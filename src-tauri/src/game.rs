@@ -283,7 +283,11 @@ pub fn read_file_version(path: &Path) -> Option<String> {
 
 #[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
+    pub title: Option<String>,
+    pub description: Option<String>,
     pub product_name: Option<String>,
+    pub company: Option<String>,
+    pub copyright: Option<String>,
     pub product_version: Option<String>,
     pub original_filename: Option<String>,
 }
@@ -293,7 +297,11 @@ pub fn read_file_metadata(path: &Path) -> FileMetadata {
     #[cfg(windows)]
     {
         FileMetadata {
+            title: read_version_string(path, "FileDescription"),
+            description: read_version_string(path, "Comments"),
             product_name: read_version_string(path, "ProductName"),
+            company: read_version_string(path, "CompanyName"),
+            copyright: read_version_string(path, "LegalCopyright"),
             product_version: read_version_string(path, "ProductVersion"),
             original_filename: read_version_string(path, "OriginalFilename"),
         }
@@ -328,7 +336,7 @@ fn read_version_string(path: &Path, key: &str) -> Option<String> {
     {
         return None;
     }
-    for language in ["040904b0", "040904e4", "080904b0", "000004b0", "000004e4"] {
+    for language in ["040904b0", "080404b0", "040904e4", "080904b0", "000004b0", "000004e4"] {
         let query = format!(r"\StringFileInfo\{language}\{key}");
         let query_w: Vec<u16> = query.encode_utf16().chain(std::iter::once(0)).collect();
         let mut value: LPVOID = null_mut();

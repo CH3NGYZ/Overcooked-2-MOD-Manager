@@ -76,6 +76,7 @@ pub fn run() {
             commands::restore_mod,
             commands::switch_winhttp,
             commands::open_game_directory,
+            commands::open_mod_directory,
             commands::open_backup_directory,
             commands::open_release_page,
             commands::exit_app,

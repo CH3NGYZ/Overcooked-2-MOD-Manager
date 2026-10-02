@@ -53,14 +53,14 @@ export interface PublicConfig {
 export interface BepInExInfo { installed: boolean; complete: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export interface InstalledMod { repository_id?: string; name: string; product_name?: string; original_filename?: string; guid?: string; plugin_name?: string; dll_file: string; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; load_warning?: string; note?: string; status: string }
+export interface InstalledMod { repository_id?: string; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; plugin_name?: string; company?: string; copyright?: string; dll_file: string; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; load_warning?: string; note?: string; status: string }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
 export interface RustLog { path: string; content: string }
 export interface DownloadProgress { label: string; downloaded: number; total?: number; speed_bytes: number; finished: boolean }
 export interface ImportPreview { valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[] }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_type?: 'exe' | 'msi' }
 export interface SettingsPatch { game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
 export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {

@@ -44,6 +44,7 @@ let toastTimer: number | undefined
 let rustLogTimer: number | undefined
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
+const installedModsPendingCheck = ref(false)
 const appVersion = ref('')
 const { locale, setLocale } = useLocaleTranslation()
 const localeOptions: Array<{ value: Locale; label: string }> = [
@@ -236,6 +237,7 @@ async function toggleWinhttp() {
   await loadDashboard()
 }
 async function openDirectory() { await run('正在打开游戏目录', api.openGameDirectory) }
+async function openModDirectory() { await run('正在打开模组目录', api.openModDirectory) }
 async function checkAppUpdate() { const result = await run('正在检查程序更新', api.checkAppUpdate); appUpdate.value = result ?? null; if (!result) message.value = '当前已是最新版本' }
 async function refreshRepositoryBatch(repositories: Repository[]) {
   const trackingToken = ++repositoryRefreshBatchToken
@@ -273,6 +275,7 @@ async function checkModUpdates() {
     const failures = await refreshMappedRepositories()
     if (failures) throw new Error(t('仓库刷新失败摘要').replace('{count}', String(failures)))
     dashboard.value = await api.dashboard()
+    installedModsPendingCheck.value = false
     return dashboard.value
   })
 }
@@ -350,6 +353,13 @@ function editModNote(mod: import('./types').InstalledMod) { editingMod.value = m
 async function saveModNote() { if (!editingMod.value) return; await run('正在保存 MOD 备注', async () => { await api.saveModNote(editingMod.value!.dll_file, modNote.value); editingMod.value = null; await loadDashboard() }) }
 async function uninstallMod(mod: import('./types').InstalledMod) { if (!confirm(`${t('确定删除 MOD')} ${mod.name}?`)) return; await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file)); await loadDashboard() }
 async function installLocalMod() { const path = await api.chooseModFile(); if (!path || Array.isArray(path)) return; await run('正在安装本地 MOD', () => api.installLocalMod(path)); await loadDashboard() }
+async function rescanInstalledMods() {
+  await run('正在重新扫描', async () => {
+    dashboard.value = await api.dashboard()
+    installedModsPendingCheck.value = true
+    return dashboard.value
+  })
+}
 let kitchenPoll: number | undefined
 onMounted(async () => {
   appVersion.value = await getVersion()
@@ -553,13 +563,14 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <div>
             <p>{{ t('这里只显示当前 BepInEx/plugins 中已经安装的插件。') }}</p>
           </div>
-          <div class="button-row"><button class="primary-button"
-              :disabled="!mappedReposAvailable || !!busy" @click="checkModUpdates">
-              <RefreshCw :size="16" />{{ t('检查模组更新') }}
+          <div class="button-row"><button class="secondary-button" :disabled="!!busy" @click="openModDirectory">
+              <FolderOpen :size="16" />{{ t('打开模组目录') }}
             </button><button class="secondary-button" :disabled="gameBlocked || !!busy" @click="installLocalMod">
               <Plus :size="16" />{{ t('手动安装模组') }}
-            </button><button class="secondary-button" :disabled="gameBlocked || !!busy" @click="loadDashboard">
+            </button><button class="secondary-button" :disabled="!!busy" @click="rescanInstalledMods">
               <RefreshCw :size="16" />{{ t('重新扫描') }}
+            </button><button class="primary-button" :disabled="!mappedReposAvailable || !!busy" @click="checkModUpdates">
+              <RefreshCw :size="16" />{{ t('检查模组更新') }}
             </button></div>
         </div>
         <div class="panel table-panel">
@@ -568,17 +579,21 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
               <div class="mod-details"><b>{{ mod.name }}</b>
+                <small v-if="mod.title"><strong>{{ t('程序集标题') }}</strong><span>{{ mod.title }}</span></small>
+                <small v-if="mod.description"><strong>{{ t('MOD 描述') }}</strong><span>{{ mod.description }}</span></small>
                 <small><strong>{{ t('产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
                 <small><strong>{{ t('插件名称') }}</strong><span>{{ mod.plugin_name || t('未识别') }}</span></small>
                 <small><strong>{{ t('原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
                 <small><strong>{{ t('GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
+                <small v-if="mod.company"><strong>{{ t('开发者') }}</strong><span>{{ mod.company }}</span></small>
+                <small v-if="mod.copyright"><strong>{{ t('版权') }}</strong><span>{{ mod.copyright }}</span></small>
                 <small><strong>{{ t('路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
                 <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note }}</span></small>
               </div>
             </div><span class="mono">{{ mod.version || t('版本未知') }}</span><span class="muted-text">{{
               t(mod.version_source) }}</span><span class="badge"
-              :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
-                mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版')) }}</span><span class="mod-actions"><button
+              :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
+                mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') : installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版')) }}</span><span class="mod-actions"><button
                 class="icon-button small" :title="t('编辑 MOD 备注')" @click="editModNote(mod)">
                 <Pencil :size="14" />
               </button><button class="icon-button small danger-icon" :title="t('删除 MOD')" :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">

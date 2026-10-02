@@ -790,6 +790,12 @@ button:disabled {
 .mod-cell small {
   color: var(--faint);
 }
+.mod-guid {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 .mod-avatar {
   width: 31px;
   height: 31px;

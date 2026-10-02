@@ -132,10 +132,6 @@ fn parse_bepin_plugin_metadata(bytes: &[u8]) -> Option<PluginMetadata> {
     if !String::from_utf8_lossy(bytes).contains("BepInPlugin") {
         return None;
     }
-    let guid_pattern = Regex::new(
-        r"(?i)^(?:[a-z0-9_-]+\.)+[a-z0-9_-]+$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    )
-    .ok()?;
     let version_pattern = Regex::new(r"(?i)^(?:\d+\.){1,3}\d+(?:[-+][0-9a-z.-]+)?$").ok()?;
     for (position, window) in bytes.windows(2).enumerate() {
         if window != [1, 0] {
@@ -152,7 +148,12 @@ fn parse_bepin_plugin_metadata(bytes: &[u8]) -> Option<PluginMetadata> {
             continue;
         };
         let guid = guid.trim_matches(['{', '}']);
-        if guid_pattern.is_match(guid) && !name.is_empty() && version_pattern.is_match(version) {
+        if !guid.is_empty()
+            && guid.len() <= 256
+            && !guid.chars().any(|character| character.is_control())
+            && !name.trim().is_empty()
+            && version_pattern.is_match(version)
+        {
             return Some(PluginMetadata {
                 guid: Some(guid.to_string()),
                 name: Some(name.to_string()),
@@ -295,6 +296,11 @@ mod tests {
             super::parse_bepin_plugin_metadata(&plugin_blob("{12345678-1234-1234-1234-123456789abc}", "HostUtilities", "1.2.3.4"))
                 .and_then(|item| item.guid),
             Some("12345678-1234-1234-1234-123456789abc".into())
+        );
+        assert_eq!(
+            super::parse_bepin_plugin_metadata(&plugin_blob("HostUtilities", "HostUtilities", "1.2.3"))
+                .and_then(|item| item.guid),
+            Some("HostUtilities".into())
         );
         assert_eq!(
             super::parse_bepin_plugin_metadata(&plugin_blob("com.example.mod", "HostUtilities", "0.0.0"))

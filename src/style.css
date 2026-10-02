@@ -632,6 +632,12 @@ button:disabled {
 .repo-logo.gitee {
   color: #e17b6c;
 }
+.spin-icon {
+  animation: repository-spin .8s linear infinite;
+}
+@keyframes repository-spin {
+  to { transform: rotate(360deg); }
+}
 .page-intro {
   display: flex;
   justify-content: space-between;
@@ -774,27 +780,37 @@ button:disabled {
 }
 .mod-cell > div:last-child {
   min-width: 0;
+  flex: 1;
 }
-.mod-cell b,
-.mod-cell span {
+.mod-cell b {
   display: block;
 }
-.mod-cell span {
+.mod-details > small {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  margin-top: 4px;
+  min-width: 0;
+}
+.mod-details > small strong {
+  color: var(--faint);
+  font-weight: 500;
+}
+.mod-details > small span {
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 10px;
-  margin-top: 3px;
 }
 .mod-cell small {
   color: var(--faint);
 }
 .mod-guid {
-  display: block;
-  margin-top: 3px;
   overflow-wrap: anywhere;
-  white-space: normal;
+}
+.mod-path {
+  word-break: break-all;
 }
 .mod-avatar {
   width: 31px;
@@ -1269,9 +1285,17 @@ button:disabled {
   background: #351d1b;
 }
 .mod-note {
-  display: block !important;
   color: var(--accent) !important;
-  white-space: normal !important;
+}
+.mod-note span {
+  color: var(--accent) !important;
+  white-space: pre-wrap;
+}
+.identity-heading {
+  margin-top: 20px;
+}
+.identity-grid {
+  margin-top: 12px;
 }
 .mod-actions {
   display: flex;

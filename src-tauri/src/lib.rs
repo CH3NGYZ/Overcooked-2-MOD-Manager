@@ -6,6 +6,8 @@ mod models;
 mod mods;
 mod releases;
 
+use tauri_plugin_log::{Target, TargetKind};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     request_elevation();
@@ -21,13 +23,20 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let log_dir = std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(|parent| parent.join("logs")))
+                .unwrap_or_else(|| std::path::PathBuf::from("logs"));
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
-                    .level(if cfg!(debug_assertions) {
-                        log::LevelFilter::Debug
-                    } else {
-                        log::LevelFilter::Info
-                    })
+                    .targets([
+                        Target::new(TargetKind::Stdout),
+                        Target::new(TargetKind::Folder {
+                            path: log_dir,
+                            file_name: Some("rust".into()),
+                        }),
+                    ])
+                    .level(log::LevelFilter::Debug)
                     .build(),
             )?;
             Ok(())
@@ -35,6 +44,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_dashboard,
             commands::get_config,
+            commands::read_rust_log,
             commands::save_mod_note,
             commands::install_local_mod,
             commands::uninstall_local_mod,

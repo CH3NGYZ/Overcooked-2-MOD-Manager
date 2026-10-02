@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   AlertTriangle, Boxes, Check, CheckCircle2, ChevronRight, CloudDownload, Coffee, Copy, Download,
-  ExternalLink, FolderOpen, Github, HardDriveDownload, LayoutDashboard,
+  ExternalLink, FileText, FolderOpen, Github, HardDriveDownload, LayoutDashboard,
   PackageCheck, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Settings2,
   ShieldCheck, Trash2, Upload, X,
 } from 'lucide-vue-next'
@@ -21,10 +21,14 @@ const busy = ref('')
 const message = ref('')
 const error = ref('')
 const progress = ref({ label: '', percent: 0, speed: '' })
+const downloadCancelRequested = ref(false)
 const dark = ref(true)
 const showRepoEditor = ref(false)
 const showImport = ref(false)
 const showExport = ref(false)
+const showRustLog = ref(false)
+const rustLog = ref({ path: '', content: '' })
+const rustLogOutput = ref<HTMLElement | null>(null)
 const showRelease = ref<Repository | null>(null)
 const showInstall = ref<Repository | null>(null)
 const selectedInstallTag = ref('')
@@ -37,6 +41,7 @@ const startupUpdateChecking = ref(true)
 const updateCheckFailed = ref(false)
 const stopProgress = ref<(() => void) | null>(null)
 let toastTimer: number | undefined
+let rustLogTimer: number | undefined
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
 const appVersion = ref('')
@@ -49,7 +54,7 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
 ]
 const repoForm = reactive<RepositoryPatch>({
   name: '', provider: 'gitee', url: '', channel: 'stable', asset_rules: [],
-  install_target: 'BepInEx/plugins', plugin_guid: '', download_threads: 1, api_proxy_mode: 'direct', api_proxy_url: '', release_proxy_mode: 'direct', release_proxy_url: '', github_token: '', gitee_token: '', official_api_only: true, enabled: true,
+  install_target: 'BepInEx/plugins', plugin_guid: '', local_product_name: '', local_original_filename: '', download_threads: 1, api_proxy_mode: 'direct', api_proxy_url: '', release_proxy_mode: 'direct', release_proxy_url: '', github_token: '', gitee_token: '', official_api_only: true, enabled: true,
 })
 
 const navItems = [
@@ -65,11 +70,18 @@ const config = computed(() => dashboard.value?.config)
 const repos = computed(() => config.value?.repositories ?? [])
 const installedMods = computed(() => dashboard.value?.mods ?? [])
 const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enabled && installedMods.value.some((mod) => mod.repository_id === repo.id)))
-const updateCount = computed(() => dashboard.value?.updates.filter((item) => item.state === 'update_available').length ?? 0)
 const gameBlocked = computed(() => game.value?.kitchen_running ?? false)
 const currentWinhttp = computed<WinhttpState>(() => game.value?.winhttp_state ?? 'missing')
+const repositoryRefreshBatchActive = ref(false)
+const repositoryRefreshBatchTotal = ref(0)
+const repositoryRefreshBatchCompleted = ref(0)
+const installableRepositoryCount = computed(() => repos.value.filter((repo) => repo.enabled && installReleases(repo).length > 0).length)
+const repositoryMetricValue = computed(() => repositoryRefreshBatchActive.value
+  ? `${repositoryRefreshBatchCompleted.value}/${repositoryRefreshBatchTotal.value}`
+  : installableRepositoryCount.value.toString().padStart(2, '0'))
 let repositoryRefreshCount = 0
 let dashboardRevision = 0
+let repositoryRefreshBatchToken = 0
 const repositoryRefreshTasks = new Map<string, Promise<boolean>>()
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: 'mod 已启用', moddisabled: 'mod 未启用', missing: '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
@@ -86,6 +98,7 @@ function assetMatchesUi(name: string, rule: { type: string; value: string }) {
   try { return new RegExp(rule.value, 'i').test(name) } catch { return false }
 }
 function showError(value: unknown) { error.value = t(value instanceof Error ? value.message : String(value)); message.value = ''; scheduleToastClose() }
+function isModRepositoryRefreshing(mod: import('./types').InstalledMod) { return !!mod.repository_id && !!repositoryRefreshing[mod.repository_id] }
 async function run<T>(label: string, action: () => Promise<T>) { busy.value = label; error.value = ''; message.value = ''; try { const result = await action(); message.value = typeof result === 'object' && result && 'message' in result ? t(String((result as { message: string }).message)) : `${t(label)}${t('完成')}`; scheduleToastClose(); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
 async function loadDashboard() { await run('正在读取厨房状态', async () => { dashboard.value = await api.dashboard() }) }
 async function detectGame() { await run('正在重新检测', async () => { await api.detectGame(); dashboard.value = await api.dashboard() }) }
@@ -116,19 +129,33 @@ async function refreshRepositoryEntry(repo: Repository) {
   repositoryRefreshTasks.set(repo.id, task)
   return task
 }
-async function refreshRepo(repo: Repository, notify = true) {
-  const refreshed = await refreshRepositoryEntry(repo)
-  if (notify) {
-    error.value = ''
-    message.value = ''
-    if (refreshed) {
-      message.value = `${repo.name}${t('刷新完成')}`
-      scheduleToastClose()
-    } else {
-      showError(repo.last_error || `${repo.name}${t('刷新失败')}`)
+async function refreshRepo(repo: Repository, notify = true, trackOverview = true) {
+  const shouldTrackOverview = trackOverview && !repositoryRefreshBatchActive.value
+  const trackingToken = shouldTrackOverview ? ++repositoryRefreshBatchToken : undefined
+  if (shouldTrackOverview) {
+    repositoryRefreshBatchTotal.value = 1
+    repositoryRefreshBatchCompleted.value = 0
+    repositoryRefreshBatchActive.value = true
+  }
+  try {
+    const refreshed = await refreshRepositoryEntry(repo)
+    if (notify) {
+      error.value = ''
+      message.value = ''
+      if (refreshed) {
+        message.value = `${repo.name}${t('刷新完成')}`
+        scheduleToastClose()
+      } else {
+        showError(repo.last_error || `${repo.name}${t('刷新失败')}`)
+      }
+    }
+    return refreshed
+  } finally {
+    if (trackingToken === repositoryRefreshBatchToken) {
+      repositoryRefreshBatchCompleted.value = 1
+      repositoryRefreshBatchActive.value = false
     }
   }
-  return refreshed
 }
 function installRepo(repo: Repository) {
   if (!game.value?.bepinex.version) { showError('请先安装 BepInEx 框架'); return }
@@ -153,6 +180,7 @@ function selectedInstallAssets(repo: Repository | null) {
 async function confirmInstall() {
   const repo = showInstall.value
   if (!repo || !selectedInstallTag.value || !selectedInstallAsset.value) return
+  downloadCancelRequested.value = false
   showInstall.value = null
   await run(`正在安装 ${repo.name}`, () => api.installRepository(repo.id, selectedInstallTag.value, selectedInstallAsset.value))
   await loadDashboard()
@@ -161,13 +189,44 @@ async function uninstallRepo(repo: Repository) { if (!confirm(`${t('确定卸载
 void uninstallRepo
 async function installBepInEx(reinstall: boolean) {
   if (reinstall && !confirm('重新安装 BepInEx 会先备份当前框架并替换框架文件，是否继续？')) return
+  downloadCancelRequested.value = false
   await run(reinstall ? '正在重新安装 BepInEx' : '正在安装 BepInEx', () => api.installBepInEx(reinstall)); await loadDashboard()
 }
 async function uninstallBepInEx() { if (!confirm('确定移除 BepInEx？程序会先创建时间戳备份。')) return; await run('正在移除 BepInEx', api.uninstallBepInEx); await loadDashboard() }
 async function backupBepInEx() { await run('正在创建 BepInEx 备份', api.backupBepInEx); await loadDashboard() }
 async function openBackupDirectory() { await run('正在打开备份目录', api.openBackupDirectory) }
 async function deleteBackup(path: string) { if (!confirm(`确定删除备份“${path.split(/[\\/]/).pop()}”？删除后无法恢复。`)) return; await run('正在删除 BepInEx 备份', () => api.deleteBepInExBackup(path)); await loadDashboard() }
-async function cancelDownload() { await api.cancelDownload() }
+async function cancelDownload() {
+  downloadCancelRequested.value = true
+  progress.value = { label: '', percent: 0, speed: '' }
+  try { await api.cancelDownload() } catch { /* 下载任务会自行结束，进度条已隐藏 */ }
+}
+async function refreshRustLog() {
+  try {
+    rustLog.value = await api.readRustLog()
+    await nextTick()
+    if (rustLogOutput.value) rustLogOutput.value.scrollTop = rustLogOutput.value.scrollHeight
+  } catch (reason) {
+    rustLog.value = { path: '', content: String(reason) }
+  }
+}
+async function openRustLog() {
+  showRustLog.value = true
+  await refreshRustLog()
+  if (rustLogTimer) window.clearInterval(rustLogTimer)
+  rustLogTimer = window.setInterval(() => { void refreshRustLog() }, 1000)
+}
+function closeRustLog() {
+  showRustLog.value = false
+  if (rustLogTimer) window.clearInterval(rustLogTimer)
+  rustLogTimer = undefined
+}
+async function openDeveloperConsole() { await run('正在打开开发者控制台', api.openDevtools) }
+async function resetUi() {
+  if (!confirm(`${t('重置到最新 UI')}？`)) return
+  await run('正在重置界面', api.resetUi)
+  await loadDashboard()
+}
 async function restoreBackup(path: string) { await run('正在恢复 BepInEx', () => api.restoreBepInEx(path)); await loadDashboard() }
 async function launchNormal() { await run('正在准备 Steam 启动', api.launchNormal); await loadDashboard() }
 async function toggleWinhttp() {
@@ -178,16 +237,29 @@ async function toggleWinhttp() {
 }
 async function openDirectory() { await run('正在打开游戏目录', api.openGameDirectory) }
 async function checkAppUpdate() { const result = await run('正在检查程序更新', api.checkAppUpdate); appUpdate.value = result ?? null; if (!result) message.value = '当前已是最新版本' }
+async function refreshRepositoryBatch(repositories: Repository[]) {
+  const trackingToken = ++repositoryRefreshBatchToken
+  repositoryRefreshBatchTotal.value = repositories.length
+  repositoryRefreshBatchCompleted.value = 0
+  repositoryRefreshBatchActive.value = repositories.length > 0
+  try {
+    const results = await Promise.all(repositories.map(async (repo) => {
+      const success = await refreshRepo(repo, false, false)
+      repositoryRefreshBatchCompleted.value += 1
+      return success
+    }))
+    return results.filter((success) => !success).length
+  } finally {
+    if (trackingToken === repositoryRefreshBatchToken) repositoryRefreshBatchActive.value = false
+  }
+}
 async function refreshEnabledRepositories() {
-  const enabled = repos.value.filter((repo) => repo.enabled)
-  const results = await Promise.all(enabled.map((repo) => refreshRepo(repo, false)))
-  return results.filter((success) => !success).length
+  return refreshRepositoryBatch(repos.value.filter((repo) => repo.enabled))
 }
 async function refreshMappedRepositories() {
   const mappedIds = new Set(installedMods.value.map((mod) => mod.repository_id).filter((id): id is string => !!id))
   const mapped = repos.value.filter((repo) => repo.enabled && mappedIds.has(repo.id))
-  const results = await Promise.all(mapped.map((repo) => refreshRepo(repo, false)))
-  return results.filter((success) => !success).length
+  return refreshRepositoryBatch(mapped)
 }
 async function refreshAllRepositories() {
   error.value = ''
@@ -231,7 +303,7 @@ async function startupChecks() {
     }
   }
 }
-function editRepo(repo?: Repository) { Object.assign(repoForm, repo ? { id: repo.id, name: repo.name, provider: repo.provider, url: repo.url, channel: repo.channel, asset_rules: repo.asset_rules.map((rule) => ({ ...rule })), install_target: repo.install_target, plugin_guid: repo.plugin_guid, download_threads: repo.download_threads || (repo.provider === 'github' ? 16 : 1), api_proxy_mode: repo.api_proxy_mode, api_proxy_url: repo.api_proxy_url, release_proxy_mode: repo.release_proxy_mode, release_proxy_url: repo.release_proxy_url, github_token: '', gitee_token: '', official_api_only: true, enabled: repo.enabled } : { id: undefined, name: '', provider: 'gitee', url: '', channel: 'stable', asset_rules: [], install_target: 'BepInEx/plugins', plugin_guid: '', download_threads: 1, api_proxy_mode: 'direct', api_proxy_url: '', release_proxy_mode: 'direct', release_proxy_url: '', github_token: '', gitee_token: '', official_api_only: true, enabled: true }); showRepoEditor.value = true }
+function editRepo(repo?: Repository) { Object.assign(repoForm, repo ? { id: repo.id, name: repo.name, provider: repo.provider, url: repo.url, channel: repo.channel, asset_rules: repo.asset_rules.map((rule) => ({ ...rule })), install_target: repo.install_target, plugin_guid: repo.plugin_guid, local_product_name: repo.local_product_name || '', local_original_filename: repo.local_original_filename || '', download_threads: repo.download_threads || (repo.provider === 'github' ? 16 : 1), api_proxy_mode: repo.api_proxy_mode, api_proxy_url: repo.api_proxy_url, release_proxy_mode: repo.release_proxy_mode, release_proxy_url: repo.release_proxy_url, github_token: '', gitee_token: '', official_api_only: true, enabled: repo.enabled } : { id: undefined, name: '', provider: 'gitee', url: '', channel: 'stable', asset_rules: [], install_target: 'BepInEx/plugins', plugin_guid: '', local_product_name: '', local_original_filename: '', download_threads: 1, api_proxy_mode: 'direct', api_proxy_url: '', release_proxy_mode: 'direct', release_proxy_url: '', github_token: '', gitee_token: '', official_api_only: true, enabled: true }); showRepoEditor.value = true }
 async function saveRepo() {
   if (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim())) {
     showError(t('请创建至少一个有效的资产规则'))
@@ -246,7 +318,7 @@ async function saveRepo() {
       if (!savedRepo) throw new Error('保存后找不到仓库配置')
       dashboard.value!.config = savedConfig
       showRepoEditor.value = false
-      if (!await refreshRepositoryEntry(savedRepo)) refreshError = savedRepo.last_error || `${savedRepo.name}${t('刷新失败')}`
+      if (!await refreshRepo(savedRepo, false)) refreshError = savedRepo.last_error || `${savedRepo.name}${t('刷新失败')}`
       dashboard.value = await api.dashboard()
     })
   } catch {
@@ -284,7 +356,11 @@ onMounted(async () => {
   document.title = `OC2 Mod Manager v${appVersion.value}`
   await getCurrentWindow().setTitle(document.title)
   await startupChecks()
-  stopProgress.value = await watchDownloadProgress((value) => { progress.value = { label: value.label, percent: value.total ? Math.min(100, value.downloaded / value.total * 100) : 0, speed: `${formatBytes(value.speed_bytes)}/s` }; if (value.finished) window.setTimeout(() => { progress.value = { label: '', percent: 0, speed: '' } }, 900) })
+  stopProgress.value = await watchDownloadProgress((value) => {
+    if (downloadCancelRequested.value) return
+    progress.value = { label: value.label, percent: value.total ? Math.min(100, value.downloaded / value.total * 100) : 0, speed: `${formatBytes(value.speed_bytes)}/s` }
+    if (value.finished) window.setTimeout(() => { progress.value = { label: '', percent: 0, speed: '' } }, 900)
+  })
   kitchenPoll = window.setInterval(async () => {
     if (busy.value || repositoryRefreshCount > 0) return
     const revision = dashboardRevision
@@ -294,7 +370,7 @@ onMounted(async () => {
     } catch { /* 状态轮询失败时保留上一状态 */ }
   }, 1000)
 })
-onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterval(kitchenPoll); if (toastTimer) window.clearTimeout(toastTimer) })
+onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterval(kitchenPoll); if (toastTimer) window.clearTimeout(toastTimer); if (rustLogTimer) window.clearInterval(rustLogTimer) })
 </script>
 
 <template>
@@ -357,7 +433,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       <div v-if="progress.label" class="download-strip">
         <div class="download-meta"><span>{{ progress.label }}</span><span>{{ progress.percent.toFixed(0) }}% ·
             {{ progress.speed }}</span></div>
-        <div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div>
+        <div class="download-progress-row"><div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div><button
+            class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button></div>
       </div>
       <section v-if="activeView === 'overview'" class="view-content">
         <div class="hero-row">
@@ -389,9 +466,9 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             </span></div>
           <div class="metric" @click="activeView = 'installed'"><span class="metric-label">{{ t('已安装 MOD') }}</span><strong>{{ installedMods.length.toString().padStart(2, '0') }}</strong><span
               class="metric-note">BepInEx/plugins</span></div>
-          <div class="metric" @click="activeView = 'installed'"><span class="metric-label">{{ t('待更新') }}</span><strong
-              class="accent-text">{{ updateCount.toString().padStart(2, '0') }}</strong><span class="metric-note"
-              :class="updateCount ? 'warn' : ''">{{ updateCount ? t('发现新版本') : t('全部最新')
+          <div class="metric" @click="activeView = 'repositories'"><span class="metric-label">{{ t('MOD仓库') }}</span><strong
+              class="accent-text">{{ repositoryMetricValue }}</strong><span class="metric-note"
+              :class="repositoryRefreshBatchActive ? 'warn' : ''">{{ repositoryRefreshBatchActive ? t('刷新状态') : t('可安装仓库')
               }}</span></div><button class="metric metric-button"
             :disabled="gameBlocked || !game?.game_exists || !!busy" @click="toggleWinhttp"><span
               class="metric-label">{{ t('启动状态') }}</span><strong>{{ statusLabel(currentWinhttp) }}</strong><span
@@ -490,13 +567,18 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <div v-for="mod in installedMods" :key="mod.dll_file" class="table-row">
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
-              <div><b>{{ mod.name }}</b><span>{{ mod.product_name || t('产品名称未知') }} · {{ mod.dll_file
-              }}</span><small class="mod-guid">{{ t('GUID') }}: {{ mod.guid || t('未识别') }}</small><small v-if="mod.note" class="mod-note">{{ t('备注：') }}{{ mod.note }}</small>
+              <div class="mod-details"><b>{{ mod.name }}</b>
+                <small><strong>{{ t('产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
+                <small><strong>{{ t('插件名称') }}</strong><span>{{ mod.plugin_name || t('未识别') }}</span></small>
+                <small><strong>{{ t('原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
+                <small><strong>{{ t('GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
+                <small><strong>{{ t('路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
+                <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note }}</span></small>
               </div>
             </div><span class="mono">{{ mod.version || t('版本未知') }}</span><span class="muted-text">{{
-              mod.version_source }}</span><span class="badge"
-              :class="mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
-                mod.load_warning || (mod.update_available ? t('有更新') : t('已安装')) }}</span><span class="mod-actions"><button
+              t(mod.version_source) }}</span><span class="badge"
+              :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
+                mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版')) }}</span><span class="mod-actions"><button
                 class="icon-button small" :title="t('编辑 MOD 备注')" @click="editModNote(mod)">
                 <Pencil :size="14" />
               </button><button class="icon-button small danger-icon" :title="t('删除 MOD')" :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">
@@ -537,7 +619,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
             <div class="row-actions"><button class="icon-button small" :title="t('刷新 Release')"
                 :disabled="!!busy || !!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
-                <RefreshCw :size="14" />
+                <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
               </button><button class="icon-button small" :title="t('查看 Release 日志')" :disabled="!latest(repo)"
                 @click="showRelease = repo">
                 <Search :size="14" />
@@ -579,10 +661,10 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
         <div class="sponsor-panel">
           <h2>{{ t('觉得好用的话，请我喝杯咖啡吧！') }}</h2><img :src="sponsorImage" alt="赞助二维码" />
             <p>{{ t('感谢你的支持。') }}</p>
+            <div class="button-row sponsor-actions"><button class="secondary-button" :disabled="!!busy" @click="openDeveloperConsole"><ExternalLink :size="15" />{{ t('打开开发者控制台') }}</button><button class="secondary-button" :disabled="!!busy" @click="resetUi"><RotateCcw :size="15" />{{ t('重置到最新 UI') }}</button><button class="secondary-button" @click="openRustLog"><FileText :size="15" />{{ t('打开 Rust 日志') }}</button></div>
         </div>
       </section>
     </main>
-    <button v-if="progress.label" class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button>
     <button v-if="activeView === 'overview'" class="update-fab" :disabled="!!busy"
       @click="appUpdate ? run('正在安装程序更新', api.installAppUpdate) : checkAppUpdate()">
       <Download :size="15" /><span>{{ appUpdate ? `${t('安装')} ${appUpdate.version}` : t('检查程序更新') }}</span>
@@ -610,8 +692,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               <option value="beta">{{ t('测试版') }}</option>
               <option value="all">{{ t('全部版本') }}</option>
             </select></label><label><span>{{ t('安装目录') }}</span><input v-model="repoForm.install_target"
-              :placeholder="t('BepInEx 插件目录')" /></label><label><span>{{ t('插件 GUID') }}</span><input v-model="repoForm.plugin_guid"
-              :placeholder="t('可选')" /></label><label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label><label><span>{{ t('API 代理策略') }}</span><select v-model="repoForm.api_proxy_mode">
+              :placeholder="t('BepInEx 插件目录')" /></label><label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label><label><span>{{ t('API 代理策略') }}</span><select v-model="repoForm.api_proxy_mode">
               <option value="direct">{{ t('直连') }}</option>
               <option value="auto">{{ t('自动选择') }}</option>
               <option value="fixed">{{ t('固定代理') }}</option>
@@ -625,6 +706,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               <option value="fixed">{{ t('固定代理') }}</option>
             </select></label><label><span>Release {{ t('代理地址') }}</span><input v-model="repoForm.release_proxy_url"
               placeholder="https://" /></label></div>
+        <div class="rules-heading identity-heading"><div><b>{{ t('本地 MOD 识别绑定') }}</b><small>{{ t('GUID、产品名称或原始文件名任一匹配即可绑定') }}</small></div></div>
+        <div class="form-grid identity-grid"><label><span>{{ t('BepInEx Plugin GUID') }}</span><input v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label><label><span>{{ t('DLL 产品名称') }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label><label class="wide"><span>{{ t('DLL 原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label></div>
         <div class="rules-heading">
           <div><b>{{ t('Release 资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div><button class="ghost-button" @click="addRule">
             <Plus :size="14" />{{ t('添加规则') }}
@@ -645,6 +728,13 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             @click="saveRepo">
             <Save :size="16" />{{ t('保存仓库') }}
           </button></div>
+      </div>
+    </div>
+    <div v-if="showRustLog" class="modal-backdrop" @click.self="closeRustLog">
+      <div class="modal rust-log-modal">
+        <div class="modal-head"><div><h3>{{ t('Rust 运行日志') }}</h3><small class="rust-log-path">{{ rustLog.path }}</small></div><button class="icon-button" @click="closeRustLog"><X :size="17" /></button></div>
+        <pre ref="rustLogOutput" class="rust-log-output">{{ rustLog.content || t('暂无 Rust 日志') }}</pre>
+        <div class="modal-actions"><button class="secondary-button" @click="refreshRustLog"><RefreshCw :size="15" />{{ t('立即刷新') }}</button><button class="primary-button" @click="closeRustLog">{{ t('关闭') }}</button></div>
       </div>
     </div>
     <div v-if="showImport" class="modal-backdrop" @click.self="showImport = false">
@@ -758,14 +848,22 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
 
 .download-strip {
   position: relative;
-  padding-right: 110px;
 }
 
 .download-cancel {
-  position: fixed;
-  right: 42px;
-  top: 118px;
-  z-index: 12;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.download-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.download-progress-row .progress {
+  flex: 1;
+  min-width: 0;
 }
 
 .metric-button {
@@ -866,6 +964,38 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
 .sponsor-panel p {
   color: var(--muted);
   font-size: 12px;
+}
+
+.sponsor-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.rust-log-modal {
+  width: min(980px, 100%);
+}
+
+.rust-log-path {
+  display: block;
+  max-width: 760px;
+  margin-top: 7px;
+  color: var(--faint);
+  font: 10px Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.rust-log-output {
+  min-height: 360px;
+  max-height: 58vh;
+  margin: 0;
+  padding: 13px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #0b1114;
+  color: #b9d8ce;
+  font: 11px/1.55 Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .startup-overlay {

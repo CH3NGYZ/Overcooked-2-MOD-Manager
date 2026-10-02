@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import type { AppUpdateInfo, Dashboard, DownloadProgress, GameInfo, ImportPreview, OperationResult, PublicConfig, ReleaseInfo, RepositoryPatch, SettingsPatch, TokenPatch } from '../types'
+import type { AppUpdateInfo, Dashboard, DownloadProgress, GameInfo, ImportPreview, OperationResult, PublicConfig, ReleaseInfo, RepositoryPatch, RustLog, SettingsPatch, TokenPatch } from '../types'
 
 export const api = {
   dashboard: () => invoke<Dashboard>('get_dashboard'),
   config: () => invoke<PublicConfig>('get_config'),
+  readRustLog: () => invoke<RustLog>('read_rust_log'),
   saveModNote: (dllFile: string, note: string) => invoke<OperationResult>('save_mod_note', { dllFile, note }),
   installLocalMod: (sourcePath: string) => invoke<OperationResult>('install_local_mod', { sourcePath }),
   uninstallLocalMod: (dllFile: string) => invoke<OperationResult>('uninstall_local_mod', { dllFile }),

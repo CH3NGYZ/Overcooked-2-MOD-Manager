@@ -33,6 +33,7 @@ pub struct InstalledMod {
     pub repository_id: Option<String>,
     pub name: String,
     pub product_name: Option<String>,
+    pub original_filename: Option<String>,
     pub guid: Option<String>,
     pub plugin_name: Option<String>,
     pub dll_file: String,
@@ -124,6 +125,10 @@ pub struct RepositoryConfig {
     pub install_target: String,
     #[serde(default)]
     pub plugin_guid: String,
+    #[serde(default)]
+    pub local_product_name: String,
+    #[serde(default)]
+    pub local_original_filename: String,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
     #[serde(default)]
@@ -217,6 +222,10 @@ pub struct RepositoryExport {
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
     pub plugin_guid: String,
+    #[serde(default)]
+    pub local_product_name: String,
+    #[serde(default)]
+    pub local_original_filename: String,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
     #[serde(default)]
@@ -259,6 +268,12 @@ pub struct UpdateStatus {
 pub struct OperationResult {
     pub ok: bool,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RustLog {
+    pub path: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,6 +324,10 @@ pub struct RepositoryPatch {
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
     pub plugin_guid: String,
+    #[serde(default)]
+    pub local_product_name: String,
+    #[serde(default)]
+    pub local_original_filename: String,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
     #[serde(default)]

@@ -1,6 +1,7 @@
 use crate::game::read_file_metadata;
 use crate::models::{AppConfig, InstalledMod};
 use regex::Regex;
+use std::cmp::Ordering;
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -35,11 +36,16 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
     let guid = plugin.as_ref().and_then(|item| item.guid.clone());
     let plugin_version = plugin.as_ref().and_then(|item| item.version.clone());
     let candidates = config.repositories.iter().filter(|repo| {
-        repo.enabled
-            && !repo.plugin_guid.is_empty()
-            && guid.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(&repo.plugin_guid))
+        repo.enabled && repository_matches_mod(
+            repo,
+            guid.as_deref(),
+            metadata.product_name.as_deref(),
+            metadata.original_filename.as_deref(),
+        )
     });
-    let local_component_count = installed_version_component_count(plugin_version.as_deref());
+    let (installed_version, version_source) =
+        choose_local_version(metadata.product_version.as_deref(), plugin_version.as_deref());
+    let local_component_count = installed_version_component_count(installed_version.as_deref());
     let candidates = candidates.collect::<Vec<_>>();
     let repository = match local_component_count {
         Some(4) => candidates.iter()
@@ -61,8 +67,6 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
                 .unwrap_or("未知 MOD")
                 .to_string()
         });
-    let installed_version = plugin_version.clone();
-    let version_source = if installed_version.is_some() { "BepInPlugin" } else { "unknown" };
     let remote = repository.and_then(|repo| {
         repo.cached_releases
             .iter()
@@ -81,7 +85,9 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
         (Some(local), Some(remote)) => remote > local,
         _ => false,
     };
+    let bound = repository.is_some();
     let product_name = metadata.product_name;
+    let original_filename = metadata.original_filename;
     let plugin_name = plugin.and_then(|item| item.name);
     let dll_file = path
         .strip_prefix(game)
@@ -104,6 +110,7 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
         name,
         product_name,
+        original_filename,
         guid,
         plugin_name,
         dll_file,
@@ -113,11 +120,49 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
         duplicate_guid: false,
         load_warning: None,
         note,
-        status: if update_available {
+        status: if !bound {
+            "unbound".into()
+        } else if update_available {
             "update_available".into()
         } else {
-            "installed".into()
+            "latest".into()
         },
+    }
+}
+
+fn repository_matches_mod(
+    repo: &crate::models::RepositoryConfig,
+    guid: Option<&str>,
+    product_name: Option<&str>,
+    original_filename: Option<&str>,
+) -> bool {
+    [
+        (guid, repo.plugin_guid.as_str()),
+        (product_name, repo.local_product_name.as_str()),
+        (original_filename, repo.local_original_filename.as_str()),
+    ]
+    .into_iter()
+    .any(|(actual, configured)| {
+        let configured = configured.trim();
+        !configured.is_empty()
+            && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
+    })
+}
+
+fn is_zero_version(value: &str) -> bool {
+    matches!(value.trim(), "0.0.0" | "0.0.0.0")
+}
+
+fn choose_local_version<'a>(
+    product_version: Option<&'a str>,
+    plugin_version: Option<&'a str>,
+) -> (Option<String>, &'static str) {
+    if let Some(version) = product_version.filter(|value| !is_zero_version(value)) {
+        (Some(version.trim().to_string()), "ProductVersion")
+    } else if let Some(version) = plugin_version {
+        (Some(version.to_string()), "BepInPlugin")
+    } else {
+        (None, "unknown")
     }
 }
 
@@ -213,39 +258,68 @@ pub fn note_key(mod_info: &InstalledMod) -> String {
 
 fn mark_duplicate_guids(mods: &mut [InstalledMod]) {
     for index in 0..mods.len() {
-        let Some(guid) = mods[index].guid.as_deref() else {
-            continue;
-        };
         let peers = mods
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.guid.as_deref() == Some(guid))
+            .filter(|(peer_index, item)| {
+                *peer_index != index && mods_share_identity(&mods[index], item)
+            })
             .map(|(peer_index, _)| peer_index)
             .collect::<Vec<_>>();
-        if peers.len() < 2 {
+        if peers.is_empty() {
             continue;
         }
         mods[index].duplicate_guid = true;
-        let current = mods[index]
-            .version
-            .as_deref()
-            .and_then(crate::releases::parse_version);
-        let higher = peers
-            .iter()
-            .filter_map(|peer| {
-                mods[*peer]
-                    .version
-                    .as_deref()
-                    .and_then(crate::releases::parse_version)
-            })
-            .max();
-        if let (Some(current), Some(higher)) = (current, higher) {
-            if higher > current {
-                mods[index].load_warning = Some("存在更高版本，框架默认不加载".into());
-                mods[index].status = "duplicate_lower_version".into();
-            }
+        let Some(current) = mods[index].version.as_deref() else {
+            continue;
+        };
+        let has_higher = peers.iter().any(|peer| {
+            mods[*peer]
+                .version
+                .as_deref()
+                .and_then(|higher| compare_mod_versions(higher, current))
+                == Some(Ordering::Greater)
+        });
+        if has_higher {
+            mods[index].load_warning = Some("存在更高版本，框架默认不加载".into());
+            mods[index].status = "duplicate_lower_version".into();
         }
     }
+}
+
+fn mods_share_identity(left: &InstalledMod, right: &InstalledMod) -> bool {
+    let same_guid = left
+        .guid
+        .as_deref()
+        .zip(right.guid.as_deref())
+        .is_some_and(|(left, right)| left.trim().eq_ignore_ascii_case(right.trim()));
+    let same_name = {
+        let left = left.name.trim();
+        let right = right.name.trim();
+        !left.is_empty() && !right.is_empty() && left.eq_ignore_ascii_case(right)
+    };
+    same_guid || same_name
+}
+
+fn compare_mod_versions(left: &str, right: &str) -> Option<Ordering> {
+    Some(parse_mod_version_components(left)?.cmp(&parse_mod_version_components(right)?))
+}
+
+fn parse_mod_version_components(value: &str) -> Option<[u64; 4]> {
+    let numeric = value
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .split(['-', '+'])
+        .next()?;
+    let parts = numeric.split('.').collect::<Vec<_>>();
+    if parts.is_empty() || parts.len() > 4 {
+        return None;
+    }
+    let mut components = [0_u64; 4];
+    for (index, part) in parts.into_iter().enumerate() {
+        components[index] = part.parse().ok()?;
+    }
+    Some(components)
 }
 
 fn installed_version_component_count(value: Option<&str>) -> Option<usize> {
@@ -274,6 +348,83 @@ mod tests {
         assert_eq!(super::installed_version_component_count(Some("1.8.5")), Some(3));
         assert_eq!(super::installed_version_component_count(Some("1.8.5.2")), Some(4));
         assert_eq!(super::installed_version_component_count(Some("v1.8.5.2-beta")), Some(4));
+    }
+
+    #[test]
+    fn mod_version_comparison_fills_missing_components_with_zero() {
+        assert_eq!(
+            super::compare_mod_versions("1.8.5.03", "1.8.5"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            super::compare_mod_versions("1.8.5", "1.8.5.0"),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            super::compare_mod_versions("1.10.0", "1.9.99.99"),
+            Some(std::cmp::Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn product_version_is_preferred_with_zero_fallback() {
+        assert_eq!(
+            super::choose_local_version(Some("1.2.3.4"), Some("1.2.3")),
+            (Some("1.2.3.4".into()), "ProductVersion")
+        );
+        assert_eq!(
+            super::choose_local_version(Some("0.0.0"), Some("1.2.3")),
+            (Some("1.2.3".into()), "BepInPlugin")
+        );
+        assert_eq!(
+            super::choose_local_version(Some("0.0.0.0"), Some("1.2.3.4")),
+            (Some("1.2.3.4".into()), "BepInPlugin")
+        );
+        assert_eq!(super::choose_local_version(None, None), (None, "unknown"));
+    }
+
+    #[test]
+    fn repository_binding_matches_any_configured_identity() {
+        let repo = crate::models::RepositoryConfig {
+            id: "test".into(),
+            name: "Test".into(),
+            provider: crate::models::Provider::Gitee,
+            url: String::new(),
+            channel: crate::models::Channel::All,
+            asset_rules: Vec::new(),
+            install_target: String::new(),
+            plugin_guid: "com.example.guid".into(),
+            local_product_name: "Example Product".into(),
+            local_original_filename: "Example.dll".into(),
+            download_threads: 1,
+            api_proxy_mode: crate::models::ProxyMode::Direct,
+            api_proxy_url: String::new(),
+            release_proxy_mode: crate::models::ProxyMode::Direct,
+            release_proxy_url: String::new(),
+            github_token: String::new(),
+            gitee_token: String::new(),
+            official_api_only: true,
+            enabled: true,
+            builtin: false,
+            pinned_version: None,
+            ignored_version: None,
+            etag: None,
+            cached_releases: Vec::new(),
+            last_error: None,
+        };
+        assert!(super::repository_matches_mod(
+            &repo,
+            Some("different"),
+            Some("example product"),
+            None
+        ));
+        assert!(super::repository_matches_mod(&repo, None, None, Some("EXAMPLE.DLL")));
+        assert!(super::repository_matches_mod(
+            &repo,
+            Some("COM.EXAMPLE.GUID"),
+            None,
+            None
+        ));
     }
 
     #[test]
@@ -316,6 +467,7 @@ mod tests {
                 repository_id: None,
                 name: "Old".into(),
                 product_name: Some("Old".into()),
+                original_filename: Some("old.dll".into()),
                 guid: Some("com.example.mod".into()),
                 plugin_name: None,
                 dll_file: "BepInEx/plugins/old.dll".into(),
@@ -331,6 +483,7 @@ mod tests {
                 repository_id: None,
                 name: "New".into(),
                 product_name: Some("New".into()),
+                original_filename: Some("new.dll".into()),
                 guid: Some("com.example.mod".into()),
                 plugin_name: None,
                 dll_file: "BepInEx/plugins/new.dll".into(),

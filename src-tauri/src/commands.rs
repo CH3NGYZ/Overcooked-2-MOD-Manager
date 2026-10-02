@@ -166,6 +166,29 @@ pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
 }
 
 #[tauri::command]
+pub fn read_rust_log() -> Result<RustLog, String> {
+    let path = std::env::current_exe()
+        .map_err(|error| error.to_string())?
+        .parent()
+        .ok_or("无法确定程序目录")?
+        .join("logs")
+        .join("rust.log");
+    let content = match fs::read(&path) {
+        Ok(bytes) => {
+            const MAX_LOG_BYTES: usize = 512 * 1024;
+            let start = bytes.len().saturating_sub(MAX_LOG_BYTES);
+            String::from_utf8_lossy(&bytes[start..]).into_owned()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(RustLog {
+        path: path.to_string_lossy().to_string(),
+        content,
+    })
+}
+
+#[tauri::command]
 pub fn save_mod_note(
     state: State<'_, AppState>,
     dll_file: String,
@@ -209,10 +232,6 @@ pub fn install_local_mod(
     let extension = source.extension().and_then(|value| value.to_str()).unwrap_or_default();
     let repository_id = format!("manual-{}", Uuid::new_v4());
     let (files, display_name) = if extension.eq_ignore_ascii_case("dll") {
-        let destination = game_root.join("BepInEx/plugins").join(file_name);
-        if destination.exists() {
-            return Err("同名 DLL 已存在，请先删除现有 MOD".into());
-        }
         let files = archive::copy_asset(&source, &game_root, "BepInEx/plugins", file_name)?;
         (files, file_name.to_string())
     } else if extension.eq_ignore_ascii_case("zip") {
@@ -664,6 +683,13 @@ pub async fn install_repository(
         Provider::Github => repo.download_threads.clamp(1, 32),
         Provider::Gitee => 1,
     };
+    log::info!(
+        "开始下载 Release：仓库={}，平台={:?}，线程数={}，Release 代理策略={:?}",
+        repo.name,
+        repo.provider,
+        download_threads,
+        repo.release_proxy_mode
+    );
     archive::start_download();
     let temp = match repo.release_proxy_mode {
         ProxyMode::Direct => archive::download_to_temp_with_threads(&client, &asset.download_url, &state.config.cache_dir(), &repo.name, Some(&app), download_threads).await?,
@@ -881,6 +907,8 @@ pub fn save_repository(
         asset_rules: patch.asset_rules,
         install_target: patch.install_target,
         plugin_guid: patch.plugin_guid,
+        local_product_name: patch.local_product_name,
+        local_original_filename: patch.local_original_filename,
         download_threads,
         api_proxy_mode: patch.api_proxy_mode,
         api_proxy_url,

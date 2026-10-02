@@ -194,6 +194,8 @@ impl ConfigService {
                 asset_rules: repo.asset_rules.clone(),
                 install_target: repo.install_target.clone(),
                 plugin_guid: repo.plugin_guid.clone(),
+                local_product_name: repo.local_product_name.clone(),
+                local_original_filename: repo.local_original_filename.clone(),
                 download_threads: repo.download_threads,
                 api_proxy_mode: repo.api_proxy_mode.clone(),
                 api_proxy_url: repo.api_proxy_url.clone(),
@@ -375,6 +377,8 @@ fn builtin_repositories() -> Vec<RepositoryConfig> {
         }],
         install_target: "BepInEx/plugins".into(),
         plugin_guid: "com.ch3ngyz.plugin.HostUtilities".into(),
+        local_product_name: "Overcooked! 2 HostUtilities".into(),
+        local_original_filename: "HostUtilities.dll".into(),
         download_threads: 1,
         api_proxy_mode: ProxyMode::Auto,
         api_proxy_url: "https://oc2gtapi.ch3ng.top".into(),
@@ -447,6 +451,8 @@ fn repo_key(repo: &RepositoryConfig) -> String {
         asset_rules: repo.asset_rules.clone(),
         install_target: repo.install_target.clone(),
         plugin_guid: repo.plugin_guid.clone(),
+        local_product_name: repo.local_product_name.clone(),
+        local_original_filename: repo.local_original_filename.clone(),
         download_threads: repo.download_threads,
         api_proxy_mode: repo.api_proxy_mode.clone(),
         api_proxy_url: repo.api_proxy_url.clone(),
@@ -486,6 +492,8 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         asset_rules: repo.asset_rules.clone(),
         install_target: repo.install_target.clone(),
         plugin_guid: repo.plugin_guid.clone(),
+        local_product_name: repo.local_product_name.clone(),
+        local_original_filename: repo.local_original_filename.clone(),
         download_threads,
         api_proxy_mode: repo.api_proxy_mode.clone(),
         api_proxy_url: repo.api_proxy_url.clone(),
@@ -607,6 +615,8 @@ mod tests {
         assert!(config.repositories.iter().all(|repo| {
             repo.plugin_guid == "com.ch3ngyz.plugin.HostUtilities"
                 && repo.channel == Channel::All
+                && repo.local_product_name == "Overcooked! 2 HostUtilities"
+                && repo.local_original_filename == "HostUtilities.dll"
         }));
         let serialized = toml::to_string(&config).unwrap();
         assert!(!serialized.contains("\n[proxies"));
@@ -638,6 +648,8 @@ mod tests {
             }],
             install_target: "../plugins".into(),
             plugin_guid: String::new(),
+            local_product_name: String::new(),
+            local_original_filename: String::new(),
             download_threads: 1,
             api_proxy_mode: ProxyMode::Auto,
             api_proxy_url: String::new(),

@@ -284,6 +284,8 @@ pub fn read_file_version(path: &Path) -> Option<String> {
 #[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
     pub product_name: Option<String>,
+    pub product_version: Option<String>,
+    pub original_filename: Option<String>,
 }
 
 /// Reads display metadata from the PE version resource without loading the DLL.
@@ -292,6 +294,8 @@ pub fn read_file_metadata(path: &Path) -> FileMetadata {
     {
         FileMetadata {
             product_name: read_version_string(path, "ProductName"),
+            product_version: read_version_string(path, "ProductVersion"),
+            original_filename: read_version_string(path, "OriginalFilename"),
         }
     }
     #[cfg(not(windows))]

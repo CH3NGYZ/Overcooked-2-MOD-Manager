@@ -32,10 +32,14 @@ pub enum WinhttpState {
 pub struct InstalledMod {
     pub repository_id: Option<String>,
     pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
     pub product_name: Option<String>,
     pub original_filename: Option<String>,
     pub guid: Option<String>,
     pub plugin_name: Option<String>,
+    pub company: Option<String>,
+    pub copyright: Option<String>,
     pub dll_file: String,
     pub version: Option<String>,
     pub version_source: String,
@@ -287,6 +291,8 @@ pub struct AppUpdateInfo {
     pub manifest_endpoints: Vec<String>,
     #[serde(default)]
     pub installer_url: Option<String>,
+    #[serde(default)]
+    pub installer_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

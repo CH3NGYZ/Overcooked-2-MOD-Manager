@@ -47,7 +47,7 @@ if errorlevel 1 (
     echo ERROR: Failed to create portable EXE copy.
     goto :failed
 )
-copy /y "src-tauri\target\release\bundle\msi\OC2 Mod Manager_1.0.2_x64_zh-CN.msi" "src-tauri\target\release\bundle\msi\OC2ModManager.msi" >nul
+copy /y "src-tauri\target\release\bundle\msi\OC2ModManager_1.0.2_x64_zh-CN.msi" "src-tauri\target\release\bundle\msi\OC2ModManager.msi" >nul
 if errorlevel 1 (
     echo.
     echo ERROR: Failed to create portable or MSI delivery copy.
@@ -62,11 +62,11 @@ echo %CD%\src-tauri\target\release\app.exe
 echo %CD%\src-tauri\target\release\OC2ModManager.exe
 echo.
 echo MSI installer:
-echo %CD%\src-tauri\target\release\bundle\msi\OC2 Mod Manager_1.0.2_x64_zh-CN.msi
+echo %CD%\src-tauri\target\release\bundle\msi\OC2ModManager_1.0.2_x64_zh-CN.msi
 echo %CD%\src-tauri\target\release\bundle\msi\OC2ModManager.msi
 echo.
 echo NSIS installer:
-echo %CD%\src-tauri\target\release\bundle\nsis\OC2 Mod Manager_1.0.2_x64-setup.exe
+echo %CD%\src-tauri\target\release\bundle\nsis\OC2ModManager_1.0.2_x64-setup.exe
 goto :done
 
 :failed

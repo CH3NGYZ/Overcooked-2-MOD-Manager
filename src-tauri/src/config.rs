@@ -363,9 +363,44 @@ fn builtin_repositories() -> Vec<RepositoryConfig> {
             // Gitee marks this beta repository's releases as non-prerelease.
             Channel::All,
         ),
+        (
+            "oc2-unlocker",
+            "厨师与DLC解锁器 / Chefs And Dlcs Unlocker",
+            Provider::Gitee,
+            "https://gitee.com/ch3ngyz/Overcooked-2-Unlocker-Releases/releases",
+            Channel::All,
+        ),
+        (
+            "oc2-chef-rotation",
+            "厨师旋转 / Chef Rotation",
+            Provider::Gitee,
+            "https://gitee.com/ch3ngyz/Overcooked-2-ChefRotation-Releases/releases",
+            Channel::All,
+        ),
     ]
     .into_iter()
-    .map(|(id, name, provider, url, channel)| RepositoryConfig {
+    .map(|(id, name, provider, url, channel)| {
+        let (asset_name, plugin_guid, local_product_name, local_original_filename) = match id {
+            "oc2-unlocker" => (
+                "OC2Unlocker.zip",
+                "com.ch3ngyz.plugin.OC2Unlocker",
+                "厨师与DLC解锁器 / Chefs And Dlcs Unlocker",
+                "OC2Unlocker.dll",
+            ),
+            "oc2-chef-rotation" => (
+                "OC2ChefRotation.zip",
+                "com.ch3ngyz.plugin.OC2ChefRotation",
+                "厨师旋转 / Chef Rotation",
+                "OC2ChefRotation.dll",
+            ),
+            _ => (
+                "HostUtilities.zip",
+                "com.ch3ngyz.plugin.HostUtilities",
+                "Overcooked! 2 HostUtilities",
+                "HostUtilities.dll",
+            ),
+        };
+        RepositoryConfig {
         id: id.into(),
         name: name.into(),
         provider: provider.clone(),
@@ -373,12 +408,12 @@ fn builtin_repositories() -> Vec<RepositoryConfig> {
         channel,
         asset_rules: vec![AssetRule {
             rule_type: AssetRuleType::Exact,
-            value: "HostUtilities.zip".into(),
+            value: asset_name.into(),
         }],
         install_target: "BepInEx/plugins".into(),
-        plugin_guid: "com.ch3ngyz.plugin.HostUtilities".into(),
-        local_product_name: "Overcooked! 2 HostUtilities".into(),
-        local_original_filename: "HostUtilities.dll".into(),
+        plugin_guid: plugin_guid.into(),
+        local_product_name: local_product_name.into(),
+        local_original_filename: local_original_filename.into(),
         download_threads: 1,
         api_proxy_mode: ProxyMode::Auto,
         api_proxy_url: "https://oc2gtapi.ch3ng.top".into(),
@@ -394,6 +429,7 @@ fn builtin_repositories() -> Vec<RepositoryConfig> {
         etag: None,
         cached_releases: Vec::new(),
         last_error: None,
+        }
     })
     .collect()
 }
@@ -604,7 +640,7 @@ mod tests {
     #[test]
     fn default_repositories_are_present() {
         let config = default_config();
-        assert_eq!(config.repositories.len(), 2);
+        assert_eq!(config.repositories.len(), 4);
         assert!(config
             .repositories
             .iter()
@@ -612,12 +648,14 @@ mod tests {
         assert!(config.repositories.iter().all(|repo| {
             repo.release_proxy_mode == ProxyMode::Direct && repo.release_proxy_url.is_empty()
         }));
-        assert!(config.repositories.iter().all(|repo| {
-            repo.plugin_guid == "com.ch3ngyz.plugin.HostUtilities"
-                && repo.channel == Channel::All
-                && repo.local_product_name == "Overcooked! 2 HostUtilities"
-                && repo.local_original_filename == "HostUtilities.dll"
-        }));
+        let unlocker = config.repositories.iter().find(|repo| repo.id == "oc2-unlocker").unwrap();
+        assert_eq!(unlocker.plugin_guid, "com.ch3ngyz.plugin.OC2Unlocker");
+        assert_eq!(unlocker.local_product_name, "厨师与DLC解锁器 / Chefs And Dlcs Unlocker");
+        assert_eq!(unlocker.local_original_filename, "OC2Unlocker.dll");
+        let chef_rotation = config.repositories.iter().find(|repo| repo.id == "oc2-chef-rotation").unwrap();
+        assert_eq!(chef_rotation.plugin_guid, "com.ch3ngyz.plugin.OC2ChefRotation");
+        assert_eq!(chef_rotation.local_product_name, "厨师旋转 / Chef Rotation");
+        assert_eq!(chef_rotation.local_original_filename, "OC2ChefRotation.dll");
         let serialized = toml::to_string(&config).unwrap();
         assert!(!serialized.contains("\n[proxies"));
         assert!(serialized.contains("api_proxy_url = \"https://oc2gtapi.ch3ng.top\""));

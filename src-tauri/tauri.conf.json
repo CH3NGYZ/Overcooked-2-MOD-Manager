@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "OC2 Mod Manager",
+  "productName": "OC2ModManager",
   "version": "1.0.2",
   "identifier": "com.oc2.modmanager",
   "build": {

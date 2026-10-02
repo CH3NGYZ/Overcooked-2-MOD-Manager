@@ -54,6 +54,26 @@ fn installer_manifest_fallback(provider: &Provider) -> String {
     }
 }
 
+fn installer_asset_for_release<'a>(
+    release: &'a ReleaseInfo,
+    version: &semver::Version,
+) -> Option<(&'a ReleaseAsset, &'static str)> {
+    let setup_name = format!("OC2ModManager_{}_x64-setup.exe", version);
+    let msi_name = format!("OC2ModManager_{}_x64_zh-CN.msi", version);
+    release
+        .assets
+        .iter()
+        .find(|asset| asset.name.eq_ignore_ascii_case(&setup_name))
+        .map(|asset| (asset, "exe"))
+        .or_else(|| {
+            release
+                .assets
+                .iter()
+                .find(|asset| asset.name.eq_ignore_ascii_case(&msi_name))
+                .map(|asset| (asset, "msi"))
+        })
+}
+
 async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateInfo>, String> {
     let config = state.config.load_or_default();
     let client =
@@ -79,45 +99,41 @@ async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateI
         {
             Ok(releases) => {
                 let filtered = releases::filter_channel(releases, &Channel::Stable);
-                for release in filtered {
-                    let Some(version) =
-                        release.version.as_deref().and_then(releases::parse_version)
-                    else {
-                        continue;
-                    };
-                    if version <= current_version {
-                        continue;
-                    }
-                    let installer_name = format!("OC2 Mod Manager_{}_x64_zh-CN.msi", version);
-                    let Some(installer_url) = release.assets.iter().find(|asset| asset.name.eq_ignore_ascii_case(&installer_name)).map(|asset| asset.download_url.clone()) else { continue };
-                    let mut manifest_endpoints = release
-                        .assets
-                        .iter()
-                        .filter(|asset| {
-                            let name = asset.name.to_ascii_lowercase();
-                            name == "latest.json"
-                                || (name.starts_with("latest-") && name.ends_with(".json"))
-                        })
-                        .map(|asset| asset.download_url.clone())
-                        .collect::<Vec<_>>();
-                    if manifest_endpoints.is_empty() {
-                        manifest_endpoints.push(installer_manifest_fallback(&provider));
-                    }
-                    return Ok(Some(AppUpdateInfo {
-                        version: version.to_string(),
-                        current_version: current_version.to_string(),
-                        body: (!release.body.is_empty()).then_some(release.body),
-                        date: release.published_at,
-                        download_size: release
-                            .assets
-                            .iter()
-                            .find(|asset| asset.name.eq_ignore_ascii_case("latest.json"))
-                            .map(|asset| asset.size),
-                        manifest_endpoints,
-                        installer_url: Some(installer_url),
-                    }));
+                let Some((release, version)) = filtered.into_iter().find_map(|release| {
+                    let version = release.version.as_deref().and_then(releases::parse_version)?;
+                    (version > current_version).then_some((release, version))
+                }) else {
+                    return Ok(None);
+                };
+                let Some((installer, installer_type)) = installer_asset_for_release(&release, &version) else {
+                    return Err("检查更新失败，请重新启动MOD管理器。".into());
+                };
+                let installer_url = installer.download_url.clone();
+                let installer_size = installer.size;
+                let installer_type = installer_type.to_string();
+                let mut manifest_endpoints = release
+                    .assets
+                    .iter()
+                    .filter(|asset| {
+                        let name = asset.name.to_ascii_lowercase();
+                        name == "latest.json"
+                            || (name.starts_with("latest-") && name.ends_with(".json"))
+                    })
+                    .map(|asset| asset.download_url.clone())
+                    .collect::<Vec<_>>();
+                if manifest_endpoints.is_empty() {
+                    manifest_endpoints.push(installer_manifest_fallback(&provider));
                 }
-                return Ok(None);
+                return Ok(Some(AppUpdateInfo {
+                    version: version.to_string(),
+                    current_version: current_version.to_string(),
+                    body: (!release.body.is_empty()).then_some(release.body),
+                    date: release.published_at,
+                    download_size: Some(installer_size),
+                    manifest_endpoints,
+                    installer_url: Some(installer_url),
+                    installer_type,
+                }));
             }
             Err(_) => {}
         }
@@ -1146,6 +1162,22 @@ pub fn open_game_directory(state: State<'_, AppState>) -> Result<OperationResult
 }
 
 #[tauri::command]
+pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    let config = state.config.load_or_default();
+    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let plugins = PathBuf::from(game_root).join("BepInEx/plugins");
+    fs::create_dir_all(&plugins).map_err(|e| e.to_string())?;
+    std::process::Command::new("explorer.exe")
+        .arg(&plugins)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(OperationResult {
+        ok: true,
+        message: "已打开模组目录".into(),
+    })
+}
+
+#[tauri::command]
 pub fn open_backup_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     let path = state.config.backups_dir();
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
@@ -1193,14 +1225,25 @@ pub async fn install_app_update(
     let info = discover_installer_update(&state)
         .await?
         .ok_or("当前已经是最新版本")?;
-    let url = info.installer_url.ok_or("更新中没有匹配的 MSI 安装包")?;
+    let url = info.installer_url.ok_or("更新中没有匹配的安装包")?;
     let config = state.config.load_or_default();
     let client = releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let bytes = client.get(&url).header("User-Agent", releases::APP_USER_AGENT).send().await
         .map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
-    let path = std::env::temp_dir().join(format!("OC2-Mod-Manager-{}.msi", info.version));
+    let installer_type = if info.installer_type.eq_ignore_ascii_case("exe") { "exe" } else { "msi" };
+    let path = std::env::temp_dir().join(format!("OC2-Mod-Manager-{}.{}", info.version, installer_type));
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    std::process::Command::new("msiexec.exe").args(["/i", path.to_string_lossy().as_ref(), "/quiet"]).spawn().map_err(|e| e.to_string())?;
+    if installer_type == "exe" {
+        std::process::Command::new(&path)
+            .arg("/S")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else {
+        std::process::Command::new("msiexec.exe")
+            .args(["/i", path.to_string_lossy().as_ref(), "/quiet"])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
     std::process::exit(0);
     /*
     let update = app

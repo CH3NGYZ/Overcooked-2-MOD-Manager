@@ -39,6 +39,7 @@ export const api = {
   openDevtools: () => invoke<OperationResult>('open_devtools'),
   resetUi: () => invoke<OperationResult>('reset_ui'),
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
+  openModDirectory: () => invoke<OperationResult>('open_mod_directory'),
   openBackupDirectory: () => invoke<OperationResult>('open_backup_directory'),
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
   exitApp: () => invoke<void>('exit_app'),

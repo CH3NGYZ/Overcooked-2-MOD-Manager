@@ -1,0 +1,64 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "OC2 Mod Manager",
+  "version": "1.0.2",
+  "identifier": "com.oc2.modmanager",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev -- --host 127.0.0.1",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OC2 Mod Manager",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "OC2 Mod Manager"
+      },
+      "wix": {
+        "language": "zh-CN",
+        "template": "wix/main.wxs"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFFREEwNkQzQjhEMjlEODUKUldTRm5kSzQwd2JhcnV3OE5nMEFtSmZFYktycm01aUN2R1o2QmdHMDFaMXNlOWdRSEt0STNkSGcK",
+      "endpoints": [
+        "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json",
+        "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "quiet" }
+    }
+  }
+}

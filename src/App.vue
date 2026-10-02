@@ -307,8 +307,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       </div>
       <div v-else class="startup-card startup-failed">
         <div class="startup-exclamation">!</div>
-        <h2>{{ t('安装器检查更新失败') }}</h2>
-        <p>{{ t('请重启软件后再试。') }}</p><button class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
+        <h2>{{ t('检查更新失败，请重新启动MOD管理器。') }}</h2>
+        <button class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
       </div>
     </div>
     <aside class="sidebar">
@@ -491,7 +491,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
               <div><b>{{ mod.name }}</b><span>{{ mod.product_name || t('产品名称未知') }} · {{ mod.dll_file
-              }}<small v-if="mod.guid"> · {{ mod.guid }}</small></span><small v-if="mod.note" class="mod-note">{{ t('备注：') }}{{ mod.note }}</small>
+              }}</span><small class="mod-guid">{{ t('GUID') }}: {{ mod.guid || t('未识别') }}</small><small v-if="mod.note" class="mod-note">{{ t('备注：') }}{{ mod.note }}</small>
               </div>
             </div><span class="mono">{{ mod.version || t('版本未知') }}</span><span class="muted-text">{{
               mod.version_source }}</span><span class="badge"

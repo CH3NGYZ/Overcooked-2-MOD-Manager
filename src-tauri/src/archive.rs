@@ -4,6 +4,7 @@ use futures_util::{StreamExt, stream};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -252,13 +253,90 @@ pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {
 }
 
 pub fn extract_zip_safe(zip_path: &Path, game_root: &Path) -> Result<Vec<String>, String> {
-    extract_zip_safe_under(zip_path, game_root, "")
+    extract_zip_into(zip_path, game_root, "", false)
 }
 
-pub fn extract_zip_safe_under(
+pub fn extract_mod_zip(
     zip_path: &Path,
     game_root: &Path,
     target_dir: &str,
+    archive_name: &str,
+) -> Result<Vec<String>, String> {
+    let wrapper = mod_zip_needs_wrapper(zip_path)?;
+    let target_dir = if wrapper {
+        Path::new(target_dir).join(safe_zip_stem(archive_name)?)
+    } else {
+        PathBuf::from(target_dir)
+    };
+    extract_zip_into(
+        zip_path,
+        game_root,
+        &target_dir.to_string_lossy().replace('\\', "/"),
+        true,
+    )
+}
+
+fn safe_zip_stem(archive_name: &str) -> Result<&str, String> {
+    if archive_name
+        .chars()
+        .any(|character| matches!(character, '/' | '\\' | ':'))
+    {
+        return Err("ZIP 文件名无效".into());
+    }
+    let stem = Path::new(archive_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or("ZIP 文件名无效")?;
+    if stem.is_empty() || stem == "." || stem == ".." {
+        return Err("ZIP 文件名无效".into());
+    }
+    Ok(stem)
+}
+
+fn mod_zip_needs_wrapper(zip_path: &Path) -> Result<bool, String> {
+    let file = File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    let mut top_level = HashSet::new();
+    let mut root_file_count = 0;
+    let mut root_dll_count = 0;
+    let mut only_root_is_directory = true;
+
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+        let path = entry
+            .enclosed_name()
+            .ok_or_else(|| format!("拒绝不安全 ZIP 路径: {}", entry.name()))?;
+        let components = path.components().collect::<Vec<_>>();
+        let Some(root) = components.first() else {
+            continue;
+        };
+        top_level.insert(root.as_os_str().to_string_lossy().into_owned());
+        let nested = components.len() > 1;
+        if !nested && !entry.is_dir() {
+            root_file_count += 1;
+            only_root_is_directory = false;
+            if path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("dll"))
+            {
+                root_dll_count += 1;
+            }
+        }
+    }
+
+    let one_directory = top_level.len() == 1 && only_root_is_directory;
+    let one_dll = top_level.len() == 1 && root_file_count == 1 && root_dll_count == 1;
+    Ok(!(one_directory || one_dll))
+}
+
+fn extract_zip_into(
+    zip_path: &Path,
+    game_root: &Path,
+    target_dir: &str,
+    reject_existing: bool,
 ) -> Result<Vec<String>, String> {
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
@@ -277,6 +355,9 @@ pub fn extract_zip_safe_under(
                 .ok_or_else(|| format!("拒绝不安全 ZIP 路径: {name}"))?;
             let relative = Path::new(target_dir).join(enclosed);
             let destination = safe_game_path(game_root, &relative.to_string_lossy())?;
+            if reject_existing && destination.exists() {
+                return Err(format!("目标文件已存在: {}", destination.display()));
+            }
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
@@ -389,6 +470,18 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        for (name, contents) in entries {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(contents).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
     #[test]
     fn sha256_is_stable() {
         let path = std::env::temp_dir().join("oc2-sha-test.bin");
@@ -412,5 +505,34 @@ mod tests {
         writer.write_all(b"bad").unwrap();
         writer.finish().unwrap();
         assert!(extract_zip_safe(&zip_path, &root).is_err());
+    }
+
+    #[test]
+    fn mod_zip_layouts_use_one_shared_install_policy() {
+        let root = std::env::temp_dir().join(format!("oc2-zip-layout-{}", Uuid::new_v4()));
+        let game = root.join("game");
+        fs::create_dir_all(&game).unwrap();
+
+        let folder_zip = root.join("folder.zip");
+        write_zip(&folder_zip, &[("Plugin/Plugin.dll", b"plugin")]);
+        extract_mod_zip(&folder_zip, &game, "BepInEx/plugins", "folder.zip").unwrap();
+        assert!(game.join("BepInEx/plugins/Plugin/Plugin.dll").is_file());
+        assert!(!game.join("BepInEx/plugins/folder/Plugin/Plugin.dll").exists());
+
+        let dll_zip = root.join("single.dll.zip");
+        write_zip(&dll_zip, &[("Single.dll", b"plugin")]);
+        extract_mod_zip(&dll_zip, &game, "BepInEx/plugins", "single.dll.zip").unwrap();
+        assert!(game.join("BepInEx/plugins/Single.dll").is_file());
+
+        let mixed_zip = root.join("mixed.zip");
+        write_zip(
+            &mixed_zip,
+            &[("Plugin/Plugin.dll", b"plugin"), ("Loose.dll", b"loose")],
+        );
+        extract_mod_zip(&mixed_zip, &game, "BepInEx/plugins", "mixed.zip").unwrap();
+        assert!(game.join("BepInEx/plugins/mixed/Plugin/Plugin.dll").is_file());
+        assert!(game.join("BepInEx/plugins/mixed/Loose.dll").is_file());
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

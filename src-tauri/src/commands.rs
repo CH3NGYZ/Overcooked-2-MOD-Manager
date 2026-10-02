@@ -60,8 +60,6 @@ async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateI
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|e| format!("当前程序版本无效: {e}"))?;
-    let mut last_error = None;
-    let mut successful_source = false;
     for (provider, endpoint, is_proxy) in installer_api_sources() {
         let token = if is_proxy {
             None
@@ -80,7 +78,6 @@ async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateI
         .await
         {
             Ok(releases) => {
-                successful_source = true;
                 let filtered = releases::filter_channel(releases, &Channel::Stable);
                 for release in filtered {
                     let Some(version) =
@@ -120,15 +117,12 @@ async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateI
                         installer_url: Some(installer_url),
                     }));
                 }
+                return Ok(None);
             }
-            Err(error) => last_error = Some(error.to_string()),
+            Err(_) => {}
         }
     }
-    if successful_source {
-        Ok(None)
-    } else {
-        Err(last_error.unwrap_or_else(|| "没有可用的安装器更新源".into()))
-    }
+    Err("检查更新失败，请重新启动MOD管理器。".into())
 }
 
 pub struct AppState {
@@ -226,11 +220,10 @@ pub fn install_local_mod(
         if folder.is_empty() || folder.contains('/') || folder.contains('\\') || folder.contains(':') {
             return Err("ZIP 文件名无效".into());
         }
-        let target = format!("BepInEx/plugins/{folder}");
-        if game_root.join(&target).exists() {
-            return Err("同名 MOD 文件夹已存在，请先删除现有 MOD".into());
-        }
-        (archive::extract_zip_safe_under(&source, &game_root, &target)?, folder.to_string())
+        (
+            archive::extract_mod_zip(&source, &game_root, "BepInEx/plugins", file_name)?,
+            folder.to_string(),
+        )
     } else {
         return Err("只支持 DLL 或 ZIP 文件".into());
     };
@@ -697,7 +690,7 @@ pub async fn install_repository(
     let files_result = if temp.extension().and_then(|value| value.to_str()) == Some("zip")
         || asset.name.to_ascii_lowercase().ends_with(".zip")
     {
-        archive::extract_zip_safe(&temp, &game_root)
+        archive::extract_mod_zip(&temp, &game_root, &repo.install_target, &asset.name)
     } else {
         archive::copy_asset(&temp, &game_root, &repo.install_target, &asset.name)
     };

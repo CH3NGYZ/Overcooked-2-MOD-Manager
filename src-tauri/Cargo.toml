@@ -1,0 +1,59 @@
+[package]
+name = "app"
+version = "1.0.2"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.1", features = ["devtools"] }
+tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["sync", "time"] }
+toml = "0.8"
+semver = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+zip = "2.2"
+walkdir = "2"
+regex = "1"
+globset = "0.4"
+sysinfo = "0.30"
+dirs = "6"
+uuid = { version = "1", features = ["v4", "serde"] }
+arboard = "3"
+base64 = "0.22"
+url = "2"
+thiserror = "2"
+winreg = "0.55"
+winapi = { version = "0.3", features = [
+    "dpapi",
+    "shellapi",
+    "securitybaseapi",
+    "winbase",
+    "winuser",
+    "winver",
+] }

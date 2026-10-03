@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameInfo {
@@ -122,11 +123,23 @@ pub struct AssetRule {
 pub struct RepositoryConfig {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub name_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub group_i18n: BTreeMap<String, String>,
     pub provider: Provider,
     pub url: String,
     pub channel: Channel,
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub note_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
     #[serde(default)]
     pub plugin_guid: String,
     #[serde(default)]
@@ -172,6 +185,8 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
+    pub repository_sources: Vec<RepositorySource>,
+    #[serde(default)]
     pub mod_notes: Vec<ModNote>,
 }
 
@@ -215,16 +230,37 @@ pub struct PublicConfig {
     pub github_token_set: bool,
     pub gitee_token_set: bool,
     pub repositories: Vec<RepositoryConfig>,
+    #[serde(default)]
+    pub repository_sources: Vec<RepositorySource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositorySource {
+    pub id: String,
+    pub nickname: String,
+    pub url: String,
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryExport {
     pub name: String,
+    #[serde(default)]
+    pub name_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub group_i18n: BTreeMap<String, String>,
     pub provider: Provider,
     pub url: String,
     pub channel: Channel,
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub note_i18n: BTreeMap<String, String>,
     pub plugin_guid: String,
     #[serde(default)]
     pub local_product_name: String,
@@ -241,6 +277,8 @@ pub struct RepositoryExport {
     #[serde(default)]
     pub release_proxy_url: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub source_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +287,8 @@ pub struct RepositoryBundle {
     pub schema_version: u32,
     pub exported_at: String,
     pub repositories: Vec<RepositoryExport>,
+    #[serde(default)]
+    pub repository_sources: Vec<RepositorySource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,6 +332,8 @@ pub struct AppUpdateInfo {
     #[serde(default)]
     pub installer_url: Option<String>,
     #[serde(default)]
+    pub installer_proxy_url: Option<String>,
+    #[serde(default)]
     pub installer_type: String,
 }
 
@@ -324,11 +366,15 @@ pub struct TokenPatch {
 pub struct RepositoryPatch {
     pub id: Option<String>,
     pub name: String,
+    #[serde(default)]
+    pub group: String,
     pub provider: Provider,
     pub url: String,
     pub channel: Channel,
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
+    #[serde(default)]
+    pub note: String,
     pub plugin_guid: String,
     #[serde(default)]
     pub local_product_name: String,

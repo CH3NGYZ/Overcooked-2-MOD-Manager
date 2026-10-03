@@ -12,35 +12,57 @@ use tauri::{AppHandle, State};
 use url::Url;
 use uuid::Uuid;
 
-pub const BEPINEX_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip";
+pub const BEPINEX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip";
+pub const BEPINEX_GITHUB_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip";
 const INSTALLER_GITEE_OWNER: &str = "ch3ngyz";
 const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
 const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
 const INSTALLER_GITHUB_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
 const GITEE_API_PROXY: &str = "https://oc2gtapi.ch3ng.top";
 const GITHUB_API_PROXY: &str = "https://oc2ghapi.ch3ng.top";
+const GITHUB_RELEASE_PROXY: &str = "https://oc2gh.ch3ng.top";
+// These credentials are embedded at compile time for installer update checks only.
+const INSTALLER_GITHUB_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITHUB_TOKEN");
+const INSTALLER_GITEE_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITEE_TOKEN");
 
-fn installer_api_sources() -> Vec<(Provider, String, bool)> {
+fn installer_api_sources(locale: &str) -> Vec<(Provider, String, bool)> {
     let gitee = format!(
         "https://gitee.com/api/v5/repos/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/latest"
     );
     let github = format!(
         "https://api.github.com/repos/{INSTALLER_GITHUB_OWNER}/{INSTALLER_GITHUB_REPO}/releases/latest"
     );
-    vec![
-        (Provider::Gitee, gitee.clone(), false),
-        (
-            Provider::Gitee,
-            releases::rewrite_proxy(GITEE_API_PROXY, &gitee),
-            true,
-        ),
+    let github_sources = vec![
         (Provider::Github, github.clone(), false),
         (
             Provider::Github,
             releases::rewrite_proxy(GITHUB_API_PROXY, &github),
             true,
         ),
-    ]
+    ];
+    if matches!(locale, "zh-CN" | "zh-TW") {
+        vec![
+            (Provider::Gitee, gitee.clone(), false),
+            (
+                Provider::Gitee,
+                releases::rewrite_proxy(GITEE_API_PROXY, &gitee),
+                true,
+            ),
+        ]
+        .into_iter()
+        .chain(github_sources)
+        .collect()
+    } else {
+        github_sources
+    }
+}
+
+fn installer_api_token(provider: &Provider) -> Option<&'static str> {
+    let token = match provider {
+        Provider::Github => INSTALLER_GITHUB_TOKEN,
+        Provider::Gitee => INSTALLER_GITEE_TOKEN,
+    }?;
+    (!token.trim().is_empty()).then_some(token)
 }
 
 fn installer_manifest_fallback(provider: &Provider) -> String {
@@ -74,21 +96,14 @@ fn installer_asset_for_release<'a>(
         })
 }
 
-async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateInfo>, String> {
+async fn discover_installer_update(state: &AppState, locale: &str) -> Result<Option<AppUpdateInfo>, String> {
     let config = state.config.load_or_default();
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|e| format!("当前程序版本无效: {e}"))?;
-    for (provider, endpoint, is_proxy) in installer_api_sources() {
-        let token = if is_proxy {
-            None
-        } else {
-            match provider {
-                Provider::Github => state.config.github_token(&config),
-                Provider::Gitee => state.config.gitee_token(&config),
-            }
-        };
+    for (provider, endpoint, is_proxy) in installer_api_sources(locale) {
+        let token = (!is_proxy).then(|| installer_api_token(&provider)).flatten();
         match releases::fetch_release_url_with_token(
             &client,
             &endpoint,
@@ -109,6 +124,8 @@ async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateI
                     return Err("检查更新失败，请重新启动MOD管理器。".into());
                 };
                 let installer_url = installer.download_url.clone();
+                let installer_proxy_url = (provider == Provider::Github)
+                    .then(|| releases::rewrite_proxy(GITHUB_RELEASE_PROXY, &installer_url));
                 let installer_size = installer.size;
                 let installer_type = installer_type.to_string();
                 let mut manifest_endpoints = release
@@ -132,6 +149,7 @@ async fn discover_installer_update(state: &AppState) -> Result<Option<AppUpdateI
                     download_size: Some(installer_size),
                     manifest_endpoints,
                     installer_url: Some(installer_url),
+                    installer_proxy_url,
                     installer_type,
                 }));
             }
@@ -179,6 +197,16 @@ pub fn get_dashboard(state: State<'_, AppState>) -> Result<DashboardData, String
 pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
     let config = state.config.load_or_default();
     Ok(state.config.public_config(&config))
+}
+
+#[tauri::command]
+pub fn get_install_language() -> Option<String> {
+    let path = std::env::current_exe().ok()?.parent()?.join("install-language.txt");
+    let value = fs::read_to_string(path).ok()?.trim().to_string();
+    match value.as_str() {
+        "zh-CN" | "zh-TW" | "en" | "ko" => Some(value),
+        _ => None,
+    }
 }
 
 #[tauri::command]
@@ -303,7 +331,7 @@ pub fn uninstall_local_mod(
     let safe_relative = relative.to_string_lossy().replace('\\', "/");
     let manifest = manifests.into_iter().find(|manifest| {
         manifest.files.iter().any(|file| file.eq_ignore_ascii_case(&safe_relative))
-    }).ok_or("该 MOD 没有安装清单，拒绝删除未知文件")?;
+    }).ok_or("该 MOD 未通过此管理器安装，拒绝删除，请手动删除此 MOD.")?;
     archive::remove_manifest_files(&game_root, &manifest)?;
     fs::remove_file(manifest_dir.join(format!("{}.toml", manifest.repository_id)))
         .map_err(|error| error.to_string())?;
@@ -358,15 +386,7 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
 #[tauri::command]
 pub fn detect_game(state: State<'_, AppState>) -> Result<GameInfo, String> {
     let config = state.config.load_or_default();
-    let info = game::detect_game(&config);
-    if let Some(path) = &info.path {
-        if config.game.path != *path {
-            let mut next = config;
-            next.game.path = path.clone();
-            let _ = state.config.save(&next);
-        }
-    }
-    Ok(info)
+    Ok(game::detect_game(&config))
 }
 
 #[tauri::command]
@@ -377,6 +397,16 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
     }
     let mut config = state.config.load_or_default();
     config.game.path = root.to_string_lossy().to_string();
+    config.game.auto_detect = false;
+    state.config.save(&config).map_err(|e| e.to_string())?;
+    Ok(game::detect_game(&config))
+}
+
+#[tauri::command]
+pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
+    let mut config = state.config.load_or_default();
+    config.game.path.clear();
+    config.game.auto_detect = true;
     state.config.save(&config).map_err(|e| e.to_string())?;
     Ok(game::detect_game(&config))
 }
@@ -466,6 +496,7 @@ pub async fn install_bepinex(
     app: AppHandle,
     state: State<'_, AppState>,
     reinstall: bool,
+    provider: Provider,
 ) -> Result<OperationResult, String> {
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
@@ -483,9 +514,13 @@ pub async fn install_bepinex(
     };
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
+    let download_url = match provider {
+        Provider::Gitee => BEPINEX_GITEE_URL,
+        Provider::Github => BEPINEX_GITHUB_URL,
+    };
     let temp = archive::download_to_temp(
         &client,
-        BEPINEX_URL,
+        download_url,
         &state.config.cache_dir(),
         "BepInEx",
         Some(&app),
@@ -890,6 +925,240 @@ pub fn import_repositories(
 }
 
 #[tauri::command]
+pub async fn import_repository_source(
+    state: State<'_, AppState>,
+    source_id: String,
+    source_url: String,
+) -> Result<ImportPreview, String> {
+    let source_url = source_url.trim();
+    let parsed = Url::parse(source_url).map_err(|error| format!("仓库源地址无效: {error}"))?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err("仓库源必须使用 HTTP 或 HTTPS 地址".into());
+    }
+    // Remove only this source's repositories before downloading. The lock is
+    // deliberately released during the network request so other sources can
+    // download and apply their own files concurrently.
+    let (timeout_seconds, previous_repositories) = {
+        let _guard = state.repository_cache.lock().await;
+        let original_config = state.config.load_or_default();
+        let previous_repositories = original_config
+            .repositories
+            .iter()
+            .filter(|repo| repo.source_id.as_deref() == Some(source_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut cleared_config = original_config.clone();
+        cleared_config
+            .repositories
+            .retain(|repo| repo.source_id.as_deref() != Some(source_id.as_str()));
+        state.config.save(&cleared_config).map_err(|e| e.to_string())?;
+        (original_config.network.timeout_seconds, previous_repositories)
+    };
+    let client = releases::build_client(timeout_seconds).map_err(|e| e.to_string())?;
+    let fetched = client
+        .get(source_url)
+        .header("User-Agent", releases::APP_USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|response| response.error_for_status().map_err(|error| error.to_string()));
+    let fetched = match fetched {
+        Ok(response) => response.text().await.map_err(|error| error.to_string()),
+        Err(error) => Err(error),
+    };
+    let text = match fetched {
+        Ok(text) => text,
+        Err(error) => {
+            restore_source_repositories(&state, &source_id, &previous_repositories).await;
+            return Err(error);
+        }
+    };
+    let repositories = match state.config.validate_repository_source(&text) {
+        Ok(repositories) => repositories,
+        Err(error) => {
+            restore_source_repositories(&state, &source_id, &previous_repositories).await;
+            return Err(error.to_string());
+        }
+    };
+    let bundle = crate::models::RepositoryBundle {
+        format: "oc2-mod-repository-bundle".into(),
+        schema_version: 1,
+        exported_at: Utc::now().to_rfc3339(),
+        repositories,
+        repository_sources: Vec::new(),
+    };
+    let _guard = state.repository_cache.lock().await;
+    let mut config = state.config.load_or_default();
+    config
+        .repositories
+        .retain(|repo| repo.source_id.as_deref() != Some(source_id.as_str()));
+    let source_urls = bundle
+        .repositories
+        .iter()
+        .map(|repo| repo.url.trim().to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let preview = state.config.import_bundle(&mut config, &bundle, "overwrite");
+    for repo in &mut config.repositories {
+        if source_urls.contains(&repo.url.trim().to_ascii_lowercase()) {
+            repo.source_id = Some(source_id.clone());
+        }
+    }
+    state.config.save(&config).map_err(|e| e.to_string())?;
+    Ok(preview)
+}
+
+async fn restore_source_repositories(
+    state: &AppState,
+    source_id: &str,
+    repositories: &[RepositoryConfig],
+) {
+    let _guard = state.repository_cache.lock().await;
+    let mut config = state.config.load_or_default();
+    config
+        .repositories
+        .retain(|repo| repo.source_id.as_deref() != Some(source_id));
+    config.repositories.extend(repositories.iter().cloned());
+    let _ = state.config.save(&config);
+}
+
+#[tauri::command]
+pub fn save_repository_source(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    nickname: String,
+    url: String,
+) -> Result<PublicConfig, String> {
+    let mut config = state.config.load_or_default();
+    let nickname = nickname.trim();
+    let url = url.trim();
+    Url::parse(url).map_err(|error| format!("仓库源地址无效: {error}"))?;
+    if nickname.is_empty() || url.is_empty() {
+        return Err("仓库源昵称和地址不能为空".into());
+    }
+    if config.repository_sources.iter().any(|item| {
+        Some(item.id.as_str()) != id.as_deref() && item.url.eq_ignore_ascii_case(url)
+    }) {
+        return Err("仓库源地址已存在".into());
+    }
+    if let Some(id) = id {
+        let source = config.repository_sources.iter_mut().find(|item| item.id == id).ok_or("仓库源不存在")?;
+        if source.builtin { return Err("内置仓库源不能修改".into()); }
+        source.nickname = nickname.into();
+        source.url = url.into();
+    } else {
+        config.repository_sources.push(RepositorySource { id: Uuid::new_v4().to_string(), nickname: nickname.into(), url: url.into(), builtin: false });
+    }
+    state.config.save(&config).map_err(|e| e.to_string())?;
+    Ok(state.config.public_config(&config))
+}
+
+#[tauri::command]
+pub fn save_repository_sources(
+    state: State<'_, AppState>,
+    sources: Vec<RepositorySource>,
+) -> Result<PublicConfig, String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let mut config = state.config.load_or_default();
+    let builtin = config
+        .repository_sources
+        .iter()
+        .find(|source| source.builtin)
+        .cloned()
+        .ok_or("缺少内置仓库源")?;
+    let existing_ids = config
+        .repository_sources
+        .iter()
+        .filter(|source| !source.builtin)
+        .map(|source| source.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut seen_urls = std::collections::HashSet::new();
+    seen_urls.insert(builtin.url.trim().to_ascii_lowercase());
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut ordered = vec![builtin];
+    for source in sources {
+        if source.builtin {
+            continue;
+        }
+        let nickname = source.nickname.trim().to_string();
+        let url = source.url.trim().to_string();
+        if nickname.is_empty() || url.is_empty() {
+            return Err("仓库源昵称和地址不能为空".into());
+        }
+        let parsed = Url::parse(&url).map_err(|error| format!("仓库源地址无效: {error}"))?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            return Err("仓库源必须使用 HTTP 或 HTTPS 地址".into());
+        }
+        if !seen_urls.insert(url.to_ascii_lowercase()) {
+            return Err("仓库源地址已存在".into());
+        }
+        let id = if existing_ids.contains(&source.id) {
+            source.id
+        } else {
+            Uuid::new_v4().to_string()
+        };
+        if !seen_ids.insert(id.clone()) {
+            return Err("仓库源标识重复".into());
+        }
+        ordered.push(RepositorySource {
+            id,
+            nickname,
+            url,
+            builtin: false,
+        });
+    }
+    let retained_source_ids = ordered
+        .iter()
+        .filter(|source| !source.builtin)
+        .map(|source| source.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for repository in &mut config.repositories {
+        if let Some(id) = repository.source_id.as_deref()
+            && id != "azhe"
+            && !retained_source_ids.contains(id)
+        {
+            repository.source_id = None;
+        }
+    }
+    config.repository_sources = ordered;
+    state.config.save(&config).map_err(|e| e.to_string())?;
+    Ok(state.config.public_config(&config))
+}
+
+#[tauri::command]
+pub fn delete_repository_source(state: State<'_, AppState>, id: String) -> Result<PublicConfig, String> {
+    let mut config = state.config.load_or_default();
+    let index = config.repository_sources.iter().position(|item| item.id == id).ok_or("仓库源不存在")?;
+    if config.repository_sources[index].builtin { return Err("内置仓库源不能删除".into()); }
+    config.repository_sources.remove(index);
+    for repository in &mut config.repositories {
+        if repository.source_id.as_deref() == Some(id.as_str()) {
+            repository.source_id = None;
+        }
+    }
+    state.config.save(&config).map_err(|e| e.to_string())?;
+    Ok(state.config.public_config(&config))
+}
+
+#[tauri::command]
+pub fn reorder_repository_sources(state: State<'_, AppState>, ids: Vec<String>) -> Result<PublicConfig, String> {
+    let mut config = state.config.load_or_default();
+    let Some(builtin) = config.repository_sources.iter().find(|item| item.builtin).cloned() else { return Err("缺少内置仓库源".into()); };
+    let mut ordered = vec![builtin];
+    for id in ids {
+        if let Some(source) = config.repository_sources.iter().find(|item| !item.builtin && item.id == id).cloned() { ordered.push(source); }
+    }
+    for source in &config.repository_sources {
+        if !source.builtin && !ordered.iter().any(|item| item.id == source.id) { ordered.push(source.clone()); }
+    }
+    config.repository_sources = ordered;
+    state.config.save(&config).map_err(|e| e.to_string())?;
+    Ok(state.config.public_config(&config))
+}
+
+#[tauri::command]
 pub fn save_repository(
     state: State<'_, AppState>,
     patch: RepositoryPatch,
@@ -908,6 +1177,17 @@ pub fn save_repository(
         return Err("请创建至少一个有效的资产规则".into());
     }
     let id = patch.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let existing_translations = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == id)
+        .map(|repo| (
+            repo.name_i18n.clone(),
+            repo.note_i18n.clone(),
+            repo.source_id.clone(),
+            repo.group.clone(),
+            repo.group_i18n.clone(),
+        ));
     let download_threads = match &patch.provider {
         Provider::Github => if patch.download_threads == 0 { 16 } else { patch.download_threads.clamp(1, 32) },
         Provider::Gitee => 1,
@@ -917,11 +1197,35 @@ pub fn save_repository(
     let mut item = RepositoryConfig {
         id: id.clone(),
         name: patch.name,
+        name_i18n: existing_translations
+            .as_ref()
+            .map(|(name_i18n, _, _, _, _)| name_i18n.clone())
+            .unwrap_or_default(),
+        group: if patch.group.trim().is_empty() {
+            existing_translations
+                .as_ref()
+                .map(|(_, _, _, group, _)| group.clone())
+                .unwrap_or_default()
+        } else {
+            patch.group.trim().to_string()
+        },
+        group_i18n: existing_translations
+            .as_ref()
+            .map(|(_, _, _, _, group_i18n)| group_i18n.clone())
+            .unwrap_or_default(),
         provider: patch.provider.clone(),
         url: patch.url,
         channel: patch.channel,
         asset_rules: patch.asset_rules,
         install_target: patch.install_target,
+        note: patch.note,
+        note_i18n: existing_translations
+            .as_ref()
+            .map(|(_, note_i18n, _, _, _)| note_i18n.clone())
+            .unwrap_or_default(),
+        source_id: existing_translations
+            .as_ref()
+            .and_then(|(_, _, source_id, _, _)| source_id.clone()),
         plugin_guid: patch.plugin_guid,
         local_product_name: patch.local_product_name,
         local_original_filename: patch.local_original_filename,
@@ -1114,9 +1418,9 @@ pub fn switch_winhttp(
     Ok(OperationResult {
         ok: true,
         message: if enabled {
-            "已切换为有 MOD 状态，尚未启动厨房".into()
+            "MOD 已启用，尚未启动厨房".into()
         } else {
-            "已切换为无 MOD 状态，尚未启动厨房".into()
+            "MOD 已关闭，尚未启动厨房".into()
         },
     })
 }
@@ -1213,23 +1517,52 @@ pub fn exit_app() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_app_update(state: State<'_, AppState>) -> Result<Option<AppUpdateInfo>, String> {
-    discover_installer_update(&state).await
+pub async fn check_app_update(
+    state: State<'_, AppState>,
+    locale: Option<String>,
+) -> Result<Option<AppUpdateInfo>, String> {
+    discover_installer_update(&state, locale.as_deref().unwrap_or("zh-CN")).await
+}
+
+async fn download_installer(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    let response = client
+        .get(url)
+        .header("User-Agent", releases::APP_USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn install_app_update(
     _app: AppHandle,
     state: State<'_, AppState>,
+    locale: Option<String>,
 ) -> Result<OperationResult, String> {
-    let info = discover_installer_update(&state)
+    let info = discover_installer_update(&state, locale.as_deref().unwrap_or("zh-CN"))
         .await?
         .ok_or("当前已经是最新版本")?;
     let url = info.installer_url.ok_or("更新中没有匹配的安装包")?;
     let config = state.config.load_or_default();
     let client = releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
-    let bytes = client.get(&url).header("User-Agent", releases::APP_USER_AGENT).send().await
-        .map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = match download_installer(&client, &url).await {
+        Ok(bytes) => bytes,
+        Err(direct_error) => {
+            let Some(proxy_url) = info.installer_proxy_url.as_deref() else {
+                return Err(direct_error);
+            };
+            download_installer(&client, proxy_url)
+                .await
+                .map_err(|proxy_error| format!("更新下载失败：直连失败 ({direct_error})；代理失败 ({proxy_error})"))?
+        }
+    };
     let installer_type = if info.installer_type.eq_ignore_ascii_case("exe") { "exe" } else { "msi" };
     let path = std::env::temp_dir().join(format!("OC2-Mod-Manager-{}.{}", info.version, installer_type));
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;

@@ -42,9 +42,7 @@ pub fn detect_game(config: &crate::models::AppConfig) -> GameInfo {
 pub fn find_game_path(config: &crate::models::AppConfig) -> Option<(PathBuf, PathBuf)> {
     if !config.game.path.is_empty() {
         let stored = PathBuf::from(&config.game.path);
-        if stored.join("Overcooked2.exe").is_file() {
-            return Some((stored.clone(), stored));
-        }
+        return Some((stored.clone(), stored));
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {

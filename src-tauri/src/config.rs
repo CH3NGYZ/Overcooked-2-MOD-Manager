@@ -4,11 +4,18 @@ use chrono::Utc;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use serde::Deserialize;
 use uuid::Uuid;
 
 const CONFIG_DIR: &str = "OC2ModManager";
 const CONFIG_FILE: &str = "config.toml";
 const BUNDLE_FORMAT: &str = "oc2-mod-repository-bundle";
+pub const AUTHORITATIVE_REPOSITORY_SOURCE: &str = "https://raw.giteeusercontent.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/azhe-repository-source.oc2repo.toml";
+
+#[derive(Debug, Deserialize)]
+struct RepositorySourceFile {
+    repositories: Vec<RepositoryExport>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -128,6 +135,7 @@ impl ConfigService {
             github_token_set: !config.auth.github_token.is_empty(),
             gitee_token_set: !config.auth.gitee_token.is_empty(),
             repositories,
+            repository_sources: config.repository_sources.clone(),
         }
     }
 
@@ -163,14 +171,6 @@ impl ConfigService {
         }
     }
 
-    pub fn github_token(&self, config: &AppConfig) -> Option<String> {
-        reveal_secret(&config.auth.github_token)
-    }
-
-    pub fn gitee_token(&self, config: &AppConfig) -> Option<String> {
-        reveal_secret(&config.auth.gitee_token)
-    }
-
     pub fn export_bundle(
         &self,
         config: &AppConfig,
@@ -188,11 +188,16 @@ impl ConfigService {
             })
             .map(|repo| RepositoryExport {
                 name: repo.name.clone(),
+                name_i18n: repo.name_i18n.clone(),
+                group: repo.group.clone(),
+                group_i18n: repo.group_i18n.clone(),
                 provider: repo.provider.clone(),
                 url: repo.url.clone(),
                 channel: repo.channel.clone(),
                 asset_rules: repo.asset_rules.clone(),
                 install_target: repo.install_target.clone(),
+                note: repo.note.clone(),
+                note_i18n: repo.note_i18n.clone(),
                 plugin_guid: repo.plugin_guid.clone(),
                 local_product_name: repo.local_product_name.clone(),
                 local_original_filename: repo.local_original_filename.clone(),
@@ -202,6 +207,7 @@ impl ConfigService {
                 release_proxy_mode: repo.release_proxy_mode.clone(),
                 release_proxy_url: repo.release_proxy_url.clone(),
                 enabled: repo.enabled,
+                source_id: repo.source_id.clone(),
             })
             .collect::<Vec<_>>();
         let bundle = RepositoryBundle {
@@ -209,6 +215,7 @@ impl ConfigService {
             schema_version: 1,
             exported_at: Utc::now().to_rfc3339(),
             repositories: selected,
+            repository_sources: config.repository_sources.clone(),
         };
         toml::to_string_pretty(&bundle).map_err(|e| ConfigError::Write(e.to_string()))
     }
@@ -236,6 +243,18 @@ impl ConfigService {
         Ok(bundle)
     }
 
+    pub fn validate_repository_source(&self, text: &str) -> Result<Vec<RepositoryExport>, ConfigError> {
+        if text.len() > 1024 * 1024 {
+            return Err(ConfigError::Invalid("仓库源文件超过 1 MiB".into()));
+        }
+        let source: RepositorySourceFile = toml::from_str(text)
+            .map_err(|e| ConfigError::Invalid(format!("仓库源 TOML 解析失败: {e}")))?;
+        for repo in &source.repositories {
+            validate_repository(repo)?;
+        }
+        Ok(source.repositories)
+    }
+
     pub fn preview_bundle(&self, config: &AppConfig, bundle: &RepositoryBundle) -> ImportPreview {
         let mut preview = ImportPreview {
             valid: true,
@@ -245,6 +264,12 @@ impl ConfigService {
             conflicts: Vec::new(),
         };
         for item in &bundle.repositories {
+            if config.repositories.iter().any(|repo| {
+                repo.url.trim().eq_ignore_ascii_case(item.url.trim())
+            }) {
+                preview.duplicates.push(item.name.clone());
+                continue;
+            }
             let key = export_key(item);
             let matching = config
                 .repositories
@@ -275,6 +300,13 @@ impl ConfigService {
         bundle: &RepositoryBundle,
         conflict: &str,
     ) -> ImportPreview {
+        for source in &bundle.repository_sources {
+            if source.builtin || config.repository_sources.iter().any(|existing| existing.url.eq_ignore_ascii_case(&source.url)) {
+                continue;
+            }
+            let imported = source.clone();
+            config.repository_sources.push(imported);
+        }
         let mut preview = self.preview_bundle(config, bundle);
         for item in &bundle.repositories {
             let key = export_key(item);
@@ -283,12 +315,13 @@ impl ConfigService {
                 .iter_mut()
                 .find(|repo| repo_key(repo) == key)
             {
-                if existing.builtin {
+                if existing.builtin && conflict != "overwrite" {
                     continue;
                 }
                 if conflict == "overwrite" {
                     let id = existing.id.clone();
-                    *existing = repository_from_export(item, id, false);
+                    let builtin = existing.builtin;
+                    *existing = repository_from_export(item, id, builtin);
                 }
                 continue;
             }
@@ -342,96 +375,41 @@ fn default_config() -> AppConfig {
             official_api_only: true,
         },
         repositories: builtin_repositories(),
+        repository_sources: vec![RepositorySource {
+            id: "azhe".into(),
+            nickname: "Azhe的仓库源".into(),
+            url: AUTHORITATIVE_REPOSITORY_SOURCE.into(),
+            builtin: true,
+        }],
         mod_notes: Vec::new(),
     }
 }
 
 fn builtin_repositories() -> Vec<RepositoryConfig> {
-    [
-        (
-            "hostutilities-stable",
-            "HostUtilities 正式版",
-            Provider::Gitee,
-            "https://gitee.com/ch3ngyz/Overcooked-2-HostUtilities-Stable-Releases/releases",
-            Channel::All,
-        ),
-        (
-            "hostutilities-beta",
-            "HostUtilities 测试版",
-            Provider::Gitee,
-            "https://gitee.com/ch3ngyz/Overcooked-2-HostUtilities-Beta-Releases/releases",
-            // Gitee marks this beta repository's releases as non-prerelease.
-            Channel::All,
-        ),
-        (
-            "oc2-unlocker",
-            "厨师与DLC解锁器 / Chefs And Dlcs Unlocker",
-            Provider::Gitee,
-            "https://gitee.com/ch3ngyz/Overcooked-2-Unlocker-Releases/releases",
-            Channel::All,
-        ),
-        (
-            "oc2-chef-rotation",
-            "厨师旋转 / Chef Rotation",
-            Provider::Gitee,
-            "https://gitee.com/ch3ngyz/Overcooked-2-ChefRotation-Releases/releases",
-            Channel::All,
-        ),
-    ]
-    .into_iter()
-    .map(|(id, name, provider, url, channel)| {
-        let (asset_name, plugin_guid, local_product_name, local_original_filename) = match id {
-            "oc2-unlocker" => (
-                "OC2Unlocker.zip",
-                "com.ch3ngyz.plugin.OC2Unlocker",
-                "厨师与DLC解锁器 / Chefs And Dlcs Unlocker",
-                "OC2Unlocker.dll",
-            ),
-            "oc2-chef-rotation" => (
-                "OC2ChefRotation.zip",
-                "com.ch3ngyz.plugin.OC2ChefRotation",
-                "厨师旋转 / Chef Rotation",
-                "OC2ChefRotation.dll",
-            ),
-            _ => (
-                "HostUtilities.zip",
-                "com.ch3ngyz.plugin.HostUtilities",
-                "Overcooked! 2 HostUtilities",
-                "HostUtilities.dll",
-            ),
-        };
-        RepositoryConfig {
-        id: id.into(),
-        name: name.into(),
-        provider: provider.clone(),
-        url: url.into(),
-        channel,
-        asset_rules: vec![AssetRule {
-            rule_type: AssetRuleType::Exact,
-            value: asset_name.into(),
-        }],
-        install_target: "BepInEx/plugins".into(),
-        plugin_guid: plugin_guid.into(),
-        local_product_name: local_product_name.into(),
-        local_original_filename: local_original_filename.into(),
-        download_threads: 1,
-        api_proxy_mode: ProxyMode::Auto,
-        api_proxy_url: "https://oc2gtapi.ch3ng.top".into(),
-        release_proxy_mode: ProxyMode::Direct,
-        release_proxy_url: String::new(),
-        github_token: String::new(),
-        gitee_token: String::new(),
-        official_api_only: true,
-        enabled: true,
-        builtin: true,
-        pinned_version: None,
-        ignored_version: None,
-        etag: None,
-        cached_releases: Vec::new(),
-        last_error: None,
-        }
-    })
-    .collect()
+    #[derive(Deserialize)]
+    struct BuiltinRepositoryEntry {
+        id: String,
+        #[serde(flatten)]
+        repository: RepositoryExport,
+    }
+    #[derive(Deserialize)]
+    struct BuiltinRepositoryFile { repositories: Vec<BuiltinRepositoryEntry> }
+    let entries = toml::from_str::<BuiltinRepositoryFile>(include_str!("../resources/builtin-repositories.toml"))
+        .expect("内置仓库 TOML 无效").repositories;
+    let mut repositories = entries
+        .into_iter()
+        .map(|entry| repository_from_export(&entry.repository, entry.id, true))
+        .collect::<Vec<_>>();
+    for repository in &mut repositories {
+        repository.github_token.clear();
+        repository.gitee_token.clear();
+        repository.cached_releases.clear();
+        repository.last_error = None;
+        repository.etag = None;
+        repository.pinned_version = None;
+        repository.ignored_version = None;
+    }
+    repositories
 }
 
 fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
@@ -455,8 +433,7 @@ fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
             )));
         }
     }
-    if repo.install_target.is_empty()
-        || Path::new(&repo.install_target).is_absolute()
+    if Path::new(&repo.install_target).is_absolute()
         || repo
             .install_target
             .split(['/', '\\'])
@@ -481,11 +458,16 @@ fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
 fn repo_key(repo: &RepositoryConfig) -> String {
     let export = RepositoryExport {
         name: String::new(),
+        name_i18n: repo.name_i18n.clone(),
+        group: repo.group.clone(),
+        group_i18n: repo.group_i18n.clone(),
         provider: repo.provider.clone(),
         url: repo.url.clone(),
         channel: repo.channel.clone(),
         asset_rules: repo.asset_rules.clone(),
         install_target: repo.install_target.clone(),
+        note: repo.note.clone(),
+        note_i18n: repo.note_i18n.clone(),
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
@@ -495,6 +477,7 @@ fn repo_key(repo: &RepositoryConfig) -> String {
         release_proxy_mode: repo.release_proxy_mode.clone(),
         release_proxy_url: repo.release_proxy_url.clone(),
         enabled: repo.enabled,
+        source_id: repo.source_id.clone(),
     };
     export_key(&export)
 }
@@ -522,11 +505,17 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
     RepositoryConfig {
         id,
         name: repo.name.clone(),
+        name_i18n: repo.name_i18n.clone(),
+        group: repo.group.clone(),
+        group_i18n: repo.group_i18n.clone(),
         provider: repo.provider.clone(),
         url: repo.url.clone(),
         channel: repo.channel.clone(),
         asset_rules: repo.asset_rules.clone(),
         install_target: repo.install_target.clone(),
+        note: repo.note.clone(),
+        note_i18n: repo.note_i18n.clone(),
+        source_id: repo.source_id.clone(),
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
@@ -640,13 +629,20 @@ mod tests {
     #[test]
     fn default_repositories_are_present() {
         let config = default_config();
-        assert_eq!(config.repositories.len(), 4);
+        assert_eq!(config.repositories.len(), 7);
         assert!(config
             .repositories
             .iter()
-            .all(|repo| repo.api_proxy_url == "https://oc2gtapi.ch3ng.top"));
-        assert!(config.repositories.iter().all(|repo| {
-            repo.release_proxy_mode == ProxyMode::Direct && repo.release_proxy_url.is_empty()
+            .all(|repo| repo.source_id.as_deref() == Some("azhe")));
+        assert!(config.repositories.iter().filter(|repo| repo.provider == Provider::Gitee).all(|repo| {
+            repo.api_proxy_url == "https://oc2gtapi.ch3ng.top"
+                && repo.release_proxy_mode == ProxyMode::Direct
+                && repo.release_proxy_url.is_empty()
+        }));
+        assert!(config.repositories.iter().filter(|repo| repo.provider == Provider::Github).all(|repo| {
+            repo.api_proxy_url == "https://oc2ghapi.ch3ng.top"
+                && repo.release_proxy_mode == ProxyMode::Auto
+                && repo.release_proxy_url == "https://oc2gh.ch3ng.top"
         }));
         let unlocker = config.repositories.iter().find(|repo| repo.id == "oc2-unlocker").unwrap();
         assert_eq!(unlocker.plugin_guid, "com.ch3ngyz.plugin.OC2Unlocker");
@@ -659,6 +655,38 @@ mod tests {
         let serialized = toml::to_string(&config).unwrap();
         assert!(!serialized.contains("\n[proxies"));
         assert!(serialized.contains("api_proxy_url = \"https://oc2gtapi.ch3ng.top\""));
+    }
+
+    #[test]
+    fn repository_source_does_not_require_bundle_metadata() {
+        let service = ConfigService {
+            root: std::env::temp_dir(),
+        };
+        let text = r#"
+[[repositories]]
+name = "Example"
+provider = "gitee"
+url = "https://gitee.com/example/release"
+channel = "all"
+install_target = "BepInEx/plugins"
+note = """
+**Example** repository
+"""
+plugin_guid = "com.example.plugin"
+download_threads = 1
+api_proxy_mode = "direct"
+api_proxy_url = ""
+release_proxy_mode = "direct"
+release_proxy_url = ""
+enabled = true
+
+[[repositories.asset_rules]]
+type = "exact"
+value = "Example.dll"
+"#;
+        let repositories = service.validate_repository_source(text).unwrap();
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].name, "Example");
     }
 
     #[test]
@@ -677,6 +705,9 @@ mod tests {
     fn unsafe_install_target_is_rejected() {
         let result = validate_repository(&RepositoryExport {
             name: "bad".into(),
+            name_i18n: std::collections::BTreeMap::new(),
+            group: String::new(),
+            group_i18n: std::collections::BTreeMap::new(),
             provider: Provider::Github,
             url: "https://github.com/a/b/releases".into(),
             channel: Channel::Stable,
@@ -685,6 +716,8 @@ mod tests {
                 value: "a.zip".into(),
             }],
             install_target: "../plugins".into(),
+            note: String::new(),
+            note_i18n: std::collections::BTreeMap::new(),
             plugin_guid: String::new(),
             local_product_name: String::new(),
             local_original_filename: String::new(),
@@ -694,6 +727,7 @@ mod tests {
             release_proxy_mode: ProxyMode::Direct,
             release_proxy_url: String::new(),
             enabled: true,
+            source_id: None,
         });
         assert!(result.is_err());
     }

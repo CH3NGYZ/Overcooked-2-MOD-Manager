@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OC2ModManager",
-  "version": "1.0.2",
-  "identifier": "com.oc2.modmanager",
+  "version": "1.0.3",
+  "identifier": "com.ch3ngyz.oc2.modmanager",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -41,9 +41,15 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese"],
-        "displayLanguageSelector": false,
-        "startMenuFolder": "OC2 Mod Manager"
+        "languages": [
+          "SimpChinese",
+          "TradChinese",
+          "English",
+          "Korean"
+        ],
+        "displayLanguageSelector": true,
+        "startMenuFolder": "OC2 Mod Manager",
+        "installerHooks": "installer-hooks.nsh"
       },
       "wix": {
         "language": "zh-CN",
@@ -58,7 +64,9 @@
         "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json",
         "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json"
       ],
-      "windows": { "installMode": "quiet" }
+      "windows": {
+        "installMode": "quiet"
+      }
     }
   }
 }

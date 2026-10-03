@@ -9,6 +9,7 @@ export interface ReleaseInfo {
   tag_name: string
   version?: string
   name: string
+  name_i18n?: Record<string, string>
   body: string
   published_at?: string
   prerelease: boolean
@@ -18,11 +19,17 @@ export interface ReleaseInfo {
 export interface Repository {
   id: string
   name: string
+  name_i18n?: Record<string, string>
+  group?: string
+  group_i18n?: Record<string, string>
   provider: Provider
   url: string
   channel: Channel
   asset_rules: AssetRule[]
   install_target: string
+  note: string
+  note_i18n?: Record<string, string>
+  source_id?: string
   plugin_guid: string
   local_product_name: string
   local_original_filename: string
@@ -49,7 +56,9 @@ export interface PublicConfig {
   github_token_set: boolean
   gitee_token_set: boolean
   repositories: Repository[]
+  repository_sources: RepositorySource[]
 }
+export interface RepositorySource { id: string; nickname: string; url: string; builtin: boolean }
 export interface BepInExInfo { installed: boolean; complete: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
@@ -60,17 +69,19 @@ export interface OperationResult { ok: boolean; message: string }
 export interface RustLog { path: string; content: string }
 export interface DownloadProgress { label: string; downloaded: number; total?: number; speed_bytes: number; finished: boolean }
 export interface ImportPreview { valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_type?: 'exe' | 'msi' }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_type?: 'exe' | 'msi' }
 export interface SettingsPatch { game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
 export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {
   id?: string
   name: string
+  group: string
   provider: Provider
   url: string
   channel: Channel
   asset_rules: AssetRule[]
   install_target: string
+  note: string
   plugin_guid: string
   local_product_name: string
   local_original_filename: string

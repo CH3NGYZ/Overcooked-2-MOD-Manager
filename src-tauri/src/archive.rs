@@ -326,26 +326,32 @@ pub fn extract_mod_zip(
     archive_name: &str,
 ) -> Result<Vec<String>, String> {
     let layout = inspect_mod_zip(zip_path, archive_name)?;
-    let (extract_target, replace_target) = match layout {
+    let (extract_target, replace_target, reject_existing) = match layout {
+        ModZipLayout::TopLevelBepInEx => (PathBuf::new(), None, false),
         ModZipLayout::SingleDirectory(name) => {
-            (PathBuf::from(target_dir), Path::new(target_dir).join(name))
+            (PathBuf::from(target_dir), Some(Path::new(target_dir).join(name)), true)
         }
         ModZipLayout::SingleDll(name) => {
-            (PathBuf::from(target_dir), Path::new(target_dir).join(name))
+            (PathBuf::from(target_dir), Some(Path::new(target_dir).join(name)), true)
         }
         ModZipLayout::Wrapped(name) => {
             let path = Path::new(target_dir).join(name);
-            (path.clone(), path)
+            (path.clone(), Some(path), true)
         }
     };
-    let replace_target = safe_game_path(game_root, &replace_target.to_string_lossy())?;
-    let snapshot = snapshot_path(&replace_target)?;
-    remove_existing_path(&replace_target)?;
+    let (replace_target, snapshot) = if let Some(replace_target) = replace_target {
+        let replace_target = safe_game_path(game_root, &replace_target.to_string_lossy())?;
+        let snapshot = snapshot_path(&replace_target)?;
+        remove_existing_path(&replace_target)?;
+        (Some(replace_target), snapshot)
+    } else {
+        (None, None)
+    };
     let result = extract_zip_into(
         zip_path,
         game_root,
         &extract_target.to_string_lossy().replace('\\', "/"),
-        true,
+        reject_existing,
     );
     match result {
         Ok(files) => {
@@ -353,7 +359,11 @@ pub fn extract_mod_zip(
             Ok(files)
         }
         Err(error) => {
-            let restore_error = restore_snapshot(snapshot, &replace_target).err();
+            let restore_error = replace_target
+                .as_ref()
+                .map(|target| restore_snapshot(snapshot, target))
+                .transpose()
+                .err();
             match restore_error {
                 Some(restore_error) => Err(format!(
                     "解压失败: {error}；恢复旧文件失败: {restore_error}"
@@ -366,6 +376,7 @@ pub fn extract_mod_zip(
 
 #[derive(Debug, PartialEq, Eq)]
 enum ModZipLayout {
+    TopLevelBepInEx,
     SingleDirectory(String),
     SingleDll(String),
     Wrapped(String),
@@ -424,6 +435,13 @@ fn inspect_mod_zip(zip_path: &Path, archive_name: &str) -> Result<ModZipLayout, 
         }
     }
 
+    if top_level.len() == 1
+        && top_level
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("BepInEx"))
+    {
+        return Ok(ModZipLayout::TopLevelBepInEx);
+    }
     let one_directory = top_level.len() == 1 && only_root_is_directory;
     let one_dll = top_level.len() == 1 && root_file_count == 1 && root_dll_count == 1;
     if one_directory {

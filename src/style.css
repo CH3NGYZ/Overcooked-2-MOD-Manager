@@ -105,13 +105,16 @@ button:disabled {
 .brand-mark {
   width: 35px;
   height: 35px;
-  display: grid;
-  place-items: center;
+  flex: 0 0 35px;
+  overflow: hidden;
   border: 1px solid #429d88;
-  color: var(--accent);
-  font-weight: 800;
-  letter-spacing: -0.05em;
-  font-size: 14px;
+  border-radius: 7px;
+}
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .brand strong {
   display: block;
@@ -467,37 +470,22 @@ button:disabled {
   margin-left: auto;
 }
 .hero-orbit {
-  width: 220px;
-  height: 220px;
+  width: 184px;
+  height: 184px;
   margin-right: 8%;
   position: relative;
-  border: 1px solid var(--line);
-  display: grid;
-  place-items: center;
-  transform: rotate(-7deg);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  transform: rotate(-4deg);
+  box-shadow: var(--shadow);
 }
-.orbit-ring {
-  position: absolute;
-  inset: 18px;
-  border: 1px dashed #3a776e;
-  border-radius: 50%;
-}
-.orbit-core {
-  position: relative;
-  width: 106px;
-  height: 106px;
-  border-radius: 50%;
-  background: #1b302d;
-  border: 1px solid #4b9d8b;
-  display: grid;
-  place-content: center;
-  text-align: center;
-  transform: rotate(7deg);
-}
-.orbit-core span {
-  color: var(--accent);
-  font-weight: 800;
-  letter-spacing: 0.12em;
+.hero-orbit img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: rotate(4deg) scale(1.04);
 }
 .metric-grid {
   display: grid;
@@ -735,6 +723,9 @@ button:disabled {
 .panel {
   padding: 21px;
 }
+.table-panel {
+  padding: 5px;
+}
 .framework-status {
   display: flex;
   align-items: center;
@@ -820,7 +811,7 @@ button:disabled {
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: 40px minmax(220px, 8fr) max-content;
+  grid-template-columns: 20px minmax(220px, 8fr) max-content;
   gap: 14px;
   align-items: center;
   text-align: center;
@@ -866,6 +857,28 @@ button:disabled {
   min-width: 0;
   flex: 0 1 auto;
 }
+.mod-details-toggle {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  color: var(--faint);
+  background: transparent;
+}
+.mod-details-toggle:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.mod-details-toggle svg {
+  transition: transform .18s ease;
+}
+.mod-details-toggle .mod-details-expanded {
+  transform: rotate(90deg);
+}
 .mod-details {
   text-align: left;
 }
@@ -874,7 +887,8 @@ button:disabled {
   font-family: Consolas, monospace;
   font-size: 11px;
 }
-.mod-details > small {
+.mod-details > small,
+.mod-detail-table > small {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   column-gap: 10px;
@@ -886,12 +900,17 @@ button:disabled {
 .mod-heading + small {
   margin-top: 8px;
 }
-.mod-details > small strong {
+.mod-detail-table {
+  margin-top: 8px;
+}
+.mod-details > small strong,
+.mod-detail-table > small strong {
   color: var(--faint);
   font-weight: 500;
   white-space: nowrap;
 }
-.mod-details > small span {
+.mod-details > small span,
+.mod-detail-table > small span {
   color: var(--muted);
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1651,7 +1670,7 @@ button:disabled {
     display: none;
   }
   .table-row {
-    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-columns: 20px minmax(0, 1fr);
     column-gap: 9px;
     row-gap: 9px;
     align-items: start;

@@ -56,10 +56,23 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
             .or_else(|| candidates.iter().find(|repo| repo.channel == crate::models::Channel::All)),
         None => candidates.first(),
     }.copied();
-    let name = metadata
-        .product_name
-        .clone()
-        .or_else(|| plugin.as_ref().and_then(|item| item.name.clone()))
+    let name = plugin
+        .as_ref()
+        .and_then(|item| item.name.clone())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            metadata
+                .product_name
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| metadata.title.clone().filter(|value| !value.trim().is_empty()))
+        .or_else(|| {
+            metadata
+                .original_filename
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+        })
         .or_else(|| repository.map(|repo| repo.name.clone()))
         .unwrap_or_else(|| {
             path.file_stem()
@@ -392,11 +405,16 @@ mod tests {
         let repo = crate::models::RepositoryConfig {
             id: "test".into(),
             name: "Test".into(),
+            name_i18n: std::collections::BTreeMap::new(),
+            group: String::new(),
+            group_i18n: std::collections::BTreeMap::new(),
             provider: crate::models::Provider::Gitee,
             url: String::new(),
             channel: crate::models::Channel::All,
             asset_rules: Vec::new(),
             install_target: String::new(),
+            note: String::new(),
+            note_i18n: std::collections::BTreeMap::new(),
             plugin_guid: "com.example.guid".into(),
             local_product_name: "Example Product".into(),
             local_original_filename: "Example.dll".into(),

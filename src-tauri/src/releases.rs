@@ -178,7 +178,7 @@ pub async fn fetch_release_url_with_token(
     provider: &Provider,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
-    let mut request = client.get(url);
+    let mut request = client.get(url).header("User-Agent", APP_USER_AGENT);
     if let Some(token) = token {
         request = match provider {
             Provider::Github => request.bearer_auth(token),

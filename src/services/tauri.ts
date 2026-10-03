@@ -1,22 +1,24 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import type { AppUpdateInfo, Dashboard, DownloadProgress, GameInfo, ImportPreview, OperationResult, PublicConfig, ReleaseInfo, RepositoryPatch, RustLog, SettingsPatch, TokenPatch } from '../types'
+import type { AppUpdateInfo, Dashboard, DownloadProgress, GameInfo, ImportPreview, OperationResult, Provider, PublicConfig, ReleaseInfo, RepositoryPatch, RepositorySource, RustLog, SettingsPatch, TokenPatch } from '../types'
 
 export const api = {
   dashboard: () => invoke<Dashboard>('get_dashboard'),
   config: () => invoke<PublicConfig>('get_config'),
+  installLanguage: () => invoke<'zh-CN' | 'zh-TW' | 'en' | 'ko' | null>('get_install_language'),
   readRustLog: () => invoke<RustLog>('read_rust_log'),
   saveModNote: (dllFile: string, note: string) => invoke<OperationResult>('save_mod_note', { dllFile, note }),
   installLocalMod: (sourcePath: string) => invoke<OperationResult>('install_local_mod', { sourcePath }),
   uninstallLocalMod: (dllFile: string) => invoke<OperationResult>('uninstall_local_mod', { dllFile }),
   detectGame: () => invoke<GameInfo>('detect_game'),
   setGamePath: (path: string) => invoke<GameInfo>('set_game_path', { path }),
+  resetGamePath: () => invoke<GameInfo>('reset_game_path'),
   saveSettings: (patch: SettingsPatch) => invoke<PublicConfig>('save_settings', { patch }),
   saveTokens: (patch: TokenPatch) => invoke<PublicConfig>('save_tokens', { patch }),
   refreshRepository: (repositoryId: string) => invoke<ReleaseInfo[]>('refresh_repository', { repositoryId }),
   releases: (repositoryId: string) => invoke<ReleaseInfo[]>('get_repository_releases', { repositoryId }),
-  installBepInEx: (reinstall: boolean) => invoke<OperationResult>('install_bepinex', { reinstall }),
+  installBepInEx: (reinstall: boolean, provider: Provider) => invoke<OperationResult>('install_bepinex', { reinstall, provider }),
   uninstallBepInEx: () => invoke<OperationResult>('uninstall_bepinex'),
   backupBepInEx: () => invoke<OperationResult>('backup_bepinex'),
   restoreBepInEx: (backupPath: string) => invoke<OperationResult>('restore_bepinex', { backupPath }),
@@ -30,6 +32,11 @@ export const api = {
   readTextFile: (path: string) => invoke<string>('read_text_file', { path }),
   previewImport: (text: string) => invoke<ImportPreview>('preview_repository_import', { text }),
   importRepositories: (text: string, conflict: string) => invoke<ImportPreview>('import_repositories', { text, conflict }),
+  importRepositorySource: (sourceId: string, sourceUrl: string) => invoke<ImportPreview>('import_repository_source', { sourceId, sourceUrl }),
+  saveRepositorySource: (id: string | null, nickname: string, url: string) => invoke<PublicConfig>('save_repository_source', { id, nickname, url }),
+  saveRepositorySources: (sources: RepositorySource[]) => invoke<PublicConfig>('save_repository_sources', { sources }),
+  deleteRepositorySource: (id: string) => invoke<PublicConfig>('delete_repository_source', { id }),
+  reorderRepositorySources: (ids: string[]) => invoke<PublicConfig>('reorder_repository_sources', { ids }),
   saveRepository: (patch: RepositoryPatch) => invoke<PublicConfig>('save_repository', { patch }),
   deleteRepository: (repositoryId: string) => invoke<OperationResult>('delete_repository', { repositoryId }),
   launchNormal: () => invoke<OperationResult>('launch_normal'),
@@ -44,8 +51,8 @@ export const api = {
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
   exitApp: () => invoke<void>('exit_app'),
   cancelDownload: () => invoke<OperationResult>('cancel_download'),
-  checkAppUpdate: () => invoke<AppUpdateInfo | null>('check_app_update'),
-  installAppUpdate: () => invoke<OperationResult>('install_app_update'),
+  checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko') => invoke<AppUpdateInfo | null>('check_app_update', { locale }),
+  installAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko') => invoke<OperationResult>('install_app_update', { locale }),
   chooseImportFile: () => open({ multiple: false, directory: false, filters: [{ name: 'OC2 仓库 TOML', extensions: ['oc2repo.toml', 'toml'] }] }),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
   chooseModFile: () => open({ multiple: false, directory: false, filters: [{ name: 'MOD 文件', extensions: ['dll', 'zip'] }] }),

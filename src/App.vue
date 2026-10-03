@@ -996,8 +996,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
                                 t(repositoryInstallStatus(repo)) }}</span>
                           </div><span>{{ repo.url }}</span><small>{{ t(repo.channel === 'stable' ? '稳定版' : repo.channel
                             === 'beta' ? '测试版' : '全部版本') }} · {{ repo.install_target || t('按压缩包结构安装') }} · {{
-                              repo.asset_rules.map((rule) => `${assetRuleLabel(rule.type)}: ${rule.value}`).join(',
-                            ')}}</small>
+                              repo.asset_rules.map((rule) => `${assetRuleLabel(rule.type)}: ${rule.value}`).join(', ')}}</small>
                           <div v-if="localizedRepositoryNote(repo) && !repositoryNoteIsLong(repo)"
                             class="repo-note markdown-body" v-html="renderMarkdown(localizedRepositoryNote(repo))">
                           </div><button v-else-if="localizedRepositoryNote(repo)" class="repo-note-button"
@@ -1172,8 +1171,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
         <div class="form-grid identity-grid"><label><span>{{ t('BepInEx Plugin GUID') }}</span><input
               v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label><label><span>{{ t('DLL 产品名称')
               }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label><label
-            class="wide"><span>{{ t('DLL
-              原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label></div>
+            class="wide"><span>{{ t('DLL 原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label></div>
         <div class="rules-heading">
           <div><b>{{ t('Release 资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div><button
             class="ghost-button" @click="addRule">

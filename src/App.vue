@@ -713,11 +713,12 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
     <main class="main-area">
       <header class="topbar">
         <div>
-          <h1>{{ t(navItems.find((item) => item.id === activeView)?.label || '') }}</h1>
+          <h1>{{t(navItems.find((item) => item.id === activeView)?.label || '')}}</h1>
         </div>
         <div class="top-actions"><select v-model="locale" @change="setLocale(locale)" class="language-select"
             :aria-label="t('界面语言')">
-            <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}
+            </option>
           </select><button class="icon-button" :title="t('重新检测游戏目录')" :disabled="!!busy" @click="detectGame">
             <RefreshCw :size="17" />
           </button><button class="icon-button" :title="t('切换主题')" @click="dark = !dark">
@@ -737,24 +738,29 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       <div v-if="progress.label" class="download-strip">
         <div class="download-meta"><span>{{ progress.label }}</span><span>{{ progress.percent.toFixed(0) }}% ·
             {{ progress.speed }}</span></div>
-        <div class="download-progress-row"><div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div><button
-            class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button></div>
+        <div class="download-progress-row">
+          <div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div><button
+            class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button>
+        </div>
       </div>
       <section v-if="activeView === 'overview'" class="view-content">
         <div class="hero-row">
           <div>
             <div class="status-line"><span class="status-dot"
                 :class="game?.game_exists ? 'success-bg' : 'danger-bg'"></span><span>{{
-                game?.game_exists ? t('已识别厨房目录') : t('等待选择厨房目录') }}</span></div>
+                  game?.game_exists ? t('已识别厨房目录') : t('等待选择厨房目录') }}</span></div>
             <h2>{{ t('把 MOD 管理变成') }}<br /><em>{{ t('一次点击的事。') }}</em></h2>
             <p class="lead">{{ t('统一管理 BepInEx、Release 仓库和本地插件，安装过程会自动保护正在运行的厨房。') }}</p>
             <div class="path-row">
-              <FolderOpen :size="16" /><span>{{ game?.path || t('尚未找到 Overcooked2.exe') }}</span><button
-                class="text-button" @click="openDirectory" :disabled="!game?.path">{{ t('打开目录') }}
-                <ExternalLink :size="13" />
-              </button><button class="text-button" @click="chooseGameDirectory" :disabled="!!busy">
+              <FolderOpen :size="16" /><span>{{ game?.path || t('尚未找到 Overcooked2.exe') }}</span>
+              <button class="text-button" @click="openDirectory" :disabled="!game?.path">
+                <ExternalLink :size="13" />{{ t('打开目录') }}
+              </button>
+              <button class="text-button" @click="chooseGameDirectory" :disabled="!!busy">
                 <Pencil :size="13" />{{ t('修改目录') }}
-              </button><button class="text-button" @click="restoreDefaultGameDirectory" :disabled="!!busy || !!config?.game.auto_detect">
+              </button>
+              <button class="text-button" @click="restoreDefaultGameDirectory"
+                :disabled="!!busy || !!config?.game.auto_detect">
                 <RotateCcw :size="13" />{{ t('恢复默认') }}
               </button>
             </div>
@@ -772,14 +778,20 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               <Check v-if="game?.bepinex.complete" :size="13" /> {{ game?.bepinex.complete ? t('完整可用') :
                 t('需要安装') }}
             </span></div>
-          <div class="metric" @click="activeView = 'installed'"><span class="metric-label">{{ t('已安装 MOD') }}</span><strong class="metric-pair"><span class="metric-primary">{{ updateAvailableModCount }}</span><span class="metric-divider">/</span><span class="metric-secondary">{{ installedMods.length }}</span></strong><span class="metric-note">{{ `${t('可更新')} / ${t('已安装 MOD')}` }}</span></div>
-          <div class="metric" @click="activeView = 'repositories'"><span class="metric-label">{{ t('MOD仓库') }}</span><strong
-              class="metric-pair"><span class="metric-primary">{{ installableRepositoryCount }}</span><span class="metric-divider">/</span><span class="metric-secondary" :class="{ 'metric-ready': allRepositoryRefreshComplete, 'metric-pending': repos.length > 0 && !allRepositoryRefreshComplete }">{{ repos.length }}</span></strong><span class="metric-note">{{ `${t('可安装仓库')} / ${t('总仓库')}`
-              }}</span></div><button class="metric metric-button"
-            :disabled="gameBlocked || !game?.game_exists || !!busy" @click="toggleWinhttp"><span
-              class="metric-label">{{ t('启动状态') }}</span><strong>{{ statusLabel(currentWinhttp) }}</strong><span
-              class="metric-note">{{ game?.kitchen_running ? t('操作已锁定') : currentWinhttp === 'conflict' ?
-                t('点击清理冲突并启用 MOD') : t('点击切换有无 MOD') }}</span></button>
+          <div class="metric" @click="activeView = 'installed'"><span class="metric-label">{{ t('已安装 MOD')
+              }}</span><strong class="metric-pair"><span class="metric-primary">{{ updateAvailableModCount
+                }}</span><span class="metric-divider">/</span><span class="metric-secondary">{{ installedMods.length
+                }}</span></strong><span class="metric-note">{{ `${t('可更新')} / ${t('已安装 MOD')}` }}</span></div>
+          <div class="metric" @click="activeView = 'repositories'"><span class="metric-label">{{ t('MOD仓库')
+              }}</span><strong class="metric-pair"><span class="metric-primary">{{ installableRepositoryCount
+                }}</span><span class="metric-divider">/</span><span class="metric-secondary"
+                :class="{ 'metric-ready': allRepositoryRefreshComplete, 'metric-pending': repos.length > 0 && !allRepositoryRefreshComplete }">{{
+                  repos.length }}</span></strong><span class="metric-note">{{ `${t('可安装仓库')} / ${t('总仓库')}`
+                }}</span></div><button class="metric metric-button"
+            :disabled="gameBlocked || !game?.game_exists || !!busy" @click="toggleWinhttp"><span class="metric-label">{{
+              t('启动状态') }}</span><strong>{{ statusLabel(currentWinhttp) }}</strong><span class="metric-note">{{
+                game?.kitchen_running ? t('操作已锁定') : currentWinhttp === 'conflict' ?
+                  t('点击清理冲突并启用 MOD') : t('点击切换有无 MOD') }}</span></button>
         </div>
         <div class="section-heading">
           <div>
@@ -790,7 +802,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
         </div>
         <div class="action-grid"><button class="action-card primary kitchen-launch-card"
             :disabled="gameBlocked || !game?.game_exists || !!busy" @click="launchNormal"><span
-              class="action-icon">▶</span><span><b>{{ t('启动厨房') }}</b><small>{{ t('通过 Steam 启动游戏') }}</small></span><span>›</span></button></div>
+              class="action-icon">▶</span><span><b>{{ t('启动厨房') }}</b><small>{{ t('通过 Steam 启动游戏')
+                }}</small></span><span>›</span></button></div>
       </section>
       <section v-else-if="activeView === 'framework'" class="view-content">
         <div class="page-intro">
@@ -817,7 +830,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <div class="button-row"><button class="primary-button" :disabled="gameBlocked || !!busy"
               @click="openBepInExInstall(false)">
               <Download :size="16" />{{ t('安装 BepInEx') }}
-            </button><button class="secondary-button" :disabled="gameBlocked || !!busy" @click="openBepInExInstall(true)">
+            </button><button class="secondary-button" :disabled="gameBlocked || !!busy"
+              @click="openBepInExInstall(true)">
               <RotateCcw :size="16" />{{ t('重新安装') }}
             </button><button class="danger-button" :disabled="gameBlocked || !game?.bepinex.installed || !!busy"
               @click="uninstallBepInEx">
@@ -865,18 +879,21 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               <Plus :size="16" />{{ t('手动安装模组') }}
             </button><button class="secondary-button" :disabled="!!busy" @click="rescanInstalledMods">
               <RefreshCw :size="16" />{{ t('重新扫描') }}
-            </button><button class="primary-button" :disabled="!mappedReposAvailable || !!busy" @click="checkModUpdates">
+            </button><button class="primary-button" :disabled="!mappedReposAvailable || !!busy"
+              @click="checkModUpdates">
               <RefreshCw :size="16" />{{ t('检查模组更新') }}
             </button></div>
         </div>
         <div class="panel table-panel">
-          <div class="table-head"><span>{{ t('MOD / GUID') }}</span><span>{{ t('本地版本') }}</span><span>{{ t('来源') }}</span><span>{{ t('状态') }}</span><span></span></div>
+          <div class="table-head"><span>{{ t('MOD / GUID') }}</span><span>{{ t('本地版本') }}</span><span>{{ t('来源')
+              }}</span><span>{{ t('状态') }}</span><span></span></div>
           <div v-for="mod in installedMods" :key="mod.dll_file" class="table-row">
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
               <div class="mod-details"><b>{{ mod.name }}</b>
                 <small v-if="mod.title"><strong>{{ t('程序集标题') }}</strong><span>{{ mod.title }}</span></small>
-                <small v-if="mod.description"><strong>{{ t('MOD 描述') }}</strong><span>{{ mod.description }}</span></small>
+                <small v-if="mod.description"><strong>{{ t('MOD 描述') }}</strong><span>{{ mod.description
+                    }}</span></small>
                 <small><strong>{{ t('产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
                 <small><strong>{{ t('插件名称') }}</strong><span>{{ mod.plugin_name || t('未识别') }}</span></small>
                 <small><strong>{{ t('原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
@@ -884,15 +901,19 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
                 <small v-if="mod.company"><strong>{{ t('开发者') }}</strong><span>{{ mod.company }}</span></small>
                 <small v-if="mod.copyright"><strong>{{ t('版权') }}</strong><span>{{ mod.copyright }}</span></small>
                 <small><strong>{{ t('路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
-                <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note }}</span></small>
+                <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note
+                    }}</span></small>
               </div>
             </div><span class="mono">{{ mod.version || t('版本未知') }}</span><span class="muted-text">{{
               t(mod.version_source) }}</span><span class="badge"
               :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
-                mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') : installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版')) }}</span><span class="mod-actions"><button
-                class="icon-button small" :title="t('编辑 MOD 备注')" @click="editModNote(mod)">
+                mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') :
+                  installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
+              }}</span><span class="mod-actions"><button class="icon-button small" :title="t('编辑 MOD 备注')"
+                @click="editModNote(mod)">
                 <Pencil :size="14" />
-              </button><button class="icon-button small danger-icon" :title="t('删除 MOD')" :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">
+              </button><button class="icon-button small danger-icon" :title="t('删除 MOD')"
+                :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">
                 <Trash2 :size="14" />
               </button></span>
           </div>
@@ -903,9 +924,15 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
         <div class="page-intro">
           <div>
             <p>{{ t('内置和自定义仓库均从 Gitee/GitHub Release 获取版本与资产。') }}</p>
-          </div><div class="button-row"><button class="secondary-button" :disabled="!!busy || !(config?.repository_sources || []).length" @click="refreshAllRepositories">
+          </div>
+          <div class="button-row"><button class="secondary-button"
+              :disabled="!!busy || !(config?.repository_sources || []).length" @click="refreshAllRepositories">
               <RefreshCw :size="16" />{{ t('刷新全部仓库源') }}
-            </button><button class="primary-button" @click="editRepo()"><Plus :size="16" />{{ t('添加仓库') }}</button><button class="primary-button" @click="openRepositorySourceManager"><Plus :size="16" />{{ t('管理仓库源') }}</button></div>
+            </button><button class="primary-button" @click="editRepo()">
+              <Plus :size="16" />{{ t('添加仓库') }}
+            </button><button class="primary-button" @click="openRepositorySourceManager">
+              <Plus :size="16" />{{ t('管理仓库源') }}
+            </button></div>
         </div>
         <div class="toolbar">
           <div class="toolbar-group"><button class="secondary-button" @click="showImport = true">
@@ -916,62 +943,147 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
         </div>
         <div class="repository-list">
           <template v-for="group in sourceGroups" :key="group.source.id">
-          <div class="source-section-heading"><button class="source-collapse-button" :title="sourceCollapsed[group.source.id] ? t('展开') : t('折叠')" @click="toggleSource(group.source.id)"><ChevronRight :size="18" :class="{ 'source-expanded': !sourceCollapsed[group.source.id] }" /></button><div class="source-section-title"><h3>{{ group.source.nickname }}</h3><small v-if="group.source.url">{{ group.source.url }}</small></div><button v-if="group.source.id !== 'unclassified'" class="icon-button small" :title="t('刷新仓库源')" :disabled="!!busy || sourceBusy(group.source.id) || (group.source.id === 'azhe' && authoritativeSourceLoading)" @click="refreshSource(group.source.id)"><RefreshCw :size="15" :class="{ 'spin-icon': sourceRefreshing(group.source.id) || (group.source.id === 'azhe' && authoritativeSourceLoading) }" /></button></div>
-          <div v-if="sourceRefreshing(group.source.id) || (group.source.id === 'azhe' && authoritativeSourceLoading)" class="source-loading-overlay"><RefreshCw :size="42" class="spin-icon" /></div>
-          <Transition name="source-collapse"><div v-if="!sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id) && !(group.source.id === 'azhe' && authoritativeSourceLoading)" class="source-repository-panel"><div v-for="repoGroup in group.groups" :key="`${group.source.id}:${repoGroup.key || 'ungrouped'}`" class="repository-group"><button v-if="repoGroup.label" class="repository-group-heading" :title="repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)] ? t('展开分组') : t('折叠分组')" @click="toggleRepositoryGroup(group.source.id, repoGroup.key)"><ChevronRight :size="15" :class="{ 'source-expanded': !repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)] }" /><span>{{ repoGroup.label }}</span><span class="badge muted">{{ repoGroup.repositories.length }}</span></button><Transition name="repository-group-collapse"><div v-if="!repoGroup.label || !repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)]" class="repository-group-items"><div v-for="repo in repoGroup.repositories" :key="repo.id"
-            :class="['repository-row', { 'repo-refreshing': repositoryRefreshing[repo.id] }]">
-            <div class="repo-logo" :class="repo.provider">
-              <svg class="provider-icon" :aria-label="repo.provider === 'github' ? 'GitHub' : 'Gitee'" role="img" :viewBox="repo.provider === 'github' ? '0 0 19 19' : '0 0 24 24'"><use :href="repo.provider === 'github' ? '/icons.svg#github-icon' : '/icons.svg#gitee-icon'"></use></svg>
+            <div class="source-section-heading"><button class="source-collapse-button"
+                :title="sourceCollapsed[group.source.id] ? t('展开') : t('折叠')" @click="toggleSource(group.source.id)">
+                <ChevronRight :size="18" :class="{ 'source-expanded': !sourceCollapsed[group.source.id] }" />
+              </button>
+              <div class="source-section-title">
+                <h3>{{ group.source.nickname }}</h3><small v-if="group.source.url">{{ group.source.url }}</small>
+              </div><button v-if="group.source.id !== 'unclassified'" class="icon-button small" :title="t('刷新仓库源')"
+                :disabled="!!busy || sourceBusy(group.source.id) || (group.source.id === 'azhe' && authoritativeSourceLoading)"
+                @click="refreshSource(group.source.id)">
+                <RefreshCw :size="15"
+                  :class="{ 'spin-icon': sourceRefreshing(group.source.id) || (group.source.id === 'azhe' && authoritativeSourceLoading) }" />
+              </button>
             </div>
-            <div class="repo-info">
-              <div class="repo-title"><b>{{ localizedRepositoryName(repo) }}</b><span v-if="repo.builtin" class="badge muted">{{ t('内置') }}</span><span
-                  class="badge" :class="repo.enabled ? 'success' : 'muted'">{{ repo.enabled ? t('启用') : t('停用') }}</span><span
-                  v-if="repositoryInstallStatus(repo)" class="badge" :class="repositoryInstallStatus(repo) === '可更新' ? 'warning' : 'success'">{{ t(repositoryInstallStatus(repo)) }}</span>
-              </div><span>{{ repo.url }}</span><small>{{ t(repo.channel === 'stable' ? '稳定版' : repo.channel === 'beta' ? '测试版' : '全部版本') }} · {{ repo.install_target || t('按压缩包结构安装') }} · {{
-                repo.asset_rules.map((rule) => `${assetRuleLabel(rule.type)}: ${rule.value}`).join(', ')}}</small>
-              <div v-if="localizedRepositoryNote(repo) && !repositoryNoteIsLong(repo)" class="repo-note markdown-body" v-html="renderMarkdown(localizedRepositoryNote(repo))"></div><button v-else-if="localizedRepositoryNote(repo)" class="repo-note-button" @click="showRepositoryNote = repo"><FileText :size="13" />{{ t('查看仓库简介') }}</button>
+            <div v-if="sourceRefreshing(group.source.id) || (group.source.id === 'azhe' && authoritativeSourceLoading)"
+              class="source-loading-overlay">
+              <RefreshCw :size="42" class="spin-icon" />
             </div>
-            <div class="repo-release"><b>{{ latest(repo)?.version || '—' }}</b><span>{{ latest(repo) ?
-              formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
-            <div class="row-actions"><button class="icon-button small" :title="t('刷新 Release')"
-                :disabled="!!busy || !!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
-                <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
-              </button><button class="icon-button small" :title="t('查看 Release 日志')" :disabled="!latest(repo)"
-                @click="showRelease = repo">
-                <Search :size="14" />
-              </button><button class="secondary-button small-button" :title="t('打开发布页')"
-                :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(repo.url)">
-                <ExternalLink :size="14" />{{ t('打开发布页') }}
-              </button><button class="primary-button small-button" :title="t('下载并安装')"
-                :disabled="gameBlocked || !installReleases(repo).length || !!busy || !!repositoryRefreshing[repo.id]"
-                @click="installRepo(repo)">
-                <Download :size="14" />{{ t('下载并安装') }}
-              </button><button class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
-                <Pencil :size="14" />
-              </button><button class="icon-button small danger-icon" :title="t('删除仓库')" :disabled="repo.builtin"
-                @click="deleteRepo(repo)">
-                <Trash2 :size="14" />
-              </button></div>
-          </div></div></Transition></div></div></Transition>
+            <Transition name="source-collapse">
+              <div
+                v-if="!sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id) && !(group.source.id === 'azhe' && authoritativeSourceLoading)"
+                class="source-repository-panel">
+                <div v-for="repoGroup in group.groups" :key="`${group.source.id}:${repoGroup.key || 'ungrouped'}`"
+                  class="repository-group"><button v-if="repoGroup.label" class="repository-group-heading"
+                    :title="repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)] ? t('展开分组') : t('折叠分组')"
+                    @click="toggleRepositoryGroup(group.source.id, repoGroup.key)">
+                    <ChevronRight :size="15"
+                      :class="{ 'source-expanded': !repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)] }" />
+                    <span>{{ repoGroup.label }}</span><span class="badge muted">{{ repoGroup.repositories.length
+                      }}</span>
+                  </button>
+                  <Transition name="repository-group-collapse">
+                    <div
+                      v-if="!repoGroup.label || !repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)]"
+                      class="repository-group-items">
+                      <div v-for="repo in repoGroup.repositories" :key="repo.id"
+                        :class="['repository-row', { 'repo-refreshing': repositoryRefreshing[repo.id] }]">
+                        <div class="repo-logo" :class="repo.provider">
+                          <svg class="provider-icon" :aria-label="repo.provider === 'github' ? 'GitHub' : 'Gitee'"
+                            role="img" :viewBox="repo.provider === 'github' ? '0 0 19 19' : '0 0 24 24'">
+                            <use
+                              :href="repo.provider === 'github' ? '/icons.svg#github-icon' : '/icons.svg#gitee-icon'">
+                            </use>
+                          </svg>
+                        </div>
+                        <div class="repo-info">
+                          <div class="repo-title"><b>{{ localizedRepositoryName(repo) }}</b><span v-if="repo.builtin"
+                              class="badge muted">{{ t('内置') }}</span><span class="badge"
+                              :class="repo.enabled ? 'success' : 'muted'">{{ repo.enabled ? t('启用') : t('停用')
+                              }}</span><span v-if="repositoryInstallStatus(repo)" class="badge"
+                              :class="repositoryInstallStatus(repo) === '可更新' ? 'warning' : 'success'">{{
+                                t(repositoryInstallStatus(repo)) }}</span>
+                          </div><span>{{ repo.url }}</span><small>{{ t(repo.channel === 'stable' ? '稳定版' : repo.channel
+                            === 'beta' ? '测试版' : '全部版本') }} · {{ repo.install_target || t('按压缩包结构安装') }} · {{
+                              repo.asset_rules.map((rule) => `${assetRuleLabel(rule.type)}: ${rule.value}`).join(',
+                            ')}}</small>
+                          <div v-if="localizedRepositoryNote(repo) && !repositoryNoteIsLong(repo)"
+                            class="repo-note markdown-body" v-html="renderMarkdown(localizedRepositoryNote(repo))">
+                          </div><button v-else-if="localizedRepositoryNote(repo)" class="repo-note-button"
+                            @click="showRepositoryNote = repo">
+                            <FileText :size="13" />{{ t('查看仓库简介') }}
+                          </button>
+                        </div>
+                        <div class="repo-release"><b>{{ latest(repo)?.version || '—' }}</b><span>{{ latest(repo) ?
+                          formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
+                        <div class="row-actions"><button class="icon-button small" :title="t('刷新 Release')"
+                            :disabled="!!busy || !!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
+                            <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
+                          </button><button class="icon-button small" :title="t('查看 Release 日志')"
+                            :disabled="!latest(repo)" @click="showRelease = repo">
+                            <Search :size="14" />
+                          </button><button class="secondary-button small-button" :title="t('打开发布页')"
+                            :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(repo.url)">
+                            <ExternalLink :size="14" />{{ t('打开发布页') }}
+                          </button><button class="primary-button small-button" :title="t('下载并安装')"
+                            :disabled="gameBlocked || !installReleases(repo).length || !!busy || !!repositoryRefreshing[repo.id]"
+                            @click="installRepo(repo)">
+                            <Download :size="14" />{{ t('下载并安装') }}
+                          </button><button class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
+                            <Pencil :size="14" />
+                          </button><button class="icon-button small danger-icon" :title="t('删除仓库')"
+                            :disabled="repo.builtin" @click="deleteRepo(repo)">
+                            <Trash2 :size="14" />
+                          </button></div>
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+            </Transition>
           </template>
           <div v-if="!repos.length" class="empty-state">{{ t('暂无仓库配置') }}</div>
         </div>
       </section>
       <div v-if="showRepositorySource" class="modal-backdrop" @click.self="closeRepositorySourceManager">
         <div class="modal source-manager-modal">
-          <div class="modal-head"><div><h3>{{ t('管理仓库源') }}</h3><p class="muted-text">{{ t('先编辑仓库源，点击保存后统一请求数据') }}</p></div><button class="icon-button" :disabled="!!busy" @click="closeRepositorySourceManager"><X :size="17" /></button></div>
+          <div class="modal-head">
+            <div>
+              <h3>{{ t('管理仓库源') }}</h3>
+              <p class="muted-text">{{ t('先编辑仓库源，点击保存后统一请求数据') }}</p>
+            </div><button class="icon-button" :disabled="!!busy" @click="closeRepositorySourceManager">
+              <X :size="17" />
+            </button>
+          </div>
           <div class="source-manager-list">
-            <div v-for="source in repositorySourceDraft" :key="source.id" class="source-manager-row" :draggable="!source.builtin" @dragstart="startSourceDrag(source.id)" @dragover.prevent @drop="dropSource(source.id)">
+            <div v-for="source in repositorySourceDraft" :key="source.id" class="source-manager-row"
+              :draggable="!source.builtin" @dragstart="startSourceDrag(source.id)" @dragover.prevent
+              @drop="dropSource(source.id)">
               <GripVertical :size="17" class="source-drag-handle" />
               <div><b>{{ source.nickname }}</b><small>{{ source.url }}</small></div>
               <span v-if="source.builtin" class="badge muted">{{ t('内置') }}</span>
-              <button v-if="!source.builtin" class="icon-button small" :title="t('编辑仓库源')" @click="editRepositorySource(source)"><Pencil :size="14" /></button>
-              <button v-if="!source.builtin" class="icon-button small danger-icon" :title="t('删除仓库源')" @click="removeRepositorySource(source)"><Trash2 :size="14" /></button>
+              <button v-if="!source.builtin" class="icon-button small" :title="t('编辑仓库源')"
+                @click="editRepositorySource(source)">
+                <Pencil :size="14" />
+              </button>
+              <button v-if="!source.builtin" class="icon-button small danger-icon" :title="t('删除仓库源')"
+                @click="removeRepositorySource(source)">
+                <Trash2 :size="14" />
+              </button>
             </div>
           </div>
-          <div class="source-manager-toolbar"><button class="secondary-button" :disabled="!!busy || repositorySourceEditorOpen" @click="startAddingRepositorySource"><Plus :size="15" />{{ t('添加仓库源') }}</button></div>
-          <div v-if="repositorySourceEditorOpen" class="source-editor-fields"><label><span>{{ t('仓库源昵称') }}</span><input v-model="repositorySourceNickname" :placeholder="t('例如：我的仓库源')" /></label><label><span>{{ t('仓库源地址') }}</span><input v-model="repositorySourceUrl" placeholder="https://example.com/repositories.oc2repo.toml" /></label><div class="source-editor-actions"><button class="ghost-button" @click="resetRepositorySourceEditor">{{ t('取消') }}</button><button class="secondary-button" :disabled="!repositorySourceNickname.trim() || !repositorySourceUrl.trim()" @click="applyRepositorySourceDraft"><Save :size="15" />{{ t('应用修改') }}</button></div></div>
-          <div class="modal-actions"><button class="secondary-button" :disabled="!!busy" @click="closeRepositorySourceManager">{{ t('关闭') }}</button><button class="primary-button" :disabled="!!busy || !repositorySourceDraft.length" @click="saveRepositorySourceChanges"><Save :size="16" />{{ t('保存仓库源') }}</button></div>
+          <div class="source-manager-toolbar"><button class="secondary-button"
+              :disabled="!!busy || repositorySourceEditorOpen" @click="startAddingRepositorySource">
+              <Plus :size="15" />{{ t('添加仓库源') }}
+            </button></div>
+          <div v-if="repositorySourceEditorOpen" class="source-editor-fields"><label><span>{{ t('仓库源昵称') }}</span><input
+                v-model="repositorySourceNickname" :placeholder="t('例如：我的仓库源')" /></label><label><span>{{ t('仓库源地址')
+                }}</span><input v-model="repositorySourceUrl"
+                placeholder="https://example.com/repositories.oc2repo.toml" /></label>
+            <div class="source-editor-actions"><button class="ghost-button" @click="resetRepositorySourceEditor">{{
+              t('取消')
+                }}</button><button class="secondary-button"
+                :disabled="!repositorySourceNickname.trim() || !repositorySourceUrl.trim()"
+                @click="applyRepositorySourceDraft">
+                <Save :size="15" />{{ t('应用修改') }}
+              </button></div>
+          </div>
+          <div class="modal-actions"><button class="secondary-button" :disabled="!!busy"
+              @click="closeRepositorySourceManager">{{ t('关闭') }}</button><button class="primary-button"
+              :disabled="!!busy || !repositorySourceDraft.length" @click="saveRepositorySourceChanges">
+              <Save :size="16" />{{ t('保存仓库源') }}
+            </button></div>
         </div>
       </div>
       <div v-if="showExport" class="modal-backdrop" @click.self="showExport = false">
@@ -983,7 +1095,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             </div><button class="icon-button" @click="showExport = false">
               <X :size="17" />
             </button>
-            </div>
+          </div>
           <div class="modal-actions"><button class="secondary-button" @click="copyRepositories">
               <Copy :size="15" />{{ t('复制文件内容') }}
             </button><button class="primary-button" @click="continueExportRepositories">
@@ -994,8 +1106,15 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       <section v-if="activeView === 'sponsor'" class="view-content sponsor-view">
         <div class="sponsor-panel">
           <h2>{{ t('觉得好用的话，请我喝杯咖啡吧！') }}</h2><img :src="sponsorImage" alt="赞助二维码" />
-            <p>{{ t('感谢你的支持。') }}</p>
-            <div class="button-row sponsor-actions"><button class="secondary-button" :disabled="!!busy" @click="openDeveloperConsole"><ExternalLink :size="15" />{{ t('打开开发者控制台') }}</button><button class="secondary-button" :disabled="!!busy" @click="resetUi"><RotateCcw :size="15" />{{ t('重置到最新 UI') }}</button><button class="secondary-button" @click="openRustLog"><FileText :size="15" />{{ t('打开 Rust 日志') }}</button></div>
+          <p>{{ t('感谢你的支持。') }}</p>
+          <div class="button-row sponsor-actions"><button class="secondary-button" :disabled="!!busy"
+              @click="openDeveloperConsole">
+              <ExternalLink :size="15" />{{ t('打开开发者控制台') }}
+            </button><button class="secondary-button" :disabled="!!busy" @click="resetUi">
+              <RotateCcw :size="15" />{{ t('重置到最新 UI') }}
+            </button><button class="secondary-button" @click="openRustLog">
+              <FileText :size="15" />{{ t('打开 Rust 日志') }}
+            </button></div>
         </div>
       </section>
     </main>
@@ -1016,8 +1135,9 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           </button>
         </div>
         <div class="form-grid"><label><span>{{ t('仓库名称') }}</span><input v-model="repoForm.name"
-              :placeholder="t('例如：我的 MOD 正式版')" /></label><label><span>{{ t('仓库分组') }}</span><input v-model="repoForm.group"
-              :placeholder="t('例如：前置必装')" /></label><label><span>{{ t('来源平台') }}</span><select v-model="repoForm.provider" @change="providerChanged">
+              :placeholder="t('例如：我的 MOD 正式版')" /></label><label><span>{{ t('仓库分组') }}</span><input
+              v-model="repoForm.group" :placeholder="t('例如：前置必装')" /></label><label><span>{{ t('来源平台') }}</span><select
+              v-model="repoForm.provider" @change="providerChanged">
               <option value="gitee">Gitee</option>
               <option value="github">GitHub</option>
             </select></label><label class="wide"><span>{{ t('版本地址') }}</span><input v-model="repoForm.url"
@@ -1027,24 +1147,36 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               <option value="beta">{{ t('测试版') }}</option>
               <option value="all">{{ t('全部版本') }}</option>
             </select></label><label><span>{{ t('安装目录') }}</span><input v-model="repoForm.install_target"
-              :placeholder="t('留空按 ZIP 结构安装')" /></label><label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label><label><span>{{ t('API 代理策略') }}</span><select v-model="repoForm.api_proxy_mode">
+              :placeholder="t('留空按 ZIP 结构安装')" /></label><label><span>{{ t('下载线程数') }}</span><input
+              v-model.number="repoForm.download_threads" type="number" min="1" max="32"
+              :disabled="repoForm.provider === 'gitee'" /></label><label><span>{{ t('API 代理策略') }}</span><select
+              v-model="repoForm.api_proxy_mode">
               <option value="direct">{{ t('直连') }}</option>
               <option value="auto">{{ t('自动选择') }}</option>
               <option value="fixed">{{ t('固定代理') }}</option>
             </select></label><label><span>API {{ t('代理地址') }}</span><input v-model="repoForm.api_proxy_url"
-              placeholder="https://" /></label><label class="wide"><span>{{ t('API 直连 Token') }} ({{ repoForm.provider === 'gitee' ? 'Gitee' : 'GitHub' }})</span><input
-              v-if="repoForm.provider === 'gitee'" v-model="repoForm.gitee_token" type="password" :placeholder="t('留空保持原设置')" /><input
-              v-else v-model="repoForm.github_token" type="password" :placeholder="t('留空保持原设置')" /></label><label><span>{{ t('Release 代理策略') }}</span><select
-              v-model="repoForm.release_proxy_mode">
+              placeholder="https://" /></label><label class="wide"><span>{{ t('API 直连 Token') }} ({{ repoForm.provider
+                ===
+                'gitee' ? 'Gitee' : 'GitHub' }})</span><input v-if="repoForm.provider === 'gitee'"
+              v-model="repoForm.gitee_token" type="password" :placeholder="t('留空保持原设置')" /><input v-else
+              v-model="repoForm.github_token" type="password" :placeholder="t('留空保持原设置')" /></label><label><span>{{
+                t('Release 代理策略') }}</span><select v-model="repoForm.release_proxy_mode">
               <option value="direct">{{ t('直连') }}</option>
               <option value="auto">{{ t('自动选择') }}</option>
               <option value="fixed">{{ t('固定代理') }}</option>
             </select></label><label><span>Release {{ t('代理地址') }}</span><input v-model="repoForm.release_proxy_url"
               placeholder="https://" /></label></div>
-        <div class="rules-heading identity-heading"><div><b>{{ t('本地 MOD 识别绑定') }}</b><small>{{ t('GUID、产品名称或原始文件名任一匹配即可绑定') }}</small></div></div>
-        <div class="form-grid identity-grid"><label><span>{{ t('BepInEx Plugin GUID') }}</span><input v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label><label><span>{{ t('DLL 产品名称') }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label><label class="wide"><span>{{ t('DLL 原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label></div>
+        <div class="rules-heading identity-heading">
+          <div><b>{{ t('本地 MOD 识别绑定') }}</b><small>{{ t('GUID、产品名称或原始文件名任一匹配即可绑定') }}</small></div>
+        </div>
+        <div class="form-grid identity-grid"><label><span>{{ t('BepInEx Plugin GUID') }}</span><input
+              v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label><label><span>{{ t('DLL 产品名称')
+              }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label><label
+            class="wide"><span>{{ t('DLL
+              原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label></div>
         <div class="rules-heading">
-          <div><b>{{ t('Release 资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div><button class="ghost-button" @click="addRule">
+          <div><b>{{ t('Release 资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div><button
+            class="ghost-button" @click="addRule">
             <Plus :size="14" />{{ t('添加规则') }}
           </button>
         </div>
@@ -1052,15 +1184,17 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <option value="exact">{{ t('精确') }}</option>
             <option value="glob">{{ t('通配符') }}</option>
             <option value="regex">{{ t('正则') }}</option>
-          </select><input v-model="rule.value" /><button
-            class="icon-button small danger-icon" :title="t('删除规则')"
+          </select><input v-model="rule.value" /><button class="icon-button small danger-icon" :title="t('删除规则')"
             @click="removeRule(index)">
             <Trash2 :size="14" />
-          </button></div><label class="check-control"><input v-model="repoForm.enabled" type="checkbox" />{{ t('启用此仓库') }}</label>
-        <div class="rules-heading"><div><b>{{ t('仓库备注') }}</b><small>{{ t('可选，多行备注') }}</small></div></div>
+          </button></div><label class="check-control"><input v-model="repoForm.enabled" type="checkbox" />{{ t('启用此仓库')
+          }}</label>
+        <div class="rules-heading">
+          <div><b>{{ t('仓库备注') }}</b><small>{{ t('可选，多行备注') }}</small></div>
+        </div>
         <textarea v-model="repoForm.note" class="repository-note-input" rows="5" :placeholder="t('可选，多行备注')"></textarea>
-        <div class="modal-actions"><button class="secondary-button" @click="showRepoEditor = false">{{ t('取消') }}</button><button
-            class="primary-button"
+        <div class="modal-actions"><button class="secondary-button" @click="showRepoEditor = false">{{ t('取消')
+            }}</button><button class="primary-button"
             :disabled="!repoForm.name || !repoForm.url || !repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()) || !!busy"
             @click="saveRepo">
             <Save :size="16" />{{ t('保存仓库') }}
@@ -1069,9 +1203,17 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
     </div>
     <div v-if="showRustLog" class="modal-backdrop" @click.self="closeRustLog">
       <div class="modal rust-log-modal">
-        <div class="modal-head"><div><h3>{{ t('Rust 运行日志') }}</h3><small class="rust-log-path">{{ rustLog.path }}</small></div><button class="icon-button" @click="closeRustLog"><X :size="17" /></button></div>
+        <div class="modal-head">
+          <div>
+            <h3>{{ t('Rust 运行日志') }}</h3><small class="rust-log-path">{{ rustLog.path }}</small>
+          </div><button class="icon-button" @click="closeRustLog">
+            <X :size="17" />
+          </button>
+        </div>
         <pre ref="rustLogOutput" class="rust-log-output">{{ rustLog.content || t('暂无 Rust 日志') }}</pre>
-        <div class="modal-actions"><button class="secondary-button" @click="refreshRustLog"><RefreshCw :size="15" />{{ t('立即刷新') }}</button><button class="primary-button" @click="closeRustLog">{{ t('关闭') }}</button></div>
+        <div class="modal-actions"><button class="secondary-button" @click="refreshRustLog">
+            <RefreshCw :size="15" />{{ t('立即刷新') }}
+          </button><button class="primary-button" @click="closeRustLog">{{ t('关闭') }}</button></div>
       </div>
     </div>
     <div v-if="showImport" class="modal-backdrop" @click.self="showImport = false">
@@ -1095,8 +1237,9 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <div class="preview-state" :class="importPreview.valid ? 'success' : 'danger'">
             <CheckCircle2 :size="16" />{{ t(importPreview.valid ? '格式有效' : '格式无效') }}
           </div>
-          <div class="preview-grid"><span>{{ t('新增') }} {{ importPreview.additions.length }}</span><span>{{ t('重复') }} {{
-            importPreview.duplicates.length }}</span><span>{{ t('冲突') }} {{ importPreview.conflicts.length
+          <div class="preview-grid"><span>{{ t('新增') }} {{ importPreview.additions.length }}</span><span>{{ t('重复') }}
+              {{
+                importPreview.duplicates.length }}</span><span>{{ t('冲突') }} {{ importPreview.conflicts.length
               }}</span></div><small v-if="importPreview.errors.length">{{ importPreview.errors.map(t).join('；')
               }}</small>
           <div v-if="importPreview.valid" class="modal-actions"><button class="secondary-button"
@@ -1126,7 +1269,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <p class="release-body">{{ latest(showRelease)?.body || t('Release 没有更新日志。') }}</p>
           <div class="asset-list">
             <div v-for="asset in latest(showRelease)?.assets" :key="asset.name"><span>{{ asset.name
-            }}</span><small>{{ formatBytes(asset.size) }}</small></div>
+                }}</span><small>{{ formatBytes(asset.size) }}</small></div>
           </div>
         </div>
       </div>
@@ -1141,7 +1284,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <X :size="17" />
           </button>
         </div>
-        <article class="markdown-body repository-note-content" v-html="renderMarkdown(localizedRepositoryNote(showRepositoryNote))"></article>
+        <article class="markdown-body repository-note-content"
+          v-html="renderMarkdown(localizedRepositoryNote(showRepositoryNote))"></article>
       </div>
     </div>
     <div v-if="editingMod" class="modal-backdrop" @click.self="editingMod = null">
@@ -1153,9 +1297,10 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <X :size="17" />
           </button>
         </div>
-        <p class="muted-text">{{ t('产品名称：') }}{{ editingMod.product_name || t('未知') }} · {{ editingMod.dll_file }}</p><textarea v-model="modNote" rows="6" :placeholder="t('例如：这是街机模组，包含房主工具、房间控制和快捷设置功能。')" />
-        <div class="modal-actions"><button class="secondary-button" @click="editingMod = null">{{ t('取消') }}</button><button
-            class="primary-button" :disabled="!!busy" @click="saveModNote">
+        <p class="muted-text">{{ t('产品名称：') }}{{ editingMod.product_name || t('未知') }} · {{ editingMod.dll_file }}</p>
+        <textarea v-model="modNote" rows="6" :placeholder="t('例如：这是街机模组，包含房主工具、房间控制和快捷设置功能。')" />
+        <div class="modal-actions"><button class="secondary-button" @click="editingMod = null">{{ t('取消')
+            }}</button><button class="primary-button" :disabled="!!busy" @click="saveModNote">
             <Save :size="16" />{{ t('保存备注') }}
           </button></div>
       </div>
@@ -1173,14 +1318,15 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <option v-for="release in installReleases(showInstall)" :key="release.tag_name" :value="release.tag_name">{{
             release.version || release.tag_name }} · {{ release.name }}
           </option>
-      </select></label><label class="install-field"><span>{{ t('下载文件') }}</span><select v-model="selectedInstallAsset">
-          <option
-            v-for="asset in selectedInstallAssets(showInstall)"
-            :key="asset.name" :value="asset.name">{{ asset.name }} · {{ formatBytes(asset.size) }}</option>
+        </select></label><label class="install-field"><span>{{ t('下载文件') }}</span><select
+          v-model="selectedInstallAsset">
+          <option v-for="asset in selectedInstallAssets(showInstall)" :key="asset.name" :value="asset.name">{{
+            asset.name
+            }} · {{ formatBytes(asset.size) }}</option>
         </select></label>
       <p class="muted-text">{{ t('仅显示符合当前仓库资产规则的文件。') }}</p>
-      <div class="modal-actions"><button class="secondary-button" @click="showInstall = null">{{ t('取消') }}</button><button
-          class="primary-button" :disabled="!selectedInstallAsset || !!busy" @click="confirmInstall">
+      <div class="modal-actions"><button class="secondary-button" @click="showInstall = null">{{ t('取消')
+          }}</button><button class="primary-button" :disabled="!selectedInstallAsset || !!busy" @click="confirmInstall">
           <Download :size="15" />{{ t('下载并安装') }}
         </button></div>
     </div>
@@ -1197,12 +1343,18 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       </div>
       <div class="bepinex-channel-grid">
         <button class="bepinex-channel-card" :disabled="!!busy" @click="installBepInEx('gitee')">
-          <span class="bepinex-channel-icon gitee"><svg class="provider-icon" aria-hidden="true" viewBox="0 0 24 24"><use href="/icons.svg#gitee-icon"></use></svg></span>
-          <span class="bepinex-channel-copy"><b>{{ t('Gitee 渠道') }}</b><small>{{ bepinexDownloadUrls.gitee }}</small><em>{{ t('直连 Release 文件') }}</em></span>
+          <span class="bepinex-channel-icon gitee"><svg class="provider-icon" aria-hidden="true" viewBox="0 0 24 24">
+              <use href="/icons.svg#gitee-icon"></use>
+            </svg></span>
+          <span class="bepinex-channel-copy"><b>{{ t('Gitee 渠道') }}</b><small>{{ bepinexDownloadUrls.gitee
+              }}</small><em>{{ t('直连 Release 文件') }}</em></span>
         </button>
         <button class="bepinex-channel-card" :disabled="!!busy" @click="installBepInEx('github')">
-          <span class="bepinex-channel-icon github"><svg class="provider-icon" aria-hidden="true" viewBox="0 0 19 19"><use href="/icons.svg#github-icon"></use></svg></span>
-          <span class="bepinex-channel-copy"><b>{{ t('GitHub 渠道') }}</b><small>{{ bepinexDownloadUrls.github }}</small><em>{{ t('直连 Release 文件') }}</em></span>
+          <span class="bepinex-channel-icon github"><svg class="provider-icon" aria-hidden="true" viewBox="0 0 19 19">
+              <use href="/icons.svg#github-icon"></use>
+            </svg></span>
+          <span class="bepinex-channel-copy"><b>{{ t('GitHub 渠道') }}</b><small>{{ bepinexDownloadUrls.github
+              }}</small><em>{{ t('直连 Release 文件') }}</em></span>
         </button>
       </div>
     </div>

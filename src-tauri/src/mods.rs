@@ -433,6 +433,7 @@ mod tests {
             etag: None,
             cached_releases: Vec::new(),
             last_error: None,
+            source_id: None,
         };
         assert!(super::repository_matches_mod(
             &repo,

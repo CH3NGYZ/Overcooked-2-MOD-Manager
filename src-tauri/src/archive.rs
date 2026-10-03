@@ -175,6 +175,18 @@ async fn download_stream(
             continue;
         }
         file.flush().map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        let actual_size = fs::metadata(target)
+            .map_err(|e| e.to_string())?
+            .len();
+        if actual_size != downloaded {
+            last_error = format!(
+                "下载文件落盘长度不完整: 文件为 {actual_size} 字节，实际收到 {downloaded} 字节"
+            );
+            log::warn!("单线程下载落盘校验失败：任务={}，尝试={}，原因={}", label, attempt, last_error);
+            continue;
+        }
         emit_progress(app, label, downloaded, total, started.elapsed(), true);
         return Ok(());
     }
@@ -260,6 +272,16 @@ async fn download_ranges(
         emit_progress(app, label, downloaded, Some(total), started.elapsed(), false);
     }
     output.flush().map_err(|error| error.to_string())?;
+    output.sync_all().map_err(|error| error.to_string())?;
+    drop(output);
+    let actual_size = fs::metadata(target)
+        .map_err(|error| error.to_string())?
+        .len();
+    if actual_size != total {
+        return Err(format!(
+            "分片下载落盘长度不完整: 文件为 {actual_size} 字节，预期 {total} 字节"
+        ));
+    }
     emit_progress(app, label, total, Some(total), started.elapsed(), true);
     Ok(())
 }
@@ -317,6 +339,24 @@ pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {
 
 pub fn extract_zip_safe(zip_path: &Path, game_root: &Path) -> Result<Vec<String>, String> {
     extract_zip_into(zip_path, game_root, "", false)
+}
+
+/// Read every ZIP entry before changing the game directory. `zip` validates
+/// each entry's compressed stream and CRC while it is read, so this catches a
+/// truncated or otherwise damaged download before installation starts.
+pub fn validate_zip(zip_path: &Path) -> Result<(), String> {
+    let file = File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+        if !entry.is_dir() {
+            io::copy(&mut entry, &mut io::sink())
+                .map_err(|e| format!("ZIP 内容校验失败: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn extract_mod_zip(
@@ -697,6 +737,21 @@ mod tests {
         writer.write_all(b"bad").unwrap();
         writer.finish().unwrap();
         assert!(extract_zip_safe(&zip_path, &root).is_err());
+    }
+
+    #[test]
+    fn truncated_zip_is_rejected_before_installation() {
+        let root = std::env::temp_dir().join(format!("oc2-truncated-zip-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let valid = root.join("valid.zip");
+        let truncated = root.join("truncated.zip");
+        write_zip(&valid, &[("Plugin.dll", b"plugin")]);
+        let bytes = fs::read(&valid).unwrap();
+        fs::write(&truncated, &bytes[..bytes.len() - 1]).unwrap();
+
+        assert!(validate_zip(&valid).is_ok());
+        assert!(validate_zip(&truncated).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

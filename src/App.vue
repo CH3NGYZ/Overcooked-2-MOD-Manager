@@ -13,6 +13,7 @@ import type { Dashboard, Provider, Repository, RepositoryPatch, RepositorySource
 import { t, useLocaleTranslation, type Locale } from './i18n'
 import { renderMarkdown } from './markdown'
 import sponsorImage from './assets/collectionCode.jpg'
+import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 
 type View = 'overview' | 'framework' | 'installed' | 'repositories' | 'sponsor'
 
@@ -60,6 +61,7 @@ const sourceCollapsed = reactive<Record<string, boolean>>({})
 const repositoryGroupCollapsed = reactive<Record<string, boolean>>({})
 const sourceLoading = reactive<Record<string, boolean>>({})
 const repositoryReleaseReady = reactive<Record<string, boolean>>({})
+const modDetailsExpanded = reactive<Record<string, boolean>>({})
 const stopProgress = ref<(() => void) | null>(null)
 let toastTimer: number | undefined
 let rustLogTimer: number | undefined
@@ -662,6 +664,7 @@ async function saveRepositorySourceChanges() {
 function sourceRefreshing(sourceId: string) { return !!sourceLoading[sourceId] }
 function sourceBusy(sourceId: string) { return !!sourceLoading[sourceId] || !!sourceRefreshingManual[sourceId] }
 function toggleSource(sourceId: string) { sourceCollapsed[sourceId] = !sourceCollapsed[sourceId] }
+function toggleModDetails(modId: string) { modDetailsExpanded[modId] = !modDetailsExpanded[modId] }
 function repositoryGroupKey(sourceId: string, group: string) { return `${sourceId}:${group}` }
 function toggleRepositoryGroup(sourceId: string, group: string) {
   if (!group) return
@@ -756,7 +759,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
     </div>
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">OC</div>
+        <div class="brand-mark"><img :src="appIcon" alt="" /></div>
         <div><strong>OC2 MOD MANAGER</strong></div>
       </div>
       <div class="sidebar-section-label">{{ t('工作区') }}</div>
@@ -833,10 +836,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               </button>
             </div>
           </div>
-          <div class="hero-orbit">
-            <div class="orbit-ring"></div>
-            <div class="orbit-core"><span>OC2</span></div>
-          </div>
+          <div class="hero-orbit"><img :src="appIcon" alt="" /></div>
         </div>
         <div class="metric-grid">
           <div class="metric" @click="activeView = 'framework'"><span class="metric-label">BepInEx</span><strong>{{
@@ -959,22 +959,24 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
               <div class="mod-details">
-                <div class="mod-heading"><b>{{ mod.name }}</b><span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><span class="badge"
+                <div class="mod-heading"><button class="mod-details-toggle" :title="modDetailsExpanded[mod.dll_file] ? t('折叠') : t('展开')"
+                    @click="toggleModDetails(mod.dll_file)"><ChevronRight :class="{ 'mod-details-expanded': modDetailsExpanded[mod.dll_file] }" :size="15" /></button><b>{{ mod.name }}</b><span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><span class="badge"
                     :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
                       mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') :
                         installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
                     }}</span></div>
                 <small v-if="mod.title"><strong>{{ t('DLL.程序集标题') }}</strong><span>{{ mod.title }}</span></small>
-                <small v-if="mod.description"><strong>{{ t('DLL.文件描述') }}</strong><span>{{ mod.description }}</span></small>
                 <small><strong>{{ t('DLL.产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
-                <small><strong>{{ t('DLL.原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
-                <small v-if="mod.company"><strong>{{ t('DLL.开发者信息') }}</strong><span>{{ mod.company }}</span></small>
-                <small v-if="mod.copyright"><strong>{{ t('DLL.版权信息') }}</strong><span>{{ mod.copyright }}</span></small>
-                <small><strong>{{ t('BepInEx.插件名称') }}</strong><span>{{ mod.plugin_name || t('未识别') }}</span></small>
-                <small><strong>{{ t('BepInEx.GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
-                <small><strong>{{ t('BepInEx.插件路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
-                <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note
-                    }}</span></small>
+                <div v-if="modDetailsExpanded[mod.dll_file]" class="mod-detail-table">
+                  <small v-if="mod.description"><strong>{{ t('DLL.文件描述') }}</strong><span>{{ mod.description }}</span></small>
+                  <small><strong>{{ t('DLL.原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
+                  <small v-if="mod.company"><strong>{{ t('DLL.开发者信息') }}</strong><span>{{ mod.company }}</span></small>
+                  <small v-if="mod.copyright"><strong>{{ t('DLL.版权信息') }}</strong><span>{{ mod.copyright }}</span></small>
+                  <small><strong>{{ t('BepInEx.GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
+                  <small><strong>{{ t('BepInEx.插件路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
+                  <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note
+                      }}</span></small>
+                </div>
               </div>
             </div>
             <div class="mod-controls">
@@ -1006,9 +1008,9 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
         </div>
         <div class="toolbar">
           <div class="toolbar-group"><button class="secondary-button" @click="showImport = true">
-              <Upload :size="15" />{{ t('导入配置') }}
+              <Download :size="15" />{{ t('导入配置') }}
             </button><button class="secondary-button" :disabled="!repos.length" @click="exportRepositories">
-              <Download :size="15" />{{ t('导出配置') }}
+              <Upload :size="15" />{{ t('导出配置') }}
             </button></div>
         </div>
         <div class="repository-list">
@@ -1173,7 +1175,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <div class="modal-actions"><button class="secondary-button" @click="copyRepositories">
               <Copy :size="15" />{{ t('复制文件内容') }}
             </button><button class="primary-button" @click="continueExportRepositories">
-              <Download :size="15" />{{ t('继续导出') }}
+              <Upload :size="15" />{{ t('继续导出') }}
             </button></div>
         </div>
       </div>
@@ -1300,7 +1302,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           </button>
         </div>
         <div class="import-actions"><button class="secondary-button" @click="importFromFile">
-            <Upload :size="15" />{{ t('选择 .oc2repo.toml') }}
+            <Download :size="15" />{{ t('选择 .oc2repo.toml') }}
           </button><button class="secondary-button" @click="importFromClipboard">
             <Copy :size="15" />{{ t('读取剪贴板') }}
           </button></div><textarea v-model="importText" :placeholder="t('粘贴仓库 TOML 内容')"></textarea><button

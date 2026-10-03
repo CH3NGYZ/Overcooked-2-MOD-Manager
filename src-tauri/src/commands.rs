@@ -1569,6 +1569,7 @@ pub async fn install_app_update(
     if installer_type == "exe" {
         std::process::Command::new(&path)
             .arg("/S")
+            .arg("/OC2AutoLaunch")
             .spawn()
             .map_err(|e| e.to_string())?;
     } else {

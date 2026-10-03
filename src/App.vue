@@ -959,23 +959,31 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
               <div class="mod-details">
-                <div class="mod-heading"><button class="mod-details-toggle" :title="modDetailsExpanded[mod.dll_file] ? t('折叠') : t('展开')"
-                    @click="toggleModDetails(mod.dll_file)"><ChevronRight :class="{ 'mod-details-expanded': modDetailsExpanded[mod.dll_file] }" :size="15" /></button><b>{{ mod.name }}</b><span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><span class="badge"
-                    :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
-                      mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') :
-                        installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
-                    }}</span></div>
-                <small v-if="mod.title"><strong>{{ t('DLL.程序集标题') }}</strong><span>{{ mod.title }}</span></small>
-                <small><strong>{{ t('DLL.产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
-                <div v-if="modDetailsExpanded[mod.dll_file]" class="mod-detail-table">
-                  <small v-if="mod.description"><strong>{{ t('DLL.文件描述') }}</strong><span>{{ mod.description }}</span></small>
-                  <small><strong>{{ t('DLL.原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
-                  <small v-if="mod.company"><strong>{{ t('DLL.开发者信息') }}</strong><span>{{ mod.company }}</span></small>
-                  <small v-if="mod.copyright"><strong>{{ t('DLL.版权信息') }}</strong><span>{{ mod.copyright }}</span></small>
-                  <small><strong>{{ t('BepInEx.GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
-                  <small><strong>{{ t('BepInEx.插件路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
-                  <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note
-                      }}</span></small>
+                <div class="mod-details-layout">
+                  <button class="mod-details-toggle" :title="modDetailsExpanded[mod.dll_file] ? t('折叠') : t('展开')"
+                    @click="toggleModDetails(mod.dll_file)"><ChevronRight :class="{ 'mod-details-expanded': modDetailsExpanded[mod.dll_file] }" :size="15" /></button>
+                  <div class="mod-details-content">
+                    <div class="mod-heading"><b>{{ mod.name }}</b><span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><span class="badge"
+                        :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
+                          mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') :
+                            installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
+                        }}</span></div>
+                    <div class="mod-summary-fields">
+                      <small><strong>{{ t('BepInEx.GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
+                      <small><strong>{{ t('BepInEx.插件路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
+                      <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note }}</span></small>
+                    </div>
+                    <Transition name="mod-details-expand">
+                      <div v-if="modDetailsExpanded[mod.dll_file]" class="mod-detail-table">
+                        <small v-if="mod.title"><strong>{{ t('DLL.程序集标题') }}</strong><span>{{ mod.title }}</span></small>
+                        <small><strong>{{ t('DLL.产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
+                        <small v-if="mod.description"><strong>{{ t('DLL.文件描述') }}</strong><span>{{ mod.description }}</span></small>
+                        <small><strong>{{ t('DLL.原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
+                        <small v-if="mod.company"><strong>{{ t('DLL.开发者信息') }}</strong><span>{{ mod.company }}</span></small>
+                        <small v-if="mod.copyright"><strong>{{ t('DLL.版权信息') }}</strong><span>{{ mod.copyright }}</span></small>
+                      </div>
+                    </Transition>
+                  </div>
                 </div>
               </div>
             </div>

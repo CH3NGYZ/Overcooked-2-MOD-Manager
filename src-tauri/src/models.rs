@@ -59,6 +59,8 @@ pub struct ModNote {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseInfo {
+    #[serde(default)]
+    pub release_id: Option<u64>,
     pub tag_name: String,
     pub version: Option<String>,
     pub name: String,

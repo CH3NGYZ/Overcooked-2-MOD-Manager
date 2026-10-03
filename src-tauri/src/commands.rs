@@ -5,9 +5,10 @@ use crate::models::*;
 use crate::mods;
 use crate::releases;
 use chrono::Utc;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
 use tauri::{AppHandle, State};
 use url::Url;
 use uuid::Uuid;
@@ -163,6 +164,7 @@ pub struct AppState {
     pub config: ConfigService,
     pub operation: Mutex<()>,
     pub repository_cache: tokio::sync::Mutex<()>,
+    pub release_size_cancellations: tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -171,6 +173,7 @@ impl AppState {
             config: ConfigService::new().map_err(|e| e.to_string())?,
             operation: Mutex::new(()),
             repository_cache: tokio::sync::Mutex::new(()),
+            release_size_cancellations: tokio::sync::Mutex::new(HashMap::new()),
         })
     }
 }
@@ -491,6 +494,127 @@ pub fn get_repository_releases(
         .clone())
 }
 
+fn release_size_request_key(repository_id: &str, release_tag: &str) -> String {
+    format!("{repository_id}\n{release_tag}")
+}
+
+async fn wait_for_release_size_cancellation(cancelled: Arc<AtomicBool>) {
+    while !cancelled.load(Ordering::Acquire) {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+#[tauri::command]
+pub async fn refresh_release_asset_sizes(
+    state: State<'_, AppState>,
+    repository_id: String,
+    release_tag: String,
+) -> Result<ReleaseInfo, String> {
+    let config = state.config.load_or_default();
+    let repo = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == repository_id)
+        .ok_or("仓库不存在")?
+        .clone();
+    if repo.provider != Provider::Gitee {
+        return Err("GitHub Release 已直接提供附件大小".into());
+    }
+    let release = repo
+        .cached_releases
+        .iter()
+        .find(|release| release.tag_name == release_tag)
+        .cloned()
+        .ok_or("Release 不存在")?;
+    let release_id = release.release_id.ok_or("Gitee Release 缺少 Release ID")?;
+    let key = release_size_request_key(&repository_id, &release_tag);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut requests = state.release_size_cancellations.lock().await;
+        if let Some(previous) = requests.insert(key.clone(), cancelled.clone()) {
+            previous.store(true, Ordering::Release);
+        }
+    }
+    let client = match releases::build_client(config.network.timeout_seconds) {
+        Ok(client) => client,
+        Err(error) => {
+            let mut requests = state.release_size_cancellations.lock().await;
+            if requests
+                .get(&key)
+                .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+            {
+                requests.remove(&key);
+            }
+            return Err(error.to_string());
+        }
+    };
+    let token = state.config.repository_token(&repo);
+    let result = tokio::select! {
+        assets = releases::fetch_gitee_asset_sizes(
+            &client,
+            &repo,
+            release_id,
+            token.as_deref(),
+            config.auth.official_api_only,
+        ) => assets.map_err(|error| error.to_string()),
+        _ = wait_for_release_size_cancellation(cancelled.clone()) => Err("附件大小请求已取消".into()),
+    };
+    let mut requests = state.release_size_cancellations.lock().await;
+    if requests
+        .get(&key)
+        .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+    {
+        requests.remove(&key);
+    }
+    drop(requests);
+    let assets = result?;
+
+    let _cache_guard = state.repository_cache.lock().await;
+    let mut latest_config = state.config.load_or_default();
+    let latest_repo = latest_config
+        .repositories
+        .iter_mut()
+        .find(|repo| repo.id == repository_id)
+        .ok_or("仓库已被删除")?;
+    let latest_release = latest_repo
+        .cached_releases
+        .iter_mut()
+        .find(|item| item.tag_name == release_tag)
+        .ok_or("Release 已被刷新，请重新选择")?;
+    for asset in &mut latest_release.assets {
+        if let Some(updated) = assets.iter().find(|item| item.name == asset.name) {
+            asset.size = updated.size;
+            if asset.download_url.trim().is_empty() {
+                asset.download_url = updated.download_url.clone();
+            }
+        }
+    }
+    let updated = latest_release.clone();
+    state.config.save(&latest_config).map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn cancel_release_asset_sizes(
+    state: State<'_, AppState>,
+    repository_id: String,
+    release_tag: String,
+) -> Result<OperationResult, String> {
+    let key = release_size_request_key(&repository_id, &release_tag);
+    if let Some(cancelled) = state
+        .release_size_cancellations
+        .lock()
+        .await
+        .get(&key)
+    {
+        cancelled.store(true, Ordering::Release);
+    }
+    Ok(OperationResult {
+        ok: true,
+        message: "附件大小请求已取消".into(),
+    })
+}
+
 #[tauri::command]
 pub async fn install_bepinex(
     app: AppHandle,
@@ -512,8 +636,8 @@ pub async fn install_bepinex(
     } else {
         None
     };
-    let client =
-        releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
+    let client = releases::build_download_client(config.network.timeout_seconds)
+        .map_err(|e| e.to_string())?;
     let download_url = match provider {
         Provider::Gitee => BEPINEX_GITEE_URL,
         Provider::Github => BEPINEX_GITHUB_URL,
@@ -526,6 +650,10 @@ pub async fn install_bepinex(
         Some(&app),
     )
     .await?;
+    if let Err(error) = archive::validate_zip(&temp) {
+        let _ = fs::remove_file(&temp);
+        return Err(format!("BepInEx 下载文件校验失败: {error}"));
+    }
     game::ensure_game_stopped(&game_root)?;
     if reinstall && game_root.join("BepInEx").exists() {
         archive::clear_readonly(&game_root.join("BepInEx"))?;
@@ -723,13 +851,13 @@ pub async fn install_repository(
                 .unwrap_or_else(|| releases::asset_matches(asset, &repo.asset_rules))
         })
         .ok_or("没有匹配的 Release 资产")?;
-    let client =
-        releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let proxy_url = if repo.release_proxy_url.trim().is_empty() {
         asset.download_url.clone()
     } else {
         releases::rewrite_proxy(&repo.release_proxy_url, &asset.download_url)
     };
+    let client = releases::build_download_client(config.network.timeout_seconds)
+        .map_err(|e| e.to_string())?;
     let download_threads = match repo.provider {
         Provider::Github => repo.download_threads.clamp(1, 32),
         Provider::Gitee => 1,
@@ -756,6 +884,14 @@ pub async fn install_repository(
         return Err("下载期间厨房重新启动，安装已取消，旧版本未删除".into());
     }
     archive::verify_digest(&temp, asset.digest.as_deref())?;
+    let is_zip = temp.extension().and_then(|value| value.to_str()) == Some("zip")
+        || asset.name.to_ascii_lowercase().ends_with(".zip");
+    if is_zip {
+        if let Err(error) = archive::validate_zip(&temp) {
+            let _ = fs::remove_file(&temp);
+            return Err(format!("下载文件校验失败: {error}"));
+        }
+    }
     let old_manifest = archive::read_manifest(&state.config.manifests_dir(), &repo.id);
     let old_backup = old_manifest
         .as_ref()
@@ -764,9 +900,7 @@ pub async fn install_repository(
     if let Some(manifest) = &old_manifest {
         archive::remove_manifest_files(&game_root, manifest)?;
     }
-    let files_result = if temp.extension().and_then(|value| value.to_str()) == Some("zip")
-        || asset.name.to_ascii_lowercase().ends_with(".zip")
-    {
+    let files_result = if is_zip {
         archive::extract_mod_zip(&temp, &game_root, &repo.install_target, &asset.name)
     } else {
         archive::copy_asset(&temp, &game_root, &repo.install_target, &asset.name)
@@ -1551,7 +1685,8 @@ pub async fn install_app_update(
         .ok_or("当前已经是最新版本")?;
     let url = info.installer_url.ok_or("更新中没有匹配的安装包")?;
     let config = state.config.load_or_default();
-    let client = releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
+    let client = releases::build_download_client(config.network.timeout_seconds)
+        .map_err(|e| e.to_string())?;
     let bytes = match download_installer(&client, &url).await {
         Ok(bytes) => bytes,
         Err(direct_error) => {

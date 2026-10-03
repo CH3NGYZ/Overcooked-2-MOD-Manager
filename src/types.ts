@@ -6,6 +6,7 @@ export type AssetRuleType = 'exact' | 'glob' | 'regex'
 export interface AssetRule { type: AssetRuleType; value: string }
 export interface ReleaseAsset { name: string; size: number; download_url: string; digest?: string }
 export interface ReleaseInfo {
+  release_id?: number
   tag_name: string
   version?: string
   name: string

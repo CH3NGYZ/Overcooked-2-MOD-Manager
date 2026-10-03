@@ -199,6 +199,90 @@ pub async fn fetch_release_url_with_token(
     parse_release_json(&value, provider)
 }
 
+pub async fn fetch_gitee_asset_sizes(
+    client: &Client,
+    repo: &RepositoryConfig,
+    release_id: u64,
+    token: Option<&str>,
+    official_api_only: bool,
+) -> Result<Vec<ReleaseAsset>, ReleaseError> {
+    if repo.provider != Provider::Gitee {
+        return Err(ReleaseError::InvalidUrl("只有 Gitee Release 需要单独请求附件大小".into()));
+    }
+    let (owner, name) = repository_path(&repo.url, &repo.provider)?;
+    let official = format!(
+        "https://gitee.com/api/v5/repos/{owner}/{name}/releases/{release_id}/attach_files"
+    );
+    let proxy_url = (!repo.api_proxy_url.trim().is_empty())
+        .then(|| rewrite_proxy(&repo.api_proxy_url, &official));
+    let direct = fetch_gitee_asset_sizes_url(client, &official, token).await;
+    if matches!(repo.api_proxy_mode, ProxyMode::Direct) || proxy_url.is_none() {
+        return direct;
+    }
+    if matches!(repo.api_proxy_mode, ProxyMode::Auto) && direct.is_ok() {
+        return direct;
+    }
+    let proxy_token = token.filter(|_| !official_api_only);
+    fetch_gitee_asset_sizes_url(
+        client,
+        proxy_url.as_deref().expect("proxy checked"),
+        proxy_token,
+    )
+    .await
+}
+
+async fn fetch_gitee_asset_sizes_url(
+    client: &Client,
+    url: &str,
+    token: Option<&str>,
+) -> Result<Vec<ReleaseAsset>, ReleaseError> {
+    let mut request = client.get(url).header("User-Agent", APP_USER_AGENT);
+    if let Some(token) = token {
+        request = request.header("PRIVATE-TOKEN", token);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| ReleaseError::Http(e.to_string()))?;
+    if !response.status().is_success() {
+        return Err(ReleaseError::Status(response.status()));
+    }
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|e| ReleaseError::Json(e.to_string()))?;
+    let array = value
+        .as_array()
+        .or_else(|| value.get("data").and_then(Value::as_array))
+        .ok_or_else(|| ReleaseError::Json("Gitee 附件响应不是数组".into()))?;
+    array
+        .iter()
+        .map(|asset| {
+            let name = asset
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ReleaseError::Json("Gitee 附件缺少文件名".into()))?
+                .to_string();
+            let download_url = ["root", "browser_download_url", "download_url", "url"]
+                .iter()
+                .filter_map(|key| asset.get(*key).and_then(Value::as_str))
+                .find(|url| !url.trim().is_empty())
+                .ok_or_else(|| ReleaseError::Json("Gitee 附件缺少下载地址".into()))?
+                .to_string();
+            let size = asset
+                .get("size")
+                .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+                .unwrap_or_default();
+            Ok(ReleaseAsset {
+                name,
+                size,
+                download_url,
+                digest: None,
+            })
+        })
+        .collect()
+}
+
 pub fn parse_release_json(
     value: &Value,
     provider: &Provider,
@@ -276,6 +360,9 @@ pub fn parse_release_json(
             .and_then(Value::as_str)
             .map(str::to_string);
         releases.push(ReleaseInfo {
+            release_id: item
+                .get("id")
+                .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok())),
             version: parse_version(&tag).map(|value| value.to_string()),
             tag_name: tag,
             name: item
@@ -307,6 +394,19 @@ pub fn build_client(_timeout_seconds: u64) -> Result<Client, ReleaseError> {
         .map_err(|e| ReleaseError::Http(e.to_string()))
 }
 
+/// Builds a client for potentially large release assets. The total request
+/// timeout is disabled so a download is allowed to run as long as data keeps
+/// arriving. The read timeout still aborts a connection that has gone idle.
+pub fn build_download_client(timeout_seconds: u64) -> Result<Client, ReleaseError> {
+    let connect_timeout = std::time::Duration::from_secs(timeout_seconds.max(1));
+    Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(std::time::Duration::from_secs(120))
+        .user_agent(APP_USER_AGENT)
+        .build()
+        .map_err(|e| ReleaseError::Http(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +432,7 @@ mod tests {
         assert!(parse_version("5.4.23.5").is_some());
         let releases = vec![
             ReleaseInfo {
+                release_id: None,
                 tag_name: "v1.0.0".into(),
                 version: Some("1.0.0".into()),
                 name: String::new(),
@@ -342,6 +443,7 @@ mod tests {
                 assets: Vec::new(),
             },
             ReleaseInfo {
+                release_id: None,
                 tag_name: "v1.1.0-beta".into(),
                 version: Some("1.1.0-beta".into()),
                 name: String::new(),
@@ -378,6 +480,21 @@ mod tests {
             ),
             "https://proxy.example/repos/a/b/releases"
         );
+    }
+
+    #[test]
+    fn release_id_is_preserved_for_gitee_attachment_requests() {
+        let value = serde_json::json!([{
+            "id": "42",
+            "tag_name": "v1.0.0",
+            "assets": [{
+                "name": "HostUtilities.zip",
+                "browser_download_url": "https://gitee.com/example/download"
+            }]
+        }]);
+        let releases = parse_release_json(&value, &Provider::Gitee).unwrap();
+        assert_eq!(releases[0].release_id, Some(42));
+        assert_eq!(releases[0].assets[0].size, 0);
     }
 
     #[test]

@@ -56,6 +56,8 @@ pub fn run() {
             commands::reset_game_path,
             commands::refresh_repository,
             commands::get_repository_releases,
+            commands::refresh_release_asset_sizes,
+            commands::cancel_release_asset_sizes,
             commands::install_bepinex,
             commands::uninstall_bepinex,
             commands::backup_bepinex,

@@ -21,7 +21,7 @@ const dashboard = ref<Dashboard | null>(null)
 const busy = ref('')
 const message = ref('')
 const error = ref('')
-const progress = ref({ label: '', percent: 0, speed: '' })
+const progress = ref({ label: '', percent: 0, speed: '', status: '' })
 const downloadCancelRequested = ref(false)
 const dark = ref(true)
 const showRepoEditor = ref(false)
@@ -44,6 +44,9 @@ const showBepInExInstall = ref(false)
 const bepinexInstallReinstall = ref(false)
 const selectedInstallTag = ref('')
 const selectedInstallAsset = ref('')
+const releaseAssetSizeLoading = ref(false)
+let releaseAssetSizeRequestToken = 0
+let releaseAssetSizeRequest: { repositoryId: string; releaseTag: string } | null = null
 const importText = ref('')
 const importPreview = ref<{ valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] } | null>(null)
 const repositoryRefreshing = reactive<Record<string, boolean>>({})
@@ -153,6 +156,7 @@ async function refreshDashboardSerialized() {
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: 'MOD 已启用', moddisabled: 'MOD 已关闭', missing: '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatBytes(value: number) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}` }
+function formatAssetSize(asset: import('./types').ReleaseAsset) { return asset.size > 0 ? formatBytes(asset.size) : t(releaseAssetSizeLoading.value ? '读取文件大小中' : '大小未知') }
 function scheduleToastClose() { if (toastTimer) window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => { message.value = ''; error.value = '' }, 5000) }
 function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
@@ -246,6 +250,7 @@ function installRepo(repo: Repository) {
   selectedInstallTag.value = release.tag_name
   selectedInstallAsset.value = matchingInstallAssets(repo, release)[0]?.name || ''
   showInstall.value = repo
+  void refreshSelectedReleaseAssetSizes(repo, release)
 }
 function installReleases(repo: Repository | null) {
   if (!repo) return []
@@ -259,13 +264,62 @@ function selectedInstallAssets(repo: Repository | null) {
   const release = selectedInstallRelease(repo)
   return repo && release ? matchingInstallAssets(repo, release) : []
 }
+async function cancelReleaseAssetSizeRequest() {
+  const request = releaseAssetSizeRequest
+  if (!request) return
+  releaseAssetSizeRequestToken += 1
+  releaseAssetSizeRequest = null
+  releaseAssetSizeLoading.value = false
+  try {
+    await api.cancelReleaseAssetSizes(request.repositoryId, request.releaseTag)
+  } catch {
+    // The request may have completed while cancellation was being sent.
+  }
+}
+function closeInstallDialog() {
+  void cancelReleaseAssetSizeRequest()
+  showInstall.value = null
+}
+async function refreshSelectedReleaseAssetSizes(repo: Repository, release: import('./types').ReleaseInfo | undefined) {
+  if (repo.provider !== 'gitee' || !release?.release_id || release.assets.every((asset) => asset.size > 0)) return
+  await cancelReleaseAssetSizeRequest()
+  const token = ++releaseAssetSizeRequestToken
+  releaseAssetSizeRequest = { repositoryId: repo.id, releaseTag: release.tag_name }
+  releaseAssetSizeLoading.value = true
+  try {
+    const updated = await api.refreshReleaseAssetSizes(repo.id, release.tag_name)
+    if (token !== releaseAssetSizeRequestToken) return
+    const current = repo.cached_releases.find((item) => item.tag_name === updated.tag_name)
+    if (current) Object.assign(current, updated)
+  } catch (reason) {
+    if (token === releaseAssetSizeRequestToken && !String(reason).includes('已取消')) showError(reason)
+  } finally {
+    if (token === releaseAssetSizeRequestToken) {
+      releaseAssetSizeRequest = null
+      releaseAssetSizeLoading.value = false
+    }
+  }
+}
+function selectInstallRelease() {
+  const repo = showInstall.value
+  if (!repo) return
+  const release = selectedInstallRelease(repo)
+  selectedInstallAsset.value = release ? matchingInstallAssets(repo, release)[0]?.name || '' : ''
+  void refreshSelectedReleaseAssetSizes(repo, release)
+}
+function clearDownloadProgress() { progress.value = { label: '', percent: 0, speed: '', status: '' } }
 async function confirmInstall() {
   const repo = showInstall.value
   if (!repo || !selectedInstallTag.value || !selectedInstallAsset.value) return
+  await cancelReleaseAssetSizeRequest()
   downloadCancelRequested.value = false
   showInstall.value = null
-  await run(`正在安装 ${localizedRepositoryName(repo)}`, () => api.installRepository(repo.id, selectedInstallTag.value, selectedInstallAsset.value))
-  await loadDashboard()
+  try {
+    await run(`正在安装 ${localizedRepositoryName(repo)}`, () => api.installRepository(repo.id, selectedInstallTag.value, selectedInstallAsset.value))
+    await loadDashboard()
+  } finally {
+    clearDownloadProgress()
+  }
 }
 async function uninstallRepo(repo: Repository) { if (!confirm(`${t('确定卸载')} ${localizedRepositoryName(repo)}? ${t('只有安装清单中的文件会被删除。')}`)) return; await run(`正在卸载 ${localizedRepositoryName(repo)}`, () => api.uninstallRepository(repo.id)); await loadDashboard() }
 void uninstallRepo
@@ -278,7 +332,11 @@ async function installBepInEx(provider: Provider) {
   showBepInExInstall.value = false
   if (reinstall && !confirm(t('重新安装 BepInEx 会先备份当前框架并替换框架文件，是否继续？'))) return
   downloadCancelRequested.value = false
-  await run(reinstall ? '正在重新安装 BepInEx' : '正在安装 BepInEx', () => api.installBepInEx(reinstall, provider)); await loadDashboard()
+  try {
+    await run(reinstall ? '正在重新安装 BepInEx' : '正在安装 BepInEx', () => api.installBepInEx(reinstall, provider)); await loadDashboard()
+  } finally {
+    clearDownloadProgress()
+  }
 }
 async function uninstallBepInEx() { if (!confirm(t('确定移除 BepInEx？程序会先创建时间戳备份。'))) return; await run('正在移除 BepInEx', api.uninstallBepInEx); await loadDashboard() }
 async function backupBepInEx() { await run('正在创建 BepInEx 备份', api.backupBepInEx); await loadDashboard() }
@@ -286,7 +344,7 @@ async function openBackupDirectory() { await run('正在打开备份目录', api
 async function deleteBackup(path: string) { if (!confirm(`${t('确定删除备份')}“${path.split(/[\\/]/).pop()}”？${t('删除后无法恢复。')}`)) return; await run('正在删除 BepInEx 备份', () => api.deleteBepInExBackup(path)); await loadDashboard() }
 async function cancelDownload() {
   downloadCancelRequested.value = true
-  progress.value = { label: '', percent: 0, speed: '' }
+  clearDownloadProgress()
   try { await api.cancelDownload() } catch { /* 下载任务会自行结束，进度条已隐藏 */ }
 }
 async function refreshRustLog() {
@@ -663,8 +721,12 @@ onMounted(async () => {
   await startupChecks()
   stopProgress.value = await watchDownloadProgress((value) => {
     if (downloadCancelRequested.value) return
-    progress.value = { label: value.label, percent: value.total ? Math.min(100, value.downloaded / value.total * 100) : 0, speed: `${formatBytes(value.speed_bytes)}/s` }
-    if (value.finished) window.setTimeout(() => { progress.value = { label: '', percent: 0, speed: '' } }, 900)
+    progress.value = {
+      label: value.label,
+      percent: value.total ? Math.min(100, value.downloaded / value.total * 100) : 0,
+      speed: value.finished ? '' : `${formatBytes(value.speed_bytes)}/s`,
+      status: value.finished ? t('下载完成，正在处理') : '',
+    }
   })
   kitchenPoll = window.setInterval(async () => {
     if (busy.value || repositoryRefreshCount > 0) return
@@ -711,7 +773,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       </div>
     </aside>
     <main class="main-area">
-      <header class="topbar">
+      <div class="main-fixed">
+        <header class="topbar">
         <div>
           <h1>{{t(navItems.find((item) => item.id === activeView)?.label || '')}}</h1>
         </div>
@@ -726,24 +789,29 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           </button>
           <div class="connection-chip"><span class="pulse success-bg"></span><span>{{ t('本地服务正常') }}</span></div>
         </div>
-      </header>
-      <div v-if="game?.kitchen_running && ['framework', 'installed', 'repositories'].includes(activeView)"
-        class="kitchen-warning">{{ t('厨房进程正在运行中，文件操作已禁止') }}</div>
-      <div v-if="message || error" class="toast" :class="{ error: !!error }">
-        <CheckCircle2 v-if="!error" :size="17" />
-        <AlertTriangle v-else :size="17" /><span>{{ error || message }}</span><button @click="message = ''; error = ''">
-          <X :size="15" />
-        </button>
-      </div>
-      <div v-if="progress.label" class="download-strip">
-        <div class="download-meta"><span>{{ progress.label }}</span><span>{{ progress.percent.toFixed(0) }}% ·
-            {{ progress.speed }}</span></div>
-        <div class="download-progress-row">
-          <div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div><button
-            class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button>
+        </header>
+        <div v-if="game?.kitchen_running && ['framework', 'installed', 'repositories'].includes(activeView)"
+          class="kitchen-warning">{{ t('厨房进程正在运行中，文件操作已禁止') }}</div>
+        <div v-if="message || error" class="toast" :class="{ error: !!error }">
+          <CheckCircle2 v-if="!error" :size="17" />
+          <AlertTriangle v-else :size="17" /><span>{{ error || message }}</span><button @click="message = ''; error = ''">
+            <X :size="15" />
+          </button>
         </div>
+        <Transition name="download-notch">
+          <div v-if="progress.label" class="download-strip">
+            <div class="download-meta"><span>{{ progress.label }}<small v-if="progress.status"> · {{ progress.status
+                }}</small></span><span>{{ progress.percent.toFixed(0) }}%<template v-if="progress.speed"> ·
+                {{ progress.speed }}</template></span></div>
+            <div class="download-progress-row">
+              <div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div><button
+                class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button>
+            </div>
+          </div>
+        </Transition>
       </div>
-      <section v-if="activeView === 'overview'" class="view-content">
+      <div class="main-scroll">
+        <section v-if="activeView === 'overview'" class="view-content">
         <div class="hero-row">
           <div>
             <div class="status-line"><span class="status-dot"
@@ -885,37 +953,39 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             </button></div>
         </div>
         <div class="panel table-panel">
-          <div class="table-head"><span>{{ t('MOD / GUID') }}</span><span>{{ t('本地版本') }}</span><span>{{ t('来源')
-              }}</span><span>{{ t('状态') }}</span><span></span></div>
-          <div v-for="mod in installedMods" :key="mod.dll_file" class="table-row">
+          <div class="table-head"><span>{{ t('序号') }}</span><span>{{ t('模组') }}</span><span>{{ t('操作') }}</span></div>
+          <div v-for="(mod, index) in installedMods" :key="mod.dll_file" class="table-row">
+            <span class="mod-index">{{ index + 1 }}</span>
             <div class="mod-cell">
               <div class="mod-avatar">{{ mod.name.slice(0, 2).toUpperCase() }}</div>
-              <div class="mod-details"><b>{{ mod.name }}</b>
-                <small v-if="mod.title"><strong>{{ t('程序集标题') }}</strong><span>{{ mod.title }}</span></small>
-                <small v-if="mod.description"><strong>{{ t('MOD 描述') }}</strong><span>{{ mod.description
-                    }}</span></small>
-                <small><strong>{{ t('产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
-                <small><strong>{{ t('插件名称') }}</strong><span>{{ mod.plugin_name || t('未识别') }}</span></small>
-                <small><strong>{{ t('原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
-                <small><strong>{{ t('GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
-                <small v-if="mod.company"><strong>{{ t('开发者') }}</strong><span>{{ mod.company }}</span></small>
-                <small v-if="mod.copyright"><strong>{{ t('版权') }}</strong><span>{{ mod.copyright }}</span></small>
-                <small><strong>{{ t('路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
+              <div class="mod-details">
+                <div class="mod-heading"><b>{{ mod.name }}</b><span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><span class="badge"
+                    :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
+                      mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') :
+                        installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
+                    }}</span></div>
+                <small v-if="mod.title"><strong>{{ t('DLL.程序集标题') }}</strong><span>{{ mod.title }}</span></small>
+                <small v-if="mod.description"><strong>{{ t('DLL.文件描述') }}</strong><span>{{ mod.description }}</span></small>
+                <small><strong>{{ t('DLL.产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
+                <small><strong>{{ t('DLL.原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
+                <small v-if="mod.company"><strong>{{ t('DLL.开发者信息') }}</strong><span>{{ mod.company }}</span></small>
+                <small v-if="mod.copyright"><strong>{{ t('DLL.版权信息') }}</strong><span>{{ mod.copyright }}</span></small>
+                <small><strong>{{ t('BepInEx.插件名称') }}</strong><span>{{ mod.plugin_name || t('未识别') }}</span></small>
+                <small><strong>{{ t('BepInEx.GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
+                <small><strong>{{ t('BepInEx.插件路径') }}</strong><span class="mod-path">{{ mod.dll_file }}</span></small>
                 <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note
                     }}</span></small>
               </div>
-            </div><span class="mono">{{ mod.version || t('版本未知') }}</span><span class="muted-text">{{
-              t(mod.version_source) }}</span><span class="badge"
-              :class="mod.status === 'unbound' ? 'muted' : isModRepositoryRefreshing(mod) || installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
-                mod.status === 'unbound' ? t('未绑定') : isModRepositoryRefreshing(mod) ? t('检查中') :
-                  installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
-              }}</span><span class="mod-actions"><button class="icon-button small" :title="t('编辑 MOD 备注')"
-                @click="editModNote(mod)">
-                <Pencil :size="14" />
-              </button><button class="icon-button small danger-icon" :title="t('删除 MOD')"
-                :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">
-                <Trash2 :size="14" />
-              </button></span>
+            </div>
+            <div class="mod-controls">
+              <span class="mod-actions"><button class="icon-button small" :title="t('编辑 MOD 备注')"
+                  @click="editModNote(mod)">
+                  <Pencil :size="14" />
+                </button><button class="icon-button small danger-icon" :title="t('删除 MOD')"
+                  :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">
+                  <Trash2 :size="14" />
+                </button></span>
+            </div>
           </div>
           <div v-if="!installedMods.length" class="empty-state">{{ t('没有扫描到 BepInEx/plugins/**/*.dll') }}</div>
         </div>
@@ -1004,27 +1074,32 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
                             <FileText :size="13" />{{ t('查看仓库简介') }}
                           </button>
                         </div>
-                        <div class="repo-release"><b>{{ latest(repo)?.version || '—' }}</b><span>{{ latest(repo) ?
-                          formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
-                        <div class="row-actions"><button class="icon-button small" :title="t('刷新 Release')"
-                            :disabled="!!busy || !!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
-                            <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
-                          </button><button class="icon-button small" :title="t('查看 Release 日志')"
-                            :disabled="!latest(repo)" @click="showRelease = repo">
-                            <Search :size="14" />
-                          </button><button class="secondary-button small-button" :title="t('打开发布页')"
-                            :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(repo.url)">
-                            <ExternalLink :size="14" />{{ t('打开发布页') }}
-                          </button><button class="primary-button small-button" :title="t('下载并安装')"
+                        <div class="repo-controls">
+                          <div class="repo-release"><b>{{ latest(repo)?.version || '—' }}</b><span>{{ latest(repo) ?
+                            formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
+                          <button class="primary-button small-button" :title="t('下载并安装')"
                             :disabled="gameBlocked || !installReleases(repo).length || !!busy || !!repositoryRefreshing[repo.id]"
                             @click="installRepo(repo)">
                             <Download :size="14" />{{ t('下载并安装') }}
-                          </button><button class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
-                            <Pencil :size="14" />
-                          </button><button class="icon-button small danger-icon" :title="t('删除仓库')"
-                            :disabled="repo.builtin" @click="deleteRepo(repo)">
-                            <Trash2 :size="14" />
-                          </button></div>
+                          </button>
+                          <div class="row-actions">
+                            <button class="icon-button small" :title="t('刷新 Release')"
+                              :disabled="!!busy || !!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
+                              <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
+                            </button><button class="icon-button small" :title="t('查看 Release 日志')"
+                              :disabled="!latest(repo)" @click="showRelease = repo">
+                              <Search :size="14" />
+                            </button><button class="icon-button small" :title="t('打开发布页')"
+                              :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(repo.url)">
+                              <ExternalLink :size="14" />
+                            </button><button class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
+                              <Pencil :size="14" />
+                            </button><button class="icon-button small danger-icon" :title="t('删除仓库')"
+                              :disabled="repo.builtin" @click="deleteRepo(repo)">
+                              <Trash2 :size="14" />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </Transition>
@@ -1102,7 +1177,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
             </button></div>
         </div>
       </div>
-      <section v-if="activeView === 'sponsor'" class="view-content sponsor-view">
+        <section v-if="activeView === 'sponsor'" class="view-content sponsor-view">
         <div class="sponsor-panel">
           <h2>{{ t('觉得好用的话，请我喝杯咖啡吧！') }}</h2><img :src="sponsorImage" alt="赞助二维码" />
           <p>{{ t('感谢你的支持。') }}</p>
@@ -1115,7 +1190,8 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
               <FileText :size="15" />{{ t('打开 Rust 日志') }}
             </button></div>
         </div>
-      </section>
+        </section>
+      </div>
     </main>
     <button v-if="activeView === 'overview'" class="update-fab" :disabled="!!busy"
       @click="appUpdate ? installAppUpdate() : checkAppUpdate()">
@@ -1267,7 +1343,7 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           <p class="release-body">{{ latest(showRelease)?.body || t('Release 没有更新日志。') }}</p>
           <div class="asset-list">
             <div v-for="asset in latest(showRelease)?.assets" :key="asset.name"><span>{{ asset.name
-                }}</span><small>{{ formatBytes(asset.size) }}</small></div>
+                }}</span><small>{{ formatAssetSize(asset) }}</small></div>
           </div>
         </div>
       </div>
@@ -1304,15 +1380,15 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
       </div>
     </div>
   </div>
-  <div v-if="showInstall" class="modal-backdrop" @click.self="showInstall = null">
+  <div v-if="showInstall" class="modal-backdrop" @click.self="closeInstallDialog">
     <div class="modal install-modal">
       <div class="modal-head">
         <div>
           <h3>{{ t('选择版本和文件') }}</h3>
-        </div><button class="icon-button" @click="showInstall = null">
+        </div><button class="icon-button" @click="closeInstallDialog">
           <X :size="17" />
         </button>
-      </div><label class="install-field"><span>{{ t('Release 版本') }}</span><select v-model="selectedInstallTag">
+      </div><label class="install-field"><span>{{ t('Release 版本') }}</span><select v-model="selectedInstallTag" @change="selectInstallRelease">
           <option v-for="release in installReleases(showInstall)" :key="release.tag_name" :value="release.tag_name">{{
             release.version || release.tag_name }} · {{ release.name }}
           </option>
@@ -1320,10 +1396,10 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
           v-model="selectedInstallAsset">
           <option v-for="asset in selectedInstallAssets(showInstall)" :key="asset.name" :value="asset.name">{{
             asset.name
-            }} · {{ formatBytes(asset.size) }}</option>
+            }} · {{ formatAssetSize(asset) }}</option>
         </select></label>
       <p class="muted-text">{{ t('仅显示符合当前仓库资产规则的文件。') }}</p>
-      <div class="modal-actions"><button class="secondary-button" @click="showInstall = null">{{ t('取消')
+      <div class="modal-actions"><button class="secondary-button" @click="closeInstallDialog">{{ t('取消')
           }}</button><button class="primary-button" :disabled="!selectedInstallAsset || !!busy" @click="confirmInstall">
           <Download :size="15" />{{ t('下载并安装') }}
         </button></div>
@@ -1368,8 +1444,37 @@ onUnmounted(() => { stopProgress.value?.(); if (kitchenPoll) window.clearInterva
   position: relative;
 }
 
-.download-strip {
-  position: relative;
+  .download-strip {
+  position: absolute;
+  z-index: 12;
+  top: 0;
+  left: 50%;
+  width: min(540px, calc(100% - 32px));
+  margin: 0;
+  padding: 11px 15px 13px;
+  border: 1px solid var(--line-strong);
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  background: var(--surface-2);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .28);
+  transform: translateX(-50%);
+}
+
+.download-notch-enter-active,
+.download-notch-leave-active {
+  transition: transform .32s cubic-bezier(.22, .8, .25, 1), opacity .24s ease;
+}
+
+.download-notch-enter-from,
+.download-notch-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -110%);
+}
+
+.download-notch-enter-to,
+.download-notch-leave-from {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .download-cancel {

@@ -15,7 +15,7 @@ note_i18n = { "zh-CN" = "此模组用于管理《主机实用MOD》等MOD创建�
 plugin_guid = "com.bepis.bepinex.configurationmanager"
 local_product_name = "BepInEx.ConfigurationManager"
 local_original_filename = "ConfigurationManager.dll"
-download_threads = 16
+download_threads = 32
 api_proxy_mode = "auto"
 api_proxy_url = "https://oc2ghapi.ch3ng.top"
 release_proxy_mode = "auto"
@@ -109,7 +109,7 @@ note_i18n = { "zh-CN" = "提供主机身份下的成员管理、语音聊天、�
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
 local_product_name = "Overcooked!2HostUtilities"
 local_original_filename = "HostUtilities.dll"
-download_threads = 1
+download_threads = 32
 api_proxy_mode = "auto"
 api_proxy_url = "https://oc2ghapi.ch3ng.top"
 release_proxy_mode = "auto"
@@ -141,7 +141,7 @@ note_i18n = { "zh-CN" = "包含《主机实用MOD》稳定版的大部分功能�
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
 local_product_name = "Overcooked!2HostUtilities"
 local_original_filename = "HostUtilities.dll"
-download_threads = 1
+download_threads = 32
 api_proxy_mode = "auto"
 api_proxy_url = "https://oc2ghapi.ch3ng.top"
 release_proxy_mode = "auto"
@@ -156,7 +156,7 @@ value = "HostUtilities.zip"
 [[repositories]]
 id = "oc2-chef-rotation"
 name = "厨师旋转/ChefRotation"
-name_i18n = { "zh-CN" = "厨师旋转/ChefRotation", "zh-TW" = "廚師旋轉/ChefRotation", "en" = "ChefRotation", "ko" = "셰프회전" }
+name_i18n = { "zh-CN" = "厨师旋转", "zh-TW" = "廚師旋轉", "en" = "ChefRotation", "ko" = "셰프회전" }
 group = "趣味MOD"
 group_i18n = { "zh-CN" = "趣味MOD", "zh-TW" = "趣味MOD", "en" = "FunMODs", "ko" = "재미있는MOD" }
 provider = "gitee"
@@ -170,7 +170,7 @@ note = """
 """
 note_i18n = { "zh-CN" = "动作：厨师的趴下、躺下、左躺、右躺，以及翻跟斗和原地旋转。\n功能：一键抛物和一键从自身背包取物。\n使用时，需要在配置管理器里面打开开关。", "zh-TW" = "動作：廚師趴下、躺下、向左躺、向右躺、翻跟斗及原地旋轉。\n功能：一鍵拋物及從自身背包取物。\n使用時需要在設定管理器中開啟開關。", "en" = "Chefactionsincludecrouching,lyingdown,rollingandspinning.\nAlsoprovidesone-clickthrowingandtakingitemsfromyourbackpack.Enableitintheconfigurationmanager.", "ko" = "셰프가엎드리기,눕기,좌우로눕기,공중제비와제자리회전을할수있습니다.\n한번의클릭으로물건을던지고가방에서꺼낼수있습니다.구성관리자에서기능을켜야합니다." }
 plugin_guid = "com.ch3ngyz.plugin.OC2ChefRotation"
-local_product_name = "厨师旋转/ChefRotation"
+local_product_name = ""
 local_original_filename = "OC2ChefRotation.dll"
 download_threads = 1
 api_proxy_mode = "auto"
@@ -199,7 +199,7 @@ note = """
 """
 note_i18n = { "zh-CN" = "用于启用游戏内的厨师和DLC内容支持，包括鸭嘴兽等特殊厨师。使用时，需要在配置管理器里面打开开关。", "zh-TW" = "用於啟用遊戲內的廚師與DLC內容支援，包括鴨嘴獸等特殊廚師。使用時，需要在設定管理器裡面開啟開關。", "en" = "Enablessupportforin-gamechefsandDLCcontent,includingspecialchefssuchastheplatypus.EnabletheoptionintheConfigurationManagertouseit.", "ko" = "게임내셰프및DLC콘텐츠를사용할수있도록지원하며,오리너구리와같은특수셰프도포함됩니다.사용하려면구성관리자에서옵션을활성화해야합니다." }
 plugin_guid = "com.ch3ngyz.plugin.OC2Unlocker"
-local_product_name = "厨师与DLC内容支持/Chef&DLCSupport"
+local_product_name = ""
 local_original_filename = "OC2Unlocker.dll"
 download_threads = 1
 api_proxy_mode = "auto"

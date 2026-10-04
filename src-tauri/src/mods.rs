@@ -84,6 +84,10 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
         choose_local_version(metadata.product_version.as_deref(), plugin_version.as_deref());
     let local_component_count = installed_version_component_count(installed_version.as_deref());
     let candidates = candidates.collect::<Vec<_>>();
+    let repository_ids = candidates
+        .iter()
+        .map(|repo| repo.id.clone())
+        .collect::<Vec<_>>();
     let repository = match local_component_count {
         Some(4) => candidates.iter()
             .find(|repo| repo.channel == crate::models::Channel::Beta)
@@ -155,6 +159,7 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
         .map(|item| item.note.clone());
     InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
+        repository_ids,
         name,
         title: metadata.title,
         description: metadata.description,
@@ -540,6 +545,7 @@ mod tests {
         let mut mods = vec![
             crate::models::InstalledMod {
                 repository_id: None,
+                repository_ids: Vec::new(),
                 name: "Old".into(),
                 title: None,
                 description: None,
@@ -561,6 +567,7 @@ mod tests {
             },
             crate::models::InstalledMod {
                 repository_id: None,
+                repository_ids: Vec::new(),
                 name: "New".into(),
                 title: None,
                 description: None,

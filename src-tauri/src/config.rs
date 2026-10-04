@@ -197,6 +197,7 @@ impl ConfigService {
             region: current_user_region().into(),
             ui_zoom: config.ui_zoom,
             onboarding_seen_steps: config.onboarding_seen_steps.clone(),
+            hide_unidentified_mods: config.hide_unidentified_mods,
             tutorial_steps: config.tutorial_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),
@@ -457,6 +458,7 @@ fn default_config() -> AppConfig {
         schema_version: 1,
         ui_zoom: 1.0,
         onboarding_seen_steps: Vec::new(),
+        hide_unidentified_mods: true,
         tutorial_steps: Vec::new(),
         game: GameConfig {
             path: String::new(),

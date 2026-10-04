@@ -184,6 +184,8 @@ pub struct AppConfig {
     pub schema_version: u32,
     pub ui_zoom: f64,
     pub onboarding_seen_steps: Vec<String>,
+    #[serde(default)]
+    pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
@@ -226,11 +228,23 @@ pub struct AuthConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TutorialStepConfig {
+    pub id: String,
+    pub selector: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+    pub title: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicConfig {
     pub schema_version: u32,
     pub region: String,
     pub ui_zoom: f64,
     pub onboarding_seen_steps: Vec<String>,
+    #[serde(default)]
+    pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
@@ -397,6 +411,7 @@ pub struct DashboardData {
 pub struct SettingsPatch {
     pub ui_zoom: Option<f64>,
     pub onboarding_seen_steps: Option<Vec<String>>,
+    pub tutorial_steps: Option<Vec<TutorialStepConfig>>,
     pub game_path: Option<String>,
     pub auto_detect: Option<bool>,
     pub check_updates_on_start: Option<bool>,

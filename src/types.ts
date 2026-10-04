@@ -53,6 +53,7 @@ export interface PublicConfig {
   region: string
   ui_zoom: number
   onboarding_seen_steps: string[]
+  tutorial_steps: TutorialStepConfig[]
   game: { path: string; auto_detect: boolean }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean; max_release_count: number }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
@@ -78,7 +79,8 @@ export interface AppUpdateInfo { version: string; current_version: string; body?
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
+export interface TutorialStepConfig { id: string; selector: string; view?: string; title: string; description: string }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
 export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {
   id?: string

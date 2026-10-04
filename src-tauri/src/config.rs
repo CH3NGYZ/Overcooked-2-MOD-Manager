@@ -197,6 +197,7 @@ impl ConfigService {
             region: current_user_region().into(),
             ui_zoom: config.ui_zoom,
             onboarding_seen_steps: config.onboarding_seen_steps.clone(),
+            tutorial_steps: config.tutorial_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),
             launch: config.launch.clone(),
@@ -456,6 +457,7 @@ fn default_config() -> AppConfig {
         schema_version: 1,
         ui_zoom: 1.0,
         onboarding_seen_steps: Vec::new(),
+        tutorial_steps: Vec::new(),
         game: GameConfig {
             path: String::new(),
             auto_detect: true,

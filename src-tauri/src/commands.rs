@@ -725,6 +725,31 @@ pub fn save_settings(
             .filter(|step| !step.is_empty())
             .collect();
     }
+    if let Some(steps) = patch.tutorial_steps {
+        config.tutorial_steps = steps
+            .into_iter()
+            .filter_map(|mut step| {
+                step.id = step.id.trim().to_string();
+                step.selector = step.selector.trim().to_string();
+                step.title = step.title.trim().to_string();
+                step.description = step.description.trim().to_string();
+                step.view = step
+                    .view
+                    .take()
+                    .map(|view| view.trim().to_string())
+                    .filter(|view| !view.is_empty());
+                if step.id.is_empty()
+                    || step.selector.is_empty()
+                    || step.title.is_empty()
+                    || step.description.is_empty()
+                {
+                    None
+                } else {
+                    Some(step)
+                }
+            })
+            .collect();
+    }
     if let Some(path) = patch.game_path {
         config.game.path = path;
     }

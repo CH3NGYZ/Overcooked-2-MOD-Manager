@@ -10,15 +10,14 @@ import {
   ShieldCheck, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchDownloadProgress } from './services/tauri'
-import type { AppUpdateCheckResult, Dashboard, Provider, Repository, RepositoryPatch, RepositorySource, WinhttpState } from './types'
+import type { AppUpdateCheckResult, Dashboard, Provider, Repository, RepositoryPatch, RepositorySource, TutorialStepConfig, WinhttpState } from './types'
 import { t, useLocaleTranslation, type Locale } from './i18n'
 import { renderMarkdown } from './markdown'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 
 type View = 'overview' | 'framework' | 'installed' | 'repositories' | 'sponsor'
-type TutorialTarget = 'sidebar' | 'topbar' | 'overview-metrics' | 'framework-panel' | 'installed-actions' | 'repositories-actions'
-type TutorialStep = { id: string; target: TutorialTarget; view?: View; title: string; description: string }
+type TutorialStep = TutorialStepConfig & { view?: View }
 
 const activeView = ref<View>('overview')
 const dashboard = ref<Dashboard | null>(null)
@@ -47,6 +46,10 @@ const tutorialOverviewMetrics = ref<HTMLElement | null>(null)
 const tutorialFrameworkPanel = ref<HTMLElement | null>(null)
 const tutorialInstalledActions = ref<HTMLElement | null>(null)
 const tutorialRepositoriesActions = ref<HTMLElement | null>(null)
+const showTutorialEditor = ref(false)
+const tutorialEditorSteps = ref<TutorialStep[]>([])
+const tutorialPickerActive = ref(false)
+const tutorialPickerIndex = ref<number | null>(null)
 const showRepoEditor = ref(false)
 const showImport = ref(false)
 const showRepositorySource = ref(false)
@@ -148,15 +151,18 @@ const navItems = [
   { id: 'repositories' as View, label: 'MOD安装', hint: '在线MOD安装与管理', icon: CloudDownload },
   { id: 'sponsor' as View, label: '赞助渠道', hint: '支持项目开发', icon: Coffee },
 ]
+function normalizeTutorialView(view?: string): View | undefined {
+  return view && navItems.some((item) => item.id === view) ? view as View : undefined
+}
 
 // Add a new step with a unique id when a new page or important workflow is introduced.
 const tutorialSteps: TutorialStep[] = [
-  { id: 'workspace-navigation-v1', target: 'sidebar', title: '认识工作区', description: '左侧导航可以切换总览、框架、已安装 MOD、仓库和赞助页面。' },
-  { id: 'global-toolbar-v1', target: 'topbar', title: '全局工具栏', description: '这里可以切换语言、重新检测游戏目录和切换主题。' },
-  { id: 'overview-metrics-v1', target: 'overview-metrics', view: 'overview', title: '总览与状态卡片', description: '总览卡片汇总框架、已安装 MOD、仓库和启动状态，点击卡片可以直接进入对应页面。' },
-  { id: 'framework-management-v1', target: 'framework-panel', view: 'framework', title: '框架管理', description: '在这里安装、更新、卸载 BepInEx，并管理框架备份。' },
-  { id: 'installed-mods-v1', target: 'installed-actions', view: 'installed', title: '已安装 MOD', description: '这里显示本地插件，可以手动安装、重新扫描、检查更新和编辑备注。' },
-  { id: 'repository-management-v1', target: 'repositories-actions', view: 'repositories', title: 'MOD安装', description: '这里管理 Release 仓库源、导入导出配置，并安装仓库中的 MOD。' },
+  { id: 'workspace-navigation-v1', selector: '.sidebar', title: '认识工作区', description: '左侧导航可以切换总览、框架、已安装 MOD、仓库和赞助页面。' },
+  { id: 'global-toolbar-v1', selector: '.topbar', title: '全局工具栏', description: '这里可以切换语言、重新检测游戏目录和切换主题。' },
+  { id: 'overview-metrics-v1', selector: '.metric-grid', view: 'overview', title: '总览与状态卡片', description: '总览卡片汇总框架、已安装 MOD、仓库和启动状态，点击卡片可以直接进入对应页面。' },
+  { id: 'framework-management-v1', selector: '.framework-panel', view: 'framework', title: '框架管理', description: '在这里安装、更新、卸载 BepInEx，并管理框架备份。' },
+  { id: 'installed-mods-v1', selector: '.page-intro', view: 'installed', title: '已安装 MOD', description: '这里显示本地插件，可以手动安装、重新扫描、检查更新和编辑备注。' },
+  { id: 'repository-management-v1', selector: '.page-intro', view: 'repositories', title: 'MOD安装', description: '这里管理 Release 仓库源、导入导出配置，并安装仓库中的 MOD。' },
 ]
 const currentTutorialStep = computed(() => tutorialPendingSteps.value[tutorialStepIndex.value] ?? null)
 const tutorialProgress = computed(() => `${tutorialStepIndex.value + 1} / ${tutorialPendingSteps.value.length}`)
@@ -197,6 +203,10 @@ const tutorialCardStyle = computed(() => {
 
 const game = computed(() => dashboard.value?.game)
 const config = computed(() => dashboard.value?.config)
+const configuredTutorialSteps = computed<TutorialStep[]>(() => {
+  const configured = config.value?.tutorial_steps ?? []
+  return configured.length ? configured.map((step) => ({ ...step, view: normalizeTutorialView(step.view) })) : tutorialSteps
+})
 function sourceMatchesRegion(source: RepositorySource) {
   const region = source.region?.trim().toLowerCase()
   if (!region) return true
@@ -348,14 +358,13 @@ function handleUiZoomWheel(event: WheelEvent) {
 }
 function tutorialTargetElement(step: TutorialStep | null) {
   if (!step) return null
-  return {
-    sidebar: tutorialSidebar.value,
-    topbar: tutorialTopbar.value,
-    'overview-metrics': tutorialOverviewMetrics.value,
-    'framework-panel': tutorialFrameworkPanel.value,
-    'installed-actions': tutorialInstalledActions.value,
-    'repositories-actions': tutorialRepositoriesActions.value,
-  }[step.target] || tutorialTopbar.value
+  try {
+    const selected = document.querySelector(step.selector)
+    if (selected instanceof Element) return selected
+  } catch {
+    // Invalid selectors are reported by the editor; keep the overlay usable.
+  }
+  return tutorialTopbar.value
 }
 function updateTutorialRect() {
   if (!tutorialVisible.value) return
@@ -393,7 +402,7 @@ async function persistTutorialSteps(ids: string[]) {
 }
 async function startOnboarding() {
   const seen = new Set(config.value?.onboarding_seen_steps ?? [])
-  const pending = tutorialSteps.filter((step) => !seen.has(step.id))
+  const pending = configuredTutorialSteps.value.filter((step) => !seen.has(step.id))
   if (!pending.length) return
   tutorialPendingSteps.value = pending
   tutorialStepIndex.value = 0
@@ -428,6 +437,158 @@ async function skipTutorial() {
   tutorialSaving.value = true
   try {
     if (await persistTutorialSteps(ids)) tutorialVisible.value = false
+  } finally {
+    tutorialSaving.value = false
+  }
+}
+function cloneTutorialSteps(steps: TutorialStepConfig[]): TutorialStep[] {
+  return steps.map((step) => ({ ...step, view: normalizeTutorialView(step.view) }))
+}
+function openTutorialEditor() {
+  tutorialEditorSteps.value = cloneTutorialSteps(configuredTutorialSteps.value)
+  showTutorialEditor.value = true
+}
+function addTutorialStep() {
+  tutorialEditorSteps.value.push({
+    id: `custom-${Date.now()}-${tutorialEditorSteps.value.length + 1}`,
+    selector: '.app-shell',
+    view: activeView.value,
+    title: t('新的教程步骤'),
+    description: t('填写这个界面区域的说明。'),
+  })
+}
+function removeTutorialStep(index: number) {
+  tutorialEditorSteps.value.splice(index, 1)
+}
+function escapeCssIdentifier(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`)
+}
+function selectorForElement(element: Element) {
+  const parts: string[] = []
+  let current: Element | null = element
+  while (current && current !== document.body && parts.length < 8) {
+    const tag = current.tagName.toLowerCase()
+    const classes = Array.from(current.classList)
+      .filter((name) => name.trim())
+      .slice(0, 3)
+      .map((name) => `.${escapeCssIdentifier(name)}`)
+      .join('')
+    let part = `${tag}${classes}`
+    if (current.id.trim()) {
+      parts.unshift(`#${escapeCssIdentifier(current.id.trim())}`)
+      break
+    }
+    const parent = current.parentElement
+    if (parent) {
+      const sameTag = Array.from(parent.children).filter((child) => child.tagName.toLowerCase() === tag)
+      if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(current) + 1})`
+    }
+    parts.unshift(part)
+    current = parent
+  }
+  return parts.join(' > ') || 'body'
+}
+function stopTutorialPicker(showEditor = true) {
+  tutorialPickerActive.value = false
+  tutorialPickerIndex.value = null
+  document.removeEventListener('click', handleTutorialPickerClick, true)
+  document.removeEventListener('keydown', handleTutorialPickerKeydown, true)
+  if (showEditor) showTutorialEditor.value = true
+}
+function startTutorialPicker(index: number) {
+  stopTutorialPicker(false)
+  tutorialPickerIndex.value = index
+  tutorialPickerActive.value = true
+  showTutorialEditor.value = false
+  document.addEventListener('click', handleTutorialPickerClick, true)
+  document.addEventListener('keydown', handleTutorialPickerKeydown, true)
+}
+function handleTutorialPickerKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && tutorialPickerActive.value) {
+    event.preventDefault()
+    stopTutorialPicker()
+  }
+}
+function handleTutorialPickerClick(event: MouseEvent) {
+  if (!tutorialPickerActive.value) return
+  const target = event.target instanceof Element ? event.target : null
+  if (!target || target.closest('.tutorial-picker-banner')) return
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+  const index = tutorialPickerIndex.value
+  if (index !== null && tutorialEditorSteps.value[index]) {
+    tutorialEditorSteps.value[index].selector = selectorForElement(target)
+  }
+  stopTutorialPicker()
+}
+function validateTutorialSelector(selector: string) {
+  try {
+    document.querySelector(selector)
+    return true
+  } catch {
+    return false
+  }
+}
+async function saveTutorialEditor() {
+  if (tutorialSaving.value) return
+  const seenIds = new Set<string>()
+  const steps = tutorialEditorSteps.value.map((step, index) => ({
+    id: step.id.trim() || `custom-${Date.now()}-${index + 1}`,
+    selector: step.selector.trim(),
+    view: step.view || undefined,
+    title: step.title.trim(),
+    description: step.description.trim(),
+  }))
+  if (!steps.length) {
+    showError(t('教程至少需要一个步骤'))
+    return
+  }
+  for (const step of steps) {
+    if (!step.selector || !step.title || !step.description) {
+      showError(t('教程步骤不能为空'))
+      return
+    }
+    if (!validateTutorialSelector(step.selector)) {
+      showError(`${t('教程选择器无效')}: ${step.selector}`)
+      return
+    }
+    if (seenIds.has(step.id)) {
+      showError(t('教程步骤 ID 不能重复'))
+      return
+    }
+    seenIds.add(step.id)
+  }
+  tutorialSaving.value = true
+  try {
+    const saved = await api.saveSettings({ tutorial_steps: steps, onboarding_seen_steps: [] })
+    if (dashboard.value) {
+      dashboard.value.config.tutorial_steps = saved.tutorial_steps
+      dashboard.value.config.onboarding_seen_steps = saved.onboarding_seen_steps
+    }
+    showTutorialEditor.value = false
+    showSuccess(t('教程配置已保存'))
+    await startOnboarding()
+  } catch (reason) {
+    showError(reason)
+  } finally {
+    tutorialSaving.value = false
+  }
+}
+async function restoreBuiltInTutorial() {
+  if (tutorialSaving.value) return
+  tutorialSaving.value = true
+  try {
+    const saved = await api.saveSettings({ tutorial_steps: [], onboarding_seen_steps: [] })
+    if (dashboard.value) {
+      dashboard.value.config.tutorial_steps = saved.tutorial_steps
+      dashboard.value.config.onboarding_seen_steps = saved.onboarding_seen_steps
+    }
+    showTutorialEditor.value = false
+    showSuccess(t('已恢复内置教程'))
+    await startOnboarding()
+  } catch (reason) {
+    showError(reason)
   } finally {
     tutorialSaving.value = false
   }
@@ -1251,6 +1412,7 @@ onMounted(async () => {
   }, 1000)
 })
 onUnmounted(() => {
+  stopTutorialPicker(false)
   window.removeEventListener('wheel', handleUiZoomWheel)
   window.removeEventListener('resize', updateTutorialRect)
   document.removeEventListener('scroll', updateTutorialRect, true)
@@ -1305,6 +1467,54 @@ onUnmounted(() => {
             :disabled="tutorialSaving" @click="skipTutorial">{{ t('跳过教程') }}</button><button class="primary-button"
             :disabled="tutorialSaving" @click="nextTutorialStep">{{ tutorialStepIndex === tutorialPendingSteps.length - 1 ? t('完成教程') : t('下一步') }}</button>
         </div>
+      </div>
+    </div>
+    <div v-if="tutorialPickerActive" class="tutorial-picker-banner">
+      <span>{{ t('正在选择教程目标') }}</span>
+      <button class="ghost-button" @click="stopTutorialPicker()">{{ t('取消选择') }}</button>
+    </div>
+    <div v-if="showTutorialEditor" class="modal-backdrop" @click.self="showTutorialEditor = false">
+      <div class="modal tutorial-editor-modal">
+        <div class="modal-head">
+          <div>
+            <h3>{{ t('编辑首次启动教程') }}</h3>
+            <p class="muted-text">{{ t('使用 CSS 层级选择器定位需要说明的界面区域。') }}</p>
+          </div><button class="icon-button" :title="t('关闭')" :disabled="tutorialSaving" @click="showTutorialEditor = false">
+            <X :size="17" />
+          </button>
+        </div>
+        <div class="tutorial-editor-list">
+          <div v-for="(step, index) in tutorialEditorSteps" :key="`${step.id}-${index}`" class="tutorial-editor-step">
+            <div class="tutorial-editor-step-head"><b>{{ t('教程步骤') }} {{ index + 1 }}</b><button class="icon-button small danger-icon"
+                :title="t('删除步骤')" :disabled="tutorialSaving" @click="removeTutorialStep(index)">
+                <Trash2 :size="14" />
+              </button></div>
+            <div class="form-grid">
+              <label><span>{{ t('步骤 ID') }}</span><input v-model="step.id" /></label>
+              <label><span>{{ t('进入页面') }}</span><select v-model="step.view">
+                  <option value="">{{ t('保持当前页面') }}</option>
+                  <option v-for="item in navItems" :key="item.id" :value="item.id">{{ t(item.label) }}</option>
+                </select></label>
+              <label class="wide"><span>{{ t('CSS 选择器') }}</span><input v-model="step.selector"
+                  placeholder=".app-shell > .sidebar > .nav-list > .nav-item" /></label>
+              <div class="tutorial-editor-selector-actions wide"><button class="secondary-button" :disabled="tutorialSaving"
+                  @click="startTutorialPicker(index)">
+                  <Search :size="15" />{{ t('从当前界面选择') }}
+                </button></div>
+              <label class="wide"><span>{{ t('步骤标题') }}</span><input v-model="step.title" /></label>
+              <label class="wide"><span>{{ t('步骤说明') }}</span><textarea v-model="step.description" rows="3" /></label>
+            </div>
+          </div>
+        </div>
+        <button class="secondary-button tutorial-editor-add" :disabled="tutorialSaving" @click="addTutorialStep">
+          <Plus :size="15" />{{ t('添加步骤') }}
+        </button>
+        <div class="modal-actions"><button class="ghost-button" :disabled="tutorialSaving" @click="restoreBuiltInTutorial">
+            <RotateCcw :size="15" />{{ t('恢复内置教程') }}
+          </button><button class="secondary-button" :disabled="tutorialSaving" @click="showTutorialEditor = false">{{ t('取消') }}</button><button
+            class="primary-button" :disabled="tutorialSaving" @click="saveTutorialEditor">
+            <Save :size="15" />{{ t('保存并重新展示') }}
+          </button></div>
       </div>
     </div>
     <aside ref="tutorialSidebar" class="sidebar">
@@ -1781,6 +1991,8 @@ onUnmounted(() => {
           <div class="button-row sponsor-actions"><button class="secondary-button" :disabled="!!busy"
               @click="openDeveloperConsole">
               <ExternalLink :size="15" />{{ t('打开开发者控制台') }}
+            </button><button class="secondary-button" :disabled="!!busy" @click="openTutorialEditor">
+              <Pencil :size="15" />{{ t('配置首次教程') }}
             </button><button class="secondary-button" :disabled="!!busy" @click="resetUi">
               <RotateCcw :size="15" />{{ t('重置到最新 UI') }}
             </button><button class="secondary-button" @click="openRustLog">
@@ -2410,6 +2622,63 @@ onUnmounted(() => {
 
 .tutorial-actions .ghost-button {
   margin-right: auto;
+}
+
+.tutorial-picker-banner {
+  position: fixed;
+  z-index: 1400;
+  top: 16px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px 9px 15px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+
+.tutorial-picker-banner .ghost-button {
+  padding: 5px 8px;
+}
+
+.tutorial-editor-modal {
+  width: min(820px, 100%);
+}
+
+.tutorial-editor-list {
+  display: grid;
+  gap: 12px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.tutorial-editor-step {
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.tutorial-editor-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+
+.tutorial-editor-selector-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tutorial-editor-add {
+  margin-top: 13px;
 }
 
 @keyframes tutorial-pulse {

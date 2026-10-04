@@ -286,7 +286,7 @@ async fn download_ranges(
     Ok(())
 }
 
-fn emit_progress(app: Option<&AppHandle>, label: &str, downloaded: u64, total: Option<u64>, elapsed: std::time::Duration, finished: bool) {
+pub fn emit_progress(app: Option<&AppHandle>, label: &str, downloaded: u64, total: Option<u64>, elapsed: std::time::Duration, finished: bool) {
     let percent = total
         .filter(|value| *value > 0)
         .map(|value| downloaded as f64 / value as f64 * 100.0);
@@ -654,10 +654,22 @@ pub fn remove_manifest_files(
     let mut removed = 0;
     for relative in &manifest.files {
         let path = safe_game_path(game_root, relative)?;
-        if path.is_file() {
-            clear_readonly(&path)?;
-            fs::remove_file(path).map_err(|e| e.to_string())?;
-            removed += 1;
+        let mut candidates = vec![path];
+        if candidates[0]
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+        {
+            candidates.push(PathBuf::from(format!(
+                "{}.disabled",
+                candidates[0].to_string_lossy()
+            )));
+        }
+        for candidate in candidates {
+            if candidate.is_file() {
+                clear_readonly(&candidate)?;
+                fs::remove_file(candidate).map_err(|e| e.to_string())?;
+                removed += 1;
+            }
         }
     }
     Ok(removed)

@@ -1,16 +1,19 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import type { AppUpdateInfo, Dashboard, DownloadProgress, GameInfo, ImportPreview, OperationResult, Provider, PublicConfig, ReleaseInfo, RepositoryPatch, RepositorySource, RustLog, SettingsPatch, TokenPatch } from '../types'
+import type { AppUpdateChannelEvent, AppUpdateCheckResult, Dashboard, DownloadProgress, GameInfo, ImportPreview, OperationResult, Provider, PublicConfig, ReleaseInfo, RepositoryPatch, RepositorySource, RustLog, SettingsPatch, TokenPatch, UninstallLocalModResult } from '../types'
 
 export const api = {
   dashboard: () => invoke<Dashboard>('get_dashboard'),
   config: () => invoke<PublicConfig>('get_config'),
   installLanguage: () => invoke<'zh-CN' | 'zh-TW' | 'en' | 'ko' | null>('get_install_language'),
   readRustLog: () => invoke<RustLog>('read_rust_log'),
+  readFrontendLog: () => invoke<RustLog>('read_frontend_log'),
+  readCrashLog: () => invoke<RustLog>('read_crash_log'),
+  writeFrontendLog: (level: string, message: string) => invoke<void>('write_frontend_log', { level, message }),
   saveModNote: (dllFile: string, note: string) => invoke<OperationResult>('save_mod_note', { dllFile, note }),
   installLocalMod: (sourcePath: string) => invoke<OperationResult>('install_local_mod', { sourcePath }),
-  uninstallLocalMod: (dllFile: string) => invoke<OperationResult>('uninstall_local_mod', { dllFile }),
+  uninstallLocalMod: (dllFile: string, allowUnmanaged = false) => invoke<UninstallLocalModResult>('uninstall_local_mod', { dllFile, allowUnmanaged }),
   detectGame: () => invoke<GameInfo>('detect_game'),
   setGamePath: (path: string) => invoke<GameInfo>('set_game_path', { path }),
   resetGamePath: () => invoke<GameInfo>('reset_game_path'),
@@ -45,6 +48,7 @@ export const api = {
   launchNoMod: () => invoke<OperationResult>('launch_no_mod'),
   restoreMod: () => invoke<OperationResult>('restore_mod'),
   switchWinhttp: (enabled: boolean) => invoke<OperationResult>('switch_winhttp', { enabled }),
+  toggleLocalMod: (dllFile: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod', { dllFile, enabled }),
   openDevtools: () => invoke<OperationResult>('open_devtools'),
   resetUi: () => invoke<OperationResult>('reset_ui'),
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
@@ -53,7 +57,7 @@ export const api = {
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
   exitApp: () => invoke<void>('exit_app'),
   cancelDownload: () => invoke<OperationResult>('cancel_download'),
-  checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko') => invoke<AppUpdateInfo | null>('check_app_update', { locale }),
+  checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
   installAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko') => invoke<OperationResult>('install_app_update', { locale }),
   chooseImportFile: () => open({ multiple: false, directory: false, filters: [{ name: 'OC2 仓库 TOML', extensions: ['oc2repo.toml', 'toml'] }] }),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
@@ -63,4 +67,8 @@ export const api = {
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
   return listen<DownloadProgress>('download-progress', (event) => callback(event.payload))
+}
+
+export function watchAppUpdateChannel(callback: (progress: AppUpdateChannelEvent) => void): Promise<UnlistenFn> {
+  return listen<AppUpdateChannelEvent>('app-update-channel', (event) => callback(event.payload))
 }

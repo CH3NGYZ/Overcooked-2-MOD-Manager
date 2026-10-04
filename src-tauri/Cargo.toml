@@ -56,4 +56,5 @@ winapi = { version = "0.3", features = [
     "winbase",
     "winuser",
     "winver",
+    "winnls",
 ] }

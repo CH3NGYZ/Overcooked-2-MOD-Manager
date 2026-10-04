@@ -6,10 +6,14 @@ mod models;
 mod mods;
 mod releases;
 
+use chrono::Utc;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_logger();
     request_elevation();
     let state = commands::AppState::new().expect("无法初始化 OC2 Mod Manager 配置服务");
     tauri::Builder::default()
@@ -37,8 +41,10 @@ pub fn run() {
                         }),
                     ])
                     .level(log::LevelFilter::Debug)
+                    .level_for("tao", log::LevelFilter::Info)
                     .build(),
             )?;
+            log::info!("OC2 Mod Manager started; version={}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,9 +52,13 @@ pub fn run() {
             commands::get_config,
             commands::get_install_language,
             commands::read_rust_log,
+            commands::read_frontend_log,
+            commands::read_crash_log,
+            commands::write_frontend_log,
             commands::save_mod_note,
             commands::install_local_mod,
             commands::uninstall_local_mod,
+            commands::toggle_local_mod,
             commands::save_settings,
             commands::save_tokens,
             commands::detect_game,
@@ -96,6 +106,35 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
+}
+
+fn install_panic_logger() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        previous(panic);
+        let Some(log_dir) = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("logs")))
+        else {
+            return;
+        };
+        if fs::create_dir_all(&log_dir).is_err() {
+            return;
+        }
+        let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_dir.join("crash.log"))
+        else {
+            return;
+        };
+        let _ = writeln!(
+            file,
+            "[{}][panic] {}",
+            Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            panic
+        );
+    }));
 }
 
 #[cfg(windows)]

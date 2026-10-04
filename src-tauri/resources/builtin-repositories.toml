@@ -1,17 +1,13 @@
 [[repositories]]
-id = "bepinex-configuration-manager"
-name = "BepInEx配置管理器"
-name_i18n = { "zh-CN" = "BepInEx配置管理器", "zh-TW" = "BepInEx設定管理器", "en" = "BepInExConfigurationManager", "ko" = "BepInEx구성관리자" }
+name = "BepInEx 配置管理器"
 group = "前置必装"
-group_i18n = { "zh-CN" = "前置必装", "zh-TW" = "前置必裝", "en" = "Requiredprerequisites", "ko" = "필수선행항목" }
 provider = "github"
 url = "https://github.com/BepInEx/BepInEx.ConfigurationManager/releases"
 channel = "all"
 install_target = ""
 note = """
-此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是F1，但可能经由《主机实用MOD》自动修改为P
+此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。
 """
-note_i18n = { "zh-CN" = "此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是F1，但可能经由《主机实用MOD》自动修改为P", "zh-TW" = "此模組用於管理《主機實用MOD》等MOD建立的設定，預設開啟快捷鍵為F1，但可能會由《主機實用MOD》自動修改為P", "en" = "ThismodisusedtomanageconfigurationscreatedbymodssuchasHostUtilities.ItsdefaulthotkeyisF1,butHostUtilitiesmayautomaticallychangeittoP.", "ko" = "이MOD는《HostUtilities》와같은MOD에서생성한설정을관리하는데사용됩니다.기본단축키는F1이지만,《HostUtilities》에의해자동으로P로변경될수있습니다." }
 plugin_guid = "com.bepis.bepinex.configurationmanager"
 local_product_name = "BepInEx.ConfigurationManager"
 local_original_filename = "ConfigurationManager.dll"
@@ -21,30 +17,43 @@ api_proxy_url = "https://oc2ghapi.ch3ng.top"
 release_proxy_mode = "auto"
 release_proxy_url = "https://oc2gh.ch3ng.top"
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "BepInEx Configuration Manager"
+ko = "BepInEx 구성 관리자"
+zh-CN = "BepInEx 配置管理器"
+zh-TW = "BepInEx 設定管理器"
+
+[repositories.group_i18n]
+en = "Required Prerequisites"
+ko = "필수 선행 항목"
+zh-CN = "前置必装"
+zh-TW = "前置必裝"
 
 [[repositories.asset_rules]]
 type = "regex"
 value = '^BepInEx\.ConfigurationManager_BepInEx5_v\d+\.\d+\.zip$'
 
+[repositories.note_i18n]
+en = "This mod is used to manage configurations created by mods such as HostUtilities. Its default hotkey is F1, but HostUtilities may automatically change it to P."
+ko = "이 모드는 《HostUtilities》와 같은 MOD에서 생성한 설정을 관리하는 데 사용됩니다. 기본 단축키는 F1이지만, 《HostUtilities》에 의해 자동으로 P로 변경될 수 있습니다."
+zh-CN = "此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。"
+zh-TW = "此模組用於管理《主機實用MOD》等MOD建立的設定，預設開啟快捷鍵為 F1，但可能會由《主機實用MOD》自動修改為 P。"
+
+
 [[repositories]]
-id = "hostutilities-stable"
-name = "主机实用MOD(街机MOD)稳定版-Gitee渠道"
-name_i18n = { "zh-CN" = "主机实用MOD(街机MOD)稳定版-Gitee渠道", "zh-TW" = "主機實用MOD（街機MOD）穩定版-Gitee頻道", "en" = "HostUtilities(ArcadeMOD)Stable-Gitee", "ko" = "HostUtilities(아케이드MOD)안정버전-Gitee" }
-group = "主机实用MOD稳定版"
-group_i18n = { "zh-CN" = "主机实用MOD稳定版", "zh-TW" = "主機實用MOD穩定版", "en" = "HostUtilitiesStable", "ko" = "HostUtilities안정버전" }
+name = "主机实用 MOD（街机 MOD）稳定版 - Gitee 渠道"
+group = "主机实用 MOD 稳定版"
 provider = "gitee"
 url = "https://gitee.com/ch3ngyz/Overcooked-2-HostUtilities-Stable-Releases/releases"
 channel = "all"
 install_target = "BepInEx/plugins"
 note = """
 提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
-中国大陆玩家推荐使用。当下载速度较慢或下载失败时可以尝试Github渠道。
-非中国大陆玩家不推荐使用，下载速度会比较慢。
+如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
 """
-note_i18n = { "zh-CN" = "提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。\n中国大陆玩家推荐使用。当下载速度较慢或下载失败时可以尝试Github渠道。\n非中国大陆玩家不推荐使用，下载速度会比较慢。", "zh-TW" = "提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。\n中國大陸玩家建議使用。當下載速度較慢或下載失敗時，可以嘗試GitHub頻道。\n不建議中國大陸以外的玩家使用，下載速度可能會比較慢。", "en" = "Providesplayermanagementasthehost,voicechat,textchat,blacklistmanagement,latencydisplay,levelskipping,restarting,andotherfeaturesthatenhancetheOvercooked!2gamingexperience.\nThischannelisrecommendedforplayersinmainlandChina.Ifthedownloadissloworfails,trytheGitHubchannelinstead.\nThischannelisnotrecommendedforplayersoutsidemainlandChina,asdownloadspeedsmayberelativelyslow.", "ko" = "호스트권한을통한멤버관리,음성채팅,문자채팅,블랙리스트관리,지연시간확인,스테이지건너뛰기,재시작등《Overcooked!2》의게임경험을향상시키는다양한보조기능을제공합니다.\n중국본토플레이어에게이채널을권장합니다.다운로드속도가느리거나다운로드에실패하면GitHub채널을이용해보세요.\n중국본토이외지역의플레이어에게는이채널을권장하지않으며,다운로드속도가비교적느릴수있습니다." }
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
-local_product_name = "Overcooked!2HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
 local_original_filename = "HostUtilities.dll"
 download_threads = 1
 api_proxy_mode = "auto"
@@ -52,18 +61,45 @@ api_proxy_url = "https://oc2gtapi.ch3ng.top"
 release_proxy_mode = "direct"
 release_proxy_url = ""
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "HostUtilities (Arcade MOD) Stable - Gitee"
+ko = "HostUtilities (아케이드 MOD) 안정 버전 - Gitee"
+zh-CN = "主机实用 MOD（街机 MOD）稳定版 - Gitee 渠道"
+zh-TW = "主機實用 MOD（街機 MOD）穩定版 - Gitee 頻道"
+
+[repositories.group_i18n]
+en = "HostUtilities Stable"
+ko = "HostUtilities 안정 버전"
+zh-CN = "主机实用 MOD 稳定版"
+zh-TW = "主機實用 MOD 穩定版"
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "HostUtilities.zip"
 
+[repositories.note_i18n]
+en = """
+Provides player management as the host, voice chat, text chat, blacklist management, latency display, level skipping, restarting, and other features that enhance the Overcooked! 2 gaming experience.
+If the download is slow or fails, the GitHub channel can also be used.
+"""
+ko = """
+호스트 권한을 통한 멤버 관리, 음성 채팅, 문자 채팅, 블랙리스트 관리, 지연 시간 확인, 스테이지 건너뛰기, 재시작 등 《Overcooked! 2》의 게임 경험을 향상시키는 다양한 보조 기능을 제공합니다.
+다운로드 속도가 느리거나 실패하면 GitHub 채널을 이용할 수도 있습니다.
+"""
+zh-CN = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
+"""
+zh-TW = """
+提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。
+如果下載速度較慢或下載失敗，也可以嘗試 GitHub 頻道。
+"""
+
+
 [[repositories]]
-id = "hostutilities-beta"
-name = "主机实用MOD(街机MOD)测试版-Gitee渠道"
-name_i18n = { "zh-CN" = "主机实用MOD(街机MOD)测试版-Gitee渠道", "zh-TW" = "主機實用MOD（街機MOD）測試版-Gitee頻道", "en" = "HostUtilities(ArcadeMOD)Beta-Gitee", "ko" = "HostUtilities(아케이드MOD)테스트버전-Gitee" }
-group = "主机实用MOD测试版"
-group_i18n = { "zh-CN" = "主机实用MOD测试版", "zh-TW" = "主機實用MOD測試版", "en" = "HostUtilitiesBeta", "ko" = "HostUtilities테스트버전" }
+name = "主机实用 MOD（街机 MOD）测试版 - Gitee 渠道"
+group = "主机实用 MOD 测试版"
 provider = "gitee"
 url = "https://gitee.com/ch3ngyz/Overcooked-2-HostUtilities-Beta-Releases/releases"
 channel = "all"
@@ -71,12 +107,9 @@ install_target = "BepInEx/plugins"
 note = """
 包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
 此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
-大陆玩家推荐使用。
-海外玩家不推荐使用。
 """
-note_i18n = { "zh-CN" = "包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。\n此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。\n大陆玩家推荐使用。\n海外玩家不推荐使用。", "zh-TW" = "包含《主機實用MOD》穩定版的大部分功能。與穩定版相比，僅有更新日誌中提到的一些變化。\n此版本僅供測試，不建議長期使用，如遇到任何問題，請重新安裝穩定版。\n中國大陸玩家建議使用。\n海外玩家不建議使用。", "en" = "IncludesmostofthefeaturesfromthestableversionofHostUtilities.Comparedwiththestableversion,itonlyincludesthechangesmentionedinthechangelog.\nThisversionisfortestingpurposesonlyandisnotrecommendedforlong-termuse.Ifyouencounteranyissues,pleasereinstallthestableversion.\nRecommendedforplayersinmainlandChina.\nNotrecommendedforplayersoutsidemainlandChina.", "ko" = "《HostUtilities》안정버전의대부분의기능을포함합니다.안정버전과비교하면업데이트로그에언급된일부변경사항만적용되어있습니다.\n이버전은테스트용으로만제공되며장기간사용하는것을권장하지않습니다.문제가발생하면안정버전을다시설치해주세요.\n중국본토플레이어에게사용을권장합니다.\n해외플레이어에게는사용을권장하지않습니다." }
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
-local_product_name = "Overcooked!2HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
 local_original_filename = "HostUtilities.dll"
 download_threads = 1
 api_proxy_mode = "auto"
@@ -84,30 +117,55 @@ api_proxy_url = "https://oc2gtapi.ch3ng.top"
 release_proxy_mode = "direct"
 release_proxy_url = ""
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "HostUtilities (Arcade MOD) Beta - Gitee"
+ko = "HostUtilities (아케이드 MOD) 테스트 버전 - Gitee"
+zh-CN = "主机实用 MOD（街机 MOD）测试版 - Gitee 渠道"
+zh-TW = "主機實用 MOD（街機 MOD）測試版 - Gitee 頻道"
+
+[repositories.group_i18n]
+en = "HostUtilities Beta"
+ko = "HostUtilities 테스트 버전"
+zh-CN = "主机实用 MOD 测试版"
+zh-TW = "主機實用 MOD 測試版"
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "HostUtilities.zip"
 
+[repositories.note_i18n]
+en = """
+Includes most of the features from the stable version of HostUtilities. Compared with the stable version, it only includes the changes mentioned in the changelog.
+This version is for testing purposes only and is not recommended for long-term use. If you encounter any issues, please reinstall the stable version.
+"""
+ko = """
+《HostUtilities》 안정 버전의 대부분의 기능을 포함합니다. 안정 버전과 비교하면 업데이트 로그에 언급된 일부 변경 사항만 적용되어 있습니다.
+이 버전은 테스트용으로만 제공되며 장기간 사용하는 것을 권장하지 않습니다. 문제가 발생하면 안정 버전을 다시 설치해 주세요.
+"""
+zh-CN = """
+包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
+此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
+"""
+zh-TW = """
+包含《主機實用 MOD》穩定版的大部分功能。與穩定版相比，僅有更新日誌中提到的一些變化。
+此版本僅供測試，不建議長期使用，如遇到任何問題，請重新安裝穩定版。
+"""
+
+
 [[repositories]]
-id = "hostutilities-stable-github"
-name = "主机实用MOD(街机MOD)稳定版-Github渠道"
-name_i18n = { "zh-CN" = "主机实用MOD(街机MOD)稳定版-Github渠道", "zh-TW" = "主機實用MOD（街機MOD）穩定版-Github頻道", "en" = "HostUtilities(ArcadeMOD)Stable-GitHub", "ko" = "HostUtilities(아케이드MOD)안정버전-GitHub" }
-group = "主机实用MOD稳定版"
-group_i18n = { "zh-CN" = "主机实用MOD稳定版", "zh-TW" = "主機實用MOD穩定版", "en" = "HostUtilitiesStable", "ko" = "HostUtilities안정버전" }
+name = "主机实用 MOD（街机 MOD）稳定版 - GitHub 渠道"
+group = "主机实用 MOD 稳定版"
 provider = "github"
 url = "https://github.com/CH3NGYZ/Overcooked-2-HostUtilities-Stable-Releases/releases"
 channel = "all"
 install_target = "BepInEx/plugins"
 note = """
 提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
-海外玩家推荐使用。
-大陆玩家也可以尝试使用。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
 """
-note_i18n = { "zh-CN" = "提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。\n海外玩家推荐使用。\n大陆玩家也可以尝试使用。", "zh-TW" = "提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。\n海外玩家建議使用。\n中國大陸玩家也可以嘗試使用。", "en" = "Providesplayermanagementasthehost,voicechat,textchat,blacklistmanagement,latencydisplay,levelskipping,restarting,andotherfeaturesthatenhancetheOvercooked!2gamingexperience.\nRecommendedforplayersoutsidemainlandChina.\nPlayersinmainlandChinacanalsotryusingit.", "ko" = "호스트권한을통한멤버관리,음성채팅,문자채팅,블랙리스트관리,지연시간확인,스테이지건너뛰기,재시작등《Overcooked!2》의게임경험을향상시키는다양한보조기능을제공합니다.\n해외플레이어에게사용을권장합니다.\n중국본토플레이어도사용해볼수있습니다." }
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
-local_product_name = "Overcooked!2HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
 local_original_filename = "HostUtilities.dll"
 download_threads = 32
 api_proxy_mode = "auto"
@@ -115,18 +173,45 @@ api_proxy_url = "https://oc2ghapi.ch3ng.top"
 release_proxy_mode = "auto"
 release_proxy_url = "https://oc2gh.ch3ng.top"
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "HostUtilities (Arcade MOD) Stable - GitHub"
+ko = "HostUtilities (아케이드 MOD) 안정 버전 - GitHub"
+zh-CN = "主机实用 MOD（街机 MOD）稳定版 - GitHub 渠道"
+zh-TW = "主機實用 MOD（街機 MOD）穩定版 - GitHub 頻道"
+
+[repositories.group_i18n]
+en = "HostUtilities Stable"
+ko = "HostUtilities 안정 버전"
+zh-CN = "主机实用 MOD 稳定版"
+zh-TW = "主機實用 MOD 穩定版"
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "HostUtilities.zip"
 
+[repositories.note_i18n]
+en = """
+Provides player management as the host, voice chat, text chat, blacklist management, latency display, level skipping, restarting, and other features that enhance the Overcooked! 2 gaming experience.
+Chinese-speaking players can also use this channel. If the Gitee channel fails to download, the GitHub channel can be used instead.
+"""
+ko = """
+호스트 권한을 통한 멤버 관리, 음성 채팅, 문자 채팅, 블랙리스트 관리, 지연 시간 확인, 스테이지 건너뛰기, 재시작 등 《Overcooked! 2》의 게임 경험을 향상시키는 다양한 보조 기능을 제공합니다.
+중국어 사용 플레이어도 이 채널을 이용할 수 있습니다. Gitee 채널에서 다운로드에 실패하면 GitHub 채널을 이용해 보세요.
+"""
+zh-CN = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
+"""
+zh-TW = """
+提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。
+中文玩家也可以使用此頻道，如果 Gitee 頻道下載失敗，可以嘗試使用 GitHub 頻道。
+"""
+
+
 [[repositories]]
-id = "hostutilities-beta-github"
-name = "主机实用MOD(街机MOD)测试版-Github渠道"
-name_i18n = { "zh-CN" = "主机实用MOD(街机MOD)测试版-Github渠道", "zh-TW" = "主機實用MOD（街機MOD）測試版-Github頻道", "en" = "HostUtilities(ArcadeMOD)Beta-GitHub", "ko" = "HostUtilities(아케이드MOD)테스트버전-GitHub" }
-group = "主机实用MOD测试版"
-group_i18n = { "zh-CN" = "主机实用MOD测试版", "zh-TW" = "主機實用MOD測試版", "en" = "HostUtilitiesBeta", "ko" = "HostUtilities테스트버전" }
+name = "主机实用 MOD（街机 MOD）测试版 - GitHub 渠道"
+group = "主机实用 MOD 测试版"
 provider = "github"
 url = "https://github.com/CH3NGYZ/Overcooked-2-HostUtilities-Beta-Releases/releases"
 channel = "all"
@@ -134,12 +219,10 @@ install_target = "BepInEx/plugins"
 note = """
 包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
 此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
-海外玩家推荐使用。
-大陆玩家也可以尝试使用。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
 """
-note_i18n = { "zh-CN" = "包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。\n此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。\n海外玩家推荐使用。\n大陆玩家也可以尝试使用。", "zh-TW" = "包含《主機實用MOD》穩定版的大部分功能。與穩定版相比，僅有更新日誌中提到的一些變化。\n此版本僅供測試，不建議長期使用，如遇到任何問題，請重新安裝穩定版。\n海外玩家建議使用。\n中國大陸玩家也可以嘗試使用。", "en" = "IncludesmostofthefeaturesfromthestableversionofHostUtilities.Comparedwiththestableversion,itonlyincludesthechangesmentionedinthechangelog.\nThisversionisfortestingpurposesonlyandisnotrecommendedforlong-termuse.Ifyouencounteranyissues,pleasereinstallthestableversion.\nRecommendedforplayersoutsidemainlandChina.\nPlayersinmainlandChinacanalsotryusingit.", "ko" = "《HostUtilities》안정버전의대부분의기능을포함합니다.안정버전과비교하면업데이트로그에언급된일부변경사항만적용되어있습니다.\n이버전은테스트용으로만제공되며장기간사용하는것을권장하지않습니다.문제가발생하면안정버전을다시설치해주세요.\n해외플레이어에게사용을권장합니다.\n중국본토플레이어도사용해볼수있습니다." }
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
-local_product_name = "Overcooked!2HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
 local_original_filename = "HostUtilities.dll"
 download_threads = 32
 api_proxy_mode = "auto"
@@ -147,18 +230,49 @@ api_proxy_url = "https://oc2ghapi.ch3ng.top"
 release_proxy_mode = "auto"
 release_proxy_url = "https://oc2gh.ch3ng.top"
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "HostUtilities (Arcade MOD) Beta - GitHub"
+ko = "HostUtilities (아케이드 MOD) 테스트 버전 - GitHub"
+zh-CN = "主机实用 MOD（街机 MOD）测试版 - GitHub 渠道"
+zh-TW = "主機實用 MOD（街機 MOD）測試版 - GitHub 頻道"
+
+[repositories.group_i18n]
+en = "HostUtilities Beta"
+ko = "HostUtilities 테스트 버전"
+zh-CN = "主机实用 MOD 测试版"
+zh-TW = "主機實用 MOD 測試版"
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "HostUtilities.zip"
 
+[repositories.note_i18n]
+en = """
+Includes most of the features from the stable version of HostUtilities. Compared with the stable version, it only includes the changes mentioned in the changelog.
+This version is for testing purposes only and is not recommended for long-term use. If you encounter any issues, please reinstall the stable version.
+Chinese-speaking players can also use this channel. If the Gitee channel fails to download, the GitHub channel can be used instead.
+"""
+ko = """
+《HostUtilities》 안정 버전의 대부분의 기능을 포함합니다. 안정 버전과 비교하면 업데이트 로그에 언급된 일부 변경 사항만 적용되어 있습니다.
+이 버전은 테스트용으로만 제공되며 장기간 사용하는 것을 권장하지 않습니다. 문제가 발생하면 안정 버전을 다시 설치해 주세요.
+중국어 사용 플레이어도 이 채널을 이용할 수 있습니다. Gitee 채널에서 다운로드에 실패하면 GitHub 채널을 이용해 보세요.
+"""
+zh-CN = """
+包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
+此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
+"""
+zh-TW = """
+包含《主機實用 MOD》穩定版的大部分功能。與穩定版相比，僅有更新日誌中提到的一些變化。
+此版本僅供測試，不建議長期使用，如遇到任何問題，請重新安裝穩定版。
+中文玩家也可以使用此頻道，如果 Gitee 頻道下載失敗，可以嘗試使用 GitHub 頻道。
+"""
+
+
 [[repositories]]
-id = "oc2-chef-rotation"
 name = "厨师旋转/ChefRotation"
-name_i18n = { "zh-CN" = "厨师旋转", "zh-TW" = "廚師旋轉", "en" = "ChefRotation", "ko" = "셰프회전" }
 group = "趣味MOD"
-group_i18n = { "zh-CN" = "趣味MOD", "zh-TW" = "趣味MOD", "en" = "FunMODs", "ko" = "재미있는MOD" }
 provider = "gitee"
 url = "https://gitee.com/ch3ngyz/Overcooked-2-ChefRotation-Releases/releases"
 channel = "all"
@@ -168,7 +282,6 @@ note = """
 功能：一键抛物和一键从自身背包取物。
 使用时，需要在配置管理器里面打开开关。
 """
-note_i18n = { "zh-CN" = "动作：厨师的趴下、躺下、左躺、右躺，以及翻跟斗和原地旋转。\n功能：一键抛物和一键从自身背包取物。\n使用时，需要在配置管理器里面打开开关。", "zh-TW" = "動作：廚師趴下、躺下、向左躺、向右躺、翻跟斗及原地旋轉。\n功能：一鍵拋物及從自身背包取物。\n使用時需要在設定管理器中開啟開關。", "en" = "Chefactionsincludecrouching,lyingdown,rollingandspinning.\nAlsoprovidesone-clickthrowingandtakingitemsfromyourbackpack.Enableitintheconfigurationmanager.", "ko" = "셰프가엎드리기,눕기,좌우로눕기,공중제비와제자리회전을할수있습니다.\n한번의클릭으로물건을던지고가방에서꺼낼수있습니다.구성관리자에서기능을켜야합니다." }
 plugin_guid = "com.ch3ngyz.plugin.OC2ChefRotation"
 local_product_name = ""
 local_original_filename = "OC2ChefRotation.dll"
@@ -178,26 +291,50 @@ api_proxy_url = "https://oc2gtapi.ch3ng.top"
 release_proxy_mode = "direct"
 release_proxy_url = ""
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "Chef Rotation"
+ko = "셰프 회전"
+zh-CN = "厨师旋转"
+zh-TW = "廚師旋轉"
+
+[repositories.group_i18n]
+en = "Fun MODs"
+ko = "재미있는 MOD"
+zh-CN = "趣味MOD"
+zh-TW = "趣味MOD"
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "OC2ChefRotation.dll"
 
+[repositories.note_i18n]
+en = """
+Chef actions include crouching, lying down, rolling, and spinning.
+Also provides one-click throwing and taking items from your backpack. Enable these features in the Configuration Manager."""
+ko = """
+셰프가 엎드리기, 눕기, 좌우로 눕기, 공중제비, 제자리 회전을 할 수 있습니다.
+한 번의 클릭으로 물건을 던지거나 자신의 배낭에서 물건을 꺼낼 수 있습니다. 구성 관리자에서 해당 기능을 활성화해야 합니다."""
+zh-CN = """
+动作：厨师的趴下、躺下、左躺、右躺，以及翻跟斗和原地旋转。
+功能：一键抛物和一键从自身背包取物。
+使用时，需要在配置管理器里面打开开关。"""
+zh-TW = """
+動作：廚師趴下、躺下、向左躺、向右躺、翻跟斗及原地旋轉。
+功能：一鍵拋物及從自身背包取物。
+使用時需要在設定管理器中開啟開關。"""
+
+
 [[repositories]]
-id = "oc2-content-access"
-name = "厨师与DLC内容支持/Chef&DLCSupport"
-name_i18n = { "zh-CN" = "厨师与DLC内容支持", "zh-TW" = "廚師與DLC內容支援", "en" = "Chef&DLCSupport", "ko" = "셰프및DLC콘텐츠지원" }
-group = "工具类"
-group_i18n = { "zh-CN" = "工具类", "zh-TW" = "工具類", "en" = "Tools", "ko" = "도구" }
+name = "厨师与DLC内容启用"
+group = "解锁内容类"
 provider = "gitee"
 url = "https://gitee.com/ch3ngyz/Overcooked-2-Unlocker-Releases/releases"
 channel = "all"
 install_target = "BepInEx/plugins"
 note = """
-用于启用游戏内的厨师和DLC内容支持，包括鸭嘴兽等特殊厨师。使用时，需要在配置管理器里面打开开关。
+用于启用游戏内的厨师和DLC内容，包括鸭嘴兽等特殊厨师。使用时，需要在配置管理器里面打开开关。
 """
-note_i18n = { "zh-CN" = "用于启用游戏内的厨师和DLC内容支持，包括鸭嘴兽等特殊厨师。使用时，需要在配置管理器里面打开开关。", "zh-TW" = "用於啟用遊戲內的廚師與DLC內容支援，包括鴨嘴獸等特殊廚師。使用時，需要在設定管理器裡面開啟開關。", "en" = "Enablessupportforin-gamechefsandDLCcontent,includingspecialchefssuchastheplatypus.EnabletheoptionintheConfigurationManagertouseit.", "ko" = "게임내셰프및DLC콘텐츠를사용할수있도록지원하며,오리너구리와같은특수셰프도포함됩니다.사용하려면구성관리자에서옵션을활성화해야합니다." }
 plugin_guid = "com.ch3ngyz.plugin.OC2Unlocker"
 local_product_name = ""
 local_original_filename = "OC2Unlocker.dll"
@@ -207,8 +344,110 @@ api_proxy_url = "https://oc2gtapi.ch3ng.top"
 release_proxy_mode = "direct"
 release_proxy_url = ""
 enabled = true
-source_id = "azhe"
+
+[repositories.name_i18n]
+en = "Chef & DLC Content Support"
+ko = "셰프 및 DLC 콘텐츠 지원"
+zh-CN = "厨师与DLC内容启用"
+zh-TW = "廚師與DLC內容啟用"
+
+[repositories.group_i18n]
+en = "Unlocks"
+ko = "콘텐츠 해금"
+zh-CN = "开启内容类"
+zh-TW = "開啟內容類"
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "OC2Unlocker.dll"
+
+[repositories.note_i18n]
+en = "Enables support for in-game chefs and DLC content, including special chefs such as the platypus. Enable the corresponding option in the Configuration Manager to use it."
+ko = "게임 내 셰프 및 DLC 콘텐츠를 사용할 수 있도록 지원하며, 오리너구리와 같은 특수 셰프도 포함됩니다. 사용하려면 구성 관리자에서 해당 옵션을 활성화해야 합니다."
+zh-CN = "用于启用游戏内的厨师和DLC内容，包括鸭嘴兽等特殊厨师。使用时，需要在配置管理器里面打开开关。"
+zh-TW = "用於啟用遊戲內的廚師與DLC內容，包括鴨嘴獸等特殊廚師。使用時，需要在設定管理器裡面開啟開關。"
+
+
+[[repositories]]
+name = "菜单限制器-DIY关卡《测试1》前两道菜不出搅拌"
+group = "体验优化类"
+provider = "gitee"
+url = "https://gitee.com/ch3ngyz/Overcooked-2-Test1RecipeLimiter-Releases/releases"
+channel = "all"
+install_target = "BepInEx/plugins"
+note = """
+MOD功能：
+1.限制四人时前两道菜不出搅拌
+2.本地单人、本地双人、在线双人时可以选只开启某些菜
+启用方法：
+安装《BepInEx 配置管理器》后在游戏中打开配置管理器，开启对应开关即可"""
+plugin_guid = "oc2.diy_level_test1_recipe_limiter"
+local_product_name = "OC2 DIY Level Test1 Recipe Limiter"
+local_original_filename = "OC2DIYLevelTest1RecipeLimiter.dll"
+download_threads = 1
+api_proxy_mode = "auto"
+api_proxy_url = "https://oc2gtapi.ch3ng.top"
+release_proxy_mode = "direct"
+release_proxy_url = ""
+enabled = true
+
+[repositories.name_i18n]
+en = "Recipe Limiter - DIY Level Test 1"
+ko = "레시피 제한기 - DIY 레벨 테스트 1"
+zh-CN = "菜单限制器-DIY关卡《测试1》前两道菜不出搅拌"
+zh-TW = "菜單限制器-DIY關卡《測試1》前兩道菜不出攪拌"
+
+[repositories.group_i18n]
+en = "Quality of Life"
+ko = "편의성 개선 MOD"
+zh-CN = "体验优化类"
+zh-TW = "體驗優化類"
+
+[[repositories.asset_rules]]
+type = "exact"
+value = "OC2DIYLevelTest1RecipeLimiter.dll"
+
+[repositories.note_i18n]
+en = """
+MOD Features:
+1. Prevents the first two recipes from requiring a mixer when playing with four players.
+2. In local single-player, local two-player, and online two-player modes, you can choose to enable only specific recipes.
+
+How to Enable:
+After installing the BepInEx Configuration Manager, open the Configuration Manager in-game and enable the corresponding options."""
+ko = """
+MOD 기능:
+1. 4인 플레이 시 처음 두 요리에 믹서가 나오지 않도록 제한합니다.
+2. 로컬 1인, 로컬 2인 및 온라인 2인 플레이에서 특정 요리만 선택하여 활성화할 수 있습니다.
+
+사용 방법:
+BepInEx 구성 관리자를 설치한 후 게임에서 구성 관리자를 열고 해당 옵션을 활성화하면 됩니다."""
+zh-CN = """
+MOD功能：
+1.限制四人时前两道菜不出搅拌
+2.本地单人、本地双人、在线双人时可以选只开启某些菜
+
+启用方法：
+安装《BepInEx配置管理器》后在游戏中打开配置管理器，开启对应开关即可"""
+zh-TW = """
+MOD功能：
+1.限制四人遊戲時前兩道菜不出現攪拌。
+2.本地單人、本地雙人及線上雙人時，可以選擇只開啟特定菜餚。
+
+啟用方法：
+安裝《BepInEx設定管理器》後，在遊戲中開啟設定管理器，啟用對應的選項即可。"""
+
+
+[[repository_sources]]
+id = "azhe-chinese_mainland"
+nickname = "Azhe的仓库源 - 中国大陆"
+url = "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/all-repository-source.oc2repo.toml"
+region = "chinese_mainland"
+builtin = true
+
+[[repository_sources]]
+id = "azhe-international"
+nickname = "Azhe的仓库源 - 国际"
+url = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/raw/refs/heads/main/all-repository-source.oc2repo.toml"
+region = "international"
+builtin = true

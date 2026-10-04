@@ -50,6 +50,9 @@ export interface Repository {
 }
 export interface PublicConfig {
   schema_version: number
+  region: string
+  ui_zoom: number
+  onboarding_seen_steps: string[]
   game: { path: string; auto_detect: boolean }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean; max_release_count: number }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
@@ -59,19 +62,23 @@ export interface PublicConfig {
   repositories: Repository[]
   repository_sources: RepositorySource[]
 }
-export interface RepositorySource { id: string; nickname: string; url: string; builtin: boolean }
+export interface RepositorySource { id: string; nickname: string; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; complete: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export interface InstalledMod { repository_id?: string; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; plugin_name?: string; company?: string; copyright?: string; dll_file: string; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; load_warning?: string; note?: string; status: string }
+export interface InstalledMod { repository_id?: string; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; load_warning?: string; note?: string; status: string }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
+export interface UninstallLocalModResult extends OperationResult { requires_confirmation: boolean }
 export interface RustLog { path: string; content: string }
 export interface DownloadProgress { label: string; downloaded: number; total?: number; speed_bytes: number; finished: boolean }
 export interface ImportPreview { valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_type?: 'exe' | 'msi' }
-export interface SettingsPatch { game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_download_urls?: string[]; installer_type?: 'exe' | 'msi'; provider?: Provider; source_channel?: string }
+export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
+export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
+export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
 export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {
   id?: string

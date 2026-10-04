@@ -2,6 +2,7 @@ use crate::game::read_file_metadata;
 use crate::models::{AppConfig, InstalledMod};
 use regex::Regex;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -11,22 +12,58 @@ pub fn scan_mods(game: &Path, config: &AppConfig) -> Vec<InstalledMod> {
     if !plugins.is_dir() {
         return Vec::new();
     }
-    let mut installed = WalkDir::new(&plugins)
+    let mut paths = WalkDir::new(&plugins)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| {
-            entry.file_type().is_file()
-                && entry
-                    .path()
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .map(|value| value.eq_ignore_ascii_case("dll"))
-                    .unwrap_or(false)
+            entry.file_type().is_file() && is_mod_file(entry.path())
         })
-        .map(|entry| inspect_dll(entry.path(), game, config))
+        .map(|entry| entry.into_path())
+        .collect::<Vec<_>>();
+    // If both names exist, the enabled DLL is the file BepInEx will load.
+    // Keep one logical MOD row and let the enabled copy win.
+    paths.sort_by_key(|path| is_disabled_mod_file(path));
+    let mut seen = HashSet::new();
+    let mut installed = paths
+        .into_iter()
+        .filter(|path| seen.insert(canonical_dll_file(path, game).to_ascii_lowercase()))
+        .map(|path| inspect_dll(&path, game, config))
         .collect::<Vec<_>>();
     mark_duplicate_guids(&mut installed);
     installed
+}
+
+fn is_mod_file(path: &Path) -> bool {
+    let name = path.to_string_lossy();
+    name.to_ascii_lowercase().ends_with(".dll")
+        || name.to_ascii_lowercase().ends_with(".dll.disabled")
+}
+
+fn is_disabled_mod_file(path: &Path) -> bool {
+    path.to_string_lossy()
+        .to_ascii_lowercase()
+        .ends_with(".dll.disabled")
+}
+
+pub fn canonical_dll_file(path: &Path, game: &Path) -> String {
+    let relative = path
+        .strip_prefix(game)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    canonical_dll_name(&relative)
+}
+
+pub fn canonical_dll_name(dll_file: &str) -> String {
+    if dll_file.to_ascii_lowercase().ends_with(".disabled") {
+        dll_file[..dll_file.len() - ".disabled".len()].to_string()
+    } else {
+        dll_file.to_string()
+    }
+}
+
+pub fn disabled_dll_file(dll_file: &str) -> String {
+    format!("{dll_file}.disabled")
 }
 
 fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
@@ -102,11 +139,8 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
     let product_name = metadata.product_name;
     let original_filename = metadata.original_filename;
     let plugin_name = plugin.and_then(|item| item.name);
-    let dll_file = path
-        .strip_prefix(game)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
+    let dll_file = canonical_dll_file(path, game);
+    let enabled = !is_disabled_mod_file(path);
     let note = config
         .mod_notes
         .iter()
@@ -131,6 +165,7 @@ fn inspect_dll(path: &Path, game: &Path, config: &AppConfig) -> InstalledMod {
         company: metadata.company,
         copyright: metadata.copyright,
         dll_file,
+        enabled,
         version: installed_version,
         version_source: version_source.into(),
         update_available,
@@ -275,11 +310,16 @@ pub fn note_key(mod_info: &InstalledMod) -> String {
 
 fn mark_duplicate_guids(mods: &mut [InstalledMod]) {
     for index in 0..mods.len() {
+        if !mods[index].enabled {
+            continue;
+        }
         let peers = mods
             .iter()
             .enumerate()
             .filter(|(peer_index, item)| {
-                *peer_index != index && mods_share_identity(&mods[index], item)
+                *peer_index != index
+                    && item.enabled
+                    && mods_share_identity(&mods[index], item)
             })
             .map(|(peer_index, _)| peer_index)
             .collect::<Vec<_>>();
@@ -352,6 +392,18 @@ fn release_version_component_count(value: Option<&str>) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn disabled_dll_names_keep_the_same_logical_path() {
+        assert_eq!(
+            super::canonical_dll_name("BepInEx/plugins/example.dll.disabled"),
+            "BepInEx/plugins/example.dll"
+        );
+        assert_eq!(
+            super::disabled_dll_file("BepInEx/plugins/example.dll"),
+            "BepInEx/plugins/example.dll.disabled"
+        );
+    }
+
     #[test]
     fn unknown_version_is_not_update() {
         assert!(!matches!(
@@ -498,6 +550,7 @@ mod tests {
                 company: None,
                 copyright: None,
                 dll_file: "BepInEx/plugins/old.dll".into(),
+                enabled: true,
                 version: Some("1.0.0".into()),
                 version_source: "BepInPlugin".into(),
                 update_available: false,
@@ -518,6 +571,7 @@ mod tests {
                 company: None,
                 copyright: None,
                 dll_file: "BepInEx/plugins/new.dll".into(),
+                enabled: true,
                 version: Some("2.0.0".into()),
                 version_source: "BepInPlugin".into(),
                 update_available: false,

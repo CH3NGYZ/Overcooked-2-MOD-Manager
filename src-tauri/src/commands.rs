@@ -6,15 +6,21 @@ use crate::mods;
 use crate::releases;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
-use tauri::{AppHandle, State};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use futures_util::StreamExt;
+use tauri::{AppHandle, Emitter, State};
 use url::Url;
 use uuid::Uuid;
 
 pub const BEPINEX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip";
-pub const BEPINEX_GITHUB_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip";
+pub const BEPINEX_GITHUB_URL: &str =
+    "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip";
 const INSTALLER_GITEE_OWNER: &str = "ch3ngyz";
 const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
 const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
@@ -26,35 +32,69 @@ const GITHUB_RELEASE_PROXY: &str = "https://oc2gh.ch3ng.top";
 const INSTALLER_GITHUB_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITHUB_TOKEN");
 const INSTALLER_GITEE_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITEE_TOKEN");
 
-fn installer_api_sources(locale: &str) -> Vec<(Provider, String, bool)> {
+#[derive(Debug, Clone)]
+struct InstallerChannel {
+    id: &'static str,
+    provider: Provider,
+    endpoint: String,
+    is_proxy: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallerRegion {
+    MainlandChina,
+    International,
+}
+
+impl InstallerRegion {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MainlandChina => "mainland-china",
+            Self::International => "international",
+        }
+    }
+}
+
+fn detect_installer_region() -> InstallerRegion {
+    if crate::config::current_user_region() == crate::config::REGION_CHINESE_MAINLAND {
+        InstallerRegion::MainlandChina
+    } else {
+        InstallerRegion::International
+    }
+}
+
+fn installer_api_sources(region: InstallerRegion) -> Vec<InstallerChannel> {
     let gitee = format!(
         "https://gitee.com/api/v5/repos/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/latest"
     );
     let github = format!(
         "https://api.github.com/repos/{INSTALLER_GITHUB_OWNER}/{INSTALLER_GITHUB_REPO}/releases/latest"
     );
-    let github_sources = vec![
-        (Provider::Github, github.clone(), false),
-        (
-            Provider::Github,
-            releases::rewrite_proxy(GITHUB_API_PROXY, &github),
-            true,
-        ),
-    ];
-    if matches!(locale, "zh-CN" | "zh-TW") {
-        vec![
-            (Provider::Gitee, gitee.clone(), false),
-            (
-                Provider::Gitee,
-                releases::rewrite_proxy(GITEE_API_PROXY, &gitee),
-                true,
-            ),
-        ]
-        .into_iter()
-        .chain(github_sources)
-        .collect()
-    } else {
-        github_sources
+    let mut sources = Vec::new();
+    if region == InstallerRegion::MainlandChina {
+        sources.push(InstallerChannel { id: "gitee-direct", provider: Provider::Gitee, endpoint: gitee.clone(), is_proxy: false });
+        sources.push(InstallerChannel { id: "gitee-proxy", provider: Provider::Gitee, endpoint: releases::rewrite_proxy(GITEE_API_PROXY, &gitee), is_proxy: true });
+    }
+    sources.push(InstallerChannel { id: "github-direct", provider: Provider::Github, endpoint: github.clone(), is_proxy: false });
+    sources.push(InstallerChannel { id: "github-proxy", provider: Provider::Github, endpoint: releases::rewrite_proxy(GITHUB_API_PROXY, &github), is_proxy: true });
+    sources
+}
+
+fn installer_download_urls(
+    region: InstallerRegion,
+    provider: &Provider,
+    direct_url: &str,
+) -> Vec<String> {
+    match (region, provider) {
+        (InstallerRegion::MainlandChina, Provider::Gitee)
+        | (InstallerRegion::International, Provider::Gitee) => vec![direct_url.to_string()],
+        (InstallerRegion::MainlandChina, Provider::Github) => {
+            vec![releases::rewrite_proxy(GITHUB_RELEASE_PROXY, direct_url)]
+        }
+        (InstallerRegion::International, Provider::Github) => vec![
+            direct_url.to_string(),
+            releases::rewrite_proxy(GITHUB_RELEASE_PROXY, direct_url),
+        ],
     }
 }
 
@@ -97,67 +137,221 @@ fn installer_asset_for_release<'a>(
         })
 }
 
-async fn discover_installer_update(state: &AppState, locale: &str) -> Result<Option<AppUpdateInfo>, String> {
+fn installer_channel_status(
+    channel: &InstallerChannel,
+    status: &str,
+    error: Option<String>,
+) -> AppUpdateChannelStatus {
+    AppUpdateChannelStatus {
+        id: channel.id.into(),
+        provider: channel.provider.clone(),
+        mode: if channel.is_proxy { "proxy" } else { "direct" }.into(),
+        status: status.into(),
+        error,
+    }
+}
+
+fn emit_installer_channel_status(
+    app: &AppHandle,
+    region: InstallerRegion,
+    status: AppUpdateChannelStatus,
+) {
+    match status.status.as_str() {
+        "failed" => log::warn!(
+            "安装器更新渠道失败: id={} mode={} error={}",
+            status.id,
+            status.mode,
+            status.error.as_deref().unwrap_or_default()
+        ),
+        _ => log::info!(
+            "安装器更新渠道状态: id={} mode={} status={}",
+            status.id,
+            status.mode,
+            status.status
+        ),
+    }
+    let _ = app.emit(
+        "app-update-channel",
+        AppUpdateChannelEvent {
+            region: region.as_str().into(),
+            channel: status,
+        },
+    );
+}
+
+fn inspect_installer_releases(
+    channel: &InstallerChannel,
+    releases: Vec<ReleaseInfo>,
+    current_version: &semver::Version,
+    region: InstallerRegion,
+    update: &mut Option<AppUpdateInfo>,
+) -> AppUpdateChannelStatus {
+    let filtered = releases::filter_channel(releases, &Channel::Stable);
+    let candidate = filtered.into_iter().find_map(|release| {
+        let version = release
+            .version
+            .as_deref()
+            .and_then(releases::parse_version)?;
+        (version > *current_version).then_some((release, version))
+    });
+    let Some((release, version)) = candidate else {
+        return installer_channel_status(channel, "latest", None);
+    };
+    let Some((installer, installer_type)) = installer_asset_for_release(&release, &version) else {
+        return installer_channel_status(
+            channel,
+            "failed",
+            Some("更新中没有匹配的安装包".into()),
+        );
+    };
+    if update.is_none() {
+        let installer_url = installer.download_url.clone();
+        let installer_proxy_url = (channel.provider == Provider::Github)
+            .then(|| releases::rewrite_proxy(GITHUB_RELEASE_PROXY, &installer_url));
+        let installer_download_urls = installer_download_urls(
+            region,
+            &channel.provider,
+            &installer_url,
+        );
+        let installer_size = installer.size;
+        let installer_type = installer_type.to_string();
+        let mut manifest_endpoints = release
+            .assets
+            .iter()
+            .filter(|asset| {
+                let name = asset.name.to_ascii_lowercase();
+                name == "latest.json" || (name.starts_with("latest-") && name.ends_with(".json"))
+            })
+            .map(|asset| asset.download_url.clone())
+            .collect::<Vec<_>>();
+        if manifest_endpoints.is_empty() {
+            manifest_endpoints.push(installer_manifest_fallback(&channel.provider));
+        }
+        *update = Some(AppUpdateInfo {
+            version: version.to_string(),
+            current_version: current_version.to_string(),
+            body: (!release.body.is_empty()).then_some(release.body),
+            date: release.published_at,
+            download_size: Some(installer_size),
+            manifest_endpoints,
+            installer_url: Some(installer_url),
+            installer_proxy_url,
+            installer_download_urls,
+            installer_type,
+            provider: Some(channel.provider.clone()),
+            source_channel: Some(channel.id.into()),
+        });
+    }
+    installer_channel_status(channel, "update_available", None)
+}
+
+async fn discover_installer_update_for_channels(
+    state: &AppState,
+    app: &AppHandle,
+    region: InstallerRegion,
+    installer_channels: Vec<InstallerChannel>,
+) -> Result<AppUpdateCheckResult, String> {
     let config = state.config.load_or_default();
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|e| format!("当前程序版本无效: {e}"))?;
-    for (provider, endpoint, is_proxy) in installer_api_sources(locale) {
-        let token = (!is_proxy).then(|| installer_api_token(&provider)).flatten();
-        match releases::fetch_release_url_with_token(
+    let mut channels = Vec::new();
+    let mut update = None;
+
+    // API requests are deliberately sequential. A successful "latest"
+    // response is authoritative and ends the API phase immediately; update
+    // candidates remain available while later channels are queried so the
+    // release phase has a platform fallback.
+    for (index, channel) in installer_channels.iter().enumerate() {
+        emit_installer_channel_status(
+            app,
+            region,
+            installer_channel_status(channel, "checking", None),
+        );
+        let result = releases::fetch_release_url_with_token(
             &client,
-            &endpoint,
-            &provider,
-            token.as_deref(),
+            &channel.endpoint,
+            &channel.provider,
+            if channel.is_proxy {
+                None
+            } else {
+                installer_api_token(&channel.provider)
+            },
         )
-        .await
-        {
+        .await;
+        match result {
             Ok(releases) => {
-                let filtered = releases::filter_channel(releases, &Channel::Stable);
-                let Some((release, version)) = filtered.into_iter().find_map(|release| {
-                    let version = release.version.as_deref().and_then(releases::parse_version)?;
-                    (version > current_version).then_some((release, version))
-                }) else {
-                    return Ok(None);
-                };
-                let Some((installer, installer_type)) = installer_asset_for_release(&release, &version) else {
-                    return Err("检查更新失败，请重新启动MOD管理器。".into());
-                };
-                let installer_url = installer.download_url.clone();
-                let installer_proxy_url = (provider == Provider::Github)
-                    .then(|| releases::rewrite_proxy(GITHUB_RELEASE_PROXY, &installer_url));
-                let installer_size = installer.size;
-                let installer_type = installer_type.to_string();
-                let mut manifest_endpoints = release
-                    .assets
-                    .iter()
-                    .filter(|asset| {
-                        let name = asset.name.to_ascii_lowercase();
-                        name == "latest.json"
-                            || (name.starts_with("latest-") && name.ends_with(".json"))
-                    })
-                    .map(|asset| asset.download_url.clone())
-                    .collect::<Vec<_>>();
-                if manifest_endpoints.is_empty() {
-                    manifest_endpoints.push(installer_manifest_fallback(&provider));
+                let status = inspect_installer_releases(
+                    channel,
+                    releases,
+                    &current_version,
+                    region,
+                    &mut update,
+                );
+                let is_latest = status.status == "latest";
+                emit_installer_channel_status(app, region, status.clone());
+                channels.push(status);
+                if is_latest {
+                    for skipped in installer_channels.iter().skip(index + 1) {
+                        let skipped_status = installer_channel_status(
+                            skipped,
+                            "skipped",
+                            Some("已确认当前为最新版本，未请求".into()),
+                        );
+                        emit_installer_channel_status(app, region, skipped_status.clone());
+                        channels.push(skipped_status);
+                    }
+                    return Ok(AppUpdateCheckResult {
+                        update: None,
+                        channels,
+                        all_failed: false,
+                        region: region.as_str().into(),
+                    });
                 }
-                return Ok(Some(AppUpdateInfo {
-                    version: version.to_string(),
-                    current_version: current_version.to_string(),
-                    body: (!release.body.is_empty()).then_some(release.body),
-                    date: release.published_at,
-                    download_size: Some(installer_size),
-                    manifest_endpoints,
-                    installer_url: Some(installer_url),
-                    installer_proxy_url,
-                    installer_type,
-                }));
             }
-            Err(_) => {}
+            Err(error) => {
+                let status = installer_channel_status(channel, "failed", Some(error.to_string()));
+                emit_installer_channel_status(app, region, status.clone());
+                channels.push(status);
+            }
         }
     }
-    Err("检查更新失败，请重新启动MOD管理器。".into())
+
+    let attempted = channels
+        .iter()
+        .filter(|channel| channel.status != "skipped")
+        .collect::<Vec<_>>();
+    let all_failed = !attempted.is_empty()
+        && attempted.iter().all(|channel| channel.status == "failed");
+    Ok(AppUpdateCheckResult {
+        update,
+        channels,
+        all_failed,
+        region: region.as_str().into(),
+    })
+}
+
+async fn discover_installer_update_for_provider(
+    state: &AppState,
+    app: &AppHandle,
+    provider: Provider,
+) -> Result<AppUpdateCheckResult, String> {
+    let region = detect_installer_region();
+    let channels = installer_api_sources(region)
+        .into_iter()
+        .filter(|channel| channel.provider == provider)
+        .collect();
+    discover_installer_update_for_channels(state, app, region, channels).await
+}
+
+async fn discover_installer_update(
+    state: &AppState,
+    _locale: &str,
+    app: &AppHandle,
+) -> Result<AppUpdateCheckResult, String> {
+    let region = detect_installer_region();
+    discover_installer_update_for_channels(state, app, region, installer_api_sources(region)).await
 }
 
 pub struct AppState {
@@ -204,7 +398,10 @@ pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
 
 #[tauri::command]
 pub fn get_install_language() -> Option<String> {
-    let path = std::env::current_exe().ok()?.parent()?.join("install-language.txt");
+    let path = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join("install-language.txt");
     let value = fs::read_to_string(path).ok()?.trim().to_string();
     match value.as_str() {
         "zh-CN" | "zh-TW" | "en" | "ko" => Some(value),
@@ -214,12 +411,26 @@ pub fn get_install_language() -> Option<String> {
 
 #[tauri::command]
 pub fn read_rust_log() -> Result<RustLog, String> {
+    read_log_file("rust.log")
+}
+
+#[tauri::command]
+pub fn read_frontend_log() -> Result<RustLog, String> {
+    read_log_file("frontend.log")
+}
+
+#[tauri::command]
+pub fn read_crash_log() -> Result<RustLog, String> {
+    read_log_file("crash.log")
+}
+
+fn read_log_file(file_name: &str) -> Result<RustLog, String> {
     let path = std::env::current_exe()
         .map_err(|error| error.to_string())?
         .parent()
         .ok_or("无法确定程序目录")?
         .join("logs")
-        .join("rust.log");
+        .join(file_name);
     let content = match fs::read(&path) {
         Ok(bytes) => {
             const MAX_LOG_BYTES: usize = 512 * 1024;
@@ -233,6 +444,40 @@ pub fn read_rust_log() -> Result<RustLog, String> {
         path: path.to_string_lossy().to_string(),
         content,
     })
+}
+
+#[tauri::command]
+pub fn write_frontend_log(level: String, message: String) -> Result<(), String> {
+    const MAX_FRONTEND_LOG_BYTES: usize = 64 * 1024;
+    let message = if message.len() > MAX_FRONTEND_LOG_BYTES {
+        format!(
+            "{}...[前端日志已截断]",
+            &message[..message.floor_char_boundary(MAX_FRONTEND_LOG_BYTES)]
+        )
+    } else {
+        message
+    };
+    let level = level.to_ascii_lowercase();
+    let path = std::env::current_exe()
+        .map_err(|error| error.to_string())?
+        .parent()
+        .ok_or("无法确定程序目录")?
+        .join("logs");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.join("frontend.log"))
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "[{}][{}] {}",
+        Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+        level,
+        message
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -267,7 +512,10 @@ pub fn install_local_mod(
     state: State<'_, AppState>,
     source_path: String,
 ) -> Result<OperationResult, String> {
-    let _guard = state.operation.lock().map_err(|_| "操作锁异常".to_string())?;
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
@@ -275,15 +523,28 @@ pub fn install_local_mod(
     if !source.is_file() {
         return Err("所选文件不存在".into());
     }
-    let file_name = source.file_name().and_then(|value| value.to_str()).ok_or("文件名无效")?;
-    let extension = source.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("文件名无效")?;
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     let repository_id = format!("manual-{}", Uuid::new_v4());
     let (files, display_name) = if extension.eq_ignore_ascii_case("dll") {
         let files = archive::copy_asset(&source, &game_root, "BepInEx/plugins", file_name)?;
         (files, file_name.to_string())
     } else if extension.eq_ignore_ascii_case("zip") {
-        let folder = source.file_stem().and_then(|value| value.to_str()).ok_or("ZIP 文件名无效")?;
-        if folder.is_empty() || folder.contains('/') || folder.contains('\\') || folder.contains(':') {
+        let folder = source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or("ZIP 文件名无效")?;
+        if folder.is_empty()
+            || folder.contains('/')
+            || folder.contains('\\')
+            || folder.contains(':')
+        {
             return Err("ZIP 文件名无效".into());
         }
         (
@@ -297,10 +558,7 @@ pub fn install_local_mod(
         return Err("所选文件没有可安装内容".into());
     }
     let manifest = archive::new_manifest(&repository_id, &display_name, files.clone());
-    if let Err(error) = archive::write_manifest(
-        &state.config.manifests_dir(),
-        &manifest,
-    ) {
+    if let Err(error) = archive::write_manifest(&state.config.manifests_dir(), &manifest) {
         for relative in files {
             if let Ok(path) = game::safe_game_path(&game_root, &relative) {
                 let _ = archive::clear_readonly(&path);
@@ -309,15 +567,22 @@ pub fn install_local_mod(
         }
         return Err(error);
     }
-    Ok(OperationResult { ok: true, message: format!("{display_name} 安装完成") })
+    Ok(OperationResult {
+        ok: true,
+        message: format!("{display_name} 安装完成"),
+    })
 }
 
 #[tauri::command]
 pub fn uninstall_local_mod(
     state: State<'_, AppState>,
     dll_file: String,
-) -> Result<OperationResult, String> {
-    let _guard = state.operation.lock().map_err(|_| "操作锁异常".to_string())?;
+    allow_unmanaged: bool,
+) -> Result<UninstallLocalModResult, String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
@@ -331,14 +596,117 @@ pub fn uninstall_local_mod(
         .filter_map(|text| toml::from_str::<archive::InstallManifest>(&text).ok())
         .collect::<Vec<_>>();
     let relative = Path::new(&dll_file);
-    let safe_relative = relative.to_string_lossy().replace('\\', "/");
-    let manifest = manifests.into_iter().find(|manifest| {
-        manifest.files.iter().any(|file| file.eq_ignore_ascii_case(&safe_relative))
-    }).ok_or("该 MOD 未通过此管理器安装，拒绝删除，请手动删除此 MOD.")?;
-    archive::remove_manifest_files(&game_root, &manifest)?;
-    fs::remove_file(manifest_dir.join(format!("{}.toml", manifest.repository_id)))
-        .map_err(|error| error.to_string())?;
-    Ok(OperationResult { ok: true, message: "MOD 已删除".into() })
+    let safe_relative = mods::canonical_dll_name(&relative.to_string_lossy().replace('\\', "/"));
+    let manifest = manifests
+        .into_iter()
+        .find(|manifest| {
+            manifest
+                .files
+                .iter()
+                .any(|file| file.eq_ignore_ascii_case(&safe_relative))
+        });
+    if let Some(manifest) = manifest {
+        archive::remove_manifest_files(&game_root, &manifest)?;
+        fs::remove_file(manifest_dir.join(format!("{}.toml", manifest.repository_id)))
+            .map_err(|error| error.to_string())?;
+        return Ok(UninstallLocalModResult {
+            ok: true,
+            message: "MOD 已删除".into(),
+            requires_confirmation: false,
+        });
+    }
+    if !allow_unmanaged {
+        return Ok(UninstallLocalModResult {
+            ok: false,
+            message: "该 MOD 不是通过本管理器安装的，因此仅删除 DLL 文件，无法删除其他的残留文件，需自己手动处理删除。是否继续？".into(),
+            requires_confirmation: true,
+        });
+    }
+    if !Path::new(&safe_relative)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+    {
+        return Err("只能删除 BepInEx/plugins 下的 DLL 文件".into());
+    }
+    let plugins_root = game::safe_game_path(&game_root, "BepInEx/plugins")?;
+    let enabled_path = game::safe_game_path(&game_root, &safe_relative)?;
+    let disabled_path = game::safe_game_path(&game_root, &mods::disabled_dll_file(&safe_relative))?;
+    let dll_path = if enabled_path.is_file() {
+        enabled_path
+    } else {
+        disabled_path
+    };
+    if !dll_path.starts_with(&plugins_root) {
+        return Err("只能删除 BepInEx/plugins 下的 DLL 文件".into());
+    }
+    if !dll_path.is_file() {
+        return Err("找不到对应的 MOD DLL 文件".into());
+    }
+    archive::clear_readonly(&dll_path)?;
+    fs::remove_file(&dll_path).map_err(|error| error.to_string())?;
+    Ok(UninstallLocalModResult {
+        ok: true,
+        message: "MOD DLL 已删除".into(),
+        requires_confirmation: false,
+    })
+}
+
+#[tauri::command]
+pub fn toggle_local_mod(
+    state: State<'_, AppState>,
+    dll_file: String,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+    let relative = mods::canonical_dll_name(
+        &Path::new(&dll_file)
+            .to_string_lossy()
+            .replace('\\', "/"),
+    );
+    if !Path::new(&relative)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+    {
+        return Err("只能切换 BepInEx/plugins 下的 DLL 文件".into());
+    }
+    let plugins_root = game::safe_game_path(&game_root, "BepInEx/plugins")?;
+    let enabled_path = game::safe_game_path(&game_root, &relative)?;
+    let disabled_path = game::safe_game_path(&game_root, &mods::disabled_dll_file(&relative))?;
+    if !enabled_path.starts_with(&plugins_root) || !disabled_path.starts_with(&plugins_root) {
+        return Err("只能切换 BepInEx/plugins 下的 DLL 文件".into());
+    }
+    let (source, target) = if enabled {
+        (&disabled_path, &enabled_path)
+    } else {
+        (&enabled_path, &disabled_path)
+    };
+    if !source.is_file() {
+        return Err(if enabled {
+            "找不到已禁用的 MOD DLL 文件"
+        } else {
+            "找不到已启用的 MOD DLL 文件"
+        }
+        .into());
+    }
+    if target.exists() {
+        return Err("目标 MOD 文件已存在，无法切换".into());
+    }
+    archive::clear_readonly(source)?;
+    fs::rename(source, target).map_err(|error| error.to_string())?;
+    Ok(OperationResult {
+        ok: true,
+        message: if enabled {
+            "MOD 已启用".into()
+        } else {
+            "MOD 已禁用".into()
+        },
+    })
 }
 
 #[tauri::command]
@@ -347,6 +715,16 @@ pub fn save_settings(
     patch: SettingsPatch,
 ) -> Result<PublicConfig, String> {
     let mut config = state.config.load_or_default();
+    if let Some(value) = patch.ui_zoom {
+        config.ui_zoom = value.clamp(0.5, 2.0);
+    }
+    if let Some(steps) = patch.onboarding_seen_steps {
+        config.onboarding_seen_steps = steps
+            .into_iter()
+            .map(|step| step.trim().to_string())
+            .filter(|step| !step.is_empty())
+            .collect();
+    }
     if let Some(path) = patch.game_path {
         config.game.path = path;
     }
@@ -590,7 +968,10 @@ pub async fn refresh_release_asset_sizes(
         }
     }
     let updated = latest_release.clone();
-    state.config.save(&latest_config).map_err(|e| e.to_string())?;
+    state
+        .config
+        .save(&latest_config)
+        .map_err(|e| e.to_string())?;
     Ok(updated)
 }
 
@@ -601,12 +982,7 @@ pub async fn cancel_release_asset_sizes(
     release_tag: String,
 ) -> Result<OperationResult, String> {
     let key = release_size_request_key(&repository_id, &release_tag);
-    if let Some(cancelled) = state
-        .release_size_cancellations
-        .lock()
-        .await
-        .get(&key)
-    {
+    if let Some(cancelled) = state.release_size_cancellations.lock().await.get(&key) {
         cancelled.store(true, Ordering::Release);
     }
     Ok(OperationResult {
@@ -871,11 +1247,50 @@ pub async fn install_repository(
     );
     archive::start_download();
     let temp = match repo.release_proxy_mode {
-        ProxyMode::Direct => archive::download_to_temp_with_threads(&client, &asset.download_url, &state.config.cache_dir(), &repo.name, Some(&app), download_threads).await?,
-        ProxyMode::Fixed => archive::download_to_temp_with_threads(&client, &proxy_url, &state.config.cache_dir(), &repo.name, Some(&app), download_threads).await?,
-        ProxyMode::Auto => match archive::download_to_temp_with_threads(&client, &asset.download_url, &state.config.cache_dir(), &repo.name, Some(&app), download_threads).await {
+        ProxyMode::Direct => {
+            archive::download_to_temp_with_threads(
+                &client,
+                &asset.download_url,
+                &state.config.cache_dir(),
+                &repo.name,
+                Some(&app),
+                download_threads,
+            )
+            .await?
+        }
+        ProxyMode::Fixed => {
+            archive::download_to_temp_with_threads(
+                &client,
+                &proxy_url,
+                &state.config.cache_dir(),
+                &repo.name,
+                Some(&app),
+                download_threads,
+            )
+            .await?
+        }
+        ProxyMode::Auto => match archive::download_to_temp_with_threads(
+            &client,
+            &asset.download_url,
+            &state.config.cache_dir(),
+            &repo.name,
+            Some(&app),
+            download_threads,
+        )
+        .await
+        {
             Ok(path) => path,
-            Err(_) if proxy_url != asset.download_url => archive::download_to_temp_with_threads(&client, &proxy_url, &state.config.cache_dir(), &repo.name, Some(&app), download_threads).await?,
+            Err(_) if proxy_url != asset.download_url => {
+                archive::download_to_temp_with_threads(
+                    &client,
+                    &proxy_url,
+                    &state.config.cache_dir(),
+                    &repo.name,
+                    Some(&app),
+                    download_threads,
+                )
+                .await?
+            }
             Err(error) => return Err(error),
         },
     };
@@ -1085,8 +1500,14 @@ pub async fn import_repository_source(
         cleared_config
             .repositories
             .retain(|repo| repo.source_id.as_deref() != Some(source_id.as_str()));
-        state.config.save(&cleared_config).map_err(|e| e.to_string())?;
-        (original_config.network.timeout_seconds, previous_repositories)
+        state
+            .config
+            .save(&cleared_config)
+            .map_err(|e| e.to_string())?;
+        (
+            original_config.network.timeout_seconds,
+            previous_repositories,
+        )
     };
     let client = releases::build_client(timeout_seconds).map_err(|e| e.to_string())?;
     let fetched = client
@@ -1095,7 +1516,11 @@ pub async fn import_repository_source(
         .send()
         .await
         .map_err(|error| error.to_string())
-        .and_then(|response| response.error_for_status().map_err(|error| error.to_string()));
+        .and_then(|response| {
+            response
+                .error_for_status()
+                .map_err(|error| error.to_string())
+        });
     let fetched = match fetched {
         Ok(response) => response.text().await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
@@ -1107,13 +1532,28 @@ pub async fn import_repository_source(
             return Err(error);
         }
     };
-    let repositories = match state.config.validate_repository_source(&text) {
-        Ok(repositories) => repositories,
+    let document = match state.config.validate_repository_source_document(&text) {
+        Ok(document) => document,
         Err(error) => {
             restore_source_repositories(&state, &source_id, &previous_repositories).await;
             return Err(error.to_string());
         }
     };
+    let repositories = document
+        .repositories
+        .into_iter()
+        .map(|mut repository| {
+            // source_id in an exported configuration describes the author's
+            // local manager state, so it is deliberately ignored here.
+            repository.source_id = None;
+            repository
+        })
+        .collect::<Vec<_>>();
+    let source_urls = repositories
+        .iter()
+        .map(|repository| repository.url.trim().to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let child_sources = document.repository_sources;
     let bundle = crate::models::RepositoryBundle {
         format: "oc2-mod-repository-bundle".into(),
         schema_version: 1,
@@ -1126,12 +1566,101 @@ pub async fn import_repository_source(
     config
         .repositories
         .retain(|repo| repo.source_id.as_deref() != Some(source_id.as_str()));
-    let source_urls = bundle
-        .repositories
+    let parent_url = config
+        .repository_sources
         .iter()
-        .map(|repo| repo.url.trim().to_ascii_lowercase())
+        .find(|source| source.id == source_id)
+        .map(|source| source.url.trim().to_ascii_lowercase());
+    let declared_child_ids = child_sources
+        .iter()
+        .filter(|source| {
+            parent_url
+                .as_deref()
+                .map(|url| !source.url.trim().eq_ignore_ascii_case(url))
+                .unwrap_or(true)
+        })
+        .map(|source| source.id.as_str())
         .collect::<std::collections::HashSet<_>>();
-    let preview = state.config.import_bundle(&mut config, &bundle, "overwrite");
+    let stale_child_ids = config
+        .repository_sources
+        .iter()
+        .filter(|source| source.parent_id.as_deref() == Some(source_id.as_str()))
+        .filter(|source| !declared_child_ids.contains(source.id.as_str()))
+        .map(|source| source.id.clone())
+        .collect::<Vec<_>>();
+    let mut removed_child_ids = stale_child_ids;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for source in &config.repository_sources {
+            if let Some(parent_id) = source.parent_id.as_deref()
+                && removed_child_ids.iter().any(|removed| removed == parent_id)
+                && !removed_child_ids.iter().any(|removed| removed == &source.id)
+            {
+                removed_child_ids.push(source.id.clone());
+                changed = true;
+            }
+        }
+    }
+    if !removed_child_ids.is_empty() {
+        config
+            .repository_sources
+            .retain(|source| !removed_child_ids.iter().any(|id| id == &source.id));
+        config.repositories.retain(|repo| {
+            repo.source_id
+                .as_ref()
+                .map(|id| !removed_child_ids.iter().any(|child_id| child_id == id))
+                .unwrap_or(true)
+        });
+    }
+    for child in child_sources {
+        let child_url = child.url.trim().to_string();
+        if parent_url
+            .as_deref()
+            .map(|url| child_url.eq_ignore_ascii_case(url))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if let Some(existing) = config.repository_sources.iter_mut().find(|source| {
+            source.id == child.id && source.parent_id.as_deref() == Some(source_id.as_str())
+        }) {
+            existing.nickname = child.nickname.trim().to_string();
+            existing.url = child_url;
+            existing.region = child.region.clone();
+            existing.builtin = child.builtin;
+            continue;
+        }
+        if config
+            .repository_sources
+            .iter()
+            .any(|source| source.url.trim().eq_ignore_ascii_case(&child_url))
+        {
+            // A source URL is authoritative for identity. Keeping the
+            // existing owner also prevents nested sources from forming a cycle.
+            continue;
+        }
+        let child_id = if config
+            .repository_sources
+            .iter()
+            .any(|source| source.id == child.id)
+        {
+            Uuid::new_v4().to_string()
+        } else {
+            child.id.trim().to_string()
+        };
+        config.repository_sources.push(RepositorySource {
+            id: child_id,
+            nickname: child.nickname.trim().to_string(),
+            url: child_url,
+            region: child.region,
+            builtin: child.builtin,
+            parent_id: Some(source_id.clone()),
+        });
+    }
+    let preview = state
+        .config
+        .import_bundle(&mut config, &bundle, "overwrite");
     for repo in &mut config.repositories {
         if source_urls.contains(&repo.url.trim().to_ascii_lowercase()) {
             repo.source_id = Some(source_id.clone());
@@ -1169,18 +1698,33 @@ pub fn save_repository_source(
     if nickname.is_empty() || url.is_empty() {
         return Err("仓库源昵称和地址不能为空".into());
     }
-    if config.repository_sources.iter().any(|item| {
-        Some(item.id.as_str()) != id.as_deref() && item.url.eq_ignore_ascii_case(url)
-    }) {
+    if config
+        .repository_sources
+        .iter()
+        .any(|item| Some(item.id.as_str()) != id.as_deref() && item.url.eq_ignore_ascii_case(url))
+    {
         return Err("仓库源地址已存在".into());
     }
     if let Some(id) = id {
-        let source = config.repository_sources.iter_mut().find(|item| item.id == id).ok_or("仓库源不存在")?;
-        if source.builtin { return Err("内置仓库源不能修改".into()); }
+        let source = config
+            .repository_sources
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or("仓库源不存在")?;
+        if source.builtin {
+            return Err("内置仓库源不能修改".into());
+        }
         source.nickname = nickname.into();
         source.url = url.into();
     } else {
-        config.repository_sources.push(RepositorySource { id: Uuid::new_v4().to_string(), nickname: nickname.into(), url: url.into(), builtin: false });
+        config.repository_sources.push(RepositorySource {
+            id: Uuid::new_v4().to_string(),
+            nickname: nickname.into(),
+            url: url.into(),
+            region: None,
+            builtin: false,
+            parent_id: None,
+        });
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
     Ok(state.config.public_config(&config))
@@ -1196,31 +1740,81 @@ pub fn save_repository_sources(
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
     let mut config = state.config.load_or_default();
-    let builtin = config
+    let has_builtin_root = config
         .repository_sources
         .iter()
-        .find(|source| source.builtin)
-        .cloned()
-        .ok_or("缺少内置仓库源")?;
-    let existing_ids = config
+        .any(|source| source.builtin && source.parent_id.is_none());
+    if !has_builtin_root {
+        return Err("缺少内置仓库源".into());
+    }
+    let builtin_ids = config
         .repository_sources
         .iter()
-        .filter(|source| !source.builtin)
+        .filter(|source| source.builtin && source.parent_id.is_none())
         .map(|source| source.id.clone())
         .collect::<std::collections::HashSet<_>>();
+    let builtin_root_urls = config
+        .repository_sources
+        .iter()
+        .filter(|source| source.builtin && source.parent_id.is_none())
+        .map(|source| source.url.trim().to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
     let mut seen_urls = std::collections::HashSet::new();
-    seen_urls.insert(builtin.url.trim().to_ascii_lowercase());
-    let mut seen_ids = std::collections::HashSet::new();
-    let mut ordered = vec![builtin];
+    seen_urls.extend(builtin_root_urls);
+    seen_urls.extend(
+        config
+            .repository_sources
+            .iter()
+            .filter(|source| source.builtin && source.parent_id.is_some())
+            .map(|source| source.url.trim().to_ascii_lowercase()),
+    );
+    let mut seen_ids = config
+        .repository_sources
+        .iter()
+        .filter(|source| source.builtin)
+        .map(|source| source.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut ordered = config
+        .repository_sources
+        .iter()
+        .filter(|source| source.builtin)
+        .cloned()
+        .collect::<Vec<_>>();
     for source in sources {
-        if source.builtin {
+        if builtin_ids.contains(&source.id) {
             continue;
+        }
+        if source.builtin {
+            if let Some(existing) = config
+                .repository_sources
+                .iter()
+                .find(|existing| existing.id == source.id && existing.builtin)
+                .cloned()
+            {
+                if !ordered.iter().any(|item| item.id == existing.id) {
+                    ordered.push(existing);
+                }
+                continue;
+            }
+            continue;
+        }
+        let id = source.id.trim().to_string();
+        if id.is_empty() {
+            return Err("仓库唯一 ID 不能为空".into());
+        }
+        if id.len() > 128 || !id.bytes().enumerate().all(|(index, byte)| {
+            (byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' || byte == b'.')
+                && (index > 0 || byte.is_ascii_alphanumeric())
+        }) {
+            return Err("仓库唯一 ID 格式无效".into());
         }
         let nickname = source.nickname.trim().to_string();
         let url = source.url.trim().to_string();
         if nickname.is_empty() || url.is_empty() {
             return Err("仓库源昵称和地址不能为空".into());
         }
+        crate::config::validate_repository_source_region(source.region.as_deref())
+            .map_err(|error| error.to_string())?;
         let parsed = Url::parse(&url).map_err(|error| format!("仓库源地址无效: {error}"))?;
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return Err("仓库源必须使用 HTTP 或 HTTPS 地址".into());
@@ -1228,11 +1822,6 @@ pub fn save_repository_sources(
         if !seen_urls.insert(url.to_ascii_lowercase()) {
             return Err("仓库源地址已存在".into());
         }
-        let id = if existing_ids.contains(&source.id) {
-            source.id
-        } else {
-            Uuid::new_v4().to_string()
-        };
         if !seen_ids.insert(id.clone()) {
             return Err("仓库源标识重复".into());
         }
@@ -1240,17 +1829,34 @@ pub fn save_repository_sources(
             id,
             nickname,
             url,
-            builtin: false,
+            region: source.region.map(|value| value.trim().to_ascii_lowercase()),
+            builtin: source.builtin,
+            parent_id: source.parent_id,
         });
+    }
+    loop {
+        let before = ordered.len();
+        let known_ids = ordered
+            .iter()
+            .map(|source| source.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        ordered.retain(|source| {
+            source
+                .parent_id
+                .as_deref()
+                .map(|parent_id| known_ids.contains(parent_id))
+                .unwrap_or(true)
+        });
+        if ordered.len() == before {
+            break;
+        }
     }
     let retained_source_ids = ordered
         .iter()
-        .filter(|source| !source.builtin)
-        .map(|source| source.id.as_str())
+        .map(|source| source.id.clone())
         .collect::<std::collections::HashSet<_>>();
     for repository in &mut config.repositories {
         if let Some(id) = repository.source_id.as_deref()
-            && id != "azhe"
             && !retained_source_ids.contains(id)
         {
             repository.source_id = None;
@@ -1262,13 +1868,36 @@ pub fn save_repository_sources(
 }
 
 #[tauri::command]
-pub fn delete_repository_source(state: State<'_, AppState>, id: String) -> Result<PublicConfig, String> {
+pub fn delete_repository_source(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<PublicConfig, String> {
     let mut config = state.config.load_or_default();
-    let index = config.repository_sources.iter().position(|item| item.id == id).ok_or("仓库源不存在")?;
-    if config.repository_sources[index].builtin { return Err("内置仓库源不能删除".into()); }
-    config.repository_sources.remove(index);
+    let index = config
+        .repository_sources
+        .iter()
+        .position(|item| item.id == id)
+        .ok_or("仓库源不存在")?;
+    if config.repository_sources[index].builtin {
+        return Err("内置仓库源不能删除".into());
+    }
+    let mut removed_ids = vec![id.clone()];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for source in &config.repository_sources {
+            if let Some(parent_id) = source.parent_id.as_deref()
+                && removed_ids.iter().any(|removed| removed == parent_id)
+                && !removed_ids.iter().any(|removed| removed == &source.id)
+            {
+                removed_ids.push(source.id.clone());
+                changed = true;
+            }
+        }
+    }
+    config.repository_sources.retain(|source| !removed_ids.iter().any(|removed| removed == &source.id));
     for repository in &mut config.repositories {
-        if repository.source_id.as_deref() == Some(id.as_str()) {
+        if repository.source_id.as_ref().is_some_and(|source_id| removed_ids.iter().any(|removed| removed == source_id)) {
             repository.source_id = None;
         }
     }
@@ -1277,15 +1906,48 @@ pub fn delete_repository_source(state: State<'_, AppState>, id: String) -> Resul
 }
 
 #[tauri::command]
-pub fn reorder_repository_sources(state: State<'_, AppState>, ids: Vec<String>) -> Result<PublicConfig, String> {
+pub fn reorder_repository_sources(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<PublicConfig, String> {
     let mut config = state.config.load_or_default();
-    let Some(builtin) = config.repository_sources.iter().find(|item| item.builtin).cloned() else { return Err("缺少内置仓库源".into()); };
-    let mut ordered = vec![builtin];
+    let builtin_roots = config
+        .repository_sources
+        .iter()
+        .filter(|item| item.builtin && item.parent_id.is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    if builtin_roots.is_empty() {
+        return Err("缺少内置仓库源".into());
+    }
+    let builtin_ids = builtin_roots
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut ordered = config
+        .repository_sources
+        .iter()
+        .filter(|source| source.builtin)
+        .cloned()
+        .collect::<Vec<_>>();
     for id in ids {
-        if let Some(source) = config.repository_sources.iter().find(|item| !item.builtin && item.id == id).cloned() { ordered.push(source); }
+        if let Some(source) = config
+            .repository_sources
+            .iter()
+            .find(|item| {
+                !builtin_ids.contains(item.id.as_str())
+                    && item.id == id
+                    && !ordered.iter().any(|existing| existing.id == item.id)
+            })
+            .cloned()
+        {
+            ordered.push(source);
+        }
     }
     for source in &config.repository_sources {
-        if !source.builtin && !ordered.iter().any(|item| item.id == source.id) { ordered.push(source.clone()); }
+        if !ordered.iter().any(|item| item.id == source.id) {
+            ordered.push(source.clone());
+        }
     }
     config.repository_sources = ordered;
     state.config.save(&config).map_err(|e| e.to_string())?;
@@ -1315,15 +1977,23 @@ pub fn save_repository(
         .repositories
         .iter()
         .find(|repo| repo.id == id)
-        .map(|repo| (
-            repo.name_i18n.clone(),
-            repo.note_i18n.clone(),
-            repo.source_id.clone(),
-            repo.group.clone(),
-            repo.group_i18n.clone(),
-        ));
+        .map(|repo| {
+            (
+                repo.name_i18n.clone(),
+                repo.note_i18n.clone(),
+                repo.source_id.clone(),
+                repo.group.clone(),
+                repo.group_i18n.clone(),
+            )
+        });
     let download_threads = match &patch.provider {
-        Provider::Github => if patch.download_threads == 0 { 16 } else { patch.download_threads.clamp(1, 32) },
+        Provider::Github => {
+            if patch.download_threads == 0 {
+                16
+            } else {
+                patch.download_threads.clamp(1, 32)
+            }
+        }
         Provider::Gitee => 1,
     };
     let api_proxy_url = patch.api_proxy_url.clone();
@@ -1384,12 +2054,20 @@ pub fn save_repository(
         let old_gitee = existing.gitee_token.clone();
         item.builtin = existing.builtin;
         *existing = item;
-        if patch.github_token.is_empty() { existing.github_token = old_github; }
-        if patch.gitee_token.is_empty() { existing.gitee_token = old_gitee; }
-        state.config.set_repository_tokens(existing, &patch.github_token, &patch.gitee_token);
+        if patch.github_token.is_empty() {
+            existing.github_token = old_github;
+        }
+        if patch.gitee_token.is_empty() {
+            existing.gitee_token = old_gitee;
+        }
+        state
+            .config
+            .set_repository_tokens(existing, &patch.github_token, &patch.gitee_token);
     } else {
         let mut item = item;
-        state.config.set_repository_tokens(&mut item, &patch.github_token, &patch.gitee_token);
+        state
+            .config
+            .set_repository_tokens(&mut item, &patch.github_token, &patch.gitee_token);
         config.repositories.push(item);
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
@@ -1544,7 +2222,7 @@ pub fn switch_winhttp(
             }
             WinhttpState::ModDisabled => {}
             WinhttpState::Conflict => {
-                return Err("winhttp.dll 与禁用文件同时存在，请先切换为有 MOD 状态".into())
+                return Err("winhttp.dll 与禁用文件同时存在，请先切换为有 MOD 状态".into());
             }
             WinhttpState::Missing => return Err("未找到 winhttp.dll，无法切换 MOD 状态".into()),
         }
@@ -1576,13 +2254,17 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
     }
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     let mut config = state.config.load_or_default();
+    config.ui_zoom = 1.0;
     for repo in &mut config.repositories {
         repo.cached_releases.clear();
         repo.etag = None;
         repo.last_error = None;
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
-    Ok(OperationResult { ok: true, message: "已清除缓存并重置界面".into() })
+    Ok(OperationResult {
+        ok: true,
+        message: "已清除缓存并重置界面".into(),
+    })
 }
 
 #[tauri::command]
@@ -1652,13 +2334,71 @@ pub fn exit_app() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_app_update(
+    app: AppHandle,
     state: State<'_, AppState>,
     locale: Option<String>,
-) -> Result<Option<AppUpdateInfo>, String> {
-    discover_installer_update(&state, locale.as_deref().unwrap_or("zh-CN")).await
+) -> Result<AppUpdateCheckResult, String> {
+    let _ = locale;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(90),
+        discover_installer_update(&state, "zh-CN", &app),
+    )
+    .await
+    {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(error)) => {
+            let region = detect_installer_region();
+            log::error!("安装器更新检查初始化失败: {error}");
+            let channels = installer_api_sources(region)
+                .iter()
+                .map(|channel| {
+                    let status = installer_channel_status(
+                        channel,
+                        "failed",
+                        Some("更新检查初始化失败，已跳过自动更新".into()),
+                    );
+                    emit_installer_channel_status(&app, region, status.clone());
+                    status
+                })
+                .collect();
+            Ok(AppUpdateCheckResult {
+                update: None,
+                channels,
+                all_failed: true,
+                region: region.as_str().into(),
+            })
+        }
+        Err(_) => {
+            let region = detect_installer_region();
+            let channels = installer_api_sources(region)
+                .iter()
+                .map(|channel| {
+                    let status = installer_channel_status(
+                        channel,
+                        "failed",
+                        Some("更新检查超时，已跳过自动更新".into()),
+                    );
+                    emit_installer_channel_status(&app, region, status.clone());
+                    status
+                })
+                .collect();
+            Ok(AppUpdateCheckResult {
+                update: None,
+                channels,
+                all_failed: true,
+                region: region.as_str().into(),
+            })
+        }
+    }
 }
 
-async fn download_installer(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+async fn download_installer(
+    client: &reqwest::Client,
+    url: &str,
+    app: &AppHandle,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    archive::start_download();
     let response = client
         .get(url)
         .header("User-Agent", releases::APP_USER_AGENT)
@@ -1667,39 +2407,171 @@ async fn download_installer(client: &reqwest::Client, url: &str) -> Result<Vec<u
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| error.to_string())?;
-    response
-        .bytes()
-        .await
-        .map(|bytes| bytes.to_vec())
-        .map_err(|error| error.to_string())
+    let total = response.content_length();
+    let started = std::time::Instant::now();
+    let mut downloaded = 0_u64;
+    let mut bytes = Vec::with_capacity(total.unwrap_or_default().min(64 * 1024 * 1024) as usize);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| error.to_string())?;
+        bytes.extend_from_slice(&chunk);
+        downloaded += chunk.len() as u64;
+        archive::emit_progress(Some(app), label, downloaded, total, started.elapsed(), false);
+    }
+    archive::emit_progress(Some(app), label, downloaded, total, started.elapsed(), true);
+    Ok(bytes)
+}
+
+async fn download_installer_with_timeout(
+    client: &reqwest::Client,
+    url: &str,
+    app: &AppHandle,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        download_installer(client, url, app, label),
+    )
+    .await
+    {
+        Ok(result) => {
+            if result.is_err() {
+                archive::emit_progress(
+                    Some(app),
+                    label,
+                    0,
+                    None,
+                    std::time::Duration::from_secs(0),
+                    true,
+                );
+            }
+            result
+        }
+        Err(_) => {
+            archive::cancel_download();
+            archive::emit_progress(
+                Some(app),
+                label,
+                0,
+                None,
+                std::time::Duration::from_secs(15),
+                true,
+            );
+            Err("单个安装包下载超过 15 秒，已跳过当前渠道".into())
+        }
+    }
+}
+
+async fn download_installer_for_info(
+    client: &reqwest::Client,
+    info: &AppUpdateInfo,
+    app: &AppHandle,
+) -> Result<Vec<u8>, Vec<String>> {
+    let urls = if info.installer_download_urls.is_empty() {
+        info.installer_url.clone().into_iter().collect::<Vec<_>>()
+    } else {
+        info.installer_download_urls.clone()
+    };
+    let mut errors = Vec::new();
+    for url in urls {
+        match download_installer_with_timeout(client, &url, app, "正在下载程序更新").await {
+            Ok(value) => return Ok(value),
+            Err(error) => errors.push(error),
+        }
+    }
+    Err(errors)
+}
+
+fn emit_installer_download_failure(
+    app: &AppHandle,
+    region: InstallerRegion,
+    info: &AppUpdateInfo,
+    error: &str,
+) {
+    let Some(channel_id) = info.source_channel.as_deref() else {
+        return;
+    };
+    let Some(channel) = installer_api_sources(region)
+        .into_iter()
+        .find(|channel| channel.id == channel_id)
+    else {
+        return;
+    };
+    emit_installer_channel_status(
+        app,
+        region,
+        installer_channel_status(&channel, "failed", Some(error.into())),
+    );
 }
 
 #[tauri::command]
 pub async fn install_app_update(
-    _app: AppHandle,
+    app: AppHandle,
     state: State<'_, AppState>,
     locale: Option<String>,
 ) -> Result<OperationResult, String> {
-    let info = discover_installer_update(&state, locale.as_deref().unwrap_or("zh-CN"))
-        .await?
-        .ok_or("当前已经是最新版本")?;
-    let url = info.installer_url.ok_or("更新中没有匹配的安装包")?;
+    let result = discover_installer_update(&state, locale.as_deref().unwrap_or("zh-CN"), &app).await?;
+    let mut info = result.update.ok_or("当前已经是最新版本")?;
     let config = state.config.load_or_default();
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
-    let bytes = match download_installer(&client, &url).await {
-        Ok(bytes) => bytes,
-        Err(direct_error) => {
-            let Some(proxy_url) = info.installer_proxy_url.as_deref() else {
-                return Err(direct_error);
-            };
-            download_installer(&client, proxy_url)
-                .await
-                .map_err(|proxy_error| format!("更新下载失败：直连失败 ({direct_error})；代理失败 ({proxy_error})"))?
+    let region = detect_installer_region();
+    let mut errors = Vec::new();
+    let mut bytes = None;
+    let mut github_retried = false;
+    loop {
+        match download_installer_for_info(&client, &info, &app).await {
+            Ok(value) => {
+                bytes = Some(value);
+                break;
+            }
+            Err(download_errors) => {
+                let detail = if download_errors.is_empty() {
+                    "更新中没有匹配的安装包".to_string()
+                } else {
+                    download_errors.join("；")
+                };
+                errors.push(detail.clone());
+                emit_installer_download_failure(&app, region, &info, &detail);
+
+                // Gitee release URLs are direct-only. Once that platform's
+                // asset download fails, query GitHub again and hand the new
+                // candidate to the same release download layer.
+                if info.provider == Some(Provider::Gitee) && !github_retried {
+                    github_retried = true;
+                    let fallback =
+                        discover_installer_update_for_provider(&state, &app, Provider::Github)
+                            .await?;
+                    if let Some(next_info) = fallback.update {
+                        info = next_info;
+                        continue;
+                    }
+                    errors.push(if fallback.all_failed {
+                        "GitHub API 请求失败，无法继续下载更新".into()
+                    } else {
+                        "GitHub 当前没有可用的更新安装包".into()
+                    });
+                }
+                break;
+            }
         }
+    }
+    let bytes = bytes.ok_or_else(|| {
+        if errors.is_empty() {
+            "更新中没有匹配的安装包".to_string()
+        } else {
+            format!("更新下载失败：{}", errors.join("；"))
+        }
+    })?;
+    let installer_type = if info.installer_type.eq_ignore_ascii_case("exe") {
+        "exe"
+    } else {
+        "msi"
     };
-    let installer_type = if info.installer_type.eq_ignore_ascii_case("exe") { "exe" } else { "msi" };
-    let path = std::env::temp_dir().join(format!("OC2-Mod-Manager-{}.{}", info.version, installer_type));
+    let path = std::env::temp_dir().join(format!(
+        "OC2-Mod-Manager-{}.{}",
+        info.version, installer_type
+    ));
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     if installer_type == "exe" {
         std::process::Command::new(&path)

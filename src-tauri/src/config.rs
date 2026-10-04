@@ -5,16 +5,77 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const CONFIG_DIR: &str = "OC2ModManager";
 const CONFIG_FILE: &str = "config.toml";
 const BUNDLE_FORMAT: &str = "oc2-mod-repository-bundle";
-pub const AUTHORITATIVE_REPOSITORY_SOURCE: &str = "https://raw.giteeusercontent.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/azhe-repository-source.oc2repo.toml";
+pub const REGION_CHINESE_MAINLAND: &str = "chinese_mainland";
+pub const REGION_INTERNATIONAL: &str = "international";
+
+pub fn current_user_region() -> &'static str {
+    #[cfg(windows)]
+    {
+        use winapi::um::winnls::GetUserGeoID;
+        // GEOCLASS_NATION is 16 in the Windows SDK and GEOID_CHINA is 45.
+        if unsafe { GetUserGeoID(16) } == 45 {
+            REGION_CHINESE_MAINLAND
+        } else {
+            REGION_INTERNATIONAL
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        REGION_INTERNATIONAL
+    }
+}
+
+pub fn validate_repository_source_region(region: Option<&str>) -> Result<(), ConfigError> {
+    let Some(value) = region.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    if value.eq_ignore_ascii_case("chinese_mainland")
+        || value.eq_ignore_ascii_case("mainland-china")
+        || value.eq_ignore_ascii_case("international")
+        || value.eq_ignore_ascii_case("other")
+    {
+        Ok(())
+    } else {
+        Err(ConfigError::Invalid(format!(
+            "仓库源地区无效: {value}，可使用 chinese_mainland 或 international"
+        )))
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct RepositorySourceFile {
+    #[serde(default)]
     repositories: Vec<RepositoryExport>,
+    #[serde(default)]
+    repository_sources: Vec<RepositorySource>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuiltinRepositoryEntry {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(flatten)]
+    repository: RepositoryExport,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuiltinRepositoryFile {
+    #[serde(default)]
+    repositories: Vec<BuiltinRepositoryEntry>,
+    #[serde(default)]
+    repository_sources: Vec<RepositorySource>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RepositorySourceDocument {
+    pub repositories: Vec<RepositoryExport>,
+    pub repository_sources: Vec<RepositorySource>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -80,7 +141,12 @@ impl ConfigService {
         };
         let text = fs::read_to_string(&source).map_err(|e| ConfigError::Read(e.to_string()))?;
         match toml::from_str::<AppConfig>(&text) {
-            Ok(config) => Ok(config),
+            Ok(mut config) => {
+                if synchronize_builtin_repository_sources(&mut config) {
+                    self.save(&config)?;
+                }
+                Ok(config)
+            }
             Err(error) => {
                 let backup = self.root.join(format!(
                     "config.corrupt-{}.toml",
@@ -128,6 +194,9 @@ impl ConfigService {
         }
         PublicConfig {
             schema_version: config.schema_version,
+            region: current_user_region().into(),
+            ui_zoom: config.ui_zoom,
+            onboarding_seen_steps: config.onboarding_seen_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),
             launch: config.launch.clone(),
@@ -243,16 +312,47 @@ impl ConfigService {
         Ok(bundle)
     }
 
-    pub fn validate_repository_source(&self, text: &str) -> Result<Vec<RepositoryExport>, ConfigError> {
+    pub fn validate_repository_source_document(&self, text: &str) -> Result<RepositorySourceDocument, ConfigError> {
         if text.len() > 1024 * 1024 {
             return Err(ConfigError::Invalid("仓库源文件超过 1 MiB".into()));
         }
         let source: RepositorySourceFile = toml::from_str(text)
             .map_err(|e| ConfigError::Invalid(format!("仓库源 TOML 解析失败: {e}")))?;
+        if source.repositories.is_empty() && source.repository_sources.is_empty() {
+            return Err(ConfigError::Invalid("仓库源至少需要包含一个仓库或一个子仓库源".into()));
+        }
         for repo in &source.repositories {
             validate_repository(repo)?;
         }
-        Ok(source.repositories)
+        let mut source_ids = std::collections::HashSet::new();
+        let mut source_urls = std::collections::HashSet::new();
+        let mut repository_sources = Vec::new();
+        for source in source.repository_sources {
+            if source.id.trim().is_empty() || source.nickname.trim().is_empty() {
+                return Err(ConfigError::Invalid("仓库源 ID 和昵称不能为空".into()));
+            }
+            validate_repository_source_region(source.region.as_deref())?;
+            let parsed = url::Url::parse(source.url.trim()).map_err(|e| {
+                ConfigError::Invalid(format!("仓库源 {} 的 URL 无效: {e}", source.id))
+            })?;
+            if parsed.scheme() != "http" && parsed.scheme() != "https" {
+                return Err(ConfigError::Invalid(format!(
+                    "仓库源 {} 必须使用 HTTP 或 HTTPS 地址",
+                    source.id
+                )));
+            }
+            if !source_urls.insert(source.url.trim().to_ascii_lowercase()) {
+                continue;
+            }
+            if !source_ids.insert(source.id.trim().to_string()) {
+                return Err(ConfigError::Invalid(format!("仓库源标识重复: {}", source.id)));
+            }
+            repository_sources.push(source);
+        }
+        Ok(RepositorySourceDocument {
+            repositories: source.repositories,
+            repository_sources,
+        })
     }
 
     pub fn preview_bundle(&self, config: &AppConfig, bundle: &RepositoryBundle) -> ImportPreview {
@@ -354,6 +454,8 @@ impl ConfigService {
 fn default_config() -> AppConfig {
     AppConfig {
         schema_version: 1,
+        ui_zoom: 1.0,
+        onboarding_seen_steps: Vec::new(),
         game: GameConfig {
             path: String::new(),
             auto_detect: true,
@@ -375,32 +477,27 @@ fn default_config() -> AppConfig {
             official_api_only: true,
         },
         repositories: builtin_repositories(),
-        repository_sources: vec![RepositorySource {
-            id: "azhe".into(),
-            nickname: "Azhe的仓库源".into(),
-            url: AUTHORITATIVE_REPOSITORY_SOURCE.into(),
-            builtin: true,
-        }],
+        repository_sources: builtin_repository_sources(),
         mod_notes: Vec::new(),
     }
 }
 
 fn builtin_repositories() -> Vec<RepositoryConfig> {
-    #[derive(Deserialize)]
-    struct BuiltinRepositoryEntry {
-        id: String,
-        #[serde(flatten)]
-        repository: RepositoryExport,
-    }
-    #[derive(Deserialize)]
-    struct BuiltinRepositoryFile { repositories: Vec<BuiltinRepositoryEntry> }
-    let entries = toml::from_str::<BuiltinRepositoryFile>(include_str!("../resources/builtin-repositories.toml"))
-        .expect("内置仓库 TOML 无效").repositories;
+    let entries = builtin_repository_file().repositories;
     let mut repositories = entries
         .into_iter()
-        .map(|entry| repository_from_export(&entry.repository, entry.id, true))
+        .map(|entry| {
+            let id = entry
+                .id
+                .filter(|id| !id.trim().is_empty())
+                .unwrap_or_else(|| builtin_repository_id(&entry.repository));
+            repository_from_export(&entry.repository, id, true)
+        })
         .collect::<Vec<_>>();
     for repository in &mut repositories {
+        // source_id belongs to the exported manager state. Built-in entries
+        // are local fallback repositories and must not inherit that binding.
+        repository.source_id = None;
         repository.github_token.clear();
         repository.gitee_token.clear();
         repository.cached_releases.clear();
@@ -410,6 +507,91 @@ fn builtin_repositories() -> Vec<RepositoryConfig> {
         repository.ignored_version = None;
     }
     repositories
+}
+
+fn builtin_repository_id(repo: &RepositoryExport) -> String {
+    let identity = format!(
+        "{:?}|{}|{:?}|{:?}|{}|{}|{}",
+        repo.provider,
+        repo.url.trim_end_matches('/').to_ascii_lowercase(),
+        repo.channel,
+        repo.asset_rules,
+        repo.install_target,
+        repo.plugin_guid.trim().to_ascii_lowercase(),
+        repo.local_original_filename.trim().to_ascii_lowercase()
+    );
+    let digest = Sha256::digest(identity.as_bytes());
+    let short_digest = digest
+        .iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("builtin-{short_digest}")
+}
+
+fn builtin_repository_file() -> BuiltinRepositoryFile {
+    toml::from_str(include_str!("../resources/builtin-repositories.toml"))
+        .expect("内置仓库 TOML 无效")
+}
+
+fn builtin_repository_sources() -> Vec<RepositorySource> {
+    builtin_repository_file()
+        .repository_sources
+        .into_iter()
+        .map(|mut source| {
+            source.builtin = true;
+            source.parent_id = None;
+            source
+        })
+        .collect()
+}
+
+fn synchronize_builtin_repository_sources(config: &mut AppConfig) -> bool {
+    let builtin_sources = builtin_repository_sources();
+    if builtin_sources.is_empty() {
+        return false;
+    }
+    let previous = config.repository_sources.clone();
+    let builtin_ids = builtin_sources
+        .iter()
+        .map(|source| source.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut synchronized = builtin_sources;
+    for source in previous {
+        // Root built-in sources are fully owned by the bundled TOML. This
+        // also removes the obsolete single "azhe" source.
+        if source.builtin && source.parent_id.is_none() {
+            continue;
+        }
+        if builtin_ids.contains(&source.id)
+            || synchronized.iter().any(|existing| {
+                existing.url.trim().eq_ignore_ascii_case(source.url.trim())
+            })
+        {
+            continue;
+        }
+        synchronized.push(source);
+    }
+    let known_ids = synchronized
+        .iter()
+        .map(|source| source.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    synchronized.retain(|source| {
+        source
+            .parent_id
+            .as_deref()
+            .map(|parent_id| known_ids.contains(parent_id))
+            .unwrap_or(true)
+    });
+    let mut changed = config.repository_sources != synchronized;
+    config.repository_sources = synchronized;
+    for repository in &mut config.repositories {
+        if repository.source_id.as_deref() == Some("azhe") {
+            repository.source_id = None;
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
@@ -629,11 +811,15 @@ mod tests {
     #[test]
     fn default_repositories_are_present() {
         let config = default_config();
-        assert_eq!(config.repositories.len(), 7);
+        assert_eq!(config.repositories.len(), 8);
         assert!(config
             .repositories
             .iter()
-            .all(|repo| repo.source_id.as_deref() == Some("azhe")));
+            .all(|repo| repo.source_id.is_none()));
+        assert_eq!(config.repository_sources.len(), 2);
+        assert_eq!(config.repository_sources[0].id, "azhe-HostUtilities");
+        assert_eq!(config.repository_sources[1].id, "azhe-Others");
+        assert!(config.repository_sources.iter().all(|source| source.builtin && source.parent_id.is_none()));
         assert!(config.repositories.iter().filter(|repo| repo.provider == Provider::Gitee).all(|repo| {
             repo.api_proxy_url == "https://oc2gtapi.ch3ng.top"
                 && repo.release_proxy_mode == ProxyMode::Direct
@@ -644,13 +830,21 @@ mod tests {
                 && repo.release_proxy_mode == ProxyMode::Auto
                 && repo.release_proxy_url == "https://oc2gh.ch3ng.top"
         }));
-        let unlocker = config.repositories.iter().find(|repo| repo.id == "oc2-unlocker").unwrap();
+        let unlocker = config
+            .repositories
+            .iter()
+            .find(|repo| repo.local_original_filename == "OC2Unlocker.dll")
+            .unwrap();
         assert_eq!(unlocker.plugin_guid, "com.ch3ngyz.plugin.OC2Unlocker");
-        assert_eq!(unlocker.local_product_name, "厨师与DLC解锁器 / Chefs And Dlcs Unlocker");
+        assert!(unlocker.local_product_name.is_empty());
         assert_eq!(unlocker.local_original_filename, "OC2Unlocker.dll");
-        let chef_rotation = config.repositories.iter().find(|repo| repo.id == "oc2-chef-rotation").unwrap();
+        let chef_rotation = config
+            .repositories
+            .iter()
+            .find(|repo| repo.local_original_filename == "OC2ChefRotation.dll")
+            .unwrap();
         assert_eq!(chef_rotation.plugin_guid, "com.ch3ngyz.plugin.OC2ChefRotation");
-        assert_eq!(chef_rotation.local_product_name, "厨师旋转 / Chef Rotation");
+        assert!(chef_rotation.local_product_name.is_empty());
         assert_eq!(chef_rotation.local_original_filename, "OC2ChefRotation.dll");
         let serialized = toml::to_string(&config).unwrap();
         assert!(!serialized.contains("\n[proxies"));
@@ -684,9 +878,28 @@ enabled = true
 type = "exact"
 value = "Example.dll"
 "#;
-        let repositories = service.validate_repository_source(text).unwrap();
-        assert_eq!(repositories.len(), 1);
-        assert_eq!(repositories[0].name, "Example");
+        let document = service.validate_repository_source_document(text).unwrap();
+        assert_eq!(document.repositories.len(), 1);
+        assert_eq!(document.repositories[0].name, "Example");
+    }
+
+    #[test]
+    fn repository_source_can_declare_child_sources() {
+        let service = ConfigService {
+            root: std::env::temp_dir(),
+        };
+        let text = r#"
+[[repository_sources]]
+id = "azhe-Others"
+nickname = "Azhe的其他MOD仓库源"
+url = "https://example.com/others.oc2repo.toml"
+builtin = true
+"#;
+        let document = service.validate_repository_source_document(text).unwrap();
+        assert!(document.repositories.is_empty());
+        assert_eq!(document.repository_sources.len(), 1);
+        assert_eq!(document.repository_sources[0].id, "azhe-Others");
+        assert!(document.repository_sources[0].builtin);
     }
 
     #[test]

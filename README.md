@@ -6,7 +6,7 @@
 
 ## 仓库源和导出配置的区别
 
-仓库源是一个供程序在线读取的 TOML 文件，文件只需要包含一个或多个 `[[repositories]]` 条目：
+仓库源是一个供程序在线读取的 TOML 文件，可以包含一个或多个 `[[repositories]]` 条目，也可以通过 `[[repository_sources]]` 条目继续声明其他仓库源。程序读取仓库源后，会保存并刷新其中的仓库源，再读取这些子仓库源中的仓库。
 
 ```toml
 [[repositories]]
@@ -30,16 +30,32 @@ type = "exact"
 value = "MyMod.dll"
 ```
 
-仓库源不需要，也不应该添加下面这些导出文件字段：
+仓库源不需要，也不应该添加下面这些导出配置包字段：
 
 - `format`
 - `schema_version`
 - `exported_at`
-- `repository_sources`
 
 这些字段只属于软件“导出配置”生成的完整配置包。完整配置包用于在另一台管理器中导入，不能直接替代仓库源文件。
 
 仓库源的推荐扩展名是 `.oc2repo.toml`，例如 `my-repositories.oc2repo.toml`。文件必须使用 UTF-8 编码，并且能够通过公开的 HTTP 或 HTTPS 地址访问。
+
+### 在仓库源中声明其他仓库源
+
+仓库源文件可以使用 `[[repository_sources]]` 声明子仓库源。子仓库源会在父仓库源刷新成功后自动加入仓库管理，并继续递归刷新：
+
+```toml
+[[repository_sources]]
+id = "azhe-Others"
+nickname = "Azhe的其他MOD仓库源"
+url = "https://raw.giteeusercontent.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/azhe-Others.oc2repo.toml"
+region = "international"
+builtin = true
+```
+
+`id` 就是管理器中显示和填写的“仓库唯一 ID”，在当前仓库源文件中必须唯一；`url` 必须是公开的 HTTP 或 HTTPS 地址。`builtin = true` 表示该源由仓库源作者提供，管理器会显示为内置源，不能在“管理仓库源”窗口中编辑、删除或拖动。`region` 是可选字段：`chinese_mainland` 只对中国大陆显示，`international` 只对其他地区显示；省略时对所有地区显示。嵌套源不需要填写 `parent_id`，管理器会根据声明它的父源自动维护父子关系。
+
+仓库源文件可以同时包含仓库和子仓库源。刷新父源时，管理器会先更新父源声明的仓库源，再刷新子仓库源和各自的 Release；如果父源移除了某个子仓库源，管理器也会移除该子源及其仓库绑定。管理器会防止同一地址重复导入，并避免循环引用造成无限刷新。
 
 ## 如何制作仓库源
 
@@ -205,7 +221,7 @@ type = "exact"
 value = "HostUtilities.zip"
 ```
 
-项目中的 [builtin-repositories.toml](src-tauri/resources/builtin-repositories.toml) 也可以作为更完整的参考。远程仓库源可以使用相同的 `repositories` 条目，但不需要复制 `id`；仓库 ID 会由管理器在导入时生成和维护。
+项目中的 [builtin-repositories.toml](src-tauri/resources/builtin-repositories.toml) 也可以作为更完整的参考。远程仓库源可以使用相同的 `repositories` 条目，但不需要复制 `id`；仓库 ID 会由管理器在导入时生成和维护。内置仓库配置中的 `id` 同样是可选的，因此可以直接粘贴软件导出的 `[[repositories]]` 条目；省略时管理器会根据 Provider、Release 地址、资产规则和安装目录生成稳定 ID，并忽略导出内容中的 `source_id`。
 
 ## 多语言名称、分组和简介
 
@@ -292,7 +308,7 @@ note = """
 | `release_proxy_url` | 否 | Release 下载代理地址；没有代理时留空。 |
 | `enabled` | 是 | `true` 显示并刷新，`false` 暂停该仓库。 |
 
-仓库源不需要填写 `source_id`。管理器会根据用户添加的仓库源自动绑定来源；导入或刷新时也会重新绑定。
+仓库源中的每个 `[[repositories]]` 都可以直接来自软件的导出配置。导出内容里的 `source_id` 只代表导出时的本地来源，发布仓库源时不需要手动修改；管理器下载仓库源后会忽略这些旧值，并统一写入当前仓库源配置的唯一 ID。
 
 ## 代理配置建议
 
@@ -320,22 +336,48 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 3. 打开 OC2 Mod Manager 的“仓库管理”。
 4. 打开“管理仓库源”，点击“添加仓库源”。
 5. 填写仓库源昵称和 TOML 文件地址。
+   新建仓库源时还要填写“仓库唯一 ID”。它只能包含字母、数字、点、短横线和下划线，且首字符必须是字母或数字，例如 `my-source-id`。
 6. 点击“保存仓库源”。只有保存后，管理器才会请求仓库源文件。
-7. 文件解析成功后，仓库会出现在对应的仓库源和分组中，并开始刷新各自的 Release。
+7. 文件解析成功后，文件中的仓库会出现在对应的仓库源和分组中；文件中的 `[[repository_sources]]` 也会被加入并自动刷新其下级仓库源和 Release。
 
-如果自定义仓库源下载或解析失败，管理器会显示失败提示并保留该源之前的仓库。内置 Azhe 源失败时，程序会使用本地内置仓库作为回退；这个回退规则只适用于内置权威源。
+从软件导出仓库配置并粘贴到仓库源文件时，可以保留导出的 `source_id`，管理器会在下载时自动忽略它，并把所有仓库绑定到“仓库唯一 ID”对应的仓库源。这样同一份导出内容可以复制到不同仓库源，而不会继承旧的来源 ID。
+
+如果自定义仓库源下载或解析失败，管理器会显示失败提示并保留该源之前的仓库。根内置源的回退规则见下方“内置仓库源配置”。
+
+### 内置仓库源配置
+
+程序随安装包读取 `src-tauri/resources/builtin-repositories.toml` 中的 `[[repository_sources]]`。这个文件是内置仓库和内置仓库源的唯一配置入口，适合在发布前集中修改昵称、地址和其他内置参数。当前内置源为：
+
+```toml
+[[repository_sources]]
+id = "azhe-HostUtilities"
+nickname = "Azhe的仓库源 - Gitee"
+url = "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/all-repository-source.oc2repo.toml"
+region = "chinese_mainland"
+builtin = true
+
+[[repository_sources]]
+id = "azhe-Others"
+nickname = "Azhe的仓库源 - Github"
+url = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/raw/refs/heads/main/all-repository-source.oc2repo.toml"
+region = "international"
+builtin = true
+```
+
+每次启动完成程序更新检查后，管理器都会重新读取这两个内置源的定义。管理器根据 Windows 当前用户的国家/地区设置选择当前地区，只请求匹配的仓库源；不匹配的源仍保存在配置中，但不会出现在仓库列表，也不会参与自动刷新，仍可在“管理仓库源”窗口中查看和修改。内置源及其远程声明的 `builtin = true` 子源不能编辑、删除或拖动；用户添加的源仍可管理。启动时会请求匹配的内置源，成功后按源文件解析仓库和子仓库源，并重新绑定本地 MOD。根文件请求或解析失败时，该内置源使用本地内置仓库回退；如果根文件成功但只声明了子源，则只有根文件没有 `repositories` 且所有子源都失败时才触发回退。根文件自身包含仓库时，即使全部子源失败也不会回退。回退时仓库管理会隐藏失败的远程内置源并显示“内置仓库源”分组，其中包含安装包自带的本地内置仓库。
 
 ## 发布前检查清单
 
 - [ ] 文件是 UTF-8 编码的 TOML。
-- [ ] 顶层存在至少一个 `[[repositories]]`。
-- [ ] 没有加入 `format`、`schema_version`、`exported_at` 等导出包字段。
+- [ ] 顶层至少存在一个 `[[repositories]]` 或 `[[repository_sources]]`。
+- [ ] 没有加入 `format`、`schema_version`、`exported_at` 等导出包字段；`[[repository_sources]]` 是仓库源文件允许使用的条目。
 - [ ] 每个仓库的 `provider` 与 URL 域名一致。
 - [ ] 每个仓库至少有一条有效的 `asset_rules`。
 - [ ] 资产规则能匹配 Release 中真实存在的文件名。
 - [ ] `plugin_guid`、`local_product_name`、`local_original_filename` 与 DLL 实际信息一致。
 - [ ] `install_target` 是相对路径，没有绝对路径和 `..`。
 - [ ] 多语言名称、分组和简介使用固定语言键。
+- [ ] 需要按地区显示时，为仓库源填写 `region = "chinese_mainland"` 或 `region = "international"`；省略表示所有地区。
 - [ ] 简介中的 Markdown 使用三引号保存多行内容。
 - [ ] URL 不包含 Token、密码或 Cookie。
 - [ ] 用浏览器确认远程文件可以直接返回原始 TOML。

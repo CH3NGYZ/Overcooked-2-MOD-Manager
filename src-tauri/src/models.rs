@@ -42,6 +42,7 @@ pub struct InstalledMod {
     pub company: Option<String>,
     pub copyright: Option<String>,
     pub dll_file: String,
+    pub enabled: bool,
     pub version: Option<String>,
     pub version_source: String,
     pub update_available: bool,
@@ -181,6 +182,8 @@ pub struct RepositoryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub schema_version: u32,
+    pub ui_zoom: f64,
+    pub onboarding_seen_steps: Vec<String>,
     pub game: GameConfig,
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
@@ -225,6 +228,9 @@ pub struct AuthConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicConfig {
     pub schema_version: u32,
+    pub region: String,
+    pub ui_zoom: f64,
+    pub onboarding_seen_steps: Vec<String>,
     pub game: GameConfig,
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
@@ -236,13 +242,17 @@ pub struct PublicConfig {
     pub repository_sources: Vec<RepositorySource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepositorySource {
     pub id: String,
     pub nickname: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
     #[serde(default)]
     pub builtin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,6 +327,13 @@ pub struct OperationResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UninstallLocalModResult {
+    pub ok: bool,
+    pub message: String,
+    pub requires_confirmation: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RustLog {
     pub path: String,
     pub content: String,
@@ -336,7 +353,36 @@ pub struct AppUpdateInfo {
     #[serde(default)]
     pub installer_proxy_url: Option<String>,
     #[serde(default)]
+    pub installer_download_urls: Vec<String>,
+    #[serde(default)]
     pub installer_type: String,
+    #[serde(default)]
+    pub provider: Option<Provider>,
+    #[serde(default)]
+    pub source_channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateChannelStatus {
+    pub id: String,
+    pub provider: Provider,
+    pub mode: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateChannelEvent {
+    pub region: String,
+    pub channel: AppUpdateChannelStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateCheckResult {
+    pub update: Option<AppUpdateInfo>,
+    pub channels: Vec<AppUpdateChannelStatus>,
+    pub all_failed: bool,
+    pub region: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +395,8 @@ pub struct DashboardData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsPatch {
+    pub ui_zoom: Option<f64>,
+    pub onboarding_seen_steps: Option<Vec<String>>,
     pub game_path: Option<String>,
     pub auto_detect: Option<bool>,
     pub check_updates_on_start: Option<bool>,

@@ -725,6 +725,9 @@ pub fn save_settings(
             .filter(|step| !step.is_empty())
             .collect();
     }
+    if let Some(value) = patch.hide_unidentified_mods {
+        config.hide_unidentified_mods = value;
+    }
     if let Some(steps) = patch.tutorial_steps {
         config.tutorial_steps = steps
             .into_iter()
@@ -2641,7 +2644,8 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
         .map(|repo| {
             let local = installed
                 .iter()
-                .find(|item| item.repository_id.as_deref() == Some(repo.id.as_str()))
+                .find(|item| item.repository_ids.iter().any(|id| id == &repo.id)
+                    || item.repository_id.as_deref() == Some(repo.id.as_str()))
                 .and_then(|item| item.version.clone());
             let remote = releases::filter_channel(repo.cached_releases.clone(), &repo.channel)
                 .first()

@@ -53,6 +53,7 @@ export interface PublicConfig {
   region: string
   ui_zoom: number
   onboarding_seen_steps: string[]
+  hide_unidentified_mods: boolean
   tutorial_steps: TutorialStepConfig[]
   game: { path: string; auto_detect: boolean }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean; max_release_count: number }
@@ -67,7 +68,7 @@ export interface RepositorySource { id: string; nickname: string; url: string; r
 export interface BepInExInfo { installed: boolean; complete: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export interface InstalledMod { repository_id?: string; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; load_warning?: string; note?: string; status: string }
+export interface InstalledMod { repository_id?: string; repository_ids?: string[]; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; load_warning?: string; note?: string; status: string }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
@@ -80,7 +81,7 @@ export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: 
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
 export interface TutorialStepConfig { id: string; selector: string; view?: string; title: string; description: string }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; max_release_count?: number }
 export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {
   id?: string

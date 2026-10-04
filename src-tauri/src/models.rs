@@ -32,6 +32,8 @@ pub enum WinhttpState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledMod {
     pub repository_id: Option<String>,
+    #[serde(default)]
+    pub repository_ids: Vec<String>,
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -184,6 +186,8 @@ pub struct AppConfig {
     pub schema_version: u32,
     pub ui_zoom: f64,
     pub onboarding_seen_steps: Vec<String>,
+    #[serde(default = "default_hide_unidentified_mods")]
+    pub hide_unidentified_mods: bool,
     #[serde(default)]
     pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
@@ -237,12 +241,15 @@ pub struct TutorialStepConfig {
     pub description: String,
 }
 
+fn default_hide_unidentified_mods() -> bool { true }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicConfig {
     pub schema_version: u32,
     pub region: String,
     pub ui_zoom: f64,
     pub onboarding_seen_steps: Vec<String>,
+    pub hide_unidentified_mods: bool,
     #[serde(default)]
     pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
@@ -411,6 +418,7 @@ pub struct DashboardData {
 pub struct SettingsPatch {
     pub ui_zoom: Option<f64>,
     pub onboarding_seen_steps: Option<Vec<String>>,
+    pub hide_unidentified_mods: Option<bool>,
     pub tutorial_steps: Option<Vec<TutorialStepConfig>>,
     pub game_path: Option<String>,
     pub auto_detect: Option<bool>,

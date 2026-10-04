@@ -40,12 +40,7 @@ const tutorialPendingSteps = ref<TutorialStep[]>([])
 const tutorialStepIndex = ref(0)
 const tutorialSaving = ref(false)
 const tutorialRect = ref({ left: 0, top: 0, width: 0, height: 0 })
-const tutorialSidebar = ref<HTMLElement | null>(null)
 const tutorialTopbar = ref<HTMLElement | null>(null)
-const tutorialOverviewMetrics = ref<HTMLElement | null>(null)
-const tutorialFrameworkPanel = ref<HTMLElement | null>(null)
-const tutorialInstalledActions = ref<HTMLElement | null>(null)
-const tutorialRepositoriesActions = ref<HTMLElement | null>(null)
 const showTutorialEditor = ref(false)
 const tutorialEditorSteps = ref<TutorialStep[]>([])
 const tutorialPickerActive = ref(false)
@@ -280,20 +275,25 @@ const sourceGroups = computed(() => {
   return groups
 })
 const modNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
-const installedMods = computed(() => [...(dashboard.value?.mods ?? [])].sort((left, right) => {
+const allInstalledMods = computed(() => [...(dashboard.value?.mods ?? [])].sort((left, right) => {
   const leftName = left.name.trim()
   const rightName = right.name.trim()
   return modNameCollator.compare(leftName, rightName)
     || modNameCollator.compare(left.dll_file, right.dll_file)
 }))
-const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enabled && installedMods.value.some((mod) => mod.repository_id === repo.id)))
+const installedMods = computed(() => allInstalledMods.value.filter((mod) => !config.value?.hide_unidentified_mods || !!mod.guid?.trim()))
+function modRepositoryIds(mod: import('./types').InstalledMod) {
+  const ids = mod.repository_ids?.length ? mod.repository_ids : mod.repository_id ? [mod.repository_id] : []
+  return new Set(ids)
+}
+const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enabled && installedMods.value.some((mod) => modRepositoryIds(mod).has(repo.id))))
 const gameBlocked = computed(() => game.value?.kitchen_running ?? false)
 const currentWinhttp = computed<WinhttpState>(() => game.value?.winhttp_state ?? 'missing')
 const repositoryRefreshBatchActive = ref(false)
 const repositoryRefreshBatchTotal = ref(0)
 const repositoryRefreshBatchCompleted = ref(0)
 const installableRepositoryCount = computed(() => repos.value.filter((repo) => repositoryReleaseReady[repo.id] && repo.enabled && installReleases(repo).length > 0).length)
-const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => mod.update_available && !!mod.repository_id && !!repositoryReleaseReady[mod.repository_id]).length)
+const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => mod.update_available && Array.from(modRepositoryIds(mod)).some((id) => repositoryReleaseReady[id])).length)
 const allRepositoryRefreshComplete = computed(() => {
   const sources = activeRepositorySources.value
   const configured = repos.value.filter((repo) => repo.enabled && !!repo.source_id)
@@ -478,7 +478,7 @@ function selectorForElement(element: Element) {
       parts.unshift(`#${escapeCssIdentifier(current.id.trim())}`)
       break
     }
-    const parent = current.parentElement
+    const parent: Element | null = current.parentElement
     if (parent) {
       const sameTag = Array.from(parent.children).filter((child) => child.tagName.toLowerCase() === tag)
       if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(current) + 1})`
@@ -597,10 +597,27 @@ function formatDate(value?: string) { if (!value) return t('未知时间'); cons
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repo.name_i18n?.[locale.value] || repo.name }
 function localizedRepositoryNote(repo: Repository) { return repo.note_i18n?.[locale.value] || repo.note }
+function compareModVersions(left?: string, right?: string) {
+  const parse = (value?: string) => {
+    const match = value?.match(/\d+(?:\.\d+){0,3}/)?.[0]
+    return match ? match.split('.').map(Number).concat([0, 0, 0, 0]).slice(0, 4) : null
+  }
+  const leftParts = parse(left)
+  const rightParts = parse(right)
+  if (!leftParts || !rightParts) return 0
+  for (let index = 0; index < 4; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] > rightParts[index] ? 1 : -1
+  }
+  return 0
+}
 function repositoryInstallStatus(repo: Repository) {
-  const boundMods = installedMods.value.filter((mod) => mod.repository_id === repo.id)
+  const boundMods = installedMods.value.filter((mod) => modRepositoryIds(mod).has(repo.id))
   if (!boundMods.length) return ''
-  return boundMods.some((mod) => mod.update_available) ? '可更新' : '已安装'
+  if (repositoryRefreshing[repo.id]) return '检查中'
+  if (!repositoryReleaseReady[repo.id]) return '待检查'
+  const remote = latest(repo)?.version || latest(repo)?.tag_name
+  if (boundMods.some((mod) => compareModVersions(remote, mod.version) > 0)) return '可更新'
+  return boundMods.every((mod) => remote && mod.version) ? '最新版' : '已安装'
 }
 function repositoryNoteIsLong(repo: Repository) {
   const note = localizedRepositoryNote(repo)
@@ -617,7 +634,22 @@ function assetMatchesUi(name: string, rule: { type: string; value: string }) {
 }
 function showSuccess(value: string) { error.value = ''; message.value = `${t('成功：')}${value}`; scheduleToastClose() }
 function showError(value: unknown) { error.value = `${t('错误：')}${t(value instanceof Error ? value.message : String(value))}`; message.value = ''; scheduleToastClose() }
-function isModRepositoryRefreshing(mod: import('./types').InstalledMod) { return !!mod.repository_id && !!repositoryRefreshing[mod.repository_id] }
+async function saveHideUnidentifiedMods(event: Event) {
+  const input = event.target as HTMLInputElement
+  const checked = input.checked
+  try {
+    await run('正在保存 MOD 显示设置', async () => {
+      const saved = await api.saveSettings({ hide_unidentified_mods: checked })
+      if (dashboard.value) dashboard.value.config.hide_unidentified_mods = saved.hide_unidentified_mods
+      return { ok: true, message: 'MOD 显示设置已保存' }
+    })
+  } catch {
+    input.checked = !checked
+  }
+}
+function isModRepositoryRefreshing(mod: import('./types').InstalledMod) {
+  return Array.from(modRepositoryIds(mod)).some((id) => repositoryRefreshing[id])
+}
 async function run<T>(label: string, action: () => Promise<T>) { busy.value = label; error.value = ''; message.value = ''; try { const result = await action(); showSuccess(typeof result === 'object' && result && 'message' in result ? t(String((result as { message: string }).message)) : t(label)); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
 async function loadDashboard() { await run('正在读取厨房状态', async () => { dashboard.value = await api.dashboard(); await setUiZoom(dashboard.value.config.ui_zoom, false) }) }
 async function detectGame() { await run('正在重新检测', async () => { await api.detectGame(); dashboard.value = await api.dashboard() }) }
@@ -925,7 +957,7 @@ async function refreshRepositoryBatch(repositories: Repository[]) {
   }
 }
 async function refreshMappedRepositories() {
-  const mappedIds = new Set(installedMods.value.map((mod) => mod.repository_id).filter((id): id is string => !!id))
+  const mappedIds = new Set(installedMods.value.flatMap((mod) => Array.from(modRepositoryIds(mod))))
   const mapped = repos.value.filter((repo) => repo.enabled && mappedIds.has(repo.id))
   return refreshRepositoryBatch(mapped)
 }
@@ -1700,6 +1732,9 @@ onUnmounted(() => {
         <div ref="tutorialInstalledActions" class="page-intro">
           <div>
             <p>{{ t('这里只显示当前 BepInEx/plugins 中已经安装的插件。') }}</p>
+            <label class="check-control mod-filter-control"><input type="checkbox"
+                :checked="config?.hide_unidentified_mods ?? true" :disabled="!!busy"
+                @change="saveHideUnidentifiedMods" />{{ t('隐藏未识别 BepInEx GUID 的插件') }}</label>
           </div>
           <div class="button-row"><button class="secondary-button" :disabled="!!busy" @click="openModDirectory">
               <FolderOpen :size="16" />{{ t('打开模组目录') }}
@@ -1760,7 +1795,7 @@ onUnmounted(() => {
                 </button></span>
             </div>
           </div>
-          <div v-if="!installedMods.length" class="empty-state">{{ t('没有扫描到 BepInEx/plugins/**/*.dll') }}</div>
+          <div v-if="!installedMods.length" class="empty-state">{{ t(config?.hide_unidentified_mods ? '没有扫描到可识别的 BepInEx MOD' : '没有扫描到 BepInEx/plugins/**/*.dll') }}</div>
         </div>
       </section>
       <section v-else-if="activeView === 'repositories'" class="view-content">
@@ -1864,7 +1899,7 @@ onUnmounted(() => {
                                       class="badge muted">{{ t('内置') }}</span><span class="badge"
                                       :class="repo.enabled ? 'success' : 'muted'">{{ repo.enabled ? t('启用') : t('停用')
                                       }}</span><span v-if="repositoryInstallStatus(repo)" class="badge"
-                                      :class="repositoryInstallStatus(repo) === '可更新' ? 'warning' : 'success'">{{
+                                      :class="['可更新', '检查中', '待检查'].includes(repositoryInstallStatus(repo)) ? 'warning' : 'success'">{{
                                         t(repositoryInstallStatus(repo)) }}</span>
                                   </div><span>{{ repo.url }}</span><small>{{ t(repo.channel === 'stable' ? '稳定版' : repo.channel
                                     === 'beta' ? '测试版' : '全部版本') }} · {{ repo.install_target || t('按压缩包结构安装') }} · {{

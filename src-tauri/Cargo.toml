@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "1.0.7"
+version = "1.0.8"
 description = "Overcooked2 MOD Manager"
 authors = ["GitHub@CH3NGYZ"]
 license = ""

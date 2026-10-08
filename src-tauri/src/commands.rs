@@ -931,12 +931,13 @@ pub fn uninstall_local_mod(
                 package_mod_names,
             });
         }
-        recycle_bin::recycle_package(
+        recycle_bin::recycle_selected_mod(
             &state.config.mod_recycle_bin_dir(),
             &manifest_dir,
             &game_root,
             &manifest.repository_id,
-            None,
+            &safe_relative,
+            true,
         )?;
         log::info!(
             "已卸载 MOD 包：包={}，文件={}",
@@ -1026,12 +1027,13 @@ pub fn uninstall_mod_dll(
                 .any(|peer| mods::is_safe_replacement_mod(target, peer))
         });
     if package_mod_count <= 1 && !safe_duplicate {
-        recycle_bin::recycle_package(
+        recycle_bin::recycle_selected_mod(
             &state.config.mod_recycle_bin_dir(),
             &manifest_dir,
             &game_root,
             &package_id,
-            None,
+            &safe_relative,
+            true,
         )?;
         log::info!("已回收 MOD 包最后一个 DLL：包={}", package_id);
         return Ok(OperationResult {
@@ -1039,13 +1041,13 @@ pub fn uninstall_mod_dll(
             message: "MOD 包已移入回收站".into(),
         });
     }
-    recycle_bin::recycle_mod_dll(
+    recycle_bin::recycle_selected_mod(
         &state.config.mod_recycle_bin_dir(),
         &manifest_dir,
         &game_root,
         &package_id,
         &safe_relative,
-        &installed,
+        false,
     )?;
     log::info!("已回收 MOD 包内 DLL：包={}", package_id);
     Ok(OperationResult {
@@ -4551,13 +4553,28 @@ fn install_downloaded_repository(
         )?;
         None
     };
+    let replacement_files = if let Some(plan) = &plan {
+        archive::prepared_mod_zip_files(asset_path, game_root, plan)?
+    } else {
+        vec![
+            Path::new(&repo.install_target)
+                .join(download_name)
+                .to_string_lossy()
+                .replace('\\', "/"),
+        ]
+    };
     let recycled = if manifests_dir
         .join(format!("{}.toml", repo.id))
         .try_exists()
         .map_err(|error| error.to_string())?
     {
-        let entry =
-            recycle_bin::recycle_package(recycle_root, manifests_dir, game_root, &repo.id, None)?;
+        let entry = recycle_bin::recycle_before_reinstall(
+            recycle_root,
+            manifests_dir,
+            game_root,
+            &repo.id,
+            &replacement_files,
+        )?;
         log::info!(
             "重装前已回收旧 MOD 包：仓库={}，回收记录={}，文件数={}",
             repo.id,
@@ -5916,6 +5933,100 @@ mod update_status_tests {
             let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
             assert!(target.starts_with(&temp) && target != temp);
             let _ = fs::remove_dir_all(target);
+        }
+    }
+
+    #[test]
+    fn online_reinstall_with_duplicate_manifests_succeeds_or_rolls_back() {
+        for zip in [false, true] {
+            for fail in [false, true] {
+                let workspace = InstallWorkspace::new();
+                let dll = "BepInEx/plugins/Main.dll";
+                workspace.write(&format!("{dll}.disabled"), b"old plugin");
+                workspace.write("BepInEx/plugins/Unrelated.dll", b"keep");
+                for id in ["package", "manual"] {
+                    archive::write_manifest(
+                        &workspace.manifests,
+                        &archive::new_manifest(id, "v1", Some(id), None, vec![dll.into()]),
+                    )
+                    .unwrap();
+                }
+                let originals = ["package", "manual"].map(|id| {
+                    (
+                        id,
+                        fs::read(workspace.manifests.join(format!("{id}.toml"))).unwrap(),
+                    )
+                });
+                let asset = if zip {
+                    if fail {
+                        fs::create_dir_all(workspace.game.join("BepInEx/plugins/Blocked.dll"))
+                            .unwrap();
+                        workspace.zip(&[("Main.dll", b"new plugin"), ("Blocked.dll", b"blocked")])
+                    } else {
+                        workspace.zip(&[("Main.dll", b"new plugin")])
+                    }
+                } else {
+                    let asset = workspace.root.join("Main.dll");
+                    if !fail {
+                        fs::write(&asset, b"new plugin").unwrap();
+                    }
+                    asset
+                };
+                let repo = repository("package", RepositoryDownloadMode::Release);
+                let result = install_downloaded_repository(
+                    &asset,
+                    if zip { "update.zip" } else { "Main.dll" },
+                    &workspace.game,
+                    &workspace.manifests,
+                    &workspace.recycle,
+                    &repo,
+                    "v2",
+                );
+                if fail {
+                    let error = result.unwrap_err();
+                    assert!(error.starts_with("安装失败，已尝试回滚:"), "{error}");
+                    assert_eq!(
+                        fs::read(workspace.game.join(format!("{dll}.disabled"))).unwrap(),
+                        b"old plugin"
+                    );
+                    assert!(!workspace.game.join(dll).exists());
+                    for (id, bytes) in originals {
+                        assert_eq!(
+                            fs::read(workspace.manifests.join(format!("{id}.toml"))).unwrap(),
+                            bytes
+                        );
+                    }
+                    assert!(recycle_bin::list(&workspace.recycle).unwrap().is_empty());
+                } else {
+                    assert_eq!(result.unwrap(), 1);
+                    assert_eq!(fs::read(workspace.game.join(dll)).unwrap(), b"new plugin");
+                    assert!(!workspace.game.join(format!("{dll}.disabled")).exists());
+                    assert!(archive::read_manifest(&workspace.manifests, "manual").is_none());
+                    assert_eq!(
+                        archive::read_manifest(&workspace.manifests, "package")
+                            .unwrap()
+                            .release_tag,
+                        "v2"
+                    );
+                    let entries = recycle_bin::list(&workspace.recycle).unwrap();
+                    assert_eq!(entries.len(), 1);
+                    assert_eq!(
+                        fs::read(
+                            workspace
+                                .recycle
+                                .join(&entries[0].id)
+                                .join("files")
+                                .join(format!("{dll}.disabled"))
+                        )
+                        .unwrap(),
+                        b"old plugin"
+                    );
+                }
+                assert_eq!(
+                    fs::read(workspace.game.join("BepInEx/plugins/Unrelated.dll")).unwrap(),
+                    b"keep"
+                );
+            }
         }
     }
 

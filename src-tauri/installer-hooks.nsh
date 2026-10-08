@@ -1,6 +1,14 @@
 !include LogicLib.nsh
 !include FileFunc.nsh
 
+!macro NSIS_HOOK_PREINSTALL
+  ; The installer runs elevated (perMachine), so it can close an elevated
+  ; manager process before replacing the installed executable.
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM OC2ModManager.exe'
+  Pop $0
+  Sleep 300
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   FileOpen $0 "$INSTDIR\install-language.txt" w
   ${If} $LANGUAGE == 2052

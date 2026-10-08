@@ -1,0 +1,200 @@
+[[repositories]]
+# 仓库基本信息
+name = "厨师旋转 / ChefRotation"
+name_i18n.en = "Chef Rotation"
+name_i18n.ko = "셰프 회전"
+name_i18n.zh-CN = "厨师旋转"
+name_i18n.zh-TW = "廚師旋轉"
+provider = "gitee"
+group = "玩法拓展"
+group_i18n.en = "Gameplay Expansion"
+group_i18n.ko = "플레이 방식 확장"
+group_i18n.zh-CN = "玩法拓展"
+group_i18n.zh-TW = "玩法拓展"
+region = ""
+username = "ch3ngyz"
+repository = "Overcooked-2-ChefRotation-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "OC2ChefRotation.dll" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.OC2ChefRotation"
+local_product_name = ""
+local_original_filename = "OC2ChefRotation.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+动作：厨师的趴下、躺下、左躺、右躺，以及翻跟斗和原地旋转。
+功能：一键抛物和一键从自身背包取物。
+- 使用时，需要在配置管理器里面打开开关。
+"""
+note_i18n.en = """
+Chef actions include crouching, lying down, rolling, and spinning.
+Also provides one-click throwing and taking items from your backpack. 
+- Enable these features in the Configuration Manager."""
+note_i18n.ko = """
+셰프가 엎드리기, 눕기, 좌우로 눕기, 공중제비, 제자리 회전을 할 수 있습니다.
+한 번의 클릭으로 물건을 던지거나 자신의 배낭에서 물건을 꺼낼 수 있습니다. 
+- 구성 관리자에서 해당 기능을 활성화해야 합니다."""
+note_i18n.zh-CN = """
+动作：厨师的趴下、躺下、左躺、右躺，以及翻跟斗和原地旋转。
+功能：一键抛物和一键从自身背包取物。
+- 使用时，需要在配置管理器里面打开开关。"""
+note_i18n.zh-TW = """
+動作：廚師趴下、躺下、向左躺、向右躺、翻跟斗及原地旋轉。
+功能：一鍵拋物及從自身背包取物。
+- 使用時需要在設定管理器中開啟開關。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "厨师与DLC内容启用"
+name_i18n.en = "Chef & DLC Content Support"
+name_i18n.ko = "셰프 및 DLC 콘텐츠 지원"
+name_i18n.zh-CN = "厨师与DLC内容启用"
+name_i18n.zh-TW = "廚師與DLC內容啟用"
+provider = "gitee"
+group = "内容拓展"
+group_i18n.en = "Content Expansion"
+group_i18n.ko = "콘텐츠 확장"
+group_i18n.zh-CN = "内容拓展"
+group_i18n.zh-TW = "內容拓展"
+region = ""
+username = "ch3ngyz"
+repository = "Overcooked-2-Unlocker-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "OC2Unlocker.dll" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.OC2Unlocker"
+local_product_name = ""
+local_original_filename = "OC2Unlocker.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+用于启用游戏内的厨师和DLC内容，包括鸭嘴兽等特殊厨师。
+
+启用方法:
+- 打开配置管理器, 开启此MOD的开关。。
+"""
+note_i18n.en = """
+Enables in-game chefs and DLC content, including special chefs like the platypus.
+- Enable this feature in the Configuration Manager."""
+note_i18n.ko = """
+게임 내 셰프 및 DLC 콘텐츠를 활성화하며, 오리너구리와 같은 특수 셰프도 포함됩니다.
+- 구성 관리자에서 해당 기능을 활성화해야 합니다."""
+note_i18n.zh-CN = """用于启用游戏内的厨师和DLC内容，包括鸭嘴兽等特殊厨师。
+
+启用方法:
+- 打开配置管理器, 开启此MOD的开关。"""
+note_i18n.zh-TW = """用於啟用遊戲內的廚師與DLC內容，包括鴨嘴獸等特殊廚師。
+
+啟用方法:
+- 開啟設定管理器，啟用此MOD的開關。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "菜单限制器 - DIY关卡《测试1》前两道菜不出搅拌"
+name_i18n.en = "Recipe Limiter - DIY Level Test 1"
+name_i18n.ko = "레시피 제한기 - DIY 레벨 테스트 1"
+name_i18n.zh-CN = "菜单限制器 - DIY关卡《测试1》前两道菜不出搅拌"
+name_i18n.zh-TW = "菜單限制器 - DIY關卡《測試1》前兩道菜不出攪拌"
+provider = "gitee"
+group = "玩法调整"
+group_i18n.en = "Gameplay Tuning"
+group_i18n.ko = "게임플레이 조정"
+group_i18n.zh-CN = "玩法调整"
+group_i18n.zh-TW = "玩法調整"
+region = ""
+username = "ch3ngyz"
+repository = "Overcooked-2-Test1RecipeLimiter-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "OC2DIYLevelTest1RecipeLimiter.dll" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "oc2.diy_level_test1_recipe_limiter"
+local_product_name = "OC2 DIY Level Test1 Recipe Limiter"
+local_original_filename = "OC2DIYLevelTest1RecipeLimiter.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+MOD功能：
+1.限制四人时前两道菜不出搅拌
+2.本地单人、本地双人、在线双人时可以选只开启某些菜
+启用方法：
+安装《BepInEx 配置管理器》后在游戏中打开配置管理器，开启对应开关即可"""
+note_i18n.en = """
+MOD Features:
+1. Prevents the first two recipes from requiring a mixer when playing with four players.
+2. In local single-player, local two-player, and online two-player modes, you can choose to enable only specific recipes.
+
+How to Enable:
+After installing the BepInEx Configuration Manager, open the Configuration Manager in-game and enable the corresponding options."""
+note_i18n.ko = """
+MOD 기능:
+1. 4인 플레이 시 처음 두 요리에 믹서가 나오지 않도록 제한합니다.
+2. 로컬 1인, 로컬 2인 및 온라인 2인 플레이에서 특정 요리만 선택하여 활성화할 수 있습니다.
+
+사용 방법:
+BepInEx 구성 관리자를 설치한 후 게임에서 구성 관리자를 열고 해당 옵션을 활성화하면 됩니다."""
+note_i18n.zh-CN = """
+MOD功能：
+1.限制四人时前两道菜不出搅拌
+2.本地单人、本地双人、在线双人时可以选只开启某些菜
+
+启用方法：
+安装《BepInEx配置管理器》后在游戏中打开配置管理器，开启对应开关即可"""
+note_i18n.zh-TW = """
+MOD功能：
+1.限制四人遊戲時前兩道菜不出現攪拌。
+2.本地單人、本地雙人及線上雙人時，可以選擇只開啟特定菜餚。
+
+啟用方法：
+安裝《BepInEx設定管理器》後，在遊戲中開啟設定管理器，啟用對應的選項即可。"""

@@ -1,0 +1,211 @@
+[[repositories]]
+# 仓库基本信息
+name = "菜谱查看"
+name_i18n.zh-CN = "菜谱查看"
+name_i18n.zh-TW = "菜譜查看"
+name_i18n.en = "Recipe Viewer"
+name_i18n.ko = "레시피 보기"
+provider = "github"
+group = "实用工具"
+group_i18n.zh-CN = "实用工具"
+group_i18n.zh-TW = "實用工具"
+group_i18n.en = "Utility Tools"
+group_i18n.ko = "유틸리티 도구"
+username = "foamp"
+repository = "Overcooked2RecipeViewer"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+asset_rules = [
+  { type = "regex", value = '^Overcooked2RecipeViewer-v\d+\.\d+\.\d+\.zip$' },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "io.github.overcooked2.recipepreview"
+local_product_name = ""
+local_original_filename = "Overcooked2RecipeViewer.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = '''
+一个基于 BepInEx 的《胡闹厨房 2》（Overcooked! 2）菜谱查看 Mod。使用游戏原版菜谱卡片展示当前关卡的全部可用菜谱，方便提前查看、整理和分享。
+
+**这是菜谱查看、排列和分享工具，仅调整查看器中的显示与布局，不改变游戏实际订单、订单生成逻辑、出菜顺序、计时或得分。**
+
+## 功能
+
+- 支持官方关卡，以及提供游戏标准菜谱数据的自制地图。
+- 查看当前关卡的菜谱，支持按厨具排序等多种排列方式。
+- 拖拽调整菜谱位置和整行顺序，自由整理布局。
+- 自动保存各关卡的自定义布局，也可保存和切换多份布局。
+- 支持滚动、缩放，以及完整菜谱图的 PNG 导出和剪贴板复制。
+- 根据游戏语言自动使用中文或英文界面。
+
+## 使用
+
+进入关卡内部后点击 `Insert` 键即可打开菜谱查看器，使用工具栏选择排序方式、保存布局和导出图片。
+可通过《BepInEx 配置管理器》来管理 **Overcooked2RecipeViewer**。
+
+## 快捷操作
+
+| 操作 | 按键 / 鼠标 |
+| --- | --- |
+| 显示 / 关闭查看器 | **Insert**（默认，可在配置中修改） |
+| 纵向滚动 | **鼠标滚轮** / **PageUp、PageDown** |
+| 横向滚动 | **Shift + 滚轮** |
+| 缩放（50%–200%） | **Ctrl + 滚轮** |
+| 移动菜谱 | 拖拽菜谱卡片 |
+| 移动整行 | 拖拽行左侧的把手 |
+
+## 问题反馈
+
+遇到问题请前往 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)，附上游戏与 Mod 版本、关卡及人数、复现步骤，以及 `BepInEx\LogOutput.log` 中的相关日志；界面问题可附截图。'''
+
+# 多语言仓库备注
+[repositories.note_i18n]
+zh-CN = '''
+一个基于 BepInEx 的《胡闹厨房 2》（Overcooked! 2）菜谱查看 Mod。使用游戏原版菜谱卡片展示当前关卡的全部可用菜谱，方便提前查看、整理和分享。
+
+**这是菜谱查看、排列和分享工具，仅调整查看器中的显示与布局，不改变游戏实际订单、订单生成逻辑、出菜顺序、计时或得分。**
+
+## 功能
+
+- 支持官方关卡，以及提供游戏标准菜谱数据的自制地图。
+- 查看当前关卡的菜谱，支持按厨具排序等多种排列方式。
+- 拖拽调整菜谱位置和整行顺序，自由整理布局。
+- 自动保存各关卡的自定义布局，也可保存和切换多份布局。
+- 支持滚动、缩放，以及完整菜谱图的 PNG 导出和剪贴板复制。
+- 根据游戏语言自动使用中文或英文界面。
+
+## 使用
+
+进入关卡内部后点击 `Insert` 键即可打开菜谱查看器，使用工具栏选择排序方式、保存布局和导出图片。
+可通过《BepInEx 配置管理器》来管理 **Overcooked2RecipeViewer**。
+
+## 快捷操作
+
+| 操作 | 按键 / 鼠标 |
+| --- | --- |
+| 显示 / 关闭查看器 | **Insert**（默认，可在配置中修改） |
+| 纵向滚动 | **鼠标滚轮** / **PageUp、PageDown** |
+| 横向滚动 | **Shift + 滚轮** |
+| 缩放（50%–200%） | **Ctrl + 滚轮** |
+| 移动菜谱 | 拖拽菜谱卡片 |
+| 移动整行 | 拖拽行左侧的把手 |
+
+## 问题反馈
+
+遇到问题请前往 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)，附上游戏与 Mod 版本、关卡及人数、复现步骤，以及 `BepInEx\LogOutput.log` 中的相关日志；界面问题可附截图。'''
+
+zh-TW = '''
+一個基於 BepInEx 的《煮過頭 2》（Overcooked! 2）菜譜查看 Mod。使用遊戲原版菜譜卡片展示目前關卡的全部可用菜譜，方便提前查看、整理和分享。
+
+**這是菜譜查看、排列和分享工具，僅調整查看器中的顯示與版面配置，不改變遊戲實際訂單、訂單生成邏輯、出菜順序、計時或得分。**
+
+## 功能
+
+- 支援官方關卡，以及提供遊戲標準菜譜資料的自製地圖。
+- 查看目前關卡的菜譜，支援依廚具排序等多種排列方式。
+- 拖曳調整菜譜位置和整行順序，自由整理版面。
+- 自動儲存各關卡的自訂版面，也可以儲存和切換多份版面。
+- 支援捲動、縮放，以及完整菜譜圖的 PNG 匯出和剪貼簿複製。
+- 根據遊戲語言自動使用中文或英文介面。
+
+## 使用
+
+進入關卡內後點擊 `Insert` 鍵即可開啟菜譜查看器，使用工具列選擇排序方式、儲存版面和匯出圖片。
+可透過《BepInEx 設定管理器》管理 **Overcooked2RecipeViewer**。
+
+## 快捷操作
+
+| 操作 | 按鍵 / 滑鼠 |
+| --- | --- |
+| 顯示 / 關閉查看器 | **Insert**（預設，可在設定中修改） |
+| 垂直捲動 | **滑鼠滾輪** / **PageUp、PageDown** |
+| 水平捲動 | **Shift + 滾輪** |
+| 縮放（50%–200%） | **Ctrl + 滾輪** |
+| 移動菜譜 | 拖曳菜譜卡片 |
+| 移動整行 | 拖曳行左側的把手 |
+
+## 問題回報
+
+遇到問題請前往 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)，附上遊戲與 Mod 版本、關卡及人數、重現步驟，以及 `BepInEx\LogOutput.log` 中的相關日誌；介面問題可附上截圖。'''
+
+en = '''
+A BepInEx mod for viewing recipes in Overcooked! 2. It uses the game's original recipe cards to display all available recipes in the current level, making them easier to view, organize, and share.
+
+**This is a recipe viewing, organization, and sharing tool. It only changes the display and layout of the viewer and does not change actual orders, order generation, serving order, timers, or scores.**
+
+## Features
+
+- Supports official levels and custom maps that provide standard game recipe data.
+- View recipes available in the current level with multiple sorting options, including sorting by appliance.
+- Drag recipes to rearrange their positions and reorder entire rows.
+- Automatically saves custom layouts for each level, with support for saving and switching between multiple layouts.
+- Supports scrolling, zooming, exporting the complete recipe layout as PNG, and copying it to the clipboard.
+- Automatically uses Chinese or English based on the game's language.
+
+## Usage
+
+Enter a level and press the `Insert` key to open the Recipe Viewer. Use the toolbar to select sorting options, save layouts, and export images.
+You can use **BepInEx Configuration Manager** to configure **Overcooked2RecipeViewer**.
+
+## Shortcuts
+
+| Action | Key / Mouse |
+| --- | --- |
+| Show / hide viewer | **Insert** (default, configurable) |
+| Vertical scrolling | **Mouse Wheel** / **PageUp, PageDown** |
+| Horizontal scrolling | **Shift + Mouse Wheel** |
+| Zoom (50%–200%) | **Ctrl + Mouse Wheel** |
+| Move recipe | Drag a recipe card |
+| Move entire row | Drag the handle on the left side of a row |
+
+## Bug Reports
+
+If you encounter a problem, please visit [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues) and include the game and mod versions, level and player count, reproduction steps, and relevant logs from `BepInEx\LogOutput.log`. Screenshots are helpful for UI issues.'''
+
+ko = '''
+BepInEx 기반의 《Overcooked! 2》 레시피 보기 모드입니다. 게임의 기본 레시피 카드를 사용하여 현재 스테이지에서 사용할 수 있는 모든 레시피를 표시하므로 레시피를 미리 확인하고 정리하거나 공유할 수 있습니다.
+
+**이 모드는 레시피를 확인하고 정리하며 공유하기 위한 도구입니다. 레시피 뷰어의 표시와 레이아웃만 변경하며 실제 주문, 주문 생성 로직, 음식 제출 순서, 시간 제한 또는 점수에는 영향을 주지 않습니다.**
+
+## 기능
+
+- 공식 스테이지와 게임의 표준 레시피 데이터를 제공하는 커스텀 맵을 지원합니다.
+- 현재 스테이지의 레시피를 확인하고 조리 기구별 정렬 등 다양한 방식으로 정렬할 수 있습니다.
+- 레시피의 위치와 전체 행의 순서를 드래그하여 자유롭게 정리할 수 있습니다.
+- 각 스테이지의 사용자 지정 레이아웃을 자동으로 저장하며 여러 레이아웃을 저장하고 전환할 수 있습니다.
+- 스크롤, 확대/축소, 전체 레시피 이미지 PNG 내보내기 및 클립보드 복사를 지원합니다.
+- 게임 언어에 따라 중국어 또는 영어 인터페이스를 자동으로 사용합니다.
+
+## 사용 방법
+
+스테이지에 들어간 후 `Insert` 키를 누르면 레시피 뷰어가 열립니다. 도구 모음에서 정렬 방식, 레이아웃 저장 및 이미지 내보내기를 선택할 수 있습니다.
+**BepInEx Configuration Manager**를 사용하여 **Overcooked2RecipeViewer**를 설정할 수 있습니다.
+
+## 단축키
+
+| 기능 | 키 / 마우스 |
+| --- | --- |
+| 뷰어 표시 / 닫기 | **Insert** (기본값, 설정에서 변경 가능) |
+| 세로 스크롤 | **마우스 휠** / **PageUp, PageDown** |
+| 가로 스크롤 | **Shift + 마우스 휠** |
+| 확대/축소 (50%–200%) | **Ctrl + 마우스 휠** |
+| 레시피 이동 | 레시피 카드를 드래그 |
+| 행 전체 이동 | 행 왼쪽의 핸들을 드래그 |
+
+## 문제 신고
+
+문제가 발생하면 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)에 게임 및 모드 버전, 스테이지와 플레이어 수, 재현 방법, `BepInEx\LogOutput.log`의 관련 로그를 첨부해 주세요. UI 문제의 경우 스크린샷을 함께 첨부하면 좋습니다.'''

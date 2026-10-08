@@ -1,0 +1,384 @@
+.table-panel {
+  padding: 0 5px;
+  overflow: visible;
+  --mod-grid-columns: 20px 34px minmax(220px, 1fr) 110px;
+}
+.table-head,
+.table-row {
+  display: grid;
+  grid-template-columns: var(--mod-grid-columns);
+  gap: 12px;
+  align-items: center;
+  text-align: center;
+}
+.table-head {
+  position: sticky;
+  z-index: 15;
+  padding: 0 10px;
+  gap: 12px;
+  min-height: 30px;
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  border-bottom: 0px;
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--line);
+}
+.table-row {
+  min-height: 45px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+.mod-row-shell {
+  display: block;
+  min-width: 0;
+}
+.mod-row-shell > .table-row {
+  position: relative;
+  z-index: 1;
+}
+.mod-row-shell.has-mod-details > .table-row {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.table-row:last-child {
+  border-bottom: 0;
+}
+.mod-package-heading {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--mod-grid-columns);
+  gap: 12px;
+  align-items: center;
+  min-height: 50px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  font-size: 11px;
+  text-align: center;
+  border-top-left-radius: 7px;
+  border-top-right-radius: 7px;
+  box-shadow: inset 3px 0 var(--accent-strong);
+}
+.mod-package-heading.mod-package-collapsed {
+  border-radius: 7px;
+}
+.mod-package-heading .mod-package-cell {
+  min-width: 0;
+  text-align: left;
+}
+.mod-package-heading .mod-package-cell b {
+  display: block;
+}
+.mod-package-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.mod-package-title .mod-heading {
+  min-width: 0;
+}
+.mod-package-child {
+  background: color-mix(in srgb, var(--surface-2) 34%, var(--surface));
+  box-shadow: inset 3px 0 var(--accent-strong);
+}
+.mod-package-child-last {
+  border-bottom-left-radius: 7px;
+  border-bottom-right-radius: 7px;
+}
+.mod-package-child .mod-cell {
+  padding-left: 10px;
+}
+.unmanaged-mod-submenu {
+  margin-top: 12px;
+  padding: 16px 18px;
+  border: 1px solid #8d535a;
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+}
+.unmanaged-mod-submenu-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.unmanaged-mod-submenu h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.unmanaged-mod-submenu p {
+  margin: 7px 0 0;
+}
+.unmanaged-mod-submenu .modal-actions {
+  display: flex;
+}
+.unmanaged-submenu-enter-active,
+.unmanaged-submenu-leave-active {
+  overflow: hidden;
+  transition: max-height .2s ease, opacity .16s ease, transform .2s ease;
+}
+.unmanaged-submenu-enter-from,
+.unmanaged-submenu-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.unmanaged-submenu-enter-to,
+.unmanaged-submenu-leave-from {
+  max-height: 900px;
+  opacity: 1;
+  transform: translateY(0);
+}
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity .18s ease;
+}
+.modal-fade-enter-active .modal,
+.modal-fade-leave-active .modal {
+  transition: opacity .18s ease, transform .18s ease;
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+.modal-fade-enter-from .modal,
+.modal-fade-leave-to .modal {
+  opacity: 0;
+  transform: translateY(8px) scale(.98);
+}
+.mod-uninstall-modal {
+  width: min(620px, 100%);
+}
+.modal.mod-uninstall-submenu {
+  margin: 0;
+  padding: 24px;
+  border-color: var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.mod-uninstall-backdrop {
+  z-index: 30;
+}
+.mod-cell {
+  min-width: 0;
+  text-align: left;
+}
+.mod-cell > div:last-child {
+  min-width: 0;
+}
+.mod-cell b {
+  display: block;
+}
+.mod-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+.mod-heading > b {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.mod-details-layout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.mod-details-toggle {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  color: var(--faint);
+  background: transparent;
+}
+.mod-details-toggle:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.mod-details-toggle svg {
+  transition: transform .18s ease;
+}
+.mod-details-toggle .mod-details-expanded {
+  transform: rotate(90deg);
+}
+.mod-details {
+  text-align: left;
+  min-width: 0;
+}
+.mod-details-content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.mod-index {
+  color: var(--faint);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+.mod-detail-table {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px 24px;
+  overflow: hidden;
+}
+.mod-detail-panel {
+  margin: 7px 10px 12px 88px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 65%, var(--surface));
+}
+.mod-package-shell > .mod-detail-panel {
+  margin-left: 98px;
+}
+.mod-detail-field {
+  min-width: 0;
+  text-align: left;
+}
+.mod-detail-wide {
+  grid-column: 1 / -1;
+}
+.mod-detail-field dt {
+  margin: 0 0 4px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.mod-detail-field dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mod-detail-field :is(.mod-guid, .mod-path) {
+  font-family: Consolas, monospace;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mod-detail-field.mod-note {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.mod-detail-field.mod-note dd {
+  white-space: pre-wrap;
+}
+.mod-details-expand-enter-active,
+.mod-details-expand-leave-active {
+  max-height: 600px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height .24s ease, opacity .18s ease, transform .24s ease, margin-bottom .24s ease, padding .24s ease;
+}
+.mod-details-expand-enter-from,
+.mod-details-expand-leave-to {
+  max-height: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.mod-package-expand-enter-active,
+.mod-package-expand-leave-active {
+  max-height: 600px;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height .24s ease, min-height .24s ease, padding .24s ease, opacity .18s ease, transform .24s ease;
+}
+.mod-package-expand-enter-from,
+.mod-package-expand-leave-to {
+  max-height: 0;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.mod-cell small {
+  color: var(--faint);
+}
+.mod-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  justify-items: stretch;
+  align-self: center;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+.mod-package-child .mod-controls {
+  padding-left: 0;
+}
+.mod-version {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.mod-guid {
+  overflow-wrap: anywhere;
+}
+.mod-path {
+  word-break: break-all;
+}
+.mono {
+  font-family: Consolas, monospace;
+  color: var(--accent);
+}
+.muted-text {
+  color: var(--muted);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  border-radius: 5px;
+}
+.badge.success {
+  color: var(--accent);
+  border-color: #347262;
+  background: #162a26;
+}
+.badge.warning {
+  color: var(--warning);
+  border-color: #755c32;
+  background: #2c271b;
+}
+.badge.muted {
+  color: var(--faint);
+}
+.toolbar {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.check-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.check-control input {
+  accent-color: var(--accent-strong);
+}
+.mod-filter-control {
+  margin-top: 9px;
+}

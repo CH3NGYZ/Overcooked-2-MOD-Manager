@@ -1,0 +1,73 @@
+# 仓库源索引：具体 MOD 配置位于下方相对路径指向的子源文件。
+# 子源按基本信息、下载方式、对应参数与资产规则、安装目录、备注排列。
+# [[repository_sources]] 的顺序决定源在管理器中的展示顺序。
+[[repository_sources]]
+id = "repositories-azhe-hostutilities"
+nickname = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+url = "repositories-azhe-hostutilities.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+zh-TW = "阿哲 - 街機MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+en = "Azhe - HostUtilities MOD - RedNote @Azhe是阿哲 - ID:5566308341"
+ko = "Azhe - 아케이드 MOD - RedNote @Azhe是阿哲 - ID:5566308341"
+
+
+[[repository_sources]]
+id = "repositories-azhe-others"
+nickname = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+url = "repositories-azhe-others.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+zh-TW = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+en = "Azhe - Others MOD - RedNote @Azhe是阿哲 - ID:5566308341"
+ko = "Azhe - 기타 MOD - RedNote @Azhe是阿哲 - ID:5566308341"
+
+
+[[repository_sources]]
+id = "repositories-gua"
+nickname = "G_U_A"
+url = "repositories-gua.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "G_U_A"
+zh-TW = "G_U_A"
+en = "G_U_A"
+ko = "G_U_A"
+
+
+[[repository_sources]]
+id = "repositories-kfyangc"
+nickname = "小红书 @漆雕帆船 - ID:5669571205"
+url = "repositories-kfyangc.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "小红书 @漆雕帆船 - ID:5669571205"
+zh-TW = "小红书 @漆雕帆船 - ID:5669571205"
+en = "RedNote @漆雕帆船 - ID:5669571205"
+ko = "RedNote @漆雕帆船 - ID:5669571205"
+
+
+[[repository_sources]]
+id = "repositories-foamp"
+nickname = "小红书 @纸沫 - ID:5696399896"
+url = "repositories-foamp.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "小红书 @纸沫 - ID:5696399896"
+zh-TW = "小红书 @纸沫 - ID:5696399896"
+en = "RedNote @纸沫 - ID:5696399896"
+ko = "RedNote @纸沫 - ID:5696399896"
+
+
+# 代理源索引
+[[github_proxy_sources]]
+url = "repositories-proxies.toml"
+
+# 用户脚本
+[[github_proxy_sources]]
+region = "chinese_mainland"
+format = "userscript"
+url = "https://tencent.api-data-abtest-config.dahi.edu.eu.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"
+
+# 用户脚本
+[[github_proxy_sources]]
+region = "international"
+format = "userscript"
+url = "https://update.greasyfork.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"

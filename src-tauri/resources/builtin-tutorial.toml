@@ -1,0 +1,528 @@
+version = 1
+
+[[steps]]
+id = "sidebar"
+selector = ".sidebar"
+view = "overview"
+scenario = "overview"
+title = "侧边栏"
+description = "左侧切换页面；底部显示游戏运行状态和管理器版本，赞助入口固定在其上方。"
+title_i18n = { "zh-CN" = "侧边栏", "zh-TW" = "側邊欄", en = "Sidebar", ko = "사이드바" }
+description_i18n = { "zh-CN" = "左侧切换页面；底部显示游戏运行状态和管理器版本，赞助入口固定在其上方。", "zh-TW" = "左側切換頁面；底部顯示遊戲執行狀態和管理器版本，贊助入口固定在其上方。", en = "Switch pages on the left. Game status and manager version appear at the bottom, with Support just above.", ko = "왼쪽에서 페이지를 전환합니다. 하단에는 게임 실행 상태와 관리자 버전이, 그 위에는 후원 메뉴가 표시됩니다." }
+
+[[steps]]
+id = "sidebar-nav"
+selector = "#app > div.app-shell > aside.sidebar > nav.nav-list.nav-list-workspace:nth-of-type(1)"
+view = "overview"
+scenario = "overview"
+title = "页面导航"
+description = "总览看状态，框架管理维护 BepInEx，MOD 安装获取在线 MOD，MOD 管理维护本地 MOD。"
+title_i18n = { "zh-CN" = "页面导航", "zh-TW" = "頁面導覽", en = "Page navigation", ko = "페이지 이동" }
+description_i18n = { "zh-CN" = "总览看状态，框架管理维护 BepInEx，MOD 安装获取在线 MOD，MOD 管理维护本地 MOD。", "zh-TW" = "總覽看狀態，框架管理維護 BepInEx，MOD 安裝取得線上 MOD，MOD 管理維護本機 MOD。", en = "Status overview shows current status; Framework management maintains BepInEx; MOD installation gets online MODs; MOD management handles local MODs.", ko = "상태 개요에서 상태를, 프레임워크 관리에서 BepInEx를 확인합니다. MOD 설치는 온라인 MOD를 받고, MOD 관리는 로컬 MOD를 관리합니다." }
+
+[[steps]]
+id = "topbar-language"
+selector = ".language-select"
+view = "overview"
+scenario = "overview"
+title = "界面语言"
+description = "切换简体、繁体、英文或韩文，界面与教程同步切换。"
+title_i18n = { "zh-CN" = "界面语言", "zh-TW" = "介面語言", en = "Interface language", ko = "화면 언어" }
+description_i18n = { "zh-CN" = "切换简体、繁体、英文或韩文，界面与教程同步切换。", "zh-TW" = "切換簡體、繁體、英文或韓文，介面與教學同步切換。", en = "Choose Simplified Chinese, Traditional Chinese, English, or Korean for both the interface and tutorial.", ko = "중국어 간체·번체, 영어, 한국어 중에서 선택하면 화면과 튜토리얼이 함께 바뀝니다." }
+
+[[steps]]
+id = "overview-cards"
+selector = ".metric-grid"
+view = "overview"
+scenario = "overview"
+title = "状态总览"
+description = "四卡依次显示 BepInEx、框架状态、本地与在线 MOD；点击进入对应管理页，框架状态卡直接切换启用状态。"
+title_i18n = { "zh-CN" = "状态总览", "zh-TW" = "狀態總覽", en = "Status overview", ko = "상태 개요" }
+description_i18n = { "zh-CN" = "四卡依次显示 BepInEx、框架状态、本地与在线 MOD；点击进入对应管理页，框架状态卡直接切换启用状态。", "zh-TW" = "四張卡片依次顯示 BepInEx、框架狀態、本機與線上 MOD；點擊進入對應管理頁，框架狀態卡直接切換啟用狀態。", en = "The cards show BepInEx, framework status, local MODs, and online MODs. Click to open their pages; the framework status card toggles the framework.", ko = "BepInEx, 프레임워크 상태, 로컬·온라인 MOD를 차례로 표시합니다. 카드를 누르면 관리 페이지로 이동하며, 프레임워크 상태 카드는 활성화를 전환합니다." }
+
+[[steps]]
+id = "bepinex-card"
+selector = "[data-tutorial=\"overview-bepinex\"]"
+view = "overview"
+scenario = "framework-missing"
+title = "BepInEx 状态"
+description = "显示版本和文件完整性；提示需要安装时，点击进入框架管理。"
+title_i18n = { "zh-CN" = "BepInEx 状态", "zh-TW" = "BepInEx 狀態", en = "BepInEx status", ko = "BepInEx 상태" }
+description_i18n = { "zh-CN" = "显示版本和文件完整性；提示需要安装时，点击进入框架管理。", "zh-TW" = "顯示版本和檔案完整性；提示需要安裝時，點擊進入框架管理。", en = "Shows the version and file readiness. If installation is needed, click to open Framework management.", ko = "버전과 파일 준비 상태를 표시합니다. 설치가 필요하면 카드를 눌러 프레임워크 관리로 이동하세요." }
+
+[[steps]]
+id = "mod-status"
+selector = "[data-tutorial=\"overview-framework-state\"]"
+view = "overview"
+scenario = "mod-management"
+title = "切换框架状态"
+description = "安装 BepInEx 后，点击切换框架状态：框架已启用时加载 MOD，框架已禁用时不加载。游戏运行时锁定。"
+title_i18n = { "zh-CN" = "切换框架状态", "zh-TW" = "切換框架狀態", en = "Toggle framework", ko = "프레임워크 전환" }
+description_i18n = { "zh-CN" = "安装 BepInEx 后，点击切换框架状态：框架已启用时加载 MOD，框架已禁用时不加载。游戏运行时锁定。", "zh-TW" = "安裝 BepInEx 後，點擊切換框架狀態：框架已啟用時載入 MOD，框架已停用時不載入。遊戲執行時鎖定。", en = "After installing BepInEx, click to toggle the framework. Enabled loads MODs; disabled prevents loading. Locked while the game runs.", ko = "BepInEx 설치 후 눌러 활성화를 전환합니다. 활성화하면 MOD를 로드하고 비활성화하면 로드하지 않습니다. 게임 실행 중에는 잠깁니다." }
+
+[[steps]]
+id = "installed-card"
+selector = "[data-tutorial=\"overview-local-mods\"]"
+view = "overview"
+scenario = "mod-management"
+title = "本地 MOD 数量"
+description = "左侧为有更新数：0 为绿色，否则黄色；右侧为已安装数。点击进入 MOD 管理。"
+title_i18n = { "zh-CN" = "本地 MOD 数量", "zh-TW" = "本機 MOD 數量", en = "Local MOD counts", ko = "로컬 MOD 수" }
+description_i18n = { "zh-CN" = "左侧为有更新数：0 为绿色，否则黄色；右侧为已安装数。点击进入 MOD 管理。", "zh-TW" = "左側為有更新數：0 為綠色，否則黃色；右側為已安裝數。點擊進入 MOD 管理。", en = "Left: MODs with updates, green at zero and yellow otherwise. Right: installed MODs. Click to open MOD management.", ko = "왼쪽은 업데이트 수로, 0이면 초록색이고 나머지는 노란색입니다. 오른쪽은 설치된 수입니다. 누르면 MOD 관리로 이동합니다." }
+
+[[steps]]
+id = "repository-card"
+selector = "[data-tutorial=\"overview-cloud-mods\"]"
+view = "overview"
+scenario = "repository-ready"
+title = "在线 MOD 数量"
+description = "左侧为可安装数，右侧为当前地区仓库总数；转圈表示正在刷新。点击进入 MOD 安装。"
+title_i18n = { "zh-CN" = "在线 MOD 数量", "zh-TW" = "線上 MOD 數量", en = "Online MOD counts", ko = "온라인 MOD 수" }
+description_i18n = { "zh-CN" = "左侧为可安装数，右侧为当前地区仓库总数；转圈表示正在刷新。点击进入 MOD 安装。", "zh-TW" = "左側為可安裝數，右側為目前地區倉庫總數；轉圈表示正在重新整理。點擊進入 MOD 安裝。", en = "Left: ready to install. Right: repositories in your region. A spinner means refreshing. Click to open MOD installation.", ko = "왼쪽은 설치 가능한 수, 오른쪽은 현재 지역의 전체 저장소 수입니다. 회전 표시는 새로 고침 중임을 뜻합니다. 누르면 MOD 설치로 이동합니다." }
+
+[[steps]]
+id = "kitchen-console"
+selector = ".kitchen-launch-card"
+view = "overview"
+scenario = "overview"
+title = "启动厨房"
+description = "通过 Steam 启动厨房；也可使用加速器或自行启动。"
+title_i18n = { "zh-CN" = "启动厨房", "zh-TW" = "啟動廚房", en = "Launch the game", ko = "게임 실행" }
+description_i18n = { "zh-CN" = "通过 Steam 启动厨房；也可使用加速器或自行启动。", "zh-TW" = "透過 Steam 啟動廚房；也可使用加速器或自行啟動。", en = "Launch Overcooked! 2 through Steam. You can also use a game accelerator or launch it yourself.", ko = "Steam으로 Overcooked! 2를 실행합니다. 게임 가속기를 이용하거나 직접 실행해도 됩니다." }
+
+[[steps]]
+id = "update-check"
+selector = ".update-fab"
+view = "overview"
+scenario = "overview"
+title = "检查管理器更新"
+description = "检查管理器新版本，查看更新日志并更新；更新失败可前往网页手动下载。"
+title_i18n = { "zh-CN" = "检查管理器更新", "zh-TW" = "檢查管理器更新", en = "Check manager updates", ko = "관리자 업데이트 확인" }
+description_i18n = { "zh-CN" = "检查管理器新版本，查看更新日志并更新；更新失败可前往网页手动下载。", "zh-TW" = "檢查管理器新版本，查看更新日誌並更新；更新失敗可前往網頁手動下載。", en = "Check for a new manager version, read its notes, and update. If updating fails, open the website to download it manually.", ko = "새 버전과 변경 내역을 확인하고 업데이트합니다. 실패하면 웹페이지에서 직접 다운로드할 수 있습니다." }
+
+[[steps]]
+id = "sidebar-framework"
+selector = ".nav-item:nth-child(2)"
+view = "framework"
+scenario = "framework-missing"
+title = "框架管理"
+description = "确认游戏目录，安装、重装或卸载 BepInEx，并管理框架备份。"
+title_i18n = { "zh-CN" = "框架管理", "zh-TW" = "框架管理", en = "Framework management", ko = "프레임워크 관리" }
+description_i18n = { "zh-CN" = "确认游戏目录，安装、重装或卸载 BepInEx，并管理框架备份。", "zh-TW" = "確認遊戲目錄，安裝、重新安裝或解除安裝 BepInEx，並管理框架備份。", en = "Check the game directory; install, reinstall, or uninstall BepInEx; manage framework backups.", ko = "게임 폴더를 확인하고 BepInEx 설치·재설치·제거 및 프레임워크 백업을 관리합니다." }
+
+[[steps]]
+id = "directory"
+selector = "[data-tutorial=\"game-directory-card\"]"
+view = "framework"
+scenario = "framework-missing"
+title = "游戏目录"
+description = "维护框架前确认路径正确；按钮可打开、修改、恢复默认或重新检测游戏目录。"
+title_i18n = { "zh-CN" = "游戏目录", "zh-TW" = "遊戲目錄", en = "Game directory", ko = "게임 폴더" }
+description_i18n = { "zh-CN" = "维护框架前确认路径正确；按钮可打开、修改、恢复默认或重新检测游戏目录。", "zh-TW" = "維護框架前確認路徑正確；按鈕可開啟、修改、恢復預設或重新偵測遊戲目錄。", en = "Confirm the path before maintaining the framework. The buttons open, change, reset, or rescan the game directory.", ko = "프레임워크 작업 전에 경로를 확인하세요. 버튼으로 폴더 열기, 경로 변경, 기본값 복원, 다시 검색을 할 수 있습니다." }
+
+[[steps]]
+id = "directory-path"
+selector = "[data-tutorial=\"game-directory-path\"]"
+view = "framework"
+scenario = "framework-missing"
+title = "游戏路径"
+description = "应指向包含 Overcooked2.exe 的文件夹；未找到或识别错误时，用修改目录手动选择。"
+title_i18n = { "zh-CN" = "游戏路径", "zh-TW" = "遊戲路徑", en = "Game path", ko = "게임 경로" }
+description_i18n = { "zh-CN" = "应指向包含 Overcooked2.exe 的文件夹；未找到或识别错误时，用修改目录手动选择。", "zh-TW" = "應指向包含 Overcooked2.exe 的資料夾；找不到或偵測錯誤時，用修改目錄手動選擇。", en = "Must point to the folder containing Overcooked2.exe. If missing or incorrect, select it manually with Change directory.", ko = "Overcooked2.exe가 있는 폴더여야 합니다. 찾지 못했거나 경로가 잘못되면 경로 변경으로 직접 선택하세요." }
+
+[[steps]]
+id = "directory-open"
+selector = "[data-tutorial=\"game-directory-open\"]"
+view = "framework"
+scenario = "framework-missing"
+title = "打开游戏目录"
+description = "在资源管理器中打开当前游戏目录；未找到游戏路径时不可用。"
+title_i18n = { "zh-CN" = "打开游戏目录", "zh-TW" = "開啟遊戲目錄", en = "Open game directory", ko = "게임 폴더 열기" }
+description_i18n = { "zh-CN" = "在资源管理器中打开当前游戏目录；未找到游戏路径时不可用。", "zh-TW" = "在檔案總管中開啟目前遊戲目錄；找不到遊戲路徑時無法使用。", en = "Open the current game folder in File Explorer. Available once a game path is found.", ko = "현재 게임 폴더를 파일 탐색기로 엽니다. 게임 경로를 찾으면 사용할 수 있습니다." }
+
+[[steps]]
+id = "directory-change"
+selector = "[data-tutorial=\"game-directory-change\"]"
+view = "framework"
+scenario = "framework-missing"
+title = "修改游戏目录"
+description = "手动选择包含 Overcooked2.exe 的文件夹，适用于自动检测失败或有多个安装位置。"
+title_i18n = { "zh-CN" = "修改游戏目录", "zh-TW" = "修改遊戲目錄", en = "Change game directory", ko = "게임 경로 변경" }
+description_i18n = { "zh-CN" = "手动选择包含 Overcooked2.exe 的文件夹，适用于自动检测失败或有多个安装位置。", "zh-TW" = "手動選擇包含 Overcooked2.exe 的資料夾，適用於自動偵測失敗或有多個安裝位置。", en = "Select the folder containing Overcooked2.exe when auto-detection fails or you have multiple installations.", ko = "자동 검색에 실패했거나 설치 위치가 여러 곳이면 Overcooked2.exe가 있는 폴더를 직접 선택하세요." }
+
+[[steps]]
+id = "directory-reset"
+selector = "[data-tutorial=\"game-directory-reset\"]"
+view = "framework"
+scenario = "framework-missing"
+title = "恢复自动检测"
+description = "清除手选路径，恢复自动检测；已使用自动检测时不可用。"
+title_i18n = { "zh-CN" = "恢复自动检测", "zh-TW" = "恢復自動偵測", en = "Restore auto-detection", ko = "자동 검색 복원" }
+description_i18n = { "zh-CN" = "清除手选路径，恢复自动检测；已使用自动检测时不可用。", "zh-TW" = "清除手選路徑，恢復自動偵測；已使用自動偵測時無法使用。", en = "Clear the manual path and resume automatic detection. Unavailable when auto-detection is already on.", ko = "직접 지정한 경로를 지우고 자동 검색으로 돌아갑니다. 이미 자동 검색 중이면 사용할 수 없습니다." }
+
+[[steps]]
+id = "directory-rescan"
+selector = "[data-tutorial=\"game-directory-rescan\"]"
+view = "framework"
+scenario = "framework-missing"
+title = "重新检测游戏与框架"
+description = "重新检测游戏路径、运行状态和框架文件；手动改动文件后用它更新状态。"
+title_i18n = { "zh-CN" = "重新检测游戏与框架", "zh-TW" = "重新偵測遊戲與框架", en = "Rescan game and framework", ko = "게임·프레임워크 다시 검색" }
+description_i18n = { "zh-CN" = "重新检测游戏路径、运行状态和框架文件；手动改动文件后用它更新状态。", "zh-TW" = "重新偵測遊戲路徑、執行狀態和框架檔案；手動更動檔案後用它更新狀態。", en = "Refresh the game path, running status, and framework files after manual file changes.", ko = "파일을 직접 변경한 뒤 게임 경로, 실행 상태, 프레임워크 파일 상태를 새로 확인합니다." }
+
+[[steps]]
+id = "framework-missing"
+selector = '[data-tutorial="bepinex-framework-card"]'
+view = "framework"
+scenario = "framework-missing"
+title = "安装前准备"
+description = "BepInEx 是加载 MOD 所需的框架；确认游戏目录后安装，安装前先关闭游戏。"
+title_i18n = { "zh-CN" = "安装前准备", "zh-TW" = "安裝前準備", en = "Before installation", ko = "설치 준비" }
+description_i18n = { "zh-CN" = "BepInEx 是加载 MOD 所需的框架；确认游戏目录后安装，安装前先关闭游戏。", "zh-TW" = "BepInEx 是載入 MOD 所需的框架；確認遊戲目錄後安裝，安裝前先關閉遊戲。", en = "BepInEx is required to load MODs. Confirm the game directory and close the game before installing.", ko = "MOD를 로드하려면 BepInEx가 필요합니다. 게임 폴더를 확인하고 게임을 종료한 뒤 설치하세요." }
+
+[[steps]]
+id = "framework-install"
+selector = '[data-tutorial="bepinex-framework-card"] .primary-button'
+view = "framework"
+scenario = "framework-missing"
+title = "安装 BepInEx"
+description = "点击选择下载渠道并安装 BepInEx。"
+title_i18n = { "zh-CN" = "安装 BepInEx", "zh-TW" = "安裝 BepInEx", en = "Install BepInEx", ko = "BepInEx 설치" }
+description_i18n = { "zh-CN" = "点击选择下载渠道并安装 BepInEx。", "zh-TW" = "點擊選擇下載渠道並安裝 BepInEx。", en = "Click to choose a download channel and install BepInEx.", ko = "눌러 다운로드 채널을 선택하고 BepInEx를 설치합니다." }
+
+[[steps]]
+id = "framework-channel"
+selector = ".bepinex-channel-modal"
+view = "framework"
+scenario = "framework-channel"
+title = "选择安装渠道"
+description = "中国大陆推荐 Gitee，其他地区推荐 GitHub；当前渠道失败时可改选另一渠道。"
+title_i18n = { "zh-CN" = "选择安装渠道", "zh-TW" = "選擇安裝渠道", en = "Choose an installation channel", ko = "설치 채널 선택" }
+description_i18n = { "zh-CN" = "中国大陆推荐 Gitee，其他地区推荐 GitHub；当前渠道失败时可改选另一渠道。", "zh-TW" = "中國大陸建議 Gitee，其他地區建議 GitHub；目前渠道失敗時可改選另一渠道。", en = "Use Gitee in mainland China and GitHub elsewhere. Try the other channel if installation fails.", ko = "중국 본토에서는 Gitee, 다른 지역에서는 GitHub를 권장합니다. 실패하면 다른 채널을 선택하세요." }
+
+[[steps]]
+id = "framework-progress"
+selector = ".download-strip"
+view = "framework"
+scenario = "framework-installing"
+title = "框架安装进度"
+description = "显示下载或解压进度、速度和阶段。教程演示约 10 秒，可直接进入下一步。"
+title_i18n = { "zh-CN" = "框架安装进度", "zh-TW" = "框架安裝進度", en = "Framework installation progress", ko = "프레임워크 설치 진행" }
+description_i18n = { "zh-CN" = "显示下载或解压进度、速度和阶段。教程演示约 10 秒，可直接进入下一步。", "zh-TW" = "顯示下載或解壓縮進度、速度和階段。教學示範約 10 秒，可直接進入下一步。", en = "Shows download or extraction progress, speed, and stage. This demo lasts about 10 seconds; you can move on anytime.", ko = "다운로드·압축 해제 진행률, 속도, 단계를 표시합니다. 약 10초 시연이며 언제든 다음 단계로 이동할 수 있습니다." }
+
+[[steps]]
+id = "framework-ready"
+selector = '[data-tutorial="bepinex-framework-card"]'
+view = "framework"
+scenario = "framework-ready"
+title = "框架已就绪"
+description = "显示已安装版本；需要修复时用重新安装。重装和卸载前都会自动备份。"
+title_i18n = { "zh-CN" = "框架已就绪", "zh-TW" = "框架已就緒", en = "Framework ready", ko = "프레임워크 준비 완료" }
+description_i18n = { "zh-CN" = "显示已安装版本；需要修复时用重新安装。重装和卸载前都会自动备份。", "zh-TW" = "顯示已安裝版本；需要修復時用重新安裝。重新安裝和解除安裝前都會自動備份。", en = "Shows the installed version. Use Reinstall for repairs. Reinstalling and uninstalling both create a backup first.", ko = "설치된 버전을 표시합니다. 복구가 필요하면 재설치를 사용하세요. 재설치·제거 전에 자동으로 백업합니다." }
+
+[[steps]]
+id = "backup-actions"
+selector = ".section-heading.compact"
+view = "framework"
+scenario = "framework-backup"
+title = "框架备份"
+description = "重装和卸载前自动备份，也可手动备份；可打开备份目录、恢复或删除副本。"
+title_i18n = { "zh-CN" = "框架备份", "zh-TW" = "框架備份", en = "Framework backups", ko = "프레임워크 백업" }
+description_i18n = { "zh-CN" = "重装和卸载前自动备份，也可手动备份；可打开备份目录、恢复或删除副本。", "zh-TW" = "重新安裝和解除安裝前自動備份，也可手動備份；可開啟備份目錄、還原或刪除副本。", en = "Backups are created before reinstalling or uninstalling, or manually. Open the backup folder, restore a copy, or delete it.", ko = "재설치·제거 전에 자동 백업하며 수동 백업도 가능합니다. 백업 폴더를 열거나 복원·삭제할 수 있습니다." }
+
+[[steps]]
+id = "backup-directory"
+selector = ".section-heading.compact .ghost-button:nth-of-type(1)"
+view = "framework"
+scenario = "framework-backup"
+title = "打开备份目录"
+description = "在资源管理器中查看备份文件，便于复制和保存。"
+title_i18n = { "zh-CN" = "打开备份目录", "zh-TW" = "開啟備份目錄", en = "Open backup folder", ko = "백업 폴더 열기" }
+description_i18n = { "zh-CN" = "在资源管理器中查看备份文件，便于复制和保存。", "zh-TW" = "在檔案總管中查看備份檔案，方便複製和保存。", en = "View backup files in File Explorer to copy or keep them elsewhere.", ko = "파일 탐색기에서 백업 파일을 확인하고 다른 곳에 복사·보관할 수 있습니다." }
+
+[[steps]]
+id = "backup-now"
+selector = ".section-heading.compact .ghost-button:nth-of-type(2)"
+view = "framework"
+scenario = "framework-backup"
+title = "立即备份"
+description = "复制当前框架文件，保存可恢复的副本；修改框架前建议备份。"
+title_i18n = { "zh-CN" = "立即备份", "zh-TW" = "立即備份", en = "Back up now", ko = "지금 백업" }
+description_i18n = { "zh-CN" = "复制当前框架文件，保存可恢复的副本；修改框架前建议备份。", "zh-TW" = "複製目前框架檔案，保存可還原的副本；修改框架前建議備份。", en = "Copy the current framework files for later restoration. Back up before modifying the framework.", ko = "현재 프레임워크 파일을 복사해 복원 가능한 사본을 저장합니다. 변경 전에 백업하세요." }
+
+[[steps]]
+id = "backup-list"
+selector = ".backup-list"
+view = "framework"
+scenario = "framework-backup"
+title = "备份列表"
+description = "列出自动和手动备份；每份都可恢复或删除。"
+title_i18n = { "zh-CN" = "备份列表", "zh-TW" = "備份列表", en = "Backup list", ko = "백업 목록" }
+description_i18n = { "zh-CN" = "列出自动和手动备份；每份都可恢复或删除。", "zh-TW" = "列出自動和手動備份；每份都可還原或刪除。", en = "Lists automatic and manual backups. Each copy can be restored or deleted.", ko = "자동·수동 백업을 표시합니다. 각 백업을 복원하거나 삭제할 수 있습니다." }
+
+[[steps]]
+id = "backup-open"
+selector = 'div.app-shell > main.main-area > div.main-scroll:nth-of-type(2) > section.view-content > div.backup-list:nth-of-type(5) > div.backup-row:nth-of-type(1) > div.button-row:nth-of-type(3) > button.ghost-button.small-button:nth-of-type(1)'
+view = "framework"
+scenario = "framework-backup"
+title = "打开框架备份"
+description = "打开选中的备份文件，查看其内容；"
+title_i18n = { "zh-CN" = "打开框架备份", "zh-TW" = "開啟框架備份", en = "Open framework backup", ko = "프레임워크 백업 열기" }
+description_i18n = { "zh-CN" = "打开选中的备份文件，查看其内容；", "zh-TW" = "開啟選取的備份檔案，查看其內容；", en = "Open the selected backup file to view its contents.", ko = "선택한 백업 파일을 열어 내용을 확인합니다." }
+
+[[steps]]
+id = "backup-restore"
+selector = '.backup-list > .backup-row:first-child [data-tutorial="backup-restore"]'
+view = "framework"
+scenario = "framework-backup"
+title = "恢复框架备份"
+description = "将选中备份写回游戏目录，恢复此前的框架文件；操作前关闭游戏。"
+title_i18n = { "zh-CN" = "恢复框架备份", "zh-TW" = "還原框架備份", en = "Restore framework backup", ko = "프레임워크 백업 복원" }
+description_i18n = { "zh-CN" = "将选中备份写回游戏目录，恢复此前的框架文件；操作前关闭游戏。", "zh-TW" = "將選取的備份寫回遊戲目錄，還原先前的框架檔案；操作前關閉遊戲。", en = "Write the selected backup to the game directory to restore earlier framework files. Close the game first.", ko = "선택한 백업을 게임 폴더에 써서 이전 프레임워크 파일로 복원합니다. 먼저 게임을 종료하세요." }
+
+[[steps]]
+id = "backup-delete"
+selector = '.backup-list > .backup-row:first-child [data-tutorial="backup-delete"]'
+view = "framework"
+scenario = "framework-backup"
+title = "删除框架备份"
+description = "移除选中备份；当前安装的框架不受影响。"
+title_i18n = { "zh-CN" = "删除框架备份", "zh-TW" = "刪除框架備份", en = "Delete framework backup", ko = "프레임워크 백업 삭제" }
+description_i18n = { "zh-CN" = "移除选中备份；当前安装的框架不受影响。", "zh-TW" = "移除選取的備份；目前安裝的框架不受影響。", en = "Remove the selected backup. The installed framework stays unchanged.", ko = "선택한 백업을 삭제합니다. 현재 설치된 프레임워크에는 영향이 없습니다." }
+
+[[steps]]
+id = "sidebar-repositories"
+selector = "[data-tutorial=\"nav-repositories\"]"
+view = "repositories"
+scenario = "repository-ready"
+title = "MOD 安装"
+description = "从仓库源获取在线 MOD，查看版本、更新日志并下载安装。"
+title_i18n = { "zh-CN" = "MOD 安装", "zh-TW" = "MOD 安裝", en = "MOD installation", ko = "MOD 설치" }
+description_i18n = { "zh-CN" = "从仓库源获取在线 MOD，查看版本、更新日志并下载安装。", "zh-TW" = "從倉庫源取得線上 MOD，查看版本、更新日誌並下載安裝。", en = "Get online MODs from repository sources, review versions and release notes, then download and install.", ko = "저장소 소스에서 온라인 MOD를 찾아 버전·변경 내역을 확인하고 다운로드·설치합니다." }
+
+[[steps]]
+id = "repository-refresh"
+selector = ".page-intro .button-row .secondary-button"
+view = "repositories"
+scenario = "repository-ready"
+title = "刷新全部仓库源"
+description = "清空旧内容，重新拉取当前地区的官方源及其他仓库源；获取到的仓库立即显示。"
+title_i18n = { "zh-CN" = "刷新全部仓库源", "zh-TW" = "重新整理全部倉庫源", en = "Refresh all sources", ko = "모든 저장소 소스 새로 고침" }
+description_i18n = { "zh-CN" = "清空旧内容，重新拉取当前地区的官方源及其他仓库源；获取到的仓库立即显示。", "zh-TW" = "清空舊內容，重新取得目前地區的官方源及其他倉庫源；取得的倉庫立即顯示。", en = "Clear old content and reload your region's official source and other sources. Repositories appear as they arrive.", ko = "기존 내용을 지우고 현재 지역의 공식 소스와 다른 소스를 다시 불러옵니다. 저장소는 도착하는 즉시 표시됩니다." }
+
+[[steps]]
+id = "repository-loading"
+selector = ".repository-list"
+view = "repositories"
+scenario = "repository-loading"
+title = "逐层加载仓库"
+description = "按父源、子源、仓库版本逐层加载；转圈表示请求中，各仓库独立刷新、到达即显示。"
+title_i18n = { "zh-CN" = "逐层加载仓库", "zh-TW" = "逐層載入倉庫", en = "Loading repositories", ko = "저장소 불러오기" }
+description_i18n = { "zh-CN" = "按父源、子源、仓库版本逐层加载；转圈表示请求中，各仓库独立刷新、到达即显示。", "zh-TW" = "按父源、子源、倉庫版本逐層載入；轉圈表示請求中，各倉庫獨立重新整理、取得後即顯示。", en = "Loads parent sources, child sources, then repository versions. Spinners mark requests; repositories refresh independently and appear as they arrive.", ko = "상위 소스, 하위 소스, 저장소 버전 순으로 불러옵니다. 회전 표시는 요청 중이며, 각 저장소는 따로 갱신되어 도착 즉시 표시됩니다." }
+
+[[steps]]
+id = "source-hierarchy"
+selector = ".repository-list"
+view = "repositories"
+scenario = "repository-ready"
+title = "仓库源层级"
+description = "仓库按父源、子源和分类组织；标题吸顶，分类显示数量，箭头展开或收起内容。"
+title_i18n = { "zh-CN" = "仓库源层级", "zh-TW" = "倉庫源層級", en = "Source hierarchy", ko = "소스 구조" }
+description_i18n = { "zh-CN" = "仓库按父源、子源和分类组织；标题吸顶，分类显示数量，箭头展开或收起内容。", "zh-TW" = "倉庫按父源、子源和分類組織；標題吸頂，分類顯示數量，箭頭展開或收起內容。", en = "Repositories are grouped by parent source, child source, and category. Headers stay visible, categories show counts, and arrows expand or collapse content.", ko = "저장소를 상위·하위 소스와 분류별로 묶습니다. 제목은 상단에 고정되고 분류에는 개수가 표시됩니다. 화살표로 내용을 펼치거나 접습니다." }
+
+[[steps]]
+id = "install-button"
+selector = "#app > div > main > div.main-scroll > section > div.repository-list > div > div.source-repository-panel.source-content > div:nth-child(1) > div > div > div > div > div > div.repo-controls > button"
+view = "repositories"
+scenario = "repository-ready"
+title = "下载并安装"
+description = "Release 模式先刷新版本和文件；刷新失败时，点击会提示先刷新。仓库文件模式直接下载。安装前关闭游戏。"
+title_i18n = { "zh-CN" = "下载并安装", "zh-TW" = "下載並安裝", en = "Download and install", ko = "다운로드·설치" }
+description_i18n = { "zh-CN" = "Release 模式先刷新版本和文件；刷新失败时，点击会提示先刷新。仓库文件模式直接下载。安装前关闭游戏。", "zh-TW" = "Release 模式先重新整理版本和檔案；重新整理失敗時，點擊會提示先重新整理。倉庫檔案模式直接下載。安裝前關閉遊戲。", en = "Refresh Release versions and files first. After a failed refresh, clicking prompts you to refresh again. Repository-file mode downloads directly. Close the game before installing.", ko = "Release 모드는 먼저 버전·파일을 새로 고칩니다. 실패 후 누르면 다시 새로 고치라는 안내가 나옵니다. 저장소 파일 모드는 바로 받습니다. 설치 전 게임을 종료하세요." }
+
+[[steps]]
+id = "release-select"
+selector = ".install-modal"
+view = "repositories"
+scenario = "release-select"
+title = "选择版本与文件"
+description = "选择版本和匹配文件，查看更新日志后安装；GitHub 还可选择直连或代理下载。"
+title_i18n = { "zh-CN" = "选择版本与文件", "zh-TW" = "選擇版本與檔案", en = "Choose version and file", ko = "버전·파일 선택" }
+description_i18n = { "zh-CN" = "选择版本和匹配文件，查看更新日志后安装；GitHub 还可选择直连或代理下载。", "zh-TW" = "選擇版本和符合規則的檔案，查看更新日誌後安裝；GitHub 還可選擇直連或代理下載。", en = "Select a release and matching file, review its notes, then install. GitHub offers direct or proxy downloads.", ko = "버전과 조건에 맞는 파일을 선택하고 변경 내역을 확인해 설치합니다. GitHub는 직접 연결 또는 프록시를 선택할 수 있습니다." }
+
+[[steps]]
+id = "download-progress"
+selector = ".download-strip"
+view = "repositories"
+scenario = "download-progress"
+title = "下载与安装进度"
+description = "显示进度、速度和阶段；实际任务可取消，教程约 10 秒，可直接进入下一步。"
+title_i18n = { "zh-CN" = "下载与安装进度", "zh-TW" = "下載與安裝進度", en = "Download and installation progress", ko = "다운로드·설치 진행" }
+description_i18n = { "zh-CN" = "显示进度、速度和阶段；实际任务可取消，教程约 10 秒，可直接进入下一步。", "zh-TW" = "顯示進度、速度和階段；實際工作可取消，教學約 10 秒，可直接進入下一步。", en = "Shows progress, speed, and stage. Real tasks can be cancelled; this demo lasts about 10 seconds and you can move on anytime.", ko = "진행률, 속도, 단계를 표시합니다. 실제 작업은 취소할 수 있으며, 약 10초 시연은 언제든 다음 단계로 이동할 수 있습니다." }
+
+[[steps]]
+id = "sidebar-installed"
+selector = "[data-tutorial=\"nav-installed\"]"
+view = "installed"
+scenario = "mod-management"
+title = "MOD 管理"
+description = "管理本地 MOD：扫描、安装、检查更新、切换启用状态或移入回收站。"
+title_i18n = { "zh-CN" = "MOD 管理", "zh-TW" = "MOD 管理", en = "MOD management", ko = "MOD 관리" }
+description_i18n = { "zh-CN" = "管理本地 MOD：扫描、安装、检查更新、切换启用状态或移入回收站。", "zh-TW" = "管理本機 MOD：掃描、安裝、檢查更新、切換啟用狀態或移入資源回收筒。", en = "Manage local MODs: scan, install, check updates, toggle activation, or move them to the recycle bin.", ko = "로컬 MOD를 검색·설치하고 업데이트 확인, 활성화 전환, 휴지통 이동을 할 수 있습니다." }
+
+[[steps]]
+id = "mod-recycle-bin"
+selector = "[data-tutorial=\"mod-recycle-bin\"]"
+view = "installed"
+scenario = "mod-management"
+title = "MOD 回收站"
+description = "删除的 MOD 文件和清单保存在这里，可恢复到原位置；彻底删除后无法恢复。"
+title_i18n = { "zh-CN" = "MOD 回收站", "zh-TW" = "MOD 資源回收筒", en = "MOD recycle bin", ko = "MOD 휴지통" }
+description_i18n = { "zh-CN" = "删除的 MOD 文件和清单保存在这里，可恢复到原位置；彻底删除后无法恢复。", "zh-TW" = "刪除的 MOD 檔案和清單保存在這裡，可還原到原位置；永久刪除後無法還原。", en = "Removed MOD files and manifests are kept here for restoration to their original location. Permanent deletion cannot be undone.", ko = "삭제한 MOD 파일과 설치 목록을 보관하며 원래 위치로 복원할 수 있습니다. 영구 삭제하면 복원할 수 없습니다." }
+
+[[steps]]
+id = "mod-open-directory"
+selector = '[data-tutorial="mod-open-directory"]'
+view = "installed"
+scenario = "mod-management"
+title = "打开 MOD 目录"
+description = "打开 BepInEx/plugins，查看 DLL 和已禁用文件。"
+title_i18n = { "zh-CN" = "打开 MOD 目录", "zh-TW" = "開啟 MOD 目錄", en = "Open MOD folder", ko = "MOD 폴더 열기" }
+description_i18n = { "zh-CN" = "打开 BepInEx/plugins，查看 DLL 和已禁用文件。", "zh-TW" = "開啟 BepInEx/plugins，查看 DLL 和已停用檔案。", en = "Open BepInEx/plugins to view DLLs and disabled files.", ko = "BepInEx/plugins를 열어 DLL과 비활성화된 파일을 확인합니다." }
+
+[[steps]]
+id = "mod-install-manual"
+selector = '[data-tutorial="mod-install-manual"]'
+view = "installed"
+scenario = "mod-management"
+title = "安装本地 MOD"
+description = "DLL、纯 DLL ZIP 和单目录 ZIP 直接放入 plugins；混合 ZIP 按包名建目录，BepInEx/plugins 格式自动合并。安装前关闭游戏。"
+title_i18n = { "zh-CN" = "安装本地 MOD", "zh-TW" = "安裝本機 MOD", en = "Install local MODs", ko = "로컬 MOD 설치" }
+description_i18n = { "zh-CN" = "DLL、纯 DLL ZIP 和单目录 ZIP 直接放入 plugins；混合 ZIP 按包名建目录，BepInEx/plugins 格式自动合并。安装前关闭游戏。", "zh-TW" = "DLL、純 DLL ZIP 和單目錄 ZIP 直接放入 plugins；混合 ZIP 按套件名建目錄，BepInEx/plugins 格式自動合併。安裝前關閉遊戲。", en = "DLLs, DLL-only ZIPs, and single-folder ZIPs go into plugins. Mixed ZIPs get an archive-named folder; BepInEx/plugins layouts merge automatically. Close the game first.", ko = "DLL, DLL만 있는 ZIP, 단일 폴더 ZIP은 plugins에 넣습니다. 혼합 ZIP은 패키지 이름의 폴더에 풀고 BepInEx/plugins 형식은 자동 병합합니다. 먼저 게임을 종료하세요." }
+
+[[steps]]
+id = "mod-rescan"
+selector = '[data-tutorial="mod-rescan"]'
+view = "installed"
+scenario = "mod-management"
+title = "扫描本地 MOD"
+description = "重新扫描 BepInEx/plugins 并更新列表；手动增删文件后使用。"
+title_i18n = { "zh-CN" = "扫描本地 MOD", "zh-TW" = "掃描本機 MOD", en = "Scan local MODs", ko = "로컬 MOD 검색" }
+description_i18n = { "zh-CN" = "重新扫描 BepInEx/plugins 并更新列表；手动增删文件后使用。", "zh-TW" = "重新掃描 BepInEx/plugins 並更新列表；手動增刪檔案後使用。", en = "Rescan BepInEx/plugins to update the list after adding or removing files manually.", ko = "파일을 직접 추가·삭제한 뒤 BepInEx/plugins를 다시 검색해 목록을 갱신합니다." }
+
+[[steps]]
+id = "mod-check-updates"
+selector = '[data-tutorial="mod-check-updates"]'
+view = "installed"
+scenario = "mod-management"
+title = "检查 MOD 更新"
+description = "刷新已绑定 Release 仓库的版本，检查本地 MOD 更新；仓库文件模式不参与更新检测。"
+title_i18n = { "zh-CN" = "检查 MOD 更新", "zh-TW" = "檢查 MOD 更新", en = "Check MOD updates", ko = "MOD 업데이트 확인" }
+description_i18n = { "zh-CN" = "刷新已绑定 Release 仓库的版本，检查本地 MOD 更新；仓库文件模式不参与更新检测。", "zh-TW" = "重新整理已綁定 Release 倉庫的版本，檢查本機 MOD 更新；倉庫檔案模式不參與更新偵測。", en = "Refresh bound Release repositories to check local MOD updates. Repository-file mode has no update detection.", ko = "연결된 Release 저장소를 새로 고쳐 로컬 MOD 업데이트를 확인합니다. 저장소 파일 모드는 업데이트를 검사하지 않습니다." }
+
+[[steps]]
+id = "mod-table"
+selector = ".table-panel"
+view = "installed"
+scenario = "mod-management"
+title = "MOD 列表与状态"
+description = "开关控制启用，标签显示更新或重复状态；“有更新”指远端新版本，“存在更高版本”指更高的本地副本。"
+title_i18n = { "zh-CN" = "MOD 列表与状态", "zh-TW" = "MOD 列表與狀態", en = "MOD list and status", ko = "MOD 목록과 상태" }
+description_i18n = { "zh-CN" = "开关控制启用，标签显示更新或重复状态；“有更新”指远端新版本，“存在更高版本”指更高的本地副本。", "zh-TW" = "開關控制啟用，標籤顯示更新或重複狀態；「有更新」指遠端新版本，「存在更高版本」指更高的本機副本。", en = "Switches toggle activation; labels show update or duplicate status. Update available means a newer remote version; a higher version exists means a newer local copy.", ko = "스위치로 활성화를 전환하고 라벨로 업데이트·중복 상태를 봅니다. 업데이트 가능은 원격 새 버전, 더 높은 버전 있음은 더 최신인 로컬 사본을 뜻합니다." }
+
+[[steps]]
+id = "mod-package"
+selector = ".mod-package-heading, .mod-package-child"
+view = "installed"
+scenario = "mod-management"
+title = "MOD 包"
+description = "包名来自仓库或 ZIP，数量统计可见子 MOD；包开关控制全部成员，部分启用时显示中间态。"
+title_i18n = { "zh-CN" = "MOD 包", "zh-TW" = "MOD 包", en = "MOD packages", ko = "MOD 패키지" }
+description_i18n = { "zh-CN" = "包名来自仓库或 ZIP，数量统计可见子 MOD；包开关控制全部成员，部分启用时显示中间态。", "zh-TW" = "包名來自倉庫或 ZIP，數量統計可見子 MOD；包開關控制全部成員，部分啟用時顯示中間狀態。", en = "Named after the repository or ZIP, with a count of visible child MODs. The package switch controls all members and shows a mixed state when some are enabled.", ko = "저장소나 ZIP 이름과 표시된 하위 MOD 수를 보여줍니다. 패키지 스위치는 전체 구성원을 제어하며 일부만 활성화되면 중간 상태로 표시됩니다." }
+
+[[steps]]
+id = "mod-package-children-toggle"
+selector = ".mod-package-heading .mod-details-toggle"
+view = "installed"
+scenario = "mod-management"
+title = "展开子 MOD"
+description = "点击包名旁的三角展开或收起子 MOD；收起只隐藏列表，保留启用状态。"
+title_i18n = { "zh-CN" = "展开子 MOD", "zh-TW" = "展開子 MOD", en = "Expand child MODs", ko = "하위 MOD 펼치기" }
+description_i18n = { "zh-CN" = "点击包名旁的三角展开或收起子 MOD；收起只隐藏列表，保留启用状态。", "zh-TW" = "點擊包名旁的三角展開或收起子 MOD；收起只隱藏列表，保留啟用狀態。", en = "Use the triangle beside the package name to expand or collapse children. Collapsing hides the list and keeps activation unchanged.", ko = "패키지 이름 옆 삼각형으로 하위 MOD를 펼치거나 접습니다. 접으면 목록만 숨겨지고 활성화 상태는 유지됩니다." }
+
+[[steps]]
+id = "mod-package-child"
+selector = ".mod-package-child"
+view = "installed"
+scenario = "mod-management"
+title = "子 MOD"
+description = "每个子 MOD 可独立开关、查看详情、编辑备注或移入回收站；删除前留意其他 MOD 是否依赖它。"
+title_i18n = { "zh-CN" = "子 MOD", "zh-TW" = "子 MOD", en = "Child MODs", ko = "하위 MOD" }
+description_i18n = { "zh-CN" = "每个子 MOD 可独立开关、查看详情、编辑备注或移入回收站；删除前留意其他 MOD 是否依赖它。", "zh-TW" = "每個子 MOD 可獨立開關、查看詳細資訊、編輯備註或移入資源回收筒；刪除前留意其他 MOD 是否相依於它。", en = "Toggle each child, view details, edit notes, or move it to the recycle bin. Check whether other MODs depend on it before removal.", ko = "각 하위 MOD를 따로 전환하고 상세 정보 확인, 메모 수정, 휴지통 이동을 할 수 있습니다. 삭제 전 다른 MOD가 의존하는지 확인하세요." }
+
+[[steps]]
+id = "mod-package-child-details"
+selector = "#app > div > main > div.main-scroll > section > div.panel.table-panel > div:nth-child(3) > div > div.mod-cell > div > div > button"
+view = "installed"
+scenario = "mod-management"
+title = "展开子 MOD 详情"
+description = "点击子 MOD 名称旁的三角，展开或收起详细信息。"
+title_i18n = { "zh-CN" = "展开子 MOD 详情", "zh-TW" = "展開子 MOD 詳細資訊", en = "Expand child MOD details", ko = "하위 MOD 상세 정보 펼치기" }
+description_i18n = { "zh-CN" = "点击子 MOD 名称旁的三角，展开或收起详细信息。", "zh-TW" = "點擊子 MOD 名稱旁的三角，展開或收起詳細資訊。", en = "Use the triangle beside a child MOD's name to expand or collapse its details.", ko = "하위 MOD 이름 옆 삼각형으로 상세 정보를 펼치거나 접습니다." }
+
+[[steps]]
+id = "mod-package-child-detail-panel"
+selector = ".mod-detail-table.mod-detail-panel"
+view = "installed"
+scenario = "mod-management"
+title = "子 MOD 信息"
+description = "查看 GUID、文件信息、开发者、路径和备注，用于识别插件与定位文件。"
+title_i18n = { "zh-CN" = "子 MOD 信息", "zh-TW" = "子 MOD 資訊", en = "Child MOD information", ko = "하위 MOD 정보" }
+description_i18n = { "zh-CN" = "查看 GUID、文件信息、开发者、路径和备注，用于识别插件与定位文件。", "zh-TW" = "查看 GUID、檔案資訊、開發者、路徑和備註，用於識別外掛與定位檔案。", en = "View GUID, file metadata, developer, path, and notes to identify the plugin and locate its file.", ko = "GUID, 파일 정보, 개발자, 경로, 메모를 확인해 플러그인을 식별하고 파일 위치를 찾습니다." }
+
+[[steps]]
+id = "mod-package-child-actions"
+selector = '[data-mod-file="ConfigurationManager.dll"] [data-tutorial="mod-actions"]'
+view = "installed"
+scenario = "mod-management"
+title = "子 MOD 操作"
+description = "铅笔编辑备注，删除按钮将 DLL 移入回收站；最后一个 DLL 移走时一并回收包资源。"
+title_i18n = { "zh-CN" = "子 MOD 操作", "zh-TW" = "子 MOD 操作", en = "Child MOD actions", ko = "하위 MOD 작업" }
+description_i18n = { "zh-CN" = "铅笔编辑备注，删除按钮将 DLL 移入回收站；最后一个 DLL 移走时一并回收包资源。", "zh-TW" = "鉛筆編輯備註，刪除按鈕將 DLL 移入資源回收筒；最後一個 DLL 移走時一併回收包資源。", en = "The pencil edits notes; Delete moves the DLL to the recycle bin. Removing the last DLL also moves the package resources.", ko = "연필로 메모를 수정하고 삭제 버튼으로 DLL을 휴지통에 옮깁니다. 마지막 DLL을 옮기면 패키지 리소스도 함께 이동합니다." }
+
+[[steps]]
+id = "sponsor-sidebar"
+selector = "#app > div.app-shell > aside.sidebar > nav.nav-list.nav-list-bottom:nth-of-type(2) > button.nav-item"
+view = "sponsor"
+title = "支持项目"
+description = "觉得好用，就请我喝杯咖啡吧。感谢支持！"
+title_i18n = { "zh-CN" = "支持项目", "zh-TW" = "支持專案", en = "Support the project", ko = "프로젝트 후원" }
+description_i18n = { "zh-CN" = "觉得好用，就请我喝杯咖啡吧。感谢支持！", "zh-TW" = "覺得好用，就請我喝杯咖啡吧。感謝支持！", en = "Buy me a coffee if it helps. Thanks for your support!", ko = "유용했다면 커피 한 잔으로 응원해 주세요. 감사합니다!" }
+
+[[steps]]
+id = "custom-1791426442690-51"
+selector = "#app > div.app-shell > main.main-area > div.main-scroll:nth-of-type(2) > section.view-content.sponsor-view > div.sponsor-panel > img"
+view = "sponsor-img"
+title = "支持项目"
+description = "觉得好用，就请我喝杯咖啡吧。感谢支持！"
+title_i18n = { "zh-CN" = "支持项目", "zh-TW" = "支持專案", en = "Support the project", ko = "프로젝트 후원" }
+description_i18n = { "zh-CN" = "觉得好用，就请我喝杯咖啡吧。感谢支持！", "zh-TW" = "覺得好用，就請我喝杯咖啡吧。感謝支持！", en = "Buy me a coffee if it helps. Thanks for your support!", ko = "유용했다면 커피 한 잔으로 응원해 주세요. 감사합니다!" }
+
+[[steps]]
+id = "custom-1791426543502-51"
+selector = "#app > div.app-shell > main.main-area > div.main-scroll:nth-of-type(2) > section.view-content.sponsor-view > div.sponsor-panel > div.button-row.sponsor-actions"
+view = "sponsor"
+title = "实用工具"
+description = "这里展示的是一些高级工具，可以查看程序运行日志、重置UI、重看教程等。"
+title_i18n = { "zh-CN" = "实用工具", "zh-TW" = "實用工具", en = "Utilities", ko = "유틸리티" }
+description_i18n = { "zh-CN" = "这里展示的是一些高级工具，可以查看程序运行日志、重置UI、重看教程等。", "zh-TW" = "這裡提供一些進階工具，可以查看程式執行日誌、重設 UI、重新查看教學等。", en = "This section provides advanced tools for viewing program logs, resetting the UI, reviewing tutorials, and more.", ko = "프로그램 실행 로그 확인, UI 초기화, 튜토리얼 다시 보기 등의 고급 도구를 제공합니다." }
+
+[[steps]]
+id = "completion"
+selector = "#app"
+view = "overview"
+scenario = "completion"
+title = "教程完成"
+description = "点击 ✓ 结束演示，恢复真实数据；先安装框架，再安装 MOD。赞助页可重看教程。"
+title_i18n = { "zh-CN" = "教程完成", "zh-TW" = "教學完成", en = "Tutorial complete", ko = "튜토리얼 완료" }
+description_i18n = { "zh-CN" = "点击 ✓ 结束演示，恢复真实数据；先安装框架，再安装 MOD。赞助页可重看教程。", "zh-TW" = "點擊 ✓ 結束示範，恢復真實資料；先安裝框架，再安裝 MOD。贊助頁可重看教學。", en = "Click ✓ to return to your real data. Install BepInEx, then MODs. Replay this tutorial from Support.", ko = "✓를 눌러 시연을 끝내고 실제 데이터로 돌아갑니다. BepInEx를 설치한 뒤 MOD를 설치하세요. 후원 페이지에서 다시 볼 수 있습니다." }

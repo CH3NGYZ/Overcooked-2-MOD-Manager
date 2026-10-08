@@ -2,9 +2,17 @@ use crate::models::{BepInExInfo, GameInfo, WinhttpState};
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
-use sysinfo::System;
+use sysinfo::{ProcessRefreshKind, System, UpdateKind};
 
 pub fn detect_game(config: &crate::models::AppConfig) -> GameInfo {
+    detect_game_from_settings(&config.game)
+}
+
+pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> GameInfo {
+    log::debug!(
+        "开始探测游戏状态：配置路径非空={}",
+        !config.path.trim().is_empty()
+    );
     let detected = find_game_path(config);
     let path = detected.as_ref().map(|(_, game)| game.clone());
     let game_exists = path
@@ -29,37 +37,61 @@ pub fn detect_game(config: &crate::models::AppConfig) -> GameInfo {
         .as_ref()
         .map(|value| winhttp_state(value))
         .unwrap_or(WinhttpState::Missing);
-    GameInfo {
+    let result = GameInfo {
         path: path.map(|p| p.to_string_lossy().to_string()),
         steam_library: detected.map(|(library, _)| library.to_string_lossy().to_string()),
         game_exists,
         bepinex,
         kitchen_running,
         winhttp_state,
-    }
+    };
+    log::info!(
+        "游戏状态探测完成：已找到路径={}，游戏文件存在={}，BepInEx已安装={}，BepInEx完整={}，游戏运行={}，WinHTTP={:?}",
+        result.path.is_some(),
+        result.game_exists,
+        result.bepinex.installed,
+        result.bepinex.complete,
+        result.kitchen_running,
+        result.winhttp_state
+    );
+    result
 }
 
-pub fn find_game_path(config: &crate::models::AppConfig) -> Option<(PathBuf, PathBuf)> {
-    if !config.game.path.is_empty() {
-        let stored = PathBuf::from(&config.game.path);
+fn find_game_path(config: &crate::models::GameConfig) -> Option<(PathBuf, PathBuf)> {
+    if !config.path.is_empty() {
+        let stored = PathBuf::from(&config.path);
+        log::debug!("使用配置中的游戏路径：存在={}", stored.is_dir());
         return Some((stored.clone(), stored));
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
             if parent.join("Overcooked2.exe").is_file() {
+                log::debug!("从程序目录探测到游戏");
                 return Some((parent.to_path_buf(), parent.to_path_buf()));
             }
         }
     }
-    steam_libraries().into_iter().find_map(|library| {
+    let detected = steam_libraries().into_iter().find_map(|library| {
         let game = library.join("steamapps/common/Overcooked! 2");
         game.join("Overcooked2.exe")
             .is_file()
             .then_some((library, game))
-    })
+    });
+    if detected.is_some() {
+        log::debug!("从 Steam 库探测到游戏");
+    } else {
+        log::warn!("未探测到 Overcooked! 2 游戏目录");
+    }
+    detected
 }
 
 fn steam_libraries() -> Vec<PathBuf> {
+    steam_libraries_from_roots(&steam_root_paths())
+}
+
+/// Read only the small registry/environment hints. The state observer uses
+/// these to notice a newly installed Steam client without reparsing its VDF.
+pub(crate) fn steam_root_paths() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     #[cfg(windows)]
     {
@@ -79,6 +111,10 @@ fn steam_libraries() -> Vec<PathBuf> {
     if let Some(program_files) = std::env::var_os("PROGRAMFILES") {
         roots.push(PathBuf::from(program_files).join("Steam"));
     }
+    roots
+}
+
+pub(crate) fn steam_libraries_from_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut libraries = Vec::new();
     for root in roots {
         let root = normalize_path(root);
@@ -100,10 +136,12 @@ fn steam_libraries() -> Vec<PathBuf> {
             }
         }
     }
+    log::trace!("Steam 库探测完成：候选数量={}", libraries.len());
     libraries
 }
 
 pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
+    log::debug!("开始探测 BepInEx：游戏目录={}", game.display());
     let root = game.join("BepInEx");
     let core = root.join("core");
     let primary = core.join("BepInEx.dll");
@@ -132,7 +170,10 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
                 .into_iter()
                 .flat_map(|entries| entries.flatten())
                 .filter(|entry| {
-                    entry.file_name().to_string_lossy().starts_with("BepInEx.backup-")
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("BepInEx.backup-")
                         && entry.path().is_dir()
                 })
                 .map(|entry| entry.path().to_string_lossy().to_string())
@@ -140,32 +181,52 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
         })
         .collect::<Vec<_>>();
     backups.sort();
-    BepInExInfo {
+    let result = BepInExInfo {
         installed,
         complete,
         version,
         version_source: source,
         backups,
-    }
+    };
+    log::info!(
+        "BepInEx 探测完成：已安装={}，完整={}，版本={}",
+        result.installed,
+        result.complete,
+        result.version.as_deref().unwrap_or("未知")
+    );
+    result
 }
 
 pub fn winhttp_state(game: &Path) -> WinhttpState {
     let enabled = game.join("winhttp.dll").is_file();
-    let disabled = game.join("winhttp.dll.oc2mod.disabled").is_file();
-    match (enabled, disabled) {
+    let disabled = game.join("winhttp.dll.disabled").is_file();
+    let state = match (enabled, disabled) {
         (true, false) => WinhttpState::ModEnabled,
         (false, true) => WinhttpState::ModDisabled,
         (false, false) => WinhttpState::Missing,
         (true, true) => WinhttpState::Conflict,
-    }
+    };
+    log::trace!("WinHTTP 状态：{:?}", state);
+    state
 }
 
 pub fn is_game_running(game: &Path) -> bool {
+    let running = is_game_running_with_system(game, &mut System::new());
+    log::trace!("游戏进程检查：运行中={}", running);
+    running
+}
+
+/// Reuse process metadata in the observer without logging unchanged checks.
+/// File operations still call `is_game_running` with a fresh process snapshot.
+pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
     let target = game.join("Overcooked2.exe");
     let target = normalize_path(target);
-    let mut system = System::new_all();
-    system.refresh_processes();
+    system
+        .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
     system.processes().values().any(|process| {
+        if !process.name().eq_ignore_ascii_case("Overcooked2.exe") {
+            return false;
+        }
         process
             .exe()
             .map(|path| normalize_path(path))
@@ -176,8 +237,10 @@ pub fn is_game_running(game: &Path) -> bool {
 
 pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
     if is_game_running(game) {
-        Err("厨房正在运行，请先关闭厨房后重试".into())
+        log::warn!("文件操作被拒绝：游戏仍在运行");
+        Err("《胡闹厨房2》正在运行，请先关闭后重试".into())
     } else {
+        log::debug!("确认游戏已停止，可以执行文件操作");
         Ok(())
     }
 }
@@ -185,18 +248,49 @@ pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
 pub fn safe_game_path(game: &Path, relative: &str) -> Result<PathBuf, String> {
     let rel = Path::new(relative);
     if rel.is_absolute()
+        || relative.contains(':')
         || rel
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
+        log::warn!("拒绝不安全游戏相对路径：{}", relative);
         return Err("路径必须是游戏目录内的相对路径".into());
     }
-    let root = normalize_path(game.to_path_buf());
-    let candidate = normalize_path(root.join(rel));
+    let root = resolve_existing_ancestor(game)?;
+    let candidate = resolve_existing_ancestor(&root.join(rel))?;
     if !candidate.starts_with(&root) {
+        log::warn!("拒绝逃逸游戏目录的路径：{}", relative);
         return Err("路径逃逸游戏目录".into());
     }
+    log::trace!("解析游戏相对路径：{}", relative);
     Ok(candidate)
+}
+
+fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(path)
+    };
+    // A new file cannot be canonicalized yet. Resolve its nearest existing
+    // ancestor so a junction cannot hide an escape behind a missing suffix.
+    for ancestor in absolute.ancestors() {
+        match fs::canonicalize(ancestor) {
+            Ok(resolved) => {
+                let suffix = absolute.strip_prefix(ancestor).map_err(|e| e.to_string())?;
+                return Ok(if suffix.as_os_str().is_empty() {
+                    resolved
+                } else {
+                    resolved.join(suffix)
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("路径逃逸游戏目录".into())
 }
 
 /// Reads the Windows PE file version shown by Explorer's Details tab.
@@ -334,7 +428,9 @@ fn read_version_string(path: &Path, key: &str) -> Option<String> {
     {
         return None;
     }
-    for language in ["040904b0", "080404b0", "040904e4", "080904b0", "000004b0", "000004e4"] {
+    for language in [
+        "040904b0", "080404b0", "040904e4", "080904b0", "000004b0", "000004e4",
+    ] {
         let query = format!(r"\StringFileInfo\{language}\{key}");
         let query_w: Vec<u16> = query.encode_utf16().chain(std::iter::once(0)).collect();
         let mut value: LPVOID = null_mut();
@@ -377,20 +473,71 @@ mod tests {
     fn rejects_parent_paths() {
         let root = std::env::temp_dir().join("oc2-manager-test");
         assert!(safe_game_path(&root, "../outside").is_err());
+        assert!(safe_game_path(&root, "BepInEx/plugins/mod.dll:stream").is_err());
         assert!(safe_game_path(&root, "BepInEx/plugins/mod.dll").is_ok());
     }
 
     #[test]
+    #[cfg(windows)]
+    fn rejects_new_files_under_a_junction_outside_the_game() {
+        let workspace =
+            std::env::temp_dir().join(format!("oc2-path-test-{}", uuid::Uuid::new_v4()));
+        let game = workspace.join("game");
+        let outside = workspace.join("outside");
+        fs::create_dir_all(&game).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let link = game.join("BepInEx");
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "failed to create test junction");
+        let rejected = safe_game_path(&game, "BepInEx/plugins/New.dll").is_err();
+        // Remove the junction itself before deleting either real directory.
+        fs::remove_dir(link).unwrap();
+        fs::remove_dir(game).unwrap();
+        fs::remove_dir(outside).unwrap();
+        fs::remove_dir(workspace).unwrap();
+        assert!(
+            rejected,
+            "a missing file must not bypass its existing ancestor's containment check"
+        );
+    }
+
+    #[test]
     fn winhttp_state_machine() {
-        let root = std::env::temp_dir().join("oc2-winhttp-test");
-        let _ = fs::create_dir_all(&root);
-        let _ = fs::remove_file(root.join("winhttp.dll"));
-        let _ = fs::remove_file(root.join("winhttp.dll.oc2mod.disabled"));
+        let root = std::env::temp_dir().join(format!("oc2-winhttp-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
         assert_eq!(winhttp_state(&root), WinhttpState::Missing);
-        fs::write(root.join("winhttp.dll"), []).unwrap();
+        fs::write(root.join("winhttp.dll"), b"loader").unwrap();
         assert_eq!(winhttp_state(&root), WinhttpState::ModEnabled);
-        let _ = fs::remove_file(root.join("winhttp.dll"));
-        fs::write(root.join("winhttp.dll.oc2mod.disabled"), []).unwrap();
+        fs::rename(root.join("winhttp.dll"), root.join("winhttp.dll.disabled")).unwrap();
         assert_eq!(winhttp_state(&root), WinhttpState::ModDisabled);
+        fs::rename(root.join("winhttp.dll.disabled"), root.join("winhttp.dll")).unwrap();
+        assert_eq!(winhttp_state(&root), WinhttpState::ModEnabled);
+        assert_eq!(fs::read(root.join("winhttp.dll")).unwrap(), b"loader");
+        fs::write(root.join("winhttp.dll.disabled"), b"disabled loader").unwrap();
+        assert_eq!(winhttp_state(&root), WinhttpState::Conflict);
+        fs::remove_file(root.join("winhttp.dll")).unwrap();
+        fs::remove_file(root.join("winhttp.dll.disabled")).unwrap();
+        assert_eq!(winhttp_state(&root), WinhttpState::Missing);
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn winhttp_state_does_not_recognize_obsolete_marker() {
+        let root =
+            std::env::temp_dir().join(format!("oc2-winhttp-marker-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let obsolete = root.join("winhttp.dll.oc2mod.disabled");
+        fs::write(&obsolete, b"obsolete loader").unwrap();
+        assert_eq!(winhttp_state(&root), WinhttpState::Missing);
+        fs::write(root.join("winhttp.dll"), b"loader").unwrap();
+        assert_eq!(winhttp_state(&root), WinhttpState::ModEnabled);
+        fs::remove_file(root.join("winhttp.dll")).unwrap();
+        fs::remove_file(obsolete).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 }

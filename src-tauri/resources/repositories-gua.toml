@@ -1,0 +1,473 @@
+[[repositories]]
+# 仓库基本信息
+name = "DIYLevel - 自定义关卡"
+name_i18n.zh-CN = "DIYLevel - 自定义关卡"
+name_i18n.zh-TW = "DIYLevel - 自訂關卡"
+name_i18n.en = "DIYLevel - Custom Levels"
+name_i18n.ko = "DIYLevel - 커스텀 레벨"
+provider = "github"
+group = "内容拓展"
+group_i18n.zh-CN = "内容拓展"
+group_i18n.zh-TW = "內容拓展"
+group_i18n.en = "Content Expansion"
+group_i18n.ko = "콘텐츠 확장"
+username = "gua248"
+repository = "Overcooked2-LevelEditor"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+asset_rules = [
+  { type = "glob", value = "OC2DIYLevel-*.zip" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.diylevel"
+local_product_name = "OC2DIYLevel"
+local_original_filename = "OC2DIYLevel"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+安装后可以让你能玩到社区制作的关卡!
+胡闹厨房制造所(QQ群): 962206048"""
+note_i18n.zh-CN = """
+安装后可以玩到社区制作的关卡！
+胡闹厨房制造所（QQ群）：962206048"""
+note_i18n.zh-TW = """
+安裝後可以遊玩社群製作的關卡！
+胡鬧廚房製造所（QQ群）：962206048"""
+note_i18n.en = """
+After installation, you can play community-made levels!
+Overcooked! 2 Level Workshop (QQ Group): 962206048"""
+note_i18n.ko = """
+설치하면 커뮤니티에서 제작한 레벨을 플레이할 수 있습니다!
+Overcooked! 2 레벨 제작소 (QQ 그룹): 962206048"""
+
+[[repositories]]
+# 仓库基本信息
+name = "投掷一切 MOD"
+name_i18n.en = "Throw Any MOD"
+name_i18n.ko = "무엇이든 던지기 MOD"
+name_i18n.zh-CN = "投掷一切 MOD"
+name_i18n.zh-TW = "投擲一切 MOD"
+provider = "github"
+group = "玩法拓展"
+group_i18n.zh-CN = "玩法拓展"
+group_i18n.zh-TW = "玩法拓展"
+group_i18n.en = "Gameplay Expansion"
+group_i18n.ko = "플레이 방식 확장"
+username = "gua248"
+repository = "Overcooked2-ThrowAny"
+enabled = true
+
+# 下载方式
+download_mode = "repository_file"
+
+# 仓库文件参数
+branch = "master"
+download_threads = 1
+
+# 仓库资产规则（仅支持具体文件）
+file_path = "bin/Release/OC2ThrowAny.dll"
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.throwany"
+local_product_name = "OC2ThrowAny"
+local_original_filename = "OC2ThrowAny.dll"
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+可以投掷盘子等游戏原本不能投掷的物品，也可以抬起并投掷其他厨师。
+- 投掷达人：可以投掷除灭火器、水枪、奶油、呼呼外的任何物品。
+- 投掷人：可以抬起和投掷其他厨师，客机效果受延迟影响较大。
+- 在游戏主菜单“设置 - MOD”中启用，默认不启用。
+- 主机安装后可自行生效；联机时主机需要安装并启用，主客机都启用后客机才能投掷。
+- 进入“街机公开”时功能会自动关闭，以免影响其他玩家。
+"""
+note_i18n.en = """
+Throw normally unthrowable items such as plates, and pick up and throw other chefs.
+- Throw Master: throw any item except fire extinguishers, water guns, cream, and whoopee cushions.
+- Throw Person: pick up and throw other chefs; client behavior can be affected by latency.
+- Enable it in the game main menu under Settings - MOD. It is disabled by default.
+- The host can use it after installing it. In multiplayer, the host must install and enable it; both host and client must enable it for clients to throw.
+- The feature is automatically disabled in Arcade Public to avoid affecting other players."""
+note_i18n.ko = """
+접시처럼 원래 던질 수 없는 물건을 던지고 다른 셰프를 들어서 던질 수 있습니다.
+- 투척 달인: 소화기, 물총, 크림, 방귀 쿠션을 제외한 모든 물건을 던집니다.
+- 투척인: 다른 셰프를 들어서 던질 수 있으며, 클라이언트 동작은 지연의 영향을 크게 받을 수 있습니다.
+- 게임 메인 메뉴의 설정 - MOD에서 활성화하세요. 기본값은 비활성화입니다.
+- 호스트는 설치 후 사용할 수 있습니다. 멀티플레이에서는 호스트가 설치하고 활성화해야 하며, 클라이언트가 던지려면 양쪽 모두 활성화해야 합니다.
+- 다른 플레이어에게 영향을 주지 않도록 Arcade Public에서는 자동으로 비활성화됩니다."""
+note_i18n.zh-CN = """
+可以投掷盘子等游戏原本不能投掷的物品，也可以抬起并投掷其他厨师。
+- 投掷达人：可以投掷除灭火器、水枪、奶油、呼呼外的任何物品。
+- 投掷人：可以抬起和投掷其他厨师，客机效果受延迟影响较大。
+- 在游戏主菜单“设置 - MOD”中启用，默认不启用。
+- 主机安装后可自行生效；联机时主机需要安装并启用，主客机都启用后客机才能投掷。
+- 进入“街机公开”时功能会自动关闭，以免影响其他玩家。"""
+note_i18n.zh-TW = """
+可以投擲盤子等遊戲原本不能投擲的物品，也可以抬起並投擲其他廚師。
+- 投擲達人：可以投擲除滅火器、水槍、奶油、呼呼以外的任何物品。
+- 投擲人：可以抬起並投擲其他廚師，客機效果較容易受到延遲影響。
+- 在遊戲主選單「設定 - MOD」中啟用，預設為關閉。
+- 主機安裝後可自行生效；連線遊玩時主機需要安裝並啟用，主客機都啟用後客機才能投擲。
+- 進入「街機公開」時功能會自動關閉，以免影響其他玩家。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "喷气背包 MOD"
+name_i18n.en = "Jetpack MOD"
+name_i18n.ko = "제트팩 MOD"
+name_i18n.zh-CN = "喷气背包 MOD"
+name_i18n.zh-TW = "噴射背包 MOD"
+provider = "github"
+group = "玩法拓展"
+group_i18n.zh-CN = "玩法拓展"
+group_i18n.zh-TW = "玩法拓展"
+group_i18n.en = "Gameplay Expansion"
+group_i18n.ko = "플레이 방식 확장"
+username = "gua248"
+repository = "Overcooked2-Jetpack"
+enabled = true
+
+# 下载方式
+download_mode = "repository_file"
+
+# 仓库文件参数
+branch = "master"
+download_threads = 1
+
+# 仓库资产规则（仅支持具体文件）
+file_path = "bin/Release/OC2Jetpack.dll"
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.jetpack"
+local_product_name = "OC2Jetpack"
+local_original_filename = "OC2Jetpack.dll"
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+可以通过指定按键起飞。使用前先在按键设置中设置起飞键，选项名为 Jet。
+- 键盘和分体键盘玩家可直接设置 Jet 键；手柄玩家需要在这里设置一个键，再到“Steam - 库 - Overcooked! 2 - 控制器布局”将手柄按键映射到该键。
+- 长按 Jet 键起飞，短按 Jet 键固定高度巡航。
+- 客机只有在主机也安装此 MOD 时才能生效。
+- 游戏启动时默认禁用，也可以在按键设置时按 Esc 禁用；禁用时不会改变原版游戏逻辑。
+- 在“街机公开”中无效。
+- 启用后重力会变为原来的五分之一，所有天花板会被移除，因此有许多不按 Jet 键也能升空的方法。
+"""
+note_i18n.en = """
+Fly using a configurable key. Set the takeoff key named Jet in the game key setup first.
+- Keyboard and split-keyboard players can set Jet directly. Gamepad players must set a keyboard key here, then map the gamepad button to it in Steam - Library - Overcooked! 2 - Controller Layout.
+- Hold Jet to take off; tap Jet to fixed height cruise.
+- Clients only work when the host also has this MOD installed.
+- Jet is disabled by default when the game starts. You can also press Esc during key setup to disable it; disabled mode does not change the original game logic.
+- Not valid in Arcade Public.
+- When enabled, gravity becomes one fifth of its original value and all ceilings are removed, so there are many ways to get airborne without pressing Jet."""
+note_i18n.ko = """
+지정한 키로 비행할 수 있습니다. 먼저 키 설정에서 Jet이라는 이륙 키를 지정하세요.
+- 키보드와 분할 키보드 사용자는 Jet 키를 바로 설정할 수 있습니다. 게임패드 사용자는 여기서 키보드 키를 지정한 뒤 Steam - 라이브러리 - Overcooked! 2 - 컨트롤러 레이아웃에서 게임패드 버튼을 해당 키에 매핑해야 합니다.
+- Jet 키를 길게 누르면 이륙하고 짧게 누르면 고도를 고정하여 순항합니다.
+- 호스트에도 이 MOD가 설치되어 있어야 클라이언트에서 작동합니다.
+- 게임 시작 시 기본적으로 비활성화됩니다. 키 설정 중 Esc를 눌러 비활성화할 수도 있으며, 비활성화 상태에서는 원래 게임 로직이 바뀌지 않습니다.
+- Arcade Public에서는 사용할 수 없습니다.
+- 활성화하면 중력이 원래의 5분의 1로 바뀌고 모든 천장이 제거되어 Jet 키를 누르지 않고도 공중에 뜰 수 있는 방법이 많아집니다."""
+note_i18n.zh-CN = """
+可以通过指定按键起飞。使用前先在按键设置中设置起飞键，选项名为 Jet。
+- 键盘和分体键盘玩家可直接设置 Jet 键；手柄玩家需要在这里设置一个键，再到“Steam - 库 - Overcooked! 2 - 控制器布局”将手柄按键映射到该键。
+- 长按 Jet 键起飞，短按 Jet 键固定高度巡航。
+- 客机只有在主机也安装此 MOD 时才能生效。
+- 游戏启动时默认禁用，也可以在按键设置时按 Esc 禁用；禁用时不会改变原版游戏逻辑。
+- 在“街机公开”中无效。
+- 启用后重力会变为原来的五分之一，所有天花板会被移除，因此有许多不按 Jet 键也能升空的方法。"""
+note_i18n.zh-TW = """
+可以透過指定按鍵起飛。使用前先在按鍵設定中設定起飛鍵，選項名稱為 Jet。
+- 鍵盤和分離式鍵盤玩家可直接設定 Jet 鍵；手把玩家需要在這裡設定一個按鍵，再到「Steam - 收藏庫 - Overcooked! 2 - 控制器配置」將手把按鍵對應到該鍵。
+- 長按 Jet 鍵起飛，短按 Jet 鍵固定高度巡航。
+- 客機只有在主機也安裝此 MOD 時才能生效。
+- 遊戲啟動時預設停用，也可以在按鍵設定時按 Esc 停用；停用時不會改變原版遊戲邏輯。
+- 在「街機公開」中無效。
+- 啟用後重力會變為原本的五分之一，所有天花板都會移除，因此有許多不按 Jet 鍵也能升空的方法。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "更多菜单 MOD"
+name_i18n.en = "Many Recipes MOD"
+name_i18n.ko = "Many Recipes MOD"
+name_i18n.zh-CN = "更多菜单 MOD"
+name_i18n.zh-TW = "更多菜單 MOD"
+provider = "github"
+group = "内容拓展"
+group_i18n.zh-CN = "内容拓展"
+group_i18n.zh-TW = "內容拓展"
+group_i18n.en = "Content Expansion"
+group_i18n.ko = "콘텐츠 확장"
+username = "gua248"
+repository = "Overcooked2-ManyRecipes"
+enabled = true
+
+# 下载方式
+download_mode = "repository_file"
+
+# 仓库文件参数
+branch = "master"
+download_threads = 1
+
+# 仓库资产规则（仅支持具体文件）
+file_path = "bin/Release/OC2ManyRecipes.dll"
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.manyrecipes"
+local_product_name = "OC2ManyRecipes"
+local_original_filename = "OC2ManyRecipes.dll"
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+需要主机和客机都安装并启用才能正常工作。
+- 在游戏主菜单“设置 - MODs”中启用，默认不启用。Many Recipes 需要主机和客机都启用。
+- 扩展所有故事、DLC、对抗和敌群关卡的食谱，但不包括故事关卡 6-6 和 Sun 1-3；兼容 HardHorde MOD。
+- Many Recipes - Display More Menus 只需主机启用，不能单独启用。菜单显示数量会从 2~5 增加到 4~6；对抗模式从 2~3 增加到 3~4。
+- 在“街机公开”中无效。
+"""
+note_i18n.en = """
+Requires installation and activation of both host and guest players to work properly.
+- Enable in the game main menu under Settings - MODs (disabled by default). Many Recipes must be enabled by both host and guest.
+- Extends recipes for all story, DLC, versus, and horde levels, except story 6-6 and Sun 1-3. Compatible with the HardHorde mod.
+- Many Recipes - Display More Menus only needs to be enabled by the host and cannot be enabled alone. It increases displayed menus from 2~5 to 4~6 (in versus mode, from 2~3 to 3~4).
+- Not valid in Arcade Public."""
+note_i18n.ko = """
+정상적으로 작동하려면 호스트와 게스트 모두 설치하고 활성화해야 합니다.
+- 게임 메인 메뉴의 설정 - MODs에서 활성화하세요(기본값은 비활성화). Many Recipes는 호스트와 게스트 모두 활성화해야 합니다.
+- 스토리 6-6과 Sun 1-3을 제외한 모든 스토리, DLC, 대전 및 적 무리 레벨의 레시피를 확장합니다. HardHorde MOD와 호환됩니다.
+- Many Recipes - Display More Menus는 호스트만 활성화하면 되며 단독으로 활성화할 수 없습니다. 표시되는 메뉴 수를 2~5개에서 4~6개로 늘립니다(대전 모드는 2~3개에서 3~4개).
+- Arcade Public에서는 사용할 수 없습니다."""
+note_i18n.zh-CN = """
+需要主机和客机都安装并启用才能正常工作。
+- 在游戏主菜单“设置 - MODs”中启用，默认不启用。Many Recipes 需要主机和客机都启用。
+- 扩展所有故事、DLC、对抗和敌群关卡的食谱，但不包括故事关卡 6-6 和 Sun 1-3；兼容 HardHorde MOD。
+- Many Recipes - Display More Menus 只需主机启用，不能单独启用。菜单显示数量会从 2~5 增加到 4~6；对抗模式从 2~3 增加到 3~4。
+- 在“街机公开”中无效。"""
+note_i18n.zh-TW = """
+需要主機和客機都安裝並啟用才能正常運作。
+- 在遊戲主選單「設定 - MODs」中啟用，預設為關閉。Many Recipes 需要主機和客機都啟用。
+- 擴充所有故事、DLC、對抗和敵群關卡的食譜，但不包括故事關卡 6-6 和 Sun 1-3；相容 HardHorde MOD。
+- Many Recipes - Display More Menus 只需主機啟用，不能單獨啟用。選單顯示數量會從 2~5 增加到 4~6；對抗模式從 2~3 增加到 3~4。
+- 在「街機公開」中無效。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "换位 MOD"
+name_i18n.en = "Host Color / Position Swap"
+name_i18n.ko = "호스트 위치 교체 MOD"
+name_i18n.zh-CN = "换位 MOD"
+name_i18n.zh-TW = "換位 MOD"
+provider = "github"
+group = "联机辅助"
+group_i18n.zh-CN = "联机辅助"
+group_i18n.zh-TW = "連線輔助"
+group_i18n.en = "Multiplayer Support"
+group_i18n.ko = "멀티플레이 지원"
+username = "gua248"
+repository = "Overcooked2-HostColor"
+enabled = true
+
+# 下载方式
+download_mode = "repository_file"
+
+# 仓库文件参数
+branch = "master"
+download_threads = 1
+
+# 仓库资产规则（仅支持具体文件）
+file_path = "bin/Release/OC2HostColor.dll"
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.hostcolor"
+local_product_name = "OC2HostColor"
+local_original_filename = "OC2HostColor.dll"
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+换位 MOD，仅能交换主机和指定位置。
+- 在游戏主菜单“设置 - MOD”中启用。
+- 与街机 MOD 的换位功能冲突；安装此 MOD 后，街机 MOD 的换位功能会关闭。
+"""
+note_i18n.en = """
+This position-swap MOD can only swap the host with a specified player slot.
+- Enable it in the game main menu under Settings - MOD.
+- It conflicts with the position-swap feature in Arcade MOD. Installing this MOD disables the Arcade MOD position-swap feature."""
+note_i18n.ko = """
+호스트와 지정한 플레이어 위치만 서로 바꾸는 MOD입니다.
+- 게임 메인 메뉴의 설정 - MOD에서 활성화하세요.
+- Arcade MOD의 자리 교체 기능과 충돌합니다. 이 MOD를 설치하면 Arcade MOD의 자리 교체 기능이 비활성화됩니다."""
+note_i18n.zh-CN = """
+换位 MOD，仅能交换主机和指定位置。
+- 在游戏主菜单“设置 - MOD”中启用。
+- 与街机 MOD 的换位功能冲突；安装此 MOD 后，街机 MOD 的换位功能会关闭。"""
+note_i18n.zh-TW = """
+換位 MOD，只能交換主機和指定位置。
+- 在遊戲主選單「設定 - MOD」中啟用。
+- 與街機 MOD 的換位功能衝突；安裝此 MOD 後，街機 MOD 的換位功能會關閉。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "随机食材 MOD"
+name_i18n.en = "Randomizer MOD"
+name_i18n.ko = "무작위 재료 MOD"
+name_i18n.zh-CN = "随机食材 MOD"
+name_i18n.zh-TW = "隨機食材 MOD"
+provider = "github"
+group = "玩法调整"
+group_i18n.zh-CN = "玩法调整"
+group_i18n.zh-TW = "玩法調整"
+group_i18n.en = "Gameplay Tuning"
+group_i18n.ko = "게임플레이 조정"
+username = "gua248"
+repository = "Overcooked2-Randomizer"
+enabled = true
+
+# 下载方式
+download_mode = "repository_file"
+
+# 仓库文件参数
+branch = "master"
+download_threads = 1
+
+# 仓库资产规则（仅支持具体文件）
+file_path = "bin/Release/OC2Randomizer.dll"
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.randomizer"
+local_product_name = "OC2Randomizer"
+local_original_filename = "OC2Randomizer.dll"
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+随机食材 MOD。
+- 在游戏主菜单“设置 - MODs”中启用，默认不启用。
+- 只需主机启用即可生效；如果客机没有安装此 MOD，分数更新可能会有延迟。
+- 食材箱中的内容会不时随机变化，食材和厨具会变得昂贵，厨房还会在每次上菜后随机起火。
+- 在“街机公开”中无效。
+"""
+note_i18n.en = """
+Ingredient randomizer MOD.
+- Enable in the game main menu under Settings - MODs (disabled by default).
+- Only the host needs to enable it. Scores may update with a delay if guests do not have this MOD installed.
+- Ingredient box contents shuffle periodically, ingredients and cookware become costly, and the kitchen randomly catches fire after each serving.
+- Not valid in Arcade Public."""
+note_i18n.ko = """
+재료 무작위화 MOD입니다.
+- 게임 메인 메뉴의 설정 - MODs에서 활성화하세요(기본값은 비활성화).
+- 호스트만 활성화하면 적용됩니다. 게스트가 이 MOD를 설치하지 않으면 점수 갱신이 지연될 수 있습니다.
+- 식재료 상자 내용물이 주기적으로 무작위 변경되고 식재료와 조리 도구가 비싸지며, 음식을 제공할 때마다 주방에 무작위로 불이 납니다.
+- Arcade Public에서는 사용할 수 없습니다."""
+note_i18n.zh-CN = """
+随机食材 MOD。
+- 在游戏主菜单“设置 - MODs”中启用，默认不启用。
+- 只需主机启用即可生效；如果客机没有安装此 MOD，分数更新可能会有延迟。
+- 食材箱中的内容会不时随机变化，食材和厨具会变得昂贵，厨房还会在每次上菜后随机起火。
+- 在“街机公开”中无效。"""
+note_i18n.zh-TW = """
+隨機食材 MOD。
+- 在遊戲主選單「設定 - MODs」中啟用，預設為關閉。
+- 只需主機啟用即可生效；如果客機沒有安裝此 MOD，分數更新可能會延遲。
+- 食材箱中的內容會不時隨機變化，食材和廚具會變得昂貴，廚房還會在每次上菜後隨機起火。
+- 在「街機公開」中無效。"""
+
+[[repositories]]
+# 仓库基本信息
+name = "困难敌群 MOD"
+name_i18n.en = "Hard Horde MOD"
+name_i18n.ko = "Hard Horde 난이도 MOD"
+name_i18n.zh-CN = "困难敌群 MOD"
+name_i18n.zh-TW = "困難敵群 MOD"
+provider = "github"
+group = "玩法调整"
+group_i18n.zh-CN = "玩法调整"
+group_i18n.zh-TW = "玩法調整"
+group_i18n.en = "Gameplay Tuning"
+group_i18n.ko = "게임플레이 조정"
+username = "gua248"
+repository = "Overcooked2-HardHorde"
+enabled = true
+
+# 下载方式
+download_mode = "repository_file"
+
+# 仓库文件参数
+branch = "master"
+download_threads = 1
+
+# 仓库资产规则（仅支持具体文件）
+file_path = "bin/Release/OC2HardHorde.dll"
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.hardhorde"
+local_product_name = "HardHorde"
+local_original_filename = "OC2HardHorde.dll"
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+困难敌群 MOD，可以提高敌群难度。
+- 在游戏主菜单“设置 - MODs”中启用，默认不启用。
+- 只需主机启用即可生效，包括街机模式。
+- 所有敌人都需要多吃一份订单（僵尸面包和辣椒需要两份，苹果需要三份）。
+- 每波结束后，不再等待所有敌人被击败就会开始下一波。
+- 菜单生成规则会从独立随机改为普通关卡的生成规则。
+"""
+note_i18n.en = """
+Hard Horde increases the difficulty of horde levels.
+- Enable in the game main menu under Settings - MODs (disabled by default).
+- Only the host needs to enable it, including in arcade mode.
+- All enemies require one extra order (two for zombie breads and chilies, three for apples).
+- At the end of each wave, the next wave starts without waiting for all enemies to be defeated.
+- Menu generation changes from independent random generation to the normal level generation rules."""
+note_i18n.ko = """
+적 무리 레벨의 난이도를 높이는 MOD입니다.
+- 게임 메인 메뉴의 설정 - MODs에서 활성화하세요(기본값은 비활성화).
+- 아케이드 모드를 포함해 호스트만 활성화하면 됩니다.
+- 모든 적은 주문을 하나 더 먹어야 합니다(좀비 빵과 고추는 두 개, 사과는 세 개).
+- 각 웨이브가 끝나면 모든 적이 처치될 때까지 기다리지 않고 다음 웨이브가 시작됩니다.
+- 메뉴 생성 규칙이 독립적인 무작위 방식에서 일반 레벨의 생성 규칙으로 바뀝니다."""
+note_i18n.zh-CN = """
+困难敌群 MOD，可以提高敌群难度。
+- 在游戏主菜单“设置 - MODs”中启用，默认不启用。
+- 只需主机启用即可生效，包括街机模式。
+- 所有敌人都需要多吃一份订单（僵尸面包和辣椒需要两份，苹果需要三份）。
+- 每波结束后，不再等待所有敌人被击败就会开始下一波。
+- 菜单生成规则会从独立随机改为普通关卡的生成规则。"""
+note_i18n.zh-TW = """
+困難敵群 MOD，可以提高敵群難度。
+- 在遊戲主選單「設定 - MODs」中啟用，預設為關閉。
+- 只需主機啟用即可生效，包括街機模式。
+- 所有敵人都需要多吃一份訂單（殭屍麵包和辣椒需要兩份，蘋果需要三份）。
+- 每波結束後，不再等待所有敵人被擊敗就會開始下一波。
+- 選單生成規則會從獨立隨機改為一般關卡的生成規則。"""

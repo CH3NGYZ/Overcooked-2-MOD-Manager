@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
+    "core:window:allow-set-size",
+    "core:window:allow-set-size-constraints",
     "core:webview:allow-set-webview-zoom",
     "dialog:default",
     "dialog:allow-confirm",

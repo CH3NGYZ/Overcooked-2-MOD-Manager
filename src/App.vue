@@ -2,52 +2,66 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import {
   AlertTriangle, Boxes, Check, CheckCircle2, ChevronRight, CloudDownload, Coffee, Copy, Download,
-  ExternalLink, FileText, FolderOpen, GripVertical, HardDriveDownload, LayoutDashboard,
-  PackageCheck, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Settings2,
-  ShieldCheck, Trash2, Upload, X,
+  FolderOpen, GripVertical, LayoutDashboard, PackageCheck, Pencil, Plus, RefreshCw,
+  Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
-import { api, watchAppUpdateChannel, watchDownloadProgress } from './services/tauri'
-import type { AppUpdateCheckResult, Dashboard, Provider, Repository, RepositoryPatch, RepositorySource, TutorialStepConfig, WinhttpState } from './types'
-import { t, useLocaleTranslation, type Locale } from './i18n'
+import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
+import type { AppUpdateCheckResult, AppUpdateInfo, Dashboard, DownloadProgress, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
+import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { renderMarkdown } from './markdown'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
+import AppSidebar from './components/AppSidebar.vue'
+import FrameworkView from './components/FrameworkView.vue'
+import InstalledModsView from './components/InstalledModsView.vue'
+import ModRecycleBin from './components/ModRecycleBin.vue'
+import OverviewView from './components/OverviewView.vue'
+import RepositoriesView from './components/RepositoriesView.vue'
+import SponsorView from './components/SponsorView.vue'
+import GitHubProxyManager from './components/GitHubProxyManager.vue'
+import TutorialExperience from './components/TutorialExperience.vue'
+import ConfirmationDialog from './components/ConfirmationDialog.vue'
+import { useConfirmationDialog } from './composables/useConfirmationDialog'
+import { useTutorialRuntime, type TutorialProgressState } from './tutorial/useTutorialRuntime'
+import type { View } from './tutorial/steps'
 
-type View = 'overview' | 'framework' | 'installed' | 'repositories' | 'sponsor'
-type TutorialStep = TutorialStepConfig & { view?: View }
+type InstalledMod = import('./types').InstalledMod
+type ModUninstallPending = {
+  kind: 'mod' | 'package'
+  phase: 'confirm' | 'package' | 'unmanaged'
+  mod?: InstalledMod
+  packageId?: string
+  packageName?: string
+  mods?: InstalledMod[]
+  siblingNames?: string[]
+}
 
 const activeView = ref<View>('overview')
+const { confirmation, requestConfirmation, answerConfirmation } = useConfirmationDialog()
 const dashboard = ref<Dashboard | null>(null)
 const busy = ref('')
 const message = ref('')
 const error = ref('')
-const progress = ref({ label: '', percent: 0, speed: '', status: '' })
+const progress = ref<TutorialProgressState>({ label: '', percent: 0, speed: '', status: '' })
+let downloadRequestContext: Pick<DownloadProgress, 'route' | 'source' | 'attempt' | 'attempt_total'> = {}
+let downloadProgressActive = false
 const downloadCancelRequested = ref(false)
-const dark = ref(true)
-const DEFAULT_UI_ZOOM = 1
-const MIN_UI_ZOOM = 0.5
+const DEFAULT_UI_ZOOM = 1.5
+const MIN_UI_ZOOM = 1
 const MAX_UI_ZOOM = 2
 const UI_ZOOM_STEP = 0.1
 const uiZoom = ref(DEFAULT_UI_ZOOM)
 let uiZoomSaveTimer: number | undefined
 let uiZoomSaveQueue: Promise<void> = Promise.resolve()
 let uiZoomSaveValue = DEFAULT_UI_ZOOM
-const tutorialVisible = ref(false)
-const tutorialPendingSteps = ref<TutorialStep[]>([])
-const tutorialStepIndex = ref(0)
-const tutorialSaving = ref(false)
-const tutorialRect = ref({ left: 0, top: 0, width: 0, height: 0 })
-const tutorialTopbar = ref<HTMLElement | null>(null)
-const showTutorialEditor = ref(false)
-const tutorialEditorSteps = ref<TutorialStep[]>([])
-const tutorialPickerActive = ref(false)
-const tutorialPickerIndex = ref<number | null>(null)
 const showRepoEditor = ref(false)
 const showImport = ref(false)
 const showRepositorySource = ref(false)
+const showGithubProxyManager = ref(false)
+const showModRecycleBin = ref(false)
 const repositorySourceUrl = ref('')
 const repositorySourceNickname = ref('')
 const repositorySourceUniqueId = ref('')
@@ -68,34 +82,48 @@ const showBepInExInstall = ref(false)
 const bepinexInstallReinstall = ref(false)
 const selectedInstallTag = ref('')
 const selectedInstallAsset = ref('')
-const releaseAssetSizeLoading = ref(false)
-let releaseAssetSizeRequestToken = 0
-let releaseAssetSizeRequest: { repositoryId: string; releaseTag: string } | null = null
+const selectedAssetProxyMode = ref<ProxyMode>('auto_direct')
+const selectedAssetProxyId = ref('')
 const importText = ref('')
 const importPreview = ref<{ valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] } | null>(null)
 const repositoryRefreshing = reactive<Record<string, boolean>>({})
 const sourceRefreshingManual = reactive<Record<string, boolean>>({})
-const appUpdate = ref<{ version: string; current_version: string } | null>(null)
+const appUpdate = ref<AppUpdateInfo | null>(null)
 const appUpdateCheck = ref<AppUpdateCheckResult | null>(null)
 const startupUpdateChecking = ref(true)
 const updateCheckFailed = ref(false)
+const updateSkipped = ref(false)
+const startupUpdatePhase = ref<'api' | 'download' | 'skipped'>('api')
+const updateSkipCountdown = ref(0)
+const updatePageOpening = ref(false)
+const updatePageError = ref('')
 const startupStage = ref('')
 const startupError = ref('')
-const builtinSourcesFailedAll = ref(false)
 const sourceCollapsed = reactive<Record<string, boolean>>({})
 const repositoryGroupCollapsed = reactive<Record<string, boolean>>({})
 const sourceLoading = reactive<Record<string, boolean>>({})
+const sourceRefreshPhase = reactive<Record<string, 'clearing' | 'loading' | 'adding' | 'refreshing'>>({})
+const sourceErrors = reactive<Record<string, string>>({})
+const sourceContentRevealing = reactive<Record<string, boolean>>({})
+const sourceContentRevealTimers = new Map<string, number>()
 const repositoryReleaseReady = reactive<Record<string, boolean>>({})
+let initialRepositoryRefreshStarted = false
 const modDetailsExpanded = reactive<Record<string, boolean>>({})
+const modPackageCollapsed = reactive<Record<string, boolean>>({})
 const modTogglePending = reactive<Record<string, boolean>>({})
+const modPackageTogglePending = reactive<Record<string, boolean>>({})
 const stopProgress = ref<(() => void) | null>(null)
 const stopAppUpdateChannel = ref<(() => void) | null>(null)
+const stopAppUpdatePhase = ref<(() => void) | null>(null)
+const stopGameState = ref<(() => void) | null>(null)
+let appUnmounted = false
 let toastTimer: number | undefined
-let rustLogTimer: number | undefined
+let updateSkipTimer: number | undefined
 let uninstallFrontendLogging: (() => void) | undefined
+let modalPointerDownTarget: Element | null = null
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
-const unmanagedModPending = ref<import('./types').InstalledMod | null>(null)
+const modUninstallPending = ref<ModUninstallPending | null>(null)
 const installedModsPendingCheck = ref(false)
 const installedModsChecking = ref(false)
 const appVersion = ref('')
@@ -107,8 +135,8 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'ko', label: '한국어' },
 ]
 const repoForm = reactive<RepositoryPatch>({
-  name: '', group: '', provider: 'gitee', url: '', channel: 'stable', asset_rules: [],
-  install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '', local_original_filename: '', download_threads: 1, api_proxy_mode: 'direct', api_proxy_url: '', release_proxy_mode: 'direct', release_proxy_url: '', github_token: '', gitee_token: '', official_api_only: true, enabled: true,
+  name: '', group: '', provider: 'gitee', username: '', repository: '', download_mode: 'release', branch: 'main', file_path: '', channel: 'all', asset_rules: [],
+  region: '', install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '', local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1, github_token: '', gitee_token: '', official_api_only: true, enabled: true,
 })
 const bepinexDownloadUrls: Record<Provider, string> = {
   gitee: 'https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip',
@@ -116,7 +144,6 @@ const bepinexDownloadUrls: Record<Provider, string> = {
 }
 
 const STARTUP_IPC_TIMEOUT_MS = 8000
-const STARTUP_CHECK_TIMEOUT_MS = 95000
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -142,81 +169,69 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 const navItems = [
   { id: 'overview' as View, label: '状态总览', hint: '当前状态和快捷操作', icon: LayoutDashboard },
   { id: 'framework' as View, label: '框架管理', hint: '框架安装与备份', icon: PackageCheck },
-  { id: 'installed' as View, label: 'MOD管理', hint: '本地MOD安装与管理', icon: Boxes },
   { id: 'repositories' as View, label: 'MOD安装', hint: '在线MOD安装与管理', icon: CloudDownload },
+  { id: 'installed' as View, label: 'MOD管理', hint: '本地MOD安装与管理', icon: Boxes },
   { id: 'sponsor' as View, label: '赞助渠道', hint: '支持项目开发', icon: Coffee },
 ]
-function normalizeTutorialView(view?: string): View | undefined {
-  return view && navItems.some((item) => item.id === view) ? view as View : undefined
-}
-
-// Add a new step with a unique id when a new page or important workflow is introduced.
-const tutorialSteps: TutorialStep[] = [
-  { id: 'workspace-navigation-v1', selector: '.sidebar', title: '认识工作区', description: '左侧导航可以切换总览、框架、已安装 MOD、仓库和赞助页面。' },
-  { id: 'global-toolbar-v1', selector: '.topbar', title: '全局工具栏', description: '这里可以切换语言、重新检测游戏目录和切换主题。' },
-  { id: 'overview-metrics-v1', selector: '.metric-grid', view: 'overview', title: '总览与状态卡片', description: '总览卡片汇总框架、已安装 MOD、仓库和启动状态，点击卡片可以直接进入对应页面。' },
-  { id: 'framework-management-v1', selector: '.framework-panel', view: 'framework', title: '框架管理', description: '在这里安装、更新、卸载 BepInEx，并管理框架备份。' },
-  { id: 'installed-mods-v1', selector: '.page-intro', view: 'installed', title: '已安装 MOD', description: '这里显示本地插件，可以手动安装、重新扫描、检查更新和编辑备注。' },
-  { id: 'repository-management-v1', selector: '.page-intro', view: 'repositories', title: 'MOD安装', description: '这里管理 Release 仓库源、导入导出配置，并安装仓库中的 MOD。' },
-]
-const currentTutorialStep = computed(() => tutorialPendingSteps.value[tutorialStepIndex.value] ?? null)
-const tutorialProgress = computed(() => `${tutorialStepIndex.value + 1} / ${tutorialPendingSteps.value.length}`)
-const tutorialSpotlightStyle = computed(() => ({
-  left: `${tutorialRect.value.left}px`,
-  top: `${tutorialRect.value.top}px`,
-  width: `${tutorialRect.value.width}px`,
-  height: `${tutorialRect.value.height}px`,
-}))
-const tutorialCardStyle = computed(() => {
-  const rect = tutorialRect.value
-  const viewportPadding = 16
-  const cardWidth = Math.min(360, Math.max(280, window.innerWidth - viewportPadding * 2))
-  const cardHeight = Math.max(160, Math.min(236, window.innerHeight - viewportPadding * 2))
-  const gap = 18
-  const maxLeft = Math.max(viewportPadding, window.innerWidth - cardWidth - viewportPadding)
-  const maxTop = Math.max(viewportPadding, window.innerHeight - cardHeight - viewportPadding)
-  const candidates = [
-    { left: rect.left, top: rect.top + rect.height + gap },
-    { left: rect.left, top: rect.top - cardHeight - gap },
-    { left: rect.left + rect.width + gap, top: rect.top },
-    { left: rect.left - cardWidth - gap, top: rect.top },
-  ].map((candidate) => {
-    const left = Math.max(viewportPadding, Math.min(candidate.left, maxLeft))
-    const top = Math.max(viewportPadding, Math.min(candidate.top, maxTop))
-    const overlapWidth = Math.max(0, Math.min(left + cardWidth, rect.left + rect.width) - Math.max(left, rect.left))
-    const overlapHeight = Math.max(0, Math.min(top + cardHeight, rect.top + rect.height) - Math.max(top, rect.top))
-    return { left, top, overlap: overlapWidth * overlapHeight }
-  })
-  const placement = candidates.find((candidate) => candidate.overlap === 0) || candidates.reduce((best, candidate) => candidate.overlap < best.overlap ? candidate : best)
-  return {
-    left: `${placement.left}px`,
-    top: `${placement.top}px`,
-    width: `${cardWidth}px`,
-    maxHeight: `calc(100vh - ${viewportPadding * 2}px)`,
-  }
+const tutorialRuntime = useTutorialRuntime({
+  api,
+  dashboard,
+  activeView,
+  locale,
+  uiZoom,
+  zoomControls: { min: MIN_UI_ZOOM, max: MAX_UI_ZOOM, step: UI_ZOOM_STEP, set: (value) => setUiZoom(value) },
+  progress,
+  sourceLoading,
+  repositoryReleaseReady,
+  modDetailsExpanded,
+  modPackageCollapsed,
+  showBepInExInstall,
+  bepinexInstallReinstall,
+  showRepositorySource,
+  showRepoEditor,
+  showInstall,
+  selectedInstallTag,
+  selectedInstallAsset,
+  getStoredSteps: () => dashboard.value?.config.tutorial_steps ?? [],
+  getSeenStepIds: () => dashboard.value?.config.onboarding_seen_steps ?? [],
+  persistSettings: async (patch: SettingsPatch) => {
+    const saved = await api.saveSettings(patch)
+    if (dashboard.value) {
+      dashboard.value.config = saved
+    }
+    return saved
+  },
+  showError,
+  showSuccess,
+  run,
+  getRepositories: () => repos.value,
+  getActiveRepositorySources: () => activeRepositorySources.value,
+  resetInstalledModExpansion,
+  openRepositorySourceManager,
+  editRepository: () => editRepo(),
+  installReleases,
+  matchingInstallAssets,
+  startInitialRepositoryRefresh,
 })
-
-const game = computed(() => dashboard.value?.game)
-const config = computed(() => dashboard.value?.config)
-const configuredTutorialSteps = computed<TutorialStep[]>(() => {
-  const configured = config.value?.tutorial_steps ?? []
-  return configured.length ? configured.map((step) => ({ ...step, view: normalizeTutorialView(step.view) })) : tutorialSteps
-})
+const tutorial = tutorialRuntime.controller
+const displayDashboard = tutorialRuntime.displayDashboard
+const game = computed(() => displayDashboard.value?.game)
+const config = computed(() => displayDashboard.value?.config)
+const realGame = computed(() => dashboard.value?.game)
+const displayProgress = tutorialRuntime.displayProgress
 function sourceMatchesRegion(source: RepositorySource) {
-  const region = source.region?.trim().toLowerCase()
-  if (!region) return true
-  if (region === 'chinese_mainland' || region === 'mainland-china') return config.value?.region === 'chinese_mainland'
-  if (region === 'international' || region === 'other') return config.value?.region !== 'chinese_mainland'
-  return true
+  return repositoryRegionMatches(source.region, config.value?.region)
 }
 function repositorySourceRegionLabel(region?: string) {
-  if (region === 'chinese_mainland' || region === 'mainland-china') return t('中国大陆')
-  if (region === 'international' || region === 'other') return t('非中国大陆')
-  return t('所有地区')
+  const normalized = normalizeRepositoryRegion(region)
+  if (normalized === 'chinese_mainland') return t('中国大陆地区')
+  if (normalized === 'international') return t('国际地区')
+  return t('全部地区')
 }
 const activeRepositorySources = computed(() => (config.value?.repository_sources ?? []).filter(sourceMatchesRegion))
 const activeRepositorySourceIds = computed(() => new Set(activeRepositorySources.value.map((source) => source.id)))
-const repos = computed(() => (config.value?.repositories ?? []).filter((repo) => !repo.source_id || activeRepositorySourceIds.value.has(repo.source_id)))
+const repos = computed(() => (config.value?.repositories ?? []).filter((repo) => repositoryRegionMatches(repo.region, config.value?.region)
+  && (!repo.source_id || activeRepositorySourceIds.value.has(repo.source_id))))
 function groupedRepositories(repositories: Repository[]) {
   const groups = new Map<string, Repository[]>()
   for (const repo of repositories) {
@@ -237,21 +252,19 @@ type SourceGroup = {
   children: SourceGroup[]
 }
 type FlattenedSourceGroup = SourceGroup & { depth: number }
+type RepositorySourceManagerEntry = { source: RepositorySource; depth: number }
 function flattenSourceGroups(group: SourceGroup, depth = 0): FlattenedSourceGroup[] {
+  const current = depth === 0 && group.groups.length === 0 ? [] : [{ ...group, depth }]
   return [
-    { ...group, depth },
+    ...current,
     ...group.children.flatMap((child) => flattenSourceGroups(child, depth + 1)),
   ]
 }
-function sourceDepthStyle(depth: number) {
-  return { marginLeft: `calc(var(--source-indent) * ${depth})` }
-}
 const sourceGroups = computed(() => {
   const sources = activeRepositorySources.value
-  const visibleSources = sources.filter((source) => !(source.builtin && builtinSourcesFailedAll.value))
-  const visibleSourceIds = new Set(visibleSources.map((source) => source.id))
+  const visibleSourceIds = new Set(sources.map((source) => source.id))
   const childrenByParent = new Map<string, RepositorySource[]>()
-  for (const source of visibleSources) {
+  for (const source of sources) {
     if (!source.parent_id || !visibleSourceIds.has(source.parent_id)) continue
     const children = childrenByParent.get(source.parent_id) || []
     children.push(source)
@@ -262,49 +275,185 @@ const sourceGroups = computed(() => {
     groups: groupedRepositories(repos.value.filter((repo) => repo.source_id === source.id)),
     children: (childrenByParent.get(source.id) || []).map(buildGroup),
   })
-  const groups = visibleSources
+  const groups = sources
     .filter((source) => !source.parent_id || !visibleSourceIds.has(source.parent_id))
     .map(buildGroup)
-  if (builtinSourcesFailedAll.value) {
-    const builtin: RepositorySource = { id: 'builtin-fallback', nickname: t('内置仓库源'), url: '', builtin: true }
-    groups.unshift({ source: builtin, groups: groupedRepositories(repos.value.filter((repo) => repo.builtin)), children: [] })
-  }
-  const knownSourceIds = new Set(visibleSources.map((source) => source.id))
-  const unclassified = repos.value.filter((repo) => !repo.source_id || !knownSourceIds.has(repo.source_id))
+  const unclassified = repos.value.filter((repo) => !repo.builtin
+    && (!repo.source_id || !visibleSourceIds.has(repo.source_id)))
   if (unclassified.length) groups.push({ source: { id: 'unclassified', nickname: t('未分类仓库'), url: '', builtin: false }, groups: groupedRepositories(unclassified), children: [] })
   return groups
 })
+function collectSourceGroupRepositoryIds(groups: SourceGroup[], ids = new Set<string>()) {
+  for (const group of groups) {
+    for (const repositoryGroup of group.groups) {
+      for (const repository of repositoryGroup.repositories) ids.add(repository.id)
+    }
+    collectSourceGroupRepositoryIds(group.children, ids)
+  }
+  return ids
+}
+const displayedRepositoryIds = computed(() => collectSourceGroupRepositoryIds(sourceGroups.value))
+const displayedRepositoryCount = computed(() => displayedRepositoryIds.value.size)
+const installableRepositoryCount = computed(() => repos.value.filter((repo) => displayedRepositoryIds.value.has(repo.id)
+  && repo.enabled
+  && (repo.download_mode === 'repository_file'
+    ? !!repo.branch.trim() && !!repo.file_path.trim()
+    : repositoryReleaseReady[repo.id] && installReleases(repo).length > 0)).length)
+const repositorySourceManagerEntries = computed<RepositorySourceManagerEntry[]>(() => {
+  const sources = repositorySourceDraft.value
+  const sourceIds = new Set(sources.map((source) => source.id))
+  const visibleSourceIds = new Set(sources.filter(sourceMatchesRegion).map((source) => source.id))
+  const childrenByParent = new Map<string, RepositorySource[]>()
+  for (const source of sources) {
+    if (!sourceMatchesRegion(source) || !source.parent_id || !sourceIds.has(source.parent_id)) continue
+    const children = childrenByParent.get(source.parent_id) || []
+    children.push(source)
+    childrenByParent.set(source.parent_id, children)
+  }
+  const entries: RepositorySourceManagerEntry[] = []
+  const visited = new Set<string>()
+  const visit = (source: RepositorySource, depth: number) => {
+    if (visited.has(source.id) || !visibleSourceIds.has(source.id)) return
+    visited.add(source.id)
+    entries.push({ source, depth })
+    for (const child of childrenByParent.get(source.id) || []) visit(child, depth + 1)
+  }
+  for (const source of sources) {
+    if ((!source.parent_id || !sourceIds.has(source.parent_id)) && visibleSourceIds.has(source.id)) visit(source, 0)
+  }
+  return entries
+})
 const modNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
-const allInstalledMods = computed(() => [...(dashboard.value?.mods ?? [])].sort((left, right) => {
+const allInstalledMods = computed(() => [...(displayDashboard.value?.mods ?? [])].sort((left, right) => {
   const leftName = left.name.trim()
   const rightName = right.name.trim()
   return modNameCollator.compare(leftName, rightName)
     || modNameCollator.compare(left.dll_file, right.dll_file)
 }))
-const installedMods = computed(() => allInstalledMods.value.filter((mod) => !config.value?.hide_unidentified_mods || !!mod.guid?.trim()))
+const visibleInstalledMods = computed(() => allInstalledMods.value.filter((mod) => !config.value?.hide_unidentified_mods || !!mod.guid?.trim()))
+const installedPackageCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const mod of allInstalledMods.value) {
+    if (mod.package_id) counts.set(mod.package_id, (counts.get(mod.package_id) || 0) + 1)
+  }
+  return counts
+})
+function packageIdForMod(mod: InstalledMod) {
+  const packageId = mod.package_id
+  const installedCount = packageId ? installedPackageCounts.value.get(packageId) || 0 : 0
+  return packageId && installedCount > 1 ? packageId : undefined
+}
+function packageNameForMod(mod: InstalledMod) {
+  if (mod.package_name) return mod.package_name
+  const repository = mod.package_id
+    ? config.value?.repositories.find((item) => item.id === mod.package_id)
+    : undefined
+  return repository ? localizedRepositoryName(repository) : mod.package_name || t('MOD 包')
+}
+function packageModCountForMod(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  return packageId ? visibleInstalledMods.value.filter((item) => item.package_id === packageId).length : 0
+}
+const installedMods = computed(() => [...visibleInstalledMods.value].sort((left, right) => {
+  const leftPackage = packageIdForMod(left)
+  const rightPackage = packageIdForMod(right)
+  const leftGroup = leftPackage ? packageNameForMod(left) : left.name
+  const rightGroup = rightPackage ? packageNameForMod(right) : right.name
+  return modNameCollator.compare(leftGroup, rightGroup)
+    || (leftPackage !== rightPackage ? (leftPackage ? -1 : 1) : 0)
+    || (leftPackage && rightPackage && leftPackage === rightPackage ? modNameCollator.compare(left.name, right.name) : 0)
+    || modNameCollator.compare(left.name, right.name)
+    || modNameCollator.compare(left.dll_file, right.dll_file)
+}))
+function packageModsForMod(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  return packageId ? allInstalledMods.value.filter((item) => item.package_id === packageId) : []
+}
+function hasOtherEnabledSameGuid(mod: InstalledMod) {
+  const guid = mod.guid?.trim()
+  if (!guid) return false
+  const normalized = guid.toLocaleLowerCase()
+  return allInstalledMods.value.some((item) => item.dll_file !== mod.dll_file
+    && item.enabled
+    && item.guid?.trim().toLocaleLowerCase() === normalized)
+}
+function isFirstModInPackage(mod: InstalledMod, index: number) {
+  const packageId = packageIdForMod(mod)
+  return !!packageId && (index === 0 || packageIdForMod(installedMods.value[index - 1]) !== packageId)
+}
+function isLastModInPackage(mod: InstalledMod, index: number) {
+  const packageId = packageIdForMod(mod)
+  return !!packageId && (index === installedMods.value.length - 1 || packageIdForMod(installedMods.value[index + 1]) !== packageId)
+}
+function modDisplayIndex(mod: InstalledMod, index: number) {
+  const packageId = packageIdForMod(mod)
+  if (packageId && !isFirstModInPackage(mod, index)) return packageChildIndex(mod)
+  return installedMods.value
+    .slice(0, index + 1)
+    .filter((item, itemIndex) => !packageIdForMod(item) || isFirstModInPackage(item, itemIndex))
+    .length
+}
+function packageChildIndex(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  if (!packageId) return 1
+  return installedMods.value.filter((item) => item.package_id === packageId)
+    .findIndex((item) => item.dll_file === mod.dll_file) + 1
+}
+function packageIsCollapsed(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  return !!packageId && modPackageCollapsed[packageId] !== false
+}
+function toggleModPackageDetails(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  if (packageId) modPackageCollapsed[packageId] = !(modPackageCollapsed[packageId] ?? true)
+}
+function resetInstalledModExpansion() {
+  for (const key of Object.keys(modPackageCollapsed)) delete modPackageCollapsed[key]
+  for (const key of Object.keys(modDetailsExpanded)) delete modDetailsExpanded[key]
+  for (const mod of installedMods.value) modDetailsExpanded[mod.dll_file] = false
+}
+function packageEnabledForMod(mod: InstalledMod) {
+  const mods = packageModsForMod(mod)
+  return mods.length > 0 && mods.every((item) => modEnabledForView(item))
+}
+function packageMixedForMod(mod: InstalledMod) {
+  const mods = packageModsForMod(mod)
+  return !packageEnabledForMod(mod) && mods.some((item) => modEnabledForView(item))
+}
+function packageTogglePendingForMod(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  return packageId ? modPackageTogglePending[packageId] : undefined
+}
+function formatModPackageDeleteWarning(pending: ModUninstallPending) {
+  const current = pending.mod?.name || ''
+  const siblings = (pending.siblingNames || []).map((name) => `【${name}】`).join('、')
+  const others = siblings || `【${t('其他 MOD')}】`
+  return t('当前 DLL【{current}】与{others}一并安装。仅将此 DLL 移入回收站，可能导致{missing}MOD 缺失依赖。可从回收站恢复，是否继续？')
+    .replace('{current}', current)
+    .replace('{others}', others)
+    .replace('{missing}', others)
+}
 function modRepositoryIds(mod: import('./types').InstalledMod) {
   const ids = mod.repository_ids?.length ? mod.repository_ids : mod.repository_id ? [mod.repository_id] : []
   return new Set(ids)
 }
-const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enabled && installedMods.value.some((mod) => modRepositoryIds(mod).has(repo.id))))
-const gameBlocked = computed(() => game.value?.kitchen_running ?? false)
+function modReleaseRepositoryIds(mod: InstalledMod) {
+  if (mod.status === 'not_release_asset') return new Set<string>()
+  const ids = modRepositoryIds(mod)
+  return new Set(repos.value.filter((repo) => repo.download_mode === 'release' && ids.has(repo.id)).map((repo) => repo.id))
+}
+const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enabled && repo.download_mode === 'release'
+  && installedMods.value.some((mod) => modReleaseRepositoryIds(mod).has(repo.id))))
+const gameBlocked = computed(() => realGame.value?.kitchen_running ?? false)
 const currentWinhttp = computed<WinhttpState>(() => game.value?.winhttp_state ?? 'missing')
 const repositoryRefreshBatchActive = ref(false)
 const repositoryRefreshBatchTotal = ref(0)
 const repositoryRefreshBatchCompleted = ref(0)
-const installableRepositoryCount = computed(() => repos.value.filter((repo) => repositoryReleaseReady[repo.id] && repo.enabled && installReleases(repo).length > 0).length)
-const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => mod.update_available && Array.from(modRepositoryIds(mod)).some((id) => repositoryReleaseReady[id])).length)
-const allRepositoryRefreshComplete = computed(() => {
-  const sources = activeRepositorySources.value
-  const configured = repos.value.filter((repo) => repo.enabled && !!repo.source_id)
-  return !repositoryRefreshBatchActive.value
-    && (sources.length > 0 || repos.value.length === 0)
-    && Object.values(sourceLoading).every((loading) => !loading)
-    && Object.values(sourceRefreshingManual).every((refreshing) => !refreshing)
-    && configured.every((repo) => repositoryReleaseReady[repo.id])
-})
-let repositoryRefreshCount = 0
-let dashboardRevision = 0
+const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => modReleaseUpdateStatus(mod) === '有更新').length)
+const repositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
+  || Object.values(repositoryRefreshing).some(Boolean)
+  || Object.values(sourceLoading).some(Boolean)
+  || Object.values(sourceRefreshingManual).some(Boolean))
 let repositoryRefreshBatchToken = 0
 const repositoryRefreshTasks = new Map<string, Promise<boolean>>()
 let dashboardUpdateQueue: Promise<void> = Promise.resolve()
@@ -318,9 +467,18 @@ async function refreshDashboardSerialized() {
   return dashboard.value
 }
 
-function statusLabel(status: WinhttpState) { return t(({ modenabled: 'MOD 已启用', moddisabled: 'MOD 已关闭', missing: '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
+async function refreshConfigSerialized() {
+  const next = dashboardUpdateQueue.then(async () => {
+    const savedConfig = await api.config()
+    if (dashboard.value) dashboard.value = { ...dashboard.value, config: savedConfig }
+  })
+  dashboardUpdateQueue = next.catch(() => undefined)
+  await next
+}
+
+function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatBytes(value: number) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}` }
-function formatAssetSize(asset: import('./types').ReleaseAsset) { return asset.size > 0 ? formatBytes(asset.size) : t(releaseAssetSizeLoading.value ? '读取文件大小中' : '大小未知') }
+function formatAssetSize(asset: import('./types').ReleaseAsset) { return formatBytes(asset.size) }
 function scheduleToastClose() { if (toastTimer) window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => { message.value = ''; error.value = '' }, 5000) }
 function clampUiZoom(value: number | undefined) {
   const numeric = Number.isFinite(value) ? value as number : DEFAULT_UI_ZOOM
@@ -329,7 +487,7 @@ function clampUiZoom(value: number | undefined) {
 async function setUiZoom(value: number | undefined, persist = true, notify = false) {
   const next = clampUiZoom(value)
   uiZoom.value = next
-  try { await getCurrentWebviewWindow().setZoom(next) } catch { /* 浏览器预览环境不提供 WebView 缩放 API */ }
+  document.documentElement.style.setProperty('--ui-zoom', String(next))
   if (!persist) {
     if (uiZoomSaveTimer) {
       window.clearTimeout(uiZoomSaveTimer)
@@ -351,259 +509,24 @@ async function setUiZoom(value: number | undefined, persist = true, notify = fal
     showSuccess(t('界面缩放至').replace('{percent}', String(Math.round(next * 100))))
   }
 }
-function handleUiZoomWheel(event: WheelEvent) {
+async function handleUiZoomWheel(event: WheelEvent) {
   if (!event.ctrlKey || event.deltaY === 0) return
   event.preventDefault()
-  void setUiZoom(uiZoom.value + (event.deltaY < 0 ? UI_ZOOM_STEP : -UI_ZOOM_STEP), true, true)
-}
-function tutorialTargetElement(step: TutorialStep | null) {
-  if (!step) return null
-  try {
-    const selected = document.querySelector(step.selector)
-    if (selected instanceof Element) return selected
-  } catch {
-    // Invalid selectors are reported by the editor; keep the overlay usable.
-  }
-  return tutorialTopbar.value
-}
-function updateTutorialRect() {
-  if (!tutorialVisible.value) return
-  const element = tutorialTargetElement(currentTutorialStep.value)
-  if (!element) return
-  const rect = element.getBoundingClientRect()
-  const padding = 8
-  const left = Math.max(8, rect.left - padding)
-  const top = Math.max(8, rect.top - padding)
-  tutorialRect.value = {
-    left,
-    top,
-    width: Math.min(window.innerWidth - left - 8, rect.width + padding * 2),
-    height: Math.min(window.innerHeight - top - 8, rect.height + padding * 2),
-  }
-}
-async function showTutorialStep() {
-  const step = currentTutorialStep.value
-  if (!step) return
-  if (step.view && activeView.value !== step.view) activeView.value = step.view
-  await nextTick()
-  updateTutorialRect()
-}
-async function persistTutorialSteps(ids: string[]) {
-  const current = config.value?.onboarding_seen_steps ?? []
-  const seen = Array.from(new Set([...current, ...ids]))
-  try {
-    const saved = await api.saveSettings({ onboarding_seen_steps: seen })
-    if (dashboard.value) dashboard.value.config.onboarding_seen_steps = saved.onboarding_seen_steps
-    return true
-  } catch (reason) {
-    showError(reason)
-    return false
-  }
-}
-async function startOnboarding() {
-  const seen = new Set(config.value?.onboarding_seen_steps ?? [])
-  const pending = configuredTutorialSteps.value.filter((step) => !seen.has(step.id))
-  if (!pending.length) return
-  tutorialPendingSteps.value = pending
-  tutorialStepIndex.value = 0
-  tutorialVisible.value = true
-  await showTutorialStep()
-}
-async function nextTutorialStep() {
-  if (tutorialSaving.value) return
-  const step = currentTutorialStep.value
-  if (!step) return
-  tutorialSaving.value = true
-  try {
-    if (!await persistTutorialSteps([step.id])) return
-    if (tutorialStepIndex.value >= tutorialPendingSteps.value.length - 1) {
-      tutorialVisible.value = false
-      return
-    }
-    tutorialStepIndex.value += 1
-    await showTutorialStep()
-  } finally {
-    tutorialSaving.value = false
-  }
-}
-async function previousTutorialStep() {
-  if (tutorialStepIndex.value === 0) return
-  tutorialStepIndex.value -= 1
-  await showTutorialStep()
-}
-async function skipTutorial() {
-  if (tutorialSaving.value) return
-  const ids = tutorialPendingSteps.value.map((step) => step.id)
-  tutorialSaving.value = true
-  try {
-    if (await persistTutorialSteps(ids)) tutorialVisible.value = false
-  } finally {
-    tutorialSaving.value = false
-  }
-}
-function cloneTutorialSteps(steps: TutorialStepConfig[]): TutorialStep[] {
-  return steps.map((step) => ({ ...step, view: normalizeTutorialView(step.view) }))
-}
-function openTutorialEditor() {
-  tutorialEditorSteps.value = cloneTutorialSteps(configuredTutorialSteps.value)
-  showTutorialEditor.value = true
-}
-function addTutorialStep() {
-  tutorialEditorSteps.value.push({
-    id: `custom-${Date.now()}-${tutorialEditorSteps.value.length + 1}`,
-    selector: '.app-shell',
-    view: activeView.value,
-    title: t('新的教程步骤'),
-    description: t('填写这个界面区域的说明。'),
-  })
-}
-function removeTutorialStep(index: number) {
-  tutorialEditorSteps.value.splice(index, 1)
-}
-function escapeCssIdentifier(value: string) {
-  return value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`)
-}
-function selectorForElement(element: Element) {
-  const parts: string[] = []
-  let current: Element | null = element
-  while (current && current !== document.body && parts.length < 8) {
-    const tag = current.tagName.toLowerCase()
-    const classes = Array.from(current.classList)
-      .filter((name) => name.trim())
-      .slice(0, 3)
-      .map((name) => `.${escapeCssIdentifier(name)}`)
-      .join('')
-    let part = `${tag}${classes}`
-    if (current.id.trim()) {
-      parts.unshift(`#${escapeCssIdentifier(current.id.trim())}`)
-      break
-    }
-    const parent: Element | null = current.parentElement
-    if (parent) {
-      const sameTag = Array.from(parent.children).filter((child) => child.tagName.toLowerCase() === tag)
-      if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(current) + 1})`
-    }
-    parts.unshift(part)
-    current = parent
-  }
-  return parts.join(' > ') || 'body'
-}
-function stopTutorialPicker(showEditor = true) {
-  tutorialPickerActive.value = false
-  tutorialPickerIndex.value = null
-  document.removeEventListener('click', handleTutorialPickerClick, true)
-  document.removeEventListener('keydown', handleTutorialPickerKeydown, true)
-  if (showEditor) showTutorialEditor.value = true
-}
-function startTutorialPicker(index: number) {
-  stopTutorialPicker(false)
-  tutorialPickerIndex.value = index
-  tutorialPickerActive.value = true
-  showTutorialEditor.value = false
-  document.addEventListener('click', handleTutorialPickerClick, true)
-  document.addEventListener('keydown', handleTutorialPickerKeydown, true)
-}
-function handleTutorialPickerKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && tutorialPickerActive.value) {
-    event.preventDefault()
-    stopTutorialPicker()
-  }
-}
-function handleTutorialPickerClick(event: MouseEvent) {
-  if (!tutorialPickerActive.value) return
-  const target = event.target instanceof Element ? event.target : null
-  if (!target || target.closest('.tutorial-picker-banner')) return
-  event.preventDefault()
-  event.stopPropagation()
-  event.stopImmediatePropagation()
-  const index = tutorialPickerIndex.value
-  if (index !== null && tutorialEditorSteps.value[index]) {
-    tutorialEditorSteps.value[index].selector = selectorForElement(target)
-  }
-  stopTutorialPicker()
-}
-function validateTutorialSelector(selector: string) {
-  try {
-    document.querySelector(selector)
-    return true
-  } catch {
-    return false
-  }
-}
-async function saveTutorialEditor() {
-  if (tutorialSaving.value) return
-  const seenIds = new Set<string>()
-  const steps = tutorialEditorSteps.value.map((step, index) => ({
-    id: step.id.trim() || `custom-${Date.now()}-${index + 1}`,
-    selector: step.selector.trim(),
-    view: step.view || undefined,
-    title: step.title.trim(),
-    description: step.description.trim(),
-  }))
-  if (!steps.length) {
-    showError(t('教程至少需要一个步骤'))
-    return
-  }
-  for (const step of steps) {
-    if (!step.selector || !step.title || !step.description) {
-      showError(t('教程步骤不能为空'))
-      return
-    }
-    if (!validateTutorialSelector(step.selector)) {
-      showError(`${t('教程选择器无效')}: ${step.selector}`)
-      return
-    }
-    if (seenIds.has(step.id)) {
-      showError(t('教程步骤 ID 不能重复'))
-      return
-    }
-    seenIds.add(step.id)
-  }
-  tutorialSaving.value = true
-  try {
-    const saved = await api.saveSettings({ tutorial_steps: steps, onboarding_seen_steps: [] })
-    if (dashboard.value) {
-      dashboard.value.config.tutorial_steps = saved.tutorial_steps
-      dashboard.value.config.onboarding_seen_steps = saved.onboarding_seen_steps
-    }
-    showTutorialEditor.value = false
-    showSuccess(t('教程配置已保存'))
-    await startOnboarding()
-  } catch (reason) {
-    showError(reason)
-  } finally {
-    tutorialSaving.value = false
-  }
-}
-async function restoreBuiltInTutorial() {
-  if (tutorialSaving.value) return
-  tutorialSaving.value = true
-  try {
-    const saved = await api.saveSettings({ tutorial_steps: [], onboarding_seen_steps: [] })
-    if (dashboard.value) {
-      dashboard.value.config.tutorial_steps = saved.tutorial_steps
-      dashboard.value.config.onboarding_seen_steps = saved.onboarding_seen_steps
-    }
-    showTutorialEditor.value = false
-    showSuccess(t('已恢复内置教程'))
-    await startOnboarding()
-  } catch (reason) {
-    showError(reason)
-  } finally {
-    tutorialSaving.value = false
-  }
+  const next = uiZoom.value + (event.deltaY < 0 ? UI_ZOOM_STEP : -UI_ZOOM_STEP)
+  // Ctrl+wheel changes only the WebView content scale.
+  await setUiZoom(next, true, true)
 }
 function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repo.name_i18n?.[locale.value] || repo.name }
 function localizedRepositoryNote(repo: Repository) { return repo.note_i18n?.[locale.value] || repo.note }
+function parseModVersion(value?: string) {
+  const match = value?.match(/\d+(?:\.\d+){1,3}/)?.[0]
+  return match ? match.split('.').map(Number).concat([0, 0, 0, 0]).slice(0, 4) : null
+}
 function compareModVersions(left?: string, right?: string) {
-  const parse = (value?: string) => {
-    const match = value?.match(/\d+(?:\.\d+){0,3}/)?.[0]
-    return match ? match.split('.').map(Number).concat([0, 0, 0, 0]).slice(0, 4) : null
-  }
-  const leftParts = parse(left)
-  const rightParts = parse(right)
+  const leftParts = parseModVersion(left)
+  const rightParts = parseModVersion(right)
   if (!leftParts || !rightParts) return 0
   for (let index = 0; index < 4; index += 1) {
     if (leftParts[index] !== rightParts[index]) return leftParts[index] > rightParts[index] ? 1 : -1
@@ -611,19 +534,83 @@ function compareModVersions(left?: string, right?: string) {
   return 0
 }
 function repositoryInstallStatus(repo: Repository) {
-  const boundMods = installedMods.value.filter((mod) => modRepositoryIds(mod).has(repo.id))
+  if (repo.download_mode === 'repository_file') return ''
+  const boundMods = installedMods.value.filter((mod) => modReleaseRepositoryIds(mod).has(repo.id))
   if (!boundMods.length) return ''
   if (repositoryRefreshing[repo.id]) return '检查中'
-  if (!repositoryReleaseReady[repo.id]) return '待检查'
+  if (!repositoryReleaseReady[repo.id] && !(tutorial.previewing.value && tutorial.scenario.value !== 'live')) return '待检查'
   const remote = latest(repo)?.version || latest(repo)?.tag_name
-  if (boundMods.some((mod) => compareModVersions(remote, mod.version) > 0)) return '可更新'
+  if (boundMods.some((mod) => remote && mod.version && compareModVersions(remote, mod.version) === 0)) return '最新版'
+  if (boundMods.some((mod) => compareModVersions(remote, mod.version) > 0)) return '有更新'
   return boundMods.every((mod) => remote && mod.version) ? '最新版' : '已安装'
+}
+function modReleaseRepositories(mod: InstalledMod) {
+  const ids = modReleaseRepositoryIds(mod)
+  return repos.value.filter((repo) => repo.enabled && ids.has(repo.id))
+}
+function modRepositoryVersionReady(repo: Repository, mod: InstalledMod) {
+  return repositoryReleaseReady[repo.id] && !repo.last_error
+    && !!parseModVersion(mod.version) && !!parseModVersion(latest(repo)?.version || latest(repo)?.tag_name)
+}
+function modHasRemoteUpdate(mod: InstalledMod) {
+  return modReleaseRepositories(mod).some((repo) => modRepositoryVersionReady(repo, mod)
+    && compareModVersions(latest(repo)?.version || latest(repo)?.tag_name, mod.version) > 0)
+}
+function installedModStatus(mod: InstalledMod) {
+  if (!modEnabledForView(mod)) return '已禁用'
+  if (mod.status === 'not_release_asset') return '不是 Release 资产, 无法检测更新'
+  if (mod.status === 'unbound') return '未绑定在线仓库，无法检测更新'
+  if (installedModsChecking.value || isModRepositoryRefreshing(mod)) return '检查中'
+  if (installedModsPendingCheck.value) return '待检查'
+  if (mod.duplicate_version) return '重复'
+  if (mod.load_warning) return mod.load_warning
+  const confirmed = modReleaseUpdateStatus(mod)
+  if (confirmed) return confirmed
+  const candidates = modReleaseRepositories(mod)
+  if (candidates.some((repo) => repo.last_error)) return '刷新失败，无法检测更新'
+  if (!parseModVersion(mod.version) || candidates.some((repo) => repositoryReleaseReady[repo.id]
+    && !parseModVersion(latest(repo)?.version || latest(repo)?.tag_name))) return '版本信息不足，无法检测更新'
+  return '待检查'
+}
+function installedModStatusLabel(mod: InstalledMod) { return t(installedModStatus(mod)) }
+function installedModStatusClass(mod: InstalledMod) {
+  const status = installedModStatus(mod)
+  if (status === '已禁用') return 'mod-disabled'
+  if (status === '最新版') return 'success'
+  if (['有更新', '检查中', '待检查', '重复'].includes(status)) return 'warning'
+  if (status === '刷新失败，无法检测更新' || (mod.load_warning && status === mod.load_warning)) return 'danger'
+  return 'muted'
+}
+function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | '' {
+  if (installedModsChecking.value || installedModsPendingCheck.value
+    || ['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
+    || !mod.version || mod.duplicate_version || mod.load_warning || isModRepositoryRefreshing(mod)) return ''
+  const candidates = modReleaseRepositories(mod)
+  if (modHasRemoteUpdate(mod)) return '有更新'
+  return candidates.length > 0 && candidates.every((repo) => modRepositoryVersionReady(repo, mod)) ? '最新版' : ''
+}
+function packageStatusModsForMod(mod: InstalledMod) {
+  if (!mod.package_id) return []
+  // Only visible children contribute; ignore shadowed older copies in every state.
+  return visibleInstalledMods.value.filter((item) => item.package_id === mod.package_id
+    && item.status !== 'duplicate_lower_version' && item.load_warning !== '存在更高版本，建议卸载')
+}
+function packageHasDuplicateForMod(mod: InstalledMod) {
+  return packageStatusModsForMod(mod).some((item) => item.duplicate_version)
+}
+function packageUpdateStatusForMod(mod: InstalledMod): '检查中' | '有更新' | '最新版' | '' {
+  const children = packageStatusModsForMod(mod)
+  if (!children.length) return ''
+  if (installedModsChecking.value || children.some(isModRepositoryRefreshing)) return '检查中'
+  if (installedModsPendingCheck.value) return ''
+  const states = children.map(modReleaseUpdateStatus)
+  if (states.includes('有更新')) return '有更新'
+  return states.every((state) => state === '最新版') ? '最新版' : ''
 }
 function repositoryNoteIsLong(repo: Repository) {
   const note = localizedRepositoryNote(repo)
-  return note.split(/\r?\n/).length > 4 || note.length > 320
+  return note.split(/\r?\n/).length >= 6
 }
-function assetRuleLabel(type: string) { return t(type === 'regex' ? '正则' : type === 'glob' ? '通配符' : '精确') }
 function assetMatchesUi(name: string, rule: { type: string; value: string }) {
   if (rule.type === 'exact') return name.toLocaleLowerCase() === rule.value.toLocaleLowerCase()
   if (rule.type === 'glob') {
@@ -634,6 +621,26 @@ function assetMatchesUi(name: string, rule: { type: string; value: string }) {
 }
 function showSuccess(value: string) { error.value = ''; message.value = `${t('成功：')}${value}`; scheduleToastClose() }
 function showError(value: unknown) { error.value = `${t('错误：')}${t(value instanceof Error ? value.message : String(value))}`; message.value = ''; scheduleToastClose() }
+function rememberModalPointerDown(event: PointerEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  modalPointerDownTarget = target?.closest('.modal-backdrop') ? target : null
+}
+function clearModalPointerDownAfterPointerUp(event: PointerEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  if (!target?.closest('.modal-backdrop')) modalPointerDownTarget = null
+}
+function preventDraggedModalBackdropClick(event: MouseEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  if (!target?.classList.contains('modal-backdrop')) return
+  const pointerDownTarget = modalPointerDownTarget
+  modalPointerDownTarget = null
+  if (pointerDownTarget && pointerDownTarget !== target && target.contains(pointerDownTarget)) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+}
+function clearModalPointerDown() { modalPointerDownTarget = null }
+function normalizeActionLabel(label: string) { return label.replace(/^正在(?=\S)/, '') }
 async function saveHideUnidentifiedMods(event: Event) {
   const input = event.target as HTMLInputElement
   const checked = input.checked
@@ -648,20 +655,27 @@ async function saveHideUnidentifiedMods(event: Event) {
   }
 }
 function isModRepositoryRefreshing(mod: import('./types').InstalledMod) {
-  return Array.from(modRepositoryIds(mod)).some((id) => repositoryRefreshing[id])
+  return Array.from(modReleaseRepositoryIds(mod)).some((id) => repositoryRefreshing[id])
 }
-async function run<T>(label: string, action: () => Promise<T>) { busy.value = label; error.value = ''; message.value = ''; try { const result = await action(); showSuccess(typeof result === 'object' && result && 'message' in result ? t(String((result as { message: string }).message)) : t(label)); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
-async function loadDashboard() { await run('正在读取厨房状态', async () => { dashboard.value = await api.dashboard(); await setUiZoom(dashboard.value.config.ui_zoom, false) }) }
-async function detectGame() { await run('正在重新检测', async () => { await api.detectGame(); dashboard.value = await api.dashboard() }) }
+async function run<T>(label: string, action: () => Promise<T>) { const actionLabel = normalizeActionLabel(label); busy.value = actionLabel; error.value = ''; message.value = ''; try { const result = await action(); const resultLabel = typeof result === 'object' && result && 'message' in result ? String((result as { message: string }).message) : actionLabel; showSuccess(t(normalizeActionLabel(resultLabel))); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
+async function loadDashboard() {
+  await run('正在读取厨房状态', async () => {
+    dashboard.value = await api.dashboard()
+    const nextZoom = clampUiZoom(dashboard.value.config.ui_zoom)
+    await setUiZoom(nextZoom, false, false)
+  })
+}
+async function detectGame() { await run('重新检测游戏目录', async () => { await api.detectGame(); dashboard.value = await api.dashboard() }) }
 async function chooseGameDirectory() { const path = await api.chooseGameDirectory(); if (!path || Array.isArray(path)) return; await run('正在保存厨房目录', async () => { await api.setGamePath(path); dashboard.value = await api.dashboard() }) }
 async function restoreDefaultGameDirectory() { await run('正在恢复默认游戏目录', async () => { await api.resetGamePath(); dashboard.value = await api.dashboard() }) }
 async function refreshRepositoryEntry(repo: Repository) {
+  if (repo.download_mode === 'repository_file') return false
   const currentTask = repositoryRefreshTasks.get(repo.id)
   if (currentTask) return currentTask
   const task = (async () => {
-    dashboardRevision += 1
-    repositoryRefreshCount += 1
     repositoryRefreshing[repo.id] = true
+    repositoryReleaseReady[repo.id] = false
+    repo.cached_releases = []
     try {
       const releases = await api.refreshRepository(repo.id) ?? []
       const currentRepo = repos.value.find((item) => item.id === repo.id) ?? repo
@@ -671,12 +685,12 @@ async function refreshRepositoryEntry(repo: Repository) {
       return true
     } catch (reason) {
       const currentRepo = repos.value.find((item) => item.id === repo.id) ?? repo
+      currentRepo.cached_releases = []
       currentRepo.last_error = reason instanceof Error ? reason.message : String(reason)
       repositoryReleaseReady[repo.id] = false
       return false
     } finally {
       repositoryRefreshing[repo.id] = false
-      repositoryRefreshCount -= 1
       repositoryRefreshTasks.delete(repo.id)
     }
   })()
@@ -710,20 +724,44 @@ async function refreshRepo(repo: Repository, notify = true, trackOverview = true
     }
   }
 }
-function installRepo(repo: Repository) {
+async function installRepo(repo: Repository) {
+  if (repo.download_mode === 'release') {
+    const release = installReleases(repo)[0]
+    if (!release) {
+      await requestConfirmation({
+        title: t('请先刷新 Release'),
+        message: t('请先刷新此仓库，直到版本号出现，再点击“下载并安装”。'),
+        acknowledge: true,
+      })
+      return
+    }
+    selectedInstallTag.value = release.tag_name
+    selectedInstallAsset.value = matchingInstallAssets(repo, release)[0]?.name || ''
+  }
   if (!game.value?.bepinex.version) { showError('请先安装 BepInEx 框架'); return }
-  const release = installReleases(repo)[0]
-  if (!release) { showError('请先刷新 Release'); return }
-  selectedInstallTag.value = release.tag_name
-  selectedInstallAsset.value = matchingInstallAssets(repo, release)[0]?.name || ''
+  selectedAssetProxyMode.value = defaultAssetProxyMode()
+  selectedAssetProxyId.value = ''
   showInstall.value = repo
-  void refreshSelectedReleaseAssetSizes(repo, release)
+}
+function defaultAssetProxyMode(): ProxyMode {
+  return config.value?.region === 'chinese_mainland' ? 'auto_proxy' : 'auto_direct'
+}
+function assetProxyEntries(repo: Repository | null) {
+  if (!repo || repo.provider !== 'github') return []
+  const entries = repo.download_mode === 'repository_file'
+    ? (config.value?.github_proxies.raw_proxies || [])
+    : (config.value?.github_proxies.release_proxies || [])
+  return entries.filter((proxy) => proxy.enabled)
+}
+function assetProxySelectionVisible(repo: Repository | null) {
+  return repo?.provider === 'github'
 }
 function installReleases(repo: Repository | null) {
-  if (!repo) return []
+  if (!repo || repo.last_error) return []
   return repo.cached_releases.filter((release) => matchingInstallAssets(repo, release).length > 0)
 }
 function matchingInstallAssets(repo: Repository, release: import('./types').ReleaseInfo) {
+  if (repo.download_mode === 'repository_file') return []
   return release.assets.filter((asset) => !!asset.download_url && repo.asset_rules.some((rule) => assetMatchesUi(asset.name, rule)))
 }
 function selectedInstallRelease(repo: Repository | null) { return installReleases(repo).find((release) => release.tag_name === selectedInstallTag.value) }
@@ -731,84 +769,108 @@ function selectedInstallAssets(repo: Repository | null) {
   const release = selectedInstallRelease(repo)
   return repo && release ? matchingInstallAssets(repo, release) : []
 }
-async function cancelReleaseAssetSizeRequest() {
-  const request = releaseAssetSizeRequest
-  if (!request) return
-  releaseAssetSizeRequestToken += 1
-  releaseAssetSizeRequest = null
-  releaseAssetSizeLoading.value = false
-  try {
-    await api.cancelReleaseAssetSizes(request.repositoryId, request.releaseTag)
-  } catch {
-    // The request may have completed while cancellation was being sent.
-  }
-}
 function closeInstallDialog() {
-  void cancelReleaseAssetSizeRequest()
   showInstall.value = null
-}
-async function refreshSelectedReleaseAssetSizes(repo: Repository, release: import('./types').ReleaseInfo | undefined) {
-  if (repo.provider !== 'gitee' || !release?.release_id || release.assets.every((asset) => asset.size > 0)) return
-  await cancelReleaseAssetSizeRequest()
-  const token = ++releaseAssetSizeRequestToken
-  releaseAssetSizeRequest = { repositoryId: repo.id, releaseTag: release.tag_name }
-  releaseAssetSizeLoading.value = true
-  try {
-    const updated = await api.refreshReleaseAssetSizes(repo.id, release.tag_name)
-    if (token !== releaseAssetSizeRequestToken) return
-    const current = repo.cached_releases.find((item) => item.tag_name === updated.tag_name)
-    if (current) Object.assign(current, updated)
-  } catch (reason) {
-    if (token === releaseAssetSizeRequestToken && !String(reason).includes('已取消')) showError(reason)
-  } finally {
-    if (token === releaseAssetSizeRequestToken) {
-      releaseAssetSizeRequest = null
-      releaseAssetSizeLoading.value = false
-    }
-  }
+  selectedAssetProxyMode.value = defaultAssetProxyMode()
+  selectedAssetProxyId.value = ''
 }
 function selectInstallRelease() {
   const repo = showInstall.value
   if (!repo) return
   const release = selectedInstallRelease(repo)
   selectedInstallAsset.value = release ? matchingInstallAssets(repo, release)[0]?.name || '' : ''
-  void refreshSelectedReleaseAssetSizes(repo, release)
 }
-function clearDownloadProgress() { progress.value = { label: '', percent: 0, speed: '', status: '' } }
-async function confirmInstall() {
-  const repo = showInstall.value
-  if (!repo || !selectedInstallTag.value || !selectedInstallAsset.value) return
-  await cancelReleaseAssetSizeRequest()
+function clearDownloadProgress() {
+  downloadProgressActive = false
+  downloadRequestContext = {}
+  progress.value = { label: '', percent: 0, speed: '', status: '' }
+}
+function beginDownloadProgress() {
+  clearDownloadProgress()
   downloadCancelRequested.value = false
+  downloadProgressActive = true
+}
+function receiveDownloadProgress(value: DownloadProgress) {
+  if (!downloadProgressActive || downloadCancelRequested.value || appUnmounted) return
+  if (progress.value.label !== value.label) downloadRequestContext = {}
+  if (value.route) downloadRequestContext = {
+    route: value.route, source: value.source,
+    attempt: value.attempt, attempt_total: value.attempt_total,
+  }
+  const route = downloadRequestContext.route === 'proxy'
+    ? t('代理：{name}').replace('{name}', downloadRequestContext.source || t('自动代理'))
+    : downloadRequestContext.route === 'direct' ? t('直连') : ''
+  const attempt = downloadRequestContext.attempt && downloadRequestContext.attempt_total
+    ? ` (${downloadRequestContext.attempt}/${downloadRequestContext.attempt_total})` : ''
+  const total = value.total && value.total > 0 ? value.total : undefined
+  const waiting = !value.finished && value.downloaded === 0
+    && (value.phase === 'connecting' || value.phase === 'switching')
+  const stage = value.finished ? t('下载完成，正在处理')
+    : waiting && value.phase === 'switching' ? t('正在切换下载渠道')
+    : waiting ? t('正在请求，等待响应') : ''
+  const parallel = !value.finished && (value.parallel_sources || 0) > 1
+    ? t('并行下载源：{count}').replace('{count}', String(value.parallel_sources)) : ''
+  progress.value = {
+    label: value.label,
+    percent: value.finished ? 100 : total ? Math.min(100, value.downloaded / total * 100) : 0,
+    speed: value.finished || waiting ? '' : `${formatBytes(value.speed_bytes)}/s`,
+    status: [stage, parallel, route && `${route}${attempt}`].filter(Boolean).join(' · '),
+    indeterminate: !value.finished && (waiting || !total),
+  }
+}
+async function confirmInstall() {
+  if (tutorial.previewing.value || appUnmounted || busy.value) return
+  const repo = showInstall.value
+  if (!repo || (repo.download_mode === 'release' && (!selectedInstallTag.value || !selectedInstallAsset.value))) return
+  beginDownloadProgress()
   showInstall.value = null
   try {
-    await run(`正在安装 ${localizedRepositoryName(repo)}`, () => api.installRepository(repo.id, selectedInstallTag.value, selectedInstallAsset.value))
+    const proxyMode = assetProxySelectionVisible(repo) ? selectedAssetProxyMode.value : 'direct'
+    const proxyId = proxyMode === 'fixed' ? selectedAssetProxyId.value || undefined : undefined
+    downloadRequestContext = {}
+    const manualProxy = assetProxyEntries(repo).find((entry) => entry.id === proxyId)
+    progress.value = {
+      label: localizedRepositoryName(repo), percent: 0, speed: '', indeterminate: true,
+      status: proxyMode === 'auto_proxy' || proxyMode === 'auto_direct' ? t('待加载，正在连接下载源')
+        : proxyMode === 'fixed' ? t('代理：{name}').replace('{name}', manualProxy?.name || t('手动选择'))
+        : t('正在建立直连'),
+    }
+    await run(`正在安装 ${localizedRepositoryName(repo)}`, () => api.installRepository(
+      repo.id,
+      repo.download_mode === 'release' ? selectedInstallTag.value : undefined,
+      repo.download_mode === 'release' ? selectedInstallAsset.value : undefined,
+      proxyMode,
+      proxyId,
+    ))
     await loadDashboard()
   } finally {
     clearDownloadProgress()
   }
 }
-async function uninstallRepo(repo: Repository) { if (!confirm(`${t('确定卸载')} ${localizedRepositoryName(repo)}? ${t('只有安装清单中的文件会被删除。')}`)) return; await run(`正在卸载 ${localizedRepositoryName(repo)}`, () => api.uninstallRepository(repo.id)); await loadDashboard() }
-void uninstallRepo
 function openBepInExInstall(reinstall: boolean) {
   bepinexInstallReinstall.value = reinstall
   showBepInExInstall.value = true
 }
 async function installBepInEx(provider: Provider) {
+  if (tutorial.previewing.value || appUnmounted || busy.value) return
   const reinstall = bepinexInstallReinstall.value
   showBepInExInstall.value = false
-  if (reinstall && !confirm(t('重新安装 BepInEx 会先备份当前框架并替换框架文件，是否继续？'))) return
-  downloadCancelRequested.value = false
+  if (reinstall && !await requestConfirmation({ title: t('重新安装'), message: t('重新安装 BepInEx 会先备份当前框架并替换框架文件，是否继续？'), danger: true })) return
+  beginDownloadProgress()
   try {
+    progress.value = { label: 'BepInEx', percent: 0, speed: '', indeterminate: true, status: t('待加载，正在连接下载源') }
     await run(reinstall ? '正在重新安装 BepInEx' : '正在安装 BepInEx', () => api.installBepInEx(reinstall, provider)); await loadDashboard()
   } finally {
     clearDownloadProgress()
   }
 }
-async function uninstallBepInEx() { if (!confirm(t('确定移除 BepInEx？程序会先创建时间戳备份。'))) return; await run('正在移除 BepInEx', api.uninstallBepInEx); await loadDashboard() }
+async function uninstallBepInEx() { if (!await requestConfirmation({ title: t('BepInEx'), message: t('确定移除 BepInEx？程序会先创建时间戳备份。'), danger: true })) return; await run('正在移除 BepInEx', api.uninstallBepInEx); await loadDashboard() }
 async function backupBepInEx() { await run('正在创建 BepInEx 备份', api.backupBepInEx); await loadDashboard() }
-async function openBackupDirectory() { await run('正在打开备份目录', api.openBackupDirectory) }
-async function deleteBackup(path: string) { if (!confirm(`${t('确定删除备份')}“${path.split(/[\\/]/).pop()}”？${t('删除后无法恢复。')}`)) return; await run('正在删除 BepInEx 备份', () => api.deleteBepInExBackup(path)); await loadDashboard() }
+async function openBackupDirectory(backupPath?: string) {
+  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value) return
+  await run('正在打开备份目录', () => api.openBackupDirectory(backupPath)).catch(() => undefined)
+}
+async function deleteBackup(path: string) { if (!await requestConfirmation({ title: t('确定删除备份'), message: `${t('确定删除备份')}“${path.split(/[\\/]/).pop()}”？${t('删除后无法恢复。')}`, danger: true })) return; await run('正在删除 BepInEx 备份', () => api.deleteBepInExBackup(path)); await loadDashboard() }
 async function cancelDownload() {
   downloadCancelRequested.value = true
   clearDownloadProgress()
@@ -831,20 +893,16 @@ async function openLog(kind: 'rust' | 'frontend' | 'crash') {
   logViewerKind.value = kind
   showRustLog.value = true
   await refreshRustLog()
-  if (rustLogTimer) window.clearInterval(rustLogTimer)
-  rustLogTimer = window.setInterval(() => { void refreshRustLog() }, 1000)
 }
 async function openRustLog() { await openLog('rust') }
 async function openFrontendLog() { await openLog('frontend') }
 async function openCrashLog() { await openLog('crash') }
 function closeRustLog() {
   showRustLog.value = false
-  if (rustLogTimer) window.clearInterval(rustLogTimer)
-  rustLogTimer = undefined
 }
 async function openDeveloperConsole() { await run('正在打开开发者控制台', api.openDevtools) }
 async function resetUi() {
-  if (!confirm(`${t('重置到最新 UI')}？`)) return
+  if (!await requestConfirmation({ title: t('重置 UI'), message: `${t('重置 UI')}？` })) return
   await run('正在重置界面', api.resetUi)
   await loadDashboard()
 }
@@ -853,20 +911,25 @@ async function launchNormal() { await run('正在准备 Steam 启动', api.launc
 async function toggleWinhttp() {
   if (currentWinhttp.value === 'missing') return
   const enabled = currentWinhttp.value === 'moddisabled' || currentWinhttp.value === 'conflict'
-  await run(enabled ? '正在切换有 MOD 状态' : '正在切换无 MOD 状态', () => api.switchWinhttp(enabled))
+  await run('正在切换框架状态', () => api.switchWinhttp(enabled))
   await loadDashboard()
 }
 async function openDirectory() { await run('正在打开游戏目录', api.openGameDirectory) }
 async function openModDirectory() { await run('正在打开模组目录', api.openModDirectory) }
+async function openModFileLocation(mod: InstalledMod) {
+  if (tutorial.visible.value || tutorial.previewing.value || busy.value) return
+  // run already displays failures; keep click errors out of unhandled rejections.
+  await run('正在打开模组目录', () => api.openModFileLocation(mod.dll_file)).catch(() => undefined)
+}
 function updateChannelName(id: string) {
-  return t(({ 'gitee-direct': 'Gitee 直连', 'gitee-proxy': 'Gitee Proxy', 'github-direct': 'GitHub 直连', 'github-proxy': 'GitHub Proxy' } as Record<string, string>)[id] || id)
+  return t(({ 'gitee-direct': 'Gitee API 1', 'gitee-token': 'Gitee API 2', 'gitee-proxy': 'Gitee API 3', 'gitee-release-direct': 'Gitee Release', 'github-direct': 'Github API 1', 'github-token': 'Github API 2', 'github-proxy': 'Github API 3', 'github-release-direct': 'Github Release', 'github-release-proxy': 'Github Release Proxy' } as Record<string, string>)[id] || id)
 }
 function updateChannelStatus(status: string) {
-  return t(({ latest: '已是最新', update_available: '发现更新', failed: '失败', skipped: '未请求', checking: '检查中' } as Record<string, string>)[status] || status)
+  return t(({ latest: '最新版', update_available: '有更新', failed: '失败', skipped: '未请求', checking: '检查中', downloading: '下载中', downloaded: '已下载' } as Record<string, string>)[status] || status)
 }
 function updateRegionLabel(region: string) {
   if (region === 'detecting') return t('检测中')
-  return t(region === 'mainland-china' ? '中国大陆' : '非中国大陆')
+  return repositorySourceRegionLabel(region)
 }
 
 function formatFrontendLogValue(value: unknown): string {
@@ -922,8 +985,10 @@ function initialUpdateCheck() {
     update: undefined,
     channels: [
       ['gitee-direct', 'gitee', 'direct'],
+      ['gitee-token', 'gitee', 'direct'],
       ['gitee-proxy', 'gitee', 'proxy'],
       ['github-direct', 'github', 'direct'],
+      ['github-token', 'github', 'direct'],
       ['github-proxy', 'github', 'proxy'],
     ].map(([id, provider, mode]) => ({ id, provider, mode, status: 'checking', error: undefined })),
     all_failed: false,
@@ -933,10 +998,63 @@ function initialUpdateCheck() {
 async function checkAppUpdate() {
   const result = await run('正在检查程序更新', () => api.checkAppUpdate(locale.value))
   appUpdateCheck.value = result
-  appUpdate.value = result.update ? { version: result.update.version, current_version: result.update.current_version } : null
+  appUpdate.value = result.update || null
+  startupUpdatePhase.value = 'api'
   if (!result.update && !result.all_failed) showSuccess(t('当前已是最新版本'))
 }
-async function installAppUpdate() { await run('正在安装程序更新', () => api.installAppUpdate(locale.value)) }
+function clearUpdateSkipTimer() {
+  if (updateSkipTimer) window.clearInterval(updateSkipTimer)
+  updateSkipTimer = undefined
+}
+async function openManualUpdatePage() {
+  if (appUnmounted || !updateSkipped.value || updatePageOpening.value) return
+  clearUpdateSkipTimer()
+  updateSkipCountdown.value = 0
+  updatePageOpening.value = true
+  updatePageError.value = ''
+  try {
+    await api.openUpdateRepository()
+  } catch (reason) {
+    if (!appUnmounted && updateSkipped.value) {
+      updatePageError.value = t('无法打开更新页面：{error}')
+        .replace('{error}', reason instanceof Error ? reason.message : String(reason))
+    }
+  } finally {
+    updatePageOpening.value = false
+  }
+}
+function markUpdateSkipped(message?: string) {
+  clearUpdateSkipTimer()
+  updateSkipped.value = true
+  updateCheckFailed.value = true
+  startupUpdatePhase.value = 'skipped'
+  startupError.value = message || '请手动更新管理器, 本次跳过更新.'
+  updatePageError.value = ''
+  updateSkipCountdown.value = 3
+  updateSkipTimer = window.setInterval(() => {
+    updateSkipCountdown.value -= 1
+    if (updateSkipCountdown.value > 0) return
+    void openManualUpdatePage()
+  }, 1000)
+}
+function continueAfterUpdateSkip() {
+  clearUpdateSkipTimer()
+  updateSkipped.value = false
+  updateCheckFailed.value = false
+  startupError.value = ''
+  updatePageError.value = ''
+  updateSkipCountdown.value = 0
+}
+async function installAppUpdate() {
+  startupUpdatePhase.value = 'download'
+  beginDownloadProgress()
+  try {
+    const result = await run('正在安装程序更新', () => api.installAppUpdate(locale.value))
+    if (!result.ok && result.message !== '当前已是最新版本') markUpdateSkipped(result.message)
+  } finally {
+    clearDownloadProgress()
+  }
+}
 async function refreshRepositoryBatch(repositories: Repository[]) {
   const trackingToken = repositories.length > 0 ? ++repositoryRefreshBatchToken : undefined
   if (trackingToken !== undefined && !repositoryRefreshBatchActive.value) {
@@ -957,11 +1075,12 @@ async function refreshRepositoryBatch(repositories: Repository[]) {
   }
 }
 async function refreshMappedRepositories() {
-  const mappedIds = new Set(installedMods.value.flatMap((mod) => Array.from(modRepositoryIds(mod))))
-  const mapped = repos.value.filter((repo) => repo.enabled && mappedIds.has(repo.id))
+  const mappedIds = new Set(installedMods.value.flatMap((mod) => Array.from(modReleaseRepositoryIds(mod))))
+  const mapped = repos.value.filter((repo) => repo.enabled && repo.download_mode === 'release' && mappedIds.has(repo.id))
   return refreshRepositoryBatch(mapped)
 }
 async function refreshMappedRepositoryUpdates() {
+  if (!mappedReposAvailable.value) return dashboard.value
   installedModsPendingCheck.value = true
   installedModsChecking.value = false
   await nextTick()
@@ -977,39 +1096,108 @@ async function refreshMappedRepositoryUpdates() {
     installedModsChecking.value = false
   }
 }
-type SourceRefreshOptions = { updateDashboard?: boolean; notify?: boolean }
-type SourceRefreshResult = { ok: boolean; sourceOk: boolean; usable: boolean; releaseFailures: number; error?: string }
+type SourceRefreshOptions = { updateDashboard?: boolean; notify?: boolean; builtinFallback?: boolean }
+type SourceRefreshResult = { ok: boolean; releaseFailures: number; error?: string; accessFailed?: boolean }
+
+function sourceDescendantIds(sourceId: string) {
+  const ids = new Set([sourceId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const source of config.value?.repository_sources ?? []) {
+      if (source.parent_id && ids.has(source.parent_id) && !ids.has(source.id)) {
+        ids.add(source.id)
+        changed = true
+      }
+    }
+  }
+  return ids
+}
+
+function clearSourceContentLocally(sourceId: string) {
+  const sourceIds = sourceDescendantIds(sourceId)
+  for (const id of sourceIds) delete sourceErrors[id]
+  if (!dashboard.value) return
+  const removedRepositoryIds = dashboard.value.config.repositories
+    .filter((repo) => repo.source_id && sourceIds.has(repo.source_id))
+    .map((repo) => repo.id)
+  dashboard.value = {
+    ...dashboard.value,
+    config: {
+      ...dashboard.value.config,
+      repositories: dashboard.value.config.repositories.filter((repo) => !repo.source_id || !sourceIds.has(repo.source_id)),
+      // Keep the source being refreshed so its heading can show the loading
+      // state, but remove every old child source until the new document adds
+      // it back. This prevents stale child cards from flashing during reload.
+      repository_sources: dashboard.value.config.repository_sources.filter((source) => source.id === sourceId || !sourceIds.has(source.id)),
+    },
+  }
+  for (const id of removedRepositoryIds) {
+    repositoryReleaseReady[id] = false
+    delete repositoryRefreshing[id]
+  }
+}
+
+async function prepareRootSourceRefresh(sources: RepositorySource[]) {
+  console.info('[repository-refresh] preparing sources', sources.map((source) => source.id))
+  // Prime every root first so a full refresh immediately replaces all old
+  // descendants with their own loading shells instead of clearing roots one
+  // by one while the user is watching.
+  for (const source of sources) {
+    sourceRefreshingManual[source.id] = true
+    sourceLoading[source.id] = true
+    sourceRefreshPhase[source.id] = 'clearing'
+  }
+  for (const source of sources) clearSourceContentLocally(source.id)
+  await nextTick()
+  try {
+    // Let previous Release requests and queued snapshots finish before
+    // clearing persisted content, so this batch cannot reuse their results.
+    await Promise.all([...repositoryRefreshTasks.values(), dashboardUpdateQueue])
+    const clearedConfig = await api.clearRepositorySourceCache(sources.map((source) => source.id))
+    if (dashboard.value) dashboard.value = { ...dashboard.value, config: clearedConfig }
+  } catch (reason) {
+    for (const source of sources) {
+      sourceLoading[source.id] = false
+      sourceRefreshingManual[source.id] = false
+      delete sourceRefreshPhase[source.id]
+    }
+    throw reason
+  }
+}
 
 async function refreshAllRepositories() {
+  if (tutorial.blocksRepositoryRefresh.value) {
+    showError(t('教程完成后才能刷新内置源'))
+    return
+  }
   try {
-    await run('正在刷新全部仓库源', async () => {
+    await (async () => {
       const sources = activeRepositorySources.value.filter((source) => !source.parent_id)
       if (!sources.length) return { ok: true, message: '全部仓库刷新完成' }
-      builtinSourcesFailedAll.value = false
       for (const repo of repos.value) repositoryReleaseReady[repo.id] = false
-      const sourceResults: Array<{ source: RepositorySource; result: SourceRefreshResult }> = []
-      for (const source of sources) {
-        sourceResults.push({
-          source,
-          result: await refreshSource(source.id, { updateDashboard: false, notify: false }),
-        })
-      }
+      await prepareRootSourceRefresh(sources)
+      const sourceResults = await Promise.all(sources.map(async (source) => {
+        try {
+          return { source, result: await refreshSource(source.id, { updateDashboard: false, notify: false }) }
+        } catch (reason) {
+          return { source, result: { ok: false, releaseFailures: 0, error: reason instanceof Error ? reason.message : String(reason) } satisfies SourceRefreshResult }
+        }
+      }))
       const failedSources = sourceResults.filter((entry) => !entry.result.ok)
-      const builtinResults = sourceResults.filter((entry) => entry.source.builtin)
-      builtinSourcesFailedAll.value = builtinResults.length > 0 && builtinResults.every((entry) => !entry.result.sourceOk || !entry.result.usable)
       const releaseFailures = sourceResults
         .reduce((total, entry) => total + entry.result.releaseFailures, 0)
       dashboard.value = await api.dashboard()
 
       const failures = failedSources
-        .filter((entry) => !(entry.source.builtin && builtinSourcesFailedAll.value))
-        .map((entry) => `${entry.source.nickname}: ${entry.result.error || t('刷新失败')}`)
+        .map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`)
       if (releaseFailures) failures.push(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
       if (failures.length) throw new Error(failures.join('；'))
       return { ok: true, message: '全部仓库刷新完成' }
-    })
-  } catch {
-    // run() has already displayed the aggregated error.
+    })()
+    showSuccess(t('全部仓库刷新完成'))
+  } catch (reason) {
+    showError(reason)
   } finally {
     for (const source of config.value?.repository_sources ?? []) {
       sourceLoading[source.id] = false
@@ -1018,12 +1206,13 @@ async function refreshAllRepositories() {
   }
 }
 async function checkModUpdates() {
-  await run('正在检查 Mod 更新', refreshMappedRepositoryUpdates)
+  if (!mappedReposAvailable.value) return
+  await run('正在检查 MOD 更新', refreshMappedRepositoryUpdates)
 }
 async function refreshSourceReleases(sourceId: string, updateDashboard = true, manageManualState = true) {
   if (manageManualState) sourceRefreshingManual[sourceId] = true
   try {
-    const sourceRepos = repos.value.filter((repo) => repo.source_id === sourceId && repo.enabled)
+    const sourceRepos = repos.value.filter((repo) => repo.source_id === sourceId && repo.enabled && repo.download_mode === 'release')
     const failures = await refreshRepositoryBatch(sourceRepos)
     if (updateDashboard) dashboard.value = await api.dashboard()
     return failures
@@ -1031,66 +1220,118 @@ async function refreshSourceReleases(sourceId: string, updateDashboard = true, m
     if (manageManualState) sourceRefreshingManual[sourceId] = false
   }
 }
-async function startupChecks() {
-  appUpdateCheck.value = initialUpdateCheck()
-  startupStage.value = t('正在识别系统地区')
-  let update: Awaited<ReturnType<typeof api.checkAppUpdate>>
+async function syncInitialGithubProxies() {
   try {
-    startupStage.value = t('正在检查安装器更新')
-    update = await withTimeout(api.checkAppUpdate(locale.value), STARTUP_CHECK_TIMEOUT_MS, '检查安装器更新')
-  } catch {
-    update = {
-      update: undefined,
-      channels: initialUpdateCheck().channels.map((channel) => ({ ...channel, status: 'failed', error: t('检查超时') })),
-      all_failed: true,
-      region: 'international',
-    }
+    const saved = await api.refreshGithubProxies()
+    if (!appUnmounted && dashboard.value) dashboard.value.config.github_proxies = saved.github_proxies
+  } catch (reason) {
+    console.warn('[proxy-sync] initial proxy synchronization failed; bundled proxies remain available', reason)
   }
-  appUpdateCheck.value = update
-  if (update.update) {
-    appUpdate.value = { version: update.update.version, current_version: update.update.current_version }
-    try { await api.installAppUpdate(locale.value) } catch { updateCheckFailed.value = true }
+}
+function startInitialRepositoryRefresh() {
+  if (appUnmounted) return
+  if (tutorial.blocksRepositoryRefresh.value) {
+    console.info('[repository-refresh] waiting for tutorial to finish')
     return
   }
-  startupStage.value = t('正在读取厨房状态')
-  await withTimeout(loadDashboard(), STARTUP_IPC_TIMEOUT_MS, '读取厨房状态')
-  for (const repo of repos.value) repositoryReleaseReady[repo.id] = false
-  builtinSourcesFailedAll.value = false
+  if (initialRepositoryRefreshStarted) return
+  initialRepositoryRefreshStarted = true
   const sources = activeRepositorySources.value.filter((source) => !source.parent_id)
-  // The main window must become usable even when a repository source is slow.
-  // Each source still refreshes in the background and updates the dashboard when it finishes.
+  console.info('[repository-refresh] starting initial refresh', sources.map((source) => source.id))
+  // Do not start this from startupChecks until the first-run tutorial has
+  // finished. Once started, each source and repository refreshes independently
+  // and updates the visible dashboard as soon as its content is available.
   void (async () => {
+    const proxySync = syncInitialGithubProxies()
+    await prepareRootSourceRefresh(sources)
     const results = await Promise.all(sources.map(async (source) => ({
       source,
       result: await refreshSource(source.id, { updateDashboard: false, notify: false }),
     })))
     const failedSources = results.filter((entry) => !entry.result.ok)
-    const builtinResults = results.filter((entry) => entry.source.builtin)
-    builtinSourcesFailedAll.value = builtinResults.length > 0 && builtinResults.every((entry) => !entry.result.sourceOk || !entry.result.usable)
     const releaseFailures = results.reduce((total, entry) => total + entry.result.releaseFailures, 0)
-    dashboard.value = await api.dashboard()
-    const otherFailures = failedSources.filter((entry) => !(entry.source.builtin && builtinSourcesFailedAll.value))
-    if (otherFailures.length) showError(otherFailures.map((entry) => `${entry.source.nickname}: ${entry.result.error || t('刷新失败')}`).join('；'))
+    // The final snapshot must include the proxy commit, even if its download
+    // finishes after a source. Individual source cards reveal independently.
+    await proxySync
+    if (appUnmounted) return
+    const snapshot = await api.dashboard()
+    if (appUnmounted) return
+    dashboard.value = snapshot
+    if (failedSources.length) showError(failedSources.map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`).join('；'))
     if (releaseFailures) showError(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
   })().catch((reason) => showError(reason))
-  await startOnboarding()
 }
-function editRepo(repo?: Repository) { Object.assign(repoForm, repo ? { id: repo.id, name: repo.name, group: repo.group || '', provider: repo.provider, url: repo.url, channel: repo.channel, asset_rules: repo.asset_rules.map((rule) => ({ ...rule })), install_target: repo.install_target, note: repo.note || '', plugin_guid: repo.plugin_guid, local_product_name: repo.local_product_name || '', local_original_filename: repo.local_original_filename || '', download_threads: repo.download_threads || (repo.provider === 'github' ? 16 : 1), api_proxy_mode: repo.api_proxy_mode, api_proxy_url: repo.api_proxy_url, release_proxy_mode: repo.release_proxy_mode, release_proxy_url: repo.release_proxy_url, github_token: '', gitee_token: '', official_api_only: true, enabled: repo.enabled } : { id: undefined, name: '', group: '', provider: 'gitee', url: '', channel: 'stable', asset_rules: [], install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '', local_original_filename: '', download_threads: 1, api_proxy_mode: 'direct', api_proxy_url: '', release_proxy_mode: 'direct', release_proxy_url: '', github_token: '', gitee_token: '', official_api_only: true, enabled: true }); showRepoEditor.value = true }
+async function startupChecks() {
+  appUpdateCheck.value = initialUpdateCheck()
+  startupStage.value = t('识别系统地区')
+  beginDownloadProgress()
+  try {
+    startupStage.value = t('检查安装器更新')
+    // The automatic path performs API discovery and Release download in one
+    // ordered pipeline. Calling checkAppUpdate first would request the APIs a
+    // second time before installAppUpdate could begin downloading.
+    const installResult = await api.installAppUpdate(locale.value)
+    if (!installResult.ok && installResult.message !== '当前已是最新版本') {
+      markUpdateSkipped(installResult.message)
+    }
+  } catch (reason) {
+    console.warn('[startup] installer update failed', reason)
+    markUpdateSkipped('请手动更新管理器, 本次跳过更新.')
+  } finally {
+    clearDownloadProgress()
+  }
+  startupStage.value = t('读取厨房状态')
+  await withTimeout(loadDashboard(), STARTUP_IPC_TIMEOUT_MS, '读取厨房状态')
+  resetInstalledModExpansion()
+  for (const repo of repos.value) repositoryReleaseReady[repo.id] = false
+  if (!await tutorialRuntime.startInitialOnboarding()) {
+    startInitialRepositoryRefresh()
+  } else {
+    console.info('[repository-refresh] waiting for initial tutorial; sources have not been loaded yet')
+  }
+}
+function editRepo(repo?: Repository) {
+  Object.assign(repoForm, repo ? {
+    id: repo.id, name: repo.name, group: repo.group || '', provider: repo.provider, username: repo.username, repository: repo.repository,
+    download_mode: repo.download_mode, branch: repo.branch || 'main', file_path: repo.file_path || '',
+    region: normalizeRepositoryRegion(repo.region), channel: repo.channel,
+    asset_rules: repo.asset_rules.map((rule) => ({ ...rule })), install_target: repo.install_target,
+    note: repo.note || '', plugin_guid: repo.plugin_guid, local_product_name: repo.local_product_name || '',
+    local_original_filename: repo.local_original_filename || '', version_regex: repo.version_regex || '',
+    max_release_count: repo.max_release_count || 10,
+    download_threads: repo.download_threads || (repo.provider === 'github' ? 16 : 1),
+    github_token: '', gitee_token: '', official_api_only: true, enabled: repo.enabled,
+  } : {
+    id: undefined, name: '', group: '', provider: 'gitee', username: '', repository: '', download_mode: 'release',
+    branch: 'main', file_path: '', region: '', channel: 'all', asset_rules: [],
+    install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '',
+    local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1,
+    github_token: '', gitee_token: '',
+    official_api_only: true, enabled: true,
+  })
+  showRepoEditor.value = true
+}
 async function saveRepo() {
-  if (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim())) {
+  if (repoForm.download_mode === 'release' && (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()))) {
     showError(t('请创建至少一个有效的资产规则'))
     return
   }
   let refreshError = ''
+  let refreshed = false
   try {
     await run('正在保存仓库', async () => {
       const savedConfig = await api.saveRepository(repoForm)
       const savedRepo = savedConfig.repositories.find((repo) => repo.id === repoForm.id)
-        ?? savedConfig.repositories.find((repo) => repo.name === repoForm.name && repo.url === repoForm.url && repo.provider === repoForm.provider)
+        ?? savedConfig.repositories.find((repo) => repo.name === repoForm.name && repo.username === repoForm.username.trim()
+          && repo.repository === repoForm.repository.trim() && repo.provider === repoForm.provider
+          && (repo.region || '') === (repoForm.region?.trim().toLowerCase() || ''))
       if (!savedRepo) throw new Error('保存后找不到仓库配置')
       dashboard.value!.config = savedConfig
       showRepoEditor.value = false
-      if (!await refreshRepo(savedRepo, false)) refreshError = savedRepo.last_error || `${localizedRepositoryName(savedRepo)}${t('刷新失败')}`
+      if (savedRepo.enabled && savedRepo.download_mode === 'release' && repos.value.some((repo) => repo.id === savedRepo.id)) {
+        refreshed = true
+        if (!await refreshRepo(savedRepo, false)) refreshError = savedRepo.last_error || `${localizedRepositoryName(savedRepo)}${t('刷新失败')}`
+      }
       dashboard.value = await api.dashboard()
     })
   } catch {
@@ -1098,23 +1339,43 @@ async function saveRepo() {
   }
   if (refreshError) showError(refreshError)
   else {
-    showSuccess(t('仓库已保存并刷新'))
+    showSuccess(t(refreshed ? '仓库已保存并刷新' : '仓库已保存'))
   }
 }
-function providerChanged() { repoForm.download_threads = repoForm.provider === 'github' ? 16 : 1; repoForm.api_proxy_url = ''; repoForm.release_proxy_url = '' }
-async function deleteRepo(repo: Repository) { if (repo.builtin || !confirm(`${t('删除仓库')} “${localizedRepositoryName(repo)}”?`)) return; await run('正在删除仓库', async () => { await api.deleteRepository(repo.id); await loadDashboard() }) }
+async function saveGithubProxyConfig(proxyConfig: GitHubProxyConfig) {
+  const result = await run('正在保存 GitHub 代理配置', async () => {
+    const saved = await api.saveGithubProxies(proxyConfig)
+    if (dashboard.value) dashboard.value.config = saved
+    return { config: saved.github_proxies, message: 'GitHub 代理配置已保存' }
+  })
+  return result.config
+}
+async function refreshGithubProxyConfig(proxyConfig: GitHubProxyConfig) {
+  const result = await run('正在同步内置 GitHub 代理', async () => {
+    const saved = await api.saveGithubProxies(proxyConfig)
+    if (dashboard.value) dashboard.value.config = saved
+    const refreshed = await api.refreshGithubProxies()
+    if (dashboard.value) dashboard.value.config = refreshed
+    return { config: refreshed.github_proxies, message: 'GitHub 代理列表已同步' }
+  })
+  return result.config
+}
+function providerChanged() {
+  repoForm.download_threads = repoForm.provider === 'github' ? 16 : 1
+}
+async function deleteRepo(repo: Repository) { if (repo.builtin || !await requestConfirmation({ title: t('删除仓库'), message: `${t('删除仓库')} “${localizedRepositoryName(repo)}”?`, danger: true })) return; await run('正在删除仓库', async () => { await api.deleteRepository(repo.id); await loadDashboard() }) }
 function addRule() { repoForm.asset_rules.push({ type: 'exact', value: '' }) }
 function removeRule(index: number) { repoForm.asset_rules.splice(index, 1) }
 async function exportRepositories() {
   showExport.value = true
 }
-async function continueExportRepositories() { const path = await api.chooseExportFile(); if (!path || Array.isArray(path)) return; await run('正在导出仓库 TOML', () => api.exportFile(path, null, true)); showExport.value = false }
-async function copyRepositories() { await run('正在复制仓库 TOML', () => api.copyRepositories(null, true)); showExport.value = false }
+async function continueExportRepositories() { const path = await api.chooseExportFile(); if (!path || Array.isArray(path)) return; await run('正在导出仓库 TOML', () => api.exportFile(path, null)); showExport.value = false }
+async function copyRepositories() { await run('正在复制仓库 TOML', () => api.copyRepositories(null)); showExport.value = false }
 async function importFromClipboard() { importText.value = await api.readClipboard(); await previewImport() }
 async function importFromFile() { const path = await api.chooseImportFile(); if (!path || Array.isArray(path)) return; importText.value = await api.readTextFile(path); await previewImport() }
 async function previewImport() { importPreview.value = await run('正在检查仓库 TOML', () => api.previewImport(importText.value)) }
 async function applyImport(conflict: string) {
-  if (conflict === 'overwrite' && !confirm(t('本地的仓库会直接覆盖成粘贴的内容，并且无法恢复，是否确定？'))) return
+  if (conflict === 'overwrite' && !await requestConfirmation({ title: t('导入仓库配置'), message: t('本地的仓库会直接覆盖成粘贴的内容，并且无法恢复，是否确定？'), danger: true })) return
   await run('正在导入仓库配置', async () => { await api.importRepositories(importText.value, conflict); showImport.value = false; await loadDashboard() })
 }
 function resetRepositorySourceEditor() {
@@ -1144,11 +1405,12 @@ function startAddingRepositorySource() {
   repositorySourceEditorOpen.value = true
 }
 function editRepositorySource(source: RepositorySource) {
+  if (source.parent_id) return
   editingRepositorySourceId.value = source.id
   repositorySourceNickname.value = source.nickname
   repositorySourceUrl.value = source.url
   repositorySourceUniqueId.value = source.id
-  repositorySourceRegion.value = source.region || ''
+  repositorySourceRegion.value = normalizeRepositoryRegion(source.region)
   repositorySourceEditorOpen.value = true
 }
 function applyRepositorySourceDraft() {
@@ -1165,7 +1427,8 @@ function applyRepositorySourceDraft() {
     showError(t('仓库唯一ID已存在'))
     return
   }
-  const duplicate = repositorySourceDraft.value.some((source) => source.id !== editingRepositorySourceId.value && source.url.trim().toLowerCase() === sourceUrl.toLowerCase())
+  const sourceKey = repositorySourceKey({ url: sourceUrl, region: repositorySourceRegion.value })
+  const duplicate = repositorySourceDraft.value.some((source) => source.id !== editingRepositorySourceId.value && repositorySourceKey(source) === sourceKey)
   if (duplicate) {
     showError(t('仓库源地址已存在'))
     return
@@ -1188,8 +1451,8 @@ function applyRepositorySourceDraft() {
   }
   resetRepositorySourceEditor()
 }
-function removeRepositorySource(source: RepositorySource) {
-  if (source.builtin || !confirm(`${t('删除仓库源')} “${source.nickname}”?`)) return
+async function removeRepositorySource(source: RepositorySource) {
+  if (source.builtin || source.parent_id || !await requestConfirmation({ title: t('删除仓库源'), message: `${t('删除仓库源')} “${localizedRepositorySourceName(source)}”?`, danger: true })) return
   const removedIds = new Set([source.id])
   let changed = true
   while (changed) {
@@ -1204,19 +1467,48 @@ function removeRepositorySource(source: RepositorySource) {
   repositorySourceDraft.value = repositorySourceDraft.value.filter((item) => !removedIds.has(item.id))
   if (editingRepositorySourceId.value === source.id) resetRepositorySourceEditor()
 }
-function startSourceDrag(id: string) { draggingSourceId.value = id }
+function startSourceDrag(id: string) {
+  const entry = repositorySourceManagerEntries.value.find((item) => item.source.id === id)
+  if (!entry || entry.depth > 0 || entry.source.parent_id || entry.source.builtin) return
+  draggingSourceId.value = id
+}
 function dropSource(id: string) {
   if (!draggingSourceId.value || draggingSourceId.value === id) return
   const sources = [...repositorySourceDraft.value]
-  const from = sources.findIndex((source) => source.id === draggingSourceId.value)
-  const to = sources.findIndex((source) => source.id === id)
-  if (from < 0 || to < 0 || sources[to].builtin) {
+  const entries = repositorySourceManagerEntries.value
+  const movingEntry = entries.find((entry) => entry.source.id === draggingSourceId.value)
+  const targetEntry = entries.find((entry) => entry.source.id === id)
+  if (!movingEntry || !targetEntry || movingEntry.depth > 0 || targetEntry.depth > 0 || movingEntry.source.parent_id || targetEntry.source.parent_id || movingEntry.source.builtin || targetEntry.source.builtin) {
     draggingSourceId.value = null
     return
   }
-  const [source] = sources.splice(from, 1)
-  sources.splice(to, 0, source)
-  repositorySourceDraft.value = sources
+  const roots = entries.filter((entry) => entry.depth === 0).map((entry) => entry.source)
+  const from = roots.findIndex((source) => source.id === movingEntry.source.id)
+  const to = roots.findIndex((source) => source.id === targetEntry.source.id)
+  if (from < 0 || to < 0) {
+    draggingSourceId.value = null
+    return
+  }
+  const [source] = roots.splice(from, 1)
+  roots.splice(to, 0, source)
+  const childrenByParent = new Map<string, RepositorySource[]>()
+  for (const item of sources) {
+    if (!item.parent_id) continue
+    const children = childrenByParent.get(item.parent_id) || []
+    children.push(item)
+    childrenByParent.set(item.parent_id, children)
+  }
+  const ordered: RepositorySource[] = []
+  const visited = new Set<string>()
+  const append = (item: RepositorySource) => {
+    if (visited.has(item.id)) return
+    visited.add(item.id)
+    ordered.push(item)
+    for (const child of childrenByParent.get(item.id) || []) append(child)
+  }
+  roots.forEach(append)
+  sources.forEach(append)
+  repositorySourceDraft.value = ordered
   draggingSourceId.value = null
 }
 async function saveRepositorySourceChanges() {
@@ -1229,41 +1521,79 @@ async function saveRepositorySourceChanges() {
     showError(t('仓库源昵称和地址不能为空'))
     return
   }
-  const normalizedUrls = draft.map((source) => source.url.toLowerCase())
+  const normalizedUrls = draft.map(repositorySourceKey)
   if (new Set(normalizedUrls).size !== normalizedUrls.length) {
     showError(t('仓库源地址已存在'))
     return
   }
+  let savedSourceConfig: PublicConfig | null = null
   try {
     await run('正在保存仓库源', async () => {
       const sourceConfig = await api.saveRepositorySources(draft)
+      closeRepositorySourceManager()
       const savedDashboard = await api.dashboard()
       const savedSourceDashboard = { ...savedDashboard, config: sourceConfig }
       dashboard.value = savedSourceDashboard
-      const sourceResults = await Promise.all(sourceConfig.repository_sources.filter((source) => !source.parent_id && sourceMatchesRegion(source)).map(async (source) => ({
+      savedSourceConfig = sourceConfig
+      return sourceConfig
+    })
+  } catch {
+    return
+  }
+  if (!savedSourceConfig) return
+  if (tutorial.blocksRepositoryRefresh.value) {
+    showError(t('教程完成后才能刷新内置源'))
+    return
+  }
+  const refreshedSourceConfig = savedSourceConfig as PublicConfig
+  void (async () => {
+    try {
+      const rootSources = refreshedSourceConfig.repository_sources
+        .filter((item) => !item.parent_id && sourceMatchesRegion(item))
+      await prepareRootSourceRefresh(rootSources)
+      const sourceResults = await Promise.all(rootSources.map(async (source) => ({
         source,
         result: await refreshSource(source.id, { updateDashboard: false, notify: false }),
       })))
-      const builtinResults = sourceResults.filter((entry) => entry.source.builtin)
-      builtinSourcesFailedAll.value = builtinResults.length > 0 && builtinResults.every((entry) => !entry.result.sourceOk || !entry.result.usable)
       const failures = sourceResults
-        .filter((entry) => !entry.result.ok && !(entry.source.builtin && builtinSourcesFailedAll.value))
-        .map((entry) => `${entry.source.nickname}: ${entry.result.error || t('刷新失败')}`)
-      const releaseFailures = sourceResults
-        .reduce((total, entry) => total + entry.result.releaseFailures, 0)
+        .filter((entry) => !entry.result.ok)
+        .map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`)
+      const releaseFailures = sourceResults.reduce((total, entry) => total + entry.result.releaseFailures, 0)
       if (releaseFailures) failures.push(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
-      if (failures.length) throw new Error(failures.join('；'))
-      const refreshedDashboard = await api.dashboard()
-      dashboard.value = refreshedDashboard
-      closeRepositorySourceManager()
-      return refreshedDashboard
-    })
-  } catch {
-    // run() has already displayed the error; keep the draft open for retry.
-  }
+      dashboard.value = await api.dashboard()
+      if (failures.length) showError(failures.join('；'))
+    } catch (reason) {
+      showError(reason)
+    }
+  })()
 }
-function sourceRefreshing(sourceId: string) { return !!sourceLoading[sourceId] }
+function sourceRefreshing(sourceId: string) {
+  const tutorialRootSourceId = activeRepositorySources.value[0]?.id
+  if (tutorial.repositoryLoadingActive.value && sourceId === tutorialRootSourceId) return true
+  return !!sourceLoading[sourceId]
+}
+function sourceCardLoading(sourceId: string) {
+  return sourceRefreshing(sourceId) || !!sourceContentRevealing[sourceId] || !!sourceErrors[sourceId]
+}
 function sourceBusy(sourceId: string) { return !!sourceLoading[sourceId] || !!sourceRefreshingManual[sourceId] }
+function finishSourceContentReveal(sourceId: string) {
+  sourceContentRevealing[sourceId] = false
+  const timer = sourceContentRevealTimers.get(sourceId)
+  if (timer !== undefined) window.clearTimeout(timer)
+  sourceContentRevealTimers.delete(sourceId)
+}
+function startSourceContentReveal(sourceId: string) {
+  finishSourceContentReveal(sourceId)
+  sourceContentRevealing[sourceId] = true
+  sourceContentRevealTimers.set(sourceId, window.setTimeout(() => {
+    finishSourceContentReveal(sourceId)
+  }, 700))
+}
+function onSourceContentEntered(sourceId: string) {
+  if (sourceRefreshPhase[sourceId] === 'clearing' || sourceRefreshPhase[sourceId] === 'loading') return
+  finishSourceContentReveal(sourceId)
+  sourceLoading[sourceId] = false
+}
 function toggleSource(sourceId: string) { sourceCollapsed[sourceId] = !sourceCollapsed[sourceId] }
 function toggleModDetails(modId: string) { modDetailsExpanded[modId] = !modDetailsExpanded[modId] }
 function repositoryGroupKey(sourceId: string, group: string) { return `${sourceId}:${group}` }
@@ -1273,72 +1603,192 @@ function toggleRepositoryGroup(sourceId: string, group: string) {
   repositoryGroupCollapsed[key] = !repositoryGroupCollapsed[key]
 }
 async function refreshSource(sourceId: string, options: SourceRefreshOptions = {}, visited = new Set<string>()): Promise<SourceRefreshResult> {
-  if (visited.has(sourceId)) return { ok: true, sourceOk: true, usable: false, releaseFailures: 0 }
+  if (visited.has(sourceId)) return { ok: true, releaseFailures: 0 }
+  if (tutorial.blocksRepositoryRefresh.value) {
+    const error = t('教程完成后才能刷新内置源')
+    if (options.notify !== false) showError(error)
+    return { ok: false, releaseFailures: 0, error }
+  }
   visited.add(sourceId)
   const updateDashboard = options.updateDashboard ?? true
   const notify = options.notify ?? true
   const source = config.value?.repository_sources.find((item) => item.id === sourceId)
-  if (source?.builtin && !source.parent_id) builtinSourcesFailedAll.value = false
+  let accessFailed = false
+  let builtinFallbackAvailable = false
+  async function loadBuiltinFallback(reason: string) {
+    console.warn('[repository-refresh] using bundled index', { sourceId, reason })
+    const retryVisited = new Set(visited)
+    retryVisited.delete(sourceId)
+    return refreshSource(sourceId, { ...options, builtinFallback: true }, retryVisited)
+  }
+  delete sourceErrors[sourceId]
   sourceRefreshingManual[sourceId] = true
   sourceLoading[sourceId] = true
+  sourceRefreshPhase[sourceId] = 'clearing'
   try {
     if (!source) throw new Error(t('仓库源不存在'))
-    if (!sourceMatchesRegion(source)) return { ok: true, sourceOk: true, usable: false, releaseFailures: 0 }
-    await api.importRepositorySource(source.id, source.url)
-    const refreshed = await refreshDashboardSerialized()
-    const hasRepositories = !!refreshed?.config.repositories.some((repo) => repo.source_id === sourceId)
-    const childSources = (config.value?.repository_sources ?? []).filter((item) => item.parent_id === sourceId && sourceMatchesRegion(item))
-    const childResults: SourceRefreshResult[] = []
-    // The source contents are now available in the dashboard. Hide this
-    // source's loading overlay immediately while its repositories refresh in
-    // parallel with the recursive child-source downloads.
-    for (const child of childSources) sourceLoading[child.id] = true
-    sourceLoading[sourceId] = false
+    if (!sourceMatchesRegion(source)) return { ok: true, releaseFailures: 0 }
+    clearSourceContentLocally(sourceId)
     await nextTick()
-    const releaseTask = refreshSourceReleases(sourceId, false, false)
-    for (const child of childSources) {
-      childResults.push(await refreshSource(child.id, { updateDashboard: false, notify: false }, visited))
+    sourceRefreshPhase[sourceId] = 'loading'
+    const imported = await api.importRepositorySource(source.id, source.url, options.builtinFallback ?? false)
+    builtinFallbackAvailable = imported.builtin_fallback_available
+    if (imported.access_error) {
+      accessFailed = true
+      throw new Error(imported.access_error)
     }
-    const releaseFailures = await releaseTask
+    await refreshConfigSerialized()
+    const childSources = (config.value?.repository_sources ?? []).filter((item) => item.parent_id === sourceId && sourceMatchesRegion(item))
+    sourceRefreshPhase[sourceId] = 'adding'
+    if (sourceCollapsed[sourceId]) {
+      finishSourceContentReveal(sourceId)
+    } else {
+      startSourceContentReveal(sourceId)
+    }
+    await nextTick()
+    // The source document has been parsed and its repository cards are now
+    // mounted. Release the source-level mask immediately; Release requests
+    // continue independently in their own row states.
+    sourceLoading[sourceId] = false
+    sourceRefreshPhase[sourceId] = 'refreshing'
+    await nextTick()
+    const childResultsPromise = Promise.all(childSources.map((child) =>
+      refreshSource(child.id, { updateDashboard: false, notify: false }, new Set(visited))))
+    const [releaseFailures, childResults] = await Promise.all([
+      refreshSourceReleases(sourceId, false, false),
+      childResultsPromise,
+    ])
     const childReleaseFailures = childResults.reduce((total, result) => total + result.releaseFailures, 0)
     const childFailures = childResults.filter((result) => !result.ok)
-    if (updateDashboard) dashboard.value = await api.dashboard()
+    const sourceIds = sourceDescendantIds(sourceId)
+    const hasRepositories = (config.value?.repositories ?? []).some((repo) => repo.source_id && sourceIds.has(repo.source_id))
+    if (builtinFallbackAvailable && !options.builtinFallback && childResults.length > 0
+      && childResults.every((result) => result.accessFailed) && !hasRepositories) {
+      return await loadBuiltinFallback('all_children_unreachable_without_repositories')
+    }
+    if (updateDashboard) await refreshDashboardSerialized()
     if (releaseFailures + childReleaseFailures && notify) showError(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures + childReleaseFailures)))
     if (childFailures.length) {
-      return { ok: false, sourceOk: true, usable: hasRepositories || childResults.some((result) => result.sourceOk), releaseFailures: releaseFailures + childReleaseFailures, error: childFailures.map((result) => result.error || t('刷新失败')).join('；') }
+      return { ok: false, releaseFailures: releaseFailures + childReleaseFailures, error: childFailures.map((result) => result.error || t('刷新失败')).join('；') }
     }
-    return { ok: true, sourceOk: true, usable: hasRepositories || childResults.some((result) => result.sourceOk), releaseFailures: releaseFailures + childReleaseFailures }
+    return { ok: true, releaseFailures: releaseFailures + childReleaseFailures }
   } catch (reason) {
+    if (accessFailed && builtinFallbackAvailable && !options.builtinFallback) {
+      return await loadBuiltinFallback('index_unreachable')
+    }
     const detail = reason instanceof Error ? reason.message : String(reason)
+    sourceErrors[sourceId] = detail
+    await (updateDashboard ? refreshDashboardSerialized() : refreshConfigSerialized()).catch(() => undefined)
     if (notify) showError(detail)
-    return { ok: false, sourceOk: false, usable: false, releaseFailures: 0, error: detail }
+    return { ok: false, releaseFailures: 0, error: detail, accessFailed }
   } finally {
+    finishSourceContentReveal(sourceId)
     sourceRefreshingManual[sourceId] = false
     sourceLoading[sourceId] = false
+    delete sourceRefreshPhase[sourceId]
   }
+}
+function openModRecycleBin() {
+  if (tutorial.visible.value || tutorial.previewing.value || busy.value) return
+  showModRecycleBin.value = true
+}
+function handleRecycledModRestored() {
+  void refreshDashboardSerialized().catch(showError)
 }
 function editModNote(mod: import('./types').InstalledMod) { editingMod.value = mod; modNote.value = mod.note ?? '' }
 async function saveModNote() { if (!editingMod.value) return; await run('正在保存 MOD 备注', async () => { await api.saveModNote(editingMod.value!.dll_file, modNote.value); editingMod.value = null; await loadDashboard() }) }
-async function uninstallMod(mod: import('./types').InstalledMod) {
-  if (!confirm(`${t('确定删除 MOD')} ${mod.name}?`)) return
-  const result = await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file))
-  if (result?.requires_confirmation) {
-    message.value = ''
-    unmanagedModPending.value = mod
+function uninstallModPackage(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  if (!packageId) return
+  modUninstallPending.value = {
+    kind: 'package',
+    phase: 'confirm',
+    packageId,
+    packageName: packageNameForMod(mod),
+    mods: packageModsForMod(mod),
+  }
+}
+async function uninstallMod(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  const manifestHasOtherFiles = !!mod.package_id && (mod.package_mod_count || 0) > 1
+  const hasSameGuid = hasOtherEnabledSameGuid(mod)
+  if (!packageId && manifestHasOtherFiles && !hasSameGuid) {
+    modUninstallPending.value = {
+      kind: 'package',
+      phase: 'confirm',
+      packageId: mod.package_id,
+      packageName: packageNameForMod(mod),
+    }
     return
   }
-  await loadDashboard()
+  const siblings = packageModsForMod(mod).filter((item) => item.dll_file !== mod.dll_file)
+  modUninstallPending.value = packageId && siblings.length && !hasSameGuid
+    ? { kind: 'mod', phase: 'package', mod, packageId, siblingNames: siblings.map((item) => item.name) }
+    : { kind: 'mod', phase: 'confirm', mod }
 }
-async function confirmUnmanagedModUninstall() {
-  const mod = unmanagedModPending.value
+function cancelModUninstall() {
+  modUninstallPending.value = null
+}
+async function confirmModUninstall() {
+  const pending = modUninstallPending.value
+  if (!pending) return
+  if (pending.kind === 'package') {
+    await run(`正在卸载 ${pending.packageName || t('MOD 包')}`, () => api.uninstallRepository(pending.packageId!))
+    cancelModUninstall()
+    await loadDashboard()
+    return
+  }
+  const mod = pending.mod
   if (!mod) return
-  unmanagedModPending.value = null
-  await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file, true))
+  if (pending.phase === 'package') {
+    await run(`正在删除 ${mod.name}`, () => api.uninstallModDll(mod.dll_file, pending.packageId!))
+    cancelModUninstall()
+    await loadDashboard()
+    return
+  }
+  if (pending.phase === 'unmanaged') {
+    await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file, true))
+    cancelModUninstall()
+    await loadDashboard()
+    return
+  }
+  const result = await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file))
+  if (result?.requires_package_confirmation) {
+    message.value = ''
+    const packageId = result.package_id || packageIdForMod(mod)
+    const siblingNames = result.package_mod_names?.length
+      ? result.package_mod_names
+      : packageModsForMod(mod).filter((item) => item.dll_file !== mod.dll_file).map((item) => item.name)
+    if (packageId) {
+      modUninstallPending.value = { kind: 'mod', phase: 'package', mod, packageId, siblingNames }
+    }
+    return
+  }
+  if (result?.requires_confirmation) {
+    message.value = ''
+    modUninstallPending.value = { kind: 'mod', phase: 'unmanaged', mod }
+    return
+  }
+  cancelModUninstall()
   await loadDashboard()
 }
-function isModToggling(mod: import('./types').InstalledMod) { return Object.prototype.hasOwnProperty.call(modTogglePending, mod.dll_file) }
-function modEnabledForView(mod: import('./types').InstalledMod) { return modTogglePending[mod.dll_file] ?? mod.enabled }
-async function toggleMod(mod: import('./types').InstalledMod) {
+function isModToggling(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  return Object.prototype.hasOwnProperty.call(modTogglePending, mod.dll_file)
+    || !!packageId && Object.prototype.hasOwnProperty.call(modPackageTogglePending, packageId)
+}
+function isPackageToggling(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  return !!packageId && (
+    Object.prototype.hasOwnProperty.call(modPackageTogglePending, packageId)
+    || packageModsForMod(mod).some((item) => Object.prototype.hasOwnProperty.call(modTogglePending, item.dll_file))
+  )
+}
+function modEnabledForView(mod: InstalledMod) {
+  const packagePending = packageTogglePendingForMod(mod)
+  return packagePending !== undefined ? packagePending : modTogglePending[mod.dll_file] ?? mod.enabled
+}
+async function toggleMod(mod: InstalledMod) {
   const key = mod.dll_file
   if (isModToggling(mod) || gameBlocked.value || busy.value) return
   const enabled = !modEnabledForView(mod)
@@ -1360,7 +1810,32 @@ async function toggleMod(mod: import('./types').InstalledMod) {
     showError(reason)
   }
 }
-function displayModPath(mod: import('./types').InstalledMod) {
+async function toggleModPackage(mod: InstalledMod) {
+  const packageId = packageIdForMod(mod)
+  const packageMods = packageModsForMod(mod)
+  if (!packageId || !packageMods.length || gameBlocked.value || busy.value || isPackageToggling(mod)) return
+  const enabled = !packageEnabledForMod(mod)
+  modPackageTogglePending[packageId] = enabled
+  await nextTick()
+  try {
+    const result = await api.toggleLocalModPackage(packageId, enabled)
+    for (const current of packageMods) {
+      const dashboardMod = dashboard.value?.mods.find((item) => item.dll_file === current.dll_file)
+      if (dashboardMod) dashboardMod.enabled = enabled
+    }
+    delete modPackageTogglePending[packageId]
+    showSuccess(t(result.message))
+    try {
+      await refreshDashboardSerialized()
+    } catch (reason) {
+      showError(reason)
+    }
+  } catch (reason) {
+    delete modPackageTogglePending[packageId]
+    showError(reason)
+  }
+}
+function displayModPath(mod: InstalledMod) {
   return `${mod.dll_file}${modEnabledForView(mod) ? '' : '.disabled'}`
 }
 async function installLocalMod() { const path = await api.chooseModFile(); if (!path || Array.isArray(path)) return; await run('正在安装本地 MOD', () => api.installLocalMod(path)); await loadDashboard() }
@@ -1376,16 +1851,33 @@ async function rescanInstalledMods() {
     if (!installedModsChecking.value) installedModsPendingCheck.value = false
   }
 }
-let kitchenPoll: number | undefined
+
 onMounted(async () => {
   window.addEventListener('wheel', handleUiZoomWheel, { passive: false })
-  window.addEventListener('resize', updateTutorialRect)
-  document.addEventListener('scroll', updateTutorialRect, true)
-  startupStage.value = t('正在初始化应用')
+  window.addEventListener('blur', clearModalPointerDown)
+  document.addEventListener('pointerdown', rememberModalPointerDown, true)
+  document.addEventListener('pointerup', clearModalPointerDownAfterPointerUp, true)
+  document.addEventListener('pointercancel', clearModalPointerDown, true)
+  document.addEventListener('click', preventDraggedModalBackdropClick, true)
+  startupStage.value = t('初始化应用')
   try {
+    const gameStateSubscription = watchGameState((game) => {
+      // Update only real game state, including while forms are open. Config
+      // drafts and tutorial scenario data remain owned by their host.
+      if (!appUnmounted && dashboard.value) dashboard.value.game = game
+    })
+    try {
+      const stop = await withTimeout(gameStateSubscription, STARTUP_IPC_TIMEOUT_MS, '注册游戏状态监听')
+      if (appUnmounted) stop()
+      else stopGameState.value = stop
+    } catch (reason) {
+      // A timed-out IPC can still finish later; release that late listener.
+      void gameStateSubscription.then((stop) => stop()).catch(() => undefined)
+      console.warn('[startup] game state listener IPC failed', reason)
+    }
     try {
       appVersion.value = await withTimeout(getVersion(), STARTUP_IPC_TIMEOUT_MS, '读取程序版本')
-      document.title = `OC2 Mod Manager v${appVersion.value}`
+      document.title = `${t('OC2 模组管理器')} v${appVersion.value}`
       void getCurrentWindow().setTitle(document.title).catch(() => undefined)
     } catch (reason) {
       console.warn('[startup] getVersion IPC failed', reason)
@@ -1412,164 +1904,99 @@ onMounted(async () => {
     } catch (reason) {
       console.warn('[startup] app update channel IPC failed', reason)
     }
-    void withTimeout(watchDownloadProgress((value) => {
-      if (downloadCancelRequested.value) return
-      progress.value = {
-        label: value.label,
-        percent: value.total ? Math.min(100, value.downloaded / value.total * 100) : 0,
-        speed: value.finished ? '' : `${formatBytes(value.speed_bytes)}/s`,
-        status: value.finished ? t('下载完成，正在处理') : '',
-      }
+    try {
+      stopAppUpdatePhase.value = await withTimeout(watchAppUpdatePhase((event) => {
+        startupUpdatePhase.value = event.phase
+        if (event.update) appUpdate.value = event.update
+        if (event.message && event.phase === 'skipped') startupError.value = event.message
+      }), STARTUP_IPC_TIMEOUT_MS, '注册更新阶段监听')
+    } catch (reason) {
+      console.warn('[startup] app update phase IPC failed', reason)
+    }
+    let progressListenerExpired = false
+    void withTimeout(watchDownloadProgress(receiveDownloadProgress).then((stop) => {
+      if (appUnmounted || progressListenerExpired) { stop(); return () => undefined }
+      return stop
     }), STARTUP_IPC_TIMEOUT_MS, '注册下载进度监听').then((stop) => {
-      stopProgress.value = stop
+      if (appUnmounted) stop()
+      else stopProgress.value = stop
     }).catch((reason) => {
+      progressListenerExpired = true
       console.warn('[startup] download progress IPC failed', reason)
     })
-    startupStage.value = t('正在检查安装器更新')
+    startupStage.value = t('检查安装器更新')
     await startupChecks()
   } catch (reason) {
     console.error('[startup] startup checks failed', reason)
-    startupError.value = t('检查更新失败，请重新启动MOD管理器。')
+    if (!updateSkipped.value) startupError.value = t('检查更新失败，请重新启动MOD管理器。')
     updateCheckFailed.value = true
   } finally {
     startupUpdateChecking.value = false
   }
-  kitchenPoll = window.setInterval(async () => {
-    if (busy.value || repositoryRefreshCount > 0) return
-    const revision = dashboardRevision
-    try {
-      const next = await api.dashboard()
-      if (revision === dashboardRevision && repositoryRefreshCount === 0) dashboard.value = next
-    } catch { /* 状态轮询失败时保留上一状态 */ }
-  }, 1000)
 })
 onUnmounted(() => {
-  stopTutorialPicker(false)
+  appUnmounted = true
   window.removeEventListener('wheel', handleUiZoomWheel)
-  window.removeEventListener('resize', updateTutorialRect)
-  document.removeEventListener('scroll', updateTutorialRect, true)
+  window.removeEventListener('blur', clearModalPointerDown)
+  document.removeEventListener('pointerdown', rememberModalPointerDown, true)
+  document.removeEventListener('pointerup', clearModalPointerDownAfterPointerUp, true)
+  document.removeEventListener('pointercancel', clearModalPointerDown, true)
+  document.removeEventListener('click', preventDraggedModalBackdropClick, true)
   stopProgress.value?.()
   stopAppUpdateChannel.value?.()
+  stopAppUpdatePhase.value?.()
+  stopGameState.value?.()
+  clearUpdateSkipTimer()
   uninstallFrontendLogging?.()
-  if (kitchenPoll) window.clearInterval(kitchenPoll)
   if (toastTimer) window.clearTimeout(toastTimer)
-  if (rustLogTimer) window.clearInterval(rustLogTimer)
   if (uiZoomSaveTimer) window.clearTimeout(uiZoomSaveTimer)
 })
 </script>
 
 <template>
-  <div class="app-shell" :class="{ light: !dark }">
+  <ConfirmationDialog :request="confirmation" @answer="answerConfirmation" />
+  <div :class="['app-shell', { 'tutorial-layer-active': tutorial.visible.value }]">
     <div v-if="startupUpdateChecking || updateCheckFailed" class="startup-overlay">
-      <div v-if="startupUpdateChecking" class="startup-card">
+      <div v-if="startupUpdateChecking && !updateSkipped" class="startup-card">
         <div class="startup-spinner"></div>
-        <h2>{{ startupStage || t('正在检查安装器更新') }}</h2>
+        <h2>{{ startupStage || t('检查安装器更新') }}</h2>
         <p>{{ t('请耐心等待') }}</p>
         <div v-if="appUpdateCheck" class="update-region">
           <span>{{ t('当前更新地区') }}</span><strong>{{ updateRegionLabel(appUpdateCheck.region) }}</strong>
         </div>
-        <div v-if="appUpdateCheck?.channels.length" class="update-channel-statuses">
+        <div v-if="startupUpdatePhase === 'api' && appUpdateCheck?.channels.length" class="update-channel-statuses">
           <div v-for="channel in appUpdateCheck.channels" :key="channel.id" class="update-channel-status">
             <span>{{ updateChannelName(channel.id) }}</span><span :class="`update-channel-${channel.status}`">{{ updateChannelStatus(channel.status) }}</span>
           </div>
         </div>
-        <div v-if="progress.label" class="startup-download-progress">
-          <div class="download-meta"><span>{{ progress.label }}</span><span>{{ progress.percent.toFixed(0) }}%</span></div>
-          <div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div>
+        <div v-if="startupUpdatePhase === 'download' && appUpdate" class="update-release-log">
+          <div class="update-release-head"><strong>{{ t('安装器更新') }} v{{ appUpdate.version }}</strong><small>{{ appUpdate.date || t('未知时间') }}</small></div>
+          <p>{{ appUpdate.body || t('Release 没有更新日志。') }}</p>
+        </div>
+        <div v-if="startupUpdatePhase === 'download' && displayProgress.label" class="startup-download-progress">
+          <div class="download-meta"><span>{{ displayProgress.label }}<small v-if="displayProgress.status"> · {{ displayProgress.status }}</small></span><span><template v-if="!displayProgress.indeterminate">{{ displayProgress.percent.toFixed(0) }}%</template><small v-if="displayProgress.speed"> · {{ displayProgress.speed }}</small></span></div>
+          <div class="progress" :class="{ 'progress-indeterminate': displayProgress.indeterminate }"><i :style="{ width: displayProgress.indeterminate ? '28%' : `${displayProgress.percent}%` }"></i></div>
         </div>
       </div>
       <div v-else class="startup-card startup-failed">
         <div class="startup-exclamation">!</div>
         <h2>{{ startupError || t('检查更新失败，请重新启动MOD管理器。') }}</h2>
-        <p v-if="startupStage">{{ startupStage }}</p>
-        <button class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
-      </div>
-    </div>
-    <div v-if="tutorialVisible && currentTutorialStep" class="tutorial-overlay">
-      <div class="tutorial-spotlight" :style="tutorialSpotlightStyle" aria-hidden="true"></div>
-      <div class="tutorial-card" :style="tutorialCardStyle" role="dialog" aria-modal="true">
-        <div class="tutorial-card-head"><span class="tutorial-progress">{{ tutorialProgress }}</span><button
-            class="icon-button" :title="t('跳过教程')" :aria-label="t('跳过教程')" :disabled="tutorialSaving" @click="skipTutorial">
-            <X :size="16" />
-          </button></div>
-        <h2>{{ t(currentTutorialStep.title) }}</h2>
-        <p>{{ t(currentTutorialStep.description) }}</p>
-        <div class="tutorial-actions"><button v-if="tutorialStepIndex > 0" class="secondary-button"
-            :disabled="tutorialSaving" @click="previousTutorialStep">{{ t('上一步') }}</button><button class="ghost-button"
-            :disabled="tutorialSaving" @click="skipTutorial">{{ t('跳过教程') }}</button><button class="primary-button"
-            :disabled="tutorialSaving" @click="nextTutorialStep">{{ tutorialStepIndex === tutorialPendingSteps.length - 1 ? t('完成教程') : t('下一步') }}</button>
+        <p v-if="updateSkipped && updateSkipCountdown > 0">{{ updateSkipCountdown }} {{ t('秒后打开管理器仓库') }}</p>
+        <p v-else-if="startupStage">{{ startupStage }}</p>
+        <p v-if="updatePageError" class="startup-update-error" role="alert">{{ updatePageError }}</p>
+        <div v-if="updateSkipped" class="startup-update-actions">
+          <button class="secondary-button" @click="continueAfterUpdateSkip">{{ t('继续') }}</button>
+          <button class="primary-button" :disabled="updatePageOpening" @click="openManualUpdatePage">{{ t('手动更新') }}</button>
         </div>
+        <button v-else class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
       </div>
     </div>
-    <div v-if="tutorialPickerActive" class="tutorial-picker-banner">
-      <span>{{ t('正在选择教程目标') }}</span>
-      <button class="ghost-button" @click="stopTutorialPicker()">{{ t('取消选择') }}</button>
-    </div>
-    <div v-if="showTutorialEditor" class="modal-backdrop" @click.self="showTutorialEditor = false">
-      <div class="modal tutorial-editor-modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ t('编辑首次启动教程') }}</h3>
-            <p class="muted-text">{{ t('使用 CSS 层级选择器定位需要说明的界面区域。') }}</p>
-          </div><button class="icon-button" :title="t('关闭')" :disabled="tutorialSaving" @click="showTutorialEditor = false">
-            <X :size="17" />
-          </button>
-        </div>
-        <div class="tutorial-editor-list">
-          <div v-for="(step, index) in tutorialEditorSteps" :key="`${step.id}-${index}`" class="tutorial-editor-step">
-            <div class="tutorial-editor-step-head"><b>{{ t('教程步骤') }} {{ index + 1 }}</b><button class="icon-button small danger-icon"
-                :title="t('删除步骤')" :disabled="tutorialSaving" @click="removeTutorialStep(index)">
-                <Trash2 :size="14" />
-              </button></div>
-            <div class="form-grid">
-              <label><span>{{ t('步骤 ID') }}</span><input v-model="step.id" /></label>
-              <label><span>{{ t('进入页面') }}</span><select v-model="step.view">
-                  <option value="">{{ t('保持当前页面') }}</option>
-                  <option v-for="item in navItems" :key="item.id" :value="item.id">{{ t(item.label) }}</option>
-                </select></label>
-              <label class="wide"><span>{{ t('CSS 选择器') }}</span><input v-model="step.selector"
-                  placeholder=".app-shell > .sidebar > .nav-list > .nav-item" /></label>
-              <div class="tutorial-editor-selector-actions wide"><button class="secondary-button" :disabled="tutorialSaving"
-                  @click="startTutorialPicker(index)">
-                  <Search :size="15" />{{ t('从当前界面选择') }}
-                </button></div>
-              <label class="wide"><span>{{ t('步骤标题') }}</span><input v-model="step.title" /></label>
-              <label class="wide"><span>{{ t('步骤说明') }}</span><textarea v-model="step.description" rows="3" /></label>
-            </div>
-          </div>
-        </div>
-        <button class="secondary-button tutorial-editor-add" :disabled="tutorialSaving" @click="addTutorialStep">
-          <Plus :size="15" />{{ t('添加步骤') }}
-        </button>
-        <div class="modal-actions"><button class="ghost-button" :disabled="tutorialSaving" @click="restoreBuiltInTutorial">
-            <RotateCcw :size="15" />{{ t('恢复内置教程') }}
-          </button><button class="secondary-button" :disabled="tutorialSaving" @click="showTutorialEditor = false">{{ t('取消') }}</button><button
-            class="primary-button" :disabled="tutorialSaving" @click="saveTutorialEditor">
-            <Save :size="15" />{{ t('保存并重新展示') }}
-          </button></div>
-      </div>
-    </div>
-    <aside ref="tutorialSidebar" class="sidebar">
-      <div class="brand">
-        <div class="brand-mark"><img :src="appIcon" alt="" /></div>
-        <div><strong>OC2 MOD MANAGER</strong></div>
-      </div>
-      <div class="sidebar-section-label">{{ t('工作区') }}</div>
-      <nav class="nav-list"><button v-for="item in navItems" :key="item.id" class="nav-item"
-          :class="{ active: activeView === item.id }" @click="activeView = item.id">
-          <component :is="item.icon" :size="18" stroke-width="1.8" /><span><b>{{ t(item.label) }}</b><small>{{
-            t(item.hint) }}</small></span>
-          <ChevronRight :size="14" class="nav-chevron" />
-        </button></nav>
-      <div class="sidebar-foot">
-        <div class="side-health"><span class="pulse"
-            :class="game?.kitchen_running ? 'danger-bg' : 'success-bg'"></span>{{ game?.kitchen_running ?
-              t('厨房正在运行') : t('厨房已关闭') }}</div><span class="version-tag">{{ appVersion ? `v${appVersion}` : '' }}</span>
-      </div>
-    </aside>
+    <TutorialExperience :controller="tutorial" :nav-items="navItems" />
+    <AppSidebar :nav-items="navItems" :active-view="activeView" :game="game" :app-version="appVersion"
+      :app-icon="appIcon" @change-view="activeView = $event" />
     <main class="main-area">
       <div class="main-fixed">
-        <header ref="tutorialTopbar" class="topbar">
+        <header class="topbar">
         <div>
           <h1>{{t(navItems.find((item) => item.id === activeView)?.label || '')}}</h1>
         </div>
@@ -1577,11 +2004,7 @@ onUnmounted(() => {
             :aria-label="t('界面语言')">
             <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}
             </option>
-          </select><button class="icon-button" :title="t('重新检测游戏目录')" :disabled="!!busy" @click="detectGame">
-            <RefreshCw :size="17" />
-          </button><button class="icon-button" :title="t('切换主题')" @click="dark = !dark">
-            <Settings2 :size="17" />
-          </button>
+          </select>
           <div class="connection-chip"><span class="pulse success-bg"></span><span>{{ t('本地服务正常') }}</span></div>
         </div>
         </header>
@@ -1594,363 +2017,142 @@ onUnmounted(() => {
           </button>
         </div>
         <Transition name="download-notch">
-          <div v-if="progress.label" class="download-strip">
-            <div class="download-meta"><span>{{ progress.label }}<small v-if="progress.status"> · {{ progress.status
-                }}</small></span><span>{{ progress.percent.toFixed(0) }}%<template v-if="progress.speed"> ·
-                {{ progress.speed }}</template></span></div>
+          <div v-if="displayProgress.label" class="download-strip">
+            <div class="download-meta"><span>{{ displayProgress.label }}<small v-if="displayProgress.status"> · {{ displayProgress.status
+                }}</small></span><span><template v-if="!displayProgress.indeterminate">{{ displayProgress.percent.toFixed(0) }}%</template><template v-if="displayProgress.speed"> ·
+                {{ displayProgress.speed }}</template></span></div>
             <div class="download-progress-row">
-              <div class="progress"><i :style="{ width: `${progress.percent}%` }"></i></div><button
+              <div class="progress" :class="{ 'progress-indeterminate': displayProgress.indeterminate }"><i :style="{ width: displayProgress.indeterminate ? '28%' : `${displayProgress.percent}%` }"></i></div><button
                 class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button>
             </div>
           </div>
         </Transition>
       </div>
       <div class="main-scroll">
-        <section v-if="activeView === 'overview'" class="view-content">
-        <div class="hero-row">
-          <div>
-            <div class="status-line"><span class="status-dot"
-                :class="game?.game_exists ? 'success-bg' : 'danger-bg'"></span><span>{{
-                  game?.game_exists ? t('已识别厨房目录') : t('等待选择厨房目录') }}</span></div>
-            <h2>{{ t('把 MOD 管理变成') }}<br /><em>{{ t('一次点击的事。') }}</em></h2>
-            <p class="lead">{{ t('统一管理 BepInEx、Release 仓库和本地插件，安装过程会自动保护正在运行的厨房。') }}</p>
-            <div class="path-row">
-              <FolderOpen :size="16" /><span>{{ game?.path || t('尚未找到 Overcooked2.exe') }}</span>
-              <button class="text-button" @click="openDirectory" :disabled="!game?.path">
-                <ExternalLink :size="13" />{{ t('打开目录') }}
-              </button>
-              <button class="text-button" @click="chooseGameDirectory" :disabled="!!busy">
-                <Pencil :size="13" />{{ t('修改目录') }}
-              </button>
-              <button class="text-button" @click="restoreDefaultGameDirectory"
-                :disabled="!!busy || !!config?.game.auto_detect">
-                <RotateCcw :size="13" />{{ t('恢复默认') }}
-              </button>
-            </div>
-          </div>
-          <div class="hero-orbit"><img :src="appIcon" alt="" /></div>
-        </div>
-        <div ref="tutorialOverviewMetrics" class="metric-grid">
-          <div class="metric" @click="activeView = 'framework'"><span class="metric-label">BepInEx</span><strong>{{
-            game?.bepinex.version ||
-            (game?.bepinex.installed ? t('版本未知') : t('未安装')) }}</strong><span class="metric-note"
-              :class="game?.bepinex.complete ? 'good' : ''">
-              <Check v-if="game?.bepinex.complete" :size="13" /> {{ game?.bepinex.complete ? t('完整可用') :
-                t('需要安装') }}
-            </span></div>
-          <div class="metric" @click="activeView = 'installed'"><span class="metric-label">{{ t('已安装 MOD')
-              }}</span><strong class="metric-pair"><span class="metric-primary">{{ updateAvailableModCount
-                }}</span><span class="metric-divider">/</span><span class="metric-secondary">{{ installedMods.length
-                }}</span></strong><span class="metric-note">{{ `${t('可更新')} / ${t('已安装 MOD')}` }}</span></div>
-          <div class="metric" @click="activeView = 'repositories'"><span class="metric-label">{{ t('MOD仓库')
-              }}</span><strong class="metric-pair"><span class="metric-primary">{{ installableRepositoryCount
-                }}</span><span class="metric-divider">/</span><span class="metric-secondary"
-                :class="{ 'metric-ready': allRepositoryRefreshComplete, 'metric-pending': repos.length > 0 && !allRepositoryRefreshComplete }">{{
-                  repos.length }}</span></strong><span class="metric-note">{{ `${t('可安装仓库')} / ${t('总仓库')}`
-                }}</span></div><button class="metric metric-button"
-            :disabled="gameBlocked || !game?.game_exists || !!busy" @click="toggleWinhttp"><span class="metric-label">{{
-              t('启动状态') }}</span><strong>{{ statusLabel(currentWinhttp) }}</strong><span class="metric-note">{{
-                game?.kitchen_running ? t('操作已锁定') : currentWinhttp === 'conflict' ?
-                  t('点击清理冲突并启用 MOD') : t('点击切换有无 MOD') }}</span></button>
-        </div>
-        <div class="section-heading">
-          <div>
-            <h3>{{ t('厨房控制台') }}</h3>
-          </div><button class="ghost-button" @click="detectGame">
-            <RefreshCw :size="15" />{{ t('重新检测') }}
-          </button>
-        </div>
-        <div class="action-grid"><button class="action-card primary kitchen-launch-card"
-            :disabled="gameBlocked || !game?.game_exists || !!busy" @click="launchNormal"><span
-              class="action-icon">▶</span><span><b>{{ t('启动厨房') }}</b><small>{{ t('通过 Steam 启动游戏')
-                }}</small></span><span>›</span></button></div>
-      </section>
-      <section v-else-if="activeView === 'framework'" class="view-content">
-        <div class="page-intro">
-          <div>
-            <p>{{ t('安装和维护框架文件，所有变更都会在厨房关闭时执行。') }}</p>
-          </div>
-          <div class="large-status" :class="game?.bepinex.complete ? 'good' : 'warn'">
-            <ShieldCheck :size="22" /><span>{{ game?.bepinex.complete ? t('完整') : game?.bepinex.installed ?
-              t('不完整') : t('未安装') }}</span>
-          </div>
-        </div>
-        <div ref="tutorialFrameworkPanel" class="panel framework-panel">
-          <div class="framework-status">
-            <div class="framework-icon">
-              <PackageCheck :size="32" />
-            </div>
-            <div>
-              <h3>{{ game?.bepinex.version || t('未检测到版本') }}</h3>
-              <p>{{ game?.bepinex.version_source || t('未读取到 BepInEx 核心 DLL 元数据') }}</p>
-            </div><span class="badge" :class="game?.bepinex.complete ? 'success' : 'warning'">{{
-              game?.bepinex.complete ? t('READY') : t('ACTION REQUIRED') }}</span>
-          </div>
-          <div class="divider"></div>
-          <div class="button-row"><button class="primary-button" :disabled="gameBlocked || !!busy"
-              @click="openBepInExInstall(false)">
-              <Download :size="16" />{{ t('安装 BepInEx') }}
-            </button><button class="secondary-button" :disabled="gameBlocked || !!busy"
-              @click="openBepInExInstall(true)">
-              <RotateCcw :size="16" />{{ t('重新安装') }}
-            </button><button class="danger-button" :disabled="gameBlocked || !game?.bepinex.installed || !!busy"
-              @click="uninstallBepInEx">
-              <Trash2 :size="16" />{{ t('卸载') }}
-            </button></div>
-          <p v-if="gameBlocked" class="guard-note">
-            <AlertTriangle :size="15" />{{ t('厨房正在运行，文件操作已禁用。') }}
-          </p>
-        </div>
-        <div class="section-heading compact">
-          <div>
-            <h3>{{ t('框架备份') }}</h3>
-          </div>
-          <div class="button-row"><button class="ghost-button" :disabled="!!busy" @click="openBackupDirectory">
-              <FolderOpen :size="15" />{{ t('打开备份目录') }}
-            </button><button class="ghost-button" :disabled="gameBlocked || !!busy" @click="backupBepInEx">
-              <HardDriveDownload :size="15" />{{ t('立即备份') }}
-            </button></div>
-        </div>
-        <div class="backup-list">
-          <div v-for="backup in (game?.bepinex.backups || [])" :key="backup" class="backup-row">
-            <div class="backup-icon">
-              <HardDriveDownload :size="16" />
-            </div>
-            <div><b>{{ backup.split(/[\\/]/).pop() }}</b><span>{{ backup }}</span></div>
-            <div class="button-row"><button class="secondary-button small-button" :disabled="gameBlocked || !!busy"
-                @click="restoreBackup(backup)">
-                <RotateCcw :size="14" />{{ t('恢复') }}
-              </button><button class="danger-button small-button" :disabled="gameBlocked || !!busy"
-                @click="deleteBackup(backup)">
-                <Trash2 :size="14" />{{ t('删除') }}
-              </button></div>
-          </div>
-          <div v-if="!(game?.bepinex.backups?.length)" class="empty-state">{{ t('还没有框架备份') }}</div>
-        </div>
-      </section>
-      <section v-else-if="activeView === 'installed'" class="view-content">
-        <div ref="tutorialInstalledActions" class="page-intro">
-          <div>
-            <p>{{ t('这里只显示当前 BepInEx/plugins 中已经安装的插件。') }}</p>
-            <label class="check-control mod-filter-control"><input type="checkbox"
-                :checked="config?.hide_unidentified_mods ?? true" :disabled="!!busy"
-                @change="saveHideUnidentifiedMods" />{{ t('隐藏未识别 BepInEx GUID 的插件') }}</label>
-          </div>
-          <div class="button-row"><button class="secondary-button" :disabled="!!busy" @click="openModDirectory">
-              <FolderOpen :size="16" />{{ t('打开模组目录') }}
-            </button><button class="secondary-button" :disabled="gameBlocked || !!busy" @click="installLocalMod">
-              <Plus :size="16" />{{ t('手动安装模组') }}
-            </button><button class="secondary-button" :disabled="!!busy" @click="rescanInstalledMods">
-              <RefreshCw :size="16" />{{ t('重新扫描') }}
-            </button><button class="primary-button" :disabled="!mappedReposAvailable || !!busy"
-              @click="checkModUpdates">
-              <RefreshCw :size="16" />{{ t('检查模组更新') }}
-            </button></div>
-        </div>
-        <div class="panel table-panel">
-          <div class="table-head"><span>{{ t('序号') }}</span><span>{{ t('状态') }}</span><span>{{ t('模组') }}</span><span>{{ t('操作') }}</span></div>
-          <div v-for="(mod, index) in installedMods" :key="mod.dll_file" class="table-row">
-            <span class="mod-index">{{ index + 1 }}</span>
-            <button class="mod-switch" :class="{ 'mod-switch-on': modEnabledForView(mod) }" role="switch"
-              :aria-checked="modEnabledForView(mod)" :title="modEnabledForView(mod) ? t('禁用 MOD') : t('启用 MOD')"
-              :aria-label="modEnabledForView(mod) ? t('禁用 MOD') : t('启用 MOD')" :disabled="gameBlocked || !!busy || isModToggling(mod)"
-              @click="toggleMod(mod)">
-              <span class="mod-switch-thumb" aria-hidden="true"></span>
-            </button>
-            <div class="mod-cell">
-              <div class="mod-details">
-                <div class="mod-details-layout">
-                  <button class="mod-details-toggle" :title="modDetailsExpanded[mod.dll_file] ? t('折叠') : t('展开')"
-                    @click="toggleModDetails(mod.dll_file)"><ChevronRight :class="{ 'mod-details-expanded': modDetailsExpanded[mod.dll_file] }" :size="15" /></button>
-                  <div class="mod-details-content">
-                    <div class="mod-heading"><b>{{ mod.name }}</b><span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><span class="badge"
-                        :class="!modEnabledForView(mod) ? 'mod-disabled' : mod.status === 'unbound' ? 'muted' : installedModsChecking || isModRepositoryRefreshing(mod) ? 'warning' : installedModsPendingCheck ? 'warning' : mod.load_warning ? 'danger' : mod.update_available ? 'warning' : 'success'">{{
-                          !modEnabledForView(mod) ? t('已禁用') : mod.status === 'unbound' ? t('未绑定') : installedModsChecking || isModRepositoryRefreshing(mod) ? t('检查中') :
-                            installedModsPendingCheck ? t('待检查') : mod.load_warning || (mod.update_available ? t('可更新') : t('最新版'))
-                        }}</span></div>
-                    <Transition name="mod-details-expand">
-                      <div v-if="modDetailsExpanded[mod.dll_file]" class="mod-detail-table">
-                        <small><strong>{{ t('BepInEx.GUID') }}</strong><span class="mod-guid">{{ mod.guid || t('未识别') }}</span></small>
-                        <small><strong>{{ t('BepInEx.插件路径') }}</strong><span class="mod-path">{{ displayModPath(mod) }}</span></small>
-                        <small v-if="mod.note" class="mod-note"><strong>{{ t('备注') }}</strong><span>{{ mod.note }}</span></small>
-                        <small v-if="mod.title"><strong>{{ t('DLL.程序集标题') }}</strong><span>{{ mod.title }}</span></small>
-                        <small><strong>{{ t('DLL.产品名称') }}</strong><span>{{ mod.product_name || t('未知') }}</span></small>
-                        <small v-if="mod.description"><strong>{{ t('DLL.文件描述') }}</strong><span>{{ mod.description }}</span></small>
-                        <small><strong>{{ t('DLL.原始文件名') }}</strong><span>{{ mod.original_filename || t('未识别') }}</span></small>
-                        <small v-if="mod.company"><strong>{{ t('DLL.开发者信息') }}</strong><span>{{ mod.company }}</span></small>
-                        <small v-if="mod.copyright"><strong>{{ t('DLL.版权信息') }}</strong><span>{{ mod.copyright }}</span></small>
-                      </div>
-                    </Transition>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="mod-controls">
-              <span class="mod-actions"><button class="icon-button small" :title="t('编辑 MOD 备注')"
-                  @click="editModNote(mod)">
-                  <Pencil :size="14" />
-                </button><button class="icon-button small danger-icon" :title="t('删除 MOD')"
-                  :disabled="gameBlocked || !!busy" @click="uninstallMod(mod)">
-                  <Trash2 :size="14" />
-                </button></span>
-            </div>
-          </div>
-          <div v-if="!installedMods.length" class="empty-state">{{ t(config?.hide_unidentified_mods ? '没有扫描到可识别的 BepInEx MOD' : '没有扫描到 BepInEx/plugins/**/*.dll') }}</div>
-        </div>
-      </section>
-      <section v-else-if="activeView === 'repositories'" class="view-content">
-        <div ref="tutorialRepositoriesActions" class="page-intro">
-          <div>
-            <p>{{ t('内置和自定义仓库均从 Gitee/GitHub Release 获取版本与资产。') }}</p>
-            <small class="muted-text">{{ t('当前MOD下载渠道') }}: {{ repositorySourceRegionLabel(config?.region) }}</small>
-          </div>
-          <div class="button-row"><button class="secondary-button"
-              :disabled="!!busy || !(config?.repository_sources || []).length" @click="refreshAllRepositories">
-              <RefreshCw :size="16" />{{ t('刷新全部仓库源') }}
-            </button><button class="primary-button" @click="editRepo()">
-              <Plus :size="16" />{{ t('添加仓库') }}
-            </button><button class="primary-button" @click="openRepositorySourceManager">
-              <Plus :size="16" />{{ t('管理仓库源') }}
-            </button></div>
-        </div>
-        <div class="toolbar">
-          <div class="toolbar-group"><button class="secondary-button" @click="showImport = true">
-              <Download :size="15" />{{ t('导入配置') }}
-            </button><button class="secondary-button" :disabled="!repos.length" @click="exportRepositories">
-              <Upload :size="15" />{{ t('导出配置') }}
-            </button></div>
-        </div>
-        <div class="repository-list">
-          <template v-for="group in sourceGroups" :key="group.source.id">
-            <div :class="['source-section-heading', { 'source-section-heading-collapsed': sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id) }]">
-              <button class="source-collapse-button"
-                :title="sourceCollapsed[group.source.id] ? t('展开') : t('折叠')" @click="toggleSource(group.source.id)">
-                <ChevronRight :size="18" :class="{ 'source-expanded': !sourceCollapsed[group.source.id] }" />
-              </button>
-              <div class="source-section-title">
-                <h3>{{ group.source.nickname }}</h3>
-              </div><button v-if="group.source.id !== 'unclassified' && group.source.id !== 'builtin-fallback'" class="icon-button small" :title="t('刷新仓库源')"
-                :disabled="!!busy || sourceBusy(group.source.id)"
-                @click="refreshSource(group.source.id)">
-                <RefreshCw :size="15"
-                  :class="{ 'spin-icon': sourceRefreshing(group.source.id) }" />
-              </button>
-            </div>
-            <div v-if="sourceRefreshing(group.source.id)"
-              class="source-loading-overlay">
-              <RefreshCw :size="42" class="spin-icon" />
-            </div>
-            <Transition name="source-collapse">
-              <div
-                v-if="!sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id)"
-                class="source-repository-panel">
-                <template v-for="nestedGroup in flattenSourceGroups(group)"
-                  :key="nestedGroup.source.id">
-                  <div :class="nestedGroup.source.id === group.source.id ? 'source-root-content' : 'source-child-block'"
-                    :style="nestedGroup.source.id === group.source.id ? undefined : sourceDepthStyle(nestedGroup.depth)">
-                    <div v-if="nestedGroup.source.id !== group.source.id"
-                      :class="['source-section-heading', 'child-source-section-heading', { 'source-section-heading-collapsed': sourceCollapsed[nestedGroup.source.id] && !sourceRefreshing(nestedGroup.source.id) }]">
-                      <button class="source-collapse-button"
-                        :title="sourceCollapsed[nestedGroup.source.id] ? t('展开') : t('折叠')"
-                        @click="toggleSource(nestedGroup.source.id)">
-                        <ChevronRight :size="18" :class="{ 'source-expanded': !sourceCollapsed[nestedGroup.source.id] }" />
-                      </button>
-                      <div class="source-section-title">
-                        <h3>{{ nestedGroup.source.nickname }}</h3>
-                      </div>
-                      <button class="icon-button small" :title="t('刷新仓库源')"
-                        :disabled="!!busy || sourceBusy(nestedGroup.source.id)"
-                        @click="refreshSource(nestedGroup.source.id)">
-                        <RefreshCw :size="15" :class="{ 'spin-icon': sourceRefreshing(nestedGroup.source.id) }" />
-                      </button>
-                    </div>
-                    <div v-if="nestedGroup.source.id !== group.source.id && sourceRefreshing(nestedGroup.source.id)"
-                      class="source-loading-overlay child-source-loading">
-                      <RefreshCw :size="42" class="spin-icon" />
-                    </div>
-                    <Transition name="source-collapse">
-                      <div v-if="(nestedGroup.source.id === group.source.id || !sourceCollapsed[nestedGroup.source.id]) && (nestedGroup.source.id === group.source.id || !sourceRefreshing(nestedGroup.source.id))"
-                        :class="nestedGroup.source.id === group.source.id ? undefined : 'source-repository-panel child-source-panel'">
-                        <div v-for="repoGroup in nestedGroup.groups" :key="`${nestedGroup.source.id}:${repoGroup.key || 'ungrouped'}`"
-                          class="repository-group">
-                          <button v-if="repoGroup.label" class="repository-group-heading"
-                            :title="repositoryGroupCollapsed[repositoryGroupKey(nestedGroup.source.id, repoGroup.key)] ? t('展开分组') : t('折叠分组')"
-                            @click="toggleRepositoryGroup(nestedGroup.source.id, repoGroup.key)">
-                            <ChevronRight :size="15"
-                              :class="{ 'source-expanded': !repositoryGroupCollapsed[repositoryGroupKey(nestedGroup.source.id, repoGroup.key)] }" />
-                            <span>{{ repoGroup.label }}</span><span class="badge muted">{{ repoGroup.repositories.length }}</span>
-                          </button>
-                          <Transition name="repository-group-collapse">
-                            <div
-                              v-if="!repoGroup.label || !repositoryGroupCollapsed[repositoryGroupKey(nestedGroup.source.id, repoGroup.key)]"
-                              class="repository-group-items">
-                              <div v-for="repo in repoGroup.repositories" :key="repo.id"
-                                :class="['repository-row', { 'repo-refreshing': repositoryRefreshing[repo.id] }]">
-                                <div class="repo-logo" :class="repo.provider">
-                                  <svg class="provider-icon" :aria-label="repo.provider === 'github' ? 'GitHub' : 'Gitee'"
-                                    role="img" :viewBox="repo.provider === 'github' ? '0 0 19 19' : '0 0 24 24'">
-                                    <use
-                                      :href="repo.provider === 'github' ? '/icons.svg#github-icon' : '/icons.svg#gitee-icon'">
-                                    </use>
-                                  </svg>
-                                </div>
-                                <div class="repo-info">
-                                  <div class="repo-title"><b>{{ localizedRepositoryName(repo) }}</b><span v-if="repo.builtin"
-                                      class="badge muted">{{ t('内置') }}</span><span class="badge"
-                                      :class="repo.enabled ? 'success' : 'muted'">{{ repo.enabled ? t('启用') : t('停用')
-                                      }}</span><span v-if="repositoryInstallStatus(repo)" class="badge"
-                                      :class="['可更新', '检查中', '待检查'].includes(repositoryInstallStatus(repo)) ? 'warning' : 'success'">{{
-                                        t(repositoryInstallStatus(repo)) }}</span>
-                                  </div><span>{{ repo.url }}</span><small>{{ t(repo.channel === 'stable' ? '稳定版' : repo.channel
-                                    === 'beta' ? '测试版' : '全部版本') }} · {{ repo.install_target || t('按压缩包结构安装') }} · {{
-                                      repo.asset_rules.map((rule) => `${assetRuleLabel(rule.type)}: ${rule.value}`).join(', ')}}</small>
-                                  <div v-if="localizedRepositoryNote(repo) && !repositoryNoteIsLong(repo)"
-                                    class="repo-note markdown-body" v-html="renderMarkdown(localizedRepositoryNote(repo))">
-                                  </div><button v-else-if="localizedRepositoryNote(repo)" class="repo-note-button"
-                                    @click="showRepositoryNote = repo">
-                                    <FileText :size="13" />{{ t('查看仓库简介') }}
-                                  </button>
-                                </div>
-                                <div class="repo-controls">
-                                  <div class="repo-release"><b>{{ latest(repo)?.version || '—' }}</b><span>{{ latest(repo) ?
-                                    formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
-                                  <button class="primary-button small-button" :title="t('下载并安装')"
-                                    :disabled="gameBlocked || !installReleases(repo).length || !!busy || !!repositoryRefreshing[repo.id]"
-                                    @click="installRepo(repo)">
-                                    <Download :size="14" />{{ t('下载并安装') }}
-                                  </button>
-                                  <div class="row-actions">
-                                    <button class="icon-button small" :title="t('刷新 Release')"
-                                      :disabled="!!busy || !!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
-                                      <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
-                                    </button><button class="icon-button small" :title="t('查看 Release 日志')"
-                                      :disabled="!latest(repo)" @click="showRelease = repo">
-                                      <Search :size="14" />
-                                    </button><button class="icon-button small" :title="t('打开发布页')"
-                                      :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(repo.url)">
-                                      <ExternalLink :size="14" />
-                                    </button><button class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
-                                      <Pencil :size="14" />
-                                    </button><button class="icon-button small danger-icon" :title="t('删除仓库')"
-                                      :disabled="repo.builtin" @click="deleteRepo(repo)">
-                                      <Trash2 :size="14" />
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </Transition>
-                        </div>
-                      </div>
-                    </Transition>
-                  </div>
-                </template>
-              </div>
-            </Transition>
-          </template>
-          <div v-if="!repos.length" class="empty-state">{{ t('暂无仓库配置') }}</div>
-        </div>
-      </section>
+      <OverviewView v-if="activeView === 'overview'"
+        :game="game"
+        :update-available-mod-count="updateAvailableModCount"
+        :installed-mods="installedMods"
+        :installable-repository-count="installableRepositoryCount"
+        :repository-count="displayedRepositoryCount"
+        :repository-refresh-active="repositoryRefreshActive"
+        :current-winhttp="currentWinhttp"
+        :game-blocked="gameBlocked"
+        :busy="busy"
+        :app-icon="appIcon"
+        :status-label="statusLabel"
+        :launch-normal="launchNormal"
+        :toggle-winhttp="toggleWinhttp"
+        @change-view="activeView = $event" />
+      <FrameworkView v-else-if="activeView === 'framework'"
+        :game="game"
+        :config="config"
+        :game-blocked="gameBlocked"
+        :busy="busy"
+        :open-directory="openDirectory"
+        :choose-game-directory="chooseGameDirectory"
+        :restore-default-game-directory="restoreDefaultGameDirectory"
+        :detect-game="detectGame"
+        :open-bep-in-ex-install="openBepInExInstall"
+        :uninstall-bep-in-ex="uninstallBepInEx"
+        :open-backup-directory="openBackupDirectory"
+        :backup-bep-in-ex="backupBepInEx"
+        :restore-backup="restoreBackup"
+        :delete-backup="deleteBackup" />
+      <InstalledModsView v-else-if="activeView === 'installed'"
+        :config="config"
+        :busy="busy"
+        :save-hide-unidentified-mods="saveHideUnidentifiedMods"
+        :open-mod-directory="openModDirectory"
+        :open-mod-file-location="openModFileLocation"
+        :open-mod-recycle-bin="openModRecycleBin"
+        :game-blocked="gameBlocked"
+        :install-local-mod="installLocalMod"
+        :rescan-installed-mods="rescanInstalledMods"
+        :mapped-repos-available="mappedReposAvailable"
+        :check-mod-updates="checkModUpdates"
+        :installed-mods="installedMods"
+        :is-first-mod-in-package="isFirstModInPackage"
+        :package-is-collapsed="packageIsCollapsed"
+        :mod-display-index="modDisplayIndex"
+        :package-enabled-for-mod="packageEnabledForMod"
+        :package-mixed-for-mod="packageMixedForMod"
+        :package-mod-count-for-mod="packageModCountForMod"
+        :package-update-status-for-mod="packageUpdateStatusForMod"
+        :package-has-duplicate-for-mod="packageHasDuplicateForMod"
+        :package-name-for-mod="packageNameForMod"
+        :toggle-mod-package="toggleModPackage"
+        :toggle-mod-package-details="toggleModPackageDetails"
+        :package-id-for-mod="packageIdForMod"
+        :mod-details-expanded="modDetailsExpanded"
+        :is-last-mod-in-package="isLastModInPackage"
+        :package-child-index="packageChildIndex"
+        :mod-enabled-for-view="modEnabledForView"
+        :is-mod-toggling="isModToggling"
+        :is-package-toggling="isPackageToggling"
+        :toggle-mod="toggleMod"
+        :toggle-mod-details="toggleModDetails"
+        :installed-mod-status-label="installedModStatusLabel"
+        :installed-mod-status-class="installedModStatusClass"
+        :edit-mod-note="editModNote"
+        :uninstall-mod="uninstallMod"
+        :uninstall-mod-package="uninstallModPackage"
+        :display-mod-path="displayModPath"
+        :mod-uninstall-pending="modUninstallPending"
+        :cancel-mod-uninstall="cancelModUninstall"
+        :format-mod-package-delete-warning="formatModPackageDeleteWarning"
+        :confirm-mod-uninstall="confirmModUninstall" />
+      <RepositoriesView v-else-if="activeView === 'repositories'"
+        :config="config"
+        :busy="busy"
+        :game-blocked="gameBlocked"
+        :repository-refresh-batch-active="repositoryRefreshBatchActive"
+        :repository-refreshing="repositoryRefreshing"
+        :source-busy="sourceBusy"
+        :source-refreshing="sourceRefreshing"
+        :source-card-loading="sourceCardLoading"
+        :source-refreshing-manual="sourceRefreshingManual"
+        :source-refresh-phase="sourceRefreshPhase"
+        :source-errors="sourceErrors"
+        :source-collapsed="sourceCollapsed"
+        :toggle-source="toggleSource"
+        :flatten-source-groups="flattenSourceGroups"
+        :repository-group-collapsed="repositoryGroupCollapsed"
+        :repository-group-key="repositoryGroupKey"
+        :toggle-repository-group="toggleRepositoryGroup"
+        :localized-repository-name="localizedRepositoryName"
+        :localized-repository-note="localizedRepositoryNote"
+        :repository-note-is-long="repositoryNoteIsLong"
+        :render-markdown="renderMarkdown"
+        :repository-install-status="repositoryInstallStatus"
+        :latest="latest"
+        :format-date="formatDate"
+        :install-releases="installReleases"
+        :install-repo="installRepo"
+        :refresh-repo="refreshRepo"
+        :refresh-all-repositories="refreshAllRepositories"
+        :refresh-source="refreshSource"
+        :api="api"
+        :edit-repo="editRepo"
+        :delete-repo="deleteRepo"
+        :repos="repos"
+        :open-repository-source-manager="openRepositorySourceManager"
+        :export-repositories="exportRepositories"
+        :source-groups="sourceGroups"
+        :repository-source-region-label="repositorySourceRegionLabel"
+        @show-import="showImport = true"
+        @show-github-proxies="showGithubProxyManager = true"
+        @show-repository-note="showRepositoryNote = $event"
+        @show-release="showRelease = $event"
+        @source-content-entered="onSourceContentEntered" />
+      <GitHubProxyManager
+        :open="showGithubProxyManager"
+        :busy="!!busy"
+        :config="config?.github_proxies || { release_proxies: [], raw_proxies: [], github_api_proxies: [], gitee_api_proxies: [] }"
+        :t="t"
+        :save-config="saveGithubProxyConfig"
+        :refresh-config="refreshGithubProxyConfig"
+        @close="showGithubProxyManager = false" />
       <div v-if="showRepositorySource" class="modal-backdrop" @click.self="closeRepositorySourceManager">
         <div class="modal source-manager-modal">
           <div class="modal-head">
@@ -1962,18 +2164,21 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="source-manager-list">
-            <div v-for="source in repositorySourceDraft" :key="source.id" class="source-manager-row"
-              :draggable="!source.builtin" @dragstart="startSourceDrag(source.id)" @dragover.prevent
-              @drop="dropSource(source.id)">
-              <GripVertical :size="17" class="source-drag-handle" />
-              <div><b>{{ source.nickname }}</b><small>{{ t('仓库唯一ID') }}: {{ source.id }}</small><small>{{ t('适用地区') }}: {{ repositorySourceRegionLabel(source.region) }}</small><small>{{ source.url }}</small></div>
-              <span v-if="source.builtin" class="badge muted">{{ t('内置') }}</span>
-              <button v-if="!source.builtin" class="icon-button small" :title="t('编辑仓库源')"
-                @click="editRepositorySource(source)">
+            <div v-for="entry in repositorySourceManagerEntries" :key="entry.source.id"
+              :class="['source-manager-row', { 'source-manager-child-row': entry.depth > 0 }]"
+              :draggable="entry.depth === 0 && !entry.source.parent_id && !entry.source.builtin"
+              @dragstart="startSourceDrag(entry.source.id)" @dragover.prevent
+              @drop="dropSource(entry.source.id)">
+              <GripVertical v-if="entry.depth === 0" :size="17" class="source-drag-handle" />
+              <ChevronRight v-else :size="15" class="source-child-marker" />
+              <div><b>{{ localizedRepositorySourceName(entry.source) }}</b><small>{{ t('仓库唯一ID') }}: {{ entry.source.id }}</small><small v-if="entry.depth === 0">{{ t('当前MOD下载渠道') }}: {{ repositorySourceRegionLabel(entry.source.region) }}</small><small>{{ entry.source.url }}</small></div>
+              <span v-if="entry.source.builtin" class="badge muted">{{ t('内置') }}</span>
+              <button v-if="entry.depth === 0 && !entry.source.builtin" class="icon-button small" :title="t('编辑仓库源')"
+                @click="editRepositorySource(entry.source)">
                 <Pencil :size="14" />
               </button>
-              <button v-if="!source.builtin" class="icon-button small danger-icon" :title="t('删除仓库源')"
-                @click="removeRepositorySource(source)">
+              <button v-if="entry.depth === 0 && !entry.source.builtin" class="icon-button small danger-icon" :title="t('删除仓库源')"
+                @click="removeRepositorySource(entry.source)">
                 <Trash2 :size="14" />
               </button>
             </div>
@@ -1986,7 +2191,7 @@ onUnmounted(() => {
                 v-model="repositorySourceUniqueId" :disabled="!!editingRepositorySourceId" :placeholder="t('例如：my-source-id')" /></label><label><span>{{ t('仓库源昵称') }}</span><input
                 v-model="repositorySourceNickname" :placeholder="t('例如：我的仓库源')" /></label><label><span>{{ t('仓库源地址')
                 }}</span><input v-model="repositorySourceUrl"
-                placeholder="https://example.com/repositories.oc2repo.toml" /></label><label><span>{{ t('适用地区') }}</span><select v-model="repositorySourceRegion"><option value="">{{ t('所有地区') }}</option><option value="chinese_mainland">{{ t('中国大陆') }}</option><option value="international">{{ t('非中国大陆') }}</option></select></label>
+                placeholder="https://example.com/repositories.oc2repo.toml" /></label><label><span>{{ t('适用地区') }}</span><select v-model="repositorySourceRegion"><option value="chinese_mainland">{{ t('中国大陆地区') }}</option><option value="international">{{ t('国际地区') }}</option><option value="">{{ t('全部地区') }}</option></select></label>
             <div class="source-editor-actions"><button class="ghost-button" @click="resetRepositorySourceEditor">{{
               t('取消')
                 }}</button><button class="secondary-button"
@@ -2019,26 +2224,15 @@ onUnmounted(() => {
             </button></div>
         </div>
       </div>
-        <section v-if="activeView === 'sponsor'" class="view-content sponsor-view">
-        <div class="sponsor-panel">
-          <h2>{{ t('觉得好用的话，请我喝杯咖啡吧！') }}</h2><img :src="sponsorImage" alt="赞助二维码" />
-          <p>{{ t('感谢你的支持。') }}</p>
-          <div class="button-row sponsor-actions"><button class="secondary-button" :disabled="!!busy"
-              @click="openDeveloperConsole">
-              <ExternalLink :size="15" />{{ t('打开开发者控制台') }}
-            </button><button class="secondary-button" :disabled="!!busy" @click="openTutorialEditor">
-              <Pencil :size="15" />{{ t('配置首次教程') }}
-            </button><button class="secondary-button" :disabled="!!busy" @click="resetUi">
-              <RotateCcw :size="15" />{{ t('重置到最新 UI') }}
-            </button><button class="secondary-button" @click="openRustLog">
-              <FileText :size="15" />{{ t('打开 Rust 日志') }}
-            </button><button class="secondary-button" @click="openFrontendLog">
-              <FileText :size="15" />{{ t('打开前端日志') }}
-            </button><button class="secondary-button" @click="openCrashLog">
-              <FileText :size="15" />{{ t('打开崩溃日志') }}
-            </button></div>
-        </div>
-        </section>
+      <SponsorView v-if="activeView === 'sponsor'"
+        :busy="busy"
+        :sponsor-image="sponsorImage"
+        :open-developer-console="openDeveloperConsole"
+        :open-tutorial-replay-menu="tutorial.openReplayMenu"
+        :reset-ui="resetUi"
+        :open-rust-log="openRustLog"
+        :open-frontend-log="openFrontendLog"
+        :open-crash-log="openCrashLog" />
       </div>
     </main>
     <button v-if="activeView === 'overview'" class="update-fab" :disabled="!!busy"
@@ -2049,75 +2243,137 @@ onUnmounted(() => {
       <FolderOpen :size="15" /><span>{{ t('选择厨房目录') }}</span>
     </button>
     <div v-if="showRepoEditor" class="modal-backdrop" @click.self="showRepoEditor = false">
-      <div class="modal">
-        <div class="modal-head">
-          <div>
+      <div class="modal repo-editor-modal">
+        <div class="modal-head repo-editor-head">
+          <div class="repo-editor-title">
             <h3>{{ t(repoForm.id ? '编辑仓库' : '添加仓库') }}</h3>
-          </div><button class="icon-button" @click="showRepoEditor = false">
+            <label class="check-control mod-switch-control repo-editor-enabled">
+              <input class="mod-switch-input" v-model="repoForm.enabled" type="checkbox" />
+              <span class="mod-switch" :class="{ 'mod-switch-on': repoForm.enabled }" aria-hidden="true"><span class="mod-switch-thumb"></span></span>
+              <span>{{ t('启用此仓库') }}</span>
+            </label>
+          </div>
+          <button class="icon-button" @click="showRepoEditor = false">
             <X :size="17" />
           </button>
         </div>
-        <div class="form-grid"><label><span>{{ t('仓库名称') }}</span><input v-model="repoForm.name"
-              :placeholder="t('例如：我的 MOD 正式版')" /></label><label><span>{{ t('仓库分组') }}</span><input
-              v-model="repoForm.group" :placeholder="t('例如：前置必装')" /></label><label><span>{{ t('来源平台') }}</span><select
-              v-model="repoForm.provider" @change="providerChanged">
-              <option value="gitee">Gitee</option>
-              <option value="github">GitHub</option>
-            </select></label><label class="wide"><span>{{ t('版本地址') }}</span><input v-model="repoForm.url"
-              placeholder="https://github.com/owner/repo/releases" /></label><label><span>{{ t('版本频道') }}</span><select
-              v-model="repoForm.channel">
-              <option value="stable">{{ t('稳定版') }}</option>
-              <option value="beta">{{ t('测试版') }}</option>
-              <option value="all">{{ t('全部版本') }}</option>
-            </select></label><label><span>{{ t('安装目录') }}</span><input v-model="repoForm.install_target"
-              :placeholder="t('留空按 ZIP 结构安装')" /></label><label><span>{{ t('下载线程数') }}</span><input
-              v-model.number="repoForm.download_threads" type="number" min="1" max="32"
-              :disabled="repoForm.provider === 'gitee'" /></label><label><span>{{ t('API 代理策略') }}</span><select
-              v-model="repoForm.api_proxy_mode">
-              <option value="direct">{{ t('直连') }}</option>
-              <option value="auto">{{ t('自动选择') }}</option>
-              <option value="fixed">{{ t('固定代理') }}</option>
-            </select></label><label><span>API {{ t('代理地址') }}</span><input v-model="repoForm.api_proxy_url"
-              placeholder="https://" /></label><label class="wide"><span>{{ t('API 直连 Token') }} ({{ repoForm.provider
-                ===
-                'gitee' ? 'Gitee' : 'GitHub' }})</span><input v-if="repoForm.provider === 'gitee'"
-              v-model="repoForm.gitee_token" type="password" :placeholder="t('留空保持原设置')" /><input v-else
-              v-model="repoForm.github_token" type="password" :placeholder="t('留空保持原设置')" /></label><label><span>{{
-                t('Release 代理策略') }}</span><select v-model="repoForm.release_proxy_mode">
-              <option value="direct">{{ t('直连') }}</option>
-              <option value="auto">{{ t('自动选择') }}</option>
-              <option value="fixed">{{ t('固定代理') }}</option>
-            </select></label><label><span>Release {{ t('代理地址') }}</span><input v-model="repoForm.release_proxy_url"
-              placeholder="https://" /></label></div>
-        <div class="rules-heading identity-heading">
-          <div><b>{{ t('本地 MOD 识别绑定') }}</b><small>{{ t('GUID、产品名称或原始文件名任一匹配即可绑定') }}</small></div>
+        <div class="repo-form-sections">
+          <section class="repo-form-section">
+            <div class="repo-form-section-title"><b>{{ t('仓库基本信息') }}</b><small>{{ t('配置仓库名称、来源平台、分组和地址') }}</small></div>
+            <div class="form-grid">
+              <label><span>{{ t('仓库名称') }}</span><input v-model="repoForm.name" :placeholder="t('例如：我的 MOD 正式版')" /></label>
+              <label><span>{{ t('来源平台') }}</span><select v-model="repoForm.provider" :aria-label="t('来源平台')" @change="providerChanged">
+                <option value="gitee">Gitee</option>
+                <option value="github">GitHub</option>
+              </select></label>
+              <label><span>{{ t('仓库分组') }}</span><input v-model="repoForm.group" :placeholder="t('例如：前置必装')" /></label>
+              <label><span>{{ t('适用地区') }}</span><select v-model="repoForm.region" :aria-label="t('适用地区')">
+                <option value="chinese_mainland">{{ t('中国大陆地区') }}</option>
+                <option value="international">{{ t('国际地区') }}</option>
+                <option value="">{{ t('全部地区') }}</option>
+              </select></label>
+              <div class="wide repository-homepage-field">
+                <div class="repository-homepage-fields">
+                  <label class="repository-owner-field">
+                    <span class="repository-field-label">{{ t('用户名') }}</span>
+                    <input v-model="repoForm.username" :placeholder="t('用户名')" :aria-label="t('用户名')" autocomplete="off" />
+                  </label>
+                  <span aria-hidden="true">/</span>
+                  <label class="repository-name-field">
+                    <span class="repository-field-label">{{ t('仓库名') }}</span>
+                    <input v-model="repoForm.repository" :placeholder="t('仓库名')" :aria-label="t('仓库名')" autocomplete="off" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="repo-form-section">
+            <div class="repo-form-section-title"><b>{{ t('下载方式') }}</b><small>{{ t('选择通过 Release 或仓库文件下载') }}</small></div>
+            <div class="form-grid">
+              <label class="wide"><span>{{ t('下载方式') }}</span><select v-model="repoForm.download_mode" :aria-label="t('下载方式')">
+                <option value="release">{{ t('Release 文件') }}</option>
+                <option value="repository_file">{{ t('仓库文件') }}</option>
+              </select></label>
+            </div>
+          </section>
+
+          <section v-if="repoForm.download_mode === 'release'" class="repo-form-section">
+            <div class="repo-form-section-title"><b>{{ t('Release 参数') }}</b><small>{{ t('配置版本筛选、请求和资产获取方式') }}</small></div>
+            <div class="form-grid">
+              <label><span>{{ t('版本频道') }}</span><select v-model="repoForm.channel" :aria-label="t('版本频道')">
+                <option value="all">{{ t('全部版本') }}</option>
+                <option value="stable">{{ t('稳定版') }}</option>
+                <option value="beta">{{ t('测试版') }}</option>
+              </select></label>
+              <label><span>{{ t('每个仓库最多获取 Release 数量') }}</span><input v-model.number="repoForm.max_release_count" type="number" min="1" max="100" /></label>
+              <label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label>
+              <label class="wide"><span>{{ t('API 直连 Token') }} ({{ repoForm.provider === 'gitee' ? 'Gitee' : 'GitHub' }})</span>
+                <input v-if="repoForm.provider === 'gitee'" v-model="repoForm.gitee_token" type="password" :placeholder="t('留空保持原设置')" />
+                <input v-else v-model="repoForm.github_token" type="password" :placeholder="t('留空保持原设置')" />
+              </label>
+            </div>
+          </section>
+
+          <section v-else class="repo-form-section">
+            <div class="repo-form-section-title"><b>{{ t('仓库文件参数') }}</b><small>{{ t('从指定分支下载单个文件，不读取 Release 版本') }}</small></div>
+            <div class="form-grid">
+              <label><span>{{ t('分支') }}</span><input v-model="repoForm.branch" placeholder="main" /></label>
+              <label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label>
+            </div>
+          </section>
+
+          <section v-if="repoForm.download_mode === 'release'" class="repo-form-section">
+            <div class="repo-asset-rules">
+              <div class="repo-form-section-title repo-rule-title">
+                <div><b>{{ t('版本资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div>
+                <button class="ghost-button" @click="addRule"><Plus :size="14" />{{ t('添加规则') }}</button>
+              </div>
+              <div v-for="(rule, index) in repoForm.asset_rules" :key="index" class="rule-row">
+                <select v-model="rule.type" :aria-label="t('规则类型')"><option value="exact">{{ t('精确') }}</option><option value="glob">{{ t('通配符') }}</option><option value="regex">{{ t('正则') }}</option></select>
+                <input v-model="rule.value" :aria-label="t('资产规则')" />
+                <button class="icon-button small danger-icon" :title="t('删除规则')" @click="removeRule(index)"><Trash2 :size="14" /></button>
+              </div>
+            </div>
+          </section>
+
+          <section v-else class="repo-form-section">
+            <div class="repo-form-section-title"><b>{{ t('仓库资产规则') }}</b><small>{{ t('仅支持具体文件，不支持通配和正则') }}</small></div>
+            <div class="rule-row repository-file-rule-row">
+              <span class="repository-file-rule-type">{{ t('精确') }}</span>
+              <input v-model="repoForm.file_path" :aria-label="t('文件相对路径')" :placeholder="t('例如：bin/Release/Example.dll')" />
+            </div>
+          </section>
+
+          <section class="repo-form-section repo-binding-section">
+            <div class="repo-form-section-title">
+              <b>{{ t('本地 MOD 识别绑定') }}</b><small>{{ t('GUID、产品名称或原始文件名任一匹配即可绑定') }}</small><small>{{ t('填写版本号正则后，版本也必须匹配；留空则忽略版本条件') }}</small>
+            </div>
+            <div class="form-grid identity-grid">
+              <label><span>{{ t('BepInEx.GUID') }}</span><input v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label>
+              <label><span>{{ t('DLL.产品名称') }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label>
+              <label><span>{{ t('DLL.原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label>
+              <label><span>{{ t('版本号正则') }}</span><input v-model="repoForm.version_regex" :placeholder="t('例如：^1\\.2\\.\\d+$')" /></label>
+            </div>
+          </section>
+
+          <section class="repo-form-section repo-install-section">
+            <div class="repo-form-section-title"><b>{{ t('安装目录') }}</b></div>
+            <div class="form-grid">
+              <label class="wide"><input v-model="repoForm.install_target" :aria-label="t('安装目录')" :placeholder="t('留空按 ZIP 结构安装')" /></label>
+            </div>
+          </section>
+
+          <section class="repo-form-section repo-note-section">
+            <div class="repo-form-section-title">
+              <b>{{ t('仓库备注') }}</b><small>{{ t('可选，多行备注') }}</small>
+            </div>
+            <textarea v-model="repoForm.note" class="repository-note-input" rows="3" :placeholder="t('可选，多行备注')"></textarea>
+          </section>
         </div>
-        <div class="form-grid identity-grid"><label><span>{{ t('BepInEx Plugin GUID') }}</span><input
-              v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label><label><span>{{ t('DLL 产品名称')
-              }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label><label
-            class="wide"><span>{{ t('DLL 原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label></div>
-        <div class="rules-heading">
-          <div><b>{{ t('Release 资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div><button
-            class="ghost-button" @click="addRule">
-            <Plus :size="14" />{{ t('添加规则') }}
-          </button>
-        </div>
-        <div v-for="(rule, index) in repoForm.asset_rules" :key="index" class="rule-row"><select v-model="rule.type">
-            <option value="exact">{{ t('精确') }}</option>
-            <option value="glob">{{ t('通配符') }}</option>
-            <option value="regex">{{ t('正则') }}</option>
-          </select><input v-model="rule.value" /><button class="icon-button small danger-icon" :title="t('删除规则')"
-            @click="removeRule(index)">
-            <Trash2 :size="14" />
-          </button></div><label class="check-control"><input v-model="repoForm.enabled" type="checkbox" />{{ t('启用此仓库')
-          }}</label>
-        <div class="rules-heading">
-          <div><b>{{ t('仓库备注') }}</b><small>{{ t('可选，多行备注') }}</small></div>
-        </div>
-        <textarea v-model="repoForm.note" class="repository-note-input" rows="5" :placeholder="t('可选，多行备注')"></textarea>
         <div class="modal-actions"><button class="secondary-button" @click="showRepoEditor = false">{{ t('取消')
             }}</button><button class="primary-button"
-            :disabled="!repoForm.name || !repoForm.url || !repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()) || !!busy"
+            :disabled="!repoForm.name || !repoForm.username.trim() || !repoForm.repository.trim() || (repoForm.download_mode === 'release' && (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()))) || (repoForm.download_mode === 'repository_file' && (!repoForm.branch.trim() || !repoForm.file_path.trim())) || !!busy"
             @click="saveRepo">
             <Save :size="16" />{{ t('保存仓库') }}
           </button></div>
@@ -2201,7 +2457,7 @@ onUnmounted(() => {
         <div class="modal-head">
           <div>
             <h3>{{ localizedRepositoryName(showRepositoryNote) }}</h3>
-            <p class="muted-text">{{ t('仓库简介') }}</p>
+            <p class="muted-text">{{ t('MOD 简介') }}</p>
           </div><button class="icon-button" :title="t('关闭')" @click="showRepositoryNote = null">
             <X :size="17" />
           </button>
@@ -2227,44 +2483,47 @@ onUnmounted(() => {
           </button></div>
       </div>
     </div>
-    <div v-if="unmanagedModPending" class="modal-backdrop" @click.self="unmanagedModPending = null">
-      <div class="modal unmanaged-mod-modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ t('确认删除未托管 MOD') }}</h3>
-            <p class="muted-text">{{ unmanagedModPending.name }}</p>
-          </div><button class="icon-button" :title="t('关闭')" @click="unmanagedModPending = null">
-            <X :size="17" />
-          </button>
-        </div>
-        <p class="warning unmanaged-mod-warning">{{ t('该 MOD 不是通过本管理器安装的，因此仅删除 DLL 文件，无法删除其他的残留文件，需自己手动处理删除。是否继续？') }}</p>
-        <div class="modal-actions"><button class="secondary-button" :disabled="!!busy" @click="unmanagedModPending = null">{{ t('否') }}</button><button class="danger-button" :disabled="!!busy" @click="confirmUnmanagedModUninstall">
-            <Trash2 :size="15" />{{ t('是') }}
-          </button></div>
-      </div>
-    </div>
   </div>
+  <ModRecycleBin :open="showModRecycleBin" :game-blocked="gameBlocked" :busy="!!busy"
+    @close="showModRecycleBin = false" @restored="handleRecycledModRestored" />
   <div v-if="showInstall" class="modal-backdrop" @click.self="closeInstallDialog">
     <div class="modal install-modal">
       <div class="modal-head">
         <div>
-          <h3>{{ t('选择版本和文件') }}</h3>
+          <h3>{{ showInstall.download_mode === 'release' ? t('选择版本和文件') : t('选择下载方式') }}</h3>
         </div><button class="icon-button" @click="closeInstallDialog">
           <X :size="17" />
         </button>
-      </div><label class="install-field"><span>{{ t('Release 版本') }}</span><select v-model="selectedInstallTag" @change="selectInstallRelease">
+      </div><template v-if="showInstall.download_mode === 'release'"><label class="install-field"><span>{{ t('Release 版本') }}</span><select v-model="selectedInstallTag" :aria-label="t('Release 版本')" @change="selectInstallRelease">
           <option v-for="release in installReleases(showInstall)" :key="release.tag_name" :value="release.tag_name">{{
             release.version || release.tag_name }} · {{ release.name }}
           </option>
-        </select></label><label class="install-field"><span>{{ t('下载文件') }}</span><select
-          v-model="selectedInstallAsset">
+        </select></label>
+      <div v-if="selectedInstallRelease(showInstall)" class="install-release-log">
+        <div class="install-release-log-head"><strong>{{ selectedInstallRelease(showInstall)?.name || selectedInstallRelease(showInstall)?.tag_name }}</strong><span>{{ selectedInstallRelease(showInstall)?.version || selectedInstallRelease(showInstall)?.tag_name }}</span></div>
+        <div class="install-release-log-body markdown-body" v-html="renderMarkdown(selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。'))"></div>
+      </div>
+      <label class="install-field"><span>{{ t('下载文件') }}</span><small class="install-field-hint">{{ t('仅显示符合当前仓库资产规则的文件。') }}</small><select
+          v-model="selectedInstallAsset" :aria-label="t('下载文件')">
           <option v-for="asset in selectedInstallAssets(showInstall)" :key="asset.name" :value="asset.name">{{
             asset.name
             }} · {{ formatAssetSize(asset) }}</option>
-        </select></label>
-      <p class="muted-text">{{ t('仅显示符合当前仓库资产规则的文件。') }}</p>
+        </select></label></template><div v-else class="install-source-file"><span>{{ t('仓库文件') }}</span><b>{{ showInstall.file_path }}</b></div>
+      <section v-if="assetProxySelectionVisible(showInstall)" class="install-proxy-choice">
+        <div class="install-field-label">{{ t('GitHub 资产下载方式') }}</div>
+        <div class="install-proxy-modes">
+          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'auto_proxy' }]" :aria-pressed="selectedAssetProxyMode === 'auto_proxy'" @click="selectedAssetProxyMode = 'auto_proxy'">{{ t('自动代理') }}</button>
+          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'auto_direct' }]" :aria-pressed="selectedAssetProxyMode === 'auto_direct'" @click="selectedAssetProxyMode = 'auto_direct'">{{ t('自动直连') }}</button>
+          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'direct' }]" @click="selectedAssetProxyMode = 'direct'">{{ t('直链') }}</button>
+          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'fixed' }]" @click="selectedAssetProxyMode = 'fixed'">{{ t('手动选择') }}</button>
+        </div>
+        <select v-if="selectedAssetProxyMode === 'fixed'" v-model="selectedAssetProxyId" class="install-proxy-select" :aria-label="t('手动选择')">
+          <option value="">{{ t('请选择代理') }}</option>
+          <option v-for="proxy in assetProxyEntries(showInstall)" :key="proxy.id" :value="proxy.id">{{ proxy.name }}<template v-if="proxy.regions.length"> · {{ proxy.regions.join('、') }}</template></option>
+        </select>
+      </section>
       <div class="modal-actions"><button class="secondary-button" @click="closeInstallDialog">{{ t('取消')
-          }}</button><button class="primary-button" :disabled="!selectedInstallAsset || !!busy" @click="confirmInstall">
+          }}</button><button class="primary-button" :disabled="(showInstall.download_mode === 'release' && !selectedInstallAsset) || (assetProxySelectionVisible(showInstall) && selectedAssetProxyMode === 'fixed' && !selectedAssetProxyId) || !!busy" @click="confirmInstall">
           <Download :size="15" />{{ t('下载并安装') }}
         </button></div>
     </div>
@@ -2298,527 +2557,3 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
-
-<style>
-.metric {
-  cursor: pointer;
-}
-
-.nav-item {
-  position: relative;
-}
-
-  .download-strip {
-  position: absolute;
-  z-index: 12;
-  top: 0;
-  left: 50%;
-  width: min(540px, calc(100% - 32px));
-  margin: 0;
-  padding: 11px 15px 13px;
-  border: 1px solid var(--line-strong);
-  border-top: 0;
-  border-radius: 0 0 18px 18px;
-  background: var(--surface-2);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, .28);
-  transform: translateX(-50%);
-}
-
-.download-notch-enter-active,
-.download-notch-leave-active {
-  transition: transform .32s cubic-bezier(.22, .8, .25, 1), opacity .24s ease;
-}
-
-.download-notch-enter-from,
-.download-notch-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -110%);
-}
-
-.download-notch-enter-to,
-.download-notch-leave-from {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
-.download-cancel {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.download-progress-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.download-progress-row .progress {
-  flex: 1;
-  min-width: 0;
-}
-
-.metric-button {
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  background: transparent;
-  color: inherit;
-  border-top: 0;
-  border-bottom: 0;
-  border-left: 0;
-  cursor: pointer;
-}
-
-.metric-button:disabled {
-  cursor: not-allowed;
-  opacity: .65;
-}
-
-.install-field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 13px;
-}
-
-.install-field select {
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text);
-  padding: 10px 11px;
-  font-size: 12px;
-}
-
-.bepinex-channel-modal {
-  width: min(760px, 100%);
-}
-
-.bepinex-channel-modal .modal-head {
-  margin-bottom: 18px;
-  padding-bottom: 15px;
-  border-bottom: 1px solid var(--line);
-}
-
-.bepinex-channel-modal .modal-head p {
-  margin: 7px 0 0;
-}
-
-.bepinex-channel-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.bepinex-channel-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  min-width: 0;
-  padding: 17px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color .18s ease, background .18s ease, transform .18s ease;
-}
-
-.bepinex-channel-card:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--surface-3);
-  transform: translateY(-1px);
-}
-
-.bepinex-channel-card:disabled {
-  cursor: wait;
-  opacity: .58;
-}
-
-.bepinex-channel-icon {
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.bepinex-channel-icon.gitee {
-  color: #c71d23;
-}
-
-.bepinex-channel-icon.github {
-  color: var(--text);
-}
-
-.bepinex-channel-icon .provider-icon {
-  width: 21px;
-  height: 21px;
-}
-
-.bepinex-channel-copy {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.bepinex-channel-copy b {
-  font-size: 13px;
-}
-
-.bepinex-channel-copy small {
-  color: var(--faint);
-  font: 10px/1.45 Consolas, monospace;
-  overflow-wrap: anywhere;
-}
-
-.bepinex-channel-copy em {
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
-}
-
-@media (max-width: 640px) {
-  .bepinex-channel-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.repository-row {
-  position: relative;
-}
-
-.repository-row.repo-refreshing {
-  pointer-events: none;
-}
-
-.repository-row.repo-refreshing::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  background: color-mix(in srgb, var(--surface) 78%, transparent);
-}
-
-.repository-row.repo-refreshing::after {
-  content: '';
-  position: absolute;
-  z-index: 3;
-  left: 50%;
-  top: 50%;
-  width: 28px;
-  height: 28px;
-  margin: -14px;
-  border: 3px solid var(--line-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: startup-spin .8s linear infinite;
-}
-
-.kitchen-warning {
-  margin: 18px 0 0;
-  padding: 10px 13px;
-  border: 1px solid #755c32;
-  background: rgba(74, 55, 25, .36);
-  color: var(--warning);
-  font-size: 12px;
-}
-
-.sponsor-panel {
-  min-height: 520px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 18px;
-  text-align: center;
-}
-
-.sponsor-panel h2 {
-  font-size: 26px;
-}
-
-.sponsor-panel img {
-  width: min(420px, 80vw);
-  max-height: 520px;
-  object-fit: contain;
-  border: 1px solid var(--line);
-  background: #fff;
-}
-
-.sponsor-panel p {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.sponsor-actions {
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.rust-log-modal {
-  width: min(980px, 100%);
-}
-
-.rust-log-path {
-  display: block;
-  max-width: 760px;
-  margin-top: 7px;
-  color: var(--faint);
-  font: 10px Consolas, monospace;
-  overflow-wrap: anywhere;
-}
-
-.rust-log-output {
-  min-height: 360px;
-  max-height: 58vh;
-  margin: 0;
-  padding: 13px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  background: #0b1114;
-  color: #b9d8ce;
-  font: 11px/1.55 Consolas, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.tutorial-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  overflow: hidden;
-  pointer-events: auto;
-  overscroll-behavior: none;
-}
-
-.tutorial-spotlight {
-  position: fixed;
-  z-index: 0;
-  border: 2px solid var(--accent);
-  border-radius: 9px;
-  box-shadow: 0 0 0 100vmax rgba(4, 8, 12, .78), 0 0 0 5px rgba(115, 213, 186, .12);
-  pointer-events: none;
-  transition: left .38s cubic-bezier(.22, .8, .28, 1), top .38s cubic-bezier(.22, .8, .28, 1), width .38s cubic-bezier(.22, .8, .28, 1), height .38s cubic-bezier(.22, .8, .28, 1);
-  animation: tutorial-pulse 1.8s ease-in-out infinite;
-}
-
-.tutorial-card {
-  position: fixed;
-  z-index: 1;
-  padding: 19px 20px 17px;
-  border: 1px solid var(--line-strong);
-  border-top: 2px solid var(--accent);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: 0 22px 60px rgba(0, 0, 0, .42);
-  overflow-y: auto;
-  transition: left .38s cubic-bezier(.22, .8, .28, 1), top .38s cubic-bezier(.22, .8, .28, 1), width .25s ease;
-}
-
-.tutorial-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 29px;
-}
-
-.tutorial-progress {
-  color: var(--accent);
-  font: 11px Consolas, monospace;
-  letter-spacing: .08em;
-}
-
-.tutorial-card h2 {
-  margin: 13px 0 8px;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.tutorial-card p {
-  min-height: 54px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.65;
-}
-
-.tutorial-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 18px;
-}
-
-.tutorial-actions .ghost-button {
-  margin-right: auto;
-}
-
-.tutorial-picker-banner {
-  position: fixed;
-  z-index: 1400;
-  top: 16px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px 9px 15px;
-  border: 1px solid var(--accent-strong);
-  border-radius: 6px;
-  background: var(--surface-2);
-  color: var(--text);
-  box-shadow: var(--shadow);
-  transform: translateX(-50%);
-}
-
-.tutorial-picker-banner .ghost-button {
-  padding: 5px 8px;
-}
-
-.tutorial-editor-modal {
-  width: min(820px, 100%);
-}
-
-.tutorial-editor-list {
-  display: grid;
-  gap: 12px;
-  max-height: 52vh;
-  overflow-y: auto;
-  padding: 2px;
-}
-
-.tutorial-editor-step {
-  padding: 13px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface-2);
-}
-
-.tutorial-editor-step-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-  color: var(--accent);
-}
-
-.tutorial-editor-selector-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.tutorial-editor-add {
-  margin-top: 13px;
-}
-
-@keyframes tutorial-pulse {
-  0%, 100% { box-shadow: 0 0 0 100vmax rgba(4, 8, 12, .78), 0 0 0 5px rgba(115, 213, 186, .10); }
-  50% { box-shadow: 0 0 0 100vmax rgba(4, 8, 12, .78), 0 0 0 8px rgba(115, 213, 186, .24); }
-}
-
-.startup-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: grid;
-  place-items: center;
-  background: rgba(5, 9, 12, .86);
-  backdrop-filter: blur(8px);
-  cursor: wait;
-}
-
-.startup-card {
-  min-width: 300px;
-  padding: 34px;
-  text-align: center;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  cursor: default;
-}
-
-.startup-card h2 {
-  margin: 17px 0 7px;
-  font-size: 19px;
-}
-
-.startup-card p {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.update-channel-statuses {
-  display: grid;
-  gap: 6px;
-  margin-top: 18px;
-  text-align: left;
-}
-.update-region {
-  display: flex;
-  justify-content: space-between;
-  gap: 28px;
-  margin-top: 16px;
-  color: var(--muted);
-  font-size: 11px;
-}
-.update-region strong { color: var(--text); font-weight: 600; }
-.update-channel-status {
-  display: flex;
-  justify-content: space-between;
-  gap: 28px;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 11px;
-}
-.update-channel-update_available { color: var(--accent); }
-.update-channel-failed { color: var(--danger); }
-.update-channel-latest { color: var(--muted); }
-.startup-download-progress { margin-top: 18px; text-align: left; }
-.startup-download-progress .download-meta {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 7px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.startup-spinner {
-  width: 42px;
-  height: 42px;
-  margin: 0 auto;
-  border: 3px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: startup-spin .8s linear infinite;
-}
-
-.startup-exclamation {
-  width: 42px;
-  height: 42px;
-  margin: 0 auto;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--warning);
-  color: #1b1510;
-  font-size: 28px;
-  font-weight: 800;
-}
-
-.startup-failed .primary-button {
-  margin-top: 20px;
-  min-width: 90px;
-}
-
-@keyframes startup-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OC2ModManager",
   "mainBinaryName": "OC2ModManager",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "identifier": "com.ch3ngyz.oc2.modmanager",
   "build": {
     "frontendDist": "../dist",
@@ -13,11 +13,11 @@
   "app": {
     "windows": [
       {
-        "title": "OC2 Mod Manager",
+        "title": "OC2 MOD Manager",
         "width": 1280,
-        "height": 820,
-        "minWidth": 960,
-        "minHeight": 640,
+        "height": 720,
+        "minWidth": 1280,
+        "minHeight": 720,
         "resizable": true,
         "fullscreen": false
       }
@@ -42,7 +42,8 @@
     },
     "windows": {
       "nsis": {
-        "installMode": "currentUser",
+        "installMode": "perMachine",
+        "template": "nsis/installer.nsi",
         "languages": [
           "SimpChinese",
           "TradChinese",
@@ -50,7 +51,7 @@
           "Korean"
         ],
         "displayLanguageSelector": true,
-        "startMenuFolder": "OC2 Mod Manager",
+        "startMenuFolder": "OC2 MOD Manager",
         "installerHooks": "installer-hooks.nsh"
       },
       "wix": {

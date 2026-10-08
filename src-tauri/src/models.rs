@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameInfo {
     pub path: Option<String>,
     pub steam_library: Option<String>,
@@ -11,7 +11,7 @@ pub struct GameInfo {
     pub winhttp_state: WinhttpState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BepInExInfo {
     pub installed: bool,
     pub complete: bool,
@@ -34,6 +34,12 @@ pub struct InstalledMod {
     pub repository_id: Option<String>,
     #[serde(default)]
     pub repository_ids: Vec<String>,
+    #[serde(default)]
+    pub package_id: Option<String>,
+    #[serde(default)]
+    pub package_name: Option<String>,
+    #[serde(default)]
+    pub package_mod_count: usize,
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -49,6 +55,8 @@ pub struct InstalledMod {
     pub version_source: String,
     pub update_available: bool,
     pub duplicate_guid: bool,
+    #[serde(default)]
+    pub duplicate_version: bool,
     pub load_warning: Option<String>,
     pub note: Option<String>,
     pub status: String,
@@ -89,24 +97,84 @@ pub enum Provider {
     Gitee,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Channel {
     Stable,
     Beta,
+    #[default]
     All,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryDownloadMode {
+    #[default]
+    Release,
+    RepositoryFile,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ProxyMode {
     Direct,
-    Auto,
+    AutoDirect,
+    AutoProxy,
     Fixed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitHubProxy {
+    pub id: String,
+    pub name: String,
+    pub template: String,
+    #[serde(default)]
+    pub regions: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub builtin: bool,
+    /// A managed proxy discovered in a userscript, rather than the TOML defaults.
+    #[serde(default)]
+    pub remote: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitHubProxyConfig {
+    #[serde(default)]
+    pub release_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub raw_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub github_api_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub gitee_api_proxies: Vec<GitHubProxy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubProxyManifest {
+    #[serde(default = "default_proxy_manifest_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub release_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub raw_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub github_api_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub gitee_api_proxies: Vec<GitHubProxy>,
+}
+
+fn default_proxy_manifest_version() -> u32 {
+    1
+}
+
 impl Default for ProxyMode {
-    fn default() -> Self { Self::Auto }
+    fn default() -> Self {
+        Self::AutoDirect
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,8 +203,19 @@ pub struct RepositoryConfig {
     #[serde(default)]
     pub group_i18n: BTreeMap<String, String>,
     pub provider: Provider,
-    pub url: String,
+    pub username: String,
+    pub repository: String,
+    #[serde(default)]
+    pub download_mode: RepositoryDownloadMode,
+    #[serde(default)]
+    pub branch: String,
+    #[serde(default)]
+    pub file_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default)]
     pub channel: Channel,
+    #[serde(default)]
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
     #[serde(default)]
@@ -151,16 +230,14 @@ pub struct RepositoryConfig {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
+    /// Optional regular expression applied to the installed MOD version when
+    /// binding a local plugin to this repository.
+    #[serde(default)]
+    pub version_regex: String,
+    #[serde(default = "default_max_release_count")]
+    pub max_release_count: u32,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
-    #[serde(default)]
-    pub api_proxy_mode: ProxyMode,
-    #[serde(default)]
-    pub api_proxy_url: String,
-    #[serde(default)]
-    pub release_proxy_mode: ProxyMode,
-    #[serde(default)]
-    pub release_proxy_url: String,
     #[serde(default)]
     pub github_token: String,
     #[serde(default)]
@@ -197,6 +274,11 @@ pub struct AppConfig {
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
+    // Identity only: no source documents, repository settings or Release cache.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_repository_ids: BTreeMap<String, String>,
+    #[serde(default = "crate::github_proxies::bundled_defaults")]
+    pub github_proxies: GitHubProxyConfig,
     #[serde(default)]
     pub mod_notes: Vec<ModNote>,
 }
@@ -213,10 +295,10 @@ pub struct NetworkConfig {
     pub download_threads: u32,
     pub max_retry_count: u32,
     pub check_updates_on_start: bool,
-    #[serde(default = "default_max_release_count")]
-    pub max_release_count: u32,
 }
-fn default_max_release_count() -> u32 { 10 }
+fn default_max_release_count() -> u32 {
+    10
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchConfig {
@@ -237,11 +319,33 @@ pub struct TutorialStepConfig {
     pub selector: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<String>,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub title_i18n: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub description_i18n: BTreeMap<String, String>,
 }
 
-fn default_hide_unidentified_mods() -> bool { true }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TutorialDocument {
+    #[serde(default = "default_tutorial_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub steps: Vec<TutorialStepConfig>,
+}
+
+fn default_tutorial_version() -> u32 {
+    1
+}
+
+fn default_hide_unidentified_mods() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicConfig {
@@ -261,12 +365,16 @@ pub struct PublicConfig {
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
+    #[serde(default)]
+    pub github_proxies: GitHubProxyConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepositorySource {
     pub id: String,
     pub nickname: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub nickname_i18n: BTreeMap<String, String>,
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
@@ -281,37 +389,45 @@ pub struct RepositoryExport {
     pub name: String,
     #[serde(default)]
     pub name_i18n: BTreeMap<String, String>,
+    pub provider: Provider,
     #[serde(default)]
     pub group: String,
     #[serde(default)]
     pub group_i18n: BTreeMap<String, String>,
-    pub provider: Provider,
-    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub username: String,
+    pub repository: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub download_mode: RepositoryDownloadMode,
+    #[serde(default)]
     pub channel: Channel,
+    #[serde(default = "default_max_release_count")]
+    pub max_release_count: u32,
+    #[serde(default = "default_download_threads")]
+    pub download_threads: u32,
+    #[serde(default)]
+    pub branch: String,
+    #[serde(default)]
+    pub file_path: String,
+    #[serde(default)]
+    pub plugin_guid: String,
+    #[serde(default)]
+    pub local_product_name: String,
+    #[serde(default)]
+    pub local_original_filename: String,
+    #[serde(default)]
+    pub version_regex: String,
+    #[serde(default)]
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
     #[serde(default)]
     pub note: String,
     #[serde(default)]
     pub note_i18n: BTreeMap<String, String>,
-    pub plugin_guid: String,
-    #[serde(default)]
-    pub local_product_name: String,
-    #[serde(default)]
-    pub local_original_filename: String,
-    #[serde(default = "default_download_threads")]
-    pub download_threads: u32,
-    #[serde(default)]
-    pub api_proxy_mode: ProxyMode,
-    #[serde(default)]
-    pub api_proxy_url: String,
-    #[serde(default)]
-    pub release_proxy_mode: ProxyMode,
-    #[serde(default)]
-    pub release_proxy_url: String,
-    pub enabled: bool,
-    #[serde(default)]
-    pub source_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,6 +450,13 @@ pub struct ImportPreview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositorySourceImportResult {
+    pub preview: Option<ImportPreview>,
+    pub access_error: Option<String>,
+    pub builtin_fallback_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateStatus {
     pub repository_id: String,
     pub local_version: Option<String>,
@@ -348,10 +471,28 @@ pub struct OperationResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModRecycleEntry {
+    pub id: String,
+    pub name: String,
+    pub deleted_at: String,
+    pub file_count: usize,
+    pub files: Vec<String>,
+    pub game_path: String,
+    pub package_id: Option<String>,
+    pub release_tag: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UninstallLocalModResult {
     pub ok: bool,
     pub message: String,
     pub requires_confirmation: bool,
+    #[serde(default)]
+    pub requires_package_confirmation: bool,
+    #[serde(default)]
+    pub package_id: Option<String>,
+    #[serde(default)]
+    pub package_mod_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,6 +517,8 @@ pub struct AppUpdateInfo {
     #[serde(default)]
     pub installer_download_urls: Vec<String>,
     #[serde(default)]
+    pub installer_digest: Option<String>,
+    #[serde(default)]
     pub installer_type: String,
     #[serde(default)]
     pub provider: Option<Provider>,
@@ -396,6 +539,14 @@ pub struct AppUpdateChannelStatus {
 pub struct AppUpdateChannelEvent {
     pub region: String,
     pub channel: AppUpdateChannelStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdatePhaseEvent {
+    pub region: String,
+    pub phase: String,
+    pub message: Option<String>,
+    pub update: Option<AppUpdateInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,7 +577,16 @@ pub struct SettingsPatch {
     pub official_api_only: Option<bool>,
     pub timeout_seconds: Option<u64>,
     pub download_threads: Option<u32>,
-    pub max_release_count: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubProxyPatch {
+    pub release_proxies: Vec<GitHubProxy>,
+    pub raw_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub github_api_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub gitee_api_proxies: Vec<GitHubProxy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,7 +602,17 @@ pub struct RepositoryPatch {
     #[serde(default)]
     pub group: String,
     pub provider: Provider,
-    pub url: String,
+    pub username: String,
+    pub repository: String,
+    #[serde(default)]
+    pub download_mode: RepositoryDownloadMode,
+    #[serde(default)]
+    pub branch: String,
+    #[serde(default)]
+    pub file_path: String,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
     pub channel: Channel,
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
@@ -453,16 +623,12 @@ pub struct RepositoryPatch {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
+    #[serde(default)]
+    pub version_regex: String,
+    #[serde(default = "default_max_release_count")]
+    pub max_release_count: u32,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
-    #[serde(default)]
-    pub api_proxy_mode: ProxyMode,
-    #[serde(default)]
-    pub api_proxy_url: String,
-    #[serde(default)]
-    pub release_proxy_mode: ProxyMode,
-    #[serde(default)]
-    pub release_proxy_url: String,
     #[serde(default)]
     pub github_token: String,
     #[serde(default)]
@@ -472,5 +638,9 @@ pub struct RepositoryPatch {
     pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
-fn default_download_threads() -> u32 { 0 }
+fn default_true() -> bool {
+    true
+}
+fn default_download_threads() -> u32 {
+    0
+}

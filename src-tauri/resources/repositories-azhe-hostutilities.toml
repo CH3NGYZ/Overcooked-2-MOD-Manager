@@ -1,0 +1,301 @@
+[[repositories]]
+# 仓库基本信息
+name = "BepInEx 配置管理器"
+name_i18n.en = "BepInEx Configuration Manager"
+name_i18n.ko = "BepInEx 구성 관리자"
+name_i18n.zh-CN = "BepInEx 配置管理器"
+name_i18n.zh-TW = "BepInEx 設定管理器"
+provider = "github"
+group = "工具与前置"
+group_i18n.en = "Tools & Prerequisites"
+group_i18n.ko = "도구 및 필수 선행 항목"
+group_i18n.zh-CN = "工具与前置"
+group_i18n.zh-TW = "工具與前置"
+username = "BepInEx"
+repository = "BepInEx.ConfigurationManager"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+asset_rules = [
+  { type = "regex", value = '^BepInEx\.ConfigurationManager_BepInEx5_v.*?.zip$' },
+  { type = "regex", value = '^BepInEx\.ConfigurationManager\.BepInEx5_v.*?.zip$' },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.bepis.bepinex.configurationmanager"
+local_product_name = "BepInEx.ConfigurationManager"
+local_original_filename = "ConfigurationManager.dll"
+version_regex = ""
+
+# 安装目录
+install_target = ""
+
+# 仓库备注
+note = """
+此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。
+"""
+note_i18n.en = "This mod is used to manage configurations created by mods such as HostUtilities. Its default hotkey is F1, but HostUtilities may automatically change it to P."
+note_i18n.ko = "이 모드는 《HostUtilities》와 같은 MOD에서 생성한 설정을 관리하는 데 사용됩니다. 기본 단축키는 F1이지만, 《HostUtilities》에 의해 자동으로 P로 변경될 수 있습니다."
+note_i18n.zh-CN = "此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。"
+note_i18n.zh-TW = "此模組用於管理《主機實用MOD》等MOD建立的設定，預設開啟快捷鍵為 F1，但可能會由《主機實用MOD》自動修改為 P。"
+
+[[repositories]]
+# 仓库基本信息
+name = "主机实用 MOD（街机 MOD）稳定版"
+name_i18n.en = "HostUtilities (Arcade MOD) Stable"
+name_i18n.ko = "HostUtilities (아케이드 MOD) 안정 버전"
+name_i18n.zh-CN = "主机实用 MOD（街机 MOD）稳定版"
+name_i18n.zh-TW = "主機實用 MOD（街機 MOD）穩定版"
+provider = "gitee"
+group = "街机MOD - 国内推荐"
+group_i18n.en = "Arcade MOD - Mainland China Recommended"
+group_i18n.ko = "아케이드 MOD - 중국 본토 권장"
+group_i18n.zh-CN = "街机MOD - 国内推荐"
+group_i18n.zh-TW = "街機MOD - 中國大陸推薦"
+region = "chinese_mainland"
+username = "ch3ngyz"
+repository = "Overcooked-2-HostUtilities-Stable-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "HostUtilities.zip" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
+local_original_filename = "HostUtilities.dll"
+version_regex = '^\d+\.\d+\.\d+$'
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
+"""
+note_i18n.en = """
+Provides player management as the host, voice chat, text chat, blacklist management, latency display, level skipping, restarting, and other features that enhance the Overcooked! 2 gaming experience.
+If the download is slow or fails, the GitHub channel can also be used.
+"""
+note_i18n.ko = """
+호스트 권한을 통한 멤버 관리, 음성 채팅, 문자 채팅, 블랙리스트 관리, 지연 시간 확인, 스테이지 건너뛰기, 재시작 등 《Overcooked! 2》의 게임 경험을 향상시키는 다양한 보조 기능을 제공합니다.
+다운로드 속도가 느리거나 실패하면 GitHub 채널을 이용할 수도 있습니다.
+"""
+note_i18n.zh-CN = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
+"""
+note_i18n.zh-TW = """
+提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。
+如果下載速度較慢或下載失敗，也可以嘗試 GitHub 頻道。
+"""
+
+[[repositories]]
+# 仓库基本信息
+name = "主机实用 MOD（街机 MOD）测试版 "
+name_i18n.en = "HostUtilities (Arcade MOD) Beta"
+name_i18n.ko = "HostUtilities (아케이드 MOD) 테스트 버전"
+name_i18n.zh-CN = "主机实用 MOD（街机 MOD）测试版"
+name_i18n.zh-TW = "主機實用 MOD（街機 MOD）測試版"
+provider = "gitee"
+group = "街机MOD - 国内推荐"
+group_i18n.en = "Arcade MOD - Mainland China Recommended"
+group_i18n.ko = "아케이드 MOD - 중국 본토 권장"
+group_i18n.zh-CN = "街机MOD - 国内推荐"
+group_i18n.zh-TW = "街機MOD - 中國大陸推薦"
+region = "chinese_mainland"
+username = "ch3ngyz"
+repository = "Overcooked-2-HostUtilities-Beta-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "HostUtilities.zip" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
+local_original_filename = "HostUtilities.dll"
+version_regex = '^\d+\.\d+\.\d+\.\d+$'
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
+此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
+"""
+note_i18n.en = """
+Includes most of the features from the stable version of HostUtilities. Compared with the stable version, it only includes the changes mentioned in the changelog.
+This version is for testing purposes only and is not recommended for long-term use. If you encounter any issues, please reinstall the stable version.
+"""
+note_i18n.ko = """
+《HostUtilities》 안정 버전의 대부분의 기능을 포함합니다. 안정 버전과 비교하면 업데이트 로그에 언급된 일부 변경 사항만 적용되어 있습니다.
+이 버전은 테스트용으로만 제공되며 장기간 사용하는 것을 권장하지 않습니다. 문제가 발생하면 안정 버전을 다시 설치해 주세요.
+"""
+note_i18n.zh-CN = """
+包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
+此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
+"""
+note_i18n.zh-TW = """
+包含《主機實用 MOD》穩定版的大部分功能。與穩定版相比，僅有更新日誌中提到的一些變化。
+此版本僅供測試，不建議長期使用，如遇到任何問題，請重新安裝穩定版。
+"""
+
+[[repositories]]
+# 仓库基本信息
+name = "主机实用 MOD（街机 MOD）稳定版"
+name_i18n.en = "HostUtilities (Arcade MOD) Stable"
+name_i18n.ko = "HostUtilities (아케이드 MOD) 안정 버전"
+name_i18n.zh-CN = "主机实用 MOD（街机 MOD）稳定版"
+name_i18n.zh-TW = "主機實用 MOD（街機 MOD）穩定版"
+provider = "github"
+group = "街机MOD - 国外推荐"
+group_i18n.en = "Arcade MOD - International Recommended"
+group_i18n.ko = "아케이드 MOD - 해외 권장"
+group_i18n.zh-CN = "街机MOD - 国外推荐"
+group_i18n.zh-TW = "街機MOD - 海外推薦"
+# region = "international" # 双渠道展示注释
+username = "CH3NGYZ"
+repository = "Overcooked-2-HostUtilities-Stable-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "HostUtilities.zip" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
+local_original_filename = "HostUtilities.dll"
+version_regex = '^\d+\.\d+\.\d+$'
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
+"""
+note_i18n.en = """
+Provides player management as the host, voice chat, text chat, blacklist management, latency display, level skipping, restarting, and other features that enhance the Overcooked! 2 gaming experience.
+Chinese-speaking players can also use this channel. If the Gitee channel fails to download, the GitHub channel can be used instead.
+"""
+note_i18n.ko = """
+호스트 권한을 통한 멤버 관리, 음성 채팅, 문자 채팅, 블랙리스트 관리, 지연 시간 확인, 스테이지 건너뛰기, 재시작 등 《Overcooked! 2》의 게임 경험을 향상시키는 다양한 보조 기능을 제공합니다.
+중국어 사용 플레이어도 이 채널을 이용할 수 있습니다. Gitee 채널에서 다운로드에 실패하면 GitHub 채널을 이용해 보세요.
+"""
+note_i18n.zh-CN = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
+"""
+note_i18n.zh-TW = """
+提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。
+中文玩家也可以使用此頻道，如果 Gitee 頻道下載失敗，可以嘗試使用 GitHub 頻道。
+"""
+
+[[repositories]]
+# 仓库基本信息
+name = "主机实用 MOD（街机 MOD）测试版"
+name_i18n.en = "HostUtilities (Arcade MOD) Beta"
+name_i18n.ko = "HostUtilities (아케이드 MOD) 테스트 버전"
+name_i18n.zh-CN = "主机实用 MOD（街机 MOD）测试版"
+name_i18n.zh-TW = "主機實用 MOD（街機 MOD）測試版"
+provider = "github"
+group = "街机MOD - 国外推荐"
+group_i18n.en = "Arcade MOD - International Recommended"
+group_i18n.ko = "아케이드 MOD - 해외 권장"
+group_i18n.zh-CN = "街机MOD - 国外推荐"
+group_i18n.zh-TW = "街機MOD - 海外推薦"
+# region = "international" # 双渠道展示注释
+username = "CH3NGYZ"
+repository = "Overcooked-2-HostUtilities-Beta-Releases"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "HostUtilities.zip" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
+local_product_name = "主机实用MOD (街机MOD)"
+local_original_filename = "HostUtilities.dll"
+version_regex = '^\d+\.\d+\.\d+\.\d+$'
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """
+包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
+此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
+"""
+note_i18n.en = """
+Includes most of the features from the stable version of HostUtilities. Compared with the stable version, it only includes the changes mentioned in the changelog.
+This version is for testing purposes only and is not recommended for long-term use. If you encounter any issues, please reinstall the stable version.
+Chinese-speaking players can also use this channel. If the Gitee channel fails to download, the GitHub channel can be used instead.
+"""
+note_i18n.ko = """
+《HostUtilities》 안정 버전의 대부분의 기능을 포함합니다. 안정 버전과 비교하면 업데이트 로그에 언급된 일부 변경 사항만 적용되어 있습니다.
+이 버전은 테스트용으로만 제공되며 장기간 사용하는 것을 권장하지 않습니다. 문제가 발생하면 안정 버전을 다시 설치해 주세요.
+중국어 사용 플레이어도 이 채널을 이용할 수 있습니다. Gitee 채널에서 다운로드에 실패하면 GitHub 채널을 이용해 보세요.
+"""
+note_i18n.zh-CN = """
+包含《主机实用MOD》稳定版的大部分功能。对比稳定版，仅有更新日志中提到的一些变化。
+此版本仅供测试，不推荐长期使用，若出现任何问题请重新安装稳定版。
+中文玩家也可以使用此渠道，如果 Gitee 渠道下载失败，可以尝试使用 GitHub 渠道。
+"""
+note_i18n.zh-TW = """
+包含《主機實用 MOD》穩定版的大部分功能。與穩定版相比，僅有更新日誌中提到的一些變化。
+此版本僅供測試，不建議長期使用，如遇到任何問題，請重新安裝穩定版。
+中文玩家也可以使用此頻道，如果 Gitee 頻道下載失敗，可以嘗試使用 GitHub 頻道。
+"""

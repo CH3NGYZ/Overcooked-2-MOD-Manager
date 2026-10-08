@@ -1,0 +1,103 @@
+/* Shared controls, including the expanded native select picker in WebView2. */
+select,
+.form-grid select,
+.rule-row select,
+.install-field select,
+.install-proxy-select {
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background-color: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 9px 32px 9px 11px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238d9bab' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  background-size: 14px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
+}
+select:hover:not(:disabled) { border-color: var(--accent); }
+select:disabled { cursor: not-allowed; opacity: .5; }
+select:focus-visible,
+.form-grid select:focus-visible,
+.form-grid input:focus-visible,
+.rule-row input:focus-visible,
+.modal textarea:focus-visible,
+.source-editor-fields input:focus-visible {
+  border-color: var(--accent-strong);
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+@supports (appearance: base-select) {
+  select,
+  .form-grid select,
+  .rule-row select,
+  .install-field select,
+  .install-proxy-select,
+  select::picker(select) {
+    appearance: base-select;
+    background-image: none;
+  }
+  select,
+  .form-grid select,
+  .rule-row select,
+  .install-field select,
+  .install-proxy-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-right: 11px;
+  }
+  select::picker-icon {
+    color: var(--muted);
+    font-size: 12px;
+    transition: rotate .16s ease;
+  }
+  select:open::picker-icon { rotate: 180deg; }
+  select::picker(select) {
+    /* The picker is in the browser top layer, outside the scaled app canvas. */
+    border: calc(1px * var(--ui-zoom)) solid var(--line-strong);
+    border-radius: calc(8px * var(--ui-zoom));
+    background: var(--surface);
+    color: var(--text);
+    padding: calc(5px * var(--ui-zoom));
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .38);
+    max-block-size: min(calc(320px * var(--ui-zoom)), calc(100dvh - 24px));
+    max-inline-size: calc(100vw - 24px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  select option,
+  .install-modal select option {
+    display: flex;
+    align-items: center;
+    gap: calc(9px * var(--ui-zoom));
+    padding: calc(9px * var(--ui-zoom)) calc(11px * var(--ui-zoom));
+    border-radius: calc(5px * var(--ui-zoom));
+    background: transparent;
+    color: var(--text);
+    font-size: calc(12px * var(--ui-zoom));
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  select option:hover,
+  select option:focus-visible {
+    background: var(--surface-3);
+    outline: none;
+  }
+  select option:checked {
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+    color: var(--accent);
+  }
+  select option::checkmark { color: var(--accent); }
+  select option:disabled { color: var(--faint); cursor: not-allowed; }
+}

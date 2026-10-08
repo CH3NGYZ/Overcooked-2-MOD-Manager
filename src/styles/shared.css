@@ -1,0 +1,115 @@
+.page-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  margin-bottom: 27px;
+}
+.page-intro p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.panel {
+  padding: 21px;
+}
+.button-row,
+.modal-actions,
+.toolbar,
+.toolbar-group,
+.import-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.small-button {
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+/* Keep the existing MOD selectors as aliases for the shared switch. */
+.ui-switch,
+.mod-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 32px;
+  height: 18px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  transition: background .18s ease, border-color .18s ease;
+}
+.ui-switch:hover:not(:disabled),
+.mod-switch:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+}
+.ui-switch-on,
+.mod-switch-on,
+.ui-switch-input:checked + .ui-switch {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+.ui-switch-thumb,
+.mod-switch-thumb {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  transform: translateX(0);
+  transition: transform .18s ease, background .18s ease;
+}
+.ui-switch-on .ui-switch-thumb,
+.mod-switch-on .mod-switch-thumb,
+.ui-switch-input:checked + .ui-switch .ui-switch-thumb {
+  background: #f5fffb;
+  transform: translateX(14px);
+}
+.ui-switch-mixed,
+.mod-switch-mixed,
+.ui-switch-input:indeterminate + .ui-switch {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 58%, var(--surface-3));
+}
+.ui-switch-mixed .ui-switch-thumb,
+.mod-switch-mixed .mod-switch-thumb,
+.ui-switch-input:indeterminate + .ui-switch .ui-switch-thumb {
+  background: #fff2c7;
+  transform: translateX(7px);
+}
+.ui-switch:focus-visible,
+.mod-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ui-switch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+}
+.ui-switch-control,
+.mod-switch-control {
+  cursor: pointer;
+}
+.ui-switch-input,
+.mod-switch-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ui-switch-control:focus-within .ui-switch,
+.mod-switch-control:focus-within .mod-switch {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ui-switch-input:disabled + .ui-switch {
+  cursor: not-allowed;
+  opacity: .45;
+}

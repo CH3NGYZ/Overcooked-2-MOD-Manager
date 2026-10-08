@@ -1,0 +1,155 @@
+.mod-recycle-backdrop {
+  z-index: 40;
+}
+
+.mod-recycle-modal {
+  width: min(820px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mod-recycle-head {
+  flex: 0 0 auto;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mod-recycle-head h3,
+.mod-recycle-files summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mod-recycle-head p {
+  max-width: 610px;
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.mod-recycle-list {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+}
+
+.mod-recycle-entry {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.mod-recycle-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mod-recycle-entry-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.mod-recycle-actions {
+  flex: 0 0 auto;
+}
+
+.mod-recycle-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.mod-recycle-game-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.mod-recycle-files {
+  margin-top: 10px;
+  font-size: 11px;
+}
+
+.mod-recycle-files summary {
+  width: fit-content;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.mod-recycle-files ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.mod-recycle-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mod-recycle-warning,
+.mod-recycle-error,
+.mod-recycle-notice {
+  margin: 0 0 12px;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.mod-recycle-warning {
+  color: var(--warning);
+}
+
+.mod-recycle-error {
+  color: var(--danger);
+}
+
+.mod-recycle-notice {
+  color: var(--accent);
+}
+
+.mod-recycle-confirm-backdrop {
+  z-index: 1;
+}
+
+.mod-recycle-confirm {
+  width: min(470px, 100%);
+  font-size: 13px;
+}
+
+.mod-recycle-confirm .mod-recycle-warning {
+  margin-top: 14px;
+}

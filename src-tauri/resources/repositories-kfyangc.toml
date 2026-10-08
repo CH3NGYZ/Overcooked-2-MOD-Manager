@@ -1,0 +1,100 @@
+[[repositories]]
+# 仓库基本信息
+name = "DIYLevel 快速载入"
+name_i18n.zh-CN = "DIYLevel 快速载入"
+name_i18n.zh-TW = "DIYLevel 快速載入"
+name_i18n.en = "DIYLevel Fast Init"
+name_i18n.ko = "DIYLevel 빠른 로딩"
+provider = "github"
+group = "性能优化"
+group_i18n.zh-CN = "性能优化"
+group_i18n.zh-TW = "效能優化"
+group_i18n.en = "Performance Optimization"
+group_i18n.ko = "성능 최적화"
+username = "kfyangc"
+repository = "Overcooked2-DIYLevelFastInit"
+enabled = true
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "DIYLevelFastInit.dll" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "oc2.diylevel.fastinit"
+local_product_name = "DIYLevelFastInit"
+local_original_filename = "DIYLevelFastInit.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note = """优化 OC2DIYLevel 自定义关卡加载，避免进入主菜单时因大量关卡资源加载而长时间卡顿。
+
+**主要功能：**
+- **后台异步加载**：将大量关卡资源转为后台异步加载，避免主线程长时间冻结。
+- **实时加载进度**：显示当前自定义关卡资源的加载进度。
+- **热更新地图**：游戏运行时往 `Levels` 文件夹复制关卡文件可以实时加载。
+- **避免重复加载**：自动跳过已经加载的资源，防止重复读档时再次完整加载。
+- **兼容已加载资源**：检测已经加载的 common 资源，减少不必要的重复读取。
+- **自动刷新关卡列表**：资源加载完成后自动更新「更多关卡」列表，确保新增关卡正常显示。
+- **加载超时回退**：异步加载超时后自动回退到原版同步加载方式。
+- **保持关卡顺序**：后台加载过程中保持原有的关卡集排列顺序。
+"""
+note_i18n.zh-CN = """优化 OC2DIYLevel 自定义关卡加载，避免进入主菜单时因大量关卡资源加载而长时间卡顿。
+
+**主要功能：**
+- **后台异步加载**：将大量关卡资源转为后台异步加载，避免主线程长时间冻结。
+- **实时加载进度**：显示当前自定义关卡资源的加载进度。
+- **热更新地图**：游戏运行时往 `Levels` 文件夹复制关卡文件可以实时加载。
+- **避免重复加载**：自动跳过已经加载的资源，防止重复读档时再次完整加载。
+- **兼容已加载资源**：检测已经加载的 common 资源，减少不必要的重复读取。
+- **自动刷新关卡列表**：资源加载完成后自动更新「更多关卡」列表，确保新增关卡正常显示。
+- **加载超时回退**：异步加载超时后自动回退到原版同步加载方式。
+- **保持关卡顺序**：后台加载过程中保持原有的关卡集排列顺序。
+"""
+note_i18n.zh-TW = """優化 OC2DIYLevel 自訂關卡載入，避免進入主選單時因大量關卡資源載入而長時間卡頓。
+
+**主要功能：**
+- **背景非同步載入**：將大量關卡資源改為背景非同步載入，避免主執行緒長時間卡頓。
+- **即時載入進度**：顯示目前自訂關卡資源的載入進度。
+- **熱更新地圖**：遊戲運行時將關卡檔案複製到 `Levels` 資料夾即可即時載入。
+- **避免重複載入**：自動跳過已經載入的資源，避免重複讀檔時再次完整載入。
+- **相容已載入資源**：偵測已經載入的 common 資源，減少不必要的重複讀取。
+- **自動更新關卡列表**：資源載入完成後自動更新「更多關卡」列表，確保新增關卡正常顯示。
+- **載入逾時回退**：非同步載入逾時後自動回退至原版同步載入方式。
+- **保持關卡順序**：背景載入過程中保持原有的關卡集排列順序。
+"""
+note_i18n.en = """Optimizes OC2DIYLevel custom level loading to prevent long freezes on the main menu when loading a large number of level resources.
+
+**Main Features:**
+- **Background Asynchronous Loading**: Loads large amounts of level resources asynchronously in the background to prevent long main-thread freezes.
+- **Real-Time Progress**: Displays the current custom level resource loading progress.
+- **Hot-reload maps**: Copy level files to the `Levels` folder while the game is running to load them in real time.
+- **Duplicate Load Prevention**: Automatically skips already loaded resources to avoid reloading everything after repeated save loading.
+- **Loaded Resource Detection**: Detects already loaded common resources to avoid unnecessary file reads.
+- **Automatic Level List Refresh**: Automatically refreshes the "More Levels" list after loading completes so newly loaded levels appear correctly.
+- **Timeout Fallback**: Falls back to the original synchronous loading method if asynchronous loading takes too long.
+- **Preserved Level Order**: Keeps the original level pack order during background loading.
+"""
+note_i18n.ko = """OC2DIYLevel 사용자 지정 레벨 로딩을 최적화하여 많은 레벨 리소스를 로드할 때 메인 메뉴가 장시간 멈추는 현상을 방지합니다.
+
+**주요 기능:**
+- **백그라운드 비동기 로딩**: 많은 레벨 리소스를 백그라운드에서 비동기적으로 로드하여 메인 스레드의 장시간 멈춤을 방지합니다.
+- **실시간 진행률 표시**: 현재 사용자 지정 레벨 리소스의 로딩 진행률을 표시합니다.
+- **맵 핫 리로드**: 게임 실행 중 `Levels` 폴더에 레벨 파일을 복사하면 실시간으로 불러올 수 있습니다.
+- **중복 로딩 방지**: 이미 로드된 리소스를 자동으로 건너뛰어 반복적인 세이브 로드 시 전체 리소스를 다시 로드하지 않습니다.
+- **로드된 리소스 감지**: 이미 로드된 common 리소스를 감지하여 불필요한 파일 읽기를 줄입니다.
+- **레벨 목록 자동 갱신**: 로딩이 완료되면 「더 많은 레벨」 목록을 자동으로 갱신하여 새로 로드된 레벨이 정상적으로 표시되도록 합니다.
+- **시간 초과 시 자동 대체**: 비동기 로딩이 너무 오래 걸리면 원래의 동기 로딩 방식으로 자동 전환합니다.
+- **레벨 순서 유지**: 백그라운드 로딩 중에도 기존 레벨 팩의 순서를 유지합니다.
+"""

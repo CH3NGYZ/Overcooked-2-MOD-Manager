@@ -1,0 +1,259 @@
+schema_version = 1
+
+# Release 代理
+[[release_proxies]]
+id = "gh-h233"
+name = "gh.h233.eu.org"
+template = "https://gh.h233.eu.org/{url}"
+regions = ["美国 Cloudflare CDN"]
+description = "XIU2 脚本标注的地区；由 X.I.U/XIU2 提供"
+
+[[release_proxies]]
+id = "gh-ddlc"
+name = "gh.ddlc.top"
+template = "https://gh.ddlc.top/{url}"
+regions = ["美国 Cloudflare CDN"]
+description = "XIU2 脚本标注的地区；由 mtr-static-official 提供"
+
+[[release_proxies]]
+id = "gh-proxy-org"
+name = "gh-proxy.org"
+template = "https://gh-proxy.org/{url}"
+regions = ["美国 Cloudflare CDN"]
+description = "XIU2 脚本标注的地区；由 gh-proxy.com 提供"
+
+[[release_proxies]]
+id = "cdn-gh-proxy-org"
+name = "cdn.gh-proxy.org"
+template = "https://cdn.gh-proxy.org/{url}"
+regions = ["Fastly CDN"]
+
+[[release_proxies]]
+id = "edgeone-gh-proxy-org"
+name = "edgeone.gh-proxy.org"
+template = "https://edgeone.gh-proxy.org/{url}"
+regions = ["EdgeOne"]
+
+[[release_proxies]]
+id = "cors-isteed"
+name = "cors.isteed.cc"
+template = "https://cors.isteed.cc/{url_no_scheme}"
+regions = ["美国 Cloudflare CDN"]
+description = "XIU2 脚本标注的地区；由 Lufs 提供"
+
+[[release_proxies]]
+id = "ghproxy-it"
+name = "ghproxy.it"
+template = "https://ghproxy.it/{url}"
+regions = ["美国 洛杉矶"]
+
+[[release_proxies]]
+id = "github-boki"
+name = "github.boki.moe"
+template = "https://github.boki.moe/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gh-jasonzeng"
+name = "gh.jasonzeng.dev"
+template = "https://gh.jasonzeng.dev/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gh-monlor"
+name = "gh.monlor.com"
+template = "https://gh.monlor.com/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "github-geekery"
+name = "github.geekery.cn"
+template = "https://github.geekery.cn/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "github-ednovas"
+name = "github.ednovas.xyz"
+template = "https://github.ednovas.xyz/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "ghfile-geekertao"
+name = "ghfile.geekertao.top"
+template = "https://ghfile.geekertao.top/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "ghp-keleyaa"
+name = "ghp.keleyaa.com"
+template = "https://ghp.keleyaa.com/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gh-chjina"
+name = "gh.chjina.com"
+template = "https://gh.chjina.com/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "ghpxy-hwinzniej"
+name = "ghpxy.hwinzniej.top"
+template = "https://ghpxy.hwinzniej.top/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "cdn-crashmc"
+name = "cdn.crashmc.com"
+template = "https://cdn.crashmc.com/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "git-yylx"
+name = "git.yylx.win"
+template = "https://git.yylx.win/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gitproxy-mrhjx"
+name = "gitproxy.mrhjx.cn"
+template = "https://gitproxy.mrhjx.cn/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "ghproxy-cxkpro"
+name = "ghproxy.cxkpro.top"
+template = "https://ghproxy.cxkpro.top/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gh-xxooo"
+name = "gh.xxooo.cf"
+template = "https://gh.xxooo.cf/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gh-idayer"
+name = "gh.idayer.com"
+template = "https://gh.idayer.com/{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "down-npee"
+name = "down.npee.cn"
+template = "https://down.npee.cn/?{url}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "raw-ihtw"
+name = "raw.ihtw.moe"
+template = "https://raw.ihtw.moe/{url_no_scheme}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "xget"
+name = "Xget"
+template = "https://xget.xi-xu.me/gh/{github_path}"
+regions = ["美国 Cloudflare CDN"]
+
+[[release_proxies]]
+id = "gh-zwy"
+name = "gh.zwy.one"
+template = "https://gh.zwy.one/{url}"
+regions = ["美国 洛杉矶"]
+
+[[release_proxies]]
+id = "ghproxy-monkeyray"
+name = "ghproxy.monkeyray.net"
+template = "https://ghproxy.monkeyray.net/{url}"
+regions = ["美国 洛杉矶"]
+
+[[release_proxies]]
+id = "ghproxy-net"
+name = "ghproxy.net"
+template = "https://ghproxy.net/{url}"
+regions = ["法国"]
+
+[[release_proxies]]
+id = "ghfast"
+name = "ghfast.top"
+template = "https://ghfast.top/{url}"
+regions = ["日本、韩国、新加坡、美国、德国等，CDN 节点动态分配"]
+description = "也支持 GitHub archive/refs/tags/{tag}.zip 形式的代码归档链接"
+
+[[release_proxies]]
+id = "wget-la"
+name = "wget.la"
+template = "https://wget.la/{url}"
+regions = ["中国香港、中国台湾、日本、美国等"]
+
+[[release_proxies]]
+id = "oc2gh-release"
+name = "oc2gh.ch3ng.top"
+template = "https://oc2gh.ch3ng.top/{url_path}"
+
+# Raw 代理
+[[raw_proxies]]
+id = "wget-la-raw"
+name = "wget.la"
+template = "https://wget.la/{url}"
+regions = ["中国香港、中国台湾、日本、美国等，CDN 节点动态分配"]
+description = "XIU2 脚本标注：缓存无或较短；由 ucdn.me 提供"
+
+[[raw_proxies]]
+id = "hk-gh-proxy-raw"
+name = "hk.gh-proxy.org"
+template = "https://hk.gh-proxy.org/{url}"
+regions = ["中国香港"]
+description = "XIU2 脚本标注：官方说明缓存约 2 小时；由 gh-proxy.com 提供"
+
+[[raw_proxies]]
+id = "ghfast-raw"
+name = "ghfast.top"
+template = "https://ghfast.top/{url}"
+regions = ["日本、韩国、新加坡、美国、德国等，CDN 节点动态分配"]
+
+[[raw_proxies]]
+id = "gh-catmak-raw"
+name = "gh.catmak.name"
+template = "https://gh.catmak.name/{url}"
+regions = ["韩国 首尔"]
+
+[[raw_proxies]]
+id = "fastly-jsdelivr"
+name = "Fastly JSDelivr"
+template = "https://fastly.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}"
+regions = ["日本 东京"]
+description = "不支持超过 50 MB 的文件，分支名不能是版本号格式"
+
+[[raw_proxies]]
+id = "cdn-gh-proxy-raw"
+name = "cdn.gh-proxy.org"
+template = "https://cdn.gh-proxy.org/{url}"
+regions = ["Fastly CDN"]
+
+[[raw_proxies]]
+id = "g-blfrp-raw"
+name = "g.blfrp.cn"
+template = "https://g.blfrp.cn/{url}"
+regions = ["日本 东京"]
+
+[[raw_proxies]]
+id = "oc2gh-raw"
+name = "oc2gh.ch3ng.top"
+template = "https://oc2gh.ch3ng.top/{url_path}"
+
+# GitHub API 代理
+[[github_api_proxies]]
+id = "oc2ghapi"
+name = "oc2ghapi.ch3ng.top"
+template = "https://oc2ghapi.ch3ng.top/{url_path}"
+regions = ["CloudFlare CDN"]
+description = "GitHub API 代理"
+
+# Gitee API 代理
+[[gitee_api_proxies]]
+id = "oc2gtapi"
+name = "oc2gtapi.ch3ng.top"
+template = "https://oc2gtapi.ch3ng.top/{url_path}"
+regions = ["CloudFlare CDN"]
+description = "Gitee API 代理"

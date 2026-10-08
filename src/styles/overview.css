@@ -1,0 +1,284 @@
+.view-content {
+  padding-top: 5px;
+}
+.hero-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 285px;
+}
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.hero-row h2 {
+  margin: 18px 0 14px;
+  font-size: 39px;
+  line-height: 1.12;
+  letter-spacing: -0.055em;
+  font-weight: 650;
+}
+.hero-row h2 em {
+  font-style: normal;
+  color: var(--accent);
+}
+.lead {
+  max-width: 510px;
+  color: var(--muted);
+  line-height: 1.7;
+  font-size: 13px;
+}
+.hero-orbit {
+  width: 184px;
+  height: 184px;
+  margin-right: 8%;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  transform: rotate(-4deg);
+  box-shadow: var(--shadow);
+}
+.hero-orbit img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: rotate(4deg) scale(1.04);
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.metric {
+  padding: 17px 19px;
+  border-right: 1px solid var(--line);
+}
+.metric:last-child {
+  border-right: 0;
+}
+.metric-label,
+.metric-note {
+  display: block;
+  color: var(--faint);
+  font-size: 10px;
+}
+.metric-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.metric-pair {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.metric strong.metric-pair {
+  display: inline-flex;
+}
+.metric-primary {
+  color: var(--accent);
+}
+.metric-divider {
+  color: var(--faint);
+  font-size: .72em;
+}
+.metric-secondary {
+  color: var(--text);
+}
+.metric-update-count.metric-updates-available {
+  color: var(--warning);
+}
+.metric strong {
+  display: block;
+  margin: 8px 0 5px;
+  font-size: 21px;
+  letter-spacing: -0.03em;
+}
+.metric-note {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.metric-note.good,
+.good {
+  color: var(--accent);
+}
+.metric-note.warn,
+.warning {
+  color: var(--warning);
+}
+.accent-text {
+  color: var(--accent);
+}
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  margin: 36px 0 14px;
+}
+.section-heading.compact {
+  margin-top: 34px;
+}
+.section-heading h3,
+.panel h3 {
+  margin: 6px 0 0;
+  font-size: 19px;
+  letter-spacing: -0.03em;
+}
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+.action-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  transition: 0.18s ease;
+  border-radius: 8px;
+}
+.action-card:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.action-card.primary {
+  border-color: #317c6d;
+  background: #152923;
+}
+.action-card .action-icon {
+  width: 37px;
+  height: 37px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  border: 1px solid #356f64;
+}
+.action-card span:nth-child(2) {
+  flex: 1;
+}
+.action-card b,
+.action-card small {
+  display: block;
+}
+.action-card b {
+  font-size: 12px;
+}
+.action-card small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.release-list,
+.backup-list,
+.repository-list,
+.panel,
+.table-panel {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.repository-list {
+  overflow: visible;
+  isolation: isolate;
+}
+.repository-list,
+.modal,
+.source-manager-list,
+.repository-note-content,
+.release-body,
+.modal textarea {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.repository-list::-webkit-scrollbar,
+.modal::-webkit-scrollbar,
+.modal *::-webkit-scrollbar,
+.source-manager-list::-webkit-scrollbar,
+.repository-note-content::-webkit-scrollbar,
+.release-body::-webkit-scrollbar,
+.modal textarea::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.modal,
+.modal * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.release-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 62px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--line);
+}
+.release-row:last-child {
+  border-bottom: 0;
+}
+.release-main {
+  flex: 1;
+  min-width: 0;
+}
+.release-main b,
+.release-main span {
+  display: block;
+}
+.release-main b {
+  font-size: 12px;
+}
+.release-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.release-version {
+  color: var(--accent);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+.repo-logo {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+}
+.repo-logo.github {
+  color: var(--text);
+}
+.repo-logo.gitee {
+  color: #c71d23;
+}
+.provider-icon {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+.spin-icon {
+  animation: repository-spin .8s linear infinite;
+}
+@keyframes repository-spin {
+  to { transform: rotate(360deg); }
+}

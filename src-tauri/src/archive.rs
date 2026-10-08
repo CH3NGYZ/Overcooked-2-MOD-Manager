@@ -854,6 +854,25 @@ pub(crate) fn extract_prepared_mod_zip(
     )
 }
 
+pub(crate) fn prepared_mod_zip_files(
+    zip_path: &Path,
+    game_root: &Path,
+    plan: &ModZipInstallPlan,
+) -> Result<Vec<String>, String> {
+    zip_entry_destinations(
+        zip_path,
+        game_root,
+        &plan.target_dir,
+        plan.strip_root.as_deref(),
+    )
+    .map(|destinations| {
+        destinations
+            .into_iter()
+            .map(|(_, path)| path_relative(game_root, &path))
+            .collect()
+    })
+}
+
 fn repository_mod_zip_plan(
     zip_path: &Path,
     install_target: &str,

@@ -464,7 +464,16 @@ pub fn recycle_package(
     package_id: &str,
     dll: Option<&str>,
 ) -> Result<ModRecycleEntry, String> {
-    recycle_package_with_mods(root, manifests_dir, game_root, package_id, dll, None)
+    recycle_package_with_mods(
+        root,
+        manifests_dir,
+        game_root,
+        package_id,
+        dll,
+        None,
+        None,
+        &[],
+    )
 }
 
 pub fn recycle_mod_dll(
@@ -482,6 +491,49 @@ pub fn recycle_mod_dll(
         package_id,
         Some(dll),
         Some(installed),
+        None,
+        &[],
+    )
+}
+
+/// A local delete explicitly selects this DLL, even when recycling its package.
+pub fn recycle_selected_mod(
+    root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    package_id: &str,
+    dll: &str,
+    whole_package: bool,
+) -> Result<ModRecycleEntry, String> {
+    recycle_package_with_mods(
+        root,
+        manifests_dir,
+        game_root,
+        package_id,
+        (!whole_package).then_some(dll),
+        None,
+        Some(dll),
+        &[],
+    )
+}
+
+/// Shared files being overwritten belong to the replacement transaction too.
+pub fn recycle_before_reinstall(
+    root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    package_id: &str,
+    replacement_files: &[String],
+) -> Result<ModRecycleEntry, String> {
+    recycle_package_with_mods(
+        root,
+        manifests_dir,
+        game_root,
+        package_id,
+        None,
+        None,
+        None,
+        replacement_files,
     )
 }
 
@@ -515,6 +567,7 @@ fn has_safe_replacement(
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn recycle_package_with_mods(
     root: &Path,
     manifests_dir: &Path,
@@ -522,10 +575,25 @@ fn recycle_package_with_mods(
     package_id: &str,
     dll: Option<&str>,
     installed: Option<&[crate::models::InstalledMod]>,
+    explicit_dll: Option<&str>,
+    replacement_files: &[String],
 ) -> Result<ModRecycleEntry, String> {
     let (manifest, original) =
         read_active_manifest(manifests_dir, package_id)?.ok_or("没有安装清单，拒绝删除未知文件")?;
     let selected = dll.map(file_key);
+    let explicit = explicit_dll.map(file_key);
+    let replacement_keys = replacement_files
+        .iter()
+        .map(|file| file_key(file))
+        .collect::<HashSet<_>>();
+    if explicit.as_ref().is_some_and(|selected| {
+        !manifest
+            .files
+            .iter()
+            .any(|file| file_key(file) == *selected)
+    }) {
+        return Err("当前 DLL 不属于这个 MOD 包".into());
+    }
     let removed_files = manifest
         .files
         .iter()
@@ -538,6 +606,12 @@ fn recycle_package_with_mods(
         .collect::<Result<Vec<_>, _>>()?;
     if removed_files.is_empty() && dll.is_some() {
         return Err("当前 DLL 不属于这个 MOD 包".into());
+    }
+    if let Some(dll) = explicit_dll {
+        let relative = normalize_relative(&mods::canonical_dll_name(dll))?;
+        if existing_variants(game_root, &relative)?.is_empty() {
+            return Err("找不到对应的 MOD DLL 文件".into());
+        }
     }
     let peer_manifests = all_active_manifests(manifests_dir)?
         .into_iter()
@@ -554,6 +628,14 @@ fn recycle_package_with_mods(
     let mut actual = Vec::new();
     for relative in &removed_files {
         if peer_files.contains(&file_key(relative)) {
+            if explicit
+                .as_ref()
+                .is_some_and(|selected| file_key(relative) == *selected)
+                || replacement_keys.contains(&file_key(relative))
+            {
+                actual.extend(existing_variants(game_root, relative)?);
+                continue;
+            }
             if dll.is_some() {
                 if !safe_duplicate {
                     return Err("该文件仍由其他 MOD 包使用，不能移入回收站".into());
@@ -604,7 +686,7 @@ fn recycle_package_with_mods(
         None
     };
     let mut related_manifests = Vec::new();
-    if safe_duplicate {
+    if safe_duplicate || explicit.is_some() || !replacement_keys.is_empty() {
         for peer in peer_manifests {
             let removed = peer
                 .files
@@ -613,6 +695,11 @@ fn recycle_package_with_mods(
                     removed_files
                         .iter()
                         .any(|removed| file_key(file) == file_key(removed))
+                        && (safe_duplicate
+                            || replacement_keys.contains(&file_key(file))
+                            || explicit
+                                .as_ref()
+                                .is_some_and(|selected| file_key(file) == *selected))
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -1501,6 +1588,104 @@ mod tests {
         )
         .unwrap();
         assert_eq!(workspace.active("package").unwrap().files, vec![A, B, DATA]);
+    }
+
+    #[test]
+    fn selected_mod_recycles_duplicate_manifest_references_and_restores_them() {
+        for disabled in [false, true] {
+            for whole_package in [false, true] {
+                let workspace = Workspace::new();
+                let actual = if disabled {
+                    format!("{A}.disabled")
+                } else {
+                    A.into()
+                };
+                workspace.write(&actual, b"selected plugin");
+                workspace.write(DATA, b"shared data");
+                workspace.write(B, b"unrelated plugin");
+                workspace.manifest("package", &[A, DATA]);
+                workspace.manifest("manual", &[A]);
+                workspace.manifest("peer", &[A, B, DATA]);
+                let originals = ["package", "manual", "peer"].map(|id| {
+                    (
+                        id,
+                        fs::read(workspace.manifests.join(format!("{id}.toml"))).unwrap(),
+                    )
+                });
+                let entry = recycle_selected_mod(
+                    &workspace.recycle,
+                    &workspace.manifests,
+                    &workspace.game,
+                    "package",
+                    A,
+                    whole_package,
+                )
+                .unwrap();
+                assert_eq!(entry.files, vec![actual.clone()]);
+                assert!(!workspace.game.join(&actual).exists());
+                assert!(workspace.active("manual").is_none());
+                assert_eq!(workspace.active("peer").unwrap().files, vec![B, DATA]);
+                if whole_package {
+                    assert!(workspace.active("package").is_none());
+                } else {
+                    assert_eq!(workspace.active("package").unwrap().files, vec![DATA]);
+                }
+                assert_eq!(fs::read(workspace.game.join(DATA)).unwrap(), b"shared data");
+                assert_eq!(
+                    fs::read(workspace.game.join(B)).unwrap(),
+                    b"unrelated plugin"
+                );
+                restore(
+                    &workspace.recycle,
+                    &workspace.manifests,
+                    &workspace.game,
+                    &entry.id,
+                )
+                .unwrap();
+                assert_eq!(
+                    fs::read(workspace.game.join(&actual)).unwrap(),
+                    b"selected plugin"
+                );
+                for (id, original) in originals {
+                    assert_eq!(
+                        fs::read(workspace.manifests.join(format!("{id}.toml"))).unwrap(),
+                        original
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selected_mod_rejects_missing_or_unowned_dll_without_changing_manifests() {
+        for selected in [A, B] {
+            let workspace = Workspace::new();
+            workspace.write(DATA, b"keep data");
+            workspace.write(B, b"unowned DLL");
+            workspace.manifest("package", &[A, DATA]);
+            workspace.manifest("peer", &[A]);
+            let result = recycle_selected_mod(
+                &workspace.recycle,
+                &workspace.manifests,
+                &workspace.game,
+                "package",
+                selected,
+                true,
+            );
+            assert_eq!(
+                result.unwrap_err(),
+                if selected == A {
+                    "找不到对应的 MOD DLL 文件"
+                } else {
+                    "当前 DLL 不属于这个 MOD 包"
+                }
+            );
+            assert_eq!(workspace.active("package").unwrap().files, vec![A, DATA]);
+            assert_eq!(workspace.active("peer").unwrap().files, vec![A]);
+            assert_eq!(fs::read(workspace.game.join(DATA)).unwrap(), b"keep data");
+            assert_eq!(fs::read(workspace.game.join(B)).unwrap(), b"unowned DLL");
+            assert!(list(&workspace.recycle).unwrap().is_empty());
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ export type TutorialLocale = 'zh-CN' | 'zh-TW' | 'en' | 'ko'
 export type TutorialScenario = 'live' | 'overview' | 'framework-missing' | 'framework-channel' | 'framework-installing' | 'framework-ready' | 'framework-backup' | 'mod-management' | 'repository-loading' | 'repository-ready' | 'source-manager' | 'repository-editor' | 'repository-install' | 'release-select' | 'download-progress' | 'sponsor' | 'completion'
 
 export interface AssetRule { type: AssetRuleType; value: string }
-export interface ReleaseAsset { name: string; size: number; download_url: string; digest?: string }
+export interface ReleaseAsset { name: string; size: number; download_count?: number | null; download_url: string; digest?: string }
 export interface ReleaseInfo {
   release_id?: number
   tag_name: string

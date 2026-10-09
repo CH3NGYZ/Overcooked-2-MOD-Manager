@@ -15,6 +15,8 @@ pub struct GameInfo {
 pub struct BepInExInfo {
     pub installed: bool,
     pub complete: bool,
+    #[serde(default)]
+    pub has_config: bool,
     pub version: Option<String>,
     pub version_source: Option<String>,
     pub backups: Vec<String>,

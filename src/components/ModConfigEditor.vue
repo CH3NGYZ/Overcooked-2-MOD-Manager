@@ -5,10 +5,10 @@ import type { editor } from 'monaco-editor'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
 import { trapModalFocus } from '../composables/modalFocus'
-import type { InstalledMod, ModConfigDocument } from '../types'
+import type { ConfigEditorTarget, ModConfigDocument } from '../types'
 
 const props = defineProps<{
-  mod: InstalledMod; gameBlocked: boolean; busy: boolean
+  target: ConfigEditorTarget; gameBlocked: boolean; busy: boolean
   confirmDiscard: () => Promise<boolean>
 }>()
 const emit = defineEmits<{ close: [] }>()
@@ -21,6 +21,8 @@ const dirty = ref(false)
 const error = ref('')
 const notice = ref('')
 const document = ref<ModConfigDocument | null>(null)
+const configName = computed(() => props.target.kind === 'mod' ? props.target.mod.name : t('BepInEx框架'))
+const configFile = computed(() => props.target.kind === 'mod' ? `${props.target.mod.guid}.cfg` : 'BepInEx.cfg')
 const canSave = computed(() => dirty.value && !loading.value && !saving.value && !confirming.value && !props.busy && !props.gameBlocked)
 let instance: editor.IStandaloneCodeEditor | undefined
 let model: editor.ITextModel | undefined
@@ -48,7 +50,8 @@ async function reload() {
   notice.value = ''
   try {
     const [loaded, { monaco }] = await Promise.all([
-      api.readModConfig(props.mod.dll_file), import('../services/configEditor'),
+      props.target.kind === 'mod' ? api.readModConfig(props.target.mod.dll_file) : api.readBepInExConfig(),
+      import('../services/configEditor'),
     ])
     if (!alive || !container.value) return
     document.value = loaded
@@ -61,7 +64,8 @@ async function reload() {
     instance = monaco.editor.create(container.value, {
       model, theme: 'vs-dark', automaticLayout: true, minimap: { enabled: false },
       fontSize: 14, tabSize: 4, wordWrap: 'on', scrollBeyondLastLine: false,
-      readOnly: props.gameBlocked || props.busy, ariaLabel: t('MOD 配置编辑器'),
+      readOnly: props.gameBlocked || props.busy,
+      ariaLabel: props.target.kind === 'mod' ? t('MOD 配置编辑器') : t('BepInEx 配置编辑器'),
       fixedOverflowWidgets: false,
     })
     subscription = model.onDidChangeContent(() => {
@@ -84,7 +88,9 @@ async function save() {
   error.value = ''
   notice.value = ''
   try {
-    const saved = await api.saveModConfig(props.mod.dll_file, document.value.revision, content)
+    const saved = await (props.target.kind === 'mod'
+      ? api.saveModConfig(props.target.mod.dll_file, document.value.revision, content)
+      : api.saveBepInExConfig(document.value.revision, content))
     if (!alive) return
     document.value = saved
     originalContent = content
@@ -120,8 +126,8 @@ const backdropPressed = ref(false)
       <section ref="dialog" class="modal mod-config-modal" role="dialog" aria-modal="true" aria-labelledby="mod-config-title" tabindex="-1"
         @keydown.esc.stop.prevent="close" @keydown.tab="trapModalFocus">
         <header class="modal-head">
-          <div class="mod-config-heading"><h3 id="mod-config-title"><FileCog :size="19" />{{ t('打开配置') }} · {{ mod.name }}</h3>
-            <p class="muted-text">BepInEx/config/{{ document?.file_name || `${mod.guid}.cfg` }}</p></div>
+          <div class="mod-config-heading"><h3 id="mod-config-title"><FileCog :size="19" />{{ t('打开配置') }} · {{ configName }}</h3>
+            <p class="muted-text">BepInEx/config/{{ document?.file_name || configFile }}</p></div>
           <button class="icon-button" :title="t('关闭')" :aria-label="t('关闭')" :disabled="saving || confirming" @click="close"><X :size="18" /></button>
         </header>
         <p v-if="gameBlocked" class="muted-text">{{ t('游戏运行中，配置仅供查看；请关闭游戏后保存。') }}</p>

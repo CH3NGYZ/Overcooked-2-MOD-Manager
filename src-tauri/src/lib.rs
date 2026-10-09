@@ -150,6 +150,8 @@ pub fn run() {
             commands::open_mod_file_location,
             commands::read_mod_config,
             commands::save_mod_config,
+            commands::read_bepinex_config,
+            commands::save_bepinex_config,
             commands::open_backup_directory,
             commands::open_release_page,
             commands::open_update_repository,

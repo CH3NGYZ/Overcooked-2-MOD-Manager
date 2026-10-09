@@ -11,6 +11,8 @@ document.documentElement.lang = initialLocale
 
 const entries: Record<string, [string, string, string]> = {
   '打开配置': ['開啟設定', 'Open configuration', '설정 열기'],
+  '配置不存在，请先运行一次游戏': ['設定檔不存在，請先執行一次遊戲', 'Configuration is missing. Run the game once first.', '설정 파일이 없습니다. 먼저 게임을 한 번 실행하세요.'],
+  'BepInEx 配置编辑器': ['BepInEx 設定編輯器', 'BepInEx configuration editor', 'BepInEx 설정 편집기'],
   'MOD 配置编辑器': ['MOD 設定編輯器', 'MOD configuration editor', 'MOD 설정 편집기'],
   '未保存的配置': ['未儲存的設定', 'Unsaved configuration', '저장하지 않은 설정'],
   '配置尚未保存，确定放弃修改？': ['設定尚未儲存，確定放棄修改？', 'Discard unsaved configuration changes?', '저장하지 않은 설정 변경을 버리시겠습니까?'],

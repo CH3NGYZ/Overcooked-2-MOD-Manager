@@ -130,12 +130,13 @@ export function createTutorialDashboard(
   }
 
   if (scenario === 'framework-missing' || scenario === 'framework-channel' || scenario === 'framework-installing') {
-    value.game.bepinex = { installed: false, complete: false, version: undefined, version_source: undefined, backups: [] }
+    value.game.bepinex = { installed: false, complete: false, has_config: false, version: undefined, version_source: undefined, backups: [] }
     value.game.winhttp_state = 'missing'
   } else if (scenario === 'framework-ready' || scenario === 'framework-backup') {
     value.game.bepinex = {
       installed: true,
       complete: true,
+      has_config: true,
       version: '5.4.23.5',
       version_source: 'BepInEx core metadata',
       backups: scenario === 'framework-backup'
@@ -155,6 +156,7 @@ export function createTutorialDashboard(
       version: '5.4.23.5',
       version_source: 'BepInEx core metadata',
       backups: [],
+      has_config: true,
     }
     value.game.winhttp_state = 'modenabled'
   }

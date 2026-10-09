@@ -16,7 +16,8 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.game-directory-actions {
+.game-directory-actions,
+.framework-actions {
   flex-wrap: wrap;
 }
 .large-status {

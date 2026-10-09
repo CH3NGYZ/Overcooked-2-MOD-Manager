@@ -108,14 +108,14 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
                 </div>
               </div>
                   <div class="mod-controls">
-              <span class="mod-actions" data-tutorial="mod-actions"><button class="icon-button small" data-tutorial="mod-open-file-location"
-                  :title="t('打开目录')" :aria-label="t('打开目录')" :disabled="!!busy || isModToggling(mod)"
-                  @click="openModFileLocation(mod)">
-                  <FolderOpen :size="14" />
-                </button><button v-if="mod.has_config && mod.guid" class="icon-button small" data-tutorial="mod-open-config"
+              <span class="mod-actions" data-tutorial="mod-actions"><button v-if="mod.has_config && mod.guid" class="icon-button small" data-tutorial="mod-open-config"
                   :title="t('打开配置')" :aria-label="t('打开配置')" :disabled="!!busy"
                   @click="dynamicProps.openModConfig(mod)">
                   <FileCog :size="14" />
+                </button><button class="icon-button small" data-tutorial="mod-open-file-location"
+                  :title="t('打开目录')" :aria-label="t('打开目录')" :disabled="!!busy || isModToggling(mod)"
+                  @click="openModFileLocation(mod)">
+                  <FolderOpen :size="14" />
                 </button><button class="icon-button small" :title="t('编辑 MOD 备注')"
                   @click="editModNote(mod)">
                   <Pencil :size="14" />

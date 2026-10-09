@@ -90,6 +90,8 @@ pub struct ReleaseInfo {
 pub struct ReleaseAsset {
     pub name: String,
     pub size: u64,
+    #[serde(default)]
+    pub download_count: Option<u64>,
     pub download_url: String,
     pub digest: Option<String>,
 }

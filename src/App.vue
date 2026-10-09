@@ -480,7 +480,10 @@ async function refreshConfigSerialized() {
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatBytes(value: number) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}` }
-function formatAssetSize(asset: import('./types').ReleaseAsset) { return formatBytes(asset.size) }
+function formatAssetMetadata(asset: import('./types').ReleaseAsset) {
+  const size = formatBytes(asset.size)
+  return asset.download_count == null ? size : `${size} · ${t('下载次数：{count}').replace('{count}', String(asset.download_count))}`
+}
 function scheduleToastClose() { if (toastTimer) window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => { message.value = ''; error.value = '' }, 5000) }
 function clampUiZoom(value: number | undefined) {
   const numeric = Number.isFinite(value) ? value as number : DEFAULT_UI_ZOOM
@@ -2459,7 +2462,7 @@ onUnmounted(() => {
           <p class="release-body">{{ latest(showRelease)?.body || t('Release 没有更新日志。') }}</p>
           <div class="asset-list">
             <div v-for="asset in latest(showRelease)?.assets" :key="asset.name"><span>{{ asset.name
-                }}</span><small>{{ formatAssetSize(asset) }}</small></div>
+                }}</span><small>{{ formatAssetMetadata(asset) }}</small></div>
           </div>
         </div>
       </div>
@@ -2522,7 +2525,7 @@ onUnmounted(() => {
           v-model="selectedInstallAsset" :aria-label="t('下载文件')">
           <option v-for="asset in selectedInstallAssets(showInstall)" :key="asset.name" :value="asset.name">{{
             asset.name
-            }} · {{ formatAssetSize(asset) }}</option>
+            }} · {{ formatAssetMetadata(asset) }}</option>
         </select></label></template><div v-else class="install-source-file"><span>{{ t('仓库文件') }}</span><b>{{ showInstall.file_path }}</b></div>
       <section v-if="assetProxySelectionVisible(showInstall)" class="install-proxy-choice">
         <div class="install-field-label">{{ t('GitHub 资产下载方式') }}</div>

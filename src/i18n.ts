@@ -330,6 +330,7 @@ const entries: Record<string, [string, string, string]> = {
   '选择版本和文件': ['選擇版本與檔案', 'Choose version and file', '버전 및 파일 선택'],
   'Release 版本': ['Release 版本', 'Release version', 'Release 버전'],
   '下载文件': ['下載檔案', 'Download file', '다운로드 파일'],
+  '下载次数：{count}': ['下載次數：{count}', 'Downloads: {count}', '다운로드 횟수: {count}'],
   '仅显示符合当前仓库资产规则的文件。': ['僅顯示符合目前倉庫資產規則的檔案。', 'Only files matching this repository’s asset rules are shown.', '이 저장소의 자산 규칙에 맞는 파일만 표시됩니다.'],
   '产品名称：': ['產品名稱：', 'Product name: ', '제품 이름: '],
   '导出配置': ['匯出設定', 'Export configuration', '설정 내보내기'],

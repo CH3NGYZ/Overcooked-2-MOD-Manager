@@ -17,6 +17,7 @@ const INVALID_RECORD: &str = "回收站记录无效";
 const IO_ERROR: &str = "回收站文件操作失败";
 const CONFLICT: &str = "恢复位置已有文件，拒绝覆盖";
 const INCOMPLETE: &str = "回收站文件不完整或已被修改";
+const NO_FILES: &str = "没有可移入回收站的文件，安装清单保持不变";
 const MAX_RECORD_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -473,7 +474,8 @@ pub fn recycle_package(
         None,
         None,
         &[],
-    )
+    )?
+    .ok_or_else(|| NO_FILES.into())
 }
 
 pub fn recycle_mod_dll(
@@ -493,7 +495,8 @@ pub fn recycle_mod_dll(
         Some(installed),
         None,
         &[],
-    )
+    )?
+    .ok_or_else(|| NO_FILES.into())
 }
 
 /// A local delete explicitly selects this DLL, even when recycling its package.
@@ -514,17 +517,20 @@ pub fn recycle_selected_mod(
         None,
         Some(dll),
         &[],
-    )
+    )?
+    .ok_or_else(|| NO_FILES.into())
 }
 
 /// Shared files being overwritten belong to the replacement transaction too.
+/// None means no old files need staging. Keep the old manifest until the
+/// replacement installation atomically commits its new manifest.
 pub fn recycle_before_reinstall(
     root: &Path,
     manifests_dir: &Path,
     game_root: &Path,
     package_id: &str,
     replacement_files: &[String],
-) -> Result<ModRecycleEntry, String> {
+) -> Result<Option<ModRecycleEntry>, String> {
     recycle_package_with_mods(
         root,
         manifests_dir,
@@ -577,7 +583,7 @@ fn recycle_package_with_mods(
     installed: Option<&[crate::models::InstalledMod]>,
     explicit_dll: Option<&str>,
     replacement_files: &[String],
-) -> Result<ModRecycleEntry, String> {
+) -> Result<Option<ModRecycleEntry>, String> {
     let (manifest, original) =
         read_active_manifest(manifests_dir, package_id)?.ok_or("没有安装清单，拒绝删除未知文件")?;
     let selected = dll.map(file_key);
@@ -653,12 +659,12 @@ fn recycle_package_with_mods(
         actual.extend(existing_variants(game_root, relative)?);
     }
     if actual.is_empty() {
-        log::warn!(
+        log::debug!(
             "MOD 包没有可回收文件，保留安装清单：包={}，清单文件数={}",
             package_id,
             removed_files.len()
         );
-        return Err("没有可移入回收站的文件，安装清单保持不变".into());
+        return Ok(None);
     }
     let name = manifest
         .package_name
@@ -728,6 +734,7 @@ fn recycle_package_with_mods(
         related_manifests,
         &mut || Ok(()),
     )
+    .map(Some)
 }
 
 pub fn recycle_unmanaged(

@@ -255,6 +255,9 @@ fn inspect_dll(
         description: metadata.description,
         product_name,
         original_filename,
+        has_config: guid
+            .as_deref()
+            .is_some_and(|guid| crate::mod_config::exists(game, guid)),
         guid,
         plugin_name,
         company: metadata.company,
@@ -1139,6 +1142,14 @@ mod tests {
             assert_eq!(installed.repository_ids, vec!["raw"]);
             assert_eq!(installed.status, "not_release_asset");
             assert!(!installed.update_available);
+            assert!(!installed.has_config);
+            std::fs::create_dir_all(root.join("BepInEx/config")).unwrap();
+            std::fs::write(
+                root.join("BepInEx/config/com.example.guid.cfg"),
+                "[General]\nEnabled = true\n",
+            )
+            .unwrap();
+            assert!(super::inspect_dll(&path, &root, &config, &[]).has_config);
             let release_install = super::inspect_dll(&path, &root, &config, &[]);
             assert_eq!(release_install.repository_id.as_deref(), Some("release"));
             assert!(release_install.update_available);
@@ -1214,6 +1225,7 @@ mod tests {
                 package_name: None,
                 package_mod_count: 0,
                 name: "Old".into(),
+                has_config: false,
                 title: None,
                 description: None,
                 product_name: Some("Old".into()),
@@ -1240,6 +1252,7 @@ mod tests {
                 package_name: None,
                 package_mod_count: 0,
                 name: "New".into(),
+                has_config: false,
                 title: None,
                 description: None,
                 product_name: Some("New".into()),

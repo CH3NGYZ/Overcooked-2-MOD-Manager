@@ -1,12 +1,15 @@
 .table-panel {
+  display: grid;
+  grid-template-columns: 20px 34px minmax(220px, 1fr) max-content;
+  column-gap: 12px;
   padding: 0 5px;
   overflow: visible;
-  --mod-grid-columns: 20px 34px minmax(220px, 1fr) 110px;
 }
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: var(--mod-grid-columns);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   gap: 12px;
   align-items: center;
   text-align: center;
@@ -31,8 +34,13 @@
   font-size: 11px;
 }
 .mod-row-shell {
-  display: block;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   min-width: 0;
+}
+.mod-row-shell > .mod-detail-panel {
+  grid-column: 1 / -1;
 }
 .mod-row-shell > .table-row {
   position: relative;
@@ -48,7 +56,8 @@
 .mod-package-heading {
   position: relative;
   display: grid;
-  grid-template-columns: var(--mod-grid-columns);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   gap: 12px;
   align-items: center;
   min-height: 50px;
@@ -315,9 +324,17 @@
   align-items: center;
   justify-items: stretch;
   align-self: center;
-  min-width: 0;
+  min-width: 110px;
   padding-left: 10px;
   border-left: 1px solid var(--line);
+}
+.table-panel .mod-actions {
+  width: max-content;
+  justify-self: end;
+  flex-wrap: nowrap;
+}
+.table-panel .mod-actions > .icon-button {
+  flex-shrink: 0;
 }
 .mod-package-child .mod-controls {
   padding-left: 0;

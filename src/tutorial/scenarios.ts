@@ -173,7 +173,7 @@ export function createTutorialDashboard(
       tutorialMod({ name: 'Chef Rotation', dll_file: 'OC2ChefRotation.dll', version: '1.0.0', enabled: true, repository_id: undefined, repository_ids: [] }, translate),
       tutorialMod({ name: 'DLC Unlocker', dll_file: 'OC2Unlocker.dll', version: '1.1.0', enabled: false, update_available: true, repository_id: undefined, repository_ids: [] }, translate),
       tutorialMod({ name: hostUtilities.name.trim(), guid: hostUtilities.plugin_guid, product_name: hostUtilities.local_product_name, original_filename: hostUtilities.local_original_filename, dll_file: 'HostUtilities.dll', version: '2.4.0', enabled: true, package_id: 'arcade-mod-package', package_name: hostUtilities.name.trim(), package_mod_count: 2, repository_id: hostUtilities.id, repository_ids: [hostUtilities.id] }, translate),
-      tutorialMod({ name: configManager.name.trim(), guid: configManager.plugin_guid, product_name: configManager.local_product_name, original_filename: configManager.local_original_filename, dll_file: 'ConfigurationManager.dll', version: '1.0.0', enabled: true, package_id: 'arcade-mod-package', package_name: hostUtilities.name.trim(), package_mod_count: 2, repository_id: configManager.id, repository_ids: [configManager.id] }, translate),
+      tutorialMod({ name: configManager.name.trim(), guid: configManager.plugin_guid, has_config: true, product_name: configManager.local_product_name, original_filename: configManager.local_original_filename, dll_file: 'ConfigurationManager.dll', version: '1.0.0', enabled: true, package_id: 'arcade-mod-package', package_name: hostUtilities.name.trim(), package_mod_count: 2, repository_id: configManager.id, repository_ids: [configManager.id] }, translate),
     ]
   }
 

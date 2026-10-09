@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { toRefs } from 'vue'
-import { ChevronRight, FolderOpen, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-vue-next'
+import { ChevronRight, FileCog, FolderOpen, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import { t } from '../i18n'
 
 const props = defineProps({
+  openModConfig: null,
   config: null, busy: null, saveHideUnidentifiedMods: null, openModDirectory: null, openModFileLocation: null, openModRecycleBin: null, gameBlocked: null,
   installLocalMod: null, rescanInstalledMods: null, mappedReposAvailable: null, checkModUpdates: null,
   installedMods: null, isFirstModInPackage: null, packageIsCollapsed: null, modDisplayIndex: null,
@@ -111,6 +112,10 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
                   :title="t('打开目录')" :aria-label="t('打开目录')" :disabled="!!busy || isModToggling(mod)"
                   @click="openModFileLocation(mod)">
                   <FolderOpen :size="14" />
+                </button><button v-if="mod.has_config && mod.guid" class="icon-button small" data-tutorial="mod-open-config"
+                  :title="t('打开配置')" :aria-label="t('打开配置')" :disabled="!!busy"
+                  @click="dynamicProps.openModConfig(mod)">
+                  <FileCog :size="14" />
                 </button><button class="icon-button small" :title="t('编辑 MOD 备注')"
                   @click="editModNote(mod)">
                   <Pencil :size="14" />

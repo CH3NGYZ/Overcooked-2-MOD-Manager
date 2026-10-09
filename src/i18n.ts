@@ -10,6 +10,26 @@ export const locale = ref<Locale>(initialLocale)
 document.documentElement.lang = initialLocale
 
 const entries: Record<string, [string, string, string]> = {
+  '打开配置': ['開啟設定', 'Open configuration', '설정 열기'],
+  'MOD 配置编辑器': ['MOD 設定編輯器', 'MOD configuration editor', 'MOD 설정 편집기'],
+  '未保存的配置': ['未儲存的設定', 'Unsaved configuration', '저장하지 않은 설정'],
+  '配置尚未保存，确定放弃修改？': ['設定尚未儲存，確定放棄修改？', 'Discard unsaved configuration changes?', '저장하지 않은 설정 변경을 버리시겠습니까?'],
+  '配置已保存': ['設定已儲存', 'Configuration saved', '설정 저장됨'],
+  'Ctrl+S 保存配置': ['Ctrl+S 儲存設定', 'Ctrl+S to save', 'Ctrl+S로 저장'],
+  '游戏运行中，配置仅供查看；请关闭游戏后保存。': ['遊戲執行中，設定僅供查看；請關閉遊戲後儲存。', 'Read only while the game is running. Close the game to save.', '게임 실행 중에는 읽기 전용입니다. 저장하려면 게임을 종료하세요.'],
+  '正在加载配置编辑器…': ['正在載入設定編輯器…', 'Loading configuration editor…', '설정 편집기를 불러오는 중…'],
+  '重新加载': ['重新載入', 'Reload', '다시 불러오기'],
+  '正在保存…': ['正在儲存…', 'Saving…', '저장 중…'],
+  '保存': ['儲存', 'Save', '저장'],
+  'MOD 配置路径不安全': ['MOD 設定路徑不安全', 'Unsafe MOD configuration path', '안전하지 않은 MOD 설정 경로'],
+  'MOD 配置文件不存在或无法访问': ['MOD 設定檔不存在或無法存取', 'MOD configuration file is missing or inaccessible', 'MOD 설정 파일이 없거나 접근할 수 없습니다'],
+  '无法读取 MOD 配置文件': ['無法讀取 MOD 設定檔', 'Cannot read MOD configuration file', 'MOD 설정 파일을 읽을 수 없습니다'],
+  '无法保存 MOD 配置文件': ['無法儲存 MOD 設定檔', 'Cannot save MOD configuration file', 'MOD 설정 파일을 저장할 수 없습니다'],
+  'MOD 配置文件超过 2 MiB，无法编辑': ['MOD 設定檔超過 2 MiB，無法編輯', 'MOD configuration exceeds 2 MiB', 'MOD 설정 파일이 2 MiB를 초과합니다'],
+  'MOD 配置文件不是有效的 UTF-8 文本': ['MOD 設定檔不是有效的 UTF-8 文字', 'MOD configuration is not valid UTF-8 text', 'MOD 설정 파일이 올바른 UTF-8 텍스트가 아닙니다'],
+  '配置文件已被外部修改，请重新加载后再保存': ['設定檔已被外部修改，請重新載入後再儲存', 'Configuration changed externally. Reload before saving.', '설정 파일이 외부에서 변경되었습니다. 다시 불러온 후 저장하세요.'],
+  '无法识别 MOD 的 GUID，请重新扫描': ['無法辨識 MOD 的 GUID，請重新掃描', 'Cannot identify MOD GUID. Rescan installed mods.', 'MOD GUID를 확인할 수 없습니다. 다시 검색하세요.'],
+  '厨房目录已变化，请重新打开配置': ['廚房目錄已變更，請重新開啟設定', 'Game directory changed. Reopen the configuration.', '게임 폴더가 변경되었습니다. 설정을 다시 여세요.'],
   // 全局状态与右上角工具栏
   '成功：': ['成功：', 'Success: ', '성공: '],
   '错误：': ['錯誤：', 'Error: ', '오류: '],

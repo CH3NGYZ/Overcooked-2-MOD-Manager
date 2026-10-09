@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  AlertTriangle, Download, ExternalLink, FolderOpen, HardDriveDownload,
+  AlertTriangle, Download, ExternalLink, FileCog, FolderOpen, HardDriveDownload,
   Pencil, RefreshCw, RotateCcw, ShieldCheck, Trash2,
 } from 'lucide-vue-next'
 import type { GameInfo, PublicConfig } from '../types'
@@ -19,6 +19,7 @@ const props = defineProps<{
   detectGame: () => void
   openBepInExInstall: (reinstall: boolean) => void
   uninstallBepInEx: () => void
+  openBepInExConfig: () => void
   openBackupDirectory: (backup?: string) => void
   backupBepInEx: () => void
   restoreBackup: (backup: string) => void
@@ -82,7 +83,7 @@ const props = defineProps<{
           props.game?.bepinex.complete ? t('READY') : t('ACTION REQUIRED') }}</span>
       </div>
       <div class="divider"></div>
-      <div class="button-row"><button class="primary-button" :disabled="props.gameBlocked || !!props.busy"
+      <div class="button-row framework-actions"><button class="primary-button" :disabled="props.gameBlocked || !!props.busy"
           @click="props.openBepInExInstall(false)">
           <Download :size="16" />{{ t('安装 BepInEx') }}
         </button><button class="secondary-button" :disabled="props.gameBlocked || !!props.busy"
@@ -92,7 +93,16 @@ const props = defineProps<{
           :disabled="props.gameBlocked || !props.game?.bepinex.installed || !!props.busy"
           @click="props.uninstallBepInEx">
           <Trash2 :size="16" />{{ t('卸载') }}
+        </button><button class="secondary-button" data-tutorial="bepinex-open-config"
+          :disabled="!props.game?.bepinex.has_config || !!props.busy"
+          :title="!props.game?.bepinex.has_config ? t('配置不存在，请先运行一次游戏') : t('打开配置')"
+          :aria-describedby="!props.game?.bepinex.has_config ? 'bepinex-config-hint' : undefined"
+          @click="props.openBepInExConfig">
+          <FileCog :size="16" />{{ t('打开配置') }}
         </button></div>
+      <p v-if="!props.game?.bepinex.has_config" id="bepinex-config-hint" class="guard-note">
+        <AlertTriangle :size="15" />{{ t('配置不存在，请先运行一次游戏') }}
+      </p>
       <p v-if="props.gameBlocked" class="guard-note">
         <AlertTriangle :size="15" />{{ t('《胡闹厨房2》正在运行，文件操作已禁用。') }}
       </p>

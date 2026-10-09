@@ -8,7 +8,7 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateCheckResult, AppUpdateInfo, Dashboard, DownloadProgress, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { AppUpdateCheckResult, AppUpdateInfo, ConfigEditorTarget, Dashboard, DownloadProgress, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { renderMarkdown } from './markdown'
@@ -63,7 +63,7 @@ const showImport = ref(false)
 const showRepositorySource = ref(false)
 const showGithubProxyManager = ref(false)
 const showModRecycleBin = ref(false)
-const configEditorMod = ref<InstalledMod | null>(null)
+const configEditorTarget = ref<ConfigEditorTarget | null>(null)
 const repositorySourceUrl = ref('')
 const repositorySourceNickname = ref('')
 const repositorySourceUniqueId = ref('')
@@ -925,7 +925,11 @@ async function openModFileLocation(mod: InstalledMod) {
 }
 function openModConfig(mod: InstalledMod) {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value || !mod.has_config || !mod.guid) return
-  configEditorMod.value = mod
+  configEditorTarget.value = { kind: 'mod', mod }
+}
+function openBepInExConfig() {
+  if (tutorial.visible.value || tutorial.previewing.value || busy.value || !game.value?.bepinex.has_config) return
+  configEditorTarget.value = { kind: 'bepinex' }
 }
 function updateChannelName(id: string) {
   return t(({ 'gitee-direct': 'Gitee API 1', 'gitee-token': 'Gitee API 2', 'gitee-proxy': 'Gitee API 3', 'gitee-release-direct': 'Gitee Release', 'github-direct': 'Github API 1', 'github-token': 'Github API 2', 'github-proxy': 'Github API 3', 'github-release-direct': 'Github Release', 'github-release-proxy': 'Github Release Proxy' } as Record<string, string>)[id] || id)
@@ -2061,6 +2065,7 @@ onUnmounted(() => {
         :detect-game="detectGame"
         :open-bep-in-ex-install="openBepInExInstall"
         :uninstall-bep-in-ex="uninstallBepInEx"
+        :open-bep-in-ex-config="openBepInExConfig"
         :open-backup-directory="openBackupDirectory"
         :backup-bep-in-ex="backupBepInEx"
         :restore-backup="restoreBackup"
@@ -2493,9 +2498,9 @@ onUnmounted(() => {
   </div>
   <ModRecycleBin :open="showModRecycleBin" :game-blocked="gameBlocked" :busy="!!busy"
     @close="showModRecycleBin = false" @restored="handleRecycledModRestored" />
-  <ModConfigEditor v-if="configEditorMod" :mod="configEditorMod" :game-blocked="gameBlocked" :busy="!!busy"
+  <ModConfigEditor v-if="configEditorTarget" :target="configEditorTarget" :game-blocked="gameBlocked" :busy="!!busy"
     :confirm-discard="() => requestConfirmation({ title: t('未保存的配置'), message: t('配置尚未保存，确定放弃修改？'), danger: true })"
-    @close="configEditorMod = null" />
+    @close="configEditorTarget = null" />
   <div v-if="showInstall" class="modal-backdrop" @click.self="closeInstallDialog">
     <div class="modal install-modal">
       <div class="modal-head">

@@ -3877,11 +3877,7 @@ fn resolve_mod_config(
     state: &AppState,
     dll_file: &str,
 ) -> Result<(PathBuf, String, String), String> {
-    let config = {
-        let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
-        state.config.load_or_default()
-    };
-    let root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let (root, config) = resolve_config_game(state)?;
     resolve_mod_file_for_location(&root, dll_file)?;
     let installed = mods::scan_mods_with_manifests(&root, &config, None);
     let key = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
@@ -3893,6 +3889,15 @@ fn resolve_mod_config(
     Ok((root, guid, config.game.path))
 }
 
+fn resolve_config_game(state: &AppState) -> Result<(PathBuf, AppConfig), String> {
+    let config = {
+        let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+        state.config.load_or_default()
+    };
+    let root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    Ok((root, config))
+}
+
 #[tauri::command]
 pub fn save_mod_config(
     state: State<'_, AppState>,
@@ -3901,14 +3906,57 @@ pub fn save_mod_config(
     content: String,
 ) -> Result<crate::mod_config::ModConfigDocument, String> {
     let (game_root, guid, configured_path) = resolve_mod_config(&state, &dll_file)?;
+    save_config_document(
+        &state,
+        &game_root,
+        &guid,
+        &configured_path,
+        &revision,
+        &content,
+    )
+}
+
+#[tauri::command]
+pub fn read_bepinex_config(
+    state: State<'_, AppState>,
+) -> Result<crate::mod_config::ModConfigDocument, String> {
+    let (game_root, _) = resolve_config_game(&state)?;
+    crate::mod_config::read(&game_root, "BepInEx")
+}
+
+#[tauri::command]
+pub fn save_bepinex_config(
+    state: State<'_, AppState>,
+    revision: String,
+    content: String,
+) -> Result<crate::mod_config::ModConfigDocument, String> {
+    let (game_root, config) = resolve_config_game(&state)?;
+    save_config_document(
+        &state,
+        &game_root,
+        "BepInEx",
+        &config.game.path,
+        &revision,
+        &content,
+    )
+}
+
+fn save_config_document(
+    state: &AppState,
+    game_root: &Path,
+    guid: &str,
+    configured_path: &str,
+    revision: &str,
+    content: &str,
+) -> Result<crate::mod_config::ModConfigDocument, String> {
     let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
     let config = state.config.load_or_default();
     if config.game.path != configured_path {
         return Err("厨房目录已变化，请重新打开配置".into());
     }
-    game::ensure_game_stopped(&game_root)?;
-    let result = crate::mod_config::save(&game_root, &guid, &revision, &content);
-    log::info!("保存 MOD 配置：GUID={}，成功={}", guid, result.is_ok());
+    game::ensure_game_stopped(game_root)?;
+    let result = crate::mod_config::save(game_root, guid, revision, content);
+    log::info!("保存配置：标识={}，成功={}", guid, result.is_ok());
     result
 }
 
@@ -4766,6 +4814,85 @@ mod mod_file_location_tests {
             assert!(root.starts_with(&temp) && root != temp);
             let _ = fs::remove_dir_all(root);
         }
+    }
+
+    #[test]
+    fn framework_config_uses_game_root_without_plugins_and_preserves_write_guards() {
+        let workspace = Workspace::new();
+        let state = AppState {
+            config: ConfigService::for_test(workspace.root.join("manager")),
+            operation: Mutex::new(()),
+            repository_cache: tokio::sync::Mutex::new(()),
+            game_state: Mutex::new(None),
+        };
+        let mut config = state.config.load().unwrap();
+        config.game.path = workspace.game.to_string_lossy().into_owned();
+        config.game.auto_detect = false;
+        state.config.save(&config).unwrap();
+        let (game, resolved) = resolve_config_game(&state).unwrap();
+        assert_eq!(game, workspace.game);
+        assert!(!crate::mod_config::exists(&game, "BepInEx"));
+        assert!(crate::mod_config::read(&game, "BepInEx").is_err());
+        assert!(!game.join("BepInEx/config").exists());
+
+        let path = workspace.file("BepInEx/config/BepInEx.cfg");
+        fs::write(
+            &path,
+            b"\xef\xbb\xbf[Logging.Console]\r\nEnabled = false\r\n",
+        )
+        .unwrap();
+        assert!(!game.join("BepInEx/plugins").exists());
+        let document = crate::mod_config::read(&game, "BepInEx").unwrap();
+        assert_eq!(document.file_name, "BepInEx.cfg");
+        let saved = save_config_document(
+            &state,
+            &game,
+            "BepInEx",
+            &resolved.game.path,
+            &document.revision,
+            "[Logging.Console]\r\nEnabled = true\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"\xef\xbb\xbf[Logging.Console]\r\nEnabled = true\r\n"
+        );
+        fs::write(&path, "external change").unwrap();
+        assert_eq!(
+            save_config_document(
+                &state,
+                &game,
+                "BepInEx",
+                &resolved.game.path,
+                &saved.revision,
+                "overwrite",
+            )
+            .err()
+            .as_deref(),
+            Some("配置文件已被外部修改，请重新加载后再保存")
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external change");
+
+        config.game.path = workspace
+            .root
+            .join("other-game")
+            .to_string_lossy()
+            .into_owned();
+        state.config.save(&config).unwrap();
+        assert_eq!(
+            save_config_document(
+                &state,
+                &game,
+                "BepInEx",
+                &resolved.game.path,
+                &saved.revision,
+                "overwrite",
+            )
+            .err()
+            .as_deref(),
+            Some("厨房目录已变化，请重新打开配置")
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external change");
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         .unwrap_or_else(|| BepInExInfo {
             installed: false,
             complete: false,
+            has_config: false,
             version: None,
             version_source: None,
             backups: Vec::new(),
@@ -184,6 +185,7 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
     let result = BepInExInfo {
         installed,
         complete,
+        has_config: crate::mod_config::exists(game, "BepInEx"),
         version,
         version_source: source,
         backups,

@@ -216,6 +216,8 @@ fn game_file_stamps(info: Option<&GameInfo>, backups: &Path) -> Vec<(PathBuf, Op
         root.join("BepInEx/core"),
         root.join("BepInEx/core/BepInEx.dll"),
         root.join("BepInEx/core/BepInEx.Core.dll"),
+        root.join("BepInEx/config"),
+        root.join("BepInEx/config/BepInEx.cfg"),
         root.join("winhttp.dll"),
         root.join("winhttp.dll.disabled"),
         backups.to_path_buf(),
@@ -242,6 +244,7 @@ mod tests {
             bepinex: BepInExInfo {
                 installed: false,
                 complete: false,
+                has_config: false,
                 version: None,
                 version_source: None,
                 backups: Vec::new(),
@@ -312,6 +315,42 @@ mod tests {
         assert!(after.bepinex.installed && after.bepinex.complete);
         let mut previous = Some(before);
         assert!(changed_snapshot(&mut previous, after).is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn framework_config_creation_and_removal_invalidate_and_publish_once() {
+        let root =
+            std::env::temp_dir().join(format!("oc2-framework-config-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("BepInEx/config")).unwrap();
+        let settings = GameConfig {
+            path: root.to_string_lossy().into_owned(),
+            auto_detect: false,
+        };
+        let backups = root.join("backups");
+        let before = game::detect_game_from_settings(&settings);
+        assert!(!before.bepinex.has_config);
+        let mut previous = Some(before.clone());
+        let mut stamps = game_file_stamps(Some(&before), &backups);
+        let config = root.join("BepInEx/config/BepInEx.cfg");
+
+        for exists in [true, false] {
+            if exists {
+                fs::write(&config, "[Logging.Console]\nEnabled = false\n").unwrap();
+            } else {
+                fs::remove_file(&config).unwrap();
+            }
+            let next_stamps = game_file_stamps(Some(&before), &backups);
+            assert!(stamps != next_stamps);
+            let next = game::detect_game_from_settings(&settings);
+            assert_eq!(next.bepinex.has_config, exists);
+            let event = changed_snapshot(&mut previous, next.clone()).unwrap();
+            assert_eq!(event.bepinex.has_config, exists);
+            assert!(changed_snapshot(&mut previous, next).is_none());
+            assert!(next_stamps == game_file_stamps(Some(&before), &backups));
+            stamps = next_stamps;
+        }
+
         fs::remove_dir_all(root).unwrap();
     }
 

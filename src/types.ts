@@ -81,11 +81,12 @@ export interface PublicConfig {
   github_proxies: GitHubProxyConfig
 }
 export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
-export interface BepInExInfo { installed: boolean; complete: boolean; version?: string; version_source?: string; backups: string[] }
+export interface BepInExInfo { installed: boolean; complete: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
 export interface InstalledMod { repository_id?: string; repository_ids?: string[]; package_id?: string; package_name?: string; package_mod_count?: number; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
 export interface ModConfigDocument { guid: string; file_name: string; content: string; revision: string }
+export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }

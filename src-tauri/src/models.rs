@@ -46,6 +46,8 @@ pub struct InstalledMod {
     pub product_name: Option<String>,
     pub original_filename: Option<String>,
     pub guid: Option<String>,
+    #[serde(default)]
+    pub has_config: bool,
     pub plugin_name: Option<String>,
     pub company: Option<String>,
     pub copyright: Option<String>,

@@ -5,6 +5,7 @@ mod download;
 mod game;
 mod game_state;
 mod github_proxies;
+mod mod_config;
 mod models;
 mod mods;
 mod recycle_bin;
@@ -147,6 +148,8 @@ pub fn run() {
             commands::open_game_directory,
             commands::open_mod_directory,
             commands::open_mod_file_location,
+            commands::read_mod_config,
+            commands::save_mod_config,
             commands::open_backup_directory,
             commands::open_release_page,
             commands::open_update_repository,

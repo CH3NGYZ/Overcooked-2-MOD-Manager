@@ -3864,6 +3864,55 @@ pub fn open_mod_file_location(
 }
 
 #[tauri::command]
+pub fn read_mod_config(
+    state: State<'_, AppState>,
+    dll_file: String,
+) -> Result<crate::mod_config::ModConfigDocument, String> {
+    let (game_root, guid, _) = resolve_mod_config(&state, &dll_file)?;
+    log::debug!("读取 MOD 配置：GUID={}", guid);
+    crate::mod_config::read(&game_root, &guid)
+}
+
+fn resolve_mod_config(
+    state: &AppState,
+    dll_file: &str,
+) -> Result<(PathBuf, String, String), String> {
+    let config = {
+        let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+        state.config.load_or_default()
+    };
+    let root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    resolve_mod_file_for_location(&root, dll_file)?;
+    let installed = mods::scan_mods_with_manifests(&root, &config, None);
+    let key = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
+    let guid = installed
+        .into_iter()
+        .find(|item| item.dll_file.eq_ignore_ascii_case(&key))
+        .and_then(|item| item.guid)
+        .ok_or("无法识别 MOD 的 GUID，请重新扫描")?;
+    Ok((root, guid, config.game.path))
+}
+
+#[tauri::command]
+pub fn save_mod_config(
+    state: State<'_, AppState>,
+    dll_file: String,
+    revision: String,
+    content: String,
+) -> Result<crate::mod_config::ModConfigDocument, String> {
+    let (game_root, guid, configured_path) = resolve_mod_config(&state, &dll_file)?;
+    let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+    let config = state.config.load_or_default();
+    if config.game.path != configured_path {
+        return Err("厨房目录已变化，请重新打开配置".into());
+    }
+    game::ensure_game_stopped(&game_root)?;
+    let result = crate::mod_config::save(&game_root, &guid, &revision, &content);
+    log::info!("保存 MOD 配置：GUID={}，成功={}", guid, result.is_ok());
+    result
+}
+
+#[tauri::command]
 pub fn open_backup_directory(
     state: State<'_, AppState>,
     backup_path: Option<String>,

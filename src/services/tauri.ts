@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { ModConfigDocument } from '../types'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, Dashboard, DownloadProgress, GameInfo, GitHubProxyPatch, ImportPreview, ModRecycleEntry, OperationResult, Provider, ProxyMode, PublicConfig, ReleaseInfo, RepositoryPatch, RepositorySource, RepositorySourceImportResult, RustLog, SettingsPatch, TokenPatch, TutorialRepositoryConfig, TutorialStepConfig, UninstallLocalModResult } from '../types'
@@ -77,6 +78,8 @@ export const api = {
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
   openModDirectory: () => invoke<OperationResult>('open_mod_directory'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),
+  readModConfig: (dllFile: string) => invoke<ModConfigDocument>('read_mod_config', { dllFile }),
+  saveModConfig: (dllFile: string, revision: string, content: string) => invoke<ModConfigDocument>('save_mod_config', { dllFile, revision, content }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
   openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),

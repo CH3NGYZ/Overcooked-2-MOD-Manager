@@ -486,9 +486,9 @@ selector = '[data-mod-file="ConfigurationManager.dll"] [data-tutorial="mod-actio
 view = "installed"
 scenario = "mod-management"
 title = "子 MOD 操作"
-description = "铅笔编辑备注，删除按钮将 DLL 移入回收站；最后一个 DLL 移走时一并回收包资源。"
+description = "文件夹按钮定位 DLL；配置文件齿轮按钮编辑配置，仅在 BepInEx/config 中存在与 MOD GUID 同名的 .cfg 文件时显示。点击后在管理器内打开宽高均占窗口 80% 的编辑器，可查找、修改，通过保存按钮或 Ctrl+S 保存；未保存关闭会询问，文件被外部修改时需重新加载，游戏运行中只读。铅笔编辑备注，删除按钮将 DLL 移入回收站；最后一个 DLL 移走时一并回收包资源。"
 title_i18n = { "zh-CN" = "子 MOD 操作", "zh-TW" = "子 MOD 操作", en = "Child MOD actions", ko = "하위 MOD 작업" }
-description_i18n = { "zh-CN" = "铅笔编辑备注，删除按钮将 DLL 移入回收站；最后一个 DLL 移走时一并回收包资源。", "zh-TW" = "鉛筆編輯備註，刪除按鈕將 DLL 移入資源回收筒；最後一個 DLL 移走時一併回收包資源。", en = "The pencil edits notes; Delete moves the DLL to the recycle bin. Removing the last DLL also moves the package resources.", ko = "연필로 메모를 수정하고 삭제 버튼으로 DLL을 휴지통에 옮깁니다. 마지막 DLL을 옮기면 패키지 리소스도 함께 이동합니다." }
+description_i18n = { "zh-CN" = "文件夹按钮定位 DLL；配置文件齿轮按钮编辑配置，仅在 BepInEx/config 中存在与 MOD GUID 同名的 .cfg 文件时显示。点击后在管理器内打开宽高均占窗口 80% 的编辑器，可查找、修改，通过保存按钮或 Ctrl+S 保存；未保存关闭会询问，文件被外部修改时需重新加载，游戏运行中只读。铅笔编辑备注，删除按钮将 DLL 移入回收站；最后一个 DLL 移走时一并回收包资源。", "zh-TW" = "資料夾按鈕定位 DLL；設定檔齒輪按鈕編輯設定，僅在 BepInEx/config 中存在與 MOD GUID 同名的 .cfg 檔案時顯示。點擊後在管理器內開啟寬高均佔視窗 80% 的編輯器，可尋找、修改，透過儲存按鈕或 Ctrl+S 儲存；未儲存關閉會詢問，檔案被外部修改時需重新載入，遊戲執行中唯讀。鉛筆編輯備註，刪除按鈕將 DLL 移入資源回收筒；最後一個 DLL 移走時一併回收包資源。", en = "The folder locates the DLL. The configuration gear edits settings and appears only when BepInEx/config contains a .cfg file named after the MOD GUID. It opens an editor inside the manager at 80% of the window width and height. Find and edit text, then use Save or Ctrl+S. Closing with unsaved changes asks for confirmation; external changes require reloading. The editor is read only while the game runs. The pencil edits notes; Delete moves the DLL to the recycle bin. Removing the last DLL also moves the package resources.", ko = "폴더 버튼으로 DLL 위치를 찾습니다. 설정 톱니바퀴는 BepInEx/config에 MOD GUID와 같은 이름의 .cfg 파일이 있을 때만 표시됩니다. 클릭하면 관리자 안에서 창 너비와 높이의 80%를 차지하는 편집기가 열립니다. 검색하고 수정한 후 저장 버튼 또는 Ctrl+S로 저장합니다. 저장하지 않고 닫으면 확인을 요청하며, 외부에서 변경된 파일은 다시 불러와야 합니다. 게임 실행 중에는 읽기 전용입니다. 연필로 메모를 수정하고 삭제 버튼으로 DLL을 휴지통에 옮깁니다. 마지막 DLL을 옮기면 패키지 리소스도 함께 이동합니다." }
 
 [[steps]]
 id = "sponsor-sidebar"

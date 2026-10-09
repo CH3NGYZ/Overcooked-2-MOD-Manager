@@ -18,6 +18,7 @@ import AppSidebar from './components/AppSidebar.vue'
 import FrameworkView from './components/FrameworkView.vue'
 import InstalledModsView from './components/InstalledModsView.vue'
 import ModRecycleBin from './components/ModRecycleBin.vue'
+import ModConfigEditor from './components/ModConfigEditor.vue'
 import OverviewView from './components/OverviewView.vue'
 import RepositoriesView from './components/RepositoriesView.vue'
 import SponsorView from './components/SponsorView.vue'
@@ -62,6 +63,7 @@ const showImport = ref(false)
 const showRepositorySource = ref(false)
 const showGithubProxyManager = ref(false)
 const showModRecycleBin = ref(false)
+const configEditorMod = ref<InstalledMod | null>(null)
 const repositorySourceUrl = ref('')
 const repositorySourceNickname = ref('')
 const repositorySourceUniqueId = ref('')
@@ -920,6 +922,10 @@ async function openModFileLocation(mod: InstalledMod) {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value) return
   // run already displays failures; keep click errors out of unhandled rejections.
   await run('正在打开模组目录', () => api.openModFileLocation(mod.dll_file)).catch(() => undefined)
+}
+function openModConfig(mod: InstalledMod) {
+  if (tutorial.visible.value || tutorial.previewing.value || busy.value || !mod.has_config || !mod.guid) return
+  configEditorMod.value = mod
 }
 function updateChannelName(id: string) {
   return t(({ 'gitee-direct': 'Gitee API 1', 'gitee-token': 'Gitee API 2', 'gitee-proxy': 'Gitee API 3', 'gitee-release-direct': 'Gitee Release', 'github-direct': 'Github API 1', 'github-token': 'Github API 2', 'github-proxy': 'Github API 3', 'github-release-direct': 'Github Release', 'github-release-proxy': 'Github Release Proxy' } as Record<string, string>)[id] || id)
@@ -2065,6 +2071,7 @@ onUnmounted(() => {
         :save-hide-unidentified-mods="saveHideUnidentifiedMods"
         :open-mod-directory="openModDirectory"
         :open-mod-file-location="openModFileLocation"
+        :open-mod-config="openModConfig"
         :open-mod-recycle-bin="openModRecycleBin"
         :game-blocked="gameBlocked"
         :install-local-mod="installLocalMod"
@@ -2486,6 +2493,9 @@ onUnmounted(() => {
   </div>
   <ModRecycleBin :open="showModRecycleBin" :game-blocked="gameBlocked" :busy="!!busy"
     @close="showModRecycleBin = false" @restored="handleRecycledModRestored" />
+  <ModConfigEditor v-if="configEditorMod" :mod="configEditorMod" :game-blocked="gameBlocked" :busy="!!busy"
+    :confirm-discard="() => requestConfirmation({ title: t('未保存的配置'), message: t('配置尚未保存，确定放弃修改？'), danger: true })"
+    @close="configEditorMod = null" />
   <div v-if="showInstall" class="modal-backdrop" @click.self="closeInstallDialog">
     <div class="modal install-modal">
       <div class="modal-head">

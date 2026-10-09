@@ -1,0 +1,14 @@
+.mod-config-backdrop { z-index: 40; padding: 0; }
+.mod-config-backdrop > .mod-config-modal {
+  width: 80%; height: 80%; max-width: none; max-height: none;
+  display: flex; flex-direction: column; gap: 12px; overflow: hidden;
+}
+.mod-config-heading { min-width: 0; }
+.mod-config-heading h3 { display: flex; align-items: center; gap: 8px; }
+.mod-config-heading p { overflow-wrap: anywhere; margin: 6px 0 0; }
+.mod-config-editor-area { flex: 1; min-height: 0; position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+.mod-config-editor { width: 100%; height: 100%; }
+.mod-config-loading { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+.mod-config-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.mod-config-footer > span { color: var(--muted); font-size: 12px; }
+.mod-config-error { color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }

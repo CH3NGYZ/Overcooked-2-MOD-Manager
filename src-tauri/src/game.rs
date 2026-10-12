@@ -289,54 +289,54 @@ pub fn is_game_running(game: &Path) -> bool {
 }
 
 /// Returns the platform-specific game process name
+#[cfg(not(target_os = "macos"))]
 fn game_process_name() -> &'static str {
     #[cfg(windows)]
     return "Overcooked2.exe";
     #[cfg(target_os = "linux")]
     return "Overcooked2.x86_64";
-    #[cfg(target_os = "macos")]
-    return "Overcooked2";
 }
 
 /// Reuse process metadata in the observer without logging unchanged checks.
 /// File operations still call `is_game_running` with a fresh process snapshot.
+#[cfg(target_os = "macos")]
+pub(crate) fn is_game_running_with_system(_game: &Path, system: &mut System) -> bool {
+    system
+        .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
+
+    // On macOS with Crossover, the game runs through wine
+    // Check for wine processes with the game executable path in command line
+    let game_exe_name = game_executable_name();
+    system.processes().values().any(|process| {
+        let name = process.name();
+        if !name.contains("wine") && !name.contains("CXWineHelper") {
+            return false;
+        }
+        // Check if command line contains the game executable
+        process.cmd().iter().any(|arg| {
+            arg.contains(game_exe_name) || arg.contains("Overcooked2")
+        })
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
     system
         .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
 
-    #[cfg(target_os = "macos")]
-    {
-        // On macOS with Crossover, the game runs through wine
-        // Check for wine processes with the game executable path in command line
-        let game_exe_name = game_executable_name();
-        return system.processes().values().any(|process| {
-            let name = process.name();
-            if !name.contains("wine") && !name.contains("CXWineHelper") {
-                return false;
-            }
-            // Check if command line contains the game executable
-            process.cmd().iter().any(|arg| {
-                arg.contains(game_exe_name) || arg.contains("Overcooked2")
-            })
-        });
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let target = game.join(game_executable_name());
-        let target = normalize_path(target);
-        let process_name = game_process_name();
-        system.processes().values().any(|process| {
-            if !process.name().eq_ignore_ascii_case(process_name) {
-                return false;
-            }
-            process
-                .exe()
-                .map(|path| normalize_path(path))
-                .map(|path| path == target)
-                .unwrap_or(false)
-        })
-    }
+    let target = game.join(game_executable_name());
+    let target = normalize_path(target);
+    let process_name = game_process_name();
+    system.processes().values().any(|process| {
+        if !process.name().eq_ignore_ascii_case(process_name) {
+            return false;
+        }
+        process
+            .exe()
+            .map(|path| normalize_path(path))
+            .map(|path| path == target)
+            .unwrap_or(false)
+    })
 }
 
 /// Check if CrossOver is running (macOS only)

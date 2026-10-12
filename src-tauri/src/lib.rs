@@ -1,16 +1,20 @@
 mod archive;
 mod commands;
 mod config;
+mod direct_mod;
 mod download;
 mod game;
 mod game_state;
 mod github_proxies;
+mod install_guard;
 mod mod_config;
 mod models;
 mod mods;
 mod recycle_bin;
 mod releases;
 mod repository_sources;
+mod update_host;
+mod update_migration;
 
 use chrono::Utc;
 use std::fs::{self, OpenOptions};
@@ -20,6 +24,11 @@ use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_guard::run_if_requested();
+    update_host::run_migration_if_requested();
+    if update_host::run_if_requested() {
+        return;
+    }
     install_panic_logger();
     request_elevation();
     tauri::Builder::default()
@@ -97,6 +106,7 @@ pub fn run() {
             commands::write_frontend_log,
             commands::save_mod_note,
             commands::install_local_mod,
+            direct_mod::install_online_mod,
             commands::uninstall_local_mod,
             commands::uninstall_mod_dll,
             commands::get_mod_recycle_bin,
@@ -109,6 +119,7 @@ pub fn run() {
             commands::refresh_github_proxies,
             commands::save_tokens,
             commands::detect_game,
+            commands::check_crossover_running,
             commands::set_game_path,
             commands::reset_game_path,
             commands::refresh_repository,

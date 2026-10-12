@@ -53,10 +53,6 @@
         "displayLanguageSelector": true,
         "startMenuFolder": "OC2 MOD Manager",
         "installerHooks": "installer-hooks.nsh"
-      },
-      "wix": {
-        "language": "zh-CN",
-        "template": "wix/main.wxs"
       }
     }
   },

@@ -17,7 +17,7 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
     let path = detected.as_ref().map(|(_, game)| game.clone());
     let game_exists = path
         .as_ref()
-        .map(|p| p.join("Overcooked2.exe").is_file())
+        .map(|p| game_executable_exists(p))
         .unwrap_or(false);
     let kitchen_running = path.as_ref().map(|p| is_game_running(p)).unwrap_or(false);
     let backup_root = std::env::current_exe()
@@ -58,6 +58,21 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
     result
 }
 
+/// Returns the platform-specific game executable name
+fn game_executable_name() -> &'static str {
+    #[cfg(windows)]
+    return "Overcooked2.exe";
+    #[cfg(target_os = "linux")]
+    return "Overcooked2.x86_64";
+    #[cfg(target_os = "macos")]
+    return "Overcooked2.exe"; // CrossOver runs Windows .exe files
+}
+
+/// Checks if the game executable exists in the given directory
+fn game_executable_exists(game_dir: &Path) -> bool {
+    game_dir.join(game_executable_name()).exists()
+}
+
 fn find_game_path(config: &crate::models::GameConfig) -> Option<(PathBuf, PathBuf)> {
     if !config.path.is_empty() {
         let stored = PathBuf::from(&config.path);
@@ -66,7 +81,7 @@ fn find_game_path(config: &crate::models::GameConfig) -> Option<(PathBuf, PathBu
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
-            if parent.join("Overcooked2.exe").is_file() {
+            if game_executable_exists(parent) {
                 log::debug!("从程序目录探测到游戏");
                 return Some((parent.to_path_buf(), parent.to_path_buf()));
             }
@@ -74,9 +89,11 @@ fn find_game_path(config: &crate::models::GameConfig) -> Option<(PathBuf, PathBu
     }
     let detected = steam_libraries().into_iter().find_map(|library| {
         let game = library.join("steamapps/common/Overcooked! 2");
-        game.join("Overcooked2.exe")
-            .is_file()
-            .then_some((library, game))
+        if game_executable_exists(&game) {
+            Some((library, game))
+        } else {
+            None
+        }
     });
     if detected.is_some() {
         log::debug!("从 Steam 库探测到游戏");
@@ -94,6 +111,7 @@ fn steam_libraries() -> Vec<PathBuf> {
 /// these to notice a newly installed Steam client without reparsing its VDF.
 pub(crate) fn steam_root_paths() -> Vec<PathBuf> {
     let mut roots = Vec::new();
+
     #[cfg(windows)]
     {
         use winreg::RegKey;
@@ -105,13 +123,48 @@ pub(crate) fn steam_root_paths() -> Vec<PathBuf> {
                 }
             }
         }
+        if let Some(program_files) = std::env::var_os("PROGRAMFILES(X86)") {
+            roots.push(PathBuf::from(program_files).join("Steam"));
+        }
+        if let Some(program_files) = std::env::var_os("PROGRAMFILES") {
+            roots.push(PathBuf::from(program_files).join("Steam"));
+        }
     }
-    if let Some(program_files) = std::env::var_os("PROGRAMFILES(X86)") {
-        roots.push(PathBuf::from(program_files).join("Steam"));
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let home_path = PathBuf::from(home);
+            // Primary Steam installation paths on Linux
+            roots.push(home_path.join(".steam/steam"));
+            roots.push(home_path.join(".local/share/Steam"));
+            // Flatpak Steam installation
+            roots.push(home_path.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"));
+        }
     }
-    if let Some(program_files) = std::env::var_os("PROGRAMFILES") {
-        roots.push(PathBuf::from(program_files).join("Steam"));
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let home_path = PathBuf::from(home);
+            // Standard macOS Steam installation
+            roots.push(home_path.join("Library/Application Support/Steam"));
+            // CrossOver bottle paths - scan common bottle locations
+            let crossover_bottles = home_path.join("Library/Application Support/CrossOver/Bottles");
+            if let Ok(entries) = fs::read_dir(&crossover_bottles) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        // Check for Steam in each bottle's drive_c
+                        let steam_path = entry.path().join("drive_c/Program Files (x86)/Steam");
+                        if steam_path.exists() {
+                            roots.push(steam_path);
+                        }
+                    }
+                }
+            }
+        }
     }
+
     roots
 }
 
@@ -199,16 +252,33 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
     result
 }
 
+/// Returns the platform-specific BepInEx loader file paths
+fn bepinex_loader_paths(game: &Path) -> (PathBuf, PathBuf) {
+    #[cfg(windows)]
+    {
+        (game.join("winhttp.dll"), game.join("winhttp.dll.disabled"))
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        // Linux/macOS use doorstop loader
+        (
+            game.join("doorstop_libs/libdoorstop_x64.so"),
+            game.join("doorstop_libs/libdoorstop_x64.so.disabled"),
+        )
+    }
+}
+
 pub fn winhttp_state(game: &Path) -> WinhttpState {
-    let enabled = game.join("winhttp.dll").is_file();
-    let disabled = game.join("winhttp.dll.disabled").is_file();
+    let (enabled_path, disabled_path) = bepinex_loader_paths(game);
+    let enabled = enabled_path.is_file();
+    let disabled = disabled_path.is_file();
     let state = match (enabled, disabled) {
         (true, false) => WinhttpState::ModEnabled,
         (false, true) => WinhttpState::ModDisabled,
         (false, false) => WinhttpState::Missing,
         (true, true) => WinhttpState::Conflict,
     };
-    log::trace!("WinHTTP 状态：{:?}", state);
+    log::trace!("框架加载器状态：{:?}", state);
     state
 }
 
@@ -218,23 +288,74 @@ pub fn is_game_running(game: &Path) -> bool {
     running
 }
 
+/// Returns the platform-specific game process name
+fn game_process_name() -> &'static str {
+    #[cfg(windows)]
+    return "Overcooked2.exe";
+    #[cfg(target_os = "linux")]
+    return "Overcooked2.x86_64";
+    #[cfg(target_os = "macos")]
+    return "Overcooked2";
+}
+
 /// Reuse process metadata in the observer without logging unchanged checks.
 /// File operations still call `is_game_running` with a fresh process snapshot.
 pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
-    let target = game.join("Overcooked2.exe");
+    let target = game.join(game_executable_name());
     let target = normalize_path(target);
     system
         .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
-    system.processes().values().any(|process| {
-        if !process.name().eq_ignore_ascii_case("Overcooked2.exe") {
-            return false;
-        }
-        process
-            .exe()
-            .map(|path| normalize_path(path))
-            .map(|path| path == target)
-            .unwrap_or(false)
-    })
+
+    #[cfg(target_os = "macos")]
+    {
+        // On macOS with Crossover, the game runs through wine
+        // Check for wine processes with the game executable path in command line
+        let game_exe_name = game_executable_name();
+        return system.processes().values().any(|process| {
+            let name = process.name();
+            if !name.contains("wine") && !name.contains("CXWineHelper") {
+                return false;
+            }
+            // Check if command line contains the game executable
+            process.cmd().iter().any(|arg| {
+                arg.contains(game_exe_name) || arg.contains("Overcooked2")
+            })
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let process_name = game_process_name();
+        system.processes().values().any(|process| {
+            if !process.name().eq_ignore_ascii_case(process_name) {
+                return false;
+            }
+            process
+                .exe()
+                .map(|path| normalize_path(path))
+                .map(|path| path == target)
+                .unwrap_or(false)
+        })
+    }
+}
+
+/// Check if CrossOver is running (macOS only)
+#[cfg(target_os = "macos")]
+pub fn is_crossover_running() -> bool {
+    let mut system = System::new();
+    system
+        .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
+    let running = system.processes().values().any(|process| {
+        let name = process.name();
+        name.contains("CrossOver") || name.contains("wineserver") || name.contains("wine")
+    });
+    log::trace!("CrossOver 运行检查：运行中={}", running);
+    running
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_crossover_running() -> bool {
+    false
 }
 
 pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
@@ -268,7 +389,7 @@ pub fn safe_game_path(game: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(candidate)
 }
 
-fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -295,8 +416,9 @@ fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
     Err("路径逃逸游戏目录".into())
 }
 
-/// Reads the Windows PE file version shown by Explorer's Details tab.
-/// This does not load or execute the DLL.
+/// Reads the file version information.
+/// On Windows: Reads PE file version from the version resource.
+/// On Linux/macOS: Returns None as ELF/Mach-O binaries don't have embedded version info.
 pub fn read_file_version(path: &Path) -> Option<String> {
     #[cfg(windows)]
     {
@@ -371,6 +493,7 @@ pub fn read_file_version(path: &Path) -> Option<String> {
     #[cfg(not(windows))]
     {
         let _ = path;
+        log::trace!("文件版本读取：非 Windows 平台不支持 PE 版本资源");
         None
     }
 }
@@ -386,7 +509,9 @@ pub struct FileMetadata {
     pub original_filename: Option<String>,
 }
 
-/// Reads display metadata from the PE version resource without loading the DLL.
+/// Reads display metadata from file version resources.
+/// On Windows: Reads PE version resource metadata.
+/// On Linux/macOS: Returns empty metadata.
 pub fn read_file_metadata(path: &Path) -> FileMetadata {
     #[cfg(windows)]
     {
@@ -403,6 +528,7 @@ pub fn read_file_metadata(path: &Path) -> FileMetadata {
     #[cfg(not(windows))]
     {
         let _ = path;
+        log::trace!("文件元数据读取：非 Windows 平台返回空元数据");
         FileMetadata::default()
     }
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
 import {
   AlertTriangle, Download, ExternalLink, FileCog, FolderOpen, HardDriveDownload,
   Pencil, RefreshCw, RotateCcw, ShieldCheck, Trash2,
@@ -7,6 +8,7 @@ import type { GameInfo, PublicConfig } from '../types'
 import { t } from '../i18n'
 import overcookedIcon from '../../src-tauri/icons/Overcooked2.icon.png'
 import bepinexIcon from '../../src-tauri/icons/BepInEx.icon.png'
+import PlatformSetupGuide from './PlatformSetupGuide.vue'
 
 const props = defineProps<{
   game?: GameInfo
@@ -25,6 +27,33 @@ const props = defineProps<{
   restoreBackup: (backup: string) => void
   deleteBackup: (backup: string) => void
 }>()
+
+const showPlatformGuide = ref(false)
+const currentPlatform = ref<string>('')
+
+const shouldShowMacOSGuide = computed(() => {
+  return currentPlatform.value === 'darwin' && !props.game?.path
+})
+
+async function detectPlatform() {
+  const { platform } = await import('@tauri-apps/plugin-os')
+  currentPlatform.value = platform()
+
+  // Auto-show guide on macOS when no game detected
+  if (shouldShowMacOSGuide.value) {
+    showPlatformGuide.value = true
+  }
+}
+
+function handleGuideCompleted() {
+  showPlatformGuide.value = false
+  // Trigger game detection after user completes setup
+  props.detectGame()
+}
+
+onMounted(() => {
+  detectPlatform()
+})
 </script>
 
 <template>
@@ -138,5 +167,12 @@ const props = defineProps<{
       </div>
       <div v-if="!(props.game?.bepinex.backups?.length)" class="empty-state">{{ t('还没有框架备份') }}</div>
     </div>
+
+    <!-- Platform Setup Guide -->
+    <PlatformSetupGuide
+      :visible="showPlatformGuide"
+      @close="showPlatformGuide = false"
+      @completed="handleGuideCompleted"
+    />
   </section>
 </template>

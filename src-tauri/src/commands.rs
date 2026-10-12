@@ -28,6 +28,31 @@ use crate::download::candidate_progress as asset_candidate_progress;
 pub const BEPINEX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip";
 pub const BEPINEX_GITHUB_URL: &str =
     "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip";
+
+// Linux-specific BepInEx download URLs
+pub const BEPINEX_LINUX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex-linux.zip";
+pub const BEPINEX_LINUX_GITHUB_URL: &str =
+    "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_linux_x64_5.4.23.5.zip";
+
+/// Returns the platform-appropriate BepInEx download URL
+fn get_bepinex_url(provider: &Provider) -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        match provider {
+            Provider::Gitee => BEPINEX_LINUX_GITEE_URL,
+            Provider::Github => BEPINEX_LINUX_GITHUB_URL,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Windows and macOS use the same Windows version
+        match provider {
+            Provider::Gitee => BEPINEX_GITEE_URL,
+            Provider::Github => BEPINEX_GITHUB_URL,
+        }
+    }
+}
+
 const INSTALLER_GITEE_OWNER: &str = "ch3ngyz";
 const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
 const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
@@ -756,7 +781,15 @@ pub fn install_local_mod(
     state: State<'_, AppState>,
     source_path: String,
 ) -> Result<OperationResult, String> {
-    log::info!("开始安装本地 MOD：来源={}", source_path);
+    install_manual_mod(&state, &PathBuf::from(source_path), None)
+}
+
+pub(crate) fn install_manual_mod(
+    state: &AppState,
+    source: &Path,
+    expected_game_root: Option<&Path>,
+) -> Result<OperationResult, String> {
+    log::info!("开始安装手动 MOD");
     let _guard = state
         .operation
         .lock()
@@ -764,7 +797,9 @@ pub fn install_local_mod(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    let source = PathBuf::from(source_path);
+    if expected_game_root.is_some_and(|expected| expected != game_root) {
+        return Err("厨房目录已变化，请重新添加模组".into());
+    }
     if !source.is_file() {
         return Err("所选文件不存在".into());
     }
@@ -1665,6 +1700,11 @@ pub fn detect_game(state: State<'_, AppState>) -> Result<GameInfo, String> {
 }
 
 #[tauri::command]
+pub fn check_crossover_running() -> bool {
+    game::is_crossover_running()
+}
+
+#[tauri::command]
 pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInfo, String> {
     log::info!("设置游戏目录");
     let root = PathBuf::from(&path);
@@ -1854,11 +1894,12 @@ pub async fn install_bepinex(
     };
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
-    let download_url = match provider {
-        Provider::Gitee => BEPINEX_GITEE_URL,
-        Provider::Github => BEPINEX_GITHUB_URL,
-    };
-    log::debug!("开始下载 BepInEx 安装包：平台={:?}", provider);
+    let download_url = get_bepinex_url(&provider);
+    log::debug!(
+        "开始下载 BepInEx 安装包：平台={:?}，URL={}",
+        provider,
+        download_url
+    );
     let proxy_urls = if provider == Provider::Github {
         asset_proxy_urls(
             &config.github_proxies.release_proxies,
@@ -1955,6 +1996,7 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     if !source.exists() {
         return Err("BepInEx 未安装".into());
     }
+    ensure_copy_paths_disjoint(&source, &state.config.backups_dir())?;
     archive::clear_readonly(&source)?;
     let backup = bepinex_backup_path(&state.config.backups_dir())?;
     // The game and portable manager may be on different drives. `rename`
@@ -4441,10 +4483,11 @@ pub async fn install_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
     locale: Option<String>,
+    failure_message: Option<String>,
 ) -> Result<OperationResult, String> {
     archive::start_download();
-    log::info!("开始安装器自更新");
     let _ = locale;
+    log::info!("开始安装器自更新");
     let attempt = discover_and_download_installer_update(&state, &app).await?;
     let (info, bytes) = match attempt {
         InstallerDownloadAttempt::Updated { info, bytes } => (info, bytes),
@@ -4476,49 +4519,35 @@ pub async fn install_app_update(
         bytes.len()
     );
     let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    installer_update_command(&path, installer_type, &current_exe)?
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    // Let Tauri close its windows and release WebView/file handles before the
-    // installer replaces the running executable. The elevated installer
-    // handles any stale process before copying the new files.
+    crate::update_host::start(
+        &path,
+        installer_type,
+        &current_exe,
+        &info.version,
+        failure_message.as_deref(),
+    )
+    .await?;
+    log::info!("更新助手已接管，准备退出当前应用；后续结果写入 logs/update.log");
     app.exit(0);
-    log::info!("安装器更新进程已启动，准备退出当前应用");
     Ok(OperationResult {
         ok: true,
-        message: "更新安装程序已启动".into(),
+        message: "更新助手已接管".into(),
     })
-    /*
-    let update = app
-        .updater_builder()
-        .header("User-Agent", releases::APP_USER_AGENT)
-        .map_err(|error| error.to_string())?
-        .endpoints(endpoints)
-        .map_err(|error| error.to_string())?
-        .timeout(Duration::from_secs(20))
-        .restart_after_install(true)
-        .build()
-        .map_err(|error| error.to_string())?
-        .check()
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or("更新清单中没有可安装的签名版本")?;
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|error| error.to_string())?;
-    */
 }
 
-fn installer_update_command(
+pub(crate) fn installer_update_command(
     installer: &Path,
     installer_type: &str,
     current_exe: &Path,
+    auto_launch: bool,
 ) -> Result<std::process::Command, String> {
     let directory = current_exe.parent().ok_or("安装目录无效")?;
     let mut command = if installer_type == "exe" {
         let mut command = std::process::Command::new(installer);
-        command.args(["/S", "/UPDATE", "/OC2AutoLaunch"]);
+        command.args(["/S", "/UPDATE"]);
+        if auto_launch {
+            command.arg("/OC2AutoLaunch");
+        }
         let mut target = std::ffi::OsString::from("/D=");
         target.push(directory);
         // NSIS requires /D to be the last argument, without quotes even when
@@ -4535,12 +4564,11 @@ fn installer_update_command(
         let mut command = std::process::Command::new("msiexec.exe");
         let mut target = std::ffi::OsString::from("INSTALLDIR=");
         target.push(directory);
-        command
-            .arg("/i")
-            .arg(installer)
-            .arg("/quiet")
-            .arg("AUTOLAUNCHAPP=1")
-            .arg(target);
+        command.arg("/i").arg(installer).arg("/quiet");
+        if auto_launch {
+            command.arg("AUTOLAUNCHAPP=1");
+        }
+        command.arg(target);
         command
     };
     command.stdin(std::process::Stdio::null());
@@ -4620,6 +4648,7 @@ fn open_steam() -> Result<OperationResult, String> {
 }
 
 fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, String> {
+    ensure_copy_paths_disjoint(&game_root.join("BepInEx"), backup_root)?;
     let target = bepinex_backup_path(backup_root)?;
     copy_dir(&game_root.join("BepInEx"), &target)?;
     Ok(target)
@@ -4754,6 +4783,7 @@ fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), String> {
         return Err("备份目录不存在".into());
     }
     let destination = game_root.join("BepInEx");
+    ensure_copy_paths_disjoint(backup, &destination)?;
     if destination.exists() {
         let previous = game_root.join(format!("BepInEx.before-restore-{}", Utc::now().timestamp()));
         archive::clear_readonly(&destination)?;
@@ -4763,10 +4793,30 @@ fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), String> {
     copy_dir(backup, &destination)
 }
 
+fn ensure_copy_paths_disjoint(source: &Path, destination: &Path) -> Result<(), String> {
+    let source =
+        game::resolve_existing_ancestor(&std::path::absolute(source).map_err(|e| e.to_string())?)?;
+    let destination = game::resolve_existing_ancestor(
+        &std::path::absolute(destination).map_err(|e| e.to_string())?,
+    )?;
+    #[cfg(windows)]
+    let (source, destination) = (
+        PathBuf::from(source.to_string_lossy().to_lowercase()),
+        PathBuf::from(destination.to_string_lossy().to_lowercase()),
+    );
+    if source.starts_with(&destination) || destination.starts_with(&source) {
+        return Err(
+            "备份与框架目录重叠，已停止操作以避免递归复制。请将管理器移到游戏目录外后重试。".into(),
+        );
+    }
+    Ok(())
+}
+
 fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     if !source.is_dir() {
         return Err(format!("目录不存在: {}", source.display()));
     }
+    ensure_copy_paths_disjoint(source, destination)?;
     fs::create_dir_all(destination).map_err(|e| e.to_string())?;
     for entry in walkdir::WalkDir::new(source)
         .into_iter()
@@ -4787,6 +4837,107 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod backup_safety_tests {
+    use super::*;
+
+    struct Workspace(PathBuf);
+
+    impl Workspace {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("oc2-backup-safety-{}", Uuid::new_v4()));
+            fs::create_dir_all(root.join("game/BepInEx/plugins")).unwrap();
+            fs::write(root.join("game/BepInEx/plugins/mod.dll"), b"original").unwrap();
+            Self(root)
+        }
+
+        fn game(&self) -> PathBuf {
+            self.0.join("game")
+        }
+    }
+
+    impl Drop for Workspace {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn rejects_nested_and_same_directory_before_creating_a_backup() {
+        let workspace = Workspace::new();
+        let framework = workspace.game().join("BepInEx");
+        let backup_root = framework.join("plugins/OC2ModManager/backups");
+        assert!(backup_bepinex_dir(&workspace.game(), &backup_root).is_err());
+        assert!(!backup_root.exists());
+        assert!(copy_dir(&framework, &framework).is_err());
+        assert!(copy_dir(&framework, &workspace.game()).is_err());
+        assert_eq!(
+            fs::read(framework.join("plugins/mod.dll")).unwrap(),
+            b"original"
+        );
+    }
+
+    #[test]
+    fn permits_sibling_destination_and_preserves_source_files() {
+        let workspace = Workspace::new();
+        let backup_root = workspace.game().join("BepInEx-backups");
+        let backup = backup_bepinex_dir(&workspace.game(), &backup_root).unwrap();
+        assert_eq!(
+            fs::read(backup.join("plugins/mod.dll")).unwrap(),
+            b"original"
+        );
+        assert_eq!(
+            fs::read(workspace.game().join("BepInEx/plugins/mod.dll")).unwrap(),
+            b"original"
+        );
+    }
+
+    #[test]
+    fn rejects_nested_restore_before_removing_the_existing_framework() {
+        let workspace = Workspace::new();
+        let nested_backup = workspace.game().join("BepInEx/plugins/Manager/backups/old");
+        fs::create_dir_all(&nested_backup).unwrap();
+        fs::write(nested_backup.join("snapshot.txt"), b"backup").unwrap();
+        assert!(restore_backup_dir(&nested_backup, &workspace.game()).is_err());
+        assert_eq!(
+            fs::read(workspace.game().join("BepInEx/plugins/mod.dll")).unwrap(),
+            b"original"
+        );
+        assert_eq!(
+            fs::read(nested_backup.join("snapshot.txt")).unwrap(),
+            b"backup"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_a_junction_into_the_source_before_creating_missing_directories() {
+        let workspace = Workspace::new();
+        let alias = workspace.0.join("backup-alias");
+        let junction = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&alias)
+            .arg(
+                workspace
+                    .game()
+                    .join("BepInEx/plugins")
+                    .to_string_lossy()
+                    .replace('/', "\\"),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            junction.status.success(),
+            "{}",
+            String::from_utf8_lossy(&junction.stderr)
+        );
+        let destination = alias.join("new/backups");
+        assert!(backup_bepinex_dir(&workspace.game(), &destination).is_err());
+        assert!(!destination.exists());
+        fs::remove_dir(alias).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -5999,7 +6150,7 @@ mod update_status_tests {
     fn installer_updates_preserve_the_current_directory_with_spaces_and_unicode() {
         let current_exe = Path::new("C:/Users/Test User/管理器/OC2ModManager.exe");
         let installer = Path::new("C:/Temp/update.exe");
-        let nsis = installer_update_command(installer, "exe", current_exe).unwrap();
+        let nsis = installer_update_command(installer, "exe", current_exe, true).unwrap();
         assert_eq!(nsis.get_program(), installer.as_os_str());
         #[cfg(windows)]
         {
@@ -6013,7 +6164,7 @@ mod update_status_tests {
                 "NSIS /D must be last and unquoted"
             );
         }
-        let msi = installer_update_command(installer, "msi", current_exe).unwrap();
+        let msi = installer_update_command(installer, "msi", current_exe, true).unwrap();
         assert_eq!(
             msi.get_args().collect::<Vec<_>>(),
             [
@@ -6024,6 +6175,23 @@ mod update_status_tests {
                 "INSTALLDIR=C:/Users/Test User/管理器"
             ]
         );
+    }
+
+    #[test]
+    fn relocation_installers_wait_for_the_helper_to_migrate_data_and_launch() {
+        let executable =
+            Path::new("C:/Users/Test User/AppData/Local/OC2ModManager/OC2ModManager.exe");
+        for kind in ["exe", "msi"] {
+            let command =
+                installer_update_command(Path::new("C:/Temp/update.exe"), kind, executable, false)
+                    .unwrap();
+            assert!(
+                !command
+                    .get_args()
+                    .any(|arg| arg == "/OC2AutoLaunch" || arg == "AUTOLAUNCHAPP=1")
+            );
+            assert!(format!("{command:?}").contains("AppData/Local/OC2ModManager"));
+        }
     }
 
     fn repository(id: &str, mode: RepositoryDownloadMode) -> RepositoryConfig {

@@ -222,7 +222,13 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
             .as_ref()
             .and_then(|response| {
                 if response.status().is_success() {
-                    response.content_length()
+                    // HEAD has no body, so Reqwest's body size can be zero even
+                    // when Content-Length advertises the downloadable file size.
+                    response
+                        .headers()
+                        .get(reqwest::header::CONTENT_LENGTH)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.parse::<u64>().ok())
                 } else {
                     log::warn!(
                         "分片 HEAD 探测返回非成功状态，回退检查：任务={}，状态码={}",
@@ -351,7 +357,7 @@ async fn download_stream(
     } else {
         request.send().await
     }
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.without_url().to_string())?;
     if !response.status().is_success() {
         return Err(format!("下载返回 HTTP {}", response.status()));
     }
@@ -378,7 +384,7 @@ async fn download_stream(
         if is_download_cancelled() {
             return Err("下载已取消".into());
         }
-        let chunk = chunk.map_err(|error| error.to_string())?;
+        let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         file.write_all(&chunk).map_err(|error| error.to_string())?;
         reporter.received(chunk.len() as u64);
         downloaded += chunk.len() as u64;
@@ -419,7 +425,7 @@ async fn read_response_bytes(
     };
     let mut next_chunk = first_chunk;
     while let Some(chunk) = next_chunk {
-        let chunk = chunk.map_err(|error| error.to_string())?;
+        let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         reporter.received(chunk.len() as u64);
         bytes.extend_from_slice(&chunk);
         if bytes.len() as u64 > expected {
@@ -540,7 +546,7 @@ async fn download_ranges(
                         } else {
                             "request_error"
                         };
-                        last_error = error.to_string();
+                        last_error = error.without_url().to_string();
                     }
                 }
             }

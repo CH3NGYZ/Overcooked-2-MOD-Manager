@@ -44,8 +44,8 @@
             <h3>{{ t('macOS 步骤 2：下载 CrossOver') }}</h3>
             <p>{{ t('加 QQ 群 1103401780，下载群文件 CrossOver，输入密码 digit77.com（输入两次）后打开安装页面。') }}</p>
             <p>{{ t('将 CrossOver 拖到 Applications 文件夹，等待复制完毕。') }}</p>
-            <img v-if="hasTutorialImage('Drag crossover to applications.png')"
-                 :src="getTutorialImagePath('Drag crossover to applications.png')"
+            <img v-if="hasTutorialImage('MacOS/Drag crossover to applications.png')"
+                 :src="getTutorialImagePath('MacOS/Drag crossover to applications.png')"
                  alt="Drag CrossOver to Applications"
                  class="tutorial-image" />
           </div>
@@ -54,8 +54,8 @@
           <div class="setup-step">
             <h3>{{ t('macOS 步骤 3：准备 CROSLIC 文件夹') }}</h3>
             <p>{{ t('将 CROSLIC 文件夹拖动到桌面。') }}</p>
-            <img v-if="hasTutorialImage('Drag croslic folder to desktop.png')"
-                 :src="getTutorialImagePath('Drag croslic folder to desktop.png')"
+            <img v-if="hasTutorialImage('MacOS/Drag croslic folder to desktop.png')"
+                 :src="getTutorialImagePath('MacOS/Drag croslic folder to desktop.png')"
                  alt="Drag CROSLIC to Desktop"
                  class="tutorial-image" />
           </div>
@@ -64,8 +64,8 @@
           <div class="setup-step">
             <h3>{{ t('macOS 步骤 4：终端进入 CROSLIC 目录') }}</h3>
             <p>{{ t('在启动台打开终端，输入 cd（空格），然后将桌面的 croslic 文件夹拖入终端，最后回车。') }}</p>
-            <img v-if="hasTutorialImage('Drag croslic folder to terminal.png')"
-                 :src="getTutorialImagePath('Drag croslic folder to terminal.png')"
+            <img v-if="hasTutorialImage('MacOS/Drag croslic folder to terminal.png')"
+                 :src="getTutorialImagePath('MacOS/Drag croslic folder to terminal.png')"
                  alt="Drag CROSLIC folder to Terminal"
                  class="tutorial-image" />
           </div>
@@ -74,8 +74,8 @@
           <div class="setup-step">
             <h3>{{ t('macOS 步骤 5：执行授权工具') }}</h3>
             <p>{{ t('打开 croslic 文件夹，将 license.tool 文件拖到终端并回车。') }}</p>
-            <img v-if="hasTutorialImage('Drag license.tool to Terminal.png')"
-                 :src="getTutorialImagePath('Drag license.tool to Terminal.png')"
+            <img v-if="hasTutorialImage('MacOS/Drag license.tool to Terminal.png')"
+                 :src="getTutorialImagePath('MacOS/Drag license.tool to Terminal.png')"
                  alt="Drag license.tool to Terminal"
                  class="tutorial-image" />
           </div>
@@ -90,8 +90,8 @@
           <div class="setup-step">
             <h3>{{ t('macOS 步骤 7：允许运行 CrossOver') }}</h3>
             <p>{{ t('关闭终端和文件夹，打开 CrossOver。若提示无法打开，按以下步骤：') }}</p>
-            <img v-if="hasTutorialImage('Can\'t open crossover.png')"
-                 :src="getTutorialImagePath('Can\'t open crossover.png')"
+            <img v-if="hasTutorialImage('MacOS/Can\'t open crossover.png')"
+                 :src="getTutorialImagePath('MacOS/Can\'t open crossover.png')"
                  alt="Can't open CrossOver warning"
                  class="tutorial-image" />
             <ol>
@@ -99,8 +99,8 @@
               <li>{{ t('去"设置"打开"隐私与安全性"') }}</li>
               <li>{{ t('滑到下方，针对 CrossOver 点击"仍要允许"并输入 Touch ID 或密码') }}</li>
             </ol>
-            <img v-if="hasTutorialImage('Use Touch ID or password to open Crossover.png')"
-                 :src="getTutorialImagePath('Use Touch ID or password to open Crossover.png')"
+            <img v-if="hasTutorialImage('MacOS/Use Touch ID or password to open Crossover.png')"
+                 :src="getTutorialImagePath('MacOS/Use Touch ID or password to open Crossover.png')"
                  alt="Allow CrossOver in Security Settings"
                  class="tutorial-image" />
           </div>
@@ -115,8 +115,8 @@
           <div class="setup-step">
             <h3>{{ t('macOS 步骤 9：在 CrossOver 中安装 Steam') }}</h3>
             <p>{{ t('切换到 CrossOver 主界面，右上角点击"安装一个不在列表里的应用程序"。') }}</p>
-            <img v-if="hasTutorialImage('Install an application.png')"
-                 :src="getTutorialImagePath('Install an application.png')"
+            <img v-if="hasTutorialImage('MacOS/Install an application.png')"
+                 :src="getTutorialImagePath('MacOS/Install an application.png')"
                  alt="Install an application"
                  class="tutorial-image" />
           </div>

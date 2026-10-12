@@ -348,6 +348,8 @@ Function PageLeaveReinstall
   ${EndIf}
 
   reinst_uninstall:
+    ; Validate explicit /D destinations before removing an older installation.
+    Call OC2ValidateInstallDirectory
     HideWindow
     ClearErrors
 
@@ -389,7 +391,54 @@ FunctionEnd
 
 ; 5. Choose install directory page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE OC2ValidateInstallDirectory
 !insertmacro MUI_PAGE_DIRECTORY
+
+Var OC2MigrationPlan
+Var OC2MigrationTarget
+
+Function OC2ValidateInstallDirectory
+  Push $0
+  Push $1
+  InitPluginsDir
+  IfFileExists "$PLUGINSDIR\OC2InstallGuard.exe" oc2_guard_ready
+  File "/oname=$PLUGINSDIR\OC2InstallGuard.exe" "${MAINBINARYSRCPATH}"
+  oc2_guard_ready:
+  ; Appending \. avoids an escaped closing quote for paths ending in a slash.
+  nsExec::ExecToStack /TIMEOUT=10000 '"$PLUGINSDIR\OC2InstallGuard.exe" --validate-manager-install-dir "$INSTDIR\."'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+  ${AndIf} $UpdateMode = 1
+  ${AndIf} $OC2MigrationPlan == ""
+    ; Older clients pass their original directory. Preserve their data before
+    ; redirecting this automatic update to the current user's default location.
+    SetShellVarContext current
+    StrCpy $OC2MigrationTarget "$LOCALAPPDATA\${PRODUCTNAME}"
+    !insertmacro SetContext
+    DetailPrint "$(OC2Migrating)"
+    nsExec::ExecToStack '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update prepare "$INSTDIR\." "$OC2MigrationTarget\." "$PLUGINSDIR\migration.json"'
+    Pop $0
+    Pop $1
+    ${If} $0 == 0
+      StrCpy $OC2MigrationPlan "$PLUGINSDIR\migration.json"
+      StrCpy $INSTDIR $OC2MigrationTarget
+    ${Else}
+      DetailPrint "$1"
+    ${EndIf}
+  ${EndIf}
+  ${If} $0 != 0
+    DetailPrint "$(OC2InvalidInstallDirectory)"
+    MessageBox MB_OK|MB_ICONSTOP "$(OC2InvalidInstallDirectory)" /SD IDOK
+    SetErrorLevel 1
+    Pop $1
+    Pop $0
+    Abort
+  ${EndIf}
+  SetErrorLevel 0
+  Pop $1
+  Pop $0
+FunctionEnd
 
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder
@@ -516,6 +565,8 @@ FunctionEnd
 
 
 Section EarlyChecks
+  ; Silent /D updates must pass before WebView2, old-app shutdown, or target writes.
+  Call OC2ValidateInstallDirectory
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
@@ -627,6 +678,7 @@ Section WebView2
 SectionEnd
 
 Section Install
+  Call OC2ValidateInstallDirectory
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
@@ -732,6 +784,23 @@ Section Install
 SectionEnd
 
 Function .onInstSuccess
+  ${If} $OC2MigrationPlan != ""
+    ; Data must be migrated before the new manager starts reading config.toml.
+    DetailPrint "$(OC2Migrating)"
+    nsExec::ExecToStack '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update finish "$OC2MigrationPlan"'
+    Pop $0
+    Pop $1
+    ${If} $0 != 0
+      DetailPrint "$1"
+      MessageBox MB_OK|MB_ICONSTOP "$(OC2MigrationFailed)" /SD IDOK
+      SetErrorLevel 1
+    ${EndIf}
+    Return
+  ${EndIf}
+  !ifmacrodef NSIS_HOOK_ONINSTSUCCESS
+    !insertmacro NSIS_HOOK_ONINSTSUCCESS
+  !endif
+
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
   ${If} $PassiveMode = 1
@@ -741,6 +810,13 @@ Function .onInstSuccess
       ${GetOptions} $CMDLINE "/ARGS" $R0
       nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
     ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+Function .onInstFailed
+  ${If} $OC2MigrationPlan != ""
+    nsExec::ExecToLog '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update restore "$OC2MigrationPlan"'
+    Pop $0
   ${EndIf}
 FunctionEnd
 

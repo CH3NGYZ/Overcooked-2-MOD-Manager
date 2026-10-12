@@ -113,3 +113,24 @@
   cursor: not-allowed;
   opacity: .45;
 }
+
+.repository-row.repository-focus,
+.mod-list-group.mod-focus {
+  position: relative;
+  outline: none;
+}
+.repository-row.repository-focus::after,
+.mod-list-group.mod-focus::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: 2;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  border-radius: 9px;
+  animation: list-focus-pulse 1.5s ease-in-out infinite;
+}
+@keyframes list-focus-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 5px rgba(115, 213, 186, .08); }
+  50% { box-shadow: inset 0 0 0 5px rgba(115, 213, 186, .25); }
+}

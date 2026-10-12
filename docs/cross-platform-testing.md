@@ -61,6 +61,8 @@ RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订�
 - `TAURI_SIGNING_PRIVATE_KEY`：与 `src-tauri/tauri.conf.json` 的已有 updater 公钥对应，不能为绕过失败随意换一把密钥。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥有密码时配置。
 
+这些是 updater 的 minisign 密钥，不是 Apple 开发者证书或 Windows 代码签名证书。非发布打包测试使用 CI 临时密钥即可；正式更新必须使用长期保管、与客户端公钥匹配的私钥，操作系统代码签名和 macOS 公证需单独配置与验收。
+
 正式草稿工作流由 `v<项目版本>` 标签或手动 dispatch 的 `mode=release` 触发；项目的 package、Tauri、Cargo 及两个 lock 文件版本必须一致。发布 dispatch 使用项目版本生成标签。已公开的同名 Release 不允许覆盖。`scripts/build-release.mjs` 对包括 DEB/RPM 在内的更新包补签并检查公钥；聚合任务检查缺包、重复包、错误下载 URL、摘要、签名与版本后才上传清单。
 
 已有的未签名包、仅有 DMG 的 Release 或缺少对应平台键的清单，不会因为源码修改而自动具备更新能力。需要在授权发布后上传完整更新包、各自 `.sig` 与 `latest.json`；Gitee 镜像必须同步这些原始字节，不重新压缩、改名或只同步安装包。测试分支仅在用户明确授权后推送；公开发布及 Gitee 同步仍不执行。
@@ -69,7 +71,7 @@ RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订�
 
 手动运行已有 `build.yml`，选择测试分支和 `mode=test`（默认值），会运行同一四端矩阵，但跳过所有 Release 准备、上传和清单发布步骤。测试只需要仓库的 Actions 权限，不需要跨仓库发布 Token 或生产签名 Secret；不得将旧提交上的三端成功记录视为新实现的四端结果。
 
-`scripts/ci-packages.mjs` 在明确的测试模式下生成临时 updater 密钥，捕获生成器全部输出，不在日志或产物中保存私钥。它只在 runner 的临时检出中替换公钥并禁用正式更新地址，再使用同一 `build-release.mjs` 打包和验签。私钥通过 `TAURI_SIGNING_PRIVATE_KEY_PATH` 的文件路径传递，任务结束时删除；不能把路径传入仅接受密钥内容的 `signer sign` 的 `TAURI_SIGNING_PRIVATE_KEY`。
+`scripts/ci-packages.mjs` 在明确的测试模式下生成临时 updater 密钥，捕获生成器全部输出，不在日志或产物中保存私钥。它只在 runner 的临时检出中替换公钥并禁用正式更新地址，再使用同一 `build-release.mjs` 打包和验签。私钥通过 `TAURI_SIGNING_PRIVATE_KEY_PATH` 的文件路径传递，任务结束时删除；共用 CLI 调用边界仅为 `tauri build` 映射为其接受的 `TAURI_SIGNING_PRIVATE_KEY` 路径，`signer sign` 仍使用 `TAURI_SIGNING_PRIVATE_KEY_PATH`，不能把路径误当成内联密钥内容。映射不修改父进程环境，也不读取或输出私钥内容。
 
 每个平台上传 `package-test-<Rust target>`，包含包、签名以及标明 `testOnly` 的版本/提交/摘要报告。两个 Mac DMG 加上七种更新格式共九个包；独立聚合任务重新下载并核对四个构建目标、同一提交、字节摘要及七种签名，结果保存为 `four-platform-package-summary`。构建日志另存 `package-build-log-<Rust target>`。这些 Actions 产物保留七天，不创建或修改 Release，不执行安装器或游戏。
 
@@ -91,6 +93,8 @@ git diff --check
 测试运行前把 `TEMP`、`TMP`、`TMPDIR` 指向工作区已忽略的 `src-tauri/target/verification/<本次记录>/tmp`，避免测试临时文件占用系统临时目录。
 
 跨平台安装回归不能依赖 `fs::copy` 拒绝自复制：Unix 可能成功返回，Windows 的失败回滚也可能改变硬链接源的权限。`copy_asset_pending` 在创建快照或修改权限前比较实际文件身份；同一路径、路径别名及硬链接均拒绝覆盖自身。回收站链接边界测试分别使用 `remove_dir` 删除 Windows 目录联接、`remove_file` 删除 Unix 符号链接，只删除链接本身并检查链接外文件保持不变。
+
+下载进度轮换测试使用缩短的 40 ms 窗口，不能依赖 Windows 调度器每 2 ms 必定执行。测试在候选工厂同步准备每阶段的 reporter 快照，并保留超过窗口的受控调度延迟、领先源字节及总大小断言；不改动生产竞速窗口或下载逻辑。
 
 将三个官方 ZIP 放到工作区的已忽略目录后，可显式执行真实包安装/重装测试（不启动游戏或完整安装器）：
 

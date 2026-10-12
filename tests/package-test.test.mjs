@@ -6,6 +6,7 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { cleanPackageTest, collectPackageTest, preparePackageTest, verifyPackageTests } from '../scripts/ci-packages.mjs'
+import { runTauri } from '../scripts/build-release.mjs'
 import { BUILD_KEYS, readProject, verifyUpdateSignature } from '../scripts/release-lib.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -36,6 +37,30 @@ function testEnvironment(directory) {
   delete env.TAURI_SIGNING_PRIVATE_KEY_PATH
   return env
 }
+
+test('the shared CLI boundary maps key paths for build without passing a path as signer key contents', t => {
+  const directory = workspace(t)
+  const key = join(directory, 'temporary-updater.key')
+  const env = { ...testEnvironment(directory), TAURI_SIGNING_PRIVATE_KEY_PATH: key }
+  const original = { ...env }
+  const calls = []
+  const invoke = (_executable, args, options) => {
+    calls.push({ args, env: options.env })
+    return { status: 0 }
+  }
+  runTauri(['build', '--target', 'x86_64-pc-windows-msvc'], env, invoke)
+  runTauri(['signer', 'sign', 'payload.bin'], env, invoke)
+  assert.equal(calls[0].env.TAURI_SIGNING_PRIVATE_KEY, key)
+  assert.equal(calls[1].env.TAURI_SIGNING_PRIVATE_KEY, undefined)
+  assert.equal(calls[1].env.TAURI_SIGNING_PRIVATE_KEY_PATH, key)
+  assert.deepEqual(env, original)
+
+  const inline = { ...testEnvironment(directory), TAURI_SIGNING_PRIVATE_KEY: '[REDACTED_SECRET]' }
+  runTauri(['build'], inline, invoke)
+  runTauri(['signer', 'sign', 'payload.bin'], inline, invoke)
+  assert.equal(calls[2].env.TAURI_SIGNING_PRIVATE_KEY, '[REDACTED_SECRET]')
+  assert.equal(calls[3].env.TAURI_SIGNING_PRIVATE_KEY, '[REDACTED_SECRET]')
+})
 
 test('CI package-test signing refuses ordinary or production-key environments and captures key output', t => {
   const directory = workspace(t)
@@ -128,10 +153,11 @@ test('the installed Tauri CLI can generate a temporary key and sign a version-bo
   const payload = join(directory, 'payload.bin')
   const { version } = readProject(directory)
   writeFileSync(payload, 'Real Tauri signer smoke test')
-  const result = spawnSync(process.execPath, [cli, 'signer', 'sign', '--app-version', version, payload], {
-    encoding: 'utf8', windowsHide: true, env: { ...env, TAURI_SIGNING_PRIVATE_KEY_PATH: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: '' },
-  })
-  assert.equal(result.status, 0, 'The real CLI signer must accept the generated private-key path')
+  runTauri(['signer', 'sign', '--app-version', version, payload], {
+    ...env, TAURI_SIGNING_PRIVATE_KEY_PATH: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: '',
+  }, (executable, args, options) => spawnSync(executable, args, {
+    ...options, stdio: 'pipe', encoding: 'utf8', windowsHide: true,
+  }))
   verifyUpdateSignature(readFileSync(payload), readFileSync(`${payload}.sig`, 'utf8').trim(), generatedPublicKey, version)
   cleanPackageTest(directory, env)
 })

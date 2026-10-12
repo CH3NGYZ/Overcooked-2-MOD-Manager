@@ -1,8 +1,4 @@
-use crate::{
-    commands::installer_update_command,
-    game,
-    update_migration::{self, Migration},
-};
+use crate::{commands::installer_update_command, game, update_migration::Migration};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -26,6 +22,7 @@ struct UpdatePlan {
     log: PathBuf,
 }
 
+#[cfg(windows)]
 pub async fn start(
     installer: &Path,
     installer_type: &str,
@@ -33,7 +30,7 @@ pub async fn start(
     version: &str,
     failure_message: Option<&str>,
 ) -> Result<(), String> {
-    let target_executable = update_migration::update_executable(executable)?;
+    let target_executable = crate::update_migration::update_executable(executable)?;
     let work = crate::user_paths::updates_dir()?.join(format!("host-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&work).map_err(|_| "无法准备更新助手")?;
     let plan = UpdatePlan {

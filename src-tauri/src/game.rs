@@ -301,8 +301,6 @@ fn game_process_name() -> &'static str {
 /// Reuse process metadata in the observer without logging unchanged checks.
 /// File operations still call `is_game_running` with a fresh process snapshot.
 pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
-    let target = game.join(game_executable_name());
-    let target = normalize_path(target);
     system
         .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
 
@@ -325,6 +323,8 @@ pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> b
 
     #[cfg(not(target_os = "macos"))]
     {
+        let target = game.join(game_executable_name());
+        let target = normalize_path(target);
         let process_name = game_process_name();
         system.processes().values().any(|process| {
             if !process.name().eq_ignore_ascii_case(process_name) {

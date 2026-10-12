@@ -25,12 +25,17 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::download::candidate_progress as asset_candidate_progress;
 
+// Windows and macOS BepInEx download URLs (both use Windows version)
+#[cfg(not(target_os = "linux"))]
 pub const BEPINEX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip";
+#[cfg(not(target_os = "linux"))]
 pub const BEPINEX_GITHUB_URL: &str =
     "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip";
 
 // Linux-specific BepInEx download URLs
+#[cfg(target_os = "linux")]
 pub const BEPINEX_LINUX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex-linux.zip";
+#[cfg(target_os = "linux")]
 pub const BEPINEX_LINUX_GITHUB_URL: &str =
     "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_linux_x64_5.4.23.5.zip";
 

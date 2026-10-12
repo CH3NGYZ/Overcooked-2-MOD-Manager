@@ -1,4 +1,6 @@
 export type Provider = 'github' | 'gitee'
+export type AppPlatform = 'windows' | 'linux' | 'macos'
+export type GameRuntime = 'wine' | 'native'
 export type Channel = 'stable' | 'beta' | 'all'
 export type ProxyMode = 'direct' | 'auto_direct' | 'auto_proxy' | 'fixed'
 export type RepositoryDownloadMode = 'release' | 'repository_file'
@@ -65,12 +67,13 @@ export interface Repository {
 export type TutorialRepositoryConfig = Omit<Repository, 'id' | 'builtin' | 'cached_releases'>
 export interface PublicConfig {
   schema_version: number
+  platform: AppPlatform
   region: string
   ui_zoom: number
   onboarding_seen_steps: string[]
   hide_unidentified_mods: boolean
   tutorial_steps: TutorialStepConfig[]
-  game: { path: string; auto_detect: boolean }
+  game: { path: string; auto_detect: boolean; runtime: GameRuntime }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
   official_api_only: boolean
@@ -83,13 +86,14 @@ export interface PublicConfig {
 export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; complete: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
-export interface GameInfo { path?: string; steam_library?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
+export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
 export interface InstalledMod { repository_id?: string; repository_ids?: string[]; package_id?: string; package_name?: string; package_mod_count?: number; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
 export interface ModConfigDocument { guid: string; file_name: string; content: string; revision: string }
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
+export interface BepInExInstallResult extends OperationResult { wine_override_applied: boolean; wine_override_error?: string }
 export interface ModRecycleEntry {
   id: string
   name: string
@@ -121,10 +125,10 @@ export interface RepositorySourceImportResult {
   access_error: string | null
   builtin_fallback_available: boolean
 }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_download_urls?: string[]; installer_digest?: string; installer_type?: 'exe' | 'msi'; provider?: Provider; source_channel?: string }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_download_urls?: string[]; installer_digest?: string; installer_name: string; installer_signature_url?: string; installer_type?: 'exe' | 'msi' | 'appimage' | 'deb' | 'rpm' | 'app'; provider?: Provider; source_channel?: string }
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
-export interface AppUpdatePhaseEvent { region: string; phase: 'api' | 'download' | 'skipped'; message?: string; update?: AppUpdateInfo }
+export interface AppUpdatePhaseEvent { region: string; phase: 'api' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
 export interface TutorialStepConfig {
   id: string
@@ -136,7 +140,7 @@ export interface TutorialStepConfig {
   title_i18n?: Partial<Record<TutorialLocale, string>>
   description_i18n?: Partial<Record<TutorialLocale, string>>
 }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number }
 export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {
   id?: string

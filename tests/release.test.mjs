@@ -1,0 +1,236 @@
+import assert from 'node:assert/strict'
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import test from 'node:test'
+import { updateFiles } from '../scripts/build-release.mjs'
+import { GitHubRelease } from '../scripts/github-release.mjs'
+import { aggregateManifest, prepareRelease } from '../scripts/release.mjs'
+import {
+  BUILD_KEYS, PLATFORM_KEYS, RELEASE_OWNER, RELEASE_REPO, assertDraftRelease,
+  collectUpdateAssets, readProject, releaseTag, updateAssetKey, updateManifest,
+  validateProjectVersions, verifyUpdateSignature,
+} from '../scripts/release-lib.mjs'
+
+const root = fileURLToPath(new URL('../', import.meta.url))
+const names = [
+  'OC2ModManager_1.2.0_x64-setup.exe',
+  'OC2ModManager_1.2.0_x64_en-US.msi',
+  'OC2ModManager_1.2.0_amd64.AppImage',
+  'OC2ModManager_1.2.0_amd64.deb',
+  'OC2ModManager-1.2.0-1.x86_64.rpm',
+  'OC2ModManager_aarch64.app.tar.gz',
+  'OC2ModManager_x64.app.tar.gz',
+]
+const urlFor = name => `https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/v1.2.0/${encodeURIComponent(name)}`
+const draft = { id: 1, tag_name: 'v1.2.0', draft: true, prerelease: false, body: 'Release notes' }
+
+function projectInputs() {
+  return {
+    packageJson: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')),
+    packageLock: JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')),
+    tauri: JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8')),
+    cargo: readFileSync(join(root, 'src-tauri/Cargo.toml'), 'utf8'),
+    cargoLock: readFileSync(join(root, 'src-tauri/Cargo.lock'), 'utf8'),
+  }
+}
+
+function signingFixture() {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+  const keyId = randomBytes(8)
+  const key = Buffer.concat([Buffer.from('Ed'), keyId, publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)])
+  const encodedPublicKey = Buffer.from(`untrusted comment: public test key\n${key.toString('base64')}\n`).toString('base64')
+  const signatureFor = (bytes, version = '1.2.0', algorithm = 'ED') => {
+    const message = algorithm === 'ED' ? createHash('blake2b512').update(bytes).digest() : bytes
+    const raw = sign(null, message, privateKey)
+    const comment = `timestamp:1\tfile:fixture\tversion:${version}`
+    const global = sign(null, Buffer.concat([raw, Buffer.from(comment)]), privateKey)
+    return Buffer.from(`untrusted comment: public test signature\n${Buffer.concat([Buffer.from(algorithm), keyId, raw]).toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`).toString('base64')
+  }
+  return { encodedPublicKey, signatureFor }
+}
+
+function releaseFixture() {
+  const signer = signingFixture()
+  const files = new Map()
+  const assets = []
+  for (const name of names) {
+    const bytes = Buffer.from(`Package fixture: ${name}`)
+    const id = assets.length + 1
+    assets.push({ id, name, size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, browser_download_url: urlFor(name) })
+    files.set(id, bytes)
+    const signature = Buffer.from(signer.signatureFor(bytes))
+    assets.push({ id: id + 1, name: `${name}.sig`, size: signature.length })
+    files.set(id + 1, signature)
+  }
+  return { ...signer, assets, files, github: { download: async id => files.get(id) } }
+}
+
+test('all project versions are consistent and a dispatch uses a version tag, never main', () => {
+  const inputs = projectInputs()
+  const { version } = readProject(root)
+  assert.equal(validateProjectVersions(inputs), version)
+  assert.equal(releaseTag(version, 'branch', 'main'), `v${version}`)
+  assert.equal(releaseTag(version, 'tag', `v${version}`), `v${version}`)
+  assert.throws(() => releaseTag(version, 'tag', 'v0.0.0'))
+  for (const change of [
+    input => { input.packageLock.version = '0.0.0' },
+    input => { input.packageLock.packages[''].version = '0.0.0' },
+    input => { input.tauri.version = '0.0.0' },
+    input => { input.cargo = input.cargo.replace(/^version = "[^"]+"/m, 'version = "0.0.0"') },
+    input => { input.cargoLock = input.cargoLock.replace(/(name = "app"\r?\nversion = ")[^"]+/, '$10.0.0') },
+    input => { input.tauri.bundle.createUpdaterArtifacts = false },
+    input => { input.tauri.plugins.updater.requireSignedVersion = false },
+    input => { input.tauri.plugins.updater.pubkey = '' },
+  ]) {
+    const changed = projectInputs()
+    change(changed)
+    assert.throws(() => validateProjectVersions(changed))
+  }
+})
+
+test('the exact supplied package names map to seven disjoint system/architecture/format targets', () => {
+  assert.deepEqual(names.map(name => updateAssetKey(name, '1.2.0')), PLATFORM_KEYS)
+  assert.equal(updateAssetKey('OC2ModManager-1.2.0-2.x86_64.rpm', '1.2.0'), 'linux-x86_64-rpm')
+  assert.equal(updateAssetKey('OC2ModManager_1.2.0_x86_64.app.tar.gz', '1.2.0'), 'darwin-x86_64-app')
+  for (const name of [
+    'OC2ModManager_1.2.0_aarch64.dmg', 'OC2ModManager.app.tar.gz',
+    'OC2ModManager_1.2.0_x64_msi.msi', 'OC2ModManager-1.2.0-1.aarch64.rpm',
+    'OC2ModManager-1.2.0-.x86_64.rpm', '../OC2ModManager_x64.app.tar.gz',
+    'OC2ModManager_1.2.1_amd64.deb', 'OC2ModManager_1.2.0_amd64.deb.sig',
+  ]) assert.equal(updateAssetKey(name, '1.2.0'), undefined, name)
+})
+
+test('aggregation rejects missing, duplicated, wrong-version or empty updater packages', () => {
+  const assets = names.map(name => ({ name, size: 1 }))
+  assert.equal(collectUpdateAssets(assets, '1.2.0').size, 7)
+  assert.throws(() => collectUpdateAssets(assets.slice(1), '1.2.0'))
+  assert.throws(() => collectUpdateAssets([...assets, assets[0]], '1.2.0'))
+  assert.throws(() => collectUpdateAssets(assets.map(asset => ({ ...asset, size: 0 })), '1.2.0'))
+  assert.throws(() => collectUpdateAssets(assets, '1.2.1'))
+})
+
+test('Node verifies the same genuine minisign fixture as the Rust updater', () => {
+  const rust = readFileSync(join(root, 'src-tauri/src/app_update.rs'), 'utf8')
+  const constant = name => rust.match(new RegExp(`const ${name}: &str = "([^"]+)"`))[1]
+  const signature = constant('TEST_SIGNATURE')
+  const key = constant('TEST_KEY')
+  verifyUpdateSignature(Buffer.from('OC2 signed update fixture'), signature, key, '1.2.0')
+  assert.throws(() => verifyUpdateSignature(Buffer.from('tampered'), signature, key, '1.2.0'))
+  assert.throws(() => verifyUpdateSignature(Buffer.from('OC2 signed update fixture'), signature, key, '9.0.0'))
+  const comment = Buffer.from(signature, 'base64').toString().replace('version:1.2.0', 'version:9.0.0')
+  assert.throws(() => verifyUpdateSignature(Buffer.from('OC2 signed update fixture'), Buffer.from(comment).toString('base64'), key, '9.0.0'))
+})
+
+test('signature verification covers prehashed and legacy payloads and rejects unbound versions/other keys', () => {
+  const signer = signingFixture()
+  const bytes = Buffer.from('Package fixture')
+  for (const algorithm of ['ED', 'Ed']) {
+    const signature = signer.signatureFor(bytes, '1.2.0', algorithm)
+    verifyUpdateSignature(bytes, signature, signer.encodedPublicKey, '1.2.0')
+    assert.throws(() => verifyUpdateSignature(bytes, signature, signingFixture().encodedPublicKey, '1.2.0'))
+  }
+  for (const version of ['2.0.0', '', '1.2.0\tversion:1.2.0']) {
+    assert.throws(() => verifyUpdateSignature(bytes, signer.signatureFor(bytes, version), signer.encodedPublicKey, '1.2.0'))
+  }
+  for (const signature of ['', 'not base64!', Buffer.from('broken').toString('base64')]) {
+    assert.throws(() => verifyUpdateSignature(bytes, signature, signer.encodedPublicKey, '1.2.0'))
+  }
+})
+
+test('the manifest uses real browser-download URLs and verified signatures for all seven targets', async () => {
+  const fixture = releaseFixture()
+  const manifest = await aggregateManifest(fixture.github, draft, fixture.assets, '1.2.0', fixture.encodedPublicKey)
+  assert.equal(manifest.version, '1.2.0')
+  assert.equal(manifest.notes, draft.body)
+  assert.deepEqual(Object.keys(manifest.platforms), PLATFORM_KEYS)
+  for (const [index, name] of names.entries()) {
+    assert.equal(manifest.platforms[PLATFORM_KEYS[index]].url, urlFor(name))
+    assert.ok(manifest.platforms[PLATFORM_KEYS[index]].signature)
+  }
+  assert.throws(() => updateManifest('1.2.0', {}))
+})
+
+test('manifest aggregation stops on corrupted uploads, missing signatures, wrong URLs or published releases', async () => {
+  for (const change of [
+    fixture => { fixture.files.set(1, Buffer.from('truncated')) },
+    fixture => { fixture.assets[0].digest = 'sha256:incorrect' },
+    fixture => { fixture.assets.splice(1, 1) },
+    fixture => { fixture.assets[0].browser_download_url = 'https://api.github.com/assets/1' },
+  ]) {
+    const fixture = releaseFixture()
+    change(fixture)
+    await assert.rejects(() => aggregateManifest(fixture.github, draft, fixture.assets, '1.2.0', fixture.encodedPublicKey))
+  }
+  const fixture = releaseFixture()
+  await assert.rejects(() => aggregateManifest(fixture.github, { ...draft, draft: false }, fixture.assets, '1.2.0', fixture.encodedPublicKey))
+  assert.throws(() => assertDraftRelease({ ...draft, tag_name: 'main' }, '1.2.0'))
+})
+
+test('prepare only reuses a matching draft and removes its stale manifest, never installer assets', async () => {
+  const deleted = []
+  const github = {
+    findRelease: async () => draft,
+    assets: async () => [{ id: 50, name: 'latest.json' }, { id: 51, name: names[0] }],
+    deleteAsset: async id => deleted.push(id),
+  }
+  assert.equal((await prepareRelease(github, '1.2.0', 'v1.2.0')).id, draft.id)
+  assert.deepEqual(deleted, [50])
+  deleted.length = 0
+  github.findRelease = async () => ({ ...draft, draft: false })
+  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0'))
+  assert.deepEqual(deleted, [])
+})
+
+test('new drafts use the release repository branch, not a commit from the code repository', async () => {
+  const requests = []
+  const github = {
+    findRelease: async () => undefined,
+    assets: async () => [],
+    request: async (path, options) => {
+      requests.push([path, options])
+      return path === '' ? { default_branch: 'main' } : draft
+    },
+  }
+  await prepareRelease(github, '1.2.0', 'v1.2.0')
+  assert.equal(requests[1][1].body.target_commitish, 'main')
+  assert.equal(requests[1][1].body.draft, true)
+})
+
+test('artifact discovery signs DEB/RPM and names both Mac updater archives as tauri-action uploads them', () => {
+  const verificationRoot = resolve(root, 'src-tauri/target/verification/release-script-tests')
+  const workspace = join(verificationRoot, randomUUID())
+  const write = (path, value = 'package fixture') => {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, value)
+  }
+  try {
+    for (const [target, keys] of Object.entries(BUILD_KEYS)) {
+      const bundle = join(workspace, target)
+      for (const key of keys) {
+        const name = names[PLATFORM_KEYS.indexOf(key)]
+        const directory = key.startsWith('darwin') ? 'macos' : key.split('-').at(-1)
+        write(join(bundle, directory, key.startsWith('darwin') ? 'OC2ModManager.app.tar.gz' : name))
+      }
+      assert.deepEqual([...updateFiles(bundle, target, '1.2.0').keys()], keys)
+    }
+    assert.throws(() => updateFiles(workspace, 'unsupported-target', '1.2.0'))
+    assert.throws(() => updateFiles(workspace, 'x86_64-unknown-linux-gnu', '1.2.0'))
+  } finally {
+    assert.ok(resolve(workspace).startsWith(`${verificationRoot}${sep}`))
+    rmSync(workspace, { recursive: true, force: true })
+  }
+})
+
+test('the release API requires a dedicated token and reports only safe HTTP status errors', async () => {
+  assert.throws(() => new GitHubRelease(''))
+  const requests = []
+  const github = new GitHubRelease('[REDACTED_SECRET]', async (url, options) => {
+    requests.push([url, options])
+    return new Response('private server details', { status: 403 })
+  })
+  await assert.rejects(() => github.release(1), error => !error.message.includes('private server details') && error.message.includes('403'))
+  assert.ok(requests[0][0].startsWith(`https://api.github.com/repos/${RELEASE_OWNER}/${RELEASE_REPO}/`))
+  assert.throws(() => github.download('../outside'))
+})

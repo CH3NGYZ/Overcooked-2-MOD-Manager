@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
@@ -8,7 +8,8 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateCheckResult, AppUpdateInfo, ConfigEditorTarget, Dashboard, DownloadProgress, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { AppUpdateCheckResult, AppUpdateInfo, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { renderMarkdown } from './markdown'
@@ -16,6 +17,7 @@ import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 import AppSidebar from './components/AppSidebar.vue'
 import FrameworkView from './components/FrameworkView.vue'
+import BepInExSetupGuide from './components/BepInExSetupGuide.vue'
 import InstalledModsView from './components/InstalledModsView.vue'
 import ModRecycleBin from './components/ModRecycleBin.vue'
 import ModConfigEditor from './components/ModConfigEditor.vue'
@@ -84,6 +86,16 @@ const showRepositoryNote = ref<Repository | null>(null)
 const showInstall = ref<Repository | null>(null)
 const showBepInExInstall = ref(false)
 const bepinexInstallReinstall = ref(false)
+const showBepInExSetup = ref(false)
+const bepinexSetupResult = ref<BepInExInstallResult | null>(null)
+watch([
+  () => dashboard.value?.config.game.runtime,
+  () => dashboard.value?.game.path,
+  () => dashboard.value?.game.wine_prefix,
+], () => {
+  bepinexSetupResult.value = null
+  showBepInExSetup.value = false
+})
 const selectedInstallTag = ref('')
 const selectedInstallAsset = ref('')
 const selectedAssetProxyMode = ref<ProxyMode>('auto_direct')
@@ -97,7 +109,7 @@ const appUpdateCheck = ref<AppUpdateCheckResult | null>(null)
 const startupUpdateChecking = ref(true)
 const updateCheckFailed = ref(false)
 const updateSkipped = ref(false)
-const startupUpdatePhase = ref<'api' | 'download' | 'skipped'>('api')
+const startupUpdatePhase = ref<'api' | 'download' | 'install' | 'skipped'>('api')
 const updateSkipCountdown = ref(0)
 const updatePageOpening = ref(false)
 const updatePageError = ref('')
@@ -142,10 +154,7 @@ const repoForm = reactive<RepositoryPatch>({
   name: '', group: '', provider: 'gitee', username: '', repository: '', download_mode: 'release', branch: 'main', file_path: '', channel: 'all', asset_rules: [],
   region: '', install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '', local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1, github_token: '', gitee_token: '', official_api_only: true, enabled: true,
 })
-const bepinexDownloadUrls: Record<Provider, string> = {
-  gitee: 'https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip',
-  github: 'https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip',
-}
+const bepinexDownloadUrls = computed(() => getBepInExDownloadUrls(config.value?.platform, config.value?.game.runtime))
 
 const STARTUP_IPC_TIMEOUT_MS = 8000
 
@@ -480,7 +489,7 @@ async function refreshConfigSerialized() {
   await next
 }
 
-function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
+function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatBytes(value: number) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}` }
 function formatAssetMetadata(asset: import('./types').ReleaseAsset) {
   const size = formatBytes(asset.size)
@@ -707,6 +716,16 @@ async function loadDashboard() {
 async function detectGame() { await run('重新检测游戏目录', async () => { await api.detectGame(); dashboard.value = await api.dashboard() }) }
 async function chooseGameDirectory() { const path = await api.chooseGameDirectory(); if (!path || Array.isArray(path)) return; await run('正在保存厨房目录', async () => { await api.setGamePath(path); dashboard.value = await api.dashboard() }) }
 async function restoreDefaultGameDirectory() { await run('正在恢复默认游戏目录', async () => { await api.resetGamePath(); dashboard.value = await api.dashboard() }) }
+async function changeGameRuntime(runtime: GameRuntime) {
+  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value) return
+  if (dashboard.value?.config.game.runtime === runtime) return
+  await run('正在切换厨房运行模式', async () => {
+    await api.saveSettings({ game_runtime: runtime })
+    bepinexSetupResult.value = null
+    showBepInExSetup.value = false
+    await loadDashboard()
+  })
+}
 async function refreshRepositoryEntry(repo: Repository) {
   if (repo.download_mode === 'repository_file') return false
   const currentTask = repositoryRefreshTasks.get(repo.id)
@@ -890,15 +909,24 @@ function openBepInExInstall(reinstall: boolean) {
   bepinexInstallReinstall.value = reinstall
   showBepInExInstall.value = true
 }
+function openBepInExSetup() {
+  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value) return
+  if (dashboard.value?.config.platform === 'windows') return
+  showBepInExSetup.value = true
+}
 async function installBepInEx(provider: Provider) {
-  if (tutorial.previewing.value || appUnmounted || busy.value) return
+  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value) return
   const reinstall = bepinexInstallReinstall.value
   showBepInExInstall.value = false
   if (reinstall && !await requestConfirmation({ title: t('重新安装'), message: t('重新安装 BepInEx 会先备份当前框架并替换框架文件，是否继续？'), danger: true })) return
   beginDownloadProgress()
   try {
     progress.value = { label: 'BepInEx', percent: 0, speed: '', indeterminate: true, status: t('待加载，正在连接下载源') }
-    await run(reinstall ? '正在重新安装 BepInEx' : '正在安装 BepInEx', () => api.installBepInEx(reinstall, provider)); await loadDashboard()
+    const result = await run(reinstall ? '正在重新安装 BepInEx' : '正在安装 BepInEx', () => api.installBepInEx(reinstall, provider))
+    await loadDashboard()
+    bepinexSetupResult.value = result
+    if (!appUnmounted && dashboard.value?.config.platform !== 'windows') showBepInExSetup.value = true
+  } catch { /* run displays the error */
   } finally {
     clearDownloadProgress()
   }
@@ -1986,6 +2014,7 @@ onMounted(async () => {
     try {
       stopAppUpdatePhase.value = await withTimeout(watchAppUpdatePhase((event) => {
         startupUpdatePhase.value = event.phase
+        if (event.phase === 'install') startupStage.value = t('正在安装程序更新')
         if (event.update) appUpdate.value = event.update
         if (event.message && event.phase === 'skipped') startupError.value = event.message
       }), STARTUP_IPC_TIMEOUT_MS, '注册更新阶段监听')
@@ -2116,6 +2145,7 @@ onUnmounted(() => {
         :repository-count="displayedRepositoryCount"
         :repository-refresh-active="repositoryRefreshActive"
         :current-winhttp="currentWinhttp"
+        :native-loader="config?.platform !== 'windows' && config?.game.runtime === 'native'"
         :game-blocked="gameBlocked"
         :busy="busy"
         :app-icon="appIcon"
@@ -2126,12 +2156,15 @@ onUnmounted(() => {
       <FrameworkView v-else-if="activeView === 'framework'"
         :game="game"
         :config="config"
+        :tutorial-active="tutorial.visible.value || tutorial.previewing.value"
         :game-blocked="gameBlocked"
         :busy="busy"
         :open-directory="openDirectory"
         :choose-game-directory="chooseGameDirectory"
         :restore-default-game-directory="restoreDefaultGameDirectory"
         :detect-game="detectGame"
+        :change-game-runtime="changeGameRuntime"
+        :open-bep-in-ex-setup="openBepInExSetup"
         :open-bep-in-ex-install="openBepInExInstall"
         :uninstall-bep-in-ex="uninstallBepInEx"
         :open-bep-in-ex-config="openBepInExConfig"
@@ -2637,6 +2670,9 @@ onUnmounted(() => {
       </template>
     </form>
   </div>
+  <BepInExSetupGuide :visible="showBepInExSetup && !tutorial.visible.value && !tutorial.previewing.value" :config="dashboard?.config" :game="realGame"
+    :result="bepinexSetupResult" @close="showBepInExSetup = false" />
+
   <div v-if="showBepInExInstall" class="modal-backdrop" @click.self="showBepInExInstall = false">
     <div class="modal bepinex-channel-modal">
       <div class="modal-head">

@@ -785,7 +785,7 @@ SectionEnd
 
 Function .onInstSuccess
   ${If} $OC2MigrationPlan != ""
-    ; Data must be migrated before the new manager starts reading config.toml.
+    ; Finish program relocation before starting the new manager.
     DetailPrint "$(OC2Migrating)"
     nsExec::ExecToStack '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update finish "$OC2MigrationPlan"'
     Pop $0

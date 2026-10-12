@@ -67,7 +67,7 @@ struct GameStateObserver {
     processes: System,
     last_reported: Option<GameInfo>,
     missing_game_probe: GameDiscoveryObserver,
-    portable_game_candidate: Option<PathBuf>,
+    portable_game_root: Option<PathBuf>,
 }
 
 impl GameStateObserver {
@@ -80,9 +80,9 @@ impl GameStateObserver {
             processes: System::new(),
             last_reported: None,
             missing_game_probe: GameDiscoveryObserver::default(),
-            portable_game_candidate: std::env::current_exe()
+            portable_game_root: std::env::current_exe()
                 .ok()
-                .and_then(|path| path.parent().map(|root| root.join("Overcooked2.exe"))),
+                .and_then(|path| path.parent().map(Path::to_path_buf)),
         }
     }
 
@@ -92,9 +92,7 @@ impl GameStateObserver {
         let mut settings_changed = false;
         if self.game_settings.is_none() || config_stamp != self.config_stamp {
             let settings = self.config.load_or_default().game;
-            settings_changed = self.game_settings.as_ref().is_none_or(|previous| {
-                previous.path != settings.path || previous.auto_detect != settings.auto_detect
-            });
+            settings_changed = self.game_settings.as_ref() != Some(&settings);
             self.game_settings = Some(settings);
             // Loading may create or normalize the file. Remember its final stamp.
             self.config_stamp = file_stamp(&self.config.config_path());
@@ -104,15 +102,23 @@ impl GameStateObserver {
         // With no detected path, framework stamps are empty. Watch the
         // discovery inputs instead so a later game installation is noticed
         // without repeatedly scanning Steam or writing unchanged diagnostics.
-        let discovery_changed =
-            if settings.path.is_empty() && cached.as_ref().is_none_or(|info| info.path.is_none()) {
-                self.missing_game_probe.refresh(
-                    &game::steam_root_paths(),
-                    self.portable_game_candidate.as_deref(),
-                )
-            } else {
-                false
-            };
+        let executable_name = crate::bepinex::Package::current(settings).executable();
+        let portable_candidate = self
+            .portable_game_root
+            .as_ref()
+            .map(|root| root.join(executable_name));
+        let discovery_changed = if settings.auto_detect
+            && settings.path.is_empty()
+            && cached.as_ref().is_none_or(|info| info.path.is_none())
+        {
+            self.missing_game_probe.refresh(
+                &game::steam_root_paths(settings),
+                portable_candidate.as_deref(),
+                executable_name,
+            )
+        } else {
+            false
+        };
         let mut next = if settings_changed
             || cached.is_none()
             || file_stamps != self.file_stamps
@@ -144,12 +150,18 @@ struct GameDiscoveryObserver {
     steam_roots: Vec<PathBuf>,
     library_indexes: Vec<(PathBuf, Option<FileStamp>)>,
     portable_candidate: Option<PathBuf>,
+    executable_name: String,
     candidates: Vec<PathBuf>,
     candidate_stamps: Vec<(PathBuf, Option<FileStamp>)>,
 }
 
 impl GameDiscoveryObserver {
-    fn refresh(&mut self, steam_roots: &[PathBuf], portable_candidate: Option<&Path>) -> bool {
+    fn refresh(
+        &mut self,
+        steam_roots: &[PathBuf],
+        portable_candidate: Option<&Path>,
+        executable_name: &str,
+    ) -> bool {
         let library_indexes = steam_roots
             .iter()
             .map(|root| {
@@ -160,14 +172,19 @@ impl GameDiscoveryObserver {
             .collect::<Vec<_>>();
         let inputs_changed = self.steam_roots != steam_roots
             || self.library_indexes != library_indexes
-            || self.portable_candidate.as_deref() != portable_candidate;
+            || self.portable_candidate.as_deref() != portable_candidate
+            || self.executable_name != executable_name;
         if inputs_changed {
             self.steam_roots = steam_roots.to_vec();
             self.library_indexes = library_indexes;
             self.portable_candidate = portable_candidate.map(Path::to_path_buf);
+            self.executable_name = executable_name.into();
             self.candidates = game::steam_libraries_from_roots(steam_roots)
                 .into_iter()
-                .map(|root| root.join("steamapps/common/Overcooked! 2/Overcooked2.exe"))
+                .map(|root| {
+                    root.join("steamapps/common/Overcooked! 2")
+                        .join(executable_name)
+                })
                 .chain(self.portable_candidate.clone())
                 .collect();
             self.candidates.sort();
@@ -212,6 +229,9 @@ fn game_file_stamps(info: Option<&GameInfo>, backups: &Path) -> Vec<(PathBuf, Op
     [
         root.to_path_buf(),
         root.join("Overcooked2.exe"),
+        root.join("Overcooked2.x86_64"),
+        root.join("Overcooked! 2.app"),
+        root.join("Overcooked! 2.app/Contents/MacOS"),
         root.join("BepInEx"),
         root.join("BepInEx/core"),
         root.join("BepInEx/core/BepInEx.dll"),
@@ -220,6 +240,11 @@ fn game_file_stamps(info: Option<&GameInfo>, backups: &Path) -> Vec<(PathBuf, Op
         root.join("BepInEx/config/BepInEx.cfg"),
         root.join("winhttp.dll"),
         root.join("winhttp.dll.disabled"),
+        root.join("run_bepinex.sh"),
+        root.join("libdoorstop.so"),
+        root.join("libdoorstop.dylib"),
+        root.join("doorstop_libs/libdoorstop_x64.so"),
+        root.join("doorstop_libs/libdoorstop_x64.dylib"),
         backups.to_path_buf(),
     ]
     .into_iter()
@@ -240,6 +265,8 @@ mod tests {
         GameInfo {
             path: Some("game".into()),
             steam_library: None,
+            steam_root: None,
+            wine_prefix: None,
             game_exists: true,
             bepinex: BepInExInfo {
                 installed: false,
@@ -303,6 +330,7 @@ mod tests {
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
             auto_detect: false,
+            runtime: crate::models::GameRuntime::Wine,
         };
         let before = game::detect_game_from_settings(&settings);
         let backups = root.join("backups");
@@ -326,6 +354,7 @@ mod tests {
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
             auto_detect: false,
+            runtime: crate::models::GameRuntime::Wine,
         };
         let backups = root.join("backups");
         let before = game::detect_game_from_settings(&settings);
@@ -364,6 +393,7 @@ mod tests {
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
             auto_detect: false,
+            runtime: crate::models::GameRuntime::Wine,
         };
         let backups = root.join("backups");
         let enabled = game::detect_game_from_settings(&settings);
@@ -435,17 +465,17 @@ mod tests {
         let steam_roots = vec![root.clone()];
         let executable = root.join("steamapps/common/Overcooked! 2/Overcooked2.exe");
         let mut observer = GameDiscoveryObserver::default();
-        assert!(observer.refresh(&steam_roots, None));
+        assert!(observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         for _ in 0..10 {
-            assert!(!observer.refresh(&steam_roots, None));
+            assert!(!observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         }
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
         fs::write(&executable, []).unwrap();
-        assert!(observer.refresh(&steam_roots, None));
-        assert!(!observer.refresh(&steam_roots, None));
+        assert!(observer.refresh(&steam_roots, None, "Overcooked2.exe"));
+        assert!(!observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         fs::remove_file(&executable).unwrap();
-        assert!(observer.refresh(&steam_roots, None));
-        assert!(!observer.refresh(&steam_roots, None));
+        assert!(observer.refresh(&steam_roots, None, "Overcooked2.exe"));
+        assert!(!observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -459,8 +489,8 @@ mod tests {
         fs::write(&executable, []).unwrap();
         let steam_roots = vec![steam.clone()];
         let mut observer = GameDiscoveryObserver::default();
-        assert!(observer.refresh(&steam_roots, None));
-        assert!(!observer.refresh(&steam_roots, None));
+        assert!(observer.refresh(&steam_roots, None, "Overcooked2.exe"));
+        assert!(!observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         fs::create_dir_all(steam.join("steamapps")).unwrap();
         let escaped_library = library.to_string_lossy().replace('\\', "\\\\");
         fs::write(
@@ -468,13 +498,13 @@ mod tests {
             format!("\"libraryfolders\" {{ \"0\" {{ \"path\" \"{escaped_library}\" }} }}"),
         )
         .unwrap();
-        assert!(observer.refresh(&steam_roots, None));
+        assert!(observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         assert!(
             observer
                 .candidates
                 .contains(&fs::canonicalize(&executable).unwrap())
         );
-        assert!(!observer.refresh(&steam_roots, None));
+        assert!(!observer.refresh(&steam_roots, None, "Overcooked2.exe"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -484,6 +514,7 @@ mod tests {
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
             auto_detect: false,
+            runtime: crate::models::GameRuntime::Wine,
         };
         let before = game::detect_game_from_settings(&settings);
         assert!(!before.game_exists);
@@ -495,5 +526,24 @@ mod tests {
         assert!(after.game_exists);
         assert!(changed_snapshot(&mut Some(before), after).is_some());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovery_runtime_switch_replaces_executable_candidates_without_repeated_events() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/verification/discovery-runtime")
+            .join(uuid::Uuid::new_v4().to_string());
+        let mut observer = GameDiscoveryObserver::default();
+        let steam_roots = vec![root];
+        for executable in ["Overcooked2.exe", "Overcooked2.x86_64", "Overcooked! 2.app"] {
+            assert!(observer.refresh(&steam_roots, None, executable));
+            assert!(
+                observer
+                    .candidates
+                    .iter()
+                    .all(|path| path.ends_with(executable))
+            );
+            assert!(!observer.refresh(&steam_roots, None, executable));
+        }
     }
 }

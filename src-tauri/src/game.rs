@@ -1,4 +1,5 @@
-use crate::models::{BepInExInfo, GameInfo, WinhttpState};
+use crate::bepinex::Package;
+use crate::models::{BepInExInfo, GameConfig, GameInfo, WinhttpState};
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,15 +15,13 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         !config.path.trim().is_empty()
     );
     let detected = find_game_path(config);
-    let path = detected.as_ref().map(|(_, game)| game.clone());
+    let path = detected.as_ref().map(|location| location.game.clone());
     let game_exists = path
         .as_ref()
-        .map(|p| game_executable_exists(p))
+        .map(|p| game_executable_exists(p, config))
         .unwrap_or(false);
     let kitchen_running = path.as_ref().map(|p| is_game_running(p)).unwrap_or(false);
-    let backup_root = std::env::current_exe()
-        .ok()
-        .and_then(|value| value.parent().map(|parent| parent.join("backups")));
+    let backup_root = crate::user_paths::backups_dir().ok();
     let bepinex = path
         .as_ref()
         .map(|value| detect_bepinex(value, backup_root.as_deref()))
@@ -36,11 +35,21 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         });
     let winhttp_state = path
         .as_ref()
-        .map(|value| winhttp_state(value))
+        .map(|value| crate::bepinex::state(value, config))
         .unwrap_or(WinhttpState::Missing);
     let result = GameInfo {
         path: path.map(|p| p.to_string_lossy().to_string()),
-        steam_library: detected.map(|(library, _)| library.to_string_lossy().to_string()),
+        steam_library: detected
+            .as_ref()
+            .map(|location| location.library.to_string_lossy().to_string()),
+        steam_root: detected
+            .as_ref()
+            .map(|location| location.steam_root.to_string_lossy().to_string()),
+        wine_prefix: detected.and_then(|location| {
+            location
+                .wine_prefix
+                .map(|prefix| prefix.to_string_lossy().to_string())
+        }),
         game_exists,
         bepinex,
         kitchen_running,
@@ -58,58 +67,124 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
     result
 }
 
-/// Returns the platform-specific game executable name
-fn game_executable_name() -> &'static str {
-    #[cfg(windows)]
-    return "Overcooked2.exe";
-    #[cfg(target_os = "linux")]
-    return "Overcooked2.x86_64";
-    #[cfg(target_os = "macos")]
-    return "Overcooked2.exe"; // CrossOver runs Windows .exe files
+pub(crate) fn game_executable_exists(game_dir: &Path, settings: &GameConfig) -> bool {
+    let package = Package::current(settings);
+    let executable = game_dir.join(package.executable());
+    if package == Package::MacOS {
+        executable.is_dir() && executable.join("Contents/MacOS").is_dir()
+    } else {
+        executable.is_file()
+    }
 }
 
-/// Checks if the game executable exists in the given directory
-fn game_executable_exists(game_dir: &Path) -> bool {
-    game_dir.join(game_executable_name()).exists()
+pub(crate) fn selected_game_root(
+    selected: &Path,
+    settings: &GameConfig,
+) -> Result<PathBuf, String> {
+    let root = if Package::current(settings) == Package::MacOS
+        && selected
+            .file_name()
+            .is_some_and(|name| name == "Overcooked! 2.app")
+    {
+        selected.parent().ok_or("所选厨房目录无效")?
+    } else {
+        selected
+    };
+    if !game_executable_exists(root, settings) {
+        return Err(match Package::current(settings) {
+            Package::Windows => "所选目录中没有 Overcooked2.exe",
+            Package::Linux => "所选目录中没有 Overcooked2.x86_64",
+            Package::MacOS => "所选目录中没有 Overcooked! 2.app",
+        }
+        .into());
+    }
+    fs::canonicalize(root).map_err(|_| "所选厨房目录无效".into())
 }
 
-fn find_game_path(config: &crate::models::GameConfig) -> Option<(PathBuf, PathBuf)> {
-    if !config.path.is_empty() {
+struct GameLocation {
+    library: PathBuf,
+    steam_root: PathBuf,
+    game: PathBuf,
+    wine_prefix: Option<PathBuf>,
+}
+
+fn location(
+    library: PathBuf,
+    game: PathBuf,
+    steam_root: &Path,
+    settings: &GameConfig,
+) -> GameLocation {
+    #[cfg(unix)]
+    let wine_prefix = (!Package::current(settings).native())
+        .then(|| {
+            crate::wine::prefix_for_path(steam_root).or_else(|| crate::wine::prefix_for_path(&game))
+        })
+        .flatten();
+    #[cfg(not(unix))]
+    let wine_prefix = {
+        let _ = (steam_root, settings);
+        None
+    };
+    GameLocation {
+        library,
+        steam_root: steam_root.to_owned(),
+        game,
+        wine_prefix,
+    }
+}
+
+fn find_game_path(config: &GameConfig) -> Option<GameLocation> {
+    if !config.path.trim().is_empty() {
         let stored = PathBuf::from(&config.path);
         log::debug!("使用配置中的游戏路径：存在={}", stored.is_dir());
-        return Some((stored.clone(), stored));
+        // A Windows Steam library may live on a mapped drive outside drive_c.
+        for steam in steam_root_paths(config) {
+            for library in steam_libraries_from_roots(std::slice::from_ref(&steam)) {
+                if normalize_path(&stored).starts_with(normalize_path(&library)) {
+                    return Some(location(library, stored, &steam, config));
+                }
+            }
+        }
+        return Some(location(stored.clone(), stored.clone(), &stored, config));
+    }
+    if !config.auto_detect {
+        return None;
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
-            if game_executable_exists(parent) {
+            if game_executable_exists(parent, config) {
                 log::debug!("从程序目录探测到游戏");
-                return Some((parent.to_path_buf(), parent.to_path_buf()));
+                return Some(location(
+                    parent.to_path_buf(),
+                    parent.to_path_buf(),
+                    parent,
+                    config,
+                ));
             }
         }
     }
-    let detected = steam_libraries().into_iter().find_map(|library| {
-        let game = library.join("steamapps/common/Overcooked! 2");
-        if game_executable_exists(&game) {
-            Some((library, game))
-        } else {
-            None
+    for steam in steam_root_paths(config) {
+        for library in steam_libraries_from_roots(std::slice::from_ref(&steam)) {
+            let game = library.join("steamapps/common/Overcooked! 2");
+            if game_executable_exists(&game, config) {
+                log::debug!("从当前运行模式的 Steam 库探测到游戏");
+                return Some(location(library, game, &steam, config));
+            }
         }
-    });
-    if detected.is_some() {
-        log::debug!("从 Steam 库探测到游戏");
-    } else {
-        log::warn!("未探测到 Overcooked! 2 游戏目录");
     }
-    detected
-}
-
-fn steam_libraries() -> Vec<PathBuf> {
-    steam_libraries_from_roots(&steam_root_paths())
+    log::warn!("未探测到当前运行模式的 Overcooked! 2 游戏目录");
+    None
 }
 
 /// Read only the small registry/environment hints. The state observer uses
 /// these to notice a newly installed Steam client without reparsing its VDF.
-pub(crate) fn steam_root_paths() -> Vec<PathBuf> {
+pub(crate) fn steam_root_paths(settings: &GameConfig) -> Vec<PathBuf> {
+    #[cfg(unix)]
+    if !Package::current(settings).native() {
+        return crate::wine::steam_roots();
+    }
+    #[cfg(windows)]
+    let _ = settings;
     let mut roots = Vec::new();
 
     #[cfg(windows)]
@@ -133,8 +208,7 @@ pub(crate) fn steam_root_paths() -> Vec<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = PathBuf::from(home);
+        if let Some(home_path) = dirs::home_dir() {
             // Primary Steam installation paths on Linux
             roots.push(home_path.join(".steam/steam"));
             roots.push(home_path.join(".local/share/Steam"));
@@ -145,23 +219,8 @@ pub(crate) fn steam_root_paths() -> Vec<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = PathBuf::from(home);
-            // Standard macOS Steam installation
+        if let Some(home_path) = dirs::home_dir() {
             roots.push(home_path.join("Library/Application Support/Steam"));
-            // CrossOver bottle paths - scan common bottle locations
-            let crossover_bottles = home_path.join("Library/Application Support/CrossOver/Bottles");
-            if let Ok(entries) = fs::read_dir(&crossover_bottles) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        // Check for Steam in each bottle's drive_c
-                        let steam_path = entry.path().join("drive_c/Program Files (x86)/Steam");
-                        if steam_path.exists() {
-                            roots.push(steam_path);
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -180,8 +239,18 @@ pub(crate) fn steam_libraries_from_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
             if let Ok(regex) = Regex::new(r#""path"\s+"([^"]+)""#) {
                 for capture in regex.captures_iter(&text) {
                     if let Some(value) = capture.get(1) {
-                        let path =
-                            normalize_path(PathBuf::from(value.as_str().replace("\\\\", "\\")));
+                        #[cfg(unix)]
+                        let path = if crate::wine::prefix_for_path(&root).is_some() {
+                            crate::wine::host_library_path(&root, value.as_str())
+                        } else {
+                            let path = PathBuf::from(value.as_str());
+                            path.is_absolute().then_some(path)
+                        };
+                        #[cfg(not(unix))]
+                        let path = Some(PathBuf::from(value.as_str().replace("\\\\", "\\")));
+                        let Some(path) = path.map(normalize_path) else {
+                            continue;
+                        };
                         if !libraries.contains(&path) {
                             libraries.push(path);
                         }
@@ -252,91 +321,125 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
     result
 }
 
-/// Returns the platform-specific BepInEx loader file paths
-fn bepinex_loader_paths(game: &Path) -> (PathBuf, PathBuf) {
-    #[cfg(windows)]
-    {
-        (game.join("winhttp.dll"), game.join("winhttp.dll.disabled"))
-    }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        // Linux/macOS use doorstop loader
-        (
-            game.join("doorstop_libs/libdoorstop_x64.so"),
-            game.join("doorstop_libs/libdoorstop_x64.so.disabled"),
-        )
-    }
-}
-
-pub fn winhttp_state(game: &Path) -> WinhttpState {
-    let (enabled_path, disabled_path) = bepinex_loader_paths(game);
-    let enabled = enabled_path.is_file();
-    let disabled = disabled_path.is_file();
-    let state = match (enabled, disabled) {
-        (true, false) => WinhttpState::ModEnabled,
-        (false, true) => WinhttpState::ModDisabled,
-        (false, false) => WinhttpState::Missing,
-        (true, true) => WinhttpState::Conflict,
-    };
-    log::trace!("框架加载器状态：{:?}", state);
-    state
-}
-
 pub fn is_game_running(game: &Path) -> bool {
     let running = is_game_running_with_system(game, &mut System::new());
     log::trace!("游戏进程检查：运行中={}", running);
     running
 }
 
-/// Returns the platform-specific game process name
-#[cfg(not(target_os = "macos"))]
-fn game_process_name() -> &'static str {
-    #[cfg(windows)]
-    return "Overcooked2.exe";
-    #[cfg(target_os = "linux")]
-    return "Overcooked2.x86_64";
-}
-
 /// Reuse process metadata in the observer without logging unchanged checks.
 /// File operations still call `is_game_running` with a fresh process snapshot.
-#[cfg(target_os = "macos")]
-pub(crate) fn is_game_running_with_system(_game: &Path, system: &mut System) -> bool {
+pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
+    system.refresh_processes_specifics(
+        ProcessRefreshKind::new()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    let game = normalize_path(game);
     system
-        .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
-
-    // On macOS with Crossover, the game runs through wine
-    // Check for wine processes with the game executable path in command line
-    let game_exe_name = game_executable_name();
-    system.processes().values().any(|process| {
-        let name = process.name();
-        if !name.contains("wine") && !name.contains("CXWineHelper") {
-            return false;
-        }
-        // Check if command line contains the game executable
-        process.cmd().iter().any(|arg| {
-            arg.contains(game_exe_name) || arg.contains("Overcooked2")
-        })
-    })
+        .processes()
+        .values()
+        .any(|process| process_matches_game(&game, process.name(), process.exe(), process.cmd()))
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
-    system
-        .refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
-
-    let target = game.join(game_executable_name());
-    let target = normalize_path(target);
-    let process_name = game_process_name();
-    system.processes().values().any(|process| {
-        if !process.name().eq_ignore_ascii_case(process_name) {
+fn process_matches_game(
+    game: &Path,
+    name: &str,
+    executable: Option<&Path>,
+    args: &[String],
+) -> bool {
+    let name = name.to_ascii_lowercase();
+    let game_process = name.starts_with("overcooked");
+    let wine_process = name.contains("wine") || name.contains("cxwinehelper");
+    if !game_process && !wine_process {
+        return false;
+    }
+    if let Some(executable) = executable {
+        let executable = normalize_path(executable);
+        if [
+            game.join("Overcooked2.exe"),
+            game.join("Overcooked2.x86_64"),
+        ]
+        .iter()
+        .any(|target| normalize_path(target) == executable)
+            || executable.starts_with(game.join("Overcooked! 2.app/Contents/MacOS"))
+        {
+            return true;
+        }
+        if game_process
+            && !wine_process
+            && !executable
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("wine")
+        {
             return false;
         }
-        process
-            .exe()
-            .map(|path| normalize_path(path))
-            .map(|path| path == target)
-            .unwrap_or(false)
-    })
+    }
+    // Wine may report the interpreter instead of the Windows game image.
+    // If process metadata is inaccessible, fail closed for a named game process.
+    game_process && executable.is_none()
+        || args
+            .iter()
+            .any(|arg| arg.to_ascii_lowercase().contains("overcooked2.exe"))
+}
+
+pub(crate) fn steam_launch_command(
+    settings: &GameConfig,
+    info: &GameInfo,
+) -> Result<std::process::Command, String> {
+    #[cfg(unix)]
+    if !Package::current(settings).native() {
+        let prefix = info
+            .wine_prefix
+            .as_deref()
+            .ok_or("无法确定游戏使用的 Wine 容器，请重新选择厨房目录")?;
+        return crate::wine::steam_command(Path::new(prefix));
+    }
+    #[cfg(windows)]
+    let _ = settings;
+    native_steam_launch_command(
+        std::env::consts::OS,
+        info.steam_root.as_deref().map(Path::new),
+    )
+}
+
+fn native_steam_launch_command(
+    platform: &str,
+    steam_root: Option<&Path>,
+) -> Result<std::process::Command, String> {
+    let mut command = match platform {
+        "windows" => {
+            let mut command = std::process::Command::new("explorer.exe");
+            command.arg("steam://rungameid/728880");
+            command
+        }
+        "linux" => {
+            // Avoid the steam:// handler, which Wine Steam may have registered.
+            let flatpak = steam_root.is_some_and(|root| {
+                root.components()
+                    .any(|part| part.as_os_str() == "com.valvesoftware.Steam")
+            });
+            let mut command = if flatpak {
+                let mut command = std::process::Command::new("flatpak");
+                command.args(["run", "com.valvesoftware.Steam"]);
+                command
+            } else {
+                std::process::Command::new("steam")
+            };
+            command.args(["-applaunch", "728880"]);
+            command
+        }
+        "macos" => {
+            let mut command = std::process::Command::new("open");
+            // CrossOver can export a same-named Steam app; target the native bundle.
+            command.args(["-b", "com.valvesoftware.steam", "steam://rungameid/728880"]);
+            command
+        }
+        _ => return Err("当前平台不支持启动厨房".into()),
+    };
+    command.stdin(std::process::Stdio::null());
+    Ok(command)
 }
 
 /// Check if CrossOver is running (macOS only)
@@ -416,9 +519,7 @@ pub(crate) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> 
     Err("路径逃逸游戏目录".into())
 }
 
-/// Reads the file version information.
-/// On Windows: Reads PE file version from the version resource.
-/// On Linux/macOS: Returns None as ELF/Mach-O binaries don't have embedded version info.
+/// BepInEx and MOD assemblies remain PE files even for native Unix games.
 pub fn read_file_version(path: &Path) -> Option<String> {
     #[cfg(windows)]
     {
@@ -492,10 +593,30 @@ pub fn read_file_version(path: &Path) -> Option<String> {
     }
     #[cfg(not(windows))]
     {
-        let _ = path;
-        log::trace!("文件版本读取：非 Windows 平台不支持 PE 版本资源");
-        None
+        if fs::metadata(path).ok()?.len() > 64 * 1024 * 1024 {
+            return None;
+        }
+        portable_pe_version(&fs::read(path).ok()?)
     }
+}
+
+#[cfg(any(not(windows), test))]
+fn portable_pe_version(bytes: &[u8]) -> Option<String> {
+    if bytes.get(..2)? != b"MZ" {
+        return None;
+    }
+    let pe = u32::from_le_bytes(bytes.get(0x3c..0x40)?.try_into().ok()?) as usize;
+    if bytes.get(pe..pe.checked_add(4)?)? != b"PE\0\0" {
+        return None;
+    }
+    let offset = bytes
+        .windows(8)
+        .position(|window| window == [0xbd, 0x04, 0xef, 0xfe, 0x00, 0x00, 0x01, 0x00])?;
+    let version = bytes.get(offset + 8..offset + 16)?;
+    let ms = u32::from_le_bytes(version[..4].try_into().ok()?);
+    let ls = u32::from_le_bytes(version[4..].try_into().ok()?);
+    (ms != 0 || ls != 0)
+        .then(|| format!("{}.{}.{}.{}", ms >> 16, ms & 0xffff, ls >> 16, ls & 0xffff))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -596,6 +717,100 @@ fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn native_steam_launch_does_not_delegate_to_a_wine_url_handler() {
+        let command = native_steam_launch_command("linux", None).unwrap();
+        assert_eq!(command.get_program(), "steam");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-applaunch", "728880"]
+        );
+        let command = native_steam_launch_command(
+            "linux",
+            Some(Path::new(
+                "/home/user/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+            )),
+        )
+        .unwrap();
+        assert_eq!(command.get_program(), "flatpak");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["run", "com.valvesoftware.Steam", "-applaunch", "728880"]
+        );
+        let command = native_steam_launch_command("macos", None).unwrap();
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-b", "com.valvesoftware.steam", "steam://rungameid/728880"]
+        );
+    }
+
+    fn winhttp_state(root: &Path) -> WinhttpState {
+        crate::bepinex::state(
+            root,
+            &GameConfig {
+                path: String::new(),
+                auto_detect: false,
+                runtime: crate::models::GameRuntime::Wine,
+            },
+        )
+    }
+
+    #[test]
+    fn game_process_matching_covers_native_and_wine_without_treating_steam_as_the_game() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/game-processes");
+        for (name, executable) in [
+            ("Overcooked2.exe", root.join("Overcooked2.exe")),
+            ("Overcooked2.x86_64", root.join("Overcooked2.x86_64")),
+            (
+                "Overcooked2",
+                root.join("Overcooked! 2.app/Contents/MacOS/Overcooked2"),
+            ),
+        ] {
+            assert!(process_matches_game(&root, name, Some(&executable), &[]));
+        }
+        assert!(process_matches_game(
+            &root,
+            "wine-preloader",
+            None,
+            &[r"C:\Games\Overcooked2.exe".into()]
+        ));
+        assert!(!process_matches_game(
+            &root,
+            "steam.exe",
+            None,
+            &["-applaunch".into(), "728880".into()]
+        ));
+        assert!(!process_matches_game(
+            &root,
+            "wine",
+            None,
+            &["steam.exe".into()]
+        ));
+        assert!(!process_matches_game(
+            &root,
+            "Overcooked2.exe",
+            Some(&root.join("other/Overcooked2.exe")),
+            &[]
+        ));
+    }
+
+    #[test]
+    fn reads_fixed_pe_file_version_without_windows_apis() {
+        let mut bytes = vec![0_u8; 80];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&64_u32.to_le_bytes());
+        bytes[64..68].copy_from_slice(b"PE\0\0");
+        bytes.extend([0xbd, 0x04, 0xef, 0xfe, 0x00, 0x00, 0x01, 0x00]);
+        bytes.extend(((5_u32 << 16) | 4).to_le_bytes());
+        bytes.extend(((23_u32 << 16) | 5).to_le_bytes());
+        assert_eq!(portable_pe_version(&bytes).as_deref(), Some("5.4.23.5"));
+        assert!(portable_pe_version(&bytes[..88]).is_none());
+        bytes[64] = 0;
+        assert!(portable_pe_version(&bytes).is_none());
+        assert!(portable_pe_version(b"ELF fixture").is_none());
+    }
 
     #[test]
     fn rejects_parent_paths() {

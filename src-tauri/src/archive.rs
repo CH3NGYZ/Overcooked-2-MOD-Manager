@@ -751,9 +751,12 @@ pub fn validate_download_bytes(
     Ok(())
 }
 
-pub fn extract_zip_safe(zip_path: &Path, game_root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn extract_framework_zip_pending(
+    zip_path: &Path,
+    game_root: &Path,
+) -> Result<PendingModInstall, String> {
     log::info!("开始安全解压 ZIP：文件={}", zip_path.display());
-    let result = extract_zip_into_with_root(zip_path, game_root, "", None);
+    let result = extract_zip_pending(zip_path, game_root, "", None);
     if let Err(error) = &result {
         log::error!(
             "安全解压 ZIP 失败：文件={}，原因={}",
@@ -1157,29 +1160,22 @@ fn copy_path(source: &Path, destination: &Path) -> Result<(), String> {
     }
 }
 
-fn extract_zip_into_with_root(
-    zip_path: &Path,
-    game_root: &Path,
-    target_dir: &str,
-    strip_root: Option<&str>,
-) -> Result<Vec<String>, String> {
-    extract_zip_pending(zip_path, game_root, target_dir, strip_root).map(PendingModInstall::commit)
-}
-
 /// Keep overwritten files until the installation manifest has been committed.
-/// Dropping an unfinished installation restores them and removes new files.
+/// Dropping an unfinished installation restores them and removes new files/directories.
 pub(crate) struct PendingModInstall {
     game_root: PathBuf,
     files: Vec<String>,
     snapshots: Vec<(PathBuf, Option<PathBuf>)>,
+    created_directories: Vec<PathBuf>,
 }
 
 impl PendingModInstall {
     fn new(game_root: &Path) -> Self {
         Self {
-            game_root: game_root.to_path_buf(),
+            game_root: fs::canonicalize(game_root).unwrap_or_else(|_| game_root.to_path_buf()),
             files: Vec::new(),
             snapshots: Vec::new(),
+            created_directories: Vec::new(),
         }
     }
 
@@ -1187,8 +1183,23 @@ impl PendingModInstall {
         if destination.is_dir() {
             return Err(format!("目标文件已存在: {}", destination.display()));
         }
+        let missing_parents = destination
+            .parent()
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|parent| !parent.exists())
+            .map(Path::to_path_buf)
+            .collect::<Vec<_>>();
+        if missing_parents
+            .iter()
+            .any(|parent| parent == &self.game_root || !parent.starts_with(&self.game_root))
+        {
+            return Err("路径逃逸游戏目录".into());
+        }
         let snapshot = snapshot_path(destination)?;
         self.snapshots.push((destination.to_path_buf(), snapshot));
+        self.created_directories
+            .extend(missing_parents.into_iter().rev());
         Ok(())
     }
 
@@ -1200,6 +1211,7 @@ impl PendingModInstall {
         for (_, snapshot) in self.snapshots.drain(..) {
             discard_snapshot(snapshot);
         }
+        self.created_directories.clear();
         std::mem::take(&mut self.files)
     }
 
@@ -1209,20 +1221,43 @@ impl PendingModInstall {
             let result = if snapshot.is_some() {
                 restore_snapshot(snapshot, &destination)
             } else {
-                remove_existing_path(&destination).and_then(|_| {
-                    destination
-                        .parent()
-                        .filter(|parent| parent.is_dir())
-                        .map_or(Ok(()), |parent| {
-                            prune_empty_parent_dirs(&self.game_root, parent)
-                        })
-                })
+                remove_existing_path(&destination)
             };
             if let Err(error) = result {
                 failed = true;
                 log::error!(
                     "MOD 安装回滚失败：路径={}，原因={}",
                     destination.display(),
+                    error
+                );
+            }
+        }
+        // Do not prune pre-existing containers or recursively remove newly added user files.
+        for directory in self.created_directories.drain(..).rev() {
+            let cleanup = (|| -> Result<(), String> {
+                let relative = directory
+                    .strip_prefix(&self.game_root)
+                    .map_err(|e| e.to_string())?;
+                if safe_game_path(&self.game_root, &relative.to_string_lossy())? != directory {
+                    return Err("路径逃逸游戏目录".into());
+                }
+                match fs::remove_dir(&directory) {
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+                        ) =>
+                    {
+                        Ok(())
+                    }
+                    result => result.map_err(|e| e.to_string()),
+                }
+            })();
+            if let Err(error) = cleanup {
+                failed = true;
+                log::error!(
+                    "安装回滚目录清理失败：路径={}，原因={}",
+                    directory.display(),
                     error
                 );
             }
@@ -1604,6 +1639,67 @@ mod tests {
     }
 
     #[test]
+    fn rollback_removes_only_directories_created_by_the_installation() {
+        let verification =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/archive-rollback");
+        for existing_framework in [false, true] {
+            let root = verification.join(Uuid::new_v4().to_string());
+            let game = root.join("game");
+            fs::create_dir_all(game.join("Existing")).unwrap();
+            if existing_framework {
+                fs::create_dir_all(game.join("BepInEx/plugins")).unwrap();
+            }
+            let archive = root.join("framework.zip");
+            write_zip(
+                &archive,
+                &[
+                    ("BepInEx/plugins/Plugin.dll", b"new plugin"),
+                    ("doorstop_libs/libdoorstop.so", b"new loader"),
+                    ("Existing/nested/file.dll", b"new file"),
+                ],
+            );
+            let mut pending = extract_framework_zip_pending(&archive, &game).unwrap();
+            pending.rollback().unwrap();
+            assert_eq!(game.join("BepInEx").exists(), existing_framework);
+            assert_eq!(game.join("BepInEx/plugins").exists(), existing_framework);
+            assert!(game.join("Existing").is_dir());
+            assert!(!game.join("Existing/nested").exists());
+            assert!(!game.join("doorstop_libs").exists());
+            assert!(
+                fs::canonicalize(&root)
+                    .unwrap()
+                    .starts_with(fs::canonicalize(&verification).unwrap())
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn rollback_keeps_unrelated_files_added_to_new_directories() {
+        let verification =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/archive-rollback");
+        let root = verification.join(Uuid::new_v4().to_string());
+        let game = root.join("game");
+        fs::create_dir_all(&game).unwrap();
+        let archive = root.join("framework.zip");
+        write_zip(&archive, &[("BepInEx/plugins/Plugin.dll", b"new plugin")]);
+        let mut pending = extract_framework_zip_pending(&archive, &game).unwrap();
+        fs::write(game.join("BepInEx/plugins/user.cfg"), b"keep user file").unwrap();
+        pending.rollback().unwrap();
+        assert!(!game.join("BepInEx/plugins/Plugin.dll").exists());
+        assert_eq!(
+            fs::read(game.join("BepInEx/plugins/user.cfg")).unwrap(),
+            b"keep user file"
+        );
+        assert!(
+            fs::canonicalize(&root)
+                .unwrap()
+                .starts_with(fs::canonicalize(&verification).unwrap())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn sha256_is_stable() {
         let path = std::env::temp_dir().join("oc2-sha-test.bin");
         fs::write(&path, b"hello").unwrap();
@@ -1625,7 +1721,7 @@ mod tests {
             .unwrap();
         writer.write_all(b"bad").unwrap();
         writer.finish().unwrap();
-        assert!(extract_zip_safe(&zip_path, &root).is_err());
+        assert!(extract_framework_zip_pending(&zip_path, &root).is_err());
     }
 
     #[test]

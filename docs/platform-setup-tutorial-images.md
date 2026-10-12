@@ -59,7 +59,9 @@ src/assets/platform-tutorials/
 4. **语言一致性**: 截图界面语言与文件名语言代码一致
 5. **简洁性**: 只截取必要的操作区域,不包含无关内容
 
-## Linux 平台教程图片清单
+## Linux 平台教程图片清单（后续制作）
+
+本轮不启用完整 Linux 图文教程，只提供框架安装后的 Steam/Wine 启动设置。Linux 默认 Wine；以下原生 Steam 截图清单是后续制作材料，不代表软件已经展示这些步骤。当前模式、包选择和验收规则见 [跨平台测试指南](cross-platform-testing.md)。
 
 ### 1. Steam 游戏属性入口
 **文件名**: `steam-properties-{语言}.png`
@@ -99,7 +101,7 @@ src/assets/platform-tutorials/
 
 **示例命令** (实际命令可能需要根据 BepInEx 版本调整):
 ```
-DOORSTOP_ENABLE=1 DOORSTOP_INVOKE_DLL_PATH="./BepInEx/core/BepInEx.Preloader.dll" %command%
+./run_bepinex.sh %command%
 ```
 
 **文字说明**:
@@ -116,7 +118,9 @@ DOORSTOP_ENABLE=1 DOORSTOP_INVOKE_DLL_PATH="./BepInEx/core/BepInEx.Preloader.dll
 - 关闭按钮或确认按钮
 - 用绿色勾标注已正确填写
 
-## macOS 平台教程图片清单
+## macOS Wine/CrossOver 平台教程图片清单
+
+CrossOver 向导仅适用于 Wine 模式；macOS 原生使用原生 Steam 和 `Overcooked! 2.app`，不显示这些 CrossOver 步骤。
 
 ### 1. Crossover 是否运行检测
 **文件名**: `crossover-running-check-{语言}.png`
@@ -180,7 +184,7 @@ DOORSTOP_ENABLE=1 DOORSTOP_INVOKE_DLL_PATH="./BepInEx/core/BepInEx.Preloader.dll
 **内容要求**:
 - Finder 窗口显示游戏安装路径
 - 完整路径可见: `~/Library/Application Support/CrossOver/Bottles/{容器名}/drive_c/...`
-- 标注 Overcooked2.app 位置
+- 标注容器中的 `Overcooked2.exe` 位置，不使用原生 `.app` 路径
 
 **文字说明**:
 - zh-CN: "游戏通常安装在 Crossover 容器的以下位置:"

@@ -34,10 +34,8 @@ pub async fn start(
     failure_message: Option<&str>,
 ) -> Result<(), String> {
     let target_executable = update_migration::update_executable(executable)?;
-    let relocating = target_executable != executable;
-    let work = std::env::temp_dir().join(format!("OC2-update-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&work).map_err(|_| "无法准备更新助手")?;
-    let directory = executable.parent().ok_or("安装目录无效")?;
+    let work = crate::user_paths::updates_dir()?.join(format!("host-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&work).map_err(|_| "无法准备更新助手")?;
     let plan = UpdatePlan {
         parent_pid: std::process::id(),
         installer: installer.to_owned(),
@@ -49,11 +47,7 @@ pub async fn start(
             .unwrap_or("更新未能完成或启动，请手动打开管理器或运行已下载的安装器。详细信息：")
             .into(),
         ready: work.join("ready"),
-        log: if relocating {
-            work.join("update.log")
-        } else {
-            directory.join("logs/update.log")
-        },
+        log: crate::user_paths::logs_dir()?.join("update.log"),
     };
     // A distinct image name survives the installer's taskkill /IM command.
     // Run before Tauri initialization, retaining the parent's elevated token.
@@ -196,14 +190,10 @@ fn install_and_launch(
         ));
     }
     append_log(&plan.log, &format!("Installed version verified: {actual}"));
-    if let Some(migration) = migration {
-        migration.install_data()?;
-    }
     launch_and_confirm(target, &plan.log)?;
     if let Some(migration) = migration {
         migration.cleanup()?;
         append_log(&plan.log, "Migration completed; old manager files removed");
-        publish_migration_log(&plan.log, &migration.target)?;
     }
     Ok(())
 }
@@ -227,18 +217,6 @@ fn launch_and_confirm(executable: &Path, log: &Path) -> Result<(), String> {
     }
     append_log(log, "New manager process confirmed after retry");
     Ok(())
-}
-
-fn publish_migration_log(log: &Path, directory: &Path) -> Result<(), String> {
-    let target = directory.join("logs/update.log");
-    fs::create_dir_all(target.parent().ok_or("更新日志目录无效")?).map_err(|e| e.to_string())?;
-    let bytes = fs::read(log).map_err(|e| e.to_string())?;
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(target)
-        .and_then(|mut file| file.write_all(&bytes))
-        .map_err(|e| e.to_string())
 }
 
 // New NSIS installers use this entry point for legacy clients that still pass
@@ -265,7 +243,8 @@ fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
             if target_exe.is_file() {
                 wait_until_stopped(&target_exe)?;
             }
-            let work = std::env::temp_dir().join(format!("OC2-migration-{}", uuid::Uuid::new_v4()));
+            let work = crate::user_paths::updates_dir()?
+                .join(format!("relocate-{}", uuid::Uuid::new_v4()));
             let migration = Migration::prepare(source, Path::new(&args[2]), &work)?;
             fs::write(
                 Path::new(&args[3]),
@@ -300,8 +279,7 @@ fn finish_legacy_migration(migration: &Migration) -> Result<(), String> {
     if !version_matches(env!("CARGO_PKG_VERSION"), &actual) {
         return Err("迁移后版本不符，已保留原管理器".into());
     }
-    migration.install_data()?;
-    let log = migration.target.join("logs/update.log");
+    let log = crate::user_paths::logs_dir()?.join("update.log");
     fs::create_dir_all(log.parent().ok_or("更新日志目录无效")?).map_err(|e| e.to_string())?;
     launch_and_confirm(&executable, &log)?;
     migration.cleanup()?;
@@ -590,7 +568,7 @@ mod tests {
             b"original config"
         );
         assert!(!target.exists());
-        assert!(directory.join("migration/source/config.toml").is_file());
+        assert!(!directory.join("migration/source/config.toml").exists());
         assert!(
             !fs::read_to_string(&plan.log)
                 .unwrap()

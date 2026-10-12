@@ -6,7 +6,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const CONFIG_DIR: &str = "OC2ModManager";
 const CONFIG_FILE: &str = "config.toml";
 const BUNDLE_FORMAT: &str = "oc2-mod-repository-bundle";
 pub const REGION_CHINESE_MAINLAND: &str = "chinese_mainland";
@@ -149,10 +148,7 @@ impl ConfigService {
     }
 
     pub fn new() -> Result<Self, ConfigError> {
-        let root = std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| std::env::temp_dir().join(CONFIG_DIR));
+        let root = crate::user_paths::root().map_err(ConfigError::Directory)?;
         fs::create_dir_all(&root).map_err(|e| {
             log::error!("创建配置目录失败：目录={}，原因={}", root.display(), e);
             ConfigError::Directory(e.to_string())
@@ -178,11 +174,7 @@ impl ConfigService {
     }
 
     pub fn backups_dir(&self) -> PathBuf {
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| self.root.clone())
-            .join("backups")
+        self.root.join("backups")
     }
 
     pub fn load(&self) -> Result<AppConfig, ConfigError> {
@@ -348,6 +340,7 @@ impl ConfigService {
         }
         PublicConfig {
             schema_version: config.schema_version,
+            platform: std::env::consts::OS.into(),
             region: current_user_region().into(),
             ui_zoom: config.ui_zoom,
             onboarding_seen_steps: config.onboarding_seen_steps.clone(),
@@ -704,6 +697,11 @@ fn default_config() -> AppConfig {
         game: GameConfig {
             path: String::new(),
             auto_detect: true,
+            runtime: if cfg!(windows) {
+                GameRuntime::Native
+            } else {
+                GameRuntime::Wine
+            },
         },
         network: NetworkConfig {
             timeout_seconds: 20,

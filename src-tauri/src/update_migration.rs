@@ -3,16 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DATA_NAMES: &[&str] = &[
-    "config.toml",
-    "config.previous.toml",
-    "install-language.txt",
-    "manifests",
-    "recycle-bin",
-    "backups",
-    "logs",
-    "cache",
-];
 const BINARY_NAMES: &[&str] = &["OC2ModManager.exe", "uninstall.exe"];
 
 #[derive(Serialize, Deserialize)]
@@ -20,8 +10,6 @@ pub(crate) struct Migration {
     pub(crate) source: PathBuf,
     pub(crate) target: PathBuf,
     work: PathBuf,
-    names: Vec<String>,
-    previous: Vec<String>,
     shared_plugins: bool,
 }
 
@@ -56,8 +44,7 @@ fn disjoint(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// Reparse points are rejected instead of traversed: legacy backups may contain
-// links back into plugins or into the manager's own backup directory.
+// Only program files are relocated. Legacy installation-local data stays put.
 fn reject_link(path: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     #[cfg(windows)]
@@ -87,23 +74,6 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn remove_tree(path: &Path) -> Result<(), String> {
-    if !path.try_exists().map_err(|e| e.to_string())? {
-        return Ok(());
-    }
-    reject_link(path)?;
-    if path.is_dir() {
-        // Check every descendant before the recursive removal.
-        for entry in walkdir::WalkDir::new(path) {
-            let entry = entry.map_err(|e| e.to_string())?;
-            reject_link(entry.path())?;
-        }
-        fs::remove_dir_all(path).map_err(|e| e.to_string())
-    } else {
-        fs::remove_file(path).map_err(|e| e.to_string())
-    }
-}
-
 impl Migration {
     pub(crate) fn prepare(source: &Path, target: &Path, work: &Path) -> Result<Self, String> {
         if !install_guard::is_plugins_directory(source)?
@@ -119,36 +89,10 @@ impl Migration {
         let target = resolved(target)?;
         let snapshot = work.join("source");
         fs::create_dir_all(&snapshot).map_err(|e| e.to_string())?;
-        let mut names = DATA_NAMES
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect::<Vec<_>>();
-        for entry in fs::read_dir(&source).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("config.corrupt-") && name.ends_with(".toml") {
-                names.push(name);
-            }
-        }
-        names.retain(|name| source.join(name).exists());
-        for name in names
-            .iter()
-            .map(String::as_str)
-            .chain(BINARY_NAMES.iter().copied())
-        {
+        for name in BINARY_NAMES {
             let path = source.join(name);
             if path.exists() {
                 copy_tree(&path, &snapshot.join(name))?;
-            }
-        }
-        let mut previous = Vec::new();
-        let previous_dir = work.join("previous");
-        fs::create_dir_all(&previous_dir).map_err(|e| e.to_string())?;
-        for name in &names {
-            let path = target.join(name);
-            if path.exists() {
-                copy_tree(&path, &previous_dir.join(name))?;
-                previous.push(name.clone());
             }
         }
         let shared_plugins = source
@@ -158,52 +102,8 @@ impl Migration {
             source,
             target,
             work: resolved(work)?,
-            names,
-            previous,
             shared_plugins,
         })
-    }
-
-    pub(crate) fn install_data(&self) -> Result<(), String> {
-        self.validate()?;
-        install_guard::validate_install_dir(&self.target)?;
-        disjoint(&self.source, &self.target)?;
-        fs::create_dir_all(&self.target).map_err(|e| e.to_string())?;
-        // Keep previous default-directory data after success, too.
-        let recovery = self
-            .target
-            .join("migration-backups")
-            .join(self.work.file_name().ok_or("迁移备份目录无效")?);
-        if !self.previous.is_empty() {
-            disjoint(&self.work, &recovery)?;
-            copy_tree(&self.work.join("previous"), &recovery)?;
-        }
-        for name in &self.names {
-            if let Err(error) = remove_tree(&self.target.join(name)).and_then(|_| {
-                copy_tree(
-                    &self.work.join("source").join(name),
-                    &self.target.join(name),
-                )
-            }) {
-                self.restore_target()?;
-                return Err(format!("管理器数据迁移失败，已恢复默认目录原数据: {error}"));
-            }
-        }
-        Ok(())
-    }
-
-    fn restore_target(&self) -> Result<(), String> {
-        self.validate()?;
-        for name in &self.names {
-            remove_tree(&self.target.join(name))?;
-            if self.previous.contains(name) {
-                copy_tree(
-                    &self.work.join("previous").join(name),
-                    &self.target.join(name),
-                )?;
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn restore_old_binaries(&self) -> Result<(), String> {
@@ -226,12 +126,7 @@ impl Migration {
             return Err("原安装目录发生变化，已保留原文件".into());
         }
         disjoint(&self.source, &self.target)?;
-        for name in self
-            .names
-            .iter()
-            .map(String::as_str)
-            .chain(BINARY_NAMES.iter().copied())
-        {
+        for name in BINARY_NAMES {
             // Generic directories inside plugins itself may belong to other MODs.
             if self.shared_plugins && self.source.join(name).is_dir() {
                 continue;
@@ -269,13 +164,6 @@ impl Migration {
                     .source
                     .file_name()
                     .is_some_and(|name| name.eq_ignore_ascii_case("plugins"))
-            || self.names.iter().any(|name| {
-                Path::new(name).components().count() != 1
-                    || name.contains(['/', '\\', ':'])
-                    || !(DATA_NAMES.contains(&name.as_str())
-                        || (name.starts_with("config.corrupt-") && name.ends_with(".toml")))
-            })
-            || self.previous.iter().any(|name| !self.names.contains(name))
         {
             return Err("迁移路径或记录无效，已保留原文件".into());
         }
@@ -372,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_data_backs_up_default_data_and_removes_only_manager_files() {
+    fn fresh_install_keeps_legacy_data_and_removes_only_manager_binaries() {
         let workspace = Workspace::new();
         for name in [
             "config.toml",
@@ -397,28 +285,19 @@ mod tests {
             fs::read(workspace.source().join("OC2ModManager.exe")).unwrap(),
             b"old manager"
         );
-        migration.install_data().unwrap();
         assert_eq!(
             fs::read(workspace.target().join("config.toml")).unwrap(),
-            b"source data"
-        );
-        assert_eq!(
-            fs::read(workspace.target().join("backups/framework/plugins/mod.dll")).unwrap(),
-            b"source data"
-        );
-        assert_eq!(
-            fs::read(
-                workspace
-                    .target()
-                    .join("migration-backups/work/config.toml")
-            )
-            .unwrap(),
             b"previous config"
         );
+        assert!(!workspace.work().join("source/config.toml").exists());
         migration.cleanup().unwrap();
         assert!(!workspace.source().join("OC2ModManager.exe").exists());
         assert!(!workspace.source().join("uninstall.exe").exists());
-        assert!(!workspace.source().join("backups").exists());
+        assert_eq!(
+            fs::read(workspace.source().join("config.toml")).unwrap(),
+            b"source data"
+        );
+        assert!(workspace.source().join("backups").is_dir());
         assert_eq!(
             fs::read(workspace.source().join("AnotherMod.dll")).unwrap(),
             b"unrelated MOD"
@@ -439,7 +318,6 @@ mod tests {
         workspace.write(&plugins.join("OtherMod.dll"), b"foreign MOD");
         let migration =
             Migration::prepare(&plugins, &workspace.target(), &workspace.work()).unwrap();
-        migration.install_data().unwrap();
         migration.cleanup().unwrap();
         assert!(!plugins.join("OC2ModManager.exe").exists());
         assert!(plugins.is_dir());
@@ -454,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_data_copy_restores_previous_target_and_keeps_source() {
+    fn relocation_does_not_read_or_replace_old_configuration() {
         let workspace = Workspace::new();
         workspace.write(&workspace.source().join("config.toml"), b"source config");
         workspace.write(
@@ -463,8 +341,7 @@ mod tests {
         );
         workspace.write(&workspace.target().join("config.toml"), b"target config");
         let migration = workspace.prepare();
-        fs::remove_file(migration.work.join("source/config.previous.toml")).unwrap();
-        assert!(migration.install_data().is_err());
+        assert!(!migration.work.join("source/config.previous.toml").exists());
         assert_eq!(
             fs::read(workspace.target().join("config.toml")).unwrap(),
             b"target config"
@@ -520,8 +397,7 @@ mod tests {
     fn rejects_forged_records_and_unsafe_or_overlapping_destinations() {
         let workspace = Workspace::new();
         let mut migration = workspace.prepare();
-        migration.names.push("../AnotherMod.dll".into());
-        assert!(migration.install_data().is_err());
+        migration.source = workspace.target();
         assert!(migration.cleanup().is_err());
         assert!(
             Migration::prepare(
@@ -536,7 +412,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn rejects_linked_data_without_touching_source_or_target() {
+    fn leaves_linked_legacy_data_untouched_without_traversing_it() {
         let workspace = Workspace::new();
         workspace.write(
             &workspace.source().join("OC2ModManager.exe"),
@@ -554,12 +430,14 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&junction.stderr)
         );
-        assert!(
+        let migration =
             Migration::prepare(&workspace.source(), &workspace.target(), &workspace.work())
-                .is_err()
-        );
+                .unwrap();
+        assert!(!migration.work.join("source/backups").exists());
         assert!(!workspace.target().exists());
         assert!(workspace.source().join("OC2ModManager.exe").is_file());
+        migration.cleanup().unwrap();
+        assert!(fs::symlink_metadata(&link).is_ok());
         fs::remove_dir(link).unwrap();
     }
 }

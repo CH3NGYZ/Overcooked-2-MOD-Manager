@@ -20,6 +20,19 @@
 .framework-actions {
   flex-wrap: wrap;
 }
+.game-runtime-choice {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 320px);
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 20px;
+  font-size: 12px;
+}
+.game-runtime-choice p {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  line-height: 1.6;
+}
 .large-status {
   display: inline-flex;
   align-items: center;

@@ -48,6 +48,8 @@ arboard = "3"
 base64 = "0.22"
 url = "2"
 thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 winapi = { version = "0.3", features = [
     "dpapi",

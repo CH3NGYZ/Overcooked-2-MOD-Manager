@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, toRefs } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, toRefs, type PropType } from 'vue'
 import {
   ChevronRight, Download, ExternalLink, FileText, Globe, Pencil, Plus, RefreshCw, Search, Trash2, Upload,
 } from 'lucide-vue-next'
 import { localizedRepositorySourceName, t } from '../i18n'
 import type { RepositorySource } from '../types'
+import { useListNavigationFocus } from '../composables/useListNavigationFocus'
 
 const props = defineProps({
+  focusRepositoryIds: { type: Array as PropType<string[]>, default: () => [] },
   config: null, busy: null, gameBlocked: null, repositoryRefreshBatchActive: null, repositoryRefreshing: null,
   sourceBusy: null, sourceRefreshing: null, sourceCardLoading: null, sourceRefreshingManual: null, sourceCollapsed: null,
   sourceRefreshPhase: null, sourceErrors: null,
   toggleSource: null, flattenSourceGroups: null, repositoryGroupCollapsed: null, repositoryGroupKey: null,
   toggleRepositoryGroup: null, localizedRepositoryName: null, localizedRepositoryNote: null,
-  repositoryNoteIsLong: null, renderMarkdown: null, repositoryInstallStatus: null, latest: null,
+  repositoryNoteIsLong: null, renderMarkdown: null, repositoryInstallStatus: null, openRepositoryMods: null, latest: null,
   formatDate: null, installReleases: null, installRepo: null, refreshRepo: null, refreshAllRepositories: null,
   refreshSource: null, api: null, editRepo: null, deleteRepo: null, repos: null,
   openRepositorySourceManager: null, exportRepositories: null, sourceGroups: null,
@@ -25,6 +27,13 @@ const showRepositoryEmptyState = computed(() => !repos.value.length
   && !(config.value?.repository_sources ?? []).some((source: RepositorySource) => sourceRefreshing.value(source.id)))
 const repositoryList = ref<HTMLElement | null>(null)
 const SOURCE_STICKY_GAP = 12
+const focusedRepositories = useListNavigationFocus({
+  list: repositoryList,
+  targetIds: () => props.focusRepositoryIds,
+  targetAttribute: 'data-repository-id',
+  stickyHeadingSelector: ':scope > .source-sticky-stack, :scope > .repository-group-heading',
+  onFinished: () => emit('focus-finished'),
+})
 let stickyLayoutFrame: number | undefined
 let stickyScrollElement: HTMLElement | null = null
 let stickyResizeObserver: ResizeObserver | undefined
@@ -175,6 +184,7 @@ onUnmounted(() => {
   stickyResizeObserver = undefined
 })
 const emit = defineEmits<{
+  'focus-finished': []
   'show-import': []
   'show-repository-note': [repository: any]
   'show-release': [repository: any]
@@ -274,7 +284,8 @@ const emit = defineEmits<{
                               v-if="!repoGroup.label || !repositoryGroupCollapsed[repositoryGroupKey(nestedGroup.source.id, repoGroup.key)]"
                               class="repository-group-items">
                               <div v-for="repo in repoGroup.repositories" :key="repo.id"
-                                :class="['repository-row', { 'repo-refreshing': repositoryRefreshing[repo.id] }]">
+                                :data-repository-id="repo.id" tabindex="-1"
+                                :class="['repository-row', { 'repo-refreshing': repositoryRefreshing[repo.id], 'repository-focus': focusedRepositories.includes(repo.id) }]">
                                 <div class="repo-logo" :class="repo.provider">
                                   <svg class="provider-icon" :aria-label="repo.provider === 'github' ? 'GitHub' : 'Gitee'"
                                     role="img" :viewBox="repo.provider === 'github' ? '0 0 19 19' : '0 0 24 24'">
@@ -285,9 +296,9 @@ const emit = defineEmits<{
                                 </div>
                                 <div class="repo-info">
                                   <div class="repo-title"><b>{{ localizedRepositoryName(repo) }}</b><span v-if="repo.builtin"
-                                      class="badge muted">{{ t('内置') }}</span><span class="badge"
-                                      :class="repo.enabled ? 'success' : 'muted'">{{ repo.enabled ? t('启用') : t('停用')
-                                      }}</span><span v-if="repositoryInstallStatus(repo)" class="badge"
+                                      class="badge muted">{{ t('内置') }}</span><span v-if="!repo.enabled" class="badge muted">{{ t('未启用') }}</span><button v-if="['有更新', '最新版'].includes(repositoryInstallStatus(repo))" type="button"
+                                      class="badge mod-update-link" :class="repositoryInstallStatus(repo) === '有更新' ? 'warning' : 'success'"
+                                      @click="dynamicProps.openRepositoryMods(repo)">{{ t(repositoryInstallStatus(repo)) }}</button><span v-else-if="repositoryInstallStatus(repo)" class="badge"
                                       :class="['有更新', '检查中', '待检查'].includes(repositoryInstallStatus(repo)) ? 'warning' : 'success'">{{
                                         t(repositoryInstallStatus(repo)) }}</span>
                                   </div>

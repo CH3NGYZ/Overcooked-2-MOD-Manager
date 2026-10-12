@@ -574,3 +574,17 @@
     transform: rotate(360deg);
   }
 }
+
+.manual-install-modal {
+  width: min(520px, calc(100vw / var(--ui-zoom) - 40px));
+}
+.manual-install-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.manual-install-modal .modal-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}

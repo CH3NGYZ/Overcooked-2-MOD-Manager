@@ -1,23 +1,62 @@
 <script setup lang="ts">
-import { toRefs } from 'vue'
+import { computed, ref, toRefs, type PropType } from 'vue'
 import { ChevronRight, FileCog, FolderOpen, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import { t } from '../i18n'
+import { useListNavigationFocus } from '../composables/useListNavigationFocus'
+import type { InstalledMod } from '../types'
 
 const props = defineProps({
-  openModConfig: null,
+  focusModFiles: { type: Array as PropType<string[]>, default: () => [] },
+  openModConfig: null, openModRepository: null,
   config: null, busy: null, saveHideUnidentifiedMods: null, openModDirectory: null, openModFileLocation: null, openModRecycleBin: null, gameBlocked: null,
   installLocalMod: null, rescanInstalledMods: null, mappedReposAvailable: null, checkModUpdates: null,
   installedMods: null, isFirstModInPackage: null, packageIsCollapsed: null, modDisplayIndex: null,
-  packageEnabledForMod: null, packageMixedForMod: null, packageModCountForMod: null, packageNameForMod: null, packageUpdateStatusForMod: null, packageHasDuplicateForMod: null,
+  packageEnabledForMod: null, packageMixedForMod: null, packageModCountForMod: null, packageNameForMod: null,
   toggleModPackage: null, toggleModPackageDetails: null, packageIdForMod: null, modDetailsExpanded: null,
   isLastModInPackage: null, packageChildIndex: null, modEnabledForView: null, isModToggling: null,
   isPackageToggling: null, toggleMod: null, toggleModDetails: null,
+  installedModStatus: { type: Function as PropType<(mod: InstalledMod) => string>, required: true },
   installedModStatusLabel: null, installedModStatusClass: null, editModNote: null, uninstallMod: null, uninstallModPackage: null,
   displayModPath: null, modUninstallPending: null, cancelModUninstall: null,
   formatModPackageDeleteWarning: null, confirmModUninstall: null,
 })
 const dynamicProps = props as Record<string, any>
-const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLocation, openModRecycleBin, gameBlocked, installLocalMod, rescanInstalledMods, mappedReposAvailable, checkModUpdates, installedMods, isFirstModInPackage, packageIsCollapsed, modDisplayIndex, packageEnabledForMod, packageMixedForMod, packageModCountForMod, packageNameForMod, packageUpdateStatusForMod, packageHasDuplicateForMod, toggleModPackage, toggleModPackageDetails, packageIdForMod, modDetailsExpanded, isLastModInPackage, packageChildIndex, modEnabledForView, isModToggling, isPackageToggling, toggleMod, toggleModDetails, installedModStatusLabel, installedModStatusClass, editModNote, uninstallMod, uninstallModPackage, displayModPath, modUninstallPending, cancelModUninstall, formatModPackageDeleteWarning, confirmModUninstall } = toRefs(dynamicProps)
+const emit = defineEmits<{ 'focus-finished': [] }>()
+const installedList = ref<HTMLElement | null>(null)
+const installedGroups = computed(() => {
+  const groups: { id: string; packageId?: string; mods: { mod: InstalledMod; index: number }[] }[] = []
+  const statusesByGroup = new Map<string, Map<string, InstalledMod[]>>()
+  for (const [index, mod] of (dynamicProps.installedMods as InstalledMod[]).entries()) {
+    const packageId = dynamicProps.packageIdForMod(mod) as string | undefined
+    const id = packageId ? `package:${packageId}` : `mod:${mod.dll_file}`
+    const previous = groups[groups.length - 1]
+    if (previous?.id === id) previous.mods.push({ mod, index })
+    else groups.push({ id, packageId, mods: [{ mod, index }] })
+    const statuses = statusesByGroup.get(id) ?? new Map<string, InstalledMod[]>()
+    const status = props.installedModStatus(mod)
+    const members = statuses.get(status)
+    if (members) members.push(mod)
+    else statuses.set(status, [mod])
+    statusesByGroup.set(id, statuses)
+  }
+  return groups.map((group) => ({
+    ...group,
+    statuses: [...statusesByGroup.get(group.id)!].map(([status, mods]) => ({ status, mods })),
+  }))
+})
+const focusGroupIds = computed(() => {
+  const files = new Set(props.focusModFiles)
+  return installedGroups.value.filter((group) => group.mods.some(({ mod }) => files.has(mod.dll_file)))
+    .map((group) => group.id)
+})
+const focusedMods = useListNavigationFocus({
+  list: installedList,
+  targetIds: () => focusGroupIds.value,
+  targetAttribute: 'data-mod-focus-target',
+  stickyHeadingSelector: ':scope > .table-head',
+  onFinished: () => emit('focus-finished'),
+})
+const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLocation, openModRecycleBin, gameBlocked, installLocalMod, rescanInstalledMods, mappedReposAvailable, checkModUpdates, installedMods, isFirstModInPackage, packageIsCollapsed, modDisplayIndex, packageEnabledForMod, packageMixedForMod, packageModCountForMod, packageNameForMod, toggleModPackage, toggleModPackageDetails, packageIdForMod, modDetailsExpanded, isLastModInPackage, packageChildIndex, modEnabledForView, isModToggling, isPackageToggling, toggleMod, toggleModDetails, installedModStatusLabel, installedModStatusClass, editModNote, uninstallMod, uninstallModPackage, displayModPath, modUninstallPending, cancelModUninstall, formatModPackageDeleteWarning, confirmModUninstall } = toRefs(dynamicProps)
 </script>
 
 <template>
@@ -50,9 +89,11 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
               <RefreshCw :size="16" />{{ t('检查模组更新') }}
             </button></div>
         </div>
-        <div class="panel table-panel">
+        <div ref="installedList" class="panel table-panel">
           <div class="table-head"><span>{{ t('序号') }}</span><span>{{ t('状态') }}</span><span>{{ t('模组') }}</span><span>{{ t('操作') }}</span></div>
-          <template v-for="(mod, index) in installedMods" :key="mod.dll_file">
+          <div v-for="group in installedGroups" :key="group.id" :data-mod-focus-target="group.id" tabindex="-1"
+            :class="['mod-list-group', { 'mod-package-group': !!group.packageId, 'mod-focus': focusedMods.includes(group.id) }]">
+          <template v-for="{ mod, index } in group.mods" :key="mod.dll_file">
             <div v-if="isFirstModInPackage(mod, index)" :class="['mod-package-heading', { 'mod-package-collapsed': packageIsCollapsed(mod) }]">
               <span class="mod-index">{{ modDisplayIndex(mod, index) }}</span>
               <button class="mod-switch" :class="{ 'mod-switch-on': packageEnabledForMod(mod), 'mod-switch-mixed': packageMixedForMod(mod) }" role="switch"
@@ -68,8 +109,15 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
                   <div class="mod-heading">
                     <b>{{ packageNameForMod(mod) }}</b>
                     <span class="badge muted">{{ packageModCountForMod(mod) }} {{ t('个子 MOD') }}</span>
-                    <span v-if="packageUpdateStatusForMod(mod)" class="badge mod-package-update-status" :class="packageUpdateStatusForMod(mod) === '最新版' ? 'success' : 'warning'"><RefreshCw v-if="packageUpdateStatusForMod(mod) === '检查中'" class="spin-icon" :size="11" />{{ t(packageUpdateStatusForMod(mod)) }}</span>
-                    <span v-if="packageHasDuplicateForMod(mod)" class="badge warning mod-package-duplicate-status" :title="t('检测到多个相同 GUID 和版本的 MOD，管理器会随机加载一个 MOD，建议删除重复 MOD')">{{ t('重复') }}</span>
+                    <template v-for="summary in group.statuses" :key="summary.status">
+                      <button v-if="['有更新', '最新版'].includes(summary.status)" type="button" class="badge mod-package-status mod-update-link"
+                        :class="installedModStatusClass(summary.mods[0])"
+                        @click="dynamicProps.openModRepository(mod, summary.status)">{{ summary.mods.length }} {{ t(summary.status) }}</button>
+                      <span v-else class="badge mod-package-status" :class="installedModStatusClass(summary.mods[0])"
+                        :title="summary.status === '重复' ? t('检测到多个相同 GUID 和版本的 MOD，管理器会随机加载一个 MOD，建议删除重复 MOD') : undefined">
+                        <RefreshCw v-if="summary.status === '检查中'" class="spin-icon" :size="11" />{{ summary.mods.length }} {{ t(summary.status) }}
+                      </span>
+                    </template>
                   </div>
                 </div>
               </div>
@@ -95,11 +143,12 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
             <div class="mod-cell">
               <div class="mod-details">
                 <div class="mod-details-layout">
-                  <button class="mod-details-toggle" :title="modDetailsExpanded[mod.dll_file] ? t('折叠') : t('展开')"
+                  <button class="mod-details-toggle" data-tutorial="mod-details-toggle" :title="modDetailsExpanded[mod.dll_file] ? t('折叠') : t('展开')"
                     @click="toggleModDetails(mod.dll_file)"><ChevronRight :class="{ 'mod-details-expanded': modDetailsExpanded[mod.dll_file] }" :size="15" /></button>
                   <div class="mod-details-content">
                     <div class="mod-heading"><b>{{ mod.name }}</b>
-                      <span class="mod-version mono">{{ mod.version || t('未知版本') }}</span><span class="badge"
+                      <span class="mod-version mono">{{ mod.version || t('未知版本') }}</span><button v-if="['有更新', '最新版'].includes(props.installedModStatus(mod))" type="button"
+                        class="badge mod-update-link" :class="installedModStatusClass(mod)" @click="dynamicProps.openModRepository(mod)">{{ installedModStatusLabel(mod) }}</button><span v-else class="badge"
                         :title="mod.duplicate_version ? t('检测到多个相同 GUID 和版本的 MOD，管理器会随机加载一个 MOD，建议删除重复 MOD') : undefined"
                         :class="installedModStatusClass(mod)"><RefreshCw v-if="installedModStatusLabel(mod) === t('检查中')" class="spin-icon" :size="11" />{{ installedModStatusLabel(mod) }}</span>
                         </div>
@@ -141,6 +190,7 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
               </div>
             </Transition>
           </template>
+          </div>
           <div v-if="!installedMods.length" class="empty-state">{{ t(config?.hide_unidentified_mods ? '没有扫描到可识别的 BepInEx MOD' : '没有扫描到 BepInEx/plugins/**/*.dll') }}</div>
         </div>
         <Transition name="modal-fade">

@@ -41,6 +41,8 @@ type ModUninstallPending = {
 }
 
 const activeView = ref<View>('overview')
+const repositoryFocusIds = ref<string[]>([])
+const modFocusFiles = ref<string[]>([])
 const { confirmation, requestConfirmation, answerConfirmation } = useConfirmationDialog()
 const dashboard = ref<Dashboard | null>(null)
 const busy = ref('')
@@ -549,6 +551,17 @@ function repositoryInstallStatus(repo: Repository) {
   if (boundMods.some((mod) => compareModVersions(remote, mod.version) > 0)) return '有更新'
   return boundMods.every((mod) => remote && mod.version) ? '最新版' : '已安装'
 }
+function openRepositoryMods(repo: Repository) {
+  if (!['有更新', '最新版'].includes(repositoryInstallStatus(repo))) return
+  const boundMods = installedMods.value.filter((mod) => modReleaseRepositoryIds(mod).has(repo.id))
+  if (!boundMods.length) return
+  for (const mod of boundMods) {
+    const packageId = packageIdForMod(mod)
+    if (packageId) modPackageCollapsed[packageId] = false
+  }
+  modFocusFiles.value = boundMods.map((mod) => mod.dll_file)
+  activeView.value = 'installed'
+}
 function modReleaseRepositories(mod: InstalledMod) {
   const ids = modReleaseRepositoryIds(mod)
   return repos.value.filter((repo) => repo.enabled && ids.has(repo.id))
@@ -563,12 +576,12 @@ function modHasRemoteUpdate(mod: InstalledMod) {
 }
 function installedModStatus(mod: InstalledMod) {
   if (!modEnabledForView(mod)) return '已禁用'
+  if (mod.duplicate_version) return '重复'
+  if (mod.load_warning) return mod.load_warning
   if (mod.status === 'not_release_asset') return '不是 Release 资产, 无法检测更新'
   if (mod.status === 'unbound') return '未绑定在线仓库，无法检测更新'
   if (installedModsChecking.value || isModRepositoryRefreshing(mod)) return '检查中'
   if (installedModsPendingCheck.value) return '待检查'
-  if (mod.duplicate_version) return '重复'
-  if (mod.load_warning) return mod.load_warning
   const confirmed = modReleaseUpdateStatus(mod)
   if (confirmed) return confirmed
   const candidates = modReleaseRepositories(mod)
@@ -594,23 +607,44 @@ function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | 
   if (modHasRemoteUpdate(mod)) return '有更新'
   return candidates.length > 0 && candidates.every((repo) => modRepositoryVersionReady(repo, mod)) ? '最新版' : ''
 }
-function packageStatusModsForMod(mod: InstalledMod) {
-  if (!mod.package_id) return []
-  // Only visible children contribute; ignore shadowed older copies in every state.
-  return visibleInstalledMods.value.filter((item) => item.package_id === mod.package_id
-    && item.status !== 'duplicate_lower_version' && item.load_warning !== '存在更高版本，建议卸载')
-}
-function packageHasDuplicateForMod(mod: InstalledMod) {
-  return packageStatusModsForMod(mod).some((item) => item.duplicate_version)
-}
-function packageUpdateStatusForMod(mod: InstalledMod): '检查中' | '有更新' | '最新版' | '' {
-  const children = packageStatusModsForMod(mod)
-  if (!children.length) return ''
-  if (installedModsChecking.value || children.some(isModRepositoryRefreshing)) return '检查中'
-  if (installedModsPendingCheck.value) return ''
-  const states = children.map(modReleaseUpdateStatus)
-  if (states.includes('有更新')) return '有更新'
-  return states.every((state) => state === '最新版') ? '最新版' : ''
+function openModRepository(mod: InstalledMod, packageStatus?: string) {
+  const status = packageStatus ?? installedModStatus(mod)
+  if (status !== '有更新' && status !== '最新版') return
+  const children = (packageStatus && mod.package_id
+    ? visibleInstalledMods.value.filter((child) => child.package_id === mod.package_id)
+    : [mod]).filter((child) => installedModStatus(child) === status && modReleaseUpdateStatus(child) === status)
+  const bound = children.flatMap(modReleaseRepositories).filter((repo) => children.some((child) =>
+    modReleaseRepositoryIds(child).has(repo.id) && modRepositoryVersionReady(repo, child)
+    && (status === '有更新'
+      ? compareModVersions(latest(repo)?.version || latest(repo)?.tag_name, child.version) > 0
+      // “最新版”也包含本地版本高于当前渠道 Release 的情况，与状态判断保持一致。
+      : compareModVersions(latest(repo)?.version || latest(repo)?.tag_name, child.version) <= 0)))
+  const targets = new Set(repos.value.filter((repo) => repo.download_mode === 'release' && bound.some((candidate) =>
+    repo.provider === candidate.provider && repo.username === candidate.username
+    && repo.repository === candidate.repository)).map((repo) => repo.id))
+  const visibleIds: string[] = []
+  function expandTargets(groups: SourceGroup[]): boolean {
+    let found = false
+    for (const group of groups) {
+      let ownTarget = false
+      for (const repoGroup of group.groups) {
+        const matches = repoGroup.repositories.filter((repo) => targets.has(repo.id))
+        if (!matches.length) continue
+        visibleIds.push(...matches.map((repo) => repo.id))
+        repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)] = false
+        ownTarget = true
+      }
+      const childTarget = expandTargets(group.children)
+      if (ownTarget || childTarget) {
+        sourceCollapsed[group.source.id] = false
+        found = true
+      }
+    }
+    return found
+  }
+  if (!expandTargets(sourceGroups.value)) return
+  repositoryFocusIds.value = visibleIds
+  activeView.value = 'repositories'
 }
 function repositoryNoteIsLong(repo: Repository) {
   const note = localizedRepositoryNote(repo)
@@ -1062,7 +1096,7 @@ async function installAppUpdate() {
   startupUpdatePhase.value = 'download'
   beginDownloadProgress()
   try {
-    const result = await run('正在安装程序更新', () => api.installAppUpdate(locale.value))
+    const result = await run('正在安装程序更新', () => api.installAppUpdate(locale.value, t('更新未能完成或启动，请手动打开管理器或运行已下载的安装器。详细信息：')))
     if (!result.ok && result.message !== '当前已是最新版本') markUpdateSkipped(result.message)
   } finally {
     clearDownloadProgress()
@@ -1283,7 +1317,7 @@ async function startupChecks() {
     // The automatic path performs API discovery and Release download in one
     // ordered pipeline. Calling checkAppUpdate first would request the APIs a
     // second time before installAppUpdate could begin downloading.
-    const installResult = await api.installAppUpdate(locale.value)
+    const installResult = await api.installAppUpdate(locale.value, t('更新未能完成或启动，请手动打开管理器或运行已下载的安装器。详细信息：'))
     if (!installResult.ok && installResult.message !== '当前已是最新版本') {
       markUpdateSkipped(installResult.message)
     }
@@ -1851,7 +1885,39 @@ async function toggleModPackage(mod: InstalledMod) {
 function displayModPath(mod: InstalledMod) {
   return `${mod.dll_file}${modEnabledForView(mod) ? '' : '.disabled'}`
 }
-async function installLocalMod() { const path = await api.chooseModFile(); if (!path || Array.isArray(path)) return; await run('正在安装本地 MOD', () => api.installLocalMod(path)); await loadDashboard() }
+const manualInstallMode = ref<'choose' | 'online' | null>(null)
+const manualInstallUrl = ref('')
+function installLocalMod() {
+  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value) return
+  manualInstallUrl.value = ''
+  manualInstallMode.value = 'choose'
+}
+async function chooseLocalMod() {
+  manualInstallMode.value = null
+  const path = await api.chooseModFile()
+  if (!path || Array.isArray(path)) return
+  if (busy.value || gameBlocked.value || appUnmounted) return
+  try {
+    await run('正在安装本地 MOD', () => api.installLocalMod(path))
+    await loadDashboard()
+  } catch { /* run displays the error */ }
+}
+async function installOnlineMod() {
+  if (busy.value || gameBlocked.value || appUnmounted || !manualInstallUrl.value.trim()) return
+  const url = manualInstallUrl.value.trim()
+  try {
+    const parsed = new URL(url)
+    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error()
+  } catch { showError(t('请输入有效的 HTTP 或 HTTPS 下载直链')); return }
+  manualInstallMode.value = null
+  beginDownloadProgress()
+  progress.value = { label: t('在线文件'), percent: 0, speed: '', indeterminate: true, status: t('正在建立直连') }
+  try {
+    await run('正在安装在线 MOD', () => api.installOnlineMod(url))
+    await loadDashboard()
+  } catch { /* run displays the error */ }
+  finally { clearDownloadProgress() }
+}
 async function rescanInstalledMods() {
   installedModsPendingCheck.value = true
   installedModsChecking.value = false
@@ -2074,6 +2140,8 @@ onUnmounted(() => {
         :restore-backup="restoreBackup"
         :delete-backup="deleteBackup" />
       <InstalledModsView v-else-if="activeView === 'installed'"
+        :focus-mod-files="modFocusFiles"
+        @focus-finished="modFocusFiles = []"
         :config="config"
         :busy="busy"
         :save-hide-unidentified-mods="saveHideUnidentifiedMods"
@@ -2093,8 +2161,7 @@ onUnmounted(() => {
         :package-enabled-for-mod="packageEnabledForMod"
         :package-mixed-for-mod="packageMixedForMod"
         :package-mod-count-for-mod="packageModCountForMod"
-        :package-update-status-for-mod="packageUpdateStatusForMod"
-        :package-has-duplicate-for-mod="packageHasDuplicateForMod"
+        :open-mod-repository="openModRepository"
         :package-name-for-mod="packageNameForMod"
         :toggle-mod-package="toggleModPackage"
         :toggle-mod-package-details="toggleModPackageDetails"
@@ -2107,6 +2174,7 @@ onUnmounted(() => {
         :is-package-toggling="isPackageToggling"
         :toggle-mod="toggleMod"
         :toggle-mod-details="toggleModDetails"
+        :installed-mod-status="installedModStatus"
         :installed-mod-status-label="installedModStatusLabel"
         :installed-mod-status-class="installedModStatusClass"
         :edit-mod-note="editModNote"
@@ -2118,6 +2186,8 @@ onUnmounted(() => {
         :format-mod-package-delete-warning="formatModPackageDeleteWarning"
         :confirm-mod-uninstall="confirmModUninstall" />
       <RepositoriesView v-else-if="activeView === 'repositories'"
+        :focus-repository-ids="repositoryFocusIds"
+        @focus-finished="repositoryFocusIds = []"
         :config="config"
         :busy="busy"
         :game-blocked="gameBlocked"
@@ -2140,6 +2210,7 @@ onUnmounted(() => {
         :repository-note-is-long="repositoryNoteIsLong"
         :render-markdown="renderMarkdown"
         :repository-install-status="repositoryInstallStatus"
+        :open-repository-mods="openRepositoryMods"
         :latest="latest"
         :format-date="formatDate"
         :install-releases="installReleases"
@@ -2545,6 +2616,26 @@ onUnmounted(() => {
           <Download :size="15" />{{ t('下载并安装') }}
         </button></div>
     </div>
+  </div>
+  <div v-if="manualInstallMode" class="modal-backdrop" @click.self="manualInstallMode = null" @keydown.esc.stop="manualInstallMode = null">
+    <form class="modal manual-install-modal" @submit.prevent="installOnlineMod">
+      <div class="modal-head">
+        <h3>{{ t('手动安装模组') }}</h3>
+        <button type="button" class="icon-button" :aria-label="t('关闭')" @click="manualInstallMode = null"><X :size="17" /></button>
+      </div>
+      <div v-if="manualInstallMode === 'choose'" class="modal-actions">
+        <button type="button" class="secondary-button" @click="chooseLocalMod">{{ t('本地文件') }}</button>
+        <button type="button" class="primary-button" @click="manualInstallMode = 'online'">{{ t('在线文件') }}</button>
+      </div>
+      <template v-else>
+        <label class="manual-install-field"><span>{{ t('下载直链') }}</span><input v-model="manualInstallUrl" type="url" required :placeholder="t('请输入 DLL 或 ZIP 文件的下载直链')" :aria-label="t('下载直链')" /></label>
+        <p class="muted-text">{{ t('仅支持 DLL 或 ZIP 文件，使用 32 线程直连下载。') }}</p>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" @click="manualInstallMode = 'choose'">{{ t('返回') }}</button>
+          <button type="submit" class="primary-button" :disabled="!!busy || gameBlocked || !manualInstallUrl.trim()">{{ t('下载并安装') }}</button>
+        </div>
+      </template>
+    </form>
   </div>
   <div v-if="showBepInExInstall" class="modal-backdrop" @click.self="showBepInExInstall = false">
     <div class="modal bepinex-channel-modal">

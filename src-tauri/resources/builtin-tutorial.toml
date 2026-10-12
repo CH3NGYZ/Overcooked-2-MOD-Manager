@@ -462,7 +462,7 @@ description_i18n = { "zh-CN" = "每个子 MOD 可独立开关、查看详情、�
 
 [[steps]]
 id = "mod-package-child-details"
-selector = "#app > div > main > div.main-scroll > section > div.panel.table-panel > div:nth-child(3) > div > div.mod-cell > div > div > button"
+selector = '[data-mod-file="ConfigurationManager.dll"] [data-tutorial="mod-details-toggle"]'
 view = "installed"
 scenario = "mod-management"
 title = "展开子 MOD 详情"

@@ -33,11 +33,16 @@
   border-bottom: 1px solid var(--line);
   font-size: 11px;
 }
+.mod-list-group,
 .mod-row-shell {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
   min-width: 0;
+}
+.mod-list-group {
+  position: relative;
+  isolation: isolate;
 }
 .mod-row-shell > .mod-detail-panel {
   grid-column: 1 / -1;
@@ -398,4 +403,10 @@
 }
 .mod-filter-control {
   margin-top: 9px;
+}
+
+button.mod-update-link:hover,
+button.mod-update-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

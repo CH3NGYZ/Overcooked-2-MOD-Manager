@@ -66,10 +66,16 @@ export function normalizeTutorialTextMap(
 
 export function normalizeTutorialStep(step: TutorialStepConfig): TutorialStep {
   // Saved copies of the former built-in step still contain its obsolete DOM path.
-  const selector = step.id === 'mod-package-child-actions' && step.scenario === 'mod-management'
-    && step.selector === '#app > div > main > div.main-scroll > section > div.panel.table-panel > div.mod-row-shell.mod-package-shell.has-mod-details > div.table-row.mod-package-child.mod-package-child-first > div.mod-controls'
-    ? '[data-mod-file="ConfigurationManager.dll"] [data-tutorial="mod-actions"]'
-    : step.selector
+  let selector = step.selector
+  if (step.scenario === 'mod-management') {
+    if (step.id === 'mod-package-child-actions'
+      && selector === '#app > div > main > div.main-scroll > section > div.panel.table-panel > div.mod-row-shell.mod-package-shell.has-mod-details > div.table-row.mod-package-child.mod-package-child-first > div.mod-controls') {
+      selector = '[data-mod-file="ConfigurationManager.dll"] [data-tutorial="mod-actions"]'
+    } else if (step.id === 'mod-package-child-details'
+      && selector === '#app > div > main > div.main-scroll > section > div.panel.table-panel > div:nth-child(3) > div > div.mod-cell > div > div > button') {
+      selector = '[data-mod-file="ConfigurationManager.dll"] [data-tutorial="mod-details-toggle"]'
+    }
+  }
   return {
     ...step,
     selector,

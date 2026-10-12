@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rtk git status:*)",
+      "Bash(rtk cargo fmt:*)",
+      "Bash(rtk cargo check --manifest-path src-tauri/Cargo.toml)",
+      "Bash(npm run build:*)",
+      "Bash(rtk wc -l src/i18n.ts)",
+      "Bash(rtk grep:*)",
+      "Bash(npm install:*)",
+      "Bash(rtk read:*)",
+      "Bash(rtk wc:*)",
+      "Bash(rtk git add .github/workflows/build.yml src/components/PlatformSetupGuide.vue src/components/FrameworkView.vue src/i18n.ts src-tauri/src/game.rs src-tauri/src/commands.rs src-tauri/src/lib.rs src/services/tauri.ts package.json package-lock.json docs/platform-setup-tutorial-images.md)",
+      "Bash(git commit:*)",
+      "Bash(rtk git add:*)",
+      "Bash(cargo update:*)",
+      "Bash(rtk git log:*)"
+    ]
+  }
+}

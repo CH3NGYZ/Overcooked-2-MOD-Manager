@@ -22,6 +22,18 @@ export function updateFiles(bundleRoot, target, version) {
   return collectUpdateAssets(assets, version, keys)
 }
 
+export function runTauri(parameters, env = process.env, invoke = spawnSync) {
+  const cli = resolve('node_modules/@tauri-apps/cli/tauri.js')
+  const commandEnv = { ...env }
+  // build accepts a key path in KEY; signer sign reserves KEY for inline contents.
+  if (parameters[0] === 'build' && !env.TAURI_SIGNING_PRIVATE_KEY?.trim()
+    && env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()) {
+    commandEnv.TAURI_SIGNING_PRIVATE_KEY = env.TAURI_SIGNING_PRIVATE_KEY_PATH
+  }
+  const result = invoke(process.execPath, [cli, ...parameters], { stdio: 'inherit', env: commandEnv })
+  if (result.error || result.status !== 0) throw new Error('Tauri release build/signing failed')
+}
+
 export function main(args = process.argv.slice(2)) {
   const { version, publicKey } = readProject()
   if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim() && !process.env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()) {
@@ -32,11 +44,6 @@ export function main(args = process.argv.slice(2)) {
   if (args[0] !== 'build' || targetIndex < 0 || !BUILD_KEYS[target]
     || args.includes('--debug') || args.includes('--profile') || args.includes('--no-bundle')) {
     throw new Error('Release builds require build --target with a supported release target')
-  }
-  const cli = resolve('node_modules/@tauri-apps/cli/tauri.js')
-  const runTauri = parameters => {
-    const result = spawnSync(process.execPath, [cli, ...parameters], { stdio: 'inherit' })
-    if (result.error || result.status !== 0) throw new Error('Tauri release build/signing failed')
   }
   runTauri(args)
   const targetRoot = resolve(process.env.CARGO_TARGET_DIR || 'src-tauri/target')

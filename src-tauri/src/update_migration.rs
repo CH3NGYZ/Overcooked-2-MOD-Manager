@@ -13,6 +13,7 @@ pub(crate) struct Migration {
     shared_plugins: bool,
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn update_executable(executable: &Path) -> Result<PathBuf, String> {
     let directory = executable.parent().ok_or("安装目录无效")?;
     if !install_guard::is_plugins_directory(directory)? {

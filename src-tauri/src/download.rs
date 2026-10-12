@@ -662,7 +662,7 @@ mod tests {
         let race = race_candidates(
             (0..7).map(candidate).collect(),
             || false,
-            |candidate, reporter| async move {
+            |candidate, reporter| {
                 let id = candidate
                     .url
                     .parse::<url::Url>()
@@ -673,17 +673,19 @@ mod tests {
                     .trim_end_matches(".example")
                     .parse::<usize>()
                     .unwrap();
+                // Seed each stage before polling, independent of timer granularity.
                 let mut progress = DownloadProgress::connecting("test");
                 progress.downloaded = (id as u64 + 1) * 100;
                 reporter.received(progress.downloaded);
                 reporter.update(progress.clone());
-                if id < 6 {
-                    std::future::pending::<Result<Vec<u8>, String>>().await
-                } else {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                    progress.downloaded = 1000;
-                    reporter.update(progress);
-                    Ok(vec![42])
+                async move {
+                    if id < 6 {
+                        std::future::pending::<Result<Vec<u8>, String>>().await
+                    } else {
+                        progress.downloaded = 1000;
+                        reporter.update(progress);
+                        Ok(vec![42])
+                    }
                 }
             },
             Some(DownloadContext {
@@ -695,7 +697,13 @@ mod tests {
                 minimum_speed: RacePolicy::default().minimum_speed,
                 ..policy()
             },
-            |progress| events.push(progress),
+            |progress| {
+                // Reproduce a scheduler stall longer than the test's 40 ms window.
+                if events.is_empty() {
+                    std::thread::sleep(Duration::from_millis(80));
+                }
+                events.push(progress);
+            },
         );
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(2), race)

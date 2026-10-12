@@ -90,6 +90,8 @@ git diff --check
 
 测试运行前把 `TEMP`、`TMP`、`TMPDIR` 指向工作区已忽略的 `src-tauri/target/verification/<本次记录>/tmp`，避免测试临时文件占用系统临时目录。
 
+跨平台安装回归不能依赖 `fs::copy` 拒绝自复制：Unix 可能成功返回，Windows 的失败回滚也可能改变硬链接源的权限。`copy_asset_pending` 在创建快照或修改权限前比较实际文件身份；同一路径、路径别名及硬链接均拒绝覆盖自身。回收站链接边界测试分别使用 `remove_dir` 删除 Windows 目录联接、`remove_file` 删除 Unix 符号链接，只删除链接本身并检查链接外文件保持不变。
+
 将三个官方 ZIP 放到工作区的已忽略目录后，可显式执行真实包安装/重装测试（不启动游戏或完整安装器）：
 
 ```powershell

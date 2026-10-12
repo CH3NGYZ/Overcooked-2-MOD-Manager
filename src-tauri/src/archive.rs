@@ -1403,6 +1403,12 @@ pub(crate) fn copy_asset_pending(
     );
     let relative = Path::new(install_target).join(file_name);
     let destination = safe_game_path(game_root, &relative.to_string_lossy())?;
+    // Path spelling alone cannot detect hard links; reject before snapshots or permission changes.
+    if destination.try_exists().map_err(|e| e.to_string())?
+        && same_file::is_same_file(asset_path, &destination).map_err(|e| e.to_string())?
+    {
+        return Err("所选文件已经位于安装目标，不能覆盖自身".into());
+    }
     let mut pending = PendingModInstall::new(game_root);
     pending.track_destination(&destination)?;
     if let Some(parent) = destination.parent() {
@@ -1591,6 +1597,39 @@ mod tests {
         assert!(copy_asset_pending(&source, &root, "BepInEx/plugins", "Existing.dll").is_err());
         assert_eq!(fs::read(&source).unwrap(), b"original plugin");
         fs::remove_file(source).unwrap();
+        fs::remove_dir(plugins).unwrap();
+        fs::remove_dir(root.join("BepInEx")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn copying_a_hard_link_alias_never_changes_the_source() {
+        let root = std::env::temp_dir().join(format!("oc2-linked-asset-{}", Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        fs::create_dir_all(&plugins).unwrap();
+        let source = root.join("alias.dll");
+        let destination = plugins.join("Existing.dll");
+        fs::write(&source, b"original plugin").unwrap();
+        fs::hard_link(&source, &destination).unwrap();
+        let permissions = fs::metadata(&source).unwrap().permissions();
+        let mut readonly = permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&source, readonly).unwrap();
+
+        assert_eq!(
+            copy_asset_pending(&source, &root, "BepInEx/plugins", "Existing.dll")
+                .err()
+                .unwrap(),
+            "所选文件已经位于安装目标，不能覆盖自身"
+        );
+        assert!(fs::metadata(&source).unwrap().permissions().readonly());
+        assert_eq!(fs::read(&source).unwrap(), b"original plugin");
+        assert_eq!(fs::read(&destination).unwrap(), b"original plugin");
+
+        fs::set_permissions(&source, permissions.clone()).unwrap();
+        fs::set_permissions(&destination, permissions).unwrap();
+        fs::remove_file(source).unwrap();
+        fs::remove_file(destination).unwrap();
         fs::remove_dir(plugins).unwrap();
         fs::remove_dir(root.join("BepInEx")).unwrap();
         fs::remove_dir(root).unwrap();

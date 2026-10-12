@@ -10,6 +10,7 @@ export const locale = ref<Locale>(initialLocale)
 document.documentElement.lang = initialLocale
 
 const entries: Record<string, [string, string, string]> = {
+  '所选文件已经位于安装目标，不能覆盖自身': ['所選檔案已經位於安裝目標，不能覆寫自身', 'The selected file is already at the installation destination and cannot overwrite itself.', '선택한 파일이 이미 설치 대상에 있으므로 자기 자신을 덮어쓸 수 없습니다.'],
   '无法确定默认安装目录': ['無法確定預設安裝目錄', 'Cannot determine the default installation directory', '기본 설치 폴더를 확인할 수 없습니다'],
   '管理器不能安装到 BepInEx/plugins 或其子目录，请选择游戏目录外的位置。': ['管理器不能安裝到 BepInEx/plugins 或其子目錄，請選擇遊戲目錄外的位置。', 'The manager cannot be installed in BepInEx/plugins or its subfolders. Choose a location outside the game directory.', '관리자를 BepInEx/plugins 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요.'],
   '更新助手已接管': ['更新助手已接管', 'Update helper is ready', '업데이트 도우미가 준비되었습니다'],

@@ -89,6 +89,7 @@ dependencies = [
  "minisign-verify",
  "regex",
  "reqwest 0.12.28",
+ "same-file",
  "semver",
  "serde",
  "serde_json",

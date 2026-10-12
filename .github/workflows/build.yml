@@ -16,13 +16,10 @@ jobs:
         include:
           - platform: 'windows-latest'
             args: '--target x86_64-pc-windows-msvc'
-            platform_name: 'Windows'
           - platform: 'ubuntu-22.04'
             args: '--target x86_64-unknown-linux-gnu'
-            platform_name: 'Linux'
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
-            platform_name: 'macOS'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -57,90 +54,13 @@ jobs:
         run: npm ci
 
       - name: Build with Tauri
-        id: tauri_build
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ''
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Overcooked 2 MOD Manager ${{ github.ref_name }}'
+          releaseBody: 'See the assets to download and install this version.'
+          releaseDraft: true
+          prerelease: false
           args: ${{ matrix.args }}
-
-      - name: Create release if not exists
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="${{ github.ref_name }}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" \
-              --title "Overcooked 2 MOD Manager $tag" \
-              --notes "See the assets to download and install this version." \
-              --draft
-          fi
-
-      - name: Rename and upload artifacts with platform name
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          platform="${{ matrix.platform_name }}"
-          tag="${{ github.ref_name }}"
-
-          cd src-tauri/target/release/bundle
-
-          # Function to rename and upload
-          upload_with_prefix() {
-            local file="$1"
-            [ -f "$file" ] || return
-            local filename=$(basename "$file")
-            local new_name="${platform}_${filename}"
-            local dir=$(dirname "$file")
-
-            # Copy with new name to avoid issues with in-place rename
-            cp "$file" "$dir/$new_name"
-            echo "Uploading: $new_name"
-            gh release upload "$tag" "$dir/$new_name" --clobber
-            rm "$dir/$new_name"
-          }
-
-          # Windows NSIS
-          if [ -d "nsis" ]; then
-            for file in nsis/*.exe; do
-              upload_with_prefix "$file"
-            done
-          fi
-
-          # Linux deb
-          if [ -d "deb" ]; then
-            for file in deb/*.deb; do
-              upload_with_prefix "$file"
-            done
-          fi
-
-          # Linux rpm
-          if [ -d "rpm" ]; then
-            for file in rpm/*.rpm; do
-              upload_with_prefix "$file"
-            done
-          fi
-
-          # Linux AppImage
-          if [ -d "appimage" ]; then
-            for file in appimage/*.AppImage; do
-              upload_with_prefix "$file"
-            done
-          fi
-
-          # macOS dmg
-          if [ -d "dmg" ]; then
-            for file in dmg/*.dmg; do
-              upload_with_prefix "$file"
-            done
-          fi
-
-          # macOS app tarball
-          if [ -d "macos" ]; then
-            for file in macos/*.tar.gz; do
-              upload_with_prefix "$file"
-            done
-          fi

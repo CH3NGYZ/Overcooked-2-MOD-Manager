@@ -107,10 +107,14 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --jobs 1 commands
 
 ## 真实平台验收清单
 
+2026-10-13 的非发布四端打包测试已完成：代码提交 `59be3ed6fd8e079cf507e20c840129ba79d42584`，Actions 运行 [38319473951](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38319473951) 的 Windows、Linux、Mac ARM64、Mac Intel 和聚合任务均成功。每端 Node 19 项；Rust Windows 为 280 通过，另外三端为 271 通过，各有 2 项显式忽略。Windows 本机另行执行三种官方 BepInEx 原包的文件系统安装/重装回归，结果通过。
+
+`four-platform-package-summary` 已下载核对同一代码提交、版本与测试标记；CI 聚合重新下载并校验九个包、七份 updater 签名及 SHA-256，包含两个 Mac DMG 和双架构 `.app.tar.gz`。这些是临时密钥签名的 Actions 测试产物，不是 Release；正式公钥未改变，生产 `latest.json` 发布步骤按测试模式跳过。CI 跟踪心跳已在核对完成后停用，以下真实安装、更新及游戏验收仍未进行。
+
 1. 在四个构建环境分别确认格式、编译、完整 Rust 回归及签名产物；检查草稿清单包含七个键，未签名和坏签名包均无法安装。
 2. 每种安装格式从较旧版本更新，检查只选择本格式/架构、权限失败可重试、取消保留旧程序、安装失败有提示，以及成功后版本与重启结果。
 3. 确认用户目录产生配置、日志、清单和备份；切换安装位置或整包更新不覆盖新数据根；旧安装目录数据不被读取或删除。
 4. Linux/macOS 分别验证默认 Wine、切换原生、重启后模式持久化、对应 Steam 探测、外置库、游戏运行检测和框架开关；双模式同时存在时不能串用路径或 prefix。
 5. 原生安装后通过 Steam 启动并检查 `BepInEx/config/BepInEx.cfg`、`BepInEx/LogOutput.log`；Wine 验证目标容器 winhttp 覆盖、已有 Steam 重启、MOD UI 字体及 Mac CrossOver 向导。
 
-本轮 Windows 主机的编译、单元回归和官方三包的文件系统验证，不替代上述 CI、Linux/Mac 实机安装更新及实际游戏加载验收。
+已完成的本地与四端 CI 验证，不替代生产 Secret 验签、Linux/Mac 实机安装更新、系统代码签名及公证、Steam/Wine 运行和实际游戏加载验收。

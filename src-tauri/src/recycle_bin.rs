@@ -2461,6 +2461,15 @@ mod tests {
         std::os::unix::fs::symlink(target, link).is_ok()
     }
 
+    #[cfg(any(windows, unix))]
+    fn remove_directory_link(link: &Path) {
+        assert!(is_link(&fs::symlink_metadata(link).unwrap()));
+        #[cfg(windows)]
+        fs::remove_dir(link).unwrap();
+        #[cfg(unix)]
+        fs::remove_file(link).unwrap();
+    }
+
     #[test]
     #[cfg(any(windows, unix))]
     fn junctions_in_source_destination_or_recycle_payload_never_follow_outside_paths() {
@@ -2483,7 +2492,7 @@ mod tests {
             .unwrap_err(),
             UNSAFE_PATH
         );
-        fs::remove_dir(&linked_source).unwrap();
+        remove_directory_link(&linked_source);
         workspace.write(A, b"staged original");
         let entry = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
         let directory = workspace.recycle.join(&entry.id);
@@ -2510,7 +2519,7 @@ mod tests {
             fs::read(outside.join("A.dll")).unwrap(),
             b"outside original"
         );
-        fs::remove_dir(&bundle).unwrap();
+        remove_directory_link(&bundle);
         fs::create_dir(&bundle).unwrap();
         fs::rename(&preserved, bundle.join("A.dll")).unwrap();
         let target_bundle = workspace.game.join("BepInEx/plugins/Bundle");
@@ -2530,6 +2539,10 @@ mod tests {
             fs::read(outside.join("A.dll")).unwrap(),
             b"outside original"
         );
-        fs::remove_dir(&target_bundle).unwrap();
+        remove_directory_link(&target_bundle);
+        assert_eq!(
+            fs::read(outside.join("A.dll")).unwrap(),
+            b"outside original"
+        );
     }
 }

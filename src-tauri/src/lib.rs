@@ -1,4 +1,6 @@
+mod app_update;
 mod archive;
+mod bepinex;
 mod commands;
 mod config;
 mod direct_mod;
@@ -15,6 +17,9 @@ mod releases;
 mod repository_sources;
 mod update_host;
 mod update_migration;
+mod user_paths;
+#[cfg(any(unix, test))]
+mod wine;
 
 use chrono::Utc;
 use std::fs::{self, OpenOptions};
@@ -41,10 +46,9 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let log_dir = std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("logs")))
-                .unwrap_or_else(|| std::path::PathBuf::from("logs"));
+            let log_dir = user_paths::logs_dir()?;
+            fs::create_dir_all(&log_dir)?;
+            let log_path = log_dir.clone();
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .targets([
@@ -77,7 +81,7 @@ pub fn run() {
                 log::info!(
                     "当前运行程序={}，Rust 日志目录={}",
                     executable.display(),
-                    executable.parent().unwrap_or_else(|| std::path::Path::new(".")).join("logs").display()
+                    log_path.display()
                 );
             }
             let region = config::current_user_region();
@@ -227,10 +231,7 @@ fn install_panic_logger() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         previous(panic);
-        let Some(log_dir) = std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|parent| parent.join("logs")))
-        else {
+        let Ok(log_dir) = user_paths::logs_dir() else {
             return;
         };
         if fs::create_dir_all(&log_dir).is_err() {

@@ -25,39 +25,6 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::download::candidate_progress as asset_candidate_progress;
 
-// Windows and macOS BepInEx download URLs (both use Windows version)
-#[cfg(not(target_os = "linux"))]
-pub const BEPINEX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex.zip";
-#[cfg(not(target_os = "linux"))]
-pub const BEPINEX_GITHUB_URL: &str =
-    "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip";
-
-// Linux-specific BepInEx download URLs
-#[cfg(target_os = "linux")]
-pub const BEPINEX_LINUX_GITEE_URL: &str = "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/bepinex-linux.zip";
-#[cfg(target_os = "linux")]
-pub const BEPINEX_LINUX_GITHUB_URL: &str =
-    "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_linux_x64_5.4.23.5.zip";
-
-/// Returns the platform-appropriate BepInEx download URL
-fn get_bepinex_url(provider: &Provider) -> &'static str {
-    #[cfg(target_os = "linux")]
-    {
-        match provider {
-            Provider::Gitee => BEPINEX_LINUX_GITEE_URL,
-            Provider::Github => BEPINEX_LINUX_GITHUB_URL,
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        // Windows and macOS use the same Windows version
-        match provider {
-            Provider::Gitee => BEPINEX_GITEE_URL,
-            Provider::Github => BEPINEX_GITHUB_URL,
-        }
-    }
-}
-
 const INSTALLER_GITEE_OWNER: &str = "ch3ngyz";
 const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
 const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
@@ -267,20 +234,10 @@ fn installer_asset_for_release<'a>(
     release: &'a ReleaseInfo,
     version: &semver::Version,
 ) -> Option<(&'a ReleaseAsset, &'static str)> {
-    let setup_name = format!("OC2ModManager_{}_x64-setup.exe", version);
-    let msi_name = format!("OC2ModManager_{}_x64_zh-CN.msi", version);
-    release
-        .assets
-        .iter()
-        .find(|asset| asset.name.eq_ignore_ascii_case(&setup_name))
-        .map(|asset| (asset, "exe"))
-        .or_else(|| {
-            release
-                .assets
-                .iter()
-                .find(|asset| asset.name.eq_ignore_ascii_case(&msi_name))
-                .map(|asset| (asset, "msi"))
-        })
+    let target = crate::app_update::UpdateTarget::current().ok()?;
+    target
+        .select_asset(release, version)
+        .map(|asset| (asset, target.kind))
 }
 
 fn installer_channel_status(
@@ -415,6 +372,12 @@ fn inspect_installer_releases(
             .cloned();
         let installer_size = installer.size;
         let installer_digest = installer.digest.clone();
+        let installer_name = installer.name.clone();
+        let installer_signature_url = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == format!("{installer_name}.sig"))
+            .map(|asset| asset.download_url.clone());
         let installer_type = installer_type.to_string();
         let mut manifest_endpoints = release
             .assets
@@ -439,6 +402,8 @@ fn inspect_installer_releases(
             installer_proxy_url,
             installer_download_urls,
             installer_digest,
+            installer_name,
+            installer_signature_url,
             installer_type,
             provider: Some(channel.provider.clone()),
             source_channel: Some(channel.id.into()),
@@ -642,10 +607,7 @@ pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
 #[tauri::command]
 pub fn get_install_language() -> Option<String> {
     log::trace!("读取安装语言标记");
-    let path = std::env::current_exe()
-        .ok()?
-        .parent()?
-        .join("install-language.txt");
+    let path = crate::user_paths::root().ok()?.join("install-language.txt");
     let value = fs::read_to_string(path).ok()?.trim().to_string();
     match value.as_str() {
         "zh-CN" | "zh-TW" | "en" | "ko" => Some(value),
@@ -669,12 +631,7 @@ pub fn read_crash_log() -> Result<RustLog, String> {
 }
 
 fn read_log_file(file_name: &str) -> Result<RustLog, String> {
-    let path = std::env::current_exe()
-        .map_err(|error| error.to_string())?
-        .parent()
-        .ok_or("无法确定程序目录")?
-        .join("logs")
-        .join(file_name);
+    let path = crate::user_paths::logs_dir()?.join(file_name);
     read_log_at_path(&path)
 }
 
@@ -716,11 +673,7 @@ pub fn write_frontend_log(level: String, message: String) -> Result<(), String> 
         message
     };
     let level = level.to_ascii_lowercase();
-    let path = std::env::current_exe()
-        .map_err(|error| error.to_string())?
-        .parent()
-        .ok_or("无法确定程序目录")?
-        .join("logs");
+    let path = crate::user_paths::logs_dir()?;
     fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     let mut file = OpenOptions::new()
         .create(true)
@@ -1242,11 +1195,34 @@ pub fn save_settings(
     patch: SettingsPatch,
 ) -> Result<PublicConfig, String> {
     log::info!("保存应用设置");
+    let previous_game = if let Some(runtime) = patch.game_runtime {
+        if cfg!(windows) && runtime != GameRuntime::Native {
+            return Err("Windows 仅支持 Windows 版厨房".into());
+        }
+        let previous = state.config.load_or_default();
+        if previous.game.runtime != runtime {
+            if let Some(path) = game::detect_game(&previous).path {
+                game::ensure_game_stopped(Path::new(&path))?;
+            }
+        }
+        Some(previous.game)
+    } else {
+        None
+    };
     let _guard = state
         .operation
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
     let mut config = state.config.load_or_default();
+    if previous_game
+        .as_ref()
+        .is_some_and(|previous| *previous != config.game)
+    {
+        return Err("厨房设置已变化，请重试".into());
+    }
+    if let Some(runtime) = patch.game_runtime {
+        config.game.switch_runtime(runtime);
+    }
     if let Some(value) = patch.ui_zoom {
         config.ui_zoom = value.clamp(1.0, 2.0);
     }
@@ -1712,9 +1688,10 @@ pub fn check_crossover_running() -> bool {
 #[tauri::command]
 pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInfo, String> {
     log::info!("设置游戏目录");
-    let root = PathBuf::from(&path);
-    if !root.join("Overcooked2.exe").is_file() {
-        return Err("所选目录中没有 Overcooked2.exe".into());
+    let previous = state.config.load_or_default();
+    let root = game::selected_game_root(Path::new(&path), &previous.game)?;
+    if let Some(path) = game::detect_game(&previous).path {
+        game::ensure_game_stopped(Path::new(&path))?;
     }
     let config = {
         let _guard = state
@@ -1722,6 +1699,9 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
             .lock()
             .map_err(|_| "操作锁异常".to_string())?;
         let mut config = state.config.load_or_default();
+        if config.game != previous.game {
+            return Err("厨房设置已变化，请重试".into());
+        }
         config.game.path = root.to_string_lossy().to_string();
         config.game.auto_detect = false;
         state.config.save(&config).map_err(|e| e.to_string())?;
@@ -1875,7 +1855,7 @@ pub async fn install_bepinex(
     state: State<'_, AppState>,
     reinstall: bool,
     provider: Provider,
-) -> Result<OperationResult, String> {
+) -> Result<BepInExInstallResult, String> {
     archive::start_download();
     log::info!(
         "开始安装 BepInEx：平台={:?}，重新安装={}",
@@ -1883,23 +1863,20 @@ pub async fn install_bepinex(
         reinstall
     );
     let config = state.config.load_or_default();
+    let package = crate::bepinex::Package::current(&config.game);
     let info = game::detect_game(&config);
-    let game_root = info.path.ok_or("尚未找到厨房目录")?;
+    if !info.game_exists {
+        return Err("当前模式下未找到厨房可执行文件".into());
+    }
+    let game_root = info.path.as_deref().ok_or("尚未找到厨房目录")?;
     let game_root = PathBuf::from(game_root);
     game::ensure_game_stopped(&game_root)?;
     if info.bepinex.installed && !reinstall {
         return Err("BepInEx 已安装，如需覆盖请使用重新安装".into());
     }
-    let backup = if reinstall && game_root.join("BepInEx").exists() {
-        log::info!("重新安装前备份现有 BepInEx");
-        let backup = backup_bepinex_dir(&game_root, &state.config.backups_dir())?;
-        Some(backup)
-    } else {
-        None
-    };
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
-    let download_url = get_bepinex_url(&provider);
+    let download_url = package.url(&provider);
     log::debug!(
         "开始下载 BepInEx 安装包：平台={:?}，URL={}",
         provider,
@@ -1938,8 +1915,9 @@ pub async fn install_bepinex(
                     Some(std::time::Duration::from_secs(5)),
                 )
                 .await?;
-                if let Err(error) = archive::validate_download_file(&temp, None, None)
-                    .and_then(|_| archive::validate_zip(&temp))
+                if let Err(error) =
+                    archive::validate_download_file(&temp, None, Some(package.digest()))
+                        .and_then(|_| archive::validate_zip(&temp))
                 {
                     let _ = fs::remove_file(&temp);
                     return Err(error);
@@ -1954,45 +1932,127 @@ pub async fn install_bepinex(
         }),
     )
     .await?;
-    game::ensure_game_stopped(&game_root)?;
-    if reinstall && game_root.join("BepInEx").exists() {
-        archive::clear_readonly(&game_root.join("BepInEx"))?;
-        fs::remove_dir_all(game_root.join("BepInEx"))
-            .map_err(|e| format!("清理旧 BepInEx 失败: {e}"))?;
-    }
-    let backup = backup.or_else(|| {
-        game_root
-            .join("BepInEx")
-            .exists()
-            .then(|| backup_bepinex_dir(&game_root, &state.config.backups_dir()).ok())
-            .flatten()
-    });
-    let extracted = archive::extract_zip_safe(&temp, &game_root);
+    let installation = (|| {
+        let _guard = state
+            .operation
+            .lock()
+            .map_err(|_| "操作锁异常".to_string())?;
+        if state.config.load_or_default().game != config.game {
+            return Err("厨房设置已变化，请重试".into());
+        }
+        if archive::is_download_cancelled() {
+            return Err("下载已取消".into());
+        }
+        game::ensure_game_stopped(&game_root)?;
+        install_framework_archive(
+            &temp,
+            &game_root,
+            &state.config.backups_dir(),
+            package,
+            reinstall,
+        )
+    })();
     let _ = fs::remove_file(&temp);
-    match extracted {
-        Ok(_) => {
-            if let Some(backup) = backup {
-                restore_preserved_dirs(&backup, &game_root)?;
+    match installation {
+        Ok(()) => {
+            log::info!(
+                "BepInEx 安装完成：渠道={:?}，游戏包={:?}",
+                provider,
+                package
+            );
+            #[cfg(unix)]
+            let override_result = if !package.native() {
+                let prefix = info.wine_prefix.map(PathBuf::from);
+                Some(
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let prefix =
+                            prefix.ok_or("无法确定游戏使用的 Wine 容器，请重新选择厨房目录")?;
+                        crate::wine::configure_winhttp(&prefix)
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err("无法自动配置 Wine winhttp，请在目标容器的 winecfg 中手动设置".into())
+                    }),
+                )
+            } else {
+                None
+            };
+            #[cfg(not(unix))]
+            let override_result: Option<Result<(), String>> = None;
+            let wine_override_applied = override_result.as_ref().is_some_and(Result::is_ok);
+            let wine_override_error = override_result.and_then(Result::err);
+            if let Some(error) = &wine_override_error {
+                log::warn!("BepInEx 已安装，Wine 配置需手动完成：{error}");
             }
-            log::info!("BepInEx 安装完成：平台={:?}", provider);
-            Ok(OperationResult {
-                ok: true,
-                message: "BepInEx 安装完成".into(),
+            Ok(BepInExInstallResult {
+                operation: OperationResult {
+                    ok: true,
+                    message: "BepInEx 安装完成".into(),
+                },
+                wine_override_applied,
+                wine_override_error,
             })
         }
         Err(error) => {
-            log::error!("BepInEx 解压安装失败，尝试恢复备份：原因={}", error);
-            if let Some(backup) = backup {
-                let _ = restore_backup_dir(&backup, &game_root);
-            }
+            log::error!("BepInEx 安装失败：原因={}", error);
             Err(format!("BepInEx 安装失败: {error}"))
         }
     }
 }
 
+fn install_framework_archive(
+    archive_path: &Path,
+    game_root: &Path,
+    backup_root: &Path,
+    package: crate::bepinex::Package,
+    reinstall: bool,
+) -> Result<(), String> {
+    let framework = game::safe_game_path(game_root, "BepInEx")?;
+    if framework.exists() && !reinstall {
+        return Err("BepInEx 已安装，如需覆盖请使用重新安装".into());
+    }
+    let backup = if framework.exists() {
+        Some(backup_bepinex_dir(game_root, backup_root)?)
+    } else {
+        None
+    };
+    let result = (|| {
+        if framework.exists() {
+            archive::clear_readonly(&framework)?;
+            fs::remove_dir_all(&framework).map_err(|e| format!("清理旧 BepInEx 失败: {e}"))?;
+        }
+        let pending = archive::extract_framework_zip_pending(archive_path, game_root)?;
+        if package.native() {
+            crate::bepinex::prepare_native(game_root, package)?;
+        }
+        if let Some(backup) = &backup {
+            restore_preserved_dirs(backup, game_root)?;
+        }
+        pending.commit();
+        Ok(())
+    })();
+    if let Err(error) = result {
+        if let Some(backup) = backup {
+            restore_backup_dir(&backup, game_root).map_err(|restore| {
+                log::error!(
+                    "BepInEx 失败回滚未完成：备份={}，原因={restore}",
+                    backup.display()
+                );
+                "BepInEx 安装失败，备份恢复未完成，请从框架备份恢复".to_string()
+            })?;
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::info!("开始卸载 BepInEx");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
     let game_root = PathBuf::from(info.path.ok_or("尚未找到厨房目录")?);
@@ -3632,28 +3692,18 @@ pub fn launch_normal(state: State<'_, AppState>) -> Result<OperationResult, Stri
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let info = game::detect_game(&config);
+    let game_root = PathBuf::from(info.path.as_deref().ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
     if config.launch.auto_restore_winhttp {
-        match game::winhttp_state(&game_root) {
-            WinhttpState::ModDisabled => {
-                fs::rename(
-                    game_root.join("winhttp.dll.disabled"),
-                    game_root.join("winhttp.dll"),
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            WinhttpState::Conflict => {
-                // A conflict means the MOD DLL is already present. Remove
-                // only the disabled marker and keep winhttp.dll in place.
-                archive::clear_readonly(&game_root.join("winhttp.dll.disabled"))?;
-                fs::remove_file(game_root.join("winhttp.dll.disabled"))
-                    .map_err(|e| e.to_string())?;
-            }
-            _ => {}
+        if matches!(
+            crate::bepinex::state(&game_root, &config.game),
+            WinhttpState::ModDisabled | WinhttpState::Conflict
+        ) {
+            crate::bepinex::set_enabled(&game_root, &config.game, true)?;
         }
     }
-    let result = open_steam();
+    let result = open_steam(&config.game, &info);
     if result.is_ok() {
         log::info!("厨房启动请求已发送：正常 MOD 模式");
     } else if let Err(error) = &result {
@@ -3670,19 +3720,13 @@ pub fn launch_no_mod(state: State<'_, AppState>) -> Result<OperationResult, Stri
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let info = game::detect_game(&config);
+    let game_root = PathBuf::from(info.path.as_deref().ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    if game::winhttp_state(&game_root) == WinhttpState::Conflict {
-        return Err("winhttp.dll 与禁用文件同时存在，请先切换为框架已启用状态".into());
+    if crate::bepinex::state(&game_root, &config.game) != WinhttpState::Missing {
+        crate::bepinex::set_enabled(&game_root, &config.game, false)?;
     }
-    if game_root.join("winhttp.dll").is_file() {
-        fs::rename(
-            game_root.join("winhttp.dll"),
-            game_root.join("winhttp.dll.disabled"),
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    let result = open_steam();
+    let result = open_steam(&config.game, &info);
     if result.is_ok() {
         log::info!("厨房启动请求已发送：无 MOD 模式");
     } else if let Err(error) = &result {
@@ -3701,12 +3745,8 @@ pub fn restore_mod(state: State<'_, AppState>) -> Result<OperationResult, String
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    if game::winhttp_state(&game_root) == WinhttpState::ModDisabled {
-        fs::rename(
-            game_root.join("winhttp.dll.disabled"),
-            game_root.join("winhttp.dll"),
-        )
-        .map_err(|e| e.to_string())?;
+    if crate::bepinex::state(&game_root, &config.game) == WinhttpState::ModDisabled {
+        crate::bepinex::set_enabled(&game_root, &config.game, true)?;
     }
     log::info!("框架状态恢复完成");
     Ok(OperationResult {
@@ -3715,7 +3755,7 @@ pub fn restore_mod(state: State<'_, AppState>) -> Result<OperationResult, String
     })
 }
 
-/// Switches the MOD loader DLL state without launching Steam. The overview
+/// Switches the runtime's loader state without launching Steam. The overview
 /// status card uses this command; actual game launch remains explicit.
 #[tauri::command]
 pub fn switch_winhttp(
@@ -3730,42 +3770,7 @@ pub fn switch_winhttp(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    let current = game::winhttp_state(&game_root);
-    if enabled {
-        match current {
-            WinhttpState::ModDisabled => {
-                archive::clear_readonly(&game_root.join("winhttp.dll.disabled"))?;
-                fs::rename(
-                    game_root.join("winhttp.dll.disabled"),
-                    game_root.join("winhttp.dll"),
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            WinhttpState::Conflict => {
-                archive::clear_readonly(&game_root.join("winhttp.dll.disabled"))?;
-                fs::remove_file(game_root.join("winhttp.dll.disabled"))
-                    .map_err(|e| e.to_string())?;
-            }
-            WinhttpState::ModEnabled => {}
-            WinhttpState::Missing => return Err("未找到 winhttp.dll，无法切换框架状态".into()),
-        }
-    } else {
-        match current {
-            WinhttpState::ModEnabled => {
-                archive::clear_readonly(&game_root.join("winhttp.dll"))?;
-                fs::rename(
-                    game_root.join("winhttp.dll"),
-                    game_root.join("winhttp.dll.disabled"),
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            WinhttpState::ModDisabled => {}
-            WinhttpState::Conflict => {
-                return Err("winhttp.dll 与禁用文件同时存在，请先切换为框架已启用状态".into());
-            }
-            WinhttpState::Missing => return Err("未找到 winhttp.dll，无法切换框架状态".into()),
-        }
-    }
+    crate::bepinex::set_enabled(&game_root, &config.game, enabled)?;
     log::info!("框架状态切换完成：启用={}", enabled);
     Ok(OperationResult {
         ok: true,
@@ -3819,7 +3824,7 @@ pub fn open_game_directory(state: State<'_, AppState>) -> Result<OperationResult
     log::debug!("打开游戏目录");
     let config = state.config.load_or_default();
     let path = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
-    std::process::Command::new("explorer.exe")
+    external_open_command()
         .arg(path)
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -3836,7 +3841,7 @@ pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult,
     let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
     let plugins = PathBuf::from(game_root).join("BepInEx/plugins");
     fs::create_dir_all(&plugins).map_err(|e| e.to_string())?;
-    std::process::Command::new("explorer.exe")
+    external_open_command()
         .arg(&plugins)
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -3866,23 +3871,45 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
 }
 
 fn mod_file_location_command(path: &Path) -> std::process::Command {
-    // Explorer expects ordinary drive/UNC paths, not canonical verbatim prefixes.
-    let path = path.to_string_lossy();
-    let shell_path = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else {
-        path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
-    };
-    let selection = format!(r#"/select,"{shell_path}""#);
-    let mut command = std::process::Command::new("explorer.exe");
+    #[cfg(target_os = "linux")]
+    {
+        let mut command = external_open_command();
+        command.arg(path.parent().unwrap_or(path));
+        return command;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = external_open_command();
+        command.arg("-R").arg(path);
+        return command;
+    }
     #[cfg(windows)]
     {
+        // Explorer expects ordinary drive/UNC paths, not canonical verbatim prefixes.
+        let path = path.to_string_lossy();
+        let shell_path = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
+        };
+        let selection = format!(r#"/select,"{shell_path}""#);
+        let mut command = std::process::Command::new("explorer.exe");
         use std::os::windows::process::CommandExt;
         // Quote only the path: Explorer does not use the standard argv parser.
         command.raw_arg(selection);
+        command
     }
-    #[cfg(not(windows))]
-    command.arg(selection);
+}
+
+fn external_open_command() -> std::process::Command {
+    #[cfg(windows)]
+    let program = "explorer.exe";
+    #[cfg(target_os = "linux")]
+    let program = "xdg-open";
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    let mut command = std::process::Command::new(program);
+    command.stdin(std::process::Stdio::null());
     command
 }
 
@@ -4027,7 +4054,7 @@ pub fn open_backup_directory(
         }
     };
     log::debug!("打开备份目录：路径={}", path.display());
-    std::process::Command::new("explorer.exe")
+    external_open_command()
         .arg(&path)
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -4044,7 +4071,10 @@ pub fn open_release_page(url: String) -> Result<OperationResult, String> {
     if parsed.scheme() != "https" {
         return Err("发布页必须使用 HTTPS".into());
     }
-    std::process::Command::new("explorer.exe")
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("发布页地址不能包含认证信息".into());
+    }
+    external_open_command()
         .arg(parsed.as_str())
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -4213,6 +4243,7 @@ async fn download_installer_for_info(
     info: &AppUpdateInfo,
     app: &AppHandle,
     proxy_config: &GitHubProxyConfig,
+    signature: &str,
 ) -> Result<Vec<u8>, Vec<String>> {
     let candidates = installer_download_candidates(info, proxy_config);
     let proxy_count = candidates
@@ -4260,6 +4291,7 @@ async fn download_installer_for_info(
                         None
                     },
                 )?;
+                crate::app_update::verify_download(&bytes, signature, &info.version)?;
                 Ok(bytes)
             });
             if let Some(provider) = info.provider.as_ref() {
@@ -4288,6 +4320,169 @@ async fn download_installer_for_info(
     )
     .await;
     result.map_err(|error| vec![error])
+}
+
+#[cfg(windows)]
+async fn download_installer_signature(
+    client: &reqwest::Client,
+    info: &AppUpdateInfo,
+    proxy_config: &GitHubProxyConfig,
+) -> Result<String, String> {
+    let url = info
+        .installer_signature_url
+        .as_deref()
+        .ok_or("更新包缺少签名，已停止安装")?;
+    let provider = info.provider.as_ref().ok_or("更新中没有匹配的安装包")?;
+    let mode = if *provider == Provider::Github {
+        ProxyMode::AutoDirect
+    } else {
+        ProxyMode::Direct
+    };
+    let candidates = ordered_asset_download_candidates(
+        mode,
+        url,
+        installer_download_urls(provider, url, proxy_config),
+    );
+    let bytes = try_asset_download_candidates(
+        candidates,
+        archive::is_download_cancelled,
+        |candidate, _| async move {
+            const MAX_SIGNATURE_BYTES: usize = 16 * 1024;
+            let response = client
+                .get(&candidate.url)
+                .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                .map_err(|error| error.without_url().to_string())?
+                .error_for_status()
+                .map_err(|error| error.without_url().to_string())?;
+            if response
+                .content_length()
+                .is_some_and(|size| size > MAX_SIGNATURE_BYTES as u64)
+            {
+                return Err("更新签名文件无效".into());
+            }
+            let mut bytes = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                if archive::is_download_cancelled() {
+                    return Err("下载已取消".into());
+                }
+                let chunk = chunk.map_err(|error| error.without_url().to_string())?;
+                if bytes.len() + chunk.len() > MAX_SIGNATURE_BYTES {
+                    return Err("更新签名文件无效".into());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let text = std::str::from_utf8(&bytes).map_err(|_| "更新签名文件无效")?;
+            if text.trim().is_empty() {
+                return Err("更新签名文件无效".into());
+            }
+            Ok(bytes)
+        },
+        None,
+    )
+    .await?;
+    String::from_utf8(bytes).map_err(|_| "更新签名文件无效".into())
+}
+
+#[cfg(not(windows))]
+async fn resolve_native_update(
+    app: &AppHandle,
+    info: &AppUpdateInfo,
+    proxy_config: &GitHubProxyConfig,
+) -> Result<tauri_plugin_updater::Update, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let target = crate::app_update::UpdateTarget::current()?;
+    if target.kind != info.installer_type {
+        return Err("更新清单与所选平台安装包不一致，已停止安装".into());
+    }
+    let provider = info.provider.as_ref().ok_or("更新中没有匹配的安装包")?;
+    let mut visited = HashSet::new();
+    for endpoint in &info.manifest_endpoints {
+        for url in installer_download_urls(provider, endpoint, proxy_config) {
+            if !visited.insert(url.clone()) {
+                continue;
+            }
+            if archive::is_download_cancelled() {
+                return Err("下载已取消".into());
+            }
+            let endpoint = Url::parse(&url).map_err(|_| "更新清单地址无效")?;
+            let builder = app
+                .updater_builder()
+                .target(target.manifest_key())
+                .timeout(std::time::Duration::from_secs(5))
+                .header("User-Agent", releases::APP_USER_AGENT)
+                .map_err(|e| e.to_string())?
+                .header("Cache-Control", "no-cache, no-store")
+                .map_err(|e| e.to_string())?
+                .header("Pragma", "no-cache")
+                .map_err(|e| e.to_string())?;
+            #[cfg(target_os = "linux")]
+            let builder = if target.kind == "appimage" {
+                let path =
+                    std::env::var_os("APPIMAGE").ok_or("当前安装格式不支持自动更新，请手动更新")?;
+                builder.executable_path(PathBuf::from(path))
+            } else {
+                builder
+            };
+            let updater = match builder
+                .endpoints(vec![endpoint])
+                .and_then(|builder| builder.build())
+            {
+                Ok(updater) => updater,
+                Err(error) => {
+                    log::warn!("更新清单入口不可用：原因={error}");
+                    continue;
+                }
+            };
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    match crate::app_update::validate_native_metadata(&update, info) {
+                        Ok(()) => return Ok(update),
+                        Err(error) => log::warn!("{error}"),
+                    }
+                }
+                Ok(None) => log::warn!("更新清单没有所选 Release 的更新版本"),
+                Err(_) => log::warn!(
+                    "更新清单读取失败：来源={}",
+                    repository_sources::safe_log_address(&url)
+                ),
+            }
+        }
+    }
+    Err("更新清单或签名不可用，已停止安装".into())
+}
+
+struct VerifiedInstallerDownload {
+    bytes: Vec<u8>,
+    #[cfg(not(windows))]
+    native_update: tauri_plugin_updater::Update,
+}
+
+async fn prepare_and_download_installer(
+    client: &reqwest::Client,
+    info: &AppUpdateInfo,
+    app: &AppHandle,
+    proxy_config: &GitHubProxyConfig,
+) -> Result<VerifiedInstallerDownload, Vec<String>> {
+    #[cfg(windows)]
+    let signature = download_installer_signature(client, info, proxy_config)
+        .await
+        .map_err(|error| vec![error])?;
+    #[cfg(not(windows))]
+    let native_update = resolve_native_update(app, info, proxy_config)
+        .await
+        .map_err(|error| vec![error])?;
+    #[cfg(not(windows))]
+    let signature = native_update.signature.clone();
+    let bytes = download_installer_for_info(client, info, app, proxy_config, &signature).await?;
+    Ok(VerifiedInstallerDownload {
+        bytes,
+        #[cfg(not(windows))]
+        native_update,
+    })
 }
 
 fn installer_download_key(info: &AppUpdateInfo) -> String {
@@ -4323,7 +4518,10 @@ fn emit_installer_download_failure(
 }
 
 enum InstallerDownloadAttempt {
-    Updated { info: AppUpdateInfo, bytes: Vec<u8> },
+    Updated {
+        info: AppUpdateInfo,
+        download: VerifiedInstallerDownload,
+    },
     Latest,
     Failed(String),
 }
@@ -4439,16 +4637,16 @@ async fn discover_and_download_installer_update(
         };
         log::info!("发现安装器更新：渠道={}，版本={}", channel.id, info.version);
         emit_installer_phase(app, region, "download", None, Some(info.clone()));
-        match download_installer_for_info(&download_client, &info, app, &config.github_proxies)
+        match prepare_and_download_installer(&download_client, &info, app, &config.github_proxies)
             .await
         {
-            Ok(bytes) => {
+            Ok(download) => {
                 log::info!(
                     "安装器更新文件下载成功：渠道={}，字节数={}",
                     channel.id,
-                    bytes.len()
+                    download.bytes.len()
                 );
-                return Ok(InstallerDownloadAttempt::Updated { info, bytes });
+                return Ok(InstallerDownloadAttempt::Updated { info, download });
             }
             Err(download_errors) => {
                 if archive::is_download_cancelled() {
@@ -4494,8 +4692,8 @@ pub async fn install_app_update(
     let _ = locale;
     log::info!("开始安装器自更新");
     let attempt = discover_and_download_installer_update(&state, &app).await?;
-    let (info, bytes) = match attempt {
-        InstallerDownloadAttempt::Updated { info, bytes } => (info, bytes),
+    let (info, download) = match attempt {
+        InstallerDownloadAttempt::Updated { info, download } => (info, download),
         InstallerDownloadAttempt::Latest => {
             log::info!("安装器已是最新版本");
             return Ok(OperationResult {
@@ -4508,36 +4706,68 @@ pub async fn install_app_update(
             return Ok(OperationResult { ok: false, message });
         }
     };
-    let installer_type = if info.installer_type.eq_ignore_ascii_case("exe") {
-        "exe"
-    } else {
-        "msi"
-    };
-    let path = std::env::temp_dir().join(format!(
-        "OC2-MOD-Manager-{}.{}",
-        info.version, installer_type
-    ));
-    fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    log::info!(
-        "安装器更新文件已写入临时目录：类型={}，字节数={}",
-        installer_type,
-        bytes.len()
+    if archive::is_download_cancelled() {
+        return Err("下载已取消".into());
+    }
+    emit_installer_phase(
+        &app,
+        detect_installer_region(),
+        "install",
+        None,
+        Some(info.clone()),
     );
-    let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    crate::update_host::start(
-        &path,
-        installer_type,
-        &current_exe,
-        &info.version,
-        failure_message.as_deref(),
-    )
-    .await?;
-    log::info!("更新助手已接管，准备退出当前应用；后续结果写入 logs/update.log");
-    app.exit(0);
-    Ok(OperationResult {
-        ok: true,
-        message: "更新助手已接管".into(),
-    })
+    #[cfg(windows)]
+    {
+        let installer_type = info.installer_type.as_str();
+        if !matches!(installer_type, "exe" | "msi") {
+            return Err("当前安装格式不支持自动更新，请手动更新".into());
+        }
+        let directory = crate::user_paths::updates_dir()?.join(Uuid::new_v4().to_string());
+        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let path = directory.join(&info.installer_name);
+        fs::write(&path, &download.bytes).map_err(|e| e.to_string())?;
+        log::info!(
+            "安装器更新文件已写入临时目录：类型={}，字节数={}",
+            installer_type,
+            download.bytes.len()
+        );
+        let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
+        crate::update_host::start(
+            &path,
+            installer_type,
+            &current_exe,
+            &info.version,
+            failure_message.as_deref(),
+        )
+        .await?;
+        log::info!("更新助手已接管，准备退出当前应用；后续结果写入 logs/update.log");
+        app.exit(0);
+        Ok(OperationResult {
+            ok: true,
+            message: "更新助手已接管".into(),
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = failure_message;
+        let version = info.version;
+        log::info!(
+            "开始安装原生平台更新：版本={}，格式={}",
+            version,
+            info.installer_type
+        );
+        tauri::async_runtime::spawn_blocking(move || {
+            download.native_update.install(&download.bytes)
+        })
+        .await
+        .map_err(|_| "程序更新安装失败")?
+        .map_err(|error| {
+            log::error!("原生平台更新安装失败：{error}");
+            "程序更新安装失败，请手动更新".to_string()
+        })?;
+        log::info!("原生平台更新安装完成，正在重启：版本={version}");
+        app.restart();
+    }
 }
 
 pub(crate) fn installer_update_command(
@@ -4641,9 +4871,11 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
         .collect()
 }
 
-fn open_steam() -> Result<OperationResult, String> {
-    std::process::Command::new("explorer.exe")
-        .arg("steam://rungameid/728880")
+fn open_steam(settings: &GameConfig, info: &GameInfo) -> Result<OperationResult, String> {
+    if !info.game_exists {
+        return Err("当前模式下未找到厨房可执行文件".into());
+    }
+    game::steam_launch_command(settings, info)?
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
@@ -4776,7 +5008,7 @@ fn restore_preserved_dirs(backup: &Path, game_root: &Path) -> Result<(), String>
     for name in ["plugins", "config"] {
         let source = backup.join(name);
         let destination = game_root.join("BepInEx").join(name);
-        if source.exists() && !destination.exists() {
+        if source.exists() {
             copy_dir(&source, &destination)?;
         }
     }
@@ -4942,6 +5174,256 @@ mod backup_safety_tests {
         assert!(backup_bepinex_dir(&workspace.game(), &destination).is_err());
         assert!(!destination.exists());
         fs::remove_dir(alias).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod framework_install_tests {
+    use super::*;
+    use crate::bepinex::Package;
+    use std::io::Write;
+
+    struct Workspace(PathBuf);
+
+    fn verification_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/framework-install")
+    }
+
+    impl Workspace {
+        fn new() -> Self {
+            let root = verification_root().join(Uuid::new_v4().to_string());
+            fs::create_dir_all(root.join("game")).unwrap();
+            Self(root)
+        }
+
+        fn game(&self) -> PathBuf {
+            self.0.join("game")
+        }
+
+        fn backups(&self) -> PathBuf {
+            self.0.join("backups")
+        }
+
+        fn write(&self, relative: &str, bytes: &[u8]) {
+            let path = self.game().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+
+        fn archive(&self, package: Package, script: Option<&str>) -> PathBuf {
+            let path = self.0.join("framework.zip");
+            let mut archive = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+            for (name, bytes) in [
+                ("BepInEx/core/BepInEx.dll", b"new core".as_slice()),
+                (
+                    match package {
+                        Package::Windows => "winhttp.dll",
+                        Package::Linux => "libdoorstop.so",
+                        Package::MacOS => "libdoorstop.dylib",
+                    },
+                    b"new loader".as_slice(),
+                ),
+            ] {
+                archive
+                    .start_file(name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                archive.write_all(bytes).unwrap();
+            }
+            if let Some(script) = script {
+                archive
+                    .start_file("run_bepinex.sh", zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                archive.write_all(script.as_bytes()).unwrap();
+            }
+            archive.finish().unwrap();
+            path
+        }
+    }
+
+    impl Drop for Workspace {
+        fn drop(&mut self) {
+            let root = fs::canonicalize(&self.0).unwrap();
+            assert!(root.starts_with(fs::canonicalize(verification_root()).unwrap()));
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const SCRIPT: &str = "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\n";
+
+    #[test]
+    fn fresh_install_and_reinstall_preserve_plugins_and_config_for_all_platform_packages() {
+        for package in [Package::Windows, Package::Linux, Package::MacOS] {
+            let workspace = Workspace::new();
+            let archive = workspace.archive(package, package.native().then_some(SCRIPT));
+            install_framework_archive(
+                &archive,
+                &workspace.game(),
+                &workspace.backups(),
+                package,
+                false,
+            )
+            .unwrap();
+            assert!(!workspace.backups().exists());
+            workspace.write("BepInEx/plugins/mod.dll.disabled", b"keep disabled plugin");
+            workspace.write("BepInEx/config/BepInEx.cfg", b"keep game config");
+            workspace.write("BepInEx/core/BepInEx.dll", b"old core");
+            install_framework_archive(
+                &archive,
+                &workspace.game(),
+                &workspace.backups(),
+                package,
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(workspace.game().join("BepInEx/core/BepInEx.dll")).unwrap(),
+                b"new core"
+            );
+            assert_eq!(
+                fs::read(workspace.game().join("BepInEx/plugins/mod.dll.disabled")).unwrap(),
+                b"keep disabled plugin"
+            );
+            assert_eq!(
+                fs::read(workspace.game().join("BepInEx/config/BepInEx.cfg")).unwrap(),
+                b"keep game config"
+            );
+            if package.native() {
+                assert!(
+                    fs::read_to_string(workspace.game().join("run_bepinex.sh"))
+                        .unwrap()
+                        .contains(&format!("executable_name=\"{}\"", package.executable()))
+                );
+            }
+            assert_eq!(fs::read_dir(workspace.backups()).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
+    fn malformed_native_scripts_roll_back_the_framework_and_existing_root_files() {
+        for script in [None, Some("executable_name=\"\"\ninvalid enabled field\n")] {
+            for reinstall in [false, true] {
+                let workspace = Workspace::new();
+                workspace.write("run_bepinex.sh", b"original script");
+                workspace.write("libdoorstop.so", b"original loader");
+                if reinstall {
+                    workspace.write("BepInEx/core/BepInEx.dll", b"original core");
+                    workspace.write("BepInEx/plugins/mod.dll", b"original plugin");
+                    workspace.write("BepInEx/config/BepInEx.cfg", b"original config");
+                }
+                let archive = workspace.archive(Package::Linux, script);
+                assert!(
+                    install_framework_archive(
+                        &archive,
+                        &workspace.game(),
+                        &workspace.backups(),
+                        Package::Linux,
+                        reinstall,
+                    )
+                    .is_err()
+                );
+                assert_eq!(
+                    fs::read(workspace.game().join("run_bepinex.sh")).unwrap(),
+                    b"original script"
+                );
+                assert_eq!(
+                    fs::read(workspace.game().join("libdoorstop.so")).unwrap(),
+                    b"original loader"
+                );
+                if reinstall {
+                    for (file, bytes) in [
+                        ("core/BepInEx.dll", b"original core".as_slice()),
+                        ("plugins/mod.dll", b"original plugin".as_slice()),
+                        ("config/BepInEx.cfg", b"original config".as_slice()),
+                    ] {
+                        assert_eq!(
+                            fs::read(workspace.game().join("BepInEx").join(file)).unwrap(),
+                            bytes
+                        );
+                    }
+                } else {
+                    assert!(!workspace.game().join("BepInEx").exists());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reinstall_must_be_explicit_before_backup_or_file_changes() {
+        let workspace = Workspace::new();
+        workspace.write("BepInEx/core/BepInEx.dll", b"original core");
+        let archive = workspace.archive(Package::Windows, None);
+        assert!(
+            install_framework_archive(
+                &archive,
+                &workspace.game(),
+                &workspace.backups(),
+                Package::Windows,
+                false,
+            )
+            .is_err()
+        );
+        assert!(!workspace.backups().exists());
+        assert!(!workspace.game().join("winhttp.dll").exists());
+        assert_eq!(
+            fs::read(workspace.game().join("BepInEx/core/BepInEx.dll")).unwrap(),
+            b"original core"
+        );
+    }
+
+    #[test]
+    #[ignore = "Requires all three original packages in OC2_BEPINEX_PACKAGE_DIR"]
+    fn installs_the_actual_platform_archives_with_digest_and_preservation_checks() {
+        let packages = PathBuf::from(
+            std::env::var_os("OC2_BEPINEX_PACKAGE_DIR")
+                .expect("Set OC2_BEPINEX_PACKAGE_DIR to the original platform packages"),
+        );
+        assert!(packages.is_absolute());
+        for package in [Package::Windows, Package::Linux, Package::MacOS] {
+            let name = package.url(&Provider::Github).rsplit('/').next().unwrap();
+            let archive = packages.join(name);
+            archive::validate_download_file(&archive, None, Some(package.digest())).unwrap();
+            let workspace = Workspace::new();
+            install_framework_archive(
+                &archive,
+                &workspace.game(),
+                &workspace.backups(),
+                package,
+                false,
+            )
+            .unwrap();
+            let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
+            assert!(info.installed && info.complete, "{name}");
+            workspace.write("BepInEx/plugins/preserved.dll.disabled", b"user MOD");
+            workspace.write("BepInEx/config/preserved.cfg", b"user settings");
+            install_framework_archive(
+                &archive,
+                &workspace.game(),
+                &workspace.backups(),
+                package,
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(
+                    workspace
+                        .game()
+                        .join("BepInEx/plugins/preserved.dll.disabled")
+                )
+                .unwrap(),
+                b"user MOD"
+            );
+            assert_eq!(
+                fs::read(workspace.game().join("BepInEx/config/preserved.cfg")).unwrap(),
+                b"user settings"
+            );
+            if package.native() {
+                let script = fs::read_to_string(workspace.game().join("run_bepinex.sh")).unwrap();
+                assert!(script.contains(&format!("executable_name=\"{}\"", package.executable())));
+                assert!(script.contains("enabled=\"1\""));
+            } else {
+                assert!(workspace.game().join("winhttp.dll").is_file());
+            }
+        }
     }
 }
 
@@ -5154,6 +5636,7 @@ mod mod_file_location_tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn explorer_selection_quotes_paths_and_removes_verbatim_prefixes() {
         for (source, expected) in [
@@ -5364,6 +5847,7 @@ mod asset_download_strategy_tests {
     const DIRECT: &str = "https://github.com/example/mod/releases/download/v1/mod.zip";
 
     #[test]
+    #[cfg(windows)]
     fn installer_candidate_preserves_the_github_api_sha256_for_download_validation() {
         let digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let releases = releases::parse_release_json(
@@ -5443,6 +5927,8 @@ mod asset_download_strategy_tests {
                 "https://stale-proxy.example/asset".into(),
             ],
             installer_digest: None,
+            installer_name: "OC2ModManager_9.0.0_x64-setup.exe".into(),
+            installer_signature_url: None,
             installer_type: "exe".into(),
             provider: Some(provider),
             source_channel: None,
@@ -7244,6 +7730,8 @@ mod repository_source_refresh_tests {
                         Err(error) => panic!("{error}"),
                     }
                 };
+                // Accepted sockets inherit nonblocking mode on Windows.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();

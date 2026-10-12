@@ -1,38 +1,14 @@
 <template>
-  <div v-if="shouldShowGuide" class="platform-setup-overlay" @click="handleOverlayClick">
-    <div class="platform-setup-dialog" @click.stop>
+  <Teleport to="body">
+  <div v-if="shouldShowGuide" class="modal-backdrop platform-setup-overlay" @click.self="closeGuide">
+    <div ref="dialog" class="platform-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="platform-setup-title" tabindex="-1" @keydown.esc.stop.prevent="closeGuide" @keydown.tab="trapModalFocus">
       <div class="platform-setup-header">
-        <h2>{{ t('平台设置向导') }}</h2>
-        <button class="close-button" @click="closeGuide" :title="t('关闭')">×</button>
+        <h2 id="platform-setup-title">{{ t('CrossOver 设置向导') }}</h2>
+        <button class="close-button" @click="closeGuide" :title="t('关闭')" :aria-label="t('关闭')">×</button>
       </div>
 
       <div class="platform-setup-content">
-        <!-- Linux Setup Guide -->
-        <template v-if="currentPlatform === 'linux'">
-          <div class="setup-step">
-            <h3>{{ t('步骤 1：安装 BepInEx 框架') }}</h3>
-            <p>{{ t('使用管理器安装 BepInEx 框架到游戏目录') }}</p>
-          </div>
-
-          <div class="setup-step">
-            <h3>{{ t('步骤 2：配置 Steam 启动参数') }}</h3>
-            <p>{{ t('在 Steam 中右键游戏，选择"属性"，在"启动选项"中输入以下命令：') }}</p>
-            <div class="command-box">
-              <pre>{{ linuxLaunchCommand }}</pre>
-              <button @click="copyCommand" class="copy-button">
-                {{ copied ? t('已复制') : t('复制') }}
-              </button>
-            </div>
-          </div>
-
-          <div class="setup-step">
-            <h3>{{ t('步骤 3：启动游戏测试') }}</h3>
-            <p>{{ t('通过 Steam 启动游戏，确认 BepInEx 框架正常加载') }}</p>
-          </div>
-        </template>
-
-        <!-- macOS Setup Guide -->
-        <template v-if="currentPlatform === 'darwin'">
+        <template v-if="props.platform === 'macos' && props.runtime === 'wine'">
           <!-- Step 1: UU Accelerator -->
           <div class="setup-step">
             <h3>{{ t('macOS 步骤 1：下载 UU 加速器') }}</h3>
@@ -202,16 +178,19 @@
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, watch, onUnmounted } from 'vue'
 import { t } from '../i18n'
-import { api } from '../services/tauri'
+import { trapModalFocus } from '../composables/modalFocus'
+import type { AppPlatform, GameRuntime } from '../types'
 
 const props = defineProps<{
   visible: boolean
-  onCompleted?: () => void
+  platform?: AppPlatform
+  runtime?: GameRuntime
 }>()
 
 const emit = defineEmits<{
@@ -219,76 +198,41 @@ const emit = defineEmits<{
   completed: []
 }>()
 
-const currentPlatform = ref<string>('')
-const crossoverRunning = ref(false)
-const copied = ref(false)
+const dialog = ref<HTMLElement | null>(null)
+let trigger: HTMLElement | null = null
+const tutorialImages = import.meta.glob<string>('../assets/tutorial/**/*.{png,jpg,jpeg,webp}', {
+  eager: true, query: '?url', import: 'default',
+})
 
 const shouldShowGuide = computed(() => {
-  return props.visible && (currentPlatform.value === 'linux' || currentPlatform.value === 'darwin')
+  return props.visible && props.platform === 'macos' && props.runtime === 'wine'
 })
-
-const linuxLaunchCommand = computed(() => {
-  return 'DOORSTOP_ENABLE=1 DOORSTOP_INVOKE_DLL_PATH="./BepInEx/core/BepInEx.Preloader.dll" %command%'
-})
-
-async function detectPlatform() {
-  // Tauri platform detection
-  const { platform } = await import('@tauri-apps/plugin-os')
-  currentPlatform.value = platform()
-}
-
-async function checkCrossover() {
-  if (currentPlatform.value === 'darwin') {
-    try {
-      crossoverRunning.value = await api.checkCrossoverRunning()
-    } catch (error) {
-      console.error('Failed to check CrossOver status:', error)
-    }
-  }
-}
-
-function copyCommand() {
-  navigator.clipboard.writeText(linuxLaunchCommand.value)
-  copied.value = true
-  setTimeout(() => {
-    copied.value = false
-  }, 2000)
-}
 
 function closeGuide() {
   emit('close')
 }
 
-function handleOverlayClick() {
-  // Allow clicking overlay to close
-  closeGuide()
-}
-
 function markCompleted() {
   emit('completed')
-  if (props.onCompleted) {
-    props.onCompleted()
-  }
   closeGuide()
 }
 
 function getTutorialImagePath(imageName: string): string {
-  return new URL(`../assets/tutorial/${imageName}`, import.meta.url).href
+  return tutorialImages[`../assets/tutorial/${imageName}`] || ''
 }
 
 function hasTutorialImage(imageName: string): boolean {
-  try {
-    getTutorialImagePath(imageName)
-    return true
-  } catch {
-    return false
-  }
+  return !!getTutorialImagePath(imageName)
 }
 
-onMounted(async () => {
-  await detectPlatform()
-  await checkCrossover()
-})
+watch(shouldShowGuide, async (visible) => {
+  if (visible) trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  if (visible && shouldShowGuide.value) dialog.value?.focus()
+  else if (!visible && trigger?.isConnected) trigger.focus()
+}, { immediate: true })
+
+onUnmounted(() => { if (trigger?.isConnected) trigger.focus() })
 </script>
 
 <style scoped>

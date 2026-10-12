@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   AlertTriangle, Download, ExternalLink, FileCog, FolderOpen, HardDriveDownload,
   Pencil, RefreshCw, RotateCcw, ShieldCheck, Trash2,
 } from 'lucide-vue-next'
-import type { GameInfo, PublicConfig } from '../types'
+import type { GameInfo, GameRuntime, PublicConfig } from '../types'
 import { t } from '../i18n'
+import { gameExecutableName } from '../gameRuntime'
 import overcookedIcon from '../../src-tauri/icons/Overcooked2.icon.png'
 import bepinexIcon from '../../src-tauri/icons/BepInEx.icon.png'
 import PlatformSetupGuide from './PlatformSetupGuide.vue'
@@ -13,12 +14,15 @@ import PlatformSetupGuide from './PlatformSetupGuide.vue'
 const props = defineProps<{
   game?: GameInfo
   config?: PublicConfig | null
+  tutorialActive: boolean
   gameBlocked: boolean
   busy: string
   openDirectory: () => void
   chooseGameDirectory: () => void
   restoreDefaultGameDirectory: () => void
   detectGame: () => void
+  changeGameRuntime: (runtime: GameRuntime) => Promise<void>
+  openBepInExSetup: () => void
   openBepInExInstall: (reinstall: boolean) => void
   uninstallBepInEx: () => void
   openBepInExConfig: () => void
@@ -29,19 +33,24 @@ const props = defineProps<{
 }>()
 
 const showPlatformGuide = ref(false)
-const currentPlatform = ref<string>('')
+const supportsRuntimeChoice = computed(() => props.config?.platform === 'linux' || props.config?.platform === 'macos')
+const missingGame = computed(() => t('尚未找到 {executable}').replace('{executable}', gameExecutableName(props.config?.platform, props.config?.game.runtime)))
 
 const shouldShowMacOSGuide = computed(() => {
-  return currentPlatform.value === 'darwin' && !props.game?.path
+  return !props.tutorialActive && props.config?.platform === 'macos'
+    && props.config.game.runtime === 'wine' && !props.game?.game_exists
 })
 
-async function detectPlatform() {
-  const { platform } = await import('@tauri-apps/plugin-os')
-  currentPlatform.value = platform()
-
-  // Auto-show guide on macOS when no game detected
-  if (shouldShowMacOSGuide.value) {
-    showPlatformGuide.value = true
+async function changeRuntime(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const runtime = select.value
+  if (runtime !== 'wine' && runtime !== 'native') return
+  try {
+    await props.changeGameRuntime(runtime)
+  } catch {
+    // The host reports the error; keep the select at the persisted mode.
+  } finally {
+    select.value = props.config?.game.runtime || 'wine'
   }
 }
 
@@ -51,9 +60,7 @@ function handleGuideCompleted() {
   props.detectGame()
 }
 
-onMounted(() => {
-  detectPlatform()
-})
+watch(shouldShowMacOSGuide, (show) => { showPlatformGuide.value = show }, { immediate: true })
 </script>
 
 <template>
@@ -75,9 +82,17 @@ onMounted(() => {
         <div class="framework-status-copy">
           <h3>{{ t('厨房目录') }}</h3>
           <div class="game-directory-path" data-tutorial="game-directory-path">
-            <span :title="props.game?.path || undefined">{{ props.game?.path || t('尚未找到 Overcooked2.exe') }}</span>
+            <span :title="props.game?.path || undefined">{{ props.game?.path || missingGame }}</span>
           </div>
         </div>
+      </div>
+      <div v-if="supportsRuntimeChoice" class="game-runtime-choice" data-tutorial="game-runtime-choice">
+        <label for="game-runtime-select">{{ t('厨房运行模式') }}</label>
+        <select id="game-runtime-select" :value="props.config?.game.runtime" :disabled="!!props.busy || props.gameBlocked || props.tutorialActive" @change="changeRuntime">
+          <option value="wine">{{ props.config?.platform === 'macos' ? t('Wine 版（CrossOver）') : t('Wine 版（Windows Steam）') }}</option>
+          <option value="native">{{ props.config?.platform === 'macos' ? t('原生 macOS 版') : t('原生 Linux 版') }}</option>
+        </select>
+        <p>{{ t('切换模式会清空已选目录并重新检测，不会移动游戏或 MOD。') }}</p>
       </div>
       <div class="divider"></div>
       <div class="button-row game-directory-actions">
@@ -85,17 +100,20 @@ onMounted(() => {
           @click="props.openDirectory">
           <ExternalLink :size="16" />{{ t('打开目录') }}
         </button>
-        <button class="secondary-button" data-tutorial="game-directory-change" :disabled="!!props.busy"
+        <button class="secondary-button" data-tutorial="game-directory-change" :disabled="!!props.busy || props.gameBlocked"
           @click="props.chooseGameDirectory">
           <Pencil :size="16" />{{ t('修改目录') }}
         </button>
         <button class="ghost-button" data-tutorial="game-directory-reset"
-          :disabled="!!props.busy || !!props.config?.game.auto_detect" @click="props.restoreDefaultGameDirectory">
+          :disabled="!!props.busy || props.gameBlocked || !!props.config?.game.auto_detect" @click="props.restoreDefaultGameDirectory">
           <RotateCcw :size="16" />{{ t('恢复默认') }}
         </button>
         <button class="ghost-button" data-tutorial="game-directory-rescan" :disabled="!!props.busy"
           @click="props.detectGame">
           <RefreshCw :size="16" />{{ t('重新检测') }}
+        </button>
+        <button v-if="props.config?.platform === 'macos' && props.config.game.runtime === 'wine'" class="ghost-button" :disabled="!!props.busy || props.tutorialActive" @click="showPlatformGuide = true">
+          <ExternalLink :size="16" />{{ t('CrossOver 设置向导') }}
         </button>
       </div>
     </div>
@@ -128,7 +146,11 @@ onMounted(() => {
           :aria-describedby="!props.game?.bepinex.has_config ? 'bepinex-config-hint' : undefined"
           @click="props.openBepInExConfig">
           <FileCog :size="16" />{{ t('打开配置') }}
-        </button></div>
+        </button>
+        <button v-if="supportsRuntimeChoice" class="ghost-button" :disabled="!!props.busy" @click="props.openBepInExSetup">
+          <ExternalLink :size="16" />{{ t('Steam / Wine 启动设置') }}
+        </button>
+      </div>
       <p v-if="!props.game?.bepinex.has_config" id="bepinex-config-hint" class="guard-note">
         <AlertTriangle :size="15" />{{ t('配置不存在，请先运行一次游戏') }}
       </p>
@@ -170,7 +192,9 @@ onMounted(() => {
 
     <!-- Platform Setup Guide -->
     <PlatformSetupGuide
-      :visible="showPlatformGuide"
+      :visible="showPlatformGuide && !props.tutorialActive && !props.busy"
+      :platform="props.config?.platform"
+      :runtime="props.config?.game.runtime"
       @close="showPlatformGuide = false"
       @completed="handleGuideCompleted"
     />

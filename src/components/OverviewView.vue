@@ -13,6 +13,7 @@ const props = defineProps<{
   repositoryCount: number
   repositoryRefreshActive: boolean
   currentWinhttp: WinhttpState
+  nativeLoader?: boolean
   gameBlocked: boolean
   busy: string
   appIcon: string
@@ -49,7 +50,7 @@ const emit = defineEmits<{ 'change-view': [view: View] }>()
           class="metric-label">{{ t('框架启用状态') }}</span><strong>{{ props.game?.bepinex.installed ? props.statusLabel(props.currentWinhttp) : t('框架未安装') }}</strong><span
           class="metric-note">{{ props.game?.kitchen_running ? t('操作已锁定') : !props.game?.bepinex.installed ? t('框架未安装') : props.currentWinhttp === 'conflict' ?
             t('点击清理冲突并启用框架') : props.currentWinhttp === 'modenabled' ? t('已启用框架, MOD 将会被加载') : props.currentWinhttp === 'moddisabled' ?
-              t('已禁用框架, MOD 将不会被加载') : t('未找到 winhttp.dll') }}</span></button>
+              t('已禁用框架, MOD 将不会被加载') : props.nativeLoader ? t('未找到框架加载器') : t('未找到 winhttp.dll') }}</span></button>
       <div class="metric" data-tutorial="overview-local-mods" @click="emit('change-view', 'installed')"><span class="metric-label">{{ t('本地 MOD')
           }}</span><strong class="metric-pair"><span class="metric-primary metric-update-count" :class="{ 'metric-updates-available': props.updateAvailableModCount > 0 }">{{ props.updateAvailableModCount
           }}</span><span class="metric-divider">/</span><span class="metric-secondary">{{ props.installedMods.length

@@ -248,6 +248,61 @@
   width: min(760px, 100%);
 }
 
+.bepinex-setup-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+}
+
+.bepinex-setup-content {
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.bepinex-setup-content p {
+  margin: 12px 0;
+}
+
+.bepinex-setup-content h4 {
+  margin: 18px 0 8px;
+  color: var(--text);
+}
+
+.bepinex-setup-command {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.bepinex-setup-command pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--accent);
+}
+
+.bepinex-setup-command button {
+  flex-shrink: 0;
+}
+
+.bepinex-setup-path code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.bepinex-setup-success {
+  color: var(--accent);
+}
+
 .bepinex-channel-modal .modal-head {
   margin-bottom: 18px;
   padding-bottom: 15px;

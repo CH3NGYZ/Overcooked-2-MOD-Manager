@@ -29,6 +29,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -58,6 +59,7 @@
   },
   "plugins": {
     "updater": {
+      "requireSignedVersion": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFFREEwNkQzQjhEMjlEODUKUldTRm5kSzQwd2JhcnV3OE5nMEFtSmZFYktycm01aUN2R1o2QmdHMDFaMXNlOWdRSEt0STNkSGcK",
       "endpoints": [
         "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json",

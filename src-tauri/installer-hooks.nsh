@@ -11,10 +11,10 @@ LangString OC2MigrationFailed 1028 "自動遷移未完成，已保留原管理�
 LangString OC2MigrationFailed 1033 "Automatic migration did not complete. The original manager or a recovery copy has been preserved. Check the installation details and try again."
 LangString OC2MigrationFailed 1042 "자동 이전을 완료하지 못했습니다. 기존 관리자 또는 복구 사본이 보존되었습니다. 설치 세부 정보를 확인한 후 다시 시도하세요."
 
-LangString OC2Migrating 2052 "正在将管理器及数据迁移到默认安装目录…"
-LangString OC2Migrating 1028 "正在將管理器及資料遷移到預設安裝目錄…"
-LangString OC2Migrating 1033 "Moving the manager and its data to the default installation directory…"
-LangString OC2Migrating 1042 "관리자와 데이터를 기본 설치 폴더로 이전하는 중…"
+LangString OC2Migrating 2052 "正在将管理器迁移到默认安装目录…"
+LangString OC2Migrating 1028 "正在將管理器遷移到預設安裝目錄…"
+LangString OC2Migrating 1033 "Moving the manager to the default installation directory…"
+LangString OC2Migrating 1042 "관리자를 기본 설치 폴더로 이전하는 중…"
 
 !macro NSIS_HOOK_PREINSTALL
   ; The installer runs elevated (perMachine), so it can close an elevated
@@ -25,7 +25,8 @@ LangString OC2Migrating 1042 "관리자와 데이터를 기본 설치 폴더로 
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  FileOpen $0 "$INSTDIR\install-language.txt" w
+  CreateDirectory "$PROFILE\OC2ModManager"
+  FileOpen $0 "$PROFILE\OC2ModManager\install-language.txt" w
   ${If} $LANGUAGE == 2052
     FileWrite $0 "zh-CN"
   ${ElseIf} $LANGUAGE == 1028
@@ -46,8 +47,8 @@ LangString OC2Migrating 1042 "관리자와 데이터를 기본 설치 폴더로 
     ClearErrors
     Exec '"$INSTDIR\OC2ModManager.exe"'
     ${If} ${Errors}
-      CreateDirectory "$INSTDIR\logs"
-      FileOpen $0 "$INSTDIR\logs\update.log" a
+      CreateDirectory "$PROFILE\OC2ModManager\logs"
+      FileOpen $0 "$PROFILE\OC2ModManager\logs\update.log" a
       FileWrite $0 "NSIS: installation succeeded; automatic launch failed.$\r$\n"
       FileClose $0
     ${EndIf}

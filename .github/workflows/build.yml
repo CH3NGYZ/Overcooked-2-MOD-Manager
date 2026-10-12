@@ -1,25 +1,64 @@
 name: Build and Release
+run-name: ${{ inputs.mode == 'test' && 'Four-platform package test' || 'Signed release draft build' }} (${{ github.ref_name }})
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Test packages without publishing, or build a signed Release draft'
+        type: choice
+        default: test
+        options:
+          - test
+          - release
+
+concurrency:
+  group: ${{ inputs.mode == 'test' && format('oc2-mod-manager-package-test-{0}', github.ref) || 'oc2-mod-manager-release' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
+  prepare:
+    if: inputs.mode != 'test'
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Validate versions and prepare the Releases repository draft
+        id: release
+        env:
+          RELEASE_REPOSITORY_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          node --input-type=module -e "if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) throw new Error('TAURI_SIGNING_PRIVATE_KEY is required')"
+          node scripts/release.mjs prepare
+
   build:
-    permissions:
-      contents: write
+    needs: prepare
+    if: ${{ !cancelled() && (inputs.mode == 'test' || needs.prepare.result == 'success') }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: 'windows-latest'
-            args: '--target x86_64-pc-windows-msvc'
+            target: 'x86_64-pc-windows-msvc'
           - platform: 'ubuntu-22.04'
-            args: '--target x86_64-unknown-linux-gnu'
+            target: 'x86_64-unknown-linux-gnu'
           - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
+          - platform: 'macos-15-intel'
+            target: 'x86_64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -30,37 +69,140 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 'lts/*'
+          node-version: '24'
           cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'ubuntu-22.04' && 'x86_64-unknown-linux-gnu' || 'x86_64-pc-windows-msvc' }}
+          targets: ${{ matrix.target }}
+          components: rustfmt
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: ${{ matrix.platform }}
+          key: ${{ matrix.target }}
           cache-on-failure: true
 
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Frontend and release-script regression tests
+        run: npm test
+
+      - name: Prepare temporary signing for non-release package tests
+        if: inputs.mode == 'test'
+        env:
+          OC2_CI_PACKAGE_TEST: '1'
+        run: node scripts/ci-packages.mjs prepare
+
+      - name: Rust regression tests
+        shell: bash
+        run: |
+          mkdir -p src-tauri/target/verification/tmp
+          export TEMP="$PWD/src-tauri/target/verification/tmp"
+          export TMP="$TEMP"
+          export TMPDIR="$TEMP"
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --jobs 1
+
+      - name: Build and verify CI-only signed packages
+        if: inputs.mode == 'test'
+        shell: bash
+        run: |
+          node scripts/build-release.mjs build --target ${{ matrix.target }} 2>&1 | tee src-tauri/target/verification/package-test/tauri-build.log
+          node scripts/ci-packages.mjs collect ${{ matrix.target }}
+
+      - name: Upload package-test artifacts
+        if: inputs.mode == 'test'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-test-${{ matrix.target }}
+          path: src-tauri/target/verification/package-test/artifacts/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload package-test build diagnostics
+        if: always() && inputs.mode == 'test'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-build-log-${{ matrix.target }}
+          path: src-tauri/target/verification/package-test/tauri-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove the temporary private key
+        if: always() && inputs.mode == 'test'
+        env:
+          OC2_CI_PACKAGE_TEST: '1'
+        run: node scripts/ci-packages.mjs clean
+
+      - name: Confirm the shared release is still a draft
+        if: inputs.mode != 'test'
+        env:
+          RELEASE_REPOSITORY_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: node scripts/release.mjs check "$RELEASE_ID"
+        shell: bash
+
       - name: Build with Tauri
+        if: inputs.mode != 'test'
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Overcooked 2 MOD Manager ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download and install this version.'
+          owner: CH3NGYZ
+          repo: Overcooked-2-MOD-Manager-Releases
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          tagName: ${{ needs.prepare.outputs.tag_name }}
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          includeUpdaterJson: false
+          tauriScript: node scripts/build-release.mjs
+          args: --target ${{ matrix.target }}
+
+  updater-manifest:
+    needs: [prepare, build]
+    if: inputs.mode != 'test'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Verify all seven uploaded targets and aggregate latest.json
+        env:
+          RELEASE_REPOSITORY_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: node scripts/release.mjs manifest "$RELEASE_ID"
+
+  verify-test-packages:
+    needs: build
+    if: ${{ !cancelled() && inputs.mode == 'test' && needs.build.result == 'success' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-test-*
+          path: src-tauri/target/verification/package-test/downloads
+      - name: Verify all four builds and seven signed updater formats
+        run: node scripts/ci-packages.mjs verify src-tauri/target/verification/package-test/downloads
+      - uses: actions/upload-artifact@v4
+        with:
+          name: four-platform-package-summary
+          path: src-tauri/target/verification/package-test/summary/
+          if-no-files-found: error
+          retention-days: 7

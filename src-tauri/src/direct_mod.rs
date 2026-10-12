@@ -237,6 +237,8 @@ mod tests {
                 };
                 let recorded = recorded.clone();
                 workers.push(std::thread::spawn(move || {
+                    // Read the request in blocking mode even on Windows.
+                    socket.set_nonblocking(false).unwrap();
                     socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
                     let mut reader = BufReader::new(socket.try_clone().unwrap());
                     let mut request = String::new();

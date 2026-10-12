@@ -46,6 +46,7 @@ dirs = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 arboard = "3"
 base64 = "0.22"
+minisign-verify = "0.2.5"
 url = "2"
 thiserror = "2"
 

@@ -86,6 +86,7 @@ dependencies = [
  "futures-util",
  "globset",
  "log",
+ "minisign-verify",
  "regex",
  "reqwest 0.12.28",
  "semver",

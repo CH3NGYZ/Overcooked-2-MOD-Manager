@@ -5,6 +5,10 @@ use std::collections::BTreeMap;
 pub struct GameInfo {
     pub path: Option<String>,
     pub steam_library: Option<String>,
+    #[serde(default)]
+    pub steam_root: Option<String>,
+    #[serde(default)]
+    pub wine_prefix: Option<String>,
     pub game_exists: bool,
     pub bepinex: BepInExInfo,
     pub kitchen_running: bool,
@@ -289,10 +293,80 @@ pub struct AppConfig {
     pub mod_notes: Vec<ModNote>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GameRuntime {
+    #[default]
+    Wine,
+    Native,
+}
+
+fn default_game_runtime() -> GameRuntime {
+    if cfg!(windows) {
+        GameRuntime::Native
+    } else {
+        GameRuntime::Wine
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameConfig {
     pub path: String,
     pub auto_detect: bool,
+    #[serde(default = "default_game_runtime")]
+    pub runtime: GameRuntime,
+}
+
+impl GameConfig {
+    pub(crate) fn switch_runtime(&mut self, runtime: GameRuntime) {
+        if self.runtime != runtime {
+            self.runtime = runtime;
+            self.path.clear();
+            self.auto_detect = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod game_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_game_settings_default_to_wine_only_on_unix() {
+        let settings: GameConfig =
+            serde_json::from_str(r#"{"path":"","auto_detect":true}"#).unwrap();
+        assert_eq!(
+            settings.runtime,
+            if cfg!(windows) {
+                GameRuntime::Native
+            } else {
+                GameRuntime::Wine
+            }
+        );
+    }
+
+    #[test]
+    fn switching_runtime_clears_only_the_selected_path_and_reenables_detection() {
+        let mut settings = GameConfig {
+            path: "old Windows game directory".into(),
+            auto_detect: false,
+            runtime: GameRuntime::Wine,
+        };
+        settings.switch_runtime(GameRuntime::Wine);
+        assert_eq!(settings.path, "old Windows game directory");
+        assert!(!settings.auto_detect);
+        settings.switch_runtime(GameRuntime::Native);
+        assert!(settings.path.is_empty());
+        assert!(settings.auto_detect);
+        let persisted = serde_json::to_string(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_str::<GameConfig>(&persisted).unwrap(),
+            settings
+        );
+        settings.path = "native game directory".into();
+        settings.switch_runtime(GameRuntime::Wine);
+        assert!(settings.path.is_empty());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,6 +430,7 @@ fn default_hide_unidentified_mods() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicConfig {
     pub schema_version: u32,
+    pub platform: String,
     pub region: String,
     pub ui_zoom: f64,
     pub onboarding_seen_steps: Vec<String>,
@@ -476,6 +551,14 @@ pub struct OperationResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BepInExInstallResult {
+    #[serde(flatten)]
+    pub operation: OperationResult,
+    pub wine_override_applied: bool,
+    pub wine_override_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModRecycleEntry {
     pub id: String,
@@ -524,6 +607,10 @@ pub struct AppUpdateInfo {
     pub installer_download_urls: Vec<String>,
     #[serde(default)]
     pub installer_digest: Option<String>,
+    #[serde(default)]
+    pub installer_name: String,
+    #[serde(default)]
+    pub installer_signature_url: Option<String>,
     #[serde(default)]
     pub installer_type: String,
     #[serde(default)]
@@ -579,6 +666,7 @@ pub struct SettingsPatch {
     pub tutorial_steps: Option<Vec<TutorialStepConfig>>,
     pub game_path: Option<String>,
     pub auto_detect: Option<bool>,
+    pub game_runtime: Option<GameRuntime>,
     pub check_updates_on_start: Option<bool>,
     pub official_api_only: Option<bool>,
     pub timeout_seconds: Option<u64>,

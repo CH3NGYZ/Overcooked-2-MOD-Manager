@@ -152,6 +152,51 @@ test('the manifest uses real browser-download URLs and verified signatures for a
   assert.throws(() => updateManifest('1.2.0', {}))
 })
 
+test('draft metadata with temporary asset URLs produces stable version URLs for publication', async () => {
+  const fixture = releaseFixture()
+  const temporaryTag = 'untagged-da619d69bdda4873d077'
+  const temporaryDraft = {
+    ...draft,
+    html_url: `https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/tag/${temporaryTag}`,
+  }
+  for (const asset of fixture.assets) {
+    if (asset.browser_download_url) {
+      asset.browser_download_url = asset.browser_download_url.replace('/v1.2.0/', `/${temporaryTag}/`)
+    }
+  }
+  const manifest = await aggregateManifest(fixture.github, temporaryDraft, fixture.assets, '1.2.0', fixture.encodedPublicKey)
+  for (const [index, name] of names.entries()) {
+    assert.equal(manifest.platforms[PLATFORM_KEYS[index]].url, urlFor(name))
+  }
+})
+
+test('draft URL normalization rejects another draft, repository, host, asset or unauthenticated version', async () => {
+  const temporaryTag = 'untagged-da619d69bdda4873d077'
+  const htmlUrl = `https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/tag/${temporaryTag}`
+  for (const change of [
+    (release, asset) => { asset.browser_download_url = asset.browser_download_url.replace(temporaryTag, 'untagged-deadbeef') },
+    (release, asset) => { asset.browser_download_url = asset.browser_download_url.replace(RELEASE_REPO, 'Other-Repository') },
+    (release, asset) => { asset.browser_download_url = asset.browser_download_url.replace('github.com', 'example.com') },
+    (release, asset) => { asset.browser_download_url += '?download=1' },
+    (release, asset) => { asset.browser_download_url += '.sig' },
+    release => { release.html_url = htmlUrl.replace(temporaryTag, 'v0.0.0') },
+    release => { release.html_url = htmlUrl.replace(RELEASE_REPO, 'Other-Repository') },
+    release => { release.html_url = undefined },
+    release => { release.tag_name = 'v0.0.0' },
+    release => { release.draft = false },
+  ]) {
+    const fixture = releaseFixture()
+    const temporaryDraft = { ...draft, html_url: htmlUrl }
+    for (const asset of fixture.assets) {
+      if (asset.browser_download_url) {
+        asset.browser_download_url = asset.browser_download_url.replace('/v1.2.0/', `/${temporaryTag}/`)
+      }
+    }
+    change(temporaryDraft, fixture.assets[0])
+    await assert.rejects(() => aggregateManifest(fixture.github, temporaryDraft, fixture.assets, '1.2.0', fixture.encodedPublicKey))
+  }
+})
+
 test('manifest aggregation stops on corrupted uploads, missing signatures, wrong URLs or published releases', async () => {
   for (const change of [
     fixture => { fixture.files.set(1, Buffer.from('truncated')) },
@@ -190,7 +235,7 @@ test('new drafts in the code repository bind to the actual source commit, with a
     assets: async () => [],
     request: async (path, options) => {
       requests.push([path, options])
-      return path === '' ? { default_branch: 'main' } : draft
+      return path === '' ? { default_branch: 'main' } : { ...draft, ...options.body }
     },
   }
   await prepareRelease(github, '1.2.0', 'v1.2.0')
@@ -200,7 +245,47 @@ test('new drafts in the code repository bind to the actual source commit, with a
   const commit = 'a'.repeat(40)
   await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
   assert.equal(requests[1][1].body.target_commitish, commit)
+  assert.equal(requests.length, 2)
   await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', '../invalid'))
+})
+
+test('a matching draft retry refreshes its source commit without publishing or removing installers', async () => {
+  const commit = 'b'.repeat(40)
+  let release = { ...draft, target_commitish: 'a'.repeat(40) }
+  const requests = []
+  const deleted = []
+  const github = {
+    findRelease: async () => release,
+    request: async (path, options) => {
+      requests.push([path, options])
+      return { ...release, ...options.body }
+    },
+    assets: async () => [{ id: 50, name: 'latest.json' }, { id: 51, name: names[0] }],
+    deleteAsset: async id => deleted.push(id),
+  }
+  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  assert.equal(updated.target_commitish, commit)
+  assert.deepEqual(requests, [[`/releases/${draft.id}`, { method: 'PATCH', body: { target_commitish: commit } }]])
+  assert.deepEqual(deleted, [50])
+  release = updated
+  requests.length = 0
+  await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  assert.deepEqual(requests, [])
+  for (const changed of [
+    { ...release, draft: false },
+    { ...release, tag_name: 'v0.0.0' },
+    { ...release, prerelease: true },
+  ]) {
+    release = changed
+    deleted.length = 0
+    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit))
+    assert.deepEqual(requests, [])
+    assert.deepEqual(deleted, [])
+  }
+  release = { ...draft, target_commitish: 'a'.repeat(40) }
+  github.request = async () => ({ ...release, draft: false })
+  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit))
+  assert.deepEqual(deleted, [])
 })
 
 test('Actions writes drafts and updater manifests to this code repository with its scoped GITHUB_TOKEN', () => {

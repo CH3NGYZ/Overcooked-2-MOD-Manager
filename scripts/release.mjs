@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { GitHubRelease } from './github-release.mjs'
 import {
   RELEASE_OWNER, RELEASE_REPO, assertDraftRelease, collectUpdateAssets,
-  readProject, releaseTag, updateManifest, verifyUpdateSignature,
+  publicUpdateAssetUrl, readProject, releaseTag, updateManifest, verifyUpdateSignature,
 } from './release-lib.mjs'
 
 export async function prepareRelease(github, version, tag, commitish) {
@@ -28,6 +28,12 @@ export async function prepareRelease(github, version, tag, commitish) {
     })
   }
   assertDraftRelease(release, version)
+  if (commitish && release.target_commitish !== commitish) {
+    release = await github.request(`/releases/${release.id}`, {
+      method: 'PATCH', body: { target_commitish: commitish },
+    })
+    assertDraftRelease(release, version)
+  }
   // A retry must not leave an old manifest advertising a partially rebuilt draft.
   for (const asset of await github.assets(release.id)) {
     if (asset.name === 'latest.json') await github.deleteAsset(asset.id)
@@ -49,8 +55,7 @@ export async function aggregateManifest(github, release, assets, version, public
       throw new Error(`Uploaded package digest mismatch: ${asset.name}`)
     }
     verifyUpdateSignature(bytes, signature, publicKey, version)
-    const url = `https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${release.tag_name}/${encodeURIComponent(asset.name)}`
-    if (asset.browser_download_url !== url) throw new Error(`Unexpected download URL for ${asset.name}`)
+    const url = publicUpdateAssetUrl(release, asset, version)
     platforms[key] = { signature, url }
   }
   return updateManifest(version, platforms, { notes: release.body || '' })

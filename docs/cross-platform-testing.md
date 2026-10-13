@@ -121,9 +121,13 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --jobs 1 commands
 
 ## 真实平台验收清单
 
-2026-10-13 的非发布四端打包测试已完成：代码提交 `59be3ed6fd8e079cf507e20c840129ba79d42584`，Actions 运行 [38319473951](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38319473951) 的 Windows、Linux、Mac ARM64、Mac Intel 和聚合任务均成功。每端 Node 19 项；Rust Windows 为 280 通过，另外三端为 271 通过，各有 2 项显式忽略。Windows 本机另行执行三种官方 BepInEx 原包的文件系统安装/重装回归，结果通过。
+2026-10-13 的统一 Updater 与配置密钥四端测试已完成：代码提交 `e0068958910c513f9dd051f057c1856fe12dc6d0`，Actions 运行 [38326592135](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38326592135) 的 Windows、Linux、Mac ARM64、Mac Intel 和聚合任务均成功。测试显式使用 `mode=test, signing=configured`；四端预检均用 Actions 私钥签名，并通过当前源码公钥校验，没有生成或替换生产公钥。每端 Node 22 项；Rust Windows 为 278 通过，另外三端为 272 通过，各有 2 项显式忽略，原 Windows 更新入口的两条 dead_code 警告未再出现。
 
-`four-platform-package-summary` 已下载核对同一代码提交、版本与测试标记；CI 聚合重新下载并校验九个包、七份 updater 签名及 SHA-256，包含两个 Mac DMG 和双架构 `.app.tar.gz`。这些是临时密钥签名的 Actions 测试产物，不是 Release；正式公钥未改变，生产 `latest.json` 发布步骤按测试模式跳过。CI 跟踪心跳已在核对完成后停用，以下真实安装、更新及游戏验收仍未进行。
+CI 聚合重新下载并校验九个包、七份 updater 签名及 SHA-256，包含两个 Mac DMG 和双架构 `.app.tar.gz`，并生成包含七个目标键的 `latest.json`。已下载 [four-platform-package-summary](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38326592135/artifacts/11782050439)，本地核对 `testOnly=true`、`signingMode=configured`、版本 `1.2.0`、代码提交、全部包记录、公钥与源码一致以及清单与报告相互对应。实际包字节和签名由 CI 验证，本地只下载摘要及清单核对，不把摘要检查说成再次下载了全部安装包。
+
+本轮证据位于 `src-tauri/target/verification/unified-updater-20261013`，包括四端/聚合日志、运行快照、摘要、`run-38326592135-latest.json` 及 `run-38326592135-verification.json`。测试未创建或修改 Release、main 或标签；正式清单上传任务按测试模式跳过，测试清单 URL 尚未公开发布，产物保留七天。该结果证明当前 Actions 私钥、源码公钥及实际更新包签名匹配，不证明实际安装更新或系统代码签名。
+
+此前临时密钥运行 [38319473951](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38319473951) 仅覆盖 `59be3ed` 的旧更新入口；该阶段 Windows 本机三种官方 BepInEx 原包文件系统回归仍可追溯，但不作为本轮 Windows Updater 或新公钥验收。旧 CI 心跳保持暂停，没有重启监控；以下真实安装、更新及游戏验收仍未进行。
 
 1. 在四个构建环境分别确认格式、编译、完整 Rust 回归及签名产物；检查草稿清单包含七个键，未签名和坏签名包均无法安装。
 2. 每种安装格式从较旧版本更新，检查只选择本格式/架构、权限失败可重试、取消保留旧程序、安装失败有提示，以及成功后版本与重启结果。
@@ -131,4 +135,4 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --jobs 1 commands
 4. Linux/macOS 分别验证默认 Wine、切换原生、重启后模式持久化、对应 Steam 探测、外置库、游戏运行检测和框架开关；双模式同时存在时不能串用路径或 prefix。
 5. 原生安装后通过 Steam 启动并检查 `BepInEx/config/BepInEx.cfg`、`BepInEx/LogOutput.log`；Wine 验证目标容器 winhttp 覆盖、已有 Steam 重启、MOD UI 字体及 Mac CrossOver 向导。
 
-已完成的本地与四端 CI 验证，不替代生产 Secret 验签、Linux/Mac 实机安装更新、系统代码签名及公证、Steam/Wine 运行和实际游戏加载验收。
+已完成的本地与配置密钥四端 CI 验证，不替代正式 Release/Gitee 资产同步、各平台实机安装更新、系统代码签名及公证、Steam/Wine 运行和实际游戏加载验收。

@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { updateFiles } from '../scripts/build-release.mjs'
+import { buildUpdateKeys, updateFiles } from '../scripts/build-release.mjs'
 import { GitHubRelease } from '../scripts/github-release.mjs'
 import { aggregateManifest, prepareRelease } from '../scripts/release.mjs'
 import {
@@ -183,7 +183,7 @@ test('prepare only reuses a matching draft and removes its stale manifest, never
   assert.deepEqual(deleted, [])
 })
 
-test('new drafts use the release repository branch, not a commit from the code repository', async () => {
+test('new drafts in the code repository bind to the actual source commit, with a branch fallback', async () => {
   const requests = []
   const github = {
     findRelease: async () => undefined,
@@ -196,6 +196,37 @@ test('new drafts use the release repository branch, not a commit from the code r
   await prepareRelease(github, '1.2.0', 'v1.2.0')
   assert.equal(requests[1][1].body.target_commitish, 'main')
   assert.equal(requests[1][1].body.draft, true)
+  requests.length = 0
+  const commit = 'a'.repeat(40)
+  await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  assert.equal(requests[1][1].body.target_commitish, commit)
+  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', '../invalid'))
+})
+
+test('Actions writes drafts and updater manifests to this code repository with its scoped GITHUB_TOKEN', () => {
+  const workflow = readFileSync(join(root, '.github/workflows/build.yml'), 'utf8')
+  assert.equal(RELEASE_REPO, 'Overcooked-2-MOD-Manager-Code')
+  assert.ok(workflow.includes(`repo: ${RELEASE_REPO}`))
+  assert.ok(!workflow.includes('RELEASE_REPOSITORY_TOKEN'))
+  assert.ok(workflow.includes("if: inputs.mode != 'test' && !github.event.deleted"))
+  assert.equal((workflow.match(/GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/g) || []).length, 4)
+  assert.equal((workflow.match(/permissions:\r?\n +contents: write/g) || []).length, 3)
+})
+
+test('local NSIS-only builds select the same signed updater format without requiring an MSI', () => {
+  for (const [target, keys] of Object.entries(BUILD_KEYS)) {
+    assert.deepEqual(buildUpdateKeys(['build', '--target', target], target), keys)
+    assert.deepEqual(buildUpdateKeys(['build', '--target', target, '--bundles', 'all'], target), keys)
+  }
+  const target = 'x86_64-pc-windows-msvc'
+  assert.deepEqual(buildUpdateKeys(['build', '--target', target, '--bundles', 'nsis'], target), ['windows-x86_64-nsis'])
+  assert.deepEqual(buildUpdateKeys(['build', '--target', target, '--bundles', 'nsis,msi'], target), BUILD_KEYS[target])
+  assert.deepEqual(buildUpdateKeys(['build', '--target', target, '--bundles', 'nsis', 'msi', '--verbose'], target), BUILD_KEYS[target])
+  for (const bundles of [[], ['deb'], ['android'], ['nsis', 'invalid']]) {
+    assert.throws(() => buildUpdateKeys(['build', '--bundles', ...bundles], target))
+  }
+  assert.throws(() => buildUpdateKeys(['build'], 'unsupported-target'))
+  assert.throws(() => buildUpdateKeys(['build', '--bundles', 'dmg'], 'aarch64-apple-darwin'))
 })
 
 test('artifact discovery signs DEB/RPM and names both Mac updater archives as tauri-action uploads them', () => {
@@ -215,6 +246,15 @@ test('artifact discovery signs DEB/RPM and names both Mac updater archives as ta
       }
       assert.deepEqual([...updateFiles(bundle, target, '1.2.0').keys()], keys)
     }
+    const nsisOnly = join(workspace, 'local-nsis')
+    write(join(nsisOnly, 'nsis', names[0]))
+    const nsisKeys = buildUpdateKeys(['build', '--bundles', 'nsis'], 'x86_64-pc-windows-msvc')
+    const selected = updateFiles(nsisOnly, 'x86_64-pc-windows-msvc', '1.2.0', nsisKeys)
+    assert.deepEqual([...selected.keys()], ['windows-x86_64-nsis'])
+    assert.equal(selected.get('windows-x86_64-nsis').path, join(nsisOnly, 'nsis', names[0]))
+    assert.throws(() => updateFiles(nsisOnly, 'x86_64-pc-windows-msvc', '1.2.0'))
+    assert.throws(() => updateFiles(nsisOnly, 'x86_64-pc-windows-msvc', '1.2.1', nsisKeys))
+    assert.throws(() => updateFiles(nsisOnly, 'x86_64-pc-windows-msvc', '1.2.0', ['linux-x86_64-deb']))
     assert.throws(() => updateFiles(workspace, 'unsupported-target', '1.2.0'))
     assert.throws(() => updateFiles(workspace, 'x86_64-unknown-linux-gnu', '1.2.0'))
   } finally {
@@ -223,7 +263,7 @@ test('artifact discovery signs DEB/RPM and names both Mac updater archives as ta
   }
 })
 
-test('the release API requires a dedicated token and reports only safe HTTP status errors', async () => {
+test('the release API requires authentication and reports only safe HTTP status errors', async () => {
   assert.throws(() => new GitHubRelease(''))
   const requests = []
   const github = new GitHubRelease('[REDACTED_SECRET]', async (url, options) => {

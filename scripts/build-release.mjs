@@ -4,9 +4,28 @@ import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BUILD_KEYS, collectUpdateAssets, readProject, verifyUpdateSignature } from './release-lib.mjs'
 
-export function updateFiles(bundleRoot, target, version) {
+export function buildUpdateKeys(args, target) {
   const keys = BUILD_KEYS[target]
   if (!keys) throw new Error(`Unsupported release build target: ${target}`)
+  const index = args.indexOf('--bundles')
+  if (index < 0) return keys
+  const values = args.slice(index + 1)
+  const end = values.findIndex(value => value.startsWith('-'))
+  const bundles = values.slice(0, end < 0 ? undefined : end).flatMap(value => value.split(','))
+  const supported = [...keys.map(key => key.split('-').at(-1)), ...(target.endsWith('apple-darwin') ? ['dmg'] : []), 'all']
+  if (!bundles.length || bundles.some(bundle => !supported.includes(bundle))) {
+    throw new Error(`Unsupported updater bundle selection for ${target}`)
+  }
+  const selected = keys.filter(key => bundles.includes('all') || bundles.includes(key.split('-').at(-1)))
+  if (!selected.length) throw new Error('A signed release build must include an updater bundle')
+  return selected
+}
+
+export function updateFiles(bundleRoot, target, version, requiredKeys = BUILD_KEYS[target]) {
+  const keys = BUILD_KEYS[target]
+  if (!keys || !requiredKeys?.length || requiredKeys.some(key => !keys.includes(key))) {
+    throw new Error(`Unsupported release build target or updater formats: ${target}`)
+  }
   const assets = []
   for (const directory of ['nsis', 'msi', 'appimage', 'deb', 'rpm', 'macos']) {
     let entries
@@ -19,7 +38,7 @@ export function updateFiles(bundleRoot, target, version) {
       assets.push({ path, name, size: statSync(path).size })
     }
   }
-  return collectUpdateAssets(assets, version, keys)
+  return collectUpdateAssets(assets, version, requiredKeys)
 }
 
 export function runTauri(parameters, env = process.env, invoke = spawnSync) {
@@ -45,9 +64,10 @@ export function main(args = process.argv.slice(2)) {
     || args.includes('--debug') || args.includes('--profile') || args.includes('--no-bundle')) {
     throw new Error('Release builds require build --target with a supported release target')
   }
+  const requiredKeys = buildUpdateKeys(args, target)
   runTauri(args)
   const targetRoot = resolve(process.env.CARGO_TARGET_DIR || 'src-tauri/target')
-  const artifacts = updateFiles(join(targetRoot, target, 'release/bundle'), target, version)
+  const artifacts = updateFiles(join(targetRoot, target, 'release/bundle'), target, version, requiredKeys)
   for (const [key, asset] of artifacts) {
     // DEB/RPM are supported by the updater, but not all CLI builds sign them.
     runTauri(['signer', 'sign', '--app-version', version, asset.path])
@@ -55,7 +75,8 @@ export function main(args = process.argv.slice(2)) {
     verifyUpdateSignature(readFileSync(asset.path), signature, publicKey, version)
     console.log(`Verified signed release target: ${key} (${basename(asset.path)})`)
   }
-  if (target.endsWith('apple-darwin')) {
+  if (target.endsWith('apple-darwin') && (args.indexOf('--bundles') < 0
+    || args.slice(args.indexOf('--bundles') + 1).some(value => value.split(',').some(bundle => ['all', 'dmg'].includes(bundle))))) {
     const arch = target.startsWith('aarch64') ? 'aarch64' : 'x64'
     const dmg = join(targetRoot, target, `release/bundle/dmg/OC2ModManager_${version}_${arch}.dmg`)
     if (statSync(dmg).size <= 0) throw new Error('The macOS installer DMG is missing or empty')

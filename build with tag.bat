@@ -75,6 +75,7 @@ endlocal & exit /b 1
 
     // Read and validate every target before writing any of them.
     const cargo = readDocument('src-tauri/Cargo.toml');
+    const cargoLock = readDocument('src-tauri/Cargo.lock');
     const tauri = readDocument('src-tauri/tauri.conf.json');
     const manifest = readDocument('package.json');
     const lock = readDocument('package-lock.json');
@@ -90,6 +91,17 @@ endlocal & exit /b 1
     });
     if (packageCount !== 1) throw new Error('Cargo.toml must have exactly one [package] version.');
     cargo.updated = Buffer.from(cargo.bom + cargoText);
+    let appLockCount = 0;
+    const cargoLockText = cargoLock.text.replace(/^(\[\[package\]\][^\r\n]*(?:\r?\n|$))([\s\S]*?)(?=^\[\[package\]\]|(?![\s\S]))/gm, (section, header, body) => {
+        if (!/^name\s*=\s*"app"\s*$/m.test(body)) return section;
+        const updatedBody = body.replace(/^([ \t]*version[ \t]*=[ \t]*")[^"\r\n]*("[^\r\n]*)$/gm, (_, prefix, suffix) => {
+            appLockCount += 1;
+            return prefix + version + suffix;
+        });
+        return header + updatedBody;
+    });
+    if (appLockCount !== 1) throw new Error('Cargo.lock must have exactly one app package version.');
+    cargoLock.updated = Buffer.from(cargoLock.bom + cargoLockText);
     updateJson(tauri, value => setVersion(value, 'tauri.conf.json'));
     updateJson(manifest, value => setVersion(value, 'package.json'));
     updateJson(lock, value => {
@@ -99,7 +111,7 @@ endlocal & exit /b 1
 
     const written = [];
     try {
-        for (const document of [cargo, tauri, manifest, lock]) {
+        for (const document of [cargo, cargoLock, tauri, manifest, lock]) {
             if (document.original.equals(document.updated)) continue;
             written.push(document);
             fs.writeFileSync(document.file, document.updated);
@@ -114,6 +126,6 @@ endlocal & exit /b 1
         throw error;
     }
     console.log('项目版本已更新为 ' + version + '：');
-    console.log('  src-tauri/Cargo.toml, src-tauri/tauri.conf.json, package.json');
+    console.log('  src-tauri/Cargo.toml, Cargo.lock app package, tauri.conf.json, package.json');
     console.log('  package-lock.json version and packages[""] version');
 })();

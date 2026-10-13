@@ -61,11 +61,10 @@ Release API 内的清单资产地址优先于备用地址。Gitee 备用清单�
 
 ## 发布前置条件
 
-`.github/workflows/build.yml` 使用 Windows、Ubuntu 22.04、Mac Apple Silicon 和 `macos-15-intel` 四个 runner。所有构建上传到 `CH3NGYZ/Overcooked-2-MOD-Manager-Releases` 的同一草稿；在四个构建成功后，由独立任务验证实际上传字节和签名，再汇总七目标 `latest.json`。并行构建不各自上传清单，也不自动发布草稿。
+`.github/workflows/build.yml` 使用 Windows、Ubuntu 22.04、Mac Apple Silicon 和 `macos-15-intel` 四个 runner。正式构建上传到当前代码仓库 `CH3NGYZ/Overcooked-2-MOD-Manager-Code` 的同一草稿；在四个构建成功后，由独立任务验证实际上传字节和签名，再汇总七目标 `latest.json`。并行构建不各自上传清单，也不自动发布草稿。新建草稿绑定实际构建的 `GITHUB_SHA`，不指向另一个仓库或无关提交。
 
-代码仓库 Actions 必须配置以下 Secrets：
+发布任务直接使用 GitHub 自动创建的 `secrets.GITHUB_TOKEN`，只有准备草稿、上传包和汇总清单三个任务声明 `contents: write`。默认权限保持只读，不再依赖跨仓库 `RELEASE_REPOSITORY_TOKEN`，也不把本机 API Token 复制到 Actions。代码仓库仍须配置以下 updater Secrets：
 
-- `RELEASE_REPOSITORY_TOKEN`：对 Releases 仓库有 Contents 写权限；代码仓库默认的 `GITHUB_TOKEN` 不能代替跨仓库权限。
 - `TAURI_SIGNING_PRIVATE_KEY`：与 `src-tauri/tauri.conf.json` 的 updater 公钥对应的私钥文件完整内容，不是本机文件路径。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥有密码时配置。
 
@@ -75,13 +74,23 @@ Release API 内的清单资产地址优先于备用地址。Gitee 备用清单�
 
 旧 Windows 客户端原本直接运行 EXE/MSI，未用 Updater 公钥验证，可按旧入口安装内置新公钥的新版本，然后进入统一签名更新链；需保留旧包名并发布更高应用版本。已使用旧公钥验签的客户端不能自动接受新私钥签名，除非有旧私钥签署过渡包，否则需手动安装一次。当前 `1.2.0` 测试不等于发布了可被已有 `1.2.0` 自动识别的更高版本。
 
-正式草稿工作流由 `v<项目版本>` 标签或手动 dispatch 的 `mode=release` 触发；项目的 package、Tauri、Cargo 及两个 lock 文件版本必须一致。发布 dispatch 使用项目版本生成标签。已公开的同名 Release 不允许覆盖。`scripts/build-release.mjs` 对包括 DEB/RPM 在内的更新包补签并检查公钥；聚合任务检查缺包、重复包、错误下载 URL、摘要、签名与版本后才上传清单。
+正式草稿工作流由 `v<项目版本>` 标签或手动 dispatch 的 `mode=release` 触发；项目的 package、Tauri、Cargo 及两个 lock 文件版本必须一致。发布 dispatch 使用项目版本生成标签。已公开的同名 Release 不允许覆盖。`scripts/build-release.mjs` 对包括 DEB/RPM 在内的更新包补签并检查公钥；聚合任务检查缺包、重复包、错误下载 URL、摘要、签名与版本后才上传清单。正式推送重建标签时以该次标签 push 触发，不额外 dispatch 同一提交造成重复构建。
 
-已有的未签名包、仅有 DMG 的 Release 或缺少对应平台键的清单，不会因为源码修改而自动具备更新能力。需要在授权发布后上传完整更新包、各自 `.sig` 与 `latest.json`；Gitee 镜像必须同步这些原始字节，不重新压缩、改名或只同步安装包。测试分支仅在用户明确授权后推送；公开发布及 Gitee 同步仍不执行。
+客户端的 GitHub/Gitee 更新渠道仍指向原 `Overcooked-2-MOD-Manager-Releases` 仓库。本仓库生成的清单 URL 指向本仓库实际资产；后续同步流程由用户另行实现，需同步完整更新包及各自 `.sig` 原始字节，并将 `latest.json` 的 URL 改为目标仓库对应的实际资产地址，不重压缩或改签名。仅在本代码仓库构建成功，不代表既有客户端的发布渠道已有可用更新。本轮不实现跨仓库或 Gitee 同步。
+
+## 本地 BAT 与 Actions 的 NSIS 一致性
+
+`build.bat` 使用同一个 `scripts/build-release.mjs`，显式指定 `x86_64-pc-windows-msvc` 与 `--bundles nsis`。它读取相同 Tauri 配置与 NSIS 模板，生成应用版本绑定的 updater 签名，并以当前公钥验签后才进入原有安装、启动流程。Actions 默认仍生成该平台的全部包；本地 NSIS-only 不要求额外生成 MSI，也不跳过签名或更换公钥。
+
+本地 updater 私钥使用 `TAURI_SIGNING_PRIVATE_KEY` 的完整内容，或 `TAURI_SIGNING_PRIVATE_KEY_PATH` 指向离线备份的私钥文件；有密码时配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。BAT 从当前进程环境读取，并用当前用户的注册表环境作缺失值后备，只记录是否配置。GitHub Secret 不会自动下载到本机。`noenv` / `clean` 保留原有行为，只清空两个 `OC2_INSTALLER_*_TOKEN`，仍要求有效 updater 签名；缺少签名密钥则停止，不生成能安装但无法验证的替代包。
+
+产物位于 `<CARGO_TARGET_DIR>/x86_64-pc-windows-msvc/release/bundle/nsis/`，未指定 target dir 时为 `src-tauri/target`。安装阶段只选择当前项目版本的 `OC2ModManager_<版本>_x64-setup.exe`，并要求对应 `.sig` 存在，不再按时间选择旧文件。这里的一致性是打包配置、格式与签名校验规则一致，不承诺不同机器/工具链编译出的 EXE 字节完全相同。
+
+`build with tag.bat` 在调用共同入口前事务性更新 Cargo.toml、Cargo.lock 的 `app`、Tauri、package.json 及 package-lock.json 的两个项目版本。依赖版本保持原样；格式或写入失败回滚，`noenv` / `clean` 参数继续原样转发。脚本回归在已忽略的工作区副本中运行嵌入 Node 更新器，Windows 额外运行真实版本 BAT 加无安装行为的 build stub；不在回归中执行生产安装器或启动应用。
 
 ## 非发布四端 Actions 打包测试
 
-手动运行已有 `build.yml`，选择测试分支、`mode=test` 和 `signing=configured`（默认值），运行同一四端矩阵，但跳过所有 Release 准备、上传和清单发布步骤。测试不需要跨仓库发布 Token；配置密钥模式使用代码仓库的私钥及密码 Secrets，打包前用真实 Tauri CLI 签名一个临时载荷并以当前源码公钥验签。缺少密钥、错误密码或公私钥不匹配均提前失败，不自动降级为临时签名。
+手动运行已有 `build.yml`，选择测试分支、`mode=test` 和 `signing=configured`（默认值），运行同一四端矩阵，但跳过所有 Release 准备、上传和清单发布步骤。测试不写入 Release；配置密钥模式使用代码仓库的私钥及密码 Secrets，打包前用真实 Tauri CLI 签名一个临时载荷并以当前源码公钥验签。缺少密钥、错误密码或公私钥不匹配均提前失败，不自动降级为临时签名。
 
 `scripts/ci-packages.mjs` 的配置密钥模式保留源码公钥，私钥仅经 Actions 步骤环境传入签名子进程，不写入 `GITHUB_ENV` 或产物，预检输出全部捕获。无生产 Secret 时仍可显式选择 `signing=temporary`：只在 runner 临时检出生成测试密钥、替换公钥，捕获生成器全部输出并在任务结束删除临时私钥。两种模式都禁用测试包的配置更新地址，并复用 `build-release.mjs` 打包验签。
 

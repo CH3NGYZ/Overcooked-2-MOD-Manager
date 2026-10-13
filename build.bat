@@ -1,9 +1,13 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001
 cd /d "%~dp0"
 
 set "BUILD_LOG=%CD%\build.log"
+set "BUILD_TARGET=x86_64-pc-windows-msvc"
+if not defined CARGO_TARGET_DIR set "CARGO_TARGET_DIR=%CD%\src-tauri\target"
+for %%A in ("%CARGO_TARGET_DIR%") do set "CARGO_TARGET_DIR=%%~fA"
+set "NSIS_BUNDLE_DIR=%CARGO_TARGET_DIR%\%BUILD_TARGET%\release\bundle\nsis"
 
 rem ============================================================
 rem 编译环境变量控制
@@ -63,6 +67,19 @@ where npm >nul 2>nul
 if errorlevel 1 (
     echo ERROR: npm was not found in PATH.
     >>"%BUILD_LOG%" echo [%date% %time%] ERROR: npm was not found in PATH.
+    goto failed
+)
+
+where node >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: Node.js was not found in PATH.
+    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: Node.js was not found in PATH.
+    goto failed
+)
+
+if not exist "scripts\build-release.mjs" (
+    echo ERROR: the shared Actions release build script was not found.
+    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: the shared release build script was not found.
     goto failed
 )
 
@@ -127,6 +144,27 @@ goto environment_ready
 
 :environment_ready
 
+rem Updater signing is required even in noenv / clean mode. Those modes only
+rem disable the two build-time API tokens, not the production updater signature.
+if not defined TAURI_SIGNING_PRIVATE_KEY (
+    for /f "tokens=1,2,*" %%A in ('reg query "HKCU\Environment" /v TAURI_SIGNING_PRIVATE_KEY 2^>nul') do if /I "%%A"=="TAURI_SIGNING_PRIVATE_KEY" set "TAURI_SIGNING_PRIVATE_KEY=%%C"
+)
+if not defined TAURI_SIGNING_PRIVATE_KEY_PATH (
+    for /f "tokens=1,2,*" %%A in ('reg query "HKCU\Environment" /v TAURI_SIGNING_PRIVATE_KEY_PATH 2^>nul') do if /I "%%A"=="TAURI_SIGNING_PRIVATE_KEY_PATH" set "TAURI_SIGNING_PRIVATE_KEY_PATH=%%C"
+)
+if not defined TAURI_SIGNING_PRIVATE_KEY_PASSWORD (
+    for /f "tokens=1,2,*" %%A in ('reg query "HKCU\Environment" /v TAURI_SIGNING_PRIVATE_KEY_PASSWORD 2^>nul') do if /I "%%A"=="TAURI_SIGNING_PRIVATE_KEY_PASSWORD" set "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%%C"
+)
+if not defined TAURI_SIGNING_PRIVATE_KEY if not defined TAURI_SIGNING_PRIVATE_KEY_PATH (
+    echo ERROR: configure TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH.
+    echo Use the private key matching the updater public key, and its password if needed.
+    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: an updater signing key is required.
+    goto failed
+)
+
+echo Updater signing key: configured
+>>"%BUILD_LOG%" echo [%date% %time%] Updater signing key: configured
+
 echo Cargo parallel jobs: %CARGO_BUILD_JOBS%
 >>"%BUILD_LOG%" echo [%date% %time%] Cargo parallel jobs: %CARGO_BUILD_JOBS%
 
@@ -137,14 +175,15 @@ rem ============================================================
 rem 编译
 rem
 rem 此时：
-rem   USE_ENV=1 -> 两个 Token 存在，会被继承给 npx / Cargo / Tauri
+rem   USE_ENV=1 -> 两个 Token 存在，会被继承给 Node / Cargo / Tauri
 rem   USE_ENV=0 -> 两个 Token 已被清空，不会传给编译器
 rem ============================================================
 
 rem Stream build output to the console while keeping a complete build log.
-rem Merge npx stderr inside cmd.exe so normal Tauri status lines are not wrapped as PowerShell errors.
+rem Reuse Actions' target, version-bound signatures and public-key verification.
+rem Merge stderr inside cmd.exe so Tauri status lines are not PowerShell errors.
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & cmd.exe /d /c 'call npx tauri build --bundles nsis 2^>^&1' | Tee-Object -FilePath $env:BUILD_LOG -Append; exit $LASTEXITCODE }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & cmd.exe /d /c 'node scripts/build-release.mjs build --target %BUILD_TARGET% --bundles nsis 2^>^&1' | Tee-Object -FilePath $env:BUILD_LOG -Append; exit $LASTEXITCODE }"
 
 set "BUILD_EXIT=%ERRORLEVEL%"
 
@@ -161,16 +200,27 @@ echo BUILD SUCCEEDED.
 echo.
 
 echo NSIS installer:
-echo %CD%\src-tauri\target\release\bundle\nsis\
->>"%BUILD_LOG%" echo NSIS installer: %CD%\src-tauri\target\release\bundle\nsis\
+echo %NSIS_BUNDLE_DIR%\
+>>"%BUILD_LOG%" echo NSIS installer: %NSIS_BUNDLE_DIR%\
 
-set "NSIS_INSTALLER="
+set "BUILD_VERSION="
+for /f "delims=" %%A in ('node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version"') do set "BUILD_VERSION=%%A"
+if not defined BUILD_VERSION (
+    echo ERROR: the current project version could not be read.
+    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: the current project version could not be read.
+    goto failed
+)
 
-for /f "delims=" %%A in ('dir /b /a-d /o-d "%CD%\src-tauri\target\release\bundle\nsis\OC2ModManager_*_x64-setup.exe" 2^>nul') do if not defined NSIS_INSTALLER set "NSIS_INSTALLER=%CD%\src-tauri\target\release\bundle\nsis\%%A"
+set "NSIS_INSTALLER=%NSIS_BUNDLE_DIR%\OC2ModManager_%BUILD_VERSION%_x64-setup.exe"
 
-if not defined NSIS_INSTALLER (
-    echo ERROR: NSIS installer was not found.
-    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: NSIS installer was not found.
+if not exist "%NSIS_INSTALLER%" (
+    echo ERROR: the NSIS installer for the current version was not found.
+    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: the NSIS installer for the current version was not found.
+    goto failed
+)
+if not exist "%NSIS_INSTALLER%.sig" (
+    echo ERROR: the verified updater signature was not found.
+    >>"%BUILD_LOG%" echo [%date% %time%] ERROR: the verified updater signature was not found.
     goto failed
 )
 

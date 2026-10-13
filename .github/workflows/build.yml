@@ -31,8 +31,10 @@ permissions:
 
 jobs:
   prepare:
-    if: inputs.mode != 'test'
+    if: inputs.mode != 'test' && !github.event.deleted
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -41,10 +43,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
-      - name: Validate versions and prepare the Releases repository draft
+      - name: Validate versions and prepare this repository's release draft
         id: release
         env:
-          RELEASE_REPOSITORY_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           node --input-type=module -e "if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) throw new Error('TAURI_SIGNING_PRIVATE_KEY is required')"
@@ -54,6 +56,8 @@ jobs:
     needs: prepare
     if: ${{ !cancelled() && (inputs.mode == 'test' || needs.prepare.result == 'success') }}
     timeout-minutes: 60
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -160,7 +164,7 @@ jobs:
       - name: Confirm the shared release is still a draft
         if: inputs.mode != 'test'
         env:
-          RELEASE_REPOSITORY_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
         run: node scripts/release.mjs check "$RELEASE_ID"
         shell: bash
@@ -169,12 +173,12 @@ jobs:
         if: inputs.mode != 'test'
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           owner: CH3NGYZ
-          repo: Overcooked-2-MOD-Manager-Releases
+          repo: Overcooked-2-MOD-Manager-Code
           releaseId: ${{ needs.prepare.outputs.release_id }}
           tagName: ${{ needs.prepare.outputs.tag_name }}
           releaseDraft: true
@@ -187,6 +191,8 @@ jobs:
     needs: [prepare, build]
     if: inputs.mode != 'test'
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -194,7 +200,7 @@ jobs:
           node-version: '24'
       - name: Verify all seven uploaded targets and aggregate latest.json
         env:
-          RELEASE_REPOSITORY_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
         run: node scripts/release.mjs manifest "$RELEASE_ID"
 

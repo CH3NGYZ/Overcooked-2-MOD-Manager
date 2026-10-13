@@ -14,7 +14,11 @@
       "Bash(git commit:*)",
       "Bash(rtk git add:*)",
       "Bash(cargo update:*)",
-      "Bash(rtk git log:*)"
+      "Bash(rtk git log:*)",
+      "Bash(rtk git commit:*)",
+      "Bash(rtk cargo check:*)",
+      "Bash(rtk git push:*)",
+      "Bash(git tag:*)"
     ]
   }
 }

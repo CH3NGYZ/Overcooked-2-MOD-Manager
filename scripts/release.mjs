@@ -8,7 +8,10 @@ import {
   readProject, releaseTag, updateManifest, verifyUpdateSignature,
 } from './release-lib.mjs'
 
-export async function prepareRelease(github, version, tag) {
+export async function prepareRelease(github, version, tag, commitish) {
+  if (commitish !== undefined && !/^[a-f0-9]{40}$/i.test(commitish)) {
+    throw new Error('The release source commit must be a full GitHub commit SHA')
+  }
   let release = await github.findRelease(tag)
   if (!release) {
     const repository = await github.request('')
@@ -16,7 +19,7 @@ export async function prepareRelease(github, version, tag) {
       method: 'POST',
       body: {
         tag_name: tag,
-        target_commitish: repository.default_branch,
+        target_commitish: commitish || repository.default_branch,
         name: `Overcooked 2 MOD Manager ${tag}`,
         body: 'Download the installer for your system. Publish only after all four builds and the updater manifest succeed.',
         draft: true,
@@ -56,9 +59,9 @@ export async function aggregateManifest(github, release, assets, version, public
 export async function main(args = process.argv.slice(2)) {
   const { version, publicKey } = readProject()
   const tag = releaseTag(version, process.env.GITHUB_REF_TYPE, process.env.GITHUB_REF_NAME)
-  const github = new GitHubRelease(process.env.RELEASE_REPOSITORY_TOKEN)
+  const github = new GitHubRelease(process.env.GITHUB_TOKEN)
   if (args[0] === 'prepare' && args.length === 1) {
-    const release = await prepareRelease(github, version, tag)
+    const release = await prepareRelease(github, version, tag, process.env.GITHUB_SHA)
     if (!process.env.GITHUB_OUTPUT) throw new Error('This command requires GitHub Actions outputs')
     appendFileSync(process.env.GITHUB_OUTPUT, `release_id=${release.id}\ntag_name=${tag}\nversion=${version}\n`)
     console.log(`Prepared draft ${tag} in ${RELEASE_OWNER}/${RELEASE_REPO}`)

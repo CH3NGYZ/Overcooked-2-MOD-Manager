@@ -265,7 +265,9 @@ test('a matching draft retry refreshes its source commit without publishing or r
   }
   const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
   assert.equal(updated.target_commitish, commit)
-  assert.deepEqual(requests, [[`/releases/${draft.id}`, { method: 'PATCH', body: { target_commitish: commit } }]])
+  assert.deepEqual(requests, [[`/releases/${draft.id}`, {
+    method: 'PATCH', body: { tag_name: 'v1.2.0', target_commitish: commit, draft: true, prerelease: false },
+  }]])
   assert.deepEqual(deleted, [50])
   release = updated
   requests.length = 0
@@ -283,9 +285,40 @@ test('a matching draft retry refreshes its source commit without publishing or r
     assert.deepEqual(deleted, [])
   }
   release = { ...draft, target_commitish: 'a'.repeat(40) }
-  github.request = async () => ({ ...release, draft: false })
-  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit))
-  assert.deepEqual(deleted, [])
+  for (const changed of [
+    { draft: false },
+    { tag_name: 'v0.0.0' },
+    { prerelease: true },
+  ]) {
+    github.request = async () => ({ ...release, ...changed })
+    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit))
+    assert.deepEqual(deleted, [])
+  }
+})
+
+test('draft retries explicitly retain the version tag when GitHub normalizes an incomplete PATCH', async () => {
+  const commit = 'b'.repeat(40)
+  const temporaryTag = 'untagged-da619d69bdda4873d077'
+  let release = { ...draft, target_commitish: 'a'.repeat(40) }
+  const requests = []
+  const github = new GitHubRelease('fixture-token', async (url, options) => {
+    const path = new URL(url).pathname
+    if (options.method === 'PATCH') {
+      const body = JSON.parse(options.body)
+      requests.push(body)
+      release = { ...release, ...body, tag_name: body.tag_name || temporaryTag }
+      return Response.json(release)
+    }
+    if (path.endsWith('/assets')) return Response.json([])
+    if (path.endsWith('/releases')) return Response.json([release])
+    throw new Error(`Unexpected fixture request: ${options.method} ${path}`)
+  })
+  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  assert.equal(updated.tag_name, 'v1.2.0')
+  assert.equal(updated.target_commitish, commit)
+  assert.equal(updated.draft, true)
+  assert.equal(updated.prerelease, false)
+  assert.deepEqual(requests, [{ tag_name: 'v1.2.0', target_commitish: commit, draft: true, prerelease: false }])
 })
 
 test('Actions writes drafts and updater manifests to this code repository with its scoped GITHUB_TOKEN', () => {

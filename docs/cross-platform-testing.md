@@ -76,7 +76,7 @@ Release API 内的清单资产地址优先于备用地址。Gitee 备用清单�
 
 正式草稿工作流由 `v<项目版本>` 标签或手动 dispatch 的 `mode=release` 触发；项目的 package、Tauri、Cargo 及两个 lock 文件版本必须一致。发布 dispatch 使用项目版本生成标签。已公开的同名 Release 不允许覆盖。`scripts/build-release.mjs` 对包括 DEB/RPM 在内的更新包补签并检查公钥；聚合任务检查缺包、重复包、错误下载 URL、摘要、签名与版本后才上传清单。正式推送重建标签时以该次标签 push 触发，不额外 dispatch 同一提交造成重复构建。
 
-GitHub 草稿的资产 API 可能返回 `releases/download/untagged-<临时标识>/...`。聚合器只接受正式版本路径或同一代码仓库、同一草稿 `html_url` 对应的临时路径，实际字节仍从带认证的资产 ID 接口下载并完整验签。`latest.json` 始终写 `releases/download/v<版本>/...`，不把公开后会变化的草稿路径留在更新清单中。同名草稿重试会更新 `target_commitish` 元数据，但 GitHub 的该字段不会移动已有标签；实际源码以明确授权的 Git 标签引用及 Actions SHA 为准。
+GitHub 草稿的资产 API 可能返回 `releases/download/untagged-<临时标识>/...`。聚合器只接受正式版本路径或同一代码仓库、同一草稿 `html_url` 对应的临时路径，实际字节仍从带认证的资产 ID 接口下载并完整验签。`latest.json` 始终写 `releases/download/v<版本>/...`，不把公开后会变化的草稿路径留在更新清单中。同名草稿重试会更新 `target_commitish` 元数据，PATCH 必须同时显式保留 `tag_name`、`draft: true` 和 `prerelease: false`；实际 API 已验证仅提交 `target_commitish` 会把草稿标签重置为 `untagged-...`，导致后续身份保护拒绝修改。修改前后均校验同版本稳定草稿，不能放宽已公开版本保护。GitHub 的 `target_commitish` 不会移动已有标签；实际源码以明确授权的 Git 标签引用及 Actions SHA 为准，重试优先对同一标签使用限定旧对象的 lease 更新，避免删除期间草稿脱离关联。
 
 客户端的 GitHub/Gitee 更新渠道仍指向原 `Overcooked-2-MOD-Manager-Releases` 仓库。本仓库生成的清单 URL 指向本仓库实际资产；后续同步流程由用户另行实现，需同步完整更新包及各自 `.sig` 原始字节，并将 `latest.json` 的 URL 改为目标仓库对应的实际资产地址，不重压缩或改签名。仅在本代码仓库构建成功，不代表既有客户端的发布渠道已有可用更新。本轮不实现跨仓库或 Gitee 同步。
 

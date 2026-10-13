@@ -9,17 +9,7 @@ if not defined CARGO_TARGET_DIR set "CARGO_TARGET_DIR=%CD%\src-tauri\target"
 for %%A in ("%CARGO_TARGET_DIR%") do set "CARGO_TARGET_DIR=%%~fA"
 set "NSIS_BUNDLE_DIR=%CARGO_TARGET_DIR%\%BUILD_TARGET%\release\bundle\nsis"
 
-rem ============================================================
-rem 编译环境变量控制
-rem
-rem 默认：
-rem   build.bat  读取环境变量并传给编译器
-rem
-rem 不读取环境变量：
-rem   build.bat noenv
-rem   build.bat clean
-rem
-rem ============================================================
+rem Default builds forward API tokens; noenv / clean clear those tokens.
 
 set "USE_ENV=1"
 
@@ -89,16 +79,14 @@ if not exist "%CARGO_HOME%\bin\cargo.exe" (
     goto failed
 )
 
-rem ============================================================
-rem 读取 / 清除编译环境变量
-rem ============================================================
+rem Load or clear the build-time API tokens.
 
 if "%USE_ENV%"=="1" goto load_environment
 
 echo Environment variables are disabled for this build.
 >>"%BUILD_LOG%" echo [%date% %time%] Environment variables are disabled for this build.
 
-rem 即使当前 CMD 已经存在，也主动清除，确保不会传给编译器。
+rem Clear inherited tokens too, so child compilers cannot receive them.
 set "OC2_INSTALLER_GITHUB_TOKEN="
 set "OC2_INSTALLER_GITEE_TOKEN="
 
@@ -171,19 +159,14 @@ echo Cargo parallel jobs: %CARGO_BUILD_JOBS%
 echo Building frontend and NSIS installer...
 >>"%BUILD_LOG%" echo [%date% %time%] Building frontend and NSIS installer...
 
-rem ============================================================
-rem 编译
-rem
-rem 此时：
-rem   USE_ENV=1 -> 两个 Token 存在，会被继承给 Node / Cargo / Tauri
-rem   USE_ENV=0 -> 两个 Token 已被清空，不会传给编译器
-rem ============================================================
+rem Child processes inherit the configured tokens or cleared noenv / clean values.
 
 rem Stream build output to the console while keeping a complete build log.
 rem Reuse Actions' target, version-bound signatures and public-key verification.
-rem Merge stderr inside cmd.exe so Tauri status lines are not PowerShell errors.
+rem Merge stderr inside cmd.exe without turning redirection into Node arguments.
+rem Append UTF-8 explicitly; Windows PowerShell's Tee-Object defaults to UTF-16.
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & cmd.exe /d /c 'node scripts/build-release.mjs build --target %BUILD_TARGET% --bundles nsis 2^>^&1' | Tee-Object -FilePath $env:BUILD_LOG -Append; exit $LASTEXITCODE }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $buildExit = 1; $log = [IO.StreamWriter]::new($env:BUILD_LOG, $true, [Text.UTF8Encoding]::new($false)); $log.AutoFlush = $true; try { & cmd.exe /d /c 'node scripts/build-release.mjs build --target %BUILD_TARGET% --bundles nsis 2>&1' | ForEach-Object { $log.WriteLine($_); $_ }; $buildExit = $LASTEXITCODE } finally { $log.Dispose() }; exit $buildExit }"
 
 set "BUILD_EXIT=%ERRORLEVEL%"
 

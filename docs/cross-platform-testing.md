@@ -84,11 +84,15 @@ GitHub 草稿的资产 API 可能返回 `releases/download/untagged-<临时标�
 
 `build.bat` 使用同一个 `scripts/build-release.mjs`，显式指定 `x86_64-pc-windows-msvc` 与 `--bundles nsis`。它读取相同 Tauri 配置与 NSIS 模板，生成应用版本绑定的 updater 签名，并以当前公钥验签后才进入原有安装、启动流程。Actions 默认仍生成该平台的全部包；本地 NSIS-only 不要求额外生成 MSI，也不跳过签名或更换公钥。
 
+`build.bat` 的命令和注释保持 ASCII、无 BOM、CRLF，避免 CMD 在 `chcp 65001` 后将 UTF-8 中文注释切成命令片段。构建入口经过 BAT、PowerShell 与内层 CMD，`2>&1` 只由内层 CMD 解释，不能转义成传给 Node 的字面参数；否则会被共享脚本当成额外 bundle 拒绝。Windows PowerShell 5 的 `Tee-Object` 默认写 UTF-16，因此构建日志用显式 UTF-8 流追加，与 BAT 的日志编码保持一致；stdout/stderr 同时显示并保存，构建退出码独立传回 BAT。
+
 本地 updater 私钥使用 `TAURI_SIGNING_PRIVATE_KEY` 的完整内容，或 `TAURI_SIGNING_PRIVATE_KEY_PATH` 指向离线备份的私钥文件；有密码时配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。BAT 从当前进程环境读取，并用当前用户的注册表环境作缺失值后备，只记录是否配置。GitHub Secret 不会自动下载到本机。`noenv` / `clean` 保留原有行为，只清空两个 `OC2_INSTALLER_*_TOKEN`，仍要求有效 updater 签名；缺少签名密钥则停止，不生成能安装但无法验证的替代包。
 
 产物位于 `<CARGO_TARGET_DIR>/x86_64-pc-windows-msvc/release/bundle/nsis/`，未指定 target dir 时为 `src-tauri/target`。安装阶段只选择当前项目版本的 `OC2ModManager_<版本>_x64-setup.exe`，并要求对应 `.sig` 存在，不再按时间选择旧文件。这里的一致性是打包配置、格式与签名校验规则一致，不承诺不同机器/工具链编译出的 EXE 字节完全相同。
 
 `build with tag.bat` 在调用共同入口前事务性更新 Cargo.toml、Cargo.lock 的 `app`、Tauri、package.json 及 package-lock.json 的两个项目版本。依赖版本保持原样；格式或写入失败回滚，`noenv` / `clean` 参数继续原样转发。脚本回归在已忽略的工作区副本中运行嵌入 Node 更新器，Windows 额外运行真实版本 BAT 加无安装行为的 build stub；不在回归中执行生产安装器或启动应用。
+
+`node --test tests/local-build.test.mjs` 还覆盖真实构建 BAT 的隔离副本：936/65001 初始代码页、default/noenv/clean、空格和中文路径、真实 `buildUpdateKeys` 参数校验、中文 stdout/stderr 与 UTF-8 日志，以及失败退出和成功后缺少当前版本安装包时的拒绝安装。回归在共享签名编译入口前替换为无安装探针，不执行编译器、生产签名、安装器或管理器，不能替代完整打包验收。
 
 ## 非发布四端 Actions 打包测试
 

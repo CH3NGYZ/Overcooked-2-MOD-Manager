@@ -1,4 +1,3 @@
-#[cfg(not(windows))]
 use crate::models::AppUpdateInfo;
 use crate::models::{ReleaseAsset, ReleaseInfo};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
@@ -48,7 +47,6 @@ impl UpdateTarget {
         Ok(Self { os, arch, kind })
     }
 
-    #[cfg(any(not(windows), test))]
     pub(crate) fn manifest_key(self) -> String {
         let kind = if self.kind == "exe" {
             "nsis"
@@ -170,23 +168,77 @@ fn verify_with_key(
     })
 }
 
-#[cfg(not(windows))]
-pub(crate) fn validate_native_metadata(
-    update: &tauri_plugin_updater::Update,
+pub(crate) fn validate_update_metadata(
+    version: &str,
+    download_url: &url::Url,
+    signature: &str,
     info: &AppUpdateInfo,
 ) -> Result<(), String> {
     let expected_name = info.installer_name.as_str();
-    let downloaded_name = update
-        .download_url
+    let downloaded_name = download_url
         .path_segments()
         .and_then(|mut segments| segments.next_back());
-    if update.version != info.version
+    if version != info.version
         || downloaded_name != Some(expected_name)
-        || update.signature.trim().is_empty()
+        || signature.trim().is_empty()
     {
         return Err("更新清单与所选平台安装包不一致，已停止安装".into());
     }
     Ok(())
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn windows_installer_args(
+    kind: &str,
+    executable: &std::path::Path,
+    target_executable: &std::path::Path,
+    log: &std::path::Path,
+) -> Result<Vec<std::ffi::OsString>, String> {
+    use std::ffi::OsString;
+    let directory = executable.parent().ok_or("安装目录无效")?;
+    let target_directory = target_executable.parent().ok_or("安装目录无效")?;
+    if directory.as_os_str().is_empty()
+        || target_directory.as_os_str().is_empty()
+        || [directory, target_directory, log].iter().any(|path| {
+            path.as_os_str()
+                .to_string_lossy()
+                .contains(['"', '\r', '\n', '\0'])
+        })
+    {
+        return Err("安装目录无效".into());
+    }
+    match kind {
+        "exe" => {
+            let mut target = OsString::from("/D=");
+            target.push(directory);
+            // Updater joins raw parameters; NSIS /D must be last and unquoted.
+            Ok(vec![OsString::from("/OC2AutoLaunch"), target])
+        }
+        "msi" => {
+            let mut target = OsString::from("INSTALLDIR=\"");
+            target.push(target_directory);
+            target.push("\"");
+            let mut log_path = OsString::from("\"");
+            log_path.push(log);
+            log_path.push("\"");
+            let mut args = vec![
+                OsString::from("AUTOLAUNCHAPP=1"),
+                target,
+                OsString::from("/norestart"),
+                OsString::from("/L*v"),
+                log_path,
+            ];
+            if directory != target_directory {
+                // MSI's textual path test cannot detect junction aliases.
+                let mut source = OsString::from("OC2MIGRATEFROM=\"");
+                source.push(directory);
+                source.push("\"");
+                args.push(source);
+            }
+            Ok(args)
+        }
+        _ => Err("当前安装格式不支持自动更新，请手动更新".into()),
+    }
 }
 
 #[cfg(test)]
@@ -291,6 +343,141 @@ mod tests {
         }
         assert!(UpdateTarget::from_parts("linux", "x86_64", None).is_err());
         assert!(UpdateTarget::from_parts("windows", "i686", None).is_err());
+    }
+
+    #[test]
+    fn tauri_windows_arguments_preserve_paths_and_only_use_success_hook_relaunch() {
+        use std::path::Path;
+        let executable = Path::new("C:/Users/Test User/管理器/OC2ModManager.exe");
+        let log = Path::new("C:/Users/Test User/OC2ModManager/logs/update-msi.log");
+        let nsis = windows_installer_args("exe", executable, executable, log).unwrap();
+        assert_eq!(nsis, ["/OC2AutoLaunch", "/D=C:/Users/Test User/管理器"]);
+        let raw = nsis.join(std::ffi::OsStr::new(" "));
+        assert_eq!(raw, "/OC2AutoLaunch /D=C:/Users/Test User/管理器");
+        assert!(!raw.to_string_lossy().contains('"'));
+        assert_eq!(
+            windows_installer_args("msi", executable, executable, log).unwrap(),
+            [
+                "AUTOLAUNCHAPP=1",
+                "INSTALLDIR=\"C:/Users/Test User/管理器\"",
+                "/norestart",
+                "/L*v",
+                "\"C:/Users/Test User/OC2ModManager/logs/update-msi.log\"",
+            ]
+        );
+        for (kind, exe, log) in [
+            ("app", executable, log),
+            ("exe", Path::new("OC2ModManager.exe"), log),
+            ("exe", Path::new("C:/bad\"path/OC2ModManager.exe"), log),
+            ("msi", executable, Path::new("C:/bad\npath/update.log")),
+        ] {
+            assert!(windows_installer_args(kind, exe, exe, log).is_err());
+        }
+    }
+
+    #[test]
+    fn relocation_arguments_keep_the_old_directory_for_installer_safety_hooks() {
+        use std::path::Path;
+        let executable = Path::new("C:/game/BepInEx/plugins/Manager/OC2ModManager.exe");
+        let target = Path::new("C:/Users/Test/AppData/Local/OC2ModManager/OC2ModManager.exe");
+        let log = Path::new("C:/Users/Test/OC2ModManager/logs/update-msi.log");
+        for kind in ["exe", "msi"] {
+            let args = windows_installer_args(kind, executable, target, log).unwrap();
+            assert!(
+                args.iter()
+                    .any(|arg| arg.to_string_lossy().contains("BepInEx/plugins/Manager"))
+            );
+            assert!(
+                args.iter()
+                    .any(|arg| arg == "/OC2AutoLaunch" || arg == "AUTOLAUNCHAPP=1")
+            );
+            assert!(!args.iter().any(|arg| arg == "/R" || arg == "/ARGS"));
+            if kind == "msi" {
+                assert!(
+                    args.iter().any(
+                        |arg| arg == "INSTALLDIR=\"C:/Users/Test/AppData/Local/OC2ModManager\""
+                    )
+                );
+                assert!(
+                    args.iter()
+                        .any(|arg| arg == "OC2MIGRATEFROM=\"C:/game/BepInEx/plugins/Manager\"")
+                );
+            }
+        }
+        let alias = Path::new("C:/game/alias/Manager/OC2ModManager.exe");
+        assert!(
+            windows_installer_args("msi", alias, target, log)
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "OC2MIGRATEFROM=\"C:/game/alias/Manager\"")
+        );
+    }
+
+    #[test]
+    fn tauri_manifest_metadata_covers_all_desktop_formats_and_rejects_mismatches() {
+        let cases = [
+            (
+                "windows",
+                "x86_64",
+                "exe",
+                "OC2ModManager_1.2.0_x64-setup.exe",
+            ),
+            (
+                "windows",
+                "x86_64",
+                "msi",
+                "OC2ModManager_1.2.0_x64_en-US.msi",
+            ),
+            (
+                "linux",
+                "x86_64",
+                "appimage",
+                "OC2ModManager_1.2.0_amd64.AppImage",
+            ),
+            ("linux", "x86_64", "deb", "OC2ModManager_1.2.0_amd64.deb"),
+            ("linux", "x86_64", "rpm", "OC2ModManager-1.2.0-1.x86_64.rpm"),
+            (
+                "macos",
+                "aarch64",
+                "app",
+                "OC2ModManager_aarch64.app.tar.gz",
+            ),
+            ("macos", "x86_64", "app", "OC2ModManager_x64.app.tar.gz"),
+        ];
+        let platforms = cases
+            .iter()
+            .map(|(os, arch, kind, name)| {
+                (
+                    target(os, arch, kind).manifest_key(),
+                    serde_json::json!({
+                        "url": format!("https://example.com/releases/download/v1.2.0/{name}"),
+                        "signature": TEST_SIGNATURE,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let release: tauri_plugin_updater::RemoteRelease =
+            serde_json::from_value(serde_json::json!({
+                "version": "1.2.0", "platforms": platforms,
+            }))
+            .unwrap();
+        for (os, arch, kind, name) in cases {
+            let key = target(os, arch, kind).manifest_key();
+            let url = release.download_url(&key).unwrap();
+            let signature = release.signature(&key).unwrap();
+            let info: AppUpdateInfo = serde_json::from_value(serde_json::json!({
+                "version": "1.2.0", "current_version": "1.1.0",
+                "installer_name": name, "installer_type": kind,
+            }))
+            .unwrap();
+            assert!(validate_update_metadata("1.2.0", url, signature, &info).is_ok());
+            assert!(validate_update_metadata("1.2.1", url, signature, &info).is_err());
+            assert!(validate_update_metadata("1.2.0", url, " ", &info).is_err());
+            let other = url::Url::parse("https://example.com/wrong-platform.exe").unwrap();
+            assert!(validate_update_metadata("1.2.0", &other, signature, &info).is_err());
+        }
+        assert!(release.download_url("android-aarch64").is_err());
+        assert!(release.download_url("ios-aarch64").is_err());
     }
 
     // Public fixtures generated solely for this test; no production private key.

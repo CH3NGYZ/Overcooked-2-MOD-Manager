@@ -1,7 +1,10 @@
 use crate::{game, install_guard};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 const BINARY_NAMES: &[&str] = &["OC2ModManager.exe", "uninstall.exe"];
 
@@ -210,9 +213,224 @@ fn remove_unchanged(path: &Path, snapshot: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn launch_and_confirm(executable: &Path, log: &Path) -> Result<(), String> {
+    // NSIS/MSI retain their automatic launch flags. Observe the result before
+    // retrying so that there is no competing second startup/update process.
+    if wait_for_application(executable, Duration::from_secs(10)) {
+        append_log(log, "New manager process confirmed");
+        return Ok(());
+    }
+    append_log(log, "Installer did not launch manager; retrying launch");
+    let mut command = Command::new(executable);
+    command.current_dir(executable.parent().ok_or("安装目录无效")?);
+    hide_console(&mut command);
+    command
+        .spawn()
+        .map_err(|error| format!("无法启动更新后的程序: {error}"))?;
+    if !wait_for_application(executable, Duration::from_secs(10)) {
+        return Err("安装成功，但新版本未能保持运行，请手动启动并查看日志".into());
+    }
+    append_log(log, "New manager process confirmed after retry");
+    Ok(())
+}
+
+// Installer-only relocation entry point, shared by legacy clients and Updater.
+pub(crate) fn run_if_requested() {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() != Some(std::ffi::OsStr::new("--oc2-migrate-update")) {
+        return;
+    }
+    let arguments = args.collect::<Vec<_>>();
+    let result = migration_command(&arguments);
+    if let Err(error) = &result {
+        eprintln!("{error}");
+    }
+    std::process::exit(if result.is_ok() { 0 } else { 1 });
+}
+
+fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
+    match args.first().and_then(|arg| arg.to_str()) {
+        Some("prepare") if args.len() == 4 => {
+            let source = Path::new(&args[1]);
+            wait_until_stopped(&source.join("OC2ModManager.exe"))?;
+            let target_exe = Path::new(&args[2]).join("OC2ModManager.exe");
+            if target_exe.is_file() {
+                wait_until_stopped(&target_exe)?;
+            }
+            let work = crate::user_paths::updates_dir()?
+                .join(format!("relocate-{}", uuid::Uuid::new_v4()));
+            let migration = Migration::prepare(source, Path::new(&args[2]), &work)?;
+            fs::write(
+                Path::new(&args[3]),
+                serde_json::to_vec(&migration).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            fs::write(
+                work.join("migration.json"),
+                serde_json::to_vec(&migration).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
+        }
+        Some(action @ ("finish" | "restore")) if args.len() == 2 => {
+            let bytes = fs::read(Path::new(&args[1])).map_err(|e| e.to_string())?;
+            let migration: Migration = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if action == "restore" {
+                return migration.restore_old_binaries();
+            }
+            let result = finish_legacy_migration(&migration);
+            if result.is_err() {
+                migration.restore_old_binaries()?;
+            }
+            result
+        }
+        _ => Err("迁移更新参数无效".into()),
+    }
+}
+
+fn finish_legacy_migration(migration: &Migration) -> Result<(), String> {
+    let executable = migration.target.join("OC2ModManager.exe");
+    let actual = game::read_file_version(&executable).ok_or("无法读取安装后的程序版本")?;
+    if !version_matches(env!("CARGO_PKG_VERSION"), &actual) {
+        return Err("迁移后版本不符，已保留原管理器".into());
+    }
+    let log = crate::user_paths::logs_dir()?.join("update.log");
+    fs::create_dir_all(log.parent().ok_or("更新日志目录无效")?).map_err(|e| e.to_string())?;
+    launch_and_confirm(&executable, &log)?;
+    migration.cleanup()?;
+    append_log(&log, "Migration completed; old manager files removed");
+    Ok(())
+}
+
+fn wait_until_stopped(executable: &Path) -> Result<(), String> {
+    use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+    let target = fs::canonicalize(executable).map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut system = System::new();
+    loop {
+        system.refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::Always));
+        if !system.processes().values().any(|process| {
+            process
+                .exe()
+                .and_then(|path| fs::canonicalize(path).ok())
+                .as_ref()
+                == Some(&target)
+        }) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("旧程序未能及时退出，未开始迁移".into());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn version_matches(expected: &str, actual: &str) -> bool {
+    let Ok(expected) = semver::Version::parse(expected) else {
+        return false;
+    };
+    let parts = actual
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>();
+    parts.is_ok_and(|parts| {
+        parts.len() == 4 && parts[..3] == [expected.major, expected.minor, expected.patch]
+    })
+}
+
+fn wait_for_application(executable: &Path, timeout: Duration) -> bool {
+    use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+    let target = fs::canonicalize(executable).ok();
+    let mut system = System::new();
+    let deadline = Instant::now() + timeout;
+    let mut seen = None;
+    while Instant::now() < deadline {
+        system.refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::Always));
+        let running = target.as_ref().is_some_and(|target| {
+            system.processes().values().any(|process| {
+                if executable.file_name().is_none_or(|name| {
+                    !process.name().eq_ignore_ascii_case(&name.to_string_lossy())
+                }) {
+                    return false;
+                }
+                process
+                    .exe()
+                    .and_then(|path| fs::canonicalize(path).ok())
+                    .as_ref()
+                    == Some(target)
+            })
+        });
+        if running {
+            let since = seen.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(2) {
+                return true;
+            }
+        } else {
+            seen = None;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    false
+}
+
+fn append_log(path: &Path, message: &str) {
+    if path
+        .metadata()
+        .is_ok_and(|meta| meta.len() > 8 * 1024 * 1024)
+    {
+        let _ = fs::rename(path, path.with_extension("log.1"));
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "[{}] {message}", chrono::Utc::now().to_rfc3339());
+        let _ = file.flush();
+    }
+}
+
+fn hide_console(command: &mut Command) {
+    command.stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relocation_rejects_stale_or_wrong_installed_versions() {
+        assert!(version_matches("1.1.0", "1.1.0.0"));
+        assert!(version_matches("1.2.3-beta.1", "1.2.3.1001"));
+        for actual in ["1.0.9.0", "1.1.1.0", "1.1.0", "garbage"] {
+            assert!(!version_matches("1.1.0", actual));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn confirms_matching_relocated_process_and_rejects_a_launch_that_exits() {
+        let directory =
+            std::env::temp_dir().join(format!("oc2-launch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let fixture = directory.join("OC2LaunchFixture.exe");
+        let cmd = PathBuf::from(std::env::var_os("WINDIR").unwrap()).join("System32/cmd.exe");
+        fs::copy(cmd, &fixture).unwrap();
+        let mut command = Command::new(&fixture);
+        command.args(["/C", "ping", "-n", "20", "127.0.0.1", ">nul"]);
+        hide_console(&mut command);
+        let mut child = command.spawn().unwrap();
+        let confirmed = wait_for_application(&fixture, Duration::from_secs(5));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(confirmed);
+        let mut command = Command::new(&fixture);
+        command.args(["/C", "exit", "0"]);
+        hide_console(&mut command);
+        command.spawn().unwrap().wait().unwrap();
+        assert!(!wait_for_application(&fixture, Duration::from_secs(3)));
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     struct Workspace(PathBuf);
     impl Workspace {

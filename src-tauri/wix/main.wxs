@@ -16,6 +16,7 @@
     <Property Id="REINSTALLMODE" Value="amus" />
     <Property Id="AUTOLAUNCHAPP" Secure="yes" />
     <Property Id="LAUNCHAPPARGS" Secure="yes" />
+    <Property Id="OC2MIGRATEFROM" Secure="yes" />
     <Binary Id="OC2InstallGuard" SourceFile="{{main_binary_path}}" />
     <!-- Legacy automatic updaters supply the old INSTALLDIR and AUTOLAUNCHAPP.
          Match complete path components; the executable verifies the real path. -->

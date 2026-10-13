@@ -1124,7 +1124,7 @@ async function installAppUpdate() {
   startupUpdatePhase.value = 'download'
   beginDownloadProgress()
   try {
-    const result = await run('正在安装程序更新', () => api.installAppUpdate(locale.value, t('更新未能完成或启动，请手动打开管理器或运行已下载的安装器。详细信息：')))
+    const result = await run('正在安装程序更新', () => api.installAppUpdate())
     if (!result.ok && result.message !== '当前已是最新版本') markUpdateSkipped(result.message)
   } finally {
     clearDownloadProgress()
@@ -1345,7 +1345,7 @@ async function startupChecks() {
     // The automatic path performs API discovery and Release download in one
     // ordered pipeline. Calling checkAppUpdate first would request the APIs a
     // second time before installAppUpdate could begin downloading.
-    const installResult = await api.installAppUpdate(locale.value, t('更新未能完成或启动，请手动打开管理器或运行已下载的安装器。详细信息：'))
+    const installResult = await api.installAppUpdate()
     if (!installResult.ok && installResult.message !== '当前已是最新版本') {
       markUpdateSkipped(installResult.message)
     }

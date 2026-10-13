@@ -47,9 +47,17 @@ GitHub 包来自 `BepInEx/BepInEx` 的 `v5.4.23.5`；Gitee 包来自 `ch3ngyz/Ov
 
 RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订号，来自 Tauri `bundle.linux.rpm.release` 的默认值 `"1"`，不是应用 Beta 号或 SemVer 的一部分；应用版本仍是 `1.2.0`。同一应用版本重新打包可以增加 RPM 修订号，但管理器自更新仍按应用版本判断是否有更新。
 
-客户端按当前系统、进程架构和 Tauri 写入的安装格式标记选包，不能跨架构或跨 DEB/RPM/AppImage 安装。Mac 自动更新使用应用归档，不直接运行 DMG；Intel Mac 与 Apple Silicon 分开。Windows 保留原更新助手、提权及原位安装；错误的 plugins 安装位置只迁移管理器程序，不迁移旧配置。Linux/macOS 安装成功后由原生 updater 重启；DEB/RPM 更新需要系统授权，AppImage/应用包目标需要可写权限。
+只构建 Windows、Linux 和 macOS 桌面应用，不配置 Android/iOS。Mac Intel 与 Apple Silicon 是同一桌面系统的两个构建目标，因此 Actions 仍有四个矩阵任务。
+
+三个桌面系统统一通过 `tauri-plugin-updater` 解析 `latest.json` 并调用 `Update::install`。客户端按当前系统、进程架构和 Tauri 写入的安装格式标记选包，不能跨架构或跨 DEB/RPM/AppImage 安装。Mac 自动更新使用应用归档，不直接运行 DMG；Intel Mac 与 Apple Silicon 分开。Linux/macOS 安装完成后调用 Tauri 重启；DEB/RPM 更新需要系统授权，AppImage/应用包目标需要可写权限。
+
+Windows 保留启动与安装器提权、正常位置原位更新，但不再复制或启动 `OC2UpdateHost.exe`。Updater 自带 `/S /UPDATE` 或 MSI 静默参数，应用追加自己的成功启动标记及安装目录，并关闭 Updater 默认的第二套重启参数。NSIS 的 `/D=目录` 必须最后且不加引号；MSI 的目录及日志参数显式引用。危险位置的 NSIS 仍由安装器校验后迁移；MSI 显式传递受保护的 `OC2MIGRATEFROM`，包括目录联接别名，迁移前校验实际路径。迁移仅处理管理器程序，保留旧配置及其他 MOD。
+
+Windows 的 `Update::install` 在启动安装器成功后退出进程，启动失败则返回错误并保留当前程序。正常更新不再由外部助手监测安装器退出码、落盘版本与新进程；安装器只在成功钩子启动新程序，MSI 详细日志保存在用户目录的 `logs/update-msi.log`。不能将“已启动安装器”说成“已完成更新”。危险位置的安装器迁移仍核对落盘版本、确认新进程持续运行后按快照清理原程序。
 
 当前锁定的 `tauri-plugin-updater 2.13.1` 支持 AppImage/DEB/RPM 和 Mac 应用归档。自定义 `install(bytes)` 不负责验签，因此现有竞速下载在每个候选胜出前校验 minisign 签名与受签名保护的版本，GitHub 提供 SHA-256 时同时校验摘要。缺失签名、版本不符、错误的包名或格式均停止安装，不降级为无校验更新。
+
+Release API 内的清单资产地址优先于备用地址。Gitee 备用清单地址为 `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/download/latest/latest.json`，`download` 位于 `latest` 前；GitHub 仍使用 `releases/latest/download/latest.json`。清单版本及包名必须与 API 选出的版本和本平台包一致，不能靠另一版本的清单或单独 `.sig` 绕过此绑定。
 
 ## 发布前置条件
 
@@ -58,10 +66,14 @@ RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订�
 代码仓库 Actions 必须配置以下 Secrets：
 
 - `RELEASE_REPOSITORY_TOKEN`：对 Releases 仓库有 Contents 写权限；代码仓库默认的 `GITHUB_TOKEN` 不能代替跨仓库权限。
-- `TAURI_SIGNING_PRIVATE_KEY`：与 `src-tauri/tauri.conf.json` 的已有 updater 公钥对应，不能为绕过失败随意换一把密钥。
+- `TAURI_SIGNING_PRIVATE_KEY`：与 `src-tauri/tauri.conf.json` 的 updater 公钥对应的私钥文件完整内容，不是本机文件路径。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥有密码时配置。
 
-这些是 updater 的 minisign 密钥，不是 Apple 开发者证书或 Windows 代码签名证书。非发布打包测试使用 CI 临时密钥即可；正式更新必须使用长期保管、与客户端公钥匹配的私钥，操作系统代码签名和 macOS 公证需单独配置与验收。
+这些是 updater 的 minisign 密钥，不是 Apple 开发者证书或 Windows 代码签名证书。操作系统代码签名和 macOS 公证需单独配置与验收。用户已更换当前源码公钥，Actions 测试应显式使用 `signing=configured` 验证其配对私钥，不得换成临时公钥冒充正式密钥验收。
+
+用户自行创建长期密钥时可运行 `npm run tauri -- signer generate -w .tauri/updater.key`；生成器会显示私钥，输出不得粘贴到聊天或日志。`.key.pub` 文件内容是一整行 Base64，解码后为 minisign 公钥文本（含注释及公钥行），不是 PEM 证书、摘要或私钥。将 `.key.pub` 的完整内容填写到客户端 `plugins.updater.pubkey`，将 `.key` 的完整内容填写到 Actions 的 `TAURI_SIGNING_PRIVATE_KEY` Secret，有密码时另填密码 Secret；`.tauri/` 已忽略，仍应离线备份私钥。本轮使用用户已有的新密钥，不再生成生产密钥。
+
+旧 Windows 客户端原本直接运行 EXE/MSI，未用 Updater 公钥验证，可按旧入口安装内置新公钥的新版本，然后进入统一签名更新链；需保留旧包名并发布更高应用版本。已使用旧公钥验签的客户端不能自动接受新私钥签名，除非有旧私钥签署过渡包，否则需手动安装一次。当前 `1.2.0` 测试不等于发布了可被已有 `1.2.0` 自动识别的更高版本。
 
 正式草稿工作流由 `v<项目版本>` 标签或手动 dispatch 的 `mode=release` 触发；项目的 package、Tauri、Cargo 及两个 lock 文件版本必须一致。发布 dispatch 使用项目版本生成标签。已公开的同名 Release 不允许覆盖。`scripts/build-release.mjs` 对包括 DEB/RPM 在内的更新包补签并检查公钥；聚合任务检查缺包、重复包、错误下载 URL、摘要、签名与版本后才上传清单。
 
@@ -69,13 +81,15 @@ RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订�
 
 ## 非发布四端 Actions 打包测试
 
-手动运行已有 `build.yml`，选择测试分支和 `mode=test`（默认值），会运行同一四端矩阵，但跳过所有 Release 准备、上传和清单发布步骤。测试只需要仓库的 Actions 权限，不需要跨仓库发布 Token 或生产签名 Secret；不得将旧提交上的三端成功记录视为新实现的四端结果。
+手动运行已有 `build.yml`，选择测试分支、`mode=test` 和 `signing=configured`（默认值），运行同一四端矩阵，但跳过所有 Release 准备、上传和清单发布步骤。测试不需要跨仓库发布 Token；配置密钥模式使用代码仓库的私钥及密码 Secrets，打包前用真实 Tauri CLI 签名一个临时载荷并以当前源码公钥验签。缺少密钥、错误密码或公私钥不匹配均提前失败，不自动降级为临时签名。
 
-`scripts/ci-packages.mjs` 在明确的测试模式下生成临时 updater 密钥，捕获生成器全部输出，不在日志或产物中保存私钥。它只在 runner 的临时检出中替换公钥并禁用正式更新地址，再使用同一 `build-release.mjs` 打包和验签。私钥通过 `TAURI_SIGNING_PRIVATE_KEY_PATH` 的文件路径传递，任务结束时删除；共用 CLI 调用边界仅为 `tauri build` 映射为其接受的 `TAURI_SIGNING_PRIVATE_KEY` 路径，`signer sign` 仍使用 `TAURI_SIGNING_PRIVATE_KEY_PATH`，不能把路径误当成内联密钥内容。映射不修改父进程环境，也不读取或输出私钥内容。
+`scripts/ci-packages.mjs` 的配置密钥模式保留源码公钥，私钥仅经 Actions 步骤环境传入签名子进程，不写入 `GITHUB_ENV` 或产物，预检输出全部捕获。无生产 Secret 时仍可显式选择 `signing=temporary`：只在 runner 临时检出生成测试密钥、替换公钥，捕获生成器全部输出并在任务结束删除临时私钥。两种模式都禁用测试包的配置更新地址，并复用 `build-release.mjs` 打包验签。
 
-每个平台上传 `package-test-<Rust target>`，包含包、签名以及标明 `testOnly` 的版本/提交/摘要报告。两个 Mac DMG 加上七种更新格式共九个包；独立聚合任务重新下载并核对四个构建目标、同一提交、字节摘要及七种签名，结果保存为 `four-platform-package-summary`。构建日志另存 `package-build-log-<Rust target>`。这些 Actions 产物保留七天，不创建或修改 Release，不执行安装器或游戏。
+临时私钥路径使用 `TAURI_SIGNING_PRIVATE_KEY_PATH`；共用 CLI 边界仅为 `tauri build` 映射为其接受的 `TAURI_SIGNING_PRIVATE_KEY` 路径，`signer sign` 仍使用 `TAURI_SIGNING_PRIVATE_KEY_PATH`。配置密钥则使用内联完整内容，不通过路径变量传递。聚合任务要求四个报告的模式一致，配置密钥模式还要求公钥与检出源码完全相同，逐个复核全部实际包字节和版本签名后，用正式流程共用的清单生成器生成七目标 `latest.json`。
 
-临时测试签名仅证明打包和校验调用链可以执行，不证明生产 Secret 与公钥匹配，也不证明 Apple 签名、公证、系统权限或实际自动更新成功。测试包不能作为正式更新发布。
+每个平台上传 `package-test-<Rust target>`，包含包、签名以及标明 `testOnly`、签名模式的版本/提交/摘要报告。两个 Mac DMG 加上七种更新格式共九个包；独立聚合任务重新下载并核对四个构建目标、同一提交、字节摘要及七种签名，结果保存为 `four-platform-package-summary`；配置密钥模式同时保存 `latest.json`，清单的 Release URL 仅用于结构验证，尚未公开上传。构建日志另存 `package-build-log-<Rust target>`。这些 Actions 产物保留七天，不创建或修改 Release，不执行安装器或游戏。
+
+临时测试签名不证明生产密钥匹配；配置密钥测试证明当前 Actions 私钥与客户端公钥及实际包签名匹配。两种测试都不证明 Apple 签名、公证、系统权限或实际自动更新成功，测试包与测试清单均不能当作已发布更新。
 
 ## 本地可执行回归
 

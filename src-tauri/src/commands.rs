@@ -222,7 +222,7 @@ fn installer_api_token(provider: &Provider) -> Option<&'static str> {
 fn installer_manifest_fallback(provider: &Provider) -> String {
     match provider {
         Provider::Gitee => format!(
-            "https://gitee.com/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/latest/download/latest.json"
+            "https://gitee.com/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/download/latest/latest.json"
         ),
         Provider::Github => format!(
             "https://github.com/{INSTALLER_GITHUB_OWNER}/{INSTALLER_GITHUB_REPO}/releases/latest/download/latest.json"
@@ -373,11 +373,6 @@ fn inspect_installer_releases(
         let installer_size = installer.size;
         let installer_digest = installer.digest.clone();
         let installer_name = installer.name.clone();
-        let installer_signature_url = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == format!("{installer_name}.sig"))
-            .map(|asset| asset.download_url.clone());
         let installer_type = installer_type.to_string();
         let mut manifest_endpoints = release
             .assets
@@ -403,7 +398,6 @@ fn inspect_installer_releases(
             installer_download_urls,
             installer_digest,
             installer_name,
-            installer_signature_url,
             installer_type,
             provider: Some(channel.provider.clone()),
             source_channel: Some(channel.id.into()),
@@ -4322,73 +4316,7 @@ async fn download_installer_for_info(
     result.map_err(|error| vec![error])
 }
 
-#[cfg(windows)]
-async fn download_installer_signature(
-    client: &reqwest::Client,
-    info: &AppUpdateInfo,
-    proxy_config: &GitHubProxyConfig,
-) -> Result<String, String> {
-    let url = info
-        .installer_signature_url
-        .as_deref()
-        .ok_or("更新包缺少签名，已停止安装")?;
-    let provider = info.provider.as_ref().ok_or("更新中没有匹配的安装包")?;
-    let mode = if *provider == Provider::Github {
-        ProxyMode::AutoDirect
-    } else {
-        ProxyMode::Direct
-    };
-    let candidates = ordered_asset_download_candidates(
-        mode,
-        url,
-        installer_download_urls(provider, url, proxy_config),
-    );
-    let bytes = try_asset_download_candidates(
-        candidates,
-        archive::is_download_cancelled,
-        |candidate, _| async move {
-            const MAX_SIGNATURE_BYTES: usize = 16 * 1024;
-            let response = client
-                .get(&candidate.url)
-                .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-                .map_err(|error| error.without_url().to_string())?
-                .error_for_status()
-                .map_err(|error| error.without_url().to_string())?;
-            if response
-                .content_length()
-                .is_some_and(|size| size > MAX_SIGNATURE_BYTES as u64)
-            {
-                return Err("更新签名文件无效".into());
-            }
-            let mut bytes = Vec::new();
-            let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                if archive::is_download_cancelled() {
-                    return Err("下载已取消".into());
-                }
-                let chunk = chunk.map_err(|error| error.without_url().to_string())?;
-                if bytes.len() + chunk.len() > MAX_SIGNATURE_BYTES {
-                    return Err("更新签名文件无效".into());
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            let text = std::str::from_utf8(&bytes).map_err(|_| "更新签名文件无效")?;
-            if text.trim().is_empty() {
-                return Err("更新签名文件无效".into());
-            }
-            Ok(bytes)
-        },
-        None,
-    )
-    .await?;
-    String::from_utf8(bytes).map_err(|_| "更新签名文件无效".into())
-}
-
-#[cfg(not(windows))]
-async fn resolve_native_update(
+async fn resolve_app_update(
     app: &AppHandle,
     info: &AppUpdateInfo,
     proxy_config: &GitHubProxyConfig,
@@ -4398,6 +4326,20 @@ async fn resolve_native_update(
     if target.kind != info.installer_type {
         return Err("更新清单与所选平台安装包不一致，已停止安装".into());
     }
+    #[cfg(windows)]
+    let installer_args = {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let target_executable = crate::update_migration::update_executable(&executable)?;
+        let logs = crate::user_paths::logs_dir()?;
+        fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
+        // Keep the original path so installer-side relocation can snapshot it.
+        crate::app_update::windows_installer_args(
+            target.kind,
+            &executable,
+            &target_executable,
+            &logs.join("update-msi.log"),
+        )?
+    };
     let provider = info.provider.as_ref().ok_or("更新中没有匹配的安装包")?;
     let mut visited = HashSet::new();
     for endpoint in &info.manifest_endpoints {
@@ -4419,6 +4361,17 @@ async fn resolve_native_update(
                 .map_err(|e| e.to_string())?
                 .header("Pragma", "no-cache")
                 .map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            let builder = builder
+                .clear_installer_args()
+                .installer_args(installer_args.clone())
+                // Our success hooks launch once; do not append /R or /ARGS.
+                .restart_after_install(false)
+                .on_before_exit(|| {
+                    log::info!(
+                        "Tauri Updater 准备启动 Windows 安装器并退出当前程序；安装结果尚未确认"
+                    );
+                });
             #[cfg(target_os = "linux")]
             let builder = if target.kind == "appimage" {
                 let path =
@@ -4439,7 +4392,12 @@ async fn resolve_native_update(
             };
             match updater.check().await {
                 Ok(Some(update)) => {
-                    match crate::app_update::validate_native_metadata(&update, info) {
+                    match crate::app_update::validate_update_metadata(
+                        &update.version,
+                        &update.download_url,
+                        &update.signature,
+                        info,
+                    ) {
                         Ok(()) => return Ok(update),
                         Err(error) => log::warn!("{error}"),
                     }
@@ -4457,8 +4415,7 @@ async fn resolve_native_update(
 
 struct VerifiedInstallerDownload {
     bytes: Vec<u8>,
-    #[cfg(not(windows))]
-    native_update: tauri_plugin_updater::Update,
+    update: tauri_plugin_updater::Update,
 }
 
 async fn prepare_and_download_installer(
@@ -4467,22 +4424,12 @@ async fn prepare_and_download_installer(
     app: &AppHandle,
     proxy_config: &GitHubProxyConfig,
 ) -> Result<VerifiedInstallerDownload, Vec<String>> {
-    #[cfg(windows)]
-    let signature = download_installer_signature(client, info, proxy_config)
+    let update = resolve_app_update(app, info, proxy_config)
         .await
         .map_err(|error| vec![error])?;
-    #[cfg(not(windows))]
-    let native_update = resolve_native_update(app, info, proxy_config)
-        .await
-        .map_err(|error| vec![error])?;
-    #[cfg(not(windows))]
-    let signature = native_update.signature.clone();
-    let bytes = download_installer_for_info(client, info, app, proxy_config, &signature).await?;
-    Ok(VerifiedInstallerDownload {
-        bytes,
-        #[cfg(not(windows))]
-        native_update,
-    })
+    let bytes =
+        download_installer_for_info(client, info, app, proxy_config, &update.signature).await?;
+    Ok(VerifiedInstallerDownload { bytes, update })
 }
 
 fn installer_download_key(info: &AppUpdateInfo) -> String {
@@ -4685,11 +4632,8 @@ async fn discover_and_download_installer_update(
 pub async fn install_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
-    locale: Option<String>,
-    failure_message: Option<String>,
 ) -> Result<OperationResult, String> {
     archive::start_download();
-    let _ = locale;
     log::info!("开始安装器自更新");
     let attempt = discover_and_download_installer_update(&state, &app).await?;
     let (info, download) = match attempt {
@@ -4716,98 +4660,31 @@ pub async fn install_app_update(
         None,
         Some(info.clone()),
     );
-    #[cfg(windows)]
-    {
-        let installer_type = info.installer_type.as_str();
-        if !matches!(installer_type, "exe" | "msi") {
-            return Err("当前安装格式不支持自动更新，请手动更新".into());
-        }
-        let directory = crate::user_paths::updates_dir()?.join(Uuid::new_v4().to_string());
-        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-        let path = directory.join(&info.installer_name);
-        fs::write(&path, &download.bytes).map_err(|e| e.to_string())?;
-        log::info!(
-            "安装器更新文件已写入临时目录：类型={}，字节数={}",
-            installer_type,
-            download.bytes.len()
-        );
-        let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
-        crate::update_host::start(
-            &path,
-            installer_type,
-            &current_exe,
-            &info.version,
-            failure_message.as_deref(),
-        )
-        .await?;
-        log::info!("更新助手已接管，准备退出当前应用；后续结果写入 logs/update.log");
-        app.exit(0);
-        Ok(OperationResult {
-            ok: true,
-            message: "更新助手已接管".into(),
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = failure_message;
-        let version = info.version;
-        log::info!(
-            "开始安装原生平台更新：版本={}，格式={}",
-            version,
-            info.installer_type
-        );
-        tauri::async_runtime::spawn_blocking(move || {
-            download.native_update.install(&download.bytes)
-        })
+    let version = info.version;
+    log::info!(
+        "开始通过 Tauri Updater 安装程序更新：版本={}，格式={}，已验签字节数={}",
+        version,
+        info.installer_type,
+        download.bytes.len()
+    );
+    tauri::async_runtime::spawn_blocking(move || download.update.install(&download.bytes))
         .await
         .map_err(|_| "程序更新安装失败")?
         .map_err(|error| {
-            log::error!("原生平台更新安装失败：{error}");
+            log::error!("Tauri Updater 安装失败：{error}");
             "程序更新安装失败，请手动更新".to_string()
         })?;
-        log::info!("原生平台更新安装完成，正在重启：版本={version}");
+    #[cfg(not(windows))]
+    {
+        log::info!("Tauri Updater 安装完成，正在重启：版本={version}");
         app.restart();
     }
-}
-
-pub(crate) fn installer_update_command(
-    installer: &Path,
-    installer_type: &str,
-    current_exe: &Path,
-    auto_launch: bool,
-) -> Result<std::process::Command, String> {
-    let directory = current_exe.parent().ok_or("安装目录无效")?;
-    let mut command = if installer_type == "exe" {
-        let mut command = std::process::Command::new(installer);
-        command.args(["/S", "/UPDATE"]);
-        if auto_launch {
-            command.arg("/OC2AutoLaunch");
-        }
-        let mut target = std::ffi::OsString::from("/D=");
-        target.push(directory);
-        // NSIS requires /D to be the last argument, without quotes even when
-        // the directory contains spaces. Command::arg would quote it.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.raw_arg(target);
-        }
-        #[cfg(not(windows))]
-        command.arg(target);
-        command
-    } else {
-        let mut command = std::process::Command::new("msiexec.exe");
-        let mut target = std::ffi::OsString::from("INSTALLDIR=");
-        target.push(directory);
-        command.arg("/i").arg(installer).arg("/quiet");
-        if auto_launch {
-            command.arg("AUTOLAUNCHAPP=1");
-        }
-        command.arg(target);
-        command
-    };
-    command.stdin(std::process::Stdio::null());
-    Ok(command)
+    #[cfg(windows)]
+    Ok(OperationResult {
+        ok: true,
+        // Windows normally exits inside Update::install after spawning.
+        message: "更新安装器已启动，请等待安装完成".into(),
+    })
 }
 
 fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<UpdateStatus> {
@@ -5928,7 +5805,6 @@ mod asset_download_strategy_tests {
             ],
             installer_digest: None,
             installer_name: "OC2ModManager_9.0.0_x64-setup.exe".into(),
-            installer_signature_url: None,
             installer_type: "exe".into(),
             provider: Some(provider),
             source_channel: None,
@@ -6638,51 +6514,15 @@ mod update_status_tests {
     use super::*;
 
     #[test]
-    fn installer_updates_preserve_the_current_directory_with_spaces_and_unicode() {
-        let current_exe = Path::new("C:/Users/Test User/管理器/OC2ModManager.exe");
-        let installer = Path::new("C:/Temp/update.exe");
-        let nsis = installer_update_command(installer, "exe", current_exe, true).unwrap();
-        assert_eq!(nsis.get_program(), installer.as_os_str());
-        #[cfg(windows)]
-        {
-            let target = format!("/D={}", current_exe.parent().unwrap().display());
-            assert_eq!(
-                nsis.get_args().collect::<Vec<_>>(),
-                ["/S", "/UPDATE", "/OC2AutoLaunch", target.as_str()]
-            );
-            assert!(
-                format!("{nsis:?}").ends_with(&target),
-                "NSIS /D must be last and unquoted"
-            );
-        }
-        let msi = installer_update_command(installer, "msi", current_exe, true).unwrap();
+    fn manifest_fallbacks_use_each_providers_download_route() {
         assert_eq!(
-            msi.get_args().collect::<Vec<_>>(),
-            [
-                "/i",
-                "C:/Temp/update.exe",
-                "/quiet",
-                "AUTOLAUNCHAPP=1",
-                "INSTALLDIR=C:/Users/Test User/管理器"
-            ]
+            installer_manifest_fallback(&Provider::Gitee),
+            "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/download/latest/latest.json"
         );
-    }
-
-    #[test]
-    fn relocation_installers_wait_for_the_helper_to_migrate_data_and_launch() {
-        let executable =
-            Path::new("C:/Users/Test User/AppData/Local/OC2ModManager/OC2ModManager.exe");
-        for kind in ["exe", "msi"] {
-            let command =
-                installer_update_command(Path::new("C:/Temp/update.exe"), kind, executable, false)
-                    .unwrap();
-            assert!(
-                !command
-                    .get_args()
-                    .any(|arg| arg == "/OC2AutoLaunch" || arg == "AUTOLAUNCHAPP=1")
-            );
-            assert!(format!("{command:?}").contains("AppData/Local/OC2ModManager"));
-        }
+        assert_eq!(
+            installer_manifest_fallback(&Provider::Github),
+            "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json"
+        );
     }
 
     fn repository(id: &str, mode: RepositoryDownloadMode) -> RepositoryConfig {

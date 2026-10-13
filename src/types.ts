@@ -125,7 +125,7 @@ export interface RepositorySourceImportResult {
   access_error: string | null
   builtin_fallback_available: boolean
 }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_download_urls?: string[]; installer_digest?: string; installer_name: string; installer_signature_url?: string; installer_type?: 'exe' | 'msi' | 'appimage' | 'deb' | 'rpm' | 'app'; provider?: Provider; source_channel?: string }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_endpoints?: string[]; installer_url?: string; installer_proxy_url?: string; installer_download_urls?: string[]; installer_digest?: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'appimage' | 'deb' | 'rpm' | 'app'; provider?: Provider; source_channel?: string }
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'api' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }

@@ -1,8 +1,9 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
-import { COMMUNITY_PAGE_SIZE, communityPage, communityPageCount, isCommunityRepository, orderedCommunityRepositories } from '../communityRepositories'
-import type { PublicConfig, Repository } from '../types'
+import { COMMUNITY_PAGE_SIZE, communityDiscovery, communityPage, communityPageCount, communitySourceId, isCommunityRepository, orderedCommunityRepositories } from '../communityRepositories'
+import type { Provider, PublicConfig, Repository } from '../types'
 
 interface CommunityHost {
+  provider?: Provider
   config: Readonly<Ref<PublicConfig | undefined>>
   canRefresh: () => boolean
   search: () => Promise<PublicConfig>
@@ -14,6 +15,8 @@ interface CommunityHost {
 }
 
 export function useCommunityRepositories(host: CommunityHost) {
+  const provider = host.provider ?? 'github'
+  const sourceId = communitySourceId(provider)
   const started = ref(false)
   const searching = ref(false)
   const refreshing = ref(false)
@@ -21,10 +24,10 @@ export function useCommunityRepositories(host: CommunityHost) {
   const releaseFailures = ref(0)
   const page = ref(1)
   const available = computed(host.canRefresh)
-  const repositories = computed(() => orderedCommunityRepositories(host.config.value))
+  const repositories = computed(() => orderedCommunityRepositories(host.config.value, provider))
   const pageCount = computed(() => communityPageCount(repositories.value))
   const visibleRepositories = computed(() => communityPage(repositories.value, page.value))
-  const discovery = computed(() => host.config.value?.community_discovery)
+  const discovery = computed(() => communityDiscovery(host.config.value, provider))
   const discoveredIds = computed(() => new Set(discovery.value?.repository_ids ?? []))
   const discoveredCount = computed(() => repositories.value.filter((repo) => discoveredIds.value.has(repo.id)).length)
   let disposed = false
@@ -61,7 +64,7 @@ export function useCommunityRepositories(host: CommunityHost) {
         page.value = 1
         searching.value = false
         // Hidden installed duplicates still need Releases for their original Tag/channel binding.
-        const refreshTargets = (host.config.value?.repositories ?? []).filter((repo) => isCommunityRepository(repo) && repo.enabled)
+        const refreshTargets = (host.config.value?.repositories ?? []).filter((repo) => isCommunityRepository(repo, provider) && repo.enabled)
         releaseFailures.value = await host.refreshReleases(refreshTargets)
         if (disposed) return false
         await host.refreshDashboard()
@@ -83,5 +86,5 @@ export function useCommunityRepositories(host: CommunityHost) {
     if (searching.value) void host.cancel().catch(() => undefined)
   })
 
-  return { started, searching, refreshing, available, error, releaseFailures, page, pageCount, repositories, visibleRepositories, discovery, discoveredIds, discoveredCount, refresh, setPage, reveal }
+  return { provider, sourceId, started, searching, refreshing, available, error, releaseFailures, page, pageCount, repositories, visibleRepositories, discovery, discoveredIds, discoveredCount, refresh, setPage, reveal }
 }

@@ -12,10 +12,11 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tauri::State;
+use tauri::{AppHandle, State};
 use url::Url;
 
 pub const SOURCE_ID: &str = "github-community";
+pub const GITEE_SOURCE_ID: &str = "gitee-community";
 pub const SEARCH_ENDPOINT: &str = "https://api.github.com/search/repositories";
 pub const PAGE_SIZE: usize = 10;
 const SEARCH_QUERY: &str = "topic:overcooked-2 topic:bepinex topic:mod";
@@ -24,34 +25,116 @@ const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(6100);
 
 pub fn is_repository(repo: &RepositoryConfig) -> bool {
-    repo.source_id.as_deref() == Some(SOURCE_ID)
+    repo.source_id.as_deref().is_some_and(is_source)
 }
 
-pub fn source() -> RepositorySource {
+pub fn is_source(id: &str) -> bool {
+    matches!(id, SOURCE_ID | GITEE_SOURCE_ID)
+}
+
+pub fn source_id(provider: &Provider) -> &'static str {
+    match provider {
+        Provider::Github => SOURCE_ID,
+        Provider::Gitee => GITEE_SOURCE_ID,
+    }
+}
+
+pub fn provider_matches_region(provider: &Provider, region: &str) -> bool {
+    *provider != Provider::Gitee || region == crate::config::REGION_CHINESE_MAINLAND
+}
+
+pub(crate) fn ensure_repository_region(
+    repo: &RepositoryConfig,
+    region: &str,
+) -> Result<(), String> {
+    if is_repository(repo) && !provider_matches_region(&repo.provider, region) {
+        return Err("Gitee 社区仓库仅在中国大陆地区可用".into());
+    }
+    Ok(())
+}
+
+pub fn is_source_archive(repo: &RepositoryConfig, tag: &str, asset_name: &str) -> bool {
+    repo.provider == Provider::Gitee
+        && repo.source_id.as_deref() == Some(GITEE_SOURCE_ID)
+        && !tag.trim().is_empty()
+        && asset_name
+            .trim()
+            .eq_ignore_ascii_case(&format!("{}.zip", tag.trim()))
+}
+
+pub fn source(provider: &Provider) -> RepositorySource {
+    let name = match provider {
+        Provider::Github => "GitHub",
+        Provider::Gitee => "Gitee",
+    };
     RepositorySource {
-        id: SOURCE_ID.into(),
-        nickname: "GitHub 社区仓库".into(),
+        id: source_id(provider).into(),
+        nickname: format!("{name} 社区仓库"),
         nickname_i18n: [
-            ("zh-CN".into(), "GitHub 社区仓库".into()),
-            ("zh-TW".into(), "GitHub 社群倉庫".into()),
-            ("en".into(), "GitHub community repositories".into()),
-            ("ko".into(), "GitHub 커뮤니티 저장소".into()),
+            ("zh-CN".into(), format!("{name} 社区仓库")),
+            ("zh-TW".into(), format!("{name} 社群倉庫")),
+            ("en".into(), format!("{name} community repositories")),
+            ("ko".into(), format!("{name} 커뮤니티 저장소")),
         ]
         .into(),
-        url: SEARCH_ENDPOINT.into(),
-        region: None,
+        url: match provider {
+            Provider::Github => SEARCH_ENDPOINT,
+            Provider::Gitee => crate::gitee_community::TOPIC_ENDPOINT,
+        }
+        .into(),
+        region: (*provider == Provider::Gitee)
+            .then(|| crate::config::REGION_CHINESE_MAINLAND.into()),
         builtin: false,
         parent_id: None,
     }
 }
 
-#[derive(Default)]
 pub struct CommunitySearch {
+    github: SearchState,
+    gitee: SearchState,
+}
+
+impl Default for CommunitySearch {
+    fn default() -> Self {
+        Self {
+            github: SearchState::new(Provider::Github),
+            gitee: SearchState::new(Provider::Gitee),
+        }
+    }
+}
+
+impl CommunitySearch {
+    fn for_provider(&self, provider: &Provider) -> &SearchState {
+        match provider {
+            Provider::Github => &self.github,
+            Provider::Gitee => &self.gitee,
+        }
+    }
+}
+
+struct SearchState {
     limits: tokio::sync::Mutex<SearchRateLimits>,
     cancelled: AtomicBool,
 }
 
-struct SearchRateLimits {
+impl SearchState {
+    fn new(provider: Provider) -> Self {
+        Self {
+            limits: tokio::sync::Mutex::new(SearchRateLimits {
+                interval: match provider {
+                    Provider::Github => SEARCH_INTERVAL,
+                    Provider::Gitee => Duration::from_secs(1),
+                },
+                provider,
+                ..Default::default()
+            }),
+            cancelled: AtomicBool::new(false),
+        }
+    }
+}
+
+pub(crate) struct SearchRateLimits {
+    provider: Provider,
     interval: Duration,
     last_request: HashMap<String, Instant>,
     cooldown: HashMap<String, Instant>,
@@ -60,6 +143,7 @@ struct SearchRateLimits {
 impl Default for SearchRateLimits {
     fn default() -> Self {
         Self {
+            provider: Provider::Github,
             interval: SEARCH_INTERVAL,
             last_request: HashMap::new(),
             cooldown: HashMap::new(),
@@ -68,14 +152,14 @@ impl Default for SearchRateLimits {
 }
 
 impl SearchRateLimits {
-    async fn before_request(&mut self, route: &str) -> Result<(), String> {
+    pub(crate) async fn before_request(&mut self, route: &str) -> Result<(), String> {
         let now = Instant::now();
         if self
             .cooldown
             .get(route)
             .is_some_and(|deadline| *deadline > now)
         {
-            return Err("GitHub 搜索触发速率限制，请稍后刷新".into());
+            return Err(self.rate_limit_message().into());
         }
         let deadline = self
             .last_request
@@ -84,7 +168,8 @@ impl SearchRateLimits {
             .unwrap_or(now);
         if deadline > now {
             log::info!(
-                "GitHub 社区搜索等待配额：渠道={}，等待秒数={}",
+                "社区搜索等待配额：平台={:?}，渠道={}，等待秒数={}",
+                self.provider,
                 route,
                 deadline.duration_since(now).as_secs() + 1
             );
@@ -94,13 +179,29 @@ impl SearchRateLimits {
         Ok(())
     }
 
-    fn observe(&mut self, route: &str, status: StatusCode, headers: &HeaderMap) {
+    pub(crate) fn observe(&mut self, route: &str, status: StatusCode, headers: &HeaderMap) {
         if let Some(delay) = rate_limit_delay(status, headers) {
             let deadline = Instant::now() + delay;
             self.cooldown
                 .entry(route.into())
                 .and_modify(|current| *current = (*current).max(deadline))
                 .or_insert(deadline);
+        }
+    }
+
+    pub(crate) fn rate_limit_message(&self) -> &'static str {
+        match self.provider {
+            Provider::Github => "GitHub 搜索触发速率限制，请稍后刷新",
+            Provider::Gitee => "Gitee 网页请求触发速率限制，请稍后刷新",
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_gitee_test() -> Self {
+        Self {
+            provider: Provider::Gitee,
+            interval: Duration::ZERO,
+            ..Default::default()
         }
     }
 }
@@ -165,21 +266,46 @@ fn repository_from_search(item: &Value) -> Option<RepositoryConfig> {
     }
     let owner = item.get("owner")?.get("login")?.as_str()?;
     let name = item.get("name")?.as_str()?;
+    repository_from_coordinates(
+        &Provider::Github,
+        owner,
+        name,
+        item.get("default_branch")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        item.get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+}
+
+pub(crate) fn repository_from_coordinates(
+    provider: &Provider,
+    owner: &str,
+    name: &str,
+    branch: &str,
+    note: &str,
+) -> Option<RepositoryConfig> {
     let (owner, name) = releases::repository_coordinates(owner, name).ok()?;
     let identity = format!(
         "{}/{}",
         owner.to_ascii_lowercase(),
         name.to_ascii_lowercase()
     );
-    let id = format!("community-{:x}", Sha256::digest(identity.as_bytes()));
+    let prefix = match provider {
+        Provider::Github => "community",
+        Provider::Gitee => "gitee-community",
+    };
+    let id = format!("{prefix}-{:x}", Sha256::digest(identity.as_bytes()));
     serde_json::from_value(serde_json::json!({
-        "id": id, "name": format!("{owner}/{name}"), "provider": "github", "username": owner,
-        "repository": name, "branch": item.get("default_branch").and_then(Value::as_str).unwrap_or_default(),
-        "note": item.get("description").and_then(Value::as_str).unwrap_or_default(),
-        "source_id": SOURCE_ID, "install_target": "BepInEx/plugins", "channel": "all",
+        "id": id, "name": format!("{owner}/{name}"), "provider": provider, "username": owner,
+        "repository": name, "branch": branch, "note": note,
+        "region": (*provider == Provider::Gitee).then_some(crate::config::REGION_CHINESE_MAINLAND),
+        "source_id": source_id(provider), "install_target": "BepInEx/plugins", "channel": "all",
         "asset_rules": [{"type": "regex", "value": "^.+\\.(?:[dD][lL][lL]|[zZ][iI][pP])$"}],
         "download_threads": 16, "enabled": true, "builtin": false
-    })).ok()
+    }))
+    .ok()
 }
 
 async fn fetch_page(
@@ -245,9 +371,9 @@ async fn fetch_page(
     Ok((value, has_next))
 }
 
-struct SearchResults {
-    repositories: Vec<RepositoryConfig>,
-    discovery: CommunityDiscovery,
+pub(crate) struct SearchResults {
+    pub(crate) repositories: Vec<RepositoryConfig>,
+    pub(crate) discovery: CommunityDiscovery,
 }
 
 struct SearchTarget<'a> {
@@ -375,11 +501,18 @@ async fn search_all(
     Ok(results)
 }
 
-fn merge_results(config: &mut AppConfig, results: SearchResults, manifests: &[InstallManifest]) {
+fn merge_results(
+    config: &mut AppConfig,
+    provider: &Provider,
+    results: SearchResults,
+    manifests: &[InstallManifest],
+) {
+    let source_id = source_id(provider);
+    let belongs_to_search = |repo: &RepositoryConfig| repo.source_id.as_deref() == Some(source_id);
     let official = config
         .repositories
         .iter()
-        .filter(|repo| repo.builtin && repo.provider == Provider::Github && !is_repository(repo))
+        .filter(|repo| repo.builtin && repo.provider == *provider && !is_repository(repo))
         .map(|repo| {
             (
                 repo.username.to_ascii_lowercase(),
@@ -401,10 +534,10 @@ fn merge_results(config: &mut AppConfig, results: SearchResults, manifests: &[In
     let mut previous = config
         .repositories
         .iter()
-        .filter(|repo| is_repository(repo))
+        .filter(|repo| belongs_to_search(repo))
         .map(|repo| (repo.id.clone(), repo.clone()))
         .collect::<HashMap<_, _>>();
-    config.repositories.retain(|repo| !is_repository(repo));
+    config.repositories.retain(|repo| !belongs_to_search(repo));
     for mut repo in results.repositories {
         if let Some(old) = previous.remove(&repo.id) {
             repo.enabled = old.enabled;
@@ -434,43 +567,57 @@ fn merge_results(config: &mut AppConfig, results: SearchResults, manifests: &[In
     config.repositories.extend(retained);
     config
         .repository_sources
-        .retain(|source| source.id != SOURCE_ID);
-    config.repository_sources.push(source());
+        .retain(|source| source.id != source_id);
+    config.repository_sources.push(source(provider));
     discovery
         .repository_ids
         .retain(|id| visible_ids.contains(id));
-    config.community_discovery = Some(discovery);
+    match provider {
+        Provider::Github => config.community_discovery = Some(discovery),
+        Provider::Gitee => config.gitee_community_discovery = Some(discovery),
+    }
 }
 
 #[tauri::command]
 pub async fn refresh_community_repositories(
+    app: AppHandle,
     state: State<'_, AppState>,
+    provider: Option<Provider>,
 ) -> Result<PublicConfig, String> {
-    let mut limits = state
-        .community
-        .limits
-        .try_lock()
-        .map_err(|_| "社区仓库正在搜索")?;
-    state.community.cancelled.store(false, Ordering::Release);
+    let provider = provider.unwrap_or(Provider::Github);
+    if !provider_matches_region(&provider, crate::config::current_user_region()) {
+        return Err("Gitee 社区仓库仅在中国大陆地区可用".into());
+    }
+    let search = state.community.for_provider(&provider);
+    let mut limits = search.limits.try_lock().map_err(|_| "社区仓库正在搜索")?;
+    search.cancelled.store(false, Ordering::Release);
     let config = {
         let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
         state.config.load_or_default()
     };
-    let client = releases::build_client(config.network.timeout_seconds)
-        .map_err(|error| error.to_string())?;
-    let token = state.config.api_token(&config, &Provider::Github);
+    let token = (provider == Provider::Github)
+        .then(|| state.config.api_token(&config, &Provider::Github))
+        .flatten();
     let results = tokio::select! {
-        results = search_all(&client, SEARCH_ENDPOINT, token.as_deref(), &config.github_proxies.github_api_proxies, &mut limits) => results?,
-        _ = async { while !state.community.cancelled.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => return Err("社区仓库搜索已取消".into()),
+        results = async {
+            match provider {
+                Provider::Github => {
+                    let client = releases::build_client(config.network.timeout_seconds).map_err(|error| error.to_string())?;
+                    search_all(&client, SEARCH_ENDPOINT, token.as_deref(), &config.github_proxies.github_api_proxies, &mut limits).await
+                },
+                Provider::Gitee => crate::gitee_community::search_all(&app, state.config.cache_dir().join("gitee-webview"), &mut limits).await,
+            }
+        } => results?,
+        _ = async { while !search.cancelled.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => return Err("社区仓库搜索已取消".into()),
     };
     let _cache_guard = state.repository_cache.lock().await;
     let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
-    if state.community.cancelled.load(Ordering::Acquire) {
+    if search.cancelled.load(Ordering::Acquire) {
         return Err("社区仓库搜索已取消".into());
     }
     let mut config = state.config.load_or_default();
     let manifests = crate::archive::read_manifests(&state.config.manifests_dir());
-    merge_results(&mut config, results, &manifests);
+    merge_results(&mut config, &provider, results, &manifests);
     state
         .config
         .save(&config)
@@ -479,8 +626,12 @@ pub async fn refresh_community_repositories(
 }
 
 #[tauri::command]
-pub fn cancel_community_search(state: State<'_, AppState>) {
-    state.community.cancelled.store(true, Ordering::Release);
+pub fn cancel_community_search(state: State<'_, AppState>, provider: Option<Provider>) {
+    state
+        .community
+        .for_provider(&provider.unwrap_or(Provider::Github))
+        .cancelled
+        .store(true, Ordering::Release);
 }
 
 #[cfg(test)]
@@ -532,6 +683,27 @@ mod tests {
             interval: Duration::ZERO,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn gitee_discovery_is_mainland_only_while_github_is_global() {
+        for region in [
+            crate::config::REGION_CHINESE_MAINLAND,
+            crate::config::REGION_INTERNATIONAL,
+            "",
+            "unknown",
+        ] {
+            assert!(provider_matches_region(&Provider::Github, region));
+            assert_eq!(
+                provider_matches_region(&Provider::Gitee, region),
+                region == crate::config::REGION_CHINESE_MAINLAND
+            );
+        }
+        assert_eq!(
+            source(&Provider::Gitee).region.as_deref(),
+            Some(crate::config::REGION_CHINESE_MAINLAND)
+        );
+        assert_eq!(source(&Provider::Github).region, None);
     }
 
     #[test]
@@ -791,6 +963,7 @@ mod tests {
         let found = repository_from_search(&item("Owner", "Official")).unwrap();
         merge_results(
             &mut config,
+            &Provider::Github,
             SearchResults {
                 discovery: CommunityDiscovery {
                     repository_ids: vec![found.id.clone()],
@@ -864,6 +1037,7 @@ mod tests {
         })).unwrap();
         merge_results(
             &mut config,
+            &Provider::Github,
             SearchResults {
                 discovery: CommunityDiscovery {
                     repository_ids: found.iter().map(|repo| repo.id.clone()).collect(),
@@ -897,6 +1071,7 @@ mod tests {
         // A later empty search must not erase an installed duplicate's update entry.
         merge_results(
             &mut config,
+            &Provider::Github,
             SearchResults {
                 repositories: vec![],
                 discovery: CommunityDiscovery::default(),
@@ -915,5 +1090,129 @@ mod tests {
         RepositoryBinding::from_release(repo, "tag")
             .unwrap()
             .channel
+    }
+
+    #[tokio::test]
+    async fn provider_search_locks_cancellation_and_rate_budgets_are_independent() {
+        let searches = CommunitySearch::default();
+        let github = searches.for_provider(&Provider::Github);
+        let gitee = searches.for_provider(&Provider::Gitee);
+        let github_limits = github.limits.try_lock().unwrap();
+        let gitee_limits = gitee.limits.try_lock().unwrap();
+        assert_eq!(github_limits.interval, SEARCH_INTERVAL);
+        assert_eq!(gitee_limits.interval, Duration::from_secs(1));
+        github.cancelled.store(true, Ordering::Release);
+        assert!(!gitee.cancelled.load(Ordering::Acquire));
+        github.cancelled.store(false, Ordering::Release);
+        gitee.cancelled.store(true, Ordering::Release);
+        assert!(!github.cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn gitee_merge_preserves_github_catalogue_and_uses_provider_scoped_official_dedup() {
+        let github = repository_from_search(&item("Owner", "Listed")).unwrap();
+        let found = repository_from_coordinates(
+            &Provider::Gitee,
+            "owner",
+            "listed",
+            "",
+            "Gitee description",
+        )
+        .unwrap();
+        assert_ne!(github.id, found.id);
+        let mut official = found.clone();
+        official.id = "official-gitee".into();
+        official.builtin = true;
+        official.source_id = Some("official-child".into());
+        official.channel = Channel::Stable;
+        let unique =
+            repository_from_coordinates(&Provider::Gitee, "Owner", "New", "", "New description")
+                .unwrap();
+        let mut manifest = crate::archive::new_manifest(&found.id, "v1.0.0", None, None, vec![]);
+        manifest.repository_binding = RepositoryBinding::from_release(&found, "v1.0.0");
+        let mut config: AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "game":{"path":"","auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repositories":[github, official, found],
+            "community_discovery":{"repository_ids":[github.id],"total_count":1,"incomplete_results":false,"truncated":false}
+        })).unwrap();
+        let github_before = serde_json::to_value(&config.repositories[0]).unwrap();
+        let discovery_before = serde_json::to_value(&config.community_discovery).unwrap();
+        merge_results(
+            &mut config,
+            &Provider::Gitee,
+            SearchResults {
+                discovery: CommunityDiscovery {
+                    repository_ids: vec![found.id.clone(), unique.id.clone()],
+                    total_count: 2,
+                    ..Default::default()
+                },
+                repositories: vec![found.clone(), unique.clone()],
+            },
+            std::slice::from_ref(&manifest),
+        );
+        assert_eq!(
+            serde_json::to_value(&config.repositories[0]).unwrap(),
+            github_before
+        );
+        assert_eq!(
+            serde_json::to_value(&config.community_discovery).unwrap(),
+            discovery_before
+        );
+        assert_eq!(
+            config
+                .gitee_community_discovery
+                .as_ref()
+                .unwrap()
+                .repository_ids,
+            vec![unique.id]
+        );
+        let hidden = config
+            .repositories
+            .iter()
+            .find(|repo| repo.id == found.id)
+            .unwrap();
+        assert_eq!(hidden.channel, Channel::All);
+        assert!(
+            manifest
+                .repository_binding
+                .as_ref()
+                .unwrap()
+                .matches_repository(hidden)
+        );
+        assert!(is_source(
+            config.repository_sources.last().unwrap().id.as_str()
+        ));
+        let round_trip: AppConfig = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(
+            round_trip
+                .gitee_community_discovery
+                .unwrap()
+                .repository_ids
+                .len(),
+            1
+        );
+        assert_eq!(
+            serde_json::to_value(&round_trip.community_discovery).unwrap(),
+            discovery_before
+        );
+
+        merge_results(
+            &mut config,
+            &Provider::Gitee,
+            SearchResults {
+                repositories: vec![],
+                discovery: CommunityDiscovery::default(),
+            },
+            &[manifest],
+        );
+        assert!(config.repositories.iter().any(|repo| repo.id == found.id));
+        assert_eq!(
+            serde_json::to_value(&config.repositories[0]).unwrap(),
+            github_before
+        );
     }
 }

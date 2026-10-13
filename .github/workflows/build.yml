@@ -178,7 +178,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           owner: CH3NGYZ
-          repo: Overcooked-2-MOD-Manager-Code
+          repo: Overcooked-2-MOD-Manager
           releaseId: ${{ needs.prepare.outputs.release_id }}
           tagName: ${{ needs.prepare.outputs.tag_name }}
           releaseDraft: true

@@ -26,9 +26,9 @@ use uuid::Uuid;
 use crate::download::candidate_progress as asset_candidate_progress;
 
 const INSTALLER_GITEE_OWNER: &str = "ch3ngyz";
-const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
+const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager";
 const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
-const INSTALLER_GITHUB_REPO: &str = "Overcooked-2-MOD-Manager-Releases";
+const INSTALLER_GITHUB_REPO: &str = "Overcooked-2-MOD-Manager";
 // These credentials are embedded at compile time for installer update checks only.
 const INSTALLER_GITHUB_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITHUB_TOKEN");
 const INSTALLER_GITEE_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITEE_TOKEN");
@@ -2286,6 +2286,7 @@ pub async fn install_repository(
     if !repo.enabled {
         return Err("仓库已禁用".into());
     }
+    crate::community::ensure_repository_region(&repo, crate::config::current_user_region())?;
     let selected_proxy_mode = selected_asset_proxy_mode(
         asset_proxy_mode,
         &repo.provider,
@@ -2358,15 +2359,7 @@ pub async fn install_repository(
                 })
                 .or_else(|| fetched_releases.first())
                 .ok_or("没有可安装的 Release")?;
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| {
-                    asset_name
-                        .as_deref()
-                        .map(|name| asset.name == name)
-                        .unwrap_or_else(|| releases::asset_matches(asset, &repo.asset_rules))
-                })
+            let asset = releases::select_install_asset(&repo, release, asset_name.as_deref())
                 .ok_or("没有匹配的 Release 资产")?;
             log::info!(
                 "已选择 Release 资产：仓库={}，版本={}，资产={}",
@@ -2826,10 +2819,7 @@ pub async fn clear_repository_source_cache(
     state: State<'_, AppState>,
     source_ids: Vec<String>,
 ) -> Result<PublicConfig, String> {
-    if source_ids
-        .iter()
-        .any(|id| id == crate::community::SOURCE_ID)
-    {
+    if source_ids.iter().any(|id| crate::community::is_source(id)) {
         return Err("社区仓库源由自动搜索管理".into());
     }
     let _cache_guard = state.repository_cache.lock().await;
@@ -2895,7 +2885,7 @@ async fn import_repository_source_into_config(
     source_url: String,
     builtin_fallback: bool,
 ) -> Result<RepositorySourceImportResult, String> {
-    if source_id == crate::community::SOURCE_ID {
+    if crate::community::is_source(&source_id) {
         return Err("社区仓库源由自动搜索管理".into());
     }
     log::info!("开始刷新仓库源：源={}", source_id);
@@ -3092,7 +3082,7 @@ async fn import_repository_source_into_config(
         });
     }
     for child in child_sources {
-        if child.id == crate::community::SOURCE_ID {
+        if crate::community::is_source(&child.id) {
             log::warn!("忽略源文档中的保留社区源标识：源={}", source_id);
             continue;
         }
@@ -3198,7 +3188,7 @@ pub fn save_repository_source(
     url: String,
     nickname_i18n: Option<std::collections::BTreeMap<String, String>>,
 ) -> Result<PublicConfig, String> {
-    if id.as_deref() == Some(crate::community::SOURCE_ID) {
+    if id.as_deref().is_some_and(crate::community::is_source) {
         return Err("社区仓库源由自动搜索管理".into());
     }
     log::info!(
@@ -3300,17 +3290,17 @@ pub fn save_repository_sources(
     let mut seen_ids = config
         .repository_sources
         .iter()
-        .filter(|source| source.builtin || source.id == crate::community::SOURCE_ID)
+        .filter(|source| source.builtin || crate::community::is_source(&source.id))
         .map(|source| source.id.clone())
         .collect::<std::collections::HashSet<_>>();
     let mut ordered = config
         .repository_sources
         .iter()
-        .filter(|source| source.builtin || source.id == crate::community::SOURCE_ID)
+        .filter(|source| source.builtin || crate::community::is_source(&source.id))
         .cloned()
         .collect::<Vec<_>>();
     for source in sources {
-        if source.id == crate::community::SOURCE_ID {
+        if crate::community::is_source(&source.id) {
             continue;
         }
         if builtin_ids.contains(&source.id) {
@@ -3421,7 +3411,7 @@ pub fn delete_repository_source(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<PublicConfig, String> {
-    if id == crate::community::SOURCE_ID {
+    if crate::community::is_source(&id) {
         return Err("社区仓库源由自动搜索管理".into());
     }
     log::info!("删除仓库源：源={}", id);
@@ -6596,12 +6586,22 @@ mod update_status_tests {
     fn manifest_fallbacks_use_each_providers_download_route() {
         assert_eq!(
             installer_manifest_fallback(&Provider::Gitee),
-            "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/download/latest/latest.json"
+            "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/latest/latest.json"
         );
         assert_eq!(
             installer_manifest_fallback(&Provider::Github),
-            "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/releases/latest/download/latest.json"
+            "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/latest/download/latest.json"
         );
+        let configuration: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let endpoints = configuration["plugins"]["updater"]["endpoints"]
+            .as_array()
+            .unwrap();
+        for provider in [Provider::Gitee, Provider::Github] {
+            assert!(endpoints.iter().any(|endpoint| {
+                endpoint.as_str() == Some(installer_manifest_fallback(&provider).as_str())
+            }));
+        }
     }
 
     fn repository(id: &str, mode: RepositoryDownloadMode) -> RepositoryConfig {

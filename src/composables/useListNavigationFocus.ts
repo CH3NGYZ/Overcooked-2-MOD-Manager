@@ -5,6 +5,7 @@ export function useListNavigationFocus(options: {
   targetIds: () => string[]
   targetAttribute: string
   stickyHeadingSelector: string
+  highlightAllTargets?: boolean
   onFinished: () => void
 }) {
   const focusedIds = ref<string[]>([])
@@ -52,12 +53,12 @@ export function useListNavigationFocus(options: {
       else {
         scrollFrame = undefined
         const viewport = container!.getBoundingClientRect()
-        const allFit = rows.every((element) => {
+        const highlightAll = options.highlightAllTargets || rows.every((element) => {
           const bounds = element.getBoundingClientRect()
           return bounds.top >= viewport.top + headingHeight * scale - 1
             && bounds.bottom <= viewport.bottom - 8 * scale
         })
-        focusedIds.value = (allFit ? rows : [row]).map((element) => element.getAttribute(options.targetAttribute)!)
+        focusedIds.value = (highlightAll ? rows : [row]).map((element) => element.getAttribute(options.targetAttribute)!)
         row.focus({ preventScroll: true })
         endTimer = setTimeout(finishFocus, 4500)
       }

@@ -340,6 +340,8 @@ pub struct AppConfig {
     pub repository_sources: Vec<RepositorySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitee_community_discovery: Option<CommunityDiscovery>,
     // Identity only: no source documents, repository settings or Release cache.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_repository_ids: BTreeMap<String, String>,
@@ -504,6 +506,8 @@ pub struct PublicConfig {
     pub repository_sources: Vec<RepositorySource>,
     #[serde(default)]
     pub community_discovery: Option<CommunityDiscovery>,
+    #[serde(default)]
+    pub gitee_community_discovery: Option<CommunityDiscovery>,
     #[serde(default)]
     pub github_proxies: GitHubProxyConfig,
 }

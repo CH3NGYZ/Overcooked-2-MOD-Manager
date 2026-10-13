@@ -30,7 +30,9 @@ export async function prepareRelease(github, version, tag, commitish) {
   assertDraftRelease(release, version)
   if (commitish && release.target_commitish !== commitish) {
     release = await github.request(`/releases/${release.id}`, {
-      method: 'PATCH', body: { target_commitish: commitish },
+      method: 'PATCH',
+      // GitHub can detach a draft from its tag when a PATCH omits tag_name.
+      body: { tag_name: tag, target_commitish: commitish, draft: true, prerelease: false },
     })
     assertDraftRelease(release, version)
   }

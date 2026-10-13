@@ -45,7 +45,7 @@ GitHub 包来自 `BepInEx/BepInEx` 的 `v5.4.23.5`；Gitee 包来自 `ch3ngyz/Ov
 | Mac Apple Silicon | `OC2ModManager_<版本>_aarch64.dmg` | `OC2ModManager_aarch64.app.tar.gz`；`darwin-aarch64-app` |
 | Mac Intel | `OC2ModManager_<版本>_x64.dmg` | `OC2ModManager_x64.app.tar.gz`；`darwin-x86_64-app` |
 
-RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订号，来自 Tauri `bundle.linux.rpm.release` 的默认值 `"1"`，不是应用 Beta 号或 SemVer 的一部分；应用版本仍是 `1.2.0`。同一应用版本重新打包可以增加 RPM 修订号，但管理器自更新仍按应用版本判断是否有更新。
+RPM 文件名为 `名称-版本-Release.架构.rpm`。`-1` 是 RPM 的包修订号，来自 Tauri `bundle.linux.rpm.release` 的默认值 `"1"`，不是应用 Beta 号或 SemVer 的一部分；例如 `OC2ModManager-1.2.1-1.x86_64.rpm` 的应用版本仍是 `1.2.1`。同一应用版本重新打包可以增加 RPM 修订号，但管理器自更新仍按应用版本判断是否有更新。
 
 只构建 Windows、Linux 和 macOS 桌面应用，不配置 Android/iOS。Mac Intel 与 Apple Silicon 是同一桌面系统的两个构建目标，因此 Actions 仍有四个矩阵任务。
 
@@ -147,6 +147,18 @@ CI 聚合重新下载并校验九个包、七份 updater 签名及 SHA-256，包
 此前临时密钥运行 [38319473951](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38319473951) 仅覆盖 `59be3ed` 的旧更新入口；该阶段 Windows 本机三种官方 BepInEx 原包文件系统回归仍可追溯，但不作为本轮 Windows Updater 或新公钥验收。旧 CI 心跳保持暂停，没有重启监控；以下真实安装、更新及游戏验收仍未进行。
 
 正式 `1.2.0` 草稿运行 [38334863349](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38334863349) 已全部成功：源码及实际 `v1.2.0` 标签均绑定 `4ef16c26a7712cab29902efc3ca50be5901d8e5b`，Prepare、Windows、Linux、双架构 Mac 和清单聚合均通过。Windows Node 为 33 通过，另外三端各 32 通过、1 项 Windows 专属 BAT 测试跳过；Rust Windows 278 通过，另外三端各 272 通过，均 0 失败、2 显式忽略。聚合重新下载七种更新包实际字节，完成长度、摘要、当前公钥签名和版本校验后上传七键 `latest.json`，所有 URL 为正式 `v1.2.0` 路径。最终本仓库草稿 `411128097` 含九包、七份签名和清单，合计恰好 17 项，仍 `draft=true`、`published_at=null`；本地只读核验额外核对实际 Git 标签、元数据、清单和七份签名文件，不代替 CI 的完整包字节验签。证据位于 `src-tauri/target/verification/release-120-20261013`。本轮没有公开草稿、同步其他仓库、更换密钥或执行实际安装更新。
+
+### 1.2.1 草稿：等待 GitHub 账单条件恢复
+
+社区仓库简介、官方去重、全部 ZIP/DLL 安装入口及 Gitee README 单次直连修复已提交并升为 `1.2.1`。本地最终 Node 为 52 通过，Rust 为 303 通过、0 失败、2 项显式忽略，fmt/check 和前端构建通过；实际 Vue 页面与 IPC 夹具的 30+4 项检查通过。这不代表真实 MOD 安装或游戏验收。
+
+第二轮 [38354780108](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38354780108) 的 Windows 和 Linux 打包成功，五种更新格式通过当前公钥与版本绑定验签。两个 Mac 均在 README 大小限制测试的同步服务器线程收尾卡住，达到 60 分钟工作流上限后取消；统一清单因此跳过。收尾已改为 `spawn_blocking` 并限定测试服务器写超时，有界调度回归先红后绿；生产 README 的大小、404、取消及 Gitee 下载规则没有变化。
+
+当前实际 `v1.2.1` 标签指向 `dbb624fc6bc91f3953160490f392da72fca3cd0f`。新运行 [38364610804](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38364610804) 绑定该源码，但 Prepare 未执行任何步骤；GitHub annotation 提示近期付款失败或消费限额需要提高，并要求检查 `Billing & plans`，不是代码或私钥失败。账单条件恢复后应重跑这一轮同一源码，再核查四目标及清单；不要换密钥、重复 dispatch、移动标签或发布不完整草稿。
+
+草稿 `411329219` 仍 `draft=true`、`published_at=null`，目前仅五种 Windows/Linux 包及各自签名，共 10 项，没有 Mac 包和 `latest.json`。因为最新 Prepare 未启动，草稿 target 仍是上一轮 `ca24daa`，不能冒称已编译最新标签。后续验收必须重新确认 target、实际 Git 标签和 Actions SHA 一致，四目标与聚合成功，且九包、七份签名、七键清单恰好 17 项。证据位于 `src-tauri/target/verification/community-121-20261013`；本轮没有公开草稿或执行实机安装更新。
+
+### 仍待实机验收
 
 1. 在四个构建环境分别确认格式、编译、完整 Rust 回归及签名产物；检查草稿清单包含七个键，未签名和坏签名包均无法安装。
 2. 每种安装格式从较旧版本更新，检查只选择本格式/架构、权限失败可重试、取消保留旧程序、安装失败有提示，以及成功后版本与重启结果。

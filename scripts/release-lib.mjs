@@ -155,6 +155,25 @@ export function assertDraftRelease(release, version) {
   }
 }
 
+export function publicUpdateAssetUrl(release, asset, version) {
+  assertDraftRelease(release, version)
+  const root = `https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases`
+  const name = encodeURIComponent(asset.name)
+  const url = `${root}/download/${release.tag_name}/${name}`
+  const allowed = [url]
+  const pagePrefix = `${root}/tag/`
+  const temporaryTag = typeof release.html_url === 'string' && release.html_url.startsWith(pagePrefix)
+    ? release.html_url.slice(pagePrefix.length) : ''
+  // GitHub draft asset URLs use a temporary tag that changes on publication.
+  if (/^untagged-[a-f0-9]+$/.test(temporaryTag)) {
+    allowed.push(`${root}/download/${temporaryTag}/${name}`)
+  }
+  if (!allowed.includes(asset.browser_download_url)) {
+    throw new Error(`Unexpected download URL for ${asset.name}`)
+  }
+  return url
+}
+
 export function updateManifest(version, platforms, { notes = '', pubDate = new Date().toISOString() } = {}) {
   checkedVersion(version)
   if (Object.keys(platforms).length !== PLATFORM_KEYS.length

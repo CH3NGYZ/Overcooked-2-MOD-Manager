@@ -15,7 +15,6 @@ mod mods;
 mod recycle_bin;
 mod releases;
 mod repository_sources;
-mod update_host;
 mod update_migration;
 mod user_paths;
 #[cfg(any(unix, test))]
@@ -27,13 +26,9 @@ use std::io::Write;
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_guard::run_if_requested();
-    update_host::run_migration_if_requested();
-    if update_host::run_if_requested() {
-        return;
-    }
+    update_migration::run_if_requested();
     install_panic_logger();
     request_elevation();
     tauri::Builder::default()

@@ -32,9 +32,10 @@ function workspace(t) {
 }
 
 function testEnvironment(directory) {
-  const env = { ...process.env, GITHUB_ACTIONS: 'true', OC2_CI_PACKAGE_TEST: '1', GITHUB_ENV: join(directory, 'github-env') }
+  const env = { ...process.env, GITHUB_ACTIONS: 'true', OC2_CI_PACKAGE_TEST: '1', OC2_CI_SIGNING_MODE: 'temporary', GITHUB_ENV: join(directory, 'github-env') }
   delete env.TAURI_SIGNING_PRIVATE_KEY
   delete env.TAURI_SIGNING_PRIVATE_KEY_PATH
+  delete env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD
   return env
 }
 
@@ -85,7 +86,40 @@ test('CI package-test signing refuses ordinary or production-key environments an
   assert.ok(!existsSync(join(directory, 'src-tauri/target/verification/package-test/temporary-updater.key')))
 })
 
-function packageFixture(t) {
+test('configured CI signing retains the checked-in public key, verifies it before build and never generates keys', t => {
+  const directory = workspace(t)
+  const path = join(directory, 'src-tauri/tauri.conf.json')
+  const config = JSON.parse(readFileSync(path, 'utf8'))
+  config.plugins.updater.pubkey = publicKey
+  writeFileSync(path, JSON.stringify(config))
+  const env = { ...testEnvironment(directory), OC2_CI_SIGNING_MODE: 'configured', TAURI_SIGNING_PRIVATE_KEY: '[REDACTED_SECRET]' }
+  let calls = 0
+  const sign = (_executable, args, options) => {
+    calls++
+    assert.deepEqual(args.slice(1, 3), ['signer', 'sign'])
+    assert.equal(options.env.TAURI_SIGNING_PRIVATE_KEY, '[REDACTED_SECRET]')
+    assert.equal(options.stdio, 'pipe')
+    assert.equal(readFileSync(args.at(-1), 'utf8'), 'OC2 signed update fixture')
+    writeFileSync(`${args.at(-1)}.sig`, signature)
+    return { status: 0, stdout: '[REDACTED_SECRET]', stderr: '' }
+  }
+  assert.deepEqual(preparePackageTest(directory, env, sign), { publicKey })
+  assert.equal(calls, 1)
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).plugins.updater.pubkey, publicKey)
+  const environmentFile = readFileSync(env.GITHUB_ENV, 'utf8')
+  assert.ok(environmentFile.includes('OC2_CI_SIGNING_MODE=configured'))
+  assert.ok(!environmentFile.includes('TAURI_SIGNING_PRIVATE_KEY'))
+  assert.ok(!environmentFile.includes('[REDACTED_SECRET]'))
+  assert.ok(!existsSync(join(directory, 'src-tauri/target/verification/package-test/temporary-updater.key')))
+  assert.throws(() => preparePackageTest(directory, { ...env, TAURI_SIGNING_PRIVATE_KEY: '' }, sign))
+  assert.throws(() => preparePackageTest(directory, env, () => ({ status: 1, stdout: '[REDACTED_SECRET]' })), /configured|Configured/)
+  assert.throws(() => preparePackageTest(directory, env, (_executable, args) => {
+    writeFileSync(`${args.at(-1)}.sig`, 'invalid signature')
+    return { status: 0 }
+  }))
+})
+
+function packageFixture(t, signingMode = 'temporary') {
   const directory = workspace(t)
   const configPath = join(directory, 'src-tauri/tauri.conf.json')
   const config = JSON.parse(readFileSync(configPath, 'utf8'))
@@ -110,7 +144,7 @@ function packageFixture(t) {
       mkdirSync(join(bundle, 'dmg'))
       writeFileSync(join(bundle, 'dmg', `OC2ModManager_1.2.0_${target.startsWith('aarch64') ? 'aarch64' : 'x64'}.dmg`), 'DMG fixture')
     }
-    collectPackageTest(target, directory, commit)
+    collectPackageTest(target, directory, commit, signingMode)
     cpSync(join(directory, 'src-tauri/target/verification/package-test/artifacts'), join(downloads, target), { recursive: true })
   }
   return { directory, downloads }
@@ -118,7 +152,7 @@ function packageFixture(t) {
 
 test('package-test aggregation verifies four targets, both DMGs and all seven actual signatures', t => {
   const { directory, downloads } = packageFixture(t)
-  const summary = verifyPackageTests(downloads, directory, commit)
+  const summary = verifyPackageTests(downloads, directory, commit, 'temporary')
   assert.equal(summary.testOnly, true)
   assert.equal(summary.buildTargets, 4)
   assert.equal(summary.updaterFormats, 7)
@@ -126,21 +160,49 @@ test('package-test aggregation verifies four targets, both DMGs and all seven ac
   assert.deepEqual(new Set(summary.reports.map(report => report.target)), new Set(Object.keys(BUILD_KEYS)))
 })
 
+test('configured-key package aggregation enforces the repository public key and generates all seven latest.json entries', t => {
+  const { directory, downloads } = packageFixture(t, 'configured')
+  const summary = verifyPackageTests(downloads, directory, commit, 'configured')
+  assert.equal(summary.signingMode, 'configured')
+  assert.equal(summary.publicKey, publicKey)
+  assert.equal(summary.manifest.version, '1.2.0')
+  assert.equal(Object.keys(summary.manifest.platforms).length, 7)
+  for (const report of summary.reports) {
+    for (const asset of report.packages.filter(asset => asset.key)) {
+      const entry = summary.manifest.platforms[asset.key]
+      assert.equal(entry.signature, asset.signature)
+      assert.ok(entry.url.endsWith(`/v1.2.0/${encodeURIComponent(asset.name)}`))
+    }
+  }
+  assert.throws(() => verifyPackageTests(downloads, directory, commit, 'temporary'))
+  const path = join(downloads, 'x86_64-pc-windows-msvc', 'package-test-report.json')
+  const original = readFileSync(path, 'utf8')
+  const report = JSON.parse(original)
+  report.publicKey = 'wrong-key'
+  writeFileSync(path, JSON.stringify(report))
+  assert.throws(() => verifyPackageTests(downloads, directory, commit, 'configured'))
+  writeFileSync(path, original)
+  report.publicKey = publicKey
+  report.signingMode = 'temporary'
+  writeFileSync(path, JSON.stringify(report))
+  assert.throws(() => verifyPackageTests(downloads, directory, commit, 'configured'))
+})
+
 test('package-test aggregation rejects corruption, different commits and unexpected key files', t => {
   const { directory, downloads } = packageFixture(t)
-  assert.throws(() => verifyPackageTests(downloads, directory, 'b'.repeat(40)))
+  assert.throws(() => verifyPackageTests(downloads, directory, 'b'.repeat(40), 'temporary'))
   const windows = join(downloads, 'x86_64-pc-windows-msvc')
   const installer = join(windows, 'OC2ModManager_1.2.0_x64-setup.exe')
   const original = readFileSync(installer)
   writeFileSync(installer, 'corrupted')
-  assert.throws(() => verifyPackageTests(downloads, directory, commit))
+  assert.throws(() => verifyPackageTests(downloads, directory, commit, 'temporary'))
   writeFileSync(installer, original)
   const signaturePath = `${installer}.sig`
   writeFileSync(signaturePath, 'corrupted signature')
-  assert.throws(() => verifyPackageTests(downloads, directory, commit))
+  assert.throws(() => verifyPackageTests(downloads, directory, commit, 'temporary'))
   writeFileSync(signaturePath, signature)
   writeFileSync(join(windows, 'temporary-updater.key'), '[REDACTED_SECRET]')
-  assert.throws(() => verifyPackageTests(downloads, directory, commit))
+  assert.throws(() => verifyPackageTests(downloads, directory, commit, 'temporary'))
 })
 
 test('the installed Tauri CLI can generate a temporary key and sign a version-bound payload without logging keys', t => {
@@ -160,4 +222,22 @@ test('the installed Tauri CLI can generate a temporary key and sign a version-bo
   }))
   verifyUpdateSignature(readFileSync(payload), readFileSync(`${payload}.sig`, 'utf8').trim(), generatedPublicKey, version)
   cleanPackageTest(directory, env)
+})
+
+test('the installed Tauri CLI verifies configured inline key contents against the existing public key', t => {
+  const directory = workspace(t)
+  const env = testEnvironment(directory)
+  const cli = resolve(root, 'node_modules/@tauri-apps/cli/tauri.js')
+  const invoke = (executable, args, options) => spawnSync(executable, [cli, ...args.slice(1)], options)
+  const { publicKey: generatedPublicKey } = preparePackageTest(directory, env, invoke)
+  const key = readFileSync(join(directory, 'src-tauri/target/verification/package-test/temporary-updater.key'), 'utf8')
+  const configured = { ...env, OC2_CI_SIGNING_MODE: 'configured', TAURI_SIGNING_PRIVATE_KEY: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: '' }
+  assert.deepEqual(preparePackageTest(directory, configured, invoke), { publicKey: generatedPublicKey })
+  assert.equal(readProject(directory).publicKey, generatedPublicKey)
+  assert.ok(!existsSync(join(directory, 'src-tauri/target/verification/package-test/temporary-updater.key')))
+  const configPath = join(directory, 'src-tauri/tauri.conf.json')
+  const config = JSON.parse(readFileSync(configPath, 'utf8'))
+  config.plugins.updater.pubkey = publicKey
+  writeFileSync(configPath, JSON.stringify(config))
+  assert.throws(() => preparePackageTest(directory, configured, invoke), /public key/)
 })

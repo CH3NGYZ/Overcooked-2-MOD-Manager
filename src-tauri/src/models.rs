@@ -610,8 +610,6 @@ pub struct AppUpdateInfo {
     #[serde(default)]
     pub installer_name: String,
     #[serde(default)]
-    pub installer_signature_url: Option<String>,
-    #[serde(default)]
     pub installer_type: String,
     #[serde(default)]
     pub provider: Option<Provider>,

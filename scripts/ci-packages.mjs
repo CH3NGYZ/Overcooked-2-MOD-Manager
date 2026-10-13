@@ -4,7 +4,7 @@ import { appendFileSync, chmodSync, copyFileSync, mkdirSync, readFileSync, readd
 import { basename, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { updateFiles } from './build-release.mjs'
-import { BUILD_KEYS, PLATFORM_KEYS, collectUpdateAssets, readProject, verifyUpdateSignature } from './release-lib.mjs'
+import { BUILD_KEYS, PLATFORM_KEYS, RELEASE_OWNER, RELEASE_REPO, collectUpdateAssets, readProject, updateManifest, verifyUpdateSignature } from './release-lib.mjs'
 
 const workDirectory = 'src-tauri/target/verification/package-test'
 const reportName = 'package-test-report.json'
@@ -18,36 +18,62 @@ function checkedWorkspacePath(root, relative) {
 
 function requireTestEnvironment(env) {
   if (env.GITHUB_ACTIONS !== 'true' || env.OC2_CI_PACKAGE_TEST !== '1') {
-    throw new Error('Temporary signing is restricted to the explicit GitHub Actions package-test mode')
+    throw new Error('CI signing is restricted to the explicit GitHub Actions package-test mode')
   }
+}
+
+function checkedSigningMode(value) {
+  if (!['temporary', 'configured'].includes(value)) throw new Error('Explicit temporary or configured CI signing is required')
+  return value
 }
 
 export function preparePackageTest(root = process.cwd(), env = process.env, invoke = spawnSync) {
   requireTestEnvironment(env)
-  if (env.TAURI_SIGNING_PRIVATE_KEY?.trim() || env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()) {
+  const signingMode = checkedSigningMode(env.OC2_CI_SIGNING_MODE)
+  if (signingMode === 'temporary' && (env.TAURI_SIGNING_PRIVATE_KEY?.trim() || env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim())) {
     throw new Error('Package tests must not receive a production signing key')
   }
+  if (signingMode === 'configured' && (!env.TAURI_SIGNING_PRIVATE_KEY?.trim() || env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim())) {
+    throw new Error('Configured CI signing requires the TAURI_SIGNING_PRIVATE_KEY secret contents')
+  }
   if (!env.GITHUB_ENV) throw new Error('The GitHub Actions environment file is required')
-  readProject(root)
+  const { version, publicKey: configuredPublicKey } = readProject(root)
   const directory = checkedWorkspacePath(root, workDirectory)
   rmSync(directory, { recursive: true, force: true })
   mkdirSync(directory, { recursive: true })
-  const privateKey = join(directory, 'temporary-updater.key')
-  const result = invoke(process.execPath, [
-    resolve(root, 'node_modules/@tauri-apps/cli/tauri.js'),
-    'signer', 'generate', '--ci', '-p', '', '-w', privateKey,
-  ], { encoding: 'utf8', env, windowsHide: true })
-  // Key generation prints the private key; capture all output, never forward it.
-  if (result.error || result.status !== 0) throw new Error('Temporary CI updater-key generation failed')
-  chmodSync(privateKey, 0o600)
-  const publicKey = readFileSync(`${privateKey}.pub`, 'utf8').trim()
+  const cli = resolve(root, 'node_modules/@tauri-apps/cli/tauri.js')
+  let publicKey = configuredPublicKey
+  if (signingMode === 'temporary') {
+    const privateKey = join(directory, 'temporary-updater.key')
+    const result = invoke(process.execPath, [cli, 'signer', 'generate', '--ci', '-p', '', '-w', privateKey], {
+      encoding: 'utf8', stdio: 'pipe', env, windowsHide: true,
+    })
+    // Key generation prints the private key; capture all output, never forward it.
+    if (result.error || result.status !== 0) throw new Error('Temporary CI updater-key generation failed')
+    chmodSync(privateKey, 0o600)
+    publicKey = readFileSync(`${privateKey}.pub`, 'utf8').trim()
+    if (/[\r\n]/.test(privateKey)) throw new Error('Invalid temporary key path')
+    appendFileSync(env.GITHUB_ENV, `TAURI_SIGNING_PRIVATE_KEY_PATH=${privateKey}\nTAURI_SIGNING_PRIVATE_KEY_PASSWORD=\n`)
+  } else {
+    const payload = join(directory, 'signing-preflight.bin')
+    writeFileSync(payload, 'OC2 signed update fixture')
+    try {
+      const result = invoke(process.execPath, [cli, 'signer', 'sign', '--app-version', version, payload], {
+        encoding: 'utf8', stdio: 'pipe', env, windowsHide: true,
+      })
+      if (result.error || result.status !== 0) throw new Error('Configured updater signing failed; check the private-key and password secrets')
+      verifyUpdateSignature(readFileSync(payload), readFileSync(`${payload}.sig`, 'utf8').trim(), publicKey, version)
+    } finally {
+      rmSync(payload, { force: true })
+      rmSync(`${payload}.sig`, { force: true })
+    }
+  }
   const configPath = join(root, 'src-tauri/tauri.conf.json')
   const config = JSON.parse(readFileSync(configPath, 'utf8'))
   config.plugins.updater.pubkey = publicKey
   config.plugins.updater.endpoints = ['https://ci-package-test.invalid/latest.json']
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
-  if (/[\r\n]/.test(privateKey)) throw new Error('Invalid temporary key path')
-  appendFileSync(env.GITHUB_ENV, `TAURI_SIGNING_PRIVATE_KEY_PATH=${privateKey}\nTAURI_SIGNING_PRIVATE_KEY_PASSWORD=\n`)
+  appendFileSync(env.GITHUB_ENV, `OC2_CI_SIGNING_MODE=${signingMode}\n`)
   return { publicKey }
 }
 
@@ -75,9 +101,10 @@ function fileRecord(path, name) {
   return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
 }
 
-export function collectPackageTest(target, root = process.cwd(), commit = process.env.GITHUB_SHA) {
+export function collectPackageTest(target, root = process.cwd(), commit = process.env.GITHUB_SHA, signingMode = process.env.OC2_CI_SIGNING_MODE) {
   const { version, publicKey } = readProject(root)
   checkedCommit(commit)
+  checkedSigningMode(signingMode)
   if (!BUILD_KEYS[target]) throw new Error('Unsupported package-test build target')
   const targetRoot = resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target')
   const bundle = join(targetRoot, target, 'release/bundle')
@@ -99,23 +126,28 @@ export function collectPackageTest(target, root = process.cwd(), commit = proces
     copyFileSync(path, join(staging, dmgName))
     packages.push(record)
   }
-  const report = { schemaVersion: 1, testOnly: true, version, commit, target, publicKey, packages }
+  const report = { schemaVersion: 1, testOnly: true, signingMode, version, commit, target, publicKey, packages }
   writeFileSync(join(staging, reportName), `${JSON.stringify(report, null, 2)}\n`)
   return report
 }
 
-export function verifyPackageTests(downloads, root = process.cwd(), commit = process.env.GITHUB_SHA) {
-  const { version } = readProject(root)
+export function verifyPackageTests(downloads, root = process.cwd(), commit = process.env.GITHUB_SHA, signingMode = process.env.OC2_CI_SIGNING_MODE) {
+  const { version, publicKey } = readProject(root)
   checkedCommit(commit)
+  checkedSigningMode(signingMode)
   const reports = []
   const seenTargets = new Set()
   const seenKeys = new Set()
+  const platforms = {}
   for (const directory of readdirSync(downloads, { withFileTypes: true }).filter(entry => entry.isDirectory())) {
     const path = join(downloads, directory.name)
     const report = JSON.parse(readFileSync(join(path, reportName), 'utf8'))
     if (report.schemaVersion !== 1 || report.testOnly !== true || report.version !== version
       || report.commit !== commit || !BUILD_KEYS[report.target] || seenTargets.has(report.target)) {
       throw new Error('Package-test reports must cover the same version/commit and four distinct targets')
+    }
+    if (report.signingMode !== signingMode || (signingMode === 'configured' && report.publicKey !== publicKey)) {
+      throw new Error('Package-test signing mode or public key differs from the repository configuration')
     }
     seenTargets.add(report.target)
     const updates = collectUpdateAssets(report.packages, version, BUILD_KEYS[report.target])
@@ -136,6 +168,7 @@ export function verifyPackageTests(downloads, root = process.cwd(), commit = pro
         const signature = readFileSync(join(path, signatureName), 'utf8').trim()
         if (signature !== asset.signature) throw new Error('Package-test signatures differ from the report')
         verifyUpdateSignature(readFileSync(join(path, asset.name)), signature, report.publicKey, version)
+        platforms[asset.key] = { signature, url: `https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/v${version}/${encodeURIComponent(asset.name)}` }
         expectedFiles.add(signatureName)
         seenKeys.add(asset.key)
       }
@@ -149,7 +182,13 @@ export function verifyPackageTests(downloads, root = process.cwd(), commit = pro
   if (seenTargets.size !== Object.keys(BUILD_KEYS).length || seenKeys.size !== PLATFORM_KEYS.length) {
     throw new Error('Four build targets and all seven signed updater formats are required')
   }
-  return { testOnly: true, version, commit, buildTargets: seenTargets.size, updaterFormats: seenKeys.size, reports }
+  return {
+    testOnly: true, signingMode, version, commit, buildTargets: seenTargets.size, updaterFormats: seenKeys.size, reports,
+    ...(signingMode === 'configured' ? {
+      publicKey,
+      manifest: updateManifest(version, platforms, { notes: 'CI-only package test. These packages and URLs have not been published.' }),
+    } : {}),
+  }
 }
 
 export function cleanPackageTest(root = process.cwd(), env = process.env) {
@@ -165,7 +204,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const [command, value] = process.argv.slice(2)
     if (command === 'prepare') {
       preparePackageTest()
-      console.log('Prepared a temporary CI-only updater key; production endpoints are disabled')
+      console.log(`Prepared ${process.env.OC2_CI_SIGNING_MODE} CI signing; configured keys were verified without printing secrets`)
     } else if (command === 'collect') {
       const report = collectPackageTest(value)
       console.log(`Verified ${report.packages.length} package-test files for ${report.target}`)
@@ -174,6 +213,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const directory = checkedWorkspacePath(process.cwd(), `${workDirectory}/summary`)
       mkdirSync(directory, { recursive: true })
       writeFileSync(join(directory, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`)
+      if (summary.manifest) writeFileSync(join(directory, 'latest.json'), `${JSON.stringify(summary.manifest, null, 2)}\n`)
       console.log(`Verified ${summary.buildTargets} builds and ${summary.updaterFormats} signed updater formats`)
     } else if (command === 'clean') {
       cleanPackageTest()

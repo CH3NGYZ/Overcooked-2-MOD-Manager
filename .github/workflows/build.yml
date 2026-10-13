@@ -1,5 +1,5 @@
 name: Build and Release
-run-name: ${{ inputs.mode == 'test' && 'Four-platform package test' || 'Signed release draft build' }} (${{ github.ref_name }})
+run-name: ${{ inputs.mode == 'test' && format('Four-platform package test - {0} signing', inputs.signing) || 'Signed release draft build' }} (${{ github.ref_name }})
 
 on:
   push:
@@ -14,6 +14,13 @@ on:
         options:
           - test
           - release
+      signing:
+        description: 'Test signing: configured repository key, or isolated temporary key'
+        type: choice
+        default: configured
+        options:
+          - configured
+          - temporary
 
 concurrency:
   group: ${{ inputs.mode == 'test' && format('oc2-mod-manager-package-test-{0}', github.ref) || 'oc2-mod-manager-release' }}
@@ -96,10 +103,13 @@ jobs:
       - name: Frontend and release-script regression tests
         run: npm test
 
-      - name: Prepare temporary signing for non-release package tests
+      - name: Prepare and verify signing for non-release package tests
         if: inputs.mode == 'test'
         env:
           OC2_CI_PACKAGE_TEST: '1'
+          OC2_CI_SIGNING_MODE: ${{ inputs.signing || 'configured' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: node scripts/ci-packages.mjs prepare
 
       - name: Rust regression tests
@@ -115,6 +125,9 @@ jobs:
       - name: Build and verify CI-only signed packages
         if: inputs.mode == 'test'
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           node scripts/build-release.mjs build --target ${{ matrix.target }} 2>&1 | tee src-tauri/target/verification/package-test/tauri-build.log
           node scripts/ci-packages.mjs collect ${{ matrix.target }}
@@ -199,6 +212,8 @@ jobs:
           pattern: package-test-*
           path: src-tauri/target/verification/package-test/downloads
       - name: Verify all four builds and seven signed updater formats
+        env:
+          OC2_CI_SIGNING_MODE: ${{ inputs.signing || 'configured' }}
         run: node scripts/ci-packages.mjs verify src-tauri/target/verification/package-test/downloads
       - uses: actions/upload-artifact@v4
         with:

@@ -354,6 +354,7 @@ impl ConfigService {
             gitee_token_set: !config.auth.gitee_token.is_empty(),
             repositories,
             repository_sources: config.repository_sources.clone(),
+            community_discovery: config.community_discovery.clone(),
             github_proxies: config.github_proxies.clone(),
         }
     }
@@ -381,6 +382,22 @@ impl ConfigService {
             Provider::Github => reveal_secret(&repo.github_token),
             Provider::Gitee => reveal_secret(&repo.gitee_token),
         }
+    }
+
+    pub(crate) fn repository_api_token(
+        &self,
+        config: &AppConfig,
+        repo: &RepositoryConfig,
+    ) -> Option<String> {
+        self.repository_token(repo)
+            .or_else(|| self.api_token(config, &repo.provider))
+    }
+
+    pub(crate) fn api_token(&self, config: &AppConfig, provider: &Provider) -> Option<String> {
+        reveal_secret(match provider {
+            Provider::Github => &config.auth.github_token,
+            Provider::Gitee => &config.auth.gitee_token,
+        })
     }
 
     pub fn set_mod_note(&self, config: &mut AppConfig, key: &str, note: &str) {
@@ -512,17 +529,18 @@ impl ConfigService {
         };
         for item in &bundle.repositories {
             if config.repositories.iter().any(|repo| {
-                repository_address_key(
-                    &repo.provider,
-                    &repo.username,
-                    &repo.repository,
-                    repo.region.as_deref(),
-                ) == repository_address_key(
-                    &item.provider,
-                    &item.username,
-                    &item.repository,
-                    item.region.as_deref(),
-                )
+                !crate::community::is_repository(repo)
+                    && repository_address_key(
+                        &repo.provider,
+                        &repo.username,
+                        &repo.repository,
+                        repo.region.as_deref(),
+                    ) == repository_address_key(
+                        &item.provider,
+                        &item.username,
+                        &item.repository,
+                        item.region.as_deref(),
+                    )
             }) {
                 preview.duplicates.push(item.name.clone());
                 continue;
@@ -531,13 +549,14 @@ impl ConfigService {
             let matching = config
                 .repositories
                 .iter()
-                .find(|repo| repo_key(repo) == key);
+                .find(|repo| !crate::community::is_repository(repo) && repo_key(repo) == key);
             if matching.is_some_and(|repo| repo.builtin) {
                 preview.duplicates.push(item.name.clone());
                 continue;
             }
             let same_name = config.repositories.iter().any(|repo| {
-                repo.name == item.name
+                !crate::community::is_repository(repo)
+                    && repo.name == item.name
                     && normalize_repository_region(repo.region.as_deref())
                         == normalize_repository_region(item.region.as_deref())
             });
@@ -565,7 +584,8 @@ impl ConfigService {
             conflict
         );
         for source in &bundle.repository_sources {
-            if source.builtin
+            if source.id == crate::community::SOURCE_ID
+                || source.builtin
                 || config.repository_sources.iter().any(|existing| {
                     crate::repository_sources::source_address_key(
                         &existing.url,
@@ -593,7 +613,7 @@ impl ConfigService {
             if let Some(existing) = config
                 .repositories
                 .iter_mut()
-                .find(|repo| repo_key(repo) == key)
+                .find(|repo| !crate::community::is_repository(repo) && repo_key(repo) == key)
             {
                 if existing.builtin && conflict != "overwrite" {
                     continue;
@@ -611,20 +631,20 @@ impl ConfigService {
                 normalize_repository_region(repo.region.as_deref())
                     == normalize_repository_region(item.region.as_deref())
             };
-            if config
-                .repositories
-                .iter()
-                .any(|repo| repo.name == name && same_region(repo))
-            {
+            if config.repositories.iter().any(|repo| {
+                !crate::community::is_repository(repo) && repo.name == name && same_region(repo)
+            }) {
                 match conflict {
                     "skip" => continue,
                     "keep_both" => {
                         name = format!("{} (导入)", name);
                     }
                     "overwrite" => {
-                        config
-                            .repositories
-                            .retain(|repo| repo.name != name || !same_region(repo));
+                        config.repositories.retain(|repo| {
+                            crate::community::is_repository(repo)
+                                || repo.name != name
+                                || !same_region(repo)
+                        });
                     }
                     _ => continue,
                 }
@@ -720,6 +740,7 @@ fn default_config() -> AppConfig {
         },
         repositories: Vec::new(),
         repository_sources: builtin_repository_sources(),
+        community_discovery: None,
         source_repository_ids: Default::default(),
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
@@ -1110,7 +1131,12 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         install_target: repo.install_target.clone(),
         note: repo.note.clone(),
         note_i18n: repo.note_i18n.clone(),
-        source_id: repo.source_id.clone(),
+        // An exported search result can be imported as a custom repository,
+        // but cannot impersonate the generated community catalogue.
+        source_id: repo
+            .source_id
+            .clone()
+            .filter(|id| id != crate::community::SOURCE_ID),
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
@@ -1867,6 +1893,74 @@ builtin = true
         let bundle = service.validate_bundle(&text).unwrap();
         assert_eq!(bundle.repositories.len(), 0);
         assert_eq!(bundle.repository_sources, config.repository_sources);
+    }
+
+    #[test]
+    fn community_catalogue_survives_config_reads_and_cannot_be_overwritten_by_import() {
+        let verification =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/community-20261013");
+        let service = ConfigService::for_test(
+            verification.join(format!("catalogue-config-{}", Uuid::new_v4())),
+        );
+        let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
+        let template = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
+            .unwrap()
+            .repositories
+            .remove(0);
+        let mut repository = repository_from_export(&template, "community-fixture".into(), false);
+        repository.source_id = Some(crate::community::SOURCE_ID.into());
+        let mut config = default_config();
+        config.repositories.push(repository.clone());
+        config.repository_sources.push(crate::community::source());
+        config.community_discovery = Some(crate::models::CommunityDiscovery {
+            repository_ids: vec![repository.id.clone()],
+            total_count: 1,
+            ..Default::default()
+        });
+        service.save(&config).unwrap();
+
+        let mut loaded = service.load().unwrap();
+        assert_eq!(loaded.repository_sources, config.repository_sources);
+        assert_eq!(loaded.repositories[0].id, repository.id);
+        assert_eq!(
+            loaded.community_discovery.as_ref().unwrap().repository_ids,
+            [repository.id.clone()]
+        );
+        let text = service.export_bundle(&loaded, None).unwrap();
+        let mut bundle = service.validate_bundle(&text).unwrap();
+        bundle.repositories[0].note = "Custom imported note".into();
+        let preview = service.import_bundle(&mut loaded, &bundle, "overwrite");
+        assert!(preview.valid);
+        assert_eq!(loaded.repositories.len(), 2);
+        let retained = loaded
+            .repositories
+            .iter()
+            .find(|repo| crate::community::is_repository(repo))
+            .unwrap();
+        assert_eq!(retained.id, repository.id);
+        assert_eq!(retained.note, repository.note);
+        let imported = loaded
+            .repositories
+            .iter()
+            .find(|repo| !crate::community::is_repository(repo))
+            .unwrap();
+        assert_ne!(imported.id, repository.id);
+        assert!(imported.source_id.is_none());
+        assert_eq!(imported.note, "Custom imported note");
+        service.save(&loaded).unwrap();
+        let reloaded = service.load().unwrap();
+        assert_eq!(reloaded.repositories.len(), 2);
+        assert_eq!(
+            reloaded
+                .repository_sources
+                .iter()
+                .filter(|source| source.id == crate::community::SOURCE_ID)
+                .count(),
+            1
+        );
+        let target = fs::canonicalize(&service.root).unwrap();
+        assert!(target.starts_with(fs::canonicalize(&verification).unwrap()));
+        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]

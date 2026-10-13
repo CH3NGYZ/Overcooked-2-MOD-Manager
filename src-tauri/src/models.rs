@@ -41,6 +41,8 @@ pub struct InstalledMod {
     #[serde(default)]
     pub repository_ids: Vec<String>,
     #[serde(default)]
+    pub repository_binding: Option<RepositoryBinding>,
+    #[serde(default)]
     pub package_id: Option<String>,
     #[serde(default)]
     pub package_name: Option<String>,
@@ -122,6 +124,58 @@ pub enum RepositoryDownloadMode {
     #[default]
     Release,
     RepositoryFile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepositoryBinding {
+    pub provider: Provider,
+    pub owner: String,
+    pub repository: String,
+    pub tag: String,
+    #[serde(default)]
+    pub channel: Channel,
+}
+
+impl RepositoryBinding {
+    pub fn from_release(repo: &RepositoryConfig, tag: &str) -> Option<Self> {
+        if repo.download_mode != RepositoryDownloadMode::Release || tag.trim().is_empty() {
+            return None;
+        }
+        let binding = Self {
+            provider: repo.provider.clone(),
+            owner: repo.username.clone(),
+            repository: repo.repository.clone(),
+            tag: tag.into(),
+            channel: repo.channel,
+        };
+        binding.is_valid().then_some(binding)
+    }
+
+    pub fn is_valid(&self) -> bool {
+        !self.tag.trim().is_empty()
+            && !self.tag.chars().any(char::is_control)
+            && crate::releases::repository_coordinates(&self.owner, &self.repository).is_ok()
+    }
+
+    pub fn matches_identity(&self, repo: &RepositoryConfig) -> bool {
+        self.provider == repo.provider
+            && self.owner.eq_ignore_ascii_case(&repo.username)
+            && self.repository.eq_ignore_ascii_case(&repo.repository)
+    }
+
+    pub fn matches_repository(&self, repo: &RepositoryConfig) -> bool {
+        self.matches_identity(repo)
+            && repo.download_mode == RepositoryDownloadMode::Release
+            && (repo.channel == self.channel || repo.channel == Channel::All)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommunityDiscovery {
+    pub repository_ids: Vec<String>,
+    pub total_count: u64,
+    pub incomplete_results: bool,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -284,6 +338,8 @@ pub struct AppConfig {
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_discovery: Option<CommunityDiscovery>,
     // Identity only: no source documents, repository settings or Release cache.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_repository_ids: BTreeMap<String, String>,
@@ -446,6 +502,8 @@ pub struct PublicConfig {
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
+    #[serde(default)]
+    pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default)]
     pub github_proxies: GitHubProxyConfig,
 }

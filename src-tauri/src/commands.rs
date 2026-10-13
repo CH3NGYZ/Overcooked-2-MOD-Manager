@@ -537,6 +537,8 @@ pub struct AppState {
     pub config: ConfigService,
     pub operation: Mutex<()>,
     pub repository_cache: tokio::sync::Mutex<()>,
+    pub community: crate::community::CommunitySearch,
+    pub readme: crate::repository_readme::ReadmeDownloads,
     // Display-only snapshot; file operations always inspect the live process.
     pub game_state: Mutex<Option<GameInfo>>,
 }
@@ -548,6 +550,8 @@ impl AppState {
             config: ConfigService::new().map_err(|e| e.to_string())?,
             operation: Mutex::new(()),
             repository_cache: tokio::sync::Mutex::new(()),
+            community: crate::community::CommunitySearch::default(),
+            readme: crate::repository_readme::ReadmeDownloads::default(),
             game_state: Mutex::new(None),
         })
     }
@@ -1755,7 +1759,7 @@ pub async fn refresh_repository(
     let repo = config.repositories[index].clone();
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
-    let token = state.config.repository_token(&repo);
+    let token = state.config.repository_api_token(&config, &repo);
     let api_proxies = match repo.provider {
         Provider::Github => &config.github_proxies.github_api_proxies,
         Provider::Gitee => &config.github_proxies.gitee_api_proxies,
@@ -2166,7 +2170,7 @@ fn selected_asset_proxy_mode(
     })
 }
 
-fn asset_proxy_urls(
+pub(crate) fn asset_proxy_urls(
     entries: &[GitHubProxy],
     direct_url: &str,
     is_raw_file: bool,
@@ -2213,7 +2217,7 @@ fn plan_asset_download_candidates(
 
 // Update and MOD downloads share candidate ordering, routing and deduplication.
 // Callers supply the proxy snapshot available at their point in startup.
-fn ordered_asset_download_candidates(
+pub(crate) fn ordered_asset_download_candidates(
     mode: ProxyMode,
     direct_url: &str,
     proxy_urls: Vec<String>,
@@ -2318,7 +2322,7 @@ pub async fn install_repository(
             let fetched_releases = if repo.cached_releases.is_empty() {
                 let client = releases::build_client(config.network.timeout_seconds)
                     .map_err(|e| e.to_string())?;
-                let token = state.config.repository_token(&repo);
+                let token = state.config.repository_api_token(&config, &repo);
                 let api_proxies = match repo.provider {
                     Provider::Github => &config.github_proxies.github_api_proxies,
                     Provider::Gitee => &config.github_proxies.gitee_api_proxies,
@@ -2493,13 +2497,16 @@ pub async fn install_repository(
             log::warn!("下载期间检测到厨房重新启动，取消安装：仓库={}", repo.name);
             return Err("下载期间厨房重新启动，安装已取消，旧版本未删除".into());
         }
+        let current_config = state.config.load_or_default();
+        let install_repo =
+            repository_install_identity(&repo, &current_config, &state.config.manifests_dir())?;
         install_downloaded_repository(
             &temp,
             &download_name,
             &game_root,
             &state.config.manifests_dir(),
             &state.config.mod_recycle_bin_dir(),
-            &repo,
+            &install_repo,
             &release_tag,
         )
     })();
@@ -2551,7 +2558,16 @@ pub fn uninstall_repository(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    let manifest = archive::read_manifest(&state.config.manifests_dir(), &repository_id)
+    let package_id = if let Some(repo) = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == repository_id)
+    {
+        repository_install_identity(repo, &config, &state.config.manifests_dir())?.id
+    } else {
+        repository_id.clone()
+    };
+    let manifest = archive::read_manifest(&state.config.manifests_dir(), &package_id)
         .ok_or("没有安装清单，拒绝删除未知文件")?;
     let entry = recycle_bin::recycle_package(
         &state.config.mod_recycle_bin_dir(),
@@ -2810,6 +2826,12 @@ pub async fn clear_repository_source_cache(
     state: State<'_, AppState>,
     source_ids: Vec<String>,
 ) -> Result<PublicConfig, String> {
+    if source_ids
+        .iter()
+        .any(|id| id == crate::community::SOURCE_ID)
+    {
+        return Err("社区仓库源由自动搜索管理".into());
+    }
     let _cache_guard = state.repository_cache.lock().await;
     let _operation_guard = state
         .operation
@@ -2873,6 +2895,9 @@ async fn import_repository_source_into_config(
     source_url: String,
     builtin_fallback: bool,
 ) -> Result<RepositorySourceImportResult, String> {
+    if source_id == crate::community::SOURCE_ID {
+        return Err("社区仓库源由自动搜索管理".into());
+    }
     log::info!("开始刷新仓库源：源={}", source_id);
     // Clear this source and all descendants before loading. The lock is
     // deliberately released during the network request so other sources can
@@ -3067,6 +3092,10 @@ async fn import_repository_source_into_config(
         });
     }
     for child in child_sources {
+        if child.id == crate::community::SOURCE_ID {
+            log::warn!("忽略源文档中的保留社区源标识：源={}", source_id);
+            continue;
+        }
         let child_url = child.url.trim().to_string();
         // Remote declarations cannot elevate their own privilege. An omitted
         // value inherits the parent; an explicit false cuts the chain, and
@@ -3126,7 +3155,7 @@ async fn import_repository_source_into_config(
         .collect::<HashSet<_>>();
     for repo in &mut config.repositories {
         let identity = crate::config::repo_key(repo);
-        if source_repository_keys.contains(&identity) {
+        if !crate::community::is_repository(repo) && source_repository_keys.contains(&identity) {
             let key = crate::config::source_repository_key(&source_id, &identity);
             used_ids.remove(&repo.id);
             if let Some(previous_id) = config.source_repository_ids.get(&key)
@@ -3169,6 +3198,9 @@ pub fn save_repository_source(
     url: String,
     nickname_i18n: Option<std::collections::BTreeMap<String, String>>,
 ) -> Result<PublicConfig, String> {
+    if id.as_deref() == Some(crate::community::SOURCE_ID) {
+        return Err("社区仓库源由自动搜索管理".into());
+    }
     log::info!(
         "保存仓库源：操作={}",
         if id.is_some() { "编辑" } else { "新增" }
@@ -3268,16 +3300,19 @@ pub fn save_repository_sources(
     let mut seen_ids = config
         .repository_sources
         .iter()
-        .filter(|source| source.builtin)
+        .filter(|source| source.builtin || source.id == crate::community::SOURCE_ID)
         .map(|source| source.id.clone())
         .collect::<std::collections::HashSet<_>>();
     let mut ordered = config
         .repository_sources
         .iter()
-        .filter(|source| source.builtin)
+        .filter(|source| source.builtin || source.id == crate::community::SOURCE_ID)
         .cloned()
         .collect::<Vec<_>>();
     for source in sources {
+        if source.id == crate::community::SOURCE_ID {
+            continue;
+        }
         if builtin_ids.contains(&source.id) {
             continue;
         }
@@ -3386,6 +3421,9 @@ pub fn delete_repository_source(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<PublicConfig, String> {
+    if id == crate::community::SOURCE_ID {
+        return Err("社区仓库源由自动搜索管理".into());
+    }
     log::info!("删除仓库源：源={}", id);
     let _guard = state
         .operation
@@ -3506,6 +3544,14 @@ pub fn save_repository(
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
     let mut config = state.config.load_or_default();
+    if patch.id.as_ref().is_some_and(|id| {
+        config
+            .repositories
+            .iter()
+            .any(|repo| repo.id == *id && crate::community::is_repository(repo))
+    }) {
+        return Err("社区仓库由自动搜索管理，请导出后作为自定义仓库编辑".into());
+    }
     let (username, repository) =
         releases::repository_coordinates(&patch.username, &patch.repository)
             .map_err(|error| error.to_string())?;
@@ -3668,6 +3714,9 @@ pub fn delete_repository(
     };
     if config.repositories[index].builtin {
         return Err("内置仓库不能删除，可禁用它".into());
+    }
+    if crate::community::is_repository(&config.repositories[index]) {
+        return Err("社区仓库由自动搜索管理，请导出后作为自定义仓库编辑".into());
     }
     config.repositories.remove(index);
     state.config.save(&config).map_err(|e| e.to_string())?;
@@ -4700,16 +4749,14 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
             )
         })
         .map(|repo| {
-            let local = installed
-                .iter()
-                .find(|item| {
-                    (repo.download_mode == RepositoryDownloadMode::RepositoryFile
-                        || (item.status != "not_release_asset"
-                            && item.status != "duplicate_lower_version"))
-                        && (item.repository_ids.iter().any(|id| id == &repo.id)
-                            || item.repository_id.as_deref() == Some(repo.id.as_str()))
-                })
-                .and_then(|item| item.version.clone());
+            let local_mod = installed.iter().find(|item| {
+                (repo.download_mode == RepositoryDownloadMode::RepositoryFile
+                    || (item.status != "not_release_asset"
+                        && item.status != "duplicate_lower_version"))
+                    && (item.repository_ids.iter().any(|id| id == &repo.id)
+                        || item.repository_id.as_deref() == Some(repo.id.as_str()))
+            });
+            let local = local_mod.and_then(mods::local_update_version);
             if repo.download_mode == RepositoryDownloadMode::RepositoryFile {
                 return UpdateStatus {
                     repository_id: repo.id.clone(),
@@ -4726,18 +4773,10 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
                     state: "repository_unavailable".into(),
                 };
             }
-            let remote = releases::filter_channel(repo.cached_releases.clone(), &repo.channel)
-                .first()
-                .and_then(|release| release.version.clone());
-            let state = match (
-                local.as_deref().and_then(releases::parse_version),
-                remote.as_deref().and_then(releases::parse_version),
-            ) {
-                (Some(local), Some(remote)) if remote > local => "update_available",
-                (Some(_), Some(_)) => "latest",
-                (None, Some(_)) => "unknown",
-                _ => "unknown",
-            };
+            let remote = mods::remote_update_version(repo, local_mod);
+            let state = local_mod
+                .map(|installed| mods::mod_update_state(repo, installed).1)
+                .unwrap_or("unknown");
             UpdateStatus {
                 repository_id: repo.id.clone(),
                 local_version: local,
@@ -4766,6 +4805,43 @@ fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, S
     let target = bepinex_backup_path(backup_root)?;
     copy_dir(&game_root.join("BepInEx"), &target)?;
     Ok(target)
+}
+
+fn repository_install_identity(
+    repo: &RepositoryConfig,
+    config: &AppConfig,
+    manifests_dir: &Path,
+) -> Result<RepositoryConfig, String> {
+    if manifests_dir
+        .join(format!("{}.toml", repo.id))
+        .try_exists()
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(repo.clone());
+    }
+    // Keep the installed package identity when an old source vanished. Never
+    // merge another still-configured package merely because its coordinates match.
+    let matches = archive::read_manifests(manifests_dir)
+        .into_iter()
+        .filter(|manifest| {
+            !config
+                .repositories
+                .iter()
+                .any(|configured| configured.id == manifest.repository_id)
+                && manifest
+                    .repository_binding
+                    .as_ref()
+                    .is_some_and(|binding| binding.is_valid() && binding.matches_repository(repo))
+        })
+        .collect::<Vec<_>>();
+    if matches.len() > 1 {
+        return Err("同一仓库绑定了多个旧 MOD 包，请先在 MOD 管理中确认要替换的包".into());
+    }
+    let mut result = repo.clone();
+    if let Some(manifest) = matches.first() {
+        result.id = manifest.repository_id.clone();
+    }
+    Ok(result)
 }
 
 fn install_downloaded_repository(
@@ -4843,13 +4919,14 @@ fn install_downloaded_repository(
             Provider::Gitee => "Gitee",
         };
         let package_name = format!("{} - {}", repo.name, provider_name);
-        let manifest = archive::new_manifest(
+        let mut manifest = archive::new_manifest(
             &repo.id,
             release_tag,
             Some(&package_name),
             Some(&repo.name),
             pending.files().to_vec(),
         );
+        manifest.repository_binding = RepositoryBinding::from_release(repo, release_tag);
         archive::write_manifest(manifests_dir, &manifest)?;
         Ok(pending.commit().len())
     })();
@@ -5345,6 +5422,8 @@ mod mod_file_location_tests {
             config: ConfigService::for_test(workspace.root.join("manager")),
             operation: Mutex::new(()),
             repository_cache: tokio::sync::Mutex::new(()),
+            community: Default::default(),
+            readme: Default::default(),
             game_state: Mutex::new(None),
         };
         let mut config = state.config.load().unwrap();
@@ -6619,6 +6698,188 @@ mod update_status_tests {
     }
 
     #[test]
+    fn all_release_install_sources_persist_repository_tags_and_recycle_the_original_binding() {
+        for source in [Some("official"), Some(crate::community::SOURCE_ID), None] {
+            for provider in [Provider::Github, Provider::Gitee] {
+                let workspace = InstallWorkspace::new();
+                let mut repo = repository("package", RepositoryDownloadMode::Release);
+                repo.provider = provider;
+                repo.source_id = source.map(str::to_string);
+                repo.builtin = source == Some("official");
+                let asset = workspace.zip(&[("Main.dll", b"first"), ("Child.dll", b"child")]);
+                install_downloaded_repository(
+                    &asset,
+                    "package.zip",
+                    &workspace.game,
+                    &workspace.manifests,
+                    &workspace.recycle,
+                    &repo,
+                    "v1.0.0",
+                )
+                .unwrap();
+                let original = archive::read_manifest(&workspace.manifests, "package").unwrap();
+                let binding = original.repository_binding.as_ref().unwrap();
+                assert_eq!(binding.owner, repo.username);
+                assert_eq!(binding.repository, repo.repository);
+                assert_eq!(binding.provider, repo.provider);
+                assert_eq!(binding.tag, "v1.0.0");
+                assert_eq!(binding.channel, repo.channel);
+                let scanned = mods::scan_mods_with_manifests(
+                    &workspace.game,
+                    &config(vec![repo.clone()]),
+                    Some(&workspace.manifests),
+                );
+                assert_eq!(scanned.len(), 2);
+                assert!(
+                    scanned
+                        .iter()
+                        .all(|item| item.repository_binding.as_ref() == Some(binding)
+                            && item.package_mod_count == 2)
+                );
+                fs::rename(
+                    workspace.game.join("BepInEx/plugins/Child.dll"),
+                    workspace.game.join("BepInEx/plugins/Child.dll.disabled"),
+                )
+                .unwrap();
+                let asset = workspace.zip(&[("Main.dll", b"second")]);
+                install_downloaded_repository(
+                    &asset,
+                    "package.zip",
+                    &workspace.game,
+                    &workspace.manifests,
+                    &workspace.recycle,
+                    &repo,
+                    "v2.0.0",
+                )
+                .unwrap();
+                let updated = archive::read_manifest(&workspace.manifests, "package").unwrap();
+                assert_eq!(updated.repository_binding.as_ref().unwrap().tag, "v2.0.0");
+                let entries = recycle_bin::list(&workspace.recycle).unwrap();
+                assert_eq!(entries.len(), 1);
+                let snapshot: archive::InstallManifest = toml::from_str(
+                    &fs::read_to_string(
+                        workspace.recycle.join(&entries[0].id).join("manifest.toml"),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(snapshot.repository_binding, original.repository_binding);
+                assert_eq!(entries[0].file_count, 2);
+            }
+        }
+        let workspace = InstallWorkspace::new();
+        let raw = repository("package", RepositoryDownloadMode::RepositoryFile);
+        let asset = workspace.zip(&[("Main.dll", b"raw")]);
+        install_downloaded_repository(
+            &asset,
+            "package.zip",
+            &workspace.game,
+            &workspace.manifests,
+            &workspace.recycle,
+            &raw,
+            "",
+        )
+        .unwrap();
+        assert!(
+            archive::read_manifest(&workspace.manifests, "package")
+                .unwrap()
+                .repository_binding
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn vanished_source_ids_reuse_the_bound_package_without_merging_live_packages() {
+        let workspace = InstallWorkspace::new();
+        let mut old_repo = repository("old-source-id", RepositoryDownloadMode::Release);
+        let asset = workspace.zip(&[("Main.dll", b"old")]);
+        install_downloaded_repository(
+            &asset,
+            "package.zip",
+            &workspace.game,
+            &workspace.manifests,
+            &workspace.recycle,
+            &old_repo,
+            "v1.0.0",
+        )
+        .unwrap();
+        let mut new_repo = old_repo.clone();
+        new_repo.id = "discovered-source-id".into();
+        let identity = repository_install_identity(
+            &new_repo,
+            &config(vec![new_repo.clone()]),
+            &workspace.manifests,
+        )
+        .unwrap();
+        assert_eq!(identity.id, "old-source-id");
+        assert_eq!(
+            repository_install_identity(
+                &new_repo,
+                &config(vec![old_repo.clone(), new_repo.clone()]),
+                &workspace.manifests
+            )
+            .unwrap()
+            .id,
+            new_repo.id
+        );
+        let asset = workspace.zip(&[("Main.dll", b"new")]);
+        install_downloaded_repository(
+            &asset,
+            "package.zip",
+            &workspace.game,
+            &workspace.manifests,
+            &workspace.recycle,
+            &identity,
+            "v2.0.0",
+        )
+        .unwrap();
+        assert!(
+            !workspace
+                .manifests
+                .join("discovered-source-id.toml")
+                .exists()
+        );
+        assert_eq!(
+            archive::read_manifest(&workspace.manifests, "old-source-id")
+                .unwrap()
+                .repository_binding
+                .unwrap()
+                .tag,
+            "v2.0.0"
+        );
+        old_repo.id = "another-orphan".into();
+        let mut other = archive::new_manifest(&old_repo.id, "v1.0.0", None, None, vec![]);
+        other.repository_binding = RepositoryBinding::from_release(&old_repo, "v1.0.0");
+        archive::write_manifest(&workspace.manifests, &other).unwrap();
+        assert!(
+            repository_install_identity(
+                &new_repo,
+                &config(vec![new_repo.clone()]),
+                &workspace.manifests
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn update_summary_prefers_a_bound_tag_over_dll_metadata_and_supports_opaque_tags() {
+        for tag in ["v1.0.0", "old-nightly"] {
+            let mut repo = repository("release", RepositoryDownloadMode::Release);
+            repo.cached_releases[0].tag_name = if tag == "old-nightly" {
+                "new-nightly".into()
+            } else {
+                "v99.0.0".into()
+            };
+            let mut local = installed("release", "latest");
+            local.version = Some("100.0.0".into());
+            local.repository_binding = RepositoryBinding::from_release(&repo, tag);
+            let status = collect_update_status(&config(vec![repo]), &[local]);
+            assert_eq!(status[0].local_version.as_deref(), Some(tag));
+            assert_eq!(status[0].state, "update_available");
+        }
+    }
+
+    #[test]
     fn online_install_with_no_recyclable_old_files_succeeds_or_preserves_manifest_on_failure() {
         for condition in ["empty", "missing", "shared"] {
             for zip in [false, true] {
@@ -7437,6 +7698,8 @@ mod repository_source_refresh_tests {
             ),
             operation: Mutex::new(()),
             repository_cache: tokio::sync::Mutex::new(()),
+            community: Default::default(),
+            readme: Default::default(),
             game_state: Mutex::new(None),
         }
     }
@@ -7685,6 +7948,8 @@ mod repository_source_refresh_tests {
             ),
             operation: Mutex::new(()),
             repository_cache: tokio::sync::Mutex::new(()),
+            community: Default::default(),
+            readme: Default::default(),
             game_state: Mutex::new(None),
         };
         refresh(&restarted, &root).await.unwrap();

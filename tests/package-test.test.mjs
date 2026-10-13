@@ -8,13 +8,14 @@ import test from 'node:test'
 import { cleanPackageTest, collectPackageTest, preparePackageTest, verifyPackageTests } from '../scripts/ci-packages.mjs'
 import { runTauri } from '../scripts/build-release.mjs'
 import { BUILD_KEYS, readProject, verifyUpdateSignature } from '../scripts/release-lib.mjs'
+import { signingFixture } from './fixtures/updater-signing.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const commit = 'a'.repeat(40)
-const rust = readFileSync(join(root, 'src-tauri/src/app_update.rs'), 'utf8')
-const fixture = name => rust.match(new RegExp(`const ${name}: &str = "([^"]+)"`))[1]
-const publicKey = fixture('TEST_KEY')
-const signature = fixture('TEST_SIGNATURE')
+const projectVersion = readProject(root).version
+const signer = signingFixture(projectVersion)
+const publicKey = signer.encodedPublicKey
+const signature = signer.signatureFor(Buffer.from('OC2 signed update fixture'))
 
 function workspace(t) {
   const base = resolve(root, 'src-tauri/target/verification/package-test-unit')
@@ -97,6 +98,7 @@ test('configured CI signing retains the checked-in public key, verifies it befor
   const sign = (_executable, args, options) => {
     calls++
     assert.deepEqual(args.slice(1, 3), ['signer', 'sign'])
+    assert.deepEqual(args.slice(3, 5), ['--app-version', projectVersion])
     assert.equal(options.env.TAURI_SIGNING_PRIVATE_KEY, '[REDACTED_SECRET]')
     assert.equal(options.stdio, 'pipe')
     assert.equal(readFileSync(args.at(-1), 'utf8'), 'OC2 signed update fixture')
@@ -117,6 +119,10 @@ test('configured CI signing retains the checked-in public key, verifies it befor
     writeFileSync(`${args.at(-1)}.sig`, 'invalid signature')
     return { status: 0 }
   }))
+  assert.throws(() => preparePackageTest(directory, env, (_executable, args) => {
+    writeFileSync(`${args.at(-1)}.sig`, signer.signatureFor(readFileSync(args.at(-1)), '0.0.0'))
+    return { status: 0 }
+  }), /not bound to this release version/)
 })
 
 function packageFixture(t, signingMode = 'temporary') {
@@ -128,8 +134,8 @@ function packageFixture(t, signingMode = 'temporary') {
   const downloads = join(directory, 'downloads')
   mkdirSync(downloads)
   const names = {
-    'x86_64-pc-windows-msvc': ['nsis/OC2ModManager_1.2.0_x64-setup.exe', 'msi/OC2ModManager_1.2.0_x64_en-US.msi'],
-    'x86_64-unknown-linux-gnu': ['appimage/OC2ModManager_1.2.0_amd64.AppImage', 'deb/OC2ModManager_1.2.0_amd64.deb', 'rpm/OC2ModManager-1.2.0-1.x86_64.rpm'],
+    'x86_64-pc-windows-msvc': [`nsis/OC2ModManager_${projectVersion}_x64-setup.exe`, `msi/OC2ModManager_${projectVersion}_x64_en-US.msi`],
+    'x86_64-unknown-linux-gnu': [`appimage/OC2ModManager_${projectVersion}_amd64.AppImage`, `deb/OC2ModManager_${projectVersion}_amd64.deb`, `rpm/OC2ModManager-${projectVersion}-1.x86_64.rpm`],
     'aarch64-apple-darwin': ['macos/OC2ModManager.app.tar.gz'],
     'x86_64-apple-darwin': ['macos/OC2ModManager.app.tar.gz'],
   }
@@ -142,7 +148,7 @@ function packageFixture(t, signingMode = 'temporary') {
     }
     if (target.endsWith('apple-darwin')) {
       mkdirSync(join(bundle, 'dmg'))
-      writeFileSync(join(bundle, 'dmg', `OC2ModManager_1.2.0_${target.startsWith('aarch64') ? 'aarch64' : 'x64'}.dmg`), 'DMG fixture')
+      writeFileSync(join(bundle, 'dmg', `OC2ModManager_${projectVersion}_${target.startsWith('aarch64') ? 'aarch64' : 'x64'}.dmg`), 'DMG fixture')
     }
     collectPackageTest(target, directory, commit, signingMode)
     cpSync(join(directory, 'src-tauri/target/verification/package-test/artifacts'), join(downloads, target), { recursive: true })
@@ -165,13 +171,13 @@ test('configured-key package aggregation enforces the repository public key and 
   const summary = verifyPackageTests(downloads, directory, commit, 'configured')
   assert.equal(summary.signingMode, 'configured')
   assert.equal(summary.publicKey, publicKey)
-  assert.equal(summary.manifest.version, '1.2.0')
+  assert.equal(summary.manifest.version, projectVersion)
   assert.equal(Object.keys(summary.manifest.platforms).length, 7)
   for (const report of summary.reports) {
     for (const asset of report.packages.filter(asset => asset.key)) {
       const entry = summary.manifest.platforms[asset.key]
       assert.equal(entry.signature, asset.signature)
-      assert.ok(entry.url.endsWith(`/v1.2.0/${encodeURIComponent(asset.name)}`))
+      assert.ok(entry.url.endsWith(`/v${projectVersion}/${encodeURIComponent(asset.name)}`))
     }
   }
   assert.throws(() => verifyPackageTests(downloads, directory, commit, 'temporary'))
@@ -192,7 +198,7 @@ test('package-test aggregation rejects corruption, different commits and unexpec
   const { directory, downloads } = packageFixture(t)
   assert.throws(() => verifyPackageTests(downloads, directory, 'b'.repeat(40), 'temporary'))
   const windows = join(downloads, 'x86_64-pc-windows-msvc')
-  const installer = join(windows, 'OC2ModManager_1.2.0_x64-setup.exe')
+  const installer = join(windows, `OC2ModManager_${projectVersion}_x64-setup.exe`)
   const original = readFileSync(installer)
   writeFileSync(installer, 'corrupted')
   assert.throws(() => verifyPackageTests(downloads, directory, commit, 'temporary'))

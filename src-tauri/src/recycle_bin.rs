@@ -1109,6 +1109,7 @@ fn merge_restored_manifest(
 ) -> Result<InstallManifest, String> {
     let mut merged = if let Some(active) = active {
         if active.release_tag != original.release_tag
+            || active.repository_binding != original.repository_binding
             || active.installed_at != original.installed_at
         {
             return Err("当前 MOD 包已更新，无法合并原安装清单".into());
@@ -1336,6 +1337,7 @@ mod tests {
             let manifest = InstallManifest {
                 repository_id: id.into(),
                 release_tag: "v1.2.3".into(),
+                repository_binding: None,
                 package_name: Some("Fixture package".into()),
                 note: Some("original note".into()),
                 installed_at: "2026-10-07T00:00:00Z".into(),
@@ -1372,6 +1374,81 @@ mod tests {
     const A: &str = "BepInEx/plugins/Bundle/A.dll";
     const B: &str = "BepInEx/plugins/Bundle/B.dll";
     const DATA: &str = "BepInEx/plugins/Bundle/data/settings.json";
+
+    #[test]
+    fn repository_binding_survives_package_and_child_restore_and_rejects_changed_owners() {
+        for whole_package in [true, false] {
+            for disabled in [false, true] {
+                let workspace = Workspace::new();
+                let actual = if disabled {
+                    format!("{A}.disabled")
+                } else {
+                    A.into()
+                };
+                workspace.write(&actual, b"bound plugin");
+                workspace.write(B, b"sibling plugin");
+                let mut original = workspace.manifest("package", &[A, B]);
+                original.repository_binding = Some(crate::models::RepositoryBinding {
+                    provider: crate::models::Provider::Github,
+                    owner: "Owner".into(),
+                    repository: "Mod".into(),
+                    tag: original.release_tag.clone(),
+                    channel: crate::models::Channel::Stable,
+                });
+                archive::write_manifest(&workspace.manifests, &original).unwrap();
+                let entry = recycle_package(
+                    &workspace.recycle,
+                    &workspace.manifests,
+                    &workspace.game,
+                    "package",
+                    (!whole_package).then_some(A),
+                )
+                .unwrap();
+                let snapshot: InstallManifest = toml::from_str(
+                    &fs::read_to_string(workspace.recycle.join(&entry.id).join("manifest.toml"))
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(snapshot.repository_binding, original.repository_binding);
+                if !whole_package {
+                    let mut changed = workspace.active("package").unwrap();
+                    changed.repository_binding.as_mut().unwrap().owner = "OtherOwner".into();
+                    archive::write_manifest(&workspace.manifests, &changed).unwrap();
+                    assert!(
+                        restore(
+                            &workspace.recycle,
+                            &workspace.manifests,
+                            &workspace.game,
+                            &entry.id,
+                        )
+                        .unwrap_err()
+                        .contains("已更新")
+                    );
+                    assert!(!workspace.game.join(&actual).exists());
+                    assert!(workspace.recycle.join(&entry.id).exists());
+                    changed.repository_binding = original.repository_binding.clone();
+                    archive::write_manifest(&workspace.manifests, &changed).unwrap();
+                }
+                restore(
+                    &workspace.recycle,
+                    &workspace.manifests,
+                    &workspace.game,
+                    &entry.id,
+                )
+                .unwrap();
+                assert_eq!(
+                    workspace.active("package").unwrap().repository_binding,
+                    original.repository_binding
+                );
+                assert_eq!(
+                    fs::read(workspace.game.join(&actual)).unwrap(),
+                    b"bound plugin"
+                );
+                assert_eq!(fs::read(workspace.game.join(B)).unwrap(), b"sibling plugin");
+                assert!(list(&workspace.recycle).unwrap().is_empty());
+            }
+        }
+    }
 
     #[test]
     fn hiding_unidentified_plugins_keeps_all_package_files_recoverable() {

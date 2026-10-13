@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { BepInExInstallResult, ModConfigDocument } from '../types'
+import type { BepInExInstallResult, ModConfigDocument, RepositoryReadme } from '../types'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, Dashboard, DownloadProgress, GameInfo, GitHubProxyPatch, ImportPreview, ModRecycleEntry, OperationResult, Provider, ProxyMode, PublicConfig, ReleaseInfo, RepositoryPatch, RepositorySource, RepositorySourceImportResult, RustLog, SettingsPatch, TokenPatch, TutorialRepositoryConfig, TutorialStepConfig, UninstallLocalModResult } from '../types'
@@ -41,6 +41,10 @@ export const api = {
   saveGithubProxies: (patch: GitHubProxyPatch) => invoke<PublicConfig>('save_github_proxies', { patch }),
   refreshGithubProxies: () => invoke<PublicConfig>('refresh_github_proxies'),
   refreshRepository: (repositoryId: string) => invoke<ReleaseInfo[]>('refresh_repository', { repositoryId }),
+  refreshCommunityRepositories: () => invoke<PublicConfig>('refresh_community_repositories'),
+  cancelCommunitySearch: () => invoke<void>('cancel_community_search'),
+  repositoryReadme: (repositoryId: string, requestId: string) => invoke<RepositoryReadme>('get_repository_readme', { repositoryId, requestId }),
+  cancelRepositoryReadme: (requestId: string) => invoke<void>('cancel_repository_readme', { requestId }),
   releases: (repositoryId: string) => invoke<ReleaseInfo[]>('get_repository_releases', { repositoryId }),
   installBepInEx: (reinstall: boolean, provider: Provider) => invoke<BepInExInstallResult>('install_bepinex', { reinstall, provider }),
   uninstallBepInEx: () => invoke<OperationResult>('uninstall_bepinex'),

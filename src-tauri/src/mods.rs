@@ -1,6 +1,8 @@
 use crate::archive::{self, InstallManifest};
 use crate::game::read_file_metadata;
-use crate::models::{AppConfig, Channel, InstalledMod, RepositoryConfig, RepositoryDownloadMode};
+use crate::models::{
+    AppConfig, Channel, InstalledMod, RepositoryBinding, RepositoryConfig, RepositoryDownloadMode,
+};
 use regex::Regex;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -156,6 +158,9 @@ fn inspect_dll(
             .iter()
             .find(|repo| repo.id == manifest.repository_id)
     });
+    let repository_binding = manifest
+        .and_then(|manifest| manifest.repository_binding.as_ref())
+        .filter(|binding| binding.is_valid());
     let candidates = config.repositories.iter().filter(|repo| {
         repo.enabled
             && crate::config::repository_matches_channel(
@@ -163,17 +168,34 @@ fn inspect_dll(
                 repo,
                 crate::config::current_user_region(),
             )
-            && repository_matches_mod(
-                repo,
-                guid.as_deref(),
-                metadata.product_name.as_deref(),
-                metadata.original_filename.as_deref(),
-                installed_version.as_deref(),
-            )
+            && if let Some(binding) = repository_binding {
+                binding.matches_repository(repo)
+            } else {
+                repository_matches_mod(
+                    repo,
+                    guid.as_deref(),
+                    metadata.product_name.as_deref(),
+                    metadata.original_filename.as_deref(),
+                    installed_version.as_deref(),
+                )
+            }
     });
     let candidates = candidates.collect::<Vec<_>>();
-    let repository =
-        select_repository(&candidates, installed_version.as_deref(), source_repository);
+    let repository = if let Some(binding) = repository_binding {
+        candidates
+            .iter()
+            .copied()
+            .find(|repo| source_repository.is_some_and(|source| source.id == repo.id))
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .copied()
+                    .find(|repo| repo.channel == binding.channel)
+            })
+            .or_else(|| candidates.first().copied())
+    } else {
+        select_repository(&candidates, installed_version.as_deref(), source_repository)
+    };
     let repository_ids = repository
         .map(|bound| {
             candidates
@@ -208,14 +230,26 @@ fn inspect_dll(
                 .unwrap_or("未知 MOD")
                 .to_string()
         });
-    let (update_available, status) =
-        repository_update_state(repository, installed_version.as_deref());
+    let (update_available, status) = if let Some(binding) = repository_binding {
+        binding_update_state(repository, binding)
+    } else {
+        repository_update_state(repository, installed_version.as_deref())
+    };
     if update_available {
-        let remote = repository.and_then(repository_remote_version);
+        let remote = repository.and_then(|repo| {
+            if let Some(binding) = repository_binding {
+                bound_release(repo, binding).map(|release| release.tag_name.clone())
+            } else {
+                repository_remote_version(repo)
+            }
+        });
         log::debug!(
             "检测到 MOD 可更新：文件={}，本地版本={}，远程版本={}",
             path.display(),
-            installed_version.as_deref().unwrap_or("未知"),
+            repository_binding
+                .map(|binding| binding.tag.as_str())
+                .or(installed_version.as_deref())
+                .unwrap_or("未知"),
             remote.as_deref().unwrap_or("未知")
         );
     }
@@ -247,6 +281,7 @@ fn inspect_dll(
     InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
         repository_ids,
+        repository_binding: repository_binding.cloned(),
         package_id,
         package_name,
         package_mod_count: 0,
@@ -359,6 +394,83 @@ fn repository_update_state(
         (Some(local), Some(remote)) if remote > local => (true, "update_available"),
         (Some(_), Some(_)) => (false, "latest"),
         _ => (false, "unknown"),
+    }
+}
+
+fn bound_release<'a>(
+    repo: &'a RepositoryConfig,
+    binding: &RepositoryBinding,
+) -> Option<&'a crate::models::ReleaseInfo> {
+    if repo.last_error.is_some() || !binding.matches_repository(repo) {
+        return None;
+    }
+    repo.cached_releases.iter().find(|release| {
+        !release.draft
+            && match binding.channel {
+                Channel::All => true,
+                Channel::Stable => !release.prerelease,
+                Channel::Beta => release.prerelease,
+            }
+    })
+}
+
+fn binding_update_state(
+    repo: Option<&RepositoryConfig>,
+    binding: &RepositoryBinding,
+) -> (bool, &'static str) {
+    let Some(repo) = repo else {
+        return (false, "bound_repository_missing");
+    };
+    if repo.last_error.is_some() {
+        return (false, "repository_unavailable");
+    }
+    let Some(release) = bound_release(repo, binding) else {
+        return (false, "unknown");
+    };
+    if release.tag_name == binding.tag {
+        return (false, "latest");
+    }
+    // Exact tags also work for non-SemVer releases; comparable versions must
+    // never turn an installed newer tag into a downgrade notification.
+    let update = match (
+        crate::releases::parse_version(&release.tag_name),
+        crate::releases::parse_version(&binding.tag),
+    ) {
+        (Some(remote), Some(local)) => remote > local,
+        _ => true,
+    };
+    if update {
+        (true, "update_available")
+    } else {
+        (false, "latest")
+    }
+}
+
+pub(crate) fn local_update_version(installed: &InstalledMod) -> Option<String> {
+    installed
+        .repository_binding
+        .as_ref()
+        .map(|binding| binding.tag.clone())
+        .or_else(|| installed.version.clone())
+}
+
+pub(crate) fn remote_update_version(
+    repo: &RepositoryConfig,
+    installed: Option<&InstalledMod>,
+) -> Option<String> {
+    match installed.and_then(|installed| installed.repository_binding.as_ref()) {
+        Some(binding) => bound_release(repo, binding).map(|release| release.tag_name.clone()),
+        None => repository_remote_version(repo),
+    }
+}
+
+pub(crate) fn mod_update_state(
+    repo: &RepositoryConfig,
+    installed: &InstalledMod,
+) -> (bool, &'static str) {
+    match installed.repository_binding.as_ref() {
+        Some(binding) => binding_update_state(Some(repo), binding),
+        None => repository_update_state(Some(repo), installed.version.as_deref()),
     }
 }
 
@@ -854,6 +966,158 @@ mod tests {
     }
 
     #[test]
+    fn explicit_repository_tags_override_dll_versions_for_every_source_type() {
+        for source in [Some("official"), Some(crate::community::SOURCE_ID), None] {
+            let mut repo = binding_repository();
+            repo.source_id = source.map(str::to_string);
+            repo.builtin = source == Some("official");
+            repo.cached_releases = vec![high_cached_release()];
+            let binding = crate::models::RepositoryBinding::from_release(&repo, "v98.0.0").unwrap();
+            assert_eq!(
+                super::binding_update_state(Some(&repo), &binding),
+                (true, "update_available")
+            );
+            let mut current = binding.clone();
+            current.tag = "v99.0.0".into();
+            assert_eq!(
+                super::binding_update_state(Some(&repo), &current),
+                (false, "latest")
+            );
+            current.tag = "v100.0.0".into();
+            assert_eq!(
+                super::binding_update_state(Some(&repo), &current),
+                (false, "latest")
+            );
+            repo.last_error = Some("request failed".into());
+            assert_eq!(
+                super::binding_update_state(Some(&repo), &binding),
+                (false, "repository_unavailable")
+            );
+        }
+    }
+
+    #[test]
+    fn opaque_tags_and_channel_provider_boundaries_are_preserved() {
+        let mut repo = binding_repository();
+        repo.channel = crate::models::Channel::Stable;
+        let binding = crate::models::RepositoryBinding::from_release(&repo, "old-nightly").unwrap();
+        let mut beta = high_cached_release();
+        beta.tag_name = "beta-nightly".into();
+        beta.prerelease = true;
+        let mut stable = high_cached_release();
+        stable.tag_name = "new-nightly".into();
+        repo.channel = crate::models::Channel::All;
+        repo.cached_releases = vec![beta, stable];
+        assert_eq!(
+            super::bound_release(&repo, &binding).unwrap().tag_name,
+            "new-nightly"
+        );
+        assert_eq!(
+            super::binding_update_state(Some(&repo), &binding),
+            (true, "update_available")
+        );
+        let mut current = binding.clone();
+        current.tag = "new-nightly".into();
+        assert_eq!(
+            super::binding_update_state(Some(&repo), &current),
+            (false, "latest")
+        );
+        repo.provider = crate::models::Provider::Github;
+        assert!(!binding.matches_repository(&repo));
+        repo.provider = binding.provider.clone();
+        repo.channel = crate::models::Channel::Beta;
+        assert!(!binding.matches_repository(&repo));
+        repo.download_mode = crate::models::RepositoryDownloadMode::RepositoryFile;
+        assert!(crate::models::RepositoryBinding::from_release(&repo, "tag").is_none());
+        assert_eq!(
+            super::binding_update_state(None, &binding),
+            (false, "bound_repository_missing")
+        );
+    }
+
+    #[test]
+    fn real_manifest_scan_keeps_dll_metadata_but_selects_owner_repository_tag_first() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/verification/community-20261013")
+            .join(format!("binding-scan-{}", uuid::Uuid::new_v4()));
+        let relative = "BepInEx/plugins/Example.dll";
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut bytes = b"BepInPlugin".to_vec();
+        bytes.extend_from_slice(&[1, 0]);
+        for value in ["com.example.guid", "Example", "100.0.0"] {
+            bytes.push(value.len() as u8);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        std::fs::write(&path, &bytes).unwrap();
+        let mut bound = binding_repository();
+        bound.id = "refreshed-source-id".into();
+        bound.plugin_guid.clear();
+        bound.local_product_name.clear();
+        bound.local_original_filename.clear();
+        bound.cached_releases = vec![high_cached_release()];
+        let mut misleading = binding_repository();
+        misleading.id = "dll-matching-but-wrong-repository".into();
+        misleading.repository = "unrelated".into();
+        let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1, "ui_zoom":1.5, "onboarding_seen_steps":[],
+            "game":{"path":"", "auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repositories":[misleading, bound]
+        })).unwrap();
+        let manifests = root.join("manifests");
+        let mut manifest = crate::archive::new_manifest(
+            "old-source-id",
+            "v98.0.0",
+            Some("Package"),
+            None,
+            vec![relative.into()],
+        );
+        manifest.repository_binding =
+            crate::models::RepositoryBinding::from_release(&bound, "v98.0.0");
+        crate::archive::write_manifest(&manifests, &manifest).unwrap();
+        let scan = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
+        assert_eq!(scan.len(), 1);
+        let installed = &scan[0];
+        assert_eq!(installed.guid.as_deref(), Some("com.example.guid"));
+        assert_eq!(installed.version.as_deref(), Some("100.0.0"));
+        assert_eq!(
+            installed.repository_id.as_deref(),
+            Some("refreshed-source-id")
+        );
+        assert_eq!(installed.repository_ids, ["refreshed-source-id"]);
+        assert_eq!(installed.package_id.as_deref(), Some("old-source-id"));
+        assert_eq!(installed.repository_binding, manifest.repository_binding);
+        assert!(installed.update_available);
+        assert_eq!(
+            super::local_update_version(installed).as_deref(),
+            Some("v98.0.0")
+        );
+
+        std::fs::rename(&path, root.join(format!("{relative}.disabled"))).unwrap();
+        let disabled = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
+        assert!(!disabled[0].enabled);
+        assert_eq!(disabled[0].repository_binding, installed.repository_binding);
+        assert_eq!(disabled[0].package_id, installed.package_id);
+
+        manifest.repository_binding = None;
+        crate::archive::write_manifest(&manifests, &manifest).unwrap();
+        let legacy = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
+        assert_eq!(
+            legacy[0].repository_id.as_deref(),
+            Some("dll-matching-but-wrong-repository")
+        );
+        assert!(legacy[0].repository_binding.is_none());
+        let verified = std::fs::canonicalize(&root).unwrap();
+        assert!(verified.starts_with(
+            std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap()
+        ));
+        std::fs::remove_dir_all(verified).unwrap();
+    }
+
+    #[test]
     fn repository_binding_matches_any_configured_identity() {
         let repo = binding_repository();
         assert!(super::repository_matches_mod(
@@ -1130,6 +1394,7 @@ mod tests {
             let manifest = crate::archive::InstallManifest {
                 repository_id: "raw".into(),
                 release_tag: String::new(),
+                repository_binding: None,
                 package_name: Some("Raw MOD".into()),
                 note: None,
                 installed_at: "2026-10-07T00:00:00Z".into(),
@@ -1221,6 +1486,7 @@ mod tests {
             crate::models::InstalledMod {
                 repository_id: None,
                 repository_ids: Vec::new(),
+                repository_binding: None,
                 package_id: None,
                 package_name: None,
                 package_mod_count: 0,
@@ -1248,6 +1514,7 @@ mod tests {
             crate::models::InstalledMod {
                 repository_id: None,
                 repository_ids: Vec::new(),
+                repository_binding: None,
                 package_id: None,
                 package_name: None,
                 package_mod_count: 0,

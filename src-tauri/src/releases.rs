@@ -435,6 +435,19 @@ async fn fetch_release_api_with_retries(
     provider: &Provider,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
+    fetch_api_with_retries(client, url, provider, token, |value| {
+        parse_release_json(value, provider)
+    })
+    .await
+}
+
+async fn fetch_api_with_retries<T>(
+    client: &Client,
+    url: &str,
+    provider: &Provider,
+    token: Option<&str>,
+    parse: impl Fn(&Value) -> Result<T, ReleaseError>,
+) -> Result<T, ReleaseError> {
     let mut last_error = None;
     for attempt in 0..REPOSITORY_API_ATTEMPTS {
         log::debug!(
@@ -444,15 +457,17 @@ async fn fetch_release_api_with_retries(
             REPOSITORY_API_ATTEMPTS,
             token.is_some()
         );
-        match fetch_release_api(client, url, provider, token).await {
-            Ok(releases) => {
+        match fetch_api_json(client, url, provider, token)
+            .await
+            .and_then(|value| parse(&value))
+        {
+            Ok(result) => {
                 log::debug!(
-                    "Release API 请求成功: provider={:?} attempt={} release_count={}",
+                    "API 请求成功: provider={:?} attempt={}",
                     provider,
-                    attempt + 1,
-                    releases.len()
+                    attempt + 1
                 );
-                return Ok(releases);
+                return Ok(result);
             }
             Err(error) if error.is_forbidden() => {
                 log::warn!(
@@ -500,6 +515,16 @@ pub async fn fetch_release_api(
     provider: &Provider,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
+    let value = fetch_api_json(client, url, provider, token).await?;
+    parse_release_json(&value, provider)
+}
+
+async fn fetch_api_json(
+    client: &Client,
+    url: &str,
+    provider: &Provider,
+    token: Option<&str>,
+) -> Result<Value, ReleaseError> {
     log::trace!(
         "发送 Release API 请求: provider={:?} token_attached={}",
         provider,
@@ -515,6 +540,7 @@ pub async fn fetch_release_api(
         .get(&request_url)
         .timeout(API_REQUEST_TIMEOUT)
         .header("User-Agent", APP_USER_AGENT)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",
@@ -552,7 +578,69 @@ pub async fn fetch_release_api(
         );
         error
     })?;
-    parse_release_json(&value, provider)
+    Ok(value)
+}
+
+pub async fn fetch_repository_default_branch(
+    client: &Client,
+    repo: &RepositoryConfig,
+    token: Option<&str>,
+    api_proxies: &[GitHubProxy],
+) -> Result<String, ReleaseError> {
+    let mut url = Url::parse(&repository_release_api_url(
+        &repo.provider,
+        &repo.username,
+        &repo.repository,
+        1,
+    )?)
+    .map_err(|error| ReleaseError::InvalidUrl(error.to_string()))?;
+    url.path_segments_mut()
+        .expect("validated repository API URL")
+        .pop();
+    url.set_query(None);
+    let official = url.to_string();
+    let mut last_error = None;
+    let mut skip_official = false;
+    for (url, request_token) in api_request_targets(&official, token, false, api_proxies) {
+        if skip_official && url == official {
+            continue;
+        }
+        log::info!(
+            "正在读取仓库默认分支：仓库={}，渠道={}",
+            repo.id,
+            api_target_kind(&official, &url, request_token)
+        );
+        let fetched =
+            fetch_api_with_retries(client, &url, &repo.provider, request_token, |value| {
+                let branch = value
+                    .get("default_branch")
+                    .and_then(Value::as_str)
+                    .filter(|branch| !branch.trim().is_empty())
+                    .ok_or_else(|| ReleaseError::Json("仓库默认分支缺失".into()))?;
+                repository_file_url(
+                    &repo.provider,
+                    &repo.username,
+                    &repo.repository,
+                    branch,
+                    "README.md",
+                )?;
+                Ok(branch.to_string())
+            })
+            .await;
+        match fetched {
+            Ok(branch) => return Ok(branch),
+            Err(error) => {
+                if repo.provider == Provider::Gitee && error.is_forbidden() {
+                    if url != official {
+                        return Err(error);
+                    }
+                    skip_official = true;
+                }
+                last_error = Some(error);
+            }
+        }
+    }
+    Err(last_error.expect("repository API always has an official target"))
 }
 
 pub fn parse_release_json(

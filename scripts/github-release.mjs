@@ -4,7 +4,7 @@ const repositoryPath = `/repos/${RELEASE_OWNER}/${RELEASE_REPO}`
 
 export class GitHubRelease {
   constructor(token, fetcher = fetch) {
-    if (!token?.trim()) throw new Error('RELEASE_REPOSITORY_TOKEN must have Contents write access to the Releases repository')
+    if (!token?.trim()) throw new Error('GITHUB_TOKEN must have Contents write access to the code repository')
     this.token = token
     this.fetcher = fetcher
   }

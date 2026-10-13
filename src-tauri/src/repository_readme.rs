@@ -325,6 +325,9 @@ mod tests {
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut request = Vec::new();
             while !request.ends_with(b"\r\n\r\n") {
                 let mut chunk = [0; 2048];
@@ -346,6 +349,29 @@ mod tests {
 
     fn candidate(url: String, route: DownloadRoute) -> DownloadCandidate {
         DownloadCandidate { url, route }
+    }
+
+    async fn finish_server(task: std::thread::JoinHandle<String>) -> String {
+        // Closing a rejected response may need the runtime before the server write can finish.
+        tokio::task::spawn_blocking(move || task.join().unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn finishing_readme_server_does_not_block_async_connection_cleanup() {
+        let (closed, connection_closed) = std::sync::mpsc::channel();
+        let task = std::thread::spawn(move || {
+            connection_closed
+                .recv_timeout(Duration::from_secs(2))
+                .expect("README server cleanup starved the current-thread async runtime");
+            String::new()
+        });
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            let _ = closed.send(());
+        });
+        finish_server(task).await;
     }
 
     #[test]
@@ -394,7 +420,7 @@ mod tests {
             } else {
                 assert_eq!(result.unwrap_err(), NOT_FOUND);
             }
-            let request = task.join().unwrap().to_ascii_lowercase();
+            let request = finish_server(task).await.to_ascii_lowercase();
             assert!(request.starts_with("get /readme.md http/1.1\r\n"));
             assert!(!request.contains("range:"));
             assert!(!request.contains("authorization:"));
@@ -438,7 +464,10 @@ mod tests {
             .await;
             assert_eq!(result.unwrap_err(), NOT_FOUND);
             assert!(started.elapsed() < Duration::from_millis(400));
-            for request in [slow_task.join().unwrap(), missing_task.join().unwrap()] {
+            for request in [
+                finish_server(slow_task).await,
+                finish_server(missing_task).await,
+            ] {
                 let request = request.to_ascii_lowercase();
                 assert!(request.contains("cache-control: no-cache"));
                 assert!(!request.contains("authorization:"));
@@ -463,8 +492,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(content, b"# README\nBody");
-        failed_task.join().unwrap();
-        success_task.join().unwrap();
+        finish_server(failed_task).await;
+        finish_server(success_task).await;
 
         let (invalid, task) = server(200, Duration::ZERO, vec![0xff]);
         assert!(
@@ -473,7 +502,7 @@ mod tests {
                 .unwrap_err()
                 .contains("UTF-8")
         );
-        task.join().unwrap();
+        finish_server(task).await;
     }
 
     #[tokio::test]
@@ -486,7 +515,7 @@ mod tests {
                 .unwrap_err()
                 .contains("2 MiB")
         );
-        task.join().unwrap();
+        finish_server(task).await;
         let result = download_readme(
             &client,
             vec![candidate(

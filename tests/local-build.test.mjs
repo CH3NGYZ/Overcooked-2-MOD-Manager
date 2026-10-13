@@ -108,6 +108,22 @@ test('the build BAT uses ASCII commands and CRLF without a BOM', () => {
   assert.ok(!bytes.toString().replace(/\r\n/g, '').includes('\n'), 'Batch commands must use CRLF')
 })
 
+test('Git checkout keeps both BAT entries CRLF without platform automatic conversion', t => {
+  const directory = workspace(t)
+  const checkout = join(directory, 'checkout')
+  mkdirSync(checkout)
+  const result = spawnSync('git', ['-c', 'core.autocrlf=false', 'checkout-index',
+    `--prefix=${checkout.replaceAll('\\', '/')}/`, '--', 'build.bat', 'build with tag.bat'], {
+    cwd: root, encoding: 'utf8', windowsHide: true,
+  })
+  assert.equal(result.status, 0, result.error?.message || result.stderr)
+  for (const file of ['build.bat', 'build with tag.bat']) {
+    const bytes = readFileSync(join(checkout, file))
+    assert.ok(!bytes.toString().replace(/\r\n/g, '').includes('\n'), `${file} must be checked out as CRLF on every platform`)
+    assert.ok(!bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), `${file} must not contain a BOM`)
+  }
+})
+
 for (const codePage of [936, 65001]) {
   for (const mode of ['', 'noenv', 'clean']) {
     test(`Windows build BAT preserves NSIS arguments and both output streams (${codePage}, ${mode || 'default'})`, {

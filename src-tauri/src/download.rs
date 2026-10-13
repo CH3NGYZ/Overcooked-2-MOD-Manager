@@ -82,6 +82,7 @@ struct RacePolicy {
     window: Duration,
     minimum_speed: u64,
     tick: Duration,
+    terminal_error: Option<&'static str>,
 }
 
 impl Default for RacePolicy {
@@ -91,6 +92,7 @@ impl Default for RacePolicy {
             window: Duration::from_secs(5),
             minimum_speed: 512 * 1024,
             tick: Duration::from_millis(250),
+            terminal_error: None,
         }
     }
 }
@@ -190,6 +192,32 @@ where
         context,
         RacePolicy::default(),
         |progress| archive::emit_progress_event(app, progress),
+    )
+    .await
+}
+
+pub async fn try_download_candidates_until_error<T, F, Fut, C>(
+    candidates: Vec<DownloadCandidate>,
+    is_cancelled: C,
+    download: F,
+    terminal_error: &'static str,
+) -> Result<T, String>
+where
+    T: DownloadOutput,
+    F: FnMut(DownloadCandidate, Arc<DownloadReporter>) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+    C: FnMut() -> bool,
+{
+    race_candidates(
+        candidates,
+        is_cancelled,
+        download,
+        None,
+        RacePolicy {
+            terminal_error: Some(terminal_error),
+            ..RacePolicy::default()
+        },
+        |_| {},
     )
     .await
 }
@@ -317,6 +345,7 @@ where
                         return Ok(completed.0.take().unwrap());
                     }
                     Ok(Err(error)) if error == "下载已取消" || is_cancelled() => return Err("下载已取消".into()),
+                    Ok(Err(error)) if policy.terminal_error == Some(error.as_str()) => return Err(error),
                     Ok(Err(error)) => {
                         log::warn!("下载候选失败，补充其他候选：候选序号={}", id + 1);
                         last_error = Some(error);
@@ -387,6 +416,7 @@ mod tests {
             window: Duration::from_millis(40),
             minimum_speed: 1024,
             tick: Duration::from_millis(2),
+            terminal_error: None,
         }
     }
 

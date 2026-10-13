@@ -13,6 +13,8 @@ import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { renderMarkdown } from './markdown'
+import { hasLocalUpdateVersion, modRepositoryReleaseState } from './modUpdates'
+import { COMMUNITY_SOURCE_ID, communityNavigationTargets, isCommunityRepository } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 import AppSidebar from './components/AppSidebar.vue'
@@ -23,11 +25,13 @@ import ModRecycleBin from './components/ModRecycleBin.vue'
 import ModConfigEditor from './components/ModConfigEditor.vue'
 import OverviewView from './components/OverviewView.vue'
 import RepositoriesView from './components/RepositoriesView.vue'
+import RepositoryDocumentDialog from './components/RepositoryDocumentDialog.vue'
 import SponsorView from './components/SponsorView.vue'
 import GitHubProxyManager from './components/GitHubProxyManager.vue'
 import TutorialExperience from './components/TutorialExperience.vue'
 import ConfirmationDialog from './components/ConfirmationDialog.vue'
 import { useConfirmationDialog } from './composables/useConfirmationDialog'
+import { useCommunityRepositories } from './composables/useCommunityRepositories'
 import { useTutorialRuntime, type TutorialProgressState } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
 
@@ -82,7 +86,7 @@ const rustLog = ref({ path: '', content: '' })
 const rustLogOutput = ref<HTMLElement | null>(null)
 const logViewerKind = ref<'rust' | 'frontend' | 'crash'>('rust')
 const showRelease = ref<Repository | null>(null)
-const showRepositoryNote = ref<Repository | null>(null)
+const repositoryDocument = ref<{ repository: Repository; kind: 'note' | 'readme' } | null>(null)
 const showInstall = ref<Repository | null>(null)
 const showBepInExInstall = ref(false)
 const bepinexInstallReinstall = ref(false)
@@ -124,6 +128,8 @@ const sourceContentRevealing = reactive<Record<string, boolean>>({})
 const sourceContentRevealTimers = new Map<string, number>()
 const repositoryReleaseReady = reactive<Record<string, boolean>>({})
 let initialRepositoryRefreshStarted = false
+const initialRepositorySourcesLoaded = ref(false)
+let initialProxySync: Promise<void> = Promise.resolve()
 const modDetailsExpanded = reactive<Record<string, boolean>>({})
 const modPackageCollapsed = reactive<Record<string, boolean>>({})
 const modTogglePending = reactive<Record<string, boolean>>({})
@@ -231,6 +237,27 @@ const displayDashboard = tutorialRuntime.displayDashboard
 const game = computed(() => displayDashboard.value?.game)
 const config = computed(() => displayDashboard.value?.config)
 const realGame = computed(() => dashboard.value?.game)
+const community = useCommunityRepositories({
+  config: computed(() => dashboard.value?.config),
+  canRefresh: () => !appUnmounted && initialRepositorySourcesLoaded.value
+    && !tutorial.blocksRepositoryRefresh.value
+    && !Object.values(sourceLoading).some(Boolean)
+    && !Object.values(sourceRefreshingManual).some(Boolean),
+  search: api.refreshCommunityRepositories,
+  cancel: api.cancelCommunitySearch,
+  beforeSearch: async () => {
+    await Promise.all([...repositoryRefreshTasks.values(), dashboardUpdateQueue])
+    if (appUnmounted) return
+    for (const repo of dashboard.value?.config.repositories.filter(isCommunityRepository) ?? []) {
+      repositoryReleaseReady[repo.id] = false
+      repo.cached_releases = []
+      repo.last_error = undefined
+    }
+  },
+  refreshConfig: refreshConfigSerialized,
+  refreshReleases: (repositories) => refreshRepositoryBatch(repositories, 4),
+  refreshDashboard: refreshDashboardSerialized,
+})
 const displayProgress = tutorialRuntime.displayProgress
 function sourceMatchesRegion(source: RepositorySource) {
   return repositoryRegionMatches(source.region, config.value?.region)
@@ -289,11 +316,16 @@ const sourceGroups = computed(() => {
     children: (childrenByParent.get(source.id) || []).map(buildGroup),
   })
   const groups = sources
-    .filter((source) => !source.parent_id || !visibleSourceIds.has(source.parent_id))
+    .filter((source) => source.id !== COMMUNITY_SOURCE_ID && (!source.parent_id || !visibleSourceIds.has(source.parent_id)))
     .map(buildGroup)
   const unclassified = repos.value.filter((repo) => !repo.builtin
     && (!repo.source_id || !visibleSourceIds.has(repo.source_id)))
   if (unclassified.length) groups.push({ source: { id: 'unclassified', nickname: t('未分类仓库'), url: '', builtin: false }, groups: groupedRepositories(unclassified), children: [] })
+  if (!tutorial.visible.value && !tutorial.previewing.value && community.started.value) {
+    const source = sources.find((source) => source.id === COMMUNITY_SOURCE_ID)
+      ?? { id: COMMUNITY_SOURCE_ID, nickname: t('GitHub 社区仓库'), url: 'https://api.github.com/search/repositories', builtin: false }
+    groups.push({ source, groups: [{ key: '', label: '', repositories: community.visibleRepositories.value }], children: [] })
+  }
   return groups
 })
 function collectSourceGroupRepositoryIds(groups: SourceGroup[], ids = new Set<string>()) {
@@ -306,8 +338,10 @@ function collectSourceGroupRepositoryIds(groups: SourceGroup[], ids = new Set<st
   return ids
 }
 const displayedRepositoryIds = computed(() => collectSourceGroupRepositoryIds(sourceGroups.value))
-const displayedRepositoryCount = computed(() => displayedRepositoryIds.value.size)
-const installableRepositoryCount = computed(() => repos.value.filter((repo) => displayedRepositoryIds.value.has(repo.id)
+const listedRepositoryIds = computed(() => new Set([...displayedRepositoryIds.value,
+  ...(!tutorial.visible.value && !tutorial.previewing.value && community.started.value ? community.repositories.value.map((repo) => repo.id) : [])]))
+const displayedRepositoryCount = computed(() => listedRepositoryIds.value.size)
+const installableRepositoryCount = computed(() => repos.value.filter((repo) => listedRepositoryIds.value.has(repo.id)
   && repo.enabled
   && (repo.download_mode === 'repository_file'
     ? !!repo.branch.trim() && !!repo.file_path.trim()
@@ -464,6 +498,7 @@ const repositoryRefreshBatchTotal = ref(0)
 const repositoryRefreshBatchCompleted = ref(0)
 const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => modReleaseUpdateStatus(mod) === '有更新').length)
 const repositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
+  || community.refreshing.value
   || Object.values(repositoryRefreshing).some(Boolean)
   || Object.values(sourceLoading).some(Boolean)
   || Object.values(sourceRefreshingManual).some(Boolean))
@@ -536,29 +571,15 @@ function formatDate(value?: string) { if (!value) return t('未知时间'); cons
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repo.name_i18n?.[locale.value] || repo.name }
 function localizedRepositoryNote(repo: Repository) { return repo.note_i18n?.[locale.value] || repo.note }
-function parseModVersion(value?: string) {
-  const match = value?.match(/\d+(?:\.\d+){1,3}/)?.[0]
-  return match ? match.split('.').map(Number).concat([0, 0, 0, 0]).slice(0, 4) : null
-}
-function compareModVersions(left?: string, right?: string) {
-  const leftParts = parseModVersion(left)
-  const rightParts = parseModVersion(right)
-  if (!leftParts || !rightParts) return 0
-  for (let index = 0; index < 4; index += 1) {
-    if (leftParts[index] !== rightParts[index]) return leftParts[index] > rightParts[index] ? 1 : -1
-  }
-  return 0
-}
 function repositoryInstallStatus(repo: Repository) {
   if (repo.download_mode === 'repository_file') return ''
   const boundMods = installedMods.value.filter((mod) => modReleaseRepositoryIds(mod).has(repo.id))
   if (!boundMods.length) return ''
   if (repositoryRefreshing[repo.id]) return '检查中'
   if (!repositoryReleaseReady[repo.id] && !(tutorial.previewing.value && tutorial.scenario.value !== 'live')) return '待检查'
-  const remote = latest(repo)?.version || latest(repo)?.tag_name
-  if (boundMods.some((mod) => remote && mod.version && compareModVersions(remote, mod.version) === 0)) return '最新版'
-  if (boundMods.some((mod) => compareModVersions(remote, mod.version) > 0)) return '有更新'
-  return boundMods.every((mod) => remote && mod.version) ? '最新版' : '已安装'
+  const states = boundMods.map((mod) => modRepositoryReleaseState(repo, mod))
+  if (states.includes('update_available')) return '有更新'
+  return states.every((state) => state === 'latest') ? '最新版' : '已安装'
 }
 function openRepositoryMods(repo: Repository) {
   if (!['有更新', '最新版'].includes(repositoryInstallStatus(repo))) return
@@ -577,11 +598,11 @@ function modReleaseRepositories(mod: InstalledMod) {
 }
 function modRepositoryVersionReady(repo: Repository, mod: InstalledMod) {
   return repositoryReleaseReady[repo.id] && !repo.last_error
-    && !!parseModVersion(mod.version) && !!parseModVersion(latest(repo)?.version || latest(repo)?.tag_name)
+    && ['latest', 'update_available'].includes(modRepositoryReleaseState(repo, mod))
 }
 function modHasRemoteUpdate(mod: InstalledMod) {
   return modReleaseRepositories(mod).some((repo) => modRepositoryVersionReady(repo, mod)
-    && compareModVersions(latest(repo)?.version || latest(repo)?.tag_name, mod.version) > 0)
+    && modRepositoryReleaseState(repo, mod) === 'update_available')
 }
 function installedModStatus(mod: InstalledMod) {
   if (!modEnabledForView(mod)) return '已禁用'
@@ -589,14 +610,15 @@ function installedModStatus(mod: InstalledMod) {
   if (mod.load_warning) return mod.load_warning
   if (mod.status === 'not_release_asset') return '不是 Release 资产, 无法检测更新'
   if (mod.status === 'unbound') return '未绑定在线仓库，无法检测更新'
+  if (mod.status === 'bound_repository_missing') return '已绑定仓库未加载，无法检测更新'
   if (installedModsChecking.value || isModRepositoryRefreshing(mod)) return '检查中'
   if (installedModsPendingCheck.value) return '待检查'
   const confirmed = modReleaseUpdateStatus(mod)
   if (confirmed) return confirmed
   const candidates = modReleaseRepositories(mod)
   if (candidates.some((repo) => repo.last_error)) return '刷新失败，无法检测更新'
-  if (!parseModVersion(mod.version) || candidates.some((repo) => repositoryReleaseReady[repo.id]
-    && !parseModVersion(latest(repo)?.version || latest(repo)?.tag_name))) return '版本信息不足，无法检测更新'
+  if (!hasLocalUpdateVersion(mod) || candidates.some((repo) => repositoryReleaseReady[repo.id]
+    && modRepositoryReleaseState(repo, mod) === 'unknown')) return '版本信息不足，无法检测更新'
   return '待检查'
 }
 function installedModStatusLabel(mod: InstalledMod) { return t(installedModStatus(mod)) }
@@ -611,7 +633,7 @@ function installedModStatusClass(mod: InstalledMod) {
 function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | '' {
   if (installedModsChecking.value || installedModsPendingCheck.value
     || ['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
-    || !mod.version || mod.duplicate_version || mod.load_warning || isModRepositoryRefreshing(mod)) return ''
+    || !hasLocalUpdateVersion(mod) || mod.duplicate_version || mod.load_warning || isModRepositoryRefreshing(mod)) return ''
   const candidates = modReleaseRepositories(mod)
   if (modHasRemoteUpdate(mod)) return '有更新'
   return candidates.length > 0 && candidates.every((repo) => modRepositoryVersionReady(repo, mod)) ? '最新版' : ''
@@ -624,13 +646,12 @@ function openModRepository(mod: InstalledMod, packageStatus?: string) {
     : [mod]).filter((child) => installedModStatus(child) === status && modReleaseUpdateStatus(child) === status)
   const bound = children.flatMap(modReleaseRepositories).filter((repo) => children.some((child) =>
     modReleaseRepositoryIds(child).has(repo.id) && modRepositoryVersionReady(repo, child)
-    && (status === '有更新'
-      ? compareModVersions(latest(repo)?.version || latest(repo)?.tag_name, child.version) > 0
-      // “最新版”也包含本地版本高于当前渠道 Release 的情况，与状态判断保持一致。
-      : compareModVersions(latest(repo)?.version || latest(repo)?.tag_name, child.version) <= 0)))
-  const targets = new Set(repos.value.filter((repo) => repo.download_mode === 'release' && bound.some((candidate) =>
-    repo.provider === candidate.provider && repo.username === candidate.username
-    && repo.repository === candidate.repository)).map((repo) => repo.id))
+    && modRepositoryReleaseState(repo, child) === (status === '有更新' ? 'update_available' : 'latest')))
+  const targets = communityNavigationTargets(repos.value, new Set(repos.value.filter((repo) => repo.download_mode === 'release' && bound.some((candidate) =>
+    repo.provider === candidate.provider && repo.username.toLowerCase() === candidate.username.toLowerCase()
+    && repo.repository.toLowerCase() === candidate.repository.toLowerCase())
+    && children.some((child) => modReleaseRepositoryIds(child).has(repo.id))).map((repo) => repo.id)))
+  community.reveal(targets)
   const visibleIds: string[] = []
   function expandTargets(groups: SourceGroup[]): boolean {
     let found = false
@@ -654,10 +675,6 @@ function openModRepository(mod: InstalledMod, packageStatus?: string) {
   if (!expandTargets(sourceGroups.value)) return
   repositoryFocusIds.value = visibleIds
   activeView.value = 'repositories'
-}
-function repositoryNoteIsLong(repo: Repository) {
-  const note = localizedRepositoryNote(repo)
-  return note.split(/\r?\n/).length >= 6
 }
 function assetMatchesUi(name: string, rule: { type: string; value: string }) {
   if (rule.type === 'exact') return name.toLocaleLowerCase() === rule.value.toLocaleLowerCase()
@@ -786,9 +803,14 @@ async function installRepo(repo: Repository) {
   if (repo.download_mode === 'release') {
     const release = installReleases(repo)[0]
     if (!release) {
+      const refreshed = repositoryReleaseReady[repo.id] && !repo.last_error
+      const hasReleases = repo.cached_releases.length > 0
       await requestConfirmation({
-        title: t('请先刷新 Release'),
-        message: t('请先刷新此仓库，直到版本号出现，再点击“下载并安装”。'),
+        title: t(!refreshed ? '请先刷新 Release' : hasReleases ? '没有匹配的 Release 资产' : '没有可安装的 Release'),
+        message: t(!refreshed ? '请先刷新此仓库，直到版本号出现，再点击“下载并安装”。'
+          : !hasReleases ? '此仓库尚未发布可安装的 Release，请查看仓库说明或发布页。'
+            : isCommunityRepository(repo) ? '此仓库的 Release 中没有 ZIP 或 DLL 资产，GitHub 自动生成的源码包不能作为 MOD 安装。'
+              : '此仓库的 Release 中没有符合资产规则的文件，请检查发布资产或资产规则。'),
         acknowledge: true,
       })
       return
@@ -1130,7 +1152,7 @@ async function installAppUpdate() {
     clearDownloadProgress()
   }
 }
-async function refreshRepositoryBatch(repositories: Repository[]) {
+async function refreshRepositoryBatch(repositories: Repository[], concurrency = repositories.length) {
   const trackingToken = repositories.length > 0 ? ++repositoryRefreshBatchToken : undefined
   if (trackingToken !== undefined && !repositoryRefreshBatchActive.value) {
     repositoryRefreshBatchTotal.value = 0
@@ -1139,10 +1161,14 @@ async function refreshRepositoryBatch(repositories: Repository[]) {
   repositoryRefreshBatchTotal.value += repositories.length
   if (repositories.length > 0) repositoryRefreshBatchActive.value = true
   try {
-    const results = await Promise.all(repositories.map(async (repo) => {
-      const success = await refreshRepo(repo, false, false)
-      repositoryRefreshBatchCompleted.value += 1
-      return success
+    const results: boolean[] = []
+    let nextIndex = 0
+    await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), repositories.length) }, async () => {
+      while (nextIndex < repositories.length && !appUnmounted) {
+        const repo = repositories[nextIndex++]!
+        results.push(await refreshRepo(repo, false, false))
+        repositoryRefreshBatchCompleted.value += 1
+      }
     }))
     return results.filter((success) => !success).length
   } finally {
@@ -1248,8 +1274,7 @@ async function refreshAllRepositories() {
   }
   try {
     await (async () => {
-      const sources = activeRepositorySources.value.filter((source) => !source.parent_id)
-      if (!sources.length) return { ok: true, message: '全部仓库刷新完成' }
+      const sources = activeRepositorySources.value.filter((source) => !source.parent_id && source.id !== COMMUNITY_SOURCE_ID)
       for (const repo of repos.value) repositoryReleaseReady[repo.id] = false
       await prepareRootSourceRefresh(sources)
       const sourceResults = await Promise.all(sources.map(async (source) => {
@@ -1262,7 +1287,10 @@ async function refreshAllRepositories() {
       const failedSources = sourceResults.filter((entry) => !entry.result.ok)
       const releaseFailures = sourceResults
         .reduce((total, entry) => total + entry.result.releaseFailures, 0)
+      await initialProxySync
       dashboard.value = await api.dashboard()
+      initialRepositorySourcesLoaded.value = true
+      await community.refresh()
 
       const failures = failedSources
         .map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`)
@@ -1311,13 +1339,13 @@ function startInitialRepositoryRefresh() {
   }
   if (initialRepositoryRefreshStarted) return
   initialRepositoryRefreshStarted = true
-  const sources = activeRepositorySources.value.filter((source) => !source.parent_id)
+  const sources = activeRepositorySources.value.filter((source) => !source.parent_id && source.id !== COMMUNITY_SOURCE_ID)
   console.info('[repository-refresh] starting initial refresh', sources.map((source) => source.id))
   // Do not start this from startupChecks until the first-run tutorial has
   // finished. Once started, each source and repository refreshes independently
   // and updates the visible dashboard as soon as its content is available.
   void (async () => {
-    const proxySync = syncInitialGithubProxies()
+    initialProxySync = syncInitialGithubProxies()
     await prepareRootSourceRefresh(sources)
     const results = await Promise.all(sources.map(async (source) => ({
       source,
@@ -1327,13 +1355,15 @@ function startInitialRepositoryRefresh() {
     const releaseFailures = results.reduce((total, entry) => total + entry.result.releaseFailures, 0)
     // The final snapshot must include the proxy commit, even if its download
     // finishes after a source. Individual source cards reveal independently.
-    await proxySync
+    await initialProxySync
     if (appUnmounted) return
     const snapshot = await api.dashboard()
     if (appUnmounted) return
     dashboard.value = snapshot
+    initialRepositorySourcesLoaded.value = true
     if (failedSources.length) showError(failedSources.map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`).join('；'))
     if (releaseFailures) showError(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
+    await community.refresh()
   })().catch((reason) => showError(reason))
 }
 async function startupChecks() {
@@ -1462,7 +1492,7 @@ function resetRepositorySourceEditor() {
   repositorySourceEditorOpen.value = false
 }
 function openRepositorySourceManager() {
-  repositorySourceDraft.value = (config.value?.repository_sources ?? []).map((source) => ({ ...source }))
+  repositorySourceDraft.value = (config.value?.repository_sources ?? []).filter((source) => source.id !== COMMUNITY_SOURCE_ID).map((source) => ({ ...source }))
   resetRepositorySourceEditor()
   showRepositorySource.value = true
 }
@@ -1624,7 +1654,7 @@ async function saveRepositorySourceChanges() {
   void (async () => {
     try {
       const rootSources = refreshedSourceConfig.repository_sources
-        .filter((item) => !item.parent_id && sourceMatchesRegion(item))
+        .filter((item) => !item.parent_id && item.id !== COMMUNITY_SOURCE_ID && sourceMatchesRegion(item))
       await prepareRootSourceRefresh(rootSources)
       const sourceResults = await Promise.all(rootSources.map(async (source) => ({
         source,
@@ -1635,7 +1665,10 @@ async function saveRepositorySourceChanges() {
         .map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`)
       const releaseFailures = sourceResults.reduce((total, entry) => total + entry.result.releaseFailures, 0)
       if (releaseFailures) failures.push(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
+      await initialProxySync
       dashboard.value = await api.dashboard()
+      initialRepositorySourcesLoaded.value = true
+      await community.refresh()
       if (failures.length) showError(failures.join('；'))
     } catch (reason) {
       showError(reason)
@@ -1643,14 +1676,16 @@ async function saveRepositorySourceChanges() {
   })()
 }
 function sourceRefreshing(sourceId: string) {
+  if (sourceId === COMMUNITY_SOURCE_ID) return community.searching.value
   const tutorialRootSourceId = activeRepositorySources.value[0]?.id
   if (tutorial.repositoryLoadingActive.value && sourceId === tutorialRootSourceId) return true
   return !!sourceLoading[sourceId]
 }
 function sourceCardLoading(sourceId: string) {
   return sourceRefreshing(sourceId) || !!sourceContentRevealing[sourceId] || !!sourceErrors[sourceId]
+    || (sourceId === COMMUNITY_SOURCE_ID && !!community.error.value)
 }
-function sourceBusy(sourceId: string) { return !!sourceLoading[sourceId] || !!sourceRefreshingManual[sourceId] }
+function sourceBusy(sourceId: string) { return sourceId === COMMUNITY_SOURCE_ID ? community.refreshing.value || !community.available.value : !!sourceLoading[sourceId] || !!sourceRefreshingManual[sourceId] }
 function finishSourceContentReveal(sourceId: string) {
   sourceContentRevealing[sourceId] = false
   const timer = sourceContentRevealTimers.get(sourceId)
@@ -1678,6 +1713,7 @@ function toggleRepositoryGroup(sourceId: string, group: string) {
   repositoryGroupCollapsed[key] = !repositoryGroupCollapsed[key]
 }
 async function refreshSource(sourceId: string, options: SourceRefreshOptions = {}, visited = new Set<string>()): Promise<SourceRefreshResult> {
+  if (sourceId === COMMUNITY_SOURCE_ID) return { ok: await community.refresh(), releaseFailures: community.releaseFailures.value, error: community.error.value }
   if (visited.has(sourceId)) return { ok: true, releaseFailures: 0 }
   if (tutorial.blocksRepositoryRefresh.value) {
     const error = t('教程完成后才能刷新内置源')
@@ -2063,6 +2099,7 @@ onUnmounted(() => {
 
 <template>
   <ConfirmationDialog :request="confirmation" @answer="answerConfirmation" />
+  <RepositoryDocumentDialog :target="repositoryDocument" @close="repositoryDocument = null" />
   <div :class="['app-shell', { 'tutorial-layer-active': tutorial.visible.value }]">
     <div v-if="startupUpdateChecking || updateCheckFailed" class="startup-overlay">
       <div v-if="startupUpdateChecking && !updateSkipped" class="startup-card">
@@ -2219,6 +2256,7 @@ onUnmounted(() => {
         :format-mod-package-delete-warning="formatModPackageDeleteWarning"
         :confirm-mod-uninstall="confirmModUninstall" />
       <RepositoriesView v-else-if="activeView === 'repositories'"
+        :community="community"
         :focus-repository-ids="repositoryFocusIds"
         @focus-finished="repositoryFocusIds = []"
         :config="config"
@@ -2240,13 +2278,10 @@ onUnmounted(() => {
         :toggle-repository-group="toggleRepositoryGroup"
         :localized-repository-name="localizedRepositoryName"
         :localized-repository-note="localizedRepositoryNote"
-        :repository-note-is-long="repositoryNoteIsLong"
-        :render-markdown="renderMarkdown"
         :repository-install-status="repositoryInstallStatus"
         :open-repository-mods="openRepositoryMods"
         :latest="latest"
         :format-date="formatDate"
-        :install-releases="installReleases"
         :install-repo="installRepo"
         :refresh-repo="refreshRepo"
         :refresh-all-repositories="refreshAllRepositories"
@@ -2261,7 +2296,8 @@ onUnmounted(() => {
         :repository-source-region-label="repositorySourceRegionLabel"
         @show-import="showImport = true"
         @show-github-proxies="showGithubProxyManager = true"
-        @show-repository-note="showRepositoryNote = $event"
+        @show-repository-note="repositoryDocument = { repository: $event, kind: 'note' }"
+        @show-repository-readme="repositoryDocument = { repository: $event, kind: 'readme' }"
         @show-release="showRelease = $event"
         @source-content-entered="onSourceContentEntered" />
       <GitHubProxyManager
@@ -2569,20 +2605,6 @@ onUnmounted(() => {
                 }}</span><small>{{ formatAssetMetadata(asset) }}</small></div>
           </div>
         </div>
-      </div>
-    </div>
-    <div v-if="showRepositoryNote" class="modal-backdrop" @click.self="showRepositoryNote = null">
-      <div class="modal repository-note-modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ localizedRepositoryName(showRepositoryNote) }}</h3>
-            <p class="muted-text">{{ t('MOD 简介') }}</p>
-          </div><button class="icon-button" :title="t('关闭')" @click="showRepositoryNote = null">
-            <X :size="17" />
-          </button>
-        </div>
-        <article class="markdown-body repository-note-content"
-          v-html="renderMarkdown(localizedRepositoryNote(showRepositoryNote))"></article>
       </div>
     </div>
     <div v-if="editingMod" class="modal-backdrop" @click.self="editingMod = null">

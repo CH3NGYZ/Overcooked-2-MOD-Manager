@@ -176,6 +176,9 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
                 </div>
                 <Transition name="mod-details-expand">
                   <dl v-if="modDetailsExpanded[mod.dll_file]" class="mod-detail-table mod-detail-panel">
+                    <div v-if="mod.repository_binding" class="mod-detail-field"><dt>{{ t('仓库 Owner') }}</dt><dd>{{ mod.repository_binding.provider === 'github' ? 'GitHub' : 'Gitee' }} / {{ mod.repository_binding.owner }}</dd></div>
+                    <div v-if="mod.repository_binding" class="mod-detail-field"><dt>{{ t('仓库 Repository') }}</dt><dd>{{ mod.repository_binding.repository }}</dd></div>
+                    <div v-if="mod.repository_binding" class="mod-detail-field mod-detail-wide"><dt>{{ t('已安装仓库 Tag') }}</dt><dd>{{ mod.repository_binding.tag }}</dd></div>
                     <div v-if="mod.guid" class="mod-detail-field mod-detail-wide"><dt>{{ t('BepInEx.GUID') }}</dt><dd class="mod-guid">{{ mod.guid }}</dd></div>
                     <div v-if="mod.product_name" class="mod-detail-field"><dt>{{ t('DLL.产品名称') }}</dt><dd>{{ mod.product_name }}</dd></div>
                     <div v-if="mod.original_filename" class="mod-detail-field"><dt>{{ t('DLL.原始文件名') }}</dt><dd>{{ mod.original_filename }}</dd></div>

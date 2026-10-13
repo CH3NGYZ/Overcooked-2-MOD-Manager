@@ -1,28 +1,33 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, toRefs, type PropType } from 'vue'
 import {
-  ChevronRight, Download, ExternalLink, FileText, Globe, Pencil, Plus, RefreshCw, Search, Trash2, Upload,
+  AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Download, ExternalLink, Globe, Pencil, Plus, RefreshCw, Search, Trash2, Upload,
 } from 'lucide-vue-next'
 import { localizedRepositorySourceName, t } from '../i18n'
 import type { RepositorySource } from '../types'
 import { useListNavigationFocus } from '../composables/useListNavigationFocus'
+import { COMMUNITY_SOURCE_ID, isCommunityRepository } from '../communityRepositories'
+import type { useCommunityRepositories } from '../composables/useCommunityRepositories'
+import RepositoryDescription from './RepositoryDescription.vue'
 
 const props = defineProps({
   focusRepositoryIds: { type: Array as PropType<string[]>, default: () => [] },
+  community: { type: Object as PropType<ReturnType<typeof useCommunityRepositories>>, required: true },
   config: null, busy: null, gameBlocked: null, repositoryRefreshBatchActive: null, repositoryRefreshing: null,
   sourceBusy: null, sourceRefreshing: null, sourceCardLoading: null, sourceRefreshingManual: null, sourceCollapsed: null,
   sourceRefreshPhase: null, sourceErrors: null,
   toggleSource: null, flattenSourceGroups: null, repositoryGroupCollapsed: null, repositoryGroupKey: null,
   toggleRepositoryGroup: null, localizedRepositoryName: null, localizedRepositoryNote: null,
-  repositoryNoteIsLong: null, renderMarkdown: null, repositoryInstallStatus: null, openRepositoryMods: null, latest: null,
-  formatDate: null, installReleases: null, installRepo: null, refreshRepo: null, refreshAllRepositories: null,
+  repositoryInstallStatus: null, openRepositoryMods: null, latest: null,
+  formatDate: null, installRepo: null, refreshRepo: null, refreshAllRepositories: null,
   refreshSource: null, api: null, editRepo: null, deleteRepo: null, repos: null,
   openRepositorySourceManager: null, exportRepositories: null, sourceGroups: null,
   repositorySourceRegionLabel: null,
 })
 const dynamicProps = props as Record<string, any>
-const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryNoteIsLong, renderMarkdown, repositoryInstallStatus, latest, formatDate, installReleases, installRepo, refreshRepo, refreshAllRepositories, refreshSource, api, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
+const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryInstallStatus, latest, formatDate, installRepo, refreshRepo, refreshAllRepositories, refreshSource, api, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
 const showRepositoryEmptyState = computed(() => !repos.value.length
+  && !props.community.started.value
   && !repositoryRefreshBatchActive.value
   && !(config.value?.repository_sources ?? []).some((source: RepositorySource) => sourceRefreshing.value(source.id)))
 const repositoryList = ref<HTMLElement | null>(null)
@@ -39,10 +44,13 @@ let stickyScrollElement: HTMLElement | null = null
 let stickyResizeObserver: ResizeObserver | undefined
 
 function sourceOverlayHasError(sourceId: string) {
+  if (sourceId === COMMUNITY_SOURCE_ID) return !!props.community.error.value
   return !!sourceErrors.value?.[sourceId]
 }
 
 function sourceOverlayMessage(sourceId: string) {
+  if (sourceId === COMMUNITY_SOURCE_ID) return props.community.error.value
+    ? `${t('社区仓库搜索失败')}: ${t(props.community.error.value)}` : t('正在搜索 GitHub 社区仓库')
   const error = sourceErrors.value?.[sourceId]
   if (error) return `${t('仓库源读取失败')}: ${t(error)}`
   const phase = sourceRefreshPhase.value?.[sourceId]
@@ -187,6 +195,7 @@ const emit = defineEmits<{
   'focus-finished': []
   'show-import': []
   'show-repository-note': [repository: any]
+  'show-repository-readme': [repository: any]
   'show-release': [repository: any]
   'close-export': []
   'source-content-entered': [sourceId: string]
@@ -202,7 +211,7 @@ const emit = defineEmits<{
             <small class="muted-text">{{ t('当前MOD下载渠道') }}: {{ repositorySourceRegionLabel(config?.region) }}</small>
           </div>
           <div class="button-row"><button class="secondary-button"
-              :disabled="!!busy || repositoryRefreshBatchActive || Object.values(sourceRefreshingManual).some(Boolean) || !(config?.repository_sources || []).length" @click="refreshAllRepositories">
+              :disabled="!!busy || repositoryRefreshBatchActive || community.refreshing.value || Object.values(sourceRefreshingManual).some(Boolean) || !(config?.repository_sources || []).length" @click="refreshAllRepositories">
               <RefreshCw :size="16" />{{ t('刷新全部仓库源') }}
             </button><button class="primary-button" @click="editRepo()">
               <Plus :size="16" />{{ t('添加仓库') }}
@@ -221,20 +230,28 @@ const emit = defineEmits<{
         </div>
         <div ref="repositoryList" class="repository-list">
           <template v-for="group in sourceGroups" :key="group.source.id">
-            <div :class="['source-section-shell', { 'source-section-loading': sourceCardLoading(group.source.id) }]">
+            <div :class="['source-section-shell', { 'source-section-loading': sourceCardLoading(group.source.id), 'community-source': group.source.id === COMMUNITY_SOURCE_ID }]" :data-source-id="group.source.id">
             <div :class="['source-sticky-stack', { 'source-sticky-stack-collapsed': sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id) }]">
-              <div :class="['source-section-heading', { 'source-section-heading-collapsed': sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id) }]">
+              <div :class="['source-section-heading', { 'source-section-heading-collapsed': sourceCollapsed[group.source.id] && !sourceRefreshing(group.source.id), 'community-source-heading': group.source.id === COMMUNITY_SOURCE_ID }]">
                 <button class="source-collapse-button"
                   :title="sourceCollapsed[group.source.id] ? t('展开') : t('折叠')" @click="toggleSource(group.source.id)">
                   <ChevronRight :size="18" :class="{ 'source-expanded': !sourceCollapsed[group.source.id] }" />
                 </button>
                 <div class="source-section-title">
                   <h3>{{ localizedRepositorySourceName(group.source) }}</h3>
-                </div><button v-if="group.source.id !== 'unclassified'" class="icon-button small" :title="t('刷新仓库源')"
+                </div>
+                <div v-if="group.source.id === COMMUNITY_SOURCE_ID" class="community-pagination" :aria-label="t('社区仓库分页')">
+                  <button class="icon-button small" :title="t('上一页')" :aria-label="t('上一页')"
+                    :disabled="community.searching.value || community.page.value <= 1" @click="community.setPage(community.page.value - 1)"><ArrowLeft :size="16" /></button>
+                  <span class="community-page-label" role="status">{{ community.page.value }} / {{ community.pageCount.value }}</span>
+                  <button class="icon-button small" :title="t('下一页')" :aria-label="t('下一页')"
+                    :disabled="community.searching.value || community.page.value >= community.pageCount.value" @click="community.setPage(community.page.value + 1)"><ArrowRight :size="16" /></button>
+                </div>
+                <button v-if="group.source.id !== 'unclassified'" class="icon-button small" :title="t('刷新仓库源')"
                   :disabled="!!busy || sourceBusy(group.source.id)"
                   @click="refreshSource(group.source.id)">
                   <RefreshCw :size="15"
-                    :class="{ 'spin-icon': sourceRefreshing(group.source.id) }" />
+                    :class="{ 'spin-icon': group.source.id === COMMUNITY_SOURCE_ID ? community.refreshing.value : sourceRefreshing(group.source.id) }" />
                 </button>
               </div>
               <div v-if="!sourceCollapsed[group.source.id] || sourceRefreshing(group.source.id)" class="source-sticky-gap" aria-hidden="true"></div>
@@ -243,6 +260,14 @@ const emit = defineEmits<{
               <div
                 v-if="!sourceCollapsed[group.source.id] && sourceRefreshPhase[group.source.id] !== 'clearing' && sourceRefreshPhase[group.source.id] !== 'loading'"
                 class="source-repository-panel source-content">
+                <div v-if="group.source.id === COMMUNITY_SOURCE_ID" class="community-discovery-notice">
+                  <p class="community-safety-warning"><AlertTriangle :size="18" />{{ t('以下为 GitHub 上带有 overcooked-2、bepinex、mod 标签的仓库，来源未知，安全性未知。请仔细检查仓库源码，再决定是否下载。') }}</p>
+                  <p v-if="community.discovery.value" class="muted-text">{{ t('本轮发现 {count} 个社区仓库，每页显示 10 个。').replace('{count}', String(community.discoveredCount.value)) }}</p>
+                  <p v-if="community.discovery.value?.truncated" class="community-discovery-warning">{{ t('GitHub 搜索最多返回前 1000 个结果，尚有仓库未展示。') }}</p>
+                  <p v-if="community.discovery.value?.incomplete_results" class="community-discovery-warning">{{ t('GitHub 返回的搜索结果不完整，可稍后刷新重试。') }}</p>
+                  <p v-if="community.releaseFailures.value" class="community-discovery-warning">{{ t('部分社区仓库 Release 刷新失败，可在对应仓库单独刷新。') }}</p>
+                  <p v-if="!community.searching.value && !community.repositories.value.length && !community.error.value" class="community-empty">{{ t('未发现符合标签的公开社区仓库') }}</p>
+                </div>
                 <template v-for="nestedGroup in flattenSourceGroups(group)"
                   :key="nestedGroup.source.id">
                   <div :class="nestedGroup.source.id === group.source.id ? undefined : ['source-child-block', { 'source-child-section-loading': sourceCardLoading(nestedGroup.source.id) }]"
@@ -296,24 +321,20 @@ const emit = defineEmits<{
                                 </div>
                                 <div class="repo-info">
                                   <div class="repo-title"><b>{{ localizedRepositoryName(repo) }}</b><span v-if="repo.builtin"
-                                      class="badge muted">{{ t('内置') }}</span><span v-if="!repo.enabled" class="badge muted">{{ t('未启用') }}</span><button v-if="['有更新', '最新版'].includes(repositoryInstallStatus(repo))" type="button"
+                                      class="badge muted">{{ t('内置') }}</span><span v-if="isCommunityRepository(repo)" class="badge muted">{{ t('社区 · 来源未知') }}</span><span v-if="isCommunityRepository(repo) && !community.discoveredIds.value.has(repo.id)" class="badge muted">{{ t('已安装仓库，本轮未发现') }}</span><span v-if="!repo.enabled" class="badge muted">{{ t('未启用') }}</span><button v-if="['有更新', '最新版'].includes(repositoryInstallStatus(repo))" type="button"
                                       class="badge mod-update-link" :class="repositoryInstallStatus(repo) === '有更新' ? 'warning' : 'success'"
                                       @click="dynamicProps.openRepositoryMods(repo)">{{ t(repositoryInstallStatus(repo)) }}</button><span v-else-if="repositoryInstallStatus(repo)" class="badge"
                                       :class="['有更新', '检查中', '待检查'].includes(repositoryInstallStatus(repo)) ? 'warning' : 'success'">{{
                                         t(repositoryInstallStatus(repo)) }}</span>
                                   </div>
-                                  <div v-if="localizedRepositoryNote(repo) && !repositoryNoteIsLong(repo)"
-                                    class="repo-note markdown-body" v-html="renderMarkdown(localizedRepositoryNote(repo))">
-                                  </div><button v-else-if="localizedRepositoryNote(repo)" class="repo-note-button"
-                                    @click="$emit('show-repository-note', repo)">
-                                    <FileText :size="13" />{{ t('查看 MOD 简介') }}
-                                  </button>
+                                  <RepositoryDescription :note="localizedRepositoryNote(repo)" :community="isCommunityRepository(repo)"
+                                    @note="emit('show-repository-note', repo)" @readme="emit('show-repository-readme', repo)" />
                                 </div>
                                 <div class="repo-controls">
-                                  <div v-if="repo.download_mode === 'release'" class="repo-release"><b>{{ latest(repo)?.version || '—' }}</b><span>{{ latest(repo) ?
+                                  <div v-if="repo.download_mode === 'release'" class="repo-release"><b>{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b><span>{{ latest(repo) ?
                                     formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
                                   <button class="primary-button small-button" :title="t('下载并安装')"
-                                    :disabled="gameBlocked || !!repositoryRefreshing[repo.id] || (repo.download_mode === 'release' && !installReleases(repo).length && !repo.last_error) || (repo.download_mode === 'repository_file' && (!repo.branch?.trim() || !repo.file_path?.trim())) || !!busy"
+                                    :disabled="gameBlocked || !!repositoryRefreshing[repo.id] || (repo.download_mode === 'repository_file' && (!repo.branch?.trim() || !repo.file_path?.trim())) || !!busy"
                                     @click="installRepo(repo)">
                                     <Download :size="14" />{{ t('下载并安装') }}
                                   </button>
@@ -327,9 +348,9 @@ const emit = defineEmits<{
                                     </button><button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('打开发布页')"
                                       :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(`https://${repo.provider === 'github' ? 'github.com' : 'gitee.com'}/${encodeURIComponent(repo.username)}/${encodeURIComponent(repo.repository)}/releases`)">
                                       <ExternalLink :size="14" />
-                                    </button><button class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
+                                    </button><button v-if="!isCommunityRepository(repo)" class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
                                       <Pencil :size="14" />
-                                    </button><button class="icon-button small danger-icon" :title="t('删除仓库')"
+                                    </button><button v-if="!isCommunityRepository(repo)" class="icon-button small danger-icon" :title="t('删除仓库')"
                                       :disabled="repo.builtin" @click="deleteRepo(repo)">
                                       <Trash2 :size="14" />
                                     </button>

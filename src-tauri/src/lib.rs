@@ -2,6 +2,7 @@ mod app_update;
 mod archive;
 mod bepinex;
 mod commands;
+mod community;
 mod config;
 mod direct_mod;
 mod download;
@@ -14,6 +15,7 @@ mod models;
 mod mods;
 mod recycle_bin;
 mod releases;
+mod repository_readme;
 mod repository_sources;
 mod update_migration;
 mod user_paths;
@@ -122,6 +124,10 @@ pub fn run() {
             commands::set_game_path,
             commands::reset_game_path,
             commands::refresh_repository,
+            community::refresh_community_repositories,
+            community::cancel_community_search,
+            repository_readme::get_repository_readme,
+            repository_readme::cancel_repository_readme,
             commands::get_repository_releases,
             commands::install_bepinex,
             commands::uninstall_bepinex,

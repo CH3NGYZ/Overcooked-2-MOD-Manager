@@ -126,6 +126,8 @@ impl DownloadReporter {
 pub struct InstallManifest {
     pub repository_id: String,
     pub release_tag: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_binding: Option<crate::models::RepositoryBinding>,
     #[serde(default)]
     pub package_name: Option<String>,
     #[serde(default)]
@@ -1575,6 +1577,7 @@ pub fn new_manifest(
     InstallManifest {
         repository_id: repository_id.into(),
         release_tag: release_tag.into(),
+        repository_binding: None,
         package_name: package_name.map(str::to_string),
         note: note.map(str::to_string),
         installed_at: Utc::now().to_rfc3339(),

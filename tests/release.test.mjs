@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,6 +7,7 @@ import test from 'node:test'
 import { buildUpdateKeys, updateFiles } from '../scripts/build-release.mjs'
 import { GitHubRelease } from '../scripts/github-release.mjs'
 import { aggregateManifest, prepareRelease } from '../scripts/release.mjs'
+import { signingFixture } from './fixtures/updater-signing.mjs'
 import {
   BUILD_KEYS, PLATFORM_KEYS, RELEASE_OWNER, RELEASE_REPO, assertDraftRelease,
   collectUpdateAssets, readProject, releaseTag, updateAssetKey, updateManifest,
@@ -36,23 +37,8 @@ function projectInputs() {
   }
 }
 
-function signingFixture() {
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
-  const keyId = randomBytes(8)
-  const key = Buffer.concat([Buffer.from('Ed'), keyId, publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)])
-  const encodedPublicKey = Buffer.from(`untrusted comment: public test key\n${key.toString('base64')}\n`).toString('base64')
-  const signatureFor = (bytes, version = '1.2.0', algorithm = 'ED') => {
-    const message = algorithm === 'ED' ? createHash('blake2b512').update(bytes).digest() : bytes
-    const raw = sign(null, message, privateKey)
-    const comment = `timestamp:1\tfile:fixture\tversion:${version}`
-    const global = sign(null, Buffer.concat([raw, Buffer.from(comment)]), privateKey)
-    return Buffer.from(`untrusted comment: public test signature\n${Buffer.concat([Buffer.from(algorithm), keyId, raw]).toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`).toString('base64')
-  }
-  return { encodedPublicKey, signatureFor }
-}
-
 function releaseFixture() {
-  const signer = signingFixture()
+  const signer = signingFixture('1.2.0')
   const files = new Map()
   const assets = []
   for (const name of names) {

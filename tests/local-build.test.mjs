@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
@@ -9,8 +9,17 @@ import { readProject } from '../scripts/release-lib.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const documents = ['src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'src-tauri/tauri.conf.json', 'package.json', 'package-lock.json']
-const versionBat = readFileSync(join(root, 'build with tag.bat'), 'utf8')
+const hasLocalBats = ['build.bat', 'build with tag.bat'].every(file => existsSync(join(root, file)))
+const versionBat = hasLocalBats ? readFileSync(join(root, 'build with tag.bat'), 'utf8') : ''
 const updater = versionBat.replace(/\r\n/g, '\n').split('\n// VERSION_UPDATE_NODE\n')[1]
+
+function localTest(name, optionsOrBody, body) {
+  const options = typeof optionsOrBody === 'function' ? {} : optionsOrBody
+  return test(name, {
+    ...options,
+    skip: hasLocalBats ? options.skip : 'Local-only BAT files are not included in Git checkouts',
+  }, body ?? optionsOrBody)
+}
 
 function workspace(t, suffix = '') {
   const base = resolve(root, 'src-tauri/target/verification/local-build-tests')
@@ -88,7 +97,7 @@ function updateVersion(directory, version, prefix = '') {
   })
 }
 
-test('both BAT entries share Actions signing, an explicit x64 target and an exact current-version installer', () => {
+localTest('both BAT entries share Actions signing, an explicit x64 target and an exact current-version installer', () => {
   const build = readFileSync(join(root, 'build.bat'), 'utf8')
   assert.ok(build.includes('node scripts/build-release.mjs build --target %BUILD_TARGET% --bundles nsis'))
   assert.ok(build.includes('set "BUILD_TARGET=x86_64-pc-windows-msvc"'))
@@ -102,31 +111,24 @@ test('both BAT entries share Actions signing, an explicit x64 target and an exac
   assert.ok(versionBat.includes('call "%~dp0build.bat" %*'))
 })
 
-test('the build BAT uses ASCII commands and CRLF without a BOM', () => {
+localTest('the build BAT uses ASCII commands and CRLF without a BOM', () => {
   const bytes = readFileSync(join(root, 'build.bat'))
   assert.ok(bytes.every(value => value < 128), 'Non-ASCII batch comments can be misparsed after CHCP changes')
   assert.ok(!bytes.toString().replace(/\r\n/g, '').includes('\n'), 'Batch commands must use CRLF')
 })
 
-test('Git checkout keeps both BAT entries CRLF without platform automatic conversion', t => {
+localTest('both local-only BAT entries retain CRLF without a BOM', t => {
   const directory = workspace(t)
-  const checkout = join(directory, 'checkout')
-  mkdirSync(checkout)
-  const result = spawnSync('git', ['-c', 'core.autocrlf=false', 'checkout-index',
-    `--prefix=${checkout.replaceAll('\\', '/')}/`, '--', 'build.bat', 'build with tag.bat'], {
-    cwd: root, encoding: 'utf8', windowsHide: true,
-  })
-  assert.equal(result.status, 0, result.error?.message || result.stderr)
   for (const file of ['build.bat', 'build with tag.bat']) {
-    const bytes = readFileSync(join(checkout, file))
-    assert.ok(!bytes.toString().replace(/\r\n/g, '').includes('\n'), `${file} must be checked out as CRLF on every platform`)
+    const bytes = readFileSync(join(directory, file))
+    assert.ok(!bytes.toString().replace(/\r\n/g, '').includes('\n'), `${file} must retain CRLF`)
     assert.ok(!bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), `${file} must not contain a BOM`)
   }
 })
 
 for (const codePage of [936, 65001]) {
   for (const mode of ['', 'noenv', 'clean']) {
-    test(`Windows build BAT preserves NSIS arguments and both output streams (${codePage}, ${mode || 'default'})`, {
+    localTest(`Windows build BAT preserves NSIS arguments and both output streams (${codePage}, ${mode || 'default'})`, {
       skip: process.platform !== 'win32',
     }, t => {
       const { directory, result } = runBuildBat(t, mode, codePage)
@@ -152,7 +154,7 @@ for (const codePage of [936, 65001]) {
   }
 }
 
-test('Windows build BAT preserves a successful build exit and refuses a missing current-version installer', {
+localTest('Windows build BAT preserves a successful build exit and refuses a missing current-version installer', {
   skip: process.platform !== 'win32',
 }, t => {
   const { directory, result } = runBuildBat(t, '', 936, 0)
@@ -167,7 +169,7 @@ test('Windows build BAT preserves a successful build exit and refuses a missing 
   }
 })
 
-test('the actual BAT version updater synchronizes Cargo.lock and leaves dependency versions unchanged', t => {
+localTest('the actual BAT version updater synchronizes Cargo.lock and leaves dependency versions unchanged', t => {
   const directory = workspace(t)
   const before = snapshot(directory)
   const version = '9.8.7'
@@ -187,7 +189,7 @@ test('the actual BAT version updater synchronizes Cargo.lock and leaves dependen
   }
 })
 
-test('invalid input and a malformed app lock entry fail before changing any project version', t => {
+localTest('invalid input and a malformed app lock entry fail before changing any project version', t => {
   const directory = workspace(t)
   const original = snapshot(directory)
   for (const version of ['v1.2.0', '01.2.0', '1.2.0-beta', '1.2.0 & echo invalid']) {
@@ -201,7 +203,7 @@ test('invalid input and a malformed app lock entry fail before changing any proj
   assert.deepEqual(snapshot(directory), malformed)
 })
 
-test('a version file write failure restores every previously written project document', t => {
+localTest('a version file write failure restores every previously written project document', t => {
   const directory = workspace(t)
   const original = snapshot(directory)
   const fault = `
@@ -222,7 +224,7 @@ test('a version file write failure restores every previously written project doc
   assert.deepEqual(snapshot(directory), original)
 })
 
-test('Windows executes the real version BAT and forwards noenv/clean to a harmless build stub', { skip: process.platform !== 'win32' }, t => {
+localTest('Windows executes the real version BAT and forwards noenv/clean to a harmless build stub', { skip: process.platform !== 'win32' }, t => {
   const directory = workspace(t)
   writeFileSync(join(directory, 'build.bat'), '@echo off\r\necho FORWARDED_ARGS=%*\r\nexit /b 0\r\n')
   for (const argument of ['noenv', 'clean']) {

@@ -106,7 +106,8 @@ pub(crate) fn repository_address_key(
 }
 
 fn repository_source_matches_region(source: &RepositorySource, region: &str) -> bool {
-    region_matches(source.region.as_deref(), region)
+    (source.id != crate::community::GITEE_SOURCE_ID || region == REGION_CHINESE_MAINLAND)
+        && region_matches(source.region.as_deref(), region)
 }
 
 pub(crate) fn repository_matches_channel(
@@ -114,7 +115,8 @@ pub(crate) fn repository_matches_channel(
     repository: &RepositoryConfig,
     region: &str,
 ) -> bool {
-    region_matches(repository.region.as_deref(), region)
+    crate::community::ensure_repository_region(repository, region).is_ok()
+        && region_matches(repository.region.as_deref(), region)
         && repository.source_id.as_deref().is_none_or(|source_id| {
             config.repository_sources.iter().any(|source| {
                 source.id == source_id && repository_source_matches_region(source, region)
@@ -355,6 +357,7 @@ impl ConfigService {
             repositories,
             repository_sources: config.repository_sources.clone(),
             community_discovery: config.community_discovery.clone(),
+            gitee_community_discovery: config.gitee_community_discovery.clone(),
             github_proxies: config.github_proxies.clone(),
         }
     }
@@ -584,7 +587,7 @@ impl ConfigService {
             conflict
         );
         for source in &bundle.repository_sources {
-            if source.id == crate::community::SOURCE_ID
+            if crate::community::is_source(&source.id)
                 || source.builtin
                 || config.repository_sources.iter().any(|existing| {
                     crate::repository_sources::source_address_key(
@@ -741,6 +744,7 @@ fn default_config() -> AppConfig {
         repositories: Vec::new(),
         repository_sources: builtin_repository_sources(),
         community_discovery: None,
+        gitee_community_discovery: None,
         source_repository_ids: Default::default(),
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
@@ -1136,7 +1140,7 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         source_id: repo
             .source_id
             .clone()
-            .filter(|id| id != crate::community::SOURCE_ID),
+            .filter(|id| !crate::community::is_source(id)),
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
@@ -1355,6 +1359,33 @@ value = "RegionalMod.dll"
             &repository,
             REGION_INTERNATIONAL
         ));
+    }
+
+    #[test]
+    fn saved_gitee_community_without_region_is_blocked_outside_mainland() {
+        let mut config = default_config();
+        let mut source = crate::community::source(&Provider::Gitee);
+        source.region = None;
+        config.repository_sources.push(source);
+        let mut repo =
+            crate::community::repository_from_coordinates(&Provider::Gitee, "Owner", "Mod", "", "")
+                .unwrap();
+        repo.region = None;
+        assert!(repository_matches_channel(
+            &config,
+            &repo,
+            REGION_CHINESE_MAINLAND
+        ));
+        assert!(!repository_matches_channel(
+            &config,
+            &repo,
+            REGION_INTERNATIONAL
+        ));
+        assert!(!repository_matches_channel(&config, &repo, ""));
+        assert_eq!(
+            config.repositories.len(),
+            default_config().repositories.len()
+        );
     }
 
     #[test]
@@ -1911,7 +1942,9 @@ builtin = true
         repository.source_id = Some(crate::community::SOURCE_ID.into());
         let mut config = default_config();
         config.repositories.push(repository.clone());
-        config.repository_sources.push(crate::community::source());
+        config
+            .repository_sources
+            .push(crate::community::source(&Provider::Github));
         config.community_discovery = Some(crate::models::CommunityDiscovery {
             repository_ids: vec![repository.id.clone()],
             total_count: 1,

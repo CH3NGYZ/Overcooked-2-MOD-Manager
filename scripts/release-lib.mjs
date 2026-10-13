@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const RELEASE_OWNER = 'CH3NGYZ'
-export const RELEASE_REPO = 'Overcooked-2-MOD-Manager-Code'
+export const RELEASE_REPO = 'Overcooked-2-MOD-Manager'
 export const BUILD_KEYS = {
   'x86_64-pc-windows-msvc': ['windows-x86_64-nsis', 'windows-x86_64-msi'],
   'x86_64-unknown-linux-gnu': ['linux-x86_64-appimage', 'linux-x86_64-deb', 'linux-x86_64-rpm'],

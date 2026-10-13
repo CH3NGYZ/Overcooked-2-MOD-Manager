@@ -85,6 +85,7 @@ export interface PublicConfig {
   repositories: Repository[]
   repository_sources: RepositorySource[]
   community_discovery?: CommunityDiscovery | null
+  gitee_community_discovery?: CommunityDiscovery | null
   github_proxies: GitHubProxyConfig
 }
 export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }

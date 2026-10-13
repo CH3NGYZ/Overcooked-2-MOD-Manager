@@ -309,7 +309,7 @@ test('draft retries explicitly retain the version tag when GitHub normalizes an 
 
 test('Actions writes drafts and updater manifests to this code repository with its scoped GITHUB_TOKEN', () => {
   const workflow = readFileSync(join(root, '.github/workflows/build.yml'), 'utf8')
-  assert.equal(RELEASE_REPO, 'Overcooked-2-MOD-Manager-Code')
+  assert.equal(RELEASE_REPO, 'Overcooked-2-MOD-Manager')
   assert.ok(workflow.includes(`repo: ${RELEASE_REPO}`))
   assert.ok(!workflow.includes('RELEASE_REPOSITORY_TOKEN'))
   assert.ok(workflow.includes("if: inputs.mode != 'test' && !github.event.deleted"))

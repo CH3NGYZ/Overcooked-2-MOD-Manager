@@ -24,6 +24,14 @@ const { outputText: assetMatcherModule } = ts.transpileModule(`export ${assetMat
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 })
 const { assetMatchesUi } = await import(`data:text/javascript;base64,${Buffer.from(assetMatcherModule).toString('base64')}`)
+const matchingAssetsSource = appSource.match(/function matchingInstallAssets\([\s\S]*?\n\}/)?.[0]
+assert.ok(matchingAssetsSource, 'Load the actual asset selection used by the install dialog')
+const { outputText: matchingAssetsModule } = ts.transpileModule(`
+import * as catalogue from '${catalogueUrl}'
+const { isCommunitySourceArchive } = catalogue
+${assetMatcherSource}
+export ${matchingAssetsSource}`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
+const { matchingInstallAssets } = await import(`data:text/javascript;base64,${Buffer.from(matchingAssetsModule).toString('base64')}`)
 
 function repository(id, patch = {}) {
   return { id, name: id, provider: 'github', username: 'Owner', repository: id, download_mode: 'release',
@@ -71,6 +79,49 @@ test('official coordinates hide community duplicates without hiding custom or ot
   assert.equal(config.repositories.length, 8, 'Filtering must not erase installed bindings or official configuration')
   assert.deepEqual([...catalogue.communityNavigationTargets(config.repositories, new Set(['duplicate', 'custom-match', 'github-match']))],
     ['duplicate', 'custom-match', 'github-match', 'official'], 'Hidden installed duplicates navigate to the official card without cross-provider substitutions')
+})
+
+test('Gitee discovery has its own catalogue, official dedup, pagination and navigation identity', () => {
+  const gitee = (id, patch = {}) => repository(id, { provider: 'gitee', source_id: catalogue.GITEE_COMMUNITY_SOURCE_ID, ...patch })
+  const official = gitee('official-gitee', { repository: 'Listed', source_id: 'official-child', builtin: true, enabled: false })
+  const hidden = gitee('hidden', { repository: 'listed' })
+  const found = Array.from({ length: 21 }, (_, index) => gitee(`gitee-${index}`))
+  const github = repository('github', { repository: 'gitee-0' })
+  const config = { region: 'chinese_mainland', repositories: [official, hidden, github, ...found],
+    community_discovery: { repository_ids: [github.id] },
+    gitee_community_discovery: { repository_ids: [...found].reverse().map((repo) => repo.id) } }
+  const ordered = catalogue.orderedCommunityRepositories(config, 'gitee')
+  assert.equal(ordered.length, 21)
+  assert.deepEqual(catalogue.orderedCommunityRepositories(config).map((repo) => repo.id), ['github'])
+  assert.equal(catalogue.communityPage(ordered, 2)[0].id, 'gitee-10')
+  assert.equal(catalogue.communitySourceId('gitee'), 'gitee-community')
+  assert.equal(catalogue.isCommunitySource('gitee-community'), true)
+  assert.equal(catalogue.isCommunitySource('official-child'), false)
+  assert.deepEqual([...catalogue.communityNavigationTargets(config.repositories, new Set(['hidden', 'github']))],
+    ['hidden', 'github', 'official-gitee'])
+})
+
+test('Gitee community is invisible outside mainland China without deleting saved bindings', () => {
+  const repo = repository('saved-gitee', { provider: 'gitee', source_id: catalogue.GITEE_COMMUNITY_SOURCE_ID })
+  for (const region of ['international', undefined, '']) {
+    const config = { region, repositories: [repo] }
+    assert.deepEqual(catalogue.orderedCommunityRepositories(config, 'gitee'), [], String(region))
+    assert.equal(config.repositories.length, 1)
+  }
+  assert.deepEqual(catalogue.orderedCommunityRepositories({ region: 'chinese_mainland', repositories: [repo] }, 'gitee'), [repo])
+})
+
+test('actual install asset selection excludes Tag ZIPs only for Gitee community, including old cached Releases', () => {
+  const rules = [{ type: 'regex', value: '^.+\\.(?:[dD][lL][lL]|[zZ][iI][pP])$' }]
+  const cases = JSON.parse(readFileSync(new URL('./fixtures/gitee-source-assets.json', import.meta.url), 'utf8'))
+  for (const [tag, name, allowed] of cases) {
+    const info = { ...release(tag), assets: [{ name, download_url: 'https://gitee.com/file' }] }
+    for (const [provider, source_id, restricted] of [['gitee', 'gitee-community', true], ['gitee', 'official', false],
+      ['gitee', undefined, false], ['github', 'github-community', false]]) {
+      const repo = repository('mod', { provider, source_id, asset_rules: rules })
+      assert.equal(matchingInstallAssets(repo, info).length, restricted && !allowed ? 0 : 1, `${provider}/${source_id}: ${tag}/${name}`)
+    }
+  }
 })
 
 test('generated community asset rules work in the actual frontend install matcher', () => {
@@ -131,7 +182,7 @@ function hostFixture(patch = {}) {
   return { calls, config, allowed, controller, scope }
 }
 
-test('discovery is gated until official loading settles, and all Releases start only after search', async () => {
+test('discovery is gated until official Raw loading settles, and community Releases start only after search', async () => {
   const fixture = hostFixture()
   const { calls, allowed, controller, scope } = fixture
   try {
@@ -214,4 +265,33 @@ test('disposal cancels only the community request and ignores a late completion'
   assert.equal(await task, false)
   assert.deepEqual(fixture.calls, ['before', 'cancel'])
   assert.equal(fixture.controller.refreshing.value, false)
+})
+
+test('disposing Gitee search does not cancel or block the GitHub controller sharing the configuration', async () => {
+  let finishGitee
+  let finishGithub
+  const giteeWait = new Promise((resolve) => { finishGitee = resolve })
+  const githubWait = new Promise((resolve) => { finishGithub = resolve })
+  const config = ref({ repositories: [repository('github'), repository('gitee', {
+    provider: 'gitee', source_id: catalogue.GITEE_COMMUNITY_SOURCE_ID,
+  })] })
+  const github = hostFixture({ config, search: () => githubWait })
+  const gitee = hostFixture({ config, provider: 'gitee', search: () => giteeWait })
+  try {
+    github.allowed.value = gitee.allowed.value = true
+    const githubTask = github.controller.refresh()
+    const giteeTask = gitee.controller.refresh()
+    await nextTick()
+    gitee.scope.stop()
+    assert.deepEqual(gitee.calls, ['before', 'cancel'])
+    assert.equal(github.controller.searching.value, true)
+    assert.equal(github.calls.includes('cancel'), false)
+    finishGithub()
+    assert.equal(await githubTask, true)
+    assert.deepEqual(github.calls, ['before', 'config', 'releases:1', 'dashboard'])
+    finishGitee()
+    assert.equal(await giteeTask, false)
+    assert.deepEqual(gitee.calls, ['before', 'cancel'])
+    assert.deepEqual(config.value.repositories.map((repo) => repo.id), ['github', 'gitee'])
+  } finally { finishGithub(); finishGitee(); github.scope.stop(); gitee.scope.stop() }
 })

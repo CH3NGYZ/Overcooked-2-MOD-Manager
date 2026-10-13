@@ -12,9 +12,9 @@ import type { AppUpdateCheckResult, AppUpdateInfo, BepInExInstallResult, ConfigE
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
-import { renderMarkdown } from './markdown'
+import { markdownLinkUrl, renderMarkdown, repositoryMarkdownBaseUrl } from './markdown'
 import { hasLocalUpdateVersion, modRepositoryReleaseState } from './modUpdates'
-import { COMMUNITY_SOURCE_ID, communityNavigationTargets, isCommunityRepository } from './communityRepositories'
+import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 import AppSidebar from './components/AppSidebar.vue'
@@ -122,6 +122,7 @@ const startupError = ref('')
 const sourceCollapsed = reactive<Record<string, boolean>>({})
 const repositoryGroupCollapsed = reactive<Record<string, boolean>>({})
 const sourceLoading = reactive<Record<string, boolean>>({})
+const sourceDocumentsLoading = reactive<Record<string, boolean>>({})
 const sourceRefreshPhase = reactive<Record<string, 'clearing' | 'loading' | 'adding' | 'refreshing'>>({})
 const sourceErrors = reactive<Record<string, string>>({})
 const sourceContentRevealing = reactive<Record<string, boolean>>({})
@@ -237,30 +238,46 @@ const displayDashboard = tutorialRuntime.displayDashboard
 const game = computed(() => displayDashboard.value?.game)
 const config = computed(() => displayDashboard.value?.config)
 const realGame = computed(() => dashboard.value?.game)
-const community = useCommunityRepositories({
-  config: computed(() => dashboard.value?.config),
-  canRefresh: () => !appUnmounted && initialRepositorySourcesLoaded.value
-    && !tutorial.blocksRepositoryRefresh.value
-    && !Object.values(sourceLoading).some(Boolean)
-    && !Object.values(sourceRefreshingManual).some(Boolean),
-  search: api.refreshCommunityRepositories,
-  cancel: api.cancelCommunitySearch,
-  beforeSearch: async () => {
-    await Promise.all([...repositoryRefreshTasks.values(), dashboardUpdateQueue])
-    if (appUnmounted) return
-    for (const repo of dashboard.value?.config.repositories.filter(isCommunityRepository) ?? []) {
-      repositoryReleaseReady[repo.id] = false
-      repo.cached_releases = []
-      repo.last_error = undefined
-    }
-  },
-  refreshConfig: refreshConfigSerialized,
-  refreshReleases: (repositories) => refreshRepositoryBatch(repositories, 4),
-  refreshDashboard: refreshDashboardSerialized,
-})
+function createCommunity(provider: Provider) {
+  return useCommunityRepositories({
+    provider,
+    config: computed(() => dashboard.value?.config),
+    canRefresh: () => !appUnmounted && initialRepositorySourcesLoaded.value
+      && communityProviderMatchesRegion(provider, dashboard.value?.config.region)
+      && !tutorial.blocksRepositoryRefresh.value
+      && !(dashboard.value?.config.repository_sources ?? []).some((source) => source.builtin && !source.parent_id
+        && [...sourceDescendantIds(source.id)].some((id) => sourceDocumentsLoading[id])),
+    search: () => api.refreshCommunityRepositories(provider),
+    cancel: () => api.cancelCommunitySearch(provider),
+    beforeSearch: async () => {
+      // Only this provider's old Releases gate a replacement search.
+      await Promise.all([
+        dashboardUpdateQueue,
+        ...(dashboard.value?.config.repositories.filter((repo) => isCommunityRepository(repo, provider)) ?? [])
+          .map((repo) => repositoryRefreshTasks.get(repo.id)),
+      ])
+      if (appUnmounted) return
+      for (const repo of dashboard.value?.config.repositories.filter((repo) => isCommunityRepository(repo, provider)) ?? []) {
+        repositoryReleaseReady[repo.id] = false
+        repo.cached_releases = []
+        repo.last_error = undefined
+      }
+    },
+    refreshConfig: refreshConfigSerialized,
+    refreshReleases: (repositories) => refreshRepositoryBatch(repositories, 4),
+    refreshDashboard: refreshDashboardSerialized,
+  })
+}
+const community = createCommunity('github')
+const giteeCommunity = createCommunity('gitee')
+const communities = [community, giteeCommunity]
+function communityForSource(sourceId: string) {
+  return communities.find((discovery) => discovery.sourceId === sourceId)
+}
 const displayProgress = tutorialRuntime.displayProgress
 function sourceMatchesRegion(source: RepositorySource) {
-  return repositoryRegionMatches(source.region, config.value?.region)
+  return (source.id !== GITEE_COMMUNITY_SOURCE_ID || communityProviderMatchesRegion('gitee', config.value?.region))
+    && repositoryRegionMatches(source.region, config.value?.region)
 }
 function repositorySourceRegionLabel(region?: string) {
   const normalized = normalizeRepositoryRegion(region)
@@ -290,6 +307,7 @@ type SourceGroup = {
   source: RepositorySource
   groups: ReturnType<typeof groupedRepositories>
   children: SourceGroup[]
+  community?: ReturnType<typeof useCommunityRepositories>
 }
 type FlattenedSourceGroup = SourceGroup & { depth: number }
 type RepositorySourceManagerEntry = { source: RepositorySource; depth: number }
@@ -316,15 +334,19 @@ const sourceGroups = computed(() => {
     children: (childrenByParent.get(source.id) || []).map(buildGroup),
   })
   const groups = sources
-    .filter((source) => source.id !== COMMUNITY_SOURCE_ID && (!source.parent_id || !visibleSourceIds.has(source.parent_id)))
+    .filter((source) => !isCommunitySource(source.id) && (!source.parent_id || !visibleSourceIds.has(source.parent_id)))
     .map(buildGroup)
   const unclassified = repos.value.filter((repo) => !repo.builtin
     && (!repo.source_id || !visibleSourceIds.has(repo.source_id)))
   if (unclassified.length) groups.push({ source: { id: 'unclassified', nickname: t('未分类仓库'), url: '', builtin: false }, groups: groupedRepositories(unclassified), children: [] })
-  if (!tutorial.visible.value && !tutorial.previewing.value && community.started.value) {
-    const source = sources.find((source) => source.id === COMMUNITY_SOURCE_ID)
-      ?? { id: COMMUNITY_SOURCE_ID, nickname: t('GitHub 社区仓库'), url: 'https://api.github.com/search/repositories', builtin: false }
-    groups.push({ source, groups: [{ key: '', label: '', repositories: community.visibleRepositories.value }], children: [] })
+  if (!tutorial.visible.value && !tutorial.previewing.value) {
+    for (const discovery of communities) {
+      if (!discovery.started.value || !communityProviderMatchesRegion(discovery.provider, config.value?.region)) continue
+      const source = sources.find((source) => source.id === discovery.sourceId)
+        ?? { id: discovery.sourceId, nickname: t(discovery.provider === 'gitee' ? 'Gitee 社区仓库' : 'GitHub 社区仓库'),
+          url: discovery.provider === 'gitee' ? GITEE_COMMUNITY_TOPIC_URL : 'https://api.github.com/search/repositories', builtin: false }
+      groups.push({ source, groups: [{ key: '', label: '', repositories: discovery.visibleRepositories.value }], children: [], community: discovery })
+    }
   }
   return groups
 })
@@ -339,7 +361,9 @@ function collectSourceGroupRepositoryIds(groups: SourceGroup[], ids = new Set<st
 }
 const displayedRepositoryIds = computed(() => collectSourceGroupRepositoryIds(sourceGroups.value))
 const listedRepositoryIds = computed(() => new Set([...displayedRepositoryIds.value,
-  ...(!tutorial.visible.value && !tutorial.previewing.value && community.started.value ? community.repositories.value.map((repo) => repo.id) : [])]))
+  ...(!tutorial.visible.value && !tutorial.previewing.value
+    ? communities.flatMap((discovery) => discovery.started.value && communityProviderMatchesRegion(discovery.provider, config.value?.region)
+      ? discovery.repositories.value.map((repo) => repo.id) : []) : [])]))
 const displayedRepositoryCount = computed(() => listedRepositoryIds.value.size)
 const installableRepositoryCount = computed(() => repos.value.filter((repo) => listedRepositoryIds.value.has(repo.id)
   && repo.enabled
@@ -498,7 +522,7 @@ const repositoryRefreshBatchTotal = ref(0)
 const repositoryRefreshBatchCompleted = ref(0)
 const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => modReleaseUpdateStatus(mod) === '有更新').length)
 const repositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
-  || community.refreshing.value
+  || communities.some((discovery) => discovery.refreshing.value)
   || Object.values(repositoryRefreshing).some(Boolean)
   || Object.values(sourceLoading).some(Boolean)
   || Object.values(sourceRefreshingManual).some(Boolean))
@@ -651,7 +675,7 @@ function openModRepository(mod: InstalledMod, packageStatus?: string) {
     repo.provider === candidate.provider && repo.username.toLowerCase() === candidate.username.toLowerCase()
     && repo.repository.toLowerCase() === candidate.repository.toLowerCase())
     && children.some((child) => modReleaseRepositoryIds(child).has(repo.id))).map((repo) => repo.id)))
-  community.reveal(targets)
+  for (const discovery of communities) discovery.reveal(targets)
   const visibleIds: string[] = []
   function expandTargets(groups: SourceGroup[]): boolean {
     let found = false
@@ -809,7 +833,9 @@ async function installRepo(repo: Repository) {
         title: t(!refreshed ? '请先刷新 Release' : hasReleases ? '没有匹配的 Release 资产' : '没有可安装的 Release'),
         message: t(!refreshed ? '请先刷新此仓库，直到版本号出现，再点击“下载并安装”。'
           : !hasReleases ? '此仓库尚未发布可安装的 Release，请查看仓库说明或发布页。'
-            : isCommunityRepository(repo) ? '此仓库的 Release 中没有 ZIP 或 DLL 资产，GitHub 自动生成的源码包不能作为 MOD 安装。'
+            : isCommunityRepository(repo) ? (repo.provider === 'gitee'
+              ? '此仓库的 Release 中没有 ZIP 或 DLL 资产，源码包不能作为 MOD 安装。'
+              : '此仓库的 Release 中没有 ZIP 或 DLL 资产，GitHub 自动生成的源码包不能作为 MOD 安装。')
               : '此仓库的 Release 中没有符合资产规则的文件，请检查发布资产或资产规则。'),
         acknowledge: true,
       })
@@ -842,7 +868,14 @@ function installReleases(repo: Repository | null) {
 }
 function matchingInstallAssets(repo: Repository, release: import('./types').ReleaseInfo) {
   if (repo.download_mode === 'repository_file') return []
-  return release.assets.filter((asset) => !!asset.download_url && repo.asset_rules.some((rule) => assetMatchesUi(asset.name, rule)))
+  return release.assets.filter((asset) => !!asset.download_url && !isCommunitySourceArchive(repo, release, asset.name)
+    && repo.asset_rules.some((rule) => assetMatchesUi(asset.name, rule)))
+}
+async function openReleaseLogLink(event: MouseEvent) {
+  const url = markdownLinkUrl(event)
+  if (!url) return
+  try { await api.openReleasePage(url) }
+  catch (reason) { showError(reason) }
 }
 function selectedInstallRelease(repo: Repository | null) { return installReleases(repo).find((release) => release.tag_name === selectedInstallTag.value) }
 function selectedInstallAssets(repo: Repository | null) {
@@ -1197,8 +1230,50 @@ async function refreshMappedRepositoryUpdates() {
     installedModsChecking.value = false
   }
 }
-type SourceRefreshOptions = { updateDashboard?: boolean; notify?: boolean; builtinFallback?: boolean }
-type SourceRefreshResult = { ok: boolean; releaseFailures: number; error?: string; accessFailed?: boolean }
+type SourceLoadResult = { ok: boolean; error?: string; accessFailed?: boolean }
+type SourceRefreshOptions = { updateDashboard?: boolean; notify?: boolean; builtinFallback?: boolean; onSourcesLoaded?: (result: SourceLoadResult) => void }
+type SourceRefreshResult = SourceLoadResult & { releaseFailures: number }
+
+function startSourceRefresh(sourceId: string, options: SourceRefreshOptions = {}, visited = new Set<string>()) {
+  let completeLoading!: (result: SourceLoadResult) => void
+  const loaded = new Promise<SourceLoadResult>((resolve) => { completeLoading = resolve })
+  const result = refreshSource(sourceId, {
+    ...options,
+    onSourcesLoaded: (result) => {
+      completeLoading(result)
+      options.onSourcesLoaded?.(result)
+    },
+  }, visited).catch((reason) => {
+    const result = { ok: false, releaseFailures: 0, error: reason instanceof Error ? reason.message : String(reason) }
+    completeLoading(result)
+    return result
+  })
+  return { loaded, result }
+}
+
+async function refreshRootSources(sources: RepositorySource[]) {
+  const previouslyLoaded = initialRepositorySourcesLoaded.value
+  initialRepositorySourcesLoaded.value = false
+  try {
+    await prepareRootSourceRefresh(sources)
+  } catch (reason) {
+    initialRepositorySourcesLoaded.value = previouslyLoaded
+    throw reason
+  }
+  const tasks = sources.map((source) => ({ source, ...startSourceRefresh(source.id, { updateDashboard: false, notify: false }) }))
+  const officialTasks = tasks.filter((task) => task.source.builtin)
+  const communityRefresh = (async () => {
+    await Promise.all((officialTasks.length ? officialTasks : tasks).map((task) => task.loaded))
+    await initialProxySync
+    if (appUnmounted) return false
+    initialRepositorySourcesLoaded.value = true
+    return Promise.all(communities.map((discovery) => discovery.refresh()))
+  })()
+  return {
+    results: Promise.all(tasks.map(async (task) => ({ source: task.source, result: await task.result }))),
+    communityRefresh,
+  }
+}
 
 function sourceDescendantIds(sourceId: string) {
   const ids = new Set([sourceId])
@@ -1247,6 +1322,7 @@ async function prepareRootSourceRefresh(sources: RepositorySource[]) {
   for (const source of sources) {
     sourceRefreshingManual[source.id] = true
     sourceLoading[source.id] = true
+    sourceDocumentsLoading[source.id] = true
     sourceRefreshPhase[source.id] = 'clearing'
   }
   for (const source of sources) clearSourceContentLocally(source.id)
@@ -1260,6 +1336,7 @@ async function prepareRootSourceRefresh(sources: RepositorySource[]) {
   } catch (reason) {
     for (const source of sources) {
       sourceLoading[source.id] = false
+      sourceDocumentsLoading[source.id] = false
       sourceRefreshingManual[source.id] = false
       delete sourceRefreshPhase[source.id]
     }
@@ -1274,23 +1351,16 @@ async function refreshAllRepositories() {
   }
   try {
     await (async () => {
-      const sources = activeRepositorySources.value.filter((source) => !source.parent_id && source.id !== COMMUNITY_SOURCE_ID)
+      const sources = activeRepositorySources.value.filter((source) => !source.parent_id && !isCommunitySource(source.id))
       for (const repo of repos.value) repositoryReleaseReady[repo.id] = false
-      await prepareRootSourceRefresh(sources)
-      const sourceResults = await Promise.all(sources.map(async (source) => {
-        try {
-          return { source, result: await refreshSource(source.id, { updateDashboard: false, notify: false }) }
-        } catch (reason) {
-          return { source, result: { ok: false, releaseFailures: 0, error: reason instanceof Error ? reason.message : String(reason) } satisfies SourceRefreshResult }
-        }
-      }))
+      const batch = await refreshRootSources(sources)
+      const sourceResults = await batch.results
       const failedSources = sourceResults.filter((entry) => !entry.result.ok)
       const releaseFailures = sourceResults
         .reduce((total, entry) => total + entry.result.releaseFailures, 0)
       await initialProxySync
-      dashboard.value = await api.dashboard()
-      initialRepositorySourcesLoaded.value = true
-      await community.refresh()
+      await refreshDashboardSerialized()
+      await batch.communityRefresh
 
       const failures = failedSources
         .map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`)
@@ -1304,6 +1374,7 @@ async function refreshAllRepositories() {
   } finally {
     for (const source of config.value?.repository_sources ?? []) {
       sourceLoading[source.id] = false
+      sourceDocumentsLoading[source.id] = false
       sourceRefreshingManual[source.id] = false
     }
   }
@@ -1339,31 +1410,26 @@ function startInitialRepositoryRefresh() {
   }
   if (initialRepositoryRefreshStarted) return
   initialRepositoryRefreshStarted = true
-  const sources = activeRepositorySources.value.filter((source) => !source.parent_id && source.id !== COMMUNITY_SOURCE_ID)
+  const sources = activeRepositorySources.value.filter((source) => !source.parent_id && !isCommunitySource(source.id))
   console.info('[repository-refresh] starting initial refresh', sources.map((source) => source.id))
   // Do not start this from startupChecks until the first-run tutorial has
   // finished. Once started, each source and repository refreshes independently
   // and updates the visible dashboard as soon as its content is available.
   void (async () => {
     initialProxySync = syncInitialGithubProxies()
-    await prepareRootSourceRefresh(sources)
-    const results = await Promise.all(sources.map(async (source) => ({
-      source,
-      result: await refreshSource(source.id, { updateDashboard: false, notify: false }),
-    })))
+    const batch = await refreshRootSources(sources)
+    const results = await batch.results
     const failedSources = results.filter((entry) => !entry.result.ok)
     const releaseFailures = results.reduce((total, entry) => total + entry.result.releaseFailures, 0)
     // The final snapshot must include the proxy commit, even if its download
     // finishes after a source. Individual source cards reveal independently.
     await initialProxySync
     if (appUnmounted) return
-    const snapshot = await api.dashboard()
+    await refreshDashboardSerialized()
     if (appUnmounted) return
-    dashboard.value = snapshot
-    initialRepositorySourcesLoaded.value = true
     if (failedSources.length) showError(failedSources.map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`).join('；'))
     if (releaseFailures) showError(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
-    await community.refresh()
+    await batch.communityRefresh
   })().catch((reason) => showError(reason))
 }
 async function startupChecks() {
@@ -1492,7 +1558,7 @@ function resetRepositorySourceEditor() {
   repositorySourceEditorOpen.value = false
 }
 function openRepositorySourceManager() {
-  repositorySourceDraft.value = (config.value?.repository_sources ?? []).filter((source) => source.id !== COMMUNITY_SOURCE_ID).map((source) => ({ ...source }))
+  repositorySourceDraft.value = (config.value?.repository_sources ?? []).filter((source) => !isCommunitySource(source.id)).map((source) => ({ ...source }))
   resetRepositorySourceEditor()
   showRepositorySource.value = true
 }
@@ -1654,21 +1720,17 @@ async function saveRepositorySourceChanges() {
   void (async () => {
     try {
       const rootSources = refreshedSourceConfig.repository_sources
-        .filter((item) => !item.parent_id && item.id !== COMMUNITY_SOURCE_ID && sourceMatchesRegion(item))
-      await prepareRootSourceRefresh(rootSources)
-      const sourceResults = await Promise.all(rootSources.map(async (source) => ({
-        source,
-        result: await refreshSource(source.id, { updateDashboard: false, notify: false }),
-      })))
+        .filter((item) => !item.parent_id && !isCommunitySource(item.id) && sourceMatchesRegion(item))
+      const batch = await refreshRootSources(rootSources)
+      const sourceResults = await batch.results
       const failures = sourceResults
         .filter((entry) => !entry.result.ok)
         .map((entry) => `${localizedRepositorySourceName(entry.source)}: ${entry.result.error || t('刷新失败')}`)
       const releaseFailures = sourceResults.reduce((total, entry) => total + entry.result.releaseFailures, 0)
       if (releaseFailures) failures.push(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures)))
       await initialProxySync
-      dashboard.value = await api.dashboard()
-      initialRepositorySourcesLoaded.value = true
-      await community.refresh()
+      await refreshDashboardSerialized()
+      await batch.communityRefresh
       if (failures.length) showError(failures.join('；'))
     } catch (reason) {
       showError(reason)
@@ -1676,16 +1738,20 @@ async function saveRepositorySourceChanges() {
   })()
 }
 function sourceRefreshing(sourceId: string) {
-  if (sourceId === COMMUNITY_SOURCE_ID) return community.searching.value
+  const discovery = communityForSource(sourceId)
+  if (discovery) return discovery.searching.value
   const tutorialRootSourceId = activeRepositorySources.value[0]?.id
   if (tutorial.repositoryLoadingActive.value && sourceId === tutorialRootSourceId) return true
   return !!sourceLoading[sourceId]
 }
 function sourceCardLoading(sourceId: string) {
   return sourceRefreshing(sourceId) || !!sourceContentRevealing[sourceId] || !!sourceErrors[sourceId]
-    || (sourceId === COMMUNITY_SOURCE_ID && !!community.error.value)
+    || !!communityForSource(sourceId)?.error.value
 }
-function sourceBusy(sourceId: string) { return sourceId === COMMUNITY_SOURCE_ID ? community.refreshing.value || !community.available.value : !!sourceLoading[sourceId] || !!sourceRefreshingManual[sourceId] }
+function sourceBusy(sourceId: string) {
+  const discovery = communityForSource(sourceId)
+  return discovery ? discovery.refreshing.value || !discovery.available.value : !!sourceLoading[sourceId] || !!sourceRefreshingManual[sourceId]
+}
 function finishSourceContentReveal(sourceId: string) {
   sourceContentRevealing[sourceId] = false
   const timer = sourceContentRevealTimers.get(sourceId)
@@ -1713,10 +1779,22 @@ function toggleRepositoryGroup(sourceId: string, group: string) {
   repositoryGroupCollapsed[key] = !repositoryGroupCollapsed[key]
 }
 async function refreshSource(sourceId: string, options: SourceRefreshOptions = {}, visited = new Set<string>()): Promise<SourceRefreshResult> {
-  if (sourceId === COMMUNITY_SOURCE_ID) return { ok: await community.refresh(), releaseFailures: community.releaseFailures.value, error: community.error.value }
-  if (visited.has(sourceId)) return { ok: true, releaseFailures: 0 }
+  const discovery = communityForSource(sourceId)
+  if (discovery) return { ok: await discovery.refresh(), releaseFailures: discovery.releaseFailures.value, error: discovery.error.value }
+  if (visited.has(sourceId)) {
+    options.onSourcesLoaded?.({ ok: true })
+    return { ok: true, releaseFailures: 0 }
+  }
+  let sourcesLoaded = false
+  function completeSourceLoading(result: SourceLoadResult) {
+    if (sourcesLoaded) return
+    sourcesLoaded = true
+    sourceDocumentsLoading[sourceId] = false
+    options.onSourcesLoaded?.(result)
+  }
   if (tutorial.blocksRepositoryRefresh.value) {
     const error = t('教程完成后才能刷新内置源')
+    completeSourceLoading({ ok: false, error })
     if (options.notify !== false) showError(error)
     return { ok: false, releaseFailures: 0, error }
   }
@@ -1730,15 +1808,19 @@ async function refreshSource(sourceId: string, options: SourceRefreshOptions = {
     console.warn('[repository-refresh] using bundled index', { sourceId, reason })
     const retryVisited = new Set(visited)
     retryVisited.delete(sourceId)
-    return refreshSource(sourceId, { ...options, builtinFallback: true }, retryVisited)
+    return refreshSource(sourceId, { ...options, builtinFallback: true, onSourcesLoaded: completeSourceLoading }, retryVisited)
   }
   delete sourceErrors[sourceId]
   sourceRefreshingManual[sourceId] = true
   sourceLoading[sourceId] = true
+  sourceDocumentsLoading[sourceId] = true
   sourceRefreshPhase[sourceId] = 'clearing'
   try {
     if (!source) throw new Error(t('仓库源不存在'))
-    if (!sourceMatchesRegion(source)) return { ok: true, releaseFailures: 0 }
+    if (!sourceMatchesRegion(source)) {
+      completeSourceLoading({ ok: true })
+      return { ok: true, releaseFailures: 0 }
+    }
     clearSourceContentLocally(sourceId)
     await nextTick()
     sourceRefreshPhase[sourceId] = 'loading'
@@ -1763,20 +1845,27 @@ async function refreshSource(sourceId: string, options: SourceRefreshOptions = {
     sourceLoading[sourceId] = false
     sourceRefreshPhase[sourceId] = 'refreshing'
     await nextTick()
-    const childResultsPromise = Promise.all(childSources.map((child) =>
-      refreshSource(child.id, { updateDashboard: false, notify: false }, new Set(visited))))
-    const [releaseFailures, childResults] = await Promise.all([
+    const childTasks = childSources.map((child) =>
+      startSourceRefresh(child.id, { updateDashboard: false, notify: false }, new Set(visited)))
+    const releaseResultsPromise = Promise.all([
       refreshSourceReleases(sourceId, false, false),
-      childResultsPromise,
+      Promise.all(childTasks.map((task) => task.result)),
     ])
-    const childReleaseFailures = childResults.reduce((total, result) => total + result.releaseFailures, 0)
-    const childFailures = childResults.filter((result) => !result.ok)
+    void releaseResultsPromise.catch(() => undefined)
+    const childLoadResults = await Promise.all(childTasks.map((task) => task.loaded))
     const sourceIds = sourceDescendantIds(sourceId)
     const hasRepositories = (config.value?.repositories ?? []).some((repo) => repo.source_id && sourceIds.has(repo.source_id))
-    if (builtinFallbackAvailable && !options.builtinFallback && childResults.length > 0
-      && childResults.every((result) => result.accessFailed) && !hasRepositories) {
+    if (builtinFallbackAvailable && !options.builtinFallback && childLoadResults.length > 0
+      && childLoadResults.every((result) => result.accessFailed) && !hasRepositories) {
+      await releaseResultsPromise
       return await loadBuiltinFallback('all_children_unreachable_without_repositories')
     }
+    const childLoadFailures = childLoadResults.filter((result) => !result.ok)
+    completeSourceLoading({ ok: childLoadFailures.length === 0, error: childLoadFailures.length
+      ? childLoadFailures.map((result) => result.error || t('刷新失败')).join('；') : undefined })
+    const [releaseFailures, childResults] = await releaseResultsPromise
+    const childReleaseFailures = childResults.reduce((total, result) => total + result.releaseFailures, 0)
+    const childFailures = childResults.filter((result) => !result.ok)
     if (updateDashboard) await refreshDashboardSerialized()
     if (releaseFailures + childReleaseFailures && notify) showError(t('仓库刷新失败摘要').replace('{count}', String(releaseFailures + childReleaseFailures)))
     if (childFailures.length) {
@@ -1790,9 +1879,11 @@ async function refreshSource(sourceId: string, options: SourceRefreshOptions = {
     const detail = reason instanceof Error ? reason.message : String(reason)
     sourceErrors[sourceId] = detail
     await (updateDashboard ? refreshDashboardSerialized() : refreshConfigSerialized()).catch(() => undefined)
+    completeSourceLoading({ ok: false, error: detail, accessFailed })
     if (notify) showError(detail)
     return { ok: false, releaseFailures: 0, error: detail, accessFailed }
   } finally {
+    completeSourceLoading({ ok: false, error: sourceErrors[sourceId] })
     finishSourceContentReveal(sourceId)
     sourceRefreshingManual[sourceId] = false
     sourceLoading[sourceId] = false
@@ -2256,7 +2347,7 @@ onUnmounted(() => {
         :format-mod-package-delete-warning="formatModPackageDeleteWarning"
         :confirm-mod-uninstall="confirmModUninstall" />
       <RepositoriesView v-else-if="activeView === 'repositories'"
-        :community="community"
+        :communities="communities"
         :focus-repository-ids="repositoryFocusIds"
         @focus-finished="repositoryFocusIds = []"
         :config="config"
@@ -2645,7 +2736,8 @@ onUnmounted(() => {
         </select></label>
       <div v-if="selectedInstallRelease(showInstall)" class="install-release-log">
         <div class="install-release-log-head"><strong>{{ selectedInstallRelease(showInstall)?.name || selectedInstallRelease(showInstall)?.tag_name }}</strong><span>{{ selectedInstallRelease(showInstall)?.version || selectedInstallRelease(showInstall)?.tag_name }}</span></div>
-        <div class="install-release-log-body markdown-body" v-html="renderMarkdown(selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。'))"></div>
+        <div class="install-release-log-body markdown-body" @click="openReleaseLogLink"
+          v-html="renderMarkdown(selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。'), repositoryMarkdownBaseUrl(showInstall))"></div>
       </div>
       <label class="install-field"><span>{{ t('下载文件') }}</span><small class="install-field-hint">{{ t('仅显示符合当前仓库资产规则的文件。') }}</small><select
           v-model="selectedInstallAsset" :aria-label="t('下载文件')">

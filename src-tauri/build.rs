@@ -1,6 +1,24 @@
 fn main() {
     embed_repository_sources();
+    link_windows_test_manifest();
     tauri_build::build()
+}
+
+fn link_windows_test_manifest() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
+        || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc")
+    {
+        return;
+    }
+    // Tauri embeds Common Controls v6 only into app binaries, not test executables.
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("tests/windows-webview.manifest");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
+    println!(
+        "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
+        manifest.display()
+    );
 }
 
 fn embed_repository_sources() {

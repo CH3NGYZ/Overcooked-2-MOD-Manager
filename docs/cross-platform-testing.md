@@ -57,11 +57,11 @@ Windows 的 `Update::install` 在启动安装器成功后退出进程，启动�
 
 当前锁定的 `tauri-plugin-updater 2.13.1` 支持 AppImage/DEB/RPM 和 Mac 应用归档。自定义 `install(bytes)` 不负责验签，因此现有竞速下载在每个候选胜出前校验 minisign 签名与受签名保护的版本，GitHub 提供 SHA-256 时同时校验摘要。缺失签名、版本不符、错误的包名或格式均停止安装，不降级为无校验更新。
 
-Release API 内的清单资产地址优先于备用地址。Gitee 备用清单地址为 `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/releases/download/latest/latest.json`，`download` 位于 `latest` 前；GitHub 仍使用 `releases/latest/download/latest.json`。清单版本及包名必须与 API 选出的版本和本平台包一致，不能靠另一版本的清单或单独 `.sig` 绕过此绑定。
+Release API 内的清单资产地址优先于备用地址。Gitee 备用清单地址为 `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/latest/latest.json`，`download` 位于 `latest` 前；GitHub 同名仓库仍使用 `releases/latest/download/latest.json`。后端更新 API、手动更新页面和备用清单地址与用户配置的更新仓库保持一致。清单版本及包名必须与 API 选出的版本和本平台包一致，不能靠另一版本的清单或单独 `.sig` 绕过此绑定。
 
 ## 发布前置条件
 
-`.github/workflows/build.yml` 使用 Windows、Ubuntu 22.04、Mac Apple Silicon 和 `macos-15-intel` 四个 runner。正式构建上传到当前代码仓库 `CH3NGYZ/Overcooked-2-MOD-Manager-Code` 的同一草稿；在四个构建成功后，由独立任务验证实际上传字节和签名，再汇总七目标 `latest.json`。并行构建不各自上传清单，也不自动发布草稿。新建草稿绑定实际构建的 `GITHUB_SHA`，不指向另一个仓库或无关提交。
+`.github/workflows/build.yml` 使用 Windows、Ubuntu 22.04、Mac Apple Silicon 和 `macos-15-intel` 四个 runner。正式构建上传到当前代码仓库 `CH3NGYZ/Overcooked-2-MOD-Manager` 的同一草稿（原名 `Overcooked-2-MOD-Manager-Code`，仓库与历史保持不变）；在四个构建成功后，由独立任务验证实际上传字节和签名，再汇总七目标 `latest.json`。并行构建不各自上传清单，也不自动发布草稿。新建草稿绑定实际构建的 `GITHUB_SHA`，不指向另一个仓库或无关提交。
 
 发布任务直接使用 GitHub 自动创建的 `secrets.GITHUB_TOKEN`，只有准备草稿、上传包和汇总清单三个任务声明 `contents: write`。默认权限保持只读，不再依赖跨仓库 `RELEASE_REPOSITORY_TOKEN`，也不把本机 API Token 复制到 Actions。代码仓库仍须配置以下 updater Secrets：
 
@@ -78,9 +78,13 @@ Release API 内的清单资产地址优先于备用地址。Gitee 备用清单�
 
 GitHub 草稿的资产 API 可能返回 `releases/download/untagged-<临时标识>/...`。聚合器只接受正式版本路径或同一代码仓库、同一草稿 `html_url` 对应的临时路径，实际字节仍从带认证的资产 ID 接口下载并完整验签。`latest.json` 始终写 `releases/download/v<版本>/...`，不把公开后会变化的草稿路径留在更新清单中。同名草稿重试会更新 `target_commitish` 元数据，PATCH 必须同时显式保留 `tag_name`、`draft: true` 和 `prerelease: false`；实际 API 已验证仅提交 `target_commitish` 会把草稿标签重置为 `untagged-...`，导致后续身份保护拒绝修改。修改前后均校验同版本稳定草稿，不能放宽已公开版本保护。GitHub 的 `target_commitish` 不会移动已有标签；实际源码以明确授权的 Git 标签引用及 Actions SHA 为准，重试优先对同一标签使用限定旧对象的 lease 更新，避免删除期间草稿脱离关联。
 
-客户端的 GitHub/Gitee 更新渠道仍指向原 `Overcooked-2-MOD-Manager-Releases` 仓库。本仓库生成的清单 URL 指向本仓库实际资产；后续同步流程由用户另行实现，需同步完整更新包及各自 `.sig` 原始字节，并将 `latest.json` 的 URL 改为目标仓库对应的实际资产地址，不重压缩或改签名。仅在本代码仓库构建成功，不代表既有客户端的发布渠道已有可用更新。本轮不实现跨仓库或 Gitee 同步。
+客户端的 GitHub/Gitee 更新渠道按用户配置指向 `Overcooked-2-MOD-Manager`，GitHub 与更名后的当前代码仓库一致。本仓库生成的清单 URL 指向本仓库实际资产；Gitee 或后续其他仓库的同步流程仍由用户另行实现，需同步完整更新包及各自 `.sig` 原始字节，并将 `latest.json` 的 URL 改为目标仓库对应的实际资产地址，不重压缩或改签名。仅生成草稿不代表客户端的公开更新渠道已有可用更新。本轮不实现跨仓库或 Gitee 同步。
+
+根目录 `index.html` 是已忽略的生成文件，不再纳入 Git 或提交历史。`npm run dev` 和 `npm run build` 的生命周期钩子先调用 `scripts/frontend-entry.mjs` 生成原有 Vite 入口，因此 Tauri 和 Actions 的干净 checkout 仍能构建；入口标题、favicon、语言及应用挂载点保持原样。不要直接依赖未生成入口时的裸 `vite` 命令。
 
 ## 本地 BAT 与 Actions 的 NSIS 一致性
+
+`build.bat`、`build with tag.bat` 和 `build.log` 仅保留在本地并明确加入 `.gitignore`，不分发到 GitHub 当前源码。没有这两个 BAT 的干净 checkout 只跳过对应本地入口回归，共享签名、版本一致性、资产选择和发布保护回归继续执行。自动打包直接使用已跟踪的 `scripts/build-release.mjs`，不依赖本地 BAT。
 
 `build.bat` 使用同一个 `scripts/build-release.mjs`，显式指定 `x86_64-pc-windows-msvc` 与 `--bundles nsis`。它读取相同 Tauri 配置与 NSIS 模板，生成应用版本绑定的 updater 签名，并以当前公钥验签后才进入原有安装、启动流程。Actions 默认仍生成该平台的全部包；本地 NSIS-only 不要求额外生成 MSI，也不跳过签名或更换公钥。
 
@@ -148,15 +152,17 @@ CI 聚合重新下载并校验九个包、七份 updater 签名及 SHA-256，包
 
 正式 `1.2.0` 草稿运行 [38334863349](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38334863349) 已全部成功：源码及实际 `v1.2.0` 标签均绑定 `4ef16c26a7712cab29902efc3ca50be5901d8e5b`，Prepare、Windows、Linux、双架构 Mac 和清单聚合均通过。Windows Node 为 33 通过，另外三端各 32 通过、1 项 Windows 专属 BAT 测试跳过；Rust Windows 278 通过，另外三端各 272 通过，均 0 失败、2 显式忽略。聚合重新下载七种更新包实际字节，完成长度、摘要、当前公钥签名和版本校验后上传七键 `latest.json`，所有 URL 为正式 `v1.2.0` 路径。最终本仓库草稿 `411128097` 含九包、七份签名和清单，合计恰好 17 项，仍 `draft=true`、`published_at=null`；本地只读核验额外核对实际 Git 标签、元数据、清单和七份签名文件，不代替 CI 的完整包字节验签。证据位于 `src-tauri/target/verification/release-120-20261013`。本轮没有公开草稿、同步其他仓库、更换密钥或执行实际安装更新。
 
-### 1.2.1 草稿：等待 GitHub 账单条件恢复
+### 1.2.1 草稿：账单阻塞已解除，四端完成
 
 社区仓库简介、官方去重、全部 ZIP/DLL 安装入口及 Gitee README 单次直连修复已提交并升为 `1.2.1`。本地最终 Node 为 52 通过，Rust 为 303 通过、0 失败、2 项显式忽略，fmt/check 和前端构建通过；实际 Vue 页面与 IPC 夹具的 30+4 项检查通过。这不代表真实 MOD 安装或游戏验收。
 
 第二轮 [38354780108](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38354780108) 的 Windows 和 Linux 打包成功，五种更新格式通过当前公钥与版本绑定验签。两个 Mac 均在 README 大小限制测试的同步服务器线程收尾卡住，达到 60 分钟工作流上限后取消；统一清单因此跳过。收尾已改为 `spawn_blocking` 并限定测试服务器写超时，有界调度回归先红后绿；生产 README 的大小、404、取消及 Gitee 下载规则没有变化。
 
-当前实际 `v1.2.1` 标签指向 `dbb624fc6bc91f3953160490f392da72fca3cd0f`。新运行 [38364610804](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38364610804) 绑定该源码，但 Prepare 未执行任何步骤；GitHub annotation 提示近期付款失败或消费限额需要提高，并要求检查 `Billing & plans`，不是代码或私钥失败。账单条件恢复后应重跑这一轮同一源码，再核查四目标及清单；不要换密钥、重复 dispatch、移动标签或发布不完整草稿。
+当时 `v1.2.1` 标签指向 `dbb624fc6bc91f3953160490f392da72fca3cd0f`。运行 [38364610804](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Code/actions/runs/38364610804) 绑定该源码，但 Prepare 未执行任何步骤；GitHub annotation 提示近期付款失败或消费限额需要提高，并要求检查 `Billing & plans`，不是代码或私钥失败。这是历史阻塞，不代表当前仍受限。
 
-草稿 `411329219` 仍 `draft=true`、`published_at=null`，目前仅五种 Windows/Linux 包及各自签名，共 10 项，没有 Mac 包和 `latest.json`。因为最新 Prepare 未启动，草稿 target 仍是上一轮 `ca24daa`，不能冒称已编译最新标签。后续验收必须重新确认 target、实际 Git 标签和 Actions SHA 一致，四目标与聚合成功，且九包、七份签名、七键清单恰好 17 项。证据位于 `src-tauri/target/verification/community-121-20261013`；本轮没有公开草稿或执行实机安装更新。
+旧草稿 `411329219` 当时只有五种 Windows/Linux 包及各自签名，共 10 项，没有 Mac 包和 `latest.json`；相关历史证据位于 `src-tauri/target/verification/community-121-20261013`。
+
+账号恢复、Agent 文件历史清理及 1.2.1 标签重建后，最终运行 [38385940925](https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/actions/runs/38385940925) 的 Prepare、Windows、Linux、双架构 Mac 和统一清单均成功。该次 CI 源码为 `38516614b87487c287d6a91bd51bc8d72e1ea25d`；草稿 `411541254` 恰有九包、七签名和七键 `latest.json` 共 17 项，仍未公开。2026-10-14 已只读复核运行 success 与草稿状态；完整历史证据位于 `src-tauri/target/verification/release-121-history-clean-20261013`。后续 index.html 历史重写会改变 Git SHA，不改变这些历史运行的实际源码记录或已生成包字节。
 
 ### 仍待实机验收
 

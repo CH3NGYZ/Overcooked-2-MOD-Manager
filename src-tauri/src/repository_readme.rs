@@ -221,6 +221,7 @@ pub async fn get_repository_readme(
         .iter()
         .find(|repo| repo.id == repository_id)
         .ok_or("仓库不存在")?;
+    crate::community::ensure_repository_region(repo, crate::config::current_user_region())?;
     let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
     let result = async {

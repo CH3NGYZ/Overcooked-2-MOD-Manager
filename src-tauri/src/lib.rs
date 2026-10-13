@@ -8,6 +8,8 @@ mod direct_mod;
 mod download;
 mod game;
 mod game_state;
+mod gitee_community;
+mod gitee_webview;
 mod github_proxies;
 mod install_guard;
 mod mod_config;
@@ -36,6 +38,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(gitee_webview::close_with_main)
         .plugin(
             tauri_plugin_updater::Builder::new()
                 .header("User-Agent", releases::APP_USER_AGENT)

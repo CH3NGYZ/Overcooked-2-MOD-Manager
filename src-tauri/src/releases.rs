@@ -299,6 +299,19 @@ pub fn asset_matches(asset: &ReleaseAsset, rules: &[AssetRule]) -> bool {
     })
 }
 
+pub fn select_install_asset<'a>(
+    repo: &RepositoryConfig,
+    release: &'a ReleaseInfo,
+    asset_name: Option<&str>,
+) -> Option<&'a ReleaseAsset> {
+    release.assets.iter().find(|asset| {
+        !crate::community::is_source_archive(repo, &release.tag_name, &asset.name)
+            && asset_name
+                .map(|name| asset.name == name)
+                .unwrap_or_else(|| asset_matches(asset, &repo.asset_rules))
+    })
+}
+
 pub async fn fetch_releases(
     client: &Client,
     repo: &RepositoryConfig,
@@ -360,7 +373,12 @@ async fn fetch_releases_from_targets(
             request_token.is_some()
         );
         match fetch_release_api_with_retries(client, &url, &repo.provider, request_token).await {
-            Ok(releases) => {
+            Ok(mut releases) => {
+                for release in &mut releases {
+                    release.assets.retain(|asset| {
+                        !crate::community::is_source_archive(repo, &release.tag_name, &asset.name)
+                    });
+                }
                 log::info!(
                     "Release API 获取成功: repository_id={} provider={:?} target_kind={} release_count={}",
                     repo.id,
@@ -1038,6 +1056,66 @@ mod tests {
         );
         assert_eq!(official.requests().len(), 3);
         assert_eq!(proxy.requests().len(), 3);
+    }
+
+    #[test]
+    fn cached_tag_source_archives_cannot_be_installed_even_when_explicitly_selected() {
+        let mut repo =
+            crate::community::repository_from_coordinates(&Provider::Gitee, "Owner", "Mod", "", "")
+                .unwrap();
+        let cases: Vec<(String, String, bool)> = serde_json::from_str(include_str!(
+            "../../tests/fixtures/gitee-source-assets.json"
+        ))
+        .unwrap();
+        for (tag, name, allowed) in cases {
+            let mut info = parse_release_json(&serde_json::json!([{"tag_name": "placeholder", "assets": [{"name": name, "browser_download_url": "https://example.com/file"}]}]), &Provider::Gitee).unwrap().remove(0);
+            info.tag_name = tag;
+            let selected = info.assets[0].name.clone();
+            assert_eq!(
+                select_install_asset(&repo, &info, None).is_some(),
+                allowed,
+                "{selected}"
+            );
+            assert_eq!(
+                select_install_asset(&repo, &info, Some(&selected)).is_some(),
+                allowed,
+                "explicit {selected}"
+            );
+            let source_id = repo.source_id.take();
+            assert!(
+                select_install_asset(&repo, &info, Some(&selected)).is_some(),
+                "custom Gitee {selected}"
+            );
+            repo.source_id = source_id;
+            repo.provider = Provider::Github;
+            assert!(
+                select_install_asset(&repo, &info, Some(&selected)).is_some(),
+                "GitHub {selected}"
+            );
+            repo.provider = Provider::Gitee;
+        }
+    }
+
+    #[test]
+    fn gitee_community_source_tag_zip_is_removed_after_real_api_parsing() {
+        let repo =
+            crate::community::repository_from_coordinates(&Provider::Gitee, "Owner", "Mod", "", "")
+                .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let server = ApiTestServer::new(vec![("200 OK", r#"[{"tag_name":"v1.8.7.15","assets":[
+                {"name":"v1.8.7.15.zip","browser_download_url":"https://gitee.com/Owner/Mod/archive/v1.8.7.15.zip"},
+                {"name":"Mod.zip","browser_download_url":"https://gitee.com/Owner/Mod/releases/download/v1.8.7.15/Mod.zip"},
+                {"name":"Mod.dll","browser_download_url":"https://gitee.com/Owner/Mod/releases/download/v1.8.7.15/Mod.dll"}
+            ]}]"#)]);
+            let releases = fetch_releases_from_targets(&api_test_client(), &repo, &server.url,
+                vec![(server.url.clone(), None)]).await.unwrap();
+            assert_eq!(releases[0].assets.iter().map(|asset| asset.name.as_str()).collect::<Vec<_>>(), ["Mod.zip", "Mod.dll"]);
+            assert_eq!(server.requests().len(), 1);
+        });
     }
 
     #[test]

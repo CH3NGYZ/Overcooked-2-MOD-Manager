@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 import { readProject } from '../scripts/release-lib.mjs'
 
@@ -12,10 +12,10 @@ const documents = ['src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'src-tauri/ta
 const versionBat = readFileSync(join(root, 'build with tag.bat'), 'utf8')
 const updater = versionBat.replace(/\r\n/g, '\n').split('\n// VERSION_UPDATE_NODE\n')[1]
 
-function workspace(t) {
+function workspace(t, suffix = '') {
   const base = resolve(root, 'src-tauri/target/verification/local-build-tests')
-  const directory = join(base, randomUUID())
-  for (const file of [...documents, 'build with tag.bat']) {
+  const directory = join(base, randomUUID() + suffix)
+  for (const file of [...documents, 'build.bat', 'build with tag.bat']) {
     mkdirSync(dirname(join(directory, file)), { recursive: true })
     copyFileSync(join(root, file), join(directory, file))
   }
@@ -24,6 +24,56 @@ function workspace(t) {
     rmSync(directory, { recursive: true, force: true })
   })
   return directory
+}
+
+function runBuildBat(t, mode, codePage, exitCode = 23) {
+  const directory = workspace(t, ' build \u6d4b\u8bd5')
+  const rust = join(directory, 'rust')
+  mkdirSync(join(rust, '.cargo/bin'), { recursive: true })
+  writeFileSync(join(rust, '.cargo/bin/cargo.exe'), '')
+  const buildPath = join(directory, 'build.bat')
+  writeFileSync(buildPath, readFileSync(buildPath, 'utf8').replaceAll('D:\\ProgramData\\rust', '%OC2_TEST_RUST_ROOT%'))
+  mkdirSync(join(directory, 'scripts'), { recursive: true })
+  const releaseBuildUrl = pathToFileURL(join(root, 'scripts/build-release.mjs')).href
+  // Stop at the real bundle selector, before any compiler, signer or installer runs.
+  writeFileSync(join(directory, 'scripts/build-release.mjs'), `
+    import { writeFileSync } from 'node:fs';
+    import { buildUpdateKeys } from ${JSON.stringify(releaseBuildUrl)};
+    const args = process.argv.slice(2);
+    writeFileSync('build-invocation.json', JSON.stringify({
+      args,
+      githubToken: Boolean(process.env.OC2_INSTALLER_GITHUB_TOKEN),
+      giteeToken: Boolean(process.env.OC2_INSTALLER_GITEE_TOKEN),
+      signingKey: Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY),
+    }));
+    try {
+      console.log('BUILD_KEYS=' + buildUpdateKeys(args, 'x86_64-pc-windows-msvc').join(','));
+      console.log('BUILD_STDOUT_PROBE_\\u4e2d\\u6587');
+      console.error('BUILD_STDERR_PROBE_\\u4e2d\\u6587');
+      process.exitCode = ${exitCode};
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 23;
+    }
+  `)
+  const tmp = join(directory, 'tmp')
+  mkdirSync(tmp, { recursive: true })
+  const result = spawnSync('cmd.exe', ['/d', '/c', `chcp ${codePage} >nul & call build.bat ${mode}`], {
+    cwd: directory, input: '\r\n', encoding: 'utf8', windowsHide: true,
+    windowsVerbatimArguments: true, timeout: 15_000,
+    env: {
+      ...process.env,
+      OC2_TEST_RUST_ROOT: rust,
+      CARGO_TARGET_DIR: join(directory, 'target'),
+      OC2_INSTALLER_GITHUB_TOKEN: '[REDACTED_SECRET]',
+      OC2_INSTALLER_GITEE_TOKEN: '[REDACTED_SECRET]',
+      TAURI_SIGNING_PRIVATE_KEY: '[REDACTED_SECRET]',
+      TAURI_SIGNING_PRIVATE_KEY_PATH: join(directory, 'unused-signing.key'),
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: '[REDACTED_SECRET]',
+      TEMP: tmp, TMP: tmp, TMPDIR: tmp,
+    },
+  })
+  return { directory, result }
 }
 
 function snapshot(directory) {
@@ -50,6 +100,55 @@ test('both BAT entries share Actions signing, an explicit x64 target and an exac
   assert.ok(!build.includes('OC2ModManager_*_x64-setup.exe'))
   assert.ok(!build.includes('createUpdaterArtifacts'))
   assert.ok(versionBat.includes('call "%~dp0build.bat" %*'))
+})
+
+test('the build BAT uses ASCII commands and CRLF without a BOM', () => {
+  const bytes = readFileSync(join(root, 'build.bat'))
+  assert.ok(bytes.every(value => value < 128), 'Non-ASCII batch comments can be misparsed after CHCP changes')
+  assert.ok(!bytes.toString().replace(/\r\n/g, '').includes('\n'), 'Batch commands must use CRLF')
+})
+
+for (const codePage of [936, 65001]) {
+  for (const mode of ['', 'noenv', 'clean']) {
+    test(`Windows build BAT preserves NSIS arguments and both output streams (${codePage}, ${mode || 'default'})`, {
+      skip: process.platform !== 'win32',
+    }, t => {
+      const { directory, result } = runBuildBat(t, mode, codePage)
+      const details = `${result.error?.message || ''}\n${result.stderr}\n${result.stdout}`
+      assert.equal(result.status, 1, details)
+      const invocation = JSON.parse(readFileSync(join(directory, 'build-invocation.json'), 'utf8'))
+      assert.deepEqual(invocation.args, ['build', '--target', 'x86_64-pc-windows-msvc', '--bundles', 'nsis'], details)
+      assert.equal(invocation.githubToken, !mode, details)
+      assert.equal(invocation.giteeToken, !mode, details)
+      assert.equal(invocation.signingKey, true, details)
+      assert.equal(result.stderr, '', details)
+      const log = readFileSync(join(directory, 'build.log'), 'utf8')
+      for (const output of [result.stdout, log]) {
+        assert.ok(output.includes('BUILD_KEYS=windows-x86_64-nsis'), output)
+        assert.ok(output.includes('BUILD_STDOUT_PROBE_\u4e2d\u6587'), output)
+        assert.ok(output.includes('BUILD_STDERR_PROBE_\u4e2d\u6587'), output)
+        assert.ok(output.includes('BUILD FAILED.'), output)
+        assert.ok(!output.includes('Installing NSIS package'), output)
+        assert.ok(!output.includes('[REDACTED_SECRET]'), output)
+      }
+      assert.ok(!log.includes('\0'), 'Build logs must not mix UTF-8 and UTF-16')
+    })
+  }
+}
+
+test('Windows build BAT preserves a successful build exit and refuses a missing current-version installer', {
+  skip: process.platform !== 'win32',
+}, t => {
+  const { directory, result } = runBuildBat(t, '', 936, 0)
+  const details = `${result.error?.message || ''}\n${result.stderr}\n${result.stdout}`
+  assert.equal(result.status, 1, details)
+  assert.equal(result.stderr, '', details)
+  for (const output of [result.stdout, readFileSync(join(directory, 'build.log'), 'utf8')]) {
+    assert.ok(output.includes('BUILD SUCCEEDED.'), output)
+    assert.ok(output.includes('the NSIS installer for the current version was not found'), output)
+    assert.ok(!output.includes('BUILD FAILED.'), output)
+    assert.ok(!output.includes('Installing NSIS package'), output)
+  }
 })
 
 test('the actual BAT version updater synchronizes Cargo.lock and leaves dependency versions unchanged', t => {

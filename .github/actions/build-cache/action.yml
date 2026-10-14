@@ -1,0 +1,32 @@
+name: Restore shared platform build cache
+description: Restore the single npm and Cargo snapshot maintained by main, without saving a tag cache
+inputs:
+  target:
+    description: Rust desktop target
+    required: true
+outputs:
+  key:
+    description: Fixed platform cache key
+    value: ${{ steps.context.outputs.key }}
+  path:
+    description: Bounded snapshot directory
+    value: ${{ steps.context.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve build cache identity
+      id: context
+      shell: bash
+      env:
+        CACHE_TARGET: ${{ inputs.target }}
+      run: node scripts/build-cache.mjs init "$CACHE_TARGET"
+    - name: Restore the main platform snapshot
+      uses: actions/cache/restore@v4
+      with:
+        key: ${{ steps.context.outputs.key }}
+        path: ${{ steps.context.outputs.path }}
+    - name: Restore npm downloads and Cargo dependencies
+      shell: bash
+      env:
+        CACHE_TARGET: ${{ inputs.target }}
+      run: node scripts/build-cache.mjs restore "$CACHE_TARGET"

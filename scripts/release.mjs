@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,10 +9,27 @@ import {
   publicUpdateAssetUrl, readProject, releaseTag, updateManifest, verifyUpdateSignature,
 } from './release-lib.mjs'
 
-export async function prepareRelease(github, version, tag, commitish) {
+export function readReleaseNotes(commitish, root = process.cwd()) {
+  if (!/^[a-f0-9]{40}$/i.test(commitish || '')) {
+    throw new Error('The release source commit must be a full GitHub commit SHA')
+  }
+  let notes
+  try {
+    notes = execFileSync('git', ['-c', 'i18n.logOutputEncoding=utf-8', 'show', '--no-patch', '--format=%B', `${commitish}^{commit}`, '--'], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    }).replace(/[\r\n]+$/, '')
+  } catch {
+    throw new Error('Could not read the release source commit message')
+  }
+  if (!notes.trim()) throw new Error('The release source commit message is empty')
+  return notes
+}
+
+export async function prepareRelease(github, version, tag, commitish, notes) {
   if (commitish !== undefined && !/^[a-f0-9]{40}$/i.test(commitish)) {
     throw new Error('The release source commit must be a full GitHub commit SHA')
   }
+  if (typeof notes !== 'string' || !notes.trim()) throw new Error('Release notes must contain the source commit message')
   let release = await github.findRelease(tag)
   if (!release) {
     const repository = await github.request('')
@@ -21,18 +39,18 @@ export async function prepareRelease(github, version, tag, commitish) {
         tag_name: tag,
         target_commitish: commitish || repository.default_branch,
         name: `Overcooked 2 MOD Manager ${tag}`,
-        body: 'Download the installer for your system. Publish only after all four builds and the updater manifest succeed.',
+        body: notes,
         draft: true,
         prerelease: false,
       },
     })
   }
   assertDraftRelease(release, version)
-  if (commitish && release.target_commitish !== commitish) {
+  if ((commitish && release.target_commitish !== commitish) || release.body !== notes) {
     release = await github.request(`/releases/${release.id}`, {
       method: 'PATCH',
       // GitHub can detach a draft from its tag when a PATCH omits tag_name.
-      body: { tag_name: tag, target_commitish: commitish, draft: true, prerelease: false },
+      body: { tag_name: tag, target_commitish: commitish || release.target_commitish, body: notes, draft: true, prerelease: false },
     })
     assertDraftRelease(release, version)
   }
@@ -68,8 +86,9 @@ export async function main(args = process.argv.slice(2)) {
   const tag = releaseTag(version, process.env.GITHUB_REF_TYPE, process.env.GITHUB_REF_NAME)
   const github = new GitHubRelease(process.env.GITHUB_TOKEN)
   if (args[0] === 'prepare' && args.length === 1) {
-    const release = await prepareRelease(github, version, tag, process.env.GITHUB_SHA)
     if (!process.env.GITHUB_OUTPUT) throw new Error('This command requires GitHub Actions outputs')
+    const notes = readReleaseNotes(process.env.GITHUB_SHA)
+    const release = await prepareRelease(github, version, tag, process.env.GITHUB_SHA, notes)
     appendFileSync(process.env.GITHUB_OUTPUT, `release_id=${release.id}\ntag_name=${tag}\nversion=${version}\n`)
     console.log(`Prepared draft ${tag} in ${RELEASE_OWNER}/${RELEASE_REPO}`)
     return

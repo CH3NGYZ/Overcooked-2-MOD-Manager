@@ -43,6 +43,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Validate versions and prepare this repository's release draft
         id: release
         env:
@@ -86,7 +87,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: '24'
-          cache: 'npm'
+          package-manager-cache: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -94,12 +95,10 @@ jobs:
           targets: ${{ matrix.target }}
           components: rustfmt
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - name: Restore shared platform cache (read only)
+        uses: ./.github/actions/build-cache
         with:
-          workspaces: './src-tauri -> target'
-          key: ${{ matrix.target }}
-          cache-on-failure: true
+          target: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm ci
@@ -198,6 +197,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Verify all seven uploaded targets and aggregate latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -213,6 +213,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          package-manager-cache: false
       - uses: actions/download-artifact@v4
         with:
           pattern: package-test-*

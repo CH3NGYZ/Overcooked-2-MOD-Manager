@@ -8,7 +8,7 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateCheckResult, AppUpdateInfo, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
@@ -111,6 +111,8 @@ const sourceRefreshingManual = reactive<Record<string, boolean>>({})
 const appUpdate = ref<AppUpdateInfo | null>(null)
 const appUpdateCheck = ref<AppUpdateCheckResult | null>(null)
 const startupUpdateChecking = ref(true)
+const startupLoading = ref(false)
+const startupLoadingError = ref('')
 const updateCheckFailed = ref(false)
 const updateSkipped = ref(false)
 const startupUpdatePhase = ref<'manifest' | 'download' | 'install' | 'skipped'>('manifest')
@@ -119,6 +121,7 @@ const updatePageOpening = ref(false)
 const updatePageError = ref('')
 const startupStage = ref('')
 const startupError = ref('')
+const visibleStartupUpdateChannels = computed(() => appUpdateCheck.value?.channels.filter((channel) => channel.status !== 'skipped') || [])
 const sourceCollapsed = reactive<Record<string, boolean>>({})
 const repositoryGroupCollapsed = reactive<Record<string, boolean>>({})
 const sourceLoading = reactive<Record<string, boolean>>({})
@@ -1119,6 +1122,28 @@ function initialUpdateCheck() {
     region: 'detecting',
   } as Awaited<ReturnType<typeof api.checkAppUpdate>>
 }
+function finishStartupUpdate() {
+  startupUpdateChecking.value = false
+  appUpdateCheck.value = null
+}
+function receiveAppUpdateChannel(event: AppUpdateChannelEvent) {
+  if (appUnmounted || !startupUpdateChecking.value) return
+  const current = appUpdateCheck.value || initialUpdateCheck()
+  const baseChannels = current.region !== event.region
+    ? current.channels.filter((channel) => event.region === 'mainland-china' || channel.provider === 'github')
+    : current.channels
+  const channels = baseChannels.some((channel) => channel.id === event.channel.id)
+    ? baseChannels.map((channel) => channel.id === event.channel.id ? event.channel : channel)
+    : [...baseChannels, event.channel]
+  appUpdateCheck.value = { ...current, region: event.region, channels }
+}
+function receiveAppUpdatePhase(event: AppUpdatePhaseEvent) {
+  if (appUnmounted || !startupUpdateChecking.value) return
+  startupUpdatePhase.value = event.phase
+  if (event.phase === 'install') startupStage.value = t('正在安装程序更新')
+  if (event.update) appUpdate.value = event.update
+  if (event.message && event.phase === 'skipped') startupError.value = event.message
+}
 async function checkAppUpdate() {
   const result = await run('正在检查程序更新', () => api.checkAppUpdate(locale.value))
   appUpdateCheck.value = result
@@ -1443,9 +1468,15 @@ async function startupChecks() {
     markUpdateSkipped('请手动更新管理器, 本次跳过更新.')
   } finally {
     clearDownloadProgress()
+    finishStartupUpdate()
   }
+  startupLoading.value = true
   startupStage.value = t('读取厨房状态')
-  await withTimeout(loadDashboard(), STARTUP_IPC_TIMEOUT_MS, '读取厨房状态')
+  try {
+    await withTimeout(loadDashboard(), STARTUP_IPC_TIMEOUT_MS, '读取厨房状态')
+  } finally {
+    startupLoading.value = false
+  }
   resetInstalledModExpansion()
   for (const repo of repos.value) repositoryReleaseReady[repo.id] = false
   if (!await tutorialRuntime.startInitialOnboarding()) {
@@ -2118,26 +2149,12 @@ onMounted(async () => {
       }
     }
     try {
-      stopAppUpdateChannel.value = await withTimeout(watchAppUpdateChannel((event) => {
-        const current = appUpdateCheck.value || initialUpdateCheck()
-        const baseChannels = current.region !== event.region
-          ? current.channels.filter((channel) => event.region === 'mainland-china' || channel.provider === 'github')
-          : current.channels
-        const channels = baseChannels.some((channel) => channel.id === event.channel.id)
-          ? baseChannels.map((channel) => channel.id === event.channel.id ? event.channel : channel)
-          : [...baseChannels, event.channel]
-        appUpdateCheck.value = { ...current, region: event.region, channels }
-      }), STARTUP_IPC_TIMEOUT_MS, '注册更新状态监听')
+      stopAppUpdateChannel.value = await withTimeout(watchAppUpdateChannel(receiveAppUpdateChannel), STARTUP_IPC_TIMEOUT_MS, '注册更新状态监听')
     } catch (reason) {
       console.warn('[startup] app update channel IPC failed', reason)
     }
     try {
-      stopAppUpdatePhase.value = await withTimeout(watchAppUpdatePhase((event) => {
-        startupUpdatePhase.value = event.phase
-        if (event.phase === 'install') startupStage.value = t('正在安装程序更新')
-        if (event.update) appUpdate.value = event.update
-        if (event.message && event.phase === 'skipped') startupError.value = event.message
-      }), STARTUP_IPC_TIMEOUT_MS, '注册更新阶段监听')
+      stopAppUpdatePhase.value = await withTimeout(watchAppUpdatePhase(receiveAppUpdatePhase), STARTUP_IPC_TIMEOUT_MS, '注册更新阶段监听')
     } catch (reason) {
       console.warn('[startup] app update phase IPC failed', reason)
     }
@@ -2156,10 +2173,15 @@ onMounted(async () => {
     await startupChecks()
   } catch (reason) {
     console.error('[startup] startup checks failed', reason)
-    if (!updateSkipped.value) startupError.value = t('检查更新失败，请重新启动MOD管理器。')
-    updateCheckFailed.value = true
+    if (startupUpdateChecking.value) {
+      if (!updateSkipped.value) startupError.value = t('检查更新失败，请重新启动MOD管理器。')
+      updateCheckFailed.value = true
+    } else {
+      startupLoadingError.value = t('初始化失败，请重新启动 MOD 管理器。')
+    }
   } finally {
     startupUpdateChecking.value = false
+    startupLoading.value = false
   }
 })
 onUnmounted(() => {
@@ -2193,8 +2215,8 @@ onUnmounted(() => {
         <div v-if="appUpdateCheck" class="update-region">
           <span>{{ t('当前更新地区') }}</span><strong>{{ updateRegionLabel(appUpdateCheck.region) }}</strong>
         </div>
-        <div v-if="startupUpdatePhase === 'manifest' && appUpdateCheck?.channels.length" class="update-channel-statuses">
-          <div v-for="channel in appUpdateCheck.channels" :key="channel.id" class="update-channel-status">
+        <div v-if="startupUpdatePhase === 'manifest' && visibleStartupUpdateChannels.length" class="update-channel-statuses">
+          <div v-for="channel in visibleStartupUpdateChannels" :key="channel.id" class="update-channel-status">
             <span>{{ updateChannelName(channel.id) }}</span><span :class="`update-channel-${channel.status}`">{{ updateChannelStatus(channel.status) }}</span>
           </div>
         </div>
@@ -2211,12 +2233,20 @@ onUnmounted(() => {
         <div class="startup-exclamation">!</div>
         <h2>{{ startupError || t('检查更新失败，请重新启动MOD管理器。') }}</h2>
         <p v-if="updateSkipped && updateSkipCountdown > 0">{{ updateSkipCountdown }} {{ t('秒后打开管理器仓库') }}</p>
-        <p v-else-if="startupStage">{{ startupStage }}</p>
         <p v-if="updatePageError" class="startup-update-error" role="alert">{{ updatePageError }}</p>
         <div v-if="updateSkipped" class="startup-update-actions">
           <button class="secondary-button" @click="continueAfterUpdateSkip">{{ t('继续') }}</button>
           <button class="primary-button" :disabled="updatePageOpening" @click="openManualUpdatePage">{{ t('手动更新') }}</button>
         </div>
+        <button v-else class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
+      </div>
+    </div>
+    <div v-else-if="startupLoading || startupLoadingError" class="startup-overlay startup-loading-overlay">
+      <div class="startup-card" :class="{ 'startup-failed': !!startupLoadingError }">
+        <div v-if="!startupLoadingError" class="startup-spinner"></div>
+        <div v-else class="startup-exclamation">!</div>
+        <h2>{{ startupLoadingError || t('读取厨房状态') }}</h2>
+        <p v-if="!startupLoadingError">{{ t('请耐心等待') }}</p>
         <button v-else class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
       </div>
     </div>

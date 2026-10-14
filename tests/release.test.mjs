@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -6,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { buildUpdateKeys, updateFiles } from '../scripts/build-release.mjs'
 import { GitHubRelease } from '../scripts/github-release.mjs'
-import { aggregateManifest, prepareRelease } from '../scripts/release.mjs'
+import { aggregateManifest, prepareRelease, readReleaseNotes } from '../scripts/release.mjs'
 import { signingFixture } from './fixtures/updater-signing.mjs'
 import {
   BUILD_KEYS, PLATFORM_KEYS, RELEASE_OWNER, RELEASE_REPO, assertDraftRelease,
@@ -206,15 +207,46 @@ test('prepare only reuses a matching draft and removes its stale manifest, never
     assets: async () => [{ id: 50, name: 'latest.json' }, { id: 51, name: names[0] }],
     deleteAsset: async id => deleted.push(id),
   }
-  assert.equal((await prepareRelease(github, '1.2.0', 'v1.2.0')).id, draft.id)
+  assert.equal((await prepareRelease(github, '1.2.0', 'v1.2.0', undefined, draft.body)).id, draft.id)
   assert.deepEqual(deleted, [50])
   deleted.length = 0
   github.findRelease = async () => ({ ...draft, draft: false })
-  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0'))
+  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', undefined, draft.body))
   assert.deepEqual(deleted, [])
 })
 
-test('new drafts in the code repository bind to the actual source commit, with a branch fallback', async () => {
+test('release notes read the exact tagged commit, preserving multiline Unicode, not later HEAD or tag annotations', t => {
+  const base = resolve(root, 'src-tauri/target/verification/release-notes-unit')
+  const workspace = join(base, randomUUID())
+  mkdirSync(workspace, { recursive: true })
+  t.after(() => {
+    assert.ok(resolve(workspace).startsWith(`${base}${sep}`))
+    rmSync(workspace, { recursive: true, force: true })
+  })
+  const git = (args, input) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false',
+    '-c', `core.hooksPath=${join(workspace, 'disabled-hooks')}`, ...args], {
+    cwd: workspace, input, encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_AUTHOR_NAME: 'Release fixture', GIT_AUTHOR_EMAIL: 'release@example.invalid',
+      GIT_COMMITTER_NAME: 'Release fixture', GIT_COMMITTER_EMAIL: 'release@example.invalid' },
+  }).trimEnd()
+  git(['init', '--quiet'])
+  const notes = '\u4fee\u590d\u66f4\u65b0\u8bf4\u660e\n\n- GitHub & Gitee\n- Keep "quoted" text\n\nCo-Authored-By: Example <example@example.invalid>'
+  git(['commit', '--allow-empty', '--quiet', '-F', '-'], notes)
+  const commit = git(['rev-parse', 'HEAD'])
+  git(['tag', '-a', 'v1.2.0', '-m', 'A separate tag annotation'])
+  const tagObject = git(['rev-parse', 'refs/tags/v1.2.0'])
+  git(['commit', '--allow-empty', '--quiet', '-m', 'A later unrelated commit'])
+  assert.equal(readReleaseNotes(commit, workspace), notes)
+  assert.equal(readReleaseNotes(tagObject, workspace), notes)
+  git(['commit', '--allow-empty', '--allow-empty-message', '--quiet', '-F', '-'], '')
+  assert.throws(() => readReleaseNotes(git(['rev-parse', 'HEAD']), workspace), /message is empty/)
+  assert.throws(() => readReleaseNotes('f'.repeat(40), workspace), /Could not read/)
+  for (const invalid of [undefined, '', 'HEAD', '--help', '../invalid']) {
+    assert.throws(() => readReleaseNotes(invalid, workspace), /full GitHub commit SHA/)
+  }
+})
+
+test('new drafts bind to the actual source commit and its message, with a branch fallback', async () => {
   const requests = []
   const github = {
     findRelease: async () => undefined,
@@ -224,15 +256,54 @@ test('new drafts in the code repository bind to the actual source commit, with a
       return path === '' ? { default_branch: 'main' } : { ...draft, ...options.body }
     },
   }
-  await prepareRelease(github, '1.2.0', 'v1.2.0')
+  await prepareRelease(github, '1.2.0', 'v1.2.0', undefined, draft.body)
   assert.equal(requests[1][1].body.target_commitish, 'main')
   assert.equal(requests[1][1].body.draft, true)
+  assert.equal(requests[1][1].body.body, draft.body)
   requests.length = 0
   const commit = 'a'.repeat(40)
-  await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  await prepareRelease(github, '1.2.0', 'v1.2.0', commit, draft.body)
   assert.equal(requests[1][1].body.target_commitish, commit)
+  assert.equal(requests[1][1].body.body, draft.body)
   assert.equal(requests.length, 2)
-  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', '../invalid'))
+  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', '../invalid', draft.body))
+})
+
+test('prepare requires a source commit message before any GitHub mutation or request', async () => {
+  const github = { findRelease: async () => assert.fail('Invalid notes must not reach GitHub') }
+  for (const notes of [undefined, null, '', ' \n ', 1]) {
+    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', 'a'.repeat(40), notes), /source commit message/)
+  }
+})
+
+test('same-commit retries replace old boilerplate notes and the verified manifest inherits the exact message', async () => {
+  const commit = 'c'.repeat(40)
+  const notes = '\u4fee\u590d\u591a\u5e73\u53f0\u66f4\u65b0\n\n- Preserve signatures\n- Keep draft only'
+  let release = { ...draft, target_commitish: commit, body: 'Old boilerplate release instructions' }
+  const requests = []
+  const fixture = releaseFixture()
+  const github = new GitHubRelease('fixture-token', async (url, options) => {
+    const path = new URL(url).pathname
+    if (options.method === 'PATCH') {
+      const body = JSON.parse(options.body)
+      requests.push(body)
+      release = { ...release, ...body }
+      return Response.json(release)
+    }
+    if (path.endsWith('/assets')) return Response.json([])
+    if (path.endsWith('/releases')) return Response.json([release])
+    throw new Error(`Unexpected fixture request: ${options.method} ${path}`)
+  })
+  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit, notes)
+  assert.equal(updated.body, notes)
+  assert.deepEqual(requests, [{ tag_name: draft.tag_name, target_commitish: commit, body: notes, draft: true, prerelease: false }])
+  const manifest = await aggregateManifest(fixture.github, updated, fixture.assets, '1.2.0', fixture.encodedPublicKey)
+  assert.equal(manifest.notes, notes)
+  await prepareRelease(github, '1.2.0', 'v1.2.0', commit, notes)
+  assert.equal(requests.length, 1)
+  release.draft = false
+  await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit, 'New message'))
+  assert.equal(requests.length, 1)
 })
 
 test('a matching draft retry refreshes its source commit without publishing or removing installers', async () => {
@@ -249,15 +320,15 @@ test('a matching draft retry refreshes its source commit without publishing or r
     assets: async () => [{ id: 50, name: 'latest.json' }, { id: 51, name: names[0] }],
     deleteAsset: async id => deleted.push(id),
   }
-  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit, draft.body)
   assert.equal(updated.target_commitish, commit)
   assert.deepEqual(requests, [[`/releases/${draft.id}`, {
-    method: 'PATCH', body: { tag_name: 'v1.2.0', target_commitish: commit, draft: true, prerelease: false },
+    method: 'PATCH', body: { tag_name: 'v1.2.0', target_commitish: commit, body: draft.body, draft: true, prerelease: false },
   }]])
   assert.deepEqual(deleted, [50])
   release = updated
   requests.length = 0
-  await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  await prepareRelease(github, '1.2.0', 'v1.2.0', commit, draft.body)
   assert.deepEqual(requests, [])
   for (const changed of [
     { ...release, draft: false },
@@ -266,7 +337,7 @@ test('a matching draft retry refreshes its source commit without publishing or r
   ]) {
     release = changed
     deleted.length = 0
-    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit))
+    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit, draft.body))
     assert.deepEqual(requests, [])
     assert.deepEqual(deleted, [])
   }
@@ -277,7 +348,7 @@ test('a matching draft retry refreshes its source commit without publishing or r
     { prerelease: true },
   ]) {
     github.request = async () => ({ ...release, ...changed })
-    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit))
+    await assert.rejects(() => prepareRelease(github, '1.2.0', 'v1.2.0', commit, draft.body))
     assert.deepEqual(deleted, [])
   }
 })
@@ -299,12 +370,12 @@ test('draft retries explicitly retain the version tag when GitHub normalizes an 
     if (path.endsWith('/releases')) return Response.json([release])
     throw new Error(`Unexpected fixture request: ${options.method} ${path}`)
   })
-  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit)
+  const updated = await prepareRelease(github, '1.2.0', 'v1.2.0', commit, draft.body)
   assert.equal(updated.tag_name, 'v1.2.0')
   assert.equal(updated.target_commitish, commit)
   assert.equal(updated.draft, true)
   assert.equal(updated.prerelease, false)
-  assert.deepEqual(requests, [{ tag_name: 'v1.2.0', target_commitish: commit, draft: true, prerelease: false }])
+  assert.deepEqual(requests, [{ tag_name: 'v1.2.0', target_commitish: commit, body: draft.body, draft: true, prerelease: false }])
 })
 
 test('Actions writes drafts and updater manifests to this code repository with its scoped GITHUB_TOKEN', () => {

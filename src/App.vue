@@ -674,7 +674,7 @@ function openModRepository(mod: InstalledMod, packageStatus?: string) {
   const targets = communityNavigationTargets(repos.value, new Set(repos.value.filter((repo) => repo.download_mode === 'release' && bound.some((candidate) =>
     repo.provider === candidate.provider && repo.username.toLowerCase() === candidate.username.toLowerCase()
     && repo.repository.toLowerCase() === candidate.repository.toLowerCase())
-    && children.some((child) => modReleaseRepositoryIds(child).has(repo.id))).map((repo) => repo.id)))
+    && children.some((child) => modReleaseRepositoryIds(child).has(repo.id))).map((repo) => repo.id)), config.value?.repository_sources)
   for (const discovery of communities) discovery.reveal(targets)
   const visibleIds: string[] = []
   function expandTargets(groups: SourceGroup[]): boolean {

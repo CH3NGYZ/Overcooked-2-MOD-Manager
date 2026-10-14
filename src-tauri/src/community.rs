@@ -39,6 +39,76 @@ pub fn source_id(provider: &Provider) -> &'static str {
     }
 }
 
+type RepositoryIdentity = (&'static str, String, String);
+
+fn identity(repo: &RepositoryConfig) -> RepositoryIdentity {
+    (
+        source_id(&repo.provider),
+        repo.username.to_ascii_lowercase(),
+        repo.repository.to_ascii_lowercase(),
+    )
+}
+
+fn official_repository_keys(config: &AppConfig) -> HashSet<RepositoryIdentity> {
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut pending = vec![crate::repository_sources::DEFAULT_INDEX_ID];
+    for source in &config.repository_sources {
+        if is_source(&source.id) {
+            continue;
+        }
+        if let Some(parent) = source.parent_id.as_deref() {
+            children.entry(parent).or_default().push(&source.id);
+        } else if source.builtin {
+            pending.push(&source.id);
+        }
+    }
+    let mut official_sources = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if official_sources.insert(id)
+            && let Some(ids) = children.get(id)
+        {
+            pending.extend(ids);
+        }
+    }
+    // Source ownership is independent of the builtin edit/delete protection flag.
+    config
+        .repositories
+        .iter()
+        .filter(|repo| {
+            !is_repository(repo)
+                && (repo.builtin
+                    || repo
+                        .source_id
+                        .as_deref()
+                        .is_some_and(|id| official_sources.contains(id)))
+        })
+        .map(identity)
+        .collect()
+}
+
+pub(crate) fn visible_discoveries(
+    config: &AppConfig,
+) -> (Option<CommunityDiscovery>, Option<CommunityDiscovery>) {
+    let official = official_repository_keys(config);
+    let visible_ids = config
+        .repositories
+        .iter()
+        .filter(|repo| is_repository(repo) && !official.contains(&identity(repo)))
+        .map(|repo| &repo.id)
+        .collect::<HashSet<_>>();
+    // Filter only the public snapshot; saved records still support installed Tag/channel bindings.
+    let visible = |discovery: &Option<CommunityDiscovery>| {
+        discovery.clone().map(|mut result| {
+            result.repository_ids.retain(|id| visible_ids.contains(id));
+            result
+        })
+    };
+    (
+        visible(&config.community_discovery),
+        visible(&config.gitee_community_discovery),
+    )
+}
+
 pub fn provider_matches_region(provider: &Provider, region: &str) -> bool {
     *provider != Provider::Gitee || region == crate::config::REGION_CHINESE_MAINLAND
 }
@@ -509,17 +579,7 @@ fn merge_results(
 ) {
     let source_id = source_id(provider);
     let belongs_to_search = |repo: &RepositoryConfig| repo.source_id.as_deref() == Some(source_id);
-    let official = config
-        .repositories
-        .iter()
-        .filter(|repo| repo.builtin && repo.provider == *provider && !is_repository(repo))
-        .map(|repo| {
-            (
-                repo.username.to_ascii_lowercase(),
-                repo.repository.to_ascii_lowercase(),
-            )
-        })
-        .collect::<HashSet<_>>();
+    let official = official_repository_keys(config);
     let is_installed = |repo: &RepositoryConfig| {
         manifests.iter().any(|manifest| {
             manifest.repository_id == repo.id
@@ -542,10 +602,7 @@ fn merge_results(
         if let Some(old) = previous.remove(&repo.id) {
             repo.enabled = old.enabled;
         }
-        let already_official = official.contains(&(
-            repo.username.to_ascii_lowercase(),
-            repo.repository.to_ascii_lowercase(),
-        ));
+        let already_official = official.contains(&identity(&repo));
         if !already_official {
             visible_ids.insert(repo.id.clone());
         }
@@ -1090,6 +1147,89 @@ mod tests {
         RepositoryBinding::from_release(repo, "tag")
             .unwrap()
             .channel
+    }
+
+    #[test]
+    fn community_merge_checks_official_source_tree_before_addition() {
+        for provider in [Provider::Github, Provider::Gitee] {
+            let mut official =
+                repository_from_coordinates(&provider, "Owner", "Listed", "main", "official")
+                    .unwrap();
+            official.id = "official-mod".into();
+            official.source_id = Some("official-leaf".into());
+            official.builtin = false;
+            official.enabled = false;
+            let found =
+                repository_from_coordinates(&provider, "owner", "LISTED", "main", "community")
+                    .unwrap();
+            let mut config: AppConfig = serde_json::from_value(serde_json::json!({
+                "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+                "game":{"path":"","auto_detect":false},
+                "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+                "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+                "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+                "repository_sources":[
+                    {"id":"official-leaf","parent_id":"official-child","nickname":"Leaf","url":"leaf.toml","builtin":false},
+                    {"id":"official-child","parent_id":"official-repository-index","nickname":"Child","url":"child.toml","builtin":false},
+                    {"id":"official-repository-index","nickname":"Official","url":"repositories.toml","builtin":true}
+                ],
+                "repositories":[official.clone()]
+            })).unwrap();
+            merge_results(
+                &mut config,
+                &provider,
+                SearchResults {
+                    discovery: CommunityDiscovery {
+                        repository_ids: vec![found.id.clone()],
+                        total_count: 1,
+                        ..Default::default()
+                    },
+                    repositories: vec![found],
+                },
+                &[],
+            );
+            assert_eq!(config.repositories.len(), 1, "{provider:?}");
+            assert_eq!(config.repositories[0].note, official.note);
+            let discovery = match provider {
+                Provider::Github => config.community_discovery.as_ref(),
+                Provider::Gitee => config.gitee_community_discovery.as_ref(),
+            };
+            assert!(discovery.unwrap().repository_ids.is_empty());
+
+            config.repository_sources.extend(
+                serde_json::from_value::<Vec<RepositorySource>>(serde_json::json!([
+                    {"id":"custom","nickname":"Custom","url":"custom.toml"},
+                    {"id":"cycle-a","parent_id":"cycle-b","nickname":"A","url":"a.toml"},
+                    {"id":"cycle-b","parent_id":"cycle-a","nickname":"B","url":"b.toml"},
+                    {"id":"legacy-root","nickname":"Legacy","url":"legacy.toml","builtin":true}
+                ]))
+                .unwrap(),
+            );
+            for (source, expected) in [
+                ("official-repository-index", true),
+                ("official-leaf", true),
+                ("legacy-root", true),
+                ("custom", false),
+                ("cycle-a", false),
+                ("missing-parent", false),
+                (source_id(&provider), false),
+            ] {
+                let mut configured = official.clone();
+                configured.source_id = Some(source.into());
+                config.repositories = vec![configured.clone()];
+                let keys = official_repository_keys(&config);
+                assert_eq!(
+                    keys.contains(&identity(&configured)),
+                    expected,
+                    "{provider:?}/{source}"
+                );
+                configured.provider = match provider {
+                    Provider::Github => Provider::Gitee,
+                    Provider::Gitee => Provider::Github,
+                };
+                assert!(!keys.contains(&identity(&configured)), "{source}");
+            }
+        }
     }
 
     #[tokio::test]

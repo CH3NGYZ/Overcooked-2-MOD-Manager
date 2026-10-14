@@ -230,8 +230,8 @@ fn game_file_stamps(info: Option<&GameInfo>, backups: &Path) -> Vec<(PathBuf, Op
         root.to_path_buf(),
         root.join("Overcooked2.exe"),
         root.join("Overcooked2.x86_64"),
-        root.join("Overcooked! 2.app"),
-        root.join("Overcooked! 2.app/Contents/MacOS"),
+        root.join("Overcooked2.app"),
+        root.join("Overcooked2.app/Contents/MacOS"),
         root.join("BepInEx"),
         root.join("BepInEx/core"),
         root.join("BepInEx/core/BepInEx.dll"),
@@ -535,7 +535,7 @@ mod tests {
             .join(uuid::Uuid::new_v4().to_string());
         let mut observer = GameDiscoveryObserver::default();
         let steam_roots = vec![root];
-        for executable in ["Overcooked2.exe", "Overcooked2.x86_64", "Overcooked! 2.app"] {
+        for executable in ["Overcooked2.exe", "Overcooked2.x86_64", "Overcooked2.app"] {
             assert!(observer.refresh(&steam_roots, None, executable));
             assert!(
                 observer
@@ -545,5 +545,36 @@ mod tests {
             );
             assert!(!observer.refresh(&steam_roots, None, executable));
         }
+    }
+
+    #[test]
+    fn game_stamps_notice_the_actual_native_mac_bundle_and_contents() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/verification/native-mac-observer")
+            .join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&root).unwrap();
+        let mut info = snapshot();
+        info.path = Some(root.to_string_lossy().into_owned());
+        let backups = root.join("backups");
+        let before = game_file_stamps(Some(&info), &backups);
+        let app = root.join("Overcooked2.app");
+        fs::create_dir_all(&app).unwrap();
+        let bundled = game_file_stamps(Some(&info), &backups);
+        assert!(before != bundled);
+        assert!(
+            bundled
+                .iter()
+                .any(|(path, stamp)| path == &app && stamp.is_some())
+        );
+        let contents = app.join("Contents/MacOS");
+        fs::create_dir_all(&contents).unwrap();
+        let complete = game_file_stamps(Some(&info), &backups);
+        assert!(bundled != complete);
+        assert!(
+            complete
+                .iter()
+                .any(|(path, stamp)| path == &contents && stamp.is_some())
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

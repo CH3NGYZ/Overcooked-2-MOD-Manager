@@ -2,6 +2,17 @@
 
 本文件记录管理器的运行模式、用户数据和签名发布约定，并列出真实平台的验收项。配置完成、本地编译和测试通过，都不能代替真实 CI、安装器、Steam 或游戏运行验证。
 
+## 系统地区与渠道
+
+地区表示系统配置的国家/地区，不通过 IP、VPN、时区或管理器界面语言推断。中国大陆使用 `chinese_mainland`，其他地区使用 `international`；官方源索引、代理筛选、自更新顺序与 Gitee 社区发现共用 `config::current_user_region`。
+
+- Windows 保留 `GetUserGeoID(GEOCLASS_NATION)`；中国大陆 GEOID 为 45。
+- macOS 使用 CoreFoundation `CFLocaleCopyCurrent` 的 `kCFLocaleCountryCode` 读取当前用户“语言与地区”中的地区，国家代码 CN 判为中国大陆。即使使用英文界面，或从 Finder 启动没有 LANG 环境变量，也读取该设置。
+- Linux 按 `LC_ALL`、地区格式变量 `LC_ADDRESS / LC_MONETARY / LC_TIME / LC_NUMERIC / LC_MEASUREMENT`、桌面地区格式、`LANG`、系统 locale 文件的顺序获取有效地域。GNOME/Unity 桌面读取 `org.gnome.system.locale region`（命令限时 500 ms，失败继续后备），KDE 读取用户 `plasma-localerc` 的 `[Formats]`；系统文件后备为 `/etc/locale.conf`、`/etc/default/locale`。Linux 没有统一的独立国家位置设置，因此以有效地区格式为准。
+- 仅明确 CN 地域判为中国大陆，例如 `en_CN.UTF-8`、`zh_CN.UTF-8`、`zh-Hans-CN`；`zh_TW`、`zh_HK`、`zh_MO`、`zh_SG` 均为国际地区。只有 `zh`/`zh-Hans` 语言没有地域时继续后备，C/POSIX 为明确的中性 locale，使用国际渠道。所有来源不可用时回退国际渠道并记录警告，不把中文语言自动当成中国大陆。
+
+macOS/Linux 地区在进程内只读取一次，避免每次读取配置都查询桌面设置；修改系统地区后重启管理器。`logs/rust.log` 记录检测平台、采用来源与最终地区，便于确认渠道选择。回归覆盖解析/优先级和地区消费者，但 Windows 本地验证不代表 Mac CoreFoundation、Linux 桌面设置或真实网络渠道已经实机验证。
+
 ## 用户数据与运行模式
 
 所有平台的数据根均为当前用户的 `~/OC2ModManager`，其中保存 `config.toml`、缓存、安装清单、回收站、框架备份、安装语言及日志。本轮按全新安装处理，不读取、导入或删除旧安装位置的数据。以后更新保留新的用户目录及已经选择的运行模式。
@@ -14,11 +25,13 @@
 
 切换模式清空已选择的游戏路径并重新检测，不移动游戏或 MOD。游戏运行、操作繁忙或教程演示时不可切换。Windows/Wine 游戏是 x86，和管理器自身的 x64 / ARM64 架构无关。
 
+游戏目录统一在框架管理页的“厨房目录”卡片中修改、恢复默认及重新检测，不额外显示全局悬浮目录选择按钮。macOS 原生游戏根目录通常为 `~/Library/Application Support/Steam/steamapps/common/Overcooked! 2`，其中的实际应用包是 `Overcooked2.app`（包名没有感叹号或空格）；选择游戏根目录或直接选择该应用包均归一化为游戏根目录。原生 BepInEx 脚本、游戏进程判断及文件变化观察沿用此包名。
+
 | 游戏模式 | Steam / 游戏 | BepInEx 5.4.23.5 包 |
 | --- | --- | --- |
 | Windows，以及 Linux/macOS Wine | Windows Steam、`Overcooked2.exe` | `BepInEx_win_x86_5.4.23.5.zip` |
 | Linux 原生 | 原生 Linux Steam、`Overcooked2.x86_64` | `BepInEx_linux_x64_5.4.23.5.zip` |
-| macOS 原生 | 原生 macOS Steam、`Overcooked! 2.app` 所在目录 | `BepInEx_macos_universal_5.4.23.5.zip` |
+| macOS 原生 | 原生 macOS Steam、`Overcooked2.app` 所在目录 | `BepInEx_macos_universal_5.4.23.5.zip` |
 
 GitHub 包来自 `BepInEx/BepInEx` 的 `v5.4.23.5`；Gitee 包来自 `ch3ngyz/Overcooked-2-Installer-ResourceFiles` 的 `bepinex` Release，三个包均保留原名，不再使用 `bepinex.zip` 别名。下载使用现有取消、竞速和 SHA-256 校验；重装保留游戏的 MOD 与配置，脚本校验失败回滚文件及本次新建的空目录。
 
@@ -55,9 +68,22 @@ Windows 保留启动与安装器提权、正常位置原位更新，但不再复
 
 Windows 的 `Update::install` 在启动安装器成功后退出进程，启动失败则返回错误并保留当前程序。正常更新不再由外部助手监测安装器退出码、落盘版本与新进程；安装器只在成功钩子启动新程序，MSI 详细日志保存在用户目录的 `logs/update-msi.log`。不能将“已启动安装器”说成“已完成更新”。危险位置的安装器迁移仍核对落盘版本、确认新进程持续运行后按快照清理原程序。
 
-当前锁定的 `tauri-plugin-updater 2.13.1` 支持 AppImage/DEB/RPM 和 Mac 应用归档。自定义 `install(bytes)` 不负责验签，因此现有竞速下载在每个候选胜出前校验 minisign 签名与受签名保护的版本，GitHub 提供 SHA-256 时同时校验摘要。缺失签名、版本不符、错误的包名或格式均停止安装，不降级为无校验更新。
+当前锁定的 `tauri-plugin-updater 2.13.1` 支持 AppImage/DEB/RPM 和 Mac 应用归档。自定义 `install(bytes)` 不负责验签，因此自更新下载完成后先校验 minisign 签名与受签名保护的版本。清单不需要包含 API 资产大小或摘要，仍检查非空文件与有 Content-Length 时的完整长度。缺失签名、版本不符、错误的包名或格式均停止安装，不降级为无校验更新。
 
-Release API 内的清单资产地址优先于备用地址。Gitee 备用清单地址为 `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/latest/latest.json`，`download` 位于 `latest` 前；GitHub 同名仓库仍使用 `releases/latest/download/latest.json`。后端更新 API、手动更新页面和备用清单地址与用户配置的更新仓库保持一致。清单版本及包名必须与 API 选出的版本和本平台包一致，不能靠另一版本的清单或单独 `.sig` 绕过此绑定。
+## 自更新清单与渠道竞速
+
+自更新不请求 GitHub/Gitee Release API，不读取或编译嵌入更新 API Token。普通 MOD 仓库刷新、社区发现仍使用原有 API 逻辑，不受此变更影响。
+
+- 中国大陆先完成 Gitee 的清单和更新包请求；Gitee 请求、包下载或验签失败后才启动 GitHub。国际地区仅请求 GitHub，不访问 Gitee。
+- Gitee 清单地址为 `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/latest/latest.json`，`download` 位于 `latest` 前；GitHub 为 `https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/latest/download/latest.json`。
+- Gitee 清单和更新包均单线程直连，不使用代理、竞速或分片。Gitee 有效清单确认当前为最新版时结束检查，不继续请求 GitHub。
+- GitHub 清单和更新包分别以官方直连及编译内置 Release 代理竞速，复用普通下载的最多三源协调器、最近五秒低于 512 KiB/s 时替换慢源、失败补位、取消及输家清理。只有完整且有效的清单或通过验签的完整包才能胜出。两轮可以由不同来源胜出，并不固定使用清单获胜代理下载包。
+- 自更新代理只来自 `repositories-proxies.toml` 的编译内置 Release 模板，不使用本地配置中用户添加、编辑或远程获取的代理，也不使用 Raw/API 代理；普通 MOD 下载继续使用原来的用户/远程配置和禁用偏好。
+- 清单请求禁止缓存、单次最多 5 秒；首次清单发现限制内容上限为 1 MiB。无效 JSON、缺少当前平台、错误包名、空签名或网络失败不能胜出，继续池中其他候选；首个有效清单确认当前版本不低于远程时结束检查。
+- 清单按系统、架构和当前安装格式选择七种目标键，并校验对应平台包名及官方渠道仓库 URL。交给 Tauri Updater 前重新读取并严格绑定原先发现的完整原始 URL、版本、平台和签名；Gitee 复核仍单路，GitHub 复核仍竞速，不接受期间改变的元数据。
+- 更新包仅使用已选清单中的原始 URL 组装渠道候选，不重新通过 API 获取资产或从另一份清单替换包；每个候选下载最多 30 秒，安装前校验实际字节、minisign 与签名保护的版本。GitHub 包池全部失败后结束本轮自动更新并保留手动入口，取消立即停止且不继续切换渠道。
+
+GitHub 的 latest 下载地址只面向公开稳定 Release；仅生成 draft 不代表清单可下载。Gitee 同步还需要提供上述固定地址可下载的 latest.json，不能只把文件放在版本标签下。Actions 草稿与真实发布可用性、系统安装权限、重启结果仍须分别验证。
 
 ## 发布前置条件
 
@@ -68,7 +94,11 @@ Release API 内的清单资产地址优先于备用地址。Gitee 备用清单�
 - `TAURI_SIGNING_PRIVATE_KEY`：与 `src-tauri/tauri.conf.json` 的 updater 公钥对应的私钥文件完整内容，不是本机文件路径。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥有密码时配置。
 
-这些是 updater 的 minisign 密钥，不是 Apple 开发者证书或 Windows 代码签名证书。操作系统代码签名和 macOS 公证需单独配置与验收。用户已更换当前源码公钥，Actions 测试应显式使用 `signing=configured` 验证其配对私钥，不得换成临时公钥冒充正式密钥验收。
+这些是 updater 的 minisign 密钥，不是 Apple 开发者证书或 Windows 代码签名证书。用户已更换当前源码公钥，Actions 测试应显式使用 `signing=configured` 验证其配对私钥，不得换成临时公钥冒充正式密钥验收。
+
+macOS 正式发布和测试打包统一采用免费的 ad-hoc 代码签名：共享 `tauri.conf.json` 设置 `bundle.macOS.signingIdentity = "-"`，Intel 和 Apple Silicon 的本地构建及 Actions 均继承此配置。现有工作流不设置 Apple 签名身份覆盖，也不导入 Apple 证书或提交公证。由 Tauri 在生成 DMG 和 updater 应用归档前签名应用，不在生成归档或 updater 签名后修改应用内容；updater 的 minisign 验签继续独立执行。ad-hoc 签名用于减少未签名下载包被 macOS 判为“已损坏”的问题，不能保证消除所有 Gatekeeper 拦截，用户仍可能需要在“系统设置 → 隐私与安全性”允许打开。
+
+真实 Mac 验收需分别检查两架构 `.app` 的 `codesign --verify --deep --strict --verbose=2` 和 `codesign -dv --verbose=4` 输出，并测试带下载隔离属性的 DMG 首次安装及 updater 更新后启动。应确认签名类型为 ad-hoc；Gatekeeper 未公证评估失败不等于应用签名损坏。本地 Windows 配置和脚本验证不代表这些 macOS 行为已通过。
 
 用户自行创建长期密钥时可运行 `npm run tauri -- signer generate -w .tauri/updater.key`；生成器会显示私钥，输出不得粘贴到聊天或日志。`.key.pub` 文件内容是一整行 Base64，解码后为 minisign 公钥文本（含注释及公钥行），不是 PEM 证书、摘要或私钥。将 `.key.pub` 的完整内容填写到客户端 `plugins.updater.pubkey`，将 `.key` 的完整内容填写到 Actions 的 `TAURI_SIGNING_PRIVATE_KEY` Secret，有密码时另填密码 Secret；`.tauri/` 已忽略，仍应离线备份私钥。本轮使用用户已有的新密钥，不再生成生产密钥。
 

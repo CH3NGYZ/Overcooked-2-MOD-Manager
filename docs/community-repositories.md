@@ -93,6 +93,8 @@ Owner/Repository/Tag 是主要绑定信息；provider 防止 GitHub/Gitee 同名
 
 本地扫描继续读取 GUID、DLL 版本、产品名和原始文件名，保留包/子 MOD、重复检测、禁用文件、备注和配置入口：
 
+DLL 版本只读取 `BepInPlugin` 属性的第三个参数，例如 `[BepInPlugin("dev.gua.overcooked.diylevel", "Overcooked2 DIYLevel Plugin", "0.10.0")]` 对应 `0.10.0`。缺失或无法读取时保留空版本并显示“版本未知”，不回退到 `ProductVersion`、`FileVersion` 或 `AssemblyVersion`；有效的 `0.0.0` 也直接采用。此规则只影响本地 MOD 版本，不改变 BepInEx 框架或管理器的版本读取。
+
 1. 有合法安装绑定时，优先按平台、Owner/Repository 和兼容频道匹配仓库；优先保留原安装源，其次匹配相同频道，再使用同项目的 `all` 条目。更新比较使用已安装 Tag，不用 DLL 版本覆盖它。
 2. 没有合法绑定的旧清单和手工 DLL 继续按现有 GUID、产品名、文件名及 `version_regex` 识别，按 DLL 版本检测更新。安装清单的新字段可缺省，旧数据不强制迁移。
 3. 相同 Tag 为最新版；可解析版本只提示更高远端版本，避免降级提示；无法解析的非 SemVer Tag 按精确差异判断更新。草稿、错误缓存和其他频道不能确认更新状态。

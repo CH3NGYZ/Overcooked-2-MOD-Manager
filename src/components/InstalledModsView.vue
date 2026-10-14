@@ -147,7 +147,7 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
                     @click="toggleModDetails(mod.dll_file)"><ChevronRight :class="{ 'mod-details-expanded': modDetailsExpanded[mod.dll_file] }" :size="15" /></button>
                   <div class="mod-details-content">
                     <div class="mod-heading"><b>{{ mod.name }}</b>
-                      <span class="mod-version mono">{{ mod.version || t('未知版本') }}</span><button v-if="['有更新', '最新版'].includes(props.installedModStatus(mod))" type="button"
+                      <span class="mod-version mono">{{ mod.version || t('版本未知') }}</span><button v-if="['有更新', '最新版'].includes(props.installedModStatus(mod))" type="button"
                         class="badge mod-update-link" :class="installedModStatusClass(mod)" @click="dynamicProps.openModRepository(mod)">{{ installedModStatusLabel(mod) }}</button><span v-else class="badge"
                         :title="mod.duplicate_version ? t('检测到多个相同 GUID 和版本的 MOD，管理器会随机加载一个 MOD，建议删除重复 MOD') : undefined"
                         :class="installedModStatusClass(mod)"><RefreshCw v-if="installedModStatusLabel(mod) === t('检查中')" class="spin-icon" :size="11" />{{ installedModStatusLabel(mod) }}</span>

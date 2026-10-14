@@ -63,7 +63,7 @@ export function tutorialMod(
     copyright: undefined,
     enabled: true,
     version: '1.1.0',
-    version_source: 'ProductVersion',
+    version_source: 'BepInPlugin',
     update_available: false,
     duplicate_guid: false,
     duplicate_version: false,

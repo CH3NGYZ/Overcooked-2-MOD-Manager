@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OC2ModManager",
   "mainBinaryName": "OC2ModManager",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "identifier": "com.ch3ngyz.oc2.modmanager",
   "build": {
     "frontendDist": "../dist",
@@ -38,6 +38,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "windows": {
       "nsis": {
         "installMode": "perMachine",

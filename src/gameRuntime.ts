@@ -2,7 +2,7 @@ import type { AppPlatform, GameRuntime, Provider } from './types'
 
 export function gameExecutableName(platform?: AppPlatform, runtime?: GameRuntime): string {
   if (runtime === 'native' && platform === 'linux') return 'Overcooked2.x86_64'
-  if (runtime === 'native' && platform === 'macos') return 'Overcooked! 2.app'
+  if (runtime === 'native' && platform === 'macos') return 'Overcooked2.app'
   return 'Overcooked2.exe'
 }
 

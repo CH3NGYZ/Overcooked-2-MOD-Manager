@@ -660,15 +660,11 @@ pub struct AppUpdateInfo {
     pub date: Option<String>,
     pub download_size: Option<u64>,
     #[serde(default)]
-    pub manifest_endpoints: Vec<String>,
+    pub manifest_url: String,
     #[serde(default)]
     pub installer_url: Option<String>,
     #[serde(default)]
-    pub installer_proxy_url: Option<String>,
-    #[serde(default)]
-    pub installer_download_urls: Vec<String>,
-    #[serde(default)]
-    pub installer_digest: Option<String>,
+    pub installer_signature: String,
     #[serde(default)]
     pub installer_name: String,
     #[serde(default)]

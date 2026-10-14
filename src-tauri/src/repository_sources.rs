@@ -9,8 +9,8 @@ use url::Url;
 pub const BUILTIN_INDEX: &str = "repositories.toml";
 pub const DEFAULT_INDEX_ID: &str = "official-repository-index";
 pub const DEFAULT_INDEX_GITEE_URL: &str =
-    "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/repositories.toml";
-pub const DEFAULT_INDEX_GITHUB_URL: &str = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/raw/refs/heads/main/repositories.toml";
+    "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/repositories.toml";
+pub const DEFAULT_INDEX_GITHUB_URL: &str = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/repositories.toml";
 
 pub fn default_index_url(region: &str) -> &'static str {
     if region == crate::config::REGION_CHINESE_MAINLAND {
@@ -867,11 +867,11 @@ mod tests {
         for (region, expected) in [
             (
                 crate::config::REGION_CHINESE_MAINLAND,
-                "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Releases/raw/main/repositories-gua.toml",
+                "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/repositories-gua.toml",
             ),
             (
                 crate::config::REGION_INTERNATIONAL,
-                "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Releases/raw/refs/heads/main/repositories-gua.toml",
+                "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/repositories-gua.toml",
             ),
         ] {
             let location = SourceLocation::parse(default_index_url(region)).unwrap();

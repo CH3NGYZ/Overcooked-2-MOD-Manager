@@ -101,6 +101,103 @@ test('Gitee discovery has its own catalogue, official dedup, pagination and navi
     ['hidden', 'github', 'official-gitee'])
 })
 
+function officialSourceTree() {
+  return [
+    { id: 'official-leaf', parent_id: 'official-child', builtin: false },
+    { id: 'official-child', parent_id: 'official-repository-index', builtin: false },
+    { id: 'official-repository-index', builtin: true },
+    { id: 'custom', builtin: false },
+    { id: 'cycle-a', parent_id: 'cycle-b', builtin: false },
+    { id: 'cycle-b', parent_id: 'cycle-a', builtin: false },
+  ]
+}
+
+test('late official descendants immediately hide both community catalogues and clamp pagination', async () => {
+  for (const provider of ['github', 'gitee']) {
+    const source_id = catalogue.communitySourceId(provider)
+    const found = Array.from({ length: 12 }, (_, index) => repository(`found-${index}`, { provider, source_id }))
+    const discoveryKey = provider === 'gitee' ? 'gitee_community_discovery' : 'community_discovery'
+    const fixture = hostFixture({ provider })
+    try {
+      fixture.config.value = { region: 'chinese_mainland', repositories: found, repository_sources: officialSourceTree(),
+        [discoveryKey]: { repository_ids: found.map((repo) => repo.id) } }
+      await nextTick()
+      fixture.controller.setPage(2)
+      assert.equal(fixture.controller.visibleRepositories.value.length, 2)
+      fixture.config.value.repositories.push(...found.slice(10).map((repo) => ({ ...repo,
+        id: `official-${repo.id}`, username: 'OWNER', repository: repo.repository.toUpperCase(),
+        source_id: 'official-leaf', builtin: false, enabled: false, channel: 'stable' })))
+      await nextTick()
+      assert.deepEqual(fixture.controller.repositories.value.map((repo) => repo.id), found.slice(0, 10).map((repo) => repo.id))
+      assert.equal(fixture.controller.discoveredCount.value, 10)
+      assert.equal(fixture.controller.pageCount.value, 1)
+      assert.equal(fixture.controller.page.value, 1)
+      assert.equal(fixture.config.value.repositories.length, 14, 'Hiding must retain installed community bindings')
+      assert.deepEqual(fixture.calls, [], 'Official arrival must not require another community search')
+    } finally { fixture.scope.stop() }
+  }
+})
+
+test('official source ancestry wins before catalogue display without suppressing custom or other-provider matches', () => {
+  for (const provider of ['github', 'gitee']) {
+    const source_id = catalogue.communitySourceId(provider)
+    const found = ['root', 'leaf', 'custom', 'cycle', 'other-provider'].map((name) => repository(name, { provider, source_id }))
+    const configured = found.map((repo) => ({ ...repo, id: `configured-${repo.id}`, builtin: false,
+      source_id: { root: 'official-repository-index', leaf: 'official-leaf', custom: 'custom', cycle: 'cycle-a',
+        'other-provider': 'official-leaf' }[repo.id],
+      provider: repo.id === 'other-provider' ? (provider === 'github' ? 'gitee' : 'github') : provider }))
+    const config = { region: 'chinese_mainland', repositories: [...configured, ...found], repository_sources: officialSourceTree() }
+    assert.deepEqual(catalogue.orderedCommunityRepositories(config, provider).map((repo) => repo.id), ['custom', 'cycle', 'other-provider'])
+  }
+})
+
+test('hidden installed community targets navigate to official descendants without relying on repository builtin flags', () => {
+  const hidden = repository('installed-community', { repository: 'Listed' })
+  const official = repository('official-leaf-mod', { repository: 'LISTED', source_id: 'official-leaf', builtin: false })
+  const custom = repository('custom-mod', { repository: 'Listed', source_id: 'custom', builtin: false })
+  const other = repository('other-provider-mod', { repository: 'Listed', provider: 'gitee', source_id: 'official-leaf', builtin: false })
+  assert.deepEqual([...catalogue.communityNavigationTargets([hidden, official, custom, other], new Set([hidden.id]), officialSourceTree())],
+    [hidden.id, official.id])
+})
+
+test('actual MOD status navigation expands and highlights the official descendant for a hidden community binding', async () => {
+  const source = appSource.match(/function openModRepository\([\s\S]*?\n\}/)?.[0]
+  assert.ok(source, 'Execute the actual MOD status navigation host')
+  const { outputText } = ts.transpileModule(`
+    import { communityNavigationTargets } from '${catalogueUrl}'
+    export function navigate(host, mod) {
+      const { installedModStatus, visibleInstalledMods, modReleaseUpdateStatus, modReleaseRepositories,
+        modReleaseRepositoryIds, modRepositoryVersionReady, modRepositoryReleaseState, repos, config,
+        communities, repositoryGroupCollapsed, repositoryGroupKey, sourceCollapsed, sourceGroups,
+        repositoryFocusIds, activeView } = host
+      ${source}
+      openModRepository(mod)
+    }`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
+  const { navigate } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+  for (const provider of ['github', 'gitee']) {
+    for (const status of ['最新版', '有更新']) {
+      const hidden = repository('installed-community', { provider, source_id: catalogue.communitySourceId(provider) })
+      const official = { ...hidden, id: 'official-mod', source_id: 'official-leaf', builtin: false }
+      const mod = installed('v1.0.0')
+      const group = (id, repositories, children = []) => ({ source: { id }, groups: [{ key: 'mods', repositories }], children })
+      const host = {
+        installedModStatus: () => status, modReleaseUpdateStatus: () => status,
+        modReleaseRepositories: () => [hidden], modReleaseRepositoryIds: () => new Set([hidden.id]),
+        modRepositoryVersionReady: () => true, modRepositoryReleaseState: () => status === '有更新' ? 'update_available' : 'latest',
+        repos: ref([official, hidden]), config: ref({ repository_sources: officialSourceTree() }),
+        communities: [], repositoryGroupCollapsed: {}, repositoryGroupKey: (id, key) => `${id}:${key}`, sourceCollapsed: {},
+        sourceGroups: ref([group('official-repository-index', [], [group('official-child', [], [group('official-leaf', [official])])])]),
+        repositoryFocusIds: ref([]), activeView: ref('mods'), visibleInstalledMods: ref([mod]),
+      }
+      navigate(host, mod)
+      assert.equal(host.activeView.value, 'repositories', `${provider}/${status}`)
+      assert.deepEqual(host.repositoryFocusIds.value, [official.id])
+      assert.deepEqual(host.sourceCollapsed, { 'official-leaf': false, 'official-child': false, 'official-repository-index': false })
+      assert.equal(host.repositoryGroupCollapsed['official-leaf:mods'], false)
+    }
+  }
+})
+
 test('Gitee community is invisible outside mainland China without deleting saved bindings', () => {
   const repo = repository('saved-gitee', { provider: 'gitee', source_id: catalogue.GITEE_COMMUNITY_SOURCE_ID })
   for (const region of ['international', undefined, '']) {

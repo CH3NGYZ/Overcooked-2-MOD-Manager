@@ -335,6 +335,8 @@ impl ConfigService {
     }
 
     pub fn public_config(&self, config: &AppConfig) -> PublicConfig {
+        let (community_discovery, gitee_community_discovery) =
+            crate::community::visible_discoveries(config);
         let mut repositories = config.repositories.clone();
         for repo in &mut repositories {
             repo.github_token.clear();
@@ -356,8 +358,8 @@ impl ConfigService {
             gitee_token_set: !config.auth.gitee_token.is_empty(),
             repositories,
             repository_sources: config.repository_sources.clone(),
-            community_discovery: config.community_discovery.clone(),
-            gitee_community_discovery: config.gitee_community_discovery.clone(),
+            community_discovery,
+            gitee_community_discovery,
             github_proxies: config.github_proxies.clone(),
         }
     }
@@ -1994,6 +1996,78 @@ builtin = true
         let target = fs::canonicalize(&service.root).unwrap();
         assert!(target.starts_with(fs::canonicalize(&verification).unwrap()));
         fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn public_discovery_hides_late_official_descendants_without_erasing_saved_bindings() {
+        let service = ConfigService::for_test(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target/verification/community-official-dedup-20261014/config-fixture"),
+        );
+        for provider in [Provider::Github, Provider::Gitee] {
+            let community = crate::community::repository_from_coordinates(
+                &provider,
+                "Owner",
+                "Listed",
+                "main",
+                "community",
+            )
+            .unwrap();
+            let binding =
+                crate::models::RepositoryBinding::from_release(&community, "v1.0.0").unwrap();
+            let mut config = default_config();
+            let mut child = config.repository_sources[0].clone();
+            child.id = "official-child".into();
+            child.parent_id = Some(config.repository_sources[0].id.clone());
+            child.builtin = false;
+            let mut leaf = child.clone();
+            leaf.id = "official-leaf".into();
+            leaf.parent_id = Some(child.id.clone());
+            config.repository_sources.extend([leaf, child]);
+            config.repositories.push(community.clone());
+            let discovery = crate::models::CommunityDiscovery {
+                repository_ids: vec![community.id.clone()],
+                total_count: 1,
+                ..Default::default()
+            };
+            match provider {
+                Provider::Github => config.community_discovery = Some(discovery),
+                Provider::Gitee => config.gitee_community_discovery = Some(discovery),
+            }
+            let ids = |public: &PublicConfig| {
+                match provider {
+                    Provider::Github => public.community_discovery.as_ref(),
+                    Provider::Gitee => public.gitee_community_discovery.as_ref(),
+                }
+                .unwrap()
+                .repository_ids
+                .clone()
+            };
+            assert_eq!(ids(&service.public_config(&config)), [community.id.clone()]);
+            let mut official = community.clone();
+            official.id = "official-mod".into();
+            official.source_id = Some("official-leaf".into());
+            official.username = "OWNER".into();
+            official.repository = "LISTED".into();
+            official.builtin = false;
+            official.enabled = false;
+            official.channel = Channel::Stable;
+            config.repositories.push(official);
+            let before = serde_json::to_value(&config).unwrap();
+            let public = service.public_config(&config);
+            assert!(ids(&public).is_empty(), "{provider:?}");
+            assert_eq!(serde_json::to_value(&config).unwrap(), before);
+            assert!(
+                public
+                    .repositories
+                    .iter()
+                    .any(|repo| repo.id == community.id
+                        && repo.channel == Channel::All
+                        && binding.matches_repository(repo))
+            );
+            config.repositories.retain(|repo| repo.id != "official-mod");
+            assert_eq!(ids(&service.public_config(&config)), [community.id]);
+        }
     }
 
     #[test]

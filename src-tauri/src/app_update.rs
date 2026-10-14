@@ -1,5 +1,4 @@
 use crate::models::AppUpdateInfo;
-use crate::models::{ReleaseAsset, ReleaseInfo};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use minisign_verify::{PublicKey, Signature};
 use semver::Version;
@@ -29,7 +28,7 @@ impl UpdateTarget {
         Self::from_parts(std::env::consts::OS, std::env::consts::ARCH, bundle)
     }
 
-    fn from_parts(os: &str, arch: &str, bundle: Option<&str>) -> Result<Self, String> {
+    pub(crate) fn from_parts(os: &str, arch: &str, bundle: Option<&str>) -> Result<Self, String> {
         let arch = match arch {
             "x86_64" => "x86_64",
             "aarch64" => "aarch64",
@@ -56,17 +55,7 @@ impl UpdateTarget {
         format!("{}-{}-{kind}", self.os, self.arch)
     }
 
-    pub(crate) fn select_asset<'a>(
-        self,
-        release: &'a ReleaseInfo,
-        version: &Version,
-    ) -> Option<&'a ReleaseAsset> {
-        release.assets.iter().find(|asset| {
-            self.matches_name(&asset.name, version) && !asset.download_url.trim().is_empty()
-        })
-    }
-
-    fn matches_name(self, name: &str, version: &Version) -> bool {
+    pub(crate) fn matches_name(self, name: &str, version: &Version) -> bool {
         if name.contains(['/', '\\']) {
             return false;
         }
@@ -129,7 +118,7 @@ pub(crate) fn verify_download(bytes: &[u8], signature: &str, version: &str) -> R
     verify_with_key(bytes, signature, key, version)
 }
 
-fn verify_with_key(
+pub(crate) fn verify_with_key(
     bytes: &[u8],
     encoded_signature: &str,
     key: &str,
@@ -181,6 +170,8 @@ pub(crate) fn validate_update_metadata(
     if version != info.version
         || downloaded_name != Some(expected_name)
         || signature.trim().is_empty()
+        || info.installer_url.as_deref() != Some(download_url.as_str())
+        || signature != info.installer_signature
     {
         return Err("更新清单与所选平台安装包不一致，已停止安装".into());
     }
@@ -240,6 +231,12 @@ pub(crate) fn windows_installer_args(
         _ => Err("当前安装格式不支持自动更新，请手动更新".into()),
     }
 }
+
+#[cfg(test)]
+pub(crate) const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHB1YmxpYyB0ZXN0IGZpeHR1cmUKUldSUFF6SjBaWE4wSVZJQldNanBhWnBtUnlyRnhXS1JOL1NqY1d4NFd2K0hIZjQ4ZEFhd1pwQUsK";
+
+#[cfg(test)]
+pub(crate) const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHB1YmxpYyB0ZXN0IGZpeHR1cmUKUlVSUFF6SjBaWE4wSVVZeUJxWmlZWlYzOVMraGtXWmIrQmtpT3EzVFNmdWcvYmd6UGFhZ0JMN28vZnRWMXMwSDNheGtwbXFxS3g5RmpMa0xzRUtPN2FXaDFFQkMxVjdWVHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxCWZpbGU6T0MyTW9kTWFuYWdlcl9hYXJjaDY0LmFwcC50YXIuZ3oJdmVyc2lvbjoxLjIuMApzZ2JpVUw5YWIveVdXOVA0d0lNaVpsZzVJNlBHZzEzU3FudnVXV3B4N2x3dDBOTHRLRHUrcGY4MkhaUXRtSGs5emlrd2YwUEcvNnl4TGFyMG1iTUdCdz09Cg==";
 
 #[cfg(test)]
 mod tests {
@@ -468,11 +465,15 @@ mod tests {
             let info: AppUpdateInfo = serde_json::from_value(serde_json::json!({
                 "version": "1.2.0", "current_version": "1.1.0",
                 "installer_name": name, "installer_type": kind,
+                "installer_url": url, "installer_signature": signature,
             }))
             .unwrap();
             assert!(validate_update_metadata("1.2.0", url, signature, &info).is_ok());
             assert!(validate_update_metadata("1.2.1", url, signature, &info).is_err());
             assert!(validate_update_metadata("1.2.0", url, " ", &info).is_err());
+            assert!(validate_update_metadata("1.2.0", url, "changed signature", &info).is_err());
+            let changed_host = url::Url::parse(&format!("https://other.example/{name}")).unwrap();
+            assert!(validate_update_metadata("1.2.0", &changed_host, signature, &info).is_err());
             let other = url::Url::parse("https://example.com/wrong-platform.exe").unwrap();
             assert!(validate_update_metadata("1.2.0", &other, signature, &info).is_err());
         }
@@ -481,8 +482,6 @@ mod tests {
     }
 
     // Public fixtures generated solely for this test; no production private key.
-    const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHB1YmxpYyB0ZXN0IGZpeHR1cmUKUldSUFF6SjBaWE4wSVZJQldNanBhWnBtUnlyRnhXS1JOL1NqY1d4NFd2K0hIZjQ4ZEFhd1pwQUsK";
-    const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHB1YmxpYyB0ZXN0IGZpeHR1cmUKUlVSUFF6SjBaWE4wSVVZeUJxWmlZWlYzOVMraGtXWmIrQmtpT3EzVFNmdWcvYmd6UGFhZ0JMN28vZnRWMXMwSDNheGtwbXFxS3g5RmpMa0xzRUtPN2FXaDFFQkMxVjdWVHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxCWZpbGU6T0MyTW9kTWFuYWdlcl9hYXJjaDY0LmFwcC50YXIuZ3oJdmVyc2lvbjoxLjIuMApzZ2JpVUw5YWIveVdXOVA0d0lNaVpsZzVJNlBHZzEzU3FudnVXV3B4N2x3dDBOTHRLRHUrcGY4MkhaUXRtSGs5emlrd2YwUEcvNnl4TGFyMG1iTUdCdz09Cg==";
 
     #[test]
     fn verifies_real_signatures_payloads_and_authenticated_versions() {

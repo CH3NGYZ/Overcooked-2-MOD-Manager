@@ -525,8 +525,7 @@ async fn fetch_api_with_retries<T>(
     Err(error)
 }
 
-/// Fetches a release list from an already selected API endpoint. This is used
-/// by the application updater so its provider/proxy order is explicit.
+#[cfg(test)]
 pub async fn fetch_release_api(
     client: &Client,
     url: &str,

@@ -675,21 +675,6 @@
   font-size: 11px;
   box-shadow: var(--shadow);
 }
-.path-fab {
-  position: absolute;
-  left: 28px;
-  bottom: 24px;
-  z-index: 5;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 12px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 11px;
-  box-shadow: var(--shadow);
-}
 .badge.danger {
   color: #ff9b91;
   border-color: #8c4038;

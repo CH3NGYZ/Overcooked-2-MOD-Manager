@@ -31,7 +31,7 @@ impl Package {
         match self {
             Self::Windows => "Overcooked2.exe",
             Self::Linux => "Overcooked2.x86_64",
-            Self::MacOS => "Overcooked! 2.app",
+            Self::MacOS => "Overcooked2.app",
         }
     }
 
@@ -243,7 +243,7 @@ mod tests {
                 "macos",
                 GameRuntime::Native,
                 Package::MacOS,
-                "Overcooked! 2.app",
+                "Overcooked2.app",
             ),
         ] {
             let package = Package::for_platform(os, runtime);
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn older_doorstop_scripts_and_crlf_are_supported() {
         let script = "#!/bin/sh\r\nexecutable_name=\"\";\r\nexport DOORSTOP_ENABLE=TRUE\r\n";
-        let changed = replace_assignment(script, "executable_name", "Overcooked! 2.app").unwrap();
+        let changed = replace_assignment(script, "executable_name", "Overcooked2.app").unwrap();
         let changed = set_script_enabled(&changed, false).unwrap();
         assert!(!changed.contains('\r'));
         assert_eq!(script_enabled(&changed), Some(false));

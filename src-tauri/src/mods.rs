@@ -138,10 +138,7 @@ fn inspect_dll(
     let metadata = read_file_metadata(path);
     let guid = plugin.as_ref().and_then(|item| item.guid.clone());
     let plugin_version = plugin.as_ref().and_then(|item| item.version.clone());
-    let (installed_version, version_source) = choose_local_version(
-        metadata.product_version.as_deref(),
-        plugin_version.as_deref(),
-    );
+    let (installed_version, version_source) = choose_local_version(plugin_version.as_deref());
     let dll_file = canonical_dll_file(path, game);
     let manifest = manifests
         .iter()
@@ -523,17 +520,11 @@ fn repository_matches_mod(
         .unwrap_or(false)
 }
 
-fn is_zero_version(value: &str) -> bool {
-    matches!(value.trim(), "0.0.0" | "0.0.0.0")
-}
-
-fn choose_local_version<'a>(
-    product_version: Option<&'a str>,
-    plugin_version: Option<&'a str>,
-) -> (Option<String>, &'static str) {
-    if let Some(version) = product_version.filter(|value| !is_zero_version(value)) {
-        (Some(version.trim().to_string()), "ProductVersion")
-    } else if let Some(version) = plugin_version {
+fn choose_local_version(plugin_version: Option<&str>) -> (Option<String>, &'static str) {
+    if let Some(version) = plugin_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         (Some(version.to_string()), "BepInPlugin")
     } else {
         (None, "unknown")
@@ -769,6 +760,16 @@ fn release_version_component_count(value: Option<&str>) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    fn plugin_blob(guid: &str, name: &str, version: &str) -> Vec<u8> {
+        let mut bytes = b"BepInPlugin".to_vec();
+        bytes.extend_from_slice(&[1, 0]);
+        for value in [guid, name, version] {
+            bytes.push(value.len() as u8);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        bytes
+    }
+
     fn duplicate_configuration_manager(
         version: &str,
         online_version: &str,
@@ -910,20 +911,20 @@ mod tests {
     }
 
     #[test]
-    fn product_version_is_preferred_with_zero_fallback() {
+    fn local_version_only_uses_bepinplugin_and_preserves_zero_versions() {
+        for version in ["0.10.0", "1.2.3.4", "0.0.0", "0.0.0.0"] {
+            assert_eq!(
+                super::choose_local_version(Some(version)),
+                (Some(version.into()), "BepInPlugin")
+            );
+        }
         assert_eq!(
-            super::choose_local_version(Some("1.2.3.4"), Some("1.2.3")),
-            (Some("1.2.3.4".into()), "ProductVersion")
+            super::choose_local_version(Some(" 0.10.0 ")),
+            (Some("0.10.0".into()), "BepInPlugin")
         );
-        assert_eq!(
-            super::choose_local_version(Some("0.0.0"), Some("1.2.3")),
-            (Some("1.2.3".into()), "BepInPlugin")
-        );
-        assert_eq!(
-            super::choose_local_version(Some("0.0.0.0"), Some("1.2.3.4")),
-            (Some("1.2.3.4".into()), "BepInPlugin")
-        );
-        assert_eq!(super::choose_local_version(None, None), (None, "unknown"));
+        for missing in [None, Some(""), Some(" \t\r\n")] {
+            assert_eq!(super::choose_local_version(missing), (None, "unknown"));
+        }
     }
 
     fn binding_repository() -> crate::models::RepositoryConfig {
@@ -1433,15 +1434,15 @@ mod tests {
 
     #[test]
     fn bepin_plugin_metadata_provides_local_version() {
-        fn plugin_blob(guid: &str, name: &str, version: &str) -> Vec<u8> {
-            let mut bytes = b"BepInPlugin".to_vec();
-            bytes.extend_from_slice(&[1, 0]);
-            for value in [guid, name, version] {
-                bytes.push(value.len() as u8);
-                bytes.extend_from_slice(value.as_bytes());
-            }
-            bytes
-        }
+        assert_eq!(
+            super::parse_bepin_plugin_metadata(&plugin_blob(
+                "dev.gua.overcooked.diylevel",
+                "Overcooked2 DIYLevel Plugin",
+                "0.10.0"
+            ))
+            .and_then(|item| item.version),
+            Some("0.10.0".into())
+        );
         assert_eq!(
             super::parse_bepin_plugin_metadata(&plugin_blob(
                 "com.example.mod",
@@ -1478,6 +1479,65 @@ mod tests {
             .and_then(|item| item.version),
             Some("0.0.0".into())
         );
+    }
+
+    #[test]
+    fn local_mod_scan_returns_unknown_without_readable_bepinplugin_version() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/verification/bepinplugin-version")
+            .join(uuid::Uuid::new_v4().to_string());
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "ui_zoom": 1.5, "onboarding_seen_steps": [],
+            "game": {"path": "", "auto_detect": false},
+            "network": {"timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false},
+            "launch": {"ask_user_to_start_from_steam": false, "auto_restore_winhttp": false},
+            "auth": {"github_token": "", "gitee_token": "", "official_api_only": true},
+            "repositories": []
+        })).unwrap();
+        let mut truncated = plugin_blob("dev.gua.overcooked.diylevel", "DIYLevel", "0.10.0");
+        truncated.pop();
+        let cases = [
+            (
+                "no-attribute",
+                b"AssemblyVersion\0FileVersion\0ProductVersion\09.9.9.9".to_vec(),
+            ),
+            (
+                "empty",
+                plugin_blob("dev.gua.overcooked.diylevel", "DIYLevel", ""),
+            ),
+            (
+                "blank",
+                plugin_blob("dev.gua.overcooked.diylevel", "DIYLevel", "   "),
+            ),
+            (
+                "invalid",
+                plugin_blob("dev.gua.overcooked.diylevel", "DIYLevel", "not-a-version"),
+            ),
+            ("truncated", truncated),
+        ];
+        for (name, bytes) in cases {
+            for suffix in [".dll", ".dll.disabled"] {
+                let path = plugins.join(format!("{name}{suffix}"));
+                std::fs::write(&path, &bytes).unwrap();
+                let installed = super::inspect_dll(&path, &root, &config, &[]);
+                assert_eq!(installed.version, None, "{name}{suffix}");
+                assert_eq!(installed.version_source, "unknown", "{name}{suffix}");
+                assert!(!installed.update_available);
+                assert_eq!(installed.enabled, suffix == ".dll");
+            }
+        }
+        let scan = super::scan_mods_with_manifests(&root, &config, None);
+        assert_eq!(scan.len(), 5);
+        assert!(
+            scan.iter()
+                .all(|item| item.version.is_none() && item.version_source == "unknown")
+        );
+        let verified = std::fs::canonicalize(&root).unwrap();
+        let workspace = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
+        assert!(verified.starts_with(workspace.join("target/verification/bepinplugin-version")));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

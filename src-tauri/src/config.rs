@@ -63,7 +63,11 @@ pub fn current_user_region() -> &'static str {
             REGION_INTERNATIONAL
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        crate::user_region::current()
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         REGION_INTERNATIONAL
     }

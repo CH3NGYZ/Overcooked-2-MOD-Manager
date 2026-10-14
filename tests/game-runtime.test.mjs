@@ -13,7 +13,7 @@ test('the frontend shows the correct executable and same-name GitHub/Gitee packa
     ['linux', 'wine', 'Overcooked2.exe', 'BepInEx_win_x86_5.4.23.5.zip'],
     ['linux', 'native', 'Overcooked2.x86_64', 'BepInEx_linux_x64_5.4.23.5.zip'],
     ['macos', 'wine', 'Overcooked2.exe', 'BepInEx_win_x86_5.4.23.5.zip'],
-    ['macos', 'native', 'Overcooked! 2.app', 'BepInEx_macos_universal_5.4.23.5.zip'],
+    ['macos', 'native', 'Overcooked2.app', 'BepInEx_macos_universal_5.4.23.5.zip'],
   ]) {
     assert.equal(runtime.gameExecutableName(platform, mode), executable)
     const urls = runtime.bepinexDownloadUrls(platform, mode)

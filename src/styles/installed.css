@@ -5,6 +5,12 @@
   padding: 0 5px;
   overflow: visible;
 }
+.table-panel > .empty-state {
+  grid-column: 1 / -1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .table-head,
 .table-row {
   display: grid;

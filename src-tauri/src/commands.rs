@@ -25,21 +25,20 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::download::candidate_progress as asset_candidate_progress;
 
+#[cfg(test)]
+#[path = "installer_update_tests.rs"]
+mod installer_update_tests;
+
 const INSTALLER_GITEE_OWNER: &str = "ch3ngyz";
 const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager";
 const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
 const INSTALLER_GITHUB_REPO: &str = "Overcooked-2-MOD-Manager";
-// These credentials are embedded at compile time for installer update checks only.
-const INSTALLER_GITHUB_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITHUB_TOKEN");
-const INSTALLER_GITEE_TOKEN: Option<&str> = option_env!("OC2_INSTALLER_GITEE_TOKEN");
-
 #[derive(Debug, Clone)]
 struct InstallerChannel {
-    id: &'static str,
+    id: String,
     provider: Provider,
     endpoint: String,
-    is_proxy: bool,
-    uses_token: bool,
+    proxy: Option<GitHubProxy>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,161 +64,7 @@ fn detect_installer_region() -> InstallerRegion {
     }
 }
 
-fn installer_api_sources(
-    region: InstallerRegion,
-    proxies: &GitHubProxyConfig,
-) -> Vec<InstallerChannel> {
-    let gitee = format!(
-        "https://gitee.com/api/v5/repos/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/latest"
-    );
-    let github = format!(
-        "https://api.github.com/repos/{INSTALLER_GITHUB_OWNER}/{INSTALLER_GITHUB_REPO}/releases/latest"
-    );
-    let mut sources = Vec::new();
-    let first_proxy_endpoint = |provider: Provider, target: &str| {
-        let entries = match provider {
-            Provider::Github => &proxies.github_api_proxies,
-            Provider::Gitee => &proxies.gitee_api_proxies,
-        };
-        crate::github_proxies::proxy_urls(entries, target, false, None)
-            .into_iter()
-            .next()
-    };
-    if region == InstallerRegion::MainlandChina {
-        sources.push(InstallerChannel {
-            id: "gitee-direct",
-            provider: Provider::Gitee,
-            endpoint: gitee.clone(),
-            is_proxy: false,
-            uses_token: false,
-        });
-        sources.push(InstallerChannel {
-            id: "gitee-token",
-            provider: Provider::Gitee,
-            endpoint: gitee.clone(),
-            is_proxy: false,
-            uses_token: true,
-        });
-        if let Some(endpoint) = first_proxy_endpoint(Provider::Gitee, &gitee) {
-            sources.push(InstallerChannel {
-                id: "gitee-proxy",
-                provider: Provider::Gitee,
-                endpoint,
-                is_proxy: true,
-                uses_token: false,
-            });
-        }
-    }
-    sources.push(InstallerChannel {
-        id: "github-direct",
-        provider: Provider::Github,
-        endpoint: github.clone(),
-        is_proxy: false,
-        uses_token: false,
-    });
-    sources.push(InstallerChannel {
-        id: "github-token",
-        provider: Provider::Github,
-        endpoint: github.clone(),
-        is_proxy: false,
-        uses_token: true,
-    });
-    if let Some(endpoint) = first_proxy_endpoint(Provider::Github, &github) {
-        sources.push(InstallerChannel {
-            id: "github-proxy",
-            provider: Provider::Github,
-            endpoint,
-            is_proxy: true,
-            uses_token: false,
-        });
-    }
-    sources
-}
-
-fn installer_release_channel(provider: &Provider, mode: &str) -> InstallerChannel {
-    let id = match (provider, mode) {
-        (Provider::Gitee, _) => "gitee-release-direct",
-        (Provider::Github, "proxy") => "github-release-proxy",
-        (Provider::Github, _) => "github-release-direct",
-    };
-    InstallerChannel {
-        id,
-        provider: provider.clone(),
-        endpoint: String::new(),
-        is_proxy: mode == "proxy",
-        uses_token: false,
-    }
-}
-
-fn installer_download_urls(
-    provider: &Provider,
-    direct_url: &str,
-    proxy_config: &GitHubProxyConfig,
-) -> Vec<String> {
-    if *provider == Provider::Gitee {
-        return vec![direct_url.to_string()];
-    }
-    // Self-update starts before the remote proxy refresh. Always fill missing
-    // bundled fallbacks without undoing saved edits, ordering or opt-outs.
-    let mut proxies = proxy_config.clone();
-    crate::github_proxies::synchronize_bundled_defaults(&mut proxies);
-    let proxy_urls = asset_proxy_urls(
-        &proxies.release_proxies,
-        direct_url,
-        false,
-        "",
-        "",
-        ProxyMode::AutoDirect,
-        None,
-    );
-    ordered_asset_download_candidates(ProxyMode::AutoDirect, direct_url, proxy_urls)
-        .into_iter()
-        .map(|candidate| candidate.url)
-        .collect()
-}
-
-fn installer_download_candidates(
-    info: &AppUpdateInfo,
-    proxy_config: &GitHubProxyConfig,
-) -> Vec<AssetDownloadCandidate> {
-    let direct = info
-        .installer_url
-        .as_deref()
-        .or_else(|| info.installer_download_urls.first().map(String::as_str));
-    if let (Some(provider), Some(direct)) = (&info.provider, direct) {
-        let mode = if *provider == Provider::Github {
-            ProxyMode::AutoDirect
-        } else {
-            ProxyMode::Direct
-        };
-        return ordered_asset_download_candidates(
-            mode,
-            direct,
-            installer_download_urls(provider, direct, proxy_config),
-        );
-    }
-    let urls = if info.installer_download_urls.is_empty() {
-        info.installer_url.clone().into_iter().collect()
-    } else {
-        info.installer_download_urls.clone()
-    };
-    urls.into_iter()
-        .map(|url| AssetDownloadCandidate {
-            route: AssetDownloadRoute::Direct,
-            url,
-        })
-        .collect()
-}
-
-fn installer_api_token(provider: &Provider) -> Option<&'static str> {
-    let token = match provider {
-        Provider::Github => INSTALLER_GITHUB_TOKEN,
-        Provider::Gitee => INSTALLER_GITEE_TOKEN,
-    }?;
-    (!token.trim().is_empty()).then_some(token)
-}
-
-fn installer_manifest_fallback(provider: &Provider) -> String {
+fn installer_manifest_url(provider: &Provider) -> String {
     match provider {
         Provider::Gitee => format!(
             "https://gitee.com/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/download/latest/latest.json"
@@ -230,14 +75,205 @@ fn installer_manifest_fallback(provider: &Provider) -> String {
     }
 }
 
-fn installer_asset_for_release<'a>(
-    release: &'a ReleaseInfo,
-    version: &semver::Version,
-) -> Option<(&'a ReleaseAsset, &'static str)> {
-    let target = crate::app_update::UpdateTarget::current().ok()?;
-    target
-        .select_asset(release, version)
-        .map(|asset| (asset, target.kind))
+fn installer_sources_for_url(provider: &Provider, url: &str) -> Vec<InstallerChannel> {
+    let mut sources = vec![InstallerChannel {
+        id: if *provider == Provider::Gitee {
+            "gitee-direct"
+        } else {
+            "github-direct"
+        }
+        .into(),
+        provider: provider.clone(),
+        endpoint: url.into(),
+        proxy: None,
+    }];
+    if *provider == Provider::Gitee {
+        return sources;
+    }
+    // Startup updates use only compiled-in Release templates, independently
+    // of the user/remote proxy lists used by MOD downloads.
+    let mut visited = HashSet::from([url.to_string()]);
+    for proxy in crate::github_proxies::bundled_defaults().release_proxies {
+        let Some(endpoint) =
+            crate::github_proxies::proxy_urls(std::slice::from_ref(&proxy), url, false, None)
+                .into_iter()
+                .next()
+        else {
+            continue;
+        };
+        if visited.insert(endpoint.clone()) {
+            sources.push(InstallerChannel {
+                id: format!("github-proxy:{}", proxy.id),
+                provider: Provider::Github,
+                endpoint,
+                proxy: Some(proxy),
+            });
+        }
+    }
+    sources
+}
+
+fn installer_manifest_sources(region: InstallerRegion) -> Vec<InstallerChannel> {
+    let mut sources = Vec::new();
+    if region == InstallerRegion::MainlandChina {
+        sources.extend(installer_sources_for_url(
+            &Provider::Gitee,
+            &installer_manifest_url(&Provider::Gitee),
+        ));
+    }
+    sources.extend(installer_sources_for_url(
+        &Provider::Github,
+        &installer_manifest_url(&Provider::Github),
+    ));
+    sources
+}
+
+fn installer_candidate(channel: &InstallerChannel) -> AssetDownloadCandidate {
+    AssetDownloadCandidate {
+        route: if channel.proxy.is_some() {
+            AssetDownloadRoute::Proxy
+        } else {
+            AssetDownloadRoute::Direct
+        },
+        url: channel.endpoint.clone(),
+    }
+}
+
+fn installer_download_candidates(info: &AppUpdateInfo) -> Vec<AssetDownloadCandidate> {
+    match (&info.provider, &info.installer_url) {
+        (Some(provider), Some(url)) => installer_sources_for_url(provider, url)
+            .iter()
+            .map(installer_candidate)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn inspect_installer_manifest(
+    channel: &InstallerChannel,
+    document: &serde_json::Value,
+    target: crate::app_update::UpdateTarget,
+    current_version: &semver::Version,
+) -> Result<Option<AppUpdateInfo>, String> {
+    let manifest: tauri_plugin_updater::RemoteRelease =
+        serde_json::from_value(document.clone()).map_err(|_| "更新清单格式无效".to_string())?;
+    if !manifest.version.pre.is_empty() {
+        return Err("更新清单不是稳定版本".into());
+    }
+    let key = target.manifest_key();
+    let url = manifest
+        .download_url(&key)
+        .map_err(|_| "更新中没有匹配的安装包")?;
+    let signature = manifest
+        .signature(&key)
+        .map_err(|_| "更新清单或签名不可用，已停止安装")?
+        .clone();
+    let name = url
+        .path_segments()
+        .and_then(|mut parts| parts.next_back())
+        .unwrap_or_default()
+        .to_string();
+    let (host, owner, repo) = match channel.provider {
+        Provider::Github => ("github.com", INSTALLER_GITHUB_OWNER, INSTALLER_GITHUB_REPO),
+        Provider::Gitee => ("gitee.com", INSTALLER_GITEE_OWNER, INSTALLER_GITEE_REPO),
+    };
+    let path_prefix = format!("/{owner}/{repo}/releases/download/");
+    if url.scheme() != "https"
+        || url.host_str() != Some(host)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.path().starts_with(&path_prefix)
+        || !target.matches_name(&name, &manifest.version)
+        || signature.trim().is_empty()
+    {
+        return Err("更新清单与所选平台安装包不一致，已停止安装".into());
+    }
+    if manifest.version <= *current_version {
+        return Ok(None);
+    }
+    let direct_url = url.to_string();
+    Ok(Some(AppUpdateInfo {
+        version: manifest.version.to_string(),
+        current_version: current_version.to_string(),
+        body: manifest.notes,
+        date: document["pub_date"].as_str().map(str::to_string),
+        download_size: None,
+        manifest_url: channel.endpoint.clone(),
+        installer_url: Some(direct_url),
+        installer_signature: signature.clone(),
+        installer_name: name,
+        installer_type: target.kind.into(),
+        provider: Some(channel.provider.clone()),
+        source_channel: Some(channel.id.clone()),
+    }))
+}
+
+async fn fetch_installer_manifest(
+    client: &reqwest::Client,
+    channel: &InstallerChannel,
+    target: crate::app_update::UpdateTarget,
+    current_version: &semver::Version,
+    is_cancelled: impl Fn() -> bool,
+    reporter: Option<&archive::DownloadReporter>,
+) -> Result<Option<AppUpdateInfo>, String> {
+    const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+    log::info!(
+        "正在请求程序更新清单：渠道={}，地址={}",
+        channel.id,
+        repository_sources::safe_log_address(&channel.endpoint)
+    );
+    let request = async {
+        let response = client
+            .get(&channel.endpoint)
+            .header("User-Agent", releases::APP_USER_AGENT)
+            .header("Cache-Control", "no-cache, no-store")
+            .header("Pragma", "no-cache")
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|_| "更新清单请求失败")?;
+        if !response.status().is_success() {
+            return Err(format!("更新清单 HTTP {}", response.status().as_u16()));
+        }
+        let total = response.content_length();
+        if total.is_some_and(|size| size > MAX_MANIFEST_BYTES as u64) {
+            return Err("更新清单过大".into());
+        }
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| "更新清单读取失败")?;
+            if bytes.len().saturating_add(chunk.len()) > MAX_MANIFEST_BYTES {
+                return Err("更新清单过大".into());
+            }
+            bytes.extend_from_slice(&chunk);
+            if let Some(reporter) = reporter {
+                reporter.received(chunk.len() as u64);
+                let mut progress = reporter.snapshot();
+                progress.downloaded = bytes.len() as u64;
+                progress.total = total;
+                reporter.update(progress);
+            }
+        }
+        let document = serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效")?;
+        inspect_installer_manifest(channel, &document, target, current_version)
+    };
+    let cancellation = async {
+        loop {
+            if is_cancelled() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        _ = cancellation => Err("下载已取消".into()),
+        result = request => result,
+    }
 }
 
 fn installer_channel_status(
@@ -246,9 +282,14 @@ fn installer_channel_status(
     error: Option<String>,
 ) -> AppUpdateChannelStatus {
     AppUpdateChannelStatus {
-        id: channel.id.into(),
+        id: channel.id.clone(),
         provider: channel.provider.clone(),
-        mode: if channel.is_proxy { "proxy" } else { "direct" }.into(),
+        mode: if channel.proxy.is_some() {
+            "proxy"
+        } else {
+            "direct"
+        }
+        .into(),
         status: status.into(),
         error,
     }
@@ -300,237 +341,219 @@ fn emit_installer_phase(
     );
 }
 
-fn inspect_installer_releases(
-    channel: &InstallerChannel,
-    releases: Vec<ReleaseInfo>,
-    current_version: &semver::Version,
-    proxy_config: &GitHubProxyConfig,
-    update: &mut Option<AppUpdateInfo>,
-    excluded_downloads: &HashSet<String>,
-) -> AppUpdateChannelStatus {
-    let filtered = releases::filter_channel(releases, &Channel::Stable);
-    let mut excluded_candidate = false;
-    let mut missing_asset = false;
-    let mut valid_asset_found = false;
-    let candidate = filtered.into_iter().find_map(|release| {
-        let version = release
-            .version
-            .as_deref()
-            .and_then(releases::parse_version)?;
-        let Some((installer, installer_type)) = installer_asset_for_release(&release, &version)
-        else {
-            if version > *current_version {
-                missing_asset = true;
-            }
-            return None;
-        };
-        valid_asset_found = true;
-        if version <= *current_version {
-            return None;
-        }
-        let download_urls =
-            installer_download_urls(&channel.provider, &installer.download_url, proxy_config);
-        let download_key = download_urls.join("\n");
-        if excluded_downloads.contains(&download_key) {
-            excluded_candidate = true;
-            return None;
-        }
-        Some((release, version, download_urls, installer_type))
-    });
-    let Some((release, version, installer_download_urls, installer_type)) = candidate else {
-        if excluded_candidate {
-            return installer_channel_status(
-                channel,
-                "failed",
-                Some("此前下载失败的安装包已跳过".into()),
-            );
-        }
-        if missing_asset {
-            return installer_channel_status(
-                channel,
-                "failed",
-                Some("更新中没有匹配的安装包".into()),
-            );
-        }
-        if !valid_asset_found {
-            return installer_channel_status(
-                channel,
-                "failed",
-                Some("API 响应中没有有效的 Release 下载链接".into()),
-            );
-        }
-        return installer_channel_status(channel, "latest", None);
-    };
-    let Some((installer, _)) = installer_asset_for_release(&release, &version) else {
-        return installer_channel_status(channel, "failed", Some("更新中没有匹配的安装包".into()));
-    };
-    if update.is_none() {
-        let installer_url = installer.download_url.clone();
-        let installer_proxy_url = installer_download_urls
-            .iter()
-            .find(|url| *url != &installer_url)
-            .cloned();
-        let installer_size = installer.size;
-        let installer_digest = installer.digest.clone();
-        let installer_name = installer.name.clone();
-        let installer_type = installer_type.to_string();
-        let mut manifest_endpoints = release
-            .assets
-            .iter()
-            .filter(|asset| {
-                let name = asset.name.to_ascii_lowercase();
-                name == "latest.json" || (name.starts_with("latest-") && name.ends_with(".json"))
-            })
-            .map(|asset| asset.download_url.clone())
-            .collect::<Vec<_>>();
-        if manifest_endpoints.is_empty() {
-            manifest_endpoints.push(installer_manifest_fallback(&channel.provider));
-        }
-        *update = Some(AppUpdateInfo {
-            version: version.to_string(),
-            current_version: current_version.to_string(),
-            body: (!release.body.is_empty()).then_some(release.body),
-            date: release.published_at,
-            download_size: Some(installer_size),
-            manifest_endpoints,
-            installer_url: Some(installer_url),
-            installer_proxy_url,
-            installer_download_urls,
-            installer_digest,
-            installer_name,
-            installer_type,
-            provider: Some(channel.provider.clone()),
-            source_channel: Some(channel.id.into()),
-        });
-    }
-    installer_channel_status(channel, "update_available", None)
+enum InstallerRouteResult<T> {
+    Updated(T),
+    Latest,
+    Failed,
 }
 
-async fn discover_installer_update_for_channels_with_exclusions(
-    state: &AppState,
-    app: &AppHandle,
-    region: InstallerRegion,
-    installer_channels: Vec<InstallerChannel>,
-    excluded_downloads: &HashSet<String>,
-) -> Result<AppUpdateCheckResult, String> {
-    emit_installer_phase(app, region, "api", None, None);
-    let config = state.config.load_or_default();
-    let client =
-        releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
-    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
-        .map_err(|e| format!("当前程序版本无效: {e}"))?;
-    let mut channels = Vec::new();
-    let mut update = None;
+struct SelectedInstallerManifest {
+    channel: InstallerChannel,
+    info: Option<AppUpdateInfo>,
+}
 
-    // API requests are deliberately sequential. Once an API returns a valid
-    // update candidate, stop the API phase immediately so the release can be
-    // attempted before another API is contacted.
-    for (index, channel) in installer_channels.iter().enumerate() {
-        emit_installer_channel_status(
-            app,
-            region,
-            installer_channel_status(channel, "checking", None),
-        );
-        let token = if channel.uses_token {
-            installer_api_token(&channel.provider)
-        } else {
-            None
-        };
-        let result = if channel.uses_token && token.is_none() {
-            Err(releases::ReleaseError::Http(
-                "未配置该渠道 API Token".into(),
-            ))
-        } else {
-            releases::fetch_release_api(&client, &channel.endpoint, &channel.provider, token).await
-        };
-        match result {
-            Ok(releases) => {
-                let status = inspect_installer_releases(
-                    channel,
-                    releases,
-                    &current_version,
-                    &config.github_proxies,
-                    &mut update,
-                    excluded_downloads,
-                );
-                let is_latest = status.status == "latest";
-                let is_update_available = status.status == "update_available";
-                emit_installer_channel_status(app, region, status.clone());
-                channels.push(status);
-                if is_update_available {
-                    return Ok(AppUpdateCheckResult {
-                        update,
-                        channels,
-                        all_failed: false,
-                        region: region.as_str().into(),
-                    });
-                }
-                // A confirmed latest version ends this ordered API pass. There
-                // is no newer release to download from the remaining mirrors.
-                if is_latest {
-                    for skipped in installer_channels.iter().skip(index + 1) {
-                        let skipped_status = installer_channel_status(
-                            skipped,
-                            "skipped",
-                            Some("已确认当前为最新版本，未请求".into()),
-                        );
-                        emit_installer_channel_status(app, region, skipped_status.clone());
-                        channels.push(skipped_status);
+impl crate::download::DownloadOutput for SelectedInstallerManifest {
+    fn discard(&self) {}
+}
+
+impl crate::download::DownloadOutput for tauri_plugin_updater::Update {
+    fn discard(&self) {}
+}
+
+async fn race_installer_channels<T, F, Fut>(
+    channels: &[InstallerChannel],
+    is_cancelled: impl Fn() -> bool,
+    mut fetch: F,
+) -> Result<T, String>
+where
+    T: crate::download::DownloadOutput,
+    F: FnMut(InstallerChannel, std::sync::Arc<archive::DownloadReporter>) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    if is_cancelled() {
+        return Err("下载已取消".into());
+    }
+    // Gitee never enters a parallel pool or uses proxy/range requests.
+    if channels.len() == 1 && channels[0].provider == Provider::Gitee {
+        return fetch(
+            channels[0].clone(),
+            std::sync::Arc::new(archive::DownloadReporter::new("")),
+        )
+        .await;
+    }
+    try_asset_download_candidates(
+        channels.iter().map(installer_candidate).collect(),
+        is_cancelled,
+        |candidate, reporter| {
+            let channel = channels
+                .iter()
+                .find(|channel| channel.endpoint == candidate.url)
+                .unwrap();
+            fetch(channel.clone(), reporter)
+        },
+        None,
+    )
+    .await
+}
+
+async fn run_installer_manifest_routes<T, F, Fut>(
+    client: &reqwest::Client,
+    channels: &[InstallerChannel],
+    target: crate::app_update::UpdateTarget,
+    current_version: &semver::Version,
+    is_cancelled: impl Fn() -> bool,
+    on_status: impl FnMut(AppUpdateChannelStatus),
+    mut on_update: F,
+) -> Result<InstallerRouteResult<T>, String>
+where
+    F: FnMut(AppUpdateInfo) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let on_status = Mutex::new(on_status);
+    for provider in [Provider::Gitee, Provider::Github] {
+        if is_cancelled() {
+            return Err("下载已取消".into());
+        }
+        let group = channels
+            .iter()
+            .filter(|channel| channel.provider == provider)
+            .cloned()
+            .collect::<Vec<_>>();
+        if group.is_empty() {
+            continue;
+        }
+        let started = Mutex::new(HashSet::new());
+        let finished = Mutex::new(HashSet::new());
+        let selected = race_installer_channels(&group, &is_cancelled, |channel, reporter| {
+            started.lock().unwrap().insert(channel.id.clone());
+            on_status.lock().unwrap()(installer_channel_status(&channel, "checking", None));
+            let (on_status, finished, is_cancelled) = (&on_status, &finished, &is_cancelled);
+            async move {
+                let result = fetch_installer_manifest(
+                    client,
+                    &channel,
+                    target,
+                    current_version,
+                    is_cancelled,
+                    Some(&reporter),
+                )
+                .await;
+                finished.lock().unwrap().insert(channel.id.clone());
+                match result {
+                    Ok(info) => {
+                        on_status.lock().unwrap()(installer_channel_status(
+                            &channel,
+                            if info.is_some() {
+                                "update_available"
+                            } else {
+                                "latest"
+                            },
+                            None,
+                        ));
+                        Ok(SelectedInstallerManifest { channel, info })
                     }
-                    return Ok(AppUpdateCheckResult {
-                        update: None,
-                        channels,
-                        all_failed: false,
-                        region: region.as_str().into(),
-                    });
+                    Err(error) => {
+                        on_status.lock().unwrap()(installer_channel_status(
+                            &channel,
+                            "failed",
+                            Some(error.clone()),
+                        ));
+                        Err(error)
+                    }
                 }
             }
-            Err(error) => {
-                let status = installer_channel_status(channel, "failed", Some(error.to_string()));
-                emit_installer_channel_status(app, region, status.clone());
-                channels.push(status);
+        })
+        .await;
+        // The coordinator has dropped losers before their final UI state.
+        for channel in &group {
+            if !finished.lock().unwrap().contains(&channel.id) {
+                let status = if started.lock().unwrap().contains(&channel.id) {
+                    "cancelled"
+                } else {
+                    "skipped"
+                };
+                on_status.lock().unwrap()(installer_channel_status(channel, status, None));
             }
         }
+        if is_cancelled() {
+            return Err("下载已取消".into());
+        }
+        let selected = match selected {
+            Ok(selected) => selected,
+            Err(error) if error == "下载已取消" => return Err(error),
+            Err(_) => continue,
+        };
+        let result = match selected.info {
+            Some(info) => on_update(info).await.map(InstallerRouteResult::Updated),
+            None => Ok(InstallerRouteResult::Latest),
+        };
+        if is_cancelled() {
+            return Err("下载已取消".into());
+        }
+        match result {
+            Ok(result) => {
+                for skipped in channels.iter().filter(|channel| {
+                    provider == Provider::Gitee && channel.provider == Provider::Github
+                }) {
+                    on_status.lock().unwrap()(installer_channel_status(skipped, "skipped", None));
+                }
+                return Ok(result);
+            }
+            Err(error) if error == "下载已取消" => return Err(error),
+            Err(error) => on_status.lock().unwrap()(installer_channel_status(
+                &selected.channel,
+                "failed",
+                Some(error),
+            )),
+        }
     }
-
-    let attempted = channels
-        .iter()
-        .filter(|channel| channel.status != "skipped")
-        .collect::<Vec<_>>();
-    let all_failed =
-        !attempted.is_empty() && attempted.iter().all(|channel| channel.status == "failed");
-    Ok(AppUpdateCheckResult {
-        update,
-        channels,
-        all_failed,
-        region: region.as_str().into(),
-    })
+    Ok(InstallerRouteResult::Failed)
 }
 
 async fn discover_installer_update(
     state: &AppState,
-    _locale: &str,
     app: &AppHandle,
-) -> Result<AppUpdateCheckResult, String> {
-    let excluded_downloads = HashSet::new();
-    discover_installer_update_with_exclusions(state, app, &excluded_downloads).await
-}
-
-async fn discover_installer_update_with_exclusions(
-    state: &AppState,
-    app: &AppHandle,
-    excluded_downloads: &HashSet<String>,
 ) -> Result<AppUpdateCheckResult, String> {
     let region = detect_installer_region();
+    emit_installer_phase(app, region, "manifest", None, None);
     let config = state.config.load_or_default();
-    discover_installer_update_for_channels_with_exclusions(
-        state,
-        app,
-        region,
-        installer_api_sources(region, &config.github_proxies),
-        excluded_downloads,
+    let client =
+        releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
+    let target = crate::app_update::UpdateTarget::current()?;
+    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .map_err(|e| format!("当前程序版本无效: {e}"))?;
+    let mut statuses: Vec<AppUpdateChannelStatus> = Vec::new();
+    let result = run_installer_manifest_routes(
+        &client,
+        &installer_manifest_sources(region),
+        target,
+        &current_version,
+        || false,
+        |status| {
+            emit_installer_channel_status(app, region, status.clone());
+            if let Some(previous) = statuses
+                .iter_mut()
+                .find(|previous| previous.id == status.id)
+            {
+                *previous = status;
+            } else {
+                statuses.push(status);
+            }
+        },
+        |info| std::future::ready(Ok(info)),
     )
-    .await
+    .await?;
+    let all_failed = matches!(result, InstallerRouteResult::Failed);
+    let update = match result {
+        InstallerRouteResult::Updated(info) => Some(info),
+        _ => None,
+    };
+    Ok(AppUpdateCheckResult {
+        update,
+        channels: statuses,
+        all_failed,
+        region: region.as_str().into(),
+    })
 }
 
 pub struct AppState {
@@ -4146,8 +4169,10 @@ pub async fn check_app_update(
     log::info!("开始检查安装器更新");
     let _ = locale;
     match tokio::time::timeout(
-        std::time::Duration::from_secs(90),
-        discover_installer_update(&state, "zh-CN", &app),
+        std::time::Duration::from_secs(
+            5 * installer_manifest_sources(detect_installer_region()).len() as u64 + 10,
+        ),
+        discover_installer_update(&state, &app),
     )
     .await
     {
@@ -4162,8 +4187,7 @@ pub async fn check_app_update(
         Ok(Err(error)) => {
             let region = detect_installer_region();
             log::error!("安装器更新检查初始化失败: {error}");
-            let config = state.config.load_or_default();
-            let channels = installer_api_sources(region, &config.github_proxies)
+            let channels = installer_manifest_sources(region)
                 .iter()
                 .map(|channel| {
                     let status = installer_channel_status(
@@ -4185,8 +4209,7 @@ pub async fn check_app_update(
         Err(_) => {
             log::warn!("安装器更新检查超过总超时，已跳过自动更新");
             let region = detect_installer_region();
-            let config = state.config.load_or_default();
-            let channels = installer_api_sources(region, &config.github_proxies)
+            let channels = installer_manifest_sources(region)
                 .iter()
                 .map(|channel| {
                     let status = installer_channel_status(
@@ -4275,16 +4298,29 @@ async fn download_installer_for_info(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
     app: &AppHandle,
-    proxy_config: &GitHubProxyConfig,
     signature: &str,
 ) -> Result<Vec<u8>, Vec<String>> {
-    let candidates = installer_download_candidates(info, proxy_config);
+    let candidates = installer_download_candidates(info);
+    download_verified_installer(client, info, candidates, Some(app), |bytes| {
+        crate::app_update::verify_download(bytes, signature, &info.version)
+    })
+    .await
+    .map_err(|error| vec![error])
+}
+
+async fn download_verified_installer(
+    client: &reqwest::Client,
+    info: &AppUpdateInfo,
+    candidates: Vec<AssetDownloadCandidate>,
+    app: Option<&AppHandle>,
+    verify: impl Fn(&[u8]) -> Result<(), String>,
+) -> Result<Vec<u8>, String> {
     let proxy_count = candidates
         .iter()
         .filter(|candidate| candidate.route == AssetDownloadRoute::Proxy)
         .count();
     log::info!(
-        "安装器下载竞速候选准备完成：平台={:?}，直连={}，Release代理={}，总候选={}",
+        "安装器下载候选准备完成：平台={:?}，直连={}，Release代理={}，总候选={}",
         info.provider,
         candidates.len() - proxy_count,
         proxy_count,
@@ -4293,72 +4329,97 @@ async fn download_installer_for_info(
     let result = try_asset_download_candidates(
         candidates,
         archive::is_download_cancelled,
-        |candidate, reporter| async move {
-            let mode = if candidate.route == AssetDownloadRoute::Proxy {
-                "proxy"
-            } else {
-                "direct"
-            };
-            if let Some(provider) = info.provider.as_ref() {
-                let channel = installer_release_channel(provider, mode);
-                emit_installer_channel_status(
-                    app,
-                    detect_installer_region(),
-                    installer_channel_status(&channel, "downloading", None),
-                );
-            }
-            let result = download_installer_with_timeout(
-                client,
-                &candidate.url,
-                &reporter,
-                "正在下载程序更新",
-            )
-            .await
-            .and_then(|bytes| {
-                archive::validate_download_bytes(
-                    &bytes,
-                    info.download_size.filter(|size| *size > 0),
-                    if info.provider == Some(Provider::Github) {
-                        info.installer_digest.as_deref()
-                    } else {
-                        None
-                    },
-                )?;
-                crate::app_update::verify_download(&bytes, signature, &info.version)?;
-                Ok(bytes)
-            });
-            if let Some(provider) = info.provider.as_ref() {
-                let channel = installer_release_channel(provider, mode);
-                emit_installer_channel_status(
-                    app,
-                    detect_installer_region(),
-                    installer_channel_status(
-                        &channel,
-                        if result.is_ok() {
-                            "downloaded"
-                        } else {
-                            "failed"
+        |candidate, reporter| {
+            let verify = &verify;
+            async move {
+                let mode = if candidate.route == AssetDownloadRoute::Proxy {
+                    "proxy"
+                } else {
+                    "direct"
+                };
+                let channel = info.provider.as_ref().and_then(|provider| {
+                    installer_sources_for_url(
+                        provider,
+                        info.installer_url.as_deref().unwrap_or_default(),
+                    )
+                    .into_iter()
+                    .find(|channel| channel.endpoint == candidate.url)
+                });
+                if let (Some(app), Some(channel)) = (app, &channel) {
+                    emit_installer_channel_status(
+                        app,
+                        detect_installer_region(),
+                        AppUpdateChannelStatus {
+                            mode: mode.into(),
+                            ..installer_channel_status(channel, "downloading", None)
                         },
-                        result.as_ref().err().cloned(),
-                    ),
-                );
+                    );
+                }
+                let result = download_installer_with_timeout(
+                    client,
+                    &candidate.url,
+                    &reporter,
+                    "正在下载程序更新",
+                )
+                .await
+                .and_then(|bytes| {
+                    archive::validate_download_bytes(
+                        &bytes,
+                        info.download_size.filter(|size| *size > 0),
+                        None,
+                    )?;
+                    verify(&bytes)?;
+                    Ok(bytes)
+                });
+                if let (Some(app), Some(channel)) = (app, &channel) {
+                    emit_installer_channel_status(
+                        app,
+                        detect_installer_region(),
+                        AppUpdateChannelStatus {
+                            mode: mode.into(),
+                            ..installer_channel_status(
+                                channel,
+                                if result.is_ok() {
+                                    "downloaded"
+                                } else {
+                                    "failed"
+                                },
+                                result.as_ref().err().cloned(),
+                            )
+                        },
+                    );
+                }
+                result
             }
-            result
         },
         Some(DownloadContext {
-            app: Some(app),
+            app,
             label: "正在下载程序更新",
             expected_size: info.download_size,
         }),
     )
     .await;
-    result.map_err(|error| vec![error])
+    result
 }
 
 async fn resolve_app_update(
     app: &AppHandle,
     info: &AppUpdateInfo,
-    proxy_config: &GitHubProxyConfig,
+) -> Result<tauri_plugin_updater::Update, String> {
+    let provider = info.provider.as_ref().ok_or("更新清单地址无效")?;
+    let channels = installer_sources_for_url(provider, &installer_manifest_url(provider));
+    race_installer_channels(
+        &channels,
+        archive::is_download_cancelled,
+        |channel, _| async move { resolve_app_update_at(app, info, &channel.endpoint).await },
+    )
+    .await
+}
+
+async fn resolve_app_update_at(
+    app: &AppHandle,
+    info: &AppUpdateInfo,
+    url: &str,
 ) -> Result<tauri_plugin_updater::Update, String> {
     use tauri_plugin_updater::UpdaterExt;
     let target = crate::app_update::UpdateTarget::current()?;
@@ -4379,75 +4440,73 @@ async fn resolve_app_update(
             &logs.join("update-msi.log"),
         )?
     };
-    let provider = info.provider.as_ref().ok_or("更新中没有匹配的安装包")?;
-    let mut visited = HashSet::new();
-    for endpoint in &info.manifest_endpoints {
-        for url in installer_download_urls(provider, endpoint, proxy_config) {
-            if !visited.insert(url.clone()) {
-                continue;
-            }
-            if archive::is_download_cancelled() {
-                return Err("下载已取消".into());
-            }
-            let endpoint = Url::parse(&url).map_err(|_| "更新清单地址无效")?;
-            let builder = app
-                .updater_builder()
-                .target(target.manifest_key())
-                .timeout(std::time::Duration::from_secs(5))
-                .header("User-Agent", releases::APP_USER_AGENT)
-                .map_err(|e| e.to_string())?
-                .header("Cache-Control", "no-cache, no-store")
-                .map_err(|e| e.to_string())?
-                .header("Pragma", "no-cache")
-                .map_err(|e| e.to_string())?;
-            #[cfg(windows)]
-            let builder = builder
-                .clear_installer_args()
-                .installer_args(installer_args.clone())
-                // Our success hooks launch once; do not append /R or /ARGS.
-                .restart_after_install(false)
-                .on_before_exit(|| {
-                    log::info!(
-                        "Tauri Updater 准备启动 Windows 安装器并退出当前程序；安装结果尚未确认"
-                    );
-                });
-            #[cfg(target_os = "linux")]
-            let builder = if target.kind == "appimage" {
-                let path =
-                    std::env::var_os("APPIMAGE").ok_or("当前安装格式不支持自动更新，请手动更新")?;
-                builder.executable_path(PathBuf::from(path))
-            } else {
-                builder
-            };
-            let updater = match builder
-                .endpoints(vec![endpoint])
-                .and_then(|builder| builder.build())
-            {
-                Ok(updater) => updater,
-                Err(error) => {
-                    log::warn!("更新清单入口不可用：原因={error}");
-                    continue;
-                }
-            };
-            match updater.check().await {
-                Ok(Some(update)) => {
-                    match crate::app_update::validate_update_metadata(
-                        &update.version,
-                        &update.download_url,
-                        &update.signature,
-                        info,
-                    ) {
-                        Ok(()) => return Ok(update),
-                        Err(error) => log::warn!("{error}"),
-                    }
-                }
-                Ok(None) => log::warn!("更新清单没有所选 Release 的更新版本"),
-                Err(_) => log::warn!(
-                    "更新清单读取失败：来源={}",
-                    repository_sources::safe_log_address(&url)
-                ),
+    if archive::is_download_cancelled() {
+        return Err("下载已取消".into());
+    }
+    let endpoint = Url::parse(url).map_err(|_| "更新清单地址无效")?;
+    let builder = app
+        .updater_builder()
+        .target(target.manifest_key())
+        .timeout(std::time::Duration::from_secs(5))
+        .header("User-Agent", releases::APP_USER_AGENT)
+        .map_err(|e| e.to_string())?
+        .header("Cache-Control", "no-cache, no-store")
+        .map_err(|e| e.to_string())?
+        .header("Pragma", "no-cache")
+        .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let builder = builder
+        .clear_installer_args()
+        .installer_args(installer_args.clone())
+        // Our success hooks launch once; do not append /R or /ARGS.
+        .restart_after_install(false)
+        .on_before_exit(|| {
+            log::info!("Tauri Updater 准备启动 Windows 安装器并退出当前程序；安装结果尚未确认");
+        });
+    #[cfg(target_os = "linux")]
+    let builder = if target.kind == "appimage" {
+        let path = std::env::var_os("APPIMAGE").ok_or("当前安装格式不支持自动更新，请手动更新")?;
+        builder.executable_path(PathBuf::from(path))
+    } else {
+        builder
+    };
+    let updater = match builder
+        .endpoints(vec![endpoint])
+        .and_then(|builder| builder.build())
+    {
+        Ok(updater) => updater,
+        Err(error) => {
+            log::warn!("更新清单入口不可用：原因={error}");
+            return Err(error.to_string());
+        }
+    };
+    let cancellation = async {
+        while !archive::is_download_cancelled() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+    let result = tokio::select! {
+        biased;
+        _ = cancellation => return Err("下载已取消".into()),
+        result = updater.check() => result,
+    };
+    match result {
+        Ok(Some(update)) => {
+            match crate::app_update::validate_update_metadata(
+                &update.version,
+                &update.download_url,
+                &update.signature,
+                info,
+            ) {
+                Ok(()) => return Ok(update),
+                Err(error) => return Err(error),
             }
         }
+        Ok(None) => log::warn!("更新清单没有所选 Release 的更新版本"),
+        Err(_) => log::warn!(
+            "更新清单读取失败：来源={}",
+            repository_sources::safe_log_address(url)
+        ),
     }
     Err("更新清单或签名不可用，已停止安装".into())
 }
@@ -4461,46 +4520,12 @@ async fn prepare_and_download_installer(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
     app: &AppHandle,
-    proxy_config: &GitHubProxyConfig,
 ) -> Result<VerifiedInstallerDownload, Vec<String>> {
-    let update = resolve_app_update(app, info, proxy_config)
+    let update = resolve_app_update(app, info)
         .await
         .map_err(|error| vec![error])?;
-    let bytes =
-        download_installer_for_info(client, info, app, proxy_config, &update.signature).await?;
+    let bytes = download_installer_for_info(client, info, app, &update.signature).await?;
     Ok(VerifiedInstallerDownload { bytes, update })
-}
-
-fn installer_download_key(info: &AppUpdateInfo) -> String {
-    let urls = if info.installer_download_urls.is_empty() {
-        info.installer_url.clone().into_iter().collect::<Vec<_>>()
-    } else {
-        info.installer_download_urls.clone()
-    };
-    urls.join("\n")
-}
-
-fn emit_installer_download_failure(
-    app: &AppHandle,
-    region: InstallerRegion,
-    info: &AppUpdateInfo,
-    error: &str,
-    proxies: &GitHubProxyConfig,
-) {
-    let Some(channel_id) = info.source_channel.as_deref() else {
-        return;
-    };
-    let Some(channel) = installer_api_sources(region, proxies)
-        .into_iter()
-        .find(|channel| channel.id == channel_id)
-    else {
-        return;
-    };
-    emit_installer_channel_status(
-        app,
-        region,
-        installer_channel_status(&channel, "failed", Some(error.into())),
-    );
 }
 
 enum InstallerDownloadAttempt {
@@ -4512,11 +4537,8 @@ enum InstallerDownloadAttempt {
     Failed(String),
 }
 
-/// Runs the automatic updater as one ordered API/release pipeline.
-///
-/// A channel is never left pending while the remaining APIs are queried: as
-/// soon as an API returns a usable update candidate, its release is attempted
-/// immediately. A failed API or release moves the pipeline to the next API.
+/// Finish the single Gitee route before starting GitHub's independent
+/// manifest and signature-validated package races.
 async fn discover_and_download_installer_update(
     state: &AppState,
     app: &AppHandle,
@@ -4524,146 +4546,46 @@ async fn discover_and_download_installer_update(
     let region = detect_installer_region();
     log::info!("开始执行安装器更新流程：地区={}", region.as_str());
     let config = state.config.load_or_default();
-    let api_client = releases::build_client(config.network.timeout_seconds)
+    let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
     let download_client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
+    let target = crate::app_update::UpdateTarget::current()?;
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("当前程序版本无效: {error}"))?;
-    let mut failed_downloads = HashSet::new();
-
-    emit_installer_phase(app, region, "api", None, None);
-    let channels = installer_api_sources(region, &config.github_proxies);
-    for (index, channel) in channels.iter().enumerate() {
-        if archive::is_download_cancelled() {
-            return Err("下载已取消".into());
-        }
-        log::info!(
-            "检查安装器更新渠道：序号={}，渠道={}，平台={:?}，方式={}",
-            index + 1,
-            channel.id,
-            channel.provider,
-            if channel.is_proxy { "代理" } else { "直连" }
-        );
-        emit_installer_channel_status(
-            app,
-            region,
-            installer_channel_status(channel, "checking", None),
-        );
-        let token = if channel.uses_token {
-            installer_api_token(&channel.provider)
-        } else {
-            None
-        };
-        let result = if channel.uses_token && token.is_none() {
-            Err(releases::ReleaseError::Http(
-                "未配置该渠道 API Token".into(),
-            ))
-        } else {
-            releases::fetch_release_api(&api_client, &channel.endpoint, &channel.provider, token)
-                .await
-        };
-
-        let releases = match result {
-            Ok(releases) => releases,
-            Err(error) => {
-                log::warn!(
-                    "安装器更新 API 请求失败：渠道={}，原因={}",
-                    channel.id,
-                    error
-                );
-                emit_installer_channel_status(
-                    app,
-                    region,
-                    installer_channel_status(channel, "failed", Some(error.to_string())),
-                );
-                continue;
+    let result = run_installer_manifest_routes(
+        &client,
+        &installer_manifest_sources(region),
+        target,
+        &current_version,
+        archive::is_download_cancelled,
+        |status| {
+            if status.status == "checking" {
+                emit_installer_phase(app, region, "manifest", None, None);
             }
-        };
-
-        let release_count = releases.len();
-        let mut candidate = None;
-        let status = inspect_installer_releases(
-            channel,
-            releases,
-            &current_version,
-            &config.github_proxies,
-            &mut candidate,
-            &failed_downloads,
-        );
-        let status_name = status.status.clone();
-        log::info!(
-            "安装器更新 API 结果：渠道={}，状态={}，Release 数={}",
-            channel.id,
-            status_name,
-            release_count
-        );
-        emit_installer_channel_status(app, region, status);
-        if status_name == "latest" {
-            for skipped in channels.iter().skip(index + 1) {
-                emit_installer_channel_status(
-                    app,
-                    region,
-                    installer_channel_status(
-                        skipped,
-                        "skipped",
-                        Some("已确认当前为最新版本，未请求".into()),
-                    ),
-                );
+            emit_installer_channel_status(app, region, status);
+        },
+        |info| {
+            let download_client = &download_client;
+            async move {
+                emit_installer_phase(app, region, "download", None, Some(info.clone()));
+                let download = prepare_and_download_installer(download_client, &info, app)
+                    .await
+                    .map_err(|errors| errors.join("；"))?;
+                Ok((info, download))
             }
-            return Ok(InstallerDownloadAttempt::Latest);
+        },
+    )
+    .await?;
+    match result {
+        InstallerRouteResult::Updated((info, download)) => {
+            return Ok(InstallerDownloadAttempt::Updated { info, download });
         }
-        if status_name != "update_available" {
-            continue;
-        }
-
-        let Some(info) = candidate else {
-            log::warn!("安装器更新渠道没有可用候选：渠道={}", channel.id);
-            continue;
-        };
-        log::info!("发现安装器更新：渠道={}，版本={}", channel.id, info.version);
-        emit_installer_phase(app, region, "download", None, Some(info.clone()));
-        match prepare_and_download_installer(&download_client, &info, app, &config.github_proxies)
-            .await
-        {
-            Ok(download) => {
-                log::info!(
-                    "安装器更新文件下载成功：渠道={}，字节数={}",
-                    channel.id,
-                    download.bytes.len()
-                );
-                return Ok(InstallerDownloadAttempt::Updated { info, download });
-            }
-            Err(download_errors) => {
-                if archive::is_download_cancelled() {
-                    return Err("下载已取消".into());
-                }
-                log::warn!(
-                    "安装器更新文件下载失败：渠道={}，尝试数={}",
-                    channel.id,
-                    download_errors.len()
-                );
-                let detail = if download_errors.is_empty() {
-                    "更新中没有匹配的安装包".to_string()
-                } else {
-                    download_errors.join("；")
-                };
-                failed_downloads.insert(installer_download_key(&info));
-                emit_installer_download_failure(
-                    app,
-                    region,
-                    &info,
-                    &detail,
-                    &config.github_proxies,
-                );
-                emit_installer_phase(app, region, "api", Some(detail), None);
-            }
-        }
+        InstallerRouteResult::Latest => return Ok(InstallerDownloadAttempt::Latest),
+        InstallerRouteResult::Failed => {}
     }
-
     let message = "请手动更新管理器, 本次跳过更新.".to_string();
     emit_installer_phase(app, region, "skipped", Some(message.clone()), None);
-    log::warn!("所有安装器更新渠道均未完成下载");
     Ok(InstallerDownloadAttempt::Failed(message))
 }
 
@@ -5793,369 +5715,6 @@ mod asset_download_strategy_tests {
     const DIRECT: &str = "https://github.com/example/mod/releases/download/v1/mod.zip";
 
     #[test]
-    #[cfg(windows)]
-    fn installer_candidate_preserves_the_github_api_sha256_for_download_validation() {
-        let digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let releases = releases::parse_release_json(
-            &serde_json::json!({
-                "tag_name": "v9.0.0", "assets": [{
-                    "name": "OC2ModManager_9.0.0_x64-setup.exe", "size": 1024,
-                    "browser_download_url": DIRECT, "digest": digest,
-                }],
-            }),
-            &Provider::Github,
-        )
-        .unwrap();
-        let mut update = None;
-        let status = inspect_installer_releases(
-            &installer_release_channel(&Provider::Github, "direct"),
-            releases,
-            &semver::Version::new(1, 0, 0),
-            &GitHubProxyConfig::default(),
-            &mut update,
-            &HashSet::new(),
-        );
-        assert_eq!(status.status, "update_available");
-        let update = update.unwrap();
-        assert_eq!(update.installer_digest.as_deref(), Some(digest));
-        assert_eq!(update.download_size, Some(1024));
-        let candidates = installer_download_candidates(&update, &GitHubProxyConfig::default());
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.url.clone())
-                .collect::<Vec<_>>(),
-            update.installer_download_urls
-        );
-        assert!(candidates.len() > 3);
-        assert_eq!(candidates[0].route, AssetDownloadRoute::Direct);
-        assert!(
-            candidates[1..]
-                .iter()
-                .all(|candidate| candidate.route == AssetDownloadRoute::Proxy)
-        );
-        assert_eq!(
-            update.installer_proxy_url.as_deref(),
-            Some(candidates[1].url.as_str())
-        );
-    }
-
-    #[test]
-    fn installer_candidates_include_all_bundled_release_proxies_without_configuration() {
-        let urls =
-            installer_download_urls(&Provider::Github, DIRECT, &GitHubProxyConfig::default());
-        let bundled = crate::github_proxies::bundled_defaults();
-        let bundled_urls =
-            crate::github_proxies::proxy_urls(&bundled.release_proxies, DIRECT, false, None);
-        assert_eq!(urls.first().map(String::as_str), Some(DIRECT));
-        assert!(bundled_urls.len() > 1);
-        for url in &bundled_urls {
-            assert!(
-                urls.contains(url),
-                "missing bundled installer download candidate: {url}"
-            );
-        }
-        assert_eq!(urls.len(), bundled_urls.len() + 1);
-    }
-
-    fn installer_info(provider: Provider) -> AppUpdateInfo {
-        AppUpdateInfo {
-            version: "9.0.0".into(),
-            current_version: "1.0.7".into(),
-            body: None,
-            date: None,
-            download_size: Some(1024),
-            manifest_endpoints: Vec::new(),
-            installer_url: Some(DIRECT.into()),
-            installer_proxy_url: None,
-            installer_download_urls: vec![
-                DIRECT.into(),
-                "https://stale-proxy.example/asset".into(),
-            ],
-            installer_digest: None,
-            installer_name: "OC2ModManager_9.0.0_x64-setup.exe".into(),
-            installer_type: "exe".into(),
-            provider: Some(provider),
-            source_channel: None,
-        }
-    }
-
-    #[test]
-    fn installer_pool_preserves_disabled_edited_and_reordered_bundled_proxies() {
-        let bundled = crate::github_proxies::bundled_defaults();
-        let mut config = GitHubProxyConfig::default();
-        let mut disabled_default = bundled
-            .release_proxies
-            .iter()
-            .find(|proxy| proxy.id == "oc2gh-release")
-            .unwrap()
-            .clone();
-        disabled_default.enabled = false;
-        let disabled_url = crate::github_proxies::proxy_urls(
-            &[bundled
-                .release_proxies
-                .iter()
-                .find(|proxy| proxy.id == "oc2gh-release")
-                .unwrap()
-                .clone()],
-            DIRECT,
-            false,
-            None,
-        )
-        .remove(0);
-        let mut edited = bundled.release_proxies[0].clone();
-        edited.template = "https://edited-proxy.example/{url}".into();
-        let mut reordered = bundled.release_proxies[1].clone();
-        reordered.name = "Saved name".into();
-        config.release_proxies = vec![
-            reordered.clone(),
-            edited.clone(),
-            disabled_default,
-            proxy("remote", "remote.example", true, true),
-        ];
-        let saved = config.clone();
-        let urls = installer_download_urls(&Provider::Github, DIRECT, &config);
-        assert_eq!(
-            config, saved,
-            "assembling installer candidates must not change saved configuration"
-        );
-        let ordered = crate::github_proxies::proxy_urls(
-            &[config.release_proxies[3].clone(), reordered, edited],
-            DIRECT,
-            false,
-            None,
-        );
-        assert_eq!(&urls[..4], [vec![DIRECT.to_string()], ordered].concat());
-        assert!(!urls.contains(&disabled_url));
-        assert!(
-            !urls
-                .iter()
-                .any(|url| url.starts_with("https://gh.h233.eu.org/"))
-        );
-        let mut info = installer_info(Provider::Github);
-        info.installer_download_urls.push(disabled_url.clone());
-        let candidates = installer_download_candidates(&info, &config);
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.url.clone())
-                .collect::<Vec<_>>(),
-            urls
-        );
-        assert!(
-            !candidates
-                .iter()
-                .any(|candidate| candidate.url == disabled_url
-                    || candidate.url.starts_with("https://stale-proxy.example/"))
-        );
-    }
-
-    #[test]
-    fn installer_pool_deduplicates_urls_and_never_uses_raw_or_api_proxies() {
-        let mut direct_alias = proxy("direct-alias", "unused.example", true, true);
-        direct_alias.template = "{url}".into();
-        let config = GitHubProxyConfig {
-            release_proxies: vec![
-                proxy("duplicate-a", "same.example", true, true),
-                proxy("duplicate-b", "same.example", true, true),
-                direct_alias,
-            ],
-            raw_proxies: vec![proxy("raw-only", "raw-only.example", false, true)],
-            github_api_proxies: vec![proxy("api-only", "api-only.example", false, true)],
-            gitee_api_proxies: Vec::new(),
-        };
-        let urls = installer_download_urls(&Provider::Github, DIRECT, &config);
-        assert_eq!(urls.len(), urls.iter().collect::<HashSet<_>>().len());
-        assert_eq!(urls.iter().filter(|url| url.as_str() == DIRECT).count(), 1);
-        assert_eq!(
-            urls.iter()
-                .filter(|url| url.starts_with("https://same.example/"))
-                .count(),
-            1
-        );
-        assert!(
-            !urls
-                .iter()
-                .any(|url| url.contains("raw-only.example") || url.contains("api-only.example"))
-        );
-        let mut disabled = crate::github_proxies::bundled_defaults();
-        for proxy in &mut disabled.release_proxies {
-            proxy.enabled = false;
-        }
-        assert_eq!(
-            installer_download_urls(&Provider::Github, DIRECT, &disabled),
-            [DIRECT]
-        );
-    }
-
-    #[test]
-    fn gitee_installer_uses_only_direct_and_legacy_direct_candidates_still_work() {
-        let config = crate::github_proxies::bundled_defaults();
-        let mut info = installer_info(Provider::Gitee);
-        assert_eq!(
-            installer_download_candidates(&info, &config),
-            [AssetDownloadCandidate {
-                route: AssetDownloadRoute::Direct,
-                url: DIRECT.into()
-            }]
-        );
-        info.installer_download_urls = vec![DIRECT.into()];
-        info.installer_url = None;
-        assert_eq!(installer_download_candidates(&info, &config).len(), 1);
-        info.provider = None;
-        info.installer_url = Some(DIRECT.into());
-        info.installer_download_urls.clear();
-        assert_eq!(
-            installer_download_candidates(&info, &config),
-            [AssetDownloadCandidate {
-                route: AssetDownloadRoute::Direct,
-                url: DIRECT.into()
-            }]
-        );
-    }
-
-    #[test]
-    fn cached_remote_proxies_survive_restart_and_share_the_mod_candidate_path() {
-        struct Workspace(PathBuf);
-        impl Drop for Workspace {
-            fn drop(&mut self) {
-                // Delete only this test's unique directory below the resolved
-                // temporary root, including when an assertion fails.
-                if let (Ok(root), Ok(temp)) =
-                    (self.0.canonicalize(), std::env::temp_dir().canonicalize())
-                {
-                    if root.parent() == Some(temp.as_path())
-                        && root.file_name().is_some_and(|name| {
-                            name.to_string_lossy().starts_with("oc2-updater-cached-")
-                        })
-                    {
-                        let _ = fs::remove_dir_all(root);
-                    }
-                }
-            }
-        }
-        let workspace =
-            Workspace(std::env::temp_dir().join(format!("oc2-updater-cached-{}", Uuid::new_v4())));
-        let service = ConfigService::for_test(workspace.0.clone());
-        let mut config = service.load().unwrap();
-        let mut bundled_alias = config.github_proxies.release_proxies[0].clone();
-        bundled_alias.id = "previous-remote-bundled-alias".into();
-        bundled_alias.builtin = false;
-        bundled_alias.remote = true;
-        let previous_success = GitHubProxyConfig {
-            release_proxies: vec![
-                proxy("previous-remote", "cached-proxy.example", true, true),
-                proxy(
-                    "previous-remote-duplicate",
-                    "cached-proxy.example",
-                    true,
-                    true,
-                ),
-                proxy("previous-remote-disabled", "cached-off.example", true, true),
-                bundled_alias,
-            ],
-            ..GitHubProxyConfig::default()
-        };
-        // Use the same merge and persistence boundary as successful refresh.
-        config.github_proxies =
-            crate::github_proxies::merge_downloaded(&config.github_proxies, previous_success);
-        for proxy in &mut config.github_proxies.release_proxies {
-            if proxy.id == "previous-remote-disabled" || proxy.id == "oc2gh-release" {
-                proxy.enabled = false;
-            }
-        }
-        service.save(&config).unwrap();
-        drop(service);
-        drop(config);
-
-        // A new service simulates startup before any remote refresh occurs.
-        let service = ConfigService::for_test(workspace.0.clone());
-        let mut restarted = service.load().unwrap();
-        assert!(
-            restarted
-                .github_proxies
-                .release_proxies
-                .iter()
-                .any(|proxy| proxy.id == "previous-remote" && proxy.remote && proxy.enabled)
-        );
-        let info = installer_info(Provider::Github);
-        let updater = installer_download_candidates(&info, &restarted.github_proxies);
-        let cached_url = format!("https://cached-proxy.example/{DIRECT}");
-        assert_eq!(
-            updater
-                .iter()
-                .filter(|candidate| candidate.url == cached_url)
-                .count(),
-            1
-        );
-        assert!(
-            updater
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://gh.ddlc.top/"))
-        );
-        assert!(!updater.iter().any(|candidate| {
-            candidate.url.starts_with("https://cached-off.example/")
-                || candidate.url.starts_with("https://oc2gh.ch3ng.top/")
-        }));
-        assert_eq!(
-            updater.len(),
-            updater
-                .iter()
-                .map(|candidate| &candidate.url)
-                .collect::<HashSet<_>>()
-                .len()
-        );
-        let mod_candidates = |proxies: &GitHubProxyConfig| {
-            let urls = asset_proxy_urls(
-                &proxies.release_proxies,
-                DIRECT,
-                false,
-                "",
-                "",
-                ProxyMode::AutoDirect,
-                None,
-            );
-            plan_asset_download_candidates(ProxyMode::AutoDirect, DIRECT, urls).unwrap()
-        };
-        assert_eq!(updater, mod_candidates(&restarted.github_proxies));
-
-        // Tutorial completion refreshes and persists a new available snapshot.
-        let next_success = GitHubProxyConfig {
-            release_proxies: vec![proxy("current-remote", "current-proxy.example", true, true)],
-            ..GitHubProxyConfig::default()
-        };
-        restarted.github_proxies =
-            crate::github_proxies::merge_downloaded(&restarted.github_proxies, next_success);
-        service.save(&restarted).unwrap();
-        let current = service.load().unwrap();
-        let current_mod = mod_candidates(&current.github_proxies);
-        assert!(
-            current_mod
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://current-proxy.example/"))
-        );
-        assert!(
-            !updater
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://current-proxy.example/"))
-        );
-        assert_eq!(
-            installer_download_candidates(&info, &current.github_proxies),
-            current_mod
-        );
-
-        // An unsuccessful new fetch must leave the saved successful list usable.
-        let after_failure = crate::github_proxies::merge_downloaded(
-            &current.github_proxies,
-            GitHubProxyConfig::default(),
-        );
-        assert_eq!(
-            installer_download_candidates(&info, &after_failure),
-            current_mod
-        );
-    }
-
-    #[test]
     fn shared_candidate_ordering_deduplicates_each_automatic_mode() {
         let proxy_a = "https://proxy-a.example/asset".to_string();
         let proxy_b = "https://proxy-b.example/asset".to_string();
@@ -6186,77 +5745,6 @@ mod asset_download_strategy_tests {
             [&proxy_a, &proxy_b, DIRECT]
         );
         assert!(plan_asset_download_candidates(ProxyMode::Fixed, DIRECT, Vec::new()).is_err());
-    }
-
-    #[tokio::test]
-    async fn installer_race_replenishes_slots_with_bundled_proxies_and_cleans_up_losers() {
-        use sha2::{Digest, Sha256};
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        struct InFlight(Arc<AtomicUsize>);
-        impl Drop for InFlight {
-            fn drop(&mut self) {
-                self.0.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-        let candidates = installer_download_candidates(
-            &installer_info(Provider::Github),
-            &GitHubProxyConfig::default(),
-        );
-        assert!(candidates.len() > 3);
-        let initial = candidates[..3]
-            .iter()
-            .map(|candidate| candidate.url.clone())
-            .collect::<Vec<_>>();
-        let winner_url = candidates[3].url.clone();
-        let started = Arc::new(Mutex::new(Vec::new()));
-        let active = Arc::new(AtomicUsize::new(0));
-        let maximum = Arc::new(AtomicUsize::new(0));
-        let race = try_asset_download_candidates(
-            candidates,
-            || false,
-            |candidate, _reporter| {
-                let initial = &initial;
-                let winner_url = &winner_url;
-                let started = started.clone();
-                let active = active.clone();
-                let maximum = maximum.clone();
-                async move {
-                    started.lock().unwrap().push(candidate.url.clone());
-                    let count = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    maximum.fetch_max(count, Ordering::SeqCst);
-                    let _guard = InFlight(active);
-                    if candidate.url == initial[0] {
-                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                        Err("直连失败".into())
-                    } else if &candidate.url == winner_url {
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        let payload = b"verified installer".to_vec();
-                        let digest = format!("sha256:{:x}", Sha256::digest(&payload));
-                        archive::validate_download_bytes(
-                            &payload,
-                            Some(payload.len() as u64),
-                            Some(&digest),
-                        )?;
-                        Ok(payload)
-                    } else {
-                        std::future::pending::<Result<Vec<u8>, String>>().await
-                    }
-                }
-            },
-            None,
-        );
-        let result = tokio::time::timeout(std::time::Duration::from_secs(2), race)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(result, b"verified installer");
-        assert_eq!(maximum.load(Ordering::SeqCst), 3);
-        assert_eq!(active.load(Ordering::SeqCst), 0);
-        let started = started.lock().unwrap();
-        assert_eq!(&started[..3], initial);
-        assert_eq!(started.len(), 4);
-        assert_eq!(started[3], winner_url);
     }
 
     #[test]
@@ -6358,6 +5846,154 @@ mod asset_download_strategy_tests {
             builtin: !remote,
             remote,
         }
+    }
+
+    #[test]
+    fn cached_remote_proxies_survive_restart_for_mods_but_not_self_updates() {
+        struct Workspace(PathBuf);
+        impl Drop for Workspace {
+            fn drop(&mut self) {
+                // Delete only this test's unique directory below the resolved
+                // temporary root, including when an assertion fails.
+                if let (Ok(root), Ok(temp)) =
+                    (self.0.canonicalize(), std::env::temp_dir().canonicalize())
+                {
+                    if root.parent() == Some(temp.as_path())
+                        && root.file_name().is_some_and(|name| {
+                            name.to_string_lossy().starts_with("oc2-updater-cached-")
+                        })
+                    {
+                        let _ = fs::remove_dir_all(root);
+                    }
+                }
+            }
+        }
+        let workspace =
+            Workspace(std::env::temp_dir().join(format!("oc2-updater-cached-{}", Uuid::new_v4())));
+        let service = ConfigService::for_test(workspace.0.clone());
+        let mut config = service.load().unwrap();
+        let mut bundled_alias = config.github_proxies.release_proxies[0].clone();
+        bundled_alias.id = "previous-remote-bundled-alias".into();
+        bundled_alias.builtin = false;
+        bundled_alias.remote = true;
+        let previous_success = GitHubProxyConfig {
+            release_proxies: vec![
+                proxy("previous-remote", "cached-proxy.example", true, true),
+                proxy(
+                    "previous-remote-duplicate",
+                    "cached-proxy.example",
+                    true,
+                    true,
+                ),
+                proxy("previous-remote-disabled", "cached-off.example", true, true),
+                bundled_alias,
+            ],
+            ..GitHubProxyConfig::default()
+        };
+        // Use the same merge and persistence boundary as successful refresh.
+        config.github_proxies =
+            crate::github_proxies::merge_downloaded(&config.github_proxies, previous_success);
+        for proxy in &mut config.github_proxies.release_proxies {
+            if proxy.id == "previous-remote-disabled" || proxy.id == "oc2gh-release" {
+                proxy.enabled = false;
+            }
+        }
+        service.save(&config).unwrap();
+        drop(service);
+        drop(config);
+
+        // A new service simulates startup before any remote refresh occurs.
+        let service = ConfigService::for_test(workspace.0.clone());
+        let mut restarted = service.load().unwrap();
+        assert!(
+            restarted
+                .github_proxies
+                .release_proxies
+                .iter()
+                .any(|proxy| proxy.id == "previous-remote" && proxy.remote && proxy.enabled)
+        );
+        let updater = installer_sources_for_url(&Provider::Github, DIRECT)
+            .iter()
+            .map(installer_candidate)
+            .collect::<Vec<_>>();
+        let mod_candidates = |proxies: &GitHubProxyConfig| {
+            let urls = asset_proxy_urls(
+                &proxies.release_proxies,
+                DIRECT,
+                false,
+                "",
+                "",
+                ProxyMode::AutoDirect,
+                None,
+            );
+            plan_asset_download_candidates(ProxyMode::AutoDirect, DIRECT, urls).unwrap()
+        };
+        let cached = mod_candidates(&restarted.github_proxies);
+        let cached_url = format!("https://cached-proxy.example/{DIRECT}");
+        assert_eq!(
+            cached
+                .iter()
+                .filter(|candidate| candidate.url == cached_url)
+                .count(),
+            1
+        );
+        assert!(
+            cached
+                .iter()
+                .any(|candidate| candidate.url.starts_with("https://gh.ddlc.top/"))
+        );
+        assert!(!cached.iter().any(|candidate| {
+            candidate.url.starts_with("https://cached-off.example/")
+                || candidate.url.starts_with("https://oc2gh.ch3ng.top/")
+        }));
+        assert_eq!(
+            cached.len(),
+            cached
+                .iter()
+                .map(|candidate| &candidate.url)
+                .collect::<HashSet<_>>()
+                .len()
+        );
+        assert!(
+            !updater
+                .iter()
+                .any(|candidate| candidate.url.starts_with("https://cached-proxy.example/"))
+        );
+
+        // Tutorial completion refreshes and persists a new available snapshot.
+        let next_success = GitHubProxyConfig {
+            release_proxies: vec![proxy("current-remote", "current-proxy.example", true, true)],
+            ..GitHubProxyConfig::default()
+        };
+        restarted.github_proxies =
+            crate::github_proxies::merge_downloaded(&restarted.github_proxies, next_success);
+        service.save(&restarted).unwrap();
+        let current = service.load().unwrap();
+        let current_mod = mod_candidates(&current.github_proxies);
+        assert!(
+            current_mod
+                .iter()
+                .any(|candidate| candidate.url.starts_with("https://current-proxy.example/"))
+        );
+        assert!(
+            !updater
+                .iter()
+                .any(|candidate| candidate.url.starts_with("https://current-proxy.example/"))
+        );
+        assert_eq!(
+            installer_sources_for_url(&Provider::Github, DIRECT)
+                .iter()
+                .map(installer_candidate)
+                .collect::<Vec<_>>(),
+            updater
+        );
+
+        // An unsuccessful new fetch must leave the saved successful list usable.
+        let after_failure = crate::github_proxies::merge_downloaded(
+            &current.github_proxies,
+            GitHubProxyConfig::default(),
+        );
+        assert_eq!(mod_candidates(&after_failure), current_mod);
     }
 
     #[test]
@@ -6585,11 +6221,11 @@ mod update_status_tests {
     #[test]
     fn manifest_fallbacks_use_each_providers_download_route() {
         assert_eq!(
-            installer_manifest_fallback(&Provider::Gitee),
+            installer_manifest_url(&Provider::Gitee),
             "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/latest/latest.json"
         );
         assert_eq!(
-            installer_manifest_fallback(&Provider::Github),
+            installer_manifest_url(&Provider::Github),
             "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/latest/download/latest.json"
         );
         let configuration: serde_json::Value =
@@ -6599,7 +6235,7 @@ mod update_status_tests {
             .unwrap();
         for provider in [Provider::Gitee, Provider::Github] {
             assert!(endpoints.iter().any(|endpoint| {
-                endpoint.as_str() == Some(installer_manifest_fallback(&provider).as_str())
+                endpoint.as_str() == Some(installer_manifest_url(&provider).as_str())
             }));
         }
     }

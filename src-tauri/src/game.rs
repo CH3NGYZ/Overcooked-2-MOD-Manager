@@ -68,7 +68,10 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
 }
 
 pub(crate) fn game_executable_exists(game_dir: &Path, settings: &GameConfig) -> bool {
-    let package = Package::current(settings);
+    executable_exists_for_package(game_dir, Package::current(settings))
+}
+
+fn executable_exists_for_package(game_dir: &Path, package: Package) -> bool {
     let executable = game_dir.join(package.executable());
     if package == Package::MacOS {
         executable.is_dir() && executable.join("Contents/MacOS").is_dir()
@@ -81,20 +84,24 @@ pub(crate) fn selected_game_root(
     selected: &Path,
     settings: &GameConfig,
 ) -> Result<PathBuf, String> {
-    let root = if Package::current(settings) == Package::MacOS
+    selected_root_for_package(selected, Package::current(settings))
+}
+
+fn selected_root_for_package(selected: &Path, package: Package) -> Result<PathBuf, String> {
+    let root = if package == Package::MacOS
         && selected
             .file_name()
-            .is_some_and(|name| name == "Overcooked! 2.app")
+            .is_some_and(|name| name == package.executable())
     {
         selected.parent().ok_or("所选厨房目录无效")?
     } else {
         selected
     };
-    if !game_executable_exists(root, settings) {
-        return Err(match Package::current(settings) {
+    if !executable_exists_for_package(root, package) {
+        return Err(match package {
             Package::Windows => "所选目录中没有 Overcooked2.exe",
             Package::Linux => "所选目录中没有 Overcooked2.x86_64",
-            Package::MacOS => "所选目录中没有 Overcooked! 2.app",
+            Package::MacOS => "所选目录中没有 Overcooked2.app",
         }
         .into());
     }
@@ -362,7 +369,7 @@ fn process_matches_game(
         ]
         .iter()
         .any(|target| normalize_path(target) == executable)
-            || executable.starts_with(game.join("Overcooked! 2.app/Contents/MacOS"))
+            || executable.starts_with(game.join("Overcooked2.app/Contents/MacOS"))
         {
             return true;
         }
@@ -626,7 +633,6 @@ pub struct FileMetadata {
     pub product_name: Option<String>,
     pub company: Option<String>,
     pub copyright: Option<String>,
-    pub product_version: Option<String>,
     pub original_filename: Option<String>,
 }
 
@@ -642,7 +648,6 @@ pub fn read_file_metadata(path: &Path) -> FileMetadata {
             product_name: read_version_string(path, "ProductName"),
             company: read_version_string(path, "CompanyName"),
             copyright: read_version_string(path, "LegalCopyright"),
-            product_version: read_version_string(path, "ProductVersion"),
             original_filename: read_version_string(path, "OriginalFilename"),
         }
     }
@@ -719,6 +724,45 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn native_mac_selection_accepts_game_root_and_actual_app_bundle() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/verification/native-mac-selection")
+            .join(uuid::Uuid::new_v4().to_string());
+        let root = fixture.join("Steam/steamapps/common/Overcooked! 2");
+        fs::create_dir_all(&root).unwrap();
+        assert!(!executable_exists_for_package(&root, Package::MacOS));
+        assert_eq!(
+            selected_root_for_package(&root, Package::MacOS).unwrap_err(),
+            "所选目录中没有 Overcooked2.app"
+        );
+        let app = root.join("Overcooked2.app");
+        fs::create_dir_all(&app).unwrap();
+        assert!(selected_root_for_package(&root, Package::MacOS).is_err());
+        assert!(selected_root_for_package(&app, Package::MacOS).is_err());
+        fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        fs::write(app.join("Contents/MacOS/Overcooked2"), b"fixture").unwrap();
+        let expected = fs::canonicalize(&root).unwrap();
+        assert_eq!(
+            selected_root_for_package(&root, Package::MacOS).unwrap(),
+            expected
+        );
+        assert_eq!(
+            selected_root_for_package(&app, Package::MacOS).unwrap(),
+            expected
+        );
+        assert!(executable_exists_for_package(&root, Package::MacOS));
+        assert!(!executable_exists_for_package(&root, Package::Windows));
+        assert!(!executable_exists_for_package(&root, Package::Linux));
+        fs::write(root.join("Overcooked2.exe"), b"fixture").unwrap();
+        fs::write(root.join("Overcooked2.x86_64"), b"fixture").unwrap();
+        for package in [Package::Windows, Package::Linux] {
+            assert_eq!(selected_root_for_package(&root, package).unwrap(), expected);
+            assert!(selected_root_for_package(&app, package).is_err());
+        }
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
     fn native_steam_launch_does_not_delegate_to_a_wine_url_handler() {
         let command = native_steam_launch_command("linux", None).unwrap();
         assert_eq!(command.get_program(), "steam");
@@ -765,7 +809,7 @@ mod tests {
             ("Overcooked2.x86_64", root.join("Overcooked2.x86_64")),
             (
                 "Overcooked2",
-                root.join("Overcooked! 2.app/Contents/MacOS/Overcooked2"),
+                root.join("Overcooked2.app/Contents/MacOS/Overcooked2"),
             ),
         ] {
             assert!(process_matches_game(&root, name, Some(&executable), &[]));

@@ -4,7 +4,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   AlertTriangle, Boxes, Check, CheckCircle2, ChevronRight, CloudDownload, Coffee, Copy, Download,
-  FolderOpen, GripVertical, LayoutDashboard, PackageCheck, Pencil, Plus, RefreshCw,
+  GripVertical, LayoutDashboard, PackageCheck, Pencil, Plus, RefreshCw,
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
@@ -113,7 +113,7 @@ const appUpdateCheck = ref<AppUpdateCheckResult | null>(null)
 const startupUpdateChecking = ref(true)
 const updateCheckFailed = ref(false)
 const updateSkipped = ref(false)
-const startupUpdatePhase = ref<'api' | 'download' | 'install' | 'skipped'>('api')
+const startupUpdatePhase = ref<'manifest' | 'download' | 'install' | 'skipped'>('manifest')
 const updateSkipCountdown = ref(0)
 const updatePageOpening = ref(false)
 const updatePageError = ref('')
@@ -1052,10 +1052,11 @@ function openBepInExConfig() {
   configEditorTarget.value = { kind: 'bepinex' }
 }
 function updateChannelName(id: string) {
-  return t(({ 'gitee-direct': 'Gitee API 1', 'gitee-token': 'Gitee API 2', 'gitee-proxy': 'Gitee API 3', 'gitee-release-direct': 'Gitee Release', 'github-direct': 'Github API 1', 'github-token': 'Github API 2', 'github-proxy': 'Github API 3', 'github-release-direct': 'Github Release', 'github-release-proxy': 'Github Release Proxy' } as Record<string, string>)[id] || id)
+  if (id.startsWith('github-proxy:')) return `${t('GitHub 内置代理')} (${id.slice('github-proxy:'.length)})`
+  return t(({ 'gitee-direct': 'Gitee 更新清单', 'github-direct': 'GitHub 更新清单' } as Record<string, string>)[id] || id)
 }
 function updateChannelStatus(status: string) {
-  return t(({ latest: '最新版', update_available: '有更新', failed: '失败', skipped: '未请求', checking: '检查中', downloading: '下载中', downloaded: '已下载' } as Record<string, string>)[status] || status)
+  return t(({ latest: '最新版', update_available: '有更新', failed: '失败', skipped: '未请求', cancelled: '已取消', checking: '检查中', downloading: '下载中', downloaded: '已下载' } as Record<string, string>)[status] || status)
 }
 function updateRegionLabel(region: string) {
   if (region === 'detecting') return t('检测中')
@@ -1113,14 +1114,7 @@ if (typeof window !== 'undefined') uninstallFrontendLogging = installFrontendLog
 function initialUpdateCheck() {
   return {
     update: undefined,
-    channels: [
-      ['gitee-direct', 'gitee', 'direct'],
-      ['gitee-token', 'gitee', 'direct'],
-      ['gitee-proxy', 'gitee', 'proxy'],
-      ['github-direct', 'github', 'direct'],
-      ['github-token', 'github', 'direct'],
-      ['github-proxy', 'github', 'proxy'],
-    ].map(([id, provider, mode]) => ({ id, provider, mode, status: 'checking', error: undefined })),
+    channels: [],
     all_failed: false,
     region: 'detecting',
   } as Awaited<ReturnType<typeof api.checkAppUpdate>>
@@ -1129,7 +1123,7 @@ async function checkAppUpdate() {
   const result = await run('正在检查程序更新', () => api.checkAppUpdate(locale.value))
   appUpdateCheck.value = result
   appUpdate.value = result.update || null
-  startupUpdatePhase.value = 'api'
+  startupUpdatePhase.value = 'manifest'
   if (!result.update && !result.all_failed) showSuccess(t('当前已是最新版本'))
 }
 function clearUpdateSkipTimer() {
@@ -1438,9 +1432,8 @@ async function startupChecks() {
   beginDownloadProgress()
   try {
     startupStage.value = t('检查安装器更新')
-    // The automatic path performs API discovery and Release download in one
-    // ordered pipeline. Calling checkAppUpdate first would request the APIs a
-    // second time before installAppUpdate could begin downloading.
+    // One pipeline finishes Gitee first, then races GitHub manifests/packages.
+    // A separate checkAppUpdate call would repeat discovery before download.
     const installResult = await api.installAppUpdate()
     if (!installResult.ok && installResult.message !== '当前已是最新版本') {
       markUpdateSkipped(installResult.message)
@@ -2200,7 +2193,7 @@ onUnmounted(() => {
         <div v-if="appUpdateCheck" class="update-region">
           <span>{{ t('当前更新地区') }}</span><strong>{{ updateRegionLabel(appUpdateCheck.region) }}</strong>
         </div>
-        <div v-if="startupUpdatePhase === 'api' && appUpdateCheck?.channels.length" class="update-channel-statuses">
+        <div v-if="startupUpdatePhase === 'manifest' && appUpdateCheck?.channels.length" class="update-channel-statuses">
           <div v-for="channel in appUpdateCheck.channels" :key="channel.id" class="update-channel-status">
             <span>{{ updateChannelName(channel.id) }}</span><span :class="`update-channel-${channel.status}`">{{ updateChannelStatus(channel.status) }}</span>
           </div>
@@ -2484,9 +2477,6 @@ onUnmounted(() => {
     <button v-if="activeView === 'overview'" class="update-fab" :disabled="!!busy"
       @click="appUpdate ? installAppUpdate() : checkAppUpdate()">
       <Download :size="15" /><span>{{ appUpdate ? `${t('安装')} ${appUpdate.version}` : t('检查程序更新') }}</span>
-    </button>
-    <button v-if="!game?.game_exists" class="path-fab" :disabled="!!busy" @click="chooseGameDirectory">
-      <FolderOpen :size="15" /><span>{{ t('选择厨房目录') }}</span>
     </button>
     <div v-if="showRepoEditor" class="modal-backdrop" @click.self="showRepoEditor = false">
       <div class="modal repo-editor-modal">

@@ -615,6 +615,8 @@ const entries: Record<string, [string, string, string]> = {
   '下载完成，正在处理': ['下載完成，正在處理', 'Download complete, processing', '다운로드 완료, 처리 중'],
   '重置 UI': ['重設 UI', 'Reset UI', 'UI 재설정'],
   '检查更新失败，请重新启动MOD管理器。': ['檢查更新失敗，請重新啟動 MOD 管理器。', 'Update check failed. Please restart OC2 MOD Manager.', '업데이트 확인에 실패했습니다. OC2 MOD Manager를 다시 시작하세요.'],
+  '读取厨房状态': ['讀取遊戲狀態', 'Reading game status', '게임 상태 읽는 중'],
+  '初始化失败，请重新启动 MOD 管理器。': ['初始化失敗，請重新啟動 MOD 管理器。', 'Initialization failed. Please restart OC2 MOD Manager.', '초기화에 실패했습니다. OC2 MOD Manager를 다시 시작하세요.'],
 
   // 通用按钮与错误
   '可安装': ['可安裝MOD', 'Installable MODs', '설치 가능한 MOD'],

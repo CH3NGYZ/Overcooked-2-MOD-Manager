@@ -1,0 +1,100 @@
+name: Refresh four platform build caches
+run-name: Refresh shared platform caches (${{ github.ref_name }})
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/build-cache/**'
+      - '.github/workflows/build*.yml'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package*.json'
+      - '*config*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            target: 'x86_64-pc-windows-msvc'
+          - platform: 'ubuntu-22.04'
+            target: 'x86_64-unknown-linux-gnu'
+          - platform: 'macos-latest'
+            target: 'aarch64-apple-darwin'
+          - platform: 'macos-15-intel'
+            target: 'x86_64-apple-darwin'
+    concurrency:
+      group: oc2-main-build-cache-${{ matrix.target }}
+      cancel-in-progress: false
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt
+      - name: Restore shared platform cache
+        id: cache
+        uses: ./.github/actions/build-cache
+        with:
+          target: ${{ matrix.target }}
+      - run: npm ci
+      - name: Regression tests and unsigned build (no installer, Release, or signing keys)
+        shell: bash
+        env:
+          CACHE_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p src-tauri/target/verification/tmp
+          export TEMP="$PWD/src-tauri/target/verification/tmp"
+          export TMP="$TEMP"
+          export TMPDIR="$TEMP"
+          npm test
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --jobs 1
+          cargo build --manifest-path src-tauri/Cargo.toml --release --locked --jobs 1 --target "$CACHE_TARGET"
+      - name: Create bounded npm and Cargo snapshot
+        shell: bash
+        env:
+          CACHE_TARGET: ${{ matrix.target }}
+        run: node scripts/build-cache.mjs snapshot "$CACHE_TARGET"
+      - name: Remove previous platform entry and legacy tag caches only after a successful build
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CACHE_TARGET: ${{ matrix.target }}
+        run: node scripts/build-cache.mjs replace "$CACHE_TARGET"
+      - name: Save the single platform cache
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          path: ${{ steps.cache.outputs.path }}
+      - name: Verify exactly one bounded main cache
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CACHE_TARGET: ${{ matrix.target }}
+        run: node scripts/build-cache.mjs verify "$CACHE_TARGET"

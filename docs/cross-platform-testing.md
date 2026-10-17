@@ -77,7 +77,7 @@ Windows 的 `Update::install` 在启动安装器成功后退出进程，启动�
 - 中国大陆先完成 Gitee 的清单和更新包请求；Gitee 请求、包下载或验签失败后才启动 GitHub。国际地区仅请求 GitHub，不访问 Gitee。
 - Gitee 清单地址为 `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/latest/latest.json`，`download` 位于 `latest` 前；GitHub 为 `https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/latest/download/latest.json`。
 - Gitee 清单和更新包均单线程直连，不使用代理、竞速或分片。Gitee 有效清单确认当前为最新版时结束检查，不继续请求 GitHub。
-- GitHub 清单和更新包分别以官方直连及编译内置 Release 代理竞速，复用普通下载的最多三源协调器、最近五秒低于 512 KiB/s 时替换慢源、失败补位、取消及输家清理。只有完整且有效的清单或通过验签的完整包才能胜出。两轮可以由不同来源胜出，并不固定使用清单获胜代理下载包。
+- GitHub 清单和更新包分别以官方直连及编译内置 Release 代理竞速，复用普通下载的最多三源协调器、最近五秒低于 256 KiB/s 时替换慢源、失败补位、取消及输家清理。只有完整且有效的清单或通过验签的完整包才能胜出。两轮可以由不同来源胜出，并不固定使用清单获胜代理下载包。
 - 自更新代理只来自 `repositories-proxies.toml` 的编译内置 Release 模板，不使用本地配置中用户添加、编辑或远程获取的代理，也不使用 Raw/API 代理；普通 MOD 下载继续使用原来的用户/远程配置和禁用偏好。
 - 清单请求禁止缓存、单次最多 5 秒；首次清单发现限制内容上限为 1 MiB。无效 JSON、缺少当前平台、错误包名、空签名或网络失败不能胜出，继续池中其他候选；首个有效清单确认当前版本不低于远程时结束检查。
 - 清单按系统、架构和当前安装格式选择七种目标键，并校验对应平台包名及官方渠道仓库 URL。交给 Tauri Updater 前重新读取并严格绑定原先发现的完整原始 URL、版本、平台和签名；Gitee 复核仍单路，GitHub 复核仍竞速，不接受期间改变的元数据。

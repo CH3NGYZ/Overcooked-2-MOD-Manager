@@ -90,7 +90,7 @@ impl Default for RacePolicy {
         Self {
             parallelism: 3,
             window: Duration::from_secs(5),
-            minimum_speed: 512 * 1024,
+            minimum_speed: 256 * 1024,
             tick: Duration::from_millis(250),
             terminal_error: None,
         }
@@ -441,7 +441,7 @@ mod tests {
         let now = Instant::now();
         let mut source = source(0, now);
         let policy = RacePolicy::default();
-        source.reporter.received(2 * 1024 * 1024);
+        source.reporter.received(1024 * 1024);
         assert!(!source.sample(now + Duration::from_secs(1), policy));
         assert!(source.sample(now + Duration::from_secs(5), policy));
         source.reporter.received(10 * 1024 * 1024);
@@ -451,11 +451,14 @@ mod tests {
     }
 
     #[test]
-    fn default_policy_only_replaces_sources_below_512_kib_per_second() {
+    fn default_policy_only_replaces_sources_below_256_kib_per_second() {
         let now = Instant::now();
         let policy = RacePolicy::default();
         for (speed, replace) in [
-            (512 * 1024 - 1, true),
+            (256 * 1024 - 1, true),
+            (256 * 1024, false),
+            (256 * 1024 + 1, false),
+            (384 * 1024, false),
             (512 * 1024, false),
             (768 * 1024, false),
         ] {

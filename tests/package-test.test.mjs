@@ -40,6 +40,18 @@ function testEnvironment(directory) {
   return env
 }
 
+test('package CI runs source regressions before signing preparation mutates updater configuration', () => {
+  const workflow = readFileSync(join(root, '.github/workflows/build.yml'), 'utf8')
+  const frontendTests = workflow.indexOf('- name: Frontend and release-script regression tests')
+  const rustTests = workflow.indexOf('- name: Rust regression tests')
+  const prepareSigning = workflow.indexOf('- name: Prepare and verify signing for non-release package tests')
+  const buildPackages = workflow.indexOf('- name: Build and verify CI-only signed packages')
+  assert.ok(frontendTests >= 0 && rustTests >= 0 && prepareSigning >= 0 && buildPackages >= 0)
+  assert.ok(frontendTests < prepareSigning, 'Frontend regressions must inspect the checked-in configuration')
+  assert.ok(rustTests < prepareSigning, 'Rust regressions must inspect the checked-in updater endpoints')
+  assert.ok(prepareSigning < buildPackages, 'Package builds must still use isolated, verified test signing')
+})
+
 test('the shared CLI boundary maps key paths for build without passing a path as signer key contents', t => {
   const directory = workspace(t)
   const key = join(directory, 'temporary-updater.key')

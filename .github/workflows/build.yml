@@ -106,15 +106,6 @@ jobs:
       - name: Frontend and release-script regression tests
         run: npm test
 
-      - name: Prepare and verify signing for non-release package tests
-        if: inputs.mode == 'test'
-        env:
-          OC2_CI_PACKAGE_TEST: '1'
-          OC2_CI_SIGNING_MODE: ${{ inputs.signing || 'configured' }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: node scripts/ci-packages.mjs prepare
-
       - name: Rust regression tests
         shell: bash
         run: |
@@ -124,6 +115,15 @@ jobs:
           export TMPDIR="$TEMP"
           cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
           cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --jobs 1
+
+      - name: Prepare and verify signing for non-release package tests
+        if: inputs.mode == 'test'
+        env:
+          OC2_CI_PACKAGE_TEST: '1'
+          OC2_CI_SIGNING_MODE: ${{ inputs.signing || 'configured' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: node scripts/ci-packages.mjs prepare
 
       - name: Build and verify CI-only signed packages
         if: inputs.mode == 'test'

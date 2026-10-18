@@ -125,6 +125,11 @@ pub(crate) fn prepare_native(game: &Path, package: Package) -> Result<(), String
     let script =
         fs::read_to_string(&script_path).map_err(|_| "原生 BepInEx 包缺少 run_bepinex.sh")?;
     let script = replace_assignment(&script, "executable_name", package.executable())?;
+    let script = if package == Package::MacOS {
+        repair_macos_overlay_script(&script)?
+    } else {
+        script
+    };
     fs::write(&script_path, set_script_enabled(&script, true)?).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
@@ -136,6 +141,44 @@ pub(crate) fn prepare_native(game: &Path, package: Package) -> Result<(), String
         fs::set_permissions(&script_path, permissions).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+pub(crate) fn repair_macos_overlay(game: &Path) -> Result<(), String> {
+    let script_path = crate::game::safe_game_path(game, "run_bepinex.sh")?;
+    let script = fs::read_to_string(&script_path)
+        .map_err(|_| "原生 BepInEx 包缺少 run_bepinex.sh".to_string())?;
+    let script = repair_macos_overlay_script(&script)?;
+    fs::write(&script_path, script).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&script_path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        permissions.set_mode(permissions.mode() | 0o100);
+        fs::set_permissions(&script_path, permissions).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn repair_macos_overlay_script(script: &str) -> Result<String, String> {
+    let script = script.replace("\r\n", "\n");
+    const MARKER: &str =
+        "export DYLD_LIBRARY_PATH=\"${doorstop_directory}:${DYLD_LIBRARY_PATH}\"\n";
+    const PATCH: &str = "# Steam passes its loader list separately because /bin/sh may have DYLD variables stripped.\nif [ -z \"$DYLD_INSERT_LIBRARIES\" ] && [ -n \"$STEAM_DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"$STEAM_DYLD_INSERT_LIBRARIES\"\nfi\n";
+    const LOADER: &str = "if [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n";
+    let patched = format!("{MARKER}{PATCH}{LOADER}");
+    if script.matches(MARKER).count() != 1 {
+        return Err("无法识别 macOS BepInEx 启动脚本，无法修复 Steam Overlay".into());
+    }
+    if script.contains(&patched) {
+        return Ok(script);
+    }
+    let original = format!("{MARKER}{LOADER}");
+    if !script.contains(&original) {
+        return Err("无法识别 macOS BepInEx 启动脚本，无法修复 Steam Overlay".into());
+    }
+    Ok(script.replacen(&original, &patched, 1))
 }
 
 fn native_state(game: &Path, package: Package) -> WinhttpState {
@@ -291,6 +334,76 @@ mod tests {
     }
 
     #[test]
+    fn macos_overlay_repair_restores_steam_libraries_after_doorstop_setup() {
+        let script = "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\nexport DYLD_LIBRARY_PATH=\"${doorstop_directory}:${DYLD_LIBRARY_PATH}\"\nif [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n";
+        let repaired = repair_macos_overlay_script(script).unwrap();
+        let steam = repaired.find("$STEAM_DYLD_INSERT_LIBRARIES").unwrap();
+        let doorstop = repaired
+            .find("${doorstop_name}:${DYLD_INSERT_LIBRARIES}")
+            .unwrap();
+        assert!(repaired.contains(
+            "[ -z \"$DYLD_INSERT_LIBRARIES\" ] && [ -n \"$STEAM_DYLD_INSERT_LIBRARIES\" ]"
+        ));
+        assert!(steam < doorstop);
+        assert_eq!(repair_macos_overlay_script(&repaired).unwrap(), repaired);
+        assert!(repair_macos_overlay_script("unrecognized").is_err());
+        assert!(repair_macos_overlay_script("# STEAM_DYLD_INSERT_LIBRARIES\n").is_err());
+        let comment = format!("# STEAM_DYLD_INSERT_LIBRARIES is not a repair\n{script}");
+        assert!(
+            repair_macos_overlay_script(&comment)
+                .unwrap()
+                .contains("export DYLD_INSERT_LIBRARIES=\"$STEAM_DYLD_INSERT_LIBRARIES\"")
+        );
+        assert_eq!(
+            repair_macos_overlay_script(&script.replace('\n', "\r\n")).unwrap(),
+            repaired
+        );
+        assert!(repair_macos_overlay_script(&format!("{script}{script}")).is_err());
+        assert!(
+            repair_macos_overlay_script(&script.replace(
+                "${doorstop_name}:${DYLD_INSERT_LIBRARIES}",
+                "${doorstop_name}"
+            ))
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_overlay_loader_order_preserves_existing_dyld_or_restores_steam() {
+        let script = "export DYLD_LIBRARY_PATH=\"${doorstop_directory}:${DYLD_LIBRARY_PATH}\"\nif [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n";
+        let repaired = repair_macos_overlay_script(script).unwrap();
+        for (dyld, steam, expected) in [
+            ("", "", "libdoorstop.dylib"),
+            (
+                "",
+                "/Steam/loader.dylib:/Steam/overlay.dylib",
+                "libdoorstop.dylib:/Steam/loader.dylib:/Steam/overlay.dylib",
+            ),
+            (
+                "/custom/library.dylib",
+                "/Steam/overlay.dylib",
+                "libdoorstop.dylib:/custom/library.dylib",
+            ),
+            (
+                "/custom/library.dylib",
+                "",
+                "libdoorstop.dylib:/custom/library.dylib",
+            ),
+        ] {
+            // Assign inside the shell to model the environment the script sees after SIP.
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("doorstop_name=libdoorstop.dylib\nDYLD_INSERT_LIBRARIES=\"$1\"\nSTEAM_DYLD_INSERT_LIBRARIES=\"$2\"\n{repaired}printf '%s' \"$DYLD_INSERT_LIBRARIES\""))
+                .args(["overlay-test", dyld, steam])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn older_doorstop_scripts_and_crlf_are_supported() {
         let script = "#!/bin/sh\r\nexecutable_name=\"\";\r\nexport DOORSTOP_ENABLE=TRUE\r\n";
         let changed = replace_assignment(script, "executable_name", "Overcooked2.app").unwrap();
@@ -307,7 +420,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("run_bepinex.sh"),
-            "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\n",
+            "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\nexport DYLD_LIBRARY_PATH=\"${doorstop_directory}:${DYLD_LIBRARY_PATH}\"\nif [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n",
         )
         .unwrap();
         fs::write(root.join("libdoorstop.so"), b"linux fixture").unwrap();
@@ -328,6 +441,20 @@ mod tests {
                 );
             }
         }
+        let script_path = root.join("run_bepinex.sh");
+        let disabled =
+            set_script_enabled(&fs::read_to_string(&script_path).unwrap(), false).unwrap();
+        fs::write(&script_path, &disabled).unwrap();
+        repair_macos_overlay(&root).unwrap();
+        repair_macos_overlay(&root).unwrap();
+        assert_eq!(fs::read_to_string(&script_path).unwrap(), disabled);
+        assert_eq!(
+            native_state(&root, Package::MacOS),
+            WinhttpState::ModDisabled
+        );
+        fs::write(&script_path, "unrecognized").unwrap();
+        assert!(repair_macos_overlay(&root).is_err());
+        assert_eq!(fs::read_to_string(&script_path).unwrap(), "unrecognized");
         fs::remove_file(root.join("run_bepinex.sh")).unwrap();
         assert!(prepare_native(&root, Package::Linux).is_err());
         fs::remove_dir_all(root).unwrap();

@@ -972,6 +972,12 @@ function openBepInExSetup() {
   if (dashboard.value?.config.platform === 'windows') return
   showBepInExSetup.value = true
 }
+async function repairNativeBepInExOverlay(): Promise<boolean> {
+  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value) return false
+  if (dashboard.value?.config.platform !== 'macos' || dashboard.value.config.game.runtime !== 'native') return false
+  await run('正在修复 macOS Steam Overlay', api.repairNativeBepInExOverlay)
+  return true
+}
 async function installBepInEx(provider: Provider) {
   if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value) return
   const reinstall = bepinexInstallReinstall.value
@@ -2805,7 +2811,7 @@ onUnmounted(() => {
     </form>
   </div>
   <BepInExSetupGuide :visible="showBepInExSetup && !tutorial.visible.value && !tutorial.previewing.value" :config="dashboard?.config" :game="realGame"
-    :result="bepinexSetupResult" @close="showBepInExSetup = false" />
+    :result="bepinexSetupResult" :busy="!!busy" :repair-native-overlay="repairNativeBepInExOverlay" @close="showBepInExSetup = false" />
 
   <div v-if="showBepInExInstall" class="modal-backdrop" @click.self="showBepInExInstall = false">
     <div class="modal bepinex-channel-modal">

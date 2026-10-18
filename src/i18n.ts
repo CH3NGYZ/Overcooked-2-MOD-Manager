@@ -10,6 +10,15 @@ export const locale = ref<Locale>(initialLocale)
 document.documentElement.lang = initialLocale
 
 const entries: Record<string, [string, string, string]> = {
+  "已修复启动脚本的 Steam Overlay 注入。请继续配置 Steam 启动项。": ["已修復啟動腳本的 Steam Overlay 注入。請繼續設定 Steam 啟動選項。", "Steam Overlay injection in the launch script has been repaired. Continue by setting the Steam launch options.", "실행 스크립트의 Steam Overlay 주입이 복구되었습니다. Steam 실행 옵션을 설정하세요."],
+  "修复 run_bepinex.sh 的 Steam Overlay 注入后，请配置 Steam 启动项。": ["修復 run_bepinex.sh 的 Steam Overlay 注入後，請設定 Steam 啟動選項。", "Repair Steam Overlay injection in run_bepinex.sh, then set the Steam launch options.", "run_bepinex.sh의 Steam Overlay 주입을 복구한 후 Steam 실행 옵션을 설정하세요."],
+  "修复 Steam Overlay 注入": ["修復 Steam Overlay 注入", "Repair Steam Overlay injection", "Steam Overlay 주입 복구"],
+  "正在修复 macOS Steam Overlay": ["正在修復 macOS Steam Overlay", "Repairing macOS Steam Overlay", "macOS Steam Overlay 복구 중"],
+  "Steam Overlay 注入修复完成": ["Steam Overlay 注入修復完成", "Steam Overlay injection repaired", "Steam Overlay 주입 복구 완료"],
+  "打开游戏属性": ["開啟遊戲內容", "Open the game properties", "게임 속성 열기"],
+  "将上方命令粘贴到启动选项，替换原有内容": ["將上方指令貼到啟動選項，取代原有內容", "Paste the command above into Launch Options, replacing the existing contents", "위 명령을 실행 옵션에 붙여넣어 기존 내용을 바꾸세요"],
+  "Steam Overlay 修复仅适用于 macOS 原生运行模式": ["Steam Overlay 修復僅適用於 macOS 原生執行模式", "Steam Overlay repair is only available in native macOS mode", "Steam Overlay 복구는 macOS 네이티브 모드에서만 사용할 수 있습니다"],
+  "无法识别 macOS BepInEx 启动脚本，无法修复 Steam Overlay": ["無法識別 macOS BepInEx 啟動腳本，無法修復 Steam Overlay", "The macOS BepInEx launch script is not recognized; Steam Overlay could not be repaired", "macOS BepInEx 실행 스크립트를 인식할 수 없어 Steam Overlay를 복구할 수 없습니다"],
   'Gitee 更新清单': ['Gitee 更新清單', 'Gitee update manifest', 'Gitee 업데이트 매니페스트'],
   'GitHub 更新清单': ['GitHub 更新清單', 'GitHub update manifest', 'GitHub 업데이트 매니페스트'],
   'GitHub 内置代理': ['GitHub 內置代理', 'GitHub bundled proxy', 'GitHub 내장 프록시'],

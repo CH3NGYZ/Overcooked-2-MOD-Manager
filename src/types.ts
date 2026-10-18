@@ -98,7 +98,7 @@ export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'b
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
-export interface BepInExInstallResult extends OperationResult { wine_override_applied: boolean; wine_override_error?: string }
+export interface BepInExInstallResult extends OperationResult { wine_override_applied: boolean; wine_override_error?: string; macos_overlay_repaired: boolean }
 export interface ModRecycleEntry {
   id: string
   name: string

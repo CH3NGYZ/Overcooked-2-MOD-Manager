@@ -47,6 +47,7 @@ export const api = {
   cancelRepositoryReadme: (requestId: string) => invoke<void>('cancel_repository_readme', { requestId }),
   releases: (repositoryId: string) => invoke<ReleaseInfo[]>('get_repository_releases', { repositoryId }),
   installBepInEx: (reinstall: boolean, provider: Provider) => invoke<BepInExInstallResult>('install_bepinex', { reinstall, provider }),
+  repairNativeBepInExOverlay: () => invoke<OperationResult>('repair_native_bepinex_overlay'),
   uninstallBepInEx: () => invoke<OperationResult>('uninstall_bepinex'),
   backupBepInEx: () => invoke<OperationResult>('backup_bepinex'),
   restoreBepInEx: (backupPath: string) => invoke<OperationResult>('restore_bepinex', { backupPath }),

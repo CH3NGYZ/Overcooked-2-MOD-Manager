@@ -619,6 +619,7 @@ pub struct BepInExInstallResult {
     pub operation: OperationResult,
     pub wine_override_applied: bool,
     pub wine_override_error: Option<String>,
+    pub macos_overlay_repaired: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

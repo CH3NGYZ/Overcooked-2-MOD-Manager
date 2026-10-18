@@ -37,6 +37,8 @@ GitHub 包来自 `BepInEx/BepInEx` 的 `v5.4.23.5`；Gitee 包来自 `ch3ngyz/Ov
 
 ## Steam 与 Wine 的安装后设置
 
+- macOS 原生安装/重装在归档事务提交及启动设置弹窗前修复 Steam Overlay：保留上游 Doorstop 脚本，在 `DYLD_INSERT_LIBRARIES` 为空且 `STEAM_DYLD_INSERT_LIBRARIES` 非空时恢复 Steam 的库列表，再由原脚本将 `libdoorstop.dylib` 放在最前。已有 DYLD 列表不覆盖，Apple Silicon 的 `arch -e` 分支继续传递最终列表。无法识别的脚本使安装失败并走原回滚流程。
+- macOS 原生启动设置页提供“修复 Steam Overlay 注入”按钮，可对已安装脚本重复修复，保留框架启用/禁用状态；游戏运行或操作繁忙时禁用。成功提示仅说明脚本修复完成，实际 Shift+Tab 与游戏加载需实机验证。页面按顺序显示 `src/assets/tutorial/MacOS/Open properties.png` 和 `Paste command to startup settings.png`，复制命令后仍需在 Steam 启动选项手动替换。Linux 原生及 Wine 不显示此修复按钮和两张截图。
 - 原生安装自动设置 `run_bepinex.sh` 的 `executable_name` 及用户执行权限；框架开关修改脚本的加载开关，不重命名原生库。
 - Linux 原生 Steam 启动项为 `./run_bepinex.sh %command%`；macOS 原生使用 `"<游戏根目录>/run_bepinex.sh" %command%`，实际路径由界面生成并转义。原生模式不要强制使用 Proton。
 - 原生厨房启动明确选择对应 Steam：Linux 使用原生 Steam 或 Flatpak 入口，Mac 使用 `com.valvesoftware.steam` 的应用身份，不交给 Wine 注册的协议处理器或同名 CrossOver 导出启动器。

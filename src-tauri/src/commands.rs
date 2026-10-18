@@ -2012,6 +2012,7 @@ pub async fn install_bepinex(
                 },
                 wine_override_applied,
                 wine_override_error,
+                macos_overlay_repaired: package == crate::bepinex::Package::MacOS,
             })
         }
         Err(error) => {
@@ -2065,6 +2066,32 @@ fn install_framework_archive(
         return Err(error);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn repair_native_bepinex_overlay(
+    state: State<'_, AppState>,
+) -> Result<OperationResult, String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    if std::env::consts::OS != "macos" || config.game.runtime != GameRuntime::Native {
+        return Err("Steam Overlay 修复仅适用于 macOS 原生运行模式".into());
+    }
+    let info = game::detect_game(&config);
+    if !info.game_exists {
+        return Err("当前模式下未找到厨房可执行文件".into());
+    }
+    let game_root = PathBuf::from(info.path.ok_or("尚未找到游戏目录")?);
+    game::ensure_game_stopped(&game_root)?;
+    crate::bepinex::repair_macos_overlay(&game_root)?;
+    log::info!("macOS Steam Overlay 注入修复完成");
+    Ok(OperationResult {
+        ok: true,
+        message: "Steam Overlay 注入修复完成".into(),
+    })
 }
 
 #[tauri::command]
@@ -5114,7 +5141,7 @@ mod framework_install_tests {
         }
     }
 
-    const SCRIPT: &str = "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\n";
+    const SCRIPT: &str = "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\nexport DYLD_LIBRARY_PATH=\"${doorstop_directory}:${DYLD_LIBRARY_PATH}\"\nif [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n";
 
     #[test]
     fn fresh_install_and_reinstall_preserve_plugins_and_config_for_all_platform_packages() {
@@ -5214,6 +5241,53 @@ mod framework_install_tests {
     }
 
     #[test]
+    fn unrecognized_macos_overlay_setup_rolls_back_fresh_install_and_reinstall() {
+        for reinstall in [false, true] {
+            let workspace = Workspace::new();
+            workspace.write("run_bepinex.sh", b"original script");
+            workspace.write("libdoorstop.dylib", b"original loader");
+            if reinstall {
+                workspace.write("BepInEx/core/BepInEx.dll", b"original core");
+                workspace.write("BepInEx/plugins/mod.dll", b"original plugin");
+            }
+            let archive = workspace.archive(
+                Package::MacOS,
+                Some("#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\n"),
+            );
+            assert!(
+                install_framework_archive(
+                    &archive,
+                    &workspace.game(),
+                    &workspace.backups(),
+                    Package::MacOS,
+                    reinstall
+                )
+                .is_err()
+            );
+            assert_eq!(
+                fs::read(workspace.game().join("run_bepinex.sh")).unwrap(),
+                b"original script"
+            );
+            assert_eq!(
+                fs::read(workspace.game().join("libdoorstop.dylib")).unwrap(),
+                b"original loader"
+            );
+            if reinstall {
+                assert_eq!(
+                    fs::read(workspace.game().join("BepInEx/core/BepInEx.dll")).unwrap(),
+                    b"original core"
+                );
+                assert_eq!(
+                    fs::read(workspace.game().join("BepInEx/plugins/mod.dll")).unwrap(),
+                    b"original plugin"
+                );
+            } else {
+                assert!(!workspace.game().join("BepInEx").exists());
+            }
+        }
+    }
+
+    #[test]
     fn reinstall_must_be_explicit_before_backup_or_file_changes() {
         let workspace = Workspace::new();
         workspace.write("BepInEx/core/BepInEx.dll", b"original core");
@@ -5286,6 +5360,11 @@ mod framework_install_tests {
                 let script = fs::read_to_string(workspace.game().join("run_bepinex.sh")).unwrap();
                 assert!(script.contains(&format!("executable_name=\"{}\"", package.executable())));
                 assert!(script.contains("enabled=\"1\""));
+                assert_eq!(
+                    script
+                        .contains("export DYLD_INSERT_LIBRARIES=\"$STEAM_DYLD_INSERT_LIBRARIES\""),
+                    package == Package::MacOS
+                );
             } else {
                 assert!(workspace.game().join("winhttp.dll").is_file());
             }

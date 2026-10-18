@@ -135,6 +135,7 @@ pub fn run() {
             repository_readme::cancel_repository_readme,
             commands::get_repository_releases,
             commands::install_bepinex,
+            commands::repair_native_bepinex_overlay,
             commands::uninstall_bepinex,
             commands::backup_bepinex,
             commands::restore_bepinex,

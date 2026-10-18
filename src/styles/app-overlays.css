@@ -303,6 +303,35 @@
   color: var(--accent);
 }
 
+.bepinex-setup-tutorial {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.bepinex-setup-tutorial figure {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.bepinex-setup-tutorial img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.bepinex-setup-tutorial figcaption {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .bepinex-channel-modal .modal-head {
   margin-bottom: 18px;
   padding-bottom: 15px;

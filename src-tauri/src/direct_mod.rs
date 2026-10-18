@@ -218,9 +218,12 @@ mod tests {
         let recorded = ranges.clone();
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let server_done = done.clone();
+        let truncated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_truncated = truncated.clone();
         listener.set_nonblocking(true).unwrap();
         const SIZE: usize = 9 * 1024 * 1024;
-        // Serve the real HEAD, range probe, and three file segments.
+        // Serve the real HEAD, range probe, and three file segments, including
+        // a truncated response that exercises the downloader's retry policy.
         let server = std::thread::spawn(move || {
             let mut workers = Vec::new();
             let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -236,6 +239,7 @@ mod tests {
                     Err(error) => panic!("{error}"),
                 };
                 let recorded = recorded.clone();
+                let truncated = server_truncated.clone();
                 workers.push(std::thread::spawn(move || {
                     // Read the request in blocking mode even on Windows.
                     socket.set_nonblocking(false).unwrap();
@@ -262,7 +266,13 @@ mod tests {
                     if !head {
                         recorded.lock().unwrap().push((start, end));
                         let bytes: Vec<u8> = (start..=end).map(|index| (index % 251) as u8).collect();
-                        socket.write_all(&bytes).unwrap();
+                        if start == 4 * 1024 * 1024
+                            && !truncated.swap(true, std::sync::atomic::Ordering::AcqRel)
+                        {
+                            socket.write_all(&bytes[..bytes.len() / 2]).unwrap();
+                        } else {
+                            socket.write_all(&bytes).unwrap();
+                        }
                     }
                 }));
             }
@@ -286,6 +296,7 @@ mod tests {
         .unwrap();
         done.store(true, std::sync::atomic::Ordering::Release);
         server.join().unwrap();
+        assert!(truncated.load(std::sync::atomic::Ordering::Acquire));
         let bytes = fs::read(&path).unwrap();
         assert_eq!(bytes.len(), SIZE);
         assert!(
@@ -295,7 +306,16 @@ mod tests {
                 .all(|(index, byte)| *byte == (index % 251) as u8)
         );
         let mut actual = ranges.lock().unwrap().clone();
+        // A valid range can be retried up to three times after a truncated body.
+        // Verify the unique partition and the retry without assuming one request
+        // per segment under parallel test load.
+        let retried = (4 * 1024 * 1024, 8 * 1024 * 1024 - 1);
+        assert!(actual.iter().filter(|range| **range == retried).count() >= 2);
+        for range in &actual {
+            assert!(actual.iter().filter(|other| *other == range).count() <= 3);
+        }
         actual.sort_unstable();
+        actual.dedup();
         assert_eq!(
             actual,
             vec![

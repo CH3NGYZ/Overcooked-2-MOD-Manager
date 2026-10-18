@@ -281,6 +281,9 @@ impl Server {
                 };
                 let (captured, responses) = (captured.clone(), responses.clone());
                 workers.push(std::thread::spawn(move || {
+                    // Accepted sockets can inherit the listener's nonblocking
+                    // mode; fragmented HTTP headers must be read to completion.
+                    socket.set_nonblocking(false).unwrap();
                     socket
                         .set_read_timeout(Some(Duration::from_secs(1)))
                         .unwrap();
@@ -367,6 +370,36 @@ fn response(status: u16, body: Vec<u8>) -> (u16, String, Vec<u8>, Duration) {
 }
 
 #[tokio::test]
+async fn manifest_test_server_reads_fragmented_request_headers() {
+    let server = Server::new(HashMap::from([(
+        "/fragmented".into(),
+        response(200, b"manifest fixture".to_vec()),
+    )]));
+    let address = server.base.strip_prefix("http://").unwrap().to_string();
+    let reply = tokio::task::spawn_blocking(move || {
+        let mut socket = std::net::TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        socket.write_all(b"GET /frag").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        socket
+            .write_all(b"mented HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut reply = String::new();
+        socket.read_to_string(&mut reply).unwrap();
+        reply
+    })
+    .await
+    .unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 Test\r\n"), "{reply}");
+    assert!(reply.ends_with("manifest fixture"));
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].starts_with("GET /fragmented HTTP/1.1\r\n"));
+}
+
+#[tokio::test]
 async fn github_manifests_race_and_invalid_json_does_not_win_without_tokens() {
     let bytes = serde_json::to_vec(&fixture(Provider::Github)).unwrap();
     let server = Server::new(HashMap::from([
@@ -446,13 +479,14 @@ async fn gitee_finishes_its_single_manifest_and_package_before_github_can_start(
         gitee.provider = Provider::Gitee;
         gitee.id = "gitee-direct".into();
         let mut packages = Vec::new();
+        let mut statuses = Vec::new();
         let result = run_installer_manifest_routes(
             &reqwest::Client::new(),
             &[gitee, server.route("/github", None)],
             target(),
             &semver::Version::new(1, 2, 3),
             || false,
-            |_| {},
+            |status| statuses.push(status),
             |info| {
                 packages.push(info.provider.clone());
                 let server = &server;
@@ -472,7 +506,7 @@ async fn gitee_finishes_its_single_manifest_and_package_before_github_can_start(
         .await
         .unwrap();
         let InstallerRouteResult::Updated(info) = result else {
-            panic!("no update")
+            panic!("no update; channel statuses: {statuses:?}")
         };
         assert_eq!(
             info.provider,

@@ -12,7 +12,8 @@ import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpd
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
-import { markdownLinkUrl, renderMarkdown, repositoryMarkdownBaseUrl } from './markdown'
+import { repositoryMarkdownBaseUrl } from './markdown'
+import MarkdownContent from './components/MarkdownContent.vue'
 import { hasLocalUpdateVersion, modRepositoryReleaseState } from './modUpdates'
 import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
@@ -873,12 +874,6 @@ function matchingInstallAssets(repo: Repository, release: import('./types').Rele
   if (repo.download_mode === 'repository_file') return []
   return release.assets.filter((asset) => !!asset.download_url && !isCommunitySourceArchive(repo, release, asset.name)
     && repo.asset_rules.some((rule) => assetMatchesUi(asset.name, rule)))
-}
-async function openReleaseLogLink(event: MouseEvent) {
-  const url = markdownLinkUrl(event)
-  if (!url) return
-  try { await api.openReleasePage(url) }
-  catch (reason) { showError(reason) }
 }
 function selectedInstallRelease(repo: Repository | null) { return installReleases(repo).find((release) => release.tag_name === selectedInstallTag.value) }
 function selectedInstallAssets(repo: Repository | null) {
@@ -2762,8 +2757,8 @@ onUnmounted(() => {
         </select></label>
       <div v-if="selectedInstallRelease(showInstall)" class="install-release-log">
         <div class="install-release-log-head"><strong>{{ selectedInstallRelease(showInstall)?.name || selectedInstallRelease(showInstall)?.tag_name }}</strong><span>{{ selectedInstallRelease(showInstall)?.version || selectedInstallRelease(showInstall)?.tag_name }}</span></div>
-        <div class="install-release-log-body markdown-body" @click="openReleaseLogLink"
-          v-html="renderMarkdown(selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。'), repositoryMarkdownBaseUrl(showInstall))"></div>
+        <MarkdownContent class="install-release-log-body"
+          :source="selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。')" :base-url="repositoryMarkdownBaseUrl(showInstall)" />
       </div>
       <label class="install-field"><span>{{ t('下载文件') }}</span><small class="install-field-hint">{{ t('仅显示符合当前仓库资产规则的文件。') }}</small><select
           v-model="selectedInstallAsset" :aria-label="t('下载文件')">

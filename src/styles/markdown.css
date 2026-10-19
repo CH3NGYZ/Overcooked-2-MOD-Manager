@@ -1,0 +1,121 @@
+.markdown-content,
+.markdown-body {
+  min-width: 0;
+  max-width: 100%;
+}
+.markdown-body {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body :is(p, ul, ol, blockquote, pre, dl, details, figure) { margin: 0 0 12px; }
+.markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  position: relative;
+  margin: 20px 0 12px;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown-body :is(h1, h2) { padding-bottom: .3em; border-bottom: 1px solid var(--line); }
+.markdown-body h1 { font-size: 2em; }
+.markdown-body h2 { font-size: 1.5em; }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body h5 { font-size: .875em; }
+.markdown-body h6 { font-size: .85em; color: var(--muted); }
+.markdown-body :is(ul, ol) { padding-left: 2em; }
+.markdown-body li + li { margin-top: .25em; }
+.markdown-body li > :is(p, ul, ol) { margin-top: 6px; margin-bottom: 6px; }
+.markdown-body blockquote {
+  padding: 0 1em;
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+}
+.markdown-body blockquote > :last-child { margin-bottom: 0; }
+.markdown-body :is(code, kbd, pre) { font-family: Consolas, 'Liberation Mono', monospace; }
+.markdown-body :is(code, kbd) {
+  padding: .15em .4em;
+  border-radius: 4px;
+  background: var(--surface-3);
+  font-size: .92em;
+}
+.markdown-body kbd { border: 1px solid var(--line-strong); box-shadow: inset 0 -1px 0 var(--line-strong); }
+.markdown-body pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.markdown-body pre code { padding: 0; border: 0; background: transparent; font-size: 1em; }
+.markdown-body a { color: var(--blue); text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body .markdown-heading-anchor {
+  margin-right: .3em;
+  color: var(--muted);
+  opacity: 0;
+  text-decoration: none;
+}
+.markdown-body :is(h1, h2, h3, h4, h5, h6):hover > .markdown-heading-anchor,
+.markdown-body .markdown-heading-anchor:focus-visible { opacity: 1; }
+.markdown-body img { max-width: 100%; height: auto; vertical-align: middle; }
+.markdown-body .markdown-table-scroll { max-width: 100%; overflow: auto; margin: 12px 0; }
+.markdown-body table { width: max-content; min-width: 100%; border-spacing: 0; border-collapse: collapse; }
+.markdown-body :is(th, td) { padding: 6px 12px; border: 1px solid var(--line-strong); text-align: left; }
+.markdown-body th { font-weight: 600; background: var(--surface-2); }
+.markdown-body tr:nth-child(2n) { background: var(--surface-2); }
+.markdown-body .markdown-align-left { text-align: left; }
+.markdown-body .markdown-align-center { text-align: center; }
+.markdown-body .markdown-align-right { text-align: right; }
+.markdown-body .markdown-task-item { list-style: none; }
+.markdown-body .markdown-task-checkbox {
+  appearance: auto;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin: 0 .4em 0 -1.4em;
+  padding: 0;
+  vertical-align: middle;
+  accent-color: var(--accent);
+  cursor: default;
+}
+.markdown-body summary { cursor: pointer; }
+.markdown-body dt { font-weight: 600; }
+.markdown-body dd { margin-left: 2em; }
+.markdown-body hr { height: 3px; margin: 20px 0; border: 0; background: var(--line); }
+.markdown-body .markdown-mermaid-image {
+  display: block;
+  margin: 12px auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #1f2020;
+}
+.markdown-body .markdown-diagram-error { color: var(--warning); font-size: .92em; }
+.markdown-diagram-staging {
+  position: fixed;
+  top: 0;
+  left: -100000px;
+  width: 1200px;
+  pointer-events: none;
+  visibility: hidden;
+}
+/* GitHub-like dark code palette; emitted only by the trusted highlighter. */
+.markdown-body .hljs { color: #e6edf3; }
+.markdown-body :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal) { color: #ff7b72; }
+.markdown-body :is(.hljs-title, .hljs-section, .hljs-title.function_) { color: #d2a8ff; }
+.markdown-body :is(.hljs-string, .hljs-regexp, .hljs-meta .hljs-string) { color: #a5d6ff; }
+.markdown-body :is(.hljs-number, .hljs-attr, .hljs-built_in, .hljs-type, .hljs-symbol) { color: #79c0ff; }
+.markdown-body :is(.hljs-comment, .hljs-quote) { color: #8b949e; }
+.markdown-body :is(.hljs-variable, .hljs-template-variable, .hljs-name) { color: #ffa657; }
+.markdown-body .hljs-addition { color: #aff5b4; background: #033a16; }
+.markdown-body .hljs-deletion { color: #ffdcd7; background: #67060c; }
+.install-release-log-body .markdown-body { font-size: inherit; line-height: inherit; }
+.repo-note .markdown-body { font-size: 11px; line-height: 1.45; }
+.repo-note .markdown-body :is(p, ul, ol, blockquote, pre) { margin-bottom: 5px; }

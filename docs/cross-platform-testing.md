@@ -97,7 +97,11 @@ Draft Release 正文直接使用 tag 对应源码提交的完整 Git 提交说�
 
 ### 四平台共享缓存与容量
 
-GitHub 不允许不同版本标签互相读取缓存，但标签可以读取默认分支 `main` 的兼容缓存。因此缓存由 `.github/workflows/build-cache.yml` 在 main 的相关代码推送或手动运行后维护；标签发布和手动打包只通过 `.github/actions/build-cache` 恢复，不再由 setup-node 或 rust-cache 自动保存。首次部署须先让 main 的维护流程成功，再发布新标签；仅修改 checkout 的 ref 不能改变缓存作用域。
+GitHub 不允许不同版本标签互相读取缓存，但标签可以读取默认分支 `main` 的兼容缓存。因此缓存由 `.github/workflows/build-cache.yml` 在 main 作用域维护：不再监听 main 的代码推送，仅保留 main 上的手动 `workflow_dispatch`，或在 `Build and Release` 的 `workflow_run: completed` 成功后自动运行。自动入口只接受本仓库 `push` 触发的三段数字 `v<版本>` 标签正式构建；普通测试 / 手动打包、失败、取消及其他来源不触发缓存刷新。成功指整个发布工作流结束，包含四平台构建及 `updater-manifest` 清单验证，并不要求公开 Release 草稿。
+
+自动入口还要求上游 `head_sha` 与本次完成事件对应的默认分支 `GITHUB_SHA` 一致。main 已推进或旧标签重跑时跳过，避免用旧源码刷新当前主分支缓存。缓存任务明确 checkout 该 main SHA，而非任意上游分支；脚本在恢复 / 编译前核对事件载荷的工作流名称、路径、ID、仓库、状态和源码 SHA，并验证真实 checkout，在替换 / 复核缓存前再次校验。`workflow_run` 仍使用默认分支的缓存作用域，不能仅修改 checkout 的 ref 就把 Tag 任务变成 main 缓存写入者。
+
+标签发布和手动打包只通过 `.github/actions/build-cache` 恢复，不再由 setup-node 或 rust-cache 自动保存。没有可用缓存时正常冷构建；需要首次预热或单独修复缓存时，可手动运行 main 的缓存维护流程。串行刷新避免同一次 main / Tag 推送同时启动两套四平台构建，但仍会执行独立的缓存验证和编译，不代表复用了发布 runner 的中间产物。新触发规则须合入默认分支后才生效，不会改变已排队或正在运行的旧任务。
 
 - 四个目标各有一个固定 `oc2-build-v1-<Rust target>` 键，npm 下载、Cargo 注册表/源码和编译依赖合并为一个快照，不包含版本、tag、源码或 lockfile 哈希。依赖变化由 npm 完整性检查和 Cargo 指纹处理；Rust 工具链改变时只恢复下载/源码，跳过旧编译对象。
 - 维护任务执行真实 Node/Rust 回归、前端构建和无安装器的 release 编译，不注入签名私钥，不创建 Release。相同目标的写入串行，不同目标可并行；只有 main 维护任务拥有 `actions: write`，标签任务不具有删除或保存缓存入口。

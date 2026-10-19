@@ -5,14 +5,24 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, syml
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { BuildCacheAPI, CACHE_DIRECTORY, MAX_CACHE_BYTES, cacheContext, cacheKey, hydrateCache, managedCache, snapshotCache } from '../scripts/build-cache.mjs'
+import { BuildCacheAPI, CACHE_DIRECTORY, MAX_CACHE_BYTES, cacheContext, cacheKey, cacheRefreshSource, hydrateCache, managedCache, snapshotCache } from '../scripts/build-cache.mjs'
 import { BUILD_KEYS, RELEASE_OWNER, RELEASE_REPO } from '../scripts/release-lib.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const targets = Object.keys(BUILD_KEYS)
 const target = 'x86_64-unknown-linux-gnu'
-const trusted = { GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'push',
-  GITHUB_REPOSITORY: `${RELEASE_OWNER}/${RELEASE_REPO}`, GITHUB_TOKEN: 'unit-test-token' }
+const sourceSha = 'a'.repeat(40)
+const trusted = { GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
+  GITHUB_SHA: sourceSha, GITHUB_REPOSITORY: `${RELEASE_OWNER}/${RELEASE_REPO}`, GITHUB_TOKEN: 'unit-test-token' }
+
+function releaseCompletion(sha = sourceSha) {
+  return {
+    action: 'completed', repository: { full_name: trusted.GITHUB_REPOSITORY, default_branch: 'main' },
+    workflow: { id: 17, name: 'Build and Release', path: '.github/workflows/build.yml' },
+    workflow_run: { id: 123, workflow_id: 17, event: 'push', status: 'completed', conclusion: 'success',
+      head_branch: 'v1.2.8', head_sha: sha, head_repository: { full_name: trusted.GITHUB_REPOSITORY } },
+  }
+}
 
 function workspace(t) {
   const base = join(root, 'src-tauri/target/verification/build-cache-unit')
@@ -144,12 +154,111 @@ test('snapshot ignores linked source directories and refuses a linked snapshot d
   assert.equal(readFileSync(join(outside, 'private'), 'utf8'), 'do-not-cache')
 })
 
-test('only trusted main runs can access the destructive cache API', () => {
+test('only trusted main manual runs or validated tag completions can access the destructive cache API', () => {
   for (const env of [
     { ...trusted, GITHUB_REF: 'refs/tags/v1.2.4' }, { ...trusted, GITHUB_REF: 'refs/heads/feature' },
-    { ...trusted, GITHUB_EVENT_NAME: 'pull_request_target' }, { ...trusted, GITHUB_ACTIONS: 'false' },
+    { ...trusted, GITHUB_EVENT_NAME: 'push' }, { ...trusted, GITHUB_EVENT_NAME: 'pull_request_target' },
+    { ...trusted, GITHUB_ACTIONS: 'false' }, { ...trusted, GITHUB_SHA: '' }, { ...trusted, GITHUB_SHA: 'main' },
     { ...trusted, GITHUB_REPOSITORY: 'somebody/other' }, { ...trusted, GITHUB_TOKEN: '' },
   ]) assert.throws(() => new BuildCacheAPI(env), /trusted main/)
+})
+
+test('successful tag completions must match the release workflow, repository and current main source', () => {
+  const env = { ...trusted, GITHUB_EVENT_NAME: 'workflow_run' }
+  assert.equal(cacheRefreshSource(trusted), sourceSha)
+  assert.equal(cacheRefreshSource(env, releaseCompletion()), sourceSha)
+  for (const [name, mutate] of [
+    ['requested event', event => { event.action = 'requested' }],
+    ['main push', event => { event.workflow_run.head_branch = 'main' }],
+    ['feature push', event => { event.workflow_run.head_branch = 'feature/test' }],
+    ['invalid version tag', event => { event.workflow_run.head_branch = 'v1.2' }],
+    ['test dispatch', event => { event.workflow_run.event = 'workflow_dispatch' }],
+    ['pull request', event => { event.workflow_run.event = 'pull_request' }],
+    ['still running', event => { event.workflow_run.status = 'in_progress' }],
+    ...['failure', 'cancelled', 'timed_out', 'skipped', null].map(conclusion => [
+      `unsuccessful ${conclusion}`, event => { event.workflow_run.conclusion = conclusion },
+    ]),
+    ['wrong workflow path', event => { event.workflow.path = '.github/workflows/build-cache.yml' }],
+    ['wrong workflow name', event => { event.workflow.name = 'Some other workflow' }],
+    ['wrong workflow id', event => { event.workflow_run.workflow_id++ }],
+    ['invalid workflow id', event => { event.workflow.id = event.workflow_run.workflow_id = 0 }],
+    ['invalid run id', event => { event.workflow_run.id = 0 }],
+    ['fork source', event => { event.workflow_run.head_repository.full_name = 'fork/other' }],
+    ['missing source repository', event => { delete event.workflow_run.head_repository }],
+    ['wrong event repository', event => { event.repository.full_name = 'fork/other' }],
+    ['wrong default branch', event => { event.repository.default_branch = 'other' }],
+    ['old tag or main advanced', event => { event.workflow_run.head_sha = 'b'.repeat(40) }],
+    ['no source SHA', event => { delete event.workflow_run.head_sha }],
+  ]) {
+    const event = releaseCompletion()
+    mutate(event)
+    assert.throws(() => cacheRefreshSource(env, event), /trusted main/, name)
+  }
+  for (const event of [null, {}, { workflow_run: {} }]) {
+    assert.throws(() => cacheRefreshSource(env, event), /trusted main/)
+  }
+})
+
+test('the cache API reads and validates the actual workflow_run event file before any cache request', async t => {
+  const { directory } = workspace(t)
+  const eventFile = join(directory, 'event.json')
+  const env = { ...trusted, GITHUB_EVENT_NAME: 'workflow_run', GITHUB_EVENT_PATH: eventFile }
+  const valid = { id: 1, key: cacheKey(target), ref: 'refs/heads/main', size_in_bytes: 100 }
+  let calls = 0
+  const fetcher = async () => { calls++; return Response.json({ actions_caches: [valid] }) }
+  for (const body of ['{invalid-json', '{}', JSON.stringify({ ...releaseCompletion(), action: 'requested' })]) {
+    writeFileSync(eventFile, body)
+    assert.throws(() => new BuildCacheAPI(env, fetcher), /trusted main/)
+    assert.equal(calls, 0)
+  }
+  assert.throws(() => new BuildCacheAPI({ ...env, GITHUB_EVENT_PATH: join(directory, 'missing') }, fetcher), /trusted main/)
+  writeFileSync(eventFile, JSON.stringify(releaseCompletion()))
+  await new BuildCacheAPI(env, fetcher).verify(target)
+  assert.equal(calls, 1)
+})
+
+test('the real authorization CLI requires both a trusted event and the pinned checkout', t => {
+  const { directory } = workspace(t)
+  const checkout = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', windowsHide: true })
+  assert.equal(checkout.status, 0)
+  const sha = checkout.stdout.trim()
+  const eventFile = join(directory, 'event.json')
+  writeFileSync(eventFile, JSON.stringify(releaseCompletion(sha)))
+  const execute = overrides => spawnSync(process.execPath, [join(root, 'scripts/build-cache.mjs'), 'authorize'], {
+    cwd: root, env: { ...process.env, ...trusted, GITHUB_SHA: sha, ...overrides }, encoding: 'utf8', windowsHide: true,
+  })
+  for (const overrides of [{}, { GITHUB_EVENT_NAME: 'workflow_run', GITHUB_EVENT_PATH: eventFile }]) {
+    const result = execute(overrides)
+    assert.equal(result.status, 0, result.stderr)
+    assert.ok(result.stdout.includes(sha))
+    assert.ok(!result.stdout.includes(trusted.GITHUB_TOKEN))
+  }
+  const mismatch = execute({ GITHUB_SHA: sourceSha === sha ? 'b'.repeat(40) : sourceSha })
+  assert.equal(mismatch.status, 1)
+  assert.match(mismatch.stderr, /source does not match the authorized main SHA/)
+  for (const overrides of [{ GITHUB_EVENT_NAME: 'push' }, { GITHUB_EVENT_NAME: 'workflow_run', GITHUB_EVENT_PATH: eventFile, GITHUB_SHA: 'b'.repeat(40) }]) {
+    const result = execute(overrides)
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /trusted main/)
+    assert.ok(!result.stderr.includes(trusted.GITHUB_TOKEN))
+  }
+})
+
+test('a ready snapshot cannot reach replacement or verification from a main push or a mismatched checkout', t => {
+  const { directory, context, write } = workspace(t)
+  write('npm', 'valid')
+  snapshotCache(context)
+  for (const command of ['replace', 'verify']) {
+    for (const overrides of [{ GITHUB_EVENT_NAME: 'push' }, {}]) {
+      const result = spawnSync(process.execPath, [join(root, 'scripts/build-cache.mjs'), command, target], {
+        cwd: directory, env: { ...process.env, ...trusted, ...overrides }, encoding: 'utf8', windowsHide: true,
+      })
+      assert.equal(result.status, 1)
+      assert.match(result.stderr, /trusted main|source does not match the authorized main SHA/)
+      assert.ok(!result.stdout.includes('Removed'))
+      assert.ok(existsSync(join(context.cache, 'manifest.json')))
+    }
+  }
 })
 
 test('cleanup paginates before deleting and removes only this platform caches, keeping the current entry until last', async () => {
@@ -269,7 +378,16 @@ test('release is restore-only and main is the only serialized, successful-build 
   assert.ok(!release.includes('actions: write'))
   assert.ok(composite.includes('actions/cache/restore@v4'))
   assert.ok(!composite.includes('actions/cache/save'))
-  assert.ok(warmup.includes("if: github.ref == 'refs/heads/main'"))
+  assert.ok(!/^  push:/m.test(warmup))
+  assert.match(warmup, /workflow_dispatch:[\s\S]*workflow_run:[\s\S]*workflows: \['Build and Release'\][\s\S]*types: \[completed\]/)
+  for (const condition of ["github.ref == 'refs/heads/main'", "github.event_name == 'workflow_dispatch'",
+    "github.event_name == 'workflow_run'", "github.event.workflow_run.event == 'push'",
+    "github.event.workflow_run.conclusion == 'success'", "startsWith(github.event.workflow_run.head_branch, 'v')",
+    'github.event.workflow_run.head_repository.full_name == github.repository',
+    'github.event.workflow_run.head_sha == github.sha']) assert.ok(warmup.includes(condition))
+  assert.ok(warmup.includes('ref: ${{ github.sha }}'))
+  assert.ok(warmup.includes('run: node scripts/build-cache.mjs authorize'))
+  assert.ok(warmup.indexOf('build-cache.mjs authorize') < warmup.indexOf('name: Restore shared platform cache'))
   assert.ok(warmup.includes('group: oc2-main-build-cache-${{ matrix.target }}'))
   assert.ok(warmup.includes('cancel-in-progress: false'))
   assert.ok(warmup.includes('actions: write'))

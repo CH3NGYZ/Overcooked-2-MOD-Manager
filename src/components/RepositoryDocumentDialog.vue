@@ -2,7 +2,8 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { FileText, RefreshCw, X } from 'lucide-vue-next'
 import { locale, t } from '../i18n'
-import { markdownLinkUrl, renderMarkdown, repositoryMarkdownBaseUrl } from '../markdown'
+import { repositoryMarkdownBaseUrl } from '../markdown'
+import MarkdownContent from './MarkdownContent.vue'
 import { api } from '../services/tauri'
 import { trapModalFocus } from '../composables/modalFocus'
 import type { Repository, RepositoryReadme } from '../types'
@@ -17,8 +18,8 @@ const backdropPressed = ref(false)
 const content = computed(() => props.target?.kind === 'note'
   ? props.target.repository.note_i18n?.[locale.value] || props.target.repository.note
   : document.value?.content ?? '')
-const contentHtml = computed(() => renderMarkdown(content.value, props.target?.kind === 'readme'
-  ? document.value?.url : props.target ? repositoryMarkdownBaseUrl(props.target.repository) : undefined))
+const baseUrl = computed(() => props.target?.kind === 'readme'
+  ? document.value?.url : props.target ? repositoryMarkdownBaseUrl(props.target.repository) : undefined)
 let revision = 0
 let requestId: string | undefined
 let trigger: HTMLElement | null = null
@@ -65,16 +66,6 @@ watch(() => props.target, async (target, previous) => {
   if (target === props.target) await load()
 }, { immediate: true })
 
-async function openLink(event: MouseEvent) {
-  const url = markdownLinkUrl(event)
-  if (!url) return
-  try {
-    await api.openReleasePage(url)
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : String(reason)
-  }
-}
-
 function close() { cancel(); emit('close') }
 onUnmounted(cancel)
 </script>
@@ -99,7 +90,7 @@ onUnmounted(cancel)
           <div v-if="loading" class="repository-document-state" role="status"><RefreshCw class="spin-icon" :size="30" />{{ t('正在读取仓库说明') }}</div>
           <div v-else-if="error" class="repository-document-state danger" role="alert">{{ t(error) }}</div>
           <div v-else-if="target.kind === 'readme' && document && !document.exists" class="repository-document-state" role="status">{{ t('文件不存在') }}</div>
-          <article v-else class="repository-note-content markdown-body" @click="openLink" v-html="contentHtml"></article>
+          <MarkdownContent v-else :key="`${target.repository.id}:${target.kind}`" class="repository-note-content" :source="content" :base-url="baseUrl" />
         </section>
       </div>
     </Transition>

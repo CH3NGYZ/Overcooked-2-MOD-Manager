@@ -320,6 +320,8 @@ const entries: Record<string, [string, string, string]> = {
   '仓库说明（README.md）': ['倉庫說明（README.md）', 'Repository README.md', '저장소 README.md'],
   '重新读取仓库说明': ['重新讀取倉庫說明', 'Reload repository README', '저장소 README 다시 불러오기'],
   '正在读取仓库说明': ['正在讀取倉庫說明', 'Loading repository README', '저장소 README 불러오는 중'],
+  'Mermaid 图表': ['Mermaid 圖表', 'Mermaid diagram', 'Mermaid 다이어그램'],
+  'Mermaid 图表无法渲染，已保留源码。请检查语法、大小或不受支持的配置。': ['Mermaid 圖表無法渲染，已保留原始碼。請檢查語法、大小或不支援的設定。', 'The Mermaid diagram could not be rendered. Source code is preserved; check syntax, size or unsupported configuration.', 'Mermaid 다이어그램을 렌더링할 수 없습니다. 소스 코드를 유지했습니다. 구문, 크기 또는 지원되지 않는 설정을 확인하세요.'],
   '文件不存在': ['檔案不存在', 'File not found', '파일이 없습니다'],
   '仓库说明请求标识无效': ['倉庫說明請求識別碼無效', 'Invalid README request identifier', 'README 요청 식별자가 올바르지 않습니다'],
   '仓库说明请求过多，请稍后重试': ['倉庫說明請求過多，請稍後重試', 'Too many README requests. Try again later.', 'README 요청이 너무 많습니다. 나중에 다시 시도하세요.'],

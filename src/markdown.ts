@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
+import GithubSlugger from 'github-slugger'
 import type { Repository } from './types'
 
 export function repositoryMarkdownBaseUrl(repo: Pick<Repository, 'provider' | 'username' | 'repository' | 'branch'>) {
@@ -34,13 +35,23 @@ export function markdownLinkUrl(event: MouseEvent) {
   if (!anchor) return undefined
   event.preventDefault()
   const href = anchor.getAttribute('href')
-  return href && !href.startsWith('#') ? markdownResourceUrl(href) : undefined
+  if (href?.startsWith('#')) {
+    // Fragment navigation stays inside this document, never the manager window.
+    const root = anchor.closest('.markdown-body')
+    let id: string
+    try { id = decodeURIComponent(href.slice(1)) } catch { return undefined }
+    const prefix = root?.getAttribute('data-markdown-prefix') || 'markdown-'
+    const target = root && Array.from(root.querySelectorAll('[id]')).find((element) => element.id === `${prefix}${id}`)
+    target?.scrollIntoView({ block: 'start', inline: 'nearest' })
+    return undefined
+  }
+  return href ? markdownResourceUrl(href) : undefined
 }
 
-export function renderMarkdown(source: string, baseUrl?: string) {
+export function renderMarkdown(source: string, baseUrl?: string, idPrefix = 'markdown-') {
   const html = marked.parse(source, {
     async: false,
-    breaks: true,
+    breaks: false,
     gfm: true,
   })
   const fragment = DOMPurify.sanitize(html, {
@@ -49,9 +60,54 @@ export function renderMarkdown(source: string, baseUrl?: string) {
     ALLOW_ARIA_ATTR: false,
     ALLOWED_TAGS: ['a', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt', 'em',
       'figcaption', 'figure', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'kbd', 'li', 'ol',
-      'p', 'pre', 's', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'ul'],
-    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'width', 'height', 'align', 'colspan', 'rowspan', 'open'],
+      'input', 'p', 'pre', 's', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'ul'],
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'width', 'height', 'align', 'colspan', 'rowspan', 'open',
+      'class', 'type', 'checked', 'disabled', 'start'],
   })
+  // Source HTML cannot inject application classes, IDs or interactive form controls.
+  for (const element of fragment.querySelectorAll('[class]')) {
+    const language = element.tagName === 'CODE' && element.parentElement?.tagName === 'PRE'
+      ? Array.from(element.classList).find((name) => /^language-[\w+-]{1,40}$/.test(name)) : undefined
+    element.removeAttribute('class')
+    if (language) element.className = language
+  }
+  for (const input of fragment.querySelectorAll('input')) {
+    const item = input.closest('li')
+    if (input.getAttribute('type') !== 'checkbox' || !item) {
+      input.remove()
+      continue
+    }
+    const checked = input.hasAttribute('checked')
+    for (const attribute of Array.from(input.attributes)) input.removeAttribute(attribute.name)
+    input.setAttribute('type', 'checkbox')
+    input.setAttribute('disabled', '')
+    if (checked) input.setAttribute('checked', '')
+    input.className = 'markdown-task-checkbox'
+    item.classList.add('markdown-task-item')
+  }
+  const slugger = new GithubSlugger()
+  for (const heading of fragment.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+    const slug = slugger.slug(heading.textContent || '')
+    heading.id = `${idPrefix}${slug}`
+    const permalink = document.createElement('a')
+    permalink.className = 'markdown-heading-anchor'
+    permalink.href = `#${slug}`
+    permalink.textContent = '#'
+    permalink.setAttribute('aria-label', heading.textContent || '#')
+    heading.prepend(permalink)
+  }
+  for (const cell of fragment.querySelectorAll('th[align],td[align]')) {
+    const align = cell.getAttribute('align')?.toLowerCase()
+    cell.removeAttribute('align')
+    if (align && ['left', 'center', 'right'].includes(align)) cell.classList.add(`markdown-align-${align}`)
+  }
+  for (const table of fragment.querySelectorAll('table')) {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'markdown-table-scroll'
+    wrapper.tabIndex = 0
+    table.replaceWith(wrapper)
+    wrapper.append(table)
+  }
   for (const anchor of fragment.querySelectorAll('a[href]')) {
     const href = anchor.getAttribute('href')!
     if (href.startsWith('#')) continue
@@ -71,7 +127,7 @@ export function renderMarkdown(source: string, baseUrl?: string) {
     image.setAttribute('decoding', 'async')
     image.setAttribute('referrerpolicy', 'no-referrer')
   }
-  // Only validated URL/dimension attributes are changed on the sanitized DOM.
+  // Only validated attributes and locally generated presentation are added after sanitizing.
   const template = document.createElement('template')
   template.content.append(fragment)
   return template.innerHTML

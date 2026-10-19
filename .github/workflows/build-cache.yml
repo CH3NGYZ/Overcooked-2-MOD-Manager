@@ -2,25 +2,25 @@ name: Refresh four platform build caches
 run-name: Refresh shared platform caches (${{ github.ref_name }})
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/actions/build-cache/**'
-      - '.github/workflows/build*.yml'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'src/**'
-      - 'src-tauri/**'
-      - 'package*.json'
-      - '*config*'
   workflow_dispatch:
+  workflow_run:
+    workflows: ['Build and Release']
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   refresh:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         startsWith(github.event.workflow_run.head_branch, 'v') &&
+         github.event.workflow_run.head_repository.full_name == github.repository &&
+         github.event.workflow_run.head_sha == github.sha))
     timeout-minutes: 60
     permissions:
       contents: read
@@ -43,6 +43,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -52,6 +54,8 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - name: Validate the cache trigger and pinned main source
+        run: node scripts/build-cache.mjs authorize
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

@@ -188,13 +188,43 @@ export function managedCache(key, target) {
     || new RegExp(`^v[0-9]+-rust-${target}-build-`).test(key))
 }
 
+export function cacheRefreshSource(env = process.env, event) {
+  const reject = () => { throw new Error('Only the trusted main workflow may replace build caches') }
+  if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REF !== 'refs/heads/main'
+    || !['workflow_dispatch', 'workflow_run'].includes(env.GITHUB_EVENT_NAME)
+    || env.GITHUB_REPOSITORY !== `${RELEASE_OWNER}/${RELEASE_REPO}`
+    || !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA || '')) reject()
+  if (env.GITHUB_EVENT_NAME === 'workflow_run') {
+    if (event === undefined) {
+      try { event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) } catch { reject() }
+    }
+    const run = event?.workflow_run
+    const workflow = event?.workflow
+    if (event?.action !== 'completed' || event?.repository?.full_name !== env.GITHUB_REPOSITORY
+      || event?.repository?.default_branch !== 'main'
+      || workflow?.name !== 'Build and Release' || workflow?.path !== '.github/workflows/build.yml'
+      || !Number.isSafeInteger(workflow?.id) || workflow.id <= 0 || run?.workflow_id !== workflow.id
+      || !Number.isSafeInteger(run?.id) || run.id <= 0
+      || run?.event !== 'push' || run?.status !== 'completed' || run?.conclusion !== 'success'
+      || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(run?.head_branch || '')
+      || run?.head_repository?.full_name !== env.GITHUB_REPOSITORY || run?.head_sha !== env.GITHUB_SHA) reject()
+  }
+  return env.GITHUB_SHA
+}
+
+function authorizeCacheRefresh(env = process.env) {
+  const source = cacheRefreshSource(env)
+  const checkout = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true })
+  if (checkout.status !== 0 || checkout.stdout.trim() !== source) {
+    throw new Error('Checked-out cache source does not match the authorized main SHA')
+  }
+  return source
+}
+
 export class BuildCacheAPI {
   constructor(env = process.env, fetcher = fetch) {
-    if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REF !== 'refs/heads/main'
-      || !['push', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)
-      || env.GITHUB_REPOSITORY !== `${RELEASE_OWNER}/${RELEASE_REPO}` || !env.GITHUB_TOKEN?.trim()) {
-      throw new Error('Only the trusted main workflow may replace build caches')
-    }
+    cacheRefreshSource(env)
+    if (!env.GITHUB_TOKEN?.trim()) throw new Error('Only the trusted main workflow may replace build caches')
     this.token = env.GITHUB_TOKEN
     this.fetcher = fetcher
   }
@@ -247,8 +277,16 @@ export class BuildCacheAPI {
 
 async function main() {
   const [command, target] = process.argv.slice(2)
+  if (command === 'authorize') {
+    console.log(`Authorized ${process.env.GITHUB_EVENT_NAME} cache refresh at ${authorizeCacheRefresh()}`)
+    return
+  }
   cacheKey(target)
-  if (command === 'verify') { await new BuildCacheAPI().verify(target, { attempts: 3 }); return }
+  if (command === 'verify') {
+    authorizeCacheRefresh()
+    await new BuildCacheAPI().verify(target, { attempts: 3 })
+    return
+  }
   const compiler = spawnSync('rustc', ['--version', '--verbose'], { encoding: 'utf8', windowsHide: true })
   if (compiler.status !== 0) throw new Error('Cannot identify the build-cache Rust toolchain')
   const context = cacheContext({ target, rustc: compiler.stdout.trim() })
@@ -266,6 +304,7 @@ async function main() {
   } else if (command === 'replace') {
     // Validate the complete new local snapshot before deleting any remote cache.
     if (!checkedManifest(context)) throw new Error('A complete new snapshot is required before replacement')
+    authorizeCacheRefresh()
     await new BuildCacheAPI().replace(target)
   } else throw new Error('Unknown build-cache command')
 }

@@ -22,6 +22,16 @@ const props = defineProps({
 })
 const dynamicProps = props as Record<string, any>
 const emit = defineEmits<{ 'focus-finished': [] }>()
+function isModActionTarget(event: MouseEvent) {
+  return event.target instanceof Element
+    && !!event.target.closest('button, a, input, select, textarea, [role="switch"]')
+}
+function toggleModDetailsFromRow(event: MouseEvent, dllFile: string) {
+  if (!isModActionTarget(event)) dynamicProps.toggleModDetails(dllFile)
+}
+function toggleModPackageDetailsFromHeading(event: MouseEvent, mod: InstalledMod) {
+  if (!isModActionTarget(event)) dynamicProps.toggleModPackageDetails(mod)
+}
 const installedList = ref<HTMLElement | null>(null)
 const installedGroups = computed(() => {
   const groups: { id: string; packageId?: string; mods: { mod: InstalledMod; index: number }[] }[] = []
@@ -94,7 +104,8 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
           <div v-for="group in installedGroups" :key="group.id" :data-mod-focus-target="group.id" tabindex="-1"
             :class="['mod-list-group', { 'mod-package-group': !!group.packageId, 'mod-focus': focusedMods.includes(group.id) }]">
           <template v-for="{ mod, index } in group.mods" :key="mod.dll_file">
-            <div v-if="isFirstModInPackage(mod, index)" :class="['mod-package-heading', { 'mod-package-collapsed': packageIsCollapsed(mod) }]">
+            <div v-if="isFirstModInPackage(mod, index)" :class="['mod-package-heading', { 'mod-package-collapsed': packageIsCollapsed(mod) }]"
+              @click="toggleModPackageDetailsFromHeading($event, mod)">
               <span class="mod-index">{{ modDisplayIndex(mod, index) }}</span>
               <button class="mod-switch" :class="{ 'mod-switch-on': packageEnabledForMod(mod), 'mod-switch-mixed': packageMixedForMod(mod) }" role="switch"
                 :aria-checked="packageEnabledForMod(mod)" :title="packageEnabledForMod(mod) ? t('禁用 MOD 包') : t('启用 MOD 包')"
@@ -132,7 +143,8 @@ const { config, busy, saveHideUnidentifiedMods, openModDirectory, openModFileLoc
               <div v-if="!packageIdForMod(mod) || !packageIsCollapsed(mod)"
                 :data-mod-file="mod.dll_file"
                 :class="['mod-row-shell', { 'mod-package-shell': !!packageIdForMod(mod), 'has-mod-details': modDetailsExpanded[mod.dll_file] }]">
-                <div :class="['table-row', { 'mod-package-child': !!packageIdForMod(mod), 'mod-package-child-first': isFirstModInPackage(mod, index), 'mod-package-child-last': isLastModInPackage(mod, index) }]">
+                <div :class="['table-row', { 'mod-package-child': !!packageIdForMod(mod), 'mod-package-child-first': isFirstModInPackage(mod, index), 'mod-package-child-last': isLastModInPackage(mod, index) }]"
+                  @click="toggleModDetailsFromRow($event, mod.dll_file)">
             <span class="mod-index">{{ packageIdForMod(mod) ? packageChildIndex(mod) : modDisplayIndex(mod, index) }}</span>
             <button class="mod-switch" :class="{ 'mod-switch-on': modEnabledForView(mod) }" role="switch"
               :aria-checked="modEnabledForView(mod)" :title="modEnabledForView(mod) ? t('禁用 MOD') : t('启用 MOD')"

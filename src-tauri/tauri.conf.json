@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OC2ModManager",
   "mainBinaryName": "OC2ModManager",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "identifier": "com.ch3ngyz.oc2.modmanager",
   "build": {
     "frontendDist": "../dist",

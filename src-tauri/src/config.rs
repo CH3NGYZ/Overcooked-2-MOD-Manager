@@ -504,7 +504,7 @@ impl ConfigService {
         if text.len() > 1024 * 1024 {
             return Err(ConfigError::Invalid("导入文件超过 1 MiB".into()));
         }
-        let bundle: RepositoryBundle = toml::from_str(text)
+        let mut bundle: RepositoryBundle = toml::from_str(text)
             .map_err(|e| ConfigError::Invalid(format!("TOML 解析失败: {e}")))?;
         if bundle.format != BUNDLE_FORMAT {
             return Err(ConfigError::Invalid(
@@ -517,7 +517,8 @@ impl ConfigService {
                 bundle.schema_version
             )));
         }
-        for repo in &bundle.repositories {
+        for repo in &mut bundle.repositories {
+            normalize_repository_name(repo)?;
             validate_repository(repo)?;
         }
         log::info!(
@@ -992,6 +993,24 @@ fn serialize_repository_bundle(bundle: &RepositoryBundle) -> Result<String, Conf
         );
     }
     Ok(text)
+}
+
+pub(crate) fn normalize_repository_name(repo: &mut RepositoryExport) -> Result<(), ConfigError> {
+    if !repo.name.trim().is_empty() {
+        return Ok(());
+    }
+    if let Some(name) = repo
+        .name_i18n
+        .get("zh-CN")
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+    {
+        repo.name = name.to_string();
+        return Ok(());
+    }
+    Err(ConfigError::Invalid(
+        "仓库缺少名称：请提供 name 或非空的 name_i18n.zh-CN".into(),
+    ))
 }
 
 pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
@@ -2312,6 +2331,50 @@ builtin = true
                 .collect::<Vec<_>>(),
             ["release", "raw"]
         );
+    }
+
+    #[test]
+    fn repository_bundle_names_fall_back_to_chinese_and_reject_missing_names() {
+        let service = ConfigService {
+            root: std::env::temp_dir(),
+        };
+        let bundle_for = |repository: &str| {
+            format!(
+                r#"format = "{BUNDLE_FORMAT}"
+schema_version = 1
+exported_at = "2026-01-01T00:00:00Z"
+
+[[repositories]]
+{repository}
+provider = "github"
+username = "example"
+repository = "mod"
+install_target = "BepInEx/plugins"
+enabled = true
+[[repositories.asset_rules]]
+type = "exact"
+value = "mod.dll"
+"#
+            )
+        };
+
+        let translated = service
+            .validate_bundle(&bundle_for(r#"name_i18n.zh-CN = "中文名称""#))
+            .unwrap();
+        assert_eq!(translated.repositories[0].name, "中文名称");
+
+        let explicit = service
+            .validate_bundle(&bundle_for(
+                r#"name = "  Explicit name  "
+name_i18n.zh-CN = "中文名称""#,
+            ))
+            .unwrap();
+        assert_eq!(explicit.repositories[0].name, "  Explicit name  ");
+
+        let error = service
+            .validate_bundle(&bundle_for(r#"name_i18n.en = "English name""#))
+            .unwrap_err();
+        assert!(error.to_string().contains("name_i18n.zh-CN"));
     }
 
     #[test]

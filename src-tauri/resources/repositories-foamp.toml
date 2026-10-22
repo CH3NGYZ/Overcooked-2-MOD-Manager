@@ -1,19 +1,18 @@
 [[repositories]]
+enabled = true
 # 仓库基本信息
-name = "菜谱查看"
 name_i18n.zh-CN = "菜谱查看"
 name_i18n.zh-TW = "菜譜查看"
 name_i18n.en = "Recipe Viewer"
 name_i18n.ko = "레시피 보기"
-provider = "github"
-group = "实用工具"
 group_i18n.zh-CN = "实用工具"
 group_i18n.zh-TW = "實用工具"
 group_i18n.en = "Utility Tools"
 group_i18n.ko = "유틸리티 도구"
+provider = "github"
 username = "foamp"
 repository = "Overcooked2RecipeViewer"
-enabled = true
+region = ""
 
 # 下载方式
 download_mode = "release"
@@ -26,6 +25,7 @@ download_threads = 32
 # 版本资产规则
 asset_rules = [
   { type = "regex", value = '^Overcooked2RecipeViewer-v\d+\.\d+\.\d+\.zip$' },
+  { type = "exact", value = 'Overcooked2RecipeViewer.dll' },
 ]
 
 # 本地 MOD 识别绑定
@@ -38,7 +38,7 @@ version_regex = ""
 install_target = "BepInEx/plugins"
 
 # 仓库备注
-note = '''
+note_i18n.zh-CN = '''
 一个基于 BepInEx 的《胡闹厨房 2》（Overcooked! 2）菜谱查看 Mod。使用游戏原版菜谱卡片展示当前关卡的全部可用菜谱，方便提前查看、整理和分享。
 
 **这是菜谱查看、排列和分享工具，仅调整查看器中的显示与布局，不改变游戏实际订单、订单生成逻辑、出菜顺序、计时或得分。**
@@ -72,43 +72,7 @@ note = '''
 
 遇到问题请前往 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)，附上游戏与 Mod 版本、关卡及人数、复现步骤，以及 `BepInEx\LogOutput.log` 中的相关日志；界面问题可附截图。'''
 
-# 多语言仓库备注
-[repositories.note_i18n]
-zh-CN = '''
-一个基于 BepInEx 的《胡闹厨房 2》（Overcooked! 2）菜谱查看 Mod。使用游戏原版菜谱卡片展示当前关卡的全部可用菜谱，方便提前查看、整理和分享。
-
-**这是菜谱查看、排列和分享工具，仅调整查看器中的显示与布局，不改变游戏实际订单、订单生成逻辑、出菜顺序、计时或得分。**
-
-## 功能
-
-- 支持官方关卡，以及提供游戏标准菜谱数据的自制地图。
-- 查看当前关卡的菜谱，支持按厨具排序等多种排列方式。
-- 拖拽调整菜谱位置和整行顺序，自由整理布局。
-- 自动保存各关卡的自定义布局，也可保存和切换多份布局。
-- 支持滚动、缩放，以及完整菜谱图的 PNG 导出和剪贴板复制。
-- 根据游戏语言自动使用中文或英文界面。
-
-## 使用
-
-进入关卡内部后点击 `Insert` 键即可打开菜谱查看器，使用工具栏选择排序方式、保存布局和导出图片。
-可通过《BepInEx 配置管理器》来管理 **Overcooked2RecipeViewer**。
-
-## 快捷操作
-
-| 操作 | 按键 / 鼠标 |
-| --- | --- |
-| 显示 / 关闭查看器 | **Insert**（默认，可在配置中修改） |
-| 纵向滚动 | **鼠标滚轮** / **PageUp、PageDown** |
-| 横向滚动 | **Shift + 滚轮** |
-| 缩放（50%–200%） | **Ctrl + 滚轮** |
-| 移动菜谱 | 拖拽菜谱卡片 |
-| 移动整行 | 拖拽行左侧的把手 |
-
-## 问题反馈
-
-遇到问题请前往 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)，附上游戏与 Mod 版本、关卡及人数、复现步骤，以及 `BepInEx\LogOutput.log` 中的相关日志；界面问题可附截图。'''
-
-zh-TW = '''
+note_i18n.zh-TW = '''
 一個基於 BepInEx 的《煮過頭 2》（Overcooked! 2）菜譜查看 Mod。使用遊戲原版菜譜卡片展示目前關卡的全部可用菜譜，方便提前查看、整理和分享。
 
 **這是菜譜查看、排列和分享工具，僅調整查看器中的顯示與版面配置，不改變遊戲實際訂單、訂單生成邏輯、出菜順序、計時或得分。**
@@ -142,7 +106,7 @@ zh-TW = '''
 
 遇到問題請前往 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)，附上遊戲與 Mod 版本、關卡及人數、重現步驟，以及 `BepInEx\LogOutput.log` 中的相關日誌；介面問題可附上截圖。'''
 
-en = '''
+note_i18n.en = '''
 A BepInEx mod for viewing recipes in Overcooked! 2. It uses the game's original recipe cards to display all available recipes in the current level, making them easier to view, organize, and share.
 
 **This is a recipe viewing, organization, and sharing tool. It only changes the display and layout of the viewer and does not change actual orders, order generation, serving order, timers, or scores.**
@@ -176,7 +140,7 @@ You can use **BepInEx Configuration Manager** to configure **Overcooked2RecipeVi
 
 If you encounter a problem, please visit [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues) and include the game and mod versions, level and player count, reproduction steps, and relevant logs from `BepInEx\LogOutput.log`. Screenshots are helpful for UI issues.'''
 
-ko = '''
+note_i18n.ko = '''
 BepInEx 기반의 《Overcooked! 2》 레시피 보기 모드입니다. 게임의 기본 레시피 카드를 사용하여 현재 스테이지에서 사용할 수 있는 모든 레시피를 표시하므로 레시피를 미리 확인하고 정리하거나 공유할 수 있습니다.
 
 **이 모드는 레시피를 확인하고 정리하며 공유하기 위한 도구입니다. 레시피 뷰어의 표시와 레이아웃만 변경하며 실제 주문, 주문 생성 로직, 음식 제출 순서, 시간 제한 또는 점수에는 영향을 주지 않습니다.**

@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { FileText, RefreshCw, X } from 'lucide-vue-next'
 import { locale, t } from '../i18n'
 import { repositoryMarkdownBaseUrl } from '../markdown'
+import { repositoryName } from '../repositoryNames'
 import MarkdownContent from './MarkdownContent.vue'
 import { api } from '../services/tauri'
 import { trapModalFocus } from '../composables/modalFocus'
@@ -79,7 +80,7 @@ onUnmounted(cancel)
         <section ref="dialog" class="modal repository-note-modal" role="dialog" aria-modal="true"
           aria-labelledby="repository-document-title" tabindex="-1" @keydown.tab="trapModalFocus">
           <header class="modal-head">
-            <div><h3 id="repository-document-title"><FileText :size="19" />{{ target.repository.name_i18n?.[locale] || target.repository.name }}</h3>
+            <div><h3 id="repository-document-title"><FileText :size="19" />{{ repositoryName(target.repository, locale) }}</h3>
               <p class="muted-text">{{ t(target.kind === 'note' ? 'MOD 简介' : '仓库说明（README.md）') }}</p>
             </div>
             <div class="button-row">

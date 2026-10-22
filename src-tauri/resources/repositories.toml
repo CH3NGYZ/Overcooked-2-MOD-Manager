@@ -5,6 +5,7 @@
 id = "repositories-azhe-hostutilities"
 nickname = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
 url = "repositories-azhe-hostutilities.toml"
+builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
 zh-TW = "阿哲 - 街機MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -16,6 +17,7 @@ ko = "Azhe - 아케이드 MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 id = "repositories-azhe-others"
 nickname = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
 url = "repositories-azhe-others.toml"
+builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
 zh-TW = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -27,6 +29,7 @@ ko = "Azhe - 기타 MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 id = "repositories-gua"
 nickname = "G_U_A"
 url = "repositories-gua.toml"
+builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "G_U_A"
 zh-TW = "G_U_A"
@@ -38,6 +41,7 @@ ko = "G_U_A"
 id = "repositories-kfyangc"
 nickname = "小红书 @漆雕帆船 - ID:5669571205"
 url = "repositories-kfyangc.toml"
+builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @漆雕帆船 - ID:5669571205"
 zh-TW = "小红书 @漆雕帆船 - ID:5669571205"
@@ -49,6 +53,7 @@ ko = "RedNote @漆雕帆船 - ID:5669571205"
 id = "repositories-foamp"
 nickname = "小红书 @纸沫 - ID:5696399896"
 url = "repositories-foamp.toml"
+builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @纸沫 - ID:5696399896"
 zh-TW = "小红书 @纸沫 - ID:5696399896"

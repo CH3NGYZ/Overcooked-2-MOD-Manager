@@ -529,6 +529,7 @@ pub struct RepositorySource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryExport {
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub name_i18n: BTreeMap<String, String>,

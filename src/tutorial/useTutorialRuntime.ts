@@ -175,7 +175,7 @@ export function useTutorialRuntime(host: TutorialRuntimeHost) {
 
   const controller = useTutorialController(createControllerHost(host, prepareStep, finishPresentation))
   const previewDashboard = computed(() => controller.previewing.value
-    ? createTutorialDashboard(host.dashboard.value, controller.scenario.value, t, builtinRepositories.value)
+    ? createTutorialDashboard(host.dashboard.value, controller.scenario.value, t, builtinRepositories.value, host.locale.value)
     : host.dashboard.value)
   const displayDashboard = computed(() => previewDashboard.value || host.dashboard.value)
   const displayProgress = computed<TutorialProgressState>(() => {

@@ -13,6 +13,7 @@ import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { repositoryMarkdownBaseUrl } from './markdown'
+import { repositoryName } from './repositoryNames'
 import MarkdownContent from './components/MarkdownContent.vue'
 import { hasLocalUpdateVersion, modRepositoryReleaseState } from './modUpdates'
 import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
@@ -597,7 +598,7 @@ async function handleUiZoomWheel(event: WheelEvent) {
 }
 function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
-function localizedRepositoryName(repo: Repository) { return repo.name_i18n?.[locale.value] || repo.name }
+function localizedRepositoryName(repo: Repository) { return repositoryName(repo, locale.value) }
 function localizedRepositoryNote(repo: Repository) { return repo.note_i18n?.[locale.value] || repo.note }
 function repositoryInstallStatus(repo: Repository) {
   if (repo.download_mode === 'repository_file') return ''

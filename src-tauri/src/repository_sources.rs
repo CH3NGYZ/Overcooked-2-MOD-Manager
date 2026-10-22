@@ -442,6 +442,7 @@ pub(crate) fn parse_document(
         ));
     }
     for repository in &mut document.repositories {
+        crate::config::normalize_repository_name(repository)?;
         repository.region = crate::config::normalize_repository_region_for_storage(
             repository.region.as_deref(),
             &format!("仓库 {}", repository.name),
@@ -1237,8 +1238,11 @@ url = "mods/child.toml"
             let child_location = SourceLocation::resolve(&declared.url, Some(&location)).unwrap();
             assert!(matches!(&child_location, SourceLocation::Bundled(_)));
             assert_eq!(source.url, child_location.address());
-            let declared_child: RepositorySourceDocument =
+            let mut declared_child: RepositorySourceDocument =
                 toml::from_str(child_location.bundled_text().unwrap()).unwrap();
+            for repository in &mut declared_child.repositories {
+                crate::config::normalize_repository_name(repository).unwrap();
+            }
             let child = load_document(&child_location, 5)
                 .await
                 .unwrap_or_else(|error| panic!("{}: {error}", source.url));
@@ -1316,6 +1320,50 @@ builtin = true
         assert_eq!(document.repository_sources[1].builtin, Some(true));
         assert!(parse_document(&text.replace("\"false\"", "\"invalid\""), &location).is_err());
         assert!(parse_document("[session-id] Repository or file not found", &location).is_err());
+    }
+
+    #[test]
+    fn repositories_fall_back_to_chinese_names_and_reject_missing_chinese_names() {
+        let location = SourceLocation::parse("index.toml").unwrap();
+        let document_for = |name: Option<&str>, translations: &[(&str, &str)]| {
+            let mut text = String::from("[[repositories]]\n");
+            if let Some(name) = name {
+                text.push_str(&format!("name = {}\n", toml::Value::String(name.into())));
+            }
+            for (locale, translated_name) in translations {
+                text.push_str(&format!(
+                    "name_i18n.{locale} = {}\n",
+                    toml::Value::String((*translated_name).into())
+                ));
+            }
+            text.push_str(
+                r#"provider = "github"
+username = "example"
+repository = "mod"
+install_target = "BepInEx/plugins"
+enabled = true
+[[repositories.asset_rules]]
+type = "exact"
+value = "mod.dll"
+"#,
+            );
+            text
+        };
+
+        let translated =
+            parse_document(&document_for(None, &[("zh-CN", "中文名称")]), &location).unwrap();
+        assert_eq!(translated.repositories[0].name, "中文名称");
+
+        let explicit = parse_document(
+            &document_for(Some("  Explicit name  "), &[("zh-CN", "中文名称")]),
+            &location,
+        )
+        .unwrap();
+        assert_eq!(explicit.repositories[0].name, "  Explicit name  ");
+
+        let error =
+            parse_document(&document_for(None, &[("en", "English name")]), &location).unwrap_err();
+        assert!(error.to_string().contains("name_i18n.zh-CN"));
     }
 
     #[test]

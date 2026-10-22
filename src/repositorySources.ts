@@ -1,7 +1,9 @@
 import type { RepositorySource } from './types'
 
 export function repositorySourceName(source: Pick<RepositorySource, 'nickname' | 'nickname_i18n'>, language: string) {
-  return source.nickname_i18n?.[language]?.trim() || source.nickname
+  return [source.nickname_i18n?.[language], source.nickname_i18n?.['zh-CN'], source.nickname]
+    .find((value): value is string => typeof value === 'string' && !!value.trim())
+    ?.trim() || ''
 }
 
 export function normalizeRepositoryRegion(region: string | undefined) {

@@ -7481,7 +7481,7 @@ mod repository_source_refresh_tests {
             .filter(|s| s.parent_id.as_deref() == Some(root.id.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(children.len(), 5);
-        for child in children {
+        for child in &children {
             assert!(matches!(
                 SourceLocation::parse(&child.url).unwrap(),
                 SourceLocation::Bundled(_)
@@ -7490,7 +7490,18 @@ mod repository_source_refresh_tests {
         }
         let loaded = state.config.load().unwrap();
         assert_eq!(loaded.repository_sources[0].url, root.url);
-        assert_eq!(loaded.repositories.len(), 17);
+        let expected_repository_count = children
+            .iter()
+            .map(|child| {
+                SourceLocation::parse(&child.url)
+                    .unwrap()
+                    .bundled_document()
+                    .unwrap()
+                    .repositories
+                    .len()
+            })
+            .sum::<usize>();
+        assert_eq!(loaded.repositories.len(), expected_repository_count);
         assert!(loaded.repository_sources.contains(&custom));
         fs::remove_dir_all(state.config.config_path().parent().unwrap()).unwrap();
     }

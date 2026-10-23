@@ -19,13 +19,13 @@ const props = defineProps({
   toggleSource: null, flattenSourceGroups: null, repositoryGroupCollapsed: null, repositoryGroupKey: null,
   toggleRepositoryGroup: null, localizedRepositoryName: null, localizedRepositoryNote: null,
   repositoryInstallStatus: null, openRepositoryMods: null, latest: null,
-  formatDate: null, installRepo: null, refreshAllRepositories: null,
+  formatDate: null, installRepo: null, refreshAllRepositories: null, refreshRepository: null,
   refreshSource: null, editRepo: null, deleteRepo: null, repos: null,
   openRepositorySourceManager: null, exportRepositories: null, sourceGroups: null,
   repositorySourceRegionLabel: null,
 })
 const dynamicProps = props as Record<string, any>
-const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryInstallStatus, latest, formatDate, installRepo, refreshAllRepositories, refreshSource, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
+const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryInstallStatus, latest, formatDate, installRepo, refreshAllRepositories, refreshRepository, refreshSource, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
 const showRepositoryEmptyState = computed(() => !repos.value.length
   && !props.communities.some((discovery) => discovery.started.value)
   && !repositoryRefreshBatchActive.value
@@ -46,6 +46,14 @@ let stickyResizeObserver: ResizeObserver | undefined
 
 function communityForSource(sourceId: string) {
   return props.communities.find((discovery) => discovery.sourceId === sourceId)
+}
+
+function showReleaseOrRefresh(repo: any) {
+  if (latest.value(repo)) {
+    emit('show-release', repo)
+    return
+  }
+  refreshRepository.value?.(repo)
 }
 
 function sourceOverlayHasError(sourceId: string) {
@@ -344,8 +352,10 @@ const emit = defineEmits<{
                                 </div>
                                 <div class="repo-controls">
                                   <button v-if="repo.download_mode === 'release'" type="button" class="repo-release"
-                                    :title="t('查看 Release 日志')" :disabled="!latest(repo)" @click="$emit('show-release', repo)"><b>{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b><span>{{ latest(repo) ?
-                                      formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></button>
+                                    :title="t(latest(repo) ? '查看 Release 日志' : '刷新仓库')"
+                                    :disabled="!!repositoryRefreshing[repo.id]"
+                                    @click="showReleaseOrRefresh(repo)"><b>{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b><span>{{ latest(repo) ?
+                                      formatDate(latest(repo)?.published_at) : t('刷新仓库') }}</span></button>
                                   <button class="primary-button small-button" :title="t('下载并安装')"
                                     :disabled="gameBlocked || !!repositoryRefreshing[repo.id] || (repo.download_mode === 'repository_file' && (!repo.branch?.trim() || !repo.file_path?.trim())) || !!busy"
                                     @click="installRepo(repo)">

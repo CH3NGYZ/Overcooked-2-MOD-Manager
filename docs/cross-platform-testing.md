@@ -93,7 +93,7 @@ GitHub 的 latest 下载地址只面向公开稳定 Release；仅生成 draft �
 
 `.github/workflows/build.yml` 使用 Windows、Ubuntu 22.04、Mac Apple Silicon 和 `macos-15-intel` 四个 runner。正式构建上传到当前代码仓库 `CH3NGYZ/Overcooked-2-MOD-Manager` 的同一草稿（原名 `Overcooked-2-MOD-Manager-Code`，仓库与历史保持不变）；在四个构建成功后，由独立任务验证实际上传字节和签名，再汇总七目标 `latest.json`。并行构建不各自上传清单，也不自动发布草稿。新建草稿绑定实际构建的 `GITHUB_SHA`，不指向另一个仓库或无关提交。
 
-Draft Release 正文直接使用 tag 对应源码提交的完整 Git 提交说明，保留标题、多行正文及署名；从 checkout 中按 `GITHUB_SHA` 精确读取提交对象，不使用另一个 HEAD 或 annotated tag 的注释，也不再写固定安装/发布提示。手动 release dispatch 则使用本次构建提交的说明。读取失败或消息为空时停止准备，不写替代文案。同版本稳定草稿重跑时同步提交和正文，即使 SHA 相同也修正旧正文；已公开 Release 仍不可修改。聚合生成的 `latest.json.notes` 直接沿用该草稿正文，保持更新日志一致。
+Draft Release 正文取自 tag 对应源码提交的 Git 提交说明，但只保留面向用户的变更内容：提交尾部的 `Co-Authored-By`、`Signed-off-by` 等 trailer，以及以「校验：」开头或包含 `npm test`、`npm run build`、`cargo test`、`cargo check`、`cargo fmt`、`git diff --check` 的本地验证段落会被过滤，这些信息只留在提交里。正文从 checkout 中按 `GITHUB_SHA` 精确读取提交对象，不使用另一个 HEAD 或 annotated tag 的注释，也不再写固定安装/发布提示。手动 release dispatch 则使用本次构建提交的说明。读取失败、消息为空或过滤后没有正文时停止准备，不写替代文案。同版本稳定草稿重跑时同步提交和正文，即使 SHA 相同也修正旧正文；已公开 Release 仍不可修改。聚合生成的 `latest.json.notes` 直接沿用该草稿正文，保持更新日志一致。
 
 ### 四平台共享缓存与容量
 

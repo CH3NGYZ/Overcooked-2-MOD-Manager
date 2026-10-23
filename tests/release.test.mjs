@@ -11,7 +11,7 @@ import { aggregateManifest, prepareRelease, readReleaseNotes } from '../scripts/
 import { signingFixture } from './fixtures/updater-signing.mjs'
 import {
   BUILD_KEYS, PLATFORM_KEYS, RELEASE_OWNER, RELEASE_REPO, assertDraftRelease,
-  collectUpdateAssets, readProject, releaseTag, updateAssetKey, updateManifest,
+  collectUpdateAssets, readProject, releaseNotesFromMessage, releaseTag, updateAssetKey, updateManifest,
   validateProjectVersions, verifyUpdateSignature,
 } from '../scripts/release-lib.mjs'
 
@@ -230,20 +230,46 @@ test('release notes read the exact tagged commit, preserving multiline Unicode, 
       GIT_COMMITTER_NAME: 'Release fixture', GIT_COMMITTER_EMAIL: 'release@example.invalid' },
   }).trimEnd()
   git(['init', '--quiet'])
-  const notes = '\u4fee\u590d\u66f4\u65b0\u8bf4\u660e\n\n- GitHub & Gitee\n- Keep "quoted" text\n\nCo-Authored-By: Example <example@example.invalid>'
-  git(['commit', '--allow-empty', '--quiet', '-F', '-'], notes)
+  const message = '\u4fee\u590d\u66f4\u65b0\u8bf4\u660e\n\n- GitHub & Gitee\n- Keep "quoted" text\n\n\u6821\u9a8c\uff1anpm run build \u901a\u8fc7\uff1bcargo test --lib 348 \u901a\u8fc7\u3002\n\nCo-Authored-By: Example <example@example.invalid>'
+  const expected = '\u4fee\u590d\u66f4\u65b0\u8bf4\u660e\n\n- GitHub & Gitee\n- Keep "quoted" text'
+  git(['commit', '--allow-empty', '--quiet', '-F', '-'], message)
   const commit = git(['rev-parse', 'HEAD'])
   git(['tag', '-a', 'v1.2.0', '-m', 'A separate tag annotation'])
   const tagObject = git(['rev-parse', 'refs/tags/v1.2.0'])
   git(['commit', '--allow-empty', '--quiet', '-m', 'A later unrelated commit'])
-  assert.equal(readReleaseNotes(commit, workspace), notes)
-  assert.equal(readReleaseNotes(tagObject, workspace), notes)
+  assert.equal(readReleaseNotes(commit, workspace), expected)
+  assert.equal(readReleaseNotes(tagObject, workspace), expected)
+  git(['commit', '--allow-empty', '--quiet', '-F', '-'],
+    '\u6821\u9a8c\uff1anpm test \u901a\u8fc7\n\nCo-Authored-By: Example <example@example.invalid>')
+  assert.throws(() => readReleaseNotes(git(['rev-parse', 'HEAD']), workspace), /no notes after removing trailers/)
   git(['commit', '--allow-empty', '--allow-empty-message', '--quiet', '-F', '-'], '')
   assert.throws(() => readReleaseNotes(git(['rev-parse', 'HEAD']), workspace), /message is empty/)
   assert.throws(() => readReleaseNotes('f'.repeat(40), workspace), /Could not read/)
   for (const invalid of [undefined, '', 'HEAD', '--help', '../invalid']) {
     assert.throws(() => readReleaseNotes(invalid, workspace), /full GitHub commit SHA/)
   }
+})
+
+test('release notes drop commit trailers and local verification, keeping the changelog', () => {
+  const message = [
+    '发布 1.3.4',
+    '',
+    '版本号升级至 1.3.4。本版新增：侧边栏折叠、窄窗口布局修复。',
+    '',
+    '校验：npm run build 通过；npm test 255 通过、14 跳过；git diff --check 通过。',
+    '',
+    '未做真实窗口目视验证。',
+    '',
+    'Signed-off-by: Example <example@example.invalid>',
+    'Co-Authored-By: Example <example@example.invalid>',
+  ].join('\n')
+  assert.equal(releaseNotesFromMessage(message), '发布 1.3.4\n\n版本号升级至 1.3.4。本版新增：侧边栏折叠、窄窗口布局修复。')
+  assert.equal(releaseNotesFromMessage('修复：\r\n\r\n- 一\r\n- 二\r\n\r\ncargo fmt --check 通过'), '修复：\n\n- 一\n- 二')
+  assert.equal(releaseNotesFromMessage('仅有一行说明'), '仅有一行说明')
+  assert.equal(releaseNotesFromMessage(''), '')
+  assert.equal(releaseNotesFromMessage(undefined), '')
+  assert.equal(releaseNotesFromMessage('Co-Authored-By: Example <example@example.invalid>'), '')
+  assert.equal(releaseNotesFromMessage('Verification: cargo test --lib passed'), '')
 })
 
 test('new drafts bind to the actual source commit and its message, with a branch fallback', async () => {

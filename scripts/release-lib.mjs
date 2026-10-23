@@ -56,6 +56,30 @@ export function readProject(root = process.cwd()) {
   return { version, publicKey: tauri.plugins.updater.pubkey }
 }
 
+// Commit trailers and local verification paragraphs belong to the commit, not
+// to the public release notes. Keep the user-facing changelog only.
+const COMMIT_TRAILER = /^(?:co-authored-by|co-developed-by|signed-off-by|reviewed-by|tested-by|change-id|refs|closes|fixes|see-also)\s*:/i
+const VERIFICATION_HEADING = /^(?:校验|驗證|验证|verification|testing|tests?)\s*[：:]/i
+const VERIFICATION_NOTE = /^(?:未做|未进行|未验证|not verified)[^\n]*(?:验证|测试|verified|tested)/i
+const BUILD_COMMAND = /\b(?:npm test|npm run build|cargo test|cargo check|cargo fmt|git diff --check)\b/i
+
+export function releaseNotesFromMessage(message) {
+  if (typeof message !== 'string') return ''
+  const paragraphs = message.replace(/\r\n/g, '\n').split(/\n{2,}/)
+  const kept = []
+  for (const paragraph of paragraphs) {
+    const body = paragraph
+      .split('\n')
+      .filter(line => !COMMIT_TRAILER.test(line.trim()))
+      .join('\n')
+      .trim()
+    if (!body) continue
+    if (VERIFICATION_HEADING.test(body) || VERIFICATION_NOTE.test(body) || BUILD_COMMAND.test(body)) continue
+    kept.push(body)
+  }
+  return kept.join('\n\n').trim()
+}
+
 export function releaseTag(version, refType, refName) {
   const tag = `v${checkedVersion(version)}`
   if (refType === 'tag' && refName !== tag) throw new Error(`The pushed tag must be ${tag}`)

@@ -111,6 +111,20 @@ test('card notes render dimmer than the repository title', () => {
   assert.match(dialog, /:breaks="target\.kind === 'note'"/)
 })
 
+test('card notes show seven lines and only then offer the note button', () => {
+  const description = readFileSync(new URL('../src/components/RepositoryDescription.vue', import.meta.url), 'utf8')
+  assert.match(description, /const NOTE_MAX_LINES = 7/)
+  assert.match(description, /const limit = lineHeight \* NOTE_MAX_LINES/)
+  assert.match(description, /long\.value = element\.scrollHeight > limit \+ 1/)
+  assert.match(description, /'repo-note-clamped': !community && long/)
+  assert.match(description, /maxHeight: `\$\{clampHeight\}px`/)
+  assert.match(description, /v-if="!community && note && long"/)
+  const css = readFileSync(new URL('../src/styles/repositories.css', import.meta.url), 'utf8')
+  assert.match(css, /\.repo-note-clamped\s*\{[^}]*overflow:\s*hidden/)
+  assert.doesNotMatch(css, /--repository-note-limit/, 'The old pixel limit must not survive')
+  assert.doesNotMatch(css, /\.repo-note-measure/, 'The hidden measurement box must not survive')
+})
+
 test('task lists are read-only and cannot smuggle other form controls or source classes', () => {
   const root = documentFrom('- [x] done\n- [ ] pending\n\n<input type="text" value="unsafe"><input type="checkbox"><form><button>submit</button></form><div class="modal-backdrop markdown-diagram-staging" id="app">visible</div>')
   const inputs = [...root.querySelectorAll('input')]

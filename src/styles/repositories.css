@@ -19,7 +19,6 @@
   gap: 7px;
 }
 .repo-description {
-  --repository-note-limit: 96px;
   position: relative;
   min-width: 0;
 }
@@ -29,6 +28,13 @@
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+/* Long notes keep their first seven lines and fade out instead of jumping
+   straight to the detail button. */
+.repo-note-clamped {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
 }
 .repo-note-button {
   display: inline-flex;
@@ -50,13 +56,6 @@
 .repo-note-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-.repo-note-measure {
-  position: absolute;
-  inset: 0 0 auto;
-  margin: 0;
-  visibility: hidden;
-  pointer-events: none;
 }
 .repo-document-actions {
   display: flex;

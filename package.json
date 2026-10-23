@@ -1,7 +1,7 @@
 {
   "name": "overcooked-2-modmanager-code",
   "private": true,
-  "version": "1.3.3",
+  "version": "1.3.4",
   "type": "module",
   "scripts": {
     "predev": "node scripts/frontend-entry.mjs",

@@ -145,6 +145,7 @@ pub fn source(provider: &Provider) -> RepositorySource {
             ("zh-TW".into(), format!("{name} 社群倉庫")),
             ("en".into(), format!("{name} community repositories")),
             ("ko".into(), format!("{name} 커뮤니티 저장소")),
+            ("ja".into(), format!("{name} コミュニティリポジトリ")),
         ]
         .into(),
         url: match provider {

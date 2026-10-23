@@ -120,3 +120,46 @@ test('the explicit update-check action remains the remote refresh entry point', 
   assert.ok(check, 'Use the actual MOD update-check handler')
   assert.match(check, /refreshMappedRepositoryUpdates/)
 })
+
+const updatesSource = readFileSync(new URL('../src/modUpdates.ts', import.meta.url), 'utf8')
+const { outputText: updatesOutput } = ts.transpileModule(updatesSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+})
+const { modUpdateCheckPhase, liveModReleaseLabel } = await import(
+  `data:text/javascript;base64,${Buffer.from(updatesOutput).toString('base64')}`,
+)
+
+test('a MOD reports per repository progress instead of waiting for the whole check', () => {
+  const base = { active: true, refreshing: false, hasBoundRepositories: true, settled: false }
+  assert.equal(modUpdateCheckPhase({ ...base, active: false }), 'idle')
+  assert.equal(modUpdateCheckPhase({ ...base, refreshing: true, settled: true }), 'checking')
+  assert.equal(modUpdateCheckPhase(base), 'pending')
+  assert.equal(modUpdateCheckPhase({ ...base, settled: true }), 'settled')
+  assert.equal(modUpdateCheckPhase({ ...base, hasBoundRepositories: false }), 'idle')
+})
+
+test('a finished MOD shows its own result while other repositories still run', () => {
+  assert.equal(liveModReleaseLabel({ releaseStatus: '有更新', hasRepositoryError: false, settled: true }), 'update_available')
+  assert.equal(liveModReleaseLabel({ releaseStatus: '最新版', hasRepositoryError: false, settled: true }), 'latest')
+  assert.equal(liveModReleaseLabel({ releaseStatus: '', hasRepositoryError: true, settled: true }), 'repository_unavailable')
+  assert.equal(liveModReleaseLabel({ releaseStatus: '', hasRepositoryError: false, settled: true }), 'unknown')
+  assert.equal(liveModReleaseLabel({ releaseStatus: '', hasRepositoryError: false, settled: false }), 'pending')
+})
+
+test('the update-check batch has no global overlay and reloads the dashboard once', () => {
+  const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+  const batch = app.match(/async function refreshMappedRepositoryUpdates\(\) \{([\s\S]*?)\n\}/)?.[1]
+  assert.ok(batch, 'Use the actual incremental update-check host')
+  assert.match(batch, /modUpdatesCheckActive\.value = true/)
+  assert.match(batch, /refreshMappedRepositories\(\)/)
+  assert.match(batch, /api\.dashboard\(\)/)
+  assert.doesNotMatch(batch, /installedModsChecking|installedModsPendingCheck/)
+  const mapped = app.match(/async function refreshMappedRepositories\(\) \{([\s\S]*?)\n\}/)?.[1]
+  assert.ok(mapped, 'Use the actual mapped repository refresh')
+  assert.match(mapped, /refreshRepositoryBatch\(mapped, 4\)/)
+  const status = app.match(/function installedModStatusCodes\(mod: InstalledMod\)([\s\S]*?)\n\}/)?.[1]
+  assert.ok(status, 'Use the actual per-MOD status derivation')
+  assert.match(status, /modUpdateCheckPhase\(/)
+  assert.match(status, /isModRepositoryRefreshing\(mod\)/)
+  assert.doesNotMatch(status, /installedModsChecking|installedModsPendingCheck/)
+})

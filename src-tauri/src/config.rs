@@ -870,6 +870,7 @@ fn builtin_repository_sources_for_region(region: &str) -> Vec<RepositorySource> 
             ("zh-TW".into(), "官方倉庫來源".into()),
             ("en".into(), "Official repositories".into()),
             ("ko".into(), "공식 저장소 소스".into()),
+            ("ja".into(), "公式リポジトリソース".into()),
         ]
         .into(),
         url: crate::repository_sources::default_index_url(region).into(),
@@ -2077,6 +2078,63 @@ value = "MOD.dll"
         let reloaded = service.load().unwrap();
         assert_eq!(reloaded.repositories[0].note_i18n["zh-CN"], "");
         assert_eq!(fs::read_to_string(service.config_path()).unwrap(), saved);
+    }
+
+    #[test]
+    fn japanese_repository_metadata_survives_import_export_and_config_reload() {
+        let service = ConfigService {
+            root: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target/test-config-load")
+                .join(Uuid::new_v4().to_string()),
+        };
+        let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
+        let text = r#"
+[[repositories]]
+name = "日本語名"
+name_i18n.zh-CN = "中文名称"
+name_i18n.ja = "日本語名"
+group_i18n.zh-CN = "工具"
+group_i18n.ja = "ツール"
+note_i18n.zh-CN = ""
+note_i18n.ja = "日本語のメモ"
+provider = "github"
+username = "example"
+repository = "mod"
+channel = "stable"
+install_target = "BepInEx/plugins"
+plugin_guid = "com.example.ja"
+enabled = true
+[[repositories.asset_rules]]
+type = "exact"
+value = "Japan.dll"
+"#;
+        let document = crate::repository_sources::parse_document(text, &location).unwrap();
+        let export = document.repositories[0].clone();
+        assert_eq!(export.name_i18n["ja"], "日本語名");
+        assert_eq!(export.group_i18n["ja"], "ツール");
+        assert_eq!(export.note_i18n["ja"], "日本語のメモ");
+        let bundle = RepositoryBundle {
+            format: BUNDLE_FORMAT.into(),
+            schema_version: 1,
+            exported_at: String::new(),
+            repositories: vec![export],
+            repository_sources: Vec::new(),
+        };
+        let mut config = default_config();
+        service.import_bundle(&mut config, &bundle, "overwrite");
+        let export_bundle = service.export_bundle(&config, None).unwrap();
+        let restored = service.validate_bundle(&export_bundle).unwrap();
+        assert_eq!(restored.repositories[0].name_i18n["ja"], "日本語名");
+        assert_eq!(restored.repositories[0].group_i18n["ja"], "ツール");
+        assert_eq!(restored.repositories[0].note_i18n["ja"], "日本語のメモ");
+        fs::create_dir_all(&service.root).unwrap();
+        service.save(&config).unwrap();
+        let reloaded = service.load().unwrap();
+        assert_eq!(reloaded.repositories[0].name_i18n["ja"], "日本語名");
+        assert_eq!(reloaded.repositories[0].group_i18n["ja"], "ツール");
+        assert_eq!(reloaded.repositories[0].note_i18n["ja"], "日本語のメモ");
+        assert_eq!(reloaded.repositories[0].name, "中文名称");
+        fs::remove_dir_all(&service.root).unwrap();
     }
 
     #[test]

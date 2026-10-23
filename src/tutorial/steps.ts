@@ -18,6 +18,7 @@ export const tutorialLocaleOptions: Array<{ code: TutorialLocale; label: string 
   { code: 'zh-TW', label: '繁體中文' },
   { code: 'en', label: 'English' },
   { code: 'ko', label: '한국어' },
+  { code: 'ja', label: '日本語' },
 ]
 
 export const tutorialScenarioOptions: Array<{ value: TutorialScenario; label: string }> = [
@@ -130,8 +131,12 @@ export function tutorialEditorStepValues(steps: TutorialStep[]): TutorialStepCon
   }))
 }
 
+// Japanese text is optional so tutorial files written for the original four
+// languages keep importing; missing Japanese falls back to the Chinese copy.
+const requiredTutorialLocales = tutorialLocaleOptions.filter((option) => option.code !== 'ja')
+
 export function validateTutorialLanguageMaps(steps: TutorialStep[]): boolean {
-  return steps.every((step) => tutorialLocaleOptions.every((option) =>
+  return steps.every((step) => requiredTutorialLocales.every((option) =>
     !!step.title_i18n[option.code]?.trim() && !!step.description_i18n[option.code]?.trim()))
 }
 
@@ -150,10 +155,12 @@ description = "中文说明"
 "zh-TW" = "繁體中文標題"
 en = "English title"
 ko = "한국어 제목"
+ja = "日本語タイトル"
 
 [steps.description_i18n]
 "zh-CN" = "简体中文说明"
 "zh-TW" = "繁體中文說明"
 en = "English description"
 ko = "한국어 설명"
+ja = "日本語の説明"
 `

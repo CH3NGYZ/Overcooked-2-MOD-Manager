@@ -124,6 +124,8 @@ const entries: Record<string, [string, string, string, string]> = {
 
   // 侧边栏与总览
   '工作区': ['工作區', 'Workspace', '작업 공간', "ワークスペース"],
+  '收起侧边栏': ['收合側邊欄', 'Collapse sidebar', '사이드바 접기', "サイドバーを折りたたむ"],
+  '展开侧边栏': ['展開側邊欄', 'Expand sidebar', '사이드바 펼치기', "サイドバーを展開"],
   '框架安装与备份': ['框架安裝與備份', 'Framework install and backups', '프레임워크 설치 및 백업', "フレームワークのインストールとバックアップ"],
   '这里只显示当前 BepInEx/plugins 中已经安装的插件。': ['這裡只顯示目前 BepInEx/plugins 中已安裝的外掛。', 'Only plugins currently installed in BepInEx/plugins are shown here.', '현재 BepInEx/plugins에 설치된 플러그인만 표시됩니다.', "ここには現在 BepInEx/plugins にインストールされているプラグインのみ表示されます。"],
   '框架管理': ['框架管理', 'Framework management', '프레임워크 관리', "フレームワーク管理"],

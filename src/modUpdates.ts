@@ -2,6 +2,38 @@ import type { InstalledMod, ReleaseInfo, Repository } from './types'
 
 export type ModReleaseState = 'latest' | 'update_available' | 'unknown' | 'repository_unavailable'
 
+/** Progress of one MOD while the user runs "check MOD updates". */
+export type ModUpdateCheckPhase = 'idle' | 'checking' | 'pending' | 'settled'
+
+/**
+ * Every repository refreshes independently, so a MOD must not wait for the
+ * whole batch: it reports "checking" only while one of its own repositories is
+ * in flight, "pending" until all of them were attempted, then its result.
+ */
+export function modUpdateCheckPhase(options: {
+  active: boolean
+  refreshing: boolean
+  hasBoundRepositories: boolean
+  settled: boolean
+}): ModUpdateCheckPhase {
+  if (!options.active) return 'idle'
+  if (options.refreshing) return 'checking'
+  if (!options.hasBoundRepositories) return 'idle'
+  return options.settled ? 'settled' : 'pending'
+}
+
+/** Label a MOD shows once its own repositories finished this check. */
+export function liveModReleaseLabel(options: {
+  releaseStatus: '有更新' | '最新版' | ''
+  hasRepositoryError: boolean
+  settled: boolean
+}): 'update_available' | 'latest' | 'repository_unavailable' | 'unknown' | 'pending' {
+  if (options.releaseStatus === '有更新') return 'update_available'
+  if (options.releaseStatus === '最新版') return 'latest'
+  if (options.hasRepositoryError) return 'repository_unavailable'
+  return options.settled ? 'unknown' : 'pending'
+}
+
 export function hasLocalUpdateVersion(mod: InstalledMod) {
   return mod.repository_binding ? !!mod.repository_binding.tag.trim() : !!numericVersion(mod.version)
 }

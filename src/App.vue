@@ -16,7 +16,7 @@ import { repositoryMarkdownBaseUrl } from './markdown'
 import { repositoryGroup, repositoryGroupKey as repositoryStableGroupKey, repositoryName, repositoryNote } from './repositoryNames'
 import { sortInstalledModGroups } from './installedModOrdering'
 import MarkdownContent from './components/MarkdownContent.vue'
-import { hasLocalUpdateVersion, modRepositoryReleaseState } from './modUpdates'
+import { hasLocalUpdateVersion, liveModReleaseLabel, modRepositoryReleaseState, modUpdateCheckPhase } from './modUpdates'
 import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
@@ -153,8 +153,9 @@ let modalPointerDownTarget: Element | null = null
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
 const modUninstallPending = ref<ModUninstallPending | null>(null)
-const installedModsPendingCheck = ref(false)
-const installedModsChecking = ref(false)
+// True while "check MOD updates" is running. Each MOD derives its own state
+// from its bound repositories, so a finished repository reports immediately.
+const modUpdatesCheckActive = ref(false)
 const appVersion = ref('')
 const { locale, setLocale } = useLocaleTranslation()
 const localeOptions: Array<{ value: Locale; label: string }> = [
@@ -162,6 +163,7 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'zh-TW', label: '繁體中文' },
   { value: 'en', label: 'English' },
   { value: 'ko', label: '한국어' },
+  { value: 'ja', label: '日本語' },
 ]
 const repoForm = reactive<RepositoryPatch>({
   name: '', name_i18n: {}, group: '', group_i18n: {}, provider: 'gitee', username: '', repository: '', download_mode: 'release', branch: 'main', file_path: '', channel: 'all', asset_rules: [],
@@ -595,7 +597,7 @@ async function handleUiZoomWheel(event: WheelEvent) {
   // Ctrl+wheel changes only the WebView content scale.
   await setUiZoom(next, true, true)
 }
-function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
+function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR', ja: 'ja-JP' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repositoryName(repo, locale.value) }
 function localizedRepositoryNote(repo: Repository) { return repositoryNote(repo, locale.value) }
@@ -662,20 +664,35 @@ function backendModStatusCodes(mod: InstalledMod): ModStatusCode[] {
   if (!modEnabledForView(mod) && !unique.includes('disabled')) unique.push('disabled')
   return unique
 }
+function modBoundRepositoriesSettled(mod: InstalledMod) {
+  return modReleaseRepositories(mod).every((repo) => repositoryReleaseReady[repo.id] || !!repo.last_error)
+}
 function installedModStatusCodes(mod: InstalledMod): ModStatusCode[] {
   const backend = backendModStatusCodes(mod)
-  const transient = installedModsChecking.value || isModRepositoryRefreshing(mod) ? 'checking' : installedModsPendingCheck.value ? 'pending' : undefined
-  if (!transient) return backend
-  return [...backend.filter((label) => ['disabled', 'duplicate', 'duplicate_lower_version', 'load_warning'].includes(label)), transient]
+  const candidates = modReleaseRepositories(mod)
+  const phase = modUpdateCheckPhase({
+    active: modUpdatesCheckActive.value,
+    refreshing: isModRepositoryRefreshing(mod),
+    hasBoundRepositories: candidates.length > 0,
+    settled: modBoundRepositoriesSettled(mod),
+  })
+  if (phase === 'idle' || phase === 'settled') return backend
+  const offline = backend.filter((label) => ['disabled', 'duplicate', 'duplicate_lower_version', 'load_warning'].includes(label))
+  return [...offline, phase]
 }
 function installedModLabels(mod: InstalledMod) {
   const hasBackendLabels = Array.isArray(mod.labels)
-  const labels = installedModStatusCodes(mod)
-  const transient = installedModsChecking.value || isModRepositoryRefreshing(mod) ? 'checking' : installedModsPendingCheck.value ? 'pending' : undefined
-  if (!hasBackendLabels && !transient && !labels.some((code) => ['duplicate_lower_version', 'load_warning'].includes(code))) {
-    const releaseStatus = modReleaseUpdateStatus(mod)
-    if (releaseStatus === '有更新') labels.push('update_available')
-    else if (releaseStatus === '最新版') labels.push('latest')
+  let labels = installedModStatusCodes(mod)
+  const transient = labels.includes('checking') || labels.includes('pending')
+  const candidates = modReleaseRepositories(mod)
+  const liveCheck = !transient && candidates.length > 0 && (modUpdatesCheckActive.value || !hasBackendLabels)
+  if (liveCheck) {
+    labels = labels.filter((code) => !['update_available', 'latest', 'repository_unavailable', 'unknown'].includes(code))
+    labels.push(liveModReleaseLabel({
+      releaseStatus: modReleaseUpdateStatus(mod),
+      hasRepositoryError: candidates.some((repo) => !!repo.last_error),
+      settled: modBoundRepositoriesSettled(mod),
+    }))
   }
   return MOD_STATUS_ORDER.filter((code) => labels.includes(code))
 }
@@ -690,8 +707,7 @@ function installedModLabelClass(code: string) {
 }
 function installedModLabelActionable(code: string) { return code === 'update_available' || code === 'latest' }
 function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | '' {
-  if (installedModsChecking.value || installedModsPendingCheck.value
-    || ['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
+  if (['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
     || !hasLocalUpdateVersion(mod) || mod.duplicate_version || mod.load_warning || isModRepositoryRefreshing(mod)) return ''
   const candidates = modReleaseRepositories(mod)
   if (modHasRemoteUpdate(mod)) return '有更新'
@@ -1263,23 +1279,22 @@ async function refreshRepositoryBatch(repositories: Repository[], concurrency = 
 async function refreshMappedRepositories() {
   const mappedIds = new Set(installedMods.value.flatMap((mod) => Array.from(modReleaseRepositoryIds(mod))))
   const mapped = repos.value.filter((repo) => repo.enabled && repo.download_mode === 'release' && mappedIds.has(repo.id))
-  return refreshRepositoryBatch(mapped)
+  // Keep a few requests in flight so repositories finish one after another and
+  // their MODs report as soon as their own repository completed.
+  return refreshRepositoryBatch(mapped, 4)
 }
 async function refreshMappedRepositoryUpdates() {
   if (!mappedReposAvailable.value) return dashboard.value
-  installedModsPendingCheck.value = true
-  installedModsChecking.value = false
-  await nextTick()
-  installedModsPendingCheck.value = false
-  installedModsChecking.value = true
+  if (modUpdatesCheckActive.value) return dashboard.value
+  modUpdatesCheckActive.value = true
   try {
     const failures = await refreshMappedRepositories()
+    // One final snapshot makes the backend labels match the fresh caches.
     dashboard.value = await api.dashboard()
     if (failures) throw new Error(t('仓库刷新失败摘要').replace('{count}', String(failures)))
     return dashboard.value
   } finally {
-    installedModsPendingCheck.value = false
-    installedModsChecking.value = false
+    modUpdatesCheckActive.value = false
   }
 }
 type SourceLoadResult = { ok: boolean; error?: string; accessFailed?: boolean }

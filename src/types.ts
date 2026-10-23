@@ -12,7 +12,7 @@ export interface GitHubProxyConfig {
   github_api_proxies: GitHubProxy[]
   gitee_api_proxies: GitHubProxy[]
 }
-export type TutorialLocale = 'zh-CN' | 'zh-TW' | 'en' | 'ko'
+export type TutorialLocale = 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja'
 export type TutorialScenario = 'live' | 'overview' | 'framework-missing' | 'framework-channel' | 'framework-installing' | 'framework-ready' | 'framework-backup' | 'mod-management' | 'repository-loading' | 'repository-ready' | 'source-manager' | 'repository-editor' | 'repository-install' | 'release-select' | 'download-progress' | 'sponsor' | 'completion'
 
 export interface AssetRule { type: AssetRuleType; value: string }

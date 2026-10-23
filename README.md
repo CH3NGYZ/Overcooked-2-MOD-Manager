@@ -94,7 +94,7 @@ url = "https://gitee.com/example/mod-releases/raw/main/repositories-gua.toml"
 | --- | --- | --- |
 | `id` | 是 | 源的唯一标识，同一源文件中不能重复。建议使用字母、数字、点、短横线和下划线，首字符使用字母或数字。 |
 | `nickname` | 是 | 默认昵称；未配置当前语言翻译时显示此名称。 |
-| `nickname_i18n` | 否 | 多语言昵称表，支持 `zh-CN`、`zh-TW`、`en`、`ko`。 |
+| `nickname_i18n` | 否 | 多语言昵称表，支持 `zh-CN`、`zh-TW`、`en`、`ko`、`ja`。 |
 | `url` | 是 | 完整 HTTP(S) 直链，或相对于当前源所在仓库的文件路径。 |
 | `region` | 否 | `chinese_mainland` 仅中国大陆，`international` 仅非中国大陆；省略时对所有地区显示。 |
 | `builtin` | 否 | 子源是否继承父源的内置保护，普通自定义源通常省略。使用布尔值 `true` / `false`。 |
@@ -392,6 +392,7 @@ name_i18n = { "zh-CN" = "主机实用 MOD", "zh-TW" = "主機實用 MOD", "en" =
 - `zh-TW`：繁體中文
 - `en`：English
 - `ko`：한국어
+- `ja`：日本語
 
 当前语言没有对应翻译时，管理器会回退到 `name`。
 

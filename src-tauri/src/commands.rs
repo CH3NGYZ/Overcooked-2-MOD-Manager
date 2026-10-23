@@ -631,7 +631,7 @@ pub fn get_install_language() -> Option<String> {
     let path = crate::user_paths::root().ok()?.join("install-language.txt");
     let value = fs::read_to_string(path).ok()?.trim().to_string();
     match value.as_str() {
-        "zh-CN" | "zh-TW" | "en" | "ko" => Some(value),
+        "zh-CN" | "zh-TW" | "en" | "ko" | "ja" => Some(value),
         _ => None,
     }
 }
@@ -1266,14 +1266,14 @@ pub fn save_settings(
                 step.title = step.title.trim().to_string();
                 step.description = step.description.trim().to_string();
                 step.title_i18n.retain(|locale, text| {
-                    matches!(locale.as_str(), "zh-CN" | "zh-TW" | "en" | "ko")
+                    matches!(locale.as_str(), "zh-CN" | "zh-TW" | "en" | "ko" | "ja")
                         && !text.trim().is_empty()
                 });
                 for text in step.title_i18n.values_mut() {
                     *text = text.trim().to_string();
                 }
                 step.description_i18n.retain(|locale, text| {
-                    matches!(locale.as_str(), "zh-CN" | "zh-TW" | "en" | "ko")
+                    matches!(locale.as_str(), "zh-CN" | "zh-TW" | "en" | "ko" | "ja")
                         && !text.trim().is_empty()
                 });
                 for text in step.description_i18n.values_mut() {

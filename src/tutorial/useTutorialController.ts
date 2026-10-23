@@ -660,12 +660,14 @@ export function useTutorialController(host: TutorialHost) {
         'zh-TW': '',
         en: '',
         ko: '',
+        ja: '',
       },
       description_i18n: {
         'zh-CN': '填写这个界面区域的说明。',
         'zh-TW': '',
         en: '',
         ko: '',
+        ja: '',
       },
     })
   }

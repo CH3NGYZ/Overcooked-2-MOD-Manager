@@ -41,6 +41,26 @@ test('repository group and note use current locale then Chinese only', () => {
   assert.equal(repositoryNote({ note: 'Raw note' }, 'ko'), '')
 })
 
+test('repository name, group, and note prefer the ja translation and fall back to Chinese', () => {
+  const japanese = {
+    name_i18n: { 'zh-CN': '中文名称', ja: '日本語の名前' },
+    group_i18n: { 'zh-CN': '中文分组', ja: 'ツール' },
+    note_i18n: { 'zh-CN': '中文备注', ja: '日本語のメモ' },
+  }
+  assert.equal(repositoryName(japanese, 'ja'), '日本語の名前')
+  assert.equal(repositoryGroup(japanese, 'ja'), 'ツール')
+  assert.equal(repositoryNote(japanese, 'ja'), '日本語のメモ')
+  const chineseOnly = {
+    name_i18n: { 'zh-CN': '中文名称' },
+    group_i18n: { 'zh-CN': '中文分组' },
+    note_i18n: { 'zh-CN': '中文备注' },
+  }
+  assert.equal(repositoryName(chineseOnly, 'ja'), '中文名称')
+  assert.equal(repositoryGroup(chineseOnly, 'ja'), '中文分组')
+  assert.equal(repositoryNote(chineseOnly, 'ja'), '中文备注')
+  assert.equal(repositoryName({ name_i18n: { ja: ' ' } }, 'ja'), '')
+})
+
 test('repository source names fall back to Chinese before the raw nickname', () => {
   assert.equal(repositorySourceName({ nickname: 'Raw nickname', nickname_i18n: { en: 'English', 'zh-CN': '中文' } }, 'en'), 'English')
   assert.equal(repositorySourceName({ nickname: 'Raw nickname', nickname_i18n: { 'zh-CN': ' 中文 ' } }, 'ko'), '中文')

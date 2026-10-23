@@ -85,6 +85,41 @@ test('group key stays zh-CN stable while label uses current locale fallback', ()
   assert.equal(repositoryStableGroupKey(repositories[0]), repositoryStableGroupKey(repositories[1]))
 })
 
+test('Japanese locale reads ja name, group, and note while the group key stays zh-CN', () => {
+  locale.value = 'ja'
+  const japanese = repo('japanese', {
+    name_i18n: { 'zh-CN': '中文名称', ja: '日本語の名前' },
+    group_i18n: { 'zh-CN': '工具', ja: 'ツール' },
+    note_i18n: { 'zh-CN': '中文备注', ja: '日本語のメモ' },
+  })
+  const chineseOnly = repo('chinese-only', {
+    name_i18n: { 'zh-CN': '仅有中文' },
+    group_i18n: { 'zh-CN': '工具' },
+    note_i18n: { 'zh-CN': '中文备注' },
+  })
+  assert.equal(localizedRepositoryName(japanese), '日本語の名前')
+  assert.equal(localizedRepositoryNote(japanese), '日本語のメモ')
+  const groups = groupedRepositories([japanese, chineseOnly])
+  assert.deepEqual(groups.map(({ key, label }) => [key, label]), [['工具', 'ツール']])
+  assert.equal(repositoryStableGroupKey(japanese), '工具')
+  assert.equal(repositoryStableGroupKey(chineseOnly), '工具')
+
+  // Editing under the Japanese UI writes the ja translation, not another key.
+  editRepo(editableRepository({
+    name_i18n: { 'zh-CN': '中文名称' },
+    group_i18n: { 'zh-CN': '工具' },
+    note_i18n: { 'zh-CN': '' },
+  }))
+  updateRepositoryTranslation('name', { target: { value: '日本語名' } })
+  updateRepositoryTranslation('group', { target: { value: 'ツール' } })
+  updateRepositoryTranslation('note', { target: { value: '日本語のメモ' } })
+  assert.equal(repoForm.name_i18n.ja, '日本語名')
+  assert.equal(repoForm.group_i18n.ja, 'ツール')
+  assert.equal(repoForm.note_i18n.ja, '日本語のメモ')
+  assert.equal(repoForm.name_i18n['zh-CN'], '中文名称')
+  assert.equal(repoForm.group_i18n['zh-CN'], '工具')
+})
+
 test('repository display helpers use current locale then zh-CN without raw fallbacks', () => {
   locale.value = 'en'
   const repository = repo('display', {

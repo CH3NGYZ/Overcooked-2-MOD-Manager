@@ -166,22 +166,26 @@ test('actual MOD status navigation expands and highlights the official descendan
   const { outputText } = ts.transpileModule(`
     import { communityNavigationTargets } from '${catalogueUrl}'
     export function navigate(host, mod) {
-      const { installedModStatus, visibleInstalledMods, modReleaseUpdateStatus, modReleaseRepositories,
+      const MOD_STATUS_TEXT = { update_available: '有更新', latest: '最新版' }
+      const { installedModLabels, installedModLabelActionable, visibleInstalledMods, modReleaseUpdateStatus, modReleaseRepositories,
         modReleaseRepositoryIds, modRepositoryVersionReady, modRepositoryReleaseState, repos, config,
         communities, repositoryGroupCollapsed, repositoryGroupKey, sourceCollapsed, sourceGroups,
         repositoryFocusIds, activeView } = host
       ${source}
-      openModRepository(mod)
+      openModRepository(mod, mod.labels?.includes('update_available') ? 'update_available' : undefined)
     }`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
   const { navigate } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
   for (const provider of ['github', 'gitee']) {
     for (const status of ['最新版', '有更新']) {
       const hidden = repository('installed-community', { provider, source_id: catalogue.communitySourceId(provider) })
       const official = { ...hidden, id: 'official-mod', source_id: 'official-leaf', builtin: false }
-      const mod = installed('v1.0.0')
+      const mod = installed('v1.0.0', { labels: status === '有更新' ? ['disabled', 'update_available'] : ['latest'] })
       const group = (id, repositories, children = []) => ({ source: { id }, groups: [{ key: 'mods', repositories }], children })
       const host = {
-        installedModStatus: () => status, modReleaseUpdateStatus: () => status,
+        installedModLabels: (item) => item.labels || [status === '有更新' ? 'update_available' : 'latest'],
+        installedModLabelText: (label) => label === 'update_available' ? '有更新' : '最新版',
+        installedModLabelActionable: (label) => ['update_available', 'latest'].includes(label),
+        modReleaseUpdateStatus: () => status,
         modReleaseRepositories: () => [hidden], modReleaseRepositoryIds: () => new Set([hidden.id]),
         modRepositoryVersionReady: () => true, modRepositoryReleaseState: () => status === '有更新' ? 'update_available' : 'latest',
         repos: ref([official, hidden]), config: ref({ repository_sources: officialSourceTree() }),

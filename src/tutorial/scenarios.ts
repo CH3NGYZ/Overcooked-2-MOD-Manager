@@ -6,7 +6,7 @@ import type {
   TutorialScenario,
   TutorialRepositoryConfig,
 } from '../types'
-import { repositoryName } from '../repositoryNames'
+import { repositoryGroup, repositoryName } from '../repositoryNames'
 
 export type TutorialTranslate = (source: string) => string
 
@@ -25,6 +25,7 @@ export function tutorialRepository(
   const tag = `v${version}`
   const host = repository.provider === 'github' ? 'github.com' : 'gitee.com'
   const homepage = `https://${host}/${encodeURIComponent(repository.username)}/${encodeURIComponent(repository.repository)}`
+  const releaseName = repositoryName(repository, language)
   return {
     ...repository,
     id,
@@ -33,7 +34,7 @@ export function tutorialRepository(
     cached_releases: [{
       tag_name: tag,
       version,
-      name: `${repositoryName(repository, language)} ${tag}`,
+      name: releaseName ? `${releaseName} ${tag}` : tag,
       body: translate('教程示例 Release'),
       published_at: '2026-01-02T00:00:00Z',
       prerelease: false,
@@ -109,7 +110,7 @@ export function createTutorialDashboard(
   }
   const childSource: RepositorySource = {
     id: childSourceId,
-    nickname: configManager?.group || (configManager ? repositoryName(configManager, language) : ''),
+    nickname: configManager ? repositoryGroup(configManager, language) || repositoryName(configManager, language) : '',
     nickname_i18n: configManager?.group_i18n,
     url: bundledSource?.url || 'repositories-azhe-hostutilities.toml',
     parent_id: sourceId,

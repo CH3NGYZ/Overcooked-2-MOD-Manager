@@ -367,9 +367,12 @@ pub(crate) fn repository_from_coordinates(
         Provider::Gitee => "gitee-community",
     };
     let id = format!("{prefix}-{:x}", Sha256::digest(identity.as_bytes()));
+    let display_name = format!("{owner}/{name}");
     serde_json::from_value(serde_json::json!({
-        "id": id, "name": format!("{owner}/{name}"), "provider": provider, "username": owner,
+        "id": id, "name": display_name, "name_i18n": {"zh-CN": display_name},
+        "provider": provider, "username": owner,
         "repository": name, "branch": branch, "note": note,
+        "group_i18n": {"zh-CN": ""}, "note_i18n": {"zh-CN": note},
         "region": (*provider == Provider::Gitee).then_some(crate::config::REGION_CHINESE_MAINLAND),
         "source_id": source_id(provider), "install_target": "BepInEx/plugins", "channel": "all",
         "asset_rules": [{"type": "regex", "value": "^.+\\.(?:[dD][lL][lL]|[zZ][iI][pP])$"}],

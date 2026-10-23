@@ -1,7 +1,8 @@
 use crate::archive::{self, InstallManifest};
 use crate::game::read_file_metadata;
 use crate::models::{
-    AppConfig, Channel, InstalledMod, RepositoryBinding, RepositoryConfig, RepositoryDownloadMode,
+    AppConfig, Channel, InstalledMod, InstalledModStatusLabel, RepositoryBinding, RepositoryConfig,
+    RepositoryDownloadMode,
 };
 use regex::Regex;
 use std::cmp::Ordering;
@@ -63,6 +64,7 @@ pub fn scan_mods_with_manifests(
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
     mark_duplicate_guids(&mut installed);
+    refresh_status_labels(&mut installed);
     let packages = installed
         .iter()
         .filter_map(|item| item.package_id.as_ref())
@@ -299,6 +301,7 @@ fn inspect_dll(
         version: installed_version,
         version_source: version_source.into(),
         update_available,
+        labels: Vec::new(),
         duplicate_guid: false,
         duplicate_version: false,
         load_warning: None,
@@ -599,6 +602,41 @@ fn read_serialized_string<'a>(bytes: &'a [u8], offset: &mut usize) -> Option<&'a
     Some(value)
 }
 
+fn refresh_status_labels(mods: &mut [InstalledMod]) {
+    for item in mods {
+        let mut labels = Vec::new();
+        if item.status == "duplicate_lower_version" {
+            labels.push(InstalledModStatusLabel::DuplicateLowerVersion);
+        } else if item.update_available {
+            labels.push(InstalledModStatusLabel::UpdateAvailable);
+        } else {
+            match item.status.as_str() {
+                "latest" => labels.push(InstalledModStatusLabel::Latest),
+                "not_release_asset" => labels.push(InstalledModStatusLabel::NotReleaseAsset),
+                "unbound" => labels.push(InstalledModStatusLabel::Unbound),
+                "bound_repository_missing" => {
+                    labels.push(InstalledModStatusLabel::BoundRepositoryMissing)
+                }
+                "repository_unavailable" => {
+                    labels.push(InstalledModStatusLabel::RepositoryUnavailable)
+                }
+                "unknown" => labels.push(InstalledModStatusLabel::Unknown),
+                _ => {}
+            }
+        }
+        if item.duplicate_guid && item.status != "duplicate_lower_version" {
+            labels.push(InstalledModStatusLabel::Duplicate);
+        }
+        if item.load_warning.is_some() && item.status != "duplicate_lower_version" {
+            labels.push(InstalledModStatusLabel::LoadWarning);
+        }
+        if !item.enabled {
+            labels.push(InstalledModStatusLabel::Disabled);
+        }
+        item.labels = labels;
+    }
+}
+
 fn note_key_for_values(guid: Option<&str>, product_name: Option<&str>, dll_file: &str) -> String {
     if let Some(guid) = guid.filter(|value| !value.is_empty()) {
         return format!("guid:{}", guid.to_ascii_lowercase());
@@ -782,6 +820,30 @@ mod tests {
             "update_available": super::compare_mod_versions(online_version, version) == Some(std::cmp::Ordering::Greater),
             "duplicate_guid": false, "status": "latest"
         })).unwrap()
+    }
+
+    #[test]
+    fn disabled_mod_keeps_update_label_and_legacy_json_defaults_labels() {
+        let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
+            "repository_id": "configuration-manager", "repository_ids": ["configuration-manager"],
+            "name": "Configuration Manager", "dll_file": "BepInEx/plugins/ConfigurationManager.dll",
+            "enabled": false, "version": "18.3", "version_source": "BepInPlugin",
+            "update_available": true, "duplicate_guid": false, "status": "update_available"
+        }))
+        .unwrap();
+        assert!(item.labels.is_empty());
+        super::refresh_status_labels(std::slice::from_mut(&mut item));
+        assert_eq!(
+            item.labels,
+            [
+                crate::models::InstalledModStatusLabel::UpdateAvailable,
+                crate::models::InstalledModStatusLabel::Disabled
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&item).unwrap()["labels"],
+            serde_json::json!(["update_available", "disabled"])
+        );
     }
 
     #[test]
@@ -1565,6 +1627,7 @@ mod tests {
                 version: Some("1.0.0".into()),
                 version_source: "BepInPlugin".into(),
                 update_available: false,
+                labels: Vec::new(),
                 duplicate_guid: false,
                 duplicate_version: false,
                 load_warning: None,
@@ -1593,6 +1656,7 @@ mod tests {
                 version: Some("2.0.0".into()),
                 version_source: "BepInPlugin".into(),
                 update_available: false,
+                labels: Vec::new(),
                 duplicate_guid: false,
                 duplicate_version: false,
                 load_warning: None,

@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { FileText, RefreshCw, X } from 'lucide-vue-next'
 import { locale, t } from '../i18n'
 import { repositoryMarkdownBaseUrl } from '../markdown'
-import { repositoryName } from '../repositoryNames'
+import { repositoryName, repositoryNote } from '../repositoryNames'
 import MarkdownContent from './MarkdownContent.vue'
 import { api } from '../services/tauri'
 import { trapModalFocus } from '../composables/modalFocus'
@@ -17,7 +17,7 @@ const error = ref('')
 const dialog = ref<HTMLElement | null>(null)
 const backdropPressed = ref(false)
 const content = computed(() => props.target?.kind === 'note'
-  ? props.target.repository.note_i18n?.[locale.value] || props.target.repository.note
+  ? repositoryNote(props.target.repository, locale.value)
   : document.value?.content ?? '')
 const baseUrl = computed(() => props.target?.kind === 'readme'
   ? document.value?.url : props.target ? repositoryMarkdownBaseUrl(props.target.repository) : undefined)

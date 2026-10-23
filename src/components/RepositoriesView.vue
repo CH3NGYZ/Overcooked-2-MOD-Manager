@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, toRefs, type PropType } from 'vue'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Download, ExternalLink, Globe, Pencil, Plus, RefreshCw, Search, Trash2, Upload,
+  AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Download, ExternalLink, FileText, Globe, Pencil, Plus, RefreshCw, Trash2, Upload,
 } from 'lucide-vue-next'
 import { localizedRepositorySourceName, t } from '../i18n'
 import type { RepositorySource } from '../types'
@@ -340,11 +340,12 @@ const emit = defineEmits<{
                                         t(repositoryInstallStatus(repo)) }}</span>
                                   </div>
                                   <RepositoryDescription :repository="repo" :note="localizedRepositoryNote(repo)" :community="isCommunityRepository(repo)"
-                                    @note="emit('show-repository-note', repo)" @readme="emit('show-repository-readme', repo)" />
+                                    @note="emit('show-repository-note', repo)" />
                                 </div>
                                 <div class="repo-controls">
-                                  <div v-if="repo.download_mode === 'release'" class="repo-release"><b>{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b><span>{{ latest(repo) ?
-                                    formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></div>
+                                  <button v-if="repo.download_mode === 'release'" type="button" class="repo-release"
+                                    :title="t('查看 Release 日志')" :disabled="!latest(repo)" @click="$emit('show-release', repo)"><b>{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b><span>{{ latest(repo) ?
+                                      formatDate(latest(repo)?.published_at) : t('待刷新') }}</span></button>
                                   <button class="primary-button small-button" :title="t('下载并安装')"
                                     :disabled="gameBlocked || !!repositoryRefreshing[repo.id] || (repo.download_mode === 'repository_file' && (!repo.branch?.trim() || !repo.file_path?.trim())) || !!busy"
                                     @click="installRepo(repo)">
@@ -354,9 +355,9 @@ const emit = defineEmits<{
                                     <button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('刷新 Release')"
                                       :disabled="!!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
                                       <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
-                                    </button><button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('查看 Release 日志')"
-                                      :disabled="!latest(repo)" @click="$emit('show-release', repo)">
-                                      <Search :size="14" />
+                                    </button><button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('查看仓库自述文件')"
+                                      @click="$emit('show-repository-readme', repo)">
+                                      <FileText :size="14" />
                                     </button><button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('打开发布页')"
                                       :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(`https://${repo.provider === 'github' ? 'github.com' : 'gitee.com'}/${encodeURIComponent(repo.username)}/${encodeURIComponent(repo.repository)}/releases`)">
                                       <ExternalLink :size="14" />

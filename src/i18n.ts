@@ -316,7 +316,7 @@ const entries: Record<string, [string, string, string, string]> = {
   '打开发布页': ['開啟發布頁', 'Open release page', '릴리스 페이지 열기', "リリースページを開く"],
   '查看 MOD 简介': ['查看 MOD 簡介', 'View MOD description', 'MOD 설명 보기', "MOD の説明を表示"],
   'MOD 简介': ['MOD 簡介', 'MOD description', 'MOD 설명', "MOD の説明"],
-  '查看仓库说明': ['查看倉庫說明', 'View repository README', '저장소 README 보기', "リポジトリの説明を表示"],
+  '查看仓库自述文件': ['查看倉庫自述檔', 'View repository README', '저장소 README 보기', "リポジトリの README を表示"],
   '仓库说明（README.md）': ['倉庫說明（README.md）', 'Repository README.md', '저장소 README.md', "リポジトリの説明（README.md）"],
   '重新读取仓库说明': ['重新讀取倉庫說明', 'Reload repository README', '저장소 README 다시 불러오기', "リポジトリの説明を再読み込み"],
   '正在读取仓库说明': ['正在讀取倉庫說明', 'Loading repository README', '저장소 README 불러오는 중', "リポジトリの説明を読み込み中"],

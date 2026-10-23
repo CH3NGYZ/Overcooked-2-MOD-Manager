@@ -7,7 +7,7 @@ import { repositoryMarkdownBaseUrl } from '../markdown'
 import type { Repository } from '../types'
 
 const props = defineProps<{ repository: Repository; note: string; community: boolean }>()
-const emit = defineEmits<{ note: []; readme: [] }>()
+const emit = defineEmits<{ note: [] }>()
 // Cards show at most seven lines; only taller notes get the detail button.
 const NOTE_MAX_LINES = 7
 const measurement = ref<HTMLElement | null>(null)
@@ -50,7 +50,6 @@ onUnmounted(() => observer?.disconnect())
       <button v-if="!community && note && long" class="repo-note-button" @click="emit('note')">
         <FileText :size="13" />{{ t('查看 MOD 简介') }}
       </button>
-      <button class="repo-note-button" @click="emit('readme')"><FileText :size="13" />{{ t('查看仓库说明') }}</button>
     </div>
   </div>
 </template>

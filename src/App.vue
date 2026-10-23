@@ -156,6 +156,11 @@ const modUninstallPending = ref<ModUninstallPending | null>(null)
 // True while "check MOD updates" is running. Each MOD derives its own state
 // from its bound repositories, so a finished repository reports immediately.
 const modUpdatesCheckActive = ref(false)
+// Sidebar collapse is layout state, so the shell owns it: the background image
+// and the content gutter follow the same width as the rail.
+const SIDEBAR_COLLAPSE_KEY = 'oc2-sidebar-collapsed'
+const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1')
+watch(sidebarCollapsed, (value) => localStorage.setItem(SIDEBAR_COLLAPSE_KEY, value ? '1' : '0'))
 const appVersion = ref('')
 const { locale, setLocale } = useLocaleTranslation()
 const localeOptions: Array<{ value: Locale; label: string }> = [
@@ -2259,7 +2264,7 @@ onUnmounted(() => {
 <template>
   <ConfirmationDialog :request="confirmation" @answer="answerConfirmation" />
   <RepositoryDocumentDialog :target="repositoryDocument" @close="repositoryDocument = null" />
-  <div :class="['app-shell', { 'tutorial-layer-active': tutorial.visible.value }]">
+  <div :class="['app-shell', { 'tutorial-layer-active': tutorial.visible.value, 'sidebar-rail': sidebarCollapsed }]">
     <div v-if="startupUpdateChecking || updateCheckFailed" class="startup-overlay">
       <div v-if="startupUpdateChecking && !updateSkipped" class="startup-card">
         <div class="startup-spinner"></div>
@@ -2305,7 +2310,8 @@ onUnmounted(() => {
     </div>
     <TutorialExperience :controller="tutorial" :nav-items="navItems" />
     <AppSidebar :nav-items="navItems" :active-view="activeView" :game="game" :app-version="appVersion"
-      :app-icon="appIcon" @change-view="activeView = $event" />
+      :app-icon="appIcon" :collapsed="sidebarCollapsed" @change-view="activeView = $event"
+      @toggle="sidebarCollapsed = !sidebarCollapsed" />
     <main class="main-area">
       <div class="main-fixed">
         <header class="topbar">
@@ -2451,10 +2457,8 @@ onUnmounted(() => {
         :latest="latest"
         :format-date="formatDate"
         :install-repo="installRepo"
-        :refresh-repo="refreshRepo"
         :refresh-all-repositories="refreshAllRepositories"
         :refresh-source="refreshSource"
-        :api="api"
         :edit-repo="editRepo"
         :delete-repo="deleteRepo"
         :repos="repos"

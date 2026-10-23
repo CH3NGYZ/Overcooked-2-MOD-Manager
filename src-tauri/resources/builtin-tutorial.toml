@@ -332,7 +332,7 @@ description_i18n = { "zh-CN" = "仓库按父源、子源和分类组织；标题
 
 [[steps]]
 id = "install-button"
-selector = "#app > div > main > div.main-scroll > section > div.repository-list > div > div.source-repository-panel.source-content > div:nth-child(1) > div > div > div > div > div > div.repo-controls > button"
+selector = "#app > div > main > div.main-scroll > section > div.repository-list > div > div.source-repository-panel.source-content > div:nth-child(1) > div > div > div > div > div > div.repo-controls > button.primary-button"
 view = "repositories"
 scenario = "repository-ready"
 title = "下载并安装"

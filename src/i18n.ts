@@ -315,7 +315,6 @@ const entries: Record<string, [string, string, string, string]> = {
 
   // MOD 安装与仓库
   '总仓库': ['總倉庫', 'Total repositories', '전체 저장소', "リポジトリ総数"],
-  '打开发布页': ['開啟發布頁', 'Open release page', '릴리스 페이지 열기', "リリースページを開く"],
   '查看 MOD 简介': ['查看 MOD 簡介', 'View MOD description', 'MOD 설명 보기', "MOD の説明を表示"],
   'MOD 简介': ['MOD 簡介', 'MOD description', 'MOD 설명', "MOD の説明"],
   '查看仓库自述文件': ['查看倉庫自述檔', 'View repository README', '저장소 README 보기', "リポジトリの README を表示"],
@@ -377,7 +376,6 @@ const entries: Record<string, [string, string, string, string]> = {
   '留空按 ZIP 结构安装': ['留空則按 ZIP 結構安裝', 'Leave blank to install by ZIP structure', '비워 두면 ZIP 구조로 설치', "空欄の場合は ZIP の構成に従ってインストール"],
   '仓库备注': ['倉庫備註', 'Repository notes', '저장소 메모', "リポジトリのメモ"],
   '可选，多行备注': ['可選，多行備註', 'Optional multiline notes', '선택적 여러 줄 메모', "任意、複数行のメモ"],
-  '刷新 Release': ['重新整理 Release', 'Refresh release', 'Release 새로 고침', "Release を更新"],
   '下载并安装': ['下載並安裝', 'Download & Install', '다운로드 및 설치', "ダウンロードしてインストール"],
   '仓库已保存并刷新': ['倉庫已儲存並重新整理', 'Repository saved and refreshed', '저장소를 저장하고 새로 고쳤습니다', "リポジトリを保存して更新しました"],
   '仓库已保存': ['倉庫已儲存', 'Repository saved', '저장소를 저장했습니다', "リポジトリを保存しました"],

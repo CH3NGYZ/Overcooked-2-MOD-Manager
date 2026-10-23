@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, type Component } from 'vue'
+import { computed, type Component } from 'vue'
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import type { GameInfo } from '../types'
 import { t } from '../i18n'
@@ -12,19 +12,14 @@ const props = defineProps<{
   game?: GameInfo
   appVersion: string
   appIcon: string
+  collapsed: boolean
 }>()
 
-const emit = defineEmits<{ 'change-view': [view: View] }>()
+const emit = defineEmits<{ 'change-view': [view: View]; toggle: [] }>()
 const navigationGroups = computed(() => [
   { id: 'workspace', label: '工作区', items: props.navItems.filter((item) => item.id !== 'sponsor') },
   { id: 'bottom', label: '赞助渠道', items: props.navItems.filter((item) => item.id === 'sponsor') },
 ])
-
-// The collapsed rail keeps the workspace heading, the icons and the status dot;
-// every text label (game state, version, nav hints) is hidden.
-const COLLAPSE_STORAGE_KEY = 'oc2-sidebar-collapsed'
-const collapsed = ref(localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1')
-watch(collapsed, (value) => localStorage.setItem(COLLAPSE_STORAGE_KEY, value ? '1' : '0'))
 </script>
 
 <template>
@@ -33,7 +28,7 @@ watch(collapsed, (value) => localStorage.setItem(COLLAPSE_STORAGE_KEY, value ? '
       <div class="brand-mark"><img :src="appIcon" alt="" /></div>
       <div class="brand-text"><strong>{{ t('OC2 模组管理器') }}</strong></div>
       <button type="button" class="sidebar-toggle" :title="t(collapsed ? '展开侧边栏' : '收起侧边栏')"
-        :aria-label="t(collapsed ? '展开侧边栏' : '收起侧边栏')" :aria-expanded="!collapsed" @click="collapsed = !collapsed">
+        :aria-label="t(collapsed ? '展开侧边栏' : '收起侧边栏')" :aria-expanded="!collapsed" @click="emit('toggle')">
         <ChevronRight v-if="collapsed" :size="15" />
         <ChevronLeft v-else :size="15" />
       </button>

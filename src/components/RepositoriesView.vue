@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, toRefs, type PropType } from 'vue'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Download, ExternalLink, FileText, Globe, Pencil, Plus, RefreshCw, Trash2, Upload,
+  AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Download, FileText, Globe, Pencil, Plus, RefreshCw, Trash2, Upload,
 } from 'lucide-vue-next'
 import { localizedRepositorySourceName, t } from '../i18n'
 import type { RepositorySource } from '../types'
@@ -19,13 +19,13 @@ const props = defineProps({
   toggleSource: null, flattenSourceGroups: null, repositoryGroupCollapsed: null, repositoryGroupKey: null,
   toggleRepositoryGroup: null, localizedRepositoryName: null, localizedRepositoryNote: null,
   repositoryInstallStatus: null, openRepositoryMods: null, latest: null,
-  formatDate: null, installRepo: null, refreshRepo: null, refreshAllRepositories: null,
-  refreshSource: null, api: null, editRepo: null, deleteRepo: null, repos: null,
+  formatDate: null, installRepo: null, refreshAllRepositories: null,
+  refreshSource: null, editRepo: null, deleteRepo: null, repos: null,
   openRepositorySourceManager: null, exportRepositories: null, sourceGroups: null,
   repositorySourceRegionLabel: null,
 })
 const dynamicProps = props as Record<string, any>
-const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryInstallStatus, latest, formatDate, installRepo, refreshRepo, refreshAllRepositories, refreshSource, api, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
+const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryInstallStatus, latest, formatDate, installRepo, refreshAllRepositories, refreshSource, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
 const showRepositoryEmptyState = computed(() => !repos.value.length
   && !props.communities.some((discovery) => discovery.started.value)
   && !repositoryRefreshBatchActive.value
@@ -352,15 +352,9 @@ const emit = defineEmits<{
                                     <Download :size="14" />{{ t('下载并安装') }}
                                   </button>
                                   <div class="row-actions">
-                                    <button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('刷新 Release')"
-                                      :disabled="!!repositoryRefreshing[repo.id]" @click="refreshRepo(repo)">
-                                      <RefreshCw :size="14" :class="{ 'spin-icon': repositoryRefreshing[repo.id] }" />
-                                    </button><button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('查看仓库自述文件')"
+                                    <button class="icon-button small" :title="t('查看仓库自述文件')"
                                       @click="$emit('show-repository-readme', repo)">
                                       <FileText :size="14" />
-                                    </button><button v-if="repo.download_mode === 'release'" class="icon-button small" :title="t('打开发布页')"
-                                      :disabled="!!repositoryRefreshing[repo.id]" @click="api.openReleasePage(`https://${repo.provider === 'github' ? 'github.com' : 'gitee.com'}/${encodeURIComponent(repo.username)}/${encodeURIComponent(repo.repository)}/releases`)">
-                                      <ExternalLink :size="14" />
                                     </button><button v-if="!isCommunityRepository(repo)" class="icon-button small" :title="t('编辑仓库')" @click="editRepo(repo)">
                                       <Pencil :size="14" />
                                     </button><button v-if="!isCommunityRepository(repo)" class="icon-button small danger-icon" :title="t('删除仓库')"

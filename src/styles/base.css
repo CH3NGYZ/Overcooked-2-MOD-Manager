@@ -74,15 +74,22 @@ button:disabled {
   isolation: isolate;
   transform: scale(var(--ui-zoom));
   transform-origin: top left;
+  /* Current rail width; the backdrop and content gutter follow it so collapsing
+     the sidebar never leaves the background image stranded. */
+  --sidebar-active-width: var(--sidebar-width);
+}
+.app-shell.sidebar-rail {
+  --sidebar-active-width: var(--sidebar-collapsed-width);
 }
 .app-shell::after {
   content: '';
   position: absolute;
   z-index: -1;
   top: 0;
-  left: var(--sidebar-width);
-  width: calc(100% - var(--sidebar-width));
+  left: var(--sidebar-active-width);
+  width: calc(100% - var(--sidebar-active-width));
   height: 100%;
+  transition: left .16s ease, width .16s ease;
   background: linear-gradient(
       to bottom,
       rgba(8, 14, 18, 0.38) 0%,

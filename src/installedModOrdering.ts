@@ -1,22 +1,37 @@
-// Checking states sort above settled results: a MOD that is being checked is
-// shown first, then update/latest and the remaining states.
-const UNKNOWN_PRIORITY = 5
-
-const STATUS_PRIORITY: Record<string, number> = {
+// Sort tiers for the installed MOD list. Lower numbers are more urgent:
+//   0  checking / pending (transient, already being resolved)
+//   1  update available, enabled
+//   2  update available but disabled — still needs the user's attention
+//   3  latest, enabled
+//   4  repository-file (Raw) assets, updates cannot be checked
+//   5  no repository bound
+//   6  refresh failed / version information insufficient
+//   7  cleanup warnings while enabled (duplicates, higher local version)
+//   8  latest but disabled, or disabled without another state
+//   9  duplicate and disabled
+//  10  a higher local version exists and the MOD is disabled
+const TIER = {
   checking: 0,
-  '检查中': 0,
-  pending: 0,
-  '待检查': 0,
-  update_available: 1,
-  '有更新': 1,
-  latest: 2,
-  '最新版': 2,
-  not_release_asset: 3,
-  '不是 Release 资产, 无法检测更新': 3,
-  unbound: 4,
-  '未绑定在线仓库，无法检测更新': 4,
-  disabled: 6,
-  '已禁用': 6,
+  updateEnabled: 1,
+  updateDisabled: 2,
+  latestEnabled: 3,
+  rawAsset: 4,
+  unbound: 5,
+  unknown: 6,
+  cleanupEnabled: 7,
+  latestDisabled: 8,
+  duplicateDisabled: 9,
+  lowerVersionDisabled: 10,
+} as const
+
+const LEGACY_CODES: Record<string, string> = {
+  '检查中': 'checking',
+  '待检查': 'pending',
+  '有更新': 'update_available',
+  '最新版': 'latest',
+  '不是 Release 资产, 无法检测更新': 'not_release_asset',
+  '未绑定在线仓库，无法检测更新': 'unbound',
+  '已禁用': 'disabled',
 }
 
 // Badge order inside one MOD row and its package heading.
@@ -26,13 +41,30 @@ export const installedModStatusOrder: readonly string[] = [
   'duplicate', 'load_warning', 'disabled',
 ]
 
+function statusCodes(status: string | readonly string[]): Set<string> {
+  const list = Array.isArray(status) ? status : [status]
+  const codes = new Set<string>()
+  for (const item of list) codes.add(LEGACY_CODES[item as string] ?? (item as string))
+  return codes
+}
+
 export function installedModStatusPriority(status: string | readonly string[]): number {
-  if (Array.isArray(status)) {
-    return status.length
-      ? status.reduce((priority, code) => Math.min(priority, STATUS_PRIORITY[code] ?? UNKNOWN_PRIORITY), 6)
-      : UNKNOWN_PRIORITY
+  const codes = statusCodes(status)
+  if (codes.has('checking') || codes.has('pending')) return TIER.checking
+  const disabled = codes.has('disabled')
+  if (codes.has('update_available')) return disabled ? TIER.updateDisabled : TIER.updateEnabled
+  if (disabled) {
+    if (codes.has('duplicate_lower_version') || codes.has('load_warning')) return TIER.lowerVersionDisabled
+    if (codes.has('duplicate')) return TIER.duplicateDisabled
+    return TIER.latestDisabled
   }
-  return STATUS_PRIORITY[status as string] ?? UNKNOWN_PRIORITY
+  if (codes.has('latest')) return TIER.latestEnabled
+  if (codes.has('not_release_asset')) return TIER.rawAsset
+  if (codes.has('unbound') || codes.has('bound_repository_missing')) return TIER.unbound
+  if (codes.has('duplicate_lower_version') || codes.has('duplicate') || codes.has('load_warning')) {
+    return TIER.cleanupEnabled
+  }
+  return TIER.unknown
 }
 
 type ModGroup<T> = {

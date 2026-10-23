@@ -36,7 +36,7 @@ test('checking MODs sort above update, latest, raw, unbound and disabled', () =>
     '最新版',
     '有更新',
   ]
-  assert.deepEqual(statuses.map(installedModStatusPriority).sort((left, right) => left - right), [0, 1, 2, 3, 4, 6])
+  assert.deepEqual(statuses.map(installedModStatusPriority).sort((left, right) => left - right), [0, 1, 3, 4, 5, 8])
   assert.deepEqual(sort(statuses.map((status) => mod(status, status))).map((item) => item.status), [
     '检查中', '有更新', '最新版', '不是 Release 资产, 无法检测更新', '未绑定在线仓库，无法检测更新', '已禁用',
   ])
@@ -71,7 +71,7 @@ test('a package uses its highest-priority member status without changing member 
 })
 
 test('unknown statuses remain before disabled MODs', () => {
-  assert.equal(installedModStatusPriority('版本信息不足，无法检测更新'), 5)
+  assert.equal(installedModStatusPriority('版本信息不足，无法检测更新'), 6)
   assert.equal(installedModStatusPriority('检查中'), 0)
   assert.deepEqual(sort([
     mod('unknown', '版本信息不足，无法检测更新'),
@@ -89,17 +89,38 @@ test('the installed MOD view iterates every label and only makes update labels a
   assert.match(view, /summary\.mods\.length/)
 })
 
-test('disabled MOD with an available update sorts by update and keeps both codes', () => {
-  assert.equal(installedModStatusPriority(['disabled', 'update_available']), 1)
-  assert.equal(installedModStatusPriority([]), 5)
+test('disabled MOD with an available update sorts directly below enabled updates', () => {
+  assert.equal(installedModStatusPriority(['disabled', 'update_available']), 2)
+  assert.equal(installedModStatusPriority(['update_available']), 1)
+  assert.equal(installedModStatusPriority([]), 6)
   const sorted = sort([
     mod('disabled', '已禁用', { labels: ['disabled'] }),
     mod('disabled-update', '已禁用', { labels: ['disabled', 'update_available'] }),
+    mod('update', '有更新', { labels: ['update_available'] }),
     mod('latest', '最新版', { labels: ['latest'] }),
   ])
-  assert.deepEqual(sorted.map((item) => item.id), ['disabled-update', 'latest', 'disabled'])
-  assert.deepEqual(sorted[0].status, '已禁用')
-  assert.deepEqual(sorted[0].labels, ['disabled', 'update_available'])
+  assert.deepEqual(sorted.map((item) => item.id), ['update', 'disabled-update', 'latest', 'disabled'])
+  assert.equal(sorted[1].status, '已禁用')
+  assert.deepEqual(sorted[1].labels, ['disabled', 'update_available'])
+})
+
+test('the installed MOD list follows the agreed urgency ladder', () => {
+  const items = [
+    mod('lower-disabled', '已禁用', { labels: ['duplicate_lower_version', 'disabled'] }),
+    mod('duplicate-disabled', '已禁用', { labels: ['duplicate', 'disabled'] }),
+    mod('latest-disabled', '已禁用', { labels: ['latest', 'disabled'] }),
+    mod('cleanup-enabled', '重复', { labels: ['duplicate'] }),
+    mod('unbound', '未绑定在线仓库，无法检测更新', { labels: ['unbound'] }),
+    mod('raw', '不是 Release 资产, 无法检测更新', { labels: ['not_release_asset'] }),
+    mod('latest', '最新版', { labels: ['latest'] }),
+    mod('update-disabled', '已禁用', { labels: ['disabled', 'update_available'] }),
+    mod('update', '有更新', { labels: ['update_available'] }),
+  ]
+  assert.deepEqual(sort(items).map((item) => item.id), [
+    'update', 'update-disabled', 'latest', 'raw', 'unbound', 'cleanup-enabled',
+    'latest-disabled', 'duplicate-disabled', 'lower-disabled',
+  ])
+  assert.deepEqual(items.map((item) => installedModStatusPriority(item.labels)), [10, 9, 8, 7, 5, 4, 3, 2, 1])
 })
 
 test('changing a MOD status causes its group to move on the next sort', () => {

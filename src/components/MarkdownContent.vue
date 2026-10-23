@@ -5,11 +5,11 @@ import { markdownLinkUrl, renderMarkdown } from '../markdown'
 import { enhanceMarkdown } from '../markdownEnhancements'
 import { api } from '../services/tauri'
 
-const props = defineProps<{ source: string; baseUrl?: string }>()
+const props = defineProps<{ source: string; baseUrl?: string; breaks?: boolean }>()
 const emit = defineEmits<{ layout: [] }>()
 const element = ref<HTMLElement | null>(null)
 const idPrefix = `markdown-${useId()}-`
-const html = computed(() => renderMarkdown(props.source, props.baseUrl, idPrefix))
+const html = computed(() => renderMarkdown(props.source, props.baseUrl, idPrefix, { breaks: props.breaks }))
 const linkError = ref('')
 let revision = 0
 let controller: AbortController | undefined

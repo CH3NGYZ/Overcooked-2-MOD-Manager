@@ -2810,7 +2810,7 @@ onUnmounted(() => {
         </select></label>
       <div v-if="selectedInstallRelease(showInstall)" class="install-release-log">
         <div class="install-release-log-head"><strong>{{ selectedInstallRelease(showInstall)?.name || selectedInstallRelease(showInstall)?.tag_name }}</strong><span>{{ selectedInstallRelease(showInstall)?.version || selectedInstallRelease(showInstall)?.tag_name }}</span></div>
-        <MarkdownContent class="install-release-log-body"
+        <MarkdownContent class="install-release-log-body" breaks
           :source="selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。')" :base-url="repositoryMarkdownBaseUrl(showInstall)" />
       </div>
       <label class="install-field"><span>{{ t('下载文件') }}</span><small class="install-field-hint">{{ t('仅显示符合当前仓库资产规则的文件。') }}</small><select

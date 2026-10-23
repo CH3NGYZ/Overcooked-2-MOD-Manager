@@ -31,7 +31,7 @@ onUnmounted(() => observer?.disconnect())
   <div class="repo-description">
     <div v-show="note" ref="measurement" class="repo-note" :class="{ 'repo-note-measure': !community && long }"
       :aria-hidden="!community && long || undefined" :inert="!community && long">
-      <MarkdownContent :source="note" :base-url="repositoryMarkdownBaseUrl(repository)" @layout="measure" />
+      <MarkdownContent :source="note" :base-url="repositoryMarkdownBaseUrl(repository)" breaks @layout="measure" />
     </div>
     <div class="repo-document-actions">
       <button v-if="!community && note && long" class="repo-note-button" @click="emit('note')">

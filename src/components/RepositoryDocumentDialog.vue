@@ -91,7 +91,8 @@ onUnmounted(cancel)
           <div v-if="loading" class="repository-document-state" role="status"><RefreshCw class="spin-icon" :size="30" />{{ t('正在读取仓库说明') }}</div>
           <div v-else-if="error" class="repository-document-state danger" role="alert">{{ t(error) }}</div>
           <div v-else-if="target.kind === 'readme' && document && !document.exists" class="repository-document-state" role="status">{{ t('文件不存在') }}</div>
-          <MarkdownContent v-else :key="`${target.repository.id}:${target.kind}`" class="repository-note-content" :source="content" :base-url="baseUrl" />
+          <MarkdownContent v-else :key="`${target.repository.id}:${target.kind}`" class="repository-note-content"
+            :source="content" :base-url="baseUrl" :breaks="target.kind === 'note'" />
         </section>
       </div>
     </Transition>

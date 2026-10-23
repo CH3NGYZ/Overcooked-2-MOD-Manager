@@ -117,5 +117,8 @@
 .markdown-body .hljs-addition { color: #aff5b4; background: #033a16; }
 .markdown-body .hljs-deletion { color: #ffdcd7; background: #67060c; }
 .install-release-log-body .markdown-body { font-size: inherit; line-height: inherit; }
-.repo-note .markdown-body { font-size: 11px; line-height: 1.45; }
+.repo-note .markdown-body { color: var(--muted); font-size: 11px; line-height: 1.45; }
+/* A card note is secondary information: keep its headings dull so they never
+   compete with the repository title. */
+.repo-note .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--muted); }
 .repo-note .markdown-body :is(p, ul, ol, blockquote, pre) { margin-bottom: 5px; }

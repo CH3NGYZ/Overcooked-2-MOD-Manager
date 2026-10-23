@@ -48,10 +48,13 @@ export function markdownLinkUrl(event: MouseEvent) {
   return href ? markdownResourceUrl(href) : undefined
 }
 
-export function renderMarkdown(source: string, baseUrl?: string, idPrefix = 'markdown-') {
+export function renderMarkdown(source: string, baseUrl?: string, idPrefix = 'markdown-', options: { breaks?: boolean } = {}) {
   const html = marked.parse(source, {
     async: false,
-    breaks: false,
+    // Repository notes and Release logs are written with single line breaks
+    // that authors expect to see, like GitHub comments. README files keep the
+    // GitHub rendering where a soft break is a space.
+    breaks: options.breaks ?? false,
     gfm: true,
   })
   const fragment = DOMPurify.sanitize(html, {

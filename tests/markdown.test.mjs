@@ -88,6 +88,29 @@ test('actual renderer supports GFM headings, lists, quotes, code, tables, detail
   assert.equal(root.querySelector('a[href="https://example.com/"]').textContent, 'https://example.com')
 })
 
+test('notes and Release logs keep author line breaks while README keeps GitHub soft breaks', () => {
+  assert.equal(documentFrom('first\nsecond').querySelectorAll('br').length, 0, 'README soft breaks stay soft')
+  const note = document.createElement('div')
+  note.className = 'markdown-body'
+  note.innerHTML = renderMarkdown('first\nsecond', undefined, 'markdown-', { breaks: true })
+  assert.equal(note.querySelectorAll('br').length, 1)
+  assert.match(note.innerHTML, /first<br\s*\/?>second/)
+  const paragraphs = document.createElement('div')
+  paragraphs.className = 'markdown-body'
+  paragraphs.innerHTML = renderMarkdown('one\n\ntwo', undefined, 'markdown-', { breaks: true })
+  assert.equal(paragraphs.querySelectorAll('p').length, 2, 'blank lines still split paragraphs')
+})
+
+test('card notes render dimmer than the repository title', () => {
+  const css = readFileSync(new URL('../src/styles/markdown.css', import.meta.url), 'utf8')
+  assert.match(css, /\.repo-note \.markdown-body\s*\{[^}]*color:\s*var\(--muted\)/)
+  assert.match(css, /\.repo-note \.markdown-body :is\(h1, h2, h3, h4, h5, h6\)\s*\{[^}]*color:\s*var\(--muted\)/)
+  const description = readFileSync(new URL('../src/components/RepositoryDescription.vue', import.meta.url), 'utf8')
+  assert.match(description, /<MarkdownContent[^>]*breaks/)
+  const dialog = readFileSync(new URL('../src/components/RepositoryDocumentDialog.vue', import.meta.url), 'utf8')
+  assert.match(dialog, /:breaks="target\.kind === 'note'"/)
+})
+
 test('task lists are read-only and cannot smuggle other form controls or source classes', () => {
   const root = documentFrom('- [x] done\n- [ ] pending\n\n<input type="text" value="unsafe"><input type="checkbox"><form><button>submit</button></form><div class="modal-backdrop markdown-diagram-staging" id="app">visible</div>')
   const inputs = [...root.querySelectorAll('input')]

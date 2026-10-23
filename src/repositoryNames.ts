@@ -1,17 +1,35 @@
+type LocalizedRepositoryField = Record<string, string | null | undefined> | null | undefined
+
+function localizedRepositoryField(values: LocalizedRepositoryField, language: string): string {
+  const localized = [values?.[language], values?.['zh-CN']]
+    .find((value): value is string => typeof value === 'string' && !!value.trim())
+  return localized?.trim() || ''
+}
+
 export type RepositoryNameFields = {
-  name?: string | null
-  name_i18n?: Record<string, string | null | undefined> | null
-  username?: string | null
-  repository?: string | null
+  name_i18n?: LocalizedRepositoryField
+}
+
+export type RepositoryNoteFields = {
+  note_i18n?: LocalizedRepositoryField
+}
+
+export type RepositoryGroupFields = {
+  group_i18n?: LocalizedRepositoryField
 }
 
 export function repositoryName(repository: RepositoryNameFields, language: string): string {
-  const localized = [repository.name_i18n?.[language], repository.name_i18n?.['zh-CN'], repository.name]
-    .find((value): value is string => typeof value === 'string' && !!value.trim())
-  if (localized) return localized.trim()
+  return localizedRepositoryField(repository.name_i18n, language)
+}
 
-  return [repository.username, repository.repository]
-    .map((value) => value?.trim())
-    .filter((value): value is string => !!value)
-    .join('/')
+export function repositoryNote(repository: RepositoryNoteFields, language: string): string {
+  return localizedRepositoryField(repository.note_i18n, language)
+}
+
+export function repositoryGroup(repository: RepositoryGroupFields, language: string): string {
+  return localizedRepositoryField(repository.group_i18n, language)
+}
+
+export function repositoryGroupKey(repository: RepositoryGroupFields): string {
+  return localizedRepositoryField(repository.group_i18n, 'zh-CN')
 }

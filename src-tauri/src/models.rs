@@ -35,6 +35,22 @@ pub enum WinhttpState {
     Conflict,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstalledModStatusLabel {
+    UpdateAvailable,
+    Latest,
+    NotReleaseAsset,
+    Unbound,
+    BoundRepositoryMissing,
+    RepositoryUnavailable,
+    Unknown,
+    Duplicate,
+    DuplicateLowerVersion,
+    LoadWarning,
+    Disabled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledMod {
     pub repository_id: Option<String>,
@@ -64,6 +80,8 @@ pub struct InstalledMod {
     pub version: Option<String>,
     pub version_source: String,
     pub update_available: bool,
+    #[serde(default)]
+    pub labels: Vec<InstalledModStatusLabel>,
     pub duplicate_guid: bool,
     #[serde(default)]
     pub duplicate_version: bool,
@@ -752,7 +770,11 @@ pub struct RepositoryPatch {
     pub id: Option<String>,
     pub name: String,
     #[serde(default)]
+    pub name_i18n: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     pub group: String,
+    #[serde(default)]
+    pub group_i18n: Option<BTreeMap<String, String>>,
     pub provider: Provider,
     pub username: String,
     pub repository: String,
@@ -770,6 +792,8 @@ pub struct RepositoryPatch {
     pub install_target: String,
     #[serde(default)]
     pub note: String,
+    #[serde(default)]
+    pub note_i18n: Option<BTreeMap<String, String>>,
     pub plugin_guid: String,
     #[serde(default)]
     pub local_product_name: String,

@@ -3635,10 +3635,46 @@ pub fn save_repository(
                 repo.name_i18n.clone(),
                 repo.note_i18n.clone(),
                 repo.source_id.clone(),
-                repo.group.clone(),
                 repo.group_i18n.clone(),
             )
         });
+    let mut name_i18n = patch.name_i18n.unwrap_or_else(|| {
+        existing_translations
+            .as_ref()
+            .map(|(name_i18n, _, _, _)| name_i18n.clone())
+            .unwrap_or_default()
+    });
+    let mut group_i18n = patch.group_i18n.unwrap_or_else(|| {
+        existing_translations
+            .as_ref()
+            .map(|(_, _, _, group_i18n)| group_i18n.clone())
+            .unwrap_or_default()
+    });
+    let mut note_i18n = patch.note_i18n.unwrap_or_else(|| {
+        existing_translations
+            .as_ref()
+            .map(|(_, note_i18n, _, _)| note_i18n.clone())
+            .unwrap_or_default()
+    });
+    if name_i18n
+        .get("zh-CN")
+        .is_none_or(|name| name.trim().is_empty())
+    {
+        name_i18n.insert("zh-CN".into(), patch.name.trim().to_string());
+    }
+    group_i18n
+        .entry("zh-CN".into())
+        .or_insert_with(|| patch.group.trim().to_string());
+    note_i18n
+        .entry("zh-CN".into())
+        .or_insert_with(|| patch.note.trim().to_string());
+    let name = name_i18n
+        .get("zh-CN")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "仓库名称不能为空".to_string())?;
+    let group = group_i18n["zh-CN"].clone();
+    let note = note_i18n["zh-CN"].clone();
     let download_threads = match &patch.provider {
         Provider::Github => {
             if patch.download_threads == 0 {
@@ -3656,23 +3692,10 @@ pub fn save_repository(
     };
     let mut item = RepositoryConfig {
         id: id.clone(),
-        name: patch.name,
-        name_i18n: existing_translations
-            .as_ref()
-            .map(|(name_i18n, _, _, _, _)| name_i18n.clone())
-            .unwrap_or_default(),
-        group: if patch.group.trim().is_empty() {
-            existing_translations
-                .as_ref()
-                .map(|(_, _, _, group, _)| group.clone())
-                .unwrap_or_default()
-        } else {
-            patch.group.trim().to_string()
-        },
-        group_i18n: existing_translations
-            .as_ref()
-            .map(|(_, _, _, _, group_i18n)| group_i18n.clone())
-            .unwrap_or_default(),
+        name,
+        name_i18n,
+        group,
+        group_i18n,
         provider: patch.provider.clone(),
         username,
         repository,
@@ -3683,14 +3706,11 @@ pub fn save_repository(
         channel: patch.channel,
         asset_rules,
         install_target: patch.install_target,
-        note: patch.note,
-        note_i18n: existing_translations
-            .as_ref()
-            .map(|(_, note_i18n, _, _, _)| note_i18n.clone())
-            .unwrap_or_default(),
+        note,
+        note_i18n,
         source_id: existing_translations
             .as_ref()
-            .and_then(|(_, _, source_id, _, _)| source_id.clone()),
+            .and_then(|(_, _, source_id, _)| source_id.clone()),
         plugin_guid: patch.plugin_guid,
         local_product_name: patch.local_product_name,
         local_original_filename: patch.local_original_filename,

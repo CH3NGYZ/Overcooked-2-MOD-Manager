@@ -13,7 +13,7 @@ function moduleUrl(source, imports = {}) {
 
 const nameSource = readFileSync(new URL('../src/repositoryNames.ts', import.meta.url), 'utf8')
 const nameUrl = moduleUrl(nameSource)
-const { repositoryName } = await import(nameUrl)
+const { repositoryName, repositoryNote, repositoryGroup } = await import(nameUrl)
 const sourceNameSource = readFileSync(new URL('../src/repositorySources.ts', import.meta.url), 'utf8')
 const sourceNameUrl = moduleUrl(sourceNameSource)
 const { repositorySourceName } = await import(sourceNameUrl)
@@ -21,12 +21,24 @@ const scenarioSource = readFileSync(new URL('../src/tutorial/scenarios.ts', impo
 const scenarioUrl = moduleUrl(scenarioSource, { '../repositoryNames': nameUrl })
 const { createTutorialDashboard } = await import(scenarioUrl)
 
-test('repository names prefer current locale, Chinese fallback, raw name, then identity', () => {
-  assert.equal(repositoryName({ name: 'Raw name', name_i18n: { en: ' English ', 'zh-CN': '中文' } }, 'en'), 'English')
-  assert.equal(repositoryName({ name: 'Raw name', name_i18n: { 'zh-CN': ' 中文 ' } }, 'ko'), '中文')
-  assert.equal(repositoryName({ name: ' Raw name ' }, 'ko'), 'Raw name')
-  assert.equal(repositoryName({ username: ' Owner ', repository: ' Mod ' }, 'ko'), 'Owner/Mod')
-  assert.equal(repositoryName({ name: '  ', name_i18n: { en: ' ' }, username: 'Owner', repository: 'Mod' }, 'en'), 'Owner/Mod')
+test('repository names use current locale then Chinese and never raw identity fields', () => {
+  assert.equal(repositoryName({ name_i18n: { en: ' English ', 'zh-CN': '中文' } }, 'en'), 'English')
+  assert.equal(repositoryName({ name_i18n: { 'zh-CN': ' 中文 ' } }, 'ko'), '中文')
+  assert.equal(repositoryName({ name_i18n: {} }, 'ko'), '')
+  assert.equal(repositoryName({ name_i18n: { en: ' ' } }, 'en'), '')
+})
+
+test('repository group and note use current locale then Chinese only', () => {
+  const repository = {
+    group: 'Raw group', group_i18n: { en: ' English group ', 'zh-CN': '中文分组' },
+    note: 'Raw note', note_i18n: { 'zh-CN': ' 中文备注 ' },
+  }
+  assert.equal(repositoryGroup(repository, 'en'), 'English group')
+  assert.equal(repositoryGroup(repository, 'ko'), '中文分组')
+  assert.equal(repositoryGroup({ group: 'Raw group', group_i18n: {} }, 'ko'), '')
+  assert.equal(repositoryNote(repository, 'en'), '中文备注')
+  assert.equal(repositoryNote(repository, 'ko'), '中文备注')
+  assert.equal(repositoryNote({ note: 'Raw note' }, 'ko'), '')
 })
 
 test('repository source names fall back to Chinese before the raw nickname', () => {
@@ -61,7 +73,7 @@ test('tutorial dashboards accept repositories without a raw name', () => {
 
   assert.ok(preview)
   assert.equal(preview.config.repositories[0].cached_releases[0].name, '主仓库 v2.4.0')
-  assert.equal(preview.config.repositories[1].cached_releases[0].name, 'Owner/manager v1.0.0')
-  assert.equal(preview.config.repository_sources[1].nickname, 'Owner/manager')
+  assert.equal(preview.config.repositories[1].cached_releases[0].name, 'v1.0.0')
+  assert.equal(preview.config.repository_sources[1].nickname, '')
   assert.equal(preview.mods.find((mod) => mod.dll_file === 'HostUtilities.dll').name, '主仓库')
 })

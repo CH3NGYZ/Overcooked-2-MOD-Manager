@@ -12,7 +12,7 @@ dist
 dist-ssr
 *.local
 .tauri
-
+/**/.*/
 # Generated frontend entry and local-only Windows build helpers
 /index.html
 /build.bat

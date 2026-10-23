@@ -8,12 +8,13 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState, InstalledModStatusLabel } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { repositoryMarkdownBaseUrl } from './markdown'
-import { repositoryName } from './repositoryNames'
+import { repositoryGroup, repositoryGroupKey as repositoryStableGroupKey, repositoryName, repositoryNote } from './repositoryNames'
+import { sortInstalledModGroups } from './installedModOrdering'
 import MarkdownContent from './components/MarkdownContent.vue'
 import { hasLocalUpdateVersion, modRepositoryReleaseState } from './modUpdates'
 import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
@@ -163,8 +164,8 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'ko', label: '한국어' },
 ]
 const repoForm = reactive<RepositoryPatch>({
-  name: '', group: '', provider: 'gitee', username: '', repository: '', download_mode: 'release', branch: 'main', file_path: '', channel: 'all', asset_rules: [],
-  region: '', install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '', local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1, github_token: '', gitee_token: '', official_api_only: true, enabled: true,
+  name: '', name_i18n: {}, group: '', group_i18n: {}, provider: 'gitee', username: '', repository: '', download_mode: 'release', branch: 'main', file_path: '', channel: 'all', asset_rules: [],
+  region: '', install_target: 'BepInEx/plugins', note: '', note_i18n: {}, plugin_guid: '', local_product_name: '', local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1, github_token: '', gitee_token: '', official_api_only: true, enabled: true,
 })
 const bepinexDownloadUrls = computed(() => getBepInExDownloadUrls(config.value?.platform, config.value?.game.runtime))
 
@@ -297,14 +298,14 @@ const repos = computed(() => (config.value?.repositories ?? []).filter((repo) =>
 function groupedRepositories(repositories: Repository[]) {
   const groups = new Map<string, Repository[]>()
   for (const repo of repositories) {
-    const key = repo.group?.trim() || ''
+    const key = repositoryStableGroupKey(repo)
     const entries = groups.get(key) || []
     entries.push(repo)
     groups.set(key, entries)
   }
   return Array.from(groups, ([key, grouped]) => ({
     key,
-    label: key ? (grouped.find((repo) => repo.group_i18n?.[locale.value])?.group_i18n?.[locale.value] || key) : '',
+    label: repositoryGroup(grouped[0], locale.value),
     repositories: grouped,
   }))
 }
@@ -430,17 +431,15 @@ function packageModCountForMod(mod: InstalledMod) {
   const packageId = packageIdForMod(mod)
   return packageId ? visibleInstalledMods.value.filter((item) => item.package_id === packageId).length : 0
 }
-const installedMods = computed(() => [...visibleInstalledMods.value].sort((left, right) => {
-  const leftPackage = packageIdForMod(left)
-  const rightPackage = packageIdForMod(right)
-  const leftGroup = leftPackage ? packageNameForMod(left) : left.name
-  const rightGroup = rightPackage ? packageNameForMod(right) : right.name
-  return modNameCollator.compare(leftGroup, rightGroup)
-    || (leftPackage !== rightPackage ? (leftPackage ? -1 : 1) : 0)
-    || (leftPackage && rightPackage && leftPackage === rightPackage ? modNameCollator.compare(left.name, right.name) : 0)
-    || modNameCollator.compare(left.name, right.name)
-    || modNameCollator.compare(left.dll_file, right.dll_file)
-}))
+const installedMods = computed(() => sortInstalledModGroups(
+  visibleInstalledMods.value,
+  packageIdForMod,
+  (mod) => installedModOrderingStatus(mod),
+  (mod, packageId) => packageId ? packageNameForMod(mod) : mod.name,
+  (mod) => mod.name,
+  (mod) => mod.dll_file,
+  (left, right) => modNameCollator.compare(left, right),
+))
 function packageModsForMod(mod: InstalledMod) {
   const packageId = packageIdForMod(mod)
   return packageId ? allInstalledMods.value.filter((item) => item.package_id === packageId) : []
@@ -599,7 +598,13 @@ async function handleUiZoomWheel(event: WheelEvent) {
 function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repositoryName(repo, locale.value) }
-function localizedRepositoryNote(repo: Repository) { return repo.note_i18n?.[locale.value] || repo.note }
+function localizedRepositoryNote(repo: Repository) { return repositoryNote(repo, locale.value) }
+function updateRepositoryTranslation(field: 'name' | 'group' | 'note', event: Event) {
+  const input = event.target as HTMLInputElement | HTMLTextAreaElement
+  repoForm[field] = input.value
+  const translations = field === 'name' ? repoForm.name_i18n : field === 'group' ? repoForm.group_i18n : repoForm.note_i18n
+  if (translations) translations[locale.value] = input.value
+}
 function repositoryInstallStatus(repo: Repository) {
   if (repo.download_mode === 'repository_file') return ''
   const boundMods = installedMods.value.filter((mod) => modReleaseRepositoryIds(mod).has(repo.id))
@@ -633,32 +638,57 @@ function modHasRemoteUpdate(mod: InstalledMod) {
   return modReleaseRepositories(mod).some((repo) => modRepositoryVersionReady(repo, mod)
     && modRepositoryReleaseState(repo, mod) === 'update_available')
 }
-function installedModStatus(mod: InstalledMod) {
-  if (!modEnabledForView(mod)) return '已禁用'
-  if (mod.duplicate_version) return '重复'
-  if (mod.load_warning) return mod.load_warning
-  if (mod.status === 'not_release_asset') return '不是 Release 资产, 无法检测更新'
-  if (mod.status === 'unbound') return '未绑定在线仓库，无法检测更新'
-  if (mod.status === 'bound_repository_missing') return '已绑定仓库未加载，无法检测更新'
-  if (installedModsChecking.value || isModRepositoryRefreshing(mod)) return '检查中'
-  if (installedModsPendingCheck.value) return '待检查'
-  const confirmed = modReleaseUpdateStatus(mod)
-  if (confirmed) return confirmed
-  const candidates = modReleaseRepositories(mod)
-  if (candidates.some((repo) => repo.last_error)) return '刷新失败，无法检测更新'
-  if (!hasLocalUpdateVersion(mod) || candidates.some((repo) => repositoryReleaseReady[repo.id]
-    && modRepositoryReleaseState(repo, mod) === 'unknown')) return '版本信息不足，无法检测更新'
-  return '待检查'
+type ModStatusCode = InstalledModStatusLabel | 'checking' | 'pending'
+const MOD_STATUS_TEXT: Record<ModStatusCode, string> = {
+  update_available: '有更新', latest: '最新版', not_release_asset: '不是 Release 资产, 无法检测更新',
+  unbound: '未绑定在线仓库，无法检测更新', bound_repository_missing: '已绑定仓库未加载，无法检测更新',
+  repository_unavailable: '刷新失败，无法检测更新', unknown: '版本信息不足，无法检测更新', duplicate: '重复',
+  duplicate_lower_version: '存在更高版本，建议卸载', load_warning: '存在更高版本，建议卸载', disabled: '已禁用', checking: '检查中', pending: '待检查',
 }
-function installedModStatusLabel(mod: InstalledMod) { return t(installedModStatus(mod)) }
-function installedModStatusClass(mod: InstalledMod) {
-  const status = installedModStatus(mod)
-  if (status === '已禁用') return 'mod-disabled'
-  if (status === '最新版') return 'success'
-  if (['有更新', '检查中', '待检查', '重复'].includes(status)) return 'warning'
-  if (status === '刷新失败，无法检测更新' || (mod.load_warning && status === mod.load_warning)) return 'danger'
+const MOD_STATUS_ORDER: ModStatusCode[] = ['update_available', 'latest', 'not_release_asset', 'unbound', 'bound_repository_missing', 'repository_unavailable', 'unknown', 'duplicate_lower_version', 'duplicate', 'load_warning', 'checking', 'pending', 'disabled']
+function legacyModStatusCode(mod: InstalledMod): ModStatusCode[] {
+  const code = ({ update_available: 'update_available', latest: 'latest', not_release_asset: 'not_release_asset', unbound: 'unbound', bound_repository_missing: 'bound_repository_missing', repository_unavailable: 'repository_unavailable', unknown: 'unknown', duplicate_lower_version: 'duplicate_lower_version' } as Record<string, ModStatusCode>)[mod.status]
+  const labels = code ? [code] : []
+  if (mod.duplicate_version || mod.duplicate_guid) labels.push('duplicate')
+  if (mod.load_warning) labels.push(mod.load_warning === '存在更高版本，建议卸载' ? 'duplicate_lower_version' : 'load_warning')
+  if (mod.update_available && !labels.includes('update_available')) labels.unshift('update_available')
+  if (!mod.enabled) labels.push('disabled')
+  return labels
+}
+function backendModStatusCodes(mod: InstalledMod): ModStatusCode[] {
+  const labels = (Array.isArray(mod.labels) ? mod.labels : legacyModStatusCode(mod))
+    .filter((label): label is ModStatusCode => label in MOD_STATUS_TEXT)
+  const unique = [...new Set(labels)]
+  if (!modEnabledForView(mod) && !unique.includes('disabled')) unique.push('disabled')
+  return unique
+}
+function installedModStatusCodes(mod: InstalledMod): ModStatusCode[] {
+  const backend = backendModStatusCodes(mod)
+  const transient = installedModsChecking.value || isModRepositoryRefreshing(mod) ? 'checking' : installedModsPendingCheck.value ? 'pending' : undefined
+  if (!transient) return backend
+  return [...backend.filter((label) => ['disabled', 'duplicate', 'duplicate_lower_version', 'load_warning'].includes(label)), transient]
+}
+function installedModLabels(mod: InstalledMod) {
+  const hasBackendLabels = Array.isArray(mod.labels)
+  const labels = installedModStatusCodes(mod)
+  const transient = installedModsChecking.value || isModRepositoryRefreshing(mod) ? 'checking' : installedModsPendingCheck.value ? 'pending' : undefined
+  if (!hasBackendLabels && !transient && !labels.some((code) => ['duplicate_lower_version', 'load_warning'].includes(code))) {
+    const releaseStatus = modReleaseUpdateStatus(mod)
+    if (releaseStatus === '有更新') labels.push('update_available')
+    else if (releaseStatus === '最新版') labels.push('latest')
+  }
+  return MOD_STATUS_ORDER.filter((code) => labels.includes(code))
+}
+function installedModOrderingStatus(mod: InstalledMod) { return installedModLabels(mod) }
+function installedModLabelText(code: string) { return code in MOD_STATUS_TEXT ? t(MOD_STATUS_TEXT[code as ModStatusCode]) : code }
+function installedModLabelClass(code: string) {
+  if (code === 'disabled') return 'mod-disabled'
+  if (['update_available', 'checking', 'pending', 'duplicate'].includes(code)) return 'warning'
+  if (code === 'latest') return 'success'
+  if (['repository_unavailable', 'load_warning', 'duplicate_lower_version'].includes(code)) return 'danger'
   return 'muted'
 }
+function installedModLabelActionable(code: string) { return code === 'update_available' || code === 'latest' }
 function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | '' {
   if (installedModsChecking.value || installedModsPendingCheck.value
     || ['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
@@ -667,15 +697,16 @@ function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | 
   if (modHasRemoteUpdate(mod)) return '有更新'
   return candidates.length > 0 && candidates.every((repo) => modRepositoryVersionReady(repo, mod)) ? '最新版' : ''
 }
-function openModRepository(mod: InstalledMod, packageStatus?: string) {
-  const status = packageStatus ?? installedModStatus(mod)
-  if (status !== '有更新' && status !== '最新版') return
-  const children = (packageStatus && mod.package_id
+function openModRepository(mod: InstalledMod, requestedLabel?: string) {
+  const label = (requestedLabel ?? installedModLabels(mod).find(installedModLabelActionable)) as ModStatusCode | undefined
+  if (!label || !installedModLabelActionable(label)) return
+  const status = MOD_STATUS_TEXT[label]
+  const children = (requestedLabel && mod.package_id
     ? visibleInstalledMods.value.filter((child) => child.package_id === mod.package_id)
-    : [mod]).filter((child) => installedModStatus(child) === status && modReleaseUpdateStatus(child) === status)
+    : [mod]).filter((child) => installedModLabels(child).includes(label) && modReleaseUpdateStatus(child) === status)
   const bound = children.flatMap(modReleaseRepositories).filter((repo) => children.some((child) =>
     modReleaseRepositoryIds(child).has(repo.id) && modRepositoryVersionReady(repo, child)
-    && modRepositoryReleaseState(repo, child) === (status === '有更新' ? 'update_available' : 'latest')))
+    && modRepositoryReleaseState(repo, child) === (label === 'update_available' ? 'update_available' : 'latest')))
   const targets = communityNavigationTargets(repos.value, new Set(repos.value.filter((repo) => repo.download_mode === 'release' && bound.some((candidate) =>
     repo.provider === candidate.provider && repo.username.toLowerCase() === candidate.username.toLowerCase()
     && repo.repository.toLowerCase() === candidate.repository.toLowerCase())
@@ -1489,39 +1520,50 @@ async function startupChecks() {
 }
 function editRepo(repo?: Repository) {
   Object.assign(repoForm, repo ? {
-    id: repo.id, name: repo.name, group: repo.group || '', provider: repo.provider, username: repo.username, repository: repo.repository,
+    id: repo.id, name: localizedRepositoryName(repo), name_i18n: { ...(repo.name_i18n || {}) },
+    group: repositoryGroup(repo, locale.value), group_i18n: { ...(repo.group_i18n || {}) },
+    provider: repo.provider, username: repo.username, repository: repo.repository,
     download_mode: repo.download_mode, branch: repo.branch || 'main', file_path: repo.file_path || '',
     region: normalizeRepositoryRegion(repo.region), channel: repo.channel,
     asset_rules: repo.asset_rules.map((rule) => ({ ...rule })), install_target: repo.install_target,
-    note: repo.note || '', plugin_guid: repo.plugin_guid, local_product_name: repo.local_product_name || '',
+    note: localizedRepositoryNote(repo), note_i18n: { ...(repo.note_i18n || {}) },
+    plugin_guid: repo.plugin_guid, local_product_name: repo.local_product_name || '',
     local_original_filename: repo.local_original_filename || '', version_regex: repo.version_regex || '',
     max_release_count: repo.max_release_count || 10,
     download_threads: repo.download_threads || (repo.provider === 'github' ? 16 : 1),
     github_token: '', gitee_token: '', official_api_only: true, enabled: repo.enabled,
   } : {
-    id: undefined, name: '', group: '', provider: 'gitee', username: '', repository: '', download_mode: 'release',
+    id: undefined, name: '', name_i18n: {}, group: '', group_i18n: {}, provider: 'gitee', username: '', repository: '', download_mode: 'release',
     branch: 'main', file_path: '', region: '', channel: 'all', asset_rules: [],
-    install_target: 'BepInEx/plugins', note: '', plugin_guid: '', local_product_name: '',
+    install_target: 'BepInEx/plugins', note: '', note_i18n: {}, plugin_guid: '', local_product_name: '',
     local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1,
     github_token: '', gitee_token: '',
     official_api_only: true, enabled: true,
   })
   showRepoEditor.value = true
 }
+function ensureRepositoryChineseName() {
+  const nameTranslations = repoForm.name_i18n || (repoForm.name_i18n = {})
+  if (!nameTranslations['zh-CN']?.trim()) {
+    nameTranslations['zh-CN'] = (locale.value === 'zh-CN' ? repoForm.name : nameTranslations[locale.value] || repoForm.name).trim()
+  }
+}
 async function saveRepo() {
   if (repoForm.download_mode === 'release' && (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()))) {
     showError(t('请创建至少一个有效的资产规则'))
     return
   }
+  ensureRepositoryChineseName()
   let refreshError = ''
   let refreshed = false
   try {
     await run('正在保存仓库', async () => {
       const savedConfig = await api.saveRepository(repoForm)
       const savedRepo = savedConfig.repositories.find((repo) => repo.id === repoForm.id)
-        ?? savedConfig.repositories.find((repo) => repo.name === repoForm.name && repo.username === repoForm.username.trim()
+        ?? savedConfig.repositories.find((repo) => repo.username === repoForm.username.trim()
           && repo.repository === repoForm.repository.trim() && repo.provider === repoForm.provider
-          && (repo.region || '') === (repoForm.region?.trim().toLowerCase() || ''))
+          && (repo.region || '') === (repoForm.region?.trim().toLowerCase() || '')
+          && repo.download_mode === repoForm.download_mode)
       if (!savedRepo) throw new Error('保存后找不到仓库配置')
       dashboard.value!.config = savedConfig
       showRepoEditor.value = false
@@ -2100,16 +2142,10 @@ async function installOnlineMod() {
   finally { clearDownloadProgress() }
 }
 async function rescanInstalledMods() {
-  installedModsPendingCheck.value = true
-  installedModsChecking.value = false
-  try {
-    await run('正在重新扫描', async () => {
-      dashboard.value = await api.dashboard()
-      return refreshMappedRepositoryUpdates()
-    })
-  } finally {
-    if (!installedModsChecking.value) installedModsPendingCheck.value = false
-  }
+  await run('正在重新扫描', async () => {
+    dashboard.value = await api.dashboard()
+    return dashboard.value
+  })
 }
 
 onMounted(async () => {
@@ -2360,9 +2396,10 @@ onUnmounted(() => {
         :is-package-toggling="isPackageToggling"
         :toggle-mod="toggleMod"
         :toggle-mod-details="toggleModDetails"
-        :installed-mod-status="installedModStatus"
-        :installed-mod-status-label="installedModStatusLabel"
-        :installed-mod-status-class="installedModStatusClass"
+        :installed-mod-labels="installedModLabels"
+        :installed-mod-label-text="installedModLabelText"
+        :installed-mod-label-class="installedModLabelClass"
+        :installed-mod-label-actionable="installedModLabelActionable"
         :edit-mod-note="editModNote"
         :uninstall-mod="uninstallMod"
         :uninstall-mod-package="uninstallModPackage"
@@ -2529,12 +2566,12 @@ onUnmounted(() => {
           <section class="repo-form-section">
             <div class="repo-form-section-title"><b>{{ t('仓库基本信息') }}</b><small>{{ t('配置仓库名称、来源平台、分组和地址') }}</small></div>
             <div class="form-grid">
-              <label><span>{{ t('仓库名称') }}</span><input v-model="repoForm.name" :placeholder="t('例如：我的 MOD 正式版')" /></label>
+              <label><span>{{ t('仓库名称') }}</span><input v-model="repoForm.name" :placeholder="t('例如：我的 MOD 正式版')" @input="updateRepositoryTranslation('name', $event)" /></label>
               <label><span>{{ t('来源平台') }}</span><select v-model="repoForm.provider" :aria-label="t('来源平台')" @change="providerChanged">
                 <option value="gitee">Gitee</option>
                 <option value="github">GitHub</option>
               </select></label>
-              <label><span>{{ t('仓库分组') }}</span><input v-model="repoForm.group" :placeholder="t('例如：前置必装')" /></label>
+              <label><span>{{ t('仓库分组') }}</span><input v-model="repoForm.group" :placeholder="t('例如：前置必装')" @input="updateRepositoryTranslation('group', $event)" /></label>
               <label><span>{{ t('适用地区') }}</span><select v-model="repoForm.region" :aria-label="t('适用地区')">
                 <option value="chinese_mainland">{{ t('中国大陆地区') }}</option>
                 <option value="international">{{ t('国际地区') }}</option>
@@ -2636,7 +2673,7 @@ onUnmounted(() => {
             <div class="repo-form-section-title">
               <b>{{ t('仓库备注') }}</b><small>{{ t('可选，多行备注') }}</small>
             </div>
-            <textarea v-model="repoForm.note" class="repository-note-input" rows="3" :placeholder="t('可选，多行备注')"></textarea>
+            <textarea v-model="repoForm.note" class="repository-note-input" rows="3" :placeholder="t('可选，多行备注')" @input="updateRepositoryTranslation('note', $event)"></textarea>
           </section>
         </div>
         <div class="modal-actions"><button class="secondary-button" @click="showRepoEditor = false">{{ t('取消')

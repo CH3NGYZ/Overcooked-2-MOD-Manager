@@ -216,6 +216,7 @@ impl ConfigService {
                     crate::github_proxies::synchronize_bundled_defaults(&mut config.github_proxies);
                 changed |= Self::normalize_configured_regions(&mut config);
                 for repository in &mut config.repositories {
+                    changed |= migrate_repository_i18n(repository);
                     let normalized = repository.max_release_count.clamp(1, 100);
                     if repository.max_release_count != normalized {
                         repository.max_release_count = normalized;
@@ -434,7 +435,7 @@ impl ConfigService {
             .iter()
             .map(|source| source.id.as_str())
             .collect::<std::collections::HashSet<_>>();
-        let selected = config
+        let mut selected = config
             .repositories
             .iter()
             .filter(|repo| {
@@ -469,6 +470,9 @@ impl ConfigService {
                 source_id: repo.source_id.clone(),
             })
             .collect::<Vec<_>>();
+        for repo in &mut selected {
+            migrate_repository_export_i18n(repo);
+        }
         let mut repository_sources = config.repository_sources.clone();
         for source in &mut repository_sources {
             if source
@@ -518,7 +522,7 @@ impl ConfigService {
             )));
         }
         for repo in &mut bundle.repositories {
-            normalize_repository_name(repo)?;
+            normalize_repository_i18n(repo)?;
             validate_repository(repo)?;
         }
         log::info!(
@@ -538,6 +542,7 @@ impl ConfigService {
             conflicts: Vec::new(),
         };
         for item in &bundle.repositories {
+            let item_name = repository_name_from_i18n(&item.name_i18n);
             if config.repositories.iter().any(|repo| {
                 !crate::community::is_repository(repo)
                     && repository_address_key(
@@ -552,7 +557,7 @@ impl ConfigService {
                         item.region.as_deref(),
                     )
             }) {
-                preview.duplicates.push(item.name.clone());
+                preview.duplicates.push(item_name.to_string());
                 continue;
             }
             let key = export_key(item);
@@ -561,21 +566,24 @@ impl ConfigService {
                 .iter()
                 .find(|repo| !crate::community::is_repository(repo) && repo_key(repo) == key);
             if matching.is_some_and(|repo| repo.builtin) {
-                preview.duplicates.push(item.name.clone());
+                preview.duplicates.push(item_name.to_string());
                 continue;
             }
             let same_name = config.repositories.iter().any(|repo| {
                 !crate::community::is_repository(repo)
-                    && repo.name == item.name
+                    && repo
+                        .name_i18n
+                        .get("zh-CN")
+                        .is_some_and(|name| name.trim() == item_name)
                     && normalize_repository_region(repo.region.as_deref())
                         == normalize_repository_region(item.region.as_deref())
             });
             if matching.is_some() {
-                preview.duplicates.push(item.name.clone());
+                preview.duplicates.push(item_name.to_string());
             } else if same_name {
-                preview.conflicts.push(item.name.clone());
+                preview.conflicts.push(item_name.to_string());
             } else {
-                preview.additions.push(item.name.clone());
+                preview.additions.push(item_name.to_string());
             }
         }
         preview
@@ -619,7 +627,10 @@ impl ConfigService {
         // them back as one ordered block after the merge.
         let mut imported_ids = Vec::with_capacity(bundle.repositories.len());
         for item in &bundle.repositories {
-            let key = export_key(item);
+            let mut item = item.clone();
+            migrate_repository_export_i18n(&mut item);
+            let item_name = repository_name_from_i18n(&item.name_i18n).to_string();
+            let key = export_key(&item);
             if let Some(existing) = config
                 .repositories
                 .iter_mut()
@@ -631,36 +642,43 @@ impl ConfigService {
                 if conflict == "overwrite" {
                     let id = existing.id.clone();
                     let builtin = existing.builtin;
-                    *existing = repository_from_export(item, id, builtin);
+                    *existing = repository_from_export(&item, id, builtin);
                     imported_ids.push(existing.id.clone());
                 }
                 continue;
             }
-            let mut name = item.name.clone();
             let same_region = |repo: &RepositoryConfig| {
                 normalize_repository_region(repo.region.as_deref())
                     == normalize_repository_region(item.region.as_deref())
             };
+            let same_name = |repo: &RepositoryConfig, name: &str| {
+                repo.name_i18n
+                    .get("zh-CN")
+                    .is_some_and(|existing_name| existing_name.trim() == name)
+            };
             if config.repositories.iter().any(|repo| {
-                !crate::community::is_repository(repo) && repo.name == name && same_region(repo)
+                !crate::community::is_repository(repo)
+                    && same_name(repo, &item_name)
+                    && same_region(repo)
             }) {
                 match conflict {
                     "skip" => continue,
                     "keep_both" => {
-                        name = format!("{} (导入)", name);
+                        let imported_name = format!("{} (导入)", item_name);
+                        item.name_i18n.insert("zh-CN".into(), imported_name.clone());
+                        item.name = imported_name;
                     }
                     "overwrite" => {
                         config.repositories.retain(|repo| {
                             crate::community::is_repository(repo)
-                                || repo.name != name
+                                || !same_name(repo, &item_name)
                                 || !same_region(repo)
                         });
                     }
                     _ => continue,
                 }
             }
-            let mut export = item.clone();
-            export.name = name;
+            let export = item;
             let id = Uuid::new_v4().to_string();
             config
                 .repositories
@@ -758,12 +776,55 @@ fn default_config() -> AppConfig {
     }
 }
 
-/// Older repository entries carried API and asset proxy settings directly on
-/// each repository. Those fields are intentionally no longer part of the
-/// configuration model: proxy selection is global and is supplied for the
-/// current download operation. Detect them while loading so an existing
-/// configuration is rewritten immediately using the current schema instead of
-/// preserving the obsolete keys on disk until some unrelated save occurs.
+fn migrate_repository_i18n(repository: &mut RepositoryConfig) -> bool {
+    let mut changed = false;
+    if repository
+        .name_i18n
+        .get("zh-CN")
+        .is_none_or(|name| name.trim().is_empty())
+    {
+        let legacy_name = repository.name.trim();
+        if !legacy_name.is_empty() {
+            repository
+                .name_i18n
+                .insert("zh-CN".into(), legacy_name.into());
+            changed = true;
+        }
+    }
+    if !repository.group_i18n.contains_key("zh-CN") {
+        repository
+            .group_i18n
+            .insert("zh-CN".into(), repository.group.clone());
+        changed = true;
+    }
+    if !repository.note_i18n.contains_key("zh-CN") {
+        repository
+            .note_i18n
+            .insert("zh-CN".into(), repository.note.clone());
+        changed = true;
+    }
+    if let Some(name) = repository.name_i18n.get("zh-CN") {
+        let name = name.trim().to_string();
+        if repository.name != name {
+            repository.name = name;
+            changed = true;
+        }
+    }
+    if let Some(group) = repository.group_i18n.get("zh-CN") {
+        if repository.group != *group {
+            repository.group = group.clone();
+            changed = true;
+        }
+    }
+    if let Some(note) = repository.note_i18n.get("zh-CN") {
+        if repository.note != *note {
+            repository.note = note.clone();
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn contains_legacy_repository_proxy_fields(text: &str) -> bool {
     const LEGACY_FIELDS: &[&str] = &[
         "api_proxy_mode",
@@ -995,22 +1056,56 @@ fn serialize_repository_bundle(bundle: &RepositoryBundle) -> Result<String, Conf
     Ok(text)
 }
 
-pub(crate) fn normalize_repository_name(repo: &mut RepositoryExport) -> Result<(), ConfigError> {
-    if !repo.name.trim().is_empty() {
-        return Ok(());
-    }
-    if let Some(name) = repo
+/// Static source and bundle entries must declare Chinese values explicitly.
+/// Raw fields remain compatibility mirrors and never determine display values.
+pub(crate) fn normalize_repository_i18n(repo: &mut RepositoryExport) -> Result<(), ConfigError> {
+    let name = repo
         .name_i18n
         .get("zh-CN")
-        .map(|name| name.trim())
-        .filter(|name| !name.is_empty())
-    {
-        repo.name = name.to_string();
-        return Ok(());
+        .ok_or_else(|| ConfigError::Invalid("仓库缺少 name_i18n.zh-CN".into()))?;
+    if name.trim().is_empty() {
+        return Err(ConfigError::Invalid(
+            "仓库的 name_i18n.zh-CN 不能为空".into(),
+        ));
     }
-    Err(ConfigError::Invalid(
-        "仓库缺少名称：请提供 name 或非空的 name_i18n.zh-CN".into(),
-    ))
+    if !repo.group_i18n.contains_key("zh-CN") {
+        return Err(ConfigError::Invalid("仓库缺少 group_i18n.zh-CN".into()));
+    }
+    if !repo.note_i18n.contains_key("zh-CN") {
+        return Err(ConfigError::Invalid("仓库缺少 note_i18n.zh-CN".into()));
+    }
+    repo.name = name.trim().to_string();
+    repo.group = repo.group_i18n["zh-CN"].clone();
+    repo.note = repo.note_i18n["zh-CN"].clone();
+    Ok(())
+}
+
+fn repository_name_from_i18n(translations: &std::collections::BTreeMap<String, String>) -> &str {
+    translations
+        .get("zh-CN")
+        .map(|name| name.trim())
+        .unwrap_or_default()
+}
+
+fn migrate_repository_export_i18n(repo: &mut RepositoryExport) {
+    repo.name_i18n
+        .entry("zh-CN".into())
+        .or_insert_with(|| repo.name.trim().to_string());
+    repo.group_i18n
+        .entry("zh-CN".into())
+        .or_insert_with(|| repo.group.clone());
+    repo.note_i18n
+        .entry("zh-CN".into())
+        .or_insert_with(|| repo.note.clone());
+    if let Some(name) = repo.name_i18n.get("zh-CN") {
+        repo.name = name.trim().to_string();
+    }
+    if let Some(group) = repo.group_i18n.get("zh-CN") {
+        repo.group = group.clone();
+    }
+    if let Some(note) = repo.note_i18n.get("zh-CN") {
+        repo.note = note.clone();
+    }
 }
 
 pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
@@ -1277,6 +1372,9 @@ mod tests {
     const REGION_REPOSITORY: &str = r#"
 [[repositories]]
 name = "Regional MOD"
+name_i18n.zh-CN = "Regional MOD"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
 provider = "github"
 username = "example"
 repository = "mod"
@@ -1711,6 +1809,9 @@ url = "https://example.com/mods.toml"
         let export: RepositoryExport = toml::from_str(
             r#"
 name = "Custom MOD"
+name_i18n.zh-CN = "Custom MOD"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
 provider = "github"
 username = "example"
 repository = "mod"
@@ -1831,10 +1932,72 @@ value = "MOD.dll"
     }
 
     #[test]
+    fn legacy_repository_metadata_migrates_into_chinese_maps_and_persists_empty_fields() {
+        let service = ConfigService {
+            root: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target/test-config-load")
+                .join(Uuid::new_v4().to_string()),
+        };
+        let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
+        let mut config = default_config();
+        let export = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
+            .unwrap()
+            .repositories
+            .remove(0);
+        config.repositories = vec![repository_from_export(
+            &export,
+            "legacy-repository".into(),
+            false,
+        )];
+        let mut legacy = toml::Value::try_from(&config).unwrap();
+        let repository = legacy["repositories"][0].as_table_mut().unwrap();
+        repository.remove("name_i18n");
+        repository.remove("group_i18n");
+        repository.remove("note_i18n");
+        repository.insert("name".into(), toml::Value::String("Legacy name".into()));
+        repository.insert("group".into(), toml::Value::String("Legacy group".into()));
+        repository.insert("note".into(), toml::Value::String(String::new()));
+        fs::create_dir_all(&service.root).unwrap();
+        fs::write(
+            service.config_path(),
+            toml::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = service.load().unwrap();
+        let repository = &loaded.repositories[0];
+        assert_eq!(repository.name_i18n["zh-CN"], "Legacy name");
+        assert_eq!(repository.group_i18n["zh-CN"], "Legacy group");
+        assert_eq!(repository.note_i18n["zh-CN"], "");
+        assert_eq!(repository.name, repository.name_i18n["zh-CN"]);
+        assert_eq!(repository.group, repository.group_i18n["zh-CN"]);
+        assert_eq!(repository.note, repository.note_i18n["zh-CN"]);
+
+        let saved = fs::read_to_string(service.config_path()).unwrap();
+        let saved_value: toml::Value = toml::from_str(&saved).unwrap();
+        let saved_repository = &saved_value["repositories"][0];
+        assert_eq!(
+            saved_repository["name_i18n"]["zh-CN"].as_str(),
+            Some("Legacy name")
+        );
+        assert_eq!(
+            saved_repository["group_i18n"]["zh-CN"].as_str(),
+            Some("Legacy group")
+        );
+        assert_eq!(saved_repository["note_i18n"]["zh-CN"].as_str(), Some(""));
+        let reloaded = service.load().unwrap();
+        assert_eq!(reloaded.repositories[0].note_i18n["zh-CN"], "");
+        assert_eq!(fs::read_to_string(service.config_path()).unwrap(), saved);
+    }
+
+    #[test]
     fn repository_source_does_not_require_bundle_metadata() {
         let text = r#"
 [[repositories]]
 name = "Example"
+name_i18n.zh-CN = "Example"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = "**Example** repository"
 provider = "gitee"
 username = "example"
 repository = "release"
@@ -1869,6 +2032,9 @@ exported_at = ""
 
 [[repositories]]
 name = "Order-C"
+name_i18n.zh-CN = "Order-C"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
 provider = "github"
 username = "example"
 repository = "order-c"
@@ -1883,6 +2049,9 @@ value = "Order-C.zip"
 
 [[repositories]]
 name = "Order-A"
+name_i18n.zh-CN = "Order-A"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
 provider = "github"
 username = "example"
 repository = "order-a"
@@ -1897,6 +2066,9 @@ value = "Order-A.zip"
 
 [[repositories]]
 name = "Order-B"
+name_i18n.zh-CN = "Order-B"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
 provider = "github"
 username = "example"
 repository = "order-b"
@@ -1986,6 +2158,9 @@ builtin = true
         );
         let text = service.export_bundle(&loaded, None).unwrap();
         let mut bundle = service.validate_bundle(&text).unwrap();
+        bundle.repositories[0]
+            .note_i18n
+            .insert("zh-CN".into(), "Custom imported note".into());
         bundle.repositories[0].note = "Custom imported note".into();
         let preview = service.import_bundle(&mut loaded, &bundle, "overwrite");
         assert!(preview.valid);
@@ -2121,14 +2296,23 @@ builtin = true
         });
         let mut builtin = repository_from_export(&template, "builtin".into(), true);
         builtin.name = "Built-in MOD".into();
+        builtin
+            .name_i18n
+            .insert("zh-CN".into(), builtin.name.clone());
         builtin.source_id = Some(builtin_source);
         let mut disabled = repository_from_export(&template, "disabled".into(), true);
         disabled.name = "Disabled other-region MOD".into();
+        disabled
+            .name_i18n
+            .insert("zh-CN".into(), disabled.name.clone());
         disabled.region = Some(other_region.into());
         disabled.source_id = Some("other-region-child".into());
         disabled.enabled = false;
         let mut detached = repository_from_export(&template, "detached".into(), false);
         detached.name = "Detached MOD".into();
+        detached
+            .name_i18n
+            .insert("zh-CN".into(), detached.name.clone());
         detached.repository = "detached".into();
         detached.source_id = Some("unavailable-source".into());
         config.repositories = vec![builtin, disabled, detached];
@@ -2210,10 +2394,15 @@ builtin = true
         release.group_i18n.insert("zh-CN".into(), "测试分组".into());
         release.note = "多行备注\n[[repositories]]\n\"quoted\" \\ path".into();
         release.note_i18n.insert("en".into(), release.note.clone());
+        release
+            .note_i18n
+            .insert("zh-CN".into(), release.note.clone());
+        release.group = "测试分组".into();
         release.version_regex = r"^1\.\d+\.\d+$".into();
         release.download_threads = 16;
         let mut raw = release.clone();
         raw.name = "Raw MOD".into();
+        raw.name_i18n.insert("zh-CN".into(), "Raw MOD".into());
         raw.download_mode = RepositoryDownloadMode::RepositoryFile;
         raw.branch = "main".into();
         raw.file_path = "bin/Raw MOD.dll".into();
@@ -2334,18 +2523,18 @@ builtin = true
     }
 
     #[test]
-    fn repository_bundle_names_fall_back_to_chinese_and_reject_missing_names() {
+    fn repository_bundle_requires_chinese_metadata_and_ignores_raw_fields() {
         let service = ConfigService {
             root: std::env::temp_dir(),
         };
-        let bundle_for = |repository: &str| {
+        let bundle_for = |metadata: &str| {
             format!(
                 r#"format = "{BUNDLE_FORMAT}"
 schema_version = 1
 exported_at = "2026-01-01T00:00:00Z"
 
 [[repositories]]
-{repository}
+{metadata}
 provider = "github"
 username = "example"
 repository = "mod"
@@ -2358,23 +2547,48 @@ value = "mod.dll"
             )
         };
 
-        let translated = service
-            .validate_bundle(&bundle_for(r#"name_i18n.zh-CN = "中文名称""#))
-            .unwrap();
-        assert_eq!(translated.repositories[0].name, "中文名称");
-
-        let explicit = service
+        let valid = service
             .validate_bundle(&bundle_for(
-                r#"name = "  Explicit name  "
-name_i18n.zh-CN = "中文名称""#,
+                r#"name = "Raw name"
+name_i18n.zh-CN = " 中文名称 "
+group = "Raw group"
+group_i18n.zh-CN = "中文分组"
+note = "Raw note"
+note_i18n.zh-CN = "中文备注""#,
             ))
             .unwrap();
-        assert_eq!(explicit.repositories[0].name, "  Explicit name  ");
+        let repository = &valid.repositories[0];
+        assert_eq!(repository.name, "中文名称");
+        assert_eq!(repository.group, "中文分组");
+        assert_eq!(repository.note, "中文备注");
 
-        let error = service
-            .validate_bundle(&bundle_for(r#"name_i18n.en = "English name""#))
-            .unwrap_err();
-        assert!(error.to_string().contains("name_i18n.zh-CN"));
+        for (metadata, expected_error) in [
+            (
+                r#"name_i18n.zh-CN = "名称"
+note_i18n.zh-CN = """#,
+                "group_i18n.zh-CN",
+            ),
+            (
+                r#"name_i18n.zh-CN = "名称"
+group_i18n.zh-CN = """#,
+                "note_i18n.zh-CN",
+            ),
+            (
+                r#"name_i18n.zh-CN = ""
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = """#,
+                "name_i18n.zh-CN",
+            ),
+            (
+                r#"name_i18n.en = "English name"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = """#,
+                "name_i18n.zh-CN",
+            ),
+        ] {
+            let error = service.validate_bundle(&bundle_for(metadata)).unwrap_err();
+            assert!(error.to_string().contains(expected_error), "{error}");
+        }
     }
 
     #[test]

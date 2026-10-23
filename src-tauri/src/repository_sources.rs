@@ -442,7 +442,7 @@ pub(crate) fn parse_document(
         ));
     }
     for repository in &mut document.repositories {
-        crate::config::normalize_repository_name(repository)?;
+        crate::config::normalize_repository_i18n(repository)?;
         repository.region = crate::config::normalize_repository_region_for_storage(
             repository.region.as_deref(),
             &format!("仓库 {}", repository.name),
@@ -820,7 +820,7 @@ mod tests {
     async fn remote_source_reloads_changed_content_and_rejects_not_modified() {
         let document = |name| {
             format!(
-                "[[repositories]]\nname = \"{name}\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{{ type = \"glob\", value = \"*.dll\" }}]\n"
+                "[[repositories]]\nname = \"{name}\"\nname_i18n.zh-CN = \"{name}\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{{ type = \"glob\", value = \"*.dll\" }}]\n"
             )
         };
         let (url, server) = serve_fresh_responses(
@@ -1241,7 +1241,7 @@ url = "mods/child.toml"
             let mut declared_child: RepositorySourceDocument =
                 toml::from_str(child_location.bundled_text().unwrap()).unwrap();
             for repository in &mut declared_child.repositories {
-                crate::config::normalize_repository_name(repository).unwrap();
+                crate::config::normalize_repository_i18n(repository).unwrap();
             }
             let child = load_document(&child_location, 5)
                 .await
@@ -1323,47 +1323,43 @@ builtin = true
     }
 
     #[test]
-    fn repositories_fall_back_to_chinese_names_and_reject_missing_chinese_names() {
+    fn repositories_require_chinese_translations_and_ignore_raw_metadata() {
         let location = SourceLocation::parse("index.toml").unwrap();
-        let document_for = |name: Option<&str>, translations: &[(&str, &str)]| {
-            let mut text = String::from("[[repositories]]\n");
-            if let Some(name) = name {
-                text.push_str(&format!("name = {}\n", toml::Value::String(name.into())));
-            }
-            for (locale, translated_name) in translations {
-                text.push_str(&format!(
-                    "name_i18n.{locale} = {}\n",
-                    toml::Value::String((*translated_name).into())
-                ));
-            }
-            text.push_str(
-                r#"provider = "github"
-username = "example"
-repository = "mod"
-install_target = "BepInEx/plugins"
-enabled = true
-[[repositories.asset_rules]]
-type = "exact"
-value = "mod.dll"
-"#,
-            );
-            text
+        let document_for = |metadata: &str| {
+            format!(
+                "[[repositories]]\n{metadata}\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{{ type = \"exact\", value = \"mod.dll\" }}]\n"
+            )
         };
+        let valid = document_for(
+            "name = \"Raw name\"\nname_i18n.zh-CN = \"中文名称\"\ngroup = \"Raw group\"\ngroup_i18n.zh-CN = \"中文分组\"\nnote = \"Raw note\"\nnote_i18n.zh-CN = \"中文备注\"",
+        );
+        let parsed = parse_document(&valid, &location).unwrap();
+        let repo = &parsed.repositories[0];
+        assert_eq!(repo.name, "中文名称");
+        assert_eq!(repo.group, "中文分组");
+        assert_eq!(repo.note, "中文备注");
 
-        let translated =
-            parse_document(&document_for(None, &[("zh-CN", "中文名称")]), &location).unwrap();
-        assert_eq!(translated.repositories[0].name, "中文名称");
-
-        let explicit = parse_document(
-            &document_for(Some("  Explicit name  "), &[("zh-CN", "中文名称")]),
-            &location,
-        )
-        .unwrap();
-        assert_eq!(explicit.repositories[0].name, "  Explicit name  ");
-
-        let error =
-            parse_document(&document_for(None, &[("en", "English name")]), &location).unwrap_err();
-        assert!(error.to_string().contains("name_i18n.zh-CN"));
+        for (metadata, expected_error) in [
+            (
+                "name_i18n.zh-CN = \"名称\"\nnote_i18n.zh-CN = \"\"",
+                "group_i18n.zh-CN",
+            ),
+            (
+                "name_i18n.zh-CN = \"名称\"\ngroup_i18n.zh-CN = \"\"",
+                "note_i18n.zh-CN",
+            ),
+            (
+                "name_i18n.zh-CN = \"\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"",
+                "name_i18n.zh-CN",
+            ),
+            (
+                "name = \"Raw only\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"",
+                "name_i18n.zh-CN",
+            ),
+        ] {
+            let error = parse_document(&document_for(metadata), &location).unwrap_err();
+            assert!(error.to_string().contains(expected_error), "{error}");
+        }
     }
 
     #[test]

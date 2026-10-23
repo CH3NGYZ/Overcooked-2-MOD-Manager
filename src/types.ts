@@ -92,7 +92,8 @@ export interface RepositorySource { id: string; nickname: string; nickname_i18n?
 export interface BepInExInfo { installed: boolean; complete: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_mod_count?: number; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
+export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled'
+export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_mod_count?: number; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; labels?: InstalledModStatusLabel[]; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
 export interface ModConfigDocument { guid: string; file_name: string; content: string; revision: string }
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
@@ -150,7 +151,9 @@ export interface TokenPatch { github_token: string; gitee_token: string }
 export interface RepositoryPatch {
   id?: string
   name: string
+  name_i18n?: Record<string, string>
   group: string
+  group_i18n?: Record<string, string>
   provider: Provider
   username: string
   repository: string
@@ -162,6 +165,7 @@ export interface RepositoryPatch {
   asset_rules: AssetRule[]
   install_target: string
   note: string
+  note_i18n?: Record<string, string>
   plugin_guid: string
   local_product_name: string
   local_original_filename: string

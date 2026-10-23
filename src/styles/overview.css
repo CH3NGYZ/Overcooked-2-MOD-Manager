@@ -257,6 +257,9 @@
   flex: 0 0 32px;
   width: 32px;
   height: 32px;
+  /* The card aligns to the top, so the provider icon must not float in the
+     vertical middle of a tall note. */
+  align-self: flex-start;
   display: grid;
   place-items: center;
   border: 1px solid var(--line-strong);

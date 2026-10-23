@@ -1,6 +1,6 @@
 .repository-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 13px 15px;
   border-bottom: 1px solid var(--line);
@@ -24,6 +24,8 @@
 }
 .repo-note {
   margin: 7px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
@@ -122,6 +124,19 @@
   width: auto;
   min-width: 90px;
   text-align: center;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.repo-release:disabled {
+  cursor: default;
+}
+.repo-release:not(:disabled):hover b {
+  color: var(--text);
 }
 .repo-release b,
 .repo-release span {

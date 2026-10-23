@@ -545,6 +545,9 @@ impl ConfigService {
             let item_name = repository_name_from_i18n(&item.name_i18n);
             if config.repositories.iter().any(|repo| {
                 !crate::community::is_repository(repo)
+                    // The channel separates Stable and Beta entries of the same
+                    // repository, so both must be imported side by side.
+                    && repo.channel == item.channel
                     && repository_address_key(
                         &repo.provider,
                         &repo.username,
@@ -571,6 +574,7 @@ impl ConfigService {
             }
             let same_name = config.repositories.iter().any(|repo| {
                 !crate::community::is_repository(repo)
+                    && repo.channel == item.channel
                     && repo
                         .name_i18n
                         .get("zh-CN")
@@ -652,9 +656,11 @@ impl ConfigService {
                     == normalize_repository_region(item.region.as_deref())
             };
             let same_name = |repo: &RepositoryConfig, name: &str| {
-                repo.name_i18n
-                    .get("zh-CN")
-                    .is_some_and(|existing_name| existing_name.trim() == name)
+                repo.channel == item.channel
+                    && repo
+                        .name_i18n
+                        .get("zh-CN")
+                        .is_some_and(|existing_name| existing_name.trim() == name)
             };
             if config.repositories.iter().any(|repo| {
                 !crate::community::is_repository(repo)
@@ -1209,11 +1215,14 @@ pub(crate) fn export_key(repo: &RepositoryExport) -> String {
         }
     };
     format!(
-        "{:?}|{}|{}|{:?}|{}|{}|{:?}|{}|{}|{}",
+        "{:?}|{}|{}|{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
         repo.provider,
         repo.username.trim().to_ascii_lowercase(),
         repo.repository.trim().to_ascii_lowercase(),
         repo.download_mode,
+        // Stable and Beta entries of one repository are separate install
+        // targets, so the channel belongs to the repository identity.
+        repo.channel,
         branch,
         file_path,
         asset_rules,
@@ -1578,6 +1587,86 @@ value = "RegionalMod.dll"
                 .map(|repo| repo.region.as_deref())
                 .collect::<Vec<_>>(),
             vec![Some(REGION_CHINESE_MAINLAND), Some(REGION_INTERNATIONAL)]
+        );
+    }
+
+    #[test]
+    fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
+        let service = ConfigService {
+            root: std::env::temp_dir(),
+        };
+        let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
+        let document =
+            crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+        let repositories = [Channel::Stable, Channel::Beta].map(|channel| {
+            let mut repository = document.repositories[0].clone();
+            repository.channel = channel;
+            repository.download_threads = 16;
+            repository.name_i18n.insert(
+                "zh-CN".into(),
+                match channel {
+                    Channel::Beta => "Regional MOD - Beta".into(),
+                    _ => "Regional MOD - Stable".into(),
+                },
+            );
+            repository
+        });
+        let bundle = RepositoryBundle {
+            format: BUNDLE_FORMAT.into(),
+            schema_version: 1,
+            exported_at: String::new(),
+            repositories: repositories.to_vec(),
+            repository_sources: Vec::new(),
+        };
+        let mut config = default_config();
+        let preview = service.import_bundle(&mut config, &bundle, "overwrite");
+        assert_eq!(config.repositories.len(), 2);
+        assert_eq!(preview.additions.len(), 2);
+        assert!(preview.duplicates.is_empty());
+        assert_eq!(
+            config
+                .repositories
+                .iter()
+                .map(|repo| repo.channel)
+                .collect::<Vec<_>>(),
+            vec![Channel::Stable, Channel::Beta]
+        );
+        assert_ne!(
+            repo_key(&config.repositories[0]),
+            repo_key(&config.repositories[1])
+        );
+        let original_ids = config
+            .repositories
+            .iter()
+            .map(|repo| repo.id.clone())
+            .collect::<Vec<_>>();
+        service.import_bundle(&mut config, &bundle, "overwrite");
+        assert_eq!(
+            config
+                .repositories
+                .iter()
+                .map(|repo| repo.id.clone())
+                .collect::<Vec<_>>(),
+            original_ids
+        );
+        let beta = &config.repositories[1];
+        let binding =
+            crate::models::RepositoryBinding::from_release(beta, "v1.0.0-beta.1").unwrap();
+        assert_eq!(binding.channel, Channel::Beta);
+        assert!(binding.matches_repository(beta));
+        assert!(!binding.matches_repository(&config.repositories[0]));
+
+        let exported = service.export_bundle(&config, None).unwrap();
+        let restored = service.validate_bundle(&exported).unwrap();
+        let mut imported = default_config();
+        service.import_bundle(&mut imported, &restored, "overwrite");
+        assert_eq!(
+            imported
+                .repositories
+                .iter()
+                .map(|repo| repo.channel)
+                .collect::<Vec<_>>(),
+            vec![Channel::Stable, Channel::Beta]
         );
     }
 

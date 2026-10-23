@@ -1181,6 +1181,70 @@ mod tests {
     }
 
     #[test]
+    fn channel_bound_install_only_checks_its_own_release_track() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/verification/channel-binding")
+            .join(format!("scan-{}", uuid::Uuid::new_v4()));
+        let relative = "BepInEx/plugins/Example.dll";
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, plugin_blob("com.example.guid", "Example", "100.0.0")).unwrap();
+        let mut stable = binding_repository();
+        stable.id = "stable-track".into();
+        stable.channel = crate::models::Channel::Stable;
+        stable.cached_releases = vec![high_cached_release()];
+        let mut beta = binding_repository();
+        beta.id = "beta-track".into();
+        beta.channel = crate::models::Channel::Beta;
+        let mut beta_release = high_cached_release();
+        beta_release.tag_name = "v99.0.0-beta.1".into();
+        beta_release.version = Some("99.0.0-beta.1".into());
+        beta_release.prerelease = true;
+        beta.cached_releases = vec![beta_release];
+        let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1, "ui_zoom":1.5, "onboarding_seen_steps":[],
+            "game":{"path":"", "auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repositories":[stable, beta]
+        })).unwrap();
+        let manifests = root.join("manifests");
+        let mut manifest = crate::archive::new_manifest(
+            "package",
+            "v98.0.0-beta.1",
+            Some("Package"),
+            None,
+            vec![relative.into()],
+        );
+        manifest.repository_binding =
+            crate::models::RepositoryBinding::from_release(&beta, "v98.0.0-beta.1");
+        crate::archive::write_manifest(&manifests, &manifest).unwrap();
+        let scan = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
+        assert_eq!(scan.len(), 1);
+        assert_eq!(scan[0].repository_id.as_deref(), Some("beta-track"));
+        assert_eq!(scan[0].repository_ids, ["beta-track"]);
+        assert!(scan[0].update_available);
+
+        manifest.repository_binding =
+            crate::models::RepositoryBinding::from_release(&stable, "v98.0.0");
+        crate::archive::write_manifest(&manifests, &manifest).unwrap();
+        let stable_scan = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
+        assert_eq!(
+            stable_scan[0].repository_id.as_deref(),
+            Some("stable-track")
+        );
+        assert_eq!(stable_scan[0].repository_ids, ["stable-track"]);
+        assert!(stable_scan[0].update_available);
+
+        let verified = std::fs::canonicalize(&root).unwrap();
+        assert!(verified.starts_with(
+            std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap()
+        ));
+        std::fs::remove_dir_all(verified).unwrap();
+    }
+
+    #[test]
     fn repository_binding_matches_any_configured_identity() {
         let repo = binding_repository();
         assert!(super::repository_matches_mod(

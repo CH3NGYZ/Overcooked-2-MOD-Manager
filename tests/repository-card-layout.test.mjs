@@ -26,6 +26,20 @@ test('the README action is a single icon button that reuses the release-log slot
   assert.match(i18n, /'查看仓库自述文件':/)
 })
 
+test('repository rows shrink instead of pushing the right-hand controls out', () => {
+  assert.match(repositoriesCss, /\.repository-row\s*\{[^}]*min-width:\s*0/)
+  assert.doesNotMatch(repositoriesCss, /\.repo-release\s*\{[^}]*min-width:\s*90px/)
+  assert.match(repositoriesCss, /\.repo-controls\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/)
+  assert.match(repositoriesCss, /\.row-actions\s*\{[^}]*flex-wrap:\s*wrap/)
+  assert.match(repositoriesCss, /\.repo-release b,\s*\.repo-release span\s*\{[^}]*text-overflow:\s*ellipsis/)
+  assert.match(repositoriesCss, /\.repo-controls \.primary-button\s*\{[^}]*white-space:\s*normal/)
+  // The surrounding grid must also allow shrink, otherwise the row min-content
+  // would still widen the card and clip the controls.
+  assert.match(repositoriesCss, /\.repository-group-list\s*\{[^}]*min-width:\s*0/)
+  assert.match(repositoriesCss, /\.repository-group\s*\{[^}]*min-width:\s*0/)
+  assert.match(repositoriesCss, /\.repository-group-items\s*\{[^}]*min-width:\s*0/)
+})
+
 test('the release version block keeps the release-log entry point', () => {
   assert.match(view, /<button v-if="repo\.download_mode === 'release'" type="button" class="repo-release"[\s\S]{0,180}@click="\$emit\('show-release', repo\)"/)
   assert.match(view, /:title="t\('查看 Release 日志'\)"/)

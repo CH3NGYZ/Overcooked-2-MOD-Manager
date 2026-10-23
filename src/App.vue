@@ -2458,6 +2458,7 @@ onUnmounted(() => {
         :format-date="formatDate"
         :install-repo="installRepo"
         :refresh-all-repositories="refreshAllRepositories"
+        :refresh-repository="refreshRepo"
         :refresh-source="refreshSource"
         :edit-repo="editRepo"
         :delete-repo="deleteRepo"

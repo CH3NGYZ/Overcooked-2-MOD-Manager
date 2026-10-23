@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const view = readFileSync(new URL('../src/components/RepositoriesView.vue', import.meta.url), 'utf8')
+const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 const description = readFileSync(new URL('../src/components/RepositoryDescription.vue', import.meta.url), 'utf8')
 const repositoriesCss = readFileSync(new URL('../src/styles/repositories.css', import.meta.url), 'utf8')
 const overviewCss = readFileSync(new URL('../src/styles/overview.css', import.meta.url), 'utf8')
@@ -27,7 +28,7 @@ test('every repository card exposes a single README icon button', () => {
   assert.match(i18n, /'查看仓库自述文件':/)
 })
 
-test('the per-card refresh and external release-page icons stay removed', () => {
+test('the legacy per-card refresh icon and external release-page icon stay removed', () => {
   assert.doesNotMatch(view, /t\('刷新 Release'\)/)
   assert.doesNotMatch(view, /t\('打开发布页'\)/)
   assert.doesNotMatch(view, /ExternalLink/)
@@ -49,8 +50,13 @@ test('repository rows shrink instead of pushing the right-hand controls out', ()
   assert.match(repositoriesCss, /\.repository-group-items\s*\{[^}]*min-width:\s*0/)
 })
 
-test('the release version block keeps the release-log entry point', () => {
-  assert.match(view, /<button v-if="repo\.download_mode === 'release'" type="button" class="repo-release"[\s\S]{0,180}@click="\$emit\('show-release', repo\)"/)
-  assert.match(view, /:title="t\('查看 Release 日志'\)"/)
+test('the release version block refreshes without a release and opens the current release with one', () => {
+  assert.match(view, /<button v-if="repo\.download_mode === 'release'" type="button" class="repo-release"[\s\S]{0,260}@click="showReleaseOrRefresh\(repo\)"/)
+  assert.match(view, /:title="t\(latest\(repo\) \? '查看 Release 日志' : '刷新仓库'\)"/)
+  assert.match(view, /formatDate\(latest\(repo\)\?\.published_at\) : t\('刷新仓库'\)/)
+  assert.match(view, /:disabled="!!repositoryRefreshing\[repo\.id\]"/)
+  assert.match(view, /function showReleaseOrRefresh\(repo: any\) \{[\s\S]*latest\.value\(repo\)[\s\S]*emit\('show-release', repo\)[\s\S]*refreshRepository\.value\?\.\(repo\)/)
+  assert.match(app, /:refresh-repository="refreshRepo"/)
+  assert.match(i18n, /'刷新仓库':/)
   assert.match(repositoriesCss, /\.repo-release\s*\{[^}]*appearance:\s*none/)
 })

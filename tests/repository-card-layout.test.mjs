@@ -18,12 +18,21 @@ test('a faint divider separates the repository title from its description', () =
   assert.match(repositoriesCss, /\.repo-note\s*\{[^}]*padding-top:/)
 })
 
-test('the README action is a single icon button that reuses the release-log slot', () => {
-  assert.match(view, /:title="t\('查看仓库自述文件'\)"[\s\S]{0,120}@click="\$emit\('show-repository-readme', repo\)"/)
+test('every repository card exposes a single README icon button', () => {
+  // No download-mode or community gate: repository-file cards get the icon too.
+  assert.match(view, /<button class="icon-button small" :title="t\('查看仓库自述文件'\)"\s*\n\s*@click="\$emit\('show-repository-readme', repo\)"/)
   assert.match(view, /<FileText :size="14" \/>/)
   assert.doesNotMatch(view, /t\('查看仓库说明'\)/, 'The old README text button must be gone')
   assert.doesNotMatch(description, /emit\('readme'\)/, 'The note component must not render a README button')
   assert.match(i18n, /'查看仓库自述文件':/)
+})
+
+test('the per-card refresh and external release-page icons stay removed', () => {
+  assert.doesNotMatch(view, /t\('刷新 Release'\)/)
+  assert.doesNotMatch(view, /t\('打开发布页'\)/)
+  assert.doesNotMatch(view, /ExternalLink/)
+  assert.doesNotMatch(i18n, /'刷新 Release':/)
+  assert.doesNotMatch(i18n, /'打开发布页':/)
 })
 
 test('repository rows shrink instead of pushing the right-hand controls out', () => {

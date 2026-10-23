@@ -6,22 +6,27 @@ import { fileURLToPath } from 'node:url'
 import { GitHubRelease } from './github-release.mjs'
 import {
   RELEASE_OWNER, RELEASE_REPO, assertDraftRelease, collectUpdateAssets,
-  publicUpdateAssetUrl, readProject, releaseTag, updateManifest, verifyUpdateSignature,
+  publicUpdateAssetUrl, readProject, releaseNotesFromMessage, releaseTag, updateManifest,
+  verifyUpdateSignature,
 } from './release-lib.mjs'
 
 export function readReleaseNotes(commitish, root = process.cwd()) {
   if (!/^[a-f0-9]{40}$/i.test(commitish || '')) {
     throw new Error('The release source commit must be a full GitHub commit SHA')
   }
-  let notes
+  let message
   try {
-    notes = execFileSync('git', ['-c', 'i18n.logOutputEncoding=utf-8', 'show', '--no-patch', '--format=%B', `${commitish}^{commit}`, '--'], {
+    message = execFileSync('git', ['-c', 'i18n.logOutputEncoding=utf-8', 'show', '--no-patch', '--format=%B', `${commitish}^{commit}`, '--'], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     }).replace(/[\r\n]+$/, '')
   } catch {
     throw new Error('Could not read the release source commit message')
   }
-  if (!notes.trim()) throw new Error('The release source commit message is empty')
+  if (!message.trim()) throw new Error('The release source commit message is empty')
+  // The release body is the user-facing changelog only: drop commit trailers
+  // (Co-Authored-By and friends) and local build/verification paragraphs.
+  const notes = releaseNotesFromMessage(message)
+  if (!notes) throw new Error('The release source commit message has no notes after removing trailers and verification text')
   return notes
 }
 

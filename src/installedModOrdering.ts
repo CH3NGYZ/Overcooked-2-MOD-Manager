@@ -1,19 +1,38 @@
+// Checking states sort above settled results: a MOD that is being checked is
+// shown first, then update/latest and the remaining states.
+const UNKNOWN_PRIORITY = 5
+
 const STATUS_PRIORITY: Record<string, number> = {
-  update_available: 0,
-  '有更新': 0,
-  latest: 1,
-  '最新版': 1,
-  not_release_asset: 2,
-  '不是 Release 资产, 无法检测更新': 2,
-  unbound: 3,
-  '未绑定在线仓库，无法检测更新': 3,
-  disabled: 5,
-  '已禁用': 5,
+  checking: 0,
+  '检查中': 0,
+  pending: 0,
+  '待检查': 0,
+  update_available: 1,
+  '有更新': 1,
+  latest: 2,
+  '最新版': 2,
+  not_release_asset: 3,
+  '不是 Release 资产, 无法检测更新': 3,
+  unbound: 4,
+  '未绑定在线仓库，无法检测更新': 4,
+  disabled: 6,
+  '已禁用': 6,
 }
 
+// Badge order inside one MOD row and its package heading.
+export const installedModStatusOrder: readonly string[] = [
+  'checking', 'pending', 'update_available', 'latest', 'not_release_asset', 'unbound',
+  'bound_repository_missing', 'repository_unavailable', 'unknown', 'duplicate_lower_version',
+  'duplicate', 'load_warning', 'disabled',
+]
+
 export function installedModStatusPriority(status: string | readonly string[]): number {
-  if (Array.isArray(status)) return status.length ? status.reduce((priority, code) => Math.min(priority, STATUS_PRIORITY[code] ?? 4), 5) : 4
-  return STATUS_PRIORITY[status as string] ?? 4
+  if (Array.isArray(status)) {
+    return status.length
+      ? status.reduce((priority, code) => Math.min(priority, STATUS_PRIORITY[code] ?? UNKNOWN_PRIORITY), 6)
+      : UNKNOWN_PRIORITY
+  }
+  return STATUS_PRIORITY[status as string] ?? UNKNOWN_PRIORITY
 }
 
 type ModGroup<T> = {

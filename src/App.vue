@@ -14,7 +14,7 @@ import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } f
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { repositoryMarkdownBaseUrl } from './markdown'
 import { repositoryGroup, repositoryGroupKey as repositoryStableGroupKey, repositoryName, repositoryNote } from './repositoryNames'
-import { sortInstalledModGroups } from './installedModOrdering'
+import { installedModStatusOrder, sortInstalledModGroups } from './installedModOrdering'
 import MarkdownContent from './components/MarkdownContent.vue'
 import { hasLocalUpdateVersion, liveModReleaseLabel, modRepositoryReleaseState, modUpdateCheckPhase } from './modUpdates'
 import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
@@ -647,7 +647,7 @@ const MOD_STATUS_TEXT: Record<ModStatusCode, string> = {
   repository_unavailable: '刷新失败，无法检测更新', unknown: '版本信息不足，无法检测更新', duplicate: '重复',
   duplicate_lower_version: '存在更高版本，建议卸载', load_warning: '存在更高版本，建议卸载', disabled: '已禁用', checking: '检查中', pending: '待检查',
 }
-const MOD_STATUS_ORDER: ModStatusCode[] = ['update_available', 'latest', 'not_release_asset', 'unbound', 'bound_repository_missing', 'repository_unavailable', 'unknown', 'duplicate_lower_version', 'duplicate', 'load_warning', 'checking', 'pending', 'disabled']
+const MOD_STATUS_ORDER = installedModStatusOrder as readonly ModStatusCode[]
 function legacyModStatusCode(mod: InstalledMod): ModStatusCode[] {
   const code = ({ update_available: 'update_available', latest: 'latest', not_release_asset: 'not_release_asset', unbound: 'unbound', bound_repository_missing: 'bound_repository_missing', repository_unavailable: 'repository_unavailable', unknown: 'unknown', duplicate_lower_version: 'duplicate_lower_version' } as Record<string, ModStatusCode>)[mod.status]
   const labels = code ? [code] : []

@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../src/installedModOrdering.ts', import.met
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 })
-const { installedModStatusPriority, sortInstalledModGroups } = await import(
+const { installedModStatusOrder, installedModStatusPriority, sortInstalledModGroups } = await import(
   `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`,
 )
 
@@ -27,7 +27,7 @@ function sort(mods) {
   )
 }
 
-test('installed MOD status priority follows update, latest, raw, unbound, unknown, disabled', () => {
+test('checking MODs sort above update, latest, raw, unbound and disabled', () => {
   const statuses = [
     '已禁用',
     '检查中',
@@ -36,10 +36,15 @@ test('installed MOD status priority follows update, latest, raw, unbound, unknow
     '最新版',
     '有更新',
   ]
-  assert.deepEqual(statuses.map(installedModStatusPriority).sort((left, right) => left - right), [0, 1, 2, 3, 4, 5])
+  assert.deepEqual(statuses.map(installedModStatusPriority).sort((left, right) => left - right), [0, 1, 2, 3, 4, 6])
   assert.deepEqual(sort(statuses.map((status) => mod(status, status))).map((item) => item.status), [
-    '有更新', '最新版', '不是 Release 资产, 无法检测更新', '未绑定在线仓库，无法检测更新', '检查中', '已禁用',
+    '检查中', '有更新', '最新版', '不是 Release 资产, 无法检测更新', '未绑定在线仓库，无法检测更新', '已禁用',
   ])
+})
+
+test('badge order starts with the checking states before update and latest', () => {
+  assert.deepEqual(installedModStatusOrder.slice(0, 4), ['checking', 'pending', 'update_available', 'latest'])
+  assert.equal(installedModStatusOrder.at(-1), 'disabled')
 })
 
 test('same-status MODs use text order and package members stay contiguous', () => {
@@ -66,11 +71,13 @@ test('a package uses its highest-priority member status without changing member 
 })
 
 test('unknown statuses remain before disabled MODs', () => {
-  assert.equal(installedModStatusPriority('检查中'), 4)
+  assert.equal(installedModStatusPriority('版本信息不足，无法检测更新'), 5)
+  assert.equal(installedModStatusPriority('检查中'), 0)
   assert.deepEqual(sort([
-    mod('unknown', '检查中'),
+    mod('unknown', '版本信息不足，无法检测更新'),
+    mod('checking', '检查中'),
     mod('disabled', '已禁用'),
-  ]).map((item) => item.id), ['unknown', 'disabled'])
+  ]).map((item) => item.id), ['checking', 'unknown', 'disabled'])
 })
 
 test('the installed MOD view iterates every label and only makes update labels actionable', () => {
@@ -83,8 +90,8 @@ test('the installed MOD view iterates every label and only makes update labels a
 })
 
 test('disabled MOD with an available update sorts by update and keeps both codes', () => {
-  assert.equal(installedModStatusPriority(['disabled', 'update_available']), 0)
-  assert.equal(installedModStatusPriority([]), 4)
+  assert.equal(installedModStatusPriority(['disabled', 'update_available']), 1)
+  assert.equal(installedModStatusPriority([]), 5)
   const sorted = sort([
     mod('disabled', '已禁用', { labels: ['disabled'] }),
     mod('disabled-update', '已禁用', { labels: ['disabled', 'update_available'] }),

@@ -2,6 +2,7 @@
 import { computed, ref, toRefs, type PropType } from 'vue'
 import { ChevronRight, FileCog, FolderOpen, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import { t } from '../i18n'
+import { installedModStatusOrder } from '../installedModOrdering'
 import { useListNavigationFocus } from '../composables/useListNavigationFocus'
 import type { InstalledMod } from '../types'
 
@@ -36,6 +37,10 @@ function toggleModPackageDetailsFromHeading(event: MouseEvent, mod: InstalledMod
   if (!isModActionTarget(event)) dynamicProps.toggleModPackageDetails(mod)
 }
 const installedList = ref<HTMLElement | null>(null)
+function statusRank(label: string) {
+  const index = installedModStatusOrder.indexOf(label)
+  return index < 0 ? installedModStatusOrder.length : index
+}
 const installedGroups = computed(() => {
   const groups: { id: string; packageId?: string; mods: { mod: InstalledMod; index: number }[] }[] = []
   const statusesByGroup = new Map<string, Map<string, InstalledMod[]>>()
@@ -55,7 +60,11 @@ const installedGroups = computed(() => {
   }
   return groups.map((group) => ({
     ...group,
-    statuses: [...statusesByGroup.get(group.id)!].map(([label, mods]) => ({ label, mods })),
+    // Package badges follow the same order as MOD rows, so a member still
+    // being checked reports above update/latest and the rest.
+    statuses: [...statusesByGroup.get(group.id)!]
+      .map(([label, mods]) => ({ label, mods }))
+      .sort((left, right) => statusRank(left.label) - statusRank(right.label)),
   }))
 })
 const focusGroupIds = computed(() => {

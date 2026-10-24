@@ -5,6 +5,7 @@ import ts from 'typescript'
 
 const source = readFileSync(new URL('../src/installedModOrdering.ts', import.meta.url), 'utf8')
 const repositoryRefreshSource = readFileSync(new URL('../src/composables/useRepositoryRefresh.ts', import.meta.url), 'utf8')
+const modsModelSource = readFileSync(new URL('../src/composables/useInstalledModsModel.ts', import.meta.url), 'utf8')
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 })
@@ -186,7 +187,7 @@ test('the update-check batch has no global overlay and reloads the dashboard onc
   const mapped = repositoryRefreshSource.match(/async function refreshMappedRepositories\(repositories = mappedUpdateRepositories\(\)\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(mapped, 'Use the actual mapped repository refresh')
   assert.match(mapped, /refreshRepositoryBatch\(repositories, 4\)/)
-  const status = app.match(/function installedModStatusCodes\(mod: InstalledMod\)([\s\S]*?)\n\}/)?.[1]
+  const status = modsModelSource.match(/function installedModStatusCodes\(mod: InstalledMod\)([\s\S]*?)\n  \}/)?.[1]
   assert.ok(status, 'Use the actual per-MOD status derivation')
   assert.match(status, /modUpdateCheckPhase\(/)
   assert.match(status, /isModRepositoryRefreshing\(mod\)/)

@@ -19,6 +19,7 @@ const { useCommunityRepositories } = await import(moduleUrl('../src/composables/
 }))
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 const assetsSource = readFileSync(new URL('../src/repositoryAssets.ts', import.meta.url), 'utf8')
+const modsModelSource = readFileSync(new URL('../src/composables/useInstalledModsModel.ts', import.meta.url), 'utf8')
 const assetMatcherSource = assetsSource.match(/function assetMatchesUi\([\s\S]*?\n\}/)?.[0]
 assert.ok(assetMatcherSource, 'Load the actual asset matcher used by the install dialog')
 const { outputText: assetMatcherModule } = ts.transpileModule(`export ${assetMatcherSource}`, {
@@ -162,7 +163,7 @@ test('hidden installed community targets navigate to official descendants withou
 })
 
 test('actual MOD status navigation expands and highlights the official descendant for a hidden community binding', async () => {
-  const source = appSource.match(/function openModRepository\([\s\S]*?\n\}/)?.[0]
+  const source = modsModelSource.match(/function openModRepository\([\s\S]*?\n  \}/)?.[0]
   assert.ok(source, 'Execute the actual MOD status navigation host')
   const { outputText } = ts.transpileModule(`
     import { communityNavigationTargets } from '${catalogueUrl}'

@@ -27,3 +27,18 @@ test('the update-check batch marks every mapped repository unready so queued MOD
   assert.match(app, /refreshRepositoryBatch\(repositories, 4\)/)
   assert.match(app, /const mapped = mappedUpdateRepositories\(\)[\s\S]*?for \(const repo of mapped\) repositoryReleaseReady\[repo\.id\] = false[\s\S]*?modUpdatesCheckActive\.value = true/)
 })
+
+test('each repository reports its own refresh state while the batch runs', () => {
+  const refresh = app.match(/async function refreshRepositoryEntry\(repo: Repository\) \{([\s\S]*?)\n\}/)?.[1]
+  assert.ok(refresh, 'Use the actual per-repository refresh')
+  assert.match(refresh, /repositoryRefreshing\[repo\.id\] = true/)
+  assert.match(refresh, /repositoryReleaseReady\[repo\.id\] = false/)
+  assert.match(refresh, /repositoryReleaseReady\[repo\.id\] = true/)
+  assert.match(refresh, /repositoryRefreshing\[repo\.id\] = false/)
+  const status = app.match(/function repositoryInstallStatus\(repo: Repository\) \{([\s\S]*?)\n\}/)?.[1]
+  assert.ok(status, 'Use the actual repository card status')
+  assert.match(status, /if \(repositoryRefreshing\[repo\.id\]\) return '检查中'/)
+  assert.match(status, /if \(!repositoryReleaseReady\[repo\.id\][\s\S]*?return '待检查'/)
+  assert.match(status, /return '有更新'/)
+  assert.match(status, /return states\.every\(\(state\) => state === 'latest'\) \? '最新版' : '已安装'/)
+})

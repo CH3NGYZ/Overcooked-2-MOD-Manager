@@ -8,16 +8,19 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState, InstalledModStatusLabel } from './types'
+import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { repositoryMarkdownBaseUrl } from './markdown'
 import { repositoryGroup, repositoryGroupKey as repositoryStableGroupKey, repositoryName, repositoryNote } from './repositoryNames'
-import { installedModStatusOrder, sortInstalledModGroups } from './installedModOrdering'
+import { sortInstalledModGroups } from './installedModOrdering'
+import { MOD_STATUS_ORDER, MOD_STATUS_TEXT, installedModLabelActionable, installedModLabelClass, installedModLabelText, type ModStatusCode } from './installedModStatus'
+import { installReleases, matchingInstallAssets } from './repositoryAssets'
+import { formatAssetMetadata, formatBytes, formatDate as formatDateForLocale } from './formatting'
 import MarkdownContent from './components/MarkdownContent.vue'
 import { hasLocalUpdateVersion, liveModReleaseLabel, modRepositoryReleaseState, modUpdateCheckPhase } from './modUpdates'
-import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository, isCommunitySourceArchive } from './communityRepositories'
+import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 import AppSidebar from './components/AppSidebar.vue'
@@ -565,11 +568,7 @@ async function refreshConfigSerialized() {
 }
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
-function formatBytes(value: number) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}` }
-function formatAssetMetadata(asset: import('./types').ReleaseAsset) {
-  const size = formatBytes(asset.size)
-  return asset.download_count == null ? size : `${size} · ${t('下载次数：{count}').replace('{count}', String(asset.download_count))}`
-}
+function formatDate(value?: string) { return formatDateForLocale(value, locale.value) }
 function scheduleToastClose() { if (toastTimer) window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => { message.value = ''; error.value = '' }, 5000) }
 function clampUiZoom(value: number | undefined) {
   const numeric = Number.isFinite(value) ? value as number : DEFAULT_UI_ZOOM
@@ -607,7 +606,6 @@ async function handleUiZoomWheel(event: WheelEvent) {
   // Ctrl+wheel changes only the WebView content scale.
   await setUiZoom(next, true, true)
 }
-function formatDate(value?: string) { if (!value) return t('未知时间'); const language = ({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US', ko: 'ko-KR', ja: 'ja-JP' } as Record<Locale, string>)[locale.value]; return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)) }
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repositoryName(repo, locale.value) }
 function localizedRepositoryNote(repo: Repository) { return repositoryNote(repo, locale.value) }
@@ -650,14 +648,6 @@ function modHasRemoteUpdate(mod: InstalledMod) {
   return modReleaseRepositories(mod).some((repo) => modRepositoryVersionReady(repo, mod)
     && modRepositoryReleaseState(repo, mod) === 'update_available')
 }
-type ModStatusCode = InstalledModStatusLabel | 'checking' | 'pending'
-const MOD_STATUS_TEXT: Record<ModStatusCode, string> = {
-  update_available: '有更新', latest: '最新版', not_release_asset: '不是 Release 资产, 无法检测更新',
-  unbound: '未绑定在线仓库，无法检测更新', bound_repository_missing: '已绑定仓库未加载，无法检测更新',
-  repository_unavailable: '刷新失败，无法检测更新', unknown: '版本信息不足，无法检测更新', duplicate: '重复',
-  duplicate_lower_version: '存在更高版本，建议卸载', load_warning: '存在更高版本，建议卸载', disabled: '已禁用', checking: '检查中', pending: '待检查',
-}
-const MOD_STATUS_ORDER = installedModStatusOrder as readonly ModStatusCode[]
 function legacyModStatusCode(mod: InstalledMod): ModStatusCode[] {
   const code = ({ update_available: 'update_available', latest: 'latest', not_release_asset: 'not_release_asset', unbound: 'unbound', bound_repository_missing: 'bound_repository_missing', repository_unavailable: 'repository_unavailable', unknown: 'unknown', duplicate_lower_version: 'duplicate_lower_version' } as Record<string, ModStatusCode>)[mod.status]
   const labels = code ? [code] : []
@@ -708,15 +698,6 @@ function installedModLabels(mod: InstalledMod) {
   return MOD_STATUS_ORDER.filter((code) => labels.includes(code))
 }
 function installedModOrderingStatus(mod: InstalledMod) { return installedModLabels(mod) }
-function installedModLabelText(code: string) { return code in MOD_STATUS_TEXT ? t(MOD_STATUS_TEXT[code as ModStatusCode]) : code }
-function installedModLabelClass(code: string) {
-  if (code === 'disabled') return 'mod-disabled'
-  if (['update_available', 'checking', 'pending', 'duplicate'].includes(code)) return 'warning'
-  if (code === 'latest') return 'success'
-  if (['repository_unavailable', 'load_warning', 'duplicate_lower_version'].includes(code)) return 'danger'
-  return 'muted'
-}
-function installedModLabelActionable(code: string) { return code === 'update_available' || code === 'latest' }
 function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | '' {
   if (['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
     || !hasLocalUpdateVersion(mod) || mod.duplicate_version || mod.load_warning || isModRepositoryRefreshing(mod)) return ''
@@ -762,14 +743,6 @@ function openModRepository(mod: InstalledMod, requestedLabel?: string) {
   if (!expandTargets(sourceGroups.value)) return
   repositoryFocusIds.value = visibleIds
   activeView.value = 'repositories'
-}
-function assetMatchesUi(name: string, rule: { type: string; value: string }) {
-  if (rule.type === 'exact') return name.toLocaleLowerCase() === rule.value.toLocaleLowerCase()
-  if (rule.type === 'glob') {
-    const escaped = rule.value.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')
-    return new RegExp(`^${escaped}$`, 'i').test(name)
-  }
-  try { return new RegExp(rule.value, 'i').test(name) } catch { return false }
 }
 function showSuccess(value: string) { error.value = ''; message.value = `${t('成功：')}${value}`; scheduleToastClose() }
 function showError(value: unknown) { error.value = `${t('错误：')}${t(value instanceof Error ? value.message : String(value))}`; message.value = ''; scheduleToastClose() }
@@ -924,15 +897,6 @@ function assetProxyEntries(repo: Repository | null) {
 }
 function assetProxySelectionVisible(repo: Repository | null) {
   return repo?.provider === 'github'
-}
-function installReleases(repo: Repository | null) {
-  if (!repo || repo.last_error) return []
-  return repo.cached_releases.filter((release) => matchingInstallAssets(repo, release).length > 0)
-}
-function matchingInstallAssets(repo: Repository, release: import('./types').ReleaseInfo) {
-  if (repo.download_mode === 'repository_file') return []
-  return release.assets.filter((asset) => !!asset.download_url && !isCommunitySourceArchive(repo, release, asset.name)
-    && repo.asset_rules.some((rule) => assetMatchesUi(asset.name, rule)))
 }
 function selectedInstallRelease(repo: Repository | null) { return installReleases(repo).find((release) => release.tag_name === selectedInstallTag.value) }
 function selectedInstallAssets(repo: Repository | null) {

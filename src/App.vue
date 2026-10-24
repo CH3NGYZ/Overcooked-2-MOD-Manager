@@ -8,7 +8,7 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, DownloadProgress, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
@@ -17,7 +17,7 @@ import { repositoryGroup, repositoryGroupKey as repositoryStableGroupKey, reposi
 import { sortInstalledModGroups } from './installedModOrdering'
 import { MOD_STATUS_ORDER, MOD_STATUS_TEXT, installedModLabelActionable, installedModLabelClass, installedModLabelText, type ModStatusCode } from './installedModStatus'
 import { installReleases, matchingInstallAssets } from './repositoryAssets'
-import { formatAssetMetadata, formatBytes, formatDate as formatDateForLocale } from './formatting'
+import { formatAssetMetadata, formatDate as formatDateForLocale } from './formatting'
 import MarkdownContent from './components/MarkdownContent.vue'
 import { hasLocalUpdateVersion, liveModReleaseLabel, modRepositoryReleaseState, modUpdateCheckPhase } from './modUpdates'
 import { GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository } from './communityRepositories'
@@ -39,7 +39,9 @@ import ConfirmationDialog from './components/ConfirmationDialog.vue'
 import { useConfirmationDialog } from './composables/useConfirmationDialog'
 import { useCommunityRepositories } from './composables/useCommunityRepositories'
 import { useUiZoom } from './composables/useUiZoom'
-import { useTutorialRuntime, type TutorialProgressState } from './tutorial/useTutorialRuntime'
+import { useDownloadProgress } from './composables/useDownloadProgress'
+import DownloadStrip from './components/DownloadStrip.vue'
+import { useTutorialRuntime } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
 
 type InstalledMod = import('./types').InstalledMod
@@ -61,10 +63,10 @@ const dashboard = ref<Dashboard | null>(null)
 const busy = ref('')
 const message = ref('')
 const error = ref('')
-const progress = ref<TutorialProgressState>({ label: '', percent: 0, speed: '', status: '' })
-let downloadRequestContext: Pick<DownloadProgress, 'route' | 'source' | 'attempt' | 'attempt_total'> = {}
-let downloadProgressActive = false
-const downloadCancelRequested = ref(false)
+const {
+  progress, clear: clearDownloadProgress, begin: beginDownloadProgress,
+  receive: receiveDownloadProgress, cancelDownload,
+} = useDownloadProgress({ isUnmounted: () => appUnmounted })
 const {
   uiZoom, min: MIN_UI_ZOOM, max: MAX_UI_ZOOM, step: UI_ZOOM_STEP,
   clamp: clampUiZoom, setUiZoom, handleWheel: handleUiZoomWheel, cleanup: cleanupUiZoom,
@@ -875,44 +877,6 @@ function selectInstallRelease() {
   const release = selectedInstallRelease(repo)
   selectedInstallAsset.value = release ? matchingInstallAssets(repo, release)[0]?.name || '' : ''
 }
-function clearDownloadProgress() {
-  downloadProgressActive = false
-  downloadRequestContext = {}
-  progress.value = { label: '', percent: 0, speed: '', status: '' }
-}
-function beginDownloadProgress() {
-  clearDownloadProgress()
-  downloadCancelRequested.value = false
-  downloadProgressActive = true
-}
-function receiveDownloadProgress(value: DownloadProgress) {
-  if (!downloadProgressActive || downloadCancelRequested.value || appUnmounted) return
-  if (progress.value.label !== value.label) downloadRequestContext = {}
-  if (value.route) downloadRequestContext = {
-    route: value.route, source: value.source,
-    attempt: value.attempt, attempt_total: value.attempt_total,
-  }
-  const route = downloadRequestContext.route === 'proxy'
-    ? t('代理：{name}').replace('{name}', downloadRequestContext.source || t('自动代理'))
-    : downloadRequestContext.route === 'direct' ? t('直连') : ''
-  const attempt = downloadRequestContext.attempt && downloadRequestContext.attempt_total
-    ? ` (${downloadRequestContext.attempt}/${downloadRequestContext.attempt_total})` : ''
-  const total = value.total && value.total > 0 ? value.total : undefined
-  const waiting = !value.finished && value.downloaded === 0
-    && (value.phase === 'connecting' || value.phase === 'switching')
-  const stage = value.finished ? t('下载完成，正在处理')
-    : waiting && value.phase === 'switching' ? t('正在切换下载渠道')
-    : waiting ? t('正在请求，等待响应') : ''
-  const parallel = !value.finished && (value.parallel_sources || 0) > 1
-    ? t('并行下载源：{count}').replace('{count}', String(value.parallel_sources)) : ''
-  progress.value = {
-    label: value.label,
-    percent: value.finished ? 100 : total ? Math.min(100, value.downloaded / total * 100) : 0,
-    speed: value.finished || waiting ? '' : `${formatBytes(value.speed_bytes)}/s`,
-    status: [stage, parallel, route && `${route}${attempt}`].filter(Boolean).join(' · '),
-    indeterminate: !value.finished && (waiting || !total),
-  }
-}
 async function confirmInstall() {
   if (tutorial.previewing.value || appUnmounted || busy.value) return
   const repo = showInstall.value
@@ -922,7 +886,6 @@ async function confirmInstall() {
   try {
     const proxyMode = assetProxySelectionVisible(repo) ? selectedAssetProxyMode.value : 'direct'
     const proxyId = proxyMode === 'fixed' ? selectedAssetProxyId.value || undefined : undefined
-    downloadRequestContext = {}
     const manualProxy = assetProxyEntries(repo).find((entry) => entry.id === proxyId)
     progress.value = {
       label: localizedRepositoryName(repo), percent: 0, speed: '', indeterminate: true,
@@ -981,11 +944,6 @@ async function openBackupDirectory(backupPath?: string) {
   await run('正在打开备份目录', () => api.openBackupDirectory(backupPath)).catch(() => undefined)
 }
 async function deleteBackup(path: string) { if (!await requestConfirmation({ title: t('确定删除备份'), message: `${t('确定删除备份')}“${path.split(/[\\/]/).pop()}”？${t('删除后无法恢复。')}`, danger: true })) return; await run('正在删除 BepInEx 备份', () => api.deleteBepInExBackup(path)); await loadDashboard() }
-async function cancelDownload() {
-  downloadCancelRequested.value = true
-  clearDownloadProgress()
-  try { await api.cancelDownload() } catch { /* 下载任务会自行结束，进度条已隐藏 */ }
-}
 async function refreshRustLog() {
   try {
     rustLog.value = logViewerKind.value === 'rust'
@@ -2271,17 +2229,7 @@ onUnmounted(() => {
             <X :size="15" />
           </button>
         </div>
-        <Transition name="download-notch">
-          <div v-if="displayProgress.label" class="download-strip">
-            <div class="download-meta"><span>{{ displayProgress.label }}<small v-if="displayProgress.status"> · {{ displayProgress.status
-                }}</small></span><span><template v-if="!displayProgress.indeterminate">{{ displayProgress.percent.toFixed(0) }}%</template><template v-if="displayProgress.speed"> ·
-                {{ displayProgress.speed }}</template></span></div>
-            <div class="download-progress-row">
-              <div class="progress" :class="{ 'progress-indeterminate': displayProgress.indeterminate }"><i :style="{ width: displayProgress.indeterminate ? '28%' : `${displayProgress.percent}%` }"></i></div><button
-                class="secondary-button download-cancel" @click="cancelDownload">{{ t('取消下载') }}</button>
-            </div>
-          </div>
-        </Transition>
+        <DownloadStrip :progress="displayProgress" @cancel="cancelDownload" />
       </div>
       <div class="main-scroll">
       <OverviewView v-if="activeView === 'overview'"

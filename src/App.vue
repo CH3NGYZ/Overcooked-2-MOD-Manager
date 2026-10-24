@@ -8,7 +8,7 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdateInfo, AppUpdatePhaseEvent, BepInExInstallResult, ConfigEditorTarget, Dashboard, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
@@ -42,8 +42,11 @@ import { useUiZoom } from './composables/useUiZoom'
 import { useDownloadProgress } from './composables/useDownloadProgress'
 import { useLogViewer } from './composables/useLogViewer'
 import { installFrontendLogging } from './composables/useFrontendLogging'
+import { useAppUpdate } from './composables/useAppUpdate'
+import { repositorySourceRegionLabel } from './repositorySources'
 import DownloadStrip from './components/DownloadStrip.vue'
 import LogViewerDialog from './components/LogViewerDialog.vue'
+import StartupOverlay from './components/StartupOverlay.vue'
 import { useTutorialRuntime } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
 
@@ -112,20 +115,10 @@ const importText = ref('')
 const importPreview = ref<{ valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] } | null>(null)
 const repositoryRefreshing = reactive<Record<string, boolean>>({})
 const sourceRefreshingManual = reactive<Record<string, boolean>>({})
-const appUpdate = ref<AppUpdateInfo | null>(null)
-const appUpdateCheck = ref<AppUpdateCheckResult | null>(null)
-const startupUpdateChecking = ref(true)
 const startupLoading = ref(false)
 const startupLoadingError = ref('')
-const updateCheckFailed = ref(false)
-const updateSkipped = ref(false)
-const startupUpdatePhase = ref<'manifest' | 'download' | 'install' | 'skipped'>('manifest')
-const updateSkipCountdown = ref(0)
-const updatePageOpening = ref(false)
-const updatePageError = ref('')
 const startupStage = ref('')
 const startupError = ref('')
-const visibleStartupUpdateChannels = computed(() => appUpdateCheck.value?.channels.filter((channel) => channel.status !== 'skipped') || [])
 const sourceCollapsed = reactive<Record<string, boolean>>({})
 const repositoryGroupCollapsed = reactive<Record<string, boolean>>({})
 const sourceLoading = reactive<Record<string, boolean>>({})
@@ -148,7 +141,6 @@ const stopAppUpdatePhase = ref<(() => void) | null>(null)
 const stopGameState = ref<(() => void) | null>(null)
 let appUnmounted = false
 let toastTimer: number | undefined
-let updateSkipTimer: number | undefined
 let modalPointerDownTarget: Element | null = null
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
@@ -163,6 +155,22 @@ const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1')
 watch(sidebarCollapsed, (value) => localStorage.setItem(SIDEBAR_COLLAPSE_KEY, value ? '1' : '0'))
 const appVersion = ref('')
 const { locale, setLocale } = useLocaleTranslation()
+const {
+  appUpdate, appUpdateCheck, startupUpdateChecking, updateCheckFailed, updateSkipped,
+  startupUpdatePhase, updateSkipCountdown, updatePageOpening, updatePageError,
+  initialUpdateCheck, finishStartupUpdate, receiveAppUpdateChannel, receiveAppUpdatePhase,
+  checkAppUpdate, installAppUpdate, markUpdateSkipped, continueAfterUpdateSkip,
+  openManualUpdatePage, clearUpdateSkipTimer,
+} = useAppUpdate({
+  run,
+  locale,
+  startupStage,
+  startupError,
+  showSuccess,
+  isUnmounted: () => appUnmounted,
+  beginDownload: beginDownloadProgress,
+  clearDownload: clearDownloadProgress,
+})
 const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'zh-CN', label: '简体中文' },
   { value: 'zh-TW', label: '繁體中文' },
@@ -291,12 +299,6 @@ const displayProgress = tutorialRuntime.displayProgress
 function sourceMatchesRegion(source: RepositorySource) {
   return (source.id !== GITEE_COMMUNITY_SOURCE_ID || communityProviderMatchesRegion('gitee', config.value?.region))
     && repositoryRegionMatches(source.region, config.value?.region)
-}
-function repositorySourceRegionLabel(region?: string) {
-  const normalized = normalizeRepositoryRegion(region)
-  if (normalized === 'chinese_mainland') return t('中国大陆地区')
-  if (normalized === 'international') return t('国际地区')
-  return t('全部地区')
 }
 const activeRepositorySources = computed(() => (config.value?.repository_sources ?? []).filter(sourceMatchesRegion))
 const activeRepositorySourceIds = computed(() => new Set(activeRepositorySources.value.map((source) => source.id)))
@@ -974,109 +976,6 @@ function openModConfig(mod: InstalledMod) {
 function openBepInExConfig() {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value || !game.value?.bepinex.has_config) return
   configEditorTarget.value = { kind: 'bepinex' }
-}
-function updateChannelName(id: string) {
-  if (id.startsWith('github-proxy:')) return `${t('GitHub 内置代理')} (${id.slice('github-proxy:'.length)})`
-  return t(({ 'gitee-direct': 'Gitee 更新清单', 'github-direct': 'GitHub 更新清单' } as Record<string, string>)[id] || id)
-}
-function updateChannelStatus(status: string) {
-  return t(({ latest: '最新版', update_available: '有更新', failed: '失败', skipped: '未请求', cancelled: '已取消', checking: '检查中', downloading: '下载中', downloaded: '已下载' } as Record<string, string>)[status] || status)
-}
-function updateRegionLabel(region: string) {
-  if (region === 'detecting') return t('检测中')
-  return repositorySourceRegionLabel(region)
-}
-
-
-function initialUpdateCheck() {
-  return {
-    update: undefined,
-    channels: [],
-    all_failed: false,
-    region: 'detecting',
-  } as Awaited<ReturnType<typeof api.checkAppUpdate>>
-}
-function finishStartupUpdate() {
-  startupUpdateChecking.value = false
-  appUpdateCheck.value = null
-}
-function receiveAppUpdateChannel(event: AppUpdateChannelEvent) {
-  if (appUnmounted || !startupUpdateChecking.value) return
-  const current = appUpdateCheck.value || initialUpdateCheck()
-  const baseChannels = current.region !== event.region
-    ? current.channels.filter((channel) => event.region === 'mainland-china' || channel.provider === 'github')
-    : current.channels
-  const channels = baseChannels.some((channel) => channel.id === event.channel.id)
-    ? baseChannels.map((channel) => channel.id === event.channel.id ? event.channel : channel)
-    : [...baseChannels, event.channel]
-  appUpdateCheck.value = { ...current, region: event.region, channels }
-}
-function receiveAppUpdatePhase(event: AppUpdatePhaseEvent) {
-  if (appUnmounted || !startupUpdateChecking.value) return
-  startupUpdatePhase.value = event.phase
-  if (event.phase === 'install') startupStage.value = t('正在安装程序更新')
-  if (event.update) appUpdate.value = event.update
-  if (event.message && event.phase === 'skipped') startupError.value = event.message
-}
-async function checkAppUpdate() {
-  const result = await run('正在检查程序更新', () => api.checkAppUpdate(locale.value))
-  appUpdateCheck.value = result
-  appUpdate.value = result.update || null
-  startupUpdatePhase.value = 'manifest'
-  if (!result.update && !result.all_failed) showSuccess(t('当前已是最新版本'))
-}
-function clearUpdateSkipTimer() {
-  if (updateSkipTimer) window.clearInterval(updateSkipTimer)
-  updateSkipTimer = undefined
-}
-async function openManualUpdatePage() {
-  if (appUnmounted || !updateSkipped.value || updatePageOpening.value) return
-  clearUpdateSkipTimer()
-  updateSkipCountdown.value = 0
-  updatePageOpening.value = true
-  updatePageError.value = ''
-  try {
-    await api.openUpdateRepository()
-  } catch (reason) {
-    if (!appUnmounted && updateSkipped.value) {
-      updatePageError.value = t('无法打开更新页面：{error}')
-        .replace('{error}', reason instanceof Error ? reason.message : String(reason))
-    }
-  } finally {
-    updatePageOpening.value = false
-  }
-}
-function markUpdateSkipped(message?: string) {
-  clearUpdateSkipTimer()
-  updateSkipped.value = true
-  updateCheckFailed.value = true
-  startupUpdatePhase.value = 'skipped'
-  startupError.value = message || '请手动更新管理器, 本次跳过更新.'
-  updatePageError.value = ''
-  updateSkipCountdown.value = 3
-  updateSkipTimer = window.setInterval(() => {
-    updateSkipCountdown.value -= 1
-    if (updateSkipCountdown.value > 0) return
-    void openManualUpdatePage()
-  }, 1000)
-}
-function continueAfterUpdateSkip() {
-  clearUpdateSkipTimer()
-  updateSkipped.value = false
-  updateCheckFailed.value = false
-  startupError.value = ''
-  updatePageError.value = ''
-  updateSkipCountdown.value = 0
-}
-async function installAppUpdate() {
-  startupUpdatePhase.value = 'download'
-  beginDownloadProgress()
-  try {
-    const result = await run('正在安装程序更新', () => api.installAppUpdate())
-    if (!result.ok && result.message !== '当前已是最新版本') markUpdateSkipped(result.message)
-  } finally {
-    clearDownloadProgress()
-  }
 }
 async function refreshRepositoryBatch(repositories: Repository[], concurrency = repositories.length) {
   const trackingToken = repositories.length > 0 ? ++repositoryRefreshBatchToken : undefined
@@ -2091,40 +1990,10 @@ onUnmounted(() => {
   <ConfirmationDialog :request="confirmation" @answer="answerConfirmation" />
   <RepositoryDocumentDialog :target="repositoryDocument" @close="repositoryDocument = null" />
   <div :class="['app-shell', { 'tutorial-layer-active': tutorial.visible.value, 'sidebar-rail': sidebarCollapsed }]">
-    <div v-if="startupUpdateChecking || updateCheckFailed" class="startup-overlay">
-      <div v-if="startupUpdateChecking && !updateSkipped" class="startup-card">
-        <div class="startup-spinner"></div>
-        <h2>{{ startupStage || t('检查安装器更新') }}</h2>
-        <p>{{ t('请耐心等待') }}</p>
-        <div v-if="appUpdateCheck" class="update-region">
-          <span>{{ t('当前更新地区') }}</span><strong>{{ updateRegionLabel(appUpdateCheck.region) }}</strong>
-        </div>
-        <div v-if="startupUpdatePhase === 'manifest' && visibleStartupUpdateChannels.length" class="update-channel-statuses">
-          <div v-for="channel in visibleStartupUpdateChannels" :key="channel.id" class="update-channel-status">
-            <span>{{ updateChannelName(channel.id) }}</span><span :class="`update-channel-${channel.status}`">{{ updateChannelStatus(channel.status) }}</span>
-          </div>
-        </div>
-        <div v-if="startupUpdatePhase === 'download' && appUpdate" class="update-release-log">
-          <div class="update-release-head"><strong>{{ t('安装器更新') }} v{{ appUpdate.version }}</strong><small>{{ appUpdate.date || t('未知时间') }}</small></div>
-          <p>{{ appUpdate.body || t('Release 没有更新日志。') }}</p>
-        </div>
-        <div v-if="startupUpdatePhase === 'download' && displayProgress.label" class="startup-download-progress">
-          <div class="download-meta"><span>{{ displayProgress.label }}<small v-if="displayProgress.status"> · {{ displayProgress.status }}</small></span><span><template v-if="!displayProgress.indeterminate">{{ displayProgress.percent.toFixed(0) }}%</template><small v-if="displayProgress.speed"> · {{ displayProgress.speed }}</small></span></div>
-          <div class="progress" :class="{ 'progress-indeterminate': displayProgress.indeterminate }"><i :style="{ width: displayProgress.indeterminate ? '28%' : `${displayProgress.percent}%` }"></i></div>
-        </div>
-      </div>
-      <div v-else class="startup-card startup-failed">
-        <div class="startup-exclamation">!</div>
-        <h2>{{ startupError || t('检查更新失败，请重新启动MOD管理器。') }}</h2>
-        <p v-if="updateSkipped && updateSkipCountdown > 0">{{ updateSkipCountdown }} {{ t('秒后打开管理器仓库') }}</p>
-        <p v-if="updatePageError" class="startup-update-error" role="alert">{{ updatePageError }}</p>
-        <div v-if="updateSkipped" class="startup-update-actions">
-          <button class="secondary-button" @click="continueAfterUpdateSkip">{{ t('继续') }}</button>
-          <button class="primary-button" :disabled="updatePageOpening" @click="openManualUpdatePage">{{ t('手动更新') }}</button>
-        </div>
-        <button v-else class="primary-button" @click="api.exitApp()">{{ t('确定') }}</button>
-      </div>
-    </div>
+    <StartupOverlay v-if="startupUpdateChecking || updateCheckFailed" :checking="startupUpdateChecking" :check-failed="updateCheckFailed"
+      :skipped="updateSkipped" :stage="startupStage" :error="startupError" :phase="startupUpdatePhase" :check="appUpdateCheck"
+      :update="appUpdate" :countdown="updateSkipCountdown" :page-opening="updatePageOpening" :page-error="updatePageError"
+      :progress="displayProgress" @continue="continueAfterUpdateSkip" @manual-update="openManualUpdatePage" @exit="api.exitApp()" />
     <div v-else-if="startupLoading || startupLoadingError" class="startup-overlay startup-loading-overlay">
       <div class="startup-card" :class="{ 'startup-failed': !!startupLoadingError }">
         <div v-if="!startupLoadingError" class="startup-spinner"></div>

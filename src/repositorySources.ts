@@ -1,4 +1,5 @@
 import type { RepositorySource } from './types'
+import { t } from './i18n'
 
 export function repositorySourceName(source: Pick<RepositorySource, 'nickname' | 'nickname_i18n'>, language: string) {
   return [source.nickname_i18n?.[language], source.nickname_i18n?.['zh-CN'], source.nickname]
@@ -22,4 +23,11 @@ export function repositoryRegionMatches(region: string | undefined, currentRegio
 
 export function repositorySourceKey(source: Pick<RepositorySource, 'url' | 'region'>) {
   return JSON.stringify([source.url.trim().toLowerCase(), normalizeRepositoryRegion(source.region)])
+}
+
+export function repositorySourceRegionLabel(region?: string) {
+  const normalized = normalizeRepositoryRegion(region)
+  if (normalized === 'chinese_mainland') return t('中国大陆地区')
+  if (normalized === 'international') return t('国际地区')
+  return t('全部地区')
 }

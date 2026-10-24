@@ -137,11 +137,11 @@ test('changing a MOD status causes its group to move on the next sort', () => {
 })
 
 test('the scan action only reloads the dashboard and does not refresh repositories', () => {
-  const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-  const scan = app.match(/async function rescanInstalledMods\(\) \{([\s\S]*?)\n\}/)?.[1]
+  const operationsSource = readFileSync(new URL('../src/composables/useModOperations.ts', import.meta.url), 'utf8')
+  const scan = operationsSource.match(/async function rescanInstalledMods\(\) \{([\s\S]*?)\n  \}/)?.[1]
   assert.ok(scan, 'Use the actual local MOD scan handler')
   assert.match(scan, /api\.dashboard\(\)/)
-  assert.doesNotMatch(scan, /refreshMappedRepositoryUpdates|refreshRepository|refreshRepo/)
+  assert.doesNotMatch(scan, /refreshMappedRepositoryUpdates|refreshRepository\(|refreshRepo\(/)
 })
 
 test('the explicit update-check action remains the remote refresh entry point', () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
@@ -8,16 +8,14 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GitHubProxyConfig, Provider, ProxyMode, Repository, RepositoryPatch, SettingsPatch, WinhttpState } from './types'
+import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GitHubProxyConfig, Provider, Repository, RepositoryPatch, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches } from './repositorySources'
-import { repositoryMarkdownBaseUrl } from './markdown'
 import { repositoryGroup, repositoryName, repositoryNote } from './repositoryNames'
 import { installedModLabelActionable, installedModLabelClass, installedModLabelText } from './installedModStatus'
 import { installReleases, matchingInstallAssets } from './repositoryAssets'
 import { formatAssetMetadata, formatDate as formatDateForLocale } from './formatting'
-import MarkdownContent from './components/MarkdownContent.vue'
 import { communityProviderMatchesRegion, isCommunityRepository } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
@@ -46,24 +44,18 @@ import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
 import { useSourceRefresh } from './composables/useSourceRefresh'
 import { useInstalledModsModel } from './composables/useInstalledModsModel'
 import { useRepositorySourceManager } from './composables/useRepositorySourceManager'
+import { useModOperations } from './composables/useModOperations'
 import { repositorySourceRegionLabel } from './repositorySources'
 import DownloadStrip from './components/DownloadStrip.vue'
 import LogViewerDialog from './components/LogViewerDialog.vue'
 import StartupOverlay from './components/StartupOverlay.vue'
 import RepositorySourceManagerDialog from './components/RepositorySourceManagerDialog.vue'
+import InstallRepositoryDialog from './components/InstallRepositoryDialog.vue'
+import ManualInstallDialog from './components/ManualInstallDialog.vue'
+import ModNoteDialog from './components/ModNoteDialog.vue'
+import BepInExChannelDialog from './components/BepInExChannelDialog.vue'
 import { useTutorialRuntime } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
-
-type InstalledMod = import('./types').InstalledMod
-type ModUninstallPending = {
-  kind: 'mod' | 'package'
-  phase: 'confirm' | 'package' | 'unmanaged'
-  mod?: InstalledMod
-  packageId?: string
-  packageName?: string
-  mods?: InstalledMod[]
-  siblingNames?: string[]
-}
 
 const activeView = ref<View>('overview')
 const repositoryFocusIds = ref<string[]>([])
@@ -105,8 +97,6 @@ watch([
 })
 const selectedInstallTag = ref('')
 const selectedInstallAsset = ref('')
-const selectedAssetProxyMode = ref<ProxyMode>('auto_direct')
-const selectedAssetProxyId = ref('')
 const importText = ref('')
 const importPreview = ref<{ valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] } | null>(null)
 const sourceRefreshingManual = reactive<Record<string, boolean>>({})
@@ -118,8 +108,6 @@ const sourceLoading = reactive<Record<string, boolean>>({})
 const repositoryReleaseReady = reactive<Record<string, boolean>>({})
 const modDetailsExpanded = reactive<Record<string, boolean>>({})
 const modPackageCollapsed = reactive<Record<string, boolean>>({})
-const modTogglePending = reactive<Record<string, boolean>>({})
-const modPackageTogglePending = reactive<Record<string, boolean>>({})
 const stopProgress = ref<(() => void) | null>(null)
 const stopAppUpdateChannel = ref<(() => void) | null>(null)
 const stopAppUpdatePhase = ref<(() => void) | null>(null)
@@ -127,9 +115,6 @@ const stopGameState = ref<(() => void) | null>(null)
 let appUnmounted = false
 let toastTimer: number | undefined
 let modalPointerDownTarget: Element | null = null
-const editingMod = ref<import('./types').InstalledMod | null>(null)
-const modNote = ref('')
-const modUninstallPending = ref<ModUninstallPending | null>(null)
 // Sidebar collapse is layout state, so the shell owns it: the background image
 // and the content gutter follow the same width as the rail.
 const SIDEBAR_COLLAPSE_KEY = 'oc2-sidebar-collapsed'
@@ -370,8 +355,8 @@ const modsModel = useInstalledModsModel({
 })
 const {
   installedMods, mappedReposAvailable, updateAvailableModCount,
-  packageIdForMod, packageNameForMod, packageModCountForMod, packageModsForMod,
-  hasOtherEnabledSameGuid, isFirstModInPackage, isLastModInPackage, modDisplayIndex,
+  packageIdForMod, packageNameForMod, packageModCountForMod,
+  isFirstModInPackage, isLastModInPackage, modDisplayIndex,
   packageChildIndex, packageIsCollapsed, toggleModPackageDetails, resetInstalledModExpansion,
   packageEnabledForMod, packageMixedForMod,
   modReleaseRepositoryIds, repositoryInstallStatus, openRepositoryMods,
@@ -393,6 +378,38 @@ const sourceManager = useRepositorySourceManager({
   api,
 })
 const { openRepositorySourceManager } = sourceManager
+const modOps = useModOperations({
+  showInstall,
+  selectedInstallTag,
+  selectedInstallAsset,
+  dashboard,
+  config,
+  game,
+  configEditorTarget,
+  repositoryReleaseReady,
+  model: modsModel,
+  busy,
+  message,
+  progress,
+  beginDownload: beginDownloadProgress,
+  clearDownload: clearDownloadProgress,
+  run,
+  showError,
+  showSuccess,
+  requestConfirmation,
+  loadDashboard,
+  refreshDashboardSerialized,
+  isUnmounted: () => appUnmounted,
+  isTutorialPreviewing: () => tutorial.previewing.value,
+  isBlocked: () => Boolean(tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value),
+  api,
+})
+const {
+  installRepo, formatModPackageDeleteWarning, editModNote, uninstallMod, uninstallModPackage,
+  cancelModUninstall, confirmModUninstall, toggleMod, toggleModPackage,
+  installLocalMod, rescanInstalledMods, saveHideUnidentifiedMods,
+  openModFileLocation, openModConfig,
+} = modOps
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatDate(value?: string) { return formatDateForLocale(value, locale.value) }
@@ -428,112 +445,7 @@ function preventDraggedModalBackdropClick(event: MouseEvent) {
 }
 function clearModalPointerDown() { modalPointerDownTarget = null }
 function normalizeActionLabel(label: string) { return label.replace(/^正在(?=\S)/, '') }
-async function saveHideUnidentifiedMods(event: Event) {
-  const input = event.target as HTMLInputElement
-  const checked = input.checked
-  try {
-    await run('正在保存 MOD 显示设置', async () => {
-      const saved = await api.saveSettings({ hide_unidentified_mods: checked })
-      if (dashboard.value) dashboard.value.config.hide_unidentified_mods = saved.hide_unidentified_mods
-      return { ok: true, message: 'MOD 显示设置已保存' }
-    })
-  } catch {
-    input.checked = !checked
-  }
-}
 async function run<T>(label: string, action: () => Promise<T>) { const actionLabel = normalizeActionLabel(label); busy.value = actionLabel; error.value = ''; message.value = ''; try { const result = await action(); const resultLabel = typeof result === 'object' && result && 'message' in result ? String((result as { message: string }).message) : actionLabel; showSuccess(t(normalizeActionLabel(resultLabel))); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
-async function installRepo(repo: Repository) {
-  if (repo.download_mode === 'release') {
-    const release = installReleases(repo)[0]
-    if (!release) {
-      const refreshed = repositoryReleaseReady[repo.id] && !repo.last_error
-      const hasReleases = repo.cached_releases.length > 0
-      await requestConfirmation({
-        title: t(!refreshed ? '请先刷新 Release' : hasReleases ? '没有匹配的 Release 资产' : '没有可安装的 Release'),
-        message: t(!refreshed ? '请先刷新此仓库，直到版本号出现，再点击“下载并安装”。'
-          : !hasReleases ? '此仓库尚未发布可安装的 Release，请查看仓库说明或发布页。'
-            : isCommunityRepository(repo) ? (repo.provider === 'gitee'
-              ? '此仓库的 Release 中没有 ZIP 或 DLL 资产，源码包不能作为 MOD 安装。'
-              : '此仓库的 Release 中没有 ZIP 或 DLL 资产，GitHub 自动生成的源码包不能作为 MOD 安装。')
-              : '此仓库的 Release 中没有符合资产规则的文件，请检查发布资产或资产规则。'),
-        acknowledge: true,
-      })
-      return
-    }
-    selectedInstallTag.value = release.tag_name
-    selectedInstallAsset.value = matchingInstallAssets(repo, release)[0]?.name || ''
-  }
-  if (!game.value?.bepinex.version) { showError('请先安装 BepInEx 框架'); return }
-  selectedAssetProxyMode.value = defaultAssetProxyMode()
-  selectedAssetProxyId.value = ''
-  showInstall.value = repo
-}
-function defaultAssetProxyMode(): ProxyMode {
-  return config.value?.region === 'chinese_mainland' ? 'auto_proxy' : 'auto_direct'
-}
-function assetProxyEntries(repo: Repository | null) {
-  if (!repo || repo.provider !== 'github') return []
-  const entries = repo.download_mode === 'repository_file'
-    ? (config.value?.github_proxies.raw_proxies || [])
-    : (config.value?.github_proxies.release_proxies || [])
-  return entries.filter((proxy) => proxy.enabled)
-}
-function assetProxySelectionVisible(repo: Repository | null) {
-  return repo?.provider === 'github'
-}
-function selectedInstallRelease(repo: Repository | null) { return installReleases(repo).find((release) => release.tag_name === selectedInstallTag.value) }
-function selectedInstallAssets(repo: Repository | null) {
-  const release = selectedInstallRelease(repo)
-  return repo && release ? matchingInstallAssets(repo, release) : []
-}
-function closeInstallDialog() {
-  showInstall.value = null
-  selectedAssetProxyMode.value = defaultAssetProxyMode()
-  selectedAssetProxyId.value = ''
-}
-function selectInstallRelease() {
-  const repo = showInstall.value
-  if (!repo) return
-  const release = selectedInstallRelease(repo)
-  selectedInstallAsset.value = release ? matchingInstallAssets(repo, release)[0]?.name || '' : ''
-}
-function formatModPackageDeleteWarning(pending: ModUninstallPending) {
-  const current = pending.mod?.name || ''
-  const siblings = (pending.siblingNames || []).map((name) => `【${name}】`).join('、')
-  const others = siblings || `【${t('其他 MOD')}】`
-  return t('当前 DLL【{current}】与{others}一并安装。仅将此 DLL 移入回收站，可能导致{missing}MOD 缺失依赖。可从回收站恢复，是否继续？')
-    .replace('{current}', current)
-    .replace('{others}', others)
-    .replace('{missing}', others)
-}
-async function confirmInstall() {
-  if (tutorial.previewing.value || appUnmounted || busy.value) return
-  const repo = showInstall.value
-  if (!repo || (repo.download_mode === 'release' && (!selectedInstallTag.value || !selectedInstallAsset.value))) return
-  beginDownloadProgress()
-  showInstall.value = null
-  try {
-    const proxyMode = assetProxySelectionVisible(repo) ? selectedAssetProxyMode.value : 'direct'
-    const proxyId = proxyMode === 'fixed' ? selectedAssetProxyId.value || undefined : undefined
-    const manualProxy = assetProxyEntries(repo).find((entry) => entry.id === proxyId)
-    progress.value = {
-      label: localizedRepositoryName(repo), percent: 0, speed: '', indeterminate: true,
-      status: proxyMode === 'auto_proxy' || proxyMode === 'auto_direct' ? t('待加载，正在连接下载源')
-        : proxyMode === 'fixed' ? t('代理：{name}').replace('{name}', manualProxy?.name || t('手动选择'))
-        : t('正在建立直连'),
-    }
-    await run(`正在安装 ${localizedRepositoryName(repo)}`, () => api.installRepository(
-      repo.id,
-      repo.download_mode === 'release' ? selectedInstallTag.value : undefined,
-      repo.download_mode === 'release' ? selectedInstallAsset.value : undefined,
-      proxyMode,
-      proxyId,
-    ))
-    await loadDashboard()
-  } finally {
-    clearDownloadProgress()
-  }
-}
 function openBepInExInstall(reinstall: boolean) {
   bepinexInstallReinstall.value = reinstall
   showBepInExInstall.value = true
@@ -579,15 +491,6 @@ const {
 } = useLogViewer({ run })
 const uninstallFrontendLogging = typeof window !== 'undefined' ? installFrontendLogging() : undefined
 async function restoreBackup(path: string) { await run('正在恢复 BepInEx', () => api.restoreBepInEx(path)); await loadDashboard() }
-async function openModFileLocation(mod: InstalledMod) {
-  if (tutorial.visible.value || tutorial.previewing.value || busy.value) return
-  // run already displays failures; keep click errors out of unhandled rejections.
-  await run('正在打开模组目录', () => api.openModFileLocation(mod.dll_file)).catch(() => undefined)
-}
-function openModConfig(mod: InstalledMod) {
-  if (tutorial.visible.value || tutorial.previewing.value || busy.value || !mod.has_config || !mod.guid) return
-  configEditorTarget.value = { kind: 'mod', mod }
-}
 function openBepInExConfig() {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value || !game.value?.bepinex.has_config) return
   configEditorTarget.value = { kind: 'bepinex' }
@@ -731,169 +634,6 @@ function openModRecycleBin() {
 }
 function handleRecycledModRestored() {
   void refreshDashboardSerialized().catch(showError)
-}
-function editModNote(mod: import('./types').InstalledMod) { editingMod.value = mod; modNote.value = mod.note ?? '' }
-async function saveModNote() { if (!editingMod.value) return; await run('正在保存 MOD 备注', async () => { await api.saveModNote(editingMod.value!.dll_file, modNote.value); editingMod.value = null; await loadDashboard() }) }
-function uninstallModPackage(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  if (!packageId) return
-  modUninstallPending.value = {
-    kind: 'package',
-    phase: 'confirm',
-    packageId,
-    packageName: packageNameForMod(mod),
-    mods: packageModsForMod(mod),
-  }
-}
-async function uninstallMod(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  const manifestHasOtherFiles = !!mod.package_id && (mod.package_mod_count || 0) > 1
-  const hasSameGuid = hasOtherEnabledSameGuid(mod)
-  if (!packageId && manifestHasOtherFiles && !hasSameGuid) {
-    modUninstallPending.value = {
-      kind: 'package',
-      phase: 'confirm',
-      packageId: mod.package_id,
-      packageName: packageNameForMod(mod),
-    }
-    return
-  }
-  const siblings = packageModsForMod(mod).filter((item) => item.dll_file !== mod.dll_file)
-  modUninstallPending.value = packageId && siblings.length && !hasSameGuid
-    ? { kind: 'mod', phase: 'package', mod, packageId, siblingNames: siblings.map((item) => item.name) }
-    : { kind: 'mod', phase: 'confirm', mod }
-}
-function cancelModUninstall() {
-  modUninstallPending.value = null
-}
-async function confirmModUninstall() {
-  const pending = modUninstallPending.value
-  if (!pending) return
-  if (pending.kind === 'package') {
-    await run(`正在卸载 ${pending.packageName || t('MOD 包')}`, () => api.uninstallRepository(pending.packageId!))
-    cancelModUninstall()
-    await loadDashboard()
-    return
-  }
-  const mod = pending.mod
-  if (!mod) return
-  if (pending.phase === 'package') {
-    await run(`正在删除 ${mod.name}`, () => api.uninstallModDll(mod.dll_file, pending.packageId!))
-    cancelModUninstall()
-    await loadDashboard()
-    return
-  }
-  if (pending.phase === 'unmanaged') {
-    await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file, true))
-    cancelModUninstall()
-    await loadDashboard()
-    return
-  }
-  const result = await run(`正在删除 ${mod.name}`, () => api.uninstallLocalMod(mod.dll_file))
-  if (result?.requires_package_confirmation) {
-    message.value = ''
-    const packageId = result.package_id || packageIdForMod(mod)
-    const siblingNames = result.package_mod_names?.length
-      ? result.package_mod_names
-      : packageModsForMod(mod).filter((item) => item.dll_file !== mod.dll_file).map((item) => item.name)
-    if (packageId) {
-      modUninstallPending.value = { kind: 'mod', phase: 'package', mod, packageId, siblingNames }
-    }
-    return
-  }
-  if (result?.requires_confirmation) {
-    message.value = ''
-    modUninstallPending.value = { kind: 'mod', phase: 'unmanaged', mod }
-    return
-  }
-  cancelModUninstall()
-  await loadDashboard()
-}
-async function toggleMod(mod: InstalledMod) {
-  const key = mod.dll_file
-  if (isModToggling(mod) || gameBlocked.value || busy.value) return
-  const enabled = !modEnabledForView(mod)
-  modTogglePending[key] = enabled
-  await nextTick()
-  try {
-    const result = await api.toggleLocalMod(key, enabled)
-    const current = dashboard.value?.mods.find((item) => item.dll_file === key)
-    if (current) current.enabled = enabled
-    delete modTogglePending[key]
-    showSuccess(t(result.message))
-    try {
-      await refreshDashboardSerialized()
-    } catch (reason) {
-      showError(reason)
-    }
-  } catch (reason) {
-    delete modTogglePending[key]
-    showError(reason)
-  }
-}
-async function toggleModPackage(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  const packageMods = packageModsForMod(mod)
-  if (!packageId || !packageMods.length || gameBlocked.value || busy.value || isPackageToggling(mod)) return
-  const enabled = !packageEnabledForMod(mod)
-  modPackageTogglePending[packageId] = enabled
-  await nextTick()
-  try {
-    const result = await api.toggleLocalModPackage(packageId, enabled)
-    for (const current of packageMods) {
-      const dashboardMod = dashboard.value?.mods.find((item) => item.dll_file === current.dll_file)
-      if (dashboardMod) dashboardMod.enabled = enabled
-    }
-    delete modPackageTogglePending[packageId]
-    showSuccess(t(result.message))
-    try {
-      await refreshDashboardSerialized()
-    } catch (reason) {
-      showError(reason)
-    }
-  } catch (reason) {
-    delete modPackageTogglePending[packageId]
-    showError(reason)
-  }
-}
-const manualInstallMode = ref<'choose' | 'online' | null>(null)
-const manualInstallUrl = ref('')
-function installLocalMod() {
-  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value) return
-  manualInstallUrl.value = ''
-  manualInstallMode.value = 'choose'
-}
-async function chooseLocalMod() {
-  manualInstallMode.value = null
-  const path = await api.chooseModFile()
-  if (!path || Array.isArray(path)) return
-  if (busy.value || gameBlocked.value || appUnmounted) return
-  try {
-    await run('正在安装本地 MOD', () => api.installLocalMod(path))
-    await loadDashboard()
-  } catch { /* run displays the error */ }
-}
-async function installOnlineMod() {
-  if (busy.value || gameBlocked.value || appUnmounted || !manualInstallUrl.value.trim()) return
-  const url = manualInstallUrl.value.trim()
-  try {
-    const parsed = new URL(url)
-    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error()
-  } catch { showError(t('请输入有效的 HTTP 或 HTTPS 下载直链')); return }
-  manualInstallMode.value = null
-  beginDownloadProgress()
-  progress.value = { label: t('在线文件'), percent: 0, speed: '', indeterminate: true, status: t('正在建立直连') }
-  try {
-    await run('正在安装在线 MOD', () => api.installOnlineMod(url))
-    await loadDashboard()
-  } catch { /* run displays the error */ }
-  finally { clearDownloadProgress() }
-}
-async function rescanInstalledMods() {
-  await run('正在重新扫描', async () => {
-    dashboard.value = await api.dashboard()
-    return dashboard.value
-  })
 }
 
 onMounted(async () => {
@@ -1113,7 +853,7 @@ onUnmounted(() => {
         :uninstall-mod="uninstallMod"
         :uninstall-mod-package="uninstallModPackage"
         :display-mod-path="displayModPath"
-        :mod-uninstall-pending="modUninstallPending"
+        :mod-uninstall-pending="modOps.modUninstallPending.value"
         :cancel-mod-uninstall="cancelModUninstall"
         :format-mod-package-delete-warning="formatModPackageDeleteWarning"
         :confirm-mod-uninstall="confirmModUninstall" />
@@ -1398,121 +1138,18 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-    <div v-if="editingMod" class="modal-backdrop" @click.self="editingMod = null">
-      <div class="modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ editingMod.name }}</h3>
-          </div><button class="icon-button" @click="editingMod = null">
-            <X :size="17" />
-          </button>
-        </div>
-        <p class="muted-text">{{ t('产品名称：') }}{{ editingMod.product_name || t('未知') }} · {{ displayModPath(editingMod) }}</p>
-        <textarea v-model="modNote" rows="6" :placeholder="t('例如：这是街机模组，包含房主工具、房间控制和快捷设置功能。')" />
-        <div class="modal-actions"><button class="secondary-button" @click="editingMod = null">{{ t('取消')
-            }}</button><button class="primary-button" :disabled="!!busy" @click="saveModNote">
-            <Save :size="16" />{{ t('保存备注') }}
-          </button></div>
-      </div>
-    </div>
+    <ModNoteDialog :ops="modOps" :busy="busy" />
   </div>
   <ModRecycleBin :open="showModRecycleBin" :game-blocked="gameBlocked" :busy="!!busy"
     @close="showModRecycleBin = false" @restored="handleRecycledModRestored" />
   <ModConfigEditor v-if="configEditorTarget" :target="configEditorTarget" :game-blocked="gameBlocked" :busy="!!busy"
     :confirm-discard="() => requestConfirmation({ title: t('未保存的配置'), message: t('配置尚未保存，确定放弃修改？'), danger: true })"
     @close="configEditorTarget = null" />
-  <div v-if="showInstall" class="modal-backdrop" @click.self="closeInstallDialog">
-    <div class="modal install-modal">
-      <div class="modal-head">
-        <div>
-          <h3>{{ showInstall.download_mode === 'release' ? t('选择版本和文件') : t('选择下载方式') }}</h3>
-        </div><button class="icon-button" @click="closeInstallDialog">
-          <X :size="17" />
-        </button>
-      </div><template v-if="showInstall.download_mode === 'release'"><label class="install-field"><span>{{ t('Release 版本') }}</span><select v-model="selectedInstallTag" :aria-label="t('Release 版本')" @change="selectInstallRelease">
-          <option v-for="release in installReleases(showInstall)" :key="release.tag_name" :value="release.tag_name">{{
-            release.version || release.tag_name }} · {{ release.name }}
-          </option>
-        </select></label>
-      <div v-if="selectedInstallRelease(showInstall)" class="install-release-log">
-        <div class="install-release-log-head"><strong>{{ selectedInstallRelease(showInstall)?.name || selectedInstallRelease(showInstall)?.tag_name }}</strong><span>{{ selectedInstallRelease(showInstall)?.version || selectedInstallRelease(showInstall)?.tag_name }}</span></div>
-        <MarkdownContent class="install-release-log-body" breaks
-          :source="selectedInstallRelease(showInstall)?.body || t('Release 没有更新日志。')" :base-url="repositoryMarkdownBaseUrl(showInstall)" />
-      </div>
-      <label class="install-field"><span>{{ t('下载文件') }}</span><small class="install-field-hint">{{ t('仅显示符合当前仓库资产规则的文件。') }}</small><select
-          v-model="selectedInstallAsset" :aria-label="t('下载文件')">
-          <option v-for="asset in selectedInstallAssets(showInstall)" :key="asset.name" :value="asset.name">{{
-            asset.name
-            }} · {{ formatAssetMetadata(asset) }}</option>
-        </select></label></template><div v-else class="install-source-file"><span>{{ t('仓库文件') }}</span><b>{{ showInstall.file_path }}</b></div>
-      <section v-if="assetProxySelectionVisible(showInstall)" class="install-proxy-choice">
-        <div class="install-field-label">{{ t('GitHub 资产下载方式') }}</div>
-        <div class="install-proxy-modes">
-          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'auto_proxy' }]" :aria-pressed="selectedAssetProxyMode === 'auto_proxy'" @click="selectedAssetProxyMode = 'auto_proxy'">{{ t('自动代理') }}</button>
-          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'auto_direct' }]" :aria-pressed="selectedAssetProxyMode === 'auto_direct'" @click="selectedAssetProxyMode = 'auto_direct'">{{ t('自动直连') }}</button>
-          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'direct' }]" @click="selectedAssetProxyMode = 'direct'">{{ t('直链') }}</button>
-          <button type="button" :class="['proxy-mode-button', { active: selectedAssetProxyMode === 'fixed' }]" @click="selectedAssetProxyMode = 'fixed'">{{ t('手动选择') }}</button>
-        </div>
-        <select v-if="selectedAssetProxyMode === 'fixed'" v-model="selectedAssetProxyId" class="install-proxy-select" :aria-label="t('手动选择')">
-          <option value="">{{ t('请选择代理') }}</option>
-          <option v-for="proxy in assetProxyEntries(showInstall)" :key="proxy.id" :value="proxy.id">{{ proxy.name }}<template v-if="proxy.regions.length"> · {{ proxy.regions.join('、') }}</template></option>
-        </select>
-      </section>
-      <div class="modal-actions"><button class="secondary-button" @click="closeInstallDialog">{{ t('取消')
-          }}</button><button class="primary-button" :disabled="(showInstall.download_mode === 'release' && !selectedInstallAsset) || (assetProxySelectionVisible(showInstall) && selectedAssetProxyMode === 'fixed' && !selectedAssetProxyId) || !!busy" @click="confirmInstall">
-          <Download :size="15" />{{ t('下载并安装') }}
-        </button></div>
-    </div>
-  </div>
-  <div v-if="manualInstallMode" class="modal-backdrop" @click.self="manualInstallMode = null" @keydown.esc.stop="manualInstallMode = null">
-    <form class="modal manual-install-modal" @submit.prevent="installOnlineMod">
-      <div class="modal-head">
-        <h3>{{ t('手动安装模组') }}</h3>
-        <button type="button" class="icon-button" :aria-label="t('关闭')" @click="manualInstallMode = null"><X :size="17" /></button>
-      </div>
-      <div v-if="manualInstallMode === 'choose'" class="modal-actions">
-        <button type="button" class="secondary-button" @click="chooseLocalMod">{{ t('本地文件') }}</button>
-        <button type="button" class="primary-button" @click="manualInstallMode = 'online'">{{ t('在线文件') }}</button>
-      </div>
-      <template v-else>
-        <label class="manual-install-field"><span>{{ t('下载直链') }}</span><input v-model="manualInstallUrl" type="url" required :placeholder="t('请输入 DLL 或 ZIP 文件的下载直链')" :aria-label="t('下载直链')" /></label>
-        <p class="muted-text">{{ t('仅支持 DLL 或 ZIP 文件，使用 32 线程直连下载。') }}</p>
-        <div class="modal-actions">
-          <button type="button" class="secondary-button" @click="manualInstallMode = 'choose'">{{ t('返回') }}</button>
-          <button type="submit" class="primary-button" :disabled="!!busy || gameBlocked || !manualInstallUrl.trim()">{{ t('下载并安装') }}</button>
-        </div>
-      </template>
-    </form>
-  </div>
+  <InstallRepositoryDialog :ops="modOps" :busy="busy" />
+  <ManualInstallDialog :ops="modOps" :busy="busy" :game-blocked="gameBlocked" />
   <BepInExSetupGuide :visible="showBepInExSetup && !tutorial.visible.value && !tutorial.previewing.value" :config="dashboard?.config" :game="realGame"
     :result="bepinexSetupResult" :busy="!!busy" :repair-native-overlay="repairNativeBepInExOverlay" @close="showBepInExSetup = false" />
 
-  <div v-if="showBepInExInstall" class="modal-backdrop" @click.self="showBepInExInstall = false">
-    <div class="modal bepinex-channel-modal">
-      <div class="modal-head">
-        <div>
-          <h3>{{ t('选择 BepInEx 安装渠道') }}</h3>
-          <p class="muted-text">{{ t('国内用户请使用 Gitee 渠道，海外用户请使用 GitHub 渠道。') }}</p>
-        </div><button class="icon-button" @click="showBepInExInstall = false">
-          <X :size="17" />
-        </button>
-      </div>
-      <div class="bepinex-channel-grid">
-        <button class="bepinex-channel-card" :disabled="!!busy" @click="installBepInEx('gitee')">
-          <span class="bepinex-channel-icon gitee"><svg class="provider-icon" aria-hidden="true" viewBox="0 0 24 24">
-              <use href="/icons.svg#gitee-icon"></use>
-            </svg></span>
-          <span class="bepinex-channel-copy"><b>{{ t('Gitee 渠道') }}</b><small>{{ bepinexDownloadUrls.gitee
-              }}</small><em>{{ t('直连 Release 文件') }}</em></span>
-        </button>
-        <button class="bepinex-channel-card" :disabled="!!busy" @click="installBepInEx('github')">
-          <span class="bepinex-channel-icon github"><svg class="provider-icon" aria-hidden="true" viewBox="0 0 19 19">
-              <use href="/icons.svg#github-icon"></use>
-            </svg></span>
-          <span class="bepinex-channel-copy"><b>{{ t('GitHub 渠道') }}</b><small>{{ bepinexDownloadUrls.github
-              }}</small><em>{{ t('直连 Release 文件') }}</em></span>
-        </button>
-      </div>
-    </div>
-  </div>
+  <BepInExChannelDialog :open="showBepInExInstall" :urls="bepinexDownloadUrls" :busy="busy"
+    @close="showBepInExInstall = false" @install="installBepInEx" />
 </template>

@@ -38,6 +38,7 @@ import TutorialExperience from './components/TutorialExperience.vue'
 import ConfirmationDialog from './components/ConfirmationDialog.vue'
 import { useConfirmationDialog } from './composables/useConfirmationDialog'
 import { useCommunityRepositories } from './composables/useCommunityRepositories'
+import { useUiZoom } from './composables/useUiZoom'
 import { useTutorialRuntime, type TutorialProgressState } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
 
@@ -64,14 +65,10 @@ const progress = ref<TutorialProgressState>({ label: '', percent: 0, speed: '', 
 let downloadRequestContext: Pick<DownloadProgress, 'route' | 'source' | 'attempt' | 'attempt_total'> = {}
 let downloadProgressActive = false
 const downloadCancelRequested = ref(false)
-const DEFAULT_UI_ZOOM = 1.5
-const MIN_UI_ZOOM = 1
-const MAX_UI_ZOOM = 2
-const UI_ZOOM_STEP = 0.1
-const uiZoom = ref(DEFAULT_UI_ZOOM)
-let uiZoomSaveTimer: number | undefined
-let uiZoomSaveQueue: Promise<void> = Promise.resolve()
-let uiZoomSaveValue = DEFAULT_UI_ZOOM
+const {
+  uiZoom, min: MIN_UI_ZOOM, max: MAX_UI_ZOOM, step: UI_ZOOM_STEP,
+  clamp: clampUiZoom, setUiZoom, handleWheel: handleUiZoomWheel, cleanup: cleanupUiZoom,
+} = useUiZoom({ dashboard, showError, showSuccess })
 const showRepoEditor = ref(false)
 const showImport = ref(false)
 const showRepositorySource = ref(false)
@@ -570,42 +567,6 @@ async function refreshConfigSerialized() {
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatDate(value?: string) { return formatDateForLocale(value, locale.value) }
 function scheduleToastClose() { if (toastTimer) window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => { message.value = ''; error.value = '' }, 5000) }
-function clampUiZoom(value: number | undefined) {
-  const numeric = Number.isFinite(value) ? value as number : DEFAULT_UI_ZOOM
-  return Math.min(MAX_UI_ZOOM, Math.max(MIN_UI_ZOOM, Math.round(numeric * 100) / 100))
-}
-async function setUiZoom(value: number | undefined, persist = true, notify = false) {
-  const next = clampUiZoom(value)
-  uiZoom.value = next
-  document.documentElement.style.setProperty('--ui-zoom', String(next))
-  if (!persist) {
-    if (uiZoomSaveTimer) {
-      window.clearTimeout(uiZoomSaveTimer)
-      uiZoomSaveTimer = undefined
-    }
-    uiZoomSaveValue = next
-    return
-  }
-  uiZoomSaveValue = next
-  if (uiZoomSaveTimer) window.clearTimeout(uiZoomSaveTimer)
-  uiZoomSaveTimer = window.setTimeout(() => {
-    uiZoomSaveTimer = undefined
-    const valueToSave = uiZoomSaveValue
-    uiZoomSaveQueue = uiZoomSaveQueue
-      .then(async () => { await api.saveSettings({ ui_zoom: valueToSave }); if (dashboard.value) dashboard.value.config.ui_zoom = valueToSave })
-      .catch((reason) => showError(reason))
-  }, 250)
-  if (notify) {
-    showSuccess(t('界面缩放至').replace('{percent}', String(Math.round(next * 100))))
-  }
-}
-async function handleUiZoomWheel(event: WheelEvent) {
-  if (!event.ctrlKey || event.deltaY === 0) return
-  event.preventDefault()
-  const next = uiZoom.value + (event.deltaY < 0 ? UI_ZOOM_STEP : -UI_ZOOM_STEP)
-  // Ctrl+wheel changes only the WebView content scale.
-  await setUiZoom(next, true, true)
-}
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repositoryName(repo, locale.value) }
 function localizedRepositoryNote(repo: Repository) { return repositoryNote(repo, locale.value) }
@@ -2233,7 +2194,7 @@ onUnmounted(() => {
   clearUpdateSkipTimer()
   uninstallFrontendLogging?.()
   if (toastTimer) window.clearTimeout(toastTimer)
-  if (uiZoomSaveTimer) window.clearTimeout(uiZoomSaveTimer)
+  cleanupUiZoom()
 })
 </script>
 

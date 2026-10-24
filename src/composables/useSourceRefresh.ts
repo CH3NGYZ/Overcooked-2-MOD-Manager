@@ -530,3 +530,5 @@ export function useSourceRefresh(options: {
     getInitialProxySync: () => initialProxySync, dispose,
   }
 }
+
+export type SourceRefresh = ReturnType<typeof useSourceRefresh>

@@ -35,11 +35,15 @@ const sourceRefreshUrl = moduleUrl(readSource('../src/composables/useSourceRefre
   '../communityRepositories': catalogueUrl, '../repositorySources': sourcesUrl, '../repositoryAssets': assetsUrl,
   vue: import.meta.resolve('vue'),
 })
+const sourceManagerUrl = moduleUrl(readSource('../src/composables/useRepositorySourceManager.ts'), {
+  ...stubs, '../i18n': stubs['../i18n'], '../repositorySources': sourcesUrl, '../communityRepositories': catalogueUrl,
+  './useSourceRefresh': sourceRefreshUrl, vue: import.meta.resolve('vue'),
+})
 const appScript = readSource('../src/App.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
 const appSource = ts.createSourceFile('App.ts', appScript, ts.ScriptTarget.Latest, true)
-// createCommunity and saveRepositorySourceChanges still live in App.vue; everything
+// createCommunity still lives in App.vue; everything
 // else runs through the extracted engine composables below.
-const names = new Set(['createCommunity', 'saveRepositorySourceChanges'])
+const names = new Set(['createCommunity'])
 const declarations = appSource.statements.flatMap((statement) => {
   if (ts.isVariableStatement(statement)) return statement.declarationList.declarations.some((node) => names.has(node.name.getText(appSource))) ? [statement.getText(appSource)] : []
   return ts.isFunctionDeclaration(statement) && names.has(statement.name?.text) ? [statement.getText(appSource)] : []
@@ -52,6 +56,7 @@ import { useCommunityRepositories } from '${communityUrl}'
 import { useDashboard } from '${dashboardUrl}'
 import { useRepositoryRefresh } from '${repositoryRefreshUrl}'
 import { useSourceRefresh } from '${sourceRefreshUrl}'
+import { useRepositorySourceManager } from '${sourceManagerUrl}'
 export function createAppFixture(api, snapshot) {
   const window = globalThis
   let appUnmounted = false
@@ -109,10 +114,25 @@ export function createAppFixture(api, snapshot) {
     getTutorialRepositoryLoadingActive: () => tutorial.repositoryLoadingActive.value,
     showError, api,
   })
+  const sourceManager = useRepositorySourceManager({
+    showRepositorySource: ref(false),
+    dashboard,
+    config,
+    sourceMatchesRegion,
+    refreshRootSources,
+    getInitialProxySync,
+    refreshDashboardSerialized,
+    isRepositoryRefreshBlocked: () => tutorial.blocksRepositoryRefresh.value,
+    run,
+    requestConfirmation: async () => true,
+    showError,
+    api,
+  })
+  sourceManager.repositorySourceDraft.value = structuredClone(snapshot.config.repository_sources)
   return {
     dashboard, tutorial, community, giteeCommunity, communities, errors, successes, repositoryRefreshTasks, sourceRefreshingManual,
     initialRepositorySourcesLoaded, startInitialRepositoryRefresh, refreshAllRepositories,
-    saveRepositorySourceChanges, refreshSource, refreshRepositoryEntry,
+    saveRepositorySourceChanges: sourceManager.saveRepositorySourceChanges, refreshSource, refreshRepositoryEntry,
     snapshots: () => getUpdateQueue(),
     dispose: () => { appUnmounted = true; dispose() },
   }

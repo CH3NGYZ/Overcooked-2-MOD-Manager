@@ -4,7 +4,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   AlertTriangle, Boxes, Check, CheckCircle2, ChevronRight, CloudDownload, Coffee, Copy, Download,
-  GripVertical, LayoutDashboard, PackageCheck, Pencil, Plus, RefreshCw,
+  GripVertical, LayoutDashboard, PackageCheck, Pencil, Plus,
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
@@ -40,7 +40,10 @@ import { useConfirmationDialog } from './composables/useConfirmationDialog'
 import { useCommunityRepositories } from './composables/useCommunityRepositories'
 import { useUiZoom } from './composables/useUiZoom'
 import { useDownloadProgress } from './composables/useDownloadProgress'
+import { useLogViewer } from './composables/useLogViewer'
+import { installFrontendLogging } from './composables/useFrontendLogging'
 import DownloadStrip from './components/DownloadStrip.vue'
+import LogViewerDialog from './components/LogViewerDialog.vue'
 import { useTutorialRuntime } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
 
@@ -86,10 +89,6 @@ const repositorySourceEditorOpen = ref(false)
 const repositorySourceDraft = ref<RepositorySource[]>([])
 const draggingSourceId = ref<string | null>(null)
 const showExport = ref(false)
-const showRustLog = ref(false)
-const rustLog = ref({ path: '', content: '' })
-const rustLogOutput = ref<HTMLElement | null>(null)
-const logViewerKind = ref<'rust' | 'frontend' | 'crash'>('rust')
 const showRelease = ref<Repository | null>(null)
 const repositoryDocument = ref<{ repository: Repository; kind: 'note' | 'readme' } | null>(null)
 const showInstall = ref<Repository | null>(null)
@@ -150,7 +149,6 @@ const stopGameState = ref<(() => void) | null>(null)
 let appUnmounted = false
 let toastTimer: number | undefined
 let updateSkipTimer: number | undefined
-let uninstallFrontendLogging: (() => void) | undefined
 let modalPointerDownTarget: Element | null = null
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
@@ -944,31 +942,11 @@ async function openBackupDirectory(backupPath?: string) {
   await run('正在打开备份目录', () => api.openBackupDirectory(backupPath)).catch(() => undefined)
 }
 async function deleteBackup(path: string) { if (!await requestConfirmation({ title: t('确定删除备份'), message: `${t('确定删除备份')}“${path.split(/[\\/]/).pop()}”？${t('删除后无法恢复。')}`, danger: true })) return; await run('正在删除 BepInEx 备份', () => api.deleteBepInExBackup(path)); await loadDashboard() }
-async function refreshRustLog() {
-  try {
-    rustLog.value = logViewerKind.value === 'rust'
-      ? await api.readRustLog()
-      : logViewerKind.value === 'frontend'
-        ? await api.readFrontendLog()
-        : await api.readCrashLog()
-    await nextTick()
-    if (rustLogOutput.value) rustLogOutput.value.scrollTop = rustLogOutput.value.scrollHeight
-  } catch (reason) {
-    rustLog.value = { path: '', content: String(reason) }
-  }
-}
-async function openLog(kind: 'rust' | 'frontend' | 'crash') {
-  logViewerKind.value = kind
-  showRustLog.value = true
-  await refreshRustLog()
-}
-async function openRustLog() { await openLog('rust') }
-async function openFrontendLog() { await openLog('frontend') }
-async function openCrashLog() { await openLog('crash') }
-function closeRustLog() {
-  showRustLog.value = false
-}
-async function openDeveloperConsole() { await run('正在打开开发者控制台', api.openDevtools) }
+const {
+  showRustLog, rustLog, logViewerKind, refresh: refreshRustLog,
+  openRustLog, openFrontendLog, openCrashLog, openDeveloperConsole, close: closeRustLog,
+} = useLogViewer({ run })
+const uninstallFrontendLogging = typeof window !== 'undefined' ? installFrontendLogging() : undefined
 async function resetUi() {
   if (!await requestConfirmation({ title: t('重置 UI'), message: `${t('重置 UI')}？` })) return
   await run('正在重置界面', api.resetUi)
@@ -1009,53 +987,6 @@ function updateRegionLabel(region: string) {
   return repositorySourceRegionLabel(region)
 }
 
-function formatFrontendLogValue(value: unknown): string {
-  if (value instanceof Error) return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`
-  if (typeof value === 'string') return value
-  try { return JSON.stringify(value) ?? String(value) } catch { return String(value) }
-}
-
-function redactFrontendLog(value: string): string {
-  return value.replace(
-    /(authorization|private[-_]?token|access[-_]?token|api[-_]?token|github[-_]?token|gitee[-_]?token)(\s*[:=]\s*(?:bearer\s+)?)[^\s,&}"']+/gi,
-    '$1$2[REDACTED_SECRET]'
-  )
-}
-
-function installFrontendLogging() {
-  const methods = ['debug', 'info', 'log', 'warn', 'error'] as const
-  const originals = new Map<string, (...args: unknown[]) => void>()
-  const consoleTarget = console as unknown as Record<string, (...args: unknown[]) => void>
-  for (const method of methods) {
-    const original = consoleTarget[method].bind(console)
-    originals.set(method, original)
-    consoleTarget[method] = (...args: unknown[]) => {
-      original(...args)
-      const message = redactFrontendLog(args.map(formatFrontendLogValue).join(' '))
-      void api.writeFrontendLog(method, message).catch(() => undefined)
-    }
-  }
-  const onError = (event: ErrorEvent) => {
-    const message = redactFrontendLog(`${event.message} at ${event.filename}:${event.lineno}:${event.colno}`)
-    void api.writeFrontendLog('error', message).catch(() => undefined)
-  }
-  const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-    const message = redactFrontendLog(`Unhandled promise rejection: ${formatFrontendLogValue(event.reason)}`)
-    void api.writeFrontendLog('error', message).catch(() => undefined)
-  }
-  window.addEventListener('error', onError)
-  window.addEventListener('unhandledrejection', onUnhandledRejection)
-  return () => {
-    for (const method of methods) {
-      const original = originals.get(method)
-      if (original) consoleTarget[method] = original
-    }
-    window.removeEventListener('error', onError)
-    window.removeEventListener('unhandledrejection', onUnhandledRejection)
-  }
-}
-
-if (typeof window !== 'undefined') uninstallFrontendLogging = installFrontendLogging()
 
 function initialUpdateCheck() {
   return {
@@ -2589,21 +2520,7 @@ onUnmounted(() => {
           </button></div>
       </div>
     </div>
-    <div v-if="showRustLog" class="modal-backdrop" @click.self="closeRustLog">
-      <div class="modal rust-log-modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ t(logViewerKind === 'rust' ? 'Rust 运行日志' : logViewerKind === 'frontend' ? '前端运行日志' : '崩溃日志') }}</h3><small class="rust-log-path">{{ rustLog.path }}</small>
-          </div><button class="icon-button" @click="closeRustLog">
-            <X :size="17" />
-          </button>
-        </div>
-        <pre ref="rustLogOutput" class="rust-log-output">{{ rustLog.content || t('暂无 Rust 日志') }}</pre>
-        <div class="modal-actions"><button class="secondary-button" @click="refreshRustLog">
-            <RefreshCw :size="15" />{{ t('立即刷新') }}
-          </button><button class="primary-button" @click="closeRustLog">{{ t('关闭') }}</button></div>
-      </div>
-    </div>
+    <LogViewerDialog :open="showRustLog" :kind="logViewerKind" :log="rustLog" @close="closeRustLog" @refresh="refreshRustLog" />
     <div v-if="showImport" class="modal-backdrop" @click.self="showImport = false">
       <div class="modal import-modal">
         <div class="modal-head">

@@ -19,12 +19,26 @@ async function importTypescript(source) {
   return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 }
 
+function moduleUrl(source, imports = {}) {
+  let { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
+  for (const [name, target] of Object.entries(imports)) outputText = outputText.replaceAll(`from '${name}'`, `from '${target}'`)
+  return `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`
+}
+
 const app = await readFile(new URL('../src/App.vue', import.meta.url), 'utf8')
 const script = app.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
+const updateModule = await readFile(new URL('../src/composables/useAppUpdate.ts', import.meta.url), 'utf8')
+const overlayComponent = await readFile(new URL('../src/components/StartupOverlay.vue', import.meta.url), 'utf8')
+const overlayScript = overlayComponent.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1] ?? ''
 const runtime = await importTypescript(`
 const t = (key) => key
-${declarations(script, ['initialUpdateCheck', 'updateChannelName', 'updateChannelStatus'])}
-export { initialUpdateCheck, updateChannelName, updateChannelStatus }
+const repositorySourceRegionLabel = (region) => region
+${declarations(updateModule, ['initialAppUpdateCheck'])}
+${declarations(overlayScript, ['channelName', 'channelStatus', 'regionLabel'])}
+const updateChannelName = channelName
+const updateChannelStatus = channelStatus
+const updateRegionLabel = regionLabel
+export { initialAppUpdateCheck as initialUpdateCheck, updateChannelName, updateChannelStatus, updateRegionLabel }
 `)
 const i18n = await readFile(new URL('../src/i18n.ts', import.meta.url), 'utf8')
 const translations = await importTypescript(`
@@ -42,7 +56,15 @@ function listenerSource(name) {
   visit(sourceFile)
   return callback
 }
+const useAppUpdateUrl = moduleUrl(updateModule, {
+  '../services/tauri': moduleUrl('export const api = {}'),
+  '../i18n': moduleUrl("export const t = (key) => key\nexport const locale = { value: 'zh-CN' }"),
+  vue: import.meta.resolve('vue'),
+})
+// useAppUpdate clears its skip countdown through window.setInterval.
+globalThis.window ??= globalThis
 const startupRuntime = await importTypescript(`
+import { useAppUpdate } from '${useAppUpdateUrl}'
 export function createStartupHarness(ref, computed, result = { ok: false, message: '当前已是最新版本' }) {
   const t = key => key
   const appUnmounted = false
@@ -60,39 +82,68 @@ export function createStartupHarness(ref, computed, result = { ok: false, messag
   const enteredDashboard = new Promise(resolve => { dashboardStarted = resolve })
   const dashboardResult = new Promise((resolve, reject) => { resolveDashboard = resolve; rejectDashboard = reject })
   const loadDashboard = () => { dashboardStarted(); return dashboardResult }
-  ${declarations(script, ['appUpdate', 'appUpdateCheck', 'startupUpdateChecking', 'startupLoading', 'startupLoadingError', 'updateCheckFailed', 'updateSkipped',
-    'startupUpdatePhase', 'startupStage', 'startupError', 'updatePageError', 'updateSkipCountdown', 'visibleStartupUpdateChannels'])}
-  const markUpdateSkipped = message => { updateSkipped.value = true; updateCheckFailed.value = true; startupUpdatePhase.value = 'skipped'; startupError.value = message }
+  const startupLoading = ref(false)
+  const startupLoadingError = ref('')
+  const startupStage = ref('')
+  const startupError = ref('')
+  const locale = ref('zh-CN')
+  const showSuccess = () => undefined
+  const run = async (_label, action) => action()
   const api = { installAppUpdate: async () => {
-    appUpdateCheck.value = { region: 'mainland-china', channels: [
-      { id: 'gitee-direct', provider: 'gitee', status: 'latest' },
-      { id: 'github-direct', provider: 'github', status: 'skipped' },
-      ...Array.from({ length: 15 }, (_, index) => ({ id: 'github-proxy:' + index, provider: 'github', status: 'skipped' })),
-    ] }
+    const updates = useAppUpdateEngine
+    updates.receiveAppUpdateChannel({ region: 'mainland-china', channel: { id: 'gitee-direct', provider: 'gitee', status: 'latest' } })
     if (result instanceof Error) throw result
     return result
   } }
-  ${declarations(script, ['initialUpdateCheck', 'startupChecks', 'finishStartupUpdate', 'receiveAppUpdateChannel', 'receiveAppUpdatePhase', 'continueAfterUpdateSkip',
-    'updateChannelName', 'updateChannelStatus', 'updateRegionLabel'])}
-  const repositorySourceRegionLabel = value => value
+  const useAppUpdateEngine = useAppUpdate({
+    run,
+    locale,
+    startupStage,
+    startupError,
+    showSuccess,
+    isUnmounted: () => appUnmounted,
+    beginDownload: beginDownloadProgress,
+    clearDownload: clearDownloadProgress,
+  })
+  const {
+    appUpdate, appUpdateCheck, startupUpdateChecking, updateCheckFailed, updateSkipped,
+    startupUpdatePhase, updateSkipCountdown, updatePageError, visibleStartupUpdateChannels,
+    receiveAppUpdateChannel, receiveAppUpdatePhase, continueAfterUpdateSkip,
+    finishStartupUpdate, initialUpdateCheck, markUpdateSkipped,
+  } = useAppUpdateEngine
+  ${declarations(script, ['startupChecks'])}
   const sendChannel = ${listenerSource('watchAppUpdateChannel')}
   const sendPhase = ${listenerSource('watchAppUpdatePhase')}
   return {
     start: startupChecks, enteredDashboard, resolveDashboard, rejectDashboard, sendChannel, sendPhase, continueAfterUpdateSkip,
     state: { t, startupUpdateChecking, updateCheckFailed, updateSkipped, startupUpdatePhase, startupStage, startupError,
-      appUpdateCheck, appUpdate, updateChannelName, updateChannelStatus, updateRegionLabel,
+      appUpdateCheck, appUpdate, updateChannelName: undefined, updateChannelStatus: undefined, updateRegionLabel: undefined,
       updateSkipCountdown, updatePageError, updatePageOpening: false, displayProgress: {},
       continueAfterUpdateSkip, openManualUpdatePage: () => undefined, api: { exitApp: () => undefined },
-      ...(typeof startupLoading !== 'undefined' ? { startupLoading, startupLoadingError } : {}),
-      ...(typeof visibleStartupUpdateChannels !== 'undefined' ? { visibleStartupUpdateChannels } : {}),
+      startupLoading, startupLoadingError, visibleStartupUpdateChannels,
     },
   }
 }
 `)
-const overlayTemplate = app.slice(app.indexOf('    <div v-if="startupUpdateChecking || updateCheckFailed"'), app.indexOf('    <TutorialExperience'))
-const overlayRender = new Function('Vue', compile(overlayTemplate, { prefixIdentifiers: true }).code)(Vue)
+const overlayTemplate = overlayComponent.slice(overlayComponent.indexOf('<template>') + '<template>'.length, overlayComponent.lastIndexOf('</template>'))
+// The shell still owns the v-if branch and the pending-kitchen loading overlay.
+const loadingOverlayTemplate = app.slice(app.indexOf('<div v-else-if="startupLoading || startupLoadingError"'), app.indexOf('<TutorialExperience'))
+const shellOverlayRender = new Function('Vue', compile(`<div v-if="checking || checkFailed">${overlayTemplate}</div>${loadingOverlayTemplate}`, { prefixIdentifiers: true }).code)(Vue)
+const overlayRender = shellOverlayRender
 async function startupHtml(harness) {
-  return renderToString(Vue.createSSRApp({ setup: () => harness.state, render: overlayRender }))
+  // StartupOverlay renders through its props, so map the harness state onto them.
+  const state = harness.state
+  const props = {
+    t: (key) => key,
+    channelName: runtime.updateChannelName, channelStatus: runtime.updateChannelStatus, regionLabel: runtime.updateRegionLabel,
+    checking: state.startupUpdateChecking, checkFailed: state.updateCheckFailed, skipped: state.updateSkipped,
+    stage: state.startupStage, error: state.startupError, phase: state.startupUpdatePhase,
+    check: state.appUpdateCheck, update: state.appUpdate, countdown: state.updateSkipCountdown,
+    pageOpening: state.updatePageOpening, pageError: state.updatePageError, progress: state.displayProgress,
+    visibleChannels: state.visibleStartupUpdateChannels?.value ?? [],
+    startupLoading: state.startupLoading, startupLoadingError: state.startupLoadingError,
+  }
+  return renderToString(Vue.createSSRApp({ setup: () => props, render: overlayRender }))
 }
 
 test('update UI starts with no fictitious API/token routes and names bundled proxies distinctly', () => {
@@ -103,7 +154,8 @@ test('update UI starts with no fictitious API/token routes and names bundled pro
   assert.equal(runtime.updateChannelName('github-proxy:gh-ddlc'), 'GitHub 内置代理 (gh-ddlc)')
   assert.equal(runtime.updateChannelName('github-proxy:oc2gh-release'), 'GitHub 内置代理 (oc2gh-release)')
   assert.equal(runtime.updateChannelStatus('cancelled'), '已取消')
-  assert.match(app, /startupUpdatePhase === 'manifest'/)
+  assert.match(overlayComponent, /phase === 'manifest'/)
+  assert.doesNotMatch(updateModule, /gitee-token|github-token|Github API [123]|Gitee API [123]/)
   assert.doesNotMatch(app, /gitee-token|github-token|Github API [123]|Gitee API [123]/)
 })
 

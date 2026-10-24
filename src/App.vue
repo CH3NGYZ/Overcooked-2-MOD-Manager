@@ -14,13 +14,11 @@ import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } f
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
 import { repositoryMarkdownBaseUrl } from './markdown'
 import { repositoryGroup, repositoryName, repositoryNote } from './repositoryNames'
-import { sortInstalledModGroups } from './installedModOrdering'
-import { MOD_STATUS_ORDER, MOD_STATUS_TEXT, installedModLabelActionable, installedModLabelClass, installedModLabelText, type ModStatusCode } from './installedModStatus'
+import { installedModLabelActionable, installedModLabelClass, installedModLabelText } from './installedModStatus'
 import { installReleases, matchingInstallAssets } from './repositoryAssets'
 import { formatAssetMetadata, formatDate as formatDateForLocale } from './formatting'
 import MarkdownContent from './components/MarkdownContent.vue'
-import { hasLocalUpdateVersion, liveModReleaseLabel, modRepositoryReleaseState, modUpdateCheckPhase } from './modUpdates'
-import { communityNavigationTargets, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository } from './communityRepositories'
+import { communityProviderMatchesRegion, isCommunitySource, isCommunityRepository } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
 import AppSidebar from './components/AppSidebar.vue'
@@ -45,7 +43,8 @@ import { installFrontendLogging } from './composables/useFrontendLogging'
 import { useAppUpdate } from './composables/useAppUpdate'
 import { useDashboard } from './composables/useDashboard'
 import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
-import { useSourceRefresh, type SourceGroup } from './composables/useSourceRefresh'
+import { useSourceRefresh } from './composables/useSourceRefresh'
+import { useInstalledModsModel } from './composables/useInstalledModsModel'
 import { repositorySourceRegionLabel } from './repositorySources'
 import DownloadStrip from './components/DownloadStrip.vue'
 import LogViewerDialog from './components/LogViewerDialog.vue'
@@ -236,7 +235,7 @@ const tutorialRuntime = useTutorialRuntime({
   run,
   getRepositories: () => repos.value,
   getActiveRepositorySources: () => activeRepositorySources.value,
-  resetInstalledModExpansion,
+  resetInstalledModExpansion: () => resetInstalledModExpansion(),
   openRepositorySourceManager,
   editRepository: () => editRepo(),
   installReleases,
@@ -309,129 +308,8 @@ const repositorySourceManagerEntries = computed<RepositorySourceManagerEntry[]>(
   }
   return entries
 })
-const modNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
-const allInstalledMods = computed(() => [...(displayDashboard.value?.mods ?? [])].sort((left, right) => {
-  const leftName = left.name.trim()
-  const rightName = right.name.trim()
-  return modNameCollator.compare(leftName, rightName)
-    || modNameCollator.compare(left.dll_file, right.dll_file)
-}))
-const visibleInstalledMods = computed(() => allInstalledMods.value.filter((mod) => !config.value?.hide_unidentified_mods || !!mod.guid?.trim()))
-const installedPackageCounts = computed(() => {
-  const counts = new Map<string, number>()
-  for (const mod of allInstalledMods.value) {
-    if (mod.package_id) counts.set(mod.package_id, (counts.get(mod.package_id) || 0) + 1)
-  }
-  return counts
-})
-function packageIdForMod(mod: InstalledMod) {
-  const packageId = mod.package_id
-  const installedCount = packageId ? installedPackageCounts.value.get(packageId) || 0 : 0
-  return packageId && installedCount > 1 ? packageId : undefined
-}
-function packageNameForMod(mod: InstalledMod) {
-  if (mod.package_name) return mod.package_name
-  const repository = mod.package_id
-    ? config.value?.repositories.find((item) => item.id === mod.package_id)
-    : undefined
-  return repository ? localizedRepositoryName(repository) : mod.package_name || t('MOD 包')
-}
-function packageModCountForMod(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  return packageId ? visibleInstalledMods.value.filter((item) => item.package_id === packageId).length : 0
-}
-const installedMods = computed(() => sortInstalledModGroups(
-  visibleInstalledMods.value,
-  packageIdForMod,
-  (mod) => installedModOrderingStatus(mod),
-  (mod, packageId) => packageId ? packageNameForMod(mod) : mod.name,
-  (mod) => mod.name,
-  (mod) => mod.dll_file,
-  (left, right) => modNameCollator.compare(left, right),
-))
-function packageModsForMod(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  return packageId ? allInstalledMods.value.filter((item) => item.package_id === packageId) : []
-}
-function hasOtherEnabledSameGuid(mod: InstalledMod) {
-  const guid = mod.guid?.trim()
-  if (!guid) return false
-  const normalized = guid.toLocaleLowerCase()
-  return allInstalledMods.value.some((item) => item.dll_file !== mod.dll_file
-    && item.enabled
-    && item.guid?.trim().toLocaleLowerCase() === normalized)
-}
-function isFirstModInPackage(mod: InstalledMod, index: number) {
-  const packageId = packageIdForMod(mod)
-  return !!packageId && (index === 0 || packageIdForMod(installedMods.value[index - 1]) !== packageId)
-}
-function isLastModInPackage(mod: InstalledMod, index: number) {
-  const packageId = packageIdForMod(mod)
-  return !!packageId && (index === installedMods.value.length - 1 || packageIdForMod(installedMods.value[index + 1]) !== packageId)
-}
-function modDisplayIndex(mod: InstalledMod, index: number) {
-  const packageId = packageIdForMod(mod)
-  if (packageId && !isFirstModInPackage(mod, index)) return packageChildIndex(mod)
-  return installedMods.value
-    .slice(0, index + 1)
-    .filter((item, itemIndex) => !packageIdForMod(item) || isFirstModInPackage(item, itemIndex))
-    .length
-}
-function packageChildIndex(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  if (!packageId) return 1
-  return installedMods.value.filter((item) => item.package_id === packageId)
-    .findIndex((item) => item.dll_file === mod.dll_file) + 1
-}
-function packageIsCollapsed(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  return !!packageId && modPackageCollapsed[packageId] !== false
-}
-function toggleModPackageDetails(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  if (packageId) modPackageCollapsed[packageId] = !(modPackageCollapsed[packageId] ?? true)
-}
-function resetInstalledModExpansion() {
-  for (const key of Object.keys(modPackageCollapsed)) delete modPackageCollapsed[key]
-  for (const key of Object.keys(modDetailsExpanded)) delete modDetailsExpanded[key]
-  for (const mod of installedMods.value) modDetailsExpanded[mod.dll_file] = false
-}
-function toggleModDetails(modId: string) { modDetailsExpanded[modId] = !modDetailsExpanded[modId] }
-function packageEnabledForMod(mod: InstalledMod) {
-  const mods = packageModsForMod(mod)
-  return mods.length > 0 && mods.every((item) => modEnabledForView(item))
-}
-function packageMixedForMod(mod: InstalledMod) {
-  const mods = packageModsForMod(mod)
-  return !packageEnabledForMod(mod) && mods.some((item) => modEnabledForView(item))
-}
-function packageTogglePendingForMod(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  return packageId ? modPackageTogglePending[packageId] : undefined
-}
-function formatModPackageDeleteWarning(pending: ModUninstallPending) {
-  const current = pending.mod?.name || ''
-  const siblings = (pending.siblingNames || []).map((name) => `【${name}】`).join('、')
-  const others = siblings || `【${t('其他 MOD')}】`
-  return t('当前 DLL【{current}】与{others}一并安装。仅将此 DLL 移入回收站，可能导致{missing}MOD 缺失依赖。可从回收站恢复，是否继续？')
-    .replace('{current}', current)
-    .replace('{others}', others)
-    .replace('{missing}', others)
-}
-function modRepositoryIds(mod: import('./types').InstalledMod) {
-  const ids = mod.repository_ids?.length ? mod.repository_ids : mod.repository_id ? [mod.repository_id] : []
-  return new Set(ids)
-}
-function modReleaseRepositoryIds(mod: InstalledMod) {
-  if (mod.status === 'not_release_asset') return new Set<string>()
-  const ids = modRepositoryIds(mod)
-  return new Set(repos.value.filter((repo) => repo.download_mode === 'release' && ids.has(repo.id)).map((repo) => repo.id))
-}
-const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enabled && repo.download_mode === 'release'
-  && installedMods.value.some((mod) => modReleaseRepositoryIds(mod).has(repo.id))))
 const gameBlocked = computed(() => realGame.value?.kitchen_running ?? false)
 const currentWinhttp = computed<WinhttpState>(() => game.value?.winhttp_state ?? 'missing')
-const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => modReleaseUpdateStatus(mod) === '有更新').length)
 const repositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
   || communities.some((discovery) => discovery.refreshing.value)
   || Object.values(repositoryRefreshing).some(Boolean)
@@ -499,6 +377,38 @@ const {
   showError,
   api,
 })
+const modsModel = useInstalledModsModel({
+  displayDashboard,
+  config,
+  repos,
+  locale,
+  repositoryReleaseReady,
+  repositoryRefreshing,
+  modUpdatesCheckActive,
+  modRepositoryRefreshActive,
+  modDetailsExpanded,
+  modPackageCollapsed,
+  sourceGroups,
+  sourceCollapsed,
+  repositoryGroupCollapsed,
+  repositoryGroupKey,
+  communities,
+  repositoryFocusIds,
+  modFocusFiles,
+  activeView,
+  isTutorialPreviewing: () => tutorial.previewing.value,
+  getTutorialScenario: () => tutorial.scenario.value,
+})
+const {
+  installedMods, mappedReposAvailable, updateAvailableModCount,
+  packageIdForMod, packageNameForMod, packageModCountForMod, packageModsForMod,
+  hasOtherEnabledSameGuid, isFirstModInPackage, isLastModInPackage, modDisplayIndex,
+  packageChildIndex, packageIsCollapsed, toggleModPackageDetails, resetInstalledModExpansion,
+  packageEnabledForMod, packageMixedForMod,
+  modReleaseRepositoryIds, repositoryInstallStatus, openRepositoryMods,
+  installedModLabels, openModRepository,
+  isModToggling, isPackageToggling, modEnabledForView, displayModPath, toggleModDetails,
+} = modsModel
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatDate(value?: string) { return formatDateForLocale(value, locale.value) }
@@ -511,135 +421,6 @@ function updateRepositoryTranslation(field: 'name' | 'group' | 'note', event: Ev
   repoForm[field] = input.value
   const translations = field === 'name' ? repoForm.name_i18n : field === 'group' ? repoForm.group_i18n : repoForm.note_i18n
   if (translations) translations[locale.value] = input.value
-}
-function repositoryInstallStatus(repo: Repository) {
-  if (repo.download_mode === 'repository_file') return ''
-  const boundMods = installedMods.value.filter((mod) => modReleaseRepositoryIds(mod).has(repo.id))
-  if (!boundMods.length) return ''
-  if (repositoryRefreshing[repo.id]) return '检查中'
-  if (!repositoryReleaseReady[repo.id] && !(tutorial.previewing.value && tutorial.scenario.value !== 'live')) return '待检查'
-  const states = boundMods.map((mod) => modRepositoryReleaseState(repo, mod))
-  if (states.includes('update_available')) return '有更新'
-  return states.every((state) => state === 'latest') ? '最新版' : '已安装'
-}
-function openRepositoryMods(repo: Repository) {
-  if (!['有更新', '最新版'].includes(repositoryInstallStatus(repo))) return
-  const boundMods = installedMods.value.filter((mod) => modReleaseRepositoryIds(mod).has(repo.id))
-  if (!boundMods.length) return
-  for (const mod of boundMods) {
-    const packageId = packageIdForMod(mod)
-    if (packageId) modPackageCollapsed[packageId] = false
-  }
-  modFocusFiles.value = boundMods.map((mod) => mod.dll_file)
-  activeView.value = 'installed'
-}
-function modReleaseRepositories(mod: InstalledMod) {
-  const ids = modReleaseRepositoryIds(mod)
-  return repos.value.filter((repo) => repo.enabled && ids.has(repo.id))
-}
-function modRepositoryVersionReady(repo: Repository, mod: InstalledMod) {
-  return repositoryReleaseReady[repo.id] && !repo.last_error
-    && ['latest', 'update_available'].includes(modRepositoryReleaseState(repo, mod))
-}
-function modHasRemoteUpdate(mod: InstalledMod) {
-  return modReleaseRepositories(mod).some((repo) => modRepositoryVersionReady(repo, mod)
-    && modRepositoryReleaseState(repo, mod) === 'update_available')
-}
-function legacyModStatusCode(mod: InstalledMod): ModStatusCode[] {
-  const code = ({ update_available: 'update_available', latest: 'latest', not_release_asset: 'not_release_asset', unbound: 'unbound', bound_repository_missing: 'bound_repository_missing', repository_unavailable: 'repository_unavailable', unknown: 'unknown', duplicate_lower_version: 'duplicate_lower_version' } as Record<string, ModStatusCode>)[mod.status]
-  const labels = code ? [code] : []
-  if (mod.duplicate_version || mod.duplicate_guid) labels.push('duplicate')
-  if (mod.load_warning) labels.push(mod.load_warning === '存在更高版本，建议卸载' ? 'duplicate_lower_version' : 'load_warning')
-  if (mod.update_available && !labels.includes('update_available')) labels.unshift('update_available')
-  if (!mod.enabled) labels.push('disabled')
-  return labels
-}
-function backendModStatusCodes(mod: InstalledMod): ModStatusCode[] {
-  const labels = (Array.isArray(mod.labels) ? mod.labels : legacyModStatusCode(mod))
-    .filter((label): label is ModStatusCode => label in MOD_STATUS_TEXT)
-  const unique = [...new Set(labels)]
-  if (!modEnabledForView(mod) && !unique.includes('disabled')) unique.push('disabled')
-  return unique
-}
-function modBoundRepositoriesSettled(mod: InstalledMod) {
-  return modReleaseRepositories(mod).every((repo) => repositoryReleaseReady[repo.id] || !!repo.last_error)
-}
-function installedModStatusCodes(mod: InstalledMod): ModStatusCode[] {
-  const backend = backendModStatusCodes(mod)
-  const candidates = modReleaseRepositories(mod)
-  const phase = modUpdateCheckPhase({
-    active: modUpdatesCheckActive.value || modRepositoryRefreshActive.value,
-    refreshing: isModRepositoryRefreshing(mod),
-    hasBoundRepositories: candidates.length > 0,
-    settled: modBoundRepositoriesSettled(mod),
-  })
-  if (phase === 'idle' || phase === 'settled') return backend
-  const offline = backend.filter((label) => ['disabled', 'duplicate', 'duplicate_lower_version', 'load_warning'].includes(label))
-  return [...offline, phase]
-}
-function installedModLabels(mod: InstalledMod) {
-  const hasBackendLabels = Array.isArray(mod.labels)
-  let labels = installedModStatusCodes(mod)
-  const transient = labels.includes('checking') || labels.includes('pending')
-  const candidates = modReleaseRepositories(mod)
-  const liveCheck = !transient && candidates.length > 0
-    && (modUpdatesCheckActive.value || modRepositoryRefreshActive.value || !hasBackendLabels)
-  if (liveCheck) {
-    labels = labels.filter((code) => !['update_available', 'latest', 'repository_unavailable', 'unknown'].includes(code))
-    labels.push(liveModReleaseLabel({
-      releaseStatus: modReleaseUpdateStatus(mod),
-      hasRepositoryError: candidates.some((repo) => !!repo.last_error),
-      settled: modBoundRepositoriesSettled(mod),
-    }))
-  }
-  return MOD_STATUS_ORDER.filter((code) => labels.includes(code))
-}
-function installedModOrderingStatus(mod: InstalledMod) { return installedModLabels(mod) }
-function modReleaseUpdateStatus(mod: InstalledMod): '有更新' | '最新版' | '' {
-  if (['unbound', 'not_release_asset', 'duplicate_lower_version'].includes(mod.status)
-    || !hasLocalUpdateVersion(mod) || mod.duplicate_version || mod.load_warning || isModRepositoryRefreshing(mod)) return ''
-  const candidates = modReleaseRepositories(mod)
-  if (modHasRemoteUpdate(mod)) return '有更新'
-  return candidates.length > 0 && candidates.every((repo) => modRepositoryVersionReady(repo, mod)) ? '最新版' : ''
-}
-function openModRepository(mod: InstalledMod, requestedLabel?: string) {
-  const label = (requestedLabel ?? installedModLabels(mod).find(installedModLabelActionable)) as ModStatusCode | undefined
-  if (!label || !installedModLabelActionable(label)) return
-  const status = MOD_STATUS_TEXT[label]
-  const children = (requestedLabel && mod.package_id
-    ? visibleInstalledMods.value.filter((child) => child.package_id === mod.package_id)
-    : [mod]).filter((child) => installedModLabels(child).includes(label) && modReleaseUpdateStatus(child) === status)
-  const bound = children.flatMap(modReleaseRepositories).filter((repo) => children.some((child) =>
-    modReleaseRepositoryIds(child).has(repo.id) && modRepositoryVersionReady(repo, child)
-    && modRepositoryReleaseState(repo, child) === (label === 'update_available' ? 'update_available' : 'latest')))
-  const targets = communityNavigationTargets(repos.value, new Set(repos.value.filter((repo) => repo.download_mode === 'release' && bound.some((candidate) =>
-    repo.provider === candidate.provider && repo.username.toLowerCase() === candidate.username.toLowerCase()
-    && repo.repository.toLowerCase() === candidate.repository.toLowerCase())
-    && children.some((child) => modReleaseRepositoryIds(child).has(repo.id))).map((repo) => repo.id)), config.value?.repository_sources)
-  for (const discovery of communities) discovery.reveal(targets)
-  const visibleIds: string[] = []
-  function expandTargets(groups: SourceGroup[]): boolean {
-    let found = false
-    for (const group of groups) {
-      let ownTarget = false
-      for (const repoGroup of group.groups) {
-        const matches = repoGroup.repositories.filter((repo) => targets.has(repo.id))
-        if (!matches.length) continue
-        visibleIds.push(...matches.map((repo) => repo.id))
-        repositoryGroupCollapsed[repositoryGroupKey(group.source.id, repoGroup.key)] = false
-        ownTarget = true
-      }
-      const childTarget = expandTargets(group.children)
-      if (ownTarget || childTarget) {
-        sourceCollapsed[group.source.id] = false
-        found = true
-      }
-    }
-    return found
-  }
-  if (!expandTargets(sourceGroups.value)) return
-  repositoryFocusIds.value = visibleIds
-  activeView.value = 'repositories'
 }
 function showSuccess(value: string) { error.value = ''; message.value = `${t('成功：')}${value}`; scheduleToastClose() }
 function showError(value: unknown) { error.value = `${t('错误：')}${t(value instanceof Error ? value.message : String(value))}`; message.value = ''; scheduleToastClose() }
@@ -675,9 +456,6 @@ async function saveHideUnidentifiedMods(event: Event) {
   } catch {
     input.checked = !checked
   }
-}
-function isModRepositoryRefreshing(mod: import('./types').InstalledMod) {
-  return Array.from(modReleaseRepositoryIds(mod)).some((id) => repositoryRefreshing[id])
 }
 async function run<T>(label: string, action: () => Promise<T>) { const actionLabel = normalizeActionLabel(label); busy.value = actionLabel; error.value = ''; message.value = ''; try { const result = await action(); const resultLabel = typeof result === 'object' && result && 'message' in result ? String((result as { message: string }).message) : actionLabel; showSuccess(t(normalizeActionLabel(resultLabel))); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
 async function installRepo(repo: Repository) {
@@ -734,6 +512,15 @@ function selectInstallRelease() {
   if (!repo) return
   const release = selectedInstallRelease(repo)
   selectedInstallAsset.value = release ? matchingInstallAssets(repo, release)[0]?.name || '' : ''
+}
+function formatModPackageDeleteWarning(pending: ModUninstallPending) {
+  const current = pending.mod?.name || ''
+  const siblings = (pending.siblingNames || []).map((name) => `【${name}】`).join('、')
+  const others = siblings || `【${t('其他 MOD')}】`
+  return t('当前 DLL【{current}】与{others}一并安装。仅将此 DLL 移入回收站，可能导致{missing}MOD 缺失依赖。可从回收站恢复，是否继续？')
+    .replace('{current}', current)
+    .replace('{others}', others)
+    .replace('{missing}', others)
 }
 async function confirmInstall() {
   if (tutorial.previewing.value || appUnmounted || busy.value) return
@@ -1226,22 +1013,6 @@ async function confirmModUninstall() {
   cancelModUninstall()
   await loadDashboard()
 }
-function isModToggling(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  return Object.prototype.hasOwnProperty.call(modTogglePending, mod.dll_file)
-    || !!packageId && Object.prototype.hasOwnProperty.call(modPackageTogglePending, packageId)
-}
-function isPackageToggling(mod: InstalledMod) {
-  const packageId = packageIdForMod(mod)
-  return !!packageId && (
-    Object.prototype.hasOwnProperty.call(modPackageTogglePending, packageId)
-    || packageModsForMod(mod).some((item) => Object.prototype.hasOwnProperty.call(modTogglePending, item.dll_file))
-  )
-}
-function modEnabledForView(mod: InstalledMod) {
-  const packagePending = packageTogglePendingForMod(mod)
-  return packagePending !== undefined ? packagePending : modTogglePending[mod.dll_file] ?? mod.enabled
-}
 async function toggleMod(mod: InstalledMod) {
   const key = mod.dll_file
   if (isModToggling(mod) || gameBlocked.value || busy.value) return
@@ -1288,9 +1059,6 @@ async function toggleModPackage(mod: InstalledMod) {
     delete modPackageTogglePending[packageId]
     showError(reason)
   }
-}
-function displayModPath(mod: InstalledMod) {
-  return `${mod.dll_file}${modEnabledForView(mod) ? '' : '.disabled'}`
 }
 const manualInstallMode = ref<'choose' | 'online' | null>(null)
 const manualInstallUrl = ref('')

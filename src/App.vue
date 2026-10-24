@@ -249,9 +249,11 @@ function createCommunity(provider: Provider): ReturnType<typeof useCommunityRepo
         repo.last_error = undefined
       }
     },
-    refreshConfig: refreshConfigSerialized,
+    // Lazy wrappers: useDashboard is wired after this factory, so passing the
+    // destructured functions by value would hit the temporal dead zone at setup.
+    refreshConfig: () => refreshConfigSerialized(),
     refreshReleases: (repositories) => refreshRepositoryBatch(repositories, 4),
-    refreshDashboard: refreshDashboardSerialized,
+    refreshDashboard: () => refreshDashboardSerialized(),
   })
 }
 const community = createCommunity('github')

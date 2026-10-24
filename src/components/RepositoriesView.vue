@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Download, FileText, Globe, Pencil, Plus, RefreshCw, Trash2, Upload,
 } from 'lucide-vue-next'
 import { localizedRepositorySourceName, t } from '../i18n'
-import type { RepositorySource } from '../types'
+import type { Repository, RepositorySource } from '../types'
 import { useListNavigationFocus } from '../composables/useListNavigationFocus'
 import { isCommunityRepository } from '../communityRepositories'
 import type { useCommunityRepositories } from '../composables/useCommunityRepositories'
@@ -26,6 +26,11 @@ const props = defineProps({
 })
 const dynamicProps = props as Record<string, any>
 const { config, busy, gameBlocked, repositoryRefreshBatchActive, repositoryRefreshing, sourceBusy, sourceRefreshing, sourceCardLoading, sourceRefreshingManual, sourceCollapsed, sourceRefreshPhase, sourceErrors, toggleSource, flattenSourceGroups, repositoryGroupCollapsed, repositoryGroupKey, toggleRepositoryGroup, localizedRepositoryName, localizedRepositoryNote, repositoryInstallStatus, latest, formatDate, installRepo, refreshAllRepositories, refreshRepository, refreshSource, editRepo, deleteRepo, repos, openRepositorySourceManager, exportRepositories, sourceGroups, repositorySourceRegionLabel } = toRefs(dynamicProps)
+// A repository whose installed MOD can be updated swaps the primary action for
+// the same amber treatment as the "有更新" badge.
+function repositoryHasUpdate(repo: Repository) {
+  return repositoryInstallStatus.value(repo) === '有更新'
+}
 const showRepositoryEmptyState = computed(() => !repos.value.length
   && !props.communities.some((discovery) => discovery.started.value)
   && !repositoryRefreshBatchActive.value
@@ -356,10 +361,12 @@ const emit = defineEmits<{
                                     :disabled="!!repositoryRefreshing[repo.id]"
                                     @click="showReleaseOrRefresh(repo)"><b>{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b><span>{{ latest(repo) ?
                                       formatDate(latest(repo)?.published_at) : t('刷新仓库') }}</span></button>
-                                  <button class="primary-button small-button" :title="t('下载并安装')"
+                                  <button class="primary-button small-button"
+                                    :class="{ 'primary-button-update': repositoryHasUpdate(repo) }"
+                                    :title="repositoryHasUpdate(repo) ? t('立即更新') : t('下载并安装')"
                                     :disabled="gameBlocked || !!repositoryRefreshing[repo.id] || (repo.download_mode === 'repository_file' && (!repo.branch?.trim() || !repo.file_path?.trim())) || !!busy"
                                     @click="installRepo(repo)">
-                                    <Download :size="14" />{{ t('下载并安装') }}
+                                    <Download :size="14" />{{ repositoryHasUpdate(repo) ? t('立即更新') : t('下载并安装') }}
                                   </button>
                                   <div class="row-actions">
                                     <button class="icon-button small" :title="t('查看仓库自述文件')"

@@ -131,6 +131,19 @@
   min-width: 0;
   white-space: normal;
 }
+/* Same amber as the "有更新" badge: an install button that is really an update. */
+.repo-controls .primary-button.primary-button-update {
+  color: #2a2110;
+  border-color: var(--warning);
+  background: var(--warning);
+}
+.repo-controls .primary-button.primary-button-update:hover:not(:disabled) {
+  border-color: #f0c882;
+  background: #f0c882;
+}
+.repo-controls .primary-button.primary-button-update:disabled {
+  opacity: .55;
+}
 .repo-release {
   width: auto;
   min-width: 0;

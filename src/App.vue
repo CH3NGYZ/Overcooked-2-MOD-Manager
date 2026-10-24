@@ -44,6 +44,7 @@ import { useLogViewer } from './composables/useLogViewer'
 import { installFrontendLogging } from './composables/useFrontendLogging'
 import { useAppUpdate } from './composables/useAppUpdate'
 import { useDashboard } from './composables/useDashboard'
+import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
 import { repositorySourceRegionLabel } from './repositorySources'
 import DownloadStrip from './components/DownloadStrip.vue'
 import LogViewerDialog from './components/LogViewerDialog.vue'
@@ -114,7 +115,6 @@ const selectedAssetProxyMode = ref<ProxyMode>('auto_direct')
 const selectedAssetProxyId = ref('')
 const importText = ref('')
 const importPreview = ref<{ valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] } | null>(null)
-const repositoryRefreshing = reactive<Record<string, boolean>>({})
 const sourceRefreshingManual = reactive<Record<string, boolean>>({})
 const startupLoading = ref(false)
 const startupLoadingError = ref('')
@@ -146,9 +146,6 @@ let modalPointerDownTarget: Element | null = null
 const editingMod = ref<import('./types').InstalledMod | null>(null)
 const modNote = ref('')
 const modUninstallPending = ref<ModUninstallPending | null>(null)
-// True while "check MOD updates" is running. Each MOD derives its own state
-// from its bound repositories, so a finished repository reports immediately.
-const modUpdatesCheckActive = ref(false)
 // Sidebar collapse is layout state, so the shell owns it: the background image
 // and the content gutter follow the same width as the rail.
 const SIDEBAR_COLLAPSE_KEY = 'oc2-sidebar-collapsed'
@@ -531,22 +528,12 @@ const mappedReposAvailable = computed(() => repos.value.some((repo) => repo.enab
   && installedMods.value.some((mod) => modReleaseRepositoryIds(mod).has(repo.id))))
 const gameBlocked = computed(() => realGame.value?.kitchen_running ?? false)
 const currentWinhttp = computed<WinhttpState>(() => game.value?.winhttp_state ?? 'missing')
-const repositoryRefreshBatchActive = ref(false)
-const repositoryRefreshBatchTotal = ref(0)
-const repositoryRefreshBatchCompleted = ref(0)
 const updateAvailableModCount = computed(() => installedMods.value.filter((mod) => modReleaseUpdateStatus(mod) === '有更新').length)
 const repositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
   || communities.some((discovery) => discovery.refreshing.value)
   || Object.values(repositoryRefreshing).some(Boolean)
   || Object.values(sourceLoading).some(Boolean)
   || Object.values(sourceRefreshingManual).some(Boolean))
-// Any repository currently fetching its Release (startup/source refresh included).
-// MOD statuses derive from this so the installed page also shows checking while
-// the install page refreshes, not only during the explicit update-check batch.
-const modRepositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
-  || Object.values(repositoryRefreshing).some(Boolean))
-let repositoryRefreshBatchToken = 0
-const repositoryRefreshTasks = new Map<string, Promise<boolean>>()
 const {
   getUpdateQueue, refreshDashboardSerialized, refreshConfigSerialized, loadDashboard,
   detectGame, chooseGameDirectory, restoreDefaultGameDirectory, changeGameRuntime,
@@ -559,6 +546,23 @@ const {
   isBlocked: () => Boolean(tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value),
   onRuntimeChanged: () => { bepinexSetupResult.value = null; showBepInExSetup.value = false },
   currentWinhttp: () => currentWinhttp.value,
+})
+const {
+  repositoryRefreshing, repositoryRefreshBatchActive, repositoryRefreshTasks,
+  modUpdatesCheckActive, modRepositoryRefreshActive, refreshRepo,
+  refreshRepositoryBatch, checkModUpdates,
+} = useRepositoryRefresh({
+  dashboard,
+  locale,
+  repositoryReleaseReady,
+  run,
+  showError,
+  showSuccess,
+  isUnmounted: () => appUnmounted,
+  getRepos: () => repos.value,
+  getInstalledMods: () => installedMods.value,
+  getModReleaseRepositoryIds: (mod) => modReleaseRepositoryIds(mod),
+  getMappedReposAvailable: () => mappedReposAvailable.value,
 })
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
@@ -741,62 +745,6 @@ function isModRepositoryRefreshing(mod: import('./types').InstalledMod) {
   return Array.from(modReleaseRepositoryIds(mod)).some((id) => repositoryRefreshing[id])
 }
 async function run<T>(label: string, action: () => Promise<T>) { const actionLabel = normalizeActionLabel(label); busy.value = actionLabel; error.value = ''; message.value = ''; try { const result = await action(); const resultLabel = typeof result === 'object' && result && 'message' in result ? String((result as { message: string }).message) : actionLabel; showSuccess(t(normalizeActionLabel(resultLabel))); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
-async function refreshRepositoryEntry(repo: Repository) {
-  if (repo.download_mode === 'repository_file') return false
-  const currentTask = repositoryRefreshTasks.get(repo.id)
-  if (currentTask) return currentTask
-  const task = (async () => {
-    repositoryRefreshing[repo.id] = true
-    repositoryReleaseReady[repo.id] = false
-    repo.cached_releases = []
-    try {
-      const releases = await api.refreshRepository(repo.id) ?? []
-      const currentRepo = repos.value.find((item) => item.id === repo.id) ?? repo
-      currentRepo.cached_releases = releases
-      currentRepo.last_error = undefined
-      repositoryReleaseReady[repo.id] = true
-      return true
-    } catch (reason) {
-      const currentRepo = repos.value.find((item) => item.id === repo.id) ?? repo
-      currentRepo.cached_releases = []
-      currentRepo.last_error = reason instanceof Error ? reason.message : String(reason)
-      repositoryReleaseReady[repo.id] = false
-      return false
-    } finally {
-      repositoryRefreshing[repo.id] = false
-      repositoryRefreshTasks.delete(repo.id)
-    }
-  })()
-  repositoryRefreshTasks.set(repo.id, task)
-  return task
-}
-async function refreshRepo(repo: Repository, notify = true, trackOverview = true) {
-  const shouldTrackOverview = trackOverview && !repositoryRefreshBatchActive.value
-  const trackingToken = shouldTrackOverview ? ++repositoryRefreshBatchToken : undefined
-  if (shouldTrackOverview) {
-    repositoryRefreshBatchTotal.value = 1
-    repositoryRefreshBatchCompleted.value = 0
-    repositoryRefreshBatchActive.value = true
-  }
-  try {
-    const refreshed = await refreshRepositoryEntry(repo)
-    if (notify) {
-      error.value = ''
-      message.value = ''
-      if (refreshed) {
-        showSuccess(`${localizedRepositoryName(repo)}${t('刷新完成')}`)
-      } else {
-        showError(repo.last_error || `${localizedRepositoryName(repo)}${t('刷新失败')}`)
-      }
-    }
-    return refreshed
-  } finally {
-    if (trackingToken === repositoryRefreshBatchToken) {
-      repositoryRefreshBatchCompleted.value = 1
-      repositoryRefreshBatchActive.value = false
-    }
-  }
-}
 async function installRepo(repo: Repository) {
   if (repo.download_mode === 'release') {
     const release = installReleases(repo)[0]
@@ -937,56 +885,6 @@ function openModConfig(mod: InstalledMod) {
 function openBepInExConfig() {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value || !game.value?.bepinex.has_config) return
   configEditorTarget.value = { kind: 'bepinex' }
-}
-async function refreshRepositoryBatch(repositories: Repository[], concurrency = repositories.length) {
-  const trackingToken = repositories.length > 0 ? ++repositoryRefreshBatchToken : undefined
-  if (trackingToken !== undefined && !repositoryRefreshBatchActive.value) {
-    repositoryRefreshBatchTotal.value = 0
-    repositoryRefreshBatchCompleted.value = 0
-  }
-  repositoryRefreshBatchTotal.value += repositories.length
-  if (repositories.length > 0) repositoryRefreshBatchActive.value = true
-  try {
-    const results: boolean[] = []
-    let nextIndex = 0
-    await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), repositories.length) }, async () => {
-      while (nextIndex < repositories.length && !appUnmounted) {
-        const repo = repositories[nextIndex++]!
-        results.push(await refreshRepo(repo, false, false))
-        repositoryRefreshBatchCompleted.value += 1
-      }
-    }))
-    return results.filter((success) => !success).length
-  } finally {
-    if (trackingToken !== undefined && trackingToken === repositoryRefreshBatchToken) repositoryRefreshBatchActive.value = false
-  }
-}
-function mappedUpdateRepositories() {
-  const mappedIds = new Set(installedMods.value.flatMap((mod) => Array.from(modReleaseRepositoryIds(mod))))
-  return repos.value.filter((repo) => repo.enabled && repo.download_mode === 'release' && mappedIds.has(repo.id))
-}
-async function refreshMappedRepositories(repositories = mappedUpdateRepositories()) {
-  // Keep a few requests in flight so repositories finish one after another and
-  // their MODs report as soon as their own repository completed.
-  return refreshRepositoryBatch(repositories, 4)
-}
-async function refreshMappedRepositoryUpdates() {
-  if (!mappedReposAvailable.value) return dashboard.value
-  if (modUpdatesCheckActive.value) return dashboard.value
-  const mapped = mappedUpdateRepositories()
-  // A queued repository must read as not-ready, otherwise MODs bound to it keep
-  // the previous "settled" result and skip the pending/checking state entirely.
-  for (const repo of mapped) repositoryReleaseReady[repo.id] = false
-  modUpdatesCheckActive.value = true
-  try {
-    const failures = await refreshMappedRepositories(mapped)
-    // One final snapshot makes the backend labels match the fresh caches.
-    dashboard.value = await api.dashboard()
-    if (failures) throw new Error(t('仓库刷新失败摘要').replace('{count}', String(failures)))
-    return dashboard.value
-  } finally {
-    modUpdatesCheckActive.value = false
-  }
 }
 type SourceLoadResult = { ok: boolean; error?: string; accessFailed?: boolean }
 type SourceRefreshOptions = { updateDashboard?: boolean; notify?: boolean; builtinFallback?: boolean; onSourcesLoaded?: (result: SourceLoadResult) => void }
@@ -1136,10 +1034,6 @@ async function refreshAllRepositories() {
       sourceRefreshingManual[source.id] = false
     }
   }
-}
-async function checkModUpdates() {
-  if (!mappedReposAvailable.value) return
-  await run('正在检查 MOD 更新', refreshMappedRepositoryUpdates)
 }
 async function refreshSourceReleases(sourceId: string, updateDashboard = true, manageManualState = true) {
   if (manageManualState) sourceRefreshingManual[sourceId] = true

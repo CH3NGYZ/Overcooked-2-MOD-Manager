@@ -3,19 +3,18 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  AlertTriangle, Boxes, Check, CheckCircle2, CloudDownload, Coffee, Copy, Download,
-  LayoutDashboard, PackageCheck, Plus,
-  Save, Search, Trash2, Upload, X,
+  AlertTriangle, Boxes, CheckCircle2, CloudDownload, Coffee, Download,
+  LayoutDashboard, PackageCheck, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GitHubProxyConfig, Provider, Repository, RepositoryPatch, SettingsPatch, WinhttpState } from './types'
+import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GitHubProxyConfig, Provider, Repository, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { t, useLocaleTranslation, type Locale } from './i18n'
-import { normalizeRepositoryRegion, repositoryRegionMatches } from './repositorySources'
-import { repositoryGroup, repositoryName, repositoryNote } from './repositoryNames'
+import { repositoryRegionMatches } from './repositorySources'
+import { repositoryName, repositoryNote } from './repositoryNames'
 import { installedModLabelActionable, installedModLabelClass, installedModLabelText } from './installedModStatus'
 import { installReleases, matchingInstallAssets } from './repositoryAssets'
-import { formatAssetMetadata, formatDate as formatDateForLocale } from './formatting'
+import { formatDate as formatDateForLocale } from './formatting'
 import { communityProviderMatchesRegion, isCommunityRepository } from './communityRepositories'
 import sponsorImage from './assets/collectionCode.jpg'
 import appIcon from './assets/bb4518aa-dc55-4cae-a432-08ccdc5f28f8.png'
@@ -45,6 +44,8 @@ import { useSourceRefresh } from './composables/useSourceRefresh'
 import { useInstalledModsModel } from './composables/useInstalledModsModel'
 import { useRepositorySourceManager } from './composables/useRepositorySourceManager'
 import { useModOperations } from './composables/useModOperations'
+import { useRepositoryEditor } from './composables/useRepositoryEditor'
+import { useImportExport } from './composables/useImportExport'
 import { repositorySourceRegionLabel } from './repositorySources'
 import DownloadStrip from './components/DownloadStrip.vue'
 import LogViewerDialog from './components/LogViewerDialog.vue'
@@ -54,6 +55,10 @@ import InstallRepositoryDialog from './components/InstallRepositoryDialog.vue'
 import ManualInstallDialog from './components/ManualInstallDialog.vue'
 import ModNoteDialog from './components/ModNoteDialog.vue'
 import BepInExChannelDialog from './components/BepInExChannelDialog.vue'
+import RepositoryEditorDialog from './components/RepositoryEditorDialog.vue'
+import RepositoryImportDialog from './components/RepositoryImportDialog.vue'
+import RepositoryExportDialog from './components/RepositoryExportDialog.vue'
+import ReleaseDetailDialog from './components/ReleaseDetailDialog.vue'
 import { useTutorialRuntime } from './tutorial/useTutorialRuntime'
 import type { View } from './tutorial/steps'
 
@@ -79,7 +84,6 @@ const showRepositorySource = ref(false)
 const showGithubProxyManager = ref(false)
 const showModRecycleBin = ref(false)
 const configEditorTarget = ref<ConfigEditorTarget | null>(null)
-const showExport = ref(false)
 const showRelease = ref<Repository | null>(null)
 const repositoryDocument = ref<{ repository: Repository; kind: 'note' | 'readme' } | null>(null)
 const showInstall = ref<Repository | null>(null)
@@ -97,8 +101,6 @@ watch([
 })
 const selectedInstallTag = ref('')
 const selectedInstallAsset = ref('')
-const importText = ref('')
-const importPreview = ref<{ valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] } | null>(null)
 const sourceRefreshingManual = reactive<Record<string, boolean>>({})
 const startupLoading = ref(false)
 const startupLoadingError = ref('')
@@ -145,10 +147,6 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'ko', label: '한국어' },
   { value: 'ja', label: '日本語' },
 ]
-const repoForm = reactive<RepositoryPatch>({
-  name: '', name_i18n: {}, group: '', group_i18n: {}, provider: 'gitee', username: '', repository: '', download_mode: 'release', branch: 'main', file_path: '', channel: 'all', asset_rules: [],
-  region: '', install_target: 'BepInEx/plugins', note: '', note_i18n: {}, plugin_guid: '', local_product_name: '', local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1, github_token: '', gitee_token: '', official_api_only: true, enabled: true,
-})
 const bepinexDownloadUrls = computed(() => getBepInExDownloadUrls(config.value?.platform, config.value?.game.runtime))
 
 const STARTUP_IPC_TIMEOUT_MS = 8000
@@ -410,6 +408,22 @@ const {
   installLocalMod, rescanInstalledMods, saveHideUnidentifiedMods,
   openModFileLocation, openModConfig,
 } = modOps
+const repoEditor = useRepositoryEditor({
+  showRepoEditor,
+  dashboard,
+  repos,
+  locale,
+  run,
+  showError,
+  showSuccess,
+  requestConfirmation,
+  loadDashboard,
+  refreshRepo,
+  api,
+})
+const { editRepo, deleteRepo } = repoEditor
+const repositoryIo = useImportExport({ run, requestConfirmation, loadDashboard, api })
+const { exportRepositories } = repositoryIo
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatDate(value?: string) { return formatDateForLocale(value, locale.value) }
@@ -417,12 +431,6 @@ function scheduleToastClose() { if (toastTimer) window.clearTimeout(toastTimer);
 function latest(repo: Repository) { return repo.cached_releases?.[0] }
 function localizedRepositoryName(repo: Repository) { return repositoryName(repo, locale.value) }
 function localizedRepositoryNote(repo: Repository) { return repositoryNote(repo, locale.value) }
-function updateRepositoryTranslation(field: 'name' | 'group' | 'note', event: Event) {
-  const input = event.target as HTMLInputElement | HTMLTextAreaElement
-  repoForm[field] = input.value
-  const translations = field === 'name' ? repoForm.name_i18n : field === 'group' ? repoForm.group_i18n : repoForm.note_i18n
-  if (translations) translations[locale.value] = input.value
-}
 function showSuccess(value: string) { error.value = ''; message.value = `${t('成功：')}${value}`; scheduleToastClose() }
 function showError(value: unknown) { error.value = `${t('错误：')}${t(value instanceof Error ? value.message : String(value))}`; message.value = ''; scheduleToastClose() }
 function rememberModalPointerDown(event: PointerEvent) {
@@ -529,69 +537,6 @@ async function startupChecks() {
     console.info('[repository-refresh] waiting for initial tutorial; sources have not been loaded yet')
   }
 }
-function editRepo(repo?: Repository) {
-  Object.assign(repoForm, repo ? {
-    id: repo.id, name: localizedRepositoryName(repo), name_i18n: { ...(repo.name_i18n || {}) },
-    group: repositoryGroup(repo, locale.value), group_i18n: { ...(repo.group_i18n || {}) },
-    provider: repo.provider, username: repo.username, repository: repo.repository,
-    download_mode: repo.download_mode, branch: repo.branch || 'main', file_path: repo.file_path || '',
-    region: normalizeRepositoryRegion(repo.region), channel: repo.channel,
-    asset_rules: repo.asset_rules.map((rule) => ({ ...rule })), install_target: repo.install_target,
-    note: localizedRepositoryNote(repo), note_i18n: { ...(repo.note_i18n || {}) },
-    plugin_guid: repo.plugin_guid, local_product_name: repo.local_product_name || '',
-    local_original_filename: repo.local_original_filename || '', version_regex: repo.version_regex || '',
-    max_release_count: repo.max_release_count || 10,
-    download_threads: repo.download_threads || (repo.provider === 'github' ? 16 : 1),
-    github_token: '', gitee_token: '', official_api_only: true, enabled: repo.enabled,
-  } : {
-    id: undefined, name: '', name_i18n: {}, group: '', group_i18n: {}, provider: 'gitee', username: '', repository: '', download_mode: 'release',
-    branch: 'main', file_path: '', region: '', channel: 'all', asset_rules: [],
-    install_target: 'BepInEx/plugins', note: '', note_i18n: {}, plugin_guid: '', local_product_name: '',
-    local_original_filename: '', version_regex: '', max_release_count: 10, download_threads: 1,
-    github_token: '', gitee_token: '',
-    official_api_only: true, enabled: true,
-  })
-  showRepoEditor.value = true
-}
-function ensureRepositoryChineseName() {
-  const nameTranslations = repoForm.name_i18n || (repoForm.name_i18n = {})
-  if (!nameTranslations['zh-CN']?.trim()) {
-    nameTranslations['zh-CN'] = (locale.value === 'zh-CN' ? repoForm.name : nameTranslations[locale.value] || repoForm.name).trim()
-  }
-}
-async function saveRepo() {
-  if (repoForm.download_mode === 'release' && (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()))) {
-    showError(t('请创建至少一个有效的资产规则'))
-    return
-  }
-  ensureRepositoryChineseName()
-  let refreshError = ''
-  let refreshed = false
-  try {
-    await run('正在保存仓库', async () => {
-      const savedConfig = await api.saveRepository(repoForm)
-      const savedRepo = savedConfig.repositories.find((repo) => repo.id === repoForm.id)
-        ?? savedConfig.repositories.find((repo) => repo.username === repoForm.username.trim()
-          && repo.repository === repoForm.repository.trim() && repo.provider === repoForm.provider
-          && (repo.region || '') === (repoForm.region?.trim().toLowerCase() || '')
-          && repo.download_mode === repoForm.download_mode)
-      if (!savedRepo) throw new Error('保存后找不到仓库配置')
-      dashboard.value!.config = savedConfig
-      showRepoEditor.value = false
-      if (savedRepo.enabled && savedRepo.download_mode === 'release' && repos.value.some((repo) => repo.id === savedRepo.id)) {
-        refreshed = true
-        if (!await refreshRepo(savedRepo, false)) refreshError = savedRepo.last_error || `${localizedRepositoryName(savedRepo)}${t('刷新失败')}`
-      }
-      dashboard.value = await api.dashboard()
-    })
-  } catch {
-    return
-  }
-  if (refreshError) showError(refreshError)
-  else {
-    showSuccess(t(refreshed ? '仓库已保存并刷新' : '仓库已保存'))
-  }
-}
 async function saveGithubProxyConfig(proxyConfig: GitHubProxyConfig) {
   const result = await run('正在保存 GitHub 代理配置', async () => {
     const saved = await api.saveGithubProxies(proxyConfig)
@@ -609,24 +554,6 @@ async function refreshGithubProxyConfig(proxyConfig: GitHubProxyConfig) {
     return { config: refreshed.github_proxies, message: 'GitHub 代理列表已同步' }
   })
   return result.config
-}
-function providerChanged() {
-  repoForm.download_threads = repoForm.provider === 'github' ? 16 : 1
-}
-async function deleteRepo(repo: Repository) { if (repo.builtin || !await requestConfirmation({ title: t('删除仓库'), message: `${t('删除仓库')} “${localizedRepositoryName(repo)}”?`, danger: true })) return; await run('正在删除仓库', async () => { await api.deleteRepository(repo.id); await loadDashboard() }) }
-function addRule() { repoForm.asset_rules.push({ type: 'exact', value: '' }) }
-function removeRule(index: number) { repoForm.asset_rules.splice(index, 1) }
-async function exportRepositories() {
-  showExport.value = true
-}
-async function continueExportRepositories() { const path = await api.chooseExportFile(); if (!path || Array.isArray(path)) return; await run('正在导出仓库 TOML', () => api.exportFile(path, null)); showExport.value = false }
-async function copyRepositories() { await run('正在复制仓库 TOML', () => api.copyRepositories(null)); showExport.value = false }
-async function importFromClipboard() { importText.value = await api.readClipboard(); await previewImport() }
-async function importFromFile() { const path = await api.chooseImportFile(); if (!path || Array.isArray(path)) return; importText.value = await api.readTextFile(path); await previewImport() }
-async function previewImport() { importPreview.value = await run('正在检查仓库 TOML', () => api.previewImport(importText.value)) }
-async function applyImport(conflict: string) {
-  if (conflict === 'overwrite' && !await requestConfirmation({ title: t('导入仓库配置'), message: t('本地的仓库会直接覆盖成粘贴的内容，并且无法恢复，是否确定？'), danger: true })) return
-  await run('正在导入仓库配置', async () => { await api.importRepositories(importText.value, conflict); showImport.value = false; await loadDashboard() })
 }
 function openModRecycleBin() {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value) return
@@ -910,23 +837,7 @@ onUnmounted(() => {
         :refresh-config="refreshGithubProxyConfig"
         @close="showGithubProxyManager = false" />
       <RepositorySourceManagerDialog :manager="sourceManager" :busy="busy" />
-      <div v-if="showExport" class="modal-backdrop" @click.self="showExport = false">
-        <div class="modal export-modal">
-          <div class="modal-head">
-            <div>
-              <h3>{{ t('导出仓库配置') }}</h3>
-              <p class="muted-text">{{ t('选择导出方式') }}</p>
-            </div><button class="icon-button" @click="showExport = false">
-              <X :size="17" />
-            </button>
-          </div>
-          <div class="modal-actions"><button class="secondary-button" @click="copyRepositories">
-              <Copy :size="15" />{{ t('复制文件内容') }}
-            </button><button class="primary-button" @click="continueExportRepositories">
-              <Upload :size="15" />{{ t('继续导出') }}
-            </button></div>
-        </div>
-      </div>
+      <RepositoryExportDialog :io="repositoryIo" />
       <SponsorView v-if="activeView === 'sponsor'"
         :busy="busy"
         :sponsor-image="sponsorImage"
@@ -942,202 +853,10 @@ onUnmounted(() => {
       @click="appUpdate ? installAppUpdate() : checkAppUpdate()">
       <Download :size="15" /><span>{{ appUpdate ? `${t('安装')} ${appUpdate.version}` : t('检查程序更新') }}</span>
     </button>
-    <div v-if="showRepoEditor" class="modal-backdrop" @click.self="showRepoEditor = false">
-      <div class="modal repo-editor-modal">
-        <div class="modal-head repo-editor-head">
-          <div class="repo-editor-title">
-            <h3>{{ t(repoForm.id ? '编辑仓库' : '添加仓库') }}</h3>
-            <label class="check-control mod-switch-control repo-editor-enabled">
-              <input class="mod-switch-input" v-model="repoForm.enabled" type="checkbox" />
-              <span class="mod-switch" :class="{ 'mod-switch-on': repoForm.enabled }" aria-hidden="true"><span class="mod-switch-thumb"></span></span>
-              <span>{{ t('启用此仓库') }}</span>
-            </label>
-          </div>
-          <button class="icon-button" @click="showRepoEditor = false">
-            <X :size="17" />
-          </button>
-        </div>
-        <div class="repo-form-sections">
-          <section class="repo-form-section">
-            <div class="repo-form-section-title"><b>{{ t('仓库基本信息') }}</b><small>{{ t('配置仓库名称、来源平台、分组和地址') }}</small></div>
-            <div class="form-grid">
-              <label><span>{{ t('仓库名称') }}</span><input v-model="repoForm.name" :placeholder="t('例如：我的 MOD 正式版')" @input="updateRepositoryTranslation('name', $event)" /></label>
-              <label><span>{{ t('来源平台') }}</span><select v-model="repoForm.provider" :aria-label="t('来源平台')" @change="providerChanged">
-                <option value="gitee">Gitee</option>
-                <option value="github">GitHub</option>
-              </select></label>
-              <label><span>{{ t('仓库分组') }}</span><input v-model="repoForm.group" :placeholder="t('例如：前置必装')" @input="updateRepositoryTranslation('group', $event)" /></label>
-              <label><span>{{ t('适用地区') }}</span><select v-model="repoForm.region" :aria-label="t('适用地区')">
-                <option value="chinese_mainland">{{ t('中国大陆地区') }}</option>
-                <option value="international">{{ t('国际地区') }}</option>
-                <option value="">{{ t('全部地区') }}</option>
-              </select></label>
-              <div class="wide repository-homepage-field">
-                <div class="repository-homepage-fields">
-                  <label class="repository-owner-field">
-                    <span class="repository-field-label">{{ t('用户名') }}</span>
-                    <input v-model="repoForm.username" :placeholder="t('用户名')" :aria-label="t('用户名')" autocomplete="off" />
-                  </label>
-                  <span aria-hidden="true">/</span>
-                  <label class="repository-name-field">
-                    <span class="repository-field-label">{{ t('仓库名') }}</span>
-                    <input v-model="repoForm.repository" :placeholder="t('仓库名')" :aria-label="t('仓库名')" autocomplete="off" />
-                  </label>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="repo-form-section">
-            <div class="repo-form-section-title"><b>{{ t('下载方式') }}</b><small>{{ t('选择通过 Release 或仓库文件下载') }}</small></div>
-            <div class="form-grid">
-              <label class="wide"><span>{{ t('下载方式') }}</span><select v-model="repoForm.download_mode" :aria-label="t('下载方式')">
-                <option value="release">{{ t('Release 文件') }}</option>
-                <option value="repository_file">{{ t('仓库文件') }}</option>
-              </select></label>
-            </div>
-          </section>
-
-          <section v-if="repoForm.download_mode === 'release'" class="repo-form-section">
-            <div class="repo-form-section-title"><b>{{ t('Release 参数') }}</b><small>{{ t('配置版本筛选、请求和资产获取方式') }}</small></div>
-            <div class="form-grid">
-              <label><span>{{ t('版本频道') }}</span><select v-model="repoForm.channel" :aria-label="t('版本频道')">
-                <option value="all">{{ t('全部版本') }}</option>
-                <option value="stable">{{ t('稳定版') }}</option>
-                <option value="beta">{{ t('测试版') }}</option>
-              </select></label>
-              <label><span>{{ t('每个仓库最多获取 Release 数量') }}</span><input v-model.number="repoForm.max_release_count" type="number" min="1" max="100" /></label>
-              <label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label>
-              <label class="wide"><span>{{ t('API 直连 Token') }} ({{ repoForm.provider === 'gitee' ? 'Gitee' : 'GitHub' }})</span>
-                <input v-if="repoForm.provider === 'gitee'" v-model="repoForm.gitee_token" type="password" :placeholder="t('留空保持原设置')" />
-                <input v-else v-model="repoForm.github_token" type="password" :placeholder="t('留空保持原设置')" />
-              </label>
-            </div>
-          </section>
-
-          <section v-else class="repo-form-section">
-            <div class="repo-form-section-title"><b>{{ t('仓库文件参数') }}</b><small>{{ t('从指定分支下载单个文件，不读取 Release 版本') }}</small></div>
-            <div class="form-grid">
-              <label><span>{{ t('分支') }}</span><input v-model="repoForm.branch" placeholder="main" /></label>
-              <label><span>{{ t('下载线程数') }}</span><input v-model.number="repoForm.download_threads" type="number" min="1" max="32" :disabled="repoForm.provider === 'gitee'" /></label>
-            </div>
-          </section>
-
-          <section v-if="repoForm.download_mode === 'release'" class="repo-form-section">
-            <div class="repo-asset-rules">
-              <div class="repo-form-section-title repo-rule-title">
-                <div><b>{{ t('版本资产规则') }}</b><small>{{ t('支持精确文件名、通配符和正则表达式') }}</small></div>
-                <button class="ghost-button" @click="addRule"><Plus :size="14" />{{ t('添加规则') }}</button>
-              </div>
-              <div v-for="(rule, index) in repoForm.asset_rules" :key="index" class="rule-row">
-                <select v-model="rule.type" :aria-label="t('规则类型')"><option value="exact">{{ t('精确') }}</option><option value="glob">{{ t('通配符') }}</option><option value="regex">{{ t('正则') }}</option></select>
-                <input v-model="rule.value" :aria-label="t('资产规则')" />
-                <button class="icon-button small danger-icon" :title="t('删除规则')" @click="removeRule(index)"><Trash2 :size="14" /></button>
-              </div>
-            </div>
-          </section>
-
-          <section v-else class="repo-form-section">
-            <div class="repo-form-section-title"><b>{{ t('仓库资产规则') }}</b><small>{{ t('仅支持具体文件，不支持通配和正则') }}</small></div>
-            <div class="rule-row repository-file-rule-row">
-              <span class="repository-file-rule-type">{{ t('精确') }}</span>
-              <input v-model="repoForm.file_path" :aria-label="t('文件相对路径')" :placeholder="t('例如：bin/Release/Example.dll')" />
-            </div>
-          </section>
-
-          <section class="repo-form-section repo-binding-section">
-            <div class="repo-form-section-title">
-              <b>{{ t('本地 MOD 识别绑定') }}</b><small>{{ t('GUID、产品名称或原始文件名任一匹配即可绑定') }}</small><small>{{ t('填写版本号正则后，版本也必须匹配；留空则忽略版本条件') }}</small>
-            </div>
-            <div class="form-grid identity-grid">
-              <label><span>{{ t('BepInEx.GUID') }}</span><input v-model="repoForm.plugin_guid" :placeholder="t('可选')" /></label>
-              <label><span>{{ t('DLL.产品名称') }}</span><input v-model="repoForm.local_product_name" :placeholder="t('可选')" /></label>
-              <label><span>{{ t('DLL.原始文件名') }}</span><input v-model="repoForm.local_original_filename" :placeholder="t('可选')" /></label>
-              <label><span>{{ t('版本号正则') }}</span><input v-model="repoForm.version_regex" :placeholder="t('例如：^1\\.2\\.\\d+$')" /></label>
-            </div>
-          </section>
-
-          <section class="repo-form-section repo-install-section">
-            <div class="repo-form-section-title"><b>{{ t('安装目录') }}</b></div>
-            <div class="form-grid">
-              <label class="wide"><input v-model="repoForm.install_target" :aria-label="t('安装目录')" :placeholder="t('留空按 ZIP 结构安装')" /></label>
-            </div>
-          </section>
-
-          <section class="repo-form-section repo-note-section">
-            <div class="repo-form-section-title">
-              <b>{{ t('仓库备注') }}</b><small>{{ t('可选，多行备注') }}</small>
-            </div>
-            <textarea v-model="repoForm.note" class="repository-note-input" rows="3" :placeholder="t('可选，多行备注')" @input="updateRepositoryTranslation('note', $event)"></textarea>
-          </section>
-        </div>
-        <div class="modal-actions"><button class="secondary-button" @click="showRepoEditor = false">{{ t('取消')
-            }}</button><button class="primary-button"
-            :disabled="!repoForm.name || !repoForm.username.trim() || !repoForm.repository.trim() || (repoForm.download_mode === 'release' && (!repoForm.asset_rules.length || repoForm.asset_rules.some((rule) => !rule.value.trim()))) || (repoForm.download_mode === 'repository_file' && (!repoForm.branch.trim() || !repoForm.file_path.trim())) || !!busy"
-            @click="saveRepo">
-            <Save :size="16" />{{ t('保存仓库') }}
-          </button></div>
-      </div>
-    </div>
+    <RepositoryEditorDialog :editor="repoEditor" :busy="busy" />
     <LogViewerDialog :open="showRustLog" :kind="logViewerKind" :log="rustLog" @close="closeRustLog" @refresh="refreshRustLog" />
-    <div v-if="showImport" class="modal-backdrop" @click.self="showImport = false">
-      <div class="modal import-modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ t('导入仓库配置') }}</h3>
-          </div><button class="icon-button" @click="showImport = false">
-            <X :size="17" />
-          </button>
-        </div>
-        <div class="import-actions"><button class="secondary-button" @click="importFromFile">
-            <Download :size="15" />{{ t('选择 .oc2repo.toml') }}
-          </button><button class="secondary-button" @click="importFromClipboard">
-            <Copy :size="15" />{{ t('读取剪贴板') }}
-          </button></div><textarea v-model="importText" :placeholder="t('粘贴仓库 TOML 内容')"></textarea><button
-          class="ghost-button full-button" :disabled="!importText" @click="previewImport">
-          <Search :size="15" />{{ t('检查导入内容') }}
-        </button>
-        <div v-if="importPreview" class="import-preview">
-          <div class="preview-state" :class="importPreview.valid ? 'success' : 'danger'">
-            <CheckCircle2 :size="16" />{{ t(importPreview.valid ? '格式有效' : '格式无效') }}
-          </div>
-          <div class="preview-grid"><span>{{ t('新增') }} {{ importPreview.additions.length }}</span><span>{{ t('重复') }}
-              {{
-                importPreview.duplicates.length }}</span><span>{{ t('冲突') }} {{ importPreview.conflicts.length
-              }}</span></div><small v-if="importPreview.errors.length">{{ importPreview.errors.map(t).join('；')
-              }}</small>
-          <div v-if="importPreview.valid" class="modal-actions"><button class="secondary-button"
-              @click="applyImport('keep_both')">{{ t('合并保存') }}</button><button class="primary-button"
-              @click="applyImport('overwrite')">
-              <Check :size="15" />{{ t('覆盖保存') }}
-            </button></div>
-        </div>
-      </div>
-    </div>
-    <div v-if="showRelease" class="modal-backdrop" @click.self="showRelease = null">
-      <div class="modal release-modal">
-        <div class="modal-head">
-          <div>
-            <h3>{{ showRelease.name }}</h3>
-          </div><button class="icon-button" @click="showRelease = null">
-            <X :size="17" />
-          </button>
-        </div>
-        <div v-if="latest(showRelease)" class="release-detail">
-          <div class="release-detail-meta"><span class="release-version">{{ latest(showRelease)?.version ||
-            latest(showRelease)?.tag_name }}</span><span>{{
-                formatDate(latest(showRelease)?.published_at) }}</span><span class="badge"
-              :class="latest(showRelease)?.prerelease ? 'warning' : 'success'">{{
-                t(latest(showRelease)?.prerelease ? 'BETA' : 'STABLE') }}</span></div>
-          <h4>{{ latest(showRelease)?.name || latest(showRelease)?.tag_name }}</h4>
-          <p class="release-body">{{ latest(showRelease)?.body || t('Release 没有更新日志。') }}</p>
-          <div class="asset-list">
-            <div v-for="asset in latest(showRelease)?.assets" :key="asset.name"><span>{{ asset.name
-                }}</span><small>{{ formatAssetMetadata(asset) }}</small></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <RepositoryImportDialog :io="repositoryIo" />
+    <ReleaseDetailDialog :repo="showRelease" @close="showRelease = null" />
     <ModNoteDialog :ops="modOps" :busy="busy" />
   </div>
   <ModRecycleBin :open="showModRecycleBin" :game-blocked="gameBlocked" :busy="!!busy"

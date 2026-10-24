@@ -179,12 +179,13 @@ test('the update-check batch has no global overlay and reloads the dashboard onc
   const batch = app.match(/async function refreshMappedRepositoryUpdates\(\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(batch, 'Use the actual incremental update-check host')
   assert.match(batch, /modUpdatesCheckActive\.value = true/)
-  assert.match(batch, /refreshMappedRepositories\(\)/)
+  assert.match(batch, /const mapped = mappedUpdateRepositories\(\)/)
+  assert.match(batch, /refreshMappedRepositories\(mapped\)/)
   assert.match(batch, /api\.dashboard\(\)/)
   assert.doesNotMatch(batch, /installedModsChecking|installedModsPendingCheck/)
-  const mapped = app.match(/async function refreshMappedRepositories\(\) \{([\s\S]*?)\n\}/)?.[1]
+  const mapped = app.match(/async function refreshMappedRepositories\(repositories = mappedUpdateRepositories\(\)\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(mapped, 'Use the actual mapped repository refresh')
-  assert.match(mapped, /refreshRepositoryBatch\(mapped, 4\)/)
+  assert.match(mapped, /refreshRepositoryBatch\(repositories, 4\)/)
   const status = app.match(/function installedModStatusCodes\(mod: InstalledMod\)([\s\S]*?)\n\}/)?.[1]
   assert.ok(status, 'Use the actual per-MOD status derivation')
   assert.match(status, /modUpdateCheckPhase\(/)

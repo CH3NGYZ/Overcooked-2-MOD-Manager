@@ -537,6 +537,11 @@ const repositoryRefreshActive = computed(() => repositoryRefreshBatchActive.valu
   || Object.values(repositoryRefreshing).some(Boolean)
   || Object.values(sourceLoading).some(Boolean)
   || Object.values(sourceRefreshingManual).some(Boolean))
+// Any repository currently fetching its Release (startup/source refresh included).
+// MOD statuses derive from this so the installed page also shows checking while
+// the install page refreshes, not only during the explicit update-check batch.
+const modRepositoryRefreshActive = computed(() => repositoryRefreshBatchActive.value
+  || Object.values(repositoryRefreshing).some(Boolean))
 let repositoryRefreshBatchToken = 0
 const repositoryRefreshTasks = new Map<string, Promise<boolean>>()
 let dashboardUpdateQueue: Promise<void> = Promise.resolve()
@@ -676,7 +681,7 @@ function installedModStatusCodes(mod: InstalledMod): ModStatusCode[] {
   const backend = backendModStatusCodes(mod)
   const candidates = modReleaseRepositories(mod)
   const phase = modUpdateCheckPhase({
-    active: modUpdatesCheckActive.value,
+    active: modUpdatesCheckActive.value || modRepositoryRefreshActive.value,
     refreshing: isModRepositoryRefreshing(mod),
     hasBoundRepositories: candidates.length > 0,
     settled: modBoundRepositoriesSettled(mod),
@@ -690,7 +695,8 @@ function installedModLabels(mod: InstalledMod) {
   let labels = installedModStatusCodes(mod)
   const transient = labels.includes('checking') || labels.includes('pending')
   const candidates = modReleaseRepositories(mod)
-  const liveCheck = !transient && candidates.length > 0 && (modUpdatesCheckActive.value || !hasBackendLabels)
+  const liveCheck = !transient && candidates.length > 0
+    && (modUpdatesCheckActive.value || modRepositoryRefreshActive.value || !hasBackendLabels)
   if (liveCheck) {
     labels = labels.filter((code) => !['update_available', 'latest', 'repository_unavailable', 'unknown'].includes(code))
     labels.push(liveModReleaseLabel({

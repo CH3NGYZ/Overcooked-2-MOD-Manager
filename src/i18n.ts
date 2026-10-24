@@ -378,6 +378,7 @@ const entries: Record<string, [string, string, string, string]> = {
   '仓库备注': ['倉庫備註', 'Repository notes', '저장소 메모', "リポジトリのメモ"],
   '可选，多行备注': ['可選，多行備註', 'Optional multiline notes', '선택적 여러 줄 메모', "任意、複数行のメモ"],
   '下载并安装': ['下載並安裝', 'Download & Install', '다운로드 및 설치', "ダウンロードしてインストール"],
+  '立即更新': ['立即更新', 'Update now', '지금 업데이트', "今すぐ更新"],
   '仓库已保存并刷新': ['倉庫已儲存並重新整理', 'Repository saved and refreshed', '저장소를 저장하고 새로 고쳤습니다', "リポジトリを保存して更新しました"],
   '仓库已保存': ['倉庫已儲存', 'Repository saved', '저장소를 저장했습니다', "リポジトリを保存しました"],
   '仓库不属于当前MOD下载渠道': ['倉庫不屬於目前 MOD 下載渠道', 'The repository is not available in the current MOD download region.', '현재 MOD 다운로드 지역에서 사용할 수 없는 저장소입니다.', "このリポジトリは現在の MOD ダウンロード地域の対象外です"],

@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const view = readFileSync(new URL('../src/components/RepositoriesView.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+const repositoryRefresh = readFileSync(new URL('../src/composables/useRepositoryRefresh.ts', import.meta.url), 'utf8')
 const repositoriesCss = readFileSync(new URL('../src/styles/repositories.css', import.meta.url), 'utf8')
 const i18n = readFileSync(new URL('../src/i18n.ts', import.meta.url), 'utf8')
 
@@ -17,19 +18,19 @@ test('a repository with an installed update turns its install button into an amb
 })
 
 test('repository refresh activity drives MOD checking state, not only the explicit check batch', () => {
-  assert.match(app, /const modRepositoryRefreshActive = computed\(\(\) => repositoryRefreshBatchActive\.value\s*\n\s*\|\| Object\.values\(repositoryRefreshing\)\.some\(Boolean\)\)/)
+  assert.match(repositoryRefresh, /const modRepositoryRefreshActive = computed\(\(\) => repositoryRefreshBatchActive\.value\s*\n\s*\|\| Object\.values\(repositoryRefreshing\)\.some\(Boolean\)\)/)
   assert.match(app, /active: modUpdatesCheckActive\.value \|\| modRepositoryRefreshActive\.value/)
   assert.match(app, /modUpdatesCheckActive\.value \|\| modRepositoryRefreshActive\.value \|\| !hasBackendLabels/)
 })
 
 test('the update-check batch marks every mapped repository unready so queued MODs show pending', () => {
-  assert.match(app, /function mappedUpdateRepositories\(\)[\s\S]*?download_mode === 'release'[\s\S]*?mappedIds\.has\(repo\.id\)/)
-  assert.match(app, /refreshRepositoryBatch\(repositories, 4\)/)
-  assert.match(app, /const mapped = mappedUpdateRepositories\(\)[\s\S]*?for \(const repo of mapped\) repositoryReleaseReady\[repo\.id\] = false[\s\S]*?modUpdatesCheckActive\.value = true/)
+  assert.match(repositoryRefresh, /function mappedUpdateRepositories\(\)[\s\S]*?download_mode === 'release'[\s\S]*?mappedIds\.has\(repo\.id\)/)
+  assert.match(repositoryRefresh, /refreshRepositoryBatch\(repositories, 4\)/)
+  assert.match(repositoryRefresh, /const mapped = mappedUpdateRepositories\(\)[\s\S]*?for \(const repo of mapped\) repositoryReleaseReady\[repo\.id\] = false[\s\S]*?modUpdatesCheckActive\.value = true/)
 })
 
 test('each repository reports its own refresh state while the batch runs', () => {
-  const refresh = app.match(/async function refreshRepositoryEntry\(repo: Repository\) \{([\s\S]*?)\n\}/)?.[1]
+  const refresh = repositoryRefresh.match(/async function refreshRepositoryEntry\(repo: import\('\.\.\/types'\)\.Repository\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(refresh, 'Use the actual per-repository refresh')
   assert.match(refresh, /repositoryRefreshing\[repo\.id\] = true/)
   assert.match(refresh, /repositoryReleaseReady\[repo\.id\] = false/)

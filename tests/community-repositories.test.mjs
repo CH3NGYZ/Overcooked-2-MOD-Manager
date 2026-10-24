@@ -18,13 +18,14 @@ const { useCommunityRepositories } = await import(moduleUrl('../src/composables/
   vue: import.meta.resolve('vue'), '../communityRepositories': catalogueUrl,
 }))
 const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-const assetMatcherSource = appSource.match(/function assetMatchesUi\([\s\S]*?\n\}/)?.[0]
+const assetsSource = readFileSync(new URL('../src/repositoryAssets.ts', import.meta.url), 'utf8')
+const assetMatcherSource = assetsSource.match(/function assetMatchesUi\([\s\S]*?\n\}/)?.[0]
 assert.ok(assetMatcherSource, 'Load the actual asset matcher used by the install dialog')
 const { outputText: assetMatcherModule } = ts.transpileModule(`export ${assetMatcherSource}`, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 })
 const { assetMatchesUi } = await import(`data:text/javascript;base64,${Buffer.from(assetMatcherModule).toString('base64')}`)
-const matchingAssetsSource = appSource.match(/function matchingInstallAssets\([\s\S]*?\n\}/)?.[0]
+const matchingAssetsSource = assetsSource.match(/function matchingInstallAssets\([\s\S]*?\n\}/)?.[0]
 assert.ok(matchingAssetsSource, 'Load the actual asset selection used by the install dialog')
 const { outputText: matchingAssetsModule } = ts.transpileModule(`
 import * as catalogue from '${catalogueUrl}'

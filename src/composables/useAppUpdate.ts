@@ -4,6 +4,15 @@ import type { Locale } from '../i18n'
 import { t } from '../i18n'
 import { api } from '../services/tauri'
 
+export function initialAppUpdateCheck() {
+  return {
+    update: undefined,
+    channels: [],
+    all_failed: false,
+    region: 'detecting',
+  } as Awaited<ReturnType<typeof api.checkAppUpdate>>
+}
+
 /**
  * Startup installer-update state machine: region/channel manifest events,
  * download phases, the skip menu with its manual-update countdown, and the
@@ -31,14 +40,7 @@ export function useAppUpdate(options: {
   const updatePageError = ref('')
   let updateSkipTimer: number | undefined
 
-  function initialUpdateCheck() {
-    return {
-      update: undefined,
-      channels: [],
-      all_failed: false,
-      region: 'detecting',
-    } as Awaited<ReturnType<typeof api.checkAppUpdate>>
-  }
+  function initialUpdateCheck() { return initialAppUpdateCheck() }
 
   function finishStartupUpdate() {
     startupUpdateChecking.value = false

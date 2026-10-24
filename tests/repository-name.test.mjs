@@ -15,7 +15,7 @@ const nameSource = readFileSync(new URL('../src/repositoryNames.ts', import.meta
 const nameUrl = moduleUrl(nameSource)
 const { repositoryName, repositoryNote, repositoryGroup } = await import(nameUrl)
 const sourceNameSource = readFileSync(new URL('../src/repositorySources.ts', import.meta.url), 'utf8')
-const sourceNameUrl = moduleUrl(sourceNameSource)
+const sourceNameUrl = moduleUrl(sourceNameSource, { './i18n': moduleUrl("export const t = (key) => key") })
 const { repositorySourceName } = await import(sourceNameUrl)
 const scenarioSource = readFileSync(new URL('../src/tutorial/scenarios.ts', import.meta.url), 'utf8')
 const scenarioUrl = moduleUrl(scenarioSource, { '../repositoryNames': nameUrl })

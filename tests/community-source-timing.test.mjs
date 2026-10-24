@@ -14,26 +14,32 @@ function moduleUrl(source, imports = {}) {
 }
 
 const readSource = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
+// The extracted engine composables call window.setTimeout like they do in the app.
+globalThis.window ??= globalThis
 const catalogueUrl = moduleUrl(readSource('../src/communityRepositories.ts'))
-const sourcesUrl = moduleUrl(readSource('../src/repositorySources.ts'))
+const stubs = {
+  '../services/tauri': moduleUrl('export const api = {}\nexport function watchGameState() { return Promise.resolve(() => undefined) }\nexport function watchDownloadProgress() { return Promise.resolve(() => undefined) }\nexport function watchAppUpdateChannel() { return Promise.resolve(() => undefined) }\nexport function watchAppUpdatePhase() { return Promise.resolve(() => undefined) }'),
+  '../i18n': moduleUrl("export const t = (key) => key\nexport const locale = { value: 'zh-CN' }\nexport function localizedRepositorySourceName(source) { return source.nickname }\nexport function useLocaleTranslation() { return { locale, setLocale: () => undefined } }"),
+}
+const sourcesUrl = moduleUrl(readSource('../src/repositorySources.ts'), { './i18n': stubs['../i18n'] })
 const communityUrl = moduleUrl(readSource('../src/composables/useCommunityRepositories.ts'), {
   vue: import.meta.resolve('vue'), '../communityRepositories': catalogueUrl,
 })
-const appSource = ts.createSourceFile('App.ts', readSource('../src/App.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true)
-const names = new Set([
-  'dashboard', 'message', 'error', 'appUnmounted', 'config', 'repos', 'activeRepositorySources', 'activeRepositorySourceIds',
-  'repositoryRefreshing', 'sourceRefreshingManual', 'sourceLoading', 'sourceDocumentsLoading', 'sourceRefreshPhase', 'sourceErrors',
-  'sourceCollapsed', 'sourceContentRevealing', 'sourceContentRevealTimers', 'repositoryReleaseReady',
-  'initialRepositoryRefreshStarted', 'initialRepositorySourcesLoaded', 'initialProxySync', 'community', 'giteeCommunity', 'communities',
-  'createCommunity', 'communityForSource',
-  'repositoryRefreshBatchActive', 'repositoryRefreshBatchTotal', 'repositoryRefreshBatchCompleted', 'repositoryRefreshBatchToken',
-  'repositoryRefreshTasks', 'dashboardUpdateQueue', 'repositorySourceEditorOpen', 'repositorySourceDraft',
-  'refreshDashboardSerialized', 'refreshConfigSerialized', 'sourceMatchesRegion', 'refreshRepositoryEntry', 'refreshRepo',
-  'refreshRepositoryBatch', 'sourceDescendantIds', 'clearSourceContentLocally', 'prepareRootSourceRefresh',
-  'startSourceRefresh', 'refreshRootSources', 'refreshAllRepositories', 'refreshSourceReleases', 'syncInitialGithubProxies',
-  'startInitialRepositoryRefresh', 'saveRepositorySourceChanges', 'finishSourceContentReveal', 'startSourceContentReveal', 'refreshSource',
-])
-// Execute App.vue's actual scheduler and community host, rather than a second implementation.
+// The engine composables are executed for real; the Tauri api is injected per fixture.
+const assetsUrl = moduleUrl(readSource('../src/repositoryAssets.ts'), { './communityRepositories': catalogueUrl })
+const repositoryNamesUrl = moduleUrl(readSource('../src/repositoryNames.ts'))
+const dashboardUrl = moduleUrl(readSource('../src/composables/useDashboard.ts'), { ...stubs, vue: import.meta.resolve('vue') })
+const repositoryRefreshUrl = moduleUrl(readSource('../src/composables/useRepositoryRefresh.ts'), { ...stubs, '../repositoryNames': repositoryNamesUrl, vue: import.meta.resolve('vue') })
+const sourceRefreshUrl = moduleUrl(readSource('../src/composables/useSourceRefresh.ts'), {
+  ...stubs, '../repositoryNames': repositoryNamesUrl,
+  '../communityRepositories': catalogueUrl, '../repositorySources': sourcesUrl, '../repositoryAssets': assetsUrl,
+  vue: import.meta.resolve('vue'),
+})
+const appScript = readSource('../src/App.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
+const appSource = ts.createSourceFile('App.ts', appScript, ts.ScriptTarget.Latest, true)
+// createCommunity and saveRepositorySourceChanges still live in App.vue; everything
+// else runs through the extracted engine composables below.
+const names = new Set(['createCommunity', 'saveRepositorySourceChanges'])
 const declarations = appSource.statements.flatMap((statement) => {
   if (ts.isVariableStatement(statement)) return statement.declarationList.declarations.some((node) => names.has(node.name.getText(appSource))) ? [statement.getText(appSource)] : []
   return ts.isFunctionDeclaration(statement) && names.has(statement.name?.text) ? [statement.getText(appSource)] : []
@@ -43,10 +49,13 @@ import { computed, nextTick, reactive, ref } from 'vue'
 import { COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_SOURCE_ID, GITEE_COMMUNITY_TOPIC_URL, communitySourceId, communityProviderMatchesRegion, isCommunitySource, isCommunityRepository } from '${catalogueUrl}'
 import { repositoryRegionMatches, repositorySourceKey } from '${sourcesUrl}'
 import { useCommunityRepositories } from '${communityUrl}'
+import { useDashboard } from '${dashboardUrl}'
+import { useRepositoryRefresh } from '${repositoryRefreshUrl}'
+import { useSourceRefresh } from '${sourceRefreshUrl}'
 export function createAppFixture(api, snapshot) {
   const window = globalThis
-  const tutorial = { blocksRepositoryRefresh: ref(false) }
-  const displayDashboard = computed(() => dashboard.value)
+  let appUnmounted = false
+  const tutorial = { blocksRepositoryRefresh: ref(false), visible: ref(false), previewing: ref(false), repositoryLoadingActive: ref(false) }
   const errors = []
   const successes = []
   const t = (key) => key
@@ -57,15 +66,55 @@ export function createAppFixture(api, snapshot) {
   const run = async (_label, action) => action()
   const closeRepositorySourceManager = () => undefined
   const applyRepositorySourceDraft = () => { throw new Error('Unexpected open source editor') }
+  const dashboard = ref(structuredClone(snapshot))
+  const locale = ref('zh-CN')
+  const repositoryReleaseReady = reactive({})
+  const sourceLoading = reactive({})
+  const sourceRefreshingManual = reactive({})
+  const repositorySourceEditorOpen = ref(false)
+  const repositorySourceDraft = ref(structuredClone(snapshot.config.repository_sources))
+  const config = computed(() => dashboard.value?.config)
+  const {
+    getUpdateQueue, refreshDashboardSerialized, refreshConfigSerialized,
+  } = useDashboard({
+    dashboard, run, requestConfirmation: async () => true, applyStartupZoom: async () => {},
+    isBlocked: () => false, onRuntimeChanged: () => {}, currentWinhttp: () => 'missing', api,
+  })
+  const {
+    repositoryRefreshing, repositoryRefreshBatchActive, repositoryRefreshTasks,
+    refreshRepositoryBatch, refreshRepo, refreshRepositoryEntry,
+  } = useRepositoryRefresh({
+    dashboard, locale, repositoryReleaseReady, run, showError, showSuccess,
+    isUnmounted: () => appUnmounted,
+    getRepos: () => repos.value, getInstalledMods: () => [], getModReleaseRepositoryIds: () => new Set(),
+    getMappedReposAvailable: () => false, api,
+  })
+  const repos = computed(() => (config.value?.repositories ?? []).filter((repo) => repositoryRegionMatches(repo.region, config.value?.region)
+    && (!repo.source_id || activeRepositorySourceIds.value.has(repo.source_id))))
   ${declarations}
-  dashboard.value = structuredClone(snapshot)
-  repositorySourceDraft.value = structuredClone(snapshot.config.repository_sources)
+  const community = createCommunity('github')
+  const giteeCommunity = createCommunity('gitee')
+  const communities = [community, giteeCommunity]
+  const {
+    sourceDocumentsLoading, initialRepositorySourcesLoaded, activeRepositorySources, activeRepositorySourceIds,
+    sourceMatchesRegion, sourceDescendantIds, refreshRootSources, refreshAllRepositories,
+    startInitialRepositoryRefresh, refreshSource, getInitialProxySync, dispose,
+  } = useSourceRefresh({
+    dashboard, config, repos, locale, communities,
+    sourceLoading, sourceRefreshingManual, repositoryRefreshing, repositoryReleaseReady, repositoryRefreshTasks,
+    refreshRepositoryBatch, refreshDashboardSerialized, refreshConfigSerialized, getUpdateQueue,
+    isUnmounted: () => appUnmounted,
+    isRepositoryRefreshBlocked: () => tutorial.blocksRepositoryRefresh.value,
+    isTutorialOverlayActive: () => tutorial.visible.value || tutorial.previewing.value,
+    getTutorialRepositoryLoadingActive: () => tutorial.repositoryLoadingActive.value,
+    showError, api,
+  })
   return {
     dashboard, tutorial, community, giteeCommunity, communities, errors, successes, repositoryRefreshTasks, sourceRefreshingManual,
     initialRepositorySourcesLoaded, startInitialRepositoryRefresh, refreshAllRepositories,
     saveRepositorySourceChanges, refreshSource, refreshRepositoryEntry,
-    snapshots: () => dashboardUpdateQueue,
-    dispose: () => { appUnmounted = true; for (const id of sourceContentRevealTimers.keys()) finishSourceContentReveal(id) },
+    snapshots: () => getUpdateQueue(),
+    dispose: () => { appUnmounted = true; dispose() },
   }
 }
 `, { vue: import.meta.resolve('vue') }))

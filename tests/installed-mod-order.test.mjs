@@ -4,6 +4,7 @@ import test from 'node:test'
 import ts from 'typescript'
 
 const source = readFileSync(new URL('../src/installedModOrdering.ts', import.meta.url), 'utf8')
+const repositoryRefreshSource = readFileSync(new URL('../src/composables/useRepositoryRefresh.ts', import.meta.url), 'utf8')
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 })
@@ -143,8 +144,7 @@ test('the scan action only reloads the dashboard and does not refresh repositori
 })
 
 test('the explicit update-check action remains the remote refresh entry point', () => {
-  const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-  const check = app.match(/async function checkModUpdates\(\) \{([\s\S]*?)\n\}/)?.[1]
+  const check = repositoryRefreshSource.match(/async function checkModUpdates\(\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(check, 'Use the actual MOD update-check handler')
   assert.match(check, /refreshMappedRepositoryUpdates/)
 })
@@ -176,14 +176,14 @@ test('a finished MOD shows its own result while other repositories still run', (
 
 test('the update-check batch has no global overlay and reloads the dashboard once', () => {
   const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-  const batch = app.match(/async function refreshMappedRepositoryUpdates\(\) \{([\s\S]*?)\n\}/)?.[1]
+  const batch = repositoryRefreshSource.match(/async function refreshMappedRepositoryUpdates\(\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(batch, 'Use the actual incremental update-check host')
   assert.match(batch, /modUpdatesCheckActive\.value = true/)
   assert.match(batch, /const mapped = mappedUpdateRepositories\(\)/)
   assert.match(batch, /refreshMappedRepositories\(mapped\)/)
   assert.match(batch, /api\.dashboard\(\)/)
   assert.doesNotMatch(batch, /installedModsChecking|installedModsPendingCheck/)
-  const mapped = app.match(/async function refreshMappedRepositories\(repositories = mappedUpdateRepositories\(\)\) \{([\s\S]*?)\n\}/)?.[1]
+  const mapped = repositoryRefreshSource.match(/async function refreshMappedRepositories\(repositories = mappedUpdateRepositories\(\)\) \{([\s\S]*?)\n\}/)?.[1]
   assert.ok(mapped, 'Use the actual mapped repository refresh')
   assert.match(mapped, /refreshRepositoryBatch\(repositories, 4\)/)
   const status = app.match(/function installedModStatusCodes\(mod: InstalledMod\)([\s\S]*?)\n\}/)?.[1]

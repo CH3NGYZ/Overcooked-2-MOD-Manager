@@ -5,19 +5,23 @@ import ts from 'typescript'
 
 const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 const names = readFileSync(new URL('../src/repositoryNames.ts', import.meta.url), 'utf8')
+const sourceRefresh = readFileSync(new URL('../src/composables/useSourceRefresh.ts', import.meta.url), 'utf8')
 const dialog = readFileSync(new URL('../src/components/RepositoryDocumentDialog.vue', import.meta.url), 'utf8')
 const appScript = app.match(/<script setup[^>]*>([\s\S]*?)<\/script>/)?.[1]
 assert.ok(appScript, 'Read the App.vue script setup block')
 const appAst = ts.createSourceFile('App.vue.ts', appScript, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+const sourceRefreshAst = ts.createSourceFile('useSourceRefresh.ts', sourceRefresh, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 function functionSource(name) {
-  let declaration
-  function visit(node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === name) declaration = node
-    ts.forEachChild(node, visit)
+  for (const [ast, fileName] of [[appAst, 'App.vue.ts'], [sourceRefreshAst, 'useSourceRefresh.ts']]) {
+    let declaration
+    function visit(node) {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === name) declaration = node
+      ts.forEachChild(node, visit)
+    }
+    visit(ast)
+    if (declaration) return declaration.getText(ast)
   }
-  visit(appAst)
-  assert.ok(declaration, `Use the actual ${name} function from App.vue`)
-  return declaration.getText(appAst)
+  assert.fail(`Use the actual ${name} function from App.vue or useSourceRefresh.ts`)
 }
 const groupedRepositoriesSource = functionSource('groupedRepositories')
 const localizedNameSource = functionSource('localizedRepositoryName')

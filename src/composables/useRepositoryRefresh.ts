@@ -23,10 +23,11 @@ export function useRepositoryRefresh(options: {
   getInstalledMods: () => InstalledMod[]
   getModReleaseRepositoryIds: (mod: InstalledMod) => Set<string>
   getMappedReposAvailable: () => boolean
+  api: typeof api
 }) {
   const {
     dashboard, locale, repositoryReleaseReady, run, showError, showSuccess,
-    isUnmounted, getRepos, getInstalledMods, getModReleaseRepositoryIds, getMappedReposAvailable,
+    isUnmounted, getRepos, getInstalledMods, getModReleaseRepositoryIds, getMappedReposAvailable, api,
   } = options
   const repositoryRefreshing = reactive<Record<string, boolean>>({})
   const repositoryRefreshBatchActive = ref(false)

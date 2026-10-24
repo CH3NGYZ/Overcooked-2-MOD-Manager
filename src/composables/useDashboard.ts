@@ -16,8 +16,9 @@ export function useDashboard(options: {
   isBlocked: () => boolean
   onRuntimeChanged: () => void
   currentWinhttp: () => WinhttpState
+  api: typeof api
 }) {
-  const { dashboard, run, requestConfirmation, applyStartupZoom, isBlocked, onRuntimeChanged, currentWinhttp } = options
+  const { dashboard, run, requestConfirmation, applyStartupZoom, isBlocked, onRuntimeChanged, currentWinhttp, api } = options
   let updateQueue: Promise<void> = Promise.resolve()
 
   function getUpdateQueue() { return updateQueue }

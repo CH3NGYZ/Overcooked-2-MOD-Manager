@@ -1287,19 +1287,25 @@ async function refreshRepositoryBatch(repositories: Repository[], concurrency = 
     if (trackingToken !== undefined && trackingToken === repositoryRefreshBatchToken) repositoryRefreshBatchActive.value = false
   }
 }
-async function refreshMappedRepositories() {
+function mappedUpdateRepositories() {
   const mappedIds = new Set(installedMods.value.flatMap((mod) => Array.from(modReleaseRepositoryIds(mod))))
-  const mapped = repos.value.filter((repo) => repo.enabled && repo.download_mode === 'release' && mappedIds.has(repo.id))
+  return repos.value.filter((repo) => repo.enabled && repo.download_mode === 'release' && mappedIds.has(repo.id))
+}
+async function refreshMappedRepositories(repositories = mappedUpdateRepositories()) {
   // Keep a few requests in flight so repositories finish one after another and
   // their MODs report as soon as their own repository completed.
-  return refreshRepositoryBatch(mapped, 4)
+  return refreshRepositoryBatch(repositories, 4)
 }
 async function refreshMappedRepositoryUpdates() {
   if (!mappedReposAvailable.value) return dashboard.value
   if (modUpdatesCheckActive.value) return dashboard.value
+  const mapped = mappedUpdateRepositories()
+  // A queued repository must read as not-ready, otherwise MODs bound to it keep
+  // the previous "settled" result and skip the pending/checking state entirely.
+  for (const repo of mapped) repositoryReleaseReady[repo.id] = false
   modUpdatesCheckActive.value = true
   try {
-    const failures = await refreshMappedRepositories()
+    const failures = await refreshMappedRepositories(mapped)
     // One final snapshot makes the backend labels match the fresh caches.
     dashboard.value = await api.dashboard()
     if (failures) throw new Error(t('仓库刷新失败摘要').replace('{count}', String(failures)))

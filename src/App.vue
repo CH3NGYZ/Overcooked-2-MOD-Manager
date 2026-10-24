@@ -8,7 +8,7 @@ import {
   Save, Search, Trash2, Upload, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
-import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GameRuntime, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
+import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GitHubProxyConfig, PublicConfig, Provider, ProxyMode, Repository, RepositoryPatch, RepositorySource, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { localizedRepositorySourceName, t, useLocaleTranslation, type Locale } from './i18n'
 import { normalizeRepositoryRegion, repositoryRegionMatches, repositorySourceKey } from './repositorySources'
@@ -43,6 +43,7 @@ import { useDownloadProgress } from './composables/useDownloadProgress'
 import { useLogViewer } from './composables/useLogViewer'
 import { installFrontendLogging } from './composables/useFrontendLogging'
 import { useAppUpdate } from './composables/useAppUpdate'
+import { useDashboard } from './composables/useDashboard'
 import { repositorySourceRegionLabel } from './repositorySources'
 import DownloadStrip from './components/DownloadStrip.vue'
 import LogViewerDialog from './components/LogViewerDialog.vue'
@@ -273,7 +274,7 @@ function createCommunity(provider: Provider) {
     beforeSearch: async () => {
       // Only this provider's old Releases gate a replacement search.
       await Promise.all([
-        dashboardUpdateQueue,
+        getUpdateQueue(),
         ...(dashboard.value?.config.repositories.filter((repo) => isCommunityRepository(repo, provider)) ?? [])
           .map((repo) => repositoryRefreshTasks.get(repo.id)),
       ])
@@ -546,25 +547,19 @@ const modRepositoryRefreshActive = computed(() => repositoryRefreshBatchActive.v
   || Object.values(repositoryRefreshing).some(Boolean))
 let repositoryRefreshBatchToken = 0
 const repositoryRefreshTasks = new Map<string, Promise<boolean>>()
-let dashboardUpdateQueue: Promise<void> = Promise.resolve()
-
-async function refreshDashboardSerialized() {
-  const next = dashboardUpdateQueue.then(async () => {
-    dashboard.value = await api.dashboard()
-  })
-  dashboardUpdateQueue = next.catch(() => undefined)
-  await next
-  return dashboard.value
-}
-
-async function refreshConfigSerialized() {
-  const next = dashboardUpdateQueue.then(async () => {
-    const savedConfig = await api.config()
-    if (dashboard.value) dashboard.value = { ...dashboard.value, config: savedConfig }
-  })
-  dashboardUpdateQueue = next.catch(() => undefined)
-  await next
-}
+const {
+  getUpdateQueue, refreshDashboardSerialized, refreshConfigSerialized, loadDashboard,
+  detectGame, chooseGameDirectory, restoreDefaultGameDirectory, changeGameRuntime,
+  launchNormal, toggleWinhttp, openDirectory, openModDirectory, resetUi,
+} = useDashboard({
+  dashboard,
+  run,
+  requestConfirmation,
+  applyStartupZoom: (value) => setUiZoom(clampUiZoom(value), false, false),
+  isBlocked: () => Boolean(tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value),
+  onRuntimeChanged: () => { bepinexSetupResult.value = null; showBepInExSetup.value = false },
+  currentWinhttp: () => currentWinhttp.value,
+})
 
 function statusLabel(status: WinhttpState) { return t(({ modenabled: '框架已启用', moddisabled: '框架已禁用', missing: config.value?.platform !== 'windows' && config.value?.game.runtime === 'native' ? '未找到框架加载器' : '未找到 winhttp.dll', conflict: '文件状态冲突' } as Record<WinhttpState, string>)[status]) }
 function formatDate(value?: string) { return formatDateForLocale(value, locale.value) }
@@ -746,26 +741,6 @@ function isModRepositoryRefreshing(mod: import('./types').InstalledMod) {
   return Array.from(modReleaseRepositoryIds(mod)).some((id) => repositoryRefreshing[id])
 }
 async function run<T>(label: string, action: () => Promise<T>) { const actionLabel = normalizeActionLabel(label); busy.value = actionLabel; error.value = ''; message.value = ''; try { const result = await action(); const resultLabel = typeof result === 'object' && result && 'message' in result ? String((result as { message: string }).message) : actionLabel; showSuccess(t(normalizeActionLabel(resultLabel))); return result } catch (reason) { showError(reason); throw reason } finally { busy.value = '' } }
-async function loadDashboard() {
-  await run('正在读取厨房状态', async () => {
-    dashboard.value = await api.dashboard()
-    const nextZoom = clampUiZoom(dashboard.value.config.ui_zoom)
-    await setUiZoom(nextZoom, false, false)
-  })
-}
-async function detectGame() { await run('重新检测游戏目录', async () => { await api.detectGame(); dashboard.value = await api.dashboard() }) }
-async function chooseGameDirectory() { const path = await api.chooseGameDirectory(); if (!path || Array.isArray(path)) return; await run('正在保存厨房目录', async () => { await api.setGamePath(path); dashboard.value = await api.dashboard() }) }
-async function restoreDefaultGameDirectory() { await run('正在恢复默认游戏目录', async () => { await api.resetGamePath(); dashboard.value = await api.dashboard() }) }
-async function changeGameRuntime(runtime: GameRuntime) {
-  if (tutorial.visible.value || tutorial.previewing.value || appUnmounted || busy.value || gameBlocked.value) return
-  if (dashboard.value?.config.game.runtime === runtime) return
-  await run('正在切换厨房运行模式', async () => {
-    await api.saveSettings({ game_runtime: runtime })
-    bepinexSetupResult.value = null
-    showBepInExSetup.value = false
-    await loadDashboard()
-  })
-}
 async function refreshRepositoryEntry(repo: Repository) {
   if (repo.download_mode === 'repository_file') return false
   const currentTask = repositoryRefreshTasks.get(repo.id)
@@ -949,21 +924,7 @@ const {
   openRustLog, openFrontendLog, openCrashLog, openDeveloperConsole, close: closeRustLog,
 } = useLogViewer({ run })
 const uninstallFrontendLogging = typeof window !== 'undefined' ? installFrontendLogging() : undefined
-async function resetUi() {
-  if (!await requestConfirmation({ title: t('重置 UI'), message: `${t('重置 UI')}？` })) return
-  await run('正在重置界面', api.resetUi)
-  await loadDashboard()
-}
 async function restoreBackup(path: string) { await run('正在恢复 BepInEx', () => api.restoreBepInEx(path)); await loadDashboard() }
-async function launchNormal() { await run('正在准备 Steam 启动', api.launchNormal); await loadDashboard() }
-async function toggleWinhttp() {
-  if (currentWinhttp.value === 'missing') return
-  const enabled = currentWinhttp.value === 'moddisabled' || currentWinhttp.value === 'conflict'
-  await run('正在切换框架状态', () => api.switchWinhttp(enabled))
-  await loadDashboard()
-}
-async function openDirectory() { await run('正在打开游戏目录', api.openGameDirectory) }
-async function openModDirectory() { await run('正在打开模组目录', api.openModDirectory) }
 async function openModFileLocation(mod: InstalledMod) {
   if (tutorial.visible.value || tutorial.previewing.value || busy.value) return
   // run already displays failures; keep click errors out of unhandled rejections.
@@ -1127,7 +1088,7 @@ async function prepareRootSourceRefresh(sources: RepositorySource[]) {
   try {
     // Let previous Release requests and queued snapshots finish before
     // clearing persisted content, so this batch cannot reuse their results.
-    await Promise.all([...repositoryRefreshTasks.values(), dashboardUpdateQueue])
+    await Promise.all([...repositoryRefreshTasks.values(), getUpdateQueue()])
     const clearedConfig = await api.clearRepositorySourceCache(sources.map((source) => source.id))
     if (dashboard.value) dashboard.value = { ...dashboard.value, config: clearedConfig }
   } catch (reason) {

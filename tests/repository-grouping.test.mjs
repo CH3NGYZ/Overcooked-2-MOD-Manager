@@ -6,13 +6,15 @@ import ts from 'typescript'
 const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 const names = readFileSync(new URL('../src/repositoryNames.ts', import.meta.url), 'utf8')
 const sourceRefresh = readFileSync(new URL('../src/composables/useSourceRefresh.ts', import.meta.url), 'utf8')
+const repositoryEditor = readFileSync(new URL('../src/composables/useRepositoryEditor.ts', import.meta.url), 'utf8')
 const dialog = readFileSync(new URL('../src/components/RepositoryDocumentDialog.vue', import.meta.url), 'utf8')
 const appScript = app.match(/<script setup[^>]*>([\s\S]*?)<\/script>/)?.[1]
 assert.ok(appScript, 'Read the App.vue script setup block')
 const appAst = ts.createSourceFile('App.vue.ts', appScript, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 const sourceRefreshAst = ts.createSourceFile('useSourceRefresh.ts', sourceRefresh, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+const repositoryEditorAst = ts.createSourceFile('useRepositoryEditor.ts', repositoryEditor, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 function functionSource(name) {
-  for (const [ast, fileName] of [[appAst, 'App.vue.ts'], [sourceRefreshAst, 'useSourceRefresh.ts']]) {
+  for (const [ast, fileName] of [[appAst, 'App.vue.ts'], [sourceRefreshAst, 'useSourceRefresh.ts'], [repositoryEditorAst, 'useRepositoryEditor.ts']]) {
     let declaration
     function visit(node) {
       if (ts.isFunctionDeclaration(node) && node.name?.text === name) declaration = node
@@ -21,7 +23,7 @@ function functionSource(name) {
     visit(ast)
     if (declaration) return declaration.getText(ast)
   }
-  assert.fail(`Use the actual ${name} function from App.vue or useSourceRefresh.ts`)
+  assert.fail(`Use the actual ${name} function from App.vue, useSourceRefresh.ts or useRepositoryEditor.ts`)
 }
 const groupedRepositoriesSource = functionSource('groupedRepositories')
 const localizedNameSource = functionSource('localizedRepositoryName')
@@ -178,7 +180,7 @@ test('editing repository populates name, group, and note from localized fields',
 })
 
 test('saveRepo ensures zh-CN name before submitting the patch', () => {
-  const saveRepo = appScript.match(/async function saveRepo\(\) \{[\s\S]*?\n\}/)?.[0]
+  const saveRepo = repositoryEditor.match(/async function saveRepo\(\) \{[\s\S]*?\n\}/)?.[0]
   assert.ok(saveRepo)
   assert.ok(saveRepo.indexOf('ensureRepositoryChineseName()') < saveRepo.indexOf('api.saveRepository(repoForm)'))
 })

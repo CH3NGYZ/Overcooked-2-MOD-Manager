@@ -419,15 +419,15 @@
   font-style: normal;
 }
 
-.repository-row {
+.ocard {
   position: relative;
 }
 
-.repository-row.repo-refreshing {
+.ocard.repo-refreshing {
   pointer-events: none;
 }
 
-.repository-row.repo-refreshing::before {
+.ocard.repo-refreshing::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -435,7 +435,7 @@
   background: color-mix(in srgb, var(--surface) 78%, transparent);
 }
 
-.repository-row.repo-refreshing::after {
+.ocard.repo-refreshing::after {
   content: '';
   position: absolute;
   z-index: 3;

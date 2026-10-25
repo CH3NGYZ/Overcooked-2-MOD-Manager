@@ -332,12 +332,12 @@ description_i18n = { "zh-CN" = "仓库按父源、子源和分类组织；标题
 
 [[steps]]
 id = "install-button"
-selector = "#app > div > main > div.main-scroll > section > div.repository-list > div > div.source-repository-panel.source-content > div:nth-child(1) > div > div > div > div > div > div.repo-controls > button.primary-button"
+selector = "[data-tutorial=\"repo-install\"]"
 view = "repositories"
 scenario = "repository-ready"
-title = "下载并安装"
+title = "立即安装"
 description = "Release 模式先刷新版本和文件；刷新失败时，点击会提示先刷新。仓库文件模式直接下载。安装前关闭游戏。"
-title_i18n = { "zh-CN" = "下载并安装", "zh-TW" = "下載並安裝", en = "Download and install", ko = "다운로드·설치", ja = "ダウンロードとインストール" }
+title_i18n = { "zh-CN" = "立即安装", "zh-TW" = "立即安裝", en = "Install now", ko = "지금 설치", ja = "今すぐインストール" }
 description_i18n = { "zh-CN" = "Release 模式先刷新版本和文件；刷新失败时，点击会提示先刷新。仓库文件模式直接下载。安装前关闭游戏。", "zh-TW" = "Release 模式先重新整理版本和檔案；重新整理失敗時，點擊會提示先重新整理。倉庫檔案模式直接下載。安裝前關閉遊戲。", en = "Refresh Release versions and files first. After a failed refresh, clicking prompts you to refresh again. Repository-file mode downloads directly. Close the game before installing.", ko = "Release 모드는 먼저 버전·파일을 새로 고칩니다. 실패 후 누르면 다시 새로 고치라는 안내가 나옵니다. 저장소 파일 모드는 바로 받습니다. 설치 전 게임을 종료하세요.", ja = "Release モードでは先にバージョンとファイルを再読み込みします。再読み込みに失敗した状態でクリックすると、先に再読み込みするよう案内します。リポジトリファイルモードは直接ダウンロードします。インストール前にゲームを終了してください。" }
 
 [[steps]]

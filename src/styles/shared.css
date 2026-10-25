@@ -114,12 +114,12 @@
   opacity: .45;
 }
 
-.repository-row.repository-focus,
+.ocard.repository-focus,
 .mod-list-group.mod-focus {
   position: relative;
   outline: none;
 }
-.repository-row.repository-focus::after,
+.ocard.repository-focus::after,
 .mod-list-group.mod-focus::after {
   content: '';
   position: absolute;

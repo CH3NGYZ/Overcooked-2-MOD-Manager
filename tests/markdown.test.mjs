@@ -101,28 +101,13 @@ test('notes and Release logs keep author line breaks while README keeps GitHub s
   assert.equal(paragraphs.querySelectorAll('p').length, 2, 'blank lines still split paragraphs')
 })
 
-test('card notes render dimmer than the repository title', () => {
-  const css = readFileSync(new URL('../src/styles/markdown.css', import.meta.url), 'utf8')
-  assert.match(css, /\.repo-note \.markdown-body\s*\{[^}]*color:\s*var\(--muted\)/)
-  assert.match(css, /\.repo-note \.markdown-body :is\(h1, h2, h3, h4, h5, h6\)\s*\{[^}]*color:\s*var\(--muted\)/)
-  const description = readFileSync(new URL('../src/components/RepositoryDescription.vue', import.meta.url), 'utf8')
-  assert.match(description, /<MarkdownContent[^>]*breaks/)
+test('the card description stays secondary to the repository title', () => {
+  const repositoriesCss = readFileSync(new URL('../src/styles/repositories.css', import.meta.url), 'utf8')
+  assert.match(repositoriesCss, /\.odesc\s*\{[^}]*color:\s*var\(--muted\)/)
+  assert.doesNotMatch(repositoriesCss, /\.repo-note-clamped/, 'The old clamped note block must be gone')
+  assert.doesNotMatch(repositoriesCss, /\.repo-note-measure/, 'The hidden measurement box must not survive')
   const dialog = readFileSync(new URL('../src/components/RepositoryDocumentDialog.vue', import.meta.url), 'utf8')
   assert.match(dialog, /:breaks="target\.kind === 'note'"/)
-})
-
-test('card notes show seven lines and only then offer the note button', () => {
-  const description = readFileSync(new URL('../src/components/RepositoryDescription.vue', import.meta.url), 'utf8')
-  assert.match(description, /const NOTE_MAX_LINES = 7/)
-  assert.match(description, /const limit = lineHeight \* NOTE_MAX_LINES/)
-  assert.match(description, /long\.value = element\.scrollHeight > limit \+ 1/)
-  assert.match(description, /'repo-note-clamped': !community && long/)
-  assert.match(description, /maxHeight: `\$\{clampHeight\}px`/)
-  assert.match(description, /v-if="!community && note && long"/)
-  const css = readFileSync(new URL('../src/styles/repositories.css', import.meta.url), 'utf8')
-  assert.match(css, /\.repo-note-clamped\s*\{[^}]*overflow:\s*hidden/)
-  assert.doesNotMatch(css, /--repository-note-limit/, 'The old pixel limit must not survive')
-  assert.doesNotMatch(css, /\.repo-note-measure/, 'The hidden measurement box must not survive')
 })
 
 test('task lists are read-only and cannot smuggle other form controls or source classes', () => {

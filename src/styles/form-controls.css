@@ -101,3 +101,81 @@ select:focus-visible,
   select option::checkmark { color: var(--accent); }
   select option:disabled { color: var(--faint); cursor: not-allowed; }
 }
+
+/* ===== Element Plus 最小验证：顶栏语言 el-select =====
+   触发器在缩放画布内，用逻辑像素；弹层 Teleport 到 body 后不继承画布变换，
+   与上面的原生 picker 一样必须按 --ui-zoom 显式换算。 */
+.language-select.el-select {
+  width: 136px;
+  min-width: 104px;
+}
+.language-select .el-select__wrapper {
+  min-height: 35px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  transition: box-shadow .16s ease, background-color .16s ease;
+}
+.language-select .el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.language-select .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--accent-strong) inset, 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.language-select .el-select__placeholder {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.language-select .el-select__caret {
+  color: var(--muted);
+}
+.language-select .el-select__selected-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 弹层：body 层级，尺寸全部乘 --ui-zoom（与原生 select::picker 同规则）。
+   .is-light 用于盖过 EP 自身的 .el-popper.is-light（同优先级但后加载）。 */
+.el-popper.oc2-lang-popper.is-light {
+  --el-popper-border-radius: calc(8px * var(--ui-zoom));
+  background: var(--surface);
+  border-color: var(--line-strong);
+  border-width: calc(1px * var(--ui-zoom));
+  border-radius: calc(8px * var(--ui-zoom));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .38);
+  padding: calc(5px * var(--ui-zoom));
+}
+.el-popper.oc2-lang-popper.is-light .el-popper__arrow::before {
+  background: var(--surface);
+  border: calc(1px * var(--ui-zoom)) solid var(--line-strong);
+}
+.oc2-lang-popper .el-select-dropdown {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.oc2-lang-popper .el-select-dropdown__wrap {
+  max-height: min(calc(320px * var(--ui-zoom)), calc(100dvh - 24px));
+}
+.oc2-lang-popper .el-select-dropdown__item {
+  height: auto;
+  padding: calc(9px * var(--ui-zoom)) calc(11px * var(--ui-zoom));
+  margin: 0 0 calc(2px * var(--ui-zoom));
+  border-radius: calc(5px * var(--ui-zoom));
+  font-size: calc(12px * var(--ui-zoom));
+  line-height: 1.45;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.oc2-lang-popper .el-select-dropdown__item.is-hovering {
+  background: var(--surface-3);
+}
+.oc2-lang-popper .el-select-dropdown__item.is-selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+}

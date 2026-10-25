@@ -1,76 +1,640 @@
-.repository-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 13px 15px;
-  border-bottom: 1px solid var(--line);
-  /* No minimum width: a narrow window must shrink the row instead of pushing
-     the right-hand controls out of the card. */
-  min-width: 0;
+/* ===== 搜索过滤 ===== */
+.search-hidden {
+  display: none !important;
 }
-.repository-row:last-child {
-  border-bottom: 0;
-}
-.repo-info {
-  flex: 1;
-  min-width: 0;
-}
-.repo-title {
+
+/* ===== 页头与工具栏 ===== */
+.page-intro-side {
   display: flex;
   align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
   flex-wrap: wrap;
-  gap: 7px;
+  justify-content: flex-end;
 }
-.repo-title b {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.layout-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 3px;
 }
-.repo-description {
-  position: relative;
-  min-width: 0;
-}
-.repo-note {
-  margin: 7px 0 0;
-  padding-top: 6px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-/* Long notes keep their first seven lines and fade out instead of jumping
-   straight to the detail button. */
-.repo-note-clamped {
-  overflow: hidden;
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
-}
-.repo-note-button {
+.layout-seg button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  color: var(--accent);
+  border: 0;
   background: transparent;
-  cursor: pointer;
-  font-size: 11px;
-  border-radius: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 11px;
+  border-radius: 7px;
+  white-space: nowrap;
+  transition: background-color .18s ease, color .18s ease;
 }
-.repo-note-button:hover {
-  border-color: var(--accent);
+.layout-seg button:hover {
+  color: var(--text);
+}
+.layout-seg button.on {
+  background: #173229;
+  color: var(--accent);
+  font-weight: 600;
+}
+.toolbar-spacer {
+  flex: 1 1 12px;
+  min-width: 12px;
+}
+.repo-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 12px;
+  height: 34px;
+  flex: 0 1 340px;
+  min-width: 200px;
+  color: var(--muted);
 }
-.repo-note-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.repo-search:focus-within {
+  border-color: #488c7b;
 }
-.repo-document-actions {
+.repo-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.repo-search input::placeholder {
+  color: var(--faint);
+}
+.repo-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* ===== ocard：紧凑列表 / 网格卡片 / 同页展开三态共用同一批元素 ===== */
+.ocard {
+  position: relative;
+  display: grid;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 8px 14px;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "tile name oline" "tile desc oline";
+}
+.ocard-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  transition: background-color .16s ease, border-color .16s ease;
+}
+.ocard:hover .ocard-bg {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+.ocard:hover .oname {
+  color: var(--accent);
+}
+.ocard > *:not(.ocard-bg) {
+  position: relative;
+  z-index: 1;
+}
+.tile {
+  grid-area: tile;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: #dfe9f4;
+}
+.tile .provider-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+.onameline {
+  grid-area: name;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.oname {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.onameline .badge {
+  flex: 0 0 auto;
+}
+.oline {
+  grid-area: oline;
+  display: flex;
+  align-items: center;
   gap: 8px;
+  justify-content: flex-end;
+  max-width: 560px;
+  margin-left: auto;
+  min-width: 0;
+}
+.obadges {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+.ometa {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  width: 112px;
+  min-width: 0;
+  white-space: nowrap;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ometa:disabled {
+  cursor: default;
+}
+div.ometa {
+  cursor: default;
+}
+.ometa:not(:disabled):hover b {
+  color: var(--accent);
+}
+.ometa b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ometa span {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oacts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  justify-self: end;
+}
+.dl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--accent-strong);
+  color: #071713;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 13px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dl:hover:not(:disabled) {
+  background: var(--accent);
+}
+.dl.amber {
+  background: var(--warning);
+  color: #2a2110;
+}
+.dl.amber:hover:not(:disabled) {
+  background: #f0c882;
+}
+.dl:disabled {
+  opacity: .55;
+}
+/* 列表/网格态折叠在卡片内部（不可见但保留可量测布局），展开态归位显示 */
+.oicons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+.odesc {
+  grid-area: desc;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.55;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ocard-body {
+  display: none;
+  grid-area: body;
+}
+.ocard-body .markdown-body {
+  font-size: 13px;
+  line-height: 1.7;
+  padding-top: 4px;
+}
+.ocard-body .markdown-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+.morph-placeholder {
+  min-width: 0;
+}
+.expand-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(5, 9, 15, .55);
+  opacity: 0;
+}
+.backdrop-fade-enter-active,
+.backdrop-fade-leave-active {
+  transition: opacity .25s ease;
+}
+.backdrop-fade-enter-to,
+.backdrop-fade-leave-from {
+  opacity: 1;
+}
+
+/* ===== 网格卡片布局：固定 300px 卡宽 auto-fill ===== */
+.repository-group-items.as-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 300px);
+  gap: 12px;
+}
+.repository-group-items.as-grid .ocard {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "tile name" "tile desc" "oline oline";
+  align-items: start;
+  gap: 6px 10px;
+  /* The status/version/action row is the last grid row, so the bottom padding
+     is what keeps it off the card border in grid mode. */
+  padding: 14px 14px 16px;
+}
+.repository-group-items.as-grid .ocard .oline {
+  /* 1 : 2 : 2 — status slot, stacked version/date, action button. Fixed
+     tracks keep the badge narrow so it never pushes the button out of a
+     300px card, and the action column stays wide enough for "立即安装". */
+  display: grid;
+  grid-template-columns: 1fr 2fr 2fr;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  max-width: none;
+  justify-content: stretch;
+}
+.repository-group-items.as-grid .ocard .obadges {
+  min-width: 0;
+  justify-content: center;
+}
+.repository-group-items.as-grid .ocard .ometa {
+  width: 100%;
+  min-width: 0;
+  flex: none;
+  overflow: hidden;
+}
+.repository-group-items.as-grid .ocard .oacts {
+  width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.repository-group-items.as-grid .ocard .dl {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.repository-group-items.as-grid .oname {
+  font-size: 13.5px;
+  white-space: normal;
+  flex-basis: auto;
+}
+.repository-group-items.as-grid .odesc {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 37px;
+}
+
+/* ===== 展开态：卡片盒固定为面板矩形，内容随宽度真实重排 ===== */
+/* The grid-mode rule `.repository-group-items.as-grid .ocard` is more specific
+   than a bare `.ocard.is-expanded`, so every expanded override repeats the
+   container selector to win. Three rows: icon+title, then status/version/action
+   cluster, then the description. */
+.ocard.is-expanded,
+.repository-group-items.as-grid .ocard.is-expanded {
+  position: fixed;
+  z-index: 50;
+  margin: 0;
+  padding: 18px 20px;
+  overflow: hidden;
+  cursor: default;
+  /* Transparent container: the surface is always painted by .ocard-bg so the
+     background never swaps layers mid-animation. */
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: transparent;
+  box-shadow: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "tile name" "oline oline" "body body";
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  align-content: start;
+}
+.ocard.is-expanded .ocard-bg,
+.repository-group-items.as-grid .ocard.is-expanded .ocard-bg {
+  display: block;
+  background: var(--surface-2);
+  border: 1px solid #3a5578;
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .68);
+}
+.ocard.is-expanded .onameline,
+.repository-group-items.as-grid .ocard.is-expanded .onameline {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.ocard.is-expanded .oname,
+.repository-group-items.as-grid .ocard.is-expanded .oname {
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.ocard.is-expanded .oline,
+.repository-group-items.as-grid .ocard.is-expanded .oline {
+  grid-area: oline;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.ocard.is-expanded .obadges,
+.repository-group-items.as-grid .ocard.is-expanded .obadges {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+.ocard.is-expanded .ometa,
+.repository-group-items.as-grid .ocard.is-expanded .ometa {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  overflow: visible;
+  gap: 1px;
+}
+.ocard.is-expanded .oacts,
+.repository-group-items.as-grid .ocard.is-expanded .oacts {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  justify-self: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ocard.is-expanded .oicons,
+.repository-group-items.as-grid .ocard.is-expanded .oicons {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  visibility: visible;
+  pointer-events: auto;
+  display: flex;
+}
+.ocard.is-expanded .ometa b {
+  font-size: 14px;
+}
+.ocard.is-expanded .ometa span {
+  font-size: 12.5px;
+}
+.ocard.is-expanded .tile,
+.repository-group-items.as-grid .ocard.is-expanded .tile {
+  grid-area: tile;
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+}
+/* The expanded panel shows the description preview as the body row; the full
+   README lives behind the "查看自述文件" button in its own dialog. */
+.ocard.is-expanded .odesc,
+.repository-group-items.as-grid .ocard.is-expanded .odesc {
+  display: -webkit-box;
+  grid-area: body;
+  margin-top: 4px;
+  white-space: normal;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.6;
+  min-height: 0;
+}
+/* ===== 收起态：外框收缩，排版尺寸逐帧插值，布局模板与紧凑卡片一致 ===== */
+/* Three requirements this satisfies:
+   1. Sizes must not snap: type, icon, gaps and paddings all interpolate from
+      panel values to compact-card values through `--ocard-close-p`
+      (0 = panel, 1 = card), so the last frame already equals the card.
+   2. The layout template must match the compact card from the very first frame
+      of the close, otherwise the final style swap re-flows every element at
+      once and the card visibly jumps (the "wrong last frame" bug).
+   3. The surface stays painted for the whole morph, or the card blinks. */
+.ocard.is-closing,
+.repository-group-items.as-grid .ocard.is-closing {
+  --ocard-close-p: 0;
+  position: fixed;
+  z-index: 50;
+  margin: 0;
+  overflow: hidden;
+  cursor: default;
+  border: 1px solid #3a5578;
+  background: var(--surface-2);
+  /* Compact-card areas, not the panel ones: the same grid the card lands in. */
+  grid-template-columns: calc(46px + (36px - 46px) * var(--ocard-close-p)) minmax(0, 1fr) auto;
+  grid-template-areas: "tile name oline" "tile desc oline";
+  align-items: center;
+  gap: calc(6px + (2px - 6px) * var(--ocard-close-p)) calc(12px + (12px - 12px) * var(--ocard-close-p));
+  padding: calc(18px + (8px - 18px) * var(--ocard-close-p)) calc(20px + (14px - 20px) * var(--ocard-close-p));
+  border-radius: calc(16px + (12px - 16px) * var(--ocard-close-p));
+  box-shadow: 0 calc((1 - var(--ocard-close-p)) * 30px) calc((1 - var(--ocard-close-p)) * 80px)
+    rgba(0, 0, 0, calc(.68 * (1 - var(--ocard-close-p))));
+}
+/* Grid mode stacks the action row under the text; match that here too. */
+.repository-group-items.as-grid .ocard.is-closing {
+  grid-template-columns: calc(46px + (36px - 46px) * var(--ocard-close-p)) minmax(0, 1fr);
+  grid-template-areas: "tile name" "tile desc" "oline oline";
+  align-items: start;
+}
+/* The surface layer keeps painting for the whole morph. */
+.ocard.is-closing .ocard-bg {
+  display: block;
+  background: var(--surface-2);
+  border-color: transparent;
+  box-shadow: none;
+}
+.ocard.is-closing .tile,
+.repository-group-items.as-grid .ocard.is-closing .tile {
+  grid-area: tile;
+  width: calc(46px + (36px - 46px) * var(--ocard-close-p));
+  height: calc(46px + (36px - 46px) * var(--ocard-close-p));
+  border-radius: calc(11px + (9px - 11px) * var(--ocard-close-p));
+}
+.ocard.is-closing .onameline,
+.repository-group-items.as-grid .ocard.is-closing .onameline {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.ocard.is-closing .oname,
+.repository-group-items.as-grid .ocard.is-closing .oname {
+  font-size: calc(21px + (14px - 21px) * var(--ocard-close-p));
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.ocard.is-closing .odesc,
+.repository-group-items.as-grid .ocard.is-closing .odesc {
+  grid-area: desc;
+  display: block;
+  font-size: calc(13px + (12.5px - 13px) * var(--ocard-close-p));
+  color: var(--muted);
+  line-height: 1.55;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: calc(.55 + .45 * var(--ocard-close-p));
+  margin: 0;
+}
+.ocard.is-closing .oline,
+.repository-group-items.as-grid .ocard.is-closing .oline {
+  grid-area: oline;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(8px + (8px - 8px) * var(--ocard-close-p));
+  width: auto;
+  max-width: 560px;
+  margin-left: auto;
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.repository-group-items.as-grid .ocard.is-closing .oline {
+  justify-content: space-between;
+  max-width: none;
+  margin-left: 0;
+}
+.ocard.is-closing .obadges,
+.repository-group-items.as-grid .ocard.is-closing .obadges {
+  min-width: 0;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+.ocard.is-closing .ometa,
+.repository-group-items.as-grid .ocard.is-closing .ometa {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  overflow: hidden;
+  gap: 0;
+  flex-direction: column;
+  align-items: center;
+}
+.ocard.is-closing .oacts,
+.repository-group-items.as-grid .ocard.is-closing .oacts {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ocard.is-closing .dl,
+.repository-group-items.as-grid .ocard.is-closing .dl {
+  padding: calc(7px + (5px - 7px) * var(--ocard-close-p)) calc(13px + (10px - 13px) * var(--ocard-close-p));
+  font-size: calc(13px + (12.5px - 13px) * var(--ocard-close-p));
+}
+/* The icon buttons do not exist on a compact card: fade them out in place
+   instead of letting them change the action row width. */
+.ocard.is-closing .oicons,
+.repository-group-items.as-grid .ocard.is-closing .oicons {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
 }
 .repository-note-modal {
   width: min(760px, 100%);
@@ -116,77 +680,6 @@
   max-height: calc(var(--layout-viewport-height) - 190px);
   overflow: auto;
   padding: 4px 3px 4px 0;
-}
-.repo-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  justify-items: stretch;
-  gap: 7px;
-  min-width: 0;
-  padding-left: 14px;
-  border-left: 1px solid var(--line);
-}
-.repo-controls .primary-button {
-  min-width: 0;
-  white-space: normal;
-}
-/* Same amber as the "有更新" badge: an install button that is really an update. */
-.repo-controls .primary-button.primary-button-update {
-  color: #2a2110;
-  border-color: var(--warning);
-  background: var(--warning);
-}
-.repo-controls .primary-button.primary-button-update:hover:not(:disabled) {
-  border-color: #f0c882;
-  background: #f0c882;
-}
-.repo-controls .primary-button.primary-button-update:disabled {
-  opacity: .55;
-}
-.repo-release {
-  width: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-align: center;
-  appearance: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.repo-release:disabled {
-  cursor: default;
-}
-.repo-release:not(:disabled):hover b {
-  color: var(--text);
-}
-.repo-release b,
-.repo-release span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.repo-release b {
-  color: var(--accent);
-  font-family: Consolas, monospace;
-  font-size: 12px;
-}
-.repo-release span {
-  color: var(--faint);
-  font-size: 9px;
-  margin-top: 3px;
-}
-.row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  width: auto;
-  min-width: 0;
-  justify-content: space-between;
 }
 .form-grid label {
   display: flex;
@@ -664,16 +1157,11 @@
  .repository-group-heading:hover { color: var(--text); background: var(--surface-3); }
  .repository-group-heading svg { flex: 0 0 auto; transition: transform .18s ease; }
  .repository-group-heading .badge { margin-left: auto; }
- .repository-group-items { position: relative; overflow: hidden; min-width: 0; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; background: var(--surface); }
+ .repository-group-items { position: relative; overflow: hidden; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; background: var(--surface); }
  .repository-group-ungrouped .repository-group-items { border-radius: 7px; }
  .repository-group-collapse-enter-active, .repository-group-collapse-leave-active { overflow: clip; transition: max-height .22s ease, opacity .18s ease, border-color .12s ease; }
  .repository-group-collapse-enter-from, .repository-group-collapse-leave-to { max-height: 0; opacity: 0; border-top-color: transparent; }
  .repository-group-collapse-enter-to, .repository-group-collapse-leave-from { max-height: 1800px; opacity: 1; }
- .source-repository-panel .repository-row { background: rgba(255, 255, 255, .012); transition: background .16s ease, border-color .16s ease; }
-.source-repository-panel .repository-row { position: relative; }
- .source-repository-panel .repository-row:hover { background: var(--surface-2); }
- .source-repository-panel .repository-row + .repository-row { border-top: 1px solid var(--line); }
- .source-repository-panel .repository-row:last-child { border-bottom: 0; }
  .source-collapse-enter-active, .source-collapse-leave-active { overflow: clip; transition: max-height .24s ease, opacity .2s ease, padding .24s ease, border-color .12s ease, box-shadow .12s ease; }
  .source-collapse-enter-from, .source-collapse-leave-to { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-color: transparent; box-shadow: none; }
  .source-collapse-enter-to, .source-collapse-leave-from { max-height: 2400px; opacity: 1; }
@@ -746,8 +1234,3 @@
 .source-loading-enter-to,
 .source-loading-leave-from { opacity: 1; transform: translateY(0); }
 .source-loading-stage { color: var(--muted); font-size: 11px; letter-spacing: .02em; }
-.repository-row { animation: repository-card-enter .24s ease both; }
-@keyframes repository-card-enter {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
-}

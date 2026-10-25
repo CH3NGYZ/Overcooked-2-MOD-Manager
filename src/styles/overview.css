@@ -253,27 +253,6 @@
   font-family: Consolas, monospace;
   font-size: 11px;
 }
-.repo-logo {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  /* The card aligns to the top, so the provider icon must not float in the
-     vertical middle of a tall note. */
-  align-self: flex-start;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line-strong);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  border-radius: 6px;
-}
-.repo-logo.github {
-  color: var(--text);
-}
-.repo-logo.gitee {
-  color: #c71d23;
-}
 .provider-icon {
   width: 17px;
   height: 17px;

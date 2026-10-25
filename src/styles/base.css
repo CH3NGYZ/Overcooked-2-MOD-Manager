@@ -21,7 +21,9 @@
   --danger: #ee8585;
   --shadow: 0 16px 44px rgba(0, 0, 0, 0.2);
   --sidebar-width: 248px;
-  --sidebar-collapsed-width: 84px;
+  /* Collapsed rail: 10px sidebar padding + 15px item padding + 22px icon + padding,
+     so the 22px icons keep the exact same x position in both states. */
+  --sidebar-collapsed-width: 73px;
   --window-min-width: 1280px;
   --window-min-height: 720px;
   --ui-zoom: 1.5;
@@ -119,79 +121,60 @@ button:disabled {
   width: var(--sidebar-collapsed-width);
   flex-basis: var(--sidebar-collapsed-width);
   min-width: var(--sidebar-collapsed-width);
-  padding: 10px 8px;
+  /* Same horizontal padding as the expanded rail so the 22px icons keep
+     their exact x position while the text retracts. */
+  padding: 10px;
 }
 .brand {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 11px;
-  padding: 0 9px 30px;
-}
-.brand-text {
-  flex: 1;
-  min-width: 0;
-}
-.sidebar-toggle {
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  width: 100%;
+  margin: 0 0 8px;
+  /* 16px + logo 22px + text: mirrors .nav-item (15px padding + 1px border),
+     so the brand mark shares the exact icon column. */
+  padding: 4px 16px 18px;
+  border: 0;
+  border-radius: 10px;
   background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: 0.16s ease;
+  color: inherit;
+  text-align: left;
+  transition: background-color .18s ease;
 }
-.sidebar-toggle:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
+.brand:hover {
   background: var(--surface-2);
 }
-.sidebar-toggle:focus-visible {
+.brand:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.sidebar-collapsed .brand {
-  justify-content: center;
-  gap: 6px;
-  padding: 0 0 22px;
+.brand-text {
+  min-width: 0;
+  margin-left: 10px;
+  max-width: 150px;
+  opacity: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Text retracts toward the icon (right-to-left) instead of popping away,
+     so the logo never shifts when the rail collapses. */
+  transition: max-width .2s ease, opacity .15s ease, margin-left .2s ease;
 }
 .sidebar-collapsed .brand-text {
-  display: none;
+  max-width: 0;
+  opacity: 0;
+  margin-left: 0;
 }
 .sidebar-collapsed .sidebar-section-label {
   padding: 0 0 9px;
   text-align: center;
 }
-.sidebar-collapsed .nav-item {
-  justify-content: center;
-  gap: 0;
-  padding: 10px 0;
-}
-.sidebar-collapsed .nav-item > span,
-.sidebar-collapsed .nav-chevron {
-  display: none;
-}
-.sidebar-collapsed .sidebar-foot {
-  justify-content: center;
-  padding: 14px 0 0;
-}
-.sidebar-collapsed .side-health-text,
-.sidebar-collapsed .version-tag {
-  display: none;
-}
 .brand-mark {
-  width: 35px;
-  height: 35px;
-  flex: 0 0 35px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   overflow: hidden;
   border: 1px solid #429d88;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 .brand-mark img {
   display: block;
@@ -235,15 +218,14 @@ button:disabled {
   flex: 0 0 auto;
   width: 100%;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 11px 11px;
+  padding: 10px 15px;
   text-align: left;
-  transition: 0.18s ease;
+  transition: background-color .18s ease, color .18s ease, border-color .18s ease;
 }
 .nav-item:hover {
   background: var(--surface-2);
@@ -255,41 +237,69 @@ button:disabled {
   color: var(--accent);
   border-color: #2d5c57;
 }
-.nav-item span {
+.nav-item > span {
   flex: 1;
   min-width: 0;
+  margin-left: 11px;
+  max-width: 150px;
+  max-height: 40px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-width .2s ease, max-height .2s ease, opacity .15s ease, margin-left .2s ease;
 }
 .nav-item b {
   display: block;
   font-size: 13px;
   font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .nav-item small {
   display: block;
   color: var(--faint);
   font-size: 10px;
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .nav-item.active small {
   color: #8db9ad;
 }
-.nav-chevron {
-  opacity: 0.4;
+.sidebar-collapsed .nav-item > span {
+  max-width: 0;
+  max-height: 0;
+  opacity: 0;
+  margin-left: 0;
+}
+.game-launch:hover {
+  border-color: var(--line);
+}
+.game-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 6px;
+  object-fit: cover;
+  transition: filter .2s ease, opacity .2s ease;
+}
+.game-icon.off {
+  filter: grayscale(1) brightness(.6);
+  opacity: .75;
 }
 .sidebar-foot {
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
-  padding: 17px 10px 0;
+  padding: 14px 15px 0;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   color: var(--muted);
   font-size: 11px;
 }
-.side-health {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+.sidebar-collapsed .sidebar-foot {
+  display: none;
 }
 .version-tag {
   color: var(--faint);

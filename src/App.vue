@@ -4,12 +4,19 @@ import { getVersion } from '@tauri-apps/api/app'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   AlertTriangle, Boxes, CheckCircle2, CloudDownload, Coffee, Download,
-  LayoutDashboard, PackageCheck, X,
+  LayoutDashboard, LayoutGrid, List, PackageCheck, X,
 } from 'lucide-vue-next'
 import { api, watchAppUpdateChannel, watchAppUpdatePhase, watchDownloadProgress, watchGameState } from './services/tauri'
+// Element Plus 最小验证：仅顶栏语言下拉使用 el-select。
+// 弹层默认 Teleport 到 body（真实坐标定位才正确）；其字体与圆角按 --ui-zoom
+// 显式换算，见 form-controls.css 的 oc2-lang-popper 段。
+import { ElSelect, ElOption } from 'element-plus'
+import 'element-plus/es/components/select/style/css'
+import 'element-plus/theme-chalk/dark/css-vars.css'
 import type { BepInExInstallResult, ConfigEditorTarget, Dashboard, GitHubProxyConfig, Provider, Repository, SettingsPatch, WinhttpState } from './types'
 import { bepinexDownloadUrls as getBepInExDownloadUrls } from './gameRuntime'
 import { t, useLocaleTranslation, type Locale } from './i18n'
+import { repositoryLayout } from './repositoryLayout'
 import { repositoryRegionMatches } from './repositorySources'
 import { repositoryName, repositoryNote } from './repositoryNames'
 import { installedModLabelActionable, installedModLabelClass, installedModLabelText } from './installedModStatus'
@@ -147,6 +154,8 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'ko', label: '한국어' },
   { value: 'ja', label: '日本語' },
 ]
+// 应用固定深色主题：给 Element Plus 的 CSS 变量启用 dark 作用域（仅影响 --el-* 变量）。
+document.documentElement.classList.add('dark')
 const bepinexDownloadUrls = computed(() => getBepInExDownloadUrls(config.value?.platform, config.value?.game.runtime))
 
 const STARTUP_IPC_TIMEOUT_MS = 8000
@@ -677,7 +686,7 @@ onUnmounted(() => {
     </div>
     <TutorialExperience :controller="tutorial" :nav-items="navItems" />
     <AppSidebar :nav-items="navItems" :active-view="activeView" :game="game" :app-version="appVersion"
-      :app-icon="appIcon" :collapsed="sidebarCollapsed" @change-view="activeView = $event"
+      :app-icon="appIcon" :collapsed="sidebarCollapsed" :launch-normal="launchNormal" @change-view="activeView = $event"
       @toggle="sidebarCollapsed = !sidebarCollapsed" />
     <main class="main-area">
       <div class="main-fixed">
@@ -685,11 +694,19 @@ onUnmounted(() => {
         <div>
           <h1>{{t(navItems.find((item) => item.id === activeView)?.label || '')}}</h1>
         </div>
-        <div class="top-actions"><select v-model="locale" @change="setLocale(locale)" class="language-select"
-            :aria-label="t('界面语言')">
-            <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}
-            </option>
-          </select>
+        <div class="top-actions">
+          <div v-if="activeView === 'repositories'" class="layout-seg" role="group" :aria-label="t('布局切换')">
+            <button type="button" data-tutorial="repo-layout-list" :class="{ on: repositoryLayout === 'list' }"
+              :aria-pressed="repositoryLayout === 'list'" @click="repositoryLayout = 'list'"><List :size="14" />{{
+                t('紧凑列表') }}</button>
+            <button type="button" data-tutorial="repo-layout-grid" :class="{ on: repositoryLayout === 'grid' }"
+              :aria-pressed="repositoryLayout === 'grid'" @click="repositoryLayout = 'grid'"><LayoutGrid :size="14" />{{
+                t('网格卡片') }}</button>
+          </div>
+          <el-select v-model="locale" class="language-select" popper-class="oc2-lang-popper"
+            :aria-label="t('界面语言')" @change="setLocale(locale)">
+            <el-option v-for="option in localeOptions" :key="option.value" :value="option.value" :label="option.label" />
+          </el-select>
           <div class="connection-chip"><span class="pulse success-bg"></span><span>{{ t('本地服务正常') }}</span></div>
         </div>
         </header>
@@ -826,7 +843,6 @@ onUnmounted(() => {
         :repository-source-region-label="repositorySourceRegionLabel"
         @show-import="showImport = true"
         @show-github-proxies="showGithubProxyManager = true"
-        @show-repository-note="repositoryDocument = { repository: $event, kind: 'note' }"
         @show-repository-readme="repositoryDocument = { repository: $event, kind: 'readme' }"
         @show-release="showRelease = $event"
         @source-content-entered="onSourceContentEntered" />

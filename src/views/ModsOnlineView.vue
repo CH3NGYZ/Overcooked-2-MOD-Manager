@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NCard, NEmpty, NSpin, NTag } from 'naive-ui'
+import { NButton, NCard, NEmpty, NFloatButton, NSpin, NTag } from 'naive-ui'
 import { ChevronDown, ChevronUp, Download, RefreshCw } from 'lucide-vue-next'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -72,9 +72,7 @@ function toggleExpand(repo: Repository) {
   <n-spin :show="loading">
     <div class="toolbar">
       <span class="muted">共 {{ repositories.length }} 个仓库</span>
-      <n-button size="small" secondary :loading="busyCount > 0" :disabled="busyCount > 0" @click="refreshAll">
-        <RefreshCw :size="14" />全部刷新
-      </n-button>
+
     </div>
 
     <n-empty v-if="!loading && !repositories.length" description="暂无仓库配置" class="empty" />
@@ -128,6 +126,10 @@ function toggleExpand(repo: Repository) {
       </div>
     </n-card>
   </n-spin>
+    <n-float-button position="fixed" bottom="28" right="32" :disabled="busyCount > 0"
+      tooltip="全部刷新（逐仓独立，互不阻塞）" @click="refreshAll">
+      <RefreshCw :size="17" :class="{ spin: busyCount > 0 }" />
+    </n-float-button>
 </template>
 
 <style scoped>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
-import { NButton, NCard, NEmpty, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
-import { ChevronDown, ChevronUp, Trash2 } from 'lucide-vue-next'
+import { NButton, NCard, NEmpty, NFloatButton, NFloatButtonGroup, NSpin, NSwitch, NTag } from 'naive-ui'
+import { AlignJustify, ArrowUpDown, ChevronDown, ChevronUp, LayoutGrid, Trash2 } from 'lucide-vue-next'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { InstalledMod } from '../types'
@@ -13,6 +13,12 @@ const { load, loading, mods, game } = useDashboard()
 
 const layout = ref<'cards' | 'rows'>((localStorage.getItem('v2-mods-layout') as 'cards' | 'rows') || 'cards')
 const sortBy = ref<'name' | 'version' | 'enabled'>('name')
+const sortLabels = { name: '名称', version: '版本', enabled: '启用' } as const
+function cycleSort() {
+  const order = ['name', 'version', 'enabled'] as const
+  sortBy.value = order[(order.indexOf(sortBy.value) + 1) % order.length]
+}
+const sortLabel = computed(() => sortLabels[sortBy.value])
 const busy = ref<Record<string, boolean>>({})
 const expanded = ref<Record<string, boolean>>({})
 
@@ -90,18 +96,9 @@ function toggleExpand(dll: string) {
 <template>
   <n-spin :show="loading">
     <div class="toolbar">
-      <span class="muted">共 {{ mods.length }} 个 · 启用 {{ enabledCount }} · 可更新 {{ updateCount }}</span>
-      <n-select v-model:value="sortBy" style="width: 140px" size="small" :options="[
-        { label: '按名称', value: 'name' },
-        { label: '按版本', value: 'version' },
-        { label: '按启用', value: 'enabled' },
-      ]" />
-      <div class="seg">
-        <n-button size="small" :secondary="layout !== 'cards'" :type="layout === 'cards' ? 'primary' : 'default'"
-          @click="setLayout('cards')">卡片</n-button>
-        <n-button size="small" :secondary="layout !== 'rows'" :type="layout === 'rows' ? 'primary' : 'default'"
-          @click="setLayout('rows')">横排</n-button>
-      </div>
+      <span class="muted">共 {{ mods.length }} 个 · 启用 {{ enabledCount }} · 可更新 {{ updateCount }} · 排序：{{ sortLabel }}</span>
+
+
     </div>
 
     <n-empty v-if="!loading && !sortedMods.length" description="尚未安装任何 MOD" class="empty" />
@@ -170,7 +167,16 @@ function toggleExpand(dll: string) {
       </template>
     </n-card>
   </n-spin>
-</template>
+    <n-float-button-group position="fixed" bottom="28" right="32" gap="10">
+      <n-float-button tooltip="切换布局（卡片 / 横排）" @click="setLayout(layout === 'cards' ? 'rows' : 'cards')">
+        <AlignJustify v-if="layout === 'cards'" :size="17" />
+        <LayoutGrid v-else :size="17" />
+      </n-float-button>
+      <n-float-button :tooltip="`排序：${sortLabel}`" @click="cycleSort">
+        <ArrowUpDown :size="17" />
+      </n-float-button>
+    </n-float-button-group>
+  </template>
 
 <style scoped>
 .toolbar {

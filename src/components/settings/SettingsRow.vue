@@ -40,16 +40,16 @@ function onClick() {
   align-items: center;
   gap: 14px;
   padding: 13px 16px;
-  border: 1px solid #262c35;
+  border: 1px solid var(--oc2-row-line);
   border-radius: 12px;
-  background: #1b1e24;
+  background: var(--oc2-row);
   transition: background-color .16s ease, border-color .16s ease;
 }
 .row.clickable {
   cursor: pointer;
 }
 .row.clickable:hover {
-  background: #21262e;
+  background: var(--oc2-row-hover);
   border-color: #34404d;
 }
 .ico {
@@ -60,7 +60,7 @@ function onClick() {
   place-items: center;
   border-radius: 9px;
   background: #232830;
-  color: #aeb9c6;
+  color: var(--oc2-text-2);
 }
 .txt {
   flex: 1;
@@ -74,7 +74,7 @@ function onClick() {
   font-weight: 600;
 }
 .txt small {
-  color: #8d9bab;
+  color: var(--oc2-text-3);
   font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -87,6 +87,6 @@ function onClick() {
   gap: 8px;
 }
 .chev {
-  color: #617081;
+  color: var(--oc2-text-4);
 }
 </style>

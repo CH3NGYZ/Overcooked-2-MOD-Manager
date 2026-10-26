@@ -1,31 +1,150 @@
-import { darkTheme, type GlobalThemeOverrides } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
+import { darkTheme, type GlobalTheme, type GlobalThemeOverrides } from 'naive-ui'
 
-export { darkTheme }
+/**
+ * 主题能力（通用可扩展）：
+ *   mode   —— 'dark' | 'light'（Naive UI 内置 darkTheme / null=light）
+ *   accent —— 主色调色板键；新增颜色只需在 ACCENTS 里加一行。
+ * 两项都持久化到 localStorage，改完立即作用到 NConfigProvider 与 CSS 变量。
+ */
 
-/** 深色主题与产品色板：绿色为主操作色，蓝色仅用于品牌标识。 */
-export const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    fontFamily: "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
-    borderRadius: '8px',
-    bodyColor: '#131417',
-    cardColor: '#1e2025',
-    modalColor: '#1e2025',
-    popoverColor: '#23252b',
-    primaryColor: '#3cb89b',
-    primaryColorHover: '#4fcfab',
-    primaryColorPressed: '#2f9c83',
-    primaryColorSuppl: '#3cb89b',
-    successColor: '#3cb89b',
-    warningColor: '#e6b86a',
-    errorColor: '#ee8585',
-    textColorBase: '#e8edf3',
-    textColor1: '#e8edf3',
-    textColor2: '#c3cdd8',
-    textColor3: '#8d9bab',
-    borderColor: '#2c3540',
-    dividerColor: '#273341',
+export type ThemeMode = 'dark' | 'light'
+export type AccentKey = 'neutral' | 'blue' | 'green' | 'purple' | 'red'
+
+const MODE_KEY = 'oc2-theme-mode'
+const ACCENT_KEY = 'oc2-theme-accent'
+
+interface Accent {
+  key: AccentKey
+  /** 调色板显示色 */
+  swatch: string
+  /** 主色三态（hover/pressed 由主色推导，保持统一） */
+  color: string
+  hover: string
+  pressed: string
+  /** 主色上的前景色（按钮文字） */
+  onColor: string
+}
+
+/** 调色板：黑（深色）/ 白（浅色）由 mode 表达；四种主色在此扩展。 */
+export const ACCENTS: Accent[] = [
+  { key: 'neutral', swatch: '#8d9bab', color: '#8d9bab', hover: '#a3b0bf', pressed: '#76838f', onColor: '#12151a' },
+  { key: 'blue', swatch: '#5b8def', color: '#5b8def', hover: '#7aa4f5', pressed: '#4878d6', onColor: '#0b1220' },
+  { key: 'green', swatch: '#3cb89b', color: '#3cb89b', hover: '#4fcfab', pressed: '#2f9c83', onColor: '#071713' },
+  { key: 'purple', swatch: '#9a7bf0', color: '#9a7bf0', hover: '#ae94f5', pressed: '#8365d8', onColor: '#120b20' },
+  { key: 'red', swatch: '#e8737d', color: '#e8737d', hover: '#f08d96', pressed: '#cf5c66', onColor: '#1d0b0e' },
+]
+
+export const themeMode = ref<ThemeMode>(localStorage.getItem(MODE_KEY) === 'light' ? 'light' : 'dark')
+export const accentKey = ref<AccentKey>(
+  (['neutral', 'blue', 'green', 'purple', 'red'] as AccentKey[]).includes(localStorage.getItem(ACCENT_KEY) as AccentKey)
+    ? (localStorage.getItem(ACCENT_KEY) as AccentKey)
+    : 'green',
+)
+
+watch(themeMode, (value) => localStorage.setItem(MODE_KEY, value))
+watch(accentKey, (value) => localStorage.setItem(ACCENT_KEY, value))
+
+export const accent = computed(() => ACCENTS.find((entry) => entry.key === accentKey.value) ?? ACCENTS[2])
+
+/** Naive UI 主题对象：浅色用内置亮色（不传 theme）。 */
+export const naiveTheme = computed<GlobalTheme | null>(() => (themeMode.value === 'dark' ? darkTheme : null))
+
+export const isDark = computed(() => themeMode.value === 'dark')
+
+/** 两种模式的表面色板，供组件内 scoped 样式与全局 CSS 变量使用。 */
+const SURFACES = {
+  dark: {
+    body: '#131417', card: '#1e2025', popover: '#23252b', rail: '#16181c', railLine: '#232a33',
+    row: '#1b1e24', rowLine: '#262c35', rowHover: '#21262e', sunken: '#181b20',
+    text1: '#e8edf3', text2: '#c3cdd8', text3: '#8d9bab', text4: '#617081', divider: '#273341',
   },
-  Card: {
-    borderRadius: '10px',
+  light: {
+    body: '#f4f6fa', card: '#ffffff', popover: '#ffffff', rail: '#eef1f6', railLine: '#dbe1ea',
+    row: '#ffffff', rowLine: '#e2e7ef', rowHover: '#f6f8fc', sunken: '#f0f3f8',
+    text1: '#1c2430', text2: '#3f4b5b', text3: '#6b7789', text4: '#8f9aab', divider: '#e2e7ef',
   },
+} as const
+
+export const surfaces = computed(() => SURFACES[themeMode.value])
+
+/** Naive UI 变量覆盖：随 mode + accent 变化。 */
+export const themeOverrides = computed<GlobalThemeOverrides>(() => {
+  const surface = surfaces.value
+  const main = accent.value
+  return {
+    common: {
+      fontFamily: "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
+      borderRadius: '8px',
+      bodyColor: surface.body,
+      cardColor: surface.card,
+      modalColor: surface.card,
+      popoverColor: surface.popover,
+      primaryColor: main.color,
+      primaryColorHover: main.hover,
+      primaryColorPressed: main.pressed,
+      primaryColorSuppl: main.color,
+      successColor: main.color,
+      warningColor: '#e6b86a',
+      errorColor: '#ee8585',
+      textColorBase: surface.text1,
+      textColor1: surface.text1,
+      textColor2: surface.text2,
+      textColor3: surface.text3,
+      borderColor: surface.rowLine,
+      dividerColor: surface.divider,
+    },
+    Card: { borderRadius: '10px' },
+  }
+})
+
+/**
+ * 把主题写成 CSS 变量，供 scoped 样式使用（`var(--oc2-*)`）。
+ * 这样新增主题色/模式不需要改任何组件样式。
+ */
+export function applyThemeCssVars() {
+  const surface = surfaces.value
+  const main = accent.value
+  const root = document.documentElement
+  const vars: Record<string, string> = {
+    '--oc2-body': surface.body,
+    '--oc2-card': surface.card,
+    '--oc2-popover': surface.popover,
+    '--oc2-rail': surface.rail,
+    '--oc2-rail-line': surface.railLine,
+    '--oc2-row': surface.row,
+    '--oc2-row-line': surface.rowLine,
+    '--oc2-row-hover': surface.rowHover,
+    '--oc2-sunken': surface.sunken,
+    '--oc2-text-1': surface.text1,
+    '--oc2-text-2': surface.text2,
+    '--oc2-text-3': surface.text3,
+    '--oc2-text-4': surface.text4,
+    '--oc2-divider': surface.divider,
+    '--oc2-accent': main.color,
+    '--oc2-accent-hover': main.hover,
+    '--oc2-accent-on': main.onColor,
+  }
+  for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value)
+  root.style.colorScheme = themeMode.value
+  document.documentElement.classList.toggle('dark', themeMode.value === 'dark')
+}
+
+watch([themeMode, accentKey], applyThemeCssVars, { immediate: true })
+
+export function setThemeMode(mode: ThemeMode) {
+  themeMode.value = mode
+}
+
+export function setAccent(key: AccentKey) {
+  accentKey.value = key
+}
+
+export function cycleAccent() {
+  const index = ACCENTS.findIndex((entry) => entry.key === accentKey.value)
+  accentKey.value = ACCENTS[(index + 1) % ACCENTS.length].key
+}
+
+export function toggleMode() {
+  themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark'
 }

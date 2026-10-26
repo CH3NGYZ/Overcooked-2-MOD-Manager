@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NCard, NEmpty, NFloatButton, NSpin, NTag } from 'naive-ui'
@@ -33,7 +34,7 @@ async function refreshOne(repo: Repository) {
   try {
     const releases = await api.refreshRepository(repo.id)
     releasesCache.value[repo.id] = releases.length
-    message.success(`${repo.name}：获取到 ${releases.length} 个 Release`)
+    message.success(`${repo.name}：` + t('获取到 {count} 个 Release', { count: releases.length }))
     await load()
   } catch (reason) { fail(reason) } finally { refreshing.value[repo.id] = false }
 }
@@ -57,7 +58,7 @@ async function install(repo: Repository, tag?: string) {
 const { game } = useDashboard()
 function gameBlocked() {
   if (game.value?.kitchen_running) {
-    message.warning('游戏运行中，已禁止安装。请先关闭游戏。')
+    message.warning(t('游戏运行中，已禁止安装。请先关闭游戏。'))
     return true
   }
   return false
@@ -71,11 +72,11 @@ function toggleExpand(repo: Repository) {
 <template>
   <n-spin :show="loading">
     <div class="toolbar">
-      <span class="muted">共 {{ repositories.length }} 个仓库</span>
+      <span class="muted">{{ t('共 {count} 个仓库', { count: repositories.length }) }}</span>
 
     </div>
 
-    <n-empty v-if="!loading && !repositories.length" description="暂无仓库配置" class="empty" />
+    <n-empty v-if="!loading && !repositories.length" :description="t('暂无仓库配置')" class="empty" />
 
     <n-card v-for="repo in repositories" :key="repo.id" class="repo" :bordered="true">
       <div class="repo-main">
@@ -86,30 +87,27 @@ function toggleExpand(repo: Repository) {
             <n-tag v-if="repo.download_mode === 'repository_file'" size="tiny" :bordered="false" type="info">
               仓库文件
             </n-tag>
-            <n-tag v-if="!repo.enabled" size="tiny" :bordered="false" type="default">未启用</n-tag>
-            <n-tag v-if="repo.last_error" size="tiny" type="error" :bordered="false">刷新失败</n-tag>
+            <n-tag v-if="!repo.enabled" size="tiny" :bordered="false" type="default">{{ t('未启用') }}</n-tag>
+            <n-tag v-if="repo.last_error" size="tiny" type="error" :bordered="false">{{ t('刷新失败') }}</n-tag>
           </div>
           <div class="muted repo-note">{{ repo.note || repo.repository }}</div>
         </div>
         <div class="repo-meta">
           <template v-if="repo.download_mode === 'release'">
             <span class="version mono">{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</span>
-            <span class="muted">{{ repo.cached_releases.length ? `${repo.cached_releases.length} 个版本` : '未刷新' }}</span>
+            <span class="muted">{{ repo.cached_releases.length ? `${repo.cached_releases.length} 个版本` : t('未刷新') }}</span>
           </template>
           <span v-else class="muted mono">{{ repo.branch }}/{{ repo.file_path }}</span>
         </div>
         <div class="repo-acts">
           <n-button size="small" secondary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
-            <RefreshOutline width="14" height="14" />刷新
-          </n-button>
+            <RefreshOutline width="14" height="14" />{{ t('刷新') }}</n-button>
           <n-button size="small" type="primary" :loading="!!installing[repo.id]"
             :disabled="game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
-            <DownloadOutline width="14" height="14" />安装
-          </n-button>
+            <DownloadOutline width="14" height="14" />{{ t('安装') }}</n-button>
           <n-button size="small" quaternary @click="toggleExpand(repo)">
             <ChevronUpOutline v-if="expanded[repo.id]" width="14" height="14" />
-            <ChevronDownOutline v-else width="14" height="14" />版本
-          </n-button>
+            <ChevronDownOutline v-else width="14" height="14" />{{ t('版本') }}</n-button>
         </div>
       </div>
       <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
@@ -117,17 +115,17 @@ function toggleExpand(repo: Repository) {
         <div v-for="release in repo.cached_releases.slice(0, 5)" :key="release.tag_name" class="release-row">
           <span class="mono">{{ release.version || release.tag_name }}</span>
           <span class="muted">{{ release.published_at?.slice(0, 10) }}</span>
-          <n-tag v-if="release.prerelease" size="tiny" type="warning" :bordered="false">预发布</n-tag>
+          <n-tag v-if="release.prerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
           <n-button size="tiny" secondary
             :disabled="game?.kitchen_running || !!installing[repo.id]"
-            @click="install(repo, release.tag_name)">安装此版本</n-button>
+            @click="install(repo, release.tag_name)">{{ t('安装此版本') }}</n-button>
         </div>
-        <div v-if="!repo.cached_releases.length" class="muted">尚无缓存的 Release，请先刷新。</div>
+        <div v-if="!repo.cached_releases.length" class="muted">{{ t('尚无缓存的 Release，请先刷新。') }}</div>
       </div>
     </n-card>
   </n-spin>
     <n-float-button position="fixed" bottom="28" right="32" :disabled="busyCount > 0"
-      tooltip="全部刷新（逐仓独立，互不阻塞）" @click="refreshAll">
+      :tooltip="t('全部刷新（逐仓独立，互不阻塞）')" @click="refreshAll">
       <RefreshOutline width="17" height="17" :class="{ spin: busyCount > 0 }" />
     </n-float-button>
 </template>
@@ -147,11 +145,11 @@ function toggleExpand(repo: Repository) {
 .repo-title b { font-size: 14px; }
 .repo-note { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
-.version { color: #3cb89b; font-size: 13px; }
+.version { color: var(--oc2-accent); font-size: 13px; }
 .repo-acts { display: flex; gap: 8px; flex: 0 0 auto; }
 .err { margin-top: 8px; color: #ee8585; }
 .releases {
-  margin-top: 12px; padding-top: 10px; border-top: 1px dashed #2c3540;
+  margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--oc2-row-line);
 }
 .release-row {
   display: flex; align-items: center; gap: 14px; padding: 6px 0;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NCard, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
@@ -23,7 +24,7 @@ const winhttpLabel = computed(() => {
     case 'modenabled': return '框架已启用'
     case 'moddisabled': return '框架已禁用'
     case 'missing': return '未找到加载器'
-    default: return '状态冲突'
+    default: return t('状态冲突')
   }
 })
 const backups = computed(() => game.value?.bepinex.backups ?? [])
@@ -34,7 +35,7 @@ function fail(reason: unknown) {
 }
 
 async function afterInstall(result: BepInExInstallResult) {
-  if (result.ok) message.success(result.message || '框架安装完成')
+  if (result.ok) message.success(result.message || t('安装框架'))
   else message.error(result.message)
   if (result.wine_override_error) message.warning(result.wine_override_error)
   await load()
@@ -49,15 +50,15 @@ async function install(reinstall: boolean) {
 
 function uninstall() {
   dialog.warning({
-    title: '卸载 BepInEx 框架',
-    content: '将移除游戏目录中的 BepInEx 框架文件。建议先创建备份。继续卸载？',
-    positiveText: '卸载',
-    negativeText: '取消',
+    title: t('卸载 BepInEx 框架'),
+    content: t('将移除游戏目录中的 BepInEx 框架文件。建议先创建备份。继续卸载？'),
+    positiveText: t('卸载'),
+    negativeText: t('取消'),
     async onPositiveClick() {
       working.value = true
       try {
         const result: OperationResult = await api.uninstallBepInEx()
-        result.ok ? message.success(result.message || '已卸载') : message.error(result.message)
+        result.ok ? message.success(result.message || t('卸载')) : message.error(result.message)
         await load()
       } catch (reason) { fail(reason) } finally { working.value = false }
     },
@@ -68,7 +69,7 @@ async function backup() {
   working.value = true
   try {
     const result = await api.backupBepInEx()
-    result.ok ? message.success(result.message || '备份完成') : message.error(result.message)
+    result.ok ? message.success(result.message || t('创建备份')) : message.error(result.message)
     await load()
   } catch (reason) { fail(reason) } finally { working.value = false }
 }
@@ -84,10 +85,10 @@ async function restore(backup: string) {
 
 function removeBackup(backup: string) {
   dialog.warning({
-    title: '删除备份',
+    title: t('删除备份'),
     content: `永久删除该备份？\n${backup}`,
     positiveText: '删除',
-    negativeText: '取消',
+    negativeText: t('取消'),
     async onPositiveClick() {
       const result = await api.deleteBepInExBackup(backup)
       result.ok ? message.success(result.message || '备份已删除') : message.error(result.message)
@@ -98,7 +99,7 @@ function removeBackup(backup: string) {
 
 async function toggleFramework(enabled: boolean) {
   const result = await api.switchWinhttp(enabled)
-  result.ok ? message.success(result.message || (enabled ? '框架已启用' : '框架已禁用')) : message.error(result.message)
+  result.ok ? message.success(result.message || (enabled ? t('框架已启用') : t('框架已禁用'))) : message.error(result.message)
   await load()
 }
 
@@ -110,10 +111,10 @@ async function openBackups() {
 
 <template>
   <n-spin :show="loading">
-    <n-card title="BepInEx 框架" class="block">
+    <n-card :title="t('BepInEx 框架')" class="block">
       <template #header-extra>
         <n-tag :type="frameworkOk ? 'success' : 'warning'" size="small">
-          {{ frameworkOk ? (game?.bepinex.complete ? '已安装' : '不完整') : '未安装' }}
+          {{ frameworkOk ? (game?.bepinex.complete ? '已安装' : t('不完整')) : t('未安装') }}
         </n-tag>
       </template>
 
@@ -124,7 +125,7 @@ async function openBackups() {
       </div>
 
       <div class="field">
-        <span class="muted">下载渠道</span>
+        <span class="muted">{{ t('下载渠道') }}</span>
         <n-select v-model:value="installProvider" style="width: 200px" :options="[
           { label: 'Gitee（中国大陆推荐）', value: 'gitee' },
           { label: 'GitHub', value: 'github' },
@@ -134,32 +135,29 @@ async function openBackups() {
       <div class="actions">
         <n-button type="primary" :loading="installing" :disabled="working"
           @click="install(!!game?.bepinex.installed)">
-          <AddCircleOutline width="16" height="16" />{{ game?.bepinex.installed ? '重新安装' : '安装框架' }}
+          <AddCircleOutline width="16" height="16" />{{ game?.bepinex.installed ? t('重新安装') : t('安装框架') }}
         </n-button>
         <n-button secondary :disabled="working || !game?.bepinex.installed" @click="backup">
-          <SaveOutline width="16" height="16" />创建备份
-        </n-button>
+          <SaveOutline width="16" height="16" />{{ t('创建备份') }}</n-button>
         <n-button secondary type="warning" :disabled="working || !game?.bepinex.installed" @click="uninstall">
-          <WarningOutline width="16" height="16" />卸载框架
-        </n-button>
+          <WarningOutline width="16" height="16" />{{ t('卸载框架') }}</n-button>
         <n-button quaternary :disabled="working" @click="openBackups">
-          <FolderOpenOutline width="16" height="16" />打开备份目录
-        </n-button>
+          <FolderOpenOutline width="16" height="16" />{{ t('打开备份目录') }}</n-button>
       </div>
 
       <div class="switch-row">
-        <span>框架启用（游戏加载 MOD）</span>
+        <span>{{ t('框架启用（游戏加载 MOD）') }}</span>
         <n-switch :value="winhttpEnabled" :disabled="working || !game?.bepinex.installed"
           @update:value="toggleFramework" />
       </div>
     </n-card>
 
-    <n-card title="框架备份" class="block">
-      <div v-if="!backups.length" class="muted">暂无备份。卸载或重装前建议先创建备份。</div>
+    <n-card :title="t('框架备份')" class="block">
+      <div v-if="!backups.length" class="muted">{{ t('暂无备份。卸载或重装前建议先创建备份。') }}</div>
       <div v-for="backup in backups" :key="backup" class="backup-row">
         <span class="mono backup-path">{{ backup }}</span>
         <span class="backup-acts">
-          <n-button size="small" secondary @click="restore(backup)">恢复</n-button>
+          <n-button size="small" secondary @click="restore(backup)">{{ t('恢复') }}</n-button>
           <n-button size="small" quaternary type="error" @click="removeBackup(backup)">
             <TrashOutline width="14" height="14" />
           </n-button>
@@ -176,11 +174,11 @@ async function openBackups() {
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .switch-row {
   display: flex; align-items: center; justify-content: space-between;
-  max-width: 420px; padding-top: 12px; border-top: 1px solid #273341;
+  max-width: 420px; padding-top: 12px; border-top: 1px solid var(--oc2-divider);
 }
 .backup-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 0; border-bottom: 1px dashed #232a33;
+  padding: 8px 0; border-bottom: 1px dashed var(--oc2-rail-line);
 }
 .backup-row:last-child { border-bottom: 0; }
 .backup-path { flex: 1; min-width: 0; }

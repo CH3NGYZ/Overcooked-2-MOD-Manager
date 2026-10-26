@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NDrawer, NDrawerContent, NSwitch, NTag } from 'naive-ui'
@@ -46,7 +47,7 @@ async function resetGamePath() {
   savingPath.value = true
   try {
     const info = await api.resetGamePath()
-    message.success(info.path ? `已恢复默认：${info.path}` : '已清除游戏路径')
+    message.success(info.path || t('恢复默认'))
     await load()
   } catch (reason) { fail(reason) } finally { savingPath.value = false }
 }
@@ -55,7 +56,7 @@ async function saveGamePath(path: string) {
   savingPath.value = true
   try {
     const info = await api.setGamePath(path)
-    message.success(info.game_exists ? '游戏路径已保存并验证' : '路径已保存，但目录不存在或缺少游戏文件')
+    message.success(t(info.game_exists ? '已验证' : '这个目录不存在或缺少游戏文件'))
     pathDrawer.value = false
     await load()
   } catch (reason) { fail(reason) } finally { savingPath.value = false }
@@ -71,9 +72,9 @@ async function checkUpdate() {
       updateInfo.value = updateResult.value.update
       showUpdate.value = true
     } else if (updateResult.value.all_failed) {
-      message.error('更新检查失败，可稍后重试')
+      message.error(t('更新检查失败，可稍后重试'))
     } else {
-      message.success('当前已是最新版本')
+      message.success(t('当前已是最新版本'))
     }
   } catch (reason) { fail(reason) } finally { checking.value = false }
 }
@@ -89,53 +90,50 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
 
 <template>
   <!-- 路径管理 -->
-  <SettingsGroup title="路径管理">
-    <SettingsRow :title="'游戏目录'" description="游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理">
+  <SettingsGroup :title="t('路径管理')">
+    <SettingsRow :title="t('游戏目录')" :description="t('游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理')">
       <template #right>
         <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">
-          <ArrowUndoOutline width="14" height="14" />恢复默认路径
-        </n-button>
+          <ArrowUndoOutline width="14" height="14" />{{ t('恢复默认路径') }}</n-button>
         <n-button size="small" secondary @click.stop="openGameDir">
-          <FolderOpenOutline width="14" height="14" />打开路径
-        </n-button>
+          <FolderOpenOutline width="14" height="14" />{{ t('打开路径') }}</n-button>
         <n-button size="small" type="primary" @click.stop="pathDrawer = true">
-          选择路径
+          {{ t('选择路径') }}
         </n-button>
       </template>
     </SettingsRow>
   </SettingsGroup>
 
   <!-- 程序更新 -->
-  <SettingsGroup title="程序更新">
-    <SettingsRow title="立即检测更新" description="检查是否有新版本可用，检测到更新会弹出确认">
+  <SettingsGroup :title="t('程序更新')">
+    <SettingsRow :title="t('立即检测更新')" :description="t('检查是否有新版本可用，检测到更新会弹出确认')">
       <template #right>
         <n-button size="small" secondary :loading="checking" @click.stop="checkUpdate">
-          <DownloadOutline width="14" height="14" />检测更新
-        </n-button>
+          <DownloadOutline width="14" height="14" />{{ t('检测更新') }}</n-button>
       </template>
     </SettingsRow>
-    <SettingsRow title="更新设置" description="自动检查与安装偏好" clickable @click="updateDrawer = true" />
+    <SettingsRow :title="t('更新设置')" :description="t('自动检查与安装偏好')" clickable @click="updateDrawer = true" />
   </SettingsGroup>
 
   <!-- 通用设置 -->
-  <SettingsGroup title="通用设置">
-    <SettingsRow title="启动时检查程序更新" description="每天首次启动时检查新版本">
+  <SettingsGroup :title="t('通用设置')">
+    <SettingsRow :title="t('启动时检查程序更新')" :description="t('每天首次启动时检查新版本')">
       <template #right>
         <n-switch size="small" :value="config?.network.check_updates_on_start"
-          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, '已保存')" />
+          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />
       </template>
     </SettingsRow>
-    <SettingsRow title="自动检测游戏路径" description="启动与刷新时自动探测 Steam 库">
+    <SettingsRow :title="t('自动检测游戏路径')" :description="t('启动与刷新时自动探测 Steam 库')">
       <template #right>
         <n-switch size="small" :value="config?.game.auto_detect"
-          @update:value="(value: boolean) => savePreference({ auto_detect: value }, '已保存')" />
+          @update:value="(value: boolean) => savePreference({ auto_detect: value }, t('已保存'))" />
       </template>
     </SettingsRow>
   </SettingsGroup>
 
   <!-- 关于 -->
-  <SettingsGroup title="关于">
-    <SettingsRow :icon="InformationCircleOutline" title="OC2 MOD 管理器" description="Tauri 2 · Vue 3 · Naive UI · Rust 后端">
+  <SettingsGroup :title="t('关于')">
+    <SettingsRow :icon="InformationCircleOutline" :title="t('OC2 MOD 管理器')" :description="t('关于') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
       <template #right>
         <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
       </template>
@@ -144,29 +142,29 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
 
   <!-- 二级：选择路径 -->
   <n-drawer v-model:show="pathDrawer" :width="440" placement="right">
-    <n-drawer-content title="选择游戏目录" closable>
+    <n-drawer-content :title="t('选择游戏目录')" closable>
       <PathEditor :path="game?.path ?? ''" :saving="savingPath" @save="saveGamePath" />
-      <div class="muted drawer-hint">目录需包含 Overcooked!2.exe；保存后自动验证。</div>
+      <div class="muted drawer-hint">{{ t('目录需包含 Overcooked!2.exe；保存后自动验证。') }}</div>
     </n-drawer-content>
   </n-drawer>
 
   <!-- 二级：更新设置 -->
   <n-drawer v-model:show="updateDrawer" :width="440" placement="right">
-    <n-drawer-content title="更新设置" closable>
+    <n-drawer-content :title="t('更新设置')" closable>
       <div class="drawer-pref">
         <div>
-          <b>启动时检查程序更新</b>
-          <div class="muted">每天首次启动时检查新版本</div>
+          <b>{{ t('启动时检查程序更新') }}</b>
+          <div class="muted">{{ t('每天首次启动时检查新版本') }}</div>
         </div>
         <n-switch size="small" :value="config?.network.check_updates_on_start"
-          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, '已保存')" />
+          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />
       </div>
       <div class="muted drawer-hint">
-        更新检查按地区走 Gitee / GitHub 双渠道；更新包经 minisign 签名校验后由 Tauri Updater 安装。
+        {{ t('更新检查按地区走 Gitee / GitHub 双渠道；更新包经 minisign 签名校验后由 Tauri Updater 安装。') }}
       </div>
       <div v-if="updateResult?.all_failed" class="muted drawer-hint danger">
-        上次检查全部渠道失败，可前往发布页手动下载。
-        <n-button size="tiny" quaternary type="primary" @click="api.openUpdateRepository()">打开发布页</n-button>
+        {{ t('全部渠道检查失败，可前往发布页手动下载。') }}
+        <n-button size="tiny" quaternary type="primary" @click="api.openUpdateRepository()">{{ t('打开发布页') }}</n-button>
       </div>
     </n-drawer-content>
   </n-drawer>
@@ -179,7 +177,7 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
 .drawer-hint.danger { color: #ee8585; }
 .drawer-pref {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
-  padding: 10px 0 14px; border-bottom: 1px dashed #232a33; margin-bottom: 6px;
+  padding: 10px 0 14px; border-bottom: 1px dashed var(--oc2-rail-line); margin-bottom: 6px;
 }
 .drawer-pref b { font-size: 13.5px; }
 </style>

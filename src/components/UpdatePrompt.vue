@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed, onUnmounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NModal } from 'naive-ui'
@@ -56,12 +57,12 @@ async function install() {
         当前 v{{ update.current_version }} → 新版 v{{ update.version }}
         <span v-if="update.provider">（{{ update.provider === 'gitee' ? 'Gitee 渠道' : 'GitHub 渠道' }}）</span>
       </div>
-      <div class="body-label muted">更新内容：</div>
+      <div class="body-label muted">{{ t('更新内容：') }}</div>
       <div class="body">{{ bodyText }}</div>
       <div v-if="phaseText" class="phase">{{ phaseText }}</div>
       <div class="actions">
-        <n-button quaternary :disabled="installing" @click="close">取消</n-button>
-        <n-button type="primary" :loading="installing" @click="install">更新</n-button>
+        <n-button quaternary :disabled="installing" @click="close">{{ t('取消') }}</n-button>
+        <n-button type="primary" :loading="installing" @click="install">{{ t('更新') }}</n-button>
       </div>
     </div>
   </n-modal>
@@ -71,8 +72,8 @@ async function install() {
 .update-card {
   width: min(520px, calc(100vw - 80px));
   border-radius: 16px;
-  background: #1e2025;
-  border: 1px solid #2c3540;
+  background: var(--oc2-card);
+  border: 1px solid var(--oc2-row-line);
   box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
   padding: 24px 26px 18px;
 }
@@ -88,16 +89,16 @@ async function install() {
   overflow: auto;
   white-space: pre-wrap;
   padding: 10px 12px;
-  border: 1px solid #273341;
+  border: 1px solid var(--oc2-divider);
   border-radius: 8px;
-  background: #181b20;
+  background: var(--oc2-sunken);
   font-size: 13px;
   line-height: 1.6;
-  color: #c3cdd8;
+  color: var(--oc2-text-2);
 }
 .phase {
   margin-top: 10px;
-  color: #3cb89b;
+  color: var(--oc2-accent);
   font-size: 12.5px;
 }
 .actions {

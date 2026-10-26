@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed, onUnmounted, ref } from 'vue'
 import { NButton, NProgress } from 'naive-ui'
 import { CloseOutline } from '@vicons/ionicons5'
@@ -48,11 +49,11 @@ async function cancel() {
     <div class="meta">
       <span>{{ progress.label }}</span>
       <span class="muted">
-        {{ percent !== null ? `${percent}%` : '等待大小' }}
+        {{ percent !== null ? `${percent}%` : t('等待大小') }}
         · {{ speedText }}
         {{ progress.route === 'proxy' ? '· 代理' : progress.route === 'direct' ? '· 直连' : '' }}
       </span>
-      <n-button quaternary size="tiny" @click="cancel"><CloseOutline width="14" height="14" />取消</n-button>
+      <n-button quaternary size="tiny" @click="cancel"><CloseOutline width="14" height="14" />{{ t('取消') }}</n-button>
     </div>
     <n-progress type="line" :percentage="percent ?? 0" :show-indicator="false" :height="6" border-radius="3"
       :processing="percent === null" />
@@ -63,7 +64,7 @@ async function cancel() {
 .download-strip {
   margin: 0 28px;
   padding: 10px 14px 12px;
-  border: 1px solid #2c3540;
+  border: 1px solid var(--oc2-row-line);
   border-radius: 8px;
   background: #1a1d22;
 }

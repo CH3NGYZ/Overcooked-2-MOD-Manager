@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { ref, watch } from 'vue'
 import { NButton, NInput } from 'naive-ui'
 import { FolderOpenOutline, SaveOutline } from '@vicons/ionicons5'
@@ -15,8 +16,8 @@ const props = withDefaults(defineProps<{
   placeholder?: string
 }>(), {
   saving: false,
-  saveLabel: '确认保存',
-  placeholder: '选择或输入目录路径',
+  saveLabel: t('确认保存'),
+  placeholder: t('选择或输入目录路径'),
 })
 
 const emit = defineEmits<{ save: [path: string] }>()
@@ -38,11 +39,11 @@ function save() {
 
 <template>
   <div class="path-editor">
-    <div class="muted label">当前路径</div>
-    <div class="mono current">{{ path || '未设置' }}</div>
+    <div class="muted label">{{ t('当前路径') }}</div>
+    <div class="mono current">{{ path || t('未设置') }}</div>
     <n-input v-model:value="draft" clearable :placeholder="placeholder" />
     <div class="acts">
-      <n-button secondary @click="browse"><FolderOpenOutline width="15" height="15" />浏览…</n-button>
+      <n-button secondary @click="browse"><FolderOpenOutline width="15" height="15" />{{ t('浏览…') }}</n-button>
       <n-button type="primary" :loading="saving" :disabled="!draft.trim() || draft.trim() === path" @click="save">
         <SaveOutline width="15" height="15" />{{ saveLabel }}
       </n-button>
@@ -55,10 +56,10 @@ function save() {
 .current {
   margin-bottom: 12px;
   padding: 9px 12px;
-  border: 1px solid #2c3540;
+  border: 1px solid var(--oc2-row-line);
   border-radius: 8px;
-  background: #181b20;
-  color: #3cb89b;
+  background: var(--oc2-sunken);
+  color: var(--oc2-accent);
   overflow-wrap: anywhere;
 }
 .acts {

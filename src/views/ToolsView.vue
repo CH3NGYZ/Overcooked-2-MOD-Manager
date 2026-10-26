@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { nextTick, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NModal, NTag } from 'naive-ui'
@@ -20,9 +21,9 @@ const logContent = ref('')
 let logPre: HTMLElement | null = null
 
 const logMeta: Record<LogKind, { title: string; read: () => Promise<RustLog> }> = {
-  rust: { title: 'Rust 后端日志', read: () => api.readRustLog() },
-  frontend: { title: '前端日志', read: () => api.readFrontendLog() },
-  crash: { title: '崩溃日志', read: () => api.readCrashLog() },
+  rust: { get title() { return t('打开 Rust 后端日志') }, read: () => api.readRustLog() },
+  frontend: { get title() { return t('打开前端日志') }, read: () => api.readFrontendLog() },
+  crash: { get title() { return t('打开崩溃日志') }, read: () => api.readCrashLog() },
 }
 
 function fail(reason: unknown) {
@@ -54,31 +55,31 @@ async function resetUi() {
 </script>
 
 <template>
-  <SettingsGroup title="支持开发">
+  <SettingsGroup :title="t('支持开发')">
     <div class="sponsor-card">
       <div class="sponsor-body">
         <img :src="sponsorImage" alt="赞助二维码" class="sponsor-img" />
         <div class="sponsor-text">
-          <b>觉得好用，请作者喝杯咖啡</b>
-          <span class="muted">所有功能永久免费，赞助用于服务器与开发动力。感谢支持！</span>
+          <b>{{ t('觉得好用，请作者喝杯咖啡') }}</b>
+          <span class="muted">{{ t('所有功能永久免费，赞助用于服务器与开发动力。感谢支持！') }}</span>
         </div>
       </div>
     </div>
   </SettingsGroup>
 
-  <SettingsGroup title="日志">
-    <SettingsRow :icon="ServerOutline" title="打开 Rust 后端日志" description="安装、下载与文件操作的详细记录"
+  <SettingsGroup :title="t('日志')">
+    <SettingsRow :icon="ServerOutline" :title="t('打开 Rust 后端日志')" :description="t('安装、下载与文件操作的详细记录')"
       clickable @click="openLog('rust')" />
-    <SettingsRow :icon="DocumentTextOutline" title="打开前端日志" description="界面渲染与调用的记录" clickable
+    <SettingsRow :icon="DocumentTextOutline" :title="t('打开前端日志')" :description="t('界面渲染与调用的记录')" clickable
       @click="openLog('frontend')" />
-    <SettingsRow :icon="DocumentTextOutline" title="打开崩溃日志" description="程序异常退出时的诊断信息" clickable
+    <SettingsRow :icon="DocumentTextOutline" :title="t('打开崩溃日志')" :description="t('程序异常退出时的诊断信息')" clickable
       @click="openLog('crash')" />
   </SettingsGroup>
 
-  <SettingsGroup title="高级">
-    <SettingsRow :icon="TerminalOutline" title="打开开发者工具" description="WebView 开发者控制台（调试用）" clickable
+  <SettingsGroup :title="t('高级')">
+    <SettingsRow :icon="TerminalOutline" :title="t('打开开发者工具')" :description="t('WebView 开发者控制台（调试用）')" clickable
       @click="devtools" />
-    <SettingsRow :icon="BuildOutline" title="重置窗口状态" description="窗口位置或尺寸异常时恢复默认布局" clickable
+    <SettingsRow :icon="BuildOutline" :title="t('重置窗口状态')" :description="t('窗口位置或尺寸异常时恢复默认布局')" clickable
       @click="resetUi" />
   </SettingsGroup>
 
@@ -86,8 +87,8 @@ async function resetUi() {
     <div class="log-modal">
       <div class="log-head">
         <b>{{ logTitle }}</b>
-        <n-tag size="small" :bordered="false">末尾 512 KiB</n-tag>
-        <n-button size="tiny" quaternary @click="logOpen = false">关闭</n-button>
+        <n-tag size="small" :bordered="false">{{ t('末尾 512 KiB') }}</n-tag>
+        <n-button size="tiny" quaternary @click="logOpen = false">{{ t('关闭') }}</n-button>
       </div>
       <div class="muted mono log-path">{{ logPath }}</div>
       <pre ref="logPre" class="log-body">{{ logContent || '（空）' }}</pre>
@@ -98,9 +99,9 @@ async function resetUi() {
 <style scoped>
 .sponsor-card {
   padding: 16px;
-  border: 1px solid #262c35;
+  border: 1px solid var(--oc2-row-line);
   border-radius: 12px;
-  background: #1b1e24;
+  background: var(--oc2-row);
 }
 .sponsor-body {
   display: flex;
@@ -111,7 +112,7 @@ async function resetUi() {
   width: 260px;
   height: auto;
   border-radius: 10px;
-  border: 1px solid #2c3540;
+  border: 1px solid var(--oc2-row-line);
   flex: 0 0 auto;
 }
 .sponsor-text {
@@ -124,8 +125,8 @@ async function resetUi() {
 }
 .log-modal {
   width: min(880px, calc(100vw - 80px));
-  background: #1e2025;
-  border: 1px solid #2c3540;
+  background: var(--oc2-card);
+  border: 1px solid var(--oc2-row-line);
   border-radius: 12px;
   padding: 16px 18px;
 }
@@ -141,7 +142,7 @@ async function resetUi() {
   height: 60vh;
   overflow: auto;
   background: #14161a;
-  border: 1px solid #232a33;
+  border: 1px solid var(--oc2-rail-line);
   border-radius: 8px;
   padding: 12px;
   font-size: 11.5px;

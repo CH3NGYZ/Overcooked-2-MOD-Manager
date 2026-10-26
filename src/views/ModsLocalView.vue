@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NCard, NEmpty, NFloatButton, NFloatButtonGroup, NSpin, NSwitch, NTag } from 'naive-ui'
@@ -13,7 +14,7 @@ const { load, loading, mods, game } = useDashboard()
 
 const layout = ref<'cards' | 'rows'>((localStorage.getItem('v2-mods-layout') as 'cards' | 'rows') || 'cards')
 const sortBy = ref<'name' | 'version' | 'enabled'>('name')
-const sortLabels = { name: '名称', version: '版本', enabled: '启用' } as const
+const sortLabels = { name: t('名称'), version: t('版本'), enabled: '启用' } as const
 function cycleSort() {
   const order = ['name', 'version', 'enabled'] as const
   sortBy.value = order[(order.indexOf(sortBy.value) + 1) % order.length]
@@ -52,27 +53,27 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
   busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalMod(mod.dll_file, enabled)
-    result.ok ? message.success(result.message || (enabled ? '已启用' : '已禁用')) : message.error(result.message)
+    result.ok ? message.success(result.message || (enabled ? '已启用' : t('已禁用'))) : message.error(result.message)
     await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }
 
 function remove(mod: InstalledMod) {
   dialog.warning({
-    title: '删除 MOD',
-    content: `「${modTitle(mod)}」将被移入回收站，可在回收站中恢复。继续？`,
-    positiveText: '移入回收站',
-    negativeText: '取消',
+    title: t('删除 MOD'),
+    content: t('「{name}」将被移入回收站，可在回收站中恢复。继续？', { name: modTitle(mod) }),
+    positiveText: t('移入回收站'),
+    negativeText: t('取消'),
     async onPositiveClick() {
       busy.value[mod.dll_file] = true
       try {
         const result = await api.uninstallLocalMod(mod.dll_file)
         if (result.requires_confirmation) {
           dialog.info({
-            title: '该 MOD 属于 MOD 包',
-            content: `它与 ${result.package_mod_names?.length ?? 0} 个子 MOD 同属一个包，一并删除？`,
-            positiveText: '整包删除',
-            negativeText: '取消',
+            title: t('该 MOD 属于 MOD 包'),
+            content: t('它与 {count} 个子 MOD 同属一个包，一并删除？', { count: result.package_mod_names?.length ?? 0 }),
+            positiveText: t('整包删除'),
+            negativeText: t('取消'),
             async onPositiveClick() {
               const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
               packageResult.ok ? message.success(packageResult.message || '已移入回收站') : message.error(packageResult.message)
@@ -101,15 +102,15 @@ function toggleExpand(dll: string) {
 
     </div>
 
-    <n-empty v-if="!loading && !sortedMods.length" description="尚未安装任何 MOD" class="empty" />
+    <n-empty v-if="!loading && !sortedMods.length" :description="t('尚未安装任何 MOD')" class="empty" />
 
     <!-- 卡片布局 -->
     <div v-if="layout === 'cards'" class="mod-grid">
       <n-card v-for="mod in sortedMods" :key="mod.dll_file" class="mod-card" :class="{ disabled: !mod.enabled }">
         <div class="card-head">
           <b class="title" :title="modTitle(mod)">{{ modTitle(mod) }}</b>
-          <n-tag v-if="mod.update_available" size="tiny" type="warning" :bordered="false">有更新</n-tag>
-          <n-tag v-else-if="mod.labels?.includes('latest')" size="tiny" type="success" :bordered="false">最新版</n-tag>
+          <n-tag v-if="mod.update_available" size="tiny" type="warning" :bordered="false">{{ t('有更新') }}</n-tag>
+          <n-tag v-else-if="mod.labels?.includes('latest')" size="tiny" type="success" :bordered="false">{{ t('最新版') }}</n-tag>
         </div>
         <div class="card-meta">
           <span class="mono">v{{ mod.version || '—' }}</span>
@@ -121,8 +122,7 @@ function toggleExpand(dll: string) {
           <span class="acts">
             <n-button size="tiny" quaternary @click="toggleExpand(mod.dll_file)">
               <ChevronUpOutline v-if="expanded[mod.dll_file]" width="13" height="13" />
-              <ChevronDownOutline v-else width="13" height="13" />详情
-            </n-button>
+              <ChevronDownOutline v-else width="13" height="13" />{{ t('详情') }}</n-button>
             <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" @click="remove(mod)">
               <TrashOutline width="13" height="13" />
             </n-button>
@@ -144,14 +144,13 @@ function toggleExpand(dll: string) {
           @update:value="(value: boolean) => toggle(mod, value)" />
         <b class="row-title" :title="modTitle(mod)">{{ modTitle(mod) }}</b>
         <span class="mono row-version">v{{ mod.version || '—' }}</span>
-        <n-tag v-if="mod.update_available" size="tiny" type="warning" :bordered="false">有更新</n-tag>
-        <n-tag v-else-if="mod.labels?.includes('latest')" size="tiny" type="success" :bordered="false">最新版</n-tag>
+        <n-tag v-if="mod.update_available" size="tiny" type="warning" :bordered="false">{{ t('有更新') }}</n-tag>
+        <n-tag v-else-if="mod.labels?.includes('latest')" size="tiny" type="success" :bordered="false">{{ t('最新版') }}</n-tag>
         <span v-if="mod.load_warning" class="muted">{{ mod.load_warning }}</span>
         <span class="row-acts">
           <n-button size="tiny" quaternary @click="toggleExpand(mod.dll_file)">
             <ChevronUpOutline v-if="expanded[mod.dll_file]" width="13" height="13" />
-            <ChevronDownOutline v-else width="13" height="13" />详情
-          </n-button>
+            <ChevronDownOutline v-else width="13" height="13" />{{ t('详情') }}</n-button>
           <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" @click="remove(mod)">
             <TrashOutline width="13" height="13" />
           </n-button>
@@ -168,7 +167,7 @@ function toggleExpand(dll: string) {
     </n-card>
   </n-spin>
     <n-float-button-group position="fixed" bottom="28" right="32" gap="10">
-      <n-float-button tooltip="切换布局（卡片 / 横排）" @click="setLayout(layout === 'cards' ? 'rows' : 'cards')">
+      <n-float-button :tooltip="t('切换布局（卡片 / 横排）')" @click="setLayout(layout === 'cards' ? 'rows' : 'cards')">
         <ReorderFourOutline v-if="layout === 'cards'" width="17" height="17" />
         <GridOutline v-else width="17" height="17" />
       </n-float-button>
@@ -195,19 +194,19 @@ function toggleExpand(dll: string) {
 .card-meta {
   display: flex; align-items: center; justify-content: space-between; margin: 8px 0;
 }
-.card-meta .mono { color: #3cb89b; }
+.card-meta .mono { color: var(--oc2-accent); }
 .card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .card-foot .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acts { display: flex; gap: 4px; flex: 0 0 auto; }
 .detail {
-  margin-top: 10px; padding-top: 10px; border-top: 1px dashed #2c3540;
-  color: #8d9bab; display: grid; gap: 3px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--oc2-row-line);
+  color: var(--oc2-text-3); display: grid; gap: 3px;
 }
-.detail .warn { color: #e6b86a; }
+.detail .warn { color: var(--oc2-accent); }
 .rows-card { max-width: 1180px; }
 .row {
   display: flex; align-items: center; gap: 14px; padding: 9px 2px;
-  border-bottom: 1px dashed #232a33;
+  border-bottom: 1px dashed var(--oc2-rail-line);
 }
 .row:last-child { border-bottom: 0; }
 .row.disabled { opacity: .6; }
@@ -215,7 +214,7 @@ function toggleExpand(dll: string) {
   flex: 1; min-width: 0; font-size: 13.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.row-version { color: #3cb89b; flex: 0 0 auto; }
+.row-version { color: var(--oc2-accent); flex: 0 0 auto; }
 .row-acts { display: flex; gap: 4px; flex: 0 0 auto; }
 .detail.inset { margin: 0 0 10px 34px; }
 </style>

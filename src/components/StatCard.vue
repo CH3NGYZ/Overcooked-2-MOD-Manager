@@ -20,7 +20,7 @@ defineProps<{
   min-height: 128px;
 }
 .stat-label {
-  color: #8d9bab;
+  color: var(--oc2-text-3);
   font-size: 12.5px;
 }
 .stat-value {
@@ -29,7 +29,7 @@ defineProps<{
   font-weight: 700;
   line-height: 1.1;
 }
-.stat-value.success { color: #3cb89b; }
-.stat-value.warning { color: #e6b86a; }
+.stat-value.success { color: var(--oc2-accent); }
+.stat-value.warning { color: var(--oc2-accent); }
 .stat-value.danger { color: #ee8585; }
 </style>

@@ -15,7 +15,7 @@ defineProps<{ title: string }>()
 .settings-group { max-width: 980px; margin-bottom: 22px; }
 .group-title {
   margin: 0 0 10px;
-  color: #3cb89b;
+  color: var(--oc2-accent);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: .04em;

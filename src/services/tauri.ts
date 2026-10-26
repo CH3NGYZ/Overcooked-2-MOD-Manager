@@ -3,8 +3,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
-  Dashboard, DownloadProgress, GameInfo, ModRecycleEntry, OperationResult, Provider,
-  PublicConfig, ReleaseInfo, RepositoryReadme, RustLog, SettingsPatch, UninstallLocalModResult,
+  Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModRecycleEntry, OperationResult, Provider,
+  PublicConfig, ReleaseInfo, RepositoryReadme, RepositorySourceImportResult, RustLog, SettingsPatch,
+  TokenPatch, UninstallLocalModResult,
 } from '../types'
 
 let gameStateRevision = 0
@@ -31,6 +32,10 @@ export const api = {
   readCrashLog: () => invoke<RustLog>('read_crash_log'),
   writeFrontendLog: (level: string, message: string) => invoke<void>('write_frontend_log', { level, message }),
   saveModNote: (dllFile: string, note: string) => invoke<OperationResult>('save_mod_note', { dllFile, note }),
+  /** MOD 在 BepInEx/config 下的配置文件（含 revision 防覆盖）。 */
+  readModConfig: (dllFile: string) => invoke<ModConfigDocument>('read_mod_config', { dllFile }),
+  saveModConfig: (dllFile: string, revision: string, content: string) =>
+    invoke<ModConfigDocument>('save_mod_config', { dllFile, revision, content }),
   uninstallLocalMod: (dllFile: string, allowUnmanaged = false) => invoke<UninstallLocalModResult>('uninstall_local_mod', { dllFile, allowUnmanaged }),
   uninstallModDll: (dllFile: string, packageId: string) => invoke<OperationResult>('uninstall_mod_dll', { dllFile, packageId }),
   getModRecycleBin: () => invoke<ModRecycleEntry[]>('get_mod_recycle_bin'),
@@ -40,7 +45,12 @@ export const api = {
   setGamePath: (path: string) => invoke<GameInfo>('set_game_path', { path }),
   resetGamePath: () => invoke<GameInfo>('reset_game_path'),
   saveSettings: (patch: SettingsPatch) => invoke<PublicConfig>('save_settings', { patch }),
+  /** 保存 / 清除 API 个人 Token（非空字符串覆盖，空字符串保持不变）。 */
+  saveTokens: (patch: TokenPatch) => invoke<PublicConfig>('save_tokens', { patch }),
   refreshRepository: (repositoryId: string) => invoke<ReleaseInfo[]>('refresh_repository', { repositoryId }),
+  /** 从源文档地址（raw / 远程 TOML）重新拉取并应用该仓库源。 */
+  importRepositorySource: (sourceId: string, sourceUrl: string, builtinFallback = false) =>
+    invoke<RepositorySourceImportResult>('import_repository_source', { sourceId, sourceUrl, builtinFallback }),
   releases: (repositoryId: string) => invoke<ReleaseInfo[]>('get_repository_releases', { repositoryId }),
   installBepInEx: (reinstall: boolean, provider: Provider) => invoke<BepInExInstallResult>('install_bepinex', { reinstall, provider }),
   repairNativeBepInExOverlay: () => invoke<OperationResult>('repair_native_bepinex_overlay'),
@@ -62,6 +72,10 @@ export const api = {
   toggleLocalModPackage: (packageId: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod_package', { packageId, enabled }),
   openDevtools: () => invoke<OperationResult>('open_devtools'),
   resetUi: () => invoke<OperationResult>('reset_ui'),
+  /** 把生成好的多彩名字推送给正在运行的多彩名字 MOD（后端逐个端口尝试）。 */
+  pushColorfulName: (name: string) => invoke<OperationResult>('push_colorful_name', { name }),
+  /** 复制文本到系统剪贴板。 */
+  copyText: (text: string) => invoke<OperationResult>('copy_text', { text }),
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
   openModDirectory: () => invoke<OperationResult>('open_mod_directory'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),

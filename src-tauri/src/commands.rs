@@ -1679,9 +1679,16 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
     let mut config = state.config.load_or_default();
-    state
-        .config
-        .set_tokens(&mut config, &patch.github_token, &patch.gitee_token);
+    if patch.clear {
+        // 显式清除：把两个 Token 都恢复成空
+        config.auth.github_token.clear();
+        config.auth.gitee_token.clear();
+        log::info!("已清除全部 API Token");
+    } else {
+        state
+            .config
+            .set_tokens(&mut config, &patch.github_token, &patch.gitee_token);
+    }
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!("API Token 配置保存完成");
     Ok(state.config.public_config(&config))
@@ -1770,7 +1777,15 @@ pub async fn refresh_repository(
         return Err("仓库已禁用".into());
     }
     if config.repositories[index].download_mode == RepositoryDownloadMode::RepositoryFile {
-        return Err("仓库文件模式不需要刷新 Release".into());
+        // 这条消息会直接展示在「刷新全部仓库源」的结果里，写成用户能看懂的话
+        log::debug!(
+            "跳过仓库文件模式的 Release 刷新：仓库={}",
+            config.repositories[index].name
+        );
+        return Err(format!(
+            "无法刷新「{}」，仓库文件模式下无法探测版本号",
+            config.repositories[index].name
+        ));
     }
     if !crate::config::repository_matches_channel(
         &config,
@@ -2342,9 +2357,15 @@ pub async fn install_repository(
         &repo.provider,
         crate::config::current_user_region(),
     );
-    let (download_url, download_name, release_tag, digest, is_raw_file, expected_size) = match repo
-        .download_mode
-    {
+    let (
+        download_url,
+        download_name,
+        release_tag,
+        release_prerelease,
+        digest,
+        is_raw_file,
+        expected_size,
+    ) = match repo.download_mode {
         RepositoryDownloadMode::RepositoryFile => {
             log::debug!(
                 "按仓库文件模式安装：仓库={}，分支={}，文件={}",
@@ -2362,7 +2383,15 @@ pub async fn install_repository(
             .map_err(|error| error.to_string())?;
             let download_name = releases::repository_file_name(&repo.file_path)
                 .map_err(|error| error.to_string())?;
-            (download_url, download_name, String::new(), None, true, None)
+            (
+                download_url,
+                download_name,
+                String::new(),
+                false,
+                None,
+                true,
+                None,
+            )
         }
         RepositoryDownloadMode::Release => {
             log::debug!(
@@ -2421,6 +2450,7 @@ pub async fn install_repository(
                 asset.download_url.clone(),
                 asset.name.clone(),
                 release.tag_name.clone(),
+                release.prerelease,
                 asset.digest.clone(),
                 false,
                 (asset.size > 0).then_some(asset.size),
@@ -2551,6 +2581,7 @@ pub async fn install_repository(
             &state.config.mod_recycle_bin_dir(),
             &install_repo,
             &release_tag,
+            release_prerelease,
         )
     })();
     let _ = fs::remove_file(&temp);
@@ -2762,6 +2793,80 @@ pub fn copy_text(text: String) -> Result<OperationResult, String> {
         ok: true,
         message: "教程格式已复制".into(),
     })
+}
+
+/// 多彩名字 MOD 的本地监听端口范围（含两端）。
+const COLORFUL_NAME_PORTS: std::ops::RangeInclusive<u16> = 28780..=28790;
+/// MOD 的显示名上限：UTF-16LE 238 字节，即 119 个 UTF-16 代码单元。
+const COLORFUL_NAME_MAX_UNITS: usize = 119;
+
+/// 把生成好的名字推送给正在运行的多彩名字 MOD。
+///
+/// 前端 CSP 只允许 `self` 与 IPC，无法直接访问 `http://127.0.0.1:287xx`，
+/// 所以由后端逐个端口尝试 POST；任一端口返回 2xx 即视为成功。
+#[tauri::command]
+pub async fn push_colorful_name(name: String) -> Result<OperationResult, String> {
+    if name.trim().is_empty() {
+        return Err("名字不能为空".into());
+    }
+    if name.chars().any(char::is_control) {
+        return Err("名字不能包含控制字符".into());
+    }
+    let units = name.encode_utf16().count();
+    if units > COLORFUL_NAME_MAX_UNITS {
+        return Err(format!(
+            "名字代码超过 MOD 限制（UTF-16LE {} / {} 字节）",
+            units * 2,
+            COLORFUL_NAME_MAX_UNITS * 2
+        ));
+    }
+    log::info!("推送多彩名字到 MOD：UTF-16 单元={}", units);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let body = serde_json::json!({ "name": name }).to_string();
+    let attempts = COLORFUL_NAME_PORTS.map(|port| {
+        let client = client.clone();
+        let body = body.clone();
+        async move {
+            let url = format!("http://127.0.0.1:{port}/set-name");
+            match client
+                .post(&url)
+                .header("Content-Type", "application/json;charset=utf-8")
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    log::info!("多彩名字 MOD 已接收：端口={port}");
+                    true
+                }
+                Ok(response) => {
+                    log::debug!("多彩名字端口 {port} 返回 {}", response.status());
+                    false
+                }
+                Err(_) => false,
+            }
+        }
+    });
+    let delivered = futures_util::future::join_all(attempts)
+        .await
+        .into_iter()
+        .any(|ok| ok);
+    if delivered {
+        return Ok(OperationResult {
+            ok: true,
+            message: "已推送到 MOD".into(),
+        });
+    }
+    log::warn!(
+        "多彩名字推送失败：{}-{} 端口均无响应",
+        COLORFUL_NAME_PORTS.start(),
+        COLORFUL_NAME_PORTS.end()
+    );
+    Err("请打开游戏并确认多彩名字 MOD 正在运行".into())
 }
 
 fn parse_tutorial_document(text: &str) -> Result<TutorialDocument, String> {
@@ -3212,6 +3317,9 @@ async fn import_repository_source_into_config(
         log::error!("仓库源刷新后保存配置失败：源={}，原因={}", source_id, error);
         error.to_string()
     })?;
+    // 配置已经是本次源文档的最新内容：此时才同步安装清单里的分组快照。
+    // 只有分组确实变化才写文件，避免每次刷新都重写全部清单。
+    sync_manifest_groups(&state, &config);
     log::info!(
         "仓库源刷新应用完成：源={}，仓库={}，新增={}，重复={}，冲突={}，子源声明={}，移除旧子源={}，结果有效={}",
         source_id,
@@ -3228,6 +3336,95 @@ async fn import_repository_source_into_config(
         access_error: None,
         builtin_fallback_available,
     })
+}
+
+/// 把安装清单里的分组快照同步成仓库当前的分组，只在真正变化时写文件。
+///
+/// 仓库源是权威数据源：清单里的分组只是缓存。这里在源文档刷新成功、
+/// 配置已是最新内容后调用，因此不会出现「刚启动还没刷新 → 分类被清空」。
+///
+/// 同时补齐旧版本升级遗留的缺失字段：
+///   - `group_i18n` / `group` 为空（旧清单）→ 从当前仓库补全
+///   - `repository_binding` 缺失（更旧的清单）→ 按仓库 + release_tag 重建，
+///     没有 release_tag 的 RAW 安装则留空（它本来就没有版本绑定）
+fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
+    let manifest_dir = state.config.manifests_dir();
+    let manifests = archive::read_manifests(&manifest_dir);
+    let mut updated = 0usize;
+    for mut manifest in manifests {
+        let Some(repository) = config
+            .repositories
+            .iter()
+            .find(|repo| repo.id == manifest.repository_id)
+        else {
+            continue;
+        };
+
+        let group_changed =
+            manifest.group_i18n != repository.group_i18n || manifest.group != repository.group;
+        // 旧清单没有版本绑定：能用 release_tag 重建就补上
+        let binding_missing = manifest.repository_binding.is_none()
+            && !manifest.release_tag.trim().is_empty()
+            && repository.download_mode == crate::models::RepositoryDownloadMode::Release;
+        // 旧清单没记预发布标记：从缓存的 Release 里按 tag 找回（找得到才改）
+        let prerelease_missing = !manifest.prerelease
+            && repository
+                .cached_releases
+                .iter()
+                .find(|release| release.tag_name == manifest.release_tag)
+                .is_some_and(|release| release.prerelease);
+        if !group_changed && !binding_missing && !prerelease_missing {
+            continue;
+        }
+
+        if group_changed {
+            log::info!(
+                "更新安装清单分组快照：仓库={}，旧分组={}，新分组={}",
+                manifest.repository_id,
+                if manifest.group.is_empty() {
+                    "<空>"
+                } else {
+                    &manifest.group
+                },
+                if repository.group.is_empty() {
+                    "<空>"
+                } else {
+                    &repository.group
+                }
+            );
+            manifest.group_i18n = repository.group_i18n.clone();
+            manifest.group = repository.group.clone();
+        }
+        if binding_missing {
+            manifest.repository_binding =
+                RepositoryBinding::from_release(repository, &manifest.release_tag);
+            log::info!(
+                "补齐安装清单版本绑定：仓库={}，标签={}",
+                manifest.repository_id,
+                manifest.release_tag
+            );
+        }
+        if prerelease_missing {
+            manifest.prerelease = true;
+            log::info!(
+                "补齐安装清单预发布标记：仓库={}，标签={}",
+                manifest.repository_id,
+                manifest.release_tag
+            );
+        }
+        if let Err(error) = archive::write_manifest(&manifest_dir, &manifest) {
+            log::warn!(
+                "更新安装清单失败：仓库={}，原因={}",
+                manifest.repository_id,
+                error
+            );
+            continue;
+        }
+        updated += 1;
+    }
+    if updated > 0 {
+        log::info!("安装清单分组快照更新完成：数量={}", updated);
+    }
 }
 
 #[tauri::command]
@@ -4811,6 +5008,7 @@ fn install_downloaded_repository(
     recycle_root: &Path,
     repo: &RepositoryConfig,
     release_tag: &str,
+    prerelease: bool,
 ) -> Result<usize, String> {
     let plan = if download_name.to_ascii_lowercase().ends_with(".zip") {
         Some(archive::prepare_repository_mod_zip(
@@ -4886,6 +5084,12 @@ fn install_downloaded_repository(
             pending.files().to_vec(),
         );
         manifest.repository_binding = RepositoryBinding::from_release(repo, release_tag);
+        // 固化安装时的分组：之后即使源文档还没刷新出来（刚启动），
+        // MOD 管理页也能按当时的分组稳定归类。
+        manifest.group_i18n = repo.group_i18n.clone();
+        manifest.group = repo.group.clone();
+        // 预发布标记跟着版本号一起固化：它只存在于当时的 Release 元数据里
+        manifest.prerelease = prerelease;
         archive::write_manifest(manifests_dir, &manifest)?;
         Ok(pending.commit().len())
     })();
@@ -6450,6 +6654,7 @@ mod update_status_tests {
                     &workspace.recycle,
                     &repo,
                     "v1.0.0",
+                    false,
                 )
                 .unwrap();
                 let original = archive::read_manifest(&workspace.manifests, "package").unwrap();
@@ -6485,6 +6690,7 @@ mod update_status_tests {
                     &workspace.recycle,
                     &repo,
                     "v2.0.0",
+                    false,
                 )
                 .unwrap();
                 let updated = archive::read_manifest(&workspace.manifests, "package").unwrap();
@@ -6513,6 +6719,7 @@ mod update_status_tests {
             &workspace.recycle,
             &raw,
             "",
+            false,
         )
         .unwrap();
         assert!(
@@ -6536,6 +6743,7 @@ mod update_status_tests {
             &workspace.recycle,
             &old_repo,
             "v1.0.0",
+            false,
         )
         .unwrap();
         let mut new_repo = old_repo.clone();
@@ -6566,6 +6774,7 @@ mod update_status_tests {
             &workspace.recycle,
             &identity,
             "v2.0.0",
+            false,
         )
         .unwrap();
         assert!(
@@ -6692,6 +6901,7 @@ mod update_status_tests {
                         &workspace.recycle,
                         &repo,
                         "v2",
+                        false,
                     );
                     if fail {
                         let error = result.unwrap_err();
@@ -6773,6 +6983,7 @@ mod update_status_tests {
                     &workspace.recycle,
                     &repo,
                     "v2",
+                    false,
                 )
                 .is_err()
             );
@@ -6828,6 +7039,7 @@ mod update_status_tests {
                 &workspace.recycle,
                 &repository("package", RepositoryDownloadMode::Release),
                 "v2",
+                false,
             );
             fs::set_permissions(&path, permissions).unwrap();
             let error = result.unwrap_err();
@@ -6883,6 +7095,7 @@ mod update_status_tests {
                     &workspace.recycle,
                     &repo,
                     "v2",
+                    false,
                 );
                 if fail {
                     let error = result.unwrap_err();
@@ -6960,6 +7173,7 @@ mod update_status_tests {
                 &workspace.recycle,
                 &repo,
                 "v2",
+                false,
             )
             .unwrap();
             assert_eq!(count, if zip { 2 } else { 1 });
@@ -7029,7 +7243,8 @@ mod update_status_tests {
                 &workspace.manifests,
                 &workspace.recycle,
                 &repo,
-                "v2"
+                "v2",
+                false,
             )
             .unwrap(),
             3
@@ -7090,7 +7305,8 @@ mod update_status_tests {
                 &workspace.manifests,
                 &workspace.recycle,
                 &repo,
-                "v2"
+                "v2",
+                false,
             )
             .is_err()
         );
@@ -7143,7 +7359,8 @@ mod update_status_tests {
                     &workspace.manifests,
                     &workspace.recycle,
                     &repo,
-                    "v2"
+                    "v2",
+                    false,
                 )
                 .is_err()
             );

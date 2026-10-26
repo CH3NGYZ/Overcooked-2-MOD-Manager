@@ -142,15 +142,39 @@ pub enum ConfigError {
     Invalid(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConfigService {
     root: PathBuf,
+    /// 上次读取的配置快照 + 文件指纹（Arc 让 Clone 共享同一份缓存）。
+    ///
+    /// 一次启动里同一份配置会被读上百次（每个仓库刷新、每次 Dashboard 读取都要读一次），
+    /// 每次都重新读盘并解析 TOML 完全是浪费。文件 mtime/大小没变时直接复用。
+    /// 保存时同步更新缓存，所以自己的写入不会读到旧值；
+    /// 外部改动（用户手改 config.toml）会改变 mtime，缓存自动失效。
+    cache: std::sync::Arc<std::sync::Mutex<Option<CachedConfig>>>,
+}
+
+impl std::fmt::Debug for ConfigService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigService")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+struct CachedConfig {
+    modified: Option<std::time::SystemTime>,
+    size: u64,
+    config: AppConfig,
 }
 
 impl ConfigService {
     #[cfg(test)]
     pub(crate) fn for_test(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     pub fn new() -> Result<Self, ConfigError> {
@@ -160,7 +184,10 @@ impl ConfigService {
             ConfigError::Directory(e.to_string())
         })?;
         log::debug!("配置服务初始化完成：目录={}", root.display());
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        })
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -184,6 +211,39 @@ impl ConfigService {
     }
 
     pub fn load(&self) -> Result<AppConfig, ConfigError> {
+        let path = self.config_path();
+        // 文件指纹没变 → 直接返回缓存副本，避免重复读盘与 TOML 解析
+        if let Some(cached) = self.cached_if_fresh(&path) {
+            return Ok(cached);
+        }
+        let config = self.load_from_disk()?;
+        self.store_cache(&path, &config);
+        Ok(config)
+    }
+
+    fn cached_if_fresh(&self, path: &Path) -> Option<AppConfig> {
+        let metadata = fs::metadata(path).ok()?;
+        let cache = self.cache.lock().ok()?;
+        let cached = cache.as_ref()?;
+        let same_time = cached.modified == metadata.modified().ok();
+        let same_size = cached.size == metadata.len();
+        (same_time && same_size).then(|| cached.config.clone())
+    }
+
+    fn store_cache(&self, path: &Path, config: &AppConfig) {
+        let Ok(metadata) = fs::metadata(path) else {
+            return;
+        };
+        if let Ok(mut cache) = self.cache.lock() {
+            *cache = Some(CachedConfig {
+                modified: metadata.modified().ok(),
+                size: metadata.len(),
+                config: config.clone(),
+            });
+        }
+    }
+
+    fn load_from_disk(&self) -> Result<AppConfig, ConfigError> {
         let path = self.config_path();
         let previous = self.root.join("config.previous.toml");
         log::debug!(
@@ -227,6 +287,8 @@ impl ConfigService {
                     log::info!("配置需要迁移或同步，保存更新后的配置");
                     self.save(&config)?;
                 }
+                // 走到这里说明真的读了盘：用 info 记录一次，便于排查迁移/同步问题。
+                // 命中缓存的高频读取不再重复打印（见 load()）。
                 log::info!(
                     "配置加载完成：仓库={}，仓库源={}，MOD备注={}，配置已迁移={}",
                     config.repositories.len(),
@@ -336,6 +398,8 @@ impl ConfigService {
             log::warn!("配置保存成功但旧备份清理失败：原因={}", error);
         }
         log::info!("配置保存完成");
+        // 自己刚写入的内容就是最新值：同步缓存，避免下一次 load 再次读盘
+        self.store_cache(&target, config);
         Ok(())
     }
 
@@ -1525,6 +1589,7 @@ value = "RegionalMod.dll"
     fn regional_repository_variants_coexist_and_export_all_channels() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let document =
@@ -1595,6 +1660,7 @@ value = "RegionalMod.dll"
     fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let document =
@@ -1828,6 +1894,7 @@ url = "shared.toml"
     fn source_nickname_translations_survive_config_and_bundle_round_trips() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let legacy: RepositorySource = toml::from_str(
             r#"
@@ -1943,6 +2010,7 @@ value = "MOD.dll"
                 root: Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("target/test-config-load")
                     .join(Uuid::new_v4().to_string()),
+                cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
             };
             let mut config = default_config();
             let mut expected_sources = config.repository_sources.clone();
@@ -2027,6 +2095,7 @@ value = "MOD.dll"
             root: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("target/test-config-load")
                 .join(Uuid::new_v4().to_string()),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
         let mut config = default_config();
@@ -2086,6 +2155,7 @@ value = "MOD.dll"
             root: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("target/test-config-load")
                 .join(Uuid::new_v4().to_string()),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
         let text = r#"
@@ -2171,6 +2241,7 @@ value = "Example.dll"
     fn imported_repositories_follow_bundle_order() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let text = r#"
 format = "oc2-mod-repository-bundle"
@@ -2261,6 +2332,7 @@ builtin = true
     fn bundle_round_trip_is_toml() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let config = default_config();
         let text = service.export_bundle(&config, None).unwrap();
@@ -2419,6 +2491,7 @@ builtin = true
     fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sources() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let template = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
@@ -2531,6 +2604,7 @@ builtin = true
     fn repository_bundle_export_follows_editor_order_and_roundtrips() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let mut release = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
@@ -2673,6 +2747,7 @@ builtin = true
     fn repository_bundle_requires_chinese_metadata_and_ignores_raw_fields() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let bundle_for = |metadata: &str| {
             format!(
@@ -2777,6 +2852,7 @@ enabled = true
     fn structured_repository_fields_survive_storage_and_public_config_without_urls() {
         let service = ConfigService {
             root: std::env::temp_dir(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let export = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)

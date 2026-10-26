@@ -284,6 +284,22 @@ fn inspect_dll(
         package_id,
         package_name,
         package_mod_count: 0,
+        // 分组优先用安装清单里的快照：源文档没刷新出来时仓库配置可能为空，
+        // 直接读当前仓库会导致分组跳变。
+        // 旧版本清单没有快照（两个字段都空）时才回退到当前仓库，
+        // 这样升级上来的用户也能立刻看到分组；回退值会在下次源刷新时写回清单。
+        group_i18n: manifest
+            .filter(|item| !item.group_i18n.is_empty())
+            .map(|item| item.group_i18n.clone())
+            .or_else(|| repository.map(|repo| repo.group_i18n.clone()))
+            .unwrap_or_default(),
+        group: manifest
+            .map(|item| item.group.clone())
+            .filter(|value| !value.is_empty())
+            .or_else(|| repository.map(|repo| repo.group.clone()))
+            .unwrap_or_default(),
+        // 预发布标记只存在于安装时的 Release 元数据，直接读清单快照
+        prerelease: manifest.is_some_and(|item| item.prerelease),
         name,
         title: metadata.title,
         description: metadata.description,
@@ -1524,6 +1540,9 @@ mod tests {
                 repository_binding: None,
                 package_name: Some("Raw MOD".into()),
                 note: None,
+                group_i18n: Default::default(),
+                group: String::new(),
+                prerelease: false,
                 installed_at: "2026-10-07T00:00:00Z".into(),
                 files: vec![relative.into()],
             };
@@ -1556,6 +1575,151 @@ mod tests {
             assert!(target.starts_with(&temp) && target != temp);
             std::fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[test]
+    fn manifest_group_snapshot_survives_missing_repository_config() {
+        // 安装清单里固化了分组：即使当前配置里找不到这个仓库
+        // （刚启动、源文档还没刷新出来），MOD 仍然带着安装时的分组。
+        let root =
+            std::env::temp_dir().join(format!("oc2-group-snapshot-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        let path = plugins.join("Grouped.dll");
+        let mut bytes = b"BepInPlugin".to_vec();
+        bytes.extend_from_slice(&[1, 0]);
+        for value in ["oc2.grouped", "Grouped", "1.0.0"] {
+            bytes.push(value.len() as u8);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        std::fs::write(&path, bytes).unwrap();
+        let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "game":{"path":"","auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repositories":[]
+        })).unwrap();
+        let mut group_i18n = std::collections::BTreeMap::new();
+        group_i18n.insert("zh-CN".into(), "内容拓展".to_string());
+        group_i18n.insert("en".into(), "Content".to_string());
+        let manifest = crate::archive::InstallManifest {
+            repository_id: "gone-repository".into(),
+            release_tag: "v1.0.0".into(),
+            repository_binding: None,
+            package_name: Some("Grouped".into()),
+            note: None,
+            group_i18n: group_i18n.clone(),
+            group: "内容拓展".into(),
+            prerelease: false,
+            installed_at: "2026-10-07T00:00:00Z".into(),
+            files: vec!["BepInEx/plugins/Grouped.dll".into()],
+        };
+        let installed = super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+        assert_eq!(installed.group_i18n, group_i18n);
+        assert_eq!(installed.group, "内容拓展");
+        // 仓库已不在配置里 → 状态仍是未绑定，但分组信息不丢
+        assert_eq!(installed.status, "unbound");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_prerelease_flag_reaches_installed_mod() {
+        // 预发布标记随安装清单固化，扫描时原样带出（仓库已不在配置里也不丢）。
+        let root = std::env::temp_dir().join(format!("oc2-pre-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        let path = plugins.join("Pre.dll");
+        let mut bytes = b"BepInPlugin".to_vec();
+        bytes.extend_from_slice(&[1, 0]);
+        for value in ["oc2.pre", "Pre", "2.0.0"] {
+            bytes.push(value.len() as u8);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        std::fs::write(&path, bytes).unwrap();
+        let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "game":{"path":"","auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repositories":[]
+        })).unwrap();
+        let manifest = crate::archive::InstallManifest {
+            repository_id: "pre-repo".into(),
+            release_tag: "v2.0.0-beta.1".into(),
+            repository_binding: None,
+            package_name: Some("Pre".into()),
+            note: None,
+            group_i18n: Default::default(),
+            group: String::new(),
+            prerelease: true,
+            installed_at: "2026-10-07T00:00:00Z".into(),
+            files: vec!["BepInEx/plugins/Pre.dll".into()],
+        };
+        let installed = super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+        assert!(installed.prerelease);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_manifest_without_snapshot_falls_back_to_repository_group() {
+        // 旧版本管理器写的清单没有 group_i18n / group。
+        // 升级后应立刻用当前仓库的分组兜底显示，而不是掉进「未绑定」。
+        let root = std::env::temp_dir().join(format!("oc2-legacy-group-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        let path = plugins.join("Legacy.dll");
+        let mut bytes = b"BepInPlugin".to_vec();
+        bytes.extend_from_slice(&[1, 0]);
+        for value in ["oc2.legacy", "Legacy", "1.0.0"] {
+            bytes.push(value.len() as u8);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut repository = binding_repository();
+        repository.id = "legacy-repo".into();
+        // 用测试 DLL 真实的 GUID 识别，否则扫描时绑不到这个仓库
+        repository.plugin_guid = "oc2.legacy".into();
+        repository.group = "实用工具".into();
+        repository
+            .group_i18n
+            .insert("zh-CN".into(), "实用工具".into());
+        repository
+            .group_i18n
+            .insert("en".into(), "Utilities".into());
+        let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "game":{"path":"","auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repositories":[repository]
+        })).unwrap();
+
+        // 旧清单：分组与绑定都为空
+        let manifest = crate::archive::InstallManifest {
+            repository_id: "legacy-repo".into(),
+            release_tag: "v1.0.0".into(),
+            repository_binding: None,
+            package_name: Some("Legacy".into()),
+            note: None,
+            group_i18n: Default::default(),
+            group: String::new(),
+            prerelease: false,
+            installed_at: "2026-10-07T00:00:00Z".into(),
+            files: vec!["BepInEx/plugins/Legacy.dll".into()],
+        };
+        let installed = super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+        // 分组回退到仓库当前值
+        assert_eq!(installed.group, "实用工具");
+        assert_eq!(
+            installed.group_i18n.get("en").map(String::as_str),
+            Some("Utilities")
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1676,6 +1840,9 @@ mod tests {
                 package_id: None,
                 package_name: None,
                 package_mod_count: 0,
+                group_i18n: Default::default(),
+                group: String::new(),
+                prerelease: false,
                 name: "Old".into(),
                 has_config: false,
                 title: None,
@@ -1705,6 +1872,9 @@ mod tests {
                 package_id: None,
                 package_name: None,
                 package_mod_count: 0,
+                group_i18n: Default::default(),
+                group: String::new(),
+                prerelease: false,
                 name: "New".into(),
                 has_config: false,
                 title: None,

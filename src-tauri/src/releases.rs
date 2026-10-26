@@ -24,6 +24,12 @@ pub enum ReleaseError {
     Http(String),
     #[error("Release operation failed: {0}")]
     Status(StatusCode),
+    /// 403/429 且带有限流特征：调用方据此给闸门上锁并改走代理。
+    #[error("Release operation failed: rate limited ({status})")]
+    RateLimited {
+        status: StatusCode,
+        signal: Box<crate::api_rate_gate::RateLimitSignal>,
+    },
     #[error("Release operation failed: {0}")]
     Json(String),
 }
@@ -33,7 +39,18 @@ const REPOSITORY_API_ATTEMPTS: usize = 3;
 
 impl ReleaseError {
     pub fn is_forbidden(&self) -> bool {
-        matches!(self, Self::Status(status) if *status == StatusCode::FORBIDDEN)
+        matches!(
+            self,
+            Self::Status(status) if *status == StatusCode::FORBIDDEN
+        ) || matches!(self, Self::RateLimited { status, .. } if *status == StatusCode::FORBIDDEN)
+    }
+
+    /// 是否因限流被拒（403/429 且带限流特征）。
+    pub fn rate_limit_signal(&self) -> Option<&crate::api_rate_gate::RateLimitSignal> {
+        match self {
+            Self::RateLimited { signal, .. } => Some(signal),
+            _ => None,
+        }
     }
 }
 
@@ -42,7 +59,12 @@ fn release_error_kind(error: &ReleaseError) -> &'static str {
         ReleaseError::InvalidUrl(_) => "invalid_url",
         ReleaseError::Http(_) => "http",
         ReleaseError::Status(status) if *status == StatusCode::FORBIDDEN => "http_403",
+        ReleaseError::Status(status) if *status == StatusCode::TOO_MANY_REQUESTS => "http_429",
         ReleaseError::Status(_) => "http_status",
+        ReleaseError::RateLimited { status, .. } if *status == StatusCode::TOO_MANY_REQUESTS => {
+            "rate_limited_429"
+        }
+        ReleaseError::RateLimited { .. } => "rate_limited_403",
         ReleaseError::Json(_) => "json",
     }
 }
@@ -71,6 +93,8 @@ fn is_official_gitee_api_url(value: &str) -> bool {
         && url.path().starts_with("/api/v5/")
 }
 
+/// Gitee 的 access_token 通过 query 参数传递（与官方文档一致）。
+/// 只有官方 Gitee API 会附加；代理地址不携带凭据。
 fn gitee_api_url_with_token(url: &str, token: &str) -> Result<String, ReleaseError> {
     let mut parsed =
         Url::parse(url).map_err(|error| ReleaseError::InvalidUrl(error.to_string()))?;
@@ -359,8 +383,30 @@ async fn fetch_releases_from_targets(
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
     let mut last_error = None;
     let mut skip_gitee_official = false;
+    let gate = crate::api_rate_gate::global_gate();
     for (index, (url, request_token)) in request_targets.into_iter().enumerate() {
         if skip_gitee_official && url == official {
+            continue;
+        }
+        // 官方地址才受限流闸门约束；代理请求不消耗官方配额
+        let gate_kind = if url == official {
+            if request_token.is_some() {
+                crate::api_rate_gate::GateKind::Token
+            } else {
+                crate::api_rate_gate::GateKind::Anonymous
+            }
+        } else {
+            crate::api_rate_gate::GateKind::Proxy
+        };
+        if let Err(wait) = gate.check(&repo.provider, gate_kind) {
+            log::warn!(
+                "Release API 被限流闸门跳过: repository_id={} provider={:?} target_kind={} 剩余等待={}秒",
+                repo.id,
+                repo.provider,
+                api_target_kind(official, &url, request_token),
+                wait.as_secs()
+            );
+            last_error = Some(ReleaseError::Http("API 限流冷却中".into()));
             continue;
         }
         let target_kind = api_target_kind(official, &url, request_token);
@@ -374,6 +420,7 @@ async fn fetch_releases_from_targets(
         );
         match fetch_release_api_with_retries(client, &url, &repo.provider, request_token).await {
             Ok(mut releases) => {
+                gate.record_success(&repo.provider, gate_kind);
                 for release in &mut releases {
                     release.assets.retain(|asset| {
                         !crate::community::is_source_archive(repo, &release.tag_name, &asset.name)
@@ -389,6 +436,17 @@ async fn fetch_releases_from_targets(
                 return Ok(releases);
             }
             Err(error) => {
+                // 命中限流特征 → 给该类凭据上锁，后续同类官方请求改走代理
+                if let Some(signal) = error.rate_limit_signal() {
+                    if let Some(block) = gate.record_forbidden(&repo.provider, gate_kind, signal) {
+                        log::warn!(
+                            "Release API 触发限流锁: provider={:?} target_kind={} 锁定={}秒",
+                            repo.provider,
+                            target_kind,
+                            block.as_secs()
+                        );
+                    }
+                }
                 log::warn!(
                     "Release API 目标失败: repository_id={} provider={:?} target_kind={} error_kind={}",
                     repo.id,
@@ -424,10 +482,11 @@ async fn fetch_releases_from_targets(
     Err(error)
 }
 
-/// Build the ordered API fallback sequence for one provider. The official
-/// endpoint is tried without credentials first, then again with the configured
-/// token, and only then are that provider's configured proxy endpoints used.
-/// A Gitee official 403 skips the token target; a Gitee proxy 403 ends the run.
+/// Build the ordered API fallback sequence for one provider.
+///
+/// 配了 Token 就直奔官方 + Token：Token 有独立配额，没必要先用匿名额度把
+/// 匿名限流额度耗掉（用户明确要求「有 Token 就别走匿名」）。
+/// 只有没有 Token 时才走官方匿名；两条路径失败后都落到配置的代理端点。
 /// Credentials are never sent to a proxy endpoint.
 fn api_request_targets<'a>(
     official_url: &str,
@@ -435,9 +494,10 @@ fn api_request_targets<'a>(
     _official_api_only: bool,
     api_proxies: &[GitHubProxy],
 ) -> Vec<(String, Option<&'a str>)> {
-    let mut targets = vec![(official_url.to_string(), None)];
-    if token.is_some() {
-        targets.push((official_url.to_string(), token));
+    let mut targets = Vec::new();
+    match token {
+        Some(token) => targets.push((official_url.to_string(), Some(token))),
+        None => targets.push((official_url.to_string(), None)),
     }
     targets.extend(
         crate::github_proxies::proxy_urls(api_proxies, official_url, false, None)
@@ -547,6 +607,7 @@ async fn fetch_api_json(
         provider,
         token.is_some()
     );
+    // Gitee 的 access_token 走 query 参数（官方约定）；GitHub 走 Authorization
     let request_url = match (provider, token) {
         (Provider::Gitee, Some(token)) if is_official_gitee_api_url(url) => {
             gitee_api_url_with_token(url, token)?
@@ -583,8 +644,39 @@ async fn fetch_api_json(
         provider,
         response.status()
     );
-    if !response.status().is_success() {
-        return Err(ReleaseError::Status(response.status()));
+    let status = response.status();
+    if !status.is_success() {
+        // 403/429 可能是限流：把响应头与正文交给闸门判定，并上报给调用方
+        if status == StatusCode::FORBIDDEN || status == StatusCode::TOO_MANY_REQUESTS {
+            let signal = crate::api_rate_gate::RateLimitSignal {
+                body_limit_message: false, // 由调用方在读取正文后补充
+                remaining_exhausted: response
+                    .headers()
+                    .get("x-ratelimit-remaining")
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.trim() == "0"),
+                reset_at: response
+                    .headers()
+                    .get("x-ratelimit-reset")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok()),
+                retry_after: response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok()),
+            };
+            let body = response.text().await.unwrap_or_default();
+            let signal = crate::api_rate_gate::RateLimitSignal {
+                body_limit_message: crate::api_rate_gate::body_reports_rate_limit(&body),
+                ..signal
+            };
+            return Err(ReleaseError::RateLimited {
+                status,
+                signal: Box::new(signal),
+            });
+        }
+        return Err(ReleaseError::Status(status));
     }
     let value = response.json::<Value>().await.map_err(|e| {
         let error = ReleaseError::Json(e.without_url().to_string());
@@ -1277,29 +1369,36 @@ mod tests {
             remote: false,
         }];
 
+        // 配了 Token：直接用官方 + Token，不再先打匿名接口
         let targets = api_request_targets(official, Some("secret"), true, &proxies);
-        assert_eq!(targets.len(), 3);
-        assert_eq!(targets[0], (official.to_string(), None));
-        assert_eq!(targets[1], (official.to_string(), Some("secret")));
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0], (official.to_string(), Some("secret")));
         assert_eq!(
-            targets[2],
+            targets[1],
             (
                 "https://proxy.example/https://api.github.com/repos/a/b/releases".to_string(),
                 None,
             )
         );
+        // 代理永远不带凭据
+        assert_eq!(targets[1].1, None);
 
-        let targets = api_request_targets(official, Some("secret"), false, &proxies);
-        assert_eq!(targets[2].1, None);
+        // 没有 Token：官方匿名 + 代理
+        let targets = api_request_targets(official, None, false, &proxies);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0], (official.to_string(), None));
+        assert_eq!(targets[1].1, None);
     }
 
     #[test]
     fn gitee_token_uses_access_token_query_on_official_api_only() {
+        // Gitee 的 access_token 走 query 参数（官方约定），且只附加在官方地址上
         let official = "https://gitee.com/api/v5/repos/a/b/releases?per_page=10";
         assert_eq!(
             gitee_api_url_with_token(official, "secret token").unwrap(),
             "https://gitee.com/api/v5/repos/a/b/releases?per_page=10&access_token=secret+token"
         );
+        // 代理地址不识别为官方接口，因此不会附加凭据
         assert!(!is_official_gitee_api_url(
             "https://oc2gtapi.ch3ng.top/api/v5/repos/a/b/releases"
         ));

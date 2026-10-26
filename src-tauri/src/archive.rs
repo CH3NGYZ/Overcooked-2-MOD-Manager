@@ -4,7 +4,7 @@ use futures_util::{StreamExt, stream};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -132,6 +132,24 @@ pub struct InstallManifest {
     pub package_name: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    /// 安装时仓库的分组快照（多语言）。
+    ///
+    /// MOD 管理页按「安装时绑定的仓库分类」分组，而分组数据来自仓库源文档。
+    /// 刚启动、源文档还没刷新出来时仓库配置可能为空或仍是旧内容，分组就会错乱。
+    /// 把分组固化进安装清单，扫描时可直接使用稳定值，
+    /// 只在仓库分组真正变化时（后续刷新到不同配置）才更新。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_i18n: BTreeMap<String, String>,
+    /// 安装时的单语分组名：`group_i18n` 缺失时兜底。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    /// 安装的 Release 是否为预发布版本。
+    ///
+    /// 跟着版本号一起固化：预发布标记只存在于当时的 Release 元数据里，
+    /// 之后仓库刷新可能已把该版本移出列表，必须在安装时记下来，
+    /// 否则 MOD 管理页没法在「最新版」旁边标出「预发布」。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prerelease: bool,
     pub installed_at: String,
     pub files: Vec<String>,
 }
@@ -1580,6 +1598,9 @@ pub fn new_manifest(
         repository_binding: None,
         package_name: package_name.map(str::to_string),
         note: note.map(str::to_string),
+        group_i18n: BTreeMap::new(),
+        group: String::new(),
+        prerelease: false,
         installed_at: Utc::now().to_rfc3339(),
         files,
     }

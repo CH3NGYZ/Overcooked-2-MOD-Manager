@@ -64,6 +64,19 @@ pub struct InstalledMod {
     pub package_name: Option<String>,
     #[serde(default)]
     pub package_mod_count: usize,
+    /// 安装时仓库的分组快照（多语言）。
+    ///
+    /// 分组语义是「安装时绑定的仓库分类」，所以在安装那一刻固化下来最稳定：
+    /// 刚启动或仓库源还没刷新完时，仓库配置可能为空/仍旧，前端据此分组会乱。
+    /// 扫描时用这份快照；仓库分组真的变了才在下一次刷新写到清单里。
+    #[serde(default)]
+    pub group_i18n: std::collections::BTreeMap<String, String>,
+    /// 安装时的单语分组名（快照缺失时兜底）。
+    #[serde(default)]
+    pub group: String,
+    /// 安装的 Release 是否为预发布版本（来自安装清单快照）。
+    #[serde(default)]
+    pub prerelease: bool,
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -763,6 +776,9 @@ pub struct GitHubProxyPatch {
 pub struct TokenPatch {
     pub github_token: String,
     pub gitee_token: String,
+    /// 显式清除已保存的 Token（留空字符串表示「不修改」）。
+    #[serde(default)]
+    pub clear: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

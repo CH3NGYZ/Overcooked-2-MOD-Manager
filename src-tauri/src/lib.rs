@@ -1,3 +1,4 @@
+mod api_rate_gate;
 mod app_update;
 mod archive;
 mod bepinex;
@@ -148,6 +149,7 @@ pub fn run() {
             commands::copy_repositories,
             commands::read_clipboard,
             commands::copy_text,
+            commands::push_colorful_name,
             commands::get_builtin_tutorial,
             commands::get_builtin_tutorial_repositories,
             commands::parse_tutorial_config,

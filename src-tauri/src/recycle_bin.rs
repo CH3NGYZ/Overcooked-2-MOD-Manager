@@ -1340,6 +1340,9 @@ mod tests {
                 repository_binding: None,
                 package_name: Some("Fixture package".into()),
                 note: Some("original note".into()),
+                group_i18n: Default::default(),
+                group: String::new(),
+                prerelease: false,
                 installed_at: "2026-10-07T00:00:00Z".into(),
                 files: files.iter().map(|file| (*file).into()).collect(),
             };

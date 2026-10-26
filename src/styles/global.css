@@ -67,12 +67,27 @@ body {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 4px 28px 28px;
+  /* 挂到内容区的弹窗（如 MOD 配置编辑器）以此容器为定位基准 */
+  position: relative;
+  /* 上下内边距不对称（上小下大），整页加载态的转圈居中要按差值补偿 */
+  --page-pad-top: 4px;
+  --page-pad-bottom: 28px;
+  padding: var(--page-pad-top) 28px var(--page-pad-bottom);
+  /* 用 flex 列布局让内容天然可撑满剩余高度（见 .page-body 的 flex） */
+  display: flex;
+  flex-direction: column;
 }
 .page-body {
   /* 内容跟随应用容器整宽，不再限制在固定 max-width 内 */
   width: 100%;
   max-width: none;
+  /*
+   * 整页加载态：首次加载时页面内容还没渲染，容器高度会塌到很小，
+   * 而 n-spin 的转圈是「在自己容器里居中」——容器不满高，视觉上就偏上。
+   * flex: 1 让它在内容不足时也能占满可视区域，转圈才是真正的视觉中央；
+   * 内容超出时照常被子元素撑高并正常滚动。
+   */
+  flex: 1 0 auto;
 }
 .mono {
   font-family: Consolas, 'Liberation Mono', monospace;
@@ -92,4 +107,115 @@ body {
   .card-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/*
+ * 整页加载态：转圈要落在「可视区域」的视觉中心，而不只是自己容器的中心。
+ *
+ * 关键点：n-spin 的转圈是相对 n-spin-container 居中的。首次加载时页面内容
+ * 还没渲染，这个容器只有内容高度（甚至为 0），所以看上去偏上。
+ * 因此让 spin 容器一路撑满到 .page-body 的高度：
+ *   .page-body (flex: 1 0 auto) → .n-spin-container (height: 100%)
+ * 这样容器本身就是满屏，居中才等于视觉居中。
+ *
+ * 注意：Naive 的 .n-spin-body 自带 transform: translate(-50%, -50%)，
+ * 用 inset: 0 铺满时必须把 transform 清掉，否则整块会被推到左上角。
+ */
+.page-scroll .n-spin-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  /* 跟随 .page-body 撑满；内容更高时正常撑开 */
+  height: 100%;
+  /*
+   * 让转圈落在「可视区」中央而不只是容器中央：
+   * page-scroll 的上下 padding 不对称（上 4px、下 28px），
+   * 内容盒整体比可视区偏上 (28-4)/2 = 12px，这里补回来。
+   */
+  margin-top: calc((var(--page-pad-bottom) - var(--page-pad-top)) / 2);
+}
+.page-scroll .n-spin-container > .n-spin-content {
+  flex: 1 0 auto;
+}
+.page-scroll .n-spin-container > .n-spin-body {
+  position: absolute;
+  inset: 0;
+  transform: none;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* 标题栏主题色矩阵：3×3 色块（5 色 + 空位），只显示颜色不显示文字 */
+.accent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-rows: repeat(3, 44px);
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 12px;
+  background: var(--oc2-popover);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .42);
+}
+.accent-cell {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
+}
+.accent-cell:hover {
+  transform: scale(1.06);
+  border-color: color-mix(in srgb, var(--oc2-text-1) 45%, transparent);
+}
+.accent-cell.active {
+  border-color: var(--oc2-text-1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--oc2-accent) 34%, transparent);
+}
+.accent-cell:focus-visible {
+  outline: 2px solid var(--oc2-text-1);
+  outline-offset: 2px;
+}
+
+/*
+ * 状态标签统一配色（MOD 安装 / MOD 管理共用），每种状态一种颜色：
+ *   未安装 / 仓库文件 → 蓝   已最新 / 就绪 → 绿   可更新 / 预发布 / 加载警告 → 橙
+ *   未绑定 / 已禁用 / 版本未知 → 灰   重复 / 仓库缺失 / 仓库不可用 → 红   低版本 → 紫
+ * 用 .state-tag 覆盖 Naive UI 的 tag 外观，深浅两种主题都保持同一语义色。
+ */
+.state-tag.n-tag {
+  border: 0;
+  border-radius: 999px;
+  padding: 0 9px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.state-tag--idle.n-tag {
+  color: #6aabf5;
+  background: rgba(59, 130, 246, .16);
+}
+.state-tag--ok.n-tag {
+  color: #4ade80;
+  background: rgba(34, 197, 94, .16);
+}
+.state-tag--warn.n-tag {
+  color: #fb923c;
+  background: rgba(249, 115, 22, .16);
+}
+.state-tag--muted.n-tag {
+  color: var(--oc2-text-3);
+  background: color-mix(in srgb, var(--oc2-text-3) 14%, transparent);
+}
+.state-tag--danger.n-tag {
+  color: #f87171;
+  background: rgba(239, 68, 68, .16);
+}
+.state-tag--violet.n-tag {
+  color: #c084fc;
+  background: rgba(168, 85, 247, .18);
 }

@@ -39,6 +39,8 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 .sidebar {
   width: 96px;
   flex: 0 0 96px;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -64,6 +66,9 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
   flex-direction: column;
   gap: 6px;
   width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .nav-item {
   display: flex;

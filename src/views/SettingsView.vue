@@ -4,21 +4,56 @@ import { useMessage } from 'naive-ui'
 import { NButton, NCard, NSwitch, NTag } from 'naive-ui'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import { getVersion } from '@tauri-apps/api/app'
+import PathSettingCard from '../components/PathSettingCard.vue'
 import { api } from '../services/tauri'
+import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, PublicConfig } from '../types'
 
 const message = useMessage()
+const { load, game } = useDashboard()
+
 const version = ref('')
 const checking = ref(false)
 const checkResult = ref<AppUpdateCheckResult | null>(null)
 const installing = ref(false)
 const config = ref<PublicConfig | null>(null)
+const savingPath = ref(false)
 
 onMounted(async () => {
   version.value = await getVersion().catch(() => '')
   config.value = await api.config().catch(() => null)
+  await load()
 })
 
+/* ===== 路径管理：游戏目录（未来 DIYLevel 自定义地图框架路径也走 PathSettingCard） ===== */
+function fail(reason: unknown) {
+  message.error(reason instanceof Error ? reason.message : String(reason))
+}
+
+async function openGameDir() {
+  const result = await api.openGameDirectory()
+  if (!result.ok) message.error(result.message)
+}
+
+async function saveGamePath(path: string) {
+  savingPath.value = true
+  try {
+    const info = await api.setGamePath(path)
+    message.success(info.game_exists ? '游戏路径已保存并验证' : '路径已保存，但目录不存在或缺少游戏文件')
+    await load()
+  } catch (reason) { fail(reason) } finally { savingPath.value = false }
+}
+
+async function resetGamePath() {
+  savingPath.value = true
+  try {
+    const info = await api.resetGamePath()
+    message.success(info.path ? `已恢复默认：${info.path}` : '已清除游戏路径')
+    await load()
+  } catch (reason) { fail(reason) } finally { savingPath.value = false }
+}
+
+/* ===== 程序更新 ===== */
 async function checkUpdate() {
   checking.value = true
   try {
@@ -26,9 +61,7 @@ async function checkUpdate() {
     if (checkResult.value.update) message.success(`发现新版本 ${checkResult.value.update.version}`)
     else if (checkResult.value.all_failed) message.error('更新检查失败，可稍后重试')
     else message.success('当前已是最新版本')
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
-  } finally { checking.value = false }
+  } catch (reason) { fail(reason) } finally { checking.value = false }
 }
 
 async function installUpdate() {
@@ -36,22 +69,30 @@ async function installUpdate() {
   try {
     const result = await api.installAppUpdate()
     result.ok ? message.success(result.message || '更新安装已开始') : message.error(result.message)
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
-  } finally { installing.value = false }
+  } catch (reason) { fail(reason) } finally { installing.value = false }
 }
 
+/* ===== 偏好 ===== */
 async function savePreference(patch: Parameters<typeof api.saveSettings>[0], label: string) {
   try {
     config.value = await api.saveSettings(patch)
     message.success(label)
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
-  }
+  } catch (reason) { fail(reason) }
 }
 </script>
 
 <template>
+  <PathSettingCard
+    title="游戏目录"
+    :path="game?.path ?? ''"
+    :verified="game?.game_exists ?? null"
+    :saving="savingPath"
+    description="包含 Overcooked!2.exe 的目录；DIYLevel 自定义地图框架路径后续也在此统一管理。"
+    @open="openGameDir"
+    @save="saveGamePath"
+    @reset="resetGamePath"
+  />
+
   <n-card title="关于" class="block">
     <div class="about-row">
       <span>OC2 MOD 管理器</span>
@@ -106,7 +147,7 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
 </template>
 
 <style scoped>
-.block { max-width: 720px; margin-bottom: 18px; }
+.block { max-width: 860px; margin-bottom: 18px; }
 .about-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .update-box {
   margin-top: 10px; padding: 12px; border: 1px solid #2c3540; border-radius: 8px;

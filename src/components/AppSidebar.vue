@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Boxes, CloudDownload, Gamepad2, LayoutGrid, PackageCheck, Settings, Wrench,
+  Boxes, CloudDownload, LayoutGrid, PackageCheck, Settings, Wrench,
 } from 'lucide-vue-next'
 
 defineProps<{ version: string }>()
@@ -10,7 +10,6 @@ const route = useRoute()
 
 const navItems = [
   { name: 'overview', title: '总览', icon: LayoutGrid },
-  { name: 'game-path', title: '游戏路径', icon: Gamepad2 },
   { name: 'framework', title: '框架管理', icon: PackageCheck },
   { name: 'mods-online', title: 'MOD 安装', icon: CloudDownload },
   { name: 'mods-local', title: 'MOD 管理', icon: Boxes },

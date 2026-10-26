@@ -41,7 +41,10 @@ onMounted(() => {
             <AppSidebar :version="version" />
             <main class="app-main">
               <header class="page-header">
-                <h1>{{ t(($route.meta.title as string) || '') }}</h1>
+                <div class="page-header-title">
+                  <h1>{{ t(($route.meta.title as string) || '') }}</h1>
+                  <div id="page-header-title-extra" class="page-header-title-extra"></div>
+                </div>
                 <div id="page-header-actions" class="page-header-actions"></div>
               </header>
               <DownloadStrip />
@@ -88,11 +91,24 @@ onMounted(() => {
   gap: 10px;
   flex: 0 0 auto;
 }
+.page-header-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.page-header-title-extra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .page-header h1 {
   margin: 0;
   font-size: 23px;
   font-weight: 650;
   letter-spacing: -0.01em;
   color: var(--oc2-text-1);
+  white-space: nowrap;
 }
 </style>

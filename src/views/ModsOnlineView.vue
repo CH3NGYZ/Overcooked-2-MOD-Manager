@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
-import { ChevronDownOutline, ChevronUpOutline, DownloadOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
+import { DownloadOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import { locale, t } from '../i18n'
+import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
+import RepositoryDetail from '../components/RepositoryDetail.vue'
 import type { Repository, RepositorySource } from '../types'
 
 const message = useMessage()
@@ -13,16 +15,28 @@ const { load, loading, config, game } = useDashboard()
 
 const refreshing = ref<Record<string, boolean>>({})
 const installing = ref<Record<string, boolean>>({})
-const expanded = ref<Record<string, boolean>>({})
 const search = ref('')
+/** 当前展开详情的仓库（同页展开，不做二级路由）。 */
+const detailId = ref<string | null>(null)
 
 const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 
 onMounted(() => { void load() })
 
-const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
-const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
+const currentRegion = computed(() => config.value?.region)
+const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
+
+/** 仅保留当前下载渠道适用的仓库。 */
+const repositories = computed<Repository[]>(() =>
+  (config.value?.repositories ?? []).filter((repo) => repositoryMatchesRegion(repo, currentRegion.value)),
+)
+const sources = computed<RepositorySource[]>(() =>
+  (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
+)
 const busyCount = computed(() => Object.values(refreshing.value).filter(Boolean).length)
+
+const detailRepo = computed(() => repositories.value.find((repo) => repo.id === detailId.value) ?? null)
+
 
 /** 多语言取值：优先当前语言 → 中文 → 首个 → 原字段。 */
 function pickI18n(map: Record<string, string> | undefined, fallback: string): string {
@@ -185,10 +199,6 @@ async function install(repo: Repository, tag?: string) {
   } catch (reason) { fail(reason) } finally { installing.value[repo.id] = false }
 }
 
-function toggleRelease(repo: Repository) {
-  expanded.value[repo.id] = !expanded.value[repo.id]
-}
-
 function tileColor(repo: Repository) {
   let hash = 0
   for (const ch of repo.id) hash = (hash * 31 + ch.charCodeAt(0)) % 360
@@ -199,6 +209,11 @@ defineExpose({ refreshAll, visibleCount })
 </script>
 
 <template>
+    <!-- 页头 h1 右侧：当前下载渠道 -->
+    <Teleport to="#page-header-title-extra" defer>
+      <n-tag size="small" :bordered="false" type="info">{{ regionLabel }}</n-tag>
+    </Teleport>
+
     <!-- 页头右侧：计数 + 搜索 + 刷新全部 -->
     <Teleport to="#page-header-actions" defer>
       <span class="header-count muted">{{ t('共 {count} 个仓库', { count: visibleCount }) }}</span>
@@ -241,12 +256,13 @@ defineExpose({ refreshAll, visibleCount })
               </template>
 
               <div class="repo-grid">
-                <article v-for="repo in group.repos" :key="repo.id" class="repo-card">
+                <article v-for="repo in group.repos" :key="repo.id" class="repo-card"
+                  :class="{ active: detailId === repo.id }" @click="detailId = repo.id">
                   <div class="card-head">
                     <span class="tile" :style="tileColor(repo)">{{ (repoName(repo)[0] || '?').toUpperCase() }}</span>
                     <span class="card-title">{{ repoName(repo) }}</span>
                     <n-button size="tiny" type="primary" class="card-install" :loading="!!installing[repo.id]"
-                      :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
+                      :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="install(repo)">
                       <DownloadOutline width="13" height="13" />{{ t('安装') }}
                     </n-button>
                   </div>
@@ -264,27 +280,14 @@ defineExpose({ refreshAll, visibleCount })
                     </span>
                     <n-tag size="tiny" :type="statusTag(repo).type" :bordered="false">{{ statusTag(repo).text }}</n-tag>
                     <span class="card-acts">
-                      <n-button size="tiny" quaternary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
+                      <n-button size="tiny" quaternary :loading="!!refreshing[repo.id]" @click.stop="refreshOne(repo)">
                         <RefreshOutline width="13" height="13" />
                       </n-button>
-                      <n-button size="tiny" quaternary @click="toggleRelease(repo)">
-                        <ChevronUpOutline v-if="expanded[repo.id]" width="13" height="13" />
-                        <ChevronDownOutline v-else width="13" height="13" />
-                      </n-button>
+                      <span class="detail-hint">{{ t('详情') }} ›</span>
                     </span>
                   </div>
 
                   <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
-
-                  <div v-if="expanded[repo.id] && repo.download_mode === 'release'" class="releases">
-                    <div v-for="release in repo.cached_releases.slice(0, 5)" :key="release.tag_name" class="release-row">
-                      <span class="mono">{{ release.version || release.tag_name }}</span>
-                      <n-tag v-if="release.prerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
-                      <n-button size="tiny" secondary :disabled="!!game?.kitchen_running || !!installing[repo.id]"
-                        @click="install(repo, release.tag_name)">{{ t('安装此版本') }}</n-button>
-                    </div>
-                    <div v-if="!repo.cached_releases.length" class="muted">{{ t('尚无缓存的 Release，请先刷新。') }}</div>
-                  </div>
                 </article>
               </div>
             </n-collapse-item>
@@ -317,12 +320,13 @@ defineExpose({ refreshAll, visibleCount })
                   </div>
                 </template>
                 <div class="repo-grid">
-                  <article v-for="repo in group.repos" :key="repo.id" class="repo-card">
+                  <article v-for="repo in group.repos" :key="repo.id" class="repo-card"
+                    :class="{ active: detailId === repo.id }" @click="detailId = repo.id">
                     <div class="card-head">
                       <span class="tile" :style="tileColor(repo)">{{ (repoName(repo)[0] || '?').toUpperCase() }}</span>
                       <span class="card-title">{{ repoName(repo) }}</span>
                       <n-button size="tiny" type="primary" class="card-install" :loading="!!installing[repo.id]"
-                        :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
+                        :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="install(repo)">
                         <DownloadOutline width="13" height="13" />{{ t('安装') }}
                       </n-button>
                     </div>
@@ -338,13 +342,10 @@ defineExpose({ refreshAll, visibleCount })
                       </span>
                       <n-tag size="tiny" :type="statusTag(repo).type" :bordered="false">{{ statusTag(repo).text }}</n-tag>
                       <span class="card-acts">
-                        <n-button size="tiny" quaternary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
+                        <n-button size="tiny" quaternary :loading="!!refreshing[repo.id]" @click.stop="refreshOne(repo)">
                           <RefreshOutline width="13" height="13" />
                         </n-button>
-                        <n-button size="tiny" quaternary @click="toggleRelease(repo)">
-                          <ChevronUpOutline v-if="expanded[repo.id]" width="13" height="13" />
-                          <ChevronDownOutline v-else width="13" height="13" />
-                        </n-button>
+                        <span class="detail-hint">{{ t('详情') }} ›</span>
                       </span>
                     </div>
                     <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
@@ -362,6 +363,14 @@ defineExpose({ refreshAll, visibleCount })
       <RefreshOutline width="17" height="17" />
     </n-float-button>
   </n-spin>
+
+  <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
+  <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
+    <n-drawer-content v-if="detailRepo" :native-scrollbar="false" closable>
+      <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="!!game?.kitchen_running"
+        @close="detailId = null" @install="install(detailRepo!)" />
+    </n-drawer-content>
+  </n-drawer>
 </template>
 
 <style scoped>
@@ -408,6 +417,18 @@ defineExpose({ refreshAll, visibleCount })
   background: var(--oc2-row-hover);
   box-shadow: 0 4px 16px rgba(0, 0, 0, .16);
 }
+.repo-card { cursor: pointer; }
+.repo-card.active {
+  border-color: var(--oc2-accent);
+  background: color-mix(in srgb, var(--oc2-accent) 8%, var(--oc2-card));
+}
+.detail-hint {
+  font-size: 11.5px;
+  color: var(--oc2-text-4);
+  white-space: nowrap;
+  transition: color .16s ease;
+}
+.repo-card:hover .detail-hint { color: var(--oc2-accent); }
 .card-head {
   display: flex;
   align-items: center;

@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
   Dashboard, DownloadProgress, GameInfo, ModRecycleEntry, OperationResult, Provider,
-  PublicConfig, ReleaseInfo, RustLog, SettingsPatch, UninstallLocalModResult,
+  PublicConfig, ReleaseInfo, RepositoryReadme, RustLog, SettingsPatch, UninstallLocalModResult,
 } from '../types'
 
 let gameStateRevision = 0
@@ -48,6 +48,12 @@ export const api = {
   backupBepInEx: () => invoke<OperationResult>('backup_bepinex'),
   restoreBepInEx: (backupPath: string) => invoke<OperationResult>('restore_bepinex', { backupPath }),
   deleteBepInExBackup: (backupPath: string) => invoke<OperationResult>('delete_bepinex_backup', { backupPath }),
+  /** 仓库 README（详情面板按需加载；requestId 用于取消）。 */
+  repositoryReadme: (repositoryId: string, requestId: string) =>
+    invoke<RepositoryReadme>('get_repository_readme', { repositoryId, requestId }),
+  cancelRepositoryReadme: (requestId: string) => invoke<void>('cancel_repository_readme', { requestId }),
+  /** 用系统默认浏览器打开外部链接（Release 页 / 源码仓库）。 */
+  openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
   installRepository: (repositoryId: string, tag?: string) => invoke<OperationResult>('install_repository', { repositoryId, tag }),
   launchNormal: () => invoke<OperationResult>('launch_normal'),
   launchNoMod: () => invoke<OperationResult>('launch_no_mod'),

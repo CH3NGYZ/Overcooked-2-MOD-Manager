@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NSpin, NTag } from 'naive-ui'
-import { ChevronDownOutline, ChevronUpOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
+import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
+import { ChevronDownOutline, ChevronUpOutline, DownloadOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import { locale, t } from '../i18n'
@@ -14,8 +14,9 @@ const { load, loading, config, game } = useDashboard()
 const refreshing = ref<Record<string, boolean>>({})
 const installing = ref<Record<string, boolean>>({})
 const expanded = ref<Record<string, boolean>>({})
-const openSources = ref<string[]>([])
-const openGroups = ref<string[]>([])
+const search = ref('')
+
+const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 
 onMounted(() => { void load() })
 
@@ -23,7 +24,7 @@ const repositories = computed<Repository[]>(() => config.value?.repositories ?? 
 const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
 const busyCount = computed(() => Object.values(refreshing.value).filter(Boolean).length)
 
-/** 多语言取值：i18n 表优先当前语言，回退中文，再回退原字段。 */
+/** 多语言取值：优先当前语言 → 中文 → 首个 → 原字段。 */
 function pickI18n(map: Record<string, string> | undefined, fallback: string): string {
   if (!map) return fallback
   return map[locale.value] || map['zh-CN'] || Object.values(map)[0] || fallback
@@ -31,14 +32,41 @@ function pickI18n(map: Record<string, string> | undefined, fallback: string): st
 function repoName(repo: Repository) {
   return pickI18n(repo.name_i18n, repo.name)
 }
+function repoGroup(repo: Repository) {
+  return pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
+}
 
+/* ===== 搜索 ===== */
+const query = computed(() => search.value.trim().toLowerCase())
+function matches(repo: Repository) {
+  if (!query.value) return true
+  const haystack = [
+    repoName(repo),
+    repo.name,
+    repo.note,
+    ...Object.values(repo.note_i18n ?? {}),
+    repoGroup(repo),
+    repo.group ?? '',
+    repo.username,
+    repo.repository,
+    repo.provider,
+  ].join(' ').toLowerCase()
+  return haystack.includes(query.value)
+}
+
+const visibleCount = computed(() => repositories.value.filter(matches).length)
+
+/* ===== 分组树 ===== */
 interface GroupNode { key: string; label: string; repos: Repository[] }
-interface SourceNode { source: RepositorySource; label: string; groups: GroupNode[]; count: number }
+interface SourceNode { source: RepositorySource; label: string; groups: GroupNode[]; count: number; community: boolean }
 
-/** 三级树：仓库源 → 分类（group_i18n）→ 仓库。 */
+const openSources = ref<string[]>([])
+const openGroups = ref<string[]>([])
+
 const tree = computed<SourceNode[]>(() => {
   const bySource = new Map<string, Repository[]>()
   for (const repo of repositories.value) {
+    if (!matches(repo)) continue
     const key = repo.source_id ?? '__none__'
     const list = bySource.get(key)
     if (list) list.push(repo)
@@ -46,44 +74,75 @@ const tree = computed<SourceNode[]>(() => {
   }
 
   const nodes: SourceNode[] = []
-  const pushNode = (source: RepositorySource, repos: Repository[]) => {
+  const push = (source: RepositorySource, repos: Repository[]) => {
     const buckets = new Map<string, Repository[]>()
     for (const repo of repos) {
-      const label = pickI18n(repo.group_i18n, repo.group || '')
+      const label = repoGroup(repo)
       const list = buckets.get(label)
       if (list) list.push(repo)
       else buckets.set(label, [repo])
     }
     const groups: GroupNode[] = [...buckets.entries()]
-      .sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
-      .map(([label, list]) => ({ key: `${source.id}::${label || '__ungrouped__'}`, label, repos: list }))
-    nodes.push({ source, label: pickI18n(source.nickname_i18n, source.nickname), groups, count: repos.length })
+      .sort(([a], [b]) => (a === t('未分组') ? 1 : b === t('未分组') ? -1 : a.localeCompare(b)))
+      .map(([label, list]) => ({ key: `${source.id}::${label}`, label, repos: list }))
+    nodes.push({
+      source,
+      label: pickI18n(source.nickname_i18n, source.nickname),
+      groups,
+      count: repos.length,
+      community: COMMUNITY_IDS.has(source.id),
+    })
   }
 
+  // 按 config.repository_sources 的持久化顺序输出（读取顺序 = 展示顺序）
   for (const source of sources.value) {
     const repos = bySource.get(source.id)
     if (!repos?.length) continue
-    pushNode(source, repos)
+    push(source, repos)
     bySource.delete(source.id)
   }
-  // 未归属已声明源的仓库收进虚拟源，避免被静默隐藏。
   const orphan = bySource.get('__none__')
-  if (orphan?.length) {
-    pushNode({ id: '__none__', nickname: t('未归类仓库'), url: '', builtin: false }, orphan)
-  }
-  return nodes
+  if (orphan?.length) push({ id: '__none__', nickname: t('未归类仓库'), url: '', builtin: false }, orphan)
+
+  // 社区源固定放最下方（内部仍保持原相对顺序）
+  const normal = nodes.filter((node) => !node.community)
+  const community = nodes.filter((node) => node.community)
+  return [...normal, ...community]
 })
 
-function groupLabel(node: GroupNode) {
-  return node.label || t('未分组')
-}
+const hasCommunity = computed(() => tree.value.some((node) => node.community))
+const normalTree = computed(() => tree.value.filter((node) => !node.community))
+const communityTree = computed(() => tree.value.filter((node) => node.community))
 
+// 默认全部展开（源与分类），搜索时也保持展开以便直接看到结果。
+const allSourceKeys = computed(() => tree.value.map((node) => node.source.id))
+const allGroupKeys = computed(() => tree.value.flatMap((node) => node.groups.map((group) => group.key)))
+const sourcesExpanded = computed(() => (query.value ? allSourceKeys.value : (openSources.value.length ? openSources.value : allSourceKeys.value)))
+const groupsExpanded = computed(() => (query.value ? allGroupKeys.value : (openGroups.value.length ? openGroups.value : allGroupKeys.value)))
+
+/* ===== 动作 ===== */
 function fail(reason: unknown) {
   message.error(reason instanceof Error ? reason.message : String(reason))
 }
 
 function latest(repo: Repository) {
   return repo.cached_releases[0]
+}
+
+/** 下载量：优先最新 Release 首个匹配资产的 download_count。 */
+function downloadCount(repo: Repository) {
+  const release = latest(repo)
+  if (!release) return null
+  const total = release.assets.reduce((sum, asset) => sum + (asset.download_count ?? 0), 0)
+  return total || null
+}
+
+function statusTag(repo: Repository) {
+  if (repo.download_mode === 'repository_file') return { type: 'default' as const, text: t('仓库文件') }
+  if (!repo.enabled) return { type: 'default' as const, text: t('未启用') }
+  if (repo.last_error) return { type: 'error' as const, text: t('刷新失败') }
+  if (latest(repo)) return { type: 'success' as const, text: t('已就绪') }
+  return { type: 'warning' as const, text: t('未刷新') }
 }
 
 async function refreshOne(repo: Repository) {
@@ -103,6 +162,7 @@ async function refreshSource(node: SourceNode) {
   }
 }
 
+/** 顶栏「刷新所有仓库」：按展示顺序逐仓刷新（互不阻塞 UI）。 */
 async function refreshAll() {
   for (const node of tree.value) await refreshSource(node)
 }
@@ -129,101 +189,173 @@ function toggleRelease(repo: Repository) {
   expanded.value[repo.id] = !expanded.value[repo.id]
 }
 
-function statusTag(repo: Repository) {
-  if (repo.download_mode === 'repository_file') return { type: 'default' as const, text: t('仓库文件') }
-  if (!repo.enabled) return { type: 'default' as const, text: t('未启用') }
-  if (repo.last_error) return { type: 'error' as const, text: t('刷新失败') }
-  return null
+function tileColor(repo: Repository) {
+  let hash = 0
+  for (const ch of repo.id) hash = (hash * 31 + ch.charCodeAt(0)) % 360
+  return { background: `hsl(${hash} 32% 28%)` }
 }
+
+defineExpose({ refreshAll, visibleCount })
 </script>
 
 <template>
+    <!-- 页头右侧：计数 + 搜索 + 刷新全部 -->
+    <Teleport to="#page-header-actions" defer>
+      <span class="header-count muted">{{ t('共 {count} 个仓库', { count: visibleCount }) }}</span>
+      <n-input v-model:value="search" clearable size="small" class="header-search"
+        :placeholder="t('搜索作者 / MOD 名称 / 简介 / 分组')">
+        <template #prefix><SearchOutline width="14" height="14" /></template>
+      </n-input>
+      <n-button size="small" secondary :loading="busyCount > 0" :disabled="busyCount > 0" @click="refreshAll">
+        <RefreshOutline width="14" height="14" />{{ t('刷新全部仓库源') }}
+      </n-button>
+    </Teleport>
+
   <n-spin :show="loading">
-    <div class="toolbar">
-      <span class="muted">{{ t('共 {count} 个仓库', { count: repositories.length }) }}</span>
-    </div>
+    <n-empty v-if="!loading && !visibleCount" :description="t('没有匹配的仓库')" class="empty" />
 
-    <n-empty v-if="!loading && !repositories.length" :description="t('暂无仓库配置')" class="empty" />
+    <template v-else>
+      <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
+        @update:expanded-names="(names: string[]) => (openSources = names)">
+        <n-collapse-item v-for="node in normalTree" :key="node.source.id" :name="node.source.id">
+          <template #header>
+            <div class="source-head">
+              <b>{{ node.label }}</b>
+              <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
+              <n-button size="tiny" quaternary
+                :loading="node.groups.some((g) => g.repos.some((r) => refreshing[r.id]))"
+                :disabled="busyCount > 0" @click.stop="refreshSource(node)">
+                <RefreshOutline width="13" height="13" />
+              </n-button>
+            </div>
+          </template>
 
-    <n-collapse v-else v-model:expanded-names="openSources" class="source-collapse">
-      <n-collapse-item v-for="node in tree" :key="node.source.id" :name="node.source.id">
-        <template #header>
-          <div class="source-head">
-            <b>{{ node.label }}</b>
-            <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
-            <n-button size="tiny" quaternary
-              :loading="node.groups.some((g) => g.repos.some((r) => refreshing[r.id]))"
-              :disabled="busyCount > 0" @click.stop="refreshSource(node)">
-              <RefreshOutline width="13" height="13" />
-            </n-button>
-          </div>
-        </template>
+          <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
+            @update:expanded-names="(names: string[]) => (openGroups = names)">
+            <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
+              <template #header>
+                <div class="group-head">
+                  <span>{{ group.label }}</span>
+                  <n-tag size="tiny" :bordered="false">{{ group.repos.length }}</n-tag>
+                </div>
+              </template>
 
-        <n-collapse v-model:expanded-names="openGroups" class="group-collapse">
-          <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
+              <div class="repo-grid">
+                <article v-for="repo in group.repos" :key="repo.id" class="repo-card">
+                  <div class="card-head">
+                    <span class="tile" :style="tileColor(repo)">{{ (repoName(repo)[0] || '?').toUpperCase() }}</span>
+                    <span class="card-title">{{ repoName(repo) }}</span>
+                    <n-button size="tiny" type="primary" class="card-install" :loading="!!installing[repo.id]"
+                      :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
+                      <DownloadOutline width="13" height="13" />{{ t('安装') }}
+                    </n-button>
+                  </div>
+
+                  <p class="card-desc">{{ repo.note || repo.repository }}</p>
+
+                  <div class="card-foot">
+                    <span class="stat">
+                      <span class="muted">{{ t('最新版本') }}</span>
+                      <b class="mono">{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b>
+                    </span>
+                    <span class="stat">
+                      <span class="muted">{{ t('下载量') }}</span>
+                      <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                    </span>
+                    <n-tag size="tiny" :type="statusTag(repo).type" :bordered="false">{{ statusTag(repo).text }}</n-tag>
+                    <span class="card-acts">
+                      <n-button size="tiny" quaternary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
+                        <RefreshOutline width="13" height="13" />
+                      </n-button>
+                      <n-button size="tiny" quaternary @click="toggleRelease(repo)">
+                        <ChevronUpOutline v-if="expanded[repo.id]" width="13" height="13" />
+                        <ChevronDownOutline v-else width="13" height="13" />
+                      </n-button>
+                    </span>
+                  </div>
+
+                  <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
+
+                  <div v-if="expanded[repo.id] && repo.download_mode === 'release'" class="releases">
+                    <div v-for="release in repo.cached_releases.slice(0, 5)" :key="release.tag_name" class="release-row">
+                      <span class="mono">{{ release.version || release.tag_name }}</span>
+                      <n-tag v-if="release.prerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
+                      <n-button size="tiny" secondary :disabled="!!game?.kitchen_running || !!installing[repo.id]"
+                        @click="install(repo, release.tag_name)">{{ t('安装此版本') }}</n-button>
+                    </div>
+                    <div v-if="!repo.cached_releases.length" class="muted">{{ t('尚无缓存的 Release，请先刷新。') }}</div>
+                  </div>
+                </article>
+              </div>
+            </n-collapse-item>
+          </n-collapse>
+        </n-collapse-item>
+      </n-collapse>
+
+      <!-- 社区仓库：与上方仓库源用分割线隔开，固定在最下方 -->
+      <template v-if="hasCommunity">
+        <div class="community-divider">
+          <span>{{ t('社区仓库') }}</span>
+        </div>
+        <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
+          @update:expanded-names="(names: string[]) => (openSources = names)">
+          <n-collapse-item v-for="node in communityTree" :key="node.source.id" :name="node.source.id">
             <template #header>
-              <div class="group-head">
-                <span>{{ groupLabel(group) }}</span>
-                <n-tag size="tiny" :bordered="false">{{ group.repos.length }}</n-tag>
+              <div class="source-head">
+                <b>{{ node.label }}</b>
+                <n-tag size="tiny" type="warning" :bordered="false">{{ t('来源未知') }}</n-tag>
+                <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
               </div>
             </template>
-
-            <div v-for="repo in group.repos" :key="repo.id" class="repo">
-              <div class="repo-main">
-                <div class="repo-info">
-                  <div class="repo-title">
-                    <b>{{ repoName(repo) }}</b>
-                    <n-tag v-if="statusTag(repo)" size="tiny" :type="statusTag(repo)!.type" :bordered="false">
-                      {{ statusTag(repo)!.text }}
-                    </n-tag>
+            <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
+              @update:expanded-names="(names: string[]) => (openGroups = names)">
+              <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
+                <template #header>
+                  <div class="group-head">
+                    <span>{{ group.label }}</span>
+                    <n-tag size="tiny" :bordered="false">{{ group.repos.length }}</n-tag>
                   </div>
-                  <div class="muted repo-note">{{ repo.note || repo.repository }}</div>
+                </template>
+                <div class="repo-grid">
+                  <article v-for="repo in group.repos" :key="repo.id" class="repo-card">
+                    <div class="card-head">
+                      <span class="tile" :style="tileColor(repo)">{{ (repoName(repo)[0] || '?').toUpperCase() }}</span>
+                      <span class="card-title">{{ repoName(repo) }}</span>
+                      <n-button size="tiny" type="primary" class="card-install" :loading="!!installing[repo.id]"
+                        :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
+                        <DownloadOutline width="13" height="13" />{{ t('安装') }}
+                      </n-button>
+                    </div>
+                    <p class="card-desc">{{ repo.note || repo.repository }}</p>
+                    <div class="card-foot">
+                      <span class="stat">
+                        <span class="muted">{{ t('最新版本') }}</span>
+                        <b class="mono">{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</b>
+                      </span>
+                      <span class="stat">
+                        <span class="muted">{{ t('下载量') }}</span>
+                        <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                      </span>
+                      <n-tag size="tiny" :type="statusTag(repo).type" :bordered="false">{{ statusTag(repo).text }}</n-tag>
+                      <span class="card-acts">
+                        <n-button size="tiny" quaternary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
+                          <RefreshOutline width="13" height="13" />
+                        </n-button>
+                        <n-button size="tiny" quaternary @click="toggleRelease(repo)">
+                          <ChevronUpOutline v-if="expanded[repo.id]" width="13" height="13" />
+                          <ChevronDownOutline v-else width="13" height="13" />
+                        </n-button>
+                      </span>
+                    </div>
+                    <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
+                  </article>
                 </div>
-
-                <div class="repo-meta">
-                  <template v-if="repo.download_mode === 'release'">
-                    <span class="version mono">{{ latest(repo)?.version || latest(repo)?.tag_name || '—' }}</span>
-                    <span class="muted">
-                      {{ repo.cached_releases.length
-                        ? t('{count} 个版本', { count: repo.cached_releases.length })
-                        : t('未刷新') }}
-                    </span>
-                  </template>
-                  <span v-else class="muted mono">{{ repo.branch }}/{{ repo.file_path }}</span>
-                </div>
-
-                <div class="repo-acts">
-                  <n-button size="small" secondary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
-                    <RefreshOutline width="14" height="14" />{{ t('刷新') }}
-                  </n-button>
-                  <n-button size="small" type="primary" :loading="!!installing[repo.id]"
-                    :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
-                    <DownloadOutline width="14" height="14" />{{ t('安装') }}
-                  </n-button>
-                  <n-button size="small" quaternary @click="toggleRelease(repo)">
-                    <ChevronUpOutline v-if="expanded[repo.id]" width="14" height="14" />
-                    <ChevronDownOutline v-else width="14" height="14" />{{ t('版本') }}
-                  </n-button>
-                </div>
-              </div>
-
-              <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
-
-              <div v-if="expanded[repo.id] && repo.download_mode === 'release'" class="releases">
-                <div v-for="release in repo.cached_releases.slice(0, 5)" :key="release.tag_name" class="release-row">
-                  <span class="mono">{{ release.version || release.tag_name }}</span>
-                  <span class="muted">{{ release.published_at?.slice(0, 10) }}</span>
-                  <n-tag v-if="release.prerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
-                  <n-button size="tiny" secondary :disabled="!!game?.kitchen_running || !!installing[repo.id]"
-                    @click="install(repo, release.tag_name)">{{ t('安装此版本') }}</n-button>
-                </div>
-                <div v-if="!repo.cached_releases.length" class="muted">{{ t('尚无缓存的 Release，请先刷新。') }}</div>
-              </div>
-            </div>
+              </n-collapse-item>
+            </n-collapse>
           </n-collapse-item>
         </n-collapse>
-      </n-collapse-item>
-    </n-collapse>
+      </template>
+    </template>
 
     <n-float-button position="fixed" bottom="28" right="32" :disabled="busyCount > 0"
       :tooltip="t('全部刷新（逐仓独立，互不阻塞）')" @click="refreshAll">
@@ -233,18 +365,18 @@ function statusTag(repo: Repository) {
 </template>
 
 <style scoped>
-.toolbar {
+.empty { margin: 60px 0; }
+.source-collapse { max-width: 1280px; }
+
+/* 三级固定缩进：源 0、分类 14px、卡片 28px */
+.source-head {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 9px;
+  min-width: 0;
 }
-.empty { margin: 60px 0; }
-.source-collapse { max-width: 1080px; }
-.source-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .source-head b { font-size: 14px; color: var(--oc2-text-1); }
-.group-collapse { margin-top: -4px; }
+.group-collapse { margin: -4px 0 0 14px; }
 .group-head {
   display: flex;
   align-items: center;
@@ -253,22 +385,105 @@ function statusTag(repo: Repository) {
   font-weight: 600;
   color: var(--oc2-accent);
 }
-.repo {
-  padding: 10px 0;
-  border-bottom: 1px dashed var(--oc2-row-line);
+.repo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 12px;
+  margin: 2px 0 6px 28px;
 }
-.repo:last-child { border-bottom: 0; }
-.repo-main { display: flex; align-items: center; gap: 18px; }
-.repo-info { flex: 1; min-width: 0; }
-.repo-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.repo-title b { font-size: 13.5px; color: var(--oc2-text-1); }
-.repo-note { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repo-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
-.version { color: var(--oc2-accent); font-size: 13px; }
-.repo-acts { display: flex; gap: 8px; flex: 0 0 auto; }
-.err { margin-top: 8px; color: #ee8585; }
-.releases { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--oc2-row-line); }
-.release-row { display: flex; align-items: center; gap: 14px; padding: 5px 0; }
-.release-row .mono { min-width: 90px; }
+
+/* 卡片：圆角边缘 + 内部分区（标题行 / 描述 / 指标行） */
+.repo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 12px;
+  background: var(--oc2-card);
+  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.repo-card:hover {
+  border-color: var(--oc2-accent);
+  background: var(--oc2-row-hover);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .16);
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.tile {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--oc2-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-install { flex: 0 0 auto; }
+.card-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--oc2-text-3);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 37px;
+}
+.card-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--oc2-row-line);
+  flex-wrap: wrap;
+}
+.stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.stat b { font-size: 12.5px; color: var(--oc2-text-1); }
+.card-acts { display: flex; gap: 2px; margin-left: auto; }
+.err { color: #ee8585; }
+.releases {
+  padding-top: 8px;
+  border-top: 1px dashed var(--oc2-row-line);
+  display: grid;
+  gap: 6px;
+}
+.release-row { display: flex; align-items: center; gap: 10px; }
 .release-row .n-button { margin-left: auto; }
+
+.community-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 12px;
+  max-width: 1280px;
+  color: var(--oc2-text-3);
+  font-size: 12px;
+}
+.community-divider::before,
+.community-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--oc2-row-line);
+}
+.header-count { white-space: nowrap; }
+.header-search { width: 240px; }
 </style>

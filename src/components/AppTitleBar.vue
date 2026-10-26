@@ -15,7 +15,7 @@ const props = defineProps<{ version: string }>()
 
 const appWindow = getCurrentWindow()
 const maximized = ref(false)
-const { zoomPercent, zoomIn, zoomOut, resetZoom, canZoomIn, canZoomOut } = useUiZoom()
+const { zoom, zoomPercent, setZoom } = useUiZoom()
 
 void appWindow.isMaximized().then((value) => { maximized.value = value }).catch(() => undefined)
 let unlistenResize: (() => void) | null = null
@@ -43,15 +43,10 @@ async function close() { await appWindow.close() }
 
 // 缩放
 const zoomMenu = computed(() => [
-  { label: '100%', key: 100 }, { label: '125%', key: 125 }, { label: '150%', key: 150 },
-  { label: '175%', key: 175 }, { label: '200%', key: 200 },
+  { label: '100%', key: 1 }, { label: '125%', key: 1.25 }, { label: '150%', key: 1.5 },
+  { label: '175%', key: 1.75 }, { label: '200%', key: 2 },
 ])
-function chooseZoom(key: number) {
-  const target = Math.round((key / 100) * 10) / 10
-  while (zoomPercent.value < target * 100 && canZoomIn.value) zoomIn()
-  while (zoomPercent.value > target * 100 && canZoomOut.value) zoomOut()
-  if (zoomPercent.value !== target * 100) resetZoom()
-}
+function chooseZoom(key: number) { void setZoom(Number(key)) }
 
 defineExpose({ onUnmountedCleanup })
 </script>
@@ -70,7 +65,7 @@ defineExpose({ onUnmountedCleanup })
     <div class="spacer" data-tauri-drag-region></div>
 
     <!-- 界面缩放 -->
-    <n-popselect :options="zoomMenu" :value="zoomPercent" trigger="click" @update:value="chooseZoom">
+    <n-popselect :options="zoomMenu" :value="zoom" trigger="click" @update:value="chooseZoom">
       <button class="pill" type="button" :title="t('界面缩放')">
         <ContrastOutline width="15" height="15" />
         <span>{{ zoomPercent }}%</span>

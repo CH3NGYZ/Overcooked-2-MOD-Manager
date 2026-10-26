@@ -42,6 +42,7 @@ onMounted(() => {
             <main class="app-main">
               <header class="page-header">
                 <h1>{{ t(($route.meta.title as string) || '') }}</h1>
+                <div id="page-header-actions" class="page-header-actions"></div>
               </header>
               <DownloadStrip />
               <div class="page-scroll">
@@ -75,7 +76,17 @@ onMounted(() => {
 }
 .page-header {
   flex: 0 0 auto;
-  padding: 18px 28px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 28px 12px;
+}
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 .page-header h1 {
   margin: 0;

@@ -59,6 +59,8 @@ const sourceUrl = computed(() => {
     : `https://github.com/${repo.username}/${repo.repository}`
 })
 const html = computed(() => renderReadme(readme.value?.content ?? ''))
+/** 备注同样按 Markdown 渲染（note_i18n 已按当前语言取值）。 */
+const noteHtml = computed(() => renderReadme(note.value))
 
 async function load() {
   const repo = props.repo
@@ -152,7 +154,7 @@ async function openUrl(url: string) {
     <hr class="divider" />
 
     <!-- 来自仓库源的备注 -->
-    <section v-if="note" class="note">{{ note }}</section>
+    <section v-if="note" class="note markdown-body" v-html="noteHtml"></section>
     <section v-else class="note muted">{{ t('该仓库没有备注') }}</section>
 
     <hr class="divider" />
@@ -236,11 +238,9 @@ async function openUrl(url: string) {
   border: 0;
   border-top: 1px solid var(--oc2-row-line);
 }
+/* 备注区与 README 用同一套 Markdown 样式，这里只补外层间距。 */
 .note {
-  font-size: 12.5px;
-  line-height: 1.65;
-  color: var(--oc2-text-2);
-  white-space: pre-wrap;
+  margin: 0;
 }
 
 /* README 骨架动画 */

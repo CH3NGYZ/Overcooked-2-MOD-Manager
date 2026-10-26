@@ -49,6 +49,22 @@ function repoName(repo: Repository) {
 function repoGroup(repo: Repository) {
   return pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
 }
+/**
+ * 卡片简介：note_i18n 取当前语言，去掉 Markdown 标记只留纯文本首行
+ * （卡片是摘要，Markdown 渲染在详情抽屉里做）。
+ */
+function repoNote(repo: Repository) {
+  const raw = pickI18n(repo.note_i18n, repo.note || '')
+  const plain = raw
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_`>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return plain
+}
 
 /* ===== 搜索 ===== */
 const query = computed(() => search.value.trim().toLowerCase())
@@ -267,7 +283,7 @@ defineExpose({ refreshAll, visibleCount })
                     </n-button>
                   </div>
 
-                  <p class="card-desc">{{ repo.note || repo.repository }}</p>
+                  <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
 
                   <div class="card-foot">
                     <span class="stat">
@@ -330,7 +346,7 @@ defineExpose({ refreshAll, visibleCount })
                         <DownloadOutline width="13" height="13" />{{ t('安装') }}
                       </n-button>
                     </div>
-                    <p class="card-desc">{{ repo.note || repo.repository }}</p>
+                    <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
                     <div class="card-foot">
                       <span class="stat">
                         <span class="muted">{{ t('最新版本') }}</span>

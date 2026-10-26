@@ -10,23 +10,17 @@ import type { BepInExInstallResult, OperationResult, Provider } from '../types'
 
 const message = useMessage()
 const dialog = useDialog()
-const { load, loading, game, config, frameworkOk } = useDashboard()
+const { load, ensureLoaded, loading, game, config, frameworkOk } = useDashboard()
 
 const working = ref(false)
 const installProvider = ref<Provider>('gitee')
 const installing = ref(false)
 
-onMounted(() => { void load() })
+// 进页面复用已有数据（避免重复扫描导致整页遮罩）；操作后仍用 load() 取最新状态
+onMounted(() => { void ensureLoaded() })
 
+// 开关状态直接由 winhttp 状态决定；「框架已启用/已禁用」文案只在切换后的提示里用
 const winhttpEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
-const winhttpLabel = computed(() => {
-  switch (game.value?.winhttp_state) {
-    case 'modenabled': return '框架已启用'
-    case 'moddisabled': return '框架已禁用'
-    case 'missing': return '未找到加载器'
-    default: return t('状态冲突')
-  }
-})
 const backups = computed(() => game.value?.bepinex.backups ?? [])
 const isWindows = computed(() => config.value?.platform === 'windows')
 
@@ -111,17 +105,24 @@ async function openBackups() {
 
 <template>
   <n-spin :show="loading">
-    <n-card :title="t('BepInEx 框架')" class="block">
+    <n-card class="block">
+      <!-- 标题行：开关 + 「BepInEx 框架」+ 版本；未安装时不显示开关 -->
+      <template #header>
+        <div class="card-head">
+          <n-switch v-if="game?.bepinex.installed" class="framework-switch" :value="winhttpEnabled"
+            :title="t('框架启用（游戏加载 MOD）')" :disabled="working" @update:value="toggleFramework" />
+          <span class="card-head-title">{{ t('BepInEx 框架') }}</span>
+          <span class="card-head-version muted">版本：{{ game?.bepinex.version || '—' }}</span>
+        </div>
+      </template>
       <template #header-extra>
         <n-tag :type="frameworkOk ? 'success' : 'warning'" size="small">
           {{ frameworkOk ? (game?.bepinex.complete ? '已安装' : t('不完整')) : t('未安装') }}
         </n-tag>
       </template>
 
-      <div class="status-row">
-        <span class="muted">版本：{{ game?.bepinex.version || '—' }}</span>
-        <span class="muted">加载器：{{ winhttpLabel }}</span>
-        <span v-if="!isWindows" class="muted">运行形态：{{ config?.game.runtime === 'native' ? '原生' : 'Wine' }}</span>
+      <div v-if="!isWindows" class="status-row">
+        <span class="muted">运行形态：{{ config?.game.runtime === 'native' ? '原生' : 'Wine' }}</span>
       </div>
 
       <div class="field">
@@ -141,18 +142,16 @@ async function openBackups() {
           <SaveOutline width="16" height="16" />{{ t('创建备份') }}</n-button>
         <n-button secondary type="warning" :disabled="working || !game?.bepinex.installed" @click="uninstall">
           <WarningOutline width="16" height="16" />{{ t('卸载框架') }}</n-button>
-        <n-button quaternary :disabled="working" @click="openBackups">
-          <FolderOpenOutline width="16" height="16" />{{ t('打开备份目录') }}</n-button>
-      </div>
-
-      <div class="switch-row">
-        <span>{{ t('框架启用（游戏加载 MOD）') }}</span>
-        <n-switch :value="winhttpEnabled" :disabled="working || !game?.bepinex.installed"
-          @update:value="toggleFramework" />
       </div>
     </n-card>
 
     <n-card :title="t('框架备份')" class="block">
+      <!-- 打开备份目录：跟随「框架备份」标题居右 -->
+      <template #header-extra>
+        <n-button size="small" quaternary :disabled="working" @click="openBackups">
+          <FolderOpenOutline width="15" height="15" />{{ t('打开备份目录') }}</n-button>
+      </template>
+
       <div v-if="!backups.length" class="muted">{{ t('暂无备份。卸载或重装前建议先创建备份。') }}</div>
       <div v-for="backup in backups" :key="backup" class="backup-row">
         <span class="mono backup-path">{{ backup }}</span>
@@ -171,11 +170,26 @@ async function openBackups() {
 .block { width: 100%; margin-bottom: 18px; }
 .status-row { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 14px; }
 .field { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-.switch-row {
-  display: flex; align-items: center; justify-content: space-between;
-  max-width: 420px; padding-top: 12px; border-top: 1px solid var(--oc2-divider);
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* 页头开关已移到卡片标题行，这里是标题行的布局 */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
+.card-head-title {
+  font-size: inherit;
+  font-weight: inherit;
+  color: var(--oc2-text-1);
+}
+/* 版本号紧跟标题，字号小一号、颜色弱化 */
+.card-head-version {
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.framework-switch { flex: 0 0 auto; }
 .backup-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 8px 0; border-bottom: 1px dashed var(--oc2-rail-line);

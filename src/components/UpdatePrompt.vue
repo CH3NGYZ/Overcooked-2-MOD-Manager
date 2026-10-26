@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NModal } from 'naive-ui'
 import { api, watchAppUpdatePhase } from '../services/tauri'
+import { renderMermaidBlocks, renderReadme } from '../markdown'
 import type { AppUpdateInfo } from '../types'
 
 const props = defineProps<{ show: boolean; update: AppUpdateInfo | null }>()
@@ -19,7 +20,19 @@ void watchAppUpdatePhase((event) => {
 }).then((un) => { unlisten = un })
 onUnmounted(() => { unlisten?.() })
 
-const bodyText = computed(() => props.update?.body?.trim() || '本次更新没有提供说明。')
+const bodyText = computed(() => props.update?.body?.trim() || t('本次更新没有提供说明。'))
+/** 更新日志按 Markdown 渲染（与 note/README 同一函数）。 */
+const bodyHtml = computed(() => renderReadme(props.update?.body?.trim() || ''))
+/** 更新日志里也可能有 mermaid 图，渲染后补一次 SVG 转换。 */
+const bodyElement = ref<HTMLElement | null>(null)
+watch(
+  [bodyHtml, () => props.show],
+  async () => {
+    await nextTick()
+    if (props.show) void renderMermaidBlocks(bodyElement.value)
+  },
+  { flush: 'post' },
+)
 
 function close() {
   emit('update:show', false)
@@ -58,7 +71,8 @@ async function install() {
         <span v-if="update.provider">（{{ update.provider === 'gitee' ? 'Gitee 渠道' : 'GitHub 渠道' }}）</span>
       </div>
       <div class="body-label muted">{{ t('更新内容：') }}</div>
-      <div class="body">{{ bodyText }}</div>
+      <div v-if="bodyHtml" ref="bodyElement" class="body markdown-body" v-html="bodyHtml"></div>
+      <div v-else class="body">{{ bodyText }}</div>
       <div v-if="phaseText" class="phase">{{ phaseText }}</div>
       <div class="actions">
         <n-button quaternary :disabled="installing" @click="close">{{ t('取消') }}</n-button>
@@ -85,7 +99,7 @@ async function install() {
 .version-line { margin-bottom: 12px; }
 .body-label { margin-bottom: 6px; }
 .body {
-  max-height: 180px;
+  max-height: 220px;
   overflow: auto;
   white-space: pre-wrap;
   padding: 10px 12px;
@@ -96,6 +110,37 @@ async function install() {
   line-height: 1.6;
   color: var(--oc2-text-2);
 }
+/* Markdown 渲染时交给块级排版，不要再叠加 pre-wrap。 */
+.body.markdown-body {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.body.markdown-body :deep(h1),
+.body.markdown-body :deep(h2),
+.body.markdown-body :deep(h3) {
+  margin: 12px 0 6px;
+  font-size: 14px;
+  color: var(--oc2-text-1);
+}
+.body.markdown-body :deep(p) { margin: 0 0 8px; }
+.body.markdown-body :deep(ul),
+.body.markdown-body :deep(ol) { margin: 0 0 8px; padding-left: 20px; }
+.body.markdown-body :deep(code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--oc2-row-line);
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.body.markdown-body :deep(pre) {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--oc2-card);
+  overflow-x: auto;
+}
+.body.markdown-body :deep(pre code) { padding: 0; background: none; }
+.body.markdown-body :deep(a) { color: var(--oc2-accent); }
 .phase {
   margin-top: 10px;
   color: var(--oc2-accent);

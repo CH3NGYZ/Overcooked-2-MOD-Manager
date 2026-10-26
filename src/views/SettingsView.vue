@@ -2,7 +2,7 @@
 import { t } from '../i18n'
 import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NDrawer, NDrawerContent, NSwitch, NTag } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NInput, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
@@ -14,7 +14,7 @@ import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, PublicConfig } from '../types'
 
 const message = useMessage()
-const { load, game } = useDashboard()
+const { load, ensureLoaded, game } = useDashboard()
 
 const version = ref('')
 const checking = ref(false)
@@ -23,6 +23,10 @@ const savingPath = ref(false)
 
 const pathDrawer = ref(false)
 const updateDrawer = ref(false)
+const tokenDrawer = ref(false)
+const githubToken = ref('')
+const giteeToken = ref('')
+const savingTokens = ref(false)
 const updateResult = ref<AppUpdateCheckResult | null>(null)
 const updateInfo = ref<NonNullable<AppUpdateCheckResult['update']> | null>(null)
 const showUpdate = ref(false)
@@ -30,7 +34,7 @@ const showUpdate = ref(false)
 onMounted(async () => {
   version.value = await getVersion().catch(() => '')
   config.value = await api.config().catch(() => null)
-  await load()
+  await ensureLoaded()
 })
 
 function fail(reason: unknown) {
@@ -86,6 +90,29 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
     message.success(label)
   } catch (reason) { fail(reason) }
 }
+
+/* ===== API 凭据 ===== */
+/** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
+async function saveTokens() {
+  savingTokens.value = true
+  try {
+    config.value = await api.saveTokens({ github_token: githubToken.value, gitee_token: giteeToken.value })
+    githubToken.value = ''
+    giteeToken.value = ''
+    message.success(t('已保存'))
+  } catch (reason) { fail(reason) } finally { savingTokens.value = false }
+}
+
+/** 清除已保存的 Token。 */
+async function clearTokens() {
+  savingTokens.value = true
+  try {
+    config.value = await api.saveTokens({ github_token: '', gitee_token: '', clear: true })
+    githubToken.value = ''
+    giteeToken.value = ''
+    message.success(t('已清除'))
+  } catch (reason) { fail(reason) } finally { savingTokens.value = false }
+}
 </script>
 
 <template>
@@ -131,6 +158,21 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
     </SettingsRow>
   </SettingsGroup>
 
+  <!-- API 凭据：配置个人 Token 后，Release/API 请求直接带凭据，不再消耗匿名额度 -->
+  <SettingsGroup :title="t('API 凭据')">
+    <SettingsRow :title="t('访问令牌')" :description="t('配置后 API 请求直接使用 Token，避免匿名限流')"
+      clickable @click="tokenDrawer = true">
+      <template #right>
+        <n-tag size="small" :bordered="false" :type="config?.github_token_set ? 'success' : 'default'">
+          GitHub{{ config?.github_token_set ? ' ✓' : '' }}
+        </n-tag>
+        <n-tag size="small" :bordered="false" :type="config?.gitee_token_set ? 'success' : 'default'">
+          Gitee{{ config?.gitee_token_set ? ' ✓' : '' }}
+        </n-tag>
+      </template>
+    </SettingsRow>
+  </SettingsGroup>
+
   <!-- 关于 -->
   <SettingsGroup :title="t('关于')">
     <SettingsRow :icon="InformationCircleOutline" :title="t('OC2 MOD 管理器')" :description="t('关于') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
@@ -169,6 +211,41 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
     </n-drawer-content>
   </n-drawer>
 
+  <!-- 二级：访问令牌 -->
+  <n-drawer v-model:show="tokenDrawer" :width="460" placement="right">
+    <n-drawer-content :title="t('访问令牌')" closable>
+      <div class="drawer-pref">
+        <div>
+          <b>GitHub Token</b>
+          <div class="muted">{{ t('使用 Authorization: Bearer 请求头') }}</div>
+        </div>
+        <n-tag v-if="config?.github_token_set" size="tiny" :bordered="false" type="success">{{ t('已配置') }}</n-tag>
+      </div>
+      <n-input v-model:value="githubToken" type="password" show-password-on="click"
+        :placeholder="config?.github_token_set ? t('已保存，留空则不修改') : 'ghp_…'" />
+
+      <div class="drawer-pref token-gap">
+        <div>
+          <b>Gitee Token</b>
+          <div class="muted">{{ t('使用 access_token 请求头') }}</div>
+        </div>
+        <n-tag v-if="config?.gitee_token_set" size="tiny" :bordered="false" type="success">{{ t('已配置') }}</n-tag>
+      </div>
+      <n-input v-model:value="giteeToken" type="password" show-password-on="click"
+        :placeholder="config?.gitee_token_set ? t('已保存，留空则不修改') : t('粘贴 Gitee 私人令牌')" />
+
+      <div class="token-actions">
+        <n-button type="primary" :loading="savingTokens" @click="saveTokens">{{ t('保存') }}</n-button>
+        <n-button v-if="config?.github_token_set || config?.gitee_token_set" quaternary type="error"
+          :loading="savingTokens" @click="clearTokens">{{ t('清除全部') }}</n-button>
+      </div>
+
+      <div class="muted drawer-hint">
+        {{ t('配置 Token 后，API 请求直接使用 Token；Token 自身被限流时才回退到代理。') }}
+      </div>
+    </n-drawer-content>
+  </n-drawer>
+
   <UpdatePrompt v-model:show="showUpdate" :update="updateInfo" />
 </template>
 
@@ -180,4 +257,11 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
   padding: 10px 0 14px; border-bottom: 1px dashed var(--oc2-rail-line); margin-bottom: 6px;
 }
 .drawer-pref b { font-size: 13.5px; }
+/* Token 区块：第二组前面留出间距，保存按钮独立成行 */
+.token-gap { margin-top: 18px; }
+.token-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
 </style>

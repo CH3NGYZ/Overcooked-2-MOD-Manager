@@ -1,17 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline } from '@vicons/ionicons5'
+import {
+  CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline, ColorWandOutline,
+} from '@vicons/ionicons5'
 import { t } from '../i18n'
 
 defineProps<{ version: string }>()
 const route = useRoute()
 
-const navItems = [
+/** 主导航：功能入口。 */
+const mainItems = [
   { name: 'overview', title: '总览', icon: GridOutline },
   { name: 'framework', title: '框架管理', icon: CubeOutline },
   { name: 'mods-online', title: 'MOD 安装', icon: CloudDownloadOutline },
   { name: 'mods-local', title: 'MOD 管理', icon: FileTrayFullOutline },
+]
+/** 分割线之下：与 MOD 管理配套的工具入口。 */
+const extraItems = [
+  { name: 'rename', title: 'MOD 改名', icon: ColorWandOutline },
+]
+/** 沉底导航：工具与设置固定在侧栏底部。 */
+const bottomItems = [
   { name: 'tools', title: '工具', icon: BuildOutline },
   { name: 'settings', title: '设置', icon: SettingsOutline },
 ]
@@ -22,12 +32,30 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 <template>
   <aside class="sidebar">
     <nav class="nav">
-      <router-link v-for="item in navItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
+      <router-link v-for="item in mainItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
+        :class="{ active: activeName === item.name }">
+        <component :is="item.icon" width="20" height="20" />
+        <span>{{ t(item.title) }}</span>
+      </router-link>
+
+      <div class="nav-divider" />
+
+      <router-link v-for="item in extraItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
         :class="{ active: activeName === item.name }">
         <component :is="item.icon" width="20" height="20" />
         <span>{{ t(item.title) }}</span>
       </router-link>
     </nav>
+
+    <!-- 工具与设置沉底：上方的 nav 吃掉剩余高度，这里永远贴着侧栏底部 -->
+    <nav class="nav nav-bottom">
+      <router-link v-for="item in bottomItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
+        :class="{ active: activeName === item.name }">
+        <component :is="item.icon" width="20" height="20" />
+        <span>{{ t(item.title) }}</span>
+      </router-link>
+    </nav>
+
     <div class="side-foot muted">{{ version ? `v${version}` : '' }}</div>
   </aside>
 </template>
@@ -56,6 +84,16 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
   min-height: 0;
   overflow-y: auto;
 }
+/* 沉底组：不参与伸展，避免被上方 nav 的滚动区推走 */
+.nav-bottom {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.nav-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--oc2-rail-line);
+}
 .nav-item {
   display: flex;
   flex-direction: column;
@@ -78,7 +116,7 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
   font-weight: 600;
 }
 .side-foot {
-  margin-top: auto;
+  margin-top: 2px;
   font-size: 10.5px;
 }
 </style>

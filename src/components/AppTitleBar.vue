@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NDropdown } from 'naive-ui'
+import { NDropdown, NPopover } from 'naive-ui'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   CloseOutline, ContrastOutline, ContractOutline, LanguageOutline, MoonOutline, RemoveOutline,
@@ -9,37 +9,58 @@ import {
 import { ACCENTS, accentKey, cycleAccent, isDark, setAccent, setThemeMode, themeMode } from '../theme'
 import { currentLocaleLabel, locale, localeOptions, setLocale, t, type Locale } from '../i18n'
 import { useUiZoom } from '../composables/useUiZoom'
+import { isTauri, safeTauri, safeTauriSync } from '../runtime'
 import appIcon from '../assets/app-icon.png'
 
 const props = defineProps<{ version: string }>()
 
-const appWindow = getCurrentWindow()
+/**
+ * 窗口对象只在真实 Tauri 环境存在。浏览器预览下必须为 null，
+ * 否则 getCurrentWindow() 抛错会让 setup 崩溃、整页白屏。
+ */
+const appWindow = safeTauriSync(() => getCurrentWindow()) ?? null
 const maximized = ref(false)
 const { zoomPercent, setZoom } = useUiZoom()
 
-void appWindow.isMaximized().then((value) => { maximized.value = value }).catch(() => undefined)
+void safeTauri(async () => {
+  const window = getCurrentWindow()
+  maximized.value = await window.isMaximized()
+})
 let unlistenResize: (() => void) | null = null
-void appWindow.onResized(async () => {
-  maximized.value = await appWindow.isMaximized().catch(() => false)
-}).then((un) => { unlistenResize = un })
+void safeTauri(async () => {
+  const window = getCurrentWindow()
+  const unlisten = await window.onResized(async () => {
+    maximized.value = await window.isMaximized().catch(() => false)
+  })
+  unlistenResize = unlisten
+})
 
 function onUnmountedCleanup() { unlistenResize?.() }
 
-const accentOptions = computed(() => ACCENTS.map((entry) => ({
-  key: entry.key,
-  label: t(entry.key === 'neutral' ? t('中性') : entry.key === 'blue' ? t('蓝色') : entry.key === 'green' ? t('绿色') : entry.key === 'purple' ? t('紫色') : t('红色')),
-  color: entry.swatch,
-})))
+/** 九色的显示名（仅用于 hover 提示与无障碍，矩阵本身不显示文字）。 */
+const ACCENT_NAMES: Record<string, string> = {
+  slate: '板岩', gray: '灰色', rose: '玫红',
+  red: '红色', orange: '橙色', amber: '琥珀',
+  green: '绿色', teal: '青色', blue: '蓝色',
+}
+const accentLabel = (key: string) => t(ACCENT_NAMES[key] ?? key)
+/** 当前主题色块（触发器按钮用），矩阵里直接读 ACCENTS。 */
+const accentSwatch = computed(() => ACCENTS.find((entry) => entry.key === accentKey.value)?.swatch ?? '#14b8a6')
 
 const themeLabel = computed(() => (isDark.value ? t('深色') : t('浅色')))
 
-// 窗口控制
-async function minimize() { await appWindow.minimize() }
+// 窗口控制：浏览器预览下按钮仍可见，但调用被安全吞掉（不抛错）。
+async function minimize() { await safeTauri(async () => appWindow?.minimize()) }
 async function toggleMaximize() {
-  await appWindow.toggleMaximize()
-  maximized.value = await appWindow.isMaximized().catch(() => false)
+  await safeTauri(async () => {
+    if (!appWindow) return
+    await appWindow.toggleMaximize()
+    maximized.value = await appWindow.isMaximized().catch(() => false)
+  })
 }
-async function close() { await appWindow.close() }
+async function close() { await safeTauri(async () => appWindow?.close()) }
+/** 浏览器预览不显示窗口控制（无窗口可控制）。 */
+const canControlWindow = computed(() => isTauri())
 
 // 缩放：下拉选择（与语言下拉同款），25% 步进，100%–200%，默认 150%
 const ZOOM_STEPS = [100, 125, 150, 175, 200] as const
@@ -91,27 +112,36 @@ defineExpose({ onUnmountedCleanup })
       <SunnyOutline v-else width="16" height="16" />
     </button>
 
-    <!-- 主题色 -->
-    <n-dropdown :options="accentOptions" trigger="click" @select="(key: any) => setAccent(key)">
-      <button class="pill icon-only" type="button" :title="t('主题色')" @contextmenu.prevent="cycleAccent">
-        <span class="swatch" :style="{ background: ACCENTS.find(a => a.key === accentKey)?.swatch }"></span>
+    <!-- 主题色：3×3 色块矩阵，只显示颜色 -->
+    <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw>
+      <template #trigger>
+        <button class="pill icon-only" type="button" :title="t('主题色')" @contextmenu.prevent="cycleAccent">
+          <span class="swatch" :style="{ background: accentSwatch }"></span>
+        </button>
+      </template>
+      <div class="accent-grid" role="listbox" :aria-label="t('主题色')">
+        <button v-for="entry in ACCENTS" :key="entry.key" type="button" class="accent-cell"
+          :class="{ active: entry.key === accentKey }" role="option" :aria-selected="entry.key === accentKey"
+          :title="accentLabel(entry.key)" :style="{ background: entry.swatch }" @click="setAccent(entry.key)" />
+      </div>
+    </n-popover>
+
+    <!-- 窗口控制：仅真实 Tauri 窗口显示 -->
+    <template v-if="canControlWindow">
+      <span class="sep"></span>
+
+      <button class="win-btn" type="button" :title="t('最小化')" :aria-label="t('最小化')" @click="minimize">
+        <RemoveOutline width="16" height="16" />
       </button>
-    </n-dropdown>
-
-    <span class="sep"></span>
-
-    <!-- 窗口控制 -->
-    <button class="win-btn" type="button" :title="t('最小化')" :aria-label="t('最小化')" @click="minimize">
-      <RemoveOutline width="16" height="16" />
-    </button>
-    <button class="win-btn" type="button" :title="maximized ? t('还原') : t('最大化')"
-      :aria-label="maximized ? t('还原') : t('最大化')" @click="toggleMaximize">
-      <ContractOutline v-if="maximized" width="15" height="15" />
-      <SquareOutline v-else width="14" height="14" />
-    </button>
-    <button class="win-btn danger" type="button" :title="t('关闭')" :aria-label="t('关闭')" @click="close">
-      <CloseOutline width="17" height="17" />
-    </button>
+      <button class="win-btn" type="button" :title="maximized ? t('还原') : t('最大化')"
+        :aria-label="maximized ? t('还原') : t('最大化')" @click="toggleMaximize">
+        <ContractOutline v-if="maximized" width="15" height="15" />
+        <SquareOutline v-else width="14" height="14" />
+      </button>
+      <button class="win-btn danger" type="button" :title="t('关闭')" :aria-label="t('关闭')" @click="close">
+        <CloseOutline width="17" height="17" />
+      </button>
+    </template>
   </header>
 </template>
 

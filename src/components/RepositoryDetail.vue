@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
-import { NButton, NTag } from 'naive-ui'
-import { CloseOutline, DownloadOutline, LinkOutline, OpenOutline } from '@vicons/ionicons5'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { NButton, NSelect, NTag } from 'naive-ui'
+import { DownloadOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
-import { renderReadme } from '../markdown'
+import { renderMermaidBlocks, renderReadme } from '../markdown'
 import type { Repository, RepositoryReadme } from '../types'
 
 const props = defineProps<{
@@ -12,11 +12,14 @@ const props = defineProps<{
   installing?: boolean
   gameBlocked?: boolean
 }>()
-const emit = defineEmits<{ close: []; install: []; back: [] }>()
+/** install 携带选中的 tag（未选则用最新）。 */
+const emit = defineEmits<{ close: []; install: [tag?: string]; back: [] }>()
 
 const readme = ref<RepositoryReadme | null>(null)
 const loading = ref(false)
 const error = ref('')
+/** 详情分段：默认显示说明（备注 + README），可滑到「下载安装」。 */
+const activeTab = ref<'info' | 'install'>('info')
 let requestId: string | null = null
 
 function pickI18n(map: Record<string, string> | undefined, fallback: string) {
@@ -26,23 +29,75 @@ function pickI18n(map: Record<string, string> | undefined, fallback: string) {
 
 const name = computed(() => (props.repo ? pickI18n(props.repo.name_i18n, props.repo.name) : ''))
 const note = computed(() => (props.repo ? pickI18n(props.repo.note_i18n, props.repo.note || '') : ''))
-const release = computed(() => props.repo?.cached_releases[0] ?? null)
-const version = computed(() => release.value?.version || release.value?.tag_name || '—')
-const downloads = computed(() => {
-  const total = release.value?.assets.reduce((sum, asset) => sum + (asset.download_count ?? 0), 0) ?? 0
-  return total || null
+/* ===== 版本选择 + 资产规则命中 ===== */
+/** 当前选中的 Release（默认最新一个）。 */
+const selectedTag = ref<string | null>(null)
+const selectedRelease = computed(() => {
+  const list = props.repo?.cached_releases ?? []
+  const found = list.find((entry) => entry.tag_name === selectedTag.value)
+  return found ?? list[0] ?? null
 })
-const updated = computed(() => release.value?.published_at?.slice(0, 10) || '—')
+const releaseOptions = computed(() =>
+  (props.repo?.cached_releases ?? []).map((entry) => ({
+    label: entry.version || entry.tag_name,
+    // Naive UI 的 n-select 用 value 作为选项值（不是 key）
+    value: entry.tag_name,
+  })),
+)
+watch(() => props.repo?.id, () => { selectedTag.value = null })
+// 仓库首次加载/刷新出 Release 后，把选中版本落到最新一个（否则下拉显示空）
+watch(
+  () => props.repo?.cached_releases,
+  (list) => {
+    if (!list?.length) return
+    const exists = list.some((entry) => entry.tag_name === selectedTag.value)
+    if (!exists) selectedTag.value = list[0].tag_name
+  },
+  { immediate: true },
+)
 
-/** 许可证：README 常见 `License: MIT` / `## License` 段落首行，取不到就显示 —。 */
-const license = computed(() => {
-  const text = readme.value?.content ?? ''
-  const inlineMatch = text.match(/licen[cs]e[^\n:：]*[:：]\s*([A-Za-z0-9.\-+ ]{2,24})/i)
-  if (inlineMatch) return inlineMatch[1].trim()
-  const section = text.match(/##+\s*licen[cs]e\s*\n+([^\n#]{2,40})/i)
-  if (section) return section[1].trim()
-  return '—'
+/** 以下指标全部跟随「当前选中的版本」，切换下拉时同步变化。 */
+const version = computed(() => selectedRelease.value?.version || selectedRelease.value?.tag_name || '—')
+
+/** 资产规则匹配（exact / glob / regex），与后端 asset_rules 语义一致。 */
+function assetMatches(name: string, rule: { type: string; value: string }): boolean {
+  if (rule.type === 'exact') return name.toLocaleLowerCase() === rule.value.toLocaleLowerCase()
+  if (rule.type === 'glob') {
+    const escaped = rule.value.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')
+    try { return new RegExp(`^${escaped}$`, 'i').test(name) } catch { return false }
+  }
+  try { return new RegExp(rule.value, 'i').test(name) } catch { return false }
+}
+
+/** 命中资产规则的 Release 资产列表。 */
+const matchedAssets = computed(() => {
+  const repo = props.repo
+  const target = selectedRelease.value
+  if (!repo || !target || repo.download_mode === 'repository_file') return []
+  return target.assets.filter((asset) =>
+    !!asset.download_url && repo.asset_rules.some((rule) => assetMatches(asset.name, rule)),
+  )
 })
+/** 当前选中的资产（默认第一个匹配文件）。 */
+const selectedAssetName = ref<string | null>(null)
+const assetOptions = computed(() =>
+  // Naive UI 的 n-select 用 value 作为选项值（不是 key）
+  matchedAssets.value.map((asset) => ({ label: asset.name, value: asset.name })),
+)
+const primaryAsset = computed(() =>
+  matchedAssets.value.find((asset) => asset.name === selectedAssetName.value) ?? matchedAssets.value[0] ?? null,
+)
+// 切换版本/仓库时清掉已选资产
+watch([() => props.repo?.id, selectedTag], () => { selectedAssetName.value = null })
+
+function formatSize(bytes: number | undefined) {
+  if (!bytes) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let index = 0
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1 }
+  return `${value.toFixed(index ? 1 : 0)} ${units[index]}`
+}
 
 const releaseUrl = computed(() => {
   const repo = props.repo
@@ -58,9 +113,50 @@ const sourceUrl = computed(() => {
     ? `https://gitee.com/${repo.username}/${repo.repository}`
     : `https://github.com/${repo.username}/${repo.repository}`
 })
+/** Raw 地址：指向仓库的文件列表（release 模式）或具体文件（repository_file 模式）。 */
+const rawUrl = computed(() => {
+  const repo = props.repo
+  if (!repo) return ''
+  if (repo.download_mode === 'repository_file' && repo.branch && repo.file_path) {
+    return repo.provider === 'gitee'
+      ? `https://gitee.com/${repo.username}/${repo.repository}/raw/${repo.branch}/${repo.file_path}`
+      : `https://github.com/${repo.username}/${repo.repository}/raw/refs/heads/${repo.branch}/${repo.file_path}`
+  }
+  // 没有具体文件时指向仓库根目录的 Raw 浏览入口
+  return repo.provider === 'gitee'
+    ? `https://gitee.com/${repo.username}/${repo.repository}/raw/${repo.branch || 'master'}`
+    : `https://github.com/${repo.username}/${repo.repository}/raw/refs/heads/${repo.branch || 'main'}`
+})
 const html = computed(() => renderReadme(readme.value?.content ?? ''))
 /** 备注同样按 Markdown 渲染（note_i18n 已按当前语言取值）。 */
 const noteHtml = computed(() => renderReadme(note.value))
+/** 当前选中 Release 的提交日志（Markdown 渲染，与 note/README 同一函数）。 */
+const logHtml = computed(() => renderReadme(selectedRelease.value?.body?.trim() ?? ''))
+
+/**
+ * README 区域是否显示：加载中、请求失败、有内容时都显示；
+ * 只有确认「文件不存在」时整块隐藏（连同上方的分割线）。
+ */
+const readmeSectionVisible = computed(() => {
+  if (loading.value) return true
+  if (error.value) return true
+  return !!readme.value?.exists
+})
+
+/** Markdown 容器：v-html 更新后把 mermaid 占位块渲染成 SVG。 */
+const noteElement = ref<HTMLElement | null>(null)
+const readmeElement = ref<HTMLElement | null>(null)
+const logElement = ref<HTMLElement | null>(null)
+watch(
+  [noteHtml, logHtml, readmeElement, loading],
+  async () => {
+    await nextTick()
+    void renderMermaidBlocks(noteElement.value)
+    void renderMermaidBlocks(logElement.value)
+    void renderMermaidBlocks(readmeElement.value)
+  },
+  { flush: 'post' },
+)
 
 async function load() {
   const repo = props.repo
@@ -87,7 +183,11 @@ function cancel() {
   loading.value = false
 }
 
-watch(() => props.repo?.id, () => { void load() }, { immediate: true })
+watch(() => props.repo?.id, () => {
+  // 切换仓库时回到「说明」页，避免上一个仓库停在下载安装页
+  activeTab.value = 'info'
+  void load()
+}, { immediate: true })
 onUnmounted(cancel)
 
 async function openUrl(url: string) {
@@ -103,75 +203,138 @@ async function openUrl(url: string) {
         <span class="tile">{{ (name[0] || '?').toUpperCase() }}</span>
         <div class="head-text">
           <b>{{ name }}</b>
-          <small class="muted">{{ repo.provider === 'gitee' ? 'Gitee' : 'GitHub' }} · {{ repo.username }}/{{ repo.repository }}</small>
+          <!-- 渠道 · 用户/仓库 · Release/Raw：后两段可点 -->
+          <small class="head-meta">
+            <span class="meta-channel">{{ repo.provider === 'gitee' ? 'Gitee' : 'GitHub' }}</span>
+            <span class="meta-sep">·</span>
+            <button type="button" class="meta-link" :title="sourceUrl" @click="openUrl(sourceUrl)">
+              {{ repo.username }}/{{ repo.repository }}
+            </button>
+            <span class="meta-sep">·</span>
+            <!-- 按仓库下载模式二选一：release 模式给 Release 页，仓库文件模式给 Raw 文件 -->
+            <template v-if="repo.download_mode === 'release'">
+              <button type="button" class="meta-link" :title="releaseUrl" @click="openUrl(releaseUrl)">Release</button>
+            </template>
+            <template v-else>
+              <button type="button" class="meta-link" :title="rawUrl" @click="openUrl(rawUrl)">Raw</button>
+            </template>
+          </small>
         </div>
       </div>
-      <div class="head-acts">
-        <n-button type="primary" :loading="installing" :disabled="gameBlocked" @click="emit('install')">
-          <DownloadOutline width="15" height="15" />{{ t('安装') }}
-        </n-button>
-        <n-button quaternary @click="emit('close')">
-          <CloseOutline width="16" height="16" />
-        </n-button>
-      </div>
+      <!-- 关闭按钮由抽屉自带的关闭入口负责，这里不再重复放一个叉 -->
     </header>
 
-    <!-- 指标网格：版本 / 下载量 / 许可证 / 更新于 / 标识 -->
-    <div class="metrics">
-      <div class="metric">
-        <span class="muted">{{ t('最新版本') }}</span>
-        <b class="mono">{{ version }}</b>
-      </div>
-      <div class="metric">
-        <span class="muted">{{ t('下载量') }}</span>
-        <b>{{ downloads?.toLocaleString() ?? '—' }}</b>
-      </div>
-      <div class="metric">
-        <span class="muted">{{ t('许可证') }}</span>
-        <b>{{ license }}</b>
-      </div>
-      <div class="metric">
-        <span class="muted">{{ t('最后更新') }}</span>
-        <b>{{ updated }}</b>
-      </div>
-      <div class="metric">
-        <span class="muted">{{ t('标识') }}</span>
-        <b class="mono">{{ repo.username }}/{{ repo.repository }}</b>
-      </div>
+    <!-- 分段切换：说明（备注 + README）/ 下载安装（版本 / 日志 / 资产 / 安装） -->
+    <div class="detail-tabs" role="tablist">
+      <button type="button" role="tab" class="detail-tab" :class="{ active: activeTab === 'info' }"
+        :aria-selected="activeTab === 'info'" @click="activeTab = 'info'">{{ t('说明') }}</button>
+      <button type="button" role="tab" class="detail-tab" :class="{ active: activeTab === 'install' }"
+        :aria-selected="activeTab === 'install'" @click="activeTab = 'install'">{{ t('下载安装') }}</button>
     </div>
 
-    <div class="links">
-      <n-button size="small" secondary :disabled="!releaseUrl" @click="openUrl(releaseUrl)">
-        <LinkOutline width="14" height="14" />{{ t('Release') }}
-      </n-button>
-      <n-button size="small" secondary :disabled="!sourceUrl" @click="openUrl(sourceUrl)">
-        <OpenOutline width="14" height="14" />{{ t('源码') }}
-      </n-button>
-      <n-tag v-if="repo.download_mode === 'repository_file'" size="small" :bordered="false">{{ t('仓库文件') }}</n-tag>
-      <n-tag v-if="!repo.enabled" size="small" :bordered="false">{{ t('未启用') }}</n-tag>
-    </div>
+    <!-- 两个面板横向滑动切换，只平移不改变高度 -->
+    <div class="detail-track" :style="{ transform: `translateX(${activeTab === 'info' ? '0' : '-100%'})` }">
+      <!-- 面板 1：说明（仓库备注 + README） -->
+      <div class="detail-panel" :aria-hidden="activeTab !== 'info'">
+        <section v-if="note" ref="noteElement" class="note markdown-body" v-html="noteHtml"></section>
+        <section v-else class="note muted">{{ t('该仓库没有备注') }}</section>
 
-    <hr class="divider" />
+        <!-- README：加载中显示骨架动画；文件不存在时整块（含分割线）收起 -->
+        <Transition name="readme-collapse">
+          <div v-if="readmeSectionVisible" class="readme-section">
+            <hr class="divider" />
 
-    <!-- 来自仓库源的备注 -->
-    <section v-if="note" class="note markdown-body" v-html="noteHtml"></section>
-    <section v-else class="note muted">{{ t('该仓库没有备注') }}</section>
-
-    <hr class="divider" />
-
-    <!-- README：加载中显示骨架动画 -->
-    <section class="readme">
-      <div v-if="loading" class="readme-loading" role="status" :aria-label="t('正在加载仓库说明')">
-        <div class="skeleton-line w-95"></div>
-        <div class="skeleton-line w-60"></div>
-        <div class="skeleton-line w-80"></div>
-        <div class="skeleton-line w-45"></div>
-        <div class="loading-hint">{{ t('正在加载仓库说明…') }}</div>
+            <section class="readme">
+              <Transition name="readme-content" mode="out-in">
+                <div v-if="loading" key="loading" class="readme-loading" role="status"
+                  :aria-label="t('正在加载仓库说明')">
+                  <div class="skeleton-line w-95"></div>
+                  <div class="skeleton-line w-60"></div>
+                  <div class="skeleton-line w-80"></div>
+                  <div class="skeleton-line w-45"></div>
+                </div>
+                <div v-else-if="error" key="error" class="muted">{{ error }}</div>
+                <div v-else key="body" ref="readmeElement" class="markdown-body" v-html="html"></div>
+              </Transition>
+            </section>
+          </div>
+        </Transition>
       </div>
-      <div v-else-if="error" class="muted">{{ error }}</div>
-      <div v-else-if="!readme?.exists" class="muted">{{ t('文件不存在') }}</div>
-      <div v-else class="markdown-body" v-html="html"></div>
-    </section>
+
+      <!-- 面板 2：下载安装（版本选择 / 提交日志 / 资产与安装） -->
+      <div class="detail-panel" :aria-hidden="activeTab !== 'install'">
+        <!-- 指标 + 安装合并区：版本下拉 / 版本绑定 / 资产信息 / 安装 -->
+        <div class="summary">
+          <div class="summary-row">
+            <div class="metric metric-version">
+              <span class="muted">{{ t('选择版本') }}</span>
+              <n-select v-if="releaseOptions.length" v-model:value="selectedTag" class="version-select" size="small"
+                :options="releaseOptions" :placeholder="t('选择版本')" />
+              <b v-else class="mono">{{ version }}</b>
+            </div>
+            <div class="metric metric-id">
+              <span class="muted">{{ t('版本绑定') }}</span>
+              <b class="mono">{{ repo.username }}/{{ repo.repository }}</b>
+            </div>
+          </div>
+
+          <!-- 第二段：当前版本的提交日志（独立滚动，最大高度固定） -->
+          <div class="release-log">
+            <div class="log-head">
+              <span class="muted">{{ t('提交日志') }}</span>
+              <b class="mono">{{ selectedRelease?.name || selectedRelease?.tag_name || '—' }}</b>
+              <span v-if="selectedRelease?.published_at" class="muted">
+                {{ selectedRelease.published_at.slice(0, 10) }}
+              </span>
+              <n-tag v-if="selectedRelease?.prerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
+            </div>
+            <div v-if="selectedRelease?.body?.trim()" ref="logElement" class="log-box markdown-body" v-html="logHtml"></div>
+            <div v-else class="log-box log-empty muted">{{ t('该版本没有提交日志') }}</div>
+          </div>
+
+          <!-- 资产选择 / 大小与下载次数 / 安装按钮 -->
+          <div class="install-row">
+            <!-- 左侧：可选已识别的 Release 资产（或仓库文件模式的文件） -->
+            <n-select v-if="repo.download_mode === 'release' && assetOptions.length" class="asset-select" size="small"
+              :value="primaryAsset?.name ?? null" :options="assetOptions" :placeholder="t('选择文件')"
+              @update:value="(value: string) => (selectedAssetName = value)" />
+            <span v-else-if="repo.download_mode === 'repository_file'" class="asset-select-file mono">
+              {{ repo.branch }}/{{ repo.file_path }}
+            </span>
+            <span v-else class="asset-select-file muted">{{ t('该版本没有命中资产规则的文件') }}</span>
+
+            <!-- 中右：大小与下载次数 -->
+            <div class="asset-stats">
+              <template v-if="repo.download_mode === 'repository_file'">
+                <span class="muted">{{ t('仓库文件模式直接下载该文件') }}</span>
+              </template>
+              <template v-else-if="primaryAsset">
+                <span class="stat-item">
+                  <span class="muted">{{ t('大小') }}</span>
+                  <b>{{ formatSize(primaryAsset.size) }}</b>
+                </span>
+                <span class="stat-item">
+                  <span class="muted">{{ t('下载量') }}</span>
+                  <b>{{ (primaryAsset.download_count ?? 0).toLocaleString() }}</b>
+                </span>
+              </template>
+            </div>
+
+            <!-- 最右：安装 -->
+            <n-button type="primary" :loading="installing"
+              :disabled="gameBlocked || (repo.download_mode === 'release' && !primaryAsset)"
+              @click="emit('install', repo.download_mode === 'release' ? selectedRelease?.tag_name : undefined)">
+              <DownloadOutline width="15" height="15" />{{ t('安装') }}
+            </n-button>
+          </div>
+
+          <!-- 仓库文件模式的下载方式已由安装行表达，这里只保留未启用提示 -->
+          <div v-if="repo.download_mode !== 'repository_file' && !repo.enabled" class="summary-tags">
+            <n-tag size="small" :bordered="false">{{ t('未启用') }}</n-tag>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -184,6 +347,54 @@ async function openUrl(url: string) {
   border: 1px solid var(--oc2-row-line);
   border-radius: 14px;
   background: var(--oc2-card);
+}
+/*
+ * 分段切换：胶囊底 + 选中项实心高亮（与截图里的标签条同风格）。
+ * 两个面板通过 .detail-track 的 translateX 横向滑动，默认停在「说明」。
+ */
+.detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--oc2-sunken);
+}
+.detail-tab {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--oc2-text-3);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color .16s ease, color .16s ease;
+}
+.detail-tab:hover { color: var(--oc2-text-1); }
+.detail-tab.active {
+  background: var(--oc2-card);
+  color: var(--oc2-text-1);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
+}
+/* 滑动轨道：宽度 200%，两个面板各占一半 */
+.detail-track {
+  display: flex;
+  width: 200%;
+  transition: transform .26s cubic-bezier(.32, .72, .35, 1);
+}
+.detail-panel {
+  width: 50%;
+  min-width: 0;
+  flex: 0 0 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .detail-track { transition: none; }
 }
 .detail-head {
   display: flex;
@@ -206,23 +417,95 @@ async function openUrl(url: string) {
 }
 .head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .head-text b { font-size: 16px; color: var(--oc2-text-1); }
-.head-acts { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* 渠道 · 用户/仓库 · Release/Raw */
+.head-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--oc2-text-3);
+  min-width: 0;
+}
+.meta-channel { flex: 0 0 auto; }
+.meta-sep { flex: 0 0 auto; color: var(--oc2-text-4); }
+.meta-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--oc2-text-2);
+  font: inherit;
+  cursor: pointer;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color .16s ease;
+}
+.meta-link:hover { color: var(--oc2-accent); text-decoration: underline; }
+.meta-link:focus-visible { outline: 1px solid var(--oc2-accent); outline-offset: 2px; border-radius: 3px; }
 
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 1px;
+/* 指标 + 安装合并区 */
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--oc2-row-line);
   border-radius: 10px;
+  background: var(--oc2-sunken);
+}
+.summary-row {
+  /* 版本列按内容自适应（不挤压版本号），版本绑定吃掉剩余空间 */
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+/* 第二段：提交日志（独立滚动区域，最大高度固定） */
+.release-log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--oc2-row-line);
+}
+.log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.log-head b {
+  font-size: 12.5px;
+  color: var(--oc2-text-1);
   overflow: hidden;
-  background: var(--oc2-row-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.log-box {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 8px;
+  background: var(--oc2-card);
+  font-size: 12px;
+  line-height: 1.65;
+  overscroll-behavior: contain;
+}
+.log-box.log-empty {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  font-size: 12px;
 }
 .metric {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
-  background: var(--oc2-sunken);
   min-width: 0;
 }
 .metric b {
@@ -232,7 +515,82 @@ async function openUrl(url: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.metric-version {
+  /* 版本列只有 1/6 宽：下拉撑满该列，靠省略号处理长版本号 */
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.version-select {
+  /* 宽度随所选版本号内容自适应（不截断版本号），列宽也由内容决定 */
+  display: inline-flex !important;
+  width: auto !important;
+  min-width: 0;
+}
+.version-select :deep(.n-base-selection) {
+  min-width: 0;
+}
+.version-select :deep(.n-base-selection-label) {
+  padding-right: 24px;
+}
+.version-select :deep(.n-base-selection-input) {
+  min-width: 0;
+  overflow: visible;
+}
+.version-select :deep(.n-base-selection-input__content) {
+  /* 不省略：版本号完整显示，宽度由内容撑开 */
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.metric-id b { font-size: 11.5px; }
+.summary-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+/* 安装行：资产下拉 / 大小与下载次数 / 安装按钮 */
+.install-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--oc2-row-line);
+}
+.asset-select {
+  /* 下拉吸收多余水平空间，统计项保持紧凑贴靠安装按钮 */
+  flex: 1 1 240px;
+  min-width: 140px;
+  max-width: 420px;
+}
+.asset-select-file {
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 420px;
+  font-size: 12px;
+  color: var(--oc2-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-stats {
+  /* 统计项自然宽度，整体靠右紧贴安装按钮；多余空隙落在下拉与统计之间 */
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 12px;
+}
+.stat-item {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+.stat-item b {
+  color: var(--oc2-text-1);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .divider {
   margin: 2px 0;
   border: 0;
@@ -243,9 +601,55 @@ async function openUrl(url: string) {
   margin: 0;
 }
 
-/* README 骨架动画 */
-.readme { min-height: 80px; }
-.readme-loading { display: flex; flex-direction: column; gap: 10px; position: relative; }
+/* README：内容决定高度，不额外留底部空白（骨架态自己撑高） */
+.readme { margin: 0; padding: 0; }
+/* README 整块（含分割线）在「文件不存在」时平滑收起，而不是瞬间消失 */
+.readme-section {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.readme-collapse-enter-active,
+.readme-collapse-leave-active {
+  overflow: hidden;
+  transition: max-height .26s cubic-bezier(.4, 0, .2, 1), opacity .2s ease;
+  max-height: 4000px;
+  opacity: 1;
+}
+.readme-collapse-enter-from,
+.readme-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+/* 内容切换（骨架 → 正文 / 错误）：向下展开与向上收起走同一组参数，保持对称 */
+.readme-content-enter-active,
+.readme-content-leave-active {
+  transition: opacity .18s ease, transform .18s ease;
+}
+.readme-content-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.readme-content-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .readme-content-enter-active,
+  .readme-content-leave-active { transition: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .readme-collapse-enter-active,
+  .readme-collapse-leave-active { transition: none; }
+}
+.readme-loading {
+  display: grid;
+  grid-template-rows: repeat(4, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 88px;
+}
 .skeleton-line {
   height: 10px;
   border-radius: 6px;
@@ -254,13 +658,13 @@ async function openUrl(url: string) {
     var(--oc2-row-hover) 40%,
     var(--oc2-row-line) 80%);
   background-size: 220% 100%;
-  animation: oc2-skeleton 1.25s ease-in-out infinite;
+  /* 加载动画稍快一些（0.8s 一轮） */
+  animation: oc2-skeleton .8s ease-in-out infinite;
 }
 .w-95 { width: 95%; }
 .w-80 { width: 80%; }
 .w-60 { width: 60%; }
 .w-45 { width: 45%; }
-.loading-hint { color: var(--oc2-text-3); font-size: 12px; }
 @keyframes oc2-skeleton {
   0% { background-position: 120% 0; }
   100% { background-position: -60% 0; }
@@ -282,7 +686,11 @@ async function openUrl(url: string) {
 .markdown-body :deep(h1) { font-size: 17px; }
 .markdown-body :deep(h2) { font-size: 15px; }
 .markdown-body :deep(h3) { font-size: 13.5px; }
+/* README 首个元素（通常是标题）不留顶部外边距，避免内容和分割线之间出现空隙 */
+.readme-section :deep(.markdown-body > :first-child) { margin-top: 0; }
 .markdown-body :deep(p) { margin: 0 0 10px; }
+/* 末元素不留底部外边距，避免 README/备注区域底部出现空隙 */
+.markdown-body :deep(> :last-child) { margin-bottom: 0; }
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) { margin: 0 0 10px; padding-left: 22px; }
 .markdown-body :deep(li) { margin: 3px 0; }
@@ -315,4 +723,32 @@ async function openUrl(url: string) {
 .markdown-body :deep(a:hover) { text-decoration: underline; }
 .markdown-body :deep(img) { max-width: 100%; border-radius: 8px; }
 .markdown-body :deep(hr) { border: 0; border-top: 1px solid var(--oc2-row-line); margin: 14px 0; }
+/* Mermaid：渲染前保留代码块，渲染后居中显示 SVG */
+.markdown-body :deep(.mermaid-block) {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 8px;
+  background: var(--oc2-sunken);
+  overflow-x: auto;
+}
+.markdown-body :deep(.mermaid-block.mermaid-rendered) {
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: var(--oc2-card);
+}
+.markdown-body :deep(.mermaid-block.mermaid-rendered svg) {
+  max-width: 100%;
+  height: auto;
+}
+.markdown-body :deep(.mermaid-error) {
+  border-color: #8c4038;
+}
+.markdown-body :deep(.mermaid-error-hint) {
+  margin: -6px 0 12px;
+  color: #ee8585;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
 </style>

@@ -9,7 +9,10 @@ import { darkTheme, type GlobalTheme, type GlobalThemeOverrides } from 'naive-ui
  */
 
 export type ThemeMode = 'dark' | 'light'
-export type AccentKey = 'neutral' | 'blue' | 'green' | 'purple' | 'red'
+export type AccentKey =
+  | 'slate' | 'gray' | 'rose'
+  | 'red' | 'orange' | 'amber'
+  | 'green' | 'teal' | 'blue'
 
 const MODE_KEY = 'oc2-theme-mode'
 const ACCENT_KEY = 'oc2-theme-accent'
@@ -26,20 +29,32 @@ interface Accent {
   onColor: string
 }
 
-/** 调色板：黑（深色）/ 白（浅色）由 mode 表达；四种主色在此扩展。 */
+/**
+ * 经典九色（3×3 排布）：
+ *   板岩 / 灰 / 玫红
+ *   红 / 橙 / 琥珀
+ *   绿 / 青 / 蓝
+ * 颜色值取自 Tailwind 的 500 色阶，深浅适中、在明暗两种模式下都能看清。
+ */
 export const ACCENTS: Accent[] = [
-  { key: 'neutral', swatch: '#8d9bab', color: '#8d9bab', hover: '#a3b0bf', pressed: '#76838f', onColor: '#12151a' },
-  { key: 'blue', swatch: '#5b8def', color: '#5b8def', hover: '#7aa4f5', pressed: '#4878d6', onColor: '#0b1220' },
-  { key: 'green', swatch: '#3cb89b', color: '#3cb89b', hover: '#4fcfab', pressed: '#2f9c83', onColor: '#071713' },
-  { key: 'purple', swatch: '#9a7bf0', color: '#9a7bf0', hover: '#ae94f5', pressed: '#8365d8', onColor: '#120b20' },
-  { key: 'red', swatch: '#e8737d', color: '#e8737d', hover: '#f08d96', pressed: '#cf5c66', onColor: '#1d0b0e' },
+  { key: 'slate', swatch: '#64748b', color: '#64748b', hover: '#7c8ba1', pressed: '#52606f', onColor: '#0c1116' },
+  { key: 'gray', swatch: '#6b7280', color: '#6b7280', hover: '#858c99', pressed: '#565d68', onColor: '#0c1116' },
+  { key: 'rose', swatch: '#f43f5e', color: '#f43f5e', hover: '#f76880', pressed: '#d92e4b', onColor: '#1a0609' },
+  { key: 'red', swatch: '#ef4444', color: '#ef4444', hover: '#f36b6b', pressed: '#d13333', onColor: '#1a0808' },
+  { key: 'orange', swatch: '#f97316', color: '#f97316', hover: '#fb8c3c', pressed: '#d95f0b', onColor: '#1c0d03' },
+  { key: 'amber', swatch: '#f59e0b', color: '#f59e0b', hover: '#f7b13a', pressed: '#d48706', onColor: '#1a1103' },
+  { key: 'green', swatch: '#22c55e', color: '#22c55e', hover: '#4ad07c', pressed: '#17a34a', onColor: '#04170c' },
+  { key: 'teal', swatch: '#14b8a6', color: '#14b8a6', hover: '#3acdbd', pressed: '#0f9a8c', onColor: '#031614' },
+  { key: 'blue', swatch: '#3b82f6', color: '#3b82f6', hover: '#609bf9', pressed: '#2563d9', onColor: '#040f1f' },
 ]
+
+const ACCENT_KEYS = ACCENTS.map((entry) => entry.key as string)
 
 export const themeMode = ref<ThemeMode>(localStorage.getItem(MODE_KEY) === 'light' ? 'light' : 'dark')
 export const accentKey = ref<AccentKey>(
-  (['neutral', 'blue', 'green', 'purple', 'red'] as AccentKey[]).includes(localStorage.getItem(ACCENT_KEY) as AccentKey)
+  ACCENT_KEYS.includes(localStorage.getItem(ACCENT_KEY) ?? '')
     ? (localStorage.getItem(ACCENT_KEY) as AccentKey)
-    : 'green',
+    : 'teal',
 )
 
 watch(themeMode, (value) => localStorage.setItem(MODE_KEY, value))

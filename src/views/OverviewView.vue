@@ -5,9 +5,9 @@ import { NSpin } from 'naive-ui'
 import StatCard from '../components/StatCard.vue'
 import { useDashboard } from '../composables/useDashboardStore'
 
-const { load, loading, error, mods, enabledModCount, updateCount, frameworkOk, game } = useDashboard()
+const { ensureLoaded, loading, error, mods, enabledModCount, updateCount, frameworkOk, game } = useDashboard()
 
-onMounted(() => { void load() })
+onMounted(() => { void ensureLoaded() })
 
 const pathVerified = () => !!game.value?.path && game.value.game_exists
 </script>

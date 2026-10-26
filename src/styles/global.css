@@ -12,6 +12,16 @@ body,
   margin: 0;
   overflow: hidden;
 }
+/* Naive UI 的 provider 组件（config-provider 默认渲染 div）会插在 #app 与
+   .app-shell 之间。若它没有高度，.app-shell 的 height:100% 会退化为内容高度
+   （表现为页面不滚动、侧栏不满窗口）。ConfigProvider 已用 abstract 不渲染
+   包装元素，这里再兜底：任何直系包装层都撑满并去掉默认 display 影响。 */
+#app > .n-config-provider,
+#app > .n-message-provider,
+#app > .n-dialog-provider {
+  height: 100%;
+  min-height: 0;
+}
 body {
   background: #131417;
   color: #e8edf3;

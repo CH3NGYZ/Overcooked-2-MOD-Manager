@@ -28,7 +28,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider abstract :theme="darkTheme" :theme-overrides="themeOverrides" :locale="zhCN"
+    :date-locale="dateZhCN">
     <n-global-style />
     <n-message-provider placement="bottom-right">
       <n-dialog-provider>

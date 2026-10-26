@@ -70,7 +70,9 @@ body {
   padding: 4px 28px 28px;
 }
 .page-body {
-  max-width: 1180px;
+  /* 内容跟随应用容器整宽，不再限制在固定 max-width 内 */
+  width: 100%;
+  max-width: none;
 }
 .mono {
   font-family: Consolas, 'Liberation Mono', monospace;

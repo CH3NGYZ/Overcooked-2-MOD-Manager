@@ -186,7 +186,6 @@ function toggleExpand(dll: string) {
 .empty { margin: 60px 0; }
 .mod-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px;
-  max-width: 1180px;
 }
 .mod-card.disabled { opacity: .6; }
 .card-head { display: flex; align-items: center; gap: 8px; }
@@ -203,7 +202,6 @@ function toggleExpand(dll: string) {
   color: var(--oc2-text-3); display: grid; gap: 3px;
 }
 .detail .warn { color: var(--oc2-accent); }
-.rows-card { max-width: 1180px; }
 .row {
   display: flex; align-items: center; gap: 14px; padding: 9px 2px;
   border-bottom: 1px dashed var(--oc2-rail-line);

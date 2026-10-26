@@ -366,7 +366,7 @@ defineExpose({ refreshAll, visibleCount })
 
 <style scoped>
 .empty { margin: 60px 0; }
-.source-collapse { max-width: 1280px; }
+.source-collapse { width: 100%; }
 
 /* 三级固定缩进：源 0、分类 14px、卡片 28px */
 .source-head {
@@ -473,7 +473,7 @@ defineExpose({ refreshAll, visibleCount })
   align-items: center;
   gap: 12px;
   margin: 20px 0 12px;
-  max-width: 1280px;
+  width: 100%;
   color: var(--oc2-text-3);
   font-size: 12px;
 }

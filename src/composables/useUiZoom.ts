@@ -10,10 +10,12 @@ import { api } from '../services/tauri'
 const MIN = 1.0
 const MAX = 2.0
 const STEP = 0.1
+/** 默认缩放 150%（与 v1 一致）。 */
+const DEFAULT = 1.5
 
 const initial = Number(localStorage.getItem('oc2-ui-zoom'))
 export const zoom = ref<number>(
-  Number.isFinite(initial) && initial >= MIN && initial <= MAX ? initial : 1.0,
+  Number.isFinite(initial) && initial >= MIN && initial <= MAX ? initial : DEFAULT,
 )
 
 export const zoomPercent = computed(() => Math.round(zoom.value * 100))
@@ -39,11 +41,22 @@ export async function setZoom(next: number) {
 
 export function zoomIn() { void setZoom(zoom.value + STEP) }
 export function zoomOut() { void setZoom(zoom.value - STEP) }
-export function resetZoom() { void setZoom(1) }
+export function resetZoom() { void setZoom(DEFAULT) }
 
 export function useUiZoom() {
   return { zoom, zoomPercent, canZoomIn, canZoomOut, zoomIn, zoomOut, resetZoom, setZoom }
 }
 
-// 启动后恢复上次缩放
-void getCurrentWebview().setZoom(zoom.value).catch(() => undefined)
+// 启动后恢复缩放：优先用后端 config.toml 的 ui_zoom（跨设备/清缓存后仍一致），
+// 读不到时退回 localStorage，最后退回默认 150%。
+void (async () => {
+  try {
+    const config = await api.config()
+    const value = Number(config?.ui_zoom)
+    if (Number.isFinite(value) && value >= MIN && value <= MAX) zoom.value = value
+  } catch {
+    // 无后端（浏览器预览）时用本地值
+  }
+  localStorage.setItem('oc2-ui-zoom', String(zoom.value))
+  void getCurrentWebview().setZoom(zoom.value).catch(() => undefined)
+})()

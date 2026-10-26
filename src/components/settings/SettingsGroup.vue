@@ -12,7 +12,7 @@ defineProps<{ title: string }>()
 </template>
 
 <style scoped>
-.settings-group { max-width: 980px; margin-bottom: 22px; }
+.settings-group { width: 100%; margin-bottom: 22px; }
 .group-title {
   margin: 0 0 10px;
   color: var(--oc2-accent);

@@ -168,7 +168,7 @@ async function openBackups() {
 </template>
 
 <style scoped>
-.block { max-width: 980px; margin-bottom: 18px; }
+.block { width: 100%; margin-bottom: 18px; }
 .status-row { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 14px; }
 .field { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }

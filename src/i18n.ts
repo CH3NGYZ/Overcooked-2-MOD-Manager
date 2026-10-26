@@ -233,6 +233,9 @@ const entries = {
   '正在加载仓库说明': ['正在載入倉庫說明', 'Loading repository README', '저장소 README 불러오는 중', 'リポジトリの説明を読み込み中'],
   '正在加载仓库说明…': ['正在載入倉庫說明…', 'Loading README…', 'README 불러오는 중…', 'README を読み込み中…'],
   '没有匹配的仓库': ['沒有符合的倉庫', 'No matching repositories', '일치하는 저장소가 없습니다', '一致するリポジトリがありません'],
+  '部分启用': ['部分啟用', 'Partially enabled', '일부 활성', '一部有効'],
+  '{count} 个可更新': ['{count} 個可更新', '{count} updatable', '{count}개 업데이트 가능', '{count} 件更新可能'],
+  '排序': ['排序', 'Sort', '정렬', '並び替え'],
   // 通用动作与状态
   '保存并验证': ['儲存並驗證', 'Save and verify', '저장 후 검증', '保存して検証'],
   '恢复默认': ['還原預設', 'Reset', '기본값 복원', '既定に戻す'],

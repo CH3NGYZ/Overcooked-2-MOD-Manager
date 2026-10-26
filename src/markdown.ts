@@ -1,131 +1,67 @@
+import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js/lib/common'
+
 /**
- * 极简 Markdown → HTML（README 展示用）：
- * 只覆盖常见语法（标题、段落、列表、代码块、行内代码、链接、粗体、引用、分割线），
- * 先整体转义，再按行解析，避免任何 HTML 注入。不追求完整 GFM。
+ * 统一的 Markdown 渲染：markdown-it + highlight.js。
+ * 只负责把 Rust 后端返回的 Markdown 文本渲染成 HTML（介绍、更新日志、安装教程等），
+ * 不带编辑器，也不接受任何原始 HTML（html: false，从根上避免 XSS）。
  */
+const md = new MarkdownIt({
+  html: false,        // 不信任源内联 HTML
+  linkify: true,      // 裸链接自动成链
+  breaks: true,       // 单个换行即换行（备注/日志更符合直觉）
+  highlight(code: string, language: string): string {
+    if (language && hljs.getLanguage(language)) {
+      try {
+        return hljs.highlight(code, { language, ignoreIllegals: true }).value
+      } catch {
+        // 落到下面自动识别
+      }
+    }
+    return hljs.highlightAuto(code).value
+  },
+})
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+/* markdown-it 的 renderer 规则签名在其类型定义里没有导出，这里用结构化签名标注。 */
+type Rule = (
+  tokens: Array<{ attrSet: (name: string, value: string) => void }>,
+  idx: number,
+  options: Record<string, unknown>,
+  env: unknown,
+  self: { renderToken: (tokens: unknown, idx: number, options: unknown) => string },
+) => string
+
+const rules = md.renderer.rules as Record<string, Rule>
+
+// 外链统一新窗口打开，避免抢占 WebView。
+const baseLinkOpen = rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx].attrSet('target', '_blank')
+  tokens[idx].attrSet('rel', 'noreferrer noopener')
+  return baseLinkOpen(tokens, idx, options, env, self)
 }
 
-/** 行内：代码、链接、粗体、斜体。输入必须已转义。 */
-function inline(text: string): string {
-  let out = text
-  // 行内代码优先，避免内部被后续规则破坏
-  const codes: string[] = []
-  out = out.replace(/`([^`]+)`/g, (_m, code: string) => {
-    codes.push(`<code>${code}</code>`)
-    return `\u0000${codes.length - 1}\u0000`
-  })
-  // 图片与链接（仅 http/https）
-  out = out.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
-    (_m, alt: string, url: string) => `<img src="${url}" alt="${alt}" loading="lazy" />`)
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    (_m, label: string, url: string) => `<a href="${url}" target="_blank" rel="noreferrer">${label}</a>`)
-  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  out = out.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
-  out = out.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => codes[Number(i)] ?? '')
-  return out
+// 图片懒加载
+const baseImage = rules.image ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+rules.image = (tokens, idx, options, env, self) => {
+  tokens[idx].attrSet('loading', 'lazy')
+  return baseImage(tokens, idx, options, env, self)
 }
 
-/** 把 Markdown 渲染为安全 HTML 字符串。 */
+/** 把 Markdown 渲染成 HTML 字符串。 */
 export function renderReadme(markdown: string): string {
   if (!markdown.trim()) return ''
-  const lines = escapeHtml(markdown.replace(/\r\n?/g, '\n')).split('\n')
-  const out: string[] = []
-  let inCode = false
-  let listType: 'ul' | 'ol' | null = null
+  return md.render(markdown)
+}
 
-  const closeList = () => {
-    if (listType) {
-      out.push(`</${listType}>`)
-      listType = null
-    }
+/** 取 Markdown 的纯文本摘要（卡片简介用，不含任何标记）。 */
+export function markdownSummary(markdown: string): string {
+  if (!markdown.trim()) return ''
+  const html = md.render(markdown)
+  if (typeof document === 'undefined') {
+    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
   }
-
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd()
-
-    // 代码块围栏
-    if (/^```/.test(line)) {
-      if (inCode) {
-        out.push('</code></pre>')
-        inCode = false
-      } else {
-        closeList()
-        out.push('<pre><code>')
-        inCode = true
-      }
-      continue
-    }
-    if (inCode) {
-      out.push(line)
-      continue
-    }
-
-    if (!line.trim()) {
-      closeList()
-      continue
-    }
-
-    // 分割线
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
-      closeList()
-      out.push('<hr />')
-      continue
-    }
-
-    // 标题
-    const heading = line.match(/^(#{1,6})\s+(.*)$/)
-    if (heading) {
-      closeList()
-      const level = heading[1].length
-      out.push(`<h${level}>${inline(heading[2])}</h${level}>`)
-      continue
-    }
-
-    // 引用
-    const quote = line.match(/^&gt;\s?(.*)$/)
-    if (quote) {
-      closeList()
-      out.push(`<blockquote>${inline(quote[1])}</blockquote>`)
-      continue
-    }
-
-    // 无序列表
-    const bullet = line.match(/^\s*[-*+]\s+(.*)$/)
-    if (bullet) {
-      if (listType !== 'ul') {
-        closeList()
-        out.push('<ul>')
-        listType = 'ul'
-      }
-      out.push(`<li>${inline(bullet[1])}</li>`)
-      continue
-    }
-
-    // 有序列表
-    const ordered = line.match(/^\s*\d+[.)]\s+(.*)$/)
-    if (ordered) {
-      if (listType !== 'ol') {
-        closeList()
-        out.push('<ol>')
-        listType = 'ol'
-      }
-      out.push(`<li>${inline(ordered[1])}</li>`)
-      continue
-    }
-
-    // 表格：跳过（README 里少见，退化成段落更安全）
-    closeList()
-    out.push(`<p>${inline(line)}</p>`)
-  }
-
-  if (inCode) out.push('</code></pre>')
-  closeList()
-  return out.join('\n')
+  const holder = document.createElement('div')
+  holder.innerHTML = html
+  return (holder.textContent ?? '').replace(/\s+/g, ' ').trim()
 }

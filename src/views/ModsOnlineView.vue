@@ -7,6 +7,7 @@ import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import { locale, t } from '../i18n'
 import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
+import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import type { Repository, RepositorySource } from '../types'
 
@@ -50,20 +51,11 @@ function repoGroup(repo: Repository) {
   return pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
 }
 /**
- * 卡片简介：note_i18n 取当前语言，去掉 Markdown 标记只留纯文本首行
- * （卡片是摘要，Markdown 渲染在详情抽屉里做）。
+ * 卡片简介：note_i18n 取当前语言，用统一的 Markdown 渲染取纯文本摘要
+ * （卡片是摘要，完整 Markdown 在详情抽屉里渲染）。
  */
 function repoNote(repo: Repository) {
-  const raw = pickI18n(repo.note_i18n, repo.note || '')
-  const plain = raw
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/[*_`>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return plain
+  return markdownSummary(pickI18n(repo.note_i18n, repo.note || ''))
 }
 
 /* ===== 搜索 ===== */

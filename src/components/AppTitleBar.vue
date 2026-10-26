@@ -9,6 +9,7 @@ import {
 import { ACCENTS, accentKey, cycleAccent, isDark, setAccent, setThemeMode, themeMode } from '../theme'
 import { currentLocaleLabel, locale, localeOptions, setLocale, t, type Locale } from '../i18n'
 import { useUiZoom } from '../composables/useUiZoom'
+import appIcon from '../assets/app-icon.png'
 
 const props = defineProps<{ version: string }>()
 
@@ -59,7 +60,7 @@ defineExpose({ onUnmountedCleanup })
   <header class="titlebar" data-tauri-drag-region>
     <!-- 品牌 -->
     <div class="brand" data-tauri-drag-region>
-      <div class="brand-mark">＋</div>
+      <img class="brand-mark" :src="appIcon" alt="" />
       <div class="brand-text" data-tauri-drag-region>
         <strong>{{ t('OC2 模组管理器') }}</strong>
         <small>{{ t('游戏模组管理器') }}</small>
@@ -140,13 +141,9 @@ defineExpose({ onUnmountedCleanup })
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  font-size: 19px;
-  font-weight: 700;
-  color: #fff;
-  background: linear-gradient(135deg, var(--oc2-accent), var(--oc2-accent-hover));
+  border-radius: 9px;
+  object-fit: cover;
+  display: block;
 }
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
 .brand-text strong { font-size: 14.5px; font-weight: 700; color: var(--oc2-text-1); }

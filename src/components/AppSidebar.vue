@@ -8,12 +8,12 @@ defineProps<{ version: string }>()
 const route = useRoute()
 
 const navItems = [
-  { name: 'overview', title: t('总览'), icon: GridOutline },
-  { name: 'framework', title: t('框架管理'), icon: CubeOutline },
+  { name: 'overview', title: '总览', icon: GridOutline },
+  { name: 'framework', title: '框架管理', icon: CubeOutline },
   { name: 'mods-online', title: 'MOD 安装', icon: CloudDownloadOutline },
   { name: 'mods-local', title: 'MOD 管理', icon: FileTrayFullOutline },
-  { name: 'tools', title: t('工具'), icon: BuildOutline },
-  { name: 'settings', title: t('设置'), icon: SettingsOutline },
+  { name: 'tools', title: '工具', icon: BuildOutline },
+  { name: 'settings', title: '设置', icon: SettingsOutline },
 ]
 
 const activeName = computed(() => (route.name as string) ?? 'overview')
@@ -21,9 +21,6 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 
 <template>
   <aside class="sidebar">
-    <div class="brand" :title="t('OC2 模组管理器')">
-      <div class="brand-mark"><FileTrayFullOutline width="22" height="22" /></div>
-    </div>
     <nav class="nav">
       <router-link v-for="item in navItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
         :class="{ active: activeName === item.name }">
@@ -49,18 +46,6 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
   border-right: 1px solid var(--oc2-rail-line);
   background: var(--oc2-rail);
   padding: 14px 8px 12px;
-}
-.brand {
-  margin-bottom: 6px;
-}
-.brand-mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: #5b6ee8;
-  color: #fff;
-  display: grid;
-  place-items: center;
 }
 .nav {
   display: flex;

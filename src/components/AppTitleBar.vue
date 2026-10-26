@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { NDropdown } from 'naive-ui'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  CloseOutline, ContractOutline, LanguageOutline, MoonOutline, RemoveOutline,
+  CloseOutline, ContrastOutline, ContractOutline, LanguageOutline, MoonOutline, RemoveOutline,
   SquareOutline, SunnyOutline,
 } from '@vicons/ionicons5'
 import { ACCENTS, accentKey, cycleAccent, isDark, setAccent, setThemeMode, themeMode } from '../theme'
@@ -41,14 +41,12 @@ async function toggleMaximize() {
 }
 async function close() { await appWindow.close() }
 
-// 缩放：25% 步进的横拖动条，100%–200%，默认 150%
+// 缩放：下拉选择（与语言下拉同款），25% 步进，100%–200%，默认 150%
 const ZOOM_STEPS = [100, 125, 150, 175, 200] as const
-const zoomIndex = computed(() => {
-  const index = ZOOM_STEPS.findIndex((step) => step === zoomPercent.value)
-  return index === -1 ? 2 : index
-})
-function onZoomStep(index: number) {
-  void setZoom(ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, index))] / 100)
+const zoomOptions = ZOOM_STEPS.map((step) => ({ label: `${step}%`, key: step }))
+const zoomKey = computed(() => ZOOM_STEPS.find((step) => step === zoomPercent.value) ?? 150)
+function onZoomSelect(key: number) {
+  void setZoom(key / 100)
 }
 
 defineExpose({ onUnmountedCleanup })
@@ -67,18 +65,14 @@ defineExpose({ onUnmountedCleanup })
 
     <div class="spacer" data-tauri-drag-region></div>
 
-    <!-- 界面缩放：25% 步进的节点滑条（100%–200%，默认 150%） -->
-    <div class="zoom" :title="t('界面缩放')">
-      <div class="zoom-track">
-        <div class="zoom-fill" :style="{ width: `${(zoomIndex / (ZOOM_STEPS.length - 1)) * 100}%` }"></div>
-        <button v-for="(step, index) in ZOOM_STEPS" :key="step" type="button" class="zoom-node"
-          :class="{ on: index <= zoomIndex, current: index === zoomIndex }" :aria-label="`${step}%`"
-          :aria-pressed="index === zoomIndex" @click="onZoomStep(index)">
-          <span>{{ step }}</span>
-        </button>
-      </div>
-      <span class="zoom-value">{{ zoomPercent }}%</span>
-    </div>
+    <!-- 界面缩放：下拉选择（与语言下拉一致） -->
+    <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" @select="onZoomSelect">
+      <button class="pill" type="button" :title="t('界面缩放')">
+        <ContrastOutline width="15" height="15" />
+        <span>{{ zoomPercent }}%</span>
+        <span class="caret">▾</span>
+      </button>
+    </n-dropdown>
 
     <!-- 语言 -->
     <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale" trigger="click"
@@ -177,91 +171,6 @@ defineExpose({ onUnmountedCleanup })
   background: var(--oc2-rail-line);
 }
 
-/* 缩放滑条：灰色轨道 + 已选段高亮 + 节点圆点（当前节点加环） */
-.zoom {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 4px;
-  height: 32px;
-}
-.zoom-track {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 168px;
-  height: 100%;
-}
-/* 轨道底线 / 已选段：靠节点中心对齐 */
-.zoom-track::before,
-.zoom-fill {
-  content: '';
-  position: absolute;
-  top: 50%;
-  height: 3px;
-  margin-top: -1.5px;
-  border-radius: 2px;
-}
-.zoom-track::before {
-  left: 0;
-  right: 0;
-  background: var(--oc2-rail-line);
-}
-.zoom-fill {
-  left: 0;
-  background: var(--oc2-accent);
-  transition: width .14s ease;
-}
-.zoom-node {
-  position: relative;
-  z-index: 1;
-  flex: 1 1 0;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-.zoom-node > span {
-  width: 15px;
-  height: 15px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--oc2-sunken);
-  outline: 1.5px solid var(--oc2-rail-line);
-  outline-offset: 0;
-  font-size: 0;              /* 节点只显示圆点，数值在右侧统一显示 */
-  transition: background-color .14s ease, outline-color .14s ease, transform .14s ease;
-}
-.zoom-node.on > span {
-  background: var(--oc2-accent);
-  outline-color: var(--oc2-accent);
-}
-.zoom-node.current > span {
-  outline-width: 2px;
-  outline-style: solid;
-  outline-color: var(--oc2-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--oc2-accent) 24%, transparent);
-  transform: scale(1.12);
-}
-.zoom-node:hover > span {
-  outline-color: var(--oc2-accent);
-}
-.zoom-node:focus-visible {
-  outline: none;
-}
-.zoom-node:focus-visible > span {
-  outline-width: 2px;
-  outline-color: var(--oc2-text-1);
-}
-.zoom-value {
-  min-width: 38px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--oc2-text-2);
-}
 .win-btn {
   width: 40px;
   height: 32px;

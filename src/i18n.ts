@@ -278,7 +278,7 @@ export const naiveDateLocale = computed(() => ({
 
 /** v2 语言选择器标签（随当前语言显示本族名）。 */
 export const currentLocaleLabel = computed(() => ({
-  'zh-CN': '文/简体中文', 'zh-TW': '文/繁體中文', en: '文/English', ko: '文/한국어', ja: '文/日本語',
+  'zh-CN': '简体中文', 'zh-TW': '繁體中文', en: 'English', ko: '한국어', ja: '日本語',
 }[locale.value]))
 
 export function setLocale(value: Locale) {

@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NDrawer, NDrawerContent, NSwitch, NTag } from 'naive-ui'
-import { Download, FolderOpen, Info, RotateCcw } from 'lucide-vue-next'
+import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
 import UpdatePrompt from '../components/UpdatePrompt.vue'
@@ -93,10 +93,10 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
     <SettingsRow :title="'游戏目录'" description="游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理">
       <template #right>
         <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">
-          <RotateCcw :size="14" />恢复默认路径
+          <ArrowUndoOutline width="14" height="14" />恢复默认路径
         </n-button>
         <n-button size="small" secondary @click.stop="openGameDir">
-          <FolderOpen :size="14" />打开路径
+          <FolderOpenOutline width="14" height="14" />打开路径
         </n-button>
         <n-button size="small" type="primary" @click.stop="pathDrawer = true">
           选择路径
@@ -110,7 +110,7 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
     <SettingsRow title="立即检测更新" description="检查是否有新版本可用，检测到更新会弹出确认">
       <template #right>
         <n-button size="small" secondary :loading="checking" @click.stop="checkUpdate">
-          <Download :size="14" />检测更新
+          <DownloadOutline width="14" height="14" />检测更新
         </n-button>
       </template>
     </SettingsRow>
@@ -135,7 +135,7 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
 
   <!-- 关于 -->
   <SettingsGroup title="关于">
-    <SettingsRow :icon="Info" title="OC2 MOD 管理器" description="Tauri 2 · Vue 3 · Naive UI · Rust 后端">
+    <SettingsRow :icon="InformationCircleOutline" title="OC2 MOD 管理器" description="Tauri 2 · Vue 3 · Naive UI · Rust 后端">
       <template #right>
         <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
       </template>

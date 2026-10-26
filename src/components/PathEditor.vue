@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { NButton, NInput } from 'naive-ui'
-import { FolderOpen, Save } from 'lucide-vue-next'
+import { FolderOpenOutline, SaveOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 
 /**
@@ -42,9 +42,9 @@ function save() {
     <div class="mono current">{{ path || '未设置' }}</div>
     <n-input v-model:value="draft" clearable :placeholder="placeholder" />
     <div class="acts">
-      <n-button secondary @click="browse"><FolderOpen :size="15" />浏览…</n-button>
+      <n-button secondary @click="browse"><FolderOpenOutline width="15" height="15" />浏览…</n-button>
       <n-button type="primary" :loading="saving" :disabled="!draft.trim() || draft.trim() === path" @click="save">
-        <Save :size="15" />{{ saveLabel }}
+        <SaveOutline width="15" height="15" />{{ saveLabel }}
       </n-button>
     </div>
   </div>

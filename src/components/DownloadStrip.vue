@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
 import { NButton, NProgress } from 'naive-ui'
-import { X } from 'lucide-vue-next'
+import { CloseOutline } from '@vicons/ionicons5'
 import { api, watchDownloadProgress } from '../services/tauri'
 import type { DownloadProgress } from '../types'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -52,7 +52,7 @@ async function cancel() {
         · {{ speedText }}
         {{ progress.route === 'proxy' ? '· 代理' : progress.route === 'direct' ? '· 直连' : '' }}
       </span>
-      <n-button quaternary size="tiny" @click="cancel"><X :size="14" />取消</n-button>
+      <n-button quaternary size="tiny" @click="cancel"><CloseOutline width="14" height="14" />取消</n-button>
     </div>
     <n-progress type="line" :percentage="percent ?? 0" :show-indicator="false" :height="6" border-radius="3"
       :processing="percent === null" />

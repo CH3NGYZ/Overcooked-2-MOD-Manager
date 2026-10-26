@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NCard, NEmpty, NFloatButton, NSpin, NTag } from 'naive-ui'
-import { ChevronDown, ChevronUp, Download, RefreshCw } from 'lucide-vue-next'
+import { ChevronDownOutline, ChevronUpOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { Repository } from '../types'
@@ -100,15 +100,15 @@ function toggleExpand(repo: Repository) {
         </div>
         <div class="repo-acts">
           <n-button size="small" secondary :loading="!!refreshing[repo.id]" @click="refreshOne(repo)">
-            <RefreshCw :size="14" />刷新
+            <RefreshOutline width="14" height="14" />刷新
           </n-button>
           <n-button size="small" type="primary" :loading="!!installing[repo.id]"
             :disabled="game?.kitchen_running || !!refreshing[repo.id]" @click="install(repo)">
-            <Download :size="14" />安装
+            <DownloadOutline width="14" height="14" />安装
           </n-button>
           <n-button size="small" quaternary @click="toggleExpand(repo)">
-            <ChevronUp v-if="expanded[repo.id]" :size="14" />
-            <ChevronDown v-else :size="14" />版本
+            <ChevronUpOutline v-if="expanded[repo.id]" width="14" height="14" />
+            <ChevronDownOutline v-else width="14" height="14" />版本
           </n-button>
         </div>
       </div>
@@ -128,7 +128,7 @@ function toggleExpand(repo: Repository) {
   </n-spin>
     <n-float-button position="fixed" bottom="28" right="32" :disabled="busyCount > 0"
       tooltip="全部刷新（逐仓独立，互不阻塞）" @click="refreshAll">
-      <RefreshCw :size="17" :class="{ spin: busyCount > 0 }" />
+      <RefreshOutline width="17" height="17" :class="{ spin: busyCount > 0 }" />
     </n-float-button>
 </template>
 

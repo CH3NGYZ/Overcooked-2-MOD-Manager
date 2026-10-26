@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NCard, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
-import { ArchiveRestore, FolderOpen, PackagePlus, ShieldAlert, Trash2 } from 'lucide-vue-next'
+import { AddCircleOutline, FolderOpenOutline, SaveOutline, TrashOutline, WarningOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { BepInExInstallResult, OperationResult, Provider } from '../types'
@@ -134,16 +134,16 @@ async function openBackups() {
       <div class="actions">
         <n-button type="primary" :loading="installing" :disabled="working"
           @click="install(!!game?.bepinex.installed)">
-          <PackagePlus :size="16" />{{ game?.bepinex.installed ? '重新安装' : '安装框架' }}
+          <AddCircleOutline width="16" height="16" />{{ game?.bepinex.installed ? '重新安装' : '安装框架' }}
         </n-button>
         <n-button secondary :disabled="working || !game?.bepinex.installed" @click="backup">
-          <ArchiveRestore :size="16" />创建备份
+          <SaveOutline width="16" height="16" />创建备份
         </n-button>
         <n-button secondary type="warning" :disabled="working || !game?.bepinex.installed" @click="uninstall">
-          <ShieldAlert :size="16" />卸载框架
+          <WarningOutline width="16" height="16" />卸载框架
         </n-button>
         <n-button quaternary :disabled="working" @click="openBackups">
-          <FolderOpen :size="16" />打开备份目录
+          <FolderOpenOutline width="16" height="16" />打开备份目录
         </n-button>
       </div>
 
@@ -161,7 +161,7 @@ async function openBackups() {
         <span class="backup-acts">
           <n-button size="small" secondary @click="restore(backup)">恢复</n-button>
           <n-button size="small" quaternary type="error" @click="removeBackup(backup)">
-            <Trash2 :size="14" />
+            <TrashOutline width="14" height="14" />
           </n-button>
         </span>
       </div>

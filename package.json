@@ -13,18 +13,18 @@
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/plugin-dialog": "^2.8.1",
-    "lucide-vue-next": "^1.0.0",
+    "@vicons/ionicons5": "^0.13.0",
     "naive-ui": "^2.42.0",
     "vue": "^3.5.42",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/tsconfig": "^0.9.0",
     "typescript": "~6.0.2",
-    "vue-tsc": "^3.3.11",
     "vite": "^8.3.0",
-    "@tauri-apps/cli": "^2.12.1"
+    "vue-tsc": "^3.3.11"
   }
 }

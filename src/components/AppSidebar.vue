@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import {
-  Boxes, CloudDownload, LayoutGrid, PackageCheck, Settings, Wrench,
-} from 'lucide-vue-next'
+import { CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline } from '@vicons/ionicons5'
 
 defineProps<{ version: string }>()
 const route = useRoute()
 
 const navItems = [
-  { name: 'overview', title: '总览', icon: LayoutGrid },
-  { name: 'framework', title: '框架管理', icon: PackageCheck },
-  { name: 'mods-online', title: 'MOD 安装', icon: CloudDownload },
-  { name: 'mods-local', title: 'MOD 管理', icon: Boxes },
-  { name: 'tools', title: '工具', icon: Wrench },
-  { name: 'settings', title: '设置', icon: Settings },
+  { name: 'overview', title: '总览', icon: GridOutline },
+  { name: 'framework', title: '框架管理', icon: CubeOutline },
+  { name: 'mods-online', title: 'MOD 安装', icon: CloudDownloadOutline },
+  { name: 'mods-local', title: 'MOD 管理', icon: FileTrayFullOutline },
+  { name: 'tools', title: '工具', icon: BuildOutline },
+  { name: 'settings', title: '设置', icon: SettingsOutline },
 ]
 
 const activeName = computed(() => (route.name as string) ?? 'overview')
@@ -23,12 +21,12 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 <template>
   <aside class="sidebar">
     <div class="brand" title="OC2 MOD 管理器">
-      <div class="brand-mark"><Boxes :size="22" :stroke-width="2" /></div>
+      <div class="brand-mark"><FileTrayFullOutline width="22" height="22" /></div>
     </div>
     <nav class="nav">
       <router-link v-for="item in navItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
         :class="{ active: activeName === item.name }">
-        <component :is="item.icon" :size="20" :stroke-width="1.9" />
+        <component :is="item.icon" width="20" height="20" />
         <span>{{ item.title }}</span>
       </router-link>
     </nav>

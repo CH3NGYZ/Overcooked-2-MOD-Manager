@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NCard, NEmpty, NFloatButton, NFloatButtonGroup, NSpin, NSwitch, NTag } from 'naive-ui'
-import { AlignJustify, ArrowUpDown, ChevronDown, ChevronUp, LayoutGrid, Trash2 } from 'lucide-vue-next'
+import { ChevronDownOutline, ChevronUpOutline, GridOutline, ReorderFourOutline, SwapVerticalOutline, TrashOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { InstalledMod } from '../types'
@@ -120,11 +120,11 @@ function toggleExpand(dll: string) {
           <span class="muted ellipsis">{{ modTitle(mod) === mod.name ? mod.product_name || mod.name : mod.name }}</span>
           <span class="acts">
             <n-button size="tiny" quaternary @click="toggleExpand(mod.dll_file)">
-              <ChevronUp v-if="expanded[mod.dll_file]" :size="13" />
-              <ChevronDown v-else :size="13" />详情
+              <ChevronUpOutline v-if="expanded[mod.dll_file]" width="13" height="13" />
+              <ChevronDownOutline v-else width="13" height="13" />详情
             </n-button>
             <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" @click="remove(mod)">
-              <Trash2 :size="13" />
+              <TrashOutline width="13" height="13" />
             </n-button>
           </span>
         </div>
@@ -149,11 +149,11 @@ function toggleExpand(dll: string) {
         <span v-if="mod.load_warning" class="muted">{{ mod.load_warning }}</span>
         <span class="row-acts">
           <n-button size="tiny" quaternary @click="toggleExpand(mod.dll_file)">
-            <ChevronUp v-if="expanded[mod.dll_file]" :size="13" />
-            <ChevronDown v-else :size="13" />详情
+            <ChevronUpOutline v-if="expanded[mod.dll_file]" width="13" height="13" />
+            <ChevronDownOutline v-else width="13" height="13" />详情
           </n-button>
           <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" @click="remove(mod)">
-            <Trash2 :size="13" />
+            <TrashOutline width="13" height="13" />
           </n-button>
         </span>
       </div>
@@ -169,11 +169,11 @@ function toggleExpand(dll: string) {
   </n-spin>
     <n-float-button-group position="fixed" bottom="28" right="32" gap="10">
       <n-float-button tooltip="切换布局（卡片 / 横排）" @click="setLayout(layout === 'cards' ? 'rows' : 'cards')">
-        <AlignJustify v-if="layout === 'cards'" :size="17" />
-        <LayoutGrid v-else :size="17" />
+        <ReorderFourOutline v-if="layout === 'cards'" width="17" height="17" />
+        <GridOutline v-else width="17" height="17" />
       </n-float-button>
       <n-float-button :tooltip="`排序：${sortLabel}`" @click="cycleSort">
-        <ArrowUpDown :size="17" />
+        <SwapVerticalOutline width="17" height="17" />
       </n-float-button>
     </n-float-button-group>
   </template>

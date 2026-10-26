@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronRight } from 'lucide-vue-next'
+import { ChevronForwardOutline } from '@vicons/ionicons5'
 import type { Component } from 'vue'
 
 /**
@@ -22,14 +22,14 @@ function onClick() {
 
 <template>
   <div class="row" :class="{ clickable: clickable }" @click="onClick">
-    <span v-if="icon" class="ico"><component :is="icon" :size="19" :stroke-width="1.9" /></span>
+    <span v-if="icon" class="ico"><component :is="icon" width="19" height="19" /></span>
     <span class="txt">
       <b>{{ title }}</b>
       <small v-if="description">{{ description }}</small>
     </span>
     <span class="right">
       <slot name="right" />
-      <ChevronRight v-if="clickable" :size="18" class="chev" />
+      <ChevronForwardOutline v-if="clickable" width="18" height="18" class="chev" />
     </span>
   </div>
 </template>

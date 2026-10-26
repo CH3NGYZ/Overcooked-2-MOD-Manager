@@ -2,7 +2,7 @@
 import { nextTick, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NModal, NTag } from 'naive-ui'
-import { FileText, ScrollText, Terminal, Wrench } from 'lucide-vue-next'
+import { BuildOutline, DocumentTextOutline, ServerOutline, TerminalOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
@@ -67,18 +67,18 @@ async function resetUi() {
   </SettingsGroup>
 
   <SettingsGroup title="日志">
-    <SettingsRow :icon="ScrollText" title="打开 Rust 后端日志" description="安装、下载与文件操作的详细记录"
+    <SettingsRow :icon="ServerOutline" title="打开 Rust 后端日志" description="安装、下载与文件操作的详细记录"
       clickable @click="openLog('rust')" />
-    <SettingsRow :icon="FileText" title="打开前端日志" description="界面渲染与调用的记录" clickable
+    <SettingsRow :icon="DocumentTextOutline" title="打开前端日志" description="界面渲染与调用的记录" clickable
       @click="openLog('frontend')" />
-    <SettingsRow :icon="FileText" title="打开崩溃日志" description="程序异常退出时的诊断信息" clickable
+    <SettingsRow :icon="DocumentTextOutline" title="打开崩溃日志" description="程序异常退出时的诊断信息" clickable
       @click="openLog('crash')" />
   </SettingsGroup>
 
   <SettingsGroup title="高级">
-    <SettingsRow :icon="Terminal" title="打开开发者工具" description="WebView 开发者控制台（调试用）" clickable
+    <SettingsRow :icon="TerminalOutline" title="打开开发者工具" description="WebView 开发者控制台（调试用）" clickable
       @click="devtools" />
-    <SettingsRow :icon="Wrench" title="重置窗口状态" description="窗口位置或尺寸异常时恢复默认布局" clickable
+    <SettingsRow :icon="BuildOutline" title="重置窗口状态" description="窗口位置或尺寸异常时恢复默认布局" clickable
       @click="resetUi" />
   </SettingsGroup>
 

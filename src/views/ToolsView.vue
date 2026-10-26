@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NCard, NModal, NTag } from 'naive-ui'
-import { FileText, RotateCcw, Terminal } from 'lucide-vue-next'
+import { NButton, NModal, NTag } from 'naive-ui'
+import { FileText, ScrollText, Terminal, Wrench } from 'lucide-vue-next'
 import sponsorImage from '../assets/collectionCode.jpg'
+import SettingsGroup from '../components/settings/SettingsGroup.vue'
+import SettingsRow from '../components/settings/SettingsRow.vue'
 import { api } from '../services/tauri'
 import type { RustLog } from '../types'
 
@@ -52,35 +54,33 @@ async function resetUi() {
 </script>
 
 <template>
-  <n-card title="支持开发" class="block">
-    <div class="sponsor">
-      <img :src="sponsorImage" alt="赞助二维码" class="sponsor-img" />
-      <div class="muted">觉得好用可以请作者喝杯咖啡，感谢支持！</div>
+  <SettingsGroup title="支持开发">
+    <div class="sponsor-card">
+      <div class="sponsor-body">
+        <img :src="sponsorImage" alt="赞助二维码" class="sponsor-img" />
+        <div class="sponsor-text">
+          <b>觉得好用，请作者喝杯咖啡</b>
+          <span class="muted">所有功能永久免费，赞助用于服务器与开发动力。感谢支持！</span>
+        </div>
+      </div>
     </div>
-  </n-card>
+  </SettingsGroup>
 
-  <n-card title="日志" class="block">
-    <div class="acts">
-      <n-button secondary :loading="!!working.rust" @click="openLog('rust')">
-        <FileText :size="15" />Rust 后端日志
-      </n-button>
-      <n-button secondary :loading="!!working.frontend" @click="openLog('frontend')">
-        <FileText :size="15" />前端日志
-      </n-button>
-      <n-button secondary :loading="!!working.crash" @click="openLog('crash')">
-        <FileText :size="15" />崩溃日志
-      </n-button>
-    </div>
-    <div class="muted hint">日志位于用户数据目录 logs/ 下，每份最多保留 5 个轮转文件。</div>
-  </n-card>
+  <SettingsGroup title="日志">
+    <SettingsRow :icon="ScrollText" title="打开 Rust 后端日志" description="安装、下载与文件操作的详细记录"
+      clickable @click="openLog('rust')" />
+    <SettingsRow :icon="FileText" title="打开前端日志" description="界面渲染与调用的记录" clickable
+      @click="openLog('frontend')" />
+    <SettingsRow :icon="FileText" title="打开崩溃日志" description="程序异常退出时的诊断信息" clickable
+      @click="openLog('crash')" />
+  </SettingsGroup>
 
-  <n-card title="高级" class="block">
-    <div class="acts">
-      <n-button secondary @click="devtools"><Terminal :size="15" />开发者工具</n-button>
-      <n-button secondary @click="resetUi"><RotateCcw :size="15" />重置窗口状态</n-button>
-    </div>
-    <div class="muted hint">重置窗口状态用于窗口位置或尺寸异常时恢复默认布局。</div>
-  </n-card>
+  <SettingsGroup title="高级">
+    <SettingsRow :icon="Terminal" title="打开开发者工具" description="WebView 开发者控制台（调试用）" clickable
+      @click="devtools" />
+    <SettingsRow :icon="Wrench" title="重置窗口状态" description="窗口位置或尺寸异常时恢复默认布局" clickable
+      @click="resetUi" />
+  </SettingsGroup>
 
   <n-modal v-model:show="logOpen">
     <div class="log-modal">
@@ -96,26 +96,58 @@ async function resetUi() {
 </template>
 
 <style scoped>
-.block { max-width: 760px; margin-bottom: 18px; }
-.sponsor { display: flex; align-items: center; gap: 18px; }
-.sponsor-img {
-  width: 148px; height: 148px; object-fit: cover;
-  border-radius: 10px; border: 1px solid #2c3540;
+.sponsor-card {
+  padding: 16px;
+  border: 1px solid #262c35;
+  border-radius: 12px;
+  background: #1b1e24;
 }
-.acts { display: flex; gap: 10px; flex-wrap: wrap; }
-.hint { margin-top: 10px; }
+.sponsor-body {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.sponsor-img {
+  width: 260px;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid #2c3540;
+  flex: 0 0 auto;
+}
+.sponsor-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sponsor-text b {
+  font-size: 14px;
+}
 .log-modal {
   width: min(880px, calc(100vw - 80px));
-  background: #1e2025; border: 1px solid #2c3540; border-radius: 12px;
+  background: #1e2025;
+  border: 1px solid #2c3540;
+  border-radius: 12px;
   padding: 16px 18px;
 }
-.log-head { display: flex; align-items: center; gap: 10px; }
+.log-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .log-head b { flex: 1; }
 .log-path { margin: 8px 0; }
 .log-body {
-  margin: 0; height: 60vh; overflow: auto;
-  background: #14161a; border: 1px solid #232a33; border-radius: 8px;
-  padding: 12px; font-size: 11.5px; line-height: 1.55; color: #b8c4d0;
-  white-space: pre-wrap; word-break: break-all;
+  margin: 0;
+  height: 60vh;
+  overflow: auto;
+  background: #14161a;
+  border: 1px solid #232a33;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #b8c4d0;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

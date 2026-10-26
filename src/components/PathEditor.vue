@@ -1,0 +1,70 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { NButton, NInput } from 'naive-ui'
+import { FolderOpen, Save } from 'lucide-vue-next'
+import { api } from '../services/tauri'
+
+/**
+ * 路径编辑字段集：输入 + 浏览 + 确认保存。
+ * 游戏目录与未来 DIYLevel 自定义地图框架路径的二级菜单共用。
+ */
+const props = withDefaults(defineProps<{
+  path: string
+  saving?: boolean
+  saveLabel?: string
+  placeholder?: string
+}>(), {
+  saving: false,
+  saveLabel: '确认保存',
+  placeholder: '选择或输入目录路径',
+})
+
+const emit = defineEmits<{ save: [path: string] }>()
+
+const draft = ref('')
+watch(() => props.path, (value) => { draft.value = value }, { immediate: true })
+
+async function browse() {
+  const dir = await api.chooseGameDirectory()
+  if (dir) draft.value = dir
+}
+
+function save() {
+  const next = draft.value.trim()
+  if (!next) return
+  emit('save', next)
+}
+</script>
+
+<template>
+  <div class="path-editor">
+    <div class="muted label">当前路径</div>
+    <div class="mono current">{{ path || '未设置' }}</div>
+    <n-input v-model:value="draft" clearable :placeholder="placeholder" />
+    <div class="acts">
+      <n-button secondary @click="browse"><FolderOpen :size="15" />浏览…</n-button>
+      <n-button type="primary" :loading="saving" :disabled="!draft.trim() || draft.trim() === path" @click="save">
+        <Save :size="15" />{{ saveLabel }}
+      </n-button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.label { margin-bottom: 6px; }
+.current {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid #2c3540;
+  border-radius: 8px;
+  background: #181b20;
+  color: #3cb89b;
+  overflow-wrap: anywhere;
+}
+.acts {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+</style>

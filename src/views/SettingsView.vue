@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NCard, NSwitch, NTag } from 'naive-ui'
-import { Download, RefreshCw } from 'lucide-vue-next'
+import { NButton, NDrawer, NDrawerContent, NSwitch, NTag } from 'naive-ui'
+import { Download, FolderOpen, Info, RotateCcw } from 'lucide-vue-next'
 import { getVersion } from '@tauri-apps/api/app'
-import PathSettingCard from '../components/PathSettingCard.vue'
+import PathEditor from '../components/PathEditor.vue'
+import UpdatePrompt from '../components/UpdatePrompt.vue'
+import SettingsGroup from '../components/settings/SettingsGroup.vue'
+import SettingsRow from '../components/settings/SettingsRow.vue'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, PublicConfig } from '../types'
@@ -14,10 +17,14 @@ const { load, game } = useDashboard()
 
 const version = ref('')
 const checking = ref(false)
-const checkResult = ref<AppUpdateCheckResult | null>(null)
-const installing = ref(false)
 const config = ref<PublicConfig | null>(null)
 const savingPath = ref(false)
+
+const pathDrawer = ref(false)
+const updateDrawer = ref(false)
+const updateResult = ref<AppUpdateCheckResult | null>(null)
+const updateInfo = ref<NonNullable<AppUpdateCheckResult['update']> | null>(null)
+const showUpdate = ref(false)
 
 onMounted(async () => {
   version.value = await getVersion().catch(() => '')
@@ -25,23 +32,14 @@ onMounted(async () => {
   await load()
 })
 
-/* ===== 路径管理：游戏目录（未来 DIYLevel 自定义地图框架路径也走 PathSettingCard） ===== */
 function fail(reason: unknown) {
   message.error(reason instanceof Error ? reason.message : String(reason))
 }
 
+/* ===== 路径管理：游戏目录 ===== */
 async function openGameDir() {
   const result = await api.openGameDirectory()
   if (!result.ok) message.error(result.message)
-}
-
-async function saveGamePath(path: string) {
-  savingPath.value = true
-  try {
-    const info = await api.setGamePath(path)
-    message.success(info.game_exists ? '游戏路径已保存并验证' : '路径已保存，但目录不存在或缺少游戏文件')
-    await load()
-  } catch (reason) { fail(reason) } finally { savingPath.value = false }
 }
 
 async function resetGamePath() {
@@ -53,26 +51,34 @@ async function resetGamePath() {
   } catch (reason) { fail(reason) } finally { savingPath.value = false }
 }
 
+async function saveGamePath(path: string) {
+  savingPath.value = true
+  try {
+    const info = await api.setGamePath(path)
+    message.success(info.game_exists ? '游戏路径已保存并验证' : '路径已保存，但目录不存在或缺少游戏文件')
+    pathDrawer.value = false
+    await load()
+  } catch (reason) { fail(reason) } finally { savingPath.value = false }
+}
+
 /* ===== 程序更新 ===== */
 async function checkUpdate() {
   checking.value = true
   try {
-    checkResult.value = await api.checkAppUpdate('zh-CN')
-    if (checkResult.value.update) message.success(`发现新版本 ${checkResult.value.update.version}`)
-    else if (checkResult.value.all_failed) message.error('更新检查失败，可稍后重试')
-    else message.success('当前已是最新版本')
+    updateResult.value = await api.checkAppUpdate('zh-CN')
+    if (updateResult.value.update) {
+      // 检测到更新：与启动时相同的弹窗，更新/取消。
+      updateInfo.value = updateResult.value.update
+      showUpdate.value = true
+    } else if (updateResult.value.all_failed) {
+      message.error('更新检查失败，可稍后重试')
+    } else {
+      message.success('当前已是最新版本')
+    }
   } catch (reason) { fail(reason) } finally { checking.value = false }
 }
 
-async function installUpdate() {
-  installing.value = true
-  try {
-    const result = await api.installAppUpdate()
-    result.ok ? message.success(result.message || '更新安装已开始') : message.error(result.message)
-  } catch (reason) { fail(reason) } finally { installing.value = false }
-}
-
-/* ===== 偏好 ===== */
+/* ===== 通用偏好 ===== */
 async function savePreference(patch: Parameters<typeof api.saveSettings>[0], label: string) {
   try {
     config.value = await api.saveSettings(patch)
@@ -82,81 +88,98 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
 </script>
 
 <template>
-  <PathSettingCard
-    title="游戏目录"
-    :path="game?.path ?? ''"
-    :verified="game?.game_exists ?? null"
-    :saving="savingPath"
-    description="包含 Overcooked!2.exe 的目录；DIYLevel 自定义地图框架路径后续也在此统一管理。"
-    @open="openGameDir"
-    @save="saveGamePath"
-    @reset="resetGamePath"
-  />
-
-  <n-card title="关于" class="block">
-    <div class="about-row">
-      <span>OC2 MOD 管理器</span>
-      <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
-    </div>
-    <div class="about-row muted">
-      <span>Tauri 2 · Vue 3 · Naive UI · Rust 后端</span>
-    </div>
-  </n-card>
-
-  <n-card title="程序更新" class="block">
-    <div class="about-row">
-      <span class="muted">内置 Tauri Updater，签名校验后自动安装。</span>
-      <n-button size="small" secondary :loading="checking" @click="checkUpdate">
-        <RefreshCw :size="14" />检查更新
-      </n-button>
-    </div>
-    <div v-if="checkResult?.update" class="update-box">
-      <div class="about-row">
-        <b>新版本 {{ checkResult.update.version }}</b>
-        <n-button size="small" type="primary" :loading="installing" @click="installUpdate">
-          <Download :size="14" />安装更新
+  <!-- 路径管理 -->
+  <SettingsGroup title="路径管理">
+    <SettingsRow :title="'游戏目录'" description="游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理">
+      <template #right>
+        <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">
+          <RotateCcw :size="14" />恢复默认路径
         </n-button>
-      </div>
-      <div v-if="checkResult.update.body" class="muted update-body">{{ checkResult.update.body }}</div>
-    </div>
-    <div v-else-if="checkResult && !checkResult.all_failed" class="muted">已是最新版本。</div>
-    <div v-else-if="checkResult?.all_failed" class="muted">
-      全部渠道检查失败，可前往发布页手动下载。
-      <n-button size="tiny" quaternary type="primary" @click="api.openUpdateRepository()">打开发布页</n-button>
-    </div>
-  </n-card>
+        <n-button size="small" secondary @click.stop="openGameDir">
+          <FolderOpen :size="14" />打开路径
+        </n-button>
+        <n-button size="small" type="primary" @click.stop="pathDrawer = true">
+          选择路径
+        </n-button>
+      </template>
+    </SettingsRow>
+  </SettingsGroup>
 
-  <n-card title="偏好" class="block">
-    <div class="pref-row">
-      <div>
-        <div>启动时检查程序更新</div>
-        <div class="muted">每天首次启动时检查新版本</div>
+  <!-- 程序更新 -->
+  <SettingsGroup title="程序更新">
+    <SettingsRow title="立即检测更新" description="检查是否有新版本可用，检测到更新会弹出确认">
+      <template #right>
+        <n-button size="small" secondary :loading="checking" @click.stop="checkUpdate">
+          <Download :size="14" />检测更新
+        </n-button>
+      </template>
+    </SettingsRow>
+    <SettingsRow title="更新设置" description="自动检查与安装偏好" clickable @click="updateDrawer = true" />
+  </SettingsGroup>
+
+  <!-- 通用设置 -->
+  <SettingsGroup title="通用设置">
+    <SettingsRow title="启动时检查程序更新" description="每天首次启动时检查新版本">
+      <template #right>
+        <n-switch size="small" :value="config?.network.check_updates_on_start"
+          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, '已保存')" />
+      </template>
+    </SettingsRow>
+    <SettingsRow title="自动检测游戏路径" description="启动与刷新时自动探测 Steam 库">
+      <template #right>
+        <n-switch size="small" :value="config?.game.auto_detect"
+          @update:value="(value: boolean) => savePreference({ auto_detect: value }, '已保存')" />
+      </template>
+    </SettingsRow>
+  </SettingsGroup>
+
+  <!-- 关于 -->
+  <SettingsGroup title="关于">
+    <SettingsRow :icon="Info" title="OC2 MOD 管理器" description="Tauri 2 · Vue 3 · Naive UI · Rust 后端">
+      <template #right>
+        <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
+      </template>
+    </SettingsRow>
+  </SettingsGroup>
+
+  <!-- 二级：选择路径 -->
+  <n-drawer v-model:show="pathDrawer" :width="440" placement="right">
+    <n-drawer-content title="选择游戏目录" closable>
+      <PathEditor :path="game?.path ?? ''" :saving="savingPath" @save="saveGamePath" />
+      <div class="muted drawer-hint">目录需包含 Overcooked!2.exe；保存后自动验证。</div>
+    </n-drawer-content>
+  </n-drawer>
+
+  <!-- 二级：更新设置 -->
+  <n-drawer v-model:show="updateDrawer" :width="440" placement="right">
+    <n-drawer-content title="更新设置" closable>
+      <div class="drawer-pref">
+        <div>
+          <b>启动时检查程序更新</b>
+          <div class="muted">每天首次启动时检查新版本</div>
+        </div>
+        <n-switch size="small" :value="config?.network.check_updates_on_start"
+          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, '已保存')" />
       </div>
-      <n-switch :value="config?.network.check_updates_on_start"
-        @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, '已保存')" />
-    </div>
-    <div class="pref-row">
-      <div>
-        <div>自动检测游戏路径</div>
-        <div class="muted">启动与刷新时自动探测 Steam 库</div>
+      <div class="muted drawer-hint">
+        更新检查按地区走 Gitee / GitHub 双渠道；更新包经 minisign 签名校验后由 Tauri Updater 安装。
       </div>
-      <n-switch :value="config?.game.auto_detect"
-        @update:value="(value: boolean) => savePreference({ auto_detect: value }, '已保存')" />
-    </div>
-  </n-card>
+      <div v-if="updateResult?.all_failed" class="muted drawer-hint danger">
+        上次检查全部渠道失败，可前往发布页手动下载。
+        <n-button size="tiny" quaternary type="primary" @click="api.openUpdateRepository()">打开发布页</n-button>
+      </div>
+    </n-drawer-content>
+  </n-drawer>
+
+  <UpdatePrompt v-model:show="showUpdate" :update="updateInfo" />
 </template>
 
 <style scoped>
-.block { max-width: 860px; margin-bottom: 18px; }
-.about-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
-.update-box {
-  margin-top: 10px; padding: 12px; border: 1px solid #2c3540; border-radius: 8px;
-  background: #1a1d22;
+.drawer-hint { margin-top: 14px; }
+.drawer-hint.danger { color: #ee8585; }
+.drawer-pref {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 10px 0 14px; border-bottom: 1px dashed #232a33; margin-bottom: 6px;
 }
-.update-body { margin-top: 8px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
-.pref-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 9px 0; border-bottom: 1px dashed #232a33;
-}
-.pref-row:last-child { border-bottom: 0; }
+.drawer-pref b { font-size: 13.5px; }
 </style>

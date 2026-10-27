@@ -2,7 +2,7 @@
 import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NDrawer, NDrawerContent, NInput, NSwitch, NTag } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
@@ -14,7 +14,7 @@ import SettingsRow from '../components/settings/SettingsRow.vue'
 import { tagColorFor } from '../theme'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
-import type { AppUpdateCheckResult, PermissionStatus, PublicConfig } from '../types'
+import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 
 const message = useMessage()
 const { load, ensureLoaded, game } = useDashboard()
@@ -35,6 +35,33 @@ const savingTokens = ref(false)
 const updateResult = ref<AppUpdateCheckResult | null>(null)
 const updateInfo = ref<NonNullable<AppUpdateCheckResult['update']> | null>(null)
 const showUpdate = ref(false)
+
+/* ===== 游戏版本（macOS：CrossOver / 原生） ===== */
+
+const isMacOS = computed(() => config.value?.platform === 'macos')
+const gameRuntime = computed<GameRuntime>(() => config.value?.game.runtime ?? 'wine')
+const switchingRuntime = ref(false)
+
+/**
+ * 切换游戏运行时。
+ *
+ * 后端 `save_settings({ game_runtime })` 会先确认游戏已停止，再用
+ * `switch_runtime` 同步调整路径与「是否原生」相关派生状态；完成后必须
+ * 重新 `load()` —— 探测路径、BepInEx 包类型和启动方式都随之改变。
+ */
+async function switchRuntime(runtime: GameRuntime) {
+  if (runtime === gameRuntime.value || switchingRuntime.value) return
+  switchingRuntime.value = true
+  try {
+    config.value = await api.saveSettings({ game_runtime: runtime })
+    await load()
+    message.success(t('已保存'))
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    switchingRuntime.value = false
+  }
+}
 
 /* ===== BepInEx 框架卡片摘要 ===== */
 
@@ -199,6 +226,21 @@ async function clearTokens() {
 <template>
   <!-- 路径管理 -->
   <SettingsGroup :title="t('路径管理')">
+    <!--
+      游戏版本（仅 macOS）：决定探测哪个安装、装哪份 BepInEx、启动走哪条链路。
+      放在游戏目录之上 —— 运行时是路径探测的前提，先选运行时再选目录才符合因果。
+      CrossOver 走 Wine 容器里的 Windows 版；原生走 macOS 版 BepInEx。
+    -->
+    <SettingsRow v-if="isMacOS" :title="t('游戏版本')"
+      :description="t('CrossOver 运行 Windows 版，或使用 macOS 原生版')">
+      <template #right>
+        <n-radio-group :value="gameRuntime" size="small" :disabled="switchingRuntime"
+          @update:value="(value: GameRuntime) => switchRuntime(value)">
+          <n-radio-button value="wine">{{ t('CrossOver') }}</n-radio-button>
+          <n-radio-button value="native">{{ t('原生') }}</n-radio-button>
+        </n-radio-group>
+      </template>
+    </SettingsRow>
     <SettingsRow :title="t('游戏目录')" :description="t('游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理')">
       <template #right>
         <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">

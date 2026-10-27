@@ -118,6 +118,8 @@ const entries = {
   '配置管理': ['設定管理', 'Manage config', '설정 관리', '設定を管理'],
   '运行形态': ['執行形態', 'Runtime', '실행 형태', '実行形態'],
   '原生': ['原生', 'Native', '네이티브', 'ネイティブ'],
+  '游戏版本': ['遊戲版本', 'Game version', '게임 버전', 'ゲームのバージョン'],
+  'CrossOver 运行 Windows 版，或使用 macOS 原生版': ['CrossOver 執行 Windows 版，或使用 macOS 原生版', 'Run the Windows build through CrossOver, or use the native macOS build', 'CrossOver로 Windows 버전을 실행하거나 macOS 네이티브 버전을 사용합니다', 'CrossOver で Windows 版を実行するか、macOS ネイティブ版を使用します'],
   '尚未安装，点击右侧按钮安装': ['尚未安裝，點擊右側按鈕安裝', 'Not installed — use the button on the right', '설치되지 않았습니다. 오른쪽 버튼으로 설치하세요', '未インストールです。右のボタンからインストールしてください'],
   '管理': ['管理', 'Manage', '관리', '管理'],
   '不完整': ['不完整', 'Incomplete', '불완전', '不完全'],

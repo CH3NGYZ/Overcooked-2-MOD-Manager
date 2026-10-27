@@ -119,6 +119,12 @@ export interface ModPreview {
   mod_count: number
   dependency_count: number
   entries: ModPreviewEntry[]
+  /** repository = 从在线仓库资产下载；manual = 本地文件或直链。 */
+  origin: 'repository' | 'manual'
+  /** 仓库来源本次 Release 的版本标签（如 v1.2.3）；手动来源为空串。 */
+  release_tag: string
+  /** 仓库来源本次 Release 的提交日志（Markdown）；手动来源为空串。 */
+  release_body: string
 }
 export type ModSourceKind = 'local' | 'url'
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }

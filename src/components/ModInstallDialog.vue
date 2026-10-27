@@ -19,6 +19,7 @@ import { computed, ref } from 'vue'
 import { NButton, NModal, NTag, useMessage } from 'naive-ui'
 import { api } from '../services/tauri'
 import { tagColorFor } from '../theme'
+import { renderReadme } from '../markdown'
 import { t } from '../i18n'
 import type { ModPreview } from '../types'
 
@@ -32,6 +33,17 @@ const emit = defineEmits<{
 
 const message = useMessage()
 const installing = ref(false)
+
+/**
+ * 仓库来源才展示 Release 提交日志；本地文件与直链没有版本概念，整块不出现。
+ * RAW 仓库虽然来源是仓库，但没有 Release，`release_tag` 为空，同样隐藏。
+ */
+const releaseLogHtml = computed(() =>
+  props.preview?.origin === 'repository' ? renderReadme(props.preview.release_body ?? '') : '',
+)
+const showReleaseLog = computed(
+  () => props.preview?.origin === 'repository' && props.preview.release_tag.trim() !== '',
+)
 
 /** 弹窗开关；关闭时统一走 discard，保证暂存一定被清理。 */
 const visible = computed({
@@ -113,6 +125,20 @@ async function confirm() {
         <div v-if="!preview.entries.length" class="muted">{{ t('这个压缩包里没有 DLL 文件') }}</div>
       </div>
 
+      <!--
+        仓库来源才展示本次 Release 的提交日志：用户点「立即安装」之前
+        应该能看到这次到底更新了什么。本地文件与直链没有版本概念，不显示。
+      -->
+      <div v-if="showReleaseLog" class="release-log">
+        <div class="release-log-head">
+          <span class="muted">{{ t('提交日志') }}</span>
+          <b class="mono">{{ preview.release_tag }}</b>
+        </div>
+        <!-- renderReadme 关闭了原始 HTML，日志只能输出 Markdown 生成的安全节点 -->
+        <div v-if="releaseLogHtml" class="release-log-box" v-html="releaseLogHtml"></div>
+        <div v-else class="release-log-box release-log-empty muted">{{ t('该版本没有提交日志') }}</div>
+      </div>
+
       <div class="install-actions">
         <n-button secondary :disabled="installing" @click="discard">{{ t('取消') }}</n-button>
         <n-button type="primary" :loading="installing" @click="confirm">{{ t('立即安装') }}</n-button>
@@ -162,6 +188,75 @@ async function confirm() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Release 提交日志：与仓库详情抽屉的日志区块保持同一视觉语言 */
+.release-log { display: flex; flex-direction: column; gap: 6px; }
+.release-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.release-log-head span { font-size: 11px; }
+.release-log-head b {
+  font-size: 12px;
+  color: var(--oc2-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.release-log-box {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 8px;
+  background: var(--oc2-sunken);
+  font-size: 12px;
+  line-height: 1.65;
+  overscroll-behavior: contain;
+}
+.release-log-empty {
+  display: grid;
+  place-items: center;
+  min-height: 48px;
+  font-size: 12px;
+}
+/*
+ * v-html 插入的 Markdown 节点不会带 scoped 属性，
+ * 所以这些规则必须用 :deep 才能作用到 renderReadme 的输出上。
+ */
+.release-log-box :deep(p) { margin: 0 0 8px; }
+.release-log-box :deep(> :last-child) { margin-bottom: 0; }
+.release-log-box :deep(h1),
+.release-log-box :deep(h2),
+.release-log-box :deep(h3),
+.release-log-box :deep(h4) {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oc2-text-1);
+}
+.release-log-box :deep(> :first-child) { margin-top: 0; }
+.release-log-box :deep(ul),
+.release-log-box :deep(ol) { margin: 0 0 8px; padding-left: 20px; }
+.release-log-box :deep(li) { margin: 2px 0; }
+.release-log-box :deep(code) {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--oc2-row-hover);
+  font-size: 11.5px;
+}
+.release-log-box :deep(pre) {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--oc2-row-hover);
+  overflow-x: auto;
+}
+.release-log-box :deep(pre code) { padding: 0; background: none; }
+.release-log-box :deep(a) { color: var(--oc2-accent); text-decoration: none; }
+.release-log-box :deep(a:hover) { text-decoration: underline; }
+.release-log-box :deep(img) { max-width: 100%; border-radius: 6px; }
 /* 底部操作行：靠右 */
 .install-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

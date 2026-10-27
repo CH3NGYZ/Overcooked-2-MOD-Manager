@@ -2377,6 +2377,7 @@ pub async fn install_repository(
         download_url,
         download_name,
         release_tag,
+        release_body,
         release_prerelease,
         digest,
         is_raw_file,
@@ -2402,6 +2403,7 @@ pub async fn install_repository(
             (
                 download_url,
                 download_name,
+                String::new(),
                 String::new(),
                 false,
                 None,
@@ -2466,6 +2468,7 @@ pub async fn install_repository(
                 asset.download_url.clone(),
                 asset.name.clone(),
                 release.tag_name.clone(),
+                release.body.clone(),
                 release.prerelease,
                 asset.digest.clone(),
                 false,
@@ -2581,7 +2584,13 @@ pub async fn install_repository(
      * 更新」与手动安装、在线直链看到的是同一个预览弹窗。
      */
     if preview_only.unwrap_or(false) {
-        let preview = crate::mod_preview::stage_downloaded_file(&state, &temp, &download_name)?;
+        let preview = crate::mod_preview::stage_downloaded_file(
+            &state,
+            &temp,
+            &download_name,
+            &release_tag,
+            &release_body,
+        )?;
         let _ = fs::remove_file(&temp);
         log::info!(
             "仓库资产已下载并解析（预览模式）：仓库={}，DLL 数={}",

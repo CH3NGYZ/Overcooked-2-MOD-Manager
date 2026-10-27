@@ -79,6 +79,21 @@ pub struct ModPreview {
     pub dependency_count: usize,
     /// 逐 DLL 的解析结果（按包内顺序）。
     pub entries: Vec<ModPreviewEntry>,
+    /// 来源：`repository` 表示从在线仓库资产下载，`manual` 表示本地文件或直链。
+    /// 界面据此决定是否展示 Release 日志区块。
+    pub origin: PreviewOrigin,
+    /// 仓库安装时本次 Release 的版本标签（如 `v1.2.3`）；手动来源为空。
+    pub release_tag: String,
+    /// 仓库安装时本次 Release 的提交日志（Markdown）；手动来源为空。
+    pub release_body: String,
+}
+
+/// 预览内容的来源，决定界面展示哪些来源专属信息。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PreviewOrigin {
+    Repository,
+    Manual,
 }
 
 /// 源类型：本地路径或在线直链。
@@ -258,6 +273,10 @@ fn build_preview(entries: Vec<ModPreviewEntry>, file_name: &str) -> ModPreview {
         mod_count,
         dependency_count,
         entries,
+        // 默认按手动来源构造；仓库安装会把这两个字段改写为实际 Release 信息。
+        origin: PreviewOrigin::Manual,
+        release_tag: String::new(),
+        release_body: String::new(),
     }
 }
 
@@ -280,17 +299,27 @@ pub(crate) fn stage_downloaded_file(
     state: &AppState,
     source: &Path,
     file_name: &str,
+    release_tag: &str,
+    release_body: &str,
 ) -> Result<ModPreview, String> {
     cleanup_stale_previews(state);
     let extension = source_extension(file_name).ok_or("无法识别文件类型")?;
     if extension != "dll" && extension != "zip" {
         return Err("只支持 .dll 或 .zip 文件".into());
     }
-    let preview = if extension == "dll" {
+    let mut preview = if extension == "dll" {
         build_preview(vec![analyze_dll(source, file_name)], file_name)
     } else {
         analyze_zip(source, file_name)?
     };
+    /*
+     * 仓库来源的预览额外带上本次 Release 的版本与提交日志：
+     * 用户在「立即安装」之前应该能看到这次到底更新了什么。
+     * RAW 仓库没有 Release，两者都是空串，界面据此隐藏该区块。
+     */
+    preview.origin = PreviewOrigin::Repository;
+    preview.release_tag = release_tag.to_string();
+    preview.release_body = release_body.to_string();
     stage_local(state, &preview, source)?;
     log::info!(
         "仓库资产已送入预览暂存：预览={}，DLL 数={}，MOD 数={}，依赖数={}",

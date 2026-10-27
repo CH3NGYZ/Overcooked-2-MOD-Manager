@@ -734,9 +734,11 @@ defineExpose({ refreshAll, visibleCount })
   --n-border-focus: 1px solid var(--oc2-accent-contrast-hover) !important;
 }
 /*
- * 刷新按钮刻意不用实心填充，而是复用「刷新失败」标签的样式：
- * 浅色底 + 对比色描边 + 对比色文字（statusToneColors.warn）。
- * 实心亮色按钮比标签重得多，会让「同一个状态的提示」看起来是两个来源；
+ * 刷新按钮刻意不用实心填充，而是复用「仓库刷新失败」标签的样式：
+ * 浅色底 + 对比色描边 + 对比色文字。
+ * statusToneColors.moderate 的 tint 比例与本处 16% 一致，
+ * 所以按钮和标签始终是同一档颜色，换主题色时一起变。
+ * 实心亮色按钮比标签重得多，会让同一个状态看起来像两个来源；
  * 这里只要让用户知道「就是这一栏、点它重试」，不需要额外强调。
  */
 .card-install.card-install--refresh.n-button {

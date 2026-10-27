@@ -55,7 +55,16 @@ test('所有未安装类标签都是灰色', () => {
 
 test('Release 仓库禁用或刷新失败时优先提示状态', () => {
   assert.equal(repositoryStatus(repo({ enabled: false }), []).text, '未启用')
-  assert.equal(repositoryStatus(repo({ last_error: 'x' }), []).text, '刷新失败')
+  assert.equal(repositoryStatus(repo({ last_error: 'x' }), []).text, '仓库刷新失败')
+})
+
+test('仓库刷新失败与已安装 MOD 的仓库刷新失败同文案同等级', () => {
+  const fromRepository = repositoryStatus(repo({ last_error: 'x' }), [])
+  const fromInstalledMod = STATUS_META.repository_unavailable
+  assert.equal(fromRepository.text, fromInstalledMod.text)
+  assert.equal(fromRepository.tone, fromInstalledMod.tone)
+  // 中等偏上：需要用户注意并重试，但没到「同 GUID 冲突 / 加载失败」那一档
+  assert.equal(fromRepository.tone, 'moderate')
 })
 
 test('后端已给出 latest 时直接采信；版本落后时判为可更新', () => {

@@ -49,7 +49,14 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   not_release_asset: { text: '已安装', tone: 'accent' },
   unbound: { text: '未绑定', tone: 'muted' },
   bound_repository_missing: { text: '仓库缺失', tone: 'critical' },
-  repository_unavailable: { text: '仓库不可用', tone: 'critical' },
+  /**
+   * 绑定仓库的 Release 抓取失败。
+   *
+   * 与 MOD 安装页的 `refresh_failed` 是同一件事（这个仓库这次没刷出来），
+   * 所以文案统一为「仓库刷新失败」、等级统一为 moderate：
+   * 需要用户注意并重试，但不像同 GUID 冲突、加载失败那样已经破坏了本地状态。
+   */
+  repository_unavailable: { text: '仓库刷新失败', tone: 'moderate' },
   unknown: { text: '版本未知', tone: 'muted' },
   duplicate: { text: '重复', tone: 'severe' },
   duplicate_lower_version: { text: '低版本', tone: 'mild' },
@@ -65,7 +72,8 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   /** RAW（仓库文件）仓库未安装时也显示「未安装」，不再显示「仓库文件」。 */
   not_installed_raw: { text: '未安装', tone: 'muted' },
   not_refreshed: { text: '未刷新', tone: 'muted' },
-  refresh_failed: { text: '刷新失败', tone: 'warn' },
+  /** 与已安装 MOD 的 `repository_unavailable` 同义，文案与等级保持一致。 */
+  refresh_failed: { text: '仓库刷新失败', tone: 'moderate' },
   repository_disabled: { text: '未启用', tone: 'muted' },
 }
 

@@ -281,6 +281,35 @@ fn file_key(relative: &str) -> String {
     mods::canonical_dll_name(&relative.replace('\\', "/")).to_lowercase()
 }
 
+/// 两个游戏相对路径是否落在同一个**包目录**里。
+///
+/// 用于识别「同一个包的历史清单」：旧版本可能把内容解到子目录，
+/// 文件路径与这次不同，但目录归属一致。
+///
+/// 必须排除 BepInEx 的系统容器目录：`BepInEx/plugins`、`BepInEx/patchers`
+/// 下的散装 DLL 只是平铺放在一起，并不属于同一个包，认错会误删无关 MOD。
+fn same_package_dir(left: &str, right: &str) -> bool {
+    const SHARED_CONTAINERS: [&str; 3] = ["plugins", "patchers", "config"];
+    let parent = |value: &str| -> Option<String> {
+        let normalized = value.replace('\\', "/");
+        let (dir, _) = normalized.rsplit_once('/')?;
+        let dir = dir.trim_end_matches('/');
+        if dir.is_empty() {
+            return None;
+        }
+        // 目录本身是系统容器（或直接位于其中之一）时不算包目录
+        let last = dir.rsplit_once('/').map_or(dir, |(_, tail)| tail);
+        if SHARED_CONTAINERS.contains(&last.to_ascii_lowercase().as_str()) {
+            return None;
+        }
+        Some(dir.to_lowercase())
+    };
+    match (parent(left), parent(right)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
 fn fingerprint(path: &Path) -> Result<(u64, String), String> {
     let metadata = fs::symlink_metadata(path).map_err(io_error)?;
     if is_link(&metadata) || !metadata.is_file() {
@@ -554,7 +583,22 @@ pub fn recycle_repository_packages_before_install(
             .repository_binding
             .as_ref()
             .is_some_and(|binding| binding.is_valid() && binding.matches_identity(repo));
-        if same_id || same_identity {
+        /*
+         * 历史遗留的手动清单：导入功能曾把在线安装走成本地安装路径，
+         * 留下了 `manual-<uuid>` 清单，里面的文件和本仓库要装的是同一批。
+         * 不回收它们的话，更新完会剩一条「本地安装」分组下的孤儿条目，
+         * 而且它和主 MOD 互相判成重复 —— 用户看到的就是「同一个 MOD 出现两次」。
+         *
+         * 两种命中方式：文件路径完全相同，或落在同一个安装目录下
+         * （旧版本可能把包解到子目录，路径不同但目录一致）。
+         */
+        let overlaps_install = manifest.repository_id.starts_with("manual-")
+            && manifest.files.iter().any(|file| {
+                replacement_files.iter().any(|target| {
+                    file_key(target) == file_key(file) || same_package_dir(target, file)
+                })
+            });
+        if same_id || same_identity || overlaps_install {
             targets.push(manifest.repository_id.clone());
         }
     }
@@ -2892,5 +2936,85 @@ mod tests {
         assert_eq!(entries.len(), 1, "渠道不同但身份相同的旧包也要回收");
         assert!(!workspace.game.join(A).exists());
         assert!(workspace.active("legacy-package").is_none());
+    }
+
+    #[test]
+    fn repository_install_recycles_legacy_manual_manifest_of_same_package() {
+        /*
+         * 真实场景：早期在线安装误走了本地安装路径，留下 `manual-<uuid>`
+         * 清单。之后从仓库正常安装时若不回收它，会多出一条「本地安装」
+         * 分组下的孤儿条目，并与主 MOD 互判重复。
+         */
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "DIYLevel", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "install_target": "BepInEx/plugins/DIYLevel", "enabled": true, "builtin": false,
+            "channel": "all"
+        }))
+        .unwrap();
+
+        // 旧的手动清单：同一个包目录下的依赖 DLL
+        workspace.write("BepInEx/plugins/DIYLevel/OC2DIYLevel.dll", b"dep");
+        workspace.manifest(
+            "manual-legacy",
+            &["BepInEx/plugins/DIYLevel/OC2DIYLevel.dll"],
+        );
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            // 新包解到同一目录，但文件名不同（旧版依赖名带版本号）
+            &["BepInEx/plugins/DIYLevel/DIYLevel.dll".into()],
+        )
+        .unwrap();
+
+        assert_eq!(entries.len(), 1, "同包目录下的历史 manual 清单应被回收");
+        assert!(workspace.active("manual-legacy").is_none());
+        assert!(
+            !workspace
+                .game
+                .join("BepInEx/plugins/DIYLevel/OC2DIYLevel.dll")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn legacy_manual_cleanup_never_touches_sibling_plugins() {
+        /*
+         * 反向保护：BepInEx/plugins 是系统容器，平铺其中的散装 DLL
+         * 不属于同一个包，绝不能因为「同目录」被误回收。
+         */
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "Repo", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "all"
+        }))
+        .unwrap();
+
+        workspace.write("BepInEx/plugins/Unrelated.dll", b"keep me");
+        workspace.manifest("manual-unrelated", &["BepInEx/plugins/Unrelated.dll"]);
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            &["BepInEx/plugins/Other.dll".into()],
+        )
+        .unwrap();
+
+        assert!(entries.is_empty(), "plugins 根目录不该被当成包目录");
+        assert!(workspace.active("manual-unrelated").is_some());
+        assert!(
+            workspace
+                .game
+                .join("BepInEx/plugins/Unrelated.dll")
+                .exists()
+        );
     }
 }

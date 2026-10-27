@@ -302,3 +302,11 @@ body {
   color: #c084fc;
   background: rgba(168, 85, 247, .18);
 }
+/*
+ * 「品牌」色标签：跟随主题色的对比色，用于「已安装且最新 / 可更新」
+ * 这类与主按钮同一语义组的状态。不用固定色值 —— 主题色切换时自动跟随。
+ */
+.state-tag--brand.n-tag {
+  color: var(--oc2-accent-contrast);
+  background: color-mix(in srgb, var(--oc2-accent-contrast) 18%, transparent);
+}

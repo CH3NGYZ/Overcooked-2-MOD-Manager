@@ -84,16 +84,27 @@ const canLaunch = computed(() => !!game.value?.path)
  * 启动与停止都走 Steam 语义：
  *   - 启动：后端 `launch_normal` → `steam://rungameid/728880`（Steam 负责拉起游戏）；
  *   - 停止：Steam 没有「停止」协议，后端 `stop_game` 结束游戏进程。
- * 完成后刷新 Dashboard，让 `kitchen_running` 通过游戏状态事件重新对齐。
+ *
+ * 命令返回后不立即刷新 Dashboard：进程启动/退出需要几秒，
+ * 游戏状态由后端观察器每秒推送（`game-state-changed`），
+ * 按钮会自动翻转。这里只在若干秒后补一次 `load()`，用于同步 MOD 扫描结果
+ * （运行状态导致的可操作项变化），避免用旧快照覆盖刚收到的状态事件。
  */
 async function toggleGame() {
   if (launching.value) return
   launching.value = true
+  const wasRunning = kitchenRunning.value
   try {
-    const result = kitchenRunning.value ? await api.stopGame() : await api.launchNormal()
+    const result = wasRunning ? await api.stopGame() : await api.launchNormal()
     result.ok ? message.success(result.message) : message.error(result.message)
-    // 进程启动/退出需要一点时间，稍等再取状态，避免读到切换前的快照
-    window.setTimeout(() => { void load() }, 1200)
+    if (result.ok) {
+      // 轮询几次，让按钮在观察器事件到达前也能尽快反映预期状态
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        await load()
+        if (kitchenRunning.value !== wasRunning) break
+      }
+    }
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : String(reason))
   } finally {

@@ -75,6 +75,32 @@ export function localVersion(mod: InstalledMod): string | undefined {
  * 后端按真实安装清单判定（含渠道、Tag 绑定、重复副本），能对上这个仓库时优先采信；
  * 只在后端绑定的不是这个仓库时，才退回本地版本比较。
  */
+/** 仓库卡片主按钮的动作：安装 / 重装 / 更新。 */
+export type InstallAction = 'install' | 'reinstall' | 'update'
+
+/**
+ * 由仓库状态推导主按钮。
+ *
+ * 规则（用户确认）：
+ *   常规仓库：未安装 → 安装；已安装且最新 → 重装；已安装且有更新 → 更新。
+ *   仓库文件：未安装 → 安装；已安装 → 重装（没有版本比较的意义）。
+ *   未刷新 / 刷新失败 / 未启用时按钮仍可点，按「安装」处理，
+ *   交给后端在真正安装前再校验一次版本。
+ */
+export function repositoryInstallAction(status: StatusTag, repo: Repository): InstallAction {
+  if (repo.download_mode === 'repository_file') {
+    return status.key === 'installed' ? 'reinstall' : 'install'
+  }
+  switch (status.key) {
+    case 'latest':
+      return 'reinstall'
+    case 'update_available':
+      return 'update'
+    default:
+      return 'install'
+  }
+}
+
 export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]): StatusTag {
   const tag = (key: keyof typeof STATUS_META): StatusTag => ({
     key,

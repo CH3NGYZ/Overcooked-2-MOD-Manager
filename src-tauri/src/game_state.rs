@@ -134,14 +134,26 @@ impl GameStateObserver {
 
         let next_stamps = game_file_stamps(Some(&next), &self.config.backups_dir());
         let mut snapshot = state.game_state.lock().map_err(|e| e.to_string())?;
-        // A user action may have returned a fresher snapshot during detection.
-        // Never replace that result with an earlier background observation.
-        if *snapshot != cached {
+        /*
+         * 检测期间可能有别的命令（`get_dashboard`、`save_settings` 等）写入更新的快照。
+         * 旧实现遇到这种情况直接 `return Ok(None)` 丢弃整轮，于是：
+         *   - `last_reported` 永远不推进，事件再也不发；
+         *   - `file_stamps` 不更新，下一轮又走全量探测，形成「一直探测、从不通知」。
+         * 现在改为：以外部快照为新基线继续本轮，只把本轮探测到的
+         * `kitchen_running` 合并进去；若合并后与外部快照相同则不发事件。
+         */
+        let baseline = snapshot.clone().unwrap_or_else(|| next.clone());
+        let mut merged = baseline;
+        merged.kitchen_running = next.kitchen_running;
+        let external_newer = *snapshot != cached;
+        if external_newer && *snapshot == Some(merged.clone()) {
+            // 外部快照已经是同一份内容，无需再写或通知
+            self.file_stamps = next_stamps;
             return Ok(None);
         }
         self.file_stamps = next_stamps;
-        *snapshot = Some(next.clone());
-        Ok(changed_snapshot(&mut self.last_reported, next))
+        *snapshot = Some(merged.clone());
+        Ok(changed_snapshot(&mut self.last_reported, merged))
     }
 }
 

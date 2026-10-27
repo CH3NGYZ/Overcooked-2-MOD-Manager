@@ -7,7 +7,7 @@ import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { modsForRepository } from '../modStatus'
-import { repositoryStatus, type StatusTone } from '../statusTags'
+import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
 import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -38,15 +38,39 @@ const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 // 刷新由手动按钮、安装器启动或教程结束后的链路触发。
 onMounted(() => { void ensureLoaded() })
 
-/** 有可安装的更新：状态为「可更新」时按钮切换成更新样式。 */
-function isUpdatable(repo: Repository) {
-  return statusOf(repo).key === 'update_available'
+/**
+ * 主按钮动作：安装 / 重装 / 更新。
+ *
+ * 「重装」与「更新」都是对已安装仓库的再次操作，用主题色的对比色区分
+ * 于首次「安装」（主题色本身）；文案与配色都由 action 决定，不各自判断。
+ */
+function installActionOf(repo: Repository): InstallAction {
+  return repositoryInstallAction(statusOf(repo), repo)
+}
+
+const INSTALL_LABELS: Record<InstallAction, string> = {
+  install: '安装',
+  reinstall: '重装',
+  update: '更新',
+}
+function installLabel(repo: Repository) {
+  return t(INSTALL_LABELS[installActionOf(repo)])
 }
 
 /** 该仓库是否有已安装的本地 MOD（决定状态标签能否跳到 MOD 管理）。 */
 function hasLocalInstall(repo: Repository) {
   return modsForRepository(mods.value, repo).length > 0
 }
+// 「重装 / 更新」这类「已安装再操作」状态用主题色对比色；其余走状态语义色
+function statusToneClass(repo: Repository) {
+  const key = statusOf(repo).key
+  if (key === 'latest' || key === 'update_available') return 'state-tag--brand'
+  if (key === 'not_installed' || key === 'not_installed_raw' || key === 'not_refreshed') {
+    return 'state-tag--muted'
+  }
+  return ''
+}
+
 /** 点击状态标签：跳到 MOD 管理页并高亮绑定该仓库的 MOD 卡片。 */
 function openInLocalMods(repo: Repository) {
   if (hasLocalInstall(repo)) linkToLocalMods(repo.id)
@@ -412,8 +436,13 @@ defineExpose({ refreshAll, visibleCount })
                     <ProviderIcon :provider="repo.provider" :size="30" />
                     <span class="card-title">{{ repoName(repo) }}</span>
                     <span class="stat stat-status">
+                      <!--
+                        标签配色：未安装类一律灰色；「已安装且可更新」用主题色对比色，
+                        与「重装 / 更新」按钮同色系；其余状态沿用状态语义色。
+                      -->
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :class="[`state-tag--${statusOf(repo).tone}`, { 'state-tag--link': hasLocalInstall(repo) }]"
+                        :class="[`state-tag--${statusOf(repo).tone}`, statusToneClass(repo),
+                          { 'state-tag--link': hasLocalInstall(repo) }]"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
                     </span>
@@ -434,14 +463,18 @@ defineExpose({ refreshAll, visibleCount })
                       <span class="muted">{{ t('下载量') }}</span>
                       <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
                     </span>
-                    <!-- 检测到已安装版本落后时，按钮变成与「可更新」标签同色的「更新」 -->
+                    <!--
+                      主按钮：安装（主题色）/ 重装、更新（主题色对比色）。
+                      文案与图标都由 installActionOf 决定，不在模板里各自判断。
+                    -->
                     <n-button size="tiny" class="card-install"
-                      :type="isUpdatable(repo) ? 'warning' : 'primary'"
+                      :class="`card-install--${installActionOf(repo)}`"
                       :loading="!!installing[repo.id]"
                       :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="install(repo)">
-                      <ArrowUpCircleOutline v-if="isUpdatable(repo)" width="13" height="13" />
+                      <RefreshOutline v-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                      <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
                       <DownloadOutline v-else width="13" height="13" />
-                      {{ isUpdatable(repo) ? t('更新') : t('安装') }}
+                      {{ installLabel(repo) }}
                     </n-button>
                   </div>
 
@@ -477,10 +510,11 @@ defineExpose({ refreshAll, visibleCount })
                   <ProviderIcon :provider="repo.provider" :size="30" />
                   <span class="card-title">{{ repoName(repo) }}</span>
                   <span class="stat stat-status">
-                    <n-tag size="tiny" :bordered="false" class="state-tag"
-                      :class="[`state-tag--${statusOf(repo).tone}`, { 'state-tag--link': hasLocalInstall(repo) }]"
-                      :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
-                      @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
+                      <n-tag size="tiny" :bordered="false" class="state-tag"
+                        :class="[`state-tag--${statusOf(repo).tone}`, statusToneClass(repo),
+                          { 'state-tag--link': hasLocalInstall(repo) }]"
+                        :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
+                        @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
                   </span>
                 </div>
                 <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
@@ -497,12 +531,13 @@ defineExpose({ refreshAll, visibleCount })
                     <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
                   </span>
                   <n-button size="tiny" class="card-install"
-                    :type="isUpdatable(repo) ? 'warning' : 'primary'"
+                    :class="`card-install--${installActionOf(repo)}`"
                     :loading="!!installing[repo.id]"
                     :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="install(repo)">
-                    <ArrowUpCircleOutline v-if="isUpdatable(repo)" width="13" height="13" />
+                    <RefreshOutline v-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                    <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
                     <DownloadOutline v-else width="13" height="13" />
-                    {{ isUpdatable(repo) ? t('更新') : t('安装') }}
+                    {{ installLabel(repo) }}
                   </n-button>
                 </div>
                 <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
@@ -613,6 +648,44 @@ defineExpose({ refreshAll, visibleCount })
   flex: 0 0 auto;
   /* 把剩余空白全部推到左边：版本/下载量靠左紧挨，按钮贴右 */
   margin-left: auto;
+}
+/*
+ * 主按钮配色：三种动作共享同一套布局，只在颜色上区分。
+ *   install   → 主题色（首次安装，最常用）
+ *   reinstall → 主题色对比色（已是最新，再装一次）
+ *   update    → 主题色对比色（有更新）
+ * 对比色由 theme.ts 按当前主题色实时计算，切换主题色时跟着变。
+ * Naive 的 n-button 没有「自定义实色」的语义类型，这里用 CSS 变量覆盖
+ * 它的 primary 外观，而不是硬编码某个色值。
+ */
+.card-install--install.n-button {
+  --n-color: var(--oc2-accent);
+  --n-color-hover: var(--oc2-accent-hover);
+  --n-color-pressed: var(--oc2-accent-hover);
+  --n-color-focus: var(--oc2-accent-hover);
+  --n-text-color: var(--oc2-accent-on);
+  --n-text-color-hover: var(--oc2-accent-on);
+  --n-text-color-pressed: var(--oc2-accent-on);
+  --n-text-color-focus: var(--oc2-accent-on);
+  --n-border: 1px solid var(--oc2-accent);
+  --n-border-hover: 1px solid var(--oc2-accent-hover);
+  --n-border-pressed: 1px solid var(--oc2-accent-hover);
+  --n-border-focus: 1px solid var(--oc2-accent-hover);
+}
+.card-install--reinstall.n-button,
+.card-install--update.n-button {
+  --n-color: var(--oc2-accent-contrast);
+  --n-color-hover: var(--oc2-accent-contrast-hover);
+  --n-color-pressed: var(--oc2-accent-contrast-hover);
+  --n-color-focus: var(--oc2-accent-contrast-hover);
+  --n-text-color: var(--oc2-accent-on);
+  --n-text-color-hover: var(--oc2-accent-on);
+  --n-text-color-pressed: var(--oc2-accent-on);
+  --n-text-color-focus: var(--oc2-accent-on);
+  --n-border: 1px solid var(--oc2-accent-contrast);
+  --n-border-hover: 1px solid var(--oc2-accent-contrast-hover);
+  --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover);
+  --n-border-focus: 1px solid var(--oc2-accent-contrast-hover);
 }
 .card-desc {
   margin: 0;

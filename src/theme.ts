@@ -126,6 +126,76 @@ export const themeOverrides = computed<GlobalThemeOverrides>(() => {
 })
 
 /**
+ * 把 `#rrggbb` 转成 HSL 三元组（h: 0-360, s/l: 0-1）。
+ */
+function hexToHsl(hex: string): [number, number, number] | null {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!match) return null
+  const value = parseInt(match[1], 16)
+  const r = ((value >> 16) & 0xff) / 255
+  const g = ((value >> 8) & 0xff) / 255
+  const b = (value & 0xff) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  if (max === min) return [0, 0, l]
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h: number
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6
+  else if (max === g) h = ((b - r) / d + 2) / 6
+  else h = ((r - g) / d + 4) / 6
+  return [Math.round(h * 360), s, l]
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const hue = ((h % 360) + 360) % 360 / 360
+  const clamp = (value: number) => Math.min(1, Math.max(0, value))
+  const s2 = clamp(s)
+  const l2 = clamp(l)
+  const q = l2 < 0.5 ? l2 * (1 + s2) : l2 + s2 - l2 * s2
+  const p = 2 * l2 - q
+  const channel = (t: number) => {
+    let value = t
+    if (value < 0) value += 1
+    if (value > 1) value -= 1
+    if (value < 1 / 6) return p + (q - p) * 6 * value
+    if (value < 1 / 2) return q
+    if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6
+    return p
+  }
+  const toByte = (value: number) =>
+    Math.round(clamp(value) * 255).toString(16).padStart(2, '0')
+  return `#${toByte(channel(hue + 1 / 3))}${toByte(channel(hue))}${toByte(channel(hue - 1 / 3))}`
+}
+
+/**
+ * 主题色的对比色。
+ *
+ * 色相旋转 180° 得到互补色，同时把亮度拉回接近中段 —— 直接取互补色在
+ * 深色主题下常偏暗（比如青色互补的红色），提亮后按钮文字才够清晰。
+ * 亮度只在原色过亮/过暗时收敛，正常色阶保持原有观感。
+ */
+export function accentContrast(color: string, mode: ThemeMode): string {
+  const hsl = hexToHsl(color)
+  if (!hsl) return color
+  const [h, s, l] = hsl
+  // 深色主题偏亮一档、浅色主题偏深一档，保证与背景有足够对比
+  const target = mode === 'dark'
+    ? Math.min(0.62, Math.max(0.52, l))
+    : Math.min(0.46, Math.max(0.36, l))
+  return hslToHex(h + 180, s, target)
+}
+
+/** 由基色推导一个 hover 态（提亮约 12%）。 */
+function hoverOf(color: string): string {
+  const hsl = hexToHsl(color)
+  if (!hsl) return color
+  const [h, s, l] = hsl
+  return hslToHex(h, s, Math.min(0.78, l + 0.12))
+}
+
+/**
  * 把主题写成 CSS 变量，供 scoped 样式使用（`var(--oc2-*)`）。
  * 这样新增主题色/模式不需要改任何组件样式。
  */
@@ -151,6 +221,14 @@ export function applyThemeCssVars() {
     '--oc2-accent': main.color,
     '--oc2-accent-hover': main.hover,
     '--oc2-accent-on': main.onColor,
+    /*
+     * 主题色的「对比色」：用于需要与主色区分、但同样醒目的一套语义
+     * （安装页的「重装 / 更新」按钮与「可更新」标签）。
+     * 取主色旋转 180° 的色相并保持相同的饱和度/亮度档位，
+     * 因此切换主题色时它跟着变，而不是写死成某个颜色。
+     */
+    '--oc2-accent-contrast': accentContrast(main.color, themeMode.value),
+    '--oc2-accent-contrast-hover': hoverOf(accentContrast(main.color, themeMode.value)),
   }
   for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value)
   root.style.colorScheme = themeMode.value

@@ -1283,9 +1283,9 @@ function removePackage(node: ModPackageNode) {
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': refreshingLocal }" />
   </n-float-button>
 
-  <!-- 配置编辑器（Monaco）：编辑该 MOD 在 BepInEx/config 下的 .cfg -->
-  <ModConfigEditor v-if="configTarget" v-model:show="configOpen" :dll-file="configTarget.dll_file"
-    :title="modTitle(configTarget)" />
+  <!-- 配置编辑器：编辑该 MOD 在 BepInEx/config 下的 .cfg（Naive 文本域） -->
+  <ModConfigEditor v-if="configTarget" v-model:show="configOpen"
+    :dll-file="configTarget.dll_file" :title="modTitle(configTarget)" />
 </template>
 
 <style scoped>

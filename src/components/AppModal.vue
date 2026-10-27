@@ -48,8 +48,8 @@ const props = withDefaults(defineProps<{
    * 长内容在内部滚动，头部与 footer 固定。
    *
    * 设 `false` 时不包裹滚动层，插槽内容直接成为内容区 flex 子项 ——
-   * 供需要「占满整块区域、内部自己管理滚动」的内容使用（如 Monaco 编辑器：
-   * 它必须拿到确定高度才能布局，包在滚动容器里永远量不到正确尺寸）。
+   * 供需要「占满整块区域、内部自己管理滚动」的内容使用
+   * （例如配置编辑器的多行文本域：它要拿到确定高度才能撑满）。
    */
   scrollable?: boolean
   /** 内容区最小高度：内容很少时也不至于缩成一条，默认不设。 */
@@ -57,8 +57,9 @@ const props = withDefaults(defineProps<{
   bordered?: boolean
   maskClosable?: boolean
   /**
-   * `if` = 关闭时真正从 DOM 移除内容（Monaco 这类需要它，
-   * 只 v-show 会让编辑器留在 0 尺寸容器里持续重排）。
+   * `if` = 关闭时真正从 DOM 移除内容。
+   * 只 v-show 会让内部的大型内容（如文本域滚动位置、富文本）留在不可见
+   * 容器里继续参与布局计算。
    */
   displayDirective?: 'if' | 'show'
   /** 额外类名，用于页面定制配色等。 */
@@ -186,7 +187,7 @@ const contentStyle = {
     <!--
       scrollable（默认）：内容包在滚动层里，长内容内部滚动。
       scrollable=false：插槽内容直接成为内容区的 flex 子项，
-      由它自己占满并管理滚动（Monaco 编辑器需要确定高度才能布局）。
+      由它自己占满并管理滚动（配置编辑器的文本域需要确定高度才能撑满）。
     -->
     <div v-if="scrollableContent" class="app-modal-scroll"
       :style="heightFloor ? { minHeight: heightFloor } : undefined">

@@ -1791,8 +1791,12 @@ pub async fn refresh_repository(
         .iter()
         .position(|repo| repo.id == repository_id)
         .ok_or("仓库不存在")?;
+    /*
+     * `enabled=false` 的仓库不刷新：它被隐藏了（用户主动关掉，或被官方
+     * 仓库源覆盖的社区副本），既不展示也没有刷新入口。
+     */
     if !config.repositories[index].enabled {
-        return Err("仓库已禁用".into());
+        return Err("该仓库未在 MOD 安装页展示，无法刷新".into());
     }
     if config.repositories[index].download_mode == RepositoryDownloadMode::RepositoryFile {
         // 这条消息会直接展示在「刷新全部仓库源」的结果里，写成用户能看懂的话
@@ -2379,8 +2383,9 @@ pub async fn install_repository(
         .find(|repo| repo.id == repository_id)
         .ok_or("仓库不存在")?
         .clone();
+    // 安装要求仓库在安装页可见；隐藏的仓库不能作为安装入口
     if !repo.enabled {
-        return Err("仓库已禁用".into());
+        return Err("该仓库未在 MOD 安装页展示，无法从这里安装".into());
     }
     crate::community::ensure_repository_region(&repo, crate::config::current_user_region())?;
     let selected_proxy_mode = selected_asset_proxy_mode(
@@ -5073,6 +5078,7 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
     config
         .repositories
         .iter()
+        // 隐藏的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
         .filter(|repo| repo.enabled)
         .filter(|repo| {
             crate::config::repository_matches_channel(

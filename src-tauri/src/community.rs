@@ -631,6 +631,17 @@ fn merge_results(
         let already_official = official.contains(&identity(&repo));
         if !already_official {
             visible_ids.insert(repo.id.clone());
+        } else {
+            /*
+             * 被官方仓库源覆盖的社区仓库等同「不在安装页展示」：
+             * 官方那份已经在列表里，社区这份再刷一遍只是重复请求同一个
+             * Release。把 enabled 置假，让它与用户手动隐藏的仓库走同一条
+             * 路径 —— 不显示、不参与刷新。
+             *
+             * 已安装的仍保留在配置里（下面那个 push），这样它的更新绑定
+             * 不会丢；只是刷新交给官方仓库去做。
+             */
+            repo.enabled = false;
         }
         // Installed duplicates retain their original channel and update binding, but stay hidden.
         if !already_official || is_installed(&repo) {
@@ -646,6 +657,10 @@ fn merge_results(
         repo.cached_releases.clear();
         repo.last_error = None;
         repo.etag = None;
+        // 被官方覆盖的历史社区仓库同样视为隐藏：不刷新，交给官方那份
+        if official.contains(&identity(repo)) {
+            repo.enabled = false;
+        }
     }
     config.repositories.extend(retained);
     config
@@ -1141,7 +1156,12 @@ mod tests {
             .find(|repo| repo.id == installed.id)
             .unwrap();
         assert_eq!(hidden.channel, Channel::All);
-        assert!(hidden.enabled);
+        /*
+         * 被官方仓库源覆盖的社区副本视为隐藏：不在安装页显示、也不发起刷新
+         * （官方那份已经在列表里）。但它自身仍保留有效的 binding 与渠道，
+         * 已安装清单的更新检测不受影响。
+         */
+        assert!(!hidden.enabled);
         assert_eq!(manifest.repository_binding, binding);
         assert!(binding.as_ref().unwrap().matches_repository(hidden));
         assert!(

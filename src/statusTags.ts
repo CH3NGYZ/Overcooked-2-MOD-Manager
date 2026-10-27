@@ -206,6 +206,10 @@ export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]
   // RAW（仓库文件）仓库没有 Release 版本，只有「装没装」两种状态
   const isRaw = repo.download_mode === 'repository_file'
   if (!isRaw) {
+    /*
+     * 隐藏的仓库（用户主动关掉，或被官方源覆盖的社区副本）不刷新，
+     * 缓存里的 Release 不可信，直接报「未启用」而不是拿旧结论下判断。
+     */
     if (!repo.enabled) return tag('repository_disabled')
     if (repo.last_error) return tag('refresh_failed')
   }

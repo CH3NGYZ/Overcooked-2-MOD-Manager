@@ -162,6 +162,10 @@ fn inspect_dll(
     let repository_binding = manifest
         .and_then(|manifest| manifest.repository_binding.as_ref())
         .filter(|binding| binding.is_valid());
+    /*
+     * 候选只来自 `enabled` 的仓库：隐藏的仓库（用户主动关掉，或被官方源
+     * 覆盖的社区副本）既不展示也不刷新，已安装的 MOD 自然不该再绑定到它。
+     */
     let candidates = config.repositories.iter().filter(|repo| {
         repo.enabled
             && crate::config::repository_matches_channel(

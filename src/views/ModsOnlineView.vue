@@ -131,8 +131,15 @@ const currentRegion = computed(() => config.value?.region)
 const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
 
 /** 仅保留当前下载渠道适用的仓库。 */
+/**
+ * 安装页展示的仓库：按当前地区筛选，并遵守 `enabled`（是否在本页展示）。
+ *
+ * `enabled` 只控制**展示**：刷新与已安装 MOD 的更新检测都不看它，
+ * 所以隐藏的仓库照样会被刷新，只是不在这个页面列出。
+ */
 const repositories = computed<Repository[]>(() =>
-  (config.value?.repositories ?? []).filter((repo) => repositoryMatchesRegion(repo, currentRegion.value)),
+  (config.value?.repositories ?? [])
+    .filter((repo) => repo.enabled && repositoryMatchesRegion(repo, currentRegion.value)),
 )
 const sources = computed<RepositorySource[]>(() =>
   (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
@@ -361,6 +368,7 @@ async function refreshSource(node: SourceNode) {
     for (const child of sources.value.filter((entry) => entry.parent_id === sourceId)) collect(child.id)
   }
   collect(node.source.id)
+  // 隐藏的仓库不刷新（与本页展示用同一套 enabled 判定）
   const scoped = repositories.value.filter((repo) => repo.enabled && repo.source_id && ids.has(repo.source_id))
   const releaseErrors = await engine.refreshMany(scoped)
   releaseErrors.forEach((error) => message.error(error))
@@ -377,6 +385,7 @@ async function refreshAll() {
  * 源文档（分组 / 仓库列表的来源）不在这里动，避免只点一个分组就把整棵源树清空重载。
  */
 async function refreshGroup(group: GroupNode) {
+  // 组内隐藏的仓库同样跳过刷新
   const errors = await engine.refreshMany(group.repos.filter((repo) => repo.enabled))
   errors.forEach((error) => message.error(error))
 }

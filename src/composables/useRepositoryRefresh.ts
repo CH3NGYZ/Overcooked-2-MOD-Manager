@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
+import { prioritizeInstalledRepositories } from '../repositoryPriority'
 import type { Repository, RepositorySource } from '../types'
 
 /**
@@ -46,10 +47,10 @@ type StartupState = 'idle' | 'deferred' | 'running' | 'done'
 let startupState: StartupState = 'idle'
 
 function store() {
-  const { load, reloadConfig, config } = useDashboard()
+  const { load, reloadConfig, config, mods } = useDashboard()
   const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
   const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
-  return { load, reloadConfig, sources, repositories }
+  return { load, reloadConfig, sources, repositories, mods }
 }
 
 /**
@@ -94,6 +95,11 @@ function applyRepositoryReleases(repositoryId: string, releases: Repository['cac
     config: { ...config, repositories },
   }
 }
+
+/**
+ * 把「有本地已安装 MOD 的仓库」排到队列最前，其余保持原有顺序。
+ * 实现见 `src/repositoryPriority.ts`（纯函数，便于直接测试）。
+ */
 
 /**
  * 限并发的批量刷新，「刷一个显示一个」由局部更新实现。
@@ -177,14 +183,28 @@ async function refreshEverything(): Promise<string[]> {
   refreshingAll.value = true
   lastErrors.value = []
   try {
-    const { load, reloadConfig, repositories, sources } = store()
+    const { load, reloadConfig, repositories, sources, mods } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await load()
     const sourceErrors = await refreshSourceDocuments()
     // 源文档阶段用的是 reloadConfig（只更新配置）；
     // 这里再读一次配置拿到最终仓库列表，Release 阶段结束时会做一次完整 load。
     await reloadConfig()
-    const releaseErrors = await refreshMany(repositories.value.filter((repo) => repo.enabled))
+    /*
+     * 已安装优先：先把本地装过的 MOD 所绑定的仓库排到队首。
+     *
+     * 首次启动与「刷新全部仓库源」都走这里，所以两条路径行为一致：
+     * 用户关心的是自己装的仓库有没有更新，不该排在几十个未安装仓库
+     * 后面慢慢等。
+     *
+     * `enabled=false` 的仓库整条跳过：它被隐藏了（用户主动关掉，或被官方
+     * 仓库源覆盖的社区副本），既不展示也不刷新。
+     */
+    const ordered = prioritizeInstalledRepositories(
+      repositories.value.filter((repo) => repo.enabled),
+      mods.value,
+    )
+    const releaseErrors = await refreshMany(ordered)
     lastErrors.value = [...sourceErrors, ...releaseErrors]
     return lastErrors.value
   } finally {

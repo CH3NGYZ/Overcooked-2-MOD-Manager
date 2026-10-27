@@ -357,6 +357,11 @@ pub struct RepositoryConfig {
     pub gitee_token: String,
     #[serde(default = "default_true")]
     pub official_api_only: bool,
+    /// 是否在这个仓库源下展示并刷新这个仓库。
+    ///
+    /// `false` = 完全不参与：不在 MOD 安装页显示卡片，也不发起 Release 刷新。
+    /// 除了用户主动关闭，被官方仓库源覆盖的社区副本也会被置成 `false`
+    /// —— 官方那份已经在列表里，社区这份再刷一遍只是重复请求。
     pub enabled: bool,
     pub builtin: bool,
     #[serde(default)]
@@ -845,6 +850,7 @@ pub struct RepositoryPatch {
     pub gitee_token: String,
     #[serde(default = "default_true")]
     pub official_api_only: bool,
+    /// 是否展示并刷新这个仓库（语义同 RepositoryConfig::enabled）。
     pub enabled: bool,
 }
 

@@ -1,10 +1,9 @@
 <script setup lang="ts">
 /**
- * 回收站弹窗（工具页入口用）。
+ * 回收站弹窗 —— 回收站的唯一入口（工具页「回收站设置」→「打开回收站」）。
  *
  * 只做外壳：标题、刷新按钮、尺寸上限，内容全部交给 `RecycleBinList`。
- * 页面版 `views/ModRecycleView.vue` 用的是同一个列表组件，所以两处
- * 的条目样式、二次确认和失败提示完全一致。
+ * 回收站既不占主导航也没有独立页面：它是低频维护功能，不值得一个常驻入口。
  */
 import { ref } from 'vue'
 import { NButton } from 'naive-ui'

@@ -173,6 +173,9 @@ const entries = {
   '删除 MOD': ['刪除 MOD', 'Delete MOD', 'MOD 삭제', 'MOD を削除'],
   '「{name}」将被移入回收站，可在回收站中恢复。继续？': ['「{name}」將被移入資源回收筒，可在資源回收筒中還原。繼續？', '"{name}" will be moved to the recycle bin and can be restored. Continue?', '"{name}"을(를) 휴지통으로 옮깁니다. 복원할 수 있습니다. 계속할까요?', '「{name}」をゴミ箱へ移動します（復元可能）。続行しますか？'],
   '移入回收站': ['移入資源回收筒', 'Move to recycle bin', '휴지통으로 이동', 'ゴミ箱へ移動'],
+  // 关闭「优先放入回收站」后的删除文案：必须明确不可恢复
+  '「{name}」将被直接删除，无法恢复。继续？': ['「{name}」將被直接刪除，無法還原。繼續？', '"{name}" will be deleted permanently. This cannot be undone. Continue?', '"{name}"을(를) 바로 삭제합니다. 복원할 수 없습니다. 계속할까요?', '「{name}」を直接削除します。元に戻せません。続行しますか？'],
+  '直接删除': ['直接刪除', 'Delete permanently', '바로 삭제', '直接削除'],
   '该 MOD 属于 MOD 包': ['該 MOD 屬於 MOD 包', 'This MOD belongs to a package', '이 MOD는 패키지에 속합니다', 'このMODはパッケージに属します'],
   '它与 {count} 个子 MOD 同属一个包，一并删除？': ['它與 {count} 個子 MOD 同屬一個包，一併刪除？', 'It shares a package with {count} MODs. Delete them together?', '{count}개 MOD와 같은 패키지입니다. 함께 삭제할까요?', '{count} 件のMODと同じパッケージです。まとめて削除しますか？'],
   '整包删除': ['整包刪除', 'Delete package', '패키지 삭제', 'パッケージを削除'],
@@ -292,6 +295,7 @@ const entries = {
   '请输入 zip 或 DLL 的直链网址': ['請輸入 zip 或 DLL 的直連網址', 'Enter a direct URL to a zip or DLL', 'zip 또는 DLL 직접 링크를 입력하세요', 'zip または DLL の直リンクを入力してください'],
   '删除 MOD 包': ['刪除 MOD 包', 'Delete MOD package', 'MOD 패키지 삭제', 'MOD パッケージを削除'],
   '「{name}」的 {count} 个文件将被整包移入回收站，可在回收站中恢复。继续？': ['「{name}」的 {count} 個檔案將被整包移入資源回收筒，可在資源回收筒中還原。繼續？', 'All {count} files of "{name}" will be moved to the recycle bin and can be restored. Continue?', '"{name}"의 파일 {count}개를 패키지째 휴지통으로 옮깁니다. 복원할 수 있습니다. 계속할까요?', '「{name}」の {count} ファイルをまとめてゴミ箱へ移動します（復元可能）。続行しますか？'],
+  '「{name}」的 {count} 个文件将被直接删除，无法恢复。继续？': ['「{name}」的 {count} 個檔案將被直接刪除，無法還原。繼續？', 'All {count} files of "{name}" will be deleted permanently. This cannot be undone. Continue?', '"{name}"의 파일 {count}개를 바로 삭제합니다. 복원할 수 없습니다. 계속할까요?', '「{name}」の {count} ファイルを直接削除します。元に戻せません。続行しますか？'],
   '配置编辑': ['設定編輯', 'Edit config', '설정 편집', '設定を編集'],
   'API 凭据': ['API 憑證', 'API credentials', 'API 자격 증명', 'API 認証情報'],
   '访问令牌': ['存取權杖', 'Access tokens', '액세스 토큰', 'アクセストークン'],

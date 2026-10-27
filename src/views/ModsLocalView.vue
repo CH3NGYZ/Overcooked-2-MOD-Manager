@@ -33,6 +33,43 @@ import type { InstalledMod, Repository } from '../types'
 const message = useMessage()
 const dialog = useDialog()
 const { load, ensureLoaded, loading, mods, game, config } = useDashboard()
+
+/**
+ * 删除是否经过回收站。
+ *
+ * 文案必须与真实行为一致：用户关掉「删除 MOD 时优先放入回收站」后，
+ * 删除就是直接抹掉文件，再提示「已移入回收站」会让人以为还能找回。
+ * 默认按开启处理（后端 default 也是 true）。
+ */
+const recyclesOnDelete = computed(() => config.value?.recycle_deleted_mods !== false)
+
+/** 删除前的确认文案与按钮：随开关切换。 */
+const deleteConfirm = computed(() => recyclesOnDelete.value
+  ? {
+      body: (name: string) => t('「{name}」将被移入回收站，可在回收站中恢复。继续？', { name }),
+      action: t('移入回收站'),
+      done: '已移入回收站',
+    }
+  : {
+      body: (name: string) => t('「{name}」将被直接删除，无法恢复。继续？', { name }),
+      action: t('直接删除'),
+      done: '已删除',
+    })
+
+/** 整包删除的确认文案与动作名：同样随开关切换。 */
+const deletePackageConfirm = computed(() => recyclesOnDelete.value
+  ? {
+      body: (name: string, count: number) =>
+        t('「{name}」的 {count} 个文件将被整包移入回收站，可在回收站中恢复。继续？', { name, count }),
+      action: t('整包移入回收站'),
+      done: '已移入回收站',
+    }
+  : {
+      body: (name: string, count: number) =>
+        t('「{name}」的 {count} 个文件将被直接删除，无法恢复。继续？', { name, count }),
+      action: t('整包删除'),
+      done: '已删除',
+    })
 /** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
 const { refreshing, refreshingAll, refreshOne } = useRepositoryRefresh()
 
@@ -474,10 +511,11 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
 }
 
 function remove(mod: InstalledMod) {
+  const confirm = deleteConfirm.value
   dialog.warning({
     title: t('删除 MOD'),
-    content: t('「{name}」将被移入回收站，可在回收站中恢复。继续？', { name: modTitle(mod) }),
-    positiveText: t('移入回收站'),
+    content: confirm.body(modTitle(mod)),
+    positiveText: confirm.action,
     negativeText: t('取消'),
     async onPositiveClick() {
       busy.value[mod.dll_file] = true
@@ -499,12 +537,14 @@ function remove(mod: InstalledMod) {
             negativeText: t('取消'),
             async onPositiveClick() {
               const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
-              packageResult.ok ? message.success(packageResult.message || '已移入回收站') : message.error(packageResult.message)
+              packageResult.ok
+                ? message.success(packageResult.message || confirm.done)
+                : message.error(packageResult.message)
               await load()
             },
           })
         } else {
-          result.ok ? message.success(result.message || '已移入回收站') : message.error(result.message)
+          result.ok ? message.success(result.message || confirm.done) : message.error(result.message)
         }
         await load()
       } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
@@ -940,24 +980,22 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
   }
 }
 
-/** 包级删除：整包移入回收站（后端 allowUnmanaged=true 即整包语义）。 */
+/** 包级删除：整包删除（文案随「是否经过回收站」切换）。 */
 function removePackage(node: ModPackageNode) {
   const first = node.mods[0]
   if (!first) return
+  const confirm = deletePackageConfirm.value
   dialog.warning({
     title: t('删除 MOD 包'),
-    content: t('「{name}」的 {count} 个文件将被整包移入回收站，可在回收站中恢复。继续？', {
-      name: node.label,
-      count: node.mods.length,
-    }),
-    positiveText: t('整包删除'),
+    content: confirm.body(node.label, node.mods.length),
+    positiveText: confirm.action,
     negativeText: t('取消'),
     async onPositiveClick() {
       for (const mod of node.mods) busy.value[mod.dll_file] = true
       try {
         const result = await api.uninstallLocalMod(first.dll_file, true)
         result.ok
-          ? message.success(result.message || '已移入回收站')
+          ? message.success(result.message || confirm.done)
           : message.error(result.message)
         await load()
       } catch (reason) {

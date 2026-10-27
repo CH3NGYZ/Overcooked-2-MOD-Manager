@@ -116,6 +116,15 @@ export const api = {
    * 五种语言，其它内容一律为 null，调用方不必再校验。
    */
   installLanguage: () => invoke<string | null>('get_install_language'),
+  /**
+   * 搜索一个平台的社区仓库并合并进配置，返回合并后的完整配置。
+   *
+   * 搜索结果由后端 `merge_results` 落盘：与官方源同坐标的社区副本会被标成
+   * `enabled=false` 整条隐藏，所以前端拿到配置后直接写回 Dashboard 即可。
+   * 同一平台并发搜索时后端返回「社区仓库正在搜索」。
+   */
+  refreshCommunityRepositories: (provider: Provider) =>
+    invoke<PublicConfig>('refresh_community_repositories', { provider }),
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),

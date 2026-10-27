@@ -5,7 +5,7 @@ import { prioritizeInstalledRepositories } from '../repositoryPriority'
 import {
   OFFICIAL_INDEX_ID, repositoryIsAvailable, shouldFallbackToBuiltin, sourceMatchesRegion,
 } from '../repositoryAvailability'
-import type { Repository, RepositorySource } from '../types'
+import type { Provider, PublicConfig, Repository, RepositorySource } from '../types'
 
 /**
  * 仓库刷新引擎（模块级单例）。
@@ -271,6 +271,38 @@ async function refreshSourceDocuments(): Promise<string[]> {
 }
 
 /**
+ * 社区仓库发现：并行搜索 GitHub 与 Gitee，把结果合并进配置。
+ *
+ * 只在官方源树刷新完毕之后调用（由 `refreshEverything` 保证顺序）：
+ * 后端用官方源树判断同坐标去重，官方条目还没落地时会误判为「社区新增」。
+ *
+ * 两个平台并行：GitHub 走 Search API，Gitee 走独立 WebView 验证，互不排队。
+ * 任一平台失败只收集错误 —— 另一平台的结果照常保留，整批刷新继续。
+ * 搜索本身有频率限制与冷却（后端 rate gate），反复失败不会拖垮应用。
+ *
+ * @param applySnapshot 用返回的完整配置替换 Dashboard 快照（不再多发一次 get_config）
+ */
+async function discoverCommunityRepositories(
+  applySnapshot: (config: PublicConfig) => void,
+): Promise<string[]> {
+  const providers: Provider[] = ['github', 'gitee']
+  const results = await Promise.all(providers.map(async (provider) => {
+    try {
+      const merged = await api.refreshCommunityRepositories(provider)
+      // 两个平台各自返回完整配置：后返回的已经包含先返回的合并结果，
+      // 所以每次都整体替换即可，不需要自己拼。
+      applySnapshot(merged)
+      return null
+    } catch (reason) {
+      const label = provider === 'github' ? 'GitHub' : 'Gitee'
+      const message = reason instanceof Error ? reason.message : String(reason)
+      return `${label} 社区仓库：${message}`
+    }
+  }))
+  return results.filter((error): error is string => error !== null)
+}
+
+/**
  * 完整刷新：源文档（父→子）→ 全部启用仓库的 Release（并发 4）。
  * 返回失败清单；调用方决定是否提示。
  */
@@ -332,6 +364,20 @@ async function refreshEverything(): Promise<string[]> {
      */
     if (hasFallenBack) await reloadConfig()
     /*
+     * 社区仓库发现：官方源树**刷新完毕之后**才触发，且不阻塞后面的 Release 刷新。
+     *
+     * 顺序要求来自用户：社区搜索依赖官方源树来判断「哪些同坐标已被官方收录」，
+     * 所以必须等官方源提交完成，否则会把官方已有的仓库当成社区新增；
+     * 而两个平台互相独立，并行发起即可 —— GitHub 走 Search API、Gitee 走
+     * 网页验证，互不排队。
+     *
+     * 结果由后端 `merge_results` 写进配置（含「被官方覆盖的社区副本置
+     * enabled=false」的闪避），这里把返回的完整配置直接写回 Dashboard。
+     * 任一平台失败只记录，不影响另一平台，也不影响整批刷新。
+     */
+    const communityErrors = await discoverCommunityRepositories(applyConfigSnapshot)
+
+    /*
      * 已安装优先：先把本地装过的 MOD 所绑定的仓库排到队首。
      *
      * 首次启动与「刷新全部仓库源」都走这里，所以两条路径行为一致：
@@ -349,7 +395,7 @@ async function refreshEverything(): Promise<string[]> {
       mods.value,
     )
     const releaseErrors = await refreshMany(ordered)
-    lastErrors.value = [...sourceErrors, ...fallbackErrors, ...releaseErrors]
+    lastErrors.value = [...sourceErrors, ...fallbackErrors, ...communityErrors, ...releaseErrors]
     return lastErrors.value
   } finally {
     refreshingAll.value = false

@@ -27,8 +27,13 @@ test('v2 调用面覆盖核心命令', () => {
   }
 })
 
-test('v2 前端不再引用教程/社区/代理命令（精简调用面）', () => {
-  for (const trimmed of ['get_builtin_tutorial', 'refresh_community_repositories', 'save_github_proxies', 'parse_tutorial_config']) {
+test('v2 前端不再引用教程/代理命令（精简调用面）', () => {
+  // 社区搜索已重新接入（启动刷新与「刷新全部」都会触发），不再属于「不引用」名单
+  for (const trimmed of ['get_builtin_tutorial', 'save_github_proxies', 'parse_tutorial_config']) {
     assert.ok(!invoked.has(trimmed), `${trimmed} 不应出现在 v2 调用面`)
   }
+})
+
+test('社区仓库搜索已接入调用面', () => {
+  assert.ok(invoked.has('refresh_community_repositories'), 'services/tauri.ts 缺少社区搜索封装')
 })

@@ -34,6 +34,29 @@ const anyRefreshing = computed(() =>
   || Object.values(sourceRefreshing.value).some(Boolean),
 )
 
+/**
+ * 「有仓库正在加载」——只用于决定刷新按钮的图标要不要转。
+ *
+ * 语义与 `anyRefreshing` 不同，两者不能合并：
+ *
+ *   · `anyRefreshing` 是「整条刷新流水线忙不忙」，含**源文档**阶段
+ *     （拉索引、递归子源）。它用于禁用按钮，防止重复触发。
+ *   · `repositoriesLoading` 只关心**仓库本身**是否在加载。源文档阶段一个
+ *     仓库都还没开始刷，图标不该转 —— 用户看到的应当是「点了之后马上转、
+ *     一直转到最后一个仓库完成或失败」。
+ *
+ * 因此这里不直接用 `refreshingAll`（它在源文档阶段就已经是 true，会持续
+ * 几十秒），而是看 `repositoriesInFlight` 这个精确计数：`refreshMany`
+ * 真正开始处理仓库队列时置数、整批结束时归零。
+ *
+ * 它是模块级单例派生，所以「启动时正在刷新」「在 MOD 管理页点了刷新」
+ * 都会让 MOD 安装页的同一个按钮转起来 —— 与从哪个页面发起无关。
+ */
+const repositoriesInFlight = ref(0)
+const repositoriesLoading = computed(() =>
+  repositoriesInFlight.value > 0 || Object.values(refreshing.value).some(Boolean),
+)
+
 /** 最近一次整批刷新的失败信息（供页面决定是否提示）。 */
 const lastErrors = ref<string[]>([])
 
@@ -117,6 +140,12 @@ async function refreshMany(repos: Repository[]) {
   // 仓库文件（RAW）模式没有 Release 可刷，直接跳过，不当成失败上报
   const queue = repos.filter((repo) => !refreshing.value[repo.id] && repo.download_mode !== 'repository_file')
   if (!queue.length) return [] as string[]
+  /*
+   * 进入仓库阶段：让「刷新按钮转不转」立刻变为真。
+   * 从这里一直到 finally，队列里始终有仓库在处理（并发 4 个 worker），
+   * 所以计数量 1 就够；结束时归零，图标随即停止。
+   */
+  repositoriesInFlight.value += 1
   const errors: string[] = []
   let index = 0
   const workers = Array.from({ length: Math.min(RELEASE_CONCURRENCY, queue.length) }, async () => {
@@ -127,8 +156,16 @@ async function refreshMany(repos: Repository[]) {
       if (error) errors.push(error)
     }
   })
-  await Promise.all(workers)
-  await store().load()
+  try {
+    await Promise.all(workers)
+    await store().load()
+  } finally {
+    /*
+     * 无论成功、失败还是抛错都归零：图标必须停，
+     * 不能因为某个仓库抛异常就一直转下去。
+     */
+    repositoriesInFlight.value = Math.max(0, repositoriesInFlight.value - 1)
+  }
   return errors
 }
 
@@ -255,7 +292,7 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 
 export function useRepositoryRefresh() {
   return {
-    refreshing, sourceRefreshing, refreshingAll, anyRefreshing,
+    refreshing, sourceRefreshing, refreshingAll, anyRefreshing, repositoriesLoading,
     lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshSourceChain, refreshSourceDocuments, refreshEverything,
     requestStartupRefresh, deferStartupRefresh, releaseStartupRefresh,

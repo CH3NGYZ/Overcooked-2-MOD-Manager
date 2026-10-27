@@ -26,7 +26,11 @@ const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦，教程门控也在那里。 */
 const engine = useRepositoryRefresh()
-const { refreshing, sourceRefreshing, anyRefreshing } = engine
+/**
+ * `anyRefreshing`：禁用按钮用（源文档阶段也算忙，避免重复触发）。
+ * `repositoriesLoading`：只决定图标转不转 —— 只有仓库真的在加载时才转。
+ */
+const { refreshing, sourceRefreshing, anyRefreshing, repositoriesLoading } = engine
 /** 状态标签跳转：点标签跳到 MOD 管理页，并高亮绑定该仓库的 MOD 卡片 3 秒。 */
 const { linkToLocalMods } = useLocalModLink()
 /** 从 MOD 管理页跳回来时，高亮对应仓库卡片 3 秒并滚动到它。 */
@@ -634,10 +638,17 @@ defineExpose({ refreshAll, visibleCount })
       </template>
     </template>
 
-    <n-float-button position="fixed" bottom="28" right="32" :disabled="anyRefreshing"
-      :tooltip="t('先刷新源文档，再并行刷新各仓库')" @click="refreshAll">
-      <RefreshOutline width="17" height="17" />
-    </n-float-button>
+  <!--
+    整源刷新入口。
+    - 禁用看 `anyRefreshing`：源文档阶段也算忙，防止重复点。
+    - 图标旋转看 `repositoriesLoading`：只要有仓库在加载就一直转，
+      包括「刚启动切到本页时启动刷新正在跑」和「在 MOD 管理页点了刷新」——
+      引擎是模块级单例，两个页面看到的是同一份状态。
+  -->
+  <n-float-button position="fixed" bottom="28" right="32" :disabled="anyRefreshing"
+    :tooltip="t('先刷新源文档，再并行刷新各仓库')" @click="refreshAll">
+    <RefreshOutline width="17" height="17" :class="{ 'spin-icon': repositoriesLoading }" />
+  </n-float-button>
   </n-spin>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->

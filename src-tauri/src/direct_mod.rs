@@ -11,6 +11,12 @@ use std::time::Duration;
 use tauri::{AppHandle, State};
 use url::Url;
 
+/// 在线直链的分片下载线程数。
+///
+/// 与仓库资产下载取同一档位：直链和 Release 资产都是「一个完整文件」，
+/// 分片并发能显著提升单文件吞吐；再往上加收益递减、对源站也不友好。
+const DIRECT_DOWNLOAD_THREADS: u32 = 16;
+
 fn decode_filename(value: &str) -> String {
     url::form_urlencoded::parse(
         format!("name={}", value.replace('+', "%2B").replace('&', "%26")).as_bytes(),
@@ -103,6 +109,7 @@ fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
 /// 避免「预览下载一次、安装再下载一次」。调用方负责删除返回的临时文件
 /// （`analyze_mod_source` 会把它搬到预览暂存目录）。
 pub(crate) async fn download_for_preview(
+    app: &tauri::AppHandle,
     state: &AppState,
     url: &str,
 ) -> Result<(PathBuf, String), String> {
@@ -166,7 +173,8 @@ pub(crate) async fn download_for_preview(
                     cache_dir,
                     "在线文件",
                     &reporter,
-                    32,
+                    // 与仓库资产下载一致的分片线程数
+                    DIRECT_DOWNLOAD_THREADS,
                     Some(Duration::from_secs(5)),
                 )
                 .await?;
@@ -178,7 +186,10 @@ pub(crate) async fn download_for_preview(
             }
         },
         Some(DownloadContext {
-            app: None,
+            // 传入 app：在线直链与仓库资产共用同一套下载进度事件，
+            // 路径是临时文件、没有 Release 元数据，所以 expected_size 留空，
+            // 大小由下载源自己上报（有 Content-Length 时显示确定进度）。
+            app: Some(app),
             label: "在线文件",
             expected_size: None,
         }),
@@ -262,7 +273,8 @@ pub async fn install_online_mod(
                     cache_dir,
                     "在线文件",
                     &reporter,
-                    32,
+                    // 与仓库资产下载一致的分片线程数
+                    DIRECT_DOWNLOAD_THREADS,
                     Some(Duration::from_secs(5)),
                 )
                 .await?;

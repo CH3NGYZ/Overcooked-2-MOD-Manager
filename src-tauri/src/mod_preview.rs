@@ -398,6 +398,7 @@ pub(crate) fn stage_downloaded_file(
 
 #[tauri::command]
 pub async fn analyze_mod_source(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     source: ModSource,
 ) -> Result<ModPreview, String> {
@@ -417,7 +418,7 @@ pub async fn analyze_mod_source(
         }
         ModSourceKind::Url => {
             let (path, name) =
-                crate::direct_mod::download_for_preview(&state, &source.value).await?;
+                crate::direct_mod::download_for_preview(&app, &state, &source.value).await?;
             (path, name)
         }
     };

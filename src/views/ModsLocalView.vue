@@ -347,19 +347,42 @@ function modCategory(mod: InstalledMod): ModCategory {
 }
 
 const groups = computed<ModGroupNode[]>(() => {
-  // 先按分类分桶，桶内再按 package_id 聚成包
-  const buckets = new Map<string, { label: string; packages: Map<string, InstalledMod[]> }>()
+  /*
+   * 先按 package_id 聚成包，再决定整包归属哪个分类。
+   *
+   * 之前的顺序反了（先按分类分桶、再在桶内聚包）：包内的纯依赖 DLL
+   * 没有 BepInPlugin GUID，匹配不到在线仓库，于是进「本地安装」分组；
+   * 同包的主 MOD 能匹配到仓库，进在线分组 —— 同一个包被拆到两个分类，
+   * 也就永远不会折叠成一个 MOD 包，还会互判「重复」。
+   *
+   * 一个包只属于一个分类，取包内**最能代表仓库**的成员：
+   * 优先能绑定在线仓库的，其次主 MOD，最后才用依赖自身。
+   */
+  const packagesByKey = new Map<string, InstalledMod[]>()
   for (const mod of sortedMods.value) {
-    const category = modCategory(mod)
+    const packageKey = mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
+    const list = packagesByKey.get(packageKey)
+    if (list) list.push(mod)
+    else packagesByKey.set(packageKey, [mod])
+  }
+
+  /** 包的分组代表：能匹配仓库的成员优先，主 MOD 其次，依赖最后。 */
+  const representative = (members: InstalledMod[]): InstalledMod => {
+    const bound = members.find((mod) => repositoryForMod(repositories.value, mod))
+    if (bound) return bound
+    const primary = members.find((mod) => !mod.is_dependency)
+    return primary ?? members[0]
+  }
+
+  const buckets = new Map<string, { label: string; packages: Map<string, InstalledMod[]> }>()
+  for (const [packageKey, members] of packagesByKey) {
+    const category = modCategory(representative(members))
     let bucket = buckets.get(category.key)
     if (!bucket) {
       bucket = { label: category.label, packages: new Map() }
       buckets.set(category.key, bucket)
     }
-    const packageKey = mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
-    const list = bucket.packages.get(packageKey)
-    if (list) list.push(mod)
-    else bucket.packages.set(packageKey, [mod])
+    bucket.packages.set(packageKey, members)
   }
 
   const toPackage = (key: string, list: InstalledMod[]): ModPackageNode => {

@@ -13,7 +13,7 @@ import {
 import { api } from '../services/tauri'
 import { isTauri, safeTauri } from '../runtime'
 import { compareVersions, repositoryForMod } from '../modStatus'
-import { installedModTags } from '../statusTags'
+import { installedModTags, recomputeModUpdate } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
@@ -42,8 +42,29 @@ const expanded = ref<Record<string, boolean>>({})
 // 切页面复用已有 Dashboard；开关/删除后仍用 load() 取最新扫描结果
 onMounted(() => { void ensureLoaded() })
 
+/**
+ * 把「后端扫描结果」和「当前仓库缓存」合成一份有效状态。
+ *
+ * 后端 `labels` / `update_available` 是扫描那一刻算的，而仓库 Release 是
+ * 异步刷新回来的；刷新期间 Dashboard 不重读（会重扫磁盘），标签就会停在
+ * 「版本未知」。这里用当前仓库缓存重算，让刷新结果立刻生效，
+ * 且整个过程是纯内存计算 —— 刷一个仓库只影响它绑定的那几个 MOD。
+ */
+const effectiveMods = computed<InstalledMod[]>(() =>
+  mods.value.map((mod) => {
+    const recomputed = recomputeModUpdate(mod, repositories.value)
+    if (!recomputed) return mod
+    const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available')
+    return {
+      ...mod,
+      update_available: recomputed.update_available,
+      labels: recomputed.update_available ? ['update_available', ...stripped] : ['latest', ...stripped],
+    }
+  }),
+)
+
 const sortedMods = computed(() => {
-  const list = [...mods.value]
+  const list = [...effectiveMods.value]
   if (sortBy.value === 'name') list.sort((a, b) => modTitle(a).localeCompare(modTitle(b)))
   if (sortBy.value === 'version') {
     list.sort((a, b) => {
@@ -56,7 +77,29 @@ const sortedMods = computed(() => {
 })
 
 const enabledCount = computed(() => mods.value.filter((mod) => mod.enabled).length)
-const updateCount = computed(() => mods.value.filter((mod) => mod.update_available).length)
+
+const updateCount = computed(() => effectiveMods.value.filter((mod) => mod.update_available).length)
+
+/**
+ * 顶部聚合标签：按状态汇总整页 MOD 数量。
+ *
+ * 顺序与「越需要注意越靠前」一致，和单个 MOD 右侧标签用的是同一套 tone，
+ * 因此颜色永远同步（都来自 theme.ts 的 statusToneColors）。
+ * 纯依赖 DLL 不参与：它不是 MOD，只是随包安装的文件。
+ */
+const statusSummaryTags = computed(() => {
+  const real = effectiveMods.value.filter((mod) => !mod.is_dependency)
+  const countLabel = (key: string) =>
+    real.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
+  const definitions: Array<{ key: string; tone: string; count: number; text: string }> = [
+    { key: 'duplicate', tone: 'contrast-strong', count: countLabel('duplicate'), text: '重复' },
+    { key: 'update_available', tone: 'contrast', count: countLabel('update_available'), text: '可更新' },
+    { key: 'duplicate_lower_version', tone: 'contrast-weak', count: countLabel('duplicate_lower_version'), text: '低版本' },
+    { key: 'latest', tone: 'accent', count: countLabel('latest'), text: '最新版' },
+    { key: 'not_release_asset', tone: 'accent', count: countLabel('not_release_asset'), text: '已安装' },
+  ]
+  return definitions.filter((entry) => entry.count > 0)
+})
 
 /**
  * 按「已安装时绑定的仓库分类」分组。
@@ -344,8 +387,15 @@ onBeforeUnmount(() => {
   void discardPreview()
 })
 
-/** 后端 labels → 文字 + 语义色（每个状态标签一种颜色，与 MOD 安装页共用）。 */
-const modTags = (mod: InstalledMod) => installedModTags(mod).map((tag) => ({ ...tag, text: t(tag.text) }))
+/**
+ * MOD 的状态标签。
+ *
+ * 传入的 mod 若来自 `effectiveMods`，其 labels 已是「后端扫描 + 当前仓库缓存」
+ * 合成后的结果，所以刷新期间也会立刻反映最新版本判断。
+ */
+function modTags(mod: InstalledMod) {
+  return installedModTags(mod).map((tag) => ({ ...tag, text: t(tag.text) }))
+}
 function statusSummary(mod: InstalledMod) {
   return modTags(mod).map((tag) => tag.text).join(' · ')
 }
@@ -634,6 +684,18 @@ function removePackage(node: ModPackageNode) {
 </script>
 
 <template>
+  <!--
+    页头标题右侧：整页状态聚合。
+    与每个 MOD 右侧的标签共用同一套 tone 与配色表，
+    所以颜色永远一致；数量为 0 的状态不显示，避免一排空标签。
+  -->
+  <Teleport to="#page-header-title-extra" defer>
+    <n-tag v-for="entry in statusSummaryTags" :key="entry.key" size="small" :bordered="false"
+      class="state-tag" :color="tagColorFor(entry.tone)">
+      {{ entry.count }} {{ t(entry.text) }}
+    </n-tag>
+  </Teleport>
+
   <!-- 页头右侧：打开 MOD 目录 + 安装 MOD（本地文件 / 在线直链） -->
   <Teleport to="#page-header-actions" defer>
     <n-button size="small" secondary @click="openModsDirectory">
@@ -653,7 +715,13 @@ function removePackage(node: ModPackageNode) {
     style="width: min(620px, 92vw)" @update:show="(value: boolean) => { if (!value) void closeInstall() }">
     <n-tabs v-model:value="installTab" type="segment" animated>
       <n-tab-pane name="local" :tab="t('本地文件')">
-        <!-- 拖放区：点击也能打开文件选择器 -->
+        <!--
+          拖放区：点击也能打开文件选择器。
+          Tauri 接管 WebView2 的拖放后会固定显示「禁止」光标（它只发事件、
+          不接受放置），CSS 无法覆盖那个系统光标。所以改用拖入时的高亮
+          来表达「可以放」：进入即描边 + 底色提亮 + 加号放大，指针形态
+          不再承担提示职责。
+        -->
         <div v-if="!preview" class="drop-zone" :class="{ active: dragActive, busy: awaitingSource }"
           role="button" tabindex="0" @click="pickLocalMod" @keydown.enter.prevent="pickLocalMod">
           <n-spin v-if="awaitingSource" size="small" />
@@ -982,23 +1050,38 @@ function removePackage(node: ModPackageNode) {
   border-radius: 12px;
   background: var(--oc2-sunken);
   cursor: pointer;
-  transition: border-color .16s ease, background-color .16s ease;
+  transition: border-color .16s ease, background-color .16s ease,
+    box-shadow .16s ease, transform .16s ease;
   user-select: none;
 }
 .drop-zone:hover,
 .drop-zone:focus-visible { border-color: var(--oc2-accent); outline: none; }
+/*
+ * 拖入高亮：这是「可以放」的唯一提示（Tauri 的系统光标无法改成允许态）。
+ * 描边变实线主题色 + 底色提亮 + 外发光 + 加号放大，四个信号叠加，
+ * 让用户在系统「禁止」光标下依然能确定这里是放置目标。
+ */
 .drop-zone.active {
+  border-style: solid;
   border-color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 10%, var(--oc2-sunken));
+  background: color-mix(in srgb, var(--oc2-accent) 14%, var(--oc2-sunken));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--oc2-accent) 28%, transparent);
 }
+.drop-zone.active .drop-plus { transform: scale(1.25); }
+.drop-zone.active .drop-hint { color: var(--oc2-text-1); }
 .drop-zone.busy { cursor: progress; }
 .drop-plus {
   font-size: 34px;
   line-height: 1;
   font-weight: 300;
   color: var(--oc2-accent);
+  transition: transform .16s ease;
 }
-.drop-hint { font-size: 12.5px; color: var(--oc2-text-3); }
+.drop-hint {
+  font-size: 12.5px;
+  color: var(--oc2-text-3);
+  transition: color .16s ease;
+}
 /* 预览区：与详情区同款的紧凑信息密度 */
 .install-preview {
   display: flex;

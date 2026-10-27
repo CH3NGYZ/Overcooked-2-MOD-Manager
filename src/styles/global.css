@@ -299,3 +299,18 @@ body {
 }
 /* 「重复」是唯一需要更重的状态：靠字重区分，颜色仍来自配色表 */
 .state-tag--strong.n-tag { font-weight: 700; }
+
+/*
+ * 按钮内 icon 与文字的间距。
+ *
+ * Naive 把 icon 和文字都放在 .n-button__content 里（display: flex），
+ * 但默认 gap 是 normal（= 0），图标和首个文字紧贴。这里统一给一点呼吸，
+ * 一处规则覆盖全站按钮，不必在每个按钮里写空格或 margin。
+ */
+.n-button__content {
+  gap: 6px;
+}
+/* 纯图标按钮（没有文字）不需要间距，否则图标会被挤偏 */
+.n-button__content > svg:only-child {
+  margin: 0;
+}

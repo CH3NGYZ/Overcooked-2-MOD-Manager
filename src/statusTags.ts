@@ -1,5 +1,5 @@
 import type { InstalledMod, InstalledModStatusLabel, Repository } from './types'
-import { compareVersions, modsForRepository } from './modStatus.ts'
+import { compareVersions, modsForRepository, repositoryForMod } from './modStatus.ts'
 
 /**
  * MOD 状态标签：两页共用同一套「文案 + 语义色」，避免两边各写一份。
@@ -154,4 +154,36 @@ export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]
   const compared = compareVersions(release.version || release.tag_name, localVersion(installed))
   if (compared === null) return tag('unknown')
   return compared > 0 ? tag('update_available') : tag('latest')
+}
+
+/**
+ * 用当前仓库缓存重算一个已安装 MOD 的更新状态。
+ *
+ * 为什么需要它：MOD 的 `labels` / `update_available` 是后端扫描时算好的，
+ * 而仓库 Release 是异步刷新回来的。刷新期间 Dashboard 不重读（那会重扫磁盘），
+ * 所以标签会一直停在「版本未知」，直到整批结束才更新。
+ *
+ * 这里用同一套判定规则在前端重算，让「刷完一个仓库 → 该仓库绑定的 MOD 立刻
+ * 显示最新版/可更新」，不需要任何 IPC，也不碰磁盘。
+ *
+ * 返回 null 表示无法判断（没绑定仓库、仓库没有 Release、版本不可比较），
+ * 调用方应保留后端给的原值。
+ */
+export function recomputeModUpdate(
+  mod: InstalledMod,
+  repositories: Repository[],
+): { update_available: boolean; latest: boolean } | null {
+  // 纯依赖不是 MOD，不参与更新判定
+  if (mod.is_dependency) return null
+  const repo = repositoryForMod(repositories, mod)
+  if (!repo || repo.last_error) return null
+  // 仓库文件模式没有版本比较的意义
+  if (repo.download_mode === 'repository_file') return null
+  const release = repo.cached_releases[0]
+  if (!release) return null
+  const compared = compareVersions(release.version || release.tag_name, localVersion(mod))
+  if (compared === null) return null
+  return compared > 0
+    ? { update_available: true, latest: false }
+    : { update_available: false, latest: true }
 }

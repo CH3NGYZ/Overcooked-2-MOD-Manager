@@ -377,11 +377,19 @@ onBeforeUnmount(clearNativeSelection)
           </div>
           <n-input :value="code" type="textarea" readonly :autosize="{ minRows: 2, maxRows: 6 }" class="code" />
         </section>
-
-        <n-spin v-if="pushing" class="push-hint" size="small" />
       </n-tab-pane>
     </n-tabs>
   </div>
+
+  <!--
+    推送中的遮罩：覆盖「侧栏右侧、标题栏下方」的内容区并居中。
+    放在 n-tabs 之外，避免随面板切换被卸载。
+  -->
+  <Teleport to="body">
+    <div v-if="pushing" class="push-mask">
+      <n-spin size="large" :description="t('正在推送到 街机MOD')" />
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -565,5 +573,21 @@ onBeforeUnmount(clearNativeSelection)
   color: #f87171;
   white-space: nowrap;
 }
-.push-hint { align-self: center; }
+/*
+ * 推送遮罩：覆盖内容区（让出侧栏与标题栏）并在其中居中。
+ * 用与弹窗一致的做法 —— 让出 --oc2-titlebar-height 与 --oc2-rail-width，
+ * 这样转圈落在用户真正在看的区域中心，而不是整个窗口中心。
+ */
+.push-mask {
+  position: fixed;
+  top: var(--oc2-titlebar-height, 56px);
+  left: var(--oc2-rail-width, 108px);
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--oc2-body) 72%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 2500;
+}
 </style>

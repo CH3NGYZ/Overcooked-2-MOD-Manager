@@ -75,14 +75,15 @@ test('后端未绑定该仓库时回退到版本比较', () => {
   })
   const status = repositoryStatus(repo(), [installed])
   assert.equal(status.text, '可更新')
-  // 可更新用对比色（中档强度）
-  assert.equal(status.tone, 'contrast')
+  // 可更新属于「中度」
+  assert.equal(status.tone, 'moderate')
 })
 
 test('每个状态标签都有文案与合法色调', () => {
+  // 五档严重度 + 中性灰，外加为兼容旧快照保留的别名
   const tones = new Set([
-    'ok', 'warn', 'idle', 'muted', 'danger', 'violet',
-    'accent', 'contrast-strong', 'contrast', 'contrast-weak',
+    'accent', 'mild', 'moderate', 'severe', 'critical', 'muted',
+    'ok', 'idle', 'warn', 'danger', 'violet',
   ])
   for (const [key, meta] of Object.entries(STATUS_META)) {
     assert.ok(meta.text, `${key} 缺少文案`)
@@ -93,15 +94,15 @@ test('每个状态标签都有文案与合法色调', () => {
 test('installedModTags 保留后端顺序，labels 为空时退回 status', () => {
   const tags = installedModTags(mod({ labels: ['duplicate_lower_version', 'duplicate'] }))
   assert.deepEqual(tags.map((tag) => tag.text), ['低版本', '重复'])
-  // 重复比对色·强，低版本用对比色·弱
-  assert.deepEqual(tags.map((tag) => tag.tone), ['contrast-weak', 'contrast-strong'])
+  // 重复属重度，低版本属轻微
+  assert.deepEqual(tags.map((tag) => tag.tone), ['mild', 'severe'])
   assert.equal(installedModTags(mod({ labels: [], status: 'unbound' }))[0].text, '未绑定')
 })
 
 test('预发布版本在最前面插入「预发布」标签，与可更新同档', () => {
   const tags = installedModTags(mod({ labels: ['latest'], prerelease: true }))
   assert.deepEqual(tags.map((tag) => tag.text), ['预发布', '最新版'])
-  assert.equal(tags[0].tone, 'contrast')
+  assert.equal(tags[0].tone, 'moderate')
   // 最新版用主题色
   assert.equal(tags[1].tone, 'accent')
 })

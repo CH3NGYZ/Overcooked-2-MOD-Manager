@@ -10,22 +10,29 @@ import { compareVersions, modsForRepository, repositoryForMod } from './modStatu
  * 颜色在 `src/styles/global.css` 的 `.state-tag--*` 里定义。
  */
 /**
- * 状态色调。
+ * 状态色调 —— 按「严重程度」五档划分。
  *
- * 「最新版 / 已安装」用主题色；与「更新」相关的三种状态用主题色对比色的
- * 三档强弱表达紧迫度（重复 > 可更新 > 低版本），这样一眼能看出层级，
- * 而不是三种互不相干的颜色。
+ * 这是全站唯一的严重度色阶，所有标签都归入其中一档：
+ *   accent    正常   主题色   最新版、已安装、部分启用
+ *   mild      轻微   对比色弱 低版本副本
+ *   moderate  中度   对比色中 可更新、预发布
+ *   severe    重度   对比色强 重复（同 GUID 冲突）
+ *   critical  严重   固定红   来源未知、仓库缺失/不可用、加载警告
+ *   muted     中性   灰       未安装、未绑定、已禁用、版本未知
+ *
+ * 旧值（ok/warn/idle/danger/violet）保留在类型里只为兼容旧快照，
+ * 新代码一律使用五档名称。
  */
 export type StatusTone =
-  | 'ok' | 'warn' | 'idle' | 'muted' | 'danger' | 'violet'
-  /** 主题色：稳定状态（最新版、已安装） */
-  | 'accent'
-  /** 对比色·强：同 GUID 重复，最需要处理 */
-  | 'contrast-strong'
-  /** 对比色·中：可更新 */
-  | 'contrast'
-  /** 对比色·弱：低版本副本 */
-  | 'contrast-weak'
+  | 'accent' | 'mild' | 'moderate' | 'severe' | 'critical' | 'muted'
+  /** @deprecated 用 accent */
+  | 'ok' | 'idle'
+  /** @deprecated 用 moderate */
+  | 'warn'
+  /** @deprecated 用 critical */
+  | 'danger'
+  /** @deprecated 用 mild */
+  | 'violet'
 
 export interface StatusTag {
   key: string
@@ -35,18 +42,18 @@ export interface StatusTag {
 
 /** 后端标签 → 文案与颜色。 */
 export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
-  update_available: { text: '可更新', tone: 'contrast' },
+  update_available: { text: '可更新', tone: 'moderate' },
   latest: { text: '最新版', tone: 'accent' },
   /** 已安装的是预发布版本：与「可更新」同档，因为都需要用户注意。 */
-  prerelease: { text: '预发布', tone: 'contrast' },
+  prerelease: { text: '预发布', tone: 'moderate' },
   not_release_asset: { text: '已安装', tone: 'accent' },
   unbound: { text: '未绑定', tone: 'muted' },
-  bound_repository_missing: { text: '仓库缺失', tone: 'danger' },
-  repository_unavailable: { text: '仓库不可用', tone: 'danger' },
+  bound_repository_missing: { text: '仓库缺失', tone: 'critical' },
+  repository_unavailable: { text: '仓库不可用', tone: 'critical' },
   unknown: { text: '版本未知', tone: 'muted' },
-  duplicate: { text: '重复', tone: 'contrast-strong' },
-  duplicate_lower_version: { text: '低版本', tone: 'contrast-weak' },
-  load_warning: { text: '加载警告', tone: 'danger' },
+  duplicate: { text: '重复', tone: 'severe' },
+  duplicate_lower_version: { text: '低版本', tone: 'mild' },
+  load_warning: { text: '加载警告', tone: 'critical' },
   disabled: { text: '已禁用', tone: 'muted' },
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
   dependency: { text: '依赖', tone: 'muted' },

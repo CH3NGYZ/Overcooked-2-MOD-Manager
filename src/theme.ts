@@ -249,39 +249,57 @@ export interface TagColorValue {
  * 所有页面的状态标签都从这里取色，通过 Naive `n-tag` 的原生 `:color`
  * 属性下发 —— 不需要任何自定义 CSS 类，换主题色时自动跟随。
  *
- * 语义分层（颜色强度即优先级）：
- *   accent          主题色        —— 最新版、已安装（稳定）
- *   contrastStrong  对比色·强     —— 重复（同 GUID 冲突，最需处理）
- *   contrast        对比色·中     —— 可更新、预发布
- *   contrastWeak    对比色·弱     —— 低版本副本（仅提示）
- *   muted           灰色          —— 未绑定、已禁用、版本未知
+ * 分级是「严重程度」五档，颜色强度直接对应用户需要多在意：
+ *
+ *   accent       正常   —— 主题色。最新版、已安装、部分启用（一切正常）
+ *   mild         轻微   —— 对比色最弱档。低版本副本（提示性，通常顺手卸载）
+ *   moderate     中度   —— 对比色中档。可更新、预发布（需要动作但不紧急）
+ *   severe       重度   —— 对比色最强档。重复（同 GUID 冲突，必须处理）
+ *   critical     严重   —— 独立的红色。来源未知、仓库缺失、加载警告
+ *   muted        中性   —— 灰色。未安装、未绑定、已禁用、版本未知
+ *
+ * `severe` 用主题色对比色（跟随主题色），`critical` 用固定红 —— 后者
+ * 表达的是「数据/来源不可信」这类与主题无关的严重问题，不该随主题变浅。
  */
 export const statusToneColors = computed<Record<string, TagColorValue>>(() => {
   const surface = surfaces.value
   const main = accent.value
   const contrast = accentContrast(main.color, themeMode.value)
   const muted = surface.text3
+  // 严重级用固定的警示红，与主题色无关
+  const critical = themeMode.value === 'dark' ? '#f87171' : '#dc2626'
   return {
+    /* 正常 */
     accent: {
       color: tint(main.color, surface.card, 0.82),
       borderColor: main.color,
       textColor: main.color,
     },
-    'contrast-strong': {
-      color: tint(contrast, surface.card, 0.74),
-      borderColor: contrast,
-      textColor: contrast,
-    },
-    contrast: {
-      color: tint(contrast, surface.card, 0.84),
-      borderColor: contrast,
-      textColor: contrast,
-    },
-    'contrast-weak': {
+    /* 轻微 */
+    mild: {
       color: tint(contrast, surface.card, 0.9),
       borderColor: tint(contrast, surface.card, 0.6),
       textColor: tint(contrast, muted, 0.32),
     },
+    /* 中度 */
+    moderate: {
+      color: tint(contrast, surface.card, 0.84),
+      borderColor: contrast,
+      textColor: contrast,
+    },
+    /* 重度 */
+    severe: {
+      color: tint(contrast, surface.card, 0.74),
+      borderColor: contrast,
+      textColor: contrast,
+    },
+    /* 严重 */
+    critical: {
+      color: tint(critical, surface.card, 0.8),
+      borderColor: critical,
+      textColor: critical,
+    },
+    /* 中性 */
     muted: {
       color: tint(muted, surface.card, 0.86),
       borderColor: tint(muted, surface.card, 0.7),

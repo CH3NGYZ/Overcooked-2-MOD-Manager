@@ -11,18 +11,35 @@ const { refresh } = useDashboard()
 const progress = ref<DownloadProgress | null>(null)
 let unlisten: (() => void) | null = null
 
-/** 有实际字节才开始走进度；连接/切换/准备阶段走不确定动画。 */
-const hasBytes = computed(() => (progress.value?.downloaded ?? 0) > 0 && !!progress.value?.total)
+function percentValue(value: { downloaded: number; total?: number }): number {
+  if (!value.total) return 0
+  return Math.min(100, Math.round((value.downloaded / value.total) * 100))
+}
+
+/** 是否走「不确定进度」动画（有确定进度之前一律用 processing）。 */
+const indeterminate = computed(() => {
+  const value = progress.value
+  if (!value || value.finished) return false
+  if (!value.total) return true
+  return (value.downloaded ?? 0) <= 0
+})
+
+/**
+ * 卡片可见性：有任务就显示，直到 finished。
+ *
+ * 连接、切换、竞速阶段都要显示 —— 用户需要看到「正在连」而不是空白等待。
+ */
 const visible = computed(() => {
   const value = progress.value
   if (!value || value.finished) return false
-  // 准备/连接阶段也要显示卡片（加载动画），一旦开始下载则显示真实进度。
-  return value.phase === 'connecting' || value.phase === 'switching' || hasBytes.value || (value.downloaded ?? 0) > 0
+  return true
 })
+
 const percent = computed(() => {
+  if (indeterminate.value) return null
   const value = progress.value
   if (!value?.total) return null
-  return Math.min(100, Math.round((value.downloaded / value.total) * 100))
+  return percentValue(value)
 })
 const percentText = computed(() => {
   if (percent.value === null) return t('准备中')

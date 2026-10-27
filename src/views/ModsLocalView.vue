@@ -11,7 +11,7 @@ import {
   DocumentTextOutline, FolderOpenOutline, LinkOutline, SettingsOutline, SwapVerticalOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
-import { isTauri, safeTauri } from '../runtime'
+import { isTauri } from '../runtime'
 import { compareVersions, repositoryForMod } from '../modStatus'
 import { installedModTags, recomputeModUpdate } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink } from '../crossLink'
@@ -92,9 +92,9 @@ const statusSummaryTags = computed(() => {
   const countLabel = (key: string) =>
     real.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
   const definitions: Array<{ key: string; tone: string; count: number; text: string }> = [
-    { key: 'duplicate', tone: 'contrast-strong', count: countLabel('duplicate'), text: '重复' },
-    { key: 'update_available', tone: 'contrast', count: countLabel('update_available'), text: '可更新' },
-    { key: 'duplicate_lower_version', tone: 'contrast-weak', count: countLabel('duplicate_lower_version'), text: '低版本' },
+    { key: 'duplicate', tone: 'severe', count: countLabel('duplicate'), text: '重复' },
+    { key: 'update_available', tone: 'moderate', count: countLabel('update_available'), text: '可更新' },
+    { key: 'duplicate_lower_version', tone: 'mild', count: countLabel('duplicate_lower_version'), text: '低版本' },
     { key: 'latest', tone: 'accent', count: countLabel('latest'), text: '最新版' },
     { key: 'not_release_asset', tone: 'accent', count: countLabel('not_release_asset'), text: '已安装' },
   ]
@@ -586,35 +586,47 @@ let dragUnlisten: (() => void) | null = null
  * 只在真实 Tauri 窗口里有效：浏览器预览没有 drag-drop 权限，
  * 且 `getCurrentWebview()` 在非 Tauri 环境会抛错（见 runtime.ts）。
  * 事件路径是绝对路径数组，取第一个交给后端解析。
+ *
+ * 注意：Tauri 接管 WebView2 的拖放后，即使监听注册成功，
+ * 系统光标也一直是「禁止」，所以高亮是唯一的可放置提示（见下方样式）。
+ * 注册结果写日志，方便确认是「没收到事件」还是「样式没生效」。
  */
 function attachDragDrop() {
   if (!isTauri() || dragUnlisten) return
-  void safeTauri(async () => {
-    const { getCurrentWebview } = await import('@tauri-apps/api/webview')
-    const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-      if (!installOpen.value) return
-      const payload = event.payload
-      if (payload.type === 'over' || payload.type === 'enter') {
-        dragActive.value = true
-        return
-      }
-      if (payload.type === 'leave') {
+  void (async () => {
+    try {
+      const { getCurrentWebview } = await import('@tauri-apps/api/webview')
+      const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        const payload = event.payload
+        console.info('[drop] event', payload.type, 'installOpen=', installOpen.value)
+        if (payload.type === 'over' || payload.type === 'enter') {
+          // 高亮不依赖弹窗是否已开：用户可能先拖到图标上方再打开弹窗
+          dragActive.value = true
+          return
+        }
+        if (payload.type === 'leave') {
+          dragActive.value = false
+          return
+        }
+        if (payload.type !== 'drop') return
         dragActive.value = false
-        return
-      }
-      if (payload.type !== 'drop') return
-      dragActive.value = false
-      const path = payload.paths?.[0]
-      if (!path) return
-      if (!/\.(dll|zip)$/i.test(path)) {
-        message.warning(t('只支持 .dll 或 .zip 文件'))
-        return
-      }
-      installTab.value = 'local'
-      void analyze('local', path)
-    })
-    dragUnlisten = unlisten
-  })
+        const path = payload.paths?.[0]
+        if (!path) return
+        if (!/\.(dll|zip)$/i.test(path)) {
+          message.warning(t('只支持 .dll 或 .zip 文件'))
+          return
+        }
+        // 拖入即安装：自动切到「本地文件」并开始解析
+        installOpen.value = true
+        installTab.value = 'local'
+        void analyze('local', path)
+      })
+      dragUnlisten = unlisten
+      console.info('[drop] listener registered')
+    } catch (reason) {
+      console.error('[drop] listener registration failed', reason)
+    }
+  })()
 }
 
 function detachDragDrop() {
@@ -813,7 +825,7 @@ function removePackage(node: ModPackageNode) {
             <b>{{ node.label }}</b>
             <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ node.count }}</n-tag>
             <n-tag v-if="node.updateCount" size="tiny" :bordered="false" class="state-tag"
-              :color="tagColorFor('contrast')">
+              :color="tagColorFor('moderate')">
               {{ t('{count} 个可更新', { count: node.updateCount }) }}
             </n-tag>
             <n-tag v-if="!node.enabled && !node.partial" size="tiny" :bordered="false"
@@ -1319,13 +1331,18 @@ function removePackage(node: ModPackageNode) {
  * 标签在该列内右对齐，所以所有行的分割线、按钮列都落在同一条竖线上。
  * 98px 的来历：3 个 30px 按钮 + 3 个 2px gap（含 .tool-spacer 占位）。
  */
+/*
+ * 状态标签组：宽度跟内容走，不再预留固定最小宽度。
+ * 之前用 min-width: 128px 让所有行的标签区起点一致，但单个标签时
+ * 右侧会空出一大片（截图里高亮框比「最新版」宽一倍）。
+ * 现在靠 flex-end + 固定的分割线/工具栏列宽保证右对齐，
+ * 标签少时容器就窄，视觉上没有空白。
+ */
 .tag-group {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  /* 至少容纳两个标签（约 2×60px），保证标签区起点一致 */
-  min-width: 128px;
   flex: 0 1 auto;
   flex-wrap: nowrap;
   overflow: hidden;

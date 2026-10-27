@@ -22,8 +22,12 @@ const pathVerified = () => !!game.value?.path && game.value.game_exists
       <StatCard :label="t('框架状态')" :value="frameworkOk ? t('正常') : t('未安装')"
         :sub="game?.bepinex.version ? `BepInEx ${game.bepinex.version}` : t('未安装')"
         :tone="frameworkOk ? 'success' : 'warning'" />
+      <!--
+        游戏路径卡片：副标题直接显示真实路径；探测不到时明确说「无法探测」，
+        而不是笼统的「尚未检测到」，这样用户一眼知道是「没设」还是「探不到」。
+      -->
       <StatCard :label="t('游戏路径')" :value="pathVerified() ? t('已验证') : (game?.path ? t('目录异常') : t('未设置'))"
-        :sub="game?.path || t('尚未检测到游戏目录')"
+        :sub="game?.path || t('无法探测游戏目录')"
         :tone="pathVerified() ? 'success' : 'warning'" />
       <StatCard :label="t('待处理事项')" :value="`${updateCount} 项`"
         :sub="updateCount ? t('有可更新的 MOD') : t('暂无可更新内容')"

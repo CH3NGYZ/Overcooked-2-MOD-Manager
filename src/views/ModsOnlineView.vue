@@ -494,8 +494,11 @@ defineExpose({ refreshAll, visibleCount })
             <template #header>
               <div class="source-head">
                 <b>{{ node.label }}</b>
-                <n-tag size="tiny" type="warning" :bordered="false">{{ t('来源未知') }}</n-tag>
-                <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
+                <!-- 社区来源未经官方索引校验，用严重级红色与「重复」同级提示 -->
+                <n-tag size="tiny" :bordered="false" class="state-tag"
+                  :color="tagColorFor('critical')">{{ t('来源未知') }}</n-tag>
+                <n-tag size="tiny" :bordered="false" class="state-tag"
+                  :color="tagColorFor('muted')">{{ node.count }}</n-tag>
               </div>
             </template>
             <!-- 社区仓库不分组：直接平铺卡片，没有分类标题 -->
@@ -593,11 +596,19 @@ defineExpose({ refreshAll, visibleCount })
   color: var(--oc2-text-3);
 }
 .group-refresh:hover { color: var(--oc2-accent); }
+/*
+ * 仓库卡片网格。
+ *
+ * 左侧 28px 是为与上方源标题的缩进对齐；右侧同样留 28px，
+ * 否则卡片会顶到 .page-body 的 padding 之外（截图里超出边距的那块）。
+ * minmax(0, 1fr) 而不是 minmax(310px, 1fr)：后者在容器窄于 310px 时
+ * 会让整列撑破容器。
+ */
 .repo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(310px, 100%), 1fr));
   gap: 12px;
-  margin: 2px 0 6px 28px;
+  margin: 2px 28px 6px 28px;
 }
 
 /* 卡片：圆角边缘 + 内部分区（标题行 / 描述 / 指标行） */

@@ -14,7 +14,7 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import { installedModTags, recomputeModUpdate, replaceVersionConclusion } from '../statusTags'
+import { STATUS_META, installedModTags, recomputeModUpdate, replaceVersionConclusion } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -144,18 +144,65 @@ const updateCount = computed(() => effectiveMods.value.filter((mod) => mod.updat
  * 因此颜色永远同步（都来自 theme.ts 的 statusToneColors）。
  * 纯依赖 DLL 不参与：它不是 MOD，只是随包安装的文件。
  */
-const statusSummaryTags = computed(() => {
+/**
+ * 顶部聚合标签：按状态汇总整页 MOD 数量。
+ *
+ * 覆盖 MOD 管理页可能出现的**全部**标签，不只挑几个。数据源是
+ * STATUS_META（文案与 tone）而不是本地再抄一份文案 —— 这样以后在
+ * statusTags.ts 里加标签，这里自动出现，不会漏。
+ *
+ * 排序按「轻重缓急」= 语义 tone 的严重度，同档内再按固定业务顺序。
+ * 越需要用户处理越靠前，正常/中性收在最后。
+ */
+const TONE_PRIORITY: Record<string, number> = {
+  critical: 0,  // 严重：加载警告、仓库缺失
+  severe: 1,    // 重度：重复
+  moderate: 2,  // 中度：可更新、仓库刷新失败、预发布
+  mild: 3,      // 轻微：低版本
+  muted: 4,     // 中性：检测中、版本未知、未绑定、已禁用
+  accent: 5,    // 正常：最新版、已安装
+}
+
+/** 同档内的稳定排序（越靠前越需要动作）。 */
+const WITHIN_TONE_ORDER: string[] = [
+  'load_warning',
+  'bound_repository_missing',
+  'repository_unavailable',
+  'duplicate',
+  'update_available',
+  'prerelease',
+  'refresh_failed',
+  'duplicate_lower_version',
+  'checking',
+  'unknown',
+  'unbound',
+  'disabled',
+  'dependency',
+  'not_release_asset',
+  'installed',
+  'latest',
+]
+
+interface SummaryTag { key: string; text: string; tone: string; count: number; index: number }
+
+const statusSummaryTags = computed<SummaryTag[]>(() => {
+  // 纯依赖 DLL 不是 MOD，只随包安装，不参与整页统计
   const real = effectiveMods.value.filter((mod) => !mod.is_dependency)
-  const countLabel = (key: string) =>
+  const countOf = (key: string) =>
     real.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
-  const definitions: Array<{ key: string; tone: string; count: number; text: string }> = [
-    { key: 'duplicate', tone: 'severe', count: countLabel('duplicate'), text: '重复' },
-    { key: 'update_available', tone: 'moderate', count: countLabel('update_available'), text: '可更新' },
-    { key: 'duplicate_lower_version', tone: 'mild', count: countLabel('duplicate_lower_version'), text: '低版本' },
-    { key: 'latest', tone: 'accent', count: countLabel('latest'), text: '最新版' },
-    { key: 'not_release_asset', tone: 'accent', count: countLabel('not_release_asset'), text: '已安装' },
-  ]
-  return definitions.filter((entry) => entry.count > 0)
+
+  const entries: SummaryTag[] = []
+  WITHIN_TONE_ORDER.forEach((key, index) => {
+    const meta = STATUS_META[key]
+    if (!meta) return
+    const count = countOf(key)
+    if (count > 0) entries.push({ key, text: meta.text, tone: meta.tone, count, index })
+  })
+
+  return entries.sort((a, b) => {
+    const byTone = (TONE_PRIORITY[a.tone] ?? 9) - (TONE_PRIORITY[b.tone] ?? 9)
+    return byTone !== 0 ? byTone : a.index - b.index
+  })
 })
 
 /**
@@ -485,10 +532,17 @@ function isExpanded(dll: string) {
  * 详情区不再阻止冒泡（点它就是「点空白」，由 onDocumentClick 收起），
  * 所以这里必须排除来自 `.card-detail` 的事件，否则点详情会先被
  * onCardClick 切换一次、再被文档监听收起，表现为「闪一下就没了」。
+ *
+ * 同时要告诉 onDocumentClick「这次点击已处理」：否则同一次点击里
+ * 本函数先把该项 toggle 开，文档监听紧接着把所有展开项置回 false，
+ * 内容只出现一帧就消失（折叠过渡动画还没播完就被打断）。
  */
+let cardClickHandled = false
+
 function onCardClick(event: MouseEvent, mod: InstalledMod) {
   const target = event.target
   if (target instanceof Element && target.closest('.card-detail')) return
+  cardClickHandled = true
   toggleExpand(mod.dll_file)
 }
 
@@ -505,6 +559,15 @@ function onCardClick(event: MouseEvent, mod: InstalledMod) {
  * 不在这里收起，避免一次点击既展开又收起。
  */
 function onDocumentClick(event: MouseEvent) {
+  /*
+   * 卡片自身的点击已由 onCardClick 处理（它会 toggle），
+   * 这里必须让路，否则同一次点击会「先展开、再全部收起」。
+   * 标记在 document 监听执行后清除，保证只影响当前这一次点击。
+   */
+  if (cardClickHandled) {
+    cardClickHandled = false
+    return
+  }
   const openKeys = Object.keys(expanded.value).filter((key) => expanded.value[key])
   if (!openKeys.length) return
   const target = event.target
@@ -948,7 +1011,7 @@ function removePackage(node: ModPackageNode) {
               </div>
 
               <!-- 展开：用 Naive 自带的折叠过渡，不自己写动画 -->
-              <n-collapse-transition :show="isExpanded(mod.dll_file)">
+              <n-collapse-transition :show="isExpanded(mod.dll_file)" display-directive="show">
                 <!-- 不阻止冒泡：点详情里的任意位置都算「点空白」，由 onDocumentClick 收起 -->
                 <div class="card-detail">
                   <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
@@ -1013,7 +1076,7 @@ function removePackage(node: ModPackageNode) {
               </header>
 
               <!-- 包展开/收起：同样用 Naive 的折叠过渡 -->
-              <n-collapse-transition :show="isPackageExpanded(pkg.key)">
+              <n-collapse-transition :show="isPackageExpanded(pkg.key)" display-directive="show">
               <div class="package-body">
                 <article v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
                   :data-focus-id="bindingRepositoryId(mod)"
@@ -1068,7 +1131,7 @@ function removePackage(node: ModPackageNode) {
                     </div>
                   </div>
 
-                  <n-collapse-transition :show="isExpanded(mod.dll_file)">
+                  <n-collapse-transition :show="isExpanded(mod.dll_file)" display-directive="show">
                     <!-- 同上：详情区不拦冒泡，点任意位置都能收起 -->
                     <div class="card-detail">
                       <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"

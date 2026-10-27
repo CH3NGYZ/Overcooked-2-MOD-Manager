@@ -411,7 +411,8 @@ defineExpose({ refreshAll, visibleCount })
         <template #prefix><SearchOutline width="14" height="14" /></template>
       </n-input>
       <n-button size="small" secondary :loading="anyRefreshing" :disabled="anyRefreshing" @click="refreshAll">
-        <RefreshOutline width="14" height="14" />{{ t('刷新全部仓库源') }}
+        <template #icon><RefreshOutline width="14" height="14" /></template>
+        {{ t('刷新全部仓库源') }}
       </n-button>
       <n-button size="small" type="primary" @click="openInstall">
         <LinkOutline width="14" height="14" />{{ t('安装 MOD') }}
@@ -432,7 +433,7 @@ defineExpose({ refreshAll, visibleCount })
               <n-button size="tiny" quaternary
                 :loading="sourceRefreshing[node.source.id] || node.groups.some((g) => g.repos.some((r) => refreshing[r.id]))"
                 :disabled="anyRefreshing" @click.stop="refreshSource(node)">
-                <RefreshOutline width="13" height="13" />
+                <template #icon><RefreshOutline width="13" height="13" /></template>
               </n-button>
             </div>
           </template>
@@ -448,7 +449,7 @@ defineExpose({ refreshAll, visibleCount })
                   <n-button size="tiny" quaternary class="group-refresh"
                     :loading="groupRefreshing(group)"
                     :disabled="anyRefreshing" @click.stop="refreshGroup(group)">
-                    <RefreshOutline width="12" height="12" />
+                    <template #icon><RefreshOutline width="12" height="12" /></template>
                   </n-button>
                 </div>
               </template>
@@ -501,11 +502,18 @@ defineExpose({ refreshAll, visibleCount })
                       :style="installButtonStyle(repo)"
                       :loading="!!installing[repo.id]"
                       :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
-                      <!-- Naive 在同一图标槽位切换 spinner，槽宽固定，故不手动隐藏 -->
-                      <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
-                      <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
-                      <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
-                      <DownloadOutline v-else width="13" height="13" />
+                      <!--
+                        图标必须放在 #icon 具名槽：Naive 只用 IconSwitchTransition
+                        切换这个槽位的内容（图标 ↔ spinner）。放在默认插槽里会被
+                        渲染两份 —— 默认插槽的 children 既进图标槽、又作为文字前缀
+                        再渲染一次，loading 时就出现「spinner + SVG 并存」。
+                      -->
+                      <template #icon>
+                        <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
+                        <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                        <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
+                        <DownloadOutline v-else width="13" height="13" />
+                      </template>
                       {{ installLabel(repo) }}
                     </n-button>
                   </div>
@@ -574,15 +582,13 @@ defineExpose({ refreshAll, visibleCount })
                     :style="installButtonStyle(repo)"
                     :loading="!!installing[repo.id]"
                     :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
-                    <!--
-                      图标与加载圈由 Naive 自己在同一槽位切换（IconSwitchTransition），
-                      槽宽固定为 --n-icon-size，所以切换时按钮宽度不变。
-                      不要用 v-if 手动隐藏图标：那会让槽位塌缩，宽度先缩后胀。
-                    -->
-                    <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
-                    <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
-                    <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
-                    <DownloadOutline v-else width="13" height="13" />
+                    <!-- 图标放 #icon 槽，才会被 Naive 的 IconSwitchTransition 与 spinner 互换 -->
+                    <template #icon>
+                      <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
+                      <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                      <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
+                      <DownloadOutline v-else width="13" height="13" />
+                    </template>
                     {{ installLabel(repo) }}
                   </n-button>
                 </div>

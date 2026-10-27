@@ -176,7 +176,7 @@ async function confirm() {
             </span>
             <span class="preview-version mono">{{ entry.version || '—' }}</span>
           </div>
-          <n-collapse-transition :show="isEntryExpanded(entry.path)">
+          <n-collapse-transition :show="isEntryExpanded(entry.path)" display-directive="show">
             <div class="preview-row-detail">
               <div class="preview-item"><span class="muted">{{ t('名称') }}</span><b>{{ entry.name || '—' }}</b></div>
               <div class="preview-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ entry.version || '—' }}</b></div>

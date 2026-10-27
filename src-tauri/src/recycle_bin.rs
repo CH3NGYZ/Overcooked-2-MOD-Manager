@@ -474,6 +474,7 @@ pub fn recycle_package(
         None,
         None,
         &[],
+        &[],
     )?
     .ok_or_else(|| NO_FILES.into())
 }
@@ -494,6 +495,7 @@ pub fn recycle_mod_dll(
         Some(dll),
         Some(installed),
         None,
+        &[],
         &[],
     )?
     .ok_or_else(|| NO_FILES.into())
@@ -517,20 +519,23 @@ pub fn recycle_selected_mod(
         None,
         Some(dll),
         &[],
+        &[],
     )?
     .ok_or_else(|| NO_FILES.into())
 }
 
-/// 安装某个仓库的资产前，回收**所有**归属该仓库的已装包。
+/// 安装某个仓库的资产前，回收该仓库的已装包。
 ///
-/// 「归属该仓库」按安装清单里的 `repository_id` 与 `repository_binding` 判定：
+/// 「归属该仓库」按**身份**判定而不看渠道：
 ///   - `repository_id` 等于本次安装的包 ID（正常升级）；
-///   - 或清单的 binding 与本次仓库身份一致（历史安装用了别的包 ID，
-///     或同一仓库先后装出过不同包 —— 这正是「重复」的来源）。
+///   - 或清单 binding 的 provider/owner/repository 与本次仓库一致
+///     （历史安装用了别的包 ID，或仓库渠道、下载方式被改过）。
 ///
-/// 之前只回收 `repository_id` 完全相等的那一个清单，同仓库的其它副本会
-/// 留在磁盘上，装完仍显示「重复」。用户要的语义是「更新一次就把同仓库的
-/// 旧装全部清掉，再装新的」。
+/// 之前用 `binding.matches_repository()` 判定，它额外要求 `channel` 相同。
+/// 结果：仓库从 `all` 改成 `beta`（或反之）后，旧安装的 binding 不再匹配，
+/// 旧包不被回收、文件留在磁盘上，扫描时就报「重复」。
+/// 渠道只是「拉哪个 Release」的过滤条件，不改变「同一个仓库、同一批文件」的
+/// 事实，所以这里必须按身份而非渠道判定。
 ///
 /// 返回本次回收的全部记录；调用方在安装失败时据此整体回滚。
 /// 任一包回收失败即中止（不继续安装），避免留下半清理状态。
@@ -541,24 +546,26 @@ pub fn recycle_repository_packages_before_install(
     repo: &crate::models::RepositoryConfig,
     replacement_files: &[String],
 ) -> Result<Vec<ModRecycleEntry>, String> {
+    let manifests = all_active_manifests(manifests_dir)?;
     let mut targets = Vec::new();
-    for manifest in all_active_manifests(manifests_dir)? {
+    for manifest in &manifests {
         let same_id = manifest.repository_id == repo.id;
-        let same_binding = manifest
+        let same_identity = manifest
             .repository_binding
             .as_ref()
-            .is_some_and(|binding| binding.is_valid() && binding.matches_repository(repo));
-        if same_id || same_binding {
-            targets.push(manifest.repository_id);
+            .is_some_and(|binding| binding.is_valid() && binding.matches_identity(repo));
+        if same_id || same_identity {
+            targets.push(manifest.repository_id.clone());
         }
     }
     targets.sort();
     targets.dedup();
 
     let mut entries = Vec::new();
+    // 同批要一起回收的包 ID 全量列表：它们彼此不能算「其他包」，
+    // 否则 A 的清单会让 B 的文件被当成共享文件而跳过回收，装完仍留旧副本。
+    let siblings = targets.clone();
     for package_id in targets {
-        // 包 ID 与本次相同的那一个属于「原位替换」，共享文件规则由
-        // recycle_before_reinstall 处理；其它包整体回收。
         let entry = recycle_package_with_mods(
             root,
             manifests_dir,
@@ -568,6 +575,7 @@ pub fn recycle_repository_packages_before_install(
             None,
             None,
             replacement_files,
+            &siblings,
         )?;
         if let Some(entry) = entry {
             log::info!(
@@ -578,6 +586,23 @@ pub fn recycle_repository_packages_before_install(
                 entry.file_count
             );
             entries.push(entry);
+            continue;
+        }
+        /*
+         * 没有可回收文件：这批文件已被同批的另一个包顺带移走
+         * （它们登记在同一批文件上）。此时必须把这个包的清单也移除，
+         * 否则活动清单里留下一条指向已不存在文件的记录，扫描仍会多出一行。
+         *
+         * 只有在同批确实有其它包存在时才这样做 —— 单独回收一个已经空了的
+         * 包时，保留清单是既有语义（用户删除时由调用方报错）。
+         */
+        if siblings.len() > 1 {
+            set_active_manifest(manifests_dir, &package_id, None)?;
+            log::info!(
+                "旧包文件已由同批回收清空，移除其清单：仓库={}，包={}",
+                repo.id,
+                package_id
+            );
         }
     }
     Ok(entries)
@@ -623,6 +648,7 @@ fn recycle_package_with_mods(
     installed: Option<&[crate::models::InstalledMod]>,
     explicit_dll: Option<&str>,
     replacement_files: &[String],
+    sibling_packages: &[String],
 ) -> Result<Option<ModRecycleEntry>, String> {
     let (manifest, original) =
         read_active_manifest(manifests_dir, package_id)?.ok_or("没有安装清单，拒绝删除未知文件")?;
@@ -661,7 +687,11 @@ fn recycle_package_with_mods(
     }
     let peer_manifests = all_active_manifests(manifests_dir)?
         .into_iter()
-        .filter(|peer| peer.repository_id != package_id)
+        // 同批回收的包不算 peer：它们会和本包一起被移走，
+        // 若把它们当「其他包」保护共享文件，两边都会跳过回收，旧副本留在磁盘上。
+        .filter(|peer| {
+            peer.repository_id != package_id && !sibling_packages.contains(&peer.repository_id)
+        })
         .collect::<Vec<_>>();
     let peer_files = peer_manifests
         .iter()
@@ -2771,5 +2801,96 @@ mod tests {
         )
         .unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn same_repository_packages_do_not_protect_each_others_files() {
+        /*
+         * 同一次安装前要回收同一仓库的多个旧包。若把它们互相当成
+         * 「其他包」，每个包都会因为「文件仍由其他包使用」而跳过回收，
+         * 结果旧副本全部留在磁盘上 —— 这就是「更新后仍显示重复」的根因。
+         */
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "Repo", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "beta"
+        }))
+        .unwrap();
+
+        // 两个旧包登记在同一批文件上（旧版本装出的两份副本）
+        workspace.write(A, b"stale a");
+        workspace.write(B, b"stale b");
+        let binding = crate::models::RepositoryBinding {
+            provider: crate::models::Provider::Github,
+            owner: "Owner".into(),
+            repository: "Mod".into(),
+            tag: "v1.8.7.21".into(),
+            // 渠道与当前仓库配置不同：旧安装记的是 all，仓库现在配的是 beta
+            channel: crate::models::Channel::All,
+        };
+        let mut first = workspace.manifest("old-1", &[A, B]);
+        first.repository_binding = Some(binding.clone());
+        archive::write_manifest(&workspace.manifests, &first).unwrap();
+
+        let mut second = workspace.manifest("old-2", &[A, B]);
+        second.repository_binding = Some(binding);
+        archive::write_manifest(&workspace.manifests, &second).unwrap();
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            &["BepInEx/plugins/new.dll".into()],
+        )
+        .unwrap();
+
+        assert!(!entries.is_empty(), "至少有一个包产生回收记录");
+        // 关键：文件必须真的从游戏目录移走，不能因为「同批包共享」而跳过
+        assert!(!workspace.game.join(A).exists(), "旧包 A 的文件应已移走");
+        assert!(!workspace.game.join(B).exists(), "旧包 B 的文件应已移走");
+        // 两个旧包的清单都不能留存，否则扫描会多出指向空文件的条目
+        assert!(workspace.active("old-1").is_none(), "旧包 1 的清单应已移除");
+        assert!(workspace.active("old-2").is_none(), "旧包 2 的清单应已移除");
+    }
+
+    #[test]
+    fn repository_recycle_matches_identity_even_when_channel_changed() {
+        // 仓库渠道从 all 改成 beta（或反之）不应让旧安装失去归属：
+        // 渠道只决定拉哪个 Release，不改变「同一个仓库」这个事实。
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "Repo", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "beta"
+        }))
+        .unwrap();
+
+        workspace.write(A, b"old");
+        let mut old = workspace.manifest("legacy-package", &[A]);
+        old.repository_binding = Some(crate::models::RepositoryBinding {
+            provider: crate::models::Provider::Github,
+            owner: "Owner".into(),
+            repository: "Mod".into(),
+            tag: "v1.8.7.21".into(),
+            channel: crate::models::Channel::Stable,
+        });
+        archive::write_manifest(&workspace.manifests, &old).unwrap();
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            &["BepInEx/plugins/new.dll".into()],
+        )
+        .unwrap();
+
+        assert_eq!(entries.len(), 1, "渠道不同但身份相同的旧包也要回收");
+        assert!(!workspace.game.join(A).exists());
+        assert!(workspace.active("legacy-package").is_none());
     }
 }

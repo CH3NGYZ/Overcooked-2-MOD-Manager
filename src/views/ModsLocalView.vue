@@ -726,21 +726,30 @@ const configOpen = ref(false)
 const configTarget = ref<InstalledMod | null>(null)
 
 /**
- * 工具栏列宽：按「两个可选项占位 + 两个固定按钮」计算固定总宽。
- * 可选项（查看日志、配置编辑）在最左侧，任一缺失时用同宽占位补上，
- * 这样「打开位置」「删除」永远落在最右同一列，图标竖排对齐。
+ * 工具栏列宽：四个按钮位（日志、配置、定位、删除）等间距排布。
+ *
+ * 之前用 `.tool-spacer { flex: 1 1 auto }` 把「可选项」和「固定按钮」推成
+ * 两端对齐，导致配置与定位之间比其它相邻按钮宽一截，四个图标看起来疏密
+ * 不匀。现在去掉弹性占位，全部靠统一的 gap 分配，四个按钮等距。
+ *
+ * 缺失的可选项仍用同宽占位补上，所以「打开位置」「删除」在任何行都落在
+ * 同一条竖线上。
  */
 const TOOL_BUTTON_WIDTH = 30
-const TOOL_GAP = 2
-/** 可选项与固定按钮之间的 .tool-spacer 最小宽度，真实列宽必须把它算进去。 */
-const TOOL_SPACER_MIN = 2
-/*
- * 4 个按钮位（日志、配置、定位、删除）+ 4 个 gap + spacer 最小值：
- * 4*30 + 4*2 + 2 = 130px。少算一个按钮位会让整列按钮错位。
- */
+const TOOL_GAP = 8
+/** 4 个 30px 按钮 + 3 个 gap（相邻按钮之间的空档，两端不加）。 */
 const toolColumnWidth = computed(
-  () => 4 * TOOL_BUTTON_WIDTH + 4 * TOOL_GAP + TOOL_SPACER_MIN,
+  () => 4 * TOOL_BUTTON_WIDTH + 3 * TOOL_GAP,
 )
+/**
+ * 把按钮宽度与间距以 CSS 变量下发，让样式和上面的列宽计算共用同一组数字。
+ * 写死在两处（JS 算列宽、CSS 排间距）迟早会漂移。
+ */
+const toolGroupStyle = computed(() => ({
+  minWidth: `${toolColumnWidth.value}px`,
+  '--tool-gap': `${TOOL_GAP}px`,
+  '--tool-button-width': `${TOOL_BUTTON_WIDTH}px`,
+}))
 
 /** 打开该 MOD 所在文件夹并选中文件（后端只允许当前游戏的 BepInEx/plugins）。 */
 async function openLocation(mod: InstalledMod) {
@@ -983,7 +992,7 @@ function removePackage(node: ModPackageNode) {
                   <span class="tool-divider" />
 
                   <!-- 工具栏：可选按钮在最左（用占位保持列宽），固定按钮贴右 -->
-                  <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }">
+                  <span class="tool-group" :style="toolGroupStyle">
                     <!-- 查看日志：只有 BepInEx/logs/<guid> 存在时才显示；缺失时保留同宽占位 -->
                     <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('查看日志')"
                       class="tool-optional" @click.stop="openLogs(mod)">
@@ -997,7 +1006,6 @@ function removePackage(node: ModPackageNode) {
                       <SettingsOutline width="14" height="14" />
                     </n-button>
                     <span v-else class="tool-placeholder" />
-                    <span class="tool-spacer" />
                     <n-button size="tiny" quaternary :title="t('打开所在文件夹并定位')"
                       :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
                       <FolderOpenOutline width="14" height="14" />
@@ -1066,7 +1074,7 @@ function removePackage(node: ModPackageNode) {
                     包标题与单 MOD 卡片是同一层级，工具栏必须用同一列宽，
                     这样删除按钮落在同一竖线；只有一个按钮时其余位置留空。
                   -->
-                  <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }" @click.stop>
+                  <span class="tool-group" :style="toolGroupStyle" @click.stop>
                     <n-button size="tiny" quaternary type="error" :title="t('整包删除')"
                       :disabled="game?.kitchen_running" @click="removePackage(pkg)">
                       <TrashOutline width="14" height="14" />
@@ -1107,7 +1115,7 @@ function removePackage(node: ModPackageNode) {
                         包内子 MOD 也用同一列宽：这一行是包内容但按钮仍需与
                         包标题、单 MOD 卡片落在同一竖线，视觉上才是一整套工具栏。
                       -->
-                      <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }">
+                      <span class="tool-group" :style="toolGroupStyle">
                         <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('查看日志')"
                           class="tool-optional" @click.stop="openLogs(mod)">
                           <DocumentTextOutline width="14" height="14" />
@@ -1118,7 +1126,6 @@ function removePackage(node: ModPackageNode) {
                           <SettingsOutline width="14" height="14" />
                         </n-button>
                         <span v-else class="tool-placeholder" />
-                        <span class="tool-spacer" />
                         <n-button size="tiny" quaternary :title="t('打开所在文件夹并定位')"
                           :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
                           <FolderOpenOutline width="14" height="14" />
@@ -1390,10 +1397,11 @@ function removePackage(node: ModPackageNode) {
 }
 /*
  * 右侧三段的定位策略：
- *   [tag-group 自适应] [divider 固定] [tool-group 固定 98px]
- * tag-group 用固定最小宽度，避免「标签多少」把分割线推来推去；
- * 标签在该列内右对齐，所以所有行的分割线、按钮列都落在同一条竖线上。
- * 98px 的来历：3 个 30px 按钮 + 3 个 2px gap（含 .tool-spacer 占位）。
+ *   [tag-group 自适应] [divider 固定] [tool-group 固定宽度]
+ * tag-group 宽度跟内容走，靠 flex-end 右对齐；分割线与工具栏列宽固定，
+ * 所以所有行的分割线、按钮列都落在同一条竖线上。
+ * 工具栏列宽由 toolColumnWidth 统一计算（4 个 30px 按钮 + 3 个 gap），
+ * 模板里用 :style 下发，不再写死像素值。
  */
 /*
  * 状态标签组：宽度跟内容走，不再预留固定最小宽度。
@@ -1428,27 +1436,29 @@ function removePackage(node: ModPackageNode) {
   height: 1px;
   flex: 0 0 1px;
 }
-/* 工具栏：可选项在最左、固定按钮贴右，中间用 spacer 推开 */
+/*
+ * 工具栏：四个按钮位等距排布。
+ * gap 与按钮宽度来自 toolGroupStyle 下发的 CSS 变量（与列宽计算同源），
+ * 所以样式和 toolColumnWidth 永远不会对不上。
+ */
 .tool-group {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
+  gap: var(--tool-gap, 8px);
   flex: 0 0 auto;
 }
 .tool-group :deep(.n-button) {
-  width: 30px;
-  min-width: 30px;
+  width: var(--tool-button-width, 30px);
+  min-width: var(--tool-button-width, 30px);
   padding: 0;
 }
-/* 没有配置按钮时保留同宽占位，保证右侧两个按钮列对齐 */
+/* 没有日志/配置按钮时保留同宽占位，保证四个按钮列在每行都对齐 */
 .tool-placeholder {
-  width: 30px;
+  width: var(--tool-button-width, 30px);
   height: 1px;
-  flex: 0 0 30px;
+  flex: 0 0 var(--tool-button-width, 30px);
 }
-/* 把可选项与固定按钮推成两端：可选项贴左，固定按钮贴右 */
-.tool-spacer { flex: 1 1 auto; min-width: 2px; }
 .card-switch { flex: 0 0 auto; }
 .card-title {
   font-size: 13.5px;

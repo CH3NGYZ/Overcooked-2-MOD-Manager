@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { NScrollbar } from 'naive-ui'
 import {
-  CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline, ColorWandOutline,
+  CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline,
+  ColorWandOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import { t } from '../i18n'
 
@@ -17,8 +18,14 @@ const mainItems = [
   { name: 'mods-online', title: 'MOD 安装', icon: CloudDownloadOutline },
   { name: 'mods-local', title: 'MOD 管理', icon: FileTrayFullOutline },
 ]
-/** 分割线之下：与 MOD 管理配套的工具入口。 */
+/**
+ * 分割线之下：与 MOD 管理配套的工具入口。
+ *
+ * 回收站是 MOD 管理的下游页面（删除的 MOD 暂存在这里、可恢复或彻底删除），
+ * 所以紧挨「MOD 管理」放在同一组，而不是沉底到工具区。
+ */
 const extraItems = [
+  { name: 'mods-recycle', title: '回收站', icon: TrashOutline },
   { name: 'rename', title: '改多彩名', icon: ColorWandOutline },
 ]
 /** 沉底导航：工具与设置固定在侧栏底部。 */

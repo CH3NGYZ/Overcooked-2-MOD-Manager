@@ -4,14 +4,16 @@
  *
  * 职责边界（解耦后的分工）：
  *   本组件只做三件事：
- *     1. 展示一份已经解析好的 `ModPreview`
+ *     1. 展示调用方传入的 `ModPreview`
  *     2. 用户点「立即安装」时调 confirm_mod_install
- *     3. 用户取消/关闭时调 cancel_mod_preview 删掉暂存
+ *     3. 用户取消/关闭时通知调用方放弃这份预览
  *   它**不负责**获取预览：本地选文件、直链下载、仓库资产下载都在调用方，
  *   因为那三种来源的下载方式（文件选择器 / 直连 / 多源竞速）差异很大，
  *   塞进弹窗会让这里变成三种流程的交叉分支。
  *
- * 调用方只需 `open(preview)`，弹窗不关心这个预览是怎么来的。
+ * 调用方把预览通过 `preview` prop 传进来，弹窗只负责渲染与确认，
+ * 不持有预览副本 —— 否则调用方与弹窗各存一份，只有一方被更新时
+ * 弹窗会打开但内容为空。
  */
 import { computed, ref } from 'vue'
 import { NButton, NModal, NTag, useMessage } from 'naive-ui'
@@ -20,17 +22,16 @@ import { tagColorFor } from '../theme'
 import { t } from '../i18n'
 import type { ModPreview } from '../types'
 
-const props = defineProps<{ show: boolean }>()
+const props = defineProps<{ show: boolean; preview: ModPreview | null }>()
 const emit = defineEmits<{
   (event: 'update:show', value: boolean): void
   (event: 'installed'): void
-  /** 用户放弃这份预览（取消按钮、叉掉、切换来源），调用方据此清理。 */
+  /** 用户放弃这份预览（取消按钮、叉掉），调用方据此清理暂存。 */
   (event: 'discarded', preview: ModPreview): void
 }>()
 
 const message = useMessage()
 const installing = ref(false)
-const preview = ref<ModPreview | null>(null)
 
 /** 弹窗开关；关闭时统一走 discard，保证暂存一定被清理。 */
 const visible = computed({
@@ -41,29 +42,16 @@ const visible = computed({
   },
 })
 
-/**
- * 打开并展示一份预览。
- *
- * 由调用方在拿到解析结果后调用。重复调用会替换当前预览，
- * 并通知上一次的预览被放弃。
- */
-function open(next: ModPreview) {
-  discard()
-  preview.value = next
-  emit('update:show', true)
-}
-
-/** 放弃当前预览：通知调用方清理，并收起面板。 */
+/** 放弃当前预览：通知调用方清理，并收起面板。预览由调用方持有。 */
 function discard() {
-  const current = preview.value
-  preview.value = null
+  const current = props.preview
   if (current) emit('discarded', current)
   emit('update:show', false)
 }
 
 /** 用户确认安装。 */
 async function confirm() {
-  const current = preview.value
+  const current = props.preview
   if (!current) return
   installing.value = true
   try {
@@ -73,8 +61,7 @@ async function confirm() {
       return
     }
     message.success(result.message)
-    // 后端已在 confirm 里删掉暂存，这里只清本地引用
-    preview.value = null
+    // 后端已在 confirm 里删掉暂存，这里只收起面板
     emit('update:show', false)
     emit('installed')
   } catch (reason) {
@@ -83,8 +70,6 @@ async function confirm() {
     installing.value = false
   }
 }
-
-defineExpose({ open })
 </script>
 
 <template>

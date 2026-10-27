@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useDialog, useMessage } from 'naive-ui'
+import { useMessage } from 'naive-ui'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
-import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { modsForRepository } from '../modStatus'
@@ -17,11 +16,11 @@ import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
+import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import type { Repository, RepositorySource } from '../types'
 
 const message = useMessage()
-const dialog = useDialog()
 const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦，教程门控也在那里。 */
@@ -44,11 +43,21 @@ const detailId = ref<string | null>(null)
 const {
   sourceOpen: installSourceOpen,
   previewOpen: installPreviewOpen,
+  preview: installPreview,
   openSource: openInstallSource,
   openPreview: openInstallPreview,
   discardPreview: discardInstallPreview,
   handleInstalled: handleInstallInstalled,
 } = useModInstallFlow(() => load())
+
+/** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先下载预览，再交给统一弹窗。 */
+const { previewRepository } = useRepositoryPreview(openInstallPreview, {
+  gameBlocked,
+  onBusyChange: (repositoryId, busy) => {
+    if (busy) installing.value[repositoryId] = true
+    else delete installing.value[repositoryId]
+  },
+})
 function openInstall() {
   openInstallSource()
 }
@@ -252,9 +261,6 @@ const sourcesExpanded = computed(() => (query.value ? allSourceKeys.value : (ope
 const groupsExpanded = computed(() => (query.value ? allGroupKeys.value : (openGroups.value.length ? openGroups.value : allGroupKeys.value)))
 
 /* ===== 动作 ===== */
-function fail(reason: unknown) {
-  message.error(reason instanceof Error ? reason.message : String(reason))
-}
 
 function latest(repo: Repository) {
   return repo.cached_releases[0]
@@ -344,58 +350,14 @@ function gameBlocked() {
 }
 
 /**
- * 安装入口（卡片与详情抽屉共用）。
- * 选中版本是预发布时先弹确认，避免用户无意中装上未稳定版本。
- *
- * 安装会写入安装清单和 MOD 文件，卡片状态（未安装 / 已最新 / 可更新）
- * 依赖 Dashboard 里的 mods + 仓库缓存，所以成功后必须重新读取 Dashboard，
- * 否则状态标签会停在安装前的值。
- */
-/**
  * 仓库卡片的「安装 / 重装 / 更新」。
  *
  * 流程与手动安装统一：先让后端**只下载并解析**（preview_only），
  * 把解析结果交给 ModInstallDialog 展示，用户点「立即安装」才真正写入。
- * 这样三个入口（本地文件、在线直链、仓库资产）看到的是同一个预览弹窗，
- * 也让用户在写入游戏目录前确认包内到底有什么。
+ * 下载与预发布确认都在 useRepositoryPreview 里，两个页面共用。
  */
-async function install(repo: Repository, tag?: string) {
-  if (gameBlocked()) return
-  const target = tag ?? repo.cached_releases[0]?.tag_name
-  const release = repo.cached_releases.find((entry) => entry.tag_name === target)
-  if (release?.prerelease) {
-    const confirmed = await new Promise<boolean>((resolve) => {
-      dialog.warning({
-        title: t('预发布版本'),
-        content: t('此版本为预览版本，可能存在未知问题，是否继续安装？'),
-        positiveText: t('继续安装'),
-        negativeText: t('取消'),
-        onPositiveClick: () => resolve(true),
-        onNegativeClick: () => resolve(false),
-        onClose: () => resolve(false),
-        onMaskClick: () => resolve(false),
-      })
-    })
-    if (!confirmed) return
-  }
-  installing.value[repo.id] = true
-  try {
-    const outcome = await api.installRepository(repo.id, tag, true)
-    if (!outcome.ok) {
-      message.error(outcome.message)
-      return
-    }
-    if (!outcome.preview) {
-      message.error(t('下载完成但没有解析出安装内容'))
-      return
-    }
-    // 把预览交给安装弹窗，用户在弹窗里确认后才写入
-    openInstallPreview(outcome.preview)
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    installing.value[repo.id] = false
-  }
+function install(repo: Repository, tag?: string) {
+  return previewRepository(repo, tag)
 }
 
 defineExpose({ refreshAll, visibleCount })
@@ -616,7 +578,7 @@ defineExpose({ refreshAll, visibleCount })
   -->
   <ModInstallSourceDialog v-model:show="installSourceOpen"
     @preview="openInstallPreview" />
-  <ModInstallDialog v-model:show="installPreviewOpen"
+  <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />
 </template>

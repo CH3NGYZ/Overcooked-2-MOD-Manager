@@ -35,60 +35,74 @@ export function useLocalModLink() {
   }
 }
 
+/** 卡片上的定位锚点选择器：跨页跳转与页内聚合标签共用同一套 DOM 标记。 */
+function focusSelector(id: string) {
+  return `[data-focus-id="${CSS.escape(id)}"]`
+}
+
+/**
+ * 等目标元素出现后滚到视口中间，返回取消函数。
+ *
+ * 卡片可能还没渲染（Dashboard 未加载、折叠面板未展开），
+ * 所以每 100ms 重试一次，最多 3 秒。命中后立刻停止重试 ——
+ * 重复调用 scrollIntoView 会不断重启平滑滚动，看起来像抖动。
+ */
+function scrollIntoViewWhenReady(find: () => HTMLElement | null) {
+  let attempts = 0
+  let timer: number | undefined
+  let done = false
+
+  const cancel = () => {
+    done = true
+    if (timer !== undefined) window.clearInterval(timer)
+    timer = undefined
+  }
+
+  const attempt = () => {
+    const element = find()
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+      cancel()
+      return
+    }
+    attempts += 1
+    if (attempts > 30) cancel()
+  }
+
+  attempt()
+  if (!done) timer = window.setInterval(attempt, 100)
+  return cancel
+}
+
 /**
  * 页面侧的高亮状态。
  *
  * 直接 watch 路由 query，而不是只在 onMounted 读一次：
  * 这样路由尚未就绪、或在本页内再次跳转时也能正确触发。
- * 卡片可能还没渲染（Dashboard 未加载、折叠面板未展开），
- * 所以滚动用短间隔重试，直到目标元素出现或超时。
  */
 export function useFocusHighlight() {
   const router = useRouter()
   const highlightId = ref<string | null>(null)
   let fadeTimer: number | undefined
-  let scrollTimer: number | undefined
-
-  function clearTimers() {
-    if (fadeTimer !== undefined) window.clearTimeout(fadeTimer)
-    if (scrollTimer !== undefined) window.clearInterval(scrollTimer)
-    fadeTimer = undefined
-    scrollTimer = undefined
-  }
+  let cancelScroll: (() => void) | undefined
+  let disposed = false
 
   function stop() {
-    clearTimers()
+    if (fadeTimer !== undefined) window.clearTimeout(fadeTimer)
+    fadeTimer = undefined
+    cancelScroll?.()
+    cancelScroll = undefined
     highlightId.value = null
   }
 
-  /** 目标卡片出现后滚动到视口中间；每 100ms 重试，最多 3 秒。 */
-  function scrollWhenReady(id: string) {
-    const selector = `[data-focus-id="${CSS.escape(id)}"]`
-    let attempts = 0
-    const attempt = () => {
-      const element = document.querySelector<HTMLElement>(selector)
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
-        if (scrollTimer !== undefined) window.clearInterval(scrollTimer)
-        scrollTimer = undefined
-        return
-      }
-      attempts += 1
-      if (attempts > 30 && scrollTimer !== undefined) {
-        window.clearInterval(scrollTimer)
-        scrollTimer = undefined
-      }
-    }
-    attempt()
-    if (scrollTimer !== undefined) window.clearInterval(scrollTimer)
-    scrollTimer = window.setInterval(attempt, 100)
-  }
-
   function focus(id: string) {
-    clearTimers()
+    stop()
     highlightId.value = id
     // 等页面切换过渡结束再滚动，避免和滑入动画抢位置
-    void waitForPageReady().then(() => scrollWhenReady(id))
+    void waitForPageReady().then(() => {
+      if (disposed) return
+      cancelScroll = scrollIntoViewWhenReady(() => document.querySelector<HTMLElement>(focusSelector(id)))
+    })
     fadeTimer = window.setTimeout(stop, FOCUS_DURATION)
   }
 
@@ -105,7 +119,63 @@ export function useFocusHighlight() {
     { immediate: true },
   )
 
-  onBeforeUnmount(stop)
+  onBeforeUnmount(() => {
+    disposed = true
+    stop()
+  })
 
   return { highlightId, focus, stop }
+}
+
+/** 折叠展开的高度动画时长：Naive 的 fade-in-height-expand 为 0.3s。 */
+const COLLAPSE_SETTLE_MS = 340
+
+/**
+ * 页内「按状态定位」：点击页面标题后的聚合标签时，
+ * 把所有命中的卡片一起高亮，并把 DOM 顺序第一张滚到视口中间。
+ *
+ * 与跨页的 useFocusHighlight 共用高亮时长和滚动逻辑，区别是不涉及路由，
+ * 且高亮条件是一个状态 key —— 卡片 labels 含它就命中，可以同时命中多张。
+ */
+export function useStatusHighlight() {
+  const activeStatus = ref<string | null>(null)
+  let fadeTimer: number | undefined
+  let settleTimer: number | undefined
+  let cancelScroll: (() => void) | undefined
+  let disposed = false
+
+  function stop() {
+    if (fadeTimer !== undefined) window.clearTimeout(fadeTimer)
+    if (settleTimer !== undefined) window.clearTimeout(settleTimer)
+    fadeTimer = undefined
+    settleTimer = undefined
+    cancelScroll?.()
+    cancelScroll = undefined
+    activeStatus.value = null
+  }
+
+  /**
+   * @param statusKey       高亮条件：卡片标签含此 key 即命中
+   * @param find            每次重试时重新查找目标卡片；返回 null 表示还没渲染
+   * @param waitForCollapse 调用方刚展开了折叠容器：等高度动画结束再滚，
+   *                        否则滚动会被随后撑开的内容带偏
+   */
+  function focusStatus(statusKey: string, find: () => HTMLElement | null, waitForCollapse = false) {
+    stop()
+    activeStatus.value = statusKey
+    fadeTimer = window.setTimeout(stop, FOCUS_DURATION)
+    const scroll = () => {
+      if (disposed) return
+      cancelScroll = scrollIntoViewWhenReady(find)
+    }
+    if (waitForCollapse) settleTimer = window.setTimeout(scroll, COLLAPSE_SETTLE_MS)
+    else scroll()
+  }
+
+  onBeforeUnmount(() => {
+    disposed = true
+    stop()
+  })
+
+  return { activeStatus, focusStatus }
 }

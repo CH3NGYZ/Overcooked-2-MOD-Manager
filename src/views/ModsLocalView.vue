@@ -8,12 +8,13 @@ import {
   NSpin, NSwitch, NTag,
 } from 'naive-ui'
 import {
-  DocumentTextOutline, FolderOpenOutline, SettingsOutline, SwapVerticalOutline, TrashOutline,
+  ArrowUpCircleOutline, DocumentTextOutline, FolderOpenOutline, SettingsOutline,
+  SwapVerticalOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { compareVersions, repositoryForMod } from '../modStatus'
 import { installedModTags, recomputeModUpdate } from '../statusTags'
-import { useFocusHighlight, useRepositoryLink } from '../crossLink'
+import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
@@ -21,6 +22,7 @@ import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
+import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import type { InstalledMod, Repository } from '../types'
 
 const message = useMessage()
@@ -33,6 +35,11 @@ const { refreshing, refreshingAll } = useRepositoryRefresh()
 const { linkToRepository } = useRepositoryLink()
 /** 从 MOD 安装页跳回来时，高亮绑定到该仓库的 MOD 卡片 3 秒并滚动到它。 */
 const { highlightId } = useFocusHighlight()
+/**
+ * 页内定位：点标题后的聚合标签，高亮该状态的全部 MOD 并把第一张居中。
+ * 与跨页高亮同一套时长与滚动规则，只是不涉及路由。
+ */
+const { activeStatus, focusStatus } = useStatusHighlight()
 
 const sortBy = ref<'name' | 'version' | 'enabled'>('name')
 const sortLabels = computed(() => ({ name: t('按名称'), version: t('按版本'), enabled: t('按启用') }))
@@ -427,6 +434,104 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
   return repositoryForMod(repositories.value, mod)?.id
 }
 
+/**
+ * 可更新的 MOD：返回它绑定的仓库，否则 undefined。
+ *
+ * 只有「真的能装到更新的版本」才给按钮 ——
+ * 未绑定、仓库缺失、仓库文件（RAW，无版本可比）都不算，
+ * 否则按钮点下去只会下载一个和本地一样的包。
+ */
+function updatableRepository(mod: InstalledMod): Repository | undefined {
+  if (mod.is_dependency || !mod.update_available) return undefined
+  const repo = repositoryForMod(repositories.value, mod)
+  if (!repo || repo.download_mode === 'repository_file') return undefined
+  return repo
+}
+
+/** 触发某个 MOD 的更新：与仓库卡片「更新」走同一条预览链路。 */
+function updateMod(mod: InstalledMod) {
+  const repo = updatableRepository(mod)
+  if (repo) void previewRepository(repo)
+}
+
+/* ===== 页内定位：点标题后的聚合标签 ===== */
+
+/** 卡片锚点：聚合标签按状态定位时用它找 DOM，与跨页高亮的锚点同一套命名。 */
+function modAnchor(mod: InstalledMod) {
+  return mod.dll_file
+}
+
+/**
+ * 某个状态标签命中的 MOD（按页面展示顺序）。
+ *
+ * 依赖 DLL 不参与：它没有版本语义，也不在聚合标签里计数，
+ * 若算进来会让「2 可更新」实际高亮出 3 张卡片。
+ */
+function modsWithStatus(statusKey: string): InstalledMod[] {
+  const matches: InstalledMod[] = []
+  for (const node of groups.value) {
+    for (const pkg of node.packages) {
+      for (const mod of pkg.mods) {
+        if (mod.is_dependency) continue
+        if ((mod.labels as string[] | undefined)?.includes(statusKey)) matches.push(mod)
+      }
+    }
+  }
+  return matches
+}
+
+/** 当前页内定位的状态是否命中该卡片（命中项一起高亮，一眼看出这一组）。 */
+function matchesActiveStatus(mod: InstalledMod) {
+  const status = activeStatus.value
+  if (!status || mod.is_dependency) return false
+  return (mod.labels as string[] | undefined)?.includes(status) ?? false
+}
+
+/** 当前轮到的命中项序号：重复点击同一标签时逐张轮换，而不是每次回到第一张。 */
+const statusCursor = ref<{ key: string; index: number }>({ key: '', index: 0 })
+
+/**
+ * 点聚合标签：高亮该状态的全部卡片，并把下一张命中项滚到视口中间。
+ *
+ * 命中项可能分布在收起的分类或 MOD 包里：先把它们全部展开，
+ * 展开带 0.3s 高度动画，所以滚动要等动画结束（由 focusStatus 负责）。
+ */
+function locateStatus(statusKey: string) {
+  const matches = modsWithStatus(statusKey)
+  if (!matches.length) return
+
+  const sameTag = statusCursor.value.key === statusKey
+  const start = sameTag ? (statusCursor.value.index + 1) % matches.length : 0
+  statusCursor.value = { key: statusKey, index: start }
+  const anchor = modAnchor(matches[start])
+
+  // 两级折叠都要展开：分别调用，不能写成一个 || 表达式，
+  // 否则分类展开为 true 时包展开会被短路跳过。
+  const groupsOpened = expandGroupsFor(matches)
+  const packagesOpened = expandPackagesFor(matches)
+  focusStatus(
+    statusKey,
+    () => document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
+    groupsOpened || packagesOpened,
+  )
+}
+
+/** 展开命中卡片所在的分类；返回是否真的展开了收起的分类。 */
+function expandGroupsFor(matches: InstalledMod[]) {
+  const keys = new Set(matches.map((mod) => modCategory(mod).key))
+  const before = collapsedGroups.value.length
+  collapsedGroups.value = collapsedGroups.value.filter((key) => !keys.has(key))
+  return collapsedGroups.value.length !== before
+}
+
+/** 展开命中卡片所在的 MOD 包；返回是否真的展开了收起的包。 */
+function expandPackagesFor(matches: InstalledMod[]) {
+  const keys = new Set(matches.map((mod) => (mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`)))
+  const before = collapsedPackages.value.length
+  collapsedPackages.value = collapsedPackages.value.filter((key) => !keys.has(key))
+  return collapsedPackages.value.length !== before
+}
+
 /** 点击状态标签：跳到 MOD 安装页并高亮对应仓库卡片。 */
 function openInRepository(mod: InstalledMod) {
   const id = bindingRepositoryId(mod)
@@ -510,10 +615,28 @@ async function openModsDirectory() {
 const {
   sourceOpen: installSourceOpen,
   previewOpen: installPreviewOpen,
+  preview: installPreview,
   openPreview: openInstallPreview,
   discardPreview: discardInstallPreview,
   handleInstalled: handleInstallInstalled,
 } = useModInstallFlow(() => load())
+
+/**
+ * MOD 卡片的「更新」按钮：和仓库卡片的安装共用同一条预览链路
+ * （preview_only 下载 → 安装详情弹窗 → 用户确认后才写入）。
+ */
+const previewing = ref<Record<string, boolean>>({})
+const { previewRepository } = useRepositoryPreview(openInstallPreview, {
+  gameBlocked: () => {
+    if (!game.value?.kitchen_running) return false
+    message.warning(t('游戏运行中，已禁止安装。请先关闭游戏。'))
+    return true
+  },
+  onBusyChange: (repositoryId, busy) => {
+    if (busy) previewing.value[repositoryId] = true
+    else delete previewing.value[repositoryId]
+  },
+})
 
 /* ===== 包级操作 ===== */
 
@@ -584,7 +707,10 @@ function removePackage(node: ModPackageNode) {
   -->
   <Teleport to="#page-header-title-extra" defer>
     <n-tag v-for="entry in statusSummaryTags" :key="entry.key" size="small" :bordered="false"
-      class="state-tag" :color="tagColorFor(entry.tone)">
+      class="state-tag state-tag--link" :color="tagColorFor(entry.tone)" role="button" tabindex="0"
+      :title="t('在页面内定位')" @click="locateStatus(entry.key)"
+      @keydown.enter.prevent="locateStatus(entry.key)"
+      @keydown.space.prevent="locateStatus(entry.key)">
       {{ entry.count }} {{ t(entry.text) }}
     </n-tag>
   </Teleport>
@@ -602,7 +728,7 @@ function removePackage(node: ModPackageNode) {
   -->
   <ModInstallSourceDialog v-model:show="installSourceOpen"
     @preview="openInstallPreview" />
-  <ModInstallDialog v-model:show="installPreviewOpen"
+  <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />
 
@@ -640,10 +766,12 @@ function removePackage(node: ModPackageNode) {
             <!-- 单 DLL 包：不套外壳，直接就是那张卡片 -->
             <article v-if="!pkg.grouped" v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
               :data-focus-id="bindingRepositoryId(mod)"
+              :data-mod-anchor="modAnchor(mod)"
               :class="{
                 disabled: !mod.enabled,
                 expanded: isExpanded(mod.dll_file),
                 'focus-flash': highlightId === bindingRepositoryId(mod),
+                'status-flash': matchesActiveStatus(mod),
               }" @click="onCardClick($event, mod)">
 
               <!-- 单行：左「开关 + 标题」… 右「标签 | 工具栏」 -->
@@ -655,6 +783,21 @@ function removePackage(node: ModPackageNode) {
                 </div>
 
                 <div class="card-right">
+                  <!--
+                    可更新时的快捷「更新」按钮：与标签之间用竖线隔开，
+                    视觉上属于标签区的一部分（不是右侧工具栏的常规动作）。
+                    点击后走和仓库卡片「安装」完全相同的链路：
+                    预览下载 → 安装详情弹窗 → 用户确认写入。
+                  -->
+                  <template v-if="updatableRepository(mod)">
+                    <n-button size="tiny" quaternary type="primary" :title="t('更新')"
+                      :loading="!!previewing[bindingRepositoryId(mod) ?? '']"
+                      :disabled="!!game?.kitchen_running" @click.stop="updateMod(mod)">
+                      <ArrowUpCircleOutline width="14" height="14" />{{ t('更新') }}
+                    </n-button>
+                    <span class="tool-divider" />
+                  </template>
+
                   <!-- 状态标签组：固定宽度按内容自适应，整体贴住分割线左侧 -->
                   <span class="tag-group">
                     <!-- 配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算 -->
@@ -764,10 +907,12 @@ function removePackage(node: ModPackageNode) {
               <div class="package-body">
                 <article v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
                   :data-focus-id="bindingRepositoryId(mod)"
+                  :data-mod-anchor="modAnchor(mod)"
                   :class="{
                     disabled: !mod.enabled,
                     expanded: isExpanded(mod.dll_file),
                     'focus-flash': highlightId === bindingRepositoryId(mod),
+                    'status-flash': matchesActiveStatus(mod),
                   }" @click="onCardClick($event, mod)">
                   <div class="card-row">
                     <div class="card-left">
@@ -989,8 +1134,13 @@ function removePackage(node: ModPackageNode) {
   background: color-mix(in srgb, var(--oc2-accent) 8%, var(--oc2-card));
 }
 .mod-card.disabled { opacity: .62; }
-/* 跨页跳转高亮：3 秒后自动褪去（时长由 crossLink.ts 控制） */
-.mod-card.focus-flash {
+/*
+ * 定位高亮：3 秒后自动褪去（时长由 crossLink.ts 的 FOCUS_DURATION 控制）。
+ * 两个类共用同一套视觉 —— focus-flash 是跨页跳转（单张），
+ * status-flash 是页内聚合标签定位（可能同时命中多张）。
+ */
+.mod-card.focus-flash,
+.mod-card.status-flash {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);

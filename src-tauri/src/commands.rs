@@ -941,44 +941,80 @@ pub fn uninstall_local_mod(
             });
         }
         if has_other_enabled_same_guid {
-            recycle_bin::recycle_mod_dll(
-                &state.config.mod_recycle_bin_dir(),
-                &manifest_dir,
-                &game_root,
-                &manifest.repository_id,
-                &safe_relative,
-                &installed,
-            )?;
+            /*
+             * 用户关闭「删除 MOD 时优先放入回收站」后走 purge_* 系列：
+             * 同一套定位与共享文件保护逻辑，只是不留回收记录。
+             */
+            if config.recycle_deleted_mods {
+                recycle_bin::recycle_mod_dll(
+                    &state.config.mod_recycle_bin_dir(),
+                    &manifest_dir,
+                    &game_root,
+                    &manifest.repository_id,
+                    &safe_relative,
+                    &installed,
+                )?;
+            } else {
+                recycle_bin::purge_mod_dll(
+                    &state.config.mod_recycle_bin_dir(),
+                    &manifest_dir,
+                    &game_root,
+                    &manifest.repository_id,
+                    &safe_relative,
+                    &installed,
+                )?;
+            }
             log::info!(
-                "已回收 MOD 包中的单个 DLL：文件={}，包={}",
+                "已回收 MOD 包中的单个 DLL：文件={}，包={}，进回收站={}",
                 safe_relative,
-                manifest.repository_id
+                manifest.repository_id,
+                config.recycle_deleted_mods
             );
             return Ok(UninstallLocalModResult {
                 ok: true,
-                message: "MOD 已移入回收站".into(),
+                message: if config.recycle_deleted_mods {
+                    "MOD 已移入回收站".into()
+                } else {
+                    "MOD 已删除".into()
+                },
                 requires_confirmation: false,
                 requires_package_confirmation: false,
                 package_id: Some(manifest.repository_id),
                 package_mod_names,
             });
         }
-        recycle_bin::recycle_selected_mod(
-            &state.config.mod_recycle_bin_dir(),
-            &manifest_dir,
-            &game_root,
-            &manifest.repository_id,
-            &safe_relative,
-            true,
-        )?;
+        if config.recycle_deleted_mods {
+            recycle_bin::recycle_selected_mod(
+                &state.config.mod_recycle_bin_dir(),
+                &manifest_dir,
+                &game_root,
+                &manifest.repository_id,
+                &safe_relative,
+                true,
+            )?;
+        } else {
+            recycle_bin::purge_selected_mod(
+                &state.config.mod_recycle_bin_dir(),
+                &manifest_dir,
+                &game_root,
+                &manifest.repository_id,
+                &safe_relative,
+                true,
+            )?;
+        }
         log::info!(
-            "已卸载 MOD 包：包={}，文件={}",
+            "已卸载 MOD 包：包={}，文件={}，进回收站={}",
             manifest.repository_id,
-            safe_relative
+            safe_relative,
+            config.recycle_deleted_mods
         );
         return Ok(UninstallLocalModResult {
             ok: true,
-            message: "MOD 包已移入回收站".into(),
+            message: if config.recycle_deleted_mods {
+                "MOD 包已移入回收站".into()
+            } else {
+                "MOD 包已删除".into()
+            },
             requires_confirmation: false,
             requires_package_confirmation: false,
             package_id: None,
@@ -992,22 +1028,38 @@ pub fn uninstall_local_mod(
         );
         return Ok(UninstallLocalModResult {
             ok: false,
-            message: "该 MOD 不是通过本管理器安装的，仅将 DLL 移入回收站；其他相关文件需手动处理。是否继续？".into(),
+            message: "该 MOD 不是通过本管理器安装的，管理器中只会删除这个 DLL，其他相关文件需手动处理。是否继续？".into(),
             requires_confirmation: true,
             requires_package_confirmation: false,
             package_id: None,
             package_mod_names: Vec::new(),
         });
     }
-    recycle_bin::recycle_unmanaged(
-        &state.config.mod_recycle_bin_dir(),
-        &game_root,
-        &safe_relative,
-    )?;
-    log::info!("已回收未托管 MOD DLL：文件={}", safe_relative);
+    if config.recycle_deleted_mods {
+        recycle_bin::recycle_unmanaged(
+            &state.config.mod_recycle_bin_dir(),
+            &game_root,
+            &safe_relative,
+        )?;
+    } else {
+        recycle_bin::purge_unmanaged(
+            &state.config.mod_recycle_bin_dir(),
+            &game_root,
+            &safe_relative,
+        )?;
+    }
+    log::info!(
+        "已删除未托管 MOD DLL：文件={}，进回收站={}",
+        safe_relative,
+        config.recycle_deleted_mods
+    );
     Ok(UninstallLocalModResult {
         ok: true,
-        message: "MOD 已移入回收站".into(),
+        message: if config.recycle_deleted_mods {
+            "MOD 已移入回收站".into()
+        } else {
+            "MOD 已删除".into()
+        },
         requires_confirmation: false,
         requires_package_confirmation: false,
         package_id: None,
@@ -1059,32 +1111,70 @@ pub fn uninstall_mod_dll(
                 .any(|peer| mods::is_safe_replacement_mod(target, peer))
         });
     if package_mod_count <= 1 && !safe_duplicate {
+        if config.recycle_deleted_mods {
+            recycle_bin::recycle_selected_mod(
+                &state.config.mod_recycle_bin_dir(),
+                &manifest_dir,
+                &game_root,
+                &package_id,
+                &safe_relative,
+                true,
+            )?;
+        } else {
+            recycle_bin::purge_selected_mod(
+                &state.config.mod_recycle_bin_dir(),
+                &manifest_dir,
+                &game_root,
+                &package_id,
+                &safe_relative,
+                true,
+            )?;
+        }
+        log::info!(
+            "已删除 MOD 包最后一个 DLL：包={}，进回收站={}",
+            package_id,
+            config.recycle_deleted_mods
+        );
+        return Ok(OperationResult {
+            ok: true,
+            message: if config.recycle_deleted_mods {
+                "MOD 包已移入回收站".into()
+            } else {
+                "MOD 包已删除".into()
+            },
+        });
+    }
+    if config.recycle_deleted_mods {
         recycle_bin::recycle_selected_mod(
             &state.config.mod_recycle_bin_dir(),
             &manifest_dir,
             &game_root,
             &package_id,
             &safe_relative,
-            true,
+            false,
         )?;
-        log::info!("已回收 MOD 包最后一个 DLL：包={}", package_id);
-        return Ok(OperationResult {
-            ok: true,
-            message: "MOD 包已移入回收站".into(),
-        });
+    } else {
+        recycle_bin::purge_selected_mod(
+            &state.config.mod_recycle_bin_dir(),
+            &manifest_dir,
+            &game_root,
+            &package_id,
+            &safe_relative,
+            false,
+        )?;
     }
-    recycle_bin::recycle_selected_mod(
-        &state.config.mod_recycle_bin_dir(),
-        &manifest_dir,
-        &game_root,
-        &package_id,
-        &safe_relative,
-        false,
-    )?;
-    log::info!("已回收 MOD 包内 DLL：包={}", package_id);
+    log::info!(
+        "已删除 MOD 包内 DLL：包={}，进回收站={}",
+        package_id,
+        config.recycle_deleted_mods
+    );
     Ok(OperationResult {
         ok: true,
-        message: "MOD 已移入回收站".into(),
+        message: if config.recycle_deleted_mods {
+            "MOD 已移入回收站".into()
+        } else {
+            "MOD 已删除".into()
+        },
     })
 }
 
@@ -1274,6 +1364,13 @@ pub fn save_settings(
     }
     if let Some(value) = patch.hide_unidentified_mods {
         config.hide_unidentified_mods = value;
+    }
+    if let Some(value) = patch.recycle_deleted_mods {
+        if !value {
+            // 关闭前留一条记录：这是不可逆行为的开关，排查「文件怎么没了」时要用
+            log::warn!("用户关闭「删除 MOD 时优先放入回收站」：此后删除将直接移除文件");
+        }
+        config.recycle_deleted_mods = value;
     }
     if let Some(steps) = patch.tutorial_steps {
         config.tutorial_steps = steps
@@ -2650,6 +2747,7 @@ pub async fn install_repository(
             &install_repo,
             &release_tag,
             release_prerelease,
+            current_config.recycle_deleted_mods,
         )
     })();
     let _ = fs::remove_file(&temp);
@@ -2712,21 +2810,39 @@ pub fn uninstall_repository(
     };
     let manifest = archive::read_manifest(&state.config.manifests_dir(), &package_id)
         .ok_or("没有安装清单，拒绝删除未知文件")?;
-    let entry = recycle_bin::recycle_package(
-        &state.config.mod_recycle_bin_dir(),
-        &state.config.manifests_dir(),
-        &game_root,
-        &manifest.repository_id,
-        None,
-    )?;
-    log::info!(
-        "在线仓库 MOD 卸载完成：仓库={}，文件数={}",
-        repository_id,
-        entry.file_count
-    );
+    if config.recycle_deleted_mods {
+        let entry = recycle_bin::recycle_package(
+            &state.config.mod_recycle_bin_dir(),
+            &state.config.manifests_dir(),
+            &game_root,
+            &manifest.repository_id,
+            None,
+        )?;
+        log::info!(
+            "在线仓库 MOD 卸载完成（已回收）：仓库={}，文件数={}",
+            repository_id,
+            entry.file_count
+        );
+    } else {
+        recycle_bin::purge_package(
+            &state.config.mod_recycle_bin_dir(),
+            &state.config.manifests_dir(),
+            &game_root,
+            &manifest.repository_id,
+            None,
+        )?;
+        log::info!(
+            "在线仓库 MOD 卸载完成（已直接删除）：仓库={}",
+            repository_id
+        );
+    }
     Ok(OperationResult {
         ok: true,
-        message: "MOD 包已移入回收站".into(),
+        message: if config.recycle_deleted_mods {
+            "MOD 包已移入回收站".into()
+        } else {
+            "MOD 包已删除".into()
+        },
     })
 }
 
@@ -5253,6 +5369,7 @@ pub(crate) fn install_staged_repository(
         &install_repo,
         release_tag,
         prerelease,
+        config.recycle_deleted_mods,
     )?;
 
     log::info!(
@@ -5280,6 +5397,8 @@ fn install_downloaded_repository(
     repo: &RepositoryConfig,
     release_tag: &str,
     prerelease: bool,
+    // 安装成功后是否保留旧包的回收记录（= 用户开启了「优先放入回收站」）。
+    keep_recycled: bool,
 ) -> Result<usize, String> {
     let plan = if download_name.to_ascii_lowercase().ends_with(".zip") {
         Some(archive::prepare_repository_mod_zip(
@@ -5315,6 +5434,10 @@ fn install_downloaded_repository(
      *
      * 回收失败必须中止安装并给出可操作的提示：此时旧包可能只移走了一部分，
      * 继续安装会让两个版本的文件混在一起。让用户手动删除是最安全的出路。
+     *
+     * 即使配置了「直接删除」，这里也**先走回收**：安装过程可能失败，
+     * 失败时必须能把旧包原样恢复（见下面的回滚）。回收记录在安装成功后
+     * 才被清掉 —— 那时暂存区里的旧文件确实不再需要了。
      */
     let recycled = recycle_bin::recycle_repository_packages_before_install(
         recycle_root,
@@ -5377,6 +5500,23 @@ fn install_downloaded_repository(
                     restore_error
                 );
                 return Err("操作失败，部分文件保留在回收站，请查看日志".into());
+            }
+        }
+    } else if !keep_recycled {
+        /*
+         * 安装成功且用户关闭了回收站：旧包已确认不再需要，现在才清理暂存记录。
+         * 放在成功分支里而不是回收时立即删，是因为上面那段回滚依赖这些记录；
+         * 提前清掉会让「安装失败 → 旧包也找不回来」变成数据丢失。
+         */
+        for entry in &recycled {
+            if let Err(error) = recycle_bin::delete(recycle_root, &entry.id) {
+                // 清理失败只影响回收站里多出一条记录，不影响本次安装结果
+                log::warn!(
+                    "覆盖安装成功后清理旧包暂存记录失败：仓库={}，记录={}，原因={}",
+                    repo.id,
+                    entry.id,
+                    error
+                );
             }
         }
     }
@@ -6938,6 +7078,7 @@ mod update_status_tests {
                     &repo,
                     "v1.0.0",
                     false,
+                    true,
                 )
                 .unwrap();
                 let original = archive::read_manifest(&workspace.manifests, "package").unwrap();
@@ -6974,6 +7115,7 @@ mod update_status_tests {
                     &repo,
                     "v2.0.0",
                     false,
+                    true,
                 )
                 .unwrap();
                 let updated = archive::read_manifest(&workspace.manifests, "package").unwrap();
@@ -7003,6 +7145,7 @@ mod update_status_tests {
             &raw,
             "",
             false,
+            true,
         )
         .unwrap();
         assert!(
@@ -7027,6 +7170,7 @@ mod update_status_tests {
             &old_repo,
             "v1.0.0",
             false,
+            true,
         )
         .unwrap();
         let mut new_repo = old_repo.clone();
@@ -7058,6 +7202,7 @@ mod update_status_tests {
             &identity,
             "v2.0.0",
             false,
+            true,
         )
         .unwrap();
         assert!(
@@ -7185,6 +7330,7 @@ mod update_status_tests {
                         &repo,
                         "v2",
                         false,
+                        true,
                     );
                     if fail {
                         let error = result.unwrap_err();
@@ -7267,6 +7413,7 @@ mod update_status_tests {
                     &repo,
                     "v2",
                     false,
+                    true,
                 )
                 .is_err()
             );
@@ -7323,6 +7470,7 @@ mod update_status_tests {
                 &repository("package", RepositoryDownloadMode::Release),
                 "v2",
                 false,
+                true,
             );
             fs::set_permissions(&path, permissions).unwrap();
             let error = result.unwrap_err();
@@ -7379,6 +7527,7 @@ mod update_status_tests {
                     &repo,
                     "v2",
                     false,
+                    true,
                 );
                 if fail {
                     let error = result.unwrap_err();
@@ -7457,6 +7606,7 @@ mod update_status_tests {
                 &repo,
                 "v2",
                 false,
+                true,
             )
             .unwrap();
             assert_eq!(count, if zip { 2 } else { 1 });
@@ -7528,6 +7678,7 @@ mod update_status_tests {
                 &repo,
                 "v2",
                 false,
+                true,
             )
             .unwrap(),
             3
@@ -7590,6 +7741,7 @@ mod update_status_tests {
                 &repo,
                 "v2",
                 false,
+                true,
             )
             .is_err()
         );
@@ -7644,6 +7796,7 @@ mod update_status_tests {
                     &repo,
                     "v2",
                     false,
+                    true,
                 )
                 .is_err()
             );

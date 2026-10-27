@@ -387,6 +387,13 @@ pub struct AppConfig {
     pub onboarding_seen_steps: Vec<String>,
     #[serde(default = "default_hide_unidentified_mods")]
     pub hide_unidentified_mods: bool,
+    /// 删除 MOD（含覆盖安装前清理旧包）时是否先移入回收站。
+    ///
+    /// 默认 `true`：管理器删除的文件都能在回收站找回。
+    /// 设成 `false` 后直接删除文件与安装清单，**不可恢复** —— 设置界面必须
+    /// 先给出风险提示与二次确认才允许关闭。
+    #[serde(default = "default_true")]
+    pub recycle_deleted_mods: bool,
     #[serde(default)]
     pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
@@ -551,6 +558,9 @@ pub struct PublicConfig {
     pub ui_zoom: f64,
     pub onboarding_seen_steps: Vec<String>,
     pub hide_unidentified_mods: bool,
+    /// 删除 MOD 时先移入回收站；false = 直接删除（不可恢复）。
+    #[serde(default = "default_true")]
+    pub recycle_deleted_mods: bool,
     #[serde(default)]
     pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
@@ -779,6 +789,8 @@ pub struct SettingsPatch {
     pub ui_zoom: Option<f64>,
     pub onboarding_seen_steps: Option<Vec<String>>,
     pub hide_unidentified_mods: Option<bool>,
+    /// 删除 MOD 时先移入回收站（默认 true）。关闭即直接删除，不可恢复。
+    pub recycle_deleted_mods: Option<bool>,
     pub tutorial_steps: Option<Vec<TutorialStepConfig>>,
     pub game_path: Option<String>,
     pub auto_detect: Option<bool>,

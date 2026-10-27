@@ -437,6 +437,7 @@ impl ConfigService {
             ui_zoom: config.ui_zoom,
             onboarding_seen_steps: config.onboarding_seen_steps.clone(),
             hide_unidentified_mods: config.hide_unidentified_mods,
+            recycle_deleted_mods: config.recycle_deleted_mods,
             tutorial_steps: config.tutorial_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),
@@ -830,6 +831,8 @@ fn default_config() -> AppConfig {
         ui_zoom: 1.5,
         onboarding_seen_steps: Vec::new(),
         hide_unidentified_mods: true,
+        // 默认开启：删除的 MOD 先进回收站，用户能反悔。
+        recycle_deleted_mods: true,
         tutorial_steps: Vec::new(),
         game: GameConfig {
             path: String::new(),
@@ -1622,7 +1625,7 @@ value = "RegionalMod.dll"
             crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
         let mut repository =
             repository_from_export(&document.repositories[0], "regional".into(), false);
-        let mut config = default_config();
+        let config = default_config();
 
         /*
          * `repository_is_available` 是「这个仓库此刻是否存在」的唯一判定：

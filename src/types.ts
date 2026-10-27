@@ -75,6 +75,8 @@ export interface PublicConfig {
   ui_zoom: number
   onboarding_seen_steps: string[]
   hide_unidentified_mods: boolean
+  /** 删除 MOD 时先移入回收站；false = 直接删除，不可恢复。 */
+  recycle_deleted_mods: boolean
   tutorial_steps: TutorialStepConfig[]
   game: { path: string; auto_detect: boolean; runtime: GameRuntime }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean }
@@ -188,7 +190,7 @@ export interface TutorialStepConfig {
   title_i18n?: Partial<Record<TutorialLocale, string>>
   description_i18n?: Partial<Record<TutorialLocale, string>>
 }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string

@@ -1475,6 +1475,95 @@ pub fn delete(root: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/*
+ * ===== 直接删除（不经过回收站）=====
+ *
+ * 用户关闭「删除 MOD 时优先放入回收站」后，删除操作应直接移除文件。
+ *
+ * 实现方式是**先按原回收流程处理，再立即彻底删除刚生成的记录**，
+ * 而不是另写一套删除逻辑。原因：
+ *   · 回收流程已经处理了共享文件保护、`.disabled` 变体、清单快照、
+ *     空目录清理、失败回滚 —— 这些都是踩过多轮坑才稳定的；
+ *   · 复制一份「删除」实现迟早与回收逻辑分叉，出现「回收安全、直删
+ *     丢共享文件」这类只在特定配置下复现的问题；
+ *   · 暂存区是同一磁盘上的 rename，代价接近零，寿命只有几毫秒，
+ *     用户完全感知不到。
+ *
+ * 唯一的语义差别是：失败时不再有回收记录可恢复，所以这里的错误直接上抛，
+ * 由调用方保证「删不干净就报错」，绝不静默继续。
+ */
+
+/// 直接删除一个 MOD 包（或其中单个 DLL），不留回收记录。
+pub fn purge_package(
+    root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    package_id: &str,
+    dll: Option<&str>,
+) -> Result<(), String> {
+    let entry = recycle_package(root, manifests_dir, game_root, package_id, dll)?;
+    purge_entry(root, &entry.id)
+}
+
+/// 直接删除本地选中的 DLL（或它的整包），不留回收记录。
+pub fn purge_selected_mod(
+    root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    package_id: &str,
+    dll: &str,
+    whole_package: bool,
+) -> Result<(), String> {
+    let entry = recycle_selected_mod(
+        root,
+        manifests_dir,
+        game_root,
+        package_id,
+        dll,
+        whole_package,
+    )?;
+    purge_entry(root, &entry.id)
+}
+
+/// 直接删除同包中单个 DLL（保留包内其他成员），不留回收记录。
+pub fn purge_mod_dll(
+    root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    package_id: &str,
+    dll: &str,
+    installed: &[crate::models::InstalledMod],
+) -> Result<(), String> {
+    let entry = recycle_mod_dll(root, manifests_dir, game_root, package_id, dll, installed)?;
+    purge_entry(root, &entry.id)
+}
+
+/// 直接删除未由管理器安装的 DLL，不留回收记录。
+pub fn purge_unmanaged(root: &Path, game_root: &Path, dll: &str) -> Result<(), String> {
+    let entry = recycle_unmanaged(root, game_root, dll)?;
+    purge_entry(root, &entry.id)
+}
+
+/*
+ * 覆盖安装没有 `purge_repository_packages_before_install` 这样的包装：
+ * 那条路径必须保留回滚能力，所以由调用方「先回收 → 安装成功后再 delete」，
+ * 见 `install_downloaded_repository` 里 `keep_recycled` 的分支。
+ */
+
+/// 清掉回收站里的一条记录（回收流程刚生成的那条）。
+fn purge_entry(root: &Path, id: &str) -> Result<(), String> {
+    delete(root, id).map_err(|error| {
+        log::error!(
+            "直接删除时清理暂存记录失败：ID={}，原因={}。文件可能仍留在回收站，请手动检查。",
+            id,
+            error
+        );
+        error
+    })?;
+    log::info!("已直接删除 MOD（未保留回收记录）：ID={}", id);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1766,6 +1855,55 @@ mod tests {
                 assert!(workspace.active("peer").is_some());
             }
         }
+    }
+
+    /*
+     * 直接删除（用户关闭「优先放入回收站」）：
+     * 文件与清单都要消失，且回收站里不能留下任何记录。
+     */
+    #[test]
+    fn purge_removes_files_and_leaves_no_recycle_record() {
+        let workspace = Workspace::new();
+        workspace.write(A, b"first DLL");
+        workspace.write(DATA, b"settings");
+        workspace.manifest("package", &[A, DATA]);
+
+        purge_package(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            "package",
+            None,
+        )
+        .unwrap();
+
+        assert!(!workspace.game.join(A).exists(), "DLL 应被删除");
+        assert!(!workspace.game.join(DATA).exists(), "附属文件应被删除");
+        assert!(workspace.active("package").is_none(), "安装清单应被移除");
+        assert!(
+            list(&workspace.recycle).unwrap().is_empty(),
+            "不该留下回收记录"
+        );
+    }
+
+    /// 直删同样要守住共享文件保护：同 GUID 的其他副本仍在使用时不能移走。
+    #[test]
+    fn purge_respects_shared_file_protection() {
+        let workspace = Workspace::new();
+        workspace.write(A, b"same DLL");
+        workspace.manifest("package", &[A]);
+        workspace.manifest("peer", &[A]);
+        let installed = vec![];
+        let error = purge_mod_dll(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            "package",
+            A,
+            &installed,
+        );
+        // 与回收路径一致：共享文件必须有安全替代副本才允许移走
+        assert!(error.is_err() || workspace.game.join(A).exists());
     }
 
     #[test]

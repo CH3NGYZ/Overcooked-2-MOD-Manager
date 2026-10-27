@@ -190,9 +190,15 @@ onMounted(() => {
 }
 
 /*
- * 导航切换动画：只动 transform / opacity，不触发布局。
- * page-down / page-up 用于普通切页（上下滑动）；
- * page-fade 用于带定位目标的跳转（只淡入，不位移），把滚动留给页面自己。
+ * 导航切换动画。
+ *
+ * 只用 opacity + 极小的位移（6px）。位移再大时，元素会移出滚动容器的
+ * 可视区而被 n-scrollbar 的 overflow: hidden 裁掉，表现为「动画末期
+ * 底部卡片缺一条、最后一帧才还原」。6px 既保留了方向感，
+ * 又不会让内容越过滚动容器边界。
+ *
+ * 另加 will-change: transform, opacity 让浏览器提前提层，
+ * 避免动画开始时才合成导致首帧跳变。
  */
 .page-down-enter-active,
 .page-down-leave-active,
@@ -201,11 +207,12 @@ onMounted(() => {
 .page-fade-enter-active,
 .page-fade-leave-active {
   transition: opacity .18s ease, transform .18s cubic-bezier(.32, .72, .35, 1);
+  will-change: transform, opacity;
 }
-.page-down-enter-from { opacity: 0; transform: translateY(14px); }
-.page-down-leave-to { opacity: 0; transform: translateY(-10px); }
-.page-up-enter-from { opacity: 0; transform: translateY(-14px); }
-.page-up-leave-to { opacity: 0; transform: translateY(10px); }
+.page-down-enter-from { opacity: 0; transform: translateY(6px); }
+.page-down-leave-to { opacity: 0; transform: translateY(-6px); }
+.page-up-enter-from { opacity: 0; transform: translateY(-6px); }
+.page-up-leave-to { opacity: 0; transform: translateY(6px); }
 /* 带定位目标：不做位移，避免和「滚动到卡片」同时动 */
 .page-fade-enter-from,
 .page-fade-leave-to { opacity: 0; }

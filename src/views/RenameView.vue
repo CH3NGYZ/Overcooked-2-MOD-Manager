@@ -126,17 +126,54 @@ function clearNativeSelection() {
   window.getSelection()?.removeAllRanges()
 }
 
+/**
+ * 「未选择文字」提示的限频。
+ *
+ * 用户未选中文字就调样式时，连续操作（拖动滑块、拖动取色器）
+ * 会每秒触发几十次，每次都弹一条通知会把右下角刷屏。
+ *
+ * 规则（按用户确认）：
+ *   - 点颜色块：一次点击 = 一次提示（click 本身就是离散动作，直接调用 warnNoSelection）
+ *   - 滑块拖动：整个按下→拖动→抬起只提示一次（beginGesture 开始，endGesture 结束）
+ *   - 自定义取色器拖动：同上
+ *
+ * 实现上用一个「手势」计数：手势内只放行第一次。离散动作（点击色块）
+ * 不走手势，因此每次点击都能提示。
+ */
+let gestureDepth = 0
+let warnedInGesture = false
+
+/** 开始一个连续手势（滑块/取色器按下）。 */
+function beginGesture() {
+  gestureDepth += 1
+  warnedInGesture = false
+}
+
+/** 结束一个连续手势（滑块/取色器抬起）。 */
+function endGesture() {
+  gestureDepth = Math.max(0, gestureDepth - 1)
+  if (gestureDepth === 0) warnedInGesture = false
+}
+
+/** 未选中文字时的提示；连续手势内只提示一次。 */
+function warnNoSelection() {
+  if (gestureDepth > 0) {
+    if (warnedInGesture) return
+    warnedInGesture = true
+  }
+  message.warning(t('请先选择要修改的文字'))
+}
+
 /** 只改颜色，不改字号。 */
 function applyColor(color: string) {
   const range = selected.value
-  if (!range) { message.warning(t('请先选择要修改的文字')); return }
+  if (!range) { warnNoSelection(); return }
   picker.value = color
   const next = [...colors.value]
   for (let index = range.start; index < range.end; index += 1) next[index] = color.toLowerCase()
   colors.value = next
 }
 
-/** 字号按「基准 + 增量」应用，避免连续拖动叠加。 */
 /**
  * 选中范围内的基准字号（本轮拖动开始前的值）。
  * 拖动时 sizes 会被本轮改过，必须回到起点才能正确叠加增量。
@@ -147,7 +184,11 @@ let sizeBaseline: number[] | null = null
 function previewSize(step: number) {
   sizeStep.value = step
   const range = selected.value
-  if (!range) return
+  if (!range) {
+    // 拖动过程中持续触发，这里靠手势限频只提示一次
+    warnNoSelection()
+    return
+  }
   if (!sizeBaseline) sizeBaseline = [...sizes.value]
   const next = [...sizes.value]
   for (let index = range.start; index < range.end; index += 1) {
@@ -159,23 +200,22 @@ function previewSize(step: number) {
 /** 松手或输入框提交：结束本轮调整，增量归零并清掉基准。 */
 function endSizeAdjust(value: number) {
   if (!selected.value) {
-    message.warning(t('请先选择要修改的文字'))
+    warnNoSelection()
     sizeStep.value = 0
     sizeBaseline = null
+    endGesture()
     return
   }
   previewSize(value)
   sizeStep.value = 0
   sizeBaseline = null
+  endGesture()
 }
 
 /** 输入框直接给绝对值：按「目标值 - 基准」换算增量后应用。 */
 function applySizeInput(target: number) {
   const range = selected.value
-  if (!range) {
-    message.warning(t('请先选择要修改的文字'))
-    return
-  }
+  if (!range) { warnNoSelection(); return }
   const next = [...sizes.value]
   for (let index = range.start; index < range.end; index += 1) {
     next[index] = Math.max(1, Math.min(71, (sizes.value[index] ?? DEFAULT_SIZE) + target))
@@ -285,20 +325,32 @@ onBeforeUnmount(clearNativeSelection)
                 打开 Naive 取色器。平铺用 n-button 的色块形态，不需要自绘。
               -->
               <div class="palette-row">
+                <!-- 色块点击是离散动作：每次点击都能提示未选文字 -->
                 <button v-for="color in PALETTE" :key="color" type="button" class="palette-swatch"
                   :class="{ active: picker.toLowerCase() === color.toLowerCase() }"
                   :style="{ background: color }" :title="color" @click="applyColor(color)" />
+                <!--
+                  自定义取色器是连续手势：按下开始、抬起结束，
+                  期间未选文字只提示一次。
+                -->
                 <n-color-picker v-model:value="picker" :show-alpha="false" size="small" class="picker-custom"
-                  :modes="['hex']" @update:value="(value: string) => applyColor(value)" />
+                  :modes="['hex']"
+                  @mousedown="beginGesture" @mouseup="endGesture"
+                  @update:value="(value: string) => applyColor(value)" />
               </div>
             </div>
 
             <div class="control-block">
               <span class="control-label">{{ t('字号增量') }}</span>
               <div class="size-row">
-                <!-- 拖动即预览：update:value 就重算，松手时归零增量 -->
+                <!--
+                  拖动即预览；按下→拖动→抬起算一个手势，
+                  未选文字时整个手势只提示一次。
+                -->
                 <n-slider :value="sizeStep" :min="-34" :max="36" :step="1" class="size-slider"
-                  @update:value="previewSize" @dragend="endSizeAdjust(sizeStep)" />
+                  @mousedown="beginGesture"
+                  @update:value="previewSize"
+                  @dragend="endSizeAdjust(sizeStep)" />
                 <n-input-number :value="sizeStep" size="small" :min="-34" :max="36" class="size-input"
                   @update:value="(value: number | null) => applySizeInput(value ?? 0)" />
                 <n-button size="small" secondary @click="resetSelectionStyle">
@@ -354,6 +406,20 @@ onBeforeUnmount(clearNativeSelection)
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+/*
+ * 面板容器：Naive 在 animated 切换时会给 .n-tabs-pane-wrapper 写一个
+ * max-height 并靠过渡动画过渡它。两个阶段的卡片数量不同（阶段一 1 张、
+ * 阶段二 2 张），如果 max-height 在动画结束时停在旧面板的高度上，
+ * 底部卡片就会被裁掉一条，直到下一帧才恢复 —— 也就是「动画末期缺一块」。
+ *
+ * 这里让 wrapper 高度由内容决定（max-height: none），
+ * 高度变化本身不再做高度动画；横向滑动已经提供了足够的过渡感，
+ * 而高度动画在「两个面板高度差很大」时本来就会显得突兀。
+ */
+.stage-tabs :deep(.n-tabs-pane-wrapper) {
+  max-height: none !important;
+  transition: none;
 }
 /*
  * Naive 的 animated 默认只位移 32px，用于标签页内的轻量过渡。

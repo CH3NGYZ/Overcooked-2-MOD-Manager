@@ -651,6 +651,29 @@ pub(crate) struct PluginMetadata {
     pub(crate) version: Option<String>,
 }
 
+/// 从磁盘上的 DLL 读取 BepInPlugin 名称，读不出返回 None。
+///
+/// 安装完成提示要显示「用户认识的名字」：仓库安装用仓库名，
+/// 本地安装就用 DLL 里的插件名，而不是 `XXX.dll` 这样的文件名。
+pub(crate) fn plugin_name_from_file(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    let plugin = parse_bepin_plugin_metadata(&bytes)?;
+    plugin
+        .name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// 文件名去掉扩展名，作为兜底显示名。
+pub(crate) fn file_stem_name(file_name: &str) -> String {
+    Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(file_name)
+        .to_string()
+}
+
 pub(crate) fn parse_bepin_plugin_metadata(bytes: &[u8]) -> Option<PluginMetadata> {
     if !String::from_utf8_lossy(bytes).contains("BepInPlugin") {
         return None;
@@ -2214,5 +2237,15 @@ mod tests {
         mods[1].duplicate_guid = false;
         super::mark_duplicate_guids(&mut mods);
         assert!(mods[0].duplicate_version && mods[1].duplicate_version);
+    }
+
+    #[test]
+    fn file_stem_name_strips_extension_as_install_display_fallback() {
+        // 本地安装提示的兜底名：文件名去扩展名，去掉 .dll 后缀
+        assert_eq!(super::file_stem_name("FastThrow.dll"), "FastThrow");
+        assert_eq!(super::file_stem_name("MyMod.zip"), "MyMod");
+        assert_eq!(super::file_stem_name("no-extension"), "no-extension");
+        // 多段文件名只去掉最后一段扩展名
+        assert_eq!(super::file_stem_name("a.b.dll"), "a.b");
     }
 }

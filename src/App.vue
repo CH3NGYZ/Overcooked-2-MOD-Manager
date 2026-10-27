@@ -111,7 +111,7 @@ onMounted(() => {
       「More than one n-global-style exist in the document.body」。
       减少这一层还避免了它每次主题变化时重写 body 样式。
     -->
-    <n-message-provider placement="bottom-right">
+    <n-message-provider placement="bottom-left">
       <n-dialog-provider>
         <div class="app-shell">
           <AppTitleBar :version="version" />

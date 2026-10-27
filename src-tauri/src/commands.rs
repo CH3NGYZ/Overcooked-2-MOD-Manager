@@ -798,9 +798,16 @@ pub(crate) fn install_manual_mod(
     let repository_id = format!("manual-{}", Uuid::new_v4());
     let (pending, display_name) = if extension.eq_ignore_ascii_case("dll") {
         log::debug!("按单 DLL 规则安装到 BepInEx/plugins：名称={}", file_name);
+        /*
+         * 显示名优先用 DLL 里的 BepInPlugin 名称 —— 用户认的是插件名，
+         * 不是 `XXX.dll` 这样的文件名。读不出元数据时退回文件名去扩展名。
+         * 仓库安装那边用仓库名，两条路径的提示体验保持一致。
+         */
+        let display =
+            mods::plugin_name_from_file(&source).unwrap_or_else(|| mods::file_stem_name(file_name));
         let pending =
             archive::copy_asset_pending(&source, &game_root, "BepInEx/plugins", file_name)?;
-        (pending, file_name.to_string())
+        (pending, display)
     } else if extension.eq_ignore_ascii_case("zip") {
         log::debug!("按本地 ZIP 布局规则解压：名称={}", file_name);
         let folder = source
@@ -814,10 +821,18 @@ pub(crate) fn install_manual_mod(
         {
             return Err("ZIP 文件名无效".into());
         }
-        (
-            archive::extract_local_mod_zip_pending(&source, &game_root, file_name)?,
-            folder.to_string(),
-        )
+        let pending = archive::extract_local_mod_zip_pending(&source, &game_root, file_name)?;
+        /*
+         * 显示名：优先包内第一个 DLL 的 BepInPlugin 名称，退回 ZIP 文件名。
+         * pending 的文件此时已落盘，可以直接读元数据。
+         */
+        let display = pending
+            .files()
+            .iter()
+            .filter(|relative| relative.to_ascii_lowercase().ends_with(".dll"))
+            .find_map(|relative| mods::plugin_name_from_file(&game_root.join(relative)))
+            .unwrap_or_else(|| folder.to_string());
+        (pending, display)
     } else {
         return Err("只支持 DLL 或 ZIP 文件".into());
     };

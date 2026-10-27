@@ -93,13 +93,14 @@ export function isPrereleaseVersion(
  *
  * 目的只有一个：让「同一版本的不同写法」看起来一致，避免用户误以为版本不同。
  *
- * 两条规则，按是否带预发布后缀区分：
- *   - **正式版**：去掉尾部多余的 `.0` 与不参与比较的第 4 段起
- *     （`0.4`、`0.4.0`、`0.4.0.0`、`0.4.0.5` 都显示 `0.4`）。
- *   - **预发布版**：**原样保留数字段**，只做必要的剥离
- *     （`v0.4.0.1-beta` → `0.4.0.1-beta`）。
- *     预发布号必须能和 Release tag 逐字对上 —— 把 `0.4.0.1-beta` 显示成
- *     `0.4-beta` 会让用户以为版本号被改了，也无法对照 tag 排查问题。
+ * 规则只有一条：**去掉尾部全为 0 的段，其余原样保留**。
+ *   - `0.4`、`0.4.0`、`0.4.0.0` → `0.4`（尾部补 0 无意义）
+ *   - `1.8.7.23` → `1.8.7.23`（第 4 段有实际数字，不能省略）
+ *   - `0.4.0.1-beta` → `0.4.0.1-beta`（预发布同样保留原样）
+ *
+ * 为什么不能截断到三段：显示要和 Release tag 逐字对上。用户看到 `1.8.7`
+ * 而 tag 其实是 `1.8.7.23` 时，会以为管理器读错了版本，也无法对照 tag
+ * 排查问题。比较时第 4 段按标准 semver 不参与，但显示必须忠实。
  *
  * 至少保留两段（`1.0` 不会被压成 `1`），无法解析时原样返回。
  */
@@ -109,20 +110,12 @@ export function formatVersion(value: string | null | undefined): string {
   const match = trimmed.match(/^(.*?)(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?$/)
   if (!match) return trimmed
   const prefix = match[1]
-  const all = match[2].split('.').map(Number)
-  if (all.some((part) => !Number.isFinite(part))) return trimmed
-  const prerelease = match[3]
-
-  // 预发布：保留原始数字段，只去掉 v 前缀等外层包装
-  if (prerelease) {
-    return `${prefix}${match[2]}-${prerelease}`
-  }
-
-  // 正式版：第 4 段起是构建号，不参与比较，显示时一并忽略
-  const numbers = all.slice(0, 3)
+  const numbers = match[2].split('.').map(Number)
+  if (numbers.some((part) => !Number.isFinite(part))) return trimmed
   // 去掉尾部全 0 段，但至少保留两段（0.4 保持 0.4，不压成 0）
   while (numbers.length > 2 && numbers[numbers.length - 1] === 0) numbers.pop()
-  return `${prefix}${numbers.join('.')}`
+  const core = numbers.join('.')
+  return match[3] ? `${prefix}${core}-${match[3]}` : `${prefix}${core}`
 }
 
 /** 比较版本：左新于右返回 1，相等 0，左旧于右 -1；任一方无法解析返回 null。 */

@@ -68,17 +68,19 @@ test('标准 semver 比较：宽写归一，第 4 段不参与', () => {
   assert.equal(compareVersions('0.4.0-beta', '0.4.0'), -1)
 })
 
-test('formatVersion：正式版去尾部 .0，预发布保留原样', () => {
+test('formatVersion 只去尾部全 0 段，有数字的段一律保留', () => {
   assert.equal(formatVersion('0.4'), '0.4')
   assert.equal(formatVersion('0.4.0'), '0.4')
   assert.equal(formatVersion('0.4.0.0'), '0.4')
-  assert.equal(formatVersion('0.4.0.5'), '0.4')
+  // 第 4 段有实际数字：保留，必须能和 Release tag 对上
+  assert.equal(formatVersion('1.8.7.23'), '1.8.7.23')
+  assert.equal(formatVersion('0.4.0.5'), '0.4.0.5')
   assert.equal(formatVersion('v1.2.3'), 'v1.2.3')
   assert.equal(formatVersion('1.2.3-beta.1'), '1.2.3-beta.1')
   // 预发布保留原始数字段，能和 Release tag 逐字对上
   assert.equal(formatVersion('0.4.0.1-beta'), '0.4.0.1-beta')
   assert.equal(formatVersion('0.4.0.1-pre.01'), '0.4.0.1-pre.01')
-  assert.equal(formatVersion('v0.4.0-beta.1'), 'v0.4.0-beta.1')
+  assert.equal(formatVersion('v0.4.0-beta.1'), 'v0.4-beta.1')
   // 至少保留两段，不把 1.0 压成 1
   assert.equal(formatVersion('1.0.0'), '1.0')
   assert.equal(formatVersion(''), '')

@@ -362,7 +362,7 @@ async function refreshSource(node: SourceNode) {
   releaseErrors.forEach((error) => message.error(error))
 }
 
-/** 顶栏「刷新全部仓库源」与 FAB 共用入口。 */
+/** 整源刷新入口（仅浮动按钮调用；页头按钮已移除）。 */
 async function refreshAll() {
   const errors = await engine.refreshEverything()
   errors.forEach((error) => message.error(error))
@@ -411,9 +411,9 @@ defineExpose({ refreshAll, visibleCount })
     </Teleport>
 
     <!--
-      页头右侧，从左到右：计数 → 搜索 → 刷新全部仓库源 → 安装 MOD。
-      「安装 MOD」固定在最右：它是本页最主要的动作入口，
-      和 MOD 管理页原来的位置一致，只是搬到了本页。
+      页头右侧，从左到右：计数 → 搜索 → 安装 MOD。
+      「安装 MOD」固定在最右：它是本页最主要的动作入口。
+      整源刷新由右下角浮动按钮承担，页头不再重复放一个按钮。
     -->
     <Teleport to="#page-header-actions" defer>
       <span class="header-count muted">{{ t('共 {count} 个仓库', { count: visibleCount }) }}</span>
@@ -421,10 +421,6 @@ defineExpose({ refreshAll, visibleCount })
         :placeholder="t('搜索')">
         <template #prefix><SearchOutline width="14" height="14" /></template>
       </n-input>
-      <n-button size="small" secondary :loading="anyRefreshing" :disabled="anyRefreshing" @click="refreshAll">
-        <template #icon><RefreshOutline width="14" height="14" /></template>
-        {{ t('刷新全部仓库源') }}
-      </n-button>
       <n-button size="small" type="primary" @click="openInstall">
         <LinkOutline width="14" height="14" />{{ t('安装 MOD') }}
       </n-button>
@@ -834,7 +830,7 @@ defineExpose({ refreshAll, visibleCount })
 .header-count { white-space: nowrap; flex: 0 0 auto; }
 /*
  * 搜索框是操作区里唯一能收缩的项：窗口变窄时它先变短，
- * 计数与「刷新全部仓库源」保持完整，避免整行折行。
+ * 计数与搜索框保持完整，避免整行折行。
  */
 .header-search { width: 240px; flex: 0 1 240px; min-width: 120px; }
 </style>

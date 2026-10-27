@@ -26,7 +26,7 @@ const route = useRoute()
 const resolvedTitle = computed(() => t(pageTitleOverride.value ?? (route.meta.title as string) ?? ''))
 
 /**
- * 安装器启动后的首次仓库刷新：与手动「刷新全部仓库源」走同一引擎。
+ * 安装器启动后的首次仓库刷新：与手动整源刷新走同一引擎。
  * 放在 App 层而不是 MOD 安装页，切换页面不会重复触发。
  * 教程系统接入后：入口处先 `deferStartupRefresh()`，教程结束再 `releaseStartupRefresh()`。
  */

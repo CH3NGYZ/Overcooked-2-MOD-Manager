@@ -45,15 +45,17 @@ interface ParsedVersion {
 }
 
 /**
- * 版本号解析：标准 semver 语义，兼容宽写的 tag。
+ * 版本号解析：三段 + 把第 4 段及以后当作「beta 序号」。
  *
- * 规则（与标准 semver 一致）：
- *   - 只取前三段数字参与比较，不足补 0 —— 所以 `0.4` = `0.4.0` = `0.4.0.0`；
- *   - 第 4 段及以后是构建号，按标准 semver 的语义**不参与比较**
- *     （如 `0.4.0.5` 与 `0.4.0` 相等）；
- *   - 带 `-` 后缀的是预发布，低于同号正式版：`0.4.0-beta < 0.4.0`；
- *   - 预发布标识按 semver 规则逐段比较，数字段低于字母段
- *     （`0.4.0-alpha < 0.4.0-alpha.1 < 0.4.0-beta`）。
+ * 本项目的宽写版本号里，第 4 段是前三位版本号的 beta 序号：
+ *   `1.8.7.23` ≡ `1.8.7-beta.23`（1.8.7 的第 23 个 beta）
+ * 所以仍然按标准 semver 比较，只是先把多余段搬进预发布标识：
+ *   - `1.8.7.23` vs `1.8.7.21` → beta.23 > beta.21 → **有更新**；
+ *   - `1.8.7.23` vs `1.8.7`     → beta 低于正式版 → 已是最新；
+ *   - `0.4.0.0`、`1.8.7.0`      → 序号为 0，等价于正式版；
+ *   - `0.4.0.1-beta`            → `0.4.0-beta.1`（后缀在前，序号追加在后）。
+ *
+ * 带 `-` 后缀时该后缀优先作为预发布标识，第 4 段追加到它后面。
  * 无法解析返回 null，调用方据此显示「版本未知」而不是臆断更新。
  */
 export function parseVersion(value: string | null | undefined): ParsedVersion | null {
@@ -63,10 +65,20 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
   if (!match) return null
   const all = match[1].split('.').map(Number)
   if (all.some((part) => !Number.isFinite(part))) return null
-  // 标准 semver 只有三段；第 4 段起是构建号，不参与比较
+
   const numbers = all.slice(0, 3)
   while (numbers.length < 3) numbers.push(0)
-  return { numbers, prerelease: match[2] ? match[2].split('.') : [] }
+
+  const suffix = match[2] ? match[2].split('.') : []
+  // 第 4 段及以后：全 0 视为正式版，否则作为 beta 序号
+  const build = all.slice(3)
+  const hasBuild = build.some((part) => part !== 0)
+  const buildParts = hasBuild ? build.map(String) : []
+  const prerelease = suffix.length
+    ? [...suffix, ...buildParts]
+    : hasBuild ? ['beta', ...buildParts] : []
+
+  return { numbers, prerelease }
 }
 
 /**

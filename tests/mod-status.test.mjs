@@ -31,8 +31,8 @@ test('版本比较覆盖 v 前缀、段数差异、预发布', () => {
   assert.equal(compareVersions('1.10.0', '1.9.9'), 1)
   assert.equal(compareVersions('1.2.3-beta.2', '1.2.3-beta.1'), 1)
   assert.equal(compareVersions('1.2.3', '1.2.3-rc.1'), 1)
-  // 标准 semver：第 4 段是构建号，不参与比较
-  assert.equal(compareVersions('2.0.0.1', '2.0.0'), 0)
+  // 第 4 段是 beta 序号：2.0.0.1 ≡ 2.0.0-beta.1，低于正式版
+  assert.equal(compareVersions('2.0.0.1', '2.0.0'), -1)
   assert.equal(compareVersions('unknown', '1.0.0'), null)
   assert.equal(compareVersions(undefined, '1.0.0'), null)
 })
@@ -56,14 +56,17 @@ test('同一仓库的多个本地副本全部返回，便于取最高版本比�
   assert.deepEqual(modsForRepository(list, target).map((item) => item.dll_file), ['A.dll', 'B.dll'])
 })
 
-test('标准 semver 比较：宽写归一，第 4 段不参与', () => {
+test('第 4 段是 beta 序号：序号间比较，且低于同号正式版', () => {
   // 真实场景：Release tag 是 0.4.0，DLL 里是 0.4.0.0。
   // 旧实现把第 4 段拼成预发布，导致已是最新的 MOD 永远显示「可更新」。
   assert.equal(compareVersions('0.4.0', '0.4.0.0'), 0)
   assert.equal(compareVersions('0.4', '0.4.0'), 0)
   assert.equal(compareVersions('v0.4', '0.4.0'), 0)
-  // 第 4 段是构建号，不参与比较
-  assert.equal(compareVersions('0.4.0.5', '0.4.0'), 0)
+  // 第 4 段是 beta 序号：23 > 21（有更新），但都低于正式版
+  assert.equal(compareVersions('1.8.7.23', '1.8.7.21'), 1)
+  assert.equal(compareVersions('1.8.7.23', '1.8.7'), -1)
+  assert.equal(compareVersions('0.4.0.5', '0.4.0'), -1)
+  assert.equal(compareVersions('0.4.0', '0.4.0.0'), 0)
   // 只有显式 - 后缀才是预发布
   assert.equal(compareVersions('0.4.0-beta', '0.4.0'), -1)
 })
@@ -93,9 +96,12 @@ test('预发布判定：元数据标记与版本号后缀是或关系', () => {
   assert.equal(isPrereleaseVersion('0.4.0-beta', false), true)
   assert.equal(isPrereleaseVersion('0.4.0.5-beta', false), true)
   assert.equal(isPrereleaseVersion('0.4.0-rc.1', undefined), true)
-  // 都是正式版
+  // 正式版（含尾部补 0 段）
   assert.equal(isPrereleaseVersion('0.4.0', false), false)
-  assert.equal(isPrereleaseVersion('0.4.0.5', false), false)
+  assert.equal(isPrereleaseVersion('0.4.0.0', false), false)
+  // 第 4 段非 0 即 beta 序号，算预发布
+  assert.equal(isPrereleaseVersion('0.4.0.5', false), true)
+  assert.equal(isPrereleaseVersion('1.8.7.23', false), true)
   assert.equal(isPrereleaseVersion('0.4', undefined), false)
   // 无法解析且没有标记 → 不臆断
   assert.equal(isPrereleaseVersion('unknown', false), false)

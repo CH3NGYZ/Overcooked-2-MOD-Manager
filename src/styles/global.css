@@ -131,10 +131,15 @@ body {
   /*
    * 整页加载态：首次加载时页面内容还没渲染，容器高度会塌到很小，
    * 而 n-spin 的转圈是「在自己容器里居中」——容器不满高，视觉上就偏上。
-   * flex: 1 让它在内容不足时也能占满可视区域，转圈才是真正的视觉中央；
-   * 内容超出时照常被子元素撑高并正常滚动。
+   *
+   * 这里必须是 flex 列容器：子级（n-spin-container）靠 `flex: 1` 吃掉
+   * 剩余高度。之前只给 .page-body 自己写了 flex: 1，但它是 block 容器，
+   * 子级的 flex 属性完全无效 —— 这就是「spin 停在 min-height 高度、
+   * 转圈偏上」的直接原因。
    */
   flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
 }
 
@@ -219,21 +224,23 @@ body {
 /*
  * 整页加载态：转圈要落在「可视区域」的视觉中心，而不只是自己容器的中心。
  *
- * 关键点：n-spin 的转圈是相对 n-spin-container 居中的。首次加载时页面内容
- * 还没渲染，这个容器只有内容高度（甚至为 0），所以看上去偏上。
- * 因此让 spin 容器一路撑满到 .page-body 的高度：
- *   .page-body (flex: 1 0 auto) → .n-spin-container (height: 100%)
- * 这样容器本身就是满屏，居中才等于视觉居中。
+ * 根因与修复（和 AppModal 的高度问题同源）：
+ *   Naive 的 .n-spin-container 默认 `flex: 0 1 auto; min-height: 320px`。
+ *   在 flex 列里它「只长不伸」——内容为空时高度就停在 min-height，
+ *   转圈于是居中于那块 320px，而不是整个内容区。
+ *   只写 `height: 100%` 没用：flex item 的百分比高度要相对「确定的父高」
+ *   解析，而父级的高度来自 flex 分配，不是定义值。
  *
- * 注意：Naive 的 .n-spin-body 自带 transform: translate(-50%, -50%)，
- * 用 inset: 0 铺满时必须把 transform 清掉，否则整块会被推到左上角。
+ * 统一规则：整条高度链都用 `flex: 1` 传递（而不是 height: 100%），
+ * 并配合 `min-height: 0` 允许收缩。这样无论内容是 0 行还是 500 行，
+ * 容器都恰好占满剩余空间，居中、滚动、百分比约束才能正确。
  */
 .page-scroll .n-spin-container {
   display: flex;
   flex-direction: column;
-  min-height: 320px;
-  /* 跟随 .page-body 撑满；内容更高时正常撑开 */
-  height: 100%;
+  /* 关键：吃掉 .page-body 的剩余高度；不再依赖 height: 100% */
+  flex: 1 1 auto;
+  min-height: 0;
   /*
    * 让转圈落在「可视区」中央而不只是容器中央：
    * page-scroll 的上下 padding 不对称（上 4px、下 28px），
@@ -241,9 +248,18 @@ body {
    */
   margin-top: calc((var(--page-pad-bottom) - var(--page-pad-top)) / 2);
 }
+/* 内容层同样用 flex 传递，撑满 spin 容器 */
 .page-scroll .n-spin-container > .n-spin-content {
-  flex: 1 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
+/*
+ * 转圈本身：绝对定位铺满整个 spin 容器再居中。
+ * Naive 的 .n-spin-body 自带 transform: translate(-50%, -50%)，
+ * 用 inset: 0 铺满时必须清掉，否则整块被推到左上角。
+ */
 .page-scroll .n-spin-container > .n-spin-body {
   position: absolute;
   inset: 0;

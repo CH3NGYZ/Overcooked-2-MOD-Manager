@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 /** 共享状态标签：真实源码直接执行（Node 24 类型擦除）。 */
-const { STATUS_META, installedModTags, repositoryStatus } = await import('../src/statusTags.ts')
+const { STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion } = await import('../src/statusTags.ts')
 
 function repo(overrides = {}) {
   return {
@@ -125,4 +125,39 @@ test('后端已带 prerelease 标签时不重复插入', () => {
   const tags = installedModTags(mod({ labels: ['prerelease', 'latest'], prerelease: true }))
   assert.equal(tags.filter((tag) => tag.key === 'prerelease').length, 1)
   assert.equal(tags[0].key, 'prerelease')
+})
+
+test('版本结论类标签互斥：替换后不残留旧结论', () => {
+  // 之前只过滤 latest/update_available，会留下 repository_unavailable，
+  // 于是出现「最新版 + 仓库不可用」这种矛盾组合。
+  const stale = ['repository_unavailable', 'latest', 'disabled']
+  const replaced = replaceVersionConclusion(stale, 'update_available')
+  assert.deepEqual(replaced, ['update_available', 'disabled'])
+  assert.equal(replaced.filter((label) => isVersionConclusion(label)).length, 1)
+})
+
+test('替换版本结论时保留非结论类标签', () => {
+  const labels = ['unknown', 'duplicate', 'duplicate_lower_version', 'load_warning']
+  const replaced = replaceVersionConclusion(labels, 'latest')
+  assert.deepEqual(replaced, ['latest', 'duplicate', 'duplicate_lower_version', 'load_warning'])
+})
+
+test('传 null 只剥离旧结论，不追加新结论', () => {
+  const replaced = replaceVersionConclusion(['not_release_asset', 'duplicate'], null)
+  assert.deepEqual(replaced, ['duplicate'])
+})
+
+test('所有版本结论标签都登记在互斥组里', () => {
+  // 防止以后新增结论标签却忘了加进 VERSION_CONCLUSION_LABELS
+  const conclusions = [
+    'latest', 'update_available', 'not_release_asset', 'installed',
+    'unknown', 'unbound', 'bound_repository_missing', 'repository_unavailable',
+  ]
+  for (const label of conclusions) {
+    assert.equal(isVersionConclusion(label), true, `${label} 应在互斥组内`)
+  }
+  // 非结论标签不能被误判为结论
+  for (const label of ['duplicate', 'duplicate_lower_version', 'disabled', 'dependency', 'prerelease']) {
+    assert.equal(isVersionConclusion(label), false, `${label} 不应在互斥组内`)
+  }
 })

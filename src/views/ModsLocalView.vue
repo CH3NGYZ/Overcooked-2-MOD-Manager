@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { t, locale } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { PULSE_DURATION } from '../motion'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import {
   NButton, NCollapse, NCollapseItem, NCollapseTransition, NEmpty, NFloatButton,
   NSpin, NSwitch, NTag,
 } from 'naive-ui'
 import {
-  ArrowUpCircleOutline, DocumentTextOutline, FolderOpenOutline, SettingsOutline,
-  SwapVerticalOutline, TrashOutline,
+  ArrowUpCircleOutline, DocumentTextOutline, FolderOpenOutline, RefreshOutline, SettingsOutline,
+  TrashOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
-import { compareVersions, repositoryForMod } from '../modStatus'
-import { installedModTags, recomputeModUpdate } from '../statusTags'
+import { repositoryForMod } from '../modStatus'
+import { installedModTags, recomputeModUpdate, replaceVersionConclusion } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -41,18 +42,38 @@ const { highlightId } = useFocusHighlight()
  */
 const { activeStatus, focusStatus } = useStatusHighlight()
 
-const sortBy = ref<'name' | 'version' | 'enabled'>('name')
-const sortLabels = computed(() => ({ name: t('按名称'), version: t('按版本'), enabled: t('按启用') }))
-function cycleSort() {
-  const order = ['name', 'version', 'enabled'] as const
-  sortBy.value = order[(order.indexOf(sortBy.value) + 1) % order.length]
-}
-const sortLabel = computed(() => sortLabels.value[sortBy.value])
+/*
+ * 固定按名称排序。
+ *
+ * 原来的「排序」切换入口是右下角浮动按钮，现在该位置改成了「重新扫描
+ * 本地 MOD」，排序已无切换入口，所以把配置一起去掉 —— 留一个永远不变的
+ * sortBy 只会误导后续维护者。
+ */
 const busy = ref<Record<string, boolean>>({})
 const expanded = ref<Record<string, boolean>>({})
 
 // 切页面复用已有 Dashboard；开关/删除后仍用 load() 取最新扫描结果
 onMounted(() => { void ensureLoaded() })
+
+/**
+ * 本地刷新：重新读取 Dashboard，重扫 BepInEx/plugins 并重算标签。
+ *
+ * 只碰本地磁盘，不刷新任何仓库 Release —— 仓库刷新在 MOD 安装页。
+ * 用户在游戏外手动增删或改名插件后，点这个就能看到最新结果。
+ */
+const refreshingLocal = ref(false)
+async function refreshLocal() {
+  if (refreshingLocal.value) return
+  refreshingLocal.value = true
+  try {
+    await load()
+    message.success(t('已重新扫描本地 MOD'))
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : String(reason))
+  } finally {
+    refreshingLocal.value = false
+  }
+}
 
 /**
  * 把「后端扫描结果」和「当前仓库缓存」合成一份有效状态。
@@ -72,20 +93,31 @@ const effectiveMods = computed<InstalledMod[]>(() =>
   mods.value.map((mod) => {
     const recomputed = recomputeModUpdate(mod, repositories.value)
     if (recomputed) {
-      const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available')
+      /*
+       * 用统一函数替换版本结论，而不是自己拼数组。
+       * 之前的实现只过滤 latest/update_available，会把 not_release_asset、
+       * repository_unavailable 等旧结论留在原地，出现「最新版 + 仓库不可用」
+       * 这种自相矛盾的组合。
+       */
       return {
         ...mod,
         update_available: recomputed.update_available,
-        labels: recomputed.update_available ? ['update_available', ...stripped] : ['latest', ...stripped],
-      }
+        labels: replaceVersionConclusion(
+          mod.labels as string[] | undefined,
+          recomputed.update_available ? 'update_available' : 'latest',
+        ) as InstalledMod['labels'],
+      } as InstalledMod
     }
     // 仓库还在抓取：明确显示「检查中」，不把旧结论当现状。
     // 但仓库文件（RAW）模式本来就没有版本可比较，刷新也不该让它变成
     // 「版本未知」—— 它的语义就是「已安装」，保持原样即可。
     const repo = repositoryForMod(repositories.value, mod)
     if (repo && repo.download_mode !== 'repository_file' && isRepositoryRefreshing(repo.id)) {
-      const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available' && label !== 'unknown')
-      return { ...mod, update_available: false, labels: ['unknown', ...stripped] }
+      return {
+        ...mod,
+        update_available: false,
+        labels: replaceVersionConclusion(mod.labels as string[] | undefined, 'unknown') as InstalledMod['labels'],
+      } as InstalledMod
     }
     return mod
   }),
@@ -96,18 +128,10 @@ function isRepositoryRefreshing(repositoryId: string) {
   return !!refreshing.value[repositoryId] || refreshingAll.value
 }
 
-const sortedMods = computed(() => {
-  const list = [...effectiveMods.value]
-  if (sortBy.value === 'name') list.sort((a, b) => modTitle(a).localeCompare(modTitle(b)))
-  if (sortBy.value === 'version') {
-    list.sort((a, b) => {
-      const compared = compareVersions(b.version, a.version)
-      return compared ?? (b.version ?? '').localeCompare(a.version ?? '')
-    })
-  }
-  if (sortBy.value === 'enabled') list.sort((a, b) => Number(b.enabled) - Number(a.enabled))
-  return list
-})
+/** 列表固定按标题排序（排序切换入口已移除，见上方说明）。 */
+const sortedMods = computed(() =>
+  [...effectiveMods.value].sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
+)
 
 const enabledCount = computed(() => mods.value.filter((mod) => mod.enabled).length)
 
@@ -174,6 +198,61 @@ interface ModGroupNode {
 }
 
 const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
+
+/**
+ * 状态变化脉冲：某个 MOD 的标签从「检查中」变成「最新版 / 可更新」时，
+ * 给它的标签组播一次短暂高亮，让异步结果被看见。
+ *
+ * 只对「变化」触发：首次渲染不播（那是初始状态，不是变化）。
+ *
+ * 实现上刻意分开两件事：
+ *   - watcher 只读 `effectiveMods` 的 dll_file + labels（不读其它 computed），
+ *     避免在 Dashboard 尚未就绪时触发更深的依赖链；
+ *   - 用 Map 直接存 key，而不是把 dll_file 和 key 拼成一个字符串再切分 ——
+ *     Windows 路径可能含冒号，拼串会导致解析错位。
+ */
+const lastStatusKey = new Map<string, string>()
+const pulsingDlls = ref<Record<string, boolean>>({})
+const pulseTimers = new Map<string, number>()
+
+/** 供模板调用：该 MOD 的标签是否刚变化过（用于加 pulse 类）。 */
+function isStatusPulsing(mod: InstalledMod) {
+  return !!pulsingDlls.value[mod.dll_file]
+}
+
+function startPulse(dllFile: string) {
+  pulsingDlls.value = { ...pulsingDlls.value, [dllFile]: true }
+  const existing = pulseTimers.get(dllFile)
+  if (existing !== undefined) window.clearTimeout(existing)
+  pulseTimers.set(dllFile, window.setTimeout(() => {
+    const next = { ...pulsingDlls.value }
+    delete next[dllFile]
+    pulsingDlls.value = next
+    pulseTimers.delete(dllFile)
+  }, PULSE_DURATION))
+}
+
+watch(
+  () => effectiveMods.value.map((mod) => ({
+    dll: mod.dll_file,
+    key: (mod.labels ?? []).join('|'),
+  })),
+  (entries) => {
+    for (const { dll, key } of entries) {
+      const previous = lastStatusKey.get(dll)
+      lastStatusKey.set(dll, key)
+      // 首次见到这个 MOD，或状态没变：不播
+      if (previous === undefined || previous === key) continue
+      startPulse(dll)
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  for (const timer of pulseTimers.values()) window.clearTimeout(timer)
+  pulseTimers.clear()
+})
 
 function pickI18n(map: Record<string, string> | undefined, fallback: string): string {
   if (!map) return fallback
@@ -761,8 +840,8 @@ function removePackage(node: ModPackageNode) {
   <n-spin :show="loading">
     <div class="toolbar">
       <span class="muted">
-        {{ t('共 {count} 个 · 启用 {enabled} · 可更新 {updates} · 排序：{sort}',
-          { count: mods.length, enabled: enabledCount, updates: updateCount, sort: sortLabel }) }}
+        {{ t('共 {count} 个 · 启用 {enabled} · 可更新 {updates}',
+          { count: mods.length, enabled: enabledCount, updates: updateCount }) }}
       </span>
     </div>
 
@@ -825,8 +904,11 @@ function removePackage(node: ModPackageNode) {
                     <span class="tool-divider" />
                   </template>
 
-                  <!-- 状态标签组：固定宽度按内容自适应，整体贴住分割线左侧 -->
-                  <span class="tag-group">
+                  <!--
+                    状态标签组：固定宽度按内容自适应，整体贴住分割线左侧。
+                    status-pulse：刷新完成后标签变化时播一次短暂高亮（见 isStatusPulsing）。
+                  -->
+                  <span class="tag-group" :class="{ 'status-pulse': isStatusPulsing(mod) }">
                     <!-- 配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算 -->
                     <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
                       class="state-tag state-tag--link" :color="tagColorForAny(tag.tone)"
@@ -1004,9 +1086,14 @@ function removePackage(node: ModPackageNode) {
   </n-spin>
 
   <!-- 只保留排序切换（卡片已是唯一布局） -->
-  <n-float-button position="fixed" bottom="28" right="32" :tooltip="`${t('排序')}：${sortLabel}`"
-    @click="cycleSort">
-    <SwapVerticalOutline width="17" height="17" />
+  <!--
+    浮动按钮：重新扫描本地 MOD（只读磁盘，不碰仓库 Release）。
+    「重新读取 Dashboard」会重扫 BepInEx/plugins 并重算标签，等同用户手动
+    改过文件后的一次本地刷新；仓库刷新在 MOD 安装页，两者职责分开。
+  -->
+  <n-float-button position="fixed" bottom="28" right="32" :tooltip="t('重新扫描本地 MOD')"
+    :disabled="refreshingLocal" @click="refreshLocal">
+    <RefreshOutline width="17" height="17" :class="{ 'spin-icon': refreshingLocal }" />
   </n-float-button>
 
   <!-- 配置编辑器（Monaco）：编辑该 MOD 在 BepInEx/config 下的 .cfg -->
@@ -1176,6 +1263,40 @@ function removePackage(node: ModPackageNode) {
 /* 可点击的状态标签：手型 + hover 反馈，表示能跳到 MOD 安装页 */
 .state-tag--link { cursor: pointer; }
 .state-tag--link:hover { filter: brightness(1.25); }
+/* 本地刷新进行中：图标自转（类由刷新按钮绑定） */
+.spin-icon { animation: oc2-local-spin .8s linear infinite; }
+@keyframes oc2-local-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin-icon { animation: none; }
+}
+/*
+ * 状态变化脉冲：刷新完成、标签从「检查中」变成确定状态时，
+ * 标签组轻微放大后回落并短暂提亮，让异步结果被看见。
+ *
+ * 用 scale + filter 而不是改颜色：颜色已由 tone 表达语义，
+ * 这里只表达「刚刚变了」这一时间信息，两者不冲突。
+ * 时长与 PULSE_DURATION（900ms）对齐 —— 计时器在 script 里，动画在 CSS 里，两处必须一致。
+ */
+.tag-group.status-pulse {
+  animation: status-pulse 900ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes status-pulse {
+  0%   { transform: scale(1);    filter: brightness(1); }
+  22%  { transform: scale(1.06); filter: brightness(1.45); }
+  100% { transform: scale(1);    filter: brightness(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动效：只保留短暂的亮度变化，不做缩放 */
+  .tag-group.status-pulse { animation: status-pulse-fade 900ms ease; }
+  @keyframes status-pulse-fade {
+    0%   { filter: brightness(1); }
+    22%  { filter: brightness(1.45); }
+    100% { filter: brightness(1); }
+  }
+}
 .card-row {
   display: flex;
   align-items: center;

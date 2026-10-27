@@ -33,6 +33,25 @@ const props = withDefaults(defineProps<{
   maxWidth?: string
   /** 最大高度（上限，不是定值）。 */
   maxHeight?: string
+  /**
+   * 是否直接撑满上限（宽高都用 100%），而不是随内容自适应。
+   *
+   * 默认 `false`：短内容自动收缩，长内容到上限后内部滚动。
+   * 编辑器这类「内容本身就需要尽可能大」的弹窗设为 `true`，
+   * 打开即占满允许的最大区域，不随内容多少跳动。
+   */
+  fill?: boolean
+  /**
+   * 内容区是否自己滚动。
+   *
+   * 默认 `true`：内容包在 `.app-modal-scroll` 里（`overflow-y: auto`），
+   * 长内容在内部滚动，头部与 footer 固定。
+   *
+   * 设 `false` 时不包裹滚动层，插槽内容直接成为内容区 flex 子项 ——
+   * 供需要「占满整块区域、内部自己管理滚动」的内容使用（如 Monaco 编辑器：
+   * 它必须拿到确定高度才能布局，包在滚动容器里永远量不到正确尺寸）。
+   */
+  scrollable?: boolean
   /** 内容区最小高度：内容很少时也不至于缩成一条，默认不设。 */
   minHeight?: string
   bordered?: boolean
@@ -58,6 +77,8 @@ const props = withDefaults(defineProps<{
    */
   maxWidth: '80%',
   maxHeight: '90%',
+  fill: false,
+  scrollable: true,
   minHeight: '',
   bordered: false,
   maskClosable: true,
@@ -86,6 +107,8 @@ const {
   title: heading,
   maxWidth: widthLimit,
   maxHeight: heightLimit,
+  fill: fillLimit,
+  scrollable: scrollableContent,
   minHeight: heightFloor,
   bordered: hasBorder,
   maskClosable: closable,
@@ -95,21 +118,47 @@ const {
 } = toRefs(props)
 
 /*
- * 全部用 max-*：宽高随内容自然伸缩，只在超过上限时才封顶。
- * max-height 生效后，内容区拿到确定高度，min-height: 0 才让它真正可滚。
+ * 尺寸全部以 Naive 的容器为基准计算，不用 vw/vh，也不用百分比。
  *
- * 宽度上限用百分比而不是 vw：Tauri 的界面缩放是 WebView zoom，`vw` 仍按
- * 未缩放的视口计算，200% 缩放下 80vw 会超出实际可见区域（截图里右边框
- * 跑到窗口外）。百分比相对 .n-modal-scroll-content（已受缩放约束）计算，
- * 任何缩放档位都落在可视范围内。
+ * 两条历史坑：
+ *   1. `vw`/`vh` 不随 WebView zoom 缩放 —— 200% 缩放下 80vw 会超出可见区域。
+ *   2. **百分比高度在这里根本无效**：.n-modal-scroll-content 只有
+ *      `min-height: 100%`，没有确定高度，`max-height: 90%` 无法解析，
+ *      浏览器按 `none` 处理，约束直接失效（内容多长弹窗就多高，按钮被挤出屏幕）。
+ *
+ * 所以改用 calc 直接对「扣除标题栏后的视口」求值：
+ *   --oc2-titlebar-height 已在 global.css 定义，
+ *   100vh - 标题栏 = 弹窗真正可用的高度。
+ * 各调用方的 maxHeight 也必须传 calc 形式，不能再传百分比。
  */
-const modalStyle = computed(() => ({
-  width: 'auto',
-  minWidth: 'min(320px, 92%)',
-  maxWidth: widthLimit.value,
-  height: 'auto',
-  maxHeight: heightLimit.value,
-}))
+const TITLEBAR = 'var(--oc2-titlebar-height, 56px)'
+
+/** 宽/高上限：以“扣除标题栏的视口”为基准，留固定边距。 */
+function toCssLimit(value: string, axis: 'width' | 'height'): string {
+  const trimmed = value.trim()
+  // 百分比转成 calc：宽度相对视口宽度，高度相对“视口高度 - 标题栏”
+  const percent = /^(\d+(?:\.\d+)?)%$/.exec(trimmed)
+  if (percent) {
+    const ratio = Number(percent[1]) / 100
+    return axis === 'width'
+      ? `calc(100vw * ${ratio})`
+      : `calc((100vh - ${TITLEBAR}) * ${ratio})`
+  }
+  return trimmed
+}
+
+const modalStyle = computed(() => {
+  const w = toCssLimit(widthLimit.value, 'width')
+  const h = toCssLimit(heightLimit.value, 'height')
+  return {
+    // fill：直接占满上限，打开即最大区域，不随内容多少跳动
+    width: fillLimit.value ? w : 'auto',
+    minWidth: fillLimit.value ? undefined : 'min(320px, 92vw)',
+    maxWidth: w,
+    height: fillLimit.value ? h : 'auto',
+    maxHeight: h,
+  }
+})
 
 /**
  * 内容区约束：min-height: 0 是让 flex 子项可收缩的关键，
@@ -134,10 +183,16 @@ const contentStyle = {
     <template v-if="$slots['header-extra']" #header-extra>
       <slot name="header-extra" />
     </template>
-    <!-- 唯一可滚动区域：内容再多也在这一层，弹窗尺寸不变 -->
-    <div class="app-modal-scroll" :style="heightFloor ? { minHeight: heightFloor } : undefined">
+    <!--
+      scrollable（默认）：内容包在滚动层里，长内容内部滚动。
+      scrollable=false：插槽内容直接成为内容区的 flex 子项，
+      由它自己占满并管理滚动（Monaco 编辑器需要确定高度才能布局）。
+    -->
+    <div v-if="scrollableContent" class="app-modal-scroll"
+      :style="heightFloor ? { minHeight: heightFloor } : undefined">
       <slot />
     </div>
+    <slot v-else />
     <!-- 固定操作区：不传就完全不渲染，内容区自动占满剩余高度 -->
     <div v-if="$slots.footer" class="app-modal-footer">
       <slot name="footer" />

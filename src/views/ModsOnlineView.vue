@@ -411,7 +411,7 @@ defineExpose({ refreshAll, visibleCount })
         <template #prefix><SearchOutline width="14" height="14" /></template>
       </n-input>
       <n-button size="small" secondary :loading="anyRefreshing" :disabled="anyRefreshing" @click="refreshAll">
-        <RefreshOutline width="14" height="14" />{{ t('刷新全部仓库源') }}
+        <RefreshOutline v-if="!anyRefreshing" width="14" height="14" />{{ t('刷新全部仓库源') }}
       </n-button>
       <n-button size="small" type="primary" @click="openInstall">
         <LinkOutline width="14" height="14" />{{ t('安装 MOD') }}
@@ -432,7 +432,7 @@ defineExpose({ refreshAll, visibleCount })
               <n-button size="tiny" quaternary
                 :loading="sourceRefreshing[node.source.id] || node.groups.some((g) => g.repos.some((r) => refreshing[r.id]))"
                 :disabled="anyRefreshing" @click.stop="refreshSource(node)">
-                <RefreshOutline width="13" height="13" />
+                <RefreshOutline v-if="!(sourceRefreshing[node.source.id] || node.groups.some((g) => g.repos.some((r) => refreshing[r.id])))" width="13" height="13" />
               </n-button>
             </div>
           </template>
@@ -448,7 +448,7 @@ defineExpose({ refreshAll, visibleCount })
                   <n-button size="tiny" quaternary class="group-refresh"
                     :loading="groupRefreshing(group)"
                     :disabled="anyRefreshing" @click.stop="refreshGroup(group)">
-                    <RefreshOutline width="12" height="12" />
+                    <RefreshOutline v-if="!groupRefreshing(group)" width="12" height="12" />
                   </n-button>
                 </div>
               </template>
@@ -501,10 +501,12 @@ defineExpose({ refreshAll, visibleCount })
                       :style="installButtonStyle(repo)"
                       :loading="!!installing[repo.id]"
                       :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
-                      <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
-                      <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
-                      <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
-                      <DownloadOutline v-else width="13" height="13" />
+                      <template v-if="!installing[repo.id]">
+                        <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
+                        <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                        <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
+                        <DownloadOutline v-else width="13" height="13" />
+                      </template>
                       {{ installLabel(repo) }}
                     </n-button>
                   </div>
@@ -573,10 +575,13 @@ defineExpose({ refreshAll, visibleCount })
                     :style="installButtonStyle(repo)"
                     :loading="!!installing[repo.id]"
                     :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
-                    <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
-                    <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
-                    <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
-                    <DownloadOutline v-else width="13" height="13" />
+                    <!-- 加载圈与图标二选一：有加载动画时只显示动画 -->
+                    <template v-if="!installing[repo.id]">
+                      <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
+                      <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                      <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
+                      <DownloadOutline v-else width="13" height="13" />
+                    </template>
                     {{ installLabel(repo) }}
                   </n-button>
                 </div>

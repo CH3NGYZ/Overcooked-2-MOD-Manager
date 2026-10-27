@@ -306,6 +306,8 @@ const entries = {
   '版本未知': ['版本未知', 'Version unknown', '버전 미확인', 'バージョン不明'],
   '{count} 个可更新': ['{count} 個可更新', '{count} updatable', '{count}개 업데이트 가능', '{count} 件更新可能'],
   '排序': ['排序', 'Sort', '정렬', '並び替え'],
+  '重新扫描本地 MOD': ['重新掃描本機 MOD', 'Rescan local MODs', '로컬 MOD 다시 검사', 'ローカル MOD を再スキャン'],
+  '已重新扫描本地 MOD': ['已重新掃描本機 MOD', 'Local MODs rescanned', '로컬 MOD를 다시 검사했습니다', 'ローカル MOD を再スキャンしました'],
   '准备中': ['準備中', 'Preparing', '준비 중', '準備中'],
   '准备中…': ['準備中…', 'Preparing…', '준비 중…', '準備中…'],
   '正在连接下载源…': ['正在連線下載來源…', 'Connecting to download source…', '다운로드 소스에 연결 중…', 'ダウンロード元に接続中…'],

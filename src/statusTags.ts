@@ -84,6 +84,55 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
  * 已安装的是预发布版本时，额外在最前面插一个「预发布」标签
  * （它不参与后端状态判定，只表达「这个版本是 pre-release」）。
  */
+/**
+ * 版本结论类标签：一个 MOD 只能有一个。
+ *
+ * 「最新版 / 可更新 / 已安装 / 版本未知 / 仓库缺失 / 仓库不可用 / 未绑定」
+ * 描述的是同一件事——这个 MOD 相对于仓库的版本结论，天然互斥。
+ * 它们同时出现就是 bug（例如重算更新状态后残留旧的「仓库不可用」）。
+ *
+ * 后端 `refresh_status_labels` 用 if/else 保证互斥；前端 `effectiveMods`
+ * 重算时必须用 `replaceVersionConclusion()` 而不是自己拼接，否则会
+ * 留下旧结论，出现「最新版 + 仓库不可用」这类矛盾组合。
+ */
+export const VERSION_CONCLUSION_LABELS = [
+  'latest',
+  'update_available',
+  'not_release_asset',
+  'installed',
+  'unknown',
+  'unbound',
+  'bound_repository_missing',
+  'repository_unavailable',
+  'refresh_failed',
+  'not_refreshed',
+  'not_installed',
+  'not_installed_raw',
+  'repository_disabled',
+] as const
+
+const VERSION_CONCLUSION_SET = new Set<string>(VERSION_CONCLUSION_LABELS)
+
+/** 该标签是否属于「版本结论」这一互斥组。 */
+export function isVersionConclusion(label: string): boolean {
+  return VERSION_CONCLUSION_SET.has(label)
+}
+
+/**
+ * 用新的版本结论替换旧的，保留所有非结论类标签（重复、低版本、加载警告、
+ * 已禁用、依赖、预发布等）。
+ *
+ * @param labels 当前标签列表
+ * @param conclusion 新的结论标签；传 `null` 表示只剥离旧结论、不追加新的
+ */
+export function replaceVersionConclusion(
+  labels: readonly string[] | undefined,
+  conclusion: string | null,
+): string[] {
+  const kept = (labels ?? []).filter((label) => !isVersionConclusion(label))
+  return conclusion ? [conclusion, ...kept] : kept
+}
+
 export function installedModTags(mod: InstalledMod): StatusTag[] {
   const labels: string[] = mod.labels?.length ? mod.labels : [mod.status]
   const tags = labels.map((label: InstalledModStatusLabel | string) => {

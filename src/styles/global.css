@@ -31,6 +31,19 @@ body > .n-drawer-container {
   bottom: 0;
   height: auto;
 }
+/*
+ * 消息提示贴到「内容区」左下角，而不是整个窗口左下角。
+ *
+ * Naive 的 n-message-container 挂在 body 下，bottom-right 位置用
+ * `left: 0; right: 12px` 铺满整宽，于是提示会压在侧栏下方。把 left 让出
+ * 侧栏宽度即可，right 保持 Naive 的 12px（与其它位置的内边距一致）。
+ *
+ * 只在本应用生效：容器类名由 Naive 生成，这里靠 body 直接子级 + 定位类
+ * 精确匹配，不会影响弹窗内部嵌套的消息容器。
+ */
+body > .n-message-container {
+  left: var(--oc2-rail-width);
+}
 * {
   box-sizing: border-box;
 }

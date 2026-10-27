@@ -42,8 +42,18 @@ const installing = ref(false)
 const releaseLogHtml = computed(() =>
   props.preview?.origin === 'repository' ? renderReadme(props.preview.release_body ?? '') : '',
 )
-const showReleaseLog = computed(
-  () => props.preview?.origin === 'repository' && props.preview.release_tag.trim() !== '',
+/**
+ * 只有「仓库来源 + 有版本号 + 有日志正文」三者齐备时才展示提交日志区块。
+ *
+ * - 本地文件 / 直链：没有版本概念，整块不出现；
+ * - RAW 仓库：没有 Release，`release_tag` 为空，整块不出现；
+ * - 有版本但这次没写日志：也整块不出现 —— 显示一个空的「该版本没有提交日志」
+ *   方框只是占地方，和仓库文件那两种情况一样应当直接省略。
+ */
+const showReleaseLog = computed(() =>
+  props.preview?.origin === 'repository'
+  && props.preview.release_tag.trim() !== ''
+  && (props.preview.release_body ?? '').trim() !== '',
 )
 
 /**
@@ -174,7 +184,13 @@ async function confirm() {
               <b class="preview-name" :title="entryTitle(entry)">{{ entryTitle(entry) }}</b>
               <span class="preview-path mono" :title="entry.path">{{ entry.path }}</span>
             </span>
-            <span class="preview-version mono">{{ entry.version || '—' }}</span>
+            <!--
+              依赖项没有版本语义（读不出 BepInPlugin），右侧显示「依赖」而不是「—」：
+              破折号只说明「字段为空」，依赖两个字说明「为什么为空」。
+            -->
+            <span class="preview-version mono">
+              {{ entry.role === 'dependency' ? t('依赖') : (entry.version || '—') }}
+            </span>
           </div>
           <n-collapse-transition :show="isEntryExpanded(entry.path)" display-directive="show">
             <div class="preview-row-detail">
@@ -200,14 +216,14 @@ async function confirm() {
         仓库来源才展示本次 Release 的提交日志：用户点「立即安装」之前
         应该能看到这次到底更新了什么。本地文件与直链没有版本概念，不显示。
       -->
+      <!-- showReleaseLog 已保证正文非空，这里不需要「没有日志」的占位分支 -->
       <div v-if="showReleaseLog" class="release-log">
         <div class="release-log-head">
           <span class="muted">{{ t('提交日志') }}</span>
           <b class="mono">{{ preview.release_tag }}</b>
         </div>
         <!-- renderReadme 关闭了原始 HTML，日志只能输出 Markdown 生成的安全节点 -->
-        <div v-if="releaseLogHtml" class="release-log-box" v-html="releaseLogHtml"></div>
-        <div v-else class="release-log-box release-log-empty muted">{{ t('该版本没有提交日志') }}</div>
+        <div class="release-log-box" v-html="releaseLogHtml"></div>
       </div>
     </div>
 
@@ -346,12 +362,6 @@ async function confirm() {
   background: var(--oc2-sunken);
   font-size: 12px;
   line-height: 1.65;
-}
-.release-log-empty {
-  display: grid;
-  place-items: center;
-  min-height: 48px;
-  font-size: 12px;
 }
 /*
  * v-html 插入的 Markdown 节点不会带 scoped 属性，

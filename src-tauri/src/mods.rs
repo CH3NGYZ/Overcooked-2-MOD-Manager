@@ -63,6 +63,7 @@ pub fn scan_mods_with_manifests(
         .map(|path| inspect_dll(&path, game, config, &manifests))
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
+    inherit_repository_from_sibling(&mut installed);
     mark_duplicate_guids(&mut installed);
     flag_manifest_version_mismatch(&mut installed, &manifests);
     refresh_status_labels(&mut installed);
@@ -520,6 +521,83 @@ pub(crate) fn mod_update_state(
     match installed.repository_binding.as_ref() {
         Some(binding) => binding_update_state(Some(repo), binding),
         None => repository_update_state(Some(repo), installed.version.as_deref()),
+    }
+}
+
+/// 同目录下读不出 GUID 的 DLL，继承同目录里第一个已绑定仓库的插件的归属。
+///
+/// 场景：用户自己把 ZIP 解压到 `BepInEx/plugins/SomeMod/`，里面既有能读出
+/// BepInPlugin 的主插件，也有读不出元数据的依赖 DLL。主插件能按 GUID 绑到
+/// 在线仓库，依赖绑不上，于是：
+///   - 前端分组会把它当成「本地安装」/「未绑定」，与主插件分成两组，
+///     永远折不成同一个 MOD 包；
+///   - 仓库更新时按仓库身份回收，也认不出这个依赖该一起删。
+///
+/// 这里给它们补上同一个仓库身份。**只在同一目录内传播**：跨目录没有可靠
+/// 依据（plugins 根目录下各插件互不相干），不能仅凭「都在 plugins 里」就
+/// 认为属于同一个包。
+fn inherit_repository_from_sibling(mods: &mut [InstalledMod]) {
+    /// DLL 所在目录（游戏相对路径去掉文件名，小写）。
+    fn parent_dir(dll_file: &str) -> Option<String> {
+        let normalized = dll_file.replace('\\', "/");
+        let (dir, _) = normalized.rsplit_once('/')?;
+        let dir = dir.trim_end_matches('/');
+        if dir.is_empty() {
+            return None;
+        }
+        /*
+         * BepInEx 的系统容器不算「包目录」：plugins / patchers / config 下
+         * 平铺的 DLL 只是碰巧放在一起，彼此互不相干，不能互相继承仓库身份。
+         */
+        const SHARED_CONTAINERS: [&str; 3] = ["plugins", "patchers", "config"];
+        let last = dir.rsplit_once('/').map_or(dir, |(_, tail)| tail);
+        if SHARED_CONTAINERS.contains(&last.to_ascii_lowercase().as_str()) {
+            return None;
+        }
+        Some(dir.to_lowercase())
+    }
+
+    // 先收集每个目录里第一个能绑定仓库的成员，作为该目录的代表。
+    let mut by_dir: HashMap<String, (String, Vec<String>)> = HashMap::new();
+    for item in mods.iter() {
+        if item.is_dependency || item.repository_ids.is_empty() {
+            continue;
+        }
+        let Some(dir) = parent_dir(&item.dll_file) else {
+            continue;
+        };
+        by_dir.entry(dir).or_insert_with(|| {
+            (
+                item.repository_id.clone().unwrap_or_default(),
+                item.repository_ids.clone(),
+            )
+        });
+    }
+    if by_dir.is_empty() {
+        return;
+    }
+
+    for item in mods.iter_mut() {
+        // 只补「自己完全没有仓库身份」的项，不覆盖已知归属
+        if !item.repository_ids.is_empty() || item.repository_binding.is_some() {
+            continue;
+        }
+        let Some(dir) = parent_dir(&item.dll_file) else {
+            continue;
+        };
+        let Some((repository_id, repository_ids)) = by_dir.get(&dir) else {
+            continue;
+        };
+        item.repository_ids = repository_ids.clone();
+        if item.repository_id.is_none() && !repository_id.is_empty() {
+            item.repository_id = Some(repository_id.clone());
+        }
+        log::debug!(
+            "同目录插件继承仓库归属：文件={}，目录={}，仓库={:?}",
+            item.dll_file,
+            dir,
+            repository_ids.first()
+        );
     }
 }
 
@@ -2247,5 +2325,83 @@ mod tests {
         assert_eq!(super::file_stem_name("no-extension"), "no-extension");
         // 多段文件名只去掉最后一段扩展名
         assert_eq!(super::file_stem_name("a.b.dll"), "a.b");
+    }
+
+    fn plain_mod(dll_file: &str, extra: serde_json::Value) -> crate::models::InstalledMod {
+        let mut base = serde_json::json!({
+            "name": dll_file, "dll_file": dll_file, "enabled": true,
+            "version_source": "BepInPlugin", "update_available": false,
+            "duplicate_guid": false, "status": "latest",
+        });
+        if let (Some(base_map), Some(extra_map)) = (base.as_object_mut(), extra.as_object()) {
+            for (key, value) in extra_map {
+                base_map.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::from_value(base).unwrap()
+    }
+
+    #[test]
+    fn dependency_inherits_repository_from_sibling_in_same_directory() {
+        /*
+         * 用户手动把 ZIP 解到 plugins/SomeMod/：主插件能读 GUID 并绑到仓库，
+         * 依赖读不出元数据。依赖必须继承同目录的仓库归属，否则前端会把它
+         * 分到「本地安装」分组、永远折不成同一个包，仓库更新时也不会一起回收。
+         */
+        let mut mods = vec![
+            plain_mod(
+                "BepInEx/plugins/SomeMod/Main.dll",
+                serde_json::json!({
+                    "repository_id": "repo-1", "repository_ids": ["repo-1"], "guid": "com.example.main"
+                }),
+            ),
+            plain_mod(
+                "BepInEx/plugins/SomeMod/Dep.dll",
+                serde_json::json!({ "is_dependency": true, "labels": ["dependency"] }),
+            ),
+        ];
+        super::inherit_repository_from_sibling(&mut mods);
+        assert_eq!(mods[1].repository_ids, vec!["repo-1".to_string()]);
+        assert_eq!(mods[1].repository_id.as_deref(), Some("repo-1"));
+        // 主插件自身不变
+        assert_eq!(mods[0].repository_ids, vec!["repo-1".to_string()]);
+    }
+
+    #[test]
+    fn repository_identity_never_leaks_across_directories() {
+        /*
+         * plugins 根目录下平铺的两个插件互不相干，不能因为「同目录」就把
+         * 一个的仓库身份传给另一个。
+         */
+        let mut mods = vec![
+            plain_mod(
+                "BepInEx/plugins/Main.dll",
+                serde_json::json!({ "repository_id": "repo-1", "repository_ids": ["repo-1"], "guid": "com.example.main" }),
+            ),
+            plain_mod(
+                "BepInEx/plugins/Other.dll",
+                serde_json::json!({ "is_dependency": true, "labels": ["dependency"] }),
+            ),
+        ];
+        super::inherit_repository_from_sibling(&mut mods);
+        assert!(mods[1].repository_ids.is_empty(), "跨目录不传播仓库身份");
+        assert!(mods[1].repository_id.is_none());
+    }
+
+    #[test]
+    fn dependency_keeps_its_own_repository_identity() {
+        // 依赖自己已经有归属时不能被同目录其它插件覆盖
+        let mut mods = vec![
+            plain_mod(
+                "BepInEx/plugins/Pack/Main.dll",
+                serde_json::json!({ "repository_id": "repo-1", "repository_ids": ["repo-1"], "guid": "com.example.main" }),
+            ),
+            plain_mod(
+                "BepInEx/plugins/Pack/Dep.dll",
+                serde_json::json!({ "repository_id": "repo-2", "repository_ids": ["repo-2"], "is_dependency": true }),
+            ),
+        ];
+        super::inherit_repository_from_sibling(&mut mods);
+        assert_eq!(mods[1].repository_ids, vec!["repo-2".to_string()]);
     }
 }

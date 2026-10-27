@@ -5,6 +5,7 @@ import { DownloadOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
+import { isPrereleaseVersion } from '../modStatus'
 import type { Repository, RepositoryReadme } from '../types'
 
 const props = defineProps<{
@@ -132,6 +133,16 @@ const html = computed(() => renderReadme(readme.value?.content ?? ''))
 const noteHtml = computed(() => renderReadme(note.value))
 /** 当前选中 Release 的提交日志（Markdown 渲染，与 note/README 同一函数）。 */
 const logHtml = computed(() => renderReadme(selectedRelease.value?.body?.trim() ?? ''))
+
+/**
+ * 选中版本是否预发布：元数据标记 **或** 版本号带 `-` 后缀。
+ * 作者没勾 prerelease 但版本叫 0.4.0-beta 时，同样要提示。
+ */
+const selectedReleaseIsPrerelease = computed(() => {
+  const release = selectedRelease.value
+  if (!release) return false
+  return isPrereleaseVersion(release.version || release.tag_name, release.prerelease)
+})
 
 /**
  * README 区域是否显示：加载中、请求失败、有内容时都显示；
@@ -278,7 +289,8 @@ async function openUrl(url: string) {
               <span v-if="selectedRelease?.published_at" class="muted">
                 {{ selectedRelease.published_at.slice(0, 10) }}
               </span>
-              <n-tag v-if="selectedRelease?.prerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
+              <!-- 预发布：元数据标记 或 版本号带 - 后缀（0.4.0-beta / 0.4.0.5-beta） -->
+              <n-tag v-if="selectedReleaseIsPrerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
             </div>
             <div v-if="selectedRelease?.body?.trim()" ref="logElement" class="log-box markdown-body" v-html="logHtml"></div>
             <div v-else class="log-box log-empty muted">{{ t('该版本没有提交日志') }}</div>

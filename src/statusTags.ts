@@ -1,5 +1,5 @@
 import type { InstalledMod, InstalledModStatusLabel, Repository } from './types'
-import { compareVersions, modsForRepository, repositoryForMod } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
 
 /**
  * MOD 状态标签：两页共用同一套「文案 + 语义色」，避免两边各写一份。
@@ -148,7 +148,12 @@ export function installedModTags(mod: InstalledMod): StatusTag[] {
     const meta = STATUS_META[label]
     return { key: label, text: meta?.text ?? label, tone: meta?.tone ?? 'muted' }
   })
-  if (mod.prerelease && !tags.some((tag) => tag.key === 'prerelease')) {
+  /*
+   * 预发布判定取「元数据标记」或「版本号带 - 后缀」：
+   * 作者没勾 prerelease 但版本叫 0.4.0-beta 时，同样要提示。
+   */
+  const prerelease = isPrereleaseVersion(localVersion(mod), mod.prerelease)
+  if (prerelease && !tags.some((tag) => tag.key === 'prerelease')) {
     const meta = STATUS_META.prerelease
     tags.unshift({ key: 'prerelease', text: meta.text, tone: meta.tone })
   }

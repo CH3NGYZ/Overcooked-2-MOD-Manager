@@ -321,8 +321,17 @@ fn inspect_dll(
             .filter(|value| !value.is_empty())
             .or_else(|| repository.map(|repo| repo.group.clone()))
             .unwrap_or_default(),
-        // 预发布标记只存在于安装时的 Release 元数据，直接读清单快照
-        prerelease: manifest.is_some_and(|item| item.prerelease),
+        /*
+         * 预发布判定取「清单快照标记」或「版本号带 - 后缀」的或关系。
+         *
+         * 只读快照不够：作者可能没在 Release 上勾 prerelease，但版本号本身
+         * 叫 `0.4.0-beta`、`0.4.0.5-beta` —— 这类同样要按预发布提示。
+         * 与前端 isPrereleaseVersion 保持同一规则。
+         */
+        prerelease: manifest.is_some_and(|item| item.prerelease)
+            || installed_version
+                .as_deref()
+                .is_some_and(crate::releases::is_prerelease_version),
         name,
         title: metadata.title,
         description: metadata.description,

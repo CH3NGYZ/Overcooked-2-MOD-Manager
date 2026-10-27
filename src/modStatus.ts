@@ -70,6 +70,25 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
 }
 
 /**
+ * 是否预发布版本。
+ *
+ * 两个来源取**或**：
+ *   1. Release 元数据里的 `prerelease` 标记（仓库作者勾选的）；
+ *   2. 版本号本身带 `-` 后缀 —— `0.4.0-beta`、`0.4.0.5-beta` 这类
+ *      即使作者没勾 prerelease，也应当按预发布对待。
+ *
+ * 任意写作里出现非数字标识符都算预发布，与 `parseVersion` 的语义一致。
+ */
+export function isPrereleaseVersion(
+  version: string | null | undefined,
+  flag?: boolean | null,
+): boolean {
+  if (flag) return true
+  const parsed = parseVersion(version)
+  return !!parsed && parsed.prerelease.length > 0
+}
+
+/**
  * 版本号规范化显示：只去掉尾部多余的 `.0`。
  *
  * 本项目版本号可以写成 `0.4`、`0.4.0`、`0.4.0.0`、`0.4.0.5`。

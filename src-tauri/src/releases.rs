@@ -377,6 +377,15 @@ pub fn compare_release_versions(remote: &str, local: &str) -> Option<std::cmp::O
     Some(LooseVersion::parse(remote)?.cmp(&LooseVersion::parse(local)?))
 }
 
+/// 版本号本身是否带预发布标识（`-beta`、`-rc.1` 等）。
+///
+/// 与 Release 元数据里的 `prerelease` 标记是**或**的关系：作者没勾标记，
+/// 但版本叫 `0.4.0-beta`、`0.4.0.5-beta` 时同样按预发布对待。
+/// 四段版本里的纯数字段不算预发布。
+pub fn is_prerelease_version(version: &str) -> bool {
+    LooseVersion::parse(version).is_some_and(|parsed| !parsed.prerelease.is_empty())
+}
+
 pub fn filter_channel(mut releases: Vec<ReleaseInfo>, channel: &Channel) -> Vec<ReleaseInfo> {
     let before = releases.len();
     releases.retain(|release| {
@@ -1398,6 +1407,18 @@ mod tests {
             repository_file_url(&Provider::Github, "gua248", "repo", "main", "../secret.dll")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn prerelease_detection_covers_version_suffixes() {
+        // 版本号带 - 后缀即预发布，与 Release 元数据标记是或关系
+        assert!(is_prerelease_version("0.4.0-beta"));
+        assert!(is_prerelease_version("0.4.0.5-beta"));
+        assert!(is_prerelease_version("v1.0.0-rc.1"));
+        // 纯数字段（哪怕四段）不是预发布
+        assert!(!is_prerelease_version("0.4.0"));
+        assert!(!is_prerelease_version("0.4.0.5"));
+        assert!(!is_prerelease_version("unknown"));
     }
 
     #[test]

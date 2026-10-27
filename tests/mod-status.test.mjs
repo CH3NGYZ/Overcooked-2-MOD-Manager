@@ -5,7 +5,7 @@ import test from 'node:test'
  * MOD 状态判定回归：MOD 安装页和 MOD 管理页共用 src/modStatus.ts。
  * Node 24 直接执行 TS（类型擦除），这里测的是真实源码，不是副本。
  */
-const { compareVersions, repositoryForMod, modsForRepository, formatVersion } =
+const { compareVersions, repositoryForMod, modsForRepository, formatVersion, isPrereleaseVersion } =
   await import('../src/modStatus.ts')
 
 function repo(overrides = {}) {
@@ -78,4 +78,19 @@ test('formatVersion 去掉尾部多余的 .0 段', () => {
   // 至少保留两段，不把 1.0 压成 1
   assert.equal(formatVersion('1.0.0'), '1.0')
   assert.equal(formatVersion(''), '')
+})
+
+test('预发布判定：元数据标记与版本号后缀是或关系', () => {
+  // 作者勾了 prerelease → 是
+  assert.equal(isPrereleaseVersion('0.4.0', true), true)
+  // 作者没勾，但版本号带 - 后缀 → 也是
+  assert.equal(isPrereleaseVersion('0.4.0-beta', false), true)
+  assert.equal(isPrereleaseVersion('0.4.0.5-beta', false), true)
+  assert.equal(isPrereleaseVersion('0.4.0-rc.1', undefined), true)
+  // 都是正式版
+  assert.equal(isPrereleaseVersion('0.4.0', false), false)
+  assert.equal(isPrereleaseVersion('0.4.0.5', false), false)
+  assert.equal(isPrereleaseVersion('0.4', undefined), false)
+  // 无法解析且没有标记 → 不臆断
+  assert.equal(isPrereleaseVersion('unknown', false), false)
 })

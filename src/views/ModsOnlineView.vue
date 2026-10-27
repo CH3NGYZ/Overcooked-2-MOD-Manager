@@ -5,7 +5,7 @@ import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFl
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
-import { formatVersion, modsForRepository } from '../modStatus'
+import { formatVersion, isPrereleaseVersion, modsForRepository } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
@@ -297,15 +297,22 @@ function latest(repo: Repository) {
 }
 
 /**
- * 卡片版本号：统一规范化后再显示（`0.4.0` / `0.4.0.0` 都显示成 `0.4`），
- * 预发布版本追加标记。这样卡片上的版本与已安装侧看到的写法一致，
- * 用户能直接判断是不是同一版。
+ * 该 Release 是否按预发布对待：元数据标记 **或** 版本号带 `-` 后缀。
+ * `0.4.0-beta`、`0.4.0.5-beta` 即使作者没勾 prerelease 也算。
+ */
+function releaseIsPrerelease(release: { prerelease: boolean; version?: string | null; tag_name?: string }) {
+  return isPrereleaseVersion(release.version || release.tag_name, release.prerelease)
+}
+
+/**
+ * 卡片版本号：统一规范化后再显示（`0.4.0` / `0.4.0.0` 都显示成 `0.4`）。
+ * 预发布判定取「元数据标记」或「版本号带 - 后缀」的或关系。
  */
 function versionLabel(repo: Repository) {
   const release = latest(repo)
   if (!release) return '—'
   const value = formatVersion(release.version || release.tag_name) || '—'
-  return release.prerelease ? `${value} · ${t('预发布')}` : value
+  return releaseIsPrerelease(release) ? `${value} · ${t('预发布')}` : value
 }
 
 /** 下载量：优先最新 Release 首个匹配资产的 download_count。 */
@@ -489,7 +496,7 @@ defineExpose({ refreshAll, visibleCount })
                     <span class="stat stat-version">
                       <span class="muted">{{ t('最新版本') }}</span>
                       <span class="version-line">
-                        <b class="mono" :class="{ prerelease: latest(repo)?.prerelease }">{{ versionLabel(repo) }}</b>
+                        <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
                         <!-- 刷新状态：转圈即表示该仓库正在拉取 Release -->
                         <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
                       </span>
@@ -574,7 +581,7 @@ defineExpose({ refreshAll, visibleCount })
                   <span class="stat stat-version">
                     <span class="muted">{{ t('最新版本') }}</span>
                     <span class="version-line">
-                      <b class="mono" :class="{ prerelease: latest(repo)?.prerelease }">{{ versionLabel(repo) }}</b>
+                      <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
                       <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
                     </span>
                   </span>

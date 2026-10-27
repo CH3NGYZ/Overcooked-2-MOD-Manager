@@ -12,6 +12,7 @@
 import { useDialog, useMessage } from 'naive-ui'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
+import { isPrereleaseVersion } from '../modStatus'
 import type { ModPreview, Repository } from '../types'
 
 export interface RepositoryPreviewOptions {
@@ -39,7 +40,11 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
 
     const target = tag ?? repo.cached_releases[0]?.tag_name
     const release = repo.cached_releases.find((entry) => entry.tag_name === target)
-    if (release?.prerelease) {
+    // 预发布判定：元数据标记 或 版本号带 - 后缀（0.4.0-beta / 0.4.0.5-beta）
+    const prerelease = release
+      ? isPrereleaseVersion(release.version || release.tag_name, release.prerelease)
+      : false
+    if (prerelease) {
       const confirmed = await new Promise<boolean>((resolve) => {
         dialog.warning({
           title: t('预发布版本'),

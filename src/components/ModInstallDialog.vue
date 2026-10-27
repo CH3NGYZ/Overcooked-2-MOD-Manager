@@ -22,6 +22,7 @@ import { tagColorFor } from '../theme'
 import { renderReadme } from '../markdown'
 import { formatVersion } from '../modStatus'
 import { t } from '../i18n'
+import { celebrateInstall } from '../celebration'
 import AppModal from './AppModal.vue'
 import type { ModPreview, ModPreviewEntry } from '../types'
 
@@ -139,6 +140,8 @@ async function confirm() {
       return
     }
     message.success(result.message)
+    // 安装成功是低频、高价值时刻：放一次短促彩带（内部已尊重 reduced-motion）
+    void celebrateInstall()
     // 后端已在 confirm 里删掉暂存；收起面板，动画结束后再通知宿主刷新
     installCompleted.value = true
     emit('update:show', false)

@@ -1361,12 +1361,26 @@ function removePackage(node: ModPackageNode) {
  * 定位高亮：3 秒后自动褪去（时长由 crossLink.ts 的 FOCUS_DURATION 控制）。
  * 两个类共用同一套视觉 —— focus-flash 是跨页跳转（单张），
  * status-flash 是页内聚合标签定位（可能同时命中多张）。
+ *
+ * 入场再播一次 pulse：跳转把用户「送」到新位置后，静态换色容易被
+ * 正在进行的滚动掩盖；一次轻微的轮廓脉冲能确认落点。
+ * 只做 opacity/box-shadow —— 不缩放卡片，否则会抖动相邻行布局。
  */
 .mod-card.focus-flash,
 .mod-card.status-flash {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
+  animation: focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes focus-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--oc2-accent) 70%, transparent); }
+  40%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--oc2-accent) 30%, transparent); }
+  100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mod-card.focus-flash,
+  .mod-card.status-flash { animation: none; }
 }
 /*
  * 包外壳的定位高亮：与单 MOD 卡片同一套视觉。
@@ -1377,6 +1391,10 @@ function removePackage(node: ModPackageNode) {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 12%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
+  animation: focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .package-shell.status-flash { animation: none; }
 }
 /* 可点击的状态标签：手型 + hover 反馈，表示能跳到 MOD 安装页 */
 .state-tag--link { cursor: pointer; }

@@ -727,6 +727,16 @@ defineExpose({ refreshAll, visibleCount })
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
+  /* 跳转落点确认：一次轮廓脉冲，与 MOD 管理页同一套（focus-pulse 见该页） */
+  animation: repo-focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes repo-focus-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--oc2-accent) 70%, transparent); }
+  40%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--oc2-accent) 30%, transparent); }
+  100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .repo-card.focus-flash { animation: none; }
 }
 /* 有本地安装的状态标签可点击跳到 MOD 管理 */
 .state-tag--link { cursor: pointer; }

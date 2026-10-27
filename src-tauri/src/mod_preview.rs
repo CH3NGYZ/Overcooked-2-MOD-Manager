@@ -280,6 +280,28 @@ fn build_preview(entries: Vec<ModPreviewEntry>, file_name: &str) -> ModPreview {
     }
 }
 
+/// 把一份预览标记为「仓库来源」，并写入该来源特有的信息。
+///
+/// 标题用仓库名：资产文件名往往是 `IMGUI.HiDPI.Patcher.Mono-v0.4.4` 这类
+/// 技术命名，用户认的是仓库名，所以覆盖掉 `build_preview` 按文件名推出来的
+/// `package_name`。仓库名为空时保留原名，避免把标题清空。
+///
+/// RAW 仓库没有 Release，`release_tag` / `release_body` 为空串，
+/// 界面据此隐藏版本与提交日志区块。
+fn apply_repository_origin(
+    preview: &mut ModPreview,
+    repository_name: &str,
+    release_tag: &str,
+    release_body: &str,
+) {
+    preview.origin = PreviewOrigin::Repository;
+    if !repository_name.trim().is_empty() {
+        preview.package_name = repository_name.to_string();
+    }
+    preview.release_tag = release_tag.to_string();
+    preview.release_body = release_body.to_string();
+}
+
 /// 把源文件复制/下载到暂存目录，返回暂存里的文件路径。
 fn stage_local(state: &AppState, preview: &ModPreview, source: &Path) -> Result<PathBuf, String> {
     let dir = preview_root(state).join(&preview.preview_id);
@@ -299,6 +321,7 @@ pub(crate) fn stage_downloaded_file(
     state: &AppState,
     source: &Path,
     file_name: &str,
+    repository_name: &str,
     release_tag: &str,
     release_body: &str,
 ) -> Result<ModPreview, String> {
@@ -312,14 +335,7 @@ pub(crate) fn stage_downloaded_file(
     } else {
         analyze_zip(source, file_name)?
     };
-    /*
-     * 仓库来源的预览额外带上本次 Release 的版本与提交日志：
-     * 用户在「立即安装」之前应该能看到这次到底更新了什么。
-     * RAW 仓库没有 Release，两者都是空串，界面据此隐藏该区块。
-     */
-    preview.origin = PreviewOrigin::Repository;
-    preview.release_tag = release_tag.to_string();
-    preview.release_body = release_body.to_string();
+    apply_repository_origin(&mut preview, repository_name, release_tag, release_body);
     stage_local(state, &preview, source)?;
     log::info!(
         "仓库资产已送入预览暂存：预览={}，DLL 数={}，MOD 数={}，依赖数={}",
@@ -449,6 +465,44 @@ mod tests {
         assert_eq!(preview.mod_count, 1);
         assert_eq!(preview.dependency_count, 0);
         assert_eq!(preview.package_name, "a");
+    }
+
+    #[test]
+    fn repository_origin_replaces_file_name_with_repository_name() {
+        // 资产文件名是技术命名，用户认的是仓库名
+        let mut preview = build_preview(
+            vec![entry(PreviewRole::Mod)],
+            "IMGUI.HiDPI.Patcher.Mono-v0.4.4.zip",
+        );
+        assert_eq!(preview.package_name, "IMGUI.HiDPI.Patcher.Mono-v0.4.4");
+
+        apply_repository_origin(
+            &mut preview,
+            "BepInEx 配置管理器 - HiDPI 缩放修复",
+            "v0.4.4",
+            "## Changes",
+        );
+        assert_eq!(preview.origin, PreviewOrigin::Repository);
+        assert_eq!(preview.package_name, "BepInEx 配置管理器 - HiDPI 缩放修复");
+        assert_eq!(preview.release_tag, "v0.4.4");
+        assert_eq!(preview.release_body, "## Changes");
+    }
+
+    #[test]
+    fn empty_repository_name_keeps_filename_as_title() {
+        // 仓库名为空时不能把标题清空，否则界面只剩一个空白标题
+        let mut preview = build_preview(vec![entry(PreviewRole::Mod)], "fallback.zip");
+        apply_repository_origin(&mut preview, "   ", "", "");
+        assert_eq!(preview.package_name, "fallback");
+    }
+
+    #[test]
+    fn manual_origin_keeps_zip_name_as_title() {
+        // 手动安装（本地文件 / 直链）不经过 apply_repository_origin，标题就是文件名
+        let preview = build_preview(vec![entry(PreviewRole::Mod)], "MyLocalModPack-v1.2.zip");
+        assert_eq!(preview.origin, PreviewOrigin::Manual);
+        assert_eq!(preview.package_name, "MyLocalModPack-v1.2");
+        assert!(preview.release_tag.is_empty());
     }
 
     #[test]

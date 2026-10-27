@@ -2588,6 +2588,7 @@ pub async fn install_repository(
             &state,
             &temp,
             &download_name,
+            &repo.name,
             &release_tag,
             &release_body,
         )?;

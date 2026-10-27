@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t, locale } from '../i18n'
-import { tagColorFor } from '../theme'
+import { tagColorFor, tagColorForAny } from '../theme'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import {
@@ -733,7 +733,7 @@ function removePackage(node: ModPackageNode) {
   -->
   <Teleport to="#page-header-title-extra" defer>
     <n-tag v-for="entry in statusSummaryTags" :key="entry.key" size="small" :bordered="false"
-      class="state-tag state-tag--link" :color="tagColorFor(entry.tone)" role="button" tabindex="0"
+      class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
       :title="t('在页面内定位')" @click="locateStatus(entry.key)"
       @keydown.enter.prevent="locateStatus(entry.key)"
       @keydown.space.prevent="locateStatus(entry.key)">
@@ -828,7 +828,7 @@ function removePackage(node: ModPackageNode) {
                   <span class="tag-group">
                     <!-- 配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算 -->
                     <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
-                      class="state-tag state-tag--link" :color="tagColorFor(tag.tone)"
+                      class="state-tag state-tag--link" :color="tagColorForAny(tag.tone)"
                       :title="bindingRepositoryId(mod) ? t('在 MOD 安装中查看') : undefined"
                       @click.stop="openInRepository(mod)">{{ tag.text }}</n-tag>
                   </span>
@@ -901,8 +901,9 @@ function removePackage(node: ModPackageNode) {
                     不再手写固定色类，否则换主题色时包标签会留在旧颜色上。
                   -->
                   <span class="tag-group">
+                    <!-- 用 moderate 而非 contrast：后者不在配色表里，会回退成灰色 -->
                     <n-tag v-if="pkg.updateCount" size="tiny" :bordered="false"
-                      class="state-tag" :color="tagColorFor('contrast')">
+                      class="state-tag" :color="tagColorFor('moderate')">
                       {{ t('{count} 个可更新', { count: pkg.updateCount }) }}
                     </n-tag>
                     <n-tag v-else-if="pkg.latest" size="tiny" :bordered="false"

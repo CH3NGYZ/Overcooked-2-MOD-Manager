@@ -333,10 +333,36 @@ export const statusToneColors = computed<Record<string, TagColorValue>>(() => {
   }
 })
 
-/** 取某个 tone 的标签配色，未知 tone 回退灰色。 */
-export function tagColorFor(tone: string): TagColorValue {
+/**
+ * 实际可用的标签色调。写死为字面量联合，
+ * 让 `tagColorFor('contrast')` 这类不存在的键在编译期就报错 ——
+ * 之前它接受任意 string 并静默回退成灰色，导致两处标签显示成错误的颜色。
+ */
+export type TagTone = 'accent' | 'mild' | 'moderate' | 'severe' | 'critical' | 'muted'
+
+/** 旧色调名 → 现行五档。只为读取旧快照兼容，新代码不要使用旧名。 */
+const LEGACY_TONES: Record<string, TagTone> = {
+  ok: 'accent',
+  idle: 'accent',
+  warn: 'moderate',
+  danger: 'critical',
+  violet: 'mild',
+}
+
+/** 取某个 tone 的标签配色（严格版：拼错的键在编译期报错）。 */
+export function tagColorFor(tone: TagTone): TagColorValue {
+  return statusToneColors.value[tone]
+}
+
+/**
+ * 同 tagColorFor，但接受来自后端/旧快照的任意字符串。
+ * 旧色调名映射到现行五档，完全无法识别的回退中性灰。
+ */
+export function tagColorForAny(tone: string): TagColorValue {
   const table = statusToneColors.value
-  return table[tone] ?? table.muted
+  if (tone in table) return table[tone as TagTone]
+  const mapped = LEGACY_TONES[tone]
+  return mapped ? table[mapped] : table.muted
 }
 
 /**

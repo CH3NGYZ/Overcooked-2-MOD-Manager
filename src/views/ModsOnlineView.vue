@@ -9,7 +9,7 @@ import { modsForRepository } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
-import { tagColorFor } from '../theme'
+import { tagColorFor, tagColorForAny } from '../theme'
 import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
@@ -456,7 +456,7 @@ defineExpose({ refreshAll, visibleCount })
                         通过 n-tag 原生 :color 下发，页面里不再写颜色。
                       -->
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :color="tagColorFor(statusOf(repo).tone)"
+                        :color="tagColorForAny(statusOf(repo).tone)"
                         :class="{ 'state-tag--link': hasLocalInstall(repo) }"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
@@ -535,7 +535,7 @@ defineExpose({ refreshAll, visibleCount })
                         通过 n-tag 原生 :color 下发，页面里不再写颜色。
                       -->
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :color="tagColorFor(statusOf(repo).tone)"
+                        :color="tagColorForAny(statusOf(repo).tone)"
                         :class="{ 'state-tag--link': hasLocalInstall(repo) }"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>

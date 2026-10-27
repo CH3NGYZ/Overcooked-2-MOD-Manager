@@ -209,7 +209,8 @@ onBeforeUnmount(disposeEditor)
     max-height="85vh" min-height="460px" @update:show="(value: boolean) => emit('update:show', value)">
     <div class="config-head">
       <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>
-      <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('contrast')">{{ t('未保存') }}</n-tag>
+      <!-- 用 moderate 而非 contrast：后者不在配色表里，会回退成灰色 -->
+      <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('moderate')">{{ t('未保存') }}</n-tag>
     </div>
 
     <div v-if="error" class="config-error">{{ error }}</div>

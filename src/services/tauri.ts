@@ -109,6 +109,13 @@ export const api = {
   /** 以管理员身份重启（仅文件访问被拒时由用户主动触发）。 */
   relaunchAsAdmin: () => invoke<OperationResult>('relaunch_as_admin'),
   cancelDownload: () => invoke<OperationResult>('cancel_download'),
+  /**
+   * 安装程序在安装时写入的界面语言（`install-language.txt`）。
+   *
+   * 仅用于「首次启动且用户还没手动选过语言」的场景；后端只返回受支持的
+   * 五种语言，其它内容一律为 null，调用方不必再校验。
+   */
+  installLanguage: () => invoke<string | null>('get_install_language'),
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),

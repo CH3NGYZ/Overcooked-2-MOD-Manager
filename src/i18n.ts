@@ -29,6 +29,41 @@ watch(locale, (value) => {
   document.documentElement.lang = value
 })
 
+/** 受支持的界面语言（供安装语言的运行期校验）。 */
+export const SUPPORTED_LOCALES: readonly Locale[] = LOCALES
+
+/**
+ * 是否已有用户选择过的语言。
+ *
+ * 「有 localStorage」= 用户在界面里选过（watch 会写）；没有则说明是首次启动，
+ * 可以采纳安装程序写入的语言。
+ */
+export function hasStoredLocale(): boolean {
+  return LOCALES.includes(localStorage.getItem(LOCALE_KEY) as Locale)
+}
+
+/**
+ * 应用安装程序选择的语言（仅首次启动时调用）。
+ *
+ * 独立成函数而不是写成模块顶层副作用：`i18n.ts` 被几乎所有组件引用，
+ * 顶层发起 IPC 会让测试与纯逻辑模块也被迫依赖 Tauri。由 `main.ts` 在挂载前调用。
+ *
+ * 无论是否命中，首次启动都会把当前语言落盘一次：这样「用户还没选过」这个状态
+ * 在启动后就不再成立，安装语言只影响第一次启动。
+ */
+export function applyInstallLanguage(value: string | null | undefined): boolean {
+  if (hasStoredLocale()) return false
+  const applied = !!value && LOCALES.includes(value as Locale)
+  if (applied) {
+    // 赋值触发 watch → 写入 localStorage
+    locale.value = value as Locale
+  } else {
+    // 没变化时 watch 不会触发，这里显式落盘默认语言
+    localStorage.setItem(LOCALE_KEY, locale.value)
+  }
+  return applied
+}
+
 /** 五语表：key = 简体中文原文。新增文案在这里加一行即可。 */
 const entries = {
   // 侧栏与标题栏

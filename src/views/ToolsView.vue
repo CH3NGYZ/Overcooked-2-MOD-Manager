@@ -2,9 +2,10 @@
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NLog, NModal, NSelect, NTag } from 'naive-ui'
+import { NLog, NSelect, NTag } from 'naive-ui'
 import { BuildOutline, DocumentTextOutline, ServerOutline, TerminalOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
+import AppModal from '../components/AppModal.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import { api } from '../services/tauri'
@@ -140,9 +141,9 @@ async function resetUi() {
       @click="resetUi" />
   </SettingsGroup>
 
-  <!-- 日志查看：用 Naive 的 modal + card preset + n-log，不再手写弹窗与滚动容器 -->
-  <n-modal v-model:show="logOpen" preset="card" class="log-dialog" :title="logTitle" :bordered="false"
-    style="width: min(880px, 90vw)">
+  <!-- 日志查看：统一弹窗外壳负责尺寸上限与滚动，内容区放 n-log -->
+  <AppModal :show="logOpen" card-class="log-dialog" :title="logTitle" max-width="min(880px, 90vw)"
+    @update:show="(value: boolean) => (logOpen = value)">
     <template #header-extra>
       <div class="log-head-extra">
         <!-- 等级筛选：默认 INFO，去掉 TRACE/DEBUG 的噪音 -->
@@ -153,7 +154,7 @@ async function resetUi() {
     <div class="muted mono log-path">{{ logPath }}</div>
     <!-- 不传 language：日志是纯文本，传了会走 hljs 高亮并因缺少 hljs 实例告警 -->
     <n-log :log="filteredLog || '（该等级没有日志）'" :rows="24" :font-size="12" trim />
-  </n-modal>
+  </AppModal>
 </template>
 
 <style scoped>

@@ -16,16 +16,20 @@
  * 而不是把标题栏提到遮罩之上 —— 后者会让弹窗内容被标题栏遮住一条，
  * 让出空间后标题栏与弹窗各自完整。
  *
- * 只作用于 body 直接子级的弹窗/抽屉；组件内部嵌套的弹窗已在缩放上下文中，
- * 有自己的定位规则，不受影响。
+ * 注意 Naive 的抽屉没有 `n-drawer-body-wrapper` 这一层：
+ * 结构是 `.n-drawer-container > .n-drawer`（抽屉本体的绝对定位容器），
+ * 该容器就是整屏 fixed 的那一层。只给不存在的 wrapper 写规则时，
+ * 抽屉会连标题栏一起盖住，并且因为 z-index 远高于标题栏而挡住拖动。
  */
 body > .n-modal-container > .n-modal-mask,
 body > .n-drawer-container > .n-drawer-mask {
   top: var(--oc2-titlebar-height);
 }
 body > .n-modal-container > .n-modal-body-wrapper,
-body > .n-drawer-container > .n-drawer-body-wrapper {
+body > .n-drawer-container {
   top: var(--oc2-titlebar-height);
+  bottom: 0;
+  height: auto;
 }
 * {
   box-sizing: border-box;

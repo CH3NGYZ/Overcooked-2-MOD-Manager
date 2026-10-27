@@ -16,11 +16,12 @@
  * 弹窗会打开但内容为空。
  */
 import { computed, ref, watch } from 'vue'
-import { NButton, NCollapseTransition, NModal, NTag, useMessage } from 'naive-ui'
+import { NButton, NCollapseTransition, NTag, useMessage } from 'naive-ui'
 import { api } from '../services/tauri'
 import { tagColorFor } from '../theme'
 import { renderReadme } from '../markdown'
 import { t } from '../i18n'
+import AppModal from './AppModal.vue'
 import type { ModPreview, ModPreviewEntry } from '../types'
 
 const props = defineProps<{ show: boolean; preview: ModPreview | null }>()
@@ -114,8 +115,12 @@ async function confirm() {
 </script>
 
 <template>
-  <n-modal :show="visible" preset="card" :title="t('安装详情')" :bordered="false"
-    class="install-dialog" @update:show="(value: boolean) => { if (!value) discard() }">
+  <!--
+    统一弹窗外壳：尺寸不超过可视区域，中间内容滚动，底部操作区固定。
+    展开任意多条目、提交日志再长，弹窗大小与按钮位置都不会变。
+  -->
+  <AppModal :show="visible" :title="t('安装详情')" card-class="install-dialog"
+    @update:show="(value: boolean) => { if (!value) discard() }">
     <div v-if="preview" class="install-preview">
       <!-- 头部：包名 + 类型 + 三个计数 -->
       <div class="preview-head">
@@ -180,65 +185,18 @@ async function confirm() {
       </div>
     </div>
 
-    <!-- 操作行在滚动区之外：无论展开多少条目、日志多长，按钮位置都不动 -->
-    <div v-if="preview" class="install-actions">
+    <template #footer>
       <n-button secondary :disabled="installing" @click="discard">{{ t('取消') }}</n-button>
       <n-button type="primary" :loading="installing" @click="confirm">{{ t('立即安装') }}</n-button>
-    </div>
-  </n-modal>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-/*
- * 弹窗尺寸固定在标题栏下方的可用区域内：宽 80%、高 90%。
- *
- * 之前用 max-height 让内容自己撑，展开一条 MOD 详情就会把弹窗顶高，
- * 「取消 / 立即安装」被推到视口外，用户得先滚到底才找得到按钮。
- * 现在整个弹窗是固定尺寸，头部与底部操作行不动，只有中间的
- * .install-preview 内部滚动，展开多少条都不会改变弹窗大小。
- *
- * 注意 Naive 在 preset="card" 下会把传进来的 class 合并到「同时带
- * n-modal 与 n-card 的同一个元素」上，而不是外层容器 ——
- * 所以尺寸、flex 布局都必须作用在这个元素自身，不能写 .n-card 后代选择器。
- */
-:global(.n-modal.install-dialog) {
-  width: min(80vw, 1180px);
-  max-width: 80vw;
-  height: 90vh;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-}
-/*
- * 内容区吃掉剩余高度：头部与底部操作行保持自然高度。
- * 内容区类名是 .n-card-content（单下划线体系里的连字符写法），
- * 不是 .n-card__content；它同时是 install-preview 与 install-actions 的父级。
- */
-:global(.n-modal.install-dialog .n-card-content) {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
 .install-preview {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* 只有这一层滚动：条目与日志都在这里上下滑动 */
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
-}
-/* 操作行固定在内容区底部，不参与滚动 */
-.install-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding-top: 12px;
 }
 .preview-head {
   display: flex;
@@ -347,16 +305,21 @@ async function confirm() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * 日志盒子不再自己限高滚动。
+ *
+ * 外层的 .app-modal-scroll 已经负责滚动；这里再套一层内滚动会出现
+ * 两级滚动：用户在日志框里滚到底，还得把指针移出来再滚弹窗，
+ * 而中间的条目区往往只有一两行，体验很别扭。
+ * 现在日志按内容自然铺开，整段由弹窗统一滚动，滚动手势只有一级。
+ */
 .release-log-box {
-  max-height: 180px;
-  overflow-y: auto;
   padding: 8px 10px;
   border: 1px solid var(--oc2-row-line);
   border-radius: 8px;
   background: var(--oc2-sunken);
   font-size: 12px;
   line-height: 1.65;
-  overscroll-behavior: contain;
 }
 .release-log-empty {
   display: grid;

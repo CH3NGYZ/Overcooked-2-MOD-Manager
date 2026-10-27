@@ -612,11 +612,15 @@ async function openUrl(url: string) {
   .readme-collapse-leave-active { transition: none; }
 }
 /* 加载骨架：用 Naive 的 n-skeleton，这里只保留纵向间距 */
+/*
+ * 加载骨架：高度由内容自己决定，不再预留 min-height。
+ * 旧版是 1em 高的满宽矩形，为了不让 README 区域在加载完成时塌缩才垫了
+ * 88px；现在骨架条本身只有 9px 高，继续留 88px 会在动画下方空出一大段。
+ */
 .readme-loading {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 88px;
 }
 /*
  * 骨架条：Naive 的 n-skeleton 默认是 1em 高的实心矩形，满宽一条很抢眼。

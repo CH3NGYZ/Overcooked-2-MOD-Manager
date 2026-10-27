@@ -13,11 +13,12 @@
  * 一个分支，预览弹窗完全不用改。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
+import { NButton, NInput, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
 import { LinkOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { isTauri } from '../runtime'
 import { t } from '../i18n'
+import AppModal from './AppModal.vue'
 import type { ModPreview, ModSourceKind } from '../types'
 
 const props = defineProps<{ show: boolean }>()
@@ -117,8 +118,9 @@ onBeforeUnmount(() => { dragUnlisten?.(); dragUnlisten = null })
 </script>
 
 <template>
-  <n-modal v-model:show="open" preset="card" :title="t('安装 MOD')" :bordered="false"
-    style="width: min(620px, 92vw)">
+  <!-- 复用统一弹窗外壳：不传 #footer，内容区独占剩余高度并自己滚动 -->
+  <AppModal :show="open" :title="t('安装 MOD')" max-width="min(620px, 92vw)"
+    max-height="min(600px, 80vh)" @update:show="(value: boolean) => (open = value)">
     <n-tabs v-model:value="sourceTab" type="segment" animated>
       <n-tab-pane name="local" :tab="t('本地文件')">
         <!--
@@ -147,7 +149,7 @@ onBeforeUnmount(() => { dragUnlisten?.(); dragUnlisten = null })
         </div>
       </n-tab-pane>
     </n-tabs>
-  </n-modal>
+  </AppModal>
 </template>
 
 <style scoped>

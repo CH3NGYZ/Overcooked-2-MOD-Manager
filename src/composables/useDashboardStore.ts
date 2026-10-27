@@ -85,6 +85,19 @@ export function useDashboard() {
   }
 
   /**
+   * 用一个已知的最新配置替换 Dashboard 里的 config，其余字段原样保留。
+   *
+   * 用途：命令本身会返回「操作后的完整配置」（例如清空源缓存），
+   * 这时没必要再发一次 `get_config`，直接写回即可，列表当场更新。
+   * 还不存在任何快照时退回完整读取。
+   */
+  function applyConfigSnapshot(config: PublicConfig) {
+    const current = dashboard.value
+    if (!current) return
+    dashboard.value = { ...current, config }
+  }
+
+  /**
    * 页面进入时使用：已有数据就直接复用，避免每次切页面都重新扫描并重绘整页。
    * 需要最新数据时由刷新引擎或用户手动刷新触发。
    */
@@ -106,6 +119,6 @@ export function useDashboard() {
   return {
     dashboard, loading, backgroundLoading, error,
     config, game, mods, enabledModCount, updateCount, frameworkOk,
-    load, reloadConfig, ensureLoaded, refresh,
+    load, reloadConfig, applyConfigSnapshot, ensureLoaded, refresh,
   }
 }

@@ -2,7 +2,9 @@ import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledRepositories } from '../repositoryPriority'
-import { repositoryIsAvailable, sourceMatchesRegion } from '../repositoryAvailability'
+import {
+  OFFICIAL_INDEX_ID, repositoryIsAvailable, shouldFallbackToBuiltin, sourceMatchesRegion,
+} from '../repositoryAvailability'
 import type { Repository, RepositorySource } from '../types'
 
 /**
@@ -71,12 +73,12 @@ type StartupState = 'idle' | 'deferred' | 'running' | 'done'
 let startupState: StartupState = 'idle'
 
 function store() {
-  const { load, reloadConfig, config, mods } = useDashboard()
+  const { load, reloadConfig, applyConfigSnapshot, config, mods } = useDashboard()
   const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
   const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
   /** 当前地区决定哪些源/仓库真实存在；空值按「非中国大陆」处理，与后端一致。 */
   const region = computed(() => config.value?.region)
-  return { load, reloadConfig, sources, repositories, mods, region }
+  return { load, reloadConfig, applyConfigSnapshot, sources, repositories, mods, region }
 }
 
 /**
@@ -205,6 +207,50 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
 }
 
 /**
+ * 官方在线源全部失败时，改从内置快照加载官方源树。
+ *
+ * 只在「真正离线 / 官方入口不可达」时兜底，判断刻意保守：
+ *   · 必须存在官方根源（`official-index`），且它在本次失败名单里；
+ *   · 当前官方源树下没有任何仓库 —— 只要有一个子源成功带回仓库，
+ *     就说明在线可用，不能再用落后几版的内置内容覆盖它；
+ *   · 只对官方根调用一次（`builtinFallback: true`），它内部会把整个
+ *     内置索引树（含子源）一起展开。
+ *
+ * 返回 `{ fallbackErrors, hasFallenBack }`：
+ *   · `fallbackErrors` 用于向用户报告失败原因（成功时为空）；
+ *   · `hasFallenBack` 表示这次是否真的发送了内置回退请求。调用方必须用它
+ *     （而不是「错误是否为空」）来决定要不要重读配置 —— 回退成功恰恰是
+ *     「没有错误」的情况。
+ */
+async function fallbackToBuiltinIfOffline(
+  sourceErrors: string[],
+): Promise<{ fallbackErrors: string[]; hasFallenBack: boolean }> {
+  const { sources, repositories } = store()
+  if (!shouldFallbackToBuiltin(sources.value, repositories.value, sourceErrors)) {
+    return { fallbackErrors: [], hasFallenBack: false }
+  }
+
+  const officialRoot = sources.value.find((source) => source.id === OFFICIAL_INDEX_ID)
+  if (!officialRoot) return { fallbackErrors: [], hasFallenBack: false }
+
+  sourceRefreshing.value[officialRoot.id] = true
+  try {
+    const result = await api.importRepositorySource(officialRoot.id, officialRoot.url, true)
+    const fallbackErrors = result.access_error
+      ? [`${officialRoot.nickname}: ${result.access_error}`]
+      : []
+    return { fallbackErrors, hasFallenBack: true }
+  } catch (reason) {
+    return {
+      fallbackErrors: [`${officialRoot.nickname}: ${reason instanceof Error ? reason.message : String(reason)}`],
+      hasFallenBack: true,
+    }
+  } finally {
+    sourceRefreshing.value[officialRoot.id] = false
+  }
+}
+
+/**
  * 刷新全部源文档（根源并行，子源递归）。
  *
  * 只刷新当前地区适用的源：international 源在中国大陆既不展示，
@@ -233,13 +279,58 @@ async function refreshEverything(): Promise<string[]> {
   refreshingAll.value = true
   lastErrors.value = []
   try {
-    const { load, reloadConfig, repositories, sources, mods, region } = store()
+    const { load, reloadConfig, applyConfigSnapshot, repositories, sources, mods, region } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await load()
+    /*
+     * 先把旧缓存清掉，再拉取权威文档。
+     *
+     * 不这样做的话，页面会先用配置里上一轮的仓库列表渲染一遍，等 raw 文档
+     * 回来再整体替换 —— 用户看到的是「旧列表一闪、随后跳变」，而且旧条目在
+     * 新文档到达前是可点的（可能装到已经下线的仓库）。
+     *
+     * 清空只作用于本次要刷的源及其后代，社区源不受影响（它们由搜索管理）。
+     * 后端返回清理后的配置，这里直接写回 Dashboard，列表当场变空。
+     */
+    const refreshable = sources.value.filter(
+      (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
+    )
+    if (refreshable.length) {
+      try {
+        const cleared = await api.clearRepositorySourceCache(refreshable.map((source) => source.id))
+        applyConfigSnapshot(cleared)
+      } catch (reason) {
+        // 清空失败不阻塞刷新：后面每个源文档应用时也会各自清一次
+        lastErrors.value.push(reason instanceof Error ? reason.message : String(reason))
+      }
+    }
     const sourceErrors = await refreshSourceDocuments()
     // 源文档阶段用的是 reloadConfig（只更新配置）；
     // 这里再读一次配置拿到最终仓库列表，Release 阶段结束时会做一次完整 load。
     await reloadConfig()
+    /*
+     * 官方在线源全军覆没时改用内置快照。
+     *
+     * 条件（三条同时满足才回退，任一不满足都不回退）：
+     *   1. 官方源本身启用且属于官方树（`DEFAULT_INDEX_ID` 及其子源）；
+     *   2. 本次源文档阶段确实失败过（sourceErrors 覆盖到官方树）；
+     *   3. 当前官方源树下**一个仓库都没有**——部分子源成功、或子源可访问但
+     *      没有仓库，都不算「全失败」，不能拿内置内容去覆盖真实结果。
+     *
+     * 内置快照是落后几个版本的官方源，只作为离线兜底；一旦回退成功，
+     * 后续每次刷新仍先请求在线入口，不会固定在内置版本。
+     */
+    const { fallbackErrors, hasFallenBack } = await fallbackToBuiltinIfOffline(sourceErrors)
+    /*
+     * 回退成功时**也要**重读配置：内置仓库是在这次命令里写进配置的，
+     * 只有重新读一次才会出现在页面上。
+     *
+     * 这里踩过一次：原先写成 `if (fallbackErrors.length) reloadConfig()`，
+     * 而回退成功返回的是空数组（没有错误），于是重读被跳过 —— 结果是
+     * 「回退请求发了、配置也写了，但页面上一个仓库都不显示」。
+     * 用 hasFallenBack 表达「这次是否真的走了回退」，与「有没有报错」解耦。
+     */
+    if (hasFallenBack) await reloadConfig()
     /*
      * 已安装优先：先把本地装过的 MOD 所绑定的仓库排到队首。
      *
@@ -258,7 +349,7 @@ async function refreshEverything(): Promise<string[]> {
       mods.value,
     )
     const releaseErrors = await refreshMany(ordered)
-    lastErrors.value = [...sourceErrors, ...releaseErrors]
+    lastErrors.value = [...sourceErrors, ...fallbackErrors, ...releaseErrors]
     return lastErrors.value
   } finally {
     refreshingAll.value = false

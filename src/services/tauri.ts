@@ -53,6 +53,15 @@ export const api = {
   /** 从源文档地址（raw / 远程 TOML）重新拉取并应用该仓库源。 */
   importRepositorySource: (sourceId: string, sourceUrl: string, builtinFallback = false) =>
     invoke<RepositorySourceImportResult>('import_repository_source', { sourceId, sourceUrl, builtinFallback }),
+  /**
+   * 刷新前清空这些源（含后代）下的仓库与子源缓存，返回清理后的配置。
+   *
+   * 为什么要先清：不清的话，前端会继续显示上一次的仓库列表，
+   * 直到新文档回来才替换 —— 用户看到「旧列表先出现、再跳变」。
+   * 清空后列表立即变空（配合页面的加载态），权威数据只来自本次 raw 拉取。
+   */
+  clearRepositorySourceCache: (sourceIds: string[]) =>
+    invoke<PublicConfig>('clear_repository_source_cache', { sourceIds }),
   releases: (repositoryId: string) => invoke<ReleaseInfo[]>('get_repository_releases', { repositoryId }),
   installBepInEx: (reinstall: boolean, provider: Provider) => invoke<BepInExInstallResult>('install_bepinex', { reinstall, provider }),
   repairNativeBepInExOverlay: () => invoke<OperationResult>('repair_native_bepinex_overlay'),

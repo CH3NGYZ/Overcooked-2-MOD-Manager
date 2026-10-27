@@ -68,3 +68,48 @@ export function repositoryIsAvailable(
   const source = repositorySource(repo, sources)
   return !!source && sourceMatchesRegion(source, currentRegion)
 }
+
+/** 与后端 `repository_sources::DEFAULT_INDEX_ID` 一致。 */
+export const OFFICIAL_INDEX_ID = 'official-repository-index'
+
+/**
+ * 是否应当改用内置快照兜底。
+ *
+ * 内置快照是落后几个版本的官方源，只在**确实拿不到在线内容**时使用，
+ * 因此判断刻意保守 —— 三条同时满足才回退：
+ *
+ *   1. 本次源文档阶段确实有失败（`sourceErrors` 非空）；
+ *   2. 失败覆盖到了官方根源（错误文案形如 `<昵称>: …`）；
+ *   3. 当前官方源树下**一个仓库都没有**。
+ *
+ * 第 3 条是关键：只要有一个官方子源成功带回仓库，就说明在线可用，
+ * 这时用旧的内置内容覆盖会丢掉刚拿到的真实数据（包括作者刚发布的仓库）。
+ * 「子源可访问但没有仓库」也不算可用，会回退 —— 那通常意味着索引被清空
+ * 或入口指向了废弃分支。
+ *
+ * 抽成纯函数是为了能在 Node 里直接测；副作用（真正发起回退请求）留在调用方。
+ */
+export function shouldFallbackToBuiltin(
+  sources: Pick<RepositorySource, 'id' | 'nickname' | 'parent_id'>[],
+  repositories: Pick<Repository, 'source_id'>[],
+  sourceErrors: readonly string[],
+): boolean {
+  if (!sourceErrors.length) return false
+  const officialRoot = sources.find((source) => source.id === OFFICIAL_INDEX_ID)
+  if (!officialRoot) return false
+  if (!sourceErrors.some((error) => error.startsWith(`${officialRoot.nickname}:`))) return false
+
+  // 官方树 = 根源 + 它声明出来的全部后代源
+  const officialIds = new Set<string>([officialRoot.id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const source of sources) {
+      if (source.parent_id && officialIds.has(source.parent_id) && !officialIds.has(source.id)) {
+        officialIds.add(source.id)
+        grew = true
+      }
+    }
+  }
+  return !repositories.some((repo) => !!repo.source_id && officialIds.has(repo.source_id))
+}

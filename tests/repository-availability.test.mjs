@@ -6,9 +6,11 @@ import test from 'node:test'
  * 真实源码直接执行（不 import i18n / naive-ui）。
  */
 const {
+  OFFICIAL_INDEX_ID,
   repositoryIsAvailable,
   repositoryRegionMatches,
   sourceMatchesRegion,
+  shouldFallbackToBuiltin,
 } = await import('../src/repositoryAvailability.ts')
 
 const sources = [
@@ -97,4 +99,59 @@ test('当前地区为空按「非中国大陆」处理，与后端 current_user_
   const intl = repo({ region: 'international' })
   assert.equal(repositoryIsAvailable(intl, sources, undefined), true)
   assert.equal(repositoryIsAvailable(repo({ region: 'chinese_mainland' }), sources, undefined), false)
+})
+
+/* ===== 内置源回退判定 ===== */
+
+/** 官方根 + 两个子源 + 一个自定义源。 */
+const fallbackSources = [
+  { id: OFFICIAL_INDEX_ID, nickname: '官方仓库源', parent_id: undefined },
+  { id: 'official-child-a', nickname: '官方子源 A', parent_id: OFFICIAL_INDEX_ID },
+  { id: 'official-child-b', nickname: '官方子源 B', parent_id: OFFICIAL_INDEX_ID },
+  { id: 'custom', nickname: '自定义源', parent_id: undefined },
+]
+const officialError = '官方仓库源: connection refused'
+
+test('官方源全部失败且树上没有仓库时回退内置源', () => {
+  assert.equal(shouldFallbackToBuiltin(fallbackSources, [], [officialError]), true)
+})
+
+test('没有失败时不回退', () => {
+  assert.equal(shouldFallbackToBuiltin(fallbackSources, [], []), false)
+})
+
+test('失败没有覆盖到官方根源时不回退', () => {
+  // 只有自定义源失败：官方树可能是好的，不该拿内置内容顶替
+  assert.equal(shouldFallbackToBuiltin(fallbackSources, [], ['自定义源: timeout']), false)
+})
+
+test('官方子源成功带回仓库时不回退（在线可用）', () => {
+  // 这是最关键的一条：只要官方树里还有仓库，就不能用落后几版的内置快照覆盖
+  const repos = [{ source_id: 'official-child-a' }]
+  assert.equal(shouldFallbackToBuiltin(fallbackSources, repos, [officialError]), false)
+})
+
+test('自定义源下的仓库不算官方在线可用', () => {
+  // 自定义源有内容不代表官方源可用，仍应回退
+  const repos = [{ source_id: 'custom' }]
+  assert.equal(shouldFallbackToBuiltin(fallbackSources, repos, [officialError]), true)
+})
+
+test('孙子代子源带回的仓库同样算官方在线可用', () => {
+  const nested = [
+    ...fallbackSources,
+    { id: 'grandchild', nickname: '孙子源', parent_id: 'official-child-a' },
+  ]
+  const repos = [{ source_id: 'grandchild' }]
+  assert.equal(shouldFallbackToBuiltin(nested, repos, [officialError]), false)
+})
+
+test('没有官方根源时不回退', () => {
+  const noRoot = [{ id: 'custom', nickname: '自定义源', parent_id: undefined }]
+  assert.equal(shouldFallbackToBuiltin(noRoot, [], [officialError]), false)
+})
+
+test('官方树里只有无归属仓库时仍然回退', () => {
+  // source_id 为空（手动安装的遗留条目）不属于任何官方源
+  assert.equal(shouldFallbackToBuiltin(fallbackSources, [{ source_id: undefined }], [officialError]), true)
 })

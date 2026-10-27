@@ -1,22 +1,26 @@
 <script setup lang="ts">
 /**
- * 统一的应用弹窗外壳。
+ * 统一的应用弹窗外壳 —— 前端所有弹窗都走这里。
  *
- * 解决的问题：Naive 的 n-modal + preset="card" 默认高度由内容决定，
- * 内容一长（展开详情、长提交日志）弹窗就会超出可视区域，底部按钮被顶到
- * 视口外，用户必须先滚整个页面才找得到；而窗口本身不可滚动时直接够不到。
+ * 解决两个反复出现的布局问题：
+ *   1. Naive 的 n-modal + preset="card" 高度由内容决定，内容一长就超出可视
+ *      区域，底部按钮被顶到视口外；窗口本身不可滚动时直接够不到。
+ *   2. 反过来，内容很短时又会被写成固定高度的弹窗拉出一大片空白。
  *
- * 这里固定三件事，所有弹窗共用：
- *   1. 弹窗尺寸永远不超过可视区域（宽最多 maxWidth，高最多 90% 可用高度）；
- *   2. 头部与底部 `#footer` 槽位是固定区，不参与滚动；
- *   3. 只有中间的默认插槽滚动，内容多长都不会撑开弹窗。
+ * 规则：尺寸是「上限」而不是「定值」——
+ *   宽：内容自然宽度，最多 max-width（默认 80vw / 1180px）
+ *   高：内容自然高度，最多 max-height（默认 90vh）
+ * 所以短内容自动收缩，长内容到上限后由中间区域滚动，
+ * 头部与 #footer 始终固定，任何情况下都不会超出可视区域。
  *
- * 不带按钮的弹窗不传 `#footer` 即可，内容区自动独占剩余高度。
- *
- * 高度约束必须用 `:content-style` 内联下发：Naive 的 `.n-card-content`
- * 自带 `flex: 1` 但**没有** `min-height: 0`，而 flex item 的 min-height
- * 默认是 auto —— 只靠外部 CSS 类去改，内容会把 card 撑破（实测溢出到卡片外，
- * 还同时出现「弹窗不变高、内容被裁掉、明明溢出却滚不动」三个症状）。
+ * 关键实现细节（都是踩过的坑）：
+ *   · 高度约束必须用 :content-style 内联下发。Naive 的 .n-card-content 自带
+ *     `flex: 1` 却**没有** `min-height: 0`，而 flex item 的 min-height 默认是
+ *     auto —— 只靠外部 class 改不动，内容会把 card 撑破，并同时出现
+ *     「弹窗不变高、内容被裁、明明溢出却滚不动」三个症状。
+ *   · Naive 在 preset="card" 下把传入的 class 合并到「同时带 n-modal 与
+ *     n-card 的同一个元素」上，内容区类名是 .n-card-content（不是
+ *     .n-card__content）。
  */
 import { computed, toRefs } from 'vue'
 import { NModal } from 'naive-ui'
@@ -25,37 +29,69 @@ const props = withDefaults(defineProps<{
   show: boolean
   /** 卡片标题；不传则不渲染头部。 */
   title?: string
-  /** 最大宽度，默认 80vw 与 1180px 取小。 */
+  /** 最大宽度（上限，不是定值）。 */
   maxWidth?: string
-  /** 最大高度，默认可用视口的 90%。 */
+  /** 最大高度（上限，不是定值）。 */
   maxHeight?: string
+  /** 内容区最小高度：内容很少时也不至于缩成一条，默认不设。 */
+  minHeight?: string
   bordered?: boolean
   maskClosable?: boolean
+  /**
+   * `if` = 关闭时真正从 DOM 移除内容（Monaco 这类需要它，
+   * 只 v-show 会让编辑器留在 0 尺寸容器里持续重排）。
+   */
+  displayDirective?: 'if' | 'show'
   /** 额外类名，用于页面定制配色等。 */
   cardClass?: string
+  /**
+   * 挂载目标。默认 `body`（全窗口居中、层级最高）。
+   * 传选择器可把遮罩限制在某个容器内 —— 配置编辑器用它挂到
+   * `.page-scroll`，让遮罩只覆盖侧栏右侧的内容区。
+   */
+  to?: string
 }>(), {
   title: '',
   maxWidth: 'min(80vw, 1180px)',
   maxHeight: '90vh',
+  minHeight: '',
   bordered: false,
   maskClosable: true,
+  displayDirective: 'if',
   cardClass: '',
+  to: undefined,
 })
-
-/*
- * 模板只能访问 setup 作用域的顶层绑定，所以这里把 props 解成独立常量。
- * 变量名不能与 prop 同名 —— 同名时 vue-tsc 会把模板里的标识符解析成
- * 组件实例属性（报 Property 'show' does not exist on ComponentPublicInstance）。
- */
-const { show: visible, title: heading, bordered: hasBorder, maskClosable: closable, cardClass: extraClass } = toRefs(props)
 
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
+/*
+ * 模板只能访问 setup 作用域的顶层绑定，所以把 props 解成独立常量。
+ * 变量名不能与 prop 同名 —— 同名时 vue-tsc 会把模板里的标识符解析成
+ * 组件实例属性（报 Property 'show' does not exist on ComponentPublicInstance）。
+ */
+const {
+  show: visible,
+  title: heading,
+  maxWidth: widthLimit,
+  maxHeight: heightLimit,
+  minHeight: heightFloor,
+  bordered: hasBorder,
+  maskClosable: closable,
+  displayDirective: directive,
+  cardClass: extraClass,
+  to: mountTarget,
+} = toRefs(props)
+
+/*
+ * 全部用 max-*：宽高随内容自然伸缩，只在超过上限时才封顶。
+ * max-height 生效后，内容区拿到确定高度，min-height: 0 才让它真正可滚。
+ */
 const modalStyle = computed(() => ({
-  width: props.maxWidth,
-  maxWidth: props.maxWidth,
-  height: props.maxHeight,
-  maxHeight: props.maxHeight,
+  width: 'auto',
+  minWidth: 'min(320px, 92vw)',
+  maxWidth: widthLimit.value,
+  height: 'auto',
+  maxHeight: heightLimit.value,
 }))
 
 /**
@@ -73,14 +109,15 @@ const contentStyle = {
 
 <template>
   <n-modal :show="visible" preset="card" :title="heading || undefined" :bordered="hasBorder"
-    :mask-closable="closable" class="app-modal" :class="extraClass" :style="modalStyle"
-    :content-style="contentStyle" @update:show="(value: boolean) => emit('update:show', value)">
+    :mask-closable="closable" :display-directive="directive" :to="mountTarget" class="app-modal"
+    :class="extraClass" :style="modalStyle" :content-style="contentStyle"
+    @update:show="(value: boolean) => emit('update:show', value)">
     <!-- 头部右侧附加内容（筛选器、计数等），透传 Naive 原生槽位 -->
     <template v-if="$slots['header-extra']" #header-extra>
       <slot name="header-extra" />
     </template>
-    <!-- 唯一可滚动区域：内容多长都在这里，弹窗尺寸不变 -->
-    <div class="app-modal-scroll">
+    <!-- 唯一可滚动区域：内容再多也在这一层，弹窗尺寸不变 -->
+    <div class="app-modal-scroll" :style="heightFloor ? { minHeight: heightFloor } : undefined">
       <slot />
     </div>
     <!-- 固定操作区：不传就完全不渲染，内容区自动占满剩余高度 -->

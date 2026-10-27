@@ -8,13 +8,14 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NModal, NSpin, NTag } from 'naive-ui'
+import { NButton, NSpin, NTag } from 'naive-ui'
 import { SaveOutline, CloseOutline } from '@vicons/ionicons5'
 import type * as MonacoApi from 'monaco-editor'
 import { api } from '../services/tauri'
 import { themeMode } from '../theme'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
+import AppModal from './AppModal.vue'
 
 const props = defineProps<{
   show: boolean
@@ -23,14 +24,10 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
-/**
- * 弹窗保持 Teleport 到 body（与其它 modal 一致，层级最可靠），
- * 但通过 config-modal 这个 class 把遮罩限制在 sidebar 右侧的内容区：
- * 左侧让出侧栏宽度（--oc2-rail-width）、顶部让出标题栏高度
- * （--oc2-titlebar-height）。
- * 这样视觉上是「在容器内弹出」，又不必 teleport 到滚动容器
- * （挂到 .page-scroll 会跟随其 padding/overflow，实测会排到页面下方）。
- * 具体坐标见下方样式里的 .config-modal.n-modal-container。
+/*
+ * 遮罩范围由 AppModal 的 to 属性决定：本组件挂到 .page-scroll，
+ * 于是弹窗只覆盖侧栏右侧的内容区，视觉上像「在页面内打开」。
+ * 外观、尺寸上限、滚动与底部按钮区都在 AppModal 里统一处理。
  */
 
 const message = useMessage()
@@ -197,68 +194,44 @@ onBeforeUnmount(disposeEditor)
 
 <template>
   <!--
-    display-directive="if"：关闭时真正从 DOM 移除内容。
-    只 v-show 隐藏会让 Monaco 留在 0 尺寸容器里持续内部重排，
-    表现为「点关闭后整个程序卡死」。
-  -->
-  <n-modal :show="show" :mask-closable="false" class="config-modal" display-directive="if"
-    @update:show="(value: boolean) => emit('update:show', value)">
-    <div class="config-shell">
-      <div class="config-head">
-        <b class="config-title">{{ title }}</b>
-        <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>
-        <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('contrast')">{{ t('未保存') }}</n-tag>
-        <span class="config-actions">
-          <n-button size="small" type="primary" :loading="saving" :disabled="!canSave" @click="save">
-            <SaveOutline width="14" height="14" />{{ t('保存') }}
-          </n-button>
-          <n-button size="small" quaternary @click="close">
-            <CloseOutline width="14" height="14" />{{ t('关闭') }}
-          </n-button>
-        </span>
-      </div>
+    统一弹窗外壳：保存/关闭放到固定 footer，中间整块留给 Monaco。
 
-      <div v-if="error" class="config-error">{{ error }}</div>
-      <n-spin v-else-if="loading" class="config-loading" size="small" />
-      <div ref="container" class="config-editor" :class="{ hidden: loading || !!error }"></div>
+    to=".page-scroll" 是这个弹窗唯一的特殊之处：它挂在内容区滚动容器上，
+    遮罩因此只覆盖侧栏右侧，视觉上像「在页面内打开」，而不是盖住整个窗口。
+    这比原来的 :global(.config-modal.n-modal-container) 可靠 ——
+    Naive 的 class 透传落在卡片上，那个组合选择器从来没有命中过。
+
+    display-directive="if"：关闭时真正从 DOM 移除内容。只 v-show 隐藏会让
+    Monaco 留在 0 尺寸容器里持续内部重排，表现为「点关闭后程序卡死」。
+  -->
+  <AppModal :show="show" :mask-closable="false" display-directive="if" :title="title"
+    to=".page-scroll" max-width="min(1000px, calc(100vw - var(--oc2-rail-width, 108px) - 96px))"
+    max-height="85vh" min-height="460px" @update:show="(value: boolean) => emit('update:show', value)">
+    <div class="config-head">
+      <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>
+      <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('contrast')">{{ t('未保存') }}</n-tag>
     </div>
-  </n-modal>
+
+    <div v-if="error" class="config-error">{{ error }}</div>
+    <n-spin v-else-if="loading" class="config-loading" size="small" />
+    <div ref="container" class="config-editor" :class="{ hidden: loading || !!error }"></div>
+
+    <template #footer>
+      <n-button size="small" type="primary" :loading="saving" :disabled="!canSave" @click="save">
+        <SaveOutline width="14" height="14" />{{ t('保存') }}
+      </n-button>
+      <n-button size="small" quaternary @click="close">
+        <CloseOutline width="14" height="14" />{{ t('关闭') }}
+      </n-button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
 /*
- * 遮罩只覆盖 sidebar 右侧的内容区：左侧让出侧栏宽度、顶部让出标题栏。
- * 用 :global 是因为 .n-modal-container 由 Naive 渲染在 body 下，
- * 不在本组件的 scoped 作用域内。
- * 只改位置不改 display：Naive 自带 grid 居中，改成别的会让卡片塌成一行。
+ * 卡片外观、遮罩范围与滚动全部交给 AppModal（通过 to=".page-scroll"）。
+ * 这里只保留编辑器自身的两件事：让 Monaco 容器撑满可用高度、出错时的提示。
  */
-:global(.config-modal.n-modal-container) {
-  top: var(--oc2-titlebar-height, 56px) !important;
-  left: var(--oc2-rail-width, 108px) !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: auto !important;
-  height: auto !important;
-}
-/* 遮罩本身铺满这个受限区域（Naive 默认 inset: 0 的 fixed 定位会盖住侧栏） */
-:global(.config-modal .n-modal-mask) {
-  position: absolute;
-  inset: 0;
-}
-.config-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  /* 相对受限遮罩区域计算尺寸：减去侧栏宽度与两侧留白 */
-  width: min(1000px, calc(100vw - var(--oc2-rail-width, 108px) - 96px));
-  height: min(640px, calc(100vh - var(--oc2-titlebar-height, 56px) - 80px));
-  max-height: calc(100vh - var(--oc2-titlebar-height, 56px) - 80px);
-  padding: 14px 16px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 14px;
-  background: var(--oc2-card);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
-}
 .config-head {
   display: flex;
   align-items: center;
@@ -266,31 +239,24 @@ onBeforeUnmount(disposeEditor)
   flex: 0 0 auto;
   min-width: 0;
 }
-.config-title {
-  font-size: 14px;
-  color: var(--oc2-text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.config-actions {
-  display: flex;
-  gap: 6px;
-  margin-left: auto;
-  flex: 0 0 auto;
-}
 .config-error {
   color: #f87171;
   font-size: 12.5px;
   padding: 10px 0;
 }
 .config-loading { align-self: center; margin: 30px 0; }
+/*
+ * Monaco 容器必须撑满剩余空间，但外层是「内容驱动高度」的滚动区，
+ * flex: 1 在这里没有可分配的高度（父级高度由内容决定），会塌成 0。
+ * 所以用 flex: 1 配合 min-height 给一个确定下限，再由 AppModal 的
+ * max-height 封顶 —— 两者共同决定编辑器的实际高度。
+ */
 .config-editor {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 320px;
   border: 1px solid var(--oc2-row-line);
   border-radius: 10px;
   overflow: hidden;
 }
-.config-editor.hidden { visibility: hidden; height: 0; }
+.config-editor.hidden { visibility: hidden; min-height: 0; height: 0; }
 </style>

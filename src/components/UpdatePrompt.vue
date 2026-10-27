@@ -2,9 +2,10 @@
 import { t } from '../i18n'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NModal } from 'naive-ui'
+import { NButton } from 'naive-ui'
 import { api, watchAppUpdatePhase } from '../services/tauri'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
+import AppModal from './AppModal.vue'
 import type { AppUpdateInfo } from '../types'
 
 const props = defineProps<{ show: boolean; update: AppUpdateInfo | null }>()
@@ -61,8 +62,10 @@ async function install() {
 </script>
 
 <template>
-  <n-modal :show="show" :mask-closable="false" :escable="false" @update:show="close">
-    <div class="update-card">
+  <!-- 复用统一弹窗外壳：尺寸随内容自适应，更新日志再长也不会超出视口 -->
+  <AppModal :show="show" :mask-closable="false" max-width="min(520px, calc(100vw - 80px))"
+    max-height="85vh" min-height="160px" @update:show="close">
+    <div class="update-body">
       <h2 class="title">
         发现新版本<span v-if="update">: v{{ update.version }}</span>
       </h2>
@@ -74,22 +77,20 @@ async function install() {
       <div v-if="bodyHtml" ref="bodyElement" class="body markdown-body" v-html="bodyHtml"></div>
       <div v-else class="body">{{ bodyText }}</div>
       <div v-if="phaseText" class="phase">{{ phaseText }}</div>
-      <div class="actions">
-        <n-button quaternary :disabled="installing" @click="close">{{ t('取消') }}</n-button>
-        <n-button type="primary" :loading="installing" @click="install">{{ t('更新') }}</n-button>
-      </div>
     </div>
-  </n-modal>
+    <template #footer>
+      <n-button quaternary :disabled="installing" @click="close">{{ t('取消') }}</n-button>
+      <n-button type="primary" :loading="installing" @click="install">{{ t('更新') }}</n-button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-.update-card {
-  width: min(520px, calc(100vw - 80px));
-  border-radius: 16px;
-  background: var(--oc2-card);
-  border: 1px solid var(--oc2-row-line);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
-  padding: 24px 26px 18px;
+/* 外壳（卡片边框/内边距/滚动）由 AppModal 负责，这里只管内容排版 */
+.update-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .title {
   margin: 0 0 6px;
@@ -98,9 +99,11 @@ async function install() {
 }
 .version-line { margin-bottom: 12px; }
 .body-label { margin-bottom: 6px; }
+/*
+ * 正文不再自己限高滚动：外层 AppModal 已经统一滚动，
+ * 这里再套一层会出现两级滚动，手势体验很差。
+ */
 .body {
-  max-height: 220px;
-  overflow: auto;
   white-space: pre-wrap;
   padding: 10px 12px;
   border: 1px solid var(--oc2-divider);
@@ -145,11 +148,5 @@ async function install() {
   margin-top: 10px;
   color: var(--oc2-accent);
   font-size: 12.5px;
-}
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 16px;
 }
 </style>

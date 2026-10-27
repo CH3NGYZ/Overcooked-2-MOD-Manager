@@ -126,7 +126,11 @@ defineExpose({ onUnmountedCleanup })
 <template>
   <header class="titlebar" data-tauri-drag-region>
     <!-- 品牌：图标上悬浮启动/停止按钮 -->
-    <div class="brand" data-tauri-drag-region>
+    <div class="brand">
+      <!--
+        brand-mark-wrap 不能带 data-tauri-drag-region：
+        Tauri 的拖拽区域会在 mousedown 时接管事件，子元素按钮就点不动了。
+      -->
       <div class="brand-mark-wrap" @mouseenter="gameHover = true" @mouseleave="gameHover = false">
         <img class="brand-mark" :src="appIcon" alt="" />
         <!--

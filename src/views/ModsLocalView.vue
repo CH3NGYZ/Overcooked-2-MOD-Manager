@@ -19,6 +19,8 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
+import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
+import { useModInstallFlow } from '../composables/useModInstallFlow'
 import type { InstalledMod, Repository } from '../types'
 
 const message = useMessage()
@@ -70,9 +72,11 @@ const effectiveMods = computed<InstalledMod[]>(() =>
         labels: recomputed.update_available ? ['update_available', ...stripped] : ['latest', ...stripped],
       }
     }
-    // 仓库还在抓取：明确显示「检查中」，不把旧结论当现状
+    // 仓库还在抓取：明确显示「检查中」，不把旧结论当现状。
+    // 但仓库文件（RAW）模式本来就没有版本可比较，刷新也不该让它变成
+    // 「版本未知」—— 它的语义就是「已安装」，保持原样即可。
     const repo = repositoryForMod(repositories.value, mod)
-    if (repo && isRepositoryRefreshing(repo.id)) {
+    if (repo && repo.download_mode !== 'repository_file' && isRepositoryRefreshing(repo.id)) {
       const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available' && label !== 'unknown')
       return { ...mod, update_available: false, labels: ['unknown', ...stripped] }
     }
@@ -498,12 +502,18 @@ async function openModsDirectory() {
 }
 
 /**
- * 「安装 MOD」弹窗的开关。
+ * 安装流程：来源选择 → 预览 → 确认安装。
  *
- * 弹窗本体、解析流程、拖放监听、暂存清理全部在 ModInstallDialog 里，
- * 与 MOD 安装页、仓库卡片安装共用同一个组件 —— 三个入口看到的信息一致。
+ * 三段都由共用组件承担（ModInstallSourceDialog / ModInstallDialog），
+ * 本页只持有流程状态；拖放监听在来源组件里，暂存清理在流程 composable 里。
  */
-const installOpen = ref(false)
+const {
+  sourceOpen: installSourceOpen,
+  previewOpen: installPreviewOpen,
+  openPreview: openInstallPreview,
+  discardPreview: discardInstallPreview,
+  handleInstalled: handleInstallInstalled,
+} = useModInstallFlow(() => load())
 
 /* ===== 包级操作 ===== */
 
@@ -587,10 +597,14 @@ function removePackage(node: ModPackageNode) {
   </Teleport>
 
   <!--
-    安装 MOD：抽成通用组件 ModInstallDialog，与 MOD 安装页、
-    仓库卡片的「安装 / 重装 / 更新」共用同一套「解析 → 预览 → 立即安装」。
+    安装流程三段：来源选择 → 详情预览 → 确认安装。
+    与 MOD 安装页、仓库卡片共用同一套组件与流程，信息完全一致。
   -->
-  <ModInstallDialog v-model:show="installOpen" @installed="void load()" />
+  <ModInstallSourceDialog v-model:show="installSourceOpen"
+    @preview="openInstallPreview" />
+  <ModInstallDialog v-model:show="installPreviewOpen"
+    @installed="handleInstallInstalled()"
+    @discarded="discardInstallPreview" />
 
   <n-spin :show="loading">
     <div class="toolbar">

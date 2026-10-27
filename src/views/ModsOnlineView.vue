@@ -15,8 +15,10 @@ import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } f
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
+import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
+import { useModInstallFlow } from '../composables/useModInstallFlow'
 import ProviderIcon from '../components/ProviderIcon.vue'
-import type { ModPreview, Repository, RepositorySource } from '../types'
+import type { Repository, RepositorySource } from '../types'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -33,13 +35,22 @@ const installing = ref<Record<string, boolean>>({})
 const search = ref('')
 /** 当前展开详情的仓库（同页展开，不做二级路由）。 */
 const detailId = ref<string | null>(null)
-/** 「安装 MOD」弹窗：本地文件 / 在线直链，与 MOD 管理页共用同一组件。 */
-const installOpen = ref(false)
-/** 仓库资产已解析好的预览，交给弹窗直接展示（不再二次下载）。 */
-const pendingPreview = ref<ModPreview | null>(null)
+/**
+ * 安装流程：来源选择 → 预览 → 确认安装。
+ *
+ * 仓库卡片的「安装 / 重装 / 更新」也走同一套——先用 preview_only 让后端
+ * 下载解析，再把结果交给预览弹窗，用户在弹窗里确认后才写入游戏目录。
+ */
+const {
+  sourceOpen: installSourceOpen,
+  previewOpen: installPreviewOpen,
+  openSource: openInstallSource,
+  openPreview: openInstallPreview,
+  discardPreview: discardInstallPreview,
+  handleInstalled: handleInstallInstalled,
+} = useModInstallFlow(() => load())
 function openInstall() {
-  pendingPreview.value = null
-  installOpen.value = true
+  openInstallSource()
 }
 
 const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
@@ -379,19 +390,12 @@ async function install(repo: Repository, tag?: string) {
       return
     }
     // 把预览交给安装弹窗，用户在弹窗里确认后才写入
-    pendingPreview.value = outcome.preview
-    installOpen.value = true
+    openInstallPreview(outcome.preview)
   } catch (reason) {
     fail(reason)
   } finally {
     installing.value[repo.id] = false
   }
-}
-
-/** 安装成功后刷新 Dashboard：状态标签与安装情况都要重新计算。 */
-async function onInstalled() {
-  pendingPreview.value = null
-  await load()
 }
 
 defineExpose({ refreshAll, visibleCount })
@@ -606,13 +610,15 @@ defineExpose({ refreshAll, visibleCount })
   </n-drawer>
 
   <!--
-    「安装 MOD」弹窗：与 MOD 管理页共用 ModInstallDialog。
-    本页的仓库卡片「安装 / 重装 / 更新」走 install()，那条路径是后端
-    直接下载安装；这个弹窗处理的是「本地文件 / 在线直链」两种手动来源。
+    安装流程三段：来源选择 → 详情预览 → 确认安装。
+    「安装 MOD」按钮走来源选择；仓库卡片的「安装 / 重装 / 更新」
+    先用 preview_only 下载解析，然后直接把预览交给同一个详情弹窗。
   -->
-  <ModInstallDialog v-model:show="installOpen" :pending-preview="pendingPreview"
-    @update:show="(value: boolean) => { if (!value) pendingPreview = null }"
-    @installed="onInstalled" />
+  <ModInstallSourceDialog v-model:show="installSourceOpen"
+    @preview="openInstallPreview" />
+  <ModInstallDialog v-model:show="installPreviewOpen"
+    @installed="handleInstallInstalled()"
+    @discarded="discardInstallPreview" />
 </template>
 
 <style scoped>

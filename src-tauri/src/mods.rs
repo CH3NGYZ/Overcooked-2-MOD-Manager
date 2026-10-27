@@ -230,10 +230,23 @@ fn inspect_dll(
                 .unwrap_or("未知 MOD")
                 .to_string()
         });
-    let (update_available, status) = if let Some(binding) = repository_binding {
-        binding_update_state(repository, binding)
-    } else {
-        repository_update_state(repository, installed_version.as_deref())
+    /*
+     * 仓库文件（RAW）模式没有 Release 可比较，装的是一份固定文件。
+     *
+     * 这类仓库也可能在清单里留下 repository_binding（安装时按 release_tag
+     * 建的），但 RAW 从不抓 Release、cached_releases 永远为空。若照常走
+     * binding_update_state，bound_release 找不到 Release 就返回 unknown，
+     * MOD 管理页于是永远显示「版本未知」——即使刷新早已完成。
+     * 所以先按仓库模式分流：RAW 直接判「已安装」，不参与版本判断。
+     */
+    let (update_available, status) = match repository {
+        Some(repo) if repo.download_mode == RepositoryDownloadMode::RepositoryFile => {
+            (false, "not_release_asset")
+        }
+        _ => match repository_binding {
+            Some(binding) => binding_update_state(repository, binding),
+            None => repository_update_state(repository, installed_version.as_deref()),
+        },
     };
     if update_available {
         let remote = repository.and_then(|repo| {
@@ -1010,6 +1023,46 @@ mod tests {
             super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
             assert!(!item.update_available, "版本 {version} 不应被判为可更新");
         }
+    }
+
+    /*
+     * 仓库文件（RAW）模式的 MOD 永远显示「已安装」，不能显示「版本未知」。
+     *
+     * 这类仓库装的是一份固定文件，没有 Release 可比较；但安装清单里可能
+     * 留下 repository_binding，此时若照常走 binding_update_state，
+     * bound_release 找不到 Release 就返回 unknown —— 即使仓库刷新早已完成，
+     * MOD 管理页也会一直同时显示「版本未知」和「已安装」。
+     */
+    #[test]
+    fn raw_repository_mods_never_report_unknown_version() {
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "raw-1", "name": "Raw", "provider": "github", "username": "u", "repository": "r",
+            "download_mode": "repository_file", "branch": "main", "file_path": "mod.dll",
+            "channel": "all", "asset_rules": [], "install_target": "BepInEx/plugins",
+            "note": "", "plugin_guid": "", "local_product_name": "", "local_original_filename": "",
+            "version_regex": "", "max_release_count": 10, "download_threads": 4,
+            "enabled": true, "builtin": false, "cached_releases": []
+        }))
+        .unwrap();
+        // RAW 仓库没有 cached_releases，但绑定存在
+        let (update, status) = super::binding_update_state(
+            Some(&repo),
+            &crate::models::RepositoryBinding {
+                provider: crate::models::Provider::Github,
+                owner: "u".into(),
+                repository: "r".into(),
+                tag: "v1.0.0".into(),
+                channel: crate::models::Channel::All,
+            },
+        );
+        // 直接调绑定判定仍会返回 unknown —— 这是它本身的语义
+        assert!(!update);
+        assert_eq!(status, "unknown");
+        // 但扫描路径必须先按仓库模式分流，不能让 RAW 走到这里
+        assert_eq!(
+            super::repository_update_state(Some(&repo), Some("1.0.0")).1,
+            "not_release_asset"
+        );
     }
 
     /// MOD 包（成员数 >= 2）不参与逐 DLL 版本比较：包版本只按 tag 比较。

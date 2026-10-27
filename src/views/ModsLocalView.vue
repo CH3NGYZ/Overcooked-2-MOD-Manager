@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t, locale } from '../i18n'
-import { tagColorFor, tagColorForAny } from '../theme'
+import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import {
@@ -816,7 +816,8 @@ function removePackage(node: ModPackageNode) {
                     预览下载 → 安装详情弹窗 → 用户确认写入。
                   -->
                   <template v-if="updatableRepository(mod)">
-                    <n-button size="tiny" quaternary type="primary" :title="t('更新')"
+                    <!-- 与「可更新」标签同档 moderate 的浅底样式，配色来自 theme.ts -->
+                    <n-button size="tiny" :style="buttonColorFor('moderate', 'soft')" :title="t('更新')"
                       :loading="!!previewing[bindingRepositoryId(mod) ?? '']"
                       :disabled="!!game?.kitchen_running" @click.stop="updateMod(mod)">
                       <ArrowUpCircleOutline width="14" height="14" />{{ t('更新') }}

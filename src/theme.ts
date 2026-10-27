@@ -244,12 +244,9 @@ export interface TagColorValue {
 }
 
 /**
- * 状态标签的统一配色表。
+ * 语义色调：全站唯一的「严重程度」刻度。
  *
- * 所有页面的状态标签都从这里取色，通过 Naive `n-tag` 的原生 `:color`
- * 属性下发 —— 不需要任何自定义 CSS 类，换主题色时自动跟随。
- *
- * 分级是「严重程度」五档，颜色强度直接对应用户需要多在意：
+ * 标签和按钮共用这一个刻度，颜色强度直接对应用户需要多在意：
  *
  *   accent       正常   —— 主题色。最新版、已安装、部分启用（一切正常）
  *   mild         轻微   —— 对比色最弱档。低版本副本（提示性，通常顺手卸载）
@@ -258,87 +255,163 @@ export interface TagColorValue {
  *   critical     严重   —— 独立的红色。来源未知、仓库缺失、加载警告
  *   muted        中性   —— 灰色。未安装、未绑定、已禁用、版本未知
  *
- * `severe` 用主题色对比色（跟随主题色），`critical` 用固定红 —— 后者
- * 表达的是「数据/来源不可信」这类与主题无关的严重问题，不该随主题变浅。
+ * 每档只在这里定义一次「强调色 + 背景混合权重」，
+ * 标签的浅底描边样式与按钮的实心样式都由它派生（见 toneStyles）。
  */
-export const statusToneColors = computed<Record<string, TagColorValue>>(() => {
+export type TagTone = 'accent' | 'mild' | 'moderate' | 'severe' | 'critical' | 'muted'
+
+/**
+ * 每档的派生强度。
+ *
+ * `tagTint` 越大 → 标签底色越接近卡片色（越淡）；
+ * `buttonTint` 更大 → 按钮用同色系的浅底描边（而非实心），用于「提示 + 可点击」
+ * 这类不该比标签更抢眼的动作（如刷新失败的「刷新」按钮）。
+ */
+interface ToneSpec {
+  /** 强调色：文字、边框、实心按钮底色都用它。 */
+  color: string
+  /** 标签背景混入卡片色的权重（越大越淡）。 */
+  tagTint: number
+  /** 边框混入卡片色的权重；不设则用纯强调色描边。 */
+  tagBorderTint?: number
+}
+
+/** 深色/浅色无关的固定红：表达「数据/来源不可信」，不该随主题变浅。 */
+function criticalColor(mode: ThemeMode): string {
+  return mode === 'dark' ? '#f87171' : '#dc2626'
+}
+
+/** 计算每档的语义规格。标签与按钮的配色都从这一份派生。 */
+function toneSpecs(): Record<TagTone, ToneSpec> {
   const surface = surfaces.value
   const main = accent.value
   const contrast = accentContrast(main.color, themeMode.value)
   const muted = surface.text3
-  // 严重级用固定的警示红，与主题色无关
-  const critical = themeMode.value === 'dark' ? '#f87171' : '#dc2626'
   return {
-    /* 正常 */
-    accent: {
-      color: tint(main.color, surface.card, 0.82),
-      borderColor: main.color,
-      textColor: main.color,
-    },
-    /* 轻微 */
-    mild: {
-      color: tint(contrast, surface.card, 0.9),
-      borderColor: tint(contrast, surface.card, 0.6),
-      textColor: tint(contrast, muted, 0.32),
-    },
-    /* 中度 */
-    moderate: {
-      color: tint(contrast, surface.card, 0.84),
-      borderColor: contrast,
-      textColor: contrast,
-    },
-    /* 重度 */
-    severe: {
-      color: tint(contrast, surface.card, 0.74),
-      borderColor: contrast,
-      textColor: contrast,
-    },
-    /* 严重 */
-    critical: {
-      color: tint(critical, surface.card, 0.8),
-      borderColor: critical,
-      textColor: critical,
-    },
-    /* 中性 */
-    muted: {
-      color: tint(muted, surface.card, 0.86),
-      borderColor: tint(muted, surface.card, 0.7),
-      textColor: muted,
-    },
-    danger: {
-      color: tint('#ee8585', surface.card, 0.82),
-      borderColor: '#ee8585',
-      textColor: '#ee8585',
-    },
-    ok: {
-      color: tint(main.color, surface.card, 0.82),
-      borderColor: main.color,
-      textColor: main.color,
-    },
-    warn: {
-      color: tint(contrast, surface.card, 0.84),
-      borderColor: contrast,
-      textColor: contrast,
-    },
-    idle: {
-      color: tint(main.color, surface.card, 0.82),
-      borderColor: main.color,
-      textColor: main.color,
-    },
-    violet: {
-      color: tint(contrast, surface.card, 0.9),
-      borderColor: tint(contrast, surface.card, 0.6),
-      textColor: tint(contrast, muted, 0.32),
-    },
+    accent: { color: main.color, tagTint: 0.82 },
+    mild: { color: tint(contrast, muted, 0.32), tagTint: 0.9, tagBorderTint: 0.6 },
+    moderate: { color: contrast, tagTint: 0.84 },
+    severe: { color: contrast, tagTint: 0.74 },
+    critical: { color: criticalColor(themeMode.value), tagTint: 0.8 },
+    muted: { color: muted, tagTint: 0.86, tagBorderTint: 0.7 },
+  }
+}
+
+/**
+ * 状态标签的统一配色表。
+ *
+ * 所有页面的状态标签都从这里取值，通过 Naive `n-tag` 的原生 `:color`
+ * 属性下发 —— 不需要任何自定义 CSS 类，换主题色时自动跟随。
+ */
+export const statusToneColors = computed<Record<TagTone, TagColorValue>>(() => {
+  const surface = surfaces.value
+  const specs = toneSpecs()
+  const build = (tone: TagTone): TagColorValue => {
+    const spec = specs[tone]
+    return {
+      color: tint(spec.color, surface.card, spec.tagTint),
+      borderColor: spec.tagBorderTint === undefined
+        ? spec.color
+        : tint(spec.color, surface.card, spec.tagBorderTint),
+      textColor: spec.color,
+    }
+  }
+  return {
+    accent: build('accent'),
+    mild: build('mild'),
+    moderate: build('moderate'),
+    severe: build('severe'),
+    critical: build('critical'),
+    muted: build('muted'),
   }
 })
 
 /**
- * 实际可用的标签色调。写死为字面量联合，
- * 让 `tagColorFor('contrast')` 这类不存在的键在编译期就报错 ——
- * 之前它接受任意 string 并静默回退成灰色，导致两处标签显示成错误的颜色。
+ * 按钮的统一配色：与标签同一个 tone 刻度，但分成两种视觉强度。
+ *
+ *   solid  —— 实心。用于「这就是主操作」（安装 / 重装 / 立即安装）。
+ *   soft   —— 浅底 + 描边 + 同色文字。用于「提示可以点这里重试」
+ *             （刷新失败的刷新按钮）——不该比旁边的标签更抢眼。
+ *
+ * 返回值直接绑到 `n-button` 的 `:style`，Naive 的按钮配色变量写在
+ * 内联 style 上，所以内联写入才能稳定覆盖，不用 CSS 类加 !important。
  */
-export type TagTone = 'accent' | 'mild' | 'moderate' | 'severe' | 'critical' | 'muted'
+export interface ButtonColorValue {
+  '--n-color': string
+  '--n-color-hover': string
+  '--n-color-pressed': string
+  '--n-color-focus': string
+  '--n-text-color': string
+  '--n-text-color-hover': string
+  '--n-text-color-pressed': string
+  '--n-text-color-focus': string
+  '--n-border': string
+  '--n-border-hover': string
+  '--n-border-pressed': string
+  '--n-border-focus': string
+}
+
+export type ButtonVariant = 'solid' | 'soft'
+
+/**
+ * 取某个 tone 的按钮配色。
+ *
+ * @param variant solid = 实心；soft = 浅底描边（同级标签的低调版）
+ */
+export function buttonColorFor(tone: TagTone, variant: ButtonVariant = 'solid'): ButtonColorValue {
+  const surface = surfaces.value
+  const spec = toneSpecs()[tone]
+  const strong = spec.color
+  const strongHover = hoverOf(spec.color)
+
+  if (variant === 'solid') {
+    // 实心按钮：底色是强调色本身，文字用「在强调色上可读」的颜色。
+    const ink = readableOn(strong)
+    return {
+      '--n-color': strong,
+      '--n-color-hover': strongHover,
+      '--n-color-pressed': strongHover,
+      '--n-color-focus': strongHover,
+      '--n-text-color': ink,
+      '--n-text-color-hover': ink,
+      '--n-text-color-pressed': ink,
+      '--n-text-color-focus': ink,
+      '--n-border': `1px solid ${strong}`,
+      '--n-border-hover': `1px solid ${strongHover}`,
+      '--n-border-pressed': `1px solid ${strongHover}`,
+      '--n-border-focus': `1px solid ${strongHover}`,
+    }
+  }
+
+  // 浅底描边：直接复用该档标签的背景色，保证「同档 = 同色」
+  const base = tint(strong, surface.card, spec.tagTint)
+  return {
+    '--n-color': base,
+    '--n-color-hover': tint(strong, surface.card, Math.max(0, spec.tagTint - 0.1)),
+    '--n-color-pressed': tint(strong, surface.card, Math.max(0, spec.tagTint - 0.16)),
+    '--n-color-focus': tint(strong, surface.card, Math.max(0, spec.tagTint - 0.1)),
+    '--n-text-color': strong,
+    '--n-text-color-hover': strongHover,
+    '--n-text-color-pressed': strongHover,
+    '--n-text-color-focus': strongHover,
+    '--n-border': `1px solid ${strong}`,
+    '--n-border-hover': `1px solid ${strongHover}`,
+    '--n-border-pressed': `1px solid ${strongHover}`,
+    '--n-border-focus': `1px solid ${strongHover}`,
+  }
+}
+
+/**
+ * 在给定背景上可读的文字色（深色或白色）。
+ * 用 HSL 亮度判断即可 —— 强调色都是高饱和纯色，
+ * 亮度超过一半时配深色文字，否则配白字。
+ */
+function readableOn(background: string): string {
+  const hsl = hexToHsl(background)
+  if (!hsl) return '#ffffff'
+  const [, , lightness] = hsl
+  return lightness > 0.55 ? '#10151a' : '#ffffff'
+}
 
 /** 旧色调名 → 现行五档。只为读取旧快照兼容，新代码不要使用旧名。 */
 const LEGACY_TONES: Record<string, TagTone> = {
@@ -399,6 +472,17 @@ export function applyThemeCssVars() {
      */
     '--oc2-accent-contrast': accentContrast(main.color, themeMode.value),
     '--oc2-accent-contrast-hover': hoverOf(accentContrast(main.color, themeMode.value)),
+  }
+  /*
+   * 每档语义色的 CSS 变量，供 scoped 样式使用（标签/按钮之外的自绘元素）。
+   * 和 statusToneColors / buttonColorFor 同源，换主题时一起变。
+   */
+  const tones = statusToneColors.value
+  for (const tone of Object.keys(tones) as TagTone[]) {
+    const value = tones[tone]
+    vars[`--oc2-tone-${tone}-bg`] = value.color
+    vars[`--oc2-tone-${tone}-border`] = value.borderColor
+    vars[`--oc2-tone-${tone}-text`] = value.textColor
   }
   for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value)
   root.style.colorScheme = themeMode.value

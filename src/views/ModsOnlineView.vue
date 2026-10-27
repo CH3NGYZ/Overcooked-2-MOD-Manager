@@ -9,7 +9,7 @@ import { modsForRepository } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
-import { tagColorFor, tagColorForAny } from '../theme'
+import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
@@ -88,6 +88,21 @@ const INSTALL_LABELS: Record<InstallAction | 'refresh', string> = {
 }
 function installLabel(repo: Repository) {
   return t(INSTALL_LABELS[installActionOf(repo)])
+}
+
+/**
+ * 主按钮的配色：动作 → 语义色调 + 视觉强度。
+ *
+ * 规则与标签共用同一个 tone 刻度（src/theme.ts）：
+ *   安装 / 重装 → accent 实心（「装到最新」这一档，不需要警告）
+ *   更新        → moderate 实心（需要用户注意的动作）
+ *   刷新（失败重试）→ moderate 浅底（提示可以点这里，不该比旁边的标签更抢眼）
+ */
+function installButtonStyle(repo: Repository) {
+  const action = installActionOf(repo)
+  if (action === 'refresh') return buttonColorFor('moderate', 'soft')
+  if (action === 'update') return buttonColorFor('moderate', 'solid')
+  return buttonColorFor('accent', 'solid')
 }
 
 /** 主按钮：刷新失败时重试该仓库的 Release，其余走安装预览链路。 */
@@ -483,7 +498,7 @@ defineExpose({ refreshAll, visibleCount })
                       文案、图标与动作都由 installActionOf 决定，不在模板里各自判断。
                     -->
                     <n-button size="tiny" class="card-install"
-                      :class="`card-install--${installActionOf(repo)}`"
+                      :style="installButtonStyle(repo)"
                       :loading="!!installing[repo.id]"
                       :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
                       <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
@@ -555,7 +570,7 @@ defineExpose({ refreshAll, visibleCount })
                     <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
                   </span>
                   <n-button size="tiny" class="card-install"
-                    :class="`card-install--${installActionOf(repo)}`"
+                    :style="installButtonStyle(repo)"
                     :loading="!!installing[repo.id]"
                     :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
                     <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
@@ -694,67 +709,10 @@ defineExpose({ refreshAll, visibleCount })
   margin-left: auto;
 }
 /*
- * 主按钮配色按「语义分组」而不是按动作分三色：
- *   install / reinstall → 主题色（都是「装到最新」这一档，不需要警告）
- *   update / refresh    → 主题色对比色（需要用户注意的动作）
- *
- * refresh 复用的正是「刷新失败」标签那一档颜色：statusToneColors.warn
- * 取的也是 accentContrast，所以两者永远是同一个色，换主题时一起变。
- *
- * Naive 的按钮把配色变量写在内联 style 上，普通 class 选择器会被它压住，
- * 因此这里重复类名提高特异性，让我们的变量优先。
+ * 主按钮配色由 installButtonStyle() 通过 :style 内联下发，
+ * 取值来自 theme.ts 的 buttonColorFor（与标签共用同一套 tone 刻度）。
+ * 这里不再手写 --n-color 覆盖 —— 那样每加一种动作就要复制一整块变量。
  */
-.card-install.card-install--install.n-button,
-.card-install.card-install--reinstall.n-button {
-  --n-color: var(--oc2-accent) !important;
-  --n-color-hover: var(--oc2-accent-hover) !important;
-  --n-color-pressed: var(--oc2-accent-hover) !important;
-  --n-color-focus: var(--oc2-accent-hover) !important;
-  --n-text-color: var(--oc2-accent-on) !important;
-  --n-text-color-hover: var(--oc2-accent-on) !important;
-  --n-text-color-pressed: var(--oc2-accent-on) !important;
-  --n-text-color-focus: var(--oc2-accent-on) !important;
-  --n-border: 1px solid var(--oc2-accent) !important;
-  --n-border-hover: 1px solid var(--oc2-accent-hover) !important;
-  --n-border-pressed: 1px solid var(--oc2-accent-hover) !important;
-  --n-border-focus: 1px solid var(--oc2-accent-hover) !important;
-}
-.card-install.card-install--update.n-button {
-  --n-color: var(--oc2-accent-contrast) !important;
-  --n-color-hover: var(--oc2-accent-contrast-hover) !important;
-  --n-color-pressed: var(--oc2-accent-contrast-hover) !important;
-  --n-color-focus: var(--oc2-accent-contrast-hover) !important;
-  --n-text-color: var(--oc2-accent-on) !important;
-  --n-text-color-hover: var(--oc2-accent-on) !important;
-  --n-text-color-pressed: var(--oc2-accent-on) !important;
-  --n-text-color-focus: var(--oc2-accent-on) !important;
-  --n-border: 1px solid var(--oc2-accent-contrast) !important;
-  --n-border-hover: 1px solid var(--oc2-accent-contrast-hover) !important;
-  --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover) !important;
-  --n-border-focus: 1px solid var(--oc2-accent-contrast-hover) !important;
-}
-/*
- * 刷新按钮刻意不用实心填充，而是复用「仓库刷新失败」标签的样式：
- * 浅色底 + 对比色描边 + 对比色文字。
- * statusToneColors.moderate 的 tint 比例与本处 16% 一致，
- * 所以按钮和标签始终是同一档颜色，换主题色时一起变。
- * 实心亮色按钮比标签重得多，会让同一个状态看起来像两个来源；
- * 这里只要让用户知道「就是这一栏、点它重试」，不需要额外强调。
- */
-.card-install.card-install--refresh.n-button {
-  --n-color: color-mix(in srgb, var(--oc2-accent-contrast) 16%, var(--oc2-card)) !important;
-  --n-color-hover: color-mix(in srgb, var(--oc2-accent-contrast) 26%, var(--oc2-card)) !important;
-  --n-color-pressed: color-mix(in srgb, var(--oc2-accent-contrast) 32%, var(--oc2-card)) !important;
-  --n-color-focus: color-mix(in srgb, var(--oc2-accent-contrast) 26%, var(--oc2-card)) !important;
-  --n-text-color: var(--oc2-accent-contrast) !important;
-  --n-text-color-hover: var(--oc2-accent-contrast-hover) !important;
-  --n-text-color-pressed: var(--oc2-accent-contrast-hover) !important;
-  --n-text-color-focus: var(--oc2-accent-contrast-hover) !important;
-  --n-border: 1px solid var(--oc2-accent-contrast) !important;
-  --n-border-hover: 1px solid var(--oc2-accent-contrast-hover) !important;
-  --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover) !important;
-  --n-border-focus: 1px solid var(--oc2-accent-contrast-hover) !important;
-}
 .card-desc {
   margin: 0;
   font-size: 12px;

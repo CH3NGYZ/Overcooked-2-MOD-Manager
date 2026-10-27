@@ -91,10 +91,12 @@ async function cancel() {
         <section class="dl-card" role="status" aria-live="polite">
           <h3 class="dl-title">{{ progress.label }}</h3>
 
-          <!-- 准备阶段：不确定进度动画；开始收字节后才走真实进度 -->
+          <!-- 准备阶段：走 Naive 的不确定进度动画；开始收字节后才走真实百分比 -->
           <div class="dl-progress-row">
             <div class="dl-bar">
-              <div v-if="percent === null" class="dl-indeterminate"></div>
+              <!-- processing 让 Naive 画条纹滚动动画，代表"进度未知" -->
+              <n-progress v-if="percent === null" type="line" :percentage="100" :show-indicator="false"
+                :height="6" :border-radius="3" processing />
               <n-progress v-else type="line" :percentage="percent" :show-indicator="false" :height="6"
                 :border-radius="3" />
             </div>
@@ -154,11 +156,10 @@ async function cancel() {
   gap: 12px;
 }
 .dl-bar {
+  /* 只负责占位与宽度；轨道底色与填充由 n-progress 自己绘制 */
   flex: 1;
   min-width: 0;
-  height: 6px;
   border-radius: 3px;
-  background: var(--oc2-sunken);
   overflow: hidden;
 }
 .dl-percent {
@@ -168,21 +169,6 @@ async function cancel() {
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--oc2-text-2);
-}
-/* 准备/切换阶段的不确定进度条 */
-.dl-indeterminate {
-  width: 40%;
-  height: 100%;
-  border-radius: 3px;
-  background: linear-gradient(90deg, transparent, var(--oc2-accent), transparent);
-  animation: dl-slide 1.1s ease-in-out infinite;
-}
-@keyframes dl-slide {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(320%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dl-indeterminate { animation: none; width: 100%; opacity: .5; }
 }
 .dl-meta {
   display: flex;

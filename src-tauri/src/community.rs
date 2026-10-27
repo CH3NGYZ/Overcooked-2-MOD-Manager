@@ -71,7 +71,7 @@ fn official_repository_keys(config: &AppConfig) -> HashSet<RepositoryIdentity> {
         }
     }
     // Source ownership is independent of the builtin edit/delete protection flag.
-    config
+    let mut keys = config
         .repositories
         .iter()
         .filter(|repo| {
@@ -83,6 +83,28 @@ fn official_repository_keys(config: &AppConfig) -> HashSet<RepositoryIdentity> {
                         .is_some_and(|id| official_sources.contains(id)))
         })
         .map(identity)
+        .collect::<HashSet<_>>();
+    /*
+     * 配置里只保存「当前地区可见」的官方仓库：地区过滤会把不适用的仓库
+     * 从 config 中剔除。若只按 config 判断，那些被地区过滤掉的官方仓库
+     * 就会重新出现在社区搜索结果里。内置快照是没有地区过滤的完整清单，
+     * 因此把它的全部仓库身份也并入回避集合。
+     */
+    keys.extend(bundled_official_repository_keys());
+    keys
+}
+
+/// 内置仓库快照里的全部仓库身份（不受当前地区过滤影响）。
+fn bundled_official_repository_keys() -> HashSet<RepositoryIdentity> {
+    crate::repository_sources::bundled_repository_configs()
+        .into_iter()
+        .map(|repo| {
+            (
+                source_id(&repo.provider),
+                repo.username.to_ascii_lowercase(),
+                repo.repository.to_ascii_lowercase(),
+            )
+        })
         .collect()
 }
 
@@ -1233,6 +1255,38 @@ mod tests {
                 };
                 assert!(!keys.contains(&identity(&configured)), "{source}");
             }
+        }
+    }
+
+    /*
+     * 地区过滤会把不适用的官方仓库从 config.repositories 里剔除。
+     * 这些仓库必须仍然被社区搜索回避，否则它们会以社区结果的身份重新出现。
+     * 内置快照是不做地区过滤的完整清单，这里验证它确实并入了回避集合。
+     */
+    #[test]
+    fn community_search_avoids_bundled_repositories_missing_from_config() {
+        let bundled = crate::repository_sources::bundled_repository_configs();
+        assert!(!bundled.is_empty(), "内置快照应当包含仓库条目");
+        let config: AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "game":{"path":"","auto_detect":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+            "repository_sources":[],
+            "repositories":[]
+        }))
+        .unwrap();
+        assert!(config.repositories.is_empty());
+        let keys = official_repository_keys(&config);
+        for repo in &bundled {
+            // 内置快照里的每个仓库都必须被回避，即便 config 里一个都没有。
+            let key = (
+                source_id(&repo.provider),
+                repo.username.to_ascii_lowercase(),
+                repo.repository.to_ascii_lowercase(),
+            );
+            assert!(keys.contains(&key), "{}/{}", repo.username, repo.repository);
         }
     }
 

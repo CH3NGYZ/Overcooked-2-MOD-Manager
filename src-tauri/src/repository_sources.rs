@@ -23,6 +23,36 @@ const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 
 include!(concat!(env!("OUT_DIR"), "/repository_sources.rs"));
 
+/// 遍历内置仓库快照，返回其中所有的仓库配置（**不做地区过滤**）。
+///
+/// 用途：社区搜索结果必须回避全部内置/官方仓库，包括因当前地区
+/// 被过滤掉、因而不在 `config.repositories` 里的那些。
+/// 只读嵌入资源，不发起网络请求，也不修改任何配置。
+pub(crate) fn bundled_repository_configs() -> Vec<RepositoryExport> {
+    let mut repositories = Vec::new();
+    let mut pending = match SourceLocation::parse(BUILTIN_INDEX) {
+        Ok(location) => vec![location],
+        Err(_) => return repositories,
+    };
+    let mut visited = HashSet::new();
+    while let Some(location) = pending.pop() {
+        // 只遍历内置资源：远程地址在这里没有网络上下文，直接跳过。
+        if !matches!(location, SourceLocation::Bundled(_)) || !visited.insert(location.address()) {
+            continue;
+        }
+        let Ok(document) = location.bundled_document() else {
+            continue;
+        };
+        repositories.extend(document.repositories);
+        for source in document.repository_sources {
+            if let Ok(next) = SourceLocation::parse(&source.url) {
+                pending.push(next);
+            }
+        }
+    }
+    repositories
+}
+
 pub(crate) fn safe_log_address(value: &str) -> String {
     let Ok(mut url) = Url::parse(value) else {
         return value.to_string();

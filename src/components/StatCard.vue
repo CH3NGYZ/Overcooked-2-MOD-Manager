@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { NCard } from 'naive-ui'
+
 defineProps<{
   label: string
   value: string

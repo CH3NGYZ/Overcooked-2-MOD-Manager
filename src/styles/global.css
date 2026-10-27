@@ -1,5 +1,11 @@
 :root {
   color-scheme: dark;
+  /* 侧栏宽度与标题栏高度：弹窗定位等需要「内容区边界」的地方统一引用 */
+  --oc2-rail-width: 108px;
+  --oc2-titlebar-height: 56px;
+  /* 页面内边距：.page-body 用它，整页加载态也用它算视觉中心补偿 */
+  --page-pad-top: 4px;
+  --page-pad-bottom: 28px;
 }
 * {
   box-sizing: border-box;
@@ -17,6 +23,11 @@ body {
   color: var(--oc2-text-1, #e8edf3);
   font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   font-size: 14px;
+  /* 以下三项与 Naive 的 body 默认值对齐（原先由 n-global-style 提供） */
+  line-height: 1.6;
+  padding: 0;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   transition: background-color .18s ease, color .18s ease;
 }
@@ -27,6 +38,10 @@ body {
   height: 100%;
   min-height: 0;
 }
+/*
+ * 原生滚动条样式：仅作为 n-scrollbar 之外的容器（textarea、markdown 代码块、
+ * 原生 overflow 区域）的回退外观。页面主滚动与侧栏滚动都由 n-scrollbar 接管。
+ */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -62,25 +77,33 @@ body {
   display: flex;
   flex-direction: column;
 }
+/*
+ * 内容滚动容器：现在是 Naive 的 n-scrollbar（自带悬浮滚动条）。
+ * 外层只负责吃掉剩余高度与建立定位上下文，padding 交给内层 .page-body，
+ * 这样滚动条能贴着内容区右边、不被内边距推偏。
+ */
 .page-scroll {
   flex: 1 1 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
   /* 挂到内容区的弹窗（如 MOD 配置编辑器）以此容器为定位基准 */
   position: relative;
-  /* 上下内边距不对称（上小下大），整页加载态的转圈居中要按差值补偿 */
-  --page-pad-top: 4px;
-  --page-pad-bottom: 28px;
-  padding: var(--page-pad-top) 28px var(--page-pad-bottom);
-  /* 用 flex 列布局让内容天然可撑满剩余高度（见 .page-body 的 flex） */
+}
+/*
+ * n-scrollbar 的内容层默认是普通块级元素，.page-body 的 flex/min-height
+ * 都没有可参照的基准，整页加载态的容器会塌回内容高度（转圈偏上）。
+ * 把内容层改成撑满容器高度的纵向 flex，短页面也能占满可视区。
+ */
+.page-scroll .n-scrollbar-content {
   display: flex;
   flex-direction: column;
+  min-height: 100%;
 }
 .page-body {
   /* 内容跟随应用容器整宽，不再限制在固定 max-width 内 */
   width: 100%;
   max-width: none;
+  /* 页内边距（原 .page-scroll 的 padding 移到这里，变量在 :root） */
+  padding: var(--page-pad-top) 28px var(--page-pad-bottom);
   /*
    * 整页加载态：首次加载时页面内容还没渲染，容器高度会塌到很小，
    * 而 n-spin 的转圈是「在自己容器里居中」——容器不满高，视觉上就偏上。
@@ -88,6 +111,66 @@ body {
    * 内容超出时照常被子元素撑高并正常滚动。
    */
   flex: 1 0 auto;
+  min-height: 100%;
+}
+
+/*
+ * 页头自适应：空间够就一行（标题 + 地区 … 计数 + 搜索 + 刷新）；
+ * 放不下时 actions 整块换到第二行，第一行只留标题与地区。
+ *
+ * 关键：两个子项都要参与 flex 计算并各自带 min-width。
+ * 如果只写 flex-wrap + space-between 而子项是 flex: 0 0 auto，
+ * 它们会各自撑满整行，导致永远两行。
+ */
+.page-header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 16px 28px 12px;
+}
+.page-header-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* 按内容占宽、允许收缩；低于内容宽度才触发换行 */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/*
+ * 页头右侧操作区：页面通过 Teleport 往 #page-header-actions 里填内容
+ * （计数、搜索框、按钮…）。
+ *
+ * 换行策略分两层，避免「标签太挤就折行」：
+ *   - 外层 .page-header 保留 flex-wrap：窗口真的不够宽时，
+ *     整个操作区换到第二行（比让控件互相挤压更可读）；
+ *   - 内层 .page-header-actions 强制 nowrap：一旦它决定放在某一行，
+ *     这一行内部就不再折行，宁可让可收缩项（搜索框）先变窄。
+ * 因此能收缩的控件必须写 min-width: 0，固定文案的控件写 nowrap。
+ */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+.page-header-title-extra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.page-header h1 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--oc2-text-1);
+  white-space: nowrap;
 }
 .mono {
   font-family: Consolas, 'Liberation Mono', monospace;

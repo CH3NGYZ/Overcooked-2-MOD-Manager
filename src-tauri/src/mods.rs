@@ -64,6 +64,7 @@ pub fn scan_mods_with_manifests(
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
     mark_duplicate_guids(&mut installed);
+    flag_manifest_version_mismatch(&mut installed, &manifests);
     refresh_status_labels(&mut installed);
     let packages = installed
         .iter()
@@ -279,6 +280,15 @@ fn inspect_dll(
         .or_else(|| manifest.and_then(|item| item.note.clone()));
     InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
+        // 安装清单 id 以 manual- 开头 → 手动安装（本地文件 / 在线直链）。
+        // 即使它成功绑定了在线仓库（repository_id 已变成仓库 id），
+        // 这个标记仍保留原始安装来源，供前端在未匹配到仓库时归类。
+        manual_install: manifest.is_some_and(|item| item.repository_id.starts_with("manual-")),
+        // 没有 BepInPlugin 元数据（无 GUID、无版本）的 DLL 是纯依赖，
+        // 例如 DIYLevel 包里的 LevelEditorStub.dll。
+        is_dependency: guid.is_none()
+            && installed_version.is_none()
+            && plugin_name.as_deref().is_none_or(str::is_empty),
         repository_ids,
         repository_binding: repository_binding.cloned(),
         package_id,
@@ -308,6 +318,9 @@ fn inspect_dll(
         has_config: guid
             .as_deref()
             .is_some_and(|guid| crate::mod_config::exists(game, guid)),
+        has_logs: guid
+            .as_deref()
+            .is_some_and(|guid| crate::mod_config::logs_dir_exists(game, guid)),
         guid,
         plugin_name,
         company: metadata.company,
@@ -504,6 +517,67 @@ fn annotate_package_counts(mods: &mut [InstalledMod]) {
     }
 }
 
+/// 单个 MOD 的「安装清单版本」与「DLL 实际版本」不一致时，标记为可更新。
+///
+/// 背景：绑定更新判定（`binding_update_state`）只比较「清单里的 tag」和
+/// 「远端最新 tag」。如果用户手动替换了 plugins 下的 DLL（或安装后又被别的
+/// 工具覆盖），DLL 自己报告的 BepInPlugin 版本可能低于清单记录的那次安装，
+/// 而清单 tag 仍等于远端最新 tag —— 结果会错误地显示「最新版」。
+///
+/// 规则边界（重要）：
+///   - 只处理**单 DLL 的 MOD**（`package_mod_count <= 1`）。MOD 包的版本
+///     不绑定任何单个 DLL，包的更新只按清单 tag 与仓库 tag 比较，这里不碰。
+///   - 只把状态升级为「可更新」，不会把已判定的更新降级；
+///   - 两者版本都不可比较（非 SemVer）时不做判断，避免误报；
+///   - DLL 版本高于清单版本不告警（用户可能已手动升级，远端也没有更新）。
+fn flag_manifest_version_mismatch(mods: &mut [InstalledMod], manifests: &[InstallManifest]) {
+    for item in mods.iter_mut() {
+        // MOD 包成员的版本由包统一判定，不参与逐 DLL 比较
+        if item.package_mod_count > 1 {
+            continue;
+        }
+        if item.update_available {
+            continue;
+        }
+        // 只对「已安装且绑定到某个 Release」的 MOD 有意义
+        let Some(binding) = item.repository_binding.as_ref() else {
+            continue;
+        };
+        let Some(manifest) = manifests.iter().find(|manifest| {
+            manifest
+                .files
+                .iter()
+                .any(|file| canonical_dll_name(file).eq_ignore_ascii_case(&item.dll_file))
+        }) else {
+            continue;
+        };
+        if manifest.release_tag.trim().is_empty() {
+            continue;
+        }
+        let Some(dll_version) = item
+            .version
+            .as_deref()
+            .and_then(crate::releases::parse_version)
+        else {
+            continue;
+        };
+        let Some(installed_tag_version) = crate::releases::parse_version(&binding.tag) else {
+            continue;
+        };
+        if dll_version >= installed_tag_version {
+            continue;
+        }
+        log::warn!(
+            "MOD 版本与安装清单不一致，标记为可更新：文件={}，DLL 版本={}，清单版本={}",
+            item.dll_file,
+            item.version.as_deref().unwrap_or("未知"),
+            binding.tag
+        );
+        item.update_available = true;
+        item.status = "update_available".into();
+    }
+}
+
 fn repository_matches_mod(
     repo: &crate::models::RepositoryConfig,
     guid: Option<&str>,
@@ -551,13 +625,13 @@ fn choose_local_version(plugin_version: Option<&str>) -> (Option<String>, &'stat
 }
 
 #[derive(Debug, Clone)]
-struct PluginMetadata {
-    guid: Option<String>,
-    name: Option<String>,
-    version: Option<String>,
+pub(crate) struct PluginMetadata {
+    pub(crate) guid: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) version: Option<String>,
 }
 
-fn parse_bepin_plugin_metadata(bytes: &[u8]) -> Option<PluginMetadata> {
+pub(crate) fn parse_bepin_plugin_metadata(bytes: &[u8]) -> Option<PluginMetadata> {
     if !String::from_utf8_lossy(bytes).contains("BepInPlugin") {
         return None;
     }
@@ -621,6 +695,21 @@ fn read_serialized_string<'a>(bytes: &'a [u8], offset: &mut usize) -> Option<&'a
 fn refresh_status_labels(mods: &mut [InstalledMod]) {
     for item in mods {
         let mut labels = Vec::new();
+        /*
+         * 纯依赖 DLL（读不出 BepInPlugin）只标「依赖」，不再套用
+         * 最新版/可更新/未绑定这些 MOD 语义 —— 它没有版本可比，
+         * 把它当 MOD 展示会让包内文件数对不上。
+         */
+        if item.is_dependency {
+            labels.push(InstalledModStatusLabel::Dependency);
+            if !item.enabled {
+                labels.push(InstalledModStatusLabel::Disabled);
+            }
+            item.update_available = false;
+            item.status = "dependency".into();
+            item.labels = labels;
+            continue;
+        }
         if item.status == "duplicate_lower_version" {
             labels.push(InstalledModStatusLabel::DuplicateLowerVersion);
         } else if item.update_available {
@@ -640,7 +729,9 @@ fn refresh_status_labels(mods: &mut [InstalledMod]) {
                 _ => {}
             }
         }
-        if item.duplicate_guid && item.status != "duplicate_lower_version" {
+        // 同 GUID 的多个副本一律标「重复」（含被高版本取代的那一份），
+        // 被取代的那份再额外带「低版本」，两条记录各自都能看出重复关系。
+        if item.duplicate_guid {
             labels.push(InstalledModStatusLabel::Duplicate);
         }
         if item.load_warning.is_some() && item.status != "duplicate_lower_version" {
@@ -836,6 +927,149 @@ mod tests {
             "update_available": super::compare_mod_versions(online_version, version) == Some(std::cmp::Ordering::Greater),
             "duplicate_guid": false, "status": "latest"
         })).unwrap()
+    }
+
+    #[test]
+    fn both_duplicate_copies_get_the_duplicate_label() {
+        // 装了两个同 GUID 的版本（1.8.7 + 1.9.7）：
+        // 两条都应显示「重复」，旧的那条额外显示「低版本」。
+        let mut mods = vec![
+            duplicate_configuration_manager("1.8.7", "1.9.7"),
+            duplicate_configuration_manager("1.9.7", "1.9.7"),
+        ];
+        super::mark_duplicate_guids(&mut mods);
+        super::refresh_status_labels(&mut mods);
+
+        use crate::models::InstalledModStatusLabel as Label;
+        assert!(mods[0].labels.contains(&Label::Duplicate));
+        assert!(mods[0].labels.contains(&Label::DuplicateLowerVersion));
+        assert!(mods[1].labels.contains(&Label::Duplicate));
+        assert!(!mods[1].labels.contains(&Label::DuplicateLowerVersion));
+        // 高版本副本保留它自己的更新状态（这里已是最新）
+        assert!(mods[1].labels.contains(&Label::Latest));
+    }
+
+    /*
+     * 单个 MOD：清单 tag 与远端最新 tag 相同（本来判「最新版」），
+     * 但 DLL 自己报告的版本低于清单记录的版本 —— 说明插件文件被替换过，
+     * 必须提示可更新，否则用户会一直看到一个版本号更低的「最新版」。
+     */
+    #[test]
+    fn single_mod_reports_update_when_dll_version_is_below_manifest_tag() {
+        let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
+            "repository_id": "repo-1", "repository_ids": ["repo-1"],
+            "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
+            "enabled": true, "version": "1.2.0", "version_source": "BepInPlugin",
+            "update_available": false, "duplicate_guid": false, "status": "latest",
+            "repository_binding": {
+                "provider": "github", "owner": "o", "repository": "r",
+                "tag": "v2.0.0", "channel": "all"
+            }
+        }))
+        .unwrap();
+        let manifests = vec![manifest_with_tag(
+            "repo-1",
+            "v2.0.0",
+            "BepInEx/plugins/Example.dll",
+        )];
+        super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
+        super::refresh_status_labels(std::slice::from_mut(&mut item));
+        assert!(item.update_available);
+        assert_eq!(item.status, "update_available");
+        assert!(
+            item.labels
+                .contains(&crate::models::InstalledModStatusLabel::UpdateAvailable)
+        );
+        assert!(
+            !item
+                .labels
+                .contains(&crate::models::InstalledModStatusLabel::Latest)
+        );
+    }
+
+    /// DLL 版本与清单一致（或更高）时不应被误判为可更新。
+    #[test]
+    fn single_mod_keeps_latest_when_dll_version_matches_manifest_tag() {
+        for version in ["2.0.0", "2.1.0"] {
+            let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
+                "repository_id": "repo-1", "repository_ids": ["repo-1"],
+                "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
+                "enabled": true, "version": version, "version_source": "BepInPlugin",
+                "update_available": false, "duplicate_guid": false, "status": "latest",
+                "repository_binding": {
+                    "provider": "github", "owner": "o", "repository": "r",
+                    "tag": "v2.0.0", "channel": "all"
+                }
+            }))
+            .unwrap();
+            let manifests = vec![manifest_with_tag(
+                "repo-1",
+                "v2.0.0",
+                "BepInEx/plugins/Example.dll",
+            )];
+            super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
+            assert!(!item.update_available, "版本 {version} 不应被判为可更新");
+        }
+    }
+
+    /// MOD 包（成员数 >= 2）不参与逐 DLL 版本比较：包版本只按 tag 比较。
+    #[test]
+    fn package_members_are_not_flagged_by_dll_version_mismatch() {
+        let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
+            "repository_id": "repo-1", "repository_ids": ["repo-1"],
+            "package_id": "pkg-1", "package_name": "Pack",
+            "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
+            "enabled": true, "version": "1.2.0", "version_source": "BepInPlugin",
+            "update_available": false, "duplicate_guid": false, "status": "latest",
+            "repository_binding": {
+                "provider": "github", "owner": "o", "repository": "r",
+                "tag": "v2.0.0", "channel": "all"
+            }
+        }))
+        .unwrap();
+        // 包内两个成员：package_mod_count 由 annotate_package_counts 写入 2
+        item.package_mod_count = 2;
+        let manifests = vec![manifest_with_tag(
+            "repo-1",
+            "v2.0.0",
+            "BepInEx/plugins/Example.dll",
+        )];
+        super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
+        assert!(
+            !item.update_available,
+            "MOD 包成员不应按 DLL 版本单独判更新"
+        );
+    }
+
+    /// 非 SemVer 版本不做比较，避免把不可比的值误判成更新。
+    #[test]
+    fn unparsable_versions_do_not_trigger_the_mismatch_rule() {
+        let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
+            "repository_id": "repo-1", "repository_ids": ["repo-1"],
+            "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
+            "enabled": true, "version": "nightly", "version_source": "BepInPlugin",
+            "update_available": false, "duplicate_guid": false, "status": "latest",
+            "repository_binding": {
+                "provider": "github", "owner": "o", "repository": "r",
+                "tag": "latest-build", "channel": "all"
+            }
+        }))
+        .unwrap();
+        let manifests = vec![manifest_with_tag(
+            "repo-1",
+            "latest-build",
+            "BepInEx/plugins/Example.dll",
+        )];
+        super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
+        assert!(!item.update_available);
+    }
+
+    fn manifest_with_tag(
+        repository_id: &str,
+        tag: &str,
+        file: &str,
+    ) -> crate::archive::InstallManifest {
+        crate::archive::new_manifest(repository_id, tag, None, None, vec![file.into()])
     }
 
     #[test]
@@ -1836,6 +2070,8 @@ mod tests {
             crate::models::InstalledMod {
                 repository_id: None,
                 repository_ids: Vec::new(),
+                manual_install: false,
+                is_dependency: false,
                 repository_binding: None,
                 package_id: None,
                 package_name: None,
@@ -1845,6 +2081,7 @@ mod tests {
                 prerelease: false,
                 name: "Old".into(),
                 has_config: false,
+                has_logs: false,
                 title: None,
                 description: None,
                 product_name: Some("Old".into()),
@@ -1868,6 +2105,8 @@ mod tests {
             crate::models::InstalledMod {
                 repository_id: None,
                 repository_ids: Vec::new(),
+                manual_install: false,
+                is_dependency: false,
                 repository_binding: None,
                 package_id: None,
                 package_name: None,
@@ -1877,6 +2116,7 @@ mod tests {
                 prerelease: false,
                 name: "New".into(),
                 has_config: false,
+                has_logs: false,
                 title: None,
                 description: None,
                 product_name: Some("New".into()),

@@ -3,7 +3,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
-  Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModRecycleEntry, OperationResult, Provider,
+  Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
+  OperationResult, Provider,
   PublicConfig, ReleaseInfo, RepositoryReadme, RepositorySourceImportResult, RustLog, SettingsPatch,
   TokenPatch, UninstallLocalModResult,
 } from '../types'
@@ -66,6 +67,8 @@ export const api = {
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
   installRepository: (repositoryId: string, tag?: string) => invoke<OperationResult>('install_repository', { repositoryId, tag }),
   launchNormal: () => invoke<OperationResult>('launch_normal'),
+  /** 停止厨房：Steam 没有停止协议，由管理器结束游戏进程。 */
+  stopGame: () => invoke<OperationResult>('stop_game'),
   launchNoMod: () => invoke<OperationResult>('launch_no_mod'),
   switchWinhttp: (enabled: boolean) => invoke<OperationResult>('switch_winhttp', { enabled }),
   toggleLocalMod: (dllFile: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod', { dllFile, enabled }),
@@ -79,6 +82,7 @@ export const api = {
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
   openModDirectory: () => invoke<OperationResult>('open_mod_directory'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),
+  openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),
   exitApp: () => invoke<void>('exit_app'),
@@ -86,6 +90,23 @@ export const api = {
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
+  /** 选择要安装的本地 MOD 文件（DLL 或 ZIP）。 */
+  chooseModFile: () => open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'MOD', extensions: ['dll', 'zip'] }],
+  }),
+  /** 安装本地 MOD 文件（DLL 或 ZIP）。 */
+  installLocalMod: (sourcePath: string) => invoke<OperationResult>('install_local_mod', { sourcePath }),
+  /** 从 zip / dll 直链下载并安装（后端已有直连下载 + 布局判定 + 清单）。 */
+  installOnlineMod: (url: string) => invoke<OperationResult>('install_online_mod', { url }),
+  /** 解析安装源（本地文件 / 在线直链），返回预览而不安装。 */
+  analyzeModSource: (kind: ModSourceKind, value: string) =>
+    invoke<ModPreview>('analyze_mod_source', { source: { kind, value } }),
+  /** 用户在预览里确认后真正安装。 */
+  confirmModInstall: (previewId: string) => invoke<OperationResult>('confirm_mod_install', { previewId }),
+  /** 取消预览，删除暂存。 */
+  cancelModPreview: (previewId: string) => invoke<void>('cancel_mod_preview', { previewId }),
 }
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

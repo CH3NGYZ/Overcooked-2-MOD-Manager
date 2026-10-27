@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { NButton, NSelect, NTag } from 'naive-ui'
+import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import { DownloadOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
@@ -225,33 +225,24 @@ async function openUrl(url: string) {
     </header>
 
     <!-- 分段切换：说明（备注 + README）/ 下载安装（版本 / 日志 / 资产 / 安装） -->
-    <div class="detail-tabs" role="tablist">
-      <button type="button" role="tab" class="detail-tab" :class="{ active: activeTab === 'info' }"
-        :aria-selected="activeTab === 'info'" @click="activeTab = 'info'">{{ t('说明') }}</button>
-      <button type="button" role="tab" class="detail-tab" :class="{ active: activeTab === 'install' }"
-        :aria-selected="activeTab === 'install'" @click="activeTab = 'install'">{{ t('下载安装') }}</button>
-    </div>
-
-    <!-- 两个面板横向滑动切换，只平移不改变高度 -->
-    <div class="detail-track" :style="{ transform: `translateX(${activeTab === 'info' ? '0' : '-100%'})` }">
-      <!-- 面板 1：说明（仓库备注 + README） -->
-      <div class="detail-panel" :aria-hidden="activeTab !== 'info'">
+    <n-tabs v-model:value="activeTab" type="segment" animated class="detail-tabs">
+      <n-tab-pane name="info" :tab="t('说明')">
         <section v-if="note" ref="noteElement" class="note markdown-body" v-html="noteHtml"></section>
         <section v-else class="note muted">{{ t('该仓库没有备注') }}</section>
 
         <!-- README：加载中显示骨架动画；文件不存在时整块（含分割线）收起 -->
         <Transition name="readme-collapse">
           <div v-if="readmeSectionVisible" class="readme-section">
-            <hr class="divider" />
+            <n-divider />
 
             <section class="readme">
               <Transition name="readme-content" mode="out-in">
                 <div v-if="loading" key="loading" class="readme-loading" role="status"
                   :aria-label="t('正在加载仓库说明')">
-                  <div class="skeleton-line w-95"></div>
-                  <div class="skeleton-line w-60"></div>
-                  <div class="skeleton-line w-80"></div>
-                  <div class="skeleton-line w-45"></div>
+                  <n-skeleton text :repeat="2" />
+                  <n-skeleton text style="width: 60%" />
+                  <n-skeleton text style="width: 80%" />
+                  <n-skeleton text style="width: 45%" />
                 </div>
                 <div v-else-if="error" key="error" class="muted">{{ error }}</div>
                 <div v-else key="body" ref="readmeElement" class="markdown-body" v-html="html"></div>
@@ -259,10 +250,10 @@ async function openUrl(url: string) {
             </section>
           </div>
         </Transition>
-      </div>
+      </n-tab-pane>
 
       <!-- 面板 2：下载安装（版本选择 / 提交日志 / 资产与安装） -->
-      <div class="detail-panel" :aria-hidden="activeTab !== 'install'">
+      <n-tab-pane name="install" :tab="t('下载安装')">
         <!-- 指标 + 安装合并区：版本下拉 / 版本绑定 / 资产信息 / 安装 -->
         <div class="summary">
           <div class="summary-row">
@@ -333,8 +324,8 @@ async function openUrl(url: string) {
             <n-tag size="small" :bordered="false">{{ t('未启用') }}</n-tag>
           </div>
         </div>
-      </div>
-    </div>
+      </n-tab-pane>
+    </n-tabs>
   </div>
 </template>
 
@@ -347,54 +338,20 @@ async function openUrl(url: string) {
   border: 1px solid var(--oc2-row-line);
   border-radius: 14px;
   background: var(--oc2-card);
+  /* 面板切换由 n-tabs 自己裁剪，这里只兜底裁掉圆角外的内容 */
+  overflow: clip;
 }
 /*
- * 分段切换：胶囊底 + 选中项实心高亮（与截图里的标签条同风格）。
- * 两个面板通过 .detail-track 的 translateX 横向滑动，默认停在「说明」。
+ * 分段切换用 Naive 的 n-tabs type="segment"：
+ * 撑满容器宽度、选中项自动使用主题色，这里只补一处间距。
  */
-.detail-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  align-self: flex-start;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--oc2-sunken);
-}
-.detail-tab {
-  padding: 5px 14px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--oc2-text-3);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color .16s ease, color .16s ease;
-}
-.detail-tab:hover { color: var(--oc2-text-1); }
-.detail-tab.active {
-  background: var(--oc2-card);
-  color: var(--oc2-text-1);
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
-}
-/* 滑动轨道：宽度 200%，两个面板各占一半 */
-.detail-track {
-  display: flex;
-  width: 200%;
-  transition: transform .26s cubic-bezier(.32, .72, .35, 1);
-}
-.detail-panel {
-  width: 50%;
-  min-width: 0;
-  flex: 0 0 50%;
+.detail-tabs :deep(.n-tabs-nav) { margin-bottom: 2px; }
+/* 面板内部保持纵向间距；Naive 的默认 pane padding 由它自己的变量控制 */
+.detail-tabs :deep(.n-tab-pane) {
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-@media (prefers-reduced-motion: reduce) {
-  .detail-track { transition: none; }
+  padding-top: 12px;
 }
 .detail-head {
   display: flex;
@@ -534,6 +491,19 @@ async function openUrl(url: string) {
 .version-select :deep(.n-base-selection-label) {
   padding-right: 24px;
 }
+/*
+ * 下拉框后缀：Naive 用 n-base-loading 包装箭头，未 loading 时里面是
+ * placeholder。这里只保留箭头、隐藏多余的占位层，避免出现看似转圈的圆。
+ */
+.version-select :deep(.n-base-loading),
+.asset-select :deep(.n-base-loading) {
+  width: 16px;
+  height: 16px;
+}
+.version-select :deep(.n-base-loading__placeholder),
+.asset-select :deep(.n-base-loading__placeholder) {
+  display: block;
+}
 .version-select :deep(.n-base-selection-input) {
   min-width: 0;
   overflow: visible;
@@ -591,11 +561,8 @@ async function openUrl(url: string) {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.divider {
-  margin: 2px 0;
-  border: 0;
-  border-top: 1px solid var(--oc2-row-line);
-}
+/* 分隔线由 Naive 的 n-divider 负责，这里只收紧它的上下间距 */
+.detail-tabs :deep(.n-divider) { margin: 2px 0; }
 /* 备注区与 README 用同一套 Markdown 样式，这里只补外层间距。 */
 .note {
   margin: 0;
@@ -643,34 +610,12 @@ async function openUrl(url: string) {
   .readme-collapse-enter-active,
   .readme-collapse-leave-active { transition: none; }
 }
+/* 加载骨架：用 Naive 的 n-skeleton，这里只保留纵向间距 */
 .readme-loading {
-  display: grid;
-  grid-template-rows: repeat(4, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: center;
   min-height: 88px;
-}
-.skeleton-line {
-  height: 10px;
-  border-radius: 6px;
-  background: linear-gradient(90deg,
-    var(--oc2-row-line) 0%,
-    var(--oc2-row-hover) 40%,
-    var(--oc2-row-line) 80%);
-  background-size: 220% 100%;
-  /* 加载动画稍快一些（0.8s 一轮） */
-  animation: oc2-skeleton .8s ease-in-out infinite;
-}
-.w-95 { width: 95%; }
-.w-80 { width: 80%; }
-.w-60 { width: 60%; }
-.w-45 { width: 45%; }
-@keyframes oc2-skeleton {
-  0% { background-position: 120% 0; }
-  100% { background-position: -60% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-line { animation: none; }
 }
 
 /* README 内容 */

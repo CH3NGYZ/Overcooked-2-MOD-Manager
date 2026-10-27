@@ -92,9 +92,35 @@ export interface RepositorySource { id: string; nickname: string; nickname_i18n?
 export interface BepInExInfo { installed: boolean; complete: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled'
-export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_mod_count?: number; group_i18n?: Record<string, string>; group?: string; prerelease?: boolean; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; plugin_name?: string; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; labels?: InstalledModStatusLabel[]; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
+export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency'
+export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_mod_count?: number; group_i18n?: Record<string, string>; group?: string; prerelease?: boolean; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; has_logs?: boolean; plugin_name?: string; manual_install?: boolean; is_dependency?: boolean; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; labels?: InstalledModStatusLabel[]; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
 export interface ModConfigDocument { guid: string; file_name: string; content: string; revision: string }
+/** MOD 安装预览：本地文件 / 在线直链在安装前的解析结果。 */
+export type ModPreviewRole = 'mod' | 'dependency'
+export interface ModPreviewEntry {
+  path: string
+  role: ModPreviewRole
+  name?: string | null
+  guid?: string | null
+  version?: string | null
+  title?: string | null
+  product_name?: string | null
+  company?: string | null
+  copyright?: string | null
+  original_filename?: string | null
+}
+export interface ModPreview {
+  preview_id: string
+  /** single = 单 mod（恰好 1 个 DLL）；package = 包含 0 个或多个 DLL。 */
+  kind: 'single' | 'package'
+  package_name: string
+  file_name: string
+  total_dlls: number
+  mod_count: number
+  dependency_count: number
+  entries: ModPreviewEntry[]
+}
+export type ModSourceKind = 'local' | 'url'
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }

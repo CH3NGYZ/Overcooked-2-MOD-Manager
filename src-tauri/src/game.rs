@@ -478,6 +478,57 @@ pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
     }
 }
 
+/// 结束正在运行的《胡闹厨房2》进程。
+///
+/// Steam 没有「停止游戏」的 URL 协议（只有 `steam://rungameid/<appid>` 用于启动），
+/// 所以「停止」只能由管理器结束游戏进程：这里复用 `is_game_running_with_system`
+/// 的匹配规则（含 Wine / CrossOver 的宿主进程），先发正常关闭信号，
+/// 给游戏几秒保存时间，仍未退出再强制结束。
+pub fn stop_game(game: &Path) -> Result<usize, String> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessRefreshKind::new()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    let normalized = normalize_path(game);
+    // Process 不实现 Clone，只保留 PID；kill 时从 system 里按 PID 取回。
+    let targets = system
+        .processes()
+        .iter()
+        .filter(|(_, process)| {
+            process_matches_game(&normalized, process.name(), process.exe(), process.cmd())
+        })
+        .map(|(pid, _)| *pid)
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        log::info!("停止游戏：当前没有运行中的厨房进程");
+        return Ok(0);
+    }
+    log::info!("停止游戏：发现运行中的进程，数量={}", targets.len());
+    /*
+     * sysinfo 的 kill() 在 Windows 上结束进程、在 Unix 上发 SIGKILL，
+     * 都是同步生效的；Signal::Term 只有 Unix feature 才有，跨平台不可用。
+     * 若结束后进程仍存活（例如还在处理退出），等一轮再重试。
+     */
+    for pid in &targets {
+        match system.process(*pid) {
+            Some(process) if process.kill() => {}
+            _ => log::warn!("停止游戏：结束进程失败，PID={pid}"),
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if !is_game_running(game) {
+            log::info!("停止游戏：进程已退出");
+            return Ok(targets.len());
+        }
+    }
+    log::warn!("停止游戏：等待超时后进程仍在运行");
+    Err("游戏进程仍在运行，请手动关闭".into())
+}
+
 pub fn safe_game_path(game: &Path, relative: &str) -> Result<PathBuf, String> {
     let rel = Path::new(relative);
     if rel.is_absolute()

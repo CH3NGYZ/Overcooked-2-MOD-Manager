@@ -8,7 +8,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NSpin, NTag } from 'naive-ui'
+import { NButton, NModal, NSpin, NTag } from 'naive-ui'
 import { SaveOutline, CloseOutline } from '@vicons/ionicons5'
 import type * as MonacoApi from 'monaco-editor'
 import { api } from '../services/tauri'
@@ -23,22 +23,14 @@ const props = defineProps<{
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
 /**
- * 弹窗挂载点：sidebar 右侧的内容区。
- *
- * n-modal 默认 Teleport 到 body 并铺满整个窗口（含侧栏）；
- * 这里改为挂到 .page-scroll 元素上，遮罩只覆盖内容区，
- * 侧栏保持可交互，视觉上也符合「在容器内弹出」。
- * 注意必须传真实 DOM 元素（字符串选择器在挂载时机上不可靠）。
+ * 弹窗保持 Teleport 到 body（与其它 modal 一致，层级最可靠），
+ * 但通过 config-modal 这个 class 把遮罩限制在 sidebar 右侧的内容区：
+ * 左侧让出侧栏宽度（--oc2-rail-width）、顶部让出标题栏高度
+ * （--oc2-titlebar-height）。
+ * 这样视觉上是「在容器内弹出」，又不必 teleport 到滚动容器
+ * （挂到 .page-scroll 会跟随其 padding/overflow，实测会排到页面下方）。
+ * 具体坐标见下方样式里的 .config-modal.n-modal-container。
  */
-const mountTarget = ref<HTMLElement | null>(null)
-
-function resolveMountTarget() {
-  if (typeof document === 'undefined') return
-  mountTarget.value = document.querySelector<HTMLElement>('.page-scroll')
-}
-
-onMounted(resolveMountTarget)
-watch(() => props.show, (visible) => { if (visible) resolveMountTarget() })
 
 const message = useMessage()
 const loading = ref(false)
@@ -74,15 +66,22 @@ async function ensureMonaco(): Promise<typeof MonacoApi> {
   return monaco
 }
 
+/** 组件是否已关闭：异步加载在关闭后不再建编辑器。 */
+let disposed = false
+
 async function createEditor(content: string) {
   const api = await ensureMonaco()
-  if (!container.value) return
+  // 加载 Monaco 是异步的：期间用户可能已经关掉弹窗
+  if (disposed || !container.value) return
   const dark = themeMode.value === 'dark'
-  editor.value = api.editor.create(container.value, {
+  const instance = api.editor.create(container.value, {
     value: content,
     language: 'ini',
     theme: dark ? 'vs-dark' : 'vs',
-    automaticLayout: true,
+    // 不用 automaticLayout：贴图容器在弹窗关闭/隐藏时尺寸为 0，
+    // 它会触发 ResizeObserver 反复重排，严重时让整个 webview 卡死。
+    // 改为在弹窗显示后手动 layout 一次。
+    automaticLayout: false,
     fontSize: 13,
     lineNumbers: 'on',
     minimap: { enabled: false },
@@ -93,22 +92,30 @@ async function createEditor(content: string) {
     fixedOverflowWidgets: true,
     padding: { top: 8, bottom: 8 },
   })
-  model = editor.value.getModel()
-  editor.value.onDidChangeModelContent(() => { dirty.value = !!model?.getValue() })
+  editor.value = instance
+  model = instance.getModel()
+  instance.onDidChangeModelContent(() => { dirty.value = !!model?.getValue() })
+  // 等一帧拿到真实尺寸后布局
+  requestAnimationFrame(() => {
+    if (!disposed) instance.layout()
+  })
 }
 
 async function load() {
   loading.value = true
   error.value = ''
   dirty.value = false
+  disposed = false
   try {
     const document = await api.readModConfig(props.dllFile)
+    if (disposed) return
     fileName.value = document.file_name
     revision.value = document.revision
     // 等容器渲染出来再建编辑器
     await new Promise((resolve) => requestAnimationFrame(resolve))
     await createEditor(document.content)
   } catch (reason) {
+    if (disposed) return
     error.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
     loading.value = false
@@ -137,11 +144,28 @@ function close() {
   emit('update:show', false)
 }
 
+/**
+ * 释放 Monaco 实例。
+ *
+ * 关键点：`editor.dispose()` 会**连带销毁它持有的 model**，
+ * 之后若再调 `model.dispose()` 就是二次释放，Monaco 内部状态被破坏，
+ * 表现出来就是关闭弹窗时整个应用卡死。
+ * 所以先把 model 从编辑器上 detach，再各自销毁，并且保证只执行一次。
+ */
 function disposeEditor() {
-  editor.value?.dispose()
+  disposed = true
+  const instance = editor.value
+  const textModel = model
   editor.value = null
-  model?.dispose()
   model = null
+  if (instance) {
+    // 先摘掉 model，避免 dispose 时走内部销毁链
+    try { instance.setModel(null) } catch { /* 已销毁 */ }
+    try { instance.dispose() } catch { /* 已销毁 */ }
+  }
+  if (textModel) {
+    try { textModel.dispose() } catch { /* 已销毁 */ }
+  }
 }
 
 watch(
@@ -163,7 +187,7 @@ onBeforeUnmount(disposeEditor)
 </script>
 
 <template>
-  <n-modal :show="show && !!mountTarget" :mask-closable="false" class="config-modal" :to="mountTarget ?? undefined"
+  <n-modal :show="show" :mask-closable="false" class="config-modal"
     @update:show="(value: boolean) => emit('update:show', value)">
     <div class="config-shell">
       <div class="config-head">
@@ -188,26 +212,38 @@ onBeforeUnmount(disposeEditor)
 </template>
 
 <style scoped>
-/* 挂到 .page-scroll 后，弹窗按该容器定位（见模板里的 :to） */
+/*
+ * 遮罩只覆盖 sidebar 右侧的内容区：左侧让出侧栏宽度、顶部让出标题栏。
+ * 用 :global 是因为 .n-modal-container 由 Naive 渲染在 body 下，
+ * 不在本组件的 scoped 作用域内。
+ * 只改位置不改 display：Naive 自带 grid 居中，改成别的会让卡片塌成一行。
+ */
+:global(.config-modal.n-modal-container) {
+  top: var(--oc2-titlebar-height, 56px) !important;
+  left: var(--oc2-rail-width, 108px) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  height: auto !important;
+}
+/* 遮罩本身铺满这个受限区域（Naive 默认 inset: 0 的 fixed 定位会盖住侧栏） */
+:global(.config-modal .n-modal-mask) {
+  position: absolute;
+  inset: 0;
+}
 .config-shell {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* 内容区宽度/高度留出边距，不按整个窗口算 */
-  width: min(1000px, calc(100% - 48px));
-  height: min(640px, calc(100% - 48px));
-  max-height: calc(100% - 48px);
+  /* 相对受限遮罩区域计算尺寸：减去侧栏宽度与两侧留白 */
+  width: min(1000px, calc(100vw - var(--oc2-rail-width, 108px) - 96px));
+  height: min(640px, calc(100vh - var(--oc2-titlebar-height, 56px) - 80px));
+  max-height: calc(100vh - var(--oc2-titlebar-height, 56px) - 80px);
   padding: 14px 16px;
   border: 1px solid var(--oc2-row-line);
   border-radius: 14px;
   background: var(--oc2-card);
-}
-/* 弹窗容器铺满 .page-scroll，使百分比尺寸有参照 */
-:global(.page-scroll > .n-modal-container) {
-  position: absolute;
-  inset: 0;
-  /* 弹窗内的滚动仍交给编辑器自身 */
-  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
 }
 .config-head {
   display: flex;

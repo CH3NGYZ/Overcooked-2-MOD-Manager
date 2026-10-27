@@ -110,6 +110,18 @@ export const themeOverrides = computed<GlobalThemeOverrides>(() => {
       dividerColor: surface.divider,
     },
     Card: { borderRadius: '10px' },
+    /*
+     * 分段切换（type="segment"）的轨道与胶囊在深色下默认都用 inputColor，
+     * 两者同色 → 选中项几乎看不出来。这里改成亮色主题的层次思路：
+     * 轨道用下沉底色、胶囊比卡片更亮的浮层色，选中文字用主题色。
+     */
+    Tabs: {
+      colorSegment: surface.sunken,
+      tabColorSegment: surface.popover,
+      tabTextColorSegment: surface.text2,
+      tabTextColorActiveSegment: main.color,
+      tabTextColorHoverSegment: surface.text1,
+    },
   }
 })
 

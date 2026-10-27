@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { NScrollbar } from 'naive-ui'
 import {
   CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline, ColorWandOutline,
 } from '@vicons/ionicons5'
@@ -18,7 +19,7 @@ const mainItems = [
 ]
 /** 分割线之下：与 MOD 管理配套的工具入口。 */
 const extraItems = [
-  { name: 'rename', title: 'MOD 改名', icon: ColorWandOutline },
+  { name: 'rename', title: '改多彩名', icon: ColorWandOutline },
 ]
 /** 沉底导航：工具与设置固定在侧栏底部。 */
 const bottomItems = [
@@ -31,23 +32,26 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 
 <template>
   <aside class="sidebar">
-    <nav class="nav">
-      <router-link v-for="item in mainItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
-        :class="{ active: activeName === item.name }">
-        <component :is="item.icon" width="20" height="20" />
-        <span>{{ t(item.title) }}</span>
-      </router-link>
+    <!-- 可滚动导航：用 Naive 的 n-scrollbar（自带悬浮细滚动条，不占布局宽度） -->
+    <n-scrollbar class="nav-scroll">
+      <nav class="nav">
+        <router-link v-for="item in mainItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
+          :class="{ active: activeName === item.name }">
+          <component :is="item.icon" width="20" height="20" />
+          <span>{{ t(item.title) }}</span>
+        </router-link>
 
-      <div class="nav-divider" />
+        <div class="nav-divider" />
 
-      <router-link v-for="item in extraItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
-        :class="{ active: activeName === item.name }">
-        <component :is="item.icon" width="20" height="20" />
-        <span>{{ t(item.title) }}</span>
-      </router-link>
-    </nav>
+        <router-link v-for="item in extraItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
+          :class="{ active: activeName === item.name }">
+          <component :is="item.icon" width="20" height="20" />
+          <span>{{ t(item.title) }}</span>
+        </router-link>
+      </nav>
+    </n-scrollbar>
 
-    <!-- 工具与设置沉底：上方的 nav 吃掉剩余高度，这里永远贴着侧栏底部 -->
+    <!-- 固定区：横条紧贴 nav 底部，不留空白；工具与设置不随上方滚动 -->
     <nav class="nav nav-bottom">
       <router-link v-for="item in bottomItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
         :class="{ active: activeName === item.name }">
@@ -63,33 +67,48 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 <style scoped>
 /* Astral 式窄侧栏：图标在上、文字在下的方块导航；配色与组件风格仍走 Naive 主题。 */
 .sidebar {
-  width: 96px;
-  flex: 0 0 96px;
+  width: 108px;
+  flex: 0 0 108px;
   height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  /* 滚动区与固定区之间不留 gap：横条要直接贴住内容，中间不能露空白 */
+  gap: 0;
   border-right: 1px solid var(--oc2-rail-line);
   background: var(--oc2-rail);
-  padding: 14px 8px 12px;
+  padding: 14px 0 12px;
+}
+.nav-scroll {
+  /* 吃掉剩余高度，把固定区推到底部；滚动条由 n-scrollbar 悬浮绘制，
+     不占布局宽度，因此不会挤压导航图标。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
 .nav {
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
+  padding: 0 8px 8px;
 }
-/* 沉底组：不参与伸展，避免被上方 nav 的滚动区推走 */
+/*
+ * 沉底固定区：紧贴滚动区下沿，顶部一条主题色横条把它框起来。
+ * 用 border-top 而不是伪元素 + padding —— 伪元素版本会在横条上方
+ * 留出一段会被滚动内容透出来的空白。
+ */
 .nav-bottom {
   flex: 0 0 auto;
-  overflow: visible;
+  width: 100%;
+  padding: 10px 8px 0;
+  /* 不留上外边距：横条直接贴在滚动区下沿，横条上方不能露空白 */
+  border-top: 2px solid color-mix(in srgb, var(--oc2-accent) 45%, transparent);
 }
 .nav-divider {
+  /* 不参与 flex 收缩，窗口矮时不会被压成 0 高度 */
+  flex: 0 0 auto;
   height: 1px;
   margin: 4px 8px;
   background: var(--oc2-rail-line);
@@ -105,6 +124,8 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
   text-decoration: none;
   font-size: 11px;
   transition: background-color .16s ease, color .16s ease;
+  /* 侧栏变矮时由外层滚动，而不是把每一项压扁 */
+  flex: 0 0 auto;
 }
 .nav-item:hover {
   background: var(--oc2-row-hover);

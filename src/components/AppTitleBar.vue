@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NDropdown, NPopover } from 'naive-ui'
+import { NDropdown, NPopover, NSpin, useMessage } from 'naive-ui'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  CloseOutline, ContrastOutline, ContractOutline, LanguageOutline, MoonOutline, RemoveOutline,
-  SquareOutline, SunnyOutline,
+  CloseOutline, ContrastOutline, ContractOutline, LanguageOutline, MoonOutline, PlayOutline,
+  RemoveOutline, SquareOutline, StopOutline, SunnyOutline,
 } from '@vicons/ionicons5'
 import { ACCENTS, accentKey, cycleAccent, isDark, setAccent, setThemeMode, themeMode } from '../theme'
 import { currentLocaleLabel, locale, localeOptions, setLocale, t, type Locale } from '../i18n'
 import { useUiZoom } from '../composables/useUiZoom'
+import { useDashboard } from '../composables/useDashboardStore'
+import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
 import appIcon from '../assets/app-icon.png'
 
@@ -62,6 +64,43 @@ async function close() { await safeTauri(async () => appWindow?.close()) }
 /** 浏览器预览不显示窗口控制（无窗口可控制）。 */
 const canControlWindow = computed(() => isTauri())
 
+/* ===== 厨房启动 / 停止（悬浮在应用图标上） ===== */
+
+const message = useMessage()
+const { game, load } = useDashboard()
+/** 启动/停止进行中，按钮显示 loading 并禁止重复点击。 */
+const launching = ref(false)
+/** 悬浮提示是否展开。 */
+const gameHover = ref(false)
+
+/** 游戏是否在运行：来自后端游戏状态观察器，前端不自己探测。 */
+const kitchenRunning = computed(() => !!game.value?.kitchen_running)
+/** 有游戏目录才允许启动。 */
+const canLaunch = computed(() => !!game.value?.path)
+
+/**
+ * 切换厨房运行状态。
+ *
+ * 启动与停止都走 Steam 语义：
+ *   - 启动：后端 `launch_normal` → `steam://rungameid/728880`（Steam 负责拉起游戏）；
+ *   - 停止：Steam 没有「停止」协议，后端 `stop_game` 结束游戏进程。
+ * 完成后刷新 Dashboard，让 `kitchen_running` 通过游戏状态事件重新对齐。
+ */
+async function toggleGame() {
+  if (launching.value) return
+  launching.value = true
+  try {
+    const result = kitchenRunning.value ? await api.stopGame() : await api.launchNormal()
+    result.ok ? message.success(result.message) : message.error(result.message)
+    // 进程启动/退出需要一点时间，稍等再取状态，避免读到切换前的快照
+    window.setTimeout(() => { void load() }, 1200)
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : String(reason))
+  } finally {
+    launching.value = false
+  }
+}
+
 // 缩放：下拉选择（与语言下拉同款），25% 步进，100%–200%，默认 150%
 const ZOOM_STEPS = [100, 125, 150, 175, 200] as const
 const zoomOptions = ZOOM_STEPS.map((step) => ({ label: `${step}%`, key: step }))
@@ -75,9 +114,28 @@ defineExpose({ onUnmountedCleanup })
 
 <template>
   <header class="titlebar" data-tauri-drag-region>
-    <!-- 品牌 -->
+    <!-- 品牌：图标上悬浮启动/停止按钮 -->
     <div class="brand" data-tauri-drag-region>
-      <img class="brand-mark" :src="appIcon" alt="" />
+      <div class="brand-mark-wrap" @mouseenter="gameHover = true" @mouseleave="gameHover = false">
+        <img class="brand-mark" :src="appIcon" alt="" />
+        <!--
+          悬浮在应用图标上的启动/停止按钮。
+          运行中显示「停止」（红色），未运行显示「启动」；
+          浏览器预览没有 IPC，仍然渲染但点击无副作用。
+        -->
+        <button class="brand-game-toggle" type="button"
+          :class="{ running: kitchenRunning }"
+          :disabled="launching || !canLaunch"
+          :title="kitchenRunning ? t('停止游戏') : t('启动游戏')"
+          @click.stop="toggleGame">
+          <n-spin v-if="launching" :size="14" />
+          <StopOutline v-else-if="kitchenRunning" width="15" height="15" />
+          <PlayOutline v-else width="15" height="15" />
+        </button>
+        <span v-if="gameHover" class="brand-game-hint">
+          {{ kitchenRunning ? t('停止游戏') : t('启动游戏') }}
+        </span>
+      </div>
       <div class="brand-text" data-tauri-drag-region>
         <strong>{{ t('OC2 模组管理器') }}</strong>
         <small>{{ t('游戏模组管理器') }}</small>
@@ -161,7 +219,16 @@ defineExpose({ onUnmountedCleanup })
   display: flex;
   align-items: center;
   gap: 11px;
+  /* 品牌区可收缩：窗口窄时优先让标题文字省略，而不是挤掉右侧控件 */
+  flex: 0 1 auto;
   min-width: 0;
+}
+.brand-mark-wrap {
+  position: relative;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  /* 悬浮按钮会超出图标边界，不能裁切；提示文字也用这块定位上下文 */
 }
 .brand-mark {
   width: 34px;
@@ -170,11 +237,62 @@ defineExpose({ onUnmountedCleanup })
   border-radius: 9px;
   object-fit: cover;
   display: block;
+  transition: filter .16s ease, transform .16s ease;
+}
+/* 悬浮时压暗图标，让按钮更清晰 */
+.brand-mark-wrap:hover .brand-mark { filter: brightness(.55); }
+/*
+ * 启动/停止按钮：覆盖在应用图标中央。
+ * 默认半透明可见（提示这里可以点），悬浮时完全不透明并轻微放大。
+ */
+.brand-game-toggle {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, .34);
+  color: #e8edf3;
+  cursor: pointer;
+  opacity: .55;
+  transition: opacity .16s ease, background-color .16s ease, transform .16s ease;
+}
+.brand-mark-wrap:hover .brand-game-toggle { opacity: 1; transform: scale(1.04); }
+.brand-game-toggle:hover { background: rgba(0, 0, 0, .55); }
+/* 运行中：停止按钮用危险色，和「正在运行」语义一致 */
+.brand-game-toggle.running { background: rgba(239, 68, 68, .72); color: #fff; }
+.brand-game-toggle.running:hover { background: rgba(239, 68, 68, .88); }
+.brand-game-toggle:disabled { cursor: not-allowed; opacity: .45; }
+/* 悬浮提示：图标下方的一行小标签 */
+.brand-game-hint {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--oc2-popover);
+  border: 1px solid var(--oc2-row-line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--oc2-text-1);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
 }
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
+.brand-text strong,
+.brand-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .brand-text strong { font-size: 14.5px; font-weight: 700; color: var(--oc2-text-1); }
 .brand-text small { font-size: 11px; color: var(--oc2-text-3); margin-top: 1px; }
-.spacer { flex: 1; height: 100%; }
+.spacer { flex: 1 1 auto; height: 100%; min-width: 8px; }
 .pill {
   display: inline-flex;
   align-items: center;
@@ -188,9 +306,27 @@ defineExpose({ onUnmountedCleanup })
   font-size: 12.5px;
   cursor: pointer;
   transition: border-color .16s ease, color .16s ease, background-color .16s ease;
+  /*
+   * 空间不足时按钮自身不收缩、文字不换行：
+   * 图标与箭头保持可见，中间的文本按需截断（1 行 + 省略号）。
+   */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 160px;
 }
+/* 文本段允许收缩并省略，图标与箭头固定不缩 */
+.pill > span:not(.caret):not(.swatch) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pill > svg,
+.pill > .caret,
+.pill > .swatch { flex: 0 0 auto; }
 .pill:hover { border-color: var(--oc2-accent); color: var(--oc2-text-1); }
-.pill.icon-only { padding: 0; width: 32px; justify-content: center; }
+.pill.icon-only { padding: 0; width: 32px; max-width: 32px; justify-content: center; }
 .caret { color: var(--oc2-text-4); font-size: 10px; }
 .swatch {
   width: 15px; height: 15px; border-radius: 50%;

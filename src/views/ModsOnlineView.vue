@@ -707,6 +707,10 @@ defineExpose({ refreshAll, visibleCount })
   height: 1px;
   background: var(--oc2-row-line);
 }
-.header-count { white-space: nowrap; }
-.header-search { width: 240px; }
+.header-count { white-space: nowrap; flex: 0 0 auto; }
+/*
+ * 搜索框是操作区里唯一能收缩的项：窗口变窄时它先变短，
+ * 计数与「刷新全部仓库源」保持完整，避免整行折行。
+ */
+.header-search { width: 240px; flex: 0 1 240px; min-width: 120px; }
 </style>

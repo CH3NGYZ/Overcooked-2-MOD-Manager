@@ -14,6 +14,7 @@ mod gitee_webview;
 mod github_proxies;
 mod install_guard;
 mod mod_config;
+mod mod_preview;
 mod models;
 mod mods;
 mod recycle_bin;
@@ -114,6 +115,9 @@ pub fn run() {
             commands::save_mod_note,
             commands::install_local_mod,
             direct_mod::install_online_mod,
+            mod_preview::analyze_mod_source,
+            mod_preview::confirm_mod_install,
+            mod_preview::cancel_mod_preview,
             commands::uninstall_local_mod,
             commands::uninstall_mod_dll,
             commands::get_mod_recycle_bin,
@@ -166,12 +170,14 @@ pub fn run() {
             commands::save_repository,
             commands::delete_repository,
             commands::launch_normal,
+            commands::stop_game,
             commands::launch_no_mod,
             commands::restore_mod,
             commands::switch_winhttp,
             commands::open_game_directory,
             commands::open_mod_directory,
             commands::open_mod_file_location,
+            commands::open_mod_logs_directory,
             commands::read_mod_config,
             commands::save_mod_config,
             commands::read_bepinex_config,

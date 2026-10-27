@@ -62,6 +62,44 @@ pub fn exists(game: &Path, guid: &str) -> bool {
     checked_file(game, guid).is_ok()
 }
 
+/// 该 GUID 是否在 `BepInEx/logs/<guid>` 下有日志目录。
+///
+/// 只判断「目录存在且是一个真实目录」：不创建、不读取内容，
+/// 也不跟随目录联接逃出游戏根目录 —— 前端据此决定要不要显示日志按钮。
+pub fn logs_dir_exists(game: &Path, guid: &str) -> bool {
+    let Ok(path) = checked_logs_dir(game, guid) else {
+        return false;
+    };
+    fs::metadata(&path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+}
+
+/// 校验并返回 `BepInEx/logs/<guid>` 的真实路径。
+pub fn checked_logs_dir(game: &Path, guid: &str) -> Result<PathBuf, String> {
+    if guid.trim().is_empty()
+        || guid.ends_with(['.', ' '])
+        || guid
+            .chars()
+            .any(|c| c.is_control() || "\\/:*?\"<>|".contains(c))
+        || guid == "."
+        || guid == ".."
+    {
+        return Err(UNSAFE.into());
+    }
+    let path = game.join("BepInEx/logs").join(guid);
+    if !path.is_absolute() {
+        return Err(UNSAFE.into());
+    }
+    if path
+        .components()
+        .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(UNSAFE.into());
+    }
+    Ok(path)
+}
+
 fn bytes(path: &Path) -> Result<Vec<u8>, String> {
     let file = fs::File::open(path).map_err(|_| "无法读取 MOD 配置文件")?;
     let mut bytes = Vec::new();

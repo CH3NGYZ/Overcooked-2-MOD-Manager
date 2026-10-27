@@ -49,6 +49,8 @@ pub enum InstalledModStatusLabel {
     DuplicateLowerVersion,
     LoadWarning,
     Disabled,
+    /// 包内的纯依赖 DLL：读不出 BepInPlugin 元数据（如 LevelEditorStub）。
+    Dependency,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +58,19 @@ pub struct InstalledMod {
     pub repository_id: Option<String>,
     #[serde(default)]
     pub repository_ids: Vec<String>,
+    /// 该 MOD 的安装清单是否由手动安装（本地文件 / 在线直链）创建。
+    ///
+    /// 手动安装的清单 id 是 `manual-<uuid>`，没有仓库也没有 Release 绑定。
+    /// 扫描时如果它能按 GUID/产品名 匹配到在线仓库，仍会绑定该仓库并归入
+    /// 仓库分组；匹配不到时才用这个标记归到「本地安装」分类。
+    #[serde(default)]
+    pub manual_install: bool,
+    /// 该 DLL 读不出 BepInPlugin 元数据，只是随包安装的纯依赖（如 LevelEditorStub）。
+    ///
+    /// 这类文件仍然会出现在扫描结果里（它确实占用了 plugins 目录，
+    /// 删除/开关也需要能操作），但界面上标为「依赖」而不是当作一个 MOD。
+    #[serde(default)]
+    pub is_dependency: bool,
     #[serde(default)]
     pub repository_binding: Option<RepositoryBinding>,
     #[serde(default)]
@@ -85,6 +100,9 @@ pub struct InstalledMod {
     pub guid: Option<String>,
     #[serde(default)]
     pub has_config: bool,
+    /// `BepInEx/logs/<guid>` 是否存在：前端据此决定是否显示「查看日志」按钮。
+    #[serde(default)]
+    pub has_logs: bool,
     pub plugin_name: Option<String>,
     pub company: Option<String>,
     pub copyright: Option<String>,

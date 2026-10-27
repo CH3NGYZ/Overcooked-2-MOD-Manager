@@ -32,6 +32,8 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   duplicate_lower_version: { text: '低版本', tone: 'violet' },
   load_warning: { text: '加载警告', tone: 'warn' },
   disabled: { text: '已禁用', tone: 'muted' },
+  /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
+  dependency: { text: '依赖', tone: 'muted' },
   installed: { text: '已安装', tone: 'idle' },
   // MOD 安装页专用：仓库维度而不是已安装 MOD 维度
   /** 未安装一律灰色，不区分 Release / RAW。 */

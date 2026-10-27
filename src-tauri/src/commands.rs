@@ -827,7 +827,10 @@ pub(crate) fn install_manual_mod(
     }
     let manifest = archive::new_manifest(
         &repository_id,
-        &display_name,
+        // release_tag 是「Release 版本标签」，手动安装没有 Release，保持空字符串。
+        // 之前这里塞了文件名，语义是错的，还会让 flag_manifest_version_mismatch
+        // 之类的逻辑把它当成版本号尝试解析。
+        "",
         Some(&display_name),
         Some(file_name),
         pending.files().to_vec(),
@@ -2866,7 +2869,7 @@ pub async fn push_colorful_name(name: String) -> Result<OperationResult, String>
         COLORFUL_NAME_PORTS.start(),
         COLORFUL_NAME_PORTS.end()
     );
-    Err("请打开游戏并确认多彩名字 MOD 正在运行".into())
+    Err("请打开游戏并确认 街机MOD 正在运行".into())
 }
 
 fn parse_tutorial_document(text: &str) -> Result<TutorialDocument, String> {
@@ -3985,6 +3988,25 @@ pub fn delete_repository(
 }
 
 #[tauri::command]
+pub fn stop_game(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    log::info!("收到停止厨房请求");
+    // 结束进程不需要操作锁：锁是给配置/清单提交用的，
+    // 而游戏退出期间的其他只读操作（例如状态刷新）应继续可用。
+    let config = state.config.load_or_default();
+    let info = game::detect_game(&config);
+    let game_root = PathBuf::from(info.path.as_deref().ok_or("尚未找到厨房目录")?);
+    let stopped = game::stop_game(&game_root)?;
+    Ok(OperationResult {
+        ok: true,
+        message: if stopped == 0 {
+            "厨房当前未在运行".into()
+        } else {
+            "已停止厨房".into()
+        },
+    })
+}
+
+#[tauri::command]
 pub fn launch_normal(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::info!("启动厨房：正常 MOD 模式");
     let _guard = state
@@ -4234,6 +4256,26 @@ pub fn open_mod_file_location(
     Ok(OperationResult {
         ok: true,
         message: "已打开目录并定位 MOD DLL".into(),
+    })
+}
+
+#[tauri::command]
+pub fn open_mod_logs_directory(
+    state: State<'_, AppState>,
+    dll_file: String,
+) -> Result<OperationResult, String> {
+    log::debug!("打开 MOD 日志目录：文件={}", dll_file);
+    let (game_root, guid, _) = resolve_mod_config(&state, &dll_file)?;
+    let path = crate::mod_config::checked_logs_dir(&game_root, &guid)?;
+    if !path.is_dir() {
+        return Err("该 MOD 没有日志目录".into());
+    }
+    mod_file_location_command(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(OperationResult {
+        ok: true,
+        message: "已打开 MOD 日志目录".into(),
     })
 }
 

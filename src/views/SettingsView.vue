@@ -144,12 +144,6 @@ async function clearTokens() {
 
   <!-- 通用设置 -->
   <SettingsGroup :title="t('通用设置')">
-    <SettingsRow :title="t('启动时检查程序更新')" :description="t('每天首次启动时检查新版本')">
-      <template #right>
-        <n-switch size="small" :value="config?.network.check_updates_on_start"
-          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />
-      </template>
-    </SettingsRow>
     <SettingsRow :title="t('自动检测游戏路径')" :description="t('启动与刷新时自动探测 Steam 库')">
       <template #right>
         <n-switch size="small" :value="config?.game.auto_detect"
@@ -196,7 +190,7 @@ async function clearTokens() {
       <div class="drawer-pref">
         <div>
           <b>{{ t('启动时检查程序更新') }}</b>
-          <div class="muted">{{ t('每天首次启动时检查新版本') }}</div>
+          <div class="muted">{{ t('启动管理器时检查新版本，可在设置中关闭') }}</div>
         </div>
         <n-switch size="small" :value="config?.network.check_updates_on_start"
           @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />

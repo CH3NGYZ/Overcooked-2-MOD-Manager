@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { nextTick, ref } from 'vue'
+import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NModal, NTag } from 'naive-ui'
+import { NLog, NModal, NTag } from 'naive-ui'
 import { BuildOutline, DocumentTextOutline, ServerOutline, TerminalOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
@@ -18,7 +18,6 @@ const logOpen = ref(false)
 const logTitle = ref('')
 const logPath = ref('')
 const logContent = ref('')
-let logPre: HTMLElement | null = null
 
 const logMeta: Record<LogKind, { title: string; read: () => Promise<RustLog> }> = {
   rust: { get title() { return t('打开 Rust 后端日志') }, read: () => api.readRustLog() },
@@ -39,7 +38,6 @@ async function openLog(kind: LogKind) {
     logPath.value = log.path
     logContent.value = log.content
     logOpen.value = true
-    void nextTick(() => { if (logPre) logPre.scrollTop = logPre.scrollHeight })
   } catch (reason) { fail(reason) } finally { working.value[kind] = false }
 }
 
@@ -83,16 +81,15 @@ async function resetUi() {
       @click="resetUi" />
   </SettingsGroup>
 
-  <n-modal v-model:show="logOpen">
-    <div class="log-modal">
-      <div class="log-head">
-        <b>{{ logTitle }}</b>
-        <n-tag size="small" :bordered="false">{{ t('末尾 512 KiB') }}</n-tag>
-        <n-button size="tiny" quaternary @click="logOpen = false">{{ t('关闭') }}</n-button>
-      </div>
-      <div class="muted mono log-path">{{ logPath }}</div>
-      <pre ref="logPre" class="log-body">{{ logContent || '（空）' }}</pre>
-    </div>
+  <!-- 日志查看：用 Naive 的 modal + card preset + n-log，不再手写弹窗与滚动容器 -->
+  <n-modal v-model:show="logOpen" preset="card" class="log-dialog" :title="logTitle" :bordered="false"
+    style="width: min(880px, 90vw)">
+    <template #header-extra>
+      <n-tag size="small" :bordered="false">{{ t('末尾 512 KiB') }}</n-tag>
+    </template>
+    <div class="muted mono log-path">{{ logPath }}</div>
+    <!-- 不传 language：日志是纯文本，传了会走 hljs 高亮并因缺少 hljs 实例告警 -->
+    <n-log :log="logContent || '（空）'" :rows="24" :font-size="12" trim />
   </n-modal>
 </template>
 
@@ -123,32 +120,5 @@ async function resetUi() {
 .sponsor-text b {
   font-size: 14px;
 }
-.log-modal {
-  width: min(880px, calc(100vw - 80px));
-  background: var(--oc2-card);
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 12px;
-  padding: 16px 18px;
-}
-.log-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.log-head b { flex: 1; }
-.log-path { margin: 8px 0; }
-.log-body {
-  margin: 0;
-  height: 60vh;
-  overflow: auto;
-  background: #14161a;
-  border: 1px solid var(--oc2-rail-line);
-  border-radius: 8px;
-  padding: 12px;
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: #b8c4d0;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
+.log-path { margin: 0 0 10px; }
 </style>

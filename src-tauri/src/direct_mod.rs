@@ -97,6 +97,97 @@ fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 只下载不安装：把直链内容落到临时文件，返回（临时路径，文件名）。
+///
+/// 安装预览用它：先下载一次、解析、让用户确认，确认后从暂存安装，
+/// 避免「预览下载一次、安装再下载一次」。调用方负责删除返回的临时文件
+/// （`analyze_mod_source` 会把它搬到预览暂存目录）。
+pub(crate) async fn download_for_preview(
+    state: &AppState,
+    url: &str,
+) -> Result<(PathBuf, String), String> {
+    archive::start_download();
+    let parsed = Url::parse(url.trim()).map_err(|_| "请输入有效的 HTTP 或 HTTPS 下载直链")?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err("请输入有效的 HTTP 或 HTTPS 下载直链".into());
+    }
+    let config = state.config.load_or_default();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(config.network.timeout_seconds.max(1)))
+        .read_timeout(Duration::from_secs(120))
+        .user_agent(releases::APP_USER_AGENT)
+        .build()
+        .map_err(|_| "无法创建下载客户端")?;
+    let candidate = DownloadCandidate {
+        route: DownloadRoute::Direct,
+        url: parsed.to_string(),
+    };
+    let response = tokio::select! {
+        result = client.get(parsed.clone()).timeout(Duration::from_secs(5)).header(reqwest::header::RANGE, "bytes=0-0")
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
+            .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send() => {
+            result.map_err(|_| "无法获取在线文件信息")?.error_for_status().map_err(|_| "无法获取在线文件信息")?
+        }
+        _ = async {
+            while !archive::is_download_cancelled() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        } => return Err("下载已取消".into()),
+    };
+    let disposition = response
+        .headers()
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok());
+    let filename = download_filename(response.url(), disposition).or_else(|error| {
+        if disposition.is_none() {
+            download_filename(&parsed, None)
+        } else {
+            Err(error)
+        }
+    })?;
+    drop(response);
+    let cache_dir = state.config.cache_dir();
+    let temp = try_download_candidates(
+        vec![candidate],
+        archive::is_download_cancelled,
+        |candidate, reporter| {
+            let client = &client;
+            let cache_dir = &cache_dir;
+            let filename = &filename;
+            async move {
+                let path = archive::download_to_temp_with_threads_and_first_byte_timeout(
+                    client,
+                    &candidate.url,
+                    cache_dir,
+                    "在线文件",
+                    &reporter,
+                    32,
+                    Some(Duration::from_secs(5)),
+                )
+                .await?;
+                if let Err(error) = validate_mod_file(&path, filename) {
+                    let _ = fs::remove_file(&path);
+                    return Err(error);
+                }
+                Ok(path)
+            }
+        },
+        Some(DownloadContext {
+            app: None,
+            label: "在线文件",
+            expected_size: None,
+        }),
+    )
+    .await?;
+    log::info!("在线 MOD 预览下载完成：文件名={filename}");
+    Ok((temp, filename))
+}
+
 #[tauri::command]
 pub async fn install_online_mod(
     app: AppHandle,

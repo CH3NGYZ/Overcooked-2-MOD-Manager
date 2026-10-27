@@ -9,7 +9,23 @@ import { compareVersions, modsForRepository } from './modStatus.ts'
  *
  * 颜色在 `src/styles/global.css` 的 `.state-tag--*` 里定义。
  */
-export type StatusTone = 'ok' | 'warn' | 'idle' | 'muted' | 'danger' | 'violet'
+/**
+ * 状态色调。
+ *
+ * 「最新版 / 已安装」用主题色；与「更新」相关的三种状态用主题色对比色的
+ * 三档强弱表达紧迫度（重复 > 可更新 > 低版本），这样一眼能看出层级，
+ * 而不是三种互不相干的颜色。
+ */
+export type StatusTone =
+  | 'ok' | 'warn' | 'idle' | 'muted' | 'danger' | 'violet'
+  /** 主题色：稳定状态（最新版、已安装） */
+  | 'accent'
+  /** 对比色·强：同 GUID 重复，最需要处理 */
+  | 'contrast-strong'
+  /** 对比色·中：可更新 */
+  | 'contrast'
+  /** 对比色·弱：低版本副本 */
+  | 'contrast-weak'
 
 export interface StatusTag {
   key: string
@@ -19,22 +35,23 @@ export interface StatusTag {
 
 /** 后端标签 → 文案与颜色。 */
 export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
-  update_available: { text: '可更新', tone: 'warn' },
-  latest: { text: '最新版', tone: 'ok' },
-  /** 已安装的是预发布版本：固定排在「最新版」左侧，黄色。 */
-  prerelease: { text: '预发布', tone: 'warn' },
-  not_release_asset: { text: '已安装', tone: 'idle' },
+  update_available: { text: '可更新', tone: 'contrast' },
+  latest: { text: '最新版', tone: 'accent' },
+  /** 已安装的是预发布版本：与「可更新」同档，因为都需要用户注意。 */
+  prerelease: { text: '预发布', tone: 'contrast' },
+  not_release_asset: { text: '已安装', tone: 'accent' },
   unbound: { text: '未绑定', tone: 'muted' },
   bound_repository_missing: { text: '仓库缺失', tone: 'danger' },
   repository_unavailable: { text: '仓库不可用', tone: 'danger' },
   unknown: { text: '版本未知', tone: 'muted' },
-  duplicate: { text: '重复', tone: 'danger' },
-  duplicate_lower_version: { text: '低版本', tone: 'violet' },
-  load_warning: { text: '加载警告', tone: 'warn' },
+  duplicate: { text: '重复', tone: 'contrast-strong' },
+  duplicate_lower_version: { text: '低版本', tone: 'contrast-weak' },
+  load_warning: { text: '加载警告', tone: 'danger' },
   disabled: { text: '已禁用', tone: 'muted' },
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
   dependency: { text: '依赖', tone: 'muted' },
-  installed: { text: '已安装', tone: 'idle' },
+  /** 仓库文件（RAW）已安装：与「最新版」同档，都用主题色。 */
+  installed: { text: '已安装', tone: 'accent' },
   // MOD 安装页专用：仓库维度而不是已安装 MOD 维度
   /** 未安装一律灰色，不区分 Release / RAW。 */
   not_installed: { text: '未安装', tone: 'muted' },

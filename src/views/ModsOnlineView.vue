@@ -61,23 +61,6 @@ function installLabel(repo: Repository) {
 function hasLocalInstall(repo: Repository) {
   return modsForRepository(mods.value, repo).length > 0
 }
-/*
- * 仓库状态标签的强调色，按「用户看到什么」分三档：
- *   未安装 / 未刷新 / 仓库文件未安装 → 灰色（muted），不需要强调
- *   最新版、仓库文件已安装           → 主题色，稳定可用
- *   可更新                           → 主题色对比色，唯一的警告性强调
- * 其余状态（未启用、刷新失败、仓库缺失）保留各自的状态语义色，
- * 因为它们表达的是错误而不是「安装进度」。
- */
-function statusToneClass(repo: Repository) {
-  const key = statusOf(repo).key
-  if (key === 'update_available') return 'state-tag--contrast'
-  if (key === 'latest' || key === 'installed') return 'state-tag--accent'
-  if (key === 'not_installed' || key === 'not_installed_raw' || key === 'not_refreshed') {
-    return 'state-tag--muted'
-  }
-  return ''
-}
 
 /** 点击状态标签：跳到 MOD 管理页并高亮绑定该仓库的 MOD 卡片。 */
 function openInLocalMods(repo: Repository) {
@@ -449,7 +432,7 @@ defineExpose({ refreshAll, visibleCount })
                         与「重装 / 更新」按钮同色系；其余状态沿用状态语义色。
                       -->
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :class="[`state-tag--${statusOf(repo).tone}`, statusToneClass(repo),
+                        :class="[`state-tag--${statusOf(repo).tone}`,
                           { 'state-tag--link': hasLocalInstall(repo) }]"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
@@ -519,7 +502,7 @@ defineExpose({ refreshAll, visibleCount })
                   <span class="card-title">{{ repoName(repo) }}</span>
                   <span class="stat stat-status">
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :class="[`state-tag--${statusOf(repo).tone}`, statusToneClass(repo),
+                        :class="[`state-tag--${statusOf(repo).tone}`,
                           { 'state-tag--link': hasLocalInstall(repo) }]"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>

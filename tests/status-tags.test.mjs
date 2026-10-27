@@ -36,7 +36,8 @@ test('RAW 仓库只区分未安装 / 已安装，未安装为灰色', () => {
   const installed = mod({ repository_id: 'repo-1' })
   const done = repositoryStatus(raw, [installed])
   assert.equal(done.text, '已安装')
-  assert.equal(done.tone, 'idle')
+  // 已安装与最新版同档，使用主题色
+  assert.equal(done.tone, 'accent')
 })
 
 test('RAW 仓库即使被禁用或刷新失败，也只按安装状态显示', () => {
@@ -74,11 +75,15 @@ test('后端未绑定该仓库时回退到版本比较', () => {
   })
   const status = repositoryStatus(repo(), [installed])
   assert.equal(status.text, '可更新')
-  assert.equal(status.tone, 'warn')
+  // 可更新用对比色（中档强度）
+  assert.equal(status.tone, 'contrast')
 })
 
 test('每个状态标签都有文案与合法色调', () => {
-  const tones = new Set(['ok', 'warn', 'idle', 'muted', 'danger', 'violet'])
+  const tones = new Set([
+    'ok', 'warn', 'idle', 'muted', 'danger', 'violet',
+    'accent', 'contrast-strong', 'contrast', 'contrast-weak',
+  ])
   for (const [key, meta] of Object.entries(STATUS_META)) {
     assert.ok(meta.text, `${key} 缺少文案`)
     assert.ok(tones.has(meta.tone), `${key} 色调非法: ${meta.tone}`)
@@ -88,15 +93,17 @@ test('每个状态标签都有文案与合法色调', () => {
 test('installedModTags 保留后端顺序，labels 为空时退回 status', () => {
   const tags = installedModTags(mod({ labels: ['duplicate_lower_version', 'duplicate'] }))
   assert.deepEqual(tags.map((tag) => tag.text), ['低版本', '重复'])
-  assert.deepEqual(tags.map((tag) => tag.tone), ['violet', 'danger'])
+  // 重复比对色·强，低版本用对比色·弱
+  assert.deepEqual(tags.map((tag) => tag.tone), ['contrast-weak', 'contrast-strong'])
   assert.equal(installedModTags(mod({ labels: [], status: 'unbound' }))[0].text, '未绑定')
 })
 
-test('预发布版本在最前面插入黄色「预发布」标签', () => {
+test('预发布版本在最前面插入「预发布」标签，与可更新同档', () => {
   const tags = installedModTags(mod({ labels: ['latest'], prerelease: true }))
   assert.deepEqual(tags.map((tag) => tag.text), ['预发布', '最新版'])
-  assert.equal(tags[0].tone, 'warn')
-  assert.equal(tags[1].tone, 'ok')
+  assert.equal(tags[0].tone, 'contrast')
+  // 最新版用主题色
+  assert.equal(tags[1].tone, 'accent')
 })
 
 test('非预发布版本不出现「预发布」标签', () => {

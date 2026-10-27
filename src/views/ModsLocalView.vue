@@ -18,6 +18,7 @@ import {
   installedModTags, recomputeModUpdate, replaceVersionConclusion,
   summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
 } from '../statusTags'
+import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -33,7 +34,7 @@ const message = useMessage()
 const dialog = useDialog()
 const { load, ensureLoaded, loading, mods, game, config } = useDashboard()
 /** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
-const { refreshing, refreshingAll } = useRepositoryRefresh()
+const { refreshing, refreshingAll, refreshOne } = useRepositoryRefresh()
 
 /** 状态标签跳转：点标签跳到 MOD 安装页，并高亮对应仓库卡片 3 秒。 */
 const { linkToRepository } = useRepositoryLink()
@@ -164,8 +165,8 @@ interface ModPackageNode {
    * 见 `statusTags.ts` 的 `packageStatuses`。
    */
   statuses: PackageStatus[]
-  /** 有更新时包标题显示的「更新」按钮所用的仓库（与单 MOD 同一链路）。 */
-  updateRepository?: Repository
+  /** 包标题的快捷动作（更新 / 刷新），由包状态决定，见 statusActions.ts。 */
+  action?: StatusActionSpec
   /** 包内用于跳转的仓库 id（点标签跳到 MOD 安装页对应仓库）。 */
   repositoryId?: string
 }
@@ -341,12 +342,13 @@ const groups = computed<ModGroupNode[]>(() => {
      */
     const statuses = packageStatuses(list)
     /*
-     * 包的仓库身份与更新动作：整包成员共享同一个仓库，
+     * 包的仓库身份与快捷动作：整包成员共享同一个仓库，
      * 所以直接用「包内能绑定仓库的那一个」——与包标题、分组用的是同一代表。
-     * 更新按钮复用单 MOD 的预览链路，标签跳转复用同一个仓库 id。
+     * 动作由包对外公开的状态集合解析（与单 MOD 共用 statusActions 的规则）。
      */
     const repo = repositoryForMod(repositories.value, representative(list))
-    const updatable = list.find((mod) => updatableRepository(mod))
+    const representativeMod = representative(list)
+    const action = actionContext(statuses.map((entry) => entry.key), representativeMod)?.action
     return {
       key,
       label,
@@ -355,7 +357,7 @@ const groups = computed<ModGroupNode[]>(() => {
       enabled: enabledCount === list.length,
       partial: enabledCount > 0 && enabledCount < list.length,
       statuses,
-      updateRepository: updatable ? updatableRepository(updatable) : undefined,
+      action,
       repositoryId: repo?.id,
     }
   }
@@ -593,23 +595,91 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
 }
 
 /**
- * 可更新的 MOD：返回它绑定的仓库，否则 undefined。
+ * 某个状态对应的按钮能不能真的执行。
  *
- * 只有「真的能装到更新的版本」才给按钮 ——
- * 未绑定、仓库缺失、仓库文件（RAW，无版本可比）都不算，
- * 否则按钮点下去只会下载一个和本地一样的包。
+ * 动作种类由 `statusActionFor` 决定（可更新 → 更新、刷新失败 → 刷新…），
+ * 但「能不能做」还要看实际条件，这些条件各状态不同，所以留在视图层：
+ *   - update：必须有可安装的仓库，且不是仓库文件模式（无版本可比）；
+ *   - refresh：必须有绑定的仓库 id（否则不知道该刷哪一条）。
+ *
+ * 返回 undefined 表示这个状态不适合给按钮（例如未绑定、依赖 DLL），
+ * 卡片就不留按钮位，避免出现点了没反应的死按钮。
  */
-function updatableRepository(mod: InstalledMod): Repository | undefined {
-  if (mod.is_dependency || !mod.update_available) return undefined
-  const repo = repositoryForMod(repositories.value, mod)
-  if (!repo || repo.download_mode === 'repository_file') return undefined
-  return repo
+function actionContext(labels: readonly string[] | undefined, mod: InstalledMod): {
+  action: StatusActionSpec
+  repository?: Repository
+} | undefined {
+  const action = statusActionFor(labels)
+  if (!action) return undefined
+  // 纯依赖 DLL 没有版本语义，任何快捷动作都没有意义
+  if (mod.is_dependency) return undefined
+
+  const repository = repositoryForMod(repositories.value, mod)
+  switch (action.kind) {
+    case 'update':
+      // 没有仓库或 RAW 仓库：点下去只会下载一份和本地一样的文件
+      if (!repository || repository.download_mode === 'repository_file') return undefined
+      return { action, repository }
+    case 'refresh':
+      // 刷新针对仓库而不是某个 DLL，解析不出仓库就不给按钮
+      if (!repository) return undefined
+      return { action, repository }
+  }
 }
 
-/** 触发某个 MOD 的更新：与仓库卡片「更新」走同一条预览链路。 */
-function updateMod(mod: InstalledMod) {
-  const repo = updatableRepository(mod)
-  if (repo) void previewRepository(repo)
+/** 单 MOD 卡片的快捷动作。 */
+function cardAction(mod: InstalledMod) {
+  return actionContext(mod.labels as string[] | undefined, mod)
+}
+
+/**
+ * 按 DLL 预计算动作：模板里要读 4 次（判断、配色、文案、图标），
+ * 每次都重跑仓库匹配太浪费，派生一次即可。键是 dll_file。
+ */
+const actionByDll = computed<Record<string, StatusActionSpec>>(() => {
+  const map: Record<string, StatusActionSpec> = {}
+  for (const mod of effectiveMods.value) {
+    const context = cardAction(mod)
+    if (context) map[mod.dll_file] = context.action
+  }
+  return map
+})
+
+/** 包标题的快捷动作：用包对外公开的状态集合判断。 */
+function packageAction(pkg: ModPackageNode) {
+  const first = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
+  if (!first) return undefined
+  return actionContext(pkg.statuses.map((entry) => entry.key), first)
+}
+
+/**
+ * 执行快捷动作。
+ *
+ * 两个动作走的是不同链路，这是它们唯一的分歧点：
+ *   - update：预下载 → 安装详情弹窗 → 用户确认（与仓库卡片安装同一套）
+ *   - refresh：只重拉这一条仓库的 Release，不下载任何文件
+ */
+function runCardAction(mod: InstalledMod) {
+  const context = cardAction(mod)
+  if (!context) return
+  if (context.action.kind === 'update' && context.repository) {
+    void previewRepository(context.repository)
+  } else if (context.repository) {
+    void refreshRepository(context.repository)
+  }
+}
+
+function runPackageAction(pkg: ModPackageNode) {
+  const context = packageAction(pkg)
+  if (!context || !context.repository) return
+  if (context.action.kind === 'update') void previewRepository(context.repository)
+  else void refreshRepository(context.repository)
+}
+
+/** 单仓刷新：复用刷新引擎，只更新这一条仓库的缓存。 */
+async function refreshRepository(repo: Repository) {
+  const error = await refreshOne(repo)
+  if (error) message.error(error)
 }
 
 /* ===== 页内定位：点标题后的聚合标签 ===== */
@@ -982,17 +1052,20 @@ function removePackage(node: ModPackageNode) {
 
                 <div class="card-right">
                   <!--
-                    可更新时的快捷「更新」按钮：与标签之间用竖线隔开，
+                    状态快捷动作：按钮由当前最需要注意的状态决定
+                    （可更新 → 更新、仓库刷新失败 → 刷新），
+                    规则集中在 statusActions.ts。与标签之间用竖线隔开，
                     视觉上属于标签区的一部分（不是右侧工具栏的常规动作）。
-                    点击后走和仓库卡片「安装」完全相同的链路：
-                    预览下载 → 安装详情弹窗 → 用户确认写入。
                   -->
-                  <template v-if="updatableRepository(mod)">
-                    <!-- 与「可更新」标签同档 moderate 的浅底样式，配色来自 theme.ts -->
-                    <n-button size="tiny" :style="buttonColorFor('moderate', 'soft')" :title="t('更新')"
-                      :loading="!!previewing[bindingRepositoryId(mod) ?? '']"
-                      :disabled="!!game?.kitchen_running" @click.stop="updateMod(mod)">
-                      <ArrowUpCircleOutline width="14" height="14" />{{ t('更新') }}
+                  <template v-if="actionByDll[mod.dll_file]">
+                    <!-- 配色跟随触发它的状态档位，来自 theme.ts 的统一色阶 -->
+                    <n-button size="tiny" :style="buttonColorFor(actionByDll[mod.dll_file].tone, 'soft')"
+                      :title="t(actionByDll[mod.dll_file].label)"
+                      :loading="!!previewing[bindingRepositoryId(mod) ?? ''] || !!refreshing[bindingRepositoryId(mod) ?? '']"
+                      :disabled="!!game?.kitchen_running" @click.stop="runCardAction(mod)">
+                      <ArrowUpCircleOutline v-if="actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
+                      <RefreshOutline v-else width="14" height="14" />
+                      {{ t(actionByDll[mod.dll_file].label) }}
                     </n-button>
                     <span class="tool-divider" />
                   </template>
@@ -1074,16 +1147,19 @@ function removePackage(node: ModPackageNode) {
                 <!-- 右：状态标签 + 分割线 + 工具列（与单 MOD 卡片同一套列宽预留） -->
                 <div class="package-right">
                   <!--
-                    可更新时的「更新」按钮：与单 MOD 卡片完全相同的位置与链路
-                    （预览下载 → 安装详情 → 用户确认）。包是一个整体，
-                    更新针对的是这个包绑定的仓库，不是包内某个 DLL。
+                    包级快捷动作：与单 MOD 卡片共用 statusActions 的规则。
+                    包是一个整体，动作针对的是这个包绑定的仓库，
+                    不是包内某个 DLL。
                   -->
-                  <template v-if="pkg.updateRepository">
-                    <n-button size="tiny" :style="buttonColorFor('moderate', 'soft')" :title="t('更新')"
-                      :loading="!!previewing[pkg.repositoryId ?? '']"
+                  <template v-if="pkg.action">
+                    <n-button size="tiny" :style="buttonColorFor(pkg.action.tone, 'soft')"
+                      :title="t(pkg.action.label)"
+                      :loading="!!previewing[pkg.repositoryId ?? ''] || !!refreshing[pkg.repositoryId ?? '']"
                       :disabled="!!game?.kitchen_running"
-                      @click.stop="previewRepository(pkg.updateRepository)">
-                      <ArrowUpCircleOutline width="14" height="14" />{{ t('更新') }}
+                      @click.stop="runPackageAction(pkg)">
+                      <ArrowUpCircleOutline v-if="pkg.action.kind === 'update'" width="14" height="14" />
+                      <RefreshOutline v-else width="14" height="14" />
+                      {{ t(pkg.action.label) }}
                     </n-button>
                     <span class="tool-divider" />
                   </template>

@@ -4446,6 +4446,79 @@ pub fn exit_app() -> Result<(), String> {
     std::process::exit(0)
 }
 
+/// 当前进程的权限与可写性自检。
+///
+/// 应用不再启动即提权（否则 Windows UIPI 会阻止拖放、每次启动弹 UAC）。
+/// 前端据此在设置页显示状态，并在真正遇到「拒绝访问」时提示用户
+/// 以管理员身份重启。
+#[derive(serde::Serialize)]
+pub struct PermissionStatus {
+    /// 当前进程是否具备管理员/root 权限。
+    pub elevated: bool,
+    /// 游戏 MOD 目录是否可写：需要提权的唯一真实判据。
+    pub game_writable: bool,
+    /// 管理器数据目录是否可写（安装目录内，正常应始终可写）。
+    pub data_writable: bool,
+}
+
+#[tauri::command]
+pub fn permission_status(state: State<'_, AppState>) -> Result<PermissionStatus, String> {
+    let config = state.config.load_or_default();
+    let game_root = game::detect_game(&config).path;
+    let game_writable = game_root
+        .as_deref()
+        .map(|path| probe_writable(&Path::new(path).join("BepInEx/plugins")))
+        .unwrap_or(false);
+    let data_writable = crate::user_paths::root()
+        .map(|root| probe_writable(&root))
+        .unwrap_or(false);
+    Ok(PermissionStatus {
+        elevated: crate::is_elevated(),
+        game_writable,
+        data_writable,
+    })
+}
+
+/// 探测目录是否可写：创建并删除一个临时文件，不改动任何既有内容。
+fn probe_writable(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".oc2-write-probe-{}", uuid::Uuid::new_v4()));
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 以管理员身份重启自己；成功后本进程立即退出。
+///
+/// 只在文件访问真的被拒时由用户主动触发 —— 应用平时以普通权限运行，
+/// 这样拖放可用、启动不弹 UAC、更新时能正常关闭自己。
+#[tauri::command]
+pub fn relaunch_as_admin() -> Result<OperationResult, String> {
+    log::info!("收到以管理员身份重启请求");
+    if crate::is_elevated() {
+        return Ok(OperationResult {
+            ok: true,
+            message: "当前已是管理员权限".into(),
+        });
+    }
+    if crate::relaunch_elevated() {
+        log::info!("已启动管理员实例，退出当前进程");
+        // 给新进程一点时间接管
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::process::exit(0);
+    }
+    Ok(OperationResult {
+        ok: false,
+        message: "未能获得管理员权限（可能取消了 UAC）".into(),
+    })
+}
+
 #[tauri::command]
 pub async fn check_app_update(
     app: AppHandle,
@@ -5000,6 +5073,32 @@ fn open_steam(settings: &GameConfig, info: &GameInfo) -> Result<OperationResult,
 
 fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, String> {
     ensure_copy_paths_disjoint(&game_root.join("BepInEx"), backup_root)?;
+    /*
+     * 额外自检：管理器自身（可执行文件所在目录）不能位于备份目录内，
+     * 备份目录也不能位于管理器安装目录内。
+     *
+     * 为什么单独检查：数据目录现在跟随安装目录。若管理器被装在
+     * `<game>/BepInEx/backups/xxx` 这种位置，BepInEx 与 backup_root 的
+     * 包含关系检查仍是「不相交」，但备份 BepInEx 时会把管理器自己
+     * 以及上一轮备份一起复制进去，同样递归膨胀。
+     */
+    if let Ok(install) = crate::user_paths::install_dir() {
+        let install_resolved = game::resolve_existing_ancestor(&install)?;
+        let backup_resolved = game::resolve_existing_ancestor(backup_root)?;
+        #[cfg(windows)]
+        let (install_resolved, backup_resolved) = (
+            PathBuf::from(install_resolved.to_string_lossy().to_lowercase()),
+            PathBuf::from(backup_resolved.to_string_lossy().to_lowercase()),
+        );
+        if install_resolved.starts_with(&backup_resolved)
+            || backup_resolved.starts_with(&install_resolved)
+        {
+            return Err(
+                "管理器安装目录与备份目录重叠，已停止备份以避免递归复制。请把管理器安装到游戏目录外。"
+                    .into(),
+            );
+        }
+    }
     let target = bepinex_backup_path(backup_root)?;
     copy_dir(&game_root.join("BepInEx"), &target)?;
     Ok(target)
@@ -5189,6 +5288,15 @@ fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), String> {
     copy_dir(backup, &destination)
 }
 
+/// 备份与源目录必须互不包含。
+///
+/// 两个目录互相包含时，复制会把自己正在写入的内容再复制进去，
+/// 表现为无限递归、磁盘被瞬间填满。数据目录改为跟随管理器安装目录后，
+/// 这个风险变大：只要管理器装在游戏目录内，备份目录就可能落在
+/// `BepInEx` 里面（或反之）。
+///
+/// 检查用「最近存在的祖先」解析，因此目标目录尚未创建时也能识别出
+/// 目录联接（junction）造成的逻辑包含关系。
 fn ensure_copy_paths_disjoint(source: &Path, destination: &Path) -> Result<(), String> {
     let source =
         game::resolve_existing_ancestor(&std::path::absolute(source).map_err(|e| e.to_string())?)?;
@@ -5200,9 +5308,12 @@ fn ensure_copy_paths_disjoint(source: &Path, destination: &Path) -> Result<(), S
         PathBuf::from(source.to_string_lossy().to_lowercase()),
         PathBuf::from(destination.to_string_lossy().to_lowercase()),
     );
+    if source == destination {
+        return Err("备份目标与源目录是同一个目录，已停止操作以避免覆盖数据。".into());
+    }
     if source.starts_with(&destination) || destination.starts_with(&source) {
         return Err(
-            "备份与框架目录重叠，已停止操作以避免递归复制。请将管理器移到游戏目录外后重试。".into(),
+            "备份与框架目录重叠，已停止操作以避免递归复制。请把管理器安装到游戏目录外，或把数据目录移出 BepInEx。".into(),
         );
     }
     Ok(())

@@ -11,7 +11,7 @@ import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
-import type { AppUpdateCheckResult, PublicConfig } from '../types'
+import type { AppUpdateCheckResult, PermissionStatus, PublicConfig } from '../types'
 
 const message = useMessage()
 const { load, ensureLoaded, game } = useDashboard()
@@ -31,10 +31,32 @@ const updateResult = ref<AppUpdateCheckResult | null>(null)
 const updateInfo = ref<NonNullable<AppUpdateCheckResult['update']> | null>(null)
 const showUpdate = ref(false)
 
+/* ===== 权限：默认普通权限，仅在文件访问被拒时提权 ===== */
+const permission = ref<PermissionStatus | null>(null)
+const relaunching = ref(false)
+
+async function refreshPermission() {
+  permission.value = await api.permissionStatus().catch(() => null)
+}
+
+async function relaunchAdmin() {
+  relaunching.value = true
+  try {
+    const result = await api.relaunchAsAdmin()
+    if (!result.ok) message.error(result.message)
+    // 成功时进程会退出，这里的代码通常不会执行到
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    relaunching.value = false
+  }
+}
+
 onMounted(async () => {
   version.value = await getVersion().catch(() => '')
   config.value = await api.config().catch(() => null)
   await ensureLoaded()
+  await refreshPermission()
 })
 
 function fail(reason: unknown) {
@@ -168,6 +190,31 @@ async function clearTokens() {
   </SettingsGroup>
 
   <!-- 关于 -->
+  <!--
+    权限：应用默认以普通用户运行（启动不弹 UAC、文件拖放可用、
+    更新时能正常关闭自己）。只有游戏目录不可写时才需要提权。
+  -->
+  <SettingsGroup :title="t('权限')">
+    <SettingsRow :title="t('以管理员身份运行')"
+      :description="permission?.elevated ? t('当前已具备管理员权限') : t('仅在游戏目录不可写时需要')">
+      <template #right>
+        <n-tag size="small" :bordered="false" :type="permission?.elevated ? 'success' : 'default'">
+          {{ permission?.elevated ? t('已提权') : t('普通权限') }}
+        </n-tag>
+        <n-button v-if="!permission?.elevated" size="small" secondary type="primary" :loading="relaunching"
+          @click.stop="relaunchAdmin">{{ t('以管理员重启') }}</n-button>
+      </template>
+    </SettingsRow>
+    <SettingsRow :title="t('游戏目录可写')"
+      :description="permission?.game_writable ? t('可以直接安装和卸载 MOD') : t('需要管理员权限才能写入')">
+      <template #right>
+        <n-tag size="small" :bordered="false" :type="permission?.game_writable ? 'success' : 'warning'">
+          {{ permission?.game_writable ? t('可写') : t('不可写') }}
+        </n-tag>
+      </template>
+    </SettingsRow>
+  </SettingsGroup>
+
   <SettingsGroup :title="t('关于')">
     <SettingsRow :icon="InformationCircleOutline" :title="t('OC2 MOD 管理器')" :description="t('关于') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
       <template #right>

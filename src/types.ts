@@ -138,6 +138,12 @@ export interface ModRecycleEntry {
 }
 export interface UninstallLocalModResult extends OperationResult { requires_confirmation: boolean; requires_package_confirmation?: boolean; package_id?: string; package_mod_names?: string[] }
 export interface RustLog { path: string; content: string }
+/** 当前进程权限与可写性：应用不再启动即提权，凭这个判断是否需要提权。 */
+export interface PermissionStatus {
+  elevated: boolean
+  game_writable: boolean
+  data_writable: boolean
+}
 export interface DownloadProgress {
   label: string
   downloaded: number

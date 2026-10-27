@@ -1,23 +1,46 @@
 use std::path::{Component, Path};
 
 const CHECK_FLAG: &str = "--validate-manager-install-dir";
-const ERROR: &str = "管理器不能安装到 BepInEx/plugins 或其子目录，请选择游戏目录外的位置。";
+const ERROR: &str = "管理器不能安装到 BepInEx 目录或其子目录，请选择游戏目录外的位置。";
 
+/// 校验管理器安装目录。
+///
+/// 禁止范围从原来的 `BepInEx/plugins` 扩展到**整个 `BepInEx`**：
+/// 数据目录（配置、备份、回收站、日志）现在跟着安装目录走，
+/// 只要管理器落在 BepInEx 里面，备份 BepInEx 时就会把备份自身
+/// 一起复制进去，下一轮再包含上一轮的备份 —— 无限递归膨胀。
 pub(crate) fn validate_install_dir(directory: &Path) -> Result<(), String> {
     if directory.as_os_str().is_empty() || !directory.is_absolute() {
         return Err(ERROR.into());
     }
-    if is_plugins_directory(directory)? {
+    if is_inside_bepinex(directory)? {
         return Err(ERROR.into());
     }
     Ok(())
 }
 
+/// 目录是否位于任意 `BepInEx` 目录内（含其本身）。
+pub(crate) fn is_inside_bepinex(directory: &Path) -> Result<bool, String> {
+    let absolute = std::path::absolute(directory).map_err(|_| ERROR.to_string())?;
+    let resolved =
+        crate::game::resolve_existing_ancestor(&absolute).map_err(|_| ERROR.to_string())?;
+    Ok(inside_bepinex(&absolute) || inside_bepinex(&resolved))
+}
+
+/// 兼容旧调用点：判断是否位于 `BepInEx/plugins` 内。
 pub(crate) fn is_plugins_directory(directory: &Path) -> Result<bool, String> {
     let absolute = std::path::absolute(directory).map_err(|_| ERROR.to_string())?;
     let resolved =
         crate::game::resolve_existing_ancestor(&absolute).map_err(|_| ERROR.to_string())?;
     Ok(inside_plugins(&absolute) || inside_plugins(&resolved))
+}
+
+/// 路径里出现过 `BepInEx` 目录（包括它自己）。
+fn inside_bepinex(path: &Path) -> bool {
+    path.components().any(|component| match component {
+        Component::Normal(name) => name.to_string_lossy().eq_ignore_ascii_case("BepInEx"),
+        _ => false,
+    })
 }
 
 fn inside_plugins(path: &Path) -> bool {
@@ -62,12 +85,12 @@ fn show_error(language: &str) {
         use std::os::windows::ffi::OsStrExt;
         let message = match language {
             "2052" => ERROR,
-            "1028" => "管理器不能安裝到 BepInEx/plugins 或其子目錄，請選擇遊戲目錄外的位置。",
+            "1028" => "管理器不能安裝到 BepInEx 目錄或其子目錄，請選擇遊戲目錄外的位置。",
             "1042" => {
-                "관리자를 BepInEx/plugins 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
+                "관리자를 BepInEx 폴더 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
             }
             _ => {
-                "The manager cannot be installed in BepInEx/plugins or any of its subfolders. Choose a location outside the game directory."
+                "The manager cannot be installed in the BepInEx folder or any of its subfolders. Choose a location outside the game directory."
             }
         };
         let message = std::ffi::OsStr::new(message)
@@ -119,10 +142,31 @@ mod tests {
         let root = std::env::temp_dir();
         for suffix in [
             "OC2ModManager",
-            "BepInEx/plugins-other/Manager",
-            "OtherBepInEx/plugins/Manager",
+            // 相似但不相同的名字不算 BepInEx 目录，仍允许
+            "BepInExManager",
+            "OtherBepInEx/Manager",
+            "plugins/Manager",
         ] {
             assert!(validate_install_dir(&root.join(suffix)).is_ok(), "{suffix}");
+        }
+    }
+
+    /// 只要路径里出现 `BepInEx` 目录就拒绝：数据目录跟随安装目录，
+    /// 装在 BepInEx 内会让「备份 BepInEx」把备份自身一起复制进去。
+    #[test]
+    fn rejects_anything_inside_bepinex() {
+        let root = std::env::temp_dir();
+        for suffix in [
+            "game/BepInEx",
+            "game/BepInEx/plugins",
+            "game/BepInEx/plugins/sub",
+            "game/BepInEx/config",
+            "game/BepInEx/patchers",
+        ] {
+            assert!(
+                validate_install_dir(&root.join(suffix)).is_err(),
+                "{suffix} 应被拒绝"
+            );
         }
     }
 

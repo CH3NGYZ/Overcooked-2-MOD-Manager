@@ -38,7 +38,19 @@ pub fn run() {
     install_guard::run_if_requested();
     update_migration::run_if_requested();
     install_panic_logger();
-    request_elevation();
+    /*
+     * 不再在启动时无条件自提权。
+     *
+     * 提权会给整个应用带来三个副作用：
+     *   1. Windows UIPI 阻止跨完整性级别的 OLE 拖放 —— 提权窗口收不到任何
+     *      文件拖放事件（资源管理器是 Medium，本进程是 High）；
+     *   2. 每次启动都弹 UAC；
+     *   3. 退出时普通权限无法结束自己，更新前必须先让用户手动关闭。
+     *
+     * 现在改为按需提权：安装器默认 perUser 装到用户目录，游戏 MOD 目录
+     * 通常也可直接写入；只有真的遇到「拒绝访问」时，才由前端提示用户
+     * 以管理员身份重启（见 `request_elevation` 命令）。
+     */
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
@@ -188,6 +200,8 @@ pub fn run() {
             commands::exit_app,
             commands::open_devtools,
             commands::reset_ui,
+            commands::permission_status,
+            commands::relaunch_as_admin,
             commands::check_app_update,
             commands::install_app_update,
         ])
@@ -268,23 +282,47 @@ fn install_panic_logger() {
     }));
 }
 
+/// 当前进程是否已具备管理员权限。
 #[cfg(windows)]
-fn request_elevation() {
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr::null_mut;
-    use winapi::um::shellapi::ShellExecuteW;
-    use winapi::um::winuser::SW_SHOWNORMAL;
+pub(crate) fn is_elevated() -> bool {
     #[link(name = "shell32")]
     unsafe extern "system" {
         fn IsUserAnAdmin() -> i32;
     }
-    let elevated = unsafe { IsUserAnAdmin() != 0 };
-    if elevated {
-        return;
+    unsafe { IsUserAnAdmin() != 0 }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_elevated() -> bool {
+    // 非 Windows 没有 UAC；用 euid 判断是否 root。
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn geteuid() -> u32;
+        }
+        unsafe { geteuid() == 0 }
     }
-    let exe = match std::env::current_exe() {
-        Ok(path) => path,
-        Err(_) => std::process::exit(1),
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// 以管理员身份重启自己（仅 Windows 的 UAC 提权有意义）。
+///
+/// 返回 true 表示新进程已启动、本进程应当退出；false 表示用户取消了 UAC
+/// 或启动失败，调用方应保留当前窗口并提示用户。
+#[cfg(windows)]
+pub(crate) fn relaunch_elevated() -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+    use winapi::um::shellapi::ShellExecuteW;
+    use winapi::um::winuser::SW_SHOWNORMAL;
+    if is_elevated() {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
     };
     let wide = |value: &std::ffi::OsStr| {
         value
@@ -304,11 +342,10 @@ fn request_elevation() {
             SW_SHOWNORMAL,
         )
     };
-    if (result as usize) > 32 {
-        std::process::exit(0);
-    }
-    std::process::exit(1);
+    (result as usize) > 32
 }
 
 #[cfg(not(windows))]
-fn request_elevation() {}
+pub(crate) fn relaunch_elevated() -> bool {
+    false
+}

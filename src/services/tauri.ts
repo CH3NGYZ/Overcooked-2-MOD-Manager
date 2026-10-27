@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
   Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
-  OperationResult, Provider,
+  OperationResult, PermissionStatus, Provider,
   PublicConfig, ReleaseInfo, RepositoryReadme, RepositorySourceImportResult, RustLog, SettingsPatch,
   TokenPatch, UninstallLocalModResult,
 } from '../types'
@@ -86,6 +86,10 @@ export const api = {
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),
   exitApp: () => invoke<void>('exit_app'),
+  /** 当前进程权限与游戏/数据目录可写性自检。 */
+  permissionStatus: () => invoke<PermissionStatus>('permission_status'),
+  /** 以管理员身份重启（仅文件访问被拒时由用户主动触发）。 */
+  relaunchAsAdmin: () => invoke<OperationResult>('relaunch_as_admin'),
   cancelDownload: () => invoke<OperationResult>('cancel_download'),
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),

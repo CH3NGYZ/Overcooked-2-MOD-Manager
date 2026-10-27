@@ -5,7 +5,7 @@ import { DownloadOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
-import { isPrereleaseVersion } from '../modStatus'
+import { formatVersion, isPrereleaseVersion } from '../modStatus'
 import type { Repository, RepositoryReadme } from '../types'
 
 const props = defineProps<{
@@ -40,7 +40,8 @@ const selectedRelease = computed(() => {
 })
 const releaseOptions = computed(() =>
   (props.repo?.cached_releases ?? []).map((entry) => ({
-    label: entry.version || entry.tag_name,
+    // 显示用 tag_name（原始写法，含第 4 位）；version 是 semver 归一值会丢段
+    label: formatVersion(entry.tag_name || entry.version || ''),
     // Naive UI 的 n-select 用 value 作为选项值（不是 key）
     value: entry.tag_name,
   })),
@@ -57,8 +58,15 @@ watch(
   { immediate: true },
 )
 
-/** 以下指标全部跟随「当前选中的版本」，切换下拉时同步变化。 */
-const version = computed(() => selectedRelease.value?.version || selectedRelease.value?.tag_name || '—')
+/**
+ * 以下指标全部跟随「当前选中的版本」，切换下拉时同步变化。
+ *
+ * 版本号优先取 `tag_name`：后端 `version` 是 semver 归一结果
+ * （`1.8.7.23` → `1.8.7`），直接显示会丢掉第 4 位。
+ */
+const version = computed(() =>
+  formatVersion(selectedRelease.value?.tag_name || selectedRelease.value?.version || '') || '—',
+)
 
 /** 资产规则匹配（exact / glob / regex），与后端 asset_rules 语义一致。 */
 function assetMatches(name: string, rule: { type: string; value: string }): boolean {
@@ -285,7 +293,8 @@ async function openUrl(url: string) {
           <div class="release-log">
             <div class="log-head">
               <span class="muted">{{ t('提交日志') }}</span>
-              <b class="mono">{{ selectedRelease?.name || selectedRelease?.tag_name || '—' }}</b>
+              <!-- 优先显示 Release tag（原始写法），name 为空时也用它 -->
+              <b class="mono">{{ selectedRelease?.tag_name || selectedRelease?.name || '—' }}</b>
               <span v-if="selectedRelease?.published_at" class="muted">
                 {{ selectedRelease.published_at.slice(0, 10) }}
               </span>

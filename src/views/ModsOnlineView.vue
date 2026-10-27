@@ -298,20 +298,24 @@ function latest(repo: Repository) {
 
 /**
  * 该 Release 是否按预发布对待：元数据标记 **或** 版本号带 `-` 后缀。
- * `0.4.0-beta`、`0.4.0.5-beta` 即使作者没勾 prerelease 也算。
+ *
+ * 版本号一律优先取 `tag_name`：后端的 `version` 字段是 semver 归一结果
+ * （`1.8.7.23` → `1.8.7`），用它判断会丢掉第 4 位；`tag_name` 才是原始写法。
  */
 function releaseIsPrerelease(release: { prerelease: boolean; version?: string | null; tag_name?: string }) {
-  return isPrereleaseVersion(release.version || release.tag_name, release.prerelease)
+  return isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
 }
 
 /**
- * 卡片版本号：统一规范化后再显示（`0.4.0` / `0.4.0.0` 都显示成 `0.4`）。
- * 预发布判定取「元数据标记」或「版本号带 - 后缀」的或关系。
+ * 卡片版本号：始终显示 Release tag 的原始写法。
+ *
+ * 后端 `version` 是 semver 归一后的值（`1.8.7.23` 会变成 `1.8.7`），
+ * 直接显示会让用户以为管理器读错了版本，所以优先用 `tag_name`。
  */
 function versionLabel(repo: Repository) {
   const release = latest(repo)
   if (!release) return '—'
-  const value = formatVersion(release.version || release.tag_name) || '—'
+  const value = formatVersion(release.tag_name || release.version) || '—'
   return releaseIsPrerelease(release) ? `${value} · ${t('预发布')}` : value
 }
 

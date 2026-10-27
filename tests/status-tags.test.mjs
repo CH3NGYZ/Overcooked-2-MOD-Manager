@@ -4,7 +4,7 @@ import test from 'node:test'
 /** 共享状态标签：真实源码直接执行（Node 24 类型擦除）。 */
 const {
   STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion,
-  packageStatuses, summarizeStatuses,
+  packageStatuses, summarizeUnits,
 } = await import('../src/statusTags.ts')
 
 function repo(overrides = {}) {
@@ -260,13 +260,54 @@ test('包内全是依赖 DLL 时不产生状态标签', () => {
   assert.deepEqual(packageStatuses([mod({ is_dependency: true, labels: ['dependency'] })]), [])
 })
 
-test('页头聚合仍然带数量（与包标题的语义不同）', () => {
-  // 页头统计的是「整个页面有多少个 MOD 处于某状态」，数量必须保留
-  const tags = summarizeStatuses([
-    mod({ dll_file: 'a.dll', labels: ['latest'] }),
-    mod({ dll_file: 'b.dll', labels: ['latest'] }),
+test('页头聚合按单元计数：两个独立 MOD 各计 1', () => {
+  // 页头统计页面上的展示单元数量，单 MOD 卡片各算一个
+  const tags = summarizeUnits([
+    { keys: ['latest'] },
+    { keys: ['latest'] },
   ])
   assert.equal(tags.length, 1)
   assert.equal(tags[0].key, 'latest')
   assert.equal(tags[0].count, 2)
+})
+
+test('一个 MOD 包无论含几个 DLL，都只作为 1 个单元计数', () => {
+  /*
+   * 这是本次修复的核心：两个 DLL 的最新版包在页头显示「1 最新版」，
+   * 与页面上看到的卡片数一致；包内子 DLL 不对外公开状态。
+   */
+  const pkgStatuses = packageStatuses([
+    mod({ dll_file: 'pkg/A.dll', labels: ['latest'] }),
+    mod({ dll_file: 'pkg/B.dll', labels: ['latest'] }),
+    mod({ dll_file: 'pkg/Stub.dll', is_dependency: true, labels: ['dependency'] }),
+  ])
+  const tags = summarizeUnits([{ keys: pkgStatuses.map((s) => s.key) }])
+  assert.equal(tags.length, 1)
+  assert.equal(tags[0].key, 'latest')
+  assert.equal(tags[0].count, 1)
+})
+
+test('单元内重复的状态只计一次', () => {
+  const tags = summarizeUnits([{ keys: ['duplicate', 'duplicate', 'latest'] }])
+  const dup = tags.find((t) => t.key === 'duplicate')
+  assert.equal(dup.count, 1)
+})
+
+test('多个包与单 MOD 混合时按单元分别计数', () => {
+  const tags = summarizeUnits([
+    { keys: ['latest'] },              // 单 MOD
+    { keys: ['latest'] },              // 一个包（内部两个 DLL）
+    { keys: ['update_available'] },    // 另一个包
+  ])
+  assert.equal(tags.find((t) => t.key === 'latest').count, 2)
+  assert.equal(tags.find((t) => t.key === 'update_available').count, 1)
+})
+
+test('页头聚合排序仍按严重度：可更新排在最新版之前', () => {
+  const tags = summarizeUnits([
+    { keys: ['latest'] },
+    { keys: ['update_available'] },
+    { keys: ['load_warning'] },
+  ])
+  assert.deepEqual(tags.map((t) => t.key), ['load_warning', 'update_available', 'latest'])
 })

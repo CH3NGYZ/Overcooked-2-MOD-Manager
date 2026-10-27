@@ -16,7 +16,7 @@ import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
 import {
   installedModTags, recomputeModUpdate, replaceVersionConclusion,
-  summarizeStatuses, packageStatuses, type PackageStatus, type StatusSummary,
+  summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
 } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -135,21 +135,6 @@ function isRepositoryRefreshing(repositoryId: string) {
 const sortedMods = computed(() =>
   [...effectiveMods.value].sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
-
-/**
- * 页头聚合标签：按状态汇总整页 MOD 数量。
- *
- * 覆盖 MOD 管理页可能出现的**全部**标签，不只挑几个。数据源是
- * STATUS_META（文案与 tone）而不是本地再抄一份文案 —— 这样以后在
- * statusTags.ts 里加标签，这里自动出现，不会漏。
- *
- * 排序按「轻重缓急」= 语义 tone 的严重度，同档内再按固定业务顺序。
- * 越需要用户处理越靠前，正常/中性收在最后。
- *
- * 具体的排序与遍在 `summarizeStatuses`（statusTags.ts），
- * 因为 MOD 包标题要用完全相同的规则汇总包内成员。
- */
-const statusSummaryTags = computed<StatusSummary[]>(() => summarizeStatuses(effectiveMods.value))
 
 /**
  * 按「已安装时绑定的仓库分类」分组。
@@ -390,8 +375,14 @@ const groups = computed<ModGroupNode[]>(() => {
         key,
         label,
         packages: nodes,
-        count: all.length,
-        updateCount: all.filter((mod) => mod.update_available).length,
+        /*
+         * 分类计数按「展示单元」而不是 DLL：一个多 DLL 包在页面上只占
+         * 一个外壳，说「3 个」而实际只看到两张卡片会让人以为是漏渲染。
+         */
+        count: nodes.length,
+        updateCount: nodes.filter((node) =>
+          node.statuses.some((entry) => entry.key === 'update_available'),
+        ).length,
         enabled: enabledCount === all.length,
         partial: enabledCount > 0 && enabledCount < all.length,
       }
@@ -406,6 +397,27 @@ function onGroupsExpanded(names: string[]) {
   const open = new Set(names)
   collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
 }
+
+/**
+ * 页头聚合标签：按状态汇总整页的**展示单元**数量。
+ *
+ * 单元 = 页面上能独立点选的那个东西：单 MOD 一张卡片，多 DLL 包是整包
+ * 一个单元。包里子 DLL 的状态不对外公开 —— 一个包只有一个版本结论
+ * （`packageStatuses`），所以两个 DLL 都最新时这里计 1，而不是 2。
+ *
+ * 这也让聚合数量与页内定位一致：点「N 最新版」高亮的是 N 张卡片
+ * （单 MOD 卡片 + 包外壳），不会把包内某一行单独高亮出来。
+ */
+const statusSummaryTags = computed<StatusSummary[]>(() =>
+  summarizeUnits(
+    groups.value.flatMap((node) =>
+      node.packages.map((pkg) => ({
+        // 包对外的状态就是包标题上那几个；标记为禁用的不算版本结论
+        keys: pkg.statuses.map((entry) => entry.key),
+      })),
+    ),
+  ),
+)
 
 /** 卡片标题：优先 MOD 包名（同一包内的子 MOD 显示同一个包标题），没有包则用插件名。 */
 /**
@@ -608,74 +620,108 @@ function modAnchor(mod: InstalledMod) {
 }
 
 /**
- * 某个状态标签命中的 MOD（按页面展示顺序）。
+ * 按状态定位时的「单元」：单 MOD 一个，多 DLL 包整包一个。
  *
- * 依赖 DLL 不参与：它没有版本语义，也不在聚合标签里计数，
- * 若算进来会让「2 可更新」实际高亮出 3 张卡片。
+ * 包是页面上的一个整体（一个外壳、一条标题、一个版本结论），
+ * 点它的状态标签时应当高亮这个外壳，而不是把包内某个 DLL 行单独
+ * 描出来 —— 那样看起来像「这个 DLL 有问题」，而实际结论属于整个包。
  */
-function modsWithStatus(statusKey: string): InstalledMod[] {
-  const matches: InstalledMod[] = []
-  for (const node of groups.value) {
-    for (const pkg of node.packages) {
+interface StatusUnitNode {
+  /** 稳定的 DOM 锚点（单 MOD 用 dll_file，包用包键）。 */
+  anchor: string
+  /** 命中时的状态集合，与 `packageStatuses` / 单 MOD 标签同源。 */
+  keys: string[]
+  /** 该单元所在的分类与包键，用于定位前展开折叠容器。 */
+  groupKey: string
+  packageKey: string
+  /** 单元内的成员（单 MOD 或包内全部 DLL），供分类/包展开使用。 */
+  mods: InstalledMod[]
+}
+
+const statusUnitNodes = computed<StatusUnitNode[]>(() => {
+  const nodes: StatusUnitNode[] = []
+  for (const group of groups.value) {
+    for (const pkg of group.packages) {
+      if (pkg.grouped) {
+        nodes.push({
+          anchor: `unit:${pkg.key}`,
+          keys: pkg.statuses.map((entry) => entry.key),
+          groupKey: group.key,
+          packageKey: pkg.key,
+          mods: pkg.mods,
+        })
+        continue
+      }
+      // 单 DLL 包：这一张卡片自己就是单元，标签按成员自己的 labels 判断
       for (const mod of pkg.mods) {
         if (mod.is_dependency) continue
-        if ((mod.labels as string[] | undefined)?.includes(statusKey)) matches.push(mod)
+        nodes.push({
+          anchor: modAnchor(mod),
+          keys: (mod.labels as string[] | undefined) ?? [],
+          groupKey: group.key,
+          packageKey: pkg.key,
+          mods: [mod],
+        })
       }
     }
   }
-  return matches
+  return nodes
+})
+
+/** 命中该状态的全部单元（按页面展示顺序）。 */
+function unitsWithStatus(statusKey: string) {
+  return statusUnitNodes.value.filter((unit) => unit.keys.includes(statusKey))
 }
 
-/** 当前页内定位的状态是否命中该卡片（命中项一起高亮，一眼看出这一组）。 */
-function matchesActiveStatus(mod: InstalledMod) {
+/**
+ * 当前页内定位的状态是否命中该单元。
+ *
+ * 单 MOD 卡片传自己的锚点，包外壳传 `unit:<包键>`；因此包内子 DLL 行
+ * 不会因为「包命中了」而被逐个高亮。命中集合按状态缓存成 Set，
+ * 避免每张卡片渲染时都重新扫一遍全部单元。
+ */
+const activeStatusAnchors = computed(() => {
   const status = activeStatus.value
-  if (!status || mod.is_dependency) return false
-  return (mod.labels as string[] | undefined)?.includes(status) ?? false
+  if (!status) return new Set<string>()
+  return new Set(unitsWithStatus(status).map((unit) => unit.anchor))
+})
+
+function matchesActiveStatus(anchor: string) {
+  return activeStatusAnchors.value.has(anchor)
 }
 
 /** 当前轮到的命中项序号：重复点击同一标签时逐张轮换，而不是每次回到第一张。 */
 const statusCursor = ref<{ key: string; index: number }>({ key: '', index: 0 })
 
 /**
- * 点聚合标签：高亮该状态的全部卡片，并把下一张命中项滚到视口中间。
+ * 点聚合标签：高亮该状态的全部单元，并把下一张命中项滚到视口中间。
  *
- * 命中项可能分布在收起的分类或 MOD 包里：先把它们全部展开，
+ * 命中项可能分布在收起的分类里：先把它们全部展开，
  * 展开带 0.3s 高度动画，所以滚动要等动画结束（由 focusStatus 负责）。
  */
 function locateStatus(statusKey: string) {
-  const matches = modsWithStatus(statusKey)
+  const matches = unitsWithStatus(statusKey)
   if (!matches.length) return
 
   const sameTag = statusCursor.value.key === statusKey
   const start = sameTag ? (statusCursor.value.index + 1) % matches.length : 0
   statusCursor.value = { key: statusKey, index: start }
-  const anchor = modAnchor(matches[start])
+  const anchor = matches[start].anchor
 
-  // 两级折叠都要展开：分别调用，不能写成一个 || 表达式，
-  // 否则分类展开为 true 时包展开会被短路跳过。
   const groupsOpened = expandGroupsFor(matches)
-  const packagesOpened = expandPackagesFor(matches)
   focusStatus(
     statusKey,
     () => document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
-    groupsOpened || packagesOpened,
+    groupsOpened,
   )
 }
 
-/** 展开命中卡片所在的分类；返回是否真的展开了收起的分类。 */
-function expandGroupsFor(matches: InstalledMod[]) {
-  const keys = new Set(matches.map((mod) => modCategory(mod).key))
+/** 展开命中单元所在的分类；返回是否真的展开了收起的分类。 */
+function expandGroupsFor(matches: StatusUnitNode[]) {
+  const keys = new Set(matches.map((unit) => unit.groupKey))
   const before = collapsedGroups.value.length
   collapsedGroups.value = collapsedGroups.value.filter((key) => !keys.has(key))
   return collapsedGroups.value.length !== before
-}
-
-/** 展开命中卡片所在的 MOD 包；返回是否真的展开了收起的包。 */
-function expandPackagesFor(matches: InstalledMod[]) {
-  const keys = new Set(matches.map((mod) => (mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`)))
-  const before = collapsedPackages.value.length
-  collapsedPackages.value = collapsedPackages.value.filter((key) => !keys.has(key))
-  return collapsedPackages.value.length !== before
 }
 
 /** 点击状态标签：跳到 MOD 安装页并高亮对应仓库卡片。 */
@@ -923,7 +969,7 @@ function removePackage(node: ModPackageNode) {
                 disabled: !mod.enabled,
                 expanded: isExpanded(mod.dll_file),
                 'focus-flash': highlightId === bindingRepositoryId(mod),
-                'status-flash': matchesActiveStatus(mod),
+                'status-flash': matchesActiveStatus(modAnchor(mod)),
               }" @click="onCardClick($event, mod)">
 
               <!-- 单行：左「开关 + 标题」… 右「标签 | 工具栏」 -->
@@ -1004,7 +1050,9 @@ function removePackage(node: ModPackageNode) {
             </article>
 
             <!-- 多 DLL 包：折叠外壳 + 包级操作，内部仍是同样的卡片 -->
-            <section v-else class="package-shell">
+            <section v-else class="package-shell"
+              :data-mod-anchor="`unit:${pkg.key}`"
+              :class="{ 'status-flash': matchesActiveStatus(`unit:${pkg.key}`) }">
               <header class="package-head" @click="togglePackage(pkg.key)">
                 <!-- 左：开关 + 包名 + 子 MOD 数量（数量紧跟包名；「N 个」已表明这是包） -->
                 <div class="package-left">
@@ -1077,14 +1125,16 @@ function removePackage(node: ModPackageNode) {
               <!-- 包展开/收起：同样用 Naive 的折叠过渡 -->
               <n-collapse-transition :show="isPackageExpanded(pkg.key)" display-directive="show">
               <div class="package-body">
+                <!--
+                  包内子 DLL 行不是独立单元：不加定位锚点，也不参与状态高亮。
+                  状态结论属于整个包，高亮只画在外壳上（见 package-shell）。
+                -->
                 <article v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
                   :data-focus-id="bindingRepositoryId(mod)"
-                  :data-mod-anchor="modAnchor(mod)"
                   :class="{
                     disabled: !mod.enabled,
                     expanded: isExpanded(mod.dll_file),
                     'focus-flash': highlightId === bindingRepositoryId(mod),
-                    'status-flash': matchesActiveStatus(mod),
                   }" @click="onCardClick($event, mod)">
                   <div class="card-row">
                     <div class="card-left">
@@ -1316,6 +1366,16 @@ function removePackage(node: ModPackageNode) {
 .mod-card.status-flash {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
+}
+/*
+ * 包外壳的定位高亮：与单 MOD 卡片同一套视觉。
+ * 包是页面上的一个单元，点它的状态标签时高亮整个外壳，
+ * 而不是包内某个 DLL 行 —— 结论属于包，不属于某一个子 MOD。
+ */
+.package-shell.status-flash {
+  border-color: var(--oc2-accent);
+  background: color-mix(in srgb, var(--oc2-accent) 12%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
 }
 /* 可点击的状态标签：手型 + hover 反馈，表示能跳到 MOD 安装页 */

@@ -218,39 +218,43 @@ export interface StatusSummary {
   count: number
 }
 
-export interface StatusSummaryOptions {
-  /** 不计入统计的标签（例如包标题自己已经画了「已禁用」/「部分启用」）。 */
-  exclude?: readonly string[]
-  /** 是否统计纯依赖 DLL。默认不统计：它不是 MOD，没有版本语义。 */
-  includeDependencies?: boolean
+/**
+ * 一个「展示单元」对外公开的状态。
+ *
+ * 页头聚合统计的是页面上的**单元**：单 MOD 一个单元，整个 MOD 包也是一个
+ * 单元。包内子 DLL 不作为单元，也不把它们的标签暴露给聚合与定位 ——
+ * 包对外只有一个版本结论（见 `packageStatuses`），否则「10 最新版」会被
+ * 读成 10 个 DLL，点进去还会高亮包里的某一行。
+ */
+export interface StatusUnit {
+  /** 该单元对外公开的状态 key；重复项会被去重，一个单元只计一次。 */
+  keys: readonly string[]
 }
 
-export function summarizeStatuses(
-  mods: readonly InstalledMod[],
-  options: StatusSummaryOptions = {},
-): StatusSummary[] {
-  const excluded = new Set(options.exclude ?? [])
-  const counted = options.includeDependencies
-    ? mods
-    : mods.filter((mod) => !mod.is_dependency)
-  const countOf = (key: string) =>
-    counted.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
+/**
+ * 按单元汇总状态数量。
+ *
+ * 排序 = 语义 tone 的严重度（越需要注意越靠前），同档内再按固定业务顺序。
+ * 数量为 0 的状态不返回。
+ */
+export function summarizeUnits(units: readonly StatusUnit[]): StatusSummary[] {
+  const counts = new Map<string, number>()
+  for (const unit of units) {
+    // 同一单元里同一状态只算一次：包里多个 DLL 都命中时仍只代表这一个包
+    for (const key of new Set(unit.keys)) {
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+  }
 
-  const entries: Array<StatusSummary & { index: number }> = []
-  WITHIN_TONE_ORDER.forEach((key, index) => {
-    if (excluded.has(key)) return
-    const meta = STATUS_META[key]
-    if (!meta) return
-    const count = countOf(key)
-    if (count > 0) entries.push({ key, text: meta.text, tone: meta.tone, count, index })
-  })
-
-  return entries
-    .sort((a, b) => {
-      const byTone = (TONE_PRIORITY[a.tone] ?? 9) - (TONE_PRIORITY[b.tone] ?? 9)
-      return byTone !== 0 ? byTone : a.index - b.index
-    })
-    .map(({ index: _index, ...entry }) => entry)
+  return WITHIN_TONE_ORDER
+    .filter((key) => (counts.get(key) ?? 0) > 0 && STATUS_META[key])
+    .map((key) => ({
+      key,
+      text: STATUS_META[key].text,
+      tone: STATUS_META[key].tone,
+      count: counts.get(key) ?? 0,
+    }))
+    .sort((a, b) => (TONE_PRIORITY[a.tone] ?? 9) - (TONE_PRIORITY[b.tone] ?? 9))
 }
 
 /**

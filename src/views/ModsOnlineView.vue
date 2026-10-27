@@ -69,22 +69,37 @@ const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 onMounted(() => { void ensureLoaded() })
 
 /**
- * 主按钮动作：安装 / 重装 / 更新。
+ * 主按钮动作：刷新失败 → 刷新，否则安装 / 重装 / 更新。
  *
- * 「重装」与「更新」都是对已安装仓库的再次操作，用主题色的对比色区分
- * 于首次「安装」（主题色本身）；文案与配色都由 action 决定，不各自判断。
+ * 刷新失败时仓库没有可用 Release，此时「安装」点下去只会提示先刷新，
+ * 用户还得再找一个刷新入口。把同一个按钮换成「刷新」，
+ * 用户对着同一个位置点一次就能重试。
  */
-function installActionOf(repo: Repository): InstallAction {
+function installActionOf(repo: Repository): InstallAction | 'refresh' {
+  if (statusOf(repo).key === 'refresh_failed') return 'refresh'
   return repositoryInstallAction(statusOf(repo), repo)
 }
 
-const INSTALL_LABELS: Record<InstallAction, string> = {
+const INSTALL_LABELS: Record<InstallAction | 'refresh', string> = {
   install: '安装',
   reinstall: '重装',
   update: '更新',
+  refresh: '刷新',
 }
 function installLabel(repo: Repository) {
   return t(INSTALL_LABELS[installActionOf(repo)])
+}
+
+/** 主按钮：刷新失败时重试该仓库的 Release，其余走安装预览链路。 */
+function runCardAction(repo: Repository) {
+  if (installActionOf(repo) === 'refresh') void refreshRepository(repo)
+  else void install(repo)
+}
+
+/** 单仓刷新：与批量刷新共用引擎，只更新这一条仓库的缓存。 */
+async function refreshRepository(repo: Repository) {
+  const error = await engine.refreshOne(repo)
+  if (error) message.error(error)
 }
 
 /** 该仓库是否有已安装的本地 MOD（决定状态标签能否跳到 MOD 管理）。 */
@@ -464,14 +479,15 @@ defineExpose({ refreshAll, visibleCount })
                       <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
                     </span>
                     <!--
-                      主按钮：安装（主题色）/ 重装、更新（主题色对比色）。
-                      文案与图标都由 installActionOf 决定，不在模板里各自判断。
+                      主按钮：安装（主题色）/ 重装、更新（对比色）/ 刷新（刷新失败的警告色）。
+                      文案、图标与动作都由 installActionOf 决定，不在模板里各自判断。
                     -->
                     <n-button size="tiny" class="card-install"
                       :class="`card-install--${installActionOf(repo)}`"
                       :loading="!!installing[repo.id]"
-                      :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="install(repo)">
-                      <RefreshOutline v-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                      :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
+                      <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
+                      <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
                       <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
                       <DownloadOutline v-else width="13" height="13" />
                       {{ installLabel(repo) }}
@@ -541,8 +557,9 @@ defineExpose({ refreshAll, visibleCount })
                   <n-button size="tiny" class="card-install"
                     :class="`card-install--${installActionOf(repo)}`"
                     :loading="!!installing[repo.id]"
-                    :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="install(repo)">
-                    <RefreshOutline v-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
+                    :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
+                    <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
+                    <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
                     <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
                     <DownloadOutline v-else width="13" height="13" />
                     {{ installLabel(repo) }}
@@ -679,7 +696,10 @@ defineExpose({ refreshAll, visibleCount })
 /*
  * 主按钮配色按「语义分组」而不是按动作分三色：
  *   install / reinstall → 主题色（都是「装到最新」这一档，不需要警告）
- *   update              → 主题色对比色（唯一需要用户注意的动作）
+ *   update / refresh    → 主题色对比色（需要用户注意的动作）
+ *
+ * refresh 复用的正是「刷新失败」标签那一档颜色：statusToneColors.warn
+ * 取的也是 accentContrast，所以两者永远是同一个色，换主题时一起变。
  *
  * Naive 的按钮把配色变量写在内联 style 上，普通 class 选择器会被它压住，
  * 因此这里重复类名提高特异性，让我们的变量优先。
@@ -708,6 +728,26 @@ defineExpose({ refreshAll, visibleCount })
   --n-text-color-hover: var(--oc2-accent-on) !important;
   --n-text-color-pressed: var(--oc2-accent-on) !important;
   --n-text-color-focus: var(--oc2-accent-on) !important;
+  --n-border: 1px solid var(--oc2-accent-contrast) !important;
+  --n-border-hover: 1px solid var(--oc2-accent-contrast-hover) !important;
+  --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover) !important;
+  --n-border-focus: 1px solid var(--oc2-accent-contrast-hover) !important;
+}
+/*
+ * 刷新按钮刻意不用实心填充，而是复用「刷新失败」标签的样式：
+ * 浅色底 + 对比色描边 + 对比色文字（statusToneColors.warn）。
+ * 实心亮色按钮比标签重得多，会让「同一个状态的提示」看起来是两个来源；
+ * 这里只要让用户知道「就是这一栏、点它重试」，不需要额外强调。
+ */
+.card-install.card-install--refresh.n-button {
+  --n-color: color-mix(in srgb, var(--oc2-accent-contrast) 16%, var(--oc2-card)) !important;
+  --n-color-hover: color-mix(in srgb, var(--oc2-accent-contrast) 26%, var(--oc2-card)) !important;
+  --n-color-pressed: color-mix(in srgb, var(--oc2-accent-contrast) 32%, var(--oc2-card)) !important;
+  --n-color-focus: color-mix(in srgb, var(--oc2-accent-contrast) 26%, var(--oc2-card)) !important;
+  --n-text-color: var(--oc2-accent-contrast) !important;
+  --n-text-color-hover: var(--oc2-accent-contrast-hover) !important;
+  --n-text-color-pressed: var(--oc2-accent-contrast-hover) !important;
+  --n-text-color-focus: var(--oc2-accent-contrast-hover) !important;
   --n-border: 1px solid var(--oc2-accent-contrast) !important;
   --n-border-hover: 1px solid var(--oc2-accent-contrast-hover) !important;
   --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover) !important;

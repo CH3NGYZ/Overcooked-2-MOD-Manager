@@ -112,8 +112,7 @@ const entries = {
   '原游戏目录': ['原遊戲目錄', 'Original location', '원래 게임 경로', '元のゲームパス'],
   '查看文件清单': ['檢視檔案清單', 'View files', '파일 목록 보기', 'ファイル一覧を表示'],
   '游戏运行中，暂时不能恢复 MOD。': ['遊戲執行中，暫時無法還原 MOD。', 'The game is running; MODs cannot be restored right now.', '게임이 실행 중이라 지금은 MOD를 복원할 수 없습니다.', 'ゲーム実行中のため、現在 MOD を復元できません。'],
-  // 回收站设置（工具页）
-  '回收站设置': ['資源回收筒設定', 'Recycle bin', '휴지통 설정', 'ゴミ箱の設定'],
+  // 回收站（工具页只保留「打开回收站」，开关在设置 → 通用设置）
   '打开回收站': ['開啟資源回收筒', 'Open recycle bin', '휴지통 열기', 'ゴミ箱を開く'],
   '查看已删除的 MOD，可恢复到原位置或彻底删除': ['檢視已刪除的 MOD，可還原到原位置或永久刪除', 'Review deleted MODs; restore them or delete permanently', '삭제된 MOD를 확인하고 복원하거나 완전 삭제합니다', '削除した MOD を確認し、復元または完全削除します'],
   '删除 MOD 时优先放入回收站': ['刪除 MOD 時優先放入資源回收筒', 'Move deleted MODs to the recycle bin', 'MOD 삭제 시 휴지통으로 이동', 'MOD 削除時にゴミ箱へ移動'],

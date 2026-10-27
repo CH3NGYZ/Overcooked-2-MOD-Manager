@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NDrawer, NDrawerContent, NInput, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
 import UpdatePrompt from '../components/UpdatePrompt.vue'
+import AppModal from '../components/AppModal.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import { api } from '../services/tauri'
@@ -113,6 +114,40 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
   } catch (reason) { fail(reason) }
 }
 
+/* ===== 删除行为：是否经过回收站 ===== */
+
+/** 关闭「优先放入回收站」的风险确认弹窗。 */
+const recycleRiskOpen = ref(false)
+
+const recycleDeletedMods = computed(() => config.value?.recycle_deleted_mods !== false)
+
+/**
+ * 切换「删除 MOD 时优先放入回收站」。
+ *
+ * 打开是安全方向，直接保存。
+ * 关闭会让之后删除的文件**不可恢复**，所以不立即保存，而是先弹风险确认；
+ * 用户在确认框里再点一次才真正写入。
+ */
+function toggleRecycleDeletedMods(value: boolean) {
+  if (value) {
+    void savePreference(
+      { recycle_deleted_mods: true },
+      t('删除的 MOD 将先移入回收站'),
+    )
+    return
+  }
+  recycleRiskOpen.value = true
+}
+
+/** 确认关闭：真正写入 false。 */
+async function confirmDisableRecycle() {
+  recycleRiskOpen.value = false
+  await savePreference(
+    { recycle_deleted_mods: false },
+    t('删除的 MOD 将直接删除，不进回收站'),
+  )
+}
+
 /* ===== API 凭据 ===== */
 /** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
 async function saveTokens() {
@@ -172,7 +207,36 @@ async function clearTokens() {
           @update:value="(value: boolean) => savePreference({ auto_detect: value }, t('已保存'))" />
       </template>
     </SettingsRow>
+    <SettingsRow :title="t('删除 MOD 时优先放入回收站')"
+      :description="t('关闭后删除的文件不会保留，无法恢复')">
+      <template #right>
+        <!-- 开关本身不阻止点击：关闭时要先弹风险确认，由 toggle 决定是否真的写入 -->
+        <n-switch size="small" :value="recycleDeletedMods"
+          @update:value="toggleRecycleDeletedMods" />
+      </template>
+    </SettingsRow>
   </SettingsGroup>
+
+  <!--
+    关闭「优先放入回收站」的风险确认。
+    这是不可逆行为的开关，所以把后果写清楚、要求用户再点一次确认，
+    而不是让开关一拨就生效。
+  -->
+  <AppModal :show="recycleRiskOpen" :title="t('关闭回收站保护')" max-width="min(520px, 92%)"
+    @update:show="(value: boolean) => (recycleRiskOpen = value)">
+    <div class="recycle-risk">
+      <p class="recycle-risk-lead">{{ t('关闭后，管理器删除 MOD 时不再移入回收站，而是直接删除文件与安装清单。') }}</p>
+      <p class="recycle-risk-note">{{ t('这个操作无法撤销，删除的 MOD 不能恢复；覆盖安装时旧版本也会被直接清除。请确认你确实想绕过回收站。') }}</p>
+    </div>
+    <template #footer>
+      <n-button size="small" type="error" @click="confirmDisableRecycle">
+        {{ t('仍然直接删除') }}
+      </n-button>
+      <n-button size="small" quaternary @click="recycleRiskOpen = false">
+        {{ t('保持开启') }}
+      </n-button>
+    </template>
+  </AppModal>
 
   <!-- API 凭据：配置个人 Token 后，Release/API 请求直接带凭据，不再消耗匿名额度 -->
   <SettingsGroup :title="t('API 凭据')">
@@ -291,6 +355,24 @@ async function clearTokens() {
 </template>
 
 <style scoped>
+/* 关闭回收站保护的风险说明：两句一重一轻，后果在前、补充说明在后 */
+.recycle-risk {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.recycle-risk-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--oc2-text-1);
+}
+.recycle-risk-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--oc2-text-3);
+}
 .drawer-hint { margin-top: 14px; }
 .drawer-hint.danger { color: #ee8585; }
 .drawer-pref {

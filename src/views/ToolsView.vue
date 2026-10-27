@@ -2,7 +2,7 @@
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NLog, NSelect, NSwitch, NTag } from 'naive-ui'
+import { NLog, NSelect, NTag } from 'naive-ui'
 import { BuildOutline, DocumentTextOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
@@ -10,7 +10,6 @@ import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
 import { api } from '../services/tauri'
-import { useDashboard } from '../composables/useDashboardStore'
 import type { RustLog } from '../types'
 
 type LogKind = 'rust' | 'frontend' | 'crash'
@@ -113,53 +112,16 @@ async function resetUi() {
   result.ok ? message.success(result.message || '窗口状态已重置') : message.error(result.message)
 }
 
-/* ===== 回收站设置 ===== */
+/* ===== 回收站 ===== */
 
-const { config, load } = useDashboard()
+/*
+ * 工具页只保留「打开回收站」入口。
+ * 「删除 MOD 时优先放入回收站」是行为偏好，已移到「设置 → 通用设置」，
+ * 与其它开关放在一起；工具页是维护/诊断工具集合，不该混入配置项。
+ */
 
 /** 回收站弹窗（只读浏览 + 恢复/彻底删除，交互在组件内）。 */
 const recycleOpen = ref(false)
-/** 关闭「优先放入回收站」的风险确认弹窗。 */
-const recycleRiskOpen = ref(false)
-const savingRecycle = ref(false)
-
-/** 当前设置：默认开启（后端 default 也是 true）。 */
-const recycleDeletedMods = computed(() => config.value?.recycle_deleted_mods !== false)
-
-/**
- * 切换「删除 MOD 时优先放入回收站」。
- *
- * 打开是安全方向，直接保存。
- * 关闭会让之后删除的文件**不可恢复**，所以不立即保存，而是先弹风险确认；
- * 用户在确认框里再点一次「直接删除」才真正写入。
- */
-async function toggleRecycleDeletedMods(value: boolean) {
-  if (value) {
-    await saveRecycleDeletedMods(true)
-    return
-  }
-  recycleRiskOpen.value = true
-}
-
-async function saveRecycleDeletedMods(value: boolean) {
-  savingRecycle.value = true
-  try {
-    const saved = await api.saveSettings({ recycle_deleted_mods: value })
-    // 用后端返回的规范化配置替换本地快照，避免前端与磁盘短暂不一致
-    if (saved) await load()
-    message.success(value ? t('删除的 MOD 将先移入回收站') : t('删除的 MOD 将直接删除，不进回收站'))
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    savingRecycle.value = false
-  }
-}
-
-/** 确认关闭：真正写入 false。 */
-async function confirmDisableRecycle() {
-  recycleRiskOpen.value = false
-  await saveRecycleDeletedMods(false)
-}
 </script>
 
 <template>
@@ -184,17 +146,9 @@ async function confirmDisableRecycle() {
       @click="openLog('crash')" />
   </SettingsGroup>
 
-  <SettingsGroup :title="t('回收站设置')">
+  <SettingsGroup :title="t('回收站')">
     <SettingsRow :icon="TrashOutline" :title="t('打开回收站')"
       :description="t('查看已删除的 MOD，可恢复到原位置或彻底删除')" clickable @click="recycleOpen = true" />
-    <SettingsRow :icon="TrashOutline" :title="t('删除 MOD 时优先放入回收站')"
-      :description="t('关闭后删除的文件不会保留，无法恢复')">
-      <template #right>
-        <!-- 开关本身不阻止点击：关闭时要先弹风险确认，由 toggle 决定是否真的写入 -->
-        <n-switch :value="recycleDeletedMods" :loading="savingRecycle" size="small"
-          @update:value="toggleRecycleDeletedMods" />
-      </template>
-    </SettingsRow>
   </SettingsGroup>
 
   <SettingsGroup :title="t('高级')">
@@ -204,29 +158,8 @@ async function confirmDisableRecycle() {
       @click="resetUi" />
   </SettingsGroup>
 
-  <!-- 回收站浏览弹窗：内容与回收站页共用同一个组件 -->
+  <!-- 回收站浏览弹窗：唯一入口就在上面的「打开回收站」 -->
   <RecycleBinDialog v-model:show="recycleOpen" />
-
-  <!--
-    关闭「优先放入回收站」的风险确认。
-    这是不可逆行为的开关，所以把后果写清楚、要求用户再点一次确认，
-    而不是让开关一拨就生效。
-  -->
-  <AppModal :show="recycleRiskOpen" :title="t('关闭回收站保护')" max-width="min(520px, 92%)"
-    @update:show="(value: boolean) => (recycleRiskOpen = value)">
-    <div class="recycle-risk">
-      <p class="recycle-risk-lead">{{ t('关闭后，管理器删除 MOD 时不再移入回收站，而是直接删除文件与安装清单。') }}</p>
-      <p class="recycle-risk-note">{{ t('这个操作无法撤销，删除的 MOD 不能恢复；覆盖安装时旧版本也会被直接清除。请确认你确实想绕过回收站。') }}</p>
-    </div>
-    <template #footer>
-      <n-button size="small" type="error" @click="confirmDisableRecycle">
-        {{ t('仍然直接删除') }}
-      </n-button>
-      <n-button size="small" quaternary @click="recycleRiskOpen = false">
-        {{ t('保持开启') }}
-      </n-button>
-    </template>
-  </AppModal>
 
   <!--
     日志查看：fill 让弹窗一打开就是允许的最大尺寸。

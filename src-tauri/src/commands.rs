@@ -2318,6 +2318,18 @@ pub(crate) fn ordered_asset_download_candidates(
         .collect()
 }
 
+/// 仓库安装的结果。
+///
+/// `preview_only` 为真时只下载并解析，不写入游戏目录，`preview` 字段
+/// 携带可供安装弹窗展示的解析结果；正常安装时 `preview` 为空。
+#[derive(serde::Serialize)]
+pub struct RepositoryInstallOutcome {
+    pub ok: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<crate::mod_preview::ModPreview>,
+}
+
 #[tauri::command]
 pub async fn install_repository(
     app: AppHandle,
@@ -2327,7 +2339,8 @@ pub async fn install_repository(
     asset_name: Option<String>,
     asset_proxy_mode: Option<ProxyMode>,
     asset_proxy_id: Option<String>,
-) -> Result<OperationResult, String> {
+    preview_only: Option<bool>,
+) -> Result<RepositoryInstallOutcome, String> {
     // The UI can cancel while we prepare metadata. Reset once at command
     // entry, never after that wait or while switching download candidates.
     archive::start_download();
@@ -2560,6 +2573,27 @@ pub async fn install_repository(
         repo.name,
         download_name
     );
+    /*
+     * 预览模式：只下载并解析，不写入游戏目录。
+     *
+     * 复用这里已经完成的下载（含代理与竞速），把临时文件移进预览暂存，
+     * 之后由 confirm_mod_install 正式安装。这样仓库卡片的「安装 / 重装 /
+     * 更新」与手动安装、在线直链看到的是同一个预览弹窗。
+     */
+    if preview_only.unwrap_or(false) {
+        let preview = crate::mod_preview::stage_downloaded_file(&state, &temp, &download_name)?;
+        let _ = fs::remove_file(&temp);
+        log::info!(
+            "仓库资产已下载并解析（预览模式）：仓库={}，DLL 数={}",
+            repo.name,
+            preview.total_dlls
+        );
+        return Ok(RepositoryInstallOutcome {
+            ok: true,
+            message: format!("{} 已就绪", repo.name),
+            preview: Some(preview),
+        });
+    }
     // No network awaits while the operation lock protects recycling and install.
     let files_result = (|| {
         let _guard = state
@@ -2596,13 +2630,14 @@ pub async fn install_repository(
                 release_tag,
                 file_count
             );
-            Ok(OperationResult {
+            Ok(RepositoryInstallOutcome {
                 ok: true,
                 message: if release_tag.is_empty() {
                     format!("{} 安装完成", repo.name)
                 } else {
                     format!("{} {} 安装完成", repo.name, release_tag)
                 },
+                preview: None,
             })
         }
         Err(error) => {

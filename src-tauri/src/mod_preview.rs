@@ -270,6 +270,38 @@ fn stage_local(state: &AppState, preview: &ModPreview, source: &Path) -> Result<
     Ok(target)
 }
 
+/// 把「已经下载好的仓库资产」直接落进预览暂存并解析。
+///
+/// 仓库安装流程的下载段包含代理选择与多源竞速，不适合在预览里重写一遍，
+/// 所以由 `install_repository` 在 `preview_only` 模式下先完成下载，
+/// 再把临时文件交给这里解析。之后 `confirm_mod_install` 就能像处理
+/// 手动安装一样安装它。
+pub(crate) fn stage_downloaded_file(
+    state: &AppState,
+    source: &Path,
+    file_name: &str,
+) -> Result<ModPreview, String> {
+    cleanup_stale_previews(state);
+    let extension = source_extension(file_name).ok_or("无法识别文件类型")?;
+    if extension != "dll" && extension != "zip" {
+        return Err("只支持 .dll 或 .zip 文件".into());
+    }
+    let preview = if extension == "dll" {
+        build_preview(vec![analyze_dll(source, file_name)], file_name)
+    } else {
+        analyze_zip(source, file_name)?
+    };
+    stage_local(state, &preview, source)?;
+    log::info!(
+        "仓库资产已送入预览暂存：预览={}，DLL 数={}，MOD 数={}，依赖数={}",
+        preview.preview_id,
+        preview.total_dlls,
+        preview.mod_count,
+        preview.dependency_count
+    );
+    Ok(preview)
+}
+
 #[tauri::command]
 pub async fn analyze_mod_source(
     state: State<'_, AppState>,

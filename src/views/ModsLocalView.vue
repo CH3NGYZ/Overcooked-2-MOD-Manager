@@ -15,6 +15,7 @@ import { compareVersions, repositoryForMod } from '../modStatus'
 import { installedModTags, recomputeModUpdate } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
@@ -23,6 +24,8 @@ import type { InstalledMod, Repository } from '../types'
 const message = useMessage()
 const dialog = useDialog()
 const { load, ensureLoaded, loading, mods, game, config } = useDashboard()
+/** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
+const { refreshing, refreshingAll } = useRepositoryRefresh()
 
 /** 状态标签跳转：点标签跳到 MOD 安装页，并高亮对应仓库卡片 3 秒。 */
 const { linkToRepository } = useRepositoryLink()
@@ -47,21 +50,40 @@ onMounted(() => { void ensureLoaded() })
  *
  * 后端 `labels` / `update_available` 是扫描那一刻算的，而仓库 Release 是
  * 异步刷新回来的；刷新期间 Dashboard 不重读（会重扫磁盘），标签就会停在
- * 「版本未知」。这里用当前仓库缓存重算，让刷新结果立刻生效，
+ * 上一次的结果。这里用当前仓库缓存重算，让刷新结果立刻生效，
  * 且整个过程是纯内存计算 —— 刷一个仓库只影响它绑定的那几个 MOD。
+ *
+ * 三层来源，优先级从高到低：
+ *   1. 仓库有 Release 且版本可比 → 用缓存重算（刷新完立刻生效）
+ *   2. 该仓库正在刷新且没有可比 Release → 显示「检查中」，
+ *      而不是拿上一次的旧结论冒充当前状态
+ *   3. 其余情况 → 保留后端扫描时的标签
  */
 const effectiveMods = computed<InstalledMod[]>(() =>
   mods.value.map((mod) => {
     const recomputed = recomputeModUpdate(mod, repositories.value)
-    if (!recomputed) return mod
-    const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available')
-    return {
-      ...mod,
-      update_available: recomputed.update_available,
-      labels: recomputed.update_available ? ['update_available', ...stripped] : ['latest', ...stripped],
+    if (recomputed) {
+      const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available')
+      return {
+        ...mod,
+        update_available: recomputed.update_available,
+        labels: recomputed.update_available ? ['update_available', ...stripped] : ['latest', ...stripped],
+      }
     }
+    // 仓库还在抓取：明确显示「检查中」，不把旧结论当现状
+    const repo = repositoryForMod(repositories.value, mod)
+    if (repo && isRepositoryRefreshing(repo.id)) {
+      const stripped = (mod.labels ?? []).filter((label) => label !== 'latest' && label !== 'update_available' && label !== 'unknown')
+      return { ...mod, update_available: false, labels: ['unknown', ...stripped] }
+    }
+    return mod
   }),
 )
+
+/** 某个仓库当前是否正在抓取 Release（单仓刷新或整批刷新都算）。 */
+function isRepositoryRefreshing(repositoryId: string) {
+  return !!refreshing.value[repositoryId] || refreshingAll.value
+}
 
 const sortedMods = computed(() => {
   const list = [...effectiveMods.value]

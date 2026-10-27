@@ -16,7 +16,7 @@ import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
-import type { Repository, RepositorySource } from '../types'
+import type { ModPreview, Repository, RepositorySource } from '../types'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -35,7 +35,10 @@ const search = ref('')
 const detailId = ref<string | null>(null)
 /** 「安装 MOD」弹窗：本地文件 / 在线直链，与 MOD 管理页共用同一组件。 */
 const installOpen = ref(false)
+/** 仓库资产已解析好的预览，交给弹窗直接展示（不再二次下载）。 */
+const pendingPreview = ref<ModPreview | null>(null)
 function openInstall() {
+  pendingPreview.value = null
   installOpen.value = true
 }
 
@@ -337,6 +340,14 @@ function gameBlocked() {
  * 依赖 Dashboard 里的 mods + 仓库缓存，所以成功后必须重新读取 Dashboard，
  * 否则状态标签会停在安装前的值。
  */
+/**
+ * 仓库卡片的「安装 / 重装 / 更新」。
+ *
+ * 流程与手动安装统一：先让后端**只下载并解析**（preview_only），
+ * 把解析结果交给 ModInstallDialog 展示，用户点「立即安装」才真正写入。
+ * 这样三个入口（本地文件、在线直链、仓库资产）看到的是同一个预览弹窗，
+ * 也让用户在写入游戏目录前确认包内到底有什么。
+ */
 async function install(repo: Repository, tag?: string) {
   if (gameBlocked()) return
   const target = tag ?? repo.cached_releases[0]?.tag_name
@@ -358,16 +369,29 @@ async function install(repo: Repository, tag?: string) {
   }
   installing.value[repo.id] = true
   try {
-    const result = await api.installRepository(repo.id, tag)
-    if (result.ok) message.success(result.message || `${repoName(repo)} ✓`)
-    else message.error(result.message)
+    const outcome = await api.installRepository(repo.id, tag, true)
+    if (!outcome.ok) {
+      message.error(outcome.message)
+      return
+    }
+    if (!outcome.preview) {
+      message.error(t('下载完成但没有解析出安装内容'))
+      return
+    }
+    // 把预览交给安装弹窗，用户在弹窗里确认后才写入
+    pendingPreview.value = outcome.preview
+    installOpen.value = true
   } catch (reason) {
     fail(reason)
   } finally {
     installing.value[repo.id] = false
-    // 成功或失败都重读一次：失败时可能是部分写入需要回滚后的真实状态
-    await load()
   }
+}
+
+/** 安装成功后刷新 Dashboard：状态标签与安装情况都要重新计算。 */
+async function onInstalled() {
+  pendingPreview.value = null
+  await load()
 }
 
 defineExpose({ refreshAll, visibleCount })
@@ -586,7 +610,9 @@ defineExpose({ refreshAll, visibleCount })
     本页的仓库卡片「安装 / 重装 / 更新」走 install()，那条路径是后端
     直接下载安装；这个弹窗处理的是「本地文件 / 在线直链」两种手动来源。
   -->
-  <ModInstallDialog v-model:show="installOpen" @installed="void refreshAll()" />
+  <ModInstallDialog v-model:show="installOpen" :pending-preview="pendingPreview"
+    @update:show="(value: boolean) => { if (!value) pendingPreview = null }"
+    @installed="onInstalled" />
 </template>
 
 <style scoped>

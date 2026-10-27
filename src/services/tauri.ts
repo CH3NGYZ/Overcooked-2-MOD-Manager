@@ -5,7 +5,8 @@ import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
   Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
   OperationResult, PermissionStatus, Provider,
-  PublicConfig, ReleaseInfo, RepositoryReadme, RepositorySourceImportResult, RustLog, SettingsPatch,
+  PublicConfig, ReleaseInfo, RepositoryInstallOutcome, RepositoryReadme, RepositorySourceImportResult,
+  RustLog, SettingsPatch,
   TokenPatch, UninstallLocalModResult,
 } from '../types'
 
@@ -65,7 +66,15 @@ export const api = {
   cancelRepositoryReadme: (requestId: string) => invoke<void>('cancel_repository_readme', { requestId }),
   /** 用系统默认浏览器打开外部链接（Release 页 / 源码仓库）。 */
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
-  installRepository: (repositoryId: string, tag?: string) => invoke<OperationResult>('install_repository', { repositoryId, tag }),
+  /**
+   * 安装仓库资产。
+   *
+   * `previewOnly` 为真时只下载并解析、不写入游戏目录，返回结果里带
+   * `preview` —— 仓库卡片的「安装 / 重装 / 更新」走这条路径先进预览弹窗，
+   * 用户确认后再调 `confirmModInstall`。
+   */
+  installRepository: (repositoryId: string, tag?: string, previewOnly = false) =>
+    invoke<RepositoryInstallOutcome>('install_repository', { repositoryId, tag, previewOnly }),
   launchNormal: () => invoke<OperationResult>('launch_normal'),
   /** 停止厨房：Steam 没有停止协议，由管理器结束游戏进程。 */
   stopGame: () => invoke<OperationResult>('stop_game'),

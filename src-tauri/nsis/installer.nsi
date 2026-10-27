@@ -884,6 +884,16 @@ Section Uninstall
   {{#each resources_ancestors}}
   RMDir /REBOOTOK "$INSTDIR\\{{this}}"
   {{/each}}
+
+  ; Data directory lives beside the executable (OC2ModManager/).
+  ; Ask before removing it: it holds config, manifests, the recycle bin and
+  ; framework backups, which the user may want to keep for a reinstall.
+  ${If} $UpdateMode <> 1
+    MessageBox MB_YESNO|MB_ICONQUESTION "是否同时删除管理器数据？$\r$\n$\r$\n包含配置、安装清单、MOD 回收站与框架备份，删除后无法恢复。$\r$\n$\r$\n选择「否」将保留这些数据，下次安装后可继续使用。" /SD IDYES IDNO skip_data_cleanup
+    RMDir /r "$INSTDIR\OC2ModManager"
+    skip_data_cleanup:
+  ${EndIf}
+
   RMDir "$INSTDIR"
 
   ; Remove shortcuts if not updating

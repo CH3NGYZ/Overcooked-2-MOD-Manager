@@ -29,6 +29,13 @@ const props = defineProps<{
   show: boolean
   /** 已下载好的资产路径：由仓库安装流程传入，直接进入解析。 */
   pendingLocalPath?: string | null
+  /**
+   * 外部已经解析好的预览（仓库资产走 preview_only 下载后得到）。
+   *
+   * 与 `pendingLocalPath` 的区别：那条路径要再下载/复制一次，
+   * 这条已经是后端暂存里的成品，直接展示即可。
+   */
+  pendingPreview?: ModPreview | null
 }>()
 const emit = defineEmits<{
   (event: 'update:show', value: boolean): void
@@ -131,6 +138,19 @@ watch(() => props.pendingLocalPath, (path) => {
   if (!path) return
   installTab.value = 'local'
   void analyze('local', path)
+}, { immediate: true })
+
+/**
+ * 仓库安装流程传入已解析好的预览时，直接展示。
+ *
+ * 这条不做二次下载：preview_only 已经在后端下载并解压过，
+ * 文件就在预览暂存里，`confirm_mod_install` 可以直接安装。
+ */
+watch(() => props.pendingPreview, (value) => {
+  if (!value) return
+  void discardPreview().then(() => {
+    preview.value = value
+  })
 }, { immediate: true })
 
 /** 打开时复位：每次打开都从「本地文件 + 空 URL」开始。 */

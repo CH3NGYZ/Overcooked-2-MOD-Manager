@@ -144,6 +144,10 @@ export interface PermissionStatus {
   game_writable: boolean
   data_writable: boolean
 }
+/** 仓库安装结果；预览模式下携带解析结果，供安装弹窗展示。 */
+export interface RepositoryInstallOutcome extends OperationResult {
+  preview?: ModPreview
+}
 export interface DownloadProgress {
   label: string
   downloaded: number

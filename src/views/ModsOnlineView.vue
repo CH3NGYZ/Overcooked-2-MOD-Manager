@@ -10,7 +10,8 @@ import { repositoryInstallAction, repositoryStatus, type InstallAction, type Sta
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
-import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
+import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
+import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
@@ -132,14 +133,17 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
 
 /** 仅保留当前下载渠道适用的仓库。 */
 /**
- * 安装页展示的仓库：按当前地区筛选，并遵守 `enabled`（是否在本页展示）。
+ * 安装页展示的仓库：只保留「在当前地区真实存在」的那些。
  *
- * `enabled` 只控制**展示**：刷新与已安装 MOD 的更新检测都不看它，
- * 所以隐藏的仓库照样会被刷新，只是不在这个页面列出。
+ * 判定统一走 `repositoryIsAvailable`（enabled + 仓库地区 + 所属源地区），
+ * 与刷新排队、MOD 绑定、后端更新状态用同一套规则。
+ * 地区不匹配的仓库不只是不显示：它也不会被刷新，
+ * 所以不会出现「看不见的仓库刷新失败」这种无处处理的报错。
  */
 const repositories = computed<Repository[]>(() =>
-  (config.value?.repositories ?? [])
-    .filter((repo) => repo.enabled && repositoryMatchesRegion(repo, currentRegion.value)),
+  (config.value?.repositories ?? []).filter((repo) =>
+    repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value),
+  ),
 )
 const sources = computed<RepositorySource[]>(() =>
   (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
@@ -368,8 +372,15 @@ async function refreshSource(node: SourceNode) {
     for (const child of sources.value.filter((entry) => entry.parent_id === sourceId)) collect(child.id)
   }
   collect(node.source.id)
-  // 隐藏的仓库不刷新（与本页展示用同一套 enabled 判定）
-  const scoped = repositories.value.filter((repo) => repo.enabled && repo.source_id && ids.has(repo.source_id))
+  /*
+   * 源文档刚拉回来的仓库也要按「真实存在」再过滤一次：
+   * 与展示同一套判定，避免把地区专属仓库（例如中国大陆下的
+   * international 仓库）送进 Release 刷新队列。
+   */
+  const scoped = repositories.value.filter(
+    (repo) => !!repo.source_id && ids.has(repo.source_id)
+      && repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value),
+  )
   const releaseErrors = await engine.refreshMany(scoped)
   releaseErrors.forEach((error) => message.error(error))
 }
@@ -385,8 +396,10 @@ async function refreshAll() {
  * 源文档（分组 / 仓库列表的来源）不在这里动，避免只点一个分组就把整棵源树清空重载。
  */
 async function refreshGroup(group: GroupNode) {
-  // 组内隐藏的仓库同样跳过刷新
-  const errors = await engine.refreshMany(group.repos.filter((repo) => repo.enabled))
+  // 组内不可用的仓库同样跳过刷新（分组由已筛选列表派生，这里再校验一次）
+  const errors = await engine.refreshMany(group.repos.filter(
+    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value),
+  ))
   errors.forEach((error) => message.error(error))
 }
 

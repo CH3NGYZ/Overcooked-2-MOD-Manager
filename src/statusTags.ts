@@ -166,6 +166,86 @@ export function localVersion(mod: InstalledMod): string | undefined {
 }
 
 /**
+ * 状态聚合：把一组 MOD 的标签按「轻重缓急」汇总成带数量的标签。
+ *
+ * MOD 管理页的页头聚合与 MOD 包标题共用这一份实现 —— 两处都是
+ * 「这一堆 MOD 里有多少个处于某状态」，各写一份迟早会漂移。
+ *
+ * 排序 = 语义 tone 的严重度（越需要注意越靠前），同档内再按固定业务顺序。
+ * 数量为 0 的状态不返回，调用方不需要再过滤。
+ */
+const TONE_PRIORITY: Record<string, number> = {
+  critical: 0,  // 严重：加载警告、仓库缺失
+  severe: 1,    // 重度：重复
+  moderate: 2,  // 中度：可更新、仓库刷新失败、预发布
+  mild: 3,      // 轻微：低版本
+  muted: 4,     // 中性：检测中、版本未知、未绑定、已禁用
+  accent: 5,    // 正常：最新版、已安装
+}
+
+/** 同档内的稳定排序（越靠前越需要动作）。 */
+const WITHIN_TONE_ORDER: string[] = [
+  'load_warning',
+  'bound_repository_missing',
+  'repository_unavailable',
+  'duplicate',
+  'update_available',
+  'prerelease',
+  'refresh_failed',
+  'duplicate_lower_version',
+  'checking',
+  'unknown',
+  'unbound',
+  'disabled',
+  'dependency',
+  'not_release_asset',
+  'installed',
+  'latest',
+]
+
+export interface StatusSummary {
+  key: string
+  text: string
+  tone: StatusTone
+  count: number
+}
+
+export interface StatusSummaryOptions {
+  /** 不计入统计的标签（例如包标题自己已经画了「已禁用」/「部分启用」）。 */
+  exclude?: readonly string[]
+  /** 是否统计纯依赖 DLL。默认不统计：它不是 MOD，没有版本语义。 */
+  includeDependencies?: boolean
+}
+
+export function summarizeStatuses(
+  mods: readonly InstalledMod[],
+  options: StatusSummaryOptions = {},
+): StatusSummary[] {
+  const excluded = new Set(options.exclude ?? [])
+  const counted = options.includeDependencies
+    ? mods
+    : mods.filter((mod) => !mod.is_dependency)
+  const countOf = (key: string) =>
+    counted.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
+
+  const entries: Array<StatusSummary & { index: number }> = []
+  WITHIN_TONE_ORDER.forEach((key, index) => {
+    if (excluded.has(key)) return
+    const meta = STATUS_META[key]
+    if (!meta) return
+    const count = countOf(key)
+    if (count > 0) entries.push({ key, text: meta.text, tone: meta.tone, count, index })
+  })
+
+  return entries
+    .sort((a, b) => {
+      const byTone = (TONE_PRIORITY[a.tone] ?? 9) - (TONE_PRIORITY[b.tone] ?? 9)
+      return byTone !== 0 ? byTone : a.index - b.index
+    })
+    .map(({ index: _index, ...entry }) => entry)
+}
+
+/**
  * 仓库维度的状态：用「已安装 MOD 的最高版本」与「仓库最新 Release」比较。
  * 后端按真实安装清单判定（含渠道、Tag 绑定、重复副本），能对上这个仓库时优先采信；
  * 只在后端绑定的不是这个仓库时，才退回本地版本比较。

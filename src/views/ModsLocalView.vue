@@ -14,7 +14,7 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import { STATUS_META, installedModTags, recomputeModUpdate, replaceVersionConclusion } from '../statusTags'
+import { installedModTags, recomputeModUpdate, replaceVersionConclusion, summarizeStatuses, type StatusSummary } from '../statusTags'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -134,14 +134,7 @@ const sortedMods = computed(() =>
 )
 
 /**
- * 顶部聚合标签：按状态汇总整页 MOD 数量。
- *
- * 顺序与「越需要注意越靠前」一致，和单个 MOD 右侧标签用的是同一套 tone，
- * 因此颜色永远同步（都来自 theme.ts 的 statusToneColors）。
- * 纯依赖 DLL 不参与：它不是 MOD，只是随包安装的文件。
- */
-/**
- * 顶部聚合标签：按状态汇总整页 MOD 数量。
+ * 页头聚合标签：按状态汇总整页 MOD 数量。
  *
  * 覆盖 MOD 管理页可能出现的**全部**标签，不只挑几个。数据源是
  * STATUS_META（文案与 tone）而不是本地再抄一份文案 —— 这样以后在
@@ -149,57 +142,11 @@ const sortedMods = computed(() =>
  *
  * 排序按「轻重缓急」= 语义 tone 的严重度，同档内再按固定业务顺序。
  * 越需要用户处理越靠前，正常/中性收在最后。
+ *
+ * 具体的排序与遍在 `summarizeStatuses`（statusTags.ts），
+ * 因为 MOD 包标题要用完全相同的规则汇总包内成员。
  */
-const TONE_PRIORITY: Record<string, number> = {
-  critical: 0,  // 严重：加载警告、仓库缺失
-  severe: 1,    // 重度：重复
-  moderate: 2,  // 中度：可更新、仓库刷新失败、预发布
-  mild: 3,      // 轻微：低版本
-  muted: 4,     // 中性：检测中、版本未知、未绑定、已禁用
-  accent: 5,    // 正常：最新版、已安装
-}
-
-/** 同档内的稳定排序（越靠前越需要动作）。 */
-const WITHIN_TONE_ORDER: string[] = [
-  'load_warning',
-  'bound_repository_missing',
-  'repository_unavailable',
-  'duplicate',
-  'update_available',
-  'prerelease',
-  'refresh_failed',
-  'duplicate_lower_version',
-  'checking',
-  'unknown',
-  'unbound',
-  'disabled',
-  'dependency',
-  'not_release_asset',
-  'installed',
-  'latest',
-]
-
-interface SummaryTag { key: string; text: string; tone: string; count: number; index: number }
-
-const statusSummaryTags = computed<SummaryTag[]>(() => {
-  // 纯依赖 DLL 不是 MOD，只随包安装，不参与整页统计
-  const real = effectiveMods.value.filter((mod) => !mod.is_dependency)
-  const countOf = (key: string) =>
-    real.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
-
-  const entries: SummaryTag[] = []
-  WITHIN_TONE_ORDER.forEach((key, index) => {
-    const meta = STATUS_META[key]
-    if (!meta) return
-    const count = countOf(key)
-    if (count > 0) entries.push({ key, text: meta.text, tone: meta.tone, count, index })
-  })
-
-  return entries.sort((a, b) => {
-    const byTone = (TONE_PRIORITY[a.tone] ?? 9) - (TONE_PRIORITY[b.tone] ?? 9)
-    return byTone !== 0 ? byTone : a.index - b.index
-  })
-})
+const statusSummaryTags = computed<StatusSummary[]>(() => summarizeStatuses(effectiveMods.value))
 
 /**
  * 按「已安装时绑定的仓库分类」分组。
@@ -224,9 +171,15 @@ interface ModPackageNode {
   grouped: boolean
   enabled: boolean
   partial: boolean
-  updateCount: number
-  /** 包内全部成员都确认是最新版（用于包标题上的「最新版」标签）。 */
-  latest: boolean
+  /**
+   * 包状态聚合（与页头完全相同的一套规则）。
+   *
+   * 包内成员可能各处于不同状态——最新版、可更新、检测中、版本未知、
+   * 仓库刷新失败……只显示「N 个可更新 / 最新版」会把「检测中」
+   * 这类中间态彻底藏掉，用户看不出刷新还在进行。
+   * 「已禁用 / 部分启用」单独渲染，所以从聚合里排除，避免重复。
+   */
+  statuses: StatusSummary[]
 }
 
 interface ModGroupNode {
@@ -393,17 +346,15 @@ const groups = computed<ModGroupNode[]>(() => {
      * 各 DLL 仍由行内插件名区分，不会因为标题统一而重名。
      */
     const label = list[0] ? displayTitle(list[0]) : ''
-    const updateCount = list.filter((mod) => mod.update_available).length
     /*
-     * 纯依赖 DLL 不参与版本结论：它没有 BepInPlugin 元数据，
-     * 永远不会有 latest/update_available 标签。如果把它算进 every()，
-     * 任何含依赖的包（如 DIYLevel）都永远判不出「最新版」。
-     * 所以只用真正的 MOD 成员判断整包状态。
+     * 包状态聚合与页头同一套规则：包内每个成员的状态都按严重度汇总，
+     * 「检测中 / 版本未知 / 仓库刷新失败」这些中间态因此能出现在包标题上，
+     * 不再只剩「最新版 / N 个可更新」两种结论。
+     *
+     * 「已禁用 / 部分启用」由包标题单独渲染（它描述整包而非成员），
+     * 所以从聚合里排除，避免同一个词出现两次。
      */
-    const modMembers = list.filter((mod) => !mod.is_dependency)
-    const latest = modMembers.length > 0
-      && updateCount === 0
-      && modMembers.every((mod) => mod.labels?.includes('latest'))
+    const statuses = summarizeStatuses(list, { exclude: ['disabled'] })
     return {
       key,
       label,
@@ -411,8 +362,7 @@ const groups = computed<ModGroupNode[]>(() => {
       grouped: list.length >= 2,
       enabled: enabledCount === list.length,
       partial: enabledCount > 0 && enabledCount < list.length,
-      updateCount,
-      latest,
+      statuses,
     }
   }
 
@@ -1071,13 +1021,15 @@ function removePackage(node: ModPackageNode) {
                     不再手写固定色类，否则换主题色时包标签会留在旧颜色上。
                   -->
                   <span class="tag-group">
-                    <!-- 用 moderate 而非 contrast：后者不在配色表里，会回退成灰色 -->
-                    <n-tag v-if="pkg.updateCount" size="tiny" :bordered="false"
-                      class="state-tag" :color="tagColorFor('moderate')">
-                      {{ t('{count} 个可更新', { count: pkg.updateCount }) }}
+                    <!--
+                      包状态聚合：与页头、单个 MOD 行完全同一套文案与 tone。
+                      每个出现的状态都带数量，按严重度排序 ——
+                      「检测中」「版本未知」「仓库刷新失败」不再被藏掉。
+                    -->
+                    <n-tag v-for="entry in pkg.statuses" :key="entry.key" size="tiny" :bordered="false"
+                      class="state-tag" :color="tagColorForAny(entry.tone)">
+                      {{ entry.count }} {{ t(entry.text) }}
                     </n-tag>
-                    <n-tag v-else-if="pkg.latest" size="tiny" :bordered="false"
-                      class="state-tag" :color="tagColorFor('accent')">{{ t('最新版') }}</n-tag>
                     <n-tag v-if="!pkg.enabled && !pkg.partial" size="tiny" :bordered="false"
                       class="state-tag" :color="tagColorFor('muted')">{{ t('已禁用') }}</n-tag>
                     <n-tag v-else-if="pkg.partial" size="tiny" :bordered="false"

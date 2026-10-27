@@ -128,6 +128,23 @@ pub(crate) fn repository_matches_channel(
         })
 }
 
+/// 仓库在当前地区「是否存在」：存在才展示、刷新、安装和参与更新检测。
+///
+/// 这是唯一的判定入口，前端 `repositoryIsAvailable` 与它逐条对应：
+///   - `enabled=false`：用户关闭，或被官方仓库源覆盖的社区副本；
+///   - 地区不适用：仓库自身地区、或所属源地区与当前地区不符。
+///
+/// 地区不适用与 `enabled=false` 取同一语义（整个不存在），而不是
+/// 「存在但不显示」——否则前端会替一个用户看不见的仓库发请求，
+/// 失败时还会弹出一条无从处理的错误。
+pub(crate) fn repository_is_available(
+    config: &AppConfig,
+    repository: &RepositoryConfig,
+    region: &str,
+) -> bool {
+    repository.enabled && repository_matches_channel(config, repository, region)
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConfigError {
     #[error("配置目录不可用: {0}")]
@@ -1583,6 +1600,53 @@ value = "RegionalMod.dll"
             config.repositories.len(),
             default_config().repositories.len()
         );
+    }
+
+    #[test]
+    fn availability_requires_enabled_and_matching_region() {
+        let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
+        let document =
+            crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+        let mut repository =
+            repository_from_export(&document.repositories[0], "regional".into(), false);
+        let mut config = default_config();
+
+        /*
+         * `repository_is_available` 是「这个仓库此刻是否存在」的唯一判定：
+         * enabled 与地区两个条件的交集。任一不满足都等于不存在，
+         * 因此既不会显示，也不会被刷新、安装或参与更新统计。
+         */
+        for (enabled, region) in [
+            (true, None),
+            (true, Some("international")),
+            (true, Some("chinese_mainland")),
+            (false, None),
+            (false, Some("international")),
+        ] {
+            repository.enabled = enabled;
+            repository.region = region.map(str::to_owned);
+            for current in [REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL] {
+                assert_eq!(
+                    repository_is_available(&config, &repository, current),
+                    enabled && repository_matches_channel(&config, &repository, current),
+                    "enabled={enabled}, region={region:?}, current={current}"
+                );
+            }
+        }
+
+        // international 仓库在中国大陆彻底不存在（这是本次修复的原始症状）
+        repository.enabled = true;
+        repository.region = Some(REGION_INTERNATIONAL.into());
+        assert!(!repository_is_available(
+            &config,
+            &repository,
+            REGION_CHINESE_MAINLAND
+        ));
+        assert!(repository_is_available(
+            &config,
+            &repository,
+            REGION_INTERNATIONAL
+        ));
     }
 
     #[test]

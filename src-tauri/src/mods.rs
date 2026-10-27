@@ -163,16 +163,12 @@ fn inspect_dll(
         .and_then(|manifest| manifest.repository_binding.as_ref())
         .filter(|binding| binding.is_valid());
     /*
-     * 候选只来自 `enabled` 的仓库：隐藏的仓库（用户主动关掉，或被官方源
-     * 覆盖的社区副本）既不展示也不刷新，已安装的 MOD 自然不该再绑定到它。
+     * 候选只来自当前地区可用的仓库：`enabled=false`（用户关闭，或被官方源
+     * 覆盖的社区副本）与地区不适用（例如中国大陆下的 international 仓库）
+     * 都不展示也不刷新，已安装的 MOD 自然不该再绑定到它们。
      */
     let candidates = config.repositories.iter().filter(|repo| {
-        repo.enabled
-            && crate::config::repository_matches_channel(
-                config,
-                repo,
-                crate::config::current_user_region(),
-            )
+        crate::config::repository_is_available(config, repo, crate::config::current_user_region())
             && if let Some(binding) = repository_binding {
                 binding.matches_repository(repo)
             } else {

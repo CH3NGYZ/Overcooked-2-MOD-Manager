@@ -1792,11 +1792,17 @@ pub async fn refresh_repository(
         .position(|repo| repo.id == repository_id)
         .ok_or("仓库不存在")?;
     /*
-     * `enabled=false` 的仓库不刷新：它被隐藏了（用户主动关掉，或被官方
-     * 仓库源覆盖的社区副本），既不展示也没有刷新入口。
+     * 不可用的仓库不刷新：`enabled=false`（用户关闭，或被官方仓库源覆盖的
+     * 社区副本）与「地区不适用」（例如中国大陆下的 international 仓库）
+     * 都按「当前不存在」处理 —— 界面上根本没有这张卡片，
+     * 刷新入口也就无从触发。
      */
-    if !config.repositories[index].enabled {
-        return Err("该仓库未在 MOD 安装页展示，无法刷新".into());
+    if !crate::config::repository_is_available(
+        &config,
+        &config.repositories[index],
+        crate::config::current_user_region(),
+    ) {
+        return Err("该仓库不在当前地区的 MOD 安装页展示，无法刷新".into());
     }
     if config.repositories[index].download_mode == RepositoryDownloadMode::RepositoryFile {
         // 这条消息会直接展示在「刷新全部仓库源」的结果里，写成用户能看懂的话
@@ -1808,13 +1814,6 @@ pub async fn refresh_repository(
             "无法刷新「{}」，仓库文件模式下无法探测版本号",
             config.repositories[index].name
         ));
-    }
-    if !crate::config::repository_matches_channel(
-        &config,
-        &config.repositories[index],
-        crate::config::current_user_region(),
-    ) {
-        return Err("仓库不属于当前MOD下载渠道".into());
     }
     let repo = config.repositories[index].clone();
     let client =
@@ -2383,11 +2382,11 @@ pub async fn install_repository(
         .find(|repo| repo.id == repository_id)
         .ok_or("仓库不存在")?
         .clone();
-    // 安装要求仓库在安装页可见；隐藏的仓库不能作为安装入口
-    if !repo.enabled {
-        return Err("该仓库未在 MOD 安装页展示，无法从这里安装".into());
+    // 安装要求仓库在当前地区可用；隐藏/地区不匹配的仓库不能作为安装入口
+    if !crate::config::repository_is_available(&config, &repo, crate::config::current_user_region())
+    {
+        return Err("该仓库不在当前地区的 MOD 安装页展示，无法从这里安装".into());
     }
-    crate::community::ensure_repository_region(&repo, crate::config::current_user_region())?;
     let selected_proxy_mode = selected_asset_proxy_mode(
         asset_proxy_mode,
         &repo.provider,
@@ -5078,10 +5077,9 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
     config
         .repositories
         .iter()
-        // 隐藏的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
-        .filter(|repo| repo.enabled)
+        // 不可用的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
         .filter(|repo| {
-            crate::config::repository_matches_channel(
+            crate::config::repository_is_available(
                 config,
                 repo,
                 crate::config::current_user_region(),

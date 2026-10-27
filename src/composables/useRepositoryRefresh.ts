@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledRepositories } from '../repositoryPriority'
+import { repositoryIsAvailable, sourceMatchesRegion } from '../repositoryAvailability'
 import type { Repository, RepositorySource } from '../types'
 
 /**
@@ -50,7 +51,9 @@ function store() {
   const { load, reloadConfig, config, mods } = useDashboard()
   const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
   const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
-  return { load, reloadConfig, sources, repositories, mods }
+  /** 当前地区决定哪些源/仓库真实存在；空值按「非中国大陆」处理，与后端一致。 */
+  const region = computed(() => config.value?.region)
+  return { load, reloadConfig, sources, repositories, mods, region }
 }
 
 /**
@@ -140,7 +143,7 @@ async function refreshMany(repos: Repository[]) {
 async function refreshSourceChain(sourceId: string, visited = new Set<string>()): Promise<string[]> {
   if (visited.has(sourceId)) return []
   visited.add(sourceId)
-  const { reloadConfig, sources } = store()
+  const { reloadConfig, sources, region } = store()
   const source = sources.value.find((entry) => entry.id === sourceId)
   if (!source) return []
 
@@ -155,16 +158,26 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   }
 
   await reloadConfig()
-  const children = sources.value.filter((entry) => entry.parent_id === sourceId)
+  // 子源同样按地区过滤：父源是通用的，但它可以声明地区专属子源
+  const children = sources.value.filter(
+    (entry) => entry.parent_id === sourceId && sourceMatchesRegion(entry, region.value),
+  )
   if (!children.length) return []
   const childErrors = await Promise.all(children.map((child) => refreshSourceChain(child.id, visited)))
   return childErrors.flat()
 }
 
-/** 刷新全部源文档（根源并行，子源递归）。 */
+/**
+ * 刷新全部源文档（根源并行，子源递归）。
+ *
+ * 只刷新当前地区适用的源：international 源在中国大陆既不展示，
+ * 也不该被拉取——否则会拖慢刷新，失败时还会弹出一条用户根本无法处理的错误。
+ */
 async function refreshSourceDocuments(): Promise<string[]> {
-  const { sources } = store()
-  const refreshable = sources.value.filter((source) => !COMMUNITY_SOURCE_IDS.has(source.id))
+  const { sources, region } = store()
+  const refreshable = sources.value.filter(
+    (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
+  )
   const known = new Set(refreshable.map((source) => source.id))
   // 父源已被移除的孤儿当作根源，避免整条链都不刷新
   const roots = refreshable.filter((source) => !source.parent_id || !known.has(source.parent_id))
@@ -183,7 +196,7 @@ async function refreshEverything(): Promise<string[]> {
   refreshingAll.value = true
   lastErrors.value = []
   try {
-    const { load, reloadConfig, repositories, sources, mods } = store()
+    const { load, reloadConfig, repositories, sources, mods, region } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await load()
     const sourceErrors = await refreshSourceDocuments()
@@ -197,11 +210,14 @@ async function refreshEverything(): Promise<string[]> {
      * 用户关心的是自己装的仓库有没有更新，不该排在几十个未安装仓库
      * 后面慢慢等。
      *
-     * `enabled=false` 的仓库整条跳过：它被隐藏了（用户主动关掉，或被官方
-     * 仓库源覆盖的社区副本），既不展示也不刷新。
+     * 不可用的仓库整条跳过，判定与安装页展示完全一致
+     * （见 `repositoryIsAvailable`）：
+     *   - `enabled=false`：被用户关闭，或被官方仓库源覆盖的社区副本；
+     *   - 地区不适用：例如 international 仓库在中国大陆。
+     * 这两类既不显示也不刷新，前端不会为它们发出任何请求。
      */
     const ordered = prioritizeInstalledRepositories(
-      repositories.value.filter((repo) => repo.enabled),
+      repositories.value.filter((repo) => repositoryIsAvailable(repo, sources.value, region.value)),
       mods.value,
     )
     const releaseErrors = await refreshMany(ordered)

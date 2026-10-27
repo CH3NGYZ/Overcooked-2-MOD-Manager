@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
-import { ArrowUpCircleOutline, DownloadOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -14,6 +14,7 @@ import { tagColorFor } from '../theme'
 import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
+import ModInstallDialog from '../components/ModInstallDialog.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import type { Repository, RepositorySource } from '../types'
 
@@ -32,6 +33,11 @@ const installing = ref<Record<string, boolean>>({})
 const search = ref('')
 /** 当前展开详情的仓库（同页展开，不做二级路由）。 */
 const detailId = ref<string | null>(null)
+/** 「安装 MOD」弹窗：本地文件 / 在线直链，与 MOD 管理页共用同一组件。 */
+const installOpen = ref(false)
+function openInstall() {
+  installOpen.value = true
+}
 
 const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 
@@ -373,15 +379,22 @@ defineExpose({ refreshAll, visibleCount })
       <n-tag size="small" :bordered="false" type="info">{{ regionLabel }}</n-tag>
     </Teleport>
 
-    <!-- 页头右侧：计数 + 搜索 + 刷新全部 -->
+    <!--
+      页头右侧，从左到右：计数 → 搜索 → 刷新全部仓库源 → 安装 MOD。
+      「安装 MOD」固定在最右：它是本页最主要的动作入口，
+      和 MOD 管理页原来的位置一致，只是搬到了本页。
+    -->
     <Teleport to="#page-header-actions" defer>
       <span class="header-count muted">{{ t('共 {count} 个仓库', { count: visibleCount }) }}</span>
       <n-input v-model:value="search" clearable size="small" class="header-search"
-        :placeholder="t('搜索作者 / MOD 名称 / 简介 / 分组')">
+        :placeholder="t('搜索')">
         <template #prefix><SearchOutline width="14" height="14" /></template>
       </n-input>
       <n-button size="small" secondary :loading="anyRefreshing" :disabled="anyRefreshing" @click="refreshAll">
         <RefreshOutline width="14" height="14" />{{ t('刷新全部仓库源') }}
+      </n-button>
+      <n-button size="small" type="primary" @click="openInstall">
+        <LinkOutline width="14" height="14" />{{ t('安装 MOD') }}
       </n-button>
     </Teleport>
 
@@ -567,6 +580,13 @@ defineExpose({ refreshAll, visibleCount })
         @close="detailId = null" @install="(tag?: string) => detailRepo && install(detailRepo, tag)" />
     </n-drawer-content>
   </n-drawer>
+
+  <!--
+    「安装 MOD」弹窗：与 MOD 管理页共用 ModInstallDialog。
+    本页的仓库卡片「安装 / 重装 / 更新」走 install()，那条路径是后端
+    直接下载安装；这个弹窗处理的是「本地文件 / 在线直链」两种手动来源。
+  -->
+  <ModInstallDialog v-model:show="installOpen" @installed="void refreshAll()" />
 </template>
 
 <style scoped>
@@ -750,8 +770,11 @@ defineExpose({ refreshAll, visibleCount })
   .spin-icon { animation: none; }
 }
 .stat b { font-size: 12.5px; color: var(--oc2-text-1); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 预发布版本用琥珀色区分，并在文案里带 · 预发布 */
-.stat b.prerelease { color: var(--warning, #e6b86a); }
+/*
+ * 预发布版本：跟随「中度」严重度色（与「可更新」「预发布」标签同一档），
+ * 不再用固定的琥珀色 —— 否则换主题色时版本号颜色和标签对不上。
+ */
+.stat b.prerelease { color: var(--oc2-accent-contrast); }
 /*
  * 标题行的状态标签靠右，与下方安装按钮同列对齐。
  * 标签本身跟随文字宽度（不拉伸），外观与 MOD 管理页的 .state-tag 完全一致：

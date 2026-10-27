@@ -229,7 +229,7 @@ const entries = {
   '已就绪': ['已就緒', 'Ready', '준비됨', '準備完了'],
   '社区仓库': ['社群倉庫', 'Community repositories', '커뮤니티 저장소', 'コミュニティリポジトリ'],
   '来源未知': ['來源未知', 'Unknown origin', '출처 불명', '出所未詳'],
-  '搜索作者 / MOD 名称 / 简介 / 分组': ['搜尋作者 / MOD 名稱 / 簡介 / 分組', 'Search author / MOD name / description / group', '작성자 / MOD 이름 / 설명 / 그룹 검색', '作者 / MOD名 / 説明 / グループを検索'],
+  '搜索': ['搜尋', 'Search', '검색', '検索'],
   '在 MOD 安装中查看': ['在 MOD 安裝中檢視', 'View in MOD Install', 'MOD 설치에서 보기', 'MOD インストールで表示'],
   '在 MOD 管理中查看': ['在 MOD 管理中檢視', 'View in MOD Manager', 'MOD 관리에서 보기', 'MOD マネージャーで表示'],
   // MOD 管理工具栏与配置编辑器

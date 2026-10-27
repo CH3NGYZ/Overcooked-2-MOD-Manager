@@ -83,10 +83,18 @@ const SURFACES = {
 
 export const surfaces = computed(() => SURFACES[themeMode.value])
 
-/** Naive UI 变量覆盖：随 mode + accent 变化。 */
+/**
+ * Naive UI 变量覆盖：随 mode + accent 变化。
+ *
+ * 这是**唯一**的 Naive 主题入口：所有 Naive 组件的配色都从这里下发，
+ * 组件里不再各自覆盖颜色。项目自定义的语义色（状态标签、安装按钮）
+ * 无法用 Naive 的标准 type 表达，它们通过 `--oc2-*` CSS 变量共享
+ * 同一个 accent 来源，见 applyThemeCssVars。
+ */
 export const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const surface = surfaces.value
   const main = accent.value
+  const contrast = accentContrast(main.color, themeMode.value)
   return {
     common: {
       fontFamily: "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
@@ -99,8 +107,15 @@ export const themeOverrides = computed<GlobalThemeOverrides>(() => {
       primaryColorHover: main.hover,
       primaryColorPressed: main.pressed,
       primaryColorSuppl: main.color,
+      infoColor: main.color,
+      infoColorHover: main.hover,
+      infoColorPressed: main.pressed,
       successColor: main.color,
-      warningColor: '#e6b86a',
+      successColorHover: main.hover,
+      successColorPressed: main.pressed,
+      warningColor: contrast,
+      warningColorHover: hoverOf(contrast),
+      warningColorPressed: hoverOf(contrast),
       errorColor: '#ee8585',
       textColorBase: surface.text1,
       textColor1: surface.text1,
@@ -121,6 +136,19 @@ export const themeOverrides = computed<GlobalThemeOverrides>(() => {
       tabTextColorSegment: surface.text2,
       tabTextColorActiveSegment: main.color,
       tabTextColorHoverSegment: surface.text1,
+    },
+    /*
+     * Tag：`type="info"` 跟随主题色、`type="warning"` 跟随对比色。
+     * 这样页面里用 Naive 原生 Tag 类型的地方不必再写 CSS 覆盖，
+     * 只保留项目自定义的 .state-tag--* 语义类（重复/低版本等无法映射到 type 的状态）。
+     */
+    Tag: {
+      colorInfo: tint(main.color, surface.card, 0.82),
+      colorInfoBorder: main.color,
+      textColorInfo: main.color,
+      colorWarning: tint(contrast, surface.card, 0.84),
+      colorWarningBorder: contrast,
+      textColorWarning: contrast,
     },
   }
 })
@@ -193,6 +221,104 @@ function hoverOf(color: string): string {
   if (!hsl) return color
   const [h, s, l] = hsl
   return hslToHex(h, s, Math.min(0.78, l + 0.12))
+}
+
+/**
+ * 把颜色按比例混入底色，得到同色系的低饱和背景。
+ * 前景色保持纯色，背景用混合色 —— 这是状态标签的通用构造方式。
+ */
+function tint(color: string, base: string, weight: number): string {
+  const front = hexToHsl(color)
+  const back = hexToHsl(base)
+  if (!front || !back) return color
+  const [h1, s1, l1] = front
+  const [, , l2] = back
+  return hslToHex(h1, s1, l1 * (1 - weight) + l2 * weight)
+}
+
+/** `n-tag` 的 `color` 属性形状（Naive 原生类型，避免自绘标签配色）。 */
+export interface TagColorValue {
+  color: string
+  borderColor: string
+  textColor: string
+}
+
+/**
+ * 状态标签的统一配色表。
+ *
+ * 所有页面的状态标签都从这里取色，通过 Naive `n-tag` 的原生 `:color`
+ * 属性下发 —— 不需要任何自定义 CSS 类，换主题色时自动跟随。
+ *
+ * 语义分层（颜色强度即优先级）：
+ *   accent          主题色        —— 最新版、已安装（稳定）
+ *   contrastStrong  对比色·强     —— 重复（同 GUID 冲突，最需处理）
+ *   contrast        对比色·中     —— 可更新、预发布
+ *   contrastWeak    对比色·弱     —— 低版本副本（仅提示）
+ *   muted           灰色          —— 未绑定、已禁用、版本未知
+ */
+export const statusToneColors = computed<Record<string, TagColorValue>>(() => {
+  const surface = surfaces.value
+  const main = accent.value
+  const contrast = accentContrast(main.color, themeMode.value)
+  const muted = surface.text3
+  return {
+    accent: {
+      color: tint(main.color, surface.card, 0.82),
+      borderColor: main.color,
+      textColor: main.color,
+    },
+    'contrast-strong': {
+      color: tint(contrast, surface.card, 0.74),
+      borderColor: contrast,
+      textColor: contrast,
+    },
+    contrast: {
+      color: tint(contrast, surface.card, 0.84),
+      borderColor: contrast,
+      textColor: contrast,
+    },
+    'contrast-weak': {
+      color: tint(contrast, surface.card, 0.9),
+      borderColor: tint(contrast, surface.card, 0.6),
+      textColor: tint(contrast, muted, 0.32),
+    },
+    muted: {
+      color: tint(muted, surface.card, 0.86),
+      borderColor: tint(muted, surface.card, 0.7),
+      textColor: muted,
+    },
+    danger: {
+      color: tint('#ee8585', surface.card, 0.82),
+      borderColor: '#ee8585',
+      textColor: '#ee8585',
+    },
+    ok: {
+      color: tint(main.color, surface.card, 0.82),
+      borderColor: main.color,
+      textColor: main.color,
+    },
+    warn: {
+      color: tint(contrast, surface.card, 0.84),
+      borderColor: contrast,
+      textColor: contrast,
+    },
+    idle: {
+      color: tint(main.color, surface.card, 0.82),
+      borderColor: main.color,
+      textColor: main.color,
+    },
+    violet: {
+      color: tint(contrast, surface.card, 0.9),
+      borderColor: tint(contrast, surface.card, 0.6),
+      textColor: tint(contrast, muted, 0.32),
+    },
+  }
+})
+
+/** 取某个 tone 的标签配色，未知 tone 回退灰色。 */
+export function tagColorFor(tone: string): TagColorValue {
+  const table = statusToneColors.value
+  return table[tone] ?? table.muted
 }
 
 /**

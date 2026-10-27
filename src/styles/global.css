@@ -7,6 +7,26 @@
   --page-pad-top: 4px;
   --page-pad-bottom: 28px;
 }
+
+/*
+ * 自绘标题栏永远可拖动。
+ *
+ * Naive 的全屏遮罩与内容层都是 `position: fixed; inset: 0`，
+ * 会盖住标题栏使其无法拖动。这里把两者顶部都让出标题栏高度，
+ * 而不是把标题栏提到遮罩之上 —— 后者会让弹窗内容被标题栏遮住一条，
+ * 让出空间后标题栏与弹窗各自完整。
+ *
+ * 只作用于 body 直接子级的弹窗/抽屉；组件内部嵌套的弹窗已在缩放上下文中，
+ * 有自己的定位规则，不受影响。
+ */
+body > .n-modal-container > .n-modal-mask,
+body > .n-drawer-container > .n-drawer-mask {
+  top: var(--oc2-titlebar-height);
+}
+body > .n-modal-container > .n-modal-body-wrapper,
+body > .n-drawer-container > .n-drawer-body-wrapper {
+  top: var(--oc2-titlebar-height);
+}
 * {
   box-sizing: border-box;
 }
@@ -264,10 +284,9 @@ body {
 }
 
 /*
- * 状态标签统一配色（MOD 安装 / MOD 管理共用），每种状态一种颜色：
- *   未安装 / 仓库文件 → 蓝   已最新 / 就绪 → 绿   可更新 / 预发布 / 加载警告 → 橙
- *   未绑定 / 已禁用 / 版本未知 → 灰   重复 / 仓库缺失 / 仓库不可用 → 红   低版本 → 紫
- * 用 .state-tag 覆盖 Naive UI 的 tag 外观，深浅两种主题都保持同一语义色。
+ * 状态标签只保留「外观形状」：颜色一律由 Naive n-tag 的原生 :color 属性
+ * 下发（配色表在 theme.ts 的 statusToneColors），这里不再定义任何色值，
+ * 避免主题色切换时标签留在旧颜色上。
  */
 .state-tag.n-tag {
   border: 0;
@@ -278,60 +297,5 @@ body {
   font-weight: 600;
   line-height: 20px;
 }
-.state-tag--idle.n-tag {
-  color: #6aabf5;
-  background: rgba(59, 130, 246, .16);
-}
-.state-tag--ok.n-tag {
-  color: #4ade80;
-  background: rgba(34, 197, 94, .16);
-}
-.state-tag--warn.n-tag {
-  color: #fb923c;
-  background: rgba(249, 115, 22, .16);
-}
-.state-tag--muted.n-tag {
-  color: var(--oc2-text-3);
-  background: color-mix(in srgb, var(--oc2-text-3) 14%, transparent);
-}
-.state-tag--danger.n-tag {
-  color: #f87171;
-  background: rgba(239, 68, 68, .16);
-}
-.state-tag--violet.n-tag {
-  color: #c084fc;
-  background: rgba(168, 85, 247, .18);
-}
-/*
- * MOD 管理页的状态标签，与 MOD 安装页共用同一套语义色，
- * 并通过「对比强弱」表达优先级（用户确认的顺序）：
- *
- *   最新版 / 已安装        → 主题色（稳定，中性强调）
- *   重复                   → 对比色·强（最需要注意：同 GUID 冲突）
- *   可更新                 → 对比色·中（需要动作，但不紧急）
- *   低版本                 → 对比色·弱（只是提示，通常应卸载旧副本）
- *   未绑定 / 已禁用 / 未知 → 灰色（不参与强调）
- *
- * 强度靠「前景色混合比例 + 背景透明度」两级递进，色相一致，
- * 所以三档放在一起时能看出层级而不是三种不同颜色。
- */
-.state-tag--accent.n-tag {
-  color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 18%, transparent);
-}
-/* 对比色·强：重复（实心感最强，前景接近纯对比色） */
-.state-tag--contrast-strong.n-tag {
-  color: var(--oc2-accent-contrast);
-  background: color-mix(in srgb, var(--oc2-accent-contrast) 26%, transparent);
-  font-weight: 700;
-}
-/* 对比色·中：可更新 */
-.state-tag--contrast.n-tag {
-  color: var(--oc2-accent-contrast);
-  background: color-mix(in srgb, var(--oc2-accent-contrast) 16%, transparent);
-}
-/* 对比色·弱：低版本（前景向正文色靠拢，只在背景上保留一点色相） */
-.state-tag--contrast-weak.n-tag {
-  color: color-mix(in srgb, var(--oc2-accent-contrast) 68%, var(--oc2-text-3));
-  background: color-mix(in srgb, var(--oc2-accent-contrast) 10%, transparent);
-}
+/* 「重复」是唯一需要更重的状态：靠字重区分，颜色仍来自配色表 */
+.state-tag--strong.n-tag { font-weight: 700; }

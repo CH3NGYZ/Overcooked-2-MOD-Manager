@@ -14,6 +14,7 @@ import type * as MonacoApi from 'monaco-editor'
 import { api } from '../services/tauri'
 import { themeMode } from '../theme'
 import { t } from '../i18n'
+import { tagColorFor } from '../theme'
 
 const props = defineProps<{
   show: boolean
@@ -205,8 +206,8 @@ onBeforeUnmount(disposeEditor)
     <div class="config-shell">
       <div class="config-head">
         <b class="config-title">{{ title }}</b>
-        <n-tag size="tiny" :bordered="false" class="state-tag state-tag--muted">{{ fileName || '—' }}</n-tag>
-        <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag state-tag--warn">{{ t('未保存') }}</n-tag>
+        <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>
+        <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('contrast')">{{ t('未保存') }}</n-tag>
         <span class="config-actions">
           <n-button size="small" type="primary" :loading="saving" :disabled="!canSave" @click="save">
             <SaveOutline width="14" height="14" />{{ t('保存') }}

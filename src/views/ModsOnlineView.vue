@@ -10,6 +10,7 @@ import { modsForRepository } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
+import { tagColorFor } from '../theme'
 import { repositoryMatchesRegion, repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
@@ -431,9 +432,14 @@ defineExpose({ refreshAll, visibleCount })
                         标签配色：未安装类一律灰色；「已安装且可更新」用主题色对比色，
                         与「重装 / 更新」按钮同色系；其余状态沿用状态语义色。
                       -->
+                      <!--
+                        标签配色：未安装类灰色；最新版/已安装用主题色；
+                        可更新用对比色。全部由 theme.ts 的 statusToneColors 计算，
+                        通过 n-tag 原生 :color 下发，页面里不再写颜色。
+                      -->
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :class="[`state-tag--${statusOf(repo).tone}`,
-                          { 'state-tag--link': hasLocalInstall(repo) }]"
+                        :color="tagColorFor(statusOf(repo).tone)"
+                        :class="{ 'state-tag--link': hasLocalInstall(repo) }"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
                     </span>
@@ -501,9 +507,14 @@ defineExpose({ refreshAll, visibleCount })
                   <ProviderIcon :provider="repo.provider" :size="30" />
                   <span class="card-title">{{ repoName(repo) }}</span>
                   <span class="stat stat-status">
+                      <!--
+                        标签配色：未安装类灰色；最新版/已安装用主题色；
+                        可更新用对比色。全部由 theme.ts 的 statusToneColors 计算，
+                        通过 n-tag 原生 :color 下发，页面里不再写颜色。
+                      -->
                       <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :class="[`state-tag--${statusOf(repo).tone}`,
-                          { 'state-tag--link': hasLocalInstall(repo) }]"
+                        :color="tagColorFor(statusOf(repo).tone)"
+                        :class="{ 'state-tag--link': hasLocalInstall(repo) }"
                         :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
                   </span>

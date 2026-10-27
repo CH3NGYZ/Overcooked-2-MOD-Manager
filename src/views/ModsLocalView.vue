@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { t, locale } from '../i18n'
+import { tagColorFor } from '../theme'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import {
@@ -680,7 +681,7 @@ function removePackage(node: ModPackageNode) {
     <div v-if="preview" class="install-preview">
       <div class="preview-head">
         <b>{{ preview.package_name }}</b>
-        <n-tag size="tiny" :bordered="false" class="state-tag state-tag--muted">
+        <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">
           {{ preview.kind === 'single' ? t('单个 MOD') : t('MOD 包') }}
         </n-tag>
         <span class="muted">
@@ -704,8 +705,8 @@ function removePackage(node: ModPackageNode) {
       <!-- 包：只列出每个 DLL 的名称 + 版本，依赖单独标注 -->
       <div v-else class="preview-list">
         <div v-for="entry in preview.entries" :key="entry.path" class="preview-row">
-          <n-tag size="tiny" :bordered="false"
-            :class="['state-tag', entry.role === 'dependency' ? 'state-tag--muted' : 'state-tag--idle']">
+          <n-tag size="tiny" :bordered="false" class="state-tag"
+            :color="tagColorFor(entry.role === 'dependency' ? 'muted' : 'accent')">
             {{ entry.role === 'dependency' ? t('依赖') : t('MOD') }}
           </n-tag>
           <b class="preview-name">{{ entry.name || entry.path }}</b>
@@ -742,14 +743,15 @@ function removePackage(node: ModPackageNode) {
         <template #header>
           <div class="group-head">
             <b>{{ node.label }}</b>
-            <n-tag size="tiny" :bordered="false" class="state-tag state-tag--muted">{{ node.count }}</n-tag>
-            <n-tag v-if="node.updateCount" size="tiny" :bordered="false" class="state-tag state-tag--warn">
+            <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ node.count }}</n-tag>
+            <n-tag v-if="node.updateCount" size="tiny" :bordered="false" class="state-tag"
+              :color="tagColorFor('contrast')">
               {{ t('{count} 个可更新', { count: node.updateCount }) }}
             </n-tag>
             <n-tag v-if="!node.enabled && !node.partial" size="tiny" :bordered="false"
-              class="state-tag state-tag--muted">{{ t('已禁用') }}</n-tag>
+              class="state-tag" :color="tagColorFor('muted')">{{ t('已禁用') }}</n-tag>
             <n-tag v-else-if="node.partial" size="tiny" :bordered="false"
-              class="state-tag state-tag--idle">{{ t('部分启用') }}</n-tag>
+              class="state-tag" :color="tagColorFor('accent')">{{ t('部分启用') }}</n-tag>
           </div>
         </template>
 
@@ -775,8 +777,9 @@ function removePackage(node: ModPackageNode) {
                 <div class="card-right">
                   <!-- 状态标签组：固定宽度按内容自适应，整体贴住分割线左侧 -->
                   <span class="tag-group">
+                    <!-- 配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算 -->
                     <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
-                      class="state-tag state-tag--link" :class="`state-tag--${tag.tone}`"
+                      class="state-tag state-tag--link" :color="tagColorFor(tag.tone)"
                       :title="bindingRepositoryId(mod) ? t('在 MOD 安装中查看') : undefined"
                       @click.stop="openInRepository(mod)">{{ tag.text }}</n-tag>
                   </span>
@@ -837,24 +840,28 @@ function removePackage(node: ModPackageNode) {
                     :class="{ 'is-partial': pkg.partial }"
                     @click.stop @update:value="(value: boolean) => togglePackageEnabled(pkg, value)" />
                   <b class="package-title" :title="pkg.label">{{ pkg.label }}</b>
-                  <n-tag size="tiny" :bordered="false" class="state-tag state-tag--muted">
+                  <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">
                     {{ t('{count} 个', { count: pkg.mods.length }) }}
                   </n-tag>
                 </div>
 
                 <!-- 右：状态标签 + 分割线 + 工具列（与单 MOD 卡片同一套列宽预留） -->
                 <div class="package-right">
+                  <!--
+                    包状态标签与单 MOD 共用同一套 tone 配色（theme.ts 统一计算），
+                    不再手写固定色类，否则换主题色时包标签会留在旧颜色上。
+                  -->
                   <span class="tag-group">
-                    <!-- 状态标签统一挂在包这一行：包内子 MOD 不再重复显示同一批标签 -->
-                    <n-tag v-if="pkg.updateCount" size="tiny" :bordered="false" class="state-tag state-tag--warn">
+                    <n-tag v-if="pkg.updateCount" size="tiny" :bordered="false"
+                      class="state-tag" :color="tagColorFor('contrast')">
                       {{ t('{count} 个可更新', { count: pkg.updateCount }) }}
                     </n-tag>
                     <n-tag v-else-if="pkg.latest" size="tiny" :bordered="false"
-                      class="state-tag state-tag--ok">{{ t('最新版') }}</n-tag>
+                      class="state-tag" :color="tagColorFor('accent')">{{ t('最新版') }}</n-tag>
                     <n-tag v-if="!pkg.enabled && !pkg.partial" size="tiny" :bordered="false"
-                      class="state-tag state-tag--muted">{{ t('已禁用') }}</n-tag>
+                      class="state-tag" :color="tagColorFor('muted')">{{ t('已禁用') }}</n-tag>
                     <n-tag v-else-if="pkg.partial" size="tiny" :bordered="false"
-                      class="state-tag state-tag--idle">{{ t('部分启用') }}</n-tag>
+                      class="state-tag" :color="tagColorFor('accent')">{{ t('部分启用') }}</n-tag>
                   </span>
 
                   <span class="tool-divider" />

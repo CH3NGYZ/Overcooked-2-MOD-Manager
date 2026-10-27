@@ -126,7 +126,8 @@ async function cancel() {
 <style scoped>
 .dl-mask {
   position: fixed;
-  inset: 0;
+  /* 顶部让出自绘标题栏：下载卡片是全局浮层，但标题栏必须始终可拖动 */
+  inset: var(--oc2-titlebar-height, 56px) 0 0 0;
   z-index: 2600;
   display: grid;
   place-items: center;

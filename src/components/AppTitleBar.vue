@@ -221,7 +221,7 @@ defineExpose({ onUnmountedCleanup })
 <style scoped>
 .titlebar {
   flex: 0 0 auto;
-  height: 56px;
+  height: var(--oc2-titlebar-height, 56px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -229,6 +229,13 @@ defineExpose({ onUnmountedCleanup })
   background: var(--oc2-rail);
   border-bottom: 1px solid var(--oc2-rail-line);
   user-select: none;
+  /*
+   * 标题栏不参与 z-index 竞争：全屏遮罩在 global.css 里让出了它的高度，
+   * 所以它天然露在最上方，拖动区域不会被遮罩吞掉。
+   * 这里只建立层叠上下文，防止内容区的子元素意外盖上来。
+   */
+  position: relative;
+  z-index: 1;
 }
 .brand {
   display: flex;

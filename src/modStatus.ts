@@ -45,19 +45,52 @@ interface ParsedVersion {
 }
 
 /**
- * 版本号解析：兼容 `v1.2`、`1.2.3`、`1.2.3.4`、`1.2.3-beta.1`，
- * 与后端 `releases::parse_version` 的宽松策略保持一致（两段补 0，四段取前三段比较）。
+ * 版本号解析：兼容 `v1.2`、`1.2.3`、`1.2.3.4`、`1.2.3-beta.1`。
+ *
+ * 本项目的版本号比标准 semver 宽松，允许四段甚至更多。
+ * 规则：
+ *   - 所有数字段都参与比较，缺的段补 0 —— 所以 `0.4` = `0.4.0`，
+ *     而 `0.4.0.5` **大于** `0.4.0`（它是更具体的同一版本线）；
+ *   - 只有显式带 `-` 后缀的（如 `0.4.0-beta`）才算预发布，
+ *     预发布低于同号正式版。
+ * 旧实现把第 4 段拼成 `-5` 当预发布，于是 `0.4.0.5 < 0.4.0`：新版被判成
+ * 比旧版旧，而 DLL 是 `0.4.0.0`、tag 是 `0.4.0` 的已安装 MOD 永远显示「可更新」。
  * 无法解析返回 null，调用方据此显示「版本未知」而不是臆断更新。
  */
 export function parseVersion(value: string | null | undefined): ParsedVersion | null {
   if (!value) return null
   const cleaned = value.trim().replace(/^[vV]/, '')
-  const match = cleaned.match(/(\d+(?:\.\d+){1,3})(?:-([0-9A-Za-z.-]+))?/)
+  const match = cleaned.match(/(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?/)
   if (!match) return null
   const numbers = match[1].split('.').map(Number)
   if (numbers.some((part) => !Number.isFinite(part))) return null
+  // 所有数字段都保留并参与比较；只把显式 '-' 后缀当预发布
   while (numbers.length < 3) numbers.push(0)
   return { numbers, prerelease: match[2] ? match[2].split('.') : [] }
+}
+
+/**
+ * 版本号规范化显示：只去掉尾部多余的 `.0`。
+ *
+ * 本项目版本号可以写成 `0.4`、`0.4.0`、`0.4.0.0`、`0.4.0.5`。
+ * 前三种是同一版本，统一显示 `0.4`；`0.4.0.5` 是**不同的、更高的**版本，
+ * 必须原样显示，否则用户看不出它比 `0.4.0` 新。
+ *
+ * 保留预发布后缀（`-beta.1`），至少保留两段（`1.0` 不会被压成 `1`），
+ * 无法解析时原样返回。
+ */
+export function formatVersion(value: string | null | undefined): string {
+  if (!value) return ''
+  const trimmed = value.trim()
+  const match = trimmed.match(/^(.*?)(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?$/)
+  if (!match) return trimmed
+  const prefix = match[1]
+  const numbers = match[2].split('.').map(Number)
+  if (numbers.some((part) => !Number.isFinite(part))) return trimmed
+  // 去掉尾部全 0 段，但至少保留两段（0.4 保持 0.4，不压成 0）
+  while (numbers.length > 2 && numbers[numbers.length - 1] === 0) numbers.pop()
+  const core = numbers.join('.')
+  return match[3] ? `${prefix}${core}-${match[3]}` : `${prefix}${core}`
 }
 
 /** 比较版本：左新于右返回 1，相等 0，左旧于右 -1；任一方无法解析返回 null。 */

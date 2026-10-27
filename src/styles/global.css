@@ -32,6 +32,29 @@ body > .n-drawer-container {
   height: auto;
 }
 /*
+ * 折叠过渡：让「内容淡出」与「高度收缩」同步。
+ *
+ * Naive 的 fade-in-height-expand 里两者用了不同缓动：
+ *   opacity → cubic-bezier(0.36, 0, 0.64, 1)（easeOut，前段很快）
+ *   max-height → ease-in-out
+ * 结果是离场前 40% 的时间内容已经淡到看不见，而高度才收了三分之一 ——
+ * 视觉上就是「内容先消失，空框还在缩」。
+ *
+ * 这里把离场时的 opacity 也换成 ease-in-out，与高度同一条曲线，
+ * 两者一起收尾。只覆盖离场（leave），入场保持 Naive 原样（入场用 easeIn，
+ * 内容比高度略晚出现，观感是对的）。
+ */
+.n-collapse-transition.fade-in-height-expand-transition-leave-active {
+  transition:
+    max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-top 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    padding-top 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    padding-bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/*
  * 消息提示贴到「内容区」左下角，而不是整个窗口左下角。
  *
  * Naive 的 n-message-container 挂在 body 下，bottom-right 位置用

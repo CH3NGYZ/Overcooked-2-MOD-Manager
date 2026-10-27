@@ -5,7 +5,7 @@ import test from 'node:test'
  * MOD 状态判定回归：MOD 安装页和 MOD 管理页共用 src/modStatus.ts。
  * Node 24 直接执行 TS（类型擦除），这里测的是真实源码，不是副本。
  */
-const { compareVersions, repositoryForMod, modsForRepository } =
+const { compareVersions, repositoryForMod, modsForRepository, formatVersion } =
   await import('../src/modStatus.ts')
 
 function repo(overrides = {}) {
@@ -31,6 +31,7 @@ test('版本比较覆盖 v 前缀、段数差异、预发布', () => {
   assert.equal(compareVersions('1.10.0', '1.9.9'), 1)
   assert.equal(compareVersions('1.2.3-beta.2', '1.2.3-beta.1'), 1)
   assert.equal(compareVersions('1.2.3', '1.2.3-rc.1'), 1)
+  // 第 4 段参与比较且更高（不是预发布）
   assert.equal(compareVersions('2.0.0.1', '2.0.0'), 1)
   assert.equal(compareVersions('unknown', '1.0.0'), null)
   assert.equal(compareVersions(undefined, '1.0.0'), null)
@@ -53,4 +54,28 @@ test('同一仓库的多个本地副本全部返回，便于取最高版本比�
     mod({ dll_file: 'C.dll', repository_id: 'other' }),
   ]
   assert.deepEqual(modsForRepository(list, target).map((item) => item.dll_file), ['A.dll', 'B.dll'])
+})
+
+test('宽松版本比较：0.4 与 0.4.0 相等，0.4.0.5 更高', () => {
+  // 真实场景：Release tag 是 0.4.0，DLL 里是 0.4.0.0。
+  // 旧实现把第 4 段拼成预发布，导致已是最新的 MOD 永远显示「可更新」。
+  assert.equal(compareVersions('0.4.0', '0.4.0.0'), 0)
+  assert.equal(compareVersions('0.4', '0.4.0'), 0)
+  assert.equal(compareVersions('v0.4', '0.4.0'), 0)
+  // 第 4 段参与比较，且更高
+  assert.equal(compareVersions('0.4.0.5', '0.4.0'), 1)
+  // 只有显式 - 后缀才是预发布
+  assert.equal(compareVersions('0.4.0-beta', '0.4.0'), -1)
+})
+
+test('formatVersion 去掉尾部多余的 .0 段', () => {
+  assert.equal(formatVersion('0.4'), '0.4')
+  assert.equal(formatVersion('0.4.0'), '0.4')
+  assert.equal(formatVersion('0.4.0.0'), '0.4')
+  assert.equal(formatVersion('0.4.0.5'), '0.4.0.5')
+  assert.equal(formatVersion('v1.2.3'), 'v1.2.3')
+  assert.equal(formatVersion('1.2.3-beta.1'), '1.2.3-beta.1')
+  // 至少保留两段，不把 1.0 压成 1
+  assert.equal(formatVersion('1.0.0'), '1.0')
+  assert.equal(formatVersion(''), '')
 })

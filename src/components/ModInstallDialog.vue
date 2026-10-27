@@ -20,6 +20,7 @@ import { NButton, NCollapseTransition, NTag, useMessage } from 'naive-ui'
 import { api } from '../services/tauri'
 import { tagColorFor } from '../theme'
 import { renderReadme } from '../markdown'
+import { formatVersion } from '../modStatus'
 import { t } from '../i18n'
 import AppModal from './AppModal.vue'
 import type { ModPreview, ModPreviewEntry } from '../types'
@@ -189,13 +190,13 @@ async function confirm() {
               破折号只说明「字段为空」，依赖两个字说明「为什么为空」。
             -->
             <span class="preview-version mono">
-              {{ entry.role === 'dependency' ? t('依赖') : (entry.version || '—') }}
+              {{ entry.role === 'dependency' ? t('依赖') : (formatVersion(entry.version) || '—') }}
             </span>
           </div>
           <n-collapse-transition :show="isEntryExpanded(entry.path)" display-directive="show">
             <div class="preview-row-detail">
               <div class="preview-item"><span class="muted">{{ t('名称') }}</span><b>{{ entry.name || '—' }}</b></div>
-              <div class="preview-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ entry.version || '—' }}</b></div>
+              <div class="preview-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ formatVersion(entry.version) || '—' }}</b></div>
               <div class="preview-item"><span class="muted">{{ t('标题') }}</span><b>{{ entry.title || '—' }}</b></div>
               <div class="preview-item"><span class="muted">{{ t('产品名') }}</span><b>{{ entry.product_name || '—' }}</b></div>
               <div class="preview-item"><span class="muted">{{ t('作者') }}</span><b>{{ entry.company || '—' }}</b></div>
@@ -220,7 +221,7 @@ async function confirm() {
       <div v-if="showReleaseLog" class="release-log">
         <div class="release-log-head">
           <span class="muted">{{ t('提交日志') }}</span>
-          <b class="mono">{{ preview.release_tag }}</b>
+          <b class="mono">{{ formatVersion(preview.release_tag) }}</b>
         </div>
         <!-- renderReadme 关闭了原始 HTML，日志只能输出 Markdown 生成的安全节点 -->
         <div class="release-log-box" v-html="releaseLogHtml"></div>

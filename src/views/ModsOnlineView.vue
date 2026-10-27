@@ -5,7 +5,7 @@ import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFl
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
-import { modsForRepository } from '../modStatus'
+import { formatVersion, modsForRepository } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
@@ -296,11 +296,15 @@ function latest(repo: Repository) {
   return repo.cached_releases[0]
 }
 
-/** 卡片版本号：预发布版本加 pre 标记，正式版原样显示。 */
+/**
+ * 卡片版本号：统一规范化后再显示（`0.4.0` / `0.4.0.0` 都显示成 `0.4`），
+ * 预发布版本追加标记。这样卡片上的版本与已安装侧看到的写法一致，
+ * 用户能直接判断是不是同一版。
+ */
 function versionLabel(repo: Repository) {
   const release = latest(repo)
   if (!release) return '—'
-  const value = release.version || release.tag_name || '—'
+  const value = formatVersion(release.version || release.tag_name) || '—'
   return release.prerelease ? `${value} · ${t('预发布')}` : value
 }
 

@@ -474,11 +474,9 @@ fn binding_update_state(
     }
     // Exact tags also work for non-SemVer releases; comparable versions must
     // never turn an installed newer tag into a downgrade notification.
-    let update = match (
-        crate::releases::parse_version(&release.tag_name),
-        crate::releases::parse_version(&binding.tag),
-    ) {
-        (Some(remote), Some(local)) => remote > local,
+    // 用宽松多段比较：本项目允许 0.4.0.5 这类四段版本，且它高于 0.4.0。
+    let update = match crate::releases::compare_release_versions(&release.tag_name, &binding.tag) {
+        Some(ordering) => ordering == std::cmp::Ordering::Greater,
         _ => true,
     };
     if update {

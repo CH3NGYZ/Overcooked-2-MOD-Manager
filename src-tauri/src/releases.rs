@@ -257,26 +257,124 @@ pub fn repository_file_name(file_path: &str) -> Result<String, ReleaseError> {
     Ok(name)
 }
 
+/// 版本号解析：把各种宽松写法归一到 semver。
+///
+/// 用于「发布渠道筛选」和「管理器自更新」这类标准版本判断。
+/// 第 4 段及以后不参与（semver 只表达三段）：`0.4.0.5` 归一成 `0.4.0`。
+///
+/// **MOD 的更新判定不要用这个函数**，见 `compare_release_versions` ——
+/// 本项目的 MOD 版本号允许四段甚至更多，需要逐段比较。
 pub fn parse_version(tag: &str) -> Option<semver::Version> {
     let cleaned = tag.trim().trim_start_matches(['v', 'V']);
     semver::Version::parse(cleaned).ok().or_else(|| {
-        let re = Regex::new(r"(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?)").ok()?;
+        let re = Regex::new(r"(\d+(?:\.\d+){1,7}(?:[-+][0-9A-Za-z.-]+)?)").ok()?;
         let value = re.captures(cleaned)?.get(1)?.as_str();
         let numeric = value.split(['-', '+']).next()?;
-        let parts = numeric
+        let mut parts = numeric
             .split('.')
             .map(str::parse::<u64>)
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
         let suffix = value.get(numeric.len()..).unwrap_or_default();
+        parts.truncate(3);
         let normalized = match parts.as_slice() {
             [major, minor] => format!("{major}.{minor}.0{suffix}"),
             [major, minor, patch] => format!("{major}.{minor}.{patch}{suffix}"),
-            [major, minor, patch, build] => format!("{major}.{minor}.{patch}-{build}{suffix}"),
             _ => return None,
         };
         semver::Version::parse(&normalized).ok()
     })
+}
+
+/// 宽松版本号：任意段数的数字前缀 + 可选预发布标识。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LooseVersion {
+    numbers: Vec<u64>,
+    prerelease: Vec<String>,
+}
+
+impl LooseVersion {
+    pub fn parse(value: &str) -> Option<Self> {
+        let cleaned = value.trim().trim_start_matches(['v', 'V']);
+        let re = Regex::new(r"(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?").ok()?;
+        let caps = re.captures(cleaned)?;
+        let numbers = caps
+            .get(1)?
+            .as_str()
+            .split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        let prerelease = caps
+            .get(2)
+            .map(|value| value.as_str().split('.').map(str::to_owned).collect())
+            .unwrap_or_default();
+        Some(Self {
+            numbers,
+            prerelease,
+        })
+    }
+}
+
+impl Ord for LooseVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let length = self.numbers.len().max(other.numbers.len());
+        for index in 0..length {
+            // 缺的段按 0 算：0.4 == 0.4.0，而 0.4.0.5 > 0.4.0
+            let left = self.numbers.get(index).copied().unwrap_or(0);
+            let right = other.numbers.get(index).copied().unwrap_or(0);
+            match left.cmp(&right) {
+                std::cmp::Ordering::Equal => continue,
+                ordering => return ordering,
+            }
+        }
+        // 数字段相同：正式版高于预发布；两个预发布按标识符逐段比较
+        match (self.prerelease.is_empty(), other.prerelease.is_empty()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => compare_prerelease(&self.prerelease, &other.prerelease),
+        }
+    }
+}
+
+impl PartialOrd for LooseVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn compare_prerelease(left: &[String], right: &[String]) -> std::cmp::Ordering {
+    let count = left.len().max(right.len());
+    for index in 0..count {
+        match (left.get(index), right.get(index)) {
+            (None, None) => break,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(a), Some(b)) => {
+                let ordering = match (a.parse::<u64>(), b.parse::<u64>()) {
+                    (Ok(x), Ok(y)) => x.cmp(&y),
+                    // 数字标识符低于字母标识符
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => a.cmp(b),
+                };
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// 比较两个 Release 标签/版本号，用于判断 MOD 是否有更新。
+///
+/// 不要求严格 semver：本项目允许 `0.4.0.5` 这类四段版本，且它**高于**
+/// `0.4.0`（同一版本线的更细粒度）。任一无法解析时返回 `None`，
+/// 调用方应显示「版本未知」而不是臆断更新。
+pub fn compare_release_versions(remote: &str, local: &str) -> Option<std::cmp::Ordering> {
+    Some(LooseVersion::parse(remote)?.cmp(&LooseVersion::parse(local)?))
 }
 
 pub fn filter_channel(mut releases: Vec<ReleaseInfo>, channel: &Channel) -> Vec<ReleaseInfo> {
@@ -1299,6 +1397,43 @@ mod tests {
         assert!(
             repository_file_url(&Provider::Github, "gua248", "repo", "main", "../secret.dll")
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn loose_version_comparison_handles_extra_segments() {
+        use std::cmp::Ordering;
+        // 真实场景：DLL 里是 0.4.0.0，Release tag 是 0.4.0。
+        // 旧实现把第 4 段拼成 -0 当预发布，导致「可更新」误报。
+        assert_eq!(
+            compare_release_versions("0.4.0.0", "0.4.0"),
+            Some(Ordering::Equal),
+            "0.4.0.0 与 0.4.0 是同一版本"
+        );
+        assert_eq!(
+            compare_release_versions("0.4", "0.4.0"),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            compare_release_versions("v0.4", "0.4.0"),
+            Some(Ordering::Equal)
+        );
+
+        // 第 4 段非 0：参与比较，且更高（不是预发布）
+        assert_eq!(
+            compare_release_versions("0.4.0.5", "0.4.0"),
+            Some(Ordering::Greater),
+            "0.4.0.5 比 0.4.0 新，不是预发布"
+        );
+        assert_eq!(
+            compare_release_versions("0.4.0", "0.4.0.5"),
+            Some(Ordering::Less)
+        );
+
+        // 只有显式 '-' 后缀才是预发布
+        assert_eq!(
+            compare_release_versions("0.4.0-beta", "0.4.0"),
+            Some(Ordering::Less)
         );
     }
 

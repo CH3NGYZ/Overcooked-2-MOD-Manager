@@ -6,6 +6,7 @@
  * 只有外壳不同，详情内容完全一样；共用一份避免两处漂移。
  */
 import { t } from '../i18n'
+import { formatVersion } from '../modStatus'
 import type { InstalledMod } from '../types'
 
 defineProps<{
@@ -26,7 +27,7 @@ defineProps<{
     <div class="detail-item"><span class="muted">{{ t('插件名') }}</span><b>{{ mod.plugin_name || '—' }}</b></div>
     <div class="detail-item"><span class="muted">{{ t('作者') }}</span><b>{{ mod.company || '—' }}</b></div>
     <div class="detail-item"><span class="muted">{{ t('版权') }}</span><b>{{ mod.copyright || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ mod.version || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ formatVersion(mod.version) || '—' }}</b></div>
     <div class="detail-item"><span class="muted">{{ t('版本来源') }}</span><b>{{ mod.version_source || '—' }}</b></div>
     <div class="detail-item"><span class="muted">{{ t('启用状态') }}</span><b>{{ mod.enabled ? t('已启用') : t('已禁用') }}</b></div>
     <div class="detail-item"><span class="muted">{{ t('配置文件') }}</span><b>{{ mod.has_config ? t('有') : t('无') }}</b></div>

@@ -11,9 +11,6 @@ import type { Repository, RepositorySource } from './types'
  * 否则会出现「前端排队刷新 → 后端拒绝」这类只在日志里可见的假失败。
  */
 
-/** 与后端 `community::GITEE_SOURCE_ID` 对应的前端常量。 */
-export const GITEE_COMMUNITY_SOURCE_ID = 'gitee-community'
-
 /** 地区值归一化：兼容旧别名，空值表示不限地区。 */
 export function normalizeRepositoryRegion(region: string | undefined): string {
   const value = region?.trim().toLowerCase()
@@ -56,8 +53,9 @@ export function repositorySource(
  *   - 仓库自身地区不适用于当前地区（例如 international 仓库在中国大陆）；
  *   - 所属来源地区不适用于当前地区，或来源已被删除（与后端一致）。
  *
- * Gitee 社区源额外遵循「仅中国大陆」规则：它的地区字段允许为空，
- * 单看来源地区会漏判，所以与后端 `provider_matches_region` 一样显式判断。
+ * 社区源（GitHub / Gitee）默认地区为空，因此对全部地区可用；
+ * 它们与官方源的关系由后端 `community::merge_results` 按身份闪避处理
+ * （官方已收录的社区副本被置 `enabled=false`），不在地区维度表达。
  */
 export function repositoryIsAvailable(
   repo: Pick<Repository, 'enabled' | 'region' | 'source_id'>,
@@ -67,7 +65,6 @@ export function repositoryIsAvailable(
   if (!repo.enabled) return false
   if (!repositoryRegionMatches(repo.region, currentRegion)) return false
   if (!repo.source_id) return true
-  if (repo.source_id === GITEE_COMMUNITY_SOURCE_ID && currentRegion !== 'chinese_mainland') return false
   const source = repositorySource(repo, sources)
   return !!source && sourceMatchesRegion(source, currentRegion)
 }

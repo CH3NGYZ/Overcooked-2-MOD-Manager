@@ -110,8 +110,11 @@ pub(crate) fn repository_address_key(
 }
 
 fn repository_source_matches_region(source: &RepositorySource, region: &str) -> bool {
-    (source.id != crate::community::GITEE_SOURCE_ID || region == REGION_CHINESE_MAINLAND)
-        && region_matches(source.region.as_deref(), region)
+    /*
+     * 来源自身的地区是唯一条件。社区源（GitHub / Gitee）默认不限地区，
+     * 所以这里不再有「Gitee 社区仅中国大陆」的特例。
+     */
+    region_matches(source.region.as_deref(), region)
 }
 
 pub(crate) fn repository_matches_channel(
@@ -119,8 +122,7 @@ pub(crate) fn repository_matches_channel(
     repository: &RepositoryConfig,
     region: &str,
 ) -> bool {
-    crate::community::ensure_repository_region(repository, region).is_ok()
-        && region_matches(repository.region.as_deref(), region)
+    region_matches(repository.region.as_deref(), region)
         && repository.source_id.as_deref().is_none_or(|source_id| {
             config.repository_sources.iter().any(|source| {
                 source.id == source_id && repository_source_matches_region(source, region)
@@ -1576,7 +1578,11 @@ value = "RegionalMod.dll"
     }
 
     #[test]
-    fn saved_gitee_community_without_region_is_blocked_outside_mainland() {
+    fn gitee_community_applies_to_every_region_when_its_region_is_empty() {
+        /*
+         * 两个社区源默认不限地区：Gitee 社区仓库在地区为空时对所有地区可用，
+         * 与 GitHub 社区一致。平台限制已移除，判定只看仓库与来源自身的 region。
+         */
         let mut config = default_config();
         let mut source = crate::community::source(&Provider::Gitee);
         source.region = None;
@@ -1585,17 +1591,24 @@ value = "RegionalMod.dll"
             crate::community::repository_from_coordinates(&Provider::Gitee, "Owner", "Mod", "", "")
                 .unwrap();
         repo.region = None;
-        assert!(repository_matches_channel(
+        for region in [REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL, "", "unknown"] {
+            assert!(
+                repository_matches_channel(&config, &repo, region),
+                "region={region}"
+            );
+        }
+        // 仓库自己声明地区时仍按该地区过滤
+        repo.region = Some(REGION_INTERNATIONAL.into());
+        assert!(!repository_matches_channel(
             &config,
             &repo,
             REGION_CHINESE_MAINLAND
         ));
-        assert!(!repository_matches_channel(
+        assert!(repository_matches_channel(
             &config,
             &repo,
             REGION_INTERNATIONAL
         ));
-        assert!(!repository_matches_channel(&config, &repo, ""));
         assert_eq!(
             config.repositories.len(),
             default_config().repositories.len()

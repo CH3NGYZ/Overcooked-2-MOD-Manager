@@ -61,10 +61,22 @@ test('来源已从配置删除时仓库不可用（与后端一致）', () => {
   assert.equal(repositoryIsAvailable(repo({ source_id: 'gone' }), sources, 'chinese_mainland'), false)
 })
 
-test('Gitee 社区源只在中国大陆可用，即使它没写地区', () => {
-  const gitee = repo({ source_id: 'gitee-community' })
-  assert.equal(repositoryIsAvailable(gitee, [{ id: 'gitee-community', region: undefined }], 'chinese_mainland'), true)
-  assert.equal(repositoryIsAvailable(gitee, [{ id: 'gitee-community', region: undefined }], 'international'), false)
+test('社区源不限地区：Gitee 社区在国际地区同样可用', () => {
+  /*
+   * 两个社区源默认 region 为空，因此对所有地区可用。
+   * 它们与官方源的关系由后端按身份闪避（官方已收录的副本 enabled=false），
+   * 不在地区维度表达。
+   */
+  const gitee = repo({ region: undefined, source_id: 'gitee-community' })
+  const github = repo({ region: undefined, source_id: 'github-community' })
+  const sources = [
+    { id: 'gitee-community', region: undefined },
+    { id: 'github-community', region: undefined },
+  ]
+  for (const region of ['chinese_mainland', 'international', undefined]) {
+    assert.equal(repositoryIsAvailable(gitee, sources, region), true, `gitee ${region}`)
+    assert.equal(repositoryIsAvailable(github, sources, region), true, `github ${region}`)
+  }
 })
 
 test('没有 source_id 的仓库只看 enabled 与自身地区', () => {

@@ -164,8 +164,45 @@ function warnNoSelection() {
   message.warning(t('请先选择要修改的文字'))
 }
 
-/** 只改颜色，不改字号。 */
-function applyColor(color: string) {
+/*
+ * 自定义取色器的手势。
+ *
+ * n-color-picker 的面板默认 Teleport 到 body，拖动发生在面板里，
+ * 宿主元素上的 mousedown / mouseup 收不到 —— 这正是之前「拖动调色板
+ * 时左下角通知刷屏」的原因：手势从没开始过，每次 update:value 都当作
+ * 离散操作各弹一条。
+ *
+ * 改用 Naive 自己的两个事件：
+ *   - update:value：拖动中持续触发 → 第一次触发时懒开启手势；
+ *   - complete：内部在 document 上监听 mouseup，抬手必触发（拖出面板也算）。
+ * 再叠加 update:show=false 兜底（拖到一半用键盘或点外部关掉面板）。
+ *
+ * 懒开启是必要的：若把手势挂在 show 上、又在 complete 时结束，
+ * 面板保持打开期间的第二次拖动就没有手势可用了（show 不会重复触发），
+ * 又退回到刷屏。
+ */
+let paletteGesture = false
+
+function beginPaletteGesture() {
+  if (paletteGesture) return
+  paletteGesture = true
+  beginGesture()
+}
+
+function endPaletteGesture() {
+  if (!paletteGesture) return
+  paletteGesture = false
+  endGesture()
+}
+
+/**
+ * 应用颜色。
+ *
+ * @param continuous 是否来自取色器的连续拖动。色块点击是离散动作，
+ *                   每次点击都该有反馈，所以不传。
+ */
+function applyColor(color: string, continuous = false) {
+  if (continuous) beginPaletteGesture()
   const range = selected.value
   if (!range) { warnNoSelection(); return }
   picker.value = color
@@ -330,13 +367,15 @@ onBeforeUnmount(clearNativeSelection)
                   :class="{ active: picker.toLowerCase() === color.toLowerCase() }"
                   :style="{ background: color }" :title="color" @click="applyColor(color)" />
                 <!--
-                  自定义取色器是连续手势：按下开始、抬起结束，
-                  期间未选文字只提示一次。
+                  自定义取色器是连续手势：拖动中持续 update:value，抬手触发
+                  complete（Naive 在 document 上监听 mouseup，拖出面板也算）。
+                  未选文字时整个拖动只提示一次，不会刷屏。
                 -->
                 <n-color-picker v-model:value="picker" :show-alpha="false" size="small" class="picker-custom"
                   :modes="['hex']"
-                  @mousedown="beginGesture" @mouseup="endGesture"
-                  @update:value="(value: string) => applyColor(value)" />
+                  @update:value="(value: string) => applyColor(value, true)"
+                  @complete="endPaletteGesture"
+                  @update:show="(show: boolean) => { if (!show) endPaletteGesture() }" />
               </div>
             </div>
 

@@ -1261,8 +1261,11 @@ function removePackage(node: ModPackageNode) {
   transform: translateX(calc(50% - 1px));
 }
 /*
- * 包内 DLL 列表：左右各留 14px（与卡片自身内边距、页面通用边距一致），
- * 让内层卡片的圆角边框完整落在外壳内部，不再与外壳边框重叠成双线。
+ * 包内 DLL 列表：外壳留 14px 内边距 + 1px 边框。
+ *
+ * 子 MOD 行不必和单 MOD 行左对齐——它嵌在外壳里，左侧天然多一层外壳
+ * 边框和内边距。约束只在右侧：让「按钮右边缘 → 子卡片边框」与
+ * 「子卡片边框 → 外壳边框」两段相等，看起来才是同一套留白。
  */
 .package-body {
   display: flex;
@@ -1272,17 +1275,15 @@ function removePackage(node: ModPackageNode) {
   border-top: 1px solid var(--oc2-row-line);
 }
 /*
- * 包内卡片：右侧内边距交给 .package-body 的 14px 承担。
- * 嵌套结构里卡片自身再留 14px 会让按钮列比包标题行左移 15px
- * （多一层 1px 边框 + 14px 内边距），而外层 14px 已经提供了
- * 按钮到外壳边框的视觉间距，因此这里右侧归零。
- * 再补 -1px 抵消内层卡片自己的右边框，按钮列才能与包标题行、
- * 单 MOD 卡片精确落在同一竖线。
+ * 包内卡片：把卡片自身 1px 右边框也算进「卡片外沿」，让两段留白相等。
+ *
+ * 目标：按钮右边缘 → 子卡片右边框外沿 = 子卡片右边框外沿 → 外壳边框内沿。
+ * 外壳内容区已留 14px，所以子卡片只需再留 `14px - 1px(自身边框) = 13px`，
+ * 两段量出来才是 14 / 14 而不是 15 / 14。
  */
 .package-body .mod-card {
   background: var(--oc2-sunken);
-  padding-right: 0;
-  margin-right: -1px;
+  padding-right: calc(14px - 1px);
 }
 
 /* 卡片：单行三段 —— 左「开关 + 标题」，右「标签 + 删除」 */

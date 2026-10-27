@@ -131,19 +131,15 @@ pub(crate) fn visible_discoveries(
     )
 }
 
-pub fn provider_matches_region(provider: &Provider, region: &str) -> bool {
-    *provider != Provider::Gitee || region == crate::config::REGION_CHINESE_MAINLAND
-}
-
-pub(crate) fn ensure_repository_region(
-    repo: &RepositoryConfig,
-    region: &str,
-) -> Result<(), String> {
-    if is_repository(repo) && !provider_matches_region(&repo.provider, region) {
-        return Err("Gitee 社区仓库仅在中国大陆地区可用".into());
-    }
-    Ok(())
-}
+/**
+ * 两个社区源（GitHub / Gitee）都不再限制地区：用户在哪个地区都可能想装
+ * 另一边社区里的 MOD。地区只由仓库/来源自身的 `region` 字段表达，
+ * 社区源本身不再额外施加平台限制，所以这里不再有「地区是否可用」的判断。
+ *
+ * 与官方仓库源的关系不靠地区表达，而是靠身份闪避（见
+ * `official_repository_keys`）：只要官方源树里已经收录同一个
+ * owner/repository，社区那份就整条隐藏，哪怕官方那份当前地区不可见或被禁用。
+ */
 
 pub fn is_source_archive(repo: &RepositoryConfig, tag: &str, asset_name: &str) -> bool {
     repo.provider == Provider::Gitee
@@ -175,8 +171,16 @@ pub fn source(provider: &Provider) -> RepositorySource {
             Provider::Gitee => crate::gitee_community::TOPIC_ENDPOINT,
         }
         .into(),
-        region: (*provider == Provider::Gitee)
-            .then(|| crate::config::REGION_CHINESE_MAINLAND.into()),
+        /*
+         * 两个社区源都不限制地区：社区发现是「额外找找还有哪些 MOD」，
+         * 用户在哪个地区都可能想装 Gitee 或 GitHub 上的社区 MOD。
+         *
+         * 与官方仓库源的关系不靠地区表达，而是靠身份闪避（见
+         * `official_repository_keys`）：只要官方源树里已经收录同一个
+         * owner/repository，社区那份就整条隐藏，哪怕官方那份当前地区
+         * 不可见或被禁用。
+         */
+        region: None,
         builtin: false,
         parent_id: None,
     }
@@ -396,7 +400,11 @@ pub(crate) fn repository_from_coordinates(
         "provider": provider, "username": owner,
         "repository": name, "branch": branch, "note": note,
         "group_i18n": {"zh-CN": ""}, "note_i18n": {"zh-CN": note},
-        "region": (*provider == Provider::Gitee).then_some(crate::config::REGION_CHINESE_MAINLAND),
+        /*
+         * 社区仓库不写地区：两个社区源都适用于所有地区，
+         * 仓库自身也就没有地区限制。与官方源的关系靠身份闪避处理，
+         * 不靠地区表达。
+         */
         "source_id": source_id(provider), "install_target": "BepInEx/plugins", "channel": "all",
         "asset_rules": [{"type": "regex", "value": "^.+\\.(?:[dD][lL][lL]|[zZ][iI][pP])$"}],
         "download_threads": 16, "enabled": true, "builtin": false
@@ -683,9 +691,6 @@ pub async fn refresh_community_repositories(
     provider: Option<Provider>,
 ) -> Result<PublicConfig, String> {
     let provider = provider.unwrap_or(Provider::Github);
-    if !provider_matches_region(&provider, crate::config::current_user_region()) {
-        return Err("Gitee 社区仓库仅在中国大陆地区可用".into());
-    }
     let search = state.community.for_provider(&provider);
     let mut limits = search.limits.try_lock().map_err(|_| "社区仓库正在搜索")?;
     search.cancelled.store(false, Ordering::Release);
@@ -784,23 +789,47 @@ mod tests {
     }
 
     #[test]
-    fn gitee_discovery_is_mainland_only_while_github_is_global() {
+    fn both_community_sources_apply_to_every_region() {
+        /*
+         * 两个社区源都不限制地区：Gitee 社区过去只在中国大陆可用，
+         * 现在与国际地区一致，地区只由仓库/来源自己的 region 表达。
+         *
+         * 断言写在「源 + 仓库」这条真实判定链上，而不是断言某个常量：
+         * 这样以后如果重新引入平台限制，测试会因为行为变化而失败。
+         */
+        let mut config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "ui_zoom": 1.5, "onboarding_seen_steps": [],
+            "game": { "path": "", "auto_detect": false },
+            "network": { "timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false },
+            "launch": { "ask_user_to_start_from_steam": false, "auto_restore_winhttp": false },
+            "auth": { "github_token": "", "gitee_token": "", "official_api_only": true },
+            "repositories": []
+        }))
+        .unwrap();
+        config.repository_sources.push(source(&Provider::Github));
+        config.repository_sources.push(source(&Provider::Gitee));
+        let gitee_repo =
+            repository_from_coordinates(&Provider::Gitee, "Owner", "Mod", "", "").unwrap();
+        let github_repo =
+            repository_from_coordinates(&Provider::Github, "Owner", "Mod", "", "").unwrap();
         for region in [
             crate::config::REGION_CHINESE_MAINLAND,
             crate::config::REGION_INTERNATIONAL,
             "",
             "unknown",
         ] {
-            assert!(provider_matches_region(&Provider::Github, region));
-            assert_eq!(
-                provider_matches_region(&Provider::Gitee, region),
-                region == crate::config::REGION_CHINESE_MAINLAND
-            );
+            assert!(crate::config::repository_matches_channel(
+                &config,
+                &gitee_repo,
+                region
+            ));
+            assert!(crate::config::repository_matches_channel(
+                &config,
+                &github_repo,
+                region
+            ));
         }
-        assert_eq!(
-            source(&Provider::Gitee).region.as_deref(),
-            Some(crate::config::REGION_CHINESE_MAINLAND)
-        );
+        assert_eq!(source(&Provider::Gitee).region, None);
         assert_eq!(source(&Provider::Github).region, None);
     }
 

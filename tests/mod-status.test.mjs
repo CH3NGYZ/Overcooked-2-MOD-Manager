@@ -31,8 +31,8 @@ test('版本比较覆盖 v 前缀、段数差异、预发布', () => {
   assert.equal(compareVersions('1.10.0', '1.9.9'), 1)
   assert.equal(compareVersions('1.2.3-beta.2', '1.2.3-beta.1'), 1)
   assert.equal(compareVersions('1.2.3', '1.2.3-rc.1'), 1)
-  // 第 4 段参与比较且更高（不是预发布）
-  assert.equal(compareVersions('2.0.0.1', '2.0.0'), 1)
+  // 标准 semver：第 4 段是构建号，不参与比较
+  assert.equal(compareVersions('2.0.0.1', '2.0.0'), 0)
   assert.equal(compareVersions('unknown', '1.0.0'), null)
   assert.equal(compareVersions(undefined, '1.0.0'), null)
 })
@@ -56,25 +56,29 @@ test('同一仓库的多个本地副本全部返回，便于取最高版本比�
   assert.deepEqual(modsForRepository(list, target).map((item) => item.dll_file), ['A.dll', 'B.dll'])
 })
 
-test('宽松版本比较：0.4 与 0.4.0 相等，0.4.0.5 更高', () => {
+test('标准 semver 比较：宽写归一，第 4 段不参与', () => {
   // 真实场景：Release tag 是 0.4.0，DLL 里是 0.4.0.0。
   // 旧实现把第 4 段拼成预发布，导致已是最新的 MOD 永远显示「可更新」。
   assert.equal(compareVersions('0.4.0', '0.4.0.0'), 0)
   assert.equal(compareVersions('0.4', '0.4.0'), 0)
   assert.equal(compareVersions('v0.4', '0.4.0'), 0)
-  // 第 4 段参与比较，且更高
-  assert.equal(compareVersions('0.4.0.5', '0.4.0'), 1)
+  // 第 4 段是构建号，不参与比较
+  assert.equal(compareVersions('0.4.0.5', '0.4.0'), 0)
   // 只有显式 - 后缀才是预发布
   assert.equal(compareVersions('0.4.0-beta', '0.4.0'), -1)
 })
 
-test('formatVersion 去掉尾部多余的 .0 段', () => {
+test('formatVersion：正式版去尾部 .0，预发布保留原样', () => {
   assert.equal(formatVersion('0.4'), '0.4')
   assert.equal(formatVersion('0.4.0'), '0.4')
   assert.equal(formatVersion('0.4.0.0'), '0.4')
-  assert.equal(formatVersion('0.4.0.5'), '0.4.0.5')
+  assert.equal(formatVersion('0.4.0.5'), '0.4')
   assert.equal(formatVersion('v1.2.3'), 'v1.2.3')
   assert.equal(formatVersion('1.2.3-beta.1'), '1.2.3-beta.1')
+  // 预发布保留原始数字段，能和 Release tag 逐字对上
+  assert.equal(formatVersion('0.4.0.1-beta'), '0.4.0.1-beta')
+  assert.equal(formatVersion('0.4.0.1-pre.01'), '0.4.0.1-pre.01')
+  assert.equal(formatVersion('v0.4.0-beta.1'), 'v0.4.0-beta.1')
   // 至少保留两段，不把 1.0 压成 1
   assert.equal(formatVersion('1.0.0'), '1.0')
   assert.equal(formatVersion(''), '')

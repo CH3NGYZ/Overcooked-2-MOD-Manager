@@ -257,13 +257,15 @@ pub fn repository_file_name(file_path: &str) -> Result<String, ReleaseError> {
     Ok(name)
 }
 
-/// 版本号解析：把各种宽松写法归一到 semver。
+/// 版本号解析：把各种宽写 tag 归一到三段 semver。
 ///
-/// 用于「发布渠道筛选」和「管理器自更新」这类标准版本判断。
-/// 第 4 段及以后不参与（semver 只表达三段）：`0.4.0.5` 归一成 `0.4.0`。
+///   - 不足三段补 0：`0.4` → `0.4.0`；
+///   - 第 4 段及以后丢弃（标准 semver 只有三段，构建号不参与比较）：
+///     `0.4.0.5`、`0.4.0.0` → `0.4.0`；
+///   - 保留 `-`/`+` 后缀作为预发布/构建元数据。
 ///
-/// **MOD 的更新判定不要用这个函数**，见 `compare_release_versions` ——
-/// 本项目的 MOD 版本号允许四段甚至更多，需要逐段比较。
+/// 所有版本比较（含 MOD 更新判定）都走这个归一结果，
+/// 因此宽写与标准写法得到一致结论。
 pub fn parse_version(tag: &str) -> Option<semver::Version> {
     let cleaned = tag.trim().trim_start_matches(['v', 'V']);
     semver::Version::parse(cleaned).ok().or_else(|| {
@@ -286,95 +288,24 @@ pub fn parse_version(tag: &str) -> Option<semver::Version> {
     })
 }
 
-/// 宽松版本号：任意段数的数字前缀 + 可选预发布标识。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LooseVersion {
-    numbers: Vec<u64>,
-    prerelease: Vec<String>,
-}
-
-impl LooseVersion {
-    pub fn parse(value: &str) -> Option<Self> {
-        let cleaned = value.trim().trim_start_matches(['v', 'V']);
-        let re = Regex::new(r"(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?").ok()?;
-        let caps = re.captures(cleaned)?;
-        let numbers = caps
-            .get(1)?
-            .as_str()
-            .split('.')
-            .map(str::parse::<u64>)
-            .collect::<Result<Vec<_>, _>>()
-            .ok()?;
-        let prerelease = caps
-            .get(2)
-            .map(|value| value.as_str().split('.').map(str::to_owned).collect())
-            .unwrap_or_default();
-        Some(Self {
-            numbers,
-            prerelease,
-        })
-    }
-}
-
-impl Ord for LooseVersion {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let length = self.numbers.len().max(other.numbers.len());
-        for index in 0..length {
-            // 缺的段按 0 算：0.4 == 0.4.0，而 0.4.0.5 > 0.4.0
-            let left = self.numbers.get(index).copied().unwrap_or(0);
-            let right = other.numbers.get(index).copied().unwrap_or(0);
-            match left.cmp(&right) {
-                std::cmp::Ordering::Equal => continue,
-                ordering => return ordering,
-            }
-        }
-        // 数字段相同：正式版高于预发布；两个预发布按标识符逐段比较
-        match (self.prerelease.is_empty(), other.prerelease.is_empty()) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            (false, false) => compare_prerelease(&self.prerelease, &other.prerelease),
-        }
-    }
-}
-
-impl PartialOrd for LooseVersion {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-fn compare_prerelease(left: &[String], right: &[String]) -> std::cmp::Ordering {
-    let count = left.len().max(right.len());
-    for index in 0..count {
-        match (left.get(index), right.get(index)) {
-            (None, None) => break,
-            (None, Some(_)) => return std::cmp::Ordering::Less,
-            (Some(_), None) => return std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => {
-                let ordering = match (a.parse::<u64>(), b.parse::<u64>()) {
-                    (Ok(x), Ok(y)) => x.cmp(&y),
-                    // 数字标识符低于字母标识符
-                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
-                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
-                    (Err(_), Err(_)) => a.cmp(b),
-                };
-                if ordering != std::cmp::Ordering::Equal {
-                    return ordering;
-                }
-            }
-        }
-    }
-    std::cmp::Ordering::Equal
-}
+/*
+ * 版本比较统一用标准 semver 语义（`semver::Version` 的 Ord 实现）：
+ *   - 只有三段数字参与比较，第 4 段起是构建号，不参与
+ *     （`0.4.0.5` 与 `0.4.0` 相等）；
+ *   - 带 `-` 后缀的是预发布，低于同号正式版（`0.4.0-beta < 0.4.0`）；
+ *   - 预发布标识逐段比较，数字段低于字母段
+ *     （`alpha < alpha.1 < beta`）。
+ *
+ * 宽写的 tag 由 `parse_version` 先归一成三段再交给 semver，
+ * 所以 `0.4`、`0.4.0`、`0.4.0.0` 都能解析且相等。
+ */
 
 /// 比较两个 Release 标签/版本号，用于判断 MOD 是否有更新。
 ///
-/// 不要求严格 semver：本项目允许 `0.4.0.5` 这类四段版本，且它**高于**
-/// `0.4.0`（同一版本线的更细粒度）。任一无法解析时返回 `None`，
+/// 标准 semver 语义。任一无法解析时返回 `None`，
 /// 调用方应显示「版本未知」而不是臆断更新。
 pub fn compare_release_versions(remote: &str, local: &str) -> Option<std::cmp::Ordering> {
-    Some(LooseVersion::parse(remote)?.cmp(&LooseVersion::parse(local)?))
+    Some(parse_version(remote)?.cmp(&parse_version(local)?))
 }
 
 /// 版本号本身是否带预发布标识（`-beta`、`-rc.1` 等）。
@@ -383,7 +314,7 @@ pub fn compare_release_versions(remote: &str, local: &str) -> Option<std::cmp::O
 /// 但版本叫 `0.4.0-beta`、`0.4.0.5-beta` 时同样按预发布对待。
 /// 四段版本里的纯数字段不算预发布。
 pub fn is_prerelease_version(version: &str) -> bool {
-    LooseVersion::parse(version).is_some_and(|parsed| !parsed.prerelease.is_empty())
+    parse_version(version).is_some_and(|parsed| !parsed.pre.is_empty())
 }
 
 pub fn filter_channel(mut releases: Vec<ReleaseInfo>, channel: &Channel) -> Vec<ReleaseInfo> {
@@ -1422,7 +1353,7 @@ mod tests {
     }
 
     #[test]
-    fn loose_version_comparison_handles_extra_segments() {
+    fn version_comparison_follows_standard_semver() {
         use std::cmp::Ordering;
         // 真实场景：DLL 里是 0.4.0.0，Release tag 是 0.4.0。
         // 旧实现把第 4 段拼成 -0 当预发布，导致「可更新」误报。
@@ -1440,20 +1371,31 @@ mod tests {
             Some(Ordering::Equal)
         );
 
-        // 第 4 段非 0：参与比较，且更高（不是预发布）
+        // 标准 semver：第 4 段是构建号，不参与比较
         assert_eq!(
             compare_release_versions("0.4.0.5", "0.4.0"),
-            Some(Ordering::Greater),
-            "0.4.0.5 比 0.4.0 新，不是预发布"
-        );
-        assert_eq!(
-            compare_release_versions("0.4.0", "0.4.0.5"),
-            Some(Ordering::Less)
+            Some(Ordering::Equal),
+            "第 4 段不参与比较"
         );
 
-        // 只有显式 '-' 后缀才是预发布
+        // 预发布低于同号正式版
         assert_eq!(
             compare_release_versions("0.4.0-beta", "0.4.0"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            compare_release_versions("0.4.0.1-beta", "0.4.0.1"),
+            Some(Ordering::Less),
+            "带 - 后缀永远低于同号正式版"
+        );
+
+        // 预发布标识逐段比较：alpha < alpha.1 < beta
+        assert_eq!(
+            compare_release_versions("0.4.0-alpha", "0.4.0-alpha.1"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            compare_release_versions("0.4.0-alpha.1", "0.4.0-beta"),
             Some(Ordering::Less)
         );
     }

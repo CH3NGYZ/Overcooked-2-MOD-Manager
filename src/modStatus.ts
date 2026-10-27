@@ -45,16 +45,15 @@ interface ParsedVersion {
 }
 
 /**
- * 版本号解析：兼容 `v1.2`、`1.2.3`、`1.2.3.4`、`1.2.3-beta.1`。
+ * 版本号解析：标准 semver 语义，兼容宽写的 tag。
  *
- * 本项目的版本号比标准 semver 宽松，允许四段甚至更多。
- * 规则：
- *   - 所有数字段都参与比较，缺的段补 0 —— 所以 `0.4` = `0.4.0`，
- *     而 `0.4.0.5` **大于** `0.4.0`（它是更具体的同一版本线）；
- *   - 只有显式带 `-` 后缀的（如 `0.4.0-beta`）才算预发布，
- *     预发布低于同号正式版。
- * 旧实现把第 4 段拼成 `-5` 当预发布，于是 `0.4.0.5 < 0.4.0`：新版被判成
- * 比旧版旧，而 DLL 是 `0.4.0.0`、tag 是 `0.4.0` 的已安装 MOD 永远显示「可更新」。
+ * 规则（与标准 semver 一致）：
+ *   - 只取前三段数字参与比较，不足补 0 —— 所以 `0.4` = `0.4.0` = `0.4.0.0`；
+ *   - 第 4 段及以后是构建号，按标准 semver 的语义**不参与比较**
+ *     （如 `0.4.0.5` 与 `0.4.0` 相等）；
+ *   - 带 `-` 后缀的是预发布，低于同号正式版：`0.4.0-beta < 0.4.0`；
+ *   - 预发布标识按 semver 规则逐段比较，数字段低于字母段
+ *     （`0.4.0-alpha < 0.4.0-alpha.1 < 0.4.0-beta`）。
  * 无法解析返回 null，调用方据此显示「版本未知」而不是臆断更新。
  */
 export function parseVersion(value: string | null | undefined): ParsedVersion | null {
@@ -62,9 +61,10 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
   const cleaned = value.trim().replace(/^[vV]/, '')
   const match = cleaned.match(/(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?/)
   if (!match) return null
-  const numbers = match[1].split('.').map(Number)
-  if (numbers.some((part) => !Number.isFinite(part))) return null
-  // 所有数字段都保留并参与比较；只把显式 '-' 后缀当预发布
+  const all = match[1].split('.').map(Number)
+  if (all.some((part) => !Number.isFinite(part))) return null
+  // 标准 semver 只有三段；第 4 段起是构建号，不参与比较
+  const numbers = all.slice(0, 3)
   while (numbers.length < 3) numbers.push(0)
   return { numbers, prerelease: match[2] ? match[2].split('.') : [] }
 }
@@ -89,14 +89,19 @@ export function isPrereleaseVersion(
 }
 
 /**
- * 版本号规范化显示：只去掉尾部多余的 `.0`。
+ * 版本号规范化显示。
  *
- * 本项目版本号可以写成 `0.4`、`0.4.0`、`0.4.0.0`、`0.4.0.5`。
- * 前三种是同一版本，统一显示 `0.4`；`0.4.0.5` 是**不同的、更高的**版本，
- * 必须原样显示，否则用户看不出它比 `0.4.0` 新。
+ * 目的只有一个：让「同一版本的不同写法」看起来一致，避免用户误以为版本不同。
  *
- * 保留预发布后缀（`-beta.1`），至少保留两段（`1.0` 不会被压成 `1`），
- * 无法解析时原样返回。
+ * 两条规则，按是否带预发布后缀区分：
+ *   - **正式版**：去掉尾部多余的 `.0` 与不参与比较的第 4 段起
+ *     （`0.4`、`0.4.0`、`0.4.0.0`、`0.4.0.5` 都显示 `0.4`）。
+ *   - **预发布版**：**原样保留数字段**，只做必要的剥离
+ *     （`v0.4.0.1-beta` → `0.4.0.1-beta`）。
+ *     预发布号必须能和 Release tag 逐字对上 —— 把 `0.4.0.1-beta` 显示成
+ *     `0.4-beta` 会让用户以为版本号被改了，也无法对照 tag 排查问题。
+ *
+ * 至少保留两段（`1.0` 不会被压成 `1`），无法解析时原样返回。
  */
 export function formatVersion(value: string | null | undefined): string {
   if (!value) return ''
@@ -104,12 +109,20 @@ export function formatVersion(value: string | null | undefined): string {
   const match = trimmed.match(/^(.*?)(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?$/)
   if (!match) return trimmed
   const prefix = match[1]
-  const numbers = match[2].split('.').map(Number)
-  if (numbers.some((part) => !Number.isFinite(part))) return trimmed
+  const all = match[2].split('.').map(Number)
+  if (all.some((part) => !Number.isFinite(part))) return trimmed
+  const prerelease = match[3]
+
+  // 预发布：保留原始数字段，只去掉 v 前缀等外层包装
+  if (prerelease) {
+    return `${prefix}${match[2]}-${prerelease}`
+  }
+
+  // 正式版：第 4 段起是构建号，不参与比较，显示时一并忽略
+  const numbers = all.slice(0, 3)
   // 去掉尾部全 0 段，但至少保留两段（0.4 保持 0.4，不压成 0）
   while (numbers.length > 2 && numbers[numbers.length - 1] === 0) numbers.pop()
-  const core = numbers.join('.')
-  return match[3] ? `${prefix}${core}-${match[3]}` : `${prefix}${core}`
+  return `${prefix}${numbers.join('.')}`
 }
 
 /** 比较版本：左新于右返回 1，相等 0，左旧于右 -1；任一方无法解析返回 null。 */

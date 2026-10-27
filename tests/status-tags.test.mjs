@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 /** 共享状态标签：真实源码直接执行（Node 24 类型擦除）。 */
-const { STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion } = await import('../src/statusTags.ts')
+const {
+  STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion,
+  packageStatuses, summarizeStatuses,
+} = await import('../src/statusTags.ts')
 
 function repo(overrides = {}) {
   return {
@@ -176,4 +179,94 @@ test('检测中与版本未知是两个独立语义', () => {
   assert.equal(isVersionConclusion('unknown'), true)
   const replaced = replaceVersionConclusion(['unknown', 'duplicate'], 'checking')
   assert.deepEqual(replaced, ['checking', 'duplicate'])
+})
+
+/* ===== MOD 包状态：以包为主体 ===== */
+
+test('包内多个 DLL 同为最新版时只显示一条「最新版」，不带数量', () => {
+  // 同一个 ZIP、同一个仓库、同一个 tag：包里只有一个版本结论可谈。
+  // 页头那种「1 最新版」会让用户以为包内还有一个不是最新版的东西。
+  const pkg = [
+    mod({ dll_file: 'pkg/A.dll', labels: ['latest'], version: '1.0.0' }),
+    mod({ dll_file: 'pkg/B.dll', labels: ['latest'], version: '1.0.0' }),
+  ]
+  const tags = packageStatuses(pkg)
+  assert.equal(tags.length, 1)
+  assert.equal(tags[0].key, 'latest')
+  assert.equal(tags[0].text, STATUS_META.latest.text)
+  assert.equal(tags[0].count, undefined)
+})
+
+test('包内有更新时整包只出一条「可更新」，不是「2 个可更新」', () => {
+  const pkg = [
+    mod({ dll_file: 'pkg/A.dll', labels: ['update_available'], update_available: true }),
+    mod({ dll_file: 'pkg/B.dll', labels: ['update_available'], update_available: true }),
+  ]
+  const tags = packageStatuses(pkg)
+  assert.equal(tags.length, 1)
+  assert.equal(tags[0].key, 'update_available')
+  assert.equal(tags[0].count, undefined)
+})
+
+test('包内状态不一致时取最需要注意的结论', () => {
+  // 可更新（moderate）比检测中（muted）更需要注意，应优先显示
+  const tags = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['checking'] }),
+    mod({ dll_file: 'b.dll', labels: ['update_available'], update_available: true }),
+  ])
+  assert.deepEqual(tags.map((t) => t.key), ['update_available'])
+})
+
+test('包内只有检测中时显示「检测中」，不再被最新版结论掩盖', () => {
+  const tags = packageStatuses([mod({ dll_file: 'a.dll', labels: ['checking'] })])
+  assert.deepEqual(tags.map((t) => t.key), ['checking'])
+  assert.equal(tags[0].count, undefined)
+})
+
+test('包内只有版本未知时显示「版本未知」', () => {
+  const tags = packageStatuses([mod({ dll_file: 'a.dll', labels: ['unknown'] })])
+  assert.deepEqual(tags.map((t) => t.key), ['unknown'])
+})
+
+test('重复与低版本等成员级告警保留数量', () => {
+  // 这类状态确实可能只命中包内某几个 DLL，数量有意义
+  const tags = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['latest', 'duplicate'], duplicate_guid: true }),
+    mod({ dll_file: 'b.dll', labels: ['latest'] }),
+  ])
+  const dup = tags.find((t) => t.key === 'duplicate')
+  assert.equal(dup?.count, 1)
+})
+
+test('预发布整包只出一条，同样不带数量', () => {
+  const tags = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['latest'], version: '1.0.0-beta.1' }),
+    mod({ dll_file: 'b.dll', labels: ['latest'], version: '1.0.0-beta.1' }),
+  ])
+  const pre = tags.filter((t) => t.key === 'prerelease')
+  assert.equal(pre.length, 1)
+  assert.equal(pre[0].count, undefined)
+})
+
+test('纯依赖 DLL 不参与包状态判断', () => {
+  const tags = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['latest'] }),
+    mod({ dll_file: 'stub.dll', is_dependency: true, labels: ['dependency'] }),
+  ])
+  assert.deepEqual(tags.map((t) => t.key), ['latest'])
+})
+
+test('包内全是依赖 DLL 时不产生状态标签', () => {
+  assert.deepEqual(packageStatuses([mod({ is_dependency: true, labels: ['dependency'] })]), [])
+})
+
+test('页头聚合仍然带数量（与包标题的语义不同）', () => {
+  // 页头统计的是「整个页面有多少个 MOD 处于某状态」，数量必须保留
+  const tags = summarizeStatuses([
+    mod({ dll_file: 'a.dll', labels: ['latest'] }),
+    mod({ dll_file: 'b.dll', labels: ['latest'] }),
+  ])
+  assert.equal(tags.length, 1)
+  assert.equal(tags[0].key, 'latest')
+  assert.equal(tags[0].count, 2)
 })

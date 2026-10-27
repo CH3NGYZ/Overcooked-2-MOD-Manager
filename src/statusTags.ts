@@ -203,6 +203,14 @@ const WITHIN_TONE_ORDER: string[] = [
   'latest',
 ]
 
+/** 严重度分值：越小越需要用户处理。tone 优先，其次同档固定次序。 */
+function statusPriority(key: string): number {
+  const meta = STATUS_META[key]
+  const tone = meta ? (TONE_PRIORITY[meta.tone] ?? 9) : 9
+  const index = WITHIN_TONE_ORDER.indexOf(key)
+  return tone * 100 + (index < 0 ? WITHIN_TONE_ORDER.length : index)
+}
+
 export interface StatusSummary {
   key: string
   text: string
@@ -243,6 +251,76 @@ export function summarizeStatuses(
       return byTone !== 0 ? byTone : a.index - b.index
     })
     .map(({ index: _index, ...entry }) => entry)
+}
+
+/**
+ * 包级状态标签。
+ *
+ * MOD 包是一个整体：同一个 ZIP、同一个仓库、同一个 Release tag，
+ * 包内多个 DLL 只是这个包的文件。所以版本结论只该有一条，
+ * 不能像页头那样把包内 DLL 的结论数一遍（那会显示成「1 最新版」，
+ * 暗示包里还有一个不是最新版的东西）。
+ *
+ * 因此这里把标签分成三类：
+ *   1. 版本结论（最新版 / 可更新 / 检测中 / 版本未知 / 仓库刷新失败…）
+ *      —— 整包只取最需要注意的那一条，不带数量；
+ *   2. 预发布 —— 整包共用一个 tag，也不带数量，与单个 MOD 一样放在最前；
+ *   3. 成员级告警（重复、低版本、加载警告）—— 确实可能只命中某几个 DLL，
+ *      保留数量。
+ *
+ * 纯依赖 DLL 不参与：它没有版本语义，包内行已经单独标了「依赖」。
+ */
+export interface PackageStatus {
+  key: string
+  text: string
+  tone: StatusTone
+  /** 仅成员级告警有数量；版本结论与预发布不显示数量。 */
+  count?: number
+}
+
+/** 这些标签描述的是包内某个 DLL 的状态，可能只命中一部分成员。 */
+const MEMBER_LEVEL_LABELS = new Set(['duplicate', 'duplicate_lower_version', 'load_warning'])
+
+export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] {
+  const real = mods.filter((mod) => !mod.is_dependency)
+  if (!real.length) return []
+
+  const present = new Set<string>()
+  for (const mod of real) {
+    for (const label of (mod.labels as string[] | undefined) ?? []) {
+      if (STATUS_META[label]) present.add(label)
+    }
+  }
+
+  const result: PackageStatus[] = []
+  /*
+   * 预发布与单个 MOD 一致：取「元数据标记」或「版本号带 - 后缀」的或关系，
+   * 放在结论前面。整包共用一个 tag，所以只看是否存在，不数个数。
+   */
+  const prerelease = real.some((mod) => isPrereleaseVersion(localVersion(mod), mod.prerelease))
+  if (prerelease) {
+    const meta = STATUS_META.prerelease
+    result.push({ key: 'prerelease', text: meta.text, tone: meta.tone })
+  }
+
+  // 版本结论互斥：整包只保留最需要注意的一条
+  const conclusion = [...present]
+    .filter(isVersionConclusion)
+    .sort((a, b) => statusPriority(a) - statusPriority(b))[0]
+  if (conclusion) {
+    const meta = STATUS_META[conclusion]
+    result.push({ key: conclusion, text: meta.text, tone: meta.tone })
+  }
+
+  // 成员级告警：命中几个 DLL 就写几个
+  for (const key of WITHIN_TONE_ORDER) {
+    if (!MEMBER_LEVEL_LABELS.has(key) || !present.has(key)) continue
+    const count = real.filter((mod) => (mod.labels as string[] | undefined)?.includes(key)).length
+    if (count <= 0) continue
+    const meta = STATUS_META[key]
+    result.push({ key, text: meta.text, tone: meta.tone, count })
+  }
+  return result
 }
 
 /**

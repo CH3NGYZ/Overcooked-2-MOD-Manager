@@ -14,7 +14,10 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import { installedModTags, recomputeModUpdate, replaceVersionConclusion, summarizeStatuses, type StatusSummary } from '../statusTags'
+import {
+  installedModTags, recomputeModUpdate, replaceVersionConclusion,
+  summarizeStatuses, packageStatuses, type PackageStatus, type StatusSummary,
+} from '../statusTags'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -172,14 +175,14 @@ interface ModPackageNode {
   enabled: boolean
   partial: boolean
   /**
-   * 包状态聚合（与页头完全相同的一套规则）。
-   *
-   * 包内成员可能各处于不同状态——最新版、可更新、检测中、版本未知、
-   * 仓库刷新失败……只显示「N 个可更新 / 最新版」会把「检测中」
-   * 这类中间态彻底藏掉，用户看不出刷新还在进行。
-   * 「已禁用 / 部分启用」单独渲染，所以从聚合里排除，避免重复。
+   * 包级状态：以整个包为主体，版本结论只保留一条，不带数量。
+   * 见 `statusTags.ts` 的 `packageStatuses`。
    */
-  statuses: StatusSummary[]
+  statuses: PackageStatus[]
+  /** 有更新时包标题显示的「更新」按钮所用的仓库（与单 MOD 同一链路）。 */
+  updateRepository?: Repository
+  /** 包内用于跳转的仓库 id（点标签跳到 MOD 安装页对应仓库）。 */
+  repositoryId?: string
 }
 
 interface ModGroupNode {
@@ -347,14 +350,18 @@ const groups = computed<ModGroupNode[]>(() => {
      */
     const label = list[0] ? displayTitle(list[0]) : ''
     /*
-     * 包状态聚合与页头同一套规则：包内每个成员的状态都按严重度汇总，
-     * 「检测中 / 版本未知 / 仓库刷新失败」这些中间态因此能出现在包标题上，
-     * 不再只剩「最新版 / N 个可更新」两种结论。
-     *
-     * 「已禁用 / 部分启用」由包标题单独渲染（它描述整包而非成员），
-     * 所以从聚合里排除，避免同一个词出现两次。
+     * 包级状态：以整个包为主体，版本结论只留一条且不带数量
+     * （包里只有一个 Release tag，说「1 最新版」会暗示还有别的东西）。
+     * 实现见 statusTags.ts 的 packageStatuses。
      */
-    const statuses = summarizeStatuses(list, { exclude: ['disabled'] })
+    const statuses = packageStatuses(list)
+    /*
+     * 包的仓库身份与更新动作：整包成员共享同一个仓库，
+     * 所以直接用「包内能绑定仓库的那一个」——与包标题、分组用的是同一代表。
+     * 更新按钮复用单 MOD 的预览链路，标签跳转复用同一个仓库 id。
+     */
+    const repo = repositoryForMod(repositories.value, representative(list))
+    const updatable = list.find((mod) => updatableRepository(mod))
     return {
       key,
       label,
@@ -363,6 +370,8 @@ const groups = computed<ModGroupNode[]>(() => {
       enabled: enabledCount === list.length,
       partial: enabledCount > 0 && enabledCount < list.length,
       statuses,
+      updateRepository: updatable ? updatableRepository(updatable) : undefined,
+      repositoryId: repo?.id,
     }
   }
 
@@ -1017,18 +1026,32 @@ function removePackage(node: ModPackageNode) {
                 <!-- 右：状态标签 + 分割线 + 工具列（与单 MOD 卡片同一套列宽预留） -->
                 <div class="package-right">
                   <!--
-                    包状态标签与单 MOD 共用同一套 tone 配色（theme.ts 统一计算），
-                    不再手写固定色类，否则换主题色时包标签会留在旧颜色上。
+                    可更新时的「更新」按钮：与单 MOD 卡片完全相同的位置与链路
+                    （预览下载 → 安装详情 → 用户确认）。包是一个整体，
+                    更新针对的是这个包绑定的仓库，不是包内某个 DLL。
+                  -->
+                  <template v-if="pkg.updateRepository">
+                    <n-button size="tiny" :style="buttonColorFor('moderate', 'soft')" :title="t('更新')"
+                      :loading="!!previewing[pkg.repositoryId ?? '']"
+                      :disabled="!!game?.kitchen_running"
+                      @click.stop="previewRepository(pkg.updateRepository)">
+                      <ArrowUpCircleOutline width="14" height="14" />{{ t('更新') }}
+                    </n-button>
+                    <span class="tool-divider" />
+                  </template>
+
+                  <!--
+                    包状态标签：以包为主体。版本结论（最新版 / 可更新 / 检测中…）
+                    整包只有一条、不带数量；成员级告警（重复 / 低版本 / 加载警告）
+                    才带数量，因为确实可能只命中包内某几个 DLL。
+                    配色与单 MOD 行同源，点击跳到 MOD 安装页对应仓库。
                   -->
                   <span class="tag-group">
-                    <!--
-                      包状态聚合：与页头、单个 MOD 行完全同一套文案与 tone。
-                      每个出现的状态都带数量，按严重度排序 ——
-                      「检测中」「版本未知」「仓库刷新失败」不再被藏掉。
-                    -->
                     <n-tag v-for="entry in pkg.statuses" :key="entry.key" size="tiny" :bordered="false"
-                      class="state-tag" :color="tagColorForAny(entry.tone)">
-                      {{ entry.count }} {{ t(entry.text) }}
+                      class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)"
+                      :title="pkg.repositoryId ? t('在 MOD 安装中查看') : undefined"
+                      @click.stop="pkg.repositoryId && linkToRepository(pkg.repositoryId)">
+                      {{ entry.count ? `${entry.count} ${t(entry.text)}` : t(entry.text) }}
                     </n-tag>
                     <n-tag v-if="!pkg.enabled && !pkg.partial" size="tiny" :bordered="false"
                       class="state-tag" :color="tagColorFor('muted')">{{ t('已禁用') }}</n-tag>

@@ -5308,6 +5308,9 @@ fn install_downloaded_repository(
      * 那一个。同一仓库历史上可能装出过多个包（换过包 ID、旧清单未清理），
      * 只回收其中一个会让装完仍然显示「重复」。用户要的语义是：
      * 更新一次就把同仓库的旧装全部清掉，再装新的。
+     *
+     * 回收失败必须中止安装并给出可操作的提示：此时旧包可能只移走了一部分，
+     * 继续安装会让两个版本的文件混在一起。让用户手动删除是最安全的出路。
      */
     let recycled = recycle_bin::recycle_repository_packages_before_install(
         recycle_root,
@@ -5315,7 +5318,15 @@ fn install_downloaded_repository(
         game_root,
         repo,
         &replacement_files,
-    )?;
+    )
+    .map_err(|error| {
+        log::error!(
+            "安装前回收旧 MOD 失败，已中止安装：仓库={}，原因={}",
+            repo.id,
+            error
+        );
+        format!("文件回收失败，请尝试手动删除 mod。（{error}）")
+    })?;
     if recycled.is_empty() {
         log::info!("安装前没有需要回收的同仓库旧包：仓库={}", repo.id);
     }

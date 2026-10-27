@@ -281,6 +281,63 @@ fn file_key(relative: &str) -> String {
     mods::canonical_dll_name(&relative.replace('\\', "/")).to_lowercase()
 }
 
+/// 清单里的某个文件是否属于给定仓库。
+///
+/// 用扫描时「本地 MOD 绑定在线仓库」的同一套字段：BepInPlugin GUID、
+/// PE 产品名、原始文件名。任一非空且与仓库配置相等即算命中。
+///
+/// 依赖 DLL 读不出这些字段，返回 false —— 但只要同一份清单里有主 MOD
+/// 命中，整包就已经被判定为该仓库的旧版本了。
+fn dll_matches_repository(
+    game_root: &Path,
+    relative: &str,
+    repo: &crate::models::RepositoryConfig,
+) -> bool {
+    let configured = [
+        repo.plugin_guid.trim(),
+        repo.local_product_name.trim(),
+        repo.local_original_filename.trim(),
+    ];
+    if configured.iter().all(|value| value.is_empty()) {
+        return false;
+    }
+    let normalized = match normalize_relative(relative) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let path = game_root.join(&normalized);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let plugin = mods::parse_bepin_plugin_metadata(&bytes);
+    let metadata = crate::game::read_file_metadata(&path);
+    let actual = [
+        plugin
+            .as_ref()
+            .and_then(|item| item.guid.clone())
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        metadata
+            .product_name
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        metadata
+            .original_filename
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    ];
+    configured
+        .iter()
+        .zip(actual.iter())
+        .any(|(expected, value)| !expected.is_empty() && value.eq_ignore_ascii_case(expected))
+}
+
 /// 两个游戏相对路径是否落在同一个**包目录**里。
 ///
 /// 用于识别「同一个包的历史清单」：旧版本可能把内容解到子目录，
@@ -584,21 +641,27 @@ pub fn recycle_repository_packages_before_install(
             .as_ref()
             .is_some_and(|binding| binding.is_valid() && binding.matches_identity(repo));
         /*
-         * 历史遗留的手动清单：导入功能曾把在线安装走成本地安装路径，
-         * 留下了 `manual-<uuid>` 清单，里面的文件和本仓库要装的是同一批。
-         * 不回收它们的话，更新完会剩一条「本地安装」分组下的孤儿条目，
-         * 而且它和主 MOD 互相判成重复 —— 用户看到的就是「同一个 MOD 出现两次」。
+         * 历史遗留或手动安装的清单：只要清单里**任一 DLL** 的身份能对上
+         * 本次安装的仓库，整包都算这个仓库的旧版本。
          *
-         * 两种命中方式：文件路径完全相同，或落在同一个安装目录下
-         * （旧版本可能把包解到子目录，路径不同但目录一致）。
+         * 判定用 GUID / 产品名 / 原始文件名 —— 与扫描时「本地 MOD 绑定在线
+         * 仓库」用的是同一套字段。不用文件路径或目录来判断：
+         *   · 包内依赖 DLL 读不出 GUID，靠主 MOD 命中即可整包归属；
+         *   · 管理器解压 ZIP 时所有文件都写进同一份清单，所以命中一个就等于
+         *     命中整包，与它们散落在哪个子目录无关；
+         *   · 同目录判定会误伤 plugins 下平铺的无关插件。
          */
+        let identity_match = manifest
+            .files
+            .iter()
+            .any(|file| dll_matches_repository(game_root, file, repo));
         let overlaps_install = manifest.repository_id.starts_with("manual-")
             && manifest.files.iter().any(|file| {
                 replacement_files.iter().any(|target| {
                     file_key(target) == file_key(file) || same_package_dir(target, file)
                 })
             });
-        if same_id || same_identity || overlaps_install {
+        if same_id || same_identity || identity_match || overlaps_install {
             targets.push(manifest.repository_id.clone());
         }
     }
@@ -1469,6 +1532,17 @@ mod tests {
                 .unwrap()
                 .map(|(manifest, _)| manifest)
         }
+    }
+
+    /// 构造一个只含 BepInPlugin 头的假 DLL，够 `parse_bepin_plugin_metadata` 解析。
+    fn plugin_blob(guid: &str, name: &str, version: &str) -> Vec<u8> {
+        let mut bytes = b"BepInPlugin".to_vec();
+        bytes.extend_from_slice(&[1, 0]);
+        for value in [guid, name, version] {
+            bytes.push(value.len() as u8);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        bytes
     }
 
     impl Drop for Workspace {
@@ -3016,5 +3090,80 @@ mod tests {
                 .join("BepInEx/plugins/Unrelated.dll")
                 .exists()
         );
+    }
+
+    #[test]
+    fn manual_package_is_recycled_by_dll_identity_across_directories() {
+        /*
+         * 用户实际场景：本地装了 DIYLevel 的 ZIP，管理器把主 MOD 和依赖
+         * 一起写进了同一份 manual 清单，但两者可能落在不同子目录。
+         * 该仓库后来发新版本时，必须按**包里任一 DLL 的身份**判定整包归属，
+         * 与文件散落在哪无关，否则这条 manual 包永远不会被回收。
+         */
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "DIYLevel", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "plugin_guid": "com.ch3ngyz.plugin.DIYLevel",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "all"
+        }))
+        .unwrap();
+
+        // 主 MOD 在子目录，依赖平铺在 plugins 根；两者同属一份 manual 清单
+        let main = "BepInEx/plugins/DIYLevel/DIYLevel.dll";
+        let dep = "BepInEx/plugins/OC2DIYLevel-v0.10.dll";
+        workspace.write(
+            main,
+            &plugin_blob("com.ch3ngyz.plugin.DIYLevel", "DIYLevel", "1.8.7"),
+        );
+        workspace.write(dep, b"dependency without plugin metadata");
+        workspace.manifest("manual-legacy", &[main, dep]);
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            // 新版本解到完全不同的可见路径，目录判定帮不上忙
+            &["BepInEx/plugins/DIYLevelNew/DIYLevel.dll".into()],
+        )
+        .unwrap();
+
+        assert_eq!(entries.len(), 1, "整包应按主 MOD 的 GUID 命中并回收");
+        assert!(workspace.active("manual-legacy").is_none());
+        assert!(!workspace.game.join(main).exists(), "主 MOD 应已移走");
+        assert!(!workspace.game.join(dep).exists(), "依赖应随整包一起移走");
+    }
+
+    #[test]
+    fn unrelated_manual_package_survives_repository_install() {
+        // 身份不匹配的 manual 包不能因为「同时存在」就被清掉
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "DIYLevel", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "plugin_guid": "com.ch3ngyz.plugin.DIYLevel",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "all"
+        }))
+        .unwrap();
+
+        let other = "BepInEx/plugins/Other/Other.dll";
+        workspace.write(other, &plugin_blob("com.example.other", "Other", "2.0.0"));
+        workspace.manifest("manual-other", &[other]);
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            &["BepInEx/plugins/DIYLevel/DIYLevel.dll".into()],
+        )
+        .unwrap();
+
+        assert!(entries.is_empty(), "身份不匹配的包不应被回收");
+        assert!(workspace.active("manual-other").is_some());
+        assert!(workspace.game.join(other).exists());
     }
 }

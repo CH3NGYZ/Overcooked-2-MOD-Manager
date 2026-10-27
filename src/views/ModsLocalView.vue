@@ -242,8 +242,12 @@ const groups = computed<ModGroupNode[]>(() => {
 
   const toPackage = (key: string, list: InstalledMod[]): ModPackageNode => {
     const enabledCount = list.filter((mod) => mod.enabled).length
-    // 单 DLL 包直接用这张卡片的标题，让「单包」与「包内 DLL」看起来是同一种东西
-    const label = list[0]?.package_name?.trim() || modTitle(list[0])
+    /*
+     * 包标题：能认出绑定仓库就用仓库名，让「装的是哪个包」一眼可读；
+     * 否则退回安装包名与插件名。整包成员共享一个仓库，所以同一包内
+     * 各 DLL 仍由行内插件名区分，不会因为标题统一而重名。
+     */
+    const label = list[0] ? displayTitle(list[0]) : ''
     const updateCount = list.filter((mod) => mod.update_available).length
     /*
      * 纯依赖 DLL 不参与版本结论：它没有 BepInPlugin 元数据，
@@ -301,11 +305,33 @@ function onGroupsExpanded(names: string[]) {
 
 /** 卡片标题：优先 MOD 包名（同一包内的子 MOD 显示同一个包标题），没有包则用插件名。 */
 /**
+ * 绑定仓库的本地化名称；未绑定返回 undefined。
+ *
+ * 用户认识的是「装的是哪个包」，而不是 DLL 文件名 ——
+ * 本地直装、手动安装或仓库改名后，DLL 名往往还是一串技术命名，
+ * 所以只要认出对应仓库，标题就以仓库名为准。
+ */
+function boundRepositoryName(mod: InstalledMod): string | undefined {
+  const repo = repositoryForMod(repositories.value, mod)
+  if (!repo) return undefined
+  return pickI18n(repo.name_i18n, repo.name).trim() || undefined
+}
+
+/**
  * 包内 DLL 的标题：插件名优先（让同包的不同 DLL 能区分开）。
- * 包名由外层「包标题行」负责展示，这里不再重复。
+ * 包名由外层「包标题行」负责展示，这里不再重复；
+ * 同一个包里的 DLL 都绑同一个仓库，若这里也换成仓库名就全重名了。
  */
 function modTitle(mod: InstalledMod) {
   return mod.plugin_name?.trim() || mod.title || mod.product_name || mod.name
+}
+
+/**
+ * 单 DLL 包 / 包标题行的名称：绑定仓库名优先，
+ * 再退回安装包名与实际插件名。
+ */
+function displayTitle(mod: InstalledMod) {
+  return boundRepositoryName(mod) || mod.package_name?.trim() || modTitle(mod)
 }
 
 /**
@@ -313,7 +339,7 @@ function modTitle(mod: InstalledMod) {
  * 所以优先用包名（与多 DLL 包的标题行保持同一语义）。
  */
 function singleModTitle(mod: InstalledMod) {
-  return mod.package_name?.trim() || modTitle(mod)
+  return displayTitle(mod)
 }
 
 function fail(reason: unknown) {

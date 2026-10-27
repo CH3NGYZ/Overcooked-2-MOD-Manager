@@ -239,10 +239,11 @@ async function openUrl(url: string) {
               <Transition name="readme-content" mode="out-in">
                 <div v-if="loading" key="loading" class="readme-loading" role="status"
                   :aria-label="t('正在加载仓库说明')">
-                  <n-skeleton text :repeat="2" />
-                  <n-skeleton text style="width: 60%" />
-                  <n-skeleton text style="width: 80%" />
-                  <n-skeleton text style="width: 45%" />
+                  <!-- 宽度与圆角统一在 .readme-loading :deep(.n-skeleton) 里定义 -->
+                  <n-skeleton text class="skeleton-line" />
+                  <n-skeleton text class="skeleton-line" />
+                  <n-skeleton text class="skeleton-line" />
+                  <n-skeleton text class="skeleton-line" />
                 </div>
                 <div v-else-if="error" key="error" class="muted">{{ error }}</div>
                 <div v-else key="body" ref="readmeElement" class="markdown-body" v-html="html"></div>
@@ -617,6 +618,19 @@ async function openUrl(url: string) {
   gap: 8px;
   min-height: 88px;
 }
+/*
+ * 骨架条：Naive 的 n-skeleton 默认是 1em 高的实心矩形，满宽一条很抢眼。
+ * 改成圆角长条并缩窄到原宽度的 2/3 左右 —— 骨架只是占位，
+ * 不该比真实内容更醒目；长短交错读起来像段落而不是几个色块。
+ */
+.readme-loading :deep(.n-skeleton) {
+  height: 9px;
+  border-radius: 999px;
+}
+.readme-loading :deep(.skeleton-line:nth-child(1)) { width: 66%; }
+.readme-loading :deep(.skeleton-line:nth-child(2)) { width: 58%; }
+.readme-loading :deep(.skeleton-line:nth-child(3)) { width: 66%; }
+.readme-loading :deep(.skeleton-line:nth-child(4)) { width: 42%; }
 
 /* README 内容 */
 .markdown-body { font-size: 12.5px; line-height: 1.7; color: var(--oc2-text-2); overflow-wrap: anywhere; }

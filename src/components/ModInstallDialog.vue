@@ -21,7 +21,7 @@ import { api } from '../services/tauri'
 import { tagColorFor } from '../theme'
 import { renderReadme } from '../markdown'
 import { t } from '../i18n'
-import type { ModPreview } from '../types'
+import type { ModPreview, ModPreviewEntry } from '../types'
 
 const props = defineProps<{ show: boolean; preview: ModPreview | null }>()
 const emit = defineEmits<{
@@ -62,6 +62,17 @@ function toggleEntry(path: string) {
 }
 /** 换一份预览时清空展开状态：上一份包的 path 对新包没有意义。 */
 watch(() => props.preview?.preview_id, () => { expandedPaths.value = [] })
+
+/**
+ * 条目标题：先用 BepInPlugin 读到的插件名（用户在游戏里认识的名字），
+ * 没有才退回文件名 —— 路径已经在旁边淡灰显示，不需要重复。
+ */
+function entryTitle(entry: ModPreviewEntry) {
+  const name = entry.name?.trim()
+  if (name) return name
+  const file = entry.path.split('/').pop() ?? entry.path
+  return file.replace(/\.dll$/i, '')
+}
 
 /** 弹窗开关；关闭时统一走 discard，保证暂存一定被清理。 */
 const visible = computed({
@@ -104,7 +115,7 @@ async function confirm() {
 
 <template>
   <n-modal :show="visible" preset="card" :title="t('安装详情')" :bordered="false"
-    style="width: min(720px, 92vw)" @update:show="(value: boolean) => { if (!value) discard() }">
+    class="install-dialog" @update:show="(value: boolean) => { if (!value) discard() }">
     <div v-if="preview" class="install-preview">
       <!-- 头部：包名 + 类型 + 三个计数 -->
       <div class="preview-head">
@@ -120,15 +131,18 @@ async function confirm() {
 
       <!--
         条目区：单 MOD 与 MOD 包统一成同一套横排紧凑卡片。
-        收起时只有「名称 …… 版本」，与 MOD 管理页的卡片同一视觉语言；
+        收起态是「插件名 …… 版本」，插件名后紧跟淡灰的包内路径；
+        路径自己截断省略，绝不挤压右侧版本列。
         点击展开该 DLL 的完整元数据，再次点击收起。
-        安装前不想逐条看细节时，这一区不会占掉提交日志的空间。
       -->
       <div v-if="preview.entries.length" class="preview-list">
         <article v-for="entry in preview.entries" :key="entry.path" class="preview-row"
           :class="{ expanded: isEntryExpanded(entry.path) }" @click="toggleEntry(entry.path)">
           <div class="preview-row-line">
-            <span class="preview-name" :title="entry.name || entry.path">{{ entry.name || entry.path }}</span>
+            <span class="preview-main">
+              <b class="preview-name" :title="entryTitle(entry)">{{ entryTitle(entry) }}</b>
+              <span class="preview-path mono" :title="entry.path">{{ entry.path }}</span>
+            </span>
             <span class="preview-version mono">{{ entry.version || '—' }}</span>
           </div>
           <n-collapse-transition :show="isEntryExpanded(entry.path)">
@@ -164,27 +178,67 @@ async function confirm() {
         <div v-if="releaseLogHtml" class="release-log-box" v-html="releaseLogHtml"></div>
         <div v-else class="release-log-box release-log-empty muted">{{ t('该版本没有提交日志') }}</div>
       </div>
+    </div>
 
-      <div class="install-actions">
-        <n-button secondary :disabled="installing" @click="discard">{{ t('取消') }}</n-button>
-        <n-button type="primary" :loading="installing" @click="confirm">{{ t('立即安装') }}</n-button>
-      </div>
+    <!-- 操作行在滚动区之外：无论展开多少条目、日志多长，按钮位置都不动 -->
+    <div v-if="preview" class="install-actions">
+      <n-button secondary :disabled="installing" @click="discard">{{ t('取消') }}</n-button>
+      <n-button type="primary" :loading="installing" @click="confirm">{{ t('立即安装') }}</n-button>
     </div>
   </n-modal>
 </template>
 
 <style scoped>
-/* 预览区：与详情区同款的紧凑信息密度 */
-.install-preview { display: flex; flex-direction: column; gap: 12px; }
 /*
- * 弹窗内容整体限高；条目与日志共享这块空间，超出时由这一层统一滚动。
- * 这样展开一条详情不会被内层容器裁掉，日志区也仍能保留自己的滚动条。
- * Naive 的 .n-card__content 不会带 scoped 属性，必须用 :deep 命中。
+ * 弹窗尺寸固定在标题栏下方的可用区域内：宽 80%、高 90%。
+ *
+ * 之前用 max-height 让内容自己撑，展开一条 MOD 详情就会把弹窗顶高，
+ * 「取消 / 立即安装」被推到视口外，用户得先滚到底才找得到按钮。
+ * 现在整个弹窗是固定尺寸，头部与底部操作行不动，只有中间的
+ * .install-preview 内部滚动，展开多少条都不会改变弹窗大小。
+ *
+ * 注意 Naive 在 preset="card" 下会把传进来的 class 合并到「同时带
+ * n-modal 与 n-card 的同一个元素」上，而不是外层容器 ——
+ * 所以尺寸、flex 布局都必须作用在这个元素自身，不能写 .n-card 后代选择器。
  */
-:deep(.n-card__content > .install-preview) {
-  max-height: min(560px, 60vh);
+:global(.n-modal.install-dialog) {
+  width: min(80vw, 1180px);
+  max-width: 80vw;
+  height: 90vh;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+/*
+ * 内容区吃掉剩余高度：头部与底部操作行保持自然高度。
+ * 内容区类名是 .n-card-content（单下划线体系里的连字符写法），
+ * 不是 .n-card__content；它同时是 install-preview 与 install-actions 的父级。
+ */
+:global(.n-modal.install-dialog .n-card-content) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.install-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* 只有这一层滚动：条目与日志都在这里上下滑动 */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding-right: 2px;
+}
+/* 操作行固定在内容区底部，不参与滚动 */
+.install-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-top: 12px;
 }
 .preview-head {
   display: flex;
@@ -222,18 +276,40 @@ async function confirm() {
 .preview-row.expanded { border-color: var(--oc2-accent); }
 .preview-row-line {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 14px;
   min-width: 0;
+}
+/*
+ * 左侧「插件名 + 路径」自己是一组：路径允许被压缩并省略，
+ * 版本列 flex: 0 0 auto 永不缩，所以路径只会避让、不会顶开版本。
+ */
+.preview-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .preview-name {
   font-size: 12.5px;
   font-weight: 500;
   color: var(--oc2-text-1);
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.preview-path {
+  font-size: 11.5px;
+  color: var(--oc2-text-4);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 路径是次要信息：优先让插件名保持完整 */
+  flex: 1 1 auto;
   min-width: 0;
 }
 .preview-version { font-size: 12px; color: var(--oc2-text-3); flex: 0 0 auto; }

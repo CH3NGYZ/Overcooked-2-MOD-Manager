@@ -61,10 +61,18 @@ function installLabel(repo: Repository) {
 function hasLocalInstall(repo: Repository) {
   return modsForRepository(mods.value, repo).length > 0
 }
-// 「重装 / 更新」这类「已安装再操作」状态用主题色对比色；其余走状态语义色
+/*
+ * 仓库状态标签的强调色，按「用户看到什么」分三档：
+ *   未安装 / 未刷新 / 仓库文件未安装 → 灰色（muted），不需要强调
+ *   最新版、仓库文件已安装           → 主题色，稳定可用
+ *   可更新                           → 主题色对比色，唯一的警告性强调
+ * 其余状态（未启用、刷新失败、仓库缺失）保留各自的状态语义色，
+ * 因为它们表达的是错误而不是「安装进度」。
+ */
 function statusToneClass(repo: Repository) {
   const key = statusOf(repo).key
-  if (key === 'latest' || key === 'update_available') return 'state-tag--brand'
+  if (key === 'update_available') return 'state-tag--contrast'
+  if (key === 'latest' || key === 'installed') return 'state-tag--accent'
   if (key === 'not_installed' || key === 'not_installed_raw' || key === 'not_refreshed') {
     return 'state-tag--muted'
   }
@@ -650,42 +658,41 @@ defineExpose({ refreshAll, visibleCount })
   margin-left: auto;
 }
 /*
- * 主按钮配色：三种动作共享同一套布局，只在颜色上区分。
- *   install   → 主题色（首次安装，最常用）
- *   reinstall → 主题色对比色（已是最新，再装一次）
- *   update    → 主题色对比色（有更新）
- * 对比色由 theme.ts 按当前主题色实时计算，切换主题色时跟着变。
- * Naive 的 n-button 没有「自定义实色」的语义类型，这里用 CSS 变量覆盖
- * 它的 primary 外观，而不是硬编码某个色值。
+ * 主按钮配色按「语义分组」而不是按动作分三色：
+ *   install / reinstall → 主题色（都是「装到最新」这一档，不需要警告）
+ *   update              → 主题色对比色（唯一需要用户注意的动作）
+ *
+ * Naive 的按钮把配色变量写在内联 style 上，普通 class 选择器会被它压住，
+ * 因此这里重复类名提高特异性，让我们的变量优先。
  */
-.card-install--install.n-button {
-  --n-color: var(--oc2-accent);
-  --n-color-hover: var(--oc2-accent-hover);
-  --n-color-pressed: var(--oc2-accent-hover);
-  --n-color-focus: var(--oc2-accent-hover);
-  --n-text-color: var(--oc2-accent-on);
-  --n-text-color-hover: var(--oc2-accent-on);
-  --n-text-color-pressed: var(--oc2-accent-on);
-  --n-text-color-focus: var(--oc2-accent-on);
-  --n-border: 1px solid var(--oc2-accent);
-  --n-border-hover: 1px solid var(--oc2-accent-hover);
-  --n-border-pressed: 1px solid var(--oc2-accent-hover);
-  --n-border-focus: 1px solid var(--oc2-accent-hover);
+.card-install.card-install--install.n-button,
+.card-install.card-install--reinstall.n-button {
+  --n-color: var(--oc2-accent) !important;
+  --n-color-hover: var(--oc2-accent-hover) !important;
+  --n-color-pressed: var(--oc2-accent-hover) !important;
+  --n-color-focus: var(--oc2-accent-hover) !important;
+  --n-text-color: var(--oc2-accent-on) !important;
+  --n-text-color-hover: var(--oc2-accent-on) !important;
+  --n-text-color-pressed: var(--oc2-accent-on) !important;
+  --n-text-color-focus: var(--oc2-accent-on) !important;
+  --n-border: 1px solid var(--oc2-accent) !important;
+  --n-border-hover: 1px solid var(--oc2-accent-hover) !important;
+  --n-border-pressed: 1px solid var(--oc2-accent-hover) !important;
+  --n-border-focus: 1px solid var(--oc2-accent-hover) !important;
 }
-.card-install--reinstall.n-button,
-.card-install--update.n-button {
-  --n-color: var(--oc2-accent-contrast);
-  --n-color-hover: var(--oc2-accent-contrast-hover);
-  --n-color-pressed: var(--oc2-accent-contrast-hover);
-  --n-color-focus: var(--oc2-accent-contrast-hover);
-  --n-text-color: var(--oc2-accent-on);
-  --n-text-color-hover: var(--oc2-accent-on);
-  --n-text-color-pressed: var(--oc2-accent-on);
-  --n-text-color-focus: var(--oc2-accent-on);
-  --n-border: 1px solid var(--oc2-accent-contrast);
-  --n-border-hover: 1px solid var(--oc2-accent-contrast-hover);
-  --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover);
-  --n-border-focus: 1px solid var(--oc2-accent-contrast-hover);
+.card-install.card-install--update.n-button {
+  --n-color: var(--oc2-accent-contrast) !important;
+  --n-color-hover: var(--oc2-accent-contrast-hover) !important;
+  --n-color-pressed: var(--oc2-accent-contrast-hover) !important;
+  --n-color-focus: var(--oc2-accent-contrast-hover) !important;
+  --n-text-color: var(--oc2-accent-on) !important;
+  --n-text-color-hover: var(--oc2-accent-on) !important;
+  --n-text-color-pressed: var(--oc2-accent-on) !important;
+  --n-text-color-focus: var(--oc2-accent-on) !important;
+  --n-border: 1px solid var(--oc2-accent-contrast) !important;
+  --n-border-hover: 1px solid var(--oc2-accent-contrast-hover) !important;
+  --n-border-pressed: 1px solid var(--oc2-accent-contrast-hover) !important;
+  --n-border-focus: 1px solid var(--oc2-accent-contrast-hover) !important;
 }
 .card-desc {
   margin: 0;

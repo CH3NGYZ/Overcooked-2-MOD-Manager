@@ -303,10 +303,16 @@ body {
   background: rgba(168, 85, 247, .18);
 }
 /*
- * 「品牌」色标签：跟随主题色的对比色，用于「已安装且最新 / 可更新」
- * 这类与主按钮同一语义组的状态。不用固定色值 —— 主题色切换时自动跟随。
+ * 仓库状态标签的两档强调色（只在 MOD 安装页使用，跟随主题色实时变化）：
+ *   state-tag--accent   「最新版」「已安装（仓库文件）」→ 主题色，表示稳定可用
+ *   state-tag--contrast 「可更新」                    → 主题色对比色，用来提醒
+ * 「未安装」类仍走 muted 灰色，不参与强调。
  */
-.state-tag--brand.n-tag {
+.state-tag--accent.n-tag {
+  color: var(--oc2-accent);
+  background: color-mix(in srgb, var(--oc2-accent) 18%, transparent);
+}
+.state-tag--contrast.n-tag {
   color: var(--oc2-accent-contrast);
-  background: color-mix(in srgb, var(--oc2-accent-contrast) 18%, transparent);
+  background: color-mix(in srgb, var(--oc2-accent-contrast) 20%, transparent);
 }

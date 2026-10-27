@@ -859,8 +859,11 @@ function removePackage(node: ModPackageNode) {
 
                   <span class="tool-divider" />
 
-                  <!-- 包级只有整包删除，按自身宽度贴右即可，不必预留整列 -->
-                  <span class="tool-group" @click.stop>
+                  <!--
+                    包标题与单 MOD 卡片是同一层级，工具栏必须用同一列宽，
+                    这样删除按钮落在同一竖线；只有一个按钮时其余位置留空。
+                  -->
+                  <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }" @click.stop>
                     <n-button size="tiny" quaternary type="error" :title="t('整包删除')"
                       :disabled="game?.kitchen_running" @click="removePackage(pkg)">
                       <TrashOutline width="14" height="14" />
@@ -896,10 +899,10 @@ function removePackage(node: ModPackageNode) {
                     <div class="card-right">
                       <span class="tool-divider-ghost" />
                       <!--
-                        包内子 MOD 的工具栏不预留其它行的列宽（那会让右侧空一大块），
-                        直接按自身按钮宽度贴右，与页面全局缩进对齐即可。
+                        包内子 MOD 也用同一列宽：这一行是包内容但按钮仍需与
+                        包标题、单 MOD 卡片落在同一竖线，视觉上才是一整套工具栏。
                       -->
-                      <span class="tool-group">
+                      <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }">
                         <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('查看日志')"
                           class="tool-optional" @click.stop="openLogs(mod)">
                           <DocumentTextOutline width="14" height="14" />

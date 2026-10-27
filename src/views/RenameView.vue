@@ -137,16 +137,52 @@ function applyColor(color: string) {
 }
 
 /** 字号按「基准 + 增量」应用，避免连续拖动叠加。 */
-function applySize(step: number) {
+/**
+ * 选中范围内的基准字号（本轮拖动开始前的值）。
+ * 拖动时 sizes 会被本轮改过，必须回到起点才能正确叠加增量。
+ */
+let sizeBaseline: number[] | null = null
+
+/** 拖动滑块时实时预览：立刻按「基准 + 增量」重算，不等到松手。 */
+function previewSize(step: number) {
+  sizeStep.value = step
   const range = selected.value
-  if (!range) { message.warning(t('请先选择要修改的文字')); return }
+  if (!range) return
+  if (!sizeBaseline) sizeBaseline = [...sizes.value]
   const next = [...sizes.value]
   for (let index = range.start; index < range.end; index += 1) {
-    const base = sizes.value[index] ?? DEFAULT_SIZE
-    next[index] = Math.max(1, Math.min(71, base + step))
+    next[index] = Math.max(1, Math.min(71, (sizeBaseline[index] ?? DEFAULT_SIZE) + step))
+  }
+  sizes.value = next
+}
+
+/** 松手或输入框提交：结束本轮调整，增量归零并清掉基准。 */
+function endSizeAdjust(value: number) {
+  if (!selected.value) {
+    message.warning(t('请先选择要修改的文字'))
+    sizeStep.value = 0
+    sizeBaseline = null
+    return
+  }
+  previewSize(value)
+  sizeStep.value = 0
+  sizeBaseline = null
+}
+
+/** 输入框直接给绝对值：按「目标值 - 基准」换算增量后应用。 */
+function applySizeInput(target: number) {
+  const range = selected.value
+  if (!range) {
+    message.warning(t('请先选择要修改的文字'))
+    return
+  }
+  const next = [...sizes.value]
+  for (let index = range.start; index < range.end; index += 1) {
+    next[index] = Math.max(1, Math.min(71, (sizes.value[index] ?? DEFAULT_SIZE) + target))
   }
   sizes.value = next
   sizeStep.value = 0
+  sizeBaseline = null
 }
 
 function resetSelectionStyle() {
@@ -244,20 +280,27 @@ onBeforeUnmount(clearNativeSelection)
           <div class="controls">
             <div class="control-block">
               <span class="control-label">{{ t('选择颜色') }}</span>
-              <!-- 色板与自定义取色都用 Naive 的 color-picker（自带色块、取色器、清空） -->
-              <n-color-picker v-model:value="picker" :show-alpha="false" size="small" class="picker"
-                :modes="['hex']" :swatches="PALETTE"
-                @update:value="(value: string) => applyColor(value)" />
+              <!--
+                预设色块全部平铺出来（点击即应用），后面跟一个「其他颜色」入口
+                打开 Naive 取色器。平铺用 n-button 的色块形态，不需要自绘。
+              -->
+              <div class="palette-row">
+                <button v-for="color in PALETTE" :key="color" type="button" class="palette-swatch"
+                  :class="{ active: picker.toLowerCase() === color.toLowerCase() }"
+                  :style="{ background: color }" :title="color" @click="applyColor(color)" />
+                <n-color-picker v-model:value="picker" :show-alpha="false" size="small" class="picker-custom"
+                  :modes="['hex']" @update:value="(value: string) => applyColor(value)" />
+              </div>
             </div>
 
             <div class="control-block">
               <span class="control-label">{{ t('字号增量') }}</span>
               <div class="size-row">
+                <!-- 拖动即预览：update:value 就重算，松手时归零增量 -->
                 <n-slider :value="sizeStep" :min="-34" :max="36" :step="1" class="size-slider"
-                  @update:value="(value: number) => (sizeStep = value)"
-                  @dragend="applySize(sizeStep)" />
+                  @update:value="previewSize" @dragend="endSizeAdjust(sizeStep)" />
                 <n-input-number :value="sizeStep" size="small" :min="-34" :max="36" class="size-input"
-                  @update:value="(value: number | null) => applySize(value ?? 0)" />
+                  @update:value="(value: number | null) => applySizeInput(value ?? 0)" />
                 <n-button size="small" secondary @click="resetSelectionStyle">
                   <RefreshOutline width="14" height="14" />{{ t('重置样式') }}
                 </n-button>
@@ -271,18 +314,16 @@ onBeforeUnmount(clearNativeSelection)
             <b>{{ t('生成的名字代码') }}</b>
             <!--
               容量指示：圆角标签本身就是进度条。
-              n-progress 的填充色画在标签底层，文字叠在上层，
-              这样不再需要标签之外单独占一行的进度条。
+              超限时在它右边直接显示红色警告，不再单独占一行提示。
             -->
             <span class="byte-chip" :class="{ over: overLimit }">
               <n-progress class="byte-chip-bar" type="line" :percentage="percent" :show-indicator="false"
                 :height="20" :border-radius="999" :status="overLimit ? 'error' : 'success'" />
               <span class="byte-chip-text">{{ byteLength }} / {{ MAX_NAME_BYTES }} B</span>
             </span>
+            <span v-if="overLimit" class="limit-warning">{{ t('超出 238 字节限制') }}</span>
           </div>
           <n-input :value="code" type="textarea" readonly :autosize="{ minRows: 2, maxRows: 6 }" class="code" />
-          <p v-if="overLimit" class="over muted">{{ t('名字代码超过 MOD 的 238 字节限制，请减少代码长度') }}</p>
-          <p v-else class="muted">{{ t('复制后粘贴到游戏内 MOD 菜单，或直接推送到正在运行的 MOD') }}</p>
         </section>
 
         <n-spin v-if="pushing" class="push-hint" size="small" />
@@ -304,8 +345,15 @@ onBeforeUnmount(clearNativeSelection)
   display: none;
 }
 /* 面板主体不额外加内边距（间距由 .rename-stage 与各 .panel 负责） */
+/*
+ * 面板内间距：两个 tab-pane 各自包含多张卡片，
+ * 这里补回纵向 gap（原先由已删除的 .colorful 容器提供）。
+ */
 .stage-tabs :deep(.n-tab-pane) {
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 /*
  * Naive 的 animated 默认只位移 32px，用于标签页内的轻量过渡。
@@ -408,9 +456,34 @@ onBeforeUnmount(clearNativeSelection)
   gap: 6px;
 }
 .control-label { font-size: 12px; color: var(--oc2-text-3); }
+/*
+ * 色板：预设色全部平铺 + 末尾一个「其他颜色」取色器。
+ * 色块本身是普通 button（只是一个色块，Naive 没有专门的纯色块组件），
+ * 取色器仍是 n-color-picker，负责任意颜色。
+ */
+.palette-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.palette-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid var(--oc2-row-line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform .14s ease, border-color .14s ease;
+}
+.palette-swatch:hover { transform: scale(1.12); border-color: var(--oc2-text-2); }
+.palette-swatch.active {
+  border-color: var(--oc2-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 40%, transparent);
+}
 /* NColorPicker 渲染的是 Fragment，根元素拿不到 scoped 的 data-v 属性，
    所以宽度只能用 :deep 从父级选择器命中。 */
-.control-block :deep(.n-color-picker) { width: 220px; }
+.palette-row :deep(.n-color-picker) { width: 150px; }
 .size-row {
   display: flex;
   align-items: center;
@@ -419,6 +492,12 @@ onBeforeUnmount(clearNativeSelection)
 .size-slider { flex: 1; min-width: 120px; }
 .size-input { width: 90px; flex: 0 0 auto; }
 .code :deep(textarea) { font-family: Consolas, monospace; font-size: 12px; }
-.over { color: #f87171; }
+/* 超限警告：紧跟容量胶囊右侧，不单独占行 */
+.limit-warning {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #f87171;
+  white-space: nowrap;
+}
 .push-hint { align-self: center; }
 </style>

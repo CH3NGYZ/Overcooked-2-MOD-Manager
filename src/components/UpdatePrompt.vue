@@ -63,8 +63,8 @@ async function install() {
 
 <template>
   <!-- 复用统一弹窗外壳：尺寸随内容自适应，更新日志再长也不会超出视口 -->
-  <AppModal :show="show" :mask-closable="false" max-width="min(520px, calc(100vw - 80px))"
-    max-height="85vh" min-height="160px" @update:show="close">
+  <AppModal :show="show" :mask-closable="false" max-width="min(520px, 92%)"
+    max-height="85%" min-height="160px" @update:show="close">
     <div class="update-body">
       <h2 class="title">
         发现新版本<span v-if="update">: v{{ update.version }}</span>

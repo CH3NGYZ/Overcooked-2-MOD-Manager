@@ -205,8 +205,8 @@ onBeforeUnmount(disposeEditor)
     Monaco 留在 0 尺寸容器里持续内部重排，表现为「点关闭后程序卡死」。
   -->
   <AppModal :show="show" :mask-closable="false" display-directive="if" :title="title"
-    to=".page-scroll" max-width="min(1000px, calc(100vw - var(--oc2-rail-width, 108px) - 96px))"
-    max-height="85vh" min-height="460px" @update:show="(value: boolean) => emit('update:show', value)">
+    to=".page-scroll" max-width="min(1000px, 96%)"
+    max-height="85%" min-height="460px" @update:show="(value: boolean) => emit('update:show', value)">
     <div class="config-head">
       <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>
       <!-- 用 moderate 而非 contrast：后者不在配色表里，会回退成灰色 -->

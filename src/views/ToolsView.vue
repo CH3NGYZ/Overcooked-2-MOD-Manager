@@ -142,7 +142,7 @@ async function resetUi() {
   </SettingsGroup>
 
   <!-- 日志查看：统一弹窗外壳负责尺寸上限与滚动，内容区放 n-log -->
-  <AppModal :show="logOpen" card-class="log-dialog" :title="logTitle" max-width="min(880px, 90vw)"
+  <AppModal :show="logOpen" card-class="log-dialog" :title="logTitle" max-width="min(880px, 90%)"
     @update:show="(value: boolean) => (logOpen = value)">
     <template #header-extra>
       <div class="log-head-extra">

@@ -75,20 +75,45 @@ function entryTitle(entry: ModPreviewEntry) {
   return file.replace(/\.dll$/i, '')
 }
 
-/** 弹窗开关；关闭时统一走 discard，保证暂存一定被清理。 */
+/**
+ * 弹窗开关；关闭时先只收起，等离场动画播完再通知丢弃。
+ *
+ * 之前是「收起 + 立刻发 discarded」同时做，调用方马上把 preview 置空，
+ * 弹窗内容先消失、只剩下一个空框在缩小，看不到渐隐。
+ */
 const visible = computed({
   get: () => props.show,
   set: (value: boolean) => {
     if (value) emit('update:show', true)
-    else discard()
+    else requestDiscard()
   },
 })
 
-/** 放弃当前预览：通知调用方清理，并收起面板。预览由调用方持有。 */
-function discard() {
-  const current = props.preview
-  if (current) emit('discarded', current)
+/** 这次关闭是否由「用户放弃」触发（安装成功后不该再清理暂存）。 */
+const discarding = ref(false)
+/** 安装已成功、等离场动画结束后再通知宿主（否则内容先消失、看不到渐隐）。 */
+const installCompleted = ref(false)
+
+/** 用户放弃：立刻收起，动画结束后再通知调用方清理。 */
+function requestDiscard() {
+  discarding.value = true
   emit('update:show', false)
+}
+
+/**
+ * 离场动画结束：此时内容已经淡出，可以安全清空并通知调用方。
+ * Naive 的 modal 用 fade-in-scale-up-transition（缩小 + 渐隐）。
+ */
+function handleAfterLeave() {
+  if (discarding.value) {
+    discarding.value = false
+    const current = props.preview
+    if (current) emit('discarded', current)
+  }
+  if (installCompleted.value) {
+    installCompleted.value = false
+    emit('installed')
+  }
 }
 
 /** 用户确认安装。 */
@@ -103,9 +128,9 @@ async function confirm() {
       return
     }
     message.success(result.message)
-    // 后端已在 confirm 里删掉暂存，这里只收起面板
+    // 后端已在 confirm 里删掉暂存；收起面板，动画结束后再通知宿主刷新
+    installCompleted.value = true
     emit('update:show', false)
-    emit('installed')
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : String(reason))
   } finally {
@@ -120,7 +145,8 @@ async function confirm() {
     展开任意多条目、提交日志再长，弹窗大小与按钮位置都不会变。
   -->
   <AppModal :show="visible" :title="t('安装详情')" card-class="install-dialog"
-    @update:show="(value: boolean) => { if (!value) discard() }">
+    @update:show="(value: boolean) => (visible = value)"
+    @after-leave="handleAfterLeave">
     <div v-if="preview" class="install-preview">
       <!-- 头部：包名 + 类型 + 三个计数 -->
       <div class="preview-head">
@@ -186,7 +212,7 @@ async function confirm() {
     </div>
 
     <template #footer>
-      <n-button secondary :disabled="installing" @click="discard">{{ t('取消') }}</n-button>
+      <n-button secondary :disabled="installing" @click="requestDiscard">{{ t('取消') }}</n-button>
       <n-button type="primary" :loading="installing" @click="confirm">{{ t('立即安装') }}</n-button>
     </template>
   </AppModal>

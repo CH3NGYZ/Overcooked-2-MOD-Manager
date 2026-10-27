@@ -5222,35 +5222,22 @@ fn install_downloaded_repository(
                 .replace('\\', "/"),
         ]
     };
-    let recycled = if manifests_dir
-        .join(format!("{}.toml", repo.id))
-        .try_exists()
-        .map_err(|error| error.to_string())?
-    {
-        let entry = recycle_bin::recycle_before_reinstall(
-            recycle_root,
-            manifests_dir,
-            game_root,
-            &repo.id,
-            &replacement_files,
-        )?;
-        if let Some(entry) = &entry {
-            log::info!(
-                "重装前已回收旧 MOD 包：仓库={}，回收记录={}，文件数={}",
-                repo.id,
-                entry.id,
-                entry.file_count
-            );
-        } else {
-            log::info!(
-                "重装前无可回收旧文件，继续安装，成功后更新原清单：仓库={}",
-                repo.id
-            );
-        }
-        entry
-    } else {
-        None
-    };
+    /*
+     * 安装前回收**所有**归属该仓库的旧包，而不只是 repository_id 完全相等的
+     * 那一个。同一仓库历史上可能装出过多个包（换过包 ID、旧清单未清理），
+     * 只回收其中一个会让装完仍然显示「重复」。用户要的语义是：
+     * 更新一次就把同仓库的旧装全部清掉，再装新的。
+     */
+    let recycled = recycle_bin::recycle_repository_packages_before_install(
+        recycle_root,
+        manifests_dir,
+        game_root,
+        repo,
+        &replacement_files,
+    )?;
+    if recycled.is_empty() {
+        log::info!("安装前没有需要回收的同仓库旧包：仓库={}", repo.id);
+    }
     let installation: Result<usize, String> = (|| {
         let pending = if let Some(plan) = &plan {
             archive::extract_prepared_mod_zip(asset_path, game_root, plan)?
@@ -5280,7 +5267,9 @@ fn install_downloaded_repository(
         Ok(pending.commit().len())
     })();
     if let Err(error) = &installation {
-        if let Some(entry) = recycled {
+        // 安装失败：把本次回收的所有同仓库旧包按逆序恢复。
+        // 逆序是为了让「后回收的先恢复」，与原清单的提交顺序相反，避免中间态冲突。
+        for entry in recycled.iter().rev() {
             if let Err(restore_error) =
                 recycle_bin::restore(recycle_root, manifests_dir, game_root, &entry.id)
             {

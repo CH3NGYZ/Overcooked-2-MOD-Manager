@@ -119,8 +119,8 @@ onBeforeUnmount(() => { dragUnlisten?.(); dragUnlisten = null })
 
 <template>
   <!-- 复用统一弹窗外壳：不传 #footer，内容区独占剩余高度并自己滚动 -->
-  <AppModal :show="open" :title="t('安装 MOD')" max-width="min(620px, 92vw)"
-    max-height="min(600px, 80vh)" @update:show="(value: boolean) => (open = value)">
+  <AppModal :show="open" :title="t('安装 MOD')" max-width="min(620px, 92%)"
+    max-height="min(600px, 80%)" @update:show="(value: boolean) => (open = value)">
     <n-tabs v-model:value="sourceTab" type="segment" animated>
       <n-tab-pane name="local" :tab="t('本地文件')">
         <!--

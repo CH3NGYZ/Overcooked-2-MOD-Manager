@@ -521,26 +521,66 @@ pub fn recycle_selected_mod(
     .ok_or_else(|| NO_FILES.into())
 }
 
-/// Shared files being overwritten belong to the replacement transaction too.
-/// None means no old files need staging. Keep the old manifest until the
-/// replacement installation atomically commits its new manifest.
-pub fn recycle_before_reinstall(
+/// 安装某个仓库的资产前，回收**所有**归属该仓库的已装包。
+///
+/// 「归属该仓库」按安装清单里的 `repository_id` 与 `repository_binding` 判定：
+///   - `repository_id` 等于本次安装的包 ID（正常升级）；
+///   - 或清单的 binding 与本次仓库身份一致（历史安装用了别的包 ID，
+///     或同一仓库先后装出过不同包 —— 这正是「重复」的来源）。
+///
+/// 之前只回收 `repository_id` 完全相等的那一个清单，同仓库的其它副本会
+/// 留在磁盘上，装完仍显示「重复」。用户要的语义是「更新一次就把同仓库的
+/// 旧装全部清掉，再装新的」。
+///
+/// 返回本次回收的全部记录；调用方在安装失败时据此整体回滚。
+/// 任一包回收失败即中止（不继续安装），避免留下半清理状态。
+pub fn recycle_repository_packages_before_install(
     root: &Path,
     manifests_dir: &Path,
     game_root: &Path,
-    package_id: &str,
+    repo: &crate::models::RepositoryConfig,
     replacement_files: &[String],
-) -> Result<Option<ModRecycleEntry>, String> {
-    recycle_package_with_mods(
-        root,
-        manifests_dir,
-        game_root,
-        package_id,
-        None,
-        None,
-        None,
-        replacement_files,
-    )
+) -> Result<Vec<ModRecycleEntry>, String> {
+    let mut targets = Vec::new();
+    for manifest in all_active_manifests(manifests_dir)? {
+        let same_id = manifest.repository_id == repo.id;
+        let same_binding = manifest
+            .repository_binding
+            .as_ref()
+            .is_some_and(|binding| binding.is_valid() && binding.matches_repository(repo));
+        if same_id || same_binding {
+            targets.push(manifest.repository_id);
+        }
+    }
+    targets.sort();
+    targets.dedup();
+
+    let mut entries = Vec::new();
+    for package_id in targets {
+        // 包 ID 与本次相同的那一个属于「原位替换」，共享文件规则由
+        // recycle_before_reinstall 处理；其它包整体回收。
+        let entry = recycle_package_with_mods(
+            root,
+            manifests_dir,
+            game_root,
+            &package_id,
+            None,
+            None,
+            None,
+            replacement_files,
+        )?;
+        if let Some(entry) = entry {
+            log::info!(
+                "安装前回收同仓库旧包：仓库={}，包={}，回收记录={}，文件数={}",
+                repo.id,
+                package_id,
+                entry.id,
+                entry.file_count
+            );
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
 }
 
 fn has_safe_replacement(
@@ -2624,5 +2664,112 @@ mod tests {
             fs::read(outside.join("A.dll")).unwrap(),
             b"outside original"
         );
+    }
+
+    #[test]
+    fn installing_repository_recycles_every_package_bound_to_it() {
+        // 同一仓库历史上装出过三个包：两个靠 binding 识别、一个靠 repository_id。
+        // 安装前必须全部回收，否则装完仍会显示「重复」。
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-1", "name": "Repo", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "stable"
+        }))
+        .unwrap();
+
+        let binding = || crate::models::RepositoryBinding {
+            provider: crate::models::Provider::Github,
+            owner: "Owner".into(),
+            repository: "Mod".into(),
+            tag: "v1.2.3".into(),
+            channel: crate::models::Channel::Stable,
+        };
+
+        // 包 A：靠 binding 匹配（旧包 ID，与本次安装 ID 不同）
+        workspace.write("BepInEx/plugins/Bundle/dup-a.dll", b"dup a");
+        let mut a = workspace.manifest("old-package-a", &["BepInEx/plugins/Bundle/dup-a.dll"]);
+        a.repository_binding = Some(binding());
+        archive::write_manifest(&workspace.manifests, &a).unwrap();
+
+        // 包 B：同样靠 binding 匹配
+        workspace.write("BepInEx/plugins/Bundle/dup-b.dll", b"dup b");
+        let mut b = workspace.manifest("old-package-b", &["BepInEx/plugins/Bundle/dup-b.dll"]);
+        b.repository_binding = Some(binding());
+        archive::write_manifest(&workspace.manifests, &b).unwrap();
+
+        // 包 C：repository_id 就是本次 ID
+        workspace.write("BepInEx/plugins/Bundle/same-id.dll", b"same id");
+        workspace.manifest("repo-1", &["BepInEx/plugins/Bundle/same-id.dll"]);
+
+        // 同 GUID 但属于别的仓库：不能动
+        workspace.write("BepInEx/plugins/Other/keep.dll", b"keep");
+        let mut keep = workspace.manifest("other-repo", &["BepInEx/plugins/Other/keep.dll"]);
+        keep.repository_binding = Some(crate::models::RepositoryBinding {
+            provider: crate::models::Provider::Github,
+            owner: "SomeoneElse".into(),
+            repository: "OtherMod".into(),
+            tag: "v9.9.9".into(),
+            channel: crate::models::Channel::Stable,
+        });
+        archive::write_manifest(&workspace.manifests, &keep).unwrap();
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            &["BepInEx/plugins/Bundle/new.dll".into()],
+        )
+        .unwrap();
+
+        assert_eq!(entries.len(), 3, "三个同仓库包都应被回收");
+        // 三个包的清单都已离开活动目录
+        assert!(workspace.active("old-package-a").is_none());
+        assert!(workspace.active("old-package-b").is_none());
+        assert!(workspace.active("repo-1").is_none());
+        // 其它仓库不受影响
+        assert!(workspace.active("other-repo").is_some());
+        assert_eq!(
+            fs::read(workspace.game.join("BepInEx/plugins/Other/keep.dll")).unwrap(),
+            b"keep"
+        );
+        // 被回收的文件已从游戏目录移走
+        assert!(
+            !workspace
+                .game
+                .join("BepInEx/plugins/Bundle/dup-a.dll")
+                .exists()
+        );
+        assert!(
+            !workspace
+                .game
+                .join("BepInEx/plugins/Bundle/dup-b.dll")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn repository_recycle_skips_unrelated_bindings() {
+        // 仓库没装过任何东西时返回空，调用方据此跳过回滚准备
+        let workspace = Workspace::new();
+        let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "repo-fresh", "name": "Fresh", "provider": "github",
+            "username": "Owner", "repository": "Mod", "download_mode": "release",
+            "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
+            "channel": "stable"
+        }))
+        .unwrap();
+
+        let entries = recycle_repository_packages_before_install(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &repo,
+            &["BepInEx/plugins/new.dll".into()],
+        )
+        .unwrap();
+        assert!(entries.is_empty());
     }
 }

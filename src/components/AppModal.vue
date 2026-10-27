@@ -52,8 +52,12 @@ const props = withDefaults(defineProps<{
   to?: string
 }>(), {
   title: '',
-  maxWidth: 'min(80vw, 1180px)',
-  maxHeight: '90vh',
+  /*
+   * 用百分比而不是 vw/vh：界面缩放是 WebView zoom，vw/vh 不随之缩放，
+   * 高缩放下会算出比可见区域更大的尺寸。百分比相对已缩放的容器计算。
+   */
+  maxWidth: '80%',
+  maxHeight: '90%',
   minHeight: '',
   bordered: false,
   maskClosable: true,
@@ -62,7 +66,15 @@ const props = withDefaults(defineProps<{
   to: undefined,
 })
 
-const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
+const emit = defineEmits<{
+  (event: 'update:show', value: boolean): void
+  /**
+   * 离场动画（Naive 的 fade-in-scale-up：缩小 + 渐隐）播完之后触发。
+   * 宿主若要在关闭时清空内容（如丢弃预览、释放编辑器），应等到这里，
+   * 否则内容会先消失、只剩一个空框在缩小，看不到渐隐。
+   */
+  (event: 'after-leave'): void
+}>()
 
 /*
  * 模板只能访问 setup 作用域的顶层绑定，所以把 props 解成独立常量。
@@ -85,10 +97,15 @@ const {
 /*
  * 全部用 max-*：宽高随内容自然伸缩，只在超过上限时才封顶。
  * max-height 生效后，内容区拿到确定高度，min-height: 0 才让它真正可滚。
+ *
+ * 宽度上限用百分比而不是 vw：Tauri 的界面缩放是 WebView zoom，`vw` 仍按
+ * 未缩放的视口计算，200% 缩放下 80vw 会超出实际可见区域（截图里右边框
+ * 跑到窗口外）。百分比相对 .n-modal-scroll-content（已受缩放约束）计算，
+ * 任何缩放档位都落在可视范围内。
  */
 const modalStyle = computed(() => ({
   width: 'auto',
-  minWidth: 'min(320px, 92vw)',
+  minWidth: 'min(320px, 92%)',
   maxWidth: widthLimit.value,
   height: 'auto',
   maxHeight: heightLimit.value,
@@ -111,7 +128,8 @@ const contentStyle = {
   <n-modal :show="visible" preset="card" :title="heading || undefined" :bordered="hasBorder"
     :mask-closable="closable" :display-directive="directive" :to="mountTarget" class="app-modal"
     :class="extraClass" :style="modalStyle" :content-style="contentStyle"
-    @update:show="(value: boolean) => emit('update:show', value)">
+    @update:show="(value: boolean) => emit('update:show', value)"
+    @after-leave="emit('after-leave')">
     <!-- 头部右侧附加内容（筛选器、计数等），透传 Naive 原生槽位 -->
     <template v-if="$slots['header-extra']" #header-extra>
       <slot name="header-extra" />

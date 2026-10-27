@@ -8,8 +8,10 @@ import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
 import UpdatePrompt from '../components/UpdatePrompt.vue'
 import AppModal from '../components/AppModal.vue'
+import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
+import { tagColorFor } from '../theme'
 import { api } from '../services/tauri'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, PermissionStatus, PublicConfig } from '../types'
@@ -23,6 +25,8 @@ const config = ref<PublicConfig | null>(null)
 const savingPath = ref(false)
 
 const pathDrawer = ref(false)
+/** BepInEx 管理抽屉（右侧滑入）。 */
+const bepinexDrawer = ref(false)
 const updateDrawer = ref(false)
 const tokenDrawer = ref(false)
 const githubToken = ref('')
@@ -31,6 +35,26 @@ const savingTokens = ref(false)
 const updateResult = ref<AppUpdateCheckResult | null>(null)
 const updateInfo = ref<NonNullable<AppUpdateCheckResult['update']> | null>(null)
 const showUpdate = ref(false)
+
+/* ===== BepInEx 框架卡片摘要 ===== */
+
+/** 框架是否已安装（以 BepInEx 目录是否完整为准）。 */
+const bepinexOk = computed(() => {
+  const info = game.value?.bepinex
+  return !!info && info.installed && info.complete
+})
+
+/**
+ * 卡片副标题：版本 + 是否启用。
+ * 只放「一眼能看出状态」的信息，具体操作都在抽屉里。
+ */
+const bepinexSummary = computed(() => {
+  const info = game.value?.bepinex
+  if (!bepinexOk.value) return t('尚未安装，点击右侧按钮安装')
+  const version = info?.version ? `${t('版本')} ${info.version}` : t('版本未知')
+  const enabled = game.value?.winhttp_state === 'modenabled'
+  return `${version} · ${enabled ? t('框架已启用') : t('框架已禁用')}`
+})
 
 /* ===== 权限：默认普通权限，仅在文件访问被拒时提权 ===== */
 const permission = ref<PermissionStatus | null>(null)
@@ -186,7 +210,30 @@ async function clearTokens() {
         </n-button>
       </template>
     </SettingsRow>
+    <!--
+      BepInEx 框架：只展示版本与启用状态，全部管理收进右侧抽屉。
+      框架管理和装一个 MOD 差不多复杂，不值得占常驻导航位。
+    -->
+    <SettingsRow :title="t('BepInEx 框架管理')"
+      :description="bepinexSummary">
+      <template #right>
+        <n-tag size="small" :bordered="false" class="state-tag" :color="tagColorFor(bepinexOk ? 'accent' : 'moderate')">
+          {{ bepinexOk ? t('已安装') : t('未安装') }}
+        </n-tag>
+        <n-button size="small" :type="bepinexOk ? 'default' : 'primary'" :secondary="bepinexOk"
+          @click.stop="bepinexDrawer = true">
+          {{ bepinexOk ? t('管理') : t('安装') }}
+        </n-button>
+      </template>
+    </SettingsRow>
   </SettingsGroup>
+
+  <!-- BepInEx 管理抽屉：从右向左滑入，内容由 BepInExPanel 承担 -->
+  <n-drawer v-model:show="bepinexDrawer" :width="520" placement="right">
+    <n-drawer-content :title="t('BepInEx 框架管理')" closable :native-scrollbar="false">
+      <BepInExPanel />
+    </n-drawer-content>
+  </n-drawer>
 
   <!-- 程序更新 -->
   <SettingsGroup :title="t('程序更新')">

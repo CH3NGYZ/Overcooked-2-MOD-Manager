@@ -113,6 +113,13 @@ const entries = {
 
   // 框架
   'BepInEx 框架': ['BepInEx 框架', 'BepInEx framework', 'BepInEx 프레임워크', 'BepInEx フレームワーク'],
+  'BepInEx 框架管理': ['BepInEx 框架管理', 'BepInEx framework', 'BepInEx 프레임워크 관리', 'BepInEx フレームワーク管理'],
+  'BepInEx 配置': ['BepInEx 設定', 'BepInEx config', 'BepInEx 설정', 'BepInEx 設定'],
+  '配置管理': ['設定管理', 'Manage config', '설정 관리', '設定を管理'],
+  '运行形态': ['執行形態', 'Runtime', '실행 형태', '実行形態'],
+  '原生': ['原生', 'Native', '네이티브', 'ネイティブ'],
+  '尚未安装，点击右侧按钮安装': ['尚未安裝，點擊右側按鈕安裝', 'Not installed — use the button on the right', '설치되지 않았습니다. 오른쪽 버튼으로 설치하세요', '未インストールです。右のボタンからインストールしてください'],
+  '管理': ['管理', 'Manage', '관리', '管理'],
   '不完整': ['不完整', 'Incomplete', '불완전', '不完全'],
   '版本：{version}': ['版本：{version}', 'Version: {version}', '버전: {version}', 'バージョン: {version}'],
   '加载器：{state}': ['載入器：{state}', 'Loader: {state}', '로더: {state}', 'ローダー: {state}'],

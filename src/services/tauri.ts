@@ -38,6 +38,10 @@ export const api = {
   readModConfig: (dllFile: string) => invoke<ModConfigDocument>('read_mod_config', { dllFile }),
   saveModConfig: (dllFile: string, revision: string, content: string) =>
     invoke<ModConfigDocument>('save_mod_config', { dllFile, revision, content }),
+  /** BepInEx 框架自身的配置文件（`BepInEx/config/BepInEx.cfg`）。 */
+  readBepInExConfig: () => invoke<ModConfigDocument>('read_bepinex_config'),
+  saveBepInExConfig: (revision: string, content: string) =>
+    invoke<ModConfigDocument>('save_bepinex_config', { revision, content }),
   uninstallLocalMod: (dllFile: string, allowUnmanaged = false) => invoke<UninstallLocalModResult>('uninstall_local_mod', { dllFile, allowUnmanaged }),
   uninstallModDll: (dllFile: string, packageId: string) => invoke<OperationResult>('uninstall_mod_dll', { dllFile, packageId }),
   getModRecycleBin: () => invoke<ModRecycleEntry[]>('get_mod_recycle_bin'),

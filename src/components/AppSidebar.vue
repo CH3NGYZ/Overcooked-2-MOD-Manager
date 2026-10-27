@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { NScrollbar } from 'naive-ui'
 import {
-  CloudDownloadOutline, CubeOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline,
+  CloudDownloadOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline,
   ColorWandOutline,
 } from '@vicons/ionicons5'
 import { t } from '../i18n'
@@ -11,10 +11,14 @@ import { t } from '../i18n'
 defineProps<{ version: string }>()
 const route = useRoute()
 
-/** 主导航：功能入口。 */
+/**
+ * 主导航：功能入口。
+ *
+ * 「框架管理」不再单独占位 —— BepInEx 的管理已收进「设置 → 路径管理 →
+ * BepInEx 框架管理」抽屉，和装一个 MOD 的复杂度相当，不值得常驻导航。
+ */
 const mainItems = [
   { name: 'overview', title: '总览', icon: GridOutline },
-  { name: 'framework', title: '框架管理', icon: CubeOutline },
   { name: 'mods-online', title: 'MOD 安装', icon: CloudDownloadOutline },
   { name: 'mods-local', title: 'MOD 管理', icon: FileTrayFullOutline },
 ]

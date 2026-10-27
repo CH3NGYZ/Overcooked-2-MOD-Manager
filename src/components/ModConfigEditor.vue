@@ -29,7 +29,15 @@ import AppModal from './AppModal.vue'
 
 const props = defineProps<{
   show: boolean
-  dllFile: string
+  /**
+   * 数据源：
+   *   · `mod`（默认）—— 某个 MOD 在 `BepInEx/config` 下的配置文件，按 `dllFile` 定位；
+   *   · `bepinex` —— BepInEx 框架自身的 `BepInEx.cfg`，与具体 MOD 无关。
+   * 两种来源的读写命令不同，但界面与 revision 校验完全一致，所以合并到一个组件。
+   */
+  source?: 'mod' | 'bepinex'
+  /** MOD 配置文件对应的 DLL；`source === 'bepinex'` 时忽略。 */
+  dllFile?: string
   title: string
 }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
@@ -46,6 +54,23 @@ const content = ref('')
 
 const canSave = computed(() => dirty.value && !saving.value && !loading.value)
 
+/** 当前数据源；缺省为 MOD 配置。 */
+const source = computed(() => props.source ?? 'mod')
+
+/** 读取当前数据源的文件内容。 */
+function readDocument() {
+  return source.value === 'bepinex'
+    ? api.readBepInExConfig()
+    : api.readModConfig(props.dllFile ?? '')
+}
+
+/** 写回当前数据源。 */
+function saveDocument(nextRevision: string, nextContent: string) {
+  return source.value === 'bepinex'
+    ? api.saveBepInExConfig(nextRevision, nextContent)
+    : api.saveModConfig(props.dllFile ?? '', nextRevision, nextContent)
+}
+
 /**
  * 加载令牌：父组件在同一 tick 里改 `dllFile` 与 `show`，
  * 关闭后立即重开时会有过期请求回来，用它丢弃迟到的结果。
@@ -58,7 +83,7 @@ async function load() {
   error.value = ''
   dirty.value = false
   try {
-    const document = await api.readModConfig(props.dllFile)
+    const document = await readDocument()
     if (token !== loadToken) return
     fileName.value = document.file_name
     revision.value = document.revision
@@ -75,7 +100,7 @@ async function save() {
   if (!canSave.value) return
   saving.value = true
   try {
-    const document = await api.saveModConfig(props.dllFile, revision.value, content.value)
+    const document = await saveDocument(revision.value, content.value)
     revision.value = document.revision
     dirty.value = false
     message.success(t('已保存'))
@@ -92,13 +117,14 @@ function close() {
 }
 
 /**
- * 只在「打开」或「换了 MOD」时重新读取。
+ * 只在「打开」或「换了数据源 / MOD」时重新读取。
  *
  * 用组合键而不是分别 watch show / dllFile：两者在同一 tick 一起变化时，
  * 分开监听会触发两次读取。用 immediate 覆盖首次挂载即为打开的情况。
+ * `bepinex` 数据源没有 dllFile，用固定的 `source` 值当 key。
  */
 watch(
-  () => (props.show ? props.dllFile : ''),
+  () => (props.show ? (source.value === 'bepinex' ? 'bepinex' : props.dllFile ?? '') : ''),
   (key) => {
     if (!key) return
     void load()
@@ -115,7 +141,7 @@ function onInput(value: string) {
 /** 外部换了 dllFile 但弹窗仍打开（正常操作不会发生）：清掉脏标记重读。 */
 watch(
   () => props.dllFile,
-  () => { if (props.show) void load() },
+  () => { if (props.show && source.value === 'mod') void load() },
 )
 </script>
 

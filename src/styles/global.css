@@ -256,6 +256,26 @@ body {
   flex-direction: column;
 }
 /*
+ * 空状态（n-empty）在整页范围内垂直居中。
+ *
+ * 各页面原来写的是 `.empty { margin: 60px 0 }` —— 固定上边距，看起来
+ * 只是「下面留白很多」，并没有落在可视区中央。空状态本来就该占据整块
+ * 内容区并居中，所以统一在这里处理：让它成为 flex 子项并吃满剩余高度，
+ * 内部内容自然居中。页面里不再需要 `.empty` 的边距声明。
+ *
+ * 只作用于直接挂在 .n-spin-content 下的空状态；卡片内部、弹窗内部的
+ * n-empty 不受影响。
+ */
+.page-scroll .n-spin-content > .n-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+/*
  * 转圈本身：绝对定位铺满整个 spin 容器再居中。
  * Naive 的 .n-spin-body 自带 transform: translate(-50%, -50%)，
  * 用 inset: 0 铺满时必须清掉，否则整块被推到左上角。

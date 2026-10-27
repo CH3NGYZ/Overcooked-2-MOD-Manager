@@ -133,10 +133,6 @@ const sortedMods = computed(() =>
   [...effectiveMods.value].sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
 
-const enabledCount = computed(() => mods.value.filter((mod) => mod.enabled).length)
-
-const updateCount = computed(() => effectiveMods.value.filter((mod) => mod.update_available).length)
-
 /**
  * 顶部聚合标签：按状态汇总整页 MOD 数量。
  *
@@ -909,14 +905,11 @@ function removePackage(node: ModPackageNode) {
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />
 
+  <!--
+    页头标题后的聚合标签已经承载了状态统计（数量、启用、可更新都在标签里），
+    原来的 .toolbar 只重复这些数字，已无存在必要，移除。
+  -->
   <n-spin :show="loading">
-    <div class="toolbar">
-      <span class="muted">
-        {{ t('共 {count} 个 · 启用 {enabled} · 可更新 {updates}',
-          { count: mods.length, enabled: enabledCount, updates: updateCount }) }}
-      </span>
-    </div>
-
     <n-empty v-if="!loading && !sortedMods.length" :description="t('尚未安装任何 MOD')" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
@@ -1172,11 +1165,7 @@ function removePackage(node: ModPackageNode) {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex; align-items: center; gap: 12px; margin-bottom: 14px;
-}
 .seg { display: flex; gap: 6px; }
-.empty { margin: 60px 0; }
 /* 分类折叠：分类标题行 + 内部单列 MOD 卡片 */
 .group-collapse { width: 100%; }
 .group-head {

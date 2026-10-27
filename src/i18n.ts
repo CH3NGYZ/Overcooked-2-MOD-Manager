@@ -124,10 +124,6 @@ const entries = {
   '获取到 {count} 个 Release': ['取得 {count} 個 Release', 'Fetched {count} releases', 'Release {count}개를 가져왔습니다', 'Release を {count} 件取得しました'],
 
   // MOD 管理
-  '共 {count} 个 · 启用 {enabled} · 可更新 {updates} · 排序：{sort}': ['共 {count} 個 · 啟用 {enabled} · 可更新 {updates} · 排序：{sort}', '{count} total · {enabled} enabled · {updates} updates · Sort: {sort}', '총 {count}개 · 활성 {enabled} · 업데이트 {updates} · 정렬: {sort}', '合計 {count} · 有効 {enabled} · 更新 {updates} · 並び: {sort}'],
-  '按名称': ['依名稱', 'By name', '이름순', '名前順'],
-  '按版本': ['依版本', 'By version', '버전순', 'バージョン順'],
-  '按启用': ['依啟用', 'By enabled', '활성순', '有効順'],
   '名称': ['名稱', 'Name', '이름', '名前'],
   '卡片': ['卡片', 'Cards', '카드', 'カード'],
   '横排': ['橫排', 'Rows', '행', '行'],

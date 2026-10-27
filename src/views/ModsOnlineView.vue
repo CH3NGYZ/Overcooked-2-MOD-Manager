@@ -628,7 +628,6 @@ defineExpose({ refreshAll, visibleCount })
 </template>
 
 <style scoped>
-.empty { margin: 60px 0; }
 .source-collapse { width: 100%; }
 
 /* 三级固定缩进：源 0、分类 14px、卡片 28px */

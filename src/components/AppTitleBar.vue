@@ -254,7 +254,10 @@ defineExpose({ onUnmountedCleanup })
 .brand-mark-wrap:hover .brand-mark { filter: brightness(.55); }
 /*
  * 启动/停止按钮：覆盖在应用图标中央。
- * 默认半透明可见（提示这里可以点），悬浮时完全不透明并轻微放大。
+ *
+ * 图标本身是彩色插画，浅色底纹几乎看不出来，所以这里用「不透明白色圆形
+ * + 深色图标」的高对比方案，不依赖悬浮才可见 —— 用户第一眼就该知道
+ * 这里能点。运行中切成实心红色圆形 + 白色停止图标。
  */
 .brand-game-toggle {
   position: absolute;
@@ -264,18 +267,32 @@ defineExpose({ onUnmountedCleanup })
   padding: 0;
   border: 0;
   border-radius: 9px;
-  background: rgba(0, 0, 0, .34);
-  color: #e8edf3;
+  background: transparent;
+  color: #fff;
   cursor: pointer;
-  opacity: .55;
-  transition: opacity .16s ease, background-color .16s ease, transform .16s ease;
+  transition: background-color .16s ease;
 }
-.brand-mark-wrap:hover .brand-game-toggle { opacity: 1; transform: scale(1.04); }
-.brand-game-toggle:hover { background: rgba(0, 0, 0, .55); }
-/* 运行中：停止按钮用危险色，和「正在运行」语义一致 */
-.brand-game-toggle.running { background: rgba(239, 68, 68, .72); color: #fff; }
-.brand-game-toggle.running:hover { background: rgba(239, 68, 68, .88); }
-.brand-game-toggle:disabled { cursor: not-allowed; opacity: .45; }
+/* 圆形底盘：让图标在任意插画底色上都清晰 */
+.brand-game-toggle::before {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+  transition: background-color .16s ease, transform .16s ease;
+}
+.brand-game-toggle > svg {
+  position: relative;
+  color: #11151a;
+}
+.brand-mark-wrap:hover .brand-game-toggle::before { transform: scale(1.08); }
+/* 运行中：红色底盘 + 白色图标，和「正在运行」语义一致 */
+.brand-game-toggle.running::before { background: #ef4444; }
+.brand-game-toggle.running { color: #fff; }
+.brand-game-toggle.running > svg { color: #fff; }
+.brand-game-toggle:disabled { cursor: not-allowed; opacity: .5; }
 /* 悬浮提示：图标下方的一行小标签 */
 .brand-game-hint {
   position: absolute;

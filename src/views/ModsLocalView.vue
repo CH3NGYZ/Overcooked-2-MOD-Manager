@@ -116,7 +116,7 @@ const effectiveMods = computed<InstalledMod[]>(() =>
       return {
         ...mod,
         update_available: false,
-        labels: replaceVersionConclusion(mod.labels as string[] | undefined, 'unknown') as InstalledMod['labels'],
+        labels: replaceVersionConclusion(mod.labels as string[] | undefined, 'checking') as InstalledMod['labels'],
       } as InstalledMod
     }
     return mod

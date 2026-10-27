@@ -57,6 +57,14 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    * 需要用户注意并重试，但不像同 GUID 冲突、加载失败那样已经破坏了本地状态。
    */
   repository_unavailable: { text: '仓库刷新失败', tone: 'moderate' },
+  /**
+   * 正在检查：绑定的仓库正在抓取 Release，结论还没出来。
+   *
+   * 与 `unknown`（版本未知）语义不同：unknown 是「查完了也判断不出来」，
+   * checking 是「还在查」。混用会让刷新过程显示成「版本未知」，
+   * 用户会误以为已经出结果了。中性灰，因为此刻没有结论、也不需要动作。
+   */
+  checking: { text: '检测中', tone: 'muted' },
   unknown: { text: '版本未知', tone: 'muted' },
   duplicate: { text: '重复', tone: 'severe' },
   duplicate_lower_version: { text: '低版本', tone: 'mild' },
@@ -100,6 +108,7 @@ export const VERSION_CONCLUSION_LABELS = [
   'update_available',
   'not_release_asset',
   'installed',
+  'checking',
   'unknown',
   'unbound',
   'bound_repository_missing',

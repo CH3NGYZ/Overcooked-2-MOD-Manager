@@ -304,6 +304,7 @@ const entries = {
   '已最新': ['已最新', 'Up to date', '최신 상태', '最新です'],
   '低版本': ['低版本', 'Older version', '이전 버전', '旧バージョン'],
   '版本未知': ['版本未知', 'Version unknown', '버전 미확인', 'バージョン不明'],
+  '检测中': ['檢測中', 'Checking', '확인 중', '確認中'],
   '{count} 个可更新': ['{count} 個可更新', '{count} updatable', '{count}개 업데이트 가능', '{count} 件更新可能'],
   '排序': ['排序', 'Sort', '정렬', '並び替え'],
   '重新扫描本地 MOD': ['重新掃描本機 MOD', 'Rescan local MODs', '로컬 MOD 다시 검사', 'ローカル MOD を再スキャン'],

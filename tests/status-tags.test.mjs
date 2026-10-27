@@ -161,3 +161,19 @@ test('所有版本结论标签都登记在互斥组里', () => {
     assert.equal(isVersionConclusion(label), false, `${label} 不应在互斥组内`)
   }
 })
+
+test('检测中与版本未知是两个独立语义', () => {
+  // 刷新进行中 → 检测中（还在查）；查完但判断不出 → 版本未知。
+  // 混用会让刷新期间看起来已经有结论了。
+  assert.notEqual(STATUS_META.checking.text, STATUS_META.unknown.text)
+  assert.equal(STATUS_META.checking.text, '检测中')
+  assert.equal(STATUS_META.unknown.text, '版本未知')
+  // 两者都是中性档：此刻既没有结论也没有需要动作的东西
+  assert.equal(STATUS_META.checking.tone, 'muted')
+  assert.equal(STATUS_META.unknown.tone, 'muted')
+  // 都参与版本结论互斥，不能同时出现
+  assert.equal(isVersionConclusion('checking'), true)
+  assert.equal(isVersionConclusion('unknown'), true)
+  const replaced = replaceVersionConclusion(['unknown', 'duplicate'], 'checking')
+  assert.deepEqual(replaced, ['checking', 'duplicate'])
+})

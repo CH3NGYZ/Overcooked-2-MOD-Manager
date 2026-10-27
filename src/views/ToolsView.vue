@@ -228,8 +228,12 @@ async function confirmDisableRecycle() {
     </template>
   </AppModal>
 
-  <!-- 日志查看：统一弹窗外壳负责尺寸上限与滚动，内容区放 n-log -->
-  <AppModal :show="logOpen" card-class="log-dialog" :title="logTitle" max-width="min(880px, 90%)"
+  <!--
+    日志查看：fill 让弹窗一打开就是允许的最大尺寸。
+    日志长度在打开前未知，随内容自适应会让弹窗先小后大地跳一次；
+    固定成上限后，路径与 n-log 的位置在加载前后都不动。
+  -->
+  <AppModal :show="logOpen" card-class="log-dialog" :title="logTitle" fill max-width="min(880px, 90%)"
     @update:show="(value: boolean) => (logOpen = value)">
     <template #header-extra>
       <div class="log-head-extra">
@@ -239,8 +243,15 @@ async function confirmDisableRecycle() {
       </div>
     </template>
     <div class="muted mono log-path">{{ logPath }}</div>
-    <!-- 不传 language：日志是纯文本，传了会走 hljs 高亮并因缺少 hljs 实例告警 -->
-    <n-log :log="filteredLog || '（该等级没有日志）'" :rows="24" :font-size="12" trim />
+    <!--
+      不传 language：日志是纯文本，传了会走 hljs 高亮并因缺少 hljs 实例告警。
+      n-log 只有 rows 一个尺寸入口（等价于固定行高），所以外面套一层 flex
+      容器让它吃掉剩余高度，rows 给足够大的值充当上限 —— 弹窗本身已由
+      fill 固定尺寸，内容不会因此变高。
+    -->
+    <div class="log-body">
+      <n-log :log="filteredLog || '（该等级没有日志）'" :rows="60" :font-size="12" trim />
+    </div>
   </AppModal>
 </template>
 
@@ -272,6 +283,19 @@ async function confirmDisableRecycle() {
   font-size: 14px;
 }
 .log-path { margin: 0 0 10px; }
+/*
+ * 日志正文：吃掉弹窗内容区的剩余高度。
+ * n-log 的高度由 rows 决定，这里只负责让它在一个可收缩的容器里，
+ * 滚动发生在 n-log 自己的滚动区（Naive 内置），不额外嵌套滚动层。
+ */
+.log-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.log-body :deep(.n-log) { flex: 1 1 auto; min-height: 0; }
 /* 标题右侧：等级选择 + 行数统计 */
 .log-head-extra { display: flex; align-items: center; gap: 8px; }
 .log-level { width: 110px; }

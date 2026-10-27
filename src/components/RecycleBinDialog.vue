@@ -32,7 +32,13 @@ async function reload() {
 </script>
 
 <template>
-  <AppModal :show="show" :title="t('回收站')" max-width="min(860px, 90%)"
+  <!--
+    fill：打开就占满允许的最大区域。
+    回收站列表的条目数量在打开前未知，若随内容自适应，短列表会让弹窗
+    缩成一条、长列表又要等渲染完才撑开。固定成最大尺寸，空态与滚动都在
+    一个稳定的框里，不会在数据到达时跳变。
+  -->
+  <AppModal :show="show" :title="t('回收站')" fill max-width="min(860px, 90%)"
     @update:show="(value: boolean) => emit('update:show', value)">
     <template #header-extra>
       <n-button size="small" quaternary :loading="refreshing" :title="t('立即刷新')" @click="reload">
@@ -47,15 +53,16 @@ async function reload() {
 
 <style scoped>
 /*
- * 弹窗内的列表需要有确定高度才能让空态居中：
- * AppModal 的 #footer 为空时不渲染，内容区就是唯一可分配空间。
- * 用 min-height 兜住「条目很少」的情况，避免弹窗缩成一条。
+ * 弹窗内容区：吃满 AppModal 分配的高度，滚动交给列表自己。
+ *
+ * fill 已经给出确定高度，所以这里只要 flex: 1 + min-height: 0 —— 不需要
+ * （也不该）再写 min-height / max-height：那会和 fill 的尺寸打架，
+ * 出现「弹窗按上限撑开、内容却按另一个上限收缩」的双重约束。
  */
 .recycle-dialog-body {
   display: flex;
   flex-direction: column;
-  min-height: min(420px, 52vh);
-  max-height: min(620px, 68vh);
-  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 </style>

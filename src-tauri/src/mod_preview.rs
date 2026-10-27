@@ -311,6 +311,42 @@ fn stage_local(state: &AppState, preview: &ModPreview, source: &Path) -> Result<
     Ok(target)
 }
 
+/// 预览暂存目录里的来源元数据文件名。
+const ORIGIN_FILE: &str = "origin.json";
+
+/// 仓库来源的预览在暂存目录里留一份来源记录。
+///
+/// `confirm_mod_install` 只拿到 `preview_id`，看不到当初是哪个仓库下的包。
+/// 若不加这份记录，确认安装只能走 `install_manual_mod` —— 那条路每次生成
+/// 新的 `manual-<uuid>` 清单，于是同仓库的旧包永远不会被回收，装完就是
+/// 「同一个仓库三份副本」。有了它，确认时才能回到仓库安装路径去先回收。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PreviewOriginRecord {
+    repository_id: String,
+    #[serde(default)]
+    release_tag: String,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+fn write_origin_record(
+    state: &AppState,
+    preview_id: &str,
+    record: &PreviewOriginRecord,
+) -> Result<(), String> {
+    let dir = preview_root(state).join(preview_id);
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(record).map_err(|error| error.to_string())?;
+    fs::write(dir.join(ORIGIN_FILE), text).map_err(|error| error.to_string())
+}
+
+/// 读取预览的来源记录；手动来源（本地文件 / 直链）没有这份文件。
+fn read_origin_record(state: &AppState, preview_id: &str) -> Option<PreviewOriginRecord> {
+    let path = preview_root(state).join(preview_id).join(ORIGIN_FILE);
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 /// 把「已经下载好的仓库资产」直接落进预览暂存并解析。
 ///
 /// 仓库安装流程的下载段包含代理选择与多源竞速，不适合在预览里重写一遍，
@@ -321,9 +357,11 @@ pub(crate) fn stage_downloaded_file(
     state: &AppState,
     source: &Path,
     file_name: &str,
+    repository_id: &str,
     repository_name: &str,
     release_tag: &str,
     release_body: &str,
+    prerelease: bool,
 ) -> Result<ModPreview, String> {
     cleanup_stale_previews(state);
     let extension = source_extension(file_name).ok_or("无法识别文件类型")?;
@@ -337,9 +375,20 @@ pub(crate) fn stage_downloaded_file(
     };
     apply_repository_origin(&mut preview, repository_name, release_tag, release_body);
     stage_local(state, &preview, source)?;
+    // 记录来源：确认安装时要回到仓库安装路径，才知道回收哪个仓库的旧包
+    write_origin_record(
+        state,
+        &preview.preview_id,
+        &PreviewOriginRecord {
+            repository_id: repository_id.to_string(),
+            release_tag: release_tag.to_string(),
+            prerelease,
+        },
+    )?;
     log::info!(
-        "仓库资产已送入预览暂存：预览={}，DLL 数={}，MOD 数={}，依赖数={}",
+        "仓库资产已送入预览暂存：预览={}，仓库={}，DLL 数={}，MOD 数={}，依赖数={}",
         preview.preview_id,
+        repository_id,
         preview.total_dlls,
         preview.mod_count,
         preview.dependency_count
@@ -424,10 +473,37 @@ pub fn confirm_mod_install(
         .map_err(|_| "预览已过期，请重新选择文件".to_string())?
         .flatten()
         .map(|entry| entry.path())
-        .find(|path| path.is_file())
+        // 跳过来源元数据：它和安装包放在同一个暂存目录里
+        .find(|path| path.is_file() && path.file_name().is_some_and(|name| name != ORIGIN_FILE))
         .ok_or("预览已过期，请重新选择文件")?;
     log::info!("确认安装预览文件：预览={preview_id}");
-    let result = crate::commands::install_manual_mod(&state, &file, None);
+
+    /*
+     * 仓库来源的预览必须走仓库安装路径。
+     *
+     * 走 install_manual_mod 会给包分配新的 `manual-<uuid>` 清单，
+     * 于是同仓库的旧包永远不会被回收 —— 用户装三次就得到三份副本。
+     * 有来源记录时改走 install_staged_repository，它会先按仓库身份
+     * 回收所有旧包再解压新文件。
+     */
+    let result = match read_origin_record(&state, &preview_id) {
+        Some(origin) => {
+            log::info!(
+                "确认安装仓库资产：预览={}，仓库={}，版本={}",
+                preview_id,
+                origin.repository_id,
+                origin.release_tag
+            );
+            crate::commands::install_staged_repository(
+                &state,
+                &file,
+                &origin.repository_id,
+                &origin.release_tag,
+                origin.prerelease,
+            )
+        }
+        None => crate::commands::install_manual_mod(&state, &file, None),
+    };
     let _ = fs::remove_dir_all(&dir);
     result
 }
@@ -545,5 +621,31 @@ mod tests {
         assert!(safe_preview_id("not-a-uuid").is_err());
         let id = Uuid::new_v4().to_string();
         assert_eq!(safe_preview_id(&id).unwrap(), id);
+    }
+
+    #[test]
+    fn origin_record_round_trips_repository_identity() {
+        // 确认安装时要靠这份记录回到仓库安装路径：
+        // 丢了它就只能走 install_manual_mod，同仓库旧包永远不被回收。
+        let record = PreviewOriginRecord {
+            repository_id: "repo-1".into(),
+            release_tag: "v1.8.7.23".into(),
+            prerelease: true,
+        };
+        let text = serde_json::to_string(&record).unwrap();
+        let parsed: PreviewOriginRecord = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.repository_id, "repo-1");
+        assert_eq!(parsed.release_tag, "v1.8.7.23");
+        assert!(parsed.prerelease);
+    }
+
+    #[test]
+    fn origin_record_tolerates_missing_optional_fields() {
+        // 只带 repository_id 的最简记录也要能读：老预览或手工构造的情况
+        let parsed: PreviewOriginRecord =
+            serde_json::from_str(r#"{"repository_id":"repo-2"}"#).unwrap();
+        assert_eq!(parsed.repository_id, "repo-2");
+        assert!(parsed.release_tag.is_empty());
+        assert!(!parsed.prerelease);
     }
 }

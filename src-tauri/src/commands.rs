@@ -2603,9 +2603,11 @@ pub async fn install_repository(
             &state,
             &temp,
             &download_name,
+            &repo.id,
             &repo.name,
             &release_tag,
             &release_body,
+            release_prerelease,
         )?;
         let _ = fs::remove_file(&temp);
         log::info!(
@@ -5199,6 +5201,70 @@ fn repository_install_identity(
         result.id = manifest.repository_id.clone();
     }
     Ok(result)
+}
+
+/// 从预览暂存安装一个仓库资产。
+///
+/// 预览阶段已经把文件下载并解析过了，这里只做最后一跳：按仓库身份回收
+/// 该仓库的全部旧包，再解压/复制新文件。必须走这条路径而不是
+/// `install_manual_mod` —— 后者每次生成新的 `manual-<uuid>` 清单，
+/// 同仓库的旧包不会被回收，装几次就有几份副本。
+pub(crate) fn install_staged_repository(
+    state: &AppState,
+    staged_file: &Path,
+    repository_id: &str,
+    release_tag: &str,
+    prerelease: bool,
+) -> Result<OperationResult, String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+
+    let repo = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == repository_id)
+        .ok_or("仓库不存在")?
+        .clone();
+
+    let download_name = staged_file
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("文件名无效")?;
+
+    let manifests_dir = state.config.manifests_dir();
+    // 沿用仓库安装的身份解析：源可能已从配置消失，但旧清单仍要能被找到
+    let install_repo = repository_install_identity(&repo, &config, &manifests_dir)?;
+
+    let file_count = install_downloaded_repository(
+        staged_file,
+        download_name,
+        &game_root,
+        &manifests_dir,
+        &state.config.mod_recycle_bin_dir(),
+        &install_repo,
+        release_tag,
+        prerelease,
+    )?;
+
+    log::info!(
+        "从预览安装仓库资产完成：仓库={}，版本={}，文件数={}",
+        repo.name,
+        release_tag,
+        file_count
+    );
+    Ok(OperationResult {
+        ok: true,
+        message: if release_tag.is_empty() {
+            format!("{} 安装完成", repo.name)
+        } else {
+            format!("{} {} 安装完成", repo.name, release_tag)
+        },
+    })
 }
 
 fn install_downloaded_repository(

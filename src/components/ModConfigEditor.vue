@@ -95,9 +95,11 @@ async function createEditor(content: string) {
   editor.value = instance
   model = instance.getModel()
   instance.onDidChangeModelContent(() => { dirty.value = !!model?.getValue() })
-  // 等一帧拿到真实尺寸后布局
+  // 等一帧拿到真实尺寸后布局。容器可能已被卸载（快速开关），
+  // 这里再判一次，避免对已销毁的实例调 layout。
   requestAnimationFrame(() => {
-    if (!disposed) instance.layout()
+    if (disposed || editor.value !== instance) return
+    try { instance.layout() } catch { /* 已销毁 */ }
   })
 }
 
@@ -138,6 +140,12 @@ async function save() {
 }
 
 function close() {
+  /*
+   * 关闭前先释放编辑器：DOM 即将卸载，若等 watch 里再 dispose，
+   * Monaco 会在容器被移除的过程中做最后一次重排，可能卡住主线程。
+   * 先 dispose 再关弹窗，DOM 移除时已没有实例在监听尺寸变化。
+   */
+  disposeEditor()
   if (dirty.value) {
     message.warning(t('有未保存的修改，已取消'))
   }
@@ -187,7 +195,12 @@ onBeforeUnmount(disposeEditor)
 </script>
 
 <template>
-  <n-modal :show="show" :mask-closable="false" class="config-modal"
+  <!--
+    display-directive="if"：关闭时真正从 DOM 移除内容。
+    只 v-show 隐藏会让 Monaco 留在 0 尺寸容器里持续内部重排，
+    表现为「点关闭后整个程序卡死」。
+  -->
+  <n-modal :show="show" :mask-closable="false" class="config-modal" display-directive="if"
     @update:show="(value: boolean) => emit('update:show', value)">
     <div class="config-shell">
       <div class="config-head">

@@ -168,10 +168,16 @@ const groups = computed<ModGroupNode[]>(() => {
     // 单 DLL 包直接用这张卡片的标题，让「单包」与「包内 DLL」看起来是同一种东西
     const label = list[0]?.package_name?.trim() || modTitle(list[0])
     const updateCount = list.filter((mod) => mod.update_available).length
-    // 全部成员都明确报告了 latest 才算整包最新（有一个状态未知就不下结论）
-    const latest = updateCount === 0
-      && list.length > 0
-      && list.every((mod) => mod.labels?.includes('latest'))
+    /*
+     * 纯依赖 DLL 不参与版本结论：它没有 BepInPlugin 元数据，
+     * 永远不会有 latest/update_available 标签。如果把它算进 every()，
+     * 任何含依赖的包（如 DIYLevel）都永远判不出「最新版」。
+     * 所以只用真正的 MOD 成员判断整包状态。
+     */
+    const modMembers = list.filter((mod) => !mod.is_dependency)
+    const latest = modMembers.length > 0
+      && updateCount === 0
+      && modMembers.every((mod) => mod.labels?.includes('latest'))
     return {
       key,
       label,
@@ -256,8 +262,16 @@ function remove(mod: InstalledMod) {
       busy.value[mod.dll_file] = true
       try {
         const result = await api.uninstallLocalMod(mod.dll_file)
-        if (result.requires_confirmation) {
-          dialog.info({
+        /*
+         * 后端有两种「需要二次确认」：
+         *   requires_package_confirmation —— 该 DLL 属于多文件 MOD 包，
+         *                                   询问是否整包一起删除（后端此时 ok=false）
+         *   requires_confirmation        —— 共享依赖 / 同 GUID 等风险确认
+         * 两者都要先弹「整包删除」二级确认，只有都不需要才真正删除。
+         * 注意：之前只判断 requires_confirmation，导致包内 DLL 永远删不掉。
+         */
+        if (result.requires_package_confirmation || result.requires_confirmation) {
+          dialog.warning({
             title: t('该 MOD 属于 MOD 包'),
             content: t('它与 {count} 个子 MOD 同属一个包，一并删除？', { count: result.package_mod_names?.length ?? 0 }),
             positiveText: t('整包删除'),
@@ -845,8 +859,8 @@ function removePackage(node: ModPackageNode) {
 
                   <span class="tool-divider" />
 
-                  <!-- 包级只有整包删除，但仍按统一列宽占位，让所有标签从同一列开始 -->
-                  <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }" @click.stop>
+                  <!-- 包级只有整包删除，按自身宽度贴右即可，不必预留整列 -->
+                  <span class="tool-group" @click.stop>
                     <n-button size="tiny" quaternary type="error" :title="t('整包删除')"
                       :disabled="game?.kitchen_running" @click="removePackage(pkg)">
                       <TrashOutline width="14" height="14" />
@@ -881,7 +895,11 @@ function removePackage(node: ModPackageNode) {
                     -->
                     <div class="card-right">
                       <span class="tool-divider-ghost" />
-                      <span class="tool-group" :style="{ minWidth: `${toolColumnWidth}px` }">
+                      <!--
+                        包内子 MOD 的工具栏不预留其它行的列宽（那会让右侧空一大块），
+                        直接按自身按钮宽度贴右，与页面全局缩进对齐即可。
+                      -->
+                      <span class="tool-group">
                         <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('查看日志')"
                           class="tool-optional" @click.stop="openLogs(mod)">
                           <DocumentTextOutline width="14" height="14" />

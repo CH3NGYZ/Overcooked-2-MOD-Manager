@@ -15,6 +15,7 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
+import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
   installedModTags, recomputeModUpdate, replaceVersionConclusion,
   summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
@@ -72,7 +73,7 @@ const deletePackageConfirm = computed(() => recyclesOnDelete.value
       done: '已删除',
     })
 /** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
-const { refreshing, refreshingAll, refreshOne, refreshEverything } = useRepositoryRefresh()
+const { refreshing, refreshingAll, refreshOne, refreshMany } = useRepositoryRefresh()
 
 /**
  * 检测更新：刷新**全部**仓库源与 Release，等价于 MOD 安装页的「刷新全部」。
@@ -83,11 +84,53 @@ const { refreshing, refreshingAll, refreshOne, refreshEverything } = useReposito
  */
 const checkingUpdates = ref(false)
 
+/**
+ * 检测更新：**只刷新与已安装 MOD 绑定的仓库**。
+ *
+ * 与 MOD 安装页的「刷新全部」不是一回事：
+ *   · 那边是「浏览可用 MOD」，要重新拉源文档、刷新所有仓库；
+ *   · 这里是「我这几个 MOD 有没有新版」，只关心它们各自绑定的仓库。
+ *
+ * 复用 `refreshMany`（它本来就是「刷新给定的仓库列表」），不需要新后端命令：
+ * 后端按仓库 ID 刷新 Release 的能力已经存在，只是这里传入的 ID 集合更小。
+ *
+ * 顺带的好处：装 4 个 MOD、来自 3 个仓库时只发 3 个 Release 请求，
+ * 而不是二十多个 —— 更快，也不浪费匿名 API 额度。
+ */
 async function checkUpdates() {
   if (checkingUpdates.value || refreshingAll.value) return
+  /*
+   * 收集「当前地区可见、且确实有本地 MOD 绑定」的仓库。
+   *
+   * 三点约束：
+   *   · 用 `repositoryIsAvailable` 而不是只看 enabled —— 地区不适用等于
+   *     该仓库不存在，不能给它发请求（否则会报「不属于当前下载渠道」）；
+   *   · 跳过 RAW 模式：它没有 Release 可查（`refreshMany` 内部也会跳过，
+   *     这里先滤掉避免无意义的排队）；
+   *   · 同一仓库只刷一次：多个 MOD 常来自同一个仓库（同一个包里的多个 DLL）。
+   */
+  const region = config.value?.region
+  const sources = config.value?.repository_sources
+  const targets = new Map<string, Repository>()
+  for (const mod of effectiveMods.value) {
+    if (mod.is_dependency) continue
+    const repo = repositoryForMod(repositories.value, mod)
+    if (!repo) continue
+    if (!repositoryIsAvailable(repo, sources, region)) continue
+    if (repo.download_mode === 'repository_file') continue
+    targets.set(repo.id, repo)
+  }
+
+  if (!targets.size) {
+    message.warning(t('没有已安装 MOD 绑定到可用的在线仓库'))
+    return
+  }
+  void api.writeFrontendLog('info',
+    `检测更新：匹配到 ${targets.size} 个仓库（已安装 MOD 共 ${effectiveMods.value.length} 个）`)
+
   checkingUpdates.value = true
   try {
-    const errors = await refreshEverything()
+    const errors = await refreshMany([...targets.values()])
     errors.forEach((error) => message.error(error))
   } catch (reason) {
     fail(reason)
@@ -1107,7 +1150,7 @@ function removePackage(node: ModPackageNode) {
       {{ t('全部禁用') }}
     </n-button>
     <n-button size="small" secondary :loading="checkingUpdates" :disabled="checkingUpdates || refreshingAll"
-      :title="t('刷新全部仓库源与 Release，检查 MOD 更新')" @click="checkUpdates">
+      :title="t('只刷新已安装 MOD 绑定的仓库，检查是否有新版本')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
       {{ t('检测更新') }}
     </n-button>

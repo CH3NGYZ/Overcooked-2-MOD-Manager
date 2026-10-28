@@ -1002,6 +1002,21 @@ pub(crate) fn is_safe_replacement_mod(target: &InstalledMod, peer: &InstalledMod
             })
 }
 
+/// 比较两个**本地** DLL 的版本号，用于同 GUID 副本去重。
+///
+/// 这里刻意用「纯数字段逐段比较」，**不是** semver 语义 —— 与
+/// `releases::compare_release_versions`（线上更新判定）是两套规则，
+/// 不要试图统一。
+///
+/// 为什么必须不同：BepInEx 加载同 GUID 的多份 DLL 时，比的是程序集版本号
+/// 的**数字大小**，`1.9.8.1`（四段）严格大于 `1.9.8`。如果这里改用 semver
+/// （beta 低于同号正式版），管理器会把 `1.9.8` 判为更高并建议卸载
+/// `1.9.8.1` —— 而实际被游戏加载的恰恰是 `1.9.8.1`，建议卸载正在生效的
+/// 文件是最坏的结果。
+///
+/// 两者各司其职：
+///   · 本地副本谁在生效 → 纯数字段比较（跟随 BepInEx）
+///   · 线上是否有新版   → semver（`1.9.8` 确实是 `1.9.8-beta.1` 的升级）
 fn compare_mod_versions(left: &str, right: &str) -> Option<Ordering> {
     Some(parse_mod_version_components(left)?.cmp(&parse_mod_version_components(right)?))
 }
@@ -1385,6 +1400,25 @@ mod tests {
         );
         assert_eq!(
             super::compare_mod_versions("1.10.0", "1.9.99.99"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        /*
+         * 本地副本去重用的是**纯数字段**比较，不是 semver。
+         *
+         * BepInEx 加载同 GUID 多份 DLL 时比程序集版本号的数字大小，
+         * `1.9.8.1` 严格大于 `1.9.8`。若这里改成 semver（beta 低于
+         * 同号正式版），管理器会建议卸载实际被加载的那个文件。
+         *
+         * 线上更新判定走另一套（releases::compare_release_versions），
+         * 那里 `1.9.8 > 1.9.8-beta.1` 是对的 —— 两套规则服务两个目的。
+         */
+        assert_eq!(
+            super::compare_mod_versions("1.9.8.1", "1.9.8"),
+            Some(std::cmp::Ordering::Greater),
+            "本地副本：四段 beta 的数字更大，与实际加载一致"
+        );
+        assert_eq!(
+            super::compare_mod_versions("1.9.8.21", "1.9.8.1"),
             Some(std::cmp::Ordering::Greater)
         );
     }

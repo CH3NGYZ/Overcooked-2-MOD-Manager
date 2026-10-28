@@ -1843,6 +1843,72 @@ mod tests {
         );
     }
 
+    /*
+     * 现实约束：.NET 程序集版本最多四段纯数字，写不出 `1.9.8-beta.1`。
+     *
+     * HostUtilities 因此采用「DLL 四段数字 + GitHub tag 标准 semver」的发布模型：
+     *
+     *     DLL version  1.9.8.1
+     *     release tag  v1.9.8-beta.1
+     *
+     * 后端比较必须把这二者视为同一版本，否则装了 beta.1 的本地副本
+     * 检测不到 beta.2，或同一个 beta 被反复提示为更新。
+     */
+    #[test]
+    fn dll_four_segment_version_equals_release_beta_tag() {
+        use std::cmp::Ordering;
+        for serial in [1, 2, 9, 10, 21, 23] {
+            let dll = format!("1.9.8.{serial}");
+            let tag = format!("v1.9.8-beta.{serial}");
+            assert_eq!(
+                compare_release_versions(&dll, &tag),
+                Some(Ordering::Equal),
+                "{dll} 应等于 {tag}"
+            );
+        }
+    }
+
+    /*
+     * 本地装四段 beta 时的更新检测：
+     *   · 线上更新的 beta → 有更新
+     *   · 线上同基版本正式版 → 有更新（同基 beta 低于 stable）
+     *   · 序号跨十位仍按数值（旧实现把 .21 判得比 .1 小）
+     */
+    #[test]
+    fn local_four_segment_beta_upgrades_to_newer_beta_and_to_stable() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            compare_release_versions("v1.9.8-beta.2", "1.9.8.1"),
+            Some(Ordering::Greater),
+            "本地 beta.1 应检测到 beta.2"
+        );
+        assert_eq!(
+            compare_release_versions("v1.9.8-beta.1", "1.9.8.2"),
+            Some(Ordering::Less),
+            "本地 beta.2 不应被更旧的 beta.1 提示更新"
+        );
+        assert_eq!(
+            compare_release_versions("v1.9.8-beta.21", "1.9.8.1"),
+            Some(Ordering::Greater),
+            "beta.21 应大于 beta.1"
+        );
+        assert_eq!(
+            compare_release_versions("v1.9.8", "1.9.8.1"),
+            Some(Ordering::Greater),
+            "本地 beta 应能升级到同基版本正式版"
+        );
+        assert_eq!(
+            compare_release_versions("v1.9.9-beta.1", "1.9.8.1"),
+            Some(Ordering::Greater),
+            "下一条产品线的 beta 也算更新"
+        );
+        assert_eq!(
+            compare_release_versions("v1.9.7", "1.9.8.1"),
+            Some(Ordering::Less),
+            "上一个正式版不应提示更新"
+        );
+    }
+
     #[test]
     fn version_comparison_counts_every_segment() {
         use std::cmp::Ordering;

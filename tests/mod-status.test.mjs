@@ -206,6 +206,46 @@ test('符合 semver 规范给出的经典优先级链', () => {
 })
 
 /*
+ * 现实约束：.NET 程序集版本最多四段纯数字，`1.9.8-beta.1` 无法写进 DLL。
+ *
+ * 所以 HostUtilities 的发布模型是「DLL 用四段数字，GitHub tag 用标准 semver」：
+ *
+ *     DLL version  1.9.8.1
+ *     release tag  v1.9.8-beta.1
+ *
+ * 安装器读取本地版本时，必须把第 4 段当作 `-beta.<n>` 参与线上 tag 对比，
+ * 否则「装了 beta.1，仓库有 beta.2」检测不出来，或者反过来把同一个 beta
+ * 反复提示为更新。
+ */
+test('DLL 四段版本与仓库 beta tag 语义等价', () => {
+  for (const serial of [1, 2, 9, 10, 21, 23]) {
+    const dll = `1.9.8.${serial}`
+    const tag = `v1.9.8-beta.${serial}`
+    assert.equal(compareVersions(dll, tag), 0, `${dll} 应等于 ${tag}`)
+  }
+})
+
+test('本地四段 DLL 能检测到线上 beta 的更新', () => {
+  // 装了 beta.1，仓库有 beta.2 → 有更新
+  assert.equal(compareVersions('v1.9.8-beta.2', '1.9.8.1'), 1)
+  // 装了 beta.2，仓库最新仍是 beta.1 → 已是最新
+  assert.equal(compareVersions('v1.9.8-beta.1', '1.9.8.2'), -1)
+  // 序号跨十位仍正确（旧实现会把 .21 判得比 .1 小）
+  assert.equal(compareVersions('v1.9.8-beta.21', '1.9.8.1'), 1)
+  assert.equal(compareVersions('1.9.8.21', '1.9.8.1'), 1)
+})
+
+test('本地装 beta 时能检测到同基版本的正式版更新', () => {
+  // HostUtilities 已开启「同基版本 beta 低于正式版」，且 beta 仓库也会带
+  // stable 的 Release，因此装了 1.9.8.1 应能升级到 1.9.8
+  assert.equal(compareVersions('v1.9.8', '1.9.8.1'), 1)
+  // 下一条产品线的 beta 同样算更新
+  assert.equal(compareVersions('v1.9.9-beta.1', '1.9.8.1'), 1)
+  // 上一个正式版不算更新
+  assert.equal(compareVersions('v1.9.7', '1.9.8.1'), -1)
+})
+
+/*
  * 同号 beta 永远低于正式版 —— 这是「稳定渠道不接受 beta 更新」的依据。
  * 本地 1.8.7，仓库有 1.8.7.23 时不能提示有更新。
  */

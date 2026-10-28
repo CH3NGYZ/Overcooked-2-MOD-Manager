@@ -6,19 +6,19 @@
  * 不值得占一个常驻导航位，所以收进设置——卡片只展示版本与启用状态，
  * 所有操作在抽屉里完成。
  *
- * 四个主操作对应四种「路径」问题：
- *   · 恢复默认路径 —— 探测结果不对时，把游戏目录交回自动探测
- *   · 打开路径     —— 去文件管理器里看/改
- *   · 选择路径     —— 手动指定
- *   · 配置管理     —— 编辑 `BepInEx/config/BepInEx.cfg`（复用 ModConfigEditor）
- * 安装/重装/卸载/备份/恢复仍在下方，属于框架本身的维护。
+ * 抽屉只放**框架自己**的操作：
+ *   · 打开路径   —— `<game>/BepInEx`（框架文件所在层，不是 plugins）
+ *   · 配置管理   —— 编辑 `BepInEx/config/BepInEx.cfg`（复用 ModConfigEditor）
+ *   · 安装 / 重装 / 备份 / 恢复 / 卸载
+ *
+ * 不放游戏目录的选择与恢复：那是设置页「路径管理 → 游戏目录」的职责，
+ * 同一件事在两处出现会让用户以为框架有独立的路径配置。
  */
 import { computed, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
 import {
   AddCircleOutline, FolderOpenOutline, SaveOutline, SettingsOutline, TrashOutline, WarningOutline,
-  RefreshOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
@@ -222,43 +222,17 @@ async function toggleFramework(enabled: boolean) {
   await load()
 }
 
-/* ===== 路径相关的四个操作 ===== */
+/* ===== 框架自身的两个操作 =====
+ *
+ * 这里**不放**「选择路径 / 恢复默认路径」：它们作用于游戏目录，和设置页
+ * 「路径管理 → 游戏目录」那行是同一件事，重复放在抽屉里会让用户以为
+ * 框架有自己的路径配置。抽屉只保留真正属于框架的两个动作。
+ */
 
-/** 打开游戏的 BepInEx 目录（需要在管理器里能看到文件）。 */
+/** 打开 `<game>/BepInEx`（框架文件所在处，不是 plugins）。 */
 async function openPath() {
-  const result = await api.openGameDirectory()
+  const result = await api.openBepInExDirectory()
   if (!result.ok) message.error(result.message)
-}
-
-/** 重新自动探测游戏目录。 */
-function restoreDefaultPath() {
-  dialog.warning({
-    title: t('恢复默认路径'),
-    content: t('将清除手动选择的游戏目录，改回自动探测 Steam 库。继续？'),
-    positiveText: t('恢复默认'),
-    negativeText: t('取消'),
-    async onPositiveClick() {
-      working.value = true
-      try {
-        await api.resetGamePath()
-        message.success(t('已恢复默认路径'))
-        await load()
-      } catch (reason) { fail(reason) } finally { working.value = false }
-    },
-  })
-}
-
-/** 手动选择游戏目录。 */
-async function choosePath() {
-  working.value = true
-  try {
-    const picked = await api.chooseGameDirectory()
-    const path = Array.isArray(picked) ? picked[0] : picked
-    if (!path) return
-    await api.setGamePath(path)
-    message.success(t('已保存'))
-    await load()
-  } catch (reason) { fail(reason) } finally { working.value = false }
 }
 
 async function openBackups() {
@@ -291,24 +265,16 @@ async function openBackups() {
     </div>
 
     <!--
-      路径 / 配置操作。
-      「打开路径」「配置管理」指向框架自己的文件，未安装时没有意义，直接隐藏；
-      「选择路径」「恢复默认路径」是针对游戏目录的，任何状态下都要能用。
+      框架自身的两个操作。
+      「选择路径 / 恢复默认路径」属于游戏目录，已在设置页「路径管理」里，
+      这里不再重复 —— 否则用户会以为框架另有路径配置。
     -->
-    <div class="panel-actions">
-      <n-button v-if="installed" size="small" secondary :disabled="working" @click="openPath">
+    <div v-if="installed" class="panel-actions">
+      <n-button size="small" secondary :disabled="working" @click="openPath">
         <template #icon><FolderOpenOutline width="15" height="15" /></template>
         {{ t('打开路径') }}
       </n-button>
-      <n-button size="small" secondary :disabled="working" @click="choosePath">
-        <template #icon><FolderOpenOutline width="15" height="15" /></template>
-        {{ t('选择路径') }}
-      </n-button>
-      <n-button size="small" secondary :disabled="working" @click="restoreDefaultPath">
-        <template #icon><RefreshOutline width="15" height="15" /></template>
-        {{ t('恢复默认路径') }}
-      </n-button>
-      <n-button v-if="installed" size="small" secondary :disabled="working" @click="configEditorOpen = true">
+      <n-button size="small" secondary :disabled="working" @click="configEditorOpen = true">
         <template #icon><SettingsOutline width="15" height="15" /></template>
         {{ t('配置管理') }}
       </n-button>

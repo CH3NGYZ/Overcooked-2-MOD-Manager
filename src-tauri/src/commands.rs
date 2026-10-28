@@ -4562,6 +4562,34 @@ pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult,
     })
 }
 
+/// 打开游戏的 `BepInEx` 目录（框架自身文件所在处，不是 plugins）。
+///
+/// 与 `open_game_directory`（游戏根目录）和 `open_mod_directory`
+/// （`BepInEx/plugins`）区分开：框架的 `core`、`config`、`doorstop` 相关
+/// 文件都在这里，排查框架问题时要看的是这一层。
+///
+/// 不自动创建目录：调用方是「框架已安装」状态下的按钮，目录本该存在。
+/// 不存在说明状态与磁盘不一致，报错让用户重新探测，而不是凭空建一个空目录
+/// 让他以为框架装好了。
+#[tauri::command]
+pub fn open_bepinex_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    log::debug!("打开 BepInEx 目录");
+    let config = state.config.load_or_default();
+    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let framework = game::safe_game_path(Path::new(&game_root), "BepInEx")?;
+    if !framework.is_dir() {
+        return Err("BepInEx 目录不存在，请重新检测框架状态".into());
+    }
+    external_open_command()
+        .arg(&framework)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(OperationResult {
+        ok: true,
+        message: "已打开 BepInEx 目录".into(),
+    })
+}
+
 fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<PathBuf, String> {
     let relative = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
     let normalized = relative.to_ascii_lowercase();

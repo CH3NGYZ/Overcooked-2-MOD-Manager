@@ -188,6 +188,7 @@ pub fn run() {
             commands::switch_winhttp,
             commands::open_game_directory,
             commands::open_mod_directory,
+            commands::open_bepinex_directory,
             commands::open_mod_file_location,
             commands::open_mod_logs_directory,
             commands::read_mod_config,

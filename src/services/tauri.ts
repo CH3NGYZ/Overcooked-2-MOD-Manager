@@ -103,6 +103,8 @@ export const api = {
   copyText: (text: string) => invoke<OperationResult>('copy_text', { text }),
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
   openModDirectory: () => invoke<OperationResult>('open_mod_directory'),
+  /** 打开 `<game>/BepInEx`（框架自身文件所在处，不是 plugins）。 */
+  openBepInExDirectory: () => invoke<OperationResult>('open_bepinex_directory'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),

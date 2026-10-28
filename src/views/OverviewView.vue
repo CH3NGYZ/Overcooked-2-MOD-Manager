@@ -23,9 +23,11 @@ import {
 import StatCard from '../components/StatCard.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
+import { tagColorFor } from '../theme'
 import { resolvedUpdateAvailable } from '../statusTags'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
@@ -34,6 +36,27 @@ import type { ModRecycleEntry } from '../types'
 const router = useRouter()
 const message = useNotify()
 const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = useDashboard()
+
+/**
+ * 次要计数的文字色 = 同卡按钮的填充色。
+ *
+ * `tagColorFor('moderate').textColor` 与 Naive `type="warning"` 按钮的
+ * `warningColor` 是同一个值（都是主题对比色），所以文字与按钮永远同色，
+ * 用户换主色时一起变。
+ *
+ * 用内联 style 而不是 CSS 变量：slot 内容渲染在 StatCard 内部，
+ * 父组件的 scoped 选择器命中不到它，而 `:style` 不受 scoped 限制。
+ */
+const toneText = computed(() => tagColorFor('moderate').textColor)
+
+/**
+ * 整批刷新是否在进行中。
+ *
+ * 只认 `refreshingAll`（整批），不看单个仓库的 `refreshing`：
+ * 用户在 MOD 安装页单独刷新一个仓库时，总览不该跳出来说「正在检测更新」——
+ * 那只是某一个仓库的行为，不代表全局在检查。
+ */
+const { refreshingAll } = useRepositoryRefresh()
 
 const recycleOpen = ref(false)
 const recycleEntries = ref<ModRecycleEntry[]>([])
@@ -251,12 +274,22 @@ async function closeRecycle() {
         :sub="installedSub"
         :tone="updatable.length ? 'warning' : 'success'">
         <template v-if="updatable.length" #extra>
-          <span class="extra-value update-color">{{ updatable.length }}</span>
-          <span class="extra-label update-color">{{ t('可更新') }}</span>
+          <span class="extra-sep">·</span>
+          <span class="extra-value" :style="{ color: toneText }">{{ updatable.length }}</span>
+          <span class="extra-label" :style="{ color: toneText }">{{ t('可更新') }}</span>
         </template>
         <template #action>
+          <!--
+            「正在检测更新」放在按钮左边：它是这个按钮动作的进度说明，
+            紧贴按钮才看得出因果关系。
+          -->
+          <span v-if="refreshingAll" class="checking-hint"
+            :style="{ fontSize: '12px', color: 'var(--oc2-text-3)', whiteSpace: 'nowrap' }">
+            {{ t('正在检测更新') }}
+          </span>
           <n-button size="small" :secondary="!updatable.length"
             :type="updatable.length ? 'warning' : 'default'"
+            :loading="refreshingAll"
             :disabled="!installedMods.length" @click="openLocalMods">
             <template #icon>
               <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
@@ -275,8 +308,9 @@ async function closeRecycle() {
         :sub="onlineSub"
         :tone="failedRepositories.length ? 'warning' : 'success'">
         <template v-if="failedRepositories.length" #extra>
-          <span class="extra-value refresh-color">{{ failedRepositories.length }}</span>
-          <span class="extra-label refresh-color">{{ t('刷新失败') }}</span>
+          <span class="extra-sep">·</span>
+          <span class="extra-value" :style="{ color: toneText }">{{ failedRepositories.length }}</span>
+          <span class="extra-label" :style="{ color: toneText }">{{ t('刷新失败') }}</span>
         </template>
         <template #action>
           <n-button size="small" :secondary="!failedRepositories.length"
@@ -324,27 +358,48 @@ async function closeRecycle() {
 .card-grid.is-loading { opacity: .6; }
 
 /*
- * 并列的次要计数：数字比主数值小一档，下面跟一行小标签。
- *
- * 颜色不取 `--oc2-tone-*`：现有色阶里 moderate 与 severe 的 textColor
- * 都是同一个对比色（只有标签底色透明度不同），两个数字会完全同色，
- * 无法区分「可更新」和「刷新失败」。这里用两个独立的语义色，
- * 与全站色阶的分工不冲突 —— 色阶表达严重程度，这两个表达「哪一类问题」。
+ * 「正在检测更新」：动作进度提示，紧贴按钮左侧。
+ * 用小字 + 次要色，不抢按钮和主数值的注意力。
  */
+.checking-hint {
+  font-size: 12px;
+  color: var(--oc2-text-3);
+  white-space: nowrap;
+}
+/*
+ * 次要计数（`4 · 2 可更新`）的样式**必须写在父组件**。
+ *
+ * slot 内容由父组件渲染并带父组件的 scoped 属性，所以写在 StatCard.vue
+ * 里的 `.extra-value` 永远不会命中这些元素（表现是字号退回默认 14px）。
+ * StatCard 只负责 `.stat-extra` 这一层容器（它自己渲染的）。
+ *
+ * 字号与主数值一致（30px）：这是同一句话的后半段，不该缩成小字。
+ * 颜色由内联 `:style` 传入（见 toneText），与同卡按钮填充色同源；
+ * 分隔符不上色，用中性灰。
+ */
+.extra-sep {
+  color: var(--oc2-text-3);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.1;
+}
 .extra-value {
-  font-size: 22px;
+  font-size: 30px;
   font-weight: 700;
   line-height: 1.1;
 }
 .extra-label {
-  font-size: 11.5px;
-  font-weight: 600;
-  line-height: 1;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.1;
 }
-/* 可更新：琥珀色，与「有动作但可等」的语义一致 */
-.update-color { color: #f0b020; }
-/* 刷新失败：蓝色，与「信息缺失、需要重新拉取」的语义一致 */
-.refresh-color { color: #4da3ff; }
+
+/* 「正在检测更新」：动作进度提示，紧贴按钮左侧。 */
+.checking-hint {
+  font-size: 12px;
+  color: var(--oc2-text-3);
+  white-space: nowrap;
+}
 
 /*
  * 窄窗口（含 150% 内容缩放下等效宽度变小）时四列会挤，

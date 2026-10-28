@@ -66,7 +66,17 @@ defineEmits<{ (event: 'click'): void }>()
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.stat-action { flex: 0 0 auto; }
+/*
+ * 动作区：可容纳「提示文字 + 按钮」并排。
+ * 提示紧贴按钮左侧，所以在同一行内用 flex 而不是让它们各自定位。
+ */
+.stat-action {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .stat-value {
   font-size: 30px;
   font-weight: 700;
@@ -75,10 +85,46 @@ defineEmits<{ (event: 'click'): void }>()
 .stat-value-row {
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  gap: 10px;
   margin: 10px 0 6px;
 }
-.stat-extra { display: flex; flex-direction: column; gap: 2px; }
+/*
+ * 次要计数与主数值同一行、基线对齐：`4 · 2 可更新`。
+ * 用 baseline 而不是 center —— 主数值 30px、次数值 22px，
+ * center 会让两者视觉重心错位，看起来像没对齐。
+ */
+.stat-extra {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+/*
+ * 颜色由使用方通过 `--stat-extra-color` 传入（或直接在 slot 里写 :style）。
+ *
+ * 为什么不用这里写死的 tone 变量：slot 内容由父组件渲染，
+ * 父组件的 scoped class 命中不到它，所以颜色必须走内联样式或继承变量。
+ *
+ * 字号与主数值**完全相同**（30px）：`4 · 2 可更新` 读起来是一个整体，
+ * 次要计数不应缩成小字——它在视觉上是同一句话的后半段。
+ */
+.extra-sep {
+  color: var(--oc2-text-3);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.1;
+}
+.extra-value {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--stat-extra-color, inherit);
+}
+.extra-label {
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.1;
+  color: var(--stat-extra-color, inherit);
+}
 .stat-value.success { color: var(--oc2-accent); }
 .stat-value.warning { color: var(--oc2-accent); }
 .stat-value.danger { color: #ee8585; }

@@ -1160,10 +1160,19 @@ function removePackage(node: ModPackageNode) {
               </n-collapse-transition>
             </article>
 
-            <!-- 多 DLL 包：折叠外壳 + 包级操作，内部仍是同样的卡片 -->
+            <!--
+              多 DLL 包：折叠外壳 + 包级操作，内部仍是同样的卡片。
+              跨页跳转（从 MOD 安装页点标签过来）要落在**包外壳**上：
+              包是页面上的一个展示单元，跳转进来高亮整包才符合语义；
+              包内子 DLL 不是单元，所以它们不带 data-focus-id。
+            -->
             <section v-else class="package-shell"
+              :data-focus-id="pkg.repositoryId"
               :data-mod-anchor="`unit:${pkg.key}`"
-              :class="{ 'status-flash': matchesActiveStatus(`unit:${pkg.key}`) }">
+              :class="{
+                'status-flash': matchesActiveStatus(`unit:${pkg.key}`),
+                'focus-flash': !!pkg.repositoryId && highlightId === pkg.repositoryId,
+              }">
               <header class="package-head" @click="togglePackage(pkg.key)">
                 <!-- 左：开关 + 包名 + 子 MOD 数量（数量紧跟包名；「N 个」已表明这是包） -->
                 <div class="package-left">
@@ -1244,11 +1253,9 @@ function removePackage(node: ModPackageNode) {
                   状态结论属于整个包，高亮只画在外壳上（见 package-shell）。
                 -->
                 <article v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
-                  :data-focus-id="bindingRepositoryId(mod)"
                   :class="{
                     disabled: !mod.enabled,
                     expanded: isExpanded(mod.dll_file),
-                    'focus-flash': highlightId === bindingRepositoryId(mod),
                   }" @click="onCardClick($event, mod)">
                   <div class="card-row">
                     <div class="card-left">
@@ -1498,17 +1505,22 @@ function removePackage(node: ModPackageNode) {
 }
 /*
  * 包外壳的定位高亮：与单 MOD 卡片同一套视觉。
- * 包是页面上的一个单元，点它的状态标签时高亮整个外壳，
+ * 两个来源都落在这里：
+ *   · status-flash —— 点包自己的状态标签（页内聚合定位）
+ *   · focus-flash  —— 从 MOD 安装页点「最新版」等标签跨页跳过来
+ * 包是页面上的一个展示单元，两种情况都该高亮整个外壳，
  * 而不是包内某个 DLL 行 —— 结论属于包，不属于某一个子 MOD。
  */
-.package-shell.status-flash {
+.package-shell.status-flash,
+.package-shell.focus-flash {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 12%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
   animation: focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  .package-shell.status-flash { animation: none; }
+  .package-shell.status-flash,
+  .package-shell.focus-flash { animation: none; }
 }
 /* 可点击的状态标签：手型 + hover 反馈，表示能跳到 MOD 安装页 */
 .state-tag--link { cursor: pointer; }

@@ -121,6 +121,7 @@ const entries = {
   '游戏版本': ['遊戲版本', 'Game version', '게임 버전', 'ゲームのバージョン'],
   'CrossOver 运行 Windows 版，或使用 macOS 原生版': ['CrossOver 執行 Windows 版，或使用 macOS 原生版', 'Run the Windows build through CrossOver, or use the native macOS build', 'CrossOver로 Windows 버전을 실행하거나 macOS 네이티브 버전을 사용합니다', 'CrossOver で Windows 版を実行するか、macOS ネイティブ版を使用します'],
   '尚未安装，点击右侧按钮安装': ['尚未安裝，點擊右側按鈕安裝', 'Not installed — use the button on the right', '설치되지 않았습니다. 오른쪽 버튼으로 설치하세요', '未インストールです。右のボタンからインストールしてください'],
+  '尚未安装框架，检测到已有的 plugins / config，安装后会保留': ['尚未安裝框架，偵測到既有的 plugins / config，安裝後會保留', 'Framework not installed. Existing plugins / config found and will be kept after install.', '프레임워크가 설치되지 않았습니다. 기존 plugins / config 가 있으며 설치 후 유지됩니다.', 'フレームワーク未インストール。既存の plugins / config はインストール後も保持されます。'],
   '管理': ['管理', 'Manage', '관리', '管理'],
   // BepInEx 平台安装引导
   '安装前准备': ['安裝前準備', 'Before installing', '설치 전 준비', 'インストール前の準備'],

@@ -65,7 +65,7 @@ async function switchRuntime(runtime: GameRuntime) {
 
 /* ===== BepInEx 框架卡片摘要 ===== */
 
-/** 框架是否已安装（以 BepInEx 目录是否完整为准）。 */
+/** 框架是否已安装：判据是 `BepInEx/core` 下的核心程序集，不是目录存在。 */
 const bepinexOk = computed(() => {
   const info = game.value?.bepinex
   return !!info && info.installed
@@ -74,10 +74,17 @@ const bepinexOk = computed(() => {
 /**
  * 卡片副标题：版本 + 是否启用。
  * 只放「一眼能看出状态」的信息，具体操作都在抽屉里。
+ *
+ * 未安装时要区分两种：完全没装，和「装过 MOD 留下了 BepInEx/plugins」。
+ * 后者提示一句「已有 MOD 目录」，用户才知道装框架不会丢 MOD。
  */
 const bepinexSummary = computed(() => {
   const info = game.value?.bepinex
-  if (!bepinexOk.value) return t('尚未安装，点击右侧按钮安装')
+  if (!bepinexOk.value) {
+    return info?.has_residue
+      ? t('尚未安装框架，检测到已有的 plugins / config，安装后会保留')
+      : t('尚未安装，点击右侧按钮安装')
+  }
   const version = info?.version ? `${t('版本')} ${info.version}` : t('版本未知')
   const enabled = game.value?.winhttp_state === 'modenabled'
   return `${version} · ${enabled ? t('框架已启用') : t('框架已禁用')}`

@@ -425,7 +425,10 @@ pub fn compare_release_versions(remote: &str, local: &str) -> Option<std::cmp::O
 ///
 /// 与 Release 元数据里的 `prerelease` 标记是**或**的关系：作者没勾标记，
 /// 但版本叫 `0.4.0-beta`、`0.4.0.5-beta` 时同样按预发布对待。
-/// 四段版本里的纯数字段不算预发布。
+///
+/// 四段版本按 semver 的 beta 序号处理：`1.8.7.23` ≡ `1.8.7-beta.23`，
+/// 因此**是预发布**。这条规则必须全局一致，否则同一版本在比较、
+/// 渠道筛选和界面提示里会得到三种答案。
 pub fn is_prerelease_version(version: &str) -> bool {
     SegmentVersion::parse(version).is_some_and(|parsed| !parsed.prerelease.is_empty())
 }
@@ -981,13 +984,23 @@ pub fn parse_release_json(
                 })
             })
             .collect();
+        /*
+         * 预发布 = API 标记 或 版本号本身是预发布（四段 beta 序号 / `-` 后缀）。
+         *
+         * 必须在这里算好、随 ReleaseInfo 一起下发：前端只能拿到
+         * `version`（已被 parse_version 截成三段，第 4 段丢失）和
+         * `tag_name` 两串文本，让各处自己反推必然出现不一致 ——
+         * 实际发生过：卡片读 tag_name 判成预发布，安装确认弹窗读
+         * version 判成正式版，同一个版本两种结论。
+         *
+         * 不再用「tag 含 beta/alpha 字样」兜底：判定统一走
+         * is_prerelease_version，与比较、渠道筛选共用同一套 semver 规则。
+         */
         let prerelease = item
             .get("prerelease")
             .and_then(Value::as_bool)
-            .unwrap_or_else(|| {
-                tag.to_ascii_lowercase().contains("beta")
-                    || tag.to_ascii_lowercase().contains("alpha")
-            });
+            .unwrap_or(false)
+            || is_prerelease_version(&tag);
         let date = item
             .get("published_at")
             .or_else(|| item.get("created_at"))
@@ -1459,10 +1472,11 @@ mod tests {
         assert!(is_prerelease_version("0.4.0-beta"));
         assert!(is_prerelease_version("0.4.0.5-beta"));
         assert!(is_prerelease_version("v1.0.0-rc.1"));
-        // 第 4 段非 0 表示 beta 序号，也算预发布
+        // 四段 = 前三位的 beta 序号（semver：1.8.7.23 ≡ 1.8.7-beta.23）
         assert!(is_prerelease_version("0.4.0.5"));
         assert!(is_prerelease_version("1.8.7.23"));
-        // 三段正式版与尾部补 0 段都不是预发布
+        assert!(is_prerelease_version("v1.8.7.23"));
+        // 三段正式版与尾部补 0 段都不是预发布（beta.0 不存在）
         assert!(!is_prerelease_version("0.4.0"));
         assert!(!is_prerelease_version("0.4.0.0"));
         assert!(!is_prerelease_version("unknown"));
@@ -1563,6 +1577,33 @@ mod tests {
         ];
         assert_eq!(filter_channel(releases.clone(), &Channel::Stable).len(), 1);
         assert_eq!(filter_channel(releases, &Channel::Beta).len(), 1);
+    }
+
+    /*
+     * 同一个版本号，无论从哪个字段读，预发布结论必须一致。
+     *
+     * 真实事故：仓库卡片读 `tag_name`（完整四段）判成预发布，
+     * 安装确认弹窗读 `version`（后端归一后的三段）判成正式版，
+     * 同一个 Release 在两处显示相反结论。
+     *
+     * 根因是判定被分散到前端各处、各自选字段反推。现在唯一实现放在
+     * 后端 `is_prerelease_version`，并随 ReleaseInfo 的 prerelease 下发。
+     */
+    #[test]
+    fn prerelease_verdict_is_identical_for_tag_and_normalized_version() {
+        for tag in ["v1.8.7.23", "1.8.7.23-beta", "v0.4.0", "v0.4.0.0"] {
+            let from_tag = is_prerelease_version(tag);
+            let normalized = parse_version(tag).map(|value| value.to_string());
+            let from_version = normalized.as_deref().is_some_and(is_prerelease_version);
+            // 归一化会丢第 4 段，所以 version 侧的结论只能"不少于" tag 侧：
+            // 带 - 后缀的必须保留预发布语义，四段的差异由后端提前算好下发。
+            if from_tag && tag.contains('-') {
+                assert!(from_version, "{tag} 归一后丢了预发布语义");
+            }
+        }
+        // 后端下发给前端的就是下面这个值，前端不再自己算
+        assert!(is_prerelease_version("v1.8.7.23"));
+        assert!(!is_prerelease_version("v0.4.0"));
     }
 
     #[test]

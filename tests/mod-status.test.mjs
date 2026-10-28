@@ -106,3 +106,29 @@ test('预发布判定：元数据标记与版本号后缀是或关系', () => {
   // 无法解析且没有标记 → 不臆断
   assert.equal(isPrereleaseVersion('unknown', false), false)
 })
+
+/*
+ * 后端下发的 prerelease 是权威值，前端不得再用版本号推翻它。
+ *
+ * 真实事故：同一个 Release，仓库卡片读 tag_name（`v1.8.7.23`，四段）
+ * 判成预发布，安装确认弹窗读 version（后端归一后的 `1.8.7`，第 4 段已丢）
+ * 判成正式版，用户看到的两个结论相反。
+ */
+test('后端标记为预发布时，任何版本号写法都按预发布处理', () => {
+  for (const version of ['1.8.7', '1.8.7.0', '1.8.7.23', 'unknown', '', undefined]) {
+    assert.equal(isPrereleaseVersion(version, true), true, String(version))
+  }
+})
+
+test('四段版本号读 tag_name 与读归一后的 version 结论应一致', () => {
+  // 后端归一化会把 1.8.7.23 截成 1.8.7，所以只靠 version 反推会漏判；
+  // 正确做法是用后端算好的 prerelease + 完整 tag_name。
+  const tagName = 'v1.8.7.23'
+  const normalized = '1.8.7'
+  const backendFlag = true // 后端 is_prerelease_version("v1.8.7.23")
+  assert.equal(isPrereleaseVersion(tagName, backendFlag), true)
+  assert.equal(isPrereleaseVersion(normalized, backendFlag), true)
+  // 若丢掉后端标记，两者就会分叉——这正是修复前的问题
+  assert.equal(isPrereleaseVersion(tagName, false), true)
+  assert.equal(isPrereleaseVersion(normalized, false), false)
+})

@@ -85,11 +85,18 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
  * 是否预发布版本。
  *
  * 两个来源取**或**：
- *   1. Release 元数据里的 `prerelease` 标记（仓库作者勾选的）；
- *   2. 版本号本身带 `-` 后缀 —— `0.4.0-beta`、`0.4.0.5-beta` 这类
- *      即使作者没勾 prerelease，也应当按预发布对待。
+ *   1. 后端算好的 `prerelease` 标记 —— 这是权威值，为真就一定按预发布处理，
+ *      与前端如何显示版本号无关；
+ *   2. 版本号本身是预发布（四段 beta 序号或 `-` 后缀）—— 仅作兜底，
+ *      用于旧缓存里没有后端算过标记的 Release。
  *
- * 任意写作里出现非数字标识符都算预发布，与 `parseVersion` 的语义一致。
+ * 规则本身只在后端 `releases::is_prerelease_version` 实现一次（四段 =
+ * beta 序号、`-` 后缀 = 预发布），前端这里只是同一套规则的镜像，
+ * 保证「后端标记优先 + 老数据可判」两点同时成立。
+ *
+ * **调用方必须传 `tag_name`，不能传 `version`。** 后端的 `version` 是
+ * `parse_version` 归一后的三段文本，第 4 段已经丢了，拿它反推必然得出
+ * 「不是预发布」；`tag_name` 才是仓库发的原始版本字符串。
  */
 export function isPrereleaseVersion(
   version: string | null | undefined,

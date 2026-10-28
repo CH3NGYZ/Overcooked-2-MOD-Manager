@@ -41,9 +41,15 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
 
     const target = tag ?? repo.cached_releases[0]?.tag_name
     const release = repo.cached_releases.find((entry) => entry.tag_name === target)
-    // 预发布判定：元数据标记 或 版本号带 - 后缀（0.4.0-beta / 0.4.0.5-beta）
+    /*
+     * 预发布判定：优先用后端算好的 `prerelease` 标记。
+     *
+     * 兜底只能传 `tag_name` —— 后端的 `version` 是归一后的三段文本，
+     * 第 4 段（beta 序号）已经丢了，拿它反推会把 `1.8.7.23` 判成正式版，
+     * 而卡片那边看到的是预发布，两处结论不一致。
+     */
     const prerelease = release
-      ? isPrereleaseVersion(release.version || release.tag_name, release.prerelease)
+      ? isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
       : false
     if (prerelease) {
       const confirmed = await new Promise<boolean>((resolve) => {

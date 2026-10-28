@@ -149,7 +149,8 @@ const logHtml = computed(() => renderReadme(selectedRelease.value?.body?.trim() 
 const selectedReleaseIsPrerelease = computed(() => {
   const release = selectedRelease.value
   if (!release) return false
-  return isPrereleaseVersion(release.version || release.tag_name, release.prerelease)
+  // 传 tag_name：version 是后端归一后的三段，第 4 段 beta 序号已经丢了
+  return isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
 })
 
 /**

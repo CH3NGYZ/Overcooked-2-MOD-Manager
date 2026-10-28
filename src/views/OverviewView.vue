@@ -265,14 +265,41 @@ async function closeRecycle() {
       </StatCard>
 
       <!--
-        2. 已安装 MOD：主数值是安装总数，旁边并列「N 可更新」。
-           两个数字各用各的等级色（总数=中性/正常，可更新=中度），
-           这样一眼能看出「4 个里有 1 个要处理」，不会把两个数读成一个。
+        2. 在线 MOD：整张卡可点，跳 MOD 安装页。
+           主数值是可见仓库总数，旁边并列「N 刷新失败」。
+           有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
+      -->
+      <StatCard :label="t('在线 MOD')" :value="String(onlineRepositories.length)"
+        :sub="onlineSub"
+        :tone="failedRepositories.length ? 'warning' : 'success'"
+        clickable @click="openOnlineRepositories">
+        <template v-if="failedRepositories.length" #extra>
+          <span class="extra-sep">·</span>
+          <span class="extra-value" :style="{ color: toneText }">{{ failedRepositories.length }}</span>
+          <span class="extra-label" :style="{ color: toneText }">{{ t('刷新失败') }}</span>
+        </template>
+        <template #action>
+          <n-button size="small" :secondary="!failedRepositories.length"
+            :type="failedRepositories.length ? 'warning' : 'default'"
+            :disabled="!onlineRepositories.length" @click.stop="openOnlineRepositories">
+            <template #icon>
+              <RefreshOutline v-if="failedRepositories.length" width="14" height="14" />
+              <CloudDownloadOutline v-else width="14" height="14" />
+            </template>
+            {{ failedRepositories.length ? t('去刷新') : t('去安装') }}
+          </n-button>
+        </template>
+      </StatCard>
+
+      <!--
+        3. 本地 MOD：整张卡可点，跳 MOD 管理页。
+           主数值是安装总数，旁边并列「N 可更新」。
            按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
       -->
-      <StatCard :label="t('已安装 MOD')" :value="String(installedMods.length)"
+      <StatCard :label="t('本地 MOD')" :value="String(installedMods.length)"
         :sub="installedSub"
-        :tone="updatable.length ? 'warning' : 'success'">
+        :tone="updatable.length ? 'warning' : 'success'"
+        clickable @click="openLocalMods">
         <template v-if="updatable.length" #extra>
           <span class="extra-sep">·</span>
           <span class="extra-value" :style="{ color: toneText }">{{ updatable.length }}</span>
@@ -290,37 +317,12 @@ async function closeRecycle() {
           <n-button size="small" :secondary="!updatable.length"
             :type="updatable.length ? 'warning' : 'default'"
             :loading="refreshingAll"
-            :disabled="!installedMods.length" @click="openLocalMods">
+            :disabled="!installedMods.length" @click.stop="openLocalMods">
             <template #icon>
               <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
               <SettingsOutline v-else width="14" height="14" />
             </template>
             {{ updatable.length ? t('去更新') : t('去管理') }}
-          </n-button>
-        </template>
-      </StatCard>
-
-      <!--
-        3. 在线 MOD：主数值是可见仓库总数，旁边并列「N 刷新失败」。
-           有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
-      -->
-      <StatCard :label="t('在线 MOD')" :value="String(onlineRepositories.length)"
-        :sub="onlineSub"
-        :tone="failedRepositories.length ? 'warning' : 'success'">
-        <template v-if="failedRepositories.length" #extra>
-          <span class="extra-sep">·</span>
-          <span class="extra-value" :style="{ color: toneText }">{{ failedRepositories.length }}</span>
-          <span class="extra-label" :style="{ color: toneText }">{{ t('刷新失败') }}</span>
-        </template>
-        <template #action>
-          <n-button size="small" :secondary="!failedRepositories.length"
-            :type="failedRepositories.length ? 'warning' : 'default'"
-            :disabled="!onlineRepositories.length" @click="openOnlineRepositories">
-            <template #icon>
-              <RefreshOutline v-if="failedRepositories.length" width="14" height="14" />
-              <CloudDownloadOutline v-else width="14" height="14" />
-            </template>
-            {{ failedRepositories.length ? t('去刷新') : t('去安装') }}
           </n-button>
         </template>
       </StatCard>

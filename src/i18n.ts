@@ -273,6 +273,7 @@ const entries = {
   '去管理': ['去管理', 'Manage', '관리하기', '管理へ'],
   '去安装': ['去安裝', 'Browse', '설치하기', 'インストールへ'],
   '在线 MOD': ['線上 MOD', 'Online MODs', '온라인 MOD', 'オンラインMOD'],
+  '本地 MOD': ['本機 MOD', 'Local MODs', '로컬 MOD', 'ローカルMOD'],
   '去刷新': ['去重新整理', 'Refresh', '새로 고침', '更新へ'],
   '共 {count} 个仓库 · {failed} 个刷新失败（{names}）': ['共 {count} 個倉庫 · {failed} 個重新整理失敗（{names}）', '{count} repositories · {failed} failed to refresh ({names})', '저장소 {count}개 · {failed}개 새로 고침 실패({names})', 'リポジトリ {count} 件 · {failed} 件が更新失敗（{names}）'],
   '共 {count} 个仓库 · 全部正常': ['共 {count} 個倉庫 · 全部正常', '{count} repositories · all healthy', '저장소 {count}개 · 모두 정상', 'リポジトリ {count} 件 · すべて正常'],

@@ -431,6 +431,26 @@ function install(repo: Repository, tag?: string) {
   return previewRepository(repo, tag)
 }
 
+/**
+ * 从仓库详情抽屉发起安装。
+ *
+ * 安装前先收起抽屉：接着会弹**安装预览**（ModInstallDialog），两个
+ * 右侧浮层叠在一起时，抽屉的滑出动画会和预览弹窗的淡入互相干扰，
+ * 看起来像两个东西在抢同一块区域。
+ *
+ * 收起放在 `install()` 之前而不是之后：`install()` 会 await 整个下载
+ * 与解析过程，放后面要等下载完抽屉才动，用户会觉得点了没反应。
+ *
+ * 先关再装还有个附带好处：下载失败时用户看到的是干净的列表页 +
+ * 错误提示，而不是「抽屉里什么都没变」的困惑。
+ */
+function installFromDetail(tag?: string) {
+  const repo = detailRepo.value
+  if (!repo) return
+  detailId.value = null
+  return install(repo, tag)
+}
+
 defineExpose({ refreshAll, visibleCount })
 </script>
 
@@ -655,7 +675,7 @@ defineExpose({ refreshAll, visibleCount })
   <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
     <n-drawer-content v-if="detailRepo" :native-scrollbar="false" closable>
       <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="!!game?.kitchen_running"
-        @close="detailId = null" @install="(tag?: string) => detailRepo && install(detailRepo, tag)" />
+        @close="detailId = null" @install="(tag?: string) => installFromDetail(tag)" />
     </n-drawer-content>
   </n-drawer>
 

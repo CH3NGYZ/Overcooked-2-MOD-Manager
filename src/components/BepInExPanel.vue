@@ -25,7 +25,8 @@ import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
-import type { BepInExInstallResult, OperationResult, Provider } from '../types'
+import BepInExSetupGuide from './BepInExSetupGuide.vue'
+import type { BepInExInstallResult, GameRuntime, OperationResult, Provider } from '../types'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -53,11 +54,78 @@ async function afterInstall(result: BepInExInstallResult) {
   await load()
 }
 
-async function install(reinstall: boolean) {
+/* ===== 平台引导（仅非 Windows） ===== */
+
+/**
+ * 引导弹窗的阶段：
+ *   · `before-install` —— CrossOver：容器与字体要先准备好，装完才起得来
+ *   · `after-install`  —— 原生 macOS：装完再给 Steam 启动项命令
+ * `null` 表示不显示。
+ */
+const guidePhase = ref<'before-install' | 'after-install' | null>(null)
+/** 引导确认后要继续执行的安装动作（CrossOver 走这条）。 */
+const pendingInstall = ref<{ reinstall: boolean } | null>(null)
+
+const platform = computed(() => config.value?.platform ?? 'windows')
+const runtime = computed<GameRuntime>(() => config.value?.game.runtime ?? 'wine')
+/** 只有非 Windows 才需要引导：Windows 装完即可用。 */
+const needsGuide = computed(() => platform.value !== 'windows')
+/** CrossOver / Wine 分支（macOS 与 Linux 的非原生）。 */
+const isWineRuntime = computed(() => runtime.value !== 'native')
+
+/** 真正执行安装（引导之外的部分）。 */
+async function runInstall(reinstall: boolean) {
   installing.value = true
   try {
-    await afterInstall(await api.installBepInEx(reinstall, installProvider.value))
-  } catch (reason) { fail(reason) } finally { installing.value = false }
+    const result = await api.installBepInEx(reinstall, installProvider.value)
+    await afterInstall(result)
+    /*
+     * 原生 macOS：安装成功后先修 Steam Overlay 注入，再弹启动命令引导。
+     * 顺序不能反 —— Overlay 修复是自动的，不该插在用户的手动步骤中间；
+     * 而且修复失败也不该阻止用户拿到启动命令（BepInEx 仍能加载）。
+     */
+    if (result.ok && platform.value === 'macos' && runtime.value === 'native') {
+      try {
+        const repaired = await api.repairNativeBepInExOverlay()
+        if (!repaired.ok) message.warning(repaired.message)
+      } catch (reason) {
+        // 修复失败只提示，不阻断后续引导
+        message.warning(reason instanceof Error ? reason.message : String(reason))
+      }
+      guidePhase.value = 'after-install'
+    }
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    installing.value = false
+  }
+}
+
+/**
+ * 安装入口：按平台决定是否先弹引导。
+ *
+ * 平台判断必须读**当前**的 config。这里踩过一次：早期用 computed 提前算好
+ * `needsGuide`，而抽屉可能在 Dashboard 还没加载完时就被打开，`config` 为 null
+ * 会退化成 `platform = 'windows'`，于是 CrossOver 分支被当成 Windows
+ * 直接安装、跳过了容器准备引导。
+ * 现在点击时先确保数据就绪，再判断。
+ */
+async function install(reinstall: boolean) {
+  if (!config.value) await load()
+  if (needsGuide.value && isWineRuntime.value) {
+    // CrossOver：先让用户准备容器，确认后再真正安装
+    pendingInstall.value = { reinstall }
+    guidePhase.value = 'before-install'
+    return
+  }
+  void runInstall(reinstall)
+}
+
+/** 引导确认：CrossOver 继续安装；原生只是关闭（安装已完成）。 */
+function onGuideConfirmed() {
+  const pending = pendingInstall.value
+  pendingInstall.value = null
+  if (pending) void runInstall(pending.reinstall)
 }
 
 function uninstall() {
@@ -255,6 +323,14 @@ async function openBackups() {
 
     <!-- 框架配置编辑器：与 MOD 配置共用同一组件，数据源切到 bepinex -->
     <ModConfigEditor v-model:show="configEditorOpen" source="bepinex" :title="t('BepInEx 配置')" />
+
+    <!--
+      平台引导：CrossOver 走安装前（先准备容器），原生 macOS 走安装后（给启动命令）。
+      用 v-if 确保不显示时不残留 DOM。
+    -->
+    <BepInExSetupGuide v-if="guidePhase" :show="true" :config="config" :game="game"
+      :phase="guidePhase" @update:show="(value: boolean) => { if (!value) guidePhase = null }"
+      @confirmed="onGuideConfirmed" />
   </n-spin>
 </template>
 

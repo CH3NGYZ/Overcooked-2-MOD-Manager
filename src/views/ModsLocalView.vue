@@ -175,6 +175,50 @@ const sortedMods = computed(() =>
   [...effectiveMods.value].sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
 
+/* ===== 全部启用 / 全部禁用 =====
+ *
+ * 这两个动作服务「一次性切换所有 MOD」的场景，入口只能有一个：
+ * MOD 管理页的页头。放在总览页是错的 —— 它管理的是 MOD，
+ * 离 MOD 列表越近越容易理解后果（页面上每张卡的开关会一起变）。
+ */
+const bulkWorking = ref(false)
+const enabledModCount = computed(() => effectiveMods.value.filter((mod) => mod.enabled).length)
+const allModsEnabled = computed(() =>
+  effectiveMods.value.length > 0 && enabledModCount.value === effectiveMods.value.length)
+
+/**
+ * 批量切换。
+ *
+ * 后端整体成功或整体回滚，不会留下半开半关的状态；
+ * 禁用方向会弹确认（游戏将不加载任何 MOD，但可随时恢复）。
+ */
+async function setAllEnabled(enabled: boolean) {
+  if (bulkWorking.value || !effectiveMods.value.length) return
+  bulkWorking.value = true
+  try {
+    const result = await api.setAllLocalModsEnabled(enabled)
+    if (result.ok) {
+      message.success(result.message)
+      await load()
+    } else {
+      message.error(result.message)
+    }
+  } catch (reason) { fail(reason) } finally { bulkWorking.value = false }
+}
+
+function confirmDisableAll() {
+  dialog.warning({
+    title: t('禁用全部 MOD'),
+    content: t('将禁用全部 {count} 个 MOD，游戏将不加载任何 MOD。可以随时重新启用。',
+      { count: effectiveMods.value.length }),
+    positiveText: t('全部禁用'),
+    negativeText: t('取消'),
+    onPositiveClick() {
+      void setAllEnabled(false)
+    },
+  })
+}
+
 /**
  * 按「已安装时绑定的仓库分类」分组。
  * MOD 通过 repository_id / repository_binding 找到对应仓库，取其 group_i18n；
@@ -1025,8 +1069,20 @@ function removePackage(node: ModPackageNode) {
     </n-tag>
   </Teleport>
 
-  <!-- 页头右侧：打开 MOD 目录（「安装 MOD」已移到 MOD 安装页） -->
+  <!--
+    页头右侧：批量开关 + 打开目录。
+    批量开关放这里而不是列表里：它是跨全部 MOD 的动作，
+    和「打开目录」一样属于页面级操作。
+  -->
   <Teleport to="#page-header-actions" defer>
+    <n-button v-if="effectiveMods.length" size="small" secondary
+      :disabled="bulkWorking || allModsEnabled" @click="setAllEnabled(true)">
+      {{ t('全部启用') }}
+    </n-button>
+    <n-button v-if="effectiveMods.length" size="small" secondary type="warning"
+      :disabled="bulkWorking || !enabledModCount" @click="confirmDisableAll">
+      {{ t('全部禁用') }}
+    </n-button>
     <n-button size="small" secondary @click="openModsDirectory">
       <FolderOpenOutline width="14" height="14" />{{ t('打开目录') }}
     </n-button>

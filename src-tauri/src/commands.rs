@@ -3188,6 +3188,24 @@ pub fn delete_recycled_mod(
 }
 
 #[tauri::command]
+pub fn delete_all_recycled_mods(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    log::info!("请求清空回收站");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let removed =
+        recycle_bin::delete_all(&state.config.mod_recycle_bin_dir()).map_err(|error| {
+            log::warn!("清空回收站失败：原因={}", error);
+            error
+        })?;
+    Ok(OperationResult {
+        ok: true,
+        message: format!("已清空回收站（{removed} 条记录）"),
+    })
+}
+
+#[tauri::command]
 pub fn export_repositories(
     state: State<'_, AppState>,
     ids: Option<Vec<String>>,

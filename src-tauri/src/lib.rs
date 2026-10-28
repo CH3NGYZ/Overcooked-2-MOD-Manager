@@ -135,6 +135,7 @@ pub fn run() {
             commands::get_mod_recycle_bin,
             commands::restore_recycled_mod,
             commands::delete_recycled_mod,
+            commands::delete_all_recycled_mods,
             commands::toggle_local_mod,
             commands::toggle_local_mod_package,
             commands::set_all_local_mods_enabled,

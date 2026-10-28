@@ -16,9 +16,9 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NSwitch, NTag, useDialog } from 'naive-ui'
+import { NButton, NSwitch } from 'naive-ui'
 import {
-  AddCircleOutline, CloudDownloadOutline, RefreshOutline, TrashOutline, WarningOutline,
+  AddCircleOutline, CloudDownloadOutline, RefreshOutline, SettingsOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import StatCard from '../components/StatCard.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
@@ -26,13 +26,11 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
-import { tagColorFor } from '../theme'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
 import type { ModRecycleEntry } from '../types'
 
 const router = useRouter()
-const dialog = useDialog()
 const message = useNotify()
 const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = useDashboard()
 
@@ -98,21 +96,39 @@ function openFrameworkSettings() {
   void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'bepinex' } })
 }
 
-/* ===== 卡片 2：可更新 ===== */
+/* ===== 卡片 2：已安装 MOD（含可更新数量） ===== */
 
+const installedMods = computed(() => mods.value)
 const updatable = computed(() =>
   mods.value.filter((mod) => mod.update_available && !mod.is_dependency))
 
 /**
- * 跳到 MOD 管理页并定位到第一条可更新的 MOD。
- *
- * 定位用仓库 ID：MOD 管理页的包外壳带 `data-focus-id="pkg.<仓库ID>"`，
- * 与「最新版」标签的跳转共用同一套锚点，不额外造标记。
+ * 卡片副标题：有更新时报「N 个可更新」，没有时只报总数。
+ * 主数值永远是已安装总数 —— 这张卡回答的是「我装了多少」，
+ * 可更新只是附加信息，不该反过来占据主位（否则没更新时显示 0 很空洞）。
  */
-function openFirstUpdate() {
+const installedSub = computed(() => {
+  const total = installedMods.value.length
+  if (!total) return t('尚未安装任何 MOD')
+  const updates = updatable.value.length
+  return updates
+    ? t('共 {count} 个，其中 {updates} 个可更新', { count: total, updates })
+    : t('共 {count} 个，全部为最新版', { count: total })
+})
+
+/**
+ * 跳到 MOD 管理页。
+ *
+ *   · 有更新 → 定位到第一条可更新的 MOD（复用包外壳的 `data-focus-id`）
+ *   · 无更新 → 直接进管理页，不带定位
+ */
+function openLocalMods() {
   const first = updatable.value[0]
-  const anchor = first?.package_id || first?.repository_id || first?.dll_file
-  if (!anchor) return
+  if (!first) {
+    void router.push({ name: 'mods-local' })
+    return
+  }
+  const anchor = first.package_id || first.repository_id || first.dll_file
   void router.push({ name: 'mods-local', query: { [FOCUS_QUERY]: anchor } })
 }
 
@@ -132,15 +148,16 @@ const failedRepositories = computed(() =>
   onlineRepositories.value.filter((repo) => repo.last_error))
 
 /**
- * 卡片副标题：正常时只说仓库总数；有失败时点明「几个失败」+ 第一批失败仓库名。
+ * 卡片副标题：主数值是在线仓库总数；有失败时追加「N 个刷新失败（仓库名）」。
  *
  * 把失败信息塞进这张卡而不是单开一张：失败仓库本身就是在线仓库的一部分，
  * 拆成两张会让「26 个仓库」和「1 个失败」看起来是两件事。
  */
 const onlineSub = computed(() => {
   const total = onlineRepositories.value.length
+  if (!total) return t('尚未加载任何仓库')
   if (!failedRepositories.value.length) {
-    return t('共 {count} 个仓库', { count: total })
+    return t('共 {count} 个仓库 · 全部正常', { count: total })
   }
   const names = failedRepositories.value.slice(0, 2).map((repo) => repo.name).join('、')
   const more = failedRepositories.value.length > 2
@@ -154,13 +171,16 @@ const onlineSub = computed(() => {
 })
 
 /**
- * 跳到 MOD 安装页并高亮第一个刷新失败的仓库。
- *
- * 仓库卡片自带 `data-focus-id="repo.id"`，与「最新版」标签的跳转共用锚点。
+ * 卡片按钮随状态分支：
+ *   · 有仓库刷新失败 → 「去刷新」，跳到安装页并高亮第一个失败仓库
+ *   · 全部正常 → 「去安装」，只跳转到安装页
  */
-function openFailedRepository() {
+function openOnlineRepositories() {
   const first = failedRepositories.value[0]
-  if (!first) return
+  if (!first) {
+    void router.push({ name: 'mods-online' })
+    return
+  }
   void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: first.id } })
 }
 
@@ -184,95 +204,68 @@ async function closeRecycle() {
   recycleOpen.value = false
   await loadRecycle()
 }
-
-/* ===== 全部启用 / 全部禁用 ===== */
-
-const enabledCount = computed(() => mods.value.filter((mod) => mod.enabled).length)
-const allEnabled = computed(() => mods.value.length > 0 && enabledCount.value === mods.value.length)
-
-/**
- * 批量开关全部 MOD。
- *
- * 禁用是「一次性关掉所有」——影响可逆、不发确认。
- * 启用同理。后端会整体成功或整体回滚，不会留下半开半关的状态。
- */
-async function setAllEnabled(enabled: boolean) {
-  if (working.value || !mods.value.length) return
-  working.value = true
-  try {
-    const result = await api.setAllLocalModsEnabled(enabled)
-    if (result.ok) {
-      message.success(result.message)
-      await load()
-    } else {
-      message.error(result.message)
-    }
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
-  } finally {
-    working.value = false
-  }
-}
-
-function confirmDisableAll() {
-  dialog.warning({
-    title: t('禁用全部 MOD'),
-    content: t('将禁用全部 {count} 个 MOD，游戏将不加载任何 MOD。可以随时重新启用。',
-      { count: mods.value.length }),
-    positiveText: t('全部禁用'),
-    negativeText: t('取消'),
-    onPositiveClick() {
-      void setAllEnabled(false)
-    },
-  })
-}
 </script>
 
 <template>
   <div class="overview">
     <div v-if="error" class="muted">{{ error }}</div>
     <div v-else class="card-grid" :class="{ 'is-loading': loading }">
-      <!-- 1. BepInEx：开关直接作用于加载器，不需要跳转 -->
+      <!--
+        1. BepInEx：整张卡可点，跳设置页并自动展开框架抽屉。
+           开关单独放在右侧，点开关不会触发跳转（@click.stop）。
+      -->
       <StatCard :label="t('BepInEx 框架')" :value="frameworkValue"
-        :sub="frameworkSub" :tone="frameworkOk ? 'success' : 'warning'">
+        :sub="frameworkSub" :tone="frameworkOk ? 'success' : 'warning'"
+        clickable @click="openFrameworkSettings">
         <template #action>
           <n-switch v-if="frameworkOk" size="small" :value="frameworkEnabled"
             :disabled="working" :title="t('框架启用（游戏加载 MOD）')"
-            @update:value="toggleFramework" />
-          <n-button v-else size="small" type="primary" @click="openFrameworkSettings">
+            @click.stop @update:value="toggleFramework" />
+          <n-button v-else size="small" type="primary" @click.stop="openFrameworkSettings">
             <template #icon><AddCircleOutline width="14" height="14" /></template>
             {{ t('安装框架') }}
           </n-button>
         </template>
       </StatCard>
 
-      <!-- 2. 可更新：主操作是跳过去看，不是在这里装 -->
-      <StatCard :label="t('可更新 MOD')" :value="String(updatable.length)"
-        :sub="updatable.length ? t('点击查看第一个可更新项') : t('全部为最新版')"
+      <!--
+        2. 已安装 MOD：主数值是总数，可更新数量进副标题。
+           按钮随状态分支 —— 有更新时「去更新」并定位到第一条，
+           没更新时「去管理」直接进管理页。
+      -->
+      <StatCard :label="t('已安装 MOD')" :value="String(installedMods.length)"
+        :sub="installedSub"
         :tone="updatable.length ? 'warning' : 'success'">
         <template #action>
-          <n-button size="small" secondary :disabled="!updatable.length" @click="openFirstUpdate">
-            <template #icon><CloudDownloadOutline width="14" height="14" /></template>
-            {{ t('去更新') }}
+          <n-button size="small" :secondary="!updatable.length"
+            :type="updatable.length ? 'warning' : 'default'"
+            :disabled="!installedMods.length" @click="openLocalMods">
+            <template #icon>
+              <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
+              <SettingsOutline v-else width="14" height="14" />
+            </template>
+            {{ updatable.length ? t('去更新') : t('去管理') }}
           </n-button>
         </template>
       </StatCard>
 
       <!--
         3. 在线 MOD：主数值是可见仓库总数，与安装页「共 N 个仓库」同口径。
-           有仓库刷新失败时额外给一个高亮的「去刷新」按钮，跳到安装页并
-           高亮第一个失败的仓库 —— 失败信息属于在线仓库的一部分，
-           单开一张卡会让两个数字看起来互不相干。
+           有刷新失败时按钮变「去刷新」并高亮第一个失败仓库；
+           全部正常时按钮是「去安装」。
       -->
       <StatCard :label="t('在线 MOD')" :value="String(onlineRepositories.length)"
         :sub="onlineSub"
         :tone="failedRepositories.length ? 'warning' : 'success'">
         <template #action>
-          <n-button size="small" :type="failedRepositories.length ? 'warning' : 'default'"
-            :secondary="!failedRepositories.length"
-            :disabled="!failedRepositories.length" @click="openFailedRepository">
-            <template #icon><RefreshOutline width="14" height="14" /></template>
-            {{ t('去刷新') }}
+          <n-button size="small" :secondary="!failedRepositories.length"
+            :type="failedRepositories.length ? 'warning' : 'default'"
+            :disabled="!onlineRepositories.length" @click="openOnlineRepositories">
+            <template #icon>
+              <RefreshOutline v-if="failedRepositories.length" width="14" height="14" />
+              <CloudDownloadOutline v-else width="14" height="14" />
+            </template>
+            {{ failedRepositories.length ? t('去刷新') : t('去安装') }}
           </n-button>
         </template>
       </StatCard>
@@ -287,34 +280,6 @@ function confirmDisableAll() {
           </n-button>
         </template>
       </StatCard>
-    </div>
-
-    <!-- 全部启用/禁用：跨全部 MOD 的操作，单独一行放，不挤占四张卡 -->
-    <div v-if="mods.length" class="bulk-row">
-      <div class="bulk-text">
-        <b>{{ t('全部 MOD') }}</b>
-        <span class="muted">
-          {{ t('已启用 {enabled} / {total}', { enabled: enabledCount, total: mods.length }) }}
-        </span>
-      </div>
-      <n-tag v-if="!allEnabled" size="small" :bordered="false" :color="tagColorFor('mild')">
-        <template #icon><WarningOutline width="12" height="12" /></template>
-        {{ t('有 MOD 未启用') }}
-      </n-tag>
-      <!--
-        两个动作始终都给：部分启用时用户可能想「一键全开」也可能想「干脆全关」。
-        只显示一个会让另一种意图无路可走。
-      -->
-      <div class="bulk-actions">
-        <n-button size="small" secondary :disabled="working || allEnabled"
-          @click="setAllEnabled(true)">
-          {{ t('全部启用') }}
-        </n-button>
-        <n-button size="small" secondary type="warning" :disabled="working || !enabledCount"
-          @click="confirmDisableAll">
-          {{ t('全部禁用') }}
-        </n-button>
-      </div>
     </div>
 
     <RecycleBinDialog :show="recycleOpen"
@@ -336,25 +301,6 @@ function confirmDisableAll() {
   gap: 16px;
 }
 .card-grid.is-loading { opacity: .6; }
-
-.bulk-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: var(--oc2-sunken);
-  border: 1px solid var(--oc2-row-line);
-}
-.bulk-text {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
-}
-.bulk-text b { font-size: 13.5px; }
-.bulk-text .muted { font-size: 12.5px; }
-.bulk-actions { margin-left: auto; display: flex; gap: 8px; }
 
 /*
  * 窄窗口（含 150% 内容缩放下等效宽度变小）时四列会挤，

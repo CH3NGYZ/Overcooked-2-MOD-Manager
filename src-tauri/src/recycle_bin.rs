@@ -1475,6 +1475,46 @@ pub fn delete(root: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 清空回收站：彻底删除**全部**记录。
+///
+/// 逐条走 `delete` 而不是直接删整个 root 目录：
+///   · 每条记录都要经过 `load_record` 校验（ID 与记录内容必须对得上），
+///     直接 `remove_dir_all(root)` 会跳过这层，一个损坏的记录也能被静默抹掉；
+///   · 逐条删除能准确统计「删了几条、几条失败」，失败时已删的保持删除、
+///     未删的原样保留，用户看到的是真实剩余而不是「全部成功」的假象。
+///
+/// 返回成功删除的条数。任一记录失败立即中止并上抛错误 —— 清空是用户
+/// 明确要求的破坏性操作，静默跳过失败项会留下「以为清空了其实还有」的状态。
+pub fn delete_all(root: &Path) -> Result<usize, String> {
+    let entries = list(root)?;
+    let total = entries.len();
+    if total == 0 {
+        return Ok(0);
+    }
+    log::info!("清空回收站开始：待删除记录数={}", total);
+    let mut removed = 0usize;
+    for entry in entries {
+        match delete(root, &entry.id) {
+            Ok(()) => removed += 1,
+            Err(error) => {
+                log::error!(
+                    "清空回收站中断：已删除={}，失败 ID={}，原因={}",
+                    removed,
+                    entry.id,
+                    error
+                );
+                return Err(format!(
+                    "清空回收站时在第 {} 条失败（已删除 {} 条）：{error}",
+                    removed + 1,
+                    removed
+                ));
+            }
+        }
+    }
+    log::info!("清空回收站完成：删除记录数={}", removed);
+    Ok(removed)
+}
+
 /*
  * ===== 直接删除（不经过回收站）=====
  *

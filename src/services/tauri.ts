@@ -47,6 +47,8 @@ export const api = {
   getModRecycleBin: () => invoke<ModRecycleEntry[]>('get_mod_recycle_bin'),
   restoreRecycledMod: (id: string) => invoke<OperationResult>('restore_recycled_mod', { id }),
   deleteRecycledMod: (id: string) => invoke<OperationResult>('delete_recycled_mod', { id }),
+  /** 清空回收站：彻底删除全部记录。 */
+  deleteAllRecycledMods: () => invoke<OperationResult>('delete_all_recycled_mods'),
   detectGame: () => invoke<GameInfo>('detect_game'),
   setGamePath: (path: string) => invoke<GameInfo>('set_game_path', { path }),
   resetGamePath: () => invoke<GameInfo>('reset_game_path'),

@@ -6,7 +6,10 @@ defineProps<{
   value: string
   sub?: string
   tone?: 'default' | 'success' | 'warning' | 'danger'
+  /** 整张卡可点（打开详情/跳转）。内部控件需要 @click.stop 阻止冒泡。 */
+  clickable?: boolean
 }>()
+defineEmits<{ (event: 'click'): void }>()
 </script>
 
 <template>
@@ -15,7 +18,8 @@ defineProps<{
     动作放在标题行右侧而不是底部：用户扫视时先看「是什么状态」，
     再决定要不要动手，动作贴着标签更容易对应。
   -->
-  <n-card class="stat-card" :bordered="true">
+  <n-card class="stat-card" :class="{ clickable }" :bordered="true"
+    @click="clickable && $emit('click')">
     <div class="stat-head">
       <div class="stat-label">{{ label }}</div>
       <div v-if="$slots.action" class="stat-action">
@@ -30,6 +34,14 @@ defineProps<{
 <style scoped>
 .stat-card {
   min-height: 128px;
+}
+/* 可点击卡片的视觉反馈：颜色 + 指针，与设置页可点行一致 */
+.stat-card.clickable {
+  cursor: pointer;
+  transition: border-color .2s ease, background-color .2s ease;
+}
+.stat-card.clickable:hover {
+  border-color: var(--oc2-accent);
 }
 .stat-head {
   display: flex;

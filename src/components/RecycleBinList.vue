@@ -100,7 +100,39 @@ async function remove(entry: ModRecycleEntry) {
   }
 }
 
-defineExpose({ reload })
+/**
+ * 清空回收站：彻底删除全部记录。
+ *
+ * 确认交给宿主弹窗（`RecycleBinDialog` 的 header 图标按钮），因为那是
+ * 整个回收站的破坏性动作，不该挤在单条记录的删除确认样式里。
+ * 这里只负责执行 + 把结果同步到本地列表。
+ */
+const clearing = ref(false)
+
+async function clearAll(): Promise<boolean> {
+  if (clearing.value || !entries.value.length) return false
+  clearing.value = true
+  try {
+    const result = await api.deleteAllRecycledMods()
+    if (result.ok) {
+      message.success(result.message || t('已清空回收站'))
+      entries.value = []
+      return true
+    }
+    message.error(result.message)
+    // 失败时可能已删掉一部分：重新读取，让用户看到真实剩余
+    await reload()
+    return false
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : String(reason))
+    await reload()
+    return false
+  } finally {
+    clearing.value = false
+  }
+}
+
+defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length) })
 </script>
 
 <template>

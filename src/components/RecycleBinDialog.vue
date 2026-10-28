@@ -2,12 +2,12 @@
 /**
  * 回收站弹窗 —— 回收站的唯一入口（工具页「回收站设置」→「打开回收站」）。
  *
- * 只做外壳：标题、刷新按钮、尺寸上限，内容全部交给 `RecycleBinList`。
+ * 只做外壳：标题、刷新与清空按钮、尺寸上限，内容全部交给 `RecycleBinList`。
  * 回收站既不占主导航也没有独立页面：它是低频维护功能，不值得一个常驻入口。
  */
 import { ref } from 'vue'
-import { NButton } from 'naive-ui'
-import { RefreshOutline } from '@vicons/ionicons5'
+import { NButton, useDialog } from 'naive-ui'
+import { RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import AppModal from './AppModal.vue'
 import RecycleBinList from './RecycleBinList.vue'
@@ -15,6 +15,7 @@ import RecycleBinList from './RecycleBinList.vue'
 defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
+const dialog = useDialog()
 const list = ref<InstanceType<typeof RecycleBinList> | null>(null)
 const refreshing = ref(false)
 
@@ -27,6 +28,27 @@ async function reload() {
   } finally {
     refreshing.value = false
   }
+}
+
+/**
+ * 清空回收站。
+ *
+ * 这是全应用破坏性最强的单个动作：一次性移走所有 MOD 的**唯一副本**
+ * （暂存文件与清单快照），删完不能恢复。所以不放进任何菜单，而用
+ * 标题栏图标 + 明确的二次确认，并在问句里点名条数。
+ */
+function confirmClearAll() {
+  const count = list.value?.entryCount ?? 0
+  if (!count) return
+  dialog.error({
+    title: t('清空回收站'),
+    content: t('将永久删除回收站中的全部 {count} 条记录及其文件，无法恢复。确定清空？', { count }),
+    positiveText: t('全部彻底删除'),
+    negativeText: t('取消'),
+    onPositiveClick() {
+      void list.value?.clearAll()
+    },
+  })
 }
 </script>
 
@@ -42,6 +64,10 @@ async function reload() {
     <template #header-extra>
       <n-button size="small" quaternary :loading="refreshing" :title="t('立即刷新')" @click="reload">
         <template #icon><RefreshOutline width="15" height="15" /></template>
+      </n-button>
+      <n-button size="small" quaternary type="error" :title="t('清空回收站')"
+        :disabled="!list?.entryCount" @click="confirmClearAll">
+        <template #icon><TrashOutline width="15" height="15" /></template>
       </n-button>
     </template>
     <div class="recycle-dialog-body">

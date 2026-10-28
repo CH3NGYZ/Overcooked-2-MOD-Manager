@@ -15,10 +15,24 @@ const error = ref('')
 let gameStateRevision = 0
 let latestGame: GameInfo | undefined
 
+/**
+ * 把后端推送的最新游戏状态合进快照。
+ *
+ * **必须整体替换 `dashboard.value`，不能就地改 `dashboard.value.game`。**
+ * `dashboard` 是 `shallowRef`：它只追踪 `.value` 这个引用本身的替换，
+ * 对内部属性的修改不产生依赖通知。就地赋值会让所有 computed
+ * （`game`、`game.kitchen_running`、`frameworkOk` 等）永远拿到旧值 ——
+ * 表现就是「游戏从 Steam 手动启动后，管理器界面一直显示未运行」，
+ * 而后端日志里明明已经推送了 `游戏运行=true`。
+ *
+ * 同理不能用 `reactive` 包一层：`Dashboard` 里的 `mods` 是几万条的大数组，
+ * 深响应会拖慢每次扫描结果的赋值。正确的做法就是浅引用 + 整对象替换。
+ */
 function applyGame(value: GameInfo) {
   latestGame = value
   gameStateRevision += 1
-  if (dashboard.value) dashboard.value.game = value
+  const current = dashboard.value
+  if (current) dashboard.value = { ...current, game: value }
 }
 
 let watching = false

@@ -29,6 +29,7 @@ import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { resolvedUpdateAvailable } from '../statusTags'
+import { repositoryForMod } from '../modStatus'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
 import type { ModRecycleEntry } from '../types'
@@ -49,26 +50,45 @@ const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = 
  */
 const toneText = computed(() => tagColorFor('moderate').textColor)
 
-/**
- * 整批刷新是否在进行中。
- *
- * 只认 `refreshingAll`（整批），不看单个仓库的 `refreshing`：
- * 用户在 MOD 安装页单独刷新一个仓库时，总览不该跳出来说「正在检测更新」——
- * 那只是某一个仓库的行为，不代表全局在检查。
- */
-const { refreshingAll } = useRepositoryRefresh()
+const { refreshing } = useRepositoryRefresh()
 
 /**
- * 本地 MOD 卡的按钮文案。
+ * 「本地 MOD 相关仓库正在检查」。
  *
- * 检测中统一显示「检测中」—— 与按钮上的转圈图标一致，说明的是「正在做什么」；
- * 检测结束后按结果回到「去更新 / 去管理」，说明的是「能做什么」。
+ * 这是本地 MOD 卡按钮的 loading 依据，语义是**只关心影响本地 MOD
+ * 更新结论的那些仓库**，不是整批刷新：
  *
- * 注意：检测中也保持可点。用户已经看到「2 可更新」时，没有理由不让他
- * 立刻跳过去看，检测完再跳纯属多余等待。
+ *   · 与本地 MOD 绑定的仓库里，还有任意一个在刷新 → true
+ *   · 全部刷完（成功或失败）→ false，按钮立刻可用
+ *   · 与本项目无关的仓库（没装任何来自它的 MOD）还在刷 → 不影响这里
+ *
+ * 为什么不能用 `refreshingAll`：它是整条流水线（源文档 + 所有仓库），
+ * 要几十秒才归零。用户装了 4 个 MOD、只关心这 4 个有没有新版，
+ * 不该被迫等二十多个仓库全部刷完。
+ */
+const localReposChecking = computed(() => {
+  const repos = config.value?.repositories ?? []
+  const bound = new Set<string>()
+  for (const mod of mods.value) {
+    if (mod.is_dependency) continue
+    const repo = repositoryForMod(repos, mod)
+    if (repo) bound.add(repo.id)
+  }
+  // 没有任何绑定关系时退回「整批是否在刷」，否则按钮永远不会转
+  if (!bound.size) return Object.values(refreshing.value).some(Boolean)
+  return [...bound].some((id) => refreshing.value[id])
+})
+
+/**
+ * 本地 MOD 卡的按钮文案与状态。
+ *
+ * 检测中显示「检测中」+ Naive 原生 loading（转圈且不可点）—— 这是
+ * 用户明确要的交互：正在查的时候不让他点，避免跳到一半数据又变。
+ *
+ * 检测范围只算「与本地 MOD 绑定的仓库」，不等整批刷新结束。
  */
 const buttonLabel = computed(() => {
-  if (refreshingAll.value) return t('检测中')
+  if (localReposChecking.value) return t('检测中')
   return updatable.value.length ? t('去更新') : t('去管理')
 })
 
@@ -321,19 +341,17 @@ async function closeRecycle() {
         </template>
         <template #action>
           <!--
-            检测中的转圈**不能用 `:loading`**：Naive 的 Button 在 handleClick 里
-            写了 `if (!props.disabled && !props.loading)`，loading 会硬性吞掉点击。
-            而这里的语义恰恰是「正在检测，但已有结果就能立刻去看」——
-            所以用一个自转的图标代替，按钮保持可点。
+            用 Naive 原生 loading：转圈 + 不可点。
+            检测期间按钮停用是刻意的 —— 数据还在变，跳过去定位到的可能是
+            即将被覆盖的旧结论。loading 只看「本地 MOD 相关仓库」，
+            不等整批刷新结束（见 localReposChecking）。
           -->
           <n-button size="small" :secondary="!updatable.length"
             :type="updatable.length ? 'warning' : 'default'"
+            :loading="localReposChecking"
             :disabled="!installedMods.length" @click.stop="openLocalMods">
             <template #icon>
-              <span v-if="refreshingAll" class="spinning">
-                <RefreshOutline width="14" height="14" />
-              </span>
-              <CloudDownloadOutline v-else-if="updatable.length" width="14" height="14" />
+              <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
               <SettingsOutline v-else width="14" height="14" />
             </template>
             {{ buttonLabel }}
@@ -373,29 +391,7 @@ async function closeRecycle() {
 }
 .card-grid.is-loading { opacity: .6; }
 
-/*
- * 检测中的自转图标。
- *
- * 不用 Naive 按钮的 `:loading`：那会在 handleClick 里直接
- * `if (!props.disabled && !props.loading)` 吞掉点击，而这里需要
- * 「检测中仍可点、直接跳去看已发现的可更新项」。
- *
- * 动画在 prefers-reduced-motion 下关闭：不转也不影响可用性，
- * 文案「检测中」已经说明了状态。
- */
-.spinning {
-  display: inline-flex;
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .spinning { animation: none; }
-}
-
-/*
- * 次要计数（`4 · 2 可更新`）的样式**必须写在父组件**。
+/* 次要计数（`4 · 2 可更新`）的样式**必须写在父组件**。
  *
  * slot 内容由父组件渲染并带父组件的 scoped 属性，所以写在 StatCard.vue
  * 里的 `.extra-value` 永远不会命中这些元素（表现是字号退回默认 14px）。

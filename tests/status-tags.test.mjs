@@ -4,7 +4,7 @@ import test from 'node:test'
 /** 共享状态标签：真实源码直接执行（Node 24 类型擦除）。 */
 const {
   STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion,
-  packageStatuses, summarizeUnits,
+  packageStatuses, summarizeUnits, resolvedUpdateAvailable,
 } = await import('../src/statusTags.ts')
 
 function repo(overrides = {}) {
@@ -310,4 +310,34 @@ test('页头聚合排序仍按严重度：可更新排在最新版之前', () =>
     { keys: ['load_warning'] },
   ])
   assert.deepEqual(tags.map((t) => t.key), ['load_warning', 'update_available', 'latest'])
+})
+
+/*
+ * 总览页的「可更新」必须和 MOD 管理页用同一个判定。
+ *
+ * 真实 bug：后端扫描时 `update_available=false`（那时 Release 还是旧的），
+ * 之后仓库刷新回来发现新版，MOD 管理页用 recomputeModUpdate 实时重算并
+ * 显示「可更新」，而总览直接读后端快照，写着「全部为最新版」。
+ *
+ * `resolvedUpdateAvailable` 的作用就是让总览优先采信重算结果。
+ */
+test('resolvedUpdateAvailable 优先采信 Release 缓存的重算结果', () => {
+  const stale = mod({
+    repository_id: 'repo-1', update_available: false, labels: ['latest'], version: '1.0.0',
+  })
+  // 仓库缓存里有更新的 Release（2.0.0 > 1.0.0）
+  assert.equal(resolvedUpdateAvailable(stale, [repo()]), true, '快照说不更新，但缓存有新版')
+})
+
+test('无法重算时退回后端快照', () => {
+  // 没绑定任何仓库 → recomputeModUpdate 返回 null → 用快照值
+  const bound = mod({ repository_id: 'no-such-repo', update_available: true, labels: ['update_available'] })
+  assert.equal(resolvedUpdateAvailable(bound, [repo()]), true, '无仓库可重算时保留快照')
+})
+
+test('仓库刷新失败时不拿旧缓存下结论，退回快照', () => {
+  const target = mod({ update_available: false, labels: ['latest'], version: '1.0.0' })
+  const failed = repo({ last_error: '请求超时' })
+  // repo.last_error 存在 → 无法重算 → 用快照（false）
+  assert.equal(resolvedUpdateAvailable(target, [failed]), false)
 })

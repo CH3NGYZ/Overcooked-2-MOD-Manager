@@ -26,6 +26,7 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
+import { resolvedUpdateAvailable } from '../statusTags'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
 import type { ModRecycleEntry } from '../types'
@@ -99,8 +100,20 @@ function openFrameworkSettings() {
 /* ===== 卡片 2：已安装 MOD（含可更新数量） ===== */
 
 const installedMods = computed(() => mods.value)
-const updatable = computed(() =>
-  mods.value.filter((mod) => mod.update_available && !mod.is_dependency))
+
+/**
+ * 可更新的 MOD。
+ *
+ * **必须用 `resolvedUpdateAvailable` 而不是 `mod.update_available`。**
+ * 后者是后端扫盘时的快照；Release 缓存是之后异步刷新回来的。
+ * MOD 管理页会用 `recomputeModUpdate` 按当前缓存实时重算，总览若只读快照
+ * 就会出现「管理页显示可更新、总览说全部为最新版」这种自相矛盾。
+ */
+const updatable = computed(() => {
+  const repos = config.value?.repositories ?? []
+  return mods.value.filter((mod) =>
+    !mod.is_dependency && resolvedUpdateAvailable(mod, repos))
+})
 
 /**
  * 卡片副标题：有更新时报「N 个可更新」，没有时只报总数。
@@ -229,13 +242,18 @@ async function closeRecycle() {
       </StatCard>
 
       <!--
-        2. 已安装 MOD：主数值是总数，可更新数量进副标题。
-           按钮随状态分支 —— 有更新时「去更新」并定位到第一条，
-           没更新时「去管理」直接进管理页。
+        2. 已安装 MOD：主数值是安装总数，旁边并列「N 可更新」。
+           两个数字各用各的等级色（总数=中性/正常，可更新=中度），
+           这样一眼能看出「4 个里有 1 个要处理」，不会把两个数读成一个。
+           按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
       -->
       <StatCard :label="t('已安装 MOD')" :value="String(installedMods.length)"
         :sub="installedSub"
         :tone="updatable.length ? 'warning' : 'success'">
+        <template v-if="updatable.length" #extra>
+          <span class="extra-value update-color">{{ updatable.length }}</span>
+          <span class="extra-label update-color">{{ t('可更新') }}</span>
+        </template>
         <template #action>
           <n-button size="small" :secondary="!updatable.length"
             :type="updatable.length ? 'warning' : 'default'"
@@ -250,13 +268,16 @@ async function closeRecycle() {
       </StatCard>
 
       <!--
-        3. 在线 MOD：主数值是可见仓库总数，与安装页「共 N 个仓库」同口径。
-           有刷新失败时按钮变「去刷新」并高亮第一个失败仓库；
-           全部正常时按钮是「去安装」。
+        3. 在线 MOD：主数值是可见仓库总数，旁边并列「N 刷新失败」。
+           有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
       -->
       <StatCard :label="t('在线 MOD')" :value="String(onlineRepositories.length)"
         :sub="onlineSub"
         :tone="failedRepositories.length ? 'warning' : 'success'">
+        <template v-if="failedRepositories.length" #extra>
+          <span class="extra-value refresh-color">{{ failedRepositories.length }}</span>
+          <span class="extra-label refresh-color">{{ t('刷新失败') }}</span>
+        </template>
         <template #action>
           <n-button size="small" :secondary="!failedRepositories.length"
             :type="failedRepositories.length ? 'warning' : 'default'"
@@ -301,6 +322,29 @@ async function closeRecycle() {
   gap: 16px;
 }
 .card-grid.is-loading { opacity: .6; }
+
+/*
+ * 并列的次要计数：数字比主数值小一档，下面跟一行小标签。
+ *
+ * 颜色不取 `--oc2-tone-*`：现有色阶里 moderate 与 severe 的 textColor
+ * 都是同一个对比色（只有标签底色透明度不同），两个数字会完全同色，
+ * 无法区分「可更新」和「刷新失败」。这里用两个独立的语义色，
+ * 与全站色阶的分工不冲突 —— 色阶表达严重程度，这两个表达「哪一类问题」。
+ */
+.extra-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.extra-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+/* 可更新：琥珀色，与「有动作但可等」的语义一致 */
+.update-color { color: #f0b020; }
+/* 刷新失败：蓝色，与「信息缺失、需要重新拉取」的语义一致 */
+.refresh-color { color: #4da3ff; }
 
 /*
  * 窄窗口（含 150% 内容缩放下等效宽度变小）时四列会挤，

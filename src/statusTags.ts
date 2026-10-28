@@ -431,3 +431,19 @@ export function recomputeModUpdate(
     ? { update_available: true, latest: false }
     : { update_available: false, latest: true }
 }
+
+/**
+ * 把后端扫描结果与当前 Release 缓存合并成一个「现在就成立」的更新判定。
+ *
+ * 存在的意义是消除两处结论不一致：MOD 管理页用 `recomputeModUpdate` 实时
+ * 重算，总览页之前直接用后端快照的 `update_available` —— 于是刷新完 Release
+ * 后管理页显示「可更新」，总览还写着「全部为最新版」。
+ *
+ * 规则：
+ *   · 能重算 → 用重算结果（Release 缓存比扫描快照新）
+ *   · 不能重算 → 退回后端快照（没绑定/仓库报错/RAW 模式等无法判断的情况）
+ */
+export function resolvedUpdateAvailable(mod: InstalledMod, repositories: Repository[]): boolean {
+  const recomputed = recomputeModUpdate(mod, repositories)
+  return recomputed ? recomputed.update_available : mod.update_available
+}

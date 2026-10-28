@@ -26,7 +26,16 @@ defineEmits<{ (event: 'click'): void }>()
         <slot name="action" />
       </div>
     </div>
-    <div class="stat-value" :class="tone ? tone : 'default'">{{ value }}</div>
+    <div class="stat-value-row">
+      <div class="stat-value" :class="tone ? tone : 'default'">{{ value }}</div>
+      <!--
+        次要计数（可更新 / 刷新失败）：与主数值并排，各自用自己的等级色。
+        不并进主数值里，否则「4 个 MOD」和「1 个可更新」会被读成同一个数。
+      -->
+      <div v-if="$slots.extra" class="stat-extra">
+        <slot name="extra" />
+      </div>
+    </div>
     <div v-if="sub" class="muted stat-sub">{{ sub }}</div>
   </n-card>
 </template>
@@ -59,11 +68,17 @@ defineEmits<{ (event: 'click'): void }>()
 }
 .stat-action { flex: 0 0 auto; }
 .stat-value {
-  margin: 10px 0 6px;
   font-size: 30px;
   font-weight: 700;
   line-height: 1.1;
 }
+.stat-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin: 10px 0 6px;
+}
+.stat-extra { display: flex; flex-direction: column; gap: 2px; }
 .stat-value.success { color: var(--oc2-accent); }
 .stat-value.warning { color: var(--oc2-accent); }
 .stat-value.danger { color: #ee8585; }

@@ -1906,6 +1906,60 @@ mod tests {
         assert!(error.is_err() || workspace.game.join(A).exists());
     }
 
+    /*
+     * 卸载 BepInEx 框架：它的 ZIP 不只解压出 `BepInEx/`，还有 `winhttp.dll`、
+     * `doorstop_config.ini`、`run_bepinex.sh` 这些**直接落在游戏根目录**的文件。
+     * 清单记的是这些游戏相对路径，所以按 package 回收必须把它们一起带走，
+     * 否则用户以为卸干净了，实际 doorstop 还在接管启动。
+     */
+    #[test]
+    fn framework_manifest_recycles_root_level_files_too() {
+        let workspace = Workspace::new();
+        const FRAMEWORK_FILES: &[&str] = &[
+            "BepInEx/core/BepInEx.dll",
+            "BepInEx/config/BepInEx.cfg",
+            "winhttp.dll",
+            "doorstop_config.ini",
+            "run_bepinex.sh",
+        ];
+        for file in FRAMEWORK_FILES {
+            workspace.write(file, b"framework");
+        }
+        workspace.manifest("bepinex-framework", FRAMEWORK_FILES);
+
+        let entry = recycle_package(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            "bepinex-framework",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(entry.file_count, FRAMEWORK_FILES.len());
+        for file in FRAMEWORK_FILES {
+            assert!(!workspace.game.join(file).exists(), "{file} 应已移走");
+        }
+        // 回收记录里也要包含根目录文件，恢复时才能原样还原
+        for file in ["winhttp.dll", "doorstop_config.ini", "run_bepinex.sh"] {
+            assert!(
+                entry.files.iter().any(|item| item == file),
+                "{file} 应记录在案"
+            );
+        }
+
+        restore(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &entry.id,
+        )
+        .unwrap();
+        for file in FRAMEWORK_FILES {
+            assert!(workspace.game.join(file).exists(), "{file} 应已恢复");
+        }
+    }
+
     #[test]
     fn whole_package_preserves_disabled_paths_nondefault_target_and_raw_manifest() {
         let workspace = Workspace::new();

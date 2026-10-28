@@ -2102,8 +2102,10 @@ pub async fn install_bepinex(
             &temp,
             &game_root,
             &state.config.backups_dir(),
+            &state.config.manifests_dir(),
             package,
             reinstall,
+            crate::bepinex::PACKAGE_VERSION,
         )
     })();
     let _ = fs::remove_file(&temp);
@@ -2155,12 +2157,22 @@ pub async fn install_bepinex(
     }
 }
 
+/// 框架安装清单的固定 id。
+///
+/// 框架不是 MOD，但它的 ZIP 解压结果同样需要一份清单：
+/// 卸载时要按清单把**所有**解压出来的文件回收（`BepInEx/` 目录之外还有
+/// `winhttp.dll`、`doorstop_config.ini`、`run_bepinex.sh` 等散落在游戏根目录的
+/// 文件），只删 `BepInEx` 目录会留下这些孤儿文件。
+const BEPINEX_MANIFEST_ID: &str = "bepinex-framework";
+
 fn install_framework_archive(
     archive_path: &Path,
     game_root: &Path,
     backup_root: &Path,
+    manifests_dir: &Path,
     package: crate::bepinex::Package,
     reinstall: bool,
+    release_tag: &str,
 ) -> Result<(), String> {
     let framework = game::safe_game_path(game_root, "BepInEx")?;
     if framework.exists() && !reinstall {
@@ -2183,6 +2195,20 @@ fn install_framework_archive(
         if let Some(backup) = &backup {
             restore_preserved_dirs(backup, game_root)?;
         }
+        /*
+         * 先落清单再提交文件：两者顺序反过来的话，commit 之后写清单失败会
+         * 留下「文件已就位但没记录」的状态，卸载时就回收不到这些文件。
+         * 清单内容取 `pending.files()` —— 那是本次实际解压出的游戏相对路径，
+         * 覆盖 `BepInEx/` 与散落在根目录的 winhttp.dll / doorstop_config.ini 等。
+         */
+        let manifest = archive::new_manifest(
+            BEPINEX_MANIFEST_ID,
+            release_tag,
+            Some("BepInEx"),
+            None,
+            pending.files().to_vec(),
+        );
+        archive::write_manifest(manifests_dir, &manifest)?;
         pending.commit();
         Ok(())
     })();
@@ -2243,6 +2269,56 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
         return Err("BepInEx 未安装".into());
     }
     ensure_copy_paths_disjoint(&source, &state.config.backups_dir())?;
+
+    let manifests_dir = state.config.manifests_dir();
+    let recycle_root = state.config.mod_recycle_bin_dir();
+    /*
+     * 优先按安装清单回收。
+     *
+     * 框架 ZIP 不只包含 `BepInEx/`：`winhttp.dll`、`doorstop_config.ini`、
+     * `run_bepinex.sh` 都直接解压在游戏根目录。只 `remove_dir_all(BepInEx)`
+     * 会把这些文件留在原地 —— 用户以为卸载干净了，实际游戏仍被 doorstop 接管。
+     *
+     * 清单里记的就是当初解压出的全部游戏相对路径，所以直接复用回收站的
+     * `recycle_package`（它内部走 `stage`，负责共享文件保护、清单快照、
+     * scratch 目录与回滚），不另写一套移动逻辑。
+     */
+    if archive::read_manifest(&manifests_dir, BEPINEX_MANIFEST_ID).is_some() {
+        match recycle_bin::recycle_package(
+            &recycle_root,
+            &manifests_dir,
+            &game_root,
+            BEPINEX_MANIFEST_ID,
+            None,
+        ) {
+            Ok(entry) => {
+                log::info!(
+                    "BepInEx 卸载完成（已回收）：文件数={}，回收记录={}",
+                    entry.file_count,
+                    entry.id
+                );
+                return Ok(OperationResult {
+                    ok: true,
+                    message: format!("BepInEx 已移入回收站（{} 个文件）", entry.file_count),
+                });
+            }
+            Err(error) => {
+                /*
+                 * 回收失败就中止，不退回「直接删目录」：
+                 * 那种做法只能删掉一部分，留下散落的 doorstop/winhttp 文件，
+                 * 用户会看到一个既装不上又卸不掉的半残状态。
+                 */
+                log::error!("BepInEx 回收失败，已中止卸载：原因={}", error);
+                return Err(format!("文件回收失败，请尝试手动删除框架文件。（{error}）"));
+            }
+        }
+    }
+
+    /*
+     * 没有清单（旧版本装的框架）：保留原有的「备份 + 删目录」路径，
+     * 至少能回退到备份，不至于让用户没有出路。
+     */
+    log::warn!("未找到 BepInEx 安装清单，退回备份并删除目录的旧流程");
     archive::clear_readonly(&source)?;
     let backup = bepinex_backup_path(&state.config.backups_dir())?;
     // The game and portable manager may be on different drives. `rename`
@@ -5744,6 +5820,11 @@ mod framework_install_tests {
             self.0.join("backups")
         }
 
+        /// 框架安装清单目录（安装时会写入 `bepinex-framework.toml`）。
+        fn manifests(&self) -> PathBuf {
+            self.0.join("manifests")
+        }
+
         fn write(&self, relative: &str, bytes: &[u8]) {
             let path = self.game().join(relative);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -5799,8 +5880,10 @@ mod framework_install_tests {
                 &archive,
                 &workspace.game(),
                 &workspace.backups(),
+                &workspace.manifests(),
                 package,
                 false,
+                "5.4.23.5",
             )
             .unwrap();
             assert!(!workspace.backups().exists());
@@ -5811,8 +5894,10 @@ mod framework_install_tests {
                 &archive,
                 &workspace.game(),
                 &workspace.backups(),
+                &workspace.manifests(),
                 package,
                 true,
+                "5.4.23.5",
             )
             .unwrap();
             assert_eq!(
@@ -5856,8 +5941,10 @@ mod framework_install_tests {
                         &archive,
                         &workspace.game(),
                         &workspace.backups(),
+                        &workspace.manifests(),
                         Package::Linux,
                         reinstall,
+                        "5.4.23.5",
                     )
                     .is_err()
                 );
@@ -5906,8 +5993,10 @@ mod framework_install_tests {
                     &archive,
                     &workspace.game(),
                     &workspace.backups(),
+                    &workspace.manifests(),
                     Package::MacOS,
-                    reinstall
+                    reinstall,
+                    "5.4.23.5",
                 )
                 .is_err()
             );
@@ -5944,8 +6033,10 @@ mod framework_install_tests {
                 &archive,
                 &workspace.game(),
                 &workspace.backups(),
+                &workspace.manifests(),
                 Package::Windows,
                 false,
+                "5.4.23.5",
             )
             .is_err()
         );
@@ -5974,8 +6065,10 @@ mod framework_install_tests {
                 &archive,
                 &workspace.game(),
                 &workspace.backups(),
+                &workspace.manifests(),
                 package,
                 false,
+                "5.4.23.5",
             )
             .unwrap();
             let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
@@ -5986,8 +6079,10 @@ mod framework_install_tests {
                 &archive,
                 &workspace.game(),
                 &workspace.backups(),
+                &workspace.manifests(),
                 package,
                 true,
+                "5.4.23.5",
             )
             .unwrap();
             assert_eq!(

@@ -130,6 +130,7 @@ const entries = {
   '安装字体': ['安裝字型', 'Install fonts', '글꼴 설치', 'フォントをインストール'],
   '补上 corefonts，否则 BepInEx 控制台会显示乱码': ['補上 corefonts，否則 BepInEx 主控台會顯示亂碼', 'Add corefonts or the BepInEx console shows garbled text', 'corefonts가 없으면 BepInEx 콘솔이 깨져 보입니다', 'corefonts がないと BepInEx コンソールが文字化けします'],
   '安装 BepInEx': ['安裝 BepInEx', 'Install BepInEx', 'BepInEx 설치', 'BepInEx をインストール'],
+  '将把游戏目录中的 BepInEx 框架文件移入回收站，可在回收站中恢复。继续卸载？': ['將把遊戲目錄中的 BepInEx 框架檔案移入資源回收筒，可在資源回收筒中還原。繼續解除安裝？', 'The BepInEx framework files will be moved to the recycle bin and can be restored. Continue uninstalling?', 'BepInEx 프레임워크 파일을 휴지통으로 옮깁니다. 복원할 수 있습니다. 제거할까요?', 'BepInEx フレームワークのファイルをゴミ箱へ移動します（復元可能）。アンインストールを続行しますか？'],
   '回到这里点击下方按钮继续': ['回到這裡點擊下方按鈕繼續', 'Come back here and continue below', '여기로 돌아와 아래 버튼을 누르세요', 'ここに戻って下のボタンを押してください'],
   '未检测到 CrossOver 容器。请先在 CrossOver 里启动一次《胡闹厨房2》，让容器生成后再回来。': ['未偵測到 CrossOver 容器。請先在 CrossOver 裡啟動一次《胡鬧廚房2》，讓容器產生後再回來。', 'No CrossOver bottle detected. Launch Overcooked! 2 once through CrossOver so the bottle is created, then come back.', 'CrossOver 병을 찾지 못했습니다. CrossOver에서 《오버쿡드! 2》를 한 번 실행해 병을 만든 뒤 다시 오세요.', 'CrossOver ボトルが見つかりません。CrossOver で『オーバークック2』を一度起動してボトルを作成してから戻ってください。'],
   '在终端执行以下命令安装字体': ['在終端機執行以下指令安裝字型', 'Run this in a terminal to install fonts', '터미널에서 아래 명령을 실행해 글꼴을 설치하세요', 'ターミナルで次のコマンドを実行してフォントをインストールします'],

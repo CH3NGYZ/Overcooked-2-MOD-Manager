@@ -131,7 +131,9 @@ function onGuideConfirmed() {
 function uninstall() {
   dialog.warning({
     title: t('卸载 BepInEx 框架'),
-    content: t('将移除游戏目录中的 BepInEx 框架文件。建议先创建备份。继续卸载？'),
+    // 卸载会把框架 ZIP 解压出的全部文件移入回收站（含游戏根目录的
+    // winhttp.dll / doorstop_config.ini / run_bepinex.sh），可随时恢复。
+    content: t('将把游戏目录中的 BepInEx 框架文件移入回收站，可在回收站中恢复。继续卸载？'),
     positiveText: t('卸载'),
     negativeText: t('取消'),
     async onPositiveClick() {

@@ -3,6 +3,9 @@ use regex::Regex;
 use std::fs;
 use std::path::Path;
 
+/// 内置 BepInEx 包版本（安装清单里记录用，与各包 URL 中的版本号一致）。
+pub(crate) const PACKAGE_VERSION: &str = "5.4.23.5";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Package {
     Windows,

@@ -491,9 +491,17 @@ pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
 /// 结束正在运行的《胡闹厨房2》进程。
 ///
 /// Steam 没有「停止游戏」的 URL 协议（只有 `steam://rungameid/<appid>` 用于启动），
-/// 所以「停止」只能由管理器结束游戏进程：这里复用 `is_game_running_with_system`
-/// 的匹配规则（含 Wine / CrossOver 的宿主进程），先发正常关闭信号，
-/// 给游戏几秒保存时间，仍未退出再强制结束。
+/// 所以「停止」只能由管理器结束游戏进程。
+///
+/// 流程是**先温和、再强制**：
+///   1. Windows 上给游戏主窗口投递 `WM_CLOSE`，等同于用户点窗口右上角的 ×，
+///      游戏会走自己的退出流程（保存进度、释放资源、正常退出）；
+///   2. 最多等 [`GRACEFUL_EXIT_TIMEOUT`]，期间每 250ms 检查进程是否已退出；
+///   3. 仍未退出才 `kill()`（Windows 上是 TerminateProcess，Unix 上是 SIGKILL）。
+///
+/// 为什么必须两步：直接 `kill()` 会跳过关卡存档写入与 Steamm 云同步钩子，
+/// 玩家正在打的那一关进度可能丢失。而只发 WM_CLOSE 又不可靠 —— 游戏卡在
+/// 无响应状态时窗口消息根本不会被处理，此时只能强制结束。
 pub fn stop_game(game: &Path) -> Result<usize, String> {
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -516,27 +524,116 @@ pub fn stop_game(game: &Path) -> Result<usize, String> {
         return Ok(0);
     }
     log::info!("停止游戏：发现运行中的进程，数量={}", targets.len());
+
+    // 第一步：温和关闭
+    let graceful = request_graceful_close(&targets);
+    if graceful > 0 {
+        log::info!("停止游戏：已向 {graceful} 个进程投递关闭请求，等待退出");
+        if wait_until_stopped(game, GRACEFUL_EXIT_TIMEOUT) {
+            log::info!("停止游戏：游戏已自行退出");
+            return Ok(targets.len());
+        }
+        log::warn!("停止游戏：温和关闭超时，转为强制结束");
+    }
+
+    // 第二步：强制结束
     /*
-     * sysinfo 的 kill() 在 Windows 上结束进程、在 Unix 上发 SIGKILL，
-     * 都是同步生效的；Signal::Term 只有 Unix feature 才有，跨平台不可用。
-     * 若结束后进程仍存活（例如还在处理退出），等一轮再重试。
+     * sysinfo 的 kill() 在 Windows 上是 TerminateProcess、在 Unix 上是
+     * SIGKILL，都会跳过游戏自己的存档与云同步流程，只在温和关闭失败后用。
      */
+    system.refresh_processes_specifics(
+        ProcessRefreshKind::new()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
     for pid in &targets {
         match system.process(*pid) {
             Some(process) if process.kill() => {}
-            _ => log::warn!("停止游戏：结束进程失败，PID={pid}"),
+            _ => log::warn!("停止游戏：强制结束进程失败，PID={pid}"),
         }
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    if wait_until_stopped(game, FORCE_EXIT_TIMEOUT) {
+        log::info!("停止游戏：进程已强制退出");
+        return Ok(targets.len());
+    }
+    log::warn!("停止游戏：强制结束后进程仍在运行");
+    Err("游戏进程仍在运行，请手动关闭".into())
+}
+
+/// 温和关闭的等待上限：足够游戏保存进度并退出，又不至于让用户干等。
+const GRACEFUL_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+/// 强制结束的等待上限（TerminateProcess 基本是立即生效的，留一点余量）。
+const FORCE_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// 轮询等待游戏进程退出，返回是否已退出。
+fn wait_until_stopped(game: &Path, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(250));
         if !is_game_running(game) {
-            log::info!("停止游戏：进程已退出");
-            return Ok(targets.len());
+            return true;
         }
     }
-    log::warn!("停止游戏：等待超时后进程仍在运行");
-    Err("游戏进程仍在运行，请手动关闭".into())
+    false
+}
+
+/// 请求游戏主窗口关闭，返回成功投递消息的窗口数。
+///
+/// Windows：向该进程的每个顶层窗口 `PostMessageW(WM_CLOSE)`，等价于点 ×。
+/// 游戏收到后走自己的退出流程，存档与云同步都能正常完成。
+///
+/// 非 Windows：返回 0，调用方直接走强制结束。
+/// macOS/Linux 的原生版需要发送 SIGTERM 才等价，但本项目在 Unix 上的游戏
+/// 多数跑在 Wine 容器里（进程模型不同），暂不实现，保持原有的强制结束行为。
+#[cfg(windows)]
+fn request_graceful_close(targets: &[sysinfo::Pid]) -> usize {
+    use winapi::shared::minwindef::{BOOL, LPARAM};
+    use winapi::um::winuser::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WM_CLOSE,
+    };
+
+    /// `EnumWindows` 回调：把目标进程的可见顶层窗口收进 `Vec<(HWND, PID)>`。
+    ///
+    /// 安全性：`lparam` 由本函数传入，指向在整个枚举期间都存活的 `windows`；
+    /// 回调只在 `EnumWindows` 内部同步调用，不存在跨线程访问。
+    unsafe extern "system" fn collect(hwnd: winapi::shared::windef::HWND, lparam: LPARAM) -> BOOL {
+        let windows = unsafe { &mut *(lparam as *mut Vec<(winapi::shared::windef::HWND, u32)>) };
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+        // 只要可见的顶层窗口：隐藏窗口（托盘图标之类）收到 WM_CLOSE 没有意义
+        if pid != 0 && unsafe { IsWindowVisible(hwnd) } != 0 {
+            windows.push((hwnd, pid));
+        }
+        // 返回 1 继续枚举
+        1
+    }
+
+    let mut windows: Vec<(winapi::shared::windef::HWND, u32)> = Vec::new();
+    unsafe {
+        EnumWindows(Some(collect), &mut windows as *mut _ as LPARAM);
+    }
+    let target_pids = targets
+        .iter()
+        .map(|pid| pid.as_u32())
+        .collect::<std::collections::HashSet<_>>();
+    let mut posted = 0usize;
+    for (hwnd, pid) in windows {
+        if !target_pids.contains(&pid) {
+            continue;
+        }
+        let ok = unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+        if ok != 0 {
+            posted += 1;
+        } else {
+            log::debug!("停止游戏：WM_CLOSE 投递失败，PID={pid}");
+        }
+    }
+    posted
+}
+
+#[cfg(not(windows))]
+fn request_graceful_close(_targets: &[sysinfo::Pid]) -> usize {
+    0
 }
 
 pub fn safe_game_path(game: &Path, relative: &str) -> Result<PathBuf, String> {

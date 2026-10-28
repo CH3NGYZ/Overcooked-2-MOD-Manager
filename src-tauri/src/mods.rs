@@ -374,12 +374,22 @@ fn select_repository<'a>(
     {
         return candidates.iter().copied().find(|repo| repo.id == source.id);
     }
-    let count = installed_version_component_count(installed_version);
-    let preferred_channel = match count {
-        Some(4) => Some(Channel::Beta),
-        Some(_) => Some(Channel::Stable),
-        None => None,
-    };
+    /*
+     * 本地装的是哪一个渠道，按「版本号是否预发布」判断，不按段数。
+     *
+     * 判定统一交给 `releases::is_prerelease_version`：四段版本号是 beta
+     * 序号（`1.8.7.23` ≡ `1.8.7-beta.23`），各种 beta 写法
+     * （`-beta.4`、`-beta1`、`.beta4`、`-pre.01`）也都算预发布。
+     * 在这里另写一套数段逻辑会和它分叉 —— 比如 `1.8.7.beta4` 按 `.`
+     * 数会得到 4 段，看起来像四段 beta 序号，其实是三段 + 标识。
+     */
+    let preferred_channel = installed_version.map(|version| {
+        if crate::releases::is_prerelease_version(version) {
+            Channel::Beta
+        } else {
+            Channel::Stable
+        }
+    });
     let compatible_release = |repo: &&RepositoryConfig| {
         repo.download_mode == RepositoryDownloadMode::Release
             && preferred_channel
@@ -1013,17 +1023,6 @@ fn parse_mod_version_components(value: &str) -> Option<[u64; 4]> {
     Some(components)
 }
 
-fn installed_version_component_count(value: Option<&str>) -> Option<usize> {
-    release_version_component_count(value)
-}
-
-fn release_version_component_count(value: Option<&str>) -> Option<usize> {
-    let value = value?.trim().trim_start_matches(['v', 'V']);
-    let numeric = value.split(['-', '+']).next()?;
-    let count = numeric.split('.').count();
-    (count >= 2 && count <= 4).then_some(count)
-}
-
 #[cfg(test)]
 mod tests {
     fn plugin_blob(guid: &str, name: &str, version: &str) -> Vec<u8> {
@@ -1351,20 +1350,27 @@ mod tests {
         ));
     }
 
+    /*
+     * 本地版本落在哪个渠道：按「是否预发布」判断，不再数版本段数。
+     *
+     * 段数是个间接指标，遇到 `1.8.7.beta4` 这类写法就会错判（按 `.`
+     * 数出 4 段，其实是三段 + 标识）。语义判定统一交给
+     * `releases::is_prerelease_version`，它认得本项目全部 beta 写法。
+     */
     #[test]
-    fn local_release_channel_uses_component_count() {
-        assert_eq!(
-            super::installed_version_component_count(Some("1.8.5")),
-            Some(3)
-        );
-        assert_eq!(
-            super::installed_version_component_count(Some("1.8.5.2")),
-            Some(4)
-        );
-        assert_eq!(
-            super::installed_version_component_count(Some("v1.8.5.2-beta")),
-            Some(4)
-        );
+    fn local_release_channel_follows_prerelease_semantics() {
+        use crate::releases::is_prerelease_version;
+        // 三段正式版
+        assert!(!is_prerelease_version("1.8.5"));
+        assert!(!is_prerelease_version("v1.8.5"));
+        // 四段 = beta 序号
+        assert!(is_prerelease_version("1.8.5.2"));
+        assert!(is_prerelease_version("v1.8.5.2-beta"));
+        // 其它 beta 写法：无分隔符、点号分隔、pre 前缀
+        assert!(is_prerelease_version("1.8.7-beta1"));
+        assert!(is_prerelease_version("1.8.7.beta4"));
+        assert!(is_prerelease_version("1.9.7-beta.4"));
+        assert!(is_prerelease_version("1.8.5-pre.01"));
     }
 
     #[test]

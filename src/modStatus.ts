@@ -55,13 +55,19 @@ interface ParsedVersion {
  *   - `0.4.0.0`、`1.8.7.0`      → 序号为 0，等价于正式版；
  *   - `0.4.0.1-beta`            → `0.4.0-beta.1`（后缀在前，序号追加在后）。
  *
- * 带 `-` 后缀时该后缀优先作为预发布标识，第 4 段追加到它后面。
+ * beta 写法在本项目不统一，下面四种语义完全相同，都必须识别：
+ *   `1.8.5-pre.01`、`1.9.7-beta.4`、`1.8.7-beta1`、`1.8.7.beta4`
+ * 所以用「贪婪吃掉所有前导数字段，剩下全部当标识符」的切法，
+ * 而不是只找第一个 `-`（那样 `.beta4` 会整个解析失败）。
+ *
+ * 带标识时该后缀优先作为预发布标识，第 4 段追加到它后面。
  * 无法解析返回 null，调用方据此显示「版本未知」而不是臆断更新。
  */
 export function parseVersion(value: string | null | undefined): ParsedVersion | null {
   if (!value) return null
   const cleaned = value.trim().replace(/^[vV]/, '')
-  const match = cleaned.match(/(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?/)
+  // 贪婪匹配前导数字段，剩下的全算后缀（兼容 -beta.4 / beta1 / .beta4）
+  const match = cleaned.match(/^(\d+(?:\.\d+)*)(.*)$/)
   if (!match) return null
   const all = match[1].split('.').map(Number)
   if (all.some((part) => !Number.isFinite(part))) return null
@@ -69,7 +75,10 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
   const numbers = all.slice(0, 3)
   while (numbers.length < 3) numbers.push(0)
 
-  const suffix = match[2] ? match[2].split('.') : []
+  const suffix = match[2]
+    .replace(/^[-+.]/, '')
+    .split(/[-+.]/)
+    .filter(Boolean)
   // 第 4 段及以后：全 0 视为正式版，否则作为 beta 序号
   const build = all.slice(3)
   const hasBuild = build.some((part) => part !== 0)

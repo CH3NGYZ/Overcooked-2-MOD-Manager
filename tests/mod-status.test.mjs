@@ -132,3 +132,40 @@ test('四段版本号读 tag_name 与读归一后的 version 结论应一致', (
   assert.equal(isPrereleaseVersion(tagName, false), true)
   assert.equal(isPrereleaseVersion(normalized, false), false)
 })
+
+/*
+ * 本项目 beta 写法不统一，下面四种语义完全一致，都必须识别成预发布。
+ *
+ * 曾经只有 `-x.y` 一种生效：`1.8.7.beta4` 因为正则只找 `-`，
+ * 整个版本号解析失败，既不判预发布也比较不了版本。
+ */
+test('四种 beta 写法统一识别为预发布', () => {
+  for (const version of ['1.8.5-pre.01', '1.9.7-beta.4', '1.8.7-beta1', '1.8.7.beta4']) {
+    assert.equal(isPrereleaseVersion(version, false), true, version)
+  }
+})
+
+test('beta 序号之间按序号比较', () => {
+  for (const [older, newer] of [
+    ['1.8.7-beta1', '1.8.7-beta2'],
+    ['1.9.7-beta.1', '1.9.7-beta.2'],
+    ['1.8.7.beta1', '1.8.7.beta2'],
+    ['1.8.5-pre.1', '1.8.5-pre.2'],
+    ['1.8.7.1', '1.8.7.2'],
+  ]) {
+    assert.equal(compareVersions(newer, older), 1, `${newer} 应新于 ${older}`)
+  }
+})
+
+/*
+ * 同号 beta 永远低于正式版 —— 这是「稳定渠道不接受 beta 更新」的依据。
+ * 本地 1.8.7，仓库有 1.8.7.23 时不能提示有更新。
+ */
+test('同号 beta 低于正式版，下一个次版本的 beta 才是更新', () => {
+  for (const beta of ['1.8.7-beta.1', '1.8.7-beta.23', '1.8.7-beta1', '1.8.7.beta4', '1.8.7.23']) {
+    assert.equal(compareVersions(beta, '1.8.7'), -1, `${beta} 应低于 1.8.7`)
+    assert.equal(compareVersions('1.8.7', beta), 1, `1.8.7 应高于 ${beta}`)
+  }
+  // host utilities 的新发布约定：下一个测试版用下一个正式版号 + beta 标志
+  assert.equal(compareVersions('1.8.8-beta1', '1.8.7'), 1)
+})

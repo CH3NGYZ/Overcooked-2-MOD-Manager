@@ -308,10 +308,41 @@ struct SegmentVersion {
     prerelease: Vec<String>,
 }
 
+/// 把版本号尾部的「非数字部分」归一成预发布标识。
+///
+/// 本项目实际出现过四种写法，语义完全一致，都必须识别成 beta：
+/// ```text
+/// 1.8.5-pre.01      → [pre, 01]
+/// 1.9.7-beta.4      → [beta, 4]
+/// 1.8.7-beta1       → [beta1]
+/// 1.8.7.beta4       → [beta4]
+/// ```
+///
+/// 调用方已用贪婪数字正则吃掉了所有前导数字段（`1.8.7.23` 的 `23` 属于
+/// 数字段，不在 rest 里），所以这里剩下的内容整体都是标识符 ——
+/// 其中的纯数字段（`-beta.4` 的 `4`）是 semver 的预发布序号，必须保留。
+///
+/// 空结果表示正式版。
+fn suffix_identifiers(rest: &str) -> Vec<String> {
+    rest.trim_start_matches(['-', '+', '.'])
+        .split(['-', '+', '.'])
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 impl SegmentVersion {
     fn parse(value: &str) -> Option<Self> {
         let cleaned = value.trim().trim_start_matches(['v', 'V']);
-        let re = Regex::new(r"(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?").ok()?;
+        /*
+         * 先切出「前导数字段」和「其余部分」。
+         *
+         * 用 `^(\d+(\.\d+)*)` 而不是找第一个 `-`：本项目的 beta 写法不统一，
+         * 除了标准 semver 的 `-beta.4`，还有 `1.8.7-beta1`（无分隔符）
+         * 和 `1.8.7.beta4`（点号分隔）—— 后者用旧的 `-` 正则会把整个号
+         * 解析失败，于是它既不参与比较也判不出预发布。
+         */
+        let re = Regex::new(r"^(\d+(?:\.\d+)*)(.*)$").ok()?;
         let caps = re.captures(cleaned)?;
         let parts = caps
             .get(1)?
@@ -321,16 +352,7 @@ impl SegmentVersion {
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
         let numbers = parts.iter().take(3).copied().collect::<Vec<_>>();
-        let suffix = caps
-            .get(2)
-            .map(|value| {
-                value
-                    .as_str()
-                    .split('.')
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let suffix = suffix_identifiers(caps.get(2).map_or("", |value| value.as_str()));
         /*
          * 第 4 段及以后是前三位的 beta 序号：`1.8.7.23` ≡ `1.8.7-beta.23`。
          * 全 0 视为正式版（1.8.7.0 与 1.8.7 相同）；有非 0 段则拼进预发布标识，
@@ -1476,10 +1498,77 @@ mod tests {
         assert!(is_prerelease_version("0.4.0.5"));
         assert!(is_prerelease_version("1.8.7.23"));
         assert!(is_prerelease_version("v1.8.7.23"));
-        // 三段正式版与尾部补 0 段都不是预发布（beta.0 不存在）
+        /*
+         * 本项目的 beta 写法不统一。下面四种语义完全相同，都必须识别。
+         *
+         * 曾经只有 `-x.y` 一种被识别：`1.8.7.beta4` 因为用 `-` 正则
+         * 整个解析失败，既不判预发布也无法参与版本比较。
+         */
+        assert!(is_prerelease_version("1.8.5-pre.01"));
+        assert!(is_prerelease_version("1.9.7-beta.4"));
+        assert!(is_prerelease_version("1.8.7-beta1"));
+        assert!(is_prerelease_version("1.8.7.beta4"));
+        // 三段正式版与尾部补 0 段都不是预发布（beta 序号为 0 不算 beta）
         assert!(!is_prerelease_version("0.4.0"));
         assert!(!is_prerelease_version("0.4.0.0"));
         assert!(!is_prerelease_version("unknown"));
+    }
+
+    /*
+     * 四条 beta 写法解析出的序号要能比较，否则「beta2 → beta3」
+     * 这种升级会被判成「已是最新」。
+     */
+    #[test]
+    fn every_beta_spelling_parses_and_orders_by_serial() {
+        use std::cmp::Ordering;
+        for (older, newer) in [
+            ("1.8.7-beta1", "1.8.7-beta2"),
+            ("1.9.7-beta.1", "1.9.7-beta.2"),
+            ("1.8.7.beta1", "1.8.7.beta2"),
+            ("1.8.5-pre.1", "1.8.5-pre.2"),
+            ("1.8.7.1", "1.8.7.2"),
+        ] {
+            assert_eq!(
+                compare_release_versions(newer, older),
+                Some(Ordering::Greater),
+                "{newer} 应新于 {older}"
+            );
+        }
+    }
+
+    /*
+     * 同号的 beta 必须低于正式版，反过来也一样。
+     *
+     * 这是「订阅 Stable 时不接受 beta 更新」的底层依据：
+     * 本地装正式版 1.8.7，仓库有 beta 号 1.8.7.23 时不能提示「有更新」。
+     */
+    #[test]
+    fn beta_serial_never_outranks_its_stable_version() {
+        use std::cmp::Ordering;
+        for beta in [
+            "1.8.7-beta.1",
+            "1.8.7-beta.23",
+            "1.8.7-beta1",
+            "1.8.7.beta4",
+            "1.8.7.23",
+        ] {
+            assert_eq!(
+                compare_release_versions(beta, "1.8.7"),
+                Some(Ordering::Less),
+                "{beta} 应低于同号正式版 1.8.7"
+            );
+            assert_eq!(
+                compare_release_versions("1.8.7", beta),
+                Some(Ordering::Greater),
+                "正式版 1.8.7 应高于 {beta}"
+            );
+        }
+        // 下一个正式版仍然更高
+        assert_eq!(
+            compare_release_versions("1.8.8-beta1", "1.8.7"),
+            Some(Ordering::Greater),
+            "1.8.8-beta1 的次版本号更高，应视为更新"
+        );
     }
 
     #[test]

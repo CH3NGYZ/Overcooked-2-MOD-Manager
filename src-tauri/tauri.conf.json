@@ -43,6 +43,10 @@
       "signingIdentity": "-"
     },
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
       "nsis": {
         "installMode": "currentUser",
         "template": "nsis/installer.nsi",

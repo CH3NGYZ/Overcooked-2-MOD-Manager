@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
@@ -11,12 +12,15 @@ import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import { tagColorFor } from '../theme'
+import { FOCUS_QUERY } from '../crossLink'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 
 const message = useNotify()
+const route = useRoute()
+const router = useRouter()
 const { load, ensureLoaded, game } = useDashboard()
 
 const version = ref('')
@@ -115,7 +119,40 @@ onMounted(async () => {
   config.value = await api.config().catch(() => null)
   await ensureLoaded()
   await refreshPermission()
+  openRequestedPanel()
 })
+
+/**
+ * 处理 `?focus=` 深链，例如总览页「安装框架」按钮跳过来要直接开抽屉。
+ *
+ * 这里不用 `useFocusHighlight`：那是给「页面上有 DOM 锚点的卡片」做高亮的，
+ * 而设置页的目标是**抽屉**——抽屉没打开时 DOM 根本不存在，高亮无从谈起。
+ * 所以按名字映射成「打开哪个抽屉」即可。
+ */
+const SETTINGS_PANELS: Record<string, () => void> = {
+  bepinex: () => {
+    bepinexDrawer.value = true
+  },
+  path: () => {
+    pathDrawer.value = true
+  },
+  token: () => {
+    tokenDrawer.value = true
+  },
+}
+
+function openRequestedPanel() {
+  const raw = route.query[FOCUS_QUERY]
+  const id = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : ''
+  if (!id) return
+  const open = SETTINGS_PANELS[id]
+  // 消费后立刻抹掉，避免刷新页面时重复弹抽屉
+  const { [FOCUS_QUERY]: _removed, ...rest } = route.query
+  void router.replace({ name: route.name ?? undefined, query: rest })
+  if (!open) return
+  // 等一帧再开：Dashboard 刚到达，抽屉内容依赖 game/config
+  window.setTimeout(open, 0)
+}
 
 function fail(reason: unknown) {
   message.error(reason instanceof Error ? reason.message : String(reason))

@@ -1318,6 +1318,88 @@ pub fn toggle_local_mod_package(
     })
 }
 
+/// 一次性启用或禁用**全部**已安装的插件 DLL。
+///
+/// 与单包切换共用 `set_local_mod_file_state`（负责路径归属校验、
+/// `.disabled` 成对检查与只读位清理），因此安全边界完全一致。
+///
+/// 失败时回滚已经改过的文件：批量操作必须要么全成、要么全不动。
+/// 不回滚会留下「一半启用一半禁用」的中间态，用户看到的是随机结果。
+///
+/// 不切换 `BepInEx/plugins` 之外的 DLL（`patchers`、`core` 里的管理器自身
+/// 组件等）：那些不是 MOD，改了会破坏框架。
+#[tauri::command]
+pub fn set_all_local_mods_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    log::info!("批量切换全部本地 MOD：启用={}", enabled);
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+
+    /*
+     * 直接从磁盘扫描，不依赖 Dashboard 快照：
+     * 快照可能过期，而用户点「全部启用」时期望覆盖磁盘上真实存在的每一个插件。
+     */
+    let mut dll_files = Vec::new();
+    let plugins = game::safe_game_path(&game_root, "BepInEx/plugins")?;
+    for entry in walkdir::WalkDir::new(&plugins)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        // `.dll.disabled` 与 `.dll` 都算插件；其他文件忽略
+        let is_plugin = name.ends_with(".dll") || name.ends_with(".dll.disabled");
+        if !is_plugin {
+            continue;
+        }
+        let Ok(relative) = entry.path().strip_prefix(&game_root) else {
+            continue;
+        };
+        dll_files.push(relative.to_string_lossy().replace('\\', "/"));
+    }
+    dll_files.sort_by_key(|file| file.to_ascii_lowercase());
+    if dll_files.is_empty() {
+        return Err("没有找到任何 MOD 插件 DLL".into());
+    }
+
+    let mut changed = Vec::new();
+    for dll_file in dll_files {
+        // 统一成启用态路径再交给状态机：它自己会按 `.disabled` 找源文件
+        let relative = dll_file.trim_end_matches(".disabled").to_string();
+        match set_local_mod_file_state(&game_root, &relative, enabled) {
+            Ok(true) => changed.push(relative),
+            Ok(false) => {}
+            Err(error) => {
+                log::error!("批量切换失败，开始回滚：文件={}，原因={}", relative, error);
+                for previous in changed.into_iter().rev() {
+                    let _ = toggle_local_mod_file(&game_root, &previous, !enabled);
+                }
+                return Err(format!("切换到「{relative}」时失败：{error}"));
+            }
+        }
+    }
+    log::info!(
+        "批量切换完成：启用={}，变更文件数={}",
+        enabled,
+        changed.len()
+    );
+    Ok(OperationResult {
+        ok: true,
+        message: format!(
+            "{} 个 MOD {}",
+            changed.len(),
+            if enabled { "已启用" } else { "已禁用" }
+        ),
+    })
+}
+
 #[tauri::command]
 pub fn save_settings(
     state: State<'_, AppState>,

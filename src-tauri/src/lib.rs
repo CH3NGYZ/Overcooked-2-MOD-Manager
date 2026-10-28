@@ -137,6 +137,7 @@ pub fn run() {
             commands::delete_recycled_mod,
             commands::toggle_local_mod,
             commands::toggle_local_mod_package,
+            commands::set_all_local_mods_enabled,
             commands::save_settings,
             commands::save_github_proxies,
             commands::refresh_github_proxies,

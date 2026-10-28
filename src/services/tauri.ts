@@ -95,6 +95,9 @@ export const api = {
   switchWinhttp: (enabled: boolean) => invoke<OperationResult>('switch_winhttp', { enabled }),
   toggleLocalMod: (dllFile: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod', { dllFile, enabled }),
   toggleLocalModPackage: (packageId: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod_package', { packageId, enabled }),
+  /** 一次性启用/禁用 `BepInEx/plugins` 下全部插件 DLL（失败整体回滚）。 */
+  setAllLocalModsEnabled: (enabled: boolean) =>
+    invoke<OperationResult>('set_all_local_mods_enabled', { enabled }),
   openDevtools: () => invoke<OperationResult>('open_devtools'),
   resetUi: () => invoke<OperationResult>('reset_ui'),
   /** 把生成好的多彩名字推送给正在运行的多彩名字 MOD（后端逐个端口尝试）。 */

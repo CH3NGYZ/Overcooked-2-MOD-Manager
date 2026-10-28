@@ -27,7 +27,6 @@ const savingPath = ref(false)
 const pathDrawer = ref(false)
 /** BepInEx 管理抽屉（右侧滑入）。 */
 const bepinexDrawer = ref(false)
-const updateDrawer = ref(false)
 const tokenDrawer = ref(false)
 const githubToken = ref('')
 const giteeToken = ref('')
@@ -148,6 +147,14 @@ async function saveGamePath(path: string) {
 }
 
 /* ===== 程序更新 ===== */
+
+/**
+ * 手动检测一次更新。
+ *
+ * 全部渠道失败时不再只弹一句「稍后重试」—— 原来的「更新设置」抽屉里有
+ * 「打开发布页」补救入口，抽屉去掉后这个入口必须跟着搬到这里，
+ * 否则用户在网络完全不通时无路可走。
+ */
 async function checkUpdate() {
   checking.value = true
   try {
@@ -157,11 +164,18 @@ async function checkUpdate() {
       updateInfo.value = updateResult.value.update
       showUpdate.value = true
     } else if (updateResult.value.all_failed) {
-      message.error(t('更新检查失败，可稍后重试'))
+      openReleaseFallback()
     } else {
       message.success(t('当前已是最新版本'))
     }
   } catch (reason) { fail(reason) } finally { checking.value = false }
+}
+
+/** 全部渠道失败时的补救入口：允许直接去发布页手动下载。 */
+const updateFailedOpen = ref(false)
+
+function openReleaseFallback() {
+  updateFailedOpen.value = true
 }
 
 /* ===== 通用偏好 ===== */
@@ -284,15 +298,19 @@ async function clearTokens() {
     </n-drawer-content>
   </n-drawer>
 
-  <!-- 程序更新 -->
+  <!--
+    程序更新：只留一个「是否启动时自动检测」开关。
+    手动检测不在这里 —— 它和版本号是同一件事，放在最下方「关于」的版本号旁边，
+    那里用户才看得到「我现在是什么版本」。
+  -->
   <SettingsGroup :title="t('程序更新')">
-    <SettingsRow :title="t('立即检测更新')" :description="t('检查是否有新版本可用，检测到更新会弹出确认')">
+    <SettingsRow :title="t('启动时检查程序更新')"
+      :description="t('启动管理器时检查新版本，可在设置中关闭')">
       <template #right>
-        <n-button size="small" secondary :loading="checking" @click.stop="checkUpdate">
-          <DownloadOutline width="14" height="14" />{{ t('检测更新') }}</n-button>
+        <n-switch size="small" :value="config?.network.check_updates_on_start"
+          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />
       </template>
     </SettingsRow>
-    <SettingsRow :title="t('更新设置')" :description="t('自动检查与安装偏好')" clickable @click="updateDrawer = true" />
   </SettingsGroup>
 
   <!-- 通用设置 -->
@@ -379,36 +397,39 @@ async function clearTokens() {
     <SettingsRow :icon="InformationCircleOutline" :title="t('OC2 MOD 管理器')" :description="t('关于') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
       <template #right>
         <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
+        <!--
+          手动检测更新放在版本号右边：用户想知道「我是不是最新」时才看版本，
+          这两个动作是同一个意图。按钮只负责检测，安装走检测出的更新弹窗。
+        -->
+        <n-button size="small" :secondary="!checking" :loading="checking" @click.stop="checkUpdate">
+          <template #icon><DownloadOutline width="14" height="14" /></template>
+          {{ t('检测更新') }}
+        </n-button>
       </template>
     </SettingsRow>
   </SettingsGroup>
+
+  <!--
+    全部渠道检查失败：给一条能走的路。
+    原来的「更新设置」抽屉里放着这个入口，抽屉删掉后放在这里，
+    由「检测更新」按钮在 all_failed 时打开。
+  -->
+  <AppModal :show="updateFailedOpen" :title="t('更新检查失败')" max-width="min(480px, 92%)"
+    @update:show="(value: boolean) => (updateFailedOpen = value)">
+    <p class="muted update-failed-note">{{ t('全部渠道检查失败，可前往发布页手动下载。') }}</p>
+    <template #footer>
+      <n-button size="small" type="primary" @click="void api.openUpdateRepository(); updateFailedOpen = false">
+        {{ t('打开发布页') }}
+      </n-button>
+      <n-button size="small" quaternary @click="updateFailedOpen = false">{{ t('取消') }}</n-button>
+    </template>
+  </AppModal>
 
   <!-- 二级：选择路径 -->
   <n-drawer v-model:show="pathDrawer" :width="440" placement="right">
     <n-drawer-content :title="t('选择游戏目录')" closable>
       <PathEditor :path="game?.path ?? ''" :saving="savingPath" @save="saveGamePath" />
       <div class="muted drawer-hint">{{ t('目录需包含 Overcooked!2.exe；保存后自动验证。') }}</div>
-    </n-drawer-content>
-  </n-drawer>
-
-  <!-- 二级：更新设置 -->
-  <n-drawer v-model:show="updateDrawer" :width="440" placement="right">
-    <n-drawer-content :title="t('更新设置')" closable>
-      <div class="drawer-pref">
-        <div>
-          <b>{{ t('启动时检查程序更新') }}</b>
-          <div class="muted">{{ t('启动管理器时检查新版本，可在设置中关闭') }}</div>
-        </div>
-        <n-switch size="small" :value="config?.network.check_updates_on_start"
-          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />
-      </div>
-      <div class="muted drawer-hint">
-        {{ t('更新检查按地区走 Gitee / GitHub 双渠道；更新包经 minisign 签名校验后由 Tauri Updater 安装。') }}
-      </div>
-      <div v-if="updateResult?.all_failed" class="muted drawer-hint danger">
-        {{ t('全部渠道检查失败，可前往发布页手动下载。') }}
-        <n-button size="tiny" quaternary type="primary" @click="api.openUpdateRepository()">{{ t('打开发布页') }}</n-button>
-      </div>
     </n-drawer-content>
   </n-drawer>
 
@@ -471,6 +492,8 @@ async function clearTokens() {
 }
 .drawer-hint { margin-top: 14px; }
 .drawer-hint.danger { color: #ee8585; }
+/* 更新检查失败弹窗的说明段：只有一句话，不要撑出多余留白 */
+.update-failed-note { margin: 0; font-size: 13px; line-height: 1.65; }
 .drawer-pref {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   padding: 10px 0 14px; border-bottom: 1px dashed var(--oc2-rail-line); margin-bottom: 6px;

@@ -158,6 +158,54 @@ test('beta 序号之间按序号比较', () => {
 })
 
 /*
+ * 紧凑写法 `-betaN` 必须按**数值**比较，否则第 10 个 beta 会静默失效。
+ *
+ * 严格 semver 里 `-beta1` 是单个字母数字标识符，按字典序比较，
+ * 于是 `"beta10" < "beta9"`（'1' < '9'）——发到 beta10 就再也检测不到
+ * 更新。规范推荐 `-beta.1` 正是为了避免这个。
+ *
+ * 本项目实际用紧凑写法，所以在解析层把 `beta1` 拆成 `beta` + `1`，
+ * 与 `beta.1` 等价。
+ */
+test('紧凑写法 betaN 按数值比较，beta10 大于 beta9', () => {
+  for (const [older, newer] of [
+    ['1.8.8-beta9', '1.8.8-beta10'],
+    ['1.8.8-beta10', '1.8.8-beta11'],
+    ['1.8.8-beta99', '1.8.8-beta100'],
+    ['1.8.8-rc9', '1.8.8-rc10'],
+  ]) {
+    assert.equal(compareVersions(newer, older), 1, `${newer} 应新于 ${older}`)
+  }
+})
+
+test('beta1 与 beta.1 是同一个预发布序号', () => {
+  for (const [compact, dotted] of [
+    ['1.8.8-beta1', '1.8.8-beta.1'],
+    ['1.8.8-beta10', '1.8.8-beta.10'],
+  ]) {
+    assert.equal(compareVersions(compact, dotted), 0, `${compact} 应等于 ${dotted}`)
+  }
+})
+
+/*
+ * semver 2.0.0 §11 给出的经典优先级链，逐条必须成立。
+ * 这是「全盘接受标准语义」的验收基准。
+ */
+test('符合 semver 规范给出的经典优先级链', () => {
+  const chain = [
+    '1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta',
+    '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0',
+  ]
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    assert.equal(
+      compareVersions(chain[index + 1], chain[index]),
+      1,
+      `${chain[index]} 应低于 ${chain[index + 1]}`,
+    )
+  }
+})
+
+/*
  * 同号 beta 永远低于正式版 —— 这是「稳定渠道不接受 beta 更新」的依据。
  * 本地 1.8.7，仓库有 1.8.7.23 时不能提示有更新。
  */

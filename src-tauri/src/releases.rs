@@ -327,8 +327,39 @@ fn suffix_identifiers(rest: &str) -> Vec<String> {
     rest.trim_start_matches(['-', '+', '.'])
         .split(['-', '+', '.'])
         .filter(|part| !part.is_empty())
-        .map(str::to_owned)
+        .flat_map(split_alpha_numeric)
         .collect()
+}
+
+/// 把 `beta1` 这类「字母 + 数字」的标识符拆成两段（`beta`、`1`）。
+///
+/// 语义上等同于 `beta.1`，让序号按数值比较。
+///
+/// 为什么必须拆：严格按 semver，`-beta1` 是**单个**字母数字标识符，
+/// 按 ASCII 字典序比较，于是 `beta10 < beta9`（`'1' < '9'`）——
+/// 发到第 10 个测试版时更新检测会静默失效。规范自己举的例子是
+/// `-beta.2 < -beta.11`，就是因为点号分隔才能按数值比较。
+///
+/// 本项目实际用 `-beta1` 这种紧凑写法，所以在解析层统一拆开，
+/// 让两种写法得到同一结论。这是对规范的**有意放宽**，不是误读。
+fn split_alpha_numeric(part: &str) -> Vec<String> {
+    let split_at = part.find(|c: char| c.is_ascii_digit());
+    let Some(index) = split_at else {
+        return vec![part.to_owned()];
+    };
+    let (head, tail) = part.split_at(index);
+    let valid = !head.is_empty()
+        && head.chars().all(|c| c.is_ascii_alphabetic())
+        && tail.chars().all(|c| c.is_ascii_digit());
+    if !valid {
+        return vec![part.to_owned()];
+    }
+    // 去掉前导零：semver 禁止它们，但真实仓库出现过 `pre.01`
+    let serial = tail.trim_start_matches('0');
+    vec![
+        head.to_owned(),
+        if serial.is_empty() { "0" } else { serial }.to_owned(),
+    ]
 }
 
 impl SegmentVersion {
@@ -1569,6 +1600,67 @@ mod tests {
             Some(Ordering::Greater),
             "1.8.8-beta1 的次版本号更高，应视为更新"
         );
+    }
+
+    /*
+     * 紧凑写法 `-betaN` 必须按**数值**比较。
+     *
+     * 严格 semver 里 `-beta1` 是单个字母数字标识符，按 ASCII 字典序比较，
+     * 于是 `"beta10" < "beta9"`（'1' < '9'）—— 发到第 10 个测试版时
+     * 更新检测会静默失效。规范推荐 `-beta.1` 正是为了避免这个。
+     *
+     * 本项目用紧凑写法，所以在解析层把 `beta1` 拆成 `beta` + `1`，
+     * 与 `beta.1` 等价。
+     */
+    #[test]
+    fn compact_beta_serial_compares_numerically() {
+        use std::cmp::Ordering;
+        for (older, newer) in [
+            ("1.8.8-beta9", "1.8.8-beta10"),
+            ("1.8.8-beta10", "1.8.8-beta11"),
+            ("1.8.8-beta99", "1.8.8-beta100"),
+            ("1.8.8-rc9", "1.8.8-rc10"),
+        ] {
+            assert_eq!(
+                compare_release_versions(newer, older),
+                Some(Ordering::Greater),
+                "{newer} 应新于 {older}"
+            );
+        }
+        // `beta1` 与 `beta.1` 是同一个序号
+        assert_eq!(
+            compare_release_versions("1.8.8-beta1", "1.8.8-beta.1"),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            compare_release_versions("1.8.8-beta10", "1.8.8-beta.10"),
+            Some(Ordering::Equal)
+        );
+    }
+
+    /// semver 2.0.0 §11 的经典优先级链，逐条必须成立。
+    #[test]
+    fn matches_the_semver_spec_precedence_chain() {
+        use std::cmp::Ordering;
+        let chain = [
+            "1.0.0-alpha",
+            "1.0.0-alpha.1",
+            "1.0.0-alpha.beta",
+            "1.0.0-beta",
+            "1.0.0-beta.2",
+            "1.0.0-beta.11",
+            "1.0.0-rc.1",
+            "1.0.0",
+        ];
+        for pair in chain.windows(2) {
+            assert_eq!(
+                compare_release_versions(pair[1], pair[0]),
+                Some(Ordering::Greater),
+                "{} 应低于 {}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 
     #[test]

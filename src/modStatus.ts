@@ -79,6 +79,12 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
     .replace(/^[-+.]/, '')
     .split(/[-+.]/)
     .filter(Boolean)
+    // `beta1` 拆成 `beta` + `1`：与 `beta.1` 等价，序号才按数值比。
+    // 不拆的话 `beta10` 会小于 `beta9`（单个标识符按字典序比较）。
+    .flatMap((part) => {
+      const digits = part.match(/^([A-Za-z]+)(\d+)$/)
+      return digits ? [digits[1], String(Number(digits[2]))] : [part]
+    })
   // 第 4 段及以后：全 0 视为正式版，否则作为 beta 序号
   const build = all.slice(3)
   const hasBuild = build.some((part) => part !== 0)

@@ -23,7 +23,6 @@ import {
 import StatCard from '../components/StatCard.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
@@ -36,7 +35,6 @@ const router = useRouter()
 const dialog = useDialog()
 const message = useNotify()
 const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = useDashboard()
-const { anyRefreshing, refreshEverything } = useRepositoryRefresh()
 
 const recycleOpen = ref(false)
 const recycleEntries = ref<ModRecycleEntry[]>([])
@@ -118,18 +116,52 @@ function openFirstUpdate() {
   void router.push({ name: 'mods-local', query: { [FOCUS_QUERY]: anchor } })
 }
 
-/* ===== 卡片 3：仓库刷新失败 ===== */
+/* ===== 卡片 3：在线 MOD（含刷新失败提示） ===== */
 
-/** 当前地区可见、且刷新报错的仓库。隐藏的仓库不该在这里出现。 */
-const failedRepositories = computed(() =>
+/**
+ * 当前地区可见的仓库 —— 口径与 MOD 安装页的「共 N 个仓库」一致
+ * （都用 `repositoryIsAvailable`），只是这里不带搜索过滤。
+ */
+const onlineRepositories = computed(() =>
   (config.value?.repositories ?? []).filter(
-    (repo) => repo.last_error && repositoryIsAvailable(repo, config.value?.repository_sources, config.value?.region),
+    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, config.value?.region),
   ))
 
-/** 刷新全部仓库：失败项会重新尝试，成功后卡片自动变化。 */
-async function refreshRepositories() {
-  if (anyRefreshing.value) return
-  await refreshEverything()
+/** 其中刷新报错的那些。隐藏的仓库不算，它们本来就不参与刷新。 */
+const failedRepositories = computed(() =>
+  onlineRepositories.value.filter((repo) => repo.last_error))
+
+/**
+ * 卡片副标题：正常时只说仓库总数；有失败时点明「几个失败」+ 第一批失败仓库名。
+ *
+ * 把失败信息塞进这张卡而不是单开一张：失败仓库本身就是在线仓库的一部分，
+ * 拆成两张会让「26 个仓库」和「1 个失败」看起来是两件事。
+ */
+const onlineSub = computed(() => {
+  const total = onlineRepositories.value.length
+  if (!failedRepositories.value.length) {
+    return t('共 {count} 个仓库', { count: total })
+  }
+  const names = failedRepositories.value.slice(0, 2).map((repo) => repo.name).join('、')
+  const more = failedRepositories.value.length > 2
+    ? t('等 {count} 个', { count: failedRepositories.value.length })
+    : ''
+  return t('共 {count} 个仓库 · {failed} 个刷新失败（{names}）', {
+    count: total,
+    failed: failedRepositories.value.length,
+    names: `${names}${more}`,
+  })
+})
+
+/**
+ * 跳到 MOD 安装页并高亮第一个刷新失败的仓库。
+ *
+ * 仓库卡片自带 `data-focus-id="repo.id"`，与「最新版」标签的跳转共用锚点。
+ */
+function openFailedRepository() {
+  const first = failedRepositories.value[0]
+  if (!first) return
+  void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: first.id } })
 }
 
 /* ===== 卡片 4：回收站 ===== */
@@ -226,17 +258,21 @@ function confirmDisableAll() {
         </template>
       </StatCard>
 
-      <!-- 3. 仓库刷新失败：就地重试，失败详情在 MOD 安装页 -->
-      <StatCard :label="t('仓库刷新失败')" :value="String(failedRepositories.length)"
-        :sub="failedRepositories.length
-          ? failedRepositories.slice(0, 2).map((repo) => repo.name).join('、')
-          : t('全部仓库刷新正常')"
-        :tone="failedRepositories.length ? 'danger' : 'success'">
+      <!--
+        3. 在线 MOD：主数值是可见仓库总数，与安装页「共 N 个仓库」同口径。
+           有仓库刷新失败时额外给一个高亮的「去刷新」按钮，跳到安装页并
+           高亮第一个失败的仓库 —— 失败信息属于在线仓库的一部分，
+           单开一张卡会让两个数字看起来互不相干。
+      -->
+      <StatCard :label="t('在线 MOD')" :value="String(onlineRepositories.length)"
+        :sub="onlineSub"
+        :tone="failedRepositories.length ? 'warning' : 'success'">
         <template #action>
-          <n-button size="small" secondary :loading="anyRefreshing"
-            :disabled="anyRefreshing" @click="refreshRepositories">
+          <n-button size="small" :type="failedRepositories.length ? 'warning' : 'default'"
+            :secondary="!failedRepositories.length"
+            :disabled="!failedRepositories.length" @click="openFailedRepository">
             <template #icon><RefreshOutline width="14" height="14" /></template>
-            {{ t('刷新全部') }}
+            {{ t('去刷新') }}
           </n-button>
         </template>
       </StatCard>

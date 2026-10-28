@@ -113,7 +113,7 @@ export function useDashboard() {
   const updateCount = computed(() => mods.value.filter((mod) => mod.update_available).length)
   const frameworkOk = computed(() => {
     const info = game.value?.bepinex
-    return !!info && info.installed && info.complete
+    return !!info && info.installed
   })
 
   return {

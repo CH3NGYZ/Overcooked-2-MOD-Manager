@@ -282,7 +282,7 @@ mod tests {
             game_exists: true,
             bepinex: BepInExInfo {
                 installed: false,
-                complete: false,
+                has_residue: false,
                 has_config: false,
                 version: None,
                 version_source: None,
@@ -325,11 +325,10 @@ mod tests {
         let mut info = snapshot();
         let mut previous = Some(info.clone());
         info.bepinex.installed = true;
-        info.bepinex.complete = true;
         info.winhttp_state = WinhttpState::ModEnabled;
         let event = changed_snapshot(&mut previous, info).unwrap();
         assert_eq!(event.path.as_deref(), Some("game"));
-        assert!(event.bepinex.complete);
+        assert!(event.bepinex.installed);
         assert_eq!(event.winhttp_state, WinhttpState::ModEnabled);
         assert!(changed_snapshot(&mut previous, event).is_none());
     }
@@ -352,7 +351,7 @@ mod tests {
         fs::write(root.join("BepInEx/core/BepInEx.dll"), []).unwrap();
         assert!(original_stamps != game_file_stamps(Some(&before), &backups));
         let after = game::detect_game_from_settings(&settings);
-        assert!(after.bepinex.installed && after.bepinex.complete);
+        assert!(after.bepinex.installed);
         let mut previous = Some(before);
         assert!(changed_snapshot(&mut previous, after).is_some());
         fs::remove_dir_all(root).unwrap();

@@ -2175,16 +2175,30 @@ fn install_framework_archive(
     release_tag: &str,
 ) -> Result<(), String> {
     let framework = game::safe_game_path(game_root, "BepInEx")?;
-    if framework.exists() && !reinstall {
+    /*
+     * 「已安装」必须看核心程序集，不能看 `BepInEx/` 目录是否存在。
+     *
+     * 装过 MOD 的游戏目录里必定有 `BepInEx/plugins/`，那个目录从来没有
+     * 框架核心。用目录判断会得到「已安装」的结论，于是首次安装被拒绝，
+     * 用户只能点「重新安装」——而重装路径又会把整个 BepInEx 删掉重建。
+     */
+    let installed = crate::bepinex::installed(game_root);
+    if installed && !reinstall {
         return Err("BepInEx 已安装，如需覆盖请使用重新安装".into());
     }
-    let backup = if framework.exists() {
+    /*
+     * 只有真装过框架才做「整目录备份 → 删除重建 → 恢复 plugins/config」。
+     *
+     * 残留空壳（目录在、核心不在）直接就地解压：ZIP 只写框架自己的文件，
+     * 已有的 plugins/config 原样保留，不必先拷一份几个 GB 的备份再恢复。
+     */
+    let backup = if installed {
         Some(backup_bepinex_dir(game_root, backup_root)?)
     } else {
         None
     };
     let result = (|| {
-        if framework.exists() {
+        if installed {
             archive::clear_readonly(&framework)?;
             fs::remove_dir_all(&framework).map_err(|e| format!("清理旧 BepInEx 失败: {e}"))?;
         }
@@ -2265,8 +2279,19 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     let game_root = PathBuf::from(info.path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
     let source = game_root.join("BepInEx");
-    if !source.exists() {
-        return Err("BepInEx 未安装".into());
+    /*
+     * 必须按「核心程序集存在」判断，不能按目录存在。
+     *
+     * 目录在、核心不在 = 只有 MOD 的空壳。此时如果继续走删除流程，
+     * 没有框架清单就会删掉整个 `BepInEx` —— 把用户所有 MOD 一起删掉，
+     * 而用户只是点了一下「卸载框架」。
+     */
+    if !crate::bepinex::installed(&game_root) {
+        return Err(if source.exists() {
+            "BepInEx 框架未安装（仅存在 MOD 目录），无需卸载".into()
+        } else {
+            "BepInEx 未安装".to_string()
+        });
     }
     ensure_copy_paths_disjoint(&source, &state.config.backups_dir())?;
 
@@ -2338,17 +2363,93 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     }
 
     /*
-     * 没有清单（旧版本装的框架）：退回「删目录」路径。
-     * 备份在上面已经统一做过了，这里直接复用那份快照，不再重复拷一次。
+     * 没有清单（旧版本装的框架）：按「框架已知文件」现造一份清单再回收。
+     *
+     * 以前这里直接 `remove_dir_all(BepInEx)`，会把 `plugins/`、`config/`
+     * 里的用户 MOD 和配置一起删掉 —— 而用户点的是「卸载框架」。
+     * 现在只收框架自己的东西（core、doorstop 库、根目录的加载器文件），
+     * 装 MOD 产生的内容原地保留；回收记录仍可在回收站恢复。
      */
-    log::warn!("未找到 BepInEx 安装清单，退回删除目录的旧流程（备份已创建）");
-    archive::clear_readonly(&source)?;
-    fs::remove_dir_all(&source).map_err(|e| e.to_string())?;
-    log::info!("BepInEx 卸载完成：备份={}", backup.display());
-    Ok(OperationResult {
-        ok: true,
-        message: format!("BepInEx 已移除，备份保存在 {}", backup.display()),
-    })
+    log::warn!("未找到 BepInEx 安装清单，按框架已知文件重建清单后回收");
+    let files = framework_manifest_files(&game_root);
+    if files.is_empty() {
+        return Err(format!(
+            "未找到可回收的框架文件。备份已保存在 {}",
+            backup.display()
+        ));
+    }
+    let fallback = archive::new_manifest(
+        BEPINEX_MANIFEST_ID,
+        crate::bepinex::PACKAGE_VERSION,
+        Some("BepInEx"),
+        None,
+        files,
+    );
+    archive::write_manifest(&manifests_dir, &fallback)?;
+    match recycle_bin::recycle_package(
+        &recycle_root,
+        &manifests_dir,
+        &game_root,
+        BEPINEX_MANIFEST_ID,
+        None,
+    ) {
+        Ok(entry) => {
+            log::info!(
+                "BepInEx 卸载完成（旧安装按已知文件回收）：文件数={}，回收记录={}，备份={}",
+                entry.file_count,
+                entry.id,
+                backup.display()
+            );
+            Ok(OperationResult {
+                ok: true,
+                message: format!(
+                    "BepInEx 已移入回收站（{} 个文件），备份保存在 {}",
+                    entry.file_count,
+                    backup.display()
+                ),
+            })
+        }
+        Err(error) => Err(format!(
+            "文件回收失败，请尝试手动删除框架文件。（{error}）备份已保存在 {}",
+            backup.display()
+        )),
+    }
+}
+
+/// 列出框架自身在游戏目录里写入的文件（游戏相对路径）。
+///
+/// 只包含框架随 ZIP 解压出的东西：`BepInEx/core`、`BepInEx/doorstop_libs`
+/// 以及散落在游戏根目录的加载器文件。`plugins/`、`config/`、`cache/`
+/// 这些目录里是用户或 MOD 产生的内容，绝不能出现在这份清单里。
+fn framework_manifest_files(game_root: &Path) -> Vec<String> {
+    let root = game_root.join("BepInEx");
+    let mut files = Vec::new();
+    for directory in ["core", "doorstop_libs"] {
+        for entry in walkdir::WalkDir::new(root.join(directory))
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+        {
+            if let Ok(relative) = entry.path().strip_prefix(game_root) {
+                files.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    for name in [
+        "winhttp.dll",
+        "winhttp.dll.disabled",
+        "doorstop_config.ini",
+        "run_bepinex.sh",
+        "libdoorstop.so",
+        "libdoorstop.dylib",
+        "doorstop_libs/libdoorstop_x64.so",
+        "doorstop_libs/libdoorstop_x64.dylib",
+    ] {
+        if game_root.join(name).is_file() {
+            files.push(name.to_string());
+        }
+    }
+    files
 }
 
 #[tauri::command]
@@ -4368,6 +4469,18 @@ pub fn switch_winhttp(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
+    /*
+     * 未安装时直接拒绝。
+     *
+     * 没有核心程序集就没有可切换的加载器：禁用方向会去找
+     * `winhttp.dll.disabled`（不存在），启用方向会去找 `winhttp.dll`
+     * （也没有）。原生平台会去找 `run_bepinex.sh`。三种结果都是
+     * 「未找到框架加载器」这种无从处理的报错。界面已经按状态隐藏开关，
+     * 这里是防止 IPC 被直接调用的兜底。
+     */
+    if !crate::bepinex::installed(&game_root) {
+        return Err("BepInEx 框架未安装，无法切换框架状态".into());
+    }
     crate::bepinex::set_enabled(&game_root, &config.game, enabled)?;
     log::info!("框架状态切换完成：启用={}", enabled);
     Ok(OperationResult {
@@ -5348,33 +5461,20 @@ fn open_steam(settings: &GameConfig, info: &GameInfo) -> Result<OperationResult,
 }
 
 fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, String> {
-    ensure_copy_paths_disjoint(&game_root.join("BepInEx"), backup_root)?;
     /*
-     * 额外自检：管理器自身（可执行文件所在目录）不能位于备份目录内，
-     * 备份目录也不能位于管理器安装目录内。
+     * 只检查「框架目录」与「备份目录」互不包含，这才是递归复制的来源。
      *
-     * 为什么单独检查：数据目录现在跟随安装目录。若管理器被装在
-     * `<game>/BepInEx/backups/xxx` 这种位置，BepInEx 与 backup_root 的
-     * 包含关系检查仍是「不相交」，但备份 BepInEx 时会把管理器自己
-     * 以及上一轮备份一起复制进去，同样递归膨胀。
+     * 这里曾经还有一段「管理器安装目录不能与备份目录重叠」的自检，那个判断
+     * 是恒真的：数据根一直放在 `install_dir()/OC2ModManager`，备份目录必然是
+     * 管理器安装目录的子目录。结果所有备份与卸载都被它拦死，用户会看到
+     * 「请把管理器安装到游戏目录外」这种无从处理的提示 —— 而管理器本来
+     * 就不在游戏目录里。
+     *
+     * 真正需要防的场景（管理器被装在 `<游戏>/BepInEx/...` 里）已经被下面的
+     * 包含关系检查覆盖：那时备份目录也落在 BepInEx 内部。管理器把数据放在
+     * 自己目录下只是让两者同生共死，不构成递归风险。
      */
-    if let Ok(install) = crate::user_paths::install_dir() {
-        let install_resolved = game::resolve_existing_ancestor(&install)?;
-        let backup_resolved = game::resolve_existing_ancestor(backup_root)?;
-        #[cfg(windows)]
-        let (install_resolved, backup_resolved) = (
-            PathBuf::from(install_resolved.to_string_lossy().to_lowercase()),
-            PathBuf::from(backup_resolved.to_string_lossy().to_lowercase()),
-        );
-        if install_resolved.starts_with(&backup_resolved)
-            || backup_resolved.starts_with(&install_resolved)
-        {
-            return Err(
-                "管理器安装目录与备份目录重叠，已停止备份以避免递归复制。请把管理器安装到游戏目录外。"
-                    .into(),
-            );
-        }
-    }
+    ensure_copy_paths_disjoint(&game_root.join("BepInEx"), backup_root)?;
     let target = bepinex_backup_path(backup_root)?;
     copy_dir(&game_root.join("BepInEx"), &target)?;
     Ok(target)
@@ -6090,7 +6190,7 @@ mod framework_install_tests {
             )
             .unwrap();
             let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
-            assert!(info.installed && info.complete, "{name}");
+            assert!(info.installed, "{name}");
             workspace.write("BepInEx/plugins/preserved.dll.disabled", b"user MOD");
             workspace.write("BepInEx/config/preserved.cfg", b"user settings");
             install_framework_archive(
@@ -6129,6 +6229,92 @@ mod framework_install_tests {
                 assert!(workspace.game().join("winhttp.dll").is_file());
             }
         }
+    }
+
+    /*
+     * 只装了 MOD、没装框架的游戏目录：`BepInEx/plugins` 存在但没有 core。
+     *
+     * 这是最常见的真实场景 —— 用户先手动放了个 MOD，再来装框架。
+     * 旧实现把「目录存在」当成已安装，于是首次安装被拒绝，只能点「重新安装」，
+     * 而重装会把整个 BepInEx 删掉再恢复。现在必须：
+     *   · 判定为「未安装」，首次安装直接放行；
+     *   · 不产生备份（没有框架可备）；
+     *   · 已有的 plugins 原样保留。
+     */
+    #[test]
+    fn installs_over_mod_only_residue_without_backup_and_keeps_plugins() {
+        let workspace = Workspace::new();
+        workspace.write("BepInEx/plugins/existing.dll", b"user MOD");
+        let archive = workspace.archive(Package::Windows, None);
+        install_framework_archive(
+            &archive,
+            &workspace.game(),
+            &workspace.backups(),
+            &workspace.manifests(),
+            Package::Windows,
+            false,
+            "5.4.23.5",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(workspace.game().join("BepInEx/plugins/existing.dll")).unwrap(),
+            b"user MOD"
+        );
+        assert!(
+            workspace.game().join("BepInEx/core/BepInEx.dll").is_file(),
+            "框架核心应已就位"
+        );
+        assert!(
+            !workspace.backups().exists(),
+            "没有已安装框架时不该产生备份"
+        );
+        let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
+        assert!(info.installed && !info.has_residue);
+    }
+
+    /// 目录在、核心不在 = 残留，不是已安装。
+    #[test]
+    fn mod_only_directory_is_residue_not_an_installed_framework() {
+        let workspace = Workspace::new();
+        workspace.write("BepInEx/plugins/existing.dll", b"user MOD");
+        let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
+        assert!(!info.installed, "只有 plugins 时不应判定为已安装");
+        assert!(info.has_residue, "应标记为残留目录");
+    }
+
+    /*
+     * 旧版本装的框架没有安装清单，卸载时按「框架已知文件」现造清单。
+     *
+     * 这份清单绝不能包含 plugins / config：那是用户和 MOD 的内容，
+     * 点「卸载框架」不该把 MOD 一起带走。
+     */
+    #[test]
+    fn framework_manifest_files_exclude_plugins_and_config() {
+        let workspace = Workspace::new();
+        workspace.write("BepInEx/core/BepInEx.dll", b"core");
+        workspace.write("BepInEx/core/extra.dll", b"core extra");
+        workspace.write("BepInEx/plugins/mod.dll", b"user MOD");
+        workspace.write("BepInEx/config/BepInEx.cfg", b"user config");
+        workspace.write("winhttp.dll", b"loader");
+        workspace.write("doorstop_config.ini", b"doorstop");
+
+        let files = framework_manifest_files(&workspace.game());
+        assert!(files.contains(&"BepInEx/core/BepInEx.dll".to_string()));
+        assert!(files.contains(&"BepInEx/core/extra.dll".to_string()));
+        assert!(files.contains(&"winhttp.dll".to_string()));
+        assert!(files.contains(&"doorstop_config.ini".to_string()));
+        // 注意：`doorstop_config.ini` 名字里也含 "config"，但它是框架自己
+        // 解压在游戏根目录的加载器配置，必须回收 —— 所以只能按路径前缀判断。
+        assert!(
+            !files
+                .iter()
+                .any(|file| file.starts_with("BepInEx/plugins/")),
+            "plugins 属于用户 MOD：{files:?}"
+        );
+        assert!(
+            !files.iter().any(|file| file.starts_with("BepInEx/config/")),
+            "config 属于用户配置：{files:?}"
+        );
     }
 
     /*

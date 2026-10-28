@@ -130,7 +130,7 @@ const entries = {
   '安装字体': ['安裝字型', 'Install fonts', '글꼴 설치', 'フォントをインストール'],
   '补上 corefonts，否则 BepInEx 控制台会显示乱码': ['補上 corefonts，否則 BepInEx 主控台會顯示亂碼', 'Add corefonts or the BepInEx console shows garbled text', 'corefonts가 없으면 BepInEx 콘솔이 깨져 보입니다', 'corefonts がないと BepInEx コンソールが文字化けします'],
   '安装 BepInEx': ['安裝 BepInEx', 'Install BepInEx', 'BepInEx 설치', 'BepInEx をインストール'],
-  '将把游戏目录中的 BepInEx 框架文件移入回收站，可在回收站中恢复。继续卸载？': ['將把遊戲目錄中的 BepInEx 框架檔案移入資源回收筒，可在資源回收筒中還原。繼續解除安裝？', 'The BepInEx framework files will be moved to the recycle bin and can be restored. Continue uninstalling?', 'BepInEx 프레임워크 파일을 휴지통으로 옮깁니다. 복원할 수 있습니다. 제거할까요?', 'BepInEx フレームワークのファイルをゴミ箱へ移動します（復元可能）。アンインストールを続行しますか？'],
+  '将把 BepInEx 框架文件（不含 plugins 与 config）移入回收站，可在回收站中恢复。继续卸载？': ['將把 BepInEx 框架檔案（不含 plugins 與 config）移入資源回收筒，可在資源回收筒中還原。繼續解除安裝？', 'The BepInEx framework files (excluding plugins and config) will be moved to the recycle bin and can be restored. Continue uninstalling?', 'BepInEx 프레임워크 파일(plugins·config 제외)을 휴지통으로 옮깁니다. 복원할 수 있습니다. 제거할까요?', 'BepInEx フレームワークのファイル（plugins・config を除く）をゴミ箱へ移動します（復元可能）。アンインストールを続行しますか？'],
   // 全屏遮罩文案（备份/恢复/卸载都是整目录拷贝，需要明确的等待提示）
   '正在备份 BepInEx 框架…': ['正在備份 BepInEx 框架…', 'Backing up the BepInEx framework…', 'BepInEx 프레임워크 백업 중…', 'BepInEx フレームワークをバックアップ中…'],
   '正在恢复 BepInEx 框架…': ['正在還原 BepInEx 框架…', 'Restoring the BepInEx framework…', 'BepInEx 프레임워크 복원 중…', 'BepInEx フレームワークを復元中…'],
@@ -168,6 +168,9 @@ const entries = {
   '框架备份': ['框架備份', 'Framework backups', '프레임워크 백업', 'フレームワークのバックアップ'],
   '暂无备份。卸载或重装前建议先创建备份。': ['暫無備份。解除安裝或重新安裝前建議先建立備份。', 'No backups yet. Create one before uninstalling or reinstalling.', '백업이 없습니다. 제거·재설치 전에 백업을 만드세요.', 'バックアップはありません。削除・再インストール前に作成してください。'],
   '恢复': ['還原', 'Restore', '복원', '復元'],
+  '检测到 MOD 目录，安装后会保留': ['偵測到 MOD 目錄，安裝後會保留', 'Existing MOD folder found, kept after install', 'MOD 폴더가 있습니다. 설치 후에도 유지됩니다', 'MOD フォルダーがあります。インストール後も保持されます'],
+  '检测到已有的 plugins / config，安装框架时会原样保留。': ['偵測到既有的 plugins / config，安裝框架時會原樣保留。', 'Existing plugins / config found; they are kept as-is when installing the framework.', '기존 plugins / config 가 있습니다. 프레임워크 설치 시 그대로 유지됩니다.', '既存の plugins / config があります。フレームワークのインストール時にそのまま保持されます。'],
+  '安装后这里会出现启用开关、配置管理与备份入口。': ['安裝後這裡會出現啟用開關、設定管理與備份入口。', 'After installing, the enable switch, config manager and backups appear here.', '설치하면 활성 스위치, 설정 관리, 백업 항목이 여기에 표시됩니다.', 'インストールすると、有効スイッチ・設定管理・バックアップがここに表示されます。'],
   // 回收站
   '回收站': ['資源回收筒', 'Recycle bin', '휴지통', 'ゴミ箱'],
   '回收站为空': ['資源回收筒是空的', 'Recycle bin is empty', '휴지통이 비어 있습니다', 'ゴミ箱は空です'],

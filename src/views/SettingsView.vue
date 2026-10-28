@@ -68,7 +68,7 @@ async function switchRuntime(runtime: GameRuntime) {
 /** 框架是否已安装（以 BepInEx 目录是否完整为准）。 */
 const bepinexOk = computed(() => {
   const info = game.value?.bepinex
-  return !!info && info.installed && info.complete
+  return !!info && info.installed
 })
 
 /**

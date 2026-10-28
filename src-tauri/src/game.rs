@@ -27,7 +27,7 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         .map(|value| detect_bepinex(value, backup_root.as_deref()))
         .unwrap_or_else(|| BepInExInfo {
             installed: false,
-            complete: false,
+            has_residue: false,
             has_config: false,
             version: None,
             version_source: None,
@@ -56,11 +56,11 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         winhttp_state,
     };
     log::info!(
-        "游戏状态探测完成：已找到路径={}，游戏文件存在={}，BepInEx已安装={}，BepInEx完整={}，游戏运行={}，WinHTTP={:?}",
+        "游戏状态探测完成：已找到路径={}，游戏文件存在={}，BepInEx已安装={}，残留目录={}，游戏运行={}，WinHTTP={:?}",
         result.path.is_some(),
         result.game_exists,
         result.bepinex.installed,
-        result.bepinex.complete,
+        result.bepinex.has_residue,
         result.kitchen_running,
         result.winhttp_state
     );
@@ -276,8 +276,18 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
     let core = root.join("core");
     let primary = core.join("BepInEx.dll");
     let secondary = core.join("BepInEx.Core.dll");
-    let installed = root.is_dir();
-    let complete = primary.is_file() || secondary.is_file();
+    /*
+     * 「已安装」= 框架核心程序集存在，**不是** `BepInEx/` 目录存在。
+     *
+     * 装任何 MOD 都会创建 `BepInEx/plugins/`，那个空壳会一直留在游戏目录里。
+     * 旧实现用 `root.is_dir()` 判断，于是没装框架也报「已安装」，
+     * 界面给出启用开关和卸载按钮 —— 而开关必然失败（找不到加载器）。
+     *
+     * 目录在但核心不在 = 残缺（用户装过 MOD、没装框架，或框架被手工删了一半），
+     * 单独用 `has_residue` 表达，界面据此提示「安装会保留 plugins/config」。
+     */
+    let installed = primary.is_file() || secondary.is_file();
+    let has_residue = !installed && root.is_dir();
     let (version, source) = [primary, secondary]
         .into_iter()
         .find_map(|file| {
@@ -313,16 +323,16 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
     backups.sort();
     let result = BepInExInfo {
         installed,
-        complete,
+        has_residue,
         has_config: crate::mod_config::exists(game, "BepInEx"),
         version,
         version_source: source,
         backups,
     };
     log::info!(
-        "BepInEx 探测完成：已安装={}，完整={}，版本={}",
+        "BepInEx 探测完成：已安装={}，残留目录={}，版本={}",
         result.installed,
-        result.complete,
+        result.has_residue,
         result.version.as_deref().unwrap_or("未知")
     );
     result

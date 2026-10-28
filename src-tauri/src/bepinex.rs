@@ -76,6 +76,17 @@ impl Package {
     }
 }
 
+/// 框架是否**真正**安装：`BepInEx/core` 下存在核心程序集。
+///
+/// 不能用「`BepInEx/` 目录存在」判断 —— 安装任何一个 MOD 都会创建
+/// `BepInEx/plugins/`。只判断目录会把这个空壳当成已安装，界面于是显示
+/// 启用开关和卸载按钮，而开关又会因为找不到加载器直接报错。
+pub(crate) fn installed(game: &Path) -> bool {
+    ["BepInEx.dll", "BepInEx.Core.dll"]
+        .iter()
+        .any(|name| game.join("BepInEx/core").join(name).is_file())
+}
+
 pub(crate) fn state(game: &Path, settings: &GameConfig) -> WinhttpState {
     let package = Package::current(settings);
     if package.native() {

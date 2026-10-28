@@ -31,7 +31,7 @@ import type { BepInExInstallResult, GameRuntime, OperationResult, Provider } fro
 
 const message = useMessage()
 const dialog = useDialog()
-const { load, loading, game, config, frameworkOk } = useDashboard()
+const { load, loading, game, config } = useDashboard()
 
 const working = ref(false)
 const installProvider = ref<Provider>('gitee')
@@ -42,7 +42,16 @@ const configEditorOpen = ref(false)
 const winhttpEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
 const backups = computed(() => game.value?.bepinex.backups ?? [])
 const isWindows = computed(() => config.value?.platform === 'windows')
+/**
+ * 框架是否已安装。
+ *
+ * 判据是 `BepInEx/core` 里的核心程序集，**不是** `BepInEx/` 目录存在：
+ * 装任何 MOD 都会创建 `BepInEx/plugins/`，用目录判断会把空壳当已安装，
+ * 于是界面给出启用开关和卸载按钮，而它们必然失败。
+ */
 const installed = computed(() => !!game.value?.bepinex.installed)
+/** 目录在、核心不在：装过 MOD 留下的空壳，安装时会保留其中的 MOD。 */
+const hasResidue = computed(() => !!game.value?.bepinex.has_residue)
 
 function fail(reason: unknown) {
   message.error(reason instanceof Error ? reason.message : String(reason))
@@ -132,9 +141,12 @@ function onGuideConfirmed() {
 function uninstall() {
   dialog.warning({
     title: t('卸载 BepInEx 框架'),
-    // 卸载会把框架 ZIP 解压出的全部文件移入回收站（含游戏根目录的
-    // winhttp.dll / doorstop_config.ini / run_bepinex.sh），可随时恢复。
-    content: t('将把游戏目录中的 BepInEx 框架文件移入回收站，可在回收站中恢复。继续卸载？'),
+    /*
+     * 卸载只回收框架自己的文件（core、doorstop 库、根目录加载器），
+     * `plugins/` 与 `config/` 里的 MOD 和配置原地保留 —— 文案必须说清，
+     * 否则用户会以为要重装全部 MOD。
+     */
+    content: t('将把 BepInEx 框架文件（不含 plugins 与 config）移入回收站，可在回收站中恢复。继续卸载？'),
     positiveText: t('卸载'),
     negativeText: t('取消'),
     async onPositiveClick() {
@@ -260,12 +272,17 @@ async function openBackups() {
     <!-- 状态摘要：版本 + 启用开关 + 安装状态 -->
     <div class="panel-head">
       <div class="panel-head-main">
+        <!-- 开关只在框架真正安装后才出现：没有加载器可切换 -->
         <n-switch v-if="installed" :value="winhttpEnabled" :title="t('框架启用（游戏加载 MOD）')"
           :disabled="working" @update:value="toggleFramework" />
         <span class="panel-title">{{ t('BepInEx 框架') }}</span>
         <span class="panel-version muted">{{ t('版本') }}：{{ game?.bepinex.version || '—' }}</span>
-        <n-tag size="small" :bordered="false" class="state-tag" :color="tagColorFor(frameworkOk ? 'accent' : 'moderate')">
-          {{ frameworkOk ? (game?.bepinex.complete ? t('已安装') : t('不完整')) : t('未安装') }}
+        <n-tag size="small" :bordered="false" class="state-tag"
+          :color="tagColorFor(installed ? 'accent' : (hasResidue ? 'moderate' : 'muted'))">
+          {{ installed ? t('已安装') : (hasResidue ? t('未安装') : t('未安装')) }}
+        </n-tag>
+        <n-tag v-if="hasResidue" size="small" :bordered="false" type="warning">
+          {{ t('检测到 MOD 目录，安装后会保留') }}
         </n-tag>
       </div>
       <span v-if="!isWindows" class="panel-runtime muted">
@@ -274,12 +291,12 @@ async function openBackups() {
     </div>
 
     <!--
-      四个路径/配置操作。
-      未安装时只有「选择路径 / 恢复默认路径」有意义，其余两个与框架文件相关，
-      所以按安装状态禁用，而不是整体藏起来 —— 用户需要知道这些能力存在。
+      路径 / 配置操作。
+      「打开路径」「配置管理」指向框架自己的文件，未安装时没有意义，直接隐藏；
+      「选择路径」「恢复默认路径」是针对游戏目录的，任何状态下都要能用。
     -->
     <div class="panel-actions">
-      <n-button size="small" secondary :disabled="!installed || working" @click="openPath">
+      <n-button v-if="installed" size="small" secondary :disabled="working" @click="openPath">
         <template #icon><FolderOpenOutline width="15" height="15" /></template>
         {{ t('打开路径') }}
       </n-button>
@@ -291,13 +308,13 @@ async function openBackups() {
         <template #icon><RefreshOutline width="15" height="15" /></template>
         {{ t('恢复默认路径') }}
       </n-button>
-      <n-button size="small" secondary :disabled="!installed || working" @click="configEditorOpen = true">
+      <n-button v-if="installed" size="small" secondary :disabled="working" @click="configEditorOpen = true">
         <template #icon><SettingsOutline width="15" height="15" /></template>
         {{ t('配置管理') }}
       </n-button>
     </div>
 
-    <!-- 安装 / 重装 / 备份 / 卸载 -->
+    <!-- 安装：未安装时只有这一个入口；已安装才是「重新安装」并给出维护按钮 -->
     <div class="panel-install">
       <div class="panel-field">
         <span class="muted">{{ t('下载渠道') }}</span>
@@ -312,19 +329,27 @@ async function openBackups() {
           <template #icon><AddCircleOutline width="15" height="15" /></template>
           {{ installed ? t('重新安装') : t('安装框架') }}
         </n-button>
-        <n-button size="small" secondary :disabled="working || !installed" @click="backup">
-          <template #icon><SaveOutline width="15" height="15" /></template>
-          {{ t('创建备份') }}
-        </n-button>
-        <n-button size="small" secondary type="warning" :disabled="working || !installed" @click="uninstall">
-          <template #icon><WarningOutline width="15" height="15" /></template>
-          {{ t('卸载框架') }}
-        </n-button>
+        <template v-if="installed">
+          <n-button size="small" secondary :disabled="working" @click="backup">
+            <template #icon><SaveOutline width="15" height="15" /></template>
+            {{ t('创建备份') }}
+          </n-button>
+          <n-button size="small" secondary type="warning" :disabled="working" @click="uninstall">
+            <template #icon><WarningOutline width="15" height="15" /></template>
+            {{ t('卸载框架') }}
+          </n-button>
+        </template>
       </div>
+      <!-- 未安装时的说明：讲清装完之后能做什么，避免用户找不到维护入口 -->
+      <p v-if="!installed" class="muted panel-hint">
+        {{ hasResidue
+          ? t('检测到已有的 plugins / config，安装框架时会原样保留。')
+          : t('安装后这里会出现启用开关、配置管理与备份入口。') }}
+      </p>
     </div>
 
-    <!-- 备份列表 -->
-    <div class="panel-backups">
+    <!-- 备份列表：没有备份且未安装时整块不出现 -->
+    <div v-if="installed || backups.length" class="panel-backups">
       <div class="panel-backups-head">
         <b>{{ t('框架备份') }}</b>
         <n-button size="tiny" quaternary :disabled="working" @click="openBackups">
@@ -424,6 +449,11 @@ async function openBackups() {
   margin-bottom: 8px;
 }
 .panel-empty { font-size: 12.5px; line-height: 1.6; }
+.panel-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
 .backup-row {
   display: flex;
   align-items: center;

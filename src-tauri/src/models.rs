@@ -17,8 +17,14 @@ pub struct GameInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BepInExInfo {
+    /// 框架核心程序集（`BepInEx/core/BepInEx.dll`）存在。
+    ///
+    /// 只判断 `BepInEx/` 目录会把「装过 MOD 但没装框架」误认成已安装：
+    /// 装任何 MOD 都会创建 `BepInEx/plugins/`。
     pub installed: bool,
-    pub complete: bool,
+    /// 目录在但核心不在：装过 MOD 留下的空壳，安装时应保留其中的 plugins/config。
+    #[serde(default)]
+    pub has_residue: bool,
     #[serde(default)]
     pub has_config: bool,
     pub version: Option<String>,

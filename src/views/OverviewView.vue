@@ -58,6 +58,20 @@ const toneText = computed(() => tagColorFor('moderate').textColor)
  */
 const { refreshingAll } = useRepositoryRefresh()
 
+/**
+ * 本地 MOD 卡的按钮文案。
+ *
+ * 检测中统一显示「检测中」—— 与按钮上的转圈图标一致，说明的是「正在做什么」；
+ * 检测结束后按结果回到「去更新 / 去管理」，说明的是「能做什么」。
+ *
+ * 注意：检测中也保持可点。用户已经看到「2 可更新」时，没有理由不让他
+ * 立刻跳过去看，检测完再跳纯属多余等待。
+ */
+const buttonLabel = computed(() => {
+  if (refreshingAll.value) return t('检测中')
+  return updatable.value.length ? t('去更新') : t('去管理')
+})
+
 const recycleOpen = ref(false)
 const recycleEntries = ref<ModRecycleEntry[]>([])
 
@@ -307,22 +321,22 @@ async function closeRecycle() {
         </template>
         <template #action>
           <!--
-            「正在检测更新」放在按钮左边：它是这个按钮动作的进度说明，
-            紧贴按钮才看得出因果关系。
+            检测中的转圈**不能用 `:loading`**：Naive 的 Button 在 handleClick 里
+            写了 `if (!props.disabled && !props.loading)`，loading 会硬性吞掉点击。
+            而这里的语义恰恰是「正在检测，但已有结果就能立刻去看」——
+            所以用一个自转的图标代替，按钮保持可点。
           -->
-          <span v-if="refreshingAll" class="checking-hint"
-            :style="{ fontSize: '12px', color: 'var(--oc2-text-3)', whiteSpace: 'nowrap' }">
-            {{ t('正在检测更新') }}
-          </span>
           <n-button size="small" :secondary="!updatable.length"
             :type="updatable.length ? 'warning' : 'default'"
-            :loading="refreshingAll"
             :disabled="!installedMods.length" @click.stop="openLocalMods">
             <template #icon>
-              <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
+              <span v-if="refreshingAll" class="spinning">
+                <RefreshOutline width="14" height="14" />
+              </span>
+              <CloudDownloadOutline v-else-if="updatable.length" width="14" height="14" />
               <SettingsOutline v-else width="14" height="14" />
             </template>
-            {{ updatable.length ? t('去更新') : t('去管理') }}
+            {{ buttonLabel }}
           </n-button>
         </template>
       </StatCard>
@@ -360,14 +374,26 @@ async function closeRecycle() {
 .card-grid.is-loading { opacity: .6; }
 
 /*
- * 「正在检测更新」：动作进度提示，紧贴按钮左侧。
- * 用小字 + 次要色，不抢按钮和主数值的注意力。
+ * 检测中的自转图标。
+ *
+ * 不用 Naive 按钮的 `:loading`：那会在 handleClick 里直接
+ * `if (!props.disabled && !props.loading)` 吞掉点击，而这里需要
+ * 「检测中仍可点、直接跳去看已发现的可更新项」。
+ *
+ * 动画在 prefers-reduced-motion 下关闭：不转也不影响可用性，
+ * 文案「检测中」已经说明了状态。
  */
-.checking-hint {
-  font-size: 12px;
-  color: var(--oc2-text-3);
-  white-space: nowrap;
+.spinning {
+  display: inline-flex;
+  animation: spin 1s linear infinite;
 }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinning { animation: none; }
+}
+
 /*
  * 次要计数（`4 · 2 可更新`）的样式**必须写在父组件**。
  *
@@ -394,13 +420,6 @@ async function closeRecycle() {
   font-size: 30px;
   font-weight: 400;
   line-height: 1.1;
-}
-
-/* 「正在检测更新」：动作进度提示，紧贴按钮左侧。 */
-.checking-hint {
-  font-size: 12px;
-  color: var(--oc2-text-3);
-  white-space: nowrap;
 }
 
 /*

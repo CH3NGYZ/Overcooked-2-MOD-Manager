@@ -474,6 +474,91 @@ pub fn compare_release_versions(remote: &str, local: &str) -> Option<std::cmp::O
     Some(SegmentVersion::parse(remote)?.cmp(&SegmentVersion::parse(local)?))
 }
 
+/// 是否符合 semver 2.0.0 的三字段语法（`x.y.z[-tag.w][+build]`）。
+///
+/// **这是发布契约，不是解析门槛。** 解析器（`SegmentVersion::parse`）继续
+/// 宽容接受历史写法（四段序号、`v0.10` 这类两段号、点号分隔的 `.beta4`），
+/// 因为已经发出去的 tag 不会改变，拒绝它们只会让老用户看到「版本未知」。
+/// 这个函数回答的是「新发布是否合规」：
+///
+/// ```text
+/// 1.9.8              ✅
+/// 1.9.8-beta.1       ✅   首选：beta / alpha / rc 统一写成 x.y.z-tag.w
+/// 1.9.8-rc.2         ✅
+/// 1.9.8-beta1        ⚠️   语法合法（单个字母数字标识符），但不推荐
+/// 1.9.8.1            ❌   四段是历史写法，semver 只允许三段
+/// 1.9.8.beta.1       ❌   预发布必须跟在 `-` 后
+/// v0.10              ❌   必须三段
+/// 01.9.8             ❌   数字段不许前导零
+/// ```
+///
+/// `-beta1` 为什么标 ⚠️ 而不是 ❌：它在语法上完全合法，但作为**单个**
+/// 标识符要按 ASCII 字典序比较（`beta9 > beta10`）。本项目在解析层把
+/// 「字母+数字」拆开规避了这个问题，但新发布统一用 `-beta.1` 更清楚，
+/// 也与规范 §11 自己的示例一致（`1.0.0-beta.2 < 1.0.0-beta.11`）。
+///
+/// 三条硬性规则：
+///   1. 恰好三段，每段无前导零；
+///   2. 预发布用 `-` 分隔，标识符逐段点号分隔，数字段无前导零；
+///   3. 标识符只含 `[0-9A-Za-z-]`。
+pub fn is_strict_semver(value: &str) -> bool {
+    let trimmed = value.trim();
+    // 允许常见的 `v` 前缀（GitHub/Gitee tag 惯例），但版本本身仍须严格
+    let text = trimmed.strip_prefix(['v', 'V']).unwrap_or(trimmed);
+    // 构建元数据（+）不参与排序，格式仍要合法
+    let (without_build, build) = match text.split_once('+') {
+        Some((core, build)) => (core, Some(build)),
+        None => (text, None),
+    };
+    if let Some(build) = build {
+        if !is_valid_identifier_sequence(build) {
+            return false;
+        }
+    }
+    let (core, prerelease) = match without_build.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (without_build, None),
+    };
+    // 恰好三段
+    let parts = core.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 || parts.iter().any(|part| !is_valid_numeric_segment(part)) {
+        return false;
+    }
+    // 预发布：至少一段合法标识符
+    match prerelease {
+        None => true,
+        Some(pre) => {
+            !pre.is_empty()
+                && pre
+                    .split('.')
+                    .all(|part| !part.is_empty() && is_valid_identifier(part))
+        }
+    }
+}
+
+/// 数字段：纯数字且无前导零（`0` 本身允许）。
+fn is_valid_numeric_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|c| c.is_ascii_digit())
+        && (value == "0" || !value.starts_with('0'))
+}
+
+/// 预发布标识符：纯数字时同样不许前导零；含字母时只允许字母数字与连字符。
+fn is_valid_identifier(value: &str) -> bool {
+    let numeric = value.chars().all(|c| c.is_ascii_digit());
+    if numeric {
+        return is_valid_numeric_segment(value);
+    }
+    value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn is_valid_identifier_sequence(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .split('.')
+            .all(|part| !part.is_empty() && is_valid_identifier(part))
+}
+
 /// 版本号本身是否带预发布标识（`-beta`、`-rc.1` 等）。
 ///
 /// 与 Release 元数据里的 `prerelease` 标记是**或**的关系：作者没勾标记，
@@ -993,6 +1078,21 @@ pub fn parse_release_json(
         if tag.is_empty() {
             skipped_without_tag += 1;
             continue;
+        }
+        /*
+         * 发布契约检查：只记日志，绝不拒绝。
+         *
+         * 解析器继续宽容处理历史 tag（四段序号、`v0.10` 两段号），
+         * 因为已发布的 tag 改不了，拒绝只会让老用户看到「版本未知」。
+         * 但新发布应当符合 semver，不合规要能被发现 —— 在这里用 debug
+         * 级记录仓库与 tag，排查「某个仓库的更新总是不对」时看得到根因。
+         */
+        if !is_strict_semver(&tag) {
+            log::debug!(
+                "Release tag 不符合严格 semver（已按宽容规则解析）: provider={:?} tag={}",
+                provider,
+                tag
+            );
         }
         let assets = item
             .get("assets")
@@ -1661,6 +1761,86 @@ mod tests {
                 pair[1]
             );
         }
+    }
+
+    /*
+     * 发布契约：新发布必须符合严格 semver。
+     *
+     * 注意这是**发布要求**，不是解析门槛 —— 解析器仍宽容接受历史 tag
+     * （见下一个测试），否则老用户会看到「版本未知」。
+     */
+    #[test]
+    fn strict_semver_accepts_canonical_and_rejects_legacy_shapes() {
+        // 合规：三段，正式版与 x.y.z-tag.w 预发布
+        for ok in [
+            "1.9.8",
+            "v1.9.8",
+            "0.4.0",
+            "1.9.8-beta.1",
+            "1.9.8-alpha.2",
+            "1.9.8-rc.1",
+            "1.9.8-beta.10",
+            "1.9.8-beta.1+build.5",
+            "1.9.8-0",
+        ] {
+            assert!(is_strict_semver(ok), "{ok} 应判为合规");
+        }
+        // 不合规：段数不对、前导零、预发布放置错误
+        for bad in [
+            "1.9.8.1",       // 四段
+            "1.9",           // 两段
+            "v0.10",         // 两段
+            "01.9.8",        // 前导零
+            "1.09.8",        // 前导零
+            "1.9.8.beta.1",  // 预发布未用 -
+            "1.9.8-beta.01", // 标识符前导零
+            "1.9.8-",        // 空标识符
+            "1.9.8-beta..1", // 空段
+            "1.9.8-beta 1",  // 空格
+            "",              // 空
+        ] {
+            assert!(!is_strict_semver(bad), "{bad} 应判为不合规");
+        }
+    }
+
+    /*
+     * 真实仓库里存在的历史 tag：不合规但仍必须能解析与比较。
+     *
+     * 这是「解析宽容」的验收：`v1.8.7.23` 这类四段号是已发布的事实，
+     * 拒绝它们会让已装用户看到「版本未知」并停止收到更新提示。
+     *
+     * 注意 `1.8.7-beta1` 不在这个列表里：它语法上合法（单个字母数字
+     * 标识符），只是不再推荐 —— 新发布统一用 `1.8.7-beta.1`。
+     */
+    #[test]
+    fn legacy_tags_stay_parseable_even_though_they_are_not_strict() {
+        use std::cmp::Ordering;
+        for legacy in ["v1.8.7.23", "1.8.7.23", "v0.10", "0.9", "1.8.7.beta4"] {
+            // 都不符合严格 semver
+            assert!(!is_strict_semver(legacy), "{legacy} 不应判为合规");
+            // 但都能参与比较
+            assert!(
+                SegmentVersion::parse(legacy).is_some(),
+                "{legacy} 必须仍可解析"
+            );
+        }
+        // 紧凑 beta 写法语法合法（解析层会拆开让序号按数值比）
+        assert!(is_strict_semver("1.8.7-beta1"));
+        assert!(SegmentVersion::parse("1.8.7-beta1").is_some());
+        // 四段号仍按 beta 语义排序
+        assert_eq!(
+            compare_release_versions("v1.8.7.23", "v1.8.7"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            compare_release_versions("v1.8.7.23", "v1.8.7.21"),
+            Some(Ordering::Greater)
+        );
+        // 两段号补齐为三段后仍可比较
+        assert_eq!(
+            compare_release_versions("v0.10", "v0.9"),
+            Some(Ordering::Greater)
+        );
     }
 
     #[test]

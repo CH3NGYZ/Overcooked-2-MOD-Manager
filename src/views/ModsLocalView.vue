@@ -72,7 +72,29 @@ const deletePackageConfirm = computed(() => recyclesOnDelete.value
       done: '已删除',
     })
 /** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
-const { refreshing, refreshingAll, refreshOne } = useRepositoryRefresh()
+const { refreshing, refreshingAll, refreshOne, refreshEverything } = useRepositoryRefresh()
+
+/**
+ * 检测更新：刷新**全部**仓库源与 Release，等价于 MOD 安装页的「刷新全部」。
+ *
+ * 复用同一引擎入口（`refreshEverything`）而不是另写一条调用链：
+ * 它会先清本次源的旧缓存、等排队请求结束，再重拉源文档并逐个刷新 Release，
+ * 这些顺序是「刷新后不显示旧列表」的前提。这里自己拼调用顺序必然分叉。
+ */
+const checkingUpdates = ref(false)
+
+async function checkUpdates() {
+  if (checkingUpdates.value || refreshingAll.value) return
+  checkingUpdates.value = true
+  try {
+    const errors = await refreshEverything()
+    errors.forEach((error) => message.error(error))
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    checkingUpdates.value = false
+  }
+}
 
 /** 状态标签跳转：点标签跳到 MOD 安装页，并高亮对应仓库卡片 3 秒。 */
 const { linkToRepository } = useRepositoryLink()
@@ -1070,9 +1092,10 @@ function removePackage(node: ModPackageNode) {
   </Teleport>
 
   <!--
-    页头右侧：批量开关 + 打开目录。
-    批量开关放这里而不是列表里：它是跨全部 MOD 的动作，
-    和「打开目录」一样属于页面级操作。
+    页头右侧，从左到右：批量开关 → 检测更新 → 打开目录。
+    「检测更新」复用 MOD 安装页的刷新全部（同一个 refreshEverything 入口），
+    放在 MOD 管理页是因为用户在这里看到「可更新」后，最自然的下一步就是
+    「再查一次」。
   -->
   <Teleport to="#page-header-actions" defer>
     <n-button v-if="effectiveMods.length" size="small" secondary
@@ -1082,6 +1105,11 @@ function removePackage(node: ModPackageNode) {
     <n-button v-if="effectiveMods.length" size="small" secondary type="warning"
       :disabled="bulkWorking || !enabledModCount" @click="confirmDisableAll">
       {{ t('全部禁用') }}
+    </n-button>
+    <n-button size="small" secondary :loading="checkingUpdates" :disabled="checkingUpdates || refreshingAll"
+      :title="t('刷新全部仓库源与 Release，检查 MOD 更新')" @click="checkUpdates">
+      <template #icon><RefreshOutline width="14" height="14" /></template>
+      {{ t('检测更新') }}
     </n-button>
     <n-button size="small" secondary @click="openModsDirectory">
       <FolderOpenOutline width="14" height="14" />{{ t('打开目录') }}

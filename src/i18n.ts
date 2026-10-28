@@ -291,6 +291,7 @@ const entries = {
   '将禁用全部 {count} 个 MOD，游戏将不加载任何 MOD。可以随时重新启用。': ['將停用全部 {count} 個 MOD，遊戲將不載入任何 MOD。可以隨時重新啟用。', 'All {count} MODs will be disabled; the game will load none of them. You can re-enable them anytime.', 'MOD {count}개를 모두 비활성화합니다. 게임이 어떤 MOD도 불러오지 않습니다. 언제든 다시 활성화할 수 있습니다.', 'MOD {count} 件をすべて無効化します。ゲームはどの MOD も読み込みません。いつでも再度有効化できます。'],
   '安装后才能加载 MOD': ['安裝後才能載入 MOD', 'Install it to load MODs', '설치해야 MOD를 불러올 수 있습니다', 'インストールしないとMODを読み込めません'],
   '检测更新': ['檢查更新', 'Check', '확인', '確認'],
+  '刷新全部仓库源与 Release，检查 MOD 更新': ['重新整理全部倉庫源與 Release，檢查 MOD 更新', 'Refresh every repository source and Release to check MOD updates', '모든 저장소 소스와 Release를 새로 고침해 MOD 업데이트를 확인합니다', 'すべてのリポジトリソースと Release を更新して MOD の更新を確認します'],
   '通用设置': ['一般設定', 'General', '일반 설정', '一般設定'],
   '重装': ['重新安裝', 'Reinstall', '재설치', '再インストール'],
   '启动游戏': ['啟動遊戲', 'Launch game', '게임 실행', 'ゲームを起動'],

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useMessage } from 'naive-ui'
 import { NButton } from 'naive-ui'
 import { api, watchAppUpdatePhase } from '../services/tauri'
+import { useNotify } from '../useNotify'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
 import AppModal from './AppModal.vue'
 import type { AppUpdateInfo } from '../types'
@@ -11,7 +11,7 @@ import type { AppUpdateInfo } from '../types'
 const props = defineProps<{ show: boolean; update: AppUpdateInfo | null }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
-const message = useMessage()
+const message = useNotify()
 const installing = ref(false)
 const phaseText = ref('')
 

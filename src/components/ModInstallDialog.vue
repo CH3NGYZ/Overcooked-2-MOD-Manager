@@ -16,12 +16,13 @@
  * 弹窗会打开但内容为空。
  */
 import { computed, ref, watch } from 'vue'
-import { NButton, NCollapseTransition, NTag, useMessage } from 'naive-ui'
+import { NButton, NCollapseTransition, NTag } from 'naive-ui'
 import { api } from '../services/tauri'
 import { tagColorFor } from '../theme'
 import { renderReadme } from '../markdown'
 import { formatVersion } from '../modStatus'
 import { t } from '../i18n'
+import { useNotify } from '../useNotify'
 import { celebrateInstall } from '../celebration'
 import AppModal from './AppModal.vue'
 import type { ModPreview, ModPreviewEntry } from '../types'
@@ -34,7 +35,7 @@ const emit = defineEmits<{
   (event: 'discarded', preview: ModPreview): void
 }>()
 
-const message = useMessage()
+const message = useNotify()
 const installing = ref(false)
 
 /**

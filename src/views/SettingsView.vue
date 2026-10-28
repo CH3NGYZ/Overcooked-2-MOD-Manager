@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
-import { useMessage } from 'naive-ui'
 import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
@@ -13,10 +12,11 @@ import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import { tagColorFor } from '../theme'
 import { api } from '../services/tauri'
+import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 
-const message = useMessage()
+const message = useNotify()
 const { load, ensureLoaded, game } = useDashboard()
 
 const version = ref('')

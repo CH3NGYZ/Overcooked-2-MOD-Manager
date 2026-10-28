@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NDropdown, NPopover, NSpin, useMessage } from 'naive-ui'
+import { NDropdown, NPopover, NSpin } from 'naive-ui'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   CloseOutline, ContrastOutline, ContractOutline, LanguageOutline, MoonOutline, PlayOutline,
   RemoveOutline, SquareOutline, StopOutline, SunnyOutline,
 } from '@vicons/ionicons5'
 import { ACCENTS, accentKey, cycleAccent, isDark, setAccent, setThemeMode, themeMode } from '../theme'
+import { useNotify } from '../useNotify'
 import { currentLocaleLabel, locale, localeOptions, setLocale, t, type Locale } from '../i18n'
 import { useUiZoom } from '../composables/useUiZoom'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -66,7 +67,7 @@ const canControlWindow = computed(() => isTauri())
 
 /* ===== 厨房启动 / 停止（悬浮在应用图标上） ===== */
 
-const message = useMessage()
+const message = useNotify()
 const { game, load } = useDashboard()
 /** 启动/停止进行中，按钮显示 loading 并禁止重复点击。 */
 const launching = ref(false)

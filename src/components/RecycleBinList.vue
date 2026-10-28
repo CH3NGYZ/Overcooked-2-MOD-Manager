@@ -14,16 +14,17 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import {
-  NButton, NCollapse, NCollapseItem, NEmpty, NList, NListItem, NPopconfirm, NSpin, NTag, NThing, useMessage,
+  NButton, NCollapse, NCollapseItem, NEmpty, NList, NListItem, NPopconfirm, NSpin, NTag, NThing,
 } from 'naive-ui'
 import { ArrowUndoOutline, TrashOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
+import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { ModRecycleEntry } from '../types'
 
-const message = useMessage()
+const message = useNotify()
 const { game } = useDashboard()
 
 const entries = ref<ModRecycleEntry[]>([])

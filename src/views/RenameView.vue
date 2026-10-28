@@ -5,11 +5,11 @@
  * 生成算法在 src/colorfulName.ts，推送走 Rust 命令（前端 CSP 不允许直连本地端口）。
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useMessage } from 'naive-ui'
 import {
   NButton, NColorPicker, NInput, NInputNumber, NProgress, NSlider, NSpin, NTabPane, NTabs,
 } from 'naive-ui'
 import { ColorWandOutline, CopyOutline, CloudUploadOutline, RefreshOutline } from '@vicons/ionicons5'
+import { useNotify } from '../useNotify'
 import {
   DEFAULT_COLOR, DEFAULT_SIZE, MAX_NAME_BYTES, buildShortestRichText, isNameOverLimit, utf16LeBytes,
 } from '../colorfulName'
@@ -17,7 +17,7 @@ import { api } from '../services/tauri'
 import { t } from '../i18n'
 import { setPageTitleOverride } from '../pageHeader'
 
-const message = useMessage()
+const message = useNotify()
 
 /** MOD 内置的常用调色板（与游戏内命名习惯一致）。 */
 const PALETTE = [

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useMessage } from 'naive-ui'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useNotify } from '../useNotify'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { formatVersion, isPrereleaseVersion, modsForRepository } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
@@ -21,7 +21,7 @@ import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import type { Repository, RepositorySource } from '../types'
 
-const message = useMessage()
+const message = useNotify()
 const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦，教程门控也在那里。 */

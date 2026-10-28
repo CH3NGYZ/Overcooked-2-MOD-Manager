@@ -15,12 +15,13 @@
  * 同一件事在两处出现会让用户以为框架有独立的路径配置。
  */
 import { computed, ref } from 'vue'
-import { useDialog, useMessage } from 'naive-ui'
+import { useDialog } from 'naive-ui'
 import { NButton, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
 import {
   AddCircleOutline, FolderOpenOutline, SaveOutline, SettingsOutline, TrashOutline, WarningOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
+import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -29,7 +30,7 @@ import BepInExSetupGuide from './BepInExSetupGuide.vue'
 import BusyOverlay from './BusyOverlay.vue'
 import type { BepInExInstallResult, GameRuntime, OperationResult, Provider } from '../types'
 
-const message = useMessage()
+const message = useNotify()
 const dialog = useDialog()
 const { load, loading, game, config } = useDashboard()
 

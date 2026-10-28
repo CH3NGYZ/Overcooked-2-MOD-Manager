@@ -20,9 +20,10 @@
  * 保存走 revision 校验：文件被外部改动时后端拒绝覆盖，避免冲掉别人的修改。
  */
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NTag, useMessage } from 'naive-ui'
+import { NButton, NInput, NTag } from 'naive-ui'
 import { SaveOutline, CloseOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
+import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import AppModal from './AppModal.vue'
@@ -42,7 +43,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
-const message = useMessage()
+const message = useNotify()
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')

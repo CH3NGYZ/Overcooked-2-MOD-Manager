@@ -3,7 +3,8 @@ import { t, locale } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { PULSE_DURATION } from '../motion'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useDialog, useMessage } from 'naive-ui'
+import { useDialog } from 'naive-ui'
+import { useNotify } from '../useNotify'
 import {
   NButton, NCollapse, NCollapseItem, NCollapseTransition, NEmpty, NFloatButton,
   NSpin, NSwitch, NTag,
@@ -30,7 +31,7 @@ import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import type { InstalledMod, Repository } from '../types'
 
-const message = useMessage()
+const message = useNotify()
 const dialog = useDialog()
 const { load, ensureLoaded, loading, mods, game, config } = useDashboard()
 

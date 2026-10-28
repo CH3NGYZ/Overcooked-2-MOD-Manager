@@ -17,11 +17,12 @@
  * 不引入图片素材：文字步骤已能说明操作，缺图不影响可用性（见 PLAN.md 第 5 步）。
  */
 import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NSteps, NStep, useMessage } from 'naive-ui'
+import { NAlert, NButton, NSteps, NStep } from 'naive-ui'
 import { CopyOutline } from '@vicons/ionicons5'
 import AppModal from './AppModal.vue'
 import { t } from '../i18n'
 import { api } from '../services/tauri'
+import { useNotify } from '../useNotify'
 import { corefontsCommand, nativeSteamLaunchOptions } from '../gameRuntime'
 import type { AppPlatform, GameInfo, GameRuntime, PublicConfig } from '../types'
 
@@ -38,7 +39,7 @@ const emit = defineEmits<{
   (event: 'confirmed'): void
 }>()
 
-const message = useMessage()
+const message = useNotify()
 
 const platform = computed<AppPlatform>(() => props.config?.platform ?? 'windows')
 const runtime = computed<GameRuntime>(() => props.config?.game.runtime ?? 'wine')

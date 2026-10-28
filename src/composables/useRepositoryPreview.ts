@@ -9,8 +9,9 @@
  * 两个页面的差异只有 UI 侧的忙碌状态和提示方式，所以这里只保留
  * 「校验 → 下载 → 交预览」这一段，两页各自决定 loading 显示在哪里。
  */
-import { useDialog, useMessage } from 'naive-ui'
+import { useDialog } from 'naive-ui'
 import { api } from '../services/tauri'
+import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { isPrereleaseVersion } from '../modStatus'
 import type { ModPreview, Repository } from '../types'
@@ -26,7 +27,7 @@ export interface RepositoryPreviewOptions {
  * @param openPreview 拿到预览后由宿主打开统一的安装详情弹窗
  */
 export function useRepositoryPreview(openPreview: (preview: ModPreview) => void, options: RepositoryPreviewOptions = {}) {
-  const message = useMessage()
+  const message = useNotify()
   const dialog = useDialog()
 
   /**

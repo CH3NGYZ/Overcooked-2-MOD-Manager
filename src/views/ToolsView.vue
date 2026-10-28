@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
-import { useMessage } from 'naive-ui'
 import { NLog, NSelect, NTag } from 'naive-ui'
 import { BuildOutline, DocumentTextOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
+import { useNotify } from '../useNotify'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
@@ -14,7 +14,7 @@ import type { RustLog } from '../types'
 
 type LogKind = 'rust' | 'frontend' | 'crash'
 
-const message = useMessage()
+const message = useNotify()
 const working = ref<Record<string, boolean>>({})
 const logOpen = ref(false)
 const logTitle = ref('')

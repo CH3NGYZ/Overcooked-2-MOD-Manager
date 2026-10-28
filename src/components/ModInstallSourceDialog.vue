@@ -13,11 +13,12 @@
  * 一个分支，预览弹窗完全不用改。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
+import { NButton, NInput, NSpin, NTabPane, NTabs } from 'naive-ui'
 import { LinkOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { isTauri } from '../runtime'
 import { t } from '../i18n'
+import { useNotify } from '../useNotify'
 import AppModal from './AppModal.vue'
 import type { ModPreview, ModSourceKind } from '../types'
 
@@ -28,7 +29,7 @@ const emit = defineEmits<{
   (event: 'preview', preview: ModPreview): void
 }>()
 
-const message = useMessage()
+const message = useNotify()
 const sourceTab = ref<'local' | 'online'>('local')
 const url = ref('')
 const busy = ref(false)

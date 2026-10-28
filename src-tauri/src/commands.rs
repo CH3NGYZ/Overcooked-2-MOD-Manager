@@ -2270,6 +2270,17 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     }
     ensure_copy_paths_disjoint(&source, &state.config.backups_dir())?;
 
+    /*
+     * 卸载前先备份框架目录。
+     *
+     * 回收站保留的是「按清单移走的文件」，而备份是**整目录快照**：
+     * 用户自己往 BepInEx 里放的东西（手工装的插件、改过的 config、日志）
+     * 不在清单里，回收站不会带走它们 —— 只有备份能保证还能找回。
+     * 两者职责不同，都要保留。
+     */
+    let backup = backup_bepinex_dir(&game_root, &state.config.backups_dir())?;
+    log::info!("BepInEx 卸载前备份完成：路径={}", backup.display());
+
     let manifests_dir = state.config.manifests_dir();
     let recycle_root = state.config.mod_recycle_bin_dir();
     /*
@@ -2293,13 +2304,18 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
         ) {
             Ok(entry) => {
                 log::info!(
-                    "BepInEx 卸载完成（已回收）：文件数={}，回收记录={}",
+                    "BepInEx 卸载完成（已回收）：文件数={}，回收记录={}，备份={}",
                     entry.file_count,
-                    entry.id
+                    entry.id,
+                    backup.display()
                 );
                 return Ok(OperationResult {
                     ok: true,
-                    message: format!("BepInEx 已移入回收站（{} 个文件）", entry.file_count),
+                    message: format!(
+                        "BepInEx 已移入回收站（{} 个文件），备份保存在 {}",
+                        entry.file_count,
+                        backup.display()
+                    ),
                 });
             }
             Err(error) => {
@@ -2308,22 +2324,24 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
                  * 那种做法只能删掉一部分，留下散落的 doorstop/winhttp 文件，
                  * 用户会看到一个既装不上又卸不掉的半残状态。
                  */
-                log::error!("BepInEx 回收失败，已中止卸载：原因={}", error);
-                return Err(format!("文件回收失败，请尝试手动删除框架文件。（{error}）"));
+                log::error!(
+                    "BepInEx 回收失败，已中止卸载：原因={}，备份={}",
+                    error,
+                    backup.display()
+                );
+                return Err(format!(
+                    "文件回收失败，请尝试手动删除框架文件。（{error}）备份已保存在 {}",
+                    backup.display()
+                ));
             }
         }
     }
 
     /*
-     * 没有清单（旧版本装的框架）：保留原有的「备份 + 删目录」路径，
-     * 至少能回退到备份，不至于让用户没有出路。
+     * 没有清单（旧版本装的框架）：退回「删目录」路径。
+     * 备份在上面已经统一做过了，这里直接复用那份快照，不再重复拷一次。
      */
-    log::warn!("未找到 BepInEx 安装清单，退回备份并删除目录的旧流程");
-    archive::clear_readonly(&source)?;
-    let backup = bepinex_backup_path(&state.config.backups_dir())?;
-    // The game and portable manager may be on different drives. `rename`
-    // fails with ERROR_NOT_SAME_DEVICE there, so copy and remove explicitly.
-    copy_dir(&source, &backup)?;
+    log::warn!("未找到 BepInEx 安装清单，退回删除目录的旧流程（备份已创建）");
     archive::clear_readonly(&source)?;
     fs::remove_dir_all(&source).map_err(|e| e.to_string())?;
     log::info!("BepInEx 卸载完成：备份={}", backup.display());
@@ -6111,6 +6129,43 @@ mod framework_install_tests {
                 assert!(workspace.game().join("winhttp.dll").is_file());
             }
         }
+    }
+
+    /*
+     * 卸载必须**先整目录备份、再按清单回收**。
+     *
+     * 这两步职责不同，缺一不可：
+     *   · 回收站只带走清单里登记的文件。用户自己往 BepInEx 里手工放的插件、
+     *     改过的 config、日志都不在清单里，回收站不管它们；
+     *   · 备份是整目录快照，能把上面那些「管理器不知道」的文件一起保住。
+     *
+     * 一旦顺序颠倒（先回收再备份），回收已经把目录搬空，备份就只剩个空壳。
+     * `uninstall_bepinex` 需要 `State`，无法在这里直接调用，所以断言源码顺序 ——
+     * 与 `tests/registry.test.mjs` 用源码文本守住接线契约是同一种做法。
+     */
+    #[test]
+    fn uninstall_backs_up_before_recycling() {
+        let source = include_str!("commands.rs");
+        let uninstall = source
+            .split("pub fn uninstall_bepinex")
+            .nth(1)
+            .expect("uninstall_bepinex 应存在");
+        // 只看这个函数体（到下一个顶层 fn 之前）
+        let body = uninstall
+            .split("\n#[tauri::command]")
+            .next()
+            .expect("函数体应可截断");
+
+        let backup_at = body
+            .find("backup_bepinex_dir(")
+            .expect("卸载流程必须调用 backup_bepinex_dir");
+        let recycle_at = body
+            .find("recycle_package(")
+            .expect("卸载流程必须调用 recycle_package");
+        assert!(
+            backup_at < recycle_at,
+            "必须先备份再回收：备份偏移={backup_at}，回收偏移={recycle_at}"
+        );
     }
 }
 

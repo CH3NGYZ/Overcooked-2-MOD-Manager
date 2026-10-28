@@ -26,6 +26,7 @@ import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
 import BepInExSetupGuide from './BepInExSetupGuide.vue'
+import BusyOverlay from './BusyOverlay.vue'
 import type { BepInExInstallResult, GameRuntime, OperationResult, Provider } from '../types'
 
 const message = useMessage()
@@ -138,31 +139,53 @@ function uninstall() {
     negativeText: t('取消'),
     async onPositiveClick() {
       working.value = true
+      // 卸载 = 先整目录备份，再按清单回收，两步都是磁盘操作，要遮罩
+      busyText.value = t('正在备份并卸载 BepInEx 框架…')
       try {
         const result: OperationResult = await api.uninstallBepInEx()
         result.ok ? message.success(result.message || t('卸载')) : message.error(result.message)
         await load()
-      } catch (reason) { fail(reason) } finally { working.value = false }
+      } catch (reason) { fail(reason) } finally {
+        working.value = false
+        busyText.value = null
+      }
     },
   })
 }
 
+/**
+ * 全屏遮罩文案：`null` 不显示。
+ *
+ * 备份与卸载都要整目录拷贝（BepInEx 里可能几万个文件、几百 MB），
+ * 期间只靠按钮转圈不够 —— 用户会以为卡死并尝试切页，反而制造一个
+ * 「备份还在跑、界面已经换了」的错觉。全屏遮罩明确告诉他「在等」。
+ */
+const busyText = ref<string | null>(null)
+
 async function backup() {
   working.value = true
+  busyText.value = t('正在备份 BepInEx 框架…')
   try {
     const result = await api.backupBepInEx()
     result.ok ? message.success(result.message || t('创建备份')) : message.error(result.message)
     await load()
-  } catch (reason) { fail(reason) } finally { working.value = false }
+  } catch (reason) { fail(reason) } finally {
+    working.value = false
+    busyText.value = null
+  }
 }
 
 async function restore(path: string) {
   working.value = true
+  busyText.value = t('正在恢复 BepInEx 框架…')
   try {
     const result = await api.restoreBepInEx(path)
     result.ok ? message.success(result.message || t('已恢复')) : message.error(result.message)
     await load()
-  } catch (reason) { fail(reason) } finally { working.value = false }
+  } catch (reason) { fail(reason) } finally {
+    working.value = false
+    busyText.value = null
+  }
 }
 
 function removeBackup(path: string) {
@@ -333,6 +356,9 @@ async function openBackups() {
     <BepInExSetupGuide v-if="guidePhase" :show="true" :config="config" :game="game"
       :phase="guidePhase" @update:show="(value: boolean) => { if (!value) guidePhase = null }"
       @confirmed="onGuideConfirmed" />
+
+    <!-- 备份/恢复/卸载期间的全屏遮罩：这些操作都在整目录拷贝，不能被打断 -->
+    <BusyOverlay :show="!!busyText" :description="busyText ?? undefined" />
   </n-spin>
 </template>
 

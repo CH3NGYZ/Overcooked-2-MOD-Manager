@@ -871,6 +871,21 @@ pub(crate) fn install_manual_mod(
     })
 }
 
+/// 是否需要先让用户确认「连整个 MOD 包一起删」。
+///
+/// 三个条件同时成立才需要：包内还有其他 MOD、没有同 GUID 的其他启用副本
+/// （那种情况走单 DLL 回收分支），并且用户点的**不是**整包删除
+/// （`allow_unmanaged = false`）。
+///
+/// 抽成函数是为了能被单测直接覆盖：命令本身要真实游戏目录和锁，测不到。
+fn needs_package_confirmation(
+    package_mod_names: &[String],
+    has_other_enabled_same_guid: bool,
+    allow_unmanaged: bool,
+) -> bool {
+    !package_mod_names.is_empty() && !has_other_enabled_same_guid && !allow_unmanaged
+}
+
 #[tauri::command]
 pub fn uninstall_local_mod(
     state: State<'_, AppState>,
@@ -925,7 +940,20 @@ pub fn uninstall_local_mod(
             .filter(|item| !item.dll_file.eq_ignore_ascii_case(&safe_relative))
             .map(|item| item.name.clone())
             .collect::<Vec<_>>();
-        if !package_mod_names.is_empty() && !has_other_enabled_same_guid {
+        /*
+         * 包确认只在「用户点的是单个 MOD」时需要。
+         *
+         * `allow_unmanaged = true` 有两个来源：一是用户已在「整包删除」二级
+         * 确认里点过确定；二是冲突卸载/安装计划里本来就按整包语义处理。
+         * 两种情况都已经表达过「我要连包一起删」，再返回一次
+         * requires_package_confirmation 只会让包标题上的「删除」按钮
+         * 又弹一遍「当前 MOD 与其他 MOD 一并安装」——真实 bug。
+         */
+        if needs_package_confirmation(
+            &package_mod_names,
+            has_other_enabled_same_guid,
+            allow_unmanaged,
+        ) {
             log::warn!(
                 "卸载本地 MOD 需要确认整个 MOD 包：文件={}，包={}，同包项目数={}",
                 safe_relative,
@@ -9685,5 +9713,52 @@ mod colorful_name_push_tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+/// 包确认的触发条件。
+///
+/// 真实 bug：包标题上的「删除」按钮已经按整包语义调用
+/// （`allow_unmanaged = true`），后端却仍然返回
+/// `requires_package_confirmation`，提示「当前 MOD 与其他 MOD 一并安装」，
+/// 看起来像是没删干净。判定必须读 `allow_unmanaged`。
+#[cfg(test)]
+mod package_confirmation_tests {
+    use super::*;
+
+    fn siblings(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    #[test]
+    fn single_dll_uninstall_still_asks_before_deleting_the_whole_package() {
+        // 点单个 DLL、包内还有别人、没有同 GUID 副本 → 需要二次确认
+        assert!(needs_package_confirmation(
+            &siblings(&["A", "B"]),
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn package_level_uninstall_never_asks_again() {
+        // 包标题的「删除」/ 冲突卸载：已经表达过整包语义，不能重复确认
+        assert!(!needs_package_confirmation(
+            &siblings(&["A", "B"]),
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn other_cases_skip_the_confirmation() {
+        // 包内没有其他 MOD：删的就是单个文件
+        assert!(!needs_package_confirmation(&siblings(&[]), false, false));
+        // 存在同 GUID 的启用副本：走单 DLL 回收分支，不是整包删除
+        assert!(!needs_package_confirmation(
+            &siblings(&["A", "B"]),
+            true,
+            false
+        ));
     }
 }

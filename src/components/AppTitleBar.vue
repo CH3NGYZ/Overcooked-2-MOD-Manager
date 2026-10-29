@@ -157,7 +157,7 @@ defineExpose({ onUnmountedCleanup })
           <strong>{{ t('OC2 模组管理器') }}</strong>
           <span v-if="props.version" class="brand-version">v{{ props.version }}</span>
         </div>
-        <small>{{ t('游戏模组管理器') }}</small>
+        <small>{{ t('快捷管理 《胡闹厨房2》的MOD') }}</small>
       </div>
     </div>
 

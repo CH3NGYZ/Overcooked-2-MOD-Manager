@@ -17,7 +17,7 @@
  * 发 `ready: true`；任何一步失败都停在原地并保留已完成的部分 ——
  * 已卸载的 MOD 会进回收站，用户仍可恢复。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NSpin } from 'naive-ui'
 import { t, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
@@ -53,6 +53,23 @@ const running = ref(false)
 /** 防重入：本组件自己 emit `update:show false`，模板又在那事件上调 close。 */
 const closing = ref(false)
 
+/**
+ * 每次打开弹窗都清空上一次的执行状态。
+ *
+ * 这个组件实例是常驻的（`<InstallPlanDialog>` 一直挂在页面里，只有内层
+ * n-modal 被销毁），所以 `done` / `failures` 会跨次残留。而步骤 key 是
+ * **按索引**生成的（`install-0`、`install-1`），新计划的 `install-0` 会撞上
+ * 上一次残留的「已完成」——表现就是刚打开「安装前检查」，依赖那一行已经
+ * 打着 ✓、按钮直接是「完成」，点下去跳过依赖直接装主包，装完仍显示缺依赖。
+ */
+watch(() => props.show, (visible) => {
+  if (!visible) return
+  done.value = {}
+  failures.value = []
+  running.value = false
+  closing.value = false
+})
+
 /** 扁平化的执行序列：卸载在前，安装在后。 */
 interface Step {
   key: string
@@ -70,7 +87,7 @@ const steps = computed<Step[]>(() => {
   const list: Step[] = []
   props.plan.uninstall.forEach((status, index) => {
     list.push({
-      key: `uninstall-${index}`,
+      key: `uninstall-${status.installedMod?.dll_file ?? status.relation.guid}`,
       kind: 'uninstall',
       label: status.installedMod?.name ?? status.relation.guid,
       action: 'uninstall',
@@ -81,7 +98,7 @@ const steps = computed<Step[]>(() => {
     const target = status.repository
     const version = status.release?.tag_name || status.release?.version || ''
     list.push({
-      key: `install-${index}`,
+      key: `install-${target?.id ?? status.relation.guid}-${version}`,
       kind: 'install',
       label: target ? pickI18n(target.name_i18n, target.name) : status.relation.guid,
       version,

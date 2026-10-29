@@ -5,10 +5,12 @@ name_i18n.zh-CN = "DIYLevel - 自定义关卡"
 name_i18n.zh-TW = "DIYLevel - 自訂關卡"
 name_i18n.en = "DIYLevel - Custom Levels"
 name_i18n.ko = "DIYLevel - 커스텀 레벨"
+name_i18n.ja = "DIYLevel - カスタムレベル"
 group_i18n.zh-CN = "内容拓展"
 group_i18n.zh-TW = "內容拓展"
 group_i18n.en = "Content Expansion"
 group_i18n.ko = "콘텐츠 확장"
+group_i18n.ja = "コンテンツ拡張"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-LevelEditor"
@@ -20,7 +22,7 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 32
+download_threads = 8
 
 # 版本资产规则
 asset_rules = [
@@ -90,7 +92,8 @@ flowchart TD
 如果出现以下问题，请优先检查 `OC2DIYLevel`、`DIYLevelRuntimeWLoader` 与 `OC2DIYLevel/levels` 内地图之间的兼容性：
 
 - 进入游戏后，选档列表为空。
-- 使用街机 MOD 的 `一键重开` 或 `一键退出` 功能后，游戏卡死或客机全部掉出。
+
+如果选档列表为空，可以安装并启用《修复 DIYLevel 资源读取失败导致存档槽位空白》MOD。它会在关卡资源加载失败时弹窗提示具体的关卡集、关卡和失败的资源，帮助定位是哪张地图导致选档无法显示。
 
 ### 推荐排查顺序
 
@@ -157,7 +160,8 @@ flowchart TD
 如果出現以下問題，請優先檢查 `OC2DIYLevel`、`DIYLevelRuntimeWLoader` 與 `OC2DIYLevel/levels` 內地圖之間的相容性：
 
 - 進入遊戲後，存檔列表為空。
-- 使用街機 MOD 的 `一鍵重開` 或 `一鍵退出` 功能後，遊戲卡死或客機全部斷線。
+
+如果存檔列表為空，可以安裝並啟用《修復 DIYLevel 資源讀取失敗導致存檔欄位空白》MOD。它會在關卡資源載入失敗時彈出視窗提示具體的關卡集、關卡和失敗的資源，幫助定位是哪張地圖導致存檔無法顯示。
 
 ### 建議排除順序
 
@@ -224,7 +228,8 @@ flowchart TD
 If any of the following problems occur, first check the compatibility between `OC2DIYLevel`, `DIYLevelRuntimeWLoader`, and the maps in `OC2DIYLevel/levels`:
 
 - The save-slot list is empty after entering the game.
-- The game freezes or all guest players are disconnected after using the Arcade MOD's `一键重开` or `一键退出` feature.
+
+If the save-slot list is empty, install and enable the `Fix Blank Save Slots When DIYLevel Resource Loading Fails` MOD. When a level resource fails to load, it shows a popup naming the failing level set, level, and resource, helping identify which map prevents the save slots from appearing.
 
 ### Recommended Troubleshooting Order
 
@@ -291,7 +296,8 @@ flowchart TD
 다음 문제가 발생하면 먼저 `OC2DIYLevel`, `DIYLevelRuntimeWLoader`, `OC2DIYLevel/levels`에 있는 맵 사이의 호환성을 확인하세요.
 
 - 게임에 들어간 후 세이브 슬롯 목록이 비어 있습니다.
-- Arcade MOD의 `一键重开` 또는 `一键退出` 기능을 사용한 후 게임이 멈추거나 모든 게스트 플레이어의 연결이 끊깁니다.
+
+세이브 슬롯 목록이 비어 있다면 《DIYLevel 리소스 로드 실패로 인한 빈 저장 슬롯 수정》 MOD를 설치하고 활성화해 보세요. 레벨 리소스 로드에 실패하면 실패한 레벨 세트, 레벨, 리소스를 팝업으로 알려 주어 어떤 맵 때문에 세이브 슬롯이 표시되지 않는지 찾을 수 있습니다.
 
 ### 권장 점검 순서
 
@@ -305,6 +311,75 @@ flowchart TD
 **Overcooked! 2 레벨 제작소 (QQ 4번 그룹): 714907749**
 사용자 지정 맵 제작, 설치 및 플레이 문제를 자유롭게 문의하고 의견을 나눌 수 있습니다.
 """
+note_i18n.ja = """
+# 🗺️ カスタムマップフレームワークと依存関係の説明
+
+カスタムマップフレームワークをインストールすると、コミュニティ制作のカスタムレベルをプレイできます！
+
+## 1. 依存関係図
+
+```mermaid
+flowchart TD
+    A["🎮 カスタムマップをプレイ"]
+    B["`OC2DIYLevel` をインストール<br/>カスタムマップフレームワーク（必須）"]
+    C["マップを<br/>`OC2DIYLevel/levels` に配置"]
+    D{"マップに前提 MOD が必要ですか？"}
+    E["そのままプレイ"]
+    F["嘉吖先生の<br/>`DIYLevelRuntimeWLoader` 前提 MOD を追加ダウンロード"]
+    G["この前提 MOD が必要なマップをプレイ"]
+
+    A --> B
+    B --> C
+    C --> D
+    D -->|不要| E
+    D -->|必要| F
+    F --> G
+
+    style B fill:#d9ead3,stroke:#38761d,color:#000
+    style C fill:#cfe2f3,stroke:#1155cc,color:#000
+    style F fill:#fce5cd,stroke:#b45f06,color:#000
+    style E fill:#d9ead3,stroke:#38761d,color:#000
+```
+
+## 2. コンポーネントの説明
+
+| コンポーネント | 必須か | 説明 |
+|---|---|---|
+| `OC2DIYLevel` | **必須** | カスタムマップの基本フレームワークです。これがないとカスタムマップをプレイできません。 |
+| `OC2DIYLevel/levels` | **必須** | プレイするすべてのカスタムマップをこのディレクトリに配置する必要があります。 |
+| `DIYLevelRuntimeWLoader` | **一部のマップで必要** | 嘉吖先生が作成した Web 共通前提 MOD で、これに依存するカスタムマップの読み込みをサポートします。 |
+
+## 3. インストールと使用の推奨事項
+
+1. **メインフレームワークのインストール：** `OC2DIYLevel` カスタムマップフレームワークをインストールします。
+2. **マップの配置：** プレイするすべてのカスタムマップを `OC2DIYLevel/levels` ディレクトリに配置します。
+3. **マップの前提 MOD の確認：** マップに `DIYLevelRuntimeWLoader` が必要かどうかを確認します。必要な場合は、嘉吖先生の `DIYLevelRuntimeWLoader` 前提 MOD も追加でダウンロードしてください。
+
+> **⚠️ 互換性の推奨事項**
+> 現在プレイするマップに `DIYLevelRuntimeWLoader` が不要な場合は、互換性の衝突を減らすため、MOD マネージャーでこの前提 MOD をオフにすることをおすすめします。
+> 必要なマップがある場合は再度オンにしてください。オフのままだとマップが正常に読み込めない可能性があります。
+
+## 4. よくある問題とトラブルシューティング
+
+以下の問題が発生した場合は、まず `OC2DIYLevel`、`DIYLevelRuntimeWLoader`、`OC2DIYLevel/levels` 内のマップ間の互換性を確認してください：
+
+- ゲームに入った後、セーブ選択一覧が空になる。
+
+セーブ選択一覧が空になる場合は、《DIYLevel のリソース読み込み失敗によるセーブスロット空白の修正》MOD をインストールして有効化してみてください。レベルリソースの読み込みに失敗すると、失敗したレベルセット・レベル・リソースをポップアップで表示し、どのマップが原因でセーブ選択が表示されないかを特定できます。
+
+### 推奨される確認手順
+
+1. `OC2DIYLevel` が正しくインストールされていることを確認します。
+2. すべてのカスタムマップが `OC2DIYLevel/levels` ディレクトリに配置されていることを確認します。
+3. マップが `DIYLevelRuntimeWLoader` に依存しているか確認します。
+4. マップにこの前提 MOD が不要な場合は、前提 MOD をオフにして再度テストします。
+5. それでも問題が解決しない場合は、マップを1つずつ外して、マップとフレームワーク間の互換性の問題を切り分けます。
+
+## 5. コミュニティ
+
+**Overcooked! 2 レベル制作所（QQ 4グループ）：714907749**
+カスタムマップの制作、インストール、プレイに関する情報交換を歓迎します。
+"""
 
 [[repositories]]
 enabled = true
@@ -313,10 +388,12 @@ name_i18n.zh-CN = "投掷一切 MOD"
 name_i18n.zh-TW = "投擲一切 MOD"
 name_i18n.en = "Throw Any MOD"
 name_i18n.ko = "무엇이든 던지기 MOD"
+name_i18n.ja = "何でも投げる MOD"
 group_i18n.zh-CN = "玩法拓展"
 group_i18n.zh-TW = "玩法拓展"
 group_i18n.en = "Gameplay Expansion"
 group_i18n.ko = "플레이 방식 확장"
+group_i18n.ja = "ゲームプレイ拡張"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-ThrowAny"
@@ -369,6 +446,14 @@ note_i18n.ko = """
 - 게임 메인 메뉴의 설정 - MOD에서 활성화하세요. 기본값은 비활성화입니다.
 - 호스트는 설치 후 사용할 수 있습니다. 멀티플레이에서는 호스트가 설치하고 활성화해야 하며, 클라이언트가 던지려면 양쪽 모두 활성화해야 합니다.
 - 다른 플레이어에게 영향을 주지 않도록 Arcade Public에서는 자동으로 비활성화됩니다."""
+note_i18n.ja = """
+皿など本来投げられないアイテムを投げたり、他のシェフを持ち上げて投げたりできます。
+- 投擲の達人：消火器、水鉄砲、クリーム、ブーブークッション以外のあらゆるアイテムを投げられます。
+- 人投げ：他のシェフを持ち上げて投げられます。クライアント側は遅延の影響を大きく受けます。
+- ゲームのメインメニュー「設定 - MOD」で有効化します。既定では無効です。
+- ホストがインストールすればそのまま有効になります。マルチプレイではホストがインストールして有効化する必要があり、ホストとクライアントの両方が有効化した場合のみクライアントも投げられます。
+- 「アーケード公開」に入ると、他のプレイヤーへの影響を避けるため自動的に無効になります。
+"""
 
 [[repositories]]
 enabled = true
@@ -377,10 +462,12 @@ name_i18n.zh-CN = "喷气背包 MOD"
 name_i18n.zh-TW = "噴射背包 MOD"
 name_i18n.en = "Jetpack MOD"
 name_i18n.ko = "제트팩 MOD"
+name_i18n.ja = "ジェットパック MOD"
 group_i18n.zh-CN = "玩法拓展"
 group_i18n.zh-TW = "玩法拓展"
 group_i18n.en = "Gameplay Expansion"
 group_i18n.ko = "플레이 방식 확장"
+group_i18n.ja = "ゲームプレイ拡張"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-Jetpack"
@@ -437,6 +524,15 @@ note_i18n.ko = """
 - 게임 시작 시 기본적으로 비활성화됩니다. 키 설정 중 Esc를 눌러 비활성화할 수도 있으며, 비활성화 상태에서는 원래 게임 로직이 바뀌지 않습니다.
 - Arcade Public에서는 사용할 수 없습니다.
 - 활성화하면 중력이 원래의 5분의 1로 바뀌고 모든 천장이 제거되어 Jet 키를 누르지 않고도 공중에 뜰 수 있는 방법이 많아집니다."""
+note_i18n.ja = """
+指定したキーで飛び立てます。使用前にキー設定で離陸キーを設定してください。オプション名は Jet です。
+- キーボードおよび分割キーボードのプレイヤーは Jet キーを直接設定できます。ゲームパッドのプレイヤーはここでキーボードのキーを設定し、「Steam - ライブラリ - Overcooked! 2 - コントローラーレイアウト」でゲームパッドのボタンをそのキーに割り当てる必要があります。
+- Jet キーを長押しすると離陸し、短押しすると高度を固定して巡航します。
+- クライアント側は、ホストもこの MOD をインストールしている場合のみ有効になります。
+- ゲーム起動時は既定で無効です。キー設定中に Esc を押して無効にすることもでき、無効時は元のゲームロジックを変更しません。
+- 「アーケード公開」では使用できません。
+- 有効にすると重力が本来の5分の1になり、すべての天井が取り除かれるため、Jet キーを押さなくても空中に浮かぶ方法が多数あります。
+"""
 
 [[repositories]]
 enabled = true
@@ -445,10 +541,12 @@ name_i18n.zh-CN = "更多菜单 MOD"
 name_i18n.zh-TW = "更多菜單 MOD"
 name_i18n.en = "Many Recipes MOD"
 name_i18n.ko = "Many Recipes MOD"
+name_i18n.ja = "メニュー増加 MOD"
 group_i18n.zh-CN = "内容拓展"
 group_i18n.zh-TW = "內容拓展"
 group_i18n.en = "Content Expansion"
 group_i18n.ko = "콘텐츠 확장"
+group_i18n.ja = "コンテンツ拡張"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-ManyRecipes"
@@ -489,18 +587,26 @@ note_i18n.zh-TW = """
 - 在「街機公開」中無效。"""
 note_i18n.en = """
 Requires installation and activation of both host and guest players to work properly.
-- Enable in the game main menu under Settings - MOD (disabled by default).
+- Enable in the game main menu under Settings - MOD (disabled by default). 
 - Many Recipes must be enabled by both host and guest.
 - Extends recipes for all story, DLC, versus, and horde levels, except story 6-6 and Sun 1-3. Compatible with the HardHorde mod.
 - Many Recipes - Display More Menus only needs to be enabled by the host and cannot be enabled alone. It increases displayed menus from 2~5 to 4~6 (in versus mode, from 2~3 to 3~4).
 - Not valid in Arcade Public."""
 note_i18n.ko = """
 정상적으로 작동하려면 호스트와 게스트 모두 설치하고 활성화해야 합니다.
-- 게임 메인 메뉴의 설정 - MOD에서 활성화하세요(기본값은 비활성화).
+- 게임 메인 메뉴의 설정 - MOD에서 활성화하세요(기본값은 비활성화). 
 - Many Recipes는 호스트와 게스트 모두 활성화해야 합니다.
 - 스토리 6-6과 Sun 1-3을 제외한 모든 스토리, DLC, 대전 및 적 무리 레벨의 레시피를 확장합니다. HardHorde MOD와 호환됩니다.
 - Many Recipes - Display More Menus는 호스트만 활성화하면 되며 단독으로 활성화할 수 없습니다. 표시되는 메뉴 수를 2~5개에서 4~6개로 늘립니다(대전 모드는 2~3개에서 3~4개).
 - Arcade Public에서는 사용할 수 없습니다."""
+note_i18n.ja = """
+正常に動作させるには、ホストとクライアントの両方がインストールして有効化する必要があります。
+- ゲームのメインメニュー「設定 - MOD」で有効化します。既定では無効です。
+- Many Recipes はホストとクライアントの両方で有効化する必要があります。
+- ストーリー、DLC、対戦、敵群のすべてのレベルのレシピを拡張します（ストーリー 6-6 と Sun 1-3 を除く）。HardHorde MOD と互換性があります。
+- Many Recipes - Display More Menus はホストのみ有効化すればよく、単独では有効化できません。メニューの表示数が 2～5 から 4～6 に増えます（対戦モードでは 2～3 から 3～4）。
+- 「アーケード公開」では使用できません。
+"""
 
 [[repositories]]
 enabled = true
@@ -509,10 +615,12 @@ name_i18n.zh-CN = "换位 MOD"
 name_i18n.zh-TW = "換位 MOD"
 name_i18n.en = "Host Color / Position Swap"
 name_i18n.ko = "호스트 위치 교체 MOD"
+name_i18n.ja = "ホスト位置交換 MOD"
 group_i18n.zh-CN = "联机辅助"
 group_i18n.zh-TW = "連線輔助"
 group_i18n.en = "Multiplayer Support"
 group_i18n.ko = "멀티플레이 지원"
+group_i18n.ja = "マルチプレイ補助"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-HostColor"
@@ -553,6 +661,11 @@ note_i18n.ko = """
 호스트와 지정한 플레이어 위치만 서로 바꾸는 MOD입니다.
 - 게임 메인 메뉴의 설정 - MOD에서 활성화하세요.
 - Arcade MOD의 위치 교체 기능과 호환됩니다. 이 MOD를 설치한 후 호스트 위치를 변경하면 Arcade MOD의 설정도 동기화되어 변경되며, 그 반대도 마찬가지입니다."""
+note_i18n.ja = """
+ホストと指定した位置のみを交換できる MOD です。
+- ゲームのメインメニュー「設定 - MOD」で有効化します。
+- アーケード MOD の位置交換機能と互換性があります。この MOD をインストールした後、ホスト位置を変更するとアーケード MOD の設定も同期して変更され、その逆も同様です。
+"""
 
 [[repositories]]
 enabled = true
@@ -561,10 +674,12 @@ name_i18n.zh-CN = "随机食材 MOD"
 name_i18n.zh-TW = "隨機食材 MOD"
 name_i18n.en = "Randomizer MOD"
 name_i18n.ko = "무작위 재료 MOD"
+name_i18n.ja = "ランダム食材 MOD"
 group_i18n.zh-CN = "玩法调整"
 group_i18n.zh-TW = "玩法調整"
 group_i18n.en = "Gameplay Tuning"
 group_i18n.ko = "게임플레이 조정"
+group_i18n.ja = "ゲームプレイ調整"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-Randomizer"
@@ -613,6 +728,13 @@ note_i18n.ko = """
 - 호스트만 활성화하면 적용됩니다. 게스트가 이 MOD를 설치하지 않으면 점수 갱신이 지연될 수 있습니다.
 - 식재료 상자 내용물이 주기적으로 무작위 변경되고 식재료와 조리 도구가 비싸지며, 음식을 제공할 때마다 주방에 무작위로 불이 납니다.
 - Arcade Public에서는 사용할 수 없습니다."""
+note_i18n.ja = """
+食材をランダム化する MOD です。
+- ゲームのメインメニュー「設定 - MOD」で有効化します。既定では無効です。
+- ホストのみ有効化すれば効果があります。クライアントがこの MOD をインストールしていない場合、スコア更新が遅れることがあります。
+- 食材ボックスの内容が定期的にランダムに変化し、食材や調理器具が高価になり、料理を提供するたびにキッチンがランダムに燃え上がります。
+- 「アーケード公開」では使用できません。
+"""
 
 [[repositories]]
 enabled = true
@@ -621,10 +743,12 @@ name_i18n.zh-CN = "困难敌群 MOD"
 name_i18n.zh-TW = "困難敵群 MOD"
 name_i18n.en = "Hard Horde MOD"
 name_i18n.ko = "Hard Horde 난이도 MOD"
+name_i18n.ja = "ハードホード MOD"
 group_i18n.zh-CN = "玩法调整"
 group_i18n.zh-TW = "玩法調整"
 group_i18n.en = "Gameplay Tuning"
 group_i18n.ko = "게임플레이 조정"
+group_i18n.ja = "ゲームプレイ調整"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-HardHorde"
@@ -677,3 +801,11 @@ note_i18n.ko = """
 - 모든 적은 주문을 하나 더 먹어야 합니다(좀비 빵과 고추는 두 개, 사과는 세 개).
 - 각 웨이브가 끝나면 모든 적이 처치될 때까지 기다리지 않고 다음 웨이브가 시작됩니다.
 - 메뉴 생성 규칙이 독립적인 무작위 방식에서 일반 레벨의 생성 규칙으로 바뀝니다."""
+note_i18n.ja = """
+敵群モードの難易度を上げる MOD です。
+- ゲームのメインメニュー「設定 - MOD」で有効化します。既定では無効です。
+- ホストのみ有効化すれば効果があります（アーケードモードを含む）。
+- すべての敵は注文をもう1つ多く食べる必要があります（ゾンビパンとチリは2つ、リンゴは3つ）。
+- 各ウェーブが終了すると、すべての敵を倒すのを待たずに次のウェーブが始まります。
+- メニュー生成ルールが独立したランダム生成から通常レベルの生成ルールに変わります。
+"""

@@ -146,6 +146,8 @@ export interface PublicConfig {
   community_discovery?: CommunityDiscovery | null
   gitee_community_discovery?: CommunityDiscovery | null
   github_proxies: GitHubProxyConfig
+  /** 只用内置仓库源：官方入口不走 Gitee / GitHub raw 直链。 */
+  builtin_sources_only?: boolean
 }
 export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; has_residue: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
@@ -249,7 +251,7 @@ export interface TutorialStepConfig {
   title_i18n?: Partial<Record<TutorialLocale, string>>
   description_i18n?: Partial<Record<TutorialLocale, string>>
 }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string

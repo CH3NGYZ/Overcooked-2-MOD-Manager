@@ -245,6 +245,31 @@ const entries = {
   ],
   // 兼容列表：MOD 只和这些指定 MOD 的指定版本兼容（compatible 关系不满足）
   '不兼容': ['不相容', 'Incompatible', '비호환', '非互換'],
+  // 仅使用内置仓库源：跳过按地区选择 raw 直链
+  '仅使用内置仓库源': [
+    '僅使用內建倉庫來源',
+    'Use bundled sources only',
+    '내장 저장소 소스만 사용',
+    '組み込みソースのみ使用',
+  ],
+  '不访问 Gitee / GitHub 的仓库源直链，直接使用管理器自带的快照；自定义仓库源不受影响': [
+    '不存取 Gitee / GitHub 的倉庫來源直鏈，直接使用管理器自帶的快照；自訂倉庫來源不受影響',
+    'Skips the Gitee / GitHub raw source links and uses the snapshot shipped with the manager. Custom sources are not affected.',
+    'Gitee / GitHub raw 링크를 사용하지 않고 관리자에 포함된 스냅샷을 사용합니다. 사용자 지정 소스는 영향받지 않습니다.',
+    'Gitee / GitHub の raw リンクを使わず、マネージャー同梱のスナップショットを使用します。カスタムソースには影響しません。',
+  ],
+  '已切换到内置仓库源，刷新后生效': [
+    '已切換到內建倉庫來源，重新整理後生效',
+    'Switched to bundled sources. Refresh to apply.',
+    '내장 저장소 소스로 전환했습니다. 새로 고침 후 적용됩니다.',
+    '組み込みソースに切り替えました。更新後に反映されます。',
+  ],
+  '已恢复在线仓库源，刷新后生效': [
+    '已恢復線上倉庫來源，重新整理後生效',
+    'Restored online sources. Refresh to apply.',
+    '온라인 저장소 소스로 복원했습니다. 새로 고침 후 적용됩니다.',
+    'オンラインソースに戻しました。更新後に反映されます。',
+  ],
 
   // 安装前检查：依赖 / 冲突 / 兼容一次处理完
   '安装前检查': ['安裝前檢查', 'Pre-install check', '설치 전 검사', 'インストール前の確認'],

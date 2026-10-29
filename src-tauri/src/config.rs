@@ -498,6 +498,7 @@ impl ConfigService {
             community_discovery,
             gitee_community_discovery,
             github_proxies: config.github_proxies.clone(),
+            builtin_sources_only: config.builtin_sources_only,
         }
     }
 
@@ -915,6 +916,7 @@ fn default_config() -> AppConfig {
         source_repository_ids: Default::default(),
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
+        builtin_sources_only: false,
     }
 }
 
@@ -992,10 +994,18 @@ fn contains_legacy_repository_proxy_fields(text: &str) -> bool {
 }
 
 fn builtin_repository_sources() -> Vec<RepositorySource> {
-    builtin_repository_sources_for_region(current_user_region())
+    builtin_repository_sources_for_region(current_user_region(), false)
 }
 
-fn builtin_repository_sources_for_region(region: &str) -> Vec<RepositorySource> {
+/// 官方根源的地址：打开「仅用内置仓库源」时直接指向打包资源。
+///
+/// `repositories.toml` 是内置索引的路径，`SourceLocation` 会把它解析成
+/// 嵌入资源 —— 也就是回退时用的那一份。所以这个开关不需要第二套加载
+/// 逻辑，只是把源头换成同一棵树。
+pub(crate) fn builtin_repository_sources_for_region(
+    region: &str,
+    builtin_only: bool,
+) -> Vec<RepositorySource> {
     // Only the entry point is shipped with the application. Its children and
     // repositories belong to the live index, not the embedded tutorial snapshot.
     vec![RepositorySource {
@@ -1009,7 +1019,11 @@ fn builtin_repository_sources_for_region(region: &str) -> Vec<RepositorySource> 
             ("ja".into(), "公式リポジトリソース".into()),
         ]
         .into(),
-        url: crate::repository_sources::default_index_url(region).into(),
+        url: if builtin_only {
+            crate::repository_sources::BUILTIN_INDEX.into()
+        } else {
+            crate::repository_sources::default_index_url(region).into()
+        },
         region: None,
         builtin: true,
         parent_id: None,
@@ -1017,7 +1031,10 @@ fn builtin_repository_sources_for_region(region: &str) -> Vec<RepositorySource> 
 }
 
 fn synchronize_builtin_repository_sources(config: &mut AppConfig) -> bool {
-    merge_builtin_repository_sources(config, builtin_repository_sources())
+    merge_builtin_repository_sources(
+        config,
+        builtin_repository_sources_for_region(current_user_region(), config.builtin_sources_only),
+    )
 }
 
 fn merge_builtin_repository_sources(
@@ -2125,7 +2142,7 @@ url = "shared.toml"
         ] {
             merge_builtin_repository_sources(
                 &mut config,
-                builtin_repository_sources_for_region(region),
+                builtin_repository_sources_for_region(region, false),
             );
             assert_eq!(config.repository_sources.len(), 2);
             assert_eq!(
@@ -2137,7 +2154,7 @@ url = "shared.toml"
             assert_eq!(config.repository_sources[1], custom);
             assert!(!merge_builtin_repository_sources(
                 &mut config,
-                builtin_repository_sources_for_region(region)
+                builtin_repository_sources_for_region(region, false)
             ));
         }
     }
@@ -2253,6 +2270,77 @@ value = "MOD.dll"
             &mut config,
             vec![new_root]
         ));
+    }
+
+    /*
+     * 「仅使用内置仓库源」开关决定官方根源的入口地址。
+     *
+     * 打开时直接指向打包资源（`repositories.toml`），不再按地区选
+     * Gitee / GitHub 的 raw 直链；关闭时恢复地区默认地址。
+     * 这是整个功能的唯一切换点 —— 不需要第二套加载逻辑。
+     */
+    #[test]
+    fn builtin_sources_only_switch_selects_the_bundled_entry() {
+        for region in [REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL] {
+            let remote = builtin_repository_sources_for_region(region, false);
+            assert_eq!(remote.len(), 1);
+            assert_eq!(remote[0].id, crate::repository_sources::DEFAULT_INDEX_ID);
+            assert_eq!(
+                remote[0].url,
+                crate::repository_sources::default_index_url(region),
+                "关闭开关时应使用地区默认远端地址"
+            );
+            assert_ne!(
+                remote[0].url,
+                crate::repository_sources::BUILTIN_INDEX,
+                "远端地址不能等于内置路径"
+            );
+
+            let bundled = builtin_repository_sources_for_region(region, true);
+            assert_eq!(bundled.len(), 1);
+            assert_eq!(
+                bundled[0].url,
+                crate::repository_sources::BUILTIN_INDEX,
+                "打开开关时官方根应指向内置快照"
+            );
+            // 两个地区得到同一个内置入口 —— 这正是「不再按地区选择」的含义
+            assert_eq!(
+                bundled[0].url,
+                builtin_repository_sources_for_region(REGION_CHINESE_MAINLAND, true)[0].url
+            );
+            // 其余身份字段不受开关影响
+            assert_eq!(bundled[0].id, remote[0].id);
+            assert!(bundled[0].builtin);
+            assert!(bundled[0].parent_id.is_none());
+        }
+    }
+
+    /// 读取配置时按开关重建官方根，且保留自定义源与既有子源。
+    #[test]
+    fn config_load_applies_builtin_sources_only_to_the_official_root() {
+        let mut config = default_config();
+        config.builtin_sources_only = true;
+        config.repository_sources.push(RepositorySource {
+            id: "custom".into(),
+            nickname: "自定义".into(),
+            nickname_i18n: Default::default(),
+            url: "https://example.com/custom.toml".into(),
+            region: None,
+            builtin: false,
+            parent_id: None,
+        });
+
+        assert!(synchronize_builtin_repository_sources(&mut config));
+        let root = config
+            .repository_sources
+            .iter()
+            .find(|source| source.id == crate::repository_sources::DEFAULT_INDEX_ID)
+            .expect("官方根应存在");
+        assert_eq!(root.url, crate::repository_sources::BUILTIN_INDEX);
+        assert!(
+            config.repository_sources.iter().any(|s| s.id == "custom"),
+            "自定义源不应被开关影响"
+        );
     }
 
     #[test]

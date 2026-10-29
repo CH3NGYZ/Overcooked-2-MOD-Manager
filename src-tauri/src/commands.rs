@@ -1522,6 +1522,37 @@ pub fn save_settings(
     if let Some(value) = patch.download_threads {
         config.network.download_threads = value.clamp(1, 64);
     }
+    if let Some(value) = patch.builtin_sources_only {
+        config.builtin_sources_only = value;
+        /*
+         * 官方根源的地址必须同步改写，否则保存下去的配置仍指向远端。
+         *
+         * 读取配置时 `synchronize_builtin_repository_sources` 会按开关重建
+         * 内置根，但那是**下次读取**才生效；这里先重建一次，保证本次返回的
+         * 配置就已经指向正确入口（否则界面上的源地址要等重启才变）。
+         * 只替换「内置根」，子源与自定义源原样保留。
+         */
+        let mut rebuilt = crate::config::builtin_repository_sources_for_region(
+            crate::config::current_user_region(),
+            value,
+        );
+        rebuilt.extend(
+            config
+                .repository_sources
+                .into_iter()
+                .filter(|source| !(source.builtin && source.parent_id.is_none())),
+        );
+        config.repository_sources = rebuilt;
+        log::info!(
+            "「仅使用内置仓库源」已{}：官方根入口={}",
+            if value { "开启" } else { "关闭" },
+            if value {
+                crate::repository_sources::BUILTIN_INDEX
+            } else {
+                "地区默认远端地址"
+            }
+        );
+    }
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!(
         "应用设置保存完成：界面缩放={}，自动检测游戏={}，启动检查更新={}",

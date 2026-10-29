@@ -1,0 +1,69 @@
+[[repositories]]
+enabled = true
+# 仓库基本信息
+name_i18n.zh-CN = "DIYLevel 地图搜索"
+name_i18n.zh-TW = "DIYLevel 地圖搜尋"
+name_i18n.en = "DIYLevel Map Search"
+name_i18n.ko = "DIYLevel 맵 검색"
+name_i18n.ja = "DIYLevel マップ検索"
+group_i18n.zh-CN = "DIYLevel 优化"
+group_i18n.zh-TW = "DIYLevel 優化"
+group_i18n.en = "DIYLevel Optimization"
+group_i18n.ko = "DIYLevel 최적화"
+group_i18n.ja = "DIYLevel 最適化"
+provider = "github"
+username = "QingyuQingxue"
+repository = "Overcooked2-DIYLevelSearchTool"
+region = ""
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "stable"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [{ type = "exact", value = "OC2DIYLevelSearchTool.dll" }]
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.qingyu.overcooked.diylevelsearch"
+local_product_name = ""
+local_original_filename = "OC2DIYLevelSearchTool.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note_i18n.zh-CN = """
+1. 支持默认、按关卡集、按作者、按关卡名四种搜索方式。默认搜索会同时检索全部三类数据，当前 50 多套地图的规模下请优先使用默认搜索。
+2. 进入选图界面后可直接输入关键词，搜索结果即时显示。该界面已占用输入状态，无法按 `P` 呼出配置界面，请前往其他界面打开。
+3. 当搜索结果只匹配到关卡名时，进入地图集后仅显示目标关卡，可直接定位到想玩的那一关。
+- **配合阿哲的 `DIYLevel` 排序/体验优化 MOD（需先安装）使用时，其排序与搜索功能会自动关闭，缩略图、退出后重新选图和最后游玩标记等功能仍可正常使用。**
+"""
+note_i18n.zh-TW = """
+1. 支援預設、依關卡集、依作者、依關卡名四種搜尋方式。預設搜尋會同時檢索全部三類資料，目前 50 多套地圖的規模下請優先使用預設搜尋。
+2. 進入選圖介面後可直接輸入關鍵字，搜尋結果即時顯示。該介面已佔用輸入狀態，無法按 `P` 呼出設定介面，請前往其他介面開啟。
+3. 當搜尋結果只比對到關卡名時，進入地圖集後僅顯示目標關卡，可直接定位到想玩的那一關。
+- **配合阿哲的 `DIYLevel` 排序/體驗優化 MOD（需先安裝）使用時，其排序與搜尋功能會自動關閉，縮圖、結束後重新選圖和最後遊玩標記等功能仍可正常使用。**
+"""
+note_i18n.en = """
+1. Provides four search modes: default, by level set, by author, and by level name. The default mode searches all three data types at once, which is enough for the current 50+ map sets.
+2. The search text can be typed directly on the level selection screen and results update instantly. Because that screen captures input, you cannot press `P` there to open the configuration screen; open it from another screen instead.
+3. When only level names match, entering the map set shows just the matching levels, so you can jump straight to the level you want.
+- **Works together with Azhe's `DIYLevel` sorting / experience optimization MOD (required). Its sorting and search features are disabled automatically, while thumbnails, returning to the level selection screen after exiting, and the last-played marker keep working.**
+"""
+note_i18n.ko = """
+1. 기본 검색, 레벨 세트별, 제작자별, 레벨 이름별 검색의 네 가지 방식을 지원합니다. 기본 검색은 세 가지 데이터를 모두 검색하며, 현재 50여 개 지도 세트 규모에서는 기본 검색으로 충분합니다.
+2. 레벨 선택 화면에서 바로 검색어를 입력할 수 있고 검색 결과가 즉시 표시됩니다. 이 화면은 입력을 점유하므로 `P` 키로 설정 화면을 열 수 없으며, 다른 화면에서 열어야 합니다.
+3. 검색 결과가 레벨 이름에만 일치하면 지도 세트에 들어갔을 때 목표 레벨만 표시되어 원하는 레벨을 바로 찾을 수 있습니다.
+- **아제(Azhe)의 `DIYLevel` 정렬/체험 최적화 MOD(필수 설치)와 함께 사용하면 해당 MOD의 정렬 및 검색 기능이 자동으로 꺼지며, 썸네일, 종료 후 레벨 선택 화면 복귀, 마지막 플레이 표시 기능은 그대로 사용할 수 있습니다.**
+"""
+note_i18n.ja = """
+1. 既定、レベルセット別、作者別、レベル名別の4種類の検索方法に対応しています。既定の検索は3種類のデータをすべて検索するため、現在の50セット超のマップ規模では既定の検索で十分です。
+2. レベル選択画面でそのまま検索語を入力でき、検索結果は即時に表示されます。この画面は入力状態を占有するため `P` キーで設定画面を呼び出せません。別の画面から設定を開いてください。
+3. 検索結果がレベル名のみに一致した場合、マップセットに入ると対象のレベルのみが表示され、遊びたいレベルをすぐに探せます。
+- **阿哲（Azhe）の `DIYLevel` 並べ替え／体験最適化 MOD（別途インストールが必要）と併用すると、その並べ替えと検索機能は自動的に無効になりますが、サムネイル、終了後のレベル選択画面への復帰、最後にプレイしたレベルの表示は引き続き利用できます。**
+"""

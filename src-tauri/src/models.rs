@@ -668,6 +668,13 @@ pub struct AppConfig {
     pub github_proxies: GitHubProxyConfig,
     #[serde(default)]
     pub mod_notes: Vec<ModNote>,
+    /// 只用管理器自带的仓库源快照，不访问 Gitee / GitHub 的 raw 入口。
+    ///
+    /// 打开后官方根源的地址直接落到打包资源，不再按地区选择远端直链；
+    /// 这通常是「官方入口在这台机器上根本连不上」时的稳定退路，也让
+    /// 完全离线环境能列出仓库。自定义源不受影响 —— 那是用户明确添加的。
+    #[serde(default)]
+    pub builtin_sources_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -832,6 +839,9 @@ pub struct PublicConfig {
     pub gitee_community_discovery: Option<CommunityDiscovery>,
     #[serde(default)]
     pub github_proxies: GitHubProxyConfig,
+    /// 只用内置仓库源（不访问远端 raw 入口）。
+    #[serde(default)]
+    pub builtin_sources_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1074,6 +1084,8 @@ pub struct SettingsPatch {
     pub official_api_only: Option<bool>,
     pub timeout_seconds: Option<u64>,
     pub download_threads: Option<u32>,
+    /// 只用内置仓库源（不访问远端 raw 入口）。
+    pub builtin_sources_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

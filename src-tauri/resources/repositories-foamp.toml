@@ -5,10 +5,12 @@ name_i18n.zh-CN = "菜谱查看"
 name_i18n.zh-TW = "菜譜查看"
 name_i18n.en = "Recipe Viewer"
 name_i18n.ko = "레시피 보기"
+name_i18n.ja = "レシピビューア"
 group_i18n.zh-CN = "实用工具"
 group_i18n.zh-TW = "實用工具"
 group_i18n.en = "Utility Tools"
 group_i18n.ko = "유틸리티 도구"
+group_i18n.ja = "便利ツール"
 provider = "github"
 username = "foamp"
 repository = "Overcooked2RecipeViewer"
@@ -20,7 +22,7 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 32
+download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -173,3 +175,37 @@ BepInEx 기반의 《Overcooked! 2》 레시피 보기 모드입니다. 게임�
 ## 문제 신고
 
 문제가 발생하면 [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues)에 게임 및 모드 버전, 스테이지와 플레이어 수, 재현 방법, `BepInEx\LogOutput.log`의 관련 로그를 첨부해 주세요. UI 문제의 경우 스크린샷을 함께 첨부하면 좋습니다.'''
+note_i18n.ja = """
+BepInEx ベースの《Overcooked! 2》レシピビューア MOD です。ゲーム本来のレシピカードを使って現在のレベルの利用可能なレシピをすべて表示し、事前の確認や整理、共有をしやすくします。
+
+**これはレシピの表示・並べ替え・共有ツールです。ビューア内の表示とレイアウトのみを変更し、実際の注文、注文生成ロジック、提供順、タイマー、スコアは変更しません。**
+
+## 機能
+
+- 公式レベルに加え、ゲーム標準のレシピデータを提供するカスタムマップに対応します。
+- 現在のレベルのレシピを表示し、調理器具別の並べ替えなど複数の並べ替え方法に対応します。
+- レシピの位置や行全体の順序をドラッグで調整でき、レイアウトを自由に整理できます。
+- レベルごとにカスタムレイアウトを自動保存し、複数のレイアウトの保存・切り替えもできます。
+- スクロール、ズーム、レシピ全体の PNG 書き出し、クリップボードへのコピーに対応します。
+- ゲームの言語に応じて中国語または英語のインターフェースを自動的に使用します。
+
+## 使い方
+
+レベルに入った後、`Insert` キーを押すとレシピビューアが開きます。ツールバーから並べ替え方法の選択、レイアウトの保存、画像の書き出しができます。
+**Overcooked2RecipeViewer** の設定は《BepInEx コンフィグマネージャー》から行えます。
+
+## ショートカット
+
+| 操作 | キー / マウス |
+| --- | --- |
+| ビューアの表示 / 閉じる | **Insert**（既定、設定で変更可能） |
+| 縦スクロール | **マウスホイール** / **PageUp、PageDown** |
+| 横スクロール | **Shift + ホイール** |
+| ズーム（50%–200%） | **Ctrl + ホイール** |
+| レシピの移動 | レシピカードをドラッグ |
+| 行全体の移動 | 行の左側のハンドルをドラッグ |
+
+## 問題報告
+
+問題が発生した場合は [Issues](https://github.com/foamp/Overcooked2RecipeViewer/issues) にアクセスし、ゲームと MOD のバージョン、レベルと人数、再現手順、`BepInEx\\LogOutput.log` の関連ログを添えてください。UI の問題はスクリーンショットがあると助かります。
+"""

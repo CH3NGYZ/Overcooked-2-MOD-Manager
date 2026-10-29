@@ -5,10 +5,12 @@ name_i18n.zh-CN = "DIYLevel 快速载入"
 name_i18n.zh-TW = "DIYLevel 快速載入"
 name_i18n.en = "DIYLevel Fast Init"
 name_i18n.ko = "DIYLevel 빠른 로딩"
-group_i18n.zh-CN = "性能优化"
-group_i18n.zh-TW = "效能優化"
-group_i18n.en = "Performance Optimization"
-group_i18n.ko = "성능 최적화"
+name_i18n.ja = "DIYLevel 高速読み込み"
+group_i18n.zh-CN = "DIYLevel 优化"
+group_i18n.zh-TW = "DIYLevel 優化"
+group_i18n.en = "DIYLevel Optimization"
+group_i18n.ko = "DIYLevel 최적화"
+group_i18n.ja = "DIYLevel 最適化"
 provider = "github"
 username = "kfyangc"
 repository = "Overcooked2-DIYLevelFastInit"
@@ -20,12 +22,10 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 32
+download_threads = 1
 
 # 版本资产规则
-asset_rules = [
-  { type = "exact", value = "DIYLevelFastInit.dll" },
-]
+asset_rules = [{ type = "exact", value = "DIYLevelFastInit.dll" }]
 
 # 本地 MOD 识别绑定
 plugin_guid = "oc2.diylevel.fastinit"
@@ -41,3 +41,4 @@ note_i18n.zh-CN = """优化 DIYLevel 加载地图流程，避免进入餐车时�
 note_i18n.zh-TW = """最佳化 DIYLevel 載入地圖的流程，避免進入餐車時因大量關卡資源載入而長時間卡頓。"""
 note_i18n.en = """Optimized the DIYLevel map loading process to prevent long freezes when entering the food truck due to loading a large number of level assets."""
 note_i18n.ko = """DIYLevel의 맵 로딩 과정을 최적화하여, 다량의 레벨 리소스를 불러오는 동안 푸드 트럭 진입 시 장시간 멈추는 현상을 방지했습니다."""
+note_i18n.ja = """DIYLevel のマップ読み込み処理を最適化し、大量のレベルリソースの読み込みによってフードトラックに入る際に長時間固まるのを防ぎます。"""

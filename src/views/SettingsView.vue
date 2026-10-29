@@ -257,8 +257,33 @@ async function confirmDisableRecycle() {
   )
 }
 
-/* ===== API 凭据 ===== */
-/** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
+/* ===== 仅使用内置仓库源 ===== */
+
+const builtinSourcesOnly = computed(() => config.value?.builtin_sources_only === true)
+const switchingBuiltinSources = ref(false)
+
+/**
+ * 切换「仅使用内置仓库源」。
+ *
+ * 保存后后端会同步改写官方根源的地址，所以**必须**把返回的配置写回
+ * `config.value` —— 否则开关状态要等下一次 Dashboard 读取才更新。
+ */
+async function toggleBuiltinSourcesOnly(value: boolean) {
+  if (switchingBuiltinSources.value) return
+  switchingBuiltinSources.value = true
+  try {
+    config.value = await api.saveSettings({ builtin_sources_only: value })
+    message.success(value
+      ? t('已切换到内置仓库源，刷新后生效')
+      : t('已恢复在线仓库源，刷新后生效'))
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    switchingBuiltinSources.value = false
+  }
+}
+
+/* ===== API 凭据 ===== *//** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
 async function saveTokens() {
   savingTokens.value = true
   try {
@@ -364,6 +389,18 @@ async function clearTokens() {
         <!-- 开关本身不阻止点击：关闭时要先弹风险确认，由 toggle 决定是否真的写入 -->
         <n-switch size="small" :value="recycleDeletedMods"
           @update:value="toggleRecycleDeletedMods" />
+      </template>
+    </SettingsRow>
+    <!--
+      仅使用内置仓库源：官方入口不再按地区选 Gitee / GitHub 的 raw 直链，
+      直接读管理器自带的快照。适合「官方入口在这台机器上连不上」或需要
+      完全离线的场景；自定义仓库源不受影响。
+    -->
+    <SettingsRow :title="t('仅使用内置仓库源')"
+      :description="t('不访问 Gitee / GitHub 的仓库源直链，直接使用管理器自带的快照；自定义仓库源不受影响')">
+      <template #right>
+        <n-switch size="small" :value="builtinSourcesOnly" :loading="switchingBuiltinSources"
+          @update:value="toggleBuiltinSourcesOnly" />
       </template>
     </SettingsRow>
   </SettingsGroup>

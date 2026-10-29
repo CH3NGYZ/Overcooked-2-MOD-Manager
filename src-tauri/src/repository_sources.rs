@@ -555,6 +555,19 @@ pub(crate) fn parse_document(
             repository.region.as_deref(),
             &format!("仓库 {}", repository.name),
         );
+        /*
+         * 顺序很重要：**先校验原文，再归一化**。
+         *
+         * 反过来做（先归一化）会把 `platform = "linux"` 悄悄变成 None，
+         * 校验阶段再也看不到非法值 —— 一个本该拒绝的配置会静默变成
+         * 「全平台可用」。归一化只负责把空串/别名整理成规范值。
+         */
+        crate::config::validate_repository_platform(
+            repository.platform.as_deref(),
+            &repository.name,
+        )?;
+        repository.platform =
+            crate::config::normalize_repository_platform(repository.platform.as_deref());
         validate_repository(repository)?;
     }
     for proxy_source in &mut document.github_proxy_sources {

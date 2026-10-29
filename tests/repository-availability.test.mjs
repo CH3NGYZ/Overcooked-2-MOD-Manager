@@ -196,3 +196,89 @@ test('没有翻译表时退回单语镜像值', () => {
   const legacy = [{ id: OFFICIAL_INDEX_ID, nickname: '官方仓库源', parent_id: undefined }]
   assert.equal(shouldFallbackToBuiltin(legacy, [], ['官方仓库源: timeout']), true)
 })
+
+/* ===== 平台限定（与 region 同语义层）===== */
+
+const { repositoryPlatformMatches, normalizeRepositoryPlatform } = await import(
+  '../src/repositoryAvailability.ts'
+)
+
+test('平台为空或缺失时全平台可用', () => {
+  assert.equal(repositoryPlatformMatches(undefined, 'windows'), true)
+  assert.equal(repositoryPlatformMatches('', 'windows'), true)
+  assert.equal(repositoryPlatformMatches('  ', 'macos'), true)
+  assert.equal(normalizeRepositoryPlatform(undefined), '')
+})
+
+test('平台限定只对匹配的平台可用', () => {
+  assert.equal(repositoryPlatformMatches('windows', 'windows'), true)
+  assert.equal(repositoryPlatformMatches('windows', 'macos'), false)
+  assert.equal(repositoryPlatformMatches('macos', 'macos'), true)
+  assert.equal(repositoryPlatformMatches('macos', 'windows'), false)
+})
+
+test('平台别名归一化（win / mac / osx / darwin）', () => {
+  assert.equal(normalizeRepositoryPlatform('win'), 'windows')
+  assert.equal(normalizeRepositoryPlatform('WIN'), 'windows')
+  assert.equal(normalizeRepositoryPlatform('mac'), 'macos')
+  assert.equal(normalizeRepositoryPlatform('osx'), 'macos')
+  assert.equal(normalizeRepositoryPlatform('darwin'), 'macos')
+  // linux 归入 windows（本项目 Linux 走 Wine 跑 Windows 版 MOD），
+  // 见下面单独的测试；这里只验真正无法识别的值
+  assert.equal(normalizeRepositoryPlatform('freebsd'), '')
+})
+
+test('repositoryIsAvailable 把平台不适用当作「不存在」', () => {
+  const macOnly = { enabled: true, region: undefined, source_id: undefined, platform: 'macos' }
+  assert.equal(repositoryIsAvailable(macOnly, undefined, undefined, 'macos'), true)
+  assert.equal(repositoryIsAvailable(macOnly, undefined, undefined, 'windows'), false)
+  /*
+   * 不传平台时按本机构建目标判断，而不是跳过过滤。
+   * 「忘了传参数」若等于「平台限定失效」，那种失效没有任何报错，
+   * 只会让本该隐藏的仓库悄悄出现在别的平台列表里。
+   * Node 下没有 navigator，回落到 windows，所以 macOS 专属仓库不可用。
+   */
+  assert.equal(repositoryIsAvailable(macOnly, undefined, undefined), false)
+})
+
+/* 内置源：只有 MacosControllerFix 限定 macOS，其余全平台 */
+test('内置仓库源里只有 macOS 手柄修复限定了平台', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs')
+  const dir = new URL('../src-tauri/resources/', import.meta.url)
+  const files = readdirSync(dir).filter((name) =>
+    name.startsWith('repositories-') && name.endsWith('.toml') && name !== 'repositories-proxies.toml')
+
+  let totalRepos = 0
+  let totalPlatformLines = 0
+  const macOnly = []
+  for (const file of files) {
+    const text = readFileSync(new URL(file, dir), 'utf8').replace(/\r\n/g, '\n')
+    // 按 [[repositories]] 切块，逐块检查
+    const blocks = text.split(/^\[\[repositories\]\]$/m).slice(1)
+    for (const block of blocks) {
+      totalRepos += 1
+      const platform = block.match(/^platform = "(.*)"$/m)
+      if (platform) totalPlatformLines += 1
+      if (platform && platform[1].trim() === 'macos') {
+        const repo = block.match(/^repository = "(.*)"$/m)
+        macOnly.push(repo ? repo[1] : '(unknown)')
+      }
+      // 不允许出现其它平台限定
+      if (platform && platform[1].trim() && platform[1].trim() !== 'macos') {
+        assert.fail(`${file} 出现非预期平台限定：${platform[1]}`)
+      }
+    }
+  }
+
+  assert.equal(totalRepos, totalPlatformLines, '每个仓库都应有 platform 字段')
+  assert.deepEqual(macOnly, ['Overcooked-2-MacosControllerFix'], '只有 macOS 手柄修复限定 macOS')
+})
+
+/* Linux 归入 windows：本项目 Linux 走 Wine 跑 Windows 版 MOD。
+ * 不归一会导致「PublicConfig.platform = linux」被当成无法识别，
+ * 连平台上限定 windows 的仓库都被过滤掉。 */
+test('linux 平台归入 windows', () => {
+  assert.equal(normalizeRepositoryPlatform('linux'), 'windows')
+  assert.equal(repositoryPlatformMatches('windows', 'linux'), true)
+  assert.equal(repositoryPlatformMatches('macos', 'linux'), false)
+})

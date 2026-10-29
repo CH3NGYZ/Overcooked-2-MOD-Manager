@@ -79,7 +79,9 @@ function store() {
   const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
   /** 当前地区决定哪些源/仓库真实存在；空值按「非中国大陆」处理，与后端一致。 */
   const region = computed(() => config.value?.region)
-  return { load, reloadConfig, applyConfigSnapshot, sources, repositories, mods, region }
+  /** 当前平台决定只看专属某平台的仓库（与 region 同语义层）。 */
+  const platform = computed(() => config.value?.platform)
+  return { load, reloadConfig, applyConfigSnapshot, sources, repositories, mods, region, platform }
 }
 
 /**
@@ -358,7 +360,7 @@ async function refreshEverything(): Promise<string[]> {
   refreshingAll.value = true
   lastErrors.value = []
   try {
-    const { load, reloadConfig, applyConfigSnapshot, repositories, sources, mods, region } = store()
+    const { load, reloadConfig, applyConfigSnapshot, repositories, sources, mods, region, platform } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await load()
     /*
@@ -438,7 +440,8 @@ async function refreshEverything(): Promise<string[]> {
      * 这两类既不显示也不刷新，前端不会为它们发出任何请求。
      */
     const ordered = prioritizeInstalledRepositories(
-      repositories.value.filter((repo) => repositoryIsAvailable(repo, sources.value, region.value)),
+      repositories.value.filter((repo) =>
+        repositoryIsAvailable(repo, sources.value, region.value, platform.value)),
       mods.value,
     )
     const releaseErrors = await refreshMany(ordered)

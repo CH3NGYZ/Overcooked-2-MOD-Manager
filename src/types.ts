@@ -1,4 +1,11 @@
 export type Provider = 'github' | 'gitee'
+/**
+ * 仓库支持的桌面平台。
+ *
+ * 只发布 Windows 与 macOS 两个平台；Linux 走 Wine 运行 Windows 版 MOD，
+ * 因此归入 `windows`。空值 / 缺失表示全平台可用。
+ */
+export type RepositoryPlatform = 'windows' | 'macos' | ''
 export type AppPlatform = 'windows' | 'linux' | 'macos'
 export type GameRuntime = 'wine' | 'native'
 export type Channel = 'stable' | 'beta' | 'all'
@@ -100,6 +107,8 @@ export interface Repository {
   branch: string
   file_path: string
   region?: string
+  /** 支持的桌面平台；空 / 缺失表示全平台可用（与 region 同语义层）。 */
+  platform?: RepositoryPlatform
   channel: Channel
   asset_rules: AssetRule[]
   install_target: string
@@ -282,6 +291,8 @@ export interface RepositoryPatch {
   branch: string
   file_path: string
   region?: string
+  /** 支持的桌面平台；空 / 缺失表示全平台可用。 */
+  platform?: RepositoryPlatform
   channel: Channel
   asset_rules: AssetRule[]
   install_target: string

@@ -183,7 +183,7 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
  */
 const repositories = computed<Repository[]>(() =>
   (config.value?.repositories ?? []).filter((repo) =>
-    repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value),
+    repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
   ),
 )
 const sources = computed<RepositorySource[]>(() =>
@@ -568,7 +568,7 @@ async function refreshSource(node: SourceNode) {
    */
   const scoped = repositories.value.filter(
     (repo) => !!repo.source_id && ids.has(repo.source_id)
-      && repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value),
+      && repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
   )
   const releaseErrors = await engine.refreshMany(scoped)
   releaseErrors.forEach((error) => message.error(error))
@@ -587,7 +587,7 @@ async function refreshAll() {
 async function refreshGroup(group: GroupNode) {
   // 组内不可用的仓库同样跳过刷新（分组由已筛选列表派生，这里再校验一次）
   const errors = await engine.refreshMany(group.repos.filter(
-    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value),
+    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
   ))
   errors.forEach((error) => message.error(error))
 }

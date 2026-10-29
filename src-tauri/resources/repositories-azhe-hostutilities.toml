@@ -15,6 +15,7 @@ provider = "github"
 username = "BepInEx"
 repository = "BepInEx.ConfigurationManager"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "release"
@@ -64,6 +65,7 @@ provider = "github"
 username = "y0soro"
 repository = "Unity.IMGUI.HiDPI.Patcher"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "release"
@@ -112,6 +114,7 @@ provider = "gitee"
 username = "ch3ngyz"
 repository = "Overcooked-2-HostUtilities-Stable-Releases"
 region = "chinese_mainland"
+platform = ""
 
 # 下载方式
 download_mode = "release"
@@ -187,6 +190,7 @@ provider = "gitee"
 username = "ch3ngyz"
 repository = "Overcooked-2-HostUtilities-Beta-Releases"
 region = "chinese_mainland"
+platform = ""
 
 # 下载方式
 download_mode = "release"
@@ -262,6 +266,7 @@ provider = "github"
 username = "CH3NGYZ"
 repository = "Overcooked-2-HostUtilities-Stable-Releases"
 region = "international"
+platform = ""
 
 # 下载方式
 download_mode = "release"
@@ -337,6 +342,7 @@ provider = "github"
 username = "CH3NGYZ"
 repository = "Overcooked-2-HostUtilities-Beta-Releases"
 region = "international"
+platform = ""
 
 # 下载方式
 download_mode = "release"

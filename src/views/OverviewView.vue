@@ -210,7 +210,7 @@ function openLocalMods() {
  */
 const onlineRepositories = computed(() =>
   (config.value?.repositories ?? []).filter(
-    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, config.value?.region),
+    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, config.value?.region, config.value?.platform),
   ))
 
 /** 其中刷新报错的那些。隐藏的仓库不算，它们本来就不参与刷新。 */

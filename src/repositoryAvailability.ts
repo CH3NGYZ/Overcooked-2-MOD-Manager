@@ -35,6 +35,35 @@ export function sourceMatchesRegion(source: Pick<RepositorySource, 'region'>, cu
   return repositoryRegionMatches(source.region, currentRegion)
 }
 
+/**
+ * 归一化仓库的平台字段。
+ *
+ * 空值 / 缺失 / 无法识别都返回 `''`（全平台可用）——与后端
+ * `config::normalize_repository_platform` 保持一致。
+ *
+ * **`linux` 归入 `windows`**：本项目 Linux 走 Wine 运行 Windows 版 MOD，
+ * 与 Windows 用的是同一批文件。不这样归一的话，Linux 上
+ * `PublicConfig.platform` 传下来是 `linux`，会被当作「无法识别」，
+ * 结果平台上限定 windows 的仓库也被过滤掉。
+ */
+export function normalizeRepositoryPlatform(platform: string | undefined): string {
+  const value = platform?.trim().toLowerCase()
+  if (!value) return ''
+  if (value === 'windows' || value === 'win' || value === 'linux') return 'windows'
+  if (value === 'macos' || value === 'mac' || value === 'osx' || value === 'darwin') return 'macos'
+  return ''
+}
+
+/** 仓库是否适用于当前平台。空平台表示全平台可用。 */
+export function repositoryPlatformMatches(
+  platform: string | undefined,
+  currentPlatform: string | undefined,
+): boolean {
+  const required = normalizeRepositoryPlatform(platform)
+  if (!required) return true
+  return required === normalizeRepositoryPlatform(currentPlatform)
+}
+
 /** 仓库所属来源；来源已从配置中删除时返回 undefined。 */
 export function repositorySource(
   repo: Pick<Repository, 'source_id'>,
@@ -58,15 +87,39 @@ export function repositorySource(
  * （官方已收录的社区副本被置 `enabled=false`），不在地区维度表达。
  */
 export function repositoryIsAvailable(
-  repo: Pick<Repository, 'enabled' | 'region' | 'source_id'>,
+  repo: Pick<Repository, 'enabled' | 'region' | 'source_id' | 'platform'>,
   sources: Pick<RepositorySource, 'id' | 'region'>[] | undefined,
   currentRegion: string | undefined,
+  currentPlatform?: string,
 ): boolean {
   if (!repo.enabled) return false
   if (!repositoryRegionMatches(repo.region, currentRegion)) return false
+  /*
+   * 平台不适用与地区不适用同义：仓库在当前环境「不存在」。
+   *
+   * 不传 `currentPlatform` 时按**本机构建目标**判断，而不是跳过过滤 ——
+   * 「忘了传参数」不该变成「平台限定失效」：那样的失效没有任何报错，
+   * 只会让本该隐藏的仓库悄悄出现在别的平台列表里。
+   */
+  const platform = normalizeRepositoryPlatform(currentPlatform) || buildPlatform()
+  if (!repositoryPlatformMatches(repo.platform, platform)) return false
   if (!repo.source_id) return true
   const source = repositorySource(repo, sources)
   return !!source && sourceMatchesRegion(source, currentRegion)
+}
+
+/**
+ * 前端运行平台（编译期常量）。
+ *
+ * 与后端 `config::current_platform` 一致：Linux 归入 `windows` ——
+ * 本项目 Linux 走 Wine 运行 Windows 版 MOD，用的是同一批文件。
+ *
+ * Node 下没有 `navigator`（本模块要能被 `node --test` 直接引用），
+ * 此时回落到 `windows`：测试里凡是关心平台的都用显式参数，不依赖这里。
+ */
+function buildPlatform(): string {
+  const platform = typeof navigator === 'undefined' ? '' : navigator.platform ?? ''
+  return /Mac/i.test(platform) ? 'macos' : 'windows'
 }
 
 /** 与后端 `repository_sources::DEFAULT_INDEX_ID` 一致。 */

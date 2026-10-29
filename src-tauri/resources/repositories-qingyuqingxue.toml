@@ -15,6 +15,7 @@ provider = "github"
 username = "QingyuQingxue"
 repository = "Overcooked2-DIYLevelSearchTool"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "release"

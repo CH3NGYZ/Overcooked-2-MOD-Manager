@@ -1506,6 +1506,7 @@ mod tests {
             file_path: String::new(),
             region: None,
             channel: crate::models::Channel::All,
+            platform: None,
             asset_rules: Vec::new(),
             install_target: String::new(),
             note: String::new(),

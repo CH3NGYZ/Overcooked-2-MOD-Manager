@@ -15,6 +15,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-LevelEditor"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "release"
@@ -398,6 +399,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-ThrowAny"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "repository_file"
@@ -472,6 +474,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-Jetpack"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "repository_file"
@@ -551,6 +554,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-ManyRecipes"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "repository_file"
@@ -625,6 +629,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-HostColor"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "repository_file"
@@ -684,6 +689,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-Randomizer"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "repository_file"
@@ -753,6 +759,7 @@ provider = "github"
 username = "gua248"
 repository = "Overcooked2-HardHorde"
 region = ""
+platform = ""
 
 # 下载方式
 download_mode = "repository_file"

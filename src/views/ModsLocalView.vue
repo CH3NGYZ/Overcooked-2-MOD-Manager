@@ -130,13 +130,14 @@ async function checkUpdates() {
    *   · 同一仓库只刷一次：多个 MOD 常来自同一个仓库（同一个包里的多个 DLL）。
    */
   const region = config.value?.region
+  const platform = config.value?.platform
   const sources = config.value?.repository_sources
   const targets = new Map<string, Repository>()
   for (const mod of effectiveMods.value) {
     if (mod.is_dependency) continue
     const repo = repositoryForMod(repositories.value, mod)
     if (!repo) continue
-    if (!repositoryIsAvailable(repo, sources, region)) continue
+    if (!repositoryIsAvailable(repo, sources, region, platform)) continue
     if (repo.download_mode === 'repository_file') continue
     targets.set(repo.id, repo)
   }

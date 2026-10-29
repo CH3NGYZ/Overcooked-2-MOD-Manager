@@ -4463,6 +4463,7 @@ pub fn save_repository(
         branch: patch.branch.trim().to_string(),
         file_path: patch.file_path.trim().replace('\\', "/"),
         region: normalized_region,
+        platform: crate::config::normalize_repository_platform(patch.platform.as_deref()),
         channel: patch.channel,
         asset_rules,
         install_target: patch.install_target,

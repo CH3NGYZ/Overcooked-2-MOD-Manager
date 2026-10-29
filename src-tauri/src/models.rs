@@ -523,6 +523,7 @@ const REPOSITORY_FIELD_NAMES: &[&str] = &[
     "branch",
     "file_path",
     "region",
+    "platform",
     "channel",
     "asset_rules",
     "install_target",
@@ -592,6 +593,16 @@ pub struct RepositoryConfig {
     pub file_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// 这个 MOD 支持的桌面平台；`None` / 缺失表示全平台可用。
+    ///
+    /// 与 `region` 同一语义层：不适用就等于**不存在**（不展示、不刷新、
+    /// 不参与绑定与更新统计），而不是「存在但不显示」——否则前端会替一个
+    /// 用户看不见的仓库发请求，失败时弹出一条无从处理的错误。
+    ///
+    /// 为什么需要它：有些 MOD 只对特定平台有意义（例如 macOS 手柄修复），
+    /// 在别的平台上装上也毫无作用，却会占满列表并参与更新检测。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
     #[serde(default)]
     pub channel: Channel,
     #[serde(default)]
@@ -905,6 +916,9 @@ pub struct RepositoryExport {
     pub group_i18n: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// 支持的桌面平台（`windows` / `macos`）；`None` 表示全平台可用。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
     pub username: String,
     pub repository: String,
     pub enabled: bool,
@@ -1174,6 +1188,9 @@ pub struct RepositoryPatch {
     pub file_path: String,
     #[serde(default)]
     pub region: Option<String>,
+    /// 支持的桌面平台（`windows` / `macos`）；`None` 表示全平台可用。
+    #[serde(default)]
+    pub platform: Option<String>,
     #[serde(default)]
     pub channel: Channel,
     pub asset_rules: Vec<AssetRule>,

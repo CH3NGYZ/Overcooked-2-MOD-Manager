@@ -685,7 +685,7 @@ defineExpose({ refreshAll, visibleCount })
                   :class="{ active: detailId === repo.id, 'focus-flash': highlightId === repo.id }"
                   @click="detailId = repo.id">
                   <div class="card-head">
-                    <ProviderIcon :provider="repo.provider" :size="30" />
+                    <ProviderIcon :provider="repo.provider" :owner="repo.username" :size="30" />
                     <!--
                       关系提示：**只做提示，不做入口**。
                       真正的处理（卸冲突、换版本、装依赖）在点底部「安装」时
@@ -809,7 +809,7 @@ defineExpose({ refreshAll, visibleCount })
                 :class="{ active: detailId === repo.id, 'focus-flash': highlightId === repo.id }"
                 @click="detailId = repo.id">
                 <div class="card-head">
-                  <ProviderIcon :provider="repo.provider" :size="30" />
+                  <ProviderIcon :provider="repo.provider" :owner="repo.username" :size="30" />
                   <!-- 关系提示：社区仓库卡片与上方源码树卡片共用同一套判定（只提示，不做入口） -->
                   <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
                     class="state-tag dep-tag"

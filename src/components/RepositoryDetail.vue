@@ -6,6 +6,7 @@ import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
+import ProviderIcon from './ProviderIcon.vue'
 import type { Repository, RepositoryReadme } from '../types'
 
 const props = defineProps<{
@@ -220,7 +221,11 @@ async function openUrl(url: string) {
   <div v-if="repo" class="detail">
     <header class="detail-head">
       <div class="head-main">
-        <span class="tile">{{ (name[0] || '?').toUpperCase() }}</span>
+        <!--
+          与卡片同一个图标组件：优先仓库头像，加载失败回落平台图标。
+          原来这里显示的是名称首字母，同一仓库在卡片和详情里长得不一样。
+        -->
+        <ProviderIcon :provider="repo.provider" :owner="repo.username" :size="38" />
         <div class="head-text">
           <b>{{ name }}</b>
           <!-- 渠道 · 用户/仓库 · Release/Raw：后两段可点 -->
@@ -383,18 +388,6 @@ async function openUrl(url: string) {
   gap: 16px;
 }
 .head-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.tile {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  font-size: 18px;
-  font-weight: 700;
-  color: #fff;
-  background: linear-gradient(135deg, var(--oc2-accent), var(--oc2-accent-hover));
-}
 .head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .head-text b { font-size: 16px; color: var(--oc2-text-1); }
 /* 渠道 · 用户/仓库 · Release/Raw */

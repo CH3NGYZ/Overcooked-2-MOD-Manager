@@ -1,14 +1,51 @@
 <script setup lang="ts">
 /**
- * 仓库渠道图标：GitHub / Gitee 的品牌 SVG。
- * 用内联 SVG 而不是字体或图片，保证缩放、主题与高分屏下都清晰。
+ * 仓库图标：优先显示仓库头像，没有 / 加载失败时回落到平台图标。
+ *
+ * 头像地址是按平台的确定性规则拼出来的，不需要额外 API 请求：
+ *   GitHub  `https://github.com/{owner}.png?size=64`
+ *   Gitee   `https://gitee.com/{owner}.png?size=64`
+ * 两者都会 302 跳到真实的图片地址，WebView 直接加载即可（CSP 已允许 https:）。
+ *
+ * 为什么必须保留回落：头像可能 404（组织改名、私有账号）、可能被网络环境
+ * 挡住、也可能加载很慢。这三种情况下继续显示空白方块，比直接显示平台图标
+ * 更糟 —— 用户会以为卡片坏了。所以加载失败**立刻**切回平台图标。
  */
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Provider } from '../types'
 
-const props = defineProps<{ provider: Provider; size?: number }>()
+const props = defineProps<{
+  provider: Provider
+  /** 仓库所有者的用户名 / 组织名；留空则只显示平台图标。 */
+  owner?: string
+  size?: number
+}>()
 
 const box = computed(() => props.size ?? 30)
+
+/**
+ * 头像地址。
+ *
+ * `size=64` 是为高分屏：卡片上显示 30px，取大一点再缩下来才不会发虚。
+ */
+const avatarUrl = computed(() => {
+  const owner = props.owner?.trim()
+  if (!owner) return null
+  // 用户名里不可能有斜杠，但仍做一次编码，避免拼出畸形 URL
+  const encoded = encodeURIComponent(owner)
+  return props.provider === 'gitee'
+    ? `https://gitee.com/${encoded}.png?size=64`
+    : `https://github.com/${encoded}.png?size=64`
+})
+
+/**
+ * 头像是否可用。
+ *
+ * 初值为「有地址就试」，`@error` 时置 false。owner 变化时重置 —— 否则
+ * 上一条仓库加载失败后，换到一条能加载的会一直显示平台图标。
+ */
+const avatarOk = ref(!!avatarUrl.value)
+watch(avatarUrl, () => { avatarOk.value = !!avatarUrl.value })
 
 /** GitHub 官方 mark（simple-icons 路径），跟随文字颜色以适配深浅主题。 */
 const GITHUB =
@@ -20,12 +57,20 @@ const GITEE =
 
 const path = computed(() => (props.provider === 'gitee' ? GITEE : GITHUB))
 const label = computed(() => (props.provider === 'gitee' ? 'Gitee' : 'GitHub'))
+/** 有头像时用仓库 owner 做提示，比平台名更有用。 */
+const title = computed(() => (avatarOk.value && props.owner ? props.owner : label.value))
 </script>
 
 <template>
   <span class="provider-icon" :class="`provider-icon--${provider}`" :style="{ width: `${box}px`, height: `${box}px` }"
-    :title="label" :aria-label="label" role="img">
-    <svg viewBox="0 0 24 24" :width="box * 0.62" :height="box * 0.62" aria-hidden="true">
+    :title="title" :aria-label="title" role="img">
+    <!--
+      头像：懒加载 + 失败即回落。`referrerpolicy=no-referrer` 是因为
+      GitHub 的头像 CDN 对部分来源会拒绝请求，去掉 Referer 最稳。
+    -->
+    <img v-if="avatarUrl && avatarOk" :src="avatarUrl" :alt="title" class="provider-avatar"
+      loading="lazy" decoding="async" referrerpolicy="no-referrer" @error="avatarOk = false" />
+    <svg v-else viewBox="0 0 24 24" :width="box * 0.62" :height="box * 0.62" aria-hidden="true">
       <path :d="path" fill="currentColor" />
     </svg>
   </span>
@@ -39,6 +84,13 @@ const label = computed(() => (props.provider === 'gitee' ? 'Gitee' : 'GitHub'))
   border-radius: 8px;
   border: 1px solid var(--oc2-row-line);
   background: var(--oc2-sunken);
+  overflow: hidden;
+}
+.provider-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 /* GitHub：黑白随主题；Gitee：品牌红 */
 .provider-icon--github { color: var(--oc2-text-1); }

@@ -16,6 +16,7 @@ import {
 import { api } from '../services/tauri'
 import { t } from '../i18n'
 import { setPageTitleOverride } from '../pageHeader'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 
@@ -364,7 +365,8 @@ async function copyCode() {
     await api.copyText(code.value)
     message.success(t('已复制，可粘贴到街机MOD 的多彩名字菜单'))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    // 后端可能回 tag，必须经过翻译层，不能直接显示原始 message
+    message.error(backendMessageOf(reason))
   }
 }
 
@@ -373,9 +375,11 @@ async function pushToMod() {
   pushing.value = true
   try {
     const result = await api.pushColorfulName(code.value)
-    result.ok ? message.success(result.message || t('已推送到 街机MOD')) : message.error(result.message)
+    result.ok
+      ? message.success(result.message || t('已推送到 街机MOD'))
+      : message.error(translateBackendMessage(result.message))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     pushing.value = false
   }

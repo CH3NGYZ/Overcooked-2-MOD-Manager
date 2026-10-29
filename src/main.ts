@@ -3,6 +3,7 @@ import App from './App.vue'
 import { router } from './router'
 import { installSingleClickSelection } from './textSelection'
 import { applyInstallLanguage, locale } from './i18n'
+import { i18n } from './locale'
 import { api } from './services/tauri'
 import 'highlight.js/styles/github-dark.css'
 import './styles/global.css'
@@ -28,7 +29,7 @@ async function bootstrap() {
   }
   // locale 的 watch 只在值变化时触发；首启没有变化时也要同步一次 <html lang>
   document.documentElement.lang = locale.value
-  createApp(App).use(router).mount('#app')
+  createApp(App).use(router).use(i18n).mount('#app')
 }
 
 void bootstrap()

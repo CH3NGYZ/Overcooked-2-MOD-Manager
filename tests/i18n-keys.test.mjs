@@ -53,8 +53,19 @@ test('t() 的字面量 key 全部已登记', () => {
   const missing = []
   for (const file of walk(SRC.pathname.replace(/^\/([A-Za-z]:)/, '$1'))) {
     if (file.endsWith('i18n.ts')) continue
+    /*
+     * 跳过 `src/locale/`：那是正在迁移过来的新系统（语义化 tag + vue-i18n），
+     * 它的 key 存在自己的域文件里，由 tests/backend-i18n.test.mjs 覆盖。
+     * 旧系统只负责尚未迁移的页面，两者的 key 空间互不相干。
+     */
+    if (/[\\/]locale[\\/]/.test(file)) continue
+
     const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
     for (const [index, line] of text.split('\n').entries()) {
+      // 跳过注释行：注释里常引用示例 tag（`t('error.xxx')`）当说明，不是真调用
+      const trimmed = line.trimStart()
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue
+
       const patterns = [
         /\bt\(\s*'((?:[^'\\]|\\.)+)'/g,
         /\bt\(\s*"((?:[^"\\]|\\.)+)"/g,

@@ -5,18 +5,18 @@ import test from 'node:test'
 /**
  * 首启语言优先级：安装程序写入的语言只作为「用户还没选过」时的默认值。
  *
- * `i18n.ts` 依赖 localStorage 与 vue 运行时，无法在 Node 里直接执行，
- * 所以这里对真实源码做结构性断言 —— 与 registry.test.mjs 的做法一致。
+ * 语言状态已从 `i18n.ts` 抽到 `src/locale/state.ts`（与文案表分离，
+ * 让纯逻辑能被 Node 直接引用）—— 这里的断言跟着源码走。
  * 行为本身另由 CDP 实测覆盖（见 PLAN.md 第 1 步的验收记录）。
  */
-const i18n = readFileSync(new URL('../src/i18n.ts', import.meta.url), 'utf8')
+const i18n = readFileSync(new URL('../src/locale/state.ts', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8')
 
 test('locale 初始化优先 localStorage', () => {
-  // 首行就必须是「localStorage 有合法值则用它」，否则会覆盖用户的选择
+  // 必须「localStorage 有合法值则用它」，否则会覆盖用户的选择
   assert.match(
     i18n,
-    /export const locale = ref<Locale>\(\s*LOCALES\.includes\(localStorage\.getItem\(LOCALE_KEY\) as Locale\)/,
+    /export const locale = ref<Locale>\(\s*hasStorage\(\) && LOCALES\.includes\(localStorage\.getItem\(LOCALE_KEY\) as Locale\)/,
   )
 })
 

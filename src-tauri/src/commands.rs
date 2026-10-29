@@ -3516,15 +3516,16 @@ pub async fn push_colorful_name(
     name: String,
 ) -> Result<OperationResult, String> {
     if name.trim().is_empty() {
-        return Err("名字不能为空".into());
+        return Err("error.rename.nameEmpty".into());
     }
     if name.chars().any(|character| character.is_control()) {
-        return Err("名字不能包含控制字符".into());
+        return Err("error.rename.nameHasControlChars".into());
     }
     let units = name.encode_utf16().count();
     if units > COLORFUL_NAME_MAX_UNITS {
+        // tag + 内联参数：前端按 tag 翻译并插值，后端不持有任何界面文案
         return Err(format!(
-            "名字代码超过 MOD 限制（UTF-16LE {} / {} 字节）",
+            "error.rename.nameTooLong?bytes={}&limit={}",
             units * 2,
             COLORFUL_NAME_MAX_UNITS * 2
         ));
@@ -3595,10 +3596,10 @@ pub async fn push_colorful_name(
             "多彩名字推送失败：街机MOD 在端口 {rejected:?} 上拒绝请求，无响应的端口={unreachable:?}，检查街机MOD 是否已写出握手文件"
         );
         // 走到这里说明端口有人听、但没通过鉴权：对用户只有一种可执行的建议。
-        return Err("街机MOD 拒绝了改名请求，请更新到最新版街机MOD 并重启游戏后重试".into());
+        return Err("error.diyLevel.rejected".into());
     }
     log::warn!("多彩名字推送失败：{unreachable:?} 端口均无响应");
-    Err("请打开游戏并确认 街机MOD 正在运行".into())
+    Err("error.diyLevel.notRunning".into())
 }
 
 fn parse_tutorial_document(text: &str) -> Result<TutorialDocument, String> {

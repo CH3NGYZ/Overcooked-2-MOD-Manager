@@ -528,6 +528,21 @@ const entries = {
     'DIYLevel이 설치되어 있지 않거나 설치 구조가 예상과 다릅니다.',
     'DIYLevel がインストールされていないか、構成が想定と異なります。',
   ],
+  // 工具页：缓存维护
+  '缓存': ['快取', 'Cache', '캐시', 'キャッシュ'],
+  '清除头像缓存': ['清除頭像快取', 'Clear avatar cache', '아바타 캐시 지우기', 'アバターキャッシュを消去'],
+  '删除已下载的仓库头像；下次进入 MOD 安装页会重新获取': [
+    '刪除已下載的倉庫頭像；下次進入 MOD 安裝頁會重新取得',
+    'Deletes downloaded repository avatars. They will be fetched again the next time you open the MOD install page.',
+    '다운로드한 저장소 아바타를 삭제합니다. 다음에 MOD 설치 페이지를 열면 다시 가져옵니다.',
+    'ダウンロード済みのリポジトリのアバターを削除します。次に MOD インストールページを開いたときに再取得します。',
+  ],
+  '已清除 {count} 个头像缓存': [
+    '已清除 {count} 個頭像快取',
+    'Cleared {count} cached avatar(s)',
+    '아바타 캐시 {count}개를 지웠습니다',
+    'アバターキャッシュを {count} 件消去しました',
+  ],
   '安装 MOD': ['安裝 MOD', 'Install MOD', 'MOD 설치', 'MOD をインストール'],
   '安装详情': ['安裝詳情', 'Install details', '설치 세부 정보', 'インストールの詳細'],
   '本地文件': ['本機檔案', 'Local file', '로컬 파일', 'ローカルファイル'],

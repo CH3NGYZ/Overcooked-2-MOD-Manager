@@ -34,6 +34,18 @@ export function avatarFor(provider: Provider, owner: string | undefined): string
 }
 
 /**
+ * 清空前端头像缓存，并允许重新请求。
+ *
+ * 必须同时清 `requested`：那个集合记录「本次会话已经问过后端」的 key，
+ * 只清 `cache` 的话，界面会立刻回落到平台图标而且**再也不会重新获取** ——
+ * 因为预取会认为这些 owner 已经请求过了。
+ */
+export function clearAvatarCache() {
+  cache.value = {}
+  requested.clear()
+}
+
+/**
  * 为一批仓库预取头像。
  *
  * 只请求「有 owner 且没请求过」的，其余直接跳过。多个调用方并发触发时

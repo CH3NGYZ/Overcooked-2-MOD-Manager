@@ -2,10 +2,11 @@
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { NLog, NSelect, NTag } from 'naive-ui'
-import { BuildOutline, DocumentTextOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
+import { clearAvatarCache } from '../avatars'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
@@ -122,6 +123,30 @@ async function resetUi() {
 
 /** 回收站弹窗（只读浏览 + 恢复/彻底删除，交互在组件内）。 */
 const recycleOpen = ref(false)
+
+/* ===== 缓存维护 ===== */
+
+/**
+ * 清除头像缓存。
+ *
+ * 两层都要清：磁盘缓存（后端 `cache/avatars/`）与前端内存缓存。
+ * 只清磁盘的话，本次会话仍在显示旧头像；只清内存的话，重新预取会立刻
+ * 从磁盘读回同一张图 —— 用户会觉得「点了没反应」。
+ */
+const clearingAvatars = ref(false)
+async function clearAvatars() {
+  if (clearingAvatars.value) return
+  clearingAvatars.value = true
+  try {
+    const removed = await api.clearRepositoryAvatars()
+    clearAvatarCache()
+    message.success(t('已清除 {count} 个头像缓存', { count: removed }))
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : String(reason))
+  } finally {
+    clearingAvatars.value = false
+  }
+}
 </script>
 
 <template>
@@ -149,6 +174,17 @@ const recycleOpen = ref(false)
   <SettingsGroup :title="t('回收站')">
     <SettingsRow :icon="TrashOutline" :title="t('打开回收站')"
       :description="t('查看已删除的 MOD，可恢复到原位置或彻底删除')" clickable @click="recycleOpen = true" />
+  </SettingsGroup>
+
+  <!--
+    缓存维护：头像缓存是「取过一次就不再请求」的本地数据，
+    偶尔会因为组织改名、代理换了张图而显示旧头像，需要手动清一次。
+    与回收站、日志并列放在工具页 —— 它是维护动作，不是配置项。
+  -->
+  <SettingsGroup :title="t('缓存')">
+    <SettingsRow :icon="CloudOfflineOutline" :title="t('清除头像缓存')"
+      :description="t('删除已下载的仓库头像；下次进入 MOD 安装页会重新获取')"
+      clickable @click="clearAvatars" />
   </SettingsGroup>
 
   <SettingsGroup :title="t('高级')">

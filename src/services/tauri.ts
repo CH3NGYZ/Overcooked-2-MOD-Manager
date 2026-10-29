@@ -131,6 +131,8 @@ export const api = {
     invoke<OperationResult>('set_diy_level_enabled', { enabled }),
   /** 打开 DIYLevel 的地图目录（不自动创建）。 */
   openDiyLevelDirectory: () => invoke<OperationResult>('open_diy_level_directory'),
+  /** 清除头像磁盘缓存，返回删除的文件数。 */
+  clearRepositoryAvatars: () => invoke<number>('clear_repository_avatars'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),

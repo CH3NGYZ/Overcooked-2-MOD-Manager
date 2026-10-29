@@ -6,11 +6,11 @@ name_i18n.zh-TW = "DIYLevel - 自訂關卡"
 name_i18n.en = "DIYLevel - Custom Levels"
 name_i18n.ko = "DIYLevel - 커스텀 레벨"
 name_i18n.ja = "DIYLevel - カスタムレベル"
-group_i18n.zh-CN = "内容拓展"
-group_i18n.zh-TW = "內容拓展"
-group_i18n.en = "Content Expansion"
-group_i18n.ko = "콘텐츠 확장"
-group_i18n.ja = "コンテンツ拡張"
+group_i18n.zh-CN = "DIYLevel"
+group_i18n.zh-TW = "DIYLevel"
+group_i18n.en = "DIYLevel"
+group_i18n.ko = "DIYLevel"
+group_i18n.ja = "DIYLevel"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-LevelEditor"
@@ -23,7 +23,7 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 8
+download_threads = 32
 
 # 版本资产规则
 asset_rules = [

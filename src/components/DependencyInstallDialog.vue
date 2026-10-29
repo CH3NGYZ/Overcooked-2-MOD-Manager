@@ -39,8 +39,16 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (event: 'update:show', value: boolean): void
-  /** 全部处理完（无论成败），宿主据此刷新 Dashboard。 */
-  (event: 'finished'): void
+  /**
+   * 弹窗关闭时给出结果，宿主据此决定是否继续安装主包。
+   *
+   * `true`  = 全部依赖都装成功了
+   * `false` = 用户取消，或有依赖安装失败
+   *
+   * 只在**关闭时**发一次：安装成功但用户还看着结果列表时，宿主不该
+   * 抢先继续 —— 那个列表本身就是给用户确认「都装好了」的。
+   */
+  (event: 'finished', ready: boolean): void
 }>()
 
 const message = useNotify()
@@ -113,18 +121,33 @@ async function installAll() {
     for (const failure of failures.value) {
       message.error(`${failure.label}：${failure.reason}`)
     }
-    emit('finished')
   } finally {
     installing.value = false
   }
 }
 
 /**
- * 关闭弹窗。全部处理完后由用户点「完成」；中途关闭则丢弃未安装的暂存。
+ * 关闭弹窗：丢弃未安装的暂存，并把「是否全部装好」交给宿主。
+ *
+ * 判断依据是 `failures` 而不是 `allDone`：用户点「完成」时确实全处理完了，
+ * 但中途点「取消」也可能刚好装完前几个 —— 那种情况仍算没准备好继续装主包
+ * （剩下那些依赖还缺着）。
  */
+const closing = ref(false)
 async function close() {
-  await discardPending()
-  emit('update:show', false)
+  /*
+   * 防重入：本函数自己会 emit `update:show false`，而模板在那个事件上
+   * 又调 close() —— 不加锁会递归。`closing` 保证结果只上报一次。
+   */
+  if (closing.value) return
+  closing.value = true
+  try {
+    await discardPending()
+    emit('finished', failures.value.length === 0 && successCount.value > 0)
+    emit('update:show', false)
+  } finally {
+    closing.value = false
+  }
 }
 </script>
 

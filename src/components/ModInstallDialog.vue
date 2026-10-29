@@ -30,7 +30,14 @@ import type { ModPreview, ModPreviewEntry } from '../types'
 const props = defineProps<{ show: boolean; preview: ModPreview | null }>()
 const emit = defineEmits<{
   (event: 'update:show', value: boolean): void
-  (event: 'installed'): void
+  /**
+   * 安装成功。
+   *
+   * 带上刚装的那份预览：宿主据此知道「装的是哪个包」，进而在刷新后
+   * 检查它有没有缺依赖。不带参数的话宿主无法区分「刚装的是这个」
+   * 与「以前装的另一个也缺依赖」。
+   */
+  (event: 'installed', preview: ModPreview | null): void
   /** 用户放弃这份预览（取消按钮、叉掉），调用方据此清理暂存。 */
   (event: 'discarded', preview: ModPreview): void
 }>()
@@ -106,6 +113,8 @@ const visible = computed({
 const discarding = ref(false)
 /** 安装已成功、等离场动画结束后再通知宿主（否则内容先消失、看不到渐隐）。 */
 const installCompleted = ref(false)
+/** 刚装成功的那份预览：离场动画结束时随 `installed` 一起交给宿主。 */
+const installedPreview = ref<ModPreview | null>(null)
 
 /** 用户放弃：立刻收起，动画结束后再通知调用方清理。 */
 function requestDiscard() {
@@ -125,7 +134,9 @@ function handleAfterLeave() {
   }
   if (installCompleted.value) {
     installCompleted.value = false
-    emit('installed')
+    const done = installedPreview.value
+    installedPreview.value = null
+    emit('installed', done)
   }
 }
 
@@ -145,6 +156,7 @@ async function confirm() {
     void celebrateInstall()
     // 后端已在 confirm 里删掉暂存；收起面板，动画结束后再通知宿主刷新
     installCompleted.value = true
+    installedPreview.value = current
     emit('update:show', false)
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : String(reason))

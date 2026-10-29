@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -65,6 +65,21 @@ const { previewRepository } = useRepositoryPreview(openInstallPreview, {
     if (busy) installing.value[repositoryId] = true
     else delete installing.value[repositoryId]
   },
+  /*
+   * 安装前先补齐依赖。
+   *
+   * 放在这里而不是「装完再提示」：用户点安装的意图是「让它能用」，
+   * 缺依赖时它装上也跑不起来；等装完再弹窗，用户已经离开这个页面了。
+   *
+   * 只有「这次要装的是新包」时才检查 —— 更新已装 MOD 时依赖在首次安装
+   * 就该齐了，再查一遍纯属重复。
+   */
+  dependenciesForInstall: installableDependencies,
+  installDependencies: async (_repo, dependencies) => {
+    const ready = await runDependencyInstall(dependencies)
+    if (ready) await load()
+    return ready
+  },
 })
 
 /* ===== 批量安装依赖 ===== */
@@ -72,29 +87,40 @@ const { previewRepository } = useRepositoryPreview(openInstallPreview, {
 /** 批量安装弹窗：一次处理某个仓库声明的全部可安装依赖。 */
 const dependencyInstallOpen = ref(false)
 const dependencyInstallItems = ref<DependencyInstallItem[]>([])
+/**
+ * 依赖弹窗关闭后的结果：前置安装流程在等它。
+ *
+ * `null` = 还在等；`true` = 依赖已装好；`false` = 用户取消或有失败。
+ * 用 ref + Promise 而不是直接在弹窗里回调：前置流程是 `await` 的，
+ * 需要「等到用户关掉弹窗」这个语义。
+ */
+const dependencyInstallOutcome = ref<boolean | null>(null)
+
+/** 这个仓库当前缺失、且能从线上装到的依赖（按声明顺序）。 */
+function installableDependencies(repo: Repository) {
+  const statuses = resolveDependencies(repo, mods.value, repositories.value)
+  return statuses
+    .filter((status) => status.state === 'installable' && status.repository)
+    .map((status) => status.repository!)
+}
 
 /**
- * 一次装齐这个仓库所有可安装的未满足依赖。
+ * 逐个下载解析依赖，然后弹窗确认安装。
  *
- * 复用现有的单包预览命令逐个下载解析（`preview_only`），拿到全部结果后
- * 用同一个弹窗确认。没有新增后端命令 —— 下载、校验、暂存、取消
- * 这些链路已经过验证，重写一遍只会引入新的分叉。
+ * 复用现有的单包预览命令（`preview_only`），拿到全部结果后用一个弹窗确认。
+ * 没有新增后端命令 —— 下载、校验、暂存、取消这些链路已经过验证。
  *
- * 顺序执行：依赖之间可能存在先后要求（例如 A 依赖 B 才能正常工作），
- * 并发下载虽然更快，但边界情况更难解释。
+ * 顺序执行：依赖之间可能存在先后要求，并发下载更快但边界更难解释。
+ *
+ * 返回是否全部装好：`false` 时调用方不应继续装主包。
  */
-async function installAllDependencies(repo: Repository) {
-  if (gameBlocked()) return
-  const statuses = resolveDependencies(repo, mods.value, repositories.value)
-  const installable = statuses.filter(
-    (status) => status.state === 'installable' && status.repository,
-  )
-  if (!installable.length) return
+async function runDependencyInstall(dependencies: Repository[]): Promise<boolean> {
+  if (gameBlocked()) return false
 
   dependencyInstallItems.value = []
+  dependencyInstallOutcome.value = null
   dependencyInstallOpen.value = true
-  for (const status of installable) {
-    const target = status.repository!
+  for (const target of dependencies) {
     try {
       const outcome = await api.installRepository(target.id, undefined, true)
       if (!outcome.ok || !outcome.preview) {
@@ -102,7 +128,7 @@ async function installAllDependencies(repo: Repository) {
         continue
       }
       dependencyInstallItems.value = [...dependencyInstallItems.value, {
-        guid: status.dependency.guid,
+        guid: target.plugin_guid,
         label: repoName(target),
         preview: outcome.preview,
       }]
@@ -111,8 +137,33 @@ async function installAllDependencies(repo: Repository) {
     }
   }
   // 一个都没成功预览到：直接收起，不弹空弹窗
-  if (!dependencyInstallItems.value.length) dependencyInstallOpen.value = false
+  if (!dependencyInstallItems.value.length) {
+    dependencyInstallOpen.value = false
+    return false
+  }
+  // 等用户关掉弹窗（安装完点「完成」或中途取消）
+  return new Promise<boolean>((resolve) => {
+    const stop = watch(dependencyInstallOutcome, (value) => {
+      if (value === null) return
+      stop()
+      resolve(value)
+    })
+  })
 }
+
+/** 弹窗给出结果时调用（安装全成功 / 用户取消）。 */
+function finishDependencyInstall(ready: boolean) {
+  dependencyInstallOutcome.value = ready
+}
+
+/** 卡片上的「安装依赖」按钮：装完刷新即可，不需要继续别的事。 */
+async function installDependenciesFromCard(repo: Repository) {
+  const dependencies = installableDependencies(repo)
+  if (!dependencies.length) return
+  const ready = await runDependencyInstall(dependencies)
+  if (ready) await load()
+}
+
 function openInstall() {
   openInstallSource()
 }
@@ -289,7 +340,7 @@ function dependencyRepoName(status: DependencyStatus) {
  */
 function openDependency(status: DependencyStatus, repo: Repository) {
   if (status.state !== 'installable') return
-  void installAllDependencies(repo)
+  void installDependenciesFromCard(repo)
 }
 
 /* ===== 搜索 ===== */
@@ -849,8 +900,13 @@ defineExpose({ refreshAll, visibleCount })
   </n-float-button>
 
   <!-- 批量安装依赖：一次确认后依次写入，详情见组件内的说明 -->
+  <!--
+    批量安装依赖。`finished` 携带「是否全部装好」，前置安装流程据此决定
+    是否继续装主包；`cancel` 是用户中途关掉，同样按未装好处理。
+  -->
   <DependencyInstallDialog v-model:show="dependencyInstallOpen"
-    :items="dependencyInstallItems" @finished="void load()" />
+    :items="dependencyInstallItems"
+    @finished="(ready: boolean) => finishDependencyInstall(ready)" />
   </n-spin>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->

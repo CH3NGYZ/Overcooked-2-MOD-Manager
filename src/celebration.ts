@@ -24,7 +24,8 @@ let active = 0
  * 依然只有 `theme.ts` 一个源头，这里只是消费方。
  */
 function themeColors(): string[] {
-  const fallback = ['#22c55e', '#3b82f6', '#f59e0b']
+  // 兜底色取自琥珀系：与默认主题色同一族，读不到 CSS 变量时观感也一致
+  const fallback = ['#f59e0b', '#3b82f6', '#f43f5e']
   if (typeof getComputedStyle !== 'function') return fallback
   const style = getComputedStyle(document.documentElement)
   const accent = style.getPropertyValue('--oc2-accent').trim()

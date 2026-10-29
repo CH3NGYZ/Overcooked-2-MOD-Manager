@@ -50,17 +50,29 @@ export const ACCENTS: Accent[] = [
 
 const ACCENT_KEYS = ACCENTS.map((entry) => entry.key as string)
 
+/** 默认主色：琥珀色（未保存过选择时使用）。 */
+const DEFAULT_ACCENT: AccentKey = 'amber'
+
 export const themeMode = ref<ThemeMode>(localStorage.getItem(MODE_KEY) === 'light' ? 'light' : 'dark')
 export const accentKey = ref<AccentKey>(
   ACCENT_KEYS.includes(localStorage.getItem(ACCENT_KEY) ?? '')
     ? (localStorage.getItem(ACCENT_KEY) as AccentKey)
-    : 'teal',
+    : DEFAULT_ACCENT,
 )
 
 watch(themeMode, (value) => localStorage.setItem(MODE_KEY, value))
 watch(accentKey, (value) => localStorage.setItem(ACCENT_KEY, value))
 
-export const accent = computed(() => ACCENTS.find((entry) => entry.key === accentKey.value) ?? ACCENTS[2])
+/**
+ * 当前主色。找不到对应键时回落到默认色 —— 兜底必须和 `accentKey` 的
+ * 默认值一致，否则「键非法」与「从未选择」会得到两种不同的颜色
+ * （这里曾经硬编码 `ACCENTS[2]`，那是 rose，与当时的默认 teal 不同）。
+ */
+export const accent = computed(() =>
+  ACCENTS.find((entry) => entry.key === accentKey.value)
+  ?? ACCENTS.find((entry) => entry.key === DEFAULT_ACCENT)
+  ?? ACCENTS[0],
+)
 
 /** Naive UI 主题对象：浅色用内置亮色（不传 theme）。 */
 export const naiveTheme = computed<GlobalTheme | null>(() => (themeMode.value === 'dark' ? darkTheme : null))

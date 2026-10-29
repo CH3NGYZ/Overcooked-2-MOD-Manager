@@ -539,18 +539,20 @@ defineExpose({ refreshAll, visibleCount })
                   <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
 
                   <div class="card-foot">
-                    <span class="stat stat-version">
-                      <span class="muted">{{ t('最新版本') }}</span>
-                      <span class="version-line">
-                        <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
-                        <!-- 刷新状态：转圈即表示该仓库正在拉取 Release -->
-                        <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
+                    <div class="card-stats">
+                      <span class="stat stat-version">
+                        <span class="muted">{{ t('最新版本') }}</span>
+                        <span class="version-line">
+                          <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
+                          <!-- 刷新状态：转圈即表示该仓库正在拉取 Release -->
+                          <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
+                        </span>
                       </span>
-                    </span>
-                    <span class="stat">
-                      <span class="muted">{{ t('下载量') }}</span>
-                      <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
-                    </span>
+                      <span class="stat">
+                        <span class="muted">{{ t('下载量') }}</span>
+                        <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                      </span>
+                    </div>
                     <!--
                       主按钮：安装（主题色）/ 重装、更新（对比色）/ 刷新（刷新失败的警告色）。
                       文案、图标与动作都由 installActionOf 决定，不在模板里各自判断。
@@ -624,17 +626,19 @@ defineExpose({ refreshAll, visibleCount })
                 </div>
                 <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
                 <div class="card-foot">
-                  <span class="stat stat-version">
-                    <span class="muted">{{ t('最新版本') }}</span>
-                    <span class="version-line">
-                      <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
-                      <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
+                  <div class="card-stats">
+                    <span class="stat stat-version">
+                      <span class="muted">{{ t('最新版本') }}</span>
+                      <span class="version-line">
+                        <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
+                        <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
+                      </span>
                     </span>
-                  </span>
-                  <span class="stat">
-                    <span class="muted">{{ t('下载量') }}</span>
-                    <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
-                  </span>
+                    <span class="stat">
+                      <span class="muted">{{ t('下载量') }}</span>
+                      <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                    </span>
+                  </div>
                   <n-button size="tiny" class="card-install"
                     :style="installButtonStyle(repo)"
                     :loading="!!installing[repo.id]"
@@ -789,9 +793,15 @@ defineExpose({ refreshAll, visibleCount })
   white-space: nowrap;
 }
 .card-install {
+  /*
+   * 由 .card-foot 的网格第二列定位到右下角。
+   * 不设 margin-left:auto —— 那是 flex 里的做法，在 grid 里会把列宽撑开。
+   *
+   * white-space: nowrap 保证按钮文字不被逐字折行（其他语言的标签更长）；
+   * 网格的 minmax(0,1fr) 保证卡片变窄时压缩的是左侧统计区而不是按钮。
+   */
   flex: 0 0 auto;
-  /* 把剩余空白全部推到左边：版本/下载量靠左紧挨，按钮贴右 */
-  margin-left: auto;
+  white-space: nowrap;
 }
 /*
  * 主按钮配色由 installButtonStyle() 通过 :style 内联下发，
@@ -811,13 +821,20 @@ defineExpose({ refreshAll, visibleCount })
 }
 .card-foot {
   /*
-   * 版本 / 下载量：各自按内容宽度（尽量窄）靠左紧挨，中间不留固定间隔；
-   * 安装按钮靠右。空白全部落在「下载量」与「安装按钮」之间。
+   * 两列网格：左列放统计（可换行收缩），右列固定放安装按钮。
+   *
+   * 为什么不用 flex + margin-left:auto：flex 里 `.stat` 是 `flex: 0 0 auto`
+   * 不收缩，卡片变窄（网格最小 310px、或 150% 缩放下等效更窄）时它会把
+   * 按钮挤出卡片右边被裁掉。grid 的 `minmax(0, 1fr)` 让左列可以真的收缩，
+   * 按钮列 `auto` 永远拿到它需要的宽度、并贴在右下角。
+   *
+   * `align-items: end` 让统计块与按钮底部对齐；下载量换行到第二行时
+   * 按钮仍钉在右下角，不会被重新排布。
    */
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 12px;
   padding-top: 8px;
   border-top: 1px solid var(--oc2-row-line);
 }
@@ -832,6 +849,18 @@ defineExpose({ refreshAll, visibleCount })
   min-width: 0;
   width: auto;
   text-align: center;
+}
+/*
+ * 统计区（版本 + 下载量）单列排布：
+ * 卡片够宽时它们在同一行左对齐；变窄时自动换行，
+ * 下载量落到版本号下面而按钮位置不受影响。
+ */
+.card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  min-width: 0;
 }
 /* 版本号可能带「· 预发布」后缀，允许比下载量宽松一点但仍随内容 */
 .stat-version { max-width: 180px; }

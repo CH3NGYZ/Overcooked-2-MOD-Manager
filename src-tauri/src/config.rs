@@ -3216,3 +3216,75 @@ mod dependency_validation_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod requires_syntax {
+    use super::*;
+
+    /*
+     * `requires` 是**表数组**（`Vec<RepositoryDependency>`），必须用
+     * `[[requires]]` 逐个声明。点号赋值写法（`requires.guid = "..."`）
+     * 在 TOML 里创建的是**单个表**，反序列化到 Vec 会失败：
+     *
+     *     invalid type: map, expected a sequence
+     *
+     * 这条测试把两种写法的差异固定下来 —— 源文档作者很容易按「配置项」
+     * 的直觉写成点号形式，那样整个仓库源文档会解析失败。
+     */
+    #[test]
+    fn dotted_assignment_is_rejected_because_requires_is_a_table_array() {
+        let dotted = r#"
+name = "x"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+install_target = "BepInEx/plugins"
+enabled = true
+requires.guid = "com.bepis.bepinex.configurationmanager"
+requires.min_version = ""
+requires.optional = false
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+"#;
+        let error = toml::from_str::<RepositoryExport>(dotted).unwrap_err();
+        assert!(error.to_string().contains("expected a sequence"), "{error}");
+    }
+
+    /// 正确写法：`[[requires]]` 表数组，可重复声明多条依赖。
+    #[test]
+    fn array_of_tables_accepts_multiple_dependencies() {
+        let explicit = r#"
+name = "x"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+install_target = "BepInEx/plugins"
+enabled = true
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+
+[[requires]]
+guid = "com.bepis.bepinex.configurationmanager"
+
+[[requires]]
+guid = "com.example.other"
+min_version = "1.8.7"
+optional = true
+"#;
+        let v = toml::from_str::<RepositoryExport>(explicit).expect("表数组写法应当成功");
+        assert_eq!(v.requires.len(), 2);
+        assert_eq!(v.requires[0].guid, "com.bepis.bepinex.configurationmanager");
+        assert_eq!(v.requires[0].min_version, "");
+        assert!(!v.requires[0].optional);
+        assert_eq!(v.requires[1].min_version, "1.8.7");
+        assert!(v.requires[1].optional);
+    }
+}

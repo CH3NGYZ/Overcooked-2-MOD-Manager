@@ -314,6 +314,28 @@ pub struct AssetRule {
     pub value: String,
 }
 
+/// 仓库（MOD）对另一个插件的依赖声明。
+///
+/// 用 GUID 表达，与本地 MOD 绑定用的 `plugin_guid` 是同一套标识 ——
+/// 「哪个插件」这件事只有 GUID 是可靠的，插件名和文件名都会随作者改写。
+///
+/// 有版本约束时，本地已装版本低于 `min_version` 也算「未满足」，
+/// 因为旧版可能缺少新版依赖才提供的 API。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepositoryDependency {
+    /// 被依赖插件的 GUID（比较时忽略大小写）。
+    pub guid: String,
+    /// 最低版本要求；空字符串表示不限版本。
+    ///
+    /// 用本项目的版本规则比较（四段 = beta 序号，见 `releases::compare_release_versions`），
+    /// 所以 `1.8.7.2` 与 `1.8.7-beta.2` 等价。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub min_version: String,
+    /// 可选依赖：缺失时不提示、不显示按钮，只作为信息记录。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryConfig {
     pub id: String,
@@ -352,6 +374,12 @@ pub struct RepositoryConfig {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
+    /// 这个 MOD 依赖的其他插件（按 GUID 声明）。
+    ///
+    /// 缺失时 MOD 安装页在卡片上提示；能匹配到线上仓库且版本满足时
+    /// 给出快捷安装入口，否则只显示「缺依赖」标签。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<RepositoryDependency>,
     /// Optional regular expression applied to the installed MOD version when
     /// binding a local plugin to this repository.
     #[serde(default)]
@@ -640,6 +668,9 @@ pub struct RepositoryExport {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
+    /// 依赖声明（与 `RepositoryConfig` 同名字段对应，导入导出时保留）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<RepositoryDependency>,
     #[serde(default)]
     pub version_regex: String,
     #[serde(default)]
@@ -866,6 +897,9 @@ pub struct RepositoryPatch {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
+    /// 依赖声明；`None` 表示本次编辑不修改依赖列表。
+    #[serde(default)]
+    pub requires: Option<Vec<RepositoryDependency>>,
     #[serde(default)]
     pub version_regex: String,
     #[serde(default = "default_max_release_count")]

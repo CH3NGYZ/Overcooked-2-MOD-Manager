@@ -8,6 +8,8 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
+import { resolveDependencies, type DependencyStatus } from '../modDependencies'
+import { api } from '../services/tauri'
 import { pickI18n, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -15,6 +17,7 @@ import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
+import DependencyInstallDialog, { type DependencyInstallItem } from '../components/DependencyInstallDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
@@ -63,6 +66,53 @@ const { previewRepository } = useRepositoryPreview(openInstallPreview, {
     else delete installing.value[repositoryId]
   },
 })
+
+/* ===== 批量安装依赖 ===== */
+
+/** 批量安装弹窗：一次处理某个仓库声明的全部可安装依赖。 */
+const dependencyInstallOpen = ref(false)
+const dependencyInstallItems = ref<DependencyInstallItem[]>([])
+
+/**
+ * 一次装齐这个仓库所有可安装的未满足依赖。
+ *
+ * 复用现有的单包预览命令逐个下载解析（`preview_only`），拿到全部结果后
+ * 用同一个弹窗确认。没有新增后端命令 —— 下载、校验、暂存、取消
+ * 这些链路已经过验证，重写一遍只会引入新的分叉。
+ *
+ * 顺序执行：依赖之间可能存在先后要求（例如 A 依赖 B 才能正常工作），
+ * 并发下载虽然更快，但边界情况更难解释。
+ */
+async function installAllDependencies(repo: Repository) {
+  if (gameBlocked()) return
+  const statuses = resolveDependencies(repo, mods.value, repositories.value)
+  const installable = statuses.filter(
+    (status) => status.state === 'installable' && status.repository,
+  )
+  if (!installable.length) return
+
+  dependencyInstallItems.value = []
+  dependencyInstallOpen.value = true
+  for (const status of installable) {
+    const target = status.repository!
+    try {
+      const outcome = await api.installRepository(target.id, undefined, true)
+      if (!outcome.ok || !outcome.preview) {
+        message.error(`${repoName(target)}：${outcome.message || t('下载完成但没有解析出安装内容')}`)
+        continue
+      }
+      dependencyInstallItems.value = [...dependencyInstallItems.value, {
+        guid: status.dependency.guid,
+        label: repoName(target),
+        preview: outcome.preview,
+      }]
+    } catch (reason) {
+      message.error(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+  // 一个都没成功预览到：直接收起，不弹空弹窗
+  if (!dependencyInstallItems.value.length) dependencyInstallOpen.value = false
+}
 function openInstall() {
   openInstallSource()
 }
@@ -204,6 +254,42 @@ function repoGroupKey(repo: Repository) {
  */
 function repoNote(repo: Repository) {
   return markdownSummary(pickI18n(repo.note_i18n, repo.note || ''))
+}
+
+/* ===== 依赖提示 ===== */
+
+/**
+ * 一个仓库未满足的必选依赖。
+ *
+ * 只给「第一条」未满足的依赖做快捷入口：卡片左侧按钮位只有一个。
+ * 多条缺失时按钮优先指向能装的那条，其余由详情抽屉里的依赖列表体现。
+ *
+ * 计算依赖只依赖当前 Dashboard（已装 MOD + 仓库 Release 缓存），
+ * 所以刷新完仓库后按钮会自动出现/消失，不需要额外请求。
+ */
+function unmetDependency(repo: Repository) {
+  const statuses = resolveDependencies(repo, mods.value, repositories.value)
+  const unmet = statuses.filter((status) => status.state !== 'satisfied')
+  if (!unmet.length) return undefined
+  // 优先返回能直接装的那条
+  return unmet.find((status) => status.state === 'installable') ?? unmet[0]
+}
+
+/** 未满足依赖的仓库名（用于标签文案与跳转）。 */
+function dependencyRepoName(status: DependencyStatus) {
+  return status.repository ? repoName(status.repository) : status.dependency.guid
+}
+
+/**
+ * 依赖快捷动作。
+ *
+ * 语义已从「跳过去自己装」升级为「一次装齐这个仓库的全部可安装依赖」：
+ * 依赖是**为了让它能用**才装的，逐个跳转让用户来回切页，还把
+ * 「哪些还没装」的判断留给了用户。
+ */
+function openDependency(status: DependencyStatus, repo: Repository) {
+  if (status.state !== 'installable') return
+  void installAllDependencies(repo)
 }
 
 /* ===== 搜索 ===== */
@@ -559,6 +645,23 @@ defineExpose({ refreshAll, visibleCount })
                   @click="detailId = repo.id">
                   <div class="card-head">
                     <ProviderIcon :provider="repo.provider" :size="30" />
+                    <!--
+                      依赖提示：未满足时显示在标题左侧。
+                      能装 → 快捷按钮跳到依赖的仓库卡片；装不了 → 只给标签，
+                      因为按钮点下去也解决不了，反而让人以为能修好。
+                    -->
+                    <n-tag v-if="unmetDependency(repo)?.state === 'missing'" size="tiny" :bordered="false"
+                      class="state-tag dep-tag" :color="tagColorFor('critical')"
+                      :title="t('缺少依赖')">
+                      {{ t('缺依赖') }}
+                    </n-tag>
+                    <n-button v-else-if="unmetDependency(repo)?.state === 'installable'" size="tiny"
+                      :style="buttonColorFor('moderate', 'soft')" class="dep-action"
+                      :title="t('安装依赖') + '： ' + dependencyRepoName(unmetDependency(repo)!)"
+                      @click.stop="openDependency(unmetDependency(repo)!, repo)">
+                      <template #icon><DownloadOutline width="13" height="13" /></template>
+                      {{ t('安装依赖') }}
+                    </n-button>
                     <span class="card-title">{{ repoName(repo) }}</span>
                     <span class="stat stat-status">
                       <!--
@@ -664,6 +767,19 @@ defineExpose({ refreshAll, visibleCount })
                 @click="detailId = repo.id">
                 <div class="card-head">
                   <ProviderIcon :provider="repo.provider" :size="30" />
+                  <!-- 依赖提示：社区仓库卡片与上方源码树卡片共用同一套判定 -->
+                  <n-tag v-if="unmetDependency(repo)?.state === 'missing'" size="tiny" :bordered="false"
+                    class="state-tag dep-tag" :color="tagColorFor('critical')"
+                    :title="t('缺少依赖')">
+                    {{ t('缺依赖') }}
+                  </n-tag>
+                  <n-button v-else-if="unmetDependency(repo)?.state === 'installable'" size="tiny"
+                    :style="buttonColorFor('moderate', 'soft')" class="dep-action"
+                    :title="t('安装依赖') + '： ' + dependencyRepoName(unmetDependency(repo)!)"
+                    @click.stop="openDependency(unmetDependency(repo)!, repo)">
+                    <template #icon><DownloadOutline width="13" height="13" /></template>
+                    {{ t('安装依赖') }}
+                  </n-button>
                   <span class="card-title">{{ repoName(repo) }}</span>
                   <span class="stat stat-status">
                       <!--
@@ -731,6 +847,10 @@ defineExpose({ refreshAll, visibleCount })
     :tooltip="t('先刷新源文档，再并行刷新各仓库')" @click="refreshAll">
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': repositoriesLoading }" />
   </n-float-button>
+
+  <!-- 批量安装依赖：一次确认后依次写入，详情见组件内的说明 -->
+  <DependencyInstallDialog v-model:show="dependencyInstallOpen"
+    :items="dependencyInstallItems" @finished="void load()" />
   </n-spin>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
@@ -839,6 +959,15 @@ defineExpose({ refreshAll, visibleCount })
   align-items: center;
   gap: 9px;
   min-width: 0;
+}
+/*
+ * 依赖提示：固定在标题左侧、不随标题压缩消失。
+ * 标题自己 flex:1 + 省略号，所以空间不足时先压标题，依赖按钮保持完整 ——
+ * 它承载的是「点了能解决」的动作，被挤掉等于功能消失。
+ */
+.card-head .dep-action,
+.card-head .dep-tag {
+  flex: 0 0 auto;
 }
 .card-title {
   flex: 1;

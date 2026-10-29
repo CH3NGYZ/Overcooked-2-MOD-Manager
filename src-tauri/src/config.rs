@@ -578,6 +578,7 @@ impl ConfigService {
                 plugin_guid: repo.plugin_guid.clone(),
                 local_product_name: repo.local_product_name.clone(),
                 local_original_filename: repo.local_original_filename.clone(),
+                requires: repo.requires.clone(),
                 version_regex: repo.version_regex.clone(),
                 max_release_count: repo.max_release_count,
                 download_threads: repo.download_threads,
@@ -1286,6 +1287,31 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
             repo.name
         )));
     }
+    /*
+     * 依赖声明校验。
+     *
+     * GUID 是依赖的唯一标识，空值或纯空白的依赖永远匹配不上任何插件，
+     * 等于一条静默失效的声明 —— 在导入时就拒绝，比等到界面上不提示更容易发现。
+     * `min_version` 若填写，必须是能解析的版本号；否则「是否满足」永远判不出来。
+     */
+    for dependency in &repo.requires {
+        if dependency.guid.trim().is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "{} 的依赖声明缺少 GUID",
+                repo.name
+            )));
+        }
+        let min_version = dependency.min_version.trim();
+        if !min_version.is_empty()
+            && crate::releases::compare_release_versions(min_version, min_version).is_none()
+        {
+            return Err(ConfigError::Invalid(format!(
+                "{} 的依赖 {} 版本要求无法解析：{min_version}",
+                repo.name,
+                dependency.guid.trim()
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -1310,6 +1336,7 @@ pub(crate) fn repo_key(repo: &RepositoryConfig) -> String {
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
+        requires: repo.requires.clone(),
         version_regex: repo.version_regex.clone(),
         max_release_count: repo.max_release_count,
         download_threads: repo.download_threads,
@@ -1391,6 +1418,7 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
+        requires: repo.requires.clone(),
         version_regex: repo.version_regex.clone(),
         max_release_count: repo.max_release_count.clamp(1, 100),
         download_threads,
@@ -2702,6 +2730,7 @@ builtin = true
             plugin_guid: String::new(),
             local_product_name: String::new(),
             local_original_filename: String::new(),
+            requires: Vec::new(),
             version_regex: String::new(),
             max_release_count: 10,
             download_threads: 1,
@@ -3104,5 +3133,86 @@ mod localized_name_tests {
     fn ignores_blank_translations() {
         let repo = repo_with(&[("en", "   ")]);
         assert_eq!(localized_repository_name(&repo, Some("en")), repo.name);
+    }
+}
+
+#[cfg(test)]
+mod dependency_validation_tests {
+    use super::*;
+
+    fn base_export(requires: Vec<RepositoryDependency>) -> RepositoryExport {
+        RepositoryExport {
+            name: "dep-owner".into(),
+            name_i18n: std::collections::BTreeMap::new(),
+            group: String::new(),
+            group_i18n: std::collections::BTreeMap::new(),
+            provider: Provider::Github,
+            username: "a".into(),
+            repository: "b".into(),
+            download_mode: RepositoryDownloadMode::Release,
+            branch: String::new(),
+            file_path: String::new(),
+            region: None,
+            channel: Channel::Stable,
+            asset_rules: vec![AssetRule {
+                rule_type: AssetRuleType::Exact,
+                value: "a.zip".into(),
+            }],
+            install_target: "BepInEx/plugins".into(),
+            note: String::new(),
+            note_i18n: std::collections::BTreeMap::new(),
+            plugin_guid: String::new(),
+            local_product_name: String::new(),
+            local_original_filename: String::new(),
+            requires,
+            version_regex: String::new(),
+            max_release_count: 10,
+            download_threads: 1,
+            enabled: true,
+            source_id: None,
+        }
+    }
+
+    /*
+     * 依赖声明的校验。
+     *
+     * 空 GUID 的依赖永远匹配不上任何插件，等于一条静默失效的声明；
+     * `min_version` 无法解析时「是否满足」永远判不出来。
+     * 两者都在导入阶段拒绝，比等到界面上不提示更容易发现。
+     */
+    #[test]
+    fn dependency_without_guid_is_rejected() {
+        let export = base_export(vec![RepositoryDependency {
+            guid: "   ".into(),
+            min_version: String::new(),
+            optional: false,
+        }]);
+        assert!(validate_repository(&export).is_err());
+    }
+
+    #[test]
+    fn dependency_with_unparsable_min_version_is_rejected() {
+        let export = base_export(vec![RepositoryDependency {
+            guid: "com.example.dep".into(),
+            min_version: "not-a-version".into(),
+            optional: false,
+        }]);
+        assert!(validate_repository(&export).is_err());
+    }
+
+    /// 合法依赖（含四段 beta 序号写法）应当通过。
+    #[test]
+    fn valid_dependencies_pass() {
+        for min_version in ["", "1.8.7", "1.8.7.2", "1.8.7-beta.2"] {
+            let export = base_export(vec![RepositoryDependency {
+                guid: "com.example.dep".into(),
+                min_version: min_version.into(),
+                optional: false,
+            }]);
+            assert!(
+                validate_repository(&export).is_ok(),
+                "min_version={min_version}"
+            );
+        }
     }
 }

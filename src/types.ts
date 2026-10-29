@@ -32,6 +32,20 @@ export interface ReleaseInfo {
   draft: boolean
   assets: ReleaseAsset[]
 }
+/**
+ * 仓库（MOD）对另一个插件的依赖声明。
+ *
+ * 用 GUID 表达 —— 与本地绑定用的 `plugin_guid` 是同一套标识，
+ * 插件名和文件名都会随作者改写，只有 GUID 可靠。
+ */
+export interface RepositoryDependency {
+  guid: string
+  /** 最低版本要求；空字符串表示不限。 */
+  min_version?: string
+  /** 可选依赖：缺失时不提示、不显示按钮。 */
+  optional?: boolean
+}
+
 export interface Repository {
   id: string
   name: string
@@ -54,6 +68,8 @@ export interface Repository {
   plugin_guid: string
   local_product_name: string
   local_original_filename: string
+  /** 这个 MOD 依赖的其他插件（按 GUID 声明）。 */
+  requires?: RepositoryDependency[]
   version_regex: string
   max_release_count: number
   download_threads: number
@@ -215,6 +231,8 @@ export interface RepositoryPatch {
   plugin_guid: string
   local_product_name: string
   local_original_filename: string
+  /** 这个 MOD 依赖的其他插件（按 GUID 声明）。 */
+  requires?: RepositoryDependency[]
   version_regex: string
   max_release_count: number
   download_threads: number

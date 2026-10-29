@@ -4333,6 +4333,13 @@ pub fn save_repository(
                 repo.group_i18n.clone(),
             )
         });
+    // 依赖列表单独取：上面的元组只装字符串映射，而 requires 是结构体列表
+    let existing_requires = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == id)
+        .map(|repo| repo.requires.clone())
+        .unwrap_or_default();
     let mut name_i18n = patch.name_i18n.unwrap_or_else(|| {
         existing_translations
             .as_ref()
@@ -4409,6 +4416,8 @@ pub fn save_repository(
         plugin_guid: patch.plugin_guid,
         local_product_name: patch.local_product_name,
         local_original_filename: patch.local_original_filename,
+        // None = 本次编辑没提交依赖列表，保留原值
+        requires: patch.requires.unwrap_or(existing_requires),
         version_regex: patch.version_regex,
         max_release_count: patch.max_release_count.clamp(1, 100),
         download_threads,

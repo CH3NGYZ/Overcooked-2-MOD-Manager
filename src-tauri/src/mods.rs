@@ -1513,6 +1513,7 @@ mod tests {
             plugin_guid: "com.example.guid".into(),
             local_product_name: "Example Product".into(),
             local_original_filename: "Example.dll".into(),
+            requires: Vec::new(),
             version_regex: String::new(),
             max_release_count: 10,
             download_threads: 1,

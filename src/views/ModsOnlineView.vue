@@ -8,7 +8,7 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { buildInstallPlan, planHasActions, primaryRelation, resolveRelations, type InstallPlan, type RelationStatus } from '../modRelations'
+import { buildInstallPlan, planHasActions, primaryRelation, relationJumpRepositoryId, resolveRelations, type InstallPlan, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -35,8 +35,12 @@ const engine = useRepositoryRefresh()
 const { refreshing, sourceRefreshing, anyRefreshing, repositoriesLoading } = engine
 /** 状态标签跳转：点标签跳到 MOD 管理页，并高亮绑定该仓库的 MOD 卡片 3 秒。 */
 const { linkToLocalMods } = useLocalModLink()
-/** 从 MOD 管理页跳回来时，高亮对应仓库卡片 3 秒并滚动到它。 */
-const { highlightId } = useFocusHighlight()
+/**
+ * 从 MOD 管理页跳回来时，高亮对应仓库卡片 3 秒并滚动到它。
+ * `focus` 也用于**页内**跳转：点卡头的「缺依赖」标签时直接高亮依赖仓库，
+ * 不需要绕一圈路由。
+ */
+const { highlightId, focus: focusRepository } = useFocusHighlight()
 const installing = ref<Record<string, boolean>>({})
 const search = ref('')
 /** 当前展开详情的仓库（同页展开，不做二级路由）。 */
@@ -319,16 +323,42 @@ function relationTargetName(status: RelationStatus) {
   return status.relation.guid
 }
 
-/** 关系标签的提示文案：说清「跟谁」「为什么」。 */
-function relationTitle(status: RelationStatus, repo: Repository) {
+/**
+ * 点关系标签该跳到哪个仓库（`undefined` = 不可点）。
+ *
+ * 与 MOD 管理页共用 `relationJumpRepositoryId` —— 两处点同一个状态，
+ * 落点必须相同：都是**依赖的**仓库，而不是当前这张卡自己的仓库。
+ */
+function relationJumpId(repo: Repository): string | undefined {
+  return relationJumpRepositoryId(unmetRelation(repo))
+}
+
+/**
+ * 关系标签的悬停提示：说清「跟谁、为什么」，以及点了会去哪。
+ *
+ * 没有可跳转目标时不假装可点，直接说明原因（没有可安装来源）。
+ */
+function relationTagTitle(repo: Repository) {
+  const status = unmetRelation(repo)
+  if (!status) return undefined
   const target = relationTargetName(status)
-  if (status.state === 'conflict') {
-    return t('「{owner}」与「{target}」不兼容，需要卸载', {
-      owner: repoName(repo),
-      target,
-    })
-  }
-  return t('缺少依赖') + '： ' + target
+  const detail = status.state === 'conflict'
+    ? t('「{owner}」与「{target}」不兼容，需要卸载', { owner: repoName(repo), target })
+    : t('缺少依赖') + '： ' + target
+  return relationJumpId(repo)
+    ? `${detail} · ${t('点击定位到该仓库')}`
+    : detail
+}
+
+/**
+ * 点关系标签：在**本页内**高亮依赖仓库并滚过去。
+ *
+ * 不需要绕路由：目标卡片就在同一页，走 `focus` 直接高亮 3 秒，
+ * 与从 MOD 管理页跳转过来用的是同一套高亮与滚动逻辑。
+ */
+function jumpToRelationRepository(repo: Repository) {
+  const id = relationJumpId(repo)
+  if (id) focusRepository(id)
 }
 
 /* ===== 搜索 ===== */
@@ -690,12 +720,17 @@ defineExpose({ refreshAll, visibleCount })
                       由安装前检查一次跑完，所以这里不再放「去卸载」「安装依赖」
                       按钮 —— 同一件事给两个入口，只会让人先去点标题前那个更显眼
                       的按钮，结果装完依赖发现主包没装。
-                      「缺依赖」是纯标签（无可安装来源时也用它），冲突用「冲突」标签。
+
+                      标签本身可以点：跳到**依赖的**仓库并高亮它，与 MOD 管理页
+                      那个「缺依赖」标签的行为一致 —— 两处点同一个状态，落点应当
+                      相同。没有可安装来源时不可点（跳过去也无处可去）。
                     -->
                     <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
                       class="state-tag dep-tag"
+                      :class="{ 'state-tag--link': !!relationJumpId(repo) }"
                       :color="tagColorFor(relationTag(repo)!.tone)"
-                      :title="relationTitle(unmetRelation(repo)!, repo)">
+                      :title="relationTagTitle(repo)"
+                      @click.stop="jumpToRelationRepository(repo)">
                       {{ t(relationTag(repo)!.text) }}
                     </n-tag>
                     <span class="card-title">{{ repoName(repo) }}</span>
@@ -806,8 +841,10 @@ defineExpose({ refreshAll, visibleCount })
                   <!-- 关系提示：社区仓库卡片与上方源码树卡片共用同一套判定（只提示，不做入口） -->
                   <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
                     class="state-tag dep-tag"
+                    :class="{ 'state-tag--link': !!relationJumpId(repo) }"
                     :color="tagColorFor(relationTag(repo)!.tone)"
-                    :title="relationTitle(unmetRelation(repo)!, repo)">
+                    :title="relationTagTitle(repo)"
+                    @click.stop="jumpToRelationRepository(repo)">
                     {{ t(relationTag(repo)!.text) }}
                   </n-tag>
                   <span class="card-title">{{ repoName(repo) }}</span>

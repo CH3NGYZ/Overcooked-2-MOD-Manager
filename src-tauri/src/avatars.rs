@@ -57,6 +57,20 @@ fn cache_key(provider: &Provider, owner: &str) -> String {
     format!("{provider}-{:016x}", hasher.finish())
 }
 
+/// 批量命令返回给前端的键：`{provider}:{owner_lowercase}`。
+///
+/// **必须与前端 `avatars.ts::avatarKey()` 逐字一致**。两边各写一份是这次
+/// bug 的来源：后端用了原样大小写的 owner，前端用小写，于是 `CH3NGY2`、
+/// `QingyuQingxue` 这类含大写的 owner 明明下载成功却查不到，卡片回落成
+/// 平台图标，而日志显示「可用=8/8」——现象是「只有这几个没有头像」。
+pub fn response_key(provider: &Provider, owner: &str) -> String {
+    let provider = match provider {
+        Provider::Github => "github",
+        Provider::Gitee => "gitee",
+    };
+    format!("{provider}:{}", owner.trim().to_lowercase())
+}
+
 /// 按文件头判断 MIME，供前端拼 data URL。
 ///
 /// 不信任响应里的 `Content-Type`：代理经常返回 `text/html` 或
@@ -341,6 +355,34 @@ mod tests {
 
         let gitee = cache_key(&Provider::Gitee, "BepInEx");
         assert_ne!(gh, gitee, "不同平台必须分开缓存");
+    }
+
+    /*
+     * 返回给前端的键必须**小写化**，与 `avatars.ts::avatarKey()` 完全一致。
+     *
+     * 真实事故：后端曾用原样大小写的 owner 作键，前端用小写去查。
+     * `CH3NGY2`、`QingyuQingxue` 这类含大写的 owner 于是查不到 ——
+     * 日志显示「可用=8/8」，界面却只有 6 个头像，另外两个回落成平台图标。
+     * 全小写的 owner 恰好一致，所以症状看起来像「某几个 owner 特别」。
+     */
+    #[test]
+    fn response_key_is_lowercase_and_matches_frontend_rule() {
+        assert_eq!(
+            response_key(&Provider::Github, "CH3NGY2"),
+            "github:ch3ngy2",
+            "provider 前缀 + 小写 owner"
+        );
+        assert_eq!(
+            response_key(&Provider::Github, "  QingyuQingxue  "),
+            "github:qingyuqingxue",
+            "首尾空白要去掉"
+        );
+        assert_eq!(response_key(&Provider::Gitee, "ch3ngyz"), "gitee:ch3ngyz");
+        // 与前端 avatarKey() 的模板字符串 `${provider}:${owner.trim().toLowerCase()}` 同构
+        for owner in ["BepInEx", "gua248", "CH3NGY2", "QingyuQingxue"] {
+            let key = response_key(&Provider::Github, owner);
+            assert_eq!(key, format!("github:{}", owner.to_lowercase()), "{owner}");
+        }
     }
 
     #[test]

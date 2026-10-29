@@ -4797,12 +4797,15 @@ pub async fn get_repository_avatars(
         if owner.is_empty() {
             continue;
         }
-        let key = match request.provider {
-            Provider::Github => format!("github:{owner}"),
-            Provider::Gitee => format!("gitee:{owner}"),
-        };
-        // 前端用 `{provider}:{owner}` 作为查询键，所以这里也按它去重
-        if !seen.insert((key.clone(), owner.clone())) {
+        /*
+         * 键必须与前端 `avatarKey()` **完全一致**：`{provider}:{owner_lowercase}`。
+         * 统一由 `avatars::response_key` 生成，避免两边各写一份再漂移 ——
+         * 之前这里用原样大小写的 owner，`CH3NGY2`、`QingyuQingxue` 这类
+         * 含大写的 owner 键就对不上，后端返回了头像前端却查不到。
+         */
+        let key = crate::avatars::response_key(&request.provider, &owner);
+        let dedupe = key.clone();
+        if !seen.insert((dedupe, owner.to_lowercase())) {
             continue;
         }
         pending.push((key, owner, request.provider));

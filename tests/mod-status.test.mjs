@@ -5,8 +5,9 @@ import test from 'node:test'
  * MOD 状态判定回归：MOD 安装页和 MOD 管理页共用 src/modStatus.ts。
  * Node 24 直接执行 TS（类型擦除），这里测的是真实源码，不是副本。
  */
-const { compareVersions, repositoryForMod, modsForRepository, formatVersion, isPrereleaseVersion } =
-  await import('../src/modStatus.ts')
+const {
+  compareVersions, repositoryForMod, modsForRepository, formatVersion, isPrereleaseVersion, versionDisplay,
+} = await import('../src/modStatus.ts')
 
 function repo(overrides = {}) {
   return {
@@ -256,4 +257,48 @@ test('同号 beta 低于正式版，下一个次版本的 beta 才是更新', ()
   }
   // host utilities 的新发布约定：下一个测试版用下一个正式版号 + beta 标志
   assert.equal(compareVersions('1.8.8-beta1', '1.8.7'), 1)
+})
+
+/*
+ * 版本号两段式展示：主干 + 一个测试标记。
+ *
+ * 卡片上的 `v1.9.9-beta.2` 占位太宽，用户实际只需要「哪个版本 + 第几个测试」。
+ */
+test('versionDisplay 把 -beta.N 拆成 主干 + 数字序号', () => {
+
+  for (const tag of ['v1.9.9-beta.2', '1.9.9-beta.2', '1.9.9.2']) {
+    const d = versionDisplay(tag, false, '测')
+    assert.equal(d.base, '1.9.9', tag)
+    assert.equal(d.marker, '2', tag)
+    assert.equal(d.markerIsNumeric, true, tag)
+  }
+})
+
+test('versionDisplay 对正式版不给标记', () => {
+
+  for (const tag of ['v1.9.9', '1.9.9', '1.9.9.0']) {
+    const d = versionDisplay(tag, false, '测')
+    assert.equal(d.base, '1.9.9', tag)
+    assert.equal(d.marker, null, tag)
+  }
+})
+
+test('versionDisplay 无数字序号时用文字标记提示测试版', () => {
+
+  // 只有文字标识
+  const beta = versionDisplay('1.9.9-beta', false, '测')
+  assert.equal(beta.base, '1.9.9')
+  assert.equal(beta.markerIsNumeric, false)
+  assert.ok(beta.marker)
+  // 后端标记 prerelease 但 tag 是纯正式版号 → 同样要提示
+  const flagged = versionDisplay('v1.9.9', true, '测')
+  assert.equal(flagged.base, '1.9.9')
+  assert.equal(flagged.marker, '测')
+  assert.equal(flagged.markerIsNumeric, false)
+})
+
+test('versionDisplay 主干去掉 v 前缀与第 4 段', () => {
+
+  assert.equal(versionDisplay('v1.9.9.23', false, '测').base, '1.9.9')
+  assert.equal(versionDisplay('v1.9.9.23', false, '测').marker, '23')
 })

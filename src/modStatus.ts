@@ -184,3 +184,70 @@ export function compareVersions(left: string | null | undefined, right: string |
   }
   return 0
 }
+
+/**
+ * 版本号的两段式展示：主干 + 一个「测试标记」。
+ *
+ * 为什么要拆：`v1.9.9-beta.2` 这类完整写法在卡片上占很宽，而且用户真正
+ * 需要的信息只有两点——「主干版本是多少」和「这是第几个测试版」。
+ *
+ * 规则：
+ *   `1.9.9-beta.2` → base `1.9.9`,  marker `2`
+ *   `1.9.9-beta`   → base `1.9.9`,  marker `beta`   （无序号，直接显示标签）
+ *   `1.9.9.2`      → base `1.9.9`,  marker `2`      （四段 = beta 序号）
+ *   `1.9.9`        → base `1.9.9`,  marker null     （正式版）
+ *
+ * `marker` 是纯数字时前端渲染成灰底数字徽标；是文字时直接拼在版本号后，
+ * 提醒用户这是测试版（因为解析不出序号，无法用数字表达）。
+ *
+ * 传入 `prerelease` 标记：为 true 但版本号本身解析不出序号时（例如作者只是
+ * 勾了 prerelease 而 tag 是 `1.9.9`），marker 用调用方给的兜底文案。
+ */
+export interface VersionDisplay {
+  /** 主干版本（已规范化：去尾部全 0 段，但至少两段）。 */
+  base: string
+  /** 测试版标记：数字序号，或文字标签；正式版为 null。 */
+  marker: string | null
+  /** marker 是否为纯数字（决定前端用灰底数字还是文字后缀）。 */
+  markerIsNumeric: boolean
+}
+
+export function versionDisplay(
+  value: string | null | undefined,
+  prerelease?: boolean | null,
+  fallbackMarker = '',
+): VersionDisplay {
+  // 主干一律用 stripPrerelease 归一：去 v 前缀、去后缀、丢第 4 段序号
+  const base = value ? stripPrerelease(value) : ''
+  if (!value) return { base: base || '—', marker: prerelease ? fallbackMarker : null, markerIsNumeric: false }
+
+  const parsed = parseVersion(value)
+  const raw = value.trim().replace(/^[vV]/, '')
+
+  if (parsed && parsed.prerelease.length) {
+    // 数字序号：取最后一个纯数字标识符（`beta.2` 的 2、四段的第 4 段）
+    const serial = [...parsed.prerelease].reverse().find((part) => /^\d+$/.test(part))
+    if (serial) {
+      return { base: stripPrerelease(raw), marker: serial, markerIsNumeric: true }
+    }
+    // 只有文字标识（`-beta`、`-rc`）：直接拼在版本号后
+    return {
+      base: stripPrerelease(raw),
+      marker: parsed.prerelease[parsed.prerelease.length - 1] ?? fallbackMarker,
+      markerIsNumeric: false,
+    }
+  }
+
+  // 版本号本身看不出预发布，但后端标记为 true：用兜底文案提示
+  return { base, marker: prerelease ? fallbackMarker : null, markerIsNumeric: false }
+}
+
+/** 去掉 `v` 前缀、`-`/`+` 之后的部分，并丢掉第 4 段及以后的 beta 序号。 */
+function stripPrerelease(raw: string): string {
+  // 先去掉 tag 惯用的 v 前缀，否则主干会显示成 v1.9.9
+  const core = raw.trim().replace(/^[vV]/, '').split(/[-+]/)[0]
+  const numbers = core.split('.').filter((part) => part !== '')
+  // 第 4 段是 beta 序号，不属于主干
+  while (numbers.length > 3) numbers.pop()
+  return formatVersion(numbers.join('.')) || core
+}

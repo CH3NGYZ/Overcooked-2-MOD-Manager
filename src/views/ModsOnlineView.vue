@@ -5,7 +5,7 @@ import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, Sea
 import { useDashboard } from '../composables/useDashboardStore'
 import { useNotify } from '../useNotify'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
-import { formatVersion, isPrereleaseVersion, modsForRepository } from '../modStatus'
+import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { locale, t } from '../i18n'
@@ -327,11 +327,23 @@ function releaseIsPrerelease(release: { prerelease: boolean; version?: string | 
  * 后端 `version` 是 semver 归一后的值（`1.8.7.23` 会变成 `1.8.7`），
  * 直接显示会让用户以为管理器读错了版本，所以优先用 `tag_name`。
  */
-function versionLabel(repo: Repository) {
+/**
+ * 版本号的两段式展示：主干（普通色）+ 测试标记（prerelease 等级色）。
+ *
+ * `v1.9.9-beta.2` 在卡片上占很宽，而且用户真正需要的只有两点：
+ * 主干版本是多少、这是第几个测试版。所以拆成 `1.9.9` + 灰底 `2`。
+ *
+ * 解析不出数字序号时（如 `1.9.9-beta`，或作者只勾了 prerelease 标记），
+ * 用「测」这个文字标记提醒这是测试版 —— 数字表达不了就说清楚。
+ */
+function versionParts(repo: Repository) {
   const release = latest(repo)
-  if (!release) return '—'
-  const value = formatVersion(release.tag_name || release.version) || '—'
-  return releaseIsPrerelease(release) ? `${value} · ${t('预发布')}` : value
+  if (!release) return { base: '—', marker: null as string | null, markerIsNumeric: false }
+  return versionDisplay(
+    release.tag_name || release.version,
+    releaseIsPrerelease(release),
+    t('测'),
+  )
 }
 
 /** 下载量：优先最新 Release 首个匹配资产的 download_count。 */
@@ -539,20 +551,29 @@ defineExpose({ refreshAll, visibleCount })
                   <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
 
                   <div class="card-foot">
-                    <div class="card-stats">
-                      <span class="stat stat-version">
-                        <span class="muted">{{ t('最新版本') }}</span>
-                        <span class="version-line">
-                          <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
-                          <!-- 刷新状态：转圈即表示该仓库正在拉取 Release -->
-                          <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
-                        </span>
+                    <span class="stat stat-version">
+                      <span class="muted">{{ t('最新版本') }}</span>
+                      <span class="version-line">
+                        <!--
+                          两段式：主干用普通色，测试标记用 prerelease 等级色。
+                          数字序号渲染成灰底徽标（与分组标题的计数同一套外观），
+                          文字标记（如「测」）直接拼在后面。
+                        -->
+                        <b class="mono version-base">{{ versionParts(repo).base }}</b>
+                        <n-tag v-if="versionParts(repo).markerIsNumeric" size="tiny" :bordered="false"
+                          class="version-marker"
+                          :color="tagColorFor('moderate')">{{ versionParts(repo).marker }}</n-tag>
+                        <b v-else-if="versionParts(repo).marker" class="mono version-marker-text"
+                          :style="{ color: tagColorFor('moderate').textColor }">{{ versionParts(repo).marker }}</b>
+                        <!-- 刷新状态：转圈即表示该仓库正在拉取 Release -->
+                        <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
                       </span>
-                      <span class="stat">
-                        <span class="muted">{{ t('下载量') }}</span>
-                        <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
-                      </span>
-                    </div>
+                    </span>
+                    <!-- 下载量是空间不足时优先被压缩隐藏的项，见 .card-downloads -->
+                    <span class="stat card-downloads">
+                      <span class="muted">{{ t('下载量') }}</span>
+                      <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                    </span>
                     <!--
                       主按钮：安装（主题色）/ 重装、更新（对比色）/ 刷新（刷新失败的警告色）。
                       文案、图标与动作都由 installActionOf 决定，不在模板里各自判断。
@@ -626,19 +647,23 @@ defineExpose({ refreshAll, visibleCount })
                 </div>
                 <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
                 <div class="card-foot">
-                  <div class="card-stats">
-                    <span class="stat stat-version">
-                      <span class="muted">{{ t('最新版本') }}</span>
-                      <span class="version-line">
-                        <b class="mono" :class="{ prerelease: !!latest(repo) && releaseIsPrerelease(latest(repo)!) }">{{ versionLabel(repo) }}</b>
-                        <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
-                      </span>
+                  <span class="stat stat-version">
+                    <span class="muted">{{ t('最新版本') }}</span>
+                    <span class="version-line">
+                      <!-- 两段式同源码树卡片：主干普通色 + 测试标记用 prerelease 等级色 -->
+                      <b class="mono version-base">{{ versionParts(repo).base }}</b>
+                      <n-tag v-if="versionParts(repo).markerIsNumeric" size="tiny" :bordered="false"
+                        class="version-marker"
+                        :color="tagColorFor('moderate')">{{ versionParts(repo).marker }}</n-tag>
+                      <b v-else-if="versionParts(repo).marker" class="mono version-marker-text"
+                        :style="{ color: tagColorFor('moderate').textColor }">{{ versionParts(repo).marker }}</b>
+                      <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
                     </span>
-                    <span class="stat">
-                      <span class="muted">{{ t('下载量') }}</span>
-                      <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
-                    </span>
-                  </div>
+                  </span>
+                  <span class="stat card-downloads">
+                    <span class="muted">{{ t('下载量') }}</span>
+                    <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                  </span>
                   <n-button size="tiny" class="card-install"
                     :style="installButtonStyle(repo)"
                     :loading="!!installing[repo.id]"
@@ -794,13 +819,16 @@ defineExpose({ refreshAll, visibleCount })
 }
 .card-install {
   /*
-   * 由 .card-foot 的网格第二列定位到右下角。
-   * 不设 margin-left:auto —— 那是 flex 里的做法，在 grid 里会把列宽撑开。
+   * 按钮不可压缩：flex: 0 0 auto + nowrap。
+   * 卡片变窄时被牺牲的是左边的 .card-downloads（先压窄、再裁掉），
+   * 按钮永远保持完整宽度并贴住右边缘。
    *
-   * white-space: nowrap 保证按钮文字不被逐字折行（其他语言的标签更长）；
-   * 网格的 minmax(0,1fr) 保证卡片变窄时压缩的是左侧统计区而不是按钮。
+   * margin-left: auto 把剩余空白全部推到左侧 —— 统计项靠左紧挨，
+   * 按钮贴右。空间不足时 flex 会先压缩 .card-downloads（它可收缩），
+   * 不会去动按钮。
    */
   flex: 0 0 auto;
+  margin-left: auto;
   white-space: nowrap;
 }
 /*
@@ -821,22 +849,22 @@ defineExpose({ refreshAll, visibleCount })
 }
 .card-foot {
   /*
-   * 两列网格：左列放统计（可换行收缩），右列固定放安装按钮。
+   * 单行 flex：版本号 → 下载量 → 按钮，从左到右。
    *
-   * 为什么不用 flex + margin-left:auto：flex 里 `.stat` 是 `flex: 0 0 auto`
-   * 不收缩，卡片变窄（网格最小 310px、或 150% 缩放下等效更窄）时它会把
-   * 按钮挤出卡片右边被裁掉。grid 的 `minmax(0, 1fr)` 让左列可以真的收缩，
-   * 按钮列 `auto` 永远拿到它需要的宽度、并贴在右下角。
+   * 空间不足时的挤压顺序由 .card-downloads 的 `flex: 0 1 auto` +
+   * `min-width: 0` + `overflow: hidden` 决定：它是唯一可收缩项，
+   * 会先被压窄、再整个被裁掉，而按钮 `flex: 0 0 auto` 永远保持完整、
+   * 钉在右下角。不做换行 —— 换行会让卡片高度参差，视觉上更乱。
    *
-   * `align-items: end` 让统计块与按钮底部对齐；下载量换行到第二行时
-   * 按钮仍钉在右下角，不会被重新排布。
+   * `align-items: end` 让统计块与按钮底部对齐。
    */
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 8px 12px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
   padding-top: 8px;
   border-top: 1px solid var(--oc2-row-line);
+  /* 防止任何子项溢出卡片右边缘 */
+  min-width: 0;
 }
 .stat {
   display: flex;
@@ -851,16 +879,47 @@ defineExpose({ refreshAll, visibleCount })
   text-align: center;
 }
 /*
- * 统计区（版本 + 下载量）单列排布：
- * 卡片够宽时它们在同一行左对齐；变窄时自动换行，
- * 下载量落到版本号下面而按钮位置不受影响。
+ * 版本号必须尽量完整显示：优先压缩下载量，不够时才压缩版本号。
+ *
+ * 压缩时同样强制单行 + 省略号：版本号是 1.9.9-beta.2 这种无空白长串，
+ * 一旦允许折行，被压到 20px 宽时会逐字断成十几行（实测脚部高度从
+ * 49px 涨到 107px），卡片高度随宽度剧烈跳动。
  */
-.card-stats {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 14px;
+.stat-version {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.stat-version b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * 下载量是「可牺牲」项：空间不足时先压窄它，压到 0 就整体隐藏。
+ * 用 max-width 过渡而不是 display:none，避免布局跳动。
+ */
+.card-downloads {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  /*
+   * 压窄时保持单行，让内容被 overflow 裁掉而不是折行。
+   *
+   * 两件事都要做：
+   *   · white-space: nowrap —— 不主动折行
+   *   · word-break: normal —— 覆盖 global.css 里给长串准备的
+   *     `word-break: break-all`，否则中文标签会在任意字间断开，
+   *     脚部高度从 49px 涨到 107px，卡片高度随宽度跳动。
+   */
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 /* 版本号可能带「· 预发布」后缀，允许比下载量宽松一点但仍随内容 */
 .stat-version { max-width: 180px; }
@@ -871,6 +930,27 @@ defineExpose({ refreshAll, visibleCount })
   gap: 5px;
   min-width: 0;
   max-width: 100%;
+}
+/*
+ * 两段式版本号：主干用普通文字色，测试标记单独上色。
+ *
+ * 主干刻意不做成 prerelease 色 —— 用户先要读「这是哪个版本」，
+ * 再读「是第几个测试版」。整串染成对比色会让主干版本号也变得难以与其他
+ * 文本区分，反而降低扫读效率。
+ */
+.version-base {
+  color: var(--oc2-text-1);
+}
+/* 数字序号的灰底徽标：与分组标题的计数同一套外观（n-tag + muted 色调） */
+.version-marker {
+  /* n-tag 内边距偏大，徽标要更紧凑才不挤占版本行 */
+  --n-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+/* 文字标记（如「测」）：只上色，不加背景 */
+.version-marker-text {
+  font-size: 11.5px;
+  font-weight: 600;
 }
 .spin-icon { flex: 0 0 auto; color: var(--oc2-accent); animation: oc2-spin .8s linear infinite; }
 @keyframes oc2-spin { to { transform: rotate(360deg); } }

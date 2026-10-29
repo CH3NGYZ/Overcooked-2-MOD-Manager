@@ -25,6 +25,7 @@ import { api } from '../../services/tauri'
 import { useNotify } from '../../useNotify'
 import { pickI18n, t } from '../../i18n'
 import { tagColorFor } from '../../theme'
+import { parseBackupTime } from '../../backupLabel'
 import { useDashboard } from '../../composables/useDashboardStore'
 import { useRepositoryLink } from '../../crossLink'
 import BusyOverlay from '../BusyOverlay.vue'
@@ -45,8 +46,14 @@ const working = ref(false)
 
 const installed = computed(() => info.value?.installed === true)
 const enabled = computed(() => info.value?.enabled === true)
-const levelPacks = computed(() => info.value?.level_packs ?? 0)
 const backups = computed(() => info.value?.backups ?? [])
+/**
+ * 备份行展示数据：`时间 · 路径`。
+ *
+ * 与 BepInExPanel 用同一个格式化函数，两处备份列表的观感必须一致。
+ */
+const backupRows = computed(() =>
+  backups.value.map((path) => ({ path, time: parseBackupTime(path) })))
 /** 游戏运行时禁止改名/删除/还原，与 BepInEx 面板同一约束。 */
 const busy = computed(() => working.value || !!game.value?.kitchen_running)
 /** 备份/恢复/卸载期间的全屏遮罩文案。 */
@@ -220,6 +227,12 @@ async function openBackups() {
   if (!result.ok) message.error(result.message)
 }
 
+/** 在文件管理器里打开**某一个**备份目录（与 BepInEx 面板的同名动作一致）。 */
+async function openBackup(backupPath: string) {
+  const result = await api.openBackupDirectory(backupPath)
+  if (!result.ok) message.error(result.message)
+}
+
 onMounted(() => { void refresh() })
 </script>
 
@@ -241,18 +254,15 @@ onMounted(() => { void refresh() })
     </div>
 
     <!--
-      框架自身的两个操作，与 BepInEx 面板一致：
-      「打开目录」指向地图目录，「配置管理」在这里换成「地图数量」这类只读信息
-      —— DIYLevel 没有 BepInEx 那样的 .cfg 配置面板。
+      框架自身的操作，与 BepInEx 面板的「打开路径 / 配置管理」对齐。
+      原来这里还并列一个「地图集：N」标签，已随地图管理拆页移除 ——
+      地图列表将由独立的「地图管理」页面承担，这里只留框架本体相关动作。
     -->
     <div v-if="installed" class="panel-actions">
       <n-button size="small" secondary :disabled="busy" @click="openDirectory">
         <template #icon><FolderOpenOutline width="15" height="15" /></template>
         {{ t('打开地图目录') }}
       </n-button>
-      <n-tag size="small" :bordered="false" type="default" class="panel-metric">
-        {{ t('地图集') }}：{{ levelPacks }}
-      </n-tag>
     </div>
 
     <!-- 安装：未安装时只有这一个入口；已安装则是「重新安装 / 创建备份 / 卸载框架」 -->
@@ -299,34 +309,30 @@ onMounted(() => { void refresh() })
       <div v-if="!backups.length" class="muted panel-empty">
         {{ t('暂无备份。卸载或重装前建议先创建备份。') }}
       </div>
-      <div v-for="backup in backups" :key="backup" class="backup-row">
-        <span class="mono backup-path" :title="backup">{{ backup }}</span>
+      <div v-for="row in backupRows" :key="row.path" class="backup-row">
+        <span class="backup-label" :title="row.path">
+          <template v-if="row.time">
+            <span class="backup-time">{{ row.time }}</span>
+            <span class="backup-sep">·</span>
+          </template>
+          <span class="mono backup-path">{{ row.path }}</span>
+        </span>
         <span class="backup-acts">
-          <n-button size="tiny" secondary :disabled="busy" @click="restore(backup)">{{ t('恢复') }}</n-button>
+          <n-button size="tiny" secondary :disabled="busy" @click="openBackup(row.path)">{{ t('打开') }}</n-button>
+          <n-button size="tiny" secondary :disabled="busy" @click="restore(row.path)">{{ t('恢复') }}</n-button>
           <n-button size="tiny" quaternary type="error" :disabled="busy" :title="t('删除备份')"
-            @click="deleteBackup(backup)">
+            @click="deleteBackup(row.path)">
             <template #icon><TrashOutline width="14" height="14" /></template>
           </n-button>
         </span>
       </div>
     </div>
 
-    <!-- 地图集：数量来自 levels/ 下的文件夹 -->
-    <div v-if="installed" class="panel-backups">
-      <div class="panel-backups-head">
-        <b>{{ t('地图集') }}</b>
-        <n-button size="tiny" quaternary :disabled="busy" @click="openDirectory">
-          <template #icon><FolderOpenOutline width="14" height="14" /></template>
-          {{ t('打开 levels 目录') }}
-        </n-button>
-      </div>
-      <div v-if="!levelPacks" class="muted panel-empty">
-        {{ t('还没有地图集。把地图文件夹放进 levels 目录即可，每个文件夹算一个地图集。') }}
-      </div>
-      <div v-else class="muted panel-empty">
-        {{ t('当前有 {count} 个地图集（每张地图集是 levels 下的一个文件夹）。', { count: levelPacks }) }}
-      </div>
-    </div>
+    <!--
+      地图集区块已移除：下一步会把「地图管理」做成与 MOD 管理同级的独立页面，
+      这里再放一份列表会与那个页面重复。后端 level_packs / open_diy_level_directory
+      仍保留，供新页面与总览卡片使用。
+    -->
 
     <!-- 备份/恢复/卸载期间的全屏遮罩：这些操作都在整目录拷贝，不能被打断 -->
     <BusyOverlay :show="!!busyText" :description="busyText ?? undefined" />
@@ -367,7 +373,7 @@ onMounted(() => { void refresh() })
 .panel-backups-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .panel-empty { font-size: 12px; margin-top: 8px; line-height: 1.5; }
 
-/* 备份行：与 BepInExPanel 完全一致的排版（长路径单行省略 + 右侧按钮组） */
+/* 备份行：与 BepInExPanel 完全一致的排版（`时间 · 路径` + 右侧按钮组） */
 .backup-row {
   display: flex;
   align-items: center;
@@ -377,6 +383,17 @@ onMounted(() => { void refresh() })
   border-bottom: 1px dashed var(--oc2-row-line);
 }
 .backup-row:last-child { border-bottom: 0; }
+.backup-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--oc2-text-3);
+}
+.backup-time { flex: 0 0 auto; color: var(--oc2-text-2); }
+.backup-sep { flex: 0 0 auto; color: var(--oc2-text-4); }
 .backup-path {
   flex: 1;
   min-width: 0;

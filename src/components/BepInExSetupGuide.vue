@@ -42,7 +42,7 @@ const emit = defineEmits<{
 const message = useNotify()
 
 const platform = computed<AppPlatform>(() => props.config?.platform ?? 'windows')
-const runtime = computed<GameRuntime>(() => props.config?.game.runtime ?? 'wine')
+const runtime = computed<GameRuntime>(() => props.config?.game?.runtime ?? 'wine')
 const isMacNative = computed(() => platform.value === 'macos' && runtime.value === 'native')
 
 /** 当前步骤（0 基）。用户可点步骤条回看，但不影响按钮可用性。 */

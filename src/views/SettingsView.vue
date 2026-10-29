@@ -45,7 +45,7 @@ const showUpdate = ref(false)
 /* ===== 游戏版本（macOS：CrossOver / 原生） ===== */
 
 const isMacOS = computed(() => config.value?.platform === 'macos')
-const gameRuntime = computed<GameRuntime>(() => config.value?.game.runtime ?? 'wine')
+const gameRuntime = computed<GameRuntime>(() => config.value?.game?.runtime ?? 'wine')
 const switchingRuntime = ref(false)
 
 /**
@@ -440,7 +440,7 @@ async function clearTokens() {
   <SettingsGroup :title="t('通用设置')">
     <SettingsRow :title="t('自动检测游戏路径')" :description="t('启动与刷新时自动探测 Steam 库')">
       <template #right>
-        <n-switch size="small" :value="config?.game.auto_detect"
+        <n-switch size="small" :value="config?.game?.auto_detect"
           @update:value="(value: boolean) => savePreference({ auto_detect: value }, t('已保存'))" />
       </template>
     </SettingsRow>

@@ -24,6 +24,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
+import { parseBackupTime } from '../backupLabel'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
 import BepInExSetupGuide from './BepInExSetupGuide.vue'
@@ -42,6 +43,14 @@ const configEditorOpen = ref(false)
 
 const winhttpEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
 const backups = computed(() => game.value?.bepinex.backups ?? [])
+/**
+ * 备份行展示数据：`时间 · 路径`。
+ *
+ * 在 computed 里一次算好，模板里不再反复调 parseBackupTime（每次重渲染
+ * 会为同一行算三遍），也让「有没有时间」只判断一次。
+ */
+const backupRows = computed(() =>
+  backups.value.map((path) => ({ path, time: parseBackupTime(path) })))
 const isWindows = computed(() => config.value?.platform === 'windows')
 /**
  * 框架是否已安装。
@@ -78,7 +87,14 @@ const guidePhase = ref<'before-install' | 'after-install' | null>(null)
 const pendingInstall = ref<{ reinstall: boolean } | null>(null)
 
 const platform = computed(() => config.value?.platform ?? 'windows')
-const runtime = computed<GameRuntime>(() => config.value?.game.runtime ?? 'wine')
+/**
+ * 运行形态。
+ *
+ * 逐层可选链：`config` 或其中的 `game` 段缺失时（配置损坏、旧版本配置、
+ * 测试夹具）都不能整块崩掉 —— 之前模板里写 `config?.game.runtime`，只保护
+ * 了 `config`，`game` 缺失会抛 `reading 'runtime'` 让整个抽屉渲染失败。
+ */
+const runtime = computed<GameRuntime>(() => config.value?.game?.runtime ?? 'wine')
 /** 只有非 Windows 才需要引导：Windows 装完即可用。 */
 const needsGuide = computed(() => platform.value !== 'windows')
 /** CrossOver / Wine 分支（macOS 的非原生运行时）。 */
@@ -240,6 +256,12 @@ async function openBackups() {
   const result = await api.openBackupDirectory()
   if (!result.ok) message.error(result.message)
 }
+
+/** 在文件管理器里打开**某一个**备份目录（与「打开备份目录」同一命令，带路径）。 */
+async function openBackup(backupPath: string) {
+  const result = await api.openBackupDirectory(backupPath)
+  if (!result.ok) message.error(result.message)
+}
 </script>
 
 <template>
@@ -261,7 +283,7 @@ async function openBackups() {
         </n-tag>
       </div>
       <span v-if="!isWindows" class="panel-runtime muted">
-        {{ t('运行形态') }}：{{ config?.game.runtime === 'native' ? t('原生') : 'Wine' }}
+        {{ t('运行形态') }}：{{ runtime === 'native' ? t('原生') : 'Wine' }}
       </span>
     </div>
 
@@ -327,11 +349,18 @@ async function openBackups() {
       <div v-if="!backups.length" class="muted panel-empty">
         {{ t('暂无备份。卸载或重装前建议先创建备份。') }}
       </div>
-      <div v-for="backup in backups" :key="backup" class="backup-row">
-        <span class="mono backup-path" :title="backup">{{ backup }}</span>
+      <div v-for="row in backupRows" :key="row.path" class="backup-row">
+        <span class="backup-label" :title="row.path">
+          <template v-if="row.time">
+            <span class="backup-time">{{ row.time }}</span>
+            <span class="backup-sep">·</span>
+          </template>
+          <span class="mono backup-path">{{ row.path }}</span>
+        </span>
         <span class="backup-acts">
-          <n-button size="tiny" secondary @click="restore(backup)">{{ t('恢复') }}</n-button>
-          <n-button size="tiny" quaternary type="error" :title="t('删除备份')" @click="removeBackup(backup)">
+          <n-button size="tiny" secondary @click="openBackup(row.path)">{{ t('打开') }}</n-button>
+          <n-button size="tiny" secondary @click="restore(row.path)">{{ t('恢复') }}</n-button>
+          <n-button size="tiny" quaternary type="error" :title="t('删除备份')" @click="removeBackup(row.path)">
             <template #icon><TrashOutline width="14" height="14" /></template>
           </n-button>
         </span>
@@ -430,6 +459,23 @@ async function openBackups() {
   border-bottom: 1px dashed var(--oc2-row-line);
 }
 .backup-row:last-child { border-bottom: 0; }
+/*
+ * 备份行文本：`时间 · 路径`。
+ *
+ * 时间不参与省略（它是最短的辨识信息，必须始终可见），路径单独占剩余宽度
+ * 并在过长时省略；两者的 title 都保留完整路径。
+ */
+.backup-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--oc2-text-3);
+}
+.backup-time { flex: 0 0 auto; color: var(--oc2-text-2); }
+.backup-sep { flex: 0 0 auto; color: var(--oc2-text-4); }
 .backup-path {
   flex: 1;
   min-width: 0;

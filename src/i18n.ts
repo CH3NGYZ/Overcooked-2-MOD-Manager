@@ -484,6 +484,7 @@ const entries = {
   '打开所在文件夹并定位': ['開啟所在資料夾並定位', 'Reveal in folder', '폴더에서 위치 열기', 'フォルダーで表示'],
   '查看日志': ['檢視日誌', 'View logs', '로그 보기', 'ログを表示'],
   '打开目录': ['開啟目錄', 'Open folder', '폴더 열기', 'フォルダーを開く'],
+  '打开': ['開啟', 'Open', '열기', '開く'],
   // DIYLevel 自定义关卡框架（本质是 MOD，但承担框架角色）
   'DIYLevel 框架': ['DIYLevel 框架', 'DIYLevel framework', 'DIYLevel 프레임워크', 'DIYLevel フレームワーク'],
   'DIYLevel 框架管理': ['DIYLevel 框架管理', 'DIYLevel framework', 'DIYLevel 프레임워크 관리', 'DIYLevel フレームワーク管理'],
@@ -496,31 +497,11 @@ const entries = {
     'オンラインインストールできるリポジトリがありません',
   ],
   '打开地图目录': ['開啟地圖目錄', 'Open map folder', '맵 폴더 열기', 'マップフォルダーを開く'],
-  '打开 levels 目录': ['開啟 levels 目錄', 'Open levels folder', 'levels 폴더 열기', 'levels フォルダーを開く'],
-  '刷新地图数量': ['重新整理地圖數量', 'Refresh map count', '맵 개수 새로고침', 'マップ数を更新'],
-  '安装后这里会出现启用开关、地图目录与地图数量。': [
-    '安裝後這裡會出現啟用開關、地圖目錄與地圖數量。',
-    'Once installed, the enable switch, map folder and map count appear here.',
-    '설치하면 활성화 스위치, 맵 폴더, 맵 개수가 여기에 표시됩니다.',
-    'インストールすると、有効スイッチ・マップフォルダー・マップ数がここに表示されます。',
-  ],
   '无法在线安装：MOD 安装页没有声明此 GUID 的仓库，请手动安装后回到这里管理。': [
     '無法線上安裝：MOD 安裝頁沒有宣告此 GUID 的倉庫，請手動安裝後回到這裡管理。',
     'Not available online: no repository declares this GUID. Install it manually, then manage it here.',
     '온라인 설치 불가: 이 GUID를 선언한 저장소가 없습니다. 직접 설치한 뒤 여기로 돌아와 관리하세요.',
     'オンラインインストール不可：この GUID を宣言したリポジトリがありません。手動でインストールしてからここで管理してください。',
-  ],
-  '还没有地图集。把地图文件夹放进 levels 目录即可，每个文件夹算一个地图集。': [
-    '還沒有地圖集。把地圖資料夾放進 levels 目錄即可，每個資料夾算一個地圖集。',
-    'No map packs yet. Drop map folders into the levels folder — each folder counts as one pack.',
-    '아직 맵 팩이 없습니다. 맵 폴더를 levels 폴더에 넣으면 폴더 하나가 맵 팩 하나입니다.',
-    'マップパックがありません。マップフォルダーを levels フォルダーに入れてください（1 フォルダー＝1 パック）。',
-  ],
-  '当前有 {count} 个地图集（每张地图集是 levels 下的一个文件夹）。': [
-    '目前有 {count} 個地圖集（每張地圖集是 levels 下的一個資料夾）。',
-    'Currently {count} map packs (each is a folder under levels).',
-    '현재 맵 팩 {count}개(각각 levels 아래의 폴더)입니다.',
-    '現在 {count} 個のマップパックがあります（各 levels 配下のフォルダー）。',
   ],
   '安装后才能加载自制地图': [
     '安裝後才能載入自製地圖',

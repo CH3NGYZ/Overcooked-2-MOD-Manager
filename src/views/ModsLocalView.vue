@@ -609,8 +609,18 @@ const statusSummaryTags = computed<StatusSummary[]>(() =>
   summarizeUnits(
     groups.value.flatMap((node) =>
       node.packages.map((pkg) => ({
-        // 包对外的状态就是包标题上那几个；标记为禁用的不算版本结论
-        keys: pkg.statuses.map((entry) => entry.key),
+        /*
+         * 与卡片渲染同源：单 MOD 用 `installedModTags` 的实际标签键
+         * （它含动态补上的 `prerelease`），多 DLL 包用包标题的 `statuses`。
+         *
+         * 不这样对齐会出现「卡片上有『预发布』，页头聚合里却没有」——
+         * 用户看到标签却找不到入口，也点不出高亮。
+         */
+        keys: pkg.grouped
+          ? pkg.statuses.map((entry) => entry.key)
+          : pkg.mods
+            .filter((mod) => !mod.is_dependency)
+            .flatMap((mod) => installedModTags(mod).map((tag) => tag.key)),
       })),
     ),
   ),
@@ -963,7 +973,15 @@ const statusUnitNodes = computed<StatusUnitNode[]>(() => {
         if (mod.is_dependency) continue
         nodes.push({
           anchor: modAnchor(mod),
-          keys: (mod.labels as string[] | undefined) ?? [],
+          /*
+           * 取「卡片实际渲染的标签键」，而不是裸 `mod.labels`。
+           *
+           * 两者不等价：`installedModTags()` 会**动态补上** `prerelease`
+           * （版本号带 -beta / 四段序号时），它不在后端 labels 里。
+           * 用 labels 作命中键时，页头聚合会少一个「预发布」，
+           * 就算它出现了，点了也定位不到任何卡片。
+           */
+          keys: installedModTags(mod).map((tag) => tag.key),
           groupKey: group.key,
           packageKey: pkg.key,
           mods: [mod],

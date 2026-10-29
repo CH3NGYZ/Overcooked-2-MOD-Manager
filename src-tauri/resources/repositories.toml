@@ -50,6 +50,18 @@ ja = "G_U_A"
 
 
 [[repository_sources]]
+id = "repositories-guojia99"
+url = "repositories-guojia99.toml"
+builtin=false
+[repository_sources.nickname_i18n]
+zh-CN = "嘉吖 - DIYLevel Web前置"
+zh-TW = "嘉吖 - DIYLevel Web前置"
+en = "Jiaya - DIYLevel Web Runtime"
+ko = "자야 선생님 - DIYLevel Web 런타임"
+ja = "嘉吖 - DIYLevel Web ランタイム"
+
+
+[[repository_sources]]
 id = "repositories-kfyangc"
 url = "repositories-kfyangc.toml"
 builtin=false

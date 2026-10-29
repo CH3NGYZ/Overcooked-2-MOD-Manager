@@ -1,0 +1,273 @@
+[[repositories]]
+enabled = true
+# 仓库基本信息
+name_i18n.zh-CN = "DIYLevel Web 前置"
+name_i18n.zh-TW = "DIYLevel Web 前置"
+name_i18n.en = "DIYLevel Web Runtime"
+name_i18n.ko = "DIYLevel Web 런타임"
+name_i18n.ja = "DIYLevel Web ランタイム"
+group_i18n.zh-CN = "DIYLevel"
+group_i18n.zh-TW = "DIYLevel"
+group_i18n.en = "DIYLevel"
+group_i18n.ko = "DIYLevel"
+group_i18n.ja = "DIYLevel"
+provider = "github"
+username = "guojia99"
+repository = "OC2DIYLevelRuntimeWLoader"
+region = ""
+platform = ""
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 32
+
+# 版本资产规则
+# 资产名形如 `v3.10.2_OC2DIYLevelRuntimeWLoader.zip`
+asset_rules = [
+  { type = "glob", value = "*_OC2DIYLevelRuntimeWLoader.zip" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "oc2.oc2diylevelruntimewloader"
+local_product_name = ""
+local_original_filename = "Loader.dll"
+version_regex = ""
+
+# 安装目录
+# 压缩包顶层就是 `OC2DIYLevelRuntimeWLoader/` 单目录，按本项目布局规则会
+# 完整放进 plugins（保留目录名），与框架预期的 `plugins/OC2DIYLevelRuntimeWLoader`
+# 一致。
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note_i18n.zh-CN = '''
+# DIYLevel Web 前置（DIYLevelRuntimeWLoader）
+
+用**嘉吖老师的 WebEditor** 导出的自制地图，需要先安装此前置才能正常加载。
+只玩普通自制地图的用户不需要它。
+
+## 什么时候需要
+
+| 地图来源 | 是否需要此前置 |
+| --- | --- |
+| WebEditor 导出、带 `webcustomstub_runtime` 目录的地图 | **需要** |
+| 手工制作或早期导出、不依赖运行时脚本的地图 | 不需要 |
+
+拿不准时可以装上再试：如果进入关卡正常、没有报错，就说明地图需要它；
+如果完全正常且不需要，关掉它能少一层兼容性风险。
+
+## 依赖关系
+
+- 此前置**必须**配合 `DIYLevel` 自定义关卡框架使用，单独安装无效。
+  管理器会把它标记为依赖 DIYLevel，未安装 DIYLevel 时安装流程会先提示。
+- 安装后由 DIYLevel 在加载地图时调用。
+
+## 安装
+
+1. 先安装 **DIYLevel - 自定义关卡** 框架。
+2. 安装此前置。
+3. 把需要游玩的地图放进 `BepInEx/plugins/OC2DIYLevel/levels/`。
+
+## 注意事项
+
+- 压缩包内有 `version.txt` 与 `log_config.txt`，可与 Release 版本对照排查。
+- 需要调试时，`debugLog.dll` 与 `log_config.txt` 用于输出运行时日志。
+- 若安装后某些**不需要**此前置的地图出现问题，先在 MOD 管理器中关闭
+  此前置再试 —— 部分地图与运行时脚本存在兼容性冲突。
+- 地图选档列表为空等异常，先确认 DIYLevel 本身正常、地图放在正确目录，
+  再逐个移除以定位是哪张地图导致。
+
+## 问题反馈
+
+问题请反馈到 [Issues](https://github.com/guojia99/OC2DIYLevelRuntimeWLoader/issues)，
+并附上游戏版本、此前置版本、地图名称，以及 `BepInEx/LogOutput.log` 的相关日志。
+'''
+
+note_i18n.zh-TW = '''
+# DIYLevel Web 前置（DIYLevelRuntimeWLoader）
+
+用**嘉吖老師的 WebEditor** 匯出的自訂地圖，需要先安裝此前置才能正常載入。
+只玩一般自訂地圖的使用者不需要它。
+
+## 什麼時候需要
+
+| 地圖來源 | 是否需要此前置 |
+| --- | --- |
+| WebEditor 匯出、帶 `webcustomstub_runtime` 目錄的地圖 | **需要** |
+| 手工製作或早期匯出、不依賴執行階段腳本的地圖 | 不需要 |
+
+不確定時可以先裝上再試：若進入關卡正常、沒有報錯，代表地圖需要它；
+若完全正常且不需要，關閉它能少一層相容性風險。
+
+## 相依關係
+
+- 此前置**必須**搭配 `DIYLevel` 自訂關卡框架使用，單獨安裝無效。
+  管理器會將它標記為依賴 DIYLevel，未安裝 DIYLevel 時安裝流程會先提示。
+- 安裝後由 DIYLevel 在載入地圖時呼叫。
+
+## 安裝
+
+1. 先安裝 **DIYLevel - 自訂關卡** 框架。
+2. 安裝此前置。
+3. 把需要遊玩的地圖放進 `BepInEx/plugins/OC2DIYLevel/levels/`。
+
+## 注意事項
+
+- 壓縮檔內有 `version.txt` 與 `log_config.txt`，可與 Release 版本對照排查。
+- 需要除錯時，`debugLog.dll` 與 `log_config.txt` 用於輸出執行階段日誌。
+- 若安裝後某些**不需要**此前置的地圖出現問題，先在 MOD 管理員中關閉
+  此前置再試 —— 部分地圖與執行階段腳本存在相容性衝突。
+- 地圖選單列表為空等異常，先確認 DIYLevel 本身正常、地圖放在正確目錄，
+  再逐個移除以找出是哪張地圖造成。
+
+## 問題回報
+
+問題請回報到 [Issues](https://github.com/guojia99/OC2DIYLevelRuntimeWLoader/issues)，
+並附上遊戲版本、此前置版本、地圖名稱，以及 `BepInEx/LogOutput.log` 的相關日誌。
+'''
+
+note_i18n.en = '''
+# DIYLevel Web Runtime (DIYLevelRuntimeWLoader)
+
+Custom maps exported from **Master Jiaya's WebEditor** need this runtime installed
+before they can load. You do not need it for ordinary custom maps.
+
+## When it is required
+
+| Map source | Needs this runtime |
+| --- | --- |
+| Exported from WebEditor, ships a `webcustomstub_runtime` folder | **Yes** |
+| Hand-made or older exports without runtime scripts | No |
+
+If you are unsure, install it and try: a level that loads without errors needs it;
+if everything works without it, leaving it disabled removes a layer of
+compatibility risk.
+
+## Dependency
+
+- This runtime **requires** the `DIYLevel` custom-level framework. Installing it
+  alone does nothing. The manager marks it as depending on DIYLevel, and the
+  install flow warns when DIYLevel is missing.
+- Once installed, DIYLevel calls it while loading maps.
+
+## Installation
+
+1. Install the **DIYLevel - Custom Levels** framework first.
+2. Install this runtime.
+3. Put the maps you want to play into `BepInEx/plugins/OC2DIYLevel/levels/`.
+
+## Notes
+
+- The archive ships `version.txt` and `log_config.txt`; use them to compare
+  against the Release version when troubleshooting.
+- For debugging, `debugLog.dll` and `log_config.txt` control runtime logging.
+- If maps that do **not** need this runtime break after installing it, disable it
+  in MOD Manager first — some maps conflict with the runtime scripts.
+- For an empty level slot list, first confirm DIYLevel itself works and the maps
+  are in the right folder, then remove maps one by one to find the culprit.
+
+## Support
+
+Report issues at [Issues](https://github.com/guojia99/OC2DIYLevelRuntimeWLoader/issues)
+with the game version, runtime version, map name, and the relevant lines from
+`BepInEx/LogOutput.log`.
+'''
+
+note_i18n.ko = '''
+# DIYLevel Web 런타임 (DIYLevelRuntimeWLoader)
+
+**자야(Gua) 선생님의 WebEditor**로 내보낸 커스텀 맵은 이 런타임을 먼저 설치해야
+정상적으로 불러올 수 있습니다. 일반 커스텀 맵만 즐긴다면 필요하지 않습니다.
+
+## 필요한 경우
+
+| 맵 출처 | 이 런타임 필요 여부 |
+| --- | --- |
+| WebEditor로 내보내고 `webcustomstub_runtime` 폴더가 포함된 맵 | **필요** |
+| 직접 제작했거나 런타임 스크립트에 의존하지 않는 맵 | 불필요 |
+
+확실하지 않다면 설치 후 시험해 보세요. 오류 없이 레벨이 열리면 필요한 맵이고,
+없어도 정상이라면 비활성화해 호환성 위험을 줄이는 편이 좋습니다.
+
+## 의존 관계
+
+- 이 런타임은 `DIYLevel` 커스텀 레벨 프레임워크가 **반드시** 필요합니다.
+  단독 설치로는 동작하지 않으며, 관리자가 DIYLevel 의존으로 표시합니다.
+- 설치 후 DIYLevel이 맵을 불러올 때 호출합니다.
+
+## 설치
+
+1. **DIYLevel - 커스텀 레벨** 프레임워크를 먼저 설치합니다.
+2. 이 런타임을 설치합니다.
+3. 플레이할 맵을 `BepInEx/plugins/OC2DIYLevel/levels/`에 넣습니다.
+
+## 참고
+
+- 압축 파일에 `version.txt`와 `log_config.txt`가 포함되어 있어 Release 버전과
+  대조하며 문제를 확인할 수 있습니다.
+- 디버깅 시 `debugLog.dll`과 `log_config.txt`가 런타임 로그를 담당합니다.
+- 이 런타임이 **필요 없는** 맵에서 문제가 생기면 MOD 관리자에서 먼저 비활성화해
+  보세요. 일부 맵은 런타임 스크립트와 충돌합니다.
+- 레벨 선택 목록이 비어 있다면 DIYLevel 자체가 정상인지, 맵이 올바른 폴더에
+  있는지 확인한 뒤 맵을 하나씩 제거해 원인을 찾으세요.
+
+## 문제 신고
+
+[Issues](https://github.com/guojia99/OC2DIYLevelRuntimeWLoader/issues)에 게임 버전,
+런타임 버전, 맵 이름과 `BepInEx/LogOutput.log`의 관련 로그를 첨부해 주세요.
+'''
+
+note_i18n.ja = '''
+# DIYLevel Web ランタイム（DIYLevelRuntimeWLoader）
+
+**嘉吖先生の WebEditor** から書き出したカスタムマップは、このランタイムを
+先にインストールしないと正常に読み込めません。通常のカスタムマップだけを
+遊ぶ場合は不要です。
+
+## 必要なケース
+
+| マップの出所 | このランタイムの要否 |
+| --- | --- |
+| WebEditor で書き出し、`webcustomstub_runtime` を含むマップ | **必要** |
+| 手作り、またはランタイムスクリプトに依存しないマップ | 不要 |
+
+判断に迷う場合はインストールして試してください。エラーなくレベルに入れれば
+必要なマップで、不要でも正常に動くなら無効化しておくと互換性リスクを減らせます。
+
+## 依存関係
+
+- このランタイムは `DIYLevel` カスタムレベルフレームワークが**必須**です。
+  単体では動作せず、マネージャーは DIYLevel 依存として表示します。
+- インストール後は DIYLevel がマップ読み込み時に呼び出します。
+
+## インストール
+
+1. **DIYLevel - カスタムレベル** フレームワークを先にインストールします。
+2. このランタイムをインストールします。
+3. 遊ぶマップを `BepInEx/plugins/OC2DIYLevel/levels/` に置きます。
+
+## 注意
+
+- アーカイブには `version.txt` と `log_config.txt` が含まれ、Release の
+  バージョンと照合して原因を確認できます。
+- デバッグ時は `debugLog.dll` と `log_config.txt` がログ出力を担当します。
+- このランタイムが**不要な**マップで問題が出た場合は、MOD マネージャーで
+  先に無効化してください。一部のマップはランタイムスクリプトと競合します。
+- レベル選択リストが空になる場合は、DIYLevel 自体が正常か、マップが正しい
+  フォルダーにあるかを確認し、マップを 1 つずつ外して原因を探してください。
+
+## フィードバック
+
+問題は [Issues](https://github.com/guojia99/OC2DIYLevelRuntimeWLoader/issues) へ、
+ゲームのバージョン、ランタイムのバージョン、マップ名、`BepInEx/LogOutput.log`
+の関連ログを添えて報告してください。
+'''
+
+# 依赖 DIYLevel 框架：此前置单独安装无效
+[[repositories.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"

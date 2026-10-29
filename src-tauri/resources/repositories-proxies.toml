@@ -212,3 +212,27 @@ id = "oc2gtapi"
 name = "oc2gtapi.ch3ng.top"
 template = "https://oc2gtapi.ch3ng.top/{url_path}"
 description = "Gitee API 桥接"
+
+# 头像代理。
+#
+# 与上面几组走同一条读取链路（内置清单 → 远程清单 → 用户脚本），代码里
+# 不写任何地址。单独一组是因为头像 URL 是 `github.com/{owner}.png`，
+# 而 raw 组的模板都按仓库文件路径设计，实测全部取不到。
+# 能服务任意 URL 的是「纯 {url} / {url_no_scheme}」型模板。
+[[avatar_proxies]]
+id = "cors-isteed-avatar"
+name = "cors.isteed.cc"
+template = "https://cors.isteed.cc/{url_no_scheme}"
+description = "头像：实测可用"
+
+[[avatar_proxies]]
+id = "ghp-keleyaa-avatar"
+name = "ghp.keleyaa.com"
+template = "https://ghp.keleyaa.com/{url}"
+description = "头像：实测可用"
+
+[[avatar_proxies]]
+id = "cdn-crashmc-avatar"
+name = "cdn.crashmc.com"
+template = "https://cdn.crashmc.com/{url}"
+description = "头像：实测可用"

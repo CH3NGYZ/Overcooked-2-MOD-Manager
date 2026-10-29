@@ -193,20 +193,19 @@ async fn download_and_store(
         crate::config::current_user_region(),
     );
     /*
-     * 候选顺序与 MOD 下载完全一致：`asset_proxy_urls` 负责按用户配置挑选
-     * 代理、按来源排序去重；`ordered_asset_download_candidates` 决定直连与
-     * 代理的先后。
+     * 用**头像专用**代理组，不用 raw 组。
      *
-     * `is_raw_file = false` **是必须的**。头像地址是 `github.com/{owner}.png`，
-     * 不是 raw 文件路径。传 true 会让 `proxy_urls` 按 raw 结构去拆
-     * `owner/repo/branch/path`，拆不出来就留空串，于是 `{github_path}` /
-     * `{branch}` / `{path}` 类模板渲染成
-     * `https://raw.githubusercontent.com/gua248.png//main/` 这种畸形地址，
-     * 代理一律 403/404 —— 每个头像都要白试好几轮才能轮到能用的候选。
-     * 传 false 时只保留 `{url}` / `{url_no_scheme}` 这类纯包装占位符。
+     * 实测 8 个 raw 代理全部取不到 `github.com/{owner}.png`（403/404）——
+     * 它们的模板都按 `{owner}/{repo}/{branch}/{path}` 设计，头像 URL 没有
+     * 这些分段。真正能取到的是「纯 {url} 包装」型代理，所以头像有独立
+     * 名单 `avatar_proxies`，不跟随另外两组一起变。
+     *
+     * `is_raw_file = false` 同样必须：raw 模式会把目标重写成
+     * `raw.githubusercontent.com/{owner}/{repo}/main/{path}`，头像拆不出
+     * repo，会拼出 `.../gua248.png//main/` 这种必然失败的地址。
      */
     let proxies = crate::commands::asset_proxy_urls(
-        &config.github_proxies.raw_proxies,
+        &config.github_proxies.avatar_proxies,
         &url,
         false,
         "",
@@ -449,5 +448,47 @@ mod tests {
                 == "https://wrap.example/https://github.com/gua248.png?size=64"),
             "纯包装模板必须原样渲染：{avatar_mode:?}"
         );
+    }
+
+    /*
+     * 头像必须读 `avatar_proxies`，不能读 raw 组。
+     *
+     * 五类代理各有自己的列表（release / raw / avatar / github_api /
+     * gitee_api）。头像 URL 是 `github.com/{owner}.png`，raw 组的模板都按
+     * 仓库文件路径设计，实测全部取不到；混用会让每个头像白试整条 raw 列表。
+     *
+     * 这里断言内置清单里确实存在 avatar 组，且条目都是「能服务任意 URL」
+     * 的模板形态（含 {url} 或 {url_no_scheme} 之一）。
+     */
+    #[test]
+    fn bundled_avatar_proxies_exist_and_are_url_wrappers() {
+        let bundled = crate::github_proxies::bundled_defaults();
+        assert!(
+            !bundled.avatar_proxies.is_empty(),
+            "内置清单应当声明头像代理"
+        );
+        for proxy in &bundled.avatar_proxies {
+            let wrappable =
+                proxy.template.contains("{url}") || proxy.template.contains("{url_no_scheme}");
+            assert!(
+                wrappable,
+                "头像代理必须能服务任意 URL（含 {{url}} 占位符）：{} = {}",
+                proxy.id, proxy.template
+            );
+            assert!(proxy.builtin, "内置头像代理应标记 builtin：{}", proxy.id);
+        }
+        // 与另外几组分开维护：不应与 raw 组共用同一批 id
+        let raw_ids: std::collections::HashSet<&str> = bundled
+            .raw_proxies
+            .iter()
+            .map(|proxy| proxy.id.as_str())
+            .collect();
+        for proxy in &bundled.avatar_proxies {
+            assert!(
+                !raw_ids.contains(proxy.id.as_str()),
+                "头像代理不应当与 raw 代理共用 id：{}",
+                proxy.id
+            );
+        }
     }
 }

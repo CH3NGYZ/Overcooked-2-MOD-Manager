@@ -96,6 +96,7 @@ fn parse_bundled_api_defaults() -> GitHubProxyConfig {
         raw_proxies: Vec::new(),
         github_api_proxies: deduplicate(normalize_bundled(document.github_api_proxies)),
         gitee_api_proxies: deduplicate(normalize_bundled(document.gitee_api_proxies)),
+        avatar_proxies: Vec::new(),
     };
     log::debug!(
         "内置 API 代理解析完成：GitHub={}，Gitee={}",
@@ -116,8 +117,10 @@ pub fn synchronize_bundled_defaults(config: &mut GitHubProxyConfig) -> bool {
     synchronize_bundled_list(&mut config.raw_proxies, &bundled.raw_proxies);
     synchronize_bundled_list(&mut config.github_api_proxies, &bundled.github_api_proxies);
     synchronize_bundled_list(&mut config.gitee_api_proxies, &bundled.gitee_api_proxies);
+    synchronize_bundled_list(&mut config.avatar_proxies, &bundled.avatar_proxies);
     prioritize_remote(&mut config.release_proxies);
     prioritize_remote(&mut config.raw_proxies);
+    prioritize_remote(&mut config.avatar_proxies);
     for proxy in config
         .github_api_proxies
         .iter_mut()
@@ -178,6 +181,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         .chain(manifest.raw_proxies.iter_mut())
         .chain(manifest.github_api_proxies.iter_mut())
         .chain(manifest.gitee_api_proxies.iter_mut())
+        .chain(manifest.avatar_proxies.iter_mut())
     {
         proxy.builtin = true;
         proxy.remote = false;
@@ -187,6 +191,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         || manifest.raw_proxies.len() > MAX_PROXY_COUNT
         || manifest.github_api_proxies.len() > MAX_PROXY_COUNT
         || manifest.gitee_api_proxies.len() > MAX_PROXY_COUNT
+        || manifest.avatar_proxies.len() > MAX_PROXY_COUNT
     {
         return Err(format!("每类代理最多允许 {MAX_PROXY_COUNT} 条"));
     }
@@ -195,6 +200,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         raw_proxies: deduplicate(manifest.raw_proxies),
         github_api_proxies: deduplicate(manifest.github_api_proxies),
         gitee_api_proxies: deduplicate(manifest.gitee_api_proxies),
+        avatar_proxies: deduplicate(manifest.avatar_proxies),
     };
     validate_unique_ids(&config)?;
     log::info!(
@@ -230,6 +236,7 @@ pub fn parse_userscript(text: &str) -> Result<GitHubProxyConfig, String> {
         raw_proxies: deduplicate(raw_proxies),
         github_api_proxies: Vec::new(),
         gitee_api_proxies: Vec::new(),
+        avatar_proxies: Vec::new(),
     };
     validate_unique_ids(&config)?;
     log::info!(
@@ -430,9 +437,17 @@ pub fn merge_source_configs(
                 .chain(right.gitee_api_proxies)
                 .collect(),
         ),
+        avatar_proxies: deduplicate(
+            left.avatar_proxies
+                .iter()
+                .cloned()
+                .chain(right.avatar_proxies)
+                .collect(),
+        ),
     };
     prioritize_remote(&mut config.release_proxies);
     prioritize_remote(&mut config.raw_proxies);
+    prioritize_remote(&mut config.avatar_proxies);
     config
 }
 
@@ -441,6 +456,7 @@ pub fn validate_config(mut config: GitHubProxyConfig) -> Result<GitHubProxyConfi
         || config.raw_proxies.len() > MAX_PROXY_COUNT
         || config.github_api_proxies.len() > MAX_PROXY_COUNT
         || config.gitee_api_proxies.len() > MAX_PROXY_COUNT
+        || config.avatar_proxies.len() > MAX_PROXY_COUNT
     {
         return Err(format!("每类代理最多允许 {MAX_PROXY_COUNT} 条"));
     }
@@ -450,6 +466,7 @@ pub fn validate_config(mut config: GitHubProxyConfig) -> Result<GitHubProxyConfi
         .chain(config.raw_proxies.iter_mut())
         .chain(config.github_api_proxies.iter_mut())
         .chain(config.gitee_api_proxies.iter_mut())
+        .chain(config.avatar_proxies.iter_mut())
     {
         normalize_proxy(proxy)?;
     }
@@ -458,8 +475,10 @@ pub fn validate_config(mut config: GitHubProxyConfig) -> Result<GitHubProxyConfi
     config.raw_proxies = deduplicate(config.raw_proxies);
     config.github_api_proxies = deduplicate(config.github_api_proxies);
     config.gitee_api_proxies = deduplicate(config.gitee_api_proxies);
+    config.avatar_proxies = deduplicate(config.avatar_proxies);
     prioritize_remote(&mut config.release_proxies);
     prioritize_remote(&mut config.raw_proxies);
+    prioritize_remote(&mut config.avatar_proxies);
     Ok(config)
 }
 
@@ -916,9 +935,15 @@ pub fn merge_downloaded(
             downloaded.gitee_api_proxies,
             &bundled.gitee_api_proxies,
         ),
+        avatar_proxies: merge(
+            &existing.avatar_proxies,
+            downloaded.avatar_proxies,
+            &bundled.avatar_proxies,
+        ),
     };
     prioritize_remote(&mut merged.release_proxies);
     prioritize_remote(&mut merged.raw_proxies);
+    prioritize_remote(&mut merged.avatar_proxies);
     log::debug!(
         "合并下载代理配置：Release={}，Raw={}，GitHub API={}，Gitee API={}",
         merged.release_proxies.len(),

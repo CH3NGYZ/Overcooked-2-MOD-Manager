@@ -11,6 +11,8 @@ export interface GitHubProxyConfig {
   raw_proxies: GitHubProxy[]
   github_api_proxies: GitHubProxy[]
   gitee_api_proxies: GitHubProxy[]
+  /** 头像专用代理：能服务任意 URL 的那类（纯 `{url}` 包装）。 */
+  avatar_proxies: GitHubProxy[]
 }
 export type TutorialLocale = 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja'
 export type TutorialScenario = 'live' | 'overview' | 'framework-missing' | 'framework-channel' | 'framework-installing' | 'framework-ready' | 'framework-backup' | 'mod-management' | 'repository-loading' | 'repository-ready' | 'source-manager' | 'repository-editor' | 'repository-install' | 'release-select' | 'download-progress' | 'sponsor' | 'completion'
@@ -291,4 +293,5 @@ export interface GitHubProxyPatch {
   raw_proxies: GitHubProxy[]
   github_api_proxies: GitHubProxy[]
   gitee_api_proxies: GitHubProxy[]
+  avatar_proxies: GitHubProxy[]
 }

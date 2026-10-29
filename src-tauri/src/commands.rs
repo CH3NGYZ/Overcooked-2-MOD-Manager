@@ -1578,6 +1578,7 @@ pub fn save_github_proxies(
         raw_proxies: patch.raw_proxies,
         github_api_proxies: patch.github_api_proxies,
         gitee_api_proxies: patch.gitee_api_proxies,
+        avatar_proxies: patch.avatar_proxies,
     };
     let mut config = state.config.load_or_default();
     proxies = crate::github_proxies::validate_saved_config(proxies, &config.github_proxies)?;

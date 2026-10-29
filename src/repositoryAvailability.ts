@@ -73,6 +73,32 @@ export function repositoryIsAvailable(
 export const OFFICIAL_INDEX_ID = 'official-repository-index'
 
 /**
+ * 源的显示名：`nickname_i18n` 按界面语言选，缺失回落到 zh-CN 再回落到镜像值。
+ *
+ * 这里**不 import `i18n.ts`**：本模块要能被 Node 测试直接引用，而 i18n
+ * 依赖 Naive UI 的语言包。规则与 `pickI18n` 一致（精确语言 → zh-CN →
+ * 第一个非空 → 兜底值），只少了「当前语言」这个响应式来源 —— 调用方传入。
+ */
+function sourceNickname(
+  source: Pick<RepositorySource, 'nickname' | 'nickname_i18n'>,
+  locale?: string,
+): string {
+  const map = source.nickname_i18n
+  if (map) {
+    if (locale) {
+      const exact = map[locale]
+      if (exact && exact.trim()) return exact
+    }
+    const chinese = map['zh-CN']
+    if (chinese && chinese.trim()) return chinese
+    for (const value of Object.values(map)) {
+      if (value && value.trim()) return value
+    }
+  }
+  return source.nickname
+}
+
+/**
  * 是否应当改用内置快照兜底。
  *
  * 内置快照是落后几个版本的官方源，只在**确实拿不到在线内容**时使用，
@@ -90,14 +116,25 @@ export const OFFICIAL_INDEX_ID = 'official-repository-index'
  * 抽成纯函数是为了能在 Node 里直接测；副作用（真正发起回退请求）留在调用方。
  */
 export function shouldFallbackToBuiltin(
-  sources: Pick<RepositorySource, 'id' | 'nickname' | 'parent_id'>[],
+  sources: Pick<RepositorySource, 'id' | 'nickname' | 'nickname_i18n' | 'parent_id'>[],
   repositories: Pick<Repository, 'source_id'>[],
   sourceErrors: readonly string[],
+  /** 当前界面语言；不传时按 zh-CN 兜底值匹配。 */
+  locale?: string,
 ): boolean {
   if (!sourceErrors.length) return false
   const officialRoot = sources.find((source) => source.id === OFFICIAL_INDEX_ID)
   if (!officialRoot) return false
-  if (!sourceErrors.some((error) => error.startsWith(`${officialRoot.nickname}:`))) return false
+  /*
+   * 前缀必须取自**和报错时同一个昵称函数**。
+   *
+   * 错误的产生方（`useRepositoryRefresh.sourceError`）用 `pickI18n` 按界面
+   * 语言取昵称；这里若改用镜像字段 `nickname`（恒为 zh-CN），繁体或英文
+   * 界面下前缀对不上，回退会被静默跳过 —— 表现正好是用户报的「报错了，
+   * 但没有回退」。两者共用 `sourceNickname`，不各写一份。
+   */
+  const rootName = sourceNickname(officialRoot, locale)
+  if (!sourceErrors.some((error) => error.startsWith(`${rootName}:`))) return false
 
   // 官方树 = 根源 + 它声明出来的全部后代源
   const officialIds = new Set<string>([officialRoot.id])

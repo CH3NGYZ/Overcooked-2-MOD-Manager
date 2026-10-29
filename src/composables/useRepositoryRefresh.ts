@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
+import { pickI18n, locale } from '../i18n'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledRepositories } from '../repositoryPriority'
 import {
@@ -172,6 +173,23 @@ async function refreshMany(repos: Repository[]) {
 }
 
 /**
+ * 源文档失败的报错文案：`<昵称>: <原因>`。
+ *
+ * **必须与回退判定用同一个昵称取值**。`shouldFallbackToBuiltin` 靠
+ * 「错误文案是否以官方源昵称开头」判断失败是否覆盖到官方根源。两边都用
+ * `pickI18n(nickname_i18n, nickname)`（并通过同一个 locale），前缀才能对上；
+ * 如果一边用翻译值、另一边用恒为 zh-CN 的镜像字段，繁体/英文界面下回退
+ * 会被静默跳过 —— 正是用户报的「报错了，但没有回退」。
+ */
+function sourceDisplayName(source: RepositorySource): string {
+  return pickI18n(source.nickname_i18n, source.nickname)
+}
+
+function sourceError(source: RepositorySource, reason: string): string {
+  return `${sourceDisplayName(source)}: ${reason}`
+}
+
+/**
  * 刷新一个源文档，并递归刷新它本次声明出来的子源。
  * 父源文档应用后必须重新读取配置才能看到新子源，所以每层都要重读一次。
  *
@@ -189,9 +207,9 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   sourceRefreshing.value[sourceId] = true
   try {
     const result = await api.importRepositorySource(source.id, source.url)
-    if (result.access_error) return [`${source.nickname}: ${result.access_error}`]
+    if (result.access_error) return [sourceError(source, result.access_error)]
   } catch (reason) {
-    return [`${source.nickname}: ${reason instanceof Error ? reason.message : String(reason)}`]
+    return [sourceError(source, reason instanceof Error ? reason.message : String(reason))]
   } finally {
     sourceRefreshing.value[sourceId] = false
   }
@@ -234,7 +252,11 @@ async function fallbackToBuiltinIfOffline(
   sourceErrors: string[],
 ): Promise<{ fallbackErrors: string[]; hasFallenBack: boolean }> {
   const { sources, repositories, reloadConfig } = store()
-  if (!shouldFallbackToBuiltin(sources.value, repositories.value, sourceErrors)) {
+  /*
+   * 传当前界面语言：判定里的昵称前缀必须和 `sourceError` 生成时用的是
+   * 同一个值，否则繁体/英文界面下前缀不匹配、回退被静默跳过。
+   */
+  if (!shouldFallbackToBuiltin(sources.value, repositories.value, sourceErrors, locale.value)) {
     return { fallbackErrors: [], hasFallenBack: false }
   }
 
@@ -246,12 +268,12 @@ async function fallbackToBuiltinIfOffline(
   try {
     const result = await api.importRepositorySource(officialRoot.id, officialRoot.url, true)
     if (result.access_error) {
-      errors.push(`${officialRoot.nickname}: ${result.access_error}`)
+      errors.push(sourceError(officialRoot, result.access_error))
       // 索引本身都没读出来：后面的子源无从谈起
       return { fallbackErrors: errors, hasFallenBack: true }
     }
   } catch (reason) {
-    errors.push(`${officialRoot.nickname}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    errors.push(sourceError(officialRoot, reason instanceof Error ? reason.message : String(reason)))
     return { fallbackErrors: errors, hasFallenBack: true }
   } finally {
     sourceRefreshing.value[officialRoot.id] = false

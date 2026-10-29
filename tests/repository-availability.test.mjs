@@ -155,3 +155,44 @@ test('官方树里只有无归属仓库时仍然回退', () => {
   // source_id 为空（手动安装的遗留条目）不属于任何官方源
   assert.equal(shouldFallbackToBuiltin(fallbackSources, [{ source_id: undefined }], [officialError]), true)
 })
+
+/* ===== 昵称多语言：回退前缀必须与报错前缀同源 ===== */
+
+/*
+ * 官方源昵称改成只认 nickname_i18n 之后，报错前缀（sourceError）和回退
+ * 判定（shouldFallbackToBuiltin）必须取自同一个函数。否则英文/繁体界面下
+ * 报错写的是翻译值、判定比的是 zh-CN 镜像值，前缀对不上，回退被静默跳过。
+ */
+const localizedSources = [{
+  id: OFFICIAL_INDEX_ID,
+  nickname: '官方仓库源',
+  nickname_i18n: {
+    'zh-CN': '官方仓库源',
+    en: 'Official repositories',
+  },
+  parent_id: undefined,
+}]
+
+test('回退判定按当前语言匹配报错前缀', () => {
+  assert.equal(
+    shouldFallbackToBuiltin(localizedSources, [], ['Official repositories: timeout'], 'en'),
+    true,
+  )
+  // 英文界面下，用中文前缀的错误不算命中（文案确实不是它产生的）
+  assert.equal(
+    shouldFallbackToBuiltin(localizedSources, [], ['官方仓库源: timeout'], 'en'),
+    false,
+  )
+})
+
+test('不传语言时按 zh-CN 兜底匹配', () => {
+  assert.equal(
+    shouldFallbackToBuiltin(localizedSources, [], ['官方仓库源: timeout']),
+    true,
+  )
+})
+
+test('没有翻译表时退回单语镜像值', () => {
+  const legacy = [{ id: OFFICIAL_INDEX_ID, nickname: '官方仓库源', parent_id: undefined }]
+  assert.equal(shouldFallbackToBuiltin(legacy, [], ['官方仓库源: timeout']), true)
+})

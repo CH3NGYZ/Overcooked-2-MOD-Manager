@@ -3748,6 +3748,7 @@ async fn import_repository_source_into_config(
         if let Some(existing) = config.repository_sources.iter_mut().find(|source| {
             source.id == child.id && source.parent_id.as_deref() == Some(source_id.as_str())
         }) {
+            // 声明里的 nickname 已是 zh-CN 兜底值，运行时镜像与多语言表一起写
             existing.nickname = child.nickname.trim().to_string();
             existing.nickname_i18n = child.nickname_i18n;
             existing.url = child_url;
@@ -3951,6 +3952,20 @@ pub fn save_repository_source(
     if nickname.is_empty() || url.is_empty() {
         return Err("仓库源昵称和地址不能为空".into());
     }
+    /*
+     * 昵称只保存多语言表：单语参数作为 zh-CN 兜底写进表里。
+     *
+     * 与源文档一致（`normalize_source_nickname`）：表里必须始终有 zh-CN。
+     * 前端仍按「单语 + 可选翻译」提交，是因为编辑器只有一个主输入框；
+     * 归一化放在后端入口，避免两个调用方各写一遍。
+     */
+    let mut nickname_map = nickname_i18n.unwrap_or_default();
+    nickname_map.retain(|_, value| !value.trim().is_empty());
+    if !nickname_map.contains_key("zh-CN") {
+        nickname_map.insert("zh-CN".into(), nickname.to_string());
+    }
+    let effective_nickname =
+        crate::repository_sources::nickname_fallback(&nickname_map).ok_or("仓库源昵称不能为空")?;
     let region = config
         .repository_sources
         .iter()
@@ -3972,16 +3987,14 @@ pub fn save_repository_source(
         if source.builtin {
             return Err("内置仓库源不能修改".into());
         }
-        source.nickname = nickname.into();
-        if let Some(nickname_i18n) = nickname_i18n {
-            source.nickname_i18n = nickname_i18n;
-        }
+        source.nickname = effective_nickname;
+        source.nickname_i18n = nickname_map;
         source.url = url.into();
     } else {
         config.repository_sources.push(RepositorySource {
             id: Uuid::new_v4().to_string(),
-            nickname: nickname.into(),
-            nickname_i18n: nickname_i18n.unwrap_or_default(),
+            nickname: effective_nickname,
+            nickname_i18n: nickname_map,
             url: url.into(),
             region: None,
             builtin: false,
@@ -4077,8 +4090,18 @@ pub fn save_repository_sources(
         {
             return Err("仓库唯一 ID 格式无效".into());
         }
-        let nickname = source.nickname.trim().to_string();
         let url = source.url.trim().to_string();
+        /*
+         * 昵称只认多语言表（zh-CN 兜底）。批量保存来自配置导入/导出，
+         * 旧文件可能只有单语字段 —— 同样把它折叠进 zh-CN，再取兜底值。
+         */
+        let mut nickname_map = source.nickname_i18n.clone();
+        nickname_map.retain(|_, value| !value.trim().is_empty());
+        if !nickname_map.contains_key("zh-CN") && !source.nickname.trim().is_empty() {
+            nickname_map.insert("zh-CN".into(), source.nickname.trim().to_string());
+        }
+        let nickname = crate::repository_sources::nickname_fallback(&nickname_map)
+            .ok_or("仓库源昵称不能为空")?;
         if nickname.is_empty() || url.is_empty() {
             return Err("仓库源昵称和地址不能为空".into());
         }
@@ -4107,7 +4130,7 @@ pub fn save_repository_sources(
         ordered.push(RepositorySource {
             id,
             nickname,
-            nickname_i18n: source.nickname_i18n,
+            nickname_i18n: nickname_map,
             url,
             region: normalized_region,
             builtin: source.builtin,

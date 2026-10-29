@@ -10,7 +10,6 @@
 
 ```toml
 [[repositories]]
-name = "我的 MOD"
 provider = "github"
 username = "example"
 repository = "my-mod"
@@ -26,16 +25,24 @@ max_release_count = 10
 download_threads = 16
 enabled = true
 
+name_i18n.zh-CN = "我的 MOD"
+name_i18n.en = "My MOD"
+group_i18n.zh-CN = "内容拓展"
+group_i18n.en = "Content Expansion"
+note_i18n.zh-CN = ""
+note_i18n.en = ""
+
 [[repositories.asset_rules]]
 type = "exact"
 value = "MyMod.dll"
 ```
 
+仓库的 `name_i18n`、`group_i18n`、`note_i18n` 都必须包含 `zh-CN`（`name_i18n.zh-CN` 不能为空）。界面语言缺失时回落到 `zh-CN`；旧的单语 `name` / `group` / `note` 仍可读取，加载时自动折叠进对应的 `zh-CN`，新文件不要再写它们。
+
 若 MOD 文件直接保存在分支中，使用 `repository_file` 模式。管理器根据平台、用户名、仓库名、分支和相对路径生成 Raw 下载地址：
 
 ```toml
 [[repositories]]
-name = "OC2 Many Recipes"
 provider = "github"
 username = "gua248"
 repository = "Overcooked2-ManyRecipes"
@@ -48,6 +55,10 @@ local_product_name = "OC2ManyRecipes"
 local_original_filename = "OC2ManyRecipes.dll"
 install_target = "BepInEx/plugins"
 enabled = true
+
+name_i18n.zh-CN = "OC2 Many Recipes"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
 ```
 
 GitHub 文件地址按 `https://github.com/{username}/{repository}/raw/refs/heads/{branch}/{file_path}` 拼接，Gitee 按 `https://gitee.com/{username}/{repository}/raw/{branch}/{file_path}` 拼接。文件模式不读取 Release，也不使用 Release 频道或资产匹配规则；安装文件名取相对路径末尾的文件名。
@@ -71,19 +82,22 @@ GitHub 文件地址按 `https://github.com/{username}/{repository}/raw/refs/head
 ```toml
 [[repository_sources]]
 id = "azhe-hostutilities"
-nickname = "阿哲 - 街机MOD"
 url = "repositories-azhe-hostutilities.toml"
+builtin = true
 
 [repository_sources.nickname_i18n]
-zh-CN = "阿哲 - 街机MOD"
-zh-TW = "阿哲 - 街機MOD"
-en = "Azhe - HostUtilities"
-ko = "Azhe - 아케이드 MOD"
+zh-CN = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+zh-TW = "阿哲 - 街機MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
+en = "Azhe - HostUtilities MOD - RedNote @Azhe是阿哲 - ID:5566308341"
+ko = "Azhe - 아케이드 MOD - RedNote @Azhe是阿哲 - ID:5566308341"
+ja = "Azhe - アーケード MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "gua"
-nickname = "G_U_A"
 url = "https://gitee.com/example/mod-releases/raw/main/repositories-gua.toml"
+
+[repository_sources.nickname_i18n]
+zh-CN = "G_U_A"
 ```
 
 示例中的 `example` 是占位符，请替换为实际的仓库所有者。多语言表属于紧邻它之前的那个 `[[repository_sources]]`；声明下一个源时，需要重新写 `[[repository_sources]]`。
@@ -93,13 +107,14 @@ url = "https://gitee.com/example/mod-releases/raw/main/repositories-gua.toml"
 | 字段 | 是否必填 | 说明 |
 | --- | --- | --- |
 | `id` | 是 | 源的唯一标识，同一源文件中不能重复。建议使用字母、数字、点、短横线和下划线，首字符使用字母或数字。 |
-| `nickname` | 是 | 默认昵称；未配置当前语言翻译时显示此名称。 |
-| `nickname_i18n` | 否 | 多语言昵称表，支持 `zh-CN`、`zh-TW`、`en`、`ko`、`ja`。 |
+| `nickname_i18n` | 是 | 多语言昵称表，必须包含非空的 `zh-CN`。支持 `zh-CN`、`zh-TW`、`en`、`ko`、`ja`。 |
 | `url` | 是 | 完整 HTTP(S) 直链，或相对于当前源所在仓库的文件路径。 |
 | `region` | 否 | `chinese_mainland` 仅中国大陆，`international` 仅非中国大陆；省略时对所有地区显示。 |
 | `builtin` | 否 | 子源是否继承父源的内置保护，普通自定义源通常省略。使用布尔值 `true` / `false`。 |
 
-`nickname_i18n` 根据当前界面语言选择昵称，翻译缺失或为空时使用 `nickname`。`region` 根据电脑地区设置筛选源，与界面语言无关：只想翻译同一个源的标题时，添加多语言表即可，不需要为了翻译重复声明源。同一 URL 可以按不同地区声明多个源，但每个源必须使用不同的 `id`。
+`nickname_i18n` 根据当前界面语言选择昵称；当前语言缺失或为空时回落到 `zh-CN`，再回落到表里第一个非空值。`zh-CN` 是强制兜底值：它缺失或为空时整个源会被判为无效 —— 与仓库的 `name_i18n`、`group_i18n`、`note_i18n` 规则完全一致，不会出现「翻译表没有当前语言、单语字段又是另一种语言」这种两边都不是的状态。旧的单语 `nickname` 仍可读取，加载时会自动折叠进 `nickname_i18n.zh-CN`，但新文件不要再写它。
+
+`region` 根据电脑地区设置筛选源，与界面语言无关：只想翻译同一个源的标题时，添加多语言表即可，不需要为了翻译重复声明源。同一 URL 可以按不同地区声明多个源，但每个源必须使用不同的 `id`。
 
 `builtin` 不能把普通自定义源变成受保护的内置源。内置父源的子源默认继承保护；子源显式填写 `builtin = false` 后，该子源及其后代不再继承保护，后代即使填写 `builtin = true` 也不能重新开启保护。兼容已有的 `"true"` / `"false"` 字符串写法，但新文件建议使用布尔值。
 
@@ -277,17 +292,12 @@ max_release_count = 10
 
 ```toml
 [[repositories]]
-name = "BepInEx 配置管理器"
-group = "前置必装"
 provider = "github"
 username = "BepInEx"
 repository = "BepInEx.ConfigurationManager"
 download_mode = "release"
 channel = "all"
 install_target = ""
-note = """
-此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。
-"""
 plugin_guid = "com.bepis.bepinex.configurationmanager"
 local_product_name = "BepInEx.ConfigurationManager"
 local_original_filename = "ConfigurationManager.dll"
@@ -295,31 +305,33 @@ max_release_count = 10
 download_threads = 32
 enabled = true
 
-[repositories.name_i18n]
-en = "BepInEx Configuration Manager"
-ko = "BepInEx 구성 관리자"
-zh-CN = "BepInEx 配置管理器"
-zh-TW = "BepInEx 設定管理器"
-
-[repositories.group_i18n]
-en = "Required Prerequisites"
-ko = "필수 선행 항목"
-zh-CN = "前置必装"
-zh-TW = "前置必裝"
+name_i18n.zh-CN = "BepInEx 配置管理器"
+name_i18n.zh-TW = "BepInEx 設定管理器"
+name_i18n.en = "BepInEx Configuration Manager"
+name_i18n.ko = "BepInEx 구성 관리자"
+group_i18n.zh-CN = "前置必装"
+group_i18n.zh-TW = "前置必裝"
+group_i18n.en = "Required Prerequisites"
+group_i18n.ko = "필수 선행 항목"
+# 多行文本用三引号；缩进与换行会原样保留
+note_i18n.zh-CN = """
+此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。
+"""
+note_i18n.zh-TW = """
+此模組用於管理《主機實用MOD》等MOD建立的設定，預設開啟快捷鍵為 F1，但可能會由《主機實用MOD》自動修改為 P。
+"""
+note_i18n.en = """
+This mod is used to manage configurations created by mods such as HostUtilities. Its default hotkey is F1, but HostUtilities may automatically change it to P.
+"""
+note_i18n.ko = """
+이 모드는 《HostUtilities》와 같은 MOD에서 생성한 설정을 관리하는 데 사용됩니다. 기본 단축키는 F1이지만, 《HostUtilities》에 의해 자동으로 P로 변경될 수 있습니다.
+"""
 
 [[repositories.asset_rules]]
 type = "regex"
 value = '^BepInEx\.ConfigurationManager_BepInEx5_v\d+\.\d+\.zip$'
 
-[repositories.note_i18n]
-en = "This mod is used to manage configurations created by mods such as HostUtilities. Its default hotkey is F1, but HostUtilities may automatically change it to P."
-ko = "이 모드는 《HostUtilities》와 같은 MOD에서 생성한 설정을 관리하는 데 사용됩니다. 기본 단축키는 F1이지만, 《HostUtilities》에 의해 자동으로 P로 변경될 수 있습니다."
-zh-CN = "此模组用于管理《主机实用MOD》等MOD创建的配置，其默认打开的快捷键是 F1，但可能经由《主机实用MOD》自动修改为 P。"
-zh-TW = "此模組用於管理《主機實用MOD》等MOD建立的設定，預設開啟快捷鍵為 F1，但可能會由《主機實用MOD》自動修改為 P。"
-
 [[repositories]]
-name = "主机实用 MOD（街机 MOD）稳定版 "
-group = "主机实用 MOD 稳定版"
 provider = "gitee"
 username = "ch3ngyz"
 repository = "Overcooked-2-HostUtilities-Stable-Releases"
@@ -327,10 +339,6 @@ download_mode = "release"
 region = "chinese_mainland"
 channel = "all"
 install_target = "BepInEx/plugins"
-note = """
-提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
-如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
-"""
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
 local_product_name = "主机实用MOD (街机MOD)"
 local_original_filename = "HostUtilities.dll"
@@ -338,74 +346,77 @@ max_release_count = 10
 download_threads = 1
 enabled = true
 
-[repositories.name_i18n]
-en = "HostUtilities (Arcade MOD) Stable - Gitee"
-ko = "HostUtilities (아케이드 MOD) 안정 버전 - Gitee"
-zh-CN = "主机实用 MOD（街机 MOD）稳定版 "
-zh-TW = "主機實用 MOD（街機 MOD）穩定版 - Gitee 頻道"
-
-[repositories.group_i18n]
-en = "HostUtilities Stable"
-ko = "HostUtilities 안정 버전"
-zh-CN = "主机实用 MOD 稳定版"
-zh-TW = "主機實用 MOD 穩定版"
+name_i18n.zh-CN = "主机实用 MOD（街机 MOD）稳定版"
+name_i18n.zh-TW = "主機實用 MOD（街機 MOD）穩定版 - Gitee 頻道"
+name_i18n.en = "HostUtilities (Arcade MOD) Stable - Gitee"
+name_i18n.ko = "HostUtilities (아케이드 MOD) 안정 버전 - Gitee"
+group_i18n.zh-CN = "主机实用 MOD 稳定版"
+group_i18n.zh-TW = "主機實用 MOD 穩定版"
+group_i18n.en = "HostUtilities Stable"
+group_i18n.ko = "HostUtilities 안정 버전"
+note_i18n.zh-CN = """
+提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
+如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
+"""
+note_i18n.zh-TW = """
+提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。
+如果下載速度較慢或下載失敗，也可以嘗試 GitHub 頻道。
+"""
+note_i18n.en = """
+Provides player management as the host, voice chat, text chat, blacklist management, latency display, level skipping, restarting, and other features that enhance the Overcooked! 2 gaming experience.
+If the download is slow or fails, the GitHub channel can also be used.
+"""
+note_i18n.ko = """
+호스트 권한을 통한 멤버 관리, 음성 채팅, 문자 채팅, 블랙리스트 관리, 지연 시간 확인, 스테이지 건너뛰기, 재시작 등 《Overcooked! 2》의 게임 경험을 향상시키는 다양한 보조 기능을 제공합니다.
+다운로드 속도가 느리거나 실패하면 GitHub 채널을 이용할 수도 있습니다.
+"""
 
 [[repositories.asset_rules]]
 type = "exact"
 value = "HostUtilities.zip"
-
-[repositories.note_i18n]
-en = """
-Provides player management as the host, voice chat, text chat, blacklist management, latency display, level skipping, restarting, and other features that enhance the Overcooked! 2 gaming experience.
-If the download is slow or fails, the GitHub channel can also be used.
-"""
-ko = """
-호스트 권한을 통한 멤버 관리, 음성 채팅, 문자 채팅, 블랙리스트 관리, 지연 시간 확인, 스테이지 건너뛰기, 재시작 등 《Overcooked! 2》의 게임 경험을 향상시키는 다양한 보조 기능을 제공합니다.
-다운로드 속도가 느리거나 실패하면 GitHub 채널을 이용할 수도 있습니다.
-"""
-zh-CN = """
-提供主机身份下的成员管理、语音聊天、文字聊天、黑名单管理、延迟查看、跳关、重开等提升《胡闹厨房2》游戏体验的辅助功能。
-如果下载速度较慢或下载失败，也可以尝试 GitHub 渠道。
-"""
-zh-TW = """
-提供主機身分下的成員管理、語音聊天、文字聊天、黑名單管理、延遲查看、跳關、重開等提升《胡鬧廚房2》遊戲體驗的輔助功能。
-如果下載速度較慢或下載失敗，也可以嘗試 GitHub 頻道。
-"""
 ```
 
 可以参考 [仓库源入口示例](src-tauri/resources/repositories.toml) 和 [街机 MOD 仓库示例](src-tauri/resources/repositories-azhe-hostutilities.toml)。`[[repositories]]` 不需要手动填写 `id` 或 `source_id`，管理器会维护仓库标识和来源绑定；也可以直接复制软件导出的仓库条目，已有的 `source_id` 会被当前源的 ID 替换。
 
 ## 多语言名称、分组和简介
 
-### 名称
-
-`name` 是默认名称，`name_i18n` 是可选的多语言名称表：
-
-```toml
-name = "主机实用 MOD"
-name_i18n = { "zh-CN" = "主机实用 MOD", "zh-TW" = "主機實用 MOD", "en" = "HostUtilities", "ko" = "HostUtilities" }
-```
+名称、分组、简介、**以及仓库源昵称**使用同一套多语言规则：只写多语言表，`zh-CN` 是强制兜底。
 
 支持的语言键是：
 
-- `zh-CN`：简体中文
+- `zh-CN`：简体中文（**必填，且不能为空**）
 - `zh-TW`：繁體中文
 - `en`：English
 - `ko`：한국어
 - `ja`：日本語
 
-当前语言没有对应翻译时，管理器会回退到 `name`。
+取值顺序：当前界面语言 → `zh-CN` → 表里第一个非空值。因为表里一定会有 `zh-CN`，所以最终一定拿得到文本。
+
+### 名称
+
+```toml
+name_i18n.zh-CN = "主机实用 MOD"
+name_i18n.zh-TW = "主機實用 MOD"
+name_i18n.en = "HostUtilities"
+name_i18n.ko = "HostUtilities"
+```
+
+`name_i18n.zh-CN` 缺失或为空时，整个仓库条目会被判为无效 —— 这条规则比「静默回退到某个默认名」更好排查。
+
+旧的单语 `name` 仍可读取：加载时会自动折叠进 `name_i18n.zh-CN`。新文件不要再用它，也不要同时写单语字段和 i18n 表（i18n 表优先）。
 
 ### 分组
 
-相同的 `group` 会显示在同一个可展开、可收起的分组卡片中：
+相同的 `group_i18n.zh-CN` 会显示在同一个可展开、可收起的分组卡片中：
 
 ```toml
-group = "主机实用 MOD 稳定版"
-group_i18n = { "zh-CN" = "主机实用 MOD 稳定版", "zh-TW" = "主機實用 MOD 穩定版", "en" = "HostUtilities Stable", "ko" = "HostUtilities 안정 버전" }
+group_i18n.zh-CN = "主机实用 MOD 稳定版"
+group_i18n.zh-TW = "主機實用 MOD 穩定版"
+group_i18n.en = "HostUtilities Stable"
+group_i18n.ko = "HostUtilities 안정 버전"
 ```
 
-分组名称由 TOML 决定，管理器不会根据 GUID 或仓库名称自动猜测分组。没有填写 `group` 的仓库不显示分类标题。
+`group_i18n` 必须存在，但 `zh-CN` 可以是空字符串（表示「不分组」）。分组名称由 TOML 决定，管理器不会根据 GUID 或仓库名称自动猜测分组。没有分组名的仓库不显示分类标题。切换界面语言不会改变分组顺序 —— 顺序沿用源文件里的声明顺序。
 
 ### Markdown 简介
 
@@ -414,7 +425,7 @@ group_i18n = { "zh-CN" = "主机实用 MOD 稳定版", "zh-TW" = "主機實用 M
 简介较短时直接显示在仓库卡片中，内容较长时在二级菜单中渲染。“查看 MOD 简介”、仓库 `README.md` 和安装菜单中的 Release 日志使用同一套显示规则。标题支持文档内锚点跳转，宽表格和长代码可以横向滚动。多行简介使用 TOML 三引号：
 
 ```toml
-note = """
+note_i18n.zh-CN = """
 ## 功能
 
 - 提供主机控制
@@ -423,17 +434,16 @@ note = """
 """
 ```
 
-多语言简介可以使用 `[repositories.note_i18n]` 表，每种语言单独填写：
+每种语言单独填写；`note_i18n` 必须存在，`zh-CN` 可以是空字符串（表示没有简介）：
 
 ```toml
-[repositories.note_i18n]
-"zh-CN" = """
+note_i18n.zh-CN = """
 ## 功能
 
 - 提供主机控制
 - 显示延迟
 """
-"en" = "Provides host controls and latency display."
+note_i18n.en = "Provides host controls and latency display."
 ```
 
 #### 表格、任务列表与 Mermaid
@@ -441,7 +451,7 @@ note = """
 Mermaid 使用标记为 `mermaid` 的围栏代码块，无需依赖在线图形服务。例如下面的 TOML 简介会展示表格、任务列表和流程图：
 
 ````toml
-note = '''
+note_i18n.zh-CN = '''
 ## 安装流程
 
 | 项目 | 状态 |
@@ -471,10 +481,8 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 
 | 字段 | 是否必填 | 说明 |
 | --- | --- | --- |
-| `name` | 是 | 默认显示名称。 |
-| `name_i18n` | 否 | 多语言名称表。 |
-| `group` | 否 | 分组的稳定键；为空时不显示分类标题。 |
-| `group_i18n` | 否 | 分组的多语言显示名称。 |
+| `name_i18n` | 是 | 多语言名称表，**必须包含非空的 `zh-CN`**。 |
+| `group_i18n` | 是 | 分组的多语言显示名称，必须存在；`group_i18n.zh-CN` 可为空字符串（不分组）。 |
 | `provider` | 是 | `github` 或 `gitee`。 |
 | `username` | 是 | 平台上的仓库所属用户或组织名，不填写完整 URL。 |
 | `repository` | 是 | 平台上的实际仓库名，不填写 `/raw`、`/releases` 或文件路径。 |
@@ -485,8 +493,9 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 | `channel` | 否 | 仅 Release 模式使用。`all`、`stable` 或 `beta`；省略时默认 `all`。正式版排除 prerelease，测试版只取 prerelease，全部版本包含两者；草稿 Release 不会使用。 |
 | `asset_rules` | Release 模式必填 | 一个或多个 Release 资产规则，至少一条。多个规则满足任意一条即可。 |
 | `install_target` | 是 | 游戏目录下的相对安装目录；空字符串表示按压缩包内部结构安装。 |
-| `note` | 否 | 默认 Markdown 简介。 |
-| `note_i18n` | 否 | 多语言 Markdown 简介表。 |
+| `note_i18n` | 是 | 多语言 Markdown 简介表，必须存在；`note_i18n.zh-CN` 可为空字符串。 |
+| `relations` | 否 | 与其它插件的关系表（依赖 / 冲突 / 兼容），见下一节。 |
+| `release_relations` | 否 | 按 Release 版本区间覆盖 `relations` 的规则，见下一节。 |
 | `plugin_guid` | 否 | 两种下载模式均支持的本地 BepInPlugin GUID；省略或未知时可填写空字符串，并用产品名称或原始文件名识别。 |
 | `local_product_name` | 否 | DLL 的 ProductName，用于本地绑定。 |
 | `local_original_filename` | 否 | DLL 的 OriginalFilename，用于本地绑定。 |
@@ -496,6 +505,73 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 | `enabled` | 是 | `true` 显示并刷新，`false` 暂停该仓库。 |
 
 仓库源中的每个 `[[repositories]]` 都可以直接来自软件的导出配置。导出内容里的 `source_id` 只代表导出时的本地来源，发布仓库源时不需要手动修改；管理器下载仓库源后会忽略这些旧值，并统一写入当前仓库源配置的唯一 ID。
+
+## 声明依赖、冲突和兼容
+
+三种关系本质上是同一个问题 ——「对某个 GUID 的版本区间有什么要求」—— 所以共用一张 `relations` 表，用 `kind` 区分：
+
+| `kind` | 含义 | 不满足时 |
+| --- | --- | --- |
+| `requires` | 目标**必须存在**，且版本落在区间内 | 显示「缺依赖」；线上有满足区间的版本时给「安装依赖」 |
+| `conflicts` | 目标**不能**落在区间内 | 显示「冲突」并给「去卸载」 |
+| `compatible` | 目标**若存在**，版本必须落在区间内 | 显示「冲突」；线上有区间内版本时优先升级/降级 |
+
+```toml
+[[repositories.relations]]
+kind = "requires"
+guid = "com.bepis.bepinex.configurationmanager"
+min_version = "19.0"
+
+[[repositories.relations]]
+kind = "conflicts"
+guid = "com.example.old-thing"
+max_version = "1.9"
+```
+
+字段说明：
+
+- `guid`（必填）：被约束插件的 BepInPlugin GUID，比较时忽略大小写。
+- `kind`：`requires`（默认）、`conflicts`、`compatible`。**省略 `kind` 时按 `requires` 处理**，兼容早期的纯依赖写法。
+- `min_version` / `max_version`：闭区间上下限，都可省略；四段写法与 beta 语义一致（`1.9.8.1` ≡ `1.9.8-beta.1`）。
+- `prerelease`：只在 `conflicts` / `compatible` 上使用。不写 = 正式版和测试版都算；`true` = 只匹配测试版；`false` = 只匹配正式版。
+- `optional`：只在 `requires` 上使用，缺失时不提示。
+
+`relations` 是**表数组**，必须用 `[[repositories.relations]]` 逐条声明。写成 `relations.guid = "..."` 会创建一个单表，导致整个源文件解析失败。未知的 `kind` 会被跳过（而不是让整份文档不可读），这是为了让旧版管理器仍能读取新版源文件。
+
+### 按 Release 版本覆盖
+
+同一 MOD 的不同大版本常常依赖不同版本的基础库，用 `release_relations` 按本次 Release 版本区间指定：
+
+```toml
+[[repositories.release_relations]]
+min_version = "1.8.0"
+max_version = "2.0.0"
+relations = [
+  { kind = "requires", guid = "com.bepis.bepinex.configurationmanager", min_version = "19.0" },
+]
+```
+
+规则：所有区间命中的条目里，取 `min_version` 最高的那条，其 `relations` **整体替换**仓库级 `relations`（不是合并 —— 合并会让「新版降低要求」无法表达）。两端都留空会被拒绝，因为那等同于「匹配所有版本」。
+
+### 正式版与测试版互斥
+
+同一 GUID 的两个发布线（stable / beta 两个仓库条目）互相排斥时，用 `prerelease` 而不是版本区间 —— 预发布版按 semver 排在**同号正式版之下**，`[1.9.8, 1.9.9)` 会命中 `1.9.8` 却漏掉 `1.9.8.1`，任何区间都分不开两条发布线：
+
+```toml
+# 正式版条目
+[[repositories.relations]]
+kind = "conflicts"
+guid = "com.ch3ngyz.plugin.HostUtilities"
+prerelease = true      # 排斥测试版
+
+# 测试版条目
+[[repositories.relations]]
+kind = "conflicts"
+guid = "com.ch3ngyz.plugin.HostUtilities"
+prerelease = false     # 排斥正式版
+```
+
+指向自己 GUID 的 `conflicts` / `compatible` **必须**写 `prerelease`：不写等于「我不能和自己共存」，永远为真，导入时会直接报错。发布线互斥只给「卸载」，不给「换版本」—— 换同一 GUID 的版本清不掉另一条发布线的文件。
 
 ## 代理配置建议
 
@@ -547,6 +623,18 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 
 刷新源时会先清理该源的旧内容。下载或解析失败后，错误会显示在对应源的加载区域，不添加该源下的仓库，也不会用其他源的内容替代。修正文件或地址后，点击该源的刷新按钮重试；其他已成功读取的源不受影响。
 
+### 官方源失败时的内置回退
+
+管理器自带一份官方源的离线快照，只在**确实拿不到在线内容**时使用。三个条件必须同时满足才会回退，缺一不可：
+
+1. 本次源文档阶段有失败；
+2. 失败覆盖到了官方根源（错误文案以官方源昵称开头）；
+3. 当前官方源树下**一个仓库都没有**。
+
+只要有任何官方子源成功带回仓库，就说明在线可用，这时不会用旧快照覆盖真实数据。自定义源失败不触发回退。
+
+内置快照同样是「索引 + 子源文件」结构：`repositories.toml` 只声明 `[[repository_sources]]`，仓库内容在各子源文件里。回退时会连同这些子源一起加载，所以回退成功后仓库列表是完整的。回退只做一次，并保留远程根地址 —— 下次刷新仍先请求在线入口。
+
 ## 发布前检查清单
 
 - [ ] 文件是 UTF-8 编码的 TOML。
@@ -558,7 +646,12 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 - [ ] `plugin_guid`、`local_product_name`、`local_original_filename` 与 DLL 实际信息一致。
 - [ ] `install_target` 是相对路径，没有绝对路径和 `..`。
 - [ ] `[[repository_sources]]` 的 `id` 不重复，子源没有循环引用。
+- [ ] 每个 `[[repository_sources]]` 都有只含多语言表的 `nickname_i18n`，且 `zh-CN` 非空；没有残留单语 `nickname`。
+- [ ] 每个 `[[repositories]]` 都有 `name_i18n`（含非空 `zh-CN`）与 `group_i18n`、`note_i18n`；没有残留单语 `name` / `group` / `note`。
 - [ ] 多语言源昵称、MOD 名称、分组和简介使用固定语言键，且对应的表放在正确的条目下。
+- [ ] 声明了 `relations` 时使用 `[[repositories.relations]]` 表数组写法，没有写成 `relations.guid = "..."` 的点号形式。
+- [ ] 指向自己 GUID 的 `conflicts` / `compatible` 关系都写了 `prerelease`。
+- [ ] 每条 `release_relations` 至少填了 `min_version` 或 `max_version` 之一，且 `min` 不大于 `max`。
 - [ ] 需要按地区显示时，为仓库源或仓库填写 `region = "chinese_mainland"` 或 `region = "international"`；省略表示所有地区，仓库和所属源的限制必须同时满足。
 - [ ] 相对路径对应当前仓库和分支中的实际文件，完整直链返回 TOML 原文。
 - [ ] Release 模式的 `channel` 符合预期，省略时为 `all`；填写了 `version_regex` 时，正则能匹配预期的本地版本。

@@ -295,17 +295,81 @@ fn remote_document_location(
     }
 }
 
+/// 源文档里的 `[[repository_sources]]` 声明。
+///
+/// `nickname` 已从单语字段改为**只认多语言表** —— 与仓库的
+/// `name_i18n` / `group_i18n` / `note_i18n` 完全一致：
+///   · `nickname_i18n` 必须包含 `zh-CN` 且非空（它就是兜底值）
+///   · 旧的单语 `nickname` 仍可读，迁移时折叠进 `zh-CN`（不在 `zh-CN`
+///     已存在时覆盖）
+///
+/// 为什么统一：多语言表 + 一个「兜底语言」比「单语字段 + 可选的翻译表」
+/// 少一条规则，也不会出现「翻译表缺当前语言、单语字段又是另一种语言」
+/// 这种两边都不是的情况。
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepositorySourceDeclaration {
     pub id: String,
-    pub nickname: String,
     #[serde(default)]
     pub nickname_i18n: std::collections::BTreeMap<String, String>,
+    /// 兼容字段：旧文档的单语昵称。
+    ///
+    /// 反序列化后由 `normalize_source_nickname` 折叠进 `nickname_i18n`，
+    /// 之后不再参与任何展示决策。
+    #[serde(default, skip_serializing)]
+    pub nickname: String,
     pub url: String,
     #[serde(default)]
     pub region: Option<String>,
     #[serde(default, deserialize_with = "deserialize_builtin")]
     pub builtin: Option<bool>,
+}
+
+/// 多语言昵称表里选展示值：`zh-CN` 优先，这是全项目的兜底语言。
+///
+/// 与前端 `pickI18n` 的规则一致（精确语言 → `zh-CN` → 第一个非空），
+/// 但后端只需要后者提供的那一个「兜底值」—— 运行时镜像
+/// `RepositorySource.nickname` 就用它，界面再按当前语言从表里选。
+pub(crate) fn nickname_fallback(
+    translations: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    translations
+        .get("zh-CN")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            translations
+                .values()
+                .map(|value| value.trim())
+                .find(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+}
+
+/// 把单语 `nickname` 折叠进 `nickname_i18n`，并校验 zh-CN 兜底存在。
+///
+/// 返回规范化后的昵称（即 `zh-CN` 值）。规则与 `normalize_repository_i18n`
+/// 对 name / group / note 的处理一致：
+///   1. `zh-CN` 已有非空值 → 用它
+///   2. 否则用旧单语 `nickname`
+///   3. 两者都没有 → 报错（原文案是「仓库源 ID 和昵称不能为空」）
+///
+/// 其余语言留空时由前端 `pickI18n` 回落到 zh-CN，所以这里只保证 zh-CN 存在。
+pub(crate) fn normalize_source_nickname(
+    source: &mut RepositorySourceDeclaration,
+) -> Result<String, ConfigError> {
+    let legacy = source.nickname.trim().to_string();
+    let resolved = nickname_fallback(&source.nickname_i18n)
+        .or_else(|| (!legacy.is_empty()).then(|| legacy.clone()))
+        .ok_or_else(|| ConfigError::Invalid("仓库源 ID 和昵称不能为空".into()))?;
+    // 空白翻译项一律清掉：`pickI18n` 会跳过空值，留着只会让 TOML 变长
+    source
+        .nickname_i18n
+        .retain(|_, value| !value.trim().is_empty());
+    source
+        .nickname_i18n
+        .insert("zh-CN".into(), resolved.clone());
+    source.nickname = resolved.clone();
+    Ok(resolved)
 }
 
 fn deserialize_builtin<'de, D: Deserializer<'de>>(
@@ -516,8 +580,9 @@ pub(crate) fn parse_document(
     let mut urls = std::collections::HashSet::new();
     for source in &mut document.repository_sources {
         source.id = source.id.trim().to_string();
-        source.nickname = source.nickname.trim().to_string();
-        if source.id.is_empty() || source.nickname.is_empty() {
+        // 昵称只认多语言表（zh-CN 兜底），旧单语字段在此折叠
+        let nickname = normalize_source_nickname(source)?;
+        if source.id.is_empty() || nickname.is_empty() {
             return Err(ConfigError::Invalid("仓库源 ID 和昵称不能为空".into()));
         }
         source.region = crate::config::normalize_repository_region_for_storage(
@@ -1392,9 +1457,20 @@ builtin = true
         }
     }
 
+    /*
+     * 昵称与 name / group / note 采用同一套多语言规则：
+     *   · 只写多语言表（含 zh-CN）→ 直接用
+     *   · 只写旧的单语 nickname → 折叠进 zh-CN（迁移兼容）
+     *   · 两者都没有 → 报错，不产生空白昵称
+     *
+     * 旧实现允许「单语 + 空翻译表」，那是 `nickname_i18n.is_empty()`
+     * 那条断言留下的行为；现在表里必须始终有 zh-CN。
+     */
     #[test]
-    fn source_nickname_translations_are_optional_and_survive_parsing() {
+    fn source_nickname_uses_i18n_table_with_zh_cn_fallback() {
         let location = SourceLocation::parse("index.toml").unwrap();
+
+        // 只有旧的单语字段：折叠进 zh-CN，镜像值同步
         let legacy = r#"
 [[repository_sources]]
 id = "mods"
@@ -1402,16 +1478,38 @@ nickname = "Fallback name"
 url = "mods.toml"
 "#;
         let document = parse_document(legacy, &location).unwrap();
-        assert!(document.repository_sources[0].nickname_i18n.is_empty());
-        let translated = format!(
-            "{legacy}\n[repository_sources.nickname_i18n]\nzh-CN = \"中文昵称\"\nzh-TW = \"繁體暱稱\"\nen = \"Translated name\"\nko = \"번역 이름\"\n"
-        );
-        let document = parse_document(&translated, &location).unwrap();
         let source = &document.repository_sources[0];
         assert_eq!(source.nickname, "Fallback name");
-        assert_eq!(source.nickname_i18n.len(), 4);
+        assert_eq!(source.nickname_i18n["zh-CN"], "Fallback name");
+
+        // 多语言表齐全：镜像值取 zh-CN，不取单语字段
+        let translated = r#"
+[[repository_sources]]
+id = "mods"
+nickname = "Ignored fallback"
+url = "mods.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "中文昵称"
+zh-TW = "繁體暱稱"
+en = "Translated name"
+ko = "번역 이름"
+"#;
+        let document = parse_document(translated, &location).unwrap();
+        let source = &document.repository_sources[0];
+        assert_eq!(source.nickname, "中文昵称", "镜像值应取 zh-CN");
         assert_eq!(source.nickname_i18n["en"], "Translated name");
         assert_eq!(source.nickname_i18n["ko"], "번역 이름");
+
+        // 完全没有昵称 → 拒绝
+        let missing = r#"
+[[repository_sources]]
+id = "mods"
+url = "mods.toml"
+"#;
+        let error = parse_document(missing, &location).unwrap_err();
+        assert!(error.to_string().contains("昵称不能为空"), "{error}");
+
+        // 翻译表语言值类型错误仍然报错
         assert!(
             parse_document(
                 &translated.replace("en = \"Translated name\"", "en = 1"),
@@ -1419,6 +1517,23 @@ url = "mods.toml"
             )
             .is_err()
         );
+    }
+
+    /// 空白翻译项被丢弃，不会留下一个「看起来有、其实空」的语言键。
+    #[test]
+    fn blank_nickname_translations_are_dropped() {
+        let location = SourceLocation::parse("index.toml").unwrap();
+        let text = r#"
+[[repository_sources]]
+id = "mods"
+url = "mods.toml"
+[repository_sources.nickname_i18n]
+zh-CN = "中文昵称"
+en = "   "
+"#;
+        let document = parse_document(text, &location).unwrap();
+        assert_eq!(document.repository_sources[0].nickname_i18n.len(), 1);
+        assert_eq!(document.repository_sources[0].nickname, "中文昵称");
     }
 
     #[test]

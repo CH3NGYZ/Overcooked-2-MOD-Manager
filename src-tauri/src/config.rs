@@ -383,6 +383,23 @@ impl ConfigService {
                 source.region = normalized;
                 changed = true;
             }
+            // 昵称以多语言表为准：镜像字段跟着 zh-CN 走，缺表项时用镜像回填。
+            // 这样旧配置文件（只有单语 nickname）在第一次读取后自动补齐。
+            let previous_nickname = source.nickname.clone();
+            let previous_map = source.nickname_i18n.clone();
+            if !source.nickname_i18n.contains_key("zh-CN") && !source.nickname.trim().is_empty() {
+                source
+                    .nickname_i18n
+                    .insert("zh-CN".into(), source.nickname.trim().to_string());
+            }
+            if let Some(nickname) =
+                crate::repository_sources::nickname_fallback(&source.nickname_i18n)
+            {
+                source.nickname = nickname;
+            }
+            if source.nickname != previous_nickname || source.nickname_i18n != previous_map {
+                changed = true;
+            }
         }
         changed
     }
@@ -2261,6 +2278,7 @@ value = "MOD.dll"
             let mut old_child = old_root.clone();
             old_child.id = "obsolete-child".into();
             old_child.parent_id = Some(old_root.id.clone());
+            // 旧配置只有单语昵称：加载后应自动回填 zh-CN（见 normalize_configured_regions）
             let custom = RepositorySource {
                 id: "custom-source".into(),
                 nickname: "Custom source".into(),
@@ -2270,7 +2288,11 @@ value = "MOD.dll"
                 builtin: false,
                 parent_id: None,
             };
-            expected_sources.push(custom.clone());
+            let mut expected_custom = custom.clone();
+            expected_custom
+                .nickname_i18n
+                .insert("zh-CN".into(), "Custom source".into());
+            expected_sources.push(expected_custom);
             config.repository_sources = vec![old_root.clone(), old_child.clone(), custom.clone()];
             let location =
                 crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();

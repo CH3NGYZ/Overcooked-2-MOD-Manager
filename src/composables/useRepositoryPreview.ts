@@ -46,11 +46,51 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
   /**
    * 预览一份仓库资产。
    *
-   * 预发布版本先确认再下载 —— 确认放在下载之前，
-   * 避免用户拒绝后白白下载一整个安装包。
+   * 顺序：**预发布确认 → 关系检查（依赖/冲突/兼容）→ 下载**。
+   *
+   * 预发布确认必须最先问：用户可能只想要正式版，拒了就到此为止。
+   * 关系检查会真的卸载/安装东西，把它排在确认之前，等于拿用户的环境
+   * 去试错 —— 可能已经卸掉了冲突 MOD，才发现用户根本不要这个测试版。
+   * 下载仍放在最后，避免用户中途拒绝时白白下载整个安装包。
    */
   async function previewRepository(repo: Repository, tag?: string): Promise<void> {
     if (options.gameBlocked?.()) return
+
+    const target = tag ?? repo.cached_releases[0]?.tag_name
+    const release = repo.cached_releases.find((entry) => entry.tag_name === target)
+    /*
+     * 预发布判定：优先用后端算好的 `prerelease` 标记。
+     *
+     * 兜底只能传 `tag_name` —— 后端的 `version` 是归一后的三段文本，
+     * 第 4 段（beta 序号）已经丢了，拿它反推会把 `1.8.7.23` 判成正式版，
+     * 而卡片那边看到的是预发布，两处结论不一致。
+     */
+    const prerelease = release
+      ? isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
+      : false
+    /*
+     * 预发布确认必须排在关系检查**之前**。
+     *
+     * 用户可能只想装正式版：先问「这是预览版，确定吗」，拒了就到此为止，
+     * 不该先为他弹一个「安装前检查」、甚至已经卸掉了冲突 MOD 才发现他
+     * 根本不要这个测试版。确认意图在前，代价高昂的副作用在后 ——
+     * 关系检查会真的卸载/安装东西，顺序反了就是拿用户的环境去试错。
+     */
+    if (prerelease) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+          title: t('预发布版本'),
+          content: t('此版本为预览版本，可能存在未知问题，是否继续安装？'),
+          positiveText: t('继续安装'),
+          negativeText: t('取消'),
+          onPositiveClick: () => resolve(true),
+          onNegativeClick: () => resolve(false),
+          onClose: () => resolve(false),
+          onMaskClick: () => resolve(false),
+        })
+      })
+      if (!confirmed) return
+    }
 
     /*
      * 安装前先处理依赖 / 冲突 / 兼容。
@@ -67,34 +107,6 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
       const ready = await options.prepareInstall(repo, tag)
       // 没处理好就不继续：装一个跑不起来或冲突的 MOD 比不装更糟
       if (!ready) return
-    }
-
-    const target = tag ?? repo.cached_releases[0]?.tag_name
-    const release = repo.cached_releases.find((entry) => entry.tag_name === target)
-    /*
-     * 预发布判定：优先用后端算好的 `prerelease` 标记。
-     *
-     * 兜底只能传 `tag_name` —— 后端的 `version` 是归一后的三段文本，
-     * 第 4 段（beta 序号）已经丢了，拿它反推会把 `1.8.7.23` 判成正式版，
-     * 而卡片那边看到的是预发布，两处结论不一致。
-     */
-    const prerelease = release
-      ? isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
-      : false
-    if (prerelease) {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        dialog.warning({
-          title: t('预发布版本'),
-          content: t('此版本为预览版本，可能存在未知问题，是否继续安装？'),
-          positiveText: t('继续安装'),
-          negativeText: t('取消'),
-          onPositiveClick: () => resolve(true),
-          onNegativeClick: () => resolve(false),
-          onClose: () => resolve(false),
-          onMaskClick: () => resolve(false),
-        })
-      })
-      if (!confirmed) return
     }
 
     options.onBusyChange?.(repo.id, true)

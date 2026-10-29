@@ -457,24 +457,36 @@ mod tests {
      * gitee_api）。头像 URL 是 `github.com/{owner}.png`，raw 组的模板都按
      * 仓库文件路径设计，实测全部取不到；混用会让每个头像白试整条 raw 列表。
      *
-     * 这里断言内置清单里确实存在 avatar 组，且条目都是「能服务任意 URL」
-     * 的模板形态（含 {url} 或 {url_no_scheme} 之一）。
+     * 头像代理的模板只需满足「能把整条 URL 或其路径转给上游」之一：
+     *   `{url}` / `{url_no_scheme}` —— 纯包装型
+     *   `{url_path}` —— 只转路径型（如 oc2gh，它按 Host 推断上游）
+     * 其余占位符（owner/repo/branch/path）无法表达头像地址，会拼出空段。
      */
     #[test]
-    fn bundled_avatar_proxies_exist_and_are_url_wrappers() {
+    fn bundled_avatar_proxies_exist_and_can_serve_any_url() {
         let bundled = crate::github_proxies::bundled_defaults();
         assert!(
             !bundled.avatar_proxies.is_empty(),
             "内置清单应当声明头像代理"
         );
         for proxy in &bundled.avatar_proxies {
-            let wrappable =
-                proxy.template.contains("{url}") || proxy.template.contains("{url_no_scheme}");
+            let wrappable = ["{url}", "{url_no_scheme}", "{url_path}"]
+                .iter()
+                .any(|placeholder| proxy.template.contains(placeholder));
             assert!(
                 wrappable,
-                "头像代理必须能服务任意 URL（含 {{url}} 占位符）：{} = {}",
+                "头像代理必须能服务任意 URL（含 {{url}}/{{url_no_scheme}}/{{url_path}}）：{} = {}",
                 proxy.id, proxy.template
             );
+            // 仓库路径类占位符对头像是无意义的：头像 URL 没有这些分段
+            for forbidden in ["{owner}", "{repo}", "{branch}", "{path}", "{github_path}"] {
+                assert!(
+                    !proxy.template.contains(forbidden),
+                    "头像代理不应依赖仓库路径占位符 {forbidden}：{} = {}",
+                    proxy.id,
+                    proxy.template
+                );
+            }
             assert!(proxy.builtin, "内置头像代理应标记 builtin：{}", proxy.id);
         }
         // 与另外几组分开维护：不应与 raw 组共用同一批 id

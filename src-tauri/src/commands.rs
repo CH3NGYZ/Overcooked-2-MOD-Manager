@@ -4841,6 +4841,127 @@ pub fn clear_repository_avatars(state: State<'_, AppState>) -> Result<usize, Str
     crate::avatars::clear_cache(&state.config.cache_dir())
 }
 
+/// DIYLevel 自定义关卡框架的稳定 GUID。
+///
+/// 与仓库源里的 `plugin_guid`、安装清单、MOD 扫描用的是同一个标识 ——
+/// 作者会改文件名和产品名，只有 GUID 稳定，所以状态判定只认它。
+const DIYLEVEL_GUID: &str = "dev.gua.overcooked.diylevel";
+
+/// 读取 DIYLevel 框架状态。
+///
+/// 复用 MOD 扫描结果，不单独扫盘：扫描已经处理了 `.dll.disabled` 命名、
+/// 元数据解析和清单绑定，再写一套判定只会和 MOD 列表给出的结论不一致。
+#[tauri::command]
+pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, String> {
+    let config = state.config.load_or_default();
+    let Some(game_root) = game::detect_game(&config).path else {
+        return Ok(DiyLevelInfo {
+            installed: false,
+            enabled: false,
+            version: None,
+            dll_file: None,
+            has_levels_dir: false,
+        });
+    };
+    let root = PathBuf::from(&game_root);
+    // 与 MOD 列表同源：同一份扫描、同一份清单，结论不会互相矛盾
+    let installed =
+        mods::scan_mods_with_manifests(&root, &config, Some(&state.config.manifests_dir()));
+    let target = installed.iter().find(|item| {
+        item.guid
+            .as_deref()
+            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
+    });
+    /*
+     * 地图目录：`BepInEx/plugins/OC2DIYLevel/levels`。
+     *
+     * 目录名来自包里固定的相对结构（`OC2DIYLevel/levels/...`），不是用户
+     * 可配的；这里只做「存在与否」的只读判断，不创建 —— 没装框架时凭空
+     * 建一个空目录，会让人以为已经准备好放地图了。
+     */
+    let levels_dir = root.join("BepInEx/plugins/OC2DIYLevel/levels");
+    Ok(DiyLevelInfo {
+        installed: target.is_some(),
+        enabled: target.is_some_and(|item| item.enabled),
+        version: target.and_then(|item| item.version.clone()),
+        dll_file: target.map(|item| item.dll_file.clone()),
+        has_levels_dir: levels_dir.is_dir(),
+    })
+}
+
+/// 切换 DIYLevel 框架的启用状态。
+///
+/// 走与 MOD 列表相同的 `.dll` / `.dll.disabled` 改名逻辑（`set_local_mod_file_state`），
+/// 不新增一套开关实现 —— 否则两处对「禁用」的定义迟早分叉。
+#[tauri::command]
+pub fn set_diy_level_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    log::info!("切换 DIYLevel 框架状态：启用={enabled}");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+    let installed =
+        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
+    let Some(target) = installed.iter().find(|item| {
+        item.guid
+            .as_deref()
+            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
+    }) else {
+        return Err("尚未安装 DIYLevel 框架".into());
+    };
+    if target.enabled == enabled {
+        return Ok(OperationResult {
+            ok: true,
+            message: if enabled { "已启用" } else { "已禁用" }.into(),
+        });
+    }
+    set_local_mod_file_state(&game_root, &target.dll_file, enabled)?;
+    Ok(OperationResult {
+        ok: true,
+        message: if enabled {
+            "DIYLevel 框架已启用".into()
+        } else {
+            "DIYLevel 框架已禁用".into()
+        },
+    })
+}
+
+/// 打开 DIYLevel 的地图目录（放在框架所在目录层）。
+///
+/// 与 `open_bepinex_directory` 同一套约束：只允许游戏目录内的固定子路径，
+/// 且**不自动创建**——目录不存在说明框架没装或版本结构不同，创建空目录
+/// 只会误导用户。
+#[tauri::command]
+pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    let config = state.config.load_or_default();
+    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let root = Path::new(&game_root);
+    // 优先地图目录；框架装在别处时退回插件目录，至少能给用户一个能看的落点
+    let levels = game::safe_game_path(root, "BepInEx/plugins/OC2DIYLevel/levels")?;
+    let package = game::safe_game_path(root, "BepInEx/plugins/OC2DIYLevel")?;
+    let target = if levels.is_dir() {
+        levels
+    } else if package.is_dir() {
+        package
+    } else {
+        return Err("尚未安装 DIYLevel 框架，或安装结构与预期不同".into());
+    };
+    external_open_command()
+        .arg(&target)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(OperationResult {
+        ok: true,
+        message: "已打开 DIYLevel 目录".into(),
+    })
+}
+
 #[tauri::command]
 pub fn open_bepinex_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::debug!("打开 BepInEx 目录");

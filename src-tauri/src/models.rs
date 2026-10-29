@@ -41,6 +41,27 @@ pub enum WinhttpState {
     Conflict,
 }
 
+/// DIYLevel 自定义关卡框架的状态。
+///
+/// 它本质是一个 MOD（`dev.gua.overcooked.diylevel`），但承担「框架」角色：
+/// 自制地图要靠它加载。所以设置页给它一个独立管理区块，而不是让用户去
+/// MOD 列表里自己找。判定依据与 MOD 扫描一致 —— 用 GUID 识别，不看文件名
+/// （作者会改名，GUID 才是稳定身份）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiyLevelInfo {
+    /// 扫描到了这个 GUID 的插件。
+    pub installed: bool,
+    /// 已启用（`.dll` 而非 `.dll.disabled`）。
+    pub enabled: bool,
+    /// 插件版本（读 BepInPlugin 元数据）。
+    pub version: Option<String>,
+    /// DLL 的游戏相对路径，用于开关与打开目录。
+    pub dll_file: Option<String>,
+    /// 本地地图目录（`BepInEx/plugins/OC2DIYLevel/levels`）是否存在。
+    #[serde(default)]
+    pub has_levels_dir: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstalledModStatusLabel {

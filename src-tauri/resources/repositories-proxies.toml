@@ -218,7 +218,16 @@ description = "Gitee API 桥接"
 # 与上面几组走同一条读取链路（内置清单 → 远程清单 → 用户脚本），代码里
 # 不写任何地址。单独一组是因为头像 URL 是 `github.com/{owner}.png`，
 # 而 raw 组的模板都按仓库文件路径设计，实测全部取不到。
-# 能服务任意 URL 的是「纯 {url} / {url_no_scheme}」型模板。
+#
+# 注意 oc2gh 必须放在最前：它只服务本管理器的 User-Agent
+# （`Overcooked 2 MOD Manager/<version> ...`），其他 UA 一律 403。
+# 同 UA 下它最快最稳，所以作为首选，其余作后备。
+[[avatar_proxies]]
+id = "oc2gh-avatar"
+name = "oc2gh.ch3ng.top"
+template = "https://oc2gh.ch3ng.top/{url_path}"
+description = "头像：自家代理（需本管理器 UA）"
+
 [[avatar_proxies]]
 id = "cors-isteed-avatar"
 name = "cors.isteed.cc"

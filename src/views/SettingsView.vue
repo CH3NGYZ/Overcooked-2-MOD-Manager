@@ -11,6 +11,7 @@ import AppModal from '../components/AppModal.vue'
 import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
+import DiyLevelSettings from '../components/settings/DiyLevelSettings.vue'
 import { tagColorFor } from '../theme'
 import { FOCUS_QUERY } from '../crossLink'
 import { api } from '../services/tauri'
@@ -351,6 +352,12 @@ async function clearTokens() {
         </n-button>
       </template>
     </SettingsRow>
+    <!--
+      DIYLevel 框架：它本质是一个 MOD，但承担「框架」角色（自制地图靠它加载），
+      所以在设置页与 BepInEx 并列，而不是让用户去 MOD 列表里自己找。
+      安装动作复用 MOD 安装页那条链路，不另写一套。
+    -->
+    <DiyLevelSettings />
   </SettingsGroup>
 
   <!-- BepInEx 管理抽屉：从右向左滑入，内容由 BepInExPanel 承担 -->

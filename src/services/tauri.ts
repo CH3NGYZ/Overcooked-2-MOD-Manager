@@ -5,7 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { locale } from '../i18n'
 import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
-  Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
+  Dashboard, DiyLevelInfo, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
   OperationResult, PermissionStatus, Provider,
   PublicConfig, ReleaseInfo, RepositoryInstallOutcome, RepositoryReadme, RepositorySourceImportResult,
   RustLog, SettingsPatch,
@@ -124,6 +124,13 @@ export const api = {
   openModDirectory: () => invoke<OperationResult>('open_mod_directory'),
   /** 打开 `<game>/BepInEx`（框架自身文件所在处，不是 plugins）。 */
   openBepInExDirectory: () => invoke<OperationResult>('open_bepinex_directory'),
+  /** DIYLevel 自定义关卡框架状态（GUID 判定，与 MOD 列表同源）。 */
+  diyLevelInfo: () => invoke<DiyLevelInfo>('get_diy_level_info'),
+  /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */
+  setDiyLevelEnabled: (enabled: boolean) =>
+    invoke<OperationResult>('set_diy_level_enabled', { enabled }),
+  /** 打开 DIYLevel 的地图目录（不自动创建）。 */
+  openDiyLevelDirectory: () => invoke<OperationResult>('open_diy_level_directory'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),

@@ -153,6 +153,20 @@ export interface PublicConfig {
 }
 export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; has_residue: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
+/**
+ * DIYLevel 自定义关卡框架状态。
+ *
+ * 它本质是一个 MOD（GUID `dev.gua.overcooked.diylevel`），但承担「框架」角色，
+ * 所以在设置页有独立管理区块。判定用 GUID，不看文件名。
+ */
+export interface DiyLevelInfo {
+  installed: boolean
+  enabled: boolean
+  version?: string | null
+  dll_file?: string | null
+  /** 地图目录 `BepInEx/plugins/OC2DIYLevel/levels` 是否存在。 */
+  has_levels_dir: boolean
+}
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
 export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'checking' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency' | 'missing_dependency' | 'dependency_conflict'

@@ -102,4 +102,41 @@ export const message: DomainMessages = {
     ko: '비활성화됨',
     ja: '無効',
   },
+
+  // ===== MOD 卸载 =====
+  'mods.movedToRecycleBin': {
+    'zh-CN': 'MOD 已移入回收站',
+    'zh-TW': 'MOD 已移入資源回收筒',
+    en: 'MOD moved to the recycle bin',
+    ko: 'MOD를 휴지통으로 옮겼습니다',
+    ja: 'MOD をゴミ箱へ移動しました',
+  },
+  'mods.deleted': {
+    'zh-CN': 'MOD 已删除',
+    'zh-TW': 'MOD 已刪除',
+    en: 'MOD deleted',
+    ko: 'MOD가 삭제되었습니다',
+    ja: 'MOD を削除しました',
+  },
+  'mods.packageMovedToRecycleBin': {
+    'zh-CN': 'MOD 包已移入回收站',
+    'zh-TW': 'MOD 包已移入資源回收筒',
+    en: 'MOD package moved to the recycle bin',
+    ko: 'MOD 패키지를 휴지통으로 옮겼습니다',
+    ja: 'MOD パッケージをゴミ箱へ移動しました',
+  },
+  'mods.packageDeleted': {
+    'zh-CN': 'MOD 包已删除',
+    'zh-TW': 'MOD 包已刪除',
+    en: 'MOD package deleted',
+    ko: 'MOD 패키지가 삭제되었습니다',
+    ja: 'MOD パッケージを削除しました',
+  },
+  'mods.packageMovedToRecycleBinWithCount': {
+    'zh-CN': 'MOD 包已移入回收站（{count} 个文件）',
+    'zh-TW': 'MOD 包已移入資源回收筒（{count} 個檔案）',
+    en: 'MOD package moved to the recycle bin ({count} files)',
+    ko: 'MOD 패키지를 휴지통으로 옮겼습니다(파일 {count}개)',
+    ja: 'MOD パッケージをゴミ箱へ移動しました（{count} ファイル）',
+  },
 }

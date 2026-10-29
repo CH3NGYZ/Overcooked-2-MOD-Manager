@@ -20,6 +20,7 @@ import { useDialog } from 'naive-ui'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import type { InstalledMod } from '../types'
 
 export interface RemovalCopy {
@@ -78,19 +79,19 @@ export function useModRemoval(options: ModRemovalOptions) {
               async onPositiveClick() {
                 const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
                 packageResult.ok
-                  ? message.success(packageResult.message || fallback.done)
-                  : message.error(packageResult.message)
+                  ? message.success(translateBackendMessage(packageResult.message) || fallback.done)
+                  : message.error(translateBackendMessage(packageResult.message))
                 await options.onDone()
               },
             })
           } else {
             result.ok
-              ? message.success(result.message || fallback.done)
-              : message.error(result.message)
+              ? message.success(translateBackendMessage(result.message) || fallback.done)
+              : message.error(translateBackendMessage(result.message))
           }
           await options.onDone()
         } catch (reason) {
-          message.error(reason instanceof Error ? reason.message : String(reason))
+          message.error(backendMessageOf(reason))
         } finally {
           options.onBusy?.(mod, false)
         }

@@ -75,6 +75,61 @@ test('空值不产生文案', () => {
   assert.equal(translateBackendMessage(undefined), '')
 })
 
+/* ===== MOD 卸载与回收站域 ===== */
+
+test('卸载与回收站的 tag 在五语下都有翻译', () => {
+  const tags = [
+    'error.mods.packageConfirmation',
+    'error.mods.unmanagedConfirmation',
+    'error.mods.unknownFiles',
+    'error.mods.dllNotInPackage',
+    'error.mods.dllNotFound',
+    'error.mods.notInPlugins',
+    'error.recycle.recordMissing',
+    'error.recycle.fileSharedByOtherPackage',
+    'error.recycle.insideModsDirectory',
+    'error.recycle.partialFailure',
+    'error.recycle.packageUpdated',
+    'error.recycle.wrongGameDirectory',
+    'message.mods.movedToRecycleBin',
+    'message.mods.deleted',
+    'message.mods.packageMovedToRecycleBin',
+    'message.mods.packageDeleted',
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const tag of tags) {
+      const text = translateBackendMessage(tag)
+      assert.notEqual(text, tag, `${locale}: ${tag} 未登记`)
+      assert.ok(text.length > 0, `${locale}: ${tag} 翻译为空`)
+    }
+  }
+})
+
+test('回收站命令不再返回中文文案（源码级确认）', () => {
+  const rust = readFileSync(
+    new URL('../src-tauri/src/recycle_bin.rs', import.meta.url),
+    'utf8',
+  )
+  for (const tag of [
+    'error.recycle.recordMissing',
+    'error.recycle.fileSharedByOtherPackage',
+    'error.recycle.insideModsDirectory',
+    'error.recycle.partialFailure',
+    'error.recycle.packageUpdated',
+    'error.recycle.wrongGameDirectory',
+  ]) {
+    assert.ok(rust.includes(tag), `recycle_bin.rs 应包含 tag：${tag}`)
+  }
+  for (const legacy of [
+    '回收站记录不存在',
+    '该文件仍由其他 MOD 包使用，不能移入回收站',
+    '操作失败，部分文件保留在回收站，请查看日志',
+  ]) {
+    assert.ok(!rust.includes(legacy), `recycle_bin.rs 不应再含中文文案：${legacy}`)
+  }
+})
+
 /* ===== 框架管理域（BepInEx / DIYLevel）===== */
 
 test('框架备份与卸载的 tag 在五语下都有翻译', () => {

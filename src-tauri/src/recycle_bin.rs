@@ -483,7 +483,7 @@ fn save_record(directory: &Path, record: &RecycleRecord) -> Result<(), String> {
 fn load_record(directory: &Path, id: &str) -> Result<RecycleRecord, String> {
     let record_path = checked_path(directory, "record.json")?;
     if !record_path.try_exists().map_err(io_error)? {
-        return Err("回收站记录不存在".into());
+        return Err("error.recycle.recordMissing".into());
     }
     let record: RecycleRecord = serde_json::from_slice(&read_bounded(&record_path)?)
         .map_err(|_| INVALID_RECORD.to_string())?;
@@ -769,7 +769,7 @@ fn recycle_package_with_mods(
     sibling_packages: &[String],
 ) -> Result<Option<ModRecycleEntry>, String> {
     let (manifest, original) =
-        read_active_manifest(manifests_dir, package_id)?.ok_or("没有安装清单，拒绝删除未知文件")?;
+        read_active_manifest(manifests_dir, package_id)?.ok_or("error.mods.unknownFiles")?;
     let selected = dll.map(file_key);
     let explicit = explicit_dll.map(file_key);
     let replacement_keys = replacement_files
@@ -782,7 +782,7 @@ fn recycle_package_with_mods(
             .iter()
             .any(|file| file_key(file) == *selected)
     }) {
-        return Err("当前 DLL 不属于这个 MOD 包".into());
+        return Err("error.mods.dllNotInPackage".into());
     }
     let removed_files = manifest
         .files
@@ -795,12 +795,12 @@ fn recycle_package_with_mods(
         .map(|file| normalize_relative(file))
         .collect::<Result<Vec<_>, _>>()?;
     if removed_files.is_empty() && dll.is_some() {
-        return Err("当前 DLL 不属于这个 MOD 包".into());
+        return Err("error.mods.dllNotInPackage".into());
     }
     if let Some(dll) = explicit_dll {
         let relative = normalize_relative(&mods::canonical_dll_name(dll))?;
         if existing_variants(game_root, &relative)?.is_empty() {
-            return Err("找不到对应的 MOD DLL 文件".into());
+            return Err("error.mods.dllNotFound".into());
         }
     }
     let peer_manifests = all_active_manifests(manifests_dir)?
@@ -832,7 +832,7 @@ fn recycle_package_with_mods(
             }
             if dll.is_some() {
                 if !safe_duplicate {
-                    return Err("该文件仍由其他 MOD 包使用，不能移入回收站".into());
+                    return Err("error.recycle.fileSharedByOtherPackage".into());
                 }
                 actual.extend(existing_variants(game_root, relative)?);
                 continue;
@@ -943,11 +943,11 @@ pub fn recycle_unmanaged(
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
     {
-        return Err("只能删除 BepInEx/plugins 下的 DLL 文件".into());
+        return Err("error.mods.notInPlugins".into());
     }
     let actual = existing_variants(game_root, &relative)?;
     if actual.is_empty() {
-        return Err("找不到对应的 MOD DLL 文件".into());
+        return Err("error.mods.dllNotFound".into());
     }
     let name = Path::new(&relative)
         .file_stem()
@@ -1057,7 +1057,7 @@ fn stage_with_related_manifests(
                     .is_some_and(|part| part.as_os_str().eq_ignore_ascii_case("plugins"))
         });
     if inside_plugins {
-        return Err("回收站不能位于游戏的 MOD 目录内".into());
+        return Err("error.recycle.insideModsDirectory".into());
     }
     let id = Uuid::new_v4().to_string();
     let directory = record_directory(root, &id)?;
@@ -1162,7 +1162,7 @@ fn stage_with_related_manifests(
         record.state = RecordState::Preparing;
         let _ = save_record(&directory, &record);
         log::error!("MOD 回收回滚未完成，保留全部暂存信息：ID={}", record.id);
-        return Err("操作失败，部分文件保留在回收站，请查看日志".into());
+        return Err("error.recycle.partialFailure".into());
     }
     for file in &record.files {
         if let Some(parent) = game_root.join(&file.relative).parent() {
@@ -1309,7 +1309,7 @@ fn merge_restored_manifest(
             || active.repository_binding != original.repository_binding
             || active.installed_at != original.installed_at
         {
-            return Err("当前 MOD 包已更新，无法合并原安装清单".into());
+            return Err("error.recycle.packageUpdated".into());
         }
         active.clone()
     } else {
@@ -1352,7 +1352,7 @@ pub fn restore(
     let directory = record_directory(root, id)?;
     let mut record = load_record(&directory, id)?;
     if record.state == RecordState::Restored {
-        return Err("回收站记录不存在".into());
+        return Err("error.recycle.recordMissing".into());
     }
     validate_absolute_path(game_root)?;
     let recorded_game = PathBuf::from(&record.game_path);
@@ -1360,7 +1360,7 @@ pub fn restore(
     if fs::canonicalize(game_root).map_err(io_error)?
         != fs::canonicalize(&recorded_game).map_err(io_error)?
     {
-        return Err("请切回原游戏目录后再恢复".into());
+        return Err("error.recycle.wrongGameDirectory".into());
     }
     let payload = checked_path(&directory, "files")?;
     validate_payload(&payload, &record)?;
@@ -1438,7 +1438,7 @@ pub fn restore(
             record.state = RecordState::Preparing;
             let _ = save_record(&directory, &record);
             log::error!("MOD 恢复回滚不完整，保留回收记录：ID={}", id);
-            return Err("操作失败，部分文件保留在回收站，请查看日志".into());
+            return Err("error.recycle.partialFailure".into());
         }
         return Err(error);
     }
@@ -1761,7 +1761,7 @@ mod tests {
                             &entry.id,
                         )
                         .unwrap_err()
-                        .contains("已更新")
+                        .contains("error.recycle.packageUpdated")
                     );
                     assert!(!workspace.game.join(&actual).exists());
                     assert!(workspace.recycle.join(&entry.id).exists());
@@ -2204,9 +2204,9 @@ mod tests {
             assert_eq!(
                 result.unwrap_err(),
                 if selected == A {
-                    "找不到对应的 MOD DLL 文件"
+                    "error.mods.dllNotFound"
                 } else {
-                    "当前 DLL 不属于这个 MOD 包"
+                    "error.mods.dllNotInPackage"
                 }
             );
             assert_eq!(workspace.active("package").unwrap().files, vec![A, DATA]);
@@ -2354,7 +2354,7 @@ mod tests {
             );
             assert_eq!(
                 result.unwrap_err(),
-                "该文件仍由其他 MOD 包使用，不能移入回收站",
+                "error.recycle.fileSharedByOtherPackage",
                 "{condition}"
             );
             assert_eq!(fs::read(workspace.game.join(A)).unwrap(), b"shared plugin");
@@ -2389,7 +2389,7 @@ mod tests {
                 &installed
             )
             .unwrap_err(),
-            "该文件仍由其他 MOD 包使用，不能移入回收站"
+            "error.recycle.fileSharedByOtherPackage"
         );
         assert_eq!(
             fs::read(workspace.game.join(A)).unwrap(),
@@ -2465,7 +2465,7 @@ mod tests {
                 &entry.id
             )
             .unwrap_err(),
-            "当前 MOD 包已更新，无法合并原安装清单"
+            "error.recycle.packageUpdated"
         );
         assert!(!workspace.game.join(A).exists());
         assert!(workspace.active("package").is_none());
@@ -2686,7 +2686,7 @@ mod tests {
                 &entry.id
             )
             .unwrap_err(),
-            "请切回原游戏目录后再恢复"
+            "error.recycle.wrongGameDirectory"
         );
         let mut updated = workspace.manifest("package", &[B]);
         updated.release_tag = "v2".into();
@@ -2699,7 +2699,7 @@ mod tests {
                 &entry.id
             )
             .unwrap_err(),
-            "当前 MOD 包已更新，无法合并原安装清单"
+            "error.recycle.packageUpdated"
         );
         assert_eq!(workspace.active("package").unwrap().release_tag, "v2");
         assert!(workspace.recycle.join(entry.id).exists());
@@ -2798,10 +2798,7 @@ mod tests {
                 Err("injected failure".into())
             },
         );
-        assert_eq!(
-            result.unwrap_err(),
-            "操作失败，部分文件保留在回收站，请查看日志"
-        );
+        assert_eq!(result.unwrap_err(), "error.recycle.partialFailure");
         let entries = list(&workspace.recycle).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -2953,7 +2950,7 @@ mod tests {
         let recycle = workspace.game.join("BepInEx/plugins/manager/recycle-bin");
         assert_eq!(
             recycle_unmanaged(&recycle, &workspace.game, A).unwrap_err(),
-            "回收站不能位于游戏的 MOD 目录内"
+            "error.recycle.insideModsDirectory"
         );
         assert_eq!(fs::read(workspace.game.join(A)).unwrap(), b"original");
         assert!(!recycle.exists());

@@ -962,7 +962,7 @@ pub fn uninstall_local_mod(
             );
             return Ok(UninstallLocalModResult {
                 ok: false,
-                message: "当前 MOD 与其他 MOD 一并安装".into(),
+                message: "error.mods.packageConfirmation".into(),
                 requires_confirmation: false,
                 requires_package_confirmation: true,
                 package_id: Some(manifest.repository_id),
@@ -1002,9 +1002,9 @@ pub fn uninstall_local_mod(
             return Ok(UninstallLocalModResult {
                 ok: true,
                 message: if config.recycle_deleted_mods {
-                    "MOD 已移入回收站".into()
+                    "message.mods.movedToRecycleBin".into()
                 } else {
-                    "MOD 已删除".into()
+                    "message.mods.deleted".into()
                 },
                 requires_confirmation: false,
                 requires_package_confirmation: false,
@@ -1040,9 +1040,9 @@ pub fn uninstall_local_mod(
         return Ok(UninstallLocalModResult {
             ok: true,
             message: if config.recycle_deleted_mods {
-                "MOD 包已移入回收站".into()
+                "message.mods.packageMovedToRecycleBin".into()
             } else {
-                "MOD 包已删除".into()
+                "message.mods.packageDeleted".into()
             },
             requires_confirmation: false,
             requires_package_confirmation: false,
@@ -1057,7 +1057,7 @@ pub fn uninstall_local_mod(
         );
         return Ok(UninstallLocalModResult {
             ok: false,
-            message: "该 MOD 不是通过本管理器安装的，管理器中只会删除这个 DLL，其他相关文件需手动处理。是否继续？".into(),
+            message: "error.mods.unmanagedConfirmation".into(),
             requires_confirmation: true,
             requires_package_confirmation: false,
             package_id: None,
@@ -1085,9 +1085,9 @@ pub fn uninstall_local_mod(
     Ok(UninstallLocalModResult {
         ok: true,
         message: if config.recycle_deleted_mods {
-            "MOD 已移入回收站".into()
+            "message.mods.movedToRecycleBin".into()
         } else {
-            "MOD 已删除".into()
+            "message.mods.deleted".into()
         },
         requires_confirmation: false,
         requires_package_confirmation: false,
@@ -1124,7 +1124,7 @@ pub fn uninstall_mod_dll(
         .iter()
         .any(|file| mods::canonical_dll_name(file).eq_ignore_ascii_case(&safe_relative))
     {
-        return Err("当前 DLL 不属于这个 MOD 包".into());
+        return Err("error.mods.dllNotInPackage".into());
     }
     let installed = mods::scan_mods_with_manifests(&game_root, &config, Some(&manifest_dir));
     let package_mod_count = installed
@@ -1167,9 +1167,9 @@ pub fn uninstall_mod_dll(
         return Ok(OperationResult {
             ok: true,
             message: if config.recycle_deleted_mods {
-                "MOD 包已移入回收站".into()
+                "message.mods.packageMovedToRecycleBin".into()
             } else {
-                "MOD 包已删除".into()
+                "message.mods.packageDeleted".into()
             },
         });
     }
@@ -1200,9 +1200,9 @@ pub fn uninstall_mod_dll(
     Ok(OperationResult {
         ok: true,
         message: if config.recycle_deleted_mods {
-            "MOD 已移入回收站".into()
+            "message.mods.movedToRecycleBin".into()
         } else {
-            "MOD 已删除".into()
+            "message.mods.deleted".into()
         },
     })
 }
@@ -3232,9 +3232,9 @@ pub fn uninstall_repository(
     Ok(OperationResult {
         ok: true,
         message: if config.recycle_deleted_mods {
-            "MOD 包已移入回收站".into()
+            "message.mods.packageMovedToRecycleBin".into()
         } else {
-            "MOD 包已删除".into()
+            "message.mods.packageDeleted".into()
         },
     })
 }

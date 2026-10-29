@@ -209,4 +209,62 @@ export const error: DomainMessages = {
     ko: '이 DLL은 해당 MOD 패키지에 속하지 않습니다',
     ja: 'この DLL はその MOD パッケージに属していません',
   },
+  'mods.dllNotFound': {
+    'zh-CN': '找不到对应的 MOD DLL 文件',
+    'zh-TW': '找不到對應的 MOD DLL 檔案',
+    en: 'The corresponding MOD DLL was not found',
+    ko: '해당 MOD DLL 파일을 찾을 수 없습니다',
+    ja: '対応する MOD の DLL が見つかりません',
+  },
+  'mods.notInPlugins': {
+    'zh-CN': '只能删除 BepInEx/plugins 下的 DLL 文件',
+    'zh-TW': '只能刪除 BepInEx/plugins 下的 DLL 檔案',
+    en: 'Only DLL files under BepInEx/plugins can be deleted',
+    ko: 'BepInEx/plugins 아래의 DLL 파일만 삭제할 수 있습니다',
+    ja: 'BepInEx/plugins 配下の DLL のみ削除できます',
+  },
+
+  // ===== 回收站 =====
+  'recycle.recordMissing': {
+    'zh-CN': '回收站记录不存在',
+    'zh-TW': '資源回收筒記錄不存在',
+    en: 'That recycle-bin entry does not exist',
+    ko: '휴지통 기록이 없습니다',
+    ja: 'ゴミ箱の記録がありません',
+  },
+  'recycle.fileSharedByOtherPackage': {
+    'zh-CN': '该文件仍由其他 MOD 包使用，不能移入回收站',
+    'zh-TW': '該檔案仍由其他 MOD 包使用，不能移入資源回收筒',
+    en: 'That file is still used by another MOD package and cannot be moved to the recycle bin',
+    ko: '해당 파일은 다른 MOD 패키지에서 사용 중이라 휴지통으로 옮길 수 없습니다',
+    ja: 'このファイルは他の MOD パッケージが使用中のため、ゴミ箱へ移動できません',
+  },
+  'recycle.insideModsDirectory': {
+    'zh-CN': '回收站不能位于游戏的 MOD 目录内',
+    'zh-TW': '資源回收筒不能位於遊戲的 MOD 目錄內',
+    en: 'The recycle bin cannot be inside the game MOD folder',
+    ko: '휴지통은 게임 MOD 폴더 안에 있을 수 없습니다',
+    ja: 'ゴミ箱をゲームの MOD フォルダー内に置くことはできません',
+  },
+  'recycle.partialFailure': {
+    'zh-CN': '操作失败，部分文件保留在回收站，请查看日志',
+    'zh-TW': '操作失敗，部分檔案保留在資源回收筒，請查看日誌',
+    en: 'The operation failed; some files remain in the recycle bin. Check the logs.',
+    ko: '작업이 실패했습니다. 일부 파일이 휴지통에 남아 있습니다. 로그를 확인하세요.',
+    ja: '操作に失敗しました。一部のファイルがゴミ箱に残っています。ログを確認してください。',
+  },
+  'recycle.packageUpdated': {
+    'zh-CN': '当前 MOD 包已更新，无法合并原安装清单',
+    'zh-TW': '目前 MOD 包已更新，無法合併原安裝清單',
+    en: 'The MOD package was updated, so the original manifest cannot be merged',
+    ko: 'MOD 패키지가 업데이트되어 기존 설치 목록을 병합할 수 없습니다',
+    ja: 'MOD パッケージが更新されているため、元のインストール記録を統合できません',
+  },
+  'recycle.wrongGameDirectory': {
+    'zh-CN': '请切回原游戏目录后再恢复',
+    'zh-TW': '請切回原遊戲目錄後再還原',
+    en: 'Switch back to the original game folder before restoring',
+    ko: '원래 게임 폴더로 돌아간 뒤 복원하세요',
+    ja: '元のゲームフォルダーに戻してから復元してください',
+  },
 }

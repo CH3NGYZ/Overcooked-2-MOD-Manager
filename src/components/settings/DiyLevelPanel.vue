@@ -25,7 +25,7 @@ import { api } from '../../services/tauri'
 import { useNotify } from '../../useNotify'
 import { pickI18n, t } from '../../i18n'
 import { tagColorFor } from '../../theme'
-import { parseBackupTime } from '../../backupLabel'
+import { formatBackupLabel } from '../../backupLabel'
 import { useDashboard } from '../../composables/useDashboardStore'
 import { useRepositoryLink } from '../../crossLink'
 import BusyOverlay from '../BusyOverlay.vue'
@@ -48,12 +48,12 @@ const installed = computed(() => info.value?.installed === true)
 const enabled = computed(() => info.value?.enabled === true)
 const backups = computed(() => info.value?.backups ?? [])
 /**
- * 备份行展示数据：`时间 · 路径`。
+ * 备份行展示数据：`时间 · 路径`（时间已转成当前时区）。
  *
  * 与 BepInExPanel 用同一个格式化函数，两处备份列表的观感必须一致。
  */
 const backupRows = computed(() =>
-  backups.value.map((path) => ({ path, time: parseBackupTime(path) })))
+  backups.value.map((path) => ({ path, time: formatBackupLabel(path).time })))
 /** 游戏运行时禁止改名/删除/还原，与 BepInEx 面板同一约束。 */
 const busy = computed(() => working.value || !!game.value?.kitchen_running)
 /** 备份/恢复/卸载期间的全屏遮罩文案。 */

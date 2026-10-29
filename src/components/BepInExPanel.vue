@@ -24,7 +24,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
-import { parseBackupTime } from '../backupLabel'
+import { formatBackupLabel } from '../backupLabel'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
 import BepInExSetupGuide from './BepInExSetupGuide.vue'
@@ -44,13 +44,13 @@ const configEditorOpen = ref(false)
 const winhttpEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
 const backups = computed(() => game.value?.bepinex.backups ?? [])
 /**
- * 备份行展示数据：`时间 · 路径`。
+ * 备份行展示数据：`时间 · 路径`（时间已转成当前时区）。
  *
- * 在 computed 里一次算好，模板里不再反复调 parseBackupTime（每次重渲染
- * 会为同一行算三遍），也让「有没有时间」只判断一次。
+ * 在 computed 里一次算好，模板里不再反复格式化（每次重渲染会为同一行
+ * 算三遍），也让「有没有时间」只判断一次。
  */
 const backupRows = computed(() =>
-  backups.value.map((path) => ({ path, time: parseBackupTime(path) })))
+  backups.value.map((path) => ({ path, time: formatBackupLabel(path).time })))
 const isWindows = computed(() => config.value?.platform === 'windows')
 /**
  * 框架是否已安装。

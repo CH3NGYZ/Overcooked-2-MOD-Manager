@@ -3541,7 +3541,7 @@ async fn import_repository_source_into_config(
     // download and apply their own files concurrently. Keep the source itself
     // so the UI can show its error state, but remove stale descendants and
     // repositories instead of restoring them after a failed request.
-    let (timeout_seconds, source_url, builtin_fallback_available) = {
+    let (source_url, builtin_fallback_available) = {
         let _cache_guard = state.repository_cache.lock().await;
         let _operation_guard = state
             .operation
@@ -3598,11 +3598,7 @@ async fn import_repository_source_into_config(
             removed_child_source_count,
             removed_repository_count
         );
-        (
-            original_config.network.timeout_seconds,
-            source_url,
-            builtin_fallback_available && !builtin_fallback,
-        )
+        (source_url, builtin_fallback_available && !builtin_fallback)
     };
     let document_url = if builtin_fallback {
         log::warn!(
@@ -3622,7 +3618,8 @@ async fn import_repository_source_into_config(
         );
         error.to_string()
     })?;
-    let document = match repository_sources::load_document(&location, timeout_seconds).await {
+    // 超时由 load_document 内部固定为 SOURCE_DOCUMENT_TIMEOUT（30 秒）
+    let document = match repository_sources::load_document(&location).await {
         Ok(document) => document,
         Err(error) => {
             log::error!(
@@ -8719,7 +8716,22 @@ mod repository_source_refresh_tests {
             .iter()
             .filter(|s| s.parent_id.as_deref() == Some(root.id.as_str()))
             .collect::<Vec<_>>();
-        assert_eq!(children.len(), 5);
+        /*
+         * 数量从内置索引**实际声明**推导，而不是写死。
+         *
+         * 之前这里是 `assert_eq!(children.len(), 5)`：作者往索引里加一个子源
+         * 就会让这条测试失败，而失败原因与回退逻辑毫无关系 —— 纯粹是常量过期。
+         * 真正要断言的是「索引声明了几个，回退后就该有几个」。
+         */
+        let declared_children = {
+            let location = SourceLocation::parse(repository_sources::BUILTIN_INDEX).unwrap();
+            let document =
+                repository_sources::parse_document(location.bundled_text().unwrap(), &location)
+                    .unwrap();
+            document.repository_sources.len()
+        };
+        assert!(declared_children > 0, "内置索引应当至少声明一个子源");
+        assert_eq!(children.len(), declared_children);
         for child in &children {
             assert!(matches!(
                 SourceLocation::parse(&child.url).unwrap(),

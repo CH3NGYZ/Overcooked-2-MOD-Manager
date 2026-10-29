@@ -19,6 +19,20 @@ pub fn default_index_url(region: &str) -> &'static str {
         DEFAULT_INDEX_GITHUB_URL
     }
 }
+
+/// 读取仓库源文档（raw 索引与各级子源）的访问超时。
+///
+/// 固定 30 秒，**不跟随** `network.timeout_seconds`：
+///   · 那个设置是给 Release API / 下载用的，用户为了「下载更快失败」
+///     调到 5 秒时，不该把源文档也一起压到 5 秒 —— 国内访问 Gitee raw
+///     首次握手常常就要好几秒，压到 5 秒会让整棵树随机失败；
+///   · 源文档阶段是串行递归（索引 → 子源），一层的超时过短会让后面
+///     所有子源根本没有机会加载。
+///
+/// 这与仓库说明（README）的 30 秒保持同一量级：两者都是「读一个不大的
+/// 文本文件」，不是大文件下载。
+pub const SOURCE_DOCUMENT_TIMEOUT: u64 = 30;
+
 const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 
 include!(concat!(env!("OUT_DIR"), "/repository_sources.rs"));
@@ -660,10 +674,16 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
     )
 }
 
+/// 读取一个源文档（远程地址或内置资源）。
+///
+/// 远程文档固定使用 `SOURCE_DOCUMENT_TIMEOUT`（30 秒）：索引与各级子源都走
+/// 这里，超时口径一致。不再由调用方传入 —— 这个阶段和 Release API 的
+/// 5 秒、下载的连接超时是三种不同性质的请求，混用一个配置会让
+/// 「调快下载」顺带把源文档读取弄坏。
 pub async fn load_document(
     location: &SourceLocation,
-    timeout_seconds: u64,
 ) -> Result<RepositorySourceDocument, ConfigError> {
+    let timeout_seconds = SOURCE_DOCUMENT_TIMEOUT;
     let SourceLocation::Remote(url) = location else {
         let safe_url = safe_log_address(&location.address());
         log::info!("开始加载内置仓库源：地址={}", safe_url);
@@ -928,15 +948,87 @@ mod tests {
         );
         let location = SourceLocation::parse(&url).unwrap();
         assert_eq!(
-            load_document(&location, 5).await.unwrap().repositories[0].name,
+            load_document(&location).await.unwrap().repositories[0].name,
             "Old"
         );
         assert_eq!(
-            load_document(&location, 5).await.unwrap().repositories[0].name,
+            load_document(&location).await.unwrap().repositories[0].name,
             "New"
         );
-        assert!(load_document(&location, 5).await.is_err());
+        assert!(load_document(&location).await.is_err());
         server.join().unwrap();
+    }
+
+    /*
+     * 源文档超时固定 30 秒，且**不受** `network.timeout_seconds` 影响。
+     *
+     * 用户把网络超时调到 5 秒是为了让下载更快失败，但索引和各级子源
+     * 是串行递归的：一层被压到 5 秒，后面所有子源都没机会加载 ——
+     * 表现为「源刷新随机失败、仓库列表时有时无」。
+     *
+     * 这里用「延迟 1.5 秒才响应」的本地服务验证读得完；如果超时仍走
+     * 用户配置且被调到很小，这条会失败。
+     */
+    #[tokio::test]
+    async fn source_document_timeout_is_independent_of_user_network_config() {
+        assert_eq!(SOURCE_DOCUMENT_TIMEOUT, 30);
+
+        let body = "[[repositories]]\nname_i18n.zh-CN = \"Slow\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{ type = \"glob\", value = \"*.dll\" }]\n";
+        let (url, server) = serve_delayed_response("/slow.toml", body, 1500);
+        let location = SourceLocation::parse(&url).unwrap();
+        let document = load_document(&location)
+            .await
+            .expect("1.5 秒延迟应在 30 秒超时内成功");
+        assert_eq!(document.repositories[0].name, "Slow");
+        server.join().unwrap();
+    }
+
+    /// 接受一次连接、睡眠 `delay_ms` 后再回 200。
+    fn serve_delayed_response(
+        path: &'static str,
+        body: &'static str,
+        delay_ms: u64,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "request did not arrive"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                request.push_str(&line);
+            }
+            assert!(request.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        (format!("http://{address}{path}"), server)
     }
 
     #[test]
@@ -1306,9 +1398,13 @@ url = "mods/child.toml"
     #[tokio::test]
     async fn builtin_index_loads_only_declared_sources_and_relative_repository_documents() {
         let location = SourceLocation::parse(BUILTIN_INDEX).unwrap();
-        let declared_index: RepositorySourceDocument =
-            toml::from_str(location.bundled_text().unwrap()).unwrap();
-        let index = load_document(&location, 5).await.unwrap();
+        /*
+         * 用 `parse_document` 而不是 `toml::from_str`：昵称现在只认
+         * `nickname_i18n`，镜像字段 `nickname` 是由 `normalize_source_nickname`
+         * 从表里派生的 —— 直接反序列化拿到的是未归一化的空镜像。
+         */
+        let declared_index = parse_document(location.bundled_text().unwrap(), &location).unwrap();
+        let index = load_document(&location).await.unwrap();
         assert!(index.repositories.is_empty());
         assert!(!index.repository_sources.is_empty());
         assert_eq!(
@@ -1338,7 +1434,7 @@ url = "mods/child.toml"
             for repository in &mut declared_child.repositories {
                 crate::config::normalize_repository_i18n(repository).unwrap();
             }
-            let child = load_document(&child_location, 5)
+            let child = load_document(&child_location)
                 .await
                 .unwrap_or_else(|error| panic!("{}: {error}", source.url));
             assert!(!child.repositories.is_empty(), "{}", source.url);
@@ -1613,7 +1709,7 @@ region = "mainland-china"
             assert_eq!(count, 2);
         });
         let location = SourceLocation::parse(&format!("http://{address}/start.toml")).unwrap();
-        let result = load_document(&location, 5).await;
+        let result = load_document(&location).await;
         server.join().unwrap();
         assert_eq!(
             result.unwrap().repository_sources[0].url,

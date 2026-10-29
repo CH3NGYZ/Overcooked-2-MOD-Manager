@@ -1192,8 +1192,21 @@ pub fn parse_release_json(
 }
 
 pub fn build_client(timeout_seconds: u64) -> Result<Client, ReleaseError> {
+    /*
+     * 参数**必须**生效。
+     *
+     * 这里曾经把 `timeout_seconds` 只写进日志、实际用硬编码 20 秒，
+     * 于是调用方以为自己在配置超时，改配置却毫无效果 —— 仓库源想放宽到
+     * 30 秒也放不出去。`max(1)` 防的是 0：reqwest 里 0 表示「永不超时」，
+     * 那会在网络挂起时把刷新卡死。
+     *
+     * 注意：Release API 另有无条件覆盖的 `API_REQUEST_TIMEOUT`（5 秒，
+     * 见 `fetch_json` 的 `.timeout(...)`），本函数的超时只对**没有**单独
+     * 设置超时的请求（例如仓库源文档）生效。
+     */
+    let timeout = std::time::Duration::from_secs(timeout_seconds.max(1));
     Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
+        .timeout(timeout)
         .user_agent(APP_USER_AGENT)
         .build()
         .map_err(|e| {

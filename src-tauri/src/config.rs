@@ -3585,4 +3585,68 @@ value = "a.zip"
         let v = toml::from_str::<RepositoryExport>(document).expect("未知字段不应让文档失败");
         assert_eq!(v.name, "x");
     }
+
+    /*
+     * 仓库字段写在 `[[repositories.relations]]` **之后**会变成关系的字段。
+     *
+     * TOML 里表数组切换后，后续键属于新表 —— 作者按「先写基本信息、最后写
+     * 备注」的顺序写，很容易把 `install_target` / `note_i18n` 放到关系块后面。
+     * serde 默认忽略未知字段，于是那些字段凭空消失，最终报的是
+     * 「missing field `install_target`」，作者会以为自己忘了写。
+     *
+     * 现在解析阶段就点名，能直接对得上症状。
+     */
+    #[test]
+    fn repository_field_after_relations_is_reported_as_misplaced() {
+        let misplaced = r#"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+enabled = true
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+
+[[relations]]
+kind = "requires"
+guid = "com.example.dep"
+
+# 写在了关系块之后 —— 实际属于关系条目
+install_target = "BepInEx/plugins"
+"#;
+        let error = toml::from_str::<RepositoryExport>(misplaced)
+            .expect_err("仓库字段出现在关系块之后应当报错");
+        let text = error.to_string();
+        assert!(text.contains("install_target"), "{text}");
+        assert!(text.contains("写在"), "{text}");
+    }
+
+    /// 正确顺序（仓库字段都在关系块之前）照常解析。
+    #[test]
+    fn repository_fields_before_relations_still_parse() {
+        let correct = r#"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+install_target = "BepInEx/plugins"
+enabled = true
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+
+[[relations]]
+kind = "requires"
+guid = "com.example.dep"
+min_version = "1.0"
+"#;
+        let v = toml::from_str::<RepositoryExport>(correct).expect("正确顺序应当成功");
+        assert_eq!(v.relations.len(), 1);
+        assert_eq!(v.install_target, "BepInEx/plugins");
+    }
 }

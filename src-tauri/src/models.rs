@@ -420,11 +420,36 @@ where
         prerelease: Option<bool>,
         #[serde(default)]
         optional: bool,
+        /*
+         * 捕获「把仓库字段写到关系表里」这类错误。
+         *
+         * TOML 里 `[[repositories.relations]]` 之后的任何键都属于**关系条目**，
+         * 不再属于仓库。作者很容易在关系块后面接着写 `install_target`、
+         * `note_i18n` —— serde 默认忽略未知字段，于是这些字段凭空消失，
+         * 最终报出的却是「missing field `install_target`」，作者会以为
+         * 自己根本忘了写。这里显式收集，给出能对得上症状的提示。
+         */
+        #[serde(flatten)]
+        extra: std::collections::BTreeMap<String, toml::Value>,
     }
 
     let raw = Vec::<RelationWire>::deserialize(deserializer)?;
     let mut relations = Vec::with_capacity(raw.len());
     for entry in raw {
+        /*
+         * 关系条目里出现仓库字段 → 说明作者把仓库字段写在关系块之后了。
+         * 这个错误本身的后果是「仓库字段神秘消失」，直接报错点名更好排查。
+         */
+        if let Some(misplaced) = entry
+            .extra
+            .keys()
+            .find(|key| REPOSITORY_FIELD_NAMES.contains(&key.as_str()))
+        {
+            return Err(serde::de::Error::custom(format!(
+                "关系表里出现了仓库字段 `{misplaced}`：`[[repositories.relations]]` 之后的键都属于关系条目，\
+                 仓库字段必须写在这些关系之前。"
+            )));
+        }
         let kind = if entry.kind.trim().is_empty() {
             RelationKind::Requires
         } else {
@@ -449,6 +474,33 @@ where
     }
     Ok(relations)
 }
+
+/// 仓库级字段名：出现在关系条目里几乎一定是位置写错了。
+const REPOSITORY_FIELD_NAMES: &[&str] = &[
+    "name",
+    "name_i18n",
+    "group",
+    "group_i18n",
+    "note",
+    "note_i18n",
+    "provider",
+    "username",
+    "repository",
+    "download_mode",
+    "branch",
+    "file_path",
+    "region",
+    "channel",
+    "asset_rules",
+    "install_target",
+    "plugin_guid",
+    "local_product_name",
+    "local_original_filename",
+    "version_regex",
+    "max_release_count",
+    "download_threads",
+    "enabled",
+];
 
 /// 按 Release 版本区间覆盖默认关系表。
 ///

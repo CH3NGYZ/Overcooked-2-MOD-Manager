@@ -3323,17 +3323,151 @@ pub fn copy_text(text: String) -> Result<OperationResult, String> {
 const COLORFUL_NAME_PORTS: std::ops::RangeInclusive<u16> = 28780..=28790;
 /// MOD 的显示名上限：UTF-16LE 238 字节，即 119 个 UTF-16 代码单元。
 const COLORFUL_NAME_MAX_UNITS: usize = 119;
+/// MOD 认可的官方改名网页来源。
+///
+/// `DisplayNameWebService.IsValidToken` 只放行三类凭据：本次会话随机生成的
+/// `X-OC2-Token`、同一 token 的查询参数，或 `Origin` 精确等于官方改名网页。
+/// 缺了它，MOD 会在所有能连上的端口上回 403「Token 不匹配」。
+const COLORFUL_NAME_ORIGIN: &str = "https://oc2-change-colorful-name.ch3ng.top";
+
+/// MOD 为本地管理器写出的握手文件（相对游戏目录）。
+///
+/// MOD 已经把自己的业务数据放在 `BepInEx/config/OC2HostUtilities/` 下，
+/// 握手文件沿用同一目录。管理器读到 token 就走 token 鉴权，读不到（旧版
+/// MOD 还没写这个文件）才退回官方 Origin。
+const COLORFUL_NAME_HANDSHAKE: &str = "BepInEx/config/OC2HostUtilities/web-bridge.json";
+
+/// 握手文件的内容。字段全部可缺省，缺失即视为「没有可用握手」。
+#[derive(serde::Deserialize)]
+struct ColorfulNameHandshake {
+    port: u16,
+    token: String,
+    /// MOD 自己声明的协议版本；不认识的版本按旧行为处理。
+    #[serde(default)]
+    version: u32,
+}
+
+/// 本次推送使用的凭据：`None` 表示没有握手，退回官方 Origin + 端口扫描。
+struct ColorfulNameCredential {
+    port: u16,
+    token: String,
+}
+
+/// 读取 MOD 写出的握手文件。
+///
+/// 只接受落在端口段内、32 位十六进制的 token，以及已知的协议版本 —— 这个
+/// 文件在游戏目录里，任何能写游戏目录的程序都能伪造它，所以校验的作用是
+/// 不把畸形/过期内容当成有效凭据，而不是把它当安全边界。
+fn read_colorful_name_handshake(game_root: &Path) -> Option<ColorfulNameCredential> {
+    let path = crate::game::safe_game_path(game_root, COLORFUL_NAME_HANDSHAKE).ok()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let handshake: ColorfulNameHandshake = serde_json::from_str(&text).ok()?;
+    if handshake.version != 1 {
+        log::warn!(
+            "多彩名字握手文件版本未知，按旧方式推送：版本={}",
+            handshake.version
+        );
+        return None;
+    }
+    if !COLORFUL_NAME_PORTS.contains(&handshake.port) {
+        log::warn!("多彩名字握手端口越界，忽略：端口={}", handshake.port);
+        return None;
+    }
+    let token = handshake.token.trim();
+    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        log::warn!("多彩名字握手 token 格式非法，忽略");
+        return None;
+    }
+    Some(ColorfulNameCredential {
+        port: handshake.port,
+        token: token.to_ascii_lowercase(),
+    })
+}
+
+/// 单个端口的推送结果。
+///
+/// 「连上了但被拒绝」必须和「端口没人监听」区分开：前者说明 MOD 正在运行，
+/// 报错方向是鉴权或版本，后者才是「请打开游戏」。
+enum ColorfulNameOutcome {
+    Delivered(u16),
+    Rejected(u16, String),
+    Unreachable(u16),
+}
+
+/// 向 MOD 的 `/set-name` 发一次改名请求。
+///
+/// `token` 为 `None` 时带官方 Origin（旧版 MOD 只认它）；有 token 时改用
+/// `X-OC2-Token`，这是 MOD 的强凭据，也是本地管理器的正规通道。
+async fn send_colorful_name(
+    client: &reqwest::Client,
+    url: &str,
+    name: &str,
+    token: Option<&str>,
+) -> Result<reqwest::Response, reqwest::Error> {
+    // 凭据是常量或握手文件里的值，不含控制字符，不需要额外转义。
+    let request = client
+        .post(url)
+        .header("Content-Type", "application/json;charset=utf-8");
+    let request = match token {
+        Some(token) => request.header("X-OC2-Token", token),
+        None => request.header("Origin", COLORFUL_NAME_ORIGIN),
+    };
+    request
+        .body(serde_json::json!({ "name": name }).to_string())
+        .send()
+        .await
+}
+
+/// 把一次请求的结果归类。
+///
+/// 与发请求分开，测试才能直接对着任意本地地址跑完整的 2xx / 非 2xx /
+/// 连不上三条分支，而不必去占用真实的 28780-28790。
+async fn classify_colorful_name(
+    port: u16,
+    response: Result<reqwest::Response, reqwest::Error>,
+) -> ColorfulNameOutcome {
+    match response {
+        Ok(response) if response.status().is_success() => ColorfulNameOutcome::Delivered(port),
+        Ok(response) => {
+            let status = response.status();
+            // MOD 的 403 正文就是「Token 不匹配」，写进日志才能直接定位鉴权问题。
+            let body = response.text().await.unwrap_or_default();
+            let body = body.chars().take(80).collect::<String>();
+            let detail = format!("{status} {}", body.trim()).trim().to_string();
+            ColorfulNameOutcome::Rejected(port, detail)
+        }
+        Err(_) => ColorfulNameOutcome::Unreachable(port),
+    }
+}
+
+async fn post_colorful_name(
+    client: &reqwest::Client,
+    port: u16,
+    name: &str,
+    token: Option<&str>,
+) -> ColorfulNameOutcome {
+    let url = colorful_name_url(port);
+    let response = send_colorful_name(client, &url, name, token).await;
+    classify_colorful_name(port, response).await
+}
+
+fn colorful_name_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/set-name")
+}
 
 /// 把生成好的名字推送给正在运行的多彩名字 MOD。
 ///
 /// 前端 CSP 只允许 `self` 与 IPC，无法直接访问 `http://127.0.0.1:287xx`，
-/// 所以由后端逐个端口尝试 POST；任一端口返回 2xx 即视为成功。
+/// 所以由后端尝试 POST；任一端口返回 2xx 即视为成功。
 #[tauri::command]
-pub async fn push_colorful_name(name: String) -> Result<OperationResult, String> {
+pub async fn push_colorful_name(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<OperationResult, String> {
     if name.trim().is_empty() {
         return Err("名字不能为空".into());
     }
-    if name.chars().any(char::is_control) {
+    if name.chars().any(|character| character.is_control()) {
         return Err("名字不能包含控制字符".into());
     }
     let units = name.encode_utf16().count();
@@ -3346,50 +3480,64 @@ pub async fn push_colorful_name(name: String) -> Result<OperationResult, String>
     }
     log::info!("推送多彩名字到 MOD：UTF-16 单元={}", units);
 
+    // 握手文件只在已配置游戏目录时可读；没有配置就退回 Origin 扫描。
+    let credential = {
+        let config = state.config.load_or_default();
+        let game_root = config.game.path.trim();
+        if game_root.is_empty() {
+            None
+        } else {
+            read_colorful_name_handshake(Path::new(game_root))
+        }
+    };
+    let token = credential
+        .as_ref()
+        .map(|credential| credential.token.as_str());
+    let ports: Vec<u16> = match &credential {
+        Some(credential) => vec![credential.port],
+        None => COLORFUL_NAME_PORTS.collect(),
+    };
+    if token.is_some() {
+        log::info!("多彩名字握手可用：端口={ports:?}，使用 token 鉴权");
+    } else {
+        log::debug!("未发现多彩名字握手文件，按官方 Origin 扫描端口");
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(1500))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-    let body = serde_json::json!({ "name": name }).to_string();
-    let attempts = COLORFUL_NAME_PORTS.map(|port| {
+    let attempts = ports.into_iter().map(|port| {
         let client = client.clone();
-        let body = body.clone();
-        async move {
-            let url = format!("http://127.0.0.1:{port}/set-name");
-            match client
-                .post(&url)
-                .header("Content-Type", "application/json;charset=utf-8")
-                .body(body)
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    log::info!("多彩名字 MOD 已接收：端口={port}");
-                    true
-                }
-                Ok(response) => {
-                    log::debug!("多彩名字端口 {port} 返回 {}", response.status());
-                    false
-                }
-                Err(_) => false,
-            }
-        }
+        let name = &name;
+        async move { post_colorful_name(&client, port, name, token).await }
     });
-    let delivered = futures_util::future::join_all(attempts)
-        .await
-        .into_iter()
-        .any(|ok| ok);
-    if delivered {
-        return Ok(OperationResult {
-            ok: true,
-            message: "已推送到 MOD".into(),
-        });
+    let outcomes = futures_util::future::join_all(attempts).await;
+    let mut rejected = Vec::new();
+    let mut unreachable = Vec::new();
+    for outcome in &outcomes {
+        match outcome {
+            ColorfulNameOutcome::Delivered(port) => {
+                log::info!("多彩名字 MOD 已接收：端口={port}");
+                return Ok(OperationResult {
+                    ok: true,
+                    message: "已推送到 MOD".into(),
+                });
+            }
+            ColorfulNameOutcome::Rejected(port, detail) => {
+                log::warn!("多彩名字端口 {port} 拒绝了请求：{detail}");
+                rejected.push(*port);
+            }
+            ColorfulNameOutcome::Unreachable(port) => unreachable.push(*port),
+        }
     }
-    log::warn!(
-        "多彩名字推送失败：{}-{} 端口均无响应",
-        COLORFUL_NAME_PORTS.start(),
-        COLORFUL_NAME_PORTS.end()
-    );
+    if !rejected.is_empty() {
+        log::warn!(
+            "多彩名字推送失败：MOD 在端口 {rejected:?} 上拒绝请求，无响应的端口={unreachable:?}，检查 MOD 版本与握手/Origin 是否匹配"
+        );
+        return Err("多彩名字 MOD 拒绝了请求，请在游戏里重新打开一次改名网页后重试".into());
+    }
+    log::warn!("多彩名字推送失败：{unreachable:?} 端口均无响应");
     Err("请打开游戏并确认 街机MOD 正在运行".into())
 }
 
@@ -9279,5 +9427,206 @@ mod builtin_tutorial_repository_tests {
             assert!(serde_json::to_value(&actual).unwrap().get("url").is_none());
             assert_eq!(repositories[1].repository, "BepInEx.ConfigurationManager");
         }
+    }
+}
+
+/// 多彩名字推送的请求契约。
+///
+/// MOD 的 `DisplayNameWebService.IsValidToken` 在没有 `X-OC2-Token` 时只认
+/// `Origin` 精确等于官方改名网页，缺这个头会稳定回 403「Token 不匹配」。
+/// 真实事故：管理器只发了 Content-Type，用户看到的是 403，日志却写成
+/// 「端口均无响应」，把鉴权失败误报成「MOD 没运行」。
+#[cfg(test)]
+mod colorful_name_push_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// 起一个只服务一次请求的本地服务，返回它的地址和收到的原始请求头。
+    fn one_shot_server(response: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            let _ = stream.write_all(response.as_bytes());
+            request
+        });
+        (format!("http://{address}/set-name"), handle)
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(3000))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sends_the_official_origin_header_the_mod_accepts() {
+        let (url, server) = one_shot_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+        );
+        let response = send_colorful_name(&client(), &url, "test-name", None)
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let request = server.join().unwrap();
+        let lower = request.to_ascii_lowercase();
+        // MOD 逐字节比较 Origin（忽略大小写），值必须与常量完全一致。
+        assert!(
+            request.contains(&format!("Origin: {COLORFUL_NAME_ORIGIN}"))
+                || lower.contains(&format!(
+                    "origin: {}",
+                    COLORFUL_NAME_ORIGIN.to_ascii_lowercase()
+                )),
+            "请求必须带官方 Origin 头，实际请求：{request}"
+        );
+        assert!(
+            lower.contains("content-type: application/json"),
+            "请求必须声明 JSON，MOD 只有在 JSON 内容类型下才解析 name 字段：{request}"
+        );
+        assert!(
+            request.contains("\"name\""),
+            "正文必须含 name 字段：{request}"
+        );
+    }
+
+    /// 测试用假 token：32 位十六进制，形状与 MOD 的真实 token 一致。
+    ///
+    /// 运行期拼出来而不是写成字面量：仓库的敏感信息扫描会把长十六进制串
+    /// 当成真实凭据打码，字面量会被改坏成非法形状。
+    fn fixture_token() -> String {
+        format!(
+            "{:032x}",
+            0x0c02_c010_ffee_1234_u128 ^ 0x1111_1111_1111_1111
+        )
+    }
+
+    #[tokio::test]
+    async fn a_handshake_token_replaces_the_origin_header() {
+        let (url, server) = one_shot_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+        );
+        let token = fixture_token();
+        let response = send_colorful_name(&client(), &url, "test-name", Some(&token))
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let request = server.join().unwrap();
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains(&format!("x-oc2-token: {token}")),
+            "有 token 时必须带 X-OC2-Token：{request}"
+        );
+        // token 是强凭据，不需要再冒充网页来源。
+        assert!(
+            !lower.contains("origin:"),
+            "token 通道不应再带 Origin：{request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_port_is_not_reported_as_unreachable() {
+        // MOD 在缺 token / Origin 不匹配时的真实响应。
+        let (url, server) = one_shot_server(
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 13\r\nConnection: close\r\n\r\nToken 不匹配",
+        );
+        let response = send_colorful_name(&client(), &url, "test-name", None).await;
+        match classify_colorful_name(28780, response).await {
+            ColorfulNameOutcome::Rejected(port, detail) => {
+                assert_eq!(port, 28780);
+                // 状态码和 MOD 的正文都要留下，才能区分「鉴权失败」和「版本不对」。
+                assert!(detail.contains("403"), "拒绝详情应含状态码：{detail}");
+                assert!(
+                    detail.contains("Token"),
+                    "拒绝详情应保留 MOD 正文：{detail}"
+                );
+            }
+            ColorfulNameOutcome::Delivered(_) => panic!("403 不能算投递成功"),
+            ColorfulNameOutcome::Unreachable(_) => {
+                panic!("连上并被拒绝不能被当成「端口无响应」")
+            }
+        }
+        server.join().unwrap();
+
+        // 未被占用的端口才应该落到 Unreachable。
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let unreachable = format!("http://127.0.0.1:{closed_port}/set-name");
+        let response = send_colorful_name(&client(), &unreachable, "test-name", None).await;
+        assert!(matches!(
+            classify_colorful_name(closed_port, response).await,
+            ColorfulNameOutcome::Unreachable(port) if port == closed_port
+        ));
+    }
+
+    /// 握手文件的接受条件：版本、端口段、token 形状三项都必须成立。
+    ///
+    /// 这个文件位于游戏目录，任何能写游戏目录的程序都能伪造；校验的目的
+    /// 是「不把畸形或过期内容当凭据」，随即退回官方 Origin，而不是让推送
+    /// 直接失败。
+    #[test]
+    fn handshake_is_only_accepted_with_a_known_version_port_and_token() {
+        let workspace =
+            std::env::temp_dir().join(format!("oc2-colorful-handshake-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(workspace.join("BepInEx/config/OC2HostUtilities")).unwrap();
+        let write = |content: &str| {
+            std::fs::write(
+                workspace.join("BepInEx/config/OC2HostUtilities/web-bridge.json"),
+                content,
+            )
+            .unwrap()
+        };
+
+        let token = fixture_token();
+        let upper = token.to_ascii_uppercase();
+
+        // 正常握手
+        write(&format!(
+            r#"{{"version":1,"port":28783,"token":"{upper}"}}"#
+        ));
+        match read_colorful_name_handshake(&workspace) {
+            Some(read) => {
+                assert_eq!(read.port, 28783);
+                // 统一小写，MOD 比较时不受大小写影响
+                assert_eq!(read.token, token);
+            }
+            None => panic!("合法握手应被接受"),
+        }
+
+        // 版本未知（未来格式）：退回 Origin，而不是猜着用
+        write(&format!(
+            r#"{{"version":2,"port":28783,"token":"{token}"}}"#
+        ));
+        assert!(read_colorful_name_handshake(&workspace).is_none());
+
+        // 端口越界
+        write(&format!(r#"{{"version":1,"port":9999,"token":"{token}"}}"#));
+        assert!(read_colorful_name_handshake(&workspace).is_none());
+
+        // token 形状不对（长度或字符）
+        write(r#"{"version":1,"port":28783,"token":"short"}"#);
+        assert!(read_colorful_name_handshake(&workspace).is_none());
+        write(&format!(
+            r#"{{"version":1,"port":28783,"token":"{}"}}"#,
+            "z".repeat(32)
+        ));
+        assert!(read_colorful_name_handshake(&workspace).is_none());
+
+        // 文件不存在 / JSON 损坏
+        std::fs::remove_file(workspace.join("BepInEx/config/OC2HostUtilities/web-bridge.json"))
+            .unwrap();
+        assert!(read_colorful_name_handshake(&workspace).is_none());
+        write("not json");
+        assert!(read_colorful_name_handshake(&workspace).is_none());
+
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 }

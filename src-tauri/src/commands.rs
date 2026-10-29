@@ -2446,7 +2446,13 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
      * 不在清单里，回收站不会带走它们 —— 只有备份能保证还能找回。
      * 两者职责不同，都要保留。
      */
-    let backup = backup_bepinex_dir(&game_root, &state.config.backups_dir())?;
+    let backup = backup_framework(
+        &game_root,
+        &state.config.backups_dir(),
+        &BEPINEX_BACKUP,
+        &state.config.manifests_dir(),
+        BEPINEX_MANIFEST_ID,
+    )?;
     log::info!("BepInEx 卸载前备份完成：路径={}", backup.display());
 
     let manifests_dir = state.config.manifests_dir();
@@ -2605,7 +2611,13 @@ pub fn backup_bepinex(state: State<'_, AppState>) -> Result<OperationResult, Str
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    let backup = backup_bepinex_dir(&game_root, &state.config.backups_dir())?;
+    let backup = backup_framework(
+        &game_root,
+        &state.config.backups_dir(),
+        &BEPINEX_BACKUP,
+        &state.config.manifests_dir(),
+        BEPINEX_MANIFEST_ID,
+    )?;
     log::info!("BepInEx 备份完成：路径={}", backup.display());
     Ok(OperationResult {
         ok: true,
@@ -2626,7 +2638,18 @@ pub fn restore_bepinex(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    restore_backup_dir(Path::new(&backup_path), &game_root)?;
+    let backup = validate_framework_backup_in(
+        Path::new(&backup_path),
+        &state.config.backups_dir(),
+        &BEPINEX_BACKUP,
+    )?;
+    restore_framework_backup(
+        &game_root,
+        &backup,
+        &BEPINEX_BACKUP,
+        &state.config.manifests_dir(),
+        BEPINEX_MANIFEST_ID,
+    )?;
     log::info!("BepInEx 备份恢复完成");
     Ok(OperationResult {
         ok: true,
@@ -5112,24 +5135,6 @@ fn list_diy_level_backups(backup_root: &Path) -> Vec<String> {
 /// 备份目录名前缀：`DIYLevel.backup-<时间戳>-<uuid>`。
 const DIYLEVEL_BACKUP_PREFIX: &str = "DIYLevel.backup-";
 
-/// 创建一次 DIYLevel 目录快照，返回备份路径。
-fn backup_diy_level_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, String> {
-    let source = game_root.join(DIYLEVEL_DIR);
-    if !source.is_dir() {
-        return Err(format!("未找到 DIYLevel 目录：{DIYLEVEL_DIR}"));
-    }
-    ensure_copy_paths_disjoint(&source, backup_root)?;
-    fs::create_dir_all(backup_root).map_err(|e| e.to_string())?;
-    let target = backup_root.join(format!(
-        "{}{}-{}",
-        DIYLEVEL_BACKUP_PREFIX,
-        Utc::now().format("%Y%m%d%H%M%S"),
-        Uuid::new_v4().simple()
-    ));
-    copy_dir(&source, &target)?;
-    Ok(target)
-}
-
 /// 地图集数量 = `levels/` 下的文件夹个数。
 ///
 /// 只数目录：`levels/` 里直接放的散文件（说明文档、缩略图、配置）不属于
@@ -5214,17 +5219,21 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
         return Err("尚未安装 DIYLevel 框架".into());
     };
     let dll_file = target.dll_file.clone();
+    let package_id = target.package_id.clone().unwrap_or_else(|| "manual".into());
 
-    // 先备份整个 OC2DIYLevel 目录，再动文件
-    let backup = backup_diy_level_dir(&game_root, &state.config.backups_dir())?;
+    // 先备份整个 OC2DIYLevel 目录（含清单快照），再动文件
+    let backup = backup_framework(
+        &game_root,
+        &state.config.backups_dir(),
+        &DIYLEVEL_BACKUP,
+        &state.config.manifests_dir(),
+        &package_id,
+    )?;
     log::info!("DIYLevel 卸载前备份完成：路径={}", backup.display());
 
     let manifests_dir = state.config.manifests_dir();
     let recycle_root = state.config.mod_recycle_bin_dir();
-    let manifest_id = installed
-        .iter()
-        .find(|item| item.dll_file.eq_ignore_ascii_case(&dll_file))
-        .and_then(|item| item.package_id.clone());
+    let manifest_id = Some(package_id.clone());
 
     // 有安装清单就整包回收；没有（手工装的）就只回收这个 DLL
     let has_manifest = manifest_id
@@ -5307,7 +5316,7 @@ pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationR
     })
 }
 
-/// 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）。
+/// 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）+ 它的安装清单快照。
 #[tauri::command]
 pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::info!("开始备份 DIYLevel");
@@ -5318,7 +5327,25 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
-    let backup = backup_diy_level_dir(&game_root, &state.config.backups_dir())?;
+    // 清单 ID 是动态的（仓库 id 或 manual-<uuid>），从当前扫描结果取
+    let installed =
+        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
+    let manifest_id = installed
+        .iter()
+        .find(|item| {
+            item.guid
+                .as_deref()
+                .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
+        })
+        .and_then(|item| item.package_id.clone())
+        .ok_or("尚未安装 DIYLevel 框架")?;
+    let backup = backup_framework(
+        &game_root,
+        &state.config.backups_dir(),
+        &DIYLEVEL_BACKUP,
+        &state.config.manifests_dir(),
+        &manifest_id,
+    )?;
     log::info!("DIYLevel 备份完成：路径={}", backup.display());
     Ok(OperationResult {
         ok: true,
@@ -5348,21 +5375,41 @@ pub fn restore_diy_level(
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
     game::ensure_game_stopped(&game_root)?;
 
-    let backup = validate_diy_level_backup(&state, &backup_path)?;
-    let destination = game_root.join(DIYLEVEL_DIR);
-    ensure_copy_paths_disjoint(&backup, &destination)?;
-    if destination.exists() {
-        let previous = game_root.join("BepInEx/plugins").join(format!(
-            "DIYLevel.before-restore-{}",
-            Utc::now().timestamp()
-        ));
-        archive::clear_readonly(&destination)?;
-        copy_dir(&destination, &previous)?;
-        fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
-        log::info!("恢复前的 DIYLevel 目录已另存：路径={}", previous.display());
-    }
-    copy_dir(&backup, &destination)?;
-    log::info!("DIYLevel 备份恢复完成：路径={}", destination.display());
+    let backup = validate_framework_backup_in(
+        Path::new(&backup_path),
+        &state.config.backups_dir(),
+        &DIYLEVEL_BACKUP,
+    )?;
+    /*
+     * 清单 ID：优先用备份里快照自带的（那是安装时的真实 ID），
+     * 没有快照的旧备份退回扫描当前安装结果，最后兜底 "manual"。
+     */
+    let manifest_id = read_backup_manifest(&backup)
+        .map(|manifest| manifest.repository_id)
+        .or_else(|| {
+            let installed = mods::scan_mods_with_manifests(
+                &game_root,
+                &config,
+                Some(&state.config.manifests_dir()),
+            );
+            installed
+                .iter()
+                .find(|item| {
+                    item.guid
+                        .as_deref()
+                        .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
+                })
+                .and_then(|item| item.package_id.clone())
+        })
+        .unwrap_or_else(|| "manual".into());
+    restore_framework_backup(
+        &game_root,
+        &backup,
+        &DIYLEVEL_BACKUP,
+        &state.config.manifests_dir(),
+        &manifest_id,
+    )?;
+    log::info!("DIYLevel 备份恢复完成：清单ID={manifest_id}");
     Ok(OperationResult {
         ok: true,
         message: "DIYLevel 备份已恢复".into(),
@@ -5380,7 +5427,11 @@ pub fn delete_diy_level_backup(
         .operation
         .lock()
         .map_err(|_| "操作锁异常".to_string())?;
-    let target = validate_diy_level_backup(&state, &backup_path)?;
+    let target = validate_framework_backup_in(
+        Path::new(&backup_path),
+        &state.config.backups_dir(),
+        &DIYLEVEL_BACKUP,
+    )?;
     archive::clear_readonly(&target)?;
     fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
     log::info!("DIYLevel 备份删除完成");
@@ -5391,35 +5442,9 @@ pub fn delete_diy_level_backup(
 }
 
 /// 校验一个路径确实是**本管理器**创建的 DIYLevel 备份目录。
-///
-/// 恢复与删除都会对目标做递归读写，所以必须同时确认三件事：名字带固定前缀、
-/// 是目录、且父目录就是备份根。只信前缀不够 —— 用户可以传任意路径进来。
-fn validate_diy_level_backup(state: &AppState, backup_path: &str) -> Result<PathBuf, String> {
-    let backup_root = state.config.backups_dir();
-    fs::create_dir_all(&backup_root).map_err(|e| e.to_string())?;
-    let root = fs::canonicalize(backup_root).map_err(|e| e.to_string())?;
-    validate_diy_level_backup_in(Path::new(backup_path), &root)
-}
-
-/// 校验逻辑本体（与 `AppState` 解耦，便于单测）。
-///
-/// `backup_root` 也要先规范化再比较：`fs::canonicalize` 在 Windows 上会返回
-/// `\\?\C:\...` 形式，直接与未规范化的根路径比较永远不相等，所有合法备份
-/// 都会被误判成「不在允许的备份位置」。
+#[cfg(test)]
 fn validate_diy_level_backup_in(backup_path: &Path, backup_root: &Path) -> Result<PathBuf, String> {
-    let target = fs::canonicalize(backup_path).map_err(|_| "备份目录不存在".to_string())?;
-    let root = fs::canonicalize(backup_root).map_err(|_| "备份目录不可用".to_string())?;
-    let name = target
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-    if !name.starts_with(DIYLEVEL_BACKUP_PREFIX) || !target.is_dir() {
-        return Err("只能操作 DIYLevel 时间戳备份".into());
-    }
-    if target.parent() != Some(root.as_path()) {
-        return Err("备份目录不在允许的备份位置".into());
-    }
-    Ok(target)
+    validate_framework_backup_in(backup_path, backup_root, &DIYLEVEL_BACKUP)
 }
 
 #[tauri::command]
@@ -6322,6 +6347,273 @@ fn open_steam(settings: &GameConfig, info: &GameInfo) -> Result<OperationResult,
         ok: true,
         message: "已请求 Steam 启动厨房，请在 Steam 中确认启动".into(),
     })
+}
+
+/// 备份里保存安装清单用的文件名（放在备份目录根部）。
+///
+/// 备份目录是框架目录的**完整可还原快照**，不只是文件副本：恢复后必须能
+/// 再次卸载，而卸载依赖安装清单。所以清单要跟文件一起进备份，恢复时一并
+/// 写回 `manifests/<id>.toml`。
+///
+/// 早期版本没备份清单，导致「卸载 → 恢复 → 再卸载」时报
+/// 「没有安装清单，拒绝删除未知文件」，用户只能手动删目录。
+const FRAMEWORK_BACKUP_MANIFEST: &str = "framework-manifest.toml";
+
+/// 一次框架备份的内容描述。
+///
+/// 两个框架（BepInEx / DIYLevel）的备份范围不同，但「备份什么、恢复什么、
+/// 清单放哪」完全同构，所以统一成这个结构，避免两套实现各自漂移：
+///   · `directories` —— 需要整棵树拷贝的目录（游戏相对路径）
+///   · `files`       —— 散落在游戏根目录的框架文件（游戏相对路径）
+struct FrameworkBackupSpec {
+    /// 备份目录名前缀，也是恢复/删除时校验用的标识。
+    prefix: &'static str,
+    /// 需要整目录拷贝的游戏相对路径。
+    directories: &'static [&'static str],
+    /// 需要单文件拷贝的游戏相对路径（与 `directories` 互不重叠）。
+    files: &'static [&'static str],
+}
+
+/// BepInEx 框架：`BepInEx/` 整棵树 + 游戏根目录的加载器文件。
+///
+/// 根目录那三个文件是关键：`winhttp.dll` 是实际的加载开关，`doorstop_config.ini`
+/// 与 `run_bepinex.sh` 是 doorstop 的配置。早期备份只拷 `BepInEx/`，恢复后
+/// 框架不完整 —— 判定「已安装」看的是 `BepInEx/core`，但 `winhttp.dll` 缺失
+/// 会让框架显示为未启用，用户以为恢复失败。
+const BEPINEX_BACKUP: FrameworkBackupSpec = FrameworkBackupSpec {
+    prefix: "BepInEx.backup-",
+    directories: &["BepInEx"],
+    files: &[
+        "winhttp.dll",
+        "winhttp.dll.disabled",
+        "doorstop_config.ini",
+        "run_bepinex.sh",
+        "libdoorstop.so",
+        "libdoorstop.dylib",
+        "doorstop_libs/libdoorstop_x64.so",
+        "doorstop_libs/libdoorstop_x64.dylib",
+    ],
+};
+
+/// DIYLevel 框架：只有 `BepInEx/plugins/OC2DIYLevel` 这一个目录。
+///
+/// 它的清单 ID 是动态的（仓库 id 或 `manual-<uuid>`），所以不在 spec 里写死，
+/// 由调用方按实际扫描到的 `package_id` 传入。
+const DIYLEVEL_BACKUP: FrameworkBackupSpec = FrameworkBackupSpec {
+    prefix: DIYLEVEL_BACKUP_PREFIX,
+    directories: &[DIYLEVEL_DIR],
+    files: &[],
+};
+
+/// 备份一个框架：目录树 + 根文件 + 清单快照。
+///
+/// 返回备份目录路径。清单快照写在备份根部的 `framework-manifest.toml`，
+/// 恢复时由 `restore_framework_backup` 写回管理器清单目录。
+fn backup_framework(
+    game_root: &Path,
+    backup_root: &Path,
+    spec: &FrameworkBackupSpec,
+    manifests_dir: &Path,
+    manifest_id: &str,
+) -> Result<PathBuf, String> {
+    for directory in spec.directories {
+        ensure_copy_paths_disjoint(&game_root.join(directory), backup_root)?;
+    }
+    fs::create_dir_all(backup_root).map_err(|e| e.to_string())?;
+    let target = backup_root.join(format!(
+        "{}{}-{}",
+        spec.prefix,
+        Utc::now().format("%Y%m%d%H%M%S"),
+        Uuid::new_v4().simple()
+    ));
+    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+
+    // 目录树：按原相对路径放回备份里，恢复时原样拷回游戏目录
+    for directory in spec.directories {
+        copy_dir(&game_root.join(directory), &target.join(directory))?;
+    }
+    // 根目录的散文件：存在才拷，缺失不算错误（比如 macOS 没有 winhttp.dll）
+    for relative in spec.files {
+        let source = game_root.join(relative);
+        if !source.is_file() {
+            continue;
+        }
+        let destination = target.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+    }
+
+    /*
+     * 清单快照。
+     *
+     * 有现成清单就原样存一份（保留原始安装信息，恢复后卸载行为与安装时
+     * 完全一致）。没有清单（手工装的框架）就按当前实际文件现造一份 ——
+     * 这样恢复后依然能正常卸载，不会落回「拒绝删除未知文件」。
+     */
+    let manifest = archive::read_manifest(manifests_dir, manifest_id).unwrap_or_else(|| {
+        let files = framework_files_on_disk(game_root, spec);
+        archive::new_manifest(
+            manifest_id,
+            crate::bepinex::PACKAGE_VERSION,
+            archive::single_language("DIYLevel"),
+            Default::default(),
+            files,
+        )
+    });
+    write_backup_manifest(&target, &manifest)?;
+    log::info!(
+        "框架备份完成：前缀={}，路径={}，清单ID={}，清单文件数={}",
+        spec.prefix,
+        target.display(),
+        manifest_id,
+        manifest.files.len()
+    );
+    Ok(target)
+}
+
+/// 把清单写进备份目录根部（与 `archive::write_manifest` 同样的原子写法）。
+fn write_backup_manifest(backup: &Path, manifest: &archive::InstallManifest) -> Result<(), String> {
+    let text = toml::to_string_pretty(manifest).map_err(|e| e.to_string())?;
+    let path = backup.join(FRAMEWORK_BACKUP_MANIFEST);
+    let temp = backup.join(format!("{FRAMEWORK_BACKUP_MANIFEST}.tmp"));
+    fs::write(&temp, text).map_err(|e| e.to_string())?;
+    fs::rename(&temp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 扫描一个框架在磁盘上实际存在的全部文件（游戏相对路径）。
+///
+/// 只在「没有现成安装清单」时用来现造清单：手工安装的框架没有清单，
+/// 备份/恢复后必须能再次卸载，否则会落回「拒绝删除未知文件」。
+fn framework_files_on_disk(game_root: &Path, spec: &FrameworkBackupSpec) -> Vec<String> {
+    let mut files = Vec::new();
+    for directory in spec.directories {
+        for entry in walkdir::WalkDir::new(game_root.join(directory))
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+        {
+            if let Ok(relative) = entry.path().strip_prefix(game_root) {
+                files.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    for relative in spec.files {
+        if game_root.join(relative).is_file() {
+            files.push((*relative).to_string());
+        }
+    }
+    files
+}
+
+/// 读取备份里的清单快照；旧备份没有这个文件时返回 `None`。
+fn read_backup_manifest(backup: &Path) -> Option<archive::InstallManifest> {
+    let text = fs::read_to_string(backup.join(FRAMEWORK_BACKUP_MANIFEST)).ok()?;
+    toml::from_str(&text).ok()
+}
+
+/// 恢复一个框架备份：先删现有内容，再整体还原，最后写回清单。
+///
+/// 与用户要求一致：**先删再恢复**，得到的是备份那一刻的完整快照。
+/// 删除前把现有内容另存 `*.before-restore-<ts>`，误操作还有后悔机会。
+fn restore_framework_backup(
+    game_root: &Path,
+    backup: &Path,
+    spec: &FrameworkBackupSpec,
+    manifests_dir: &Path,
+    manifest_id: &str,
+) -> Result<(), String> {
+    if !backup.is_dir() {
+        return Err("备份目录不存在".into());
+    }
+    // 恢复前的另存目录：放在备份根的同级，避开被还原的目录树
+    let stamp = Utc::now().timestamp();
+    for directory in spec.directories {
+        let destination = game_root.join(directory);
+        ensure_copy_paths_disjoint(&backup.join(directory), &destination)?;
+        if !destination.exists() {
+            continue;
+        }
+        let previous = game_root.join(format!("{directory}.before-restore-{stamp}"));
+        archive::clear_readonly(&destination)?;
+        copy_dir(&destination, &previous)?;
+        fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
+        log::info!("恢复前已另存：路径={}", previous.display());
+    }
+    for relative in spec.files {
+        let destination = game_root.join(relative);
+        if destination.exists() {
+            let _ = fs::remove_file(&destination);
+        }
+    }
+
+    // 整体还原
+    for directory in spec.directories {
+        let source = backup.join(directory);
+        if source.is_dir() {
+            copy_dir(&source, &game_root.join(directory))?;
+        }
+    }
+    for relative in spec.files {
+        let source = backup.join(relative);
+        if !source.is_file() {
+            continue;
+        }
+        let destination = game_root.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+    }
+
+    /*
+     * 写回安装清单。
+     *
+     * 这是「恢复后还能正常卸载」的关键：卸载依赖清单来判断哪些文件属于
+     * 框架。旧备份没有清单快照时，退回按当前实际文件现造一份 —— 至少保证
+     * 不会再报「没有安装清单，拒绝删除未知文件」。
+     */
+    let manifest = read_backup_manifest(backup).unwrap_or_else(|| {
+        let files = framework_files_on_disk(game_root, spec);
+        archive::new_manifest(
+            manifest_id,
+            crate::bepinex::PACKAGE_VERSION,
+            archive::single_language("DIYLevel"),
+            Default::default(),
+            files,
+        )
+    });
+    archive::write_manifest(manifests_dir, &manifest)?;
+    log::info!(
+        "框架备份恢复完成：前缀={}，路径={}，清单文件数={}",
+        spec.prefix,
+        game_root.display(),
+        manifest.files.len()
+    );
+    Ok(())
+}
+
+/// 校验一个路径确实是本管理器创建的某个框架备份目录。
+fn validate_framework_backup_in(
+    backup_path: &Path,
+    backup_root: &Path,
+    spec: &FrameworkBackupSpec,
+) -> Result<PathBuf, String> {
+    let target = fs::canonicalize(backup_path).map_err(|_| "备份目录不存在".to_string())?;
+    let root = fs::canonicalize(backup_root).map_err(|_| "备份目录不可用".to_string())?;
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !name.starts_with(spec.prefix) || !target.is_dir() {
+        return Err("只能操作该框架的时间戳备份".into());
+    }
+    if target.parent() != Some(root.as_path()) {
+        return Err("备份目录不在允许的备份位置".into());
+    }
+    Ok(target)
 }
 
 fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, String> {
@@ -7232,8 +7524,8 @@ mod framework_install_tests {
             .expect("函数体应可截断");
 
         let backup_at = body
-            .find("backup_bepinex_dir(")
-            .expect("卸载流程必须调用 backup_bepinex_dir");
+            .find("backup_framework(")
+            .expect("卸载流程必须调用 backup_framework");
         let recycle_at = body
             .find("recycle_package(")
             .expect("卸载流程必须调用 recycle_package");
@@ -10103,7 +10395,10 @@ mod diy_level_backup_tests {
         std::fs::create_dir_all(game.join("BepInEx/core")).unwrap();
         std::fs::write(game.join("BepInEx/core/BepInEx.dll"), b"core").unwrap();
 
-        let backup = backup_diy_level_dir(&game, &backups).unwrap();
+        let manifests =
+            std::env::temp_dir().join(format!("oc2-diy-manifests-{}", uuid::Uuid::new_v4()));
+        let backup =
+            backup_framework(&game, &backups, &DIYLEVEL_BACKUP, &manifests, "diy-repo").unwrap();
         assert!(backup.starts_with(&backups), "备份必须落在备份根下");
         assert!(
             backup
@@ -10113,15 +10408,37 @@ mod diy_level_backup_tests {
                 .starts_with(DIYLEVEL_BACKUP_PREFIX),
             "备份目录名必须带前缀，恢复/删除才认得出"
         );
-        // 备份内容 = 框架目录本身
-        assert_eq!(std::fs::read(backup.join("DIYLevel.dll")).unwrap(), b"dll");
+        /*
+         * 备份内保留**游戏相对路径**：`BepInEx/plugins/OC2DIYLevel/...`。
+         * 恢复时按同一相对路径拷回，不需要为每个框架单独记映射。
+         */
+        const IN_BACKUP: &str = "BepInEx/plugins/OC2DIYLevel";
         assert_eq!(
-            std::fs::read(backup.join("levels/PackA/map.txt")).unwrap(),
+            std::fs::read(backup.join(IN_BACKUP).join("DIYLevel.dll")).unwrap(),
+            b"dll"
+        );
+        assert_eq!(
+            std::fs::read(backup.join(IN_BACKUP).join("levels/PackA/map.txt")).unwrap(),
             b"map"
         );
         // 兄弟插件与加载器核心都不在备份里
-        assert!(!backup.join("OtherMod").exists());
-        assert!(!backup.join("core").exists());
+        assert!(!backup.join("BepInEx/plugins/OtherMod").exists());
+        assert!(!backup.join("BepInEx/core").exists());
+
+        /*
+         * 清单快照必须一起进备份：这是「恢复后还能正常卸载」的前提。
+         * 没有现成清单时按磁盘实际文件现造一份。
+         */
+        let manifest = read_backup_manifest(&backup).expect("备份必须带清单快照");
+        assert_eq!(manifest.repository_id, "diy-repo");
+        assert!(
+            manifest
+                .files
+                .iter()
+                .any(|file| file.ends_with("OC2DIYLevel/DIYLevel.dll")),
+            "清单应包含框架主文件：{:?}",
+            manifest.files
+        );
 
         // 列表能列出它
         let listed = list_diy_level_backups(&backups);
@@ -10130,15 +10447,18 @@ mod diy_level_backup_tests {
 
         std::fs::remove_dir_all(&game).unwrap();
         std::fs::remove_dir_all(&backups).unwrap();
+        // manifests 目录可能从未被创建（没有现成清单时不需要它）
+        let _ = std::fs::remove_dir_all(&manifests);
     }
 
     #[test]
     fn backup_requires_the_diy_level_folder_to_exist() {
         let game = std::env::temp_dir().join(format!("oc2-diy-missing-{}", uuid::Uuid::new_v4()));
         let backups = std::env::temp_dir().join(format!("oc2-diy-none-{}", uuid::Uuid::new_v4()));
+        let manifests = std::env::temp_dir().join(format!("oc2-diy-m-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(game.join("BepInEx/plugins")).unwrap();
         assert!(
-            backup_diy_level_dir(&game, &backups).is_err(),
+            backup_framework(&game, &backups, &DIYLEVEL_BACKUP, &manifests, "diy").is_err(),
             "没有 OC2DIYLevel 目录时必须报错，而不是生成空备份"
         );
         std::fs::remove_dir_all(&game).unwrap();
@@ -10169,5 +10489,191 @@ mod diy_level_backup_tests {
 
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&outside).unwrap();
+    }
+}
+
+/// 「备份 → 卸载 → 恢复 → 再卸载」的完整往返。
+///
+/// 真实事故：旧备份只拷目录、不带安装清单，用户恢复后再卸载会报
+/// 「没有安装清单，拒绝删除未知文件」，只能手动删目录。这里把整条链路
+/// 钉住：恢复后清单必须回到管理器清单目录，且内容覆盖框架主文件。
+#[cfg(test)]
+mod framework_backup_roundtrip_tests {
+    use super::*;
+
+    /// 造一个最小 BepInEx 框架目录（含核心程序集与根目录加载器文件）。
+    fn write_bepinex(game: &Path) {
+        std::fs::create_dir_all(game.join("BepInEx/core")).unwrap();
+        std::fs::write(game.join("BepInEx/core/BepInEx.dll"), b"core").unwrap();
+        std::fs::write(game.join("winhttp.dll"), b"loader").unwrap();
+        std::fs::write(game.join("doorstop_config.ini"), b"cfg").unwrap();
+        // MOD 目录：属于用户数据，必须一起备份但不能被当成框架文件
+        std::fs::create_dir_all(game.join("BepInEx/plugins/SomeMod")).unwrap();
+        std::fs::write(game.join("BepInEx/plugins/SomeMod/mod.dll"), b"mod").unwrap();
+    }
+
+    #[test]
+    fn bepinex_backup_restores_root_loader_files_and_manifest() {
+        let root = std::env::temp_dir().join(format!("oc2-fw-rt-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let backups = root.join("backups");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+        write_bepinex(&game);
+
+        let backup = backup_framework(
+            &game,
+            &backups,
+            &BEPINEX_BACKUP,
+            &manifests,
+            BEPINEX_MANIFEST_ID,
+        )
+        .unwrap();
+
+        /*
+         * 备份必须包含游戏根目录的加载器文件。
+         * 早期只拷 `BepInEx/`，恢复后 winhttp.dll 缺失 —— 用户在界面看到的
+         * 就是「恢复完了但框架没装好」。
+         */
+        assert!(backup.join("winhttp.dll").is_file(), "备份缺 winhttp.dll");
+        assert!(
+            backup.join("doorstop_config.ini").is_file(),
+            "备份缺 doorstop_config.ini"
+        );
+        assert!(
+            backup.join("BepInEx/core/BepInEx.dll").is_file(),
+            "备份缺核心程序集"
+        );
+
+        // 模拟卸载：清掉游戏目录里的框架（含根文件）
+        std::fs::remove_dir_all(game.join("BepInEx")).unwrap();
+        std::fs::remove_file(game.join("winhttp.dll")).unwrap();
+        std::fs::remove_file(game.join("doorstop_config.ini")).unwrap();
+        assert!(!crate::bepinex::installed(&game));
+
+        // 恢复
+        restore_framework_backup(
+            &game,
+            &backup,
+            &BEPINEX_BACKUP,
+            &manifests,
+            BEPINEX_MANIFEST_ID,
+        )
+        .unwrap();
+
+        // 核心程序集与根文件都必须回来
+        assert!(
+            crate::bepinex::installed(&game),
+            "恢复后必须重新判定为已安装"
+        );
+        assert!(game.join("winhttp.dll").is_file(), "恢复后缺 winhttp.dll");
+        assert!(
+            game.join("doorstop_config.ini").is_file(),
+            "恢复后缺 doorstop_config.ini"
+        );
+        assert!(
+            game.join("BepInEx/plugins/SomeMod/mod.dll").is_file(),
+            "恢复必须带回 plugins 里的 MOD"
+        );
+
+        // 清单必须写回：这是「恢复后还能再卸载」的关键
+        let manifest = archive::read_manifest(&manifests, BEPINEX_MANIFEST_ID)
+            .expect("恢复后必须存在安装清单");
+        assert!(
+            manifest.files.iter().any(|file| file == "winhttp.dll"),
+            "清单应包含根目录加载器文件：{:?}",
+            manifest.files
+        );
+        assert!(
+            manifest
+                .files
+                .iter()
+                .any(|file| file.ends_with("BepInEx/core/BepInEx.dll")),
+            "清单应包含核心程序集：{:?}",
+            manifest.files
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn restoring_without_a_backup_manifest_still_writes_one() {
+        /*
+         * 旧版本产生的备份没有清单快照。恢复时必须按磁盘实际文件现造一份，
+         * 否则用户升级管理器后恢复旧备份，再卸载仍然会报
+         * 「没有安装清单，拒绝删除未知文件」。
+         */
+        let root = std::env::temp_dir().join(format!("oc2-fw-legacy-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let backups = root.join("backups");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+        write_bepinex(&game);
+
+        let backup = backup_framework(
+            &game,
+            &backups,
+            &BEPINEX_BACKUP,
+            &manifests,
+            BEPINEX_MANIFEST_ID,
+        )
+        .unwrap();
+        // 模拟旧备份：删掉清单快照
+        std::fs::remove_file(backup.join(FRAMEWORK_BACKUP_MANIFEST)).unwrap();
+        assert!(read_backup_manifest(&backup).is_none());
+
+        // 清空管理器清单目录，模拟「从未装过、也没有清单」
+        std::fs::remove_dir_all(&manifests).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+
+        restore_framework_backup(
+            &game,
+            &backup,
+            &BEPINEX_BACKUP,
+            &manifests,
+            BEPINEX_MANIFEST_ID,
+        )
+        .unwrap();
+        let manifest = archive::read_manifest(&manifests, BEPINEX_MANIFEST_ID)
+            .expect("旧备份恢复后也必须现造出清单");
+        assert!(!manifest.files.is_empty());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn diy_level_backup_never_touches_the_bepinex_loader() {
+        /*
+         * DIYLevel 的备份范围必须严格是 `BepInEx/plugins/OC2DIYLevel`：
+         * `BepInEx/core` 归 BepInEx 自己的备份管，两边都备份会互相覆盖。
+         */
+        let root = std::env::temp_dir().join(format!("oc2-fw-diy-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let backups = root.join("backups");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+        write_bepinex(&game);
+        std::fs::create_dir_all(game.join("BepInEx/plugins/OC2DIYLevel/levels/PackA")).unwrap();
+        std::fs::write(
+            game.join("BepInEx/plugins/OC2DIYLevel/DIYLevel.dll"),
+            b"diy",
+        )
+        .unwrap();
+
+        let backup =
+            backup_framework(&game, &backups, &DIYLEVEL_BACKUP, &manifests, "diy-id").unwrap();
+        // 只有 DIYLevel 目录，没有 core、没有 winhttp.dll
+        assert!(
+            backup
+                .join("BepInEx/plugins/OC2DIYLevel/DIYLevel.dll")
+                .is_file()
+        );
+        assert!(!backup.join("BepInEx/core").exists());
+        assert!(!backup.join("winhttp.dll").exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

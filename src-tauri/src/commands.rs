@@ -2732,6 +2732,9 @@ pub async fn install_repository(
     asset_proxy_mode: Option<ProxyMode>,
     asset_proxy_id: Option<String>,
     preview_only: Option<bool>,
+    // 界面语言（`zh-CN` / `en` / …）。用来在下载进度标签与安装预览标题里
+    // 显示仓库的本地化名称；缺省时回退到仓库中文名。
+    locale: Option<String>,
 ) -> Result<RepositoryInstallOutcome, String> {
     // The UI can cancel while we prepare metadata. Reset once at command
     // entry, never after that wait or while switching download candidates.
@@ -2761,6 +2764,13 @@ pub async fn install_repository(
     {
         return Err("该仓库不在当前地区的 MOD 安装页展示，无法从这里安装".into());
     }
+    /*
+     * 用于下载进度标签与安装预览标题的显示名。
+     *
+     * 必须在下载开始前算好：进度事件在下载过程中持续发出，label 是其中
+     * 一个字段；等下载完再改就晚了。跟随界面语言，而不是固定用中文原名。
+     */
+    let display_name = crate::config::localized_repository_name(&repo, locale.as_deref());
     let selected_proxy_mode = selected_asset_proxy_mode(
         asset_proxy_mode,
         &repo.provider,
@@ -2955,7 +2965,8 @@ pub async fn install_repository(
         },
         Some(DownloadContext {
             app: Some(&app),
-            label: &repo.name,
+            // 下载进度里显示的名字同样跟随界面语言
+            label: &display_name,
             expected_size,
         }),
     )
@@ -2982,7 +2993,7 @@ pub async fn install_repository(
             &temp,
             &download_name,
             &repo.id,
-            &repo.name,
+            &display_name,
             &release_tag,
             &release_body,
             release_prerelease,

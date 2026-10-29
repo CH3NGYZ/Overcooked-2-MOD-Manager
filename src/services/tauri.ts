@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
+// 只读当前界面语言（用于让后端选择仓库的本地化名称）；不引入任何 UI 依赖
+import { locale } from '../i18n'
 import type {
   AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
   Dashboard, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
@@ -89,7 +91,11 @@ export const api = {
    * 用户确认后再调 `confirmModInstall`。
    */
   installRepository: (repositoryId: string, tag?: string, previewOnly = false) =>
-    invoke<RepositoryInstallOutcome>('install_repository', { repositoryId, tag, previewOnly }),
+    invoke<RepositoryInstallOutcome>('install_repository', {
+      repositoryId, tag, previewOnly,
+      // 后端按它选仓库的本地化名称（下载进度标签 + 安装预览标题）
+      locale: locale.value,
+    }),
   launchNormal: () => invoke<OperationResult>('launch_normal'),
   /** 停止厨房：Steam 没有停止协议，由管理器结束游戏进程。 */
   stopGame: () => invoke<OperationResult>('stop_game'),

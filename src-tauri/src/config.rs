@@ -147,6 +147,37 @@ pub(crate) fn repository_is_available(
     repository.enabled && repository_matches_channel(config, repository, region)
 }
 
+/// 按界面语言从 `name_i18n` 取仓库名，缺失时回退到中文原名。
+///
+/// 语言标记来自前端（`zh-CN` / `zh-TW` / `en` / `ko` / `ja`），因为界面
+/// 语言由前端 localStorage 管理、后端配置里不存这一项。
+///
+/// 查找顺序：完整标记 → 主语言前缀 → `name`。
+/// 加前缀回退是因为源文档里可能只写了 `zh` 或 `en-US` 这类宽标记，
+/// 而界面传来的可能是 `zh-CN`，两者应当能对上。
+pub(crate) fn localized_repository_name(repo: &RepositoryConfig, locale: Option<&str>) -> String {
+    let Some(locale) = locale.map(str::trim).filter(|value| !value.is_empty()) else {
+        return repo.name.clone();
+    };
+    let map = &repo.name_i18n;
+    if let Some(value) = map.get(locale).filter(|value| !value.trim().is_empty()) {
+        return value.clone();
+    }
+    // 主语言前缀：zh-CN → zh
+    let primary = locale
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(locale)
+        .to_ascii_lowercase();
+    map.iter()
+        .find(|(key, value)| {
+            !value.trim().is_empty()
+                && key.to_ascii_lowercase().split(['-', '_']).next() == Some(primary.as_str())
+        })
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| repo.name.clone())
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConfigError {
     #[error("配置目录不可用: {0}")]
@@ -2996,5 +3027,82 @@ enabled = true
                 Some("international")
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod localized_name_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn repo_with(names: &[(&str, &str)]) -> RepositoryConfig {
+        let mut name_i18n = BTreeMap::new();
+        for (key, value) in names {
+            name_i18n.insert((*key).to_string(), (*value).to_string());
+        }
+        let mut repo: RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": "r1", "name": "主机实用 MOD（街机 MOD）稳定版",
+            "group": "", "provider": "github", "username": "u", "repository": "r",
+            "download_mode": "release", "branch": "main", "file_path": "",
+            "region": "", "channel": "all", "install_target": "",
+            "enabled": true, "builtin": false
+        }))
+        .unwrap();
+        repo.name_i18n = name_i18n;
+        repo
+    }
+
+    /*
+     * 下载进度标签与安装预览标题都要跟随界面语言。
+     *
+     * 真实问题：这两处原来固定用 `repo.name`（中文原名），切到英文后
+     * 卡片列表是英文、下载弹窗和安装预览却还是中文，同一件事两个语言。
+     */
+    #[test]
+    fn picks_the_name_matching_the_interface_locale() {
+        let repo = repo_with(&[
+            ("zh-CN", "主机实用 MOD"),
+            ("en", "HostUtilities"),
+            ("ja", "ホストツール"),
+        ]);
+        assert_eq!(
+            localized_repository_name(&repo, Some("en")),
+            "HostUtilities"
+        );
+        assert_eq!(localized_repository_name(&repo, Some("ja")), "ホストツール");
+        assert_eq!(
+            localized_repository_name(&repo, Some("zh-CN")),
+            "主机实用 MOD"
+        );
+    }
+
+    /// 语言标记缺失时退回中文原名，不能返回空串。
+    #[test]
+    fn falls_back_to_the_base_name_when_locale_is_missing_or_unknown() {
+        let repo = repo_with(&[("en", "HostUtilities")]);
+        assert_eq!(localized_repository_name(&repo, Some("ko")), repo.name);
+        assert_eq!(localized_repository_name(&repo, None), repo.name);
+        assert_eq!(localized_repository_name(&repo, Some("")), repo.name);
+    }
+
+    /// 源文档可能只写主语言标记（`zh`），界面传来的是 `zh-TW`：应当能对上。
+    #[test]
+    fn matches_on_the_primary_language_when_the_exact_tag_is_absent() {
+        let repo = repo_with(&[("zh", "主机实用 MOD"), ("en-US", "HostUtilities")]);
+        assert_eq!(
+            localized_repository_name(&repo, Some("zh-TW")),
+            "主机实用 MOD"
+        );
+        assert_eq!(
+            localized_repository_name(&repo, Some("en-GB")),
+            "HostUtilities"
+        );
+    }
+
+    /// 空翻译值等同缺失，不要显示成空白。
+    #[test]
+    fn ignores_blank_translations() {
+        let repo = repo_with(&[("en", "   ")]);
+        assert_eq!(localized_repository_name(&repo, Some("en")), repo.name);
     }
 }

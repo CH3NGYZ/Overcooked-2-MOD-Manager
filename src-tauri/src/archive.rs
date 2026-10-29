@@ -454,7 +454,7 @@ async fn download_stream(
     first_byte_timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     if is_download_cancelled() {
-        return Err("下载已取消".into());
+        return Err("error.download.cancelled".into());
     }
     reporter.update(DownloadProgress::connecting(label));
     let request = client
@@ -470,7 +470,10 @@ async fn download_stream(
     }
     .map_err(|error| error.without_url().to_string())?;
     if !response.status().is_success() {
-        return Err(format!("下载返回 HTTP {}", response.status()));
+        return Err(crate::locale_tag::with_params(
+            "error.download.httpStatus",
+            &[("status", &response.status().to_string())],
+        ));
     }
     let total = response.content_length();
     log::info!(
@@ -493,7 +496,7 @@ async fn download_stream(
     let mut next_chunk = first_chunk;
     while let Some(chunk) = next_chunk {
         if is_download_cancelled() {
-            return Err("下载已取消".into());
+            return Err("error.download.cancelled".into());
         }
         let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         file.write_all(&chunk).map_err(|error| error.to_string())?;
@@ -540,12 +543,18 @@ async fn read_response_bytes(
         reporter.received(chunk.len() as u64);
         bytes.extend_from_slice(&chunk);
         if bytes.len() as u64 > expected {
-            return Err(format!("分段长度超出预期: 收到 {} 字节", bytes.len()));
+            return Err(crate::locale_tag::with_params(
+                "error.download.chunkTooLong",
+                &[("bytes", &bytes.len().to_string())],
+            ));
         }
         next_chunk = body.next().await;
     }
     if bytes.len() as u64 != expected {
-        return Err(format!("分段长度错误: 收到 {} 字节", bytes.len()));
+        return Err(crate::locale_tag::with_params(
+            "error.download.chunkLengthMismatch",
+            &[("bytes", &bytes.len().to_string())],
+        ));
     }
     Ok(bytes)
 }
@@ -590,7 +599,7 @@ async fn download_ranges(
             let mut last_error_kind = "unknown";
             for attempt in 1..=3 {
                 if DOWNLOAD_CANCELLED.load(Ordering::Acquire) {
-                    return Err("下载已取消".to_string());
+                    return Err("error.download.cancelled".to_string());
                 }
                 let request = client
                     .get(&url)
@@ -673,7 +682,7 @@ async fn download_ranges(
     .buffer_unordered(threads.clamp(1, 32) as usize);
     while let Some(result) = pending.next().await {
         if DOWNLOAD_CANCELLED.load(Ordering::Acquire) {
-            return Err("下载已取消".into());
+            return Err("error.download.cancelled".into());
         }
         let (offset, bytes) = result?;
         output.seek(SeekFrom::Start(offset)).map_err(|error| {
@@ -807,7 +816,13 @@ pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {
         let actual = sha256_file(path)?;
         if expected != actual {
             log::error!("SHA-256 校验失败：文件={}", path.display());
-            return Err(format!("SHA-256 校验失败，期望 {expected}，实际 {actual}"));
+            return Err(crate::locale_tag::with_params(
+                "error.download.checksumMismatch",
+                &[
+                    ("expected", &expected.to_string()),
+                    ("actual", &actual.to_string()),
+                ],
+            ));
         }
         log::info!("文件摘要校验通过：文件={}", path.display());
     } else {
@@ -830,14 +845,14 @@ pub fn validate_download_file(
 
 fn validate_download_size(actual: u64, expected: Option<u64>) -> Result<(), String> {
     if actual == 0 {
-        return Err("下载文件为空".into());
+        return Err("error.download.empty".into());
     }
     if expected.is_some_and(|size| size != actual) {
         log::warn!(
             "下载长度不完整: 收到 {actual} 字节，预期 {} 字节",
             expected.unwrap()
         );
-        return Err("下载长度不完整".into());
+        return Err("error.download.incomplete".into());
     }
     Ok(())
 }
@@ -856,7 +871,7 @@ pub fn validate_download_bytes(
             .to_ascii_lowercase();
         let actual = format!("{:x}", Sha256::digest(bytes));
         if actual != expected {
-            return Err("SHA-256 校验失败".into());
+            return Err("error.download.checksumFailed".into());
         }
     }
     Ok(())
@@ -1062,14 +1077,14 @@ fn safe_zip_stem(archive_name: &str) -> Result<&str, String> {
         .chars()
         .any(|character| matches!(character, '/' | '\\' | ':'))
     {
-        return Err("ZIP 文件名无效".into());
+        return Err("error.archive.invalidZipName".into());
     }
     let stem = Path::new(archive_name)
         .file_stem()
         .and_then(|value| value.to_str())
-        .ok_or("ZIP 文件名无效")?;
+        .ok_or("error.archive.invalidZipName")?;
     if stem.is_empty() || stem == "." || stem == ".." {
-        return Err("ZIP 文件名无效".into());
+        return Err("error.archive.invalidZipName".into());
     }
     Ok(stem)
 }
@@ -1101,9 +1116,9 @@ fn inspect_mod_zip(zip_path: &Path) -> Result<ModZipLayout, String> {
         let entry = archive
             .by_index(index)
             .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
-        let path = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("拒绝不安全 ZIP 路径: {}", entry.name()))?;
+        let path = entry.enclosed_name().ok_or_else(|| {
+            crate::locale_tag::with_params("error.archive.unsafePath", &[("entry", entry.name())])
+        })?;
         let components = path.components().collect::<Vec<_>>();
         let Some(root) = components.first() else {
             only_root_dlls = false;
@@ -1147,9 +1162,9 @@ fn online_zip_strip_root(zip_path: &Path, install_target: &str) -> Result<Option
         let entry = archive
             .by_index(index)
             .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
-        let path = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("拒绝不安全 ZIP 路径: {}", entry.name()))?;
+        let path = entry.enclosed_name().ok_or_else(|| {
+            crate::locale_tag::with_params("error.archive.unsafePath", &[("entry", entry.name())])
+        })?;
         if !entry.is_dir() {
             file_paths.push(path.to_path_buf());
         }
@@ -1292,7 +1307,10 @@ impl PendingModInstall {
 
     fn track_destination(&mut self, destination: &Path) -> Result<(), String> {
         if destination.is_dir() {
-            return Err(format!("目标文件已存在: {}", destination.display()));
+            return Err(crate::locale_tag::with_params(
+                "error.archive.targetExists",
+                &[("path", &destination.display().to_string())],
+            ));
         }
         let missing_parents = destination
             .parent()
@@ -1305,7 +1323,7 @@ impl PendingModInstall {
             .iter()
             .any(|parent| parent == &self.game_root || !parent.starts_with(&self.game_root))
         {
-            return Err("路径逃逸游戏目录".into());
+            return Err("error.archive.pathEscape".into());
         }
         let snapshot = snapshot_path(destination)?;
         self.snapshots.push((destination.to_path_buf(), snapshot));
@@ -1350,7 +1368,7 @@ impl PendingModInstall {
                     .strip_prefix(&self.game_root)
                     .map_err(|e| e.to_string())?;
                 if safe_game_path(&self.game_root, &relative.to_string_lossy())? != directory {
-                    return Err("路径逃逸游戏目录".into());
+                    return Err("error.archive.pathEscape".into());
                 }
                 match fs::remove_dir(&directory) {
                     Err(error)
@@ -1401,9 +1419,9 @@ fn zip_entry_destinations(
         let entry = archive
             .by_index(index)
             .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("拒绝不安全 ZIP 路径: {}", entry.name()))?;
+        let enclosed = entry.enclosed_name().ok_or_else(|| {
+            crate::locale_tag::with_params("error.archive.unsafePath", &[("entry", entry.name())])
+        })?;
         if entry.is_dir() {
             continue;
         }
@@ -1416,12 +1434,15 @@ fn zip_entry_destinations(
         let relative = Path::new(target_dir).join(relative_entry);
         let destination = safe_game_path(game_root, &relative.to_string_lossy())?;
         if !unique.insert(destination.to_string_lossy().to_lowercase()) {
-            return Err(format!("目标文件已存在: {}", destination.display()));
+            return Err(crate::locale_tag::with_params(
+                "error.archive.targetExists",
+                &[("path", &destination.display().to_string())],
+            ));
         }
         destinations.push((index, destination));
     }
     if destinations.is_empty() {
-        return Err("所选文件没有可安装内容".into());
+        return Err("error.archive.noInstallableContent".into());
     }
     Ok(destinations)
 }
@@ -1518,7 +1539,7 @@ pub(crate) fn copy_asset_pending(
     if destination.try_exists().map_err(|e| e.to_string())?
         && same_file::is_same_file(asset_path, &destination).map_err(|e| e.to_string())?
     {
-        return Err("所选文件已经位于安装目标，不能覆盖自身".into());
+        return Err("error.archive.sourceEqualsTarget".into());
     }
     let mut pending = PendingModInstall::new(game_root);
     pending.track_destination(&destination)?;
@@ -1775,7 +1796,7 @@ mod tests {
             copy_asset_pending(&source, &root, "BepInEx/plugins", "Existing.dll")
                 .err()
                 .unwrap(),
-            "所选文件已经位于安装目标，不能覆盖自身"
+            "error.archive.sourceEqualsTarget"
         );
         assert!(fs::metadata(&source).unwrap().permissions().readonly());
         assert_eq!(fs::read(&source).unwrap(), b"original plugin");

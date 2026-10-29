@@ -130,6 +130,49 @@ test('回收站命令不再返回中文文案（源码级确认）', () => {
   }
 })
 
+/* ===== 下载与归档域 ===== */
+
+test('下载与归档的 tag 在五语下都有翻译', () => {
+  const tags = [
+    'error.download.cancelled',
+    'error.download.empty',
+    'error.download.incomplete',
+    'error.download.httpStatus',
+    'error.download.checksumFailed',
+    'error.download.checksumMismatch',
+    'error.download.chunkTooLong',
+    'error.download.chunkLengthMismatch',
+    'error.archive.invalidZipName',
+    'error.archive.unsafePath',
+    'error.archive.pathEscape',
+    'error.archive.noInstallableContent',
+    'error.archive.sourceEqualsTarget',
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const tag of tags) {
+      const text = translateBackendMessage(tag)
+      assert.notEqual(text, tag, `${locale}: ${tag} 未登记`)
+      assert.ok(text.length > 0, `${locale}: ${tag} 翻译为空`)
+    }
+  }
+})
+
+test('下载的 HTTP 状态与校验失败参数在五语下都插值', () => {
+  const cases = [
+    ['error.download.httpStatus?status=404', /404/],
+    ['error.download.checksumMismatch?expected=abc&actual=def', /abc/],
+    ['error.archive.unsafePath?entry=..%2Fevil', /\.\./],
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const [tag, pattern] of cases) {
+      const text = translateBackendMessage(tag)
+      assert.match(text, pattern, `${locale}: ${tag} 参数未插值 → ${text}`)
+    }
+  }
+})
+
 /* ===== 框架管理域（BepInEx / DIYLevel）===== */
 
 test('框架备份与卸载的 tag 在五语下都有翻译', () => {

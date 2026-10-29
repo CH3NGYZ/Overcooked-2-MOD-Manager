@@ -13,6 +13,7 @@ import { useDialog } from 'naive-ui'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { isPrereleaseVersion } from '../modStatus'
 import type { ModPreview, Repository } from '../types'
 
@@ -113,7 +114,7 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
     try {
       const outcome = await api.installRepository(repo.id, tag, true)
       if (!outcome.ok) {
-        message.error(outcome.message)
+        message.error(translateBackendMessage(outcome.message))
         return
       }
       if (!outcome.preview) {
@@ -122,7 +123,7 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
       }
       openPreview(outcome.preview)
     } catch (reason) {
-      message.error(reason instanceof Error ? reason.message : String(reason))
+      message.error(backendMessageOf(reason))
     } finally {
       options.onBusyChange?.(repo.id, false)
     }

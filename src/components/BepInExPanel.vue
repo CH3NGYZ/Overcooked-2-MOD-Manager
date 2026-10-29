@@ -25,6 +25,7 @@ import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { formatBackupLabel } from '../backupLabel'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
 import BepInExSetupGuide from './BepInExSetupGuide.vue'
@@ -64,13 +65,13 @@ const installed = computed(() => !!game.value?.bepinex.installed)
 const hasResidue = computed(() => !!game.value?.bepinex.has_residue)
 
 function fail(reason: unknown) {
-  message.error(reason instanceof Error ? reason.message : String(reason))
+  message.error(backendMessageOf(reason))
 }
 
 async function afterInstall(result: BepInExInstallResult) {
-  if (result.ok) message.success(result.message || t('安装框架'))
-  else message.error(result.message)
-  if (result.wine_override_error) message.warning(result.wine_override_error)
+  if (result.ok) message.success(translateBackendMessage(result.message) || t('安装框架'))
+  else message.error(translateBackendMessage(result.message))
+  if (result.wine_override_error) message.warning(translateBackendMessage(result.wine_override_error))
   await load()
 }
 
@@ -114,7 +115,7 @@ async function runInstall(reinstall: boolean) {
     if (result.ok && platform.value === 'macos' && runtime.value === 'native') {
       try {
         const repaired = await api.repairNativeBepInExOverlay()
-        if (!repaired.ok) message.warning(repaired.message)
+        if (!repaired.ok) message.warning(translateBackendMessage(repaired.message))
       } catch (reason) {
         // 修复失败只提示，不阻断后续引导
         message.warning(reason instanceof Error ? reason.message : String(reason))
@@ -172,7 +173,7 @@ function uninstall() {
       busyText.value = t('正在备份并卸载 BepInEx 框架…')
       try {
         const result: OperationResult = await api.uninstallBepInEx()
-        result.ok ? message.success(result.message || t('卸载')) : message.error(result.message)
+        result.ok ? message.success(translateBackendMessage(result.message) || t('卸载')) : message.error(translateBackendMessage(result.message))
         await load()
       } catch (reason) { fail(reason) } finally {
         working.value = false
@@ -196,7 +197,7 @@ async function backup() {
   busyText.value = t('正在备份 BepInEx 框架…')
   try {
     const result = await api.backupBepInEx()
-    result.ok ? message.success(result.message || t('创建备份')) : message.error(result.message)
+    result.ok ? message.success(translateBackendMessage(result.message) || t('创建备份')) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally {
     working.value = false
@@ -209,7 +210,7 @@ async function restore(path: string) {
   busyText.value = t('正在恢复 BepInEx 框架…')
   try {
     const result = await api.restoreBepInEx(path)
-    result.ok ? message.success(result.message || t('已恢复')) : message.error(result.message)
+    result.ok ? message.success(translateBackendMessage(result.message) || t('已恢复')) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally {
     working.value = false
@@ -225,7 +226,7 @@ function removeBackup(path: string) {
     negativeText: t('取消'),
     async onPositiveClick() {
       const result = await api.deleteBepInExBackup(path)
-      result.ok ? message.success(result.message || t('备份已删除')) : message.error(result.message)
+      result.ok ? message.success(translateBackendMessage(result.message) || t('备份已删除')) : message.error(translateBackendMessage(result.message))
       await load()
     },
   })
@@ -234,7 +235,7 @@ function removeBackup(path: string) {
 async function toggleFramework(enabled: boolean) {
   const result = await api.switchWinhttp(enabled)
   result.ok
-    ? message.success(result.message || (enabled ? t('框架已启用') : t('框架已禁用')))
+    ? message.success(translateBackendMessage(result.message) || (enabled ? t('框架已启用') : t('框架已禁用')))
     : message.error(result.message)
   await load()
 }
@@ -249,18 +250,18 @@ async function toggleFramework(enabled: boolean) {
 /** 打开 `<game>/BepInEx`（框架文件所在处，不是 plugins）。 */
 async function openPath() {
   const result = await api.openBepInExDirectory()
-  if (!result.ok) message.error(result.message)
+  if (!result.ok) message.error(translateBackendMessage(result.message))
 }
 
 async function openBackups() {
   const result = await api.openBackupDirectory()
-  if (!result.ok) message.error(result.message)
+  if (!result.ok) message.error(translateBackendMessage(result.message))
 }
 
 /** 在文件管理器里打开**某一个**备份目录（与「打开备份目录」同一命令，带路径）。 */
 async function openBackup(backupPath: string) {
   const result = await api.openBackupDirectory(backupPath)
-  if (!result.ok) message.error(result.message)
+  if (!result.ok) message.error(translateBackendMessage(result.message))
 }
 </script>
 

@@ -2169,7 +2169,7 @@ pub async fn install_bepinex(
     let game_root = PathBuf::from(game_root);
     game::ensure_game_stopped(&game_root)?;
     if info.bepinex.installed && !reinstall {
-        return Err("BepInEx 已安装，如需覆盖请使用重新安装".into());
+        return Err("error.framework.alreadyInstalled".into());
     }
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
@@ -2295,7 +2295,10 @@ pub async fn install_bepinex(
         }
         Err(error) => {
             log::error!("BepInEx 安装失败：原因={}", error);
-            Err(format!("BepInEx 安装失败: {error}"))
+            Err(format!(
+                "error.framework.installFailed?reason={}",
+                crate::locale_tag::encode(&error)
+            ))
         }
     }
 }
@@ -2327,7 +2330,7 @@ fn install_framework_archive(
      */
     let installed = crate::bepinex::installed(game_root);
     if installed && !reinstall {
-        return Err("BepInEx 已安装，如需覆盖请使用重新安装".into());
+        return Err("error.framework.alreadyInstalled".into());
     }
     /*
      * 只有真装过框架才做「整目录备份 → 删除重建 → 恢复 plugins/config」。
@@ -2343,7 +2346,12 @@ fn install_framework_archive(
     let result = (|| {
         if installed {
             archive::clear_readonly(&framework)?;
-            fs::remove_dir_all(&framework).map_err(|e| format!("清理旧 BepInEx 失败: {e}"))?;
+            fs::remove_dir_all(&framework).map_err(|e| {
+                format!(
+                    "error.framework.cleanupFailed?reason={}",
+                    crate::locale_tag::encode(&e.to_string())
+                )
+            })?;
         }
         let pending = archive::extract_framework_zip_pending(archive_path, game_root)?;
         if package.native() {
@@ -2376,7 +2384,7 @@ fn install_framework_archive(
                     "BepInEx 失败回滚未完成：备份={}，原因={restore}",
                     backup.display()
                 );
-                "BepInEx 安装失败，备份恢复未完成，请从框架备份恢复".to_string()
+                "error.framework.installFailedRollbackIncomplete".to_string()
             })?;
         }
         return Err(error);
@@ -2431,9 +2439,9 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
      */
     if !crate::bepinex::installed(&game_root) {
         return Err(if source.exists() {
-            "BepInEx 框架未安装（仅存在 MOD 目录），无需卸载".into()
+            "error.framework.bepinexOnlyResidue".into()
         } else {
-            "BepInEx 未安装".to_string()
+            "error.framework.bepinexMissing".to_string()
         });
     }
     ensure_copy_paths_disjoint(&source, &state.config.backups_dir())?;
@@ -2485,10 +2493,12 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
                 );
                 return Ok(OperationResult {
                     ok: true,
-                    message: format!(
-                        "BepInEx 已移入回收站（{} 个文件），备份保存在 {}",
-                        entry.file_count,
-                        backup.display()
+                    message: crate::locale_tag::with_params(
+                        "message.framework.movedToRecycleBin",
+                        &[
+                            ("count", &entry.file_count.to_string()),
+                            ("path", &backup.display().to_string()),
+                        ],
                     ),
                 });
             }
@@ -2503,9 +2513,12 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
                     error,
                     backup.display()
                 );
-                return Err(format!(
-                    "文件回收失败，请尝试手动删除框架文件。（{error}）备份已保存在 {}",
-                    backup.display()
+                return Err(crate::locale_tag::with_params(
+                    "error.backup.recycleFailed",
+                    &[
+                        ("reason", &error.to_string()),
+                        ("path", &backup.display().to_string()),
+                    ],
                 ));
             }
         }
@@ -2522,9 +2535,9 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     log::warn!("未找到 BepInEx 安装清单，按框架已知文件重建清单后回收");
     let files = framework_manifest_files(&game_root);
     if files.is_empty() {
-        return Err(format!(
-            "未找到可回收的框架文件。备份已保存在 {}",
-            backup.display()
+        return Err(crate::locale_tag::with_params(
+            "error.backup.noReclaimableFiles",
+            &[("path", &backup.display().to_string())],
         ));
     }
     let fallback = archive::new_manifest(
@@ -2551,16 +2564,21 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
             );
             Ok(OperationResult {
                 ok: true,
-                message: format!(
-                    "BepInEx 已移入回收站（{} 个文件），备份保存在 {}",
-                    entry.file_count,
-                    backup.display()
+                message: crate::locale_tag::with_params(
+                    "message.framework.movedToRecycleBin",
+                    &[
+                        ("count", &entry.file_count.to_string()),
+                        ("path", &backup.display().to_string()),
+                    ],
                 ),
             })
         }
-        Err(error) => Err(format!(
-            "文件回收失败，请尝试手动删除框架文件。（{error}）备份已保存在 {}",
-            backup.display()
+        Err(error) => Err(crate::locale_tag::with_params(
+            "error.backup.recycleFailed",
+            &[
+                ("reason", &error.to_string()),
+                ("path", &backup.display().to_string()),
+            ],
         )),
     }
 }
@@ -2621,7 +2639,10 @@ pub fn backup_bepinex(state: State<'_, AppState>) -> Result<OperationResult, Str
     log::info!("BepInEx 备份完成：路径={}", backup.display());
     Ok(OperationResult {
         ok: true,
-        message: format!("备份完成: {}", backup.display()),
+        message: crate::locale_tag::with_params(
+            "message.backup.created",
+            &[("path", &backup.display().to_string())],
+        ),
     })
 }
 
@@ -2653,7 +2674,7 @@ pub fn restore_bepinex(
     log::info!("BepInEx 备份恢复完成");
     Ok(OperationResult {
         ok: true,
-        message: "BepInEx 备份已恢复".into(),
+        message: "message.backup.bepInExRestored".into(),
     })
 }
 
@@ -2695,7 +2716,7 @@ pub fn delete_bepinex_backup(
     log::info!("BepInEx 备份删除完成");
     Ok(OperationResult {
         ok: true,
-        message: "BepInEx 备份已删除".into(),
+        message: "message.backup.deleted".into(),
     })
 }
 
@@ -5175,7 +5196,7 @@ pub fn set_diy_level_enabled(
             .as_deref()
             .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
     }) else {
-        return Err("尚未安装 DIYLevel 框架".into());
+        return Err("error.framework.diyLevelMissing".into());
     };
     if target.enabled == enabled {
         return Ok(OperationResult {
@@ -5187,9 +5208,9 @@ pub fn set_diy_level_enabled(
     Ok(OperationResult {
         ok: true,
         message: if enabled {
-            "DIYLevel 框架已启用".into()
+            "message.framework.diyLevelEnabled".into()
         } else {
-            "DIYLevel 框架已禁用".into()
+            "message.framework.diyLevelDisabled".into()
         },
     })
 }
@@ -5217,7 +5238,7 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
             .as_deref()
             .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
     }) else {
-        return Err("尚未安装 DIYLevel 框架".into());
+        return Err("error.framework.diyLevelMissing".into());
     };
     let dll_file = target.dll_file.clone();
     let package_id = target.package_id.clone().unwrap_or_else(|| "manual".into());
@@ -5243,10 +5264,12 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
     let result = if let Some(id) = manifest_id.as_deref().filter(|_| has_manifest) {
         recycle_bin::recycle_package(&recycle_root, &manifests_dir, &game_root, id, None).map(
             |entry| {
-                format!(
-                    "DIYLevel 已移入回收站（{} 个文件），备份保存在 {}",
-                    entry.file_count,
-                    backup.display()
+                crate::locale_tag::with_params(
+                    "message.framework.diyLevelMovedToRecycleBin",
+                    &[
+                        ("count", &entry.file_count.to_string()),
+                        ("path", &backup.display().to_string()),
+                    ],
                 )
             },
         )
@@ -5259,7 +5282,12 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
             &dll_file,
             &installed,
         )
-        .map(|_| format!("DIYLevel 已移入回收站，备份保存在 {}", backup.display()))
+        .map(|_| {
+            crate::locale_tag::with_params(
+                "message.framework.diyLevelMovedToRecycleBinNoCount",
+                &[("path", &backup.display().to_string())],
+            )
+        })
     } else {
         recycle_bin::purge_mod_dll(
             &recycle_root,
@@ -5269,7 +5297,12 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
             &dll_file,
             &installed,
         )
-        .map(|_| format!("DIYLevel 已删除，备份保存在 {}", backup.display()))
+        .map(|_| {
+            crate::locale_tag::with_params(
+                "message.framework.diyLevelDeleted",
+                &[("path", &backup.display().to_string())],
+            )
+        })
     };
 
     match result {
@@ -5279,9 +5312,12 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
         }
         Err(error) => {
             log::error!("DIYLevel 回收失败：原因={error}，备份={}", backup.display());
-            Err(format!(
-                "文件回收失败，请尝试手动删除 DIYLevel 文件。（{error}）备份已保存在 {}",
-                backup.display()
+            Err(crate::locale_tag::with_params(
+                "error.backup.diyLevelRecycleFailed",
+                &[
+                    ("reason", &error.to_string()),
+                    ("path", &backup.display().to_string()),
+                ],
             ))
         }
     }
@@ -5305,7 +5341,7 @@ pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationR
     } else if package.is_dir() {
         package
     } else {
-        return Err("尚未安装 DIYLevel 框架，或安装结构与预期不同".into());
+        return Err("error.framework.diyLevelDirMissing?path=BepInEx/plugins/OC2DIYLevel".into());
     };
     external_open_command()
         .arg(&target)
@@ -5313,7 +5349,7 @@ pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationR
         .map_err(|error| error.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开 DIYLevel 目录".into(),
+        message: "message.framework.diyLevelDirOpened".into(),
     })
 }
 
@@ -5339,7 +5375,7 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
                 .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
         })
         .and_then(|item| item.package_id.clone())
-        .ok_or("尚未安装 DIYLevel 框架")?;
+        .ok_or("error.framework.diyLevelMissing")?;
     let backup = backup_framework(
         &game_root,
         &state.config.backups_dir(),
@@ -5350,7 +5386,10 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
     log::info!("DIYLevel 备份完成：路径={}", backup.display());
     Ok(OperationResult {
         ok: true,
-        message: format!("备份完成: {}", backup.display()),
+        message: crate::locale_tag::with_params(
+            "message.backup.created",
+            &[("path", &backup.display().to_string())],
+        ),
     })
 }
 
@@ -5413,7 +5452,7 @@ pub fn restore_diy_level(
     log::info!("DIYLevel 备份恢复完成：清单ID={manifest_id}");
     Ok(OperationResult {
         ok: true,
-        message: "DIYLevel 备份已恢复".into(),
+        message: "message.backup.diyLevelRestored".into(),
     })
 }
 
@@ -5438,7 +5477,7 @@ pub fn delete_diy_level_backup(
     log::info!("DIYLevel 备份删除完成");
     Ok(OperationResult {
         ok: true,
-        message: "DIYLevel 备份已删除".into(),
+        message: "message.backup.deleted".into(),
     })
 }
 

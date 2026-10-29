@@ -14,6 +14,7 @@ mod gitee_community;
 mod gitee_webview;
 mod github_proxies;
 mod install_guard;
+mod locale_tag;
 mod mod_config;
 mod mod_preview;
 mod models;

@@ -52,9 +52,11 @@ export const DOMAINS = [
   'rename',      // 改多彩名
   'tools',       // 工具页
   'settings',    // 设置页（含框架管理抽屉）
+  'framework',   // BepInEx / DIYLevel 框架管理
   'dialogs',     // 独立弹窗：确认、导入导出、回收站、日志
   'tutorial',    // 教程
-  'error',       // **后端返回的错误/状态 tag**，见下
+  'error',       // **后端返回的错误 tag**
+  'message',     // **后端返回的成功/状态提示 tag**
 ] as const
 
 export type Domain = (typeof DOMAINS)[number]
@@ -70,3 +72,11 @@ export type Domain = (typeof DOMAINS)[number]
  * 是哪个环节失败，不需要对照表。
  */
 export const ERROR_TAG_PREFIX = 'error.'
+
+/**
+ * 后端成功提示 tag 的前缀。
+ *
+ * 与错误对称：这些提示也由后端产出、前端翻译。之所以也要 tag 化，
+ * 是因为它们常含关键信息（"备份保存在 D:\..."），英文用户看不懂等于没有。
+ */
+export const MESSAGE_TAG_PREFIX = 'message.'

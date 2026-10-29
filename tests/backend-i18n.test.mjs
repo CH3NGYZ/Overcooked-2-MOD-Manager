@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 /**
@@ -72,4 +73,72 @@ test('空值不产生文案', () => {
   assert.equal(translateBackendMessage(''), '')
   assert.equal(translateBackendMessage(null), '')
   assert.equal(translateBackendMessage(undefined), '')
+})
+
+/* ===== 框架管理域（BepInEx / DIYLevel）===== */
+
+test('框架备份与卸载的 tag 在五语下都有翻译', () => {
+  const tags = [
+    'error.framework.bepinexMissing',
+    'error.framework.bepinexOnlyResidue',
+    'error.framework.alreadyInstalled',
+    'error.framework.diyLevelMissing',
+    'error.backup.notFound',
+    'error.backup.outsideRoot',
+    'error.backup.overlap',
+    'error.backup.recycleFailed',
+    'error.backup.noReclaimableFiles',
+    'message.backup.created',
+    'message.backup.bepInExRestored',
+    'message.backup.diyLevelRestored',
+    'message.backup.deleted',
+    'message.framework.movedToRecycleBin',
+    'message.framework.diyLevelMovedToRecycleBin',
+    'message.framework.diyLevelDeleted',
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const tag of tags) {
+      const text = translateBackendMessage(tag)
+      assert.notEqual(text, tag, `${locale}: ${tag} 未登记`)
+      assert.ok(text.length > 0, `${locale}: ${tag} 翻译为空`)
+    }
+  }
+})
+
+test('框架 tag 的参数在每种语言下都插值', () => {
+  const tag = 'error.backup.recycleFailed?reason=busy&path=D%3A%5Cbackups%5Cx'
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const text = translateBackendMessage(tag)
+    assert.match(text, /busy/, `${locale}: reason 未插值`)
+    assert.match(text, /backups/, `${locale}: path 未插值`)
+  }
+})
+
+test('后端不再返回中文整句的框架错误（源码级确认）', () => {
+  /*
+   * 反向断言：这几个命令的错误路径必须已经是 tag，不能漏回中文。
+   * 后端返回中文时前端怎么翻都翻不了 —— 这条守住「不要再写中文」。
+   */
+  const rust = readFileSync(
+    new URL('../src-tauri/src/commands.rs', import.meta.url),
+    'utf8',
+  )
+  for (const tag of [
+    'error.framework.alreadyInstalled',
+    'error.framework.bepinexMissing',
+    'error.framework.bepinexOnlyResidue',
+    'error.framework.diyLevelMissing',
+    'error.backup.recycleFailed',
+  ]) {
+    assert.ok(rust.includes(tag), `commands.rs 应包含 tag：${tag}`)
+  }
+  // 已迁移的这几条中文不该再残留
+  for (const legacy of [
+    'BepInEx 已安装，如需覆盖请使用重新安装',
+    'BepInEx 框架未安装（仅存在 MOD 目录），无需卸载',
+  ]) {
+    assert.ok(!rust.includes(legacy), `commands.rs 不应再含中文文案：${legacy}`)
+  }
 })

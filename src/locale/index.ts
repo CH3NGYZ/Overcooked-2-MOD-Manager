@@ -3,6 +3,8 @@ import { watch } from 'vue'
 import { locale as appLocale, type Locale } from './state.ts'
 import { common } from './common.ts'
 import { error } from './error.ts'
+import { framework } from './framework.ts'
+import { message } from './message.ts'
 import { LOCALE_CODES, type Domain, type DomainMessages, type Localized } from './types.ts'
 
 /**
@@ -28,6 +30,8 @@ import { LOCALE_CODES, type Domain, type DomainMessages, type Localized } from '
 const DOMAIN_TABLES: Partial<Record<Domain, DomainMessages>> = {
   common,
   error,
+  framework,
+  message,
 }
 
 /** 把一条五语文案按语言摊平。 */

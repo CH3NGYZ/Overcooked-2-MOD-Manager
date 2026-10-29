@@ -6,7 +6,7 @@
  * 只有真正跑测试时才会暴露。Vite 也接受显式扩展名，所以两边都能用。
  */
 import { i18n } from './index.ts'
-import { ERROR_TAG_PREFIX } from './types.ts'
+import { ERROR_TAG_PREFIX, MESSAGE_TAG_PREFIX } from './types.ts'
 
 /**
  * 后端错误 → 用户可见文案。
@@ -36,9 +36,10 @@ export interface BackendErrorPayload {
   params?: Record<string, string | number>
 }
 
-/** 判断一个字符串是不是后端错误 tag。 */
+/** 判断一个字符串是不是后端 tag（错误或成功提示）。 */
 export function isErrorTag(value: string): boolean {
-  return value.trim().startsWith(ERROR_TAG_PREFIX)
+  const tag = value.trim()
+  return tag.startsWith(ERROR_TAG_PREFIX) || tag.startsWith(MESSAGE_TAG_PREFIX)
 }
 
 /**

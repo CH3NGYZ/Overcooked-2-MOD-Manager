@@ -26,6 +26,7 @@ import { useNotify } from '../../useNotify'
 import { pickI18n, t } from '../../i18n'
 import { tagColorFor } from '../../theme'
 import { formatBackupLabel } from '../../backupLabel'
+import { backendMessageOf, translateBackendMessage } from '../../locale/backend'
 import { useDashboard } from '../../composables/useDashboardStore'
 import { useRepositoryLink } from '../../crossLink'
 import BusyOverlay from '../BusyOverlay.vue'
@@ -81,7 +82,7 @@ const repositoryName = computed(() =>
     : '')
 
 function fail(reason: unknown) {
-  message.error(reason instanceof Error ? reason.message : String(reason))
+  message.error(backendMessageOf(reason))
 }
 
 async function refresh() {
@@ -108,7 +109,7 @@ function openInstall() {
 async function openDirectory() {
   try {
     const result = await api.openDiyLevelDirectory()
-    if (!result.ok) message.error(result.message)
+    if (!result.ok) message.error(translateBackendMessage(result.message))
   } catch (reason) {
     fail(reason)
   }
@@ -120,7 +121,9 @@ async function toggle(value: boolean) {
   switching.value = true
   try {
     const result = await api.setDiyLevelEnabled(value)
-    result.ok ? message.success(result.message) : message.error(result.message)
+    result.ok
+      ? message.success(translateBackendMessage(result.message))
+      : message.error(translateBackendMessage(result.message))
     await refresh()
     // MOD 列表里也显示这个插件，状态变了要同步刷新
     await load()
@@ -149,7 +152,9 @@ function uninstall() {
       busyText.value = t('正在备份并卸载 DIYLevel…')
       try {
         const result = await api.uninstallDiyLevel()
-        result.ok ? message.success(result.message) : message.error(result.message)
+        result.ok
+      ? message.success(translateBackendMessage(result.message))
+      : message.error(translateBackendMessage(result.message))
         await refresh()
         await load()
       } catch (reason) {
@@ -168,7 +173,9 @@ async function backup() {
   busyText.value = t('正在备份 DIYLevel 目录…')
   try {
     const result = await api.backupDiyLevel()
-    result.ok ? message.success(result.message) : message.error(result.message)
+    result.ok
+      ? message.success(translateBackendMessage(result.message))
+      : message.error(translateBackendMessage(result.message))
     await refresh()
   } catch (reason) {
     fail(reason)
@@ -190,7 +197,9 @@ function restore(backupPath: string) {
       busyText.value = t('正在恢复 DIYLevel 备份…')
       try {
         const result = await api.restoreDiyLevel(backupPath)
-        result.ok ? message.success(result.message) : message.error(result.message)
+        result.ok
+      ? message.success(translateBackendMessage(result.message))
+      : message.error(translateBackendMessage(result.message))
         await refresh()
         await load()
       } catch (reason) {
@@ -213,7 +222,9 @@ function deleteBackup(backupPath: string) {
     async onPositiveClick() {
       try {
         const result = await api.deleteDiyLevelBackup(backupPath)
-        result.ok ? message.success(result.message) : message.error(result.message)
+        result.ok
+      ? message.success(translateBackendMessage(result.message))
+      : message.error(translateBackendMessage(result.message))
         await refresh()
       } catch (reason) {
         fail(reason)
@@ -224,13 +235,13 @@ function deleteBackup(backupPath: string) {
 
 async function openBackups() {
   const result = await api.openBackupDirectory()
-  if (!result.ok) message.error(result.message)
+  if (!result.ok) message.error(translateBackendMessage(result.message))
 }
 
 /** 在文件管理器里打开**某一个**备份目录（与 BepInEx 面板的同名动作一致）。 */
 async function openBackup(backupPath: string) {
   const result = await api.openBackupDirectory(backupPath)
-  if (!result.ok) message.error(result.message)
+  if (!result.ok) message.error(translateBackendMessage(result.message))
 }
 
 onMounted(() => { void refresh() })

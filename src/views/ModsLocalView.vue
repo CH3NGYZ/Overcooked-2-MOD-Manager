@@ -15,7 +15,7 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import { primaryRelation, resolveRelations, type RelationStatus } from '../modRelations'
+import { primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
   installedModTags, modUpdateVerdict, replaceVersionConclusion,
@@ -788,6 +788,24 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
 }
 
 /**
+ * 标签点下去该跳到哪个仓库。
+ *
+ * 大多数标签（最新版 / 可更新 / 未绑定…）描述的是「这个 MOD 相对**自己**
+ * 绑定的仓库」的结论，所以跳它自己的仓库。
+ *
+ * 「缺依赖」「冲突」不同：它们指向**另一个**插件。此时跳到自己的仓库只会
+ * 让用户看着一张毫无问题的卡片，找不到该处理的目标。这两种标签的跳转
+ * 必须落在关系解析出的那个仓库上；解析不出来（线上没有可安装来源）
+ * 就返回 undefined，标签不可点。
+ */
+function tagTargetRepositoryId(mod: InstalledMod, tagKey: string): string | undefined {
+  if (tagKey === 'missing_dependency' || tagKey === 'dependency_conflict') {
+    return relationJumpRepositoryId(relationIssueByDll.value[mod.dll_file])
+  }
+  return bindingRepositoryId(mod)
+}
+
+/**
  * 某个状态对应的按钮能不能真的执行。
  *
  * 动作种类由 `statusActionFor` 决定（可更新 → 更新、刷新失败 → 刷新…），
@@ -820,16 +838,21 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
       // 刷新针对仓库而不是某个 DLL，解析不出仓库就不给按钮
       if (!repository) return undefined
       return { action, repository }
-    case 'install-dependency':
+    case 'install-dependency': {
       /*
-       * 「去安装」只对本地 MOD 有意义，且必须有仓库能提供依赖。
+       * 「去安装」要跳到**依赖的**仓库，不是这个 MOD 自己的仓库。
        *
-       * 这里不做「有没有可安装来源」的判定 —— 那是安装页的职责
-       * （`unmetDependency`）。本地卡片只需要区分「缺」和「不缺」，
-       * 点击后跳去安装页，由那边决定给按钮还是只给标签。
+       * 之前这里用的是 `repositoryForMod(mod)` —— 当前卡片的仓库，
+       * 于是点了「去安装」，安装页高亮的却是这张本身有问题的 MOD，
+       * 用户在那里找不到要装的东西。
+       *
+       * 关系解析不出可安装来源时不给按钮：那说明线上没有这个 GUID，
+       * 跳过去也无处可去，只留「缺依赖」标签说明情况。
        */
-      if (!repository) return undefined
-      return { action, repository }
+      const dependency = relationIssueByDll.value[mod.dll_file]
+      if (!dependency?.repository) return undefined
+      return { action, repository: dependency.repository }
+    }
     case 'uninstall-conflict': {
       /*
        * 冲突要卸的是**对方**，不一定是当前卡片这一项：
@@ -1024,9 +1047,48 @@ function expandGroupsFor(matches: StatusUnitNode[]) {
   return collapsedGroups.value.length !== before
 }
 
-/** 点击状态标签：跳到 MOD 安装页并高亮对应仓库卡片。 */
-function openInRepository(mod: InstalledMod) {
-  const id = bindingRepositoryId(mod)
+/**
+ * 点击状态标签：跳到 MOD 安装页并高亮**该标签指向的**仓库卡片。
+ *
+ * 目标是 `tagTargetRepositoryId` 算出来的那个 id，所以「缺依赖」去的是
+ * 依赖的仓库，其余标签去的是这个 MOD 自己的仓库。
+ */
+function openTagTarget(mod: InstalledMod, tagKey: string) {
+  const id = tagTargetRepositoryId(mod, tagKey)
+  if (id) linkToRepository(id)
+}
+
+/** 标签的悬停提示：说清点了会跳到哪、为什么可跳/不可跳。 */
+function tagTitle(mod: InstalledMod, tagKey: string): string | undefined {
+  const target = tagTargetRepositoryId(mod, tagKey)
+  if (!target) {
+    // 缺依赖但没有可安装来源：说明「没有地方可去」，而不是假装可点
+    return tagKey === 'missing_dependency' ? t('没有可安装的来源') : undefined
+  }
+  return tagKey === 'missing_dependency' || tagKey === 'dependency_conflict'
+    ? t('在 MOD 安装中查看依赖')
+    : t('在 MOD 安装中查看')
+}
+
+/**
+ * 包标签点下去该跳到哪个仓库。
+ *
+ * 与单 MOD 同一套规则，只是「依赖类标签」要取**包内任一成员**解析出的
+ * 依赖仓库 —— 包是多个 DLL 的聚合，缺依赖的可能是其中某一个。
+ */
+function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undefined {
+  if (tagKey === 'missing_dependency' || tagKey === 'dependency_conflict') {
+    for (const mod of pkg.mods) {
+      const repository = relationIssueByDll.value[mod.dll_file]?.repository
+      if (repository) return repository.id
+    }
+    return undefined
+  }
+  return pkg.repositoryId
+}
+
+function openPackageTag(pkg: ModPackageNode, tagKey: string) {
+  const id = packageTagTargetId(pkg, tagKey)
   if (id) linkToRepository(id)
 }
 
@@ -1323,11 +1385,17 @@ function removePackage(node: ModPackageNode) {
                     status-pulse：刷新完成后标签变化时播一次短暂高亮（见 isStatusPulsing）。
                   -->
                   <span class="tag-group" :class="{ 'status-pulse': isStatusPulsing(mod) }">
-                    <!-- 配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算 -->
+                    <!--
+                      配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算。
+                      「缺依赖」/「冲突」跳到**依赖的**仓库；解析不出可安装来源时
+                      没有跳转目标，此时不给链接样式也不可点 —— 一个点了没反应、
+                      却长得像能点的标签比纯文字更糟。
+                    -->
                     <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
-                      class="state-tag state-tag--link" :color="tagColorForAny(tag.tone)"
-                      :title="bindingRepositoryId(mod) ? t('在 MOD 安装中查看') : undefined"
-                      @click.stop="openInRepository(mod)">{{ tag.text }}</n-tag>
+                      class="state-tag" :class="{ 'state-tag--link': !!tagTargetRepositoryId(mod, tag.key) }"
+                      :color="tagColorForAny(tag.tone)"
+                      :title="tagTitle(mod, tag.key)"
+                      @click.stop="openTagTarget(mod, tag.key)">{{ tag.text }}</n-tag>
                   </span>
 
                   <!-- 分割线：把标签区和操作按钮区分开 -->
@@ -1431,9 +1499,12 @@ function removePackage(node: ModPackageNode) {
                   -->
                   <span class="tag-group">
                     <n-tag v-for="entry in pkg.statuses" :key="entry.key" size="tiny" :bordered="false"
-                      class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)"
-                      :title="pkg.repositoryId ? t('在 MOD 安装中查看') : undefined"
-                      @click.stop="pkg.repositoryId && linkToRepository(pkg.repositoryId)">
+                      class="state-tag" :class="{ 'state-tag--link': !!packageTagTargetId(pkg, entry.key) }"
+                      :color="tagColorForAny(entry.tone)"
+                      :title="packageTagTargetId(pkg, entry.key)
+                        ? t('在 MOD 安装中查看')
+                        : undefined"
+                      @click.stop="openPackageTag(pkg, entry.key)">
                       {{ entry.count ? `${entry.count} ${t(entry.text)}` : t(entry.text) }}
                     </n-tag>
                     <n-tag v-if="!pkg.enabled && !pkg.partial" size="tiny" :bordered="false"

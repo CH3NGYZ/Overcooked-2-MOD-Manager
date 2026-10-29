@@ -231,12 +231,6 @@ const entries = {
   '冲突': ['衝突', 'Conflict', '충돌', '競合'],
   '去卸载': ['去解除安裝', 'Uninstall', '제거하기', 'アンインストールへ'],
   '卸载冲突的 MOD': ['解除安裝衝突的 MOD', 'Uninstall conflicting MOD', '충돌 MOD 제거', '競合 MOD をアンインストール'],
-  '「{target}」与「{owner}」不兼容，需要卸载。继续？': [
-    '「{target}」與「{owner}」不相容，需要解除安裝。繼續？',
-    '"{target}" is incompatible with "{owner}" and must be uninstalled. Continue?',
-    '"{target}"은(는) "{owner}"와(과) 호환되지 않아 제거해야 합니다. 계속할까요?',
-    '「{target}」は「{owner}」と互換性がないため、アンインストールが必要です。続行しますか？',
-  ],
   '「{owner}」与「{target}」不兼容，需要卸载': [
     '「{owner}」與「{target}」不相容，需要解除安裝',
     '"{owner}" is incompatible with "{target}" and must be uninstalled',
@@ -464,6 +458,19 @@ const entries = {
   '可写': ['可寫', 'Writable', '쓰기 가능', '書き込み可'],
   '不可写': ['不可寫', 'Not writable', '쓰기 불가', '書き込み不可'],
   '在 MOD 安装中查看': ['在 MOD 安裝中檢視', 'View in MOD Install', 'MOD 설치에서 보기', 'MOD インストールで表示'],
+  // 缺依赖/冲突标签的跳转：目标是**依赖的**仓库，不是这个 MOD 自己的仓库
+  '在 MOD 安装中查看依赖': [
+    '在 MOD 安裝中檢視依賴',
+    'View dependency in MOD Install',
+    'MOD 설치에서 의존성 보기',
+    'MOD インストールで依存関係を表示',
+  ],
+  '没有可安装的来源': [
+    '沒有可安裝的來源',
+    'No installable source',
+    '설치 가능한 소스 없음',
+    'インストール可能なソースがありません',
+  ],
   '在 MOD 管理中查看': ['在 MOD 管理中檢視', 'View in MOD Manager', 'MOD 관리에서 보기', 'MOD マネージャーで表示'],
   '在页面内定位': ['在頁面內定位', 'Locate on this page', '페이지에서 찾기', 'このページ内で表示'],
   // MOD 管理工具栏与配置编辑器

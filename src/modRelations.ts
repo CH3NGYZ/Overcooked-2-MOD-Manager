@@ -394,6 +394,22 @@ export function primaryRelation(
     ?? unmet[0]
 }
 
+/**
+ * 关系标签点下去该跳到哪个仓库（`undefined` 表示没有可跳转的目标）。
+ *
+ * 「缺依赖」「冲突」描述的是**另一个**插件，所以目标必须是关系解析出的
+ * 那个仓库。跳到当前 MOD 自己的仓库是错的：用户在那里看到的是一张
+ * 毫无问题的卡片，找不到该处理的东西 —— 这正是这条函数要修的 bug。
+ *
+ * 没有可安装来源时返回 `undefined`：线上根本没有那个 GUID，跳过去也
+ * 无处可去，标签就该保持不可点。
+ */
+export function relationJumpRepositoryId(
+  status: Pick<RelationStatus, 'relation' | 'repository'> | undefined,
+): string | undefined {
+  return status?.repository?.id
+}
+
 /* ===== 安装前计划 ===== */
 
 /**

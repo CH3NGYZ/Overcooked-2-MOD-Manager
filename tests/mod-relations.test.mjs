@@ -599,3 +599,42 @@ test('依赖自动选源跳过预发布版本', () => {
   })
   assert.equal(resolveRelation(dep, [], [betaOnly]).state, 'missing')
 })
+
+/* ===== 标签跳转目标 ===== */
+
+const { relationJumpRepositoryId } = await import('../src/modRelations.ts')
+
+/*
+ * 缺依赖 / 冲突标签必须跳到**依赖的**仓库。
+ *
+ * 之前的实现跳到当前 MOD 自己绑定的仓库，于是用户在安装页看到的是一张
+ * 毫无问题的卡片，找不到要装的东西。这里固定「目标取自关系」这条规则。
+ */
+test('关系跳转目标取依赖仓库，而不是当前 MOD 的仓库', () => {
+  const dep = repo({ id: 'cma-repo', name: 'Configuration Manager' })
+  const status = resolveRelation({ kind: 'requires', guid: 'com.example.dep' }, [], [dep])
+  assert.equal(status.repository?.id, 'cma-repo')
+  assert.equal(relationJumpRepositoryId(status), 'cma-repo')
+})
+
+test('没有可安装来源时不给跳转目标（标签保持不可点）', () => {
+  const status = resolveRelation({ kind: 'requires', guid: 'com.example.dep' }, [], [])
+  assert.equal(status.state, 'missing')
+  assert.equal(relationJumpRepositoryId(status), undefined)
+})
+
+test('没有关系问题时也没有跳转目标', () => {
+  assert.equal(relationJumpRepositoryId(undefined), undefined)
+})
+
+/* 冲突同样指向关系里那个仓库（线上有可修复版本时才有目标）。 */
+test('冲突关系的跳转目标同样取关系仓库', () => {
+  const installed = [mod({ guid: 'com.example.dep', version: '0.9' })]
+  const status = resolveRelation(
+    { kind: 'conflicts', guid: 'com.example.dep', max_version: '1.0' },
+    installed,
+    [repo()],
+  )
+  assert.equal(status.state, 'conflict')
+  assert.equal(relationJumpRepositoryId(status), 'dep-repo')
+})

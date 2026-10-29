@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
-import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline, TrashOutline } from '@vicons/ionicons5'
+import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useNotify } from '../useNotify'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
@@ -10,7 +10,7 @@ import { repositoryInstallAction, repositoryStatus, type InstallAction, type Sta
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { buildInstallPlan, planHasActions, primaryRelation, resolveRelations, type InstallPlan, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
-import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
+import { buttonColorFor, tagColorFor, tagColorForAny, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
@@ -20,34 +20,11 @@ import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
-import { useModRemoval } from '../composables/useModRemoval'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import type { Repository, RepositorySource } from '../types'
 
 const message = useNotify()
 const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
-
-/**
- * 冲突 MOD 的卸载：与 MOD 管理页共用同一份流程。
- *
- * 在线卡片不展示「回收站开关」，但文案必须与真实行为一致，
- * 所以仍然读同一个配置项；标题用插件名，这里没有仓库名可显示。
- */
-const { remove } = useModRemoval({
-  deleteCopy: () => (config.value?.recycle_deleted_mods !== false
-    ? {
-        body: (name: string) => t('「{name}」将被移入回收站，可在回收站中恢复。继续？', { name }),
-        action: t('移入回收站'),
-        done: '已移入回收站',
-      }
-    : {
-        body: (name: string) => t('「{name}」将被直接删除，无法恢复。继续？', { name }),
-        action: t('直接删除'),
-        done: '已删除',
-      }),
-  titleOf: (mod) => mod.name,
-  onDone: () => load(),
-})
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦，教程门控也在那里。 */
 const engine = useRepositoryRefresh()
@@ -137,40 +114,13 @@ async function runInstallPlan(repo: Repository, tag?: string): Promise<boolean> 
 }
 
 /** 弹窗给出结果时调用（全部处理完 / 用户取消 / 仍然安装）。 */
+/**
+ * 弹窗给出结果时调用（全部处理完 / 用户取消 / 仍然安装）。
+ */
 async function finishInstallPlan(ready: boolean) {
   installPlanOutcome.value = ready
   // 计划里可能卸载或装过东西，Dashboard 必须重读才能反映现状
   if (installPlan.value.uninstall.length || installPlan.value.install.length) await load()
-}
-
-/**
- * 卡片的「安装依赖」按钮：只跑依赖部分。
- *
- * 与完整安装计划共用同一个弹窗与判定 —— 用户只是想补依赖时，
- * 不应该顺带卸载任何东西，所以这里把计划裁剪成只剩 install 里的依赖条目。
- */
-async function installDependenciesFromCard(repo: Repository) {
-  if (gameBlocked()) return
-  const plan = buildInstallPlan(repo, mods.value, repositories.value)
-  const dependencies: InstallPlan = {
-    uninstall: [],
-    install: plan.install.filter((status) => (status.relation.kind ?? 'requires') === 'requires'),
-    blocked: plan.blocked.filter((status) => (status.relation.kind ?? 'requires') === 'requires'),
-  }
-  if (!dependencies.install.length && !dependencies.blocked.length) return
-
-  installPlan.value = dependencies
-  installPlanTarget.value = repoName(repo)
-  installPlanOutcome.value = null
-  installPlanOpen.value = true
-  await new Promise<void>((resolve) => {
-    const stop = watch(installPlanOutcome, (value) => {
-      if (value === null) return
-      stop()
-      resolve()
-    })
-  })
-  await load()
 }
 
 function openInstall() {
@@ -321,18 +271,37 @@ function repoNote(repo: Repository) {
 /**
  * 一个仓库未满足的第一条关系。
  *
- * 只给「第一条」做快捷入口：卡片左侧按钮位只有一个。优先级由
+ * 只取「第一条」用于卡片提示：卡头只有一个标签位。优先级由
  * `primaryRelation` 决定 —— 冲突优先（可能已经崩游戏），其次能给安装
  * 入口的依赖，最后是只提示的那些。
  *
  * 计算只依赖当前 Dashboard（已装 MOD + 仓库 Release 缓存），
- * 所以刷新完仓库后按钮会自动出现/消失，不需要额外请求。
+ * 所以刷新完仓库后标签会自动出现/消失，不需要额外请求。
  */
 function unmetRelation(repo: Repository): RelationStatus | undefined {
   return primaryRelation(resolveRelations(repo, mods.value, repositories.value))
 }
 
-/** 关系目标的来源名（用于标签文案与跳转）。 */
+/**
+ * 卡头那个关系标签该显示什么（`null` 表示没有问题）。
+ *
+ * 三种未满足状态落到两个标签：
+ *   conflict（冲突 / 不兼容）→ 「冲突」
+ *   missing / installable（缺依赖，能不能一键装都一样）→ 「缺依赖」
+ *
+ * 为什么把 installable 也并进来：卡头**不再是入口**。能不能自动装由
+ * 点底部「安装」后的检查窗决定，这里只负责告诉用户「这张卡还缺点东西」。
+ * 分成两个标签（「缺依赖」vs「安装依赖」按钮）会让卡头看起来像操作区。
+ */
+function relationTag(repo: Repository): { text: string; tone: TagTone } | null {
+  const status = unmetRelation(repo)
+  if (!status) return null
+  return status.state === 'conflict'
+    ? { text: '冲突', tone: 'critical' }
+    : { text: '缺依赖', tone: 'critical' }
+}
+
+/** 关系目标的来源名（用于标签提示）。 */
 function relationTargetName(status: RelationStatus) {
   if (status.repository) return repoName(status.repository)
   if (status.installedMod) return status.installedMod.name
@@ -349,37 +318,6 @@ function relationTitle(status: RelationStatus, repo: Repository) {
     })
   }
   return t('缺少依赖') + '： ' + target
-}
-
-/**
- * 依赖快捷动作。
- *
- * 语义已从「跳过去自己装」升级为「一次装齐这个仓库的全部可安装依赖」：
- * 依赖是**为了让它能用**才装的，逐个跳转让用户来回切页，还把
- * 「哪些还没装」的判断留给了用户。
- */
-function openDependency(status: RelationStatus, repo: Repository) {
-  if (status.state !== 'installable') return
-  void installDependenciesFromCard(repo)
-}
-
-/**
- * 冲突快捷动作：确认后卸载本地那个冲突的 MOD。
- *
- * 在线卡片上不能装任何东西来消除冲突 —— 冲突的解法只有卸载，
- * 所以按钮直接指向卸载确认，而不是跳转或刷新。
- *
- * 卸载流程复用 MOD 管理页的同一份实现（`useModRemoval`）：
- * 后端可能要求「整包删除」再确认一次，自己写简化版会漏掉那个分支。
- */
-function uninstallConflict(status: RelationStatus, repo: Repository) {
-  const target = status.installedMod
-  if (!target) return
-  remove(target, {
-    title: t('卸载冲突的 MOD'),
-    body: (name) => t('「{name}」与「{owner}」不兼容，需要卸载。继续？',
-      { name, owner: repoName(repo) }),
-  })
 }
 
 /* ===== 搜索 ===== */
@@ -736,30 +674,19 @@ defineExpose({ refreshAll, visibleCount })
                   <div class="card-head">
                     <ProviderIcon :provider="repo.provider" :size="30" />
                     <!--
-                      关系提示：未满足时显示在标题左侧。
-                      冲突 → 「去卸载」按钮（装任何东西都解决不了）；
-                      依赖能装 → 「安装依赖」；装不了 → 只给「缺依赖」标签，
-                      因为按钮点下去也解决不了，反而让人以为能修好。
+                      关系提示：**只做提示，不做入口**。
+                      真正的处理（卸冲突、换版本、装依赖）在点底部「安装」时
+                      由安装前检查一次跑完，所以这里不再放「去卸载」「安装依赖」
+                      按钮 —— 同一件事给两个入口，只会让人先去点标题前那个更显眼
+                      的按钮，结果装完依赖发现主包没装。
+                      「缺依赖」是纯标签（无可安装来源时也用它），冲突用「冲突」标签。
                     -->
-                    <n-button v-if="unmetRelation(repo)?.state === 'conflict'" size="tiny"
-                      :style="buttonColorFor('critical', 'soft')" class="dep-action"
-                      :title="relationTitle(unmetRelation(repo)!, repo)"
-                      @click.stop="uninstallConflict(unmetRelation(repo)!, repo)">
-                      <template #icon><TrashOutline width="13" height="13" /></template>
-                      {{ t('去卸载') }}
-                    </n-button>
-                    <n-tag v-else-if="unmetRelation(repo)?.state === 'missing'" size="tiny" :bordered="false"
-                      class="state-tag dep-tag" :color="tagColorFor('critical')"
+                    <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
+                      class="state-tag dep-tag"
+                      :color="tagColorFor(relationTag(repo)!.tone)"
                       :title="relationTitle(unmetRelation(repo)!, repo)">
-                      {{ t('缺依赖') }}
+                      {{ t(relationTag(repo)!.text) }}
                     </n-tag>
-                    <n-button v-else-if="unmetRelation(repo)?.state === 'installable'" size="tiny"
-                      :style="buttonColorFor('moderate', 'soft')" class="dep-action"
-                      :title="t('安装依赖') + '： ' + relationTargetName(unmetRelation(repo)!)"
-                      @click.stop="openDependency(unmetRelation(repo)!, repo)">
-                      <template #icon><DownloadOutline width="13" height="13" /></template>
-                      {{ t('安装依赖') }}
-                    </n-button>
                     <span class="card-title">{{ repoName(repo) }}</span>
                     <span class="stat stat-status">
                       <!--
@@ -865,26 +792,13 @@ defineExpose({ refreshAll, visibleCount })
                 @click="detailId = repo.id">
                 <div class="card-head">
                   <ProviderIcon :provider="repo.provider" :size="30" />
-                  <!-- 关系提示：社区仓库卡片与上方源码树卡片共用同一套判定 -->
-                  <n-button v-if="unmetRelation(repo)?.state === 'conflict'" size="tiny"
-                    :style="buttonColorFor('critical', 'soft')" class="dep-action"
-                    :title="relationTitle(unmetRelation(repo)!, repo)"
-                    @click.stop="uninstallConflict(unmetRelation(repo)!, repo)">
-                    <template #icon><TrashOutline width="13" height="13" /></template>
-                    {{ t('去卸载') }}
-                  </n-button>
-                  <n-tag v-else-if="unmetRelation(repo)?.state === 'missing'" size="tiny" :bordered="false"
-                    class="state-tag dep-tag" :color="tagColorFor('critical')"
+                  <!-- 关系提示：社区仓库卡片与上方源码树卡片共用同一套判定（只提示，不做入口） -->
+                  <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
+                    class="state-tag dep-tag"
+                    :color="tagColorFor(relationTag(repo)!.tone)"
                     :title="relationTitle(unmetRelation(repo)!, repo)">
-                    {{ t('缺依赖') }}
+                    {{ t(relationTag(repo)!.text) }}
                   </n-tag>
-                  <n-button v-else-if="unmetRelation(repo)?.state === 'installable'" size="tiny"
-                    :style="buttonColorFor('moderate', 'soft')" class="dep-action"
-                    :title="t('安装依赖') + '： ' + relationTargetName(unmetRelation(repo)!)"
-                    @click.stop="openDependency(unmetRelation(repo)!, repo)">
-                    <template #icon><DownloadOutline width="13" height="13" /></template>
-                    {{ t('安装依赖') }}
-                  </n-button>
                   <span class="card-title">{{ repoName(repo) }}</span>
                   <span class="stat stat-status">
                       <!--
@@ -1070,11 +984,9 @@ defineExpose({ refreshAll, visibleCount })
   min-width: 0;
 }
 /*
- * 依赖提示：固定在标题左侧、不随标题压缩消失。
- * 标题自己 flex:1 + 省略号，所以空间不足时先压标题，依赖按钮保持完整 ——
- * 它承载的是「点了能解决」的动作，被挤掉等于功能消失。
+ * 关系提示标签：固定在标题左侧、不随标题压缩消失。
+ * 标题自己 flex:1 + 省略号，所以空间不足时先压标题，标签保持完整。
  */
-.card-head .dep-action,
 .card-head .dep-tag {
   flex: 0 0 auto;
 }

@@ -11,7 +11,7 @@ import AppModal from '../components/AppModal.vue'
 import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
-import DiyLevelSettings from '../components/settings/DiyLevelSettings.vue'
+import DiyLevelPanel from '../components/settings/DiyLevelPanel.vue'
 import { tagColorFor } from '../theme'
 import { FOCUS_QUERY } from '../crossLink'
 import { api } from '../services/tauri'
@@ -22,7 +22,7 @@ import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig 
 const message = useNotify()
 const route = useRoute()
 const router = useRouter()
-const { load, ensureLoaded, game } = useDashboard()
+const { load, ensureLoaded, game, mods } = useDashboard()
 
 const version = ref('')
 const checking = ref(false)
@@ -32,6 +32,8 @@ const savingPath = ref(false)
 const pathDrawer = ref(false)
 /** BepInEx 管理抽屉（右侧滑入）。 */
 const bepinexDrawer = ref(false)
+/** DIYLevel 管理抽屉（右侧滑入，与 BepInEx 同形态）。 */
+const diyLevelDrawer = ref(false)
 const tokenDrawer = ref(false)
 const githubToken = ref('')
 const giteeToken = ref('')
@@ -94,6 +96,36 @@ const bepinexSummary = computed(() => {
   return `${version} · ${enabled ? t('框架已启用') : t('框架已禁用')}`
 })
 
+/* ===== DIYLevel 框架卡片摘要（与 BepInEx 对齐） ===== */
+
+/** DIYLevel 的稳定 GUID，与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
+const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
+
+/**
+ * 从 MOD 扫描结果里取 DIYLevel 那一项。
+ *
+ * 用 `mods` 而不是再调一次 `diy_level_info`：设置页已经拿到 Dashboard，
+ * 多一次 IPC 只会让摘要比抽屉慢半拍。抽屉里才用专用命令（它还带地图数量）。
+ */
+const diyLevelMod = computed(() =>
+  (mods.value ?? []).find((mod) =>
+    !!mod.guid && mod.guid.trim().toLowerCase() === DIYLEVEL_GUID))
+
+const diyLevelInstalled = computed(() => !!diyLevelMod.value)
+const diyLevelEnabled = computed(() => diyLevelMod.value?.enabled === true)
+
+/**
+ * 卡片副标题：版本 + 启用状态，与 BepInEx 的行文一致。
+ * 未安装时直接说明它是干什么的，避免用户不知道这个框架有什么用。
+ */
+const diyLevelSummary = computed(() => {
+  if (!diyLevelInstalled.value) return t('尚未安装，点击右侧按钮安装')
+  const version = diyLevelMod.value?.version
+    ? `${t('版本')} ${diyLevelMod.value.version}`
+    : t('版本未知')
+  return `${version} · ${diyLevelEnabled.value ? t('框架已启用') : t('框架已禁用')}`
+})
+
 /* ===== 权限：默认普通权限，仅在文件访问被拒时提权 ===== */
 const permission = ref<PermissionStatus | null>(null)
 const relaunching = ref(false)
@@ -133,6 +165,9 @@ onMounted(async () => {
 const SETTINGS_PANELS: Record<string, () => void> = {
   bepinex: () => {
     bepinexDrawer.value = true
+  },
+  diylevel: () => {
+    diyLevelDrawer.value = true
   },
   path: () => {
     pathDrawer.value = true
@@ -353,17 +388,36 @@ async function clearTokens() {
       </template>
     </SettingsRow>
     <!--
-      DIYLevel 框架：它本质是一个 MOD，但承担「框架」角色（自制地图靠它加载），
-      所以在设置页与 BepInEx 并列，而不是让用户去 MOD 列表里自己找。
-      安装动作复用 MOD 安装页那条链路，不另写一套。
+      DIYLevel 框架：与 BepInEx 完全同形态 —— 一行摘要 + 右侧抽屉管理。
+      它是 MOD（GUID `dev.gua.overcooked.diylevel`）但承担框架角色，
+      同一类东西两种交互会让人不知道该去哪儿找。
     -->
-    <DiyLevelSettings />
+    <SettingsRow :title="t('DIYLevel 框架管理')"
+      :description="diyLevelSummary">
+      <template #right>
+        <n-tag size="small" :bordered="false" class="state-tag"
+          :color="tagColorFor(diyLevelInstalled ? 'accent' : 'moderate')">
+          {{ diyLevelInstalled ? t('已安装') : t('未安装') }}
+        </n-tag>
+        <n-button size="small" :type="diyLevelInstalled ? 'default' : 'primary'"
+          :secondary="diyLevelInstalled" @click.stop="diyLevelDrawer = true">
+          {{ diyLevelInstalled ? t('管理') : t('安装') }}
+        </n-button>
+      </template>
+    </SettingsRow>
   </SettingsGroup>
 
   <!-- BepInEx 管理抽屉：从右向左滑入，内容由 BepInExPanel 承担 -->
   <n-drawer v-model:show="bepinexDrawer" :width="520" placement="right">
     <n-drawer-content :title="t('BepInEx 框架管理')" closable :native-scrollbar="false">
       <BepInExPanel />
+    </n-drawer-content>
+  </n-drawer>
+
+  <!-- DIYLevel 管理抽屉：与 BepInEx 同一宽度、同一位置、同一交互 -->
+  <n-drawer v-model:show="diyLevelDrawer" :width="520" placement="right">
+    <n-drawer-content :title="t('DIYLevel 框架管理')" closable :native-scrollbar="false">
+      <DiyLevelPanel />
     </n-drawer-content>
   </n-drawer>
 

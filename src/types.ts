@@ -177,6 +177,8 @@ export interface DiyLevelInfo {
   dll_file?: string | null
   /** 地图目录 `BepInEx/plugins/OC2DIYLevel/levels` 是否存在。 */
   has_levels_dir: boolean
+  /** 地图集数量：只数 `levels/` 下的文件夹（散文件不算）。 */
+  level_packs: number
 }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }

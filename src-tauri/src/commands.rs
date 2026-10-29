@@ -5050,6 +5050,7 @@ pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, St
             version: None,
             dll_file: None,
             has_levels_dir: false,
+            level_packs: 0,
         });
     };
     let root = PathBuf::from(&game_root);
@@ -5075,7 +5076,23 @@ pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, St
         version: target.and_then(|item| item.version.clone()),
         dll_file: target.map(|item| item.dll_file.clone()),
         has_levels_dir: levels_dir.is_dir(),
+        level_packs: count_level_packs(&levels_dir),
     })
+}
+
+/// 地图集数量 = `levels/` 下的文件夹个数。
+///
+/// 只数目录：`levels/` 里直接放的散文件（说明文档、缩略图、配置）不属于
+/// 任何地图集。目录不存在或不可读都返回 0 —— 这是只读的展示信息，
+/// 不该因为权限问题让整个面板报错。
+fn count_level_packs(levels_dir: &Path) -> u32 {
+    let Ok(entries) = std::fs::read_dir(levels_dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .count() as u32
 }
 
 /// 切换 DIYLevel 框架的启用状态。
@@ -9760,5 +9777,41 @@ mod package_confirmation_tests {
             true,
             false
         ));
+    }
+}
+
+/// DIYLevel 地图集计数。
+///
+/// 约定：`levels/` 下**每个文件夹算一个地图集**，直接放在 `levels/` 里的
+/// 散文件（说明、缩略图）不属于任何地图集。这条口径要和总览、设置抽屉
+/// 显示的「地图集 N」完全一致，所以钉在这里。
+#[cfg(test)]
+mod diy_level_packs_tests {
+    use super::*;
+
+    #[test]
+    fn counts_only_directories_under_levels() {
+        let root = std::env::temp_dir().join(format!("oc2-diy-levels-{}", uuid::Uuid::new_v4()));
+        let levels = root.join("levels");
+        std::fs::create_dir_all(&levels).unwrap();
+
+        // 空目录：0 个地图集
+        assert_eq!(count_level_packs(&levels), 0);
+
+        // 两个文件夹 + 三个散文件 → 只数出来 2
+        std::fs::create_dir_all(levels.join("Pack A")).unwrap();
+        std::fs::create_dir_all(levels.join("Pack B")).unwrap();
+        std::fs::write(levels.join("readme.txt"), b"notes").unwrap();
+        std::fs::write(levels.join("preview.png"), b"png").unwrap();
+        std::fs::write(levels.join("config.json"), b"{}").unwrap();
+        assert_eq!(count_level_packs(&levels), 2);
+
+        // 嵌套目录只按顶层算：Pack A 里再建一个不算新地图集
+        std::fs::create_dir_all(levels.join("Pack A/inner")).unwrap();
+        assert_eq!(count_level_packs(&levels), 2);
+
+        // 目录不存在：0，不报错
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(count_level_packs(&levels), 0);
     }
 }

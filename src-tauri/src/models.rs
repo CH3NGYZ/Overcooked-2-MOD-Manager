@@ -60,6 +60,12 @@ pub struct DiyLevelInfo {
     /// 本地地图目录（`BepInEx/plugins/OC2DIYLevel/levels`）是否存在。
     #[serde(default)]
     pub has_levels_dir: bool,
+    /// 地图集数量：只看 `levels/` 下的**文件夹**个数。
+    ///
+    /// 一个地图集就是 `levels/` 下的一个目录，目录里的散文件（readme、
+    /// 缩略图等）不属于任何地图集，不计数。目录不可读时为 0。
+    #[serde(default)]
+    pub level_packs: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

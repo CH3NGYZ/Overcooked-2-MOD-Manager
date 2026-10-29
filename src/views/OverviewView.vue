@@ -98,6 +98,7 @@ const recycleEntries = ref<ModRecycleEntry[]>([])
 onMounted(() => {
   void ensureLoaded()
   void loadRecycle()
+  void loadDiyLevel()
 })
 
 /** 回收站条目：只用来在卡片上显示有多少待清理。 */
@@ -152,6 +153,76 @@ async function toggleFramework(enabled: boolean) {
 /** 未安装时跳转到设置页的框架管理抽屉。 */
 function openFrameworkSettings() {
   void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'bepinex' } })
+}
+
+/* ===== 卡片 1b：DIYLevel 框架（紧跟 BepInEx） ===== */
+
+/** DIYLevel 的稳定 GUID：与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
+const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
+
+const diyLevelMod = computed(() =>
+  mods.value.find((mod) =>
+    !!mod.guid && mod.guid.trim().toLowerCase() === DIYLEVEL_GUID))
+
+const diyLevelOk = computed(() => !!diyLevelMod.value)
+const diyLevelEnabled = computed(() => diyLevelMod.value?.enabled === true)
+const diyLevelValue = computed(() => {
+  if (!diyLevelOk.value) return t('未安装')
+  return diyLevelEnabled.value ? t('已启用') : t('已禁用')
+})
+
+/**
+ * 地图集数量。
+ *
+ * 只数 `levels/` 下的**文件夹**（一个文件夹 = 一个地图集），散文件不算。
+ * 这个数据只有专用的 `diy_level_info` 命令才有（MOD 扫描不带它），
+ * 所以要单独读一次；失败按 0 处理，不能让整张卡片报错。
+ */
+const diyLevelPacks = ref(0)
+const diyLevelLoading = ref(false)
+
+async function loadDiyLevel() {
+  diyLevelLoading.value = true
+  try {
+    const info = await api.diyLevelInfo()
+    diyLevelPacks.value = info.level_packs ?? 0
+  } catch {
+    diyLevelPacks.value = 0
+  } finally {
+    diyLevelLoading.value = false
+  }
+}
+
+const diyLevelSub = computed(() => {
+  if (!diyLevelOk.value) return t('安装后才能加载自制地图')
+  const version = diyLevelMod.value?.version ?? t('版本未知')
+  return `${t('版本')} ${version} · ${t('地图集')} ${diyLevelPacks.value}`
+})
+
+/** 切换 DIYLevel 启用状态：走后端与 MOD 列表相同的 .dll 改名逻辑。 */
+async function toggleDiyLevel(enabled: boolean) {
+  if (working.value) return
+  working.value = true
+  try {
+    const result = await api.setDiyLevelEnabled(enabled)
+    if (result.ok) {
+      message.success(result.message)
+      await load()
+      // 开关不改地图文件，但重读一次能顺带刷新版本/地图集摘要
+      await loadDiyLevel()
+    } else {
+      message.error(result.message)
+    }
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : String(reason))
+  } finally {
+    working.value = false
+  }
+}
+
+/** 未安装/管理时跳设置页的 DIYLevel 抽屉。 */
+function openDiyLevelSettings() {
+  void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'diylevel' } })
 }
 
 /* ===== 卡片 2：已安装 MOD（含可更新数量） ===== */
@@ -292,6 +363,24 @@ async function closeRecycle() {
             :disabled="working" :title="t('框架启用（游戏加载 MOD）')"
             @click.stop @update:value="toggleFramework" />
           <n-button v-else size="small" type="primary" @click.stop="openFrameworkSettings">
+            <template #icon><AddCircleOutline width="14" height="14" /></template>
+            {{ t('安装框架') }}
+          </n-button>
+        </template>
+      </StatCard>
+
+      <!--
+        1b. DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转），紧跟其后。
+            数值是启用状态，副标题给出版本与地图集数量。
+      -->
+      <StatCard :label="t('DIYLevel 框架')" :value="diyLevelValue"
+        :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
+        clickable @click="openDiyLevelSettings">
+        <template #action>
+          <n-switch v-if="diyLevelOk" size="small" :value="diyLevelEnabled"
+            :disabled="working" :title="t('框架启用（游戏加载此框架）')"
+            @click.stop @update:value="toggleDiyLevel" />
+          <n-button v-else size="small" type="primary" @click.stop="openDiyLevelSettings">
             <template #icon><AddCircleOutline width="14" height="14" /></template>
             {{ t('安装框架') }}
           </n-button>

@@ -14,7 +14,7 @@ import type { TagTone } from './theme'
  */
 
 /** 动作种类：决定调用哪个 handler。 */
-export type StatusActionKind = 'update' | 'refresh'
+export type StatusActionKind = 'update' | 'refresh' | 'install-dependency'
 
 export interface StatusActionSpec {
   kind: StatusActionKind
@@ -47,19 +47,40 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
   repository_unavailable: { kind: 'refresh', label: '刷新', tone: 'moderate' },
   refresh_failed: { kind: 'refresh', label: '刷新', tone: 'moderate' },
   bound_repository_missing: { kind: 'refresh', label: '刷新', tone: 'critical' },
+  /*
+   * 缺依赖 → 「去安装」。色调用 critical，与「缺依赖」标签同档 ——
+   * 用户看到的标签与按钮是同一种颜色，不需要额外解释它们是一回事。
+   */
+  missing_dependency: { kind: 'install-dependency', label: '去安装', tone: 'critical' },
 }
+
+/**
+ * 标签列表里可能同时有多件该处理的事，按钮位只有一个，按这里选。
+ *
+ * 不能按标签传入顺序选：那个顺序是**严重度**排序，缺依赖（critical）
+ * 会排在可更新（moderate）前面，于是用户看到「去安装」而真正该先做的
+ * 是更新。这里的优先级独立表达「先给哪个动作」：
+ *
+ *   update            用户本来就想做的事，做完可能连依赖也一起换了
+ *   install-dependency 让 MOD 能跑起来，比刷新更接近「解决问题」
+ *   refresh           只是重新取数据，不直接改变可用性
+ */
+const ACTION_PRIORITY: StatusActionKind[] = ['update', 'install-dependency', 'refresh']
 
 /**
  * 按状态标签列表解析出唯一的快捷动作。
  *
- * 一个 MOD / 一个包可能同时带着多条标签（例如「可更新」+「重复」），
- * 但按钮位只有一个，所以按传入顺序取**第一个**有动作的状态 ——
- * 调用方传入的顺序本身按严重度排好了（与标签展示顺序一致），
- * 因此这里不需要再排序，也不会出现两个按钮抢同一个位置。
+ * 同一标签列表里可能有多个可执行动作，按 `ACTION_PRIORITY` 取最优先的；
+ * 同一 kind 只保留第一次出现（不需要再比较，标签已按严重度排好）。
  */
 export function statusActionFor(labels: readonly string[] | undefined): StatusActionSpec | undefined {
+  const available = new Map<StatusActionKind, StatusActionSpec>()
   for (const label of labels ?? []) {
     const action = STATUS_ACTIONS[label]
+    if (action && !available.has(action.kind)) available.set(action.kind, action)
+  }
+  for (const kind of ACTION_PRIORITY) {
+    const action = available.get(kind)
     if (action) return action
   }
   return undefined

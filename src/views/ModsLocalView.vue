@@ -10,11 +10,12 @@ import {
   NSpin, NSwitch, NTag,
 } from 'naive-ui'
 import {
-  ArrowUpCircleOutline, DocumentTextOutline, FolderOpenOutline, RefreshOutline, SettingsOutline,
-  TrashOutline,
+  ArrowUpCircleOutline, DocumentTextOutline, DownloadOutline, FolderOpenOutline, RefreshOutline,
+  SettingsOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
+import { resolveDependencies } from '../modDependencies'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
   installedModTags, modUpdateVerdict, replaceVersionConclusion,
@@ -198,6 +199,16 @@ async function refreshLocal() {
  */
 const effectiveMods = computed<InstalledMod[]>(() =>
   mods.value.map((mod) => {
+    /*
+     * 缺依赖判定先算：它和版本结论是两件独立的事（可以同时「有更新」和
+     * 「缺依赖」），所以要各自往 labels 里加，不能互相替换。
+     */
+    const dependencyLabel = missingDependencyLabel(mod)
+    const withDependency = (labels: InstalledMod['labels']): InstalledMod['labels'] => {
+      const base = (labels as string[] | undefined)?.filter((key) => key !== 'missing_dependency') ?? []
+      return (dependencyLabel ? ['missing_dependency', ...base] : base) as InstalledMod['labels']
+    }
+
     const verdict = modUpdateVerdict(mod, repositories.value)
     if (verdict.known) {
       /*
@@ -209,10 +220,10 @@ const effectiveMods = computed<InstalledMod[]>(() =>
       return {
         ...mod,
         update_available: verdict.updateAvailable,
-        labels: replaceVersionConclusion(
+        labels: withDependency(replaceVersionConclusion(
           mod.labels as string[] | undefined,
           verdict.updateAvailable ? 'update_available' : 'latest',
-        ) as InstalledMod['labels'],
+        ) as InstalledMod['labels']),
       } as InstalledMod
     }
     // 仓库还在抓取：明确显示「检查中」，不把旧结论当现状。
@@ -223,12 +234,29 @@ const effectiveMods = computed<InstalledMod[]>(() =>
       return {
         ...mod,
         update_available: false,
-        labels: replaceVersionConclusion(mod.labels as string[] | undefined, 'checking') as InstalledMod['labels'],
+        labels: withDependency(replaceVersionConclusion(mod.labels as string[] | undefined, 'checking') as InstalledMod['labels']),
       } as InstalledMod
     }
-    return mod
+    return { ...mod, labels: withDependency(mod.labels) } as InstalledMod
   }),
 )
+
+/**
+ * 本地 MOD 是否缺依赖（只看它自己绑定的仓库声明）。
+ *
+ * 只判断「有没有缺」，不给可安装来源 —— 那个由 `unmetDependency` 在
+ * 安装页负责。本地卡片只需要一个标签提醒用户去处理。
+ *
+ * 用**已安装版本**筛 `release_requires`：装的是 1.0 就该按 1.0 的依赖算，
+ * 而不是最新 Release 的要求。
+ */
+function missingDependencyLabel(mod: InstalledMod): boolean {
+  if (mod.is_dependency) return false
+  const repo = repositoryForMod(repositories.value, mod)
+  if (!repo) return false
+  const statuses = resolveDependencies(repo, mods.value, repositories.value, mod.version)
+  return statuses.some((status) => status.state !== 'satisfied')
+}
 
 /** 某个仓库当前是否正在抓取 Release（单仓刷新或整批刷新都算）。 */
 function isRepositoryRefreshing(repositoryId: string) {
@@ -780,6 +808,16 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
       // 刷新针对仓库而不是某个 DLL，解析不出仓库就不给按钮
       if (!repository) return undefined
       return { action, repository }
+    case 'install-dependency':
+      /*
+       * 「去安装」只对本地 MOD 有意义，且必须有仓库能提供依赖。
+       *
+       * 这里不做「有没有可安装来源」的判定 —— 那是安装页的职责
+       * （`unmetDependency`）。本地卡片只需要区分「缺」和「不缺」，
+       * 点击后跳去安装页，由那边决定给按钮还是只给标签。
+       */
+      if (!repository) return undefined
+      return { action, repository }
   }
 }
 
@@ -820,6 +858,9 @@ function runCardAction(mod: InstalledMod) {
   if (!context) return
   if (context.action.kind === 'update' && context.repository) {
     void previewRepository(context.repository)
+  } else if (context.action.kind === 'install-dependency' && context.repository) {
+    // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
+    linkToRepository(context.repository.id)
   } else if (context.repository) {
     void refreshRepository(context.repository)
   }
@@ -829,6 +870,7 @@ function runPackageAction(pkg: ModPackageNode) {
   const context = packageAction(pkg)
   if (!context || !context.repository) return
   if (context.action.kind === 'update') void previewRepository(context.repository)
+  else if (context.action.kind === 'install-dependency') linkToRepository(context.repository.id)
   else void refreshRepository(context.repository)
 }
 
@@ -1236,6 +1278,7 @@ function removePackage(node: ModPackageNode) {
                       :loading="!!previewing[bindingRepositoryId(mod) ?? ''] || !!refreshing[bindingRepositoryId(mod) ?? '']"
                       :disabled="!!game?.kitchen_running" @click.stop="runCardAction(mod)">
                       <ArrowUpCircleOutline v-if="actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
+                      <DownloadOutline v-else-if="actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
                       <RefreshOutline v-else width="14" height="14" />
                       {{ t(actionByDll[mod.dll_file].label) }}
                     </n-button>
@@ -1339,6 +1382,7 @@ function removePackage(node: ModPackageNode) {
                       :disabled="!!game?.kitchen_running"
                       @click.stop="runPackageAction(pkg)">
                       <ArrowUpCircleOutline v-if="pkg.action.kind === 'update'" width="14" height="14" />
+                      <DownloadOutline v-else-if="pkg.action.kind === 'install-dependency'" width="14" height="14" />
                       <RefreshOutline v-else width="14" height="14" />
                       {{ t(pkg.action.label) }}
                     </n-button>

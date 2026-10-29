@@ -124,3 +124,59 @@ test('firstUnmetDependency 取第一条未满足的', () => {
   assert.equal(firstUnmetDependency(statuses)?.dependency.guid, 'other')
   assert.equal(firstUnmetDependency([statuses[0]]), undefined)
 })
+
+/*
+ * 按 Release 覆盖依赖：同一 MOD 的不同大版本可以依赖不同版本的基础库。
+ * A 1.0 要 B ≥2.0，A 1.1 要 B ≥3.0 —— 仓库级 requires 表达不了这种差异。
+ */
+test('requiresForRelease 按版本选最高的匹配覆盖', async () => {
+  const { requiresForRelease } = await import('../src/modDependencies.ts')
+  const owner = repo({
+    requires: [{ guid: 'b', min_version: '2.0' }],
+    release_requires: [
+      { version: '1.1', requires: [{ guid: 'b', min_version: '3.0' }] },
+      { version: '1.5', requires: [{ guid: 'b', min_version: '4.0' }] },
+    ],
+  })
+  // 1.0 低于所有覆盖门槛 → 用默认
+  assert.equal(requiresForRelease(owner, '1.0')[0].min_version, '2.0')
+  // 1.1 命中第一条
+  assert.equal(requiresForRelease(owner, '1.1')[0].min_version, '3.0')
+  // 1.6 命中更高那条（取最大匹配，不是第一条匹配）
+  assert.equal(requiresForRelease(owner, '1.6')[0].min_version, '4.0')
+})
+
+test('没有版本号时只用仓库级默认声明', async () => {
+  const { requiresForRelease } = await import('../src/modDependencies.ts')
+  const owner = repo({
+    requires: [{ guid: 'b', min_version: '2.0' }],
+    release_requires: [{ version: '1.0', requires: [{ guid: 'b', min_version: '9.0' }] }],
+  })
+  assert.equal(requiresForRelease(owner, null)[0].min_version, '2.0')
+  assert.equal(requiresForRelease(owner, '')[0].min_version, '2.0')
+})
+
+test('覆盖是整体替换而不是合并', async () => {
+  const { requiresForRelease } = await import('../src/modDependencies.ts')
+  const owner = repo({
+    requires: [{ guid: 'old', min_version: '' }],
+    release_requires: [{ version: '2.0', requires: [{ guid: 'new', min_version: '' }] }],
+  })
+  const result = requiresForRelease(owner, '2.0')
+  assert.equal(result.length, 1)
+  assert.equal(result[0].guid, 'new', '旧依赖应被替换掉，不是并存')
+})
+
+test('resolveDependencies 接受 releaseVersion 并按覆盖后的声明判定', async () => {
+  const { resolveDependencies } = await import('../src/modDependencies.ts')
+  const b = repo({ id: 'b-repo', plugin_guid: 'b', name: 'B' })
+  const owner = repo({
+    id: 'owner', plugin_guid: 'owner', name: 'Owner',
+    requires: [{ guid: 'b', min_version: '2.0' }],
+    release_requires: [{ version: '1.1', requires: [{ guid: 'b', min_version: '3.0' }] }],
+  })
+  // 本地 B 是 2.5：默认要求（≥2.0）满足，但 1.1 的要求（≥3.0）不满足
+  const installed = [mod({ guid: 'b', version: '2.5' })]
+  assert.equal(resolveDependencies(owner, installed, [b], '1.0')[0].state, 'satisfied')
+  assert.equal(resolveDependencies(owner, installed, [b], '1.1')[0].state, 'installable')
+})

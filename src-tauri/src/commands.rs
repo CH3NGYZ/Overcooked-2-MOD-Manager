@@ -4340,6 +4340,12 @@ pub fn save_repository(
         .find(|repo| repo.id == id)
         .map(|repo| repo.requires.clone())
         .unwrap_or_default();
+    let existing_release_requires = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == id)
+        .map(|repo| repo.release_requires.clone())
+        .unwrap_or_default();
     let mut name_i18n = patch.name_i18n.unwrap_or_else(|| {
         existing_translations
             .as_ref()
@@ -4418,6 +4424,7 @@ pub fn save_repository(
         local_original_filename: patch.local_original_filename,
         // None = 本次编辑没提交依赖列表，保留原值
         requires: patch.requires.unwrap_or(existing_requires),
+        release_requires: patch.release_requires.unwrap_or(existing_release_requires),
         version_regex: patch.version_regex,
         max_release_count: patch.max_release_count.clamp(1, 100),
         download_threads,

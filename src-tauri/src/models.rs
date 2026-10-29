@@ -336,6 +336,30 @@ pub struct RepositoryDependency {
     pub optional: bool,
 }
 
+/// 按 Release 版本覆盖默认依赖。
+///
+/// 场景：同一个 MOD 的不同大版本依赖不同版本的基础库 ——
+/// `A 1.0` 要 `B ≥ 2.0`，`A 1.1` 要 `B ≥ 3.0`。仓库级的 `requires`
+/// 无法表达这种差异（它是固定值），所以额外提供这张表：
+///
+/// ```toml
+/// [[repositories.release_requires]]
+/// version = "1.1"          # 从 1.1 起（含）生效
+/// requires = [{ guid = "...", min_version = "3.0" }]
+/// ```
+///
+/// 匹配规则：取**满足 `version <= 当前 Release 版本` 的最大那条**，
+/// 其 `requires` 整体替换仓库级 `requires`（不是合并 —— 合并会让
+/// 「新版降低要求」无法表达）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReleaseDependencyOverride {
+    /// 生效的最低 Release 版本（含）。用项目版本规则比较。
+    pub version: String,
+    /// 从该版本起使用的依赖列表（整体替换，不合并）。
+    #[serde(default)]
+    pub requires: Vec<RepositoryDependency>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryConfig {
     pub id: String,
@@ -380,6 +404,9 @@ pub struct RepositoryConfig {
     /// 给出快捷安装入口，否则只显示「缺依赖」标签。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<RepositoryDependency>,
+    /// 按 Release 版本覆盖 `requires`（见 `ReleaseDependencyOverride`）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_requires: Vec<ReleaseDependencyOverride>,
     /// Optional regular expression applied to the installed MOD version when
     /// binding a local plugin to this repository.
     #[serde(default)]
@@ -671,6 +698,9 @@ pub struct RepositoryExport {
     /// 依赖声明（与 `RepositoryConfig` 同名字段对应，导入导出时保留）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<RepositoryDependency>,
+    /// 按 Release 版本覆盖依赖的规则（与 `RepositoryConfig` 同名字段对应）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_requires: Vec<ReleaseDependencyOverride>,
     #[serde(default)]
     pub version_regex: String,
     #[serde(default)]
@@ -900,6 +930,9 @@ pub struct RepositoryPatch {
     /// 依赖声明；`None` 表示本次编辑不修改依赖列表。
     #[serde(default)]
     pub requires: Option<Vec<RepositoryDependency>>,
+    /// 按 Release 覆盖依赖的规则；`None` 表示本次编辑不修改。
+    #[serde(default)]
+    pub release_requires: Option<Vec<ReleaseDependencyOverride>>,
     #[serde(default)]
     pub version_regex: String,
     #[serde(default = "default_max_release_count")]

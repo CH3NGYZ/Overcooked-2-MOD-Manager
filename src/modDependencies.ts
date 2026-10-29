@@ -34,6 +34,40 @@ function sameGuid(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase()
 }
 
+/**
+ * 取某个 Release 版本适用的依赖列表。
+ *
+ * 仓库级 `requires` 是默认值；`release_requires` 里的条目按
+ * 「`version` ≤ 当前 Release 版本」筛选，取**匹配到的最高那条**，
+ * 用它的 `requires` **整体替换**默认值（不是合并 ——
+ * 合并会让「新版本降低要求」无法表达）。
+ *
+ * 传空 `releaseVersion` 时只用默认值：调用方拿不到版本号时，
+ * 无法判断该用哪条覆盖规则，硬套一条会比不给更糟。
+ */
+export function requiresForRelease(
+  repo: Repository,
+  releaseVersion: string | null | undefined,
+): RepositoryDependency[] {
+  const base = repo.requires ?? []
+  const overrides = repo.release_requires ?? []
+  const current = releaseVersion?.trim()
+  if (!current || !overrides.length) return base
+
+  let best: { requires: RepositoryDependency[]; matched: string } | undefined
+  for (const override of overrides) {
+    const gate = override.version?.trim()
+    if (!gate) continue
+    const compared = compareVersions(current, gate)
+    // 当前版本 >= 该条的生效版本 才算命中
+    if (compared === null || compared < 0) continue
+    if (!best || (compareVersions(gate, best.matched) ?? -1) > 0) {
+      best = { requires: override.requires ?? [], matched: gate }
+    }
+  }
+  return best ? best.requires : base
+}
+
 /** 本地是否装了某个 GUID（含被禁用的插件 —— 禁用不等于没装）。 */
 function installedForGuid(mods: readonly InstalledMod[], guid: string): InstalledMod | undefined {
   return mods.find((mod) => !!mod.guid && sameGuid(mod.guid, guid))
@@ -97,13 +131,19 @@ export function resolveDependency(
  *
  * 可选依赖（`optional: true`）不参与判定：它们缺失是正常状态，
  * 提示出来只会变成噪音。
+ *
+ * `releaseVersion` 用于按 Release 覆盖依赖：同一 MOD 的不同大版本可以
+ * 依赖不同版本的基础库（A 1.0 要 B ≥2.0，A 1.1 要 B ≥3.0）。
+ * 不传时只用仓库级默认声明。
  */
 export function resolveDependencies(
   repo: Repository,
   mods: readonly InstalledMod[],
   repositories: readonly Repository[],
+  releaseVersion?: string | null,
 ): DependencyStatus[] {
-  const required = (repo.requires ?? []).filter((dependency) => !dependency.optional)
+  const declared = requiresForRelease(repo, releaseVersion)
+  const required = declared.filter((dependency) => !dependency.optional)
   if (!required.length) return []
   /*
    * 查找可安装来源时排除仓库自身：一个 MOD 声明依赖自己的 GUID 是配置错误，

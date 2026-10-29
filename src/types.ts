@@ -46,6 +46,19 @@ export interface RepositoryDependency {
   optional?: boolean
 }
 
+/**
+ * 按 Release 版本覆盖依赖。
+ *
+ * 同一 MOD 的不同大版本可以依赖不同版本的基础库。匹配规则：
+ * 取「`version` ≤ 当前 Release 版本」的最高那条，其 `requires`
+ * 整体替换仓库级 `requires`（不合并）。
+ */
+export interface ReleaseDependencyOverride {
+  /** 生效的最低 Release 版本（含）。 */
+  version: string
+  requires: RepositoryDependency[]
+}
+
 export interface Repository {
   id: string
   name: string
@@ -70,6 +83,8 @@ export interface Repository {
   local_original_filename: string
   /** 这个 MOD 依赖的其他插件（按 GUID 声明）。 */
   requires?: RepositoryDependency[]
+  /** 按 Release 版本覆盖依赖（见 ReleaseDependencyOverride）。 */
+  release_requires?: ReleaseDependencyOverride[]
   version_regex: string
   max_release_count: number
   download_threads: number
@@ -233,6 +248,8 @@ export interface RepositoryPatch {
   local_original_filename: string
   /** 这个 MOD 依赖的其他插件（按 GUID 声明）。 */
   requires?: RepositoryDependency[]
+  /** 按 Release 版本覆盖依赖（见 ReleaseDependencyOverride）。 */
+  release_requires?: ReleaseDependencyOverride[]
   version_regex: string
   max_release_count: number
   download_threads: number

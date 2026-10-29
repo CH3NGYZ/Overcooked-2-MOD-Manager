@@ -43,3 +43,9 @@ note_i18n.zh-TW = """最佳化 DIYLevel 載入地圖的流程，避免進入餐�
 note_i18n.en = """Optimized the DIYLevel map loading process to prevent long freezes when entering the food truck due to loading a large number of level assets."""
 note_i18n.ko = """DIYLevel의 맵 로딩 과정을 최적화하여, 다량의 레벨 리소스를 불러오는 동안 푸드 트럭 진입 시 장시간 멈추는 현상을 방지했습니다."""
 note_i18n.ja = """DIYLevel のマップ読み込み処理を最適化し、大量のレベルリソースの読み込みによってフードトラックに入る際に長時間固まるのを防ぎます。"""
+
+# 依赖 DIYLevel
+[[repositories.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"
+min_version = ""

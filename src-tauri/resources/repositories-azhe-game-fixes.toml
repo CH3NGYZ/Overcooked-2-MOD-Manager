@@ -1,0 +1,155 @@
+[[repositories]]
+enabled = true
+# 仓库基本信息
+name_i18n.zh-CN = "macOS Xbox 手柄支持修复"
+name_i18n.zh-TW = "macOS Xbox 控制器支援修復"
+name_i18n.en = "macOS Xbox Controller Support Fix"
+name_i18n.ko = "macOS Xbox 컨트롤러 지원 수정"
+name_i18n.ja = "macOS Xbox コントローラー対応の修正"
+group_i18n.zh-CN = "游戏修复"
+group_i18n.zh-TW = "遊戲修復"
+group_i18n.en = "Game Fixes"
+group_i18n.ko = "게임 수정"
+group_i18n.ja = "ゲーム修正"
+provider = "github"
+username = "CH3NGY2"
+repository = "Overcooked-2-MacosControllerFix"
+region = ""
+platform = "macos"
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = "exact", value = "OC2MacControllerFix.dll" },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.overcooked2.maccontrollerfix"
+local_product_name = ""
+local_original_filename = "OC2MacControllerFix.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note_i18n.zh-CN = """
+此 MOD 专用于修复 macOS 原生版本《胡闹厨房 2》的 Steam 手柄支持。
+鸣谢：连营 - 小红书号：6390308606
+- **Windows 系统请勿安装！**
+- **安装后自动启用。**
+- **可在《BepInEx 配置管理器》中修改摇杆方向反转；修改后需要重启游戏。**
+"""
+note_i18n.zh-TW = """
+此 MOD 專用於修復 macOS 原生版本《胡鬧廚房 2》的 Steam 控制器支援。
+鳴謝：連營 - 小紅書帳號：6390308606
+- **請勿在 Windows 系統上安裝！**
+- **安裝後會自動啟用。**
+- **可在《BepInEx 設定管理器》中修改搖桿方向反轉；修改後需要重新啟動遊戲。**
+"""
+note_i18n.en = """
+This MOD is specifically designed to fix Steam controller support in the native macOS version of Overcooked! 2.
+Credits: 连营 - Xiaohongshu ID: 6390308606
+- **Do NOT install on Windows!**
+- **Automatically enabled after installation.**
+- **You can toggle joystick direction inversion in the BepInEx Configuration Manager. Restart the game for changes to take effect.**
+"""
+note_i18n.ko = """
+이 MOD는 macOS 네이티브 버전 《오버쿡! 2》의 Steam 컨트롤러 지원 문제를 해결하기 위해 제작되었습니다.
+제작 도움: 连营 - 샤오홍슈 계정: 6390308606
+- **Windows에서는 설치하지 마세요!**
+- **설치 후 자동으로 활성화됩니다.**
+- **BepInEx Configuration Manager에서 조이스틱 방향 반전을 설정할 수 있습니다. 변경 사항을 적용하려면 게임을 다시 시작해야 합니다.**
+"""
+note_i18n.ja = """
+この MOD は、macOS ネイティブ版『Overcooked! 2』の Steam コントローラー対応を修正するためのものです。
+謝辞：连营 - 小紅書 ID：6390308606
+- **Windows にはインストールしないでください！**
+- **インストール後、自動的に有効になります。**
+- **BepInEx Configuration Manager でスティックの方向反転を変更できます。変更を適用するにはゲームの再起動が必要です。**
+"""
+
+[[repositories]]
+enabled = true
+# 仓库基本信息
+name_i18n.zh-CN = "修复战局频繁加入失败"
+name_i18n.zh-TW = "修復戰局頻繁加入失敗"
+name_i18n.en = "Fix Frequent Match Join Failures"
+name_i18n.ko = "게임 참가가 자주 실패하는 문제 수정"
+name_i18n.ja = "ゲームへの参加が頻繁に失敗する問題を修正"
+group_i18n.zh-CN = "游戏修复"
+group_i18n.zh-TW = "遊戲修復"
+group_i18n.en = "Game Fixes"
+group_i18n.ko = "게임 수정"
+group_i18n.ja = "ゲーム修正"
+provider = "github"
+username = "CH3NGY2"
+repository = "Overcooked-2-JoinRecovery"
+region = ""
+platform = ""
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [
+  { type = 'regex', value = '^OC2JoinRecovery-v[0-9]+(\.[0-9]+){1,3}\.zip$' },
+]
+
+# 本地 MOD 识别绑定
+plugin_guid = "com.ch3ngyz.plugin.oc2joinrecovery"
+local_product_name = "OC2JoinRecovery-重新加入修复"
+local_original_filename = "OC2JoinRecovery-重新加入修复.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note_i18n.zh-CN = """
+修复加入房间失败或主动退出房间后，再用同一个 Steam 加入链接反复提示加入失败、点击无反应，通常必须重启游戏或先进入一次街机再退出才能恢复的问题。
+插件在链接加入前、加入失败后和离房时，清理游戏原生流程残留的 Steam 大厅成员关系与邀请处理状态；安装后自动生效，无需配置。
+- **仅影响本机的大厅/加入状态，不修改存档、关卡、DIY 参数或联机协议。**
+- **可与街机 MOD 同时安装；需要重新加入房间的玩家安装即可，主机和客机均适用。**
+- **此版本为尚未实测可用的测试版；如遇 BUG，请带上 `BepInEx/logs/com.ch3ngyz.plugin.oc2joinrecovery/` 下最新时间的 `.log` 日志反馈给作者。**
+"""
+note_i18n.zh-TW = """
+修復加入房間失敗或主動退出房間後，再用同一個 Steam 加入連結反覆提示加入失敗、點擊無反應，通常必須重新啟動遊戲或先進入一次街機再退出才能恢復的問題。
+外掛會在連結加入前、加入失敗後和離房時，清理遊戲原生流程殘留的 Steam 大廳成員關係與邀請處理狀態；安裝後自動生效，無需設定。
+- **僅影響本機的大廳/加入狀態，不修改存檔、關卡、DIY 參數或連線協定。**
+- **可與街機 MOD 同時安裝；需要重新加入房間的玩家安裝即可，主機和客機均適用。**
+- **此版本為尚未實測可用的測試版；如遇 BUG，請帶上 `BepInEx/logs/com.ch3ngyz.plugin.oc2joinrecovery/` 下最新時間的 `.log` 日誌回饋給作者。**
+"""
+note_i18n.en = """
+Fixes the issue where, after a failed room join or leaving a room, the same Steam join link keeps failing or stops responding, and the game usually has to be restarted, or an Arcade room entered and left once, before joining works again.
+The mod clears stale Steam lobby membership and invite-handling state left behind by the game's join/leave flow before a link join, after a failed join, and when leaving a room. It works automatically after installation and needs no configuration.
+- **Only local lobby/join state is affected; saves, levels, DIY parameters and the multiplayer protocol are not modified.**
+- **Compatible with the Arcade MOD. Install it on the player who needs to rejoin; it applies to both hosts and clients.**
+- **This is an untested beta build. If you encounter a bug, please report it to the author with the latest `.log` file from `BepInEx/logs/com.ch3ngyz.plugin.oc2joinrecovery/`.**
+"""
+note_i18n.ko = """
+방 참가 실패 또는 방을 나간 뒤 같은 Steam 참가 링크로 다시 참가하려 하면 계속 실패하거나 클릭에 반응하지 않아, 보통 게임을 재시작하거나 아케이드 방에 한 번 들어갔다 나와야 복구되는 문제를 수정합니다.
+모드는 링크 참가 전, 참가 실패 후, 방을 나갈 때 게임 원본 흐름에 남은 Steam 로비 멤버십과 초대 처리 상태를 정리합니다. 설치 후 자동으로 적용되며 별도의 설정이 필요하지 않습니다.
+- **본인의 로비/참가 상태에만 영향을 주며 저장 파일, 레벨, DIY 매개변수 또는 멀티플레이 프로토콜을 변경하지 않습니다.**
+- **아케이드 MOD와 함께 설치할 수 있습니다. 다시 참가해야 하는 플레이어에게 설치하면 되며 호스트와 클라이언트 모두 적용됩니다.**
+- **이 버전은 아직 테스트되지 않은 베타 버전입니다. 버그가 발생하면 `BepInEx/logs/com.ch3ngyz.plugin.oc2joinrecovery/` 에서 가장 최근 `.log` 파일과 함께 작성자에게 제보해 주세요.**
+"""
+note_i18n.ja = """
+ルームへの参加に失敗した後、またはルームを退出した後に、同じ Steam 招待リンクから再度参加しようとすると参加失敗が繰り返されたり、クリックしても反応しなかったりして、通常はゲームを再起動するか、アーケードに一度入って退出しないと復旧しない問題を修正します。
+このプラグインは、リンク参加前、参加失敗後、ルーム退出時に、ゲーム本来の処理に残った Steam ロビーのメンバーシップと招待処理の状態をクリアします。インストール後は自動的に有効になり、設定は不要です。
+- **本機のロビー／参加状態にのみ影響し、セーブデータ、レベル、DIY パラメータ、マルチプレイのプロトコルは変更しません。**
+- **アーケード MOD と同時にインストールできます。再度参加する必要があるプレイヤーにインストールすればよく、ホストとクライアントの両方に適用されます。**
+- **このバージョンはまだ実機検証されていないテスト版です。BUG が発生した場合は、`BepInEx/logs/com.ch3ngyz.plugin.oc2joinrecovery/` にある最新の `.log` ログを添えて作者に報告してください。**
+"""

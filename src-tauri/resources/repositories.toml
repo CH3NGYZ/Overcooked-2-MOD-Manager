@@ -26,6 +26,18 @@ ja = "Azhe - その他の MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 
 
 [[repository_sources]]
+id = "repositories-azhe-game-fixes"
+url = "repositories-azhe-game-fixes.toml"
+builtin=true
+[repository_sources.nickname_i18n]
+zh-CN = "阿哲 - 游戏修复 - 小红书 @Azhe是阿哲 - ID:5566308341"
+zh-TW = "阿哲 - 遊戲修復 - 小红书 @Azhe是阿哲 - ID:5566308341"
+en = "Azhe - Game Fixes - RedNote @Azhe是阿哲 - ID:5566308341"
+ko = "Azhe - 게임 수정 - RedNote @Azhe是阿哲 - ID:5566308341"
+ja = "Azhe - ゲーム修正 - RedNote @Azhe是阿哲 - ID:5566308341"
+
+
+[[repository_sources]]
 id = "repositories-gua"
 url = "repositories-gua.toml"
 builtin=false

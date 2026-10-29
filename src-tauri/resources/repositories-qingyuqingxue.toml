@@ -68,3 +68,9 @@ note_i18n.ja = """
 3. 検索結果がレベル名のみに一致した場合、マップセットに入ると対象のレベルのみが表示され、遊びたいレベルをすぐに探せます。
 - **阿哲（Azhe）の `DIYLevel` 並べ替え／体験最適化 MOD（別途インストールが必要）と併用すると、その並べ替えと検索機能は自動的に無効になりますが、サムネイル、終了後のレベル選択画面への復帰、最後にプレイしたレベルの表示は引き続き利用できます。**
 """
+
+# 依赖 DIYLevel
+[[repositories.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"
+min_version = ""

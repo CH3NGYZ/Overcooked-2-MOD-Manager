@@ -145,7 +145,6 @@ template = "https://ghproxy.net/{url}"
 id = "ghfast"
 name = "ghfast.top"
 template = "https://ghfast.top/{url}"
-description = "也支持 GitHub archive/refs/tags/{tag}.zip 形式的代码归档链接"
 
 [[release_proxies]]
 id = "wget-la"
@@ -182,7 +181,6 @@ template = "https://gh.catmak.name/{url}"
 id = "fastly-jsdelivr"
 name = "jsdelivr.net"
 template = "https://fastly.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}"
-description = "不支持超过 50 MB 的文件，分支名不能是版本号格式"
 
 [[raw_proxies]]
 id = "cdn-gh-proxy-raw"
@@ -213,35 +211,23 @@ name = "oc2gtapi.ch3ng.top"
 template = "https://oc2gtapi.ch3ng.top/{url_path}"
 description = "Gitee API 桥接"
 
-# 头像代理。
-#
-# 与上面几组走同一条读取链路（内置清单 → 远程清单 → 用户脚本），代码里
-# 不写任何地址。单独一组是因为头像 URL 是 `github.com/{owner}.png`，
-# 而 raw 组的模板都按仓库文件路径设计，实测全部取不到。
-#
-# 注意 oc2gh 必须放在最前：它只服务本管理器的 User-Agent
-# （`Overcooked 2 MOD Manager/<version> ...`），其他 UA 一律 403。
-# 同 UA 下它最快最稳，所以作为首选，其余作后备。
-[[avatar_proxies]]
-id = "oc2gh-avatar"
-name = "oc2gh.ch3ng.top"
-template = "https://oc2gh.ch3ng.top/{url_path}"
-description = "头像：自家代理（需本管理器 UA）"
-
+# 头像桥接
 [[avatar_proxies]]
 id = "cors-isteed-avatar"
 name = "cors.isteed.cc"
 template = "https://cors.isteed.cc/{url_no_scheme}"
-description = "头像：实测可用"
 
 [[avatar_proxies]]
 id = "ghp-keleyaa-avatar"
 name = "ghp.keleyaa.com"
 template = "https://ghp.keleyaa.com/{url}"
-description = "头像：实测可用"
 
 [[avatar_proxies]]
 id = "cdn-crashmc-avatar"
 name = "cdn.crashmc.com"
 template = "https://cdn.crashmc.com/{url}"
-description = "头像：实测可用"
+
+[[avatar_proxies]]
+id = "oc2gh-avatar"
+name = "oc2gh.ch3ng.top"
+template = "https://oc2gh.ch3ng.top/{url_path}"

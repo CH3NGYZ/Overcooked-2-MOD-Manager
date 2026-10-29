@@ -964,6 +964,17 @@ pub struct OperationResult {
     pub message: String,
 }
 
+/// 头像请求：一次批量读取时要哪个平台、哪个 owner 的头像。
+///
+/// 头像由 owner（用户/组织）决定，不是仓库级信息 —— GitHub/Gitee 都没有
+/// 独立的仓库头像。同一 owner 下的多个仓库共用一张图，前端按
+/// `{provider}:{owner}` 去重后再传上来。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvatarRequest {
+    pub provider: Provider,
+    pub owner: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BepInExInstallResult {
     #[serde(flatten)]

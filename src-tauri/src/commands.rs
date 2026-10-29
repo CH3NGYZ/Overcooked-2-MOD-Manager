@@ -13,7 +13,7 @@ use crate::releases;
 use crate::repository_sources::{self, SourceLocation, source_address_key};
 use chrono::Utc;
 use futures_util::StreamExt;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -2647,7 +2647,7 @@ pub fn delete_bepinex_backup(
     })
 }
 
-fn selected_asset_proxy_mode(
+pub(crate) fn selected_asset_proxy_mode(
     requested: Option<ProxyMode>,
     provider: &Provider,
     region: &str,
@@ -4758,6 +4758,88 @@ pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult,
 /// 不自动创建目录：调用方是「框架已安装」状态下的按钮，目录本该存在。
 /// 不存在说明状态与磁盘不一致，报错让用户重新探测，而不是凭空建一个空目录
 /// 让他以为框架装好了。
+/// 读取一批仓库 owner 的头像（供卡片与详情页显示）。
+///
+/// **批量而不是逐个**：一次刷新会同时刷出几十个仓库，逐个 IPC 往返既慢
+/// 又会让前端持有几十个独立请求。这里一次收下全部 owner，去重后并发读取，
+/// 返回 `owner -> data URL` 的映射。
+///
+/// 去重发生在两处：
+///   · 本函数内按 `(provider, owner)` 去重 —— 同一个人只读一次；
+///   · `avatars::load` 内部的 in-flight 表 —— 即便有其他调用方并发请求
+///     同一 owner，也只有一次真实下载。
+///
+/// 失败的 owner **不出现在结果里**（不返回空串或占位图），前端据此回落到
+/// 平台图标。头像不是关键数据，失败不该弹错误。
+#[tauri::command]
+pub async fn get_repository_avatars(
+    state: State<'_, AppState>,
+    owners: Vec<AvatarRequest>,
+) -> Result<HashMap<String, String>, String> {
+    if owners.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let (config, cache_dir) = {
+        let _guard = state
+            .operation
+            .lock()
+            .map_err(|_| "操作锁异常".to_string())?;
+        (state.config.load_or_default(), state.config.cache_dir())
+    };
+    log::debug!("开始读取头像：请求数={}", owners.len());
+
+    let mut result: HashMap<String, String> = HashMap::new();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut pending = Vec::new();
+    for request in owners {
+        let owner = request.owner.trim().to_string();
+        if owner.is_empty() {
+            continue;
+        }
+        let key = match request.provider {
+            Provider::Github => format!("github:{owner}"),
+            Provider::Gitee => format!("gitee:{owner}"),
+        };
+        // 前端用 `{provider}:{owner}` 作为查询键，所以这里也按它去重
+        if !seen.insert((key.clone(), owner.clone())) {
+            continue;
+        }
+        pending.push((key, owner, request.provider));
+    }
+
+    // 并发读取，但每个 owner 内部已有单飞保护；并发上限由请求数自然限制
+    let mut tasks = Vec::with_capacity(pending.len());
+    for (key, owner, provider) in pending {
+        let config = config.clone();
+        let cache_dir = cache_dir.clone();
+        tasks.push(async move {
+            let loaded = crate::avatars::load(&config, &cache_dir, &provider, &owner).await;
+            (key, loaded)
+        });
+    }
+    for (key, loaded) in futures_util::future::join_all(tasks).await {
+        match loaded {
+            Ok(bytes) => {
+                let mime = crate::avatars::sniff_mime(&bytes);
+                use base64::{Engine, engine::general_purpose::STANDARD as B64};
+                result.insert(key, format!("data:{mime};base64,{}", B64.encode(&bytes)));
+            }
+            Err(error) => {
+                // 只记 debug：头像取不到属于正常回落，不是错误
+                log::debug!("头像不可用，前端将回落到平台图标：key={key} 原因={error}");
+            }
+        }
+    }
+    log::debug!("头像读取完成：可用={}/{}", result.len(), seen.len());
+    Ok(result)
+}
+
+/// 清空头像缓存。
+#[tauri::command]
+pub fn clear_repository_avatars(state: State<'_, AppState>) -> Result<usize, String> {
+    crate::avatars::clear_cache(&state.config.cache_dir())
+}
+
 #[tauri::command]
 pub fn open_bepinex_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::debug!("打开 BepInEx 目录");

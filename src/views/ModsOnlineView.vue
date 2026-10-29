@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
+import { prefetchAvatars } from '../avatars'
 import { useNotify } from '../useNotify'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
@@ -189,6 +190,21 @@ const sources = computed<RepositorySource[]>(() =>
   (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
 )
 const detailRepo = computed(() => repositories.value.find((repo) => repo.id === detailId.value) ?? null)
+
+/*
+ * 预取 owner 头像。
+ *
+ * 放在这里而不是每个卡片自己请求：一次刷新会同时刷出几十个仓库，很多属于
+ * 同一个 owner（所有 BepInEx 插件都是 BepInEx）。`prefetchAvatars` 按
+ * `provider:owner` 去重，后端再按 owner 单飞 + 磁盘缓存，所以同一 owner
+ * 只会真正下载一次。
+ *
+ * `immediate` + `onMounted` 双触发是有意的：首次进入页面时 `repositories`
+ * 可能还没数据（Dashboard 还在读），watch 不会触发；等数据到了再触发一次。
+ * 两次都调用没有副作用 —— 已有在途请求时会复用。
+ */
+watch(repositories, (list) => { void prefetchAvatars(list) }, { immediate: true })
+onMounted(() => { void prefetchAvatars(repositories.value) })
 
 /** 社区仓库（github-community / gitee-community）不展示分组标题，全部按未分组处理。 */
 function isCommunityRepo(repo: Repository) {

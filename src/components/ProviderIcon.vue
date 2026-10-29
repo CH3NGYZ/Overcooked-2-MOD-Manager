@@ -1,17 +1,16 @@
 <script setup lang="ts">
 /**
- * 仓库图标：优先显示仓库头像，没有 / 加载失败时回落到平台图标。
+ * 仓库图标：优先显示 owner 头像，没有 / 取不到时回落到平台图标。
  *
- * 头像地址是按平台的确定性规则拼出来的，不需要额外 API 请求：
- *   GitHub  `https://github.com/{owner}.png?size=64`
- *   Gitee   `https://gitee.com/{owner}.png?size=64`
- * 两者都会 302 跳到真实的图片地址，WebView 直接加载即可（CSP 已允许 https:）。
+ * 头像**不在这里下载**：由 `avatars.ts` 批量预取（按 owner 去重、后端竞速
+ * 下载并磁盘缓存），本组件只查内存缓存。这样一次刷新里几十个同 owner 的
+ * 仓库只会产生一次下载，而不是每个卡片各拉一遍。
  *
- * 为什么必须保留回落：头像可能 404（组织改名、私有账号）、可能被网络环境
- * 挡住、也可能加载很慢。这三种情况下继续显示空白方块，比直接显示平台图标
- * 更糟 —— 用户会以为卡片坏了。所以加载失败**立刻**切回平台图标。
+ * 为什么不直接用 `<img>` 指向远端 URL：那样浏览器会为每个卡片各发一次请求
+ * （同一 owner 也重复），既绕过了后端的代理竞速，也无法跨启动缓存。
  */
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
+import { avatarFor } from '../avatars'
 import type { Provider } from '../types'
 
 const props = defineProps<{
@@ -23,29 +22,8 @@ const props = defineProps<{
 
 const box = computed(() => props.size ?? 30)
 
-/**
- * 头像地址。
- *
- * `size=64` 是为高分屏：卡片上显示 30px，取大一点再缩下来才不会发虚。
- */
-const avatarUrl = computed(() => {
-  const owner = props.owner?.trim()
-  if (!owner) return null
-  // 用户名里不可能有斜杠，但仍做一次编码，避免拼出畸形 URL
-  const encoded = encodeURIComponent(owner)
-  return props.provider === 'gitee'
-    ? `https://gitee.com/${encoded}.png?size=64`
-    : `https://github.com/${encoded}.png?size=64`
-})
-
-/**
- * 头像是否可用。
- *
- * 初值为「有地址就试」，`@error` 时置 false。owner 变化时重置 —— 否则
- * 上一条仓库加载失败后，换到一条能加载的会一直显示平台图标。
- */
-const avatarOk = ref(!!avatarUrl.value)
-watch(avatarUrl, () => { avatarOk.value = !!avatarUrl.value })
+/** 头像 data URL；未取到为 null。 */
+const avatar = computed(() => avatarFor(props.provider, props.owner))
 
 /** GitHub 官方 mark（simple-icons 路径），跟随文字颜色以适配深浅主题。 */
 const GITHUB =
@@ -57,19 +35,14 @@ const GITEE =
 
 const path = computed(() => (props.provider === 'gitee' ? GITEE : GITHUB))
 const label = computed(() => (props.provider === 'gitee' ? 'Gitee' : 'GitHub'))
-/** 有头像时用仓库 owner 做提示，比平台名更有用。 */
-const title = computed(() => (avatarOk.value && props.owner ? props.owner : label.value))
+/** 有头像时用 owner 做提示，比平台名更有用。 */
+const title = computed(() => (avatar.value && props.owner ? props.owner : label.value))
 </script>
 
 <template>
   <span class="provider-icon" :class="`provider-icon--${provider}`" :style="{ width: `${box}px`, height: `${box}px` }"
     :title="title" :aria-label="title" role="img">
-    <!--
-      头像：懒加载 + 失败即回落。`referrerpolicy=no-referrer` 是因为
-      GitHub 的头像 CDN 对部分来源会拒绝请求，去掉 Referer 最稳。
-    -->
-    <img v-if="avatarUrl && avatarOk" :src="avatarUrl" :alt="title" class="provider-avatar"
-      loading="lazy" decoding="async" referrerpolicy="no-referrer" @error="avatarOk = false" />
+    <img v-if="avatar" :src="avatar" :alt="title" class="provider-avatar" decoding="async" />
     <svg v-else viewBox="0 0 24 24" :width="box * 0.62" :height="box * 0.62" aria-hidden="true">
       <path :d="path" fill="currentColor" />
     </svg>

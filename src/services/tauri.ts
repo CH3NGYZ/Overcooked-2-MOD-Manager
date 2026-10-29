@@ -71,6 +71,14 @@ export const api = {
   clearRepositorySourceCache: (sourceIds: string[]) =>
     invoke<PublicConfig>('clear_repository_source_cache', { sourceIds }),
   releases: (repositoryId: string) => invoke<ReleaseInfo[]>('get_repository_releases', { repositoryId }),
+  /**
+   * 批量读取仓库 owner 头像，返回 `{provider}:{owner} -> data URL`。
+   *
+   * 后端按 owner 去重、缓存到磁盘、按 Raw 代理候选下载；取不到的 owner
+   * **不在结果里**（不是空串），前端据此回落到平台图标。
+   */
+  repositoryAvatars: (owners: { provider: Provider; owner: string }[]) =>
+    invoke<Record<string, string>>('get_repository_avatars', { owners }),
   installBepInEx: (reinstall: boolean, provider: Provider) => invoke<BepInExInstallResult>('install_bepinex', { reinstall, provider }),
   repairNativeBepInExOverlay: () => invoke<OperationResult>('repair_native_bepinex_overlay'),
   uninstallBepInEx: () => invoke<OperationResult>('uninstall_bepinex'),

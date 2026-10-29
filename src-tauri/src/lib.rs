@@ -1,6 +1,7 @@
 mod api_rate_gate;
 mod app_update;
 mod archive;
+mod avatars;
 mod bepinex;
 mod commands;
 mod community;
@@ -191,6 +192,8 @@ pub fn run() {
             commands::open_game_directory,
             commands::open_mod_directory,
             commands::open_bepinex_directory,
+            commands::get_repository_avatars,
+            commands::clear_repository_avatars,
             commands::open_mod_file_location,
             commands::open_mod_logs_directory,
             commands::read_mod_config,

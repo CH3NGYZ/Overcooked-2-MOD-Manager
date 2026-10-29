@@ -116,7 +116,7 @@ onMounted(() => {
         <div class="app-shell">
           <AppTitleBar :version="version" />
           <div class="app-body">
-            <AppSidebar :version="version" />
+            <AppSidebar />
             <main class="app-main">
               <header class="page-header">
                 <div class="page-header-title">

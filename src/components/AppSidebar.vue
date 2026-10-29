@@ -8,7 +8,6 @@ import {
 } from '@vicons/ionicons5'
 import { t } from '../i18n'
 
-defineProps<{ version: string }>()
 const route = useRoute()
 
 /**
@@ -70,7 +69,6 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
       </router-link>
     </nav>
 
-    <div class="side-foot muted">{{ version ? `v${version}` : '' }}</div>
   </aside>
 </template>
 
@@ -145,9 +143,5 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
   background: rgba(60, 184, 155, .14);
   color: var(--oc2-accent);
   font-weight: 600;
-}
-.side-foot {
-  margin-top: 2px;
-  font-size: 10.5px;
 }
 </style>

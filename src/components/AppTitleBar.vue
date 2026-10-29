@@ -153,7 +153,10 @@ defineExpose({ onUnmountedCleanup })
         </span>
       </div>
       <div class="brand-text" data-tauri-drag-region>
-        <strong>{{ t('OC2 模组管理器') }}</strong>
+        <div class="brand-title-row">
+          <strong>{{ t('OC2 模组管理器') }}</strong>
+          <span v-if="props.version" class="brand-version">v{{ props.version }}</span>
+        </div>
         <small>{{ t('游戏模组管理器') }}</small>
       </div>
     </div>
@@ -324,6 +327,15 @@ defineExpose({ onUnmountedCleanup })
   z-index: 10;
 }
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
+.brand-title-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+/* 版本号跟在标题后面，弱化到副标题层级，不抢标题的视觉权重。 */
+.brand-version {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--oc2-text-3);
+  letter-spacing: .2px;
+  white-space: nowrap;
+}
 .brand-text strong,
 .brand-text small {
   overflow: hidden;

@@ -5043,6 +5043,7 @@ const DIYLEVEL_GUID: &str = "dev.gua.overcooked.diylevel";
 #[tauri::command]
 pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, String> {
     let config = state.config.load_or_default();
+    let backups = list_diy_level_backups(&state.config.backups_dir());
     let Some(game_root) = game::detect_game(&config).path else {
         return Ok(DiyLevelInfo {
             installed: false,
@@ -5051,6 +5052,7 @@ pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, St
             dll_file: None,
             has_levels_dir: false,
             level_packs: 0,
+            backups,
         });
     };
     let root = PathBuf::from(&game_root);
@@ -5077,7 +5079,55 @@ pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, St
         dll_file: target.map(|item| item.dll_file.clone()),
         has_levels_dir: levels_dir.is_dir(),
         level_packs: count_level_packs(&levels_dir),
+        backups,
     })
+}
+
+/// DIYLevel 框架本体所在目录（游戏相对路径）。
+///
+/// 备份、恢复、卸载都以它为单位：`OC2DIYLevel` 下既有框架 DLL，也有
+/// `levels/` 自制地图。`BepInEx/core` 属于加载器，归 BepInEx 的备份管。
+const DIYLEVEL_DIR: &str = "BepInEx/plugins/OC2DIYLevel";
+
+/// 列出已有的 DIYLevel 备份（按名称升序，与 BepInEx 备份同样的排列方式）。
+fn list_diy_level_backups(backup_root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(backup_root) else {
+        return Vec::new();
+    };
+    let mut backups = entries
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(DIYLEVEL_BACKUP_PREFIX)
+                && entry.path().is_dir()
+        })
+        .map(|entry| entry.path().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    backups.sort();
+    backups
+}
+
+/// 备份目录名前缀：`DIYLevel.backup-<时间戳>-<uuid>`。
+const DIYLEVEL_BACKUP_PREFIX: &str = "DIYLevel.backup-";
+
+/// 创建一次 DIYLevel 目录快照，返回备份路径。
+fn backup_diy_level_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, String> {
+    let source = game_root.join(DIYLEVEL_DIR);
+    if !source.is_dir() {
+        return Err(format!("未找到 DIYLevel 目录：{DIYLEVEL_DIR}"));
+    }
+    ensure_copy_paths_disjoint(&source, backup_root)?;
+    fs::create_dir_all(backup_root).map_err(|e| e.to_string())?;
+    let target = backup_root.join(format!(
+        "{}{}-{}",
+        DIYLEVEL_BACKUP_PREFIX,
+        Utc::now().format("%Y%m%d%H%M%S"),
+        Uuid::new_v4().simple()
+    ));
+    copy_dir(&source, &target)?;
+    Ok(target)
 }
 
 /// 地图集数量 = `levels/` 下的文件夹个数。
@@ -5138,6 +5188,95 @@ pub fn set_diy_level_enabled(
     })
 }
 
+/// 卸载 DIYLevel 框架（先自动备份，再按安装清单回收）。
+///
+/// 与 `uninstall_bepinex` 同一套顺序：**先整目录备份，再回收文件**。
+/// 回收站只带得走清单里登记的文件，用户自己放进 `OC2DIYLevel` 的地图集、
+/// 改过的配置不在清单里 —— 只有目录备份能保证还能找回。
+#[tauri::command]
+pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    log::info!("开始卸载 DIYLevel");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+
+    let installed =
+        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
+    let Some(target) = installed.iter().find(|item| {
+        item.guid
+            .as_deref()
+            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
+    }) else {
+        return Err("尚未安装 DIYLevel 框架".into());
+    };
+    let dll_file = target.dll_file.clone();
+
+    // 先备份整个 OC2DIYLevel 目录，再动文件
+    let backup = backup_diy_level_dir(&game_root, &state.config.backups_dir())?;
+    log::info!("DIYLevel 卸载前备份完成：路径={}", backup.display());
+
+    let manifests_dir = state.config.manifests_dir();
+    let recycle_root = state.config.mod_recycle_bin_dir();
+    let manifest_id = installed
+        .iter()
+        .find(|item| item.dll_file.eq_ignore_ascii_case(&dll_file))
+        .and_then(|item| item.package_id.clone());
+
+    // 有安装清单就整包回收；没有（手工装的）就只回收这个 DLL
+    let has_manifest = manifest_id
+        .as_deref()
+        .is_some_and(|id| archive::read_manifest(&manifests_dir, id).is_some());
+    let result = if let Some(id) = manifest_id.as_deref().filter(|_| has_manifest) {
+        recycle_bin::recycle_package(&recycle_root, &manifests_dir, &game_root, id, None).map(
+            |entry| {
+                format!(
+                    "DIYLevel 已移入回收站（{} 个文件），备份保存在 {}",
+                    entry.file_count,
+                    backup.display()
+                )
+            },
+        )
+    } else if config.recycle_deleted_mods {
+        recycle_bin::recycle_mod_dll(
+            &recycle_root,
+            &manifests_dir,
+            &game_root,
+            manifest_id.as_deref().unwrap_or("manual"),
+            &dll_file,
+            &installed,
+        )
+        .map(|_| format!("DIYLevel 已移入回收站，备份保存在 {}", backup.display()))
+    } else {
+        recycle_bin::purge_mod_dll(
+            &recycle_root,
+            &manifests_dir,
+            &game_root,
+            manifest_id.as_deref().unwrap_or("manual"),
+            &dll_file,
+            &installed,
+        )
+        .map(|_| format!("DIYLevel 已删除，备份保存在 {}", backup.display()))
+    };
+
+    match result {
+        Ok(message) => {
+            log::info!("DIYLevel 卸载完成：{message}");
+            Ok(OperationResult { ok: true, message })
+        }
+        Err(error) => {
+            log::error!("DIYLevel 回收失败：原因={error}，备份={}", backup.display());
+            Err(format!(
+                "文件回收失败，请尝试手动删除 DIYLevel 文件。（{error}）备份已保存在 {}",
+                backup.display()
+            ))
+        }
+    }
+}
+
 /// 打开 DIYLevel 的地图目录（放在框架所在目录层）。
 ///
 /// 与 `open_bepinex_directory` 同一套约束：只允许游戏目录内的固定子路径，
@@ -5166,6 +5305,121 @@ pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationR
         ok: true,
         message: "已打开 DIYLevel 目录".into(),
     })
+}
+
+/// 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）。
+#[tauri::command]
+pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    log::info!("开始备份 DIYLevel");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+    let backup = backup_diy_level_dir(&game_root, &state.config.backups_dir())?;
+    log::info!("DIYLevel 备份完成：路径={}", backup.display());
+    Ok(OperationResult {
+        ok: true,
+        message: format!("备份完成: {}", backup.display()),
+    })
+}
+
+/// 恢复 DIYLevel 备份。
+///
+/// 按用户要求：**先删掉现有的 DIYLevel 目录，再整体还原备份**。这与覆盖式
+/// 恢复不同 —— 备份之后新增的地图集不会被留下来，得到的就是备份那一刻的
+/// 完整快照，不会出现「新旧文件混在一起」的半新半旧状态。
+///
+/// 与 BepInEx 恢复一致，删除前先把当前目录另存一份 `DIYLevel.before-restore-*`，
+/// 用户误操作时还有一次后悔的机会。
+#[tauri::command]
+pub fn restore_diy_level(
+    state: State<'_, AppState>,
+    backup_path: String,
+) -> Result<OperationResult, String> {
+    log::info!("开始恢复 DIYLevel 备份：路径={backup_path}");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    game::ensure_game_stopped(&game_root)?;
+
+    let backup = validate_diy_level_backup(&state, &backup_path)?;
+    let destination = game_root.join(DIYLEVEL_DIR);
+    ensure_copy_paths_disjoint(&backup, &destination)?;
+    if destination.exists() {
+        let previous = game_root.join("BepInEx/plugins").join(format!(
+            "DIYLevel.before-restore-{}",
+            Utc::now().timestamp()
+        ));
+        archive::clear_readonly(&destination)?;
+        copy_dir(&destination, &previous)?;
+        fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
+        log::info!("恢复前的 DIYLevel 目录已另存：路径={}", previous.display());
+    }
+    copy_dir(&backup, &destination)?;
+    log::info!("DIYLevel 备份恢复完成：路径={}", destination.display());
+    Ok(OperationResult {
+        ok: true,
+        message: "DIYLevel 备份已恢复".into(),
+    })
+}
+
+/// 删除一个 DIYLevel 备份。
+#[tauri::command]
+pub fn delete_diy_level_backup(
+    state: State<'_, AppState>,
+    backup_path: String,
+) -> Result<OperationResult, String> {
+    log::info!("开始删除 DIYLevel 备份：路径={backup_path}");
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "操作锁异常".to_string())?;
+    let target = validate_diy_level_backup(&state, &backup_path)?;
+    archive::clear_readonly(&target)?;
+    fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+    log::info!("DIYLevel 备份删除完成");
+    Ok(OperationResult {
+        ok: true,
+        message: "DIYLevel 备份已删除".into(),
+    })
+}
+
+/// 校验一个路径确实是**本管理器**创建的 DIYLevel 备份目录。
+///
+/// 恢复与删除都会对目标做递归读写，所以必须同时确认三件事：名字带固定前缀、
+/// 是目录、且父目录就是备份根。只信前缀不够 —— 用户可以传任意路径进来。
+fn validate_diy_level_backup(state: &AppState, backup_path: &str) -> Result<PathBuf, String> {
+    let backup_root = state.config.backups_dir();
+    fs::create_dir_all(&backup_root).map_err(|e| e.to_string())?;
+    let root = fs::canonicalize(backup_root).map_err(|e| e.to_string())?;
+    validate_diy_level_backup_in(Path::new(backup_path), &root)
+}
+
+/// 校验逻辑本体（与 `AppState` 解耦，便于单测）。
+///
+/// `backup_root` 也要先规范化再比较：`fs::canonicalize` 在 Windows 上会返回
+/// `\\?\C:\...` 形式，直接与未规范化的根路径比较永远不相等，所有合法备份
+/// 都会被误判成「不在允许的备份位置」。
+fn validate_diy_level_backup_in(backup_path: &Path, backup_root: &Path) -> Result<PathBuf, String> {
+    let target = fs::canonicalize(backup_path).map_err(|_| "备份目录不存在".to_string())?;
+    let root = fs::canonicalize(backup_root).map_err(|_| "备份目录不可用".to_string())?;
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !name.starts_with(DIYLEVEL_BACKUP_PREFIX) || !target.is_dir() {
+        return Err("只能操作 DIYLevel 时间戳备份".into());
+    }
+    if target.parent() != Some(root.as_path()) {
+        return Err("备份目录不在允许的备份位置".into());
+    }
+    Ok(target)
 }
 
 #[tauri::command]
@@ -9813,5 +10067,107 @@ mod diy_level_packs_tests {
         // 目录不存在：0，不报错
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(count_level_packs(&levels), 0);
+    }
+}
+
+/// DIYLevel 备份的目录结构与校验规则。
+///
+/// 用户要求：备份只包含 `BepInEx/plugins/OC2DIYLevel` 这一个文件夹；
+/// 恢复时先删掉现有目录再整体还原。这里钉住备份产物的形状与校验边界，
+/// 避免以后有人把备份范围扩大到整个 BepInEx（那会和 BepInEx 备份重复）。
+#[cfg(test)]
+mod diy_level_backup_tests {
+    use super::*;
+
+    #[test]
+    fn backup_copies_only_the_diy_level_folder() {
+        let game =
+            std::env::temp_dir().join(format!("oc2-diy-backup-game-{}", uuid::Uuid::new_v4()));
+        let backups =
+            std::env::temp_dir().join(format!("oc2-diy-backup-root-{}", uuid::Uuid::new_v4()));
+        // 框架目录：DLL + 一个地图集
+        std::fs::create_dir_all(game.join("BepInEx/plugins/OC2DIYLevel/levels/PackA")).unwrap();
+        std::fs::write(
+            game.join("BepInEx/plugins/OC2DIYLevel/DIYLevel.dll"),
+            b"dll",
+        )
+        .unwrap();
+        std::fs::write(
+            game.join("BepInEx/plugins/OC2DIYLevel/levels/PackA/map.txt"),
+            b"map",
+        )
+        .unwrap();
+        // 同级还有别的东西，绝不能被备份进来
+        std::fs::create_dir_all(game.join("BepInEx/plugins/OtherMod")).unwrap();
+        std::fs::write(game.join("BepInEx/plugins/OtherMod/other.dll"), b"other").unwrap();
+        std::fs::create_dir_all(game.join("BepInEx/core")).unwrap();
+        std::fs::write(game.join("BepInEx/core/BepInEx.dll"), b"core").unwrap();
+
+        let backup = backup_diy_level_dir(&game, &backups).unwrap();
+        assert!(backup.starts_with(&backups), "备份必须落在备份根下");
+        assert!(
+            backup
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(DIYLEVEL_BACKUP_PREFIX),
+            "备份目录名必须带前缀，恢复/删除才认得出"
+        );
+        // 备份内容 = 框架目录本身
+        assert_eq!(std::fs::read(backup.join("DIYLevel.dll")).unwrap(), b"dll");
+        assert_eq!(
+            std::fs::read(backup.join("levels/PackA/map.txt")).unwrap(),
+            b"map"
+        );
+        // 兄弟插件与加载器核心都不在备份里
+        assert!(!backup.join("OtherMod").exists());
+        assert!(!backup.join("core").exists());
+
+        // 列表能列出它
+        let listed = list_diy_level_backups(&backups);
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].contains("DIYLevel.backup-"));
+
+        std::fs::remove_dir_all(&game).unwrap();
+        std::fs::remove_dir_all(&backups).unwrap();
+    }
+
+    #[test]
+    fn backup_requires_the_diy_level_folder_to_exist() {
+        let game = std::env::temp_dir().join(format!("oc2-diy-missing-{}", uuid::Uuid::new_v4()));
+        let backups = std::env::temp_dir().join(format!("oc2-diy-none-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(game.join("BepInEx/plugins")).unwrap();
+        assert!(
+            backup_diy_level_dir(&game, &backups).is_err(),
+            "没有 OC2DIYLevel 目录时必须报错，而不是生成空备份"
+        );
+        std::fs::remove_dir_all(&game).unwrap();
+    }
+
+    #[test]
+    fn only_timestamped_backups_inside_the_backup_root_are_accepted() {
+        let root = std::env::temp_dir().join(format!("oc2-diy-valid-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("DIYLevel.backup-20261029120000-abc")).unwrap();
+        std::fs::create_dir_all(root.join("SomethingElse")).unwrap();
+        // 备份根之外的目录，名字对也不能用
+        let outside =
+            std::env::temp_dir().join(format!("oc2-diy-outside-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(outside.join("DIYLevel.backup-20261029120000-abc")).unwrap();
+
+        let valid = root.join("DIYLevel.backup-20261029120000-abc");
+        assert!(validate_diy_level_backup_in(&valid, &root).is_ok());
+        // 名字不带前缀
+        assert!(validate_diy_level_backup_in(&root.join("SomethingElse"), &root).is_err());
+        // 父目录不是备份根
+        assert!(
+            validate_diy_level_backup_in(
+                &outside.join("DIYLevel.backup-20261029120000-abc"),
+                &root
+            )
+            .is_err()
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&outside).unwrap();
     }
 }

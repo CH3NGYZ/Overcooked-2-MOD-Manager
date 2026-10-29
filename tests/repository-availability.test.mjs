@@ -239,8 +239,12 @@ test('repositoryIsAvailable 把平台不适用当作「不存在」', () => {
   assert.equal(repositoryIsAvailable(macOnly, undefined, undefined), false)
 })
 
-/* 内置源：只有 MacosControllerFix 限定 macOS，其余全平台 */
-test('内置仓库源里只有 macOS 手柄修复限定了平台', async () => {
+/* 内置源：每个仓库都显式声明 platform，且只允许 macos 这一种限定。
+ *
+ * 不断言具体仓库名单：内置源会随运营持续新增 macOS 专用仓库（例如
+ * 系统版本修复、手柄修复），把名单写死会让每次加仓库都要改测试，
+ * 而真正要守的规则是「字段齐全 + 不出现 windows/未知限定」。 */
+test('内置仓库源每项都声明 platform，且只允许 macOS 限定', async () => {
   const { readFileSync, readdirSync } = await import('node:fs')
   const dir = new URL('../src-tauri/resources/', import.meta.url)
   const files = readdirSync(dir).filter((name) =>
@@ -261,7 +265,7 @@ test('内置仓库源里只有 macOS 手柄修复限定了平台', async () => {
         const repo = block.match(/^repository = "(.*)"$/m)
         macOnly.push(repo ? repo[1] : '(unknown)')
       }
-      // 不允许出现其它平台限定
+      // 不允许出现其它平台限定（windows 限定会隐藏仓库，是最常见的误加）
       if (platform && platform[1].trim() && platform[1].trim() !== 'macos') {
         assert.fail(`${file} 出现非预期平台限定：${platform[1]}`)
       }
@@ -269,7 +273,12 @@ test('内置仓库源里只有 macOS 手柄修复限定了平台', async () => {
   }
 
   assert.equal(totalRepos, totalPlatformLines, '每个仓库都应有 platform 字段')
-  assert.deepEqual(macOnly, ['Overcooked-2-MacosControllerFix'], '只有 macOS 手柄修复限定 macOS')
+  // 已知的 macOS 专用仓库必须确实被标记（漏标会让它出现在 Windows 列表里）
+  assert.ok(
+    macOnly.includes('Overcooked-2-MacosControllerFix'),
+    'macOS 手柄修复必须限定 macos',
+  )
+  assert.equal(new Set(macOnly).size, macOnly.length, `同一仓库重复限定：${macOnly.join(', ')}`)
 })
 
 /* 只发布 Windows 与 macOS：`linux` 不再是合法平台名，前后端都不给它开特例。

@@ -66,6 +66,12 @@ pub struct DiyLevelInfo {
     /// 缩略图等）不属于任何地图集，不计数。目录不可读时为 0。
     #[serde(default)]
     pub level_packs: u32,
+    /// 已有的 DIYLevel 目录备份（绝对路径，按名称升序）。
+    ///
+    /// 只备份 `BepInEx/plugins/OC2DIYLevel` 这一个文件夹 —— 它是框架本体
+    /// 和自制地图所在处，而 `BepInEx/core` 等属于加载器，归 BepInEx 备份管。
+    #[serde(default)]
+    pub backups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

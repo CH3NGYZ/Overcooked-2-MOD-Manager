@@ -179,6 +179,8 @@ export interface DiyLevelInfo {
   has_levels_dir: boolean
   /** 地图集数量：只数 `levels/` 下的文件夹（散文件不算）。 */
   level_packs: number
+  /** 已有的 DIYLevel 目录备份（绝对路径，升序）。 */
+  backups?: string[]
 }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }

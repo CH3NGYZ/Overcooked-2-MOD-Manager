@@ -131,6 +131,14 @@ export const api = {
     invoke<OperationResult>('set_diy_level_enabled', { enabled }),
   /** 打开 DIYLevel 的地图目录（不自动创建）。 */
   openDiyLevelDirectory: () => invoke<OperationResult>('open_diy_level_directory'),
+  /** 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）。 */
+  backupDiyLevel: () => invoke<OperationResult>('backup_diy_level'),
+  /** 恢复 DIYLevel 备份（先删现有目录再整体还原）。 */
+  restoreDiyLevel: (backupPath: string) => invoke<OperationResult>('restore_diy_level', { backupPath }),
+  deleteDiyLevelBackup: (backupPath: string) =>
+    invoke<OperationResult>('delete_diy_level_backup', { backupPath }),
+  /** 卸载 DIYLevel 框架：自动备份后按安装清单回收。 */
+  uninstallDiyLevel: () => invoke<OperationResult>('uninstall_diy_level'),
   /** 清除头像磁盘缓存，返回删除的文件数。 */
   clearRepositoryAvatars: () => invoke<number>('clear_repository_avatars'),
   openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),

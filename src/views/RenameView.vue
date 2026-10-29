@@ -281,7 +281,7 @@ async function copyCode() {
   if (overLimit.value) { message.error(t('名字代码超过限制')); return }
   try {
     await api.copyText(code.value)
-    message.success(t('已复制，可粘贴到 MOD 菜单'))
+    message.success(t('已复制，可粘贴到街机MOD 的多彩名字菜单'))
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : String(reason))
   }

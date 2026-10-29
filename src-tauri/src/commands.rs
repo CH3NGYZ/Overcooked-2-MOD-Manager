@@ -3319,18 +3319,18 @@ pub fn copy_text(text: String) -> Result<OperationResult, String> {
     })
 }
 
-/// 多彩名字 MOD 的本地监听端口范围（含两端）。
+/// 街机MOD 里「多彩名字」功能的本地监听端口范围（含两端）。
 const COLORFUL_NAME_PORTS: std::ops::RangeInclusive<u16> = 28780..=28790;
-/// MOD 的显示名上限：UTF-16LE 238 字节，即 119 个 UTF-16 代码单元。
+/// 街机MOD 的显示名上限：UTF-16LE 238 字节，即 119 个 UTF-16 代码单元。
 const COLORFUL_NAME_MAX_UNITS: usize = 119;
-/// MOD 认可的官方改名网页来源。
+/// 官方改名网页的来源，仅用于**旧版**街机MOD 的兜底通道。
 ///
-/// `DisplayNameWebService.IsValidToken` 只放行三类凭据：本次会话随机生成的
-/// `X-OC2-Token`、同一 token 的查询参数，或 `Origin` 精确等于官方改名网页。
-/// 缺了它，MOD 会在所有能连上的端口上回 403「Token 不匹配」。
+/// 街机MOD v1.9.9 起 `IsValidToken` 只认 `X-OC2-Token`，Origin 已被明确
+/// 移除（网页同样改发请求头）。这里的常量只服务还没写出握手文件的旧版，
+/// 不要把它当常规通道，也不要据此放宽校验。
 const COLORFUL_NAME_ORIGIN: &str = "https://oc2-change-colorful-name.ch3ng.top";
 
-/// MOD 为本地管理器写出的握手文件（相对游戏目录）。
+/// 街机MOD 为本地管理器写出的握手文件（相对游戏目录）。
 ///
 /// MOD 已经把自己的业务数据放在 `BepInEx/config/OC2HostUtilities/` 下，
 /// 握手文件沿用同一目录。管理器读到 token 就走 token 鉴权，读不到（旧版
@@ -3347,13 +3347,13 @@ struct ColorfulNameHandshake {
     version: u32,
 }
 
-/// 本次推送使用的凭据：`None` 表示没有握手，退回官方 Origin + 端口扫描。
+/// 本次推送使用的凭据。
 struct ColorfulNameCredential {
     port: u16,
     token: String,
 }
 
-/// 读取 MOD 写出的握手文件。
+/// 读取街机MOD 写出的握手文件。
 ///
 /// 只接受落在端口段内、32 位十六进制的 token，以及已知的协议版本 —— 这个
 /// 文件在游戏目录里，任何能写游戏目录的程序都能伪造它，所以校验的作用是
@@ -3364,18 +3364,18 @@ fn read_colorful_name_handshake(game_root: &Path) -> Option<ColorfulNameCredenti
     let handshake: ColorfulNameHandshake = serde_json::from_str(&text).ok()?;
     if handshake.version != 1 {
         log::warn!(
-            "多彩名字握手文件版本未知，按旧方式推送：版本={}",
+            "街机MOD 握手文件版本未知，按旧方式推送：版本={}",
             handshake.version
         );
         return None;
     }
     if !COLORFUL_NAME_PORTS.contains(&handshake.port) {
-        log::warn!("多彩名字握手端口越界，忽略：端口={}", handshake.port);
+        log::warn!("街机MOD 握手端口越界，忽略：端口={}", handshake.port);
         return None;
     }
     let token = handshake.token.trim();
     if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        log::warn!("多彩名字握手 token 格式非法，忽略");
+        log::warn!("街机MOD 握手 token 格式非法，忽略");
         return None;
     }
     Some(ColorfulNameCredential {
@@ -3386,18 +3386,18 @@ fn read_colorful_name_handshake(game_root: &Path) -> Option<ColorfulNameCredenti
 
 /// 单个端口的推送结果。
 ///
-/// 「连上了但被拒绝」必须和「端口没人监听」区分开：前者说明 MOD 正在运行，
-/// 报错方向是鉴权或版本，后者才是「请打开游戏」。
+/// 「连上了但被拒绝」必须和「端口没人监听」区分开：前者说明街机MOD 正在
+/// 运行，报错方向是鉴权或版本，后者才是「请打开游戏」。
 enum ColorfulNameOutcome {
     Delivered(u16),
     Rejected(u16, String),
     Unreachable(u16),
 }
 
-/// 向 MOD 的 `/set-name` 发一次改名请求。
+/// 向街机MOD 的 `/set-name` 发一次改名请求。
 ///
-/// `token` 为 `None` 时带官方 Origin（旧版 MOD 只认它）；有 token 时改用
-/// `X-OC2-Token`，这是 MOD 的强凭据，也是本地管理器的正规通道。
+/// `token` 为 `None` 时带官方 Origin（只有旧版街机MOD 还认它）；有 token 时
+/// 改用 `X-OC2-Token`，这是当前唯一的正规通道。
 async fn send_colorful_name(
     client: &reqwest::Client,
     url: &str,
@@ -3430,7 +3430,7 @@ async fn classify_colorful_name(
         Ok(response) if response.status().is_success() => ColorfulNameOutcome::Delivered(port),
         Ok(response) => {
             let status = response.status();
-            // MOD 的 403 正文就是「Token 不匹配」，写进日志才能直接定位鉴权问题。
+            // 街机MOD 的 403 正文就是「Token 不匹配」，写进日志才能直接定位鉴权问题。
             let body = response.text().await.unwrap_or_default();
             let body = body.chars().take(80).collect::<String>();
             let detail = format!("{status} {}", body.trim()).trim().to_string();
@@ -3455,7 +3455,7 @@ fn colorful_name_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/set-name")
 }
 
-/// 把生成好的名字推送给正在运行的多彩名字 MOD。
+/// 把生成好的名字推送给街机MOD 的「多彩名字」功能。
 ///
 /// 前端 CSP 只允许 `self` 与 IPC，无法直接访问 `http://127.0.0.1:287xx`，
 /// 所以由后端尝试 POST；任一端口返回 2xx 即视为成功。
@@ -3478,17 +3478,23 @@ pub async fn push_colorful_name(
             COLORFUL_NAME_MAX_UNITS * 2
         ));
     }
-    log::info!("推送多彩名字到 MOD：UTF-16 单元={}", units);
+    log::info!("推送多彩名字到街机MOD：UTF-16 单元={}", units);
 
-    // 握手文件只在已配置游戏目录时可读；没有配置就退回 Origin 扫描。
+    /*
+     * 握手文件必须按**探测到的**游戏目录去找，不能读 `config.game.path`。
+     *
+     * 真实事故：配置里 `game.path` 为空（目录是每次运行时探测出来的，
+     * 用户从没手动填过），于是这里判定「没配目录」直接走 Origin 兜底；
+     * 而新街机MOD 已改成只认 `X-OC2-Token`，Origin 必然 403，用户看到
+     * 的是「MOD 拒绝了请求」。与其它命令保持一致，用 `detect_game` 的
+     * 结果。
+     */
     let credential = {
         let config = state.config.load_or_default();
-        let game_root = config.game.path.trim();
-        if game_root.is_empty() {
-            None
-        } else {
-            read_colorful_name_handshake(Path::new(game_root))
-        }
+        game::detect_game(&config)
+            .path
+            .as_deref()
+            .and_then(|game_root| read_colorful_name_handshake(Path::new(game_root)))
     };
     let token = credential
         .as_ref()
@@ -3498,9 +3504,11 @@ pub async fn push_colorful_name(
         None => COLORFUL_NAME_PORTS.collect(),
     };
     if token.is_some() {
-        log::info!("多彩名字握手可用：端口={ports:?}，使用 token 鉴权");
+        log::info!("街机MOD 握手可用：端口={ports:?}，使用 token 鉴权");
     } else {
-        log::debug!("未发现多彩名字握手文件，按官方 Origin 扫描端口");
+        log::warn!(
+            "未找到街机MOD 握手文件（{COLORFUL_NAME_HANDSHAKE}），改用 Origin 兜底；新版本街机MOD 只认 token，这一步很可能被拒绝"
+        );
     }
 
     let client = reqwest::Client::builder()
@@ -3518,10 +3526,10 @@ pub async fn push_colorful_name(
     for outcome in &outcomes {
         match outcome {
             ColorfulNameOutcome::Delivered(port) => {
-                log::info!("多彩名字 MOD 已接收：端口={port}");
+                log::info!("街机MOD 已接收多彩名字：端口={port}");
                 return Ok(OperationResult {
                     ok: true,
-                    message: "已推送到 MOD".into(),
+                    message: "已推送到街机MOD".into(),
                 });
             }
             ColorfulNameOutcome::Rejected(port, detail) => {
@@ -3533,9 +3541,10 @@ pub async fn push_colorful_name(
     }
     if !rejected.is_empty() {
         log::warn!(
-            "多彩名字推送失败：MOD 在端口 {rejected:?} 上拒绝请求，无响应的端口={unreachable:?}，检查 MOD 版本与握手/Origin 是否匹配"
+            "多彩名字推送失败：街机MOD 在端口 {rejected:?} 上拒绝请求，无响应的端口={unreachable:?}，检查街机MOD 是否已写出握手文件"
         );
-        return Err("多彩名字 MOD 拒绝了请求，请在游戏里重新打开一次改名网页后重试".into());
+        // 走到这里说明端口有人听、但没通过鉴权：对用户只有一种可执行的建议。
+        return Err("街机MOD 拒绝了改名请求，请更新到最新版街机MOD 并重启游戏后重试".into());
     }
     log::warn!("多彩名字推送失败：{unreachable:?} 端口均无响应");
     Err("请打开游戏并确认 街机MOD 正在运行".into())
@@ -9628,5 +9637,53 @@ mod colorful_name_push_tests {
         assert!(read_colorful_name_handshake(&workspace).is_none());
 
         std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    /// 握手文件必须按 `detect_game` 探测到的目录去找。
+    ///
+    /// 真实事故：`config.game.path` 为空（目录是运行时探测的，用户没手动填
+    /// 过），读握手文件的代码却只看配置字段，于是判定「没配目录」直接走
+    /// Origin 兜底；而当前街机MOD 只认 `X-OC2-Token`，用户拿到的是 403。
+    /// 这里用源码断言把「用探测结果」这件事钉死，因为这条路径需要真实游戏
+    /// 目录才能触发，纯逻辑测试覆盖不到。
+    #[test]
+    fn handshake_lookup_uses_the_detected_game_path_not_the_config_field() {
+        let source = include_str!("commands.rs");
+        let body = source
+            .split("pub async fn push_colorful_name")
+            .nth(1)
+            .and_then(|tail| tail.split("fn parse_tutorial_document").next())
+            .expect("push_colorful_name 函数体应当可定位");
+        // 注释里会引用这个字段名来说明为什么不能用它，先剥掉块注释与行注释再断言。
+        let code = strip_comments(body);
+        assert!(
+            code.contains("game::detect_game(&config)"),
+            "读握手文件必须用 detect_game 的探测结果；配置里的 game.path 可能为空"
+        );
+        assert!(
+            !code.contains("config.game.path"),
+            "不要再直接读 config.game.path：该字段为空时会让握手文件永远找不到"
+        );
+    }
+
+    /// 去掉 `/* … */` 与 `// …`，避免断言命中说明性的注释文字。
+    fn strip_comments(source: &str) -> String {
+        let mut out = String::new();
+        let mut rest = source;
+        while let Some(start) = rest.find("/*") {
+            out.push_str(&rest[..start]);
+            match rest[start..].find("*/") {
+                Some(end) => rest = &rest[start + end + 2..],
+                None => return out,
+            }
+        }
+        out.push_str(rest);
+        out.lines()
+            .map(|line| match line.find("//") {
+                Some(index) => &line[..index],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }

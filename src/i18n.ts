@@ -669,10 +669,10 @@ const entries = {
   '全部等级': ['全部等級', 'All levels', '모든 레벨', 'すべてのレベル'],
   '{count} 行': ['{count} 行', '{count} lines', '{count}줄', '{count} 行'],
   '复制代码': ['複製代碼', 'Copy code', '코드 복사', 'コードをコピー'],
-  '已复制，可粘贴到 MOD 菜单': ['已複製，可貼到 MOD 選單', 'Copied. Paste it into the MOD menu.', '복사되었습니다. MOD 메뉴에 붙여넣으세요', 'コピーしました。MOD メニューに貼り付けられます'],
+  '已复制，可粘贴到街机MOD 的多彩名字菜单': ['已複製，可貼到主機實用工具的多彩名字選單', 'Copied. Paste it into HostUtilities\' colorful-name menu.', '복사되었습니다. 호스트 유틸리티의 다채로운 이름 메뉴에 붙여넣으세요', 'コピーしました。ホストユーティリティのカラフルネームメニューに貼り付けられます'],
   '推送到 街机MOD': ['推送到 主機實用工具', 'Push To HostUtilities', '호스트 유틸리티로 보내기', 'ホストユーティリティへ送信'],
   '已推送到 街机MOD': ['已推送到 主機實用工具', 'Pushed to HostUtilities', '호스트 유틸리티로 보냈습니다', 'ホストユーティリティに送信しました'],
-  '复制后粘贴到游戏内 MOD 菜单，或直接推送到正在运行的 MOD': ['複製後貼到遊戲內 MOD 選單，或直接推送到執行中的 MOD', 'Copy and paste into the in-game MOD menu, or push to the running MOD', '복사해 게임 내 MOD 메뉴에 붙여넣거나 실행 중인 MOD로 보내세요', 'コピーしてゲーム内 MOD メニューに貼り付けるか、実行中の MOD へ送信します'],
+  '复制后粘贴到游戏内街机MOD 的多彩名字菜单，或直接推送': ['複製後貼到遊戲內主機實用工具的多彩名字選單，或直接推送', 'Copy and paste into HostUtilities\' colorful-name menu in game, or push directly', '복사해 게임 내 호스트 유틸리티의 다채로운 이름 메뉴에 붙여넣거나 바로 보내세요', 'コピーしてゲーム内ホストユーティリティのカラフルネームメニューに貼り付けるか、直接送信します'],
   '{count} 个': ['{count} 個', '{count}', '{count}개', '{count} 件'],
   // 通用动作与状态
   '保存并验证': ['儲存並驗證', 'Save and verify', '저장 후 검증', '保存して検証'],

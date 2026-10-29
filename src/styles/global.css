@@ -57,14 +57,18 @@ body > .n-drawer-container {
 /*
  * 消息提示贴到「内容区」左下角，而不是整个窗口左下角。
  *
- * Naive 的 n-message-container 挂在 body 下，bottom-left 位置用
- * `left: 12px; right: 0` 定位，提示会压在侧栏下方。把左边界让出侧栏宽度、
- * 再加一点内边距即可。
+ * Naive 的 n-message-container 挂在 body 下，各位置的定位规则形如
+ * `.n-message-container.n-message-container--bottom-left { left: 12px }` ——
+ * 两个类的特指度是 0,2,0。所以这里**必须**用同样两个类再加 body 前缀
+ * （0,2,1）才能压过它；早先只写 `body > .n-message-container`（0,1,1）
+ * 特指度不够，规则被静默忽略，提示仍然压在侧栏下方。
  *
- * 只在本应用生效：容器类名由 Naive 生成，这里靠 body 直接子级精确匹配，
- * 不会影响弹窗内部嵌套的消息容器。
+ * 三种靠左的位置都要让出侧栏宽度：margin 由 Naive 定，这里只改左边界。
  */
-body > .n-message-container {
+body > .n-message-container.n-message-container--bottom-left,
+body > .n-message-container.n-message-container--top-left,
+body > .n-message-container.n-message-container--bottom,
+body > .n-message-container.n-message-container--top {
   left: calc(var(--oc2-rail-width) + 12px);
 }
 * {

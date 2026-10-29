@@ -283,17 +283,28 @@ function unmetRelation(repo: Repository): RelationStatus | undefined {
 }
 
 /**
- * 卡头那个关系标签该显示什么（`null` 表示没有问题）。
+ * 卡头那个关系标签该显示什么（`null` 表示不显示）。
  *
- * 三种未满足状态落到两个标签：
+ * **只在已安装的卡片上显示。** 未安装的卡片一律不显示关系标签 ——
+ * 关系对它来说是「安装前置条件」，不是「当前待处理的状态」：
+ *
+ *   · 用户装了稳定版街机 MOD，测试版卡片会解析出 `conflicts{prerelease:false}`，
+ *     于是凭空冒出一个红色「冲突」。用户根本没装测试版，看到「冲突」只会
+ *     以为自己要卸载什么，而底部按钮明明是「安装」—— 两个控件自相矛盾。
+ *   · 缺依赖同理：装它要先把 CM 装到 19.0，这是安装时自动处理的事，
+ *     点「安装」后检查窗会完整列出并让用户确认，卡头再挂一个「缺依赖」
+ *     属于重复，而且让人误以为要自己动手。
+ *
+ * 已安装的卡片则相反：那两个标签描述的是「你现在装的东西有问题」，
+ * 是用户真正需要知道的现状。
+ *
+ * 三种未满足状态在已安装卡片上落到两个标签：
  *   conflict（冲突 / 不兼容）→ 「冲突」
  *   missing / installable（缺依赖，能不能一键装都一样）→ 「缺依赖」
- *
- * 为什么把 installable 也并进来：卡头**不再是入口**。能不能自动装由
- * 点底部「安装」后的检查窗决定，这里只负责告诉用户「这张卡还缺点东西」。
- * 分成两个标签（「缺依赖」vs「安装依赖」按钮）会让卡头看起来像操作区。
  */
 function relationTag(repo: Repository): { text: string; tone: TagTone } | null {
+  // 未安装：安装前置条件不在卡头表达，交给安装前检查
+  if (!hasLocalInstall(repo)) return null
   const status = unmetRelation(repo)
   if (!status) return null
   return status.state === 'conflict'

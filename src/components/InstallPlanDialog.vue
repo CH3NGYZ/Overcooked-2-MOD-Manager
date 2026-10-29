@@ -18,7 +18,7 @@
  * 已卸载的 MOD 会进回收站，用户仍可恢复。
  */
 import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NSpin } from 'naive-ui'
+import { NAlert, NButton, NSpin, NTag } from 'naive-ui'
 import { t, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'

@@ -209,6 +209,14 @@ const entries = {
   '将移除游戏目录中的 BepInEx 框架文件。建议先创建备份。继续卸载？': ['將移除遊戲目錄中的 BepInEx 框架檔案。建議先建立備份。繼續解除安裝？', 'This removes BepInEx files from the game folder. Create a backup first. Continue?', '게임 폴더의 BepInEx 파일을 제거합니다. 먼저 백업하는 것이 좋습니다. 계속할까요?', 'ゲームフォルダーの BepInEx ファイルを削除します。先にバックアップを推奨します。続行しますか？'],
   '删除备份': ['刪除備份', 'Delete backup', '백업 삭제', 'バックアップを削除'],
   '永久删除该备份？': ['永久刪除該備份？', 'Permanently delete this backup?', '이 백업을 영구 삭제할까요?', 'このバックアップを完全に削除しますか？'],
+  '已恢复': ['已還原', 'Restored', '복원되었습니다', '復元しました'],
+  '备份已删除': ['備份已刪除', 'Backup deleted', '백업이 삭제되었습니다', 'バックアップを削除しました'],
+  '框架启用（游戏加载此框架）': [
+    '框架啟用（遊戲載入此框架）',
+    'Framework enabled (the game loads this framework)',
+    '프레임워크 활성화(게임이 이 프레임워크를 불러옵니다)',
+    'フレームワーク有効（ゲームがこのフレームワークを読み込みます）',
+  ],
 
   // MOD 安装
   '共 {count} 个仓库': ['共 {count} 個倉庫', '{count} repositories', '저장소 {count}개', 'リポジトリ {count} 件'],
@@ -239,6 +247,12 @@ const entries = {
   ],
   // 兼容列表：MOD 只和这些指定 MOD 的指定版本兼容（compatible 关系不满足）
   '不兼容': ['不相容', 'Incompatible', '비호환', '非互換'],
+  '「{name}」与「{owner}」不兼容，需要卸载。继续？': [
+    '「{name}」與「{owner}」不相容，需要解除安裝。繼續？',
+    '"{name}" is incompatible with "{owner}" and must be uninstalled. Continue?',
+    '"{name}"은(는) "{owner}"와(과) 호환되지 않아 제거가 필요합니다. 계속할까요?',
+    '「{name}」は「{owner}」と互換性がないため、アンインストールが必要です。続行しますか？',
+  ],
   // 仅使用内置仓库源：跳过按地区选择 raw 直链
   '仅使用内置仓库源': [
     '僅使用內建倉庫來源',
@@ -275,6 +289,18 @@ const entries = {
   ],
   '全部处理': ['全部處理', 'Handle all', '모두 처리', 'すべて処理'],
   '仍然安装': ['仍然安裝', 'Install anyway', '그래도 설치', 'それでもインストール'],
+  '完成': ['完成', 'Done', '완료', '完了'],
+  '下载完成但没有解析出安装内容': [
+    '下載完成但沒有解析出安裝內容',
+    'Download finished but no installable content was parsed',
+    '다운로드는 완료되었지만 설치할 내용을 분석하지 못했습니다',
+    'ダウンロードは完了しましたが、インストール内容を解析できませんでした',
+  ],
+  '正在读取配置': ['正在讀取設定', 'Reading configuration', '설정 읽는 중', '設定を読み込み中'],
+  '保存': ['儲存', 'Save', '저장', '保存'],
+  '已复制': ['已複製', 'Copied', '복사되었습니다', 'コピーしました'],
+  '复制': ['複製', 'Copy', '복사', 'コピー'],
+  '整包移入回收站': ['整包移入資源回收筒', 'Move package to recycle bin', '패키지째 휴지통으로 이동', 'パッケージをゴミ箱へ移動'],
   '已完成 {count} 项处理': [
     '已完成 {count} 項處理',
     'Handled {count} item(s)',
@@ -600,7 +626,7 @@ const entries = {
   '{count} 个 DLL · {mods} 个 MOD · {deps} 个依赖': ['{count} 個 DLL · {mods} 個 MOD · {deps} 個相依', '{count} DLLs · {mods} MODs · {deps} dependencies', 'DLL {count}개 · MOD {mods}개 · 의존성 {deps}개', 'DLL {count} 件 · MOD {mods} 件 · 依存 {deps} 件'],
   '下载并安装': ['下載並安裝', 'Download and install', '다운로드 후 설치', 'ダウンロードしてインストール'],
   '选择本地的 .dll 或 .zip 文件，按标准布局安装到厨房目录。': ['選擇本機的 .dll 或 .zip 檔案，依標準版面配置安裝到廚房目錄。', 'Pick a local .dll or .zip file; it is installed into the kitchen folder using the standard layout rules.', '로컬 .dll 또는 .zip 파일을 선택하면 표준 배치 규칙으로 게임 폴더에 설치합니다', 'ローカルの .dll または .zip を選ぶと、標準レイアウト規則でゲームフォルダーにインストールします'],
-  '粘贴 zip 或 DLL 的下载直链，由管理器下载并安装。': ['貼上 zip 或 DLL 的下載直連，由管理器下載並安裝。', 'Paste a direct download URL for a zip or DLL; the manager downloads and installs it.', 'zip 또는 DLL의 직접 다운로드 링크를 붙여넣으면 관리자가 내려받아 설치합니다', 'zip または DLL の直リンクを貼り付けると、マネージャーがダウンロードしてインストールします'],
+  '粘贴 zip 或 DLL 的下载直链，由管理器下载并解析。': ['貼上 zip 或 DLL 的下載直連，由管理器下載並解析。', 'Paste a direct download URL for a zip or DLL; the manager downloads and inspects it.', 'zip 또는 DLL의 직접 다운로드 링크를 붙여넣으면 관리자가 내려받아 분석합니다', 'zip または DLL の直リンクを貼り付けると、マネージャーがダウンロードして解析します'],
   '请输入 zip 或 DLL 的直链网址': ['請輸入 zip 或 DLL 的直連網址', 'Enter a direct URL to a zip or DLL', 'zip 또는 DLL 직접 링크를 입력하세요', 'zip または DLL の直リンクを入力してください'],
   '删除 MOD 包': ['刪除 MOD 包', 'Delete MOD package', 'MOD 패키지 삭제', 'MOD パッケージを削除'],
   '「{name}」的 {count} 个文件将被整包移入回收站，可在回收站中恢复。继续？': ['「{name}」的 {count} 個檔案將被整包移入資源回收筒，可在資源回收筒中還原。繼續？', 'All {count} files of "{name}" will be moved to the recycle bin and can be restored. Continue?', '"{name}"의 파일 {count}개를 패키지째 휴지통으로 옮깁니다. 복원할 수 있습니다. 계속할까요?', '「{name}」の {count} ファイルをまとめてゴミ箱へ移動します（復元可能）。続行しますか？'],

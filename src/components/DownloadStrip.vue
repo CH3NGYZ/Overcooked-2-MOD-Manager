@@ -145,7 +145,8 @@ async function cancel() {
   position: fixed;
   /* 顶部让出自绘标题栏：下载卡片是全局浮层，但标题栏必须始终可拖动 */
   inset: var(--oc2-titlebar-height, 56px) 0 0 0;
-  z-index: 2600;
+  /* 层级取自 global.css 的浮层阶梯：低于标题栏弹层，高于页面内浮层 */
+  z-index: var(--oc2-layer-download, 2600);
   display: grid;
   place-items: center;
   background: rgba(0, 0, 0, .38);

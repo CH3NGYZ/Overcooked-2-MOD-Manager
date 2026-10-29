@@ -633,6 +633,6 @@ onBeforeUnmount(clearNativeSelection)
   place-items: center;
   background: color-mix(in srgb, var(--oc2-body) 72%, transparent);
   backdrop-filter: blur(2px);
-  z-index: 2500;
+  z-index: var(--oc2-layer-page, 2500);
 }
 </style>

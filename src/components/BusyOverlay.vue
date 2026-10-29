@@ -40,7 +40,8 @@ defineProps<{
 .busy-overlay {
   position: fixed;
   inset: 0;
-  z-index: 4000;
+  /* 层级取自 global.css 的浮层阶梯：高于下载遮罩，低于标题栏弹层 */
+  z-index: var(--oc2-layer-busy, 4000);
   display: flex;
   align-items: center;
   justify-content: center;

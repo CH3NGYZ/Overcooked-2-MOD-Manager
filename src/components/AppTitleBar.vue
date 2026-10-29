@@ -18,6 +18,15 @@ import appIcon from '../assets/app-icon.png'
 const props = defineProps<{ version: string }>()
 
 /**
+ * 标题栏三个弹层（缩放 / 语言 / 主题色）的层级。
+ *
+ * 必须高于页面上所有其它浮层 —— 包括下载遮罩（2600）与全屏阻塞遮罩
+ * （4000）。这三个是挂在自绘标题栏上的真窗口级控件，被下载卡片盖住时
+ * 用户会以为按钮失效。取值与 `global.css` 的 --oc2-layer-titlebar-menu 一致。
+ */
+const TITLEBAR_MENU_Z_INDEX = 5000
+
+/**
  * 窗口对象只在真实 Tauri 环境存在。浏览器预览下必须为 null，
  * 否则 getCurrentWindow() 抛错会让 setup 崩溃、整页白屏。
  */
@@ -164,7 +173,8 @@ defineExpose({ onUnmountedCleanup })
     <div class="spacer" data-tauri-drag-region></div>
 
     <!-- 界面缩放：下拉选择（与语言下拉一致） -->
-    <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" @select="onZoomSelect">
+    <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
+      @select="onZoomSelect">
       <button class="pill" type="button" :title="t('界面缩放')">
         <ContrastOutline width="15" height="15" />
         <span>{{ zoomPercent }}%</span>
@@ -173,7 +183,8 @@ defineExpose({ onUnmountedCleanup })
     </n-dropdown>
 
     <!-- 语言 -->
-    <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale" trigger="click"
+    <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale"
+      trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
       @select="(key: Locale) => setLocale(key)">
       <button class="pill" type="button" :title="t('界面语言')">
         <LanguageOutline width="15" height="15" />
@@ -190,7 +201,8 @@ defineExpose({ onUnmountedCleanup })
     </button>
 
     <!-- 主题色：3×3 色块矩阵，只显示颜色 -->
-    <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw>
+    <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw
+      :z-index="TITLEBAR_MENU_Z_INDEX">
       <template #trigger>
         <button class="pill icon-only" type="button" :title="t('主题色')" @contextmenu.prevent="cycleAccent">
           <span class="swatch" :style="{ background: accentSwatch }"></span>

@@ -25,6 +25,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { corefontsCommand, nativeSteamLaunchOptions } from '../gameRuntime'
 import type { AppPlatform, GameInfo, GameRuntime, PublicConfig } from '../types'
+import { backendMessageOf } from '../locale/backend'
 
 const props = defineProps<{
   show: boolean
@@ -65,7 +66,7 @@ async function copy(value: string) {
     await api.copyText(value)
     message.success(t('已复制'))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   }
 }
 

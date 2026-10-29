@@ -26,6 +26,7 @@ import { useNotify } from '../useNotify'
 import { celebrateInstall } from '../celebration'
 import AppModal from './AppModal.vue'
 import type { ModPreview, ModPreviewEntry } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const props = defineProps<{ show: boolean; preview: ModPreview | null }>()
 const emit = defineEmits<{
@@ -148,10 +149,10 @@ async function confirm() {
   try {
     const result = await api.confirmModInstall(current.preview_id)
     if (!result.ok) {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
       return
     }
-    message.success(result.message)
+    message.success(translateBackendMessage(result.message))
     // 安装成功是低频、高价值时刻：放一次短促彩带（内部已尊重 reduced-motion）
     void celebrateInstall()
     // 后端已在 confirm 里删掉暂存；收起面板，动画结束后再通知宿主刷新
@@ -159,7 +160,7 @@ async function confirm() {
     installedPreview.value = current
     emit('update:show', false)
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     installing.value = false
   }

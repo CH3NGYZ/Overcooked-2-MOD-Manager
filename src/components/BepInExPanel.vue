@@ -118,7 +118,7 @@ async function runInstall(reinstall: boolean) {
         if (!repaired.ok) message.warning(translateBackendMessage(repaired.message))
       } catch (reason) {
         // 修复失败只提示，不阻断后续引导
-        message.warning(reason instanceof Error ? reason.message : String(reason))
+        message.warning(backendMessageOf(reason))
       }
       guidePhase.value = 'after-install'
     }
@@ -236,7 +236,7 @@ async function toggleFramework(enabled: boolean) {
   const result = await api.switchWinhttp(enabled)
   result.ok
     ? message.success(translateBackendMessage(result.message) || (enabled ? t('框架已启用') : t('框架已禁用')))
-    : message.error(result.message)
+    : message.error(translateBackendMessage(result.message))
   await load()
 }
 

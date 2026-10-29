@@ -23,6 +23,7 @@ import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { ModRecycleEntry } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const { game } = useDashboard()
@@ -83,10 +84,10 @@ async function restore(entry: ModRecycleEntry) {
       message.success(result.message || t('恢复'))
       entries.value = entries.value.filter((item) => item.id !== entry.id)
     } else {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
     }
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     acting.value = null
   }
@@ -101,10 +102,10 @@ async function remove(entry: ModRecycleEntry) {
       message.success(result.message || t('彻底删除'))
       entries.value = entries.value.filter((item) => item.id !== entry.id)
     } else {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
     }
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     acting.value = null
   }
@@ -129,12 +130,12 @@ async function clearAll(): Promise<boolean> {
       entries.value = []
       return true
     }
-    message.error(result.message)
+    message.error(translateBackendMessage(result.message))
     // 失败时可能已删掉一部分：重新读取，让用户看到真实剩余
     await reload()
     return false
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
     await reload()
     return false
   } finally {

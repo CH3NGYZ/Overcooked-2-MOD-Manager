@@ -108,7 +108,7 @@ impl SourceLocation {
     fn resolve(reference: &str, parent: Option<&Self>) -> Result<Self, ConfigError> {
         let reference = reference.trim();
         if reference.is_empty() {
-            return Err(ConfigError::Invalid("仓库源地址不能为空".into()));
+            return Err(ConfigError::Invalid("error.source.addressEmpty".into()));
         }
         match Url::parse(reference) {
             Ok(url) => Self::remote(url),
@@ -124,29 +124,41 @@ impl SourceLocation {
                     Self::bundled_path(reference, base)
                 }
             },
-            Err(error) => Err(ConfigError::Invalid(format!("仓库源地址无效: {error}"))),
+            Err(error) => Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "error.source.addressInvalid",
+                &[("reason", &error.to_string())],
+            ))),
         }
     }
 
     fn resolve_remote_path(reference: &str, base: &Url) -> Result<Self, ConfigError> {
         let Some(root) = raw_repository_root(base) else {
-            return Self::remote(
-                base.join(reference)
-                    .map_err(|error| ConfigError::Invalid(format!("仓库源地址无效: {error}")))?,
-            );
+            return Self::remote(base.join(reference).map_err(|error| {
+                ConfigError::Invalid(crate::locale_tag::with_params(
+                    "error.source.addressInvalid",
+                    &[("reason", &error.to_string())],
+                ))
+            })?);
         };
         if reference.starts_with("//") {
-            return Self::remote(
-                base.join(reference)
-                    .map_err(|error| ConfigError::Invalid(format!("仓库源地址无效: {error}")))?,
-            );
+            return Self::remote(base.join(reference).map_err(|error| {
+                ConfigError::Invalid(crate::locale_tag::with_params(
+                    "error.source.addressInvalid",
+                    &[("reason", &error.to_string())],
+                ))
+            })?);
         }
         let resolved = if is_file_relative_path(reference) || reference.starts_with(['?', '#']) {
             base.join(reference)
         } else {
             root.join(reference.trim_start_matches('/'))
         }
-        .map_err(|error| ConfigError::Invalid(format!("仓库源地址无效: {error}")))?;
+        .map_err(|error| {
+            ConfigError::Invalid(crate::locale_tag::with_params(
+                "error.source.addressInvalid",
+                &[("reason", &error.to_string())],
+            ))
+        })?;
         if resolved.origin() != root.origin() || !resolved.path().starts_with(root.path()) {
             return Err(ConfigError::Invalid(
                 "仓库源路径不能超出当前仓库分支".into(),
@@ -162,14 +174,18 @@ impl SourceLocation {
             ));
         }
         if !url.username().is_empty() || url.password().is_some() {
-            return Err(ConfigError::Invalid("仓库源地址不能包含认证信息".into()));
+            return Err(ConfigError::Invalid(
+                "error.source.addressHasCredentials".into(),
+            ));
         }
         Ok(Self::Remote(url))
     }
 
     fn bundled_path(reference: &str, base: Option<&str>) -> Result<Self, ConfigError> {
         if reference.starts_with(['/', '\\']) || reference.contains(['\\', ':', '?', '#']) {
-            return Err(ConfigError::Invalid("内置仓库源路径不安全".into()));
+            return Err(ConfigError::Invalid(
+                "error.source.builtinPathUnsafe".into(),
+            ));
         }
         let mut components = base
             .map(|base| base.split('/').collect::<Vec<_>>())
@@ -179,7 +195,9 @@ impl SourceLocation {
                 "" | "." => {}
                 ".." => {
                     if components.pop().is_none() {
-                        return Err(ConfigError::Invalid("内置仓库源路径不安全".into()));
+                        return Err(ConfigError::Invalid(
+                            "error.source.builtinPathUnsafe".into(),
+                        ));
                     }
                 }
                 value => components.push(value),
@@ -190,7 +208,7 @@ impl SourceLocation {
                 .last()
                 .is_some_and(|name| name.ends_with(".toml"))
         {
-            return Err(ConfigError::Invalid("内置仓库源必须是 TOML 文件".into()));
+            return Err(ConfigError::Invalid("error.source.builtinNotToml".into()));
         }
         Ok(Self::Bundled(components.join("/")))
     }
@@ -235,13 +253,18 @@ impl SourceLocation {
 
     pub fn bundled_text(&self) -> Result<&'static str, ConfigError> {
         let Self::Bundled(path) = self else {
-            return Err(ConfigError::Invalid("仓库源不是内置文件".into()));
+            return Err(ConfigError::Invalid("error.source.notBuiltin".into()));
         };
         BUNDLED_SOURCES
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(path))
             .map(|(_, text)| *text)
-            .ok_or_else(|| ConfigError::Read(format!("内置仓库源文件不存在: {path}")))
+            .ok_or_else(|| {
+                ConfigError::Read(crate::locale_tag::with_params(
+                    "error.source.builtinFileMissing",
+                    &[("path", &path.to_string())],
+                ))
+            })
     }
 }
 
@@ -374,7 +397,7 @@ pub(crate) fn normalize_source_nickname(
     let legacy = source.nickname.trim().to_string();
     let resolved = nickname_fallback(&source.nickname_i18n)
         .or_else(|| (!legacy.is_empty()).then(|| legacy.clone()))
-        .ok_or_else(|| ConfigError::Invalid("仓库源 ID 和昵称不能为空".into()))?;
+        .ok_or_else(|| ConfigError::Invalid("error.source.idOrNicknameEmpty".into()))?;
     // 空白翻译项一律清掉：`pickI18n` 会跳过空值，留着只会让 TOML 变长
     source
         .nickname_i18n
@@ -468,13 +491,16 @@ pub fn github_proxy_sources(
                     SourceLocation::resolve(&source.url, Some(&base))?
                 }
                 Err(error) => {
-                    return Err(ConfigError::Invalid(format!("代理来源地址无效: {error}")));
+                    return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                        "error.source.proxyAddressInvalid",
+                        &[("reason", &error.to_string())],
+                    )));
                 }
             };
             let (url, bundled) = match resolved {
                 SourceLocation::Remote(url) => {
                     if url.scheme() != "https" || url.host_str().is_none() {
-                        return Err(ConfigError::Invalid("代理来源地址必须是 HTTPS URL".into()));
+                        return Err(ConfigError::Invalid("error.source.proxyNotHttps".into()));
                     }
                     (url.to_string(), false)
                 }
@@ -535,10 +561,14 @@ pub(crate) fn parse_document(
             safe_log_address(&location.address()),
             text.len()
         );
-        return Err(ConfigError::Invalid("仓库源文件超过 1 MiB".into()));
+        return Err(ConfigError::Invalid("error.source.tooLarge".into()));
     }
-    let mut document: RepositorySourceDocument = toml::from_str(text)
-        .map_err(|error| ConfigError::Invalid(format!("仓库源 TOML 解析失败: {error}")))?;
+    let mut document: RepositorySourceDocument = toml::from_str(text).map_err(|error| {
+        ConfigError::Invalid(crate::locale_tag::with_params(
+            "error.source.tomlInvalid",
+            &[("reason", &error.to_string())],
+        ))
+    })?;
     if document.repositories.is_empty()
         && document.repository_sources.is_empty()
         && document.github_proxy_sources.is_empty()
@@ -595,11 +625,16 @@ pub(crate) fn parse_document(
                     .unwrap_or_else(|| location.clone());
                 SourceLocation::resolve(&proxy_source.url, Some(&base))?
             }
-            Err(error) => return Err(ConfigError::Invalid(format!("代理来源地址无效: {error}"))),
+            Err(error) => {
+                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                    "error.source.proxyAddressInvalid",
+                    &[("reason", &error.to_string())],
+                )));
+            }
         };
         if let SourceLocation::Remote(url) = resolved {
             if url.scheme() != "https" || url.host_str().is_none() {
-                return Err(ConfigError::Invalid("代理来源地址必须是 HTTPS URL".into()));
+                return Err(ConfigError::Invalid("error.source.proxyNotHttps".into()));
             }
         }
     }
@@ -610,7 +645,9 @@ pub(crate) fn parse_document(
         // 昵称只认多语言表（zh-CN 兜底），旧单语字段在此折叠
         let nickname = normalize_source_nickname(source)?;
         if source.id.is_empty() || nickname.is_empty() {
-            return Err(ConfigError::Invalid("仓库源 ID 和昵称不能为空".into()));
+            return Err(ConfigError::Invalid(
+                "error.source.idOrNicknameEmpty".into(),
+            ));
         }
         source.region = crate::config::normalize_repository_region_for_storage(
             source.region.as_deref(),
@@ -795,7 +832,7 @@ pub async fn load_document(
     })? {
         if bytes.len() + chunk.len() > MAX_SOURCE_BYTES {
             log::error!("远程仓库源文件超过大小限制：地址={}", safe_url);
-            return Err(ConfigError::Invalid("仓库源文件超过 1 MiB".into()));
+            return Err(ConfigError::Invalid("error.source.tooLarge".into()));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -1616,7 +1653,10 @@ id = "mods"
 url = "mods.toml"
 "#;
         let error = parse_document(missing, &location).unwrap_err();
-        assert!(error.to_string().contains("昵称不能为空"), "{error}");
+        assert!(
+            error.to_string().contains("error.source.idOrNicknameEmpty"),
+            "{error}"
+        );
 
         // 翻译表语言值类型错误仍然报错
         assert!(

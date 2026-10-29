@@ -35,6 +35,7 @@ import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useModRemoval } from '../composables/useModRemoval'
 import type { InstalledMod, Repository } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const dialog = useDialog()
@@ -197,7 +198,7 @@ async function refreshLocal() {
     await load()
     message.success(t('已重新扫描本地 MOD'))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     refreshingLocal.value = false
   }
@@ -330,10 +331,10 @@ async function setAllEnabled(enabled: boolean) {
   try {
     const result = await api.setAllLocalModsEnabled(enabled)
     if (result.ok) {
-      message.success(result.message)
+      message.success(translateBackendMessage(result.message))
       await load()
     } else {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
     }
   } catch (reason) { fail(reason) } finally { bulkWorking.value = false }
 }
@@ -672,14 +673,14 @@ function singleModTitle(mod: InstalledMod) {
 }
 
 function fail(reason: unknown) {
-  message.error(reason instanceof Error ? reason.message : String(reason))
+  message.error(backendMessageOf(reason))
 }
 
 async function toggle(mod: InstalledMod, enabled: boolean) {
   busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalMod(mod.dll_file, enabled)
-    result.ok ? message.success(result.message || (enabled ? '已启用' : t('已禁用'))) : message.error(result.message)
+    result.ok ? message.success(result.message || (enabled ? '已启用' : t('已禁用'))) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }
@@ -1143,7 +1144,7 @@ const toolGroupStyle = computed(() => ({
 async function openLocation(mod: InstalledMod) {
   try {
     const result = await api.openModFileLocation(mod.dll_file)
-    if (!result.ok) message.error(result.message)
+    if (!result.ok) message.error(translateBackendMessage(result.message))
   } catch (reason) { fail(reason) }
 }
 
@@ -1157,7 +1158,7 @@ function editConfig(mod: InstalledMod) {
 async function openLogs(mod: InstalledMod) {
   try {
     const result = await api.openModLogsDirectory(mod.dll_file)
-    if (!result.ok) message.error(result.message)
+    if (!result.ok) message.error(translateBackendMessage(result.message))
   } catch (reason) { fail(reason) }
 }
 
@@ -1167,7 +1168,7 @@ async function openLogs(mod: InstalledMod) {
 async function openModsDirectory() {
   try {
     const result = await api.openModDirectory()
-    if (!result.ok) message.error(result.message)
+    if (!result.ok) message.error(translateBackendMessage(result.message))
   } catch (reason) { fail(reason) }
 }
 
@@ -1253,7 +1254,7 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
     const result = await api.toggleLocalModPackage(packageId, enabled)
     result.ok
       ? message.success(result.message || (enabled ? t('已启用') : t('已禁用')))
-      : message.error(result.message)
+      : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) {
     fail(reason)
@@ -1278,7 +1279,7 @@ function removePackage(node: ModPackageNode) {
         const result = await api.uninstallLocalMod(first.dll_file, true)
         result.ok
           ? message.success(result.message || confirm.done)
-          : message.error(result.message)
+          : message.error(translateBackendMessage(result.message))
         await load()
       } catch (reason) {
         fail(reason)

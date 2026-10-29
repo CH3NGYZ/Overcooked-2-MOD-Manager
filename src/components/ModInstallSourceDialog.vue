@@ -21,6 +21,7 @@ import { t } from '../i18n'
 import { useNotify } from '../useNotify'
 import AppModal from './AppModal.vue'
 import type { ModPreview, ModSourceKind } from '../types'
+import { backendMessageOf } from '../locale/backend'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
@@ -57,7 +58,7 @@ async function analyze(kind: ModSourceKind, value: string) {
   try {
     handOff(await api.analyzeModSource(kind, value))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     busy.value = false
   }

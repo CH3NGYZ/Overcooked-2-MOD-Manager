@@ -27,6 +27,7 @@ import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import AppModal from './AppModal.vue'
+import { backendMessageOf } from '../locale/backend'
 
 const props = defineProps<{
   show: boolean
@@ -106,7 +107,7 @@ async function save() {
     dirty.value = false
     message.success(t('已保存'))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     saving.value = false
   }

@@ -33,6 +33,7 @@ import { repositoryForMod } from '../modStatus'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
 import type { ModRecycleEntry } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const router = useRouter()
 const message = useNotify()
@@ -141,10 +142,10 @@ async function toggleFramework(enabled: boolean) {
       message.success(result.message || (enabled ? t('框架已启用') : t('框架已禁用')))
       await load()
     } else {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
     }
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     working.value = false
   }
@@ -206,15 +207,15 @@ async function toggleDiyLevel(enabled: boolean) {
   try {
     const result = await api.setDiyLevelEnabled(enabled)
     if (result.ok) {
-      message.success(result.message)
+      message.success(translateBackendMessage(result.message))
       await load()
       // 开关不改地图文件，但重读一次能顺带刷新版本/地图集摘要
       await loadDiyLevel()
     } else {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
     }
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     working.value = false
   }

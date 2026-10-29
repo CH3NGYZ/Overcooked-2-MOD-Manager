@@ -7,6 +7,7 @@ import { useNotify } from '../useNotify'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
 import AppModal from './AppModal.vue'
 import type { AppUpdateInfo } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const props = defineProps<{ show: boolean; update: AppUpdateInfo | null }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
@@ -49,11 +50,11 @@ async function install() {
       phaseText.value = ''
       close()
     } else {
-      message.error(result.message)
+      message.error(translateBackendMessage(result.message))
       phaseText.value = ''
     }
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
     phaseText.value = ''
   } finally {
     installing.value = false

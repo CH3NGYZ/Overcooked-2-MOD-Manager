@@ -14,6 +14,7 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
 import appIcon from '../assets/app-icon.png'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const props = defineProps<{ version: string }>()
 
@@ -106,7 +107,7 @@ async function toggleGame() {
   const wasRunning = kitchenRunning.value
   try {
     const result = wasRunning ? await api.stopGame() : await api.launchNormal()
-    result.ok ? message.success(result.message) : message.error(result.message)
+    result.ok ? message.success(translateBackendMessage(result.message)) : message.error(translateBackendMessage(result.message))
     if (result.ok) {
       // 轮询几次，让按钮在观察器事件到达前也能尽快反映预期状态
       for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -116,7 +117,7 @@ async function toggleGame() {
       }
     }
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     launching.value = false
   }

@@ -18,6 +18,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const route = useRoute()
@@ -138,7 +139,7 @@ async function relaunchAdmin() {
   relaunching.value = true
   try {
     const result = await api.relaunchAsAdmin()
-    if (!result.ok) message.error(result.message)
+    if (!result.ok) message.error(translateBackendMessage(result.message))
     // 成功时进程会退出，这里的代码通常不会执行到
   } catch (reason) {
     fail(reason)
@@ -191,13 +192,13 @@ function openRequestedPanel() {
 }
 
 function fail(reason: unknown) {
-  message.error(reason instanceof Error ? reason.message : String(reason))
+  message.error(backendMessageOf(reason))
 }
 
 /* ===== 路径管理：游戏目录 ===== */
 async function openGameDir() {
   const result = await api.openGameDirectory()
-  if (!result.ok) message.error(result.message)
+  if (!result.ok) message.error(translateBackendMessage(result.message))
 }
 
 async function resetGamePath() {

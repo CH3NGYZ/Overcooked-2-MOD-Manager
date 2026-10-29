@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import test from 'node:test'
+
+/** 源码根目录：用于扫描「绕过桥接层」的写法。 */
+const SRC = new URL('../src/', import.meta.url)
 
 /**
  * 后端错误 tag → 前端文案的翻译链路。
@@ -130,7 +134,71 @@ test('回收站命令不再返回中文文案（源码级确认）', () => {
   }
 })
 
-/* ===== 下载与归档域 ===== */
+/* ===== 仓库源域 ===== */
+
+test('仓库源导入的 tag 在五语下都有翻译', () => {
+  const tags = [
+    'error.source.addressEmpty',
+    'error.source.addressInvalid',
+    'error.source.addressHasCredentials',
+    'error.source.builtinPathUnsafe',
+    'error.source.builtinNotToml',
+    'error.source.builtinFileMissing',
+    'error.source.notBuiltin',
+    'error.source.idOrNicknameEmpty',
+    'error.source.proxyNotHttps',
+    'error.source.proxyAddressInvalid',
+    'error.source.tooLarge',
+    'error.source.tomlInvalid',
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const tag of tags) {
+      const text = translateBackendMessage(tag)
+      assert.notEqual(text, tag, `${locale}: ${tag} 未登记`)
+      assert.ok(text.length > 0, `${locale}: ${tag} 翻译为空`)
+    }
+  }
+})
+
+/* ===== 前端不再直接显示后端 message（全局护栏）===== */
+
+test('前端不直接显示后端 message（必须经过桥接层）', () => {
+  /*
+   * 这是「弹窗通知没多语言」的根因：只要有一处直接
+   * `message.error(result.message)`，那条提示就永远是后端语言。
+   * 桥接层存在后仍可能有人写回旧写法，所以扫源码守住。
+   */
+  const offenders = []
+  const files = []
+  const walk = (dir) => {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name)
+      if (name.isDirectory()) {
+        if (name.name !== 'locale') walk(full)
+      } else if (/\.(vue|ts)$/.test(name.name)) {
+        files.push(full)
+      }
+    }
+  }
+  walk(SRC.pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
+    for (const [index, line] of text.split('\n').entries()) {
+      const trimmed = line.trimStart()
+      if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue
+      // 裸显示后端 message：没有包在 translateBackendMessage / backendMessageOf 里
+      if (/message\.(error|success|warning)\((result|outcome)\.message\)/.test(line)) {
+        offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${index + 1}`)
+      }
+      if (/message\.(error|warning)\(reason instanceof Error \? reason\.message/.test(line)) {
+        offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${index + 1}`)
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `这些位置绕过了翻译桥接：\n  ${offenders.join('\n  ')}`)
+})
 
 test('下载与归档的 tag 在五语下都有翻译', () => {
   const tags = [

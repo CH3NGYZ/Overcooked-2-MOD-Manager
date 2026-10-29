@@ -12,6 +12,7 @@ import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
 import { api } from '../services/tauri'
 import type { RustLog } from '../types'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 type LogKind = 'rust' | 'frontend' | 'crash'
 
@@ -88,7 +89,7 @@ const logMeta: Record<LogKind, { title: string; read: () => Promise<RustLog> }> 
 }
 
 function fail(reason: unknown) {
-  message.error(reason instanceof Error ? reason.message : String(reason))
+  message.error(backendMessageOf(reason))
 }
 
 async function openLog(kind: LogKind) {
@@ -105,12 +106,12 @@ async function openLog(kind: LogKind) {
 
 async function devtools() {
   const result = await api.openDevtools()
-  result.ok ? message.success(result.message || '已打开开发者工具') : message.error(result.message)
+  result.ok ? message.success(result.message || '已打开开发者工具') : message.error(translateBackendMessage(result.message))
 }
 
 async function resetUi() {
   const result = await api.resetUi()
-  result.ok ? message.success(result.message || '窗口状态已重置') : message.error(result.message)
+  result.ok ? message.success(result.message || '窗口状态已重置') : message.error(translateBackendMessage(result.message))
 }
 
 /* ===== 回收站 ===== */
@@ -142,7 +143,7 @@ async function clearAvatars() {
     clearAvatarCache()
     message.success(t('已清除 {count} 个头像缓存', { count: removed }))
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : String(reason))
+    message.error(backendMessageOf(reason))
   } finally {
     clearingAvatars.value = false
   }

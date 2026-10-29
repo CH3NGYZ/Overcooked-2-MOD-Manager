@@ -5,7 +5,7 @@
  * 抽成组件是因为「单 DLL 包」和「多 DLL 包内的子 DLL」两种卡片
  * 只有外壳不同，详情内容完全一样；共用一份避免两处漂移。
  */
-import { t } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { formatVersion } from '../modStatus'
 import type { InstalledMod } from '../types'
 
@@ -15,6 +15,11 @@ defineProps<{
   statusSummary: string
   packageCountText: string
 }>()
+
+/** 包名快照：按当前界面语言取，没有快照时回退后端给的单语值。 */
+function packageNameText(mod: InstalledMod) {
+  return pickI18n(mod.package_name_i18n, mod.package_name ?? '').trim()
+}
 </script>
 
 <template>
@@ -35,9 +40,9 @@ defineProps<{
     <div class="detail-item wide"><span class="muted">{{ t('文件') }}</span><b class="mono">{{ mod.dll_file }}</b></div>
     <div class="detail-item wide"><span class="muted">{{ t('绑定仓库') }}</span><b class="mono">{{ bindingText }}</b></div>
     <div class="detail-item wide"><span class="muted">{{ t('状态标签') }}</span><b>{{ statusSummary || '—' }}</b></div>
-    <div v-if="mod.package_name" class="detail-item wide">
+    <div v-if="packageNameText(mod)" class="detail-item wide">
       <span class="muted">{{ t('MOD 包') }}</span>
-      <b>{{ mod.package_name }}（{{ packageCountText }}）</b>
+      <b>{{ packageNameText(mod) }}（{{ packageCountText }}）</b>
     </div>
     <div v-if="mod.load_warning" class="detail-item wide">
       <span class="muted">{{ t('加载警告') }}</span>

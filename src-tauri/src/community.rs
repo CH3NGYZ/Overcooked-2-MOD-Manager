@@ -1085,7 +1085,13 @@ mod tests {
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[official, retained, removed]
         })).unwrap();
-        let mut manifest = crate::archive::new_manifest("old-id", "nightly", None, None, vec![]);
+        let mut manifest = crate::archive::new_manifest(
+            "old-id",
+            "nightly",
+            Default::default(),
+            Default::default(),
+            vec![],
+        );
         manifest.repository_binding = RepositoryBinding::from_release(&retained, "nightly");
         let found = repository_from_search(&item("Owner", "Official")).unwrap();
         merge_results(
@@ -1132,8 +1138,13 @@ mod tests {
         official.enabled = false;
         official.channel = Channel::Stable;
         let installed = repository_from_search(&item("owner", "listed")).unwrap();
-        let mut manifest =
-            crate::archive::new_manifest(&installed.id, "v1.0.0", None, None, vec![]);
+        let mut manifest = crate::archive::new_manifest(
+            &installed.id,
+            "v1.0.0",
+            Default::default(),
+            Default::default(),
+            vec![],
+        );
         manifest.repository_binding = RepositoryBinding::from_release(&installed, "v1.0.0");
         let binding = manifest.repository_binding.clone();
 
@@ -1375,7 +1386,13 @@ mod tests {
         let unique =
             repository_from_coordinates(&Provider::Gitee, "Owner", "New", "", "New description")
                 .unwrap();
-        let mut manifest = crate::archive::new_manifest(&found.id, "v1.0.0", None, None, vec![]);
+        let mut manifest = crate::archive::new_manifest(
+            &found.id,
+            "v1.0.0",
+            Default::default(),
+            Default::default(),
+            vec![],
+        );
         manifest.repository_binding = RepositoryBinding::from_release(&found, "v1.0.0");
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],

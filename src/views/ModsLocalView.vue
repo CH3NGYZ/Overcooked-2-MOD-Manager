@@ -409,17 +409,19 @@ function modCategory(mod: InstalledMod): ModCategory {
    *   3. 其余（直接丢进 plugins、没有清单）→「未绑定」。
    * 安装清单里的 group 快照只在「有快照且能匹配仓库」时才使用，
    * 否则会把本地安装错误地显示成空分组。
+   *
+   * 快照现在只有 i18n 形态（后端已删掉单语 `group` 字段）。
+   * 分组键必须与语言无关，所以取 `zh-CN`（或任一可用值）作为规范名，
+   * 展示名才用 `pickI18n` 按当前语言取 —— 否则切语言会重建折叠键。
    */
   const snapshot = mod.group_i18n
-  const snapshotGroup = (mod.group || '').trim()
   const hasSnapshot = !!snapshot && Object.keys(snapshot).length > 0
   if (repo) {
     if (hasSnapshot) {
-      const canonical = (snapshotGroup || snapshot['zh-CN'] || pickI18n(snapshot, '')).trim()
-      const label = pickI18n(snapshot, snapshotGroup) || t('未分组')
+      const canonical = (snapshot['zh-CN'] || pickI18n(snapshot, '')).trim()
+      const label = pickI18n(snapshot, '') || t('未分组')
       return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
     }
-    if (snapshotGroup) return { key: `group:${snapshotGroup.toLowerCase()}`, label: snapshotGroup }
     // key 用语言无关的原始分组名，切换语言时折叠状态不丢
     const canonical = (repo.group || repo.group_i18n?.['zh-CN'] || pickI18n(repo.group_i18n, '')).trim()
     const label = pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
@@ -427,11 +429,10 @@ function modCategory(mod: InstalledMod): ModCategory {
   }
   if (mod.manual_install) return { key: '__local_install__', label: t('本地安装') }
   if (hasSnapshot) {
-    const canonical = (snapshotGroup || snapshot['zh-CN'] || pickI18n(snapshot, '')).trim()
-    const label = pickI18n(snapshot, snapshotGroup) || t('未分组')
+    const canonical = (snapshot!['zh-CN'] || pickI18n(snapshot, '')).trim()
+    const label = pickI18n(snapshot, '') || t('未分组')
     return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
   }
-  if (snapshotGroup) return { key: `group:${snapshotGroup.toLowerCase()}`, label: snapshotGroup }
   return { key: '__unbound__', label: t('未绑定') }
 }
 

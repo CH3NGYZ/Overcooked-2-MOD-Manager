@@ -122,25 +122,43 @@ impl DownloadReporter {
     }
 }
 
+/*
+ * `from = "ManifestWire"`：读旧清单时的兼容桥。
+ *
+ * 旧清单存的是单语 `package_name` / `group` / `note`。新结构只有 `*_i18n`，
+ * 直接反序列化会把这些值丢掉 —— 用户在 MOD 管理页看到的包名和分组会空掉。
+ * 中间结构 `ManifestWire` 同时接受两套字段，`InstallManifest::from` 里
+ * 把单语值折成 `zh-CN` 键（正是仓库源规范里 zh-CN 必填的那一条）。
+ *
+ * 只影响**反序列化**：写出时始终是新结构，所以旧清单在下次写入时自动
+ * 收敛成新格式，不需要单独的迁移脚本。
+ */
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "ManifestWire")]
 pub struct InstallManifest {
     pub repository_id: String,
     pub release_tag: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_binding: Option<crate::models::RepositoryBinding>,
-    #[serde(default)]
-    pub package_name: Option<String>,
+    /*
+     * 以下三个字段只有多语言形态，没有单语版本。
+     *
+     * 仓库源的规范形式本来就是 `name_i18n` / `group_i18n` / `note_i18n`
+     * （`config::normalize_repository_i18n` 强制要求 zh-CN 存在，社区源
+     * 也是把抓到的名字同时写进 `name` 与 `name_i18n.zh-CN`）。
+     * 清单再存一份单语副本属于冗余双写，两者迟早不一致，
+     * 读的时候还得判断「该信哪份」。
+     *
+     * 旧清单（只有 `package_name` / `group` / `note`）由
+     * `legacy_names` 在反序列化时接住并折进 i18n 字段，见本结构体的
+     * `#[serde(from = ...)]`。
+     */
     /// 安装时仓库名的多语言快照。
     ///
-    /// 与 `group_i18n` 同一个理由：包名要随界面语言显示，而安装之后
-    /// 仓库可能已从源文档里下线，届时无处可查。存下来才能在 MOD 管理页
-    /// 和回收站里按当前语言渲染，切语言后连历史记录也一起变。
-    ///
-    /// 旧清单没有这个字段，回退到单语 `package_name`。
+    /// 安装之后仓库可能已从源文档下线，届时无处可查。存下来才能在
+    /// MOD 管理页和回收站里按当前语言渲染，切语言后连历史记录也一起变。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_name_i18n: BTreeMap<String, String>,
-    #[serde(default)]
-    pub note: Option<String>,
     /// 安装时仓库的分组快照（多语言）。
     ///
     /// MOD 管理页按「安装时绑定的仓库分类」分组，而分组数据来自仓库源文档。
@@ -149,9 +167,9 @@ pub struct InstallManifest {
     /// 只在仓库分组真正变化时（后续刷新到不同配置）才更新。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub group_i18n: BTreeMap<String, String>,
-    /// 安装时的单语分组名：`group_i18n` 缺失时兜底。
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub group: String,
+    /// 安装时仓库备注的快照（多语言）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_i18n: BTreeMap<String, String>,
     /// 安装的 Release 是否为预发布版本。
     ///
     /// 跟着版本号一起固化：预发布标记只存在于当时的 Release 元数据里，
@@ -161,6 +179,70 @@ pub struct InstallManifest {
     pub prerelease: bool,
     pub installed_at: String,
     pub files: Vec<String>,
+}
+
+/// 清单的反序列化中间层：同时接受「只有 i18n」和「旧单语字段」两种格式。
+///
+/// 为什么不给 `InstallManifest` 直接挂 `#[serde(default)]` 单语字段：
+/// 那样字段会一直留在结构体里，所有构造点都必须写 `package_name: None`，
+/// 而且代码里随时可能有人再读那份单语值，重新引入「两份数据信哪份」的问题。
+/// 用中间层把兼容逻辑收敛到 `From` 实现里，主结构保持只有一种表示。
+#[derive(Deserialize)]
+struct ManifestWire {
+    repository_id: String,
+    release_tag: String,
+    #[serde(default)]
+    repository_binding: Option<crate::models::RepositoryBinding>,
+    #[serde(default)]
+    package_name: Option<String>,
+    #[serde(default)]
+    package_name_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    group: String,
+    #[serde(default)]
+    group_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    note_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    prerelease: bool,
+    installed_at: String,
+    files: Vec<String>,
+}
+
+/// 把单语值折进 i18n 映射的 `zh-CN` 键（已有该键时不覆盖）。
+///
+/// 空值与纯空白视为「没有这个信息」，不写入 —— 否则会给 `zh-CN`
+/// 塞一个空串，让下游以为「有中文翻译但是空的」。
+fn fold_legacy(map: &mut BTreeMap<String, String>, legacy: Option<&str>) {
+    let Some(value) = legacy.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    map.entry("zh-CN".to_string())
+        .or_insert_with(|| value.to_string());
+}
+
+impl From<ManifestWire> for InstallManifest {
+    fn from(wire: ManifestWire) -> Self {
+        let mut package_name_i18n = wire.package_name_i18n;
+        fold_legacy(&mut package_name_i18n, wire.package_name.as_deref());
+        let mut group_i18n = wire.group_i18n;
+        fold_legacy(&mut group_i18n, Some(&wire.group));
+        let mut note_i18n = wire.note_i18n;
+        fold_legacy(&mut note_i18n, wire.note.as_deref());
+        Self {
+            repository_id: wire.repository_id,
+            release_tag: wire.release_tag,
+            repository_binding: wire.repository_binding,
+            package_name_i18n,
+            group_i18n,
+            note_i18n,
+            prerelease: wire.prerelease,
+            installed_at: wire.installed_at,
+            files: wire.files,
+        }
+    }
 }
 
 // Dropping an in-flight download (including HEAD, GET and range waits) must
@@ -1606,22 +1688,49 @@ pub fn package_display_name(repository_name: &str, provider: &crate::models::Pro
     format!("{repository_name} - {platform}")
 }
 
+/// 只有一个语言版本的文案（手动安装的包名、备注等）。
+///
+/// 这些内容来自文件名或用户输入，没有仓库源提供的多语言信息，
+/// 只能挂在 `zh-CN` 这一个键上 —— 与仓库源规范里「zh-CN 必填」一致。
+/// 空值返回空映射，避免存一个空字符串让下游以为「有翻译但是空的」。
+pub fn single_language(value: &str) -> BTreeMap<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return BTreeMap::new();
+    }
+    let mut map = BTreeMap::new();
+    map.insert("zh-CN".to_string(), trimmed.to_string());
+    map
+}
+
+/// 从多语言映射里取「中文主语言」值，用于后端内部需要单一字符串的地方
+/// （比如 `InstalledMod.package_name` 这种给旧调用方用的兼容字段）。
+///
+/// 顺序：`zh-CN` → 任取第一个非空值 → 空串。
+pub fn primary_translation(map: &BTreeMap<String, String>) -> String {
+    if let Some(value) = map.get("zh-CN").filter(|value| !value.trim().is_empty()) {
+        return value.clone();
+    }
+    map.values()
+        .find(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub fn new_manifest(
     repository_id: &str,
     release_tag: &str,
-    package_name: Option<&str>,
-    note: Option<&str>,
+    package_name_i18n: BTreeMap<String, String>,
+    note_i18n: BTreeMap<String, String>,
     files: Vec<String>,
 ) -> InstallManifest {
     InstallManifest {
         repository_id: repository_id.into(),
         release_tag: release_tag.into(),
         repository_binding: None,
-        package_name: package_name.map(str::to_string),
-        package_name_i18n: BTreeMap::new(),
-        note: note.map(str::to_string),
+        package_name_i18n,
         group_i18n: BTreeMap::new(),
-        group: String::new(),
+        note_i18n,
         prerelease: false,
         installed_at: Utc::now().to_rfc3339(),
         files,
@@ -2107,7 +2216,13 @@ mod tests {
                 copy_asset_pending(&asset, &game, "BepInEx/plugins", "Existing.dll").unwrap()
             };
             assert_eq!(fs::read(plugins.join("Existing.dll")).unwrap(), b"new DLL");
-            let manifest = new_manifest("package", "v2", None, None, pending.files().to_vec());
+            let manifest = new_manifest(
+                "package",
+                "v2",
+                Default::default(),
+                Default::default(),
+                pending.files().to_vec(),
+            );
             let blocked = root.join("blocked-manifests");
             fs::write(&blocked, b"not a directory").unwrap();
             assert!(write_manifest(&blocked, &manifest).is_err());
@@ -2406,5 +2521,105 @@ mod tests {
         assert!(!game.join("BepInEx/plugins/Loose.dll").exists());
 
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod legacy_manifest_tests {
+    use super::*;
+
+    /*
+     * 旧清单只有单语 `package_name` / `group` / `note`。
+     *
+     * 新结构删掉了这三个字段，如果读取时不迁移，用户在 MOD 管理页会看到
+     * 空白的包名和分组 —— 等于升级后旧 MOD 的标题全丢了。
+     * `ManifestWire` 负责把单语值折进 `zh-CN` 键。
+     */
+    #[test]
+    fn legacy_single_language_fields_fold_into_zh_cn() {
+        let text = r#"
+repository_id = "old"
+release_tag = "v1.0.0"
+package_name = "旧包名"
+group = "旧分组"
+note = "旧备注"
+prerelease = false
+installed_at = "2026-01-01T00:00:00Z"
+files = ["BepInEx/plugins/Old.dll"]
+"#;
+        let manifest: InstallManifest = toml::from_str(text).unwrap();
+        assert_eq!(manifest.package_name_i18n["zh-CN"], "旧包名");
+        assert_eq!(manifest.group_i18n["zh-CN"], "旧分组");
+        assert_eq!(manifest.note_i18n["zh-CN"], "旧备注");
+    }
+
+    /// 新旧字段并存时以多语言字段为准，不被单语值覆盖。
+    #[test]
+    fn explicit_i18n_wins_over_legacy_fields() {
+        let text = r#"
+repository_id = "mixed"
+release_tag = "v1.0.0"
+package_name = "旧包名"
+package_name_i18n.zh-CN = "新包名"
+package_name_i18n.en = "New name"
+group = "旧分组"
+group_i18n.zh-CN = "新分组"
+note = "旧备注"
+note_i18n.zh-CN = "新备注"
+installed_at = "2026-01-01T00:00:00Z"
+files = []
+"#;
+        let manifest: InstallManifest = toml::from_str(text).unwrap();
+        assert_eq!(manifest.package_name_i18n["zh-CN"], "新包名");
+        assert_eq!(manifest.package_name_i18n["en"], "New name");
+        assert_eq!(manifest.group_i18n["zh-CN"], "新分组");
+        assert_eq!(manifest.note_i18n["zh-CN"], "新备注");
+    }
+
+    /// 空值与空白不写入 zh-CN，避免出现「有翻译但是空的」。
+    #[test]
+    fn blank_legacy_values_are_ignored() {
+        let text = r#"
+repository_id = "blank"
+release_tag = ""
+package_name = "   "
+group = ""
+installed_at = "2026-01-01T00:00:00Z"
+files = []
+"#;
+        let manifest: InstallManifest = toml::from_str(text).unwrap();
+        assert!(manifest.package_name_i18n.is_empty());
+        assert!(manifest.group_i18n.is_empty());
+        assert!(manifest.note_i18n.is_empty());
+    }
+
+    /// 写出时不再产生单语字段。
+    #[test]
+    fn serialized_manifest_has_no_legacy_single_language_fields() {
+        let mut manifest = new_manifest(
+            "p",
+            "v1",
+            single_language("包名 - GitHub"),
+            single_language("备注"),
+            vec!["a.dll".into()],
+        );
+        manifest.group_i18n = single_language("分组");
+        let text = toml::to_string_pretty(&manifest).unwrap();
+        assert!(!text.contains("package_name ="), "{text}");
+        assert!(!text.contains("\ngroup ="), "{text}");
+        assert!(!text.contains("\nnote ="), "{text}");
+        assert!(text.contains("package_name_i18n"), "{text}");
+    }
+
+    /// `primary_translation` 优先中文，缺失时取第一个非空值。
+    #[test]
+    fn primary_translation_prefers_chinese_then_any() {
+        let mut map = BTreeMap::new();
+        map.insert("en".to_string(), "English".to_string());
+        map.insert("ja".to_string(), "日本語".to_string());
+        assert_eq!(primary_translation(&map), "English");
+        map.insert("zh-CN".to_string(), "中文".to_string());
+        assert_eq!(primary_translation(&map), "中文");
+        assert_eq!(primary_translation(&BTreeMap::new()), "");
     }
 }

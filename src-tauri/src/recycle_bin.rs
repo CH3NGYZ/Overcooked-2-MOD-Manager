@@ -854,11 +854,15 @@ fn recycle_package_with_mods(
         );
         return Ok(None);
     }
-    let name = manifest
-        .package_name
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| package_id.to_owned());
+    // 清单只剩多语言快照，单语名取主语言值作为兜底显示名
+    let name = {
+        let from_i18n = archive::primary_translation(&manifest.package_name_i18n);
+        if from_i18n.trim().is_empty() {
+            package_id.to_owned()
+        } else {
+            from_i18n
+        }
+    };
     let name = dll
         .map(|relative| {
             Path::new(relative)
@@ -1660,11 +1664,9 @@ mod tests {
                 repository_id: id.into(),
                 release_tag: "v1.2.3".into(),
                 repository_binding: None,
-                package_name: Some("Fixture package".into()),
-                package_name_i18n: Default::default(),
-                note: Some("original note".into()),
+                package_name_i18n: crate::archive::single_language("Fixture package"),
+                note_i18n: crate::archive::single_language("original note"),
                 group_i18n: Default::default(),
-                group: String::new(),
                 prerelease: false,
                 installed_at: "2026-10-07T00:00:00Z".into(),
                 files: files.iter().map(|file| (*file).into()).collect(),
@@ -2090,7 +2092,7 @@ mod tests {
         )
         .unwrap();
         let mut active = workspace.active("package").unwrap();
-        active.note = Some("edited after removal".into());
+        active.note_i18n = crate::archive::single_language("edited after removal");
         archive::write_manifest(&workspace.manifests, &active).unwrap();
         restore(
             &workspace.recycle,
@@ -2101,7 +2103,10 @@ mod tests {
         .unwrap();
         let merged = workspace.active("package").unwrap();
         assert_eq!(merged.files, vec![A, DATA]);
-        assert_eq!(merged.note.as_deref(), Some("edited after removal"));
+        assert_eq!(
+            crate::archive::primary_translation(&merged.note_i18n),
+            "edited after removal"
+        );
         assert!(!workspace.game.join(B).exists());
         assert!(workspace.recycle.join(&second.id).exists());
         restore(

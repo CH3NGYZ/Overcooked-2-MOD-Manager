@@ -271,22 +271,10 @@ fn inspect_dll(
     let original_filename = metadata.original_filename;
     let plugin_name = plugin.and_then(|item| item.name);
     let package_id = manifest.map(|item| item.repository_id.clone());
-    let package_name = manifest.and_then(|item| {
-        item.package_name
-            .clone()
-            .or_else(|| {
-                config
-                    .repositories
-                    .iter()
-                    .find(|repo| repo.id == item.repository_id)
-                    .map(|repo| repo.name.clone())
-            })
-            .or_else(|| (!item.release_tag.trim().is_empty()).then(|| item.release_tag.clone()))
-    });
     /*
-     * 包名的多语言快照：与 `package_name` 同一件事的其他语言写法。
+     * 包名的多语言快照 —— 清单里现在只有这一份。
      *
-     * 清单里没有快照（旧版本安装的）时回退到当前仓库的 `name_i18n`，
+     * 清单没有快照（更旧版本安装的）时回退到当前仓库的 `name_i18n`，
      * 并在下次同步安装清单时写回 —— 与 `group_i18n` 的处理方式一致。
      */
     let package_name_i18n = manifest
@@ -313,7 +301,22 @@ fn inspect_dll(
                 .filter(|map: &BTreeMap<String, String>| !map.is_empty())
         })
         .unwrap_or_default();
+    /*
+     * 单语包名 = 多语言快照的主语言值，没有快照时退回 Release tag。
+     * 保留这个字段是为了兼容仍读它的旧调用方；前端优先用 `package_name_i18n`。
+     */
+    let package_name = if package_name_i18n.is_empty() {
+        manifest
+            .map(|item| item.release_tag.clone())
+            .filter(|tag| !tag.trim().is_empty())
+    } else {
+        Some(crate::archive::primary_translation(&package_name_i18n))
+    };
     let enabled = !is_disabled_mod_file(path);
+    // 备注同理：清单只存多语言快照，单语值由主语言派生
+    let note_i18n = manifest
+        .map(|item| item.note_i18n.clone())
+        .unwrap_or_default();
     let note = config
         .mod_notes
         .iter()
@@ -321,7 +324,10 @@ fn inspect_dll(
             item.key == note_key_for_values(guid.as_deref(), product_name.as_deref(), &dll_file)
         })
         .map(|item| item.note.clone())
-        .or_else(|| manifest.and_then(|item| item.note.clone()));
+        .or_else(|| {
+            let value = crate::archive::primary_translation(&note_i18n);
+            (!value.is_empty()).then_some(value)
+        });
     InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
         // 安装清单 id 以 manual- 开头 → 手动安装（本地文件 / 在线直链）。
@@ -341,18 +347,26 @@ fn inspect_dll(
         package_mod_count: 0,
         // 分组优先用安装清单里的快照：源文档没刷新出来时仓库配置可能为空，
         // 直接读当前仓库会导致分组跳变。
-        // 旧版本清单没有快照（两个字段都空）时才回退到当前仓库，
+        // 旧版本清单没有快照（字段为空）时才回退到当前仓库，
         // 这样升级上来的用户也能立刻看到分组；回退值会在下次源刷新时写回清单。
         group_i18n: manifest
             .filter(|item| !item.group_i18n.is_empty())
             .map(|item| item.group_i18n.clone())
             .or_else(|| repository.map(|repo| repo.group_i18n.clone()))
             .unwrap_or_default(),
-        group: manifest
-            .map(|item| item.group.clone())
-            .filter(|value| !value.is_empty())
-            .or_else(|| repository.map(|repo| repo.group.clone()))
-            .unwrap_or_default(),
+        /* 单语分组名 = 多语言快照的主语言值，仅作旧调用方的兼容字段。 */
+        group: {
+            let snapshot = manifest
+                .map(|item| crate::archive::primary_translation(&item.group_i18n))
+                .unwrap_or_default();
+            if !snapshot.is_empty() {
+                snapshot
+            } else {
+                repository
+                    .map(|repo| repo.group.clone())
+                    .unwrap_or_default()
+            }
+        },
         /*
          * 预发布判定取「清单快照标记」或「版本号带 - 后缀」的或关系。
          *
@@ -1275,7 +1289,13 @@ mod tests {
         tag: &str,
         file: &str,
     ) -> crate::archive::InstallManifest {
-        crate::archive::new_manifest(repository_id, tag, None, None, vec![file.into()])
+        crate::archive::new_manifest(
+            repository_id,
+            tag,
+            Default::default(),
+            Default::default(),
+            vec![file.into()],
+        )
     }
 
     #[test]
@@ -1616,8 +1636,8 @@ mod tests {
         let mut manifest = crate::archive::new_manifest(
             "old-source-id",
             "v98.0.0",
-            Some("Package"),
-            None,
+            crate::archive::single_language("Package"),
+            Default::default(),
             vec![relative.into()],
         );
         manifest.repository_binding =
@@ -1695,8 +1715,8 @@ mod tests {
         let mut manifest = crate::archive::new_manifest(
             "package",
             "v98.0.0-beta.1",
-            Some("Package"),
-            None,
+            crate::archive::single_language("Package"),
+            Default::default(),
             vec![relative.into()],
         );
         manifest.repository_binding =
@@ -2004,11 +2024,9 @@ mod tests {
                 repository_id: "raw".into(),
                 release_tag: String::new(),
                 repository_binding: None,
-                package_name: Some("Raw MOD".into()),
-                package_name_i18n: Default::default(),
-                note: None,
+                package_name_i18n: crate::archive::single_language("Raw MOD"),
+                note_i18n: Default::default(),
                 group_i18n: Default::default(),
-                group: String::new(),
                 prerelease: false,
                 installed_at: "2026-10-07T00:00:00Z".into(),
                 files: vec![relative.into()],
@@ -2075,11 +2093,9 @@ mod tests {
             repository_id: "gone-repository".into(),
             release_tag: "v1.0.0".into(),
             repository_binding: None,
-            package_name: Some("Grouped".into()),
-            package_name_i18n: Default::default(),
-            note: None,
+            package_name_i18n: crate::archive::single_language("Grouped"),
+            note_i18n: Default::default(),
             group_i18n: group_i18n.clone(),
-            group: "内容拓展".into(),
             prerelease: false,
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Grouped.dll".into()],
@@ -2118,11 +2134,9 @@ mod tests {
             repository_id: "pre-repo".into(),
             release_tag: "v2.0.0-beta.1".into(),
             repository_binding: None,
-            package_name: Some("Pre".into()),
-            package_name_i18n: Default::default(),
-            note: None,
+            package_name_i18n: crate::archive::single_language("Pre"),
+            note_i18n: Default::default(),
             group_i18n: Default::default(),
-            group: String::new(),
             prerelease: true,
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Pre.dll".into()],
@@ -2173,11 +2187,9 @@ mod tests {
             repository_id: "legacy-repo".into(),
             release_tag: "v1.0.0".into(),
             repository_binding: None,
-            package_name: Some("Legacy".into()),
-            package_name_i18n: Default::default(),
-            note: None,
+            package_name_i18n: crate::archive::single_language("Legacy"),
+            note_i18n: Default::default(),
             group_i18n: Default::default(),
-            group: String::new(),
             prerelease: false,
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Legacy.dll".into()],

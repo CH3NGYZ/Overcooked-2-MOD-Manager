@@ -13,7 +13,7 @@ use crate::releases;
 use crate::repository_sources::{self, SourceLocation, source_address_key};
 use chrono::Utc;
 use futures_util::StreamExt;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -846,8 +846,9 @@ pub(crate) fn install_manual_mod(
         // 之前这里塞了文件名，语义是错的，还会让 flag_manifest_version_mismatch
         // 之类的逻辑把它当成版本号尝试解析。
         "",
-        Some(&display_name),
-        Some(file_name),
+        // 手动安装没有仓库，包名与备注只有当前语言这一种写法
+        archive::single_language(&display_name),
+        archive::single_language(file_name),
         pending.files().to_vec(),
     );
     if let Err(error) = archive::write_manifest(&state.config.manifests_dir(), &manifest) {
@@ -2300,8 +2301,8 @@ fn install_framework_archive(
         let manifest = archive::new_manifest(
             BEPINEX_MANIFEST_ID,
             release_tag,
-            Some("BepInEx"),
-            None,
+            archive::single_language("BepInEx"),
+            Default::default(),
             pending.files().to_vec(),
         );
         archive::write_manifest(manifests_dir, &manifest)?;
@@ -2463,8 +2464,8 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     let fallback = archive::new_manifest(
         BEPINEX_MANIFEST_ID,
         crate::bepinex::PACKAGE_VERSION,
-        Some("BepInEx"),
-        None,
+        archive::single_language("BepInEx"),
+        Default::default(),
         files,
     );
     archive::write_manifest(&manifests_dir, &fallback)?;
@@ -3851,8 +3852,8 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
             continue;
         };
 
-        let group_changed =
-            manifest.group_i18n != repository.group_i18n || manifest.group != repository.group;
+        // 清单现在只存 i18n 快照，比较时也只看它
+        let group_changed = manifest.group_i18n != repository.group_i18n;
         /*
          * 包名的多语言快照也要同步：仓库名改了之后，MOD 管理页的分组标题
          * 会更新，但包名停在上次安装时的旧翻译，两边对不上。
@@ -3877,21 +3878,12 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
 
         if group_changed {
             log::info!(
-                "更新安装清单分组快照：仓库={}，旧分组={}，新分组={}",
+                "更新安装清单分组快照：仓库={}，旧分组语言数={}，新分组语言数={}",
                 manifest.repository_id,
-                if manifest.group.is_empty() {
-                    "<空>"
-                } else {
-                    &manifest.group
-                },
-                if repository.group.is_empty() {
-                    "<空>"
-                } else {
-                    &repository.group
-                }
+                manifest.group_i18n.len(),
+                repository.group_i18n.len()
             );
             manifest.group_i18n = repository.group_i18n.clone();
-            manifest.group = repository.group.clone();
         }
         if name_changed {
             manifest.package_name_i18n = repository.name_i18n.clone();
@@ -5811,27 +5803,15 @@ fn install_downloaded_repository(
         } else {
             archive::copy_asset_pending(asset_path, game_root, &repo.install_target, download_name)?
         };
-        let package_name = archive::package_display_name(&repo.name, &repo.provider);
-        let mut manifest = archive::new_manifest(
-            &repo.id,
-            release_tag,
-            Some(&package_name),
-            Some(&repo.name),
-            pending.files().to_vec(),
-        );
-        manifest.repository_binding = RepositoryBinding::from_release(repo, release_tag);
-        // 固化安装时的分组：之后即使源文档还没刷新出来（刚启动），
-        // MOD 管理页也能按当时的分组稳定归类。
-        manifest.group_i18n = repo.group_i18n.clone();
-        manifest.group = repo.group.clone();
         /*
-         * 包名的多语言快照，与单语 `package_name` 同一格式（`{仓库名} - {平台}`）。
+         * 包名与备注都只存多语言快照，格式 `{仓库名} - {平台}`。
          *
-         * `package_name` 那个单语字段保留：旧版本清单和回收记录都靠它兜底，
-         * 而且它是「安装那一刻的事实」，不该因为后来仓库改名而消失。
-         * 新字段只负责「同一件事的其他语言写法」。
+         * 仓库的规范形式本来就是 `name_i18n` / `note_i18n`（源文档里
+         * `name`/`note` 是可选兜底，`normalize_repository_i18n` 会把
+         * zh-CN 回填到它们）。清单再存一份单语副本属于冗余双写，
+         * 两者迟早不一致。所以这里直接把 i18n 交给 `new_manifest`。
          */
-        manifest.package_name_i18n = repo
+        let package_name_i18n = repo
             .name_i18n
             .iter()
             .filter(|(_, value)| !value.trim().is_empty())
@@ -5841,7 +5821,24 @@ fn install_downloaded_repository(
                     archive::package_display_name(value, &repo.provider),
                 )
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        let note_i18n = repo
+            .note_i18n
+            .iter()
+            .filter(|(_, value)| !value.trim().is_empty())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut manifest = archive::new_manifest(
+            &repo.id,
+            release_tag,
+            package_name_i18n,
+            note_i18n,
+            pending.files().to_vec(),
+        );
+        manifest.repository_binding = RepositoryBinding::from_release(repo, release_tag);
+        // 固化安装时的分组：之后即使源文档还没刷新出来（刚启动），
+        // MOD 管理页也能按当时的分组稳定归类。
+        manifest.group_i18n = repo.group_i18n.clone();
         // 预发布标记跟着版本号一起固化：它只存在于当时的 Release 元数据里
         manifest.prerelease = prerelease;
         archive::write_manifest(manifests_dir, &manifest)?;
@@ -7536,7 +7533,13 @@ mod update_status_tests {
                 .map(|file| format!("BepInEx/plugins/{file}"));
             archive::write_manifest(
                 &self.manifests,
-                &archive::new_manifest("package", "v1", Some("Package"), None, files.to_vec()),
+                &archive::new_manifest(
+                    "package",
+                    "v1",
+                    archive::single_language("Package"),
+                    Default::default(),
+                    files.to_vec(),
+                ),
             )
             .unwrap();
             archive::write_manifest(
@@ -7544,8 +7547,8 @@ mod update_status_tests {
                 &archive::new_manifest(
                     "peer",
                     "v1",
-                    Some("Peer"),
-                    None,
+                    archive::single_language("Peer"),
+                    Default::default(),
                     vec!["BepInEx/plugins/Shared.dll".into()],
                 ),
             )
@@ -7724,7 +7727,13 @@ mod update_status_tests {
             "v2.0.0"
         );
         old_repo.id = "another-orphan".into();
-        let mut other = archive::new_manifest(&old_repo.id, "v1.0.0", None, None, vec![]);
+        let mut other = archive::new_manifest(
+            &old_repo.id,
+            "v1.0.0",
+            Default::default(),
+            Default::default(),
+            vec![],
+        );
         other.repository_binding = RepositoryBinding::from_release(&old_repo, "v1.0.0");
         archive::write_manifest(&workspace.manifests, &other).unwrap();
         assert!(
@@ -7776,8 +7785,8 @@ mod update_status_tests {
                         &archive::new_manifest(
                             "package",
                             "v1",
-                            Some("Old package"),
-                            None,
+                            archive::single_language("Old package"),
+                            Default::default(),
                             old_files,
                         ),
                     )
@@ -7790,8 +7799,8 @@ mod update_status_tests {
                             &archive::new_manifest(
                                 "peer",
                                 "v1",
-                                Some("Peer"),
-                                None,
+                                archive::single_language("Peer"),
+                                Default::default(),
                                 vec![shared.into()],
                             ),
                         )
@@ -7894,7 +7903,13 @@ mod update_status_tests {
             };
             archive::write_manifest(
                 &workspace.manifests,
-                &archive::new_manifest("package", "v1", None, None, files),
+                &archive::new_manifest(
+                    "package",
+                    "v1",
+                    Default::default(),
+                    Default::default(),
+                    files,
+                ),
             )
             .unwrap();
             if condition == "invalid_toml" {
@@ -7946,8 +7961,8 @@ mod update_status_tests {
                 &archive::new_manifest(
                     "package",
                     "v1",
-                    None,
-                    None,
+                    Default::default(),
+                    Default::default(),
                     vec!["BepInEx/plugins/Main.dll".into()],
                 ),
             )
@@ -7996,7 +8011,13 @@ mod update_status_tests {
                 for id in ["package", "manual"] {
                     archive::write_manifest(
                         &workspace.manifests,
-                        &archive::new_manifest(id, "v1", Some(id), None, vec![dll.into()]),
+                        &archive::new_manifest(
+                            id,
+                            "v1",
+                            archive::single_language(id),
+                            Default::default(),
+                            vec![dll.into()],
+                        ),
                     )
                     .unwrap();
                 }

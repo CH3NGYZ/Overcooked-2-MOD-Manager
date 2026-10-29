@@ -118,14 +118,89 @@ function readSelection(): { start: number; end: number } | null {
   return { start: Math.min(start, end), end: Math.max(start, end) + 1 }
 }
 
+/*
+ * ===== 自绘选区 =====
+ *
+ * 为什么不用浏览器原生选区：原生选中会给文字盖一层系统蓝色的高亮，
+ * 用户正要看「这段文字现在是什么颜色」，却被高亮本身挡住；而且一旦
+ * 点颜色块或拖滑块，焦点离开预览区，原生选区往往当场消失。
+ *
+ * 早期做法是「每次应用样式后再手动清掉原生选区」—— 那是逐处打补丁：
+ * 颜色、滑条、重置各清一次，将来任何新控件都得记得再清一次，漏一个就
+ * 复发。这里改成完全不依赖原生选区：
+ *
+ *   · 在预览区按下 → 记住起点字符索引；
+ *   · 拖动经过 → 区间随指针扩展（用 elementFromPoint 找字符，不依赖
+ *     原生选区事件）；
+ *   · 抬起 → 结束，区间留在 `selected` 里；
+ *   · 高亮由布局自己画（`.preview-char.is-selected`），只加描边与底色，
+ *     不覆盖字符本身的颜色 —— 所以随时能看出颜色变化。
+ *
+ * 原生选区在按下时就 preventDefault 关掉，避免页面里出现两套高亮。
+ */
+const dragging = ref(false)
+/** 拖动起点（字符索引）；`null` 表示当前不是拖动中。 */
+let dragAnchor: number | null = null
+
+/** 指针位置命中的字符索引；命中不到返回 null。 */
+function charIndexAt(x: number, y: number): number | null {
+  const hit = document.elementFromPoint(x, y)
+  const span = hit instanceof Element ? hit.closest<HTMLElement>('[data-index]') : null
+  if (!span) return null
+  const index = Number(span.dataset.index)
+  return Number.isInteger(index) ? index : null
+}
+
+/** 把拖动的锚点与当前点合成一个有序区间并写入 `selected`。 */
+function selectRange(anchor: number, current: number) {
+  const start = Math.min(anchor, current)
+  const end = Math.max(anchor, current)
+  selected.value = { start, end: end + 1 }
+  // 同步第一个字符的样式到控件，方便接着微调
+  picker.value = colors.value[start] ?? DEFAULT_COLOR
+  sizeStep.value = 0
+}
+
+function onPreviewPointerDown(event: PointerEvent) {
+  const index = charIndexAt(event.clientX, event.clientY)
+  if (index === null) return
+  // 关掉原生选区：本组件自己画高亮，不要两套并存
+  event.preventDefault()
+  dragAnchor = index
+  dragging.value = true
+  selectRange(index, index)
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+}
+
+function onPreviewPointerMove(event: PointerEvent) {
+  if (!dragging.value || dragAnchor === null) return
+  const index = charIndexAt(event.clientX, event.clientY)
+  if (index === null) return
+  selectRange(dragAnchor, index)
+}
+
+function onPreviewPointerUp(event: PointerEvent) {
+  if (!dragging.value) return
+  dragging.value = false
+  dragAnchor = null
+  ;(event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId)
+}
+
+/**
+ * 点击预览区空白处清除选区。
+ *
+ * 与「选新文字」不冲突：命中到字符时 pointerdown 已经建了新选区。
+ */
+function clearSelectionIfBlank(event: PointerEvent) {
+  if (charIndexAt(event.clientX, event.clientY) !== null) return
+  selected.value = null
+}
+
 function updateSelection() {
+  // 键盘选择（Shift+方向键）仍走原生选区，作为可访问性后备
+  if (dragging.value) return
   const range = readSelection()
-  if (range) {
-    selected.value = range
-    // 同步第一个字符的样式到控件，方便接着微调
-    picker.value = colors.value[range.start] ?? DEFAULT_COLOR
-    sizeStep.value = 0
-  }
+  if (range) selectRange(range.start, range.end - 1)
 }
 
 function clearNativeSelection() {
@@ -355,8 +430,20 @@ onBeforeUnmount(clearNativeSelection)
             <b>{{ t('选择要修改的文字') }}</b>
             <span class="muted">{{ t('拖动选中预览里的字符，再应用颜色或字号') }}</span>
           </div>
-          <div ref="previewEl" class="preview" @mouseup="updateSelection" @keyup="updateSelection">
+          <!--
+            自绘选区：按下记锚点、拖动扩展、抬起结束。
+            `select-none` 由 CSS 的 user-select: none 承担，原生高亮不再出现，
+            所以字符颜色随时可见。
+          -->
+          <div ref="previewEl" class="preview"
+            @pointerdown="onPreviewPointerDown"
+            @pointermove="onPreviewPointerMove"
+            @pointerup="onPreviewPointerUp"
+            @pointercancel="onPreviewPointerUp"
+            @click="clearSelectionIfBlank"
+            @keyup="updateSelection">
             <span v-for="(char, index) in chars" :key="index" :data-index="index" class="preview-char"
+              :class="{ 'is-selected': selected && index >= selected.start && index < selected.end }"
               :style="{ color: colors[index], fontSize: `${sizes[index]}px` }">{{ char }}</span>
           </div>
 
@@ -560,10 +647,28 @@ onBeforeUnmount(clearNativeSelection)
   white-space: pre-wrap;
   line-height: 1.5;
   word-break: break-word;
-  user-select: text;
+  /*
+   * 关掉原生选中：本组件自己画高亮。
+   *
+   * 开着 user-select: text 的话，拖动会同时出现系统蓝色高亮并盖住字符颜色，
+   * 用户没法一边调一边看颜色变化 —— 这正是「点颜色后要手动清选区」那类
+   * 补丁的根源。改成 none 后原生选区根本不产生。
+   */
+  user-select: none;
   cursor: text;
 }
+/*
+ * 自绘选区高亮。
+ *
+ * 只加底色与轮廓，**不改 color** —— 字符自身的颜色必须始终可见，否则
+ * 调色时看不出效果。用半透明底色而不是实心块，浅色字也读得清。
+ */
 .preview-char { white-space: pre; }
+.preview-char.is-selected {
+  background: color-mix(in srgb, var(--oc2-accent) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--oc2-accent) 55%, transparent);
+  border-radius: 3px;
+}
 .controls {
   display: flex;
   flex-direction: column;

@@ -289,7 +289,12 @@ const failedRepositories = computed(() =>
   onlineRepositories.value.filter((repo) => repo.last_error))
 
 /**
- * 卡片副标题：主数值是在线仓库总数；有失败时追加「N 个刷新失败（仓库名）」。
+ * 卡片副标题：主数值是在线仓库总数；有失败时只追加失败数量。
+ *
+ * 不列仓库名：卡片副标题是单行、宽度有限，两个名字就能把它撑成两行
+ * 并顶掉「全部正常」那种清爽观感；而具体是哪几个仓库、失败原因是什么，
+ * 点「去刷新」跳到安装页后每个仓库卡片上都写着 —— 总览只需要告诉用户
+ * 「有没有失败、有几个」。
  *
  * 把失败信息塞进这张卡而不是单开一张：失败仓库本身就是在线仓库的一部分，
  * 拆成两张会让「26 个仓库」和「1 个失败」看起来是两件事。
@@ -300,14 +305,9 @@ const onlineSub = computed(() => {
   if (!failedRepositories.value.length) {
     return t('共 {count} 个仓库 · 全部正常', { count: total })
   }
-  const names = failedRepositories.value.slice(0, 2).map((repo) => repo.name).join('、')
-  const more = failedRepositories.value.length > 2
-    ? t('等 {count} 个', { count: failedRepositories.value.length })
-    : ''
-  return t('共 {count} 个仓库 · {failed} 个刷新失败（{names}）', {
+  return t('共 {count} 个仓库 · {failed} 个刷新失败', {
     count: total,
     failed: failedRepositories.value.length,
-    names: `${names}${more}`,
   })
 })
 

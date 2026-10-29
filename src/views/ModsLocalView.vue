@@ -387,10 +387,6 @@ interface ModGroupNode {
   label: string
   /** 该分类下的包（已按包聚合）。 */
   packages: ModPackageNode[]
-  count: number
-  updateCount: number
-  enabled: boolean
-  partial: boolean
 }
 
 const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
@@ -581,26 +577,11 @@ const groups = computed<ModGroupNode[]>(() => {
       if (tails.has(aKey) !== tails.has(bKey)) return tails.has(aKey) ? 1 : -1
       return a.label.localeCompare(b.label)
     })
-    .map(([key, { label, packages }]) => {
-      const nodes = [...packages.entries()].map(([pkgKey, list]) => toPackage(pkgKey, list))
-      const all = nodes.flatMap((node) => node.mods)
-      const enabledCount = all.filter((mod) => mod.enabled).length
-      return {
-        key,
-        label,
-        packages: nodes,
-        /*
-         * 分类计数按「展示单元」而不是 DLL：一个多 DLL 包在页面上只占
-         * 一个外壳，说「3 个」而实际只看到两张卡片会让人以为是漏渲染。
-         */
-        count: nodes.length,
-        updateCount: nodes.filter((node) =>
-          node.statuses.some((entry) => entry.key === 'update_available'),
-        ).length,
-        enabled: enabledCount === all.length,
-        partial: enabledCount > 0 && enabledCount < all.length,
-      }
-    })
+    .map(([key, { label, packages }]) => ({
+      key,
+      label,
+      packages: [...packages.entries()].map(([pkgKey, list]) => toPackage(pkgKey, list)),
+    }))
 })
 
 const allGroupKeys = computed(() => groups.value.map((node) => node.key))
@@ -1323,17 +1304,14 @@ function removePackage(node: ModPackageNode) {
       @update:expanded-names="onGroupsExpanded">
       <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
         <template #header>
+          <!--
+            分组标题只显示分类名。
+            这里曾经还挂着「N 个」「X 个可更新」「已禁用 / 部分启用」几个标签，
+            但页头已经有一排覆盖全页的状态聚合（点它能按状态定位），
+            分组标题再重复一遍只是把同一信息说两次，还把标题挤窄。
+          -->
           <div class="group-head">
             <b>{{ node.label }}</b>
-            <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ node.count }}</n-tag>
-            <n-tag v-if="node.updateCount" size="tiny" :bordered="false" class="state-tag"
-              :color="tagColorFor('moderate')">
-              {{ t('{count} 个可更新', { count: node.updateCount }) }}
-            </n-tag>
-            <n-tag v-if="!node.enabled && !node.partial" size="tiny" :bordered="false"
-              class="state-tag" :color="tagColorFor('muted')">{{ t('已禁用') }}</n-tag>
-            <n-tag v-else-if="node.partial" size="tiny" :bordered="false"
-              class="state-tag" :color="tagColorFor('accent')">{{ t('部分启用') }}</n-tag>
           </div>
         </template>
 

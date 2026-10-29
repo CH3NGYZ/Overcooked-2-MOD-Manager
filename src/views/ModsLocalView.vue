@@ -28,9 +28,11 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
+import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
+import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useModRemoval } from '../composables/useModRemoval'
 import type { InstalledMod, Repository } from '../types'
 
@@ -1180,6 +1182,34 @@ const { previewRepository } = useRepositoryPreview(openInstallPreview, {
     if (busy) previewing.value[repositoryId] = true
     else delete previewing.value[repositoryId]
   },
+  /*
+   * 更新也要走安装前检查。
+   *
+   * 之前这里不传 `prepareInstall`，理由是「依赖在首次安装时就该齐了」。
+   * 这个假设不成立：依赖可能被用户单独删掉、被别的包顶掉，或者新版本
+   * 增删了依赖 —— 更新一个新增了依赖的版本，装完照样跑不起来。
+   * 与安装页共用同一份门控（`useInstallPlanGate`），所以判定与弹窗一致。
+   */
+  prepareInstall: (repo, tag) => runInstallPlan(repo, tag),
+})
+
+/* ===== 安装前检查（更新时的依赖 / 冲突 / 兼容） ===== */
+
+const {
+  open: installPlanOpen,
+  plan: installPlan,
+  target: installPlanTarget,
+  run: runInstallPlan,
+  finish: finishInstallPlan,
+} = useInstallPlanGate({
+  mods: () => mods.value,
+  repositories: () => repositories.value,
+  gameBlocked: () => {
+    if (!game.value?.kitchen_running) return false
+    message.warning(t('游戏运行中，已禁止安装。请先关闭游戏。'))
+    return true
+  },
+  onApplied: () => load(),
 })
 
 /* ===== 包级操作 ===== */
@@ -1291,6 +1321,13 @@ function removePackage(node: ModPackageNode) {
   <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />
+  <!--
+    安装前检查：更新一个已装 MOD 时，若它的新版本还缺依赖 / 有冲突，
+    在这里一次处理完再继续安装。与 MOD 安装页共用同一个弹窗与判定。
+  -->
+  <InstallPlanDialog v-model:show="installPlanOpen" :plan="installPlan"
+    :target-label="installPlanTarget"
+    @finished="(ready: boolean) => { void finishInstallPlan(ready) }" />
 
   <!--
     页头标题后的聚合标签已经承载了状态统计（数量、启用、可更新都在标签里），

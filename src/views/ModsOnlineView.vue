@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
 import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -8,7 +8,7 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { buildInstallPlan, planHasActions, primaryRelation, relationJumpRepositoryId, resolveRelations, type InstallPlan, type RelationStatus } from '../modRelations'
+import { primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -20,6 +20,7 @@ import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
+import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import type { Repository, RepositorySource } from '../types'
 
@@ -80,52 +81,23 @@ const { previewRepository } = useRepositoryPreview(openInstallPreview, {
 
 /* ===== 安装前检查（依赖 / 冲突 / 兼容） ===== */
 
-/** 安装前检查弹窗：一次展示并执行整个计划。 */
-const installPlanOpen = ref(false)
-const installPlan = ref<InstallPlan>({ uninstall: [], install: [], blocked: [] })
-const installPlanTarget = ref('')
 /**
- * 弹窗关闭后的结果：前置流程在等它。
+ * 生成计划、弹窗、等结果 —— 与 MOD 管理页的「更新」共用同一份实现。
  *
- * `null` = 还在等；`true` = 可以继续装主包；`false` = 用户取消或失败。
+ * 两个页面都要做这件事，写两份迟早分叉（管理页就曾因此漏掉整个检查）。
  */
-const installPlanOutcome = ref<boolean | null>(null)
-
-/**
- * 生成计划并等用户把弹窗处理完。
- *
- * 没有需要处理的关系时直接放行，不弹空弹窗 —— 绝大多数安装都属于这种，
- * 每次都弹一个「没问题」的窗口只会让用户学会无脑点掉它。
- */
-async function runInstallPlan(repo: Repository, tag?: string): Promise<boolean> {
-  if (gameBlocked()) return false
-  const version = tag ?? repo.cached_releases[0]?.tag_name
-  const plan = buildInstallPlan(repo, mods.value, repositories.value, version)
-  if (!planHasActions(plan)) return true
-
-  installPlan.value = plan
-  installPlanTarget.value = repoName(repo)
-  installPlanOutcome.value = null
-  installPlanOpen.value = true
-  // 等用户关掉弹窗（处理完点「完成」或中途取消）
-  return new Promise<boolean>((resolve) => {
-    const stop = watch(installPlanOutcome, (value) => {
-      if (value === null) return
-      stop()
-      resolve(value)
-    })
-  })
-}
-
-/** 弹窗给出结果时调用（全部处理完 / 用户取消 / 仍然安装）。 */
-/**
- * 弹窗给出结果时调用（全部处理完 / 用户取消 / 仍然安装）。
- */
-async function finishInstallPlan(ready: boolean) {
-  installPlanOutcome.value = ready
-  // 计划里可能卸载或装过东西，Dashboard 必须重读才能反映现状
-  if (installPlan.value.uninstall.length || installPlan.value.install.length) await load()
-}
+const {
+  open: installPlanOpen,
+  plan: installPlan,
+  target: installPlanTarget,
+  run: runInstallPlan,
+  finish: finishInstallPlan,
+} = useInstallPlanGate({
+  mods: () => mods.value,
+  repositories: () => repositories.value,
+  gameBlocked,
+  onApplied: () => load(),
+})
 
 function openInstall() {
   openInstallSource()

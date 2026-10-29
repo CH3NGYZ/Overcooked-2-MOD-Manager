@@ -553,3 +553,28 @@ export const currentLocaleLabel = computed(() => ({
 export function setLocale(value: Locale) {
   locale.value = value
 }
+
+/**
+ * 从多语言映射里按当前界面语言取文案，缺失时回退。
+ *
+ * 回退顺序：完整标记 → `zh-CN` → 任意第一个非空值 → `fallback`。
+ * 取「任意第一个」是为了兼容源文档只写了一两种语言的情况——
+ * 显示一个外语名称总比显示空白好。
+ *
+ * 放在 i18n 模块是因为它天然依赖 `locale.value`，且要多处共用
+ * （仓库名、分组名、包名快照、回收站条目）。
+ */
+export function pickI18n(
+  map: Record<string, string> | undefined | null,
+  fallback: string,
+): string {
+  if (!map) return fallback
+  const exact = map[locale.value]
+  if (exact && exact.trim()) return exact
+  const chinese = map['zh-CN']
+  if (chinese && chinese.trim()) return chinese
+  for (const value of Object.values(map)) {
+    if (value && value.trim()) return value
+  }
+  return fallback
+}

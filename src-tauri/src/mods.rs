@@ -6,7 +6,7 @@ use crate::models::{
 };
 use regex::Regex;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -283,6 +283,36 @@ fn inspect_dll(
             })
             .or_else(|| (!item.release_tag.trim().is_empty()).then(|| item.release_tag.clone()))
     });
+    /*
+     * 包名的多语言快照：与 `package_name` 同一件事的其他语言写法。
+     *
+     * 清单里没有快照（旧版本安装的）时回退到当前仓库的 `name_i18n`，
+     * 并在下次同步安装清单时写回 —— 与 `group_i18n` 的处理方式一致。
+     */
+    let package_name_i18n = manifest
+        .map(|item| item.package_name_i18n.clone())
+        .filter(|map| !map.is_empty())
+        .or_else(|| {
+            let repository_id = manifest?.repository_id.as_str();
+            config
+                .repositories
+                .iter()
+                .find(|repo| repo.id == repository_id)
+                .map(|repo| {
+                    repo.name_i18n
+                        .iter()
+                        .filter(|(_, value)| !value.trim().is_empty())
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::archive::package_display_name(value, &repo.provider),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .filter(|map: &BTreeMap<String, String>| !map.is_empty())
+        })
+        .unwrap_or_default();
     let enabled = !is_disabled_mod_file(path);
     let note = config
         .mod_notes
@@ -307,6 +337,7 @@ fn inspect_dll(
         repository_binding: repository_binding.cloned(),
         package_id,
         package_name,
+        package_name_i18n,
         package_mod_count: 0,
         // 分组优先用安装清单里的快照：源文档没刷新出来时仓库配置可能为空，
         // 直接读当前仓库会导致分组跳变。
@@ -1974,6 +2005,7 @@ mod tests {
                 release_tag: String::new(),
                 repository_binding: None,
                 package_name: Some("Raw MOD".into()),
+                package_name_i18n: Default::default(),
                 note: None,
                 group_i18n: Default::default(),
                 group: String::new(),
@@ -2044,6 +2076,7 @@ mod tests {
             release_tag: "v1.0.0".into(),
             repository_binding: None,
             package_name: Some("Grouped".into()),
+            package_name_i18n: Default::default(),
             note: None,
             group_i18n: group_i18n.clone(),
             group: "内容拓展".into(),
@@ -2086,6 +2119,7 @@ mod tests {
             release_tag: "v2.0.0-beta.1".into(),
             repository_binding: None,
             package_name: Some("Pre".into()),
+            package_name_i18n: Default::default(),
             note: None,
             group_i18n: Default::default(),
             group: String::new(),
@@ -2140,6 +2174,7 @@ mod tests {
             release_tag: "v1.0.0".into(),
             repository_binding: None,
             package_name: Some("Legacy".into()),
+            package_name_i18n: Default::default(),
             note: None,
             group_i18n: Default::default(),
             group: String::new(),
@@ -2276,6 +2311,7 @@ mod tests {
                 repository_binding: None,
                 package_id: None,
                 package_name: None,
+                package_name_i18n: Default::default(),
                 package_mod_count: 0,
                 group_i18n: Default::default(),
                 group: String::new(),
@@ -2311,6 +2347,7 @@ mod tests {
                 repository_binding: None,
                 package_id: None,
                 package_name: None,
+                package_name_i18n: Default::default(),
                 package_mod_count: 0,
                 group_i18n: Default::default(),
                 group: String::new(),

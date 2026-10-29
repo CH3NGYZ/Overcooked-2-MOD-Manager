@@ -83,6 +83,9 @@ pub struct InstalledMod {
     pub package_id: Option<String>,
     #[serde(default)]
     pub package_name: Option<String>,
+    /// 包名的多语言快照（与安装清单里的同名，供前端按语言现选）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub package_name_i18n: BTreeMap<String, String>,
     #[serde(default)]
     pub package_mod_count: usize,
     /// 安装时仓库的分组快照（多语言）。
@@ -701,6 +704,9 @@ pub struct BepInExInstallResult {
 pub struct ModRecycleEntry {
     pub id: String,
     pub name: String,
+    /// 删除时仓库名的多语言快照，前端按当前语言现选。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_i18n: BTreeMap<String, String>,
     pub deleted_at: String,
     pub file_count: usize,
     pub files: Vec<String>,

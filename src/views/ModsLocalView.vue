@@ -17,7 +17,7 @@ import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
-  installedModTags, recomputeModUpdate, replaceVersionConclusion,
+  installedModTags, modUpdateVerdict, replaceVersionConclusion,
   summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
 } from '../statusTags'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
@@ -198,8 +198,8 @@ async function refreshLocal() {
  */
 const effectiveMods = computed<InstalledMod[]>(() =>
   mods.value.map((mod) => {
-    const recomputed = recomputeModUpdate(mod, repositories.value)
-    if (recomputed) {
+    const verdict = modUpdateVerdict(mod, repositories.value)
+    if (verdict.known) {
       /*
        * 用统一函数替换版本结论，而不是自己拼数组。
        * 之前的实现只过滤 latest/update_available，会把 not_release_asset、
@@ -208,10 +208,10 @@ const effectiveMods = computed<InstalledMod[]>(() =>
        */
       return {
         ...mod,
-        update_available: recomputed.update_available,
+        update_available: verdict.updateAvailable,
         labels: replaceVersionConclusion(
           mod.labels as string[] | undefined,
-          recomputed.update_available ? 'update_available' : 'latest',
+          verdict.updateAvailable ? 'update_available' : 'latest',
         ) as InstalledMod['labels'],
       } as InstalledMod
     }
@@ -593,10 +593,15 @@ function modTitle(mod: InstalledMod) {
 
 /**
  * 单 DLL 包 / 包标题行的名称：绑定仓库名优先，
- * 再退回安装包名与实际插件名。
+ * 再退回安装包名（多语言快照）与实际插件名。
+ *
+ * 包名快照带 `{仓库名} - {平台}` 后缀，所以它排在纯仓库名之后：
+ * 有当前仓库配置时用干净的仓库名，仓库已下线时才用安装时的快照。
  */
 function displayTitle(mod: InstalledMod) {
-  return boundRepositoryName(mod) || mod.package_name?.trim() || modTitle(mod)
+  return boundRepositoryName(mod)
+    || pickI18n(mod.package_name_i18n, mod.package_name ?? '').trim()
+    || modTitle(mod)
 }
 
 /**

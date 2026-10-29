@@ -18,7 +18,7 @@ import {
 } from 'naive-ui'
 import { ArrowUndoOutline, TrashOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
-import { t, locale } from '../i18n'
+import { pickI18n, t, locale } from '../i18n'
 import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -52,6 +52,16 @@ async function reload() {
   } finally {
     loading.value = false
   }
+}
+
+/**
+ * 回收条目的显示名：优先用删除时存下的多语言快照，按当前语言现选。
+ *
+ * 切语言后历史记录也会跟着变；旧记录没有快照，回退到单语 `name`
+ * （那通常是仓库名或 DLL 文件名，本身没有多语言信息）。
+ */
+function entryName(entry: ModRecycleEntry) {
+  return pickI18n(entry.name_i18n, entry.name)
 }
 
 /** 删除时间：按当前界面语言格式化；解析失败时原样显示，不编造时间。 */
@@ -148,7 +158,7 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
 
     <n-list v-else-if="entries.length" class="recycle-list" hoverable>
       <n-list-item v-for="entry in entries" :key="entry.id">
-        <n-thing :title="entry.name">
+        <n-thing :title="entryName(entry)">
           <template #header-extra>
             <div class="recycle-actions">
               <n-button size="tiny" secondary :loading="isActing(entry, 'restore')"
@@ -166,7 +176,7 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
                 </template>
                 <div class="recycle-confirm">
                   <b>{{ t('彻底删除 MOD') }}</b>
-                  <span class="recycle-confirm-name">{{ entry.name }}</span>
+                  <span class="recycle-confirm-name">{{ entryName(entry) }}</span>
                   <span class="recycle-confirm-note">{{ t('将永久删除回收站中的 MOD 文件和保存的安装清单，此操作无法撤销。') }}</span>
                 </div>
               </n-popconfirm>

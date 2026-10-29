@@ -28,7 +28,7 @@ import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
 import { tagColorFor } from '../theme'
-import { resolvedUpdateAvailable } from '../statusTags'
+import { modUpdateAvailable } from '../statusTags'
 import { repositoryForMod } from '../modStatus'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
@@ -161,15 +161,15 @@ const installedMods = computed(() => mods.value)
 /**
  * 可更新的 MOD。
  *
- * **必须用 `resolvedUpdateAvailable` 而不是 `mod.update_available`。**
+ * **必须用 `modUpdateAvailable` 而不是 `mod.update_available`。**
  * 后者是后端扫盘时的快照；Release 缓存是之后异步刷新回来的。
- * MOD 管理页会用 `recomputeModUpdate` 按当前缓存实时重算，总览若只读快照
+ * MOD 管理页会用 `modUpdateVerdict` 按当前缓存实时重算，总览若只读快照
  * 就会出现「管理页显示可更新、总览说全部为最新版」这种自相矛盾。
  */
 const updatable = computed(() => {
   const repos = config.value?.repositories ?? []
   return mods.value.filter((mod) =>
-    !mod.is_dependency && resolvedUpdateAvailable(mod, repos))
+    !mod.is_dependency && modUpdateAvailable(mod, repos))
 })
 
 /**

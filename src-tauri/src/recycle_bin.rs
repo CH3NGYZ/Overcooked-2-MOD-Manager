@@ -6,7 +6,7 @@ use crate::mods;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -84,6 +84,16 @@ impl RelatedManifest {
 struct RecycleRecord {
     id: String,
     name: String,
+    /// 删除时仓库名的多语言快照。
+    ///
+    /// 为什么存快照而不是删除后去查仓库：MOD 已经从磁盘移走了，
+    /// 回收站列表要能独立回答「这是哪个 MOD」，不该依赖当前配置里
+    /// 是否还存在那个仓库（仓库可能已从源里下线）。
+    ///
+    /// 渲染时按界面语言从这里现选，所以切语言后**历史记录也会跟着变**。
+    /// 旧记录没有这个字段，回退到单语 `name`。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    name_i18n: BTreeMap<String, String>,
     deleted_at: String,
     game_path: String,
     package_id: Option<String>,
@@ -101,6 +111,7 @@ impl RecycleRecord {
         ModRecycleEntry {
             id: self.id.clone(),
             name: self.name.clone(),
+            name_i18n: self.name_i18n.clone(),
             deleted_at: self.deleted_at.clone(),
             file_count: self.files.len(),
             files: self
@@ -1061,6 +1072,11 @@ fn stage_with_related_manifests(
     let mut record = RecycleRecord {
         id,
         name,
+        // 仓库名的多语言快照：回收站列表要能随界面语言渲染，而删除之后
+        // 仓库可能已从源文档下线，无处可查，所以在这里固化下来。
+        name_i18n: manifest
+            .map(|manifest| manifest.package_name_i18n.clone())
+            .unwrap_or_default(),
         deleted_at: Utc::now().to_rfc3339(),
         game_path: canonical_game.to_string_lossy().into_owned(),
         package_id: manifest.map(|manifest| manifest.repository_id.clone()),
@@ -1645,6 +1661,7 @@ mod tests {
                 release_tag: "v1.2.3".into(),
                 repository_binding: None,
                 package_name: Some("Fixture package".into()),
+                package_name_i18n: Default::default(),
                 note: Some("original note".into()),
                 group_i18n: Default::default(),
                 group: String::new(),

@@ -130,6 +130,15 @@ pub struct InstallManifest {
     pub repository_binding: Option<crate::models::RepositoryBinding>,
     #[serde(default)]
     pub package_name: Option<String>,
+    /// 安装时仓库名的多语言快照。
+    ///
+    /// 与 `group_i18n` 同一个理由：包名要随界面语言显示，而安装之后
+    /// 仓库可能已从源文档里下线，届时无处可查。存下来才能在 MOD 管理页
+    /// 和回收站里按当前语言渲染，切语言后连历史记录也一起变。
+    ///
+    /// 旧清单没有这个字段，回退到单语 `package_name`。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub package_name_i18n: BTreeMap<String, String>,
     #[serde(default)]
     pub note: Option<String>,
     /// 安装时仓库的分组快照（多语言）。
@@ -1585,6 +1594,18 @@ fn path_relative(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// 安装包显示名的统一格式：`{仓库名} - {平台}`。
+///
+/// 抽成函数是因为「安装时写清单」和「扫描时补快照」两处都要生成它，
+/// 各写一份迟早出现 `A - GitHub` 与 `A - Github` 这种不一致。
+pub fn package_display_name(repository_name: &str, provider: &crate::models::Provider) -> String {
+    let platform = match provider {
+        crate::models::Provider::Github => "GitHub",
+        crate::models::Provider::Gitee => "Gitee",
+    };
+    format!("{repository_name} - {platform}")
+}
+
 pub fn new_manifest(
     repository_id: &str,
     release_tag: &str,
@@ -1597,6 +1618,7 @@ pub fn new_manifest(
         release_tag: release_tag.into(),
         repository_binding: None,
         package_name: package_name.map(str::to_string),
+        package_name_i18n: BTreeMap::new(),
         note: note.map(str::to_string),
         group_i18n: BTreeMap::new(),
         group: String::new(),

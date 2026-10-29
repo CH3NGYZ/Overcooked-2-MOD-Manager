@@ -3853,6 +3853,13 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
 
         let group_changed =
             manifest.group_i18n != repository.group_i18n || manifest.group != repository.group;
+        /*
+         * 包名的多语言快照也要同步：仓库名改了之后，MOD 管理页的分组标题
+         * 会更新，但包名停在上次安装时的旧翻译，两边对不上。
+         * 只在仓库确实提供了 name_i18n 时才覆盖，避免把手工补的名字抹掉。
+         */
+        let name_changed =
+            !repository.name_i18n.is_empty() && manifest.package_name_i18n != repository.name_i18n;
         // 旧清单没有版本绑定：能用 release_tag 重建就补上
         let binding_missing = manifest.repository_binding.is_none()
             && !manifest.release_tag.trim().is_empty()
@@ -3864,7 +3871,7 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
                 .iter()
                 .find(|release| release.tag_name == manifest.release_tag)
                 .is_some_and(|release| release.prerelease);
-        if !group_changed && !binding_missing && !prerelease_missing {
+        if !group_changed && !name_changed && !binding_missing && !prerelease_missing {
             continue;
         }
 
@@ -3885,6 +3892,14 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
             );
             manifest.group_i18n = repository.group_i18n.clone();
             manifest.group = repository.group.clone();
+        }
+        if name_changed {
+            manifest.package_name_i18n = repository.name_i18n.clone();
+            log::info!(
+                "更新安装清单仓库名快照：仓库={}，语言数={}",
+                manifest.repository_id,
+                repository.name_i18n.len()
+            );
         }
         if binding_missing {
             manifest.repository_binding =
@@ -5796,11 +5811,7 @@ fn install_downloaded_repository(
         } else {
             archive::copy_asset_pending(asset_path, game_root, &repo.install_target, download_name)?
         };
-        let provider_name = match repo.provider {
-            Provider::Github => "GitHub",
-            Provider::Gitee => "Gitee",
-        };
-        let package_name = format!("{} - {}", repo.name, provider_name);
+        let package_name = archive::package_display_name(&repo.name, &repo.provider);
         let mut manifest = archive::new_manifest(
             &repo.id,
             release_tag,
@@ -5813,6 +5824,24 @@ fn install_downloaded_repository(
         // MOD 管理页也能按当时的分组稳定归类。
         manifest.group_i18n = repo.group_i18n.clone();
         manifest.group = repo.group.clone();
+        /*
+         * 包名的多语言快照，与单语 `package_name` 同一格式（`{仓库名} - {平台}`）。
+         *
+         * `package_name` 那个单语字段保留：旧版本清单和回收记录都靠它兜底，
+         * 而且它是「安装那一刻的事实」，不该因为后来仓库改名而消失。
+         * 新字段只负责「同一件事的其他语言写法」。
+         */
+        manifest.package_name_i18n = repo
+            .name_i18n
+            .iter()
+            .filter(|(_, value)| !value.trim().is_empty())
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    archive::package_display_name(value, &repo.provider),
+                )
+            })
+            .collect();
         // 预发布标记跟着版本号一起固化：它只存在于当时的 Release 元数据里
         manifest.prerelease = prerelease;
         archive::write_manifest(manifests_dir, &manifest)?;

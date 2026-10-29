@@ -8,7 +8,7 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { locale, t } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { repositoryIsAvailable } from '../repositoryAvailability'
@@ -179,16 +179,24 @@ function isDuplicateOfOfficial(repo: Repository) {
 }
 
 
-/** 多语言取值：优先当前语言 → 中文 → 首个 → 原字段。 */
-function pickI18n(map: Record<string, string> | undefined, fallback: string): string {
-  if (!map) return fallback
-  return map[locale.value] || map['zh-CN'] || Object.values(map)[0] || fallback
-}
+/* 多语言取值统一走 i18n 的 pickI18n（回收站、MOD 管理页也用它）。 */
 function repoName(repo: Repository) {
   return pickI18n(repo.name_i18n, repo.name)
 }
 function repoGroup(repo: Repository) {
   return pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
+}
+/**
+ * 分组键：与界面语言无关的稳定标识。
+ *
+ * 用 `group` 原文（不是翻译后的 label）作键，切语言时同一个分组的键不变，
+ * 分桶结果和顺序都不受影响 —— 见 `tree` 里分桶处的说明。
+ *
+ * 空分组归入 `__ungrouped__`，避免把中文「未分组」这种翻译文案写进键里。
+ */
+function repoGroupKey(repo: Repository) {
+  const raw = (repo.group || '').trim().toLowerCase()
+  return raw ? `group:${raw}` : '__ungrouped__'
 }
 /**
  * 卡片简介：note_i18n 取当前语言，用统一的 Markdown 渲染取纯文本摘要
@@ -259,16 +267,38 @@ const tree = computed<SourceNode[]>(() => {
       })
       return
     }
-    const buckets = new Map<string, Repository[]>()
+    /*
+     * 分桶用**分组键**而不是显示名。
+     *
+     * 显示名是翻译后的字符串，会随界面语言变化；拿它当 Map 键意味着切语言
+     * 等于换了一组桶，顺序也随之重排。分组键（`group:` + 规范化后的原文）
+     * 与语言无关，语言只影响 label 的展示。
+     */
+    const buckets = new Map<string, { label: string; repos: Repository[] }>()
+    // 首次出现的顺序 = 后端/源文档声明的顺序，分组保持这个顺序，不排序
+    const order: string[] = []
     for (const repo of repos) {
-      const label = repoGroup(repo)
-      const list = buckets.get(label)
-      if (list) list.push(repo)
-      else buckets.set(label, [repo])
+      const key = repoGroupKey(repo)
+      const existing = buckets.get(key)
+      if (existing) {
+        existing.repos.push(repo)
+      } else {
+        buckets.set(key, { label: repoGroup(repo), repos: [repo] })
+        order.push(key)
+      }
     }
-    const groups: GroupNode[] = [...buckets.entries()]
-      .sort(([a], [b]) => (a === t('未分组') ? 1 : b === t('未分组') ? -1 : a.localeCompare(b)))
-      .map(([label, list]) => ({ key: `${source.id}::${label}`, label, repos: list }))
+    /*
+     * 按首次出现顺序输出：**不按分组名排序**。
+     *
+     * 原来用 `localeCompare` 按显示名排序，切语言后同一个分组换了名字、
+     * 顺序就变了 —— 用户看到的是「改个语言，MOD 安装页的分组全乱了」。
+     * 现在顺序完全由源文档里仓库的声明顺序决定，与语言无关。
+     * 「未分组」本来就在声明顺序里落在它实际出现的位置，不再强行垫底。
+     */
+    const groups: GroupNode[] = order.map((key) => {
+      const bucket = buckets.get(key)!
+      return { key: `${source.id}::${key}`, label: bucket.label, repos: bucket.repos }
+    })
     nodes.push({
       source,
       label: pickI18n(source.nickname_i18n, source.nickname),
@@ -569,10 +599,13 @@ defineExpose({ refreshAll, visibleCount })
                         <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
                       </span>
                     </span>
-                    <!-- 下载量是空间不足时优先被压缩隐藏的项，见 .card-downloads -->
-                    <span class="stat card-downloads">
+                    <!--
+                      下载量：为 0 或没获取到整块隐藏，而不是显示「—」。
+                      一个永远显示破折号的统计项只会占地方，还让人怀疑数据坏了。
+                    -->
+                    <span v-if="downloadCount(repo)" class="stat card-downloads">
                       <span class="muted">{{ t('下载量') }}</span>
-                      <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                      <b>{{ downloadCount(repo)?.toLocaleString() }}</b>
                     </span>
                     <!--
                       主按钮：安装（主题色）/ 重装、更新（对比色）/ 刷新（刷新失败的警告色）。
@@ -660,9 +693,9 @@ defineExpose({ refreshAll, visibleCount })
                       <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
                     </span>
                   </span>
-                  <span class="stat card-downloads">
+                  <span v-if="downloadCount(repo)" class="stat card-downloads">
                     <span class="muted">{{ t('下载量') }}</span>
-                    <b>{{ downloadCount(repo)?.toLocaleString() ?? '—' }}</b>
+                    <b>{{ downloadCount(repo)?.toLocaleString() }}</b>
                   </span>
                   <n-button size="tiny" class="card-install"
                     :style="installButtonStyle(repo)"

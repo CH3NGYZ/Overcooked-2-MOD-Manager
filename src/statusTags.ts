@@ -401,49 +401,48 @@ export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]
 }
 
 /**
- * 用当前仓库缓存重算一个已安装 MOD 的更新状态。
+ * 用当前 Release 缓存判断一个已安装 MOD 的更新状态 —— 唯一的判定入口。
  *
- * 为什么需要它：MOD 的 `labels` / `update_available` 是后端扫描时算好的，
- * 而仓库 Release 是异步刷新回来的。刷新期间 Dashboard 不重读（那会重扫磁盘），
- * 所以标签会一直停在「版本未知」，直到整批结束才更新。
+ * 为什么需要重算：MOD 的 `labels` / `update_available` 是后端**扫描时**
+ * 算好的，而仓库 Release 是之后异步刷新回来的。刷新期间 Dashboard 不重读
+ * （那会重扫磁盘），所以标签会停在旧结论，直到整批结束才更新。
+ * 这里按同一套版本规则用当前 Release 缓存重算，让「刷完一个仓库 →
+ * 该仓库绑定的 MOD 立刻显示最新版/可更新」，不需要 IPC，也不碰磁盘。
  *
- * 这里用同一套判定规则在前端重算，让「刷完一个仓库 → 该仓库绑定的 MOD 立刻
- * 显示最新版/可更新」，不需要任何 IPC，也不碰磁盘。
+ * **所有需要「这个 MOD 现在能不能更新」的地方都必须调它。** 曾经拆成
+ * 「返回可空的重算」+ 一层包装函数，结果总览页用错了一个 —— 刷新完 Release
+ * 后管理页显示可更新、总览写着全部最新。合并成一个函数后没有选择空间。
  *
- * 返回 null 表示无法判断（没绑定仓库、仓库没有 Release、版本不可比较），
- * 调用方应保留后端给的原值。
+ * `mods.ts` 里的后端扫描用同样规则算 `update_available`，两者必须一致。
  */
-export function recomputeModUpdate(
-  mod: InstalledMod,
-  repositories: Repository[],
-): { update_available: boolean; latest: boolean } | null {
+export type ModUpdateVerdict =
+  /** 能按当前缓存判定。 */
+  | { known: true; updateAvailable: boolean }
+  /** 无法判定（未绑定 / 仓库报错 / RAW / 版本不可比较），调用方保留后端快照。 */
+  | { known: false }
+
+export function modUpdateVerdict(mod: InstalledMod, repositories: Repository[]): ModUpdateVerdict {
   // 纯依赖不是 MOD，不参与更新判定
-  if (mod.is_dependency) return null
+  if (mod.is_dependency) return { known: false }
   const repo = repositoryForMod(repositories, mod)
-  if (!repo || repo.last_error) return null
+  if (!repo || repo.last_error) return { known: false }
   // 仓库文件模式没有版本比较的意义
-  if (repo.download_mode === 'repository_file') return null
+  if (repo.download_mode === 'repository_file') return { known: false }
   const release = repo.cached_releases[0]
-  if (!release) return null
+  if (!release) return { known: false }
   const compared = compareVersions(release.version || release.tag_name, localVersion(mod))
-  if (compared === null) return null
-  return compared > 0
-    ? { update_available: true, latest: false }
-    : { update_available: false, latest: true }
+  if (compared === null) return { known: false }
+  return { known: true, updateAvailable: compared > 0 }
 }
 
 /**
- * 把后端扫描结果与当前 Release 缓存合并成一个「现在就成立」的更新判定。
+ * 一个已安装 MOD 现在是否可更新（合并「缓存重算」与「后端快照」）。
  *
- * 存在的意义是消除两处结论不一致：MOD 管理页用 `recomputeModUpdate` 实时
- * 重算，总览页之前直接用后端快照的 `update_available` —— 于是刷新完 Release
- * 后管理页显示「可更新」，总览还写着「全部为最新版」。
- *
- * 规则：
- *   · 能重算 → 用重算结果（Release 缓存比扫描快照新）
- *   · 不能重算 → 退回后端快照（没绑定/仓库报错/RAW 模式等无法判断的情况）
+ * 这是给只需要最终结论的调用方（总览页统计）用的便捷形态；
+ * 需要区分「已判定 / 无法判定」的地方（MOD 管理页要显示「检查中」）
+ * 直接调 `modUpdateVerdict`。
  */
-export function resolvedUpdateAvailable(mod: InstalledMod, repositories: Repository[]): boolean {
-  const recomputed = recomputeModUpdate(mod, repositories)
-  return recomputed ? recomputed.update_available : mod.update_available
+export function modUpdateAvailable(mod: InstalledMod, repositories: Repository[]): boolean {
+  const verdict = modUpdateVerdict(mod, repositories)
+  return verdict.known ? verdict.updateAvailable : mod.update_available
 }

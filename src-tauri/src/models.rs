@@ -314,50 +314,160 @@ pub struct AssetRule {
     pub value: String,
 }
 
-/// 仓库（MOD）对另一个插件的依赖声明。
+/// MOD 与另一个插件之间的关系种类。
+///
+/// 依赖、排斥、兼容三件事本质上是同一个问题 ——「对某个 GUID 的版本区间
+/// 有什么要求」，只是满足与违反时的含义不同：
+///
+/// - `requires`   目标**必须存在**且版本落在区间内。缺失或版本不符 → 缺依赖。
+/// - `conflicts`  目标**若存在**且版本落在区间内 → 冲突，需要卸载。
+/// - `compatible` 目标**若存在**，版本必须落在区间内 → 否则不兼容，需要卸载。
+///
+/// 三者共用 `min_version`/`max_version`：不写就是该端不设限制。
+/// 放在一张表里而不是三张表，是为了让作者按「跟谁有关系」组织配置，
+/// 而不是按「哪种关系」拆成三处；前端也只需要一条判定管线。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationKind {
+    #[default]
+    Requires,
+    Conflicts,
+    Compatible,
+}
+
+impl RelationKind {
+    /// 从配置里的 `kind` 文本解析。未知值返回 `None`，由调用方决定跳过。
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "requires" | "require" | "dependency" => Some(Self::Requires),
+            "conflicts" | "conflict" | "incompatible_with" => Some(Self::Conflicts),
+            "compatible" | "compatibility" => Some(Self::Compatible),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Requires => "requires",
+            Self::Conflicts => "conflicts",
+            Self::Compatible => "compatible",
+        }
+    }
+}
+
+/// 仓库（MOD）与另一个插件的一条关系声明。
 ///
 /// 用 GUID 表达，与本地 MOD 绑定用的 `plugin_guid` 是同一套标识 ——
 /// 「哪个插件」这件事只有 GUID 是可靠的，插件名和文件名都会随作者改写。
 ///
-/// 有版本约束时，本地已装版本低于 `min_version` 也算「未满足」，
-/// 因为旧版可能缺少新版依赖才提供的 API。
+/// 版本边界用本项目规则比较（四段 = beta 序号，见
+/// `releases::compare_release_versions`），所以 `1.8.7.2` 与 `1.8.7-beta.2` 等价。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RepositoryDependency {
-    /// 被依赖插件的 GUID（比较时忽略大小写）。
+pub struct RepositoryRelation {
+    pub kind: RelationKind,
+    /// 目标插件的 GUID（比较时忽略大小写）。
     pub guid: String,
-    /// 最低版本要求；空字符串表示不限版本。
-    ///
-    /// 用本项目的版本规则比较（四段 = beta 序号，见 `releases::compare_release_versions`），
-    /// 所以 `1.8.7.2` 与 `1.8.7-beta.2` 等价。
+    /// 版本区间下限（含）；空字符串表示不限下限。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub min_version: String,
-    /// 可选依赖：缺失时不提示、不显示按钮，只作为信息记录。
+    /// 版本区间上限（含）；空字符串表示不限上限。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub max_version: String,
+    /// 仅对 `requires` 有意义：缺失时不提示、不显示按钮。
+    ///
+    /// 其它种类写 `optional = true` 属于配置错误 —— 「可选的冲突」没有含义。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
 }
 
-/// 按 Release 版本覆盖默认依赖。
+/// 反序列化关系表：**未知的 `kind` 跳过而不是报错**。
+///
+/// 这是仓库源的前向兼容边界。新版本客户端可能写入旧版本不认识的关系种类
+/// （例如以后的 `loads_after`），旧客户端若直接报错，整份源文档就不可读，
+/// 用户会看到「所有仓库都失败」。跳过 + 记一条 warn 更合适：
+/// 旧客户端只是不认识这条关系，其余配置仍然可用。
+///
+/// 缺少 `kind` 按 `requires` 处理：这是最可能的意图，也让历史写法
+/// （`[[repositories.requires]]` 只写 guid 的表）继续可读。
+fn deserialize_relations<'de, D>(deserializer: D) -> Result<Vec<RepositoryRelation>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct RelationWire {
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        guid: String,
+        #[serde(default)]
+        min_version: String,
+        #[serde(default)]
+        max_version: String,
+        #[serde(default)]
+        optional: bool,
+    }
+
+    let raw = Vec::<RelationWire>::deserialize(deserializer)?;
+    let mut relations = Vec::with_capacity(raw.len());
+    for entry in raw {
+        let kind = if entry.kind.trim().is_empty() {
+            RelationKind::Requires
+        } else {
+            let Some(kind) = RelationKind::from_token(&entry.kind) else {
+                log::warn!(
+                    "忽略不认识的关系类型：kind={}，guid={}（可能是更新版本的客户端写入）",
+                    entry.kind.trim(),
+                    entry.guid.trim()
+                );
+                continue;
+            };
+            kind
+        };
+        relations.push(RepositoryRelation {
+            kind,
+            guid: entry.guid,
+            min_version: entry.min_version,
+            max_version: entry.max_version,
+            optional: entry.optional,
+        });
+    }
+    Ok(relations)
+}
+
+/// 按 Release 版本区间覆盖默认关系表。
 ///
 /// 场景：同一个 MOD 的不同大版本依赖不同版本的基础库 ——
-/// `A 1.0` 要 `B ≥ 2.0`，`A 1.1` 要 `B ≥ 3.0`。仓库级的 `requires`
+/// `A 1.0` 要 `B ≥ 2.0`，`A 1.1` 要 `B ≥ 3.0`。仓库级的 `relations`
 /// 无法表达这种差异（它是固定值），所以额外提供这张表：
 ///
 /// ```toml
-/// [[repositories.release_requires]]
-/// version = "1.1"          # 从 1.1 起（含）生效
-/// requires = [{ guid = "...", min_version = "3.0" }]
+/// [[repositories.release_relations]]
+/// min_version = "1.8.0"        # 从 1.8.0（含）起
+/// max_version = "2.0.0"        # 到 2.0.0（含）为止；留空表示不设上限
+/// relations = [{ kind = "requires", guid = "...", min_version = "19.0" }]
 /// ```
 ///
-/// 匹配规则：取**满足 `version <= 当前 Release 版本` 的最大那条**，
-/// 其 `requires` 整体替换仓库级 `requires`（不是合并 —— 合并会让
+/// 匹配规则：所有**区间命中**的条目里，取 `min_version` 最高的那条，
+/// 其 `relations` 整体替换仓库级 `relations`（不是合并 —— 合并会让
 /// 「新版降低要求」无法表达）。
+///
+/// 两个边界都留空是错误配置：那样它会匹配任何版本，等同于直接改
+/// `relations`，但在校验阶段就拒绝，避免「以为写了区间其实没限」。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ReleaseDependencyOverride {
-    /// 生效的最低 Release 版本（含）。用项目版本规则比较。
-    pub version: String,
-    /// 从该版本起使用的依赖列表（整体替换，不合并）。
-    #[serde(default)]
-    pub requires: Vec<RepositoryDependency>,
+pub struct ReleaseRelationOverride {
+    /// 生效的 Release 版本下限（含）。空表示不限下限。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub min_version: String,
+    /// 生效的 Release 版本上限（含）。空表示不限上限。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub max_version: String,
+    /// 命中的区间内使用的关系表（整体替换，不合并）。
+    #[serde(
+        default,
+        alias = "requires",
+        deserialize_with = "deserialize_relations"
+    )]
+    pub relations: Vec<RepositoryRelation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,15 +508,27 @@ pub struct RepositoryConfig {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
-    /// 这个 MOD 依赖的其他插件（按 GUID 声明）。
+    /// 这个 MOD 与其它插件的关系（依赖 / 排斥 / 兼容，按 GUID 声明）。
     ///
-    /// 缺失时 MOD 安装页在卡片上提示；能匹配到线上仓库且版本满足时
-    /// 给出快捷安装入口，否则只显示「缺依赖」标签。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub requires: Vec<RepositoryDependency>,
-    /// 按 Release 版本覆盖 `requires`（见 `ReleaseDependencyOverride`）。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub release_requires: Vec<ReleaseDependencyOverride>,
+    /// 缺失依赖或出现冲突时，MOD 安装页与 MOD 管理页都会在卡片上提示；
+    /// 能匹配到线上仓库且版本满足时给出快捷安装入口。
+    ///
+    /// `requires` 是早期只有依赖时的字段名，保留为别名：已经照那个名字
+    /// 写下的源文档不需要改写。
+    #[serde(
+        default,
+        alias = "requires",
+        deserialize_with = "deserialize_relations",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub relations: Vec<RepositoryRelation>,
+    /// 按 Release 版本区间覆盖 `relations`（见 `ReleaseRelationOverride`）。
+    #[serde(
+        default,
+        alias = "release_requires",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub release_relations: Vec<ReleaseRelationOverride>,
     /// Optional regular expression applied to the installed MOD version when
     /// binding a local plugin to this repository.
     #[serde(default)]
@@ -695,12 +817,24 @@ pub struct RepositoryExport {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
-    /// 依赖声明（与 `RepositoryConfig` 同名字段对应，导入导出时保留）。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub requires: Vec<RepositoryDependency>,
-    /// 按 Release 版本覆盖依赖的规则（与 `RepositoryConfig` 同名字段对应）。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub release_requires: Vec<ReleaseDependencyOverride>,
+    /// 与其它插件的关系（依赖 / 排斥 / 兼容）；与 `RepositoryConfig` 同名字段对应。
+    ///
+    /// `requires` 是早期只有依赖时的字段名，保留为别名：已经照那个名字
+    /// 写下的源文档不需要改写。
+    #[serde(
+        default,
+        alias = "requires",
+        deserialize_with = "deserialize_relations",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub relations: Vec<RepositoryRelation>,
+    /// 按 Release 版本覆盖关系表的规则（与 `RepositoryConfig` 同名字段对应）。
+    #[serde(
+        default,
+        alias = "release_requires",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub release_relations: Vec<ReleaseRelationOverride>,
     #[serde(default)]
     pub version_regex: String,
     #[serde(default)]
@@ -927,12 +1061,12 @@ pub struct RepositoryPatch {
     pub local_product_name: String,
     #[serde(default)]
     pub local_original_filename: String,
-    /// 依赖声明；`None` 表示本次编辑不修改依赖列表。
+    /// 与其它插件的关系；`None` 表示本次编辑不修改关系表。
     #[serde(default)]
-    pub requires: Option<Vec<RepositoryDependency>>,
-    /// 按 Release 覆盖依赖的规则；`None` 表示本次编辑不修改。
+    pub relations: Option<Vec<RepositoryRelation>>,
+    /// 按 Release 覆盖关系表的规则；`None` 表示本次编辑不修改。
     #[serde(default)]
-    pub release_requires: Option<Vec<ReleaseDependencyOverride>>,
+    pub release_relations: Option<Vec<ReleaseRelationOverride>>,
     #[serde(default)]
     pub version_regex: String,
     #[serde(default = "default_max_release_count")]

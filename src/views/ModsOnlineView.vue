@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
-import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline, TrashOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useNotify } from '../useNotify'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { resolveDependencies, type DependencyStatus } from '../modDependencies'
-import { api } from '../services/tauri'
+import { buildInstallPlan, planHasActions, primaryRelation, resolveRelations, type InstallPlan, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -17,15 +16,38 @@ import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
-import DependencyInstallDialog, { type DependencyInstallItem } from '../components/DependencyInstallDialog.vue'
+import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
+import { useModRemoval } from '../composables/useModRemoval'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import type { Repository, RepositorySource } from '../types'
 
 const message = useNotify()
 const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
+
+/**
+ * 冲突 MOD 的卸载：与 MOD 管理页共用同一份流程。
+ *
+ * 在线卡片不展示「回收站开关」，但文案必须与真实行为一致，
+ * 所以仍然读同一个配置项；标题用插件名，这里没有仓库名可显示。
+ */
+const { remove } = useModRemoval({
+  deleteCopy: () => (config.value?.recycle_deleted_mods !== false
+    ? {
+        body: (name: string) => t('「{name}」将被移入回收站，可在回收站中恢复。继续？', { name }),
+        action: t('移入回收站'),
+        done: '已移入回收站',
+      }
+    : {
+        body: (name: string) => t('「{name}」将被直接删除，无法恢复。继续？', { name }),
+        action: t('直接删除'),
+        done: '已删除',
+      }),
+  titleOf: (mod) => mod.name,
+  onDone: () => load(),
+})
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦，教程门控也在那里。 */
 const engine = useRepositoryRefresh()
@@ -58,7 +80,7 @@ const {
   handleInstalled: handleInstallInstalled,
 } = useModInstallFlow(() => load())
 
-/** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先下载预览，再交给统一弹窗。 */
+/** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先检查关系，再下载预览。 */
 const { previewRepository } = useRepositoryPreview(openInstallPreview, {
   gameBlocked,
   onBusyChange: (repositoryId, busy) => {
@@ -66,84 +88,47 @@ const { previewRepository } = useRepositoryPreview(openInstallPreview, {
     else delete installing.value[repositoryId]
   },
   /*
-   * 安装前先补齐依赖。
+   * 安装前把依赖 / 冲突 / 兼容一次处理完。
    *
    * 放在这里而不是「装完再提示」：用户点安装的意图是「让它能用」，
    * 缺依赖时它装上也跑不起来；等装完再弹窗，用户已经离开这个页面了。
-   *
-   * 只有「这次要装的是新包」时才检查 —— 更新已装 MOD 时依赖在首次安装
-   * 就该齐了，再查一遍纯属重复。
+   * 冲突同理 —— 装上之后才发现冲突，等于先制造一次故障再解释。
    */
-  dependenciesForInstall: installableDependencies,
-  installDependencies: async (_repo, dependencies) => {
-    const ready = await runDependencyInstall(dependencies)
-    if (ready) await load()
-    return ready
-  },
+  prepareInstall: (repo, tag) => runInstallPlan(repo, tag),
 })
 
-/* ===== 批量安装依赖 ===== */
+/* ===== 安装前检查（依赖 / 冲突 / 兼容） ===== */
 
-/** 批量安装弹窗：一次处理某个仓库声明的全部可安装依赖。 */
-const dependencyInstallOpen = ref(false)
-const dependencyInstallItems = ref<DependencyInstallItem[]>([])
+/** 安装前检查弹窗：一次展示并执行整个计划。 */
+const installPlanOpen = ref(false)
+const installPlan = ref<InstallPlan>({ uninstall: [], install: [], blocked: [] })
+const installPlanTarget = ref('')
 /**
- * 依赖弹窗关闭后的结果：前置安装流程在等它。
+ * 弹窗关闭后的结果：前置流程在等它。
  *
- * `null` = 还在等；`true` = 依赖已装好；`false` = 用户取消或有失败。
- * 用 ref + Promise 而不是直接在弹窗里回调：前置流程是 `await` 的，
- * 需要「等到用户关掉弹窗」这个语义。
+ * `null` = 还在等；`true` = 可以继续装主包；`false` = 用户取消或失败。
  */
-const dependencyInstallOutcome = ref<boolean | null>(null)
-
-/** 这个仓库当前缺失、且能从线上装到的依赖（按声明顺序）。 */
-function installableDependencies(repo: Repository) {
-  const statuses = resolveDependencies(repo, mods.value, repositories.value)
-  return statuses
-    .filter((status) => status.state === 'installable' && status.repository)
-    .map((status) => status.repository!)
-}
+const installPlanOutcome = ref<boolean | null>(null)
 
 /**
- * 逐个下载解析依赖，然后弹窗确认安装。
+ * 生成计划并等用户把弹窗处理完。
  *
- * 复用现有的单包预览命令（`preview_only`），拿到全部结果后用一个弹窗确认。
- * 没有新增后端命令 —— 下载、校验、暂存、取消这些链路已经过验证。
- *
- * 顺序执行：依赖之间可能存在先后要求，并发下载更快但边界更难解释。
- *
- * 返回是否全部装好：`false` 时调用方不应继续装主包。
+ * 没有需要处理的关系时直接放行，不弹空弹窗 —— 绝大多数安装都属于这种，
+ * 每次都弹一个「没问题」的窗口只会让用户学会无脑点掉它。
  */
-async function runDependencyInstall(dependencies: Repository[]): Promise<boolean> {
+async function runInstallPlan(repo: Repository, tag?: string): Promise<boolean> {
   if (gameBlocked()) return false
+  const version = tag ?? repo.cached_releases[0]?.tag_name
+  const plan = buildInstallPlan(repo, mods.value, repositories.value, version)
+  if (!planHasActions(plan)) return true
 
-  dependencyInstallItems.value = []
-  dependencyInstallOutcome.value = null
-  dependencyInstallOpen.value = true
-  for (const target of dependencies) {
-    try {
-      const outcome = await api.installRepository(target.id, undefined, true)
-      if (!outcome.ok || !outcome.preview) {
-        message.error(`${repoName(target)}：${outcome.message || t('下载完成但没有解析出安装内容')}`)
-        continue
-      }
-      dependencyInstallItems.value = [...dependencyInstallItems.value, {
-        guid: target.plugin_guid,
-        label: repoName(target),
-        preview: outcome.preview,
-      }]
-    } catch (reason) {
-      message.error(reason instanceof Error ? reason.message : String(reason))
-    }
-  }
-  // 一个都没成功预览到：直接收起，不弹空弹窗
-  if (!dependencyInstallItems.value.length) {
-    dependencyInstallOpen.value = false
-    return false
-  }
-  // 等用户关掉弹窗（安装完点「完成」或中途取消）
+  installPlan.value = plan
+  installPlanTarget.value = repoName(repo)
+  installPlanOutcome.value = null
+  installPlanOpen.value = true
+  // 等用户关掉弹窗（处理完点「完成」或中途取消）
   return new Promise<boolean>((resolve) => {
-    const stop = watch(dependencyInstallOutcome, (value) => {
+    const stop = watch(installPlanOutcome, (value) => {
       if (value === null) return
       stop()
       resolve(value)
@@ -151,17 +136,41 @@ async function runDependencyInstall(dependencies: Repository[]): Promise<boolean
   })
 }
 
-/** 弹窗给出结果时调用（安装全成功 / 用户取消）。 */
-function finishDependencyInstall(ready: boolean) {
-  dependencyInstallOutcome.value = ready
+/** 弹窗给出结果时调用（全部处理完 / 用户取消 / 仍然安装）。 */
+async function finishInstallPlan(ready: boolean) {
+  installPlanOutcome.value = ready
+  // 计划里可能卸载或装过东西，Dashboard 必须重读才能反映现状
+  if (installPlan.value.uninstall.length || installPlan.value.install.length) await load()
 }
 
-/** 卡片上的「安装依赖」按钮：装完刷新即可，不需要继续别的事。 */
+/**
+ * 卡片的「安装依赖」按钮：只跑依赖部分。
+ *
+ * 与完整安装计划共用同一个弹窗与判定 —— 用户只是想补依赖时，
+ * 不应该顺带卸载任何东西，所以这里把计划裁剪成只剩 install 里的依赖条目。
+ */
 async function installDependenciesFromCard(repo: Repository) {
-  const dependencies = installableDependencies(repo)
-  if (!dependencies.length) return
-  const ready = await runDependencyInstall(dependencies)
-  if (ready) await load()
+  if (gameBlocked()) return
+  const plan = buildInstallPlan(repo, mods.value, repositories.value)
+  const dependencies: InstallPlan = {
+    uninstall: [],
+    install: plan.install.filter((status) => (status.relation.kind ?? 'requires') === 'requires'),
+    blocked: plan.blocked.filter((status) => (status.relation.kind ?? 'requires') === 'requires'),
+  }
+  if (!dependencies.install.length && !dependencies.blocked.length) return
+
+  installPlan.value = dependencies
+  installPlanTarget.value = repoName(repo)
+  installPlanOutcome.value = null
+  installPlanOpen.value = true
+  await new Promise<void>((resolve) => {
+    const stop = watch(installPlanOutcome, (value) => {
+      if (value === null) return
+      stop()
+      resolve()
+    })
+  })
+  await load()
 }
 
 function openInstall() {
@@ -307,28 +316,39 @@ function repoNote(repo: Repository) {
   return markdownSummary(pickI18n(repo.note_i18n, repo.note || ''))
 }
 
-/* ===== 依赖提示 ===== */
+/* ===== 关系提示（依赖 / 冲突） ===== */
 
 /**
- * 一个仓库未满足的必选依赖。
+ * 一个仓库未满足的第一条关系。
  *
- * 只给「第一条」未满足的依赖做快捷入口：卡片左侧按钮位只有一个。
- * 多条缺失时按钮优先指向能装的那条，其余由详情抽屉里的依赖列表体现。
+ * 只给「第一条」做快捷入口：卡片左侧按钮位只有一个。优先级由
+ * `primaryRelation` 决定 —— 冲突优先（可能已经崩游戏），其次能给安装
+ * 入口的依赖，最后是只提示的那些。
  *
- * 计算依赖只依赖当前 Dashboard（已装 MOD + 仓库 Release 缓存），
+ * 计算只依赖当前 Dashboard（已装 MOD + 仓库 Release 缓存），
  * 所以刷新完仓库后按钮会自动出现/消失，不需要额外请求。
  */
-function unmetDependency(repo: Repository) {
-  const statuses = resolveDependencies(repo, mods.value, repositories.value)
-  const unmet = statuses.filter((status) => status.state !== 'satisfied')
-  if (!unmet.length) return undefined
-  // 优先返回能直接装的那条
-  return unmet.find((status) => status.state === 'installable') ?? unmet[0]
+function unmetRelation(repo: Repository): RelationStatus | undefined {
+  return primaryRelation(resolveRelations(repo, mods.value, repositories.value))
 }
 
-/** 未满足依赖的仓库名（用于标签文案与跳转）。 */
-function dependencyRepoName(status: DependencyStatus) {
-  return status.repository ? repoName(status.repository) : status.dependency.guid
+/** 关系目标的来源名（用于标签文案与跳转）。 */
+function relationTargetName(status: RelationStatus) {
+  if (status.repository) return repoName(status.repository)
+  if (status.installedMod) return status.installedMod.name
+  return status.relation.guid
+}
+
+/** 关系标签的提示文案：说清「跟谁」「为什么」。 */
+function relationTitle(status: RelationStatus, repo: Repository) {
+  const target = relationTargetName(status)
+  if (status.state === 'conflict') {
+    return t('「{owner}」与「{target}」不兼容，需要卸载', {
+      owner: repoName(repo),
+      target,
+    })
+  }
+  return t('缺少依赖') + '： ' + target
 }
 
 /**
@@ -338,9 +358,28 @@ function dependencyRepoName(status: DependencyStatus) {
  * 依赖是**为了让它能用**才装的，逐个跳转让用户来回切页，还把
  * 「哪些还没装」的判断留给了用户。
  */
-function openDependency(status: DependencyStatus, repo: Repository) {
+function openDependency(status: RelationStatus, repo: Repository) {
   if (status.state !== 'installable') return
   void installDependenciesFromCard(repo)
+}
+
+/**
+ * 冲突快捷动作：确认后卸载本地那个冲突的 MOD。
+ *
+ * 在线卡片上不能装任何东西来消除冲突 —— 冲突的解法只有卸载，
+ * 所以按钮直接指向卸载确认，而不是跳转或刷新。
+ *
+ * 卸载流程复用 MOD 管理页的同一份实现（`useModRemoval`）：
+ * 后端可能要求「整包删除」再确认一次，自己写简化版会漏掉那个分支。
+ */
+function uninstallConflict(status: RelationStatus, repo: Repository) {
+  const target = status.installedMod
+  if (!target) return
+  remove(target, {
+    title: t('卸载冲突的 MOD'),
+    body: (name) => t('「{name}」与「{owner}」不兼容，需要卸载。继续？',
+      { name, owner: repoName(repo) }),
+  })
 }
 
 /* ===== 搜索 ===== */
@@ -697,19 +736,27 @@ defineExpose({ refreshAll, visibleCount })
                   <div class="card-head">
                     <ProviderIcon :provider="repo.provider" :size="30" />
                     <!--
-                      依赖提示：未满足时显示在标题左侧。
-                      能装 → 快捷按钮跳到依赖的仓库卡片；装不了 → 只给标签，
+                      关系提示：未满足时显示在标题左侧。
+                      冲突 → 「去卸载」按钮（装任何东西都解决不了）；
+                      依赖能装 → 「安装依赖」；装不了 → 只给「缺依赖」标签，
                       因为按钮点下去也解决不了，反而让人以为能修好。
                     -->
-                    <n-tag v-if="unmetDependency(repo)?.state === 'missing'" size="tiny" :bordered="false"
+                    <n-button v-if="unmetRelation(repo)?.state === 'conflict'" size="tiny"
+                      :style="buttonColorFor('critical', 'soft')" class="dep-action"
+                      :title="relationTitle(unmetRelation(repo)!, repo)"
+                      @click.stop="uninstallConflict(unmetRelation(repo)!, repo)">
+                      <template #icon><TrashOutline width="13" height="13" /></template>
+                      {{ t('去卸载') }}
+                    </n-button>
+                    <n-tag v-else-if="unmetRelation(repo)?.state === 'missing'" size="tiny" :bordered="false"
                       class="state-tag dep-tag" :color="tagColorFor('critical')"
-                      :title="t('缺少依赖')">
+                      :title="relationTitle(unmetRelation(repo)!, repo)">
                       {{ t('缺依赖') }}
                     </n-tag>
-                    <n-button v-else-if="unmetDependency(repo)?.state === 'installable'" size="tiny"
+                    <n-button v-else-if="unmetRelation(repo)?.state === 'installable'" size="tiny"
                       :style="buttonColorFor('moderate', 'soft')" class="dep-action"
-                      :title="t('安装依赖') + '： ' + dependencyRepoName(unmetDependency(repo)!)"
-                      @click.stop="openDependency(unmetDependency(repo)!, repo)">
+                      :title="t('安装依赖') + '： ' + relationTargetName(unmetRelation(repo)!)"
+                      @click.stop="openDependency(unmetRelation(repo)!, repo)">
                       <template #icon><DownloadOutline width="13" height="13" /></template>
                       {{ t('安装依赖') }}
                     </n-button>
@@ -818,16 +865,23 @@ defineExpose({ refreshAll, visibleCount })
                 @click="detailId = repo.id">
                 <div class="card-head">
                   <ProviderIcon :provider="repo.provider" :size="30" />
-                  <!-- 依赖提示：社区仓库卡片与上方源码树卡片共用同一套判定 -->
-                  <n-tag v-if="unmetDependency(repo)?.state === 'missing'" size="tiny" :bordered="false"
+                  <!-- 关系提示：社区仓库卡片与上方源码树卡片共用同一套判定 -->
+                  <n-button v-if="unmetRelation(repo)?.state === 'conflict'" size="tiny"
+                    :style="buttonColorFor('critical', 'soft')" class="dep-action"
+                    :title="relationTitle(unmetRelation(repo)!, repo)"
+                    @click.stop="uninstallConflict(unmetRelation(repo)!, repo)">
+                    <template #icon><TrashOutline width="13" height="13" /></template>
+                    {{ t('去卸载') }}
+                  </n-button>
+                  <n-tag v-else-if="unmetRelation(repo)?.state === 'missing'" size="tiny" :bordered="false"
                     class="state-tag dep-tag" :color="tagColorFor('critical')"
-                    :title="t('缺少依赖')">
+                    :title="relationTitle(unmetRelation(repo)!, repo)">
                     {{ t('缺依赖') }}
                   </n-tag>
-                  <n-button v-else-if="unmetDependency(repo)?.state === 'installable'" size="tiny"
+                  <n-button v-else-if="unmetRelation(repo)?.state === 'installable'" size="tiny"
                     :style="buttonColorFor('moderate', 'soft')" class="dep-action"
-                    :title="t('安装依赖') + '： ' + dependencyRepoName(unmetDependency(repo)!)"
-                    @click.stop="openDependency(unmetDependency(repo)!, repo)">
+                    :title="t('安装依赖') + '： ' + relationTargetName(unmetRelation(repo)!)"
+                    @click.stop="openDependency(unmetRelation(repo)!, repo)">
                     <template #icon><DownloadOutline width="13" height="13" /></template>
                     {{ t('安装依赖') }}
                   </n-button>
@@ -899,14 +953,13 @@ defineExpose({ refreshAll, visibleCount })
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': repositoriesLoading }" />
   </n-float-button>
 
-  <!-- 批量安装依赖：一次确认后依次写入，详情见组件内的说明 -->
   <!--
-    批量安装依赖。`finished` 携带「是否全部装好」，前置安装流程据此决定
-    是否继续装主包；`cancel` 是用户中途关掉，同样按未装好处理。
+    安装前检查：依赖 / 冲突 / 兼容一次列清并执行。
+    `finished` 携带「是否处理完毕」，前置流程据此决定是否继续装主包。
   -->
-  <DependencyInstallDialog v-model:show="dependencyInstallOpen"
-    :items="dependencyInstallItems"
-    @finished="(ready: boolean) => finishDependencyInstall(ready)" />
+  <InstallPlanDialog v-model:show="installPlanOpen" :plan="installPlan"
+    :target-label="installPlanTarget"
+    @finished="(ready: boolean) => { void finishInstallPlan(ready) }" />
   </n-spin>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->

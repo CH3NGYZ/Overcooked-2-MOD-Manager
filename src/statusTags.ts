@@ -73,13 +73,21 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
   dependency: { text: '依赖', tone: 'muted' },
   /**
-   * 缺依赖：这个 MOD 声明的某个必选依赖没装（或版本不够）。
+   * 缺依赖：这个 MOD 声明的某个必选依赖没装（或版本不在要求区间内）。
    *
    * 等级取 `critical`（与「加载警告」同档）：缺依赖时 MOD 很可能直接不工作，
    * 比「可更新」更该被看见。但也只是提示 —— 能不能一键装由
-   * `modDependencies` 判定，没有可安装来源时只显示标签。
+   * `modRelations` 判定，没有可安装来源时只显示标签。
    */
   missing_dependency: { text: '缺依赖', tone: 'critical' },
+  /**
+   * 关系冲突：装了不该装的（`conflicts` 命中），或对方版本不在兼容区间内
+   * （`compatible` 不满足）。
+   *
+   * 与「缺依赖」同档 critical，但文案区分：缺依赖是「少东西」，
+   * 冲突是「东西不对」，后者通常要卸载而不是安装。
+   */
+  dependency_conflict: { text: '冲突', tone: 'critical' },
   /** 仓库文件（RAW）已安装：与「最新版」同档，都用主题色。 */
   installed: { text: '已安装', tone: 'accent' },
   // MOD 安装页专用：仓库维度而不是已安装 MOD 维度
@@ -194,6 +202,7 @@ const TONE_PRIORITY: Record<string, number> = {
 /** 同档内的稳定排序（越靠前越需要动作）。 */
 const WITHIN_TONE_ORDER: string[] = [
   'load_warning',
+  'dependency_conflict',
   'missing_dependency',
   'bound_repository_missing',
   'repository_unavailable',

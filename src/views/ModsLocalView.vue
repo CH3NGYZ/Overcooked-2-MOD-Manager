@@ -15,7 +15,7 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import { resolveDependencies } from '../modDependencies'
+import { primaryRelation, resolveRelations, type RelationStatus } from '../modRelations'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
   installedModTags, modUpdateVerdict, replaceVersionConclusion,
@@ -31,6 +31,7 @@ import ModInstallDialog from '../components/ModInstallDialog.vue'
 import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
+import { useModRemoval } from '../composables/useModRemoval'
 import type { InstalledMod, Repository } from '../types'
 
 const message = useNotify()
@@ -73,6 +74,22 @@ const deletePackageConfirm = computed(() => recyclesOnDelete.value
       action: t('整包删除'),
       done: '已删除',
     })
+
+/**
+ * 卸载单个 MOD：确认 → 后端 → （可能）整包确认 → 刷新。
+ *
+ * 与 MOD 安装页的「卸载冲突」共用同一份实现 —— 那段流程里
+ * 「后端要求二次确认」的分支很容易漏，漏了就会让包内 DLL 删不掉。
+ */
+const { remove } = useModRemoval({
+  deleteCopy: () => deleteConfirm.value,
+  titleOf: (mod) => modTitle(mod),
+  onBusy: (mod, busyState) => {
+    if (busyState) busy.value[mod.dll_file] = true
+    else delete busy.value[mod.dll_file]
+  },
+  onDone: () => load(),
+})
 /** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
 const { refreshing, refreshingAll, refreshOne, refreshMany } = useRepositoryRefresh()
 
@@ -200,13 +217,17 @@ async function refreshLocal() {
 const effectiveMods = computed<InstalledMod[]>(() =>
   mods.value.map((mod) => {
     /*
-     * 缺依赖判定先算：它和版本结论是两件独立的事（可以同时「有更新」和
-     * 「缺依赖」），所以要各自往 labels 里加，不能互相替换。
+     * 关系判定先算：它和版本结论是两件独立的事（可以同时「有更新」和
+     * 「缺依赖」/「冲突」），所以要各自往 labels 里加，不能互相替换。
      */
-    const dependencyLabel = missingDependencyLabel(mod)
-    const withDependency = (labels: InstalledMod['labels']): InstalledMod['labels'] => {
-      const base = (labels as string[] | undefined)?.filter((key) => key !== 'missing_dependency') ?? []
-      return (dependencyLabel ? ['missing_dependency', ...base] : base) as InstalledMod['labels']
+    const issue = relationIssue(mod)
+    const withRelation = (labels: InstalledMod['labels']): InstalledMod['labels'] => {
+      const base = (labels as string[] | undefined)
+        ?.filter((key) => key !== 'missing_dependency' && key !== 'dependency_conflict') ?? []
+      if (!issue) return base as InstalledMod['labels']
+      // 冲突比缺依赖更该被看见：缺依赖只是不工作，冲突可能已经让游戏崩了
+      const label = issue.state === 'conflict' ? 'dependency_conflict' : 'missing_dependency'
+      return [label, ...base] as InstalledMod['labels']
     }
 
     const verdict = modUpdateVerdict(mod, repositories.value)
@@ -220,7 +241,7 @@ const effectiveMods = computed<InstalledMod[]>(() =>
       return {
         ...mod,
         update_available: verdict.updateAvailable,
-        labels: withDependency(replaceVersionConclusion(
+        labels: withRelation(replaceVersionConclusion(
           mod.labels as string[] | undefined,
           verdict.updateAvailable ? 'update_available' : 'latest',
         ) as InstalledMod['labels']),
@@ -234,29 +255,44 @@ const effectiveMods = computed<InstalledMod[]>(() =>
       return {
         ...mod,
         update_available: false,
-        labels: withDependency(replaceVersionConclusion(mod.labels as string[] | undefined, 'checking') as InstalledMod['labels']),
+        labels: withRelation(replaceVersionConclusion(mod.labels as string[] | undefined, 'checking') as InstalledMod['labels']),
       } as InstalledMod
     }
-    return { ...mod, labels: withDependency(mod.labels) } as InstalledMod
+    return { ...mod, labels: withRelation(mod.labels) } as InstalledMod
   }),
 )
 
 /**
- * 本地 MOD 是否缺依赖（只看它自己绑定的仓库声明）。
+ * 这个本地 MOD 与其它插件的第一个未满足关系（只看它自己绑定的仓库声明）。
  *
- * 只判断「有没有缺」，不给可安装来源 —— 那个由 `unmetDependency` 在
- * 安装页负责。本地卡片只需要一个标签提醒用户去处理。
- *
- * 用**已安装版本**筛 `release_requires`：装的是 1.0 就该按 1.0 的依赖算，
+ * 用**已安装版本**筛 `release_relations`：装的是 1.0 就该按 1.0 的要求算，
  * 而不是最新 Release 的要求。
+ *
+ * 只判断「有没有问题」，不决定「怎么处理」；冲突要卸载哪个 MOD 由
+ * `status.installedMod` 给出。
  */
-function missingDependencyLabel(mod: InstalledMod): boolean {
-  if (mod.is_dependency) return false
+function relationIssue(mod: InstalledMod) {
+  if (mod.is_dependency) return undefined
   const repo = repositoryForMod(repositories.value, mod)
-  if (!repo) return false
-  const statuses = resolveDependencies(repo, mods.value, repositories.value, mod.version)
-  return statuses.some((status) => status.state !== 'satisfied')
+  if (!repo) return undefined
+  const statuses = resolveRelations(repo, mods.value, repositories.value, mod.version)
+  return primaryRelation(statuses)
 }
+
+/**
+ * 每个本地 MOD 的关系问题，按 dll_file 索引。
+ *
+ * 模板与动作处理都要读它（判断标签、决定卸载哪个 MOD、找可安装仓库），
+ * 每次重算一遍全部关系太浪费，派生一次即可。
+ */
+const relationIssueByDll = computed<Record<string, RelationStatus>>(() => {
+  const map: Record<string, RelationStatus> = {}
+  for (const mod of mods.value) {
+    const issue = relationIssue(mod)
+    if (issue) map[mod.dll_file] = issue
+  }
+  return map
+})
 
 /** 某个仓库当前是否正在抓取 Release（单仓刷新或整批刷新都算）。 */
 function isRepositoryRefreshing(repositoryId: string) {
@@ -654,45 +690,18 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }
 
-function remove(mod: InstalledMod) {
-  const confirm = deleteConfirm.value
-  dialog.warning({
-    title: t('删除 MOD'),
-    content: confirm.body(modTitle(mod)),
-    positiveText: confirm.action,
-    negativeText: t('取消'),
-    async onPositiveClick() {
-      busy.value[mod.dll_file] = true
-      try {
-        const result = await api.uninstallLocalMod(mod.dll_file)
-        /*
-         * 后端有两种「需要二次确认」：
-         *   requires_package_confirmation —— 该 DLL 属于多文件 MOD 包，
-         *                                   询问是否整包一起删除（后端此时 ok=false）
-         *   requires_confirmation        —— 共享依赖 / 同 GUID 等风险确认
-         * 两者都要先弹「整包删除」二级确认，只有都不需要才真正删除。
-         * 注意：之前只判断 requires_confirmation，导致包内 DLL 永远删不掉。
-         */
-        if (result.requires_package_confirmation || result.requires_confirmation) {
-          dialog.warning({
-            title: t('该 MOD 属于 MOD 包'),
-            content: t('它与 {count} 个子 MOD 同属一个包，一并删除？', { count: result.package_mod_names?.length ?? 0 }),
-            positiveText: t('整包删除'),
-            negativeText: t('取消'),
-            async onPositiveClick() {
-              const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
-              packageResult.ok
-                ? message.success(packageResult.message || confirm.done)
-                : message.error(packageResult.message)
-              await load()
-            },
-          })
-        } else {
-          result.ok ? message.success(result.message || confirm.done) : message.error(result.message)
-        }
-        await load()
-      } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
-    },
+/**
+ * 冲突的「去卸载」：确认后卸掉关系里指名的那个 MOD。
+ *
+ * 只卸冲突对方，不动声明方 —— 声明方是用户想留下的那个（它是当前看板
+ * 卡片的归属），卸错了就要重新装一遍。多个 MOD 同时冲突时也只处理
+ * 当前这条关系，逐个解决比一次卸一堆更可控。
+ */
+function uninstallConflict(mod: InstalledMod, target: InstalledMod) {
+  remove(target, {
+    title: t('卸载冲突的 MOD'),
+    body: (name) => t('「{name}」与「{owner}」不兼容，需要卸载。继续？',
+      { name, owner: modTitle(mod) }),
   })
 }
 
@@ -784,7 +793,8 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
  * 动作种类由 `statusActionFor` 决定（可更新 → 更新、刷新失败 → 刷新…），
  * 但「能不能做」还要看实际条件，这些条件各状态不同，所以留在视图层：
  *   - update：必须有可安装的仓库，且不是仓库文件模式（无版本可比）；
- *   - refresh：必须有绑定的仓库 id（否则不知道该刷哪一条）。
+ *   - refresh：必须有绑定的仓库 id（否则不知道该刷哪一条）；
+ *   - uninstall-conflict：必须解析出要卸载的那个 MOD。
  *
  * 返回 undefined 表示这个状态不适合给按钮（例如未绑定、依赖 DLL），
  * 卡片就不留按钮位，避免出现点了没反应的死按钮。
@@ -792,6 +802,8 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
 function actionContext(labels: readonly string[] | undefined, mod: InstalledMod): {
   action: StatusActionSpec
   repository?: Repository
+  /** 冲突要卸载的目标：可能是别的 MOD，不一定是当前这张卡片。 */
+  conflictMod?: InstalledMod
 } | undefined {
   const action = statusActionFor(labels)
   if (!action) return undefined
@@ -818,6 +830,16 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
        */
       if (!repository) return undefined
       return { action, repository }
+    case 'uninstall-conflict': {
+      /*
+       * 冲突要卸的是**对方**，不一定是当前卡片这一项：
+       * A 声明「与 B 1.x 冲突」时，用户看的是 A 的卡片，要卸的是 B。
+       * 解析不出具体目标就不给按钮 —— 一个不知道该卸什么的按钮没意义。
+       */
+      const conflictMod = relationIssueByDll.value[mod.dll_file]?.installedMod
+      if (!conflictMod) return undefined
+      return { action, repository, conflictMod }
+    }
   }
 }
 
@@ -849,9 +871,11 @@ function packageAction(pkg: ModPackageNode) {
 /**
  * 执行快捷动作。
  *
- * 两个动作走的是不同链路，这是它们唯一的分歧点：
+ * 三个动作走的是不同链路，这是它们唯一的分歧点：
  *   - update：预下载 → 安装详情弹窗 → 用户确认（与仓库卡片安装同一套）
  *   - refresh：只重拉这一条仓库的 Release，不下载任何文件
+ *   - install-dependency：跳到 MOD 安装页并定位到该仓库卡片
+ *   - uninstall-conflict：确认后卸载关系里指名的那个 MOD
  */
 function runCardAction(mod: InstalledMod) {
   const context = cardAction(mod)
@@ -861,6 +885,8 @@ function runCardAction(mod: InstalledMod) {
   } else if (context.action.kind === 'install-dependency' && context.repository) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
     linkToRepository(context.repository.id)
+  } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
+    uninstallConflict(mod, context.conflictMod)
   } else if (context.repository) {
     void refreshRepository(context.repository)
   }
@@ -868,7 +894,13 @@ function runCardAction(mod: InstalledMod) {
 
 function runPackageAction(pkg: ModPackageNode) {
   const context = packageAction(pkg)
-  if (!context || !context.repository) return
+  if (!context) return
+  const first = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
+  if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
+    if (first) uninstallConflict(first, context.conflictMod)
+    return
+  }
+  if (!context.repository) return
   if (context.action.kind === 'update') void previewRepository(context.repository)
   else if (context.action.kind === 'install-dependency') linkToRepository(context.repository.id)
   else void refreshRepository(context.repository)
@@ -1279,6 +1311,7 @@ function removePackage(node: ModPackageNode) {
                       :disabled="!!game?.kitchen_running" @click.stop="runCardAction(mod)">
                       <ArrowUpCircleOutline v-if="actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
                       <DownloadOutline v-else-if="actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
+                      <TrashOutline v-else-if="actionByDll[mod.dll_file].kind === 'uninstall-conflict'" width="14" height="14" />
                       <RefreshOutline v-else width="14" height="14" />
                       {{ t(actionByDll[mod.dll_file].label) }}
                     </n-button>
@@ -1383,6 +1416,7 @@ function removePackage(node: ModPackageNode) {
                       @click.stop="runPackageAction(pkg)">
                       <ArrowUpCircleOutline v-if="pkg.action.kind === 'update'" width="14" height="14" />
                       <DownloadOutline v-else-if="pkg.action.kind === 'install-dependency'" width="14" height="14" />
+                      <TrashOutline v-else-if="pkg.action.kind === 'uninstall-conflict'" width="14" height="14" />
                       <RefreshOutline v-else width="14" height="14" />
                       {{ t(pkg.action.label) }}
                     </n-button>

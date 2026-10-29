@@ -4333,18 +4333,18 @@ pub fn save_repository(
                 repo.group_i18n.clone(),
             )
         });
-    // 依赖列表单独取：上面的元组只装字符串映射，而 requires 是结构体列表
-    let existing_requires = config
+    // 关系表单独取：上面的元组只装字符串映射，而 relations 是结构体列表
+    let existing_relations = config
         .repositories
         .iter()
         .find(|repo| repo.id == id)
-        .map(|repo| repo.requires.clone())
+        .map(|repo| repo.relations.clone())
         .unwrap_or_default();
-    let existing_release_requires = config
+    let existing_release_relations = config
         .repositories
         .iter()
         .find(|repo| repo.id == id)
-        .map(|repo| repo.release_requires.clone())
+        .map(|repo| repo.release_relations.clone())
         .unwrap_or_default();
     let mut name_i18n = patch.name_i18n.unwrap_or_else(|| {
         existing_translations
@@ -4422,9 +4422,11 @@ pub fn save_repository(
         plugin_guid: patch.plugin_guid,
         local_product_name: patch.local_product_name,
         local_original_filename: patch.local_original_filename,
-        // None = 本次编辑没提交依赖列表，保留原值
-        requires: patch.requires.unwrap_or(existing_requires),
-        release_requires: patch.release_requires.unwrap_or(existing_release_requires),
+        // None = 本次编辑没提交关系表，保留原值
+        relations: patch.relations.unwrap_or(existing_relations),
+        release_relations: patch
+            .release_relations
+            .unwrap_or(existing_release_relations),
         version_regex: patch.version_regex,
         max_release_count: patch.max_release_count.clamp(1, 100),
         download_threads,

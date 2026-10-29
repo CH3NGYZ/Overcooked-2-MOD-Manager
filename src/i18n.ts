@@ -227,6 +227,74 @@ const entries = {
   '安装依赖': ['安裝依賴', 'Install dependency', '의존성 설치', '依存関係をインストール'],
   '缺少依赖': ['缺少依賴', 'Missing dependency', '의존성 누락', '依存関係が不足'],
   '缺依赖': ['缺依賴', 'Missing dep', '의존성 없음', '依存不足'],
+  // 关系冲突：装了不该装的，或对方版本不在兼容区间内。解法是卸载而不是安装。
+  '冲突': ['衝突', 'Conflict', '충돌', '競合'],
+  '去卸载': ['去解除安裝', 'Uninstall', '제거하기', 'アンインストールへ'],
+  '卸载冲突的 MOD': ['解除安裝衝突的 MOD', 'Uninstall conflicting MOD', '충돌 MOD 제거', '競合 MOD をアンインストール'],
+  '「{target}」与「{owner}」不兼容，需要卸载。继续？': [
+    '「{target}」與「{owner}」不相容，需要解除安裝。繼續？',
+    '"{target}" is incompatible with "{owner}" and must be uninstalled. Continue?',
+    '"{target}"은(는) "{owner}"와(과) 호환되지 않아 제거해야 합니다. 계속할까요?',
+    '「{target}」は「{owner}」と互換性がないため、アンインストールが必要です。続行しますか？',
+  ],
+  '「{owner}」与「{target}」不兼容，需要卸载': [
+    '「{owner}」與「{target}」不相容，需要解除安裝',
+    '"{owner}" is incompatible with "{target}" and must be uninstalled',
+    '"{owner}"은(는) "{target}"와(과) 호환되지 않아 제거가 필요합니다',
+    '「{owner}」は「{target}」と互換性がないため、アンインストールが必要です',
+  ],
+  // 兼容列表：MOD 只和这些指定 MOD 的指定版本兼容（compatible 关系不满足）
+  '不兼容': ['不相容', 'Incompatible', '비호환', '非互換'],
+
+  // 安装前检查：依赖 / 冲突 / 兼容一次处理完
+  '安装前检查': ['安裝前檢查', 'Pre-install check', '설치 전 검사', 'インストール前の確認'],
+  '安装「{name}」前，需要先处理以下关系：': [
+    '安裝「{name}」前，需要先處理以下關係：',
+    'Before installing "{name}", these relations must be handled first:',
+    '"{name}" 설치 전에 다음 관계를 먼저 처리해야 합니다:',
+    '「{name}」をインストールする前に、以下の関係を処理する必要があります：',
+  ],
+  '全部处理': ['全部處理', 'Handle all', '모두 처리', 'すべて処理'],
+  '仍然安装': ['仍然安裝', 'Install anyway', '그래도 설치', 'それでもインストール'],
+  '已完成 {count} 项处理': [
+    '已完成 {count} 項處理',
+    'Handled {count} item(s)',
+    '{count}개 항목을 처리했습니다',
+    '{count} 件を処理しました',
+  ],
+  '找不到要卸载的 MOD': ['找不到要解除安裝的 MOD', 'The MOD to uninstall was not found', '제거할 MOD를 찾을 수 없습니다', 'アンインストール対象の MOD が見つかりません'],
+  '找不到可安装的来源': ['找不到可安裝的來源', 'No installable source found', '설치 가능한 소스를 찾을 수 없습니다', 'インストール可能なソースが見つかりません'],
+  // 关系提醒：无法自动处理时的说明
+  '「{name}」{version} 不兼容，需要 {range} 之间的版本': [
+    '「{name}」{version} 不相容，需要 {range} 之間的版本',
+    '"{name}" {version} is incompatible; a version in {range} is required',
+    '"{name}" {version}은(는) 호환되지 않습니다. {range} 버전이 필요합니다',
+    '「{name}」{version} は非互換です。{range} のバージョンが必要です',
+  ],
+  '「{name}」{version} 不兼容，请注意': [
+    '「{name}」{version} 不相容，請注意',
+    '"{name}" {version} is incompatible; please check',
+    '"{name}" {version}은(는) 호환되지 않습니다. 확인해 주세요',
+    '「{name}」{version} は非互換です。ご確認ください',
+  ],
+  '「{name}」{version} 冲突，请卸载': [
+    '「{name}」{version} 衝突，請解除安裝',
+    '"{name}" {version} conflicts; please uninstall it',
+    '"{name}" {version}이(가) 충돌합니다. 제거해 주세요',
+    '「{name}」{version} が競合しています。アンインストールしてください',
+  ],
+  '缺少依赖「{name}」，需要 {range} 之间的版本': [
+    '缺少依賴「{name}」，需要 {range} 之間的版本',
+    'Missing dependency "{name}"; a version in {range} is required',
+    '의존성 "{name}"이(가) 없습니다. {range} 버전이 필요합니다',
+    '依存関係「{name}」がありません。{range} のバージョンが必要です',
+  ],
+  '缺少依赖「{name}」': [
+    '缺少依賴「{name}」',
+    'Missing dependency "{name}"',
+    '의존성 "{name}"이(가) 없습니다',
+    '依存関係「{name}」がありません',
+  ],
   // 版本号后的测试标记：解析不出数字序号时用这个字提示
   '测': ['測', 'T', '테', '試'],
   '安装此版本': ['安裝此版本', 'Install this version', '이 버전 설치', 'このバージョンをインストール'],

@@ -22,25 +22,18 @@ export interface RepositoryPreviewOptions {
   /** 下载开始/结束的忙碌回调，用于驱动各自卡片的 loading。 */
   onBusyChange?: (repositoryId: string, busy: boolean) => void
   /**
-   * 安装前检查依赖：返回需要同时安装的依赖仓库（按安装顺序）。
+   * 安装前的**关系检查并处理**：依赖、冲突、兼容一次跑完。
    *
-   * 返回空数组表示没有缺失或没有可安装来源，直接走正常安装。
-   * 为什么放在「安装前」而不是「装完再提示」：用户点安装的意图是
-   * 「让它能用」，缺依赖时它装上也跑不起来；等装完再弹一个窗，
-   * 用户已经离开这个页面了。
+   * 返回 `true` 表示都处理好了、可以继续安装主包；`false` 表示用户取消、
+   * 有关系处理失败、或存在无法自动处理的问题，此时**不应**继续装主包 ——
+   * 装一个跑不起来、或会和已装内容冲突的 MOD，比不装更糟。
+   *
+   * 为什么是三合一而不是三个回调：这些关系的解法互相影响
+   * （冲突要先卸、版本要先换、依赖最后补），拆开就变成了三段互不知情的
+   * 流程，宿主还得自己排顺序。宿主只实现「弹出计划、执行、告诉我结果」，
+   * 顺序与判定都留在 `modRelations.buildInstallPlan`。
    */
-  dependenciesForInstall?: (repo: Repository) => Repository[]
-  /**
-   * 批量安装依赖。宿主提供实现（它知道怎么下载预览和弹确认窗）。
-   *
-   * 返回 `true` 表示依赖已装好、可以继续安装主包；`false` 表示用户取消
-   * 或有依赖失败，此时**不应**继续装主包 —— 装一个跑不起来的 MOD
-   * 比不装更糟。
-   *
-   * 与 `dependenciesForInstall` 成对出现：前者决定「要装哪些」，
-   * 后者负责「怎么装」。两个都提供时才启用前置依赖安装。
-   */
-  installDependencies?: (repo: Repository, dependencies: Repository[]) => Promise<boolean>
+  prepareInstall?: (repo: Repository, tag?: string) => Promise<boolean>
 }
 
 /**
@@ -60,22 +53,20 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
     if (options.gameBlocked?.()) return
 
     /*
-     * 安装前先补齐依赖。
+     * 安装前先处理依赖 / 冲突 / 兼容。
      *
-     * 顺序很重要：依赖必须先装好，主包才有意义 —— 先把主包装上、再提示
-     * 缺依赖，用户已经离开这个页面，而且中间那段时间主包是「装了但不工作」
-     * 的误导状态。
+     * 顺序很重要：这些关系不先理顺，主包装上也不可用 ——
+     * 缺依赖跑不起来、冲突可能直接崩游戏、版本不兼容同样白装。
+     * 等装完再提示，用户已经离开这个页面，中间那段时间还是个
+     * 「装了但不工作」的误导状态。
      *
-     * 只有两个回调都提供时才启用（MOD 安装页会提供；MOD 管理页的「更新」
-     * 不提供 —— 那里更新的是已装 MOD，依赖在它首次安装时就该齐了）。
+     * 检查要针对**这次要装的版本**：不同大版本可以声明不同关系
+     * （1.0 依赖 B≥2，1.1 依赖 B≥3），所以把 tag 一起传下去。
      */
-    if (options.dependenciesForInstall && options.installDependencies) {
-      const dependencies = options.dependenciesForInstall(repo)
-      if (dependencies.length) {
-        const ready = await options.installDependencies(repo, dependencies)
-        // 依赖没装好就不继续：装一个跑不起来的 MOD 比不装更糟
-        if (!ready) return
-      }
+    if (options.prepareInstall) {
+      const ready = await options.prepareInstall(repo, tag)
+      // 没处理好就不继续：装一个跑不起来或冲突的 MOD 比不装更糟
+      if (!ready) return
     }
 
     const target = tag ?? repo.cached_releases[0]?.tag_name

@@ -578,8 +578,8 @@ impl ConfigService {
                 plugin_guid: repo.plugin_guid.clone(),
                 local_product_name: repo.local_product_name.clone(),
                 local_original_filename: repo.local_original_filename.clone(),
-                requires: repo.requires.clone(),
-                release_requires: repo.release_requires.clone(),
+                relations: repo.relations.clone(),
+                release_relations: repo.release_relations.clone(),
                 version_regex: repo.version_regex.clone(),
                 max_release_count: repo.max_release_count,
                 download_threads: repo.download_threads,
@@ -1289,29 +1289,100 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
         )));
     }
     /*
-     * 依赖声明校验。
+     * 关系声明校验。
      *
-     * GUID 是依赖的唯一标识，空值或纯空白的依赖永远匹配不上任何插件，
-     * 等于一条静默失效的声明 —— 在导入时就拒绝，比等到界面上不提示更容易发现。
-     * `min_version` 若填写，必须是能解析的版本号；否则「是否满足」永远判不出来。
+     * GUID 是关系的唯一标识，空值或纯空白的声明永远匹配不上任何插件，
+     * 等于一条静默失效的配置 —— 在导入时就拒绝，比等到界面上不提示更容易发现。
+     * `min_version`/`max_version` 若填写，必须是能解析的版本号；
+     * 否则「是否满足」永远判不出来。
      */
-    for dependency in &repo.requires {
-        if dependency.guid.trim().is_empty() {
+    for relation in &repo.relations {
+        validate_relation(relation, &repo.name)?;
+    }
+    /*
+     * 按 Release 覆盖的关系表也要校验，且区间不能两端全空。
+     *
+     * 两端全空意味着「匹配任何版本」，那和在 `relations` 里直接写没有区别，
+     * 但作者会以为自己限定了范围。在导入阶段拒绝，比等它悄悄生效好。
+     */
+    for override_entry in &repo.release_relations {
+        let min = override_entry.min_version.trim();
+        let max = override_entry.max_version.trim();
+        if min.is_empty() && max.is_empty() {
             return Err(ConfigError::Invalid(format!(
-                "{} 的依赖声明缺少 GUID",
+                "{} 的 release_relations 必须至少指定 min_version 或 max_version",
                 repo.name
             )));
         }
-        let min_version = dependency.min_version.trim();
-        if !min_version.is_empty()
-            && crate::releases::compare_release_versions(min_version, min_version).is_none()
-        {
+        for (label, value) in [("min_version", min), ("max_version", max)] {
+            if !value.is_empty()
+                && crate::releases::compare_release_versions(value, value).is_none()
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "{} 的 release_relations {label} 无法解析：{value}",
+                    repo.name
+                )));
+            }
+        }
+        if !min.is_empty() && !max.is_empty() {
+            // 区间反了（min > max）永远匹配不到任何版本，属于配置错误
+            if crate::releases::compare_release_versions(min, max)
+                == Some(std::cmp::Ordering::Greater)
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "{} 的 release_relations 区间无效：min_version {min} 大于 max_version {max}",
+                    repo.name
+                )));
+            }
+        }
+        for relation in &override_entry.relations {
+            validate_relation(relation, &repo.name)?;
+        }
+    }
+    Ok(())
+}
+
+/// 单条关系声明的校验：GUID 必填，版本边界若填写必须可解析。
+///
+/// `optional` 只对 `requires` 有意义 —— 「可选的冲突」自相矛盾，
+/// 写出来只会让前端不知道该怎么提示，所以在导入阶段就拒绝。
+fn validate_relation(
+    relation: &RepositoryRelation,
+    repository_name: &str,
+) -> Result<(), ConfigError> {
+    let kind = relation.kind.as_str();
+    if relation.guid.trim().is_empty() {
+        return Err(ConfigError::Invalid(format!(
+            "{repository_name} 的 {kind} 关系缺少 GUID"
+        )));
+    }
+    if relation.optional && relation.kind != RelationKind::Requires {
+        return Err(ConfigError::Invalid(format!(
+            "{repository_name} 的 {kind} 关系 {} 不能标记 optional：只有 requires 支持可选",
+            relation.guid.trim()
+        )));
+    }
+    for (label, value) in [
+        ("min_version", relation.min_version.trim()),
+        ("max_version", relation.max_version.trim()),
+    ] {
+        if !value.is_empty() && crate::releases::compare_release_versions(value, value).is_none() {
             return Err(ConfigError::Invalid(format!(
-                "{} 的依赖 {} 版本要求无法解析：{min_version}",
-                repo.name,
-                dependency.guid.trim()
+                "{repository_name} 的 {kind} 关系 {} {label} 无法解析：{value}",
+                relation.guid.trim()
             )));
         }
+    }
+    let min = relation.min_version.trim();
+    let max = relation.max_version.trim();
+    if !min.is_empty()
+        && !max.is_empty()
+        && crate::releases::compare_release_versions(min, max) == Some(std::cmp::Ordering::Greater)
+    {
+        return Err(ConfigError::Invalid(format!(
+            "{repository_name} 的 {kind} 关系 {} 版本区间无效：min_version {min} 大于 max_version {max}",
+            relation.guid.trim()
+        )));
     }
     Ok(())
 }
@@ -1337,8 +1408,8 @@ pub(crate) fn repo_key(repo: &RepositoryConfig) -> String {
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
-        requires: repo.requires.clone(),
-        release_requires: repo.release_requires.clone(),
+        relations: repo.relations.clone(),
+        release_relations: repo.release_relations.clone(),
         version_regex: repo.version_regex.clone(),
         max_release_count: repo.max_release_count,
         download_threads: repo.download_threads,
@@ -1420,8 +1491,8 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         plugin_guid: repo.plugin_guid.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
-        requires: repo.requires.clone(),
-        release_requires: repo.release_requires.clone(),
+        relations: repo.relations.clone(),
+        release_relations: repo.release_relations.clone(),
         version_regex: repo.version_regex.clone(),
         max_release_count: repo.max_release_count.clamp(1, 100),
         download_threads,
@@ -2733,9 +2804,8 @@ builtin = true
             plugin_guid: String::new(),
             local_product_name: String::new(),
             local_original_filename: String::new(),
-            requires: Vec::new(),
-
-            release_requires: Vec::new(),
+            relations: Vec::new(),
+            release_relations: Vec::new(),
             version_regex: String::new(),
             max_release_count: 10,
             download_threads: 1,
@@ -3145,7 +3215,7 @@ mod localized_name_tests {
 mod dependency_validation_tests {
     use super::*;
 
-    fn base_export(requires: Vec<RepositoryDependency>) -> RepositoryExport {
+    fn base_export(relations: Vec<RepositoryRelation>) -> RepositoryExport {
         RepositoryExport {
             name: "dep-owner".into(),
             name_i18n: std::collections::BTreeMap::new(),
@@ -3169,8 +3239,8 @@ mod dependency_validation_tests {
             plugin_guid: String::new(),
             local_product_name: String::new(),
             local_original_filename: String::new(),
-            requires,
-            release_requires: Vec::new(),
+            relations,
+            release_relations: Vec::new(),
             version_regex: String::new(),
             max_release_count: 10,
             download_threads: 1,
@@ -3179,57 +3249,101 @@ mod dependency_validation_tests {
         }
     }
 
+    fn relation(kind: RelationKind, min: &str, max: &str, optional: bool) -> RepositoryRelation {
+        RepositoryRelation {
+            kind,
+            guid: "com.example.dep".into(),
+            min_version: min.into(),
+            max_version: max.into(),
+            optional,
+        }
+    }
+
     /*
-     * 依赖声明的校验。
+     * 关系声明的校验。
      *
-     * 空 GUID 的依赖永远匹配不上任何插件，等于一条静默失效的声明；
+     * 空 GUID 的关系永远匹配不上任何插件，等于一条静默失效的声明；
      * `min_version` 无法解析时「是否满足」永远判不出来。
      * 两者都在导入阶段拒绝，比等到界面上不提示更容易发现。
      */
     #[test]
-    fn dependency_without_guid_is_rejected() {
-        let export = base_export(vec![RepositoryDependency {
-            guid: "   ".into(),
-            min_version: String::new(),
-            optional: false,
-        }]);
-        assert!(validate_repository(&export).is_err());
+    fn relation_without_guid_is_rejected() {
+        let mut entry = relation(RelationKind::Requires, "", "", false);
+        entry.guid = "   ".into();
+        assert!(validate_repository(&base_export(vec![entry])).is_err());
     }
 
     #[test]
-    fn dependency_with_unparsable_min_version_is_rejected() {
-        let export = base_export(vec![RepositoryDependency {
-            guid: "com.example.dep".into(),
-            min_version: "not-a-version".into(),
-            optional: false,
-        }]);
-        assert!(validate_repository(&export).is_err());
+    fn relation_with_unparsable_min_version_is_rejected() {
+        let entry = relation(RelationKind::Requires, "not-a-version", "", false);
+        assert!(validate_repository(&base_export(vec![entry])).is_err());
     }
 
-    /// 合法依赖（含四段 beta 序号写法）应当通过。
     #[test]
-    fn valid_dependencies_pass() {
+    fn relation_with_unparsable_max_version_is_rejected() {
+        let entry = relation(RelationKind::Compatible, "", "not-a-version", false);
+        assert!(validate_repository(&base_export(vec![entry])).is_err());
+    }
+
+    /// 区间反了（min > max）永远匹配不到任何插件，属于配置错误。
+    #[test]
+    fn inverted_relation_range_is_rejected() {
+        let entry = relation(RelationKind::Conflicts, "2.0", "1.0", false);
+        assert!(validate_repository(&base_export(vec![entry])).is_err());
+    }
+
+    /// 合法关系（含四段 beta 序号写法）应当通过。
+    #[test]
+    fn valid_relations_pass() {
         for min_version in ["", "1.8.7", "1.8.7.2", "1.8.7-beta.2"] {
-            let export = base_export(vec![RepositoryDependency {
-                guid: "com.example.dep".into(),
-                min_version: min_version.into(),
-                optional: false,
-            }]);
+            let entry = relation(RelationKind::Requires, min_version, "", false);
             assert!(
-                validate_repository(&export).is_ok(),
+                validate_repository(&base_export(vec![entry])).is_ok(),
                 "min_version={min_version}"
             );
         }
+        // conflicts / compatible 同样接受双端区间
+        for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
+            let entry = relation(kind, "1.0", "2.0", false);
+            assert!(
+                validate_repository(&base_export(vec![entry])).is_ok(),
+                "kind={}",
+                kind.as_str()
+            );
+        }
+    }
+
+    /// `optional` 只属于依赖：冲突与兼容关系标记可选是自相矛盾的。
+    #[test]
+    fn optional_is_rejected_for_non_requirement_relations() {
+        for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
+            let entry = relation(kind, "", "", true);
+            let error = validate_repository(&base_export(vec![entry])).unwrap_err();
+            assert!(error.to_string().contains("不能标记 optional"), "{error}");
+        }
+    }
+
+    /// Release 覆盖表的区间两端全空等同于不限版本，应当拒绝。
+    #[test]
+    fn release_relations_without_any_bound_is_rejected() {
+        let mut export = base_export(Vec::new());
+        export.release_relations.push(ReleaseRelationOverride {
+            min_version: String::new(),
+            max_version: String::new(),
+            relations: Vec::new(),
+        });
+        let error = validate_repository(&export).unwrap_err();
+        assert!(error.to_string().contains("至少指定"), "{error}");
     }
 }
 
 #[cfg(test)]
-mod requires_syntax {
+mod relations_syntax {
     use super::*;
 
     /*
-     * `requires` 是**表数组**（`Vec<RepositoryDependency>`），必须用
-     * `[[requires]]` 逐个声明。点号赋值写法（`requires.guid = "..."`）
+     * `relations` 是**表数组**（`Vec<RepositoryRelation>`），必须用
+     * `[[relations]]` 逐个声明。点号赋值写法（`relations.guid = "..."`）
      * 在 TOML 里创建的是**单个表**，反序列化到 Vec 会失败：
      *
      *     invalid type: map, expected a sequence
@@ -3238,7 +3352,7 @@ mod requires_syntax {
      * 的直觉写成点号形式，那样整个仓库源文档会解析失败。
      */
     #[test]
-    fn dotted_assignment_is_rejected_because_requires_is_a_table_array() {
+    fn dotted_assignment_is_rejected_because_relations_is_a_table_array() {
         let dotted = r#"
 name = "x"
 name_i18n.zh-CN = "x"
@@ -3249,9 +3363,9 @@ username = "a"
 repository = "b"
 install_target = "BepInEx/plugins"
 enabled = true
-requires.guid = "com.bepis.bepinex.configurationmanager"
-requires.min_version = ""
-requires.optional = false
+relations.guid = "com.bepis.bepinex.configurationmanager"
+relations.min_version = ""
+relations.optional = false
 [[asset_rules]]
 type = "exact"
 value = "a.zip"
@@ -3260,9 +3374,9 @@ value = "a.zip"
         assert!(error.to_string().contains("expected a sequence"), "{error}");
     }
 
-    /// 正确写法：`[[requires]]` 表数组，可重复声明多条依赖。
+    /// 正确写法：`[[relations]]` 表数组，可重复声明多条关系。
     #[test]
-    fn array_of_tables_accepts_multiple_dependencies() {
+    fn array_of_tables_accepts_multiple_relations() {
         let explicit = r#"
 name = "x"
 name_i18n.zh-CN = "x"
@@ -3277,20 +3391,112 @@ enabled = true
 type = "exact"
 value = "a.zip"
 
-[[requires]]
+[[relations]]
 guid = "com.bepis.bepinex.configurationmanager"
 
-[[requires]]
+[[relations]]
+kind = "conflicts"
 guid = "com.example.other"
+min_version = "1.8.7"
+max_version = "2.0"
+"#;
+        let v = toml::from_str::<RepositoryExport>(explicit).expect("表数组写法应当成功");
+        assert_eq!(v.relations.len(), 2);
+        // 省略 kind 时按依赖处理：历史写法（[[requires]] 只写 guid）继续可读
+        assert_eq!(v.relations[0].kind, RelationKind::Requires);
+        assert_eq!(
+            v.relations[0].guid,
+            "com.bepis.bepinex.configurationmanager"
+        );
+        assert_eq!(v.relations[1].kind, RelationKind::Conflicts);
+        assert_eq!(v.relations[1].min_version, "1.8.7");
+        assert_eq!(v.relations[1].max_version, "2.0");
+        assert!(!v.relations[1].optional);
+    }
+
+    /// `[[requires]]` 作为历史字段名继续可读（alias，不需要作者改文档）。
+    #[test]
+    fn legacy_requires_field_still_parses() {
+        let legacy = r#"
+name = "x"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+install_target = "BepInEx/plugins"
+enabled = true
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+
+[[requires]]
+guid = "com.example.dep"
 min_version = "1.8.7"
 optional = true
 "#;
-        let v = toml::from_str::<RepositoryExport>(explicit).expect("表数组写法应当成功");
-        assert_eq!(v.requires.len(), 2);
-        assert_eq!(v.requires[0].guid, "com.bepis.bepinex.configurationmanager");
-        assert_eq!(v.requires[0].min_version, "");
-        assert!(!v.requires[0].optional);
-        assert_eq!(v.requires[1].min_version, "1.8.7");
-        assert!(v.requires[1].optional);
+        let v = toml::from_str::<RepositoryExport>(legacy).expect("旧字段名应当继续可读");
+        assert_eq!(v.relations.len(), 1);
+        assert_eq!(v.relations[0].kind, RelationKind::Requires);
+        assert_eq!(v.relations[0].min_version, "1.8.7");
+        assert!(v.relations[0].optional);
+    }
+
+    /*
+     * 未知的 `kind` 跳过而不是让整份文档解析失败。
+     *
+     * 前向兼容边界：新版本客户端写入的关系种类（例如以后的 `loads_after`）
+     * 不能被旧客户端变成「整个仓库源读取失败」。
+     */
+    #[test]
+    fn unknown_relation_kind_is_skipped_instead_of_failing_the_document() {
+        let document = r#"
+name = "x"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+install_target = "BepInEx/plugins"
+enabled = true
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+
+[[relations]]
+kind = "loads_after"
+guid = "com.example.future"
+
+[[relations]]
+kind = "requires"
+guid = "com.example.dep"
+"#;
+        let v = toml::from_str::<RepositoryExport>(document).expect("未知 kind 不应让文档失败");
+        assert_eq!(v.relations.len(), 1);
+        assert_eq!(v.relations[0].guid, "com.example.dep");
+    }
+
+    /// 未知的**顶层**字段也不该让源文档失败（旧客户端读新文档）。
+    #[test]
+    fn unknown_top_level_field_is_ignored() {
+        let document = r#"
+name = "x"
+name_i18n.zh-CN = "x"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "a"
+repository = "b"
+install_target = "BepInEx/plugins"
+enabled = true
+some_future_field = "whatever"
+[[asset_rules]]
+type = "exact"
+value = "a.zip"
+"#;
+        let v = toml::from_str::<RepositoryExport>(document).expect("未知字段不应让文档失败");
+        assert_eq!(v.name, "x");
     }
 }

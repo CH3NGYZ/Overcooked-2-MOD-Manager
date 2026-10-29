@@ -14,7 +14,11 @@ import type { TagTone } from './theme'
  */
 
 /** 动作种类：决定调用哪个 handler。 */
-export type StatusActionKind = 'update' | 'refresh' | 'install-dependency'
+export type StatusActionKind =
+  | 'update'
+  | 'refresh'
+  | 'install-dependency'
+  | 'uninstall-conflict'
 
 export interface StatusActionSpec {
   kind: StatusActionKind
@@ -52,6 +56,13 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
    * 用户看到的标签与按钮是同一种颜色，不需要额外解释它们是一回事。
    */
   missing_dependency: { kind: 'install-dependency', label: '去安装', tone: 'critical' },
+  /*
+   * 冲突 → 「去卸载」。与「冲突」标签同档同色。
+   *
+   * 冲突不能靠安装解决 —— 装什么都不会让「你不该装它」变成「该装」，
+   * 唯一出路是卸掉。所以这里指向卸载确认，而不是仓库跳转。
+   */
+  dependency_conflict: { kind: 'uninstall-conflict', label: '去卸载', tone: 'critical' },
 }
 
 /**
@@ -61,11 +72,17 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
  * 会排在可更新（moderate）前面，于是用户看到「去安装」而真正该先做的
  * 是更新。这里的优先级独立表达「先给哪个动作」：
  *
+ *   uninstall-conflict 冲突可能已经让游戏崩溃，先解决它
  *   update            用户本来就想做的事，做完可能连依赖也一起换了
  *   install-dependency 让 MOD 能跑起来，比刷新更接近「解决问题」
  *   refresh           只是重新取数据，不直接改变可用性
  */
-const ACTION_PRIORITY: StatusActionKind[] = ['update', 'install-dependency', 'refresh']
+const ACTION_PRIORITY: StatusActionKind[] = [
+  'uninstall-conflict',
+  'update',
+  'install-dependency',
+  'refresh',
+]
 
 /**
  * 按状态标签列表解析出唯一的快捷动作。

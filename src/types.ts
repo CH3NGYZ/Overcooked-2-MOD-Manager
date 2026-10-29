@@ -33,30 +33,45 @@ export interface ReleaseInfo {
   assets: ReleaseAsset[]
 }
 /**
- * 仓库（MOD）对另一个插件的依赖声明。
+ * MOD 与另一个插件之间的关系种类。
  *
- * 用 GUID 表达 —— 与本地绑定用的 `plugin_guid` 是同一套标识，
- * 插件名和文件名都会随作者改写，只有 GUID 可靠。
+ * 依赖、排斥、兼容三件事本质上是同一个问题 ——「对某个 GUID 的版本区间
+ * 有什么要求」，只是满足与违反时的含义不同：
+ *
+ * - `requires`   目标必须存在且版本落在区间内；否则是「缺依赖」
+ * - `conflicts`  目标存在且版本落在区间内 → 冲突，需要卸载
+ * - `compatible` 目标存在时版本必须落在区间内；否则不兼容，需要卸载
+ *
+ * 三者共用 `min_version`/`max_version`：不写就是该端不设限制。
  */
-export interface RepositoryDependency {
+export type RelationKind = 'requires' | 'conflicts' | 'compatible'
+
+/** 一条关系声明：对某个 GUID 的版本区间要求。 */
+export interface RepositoryRelation {
+  /** 省略时按 `requires` 处理（历史写法只写 guid）。 */
+  kind?: RelationKind
   guid: string
-  /** 最低版本要求；空字符串表示不限。 */
+  /** 版本区间下限（含）；空字符串表示不限。 */
   min_version?: string
-  /** 可选依赖：缺失时不提示、不显示按钮。 */
+  /** 版本区间上限（含）；空字符串表示不限。 */
+  max_version?: string
+  /** 仅对 `requires` 有意义：缺失时不提示、不显示按钮。 */
   optional?: boolean
 }
 
 /**
- * 按 Release 版本覆盖依赖。
+ * 按 Release 版本覆盖关系表。
  *
  * 同一 MOD 的不同大版本可以依赖不同版本的基础库。匹配规则：
- * 取「`version` ≤ 当前 Release 版本」的最高那条，其 `requires`
- * 整体替换仓库级 `requires`（不合并）。
+ * 所有区间命中的条目里取 `min_version` 最高的那条，其 `relations`
+ * 整体替换仓库级 `relations`（不合并）。
  */
-export interface ReleaseDependencyOverride {
-  /** 生效的最低 Release 版本（含）。 */
-  version: string
-  requires: RepositoryDependency[]
+export interface ReleaseRelationOverride {
+  /** 生效的最低 Release 版本（含）；空表示不限。 */
+  min_version?: string
+  /** 生效的最高 Release 版本（含）；空表示不限。 */
+  max_version?: string
+  relations: RepositoryRelation[]
 }
 
 export interface Repository {
@@ -81,10 +96,10 @@ export interface Repository {
   plugin_guid: string
   local_product_name: string
   local_original_filename: string
-  /** 这个 MOD 依赖的其他插件（按 GUID 声明）。 */
-  requires?: RepositoryDependency[]
-  /** 按 Release 版本覆盖依赖（见 ReleaseDependencyOverride）。 */
-  release_requires?: ReleaseDependencyOverride[]
+  /** 这个 MOD 与其它插件的关系（依赖 / 排斥 / 兼容，按 GUID 声明）。 */
+  relations?: RepositoryRelation[]
+  /** 按 Release 版本覆盖关系表（见 ReleaseRelationOverride）。 */
+  release_relations?: ReleaseRelationOverride[]
   version_regex: string
   max_release_count: number
   download_threads: number
@@ -125,7 +140,7 @@ export interface RepositorySource { id: string; nickname: string; nickname_i18n?
 export interface BepInExInfo { installed: boolean; has_residue: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'checking' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency'
+export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'checking' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency' | 'missing_dependency' | 'dependency_conflict'
 export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_name_i18n?: Record<string, string>; package_mod_count?: number; group_i18n?: Record<string, string>; group?: string; prerelease?: boolean; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; has_logs?: boolean; plugin_name?: string; manual_install?: boolean; is_dependency?: boolean; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; labels?: InstalledModStatusLabel[]; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
 export interface ModConfigDocument { guid: string; file_name: string; content: string; revision: string }
 /** MOD 安装预览：本地文件 / 在线直链在安装前的解析结果。 */
@@ -246,10 +261,10 @@ export interface RepositoryPatch {
   plugin_guid: string
   local_product_name: string
   local_original_filename: string
-  /** 这个 MOD 依赖的其他插件（按 GUID 声明）。 */
-  requires?: RepositoryDependency[]
-  /** 按 Release 版本覆盖依赖（见 ReleaseDependencyOverride）。 */
-  release_requires?: ReleaseDependencyOverride[]
+  /** 这个 MOD 与其它插件的关系（依赖 / 排斥 / 兼容，按 GUID 声明）。 */
+  relations?: RepositoryRelation[]
+  /** 按 Release 版本覆盖关系表（见 ReleaseRelationOverride）。 */
+  release_relations?: ReleaseRelationOverride[]
   version_regex: string
   max_release_count: number
   download_threads: number

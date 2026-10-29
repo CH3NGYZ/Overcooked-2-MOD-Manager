@@ -497,3 +497,105 @@ test('安装前计划按目标 Release 版本选关系表', () => {
   const older = buildInstallPlan(owner, [], [repo()], '1.0')
   assert.equal(older.install.length, 1)
 })
+
+/* ===== 发布线（prerelease）===== */
+
+/*
+ * 正式版与测试版常是同一 GUID 的两条发布线（stable / beta 两个仓库条目）。
+ * 版本区间无法把它们分干净：`1.9.8.1`（= 1.9.8-beta.1）排在 `1.9.8` 之下，
+ * 所以 `[1.9.8, 1.9.9)` 命中正式版却漏掉测试版。`prerelease` 直接按发布线筛。
+ */
+const SAME_GUID = 'com.example.self'
+
+test('prerelease=true 只匹配测试版', () => {
+  const rel = { kind: 'conflicts', guid: SAME_GUID, prerelease: true }
+  const stableCopy = [mod({ guid: SAME_GUID, version: '1.9.8' })]
+  const betaCopy = [mod({ guid: SAME_GUID, version: '1.9.8.1', prerelease: true })]
+  assert.equal(resolveRelation(rel, stableCopy, []).state, 'ok', '正式版不该命中')
+  assert.equal(resolveRelation(rel, betaCopy, []).state, 'conflict', '测试版应命中')
+})
+
+test('prerelease=false 只匹配正式版', () => {
+  const rel = { kind: 'conflicts', guid: SAME_GUID, prerelease: false }
+  const stableCopy = [mod({ guid: SAME_GUID, version: '1.9.8' })]
+  const betaCopy = [mod({ guid: SAME_GUID, version: '1.9.9.3', prerelease: true })]
+  assert.equal(resolveRelation(rel, stableCopy, []).state, 'conflict')
+  assert.equal(resolveRelation(rel, betaCopy, []).state, 'ok')
+})
+
+test('不写 prerelease 时两条发布线都算', () => {
+  const rel = { kind: 'conflicts', guid: SAME_GUID }
+  assert.equal(resolveRelation(rel, [mod({ guid: SAME_GUID, version: '1.9.8' })], []).state, 'conflict')
+  assert.equal(
+    resolveRelation(rel, [mod({ guid: SAME_GUID, version: '1.9.8.1', prerelease: true })], []).state,
+    'conflict')
+})
+
+/* 四段写法本身就是预发布，不依赖清单标记也能判出来。 */
+test('四段版本号按预发布处理（即使清单没标记）', () => {
+  const rel = { kind: 'conflicts', guid: SAME_GUID, prerelease: true }
+  assert.equal(resolveRelation(rel, [mod({ guid: SAME_GUID, version: '1.9.8.7' })], []).state, 'conflict')
+  const stableOnly = { kind: 'conflicts', guid: SAME_GUID, prerelease: false }
+  assert.equal(resolveRelation(stableOnly, [mod({ guid: SAME_GUID, version: '1.9.8.7' })], []).state, 'ok')
+})
+
+/* 正式版与测试版互斥：两边都装时各自都报冲突，且指向的是对方。 */
+test('同 GUID 两条发布线互斥：两边都装时互相报冲突', () => {
+  const stable = repo({
+    id: 'hu-stable', plugin_guid: SAME_GUID,
+    relations: [{ kind: 'conflicts', guid: SAME_GUID, prerelease: true }],
+  })
+  const beta = repo({
+    id: 'hu-beta', plugin_guid: SAME_GUID,
+    relations: [{ kind: 'conflicts', guid: SAME_GUID, prerelease: false }],
+  })
+  const installed = [
+    mod({ name: 'Stable', guid: SAME_GUID, version: '1.9.8' }),
+    mod({ name: 'Beta', guid: SAME_GUID, version: '1.9.9.1', prerelease: true }),
+  ]
+  const fromStable = resolveRelations(stable, installed, [stable, beta])
+  const fromBeta = resolveRelations(beta, installed, [stable, beta])
+  assert.equal(fromStable[0].state, 'conflict')
+  assert.equal(fromStable[0].installedMod?.name, 'Beta', '正式版应指向测试版')
+  assert.equal(fromBeta[0].state, 'conflict')
+  assert.equal(fromBeta[0].installedMod?.name, 'Stable', '测试版应指向正式版')
+})
+
+/* 只装一边时谁也不冲突 —— 否则装完自己的正式版就会立刻提示冲突。 */
+test('同 GUID 发布线互斥：只装一边不报冲突', () => {
+  const stable = repo({
+    id: 'hu-stable', plugin_guid: SAME_GUID,
+    relations: [{ kind: 'conflicts', guid: SAME_GUID, prerelease: true }],
+  })
+  const installed = [mod({ name: 'Stable', guid: SAME_GUID, version: '1.9.8' })]
+  // 关系仍然返回一条（state=ok），但没有未满足项
+  assert.deepEqual(unmetRelations(resolveRelations(stable, installed, [stable])), [])
+})
+
+/* 发布线互斥只给卸载，不给「换版本」——换发布线不是装同一 GUID 的另一个包。 */
+test('发布线互斥的冲突不进 install 计划，只进 uninstall', () => {
+  const stable = repo({
+    id: 'hu-stable', plugin_guid: SAME_GUID,
+    relations: [{ kind: 'conflicts', guid: SAME_GUID, prerelease: true }],
+    cached_releases: [{
+      tag_name: 'v2.0.0', version: '2.0.0', name: '', body: '',
+      prerelease: false, draft: false, assets: [],
+    }],
+  })
+  const installed = [mod({ guid: SAME_GUID, version: '1.9.9.1', prerelease: true })]
+  const plan = buildInstallPlan(stable, installed, [stable])
+  assert.equal(plan.uninstall.length, 1)
+  assert.equal(plan.install.length, 0, '换同一 GUID 的版本解决不了发布线冲突')
+})
+
+/* 自动选源要尊重发布线：关系限定了正式版，就不能自动装预发布。 */
+test('依赖自动选源跳过预发布版本', () => {
+  const dep = { kind: 'requires', guid: 'com.example.dep' }
+  const betaOnly = repo({
+    cached_releases: [{
+      tag_name: 'v3.0.0-beta.1', version: '3.0.0-beta.1', name: '', body: '',
+      prerelease: true, draft: false, assets: [],
+    }],
+  })
+  assert.equal(resolveRelation(dep, [], [betaOnly]).state, 'missing')
+})

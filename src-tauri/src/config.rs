@@ -1297,7 +1297,7 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
      * 否则「是否满足」永远判不出来。
      */
     for relation in &repo.relations {
-        validate_relation(relation, &repo.name)?;
+        validate_relation(relation, &repo.name, &repo.plugin_guid)?;
     }
     /*
      * 按 Release 覆盖的关系表也要校验，且区间不能两端全空。
@@ -1336,7 +1336,7 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
             }
         }
         for relation in &override_entry.relations {
-            validate_relation(relation, &repo.name)?;
+            validate_relation(relation, &repo.name, &repo.plugin_guid)?;
         }
     }
     Ok(())
@@ -1346,9 +1346,16 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
 ///
 /// `optional` 只对 `requires` 有意义 —— 「可选的冲突」自相矛盾，
 /// 写出来只会让前端不知道该怎么提示，所以在导入阶段就拒绝。
+/// `prerelease` 反过来只对冲突/兼容有意义：依赖要求「必须是测试版」
+/// 不是作者会想表达的事，真要那样直接写 `min_version` 更清楚。
+///
+/// **指向自己 GUID 的冲突/兼容必须写 `prerelease`**：那是「正式版与测试版
+/// 互斥」的表达方式（两条发布线同 GUID）。不写标志时它等价于「我不能和
+/// 自己共存」，永远为真 —— 这种配置一定写错了，导入阶段就拒绝。
 fn validate_relation(
     relation: &RepositoryRelation,
     repository_name: &str,
+    owner_guid: &str,
 ) -> Result<(), ConfigError> {
     let kind = relation.kind.as_str();
     if relation.guid.trim().is_empty() {
@@ -1360,6 +1367,21 @@ fn validate_relation(
         return Err(ConfigError::Invalid(format!(
             "{repository_name} 的 {kind} 关系 {} 不能标记 optional：只有 requires 支持可选",
             relation.guid.trim()
+        )));
+    }
+    if relation.prerelease.is_some() && relation.kind == RelationKind::Requires {
+        return Err(ConfigError::Invalid(format!(
+            "{repository_name} 的 requires 关系 {} 不能限定 prerelease：依赖版本请用版本区间表达",
+            relation.guid.trim()
+        )));
+    }
+    if relation.kind != RelationKind::Requires
+        && relation.prerelease.is_none()
+        && !owner_guid.trim().is_empty()
+        && relation.guid.trim().eq_ignore_ascii_case(owner_guid.trim())
+    {
+        return Err(ConfigError::Invalid(format!(
+            "{repository_name} 的 {kind} 关系指向自己的 GUID，必须用 prerelease = true/false 区分发布线",
         )));
     }
     for (label, value) in [
@@ -3255,6 +3277,7 @@ mod dependency_validation_tests {
             guid: "com.example.dep".into(),
             min_version: min.into(),
             max_version: max.into(),
+            prerelease: None,
             optional,
         }
     }
@@ -3334,6 +3357,47 @@ mod dependency_validation_tests {
         });
         let error = validate_repository(&export).unwrap_err();
         assert!(error.to_string().contains("至少指定"), "{error}");
+    }
+
+    /*
+     * 指向自己的冲突必须带 prerelease。
+     *
+     * 「正式版与测试版互斥」是两条同 GUID 的发布线各自声明互相冲突，
+     * 靠 `prerelease = true/false` 区分。不写标志时它等价于
+     * 「我不能和自己共存」—— 永远为真，一定是配置写错了。
+     */
+    #[test]
+    fn self_conflict_without_prerelease_flag_is_rejected() {
+        let mut export = base_export(Vec::new());
+        export.plugin_guid = "com.example.owner".into();
+        let mut entry = relation(RelationKind::Conflicts, "", "", false);
+        entry.guid = "com.example.owner".into();
+        export.relations = vec![entry];
+        let error = validate_repository(&export).unwrap_err();
+        assert!(error.to_string().contains("指向自己的 GUID"), "{error}");
+    }
+
+    /// 带了 prerelease 的自冲突是合法写法（正式版排斥测试版）。
+    #[test]
+    fn self_conflict_with_prerelease_flag_passes() {
+        for flag in [true, false] {
+            let mut export = base_export(Vec::new());
+            export.plugin_guid = "com.example.owner".into();
+            let mut entry = relation(RelationKind::Conflicts, "", "", false);
+            entry.guid = "com.example.owner".into();
+            entry.prerelease = Some(flag);
+            export.relations = vec![entry];
+            assert!(validate_repository(&export).is_ok(), "prerelease={flag}");
+        }
+    }
+
+    /// `prerelease` 不能用在依赖上：那是「必须是测试版依赖」，语义应写进版本区间。
+    #[test]
+    fn prerelease_is_rejected_for_requires() {
+        let mut entry = relation(RelationKind::Requires, "", "", false);
+        entry.prerelease = Some(true);
+        let error = validate_repository(&base_export(vec![entry])).unwrap_err();
+        assert!(error.to_string().contains("不能限定 prerelease"), "{error}");
     }
 }
 

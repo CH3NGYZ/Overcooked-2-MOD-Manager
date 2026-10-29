@@ -55,6 +55,17 @@ export interface RepositoryRelation {
   min_version?: string
   /** 版本区间上限（含）；空字符串表示不限。 */
   max_version?: string
+  /**
+   * 只对预发布版本成立（三态）。
+   *
+   * - 不写：正式版与预发布版都算
+   * - `true`：只匹配预发布版（四段写法 `1.9.8.1` 即 `1.9.8-beta.1`）
+   * - `false`：只匹配正式版
+   *
+   * 用于「正式版与测试版互斥」：预发布版按 semver 排在**同号正式版之下**，
+   * 版本区间无法把 `1.9.8` 和 `1.9.8.1` 分成两类，只能靠这个标志。
+   */
+  prerelease?: boolean
   /** 仅对 `requires` 有意义：缺失时不提示、不显示按钮。 */
   optional?: boolean
 }

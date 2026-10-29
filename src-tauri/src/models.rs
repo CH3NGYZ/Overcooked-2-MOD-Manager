@@ -373,6 +373,19 @@ pub struct RepositoryRelation {
     /// 版本区间上限（含）；空字符串表示不限上限。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub max_version: String,
+    /// 只对**预发布版本**成立（三态）。
+    ///
+    /// - 不写（`None`）：正式版与预发布版都算
+    /// - `true`：只匹配预发布版（本项目的四段写法 `1.9.8.1` 即 `1.9.8-beta.1`）
+    /// - `false`：只匹配正式版
+    ///
+    /// 为什么需要它：正式版与测试版常是**同一个 GUID** 的两条发布线
+    /// （同一仓库的 stable / beta 渠道各一个仓库条目）。要表达「正式版与
+    /// 测试版互斥」时，版本区间无能为力 —— 预发布版按 semver 排在**同号
+    /// 正式版之下**，`[1.9.8, 1.9.9)` 会命中 `1.9.8` 却漏掉 `1.9.8.1`。
+    /// 用这个标志直接按「是不是预发布」筛，两边各写一条即可。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prerelease: Option<bool>,
     /// 仅对 `requires` 有意义：缺失时不提示、不显示按钮。
     ///
     /// 其它种类写 `optional = true` 属于配置错误 —— 「可选的冲突」没有含义。
@@ -404,6 +417,8 @@ where
         #[serde(default)]
         max_version: String,
         #[serde(default)]
+        prerelease: Option<bool>,
+        #[serde(default)]
         optional: bool,
     }
 
@@ -428,6 +443,7 @@ where
             guid: entry.guid,
             min_version: entry.min_version,
             max_version: entry.max_version,
+            prerelease: entry.prerelease,
             optional: entry.optional,
         });
     }

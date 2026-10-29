@@ -23,7 +23,7 @@
  */
 // 带 .ts 扩展名：Node 24 直接执行 TS 时靠它解析相对导入；
 // 该文件同时被 Vite 打包，两种加载方式都要能用（与 statusTags 的写法一致）。
-import { compareVersions } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
 import type {
   InstalledMod, RelationKind, ReleaseInfo, Repository, RepositoryRelation,
 } from './types'
@@ -138,6 +138,29 @@ function installedForGuid(mods: readonly InstalledMod[], guid: string): Installe
 }
 
 /**
+ * 一个本地 MOD 是否属于「预发布」。
+ *
+ * 两个来源取或：安装清单的 `prerelease` 标记（权威），以及版本号本身
+ * 是不是四段/带后缀写法（旧快照兜底）。与 `statusTags` 的展示判定
+ * 用同一套规则，避免「标签说预发布、关系判定说正式版」。
+ */
+function isPrereleaseCopy(mod: InstalledMod): boolean {
+  return isPrereleaseVersion(mod.version, mod.prerelease)
+}
+
+/**
+ * 这条关系是否适用于该本地 MOD（版本区间 + 预发布三态）。
+ *
+ * `prerelease` 不写表示两种都算；写了就只在「是不是预发布」相符时才成立。
+ * 它先于版本区间判断：区间是「哪些版本」，这个标志是「哪条发布线」。
+ */
+function relationMatchesCopy(relation: RepositoryRelation, mod: InstalledMod): boolean {
+  const wantPrerelease = relation.prerelease
+  if (wantPrerelease !== undefined && isPrereleaseCopy(mod) !== wantPrerelease) return false
+  return versionInRange(mod.version, relation.min_version, relation.max_version)
+}
+
+/**
  * 在来源仓库里挑一个**满足区间**的 Release。
  *
  * 为什么不能只看仓库：要求 B ≥2.0 而该仓库最高版本只有 1.9 时，
@@ -145,18 +168,26 @@ function installedForGuid(mods: readonly InstalledMod[], guid: string): Installe
  * 而不是给一个点了也没用的按钮。
  *
  * `cached_releases` 已按后端顺序（新的在前）排列，所以从前往后找第一个
- * 满足区间的即可；跳过草稿与预发布，避免自动装到测试版。
+ * 满足区间的即可。默认跳过草稿与预发布，避免自动装到测试版；
+ * 只有当关系显式要求 `prerelease = true` 时才接受预发布 Release。
  */
 function matchingRelease(
   repo: Repository,
-  minVersion: string | undefined,
-  maxVersion: string | undefined,
+  relation: RepositoryRelation,
 ): ReleaseInfo | undefined {
-  const min = minVersion?.trim()
-  const max = maxVersion?.trim()
+  const min = relation.min_version?.trim()
+  const max = relation.max_version?.trim()
+  const wantPrerelease = relation.prerelease
   return (repo.cached_releases ?? []).find((release) => {
-    if (release.draft || release.prerelease) return false
+    if (release.draft) return false
     const version = release.tag_name || release.version
+    // 发布线判定：默认只要正式版；显式要求预发布时才放宽
+    const prerelease = isPrereleaseVersion(version, release.prerelease)
+    if (wantPrerelease === true) {
+      if (!prerelease) return false
+    } else if (prerelease) {
+      return false
+    }
     return versionInRange(version, min, max)
   })
 }
@@ -167,17 +198,21 @@ function matchingRelease(
  * 要求仓库本身可用（地区/启用已由调用方筛过）、是 Release 模式、
  * 且缓存里有满足区间的 Release。RAW 仓库不能用来满足关系 ——
  * 它没有版本概念，也没法比较 `min_version`。
+ *
+ * `excludeRepositoryId` 排除仓库自身：一个 MOD 声明关于自己的关系时，
+ * 「装自己」既解决不了依赖也消不掉冲突，只会产生一个点不动按钮。
  */
 function installSourceFor(
   guid: string,
   repositories: readonly Repository[],
-  minVersion?: string,
-  maxVersion?: string,
+  relation: RepositoryRelation,
+  excludeRepositoryId?: string,
 ): { repository: Repository; release: ReleaseInfo } | undefined {
   for (const repo of repositories) {
+    if (repo.id === excludeRepositoryId) continue
     if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, guid)) continue
     if (repo.download_mode !== 'release') continue
-    const release = matchingRelease(repo, minVersion, maxVersion)
+    const release = matchingRelease(repo, relation)
     if (release) return { repository: repo, release }
   }
   return undefined
@@ -188,32 +223,39 @@ function installSourceFor(
  *
  * 三种 kind 的判定差异集中在这里，其它地方不需要再判断 kind：
  *   requires    装了且版本在区间内 → ok；否则找安装来源（installable/missing）
- *   conflicts   装了且版本在区间内 → conflict；否则 ok（没装就没有冲突）
+ *   conflicts   装了且命中区间 → conflict；否则 ok（没装就没有冲突）
  *   compatible  没装 → ok（不兼容只在对方存在时才成立）；
  *               装了但版本在区间外 → conflict
+ *
+ * `owner` 是**声明这条关系的仓库**，只用于排除「装自己」这种无意义来源。
+ *
+ * 自冲突（正式版声明「与同 GUID 的测试版互斥」）靠 `prerelease` 三态自然
+ * 消解：owner 自己的副本必定在标志的另一侧，不会命中。因此 `conflicts` /
+ * `compatible` 指向自己的 `plugin_guid` 时必须写这个标志 —— 导入校验会拒绝
+ * 没有标志的自冲突（那是「我不能和自己共存」，永远为真）。
  */
 export function resolveRelation(
   relation: RepositoryRelation,
   mods: readonly InstalledMod[],
   repositories: readonly Repository[],
+  owner?: Repository,
 ): RelationStatus {
+  const kind: RelationKind = relation.kind ?? 'requires'
+  // 依赖看全部副本（存在即可）；冲突/兼容同样看全部，靠 prerelease 区分发布线
   const installed = installedForGuid(mods, relation.guid)
   const target = installed[0]
   const installedVersion = target?.version ?? null
-  const satisfies = versionInRange(installedVersion, relation.min_version, relation.max_version)
-  const kind: RelationKind = relation.kind ?? 'requires'
 
   if (kind === 'requires') {
     // 装了且版本落在区间内才算满足；装了多份时任一份满足即可
-    const anySatisfied = installed.some((mod) =>
-      versionInRange(mod.version, relation.min_version, relation.max_version))
-    if (anySatisfied) return { relation, state: 'ok', installedVersion, installedMod: target }
+    if (installed.some((mod) => relationMatchesCopy(relation, mod))) {
+      return { relation, state: 'ok', installedVersion, installedMod: target }
+    }
     /*
      * 已装但版本不符：仍然要给出「可安装」入口 —— 用户需要的是升级/降级到
      * 依赖要求的那个版本，而不是再装一遍。
      */
-    const source = installSourceFor(
-      relation.guid, repositories, relation.min_version, relation.max_version)
+    const source = installSourceFor(relation.guid, repositories, relation, owner?.id)
     return {
       relation,
       state: source ? 'installable' : 'missing',
@@ -225,16 +267,18 @@ export function resolveRelation(
   }
 
   if (kind === 'conflicts') {
-    // 目标存在且版本落在区间内 → 冲突
-    const hit = installed.find((mod) =>
-      versionInRange(mod.version, relation.min_version, relation.max_version))
+    // 目标存在且命中（版本区间 + 发布线）→ 冲突
+    const hit = installed.find((mod) => relationMatchesCopy(relation, mod))
     if (!hit) return { relation, state: 'ok', installedVersion }
     /*
-     * 冲突也能给「可修复来源」：如果线上有**不在冲突区间内**的版本，
-     * 升级/降级到那个版本同样能消除冲突，而且比卸载更符合用户意图
-     * （他本来就想继续用这个 MOD）。
+     * 冲突的解法看它是哪一类：
+     *   · 纯版本区间冲突（同一发布线内）→ 线上有区间外版本就换版本；
+     *   · 发布线互斥（写了 prerelease）→ 换版本等于换发布线，装同一
+     *     GUID 的另一个包并不能把旧发布线的文件清干净，所以只能卸载。
      */
-    const source = compatibleSourceFor(relation.guid, repositories, relation)
+    const source = relation.prerelease === undefined
+      ? compatibleSourceFor(relation, repositories, owner?.id)
+      : undefined
     return {
       relation,
       state: 'conflict',
@@ -245,12 +289,13 @@ export function resolveRelation(
     }
   }
 
-  // kind === 'compatible'：对方存在时版本必须在区间内
+  // kind === 'compatible'：对方存在时版本必须落在区间内
   if (!target) return { relation, state: 'ok', installedVersion: null }
-  if (satisfies) return { relation, state: 'ok', installedVersion, installedMod: target }
+  if (relationMatchesCopy(relation, target)) {
+    return { relation, state: 'ok', installedVersion, installedMod: target }
+  }
   // 不在兼容区间内：线上有区间内的版本就能靠升级/降级救回来
-  const source = installSourceFor(
-    relation.guid, repositories, relation.min_version, relation.max_version)
+  const source = installSourceFor(relation.guid, repositories, relation, owner?.id)
   return {
     relation,
     state: 'conflict',
@@ -261,26 +306,40 @@ export function resolveRelation(
   }
 }
 
+/** 这个本地 MOD 是否来自该仓库（按 id 或结构化绑定判断）。 */
+export function belongsToRepository(mod: InstalledMod, repo: Repository): boolean {
+  if (mod.repository_id === repo.id) return true
+  if (mod.repository_ids?.includes(repo.id)) return true
+  const binding = mod.repository_binding
+  if (!binding) return false
+  return binding.provider === repo.provider
+    && binding.owner.toLowerCase() === repo.username.toLowerCase()
+    && binding.repository.toLowerCase() === repo.repository.toLowerCase()
+}
+
 /**
  * 为冲突关系找一个「装上就不冲突」的版本。
  *
- * 冲突区间是「不能用的版本」，所以需要的是区间**之外**的版本 ——
- * 通常就是比 `max_version` 更新（修复了冲突）或比 `min_version` 更旧
- * （还没引入冲突）的那一版。优先取更新的，因为退回旧版会丢功能。
+ * 需要的是**不命中**这条关系的版本 —— 通常比冲突区间更新（修复了冲突）
+ * 或更旧（还没引入冲突）。只在「纯版本区间冲突」时使用；发布线互斥
+ * （写了 `prerelease`）不走这条路，原因见 `resolveRelation`。
  */
 function compatibleSourceFor(
-  guid: string,
-  repositories: readonly Repository[],
   relation: RepositoryRelation,
+  repositories: readonly Repository[],
+  excludeRepositoryId?: string,
 ): { repository: Repository; release: ReleaseInfo } | undefined {
+  const min = relation.min_version?.trim()
+  const max = relation.max_version?.trim()
   for (const repo of repositories) {
-    if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, guid)) continue
+    if (repo.id === excludeRepositoryId) continue
+    if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, relation.guid)) continue
     if (repo.download_mode !== 'release') continue
     const release = (repo.cached_releases ?? []).find((entry) => {
       if (entry.draft || entry.prerelease) return false
       const version = entry.tag_name || entry.version
-      // 只要不在冲突区间内就可用
-      return !versionInRange(version, relation.min_version, relation.max_version)
+      // 只要不命中区间就可用
+      return !versionInRange(version, min, max)
     })
     if (release) return { repository: repo, release }
   }
@@ -308,11 +367,11 @@ export function resolveRelations(
     !(relation.kind === 'requires' && relation.optional))
   if (!relevant.length) return []
   /*
-   * 查找可安装来源时排除仓库自身：一个 MOD 声明依赖自己的 GUID 是配置错误，
+   * 候选来源排除仓库自身：一个 MOD 声明依赖自己的 GUID 是配置错误，
    * 若把自己当作来源，按钮会「安装自己」，永远不解决依赖。
    */
   const candidates = repositories.filter((candidate) => candidate.id !== repo.id)
-  return relevant.map((relation) => resolveRelation(relation, mods, candidates))
+  return relevant.map((relation) => resolveRelation(relation, mods, candidates, repo))
 }
 
 /** 汇总：所有未满足的状态（用于决定卡片显示什么、按钮指向哪条）。 */

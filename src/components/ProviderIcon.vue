@@ -51,19 +51,31 @@ const title = computed(() => (avatar.value && props.owner ? props.owner : label.
 
 <style scoped>
 .provider-icon {
+  /* 圆角只有一个出处：容器定义、图片继承，两者不会漂移 */
+  --provider-icon-radius: 8px;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--provider-icon-radius);
   border: 1px solid var(--oc2-row-line);
   background: var(--oc2-sunken);
+  /* 双重保险：overflow 裁剪 + 图片自身圆角，见 .provider-avatar */
   overflow: hidden;
+  isolation: isolate;
 }
 .provider-avatar {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  /*
+   * 图片自己也带圆角，与容器一致。
+   *
+   * 只靠父级 `overflow: hidden` 裁剪在 WebView2 里不可靠：图片会被提升为
+   * 独立合成图层，圆角裁剪时有时不生效，四个直角会盖在框外 —— 表现为
+   * 「头像超出圆角框」。给图片本身圆角之后，即便父级裁剪失效也不会露角。
+   */
+  border-radius: inherit;
 }
 /* GitHub：黑白随主题；Gitee：品牌红 */
 .provider-icon--github { color: var(--oc2-text-1); }

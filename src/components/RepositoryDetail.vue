@@ -652,7 +652,14 @@ async function openUrl(url: string) {
 .readme-loading :deep(.skeleton-line:nth-child(4)) { width: 42%; }
 
 /* README 内容 */
-.markdown-body { font-size: 12.5px; line-height: 1.7; color: var(--oc2-text-2); overflow-wrap: anywhere; }
+.markdown-body {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--oc2-text-2);
+  overflow-wrap: anywhere;
+  /* Markdown 输出的宽表格/长代码行不撑破抽屉，超出时横向滚动 */
+  overflow-x: auto;
+}
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
 .markdown-body :deep(h3),

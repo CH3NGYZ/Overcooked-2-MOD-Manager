@@ -379,6 +379,8 @@ async function confirm() {
   background: var(--oc2-sunken);
   font-size: 12px;
   line-height: 1.65;
+  /* Markdown 输出的宽表格/长代码行不撑破弹窗，超出时横向滚动 */
+  overflow-x: auto;
 }
 /*
  * v-html 插入的 Markdown 节点不会带 scoped 属性，

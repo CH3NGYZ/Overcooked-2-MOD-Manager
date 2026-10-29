@@ -394,3 +394,67 @@ body {
 .n-button__content > svg:only-child {
   margin: 0;
 }
+
+/*
+ * Markdown 表格（renderReadme 输出）。
+ *
+ * markdown-it 只生成裸 <table>/<thead>/<th>/<td>，没有任何样式。此前 README、
+ * 仓库备注和 Release 日志里的表格完全塌在一起：无边框、无列宽、单元格紧贴，
+ * 表头与内容无法区分。
+ *
+ * 放在全局而不是各组件的 scoped 块里：渲染 Markdown 的地方不止一处
+ * （RepositoryDetail 的 README/备注/日志、ModInstallDialog 的 Release 日志），
+ * 每处各写一份迟早不一致。这些选择器天然作用到 v-html 插入的节点上，
+ * 不需要 :deep。
+ *
+ * 不加 table-layout: fixed —— 表格列宽应由内容决定；长内容靠
+ * overflow-wrap 与横向滚动处理，而不是把每列压成等宽。
+ */
+.markdown-body table,
+.release-log-box table {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.markdown-body th,
+.markdown-body td,
+.release-log-box th,
+.release-log-box td {
+  padding: 6px 10px;
+  border: 1px solid var(--oc2-row-line);
+  text-align: left;
+  vertical-align: top;
+  /* 长英文/路径不把列撑爆 */
+  overflow-wrap: anywhere;
+}
+
+.markdown-body thead th,
+.release-log-box thead th {
+  background: var(--oc2-sunken);
+  color: var(--oc2-text-1);
+  font-weight: 600;
+  /* 表头不跟随 Markdown 的对齐标记抖动，统一左对齐更好扫读 */
+  text-align: left;
+}
+
+/* 斑马纹：宽表格里逐行对齐更容易 */
+.markdown-body tbody tr:nth-child(even),
+.release-log-box tbody tr:nth-child(even) {
+  background: var(--oc2-row-hover);
+}
+
+/*
+ * 宽表格的横向滚动。
+ *
+ * 浏览器对 `table { overflow }` 支持不一致，所以让表格保持 table 布局、
+ * 靠外层容器滚动（两个宿主容器都设了 overflow-x: auto）。单元格内容可换行，
+ * 配合 width: 100% 绝大多数列都能排下；真正超宽时由容器兜底。
+ */
+.markdown-body table td code,
+.release-log-box table td code {
+  /* 单元格里的行内代码不额外加内边距，避免把列宽顶开 */
+  padding: 0 3px;
+}

@@ -195,12 +195,20 @@ async fn download_and_store(
     /*
      * 候选顺序与 MOD 下载完全一致：`asset_proxy_urls` 负责按用户配置挑选
      * 代理、按来源排序去重；`ordered_asset_download_candidates` 决定直连与
-     * 代理的先后。头像没有自己的下载策略，就是一次小文件 Raw 下载。
+     * 代理的先后。
+     *
+     * `is_raw_file = false` **是必须的**。头像地址是 `github.com/{owner}.png`，
+     * 不是 raw 文件路径。传 true 会让 `proxy_urls` 按 raw 结构去拆
+     * `owner/repo/branch/path`，拆不出来就留空串，于是 `{github_path}` /
+     * `{branch}` / `{path}` 类模板渲染成
+     * `https://raw.githubusercontent.com/gua248.png//main/` 这种畸形地址，
+     * 代理一律 403/404 —— 每个头像都要白试好几轮才能轮到能用的候选。
+     * 传 false 时只保留 `{url}` / `{url_no_scheme}` 这类纯包装占位符。
      */
     let proxies = crate::commands::asset_proxy_urls(
         &config.github_proxies.raw_proxies,
         &url,
-        true,
+        false,
         "",
         "",
         mode,
@@ -365,5 +373,81 @@ mod tests {
         // 真实图片头通过
         assert!(validate(&[0xFF, 0xD8, 0xFF, 0, 0]).is_ok());
         assert!(validate(b"\x89PNG\r\n\x1a\n").is_ok());
+    }
+
+    /*
+     * 头像的代理候选**不能**按 raw 文件模式渲染。
+     *
+     * 真实事故：传 `is_raw_file = true` 时，`proxy_context` 会把目标 URL
+     * 重写成 `raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`。
+     * 头像地址是 `github.com/{owner}.png`，拆不出 repo，于是 owner 变成
+     * `gua248.png`、repo 为空，最终渲染出
+     * `https://raw.githubusercontent.com/gua248.png//main/` —— 所有代理
+     * 一律 403/404，每个头像都要白试好几轮。
+     *
+     * 断言：非 raw 模式下，渲染结果里不得出现被改写成 raw 路径的形态。
+     */
+    #[test]
+    fn avatar_candidates_are_not_rewritten_into_raw_paths() {
+        let proxy = |id: &str, template: &str| crate::models::GitHubProxy {
+            id: id.into(),
+            name: id.into(),
+            template: template.into(),
+            regions: Vec::new(),
+            description: String::new(),
+            enabled: true,
+            builtin: true,
+            remote: false,
+        };
+        let proxies = vec![
+            proxy("wrap", "https://wrap.example/{url}"),
+            // 依赖 owner/repo/branch/path 的模板：raw 模式下会被喂进错误的分段
+            proxy(
+                "rawstyle",
+                "https://rawstyle.example/{owner}/{repo}/{branch}/{path}",
+            ),
+        ];
+        let url = direct_url(&Provider::Github, "gua248");
+
+        // 错误的写法：raw 模式会把 .png 当成 owner 并拼出空 repo/分支
+        let raw_mode = crate::commands::asset_proxy_urls(
+            &proxies,
+            &url,
+            true,
+            "",
+            "",
+            crate::models::ProxyMode::AutoProxy,
+            None,
+        );
+        assert!(
+            raw_mode
+                .iter()
+                .any(|candidate| candidate.contains("raw.githubusercontent.com")
+                    || candidate.contains("//main")),
+            "raw 模式应当能复现畸形地址，否则这条测试没有意义：{raw_mode:?}"
+        );
+
+        // 正确写法：非 raw 模式，不得出现被改写或空段拼接的地址
+        let avatar_mode = crate::commands::asset_proxy_urls(
+            &proxies,
+            &url,
+            false,
+            "",
+            "",
+            crate::models::ProxyMode::AutoProxy,
+            None,
+        );
+        for candidate in &avatar_mode {
+            assert!(
+                !candidate.contains("raw.githubusercontent.com"),
+                "不应被改写成 raw 路径：{candidate}"
+            );
+            assert!(!candidate.contains("//main"), "不应拼出空分支：{candidate}");
+        }
+        assert!(
+            avatar_mode.iter().any(|candidate| candidate
+                == "https://wrap.example/https://github.com/gua248.png?size=64"),
+            "纯包装模板必须原样渲染：{avatar_mode:?}"
+        );
     }
 }

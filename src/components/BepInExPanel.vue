@@ -81,7 +81,7 @@ const platform = computed(() => config.value?.platform ?? 'windows')
 const runtime = computed<GameRuntime>(() => config.value?.game.runtime ?? 'wine')
 /** 只有非 Windows 才需要引导：Windows 装完即可用。 */
 const needsGuide = computed(() => platform.value !== 'windows')
-/** CrossOver / Wine 分支（macOS 与 Linux 的非原生）。 */
+/** CrossOver / Wine 分支（macOS 的非原生运行时）。 */
 const isWineRuntime = computed(() => runtime.value !== 'native')
 
 /** 真正执行安装（引导之外的部分）。 */

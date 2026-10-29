@@ -10,12 +10,11 @@ test('Windows 与 CrossOver 都用 Windows 可执行文件名', () => {
   assert.equal(gameExecutableName('windows', 'native'), 'Overcooked2.exe')
   // macOS + wine = CrossOver 里的 Windows 版
   assert.equal(gameExecutableName('macos', 'wine'), 'Overcooked2.exe')
-  assert.equal(gameExecutableName('linux', 'wine'), 'Overcooked2.exe')
 })
 
-test('原生 Linux / macOS 各有自己的可执行文件名', () => {
-  assert.equal(gameExecutableName('linux', 'native'), 'Overcooked2.x86_64')
+test('只有 macOS 原生有自己的可执行文件名', () => {
   assert.equal(gameExecutableName('macos', 'native'), 'Overcooked2.app')
+  assert.equal(gameExecutableName('windows', 'native'), 'Overcooked2.exe')
 })
 
 test('BepInEx 包按平台与运行时区分', () => {
@@ -28,9 +27,6 @@ test('BepInEx 包按平台与运行时区分', () => {
 
   const macWine = bepinexDownloadUrls('macos', 'wine')
   assert.ok(macWine.github.includes('BepInEx_win_x86'), 'CrossOver 装 Windows 版包')
-
-  const linux = bepinexDownloadUrls('linux', 'native')
-  assert.ok(linux.github.includes('BepInEx_linux_x64'))
 })
 
 test('两个渠道的包名一致，只有仓库主机不同', () => {
@@ -42,8 +38,8 @@ test('两个渠道的包名一致，只有仓库主机不同', () => {
   assert.ok(urls.gitee.includes('gitee.com/ch3ngyz/'))
 })
 
-test('原生 Linux 的启动项是相对脚本', () => {
-  assert.equal(nativeSteamLaunchOptions('linux', '/games/oc2'), './run_bepinex.sh %command%')
+test('Windows 没有原生启动项（走 doorstop 的 winhttp.dll）', () => {
+  assert.equal(nativeSteamLaunchOptions('windows', 'C:/Games/Overcooked 2'), '')
 })
 
 test('原生 macOS 的启动项是带引号的绝对脚本路径', () => {

@@ -111,7 +111,7 @@ export async function main(args = process.argv.slice(2)) {
     if (asset.name === 'latest.json') await github.deleteAsset(asset.id)
   }
   await github.uploadManifest(release.id, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'))
-  console.log(`Uploaded a verified seven-target latest.json to draft ${tag}; nothing was published`)
+  console.log(`Uploaded a verified ${Object.keys(manifest.platforms).length}-target latest.json to draft ${tag}; nothing was published`)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

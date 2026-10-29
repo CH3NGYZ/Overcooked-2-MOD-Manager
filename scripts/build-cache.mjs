@@ -178,7 +178,6 @@ export function hydrateCache(context) {
 
 function legacyNodePrefix(target) {
   if (target.endsWith('windows-msvc')) return 'node-cache-Windows-x64-npm-'
-  if (target.endsWith('linux-gnu')) return 'node-cache-Linux-x64-npm-'
   return `node-cache-macOS-${target.startsWith('aarch64') ? 'arm64' : 'x64'}-npm-`
 }
 

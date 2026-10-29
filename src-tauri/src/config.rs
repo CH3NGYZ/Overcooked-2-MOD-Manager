@@ -63,11 +63,11 @@ pub fn current_user_region() -> &'static str {
             REGION_INTERNATIONAL
         }
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
         crate::user_region::current()
     }
-    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         REGION_INTERNATIONAL
     }
@@ -119,8 +119,6 @@ pub fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         PLATFORM_MACOS
     } else {
-        // Windows 与 Linux 都归入 windows：本项目只发布这两个桌面平台，
-        // Linux 走 Wine 运行 Windows 版 MOD，与 Windows 用的是同一批文件。
         PLATFORM_WINDOWS
     }
 }

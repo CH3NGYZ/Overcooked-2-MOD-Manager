@@ -103,14 +103,13 @@ fn dll_overrides(previous: &str) -> String {
     overrides.join(";")
 }
 
-#[cfg(unix)]
+// Wine 只在本项目的 macOS 构建里出现（CrossOver）。Windows 直接跑游戏，
+// Linux 发布目标已移除，因此这里不再有系统 wine 的分支。
+#[cfg(target_os = "macos")]
 fn wine_command(prefix: &Path) -> Result<std::process::Command, String> {
     if !prefix.is_absolute() || !prefix.join("drive_c").is_dir() {
         return Err("无法确定游戏使用的 Wine 容器，请重新选择厨房目录".into());
     }
-    #[cfg(target_os = "linux")]
-    let mut command = std::process::Command::new("wine");
-    #[cfg(target_os = "macos")]
     let mut command = {
         let mut apps = vec![PathBuf::from("/Applications/CrossOver.app")];
         if let Some(home) = dirs::home_dir() {

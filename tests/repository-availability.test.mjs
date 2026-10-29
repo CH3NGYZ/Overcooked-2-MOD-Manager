@@ -223,8 +223,6 @@ test('平台别名归一化（win / mac / osx / darwin）', () => {
   assert.equal(normalizeRepositoryPlatform('mac'), 'macos')
   assert.equal(normalizeRepositoryPlatform('osx'), 'macos')
   assert.equal(normalizeRepositoryPlatform('darwin'), 'macos')
-  // linux 归入 windows（本项目 Linux 走 Wine 跑 Windows 版 MOD），
-  // 见下面单独的测试；这里只验真正无法识别的值
   assert.equal(normalizeRepositoryPlatform('freebsd'), '')
 })
 
@@ -274,11 +272,14 @@ test('内置仓库源里只有 macOS 手柄修复限定了平台', async () => {
   assert.deepEqual(macOnly, ['Overcooked-2-MacosControllerFix'], '只有 macOS 手柄修复限定 macOS')
 })
 
-/* Linux 归入 windows：本项目 Linux 走 Wine 跑 Windows 版 MOD。
- * 不归一会导致「PublicConfig.platform = linux」被当成无法识别，
- * 连平台上限定 windows 的仓库都被过滤掉。 */
-test('linux 平台归入 windows', () => {
-  assert.equal(normalizeRepositoryPlatform('linux'), 'windows')
-  assert.equal(repositoryPlatformMatches('windows', 'linux'), true)
+/* 只发布 Windows 与 macOS：`linux` 不再是合法平台名，前后端都不给它开特例。
+ * 后端导入时直接拒绝 platform = "linux"；前端归一化得到空串，于是
+ * 「仓库限定 windows」与「当前平台是 linux」比较不相等 —— 平台限定的仓库
+ * 不显示。这与「平台未知时不放行平台限定仓库」的既有规则一致。 */
+test('linux 不是可识别的平台名', () => {
+  assert.equal(normalizeRepositoryPlatform('linux'), '')
+  assert.equal(repositoryPlatformMatches('windows', 'linux'), false)
   assert.equal(repositoryPlatformMatches('macos', 'linux'), false)
+  // 没有平台限定的仓库仍然对任何平台可见（含未知平台名）
+  assert.equal(repositoryPlatformMatches('', 'linux'), true)
 })

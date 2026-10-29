@@ -100,7 +100,6 @@ fn selected_root_for_package(selected: &Path, package: Package) -> Result<PathBu
     if !executable_exists_for_package(root, package) {
         return Err(match package {
             Package::Windows => "所选目录中没有 Overcooked2.exe",
-            Package::Linux => "所选目录中没有 Overcooked2.x86_64",
             Package::MacOS => "所选目录中没有 Overcooked2.app",
         }
         .into());
@@ -210,17 +209,6 @@ pub(crate) fn steam_root_paths(settings: &GameConfig) -> Vec<PathBuf> {
         }
         if let Some(program_files) = std::env::var_os("PROGRAMFILES") {
             roots.push(PathBuf::from(program_files).join("Steam"));
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(home_path) = dirs::home_dir() {
-            // Primary Steam installation paths on Linux
-            roots.push(home_path.join(".steam/steam"));
-            roots.push(home_path.join(".local/share/Steam"));
-            // Flatpak Steam installation
-            roots.push(home_path.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"));
         }
     }
 
@@ -373,12 +361,9 @@ fn process_matches_game(
     }
     if let Some(executable) = executable {
         let executable = normalize_path(executable);
-        if [
-            game.join("Overcooked2.exe"),
-            game.join("Overcooked2.x86_64"),
-        ]
-        .iter()
-        .any(|target| normalize_path(target) == executable)
+        // 只认本项目会出现的主程序：Windows 的 exe 与 macOS 应用包内可执行文件。
+        // Linux 原生的 `Overcooked2.x86_64` 随发布目标一起移除。
+        if normalize_path(&game.join("Overcooked2.exe")) == executable
             || executable.starts_with(game.join("Overcooked2.app/Contents/MacOS"))
         {
             return true;
@@ -413,38 +398,24 @@ pub(crate) fn steam_launch_command(
             .ok_or("无法确定游戏使用的 Wine 容器，请重新选择厨房目录")?;
         return crate::wine::steam_command(Path::new(prefix));
     }
+    /*
+     * Windows 与 macOS 原生走平台自己的启动命令。`settings` / `info`
+     * 在这条路径上都不用，显式标记避免未使用警告 —— 它们的取值只在
+     * macOS 的 Wine 分支里需要。
+     */
     #[cfg(windows)]
-    let _ = settings;
-    native_steam_launch_command(
-        std::env::consts::OS,
-        info.steam_root.as_deref().map(Path::new),
-    )
+    let _ = (settings, info);
+    native_steam_launch_command(std::env::consts::OS)
 }
 
-fn native_steam_launch_command(
-    platform: &str,
-    steam_root: Option<&Path>,
-) -> Result<std::process::Command, String> {
+/// 原生模式下启动厨房的命令。
+///
+/// 只有 Windows 与 macOS 两个分支：本项目不再发布 Linux 版本。
+fn native_steam_launch_command(platform: &str) -> Result<std::process::Command, String> {
     let mut command = match platform {
         "windows" => {
             let mut command = std::process::Command::new("explorer.exe");
             command.arg("steam://rungameid/728880");
-            command
-        }
-        "linux" => {
-            // Avoid the steam:// handler, which Wine Steam may have registered.
-            let flatpak = steam_root.is_some_and(|root| {
-                root.components()
-                    .any(|part| part.as_os_str() == "com.valvesoftware.Steam")
-            });
-            let mut command = if flatpak {
-                let mut command = std::process::Command::new("flatpak");
-                command.args(["run", "com.valvesoftware.Steam"]);
-                command
-            } else {
-                std::process::Command::new("steam")
-            };
-            command.args(["-applaunch", "728880"]);
             command
         }
         "macos" => {
@@ -583,8 +554,8 @@ fn wait_until_stopped(game: &Path, timeout: std::time::Duration) -> bool {
 /// 游戏收到后走自己的退出流程，存档与云同步都能正常完成。
 ///
 /// 非 Windows：返回 0，调用方直接走强制结束。
-/// macOS/Linux 的原生版需要发送 SIGTERM 才等价，但本项目在 Unix 上的游戏
-/// 多数跑在 Wine 容器里（进程模型不同），暂不实现，保持原有的强制结束行为。
+/// macOS 原生版的游戏在 Wine 容器里跑（进程模型不同），发 SIGTERM 不等价，
+/// 暂不实现，保持原有的强制结束行为。
 #[cfg(windows)]
 fn request_graceful_close(targets: &[sysinfo::Pid]) -> usize {
     use winapi::shared::minwindef::{BOOL, LPARAM};
@@ -796,7 +767,7 @@ pub struct FileMetadata {
 
 /// Reads display metadata from file version resources.
 /// On Windows: Reads PE version resource metadata.
-/// On Linux/macOS: Returns empty metadata.
+/// On macOS: Returns empty metadata.
 pub fn read_file_metadata(path: &Path) -> FileMetadata {
     #[cfg(windows)]
     {
@@ -910,42 +881,35 @@ mod tests {
         );
         assert!(executable_exists_for_package(&root, Package::MacOS));
         assert!(!executable_exists_for_package(&root, Package::Windows));
-        assert!(!executable_exists_for_package(&root, Package::Linux));
         fs::write(root.join("Overcooked2.exe"), b"fixture").unwrap();
-        fs::write(root.join("Overcooked2.x86_64"), b"fixture").unwrap();
-        for package in [Package::Windows, Package::Linux] {
+        // 两个包都能接受游戏根目录
+        for package in [Package::Windows, Package::MacOS] {
             assert_eq!(selected_root_for_package(&root, package).unwrap(), expected);
-            assert!(selected_root_for_package(&app, package).is_err());
         }
+        /*
+         * `.app` bundle 只在 macOS 包下被接受（上面已断言它会向上回溯到
+         * 游戏根）；Windows 包必须拒绝 —— 它不是游戏目录。
+         */
+        assert!(selected_root_for_package(&app, Package::Windows).is_err());
         fs::remove_dir_all(fixture).unwrap();
     }
 
     #[test]
-    fn native_steam_launch_does_not_delegate_to_a_wine_url_handler() {
-        let command = native_steam_launch_command("linux", None).unwrap();
-        assert_eq!(command.get_program(), "steam");
+    fn native_steam_launch_uses_the_platform_handler() {
+        let command = native_steam_launch_command("windows").unwrap();
+        assert_eq!(command.get_program(), "explorer.exe");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
-            ["-applaunch", "728880"]
+            ["steam://rungameid/728880"]
         );
-        let command = native_steam_launch_command(
-            "linux",
-            Some(Path::new(
-                "/home/user/.var/app/com.valvesoftware.Steam/.local/share/Steam",
-            )),
-        )
-        .unwrap();
-        assert_eq!(command.get_program(), "flatpak");
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["run", "com.valvesoftware.Steam", "-applaunch", "728880"]
-        );
-        let command = native_steam_launch_command("macos", None).unwrap();
+        let command = native_steam_launch_command("macos").unwrap();
         assert_eq!(command.get_program(), "open");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             ["-b", "com.valvesoftware.steam", "steam://rungameid/728880"]
         );
+        // 未列入的平台名一律拒绝：本项目只支持 Windows 与 macOS。
+        assert!(native_steam_launch_command("linux").is_err());
     }
 
     fn winhttp_state(root: &Path) -> WinhttpState {
@@ -964,7 +928,6 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/game-processes");
         for (name, executable) in [
             ("Overcooked2.exe", root.join("Overcooked2.exe")),
-            ("Overcooked2.x86_64", root.join("Overcooked2.x86_64")),
             (
                 "Overcooked2",
                 root.join("Overcooked2.app/Contents/MacOS/Overcooked2"),
@@ -972,6 +935,13 @@ mod tests {
         ] {
             assert!(process_matches_game(&root, name, Some(&executable), &[]));
         }
+        // 平台已不发布的原生可执行文件名不再被当作本游戏的进程
+        assert!(!process_matches_game(
+            &root,
+            "Overcooked2.x86_64",
+            Some(&root.join("Overcooked2.x86_64")),
+            &[]
+        ));
         assert!(process_matches_game(
             &root,
             "wine-preloader",

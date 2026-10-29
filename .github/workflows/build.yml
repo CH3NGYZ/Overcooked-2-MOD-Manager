@@ -1,5 +1,5 @@
 name: Build and Release
-run-name: ${{ inputs.mode == 'test' && format('Four-platform package test - {0} signing', inputs.signing) || 'Signed release draft build' }} (${{ github.ref_name }})
+run-name: ${{ inputs.mode == 'test' && format('Three-platform package test - {0} signing', inputs.signing) || 'Signed release draft build' }} (${{ github.ref_name }})
 
 on:
   push:
@@ -65,8 +65,6 @@ jobs:
         include:
           - platform: 'windows-latest'
             target: 'x86_64-pc-windows-msvc'
-          - platform: 'ubuntu-22.04'
-            target: 'x86_64-unknown-linux-gnu'
           - platform: 'macos-latest'
             target: 'aarch64-apple-darwin'
           - platform: 'macos-15-intel'
@@ -76,12 +74,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -198,7 +190,7 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Verify all seven uploaded targets and aggregate latest.json
+      - name: Verify all uploaded targets and aggregate latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
@@ -218,13 +210,13 @@ jobs:
         with:
           pattern: package-test-*
           path: src-tauri/target/verification/package-test/downloads
-      - name: Verify all four builds and seven signed updater formats
+      - name: Verify all three builds and four signed updater formats
         env:
           OC2_CI_SIGNING_MODE: ${{ inputs.signing || 'configured' }}
         run: node scripts/ci-packages.mjs verify src-tauri/target/verification/package-test/downloads
       - uses: actions/upload-artifact@v4
         with:
-          name: four-platform-package-summary
+          name: three-platform-package-summary
           path: src-tauri/target/verification/package-test/summary/
           if-no-files-found: error
           retention-days: 7

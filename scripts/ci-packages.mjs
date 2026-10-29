@@ -144,7 +144,7 @@ export function verifyPackageTests(downloads, root = process.cwd(), commit = pro
     const report = JSON.parse(readFileSync(join(path, reportName), 'utf8'))
     if (report.schemaVersion !== 1 || report.testOnly !== true || report.version !== version
       || report.commit !== commit || !BUILD_KEYS[report.target] || seenTargets.has(report.target)) {
-      throw new Error('Package-test reports must cover the same version/commit and four distinct targets')
+      throw new Error('Package-test reports must cover the same version/commit and three distinct targets')
     }
     if (report.signingMode !== signingMode || (signingMode === 'configured' && report.publicKey !== publicKey)) {
       throw new Error('Package-test signing mode or public key differs from the repository configuration')
@@ -180,7 +180,7 @@ export function verifyPackageTests(downloads, root = process.cwd(), commit = pro
     reports.push(report)
   }
   if (seenTargets.size !== Object.keys(BUILD_KEYS).length || seenKeys.size !== PLATFORM_KEYS.length) {
-    throw new Error('Four build targets and all seven signed updater formats are required')
+    throw new Error(`All ${Object.keys(BUILD_KEYS).length} build targets and ${PLATFORM_KEYS.length} signed updater formats are required`)
   }
   return {
     testOnly: true, signingMode, version, commit, buildTargets: seenTargets.size, updaterFormats: seenKeys.size, reports,

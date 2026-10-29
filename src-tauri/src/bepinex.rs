@@ -6,10 +6,14 @@ use std::path::Path;
 /// 内置 BepInEx 包版本（安装清单里记录用，与各包 URL 中的版本号一致）。
 pub(crate) const PACKAGE_VERSION: &str = "5.4.23.5";
 
+/// BepInEx 包种类：Windows 版与 macOS 原生版。
+///
+/// 只保留两个：本项目不再发布 Linux 版本。原来还有一个 `Linux` 变体，
+/// 对应 `Overcooked2.x86_64` 与 `BepInEx_linux_x64_*.zip`；移除发布目标后
+/// 那些字段再也没有调用方，留着只会让每条 match 多一个死分支。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Package {
     Windows,
-    Linux,
     MacOS,
 }
 
@@ -20,7 +24,6 @@ impl Package {
 
     fn for_platform(platform: &str, runtime: GameRuntime) -> Self {
         match (platform, runtime) {
-            ("linux", GameRuntime::Native) => Self::Linux,
             ("macos", GameRuntime::Native) => Self::MacOS,
             _ => Self::Windows,
         }
@@ -33,7 +36,6 @@ impl Package {
     pub(crate) fn executable(self) -> &'static str {
         match self {
             Self::Windows => "Overcooked2.exe",
-            Self::Linux => "Overcooked2.x86_64",
             Self::MacOS => "Overcooked2.app",
         }
     }
@@ -45,12 +47,6 @@ impl Package {
             }
             (Self::Windows, Provider::Github) => {
                 "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip"
-            }
-            (Self::Linux, Provider::Gitee) => {
-                "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/BepInEx_linux_x64_5.4.23.5.zip"
-            }
-            (Self::Linux, Provider::Github) => {
-                "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_linux_x64_5.4.23.5.zip"
             }
             (Self::MacOS, Provider::Github) => {
                 "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_macos_universal_5.4.23.5.zip"
@@ -65,9 +61,6 @@ impl Package {
         match self {
             Self::Windows => {
                 "sha256:37651c79e40d6f909572a4f461ac25350bb3ef8fe7fbd29f1aa8791a33b84c82"
-            }
-            Self::Linux => {
-                "sha256:e538560be65739f562519ab518a75f9c65b3f57f87457403ae7cde683c12dab7"
             }
             Self::MacOS => {
                 "sha256:01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323"
@@ -279,16 +272,12 @@ mod tests {
                 "Overcooked2.exe",
             ),
             (
-                "linux",
-                GameRuntime::Wine,
+                // 任何非 macOS 平台都按 Windows 包处理：这是 `for_platform`
+                // 的兜底分支，Linux 发布目标移除后仍要覆盖它。
+                "freebsd",
+                GameRuntime::Native,
                 Package::Windows,
                 "Overcooked2.exe",
-            ),
-            (
-                "linux",
-                GameRuntime::Native,
-                Package::Linux,
-                "Overcooked2.x86_64",
             ),
             (
                 "macos",
@@ -308,11 +297,10 @@ mod tests {
             assert_eq!(package.executable(), executable);
             assert!(package.url(&Provider::Github).contains(match package {
                 Package::Windows => "BepInEx_win_x86_",
-                Package::Linux => "BepInEx_linux_x64_",
                 Package::MacOS => "BepInEx_macos_universal_",
             }));
         }
-        for package in [Package::Windows, Package::Linux, Package::MacOS] {
+        for package in [Package::Windows, Package::MacOS] {
             assert_eq!(
                 package.url(&Provider::Github).rsplit('/').next(),
                 package.url(&Provider::Gitee).rsplit('/').next(),
@@ -324,7 +312,7 @@ mod tests {
     #[test]
     fn native_scripts_configure_the_executable_and_toggle_without_renaming_loaders() {
         let script = "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\n  enabled=\"$2\"\nexec \"$executable_name\" \"$@\"\n";
-        for package in [Package::Linux, Package::MacOS] {
+        for package in [Package::MacOS] {
             let configured =
                 replace_assignment(script, "executable_name", package.executable()).unwrap();
             assert!(configured.contains(&format!("executable_name=\"{}\"", package.executable())));
@@ -437,9 +425,8 @@ mod tests {
             "#!/bin/sh\nexecutable_name=\"\"\nenabled=\"1\"\nexport DYLD_LIBRARY_PATH=\"${doorstop_directory}:${DYLD_LIBRARY_PATH}\"\nif [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n",
         )
         .unwrap();
-        fs::write(root.join("libdoorstop.so"), b"linux fixture").unwrap();
         fs::write(root.join("libdoorstop.dylib"), b"mac fixture").unwrap();
-        for package in [Package::Linux, Package::MacOS] {
+        for package in [Package::MacOS] {
             prepare_native(&root, package).unwrap();
             assert_eq!(native_state(&root, package), WinhttpState::ModEnabled);
             #[cfg(unix)]
@@ -470,7 +457,7 @@ mod tests {
         assert!(repair_macos_overlay(&root).is_err());
         assert_eq!(fs::read_to_string(&script_path).unwrap(), "unrecognized");
         fs::remove_file(root.join("run_bepinex.sh")).unwrap();
-        assert!(prepare_native(&root, Package::Linux).is_err());
+        assert!(prepare_native(&root, Package::MacOS).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

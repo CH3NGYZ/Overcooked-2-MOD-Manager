@@ -17,12 +17,6 @@ fn fixture(provider: Provider) -> serde_json::Value {
     let platforms = [
         ("windows-x86_64-nsis", "OC2ModManager_9.0.0_x64-setup.exe"),
         ("windows-x86_64-msi", "OC2ModManager_9.0.0_x64_en-US.msi"),
-        (
-            "linux-x86_64-appimage",
-            "OC2ModManager_9.0.0_amd64.AppImage",
-        ),
-        ("linux-x86_64-deb", "OC2ModManager_9.0.0_amd64.deb"),
-        ("linux-x86_64-rpm", "OC2ModManager-9.0.0-1.x86_64.rpm"),
         ("darwin-aarch64-app", "OC2ModManager_aarch64.app.tar.gz"),
         ("darwin-x86_64-app", "OC2ModManager_x64.app.tar.gz"),
     ]
@@ -110,16 +104,13 @@ fn region_order_uses_all_and_only_compiled_release_templates() {
 }
 
 #[test]
-fn each_of_seven_formats_is_selected_from_json_without_api_size_or_digest() {
+fn each_released_format_is_selected_from_json_without_api_size_or_digest() {
     for provider in [Provider::Github, Provider::Gitee] {
         let route = direct(provider.clone());
         let document = fixture(provider);
         for (os, arch, kind) in [
             ("windows", "x86_64", "exe"),
             ("windows", "x86_64", "msi"),
-            ("linux", "x86_64", "appimage"),
-            ("linux", "x86_64", "deb"),
-            ("linux", "x86_64", "rpm"),
             ("macos", "aarch64", "app"),
             ("macos", "x86_64", "app"),
         ] {

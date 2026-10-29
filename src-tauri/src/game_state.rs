@@ -241,7 +241,6 @@ fn game_file_stamps(info: Option<&GameInfo>, backups: &Path) -> Vec<(PathBuf, Op
     [
         root.to_path_buf(),
         root.join("Overcooked2.exe"),
-        root.join("Overcooked2.x86_64"),
         root.join("Overcooked2.app"),
         root.join("Overcooked2.app/Contents/MacOS"),
         root.join("BepInEx"),
@@ -546,7 +545,8 @@ mod tests {
             .join(uuid::Uuid::new_v4().to_string());
         let mut observer = GameDiscoveryObserver::default();
         let steam_roots = vec![root];
-        for executable in ["Overcooked2.exe", "Overcooked2.x86_64", "Overcooked2.app"] {
+        // 只覆盖本项目会产出的两种主程序名；`Overcooked2.x86_64` 随 Linux 支持移除。
+        for executable in ["Overcooked2.exe", "Overcooked2.app"] {
             assert!(observer.refresh(&steam_roots, None, executable));
             assert!(
                 observer

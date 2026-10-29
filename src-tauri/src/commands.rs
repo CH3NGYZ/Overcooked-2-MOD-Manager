@@ -5005,12 +5005,6 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
 }
 
 fn mod_file_location_command(path: &Path) -> std::process::Command {
-    #[cfg(target_os = "linux")]
-    {
-        let mut command = external_open_command();
-        command.arg(path.parent().unwrap_or(path));
-        return command;
-    }
     #[cfg(target_os = "macos")]
     {
         let mut command = external_open_command();
@@ -5038,8 +5032,6 @@ fn mod_file_location_command(path: &Path) -> std::process::Command {
 fn external_open_command() -> std::process::Command {
     #[cfg(windows)]
     let program = "explorer.exe";
-    #[cfg(target_os = "linux")]
-    let program = "xdg-open";
     #[cfg(target_os = "macos")]
     let program = "open";
     let mut command = std::process::Command::new(program);
@@ -5634,13 +5626,6 @@ async fn resolve_app_update_at(
         .on_before_exit(|| {
             log::info!("Tauri Updater 准备启动 Windows 安装器并退出当前程序；安装结果尚未确认");
         });
-    #[cfg(target_os = "linux")]
-    let builder = if target.kind == "appimage" {
-        let path = std::env::var_os("APPIMAGE").ok_or("当前安装格式不支持自动更新，请手动更新")?;
-        builder.executable_path(PathBuf::from(path))
-    } else {
-        builder
-    };
     let updater = match builder
         .endpoints(vec![endpoint])
         .and_then(|builder| builder.build())
@@ -6399,7 +6384,6 @@ mod framework_install_tests {
                 (
                     match package {
                         Package::Windows => "winhttp.dll",
-                        Package::Linux => "libdoorstop.so",
                         Package::MacOS => "libdoorstop.dylib",
                     },
                     b"new loader".as_slice(),
@@ -6433,7 +6417,7 @@ mod framework_install_tests {
 
     #[test]
     fn fresh_install_and_reinstall_preserve_plugins_and_config_for_all_platform_packages() {
-        for package in [Package::Windows, Package::Linux, Package::MacOS] {
+        for package in [Package::Windows, Package::MacOS] {
             let workspace = Workspace::new();
             let archive = workspace.archive(package, package.native().then_some(SCRIPT));
             install_framework_archive(
@@ -6483,26 +6467,33 @@ mod framework_install_tests {
         }
     }
 
+    /*
+     * 危险的脚本内容必须让安装整体回滚，且原有根文件保持不动。
+     *
+     * 用 macOS 包：Linux 已不在发布范围内，但它原本是这条测试使用的对象
+     * （`libdoorstop.so`），这里换成 macOS 的 `libdoorstop.dylib`，
+     * 断言的内容完全等价。
+     */
     #[test]
     fn malformed_native_scripts_roll_back_the_framework_and_existing_root_files() {
         for script in [None, Some("executable_name=\"\"\ninvalid enabled field\n")] {
             for reinstall in [false, true] {
                 let workspace = Workspace::new();
                 workspace.write("run_bepinex.sh", b"original script");
-                workspace.write("libdoorstop.so", b"original loader");
+                workspace.write("libdoorstop.dylib", b"original loader");
                 if reinstall {
                     workspace.write("BepInEx/core/BepInEx.dll", b"original core");
                     workspace.write("BepInEx/plugins/mod.dll", b"original plugin");
                     workspace.write("BepInEx/config/BepInEx.cfg", b"original config");
                 }
-                let archive = workspace.archive(Package::Linux, script);
+                let archive = workspace.archive(Package::MacOS, script);
                 assert!(
                     install_framework_archive(
                         &archive,
                         &workspace.game(),
                         &workspace.backups(),
                         &workspace.manifests(),
-                        Package::Linux,
+                        Package::MacOS,
                         reinstall,
                         "5.4.23.5",
                     )
@@ -6513,7 +6504,7 @@ mod framework_install_tests {
                     b"original script"
                 );
                 assert_eq!(
-                    fs::read(workspace.game().join("libdoorstop.so")).unwrap(),
+                    fs::read(workspace.game().join("libdoorstop.dylib")).unwrap(),
                     b"original loader"
                 );
                 if reinstall {
@@ -6616,7 +6607,7 @@ mod framework_install_tests {
                 .expect("Set OC2_BEPINEX_PACKAGE_DIR to the original platform packages"),
         );
         assert!(packages.is_absolute());
-        for package in [Package::Windows, Package::Linux, Package::MacOS] {
+        for package in [Package::Windows, Package::MacOS] {
             let name = package.url(&Provider::Github).rsplit('/').next().unwrap();
             let archive = packages.join(name);
             archive::validate_download_file(&archive, None, Some(package.digest())).unwrap();

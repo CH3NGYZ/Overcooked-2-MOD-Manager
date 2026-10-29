@@ -27,7 +27,9 @@ export function updateFiles(bundleRoot, target, version, requiredKeys = BUILD_KE
     throw new Error(`Unsupported release build target or updater formats: ${target}`)
   }
   const assets = []
-  for (const directory of ['nsis', 'msi', 'appimage', 'deb', 'rpm', 'macos']) {
+  // 只扫描本项目还会产出的包目录：Windows 的 NSIS/MSI 与 macOS 的 .app。
+  // Linux 的 appimage/deb/rpm 目录随发布目标一起移除。
+  for (const directory of ['nsis', 'msi', 'macos']) {
     let entries
     try { entries = readdirSync(join(bundleRoot, directory), { withFileTypes: true }) }
     catch (error) { if (error.code === 'ENOENT') continue; throw error }

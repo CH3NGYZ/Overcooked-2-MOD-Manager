@@ -4,9 +4,15 @@ import { join } from 'node:path'
 
 export const RELEASE_OWNER = 'CH3NGYZ'
 export const RELEASE_REPO = 'Overcooked-2-MOD-Manager'
+/**
+ * 每个构建目标产出的更新包键。
+ *
+ * 只保留 Windows 与 macOS：本项目不再发布 Linux 版本。移除目标时**必须**
+ * 同时改这里 —— 这份表既是收集清单也是校验清单，漏改会让发布卡在
+ * 「缺少某个平台的更新包」。
+ */
 export const BUILD_KEYS = {
   'x86_64-pc-windows-msvc': ['windows-x86_64-nsis', 'windows-x86_64-msi'],
-  'x86_64-unknown-linux-gnu': ['linux-x86_64-appimage', 'linux-x86_64-deb', 'linux-x86_64-rpm'],
   'aarch64-apple-darwin': ['darwin-aarch64-app'],
   'x86_64-apple-darwin': ['darwin-x86_64-app'],
 }
@@ -98,15 +104,6 @@ export function updateAssetKey(name, version) {
     return lower.startsWith(msiPrefix) && lower.endsWith('.msi')
       && /^[a-z]{2}-[a-z]{2}$/.test(lower.slice(msiPrefix.length, -4))
   })) return 'windows-x86_64-msi'
-  for (const kind of ['appimage', 'deb']) {
-    if (x64.some(arch => lower === `${prefix}${arch}.${kind}`)) return `linux-x86_64-${kind}`
-  }
-  const rpmPrefix = `oc2modmanager-${version}-`
-  const rpmSuffix = '.x86_64.rpm'
-  if (lower.startsWith(rpmPrefix) && lower.endsWith(rpmSuffix)
-    && /^[a-z0-9._+~]+$/.test(lower.slice(rpmPrefix.length, -rpmSuffix.length))) {
-    return 'linux-x86_64-rpm'
-  }
   for (const [arch, aliases] of [['x86_64', x64], ['aarch64', ['aarch64', 'arm64']]]) {
     if (aliases.some(alias => lower === `oc2modmanager_${alias}.app.tar.gz`
       || lower === `${prefix}${alias}.app.tar.gz`)) return `darwin-${arch}-app`
@@ -202,7 +199,7 @@ export function updateManifest(version, platforms, { notes = '', pubDate = new D
   checkedVersion(version)
   if (Object.keys(platforms).length !== PLATFORM_KEYS.length
     || PLATFORM_KEYS.some(key => !platforms[key]?.signature || !platforms[key]?.url)) {
-    throw new Error('The updater manifest must include all seven signed targets')
+    throw new Error(`The updater manifest must include all ${PLATFORM_KEYS.length} signed targets`)
   }
   return { version, notes, pub_date: pubDate, platforms }
 }

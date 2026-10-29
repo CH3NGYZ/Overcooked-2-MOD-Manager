@@ -4,8 +4,7 @@
   "description": "enables the default permissions",
   "platforms": [
     "macOS",
-    "windows",
-    "linux"
+    "windows"
   ],
   "windows": [
     "main"

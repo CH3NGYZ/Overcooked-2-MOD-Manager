@@ -41,15 +41,14 @@ export function sourceMatchesRegion(source: Pick<RepositorySource, 'region'>, cu
  * 空值 / 缺失 / 无法识别都返回 `''`（全平台可用）——与后端
  * `config::normalize_repository_platform` 保持一致。
  *
- * **`linux` 归入 `windows`**：本项目 Linux 走 Wine 运行 Windows 版 MOD，
- * 与 Windows 用的是同一批文件。不这样归一的话，Linux 上
- * `PublicConfig.platform` 传下来是 `linux`，会被当作「无法识别」，
- * 结果平台上限定 windows 的仓库也被过滤掉。
+ * 合法取值只有 `windows` 与 `macos`（本项目只发布这两个平台）。
+ * 别的值（包括旧配置里的 `linux`）在后端导入时就会被拒绝，
+ * 前端这里按「无法识别」处理，不会把它误判成某个平台。
  */
 export function normalizeRepositoryPlatform(platform: string | undefined): string {
   const value = platform?.trim().toLowerCase()
   if (!value) return ''
-  if (value === 'windows' || value === 'win' || value === 'linux') return 'windows'
+  if (value === 'windows' || value === 'win') return 'windows'
   if (value === 'macos' || value === 'mac' || value === 'osx' || value === 'darwin') return 'macos'
   return ''
 }
@@ -111,8 +110,7 @@ export function repositoryIsAvailable(
 /**
  * 前端运行平台（编译期常量）。
  *
- * 与后端 `config::current_platform` 一致：Linux 归入 `windows` ——
- * 本项目 Linux 走 Wine 运行 Windows 版 MOD，用的是同一批文件。
+ * 与后端 `config::current_platform` 一致：只区分 macOS 与 Windows。
  *
  * Node 下没有 `navigator`（本模块要能被 `node --test` 直接引用），
  * 此时回落到 `windows`：测试里凡是关心平台的都用显式参数，不依赖这里。

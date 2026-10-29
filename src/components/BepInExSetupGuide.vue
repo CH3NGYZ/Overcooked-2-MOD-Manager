@@ -4,7 +4,7 @@
  *
  * 两条分支的操作完全不同，所以各自一套步骤：
  *
- * **CrossOver（macOS / Linux 的 Wine 容器）**
+ * **CrossOver（macOS 的 Wine 容器）**
  *   安装前就要把容器准备好，否则装完也起不来。步骤是「装 CrossOver 字体 →
  *   确认容器 → 安装 BepInEx」，做完点「我已完成所需操作」才真正开始下载安装。
  *

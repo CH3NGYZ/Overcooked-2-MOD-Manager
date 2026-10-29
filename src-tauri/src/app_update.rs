@@ -13,16 +13,13 @@ pub(crate) struct UpdateTarget {
 
 impl UpdateTarget {
     pub(crate) fn current() -> Result<Self, String> {
+        // 只有两种安装包形态参与自动更新：Windows 的 NSIS / MSI 与 macOS 的 .app。
+        // DEB / RPM / AppImage 随 Linux 支持一起移除，落到 `_ => None` 后由
+        // `from_parts` 拒绝，不会尝试下载一个本项目不再产出的包。
         let bundle = match bundle_type() {
             Some(BundleType::Nsis) => Some("exe"),
             Some(BundleType::Msi) => Some("msi"),
-            Some(BundleType::Deb) => Some("deb"),
-            Some(BundleType::Rpm) => Some("rpm"),
-            Some(BundleType::AppImage) => Some("appimage"),
             Some(BundleType::App) => Some("app"),
-            _ if cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some() => {
-                Some("appimage")
-            }
             _ => None,
         };
         Self::from_parts(std::env::consts::OS, std::env::consts::ARCH, bundle)
@@ -37,9 +34,6 @@ impl UpdateTarget {
         let (os, kind) = match (os, bundle) {
             ("windows", Some("msi")) => ("windows", "msi"),
             ("windows", None | Some("exe")) => ("windows", "exe"),
-            ("linux", Some("appimage")) => ("linux", "appimage"),
-            ("linux", Some("deb")) => ("linux", "deb"),
-            ("linux", Some("rpm")) => ("linux", "rpm"),
             ("macos", None | Some("app")) => ("darwin", "app"),
             _ => return Err("当前安装格式不支持自动更新，请手动更新".into()),
         };
@@ -81,25 +75,6 @@ impl UpdateTarget {
                             && bytes[3..].iter().all(u8::is_ascii_alphabetic)
                     })
             }),
-            ("linux", "appimage" | "deb") => arches
-                .iter()
-                .any(|arch| name == format!("{prefix}{arch}.{}", self.kind)),
-            ("linux", "rpm") => {
-                let rpm_prefix = format!("oc2modmanager-{version}-").to_ascii_lowercase();
-                let rpm_arch = if self.arch == "x86_64" {
-                    "x86_64"
-                } else {
-                    "aarch64"
-                };
-                name.strip_prefix(&rpm_prefix)
-                    .and_then(|value| value.strip_suffix(&format!(".{rpm_arch}.rpm")))
-                    .is_some_and(|revision| {
-                        !revision.is_empty()
-                            && revision
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || b"._+~".contains(&byte))
-                    })
-            }
             ("darwin", "app") => arches.iter().any(|arch| {
                 name == format!("oc2modmanager_{arch}.app.tar.gz")
                     || name == format!("{prefix}{arch}.app.tar.gz")
@@ -259,18 +234,6 @@ mod tests {
                 "OC2ModManager_1.2.0_x64_en-US.msi",
             ),
             (
-                target("linux", "x86_64", "appimage"),
-                "OC2ModManager_1.2.0_amd64.AppImage",
-            ),
-            (
-                target("linux", "x86_64", "deb"),
-                "OC2ModManager_1.2.0_amd64.deb",
-            ),
-            (
-                target("linux", "x86_64", "rpm"),
-                "OC2ModManager-1.2.0-1.x86_64.rpm",
-            ),
-            (
                 target("macos", "aarch64", "app"),
                 "OC2ModManager_aarch64.app.tar.gz",
             ),
@@ -312,32 +275,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_other_versions_and_keeps_rpm_revision_separate_from_app_version() {
-        let rpm = target("linux", "x86_64", "rpm");
+    fn rejects_other_versions_and_keeps_msi_locale_separate_from_app_version() {
+        let msi = target("windows", "x86_64", "msi");
         let version = Version::new(1, 2, 0);
-        assert!(rpm.matches_name("OC2ModManager-1.2.0-2.x86_64.rpm", &version));
-        assert!(!rpm.matches_name("OC2ModManager-1.2.0-1.aarch64.rpm", &version));
-        assert!(!rpm.matches_name("OC2ModManager-1.2.1-1.x86_64.rpm", &version));
-        assert!(!rpm.matches_name("OC2ModManager-1.2.0-.x86_64.rpm", &version));
+        assert!(msi.matches_name("OC2ModManager_1.2.0_x64_en-US.msi", &version));
+        assert!(msi.matches_name("OC2ModManager_1.2.0_amd64_zh-CN.msi", &version));
+        assert!(!msi.matches_name("OC2ModManager_1.2.0_arm64_en-US.msi", &version));
+        assert!(!msi.matches_name("OC2ModManager_1.2.1_x64_en-US.msi", &version));
+        assert!(!msi.matches_name("OC2ModManager_1.2.0_x64_.msi", &version));
         assert!(
-            !target("windows", "x86_64", "msi")
-                .matches_name("OC2ModManager_1.2.0_x64_msi.msi", &version)
+            !target("windows", "x86_64", "exe")
+                .matches_name("OC2ModManager_1.2.0_x64-setup.msi", &version)
         );
     }
 
     #[test]
-    fn manifest_keys_never_mix_linux_package_formats_or_mac_architectures() {
+    fn manifest_keys_never_mix_windows_packages_or_mac_architectures() {
         for (os, arch, kind, key) in [
             ("windows", "x86_64", "exe", "windows-x86_64-nsis"),
             ("windows", "x86_64", "msi", "windows-x86_64-msi"),
-            ("linux", "x86_64", "deb", "linux-x86_64-deb"),
-            ("linux", "x86_64", "rpm", "linux-x86_64-rpm"),
-            ("linux", "x86_64", "appimage", "linux-x86_64-appimage"),
             ("macos", "aarch64", "app", "darwin-aarch64-app"),
             ("macos", "x86_64", "app", "darwin-x86_64-app"),
         ] {
             assert_eq!(target(os, arch, kind).manifest_key(), key);
         }
+        // Linux 的三个安装格式随发布目标一起移除：构造它们必须失败。
+        assert!(UpdateTarget::from_parts("linux", "x86_64", Some("deb")).is_err());
         assert!(UpdateTarget::from_parts("linux", "x86_64", None).is_err());
         assert!(UpdateTarget::from_parts("windows", "i686", None).is_err());
     }
@@ -425,14 +388,6 @@ mod tests {
                 "msi",
                 "OC2ModManager_1.2.0_x64_en-US.msi",
             ),
-            (
-                "linux",
-                "x86_64",
-                "appimage",
-                "OC2ModManager_1.2.0_amd64.AppImage",
-            ),
-            ("linux", "x86_64", "deb", "OC2ModManager_1.2.0_amd64.deb"),
-            ("linux", "x86_64", "rpm", "OC2ModManager-1.2.0-1.x86_64.rpm"),
             (
                 "macos",
                 "aarch64",

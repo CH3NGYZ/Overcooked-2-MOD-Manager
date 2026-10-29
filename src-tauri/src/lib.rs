@@ -24,7 +24,7 @@ mod repository_readme;
 mod repository_sources;
 mod update_migration;
 mod user_paths;
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", test))]
 mod user_region;
 #[cfg(any(unix, test))]
 mod wine;

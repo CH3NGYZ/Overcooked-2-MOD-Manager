@@ -2,11 +2,13 @@ export type Provider = 'github' | 'gitee'
 /**
  * 仓库支持的桌面平台。
  *
- * 只发布 Windows 与 macOS 两个平台；Linux 走 Wine 运行 Windows 版 MOD，
- * 因此归入 `windows`。空值 / 缺失表示全平台可用。
+ * 只发布 Windows 与 macOS 两个平台；空值 / 缺失表示全平台可用。
  */
 export type RepositoryPlatform = 'windows' | 'macos' | ''
-export type AppPlatform = 'windows' | 'linux' | 'macos'
+/**
+ * 桌面平台。只保留 Windows 与 macOS —— 本项目不再发布 Linux 版本。
+ */
+export type AppPlatform = 'windows' | 'macos'
 export type GameRuntime = 'wine' | 'native'
 export type Channel = 'stable' | 'beta' | 'all'
 export type ProxyMode = 'direct' | 'auto_direct' | 'auto_proxy' | 'fixed'
@@ -261,7 +263,7 @@ export interface RepositorySourceImportResult {
   access_error: string | null
   builtin_fallback_available: boolean
 }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'appimage' | 'deb' | 'rpm' | 'app'; provider?: Provider; source_channel?: string }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'app'; provider?: Provider; source_channel?: string }
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }

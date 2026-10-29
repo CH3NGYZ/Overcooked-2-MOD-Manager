@@ -216,6 +216,14 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
  *   · 只对官方根调用一次（`builtinFallback: true`），它内部会把整个
  *     内置索引树（含子源）一起展开。
  *
+ * **必须继续递归子源**：内置索引 `repositories.toml` 自己**没有仓库**，
+ * 它只声明子源（`repositories-azhe-hostutilities.toml` 等），仓库都在子源
+ * 文件里。只加载索引会得到「回退成功、子源已写入、但一个仓库都没有」——
+ * 这正是用户报的「报错之后没回退到内置仓库源，列表全空」。
+ * 之前这里只调了一次 `importRepositorySource` 就返回，漏掉了与在线流程
+ * 同一套的 `refreshSourceChain` 递归。现在回退后复用同一个函数展开子源，
+ * 两条路径的子源处理不再分叉。
+ *
  * 返回 `{ fallbackErrors, hasFallenBack }`：
  *   · `fallbackErrors` 用于向用户报告失败原因（成功时为空）；
  *   · `hasFallenBack` 表示这次是否真的发送了内置回退请求。调用方必须用它
@@ -225,7 +233,7 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
 async function fallbackToBuiltinIfOffline(
   sourceErrors: string[],
 ): Promise<{ fallbackErrors: string[]; hasFallenBack: boolean }> {
-  const { sources, repositories } = store()
+  const { sources, repositories, reloadConfig } = store()
   if (!shouldFallbackToBuiltin(sources.value, repositories.value, sourceErrors)) {
     return { fallbackErrors: [], hasFallenBack: false }
   }
@@ -233,21 +241,38 @@ async function fallbackToBuiltinIfOffline(
   const officialRoot = sources.value.find((source) => source.id === OFFICIAL_INDEX_ID)
   if (!officialRoot) return { fallbackErrors: [], hasFallenBack: false }
 
+  const errors: string[] = []
   sourceRefreshing.value[officialRoot.id] = true
   try {
     const result = await api.importRepositorySource(officialRoot.id, officialRoot.url, true)
-    const fallbackErrors = result.access_error
-      ? [`${officialRoot.nickname}: ${result.access_error}`]
-      : []
-    return { fallbackErrors, hasFallenBack: true }
-  } catch (reason) {
-    return {
-      fallbackErrors: [`${officialRoot.nickname}: ${reason instanceof Error ? reason.message : String(reason)}`],
-      hasFallenBack: true,
+    if (result.access_error) {
+      errors.push(`${officialRoot.nickname}: ${result.access_error}`)
+      // 索引本身都没读出来：后面的子源无从谈起
+      return { fallbackErrors: errors, hasFallenBack: true }
     }
+  } catch (reason) {
+    errors.push(`${officialRoot.nickname}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    return { fallbackErrors: errors, hasFallenBack: true }
   } finally {
     sourceRefreshing.value[officialRoot.id] = false
   }
+
+  /*
+   * 索引已写入配置，子源现在才出现在 `sources` 里。
+   * 用和在线流程完全相同的 `refreshSourceChain` 展开它们 ——
+   * 内置子源地址是相对路径，后端 `SourceLocation` 会解析成打包资源，
+   * 不需要任何「内置专用」分支。
+   *
+   * 传空的 visited：根源刚刚已经被单独应用过，这里只需要它的后代。
+   */
+  await reloadConfig()
+  const childErrors = await Promise.all(
+    sources.value
+      .filter((entry) => entry.parent_id === officialRoot.id)
+      .map((child) => refreshSourceChain(child.id, new Set([officialRoot.id]))),
+  )
+  errors.push(...childErrors.flat())
+  return { fallbackErrors: errors, hasFallenBack: true }
 }
 
 /**

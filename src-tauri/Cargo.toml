@@ -40,6 +40,14 @@ sha2 = "0.10"
 zip = "2.2"
 walkdir = "2"
 same-file = "1"
+# DIYLevel 的 info 文件是 Unity AssetBundle（UnityFS），关卡集名/作者/版本
+# 只能从里面解析。SerializedFile 与类型树交给 unityfs（UnityPy 的 Rust 移植）。
+#
+# 容器（UnityFS 头部 + 块表）仍自己解：unityfs 的数据块解压缺 LZMA 分支，
+# 而这份资源恰恰用 LZMA 压缩数据块，用它会把压缩数据当原始数据。
+unityfs = "0.1"
+lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
+lzma-rs = "0.3"
 regex = "1"
 scraper = { version = "0.27", default-features = false }
 globset = "0.4"

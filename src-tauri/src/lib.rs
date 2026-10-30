@@ -1,6 +1,8 @@
 mod api_rate_gate;
 mod app_update;
 mod archive;
+// DIYLevel 关卡集的 info 是 Unity AssetBundle，关卡集名/作者/版本只能从里面解析
+mod asset_bundle;
 mod avatars;
 mod bepinex;
 mod commands;

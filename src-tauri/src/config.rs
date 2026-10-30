@@ -221,11 +221,30 @@ pub(crate) fn repository_is_available(
 /// 加前缀回退是因为源文档里可能只写了 `zh` 或 `en-US` 这类宽标记，
 /// 而界面传来的可能是 `zh-CN`，两者应当能对上。
 pub(crate) fn localized_repository_name(repo: &RepositoryConfig, locale: Option<&str>) -> String {
+    localized_name(&repo.name_i18n, &repo.name, locale)
+}
+
+/// 地图仓库的本地化名称（`MapRepositoryConfig` 的对应入口）。
+pub(crate) fn localized_map_name(
+    map: &crate::models::MapRepositoryConfig,
+    locale: Option<&str>,
+) -> String {
+    localized_name(&map.name_i18n, &map.name, locale)
+}
+
+/// 按界面语言从多语言表取名字，回退到单语言镜像。
+///
+/// 仓库与地图共用同一套规则，差别只在字段来源，所以只保留这一份实现 ——
+/// 两份拷贝迟早在前缀回退或空值处理上分叉。
+fn localized_name(
+    table: &std::collections::BTreeMap<String, String>,
+    mirror: &str,
+    locale: Option<&str>,
+) -> String {
     let Some(locale) = locale.map(str::trim).filter(|value| !value.is_empty()) else {
-        return repo.name.clone();
+        return mirror.to_string();
     };
-    let map = &repo.name_i18n;
-    if let Some(value) = map.get(locale).filter(|value| !value.trim().is_empty()) {
+    if let Some(value) = table.get(locale).filter(|value| !value.trim().is_empty()) {
         return value.clone();
     }
     // 主语言前缀：zh-CN → zh
@@ -234,13 +253,14 @@ pub(crate) fn localized_repository_name(repo: &RepositoryConfig, locale: Option<
         .next()
         .unwrap_or(locale)
         .to_ascii_lowercase();
-    map.iter()
+    table
+        .iter()
         .find(|(key, value)| {
             !value.trim().is_empty()
                 && key.to_ascii_lowercase().split(['-', '_']).next() == Some(primary.as_str())
         })
         .map(|(_, value)| value.clone())
-        .unwrap_or_else(|| repo.name.clone())
+        .unwrap_or_else(|| mirror.to_string())
 }
 
 /// 配置读写失败。

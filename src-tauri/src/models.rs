@@ -1479,6 +1479,13 @@ pub struct MapInfo {
     /// 缓存里最新的 Release tag；没刷新过时为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_tag: Option<String>,
+    /// 缓存里最新的那一条 Release（卡片复用 MOD 卡片时直接喂给版本/下载量）。
+    ///
+    /// 只给界面要显示的字段，和 `latest_tag` 冗余但语义不同：卡片需要
+    /// `assets` 算下载量、需要 `prerelease` 决定版本标记样式。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_release: Option<ReleaseInfo>,
+    /// 当前地区可安装的 Release 数（与 `cached_release_count` 同源）。
     #[serde(default)]
     pub cached_release_count: usize,
     /// Release 缓存时间（Unix 毫秒），用于界面提示「几分钟前」。

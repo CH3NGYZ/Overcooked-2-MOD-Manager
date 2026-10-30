@@ -5697,6 +5697,7 @@ fn map_to_info(
             .cached_releases
             .first()
             .map(|release| release.tag_name.clone()),
+        latest_release: map.cached_releases.first().cloned(),
         cached_release_count: map.cached_releases.len(),
         cached_at: map.releases_cached_at,
         last_error: map.last_error.clone(),
@@ -5847,12 +5848,20 @@ pub async fn refresh_map_releases(
 ///
 /// 流程与 MOD 在线安装同构：选资产 → 下载 → 校验 → 安装。差别只在最后一步：
 /// MOD 走安装清单，地图走「回收旧集 + 写入新集」。
+///
+/// 下载**完全复用** MOD 的候选规划与竞速协调器：GitHub 按自动直连 / 自动代理
+/// 生成多个完整文件源并竞速（最多三个并行，慢的让位），Gitee 只直连且单线程。
+/// 地图以前是单源直下，中国大陆走 Gitee 时慢得没有退路，走 GitHub 时又用不上
+/// 用户配好的代理。
 #[tauri::command]
 pub async fn install_map_release(
+    app: AppHandle,
     state: State<'_, AppState>,
     map_id: String,
     tag: Option<String>,
+    locale: Option<String>,
 ) -> Result<LevelSetImportResult, String> {
+    // 取消标记只在命令入口重置，不能在等待元数据或补充候选之后重置
     archive::start_download();
     let config = state.config.load_or_default();
     let Some(map) = config
@@ -5894,27 +5903,37 @@ pub async fn install_map_release(
         release.tag_name,
         asset.name
     );
-    let client = releases::build_client(config.network.timeout_seconds)
-        .map_err(|error| error.to_string())?;
-    let reporter = archive::DownloadReporter::new(&map.name);
-    let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
-        &client,
-        &asset.download_url,
-        &state.config.cache_dir(),
-        &map.name,
-        &reporter,
-        map.download_threads,
-        Some(std::time::Duration::from_secs(5)),
-    )
-    .await?;
+
     /*
-     * 校验与 ZIP 完整性：坏包绝不能进游戏目录。
+     * 下载候选：与 MOD 资产同一条路径。
      *
-     * Gitee 不提供 GitHub 那种 SHA-256 摘要，所以摘要校验只对 GitHub 生效；
+     * 地图只分发 ZIP，所以 `is_raw_file` 恒为 false；代理模式按平台与地区取
+     * `selected_asset_proxy_mode` 的默认值（Gitee 恒直连）。
+     */
+    let proxy_mode =
+        selected_asset_proxy_mode(None, &map.provider, crate::config::current_user_region());
+    let proxy_entries: &[GitHubProxy] = if map.provider == Provider::Github {
+        &config.github_proxies.release_proxies
+    } else {
+        &[]
+    };
+    let proxy_urls = asset_proxy_urls(
+        proxy_entries,
+        &asset.download_url,
+        false,
+        "",
+        "",
+        proxy_mode,
+        None,
+    );
+    let candidates = plan_asset_download_candidates(proxy_mode, &asset.download_url, proxy_urls)?;
+
+    // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
+    let expected_size = (asset.size > 0).then_some(asset.size);
+    /*
+     * 摘要校验只对 GitHub 生效：Gitee 不提供 SHA-256。
      * 长度与 ZIP 结构校验两边都做。
      */
-    // size 是 u64（0 表示未知），只有正值才参与校验
-    let expected_size = (asset.size > 0).then_some(asset.size);
     let digest = if map.provider == Provider::Github {
         asset
             .digest
@@ -5923,12 +5942,80 @@ pub async fn install_map_release(
     } else {
         None
     };
-    let validation = archive::validate_download_file(&temp, expected_size, digest)
-        .and_then(|_| archive::validate_zip(&temp));
-    if let Err(error) = validation {
-        let _ = fs::remove_file(&temp);
-        return Err(error);
-    }
+    let download_name = asset.name.clone();
+    /*
+     * 进度标签与预览标题用界面语言下的地图名：进度事件在下载过程中持续发出，
+     * 名称必须在开始前算好。
+     */
+    let display_name = crate::config::localized_map_name(&map, locale.as_deref());
+
+    let client = releases::build_download_client(config.network.timeout_seconds)
+        .map_err(|error| error.to_string())?;
+    /*
+     * 线程数：GitHub 用仓库配置；Gitee 恒 1。
+     * 竞速时每个源只开 1 个分片连接（`racing` 时传 1），否则三源 × N 分片会
+     * 把带宽切得太碎，反而更慢 —— 与 MOD 侧完全相同的取舍。
+     */
+    let configured_threads = match map.provider {
+        Provider::Github => map.download_threads.clamp(0, 32),
+        Provider::Gitee => 1,
+    };
+    let racing = candidates.len() > 1;
+    log::debug!(
+        "地图下载候选准备完成：地图={}，平台={:?}，候选数={}，线程数={}，竞速={}",
+        map.name,
+        map.provider,
+        candidates.len(),
+        configured_threads,
+        racing
+    );
+
+    let cache_dir = state.config.cache_dir();
+    let temp = try_asset_download_candidates(
+        candidates,
+        archive::is_download_cancelled,
+        |candidate, reporter| {
+            let client = &client;
+            let cache_dir = &cache_dir;
+            let label = &display_name;
+            let is_zip = download_name.to_ascii_lowercase().ends_with(".zip");
+            async move {
+                let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
+                    client,
+                    &candidate.url,
+                    cache_dir,
+                    label,
+                    &reporter,
+                    if racing { 1 } else { configured_threads },
+                    Some(std::time::Duration::from_secs(5)),
+                )
+                .await?;
+                let validation = archive::validate_download_file(&temp, expected_size, digest)
+                    .and_then(|_| {
+                        if is_zip {
+                            archive::validate_zip(&temp)
+                        } else {
+                            Ok(())
+                        }
+                    });
+                if let Err(error) = validation {
+                    let _ = fs::remove_file(&temp);
+                    return Err(error);
+                }
+                Ok(temp)
+            }
+        },
+        Some(DownloadContext {
+            app: Some(&app),
+            label: &display_name,
+            expected_size,
+        }),
+    )
+    .await
+    .map_err(|error| {
+        log::error!("地图资产下载失败：地图={}，原因={}", map.name, error);
+        error
+    })?;
 
     /*
      * 交给关卡集安装器：按 ZIP 里 info 的集名落盘，并**先回收**同名关卡集。

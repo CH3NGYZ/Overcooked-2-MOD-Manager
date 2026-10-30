@@ -74,6 +74,73 @@ pub struct DiyLevelInfo {
     pub backups: Vec<String>,
 }
 
+/// 一个 DIYLevel 关卡集（玩家口中的「地图」）在磁盘上的状态。
+///
+/// 与 `InstalledMod` 的关系：两者都是「游戏目录里的东西 + 元数据」，但扫描源
+/// 与身份都不同 —— MOD 靠 BepInPlugin 的 GUID，关卡集靠 info 里的
+/// `levelSetName + author`。界面复用同一套卡片样式，数据不共用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelSetInfo {
+    /// 目录名（唯一键，也是开关时移动的目录名）。
+    pub dir_name: String,
+    /// `true` = 在 `levels/`；`false` = 在 `disabled/`。
+    pub enabled: bool,
+    /// info 里的英文集名；解析失败时为空。
+    #[serde(default)]
+    pub name: String,
+    /// info 里的中文集名；老资源或解析失败时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_zh: Option<String>,
+    /// info 里的作者；官方导出常为空。
+    #[serde(default)]
+    pub author: String,
+    /// info 里的版本号（地图自己的版本，与 Release tag 比对）。
+    #[serde(default)]
+    pub version: String,
+    /// info 里的 uid（= MD5(baseUID + version)，随版本变化，不能当稳定身份）。
+    #[serde(default)]
+    pub uid: String,
+    /// info 里的 baseUID（稳定身份；老导出可能为空）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_uid: Option<String>,
+    /// 关卡数量（按 info 里 `levelInfos` 的声明统计，不是对象表）。
+    #[serde(default)]
+    pub level_count: usize,
+    /// 解析失败的原因（tag）；成功时为 `None`。
+    ///
+    /// **解析失败不影响开关**：界面照常显示目录名，用户仍可把它移出去。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// ZIP 里识别出的一个关卡集（导入前给用户确认用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZipLevelSet {
+    /// 导入后使用的目录名（由集名推导，已清理非法字符）。
+    pub dir_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_zh: Option<String>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub level_count: usize,
+    /// 该关卡集在 ZIP 里的文件数。
+    #[serde(default)]
+    pub file_count: usize,
+    /// 目标位置是否已有同名目录（界面据此提示「将覆盖并回收旧版本」）。
+    #[serde(default)]
+    pub exists: bool,
+}
+
+/// ZIP 导入结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelSetImportResult {
+    pub installed: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstalledModStatusLabel {

@@ -183,6 +183,49 @@ export interface DiyLevelInfo {
   backups?: string[]
 }
 export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
+
+/**
+ * 一个 DIYLevel 关卡集（玩家口中的「地图」）。
+ *
+ * 与 `InstalledMod` 是两套数据：MOD 靠 BepInPlugin 的 GUID 识别、由 BepInEx
+ * 加载；关卡集是 `levels/` 下的一个目录、由 DIYLevel 读取。界面复用同一套
+ * 卡片样式，模型刻意不合并 —— 合并后每个使用点都要判「这是哪种」。
+ */
+export interface LevelSetInfo {
+  /** 目录名（唯一键，也是开关时移动的目录名）。 */
+  dir_name: string
+  /** `true` = 在 `levels/`；`false` = 在 `disabled/`。 */
+  enabled: boolean
+  /** info 里的英文集名；解析失败时为空。 */
+  name: string
+  name_zh?: string | null
+  /** info 里的作者；官方导出常为空。 */
+  author: string
+  /** 地图自己的版本号（与 Release tag 比对）。 */
+  version: string
+  /** MD5(baseUID + version)：随版本变化，不能当稳定身份。 */
+  uid: string
+  /** 稳定身份（老导出可能为空）。 */
+  base_uid?: string | null
+  /** 关卡数（按 info 里 levelInfos 的声明统计）。 */
+  level_count: number
+  /** 解析失败的原因（tag）；成功时无此字段。 */
+  error?: string | null
+}
+
+/** ZIP 里识别出的一个关卡集（导入前确认用）。 */
+export interface ZipLevelSet {
+  dir_name: string
+  name: string
+  name_zh?: string | null
+  author: string
+  version: string
+  level_count: number
+  file_count: number
+  /** 目标位置是否已有同名目录（会回收旧版本）。 */
+  exists: boolean
+}
+
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
 export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'checking' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency' | 'missing_dependency' | 'dependency_conflict'
 export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_name_i18n?: Record<string, string>; package_mod_count?: number; group_i18n?: Record<string, string>; group?: string; prerelease?: boolean; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; has_logs?: boolean; plugin_name?: string; manual_install?: boolean; is_dependency?: boolean; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; labels?: InstalledModStatusLabel[]; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }

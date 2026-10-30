@@ -153,4 +153,18 @@ export const message: DomainMessages = {
     ko: 'MOD {count}개를 비활성화했습니다',
     ja: '{count} 個の MOD を無効にしました',
   },
+  'levelSet.enabled': {
+    'zh-CN': '地图已启用',
+    'zh-TW': '地圖已啟用',
+    en: 'Map enabled',
+    ko: '지도를 활성화했습니다',
+    ja: 'マップを有効にしました',
+  },
+  'levelSet.disabled': {
+    'zh-CN': '地图已停用',
+    'zh-TW': '地圖已停用',
+    en: 'Map disabled',
+    ko: '지도를 비활성화했습니다',
+    ja: 'マップを無効にしました',
+  },
 }

@@ -23,6 +23,7 @@ import {
 } from './misc.ts'
 import { mods } from './mods.ts'
 import { backup, modConfig, modPreview } from './modsFiles.ts'
+import { levelSet } from './levelSet.ts'
 import { community, proxy } from './network.ts'
 import { source } from './source.ts'
 import { migrate, update } from './update.ts'
@@ -117,6 +118,7 @@ const TABLES: DomainTable[] = [
   { domain: 'backup', messages: backup },
   { domain: 'modConfig', messages: modConfig },
   { domain: 'modPreview', messages: modPreview },
+  { domain: 'levelSet', messages: levelSet },
   { domain: 'community', messages: community },
   { domain: 'proxy', messages: proxy },
   { domain: 'source', messages: source },

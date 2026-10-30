@@ -5375,6 +5375,171 @@ pub fn set_diy_level_enabled(
     })
 }
 
+// ===== 地图（DIYLevel 关卡集）管理 =====
+//
+// 与 MOD 管理是两套数据：MOD 靠 BepInPlugin 的 GUID 识别，关卡集靠 info 里的
+// `levelSetName + author`。界面复用同一套卡片样式，但扫描、开关、安装各自
+// 独立 —— 硬把两者塞进一个模型会让每处调用都要判「这是 MOD 还是地图」。
+
+/// 把内部扫描结果转成 IPC 模型。
+fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
+    let metadata = set.metadata;
+    LevelSetInfo {
+        dir_name: set.dir_name,
+        enabled: set.enabled,
+        name: metadata
+            .as_ref()
+            .map(|meta| meta.name.clone())
+            .unwrap_or_default(),
+        name_zh: metadata.as_ref().and_then(|meta| meta.name_zh.clone()),
+        author: metadata
+            .as_ref()
+            .map(|meta| meta.author.clone())
+            .unwrap_or_default(),
+        version: metadata
+            .as_ref()
+            .map(|meta| meta.version.clone())
+            .unwrap_or_default(),
+        uid: metadata
+            .as_ref()
+            .map(|meta| meta.uid.clone())
+            .unwrap_or_default(),
+        base_uid: metadata.as_ref().and_then(|meta| meta.base_uid.clone()),
+        level_count: metadata.as_ref().map(|meta| meta.levels.len()).unwrap_or(0),
+        error: set.error,
+    }
+}
+
+/// 列出全部关卡集（启用与停用）。
+///
+/// 只读：不创建 `levels/`，不要求游戏已停止 —— 打开页面就能看到现状。
+/// 未找到游戏目录时返回空列表而不是报错：地图页在没有厨房的情况下也该能打开。
+#[tauri::command]
+pub fn get_level_sets(state: State<'_, AppState>) -> Result<Vec<LevelSetInfo>, String> {
+    let config = state.config.load_or_default();
+    let Some(game_root) = game::detect_game(&config).path else {
+        return Ok(Vec::new());
+    };
+    let sets = crate::level_sets::scan_level_sets(&PathBuf::from(game_root));
+    log::debug!("关卡集列表读取完成：数量={}", sets.len());
+    Ok(sets.into_iter().map(level_set_to_info).collect())
+}
+
+/// 启用或停用一个关卡集（在 `levels/` 与 `disabled/` 之间移动目录）。
+///
+/// 会改磁盘，所以要求游戏已停止 —— 与 MOD 开关同一条约束：游戏运行时改
+/// 插件目录里的内容，轻则本次不生效，重则读到半个文件。
+#[tauri::command]
+pub fn set_level_set_enabled(
+    state: State<'_, AppState>,
+    dir_name: String,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    log::info!("切换关卡集状态：目录={}，启用={}", dir_name, enabled);
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    // 移动目录在游戏运行时不安全（DLL 正在枚举 levels/），按策略拦下
+    crate::level_sets::ensure_operation_allowed(
+        &game_root,
+        crate::level_sets::LevelSetOperation::Toggle,
+    )?;
+    crate::level_sets::set_level_set_enabled(&game_root, &dir_name, enabled)?;
+    Ok(OperationResult {
+        ok: true,
+        message: if enabled {
+            "message.levelSet.enabled".into()
+        } else {
+            "message.levelSet.disabled".into()
+        },
+    })
+}
+
+/// 读一个 ZIP，列出其中的关卡集（不落盘，供导入前确认）。
+///
+/// `exists` 标记目标位置是否已有同名目录 —— 界面据此提示「会回收旧版本」，
+/// 与真正安装时的判定保持一致。
+#[tauri::command]
+pub fn inspect_level_set_zip(
+    state: State<'_, AppState>,
+    zip_path: String,
+) -> Result<Vec<ZipLevelSet>, String> {
+    let config = state.config.load_or_default();
+    let path = PathBuf::from(&zip_path);
+    let sets = crate::level_sets::inspect_zip(&path)?;
+    let levels_dir = game::detect_game(&config)
+        .path
+        .map(|root| PathBuf::from(root).join("BepInEx/plugins/OC2DIYLevel/levels"));
+    Ok(sets
+        .into_iter()
+        .map(|set| {
+            let exists = levels_dir
+                .as_ref()
+                .is_some_and(|dir| dir.join(&set.dir_name).exists());
+            ZipLevelSet {
+                exists,
+                dir_name: set.dir_name,
+                name: set.metadata.name,
+                name_zh: set.metadata.name_zh,
+                author: set.metadata.author,
+                version: set.metadata.version,
+                level_count: set.metadata.levels.len(),
+                file_count: set.files.len(),
+            }
+        })
+        .collect())
+}
+
+/// 从本地 ZIP 导入选定的关卡集。
+///
+/// 已存在的同名关卡集会被**回收**（进回收站），而不是直接删除。
+#[tauri::command]
+pub fn import_level_sets(
+    state: State<'_, AppState>,
+    zip_path: String,
+    selected: Vec<String>,
+) -> Result<LevelSetImportResult, String> {
+    log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    /*
+     * 安装是新增内容，游戏运行时也允许 —— 写的是本次启动还没扫描过的新目录。
+     * 用策略而不是直接 `ensure_game_stopped`：开关仍然需要停止游戏，
+     * 两者的差异集中在一处声明。
+     */
+    crate::level_sets::ensure_operation_allowed(
+        &game_root,
+        crate::level_sets::LevelSetOperation::Install,
+    )?;
+
+    /*
+     * 逐个集安装，而不是一次性全装。
+     *
+     * `install_level_set` 负责「先回收再写入」，但它的签名是「一个 ZIP 一个集」。
+     * 多集 ZIP 在这里循环调用；任一失败就停下并保留已成功的（它们已经在
+     * 磁盘上且各自的旧版本已回收），错误如实上报 —— 悄悄跳过会让用户以为
+     * 全装上了。
+     */
+    let mut installed = Vec::new();
+    for name in &selected {
+        let single = crate::level_sets::install_from_zip(
+            &PathBuf::from(&zip_path),
+            &game_root,
+            std::slice::from_ref(name),
+        )?;
+        installed.extend(single);
+    }
+    log::info!("关卡集导入完成：数量={}", installed.len());
+    Ok(LevelSetImportResult { installed })
+}
+
 /// 卸载 DIYLevel 框架（先自动备份，再按安装清单回收）。
 ///
 /// 与 `uninstall_bepinex` 同一套顺序：**先整目录备份，再回收文件**。

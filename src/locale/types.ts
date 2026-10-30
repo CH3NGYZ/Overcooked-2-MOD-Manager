@@ -66,6 +66,7 @@ export const DOMAINS = [
   'mods',        // MOD 扫描、开关、安装
   'modConfig',   // MOD 配置文件编辑
   'modPreview',  // MOD 预览
+  'levelSet',    // DIYLevel 关卡集（地图）的扫描、开关与导入
   'backup',      // 框架备份
   'archive',     // ZIP 解压与安装
   'download',    // 下载

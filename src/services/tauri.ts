@@ -4,12 +4,32 @@ import { open } from '@tauri-apps/plugin-dialog'
 // 只读当前界面语言（用于让后端选择仓库的本地化名称）；不引入任何 UI 依赖
 import { locale } from '../i18n'
 import type {
-  AppUpdateChannelEvent, AppUpdateCheckResult, AppUpdatePhaseEvent, BepInExInstallResult,
-  Dashboard, DiyLevelInfo, DownloadProgress, GameInfo, ModConfigDocument, ModPreview, ModRecycleEntry, ModSourceKind,
-  OperationResult, PermissionStatus, Provider,
-  PublicConfig, ReleaseInfo, RepositoryInstallOutcome, RepositoryReadme, RepositorySourceImportResult,
-  RustLog, SettingsPatch,
-  TokenPatch, UninstallLocalModResult,
+  AppUpdateChannelEvent,
+  AppUpdateCheckResult,
+  AppUpdatePhaseEvent,
+  BepInExInstallResult,
+  Dashboard,
+  DiyLevelInfo,
+  DownloadProgress,
+  GameInfo,
+  ModConfigDocument,
+  ModPreview,
+  ModRecycleEntry,
+  ModSourceKind,
+  OperationResult,
+  PermissionStatus,
+  Provider,
+  PublicConfig,
+  ReleaseInfo,
+  RepositoryInstallOutcome,
+  RepositoryReadme,
+  RepositorySourceImportResult,
+  RustLog,
+  SettingsPatch,
+  TokenPatch,
+  UninstallLocalModResult,
+  LevelSetInfo,
+  ZipLevelSet,
 } from '../types'
 
 let gameStateRevision = 0
@@ -134,6 +154,33 @@ export const api = {
   openBepInExDirectory: () => invoke<OperationResult>('open_bepinex_directory'),
   /** DIYLevel 自定义关卡框架状态（GUID 判定，与 MOD 列表同源）。 */
   diyLevelInfo: () => invoke<DiyLevelInfo>('get_diy_level_info'),
+
+  /*
+   * 地图（DIYLevel 关卡集）管理。
+   *
+   * 与 MOD 的 api 刻意分开：两者扫描源、身份和安装单元都不同。共用的是
+   * 界面组件与样式，不是数据通道。
+   */
+  /** 列出全部关卡集（启用与停用）。只读，游戏运行时也可调用。 */
+  levelSets: () => invoke<LevelSetInfo[]>('get_level_sets'),
+  /**
+   * 启用或停用一个关卡集（移动目录）。
+   *
+   * 游戏运行时会失败并返回 `levelSet.gameRunning` —— 移动 `levels/` 里的
+   * 目录可能与 DLL 正在做的枚举冲突，这条约束在实机验证前不放行。
+   */
+  setLevelSetEnabled: (dirName: string, enabled: boolean) =>
+    invoke<OperationResult>('set_level_set_enabled', { dirName, enabled }),
+  /** 读 ZIP 列出其中的关卡集，不落盘。 */
+  inspectLevelSetZip: (zipPath: string) =>
+    invoke<ZipLevelSet[]>('inspect_level_set_zip', { zipPath }),
+  /**
+   * 从本地 ZIP 导入选定的关卡集。
+   *
+   * 已存在的同名关卡集会被回收（进回收站），不是直接删除。游戏运行时允许。
+   */
+  importLevelSets: (zipPath: string, selected: string[]) =>
+    invoke<{ installed: string[] }>('import_level_sets', { zipPath, selected }),
   /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */
   setDiyLevelEnabled: (enabled: boolean) =>
     invoke<OperationResult>('set_diy_level_enabled', { enabled }),
@@ -178,6 +225,12 @@ export const api = {
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
+  /** 选择要导入的地图 ZIP。 */
+  chooseLevelSetZip: () => open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'ZIP', extensions: ['zip'] }],
+  }),
   /** 选择要安装的本地 MOD 文件（DLL 或 ZIP）。 */
   chooseModFile: () => open({
     multiple: false,

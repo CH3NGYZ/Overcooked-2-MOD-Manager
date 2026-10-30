@@ -58,6 +58,58 @@ const LEVELS_DIR: &str = "levels";
 /// 「.disabled」的关卡集去加载 `info`，找不到就刷一条错误。
 const DISABLED_DIR: &str = "disabled";
 
+/// 游戏运行时是否允许「移动目录」这类关卡集操作。
+///
+/// ## 为什么安装可以、开关不行
+///
+/// 安装是**新增**：写一个游戏本次启动还没扫描过的新目录，即使游戏正在运行，
+/// DIYLevel 也只会把它当成「下次启动才出现的地图」，不会读到半个文件。
+///
+/// 开关是**移动**：DLL 正在 `levels/` 下按目录枚举并加载 `info`，此时把目录
+/// 挪到 `disabled/` 会让它正在读的路径消失。卸载（删除）同理。
+///
+/// ## 为什么做成常量而不是直接禁死
+///
+/// 这条约束**尚未实机验证**。用户会手动测试「游戏运行时把目录移到
+/// `disabled/`」是否安全，确认没问题后把这个常量改成 `true` 即可放开。
+///
+/// 判定集中在一处，就不会出现「安装放开了、开关忘了拦」这种半放开状态。
+pub(crate) const ALLOW_LEVEL_SET_TOGGLE_WHILE_RUNNING: bool = false;
+
+/// 关卡集写操作的类型，决定游戏运行时是否放行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelSetOperation {
+    /// 安装 / 更新：新增内容，运行时允许。
+    Install,
+    /// 启用 / 停用：移动目录，运行时不安全（待实机验证）。
+    Toggle,
+}
+
+impl LevelSetOperation {
+    /// 该操作在游戏运行时是否允许。
+    pub(crate) fn allowed_while_running(self) -> bool {
+        match self {
+            Self::Install => true,
+            Self::Toggle => ALLOW_LEVEL_SET_TOGGLE_WHILE_RUNNING,
+        }
+    }
+}
+
+/// 按操作类型决定是否需要「游戏已停止」。
+///
+/// 所有关卡集写操作都必须走这里，不要在命令里各写一次 `ensure_game_stopped`
+/// —— 策略一改就得改多处，早晚漏掉一处。
+pub fn ensure_operation_allowed(
+    game_root: &Path,
+    operation: LevelSetOperation,
+) -> Result<(), String> {
+    if !operation.allowed_while_running() && crate::game::is_game_running(game_root) {
+        log::warn!("关卡集操作被拒绝：游戏仍在运行，操作={operation:?}");
+        return Err("levelSet.gameRunning".into());
+    }
+    Ok(())
+}
+
 /// 单个关卡集在磁盘上的状态。
 #[derive(Debug, Clone)]
 pub struct LevelSetOnDisk {

@@ -243,17 +243,25 @@ pub(crate) fn localized_repository_name(repo: &RepositoryConfig, locale: Option<
         .unwrap_or_else(|| repo.name.clone())
 }
 
+/// 配置读写失败。
+///
+/// `#[error]` 的值是**给 thiserror 的模板**，不是普通字符串：末尾的 `: {0}`
+/// 必须保留，否则会把具体原因（哪个文件、哪一行解析失败）整个丢掉 ——
+/// 用户只看到「配置格式无效」却不知道哪里错了，日志里也查不到。
+///
+/// 前端翻译时按 `error.<域>.<原因>` 的约定识别 tag 前缀，冒号后面是
+/// 参数（技术细节，原样展示）。
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConfigError {
-    #[error("config.directoryUnavailableReason")]
+    #[error("config.directoryUnavailableReason: {0}")]
     Directory(String),
-    #[error("config.readFailedReason")]
+    #[error("config.readFailedReason: {0}")]
     Read(String),
-    #[error("config.parseFailedReason")]
+    #[error("config.parseFailedReason: {0}")]
     Parse(String),
-    #[error("config.writeFailedReason")]
+    #[error("config.writeFailedReason: {0}")]
     Write(String),
-    #[error("config.invalidFormatReason")]
+    #[error("config.invalidFormatReason: {0}")]
     Invalid(String),
 }
 
@@ -1664,6 +1672,7 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         ignored_version: None,
         etag: None,
         cached_releases: Vec::new(),
+        releases_cached_at: None,
         last_error: None,
     }
 }
@@ -1870,7 +1879,7 @@ value = "RegionalMod.dll"
         // 无法识别的平台：验证阶段拒绝整条仓库（不是静默忽略）
         let invalid = REGION_REPOSITORY.replace("channel =", "platform = \"linux\"\nchannel =");
         let error = crate::repository_sources::parse_document(&invalid, &location).unwrap_err();
-        assert!(error.to_string().contains("平台无效"), "{error}");
+        assert!(error.to_string().contains("invalidPlatform"), "{error}");
     }
 
     /// 平台不适用时，repository_is_available 与地区不适用表现完全一致。
@@ -3324,24 +3333,24 @@ note_i18n.zh-CN = "中文备注""#,
             (
                 r#"name_i18n.zh-CN = "名称"
 note_i18n.zh-CN = """#,
-                "group_i18n.zh-CN",
+                "config.missingGroupI18n",
             ),
             (
                 r#"name_i18n.zh-CN = "名称"
 group_i18n.zh-CN = """#,
-                "note_i18n.zh-CN",
+                "config.missingNoteI18n",
             ),
             (
                 r#"name_i18n.zh-CN = ""
 group_i18n.zh-CN = ""
 note_i18n.zh-CN = """#,
-                "name_i18n.zh-CN",
+                "config.emptyNameI18n",
             ),
             (
                 r#"name_i18n.en = "English name"
 group_i18n.zh-CN = ""
 note_i18n.zh-CN = """#,
-                "name_i18n.zh-CN",
+                "config.missingNameI18n",
             ),
         ] {
             let error = service.validate_bundle(&bundle_for(metadata)).unwrap_err();
@@ -3642,7 +3651,10 @@ mod dependency_validation_tests {
         for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
             let entry = relation(kind, "", "", true);
             let error = validate_repository(&base_export(vec![entry])).unwrap_err();
-            assert!(error.to_string().contains("不能标记 optional"), "{error}");
+            assert!(
+                error.to_string().contains("relationOptionalUnsupported"),
+                "{error}"
+            );
         }
     }
 
@@ -3656,7 +3668,7 @@ mod dependency_validation_tests {
             relations: Vec::new(),
         });
         let error = validate_repository(&export).unwrap_err();
-        assert!(error.to_string().contains("至少指定"), "{error}");
+        assert!(error.to_string().contains("relationsEmpty"), "{error}");
     }
 
     /*
@@ -3674,7 +3686,7 @@ mod dependency_validation_tests {
         entry.guid = "com.example.owner".into();
         export.relations = vec![entry];
         let error = validate_repository(&export).unwrap_err();
-        assert!(error.to_string().contains("指向自己的 GUID"), "{error}");
+        assert!(error.to_string().contains("relationSelfGuid"), "{error}");
     }
 
     /// 带了 prerelease 的自冲突是合法写法（正式版排斥测试版）。
@@ -3697,7 +3709,10 @@ mod dependency_validation_tests {
         let mut entry = relation(RelationKind::Requires, "", "", false);
         entry.prerelease = Some(true);
         let error = validate_repository(&base_export(vec![entry])).unwrap_err();
-        assert!(error.to_string().contains("不能限定 prerelease"), "{error}");
+        assert!(
+            error.to_string().contains("relationRequiresPrerelease"),
+            "{error}"
+        );
     }
 }
 

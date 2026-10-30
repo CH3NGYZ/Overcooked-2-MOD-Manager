@@ -172,9 +172,15 @@ test('仓库源导入的 tag 在五语下都有翻译', () => {
 
 test('前端不直接显示后端 message（必须经过桥接层）', () => {
   /*
-   * 这是「弹窗通知没多语言」的根因：只要有一处直接
-   * `message.error(result.message)`，那条提示就永远是后端语言。
-   * 桥接层存在后仍可能有人写回旧写法，所以扫源码守住。
+   * 这是「弹窗通知没多语言」的根因，也是用户实际报过的两个症状：
+   *
+   *   1. `message.success(result.message || t('兜底'))` —— 点了「推送到
+   *      街机MOD」，toast 直接显示裸 tag `rename.pushed`；
+   *   2. `error.value = reason instanceof Error ? reason.message : ...`
+   *      —— 页面上的错误条显示后端 tag。
+   *
+   * 两种形态的共性是：后端字符串被**存进**某个会渲染的位置，中间没经过
+   * 桥接。所以扫描要盯「存进展示位置」这个动作，而不只是 toast 调用。
    */
   const offenders = []
   const files = []
@@ -190,22 +196,95 @@ test('前端不直接显示后端 message（必须经过桥接层）', () => {
   }
   walk(SRC.pathname.replace(/^\/([A-Za-z]:)/, '$1'))
 
+  /*
+   * 三种合法写法，避免误报：
+   *
+   *   1. 行内桥接：语句里出现 translateBackendMessage / backendMessageOf；
+   *   2. 收口桥接：值交给**内部已桥接**的函数（如 markFailed）；
+   *   3. 前端日志：`writeFrontendLog` / `console.*` 不是界面文案，不翻译。
+   *
+   * 跨行调用（`message.success(result.message\n ? translate…`）也要认，
+   * 所以判断的是「当前行 + 后几行」而不是单行。
+   */
+  const BRIDGED = /\b(translateBackendMessage|backendMessageOf)\b/
+  const SINK_FUNCTIONS = ['markFailed']
+  const NOT_UI = /writeFrontendLog|console\.(log|warn|error|info|debug)/
+
+  /** 会渲染到界面的接收位置。 */
+  const DISPLAY_SINKS = [
+    /message\.(error|success|warning|info)\(/,
+    /\bphaseText\b/,
+    /\bmarkFailed\(/,
+    /failures\.value/,
+    /\berror\.value\s*=/,
+    /\blastErrors\.value\b/,
+  ]
+  /** 后端字符串的来源。 */
+  const BACKEND_VALUES = /(result|outcome|confirmed)\.message|reason instanceof Error \? reason\.message|String\(reason\)|String\(error\)/
+
   for (const file of files) {
     const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
-    for (const [index, line] of text.split('\n').entries()) {
-      const trimmed = line.trimStart()
-      if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue
-      // 裸显示后端 message：没有包在 translateBackendMessage / backendMessageOf 里
-      if (/message\.(error|success|warning)\((result|outcome)\.message\)/.test(line)) {
-        offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${index + 1}`)
-      }
-      if (/message\.(error|warning)\(reason instanceof Error \? reason\.message/.test(line)) {
-        offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${index + 1}`)
-      }
+    const lines = text.split('\n')
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i].trimStart()
+      if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue
+      if (!DISPLAY_SINKS.some((re) => re.test(lines[i]))) continue
+      if (!BACKEND_VALUES.test(lines[i])) continue
+      if (NOT_UI.test(lines[i])) continue
+
+      /*
+       * 先看**当前行**：只要这一行自己就带桥接，直接放行。
+       *
+       * 下面按语句扫描是为了认出跨行写法，但那个扫描在
+       * `result.ok ? message.success(translate…) : …` 里会在 `?` 处截断，
+       * 把已经桥接好的调用误判成裸用法 —— 所以不能只靠它。
+       */
+      if (BRIDGED.test(lines[i])) continue
+
+      /*
+       * 只取**当前语句**，不能取「后几行」。
+       *
+       * 曾经用后 4 行做窗口，结果 `result.ok ? A : message.error(translate…)`
+       * 这种三元表达式里，下一行的桥接把上一行的裸用法一起「洗白」了 ——
+       * 明明是同一处 bug，护栏却永远报绿。
+       */
+      const statement = collectStatement(lines, i)
+      if (BRIDGED.test(statement)) continue
+      if (SINK_FUNCTIONS.some((fn) => statement.includes(`${fn}(`))) continue
+      offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${i + 1}  ${lines[i].trim().slice(0, 90)}`)
     }
   }
   assert.deepEqual(offenders, [], `这些位置绕过了翻译桥接：\n  ${offenders.join('\n  ')}`)
 })
+
+/**
+ * 从第 `start` 行起，取出属于同一个表达式的文本。
+ *
+ * 规则：一直读到**未闭合的括号归零**且遇到语句终止符（`;` `,` 或三元分支
+ * 的 `?` `:`）为止。这样 `cond ? a : b` 的两臂各自独立，互相不会把对方的
+ * 桥接借过来。
+ */
+function collectStatement(lines, start) {
+  let depth = 0
+  let out = ''
+  for (let i = start; i < lines.length; i += 1) {
+    const line = lines[i]
+    for (let c = 0; c < line.length; c += 1) {
+      const ch = line[c]
+      if (ch === '(') depth += 1
+      else if (ch === ')') depth -= 1
+      // 深度归零后遇到分支/语句分隔符，就到此为止
+      if (depth <= 0 && (ch === '?' || ch === ':' || ch === ';' || ch === ',')) {
+        return out
+      }
+      out += ch
+    }
+    out += '\n'
+    // 上一行是完整语句且不以运算符结尾时结束
+    if (depth <= 0 && !/[?+:.,&|(]$/.test(line.trimEnd())) return out
+  }
+  return out
+}
 
 test('下载与归档的 tag 在五语下都有翻译', () => {
   const tags = [

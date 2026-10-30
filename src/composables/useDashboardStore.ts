@@ -1,5 +1,6 @@
 import { computed, ref, shallowRef } from 'vue'
 import { api, watchGameState } from '../services/tauri'
+import { backendMessageOf } from '../locale/backend'
 import type { Dashboard, GameInfo, PublicConfig } from '../types'
 
 /**
@@ -65,7 +66,7 @@ export function useDashboard() {
     try {
       dashboard.value = await readDashboard()
     } catch (reason) {
-      error.value = reason instanceof Error ? reason.message : String(reason)
+      error.value = backendMessageOf(reason)
     } finally {
       if (initial) loading.value = false
       else backgroundLoading.value = Math.max(0, backgroundLoading.value - 1)
@@ -94,7 +95,7 @@ export function useDashboard() {
       }
       dashboard.value = { ...current, config }
     } catch (reason) {
-      error.value = reason instanceof Error ? reason.message : String(reason)
+      error.value = backendMessageOf(reason)
     }
   }
 

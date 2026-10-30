@@ -92,7 +92,7 @@ async function load() {
     content.value = document.content
   } catch (reason) {
     if (token !== loadToken) return
-    error.value = reason instanceof Error ? reason.message : String(reason)
+    error.value = backendMessageOf(reason)
   } finally {
     if (token === loadToken) loading.value = false
   }

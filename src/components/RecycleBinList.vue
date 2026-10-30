@@ -49,7 +49,7 @@ async function reload() {
   try {
     entries.value = await api.getModRecycleBin()
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : String(reason)
+    error.value = backendMessageOf(reason)
   } finally {
     loading.value = false
   }
@@ -81,7 +81,7 @@ async function restore(entry: ModRecycleEntry) {
   try {
     const result = await api.restoreRecycledMod(entry.id)
     if (result.ok) {
-      message.success(result.message || t('overlays.restore'))
+      message.success(result.message ? translateBackendMessage(result.message) : t('overlays.restore'))
       entries.value = entries.value.filter((item) => item.id !== entry.id)
     } else {
       message.error(translateBackendMessage(result.message))
@@ -99,7 +99,7 @@ async function remove(entry: ModRecycleEntry) {
   try {
     const result = await api.deleteRecycledMod(entry.id)
     if (result.ok) {
-      message.success(result.message || t('recycle.deletePermanently'))
+      message.success(result.message ? translateBackendMessage(result.message) : t('recycle.deletePermanently'))
       entries.value = entries.value.filter((item) => item.id !== entry.id)
     } else {
       message.error(translateBackendMessage(result.message))
@@ -126,7 +126,7 @@ async function clearAll(): Promise<boolean> {
   try {
     const result = await api.deleteAllRecycledMods()
     if (result.ok) {
-      message.success(result.message || t('recycle.recycleBinEmptied'))
+      message.success(result.message ? translateBackendMessage(result.message) : t('recycle.recycleBinEmptied'))
       entries.value = []
       return true
     }

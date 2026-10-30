@@ -799,4 +799,28 @@ export const toolsUi: DomainMessages = {
     ko: '이 채널에는 커뮤니티 저장소가 없습니다',
     ja: 'このチャンネルにはコミュニティリポジトリがありません',
   },
+  // 已打开开发者工具
+  developerToolsOpened: {
+    'zh-CN': '已打开开发者工具',
+    'zh-TW': '已開啟開發人員工具',
+    en: 'Developer tools opened',
+    ko: '개발자 도구를 열었습니다',
+    ja: '開発者ツールを開きました',
+  },
+  // 窗口状态已重置
+  windowStateWasReset: {
+    'zh-CN': '窗口状态已重置',
+    'zh-TW': '視窗狀態已重設',
+    en: 'Window state reset',
+    ko: '창 상태를 초기화했습니다',
+    ja: 'ウィンドウ状態をリセットしました',
+  },
+  // （该等级没有日志）
+  noLogsAtThisLevel: {
+    'zh-CN': '（该等级没有日志）',
+    'zh-TW': '（該等級沒有日誌）',
+    en: '(no logs at this level)',
+    ko: '(이 등급에는 로그가 없습니다)',
+    ja: '（このレベルにログはありません）',
+  },
 }

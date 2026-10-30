@@ -57,7 +57,15 @@ export const api = {
   saveSettings: (patch: SettingsPatch) => invoke<PublicConfig>('save_settings', { patch }),
   /** 保存 / 清除 API 个人 Token（非空字符串覆盖，空字符串保持不变）。 */
   saveTokens: (patch: TokenPatch) => invoke<PublicConfig>('save_tokens', { patch }),
-  refreshRepository: (repositoryId: string) => invoke<ReleaseInfo[]>('refresh_repository', { repositoryId }),
+  /**
+   * 刷新单个仓库的 Release 列表。
+   *
+   * 后端对 Release 列表有 10 分钟缓存：批量刷新、自动刷新、切页回来都直接
+   * 读缓存，不再逐仓打 API。只有**用户主动点刷新**时才传 `force: true`，
+   * 因为那个动作的语义就是「现在就要最新的」。
+   */
+  refreshRepository: (repositoryId: string, force = false) =>
+    invoke<ReleaseInfo[]>('refresh_repository', { repositoryId, force }),
   /** 从源文档地址（raw / 远程 TOML）重新拉取并应用该仓库源。 */
   importRepositorySource: (sourceId: string, sourceUrl: string, builtinFallback = false) =>
     invoke<RepositorySourceImportResult>('import_repository_source', { sourceId, sourceUrl, builtinFallback }),

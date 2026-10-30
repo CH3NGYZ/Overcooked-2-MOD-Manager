@@ -376,7 +376,7 @@ async function pushToMod() {
   try {
     const result = await api.pushColorfulName(code.value)
     result.ok
-      ? message.success(result.message || t('rename.pushedToHostutilities'))
+      ? message.success(result.message ? translateBackendMessage(result.message) : t('rename.pushedToHostutilities'))
       : message.error(translateBackendMessage(result.message))
   } catch (reason) {
     message.error(backendMessageOf(reason))

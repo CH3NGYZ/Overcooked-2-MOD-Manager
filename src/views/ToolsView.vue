@@ -106,12 +106,12 @@ async function openLog(kind: LogKind) {
 
 async function devtools() {
   const result = await api.openDevtools()
-  result.ok ? message.success(result.message || '已打开开发者工具') : message.error(translateBackendMessage(result.message))
+  result.ok ? message.success(result.message ? translateBackendMessage(result.message) : t('tools.developerToolsOpened')) : message.error(translateBackendMessage(result.message))
 }
 
 async function resetUi() {
   const result = await api.resetUi()
-  result.ok ? message.success(result.message || '窗口状态已重置') : message.error(translateBackendMessage(result.message))
+  result.ok ? message.success(result.message ? translateBackendMessage(result.message) : t('tools.windowStateWasReset')) : message.error(translateBackendMessage(result.message))
 }
 
 /* ===== 回收站 ===== */
@@ -220,7 +220,7 @@ async function clearAvatars() {
       fill 固定尺寸，内容不会因此变高。
     -->
     <div class="log-body">
-      <n-log :log="filteredLog || '（该等级没有日志）'" :rows="60" :font-size="12" trim />
+      <n-log :log="filteredLog || t('tools.noLogsAtThisLevel')" :rows="60" :font-size="12" trim />
     </div>
   </AppModal>
 </template>

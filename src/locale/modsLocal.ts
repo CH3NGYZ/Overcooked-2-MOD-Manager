@@ -479,4 +479,20 @@ export const modsLocal: DomainMessages = {
     ko: '삭제',
     ja: '削除',
   },
+  // 已移入回收站
+  movedToRecycleBin: {
+    'zh-CN': '已移入回收站',
+    'zh-TW': '已移入資源回收筒',
+    en: 'Moved to the recycle bin',
+    ko: '휴지통으로 옮겼습니다',
+    ja: 'ゴミ箱へ移動しました',
+  },
+  // 已删除
+  deleted: {
+    'zh-CN': '已删除',
+    'zh-TW': '已刪除',
+    en: 'Deleted',
+    ko: '삭제되었습니다',
+    ja: '削除しました',
+  },
 }

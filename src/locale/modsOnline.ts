@@ -439,4 +439,12 @@ export const modsOnline: DomainMessages = {
     ko: '페이지에서 찾기',
     ja: 'このページ内で表示',
   },
+  // {provider} 社区仓库：{reason}
+  communityRepositoryError: {
+    'zh-CN': '{provider} 社区仓库：{reason}',
+    'zh-TW': '{provider} 社群倉庫：{reason}',
+    en: '{provider} community repositories: {reason}',
+    ko: '{provider} 커뮤니티 저장소: {reason}',
+    ja: '{provider} コミュニティリポジトリ: {reason}',
+  },
 }

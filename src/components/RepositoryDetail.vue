@@ -4,6 +4,7 @@ import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'na
 import { DownloadOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { t, locale } from '../i18n'
+import { backendMessageOf } from '../locale/backend'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
 import ProviderIcon from './ProviderIcon.vue'
@@ -192,7 +193,7 @@ async function load() {
     const result = await api.repositoryReadme(repo.id, id)
     if (requestId === id) readme.value = result
   } catch (reason) {
-    if (requestId === id) error.value = reason instanceof Error ? reason.message : String(reason)
+    if (requestId === id) error.value = backendMessageOf(reason)
   } finally {
     if (requestId === id) { loading.value = false; requestId = null }
   }

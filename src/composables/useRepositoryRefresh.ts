@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
-import { pickI18n, locale } from '../i18n'
+import { pickI18n, locale, t } from '../i18n'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledRepositories } from '../repositoryPriority'
 import {
@@ -90,16 +91,21 @@ function store() {
  * 这里刻意不调用 load()：全量重读会重新扫描游戏目录和每个 DLL，
  * 在滚动时刷新表现为明显卡顿。单个仓库的结果局部替换即可，
  * 整批结束后再统一 load() 一次补齐其它派生状态（更新数、MOD 标签等）。
+ *
+ * `force` 只由**用户手动点刷新**传入：后端有 10 分钟 Release 缓存，批量
+ * 刷新走缓存才不会把整棵仓库树重打一遍；但用户点那颗刷新按钮时的语义
+ * 就是「现在就要最新的」，必须绕过缓存。
  */
-async function refreshOne(repo: Repository): Promise<string | null> {
+async function refreshOne(repo: Repository, force = false): Promise<string | null> {
   if (refreshing.value[repo.id]) return null
   refreshing.value[repo.id] = true
   try {
-    const releases = await api.refreshRepository(repo.id)
+    const releases = await api.refreshRepository(repo.id, force)
     applyRepositoryReleases(repo.id, releases)
     return null
   } catch (reason) {
-    return `${repo.name}: ${reason instanceof Error ? reason.message : String(reason)}`
+    // 原因来自后端，可能是 tag —— 拼进展示串之前必须翻译
+    return `${repo.name}: ${backendMessageOf(reason)}`
   } finally {
     refreshing.value[repo.id] = false
   }
@@ -187,8 +193,15 @@ function sourceDisplayName(source: RepositorySource): string {
   return pickI18n(source.nickname_i18n, source.nickname)
 }
 
+/**
+ * 把「来源名 + 失败原因」拼成一条可展示的错误。
+ *
+ * 收口点在这里是因为三处调用（单仓刷新、源链刷新、失败回退）都是同一个
+ * 形态，而**原因部分是后端 tag**（`source.tomlInvalid` 之类）。谁拼这条
+ * 字符串谁就必须翻译，否则界面上会出现「某仓库: source.tomlInvalid」。
+ */
 function sourceError(source: RepositorySource, reason: string): string {
-  return `${sourceDisplayName(source)}: ${reason}`
+  return `${sourceDisplayName(source)}: ${translateBackendMessage(reason)}`
 }
 
 /**
@@ -344,8 +357,13 @@ async function discoverCommunityRepositories(
       return null
     } catch (reason) {
       const label = provider === 'github' ? 'GitHub' : 'Gitee'
-      const message = reason instanceof Error ? reason.message : String(reason)
-      return `${label} 社区仓库：${message}`
+      /*
+       * 原因来自后端，可能是 tag。它作为**参数值**传进文案，vue-i18n 只会
+       * 原样插入，不会二次翻译 —— 所以必须先在这里翻译。
+       * `provider` 是产品名（GitHub / Gitee），各语言都保持原样，只翻外壳。
+       */
+      const message = backendMessageOf(reason)
+      return t('modsOnline.communityRepositoryError', { provider: label, reason: message })
     }
   }))
   return results.filter((error): error is string => error !== null)
@@ -382,7 +400,8 @@ async function refreshEverything(): Promise<string[]> {
         applyConfigSnapshot(cleared)
       } catch (reason) {
         // 清空失败不阻塞刷新：后面每个源文档应用时也会各自清一次
-        lastErrors.value.push(reason instanceof Error ? reason.message : String(reason))
+        // 这条会被 message.error 直接显示，原因可能是后端 tag
+        lastErrors.value.push(backendMessageOf(reason))
       }
     }
     const sourceErrors = await refreshSourceDocuments()

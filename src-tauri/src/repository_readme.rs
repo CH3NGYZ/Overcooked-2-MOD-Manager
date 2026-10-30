@@ -444,7 +444,7 @@ mod tests {
             )
             .await
             .unwrap_err(),
-            "下载已取消"
+            "download.cancelled"
         );
     }
 
@@ -503,7 +503,7 @@ mod tests {
             fetch_readme(&client, &invalid, &DownloadReporter::new("README"))
                 .await
                 .unwrap_err()
-                .contains("UTF-8")
+                .contains("readme.invalidUtf8")
         );
         finish_server(task).await;
     }
@@ -516,7 +516,7 @@ mod tests {
             fetch_readme(&client, &large, &DownloadReporter::new("README"))
                 .await
                 .unwrap_err()
-                .contains("2 MiB")
+                .contains("readme.tooLarge")
         );
         finish_server(task).await;
         let result = download_readme(
@@ -528,7 +528,7 @@ mod tests {
             &AtomicBool::new(true),
         )
         .await;
-        assert_eq!(result.unwrap_err(), "下载已取消");
+        assert_eq!(result.unwrap_err(), "download.cancelled");
     }
 
     #[test]

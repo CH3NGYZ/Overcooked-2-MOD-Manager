@@ -1906,7 +1906,7 @@ mod tests {
                 None,
             )
             .unwrap_err();
-            assert_eq!(error, "没有可移入回收站的文件，安装清单保持不变");
+            assert_eq!(error, "recycle.noMovableFiles");
             assert!(list(&workspace.recycle).unwrap().is_empty());
             assert_eq!(
                 fs::read(workspace.manifests.join("package.toml")).unwrap(),

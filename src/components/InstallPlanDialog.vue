@@ -20,6 +20,7 @@
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NSpin, NTag } from 'naive-ui'
 import { t, pickI18n } from '../i18n'
+import { backendMessageOf } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
@@ -222,7 +223,12 @@ async function runInstall(step: Step) {
 }
 
 function markFailed(step: Step, reason: unknown) {
-  const text = reason instanceof Error ? reason.message : String(reason)
+  /*
+   * 收口翻译：三处调用分别来自 `result.message`、`outcome.message` 和
+   * `t(...)` 兜底，都是后端 tag 或已翻译文案。统一在这里过一遍桥接层，
+   * 比在每个调用点各写一次 `translateBackendMessage` 更难漏。
+   */
+  const text = backendMessageOf(reason)
   done.value = { ...done.value, [step.key]: 'failed' }
   failures.value = [...failures.value, { label: step.label, reason: text }]
 }

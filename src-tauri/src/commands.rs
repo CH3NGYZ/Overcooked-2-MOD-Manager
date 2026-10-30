@@ -2046,12 +2046,52 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
     Ok(info)
 }
 
+/// 仓库 Release 列表的缓存有效期。
+///
+/// 一次「刷新全部仓库源」会把整棵仓库树挨个打一遍 API：几十个仓库 × 每个
+/// 若干次请求，光是打开页面就要等几十秒，而且极容易撞上 GitHub/Gitee 的
+/// 速率限制。缓存 10 分钟后，重复刷新、切页再回来、重启管理器都直接读
+/// 已有结果，只有真正过期或用户**主动**点刷新时才重新请求。
+const RELEASE_CACHE_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// 当前 Unix 毫秒时间戳。
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 这份 Release 缓存是否仍在有效期内。
+///
+/// `None` 时间戳（旧配置、从未成功获取）一律视为过期 —— 宁可多请求一次，
+/// 也不要拿一份来源不明的列表去判断「有没有更新」。
+fn release_cache_is_fresh(cached_at: Option<i64>, now: i64) -> bool {
+    match cached_at {
+        // 时钟回拨（now < cached_at）也算过期：说明系统时间被改过，
+        // 此时的「新鲜度」不可信。
+        Some(at) => now >= at && now - at < RELEASE_CACHE_TTL_MS,
+        None => false,
+    }
+}
+
+/// 刷新单个仓库的 Release 列表。
+///
+/// `force = true` 跳过 10 分钟缓存强制请求 —— 用户手动点「刷新」时传，
+/// 因为那个动作的语义就是「我要最新的」。批量刷新、自动刷新、切页回来
+/// 都传 `false`（或缺省）走缓存。
 #[tauri::command]
 pub async fn refresh_repository(
     state: State<'_, AppState>,
     repository_id: String,
+    force: Option<bool>,
 ) -> Result<Vec<ReleaseInfo>, String> {
-    log::info!("开始刷新仓库 Release：仓库={}", repository_id);
+    let force = force.unwrap_or(false);
+    log::info!(
+        "开始刷新仓库 Release：仓库={}，跳过缓存={}",
+        repository_id,
+        force
+    );
     let config = state.config.load_or_default();
     let index = config
         .repositories
@@ -2083,6 +2123,29 @@ pub async fn refresh_repository(
         ));
     }
     let repo = config.repositories[index].clone();
+
+    /*
+     * 缓存命中就直接返回已有列表，一个网络请求都不发。
+     *
+     * 为什么放在这里、而不是在命令入口：上面几条「不可用 / 仓库文件模式」
+     * 的拒绝要先执行 —— 那些是配置层面的「不该刷新」，与缓存无关。
+     *
+     * `last_error` 不清：上次失败留下的错误要保留到下一次真正成功为止，
+     * 否则界面会出现「有缓存列表但没有错误」的假象，用户以为已经恢复。
+     */
+    if !force
+        && !repo.cached_releases.is_empty()
+        && release_cache_is_fresh(repo.releases_cached_at, now_millis())
+    {
+        log::info!(
+            "仓库 Release 命中缓存：仓库={}，数量={}，缓存时间={:?}",
+            repo.name,
+            repo.cached_releases.len(),
+            repo.releases_cached_at
+        );
+        return Ok(repo.cached_releases.clone());
+    }
+
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let token = state.config.repository_api_token(&config, &repo);
@@ -2133,6 +2196,8 @@ pub async fn refresh_repository(
     match fetched {
         Ok(filtered) => {
             latest_repo.cached_releases = filtered.clone();
+            // 只有真正拿到结果才刷新时间戳：失败后必须让下一次请求重新打 API
+            latest_repo.releases_cached_at = Some(now_millis());
             latest_repo.last_error = None;
             state
                 .config
@@ -2148,6 +2213,8 @@ pub async fn refresh_repository(
         Err(error) => {
             log::error!("仓库 Release 刷新失败：仓库={}，原因={}", repo.name, error);
             latest_repo.cached_releases.clear();
+            // 清掉时间戳，避免「空列表 + 新鲜时间」被误判成命中缓存
+            latest_repo.releases_cached_at = None;
             latest_repo.last_error = Some(error.clone());
             state
                 .config
@@ -4779,6 +4846,7 @@ pub fn save_repository(
         ignored_version: None,
         etag: None,
         cached_releases: Vec::new(),
+        releases_cached_at: None,
         last_error: None,
     };
     if let Some(existing) = config.repositories.iter_mut().find(|repo| repo.id == id) {
@@ -4995,6 +5063,9 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
     config.ui_zoom = 1.0;
     for repo in &mut config.repositories {
         repo.cached_releases.clear();
+        // 时间戳与列表同生共死：只清列表会留下「空列表 + 新鲜时间」，
+        // 下次刷新命中缓存却拿到 0 条，等于永久看不到 Release。
+        repo.releases_cached_at = None;
         repo.etag = None;
         repo.last_error = None;
     }
@@ -7748,7 +7819,7 @@ mod mod_file_location_tests {
             )
             .err()
             .as_deref(),
-            Some("配置文件已被外部修改，请重新加载后再保存")
+            Some("modConfig.externallyModified")
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "external change");
 
@@ -7769,7 +7840,7 @@ mod mod_file_location_tests {
             )
             .err()
             .as_deref(),
-            Some("厨房目录已变化，请重新打开配置")
+            Some("game.directoryChangedReopenConfig")
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "external change");
     }
@@ -7833,7 +7904,7 @@ mod mod_file_location_tests {
         let workspace = Workspace::new();
         let error = resolve_mod_file_for_location(&workspace.game, "BepInEx/plugins/missing.dll")
             .unwrap_err();
-        assert_eq!(error, "MOD DLL 文件不存在，请重新扫描");
+        assert_eq!(error, "mods.dllFileMissing");
         assert!(!workspace.game.join("BepInEx").exists());
     }
 
@@ -8048,7 +8119,7 @@ var download_url_us = [
             .await
             .unwrap_err();
         assert_eq!(error.stage, "parse");
-        assert_eq!(error.reason, "JS 文件没有可识别的 Release 或 Raw 代理");
+        assert_eq!(error.reason, "proxy.noUsableEntriesJs");
         let bundled = read_github_proxy_source(
             &client(),
             &ProxySource {
@@ -8546,12 +8617,12 @@ mod asset_download_strategy_tests {
             || false,
             |_candidate, _reporter| {
                 attempted += 1;
-                std::future::ready(Err("下载已取消".into()))
+                std::future::ready(Err("download.cancelled".into()))
             },
             None,
         )
         .await;
-        assert_eq!(result.unwrap_err(), "下载已取消");
+        assert_eq!(result.unwrap_err(), "download.cancelled");
         // Both initial slots may start before an asynchronous cancellation
         // result is received. No later candidate may start after cancellation.
         assert_eq!(attempted, 2);
@@ -8575,7 +8646,7 @@ mod asset_download_strategy_tests {
             None,
         )
         .await;
-        assert_eq!(result.unwrap_err(), "下载已取消");
+        assert_eq!(result.unwrap_err(), "download.cancelled");
         assert_eq!(attempted, 1);
     }
 }
@@ -8987,7 +9058,7 @@ mod update_status_tests {
                     if fail {
                         let error = result.unwrap_err();
                         assert!(
-                            error.starts_with("安装失败，已尝试回滚:"),
+                            error.starts_with("mods.installFailedRolledBack"),
                             "{condition}, zip={zip}: {error}"
                         );
                         assert!(!workspace.game.join(missing).exists());
@@ -9132,7 +9203,7 @@ mod update_status_tests {
             );
             fs::set_permissions(&path, permissions).unwrap();
             let error = result.unwrap_err();
-            assert!(error.starts_with("安装失败，已尝试回滚:"), "{error}");
+            assert!(error.starts_with("mods.installFailedRolledBack"), "{error}");
             assert_eq!(fs::read(&path).unwrap(), original);
             assert!(!workspace.game.join("BepInEx/plugins/Main.dll").exists());
             assert!(!workspace.recycle.exists());
@@ -9195,7 +9266,7 @@ mod update_status_tests {
                 );
                 if fail {
                     let error = result.unwrap_err();
-                    assert!(error.starts_with("安装失败，已尝试回滚:"), "{error}");
+                    assert!(error.starts_with("mods.installFailedRolledBack"), "{error}");
                     assert_eq!(
                         fs::read(workspace.game.join(format!("{dll}.disabled"))).unwrap(),
                         b"old plugin"
@@ -10798,5 +10869,66 @@ mod framework_backup_roundtrip_tests {
         assert!(!backup.join("winhttp.dll").exists());
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+/// Release 缓存有效期的判定。
+///
+/// 这里是「每个仓库的 API 请求缓存 10 分钟」的核心逻辑：判错的后果很具体 ——
+/// 判松了会把过期数据当最新（用户看不到新版本），判严了等于没有缓存
+/// （每次打开页面都把整棵仓库树重打一遍，撞速率限制）。
+#[cfg(test)]
+mod release_cache_tests {
+    use super::{RELEASE_CACHE_TTL_MS, now_millis, release_cache_is_fresh};
+
+    #[test]
+    fn fresh_within_ten_minutes() {
+        let now = 1_700_000_000_000;
+        assert!(release_cache_is_fresh(Some(now), now), "刚写入应命中");
+        assert!(
+            release_cache_is_fresh(Some(now - RELEASE_CACHE_TTL_MS + 1), now),
+            "差 1 毫秒到期仍算新鲜"
+        );
+        assert_eq!(RELEASE_CACHE_TTL_MS, 10 * 60 * 1000);
+    }
+
+    #[test]
+    fn expired_at_and_after_ttl() {
+        let now = 1_700_000_000_000;
+        assert!(
+            !release_cache_is_fresh(Some(now - RELEASE_CACHE_TTL_MS), now),
+            "正好到期即失效"
+        );
+        assert!(!release_cache_is_fresh(
+            Some(now - RELEASE_CACHE_TTL_MS - 1),
+            now
+        ));
+        assert!(
+            !release_cache_is_fresh(Some(now - 86_400_000), now),
+            "隔天必失效"
+        );
+    }
+
+    #[test]
+    fn missing_timestamp_is_expired() {
+        // 旧版本配置没有这个字段，或从未成功获取过 —— 必须重新请求，
+        // 不能拿一份来源不明的列表去判断「有没有更新」。
+        assert!(!release_cache_is_fresh(None, 1_700_000_000_000));
+    }
+
+    #[test]
+    fn clock_going_backwards_is_treated_as_expired() {
+        // 系统时间被调早：此时 now < cached_at，差值算出来是负数，
+        // 如果不判方向就会永远命中缓存。
+        let now = 1_700_000_000_000;
+        assert!(!release_cache_is_fresh(Some(now + 60_000), now));
+    }
+
+    #[test]
+    fn now_millis_is_plausible() {
+        // 2023-11 之后、2100 之前：防止单位错成秒导致缓存永不过期
+        let now = now_millis();
+        assert!(now > 1_700_000_000_000, "时间戳应以毫秒为单位：{now}");
+        assert!(now < 4_102_444_800_000, "时间戳明显异常：{now}");
     }
 }

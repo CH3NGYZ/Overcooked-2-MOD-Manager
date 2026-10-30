@@ -155,7 +155,8 @@ function runCardAction(repo: Repository) {
 
 /** 单仓刷新：与批量刷新共用引擎，只更新这一条仓库的缓存。 */
 async function refreshRepository(repo: Repository) {
-  const error = await engine.refreshOne(repo)
+  // 用户主动点刷新 → 强制请求，不吃 10 分钟 Release 缓存
+  const error = await engine.refreshOne(repo, true)
   if (error) message.error(error)
 }
 

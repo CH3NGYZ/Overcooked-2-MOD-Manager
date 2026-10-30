@@ -1333,7 +1333,7 @@ mod tests {
         assert_eq!(installed[0].status, "duplicate_lower_version");
         assert_eq!(
             installed[0].load_warning.as_deref(),
-            Some("存在更高版本，建议卸载")
+            Some("mods.higherVersionPresent")
         );
         assert_eq!(
             installed
@@ -1528,6 +1528,7 @@ mod tests {
             ignored_version: None,
             etag: None,
             cached_releases: Vec::new(),
+            releases_cached_at: None,
             last_error: None,
             source_id: None,
         }
@@ -2394,7 +2395,7 @@ mod tests {
         super::mark_duplicate_guids(&mut mods);
         assert_eq!(
             mods[0].load_warning.as_deref(),
-            Some("存在更高版本，建议卸载")
+            Some("mods.higherVersionPresent")
         );
         assert!(mods[1].load_warning.is_none());
         assert!(mods[0].duplicate_guid && mods[1].duplicate_guid);

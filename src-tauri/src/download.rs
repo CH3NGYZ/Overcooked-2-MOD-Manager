@@ -1060,7 +1060,7 @@ mod tests {
             cancelled.store(true, Ordering::Release);
         };
         let (result, _) = tokio::join!(race, cancel);
-        assert_eq!(result.unwrap_err(), "下载已取消");
+        assert_eq!(result.unwrap_err(), "download.cancelled");
         assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0);
         std::fs::remove_dir(cache).unwrap();
     }

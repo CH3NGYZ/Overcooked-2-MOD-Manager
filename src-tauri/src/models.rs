@@ -686,6 +686,13 @@ pub struct RepositoryConfig {
     pub etag: Option<String>,
     #[serde(default)]
     pub cached_releases: Vec<ReleaseInfo>,
+    /// `cached_releases` 的获取时间（Unix 毫秒）。
+    ///
+    /// 用来判断缓存是否还在有效期内，避免每次打开页面或批量刷新都把整棵
+    /// 仓库树的 Release API 重打一遍。`None` 表示这份缓存来自旧版本配置或
+    /// 从未成功获取过 —— 两种情况都当作「已过期」，必须重新请求。
+    #[serde(default)]
+    pub releases_cached_at: Option<i64>,
     #[serde(default)]
     pub last_error: Option<String>,
 }

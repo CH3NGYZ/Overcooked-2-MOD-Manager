@@ -859,7 +859,7 @@ mod tests {
         assert!(!executable_exists_for_package(&root, Package::MacOS));
         assert_eq!(
             selected_root_for_package(&root, Package::MacOS).unwrap_err(),
-            "所选目录中没有 Overcooked2.app"
+            "game.appNotFound"
         );
         let app = root.join("Overcooked2.app");
         fs::create_dir_all(&app).unwrap();

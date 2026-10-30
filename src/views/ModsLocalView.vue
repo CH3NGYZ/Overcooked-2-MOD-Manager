@@ -55,12 +55,12 @@ const deleteConfirm = computed(() => recyclesOnDelete.value
   ? {
       body: (name: string) => t('modsLocal.willBeMovedToTheRecycleBinAndCanBeRestoredContinue', { name }),
       action: t('modsLocal.moveToRecycleBin'),
-      done: '已移入回收站',
+      done: t('modsLocal.movedToRecycleBin'),
     }
   : {
       body: (name: string) => t('modsLocal.willBeDeletedPermanentlyThisCannotBeUndoneContinue', { name }),
       action: t('modsLocal.deletePermanently'),
-      done: '已删除',
+      done: t('modsLocal.deleted'),
     })
 
 /** 整包删除的确认文案与动作名：同样随开关切换。 */
@@ -69,13 +69,13 @@ const deletePackageConfirm = computed(() => recyclesOnDelete.value
       body: (name: string, count: number) =>
         t('tools.allFilesOfWillBeMovedToTheRecycleBinAndCanBeRestoredContinue', { name, count }),
       action: t('modsOnline.movePackageToRecycleBin'),
-      done: '已移入回收站',
+      done: t('modsLocal.movedToRecycleBin'),
     }
   : {
       body: (name: string, count: number) =>
         t('tools.allFilesOfWillBeDeletedPermanentlyThisCannotBeUndoneContinue', { name, count }),
       action: t('modsLocal.deletePackage'),
-      done: '已删除',
+      done: t('modsLocal.deleted'),
     })
 
 /**
@@ -680,7 +680,7 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
   busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalMod(mod.dll_file, enabled)
-    result.ok ? message.success(result.message || (enabled ? '已启用' : t('modsLocal.disabled'))) : message.error(translateBackendMessage(result.message))
+    result.ok ? message.success(result.message || (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled'))) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }
@@ -926,7 +926,8 @@ function runPackageAction(pkg: ModPackageNode) {
 
 /** 单仓刷新：复用刷新引擎，只更新这一条仓库的缓存。 */
 async function refreshRepository(repo: Repository) {
-  const error = await refreshOne(repo)
+  // 用户主动点刷新 → 强制请求，不吃 10 分钟 Release 缓存
+  const error = await refreshOne(repo, true)
   if (error) message.error(error)
 }
 
@@ -1253,7 +1254,7 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
   try {
     const result = await api.toggleLocalModPackage(packageId, enabled)
     result.ok
-      ? message.success(result.message || (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
+      ? message.success(result.message ? translateBackendMessage(result.message) : (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
       : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) {
@@ -1278,7 +1279,7 @@ function removePackage(node: ModPackageNode) {
       try {
         const result = await api.uninstallLocalMod(first.dll_file, true)
         result.ok
-          ? message.success(result.message || confirm.done)
+          ? message.success(result.message ? translateBackendMessage(result.message) : confirm.done)
           : message.error(translateBackendMessage(result.message))
         await load()
       } catch (reason) {

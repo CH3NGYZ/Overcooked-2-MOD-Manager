@@ -1575,19 +1575,19 @@ builtin = true
         for (metadata, expected_error) in [
             (
                 "name_i18n.zh-CN = \"名称\"\nnote_i18n.zh-CN = \"\"",
-                "group_i18n.zh-CN",
+                "config.missingGroupI18n",
             ),
             (
                 "name_i18n.zh-CN = \"名称\"\ngroup_i18n.zh-CN = \"\"",
-                "note_i18n.zh-CN",
+                "config.missingNoteI18n",
             ),
             (
                 "name_i18n.zh-CN = \"\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"",
-                "name_i18n.zh-CN",
+                "config.emptyNameI18n",
             ),
             (
                 "name = \"Raw only\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"",
-                "name_i18n.zh-CN",
+                "config.missingNameI18n",
             ),
         ] {
             let error = parse_document(&document_for(metadata), &location).unwrap_err();

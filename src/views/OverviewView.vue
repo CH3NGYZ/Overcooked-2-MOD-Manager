@@ -139,7 +139,7 @@ async function toggleFramework(enabled: boolean) {
   try {
     const result = await api.switchWinhttp(enabled)
     if (result.ok) {
-      message.success(result.message || (enabled ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')))
+      message.success(result.message ? translateBackendMessage(result.message) : (enabled ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')))
       await load()
     } else {
       message.error(translateBackendMessage(result.message))

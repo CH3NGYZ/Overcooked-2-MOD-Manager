@@ -189,7 +189,7 @@ async function runUninstall(step: Step) {
   const status = props.plan.uninstall[step.index]
   const target = status.installedMod
   if (!target) {
-    markFailed(step, new Error(t('找不到要卸载的 MOD')))
+    markFailed(step, new Error(t('modsOnline.theModToUninstallWasNotFound')))
     return
   }
   /*
@@ -206,14 +206,14 @@ async function runInstall(step: Step) {
   const status = props.plan.install[step.index]
   const target = status.repository
   if (!target) {
-    markFailed(step, new Error(t('找不到可安装的来源')))
+    markFailed(step, new Error(t('modsOnline.noInstallableSourceFound')))
     return
   }
   const tag = status.release?.tag_name
   // 先下载预览，再直接确认安装：暂存目录与用户确认已在上一层完成
   const outcome = await api.installRepository(target.id, tag, true)
   if (!outcome.ok || !outcome.preview) {
-    markFailed(step, new Error(outcome.message || t('下载完成但没有解析出安装内容')))
+    markFailed(step, new Error(outcome.message || t('modsOnline.downloadFinishedButNoInstallableContentWasParsed')))
     return
   }
   const confirmed = await api.confirmModInstall(outcome.preview.preview_id)
@@ -231,7 +231,7 @@ function markFailed(step: Step, reason: unknown) {
 function report() {
   const okCount = steps.value.filter((step) => done.value[step.key] === 'ok').length
   if (okCount) {
-    message.success(t('已完成 {count} 项处理', { count: okCount }))
+    message.success(t('modsOnline.handledItemS', { count: okCount }))
   }
   for (const failure of failures.value) {
     message.error(`${failure.label}：${failure.reason}`)
@@ -264,10 +264,10 @@ async function continueAnyway() {
 
 /** 步骤行的中文动作名。 */
 const ACTION_LABELS: Record<Step['action'], string> = {
-  uninstall: '卸载',
-  upgrade: '升级',
-  downgrade: '降级',
-  'install-dependency': '安装依赖',
+  uninstall: 'recycle.uninstall',
+  upgrade: 'recycle.upgrade',
+  downgrade: 'recycle.downgrade',
+  'install-dependency': 'modsOnline.installDependency',
 }
 
 /**
@@ -286,31 +286,31 @@ function blockedText(status: RelationStatus): string {
   if (kind === 'compatible') {
     // 兼容列表：只能提醒版本不对，卸载对方没有意义
     return range
-      ? t('「{name}」{version} 不兼容，需要 {range} 之间的版本', {
+      ? t('modsOnline.isIncompatibleAVersionInIsRequired', {
         name: target, version: status.installedVersion ?? '', range,
       })
-      : t('「{name}」{version} 不兼容，请注意', {
+      : t('modsOnline.isIncompatiblePleaseCheck', {
         name: target, version: status.installedVersion ?? '',
       })
   }
   if (kind === 'conflicts') {
-    return t('「{name}」{version} 冲突，请卸载', {
+    return t('modsOnline.conflictsPleaseUninstallIt', {
       name: target, version: status.installedVersion ?? '',
     })
   }
   // requires：缺或版本不符
   return range
-    ? t('缺少依赖「{name}」，需要 {range} 之间的版本', { name: target, range })
-    : t('缺少依赖「{name}」', { name: target })
+    ? t('modsOnline.missingDependencyAVersionInIsRequired', { name: target, range })
+    : t('modsOnline.missingDependency2', { name: target })
 }
 </script>
 
 <template>
-  <AppModal :show="show" :mask-closable="false" :title="t('安装前检查')"
+  <AppModal :show="show" :mask-closable="false" :title="t('modsOnline.preInstallCheck')"
     max-width="min(680px, 94%)"
     @update:show="(value: boolean) => { if (!value) void close() }">
     <p class="plan-lead">
-      {{ t('安装「{name}」前，需要先处理以下关系：', { name: targetLabel }) }}
+      {{ t('modsOnline.beforeInstallingTheseRelationsMustBeHandledFirst', { name: targetLabel }) }}
     </p>
 
     <div v-if="steps.length" class="plan-list">
@@ -345,7 +345,7 @@ function blockedText(status: RelationStatus): string {
     <template #footer>
       <n-button v-if="!allDone" size="small" type="primary" :loading="running"
         :disabled="running || !steps.length" @click="runAll">
-        {{ t('全部处理') }}
+        {{ t('modsOnline.handleAll') }}
       </n-button>
       <!--
         没有可执行步骤时只有提醒：让用户明确「我看过了仍要继续」，
@@ -353,11 +353,11 @@ function blockedText(status: RelationStatus): string {
       -->
       <n-button v-if="!steps.length && blocked.length" size="small" type="primary"
         @click="continueAnyway">
-        {{ t('仍然安装') }}
+        {{ t('modsOnline.installAnyway') }}
       </n-button>
       <n-button size="small" :quaternary="!allDone" :type="allDone ? 'primary' : 'default'"
         :disabled="running" @click="close">
-        {{ allDone ? t('完成') : t('取消') }}
+        {{ allDone ? t('modsOnline.done') : t('recycle.cancel') }}
       </n-button>
     </template>
   </AppModal>

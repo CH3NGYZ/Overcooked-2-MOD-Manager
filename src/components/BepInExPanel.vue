@@ -69,7 +69,7 @@ function fail(reason: unknown) {
 }
 
 async function afterInstall(result: BepInExInstallResult) {
-  if (result.ok) message.success(translateBackendMessage(result.message) || t('安装框架'))
+  if (result.ok) message.success(translateBackendMessage(result.message) || t('overlays.installFramework'))
   else message.error(translateBackendMessage(result.message))
   if (result.wine_override_error) message.warning(translateBackendMessage(result.wine_override_error))
   await load()
@@ -158,22 +158,22 @@ function onGuideConfirmed() {
 
 function uninstall() {
   dialog.warning({
-    title: t('卸载 BepInEx 框架'),
+    title: t('recycle.uninstallBepinex'),
     /*
      * 卸载只回收框架自己的文件（core、doorstop 库、根目录加载器），
      * `plugins/` 与 `config/` 里的 MOD 和配置原地保留 —— 文案必须说清，
      * 否则用户会以为要重装全部 MOD。
      */
-    content: t('将把 BepInEx 框架文件（不含 plugins 与 config）移入回收站，可在回收站中恢复。继续卸载？'),
-    positiveText: t('卸载'),
-    negativeText: t('取消'),
+    content: t('framework.theBepinexFrameworkFilesExcludingPluginsAndConfigWillBeMovedToTheRecycleBinAndCanBeRestoredContinueUninstalling'),
+    positiveText: t('recycle.uninstall'),
+    negativeText: t('recycle.cancel'),
     async onPositiveClick() {
       working.value = true
       // 卸载 = 先整目录备份，再按清单回收，两步都是磁盘操作，要遮罩
-      busyText.value = t('正在备份并卸载 BepInEx 框架…')
+      busyText.value = t('overlays.backingUpAndRemovingTheBepinexFramework')
       try {
         const result: OperationResult = await api.uninstallBepInEx()
-        result.ok ? message.success(translateBackendMessage(result.message) || t('卸载')) : message.error(translateBackendMessage(result.message))
+        result.ok ? message.success(translateBackendMessage(result.message) || t('recycle.uninstall')) : message.error(translateBackendMessage(result.message))
         await load()
       } catch (reason) { fail(reason) } finally {
         working.value = false
@@ -194,10 +194,10 @@ const busyText = ref<string | null>(null)
 
 async function backup() {
   working.value = true
-  busyText.value = t('正在备份 BepInEx 框架…')
+  busyText.value = t('overlays.backingUpTheBepinexFramework')
   try {
     const result = await api.backupBepInEx()
-    result.ok ? message.success(translateBackendMessage(result.message) || t('创建备份')) : message.error(translateBackendMessage(result.message))
+    result.ok ? message.success(translateBackendMessage(result.message) || t('overlays.createBackup')) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally {
     working.value = false
@@ -207,10 +207,10 @@ async function backup() {
 
 async function restore(path: string) {
   working.value = true
-  busyText.value = t('正在恢复 BepInEx 框架…')
+  busyText.value = t('overlays.restoringTheBepinexFramework')
   try {
     const result = await api.restoreBepInEx(path)
-    result.ok ? message.success(translateBackendMessage(result.message) || t('已恢复')) : message.error(translateBackendMessage(result.message))
+    result.ok ? message.success(translateBackendMessage(result.message) || t('recycle.restored')) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally {
     working.value = false
@@ -220,13 +220,13 @@ async function restore(path: string) {
 
 function removeBackup(path: string) {
   dialog.warning({
-    title: t('删除备份'),
-    content: t('永久删除该备份？') + `\n${path}`,
-    positiveText: t('删除'),
-    negativeText: t('取消'),
+    title: t('recycle.deleteBackup'),
+    content: t('recycle.permanentlyDeleteThisBackup') + `\n${path}`,
+    positiveText: t('modsLocal.delete'),
+    negativeText: t('recycle.cancel'),
     async onPositiveClick() {
       const result = await api.deleteBepInExBackup(path)
-      result.ok ? message.success(translateBackendMessage(result.message) || t('备份已删除')) : message.error(translateBackendMessage(result.message))
+      result.ok ? message.success(translateBackendMessage(result.message) || t('recycle.backupDeleted')) : message.error(translateBackendMessage(result.message))
       await load()
     },
   })
@@ -235,7 +235,7 @@ function removeBackup(path: string) {
 async function toggleFramework(enabled: boolean) {
   const result = await api.switchWinhttp(enabled)
   result.ok
-    ? message.success(translateBackendMessage(result.message) || (enabled ? t('框架已启用') : t('框架已禁用')))
+    ? message.success(translateBackendMessage(result.message) || (enabled ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')))
     : message.error(translateBackendMessage(result.message))
   await load()
 }
@@ -271,20 +271,20 @@ async function openBackup(backupPath: string) {
     <div class="panel-head">
       <div class="panel-head-main">
         <!-- 开关只在框架真正安装后才出现：没有加载器可切换 -->
-        <n-switch v-if="installed" :value="winhttpEnabled" :title="t('框架启用（游戏加载 MOD）')"
+        <n-switch v-if="installed" :value="winhttpEnabled" :title="t('overlays.frameworkEnabledGameLoadsMods')"
           :disabled="working" @update:value="toggleFramework" />
-        <span class="panel-title">{{ t('BepInEx 框架') }}</span>
-        <span class="panel-version muted">{{ t('版本') }}：{{ game?.bepinex.version || '—' }}</span>
+        <span class="panel-title">{{ t('framework.bepinexFramework') }}</span>
+        <span class="panel-version muted">{{ t('modsOnline.versions') }}：{{ game?.bepinex.version || '—' }}</span>
         <n-tag size="small" :bordered="false" class="state-tag"
           :color="tagColorFor(installed ? 'accent' : (hasResidue ? 'moderate' : 'muted'))">
-          {{ installed ? t('已安装') : (hasResidue ? t('未安装') : t('未安装')) }}
+          {{ installed ? t('modsLocal.installed') : (hasResidue ? t('overview.notInstalled') : t('overview.notInstalled')) }}
         </n-tag>
         <n-tag v-if="hasResidue" size="small" :bordered="false" type="warning">
-          {{ t('检测到 MOD 目录，安装后会保留') }}
+          {{ t('overlays.existingModFolderFoundKeptAfterInstall') }}
         </n-tag>
       </div>
       <span v-if="!isWindows" class="panel-runtime muted">
-        {{ t('运行形态') }}：{{ runtime === 'native' ? t('原生') : 'Wine' }}
+        {{ t('framework.runtime') }}：{{ runtime === 'native' ? t('framework.native') : 'Wine' }}
       </span>
     </div>
 
@@ -296,20 +296,20 @@ async function openBackup(backupPath: string) {
     <div v-if="installed" class="panel-actions">
       <n-button size="small" secondary :disabled="working" @click="openPath">
         <template #icon><FolderOpenOutline width="15" height="15" /></template>
-        {{ t('打开路径') }}
+        {{ t('settings.openFolder') }}
       </n-button>
       <n-button size="small" secondary :disabled="working" @click="configEditorOpen = true">
         <template #icon><SettingsOutline width="15" height="15" /></template>
-        {{ t('配置管理') }}
+        {{ t('framework.manageConfig') }}
       </n-button>
     </div>
 
     <!-- 安装：未安装时只有这一个入口；已安装才是「重新安装」并给出维护按钮 -->
     <div class="panel-install">
       <div class="panel-field">
-        <span class="muted">{{ t('下载渠道') }}</span>
+        <span class="muted">{{ t('overlays.downloadChannel') }}</span>
         <n-select v-model:value="installProvider" size="small" style="width: 190px" :options="[
-          { label: t('Gitee（中国大陆推荐）'), value: 'gitee' },
+          { label: t('overlays.giteeRecommendedInMainlandChina'), value: 'gitee' },
           { label: 'GitHub', value: 'github' },
         ]" />
       </div>
@@ -317,38 +317,38 @@ async function openBackup(backupPath: string) {
         <n-button size="small" type="primary" :loading="installing" :disabled="working"
           @click="install(installed)">
           <template #icon><AddCircleOutline width="15" height="15" /></template>
-          {{ installed ? t('重新安装') : t('安装框架') }}
+          {{ installed ? t('overlays.reinstall') : t('overlays.installFramework') }}
         </n-button>
         <template v-if="installed">
           <n-button size="small" secondary :disabled="working" @click="backup">
             <template #icon><SaveOutline width="15" height="15" /></template>
-            {{ t('创建备份') }}
+            {{ t('overlays.createBackup') }}
           </n-button>
           <n-button size="small" secondary type="warning" :disabled="working" @click="uninstall">
             <template #icon><WarningOutline width="15" height="15" /></template>
-            {{ t('卸载框架') }}
+            {{ t('overlays.uninstallFramework') }}
           </n-button>
         </template>
       </div>
       <!-- 未安装时的说明：讲清装完之后能做什么，避免用户找不到维护入口 -->
       <p v-if="!installed" class="muted panel-hint">
         {{ hasResidue
-          ? t('检测到已有的 plugins / config，安装框架时会原样保留。')
-          : t('安装后这里会出现启用开关、配置管理与备份入口。') }}
+          ? t('overlays.existingPluginsConfigFoundTheyAreKeptAsIsWhenInstallingTheFramework')
+          : t('overlays.afterInstallingTheEnableSwitchConfigManagerAndBackupsAppearHere') }}
       </p>
     </div>
 
     <!-- 备份列表：没有备份且未安装时整块不出现 -->
     <div v-if="installed || backups.length" class="panel-backups">
       <div class="panel-backups-head">
-        <b>{{ t('框架备份') }}</b>
+        <b>{{ t('overlays.frameworkBackups') }}</b>
         <n-button size="tiny" quaternary :disabled="working" @click="openBackups">
           <template #icon><FolderOpenOutline width="14" height="14" /></template>
-          {{ t('打开备份目录') }}
+          {{ t('overlays.openBackupFolder') }}
         </n-button>
       </div>
       <div v-if="!backups.length" class="muted panel-empty">
-        {{ t('暂无备份。卸载或重装前建议先创建备份。') }}
+        {{ t('overlays.noBackupsYetCreateOneBeforeUninstallingOrReinstalling') }}
       </div>
       <div v-for="row in backupRows" :key="row.path" class="backup-row">
         <span class="backup-label" :title="row.path">
@@ -359,9 +359,9 @@ async function openBackup(backupPath: string) {
           <span class="mono backup-path">{{ row.path }}</span>
         </span>
         <span class="backup-acts">
-          <n-button size="tiny" secondary @click="openBackup(row.path)">{{ t('打开') }}</n-button>
-          <n-button size="tiny" secondary @click="restore(row.path)">{{ t('恢复') }}</n-button>
-          <n-button size="tiny" quaternary type="error" :title="t('删除备份')" @click="removeBackup(row.path)">
+          <n-button size="tiny" secondary @click="openBackup(row.path)">{{ t('modsLocal.open') }}</n-button>
+          <n-button size="tiny" secondary @click="restore(row.path)">{{ t('overlays.restore') }}</n-button>
+          <n-button size="tiny" quaternary type="error" :title="t('recycle.deleteBackup')" @click="removeBackup(row.path)">
             <template #icon><TrashOutline width="14" height="14" /></template>
           </n-button>
         </span>
@@ -369,7 +369,7 @@ async function openBackup(backupPath: string) {
     </div>
 
     <!-- 框架配置编辑器：与 MOD 配置共用同一组件，数据源切到 bepinex -->
-    <ModConfigEditor v-model:show="configEditorOpen" source="bepinex" :title="t('BepInEx 配置')" />
+    <ModConfigEditor v-model:show="configEditorOpen" source="bepinex" :title="t('framework.bepinexConfig')" />
 
     <!--
       平台引导：CrossOver 走安装前（先准备容器），原生 macOS 走安装后（给启动命令）。

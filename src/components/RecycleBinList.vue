@@ -81,7 +81,7 @@ async function restore(entry: ModRecycleEntry) {
   try {
     const result = await api.restoreRecycledMod(entry.id)
     if (result.ok) {
-      message.success(result.message || t('恢复'))
+      message.success(result.message || t('overlays.restore'))
       entries.value = entries.value.filter((item) => item.id !== entry.id)
     } else {
       message.error(translateBackendMessage(result.message))
@@ -99,7 +99,7 @@ async function remove(entry: ModRecycleEntry) {
   try {
     const result = await api.deleteRecycledMod(entry.id)
     if (result.ok) {
-      message.success(result.message || t('彻底删除'))
+      message.success(result.message || t('recycle.deletePermanently'))
       entries.value = entries.value.filter((item) => item.id !== entry.id)
     } else {
       message.error(translateBackendMessage(result.message))
@@ -126,7 +126,7 @@ async function clearAll(): Promise<boolean> {
   try {
     const result = await api.deleteAllRecycledMods()
     if (result.ok) {
-      message.success(result.message || t('已清空回收站'))
+      message.success(result.message || t('recycle.recycleBinEmptied'))
       entries.value = []
       return true
     }
@@ -147,13 +147,13 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
 </script>
 
 <template>
-  <p v-if="restoreBlocked" class="recycle-warning">{{ t('游戏运行中，暂时不能恢复 MOD。') }}</p>
+  <p v-if="restoreBlocked" class="recycle-warning">{{ t('recycle.theGameIsRunningModsCannotBeRestoredRightNow') }}</p>
   <p v-if="error" class="recycle-error" role="alert">{{ error }}</p>
 
   <n-spin :show="loading">
-    <n-empty v-if="isEmpty" :description="t('回收站为空')" class="recycle-empty">
+    <n-empty v-if="isEmpty" :description="t('recycle.recycleBinIsEmpty')" class="recycle-empty">
       <template #extra>
-        <span class="recycle-hint">{{ t('尚未删除任何 MOD。删除的 MOD 会先暂存在这里，可随时恢复。') }}</span>
+        <span class="recycle-hint">{{ t('recycle.noModsDeletedYetDeletedModsAreKeptHereUntilYouRemoveThemPermanently') }}</span>
       </template>
     </n-empty>
 
@@ -165,20 +165,20 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
               <n-button size="tiny" secondary :loading="isActing(entry, 'restore')"
                 :disabled="busy || restoreBlocked" @click="restore(entry)">
                 <template #icon><ArrowUndoOutline width="14" height="14" /></template>
-                {{ t('恢复') }}
+                {{ t('overlays.restore') }}
               </n-button>
               <n-popconfirm :disabled="busy" @positive-click="remove(entry)">
                 <template #trigger>
                   <n-button size="tiny" quaternary type="error" :loading="isActing(entry, 'delete')"
-                    :disabled="busy" :title="t('彻底删除')">
+                    :disabled="busy" :title="t('recycle.deletePermanently')">
                     <template #icon><TrashOutline width="14" height="14" /></template>
-                    {{ t('彻底删除') }}
+                    {{ t('recycle.deletePermanently') }}
                   </n-button>
                 </template>
                 <div class="recycle-confirm">
-                  <b>{{ t('彻底删除 MOD') }}</b>
+                  <b>{{ t('recycle.deleteModPermanently') }}</b>
                   <span class="recycle-confirm-name">{{ entryName(entry) }}</span>
-                  <span class="recycle-confirm-note">{{ t('将永久删除回收站中的 MOD 文件和保存的安装清单，此操作无法撤销。') }}</span>
+                  <span class="recycle-confirm-note">{{ t('recycle.thisPermanentlyDeletesTheModFilesAndTheSavedInstallManifestItCannotBeUndone') }}</span>
                 </div>
               </n-popconfirm>
             </div>
@@ -188,15 +188,15 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
             <div class="recycle-meta">
               <n-tag v-if="entry.release_tag" size="tiny" :bordered="false" class="state-tag"
                 :color="tagColorFor('muted')">{{ entry.release_tag }}</n-tag>
-              <span>{{ t('删除时间') }} · {{ deletedTime(entry.deleted_at) }}</span>
-              <span>{{ t('文件数量') }} · {{ entry.file_count }}</span>
+              <span>{{ t('recycle.deleted') }} · {{ deletedTime(entry.deleted_at) }}</span>
+              <span>{{ t('recycle.files') }} · {{ entry.file_count }}</span>
             </div>
             <div class="recycle-path" :title="entry.game_path">{{ entry.game_path }}</div>
           </template>
 
           <!-- 文件清单：用 n-collapse 承担展开，不写自绘 disclosure -->
           <n-collapse v-if="entry.files.length" class="recycle-files">
-            <n-collapse-item :title="t('查看文件清单')" :name="entry.id">
+            <n-collapse-item :title="t('recycle.viewFiles')" :name="entry.id">
               <ul class="recycle-file-list">
                 <li v-for="file in entry.files" :key="file">{{ file }}</li>
               </ul>

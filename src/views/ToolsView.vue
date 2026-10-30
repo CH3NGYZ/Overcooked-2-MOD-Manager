@@ -35,7 +35,7 @@ type LogLevel = 'all' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
 const logLevel = ref<LogLevel>('INFO')
 
 const logLevelOptions = computed(() => [
-  { label: t('全部等级'), value: 'all' },
+  { label: t('rename.allLevels'), value: 'all' },
   { label: 'TRACE', value: 'TRACE' },
   { label: 'DEBUG', value: 'DEBUG' },
   { label: 'INFO', value: 'INFO' },
@@ -83,9 +83,9 @@ const filteredLog = computed(() => {
 const filteredLineCount = computed(() => (filteredLog.value ? filteredLog.value.split('\n').length : 0))
 
 const logMeta: Record<LogKind, { title: string; read: () => Promise<RustLog> }> = {
-  rust: { get title() { return t('打开 Rust 后端日志') }, read: () => api.readRustLog() },
-  frontend: { get title() { return t('打开前端日志') }, read: () => api.readFrontendLog() },
-  crash: { get title() { return t('打开崩溃日志') }, read: () => api.readCrashLog() },
+  rust: { get title() { return t('tools.openRustLog') }, read: () => api.readRustLog() },
+  frontend: { get title() { return t('tools.openFrontendLog') }, read: () => api.readFrontendLog() },
+  crash: { get title() { return t('tools.openCrashLog') }, read: () => api.readCrashLog() },
 }
 
 function fail(reason: unknown) {
@@ -141,7 +141,7 @@ async function clearAvatars() {
   try {
     const removed = await api.clearRepositoryAvatars()
     clearAvatarCache()
-    message.success(t('已清除 {count} 个头像缓存', { count: removed }))
+    message.success(t('tools.clearedCachedAvatarS', { count: removed }))
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -151,30 +151,30 @@ async function clearAvatars() {
 </script>
 
 <template>
-  <SettingsGroup :title="t('支持开发')">
+  <SettingsGroup :title="t('tools.supportDevelopment')">
     <div class="sponsor-card">
       <div class="sponsor-body">
         <img :src="sponsorImage" alt="赞助二维码" class="sponsor-img" />
         <div class="sponsor-text">
-          <b>{{ t('觉得好用，请作者喝杯咖啡') }}</b>
-          <span class="muted">{{ t('所有功能永久免费，赞助用于服务器与开发动力。感谢支持！') }}</span>
+          <b>{{ t('tools.buyTheAuthorACoffee') }}</b>
+          <span class="muted">{{ t('tools.allFeaturesStayFreeSponsorshipsFundServersAndDevelopmentThankYou') }}</span>
         </div>
       </div>
     </div>
   </SettingsGroup>
 
-  <SettingsGroup :title="t('日志')">
-    <SettingsRow :icon="ServerOutline" :title="t('打开 Rust 后端日志')" :description="t('安装、下载与文件操作的详细记录')"
+  <SettingsGroup :title="t('tools.logs')">
+    <SettingsRow :icon="ServerOutline" :title="t('tools.openRustLog')" :description="t('tools.detailedRecordOfInstallsDownloadsAndFileOperations')"
       clickable @click="openLog('rust')" />
-    <SettingsRow :icon="DocumentTextOutline" :title="t('打开前端日志')" :description="t('界面渲染与调用的记录')" clickable
+    <SettingsRow :icon="DocumentTextOutline" :title="t('tools.openFrontendLog')" :description="t('tools.uiRenderingAndIpcCalls')" clickable
       @click="openLog('frontend')" />
-    <SettingsRow :icon="DocumentTextOutline" :title="t('打开崩溃日志')" :description="t('程序异常退出时的诊断信息')" clickable
+    <SettingsRow :icon="DocumentTextOutline" :title="t('tools.openCrashLog')" :description="t('tools.diagnosticsFromAbnormalExits')" clickable
       @click="openLog('crash')" />
   </SettingsGroup>
 
-  <SettingsGroup :title="t('回收站')">
-    <SettingsRow :icon="TrashOutline" :title="t('打开回收站')"
-      :description="t('查看已删除的 MOD，可恢复到原位置或彻底删除')" clickable @click="recycleOpen = true" />
+  <SettingsGroup :title="t('recycle.recycleBin')">
+    <SettingsRow :icon="TrashOutline" :title="t('recycle.openRecycleBin')"
+      :description="t('recycle.reviewDeletedModsRestoreThemOrDeletePermanently')" clickable @click="recycleOpen = true" />
   </SettingsGroup>
 
   <!--
@@ -182,16 +182,16 @@ async function clearAvatars() {
     偶尔会因为组织改名、代理换了张图而显示旧头像，需要手动清一次。
     与回收站、日志并列放在工具页 —— 它是维护动作，不是配置项。
   -->
-  <SettingsGroup :title="t('缓存')">
-    <SettingsRow :icon="CloudOfflineOutline" :title="t('清除头像缓存')"
-      :description="t('删除已下载的仓库头像；下次进入 MOD 安装页会重新获取')"
+  <SettingsGroup :title="t('tools.cache')">
+    <SettingsRow :icon="CloudOfflineOutline" :title="t('tools.clearAvatarCache')"
+      :description="t('tools.deletesDownloadedRepositoryAvatarsTheyWillBeFetchedAgainTheNextTimeYouOpenTheModInstallPage')"
       clickable @click="clearAvatars" />
   </SettingsGroup>
 
-  <SettingsGroup :title="t('高级')">
-    <SettingsRow :icon="TerminalOutline" :title="t('打开开发者工具')" :description="t('WebView 开发者控制台（调试用）')" clickable
+  <SettingsGroup :title="t('tools.advanced')">
+    <SettingsRow :icon="TerminalOutline" :title="t('tools.openDeveloperTools')" :description="t('tools.webviewDeveloperConsoleDebugging')" clickable
       @click="devtools" />
-    <SettingsRow :icon="BuildOutline" :title="t('重置窗口状态')" :description="t('窗口位置或尺寸异常时恢复默认布局')" clickable
+    <SettingsRow :icon="BuildOutline" :title="t('tools.resetWindowState')" :description="t('tools.restoreTheDefaultLayoutWhenTheWindowIsMisplaced')" clickable
       @click="resetUi" />
   </SettingsGroup>
 
@@ -209,7 +209,7 @@ async function clearAvatars() {
       <div class="log-head-extra">
         <!-- 等级筛选：默认 INFO，去掉 TRACE/DEBUG 的噪音 -->
         <n-select v-model:value="logLevel" size="small" class="log-level" :options="logLevelOptions" />
-        <n-tag size="small" :bordered="false">{{ t('{count} 行', { count: filteredLineCount }) }}</n-tag>
+        <n-tag size="small" :bordered="false">{{ t('rename.lines', { count: filteredLineCount }) }}</n-tag>
       </div>
     </template>
     <div class="muted mono log-path">{{ logPath }}</div>

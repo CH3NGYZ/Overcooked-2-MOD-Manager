@@ -26,6 +26,18 @@ import { backup, modConfig, modPreview } from './modsFiles.ts'
 import { community, proxy } from './network.ts'
 import { source } from './source.ts'
 import { migrate, update } from './update.ts'
+import { nav } from './nav.ts'
+import { overview } from './overview.ts'
+import { frameworkUi } from './frameworkUi.ts'
+import { overlays } from './overlays.ts'
+import { recycleUi } from './recycleUi.ts'
+import { modsOnline } from './modsOnline.ts'
+import { modsLocal } from './modsLocal.ts'
+import { settings } from './settings.ts'
+import { toolsUi } from './toolsUi.ts'
+import { dialogs } from './dialogs.ts'
+import { renameUi } from './renameUi.ts'
+import { uiCommon } from './uiCommon.ts'
 import { DOMAINS, LOCALE_CODES, type Domain, type DomainMessages, type Localized } from './types.ts'
 
 /**
@@ -110,6 +122,20 @@ const TABLES: DomainTable[] = [
   { domain: 'source', messages: source },
   { domain: 'migrate', messages: migrate },
   { domain: 'update', messages: update },
+
+  // —— 界面文案（迁移自旧 `src/i18n.ts` 的中文 key 表）——
+  { domain: 'nav', messages: nav },
+  { domain: 'overview', messages: overview },
+  { domain: 'framework', messages: frameworkUi },
+  { domain: 'overlays', messages: overlays },
+  { domain: 'recycle', messages: recycleUi },
+  { domain: 'modsOnline', messages: modsOnline },
+  { domain: 'modsLocal', messages: modsLocal },
+  { domain: 'settings', messages: settings },
+  { domain: 'tools', messages: toolsUi },
+  { domain: 'dialogs', messages: dialogs },
+  { domain: 'rename', messages: renameUi },
+  { domain: 'common', messages: uiCommon },
 ]
 
 /** 把一条五语文案按语言摊平。 */

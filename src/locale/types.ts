@@ -47,6 +47,7 @@ export const DOMAINS = [
   // —— 界面域：按页面/区域归属 ——
   'common',      // 通用：确定/取消/保存/删除 等跨页面复用的词
   'nav',         // 侧栏、标题栏、页面标题
+  'overlays',    // 全屏遮罩（备份/恢复/卸载整目录拷贝的等待提示）
   'overview',    // 总览
   'modsOnline',  // MOD 安装页
   'modsLocal',   // MOD 管理页

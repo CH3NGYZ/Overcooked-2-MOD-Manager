@@ -69,7 +69,7 @@ const percent = computed(() => Math.min(100, Math.round((byteLength.value / MAX_
  * 比手写 keyframes 更容易和主题的缓动对齐。
  */
 const stage = ref<'input' | 'customize'>('input')
-watch(stage, (value) => setPageTitleOverride(value === 'customize' ? '开始自定义' : null))
+watch(stage, (value) => setPageTitleOverride(value === 'customize' ? 'rename.startCustomizing' : null))
 onBeforeUnmount(() => setPageTitleOverride(null))
 
 /** n-tabs 用 tab name 表达阶段。 */
@@ -80,7 +80,7 @@ const stageName = computed({
 
 function startEdit() {
   const text = rawName.value.trim()
-  if (!text) { message.warning(t('请输入名字')); return }
+  if (!text) { message.warning(t('rename.pleaseEnterAName')); return }
   name.value = text
   colors.value = chars.value.map(() => DEFAULT_COLOR)
   sizes.value = chars.value.map(() => DEFAULT_SIZE)
@@ -243,7 +243,7 @@ function warnNoSelection() {
     if (warnedInGesture) return
     warnedInGesture = true
   }
-  message.warning(t('请先选择要修改的文字'))
+  message.warning(t('rename.selectSomeTextFirst'))
 }
 
 /*
@@ -346,7 +346,7 @@ function applySizeInput(target: number) {
 
 function resetSelectionStyle() {
   const range = selected.value
-  if (!range) { message.warning(t('请先选择要修改的文字')); return }
+  if (!range) { message.warning(t('rename.selectSomeTextFirst')); return }
   const nextColors = [...colors.value]
   const nextSizes = [...sizes.value]
   for (let index = range.start; index < range.end; index += 1) {
@@ -360,10 +360,10 @@ function resetSelectionStyle() {
 }
 
 async function copyCode() {
-  if (overLimit.value) { message.error(t('名字代码超过限制')); return }
+  if (overLimit.value) { message.error(t('rename.nameCodeIsOverTheLimit')); return }
   try {
     await api.copyText(code.value)
-    message.success(t('已复制，可粘贴到街机MOD 的多彩名字菜单'))
+    message.success(t('rename.copiedPasteItIntoHostutilitiesColorfulNameMenu'))
   } catch (reason) {
     // 后端可能回 tag，必须经过翻译层，不能直接显示原始 message
     message.error(backendMessageOf(reason))
@@ -371,12 +371,12 @@ async function copyCode() {
 }
 
 async function pushToMod() {
-  if (overLimit.value) { message.error(t('名字代码超过限制')); return }
+  if (overLimit.value) { message.error(t('rename.nameCodeIsOverTheLimit')); return }
   pushing.value = true
   try {
     const result = await api.pushColorfulName(code.value)
     result.ok
-      ? message.success(result.message || t('已推送到 街机MOD'))
+      ? message.success(result.message || t('rename.pushedToHostutilities'))
       : message.error(translateBackendMessage(result.message))
   } catch (reason) {
     message.error(backendMessageOf(reason))
@@ -396,15 +396,15 @@ onBeforeUnmount(clearNativeSelection)
   -->
   <Teleport v-if="stage === 'customize'" to="#page-header-title-extra" defer>
     <n-button size="small" secondary @click="resetAll">
-      <RefreshOutline width="14" height="14" />{{ t('重新输入') }}
+      <RefreshOutline width="14" height="14" />{{ t('rename.startOver') }}
     </n-button>
   </Teleport>
   <Teleport v-if="stage === 'customize'" to="#page-header-actions" defer>
     <n-button size="small" secondary :disabled="overLimit" @click="copyCode">
-      <CopyOutline width="14" height="14" />{{ t('复制代码') }}
+      <CopyOutline width="14" height="14" />{{ t('rename.copyCode') }}
     </n-button>
     <n-button size="small" type="primary" :loading="pushing" :disabled="overLimit" @click="pushToMod">
-      <CloudUploadOutline width="14" height="14" />{{ t('推送到 街机MOD') }}
+      <CloudUploadOutline width="14" height="14" />{{ t('rename.pushToHostutilities') }}
     </n-button>
   </Teleport>
 
@@ -414,14 +414,14 @@ onBeforeUnmount(clearNativeSelection)
       <n-tab-pane name="input">
         <section class="panel">
           <div class="panel-head">
-            <b>{{ t('输入名字') }}</b>
-            <span class="muted">{{ t('支持任意字符，例如中文、英文与符号') }}</span>
+            <b>{{ t('rename.enterName') }}</b>
+            <span class="muted">{{ t('rename.anyCharactersEGChineseEnglishSymbols') }}</span>
           </div>
           <n-input v-model:value="rawName" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }"
-            :placeholder="t('在这里输入要修改的名字')" @keydown.enter.prevent="startEdit" />
+            :placeholder="t('rename.enterTheNameYouWantToRestyle')" @keydown.enter.prevent="startEdit" />
           <div class="row-actions">
             <n-button type="primary" @click="startEdit">
-              <ColorWandOutline width="15" height="15" />{{ t('开始自定义') }}
+              <ColorWandOutline width="15" height="15" />{{ t('rename.startCustomizing') }}
             </n-button>
           </div>
         </section>
@@ -431,8 +431,8 @@ onBeforeUnmount(clearNativeSelection)
       <n-tab-pane name="customize">
         <section class="panel">
           <div class="panel-head">
-            <b>{{ t('选择要修改的文字') }}</b>
-            <span class="muted">{{ t('拖动选中预览里的字符，再应用颜色或字号') }}</span>
+            <b>{{ t('rename.selectTextToEdit') }}</b>
+            <span class="muted">{{ t('rename.dragSelectCharactersInThePreviewThenApplyColorOrSize') }}</span>
           </div>
           <!--
             自绘选区：按下记锚点、拖动扩展、抬起结束。
@@ -453,7 +453,7 @@ onBeforeUnmount(clearNativeSelection)
 
           <div class="controls">
             <div class="control-block">
-              <span class="control-label">{{ t('选择颜色') }}</span>
+              <span class="control-label">{{ t('rename.chooseColor') }}</span>
               <!--
                 预设色块全部平铺出来（点击即应用），后面跟一个「其他颜色」入口
                 打开 Naive 取色器。平铺用 n-button 的色块形态，不需要自绘。
@@ -477,7 +477,7 @@ onBeforeUnmount(clearNativeSelection)
             </div>
 
             <div class="control-block">
-              <span class="control-label">{{ t('字号增量') }}</span>
+              <span class="control-label">{{ t('rename.sizeDelta') }}</span>
               <div class="size-row">
                 <!--
                   拖动即预览；按下→拖动→抬起算一个手势，
@@ -490,7 +490,7 @@ onBeforeUnmount(clearNativeSelection)
                 <n-input-number :value="sizeStep" size="small" :min="-34" :max="36" class="size-input"
                   @update:value="(value: number | null) => applySizeInput(value ?? 0)" />
                 <n-button size="small" secondary @click="resetSelectionStyle">
-                  <RefreshOutline width="14" height="14" />{{ t('重置样式') }}
+                  <RefreshOutline width="14" height="14" />{{ t('rename.resetStyle') }}
                 </n-button>
               </div>
             </div>
@@ -499,7 +499,7 @@ onBeforeUnmount(clearNativeSelection)
 
         <section class="panel">
           <div class="panel-head">
-            <b>{{ t('生成的名字代码') }}</b>
+            <b>{{ t('rename.generatedNameCode') }}</b>
             <!--
               容量指示：圆角标签本身就是进度条。
               超限时在它右边直接显示红色警告，不再单独占一行提示。
@@ -509,7 +509,7 @@ onBeforeUnmount(clearNativeSelection)
                 :height="20" :border-radius="999" :status="overLimit ? 'error' : 'success'" />
               <span class="byte-chip-text">{{ byteLength }} / {{ MAX_NAME_BYTES }} B</span>
             </span>
-            <span v-if="overLimit" class="limit-warning">{{ t('超出 238 字节限制') }}</span>
+            <span v-if="overLimit" class="limit-warning">{{ t('rename.exceedsThe238ByteLimit') }}</span>
           </div>
           <n-input :value="code" type="textarea" readonly :autosize="{ minRows: 2, maxRows: 6 }" class="code" />
         </section>
@@ -523,7 +523,7 @@ onBeforeUnmount(clearNativeSelection)
   -->
   <Teleport to="body">
     <div v-if="pushing" class="push-mask">
-      <n-spin size="large" :description="t('正在推送到 街机MOD')" />
+      <n-spin size="large" :description="t('rename.pushingToHostutilities')" />
     </div>
   </Teleport>
 </template>

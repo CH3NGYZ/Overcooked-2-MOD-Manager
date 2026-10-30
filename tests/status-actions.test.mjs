@@ -7,7 +7,7 @@ const { statusActionFor } = await import('../src/statusActions.ts')
 test('可更新映射到「更新」动作', () => {
   const action = statusActionFor(['update_available'])
   assert.equal(action.kind, 'update')
-  assert.equal(action.label, '更新')
+  assert.equal(action.label, 'dialogs.update')
   // 与「可更新」标签同档，按钮与标签颜色一致
   assert.equal(action.tone, 'moderate')
 })
@@ -16,7 +16,7 @@ test('仓库刷新失败映射到「刷新」动作（已安装 MOD 视角）', 
   // 后端扫描算出的标签 key
   const action = statusActionFor(['repository_unavailable'])
   assert.equal(action.kind, 'refresh')
-  assert.equal(action.label, '刷新')
+  assert.equal(action.label, 'modsOnline.refresh')
   assert.equal(action.tone, 'moderate')
 })
 
@@ -24,7 +24,7 @@ test('仓库刷新失败映射到「刷新」动作（仓库卡片视角）', ()
   // MOD 安装页仓库卡片的标签 key 与上一条同义、不同名
   const action = statusActionFor(['refresh_failed'])
   assert.equal(action.kind, 'refresh')
-  assert.equal(action.label, '刷新')
+  assert.equal(action.label, 'modsOnline.refresh')
 })
 
 test('绑定仓库缺失也给刷新按钮，且用严重档配色', () => {

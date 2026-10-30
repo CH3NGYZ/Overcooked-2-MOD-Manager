@@ -251,9 +251,9 @@ async function openUrl(url: string) {
 
     <!-- 分段切换：说明（备注 + README）/ 下载安装（版本 / 日志 / 资产 / 安装） -->
     <n-tabs v-model:value="activeTab" type="segment" animated class="detail-tabs">
-      <n-tab-pane name="info" :tab="t('说明')">
+      <n-tab-pane name="info" :tab="t('tools.details')">
         <section v-if="note" ref="noteElement" class="note markdown-body" v-html="noteHtml"></section>
-        <section v-else class="note muted">{{ t('该仓库没有备注') }}</section>
+        <section v-else class="note muted">{{ t('tools.thisRepositoryHasNoNote') }}</section>
 
         <!-- README：加载中显示骨架动画；文件不存在时整块（含分割线）收起 -->
         <Transition name="readme-collapse">
@@ -263,7 +263,7 @@ async function openUrl(url: string) {
             <section class="readme">
               <Transition name="readme-content" mode="out-in">
                 <div v-if="loading" key="loading" class="readme-loading" role="status"
-                  :aria-label="t('正在加载仓库说明')">
+                  :aria-label="t('tools.loadingRepositoryReadme')">
                   <!-- 宽度与圆角统一在 .readme-loading :deep(.n-skeleton) 里定义 -->
                   <n-skeleton text class="skeleton-line" />
                   <n-skeleton text class="skeleton-line" />
@@ -279,18 +279,18 @@ async function openUrl(url: string) {
       </n-tab-pane>
 
       <!-- 面板 2：下载安装（版本选择 / 提交日志 / 资产与安装） -->
-      <n-tab-pane name="install" :tab="t('下载安装')">
+      <n-tab-pane name="install" :tab="t('tools.download')">
         <!-- 指标 + 安装合并区：版本下拉 / 版本绑定 / 资产信息 / 安装 -->
         <div class="summary">
           <div class="summary-row">
             <div class="metric metric-version">
-              <span class="muted">{{ t('选择版本') }}</span>
+              <span class="muted">{{ t('tools.selectVersion') }}</span>
               <n-select v-if="releaseOptions.length" v-model:value="selectedTag" class="version-select" size="small"
-                :options="releaseOptions" :placeholder="t('选择版本')" />
+                :options="releaseOptions" :placeholder="t('tools.selectVersion')" />
               <b v-else class="mono">{{ version }}</b>
             </div>
             <div class="metric metric-id">
-              <span class="muted">{{ t('版本绑定') }}</span>
+              <span class="muted">{{ t('tools.versionBinding') }}</span>
               <b class="mono">{{ repo.username }}/{{ repo.repository }}</b>
             </div>
           </div>
@@ -298,42 +298,42 @@ async function openUrl(url: string) {
           <!-- 第二段：当前版本的提交日志（独立滚动，最大高度固定） -->
           <div class="release-log">
             <div class="log-head">
-              <span class="muted">{{ t('提交日志') }}</span>
+              <span class="muted">{{ t('modsLocal.releaseNotes') }}</span>
               <!-- 优先显示 Release tag（原始写法），name 为空时也用它 -->
               <b class="mono">{{ selectedRelease?.tag_name || selectedRelease?.name || '—' }}</b>
               <span v-if="selectedRelease?.published_at" class="muted">
                 {{ selectedRelease.published_at.slice(0, 10) }}
               </span>
               <!-- 预发布：元数据标记 或 版本号带 - 后缀（0.4.0-beta / 0.4.0.5-beta） -->
-              <n-tag v-if="selectedReleaseIsPrerelease" size="tiny" type="warning" :bordered="false">{{ t('预发布') }}</n-tag>
+              <n-tag v-if="selectedReleaseIsPrerelease" size="tiny" type="warning" :bordered="false">{{ t('modsOnline.preRelease') }}</n-tag>
             </div>
             <div v-if="selectedRelease?.body?.trim()" ref="logElement" class="log-box markdown-body" v-html="logHtml"></div>
-            <div v-else class="log-box log-empty muted">{{ t('该版本没有提交日志') }}</div>
+            <div v-else class="log-box log-empty muted">{{ t('modsLocal.thisReleaseHasNoNotes') }}</div>
           </div>
 
           <!-- 资产选择 / 大小与下载次数 / 安装按钮 -->
           <div class="install-row">
             <!-- 左侧：可选已识别的 Release 资产（或仓库文件模式的文件） -->
             <n-select v-if="repo.download_mode === 'release' && assetOptions.length" class="asset-select" size="small"
-              :value="primaryAsset?.name ?? null" :options="assetOptions" :placeholder="t('选择文件')"
+              :value="primaryAsset?.name ?? null" :options="assetOptions" :placeholder="t('tools.selectFile')"
               @update:value="(value: string) => (selectedAssetName = value)" />
             <span v-else-if="repo.download_mode === 'repository_file'" class="asset-select-file mono">
               {{ repo.branch }}/{{ repo.file_path }}
             </span>
-            <span v-else class="asset-select-file muted">{{ t('该版本没有命中资产规则的文件') }}</span>
+            <span v-else class="asset-select-file muted">{{ t('tools.noAssetInThisReleaseMatchesTheAssetRules') }}</span>
 
             <!-- 中右：大小与下载次数 -->
             <div class="asset-stats">
               <template v-if="repo.download_mode === 'repository_file'">
-                <span class="muted">{{ t('仓库文件模式直接下载该文件') }}</span>
+                <span class="muted">{{ t('tools.repositoryFileModeDownloadsThisFileDirectly') }}</span>
               </template>
               <template v-else-if="primaryAsset">
                 <span class="stat-item">
-                  <span class="muted">{{ t('大小') }}</span>
+                  <span class="muted">{{ t('tools.size') }}</span>
                   <b>{{ formatSize(primaryAsset.size) }}</b>
                 </span>
                 <span class="stat-item">
-                  <span class="muted">{{ t('下载量') }}</span>
+                  <span class="muted">{{ t('dialogs.downloads') }}</span>
                   <b>{{ (primaryAsset.download_count ?? 0).toLocaleString() }}</b>
                 </span>
               </template>
@@ -343,13 +343,13 @@ async function openUrl(url: string) {
             <n-button type="primary" :loading="installing"
               :disabled="gameBlocked || (repo.download_mode === 'release' && !primaryAsset)"
               @click="emit('install', repo.download_mode === 'release' ? selectedRelease?.tag_name : undefined)">
-              <DownloadOutline width="15" height="15" />{{ t('安装') }}
+              <DownloadOutline width="15" height="15" />{{ t('modsOnline.install') }}
             </n-button>
           </div>
 
           <!-- 仓库文件模式的下载方式已由安装行表达，这里只保留未启用提示 -->
           <div v-if="repo.download_mode !== 'repository_file' && !repo.enabled" class="summary-tags">
-            <n-tag size="small" :bordered="false">{{ t('未启用') }}</n-tag>
+            <n-tag size="small" :bordered="false">{{ t('modsOnline.disabled') }}</n-tag>
           </div>
         </div>
       </n-tab-pane>

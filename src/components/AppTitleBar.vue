@@ -52,15 +52,15 @@ function onUnmountedCleanup() { unlistenResize?.() }
 
 /** 九色的显示名（仅用于 hover 提示与无障碍，矩阵本身不显示文字）。 */
 const ACCENT_NAMES: Record<string, string> = {
-  slate: '板岩', gray: '灰色', rose: '玫红',
-  red: '红色', orange: '橙色', amber: '琥珀',
-  green: '绿色', teal: '青色', blue: '蓝色',
+  slate: 'nav.slate', gray: 'nav.gray', rose: 'nav.rose',
+  red: 'nav.red', orange: 'nav.orange', amber: 'nav.amber',
+  green: 'nav.green', teal: 'nav.teal', blue: 'nav.blue',
 }
 const accentLabel = (key: string) => t(ACCENT_NAMES[key] ?? key)
 /** 当前主题色块（触发器按钮用），矩阵里直接读 ACCENTS。 */
 const accentSwatch = computed(() => ACCENTS.find((entry) => entry.key === accentKey.value)?.swatch ?? '#14b8a6')
 
-const themeLabel = computed(() => (isDark.value ? t('深色') : t('浅色')))
+const themeLabel = computed(() => (isDark.value ? t('nav.dark') : t('nav.light')))
 
 // 窗口控制：浏览器预览下按钮仍可见，但调用被安全吞掉（不抛错）。
 async function minimize() { await safeTauri(async () => appWindow?.minimize()) }
@@ -152,22 +152,22 @@ defineExpose({ onUnmountedCleanup })
         <button class="brand-game-toggle" type="button"
           :class="{ running: kitchenRunning }"
           :disabled="launching || !canLaunch"
-          :title="kitchenRunning ? t('停止游戏') : t('启动游戏')"
+          :title="kitchenRunning ? t('overview.stopGame') : t('overview.launchGame')"
           @click.stop="toggleGame">
           <n-spin v-if="launching" :size="14" />
           <StopOutline v-else-if="kitchenRunning" width="15" height="15" />
           <PlayOutline v-else width="15" height="15" />
         </button>
         <span v-if="gameHover" class="brand-game-hint">
-          {{ kitchenRunning ? t('停止游戏') : t('启动游戏') }}
+          {{ kitchenRunning ? t('overview.stopGame') : t('overview.launchGame') }}
         </span>
       </div>
       <div class="brand-text" data-tauri-drag-region>
         <div class="brand-title-row">
-          <strong>{{ t('OC2 模组管理器') }}</strong>
+          <strong>{{ t('nav.oc2ModManager') }}</strong>
           <span v-if="props.version" class="brand-version">v{{ props.version }}</span>
         </div>
-        <small>{{ t('快捷管理 《胡闹厨房2》的MOD') }}</small>
+        <small>{{ t('nav.quicklyManageModsForOvercooked2') }}</small>
       </div>
     </div>
 
@@ -176,7 +176,7 @@ defineExpose({ onUnmountedCleanup })
     <!-- 界面缩放：下拉选择（与语言下拉一致） -->
     <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
       @select="onZoomSelect">
-      <button class="pill" type="button" :title="t('界面缩放')">
+      <button class="pill" type="button" :title="t('nav.uiScale')">
         <ContrastOutline width="15" height="15" />
         <span>{{ zoomPercent }}%</span>
         <span class="caret">▾</span>
@@ -187,7 +187,7 @@ defineExpose({ onUnmountedCleanup })
     <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale"
       trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
       @select="(key: Locale) => setLocale(key)">
-      <button class="pill" type="button" :title="t('界面语言')">
+      <button class="pill" type="button" :title="t('nav.language')">
         <LanguageOutline width="15" height="15" />
         <span>{{ currentLocaleLabel }}</span>
         <span class="caret">▾</span>
@@ -205,11 +205,11 @@ defineExpose({ onUnmountedCleanup })
     <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw
       :z-index="TITLEBAR_MENU_Z_INDEX">
       <template #trigger>
-        <button class="pill icon-only" type="button" :title="t('主题色')" @contextmenu.prevent="cycleAccent">
+        <button class="pill icon-only" type="button" :title="t('nav.accent')" @contextmenu.prevent="cycleAccent">
           <span class="swatch" :style="{ background: accentSwatch }"></span>
         </button>
       </template>
-      <div class="accent-grid" role="listbox" :aria-label="t('主题色')">
+      <div class="accent-grid" role="listbox" :aria-label="t('nav.accent')">
         <button v-for="entry in ACCENTS" :key="entry.key" type="button" class="accent-cell"
           :class="{ active: entry.key === accentKey }" role="option" :aria-selected="entry.key === accentKey"
           :title="accentLabel(entry.key)" :style="{ background: entry.swatch }" @click="setAccent(entry.key)" />
@@ -220,15 +220,15 @@ defineExpose({ onUnmountedCleanup })
     <template v-if="canControlWindow">
       <span class="sep"></span>
 
-      <button class="win-btn" type="button" :title="t('最小化')" :aria-label="t('最小化')" @click="minimize">
+      <button class="win-btn" type="button" :title="t('nav.minimize')" :aria-label="t('nav.minimize')" @click="minimize">
         <RemoveOutline width="16" height="16" />
       </button>
-      <button class="win-btn" type="button" :title="maximized ? t('还原') : t('最大化')"
-        :aria-label="maximized ? t('还原') : t('最大化')" @click="toggleMaximize">
+      <button class="win-btn" type="button" :title="maximized ? t('nav.restore') : t('nav.maximize')"
+        :aria-label="maximized ? t('nav.restore') : t('nav.maximize')" @click="toggleMaximize">
         <ContractOutline v-if="maximized" width="15" height="15" />
         <SquareOutline v-else width="14" height="14" />
       </button>
-      <button class="win-btn danger" type="button" :title="t('关闭')" :aria-label="t('关闭')" @click="close">
+      <button class="win-btn danger" type="button" :title="t('nav.close')" :aria-label="t('nav.close')" @click="close">
         <CloseOutline width="17" height="17" />
       </button>
     </template>

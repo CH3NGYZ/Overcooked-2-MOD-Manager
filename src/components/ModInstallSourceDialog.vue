@@ -72,7 +72,7 @@ async function pickLocal() {
 async function downloadOnline() {
   const trimmed = url.value.trim()
   if (!/^https?:\/\//i.test(trimmed)) {
-    message.warning(t('请输入 zip 或 DLL 的直链网址'))
+    message.warning(t('tools.enterADirectUrlToAZipOrDll'))
     return
   }
   await analyze('url', trimmed)
@@ -102,7 +102,7 @@ onMounted(() => {
         const path = payload.paths?.[0]
         if (!path) return
         if (!/\.(dll|zip)$/i.test(path)) {
-          message.warning(t('只支持 .dll 或 .zip 文件'))
+          message.warning(t('tools.onlyDllOrZipFilesAreSupported'))
           return
         }
         // 拖入即安装：自动打开本面板并开始解析
@@ -121,10 +121,10 @@ onBeforeUnmount(() => { dragUnlisten?.(); dragUnlisten = null })
 
 <template>
   <!-- 复用统一弹窗外壳：不传 #footer，内容区独占剩余高度并自己滚动 -->
-  <AppModal :show="open" :title="t('安装 MOD')" max-width="min(620px, 92%)"
+  <AppModal :show="open" :title="t('tools.installMod')" max-width="min(620px, 92%)"
     max-height="min(600px, 80%)" @update:show="(value: boolean) => (open = value)">
     <n-tabs v-model:value="sourceTab" type="segment" animated>
-      <n-tab-pane name="local" :tab="t('本地文件')">
+      <n-tab-pane name="local" :tab="t('tools.localFile')">
         <!--
           拖放区：点击也能打开文件选择器。
           Tauri 接管 WebView2 的拖放后系统光标固定是「禁止」（UIPI 之外还有
@@ -135,17 +135,17 @@ onBeforeUnmount(() => { dragUnlisten?.(); dragUnlisten = null })
           <n-spin v-if="busy" size="small" />
           <template v-else>
             <span class="drop-plus">+</span>
-            <span class="drop-hint">{{ t('把 .dll 或 .zip 拖到这里，或点击选择文件') }}</span>
+            <span class="drop-hint">{{ t('tools.dropADllOrZipHereOrClickToChooseAFile') }}</span>
           </template>
         </div>
       </n-tab-pane>
-      <n-tab-pane name="online" :tab="t('在线直链')">
+      <n-tab-pane name="online" :tab="t('tools.directUrl')">
         <div class="online-form">
-          <p class="muted">{{ t('粘贴 zip 或 DLL 的下载直链，由管理器下载并解析。') }}</p>
+          <p class="muted">{{ t('tools.pasteADirectDownloadUrlForAZipOrDllTheManagerDownloadsAndInspectsIt') }}</p>
           <n-input v-model:value="url" :placeholder="t('https://example.com/mod.zip')" clearable />
           <div class="actions">
             <n-button type="primary" :loading="busy" :disabled="busy" @click="downloadOnline">
-              <LinkOutline width="14" height="14" />{{ t('下载并解析') }}
+              <LinkOutline width="14" height="14" />{{ t('tools.downloadAndAnalyze') }}
             </n-button>
           </div>
         </div>

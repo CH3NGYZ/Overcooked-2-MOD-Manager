@@ -59,10 +59,10 @@ export function useModRemoval(options: ModRemovalOptions) {
   function remove(mod: InstalledMod, copy?: RemovalCopy) {
     const fallback = options.deleteCopy()
     dialog.warning({
-      title: copy?.title ?? t('删除 MOD'),
+      title: copy?.title ?? t('modsLocal.deleteMod'),
       content: copy ? copy.body(options.titleOf(mod)) : fallback.body(options.titleOf(mod)),
       positiveText: fallback.action,
-      negativeText: t('取消'),
+      negativeText: t('recycle.cancel'),
       async onPositiveClick() {
         options.onBusy?.(mod, true)
         try {
@@ -70,12 +70,12 @@ export function useModRemoval(options: ModRemovalOptions) {
           if (result.requires_package_confirmation || result.requires_confirmation) {
             // 后端此时还没删任何东西（ok=false），确认后才带 allow_unmanaged 重试
             dialog.warning({
-              title: t('该 MOD 属于 MOD 包'),
-              content: t('它与 {count} 个子 MOD 同属一个包，一并删除？', {
+              title: t('modsLocal.thisModBelongsToAPackage'),
+              content: t('modsLocal.itSharesAPackageWithModsDeleteThemTogether', {
                 count: result.package_mod_names?.length ?? 0,
               }),
-              positiveText: t('整包删除'),
-              negativeText: t('取消'),
+              positiveText: t('modsLocal.deletePackage'),
+              negativeText: t('recycle.cancel'),
               async onPositiveClick() {
                 const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
                 packageResult.ok

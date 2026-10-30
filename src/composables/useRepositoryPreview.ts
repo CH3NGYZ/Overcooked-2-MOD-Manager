@@ -80,10 +80,10 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
     if (prerelease) {
       const confirmed = await new Promise<boolean>((resolve) => {
         dialog.warning({
-          title: t('预发布版本'),
-          content: t('此版本为预览版本，可能存在未知问题，是否继续安装？'),
-          positiveText: t('继续安装'),
-          negativeText: t('取消'),
+          title: t('modsLocal.preReleaseVersion'),
+          content: t('modsLocal.thisIsAPreReleaseBuildAndMayHaveUnknownIssuesContinueInstalling'),
+          positiveText: t('modsLocal.continueInstalling'),
+          negativeText: t('recycle.cancel'),
           onPositiveClick: () => resolve(true),
           onNegativeClick: () => resolve(false),
           onClose: () => resolve(false),
@@ -118,7 +118,7 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
         return
       }
       if (!outcome.preview) {
-        message.error(t('下载完成但没有解析出安装内容'))
+        message.error(t('modsOnline.downloadFinishedButNoInstallableContentWasParsed'))
         return
       }
       openPreview(outcome.preview)

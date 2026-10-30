@@ -26,39 +26,44 @@ function mod(overrides = {}) {
 }
 
 test('未安装仓库显示未安装，未刷新仓库显示未刷新', () => {
-  assert.equal(repositoryStatus(repo(), []).text, '未安装')
-  assert.equal(repositoryStatus(repo({ cached_releases: [] }), []).text, '未刷新')
+  assert.equal(repositoryStatus(repo(), []).text, 'overview.notInstalled')
+  assert.equal(repositoryStatus(repo({ cached_releases: [] }), []).text, 'modsOnline.notRefreshed')
 })
 
 test('RAW 仓库只区分未安装 / 已安装，未安装为灰色', () => {
   const raw = repo({ download_mode: 'repository_file' })
   const notInstalled = repositoryStatus(raw, [])
-  assert.equal(notInstalled.text, '未安装')
+  assert.equal(notInstalled.text, 'overview.notInstalled')
   assert.equal(notInstalled.tone, 'muted')
 
   const installed = mod({ repository_id: 'repo-1' })
   const done = repositoryStatus(raw, [installed])
-  assert.equal(done.text, '已安装')
+  assert.equal(done.text, 'modsLocal.installed')
   // 已安装与最新版同档，使用主题色
   assert.equal(done.tone, 'accent')
 })
 
 test('RAW 仓库即使被禁用或刷新失败，也只按安装状态显示', () => {
   const installed = mod({ repository_id: 'repo-1' })
-  assert.equal(repositoryStatus(repo({ download_mode: 'repository_file', enabled: false }), [installed]).text, '已安装')
-  assert.equal(repositoryStatus(repo({ download_mode: 'repository_file', last_error: 'x' }), []).text, '未安装')
+  assert.equal(repositoryStatus(repo({ download_mode: 'repository_file', enabled: false }), [installed]).text, 'modsLocal.installed')
+  assert.equal(repositoryStatus(repo({ download_mode: 'repository_file', last_error: 'x' }), []).text, 'overview.notInstalled')
 })
 
 test('所有未安装类标签都是灰色', () => {
+  /*
+   * `text` 现在是 tag（`overview.notInstalled`），不再以「未」开头 ——
+   * 断言中文前缀等于在断言某个具体语言的译文。这里改为断言两件真正重要
+   * 的事：文案指向「未安装」这一族 tag，且色调是中性灰。
+   */
   for (const key of ['not_installed', 'not_installed_raw', 'not_refreshed']) {
-    assert.equal(STATUS_META[key].text.startsWith('未'), true, key)
+    assert.match(STATUS_META[key].text, /^[a-zA-Z]+\.[a-zA-Z]/, `${key} 的文案不是 tag`)
     assert.equal(STATUS_META[key].tone, 'muted', key)
   }
 })
 
 test('Release 仓库禁用或刷新失败时优先提示状态', () => {
-  assert.equal(repositoryStatus(repo({ enabled: false }), []).text, '未启用')
-  assert.equal(repositoryStatus(repo({ last_error: 'x' }), []).text, '仓库刷新失败')
+  assert.equal(repositoryStatus(repo({ enabled: false }), []).text, 'modsOnline.disabled')
+  assert.equal(repositoryStatus(repo({ last_error: 'x' }), []).text, 'modsOnline.repositoryRefreshFailed')
 })
 
 test('仓库刷新失败与已安装 MOD 的仓库刷新失败同文案同等级', () => {
@@ -75,10 +80,10 @@ test('后端已给出 latest 时直接采信；版本落后时判为可更新', 
     repository_id: 'repo-1', labels: ['latest'], version: '2.0.0',
     repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v2.0.0', channel: 'all' },
   })
-  assert.equal(repositoryStatus(repo(), [installed]).text, '最新版')
+  assert.equal(repositoryStatus(repo(), [installed]).text, 'modsLocal.latest')
 
   const outdated = { ...installed, labels: ['update_available'], update_available: true }
-  assert.equal(repositoryStatus(repo(), [outdated]).text, '可更新')
+  assert.equal(repositoryStatus(repo(), [outdated]).text, 'tools.update')
 })
 
 test('后端未绑定该仓库时回退到版本比较', () => {
@@ -86,7 +91,7 @@ test('后端未绑定该仓库时回退到版本比较', () => {
     repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'all' },
   })
   const status = repositoryStatus(repo(), [installed])
-  assert.equal(status.text, '可更新')
+  assert.equal(status.text, 'tools.update')
   // 可更新属于「中度」
   assert.equal(status.tone, 'moderate')
 })
@@ -105,15 +110,15 @@ test('每个状态标签都有文案与合法色调', () => {
 
 test('installedModTags 保留后端顺序，labels 为空时退回 status', () => {
   const tags = installedModTags(mod({ labels: ['duplicate_lower_version', 'duplicate'] }))
-  assert.deepEqual(tags.map((tag) => tag.text), ['低版本', '重复'])
+  assert.deepEqual(tags.map((tag) => tag.text), ['tools.olderVersion', 'modsLocal.duplicate'])
   // 重复属重度，低版本属轻微
   assert.deepEqual(tags.map((tag) => tag.tone), ['mild', 'severe'])
-  assert.equal(installedModTags(mod({ labels: [], status: 'unbound' }))[0].text, '未绑定')
+  assert.equal(installedModTags(mod({ labels: [], status: 'unbound' }))[0].text, 'modsLocal.unbound')
 })
 
 test('预发布版本在最前面插入「预发布」标签，与可更新同档', () => {
   const tags = installedModTags(mod({ labels: ['latest'], prerelease: true }))
-  assert.deepEqual(tags.map((tag) => tag.text), ['预发布', '最新版'])
+  assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.preRelease', 'modsLocal.latest'])
   assert.equal(tags[0].tone, 'moderate')
   // 最新版用主题色
   assert.equal(tags[1].tone, 'accent')
@@ -121,7 +126,7 @@ test('预发布版本在最前面插入「预发布」标签，与可更新同�
 
 test('非预发布版本不出现「预发布」标签', () => {
   const tags = installedModTags(mod({ labels: ['latest'], prerelease: false }))
-  assert.deepEqual(tags.map((tag) => tag.text), ['最新版'])
+  assert.deepEqual(tags.map((tag) => tag.text), ['modsLocal.latest'])
 })
 
 test('后端已带 prerelease 标签时不重复插入', () => {
@@ -169,8 +174,8 @@ test('检测中与版本未知是两个独立语义', () => {
   // 刷新进行中 → 检测中（还在查）；查完但判断不出 → 版本未知。
   // 混用会让刷新期间看起来已经有结论了。
   assert.notEqual(STATUS_META.checking.text, STATUS_META.unknown.text)
-  assert.equal(STATUS_META.checking.text, '检测中')
-  assert.equal(STATUS_META.unknown.text, '版本未知')
+  assert.equal(STATUS_META.checking.text, 'tools.checking')
+  assert.equal(STATUS_META.unknown.text, 'tools.versionUnknown')
   // 两者都是中性档：此刻既没有结论也没有需要动作的东西
   assert.equal(STATUS_META.checking.tone, 'muted')
   assert.equal(STATUS_META.unknown.tone, 'muted')

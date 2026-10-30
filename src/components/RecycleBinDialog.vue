@@ -41,10 +41,10 @@ function confirmClearAll() {
   const count = list.value?.entryCount ?? 0
   if (!count) return
   dialog.error({
-    title: t('清空回收站'),
-    content: t('将永久删除回收站中的全部 {count} 条记录及其文件，无法恢复。确定清空？', { count }),
-    positiveText: t('全部彻底删除'),
-    negativeText: t('取消'),
+    title: t('recycle.emptyRecycleBin'),
+    content: t('recycle.allRecycledEntriesAndTheirFilesWillBePermanentlyDeletedThisCannotBeUndoneEmptyTheBin', { count }),
+    positiveText: t('recycle.deleteAllPermanently'),
+    negativeText: t('recycle.cancel'),
     onPositiveClick() {
       void list.value?.clearAll()
     },
@@ -59,13 +59,13 @@ function confirmClearAll() {
     缩成一条、长列表又要等渲染完才撑开。固定成最大尺寸，空态与滚动都在
     一个稳定的框里，不会在数据到达时跳变。
   -->
-  <AppModal :show="show" :title="t('回收站')" fill max-width="min(860px, 90%)"
+  <AppModal :show="show" :title="t('recycle.recycleBin')" fill max-width="min(860px, 90%)"
     @update:show="(value: boolean) => emit('update:show', value)">
     <template #header-extra>
-      <n-button size="small" quaternary :loading="refreshing" :title="t('立即刷新')" @click="reload">
+      <n-button size="small" quaternary :loading="refreshing" :title="t('recycle.refreshNow')" @click="reload">
         <template #icon><RefreshOutline width="15" height="15" /></template>
       </n-button>
-      <n-button size="small" quaternary type="error" :title="t('清空回收站')"
+      <n-button size="small" quaternary type="error" :title="t('recycle.emptyRecycleBin')"
         :disabled="!list?.entryCount" @click="confirmClearAll">
         <template #icon><TrashOutline width="15" height="15" /></template>
       </n-button>

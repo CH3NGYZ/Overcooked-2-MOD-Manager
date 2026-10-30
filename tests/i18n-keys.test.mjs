@@ -12,9 +12,16 @@ import test from 'node:test'
  *
  * 只覆盖字面量调用。动态 key（变量、模板拼接）无法静态判定，那部分仍需
  * 人工检查；本测试的存在是为了让「新增文案忘了登记」变成构建期红灯。
+ *
+ * ## 表在哪里
+ *
+ * 文案全部在 `src/locale/*.ts`，每张表声明自己属于哪个域（`index.ts` 的
+ * `TABLES`）。所以这里读 `index.ts` 建立「导出名 → 域」，再读各域文件
+ * 的 key，拼出完整 tag 集合。
  */
 const SRC = new URL('../src/', import.meta.url)
-const I18N = new URL('../src/i18n.ts', import.meta.url)
+const LOCALE_DIR = new URL('../src/locale/', import.meta.url)
+const NON_TABLE = new Set(['index.ts', 'backend.ts', 'state.ts', 'types.ts'])
 
 /** 无需翻译的 key：占位符与产品名。 */
 const IGNORED = new Set([
@@ -22,8 +29,6 @@ const IGNORED = new Set([
   'https://example.com/mod.zip',
   // CodeWeavers 的商标
   'CrossOver',
-  // 管理器自身的产品名，各语言保持同一写法
-  'OC2 MOD 管理器',
 ])
 
 function walk(dir, files = []) {
@@ -38,31 +43,52 @@ function walk(dir, files = []) {
   return files
 }
 
-const i18nSource = readFileSync(I18N, 'utf8').replace(/\r\n/g, '\n')
+const localePath = LOCALE_DIR.pathname.replace(/^\/([A-Za-z]:)/, '$1')
+
+/** 从 `index.ts` 读「导出名 → 域」。`flat` 表记为 null（key 自带完整 tag）。 */
+const domainOf = new Map()
+for (const m of readFileSync(join(localePath, 'index.ts'), 'utf8').matchAll(
+  /\{\s*(?:domain:\s*'([A-Za-z.]+)'|flat:\s*true),\s*messages:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g,
+)) {
+  domainOf.set(m[2], m[1] ?? null)
+}
+
+/** 读出所有已登记的完整 tag。 */
 const declared = new Set()
-for (const match of i18nSource.matchAll(/^\s*'((?:[^'\\]|\\.)+)'\s*:\s*\[/gm)) {
-  declared.add(match[1].replace(/\\'/g, "'"))
+for (const file of readdirSync(localePath)) {
+  if (!file.endsWith('.ts') || NON_TABLE.has(file)) continue
+  const text = readFileSync(join(localePath, file), 'utf8').replace(/\r\n/g, '\n')
+
+  // 该文件导出了哪些表（一个文件可能导出多张）
+  const exports = [...text.matchAll(/export const ([A-Za-z_][A-Za-z0-9_]*):\s*DomainMessages/g)].map((m) => m[1])
+
+  // 按 `export const` 切块，逐块收集 key
+  const blocks = text.split(/export const [A-Za-z_][A-Za-z0-9_]*:\s*DomainMessages\s*=\s*\{/)
+  for (let i = 0; i < exports.length; i += 1) {
+    const block = blocks[i + 1] ?? ''
+    const domain = domainOf.has(exports[i]) ? domainOf.get(exports[i]) : null
+    const prefix = domain === null ? '' : `${domain}.`
+    // key 有带引号（`'a.b': {`）和裸标识符（`abc: {`）两种写法
+    for (const m of block.matchAll(/^\s*(?:'([A-Za-z0-9_.]+)'|([A-Za-z_][A-Za-z0-9_]*)):\s*\{/gm)) {
+      declared.add(`${prefix}${m[1] ?? m[2]}`)
+    }
+  }
 }
 
 test('语言表至少包含项目现有文案量', () => {
   // 防止解析正则失效导致 declared 为空、测试假通过
-  assert.ok(declared.size > 400, `语言表只解析出 ${declared.size} 条，扫描可能失效`)
+  assert.ok(declared.size > 700, `语言表只解析出 ${declared.size} 条，扫描可能失效`)
 })
 
 test('t() 的字面量 key 全部已登记', () => {
   const missing = []
   for (const file of walk(SRC.pathname.replace(/^\/([A-Za-z]:)/, '$1'))) {
-    if (file.endsWith('i18n.ts')) continue
-    /*
-     * 跳过 `src/locale/`：那是正在迁移过来的新系统（语义化 tag + vue-i18n），
-     * 它的 key 存在自己的域文件里，由 tests/backend-i18n.test.mjs 覆盖。
-     * 旧系统只负责尚未迁移的页面，两者的 key 空间互不相干。
-     */
+    // 语言表自己的文件不参与扫描
     if (/[\\/]locale[\\/]/.test(file)) continue
 
     const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
     for (const [index, line] of text.split('\n').entries()) {
-      // 跳过注释行：注释里常引用示例 tag（`t('error.xxx')`）当说明，不是真调用
+      // 跳过注释行：注释里常引用示例 tag（`t('mods.xxx')`）当说明，不是真调用
       const trimmed = line.trimStart()
       if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue
 
@@ -79,5 +105,5 @@ test('t() 的字面量 key 全部已登记', () => {
       }
     }
   }
-  assert.deepEqual(missing, [], `以下文案未登记到 i18n.ts：\n  ${missing.join('\n  ')}`)
+  assert.deepEqual(missing, [], `以下文案未登记到语言表：\n  ${missing.join('\n  ')}`)
 })

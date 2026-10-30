@@ -47,22 +47,22 @@ export interface StatusActionSpec {
  *   - `disabled` / `prerelease` / `latest`：无需动作。
  */
 const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
-  update_available: { kind: 'update', label: '更新', tone: 'moderate' },
-  repository_unavailable: { kind: 'refresh', label: '刷新', tone: 'moderate' },
-  refresh_failed: { kind: 'refresh', label: '刷新', tone: 'moderate' },
-  bound_repository_missing: { kind: 'refresh', label: '刷新', tone: 'critical' },
+  update_available: { kind: 'update', label: 'dialogs.update', tone: 'moderate' },
+  repository_unavailable: { kind: 'refresh', label: 'modsOnline.refresh', tone: 'moderate' },
+  refresh_failed: { kind: 'refresh', label: 'modsOnline.refresh', tone: 'moderate' },
+  bound_repository_missing: { kind: 'refresh', label: 'modsOnline.refresh', tone: 'critical' },
   /*
    * 缺依赖 → 「去安装」。色调用 critical，与「缺依赖」标签同档 ——
    * 用户看到的标签与按钮是同一种颜色，不需要额外解释它们是一回事。
    */
-  missing_dependency: { kind: 'install-dependency', label: '去安装', tone: 'critical' },
+  missing_dependency: { kind: 'install-dependency', label: 'overview.browse', tone: 'critical' },
   /*
    * 冲突 → 「去卸载」。与「冲突」标签同档同色。
    *
    * 冲突不能靠安装解决 —— 装什么都不会让「你不该装它」变成「该装」，
    * 唯一出路是卸掉。所以这里指向卸载确认，而不是仓库跳转。
    */
-  dependency_conflict: { kind: 'uninstall-conflict', label: '去卸载', tone: 'critical' },
+  dependency_conflict: { kind: 'uninstall-conflict', label: 'modsOnline.uninstall', tone: 'critical' },
 }
 
 /**

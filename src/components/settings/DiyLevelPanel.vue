@@ -100,7 +100,7 @@ async function refresh() {
 function openInstall() {
   const repo = installableRepository.value
   if (!repo) {
-    message.warning(t('无法在线安装 DIYLevel，请手动安装后在这里管理'))
+    message.warning(t('framework.diylevelIsNotAvailableOnlineInstallItManuallyThenManageItHere'))
     return
   }
   linkToRepository(repo.id)
@@ -143,13 +143,13 @@ async function toggle(value: boolean) {
  */
 function uninstall() {
   dialog.warning({
-    title: t('卸载 DIYLevel 框架'),
-    content: t('卸载前会自动备份整个 DIYLevel 目录。其中的自制地图文件会一并移入回收站。继续？'),
-    positiveText: t('卸载框架'),
-    negativeText: t('取消'),
+    title: t('framework.uninstallDiylevelFramework'),
+    content: t('framework.theWholeDiylevelFolderIsBackedUpBeforeUninstallingCustomMapsInsideAreMovedToTheRecycleBinTooContinue'),
+    positiveText: t('overlays.uninstallFramework'),
+    negativeText: t('recycle.cancel'),
     async onPositiveClick() {
       working.value = true
-      busyText.value = t('正在备份并卸载 DIYLevel…')
+      busyText.value = t('framework.backingUpAndUninstallingDiylevel')
       try {
         const result = await api.uninstallDiyLevel()
         result.ok
@@ -170,7 +170,7 @@ function uninstall() {
 /** 创建一个 DIYLevel 目录备份。 */
 async function backup() {
   working.value = true
-  busyText.value = t('正在备份 DIYLevel 目录…')
+  busyText.value = t('framework.backingUpTheDiylevelFolder')
   try {
     const result = await api.backupDiyLevel()
     result.ok
@@ -188,13 +188,13 @@ async function backup() {
 /** 恢复备份：先删现有 DIYLevel 目录，再整体还原（后端负责）。 */
 function restore(backupPath: string) {
   dialog.warning({
-    title: t('恢复 DIYLevel 备份'),
-    content: t('当前的 DIYLevel 目录会被删除，然后还原成这个备份的内容。继续？'),
-    positiveText: t('恢复'),
-    negativeText: t('取消'),
+    title: t('framework.restoreDiylevelBackup'),
+    content: t('framework.theCurrentDiylevelFolderWillBeDeletedThenReplacedWithThisBackupContinue'),
+    positiveText: t('overlays.restore'),
+    negativeText: t('recycle.cancel'),
     async onPositiveClick() {
       working.value = true
-      busyText.value = t('正在恢复 DIYLevel 备份…')
+      busyText.value = t('framework.restoringDiylevelBackup')
       try {
         const result = await api.restoreDiyLevel(backupPath)
         result.ok
@@ -215,10 +215,10 @@ function restore(backupPath: string) {
 /** 删除一个备份目录。 */
 function deleteBackup(backupPath: string) {
   dialog.warning({
-    title: t('删除备份'),
-    content: t('这个备份会被永久删除，无法恢复。继续？'),
-    positiveText: t('删除'),
-    negativeText: t('取消'),
+    title: t('recycle.deleteBackup'),
+    content: t('framework.thisBackupWillBeDeletedPermanentlyContinue'),
+    positiveText: t('modsLocal.delete'),
+    negativeText: t('recycle.cancel'),
     async onPositiveClick() {
       try {
         const result = await api.deleteDiyLevelBackup(backupPath)
@@ -253,13 +253,13 @@ onMounted(() => { void refresh() })
     <div class="panel-head">
       <div class="panel-head-main">
         <!-- 开关只在框架真正安装后才出现：没有可切换的插件 -->
-        <n-switch v-if="installed" :value="enabled" :title="t('框架启用（游戏加载此框架）')"
+        <n-switch v-if="installed" :value="enabled" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
           :loading="switching" :disabled="busy" @update:value="toggle" />
-        <span class="panel-title">{{ t('DIYLevel 框架') }}</span>
-        <span class="panel-version muted">{{ t('版本') }}：{{ info?.version || '—' }}</span>
+        <span class="panel-title">{{ t('framework.diylevelFramework') }}</span>
+        <span class="panel-version muted">{{ t('modsOnline.versions') }}：{{ info?.version || '—' }}</span>
         <n-tag size="small" :bordered="false" class="state-tag"
           :color="tagColorFor(installed ? (enabled ? 'accent' : 'muted') : 'muted')">
-          {{ installed ? (enabled ? t('已启用') : t('已禁用')) : t('未安装') }}
+          {{ installed ? (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')) : t('overview.notInstalled') }}
         </n-tag>
       </div>
     </div>
@@ -272,53 +272,53 @@ onMounted(() => { void refresh() })
     <div v-if="installed" class="panel-actions">
       <n-button size="small" secondary :disabled="busy" @click="openDirectory">
         <template #icon><FolderOpenOutline width="15" height="15" /></template>
-        {{ t('打开地图目录') }}
+        {{ t('framework.openMapFolder') }}
       </n-button>
     </div>
 
     <!-- 安装：未安装时只有这一个入口；已安装则是「重新安装 / 创建备份 / 卸载框架」 -->
     <div class="panel-install">
       <div class="panel-field">
-        <span class="muted">{{ t('安装来源') }}</span>
+        <span class="muted">{{ t('framework.installSource') }}</span>
         <span v-if="installableRepository" class="muted">{{ repositoryName }}</span>
-        <span v-else class="muted">{{ t('未找到可在线安装的仓库') }}</span>
+        <span v-else class="muted">{{ t('framework.noRepositoryCanInstallItOnline') }}</span>
       </div>
       <div class="panel-buttons">
         <n-button size="small" type="primary" :disabled="busy || !installableRepository"
           @click="openInstall">
           <template #icon><AddCircleOutline width="15" height="15" /></template>
-          {{ installed ? t('重新安装') : t('安装框架') }}
+          {{ installed ? t('overlays.reinstall') : t('overlays.installFramework') }}
         </n-button>
         <template v-if="installed">
           <n-button size="small" secondary :disabled="busy" @click="backup">
             <template #icon><SaveOutline width="15" height="15" /></template>
-            {{ t('创建备份') }}
+            {{ t('overlays.createBackup') }}
           </n-button>
           <n-button size="small" secondary type="warning" :disabled="busy" @click="uninstall">
             <template #icon><WarningOutline width="15" height="15" /></template>
-            {{ t('卸载框架') }}
+            {{ t('overlays.uninstallFramework') }}
           </n-button>
         </template>
       </div>
       <!-- 未安装时的说明：讲清装完之后能做什么，避免用户找不到维护入口 -->
       <p v-if="!installed" class="muted panel-hint">
         {{ installableRepository
-          ? t('安装后这里会出现启用开关、配置管理与备份入口。')
-          : t('无法在线安装：MOD 安装页没有声明此 GUID 的仓库，请手动安装后回到这里管理。') }}
+          ? t('overlays.afterInstallingTheEnableSwitchConfigManagerAndBackupsAppearHere')
+          : t('framework.notAvailableOnlineNoRepositoryDeclaresThisGuidInstallItManuallyThenManageItHere') }}
       </p>
     </div>
 
     <!-- 备份列表：与 BepInEx 面板同一套结构；没有备份且未安装时整块不出现 -->
     <div v-if="installed || backups.length" class="panel-backups">
       <div class="panel-backups-head">
-        <b>{{ t('框架备份') }}</b>
+        <b>{{ t('overlays.frameworkBackups') }}</b>
         <n-button size="tiny" quaternary :disabled="busy" @click="openBackups">
           <template #icon><FolderOpenOutline width="14" height="14" /></template>
-          {{ t('打开备份目录') }}
+          {{ t('overlays.openBackupFolder') }}
         </n-button>
       </div>
       <div v-if="!backups.length" class="muted panel-empty">
-        {{ t('暂无备份。卸载或重装前建议先创建备份。') }}
+        {{ t('overlays.noBackupsYetCreateOneBeforeUninstallingOrReinstalling') }}
       </div>
       <div v-for="row in backupRows" :key="row.path" class="backup-row">
         <span class="backup-label" :title="row.path">
@@ -329,9 +329,9 @@ onMounted(() => { void refresh() })
           <span class="mono backup-path">{{ row.path }}</span>
         </span>
         <span class="backup-acts">
-          <n-button size="tiny" secondary :disabled="busy" @click="openBackup(row.path)">{{ t('打开') }}</n-button>
-          <n-button size="tiny" secondary :disabled="busy" @click="restore(row.path)">{{ t('恢复') }}</n-button>
-          <n-button size="tiny" quaternary type="error" :disabled="busy" :title="t('删除备份')"
+          <n-button size="tiny" secondary :disabled="busy" @click="openBackup(row.path)">{{ t('modsLocal.open') }}</n-button>
+          <n-button size="tiny" secondary :disabled="busy" @click="restore(row.path)">{{ t('overlays.restore') }}</n-button>
+          <n-button size="tiny" quaternary type="error" :disabled="busy" :title="t('recycle.deleteBackup')"
             @click="deleteBackup(row.path)">
             <template #icon><TrashOutline width="14" height="14" /></template>
           </n-button>

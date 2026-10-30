@@ -22,7 +22,7 @@ void watchAppUpdatePhase((event) => {
 }).then((un) => { unlisten = un })
 onUnmounted(() => { unlisten?.() })
 
-const bodyText = computed(() => props.update?.body?.trim() || t('本次更新没有提供说明。'))
+const bodyText = computed(() => props.update?.body?.trim() || t('dialogs.noReleaseNotesWereProvided'))
 /** 更新日志按 Markdown 渲染（与 note/README 同一函数）。 */
 const bodyHtml = computed(() => renderReadme(props.update?.body?.trim() || ''))
 /** 更新日志里也可能有 mermaid 图，渲染后补一次 SVG 转换。 */
@@ -42,11 +42,13 @@ function close() {
 
 async function install() {
   installing.value = true
-  phaseText.value = '准备下载更新…'
+  phaseText.value = t('dialogs.preparingDownload')
   try {
     const result = await api.installAppUpdate()
     if (result.ok) {
-      message.success(result.message || '更新安装已开始，应用将自动退出')
+      message.success(result.message
+        ? translateBackendMessage(result.message)
+        : t('dialogs.updateInstallStartedTheAppWillExitAutomatically'))
       phaseText.value = ''
       close()
     } else {
@@ -74,14 +76,14 @@ async function install() {
         当前 v{{ update.current_version }} → 新版 v{{ update.version }}
         <span v-if="update.provider">（{{ update.provider === 'gitee' ? 'Gitee 渠道' : 'GitHub 渠道' }}）</span>
       </div>
-      <div class="body-label muted">{{ t('更新内容：') }}</div>
+      <div class="body-label muted">{{ t('dialogs.whatSNew') }}</div>
       <div v-if="bodyHtml" ref="bodyElement" class="body markdown-body" v-html="bodyHtml"></div>
       <div v-else class="body">{{ bodyText }}</div>
       <div v-if="phaseText" class="phase">{{ phaseText }}</div>
     </div>
     <template #footer>
-      <n-button quaternary :disabled="installing" @click="close">{{ t('取消') }}</n-button>
-      <n-button type="primary" :loading="installing" @click="install">{{ t('更新') }}</n-button>
+      <n-button quaternary :disabled="installing" @click="close">{{ t('recycle.cancel') }}</n-button>
+      <n-button type="primary" :loading="installing" @click="install">{{ t('dialogs.update') }}</n-button>
     </template>
   </AppModal>
 </template>

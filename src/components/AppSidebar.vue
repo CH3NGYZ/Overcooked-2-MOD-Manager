@@ -17,9 +17,9 @@ const route = useRoute()
  * BepInEx 框架管理」抽屉，和装一个 MOD 的复杂度相当，不值得常驻导航。
  */
 const mainItems = [
-  { name: 'overview', title: '总览', icon: GridOutline },
-  { name: 'mods-online', title: 'MOD 安装', icon: CloudDownloadOutline },
-  { name: 'mods-local', title: 'MOD 管理', icon: FileTrayFullOutline },
+  { name: 'overview', title: 'nav.overview', icon: GridOutline },
+  { name: 'mods-online', title: 'nav.modInstall', icon: CloudDownloadOutline },
+  { name: 'mods-local', title: 'nav.modManager', icon: FileTrayFullOutline },
 ]
 /**
  * 分割线之下：与 MOD 管理配套的工具入口。
@@ -28,12 +28,12 @@ const mainItems = [
  * 「回收站设置」分组里（打开回收站弹窗），不占主导航。
  */
 const extraItems = [
-  { name: 'rename', title: '改多彩名', icon: ColorWandOutline },
+  { name: 'rename', title: 'rename.colorfulName', icon: ColorWandOutline },
 ]
 /** 沉底导航：工具与设置固定在侧栏底部。 */
 const bottomItems = [
-  { name: 'tools', title: '工具', icon: BuildOutline },
-  { name: 'settings', title: '设置', icon: SettingsOutline },
+  { name: 'tools', title: 'nav.tools', icon: BuildOutline },
+  { name: 'settings', title: 'nav.settings', icon: SettingsOutline },
 ]
 
 const activeName = computed(() => (route.name as string) ?? 'overview')

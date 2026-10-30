@@ -53,13 +53,13 @@ const recyclesOnDelete = computed(() => config.value?.recycle_deleted_mods !== f
 /** 删除前的确认文案与按钮：随开关切换。 */
 const deleteConfirm = computed(() => recyclesOnDelete.value
   ? {
-      body: (name: string) => t('「{name}」将被移入回收站，可在回收站中恢复。继续？', { name }),
-      action: t('移入回收站'),
+      body: (name: string) => t('modsLocal.willBeMovedToTheRecycleBinAndCanBeRestoredContinue', { name }),
+      action: t('modsLocal.moveToRecycleBin'),
       done: '已移入回收站',
     }
   : {
-      body: (name: string) => t('「{name}」将被直接删除，无法恢复。继续？', { name }),
-      action: t('直接删除'),
+      body: (name: string) => t('modsLocal.willBeDeletedPermanentlyThisCannotBeUndoneContinue', { name }),
+      action: t('modsLocal.deletePermanently'),
       done: '已删除',
     })
 
@@ -67,14 +67,14 @@ const deleteConfirm = computed(() => recyclesOnDelete.value
 const deletePackageConfirm = computed(() => recyclesOnDelete.value
   ? {
       body: (name: string, count: number) =>
-        t('「{name}」的 {count} 个文件将被整包移入回收站，可在回收站中恢复。继续？', { name, count }),
-      action: t('整包移入回收站'),
+        t('tools.allFilesOfWillBeMovedToTheRecycleBinAndCanBeRestoredContinue', { name, count }),
+      action: t('modsOnline.movePackageToRecycleBin'),
       done: '已移入回收站',
     }
   : {
       body: (name: string, count: number) =>
-        t('「{name}」的 {count} 个文件将被直接删除，无法恢复。继续？', { name, count }),
-      action: t('整包删除'),
+        t('tools.allFilesOfWillBeDeletedPermanentlyThisCannotBeUndoneContinue', { name, count }),
+      action: t('modsLocal.deletePackage'),
       done: '已删除',
     })
 
@@ -144,7 +144,7 @@ async function checkUpdates() {
   }
 
   if (!targets.size) {
-    message.warning(t('没有已安装 MOD 绑定到可用的在线仓库'))
+    message.warning(t('overview.noInstalledModIsBoundToAnAvailableOnlineRepository'))
     return
   }
   void api.writeFrontendLog('info',
@@ -196,7 +196,7 @@ async function refreshLocal() {
   refreshingLocal.value = true
   try {
     await load()
-    message.success(t('已重新扫描本地 MOD'))
+    message.success(t('tools.localModsRescanned'))
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -341,11 +341,11 @@ async function setAllEnabled(enabled: boolean) {
 
 function confirmDisableAll() {
   dialog.warning({
-    title: t('禁用全部 MOD'),
-    content: t('将禁用全部 {count} 个 MOD，游戏将不加载任何 MOD。可以随时重新启用。',
+    title: t('overview.disableAllMods'),
+    content: t('overview.allModsWillBeDisabledTheGameWillLoadNoneOfThemYouCanReEnableThemAnytime',
       { count: effectiveMods.value.length }),
-    positiveText: t('全部禁用'),
-    negativeText: t('取消'),
+    positiveText: t('overview.disableAll'),
+    negativeText: t('recycle.cancel'),
     onPositiveClick() {
       void setAllEnabled(false)
     },
@@ -483,21 +483,21 @@ function modCategory(mod: InstalledMod): ModCategory {
   if (repo) {
     if (hasSnapshot) {
       const canonical = (snapshot['zh-CN'] || pickI18n(snapshot, '')).trim()
-      const label = pickI18n(snapshot, '') || t('未分组')
+      const label = pickI18n(snapshot, '') || t('dialogs.ungrouped')
       return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
     }
     // key 用语言无关的原始分组名，切换语言时折叠状态不丢
     const canonical = (repo.group || repo.group_i18n?.['zh-CN'] || pickI18n(repo.group_i18n, '')).trim()
-    const label = pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
+    const label = pickI18n(repo.group_i18n, repo.group || '') || t('dialogs.ungrouped')
     return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
   }
-  if (mod.manual_install) return { key: '__local_install__', label: t('本地安装') }
+  if (mod.manual_install) return { key: '__local_install__', label: t('tools.localInstall') }
   if (hasSnapshot) {
     const canonical = (snapshot!['zh-CN'] || pickI18n(snapshot, '')).trim()
-    const label = pickI18n(snapshot, '') || t('未分组')
+    const label = pickI18n(snapshot, '') || t('dialogs.ungrouped')
     return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
   }
-  return { key: '__unbound__', label: t('未绑定') }
+  return { key: '__unbound__', label: t('modsLocal.unbound') }
 }
 
 const groups = computed<ModGroupNode[]>(() => {
@@ -680,7 +680,7 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
   busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalMod(mod.dll_file, enabled)
-    result.ok ? message.success(result.message || (enabled ? '已启用' : t('已禁用'))) : message.error(translateBackendMessage(result.message))
+    result.ok ? message.success(result.message || (enabled ? '已启用' : t('modsLocal.disabled'))) : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }
@@ -694,8 +694,8 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
  */
 function uninstallConflict(mod: InstalledMod, target: InstalledMod) {
   remove(target, {
-    title: t('卸载冲突的 MOD'),
-    body: (name) => t('「{name}」与「{owner}」不兼容，需要卸载。继续？',
+    title: t('modsOnline.uninstallConflictingMod'),
+    body: (name) => t('modsOnline.isIncompatibleWithAndMustBeUninstalledContinue',
       { name, owner: modTitle(mod) }),
   })
 }
@@ -1066,11 +1066,11 @@ function tagTitle(mod: InstalledMod, tagKey: string): string | undefined {
   const target = tagTargetRepositoryId(mod, tagKey)
   if (!target) {
     // 缺依赖但没有可安装来源：说明「没有地方可去」，而不是假装可点
-    return tagKey === 'missing_dependency' ? t('没有可安装的来源') : undefined
+    return tagKey === 'missing_dependency' ? t('modsOnline.noInstallableSource') : undefined
   }
   return tagKey === 'missing_dependency' || tagKey === 'dependency_conflict'
-    ? t('在 MOD 安装中查看依赖')
-    : t('在 MOD 安装中查看')
+    ? t('modsOnline.viewDependencyInModInstall')
+    : t('dialogs.viewInModInstall')
 }
 
 /**
@@ -1105,7 +1105,7 @@ function bindingText(mod: InstalledMod) {
 
 /** 包成员数文案。 */
 function packageCountText(mod: InstalledMod) {
-  return t('{count} 个', { count: mod.package_mod_count ?? 0 })
+  return t('rename.text', { count: mod.package_mod_count ?? 0 })
 }
 
 /* ===== 工具栏：定位目录 / 配置编辑 ===== */
@@ -1195,7 +1195,7 @@ const previewing = ref<Record<string, boolean>>({})
 const { previewRepository } = useRepositoryPreview(openInstallPreview, {
   gameBlocked: () => {
     if (!game.value?.kitchen_running) return false
-    message.warning(t('游戏运行中，已禁止安装。请先关闭游戏。'))
+    message.warning(t('modsOnline.theGameIsRunningCloseItBeforeInstalling'))
     return true
   },
   onBusyChange: (repositoryId, busy) => {
@@ -1226,7 +1226,7 @@ const {
   repositories: () => repositories.value,
   gameBlocked: () => {
     if (!game.value?.kitchen_running) return false
-    message.warning(t('游戏运行中，已禁止安装。请先关闭游戏。'))
+    message.warning(t('modsOnline.theGameIsRunningCloseItBeforeInstalling'))
     return true
   },
   onApplied: () => load(),
@@ -1253,7 +1253,7 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
   try {
     const result = await api.toggleLocalModPackage(packageId, enabled)
     result.ok
-      ? message.success(result.message || (enabled ? t('已启用') : t('已禁用')))
+      ? message.success(result.message || (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
       : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) {
@@ -1269,10 +1269,10 @@ function removePackage(node: ModPackageNode) {
   if (!first) return
   const confirm = deletePackageConfirm.value
   dialog.warning({
-    title: t('删除 MOD 包'),
+    title: t('tools.deleteModPackage'),
     content: confirm.body(node.label, node.mods.length),
     positiveText: confirm.action,
-    negativeText: t('取消'),
+    negativeText: t('recycle.cancel'),
     async onPositiveClick() {
       for (const mod of node.mods) busy.value[mod.dll_file] = true
       try {
@@ -1300,7 +1300,7 @@ function removePackage(node: ModPackageNode) {
   <Teleport to="#page-header-title-extra" defer>
     <n-tag v-for="entry in statusSummaryTags" :key="entry.key" size="small" :bordered="false"
       class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
-      :title="t('在页面内定位')" @click="locateStatus(entry.key)"
+      :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
       @keydown.enter.prevent="locateStatus(entry.key)"
       @keydown.space.prevent="locateStatus(entry.key)">
       {{ entry.count }} {{ t(entry.text) }}
@@ -1316,19 +1316,19 @@ function removePackage(node: ModPackageNode) {
   <Teleport to="#page-header-actions" defer>
     <n-button v-if="effectiveMods.length" size="small" secondary
       :disabled="bulkWorking || allModsEnabled" @click="setAllEnabled(true)">
-      {{ t('全部启用') }}
+      {{ t('overview.enableAll') }}
     </n-button>
     <n-button v-if="effectiveMods.length" size="small" secondary type="warning"
       :disabled="bulkWorking || !enabledModCount" @click="confirmDisableAll">
-      {{ t('全部禁用') }}
+      {{ t('overview.disableAll') }}
     </n-button>
     <n-button size="small" secondary :loading="checkingUpdates" :disabled="checkingUpdates || refreshingAll"
-      :title="t('只刷新已安装 MOD 绑定的仓库，检查是否有新版本')" @click="checkUpdates">
+      :title="t('overview.refreshOnlyTheRepositoriesYourInstalledModsAreBoundToAndCheckForNewVersions')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
-      {{ t('检测更新') }}
+      {{ t('overview.check') }}
     </n-button>
     <n-button size="small" secondary @click="openModsDirectory">
-      <FolderOpenOutline width="14" height="14" />{{ t('打开目录') }}
+      <FolderOpenOutline width="14" height="14" />{{ t('modsLocal.openFolder') }}
     </n-button>
   </Teleport>
 
@@ -1354,7 +1354,7 @@ function removePackage(node: ModPackageNode) {
     原来的 .toolbar 只重复这些数字，已无存在必要，移除。
   -->
   <n-spin :show="loading">
-    <n-empty v-if="!loading && !sortedMods.length" :description="t('尚未安装任何 MOD')" class="empty" />
+    <n-empty v-if="!loading && !sortedMods.length" :description="t('modsLocal.noModsInstalled')" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
@@ -1439,23 +1439,23 @@ function removePackage(node: ModPackageNode) {
                   <!-- 工具栏：可选按钮在最左（用占位保持列宽），固定按钮贴右 -->
                   <span class="tool-group" :style="toolGroupStyle">
                     <!-- 查看日志：只有 BepInEx/logs/<guid> 存在时才显示；缺失时保留同宽占位 -->
-                    <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('查看日志')"
+                    <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('modsLocal.viewLogs')"
                       class="tool-optional" @click.stop="openLogs(mod)">
                       <DocumentTextOutline width="14" height="14" />
                     </n-button>
                     <span v-else class="tool-placeholder" />
                     <!-- 配置编辑：只有存在配置文件的 MOD 才有；缺失时保留同宽占位，
                          这样「打开位置」「删除」始终落在最右侧同一列 -->
-                    <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('配置编辑')"
+                    <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('tools.editConfig')"
                       class="tool-optional" @click.stop="editConfig(mod)">
                       <SettingsOutline width="14" height="14" />
                     </n-button>
                     <span v-else class="tool-placeholder" />
-                    <n-button size="tiny" quaternary :title="t('打开所在文件夹并定位')"
+                    <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
                       :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
                       <FolderOpenOutline width="14" height="14" />
                     </n-button>
-                    <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" :title="t('删除')"
+                    <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" :title="t('modsLocal.delete')"
                       @click.stop="remove(mod)">
                       <TrashOutline width="14" height="14" />
                     </n-button>
@@ -1500,7 +1500,7 @@ function removePackage(node: ModPackageNode) {
                     @click.stop @update:value="(value: boolean) => togglePackageEnabled(pkg, value)" />
                   <b class="package-title" :title="pkg.label">{{ pkg.label }}</b>
                   <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">
-                    {{ t('{count} 个', { count: pkg.mods.length }) }}
+                    {{ t('rename.text', { count: pkg.mods.length }) }}
                   </n-tag>
                 </div>
 
@@ -1537,15 +1537,15 @@ function removePackage(node: ModPackageNode) {
                       class="state-tag" :class="{ 'state-tag--link': !!packageTagTargetId(pkg, entry.key) }"
                       :color="tagColorForAny(entry.tone)"
                       :title="packageTagTargetId(pkg, entry.key)
-                        ? t('在 MOD 安装中查看')
+                        ? t('dialogs.viewInModInstall')
                         : undefined"
                       @click.stop="openPackageTag(pkg, entry.key)">
                       {{ entry.count ? `${entry.count} ${t(entry.text)}` : t(entry.text) }}
                     </n-tag>
                     <n-tag v-if="!pkg.enabled && !pkg.partial" size="tiny" :bordered="false"
-                      class="state-tag" :color="tagColorFor('muted')">{{ t('已禁用') }}</n-tag>
+                      class="state-tag" :color="tagColorFor('muted')">{{ t('modsLocal.disabled') }}</n-tag>
                     <n-tag v-else-if="pkg.partial" size="tiny" :bordered="false"
-                      class="state-tag" :color="tagColorFor('accent')">{{ t('部分启用') }}</n-tag>
+                      class="state-tag" :color="tagColorFor('accent')">{{ t('tools.partiallyEnabled') }}</n-tag>
                   </span>
 
                   <span class="tool-divider" />
@@ -1555,7 +1555,7 @@ function removePackage(node: ModPackageNode) {
                     这样删除按钮落在同一竖线；只有一个按钮时其余位置留空。
                   -->
                   <span class="tool-group" :style="toolGroupStyle" @click.stop>
-                    <n-button size="tiny" quaternary type="error" :title="t('整包删除')"
+                    <n-button size="tiny" quaternary type="error" :title="t('modsLocal.deletePackage')"
                       :disabled="game?.kitchen_running" @click="removePackage(pkg)">
                       <TrashOutline width="14" height="14" />
                     </n-button>
@@ -1596,22 +1596,22 @@ function removePackage(node: ModPackageNode) {
                         包标题、单 MOD 卡片落在同一竖线，视觉上才是一整套工具栏。
                       -->
                       <span class="tool-group" :style="toolGroupStyle">
-                        <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('查看日志')"
+                        <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('modsLocal.viewLogs')"
                           class="tool-optional" @click.stop="openLogs(mod)">
                           <DocumentTextOutline width="14" height="14" />
                         </n-button>
                         <span v-else class="tool-placeholder" />
-                        <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('配置编辑')"
+                        <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('tools.editConfig')"
                           class="tool-optional" @click.stop="editConfig(mod)">
                           <SettingsOutline width="14" height="14" />
                         </n-button>
                         <span v-else class="tool-placeholder" />
-                        <n-button size="tiny" quaternary :title="t('打开所在文件夹并定位')"
+                        <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
                           :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
                           <FolderOpenOutline width="14" height="14" />
                         </n-button>
                         <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running"
-                          :title="t('删除')" @click.stop="remove(mod)">
+                          :title="t('modsLocal.delete')" @click.stop="remove(mod)">
                           <TrashOutline width="14" height="14" />
                         </n-button>
                       </span>
@@ -1641,7 +1641,7 @@ function removePackage(node: ModPackageNode) {
     「重新读取 Dashboard」会重扫 BepInEx/plugins 并重算标签，等同用户手动
     改过文件后的一次本地刷新；仓库刷新在 MOD 安装页，两者职责分开。
   -->
-  <n-float-button position="fixed" bottom="28" right="32" :tooltip="t('重新扫描本地 MOD')"
+  <n-float-button position="fixed" bottom="28" right="32" :tooltip="t('tools.rescanLocalMods')"
     :disabled="refreshingLocal" @click="refreshLocal">
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': refreshingLocal }" />
   </n-float-button>

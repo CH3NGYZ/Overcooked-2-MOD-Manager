@@ -42,13 +42,13 @@ export interface StatusTag {
 
 /** 后端标签 → 文案与颜色。 */
 export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
-  update_available: { text: '可更新', tone: 'moderate' },
-  latest: { text: '最新版', tone: 'accent' },
+  update_available: { text: 'tools.update', tone: 'moderate' },
+  latest: { text: 'modsLocal.latest', tone: 'accent' },
   /** 已安装的是预发布版本：与「可更新」同档，因为都需要用户注意。 */
-  prerelease: { text: '预发布', tone: 'moderate' },
-  not_release_asset: { text: '已安装', tone: 'accent' },
-  unbound: { text: '未绑定', tone: 'muted' },
-  bound_repository_missing: { text: '仓库缺失', tone: 'critical' },
+  prerelease: { text: 'modsOnline.preRelease', tone: 'moderate' },
+  not_release_asset: { text: 'modsLocal.installed', tone: 'accent' },
+  unbound: { text: 'modsLocal.unbound', tone: 'muted' },
+  bound_repository_missing: { text: 'modsLocal.repositoryMissing', tone: 'critical' },
   /**
    * 绑定仓库的 Release 抓取失败。
    *
@@ -56,7 +56,7 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    * 所以文案统一为「仓库刷新失败」、等级统一为 moderate：
    * 需要用户注意并重试，但不像同 GUID 冲突、加载失败那样已经破坏了本地状态。
    */
-  repository_unavailable: { text: '仓库刷新失败', tone: 'moderate' },
+  repository_unavailable: { text: 'modsOnline.repositoryRefreshFailed', tone: 'moderate' },
   /**
    * 正在检查：绑定的仓库正在抓取 Release，结论还没出来。
    *
@@ -64,14 +64,14 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    * checking 是「还在查」。混用会让刷新过程显示成「版本未知」，
    * 用户会误以为已经出结果了。中性灰，因为此刻没有结论、也不需要动作。
    */
-  checking: { text: '检测中', tone: 'muted' },
-  unknown: { text: '版本未知', tone: 'muted' },
-  duplicate: { text: '重复', tone: 'severe' },
-  duplicate_lower_version: { text: '低版本', tone: 'mild' },
-  load_warning: { text: '加载警告', tone: 'critical' },
-  disabled: { text: '已禁用', tone: 'muted' },
+  checking: { text: 'tools.checking', tone: 'muted' },
+  unknown: { text: 'tools.versionUnknown', tone: 'muted' },
+  duplicate: { text: 'modsLocal.duplicate', tone: 'severe' },
+  duplicate_lower_version: { text: 'tools.olderVersion', tone: 'mild' },
+  load_warning: { text: 'modsLocal.loadWarning', tone: 'critical' },
+  disabled: { text: 'modsLocal.disabled', tone: 'muted' },
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
-  dependency: { text: '依赖', tone: 'muted' },
+  dependency: { text: 'tools.dependency', tone: 'muted' },
   /**
    * 缺依赖：这个 MOD 声明的某个必选依赖没装（或版本不在要求区间内）。
    *
@@ -79,7 +79,7 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    * 比「可更新」更该被看见。但也只是提示 —— 能不能一键装由
    * `modRelations` 判定，没有可安装来源时只显示标签。
    */
-  missing_dependency: { text: '缺依赖', tone: 'critical' },
+  missing_dependency: { text: 'modsOnline.missingDep', tone: 'critical' },
   /**
    * 关系冲突：装了不该装的（`conflicts` 命中），或对方版本不在兼容区间内
    * （`compatible` 不满足）。
@@ -87,18 +87,18 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    * 与「缺依赖」同档 critical，但文案区分：缺依赖是「少东西」，
    * 冲突是「东西不对」，后者通常要卸载而不是安装。
    */
-  dependency_conflict: { text: '冲突', tone: 'critical' },
+  dependency_conflict: { text: 'modsOnline.conflict', tone: 'critical' },
   /** 仓库文件（RAW）已安装：与「最新版」同档，都用主题色。 */
-  installed: { text: '已安装', tone: 'accent' },
+  installed: { text: 'modsLocal.installed', tone: 'accent' },
   // MOD 安装页专用：仓库维度而不是已安装 MOD 维度
   /** 未安装一律灰色，不区分 Release / RAW。 */
-  not_installed: { text: '未安装', tone: 'muted' },
+  not_installed: { text: 'overview.notInstalled', tone: 'muted' },
   /** RAW（仓库文件）仓库未安装时也显示「未安装」，不再显示「仓库文件」。 */
-  not_installed_raw: { text: '未安装', tone: 'muted' },
-  not_refreshed: { text: '未刷新', tone: 'muted' },
+  not_installed_raw: { text: 'overview.notInstalled', tone: 'muted' },
+  not_refreshed: { text: 'modsOnline.notRefreshed', tone: 'muted' },
   /** 与已安装 MOD 的 `repository_unavailable` 同义，文案与等级保持一致。 */
-  refresh_failed: { text: '仓库刷新失败', tone: 'moderate' },
-  repository_disabled: { text: '未启用', tone: 'muted' },
+  refresh_failed: { text: 'modsOnline.repositoryRefreshFailed', tone: 'moderate' },
+  repository_disabled: { text: 'modsOnline.disabled', tone: 'muted' },
 }
 
 /**

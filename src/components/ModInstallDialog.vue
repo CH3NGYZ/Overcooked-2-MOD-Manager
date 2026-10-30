@@ -172,7 +172,7 @@ async function confirm() {
     统一弹窗外壳：尺寸不超过可视区域，中间内容滚动，底部操作区固定。
     展开任意多条目、提交日志再长，弹窗大小与按钮位置都不会变。
   -->
-  <AppModal :show="visible" :title="t('安装详情')" card-class="install-dialog"
+  <AppModal :show="visible" :title="t('tools.installDetails')" card-class="install-dialog"
     @update:show="(value: boolean) => (visible = value)"
     @after-leave="handleAfterLeave">
     <div v-if="preview" class="install-preview">
@@ -180,10 +180,10 @@ async function confirm() {
       <div class="preview-head">
         <b>{{ preview.package_name }}</b>
         <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">
-          {{ preview.kind === 'single' ? t('单个 MOD') : t('MOD 包') }}
+          {{ preview.kind === 'single' ? t('tools.singleMod') : t('tools.modPackage') }}
         </n-tag>
         <span class="muted">
-          {{ t('{count} 个 DLL · {mods} 个 MOD · {deps} 个依赖',
+          {{ t('tools.dllsModsDependencies',
             { count: preview.total_dlls, mods: preview.mod_count, deps: preview.dependency_count }) }}
         </span>
       </div>
@@ -207,27 +207,27 @@ async function confirm() {
               破折号只说明「字段为空」，依赖两个字说明「为什么为空」。
             -->
             <span class="preview-version mono">
-              {{ entry.role === 'dependency' ? t('依赖') : (formatVersion(entry.version) || '—') }}
+              {{ entry.role === 'dependency' ? t('tools.dependency') : (formatVersion(entry.version) || '—') }}
             </span>
           </div>
           <n-collapse-transition :show="isEntryExpanded(entry.path)" display-directive="show">
             <div class="preview-row-detail">
-              <div class="preview-item"><span class="muted">{{ t('名称') }}</span><b>{{ entry.name || '—' }}</b></div>
-              <div class="preview-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ formatVersion(entry.version) || '—' }}</b></div>
-              <div class="preview-item"><span class="muted">{{ t('标题') }}</span><b>{{ entry.title || '—' }}</b></div>
-              <div class="preview-item"><span class="muted">{{ t('产品名') }}</span><b>{{ entry.product_name || '—' }}</b></div>
-              <div class="preview-item"><span class="muted">{{ t('作者') }}</span><b>{{ entry.company || '—' }}</b></div>
-              <div class="preview-item"><span class="muted">{{ t('依赖') }}</span>
-                <b>{{ entry.role === 'dependency' ? t('是') : t('否') }}</b>
+              <div class="preview-item"><span class="muted">{{ t('modsLocal.name') }}</span><b>{{ entry.name || '—' }}</b></div>
+              <div class="preview-item"><span class="muted">{{ t('modsOnline.versions') }}</span><b class="mono">{{ formatVersion(entry.version) || '—' }}</b></div>
+              <div class="preview-item"><span class="muted">{{ t('modsLocal.title') }}</span><b>{{ entry.title || '—' }}</b></div>
+              <div class="preview-item"><span class="muted">{{ t('modsLocal.productName') }}</span><b>{{ entry.product_name || '—' }}</b></div>
+              <div class="preview-item"><span class="muted">{{ t('modsLocal.author') }}</span><b>{{ entry.company || '—' }}</b></div>
+              <div class="preview-item"><span class="muted">{{ t('tools.dependency') }}</span>
+                <b>{{ entry.role === 'dependency' ? t('modsLocal.yes2') : t('modsLocal.no2') }}</b>
               </div>
               <div class="preview-item wide"><span class="muted">GUID</span><b class="mono">{{ entry.guid || '—' }}</b></div>
-              <div class="preview-item wide"><span class="muted">{{ t('原始文件名') }}</span><b class="mono">{{ entry.original_filename || '—' }}</b></div>
-              <div class="preview-item wide"><span class="muted">{{ t('文件') }}</span><b class="mono">{{ entry.path }}</b></div>
+              <div class="preview-item wide"><span class="muted">{{ t('modsLocal.originalFilename') }}</span><b class="mono">{{ entry.original_filename || '—' }}</b></div>
+              <div class="preview-item wide"><span class="muted">{{ t('modsLocal.file2') }}</span><b class="mono">{{ entry.path }}</b></div>
             </div>
           </n-collapse-transition>
         </article>
       </div>
-      <div v-else class="muted">{{ t('这个压缩包里没有 DLL 文件') }}</div>
+      <div v-else class="muted">{{ t('tools.thisArchiveContainsNoDllFiles') }}</div>
 
 
       <!--
@@ -237,7 +237,7 @@ async function confirm() {
       <!-- showReleaseLog 已保证正文非空，这里不需要「没有日志」的占位分支 -->
       <div v-if="showReleaseLog" class="release-log">
         <div class="release-log-head">
-          <span class="muted">{{ t('提交日志') }}</span>
+          <span class="muted">{{ t('modsLocal.releaseNotes') }}</span>
           <b class="mono">{{ formatVersion(preview.release_tag) }}</b>
         </div>
         <!-- renderReadme 关闭了原始 HTML，日志只能输出 Markdown 生成的安全节点 -->
@@ -246,8 +246,8 @@ async function confirm() {
     </div>
 
     <template #footer>
-      <n-button secondary :disabled="installing" @click="requestDiscard">{{ t('取消') }}</n-button>
-      <n-button type="primary" :loading="installing" @click="confirm">{{ t('立即安装') }}</n-button>
+      <n-button secondary :disabled="installing" @click="requestDiscard">{{ t('recycle.cancel') }}</n-button>
+      <n-button type="primary" :loading="installing" @click="confirm">{{ t('tools.installNow') }}</n-button>
     </template>
   </AppModal>
 </template>

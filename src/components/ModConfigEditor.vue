@@ -105,7 +105,7 @@ async function save() {
     const document = await saveDocument(revision.value, content.value)
     revision.value = document.revision
     dirty.value = false
-    message.success(t('已保存'))
+    message.success(t('common.saved'))
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -114,7 +114,7 @@ async function save() {
 }
 
 function close() {
-  if (dirty.value) message.warning(t('有未保存的修改，已取消'))
+  if (dirty.value) message.warning(t('tools.unsavedChangesWereDiscarded'))
   emit('update:show', false)
 }
 
@@ -157,7 +157,7 @@ watch(
     @update:show="(value: boolean) => emit('update:show', value)">
     <div class="config-head">
       <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>
-      <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('moderate')">{{ t('未保存') }}</n-tag>
+      <n-tag v-if="dirty" size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('moderate')">{{ t('tools.unsaved') }}</n-tag>
     </div>
 
     <div v-if="error" class="config-error">{{ error }}</div>
@@ -167,15 +167,15 @@ watch(
       这不是表单校验字段，所以不套 n-form-item。
     -->
     <n-input v-else :value="content" type="textarea" class="config-text" :loading="loading"
-      :placeholder="loading ? t('正在读取配置') : ''" :disabled="loading" spellcheck="false"
+      :placeholder="loading ? t('modsOnline.readingConfiguration') : ''" :disabled="loading" spellcheck="false"
       autocorrect="off" autocapitalize="off" @update:value="onInput" />
 
     <template #footer>
       <n-button size="small" type="primary" :loading="saving" :disabled="!canSave" @click="save">
-        <SaveOutline width="14" height="14" />{{ t('保存') }}
+        <SaveOutline width="14" height="14" />{{ t('modsOnline.save') }}
       </n-button>
       <n-button size="small" quaternary @click="close">
-        <CloseOutline width="14" height="14" />{{ t('关闭') }}
+        <CloseOutline width="14" height="14" />{{ t('nav.close') }}
       </n-button>
     </template>
   </AppModal>

@@ -64,7 +64,7 @@ async function copy(value: string) {
   if (!value) return
   try {
     await api.copyText(value)
-    message.success(t('已复制'))
+    message.success(t('modsOnline.copied'))
   } catch (reason) {
     message.error(backendMessageOf(reason))
   }
@@ -79,7 +79,7 @@ function confirm() {
 
 <template>
   <AppModal :show="show" :mask-closable="false" display-directive="if"
-    :title="phase === 'before-install' ? t('安装前准备') : t('还需要一步')"
+    :title="phase === 'before-install' ? t('framework.beforeInstalling') : t('framework.oneMoreStep')"
     max-width="min(620px, 92%)"
     @update:show="(value: boolean) => emit('update:show', value)">
     <!--
@@ -88,29 +88,29 @@ function confirm() {
     -->
     <template v-if="phase === 'before-install'">
       <n-alert v-if="!winePrefix" type="warning" :bordered="false" class="guide-alert">
-        {{ t('未检测到 CrossOver 容器。请先在 CrossOver 里启动一次《胡闹厨房2》，让容器生成后再回来。') }}
+        {{ t('overlays.noCrossoverBottleDetectedLaunchOvercooked2OnceThroughCrossoverSoTheBottleIsCreatedThenComeBack') }}
       </n-alert>
       <n-steps :current="step + 1" size="small" class="guide-steps">
-        <n-step :title="t('准备 CrossOver 容器')"
-          :description="t('确认游戏能在 CrossOver 中正常启动')" />
-        <n-step :title="t('安装字体')"
-          :description="t('补上 corefonts，否则 BepInEx 控制台会显示乱码')" />
-        <n-step :title="t('安装 BepInEx')"
-          :description="t('回到这里点击下方按钮继续')" />
+        <n-step :title="t('framework.prepareTheCrossoverBottle')"
+          :description="t('framework.makeSureTheGameLaunchesInCrossover')" />
+        <n-step :title="t('framework.installFonts')"
+          :description="t('framework.addCorefontsOrTheBepinexConsoleShowsGarbledText')" />
+        <n-step :title="t('framework.installBepinex')"
+          :description="t('overlays.comeBackHereAndContinueBelow')" />
       </n-steps>
 
       <div v-if="fontsCommand" class="guide-block">
-        <span class="guide-label">{{ t('在终端执行以下命令安装字体') }}</span>
+        <span class="guide-label">{{ t('overlays.runThisInATerminalToInstallFonts') }}</span>
         <div class="guide-code">
           <!-- 纯文本命令：不传 language，n-code 也就不会去找 hljs 实例 -->
           <code class="guide-command">{{ fontsCommand }}</code>
-          <n-button size="tiny" quaternary :title="t('复制')" @click="copy(fontsCommand)">
+          <n-button size="tiny" quaternary :title="t('modsOnline.copy')" @click="copy(fontsCommand)">
             <template #icon><CopyOutline width="14" height="14" /></template>
           </n-button>
         </div>
       </div>
       <p class="guide-note muted">
-        {{ t('这一步不是必须的：跳过只会让 BepInEx 控制台里的中文显示成方块，不影响 MOD 加载。') }}
+        {{ t('overlays.optionalSkippingItOnlyMakesChineseTextInTheBepinexConsoleShowAsBoxesModsStillLoad') }}
       </p>
     </template>
 
@@ -120,35 +120,35 @@ function confirm() {
     -->
     <template v-else>
       <n-alert v-if="isMacNative" type="info" :bordered="false" class="guide-alert">
-        {{ t('BepInEx 已安装。最后一步：把下面的命令粘贴到 Steam 里《胡闹厨房2》的启动选项中。') }}
+        {{ t('overlays.bepinexIsInstalledLastStepPasteTheCommandBelowIntoTheSteamLaunchOptionsForOvercooked2') }}
       </n-alert>
 
       <div v-if="launchOptions" class="guide-block">
-        <span class="guide-label">{{ t('启动选项') }}</span>
+        <span class="guide-label">{{ t('overlays.launchOptions') }}</span>
         <div class="guide-code">
           <code class="guide-command">{{ launchOptions }}</code>
-          <n-button size="tiny" quaternary :title="t('复制')" @click="copy(launchOptions)">
+          <n-button size="tiny" quaternary :title="t('modsOnline.copy')" @click="copy(launchOptions)">
             <template #icon><CopyOutline width="14" height="14" /></template>
           </n-button>
         </div>
       </div>
       <n-alert v-else type="warning" :bordered="false" class="guide-alert">
-        {{ t('尚未探测到游戏目录，无法生成启动命令。请先在设置里确认游戏目录。') }}
+        {{ t('overlays.noGameFolderDetectedSoTheLaunchCommandCannotBeGeneratedCheckTheGameFolderInSettingsFirst') }}
       </n-alert>
 
       <n-steps :current="3" size="small" class="guide-steps">
-        <n-step :title="t('库中右键游戏')" :description="t('Steam → 库 → 右键《胡闹厨房2》')" />
-        <n-step :title="t('打开属性')" :description="t('选择「属性」→「通用」')" />
-        <n-step :title="t('粘贴启动选项')" :description="t('把上面的命令粘贴到「启动选项」')" />
+        <n-step :title="t('overlays.rightClickTheGameInYourLibrary')" :description="t('overlays.steamLibraryRightClickOvercooked2')" />
+        <n-step :title="t('overlays.openProperties')" :description="t('overlays.choosePropertiesGeneral')" />
+        <n-step :title="t('overlays.pasteTheLaunchOptions')" :description="t('overlays.pasteTheCommandAboveIntoLaunchOptions')" />
       </n-steps>
     </template>
 
     <template #footer>
       <n-button size="small" type="primary" @click="confirm">
-        {{ t('我已完成所需操作') }}
+        {{ t('overlays.iHaveCompletedTheseSteps') }}
       </n-button>
       <n-button size="small" quaternary @click="emit('update:show', false)">
-        {{ t('取消') }}
+        {{ t('recycle.cancel') }}
       </n-button>
     </template>
   </AppModal>

@@ -123,10 +123,10 @@ function installActionOf(repo: Repository): InstallAction | 'refresh' {
 }
 
 const INSTALL_LABELS: Record<InstallAction | 'refresh', string> = {
-  install: '安装',
-  reinstall: '重装',
-  update: '更新',
-  refresh: '刷新',
+  install: 'modsOnline.install',
+  reinstall: 'overview.reinstall',
+  update: 'dialogs.update',
+  refresh: 'modsOnline.refresh',
 }
 function installLabel(repo: Repository) {
   return t(INSTALL_LABELS[installActionOf(repo)])
@@ -236,7 +236,7 @@ function repoName(repo: Repository) {
   return pickI18n(repo.name_i18n, repo.name)
 }
 function repoGroup(repo: Repository) {
-  return pickI18n(repo.group_i18n, repo.group || '') || t('未分组')
+  return pickI18n(repo.group_i18n, repo.group || '') || t('dialogs.ungrouped')
 }
 /**
  * 分组键：与界面语言无关的稳定标识。
@@ -300,8 +300,8 @@ function relationTag(repo: Repository): { text: string; tone: TagTone } | null {
   const status = unmetRelation(repo)
   if (!status) return null
   return status.state === 'conflict'
-    ? { text: '冲突', tone: 'critical' }
-    : { text: '缺依赖', tone: 'critical' }
+    ? { text: 'modsOnline.conflict', tone: 'critical' }
+    : { text: 'modsOnline.missingDep', tone: 'critical' }
 }
 
 /** 关系目标的来源名（用于标签提示）。 */
@@ -331,10 +331,10 @@ function relationTagTitle(repo: Repository) {
   if (!status) return undefined
   const target = relationTargetName(status)
   const detail = status.state === 'conflict'
-    ? t('「{owner}」与「{target}」不兼容，需要卸载', { owner: repoName(repo), target })
-    : t('缺少依赖') + '： ' + target
+    ? t('modsOnline.isIncompatibleWithAndMustBeUninstalled', { owner: repoName(repo), target })
+    : t('modsOnline.missingDependency') + '： ' + target
   return relationJumpId(repo)
-    ? `${detail} · ${t('点击定位到该仓库')}`
+    ? `${detail} · ${t('modsOnline.clickToLocateThatRepository')}`
     : detail
 }
 
@@ -460,7 +460,7 @@ const tree = computed<SourceNode[]>(() => {
     bySource.delete(source.id)
   }
   const orphan = bySource.get('__none__')
-  if (orphan?.length) push({ id: '__none__', nickname: t('未归类仓库'), url: '', builtin: false }, orphan)
+  if (orphan?.length) push({ id: '__none__', nickname: t('dialogs.uncategorizedRepositories'), url: '', builtin: false }, orphan)
 
   // 社区源固定放最下方（内部仍保持原相对顺序）
   const normal = nodes.filter((node) => !node.community)
@@ -515,7 +515,7 @@ function versionParts(repo: Repository) {
   return versionDisplay(
     release.tag_name || release.version,
     releaseIsPrerelease(release),
-    t('测'),
+    t('modsOnline.t'),
   )
 }
 
@@ -544,7 +544,7 @@ const statusByRepo = computed(() => {
   return map
 })
 function statusOf(repo: Repository): RepoStatus {
-  return statusByRepo.value.get(repo.id) ?? { key: 'not_refreshed', tone: 'idle', text: t('未刷新') }
+  return statusByRepo.value.get(repo.id) ?? { key: 'not_refreshed', tone: 'idle', text: t('modsOnline.notRefreshed') }
 }
 
 /**
@@ -599,7 +599,7 @@ function groupRefreshing(group: GroupNode) {
 
 function gameBlocked() {
   if (game.value?.kitchen_running) {
-    message.warning(t('游戏运行中，已禁止安装。请先关闭游戏。'))
+    message.warning(t('modsOnline.theGameIsRunningCloseItBeforeInstalling'))
     return true
   }
   return false
@@ -651,18 +651,18 @@ defineExpose({ refreshAll, visibleCount })
       整源刷新由右下角浮动按钮承担，页头不再重复放一个按钮。
     -->
     <Teleport to="#page-header-actions" defer>
-      <span class="header-count muted">{{ t('共 {count} 个仓库', { count: visibleCount }) }}</span>
+      <span class="header-count muted">{{ t('modsOnline.repositories', { count: visibleCount }) }}</span>
       <n-input v-model:value="search" clearable size="small" class="header-search"
-        :placeholder="t('搜索')">
+        :placeholder="t('dialogs.search')">
         <template #prefix><SearchOutline width="14" height="14" /></template>
       </n-input>
       <n-button size="small" type="primary" @click="openInstall">
-        <LinkOutline width="14" height="14" />{{ t('安装 MOD') }}
+        <LinkOutline width="14" height="14" />{{ t('tools.installMod') }}
       </n-button>
     </Teleport>
 
   <n-spin :show="loading">
-    <n-empty v-if="!loading && !visibleCount" :description="t('没有匹配的仓库')" class="empty" />
+    <n-empty v-if="!loading && !visibleCount" :description="t('tools.noMatchingRepositories')" class="empty" />
 
     <template v-else>
       <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
@@ -735,7 +735,7 @@ defineExpose({ refreshAll, visibleCount })
                       <n-tag size="tiny" :bordered="false" class="state-tag"
                         :color="tagColorForAny(statusOf(repo).tone)"
                         :class="{ 'state-tag--link': hasLocalInstall(repo) }"
-                        :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
+                        :title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
                     </span>
                   </div>
@@ -744,7 +744,7 @@ defineExpose({ refreshAll, visibleCount })
 
                   <div class="card-foot">
                     <span class="stat stat-version">
-                      <span class="muted">{{ t('最新版本') }}</span>
+                      <span class="muted">{{ t('dialogs.latestVersion') }}</span>
                       <span class="version-line">
                         <!--
                           两段式：主干用普通色，测试标记用 prerelease 等级色。
@@ -766,7 +766,7 @@ defineExpose({ refreshAll, visibleCount })
                       一个永远显示破折号的统计项只会占地方，还让人怀疑数据坏了。
                     -->
                     <span v-if="downloadCount(repo)" class="stat card-downloads">
-                      <span class="muted">{{ t('下载量') }}</span>
+                      <span class="muted">{{ t('dialogs.downloads') }}</span>
                       <b>{{ downloadCount(repo)?.toLocaleString() }}</b>
                     </span>
                     <!--
@@ -804,7 +804,7 @@ defineExpose({ refreshAll, visibleCount })
       <!-- 社区仓库：与上方仓库源用分割线隔开，固定在最下方 -->
       <template v-if="hasCommunity">
         <div class="community-divider">
-          <span>{{ t('社区仓库') }}</span>
+          <span>{{ t('dialogs.communityRepositories') }}</span>
         </div>
         <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
           @update:expanded-names="(names: string[]) => (openSources = names)">
@@ -814,7 +814,7 @@ defineExpose({ refreshAll, visibleCount })
                 <b>{{ node.label }}</b>
                 <!-- 社区来源未经官方索引校验，用严重级红色与「重复」同级提示 -->
                 <n-tag size="tiny" :bordered="false" class="state-tag"
-                  :color="tagColorFor('critical')">{{ t('来源未知') }}</n-tag>
+                  :color="tagColorFor('critical')">{{ t('dialogs.unknownOrigin') }}</n-tag>
                 <n-tag size="tiny" :bordered="false" class="state-tag"
                   :color="tagColorFor('muted')">{{ node.count }}</n-tag>
               </div>
@@ -845,14 +845,14 @@ defineExpose({ refreshAll, visibleCount })
                       <n-tag size="tiny" :bordered="false" class="state-tag"
                         :color="tagColorForAny(statusOf(repo).tone)"
                         :class="{ 'state-tag--link': hasLocalInstall(repo) }"
-                        :title="hasLocalInstall(repo) ? t('在 MOD 管理中查看') : undefined"
+                        :title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
                         @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
                   </span>
                 </div>
                 <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
                 <div class="card-foot">
                   <span class="stat stat-version">
-                    <span class="muted">{{ t('最新版本') }}</span>
+                    <span class="muted">{{ t('dialogs.latestVersion') }}</span>
                     <span class="version-line">
                       <!-- 两段式同源码树卡片：主干普通色 + 测试标记用 prerelease 等级色 -->
                       <b class="mono version-base">{{ versionParts(repo).base }}</b>
@@ -865,7 +865,7 @@ defineExpose({ refreshAll, visibleCount })
                     </span>
                   </span>
                   <span v-if="downloadCount(repo)" class="stat card-downloads">
-                    <span class="muted">{{ t('下载量') }}</span>
+                    <span class="muted">{{ t('dialogs.downloads') }}</span>
                     <b>{{ downloadCount(repo)?.toLocaleString() }}</b>
                   </span>
                   <n-button size="tiny" class="card-install"
@@ -885,7 +885,7 @@ defineExpose({ refreshAll, visibleCount })
                 <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
               </article>
             </div>
-            <div v-if="!node.count" class="community-empty muted">{{ t('当前渠道没有社区仓库') }}</div>
+            <div v-if="!node.count" class="community-empty muted">{{ t('tools.noCommunityRepositoriesInThisChannel') }}</div>
           </n-collapse-item>
         </n-collapse>
       </template>
@@ -899,7 +899,7 @@ defineExpose({ refreshAll, visibleCount })
       引擎是模块级单例，两个页面看到的是同一份状态。
   -->
   <n-float-button position="fixed" bottom="28" right="32" :disabled="anyRefreshing"
-    :tooltip="t('先刷新源文档，再并行刷新各仓库')" @click="refreshAll">
+    :tooltip="t('tools.reloadSourceDocumentsThenRefreshRepositoriesInParallel')" @click="refreshAll">
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': repositoriesLoading }" />
   </n-float-button>
 

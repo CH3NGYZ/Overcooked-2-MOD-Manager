@@ -16,8 +16,8 @@ const props = withDefaults(defineProps<{
   placeholder?: string
 }>(), {
   saving: false,
-  saveLabel: t('确认保存'),
-  placeholder: t('选择或输入目录路径'),
+  saveLabel: t('overview.save'),
+  placeholder: t('overview.chooseOrEnterAFolderPath'),
 })
 
 const emit = defineEmits<{ save: [path: string] }>()
@@ -39,11 +39,11 @@ function save() {
 
 <template>
   <div class="path-editor">
-    <div class="muted label">{{ t('当前路径') }}</div>
-    <div class="mono current">{{ path || t('未设置') }}</div>
+    <div class="muted label">{{ t('overview.currentPath') }}</div>
+    <div class="mono current">{{ path || t('overview.notSet') }}</div>
     <n-input v-model:value="draft" clearable :placeholder="placeholder" />
     <div class="acts">
-      <n-button secondary @click="browse"><FolderOpenOutline width="15" height="15" />{{ t('浏览…') }}</n-button>
+      <n-button secondary @click="browse"><FolderOpenOutline width="15" height="15" />{{ t('overview.browse2') }}</n-button>
       <n-button type="primary" :loading="saving" :disabled="!draft.trim() || draft.trim() === path" @click="save">
         <SaveOutline width="15" height="15" />{{ saveLabel }}
       </n-button>

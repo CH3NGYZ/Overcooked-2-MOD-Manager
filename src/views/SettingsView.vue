@@ -62,7 +62,7 @@ async function switchRuntime(runtime: GameRuntime) {
   try {
     config.value = await api.saveSettings({ game_runtime: runtime })
     await load()
-    message.success(t('已保存'))
+    message.success(t('common.saved'))
   } catch (reason) {
     fail(reason)
   } finally {
@@ -89,12 +89,12 @@ const bepinexSummary = computed(() => {
   const info = game.value?.bepinex
   if (!bepinexOk.value) {
     return info?.has_residue
-      ? t('尚未安装框架，检测到已有的 plugins / config，安装后会保留')
-      : t('尚未安装，点击右侧按钮安装')
+      ? t('framework.frameworkNotInstalledExistingPluginsConfigFoundAndWillBeKeptAfterInstall')
+      : t('framework.notInstalledUseTheButtonOnTheRight')
   }
-  const version = info?.version ? `${t('版本')} ${info.version}` : t('版本未知')
+  const version = info?.version ? `${t('modsOnline.versions')} ${info.version}` : t('tools.versionUnknown')
   const enabled = game.value?.winhttp_state === 'modenabled'
-  return `${version} · ${enabled ? t('框架已启用') : t('框架已禁用')}`
+  return `${version} · ${enabled ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')}`
 })
 
 /* ===== DIYLevel 框架卡片摘要（与 BepInEx 对齐） ===== */
@@ -120,11 +120,11 @@ const diyLevelEnabled = computed(() => diyLevelMod.value?.enabled === true)
  * 未安装时直接说明它是干什么的，避免用户不知道这个框架有什么用。
  */
 const diyLevelSummary = computed(() => {
-  if (!diyLevelInstalled.value) return t('尚未安装，点击右侧按钮安装')
+  if (!diyLevelInstalled.value) return t('framework.notInstalledUseTheButtonOnTheRight')
   const version = diyLevelMod.value?.version
-    ? `${t('版本')} ${diyLevelMod.value.version}`
-    : t('版本未知')
-  return `${version} · ${diyLevelEnabled.value ? t('框架已启用') : t('框架已禁用')}`
+    ? `${t('modsOnline.versions')} ${diyLevelMod.value.version}`
+    : t('tools.versionUnknown')
+  return `${version} · ${diyLevelEnabled.value ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')}`
 })
 
 /* ===== 权限：默认普通权限，仅在文件访问被拒时提权 ===== */
@@ -205,7 +205,7 @@ async function resetGamePath() {
   savingPath.value = true
   try {
     const info = await api.resetGamePath()
-    message.success(info.path || t('恢复默认'))
+    message.success(info.path || t('common.reset'))
     await load()
   } catch (reason) { fail(reason) } finally { savingPath.value = false }
 }
@@ -214,7 +214,7 @@ async function saveGamePath(path: string) {
   savingPath.value = true
   try {
     const info = await api.setGamePath(path)
-    message.success(t(info.game_exists ? '已验证' : '这个目录不存在或缺少游戏文件'))
+    message.success(t(info.game_exists ? 'overview.verified' : 'common.theFolderIsMissingOrHasNoGameFiles'))
     pathDrawer.value = false
     await load()
   } catch (reason) { fail(reason) } finally { savingPath.value = false }
@@ -240,7 +240,7 @@ async function checkUpdate() {
     } else if (updateResult.value.all_failed) {
       openReleaseFallback()
     } else {
-      message.success(t('当前已是最新版本'))
+      message.success(t('dialogs.youAreUpToDate'))
     }
   } catch (reason) { fail(reason) } finally { checking.value = false }
 }
@@ -278,7 +278,7 @@ function toggleRecycleDeletedMods(value: boolean) {
   if (value) {
     void savePreference(
       { recycle_deleted_mods: true },
-      t('删除的 MOD 将先移入回收站'),
+      t('recycle.deletedModsWillGoToTheRecycleBin'),
     )
     return
   }
@@ -290,7 +290,7 @@ async function confirmDisableRecycle() {
   recycleRiskOpen.value = false
   await savePreference(
     { recycle_deleted_mods: false },
-    t('删除的 MOD 将直接删除，不进回收站'),
+    t('recycle.deletedModsAreRemovedPermanently'),
   )
 }
 
@@ -311,8 +311,8 @@ async function toggleBuiltinSourcesOnly(value: boolean) {
   try {
     config.value = await api.saveSettings({ builtin_sources_only: value })
     message.success(value
-      ? t('已切换到内置仓库源，刷新后生效')
-      : t('已恢复在线仓库源，刷新后生效'))
+      ? t('modsOnline.switchedToBundledSourcesRefreshToApply')
+      : t('modsOnline.restoredOnlineSourcesRefreshToApply'))
   } catch (reason) {
     fail(reason)
   } finally {
@@ -327,7 +327,7 @@ async function saveTokens() {
     config.value = await api.saveTokens({ github_token: githubToken.value, gitee_token: giteeToken.value })
     githubToken.value = ''
     giteeToken.value = ''
-    message.success(t('已保存'))
+    message.success(t('common.saved'))
   } catch (reason) { fail(reason) } finally { savingTokens.value = false }
 }
 
@@ -338,37 +338,37 @@ async function clearTokens() {
     config.value = await api.saveTokens({ github_token: '', gitee_token: '', clear: true })
     githubToken.value = ''
     giteeToken.value = ''
-    message.success(t('已清除'))
+    message.success(t('tools.cleared'))
   } catch (reason) { fail(reason) } finally { savingTokens.value = false }
 }
 </script>
 
 <template>
   <!-- 路径管理 -->
-  <SettingsGroup :title="t('路径管理')">
+  <SettingsGroup :title="t('settings.paths')">
     <!--
       游戏版本（仅 macOS）：决定探测哪个安装、装哪份 BepInEx、启动走哪条链路。
       放在游戏目录之上 —— 运行时是路径探测的前提，先选运行时再选目录才符合因果。
       CrossOver 走 Wine 容器里的 Windows 版；原生走 macOS 版 BepInEx。
     -->
-    <SettingsRow v-if="isMacOS" :title="t('游戏版本')"
-      :description="t('CrossOver 运行 Windows 版，或使用 macOS 原生版')">
+    <SettingsRow v-if="isMacOS" :title="t('framework.gameVersion')"
+      :description="t('framework.runTheWindowsBuildThroughCrossoverOrUseTheNativeMacosBuild')">
       <template #right>
         <n-radio-group :value="gameRuntime" size="small" :disabled="switchingRuntime"
           @update:value="(value: GameRuntime) => switchRuntime(value)">
           <n-radio-button value="wine">{{ t('CrossOver') }}</n-radio-button>
-          <n-radio-button value="native">{{ t('原生') }}</n-radio-button>
+          <n-radio-button value="native">{{ t('framework.native') }}</n-radio-button>
         </n-radio-group>
       </template>
     </SettingsRow>
-    <SettingsRow :title="t('游戏目录')" :description="t('游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理')">
+    <SettingsRow :title="t('settings.gameDirectory')" :description="t('settings.folderContainingTheGameAndBepinexDiylevelMapFrameworkPathsWillLiveHereToo')">
       <template #right>
         <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">
-          <ArrowUndoOutline width="14" height="14" />{{ t('恢复默认路径') }}</n-button>
+          <ArrowUndoOutline width="14" height="14" />{{ t('settings.resetPath') }}</n-button>
         <n-button size="small" secondary @click.stop="openGameDir">
-          <FolderOpenOutline width="14" height="14" />{{ t('打开路径') }}</n-button>
+          <FolderOpenOutline width="14" height="14" />{{ t('settings.openFolder') }}</n-button>
         <n-button size="small" type="primary" @click.stop="pathDrawer = true">
-          {{ t('选择路径') }}
+          {{ t('settings.choosePath') }}
         </n-button>
       </template>
     </SettingsRow>
@@ -376,15 +376,15 @@ async function clearTokens() {
       BepInEx 框架：只展示版本与启用状态，全部管理收进右侧抽屉。
       框架管理和装一个 MOD 差不多复杂，不值得占常驻导航位。
     -->
-    <SettingsRow :title="t('BepInEx 框架管理')"
+    <SettingsRow :title="t('framework.bepinexFramework2')"
       :description="bepinexSummary">
       <template #right>
         <n-tag size="small" :bordered="false" class="state-tag" :color="tagColorFor(bepinexOk ? 'accent' : 'moderate')">
-          {{ bepinexOk ? t('已安装') : t('未安装') }}
+          {{ bepinexOk ? t('modsLocal.installed') : t('overview.notInstalled') }}
         </n-tag>
         <n-button size="small" :type="bepinexOk ? 'default' : 'primary'" :secondary="bepinexOk"
           @click.stop="bepinexDrawer = true">
-          {{ bepinexOk ? t('管理') : t('安装') }}
+          {{ bepinexOk ? t('framework.manage') : t('modsOnline.install') }}
         </n-button>
       </template>
     </SettingsRow>
@@ -393,16 +393,16 @@ async function clearTokens() {
       它是 MOD（GUID `dev.gua.overcooked.diylevel`）但承担框架角色，
       同一类东西两种交互会让人不知道该去哪儿找。
     -->
-    <SettingsRow :title="t('DIYLevel 框架管理')"
+    <SettingsRow :title="t('framework.diylevelFramework2')"
       :description="diyLevelSummary">
       <template #right>
         <n-tag size="small" :bordered="false" class="state-tag"
           :color="tagColorFor(diyLevelInstalled ? 'accent' : 'moderate')">
-          {{ diyLevelInstalled ? t('已安装') : t('未安装') }}
+          {{ diyLevelInstalled ? t('modsLocal.installed') : t('overview.notInstalled') }}
         </n-tag>
         <n-button size="small" :type="diyLevelInstalled ? 'default' : 'primary'"
           :secondary="diyLevelInstalled" @click.stop="diyLevelDrawer = true">
-          {{ diyLevelInstalled ? t('管理') : t('安装') }}
+          {{ diyLevelInstalled ? t('framework.manage') : t('modsOnline.install') }}
         </n-button>
       </template>
     </SettingsRow>
@@ -410,14 +410,14 @@ async function clearTokens() {
 
   <!-- BepInEx 管理抽屉：从右向左滑入，内容由 BepInExPanel 承担 -->
   <n-drawer v-model:show="bepinexDrawer" :width="520" placement="right">
-    <n-drawer-content :title="t('BepInEx 框架管理')" closable :native-scrollbar="false">
+    <n-drawer-content :title="t('framework.bepinexFramework2')" closable :native-scrollbar="false">
       <BepInExPanel />
     </n-drawer-content>
   </n-drawer>
 
   <!-- DIYLevel 管理抽屉：与 BepInEx 同一宽度、同一位置、同一交互 -->
   <n-drawer v-model:show="diyLevelDrawer" :width="520" placement="right">
-    <n-drawer-content :title="t('DIYLevel 框架管理')" closable :native-scrollbar="false">
+    <n-drawer-content :title="t('framework.diylevelFramework2')" closable :native-scrollbar="false">
       <DiyLevelPanel />
     </n-drawer-content>
   </n-drawer>
@@ -427,26 +427,26 @@ async function clearTokens() {
     手动检测不在这里 —— 它和版本号是同一件事，放在最下方「关于」的版本号旁边，
     那里用户才看得到「我现在是什么版本」。
   -->
-  <SettingsGroup :title="t('程序更新')">
-    <SettingsRow :title="t('启动时检查程序更新')"
-      :description="t('启动管理器时检查新版本，可在设置中关闭')">
+  <SettingsGroup :title="t('settings.appUpdate')">
+    <SettingsRow :title="t('overview.checkForUpdatesOnStartup')"
+      :description="t('overview.checkForANewVersionWhenTheManagerStartsCanBeTurnedOffInSettings')">
       <template #right>
         <n-switch size="small" :value="config?.network.check_updates_on_start"
-          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('已保存'))" />
+          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('common.saved'))" />
       </template>
     </SettingsRow>
   </SettingsGroup>
 
   <!-- 通用设置 -->
-  <SettingsGroup :title="t('通用设置')">
-    <SettingsRow :title="t('自动检测游戏路径')" :description="t('启动与刷新时自动探测 Steam 库')">
+  <SettingsGroup :title="t('overview.general')">
+    <SettingsRow :title="t('overview.autoDetectGamePath')" :description="t('overview.probeSteamLibrariesOnLaunchAndRefresh')">
       <template #right>
         <n-switch size="small" :value="config?.game?.auto_detect"
-          @update:value="(value: boolean) => savePreference({ auto_detect: value }, t('已保存'))" />
+          @update:value="(value: boolean) => savePreference({ auto_detect: value }, t('common.saved'))" />
       </template>
     </SettingsRow>
-    <SettingsRow :title="t('删除 MOD 时优先放入回收站')"
-      :description="t('关闭后删除的文件不会保留，无法恢复')">
+    <SettingsRow :title="t('recycle.moveDeletedModsToTheRecycleBin')"
+      :description="t('recycle.whenOffDeletedFilesAreRemovedPermanently')">
       <template #right>
         <!-- 开关本身不阻止点击：关闭时要先弹风险确认，由 toggle 决定是否真的写入 -->
         <n-switch size="small" :value="recycleDeletedMods"
@@ -458,8 +458,8 @@ async function clearTokens() {
       直接读管理器自带的快照。适合「官方入口在这台机器上连不上」或需要
       完全离线的场景；自定义仓库源不受影响。
     -->
-    <SettingsRow :title="t('仅使用内置仓库源')"
-      :description="t('不访问 Gitee / GitHub 的仓库源直链，直接使用管理器自带的快照；自定义仓库源不受影响')">
+    <SettingsRow :title="t('modsOnline.useBundledSourcesOnly')"
+      :description="t('modsOnline.skipsTheGiteeGithubRawSourceLinksAndUsesTheSnapshotShippedWithTheManagerCustomSourcesAreNotAffected')">
       <template #right>
         <n-switch size="small" :value="builtinSourcesOnly" :loading="switchingBuiltinSources"
           @update:value="toggleBuiltinSourcesOnly" />
@@ -472,25 +472,25 @@ async function clearTokens() {
     这是不可逆行为的开关，所以把后果写清楚、要求用户再点一次确认，
     而不是让开关一拨就生效。
   -->
-  <AppModal :show="recycleRiskOpen" :title="t('关闭回收站保护')" max-width="min(520px, 92%)"
+  <AppModal :show="recycleRiskOpen" :title="t('recycle.turnOffRecycleBinProtection')" max-width="min(520px, 92%)"
     @update:show="(value: boolean) => (recycleRiskOpen = value)">
     <div class="recycle-risk">
-      <p class="recycle-risk-lead">{{ t('关闭后，管理器删除 MOD 时不再移入回收站，而是直接删除文件与安装清单。') }}</p>
-      <p class="recycle-risk-note">{{ t('这个操作无法撤销，删除的 MOD 不能恢复；覆盖安装时旧版本也会被直接清除。请确认你确实想绕过回收站。') }}</p>
+      <p class="recycle-risk-lead">{{ t('recycle.withThisOffDeletingAModRemovesItsFilesAndInstallManifestImmediatelyInsteadOfMovingThemToTheRecycleBin') }}</p>
+      <p class="recycle-risk-note">{{ t('recycle.thisCannotBeUndoneDeletedModsAreUnrecoverableAndOverwritingAnInstallAlsoDiscardsThePreviousVersionConfirmThatYouReallyWantToBypassTheRecycleBin') }}</p>
     </div>
     <template #footer>
       <n-button size="small" type="error" @click="confirmDisableRecycle">
-        {{ t('仍然直接删除') }}
+        {{ t('recycle.deleteDirectlyAnyway') }}
       </n-button>
       <n-button size="small" quaternary @click="recycleRiskOpen = false">
-        {{ t('保持开启') }}
+        {{ t('recycle.keepItOn') }}
       </n-button>
     </template>
   </AppModal>
 
   <!-- API 凭据：配置个人 Token 后，Release/API 请求直接带凭据，不再消耗匿名额度 -->
-  <SettingsGroup :title="t('API 凭据')">
-    <SettingsRow :title="t('访问令牌')" :description="t('配置后 API 请求直接使用 Token，避免匿名限流')"
+  <SettingsGroup :title="t('tools.apiCredentials')">
+    <SettingsRow :title="t('tools.accessTokens')" :description="t('tools.withATokenApiRequestsUseItDirectlyInsteadOfTheAnonymousQuota')"
       clickable @click="tokenDrawer = true">
       <template #right>
         <n-tag size="small" :bordered="false" :type="config?.github_token_set ? 'success' : 'default'">
@@ -508,29 +508,29 @@ async function clearTokens() {
     权限：应用默认以普通用户运行（启动不弹 UAC、文件拖放可用、
     更新时能正常关闭自己）。只有游戏目录不可写时才需要提权。
   -->
-  <SettingsGroup :title="t('权限')">
-    <SettingsRow :title="t('以管理员身份运行')"
-      :description="permission?.elevated ? t('当前已具备管理员权限') : t('仅在游戏目录不可写时需要')">
+  <SettingsGroup :title="t('dialogs.permissions')">
+    <SettingsRow :title="t('dialogs.runAsAdministrator')"
+      :description="permission?.elevated ? t('dialogs.administratorRightsAreActive') : t('dialogs.onlyNeededWhenTheGameFolderIsNotWritable')">
       <template #right>
         <n-tag size="small" :bordered="false" :type="permission?.elevated ? 'success' : 'default'">
-          {{ permission?.elevated ? t('已提权') : t('普通权限') }}
+          {{ permission?.elevated ? t('dialogs.elevated') : t('dialogs.standard') }}
         </n-tag>
         <n-button v-if="!permission?.elevated" size="small" secondary type="primary" :loading="relaunching"
-          @click.stop="relaunchAdmin">{{ t('以管理员重启') }}</n-button>
+          @click.stop="relaunchAdmin">{{ t('dialogs.restartAsAdministrator') }}</n-button>
       </template>
     </SettingsRow>
-    <SettingsRow :title="t('游戏目录可写')"
-      :description="permission?.game_writable ? t('可以直接安装和卸载 MOD') : t('需要管理员权限才能写入')">
+    <SettingsRow :title="t('dialogs.gameFolderWritable')"
+      :description="permission?.game_writable ? t('dialogs.modsCanBeInstalledAndRemovedDirectly') : t('dialogs.administratorRightsAreRequiredToWrite')">
       <template #right>
         <n-tag size="small" :bordered="false" :type="permission?.game_writable ? 'success' : 'warning'">
-          {{ permission?.game_writable ? t('可写') : t('不可写') }}
+          {{ permission?.game_writable ? t('dialogs.writable') : t('dialogs.notWritable') }}
         </n-tag>
       </template>
     </SettingsRow>
   </SettingsGroup>
 
-  <SettingsGroup :title="t('关于')">
-    <SettingsRow :icon="InformationCircleOutline" :title="t('OC2 MOD 管理器')" :description="t('关于') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
+  <SettingsGroup :title="t('overview.about')">
+    <SettingsRow :icon="InformationCircleOutline" :title="t('nav.oc2ModManager')" :description="t('overview.about') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
       <template #right>
         <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
         <!--
@@ -539,7 +539,7 @@ async function clearTokens() {
         -->
         <n-button size="small" :secondary="!checking" :loading="checking" @click.stop="checkUpdate">
           <template #icon><DownloadOutline width="14" height="14" /></template>
-          {{ t('检测更新') }}
+          {{ t('overview.check') }}
         </n-button>
       </template>
     </SettingsRow>
@@ -550,56 +550,56 @@ async function clearTokens() {
     原来的「更新设置」抽屉里放着这个入口，抽屉删掉后放在这里，
     由「检测更新」按钮在 all_failed 时打开。
   -->
-  <AppModal :show="updateFailedOpen" :title="t('更新检查失败')" max-width="min(480px, 92%)"
+  <AppModal :show="updateFailedOpen" :title="t('dialogs.updateCheckFailed')" max-width="min(480px, 92%)"
     @update:show="(value: boolean) => (updateFailedOpen = value)">
-    <p class="muted update-failed-note">{{ t('全部渠道检查失败，可前往发布页手动下载。') }}</p>
+    <p class="muted update-failed-note">{{ t('dialogs.allChannelsFailedDownloadManuallyFromTheReleasePage') }}</p>
     <template #footer>
       <n-button size="small" type="primary" @click="void api.openUpdateRepository(); updateFailedOpen = false">
-        {{ t('打开发布页') }}
+        {{ t('dialogs.openReleasePage') }}
       </n-button>
-      <n-button size="small" quaternary @click="updateFailedOpen = false">{{ t('取消') }}</n-button>
+      <n-button size="small" quaternary @click="updateFailedOpen = false">{{ t('recycle.cancel') }}</n-button>
     </template>
   </AppModal>
 
   <!-- 二级：选择路径 -->
   <n-drawer v-model:show="pathDrawer" :width="440" placement="right">
-    <n-drawer-content :title="t('选择游戏目录')" closable>
+    <n-drawer-content :title="t('overview.chooseGameDirectory')" closable>
       <PathEditor :path="game?.path ?? ''" :saving="savingPath" @save="saveGamePath" />
-      <div class="muted drawer-hint">{{ t('目录需包含 Overcooked!2.exe；保存后自动验证。') }}</div>
+      <div class="muted drawer-hint">{{ t('overview.theFolderMustContainOvercooked2ExeItIsVerifiedOnSave') }}</div>
     </n-drawer-content>
   </n-drawer>
 
   <!-- 二级：访问令牌 -->
   <n-drawer v-model:show="tokenDrawer" :width="460" placement="right">
-    <n-drawer-content :title="t('访问令牌')" closable>
+    <n-drawer-content :title="t('tools.accessTokens')" closable>
       <div class="drawer-pref">
         <div>
           <b>GitHub Token</b>
-          <div class="muted">{{ t('使用 Authorization: Bearer 请求头') }}</div>
+          <div class="muted">{{ t('tools.sentAsAnAuthorizationBearerHeader') }}</div>
         </div>
-        <n-tag v-if="config?.github_token_set" size="tiny" :bordered="false" type="success">{{ t('已配置') }}</n-tag>
+        <n-tag v-if="config?.github_token_set" size="tiny" :bordered="false" type="success">{{ t('tools.configured') }}</n-tag>
       </div>
       <n-input v-model:value="githubToken" type="password" show-password-on="click"
-        :placeholder="config?.github_token_set ? t('已保存，留空则不修改') : 'ghp_…'" />
+        :placeholder="config?.github_token_set ? t('tools.savedLeaveBlankToKeep') : 'ghp_…'" />
 
       <div class="drawer-pref token-gap">
         <div>
           <b>Gitee Token</b>
-          <div class="muted">{{ t('使用 access_token 请求头') }}</div>
+          <div class="muted">{{ t('tools.sentAsAnAccessTokenHeader') }}</div>
         </div>
-        <n-tag v-if="config?.gitee_token_set" size="tiny" :bordered="false" type="success">{{ t('已配置') }}</n-tag>
+        <n-tag v-if="config?.gitee_token_set" size="tiny" :bordered="false" type="success">{{ t('tools.configured') }}</n-tag>
       </div>
       <n-input v-model:value="giteeToken" type="password" show-password-on="click"
-        :placeholder="config?.gitee_token_set ? t('已保存，留空则不修改') : t('粘贴 Gitee 私人令牌')" />
+        :placeholder="config?.gitee_token_set ? t('tools.savedLeaveBlankToKeep') : t('tools.pasteYourGiteePrivateToken')" />
 
       <div class="token-actions">
-        <n-button type="primary" :loading="savingTokens" @click="saveTokens">{{ t('保存') }}</n-button>
+        <n-button type="primary" :loading="savingTokens" @click="saveTokens">{{ t('modsOnline.save') }}</n-button>
         <n-button v-if="config?.github_token_set || config?.gitee_token_set" quaternary type="error"
-          :loading="savingTokens" @click="clearTokens">{{ t('清除全部') }}</n-button>
+          :loading="savingTokens" @click="clearTokens">{{ t('tools.clearAll') }}</n-button>
       </div>
 
       <div class="muted drawer-hint">
-        {{ t('配置 Token 后，API 请求直接使用 Token；Token 自身被限流时才回退到代理。') }}
+        {{ t('tools.withTokensSetRequestsUseThemDirectlyAndOnlyFallBackToProxiesWhenTheTokenItselfIsRateLimited') }}
       </div>
     </n-drawer-content>
   </n-drawer>

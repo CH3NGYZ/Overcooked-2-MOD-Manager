@@ -89,8 +89,8 @@ const localReposChecking = computed(() => {
  * 检测范围只算「与本地 MOD 绑定的仓库」，不等整批刷新结束。
  */
 const buttonLabel = computed(() => {
-  if (localReposChecking.value) return t('检测中')
-  return updatable.value.length ? t('去更新') : t('去管理')
+  if (localReposChecking.value) return t('tools.checking')
+  return updatable.value.length ? t('overview.review') : t('overview.manage')
 })
 
 const recycleOpen = ref(false)
@@ -118,16 +118,16 @@ const frameworkVersion = computed(() => game.value?.bepinex.version ?? '')
 const frameworkEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
 /** 框架的完整状态文案：未装 / 已装未启用 / 正常。 */
 const frameworkValue = computed(() => {
-  if (!frameworkOk.value) return t('未安装')
-  return frameworkEnabled.value ? t('已启用') : t('已禁用')
+  if (!frameworkOk.value) return t('overview.notInstalled')
+  return frameworkEnabled.value ? t('modsLocal.enabled2') : t('modsLocal.disabled')
 })
 const frameworkSub = computed(() => {
   if (!frameworkOk.value) {
     return game.value?.bepinex.has_residue
-      ? t('检测到 MOD 目录，安装后会保留')
-      : t('安装后才能加载 MOD')
+      ? t('overlays.existingModFolderFoundKeptAfterInstall')
+      : t('overview.installItToLoadMods')
   }
-  return frameworkVersion.value ? `BepInEx ${frameworkVersion.value}` : t('版本未知')
+  return frameworkVersion.value ? `BepInEx ${frameworkVersion.value}` : t('tools.versionUnknown')
 })
 
 const working = ref(false)
@@ -139,7 +139,7 @@ async function toggleFramework(enabled: boolean) {
   try {
     const result = await api.switchWinhttp(enabled)
     if (result.ok) {
-      message.success(result.message || (enabled ? t('框架已启用') : t('框架已禁用')))
+      message.success(result.message || (enabled ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')))
       await load()
     } else {
       message.error(translateBackendMessage(result.message))
@@ -168,8 +168,8 @@ const diyLevelMod = computed(() =>
 const diyLevelOk = computed(() => !!diyLevelMod.value)
 const diyLevelEnabled = computed(() => diyLevelMod.value?.enabled === true)
 const diyLevelValue = computed(() => {
-  if (!diyLevelOk.value) return t('未安装')
-  return diyLevelEnabled.value ? t('已启用') : t('已禁用')
+  if (!diyLevelOk.value) return t('overview.notInstalled')
+  return diyLevelEnabled.value ? t('modsLocal.enabled2') : t('modsLocal.disabled')
 })
 
 /**
@@ -195,9 +195,9 @@ async function loadDiyLevel() {
 }
 
 const diyLevelSub = computed(() => {
-  if (!diyLevelOk.value) return t('安装后才能加载自制地图')
-  const version = diyLevelMod.value?.version ?? t('版本未知')
-  return `${t('版本')} ${version} · ${t('地图集')} ${diyLevelPacks.value}`
+  if (!diyLevelOk.value) return t('framework.customMapsLoadOnlyAfterInstallingThis')
+  const version = diyLevelMod.value?.version ?? t('tools.versionUnknown')
+  return `${t('modsOnline.versions')} ${version} · ${t('framework.mapPacks')} ${diyLevelPacks.value}`
 })
 
 /** 切换 DIYLevel 启用状态：走后端与 MOD 列表相同的 .dll 改名逻辑。 */
@@ -251,11 +251,11 @@ const updatable = computed(() => {
  */
 const installedSub = computed(() => {
   const total = installedMods.value.length
-  if (!total) return t('尚未安装任何 MOD')
+  if (!total) return t('modsLocal.noModsInstalled')
   const updates = updatable.value.length
   return updates
-    ? t('共 {count} 个，其中 {updates} 个可更新', { count: total, updates })
-    : t('共 {count} 个，全部为最新版', { count: total })
+    ? t('overview.installedCanUpdate', { count: total, updates })
+    : t('overview.installedAllUpToDate', { count: total })
 })
 
 /**
@@ -302,11 +302,11 @@ const failedRepositories = computed(() =>
  */
 const onlineSub = computed(() => {
   const total = onlineRepositories.value.length
-  if (!total) return t('尚未加载任何仓库')
+  if (!total) return t('overview.noRepositoriesLoadedYet')
   if (!failedRepositories.value.length) {
-    return t('共 {count} 个仓库 · 全部正常', { count: total })
+    return t('overview.repositoriesAllHealthy', { count: total })
   }
-  return t('共 {count} 个仓库 · {failed} 个刷新失败', {
+  return t('overview.repositoriesFailedToRefresh', {
     count: total,
     failed: failedRepositories.value.length,
   })
@@ -334,8 +334,8 @@ const recycleFiles = computed(() =>
   recycleEntries.value.reduce((total, entry) => total + (entry.file_count ?? 0), 0))
 
 const recycleSub = computed(() => {
-  if (!recycleCount.value) return t('暂无已删除的 MOD')
-  return t('{count} 个已删除的 MOD，共 {files} 个文件', {
+  if (!recycleCount.value) return t('overview.nothingDeletedYet')
+  return t('overview.deletedModsFilesTotal', {
     count: recycleCount.value,
     files: recycleFiles.value,
   })
@@ -356,16 +356,16 @@ async function closeRecycle() {
         1. BepInEx：整张卡可点，跳设置页并自动展开框架抽屉。
            开关单独放在右侧，点开关不会触发跳转（@click.stop）。
       -->
-      <StatCard :label="t('BepInEx 框架')" :value="frameworkValue"
+      <StatCard :label="t('framework.bepinexFramework')" :value="frameworkValue"
         :sub="frameworkSub" :tone="frameworkOk ? 'success' : 'warning'"
         clickable @click="openFrameworkSettings">
         <template #action>
           <n-switch v-if="frameworkOk" size="small" :value="frameworkEnabled"
-            :disabled="working" :title="t('框架启用（游戏加载 MOD）')"
+            :disabled="working" :title="t('overlays.frameworkEnabledGameLoadsMods')"
             @click.stop @update:value="toggleFramework" />
           <n-button v-else size="small" type="primary" @click.stop="openFrameworkSettings">
             <template #icon><AddCircleOutline width="14" height="14" /></template>
-            {{ t('安装框架') }}
+            {{ t('overlays.installFramework') }}
           </n-button>
         </template>
       </StatCard>
@@ -374,16 +374,16 @@ async function closeRecycle() {
         1b. DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转），紧跟其后。
             数值是启用状态，副标题给出版本与地图集数量。
       -->
-      <StatCard :label="t('DIYLevel 框架')" :value="diyLevelValue"
+      <StatCard :label="t('framework.diylevelFramework')" :value="diyLevelValue"
         :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
         clickable @click="openDiyLevelSettings">
         <template #action>
           <n-switch v-if="diyLevelOk" size="small" :value="diyLevelEnabled"
-            :disabled="working" :title="t('框架启用（游戏加载此框架）')"
+            :disabled="working" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
             @click.stop @update:value="toggleDiyLevel" />
           <n-button v-else size="small" type="primary" @click.stop="openDiyLevelSettings">
             <template #icon><AddCircleOutline width="14" height="14" /></template>
-            {{ t('安装框架') }}
+            {{ t('overlays.installFramework') }}
           </n-button>
         </template>
       </StatCard>
@@ -393,14 +393,14 @@ async function closeRecycle() {
            主数值是可见仓库总数，旁边并列「N 刷新失败」。
            有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
       -->
-      <StatCard :label="t('在线 MOD')" :value="String(onlineRepositories.length)"
+      <StatCard :label="t('overview.onlineMods')" :value="String(onlineRepositories.length)"
         :sub="onlineSub"
         :tone="failedRepositories.length ? 'warning' : 'success'"
         clickable @click="openOnlineRepositories">
         <template v-if="failedRepositories.length" #extra>
           <span class="extra-sep">·</span>
           <span class="extra-value" :style="{ color: toneText }">{{ failedRepositories.length }}</span>
-          <span class="extra-label" :style="{ color: toneText }">{{ t('刷新失败') }}</span>
+          <span class="extra-label" :style="{ color: toneText }">{{ t('tools.refreshFailed') }}</span>
         </template>
         <template #action>
           <n-button size="small" :secondary="!failedRepositories.length"
@@ -410,7 +410,7 @@ async function closeRecycle() {
               <RefreshOutline v-if="failedRepositories.length" width="14" height="14" />
               <CloudDownloadOutline v-else width="14" height="14" />
             </template>
-            {{ failedRepositories.length ? t('去刷新') : t('去安装') }}
+            {{ failedRepositories.length ? t('overview.refresh') : t('overview.browse') }}
           </n-button>
         </template>
       </StatCard>
@@ -420,14 +420,14 @@ async function closeRecycle() {
            主数值是安装总数，旁边并列「N 可更新」。
            按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
       -->
-      <StatCard :label="t('本地 MOD')" :value="String(installedMods.length)"
+      <StatCard :label="t('overview.localMods')" :value="String(installedMods.length)"
         :sub="installedSub"
         :tone="updatable.length ? 'warning' : 'success'"
         clickable @click="openLocalMods">
         <template v-if="updatable.length" #extra>
           <span class="extra-sep">·</span>
           <span class="extra-value" :style="{ color: toneText }">{{ updatable.length }}</span>
-          <span class="extra-label" :style="{ color: toneText }">{{ t('可更新') }}</span>
+          <span class="extra-label" :style="{ color: toneText }">{{ t('tools.update') }}</span>
         </template>
         <template #action>
           <!--
@@ -450,12 +450,12 @@ async function closeRecycle() {
       </StatCard>
 
       <!-- 4. 回收站：唯一需要「主动清理」的累积项 -->
-      <StatCard :label="t('回收站')" :value="String(recycleCount)"
+      <StatCard :label="t('recycle.recycleBin')" :value="String(recycleCount)"
         :sub="recycleSub" :tone="recycleCount ? 'warning' : 'default'">
         <template #action>
           <n-button size="small" secondary :disabled="!recycleCount" @click="recycleOpen = true">
             <template #icon><TrashOutline width="14" height="14" /></template>
-            {{ t('打开回收站') }}
+            {{ t('recycle.openRecycleBin') }}
           </n-button>
         </template>
       </StatCard>

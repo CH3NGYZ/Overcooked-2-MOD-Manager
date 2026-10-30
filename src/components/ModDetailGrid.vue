@@ -24,28 +24,28 @@ function packageNameText(mod: InstalledMod) {
 
 <template>
   <div class="detail-grid">
-    <div class="detail-item"><span class="muted">{{ t('名称') }}</span><b>{{ mod.name }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('标题') }}</span><b>{{ mod.title || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('产品名') }}</span><b>{{ mod.product_name || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('原始文件名') }}</span><b class="mono">{{ mod.original_filename || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.name') }}</span><b>{{ mod.name }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.title') }}</span><b>{{ mod.title || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.productName') }}</span><b>{{ mod.product_name || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.originalFilename') }}</span><b class="mono">{{ mod.original_filename || '—' }}</b></div>
     <div class="detail-item"><span class="muted">GUID</span><b class="mono">{{ mod.guid || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('插件名') }}</span><b>{{ mod.plugin_name || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('作者') }}</span><b>{{ mod.company || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('版权') }}</span><b>{{ mod.copyright || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('版本') }}</span><b class="mono">{{ formatVersion(mod.version) || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('版本来源') }}</span><b>{{ mod.version_source || '—' }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('启用状态') }}</span><b>{{ mod.enabled ? t('已启用') : t('已禁用') }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('配置文件') }}</span><b>{{ mod.has_config ? t('有') : t('无') }}</b></div>
-    <div class="detail-item"><span class="muted">{{ t('重复 GUID') }}</span><b>{{ mod.duplicate_guid ? t('是') : t('否') }}</b></div>
-    <div class="detail-item wide"><span class="muted">{{ t('文件') }}</span><b class="mono">{{ mod.dll_file }}</b></div>
-    <div class="detail-item wide"><span class="muted">{{ t('绑定仓库') }}</span><b class="mono">{{ bindingText }}</b></div>
-    <div class="detail-item wide"><span class="muted">{{ t('状态标签') }}</span><b>{{ statusSummary || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.pluginName') }}</span><b>{{ mod.plugin_name || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.author') }}</span><b>{{ mod.company || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.copyright') }}</span><b>{{ mod.copyright || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsOnline.versions') }}</span><b class="mono">{{ formatVersion(mod.version) || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.versionSource') }}</span><b>{{ mod.version_source || '—' }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.enabled') }}</span><b>{{ mod.enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled') }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.configFile') }}</span><b>{{ mod.has_config ? t('modsLocal.yes') : t('modsLocal.no') }}</b></div>
+    <div class="detail-item"><span class="muted">{{ t('modsLocal.duplicateGuid') }}</span><b>{{ mod.duplicate_guid ? t('modsLocal.yes2') : t('modsLocal.no2') }}</b></div>
+    <div class="detail-item wide"><span class="muted">{{ t('modsLocal.file2') }}</span><b class="mono">{{ mod.dll_file }}</b></div>
+    <div class="detail-item wide"><span class="muted">{{ t('modsLocal.boundRepository') }}</span><b class="mono">{{ bindingText }}</b></div>
+    <div class="detail-item wide"><span class="muted">{{ t('modsLocal.statusLabels') }}</span><b>{{ statusSummary || '—' }}</b></div>
     <div v-if="packageNameText(mod)" class="detail-item wide">
-      <span class="muted">{{ t('MOD 包') }}</span>
+      <span class="muted">{{ t('tools.modPackage') }}</span>
       <b>{{ packageNameText(mod) }}（{{ packageCountText }}）</b>
     </div>
     <div v-if="mod.load_warning" class="detail-item wide">
-      <span class="muted">{{ t('加载警告') }}</span>
+      <span class="muted">{{ t('modsLocal.loadWarning') }}</span>
       <b class="warn">{{ mod.load_warning }}</b>
     </div>
   </div>

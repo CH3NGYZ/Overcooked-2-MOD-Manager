@@ -42,7 +42,7 @@ const percent = computed(() => {
   return percentValue(value)
 })
 const percentText = computed(() => {
-  if (percent.value === null) return t('准备中')
+  if (percent.value === null) return t('tools.preparing')
   return `${percent.value.toFixed(1)}%`
 })
 const speedText = computed(() => {
@@ -57,10 +57,10 @@ const raceText = computed(() => {
   if (!value) return ''
   const parts: string[] = []
   if (value.parallel_sources && value.parallel_sources > 1) {
-    parts.push(t('{count} 源竞速', { count: value.parallel_sources }))
+    parts.push(t('tools.sourcesRacing', { count: value.parallel_sources }))
   }
   if (value.attempt && value.attempt_total && value.attempt_total > 1) {
-    parts.push(t('第 {current}/{total} 次尝试', { current: value.attempt, total: value.attempt_total }))
+    parts.push(t('tools.attempt', { current: value.attempt, total: value.attempt_total }))
   }
   return parts.join(' · ')
 })
@@ -68,16 +68,16 @@ const stageText = computed(() => {
   const value = progress.value
   if (!value) return ''
   switch (value.phase) {
-    case 'connecting': return t('正在连接下载源…')
-    case 'switching': return t('正在切换更快的源…')
-    case 'downloading': return t('正在下载')
-    case 'finished': return t('已完成')
-    default: return t('准备中…')
+    case 'connecting': return t('tools.connectingToDownloadSource')
+    case 'switching': return t('tools.switchingToAFasterSource')
+    case 'downloading': return t('tools.downloading')
+    case 'finished': return t('tools.completed')
+    default: return t('tools.preparing2')
   }
 })
 const routeText = computed(() => {
   const route = progress.value?.route
-  return route === 'proxy' ? t('代理') : route === 'direct' ? t('直连') : ''
+  return route === 'proxy' ? t('common.proxy') : route === 'direct' ? t('common.direct') : ''
 })
 
 void watchDownloadProgress((value) => {
@@ -131,7 +131,7 @@ async function cancel() {
 
           <div class="dl-actions">
             <n-button secondary size="small" @click="cancel">
-              <CloseOutline width="13" height="13" />{{ t('取消下载') }}
+              <CloseOutline width="13" height="13" />{{ t('common.cancelDownload') }}
             </n-button>
           </div>
         </section>

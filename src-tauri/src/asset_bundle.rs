@@ -193,17 +193,23 @@ fn collect_level_set(file: &SerializedFile) -> Option<LevelSetMetadata> {
 
     let set = set_object?;
     /*
-     * 按 `levelInfos` 的声明顺序重排。
+     * 按 `levelInfos` 的声明**过滤并排序**。
      *
-     * 对象表里的顺序**不保证**与 `levelInfos` 一致（实测 oc1_story 就是从
-     * 6-2 开始），所以必须按声明的 PPtr path_id 排序。取不到引用时保持原顺序。
+     * 两个都不能省：
+     *
+     * - **过滤**：实测 RW 地图的 info 里有 11 个 `LevelInfoSO`，但只声明了
+     *   10 个 —— 多出来的 `rw_test` 是作者的开发残留，连场景文件都没打包。
+     *   不过滤就会报「11 个关卡」，而实际只有 10 个可玩。
+     * - **排序**：对象表顺序不保证与声明一致（oc1_story 从 6-2 开始）。
+     *
+     * 声明为空（老导出）时保持原样，不做过滤 —— 那时对象表是唯一依据。
      */
     let declared: Vec<i64> = match set.get("levelInfos") {
         Some(UnityValue::Array(items)) => items
             .iter()
             .filter_map(|item| match item {
                 // PPtr 在 UnityValue 里是**独立变体**，不是 Map ——
-                // 按 Map 取 m_PathID 会全部落空，排序静默失效。
+                // 按 Map 取 m_PathID 会全部落空，过滤和排序一起静默失效。
                 UnityValue::PPtr { path_id, .. } => Some(*path_id),
                 _ => None,
             })
@@ -211,6 +217,7 @@ fn collect_level_set(file: &SerializedFile) -> Option<LevelSetMetadata> {
         _ => Vec::new(),
     };
     if !declared.is_empty() {
+        level_objects.retain(|(path_id, _)| declared.contains(path_id));
         level_objects.sort_by_key(|(path_id, _)| {
             declared
                 .iter()

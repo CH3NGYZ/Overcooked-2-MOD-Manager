@@ -4,6 +4,7 @@ mod archive;
 // DIYLevel 关卡集的 info 是 Unity AssetBundle，关卡集名/作者/版本只能从里面解析
 mod asset_bundle;
 mod avatars;
+// 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod bepinex;
 mod commands;
 mod community;
@@ -16,6 +17,7 @@ mod gitee_community;
 mod gitee_webview;
 mod github_proxies;
 mod install_guard;
+mod level_sets;
 mod locale_tag;
 mod mod_config;
 mod mod_preview;

@@ -990,7 +990,15 @@ fn existing_variants(game_root: &Path, relative: &str) -> Result<Vec<String>, St
 }
 
 #[allow(clippy::too_many_arguments)]
-fn stage(
+/// 把一批游戏相对路径移进回收站。
+///
+/// `pub(crate)` 是因为关卡集（`level_sets.rs`）也要用它：一个关卡集是整目录，
+/// 但回收记录按**文件**存，所以调用方把目录展开成文件列表再传进来 —— 恢复时
+/// 就能按原路径逐一还原，与 MOD 的恢复走同一条代码路径。
+///
+/// 不新增一套「目录回收」：那会让回收站的记录格式分叉，恢复、彻底删除、
+/// 失败回滚全都要写两遍。
+pub(crate) fn stage(
     root: &Path,
     manifests_dir: &Path,
     game_root: &Path,

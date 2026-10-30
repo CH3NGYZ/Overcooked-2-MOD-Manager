@@ -961,7 +961,11 @@ fn reorder_imported_repositories(config: &mut AppConfig, imported_ids: &[String]
     config.repositories = remaining;
 }
 
-fn default_config() -> AppConfig {
+/// 默认配置。
+///
+/// 测试也需要一份结构完整的 `AppConfig`（字段多且部分无 serde 默认值），
+/// 所以对 crate 内可见 —— 复制一份字段列表到测试里，新增字段时就会漏。
+pub(crate) fn default_config() -> AppConfig {
     AppConfig {
         schema_version: 1,
         ui_zoom: 1.5,

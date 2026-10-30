@@ -486,3 +486,31 @@ export function buildInstallPlan(
 export function planHasActions(plan: InstallPlan): boolean {
   return plan.uninstall.length > 0 || plan.install.length > 0 || plan.blocked.length > 0
 }
+
+/**
+ * 卡头那个关系标签该显示什么（`undefined` 表示不显示）。
+ *
+ * ## 为什么判据是「状态种类」而不是「装没装」
+ *
+ * 早期实现「只在已安装的卡片上显示」，理由是关系对未安装的卡是前置条件，
+ * 交给安装前检查即可。这个理由只对**冲突**成立：
+ *
+ *   - 冲突：用户装了稳定版街机 MOD，测试版卡片会解析出
+ *     `conflicts{prerelease:false}`。未安装的卡片上冒出红色「冲突」会让用户
+ *     以为要卸载什么，而底部按钮明明是「安装」—— 两个控件自相矛盾。
+ *   - 缺依赖：恰恰相反，它是**装之前就该知道**的信息。关卡包这类 MOD 缺少
+ *     前置就跑不起来，用户看到的却是一张普通的「安装」卡片，装上才发现装不了。
+ *
+ * 所以：冲突只在已安装时显示，依赖两处都显示。这同时保证「包」和「单个 MOD」
+ * 行为一致 —— 两者的差别只是 DLL 数量，依赖信息不该因此消失。
+ */
+export function relationCardTag(
+  status: RelationStatus | undefined,
+  installed: boolean,
+): { kind: 'conflict' | 'missingDependency' } | undefined {
+  if (!status) return undefined
+  if (status.state === 'conflict') {
+    return installed ? { kind: 'conflict' } : undefined
+  }
+  return { kind: 'missingDependency' }
+}

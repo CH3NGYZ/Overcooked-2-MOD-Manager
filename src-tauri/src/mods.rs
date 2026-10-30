@@ -11,6 +11,22 @@ use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
+/**
+ * 是否是「恢复框架前的暂存目录」。
+ *
+ * 恢复 BepInEx 或 DIYLevel 时会先把现有目录改名成 `<目录>.before-restore-<时间戳>`，
+ * 用完即删。但旧版本不删，且 DIYLevel 的目录在 `BepInEx/plugins/` 里面
+ * （`BepInEx/plugins/OC2DIYLevel`），所以它的暂存目录直接躺在扫描根下 ——
+ * 里面的 DLL 会被当成插件，用户看到「刚恢复完就冒出一批重复 MOD」。
+ *
+ * 这里在扫描时兜底跳过：新版本已经会删，但升级前留下的残留仍可能一直在，
+ * 不跳过就会持续误报，用户只能自己翻目录手删才能恢复。
+ */
+fn is_restore_staging_component(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|text| text.contains(".before-restore-"))
+}
+
 pub fn scan_mods_with_manifests(
     game: &Path,
     config: &AppConfig,
@@ -30,6 +46,20 @@ pub fn scan_mods_with_manifests(
     for entry in WalkDir::new(&plugins) {
         match entry {
             Ok(entry) if entry.file_type().is_file() && is_mod_file(entry.path()) => {
+                // 恢复暂存目录里的文件不算 MOD：那是一次恢复操作的回滚素材，
+                // 删不掉时会残留，不能让它污染插件列表
+                let inside_staging = entry
+                    .path()
+                    .strip_prefix(&plugins)
+                    .ok()
+                    .is_some_and(|relative| {
+                        relative
+                            .components()
+                            .any(|component| is_restore_staging_component(component.as_os_str()))
+                    });
+                if inside_staging {
+                    continue;
+                }
                 paths.push(entry.into_path());
             }
             Ok(_) => {}
@@ -2496,5 +2526,74 @@ mod tests {
         ];
         super::inherit_repository_from_sibling(&mut mods);
         assert_eq!(mods[1].repository_ids, vec!["repo-2".to_string()]);
+    }
+
+    /// 恢复框架留下的 `.before-restore-*` 目录不能被当成 MOD。
+    ///
+    /// 这是真实用户会踩的坑：恢复 DIYLevel 时，暂存目录就建在
+    /// `BepInEx/plugins/OC2DIYLevel.before-restore-<ts>`，里面的 DLL 被扫成
+    /// 插件后，界面上「刚恢复完就冒出一堆重复 MOD」，而且因为文件确实存在，
+    /// 用户只能自己翻目录手删才能消除。
+    ///
+    /// 断言方式是**对比两次扫描**：先放一个暂存目录，期望只扫到真实 MOD。
+    /// 这个测试必须能失败 —— 把 `scan_mods_with_manifests` 里的跳过分支删掉
+    /// 时它应当红。为此还要断言暂存目录**确实在磁盘上**（否则「扫不到」
+    /// 可能只是因为文件没建成，测试就变成了空转）。
+    #[test]
+    fn restore_staging_directories_are_not_scanned_as_mods() {
+        let root = std::env::temp_dir().join(format!("oc2-scan-stage-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+
+        // 正常 MOD
+        std::fs::create_dir_all(plugins.join("RealMod")).unwrap();
+        std::fs::write(
+            plugins.join("RealMod/Real.dll"),
+            plugin_blob("com.example.real", "Real", "1.0.0"),
+        )
+        .unwrap();
+
+        // 恢复残留：DIYLevel 的暂存目录就在 plugins 下
+        let staging = plugins.join("OC2DIYLevel.before-restore-1793336706");
+        std::fs::create_dir_all(&staging).unwrap();
+        let staged_dll = staging.join("OC2DIYLevel.dll");
+        std::fs::write(
+            &staged_dll,
+            plugin_blob("dev.gua.overcooked.diylevel", "DIYLevel", "1.0.0"),
+        )
+        .unwrap();
+
+        // 前置条件：暂存 DLL 真的在磁盘上，且确实是 .dll（否则下面「扫不到」
+        // 可能是 `is_mod_file` 不认它，而不是过滤生效）
+        assert!(staged_dll.is_file(), "夹具没建好，测试会空转");
+        assert!(super::is_mod_file(&staged_dll));
+
+        let config = crate::config::default_config();
+        let scanned = super::scan_mods_with_manifests(&root, &config, None);
+
+        assert!(
+            !scanned
+                .iter()
+                .any(|item| item.dll_file.contains(".before-restore-")),
+            "暂存目录里的文件不应出现在扫描结果里：{:?}",
+            scanned.iter().map(|item| &item.dll_file).collect::<Vec<_>>()
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 单测过滤谓词本身：目录名判定不依赖扫描管线的其它环节。
+    #[test]
+    fn staging_component_detection_matches_only_before_restore_dirs() {
+        assert!(super::is_restore_staging_component(std::ffi::OsStr::new(
+            "OC2DIYLevel.before-restore-1793336706"
+        )));
+        assert!(super::is_restore_staging_component(std::ffi::OsStr::new(
+            "BepInEx.before-restore-1"
+        )));
+        // 正常目录不能误伤
+        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new("OC2DIYLevel")));
+        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new("SomeMod")));
+        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new("before-restore")));
     }
 }

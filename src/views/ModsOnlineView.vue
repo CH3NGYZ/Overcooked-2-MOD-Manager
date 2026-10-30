@@ -9,7 +9,7 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
+import { primaryRelation, relationCardTag, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -278,29 +278,13 @@ function unmetRelation(repo: Repository): RelationStatus | undefined {
 /**
  * 卡头那个关系标签该显示什么（`null` 表示不显示）。
  *
- * **只在已安装的卡片上显示。** 未安装的卡片一律不显示关系标签 ——
- * 关系对它来说是「安装前置条件」，不是「当前待处理的状态」：
- *
- *   · 用户装了稳定版街机 MOD，测试版卡片会解析出 `conflicts{prerelease:false}`，
- *     于是凭空冒出一个红色「冲突」。用户根本没装测试版，看到「冲突」只会
- *     以为自己要卸载什么，而底部按钮明明是「安装」—— 两个控件自相矛盾。
- *   · 缺依赖同理：装它要先把 CM 装到 19.0，这是安装时自动处理的事，
- *     点「安装」后检查窗会完整列出并让用户确认，卡头再挂一个「缺依赖」
- *     属于重复，而且让人误以为要自己动手。
- *
- * 已安装的卡片则相反：那两个标签描述的是「你现在装的东西有问题」，
- * 是用户真正需要知道的现状。
- *
- * 三种未满足状态在已安装卡片上落到两个标签：
- *   conflict（冲突 / 不兼容）→ 「冲突」
- *   missing / installable（缺依赖，能不能一键装都一样）→ 「缺依赖」
+ * 显示规则本身在 `modRelations.ts` 的 `relationCardTag` 里（纯函数、可测），
+ * 这里只负责把「冲突 / 缺依赖」映射成界面文案与色调。
  */
 function relationTag(repo: Repository): { text: string; tone: TagTone } | null {
-  // 未安装：安装前置条件不在卡头表达，交给安装前检查
-  if (!hasLocalInstall(repo)) return null
-  const status = unmetRelation(repo)
-  if (!status) return null
-  return status.state === 'conflict'
+  const tag = relationCardTag(unmetRelation(repo), hasLocalInstall(repo))
+  if (!tag) return null
+  return tag.kind === 'conflict'
     ? { text: 'modsOnline.conflict', tone: 'critical' }
     : { text: 'modsOnline.missingDep', tone: 'critical' }
 }

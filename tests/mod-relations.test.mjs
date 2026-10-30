@@ -3,7 +3,7 @@ import test from 'node:test'
 
 /** 关系判定：真实源码直接执行（纯函数，不依赖 Vue / Naive）。 */
 const {
-  relationsForRelease, resolveRelation, resolveRelations, unmetRelations, primaryRelation,
+  relationsForRelease, resolveRelation, resolveRelations, unmetRelations, primaryRelation, relationCardTag,
 } = await import('../src/modRelations.ts')
 
 function mod(overrides = {}) {
@@ -637,4 +637,57 @@ test('冲突关系的跳转目标同样取关系仓库', () => {
   )
   assert.equal(status.state, 'conflict')
   assert.equal(relationJumpRepositoryId(status), 'dep-repo')
+})
+
+/* ===== 卡头关系标签：未安装的卡也要能看到缺依赖 ===== */
+
+/*
+ * 真实反馈：关卡包（DIYLevel 地图包）卡片上看不到「缺依赖」，也没有提示
+ * 要先装前置，装上才发现跑不起来。
+ *
+ * 「包」和「单个 MOD」的差别只是 DLL 数量，依赖信息不该因未安装而消失。
+ * 唯一例外是冲突：未安装的卡片挂「冲突」会和底部的「安装」按钮自相矛盾。
+ */
+
+test('未安装且缺依赖 → 仍显示缺依赖标签', () => {
+  const status = resolveRelation(DEP, [], [repo()])
+  assert.equal(status.state, 'installable')
+  assert.deepEqual(relationCardTag(status, false), { kind: 'missingDependency' })
+})
+
+test('未安装且没有可安装来源的依赖 → 仍显示缺依赖标签', () => {
+  const status = resolveRelation(DEP, [], [])
+  assert.equal(status.state, 'missing')
+  assert.deepEqual(relationCardTag(status, false), { kind: 'missingDependency' })
+})
+
+test('已安装且缺依赖 → 显示缺依赖标签', () => {
+  const status = resolveRelation(DEP, [], [repo()])
+  assert.deepEqual(relationCardTag(status, true), { kind: 'missingDependency' })
+})
+
+test('已安装且冲突 → 显示冲突标签', () => {
+  const installed = [mod({ guid: 'com.example.dep', version: '0.9' })]
+  const status = resolveRelation(
+    { kind: 'conflicts', guid: 'com.example.dep', max_version: '1.0' },
+    installed,
+    [],
+  )
+  assert.equal(status.state, 'conflict')
+  assert.deepEqual(relationCardTag(status, true), { kind: 'conflict' })
+})
+
+test('未安装且冲突 → 不显示（否则与「安装」按钮矛盾）', () => {
+  // 测试版卡片对稳定版声明 conflicts{prerelease:false}：用户没装这张卡，
+  // 卡头却挂「冲突」，而主按钮是「安装」—— 用户不知道该卸载什么
+  const status = {
+    state: 'conflict',
+    relation: { kind: 'conflicts', guid: 'com.example.dep' },
+  }
+  assert.equal(relationCardTag(status, false), undefined)
+})
+
+test('没有未满足的关系 → 不显示', () => {
+  assert.equal(relationCardTag(undefined, false), undefined)
+  assert.equal(relationCardTag(undefined, true), undefined)
 })

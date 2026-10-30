@@ -153,6 +153,14 @@ export const backup: DomainMessages = {
     ko: '제거할 프레임워크 파일을 찾지 못했습니다.',
     ja: '削除できるフレームワークファイルが見つかりません。',
   },
+  // 框架已恢复，但恢复前的暂存目录没能删除：{paths}
+  restoreLeftoverCleanupFailed: {
+    'zh-CN': '框架已恢复，但恢复前的暂存目录未能删除：{paths}。请手动删除，否则里面的 MOD 会被重复识别。',
+    'zh-TW': '框架已還原，但還原前的暫存目錄未能刪除：{paths}。請手動刪除，否則裡面的 MOD 會被重複辨識。',
+    en: 'The framework was restored, but the pre-restore staging folder could not be removed: {paths}. Delete it manually, otherwise its MODs will be detected twice.',
+    ko: '프레임워크는 복원되었지만 복원 전 임시 폴더를 삭제하지 못했습니다: {paths}. 직접 삭제하세요. 그렇지 않으면 해당 MOD가 중복 인식됩니다.',
+    ja: 'フレームワークは復元されましたが、復元前の一時フォルダーを削除できませんでした: {paths}。手動で削除してください。そうしないと中の MOD が重複して認識されます。',
+  },
   recycleFailed: {
     'zh-CN': '文件回收失败，请尝试手动删除框架文件。（{reason}）备份已保存在 {path}',
     'zh-TW': '檔案回收失敗，請嘗試手動刪除框架檔案。（{reason}）備份已儲存在 {path}',

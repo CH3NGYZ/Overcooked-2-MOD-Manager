@@ -6696,7 +6696,16 @@ fn read_backup_manifest(backup: &Path) -> Option<archive::InstallManifest> {
 /// 恢复一个框架备份：先删现有内容，再整体还原，最后写回清单。
 ///
 /// 与用户要求一致：**先删再恢复**，得到的是备份那一刻的完整快照。
-/// 删除前把现有内容另存 `*.before-restore-<ts>`，误操作还有后悔机会。
+///
+/// ## 为什么 `*.before-restore-*` 必须删掉
+///
+/// 删除前会把现有内容另存一份，失败时用来回滚。但恢复成功后这个目录必须
+/// 立刻删除：它就在游戏根目录下（`BepInEx.before-restore-<ts>`、
+/// `OC2DIYLevel.before-restore-<ts>`），MOD 扫描会把里面的 DLL 当成插件，
+/// 于是用户看到「刚恢复完就冒出一堆重复/低版本 MOD」，甚至出现同 GUID 冲突。
+///
+/// 也就是说它不是「给用户后悔用的备份」，只是**本次操作的回滚素材**：
+/// 真正的后悔入口是备份列表里的快照。所以成功即删，失败才用。
 fn restore_framework_backup(
     game_root: &Path,
     backup: &Path,
@@ -6709,6 +6718,7 @@ fn restore_framework_backup(
     }
     // 恢复前的另存目录：放在备份根的同级，避开被还原的目录树
     let stamp = Utc::now().timestamp();
+    let mut staged = Vec::new();
     for directory in spec.directories {
         let destination = game_root.join(directory);
         ensure_copy_paths_disjoint(&backup.join(directory), &destination)?;
@@ -6718,6 +6728,7 @@ fn restore_framework_backup(
         let previous = game_root.join(format!("{directory}.before-restore-{stamp}"));
         archive::clear_readonly(&destination)?;
         copy_dir(&destination, &previous)?;
+        staged.push(previous.clone());
         fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
         log::info!("恢复前已另存：路径={}", previous.display());
     }
@@ -6745,6 +6756,30 @@ fn restore_framework_backup(
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+    }
+
+    /*
+     * 还原完成，回滚素材用完即弃。
+     *
+     * 删不掉不算恢复失败（目录已经正确还原了），但必须留日志并如实告知：
+     * 残留目录会被 MOD 扫描当成插件，用户需要自己删。
+     */
+    let mut leftovers = Vec::new();
+    for previous in staged {
+        archive::clear_readonly(&previous)?;
+        match fs::remove_dir_all(&previous) {
+            Ok(()) => log::info!("已清理恢复前暂存：路径={}", previous.display()),
+            Err(error) => {
+                log::warn!("恢复前暂存清理失败：路径={}，原因={}", previous.display(), error);
+                leftovers.push(previous.display().to_string());
+            }
+        }
+    }
+    if !leftovers.is_empty() {
+        return Err(crate::locale_tag::with_params(
+            "backup.restoreLeftoverCleanupFailed",
+            &[("paths", &leftovers.join(", "))],
+        ));
     }
 
     /*
@@ -7105,19 +7140,39 @@ fn restore_preserved_dirs(backup: &Path, game_root: &Path) -> Result<(), String>
     Ok(())
 }
 
+/// 把整个 `BepInEx/` 换成备份内容（安装失败时的回滚）。
+///
+/// 与 `restore_framework_backup` 一样，回滚素材用完即删：`BepInEx.before-restore-*`
+/// 留在游戏根目录下会被 MOD 扫描当成插件，表现为「刚回滚完就多出一批重复 MOD」。
 fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), String> {
     if !backup.is_dir() {
         return Err("backup.notFound".into());
     }
     let destination = game_root.join("BepInEx");
     ensure_copy_paths_disjoint(backup, &destination)?;
+    let mut previous = None;
     if destination.exists() {
-        let previous = game_root.join(format!("BepInEx.before-restore-{}", Utc::now().timestamp()));
+        let staged = game_root.join(format!("BepInEx.before-restore-{}", Utc::now().timestamp()));
         archive::clear_readonly(&destination)?;
-        copy_dir(&destination, &previous)?;
+        copy_dir(&destination, &staged)?;
+        previous = Some(staged);
         fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
     }
-    copy_dir(backup, &destination)
+    copy_dir(backup, &destination)?;
+
+    // 删除失败不影响回滚结果，但必须留痕：残留目录会污染 MOD 扫描
+    if let Some(staged) = previous {
+        archive::clear_readonly(&staged)?;
+        match fs::remove_dir_all(&staged) {
+            Ok(()) => log::info!("已清理回滚前暂存：路径={}", staged.display()),
+            Err(error) => log::warn!(
+                "回滚前暂存清理失败：路径={}，原因={}",
+                staged.display(),
+                error
+            ),
+        }
+    }
+    Ok(())
 }
 
 /// 备份与源目录必须互不包含。
@@ -10867,6 +10922,106 @@ mod framework_backup_roundtrip_tests {
         );
         assert!(!backup.join("BepInEx/core").exists());
         assert!(!backup.join("winhttp.dll").exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 恢复 BepInEx 后，`.before-restore-*` 暂存目录必须被删掉。
+    ///
+    /// 它落在游戏根目录（`BepInEx.before-restore-<ts>`）。留着不只是占空间：
+    /// MOD 扫描会把里面的 DLL 当成插件，用户看到「刚恢复完就多出一批重复 MOD」。
+    #[test]
+    fn bepinex_restore_removes_the_staging_directory() {
+        let root = std::env::temp_dir().join(format!("oc2-fw-stage-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let backups = root.join("backups");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+        write_bepinex(&game);
+
+        let backup = backup_framework(
+            &game,
+            &backups,
+            &BEPINEX_BACKUP,
+            &manifests,
+            BEPINEX_MANIFEST_ID,
+        )
+        .unwrap();
+        // 备份之后改动目录，让「恢复前内容」与备份内容不同
+        std::fs::write(game.join("BepInEx/core/Extra.dll"), b"extra").unwrap();
+
+        restore_framework_backup(
+            &game,
+            &backup,
+            &BEPINEX_BACKUP,
+            &manifests,
+            BEPINEX_MANIFEST_ID,
+        )
+        .unwrap();
+
+        let leftovers: Vec<_> = std::fs::read_dir(&game)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".before-restore-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "恢复后不应残留暂存目录：{leftovers:?}"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 恢复 DIYLevel 后同样不能残留 —— 它的暂存目录在 `plugins/` 里面，
+    /// 不删就必然被 MOD 扫描当成插件（比 BepInEx 的情况更严重）。
+    #[test]
+    fn diy_level_restore_removes_the_staging_directory_inside_plugins() {
+        let root = std::env::temp_dir().join(format!("oc2-diy-stage-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let backups = root.join("backups");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+
+        let diy = game.join(DIYLEVEL_DIR);
+        std::fs::create_dir_all(&diy).unwrap();
+        std::fs::write(diy.join("OC2DIYLevel.dll"), b"v1").unwrap();
+
+        let backup = backup_framework(
+            &game,
+            &backups,
+            &DIYLEVEL_BACKUP,
+            &manifests,
+            "oc2diylevel",
+        )
+        .unwrap();
+        // 备份后放一个不同版本，确保恢复前的目录非空
+        std::fs::write(diy.join("OC2DIYLevel.dll"), b"v2").unwrap();
+
+        restore_framework_backup(
+            &game,
+            &backup,
+            &DIYLEVEL_BACKUP,
+            &manifests,
+            "oc2diylevel",
+        )
+        .unwrap();
+
+        let plugins = game.join("BepInEx/plugins");
+        let leftovers: Vec<_> = std::fs::read_dir(&plugins)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".before-restore-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "DIYLevel 恢复后 plugins 下不应残留暂存目录：{leftovers:?}"
+        );
+        // 恢复出来的内容必须是备份那一刻的
+        assert_eq!(std::fs::read(diy.join("OC2DIYLevel.dll")).unwrap(), b"v1");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

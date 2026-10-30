@@ -4178,11 +4178,39 @@ async fn import_repository_source_into_config(
                 && !used_ids.contains(previous_id)
             {
                 repo.id = previous_id.clone();
+                /*
+                 * 把清理阶段暂存的 Release 缓存接回来。
+                 *
+                 * 不接的话，10 分钟缓存**永远命中不了**：整批刷新先删光仓库、
+                 * 再从源文档重建，重建出来的是全新空仓库，于是每次刷新都把
+                 * 整棵仓库树的 API 重打一遍（20+ 个仓库、几十个请求，还会撞
+                 * Gitee 速率限制）。缓存本身没坏，只是被「重建」这件事丢了。
+                 *
+                 * ID 已由 `source_repository_ids` 保住，所以按 ID 取得到。
+                 */
+                if let Some(staged) = config.staged_release_cache.remove(previous_id) {
+                    repo.cached_releases = staged.releases;
+                    repo.releases_cached_at = staged.cached_at;
+                    repo.last_error = staged.last_error;
+                }
             }
             used_ids.insert(repo.id.clone());
             config.source_repository_ids.insert(key, repo.id.clone());
             repo.source_id = Some(source_id.clone());
         }
+    }
+    /*
+     * 清理暂存表里没人认领的条目。
+     *
+     * 走到这里说明所有源文档都已应用完毕：还在表里的 ID 属于已经从源文档
+     * 下线的仓库，缓存留着没有意义，而且会让配置文件越长越大。
+     */
+    if !config.staged_release_cache.is_empty() {
+        log::debug!(
+            "丢弃未认领的暂存 Release 缓存：数量={}",
+            config.staged_release_cache.len()
+        );
+        config.staged_release_cache.clear();
     }
     state.config.save(&config).map_err(|error| {
         log::error!("仓库源刷新后保存配置失败：源={}，原因={}", source_id, error);
@@ -6770,7 +6798,11 @@ fn restore_framework_backup(
         match fs::remove_dir_all(&previous) {
             Ok(()) => log::info!("已清理恢复前暂存：路径={}", previous.display()),
             Err(error) => {
-                log::warn!("恢复前暂存清理失败：路径={}，原因={}", previous.display(), error);
+                log::warn!(
+                    "恢复前暂存清理失败：路径={}，原因={}",
+                    previous.display(),
+                    error
+                );
                 leftovers.push(previous.display().to_string());
             }
         }
@@ -10989,25 +11021,13 @@ mod framework_backup_roundtrip_tests {
         std::fs::create_dir_all(&diy).unwrap();
         std::fs::write(diy.join("OC2DIYLevel.dll"), b"v1").unwrap();
 
-        let backup = backup_framework(
-            &game,
-            &backups,
-            &DIYLEVEL_BACKUP,
-            &manifests,
-            "oc2diylevel",
-        )
-        .unwrap();
+        let backup =
+            backup_framework(&game, &backups, &DIYLEVEL_BACKUP, &manifests, "oc2diylevel").unwrap();
         // 备份后放一个不同版本，确保恢复前的目录非空
         std::fs::write(diy.join("OC2DIYLevel.dll"), b"v2").unwrap();
 
-        restore_framework_backup(
-            &game,
-            &backup,
-            &DIYLEVEL_BACKUP,
-            &manifests,
-            "oc2diylevel",
-        )
-        .unwrap();
+        restore_framework_backup(&game, &backup, &DIYLEVEL_BACKUP, &manifests, "oc2diylevel")
+            .unwrap();
 
         let plugins = game.join("BepInEx/plugins");
         let leftovers: Vec<_> = std::fs::read_dir(&plugins)

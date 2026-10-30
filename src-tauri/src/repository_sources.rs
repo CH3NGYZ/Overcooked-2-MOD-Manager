@@ -690,15 +690,37 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
         }
     }
     let repository_count = config.repositories.len();
-    // Clear all fetched content, but keep the IDs referenced by install
-    // manifests even if this refresh fails and the application restarts.
+    /*
+     * 清空这些源的仓库，但把 Release 缓存**暂存下来**。
+     *
+     * 早先的做法是整条 `retain` 掉仓库，于是列表重新拉回来、仓库重建之后
+     * `cached_releases` 与 `releases_cached_at` 都是空的 —— 10 分钟缓存
+     * 永远不可能命中，每次刷新（含每次启动）都得把整棵仓库树的 API 重打
+     * 一遍。实测 20+ 个仓库、每次几十个请求，还固定撞上 Gitee 的速率限制。
+     *
+     * 缓存按 `repository_id` 存：ID 已经被 `source_repository_ids` 保住，
+     * 重建出来的仓库会拿回同一个 ID，于是能对得上。`apply_document` 取回
+     * 之后会清空这张暂存表，它只在「清理 → 重建」之间短暂存在。
+     */
     for repo in &config.repositories {
-        if let Some(source_id) = &repo.source_id
-            && descendants.contains(source_id)
-        {
-            let key =
-                crate::config::source_repository_key(source_id, &crate::config::repo_key(repo));
-            config.source_repository_ids.insert(key, repo.id.clone());
+        let Some(source_id) = repo.source_id.as_ref() else {
+            continue;
+        };
+        if !descendants.contains(source_id) {
+            continue;
+        }
+        let key = crate::config::source_repository_key(source_id, &crate::config::repo_key(repo));
+        config.source_repository_ids.insert(key, repo.id.clone());
+        // 只搬「有内容」的缓存：空列表搬过去也没有意义，反而让判断变复杂
+        if !repo.cached_releases.is_empty() {
+            config.staged_release_cache.insert(
+                repo.id.clone(),
+                crate::models::StagedReleaseCache {
+                    releases: repo.cached_releases.clone(),
+                    cached_at: repo.releases_cached_at,
+                    last_error: repo.last_error.clone(),
+                },
+            );
         }
     }
     config.repositories.retain(|repo| {
@@ -1759,6 +1781,88 @@ region = "mainland-china"
         assert_eq!(
             result.unwrap().repository_sources[0].url,
             format!("http://{address}/mods.toml")
+        );
+    }
+}
+
+/// 整批刷新不能把 Release 缓存一起丢掉。
+///
+/// 真实回归：清理源缓存会把整棵源的仓库删掉，源文档回来后再重建。重建出来的
+/// 仓库 `cached_releases` 为空，于是 10 分钟缓存**永远命中不了** —— 每次启动
+/// 都要把整棵仓库树的 API 重打一遍（20+ 个仓库、几十个请求，还固定撞 Gitee
+/// 的速率限制）。用户看日志就是「跳过缓存=false」却照样一路请求。
+#[cfg(test)]
+mod release_cache_staging_tests {
+    use super::*;
+
+    fn repo(id: &str, source_id: &str) -> crate::models::RepositoryConfig {
+        let mut repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+            "id": id, "name": "Mod", "group": "G",
+            "provider": "github", "username": "u", "repository": "r",
+            "download_mode": "release", "channel": "all",
+            "asset_rules": [{ "type": "exact", "value": "a.zip" }],
+            "install_target": "BepInEx/plugins",
+            "enabled": true, "builtin": false,
+            "max_release_count": 10, "download_threads": 32
+        }))
+        .unwrap();
+        repo.source_id = Some(source_id.to_string());
+        repo
+    }
+
+    #[test]
+    fn clearing_a_source_stages_the_release_cache_instead_of_dropping_it() {
+        let mut config = crate::config::default_config();
+        config.repository_sources = vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "src", "nickname": "S", "nickname_i18n": { "zh-CN": "S" },
+                "url": "https://example.com/x.toml", "builtin": false
+            }))
+            .unwrap(),
+        ];
+
+        let mut entry = repo("repo-1", "src");
+        entry.cached_releases = vec![
+            serde_json::from_value(serde_json::json!({
+                "tag_name": "v1.0.0", "version": "1.0.0", "name": "v1", "body": "",
+                "prerelease": false, "draft": false, "assets": []
+            }))
+            .unwrap(),
+        ];
+        entry.releases_cached_at = Some(1_700_000_000_000);
+        config.repositories = vec![entry];
+
+        clear_source_cache(&mut config, &["src".to_string()]);
+
+        // 仓库确实被清掉了（源文档要重新决定它的存在与配置）
+        assert!(config.repositories.is_empty(), "仓库应被清空");
+        // 但缓存被暂存下来，等重建时取回
+        let staged = config
+            .staged_release_cache
+            .get("repo-1")
+            .expect("缓存必须被暂存，否则重建后永远命中不了");
+        assert_eq!(staged.releases.len(), 1);
+        assert_eq!(staged.cached_at, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn empty_caches_are_not_staged() {
+        let mut config = crate::config::default_config();
+        config.repository_sources = vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "src", "nickname": "S", "nickname_i18n": { "zh-CN": "S" },
+                "url": "https://example.com/x.toml", "builtin": false
+            }))
+            .unwrap(),
+        ];
+        // 从没成功刷新过：空列表 + 没有时间戳
+        config.repositories = vec![repo("repo-1", "src")];
+
+        clear_source_cache(&mut config, &["src".to_string()]);
+
+        assert!(
+            config.staged_release_cache.is_empty(),
+            "空缓存不该搬进暂存表，否则判断变复杂而且没有意义"
         );
     }
 }

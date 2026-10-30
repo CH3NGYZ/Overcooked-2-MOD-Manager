@@ -1003,6 +1003,7 @@ pub(crate) fn default_config() -> AppConfig {
         community_discovery: None,
         gitee_community_discovery: None,
         source_repository_ids: Default::default(),
+        staged_release_cache: Default::default(),
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
         builtin_sources_only: false,

@@ -48,15 +48,16 @@ pub fn scan_mods_with_manifests(
             Ok(entry) if entry.file_type().is_file() && is_mod_file(entry.path()) => {
                 // 恢复暂存目录里的文件不算 MOD：那是一次恢复操作的回滚素材，
                 // 删不掉时会残留，不能让它污染插件列表
-                let inside_staging = entry
-                    .path()
-                    .strip_prefix(&plugins)
-                    .ok()
-                    .is_some_and(|relative| {
-                        relative
-                            .components()
-                            .any(|component| is_restore_staging_component(component.as_os_str()))
-                    });
+                let inside_staging =
+                    entry
+                        .path()
+                        .strip_prefix(&plugins)
+                        .ok()
+                        .is_some_and(|relative| {
+                            relative.components().any(|component| {
+                                is_restore_staging_component(component.as_os_str())
+                            })
+                        });
                 if inside_staging {
                     continue;
                 }
@@ -2576,7 +2577,10 @@ mod tests {
                 .iter()
                 .any(|item| item.dll_file.contains(".before-restore-")),
             "暂存目录里的文件不应出现在扫描结果里：{:?}",
-            scanned.iter().map(|item| &item.dll_file).collect::<Vec<_>>()
+            scanned
+                .iter()
+                .map(|item| &item.dll_file)
+                .collect::<Vec<_>>()
         );
 
         std::fs::remove_dir_all(&root).unwrap();
@@ -2592,8 +2596,14 @@ mod tests {
             "BepInEx.before-restore-1"
         )));
         // 正常目录不能误伤
-        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new("OC2DIYLevel")));
-        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new("SomeMod")));
-        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new("before-restore")));
+        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new(
+            "OC2DIYLevel"
+        )));
+        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new(
+            "SomeMod"
+        )));
+        assert!(!super::is_restore_staging_component(std::ffi::OsStr::new(
+            "before-restore"
+        )));
     }
 }

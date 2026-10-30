@@ -584,6 +584,20 @@ pub struct ReleaseRelationOverride {
     pub relations: Vec<RepositoryRelation>,
 }
 
+/// 整批刷新期间暂存的 Release 缓存。
+///
+/// 见 `AppConfig::staged_release_cache` 的说明：清理仓库前把缓存挪到这里，
+/// 按源文档重建仓库时再取回，避免 10 分钟缓存被「重建」这件事本身作废。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StagedReleaseCache {
+    #[serde(default)]
+    pub releases: Vec<ReleaseInfo>,
+    #[serde(default)]
+    pub cached_at: Option<i64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryConfig {
     pub id: String,
@@ -727,6 +741,18 @@ pub struct AppConfig {
     // Identity only: no source documents, repository settings or Release cache.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_repository_ids: BTreeMap<String, String>,
+    /// 整批刷新清掉仓库前，暂存的 Release 缓存（`repository_id` → 缓存）。
+    ///
+    /// 刷新流程是「先清空整棵源的仓库 → 再拉源文档 → 按源文档重建仓库」。
+    /// 重建出来的仓库是全新的，`cached_releases` 为空，于是 10 分钟缓存
+    /// **永远命中不了** —— 每次刷新都把整棵仓库树的 API 重打一遍（实测
+    /// 20+ 个仓库、几十个请求，还固定撞速率限制）。
+    ///
+    /// 所以清理时把缓存挪到这里，`apply_document` 重建仓库时按 ID 取回。
+    /// 它只是短暂的搬运中转：重建完成的仓库会把缓存接回自己的字段，这里
+    /// 随即清空。真正到期与否仍由各仓库的 `releases_cached_at` 决定。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub staged_release_cache: BTreeMap<String, StagedReleaseCache>,
     #[serde(default = "crate::github_proxies::bundled_defaults")]
     pub github_proxies: GitHubProxyConfig,
     #[serde(default)]

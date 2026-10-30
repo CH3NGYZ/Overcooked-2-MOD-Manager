@@ -801,6 +801,19 @@ pub struct AppConfig {
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
+    /// 地图仓库（DIYLevel 关卡集的远程来源）。
+    ///
+    /// 与 `repositories` 平行而非合并：两者的绑定身份、安装单元都不同
+    /// （见 `MapRepositoryConfig` 的说明）。源树复用 `repository_sources`
+    /// 的地址解析与相对路径规则。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub map_repositories: Vec<MapRepositoryConfig>,
+    /// 是否只用内置地图快照（与 `builtin_sources_only` 呼应）。
+    ///
+    /// 打开后官方地图索引的 `url` 指向编译期嵌入的 `maps.toml`，
+    /// 与仓库侧「仅使用内置仓库源」完全同一套语义。
+    #[serde(default)]
+    pub builtin_map_sources_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -998,6 +1011,10 @@ pub struct PublicConfig {
     /// 只用内置仓库源（不访问远端 raw 入口）。
     #[serde(default)]
     pub builtin_sources_only: bool,
+    /// 只用内置地图源。与仓库源开关相互独立：地图索引和仓库索引是两个文件，
+    /// 一个连不上不代表另一个也连不上。
+    #[serde(default)]
+    pub builtin_map_sources_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1081,6 +1098,90 @@ pub struct RepositoryExport {
     pub note: String,
     #[serde(default)]
     pub note_i18n: BTreeMap<String, String>,
+}
+
+/// 一个地图仓库：地图的分发单元。
+///
+/// 与 `RepositoryConfig` 对称但**刻意不合并**：
+///
+/// - MOD 仓库绑定本地插件靠 `plugin_guid`（DLL 内嵌元数据）；
+/// - 地图仓库绑定本地关卡集靠 `author + level_set_name`（info 里的字段）。
+///
+/// 两者字段几乎没有交集（GUID / 产品名 / 关系表 vs 关卡集名 / 作者），
+/// 合并后每个使用点都要判断「这是哪种」。共用的是源树、Release 刷新与下载
+/// 竞速这些**流水线**，不是模型。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapRepositoryConfig {
+    /// 稳定 ID。
+    ///
+    /// 源文档可以不写：首次导入时按「源 ID + 身份」生成并持久化，
+    /// 之后一直复用（安装清单与缓存都挂在它上面）。手写 UUID 只会制造
+    /// 「复制一份配置忘了改 ID」这类问题。
+    #[serde(default)]
+    pub id: String,
+    /// 单语言镜像。源文档**只需要写 `name_i18n`**，这里是加载后从
+    /// `zh-CN` 折进 来的兼容字段，不要求作者手写两遍。
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_i18n: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    pub provider: Provider,
+    pub username: String,
+    pub repository: String,
+    #[serde(default)]
+    pub channel: Channel,
+    #[serde(default = "default_max_release_count")]
+    pub max_release_count: u32,
+    #[serde(default = "default_download_threads")]
+    pub download_threads: u32,
+    /// 选哪个资产：地图只分发 ZIP。
+    #[serde(default)]
+    pub asset_rules: Vec<AssetRule>,
+    /// 本地关卡集的 `levelSetName`（info 里的英文名）。
+    ///
+    /// 与 `author` 一起构成绑定身份。不能用 `uid`：它是
+    /// `MD5(baseUID + version)`，每发一版就变。
+    #[serde(default)]
+    pub level_set_name: String,
+    /// 本地关卡集的 `author`（info 里的作者，官方导出常为空）。
+    #[serde(default)]
+    pub author: String,
+    /// 依赖声明：地图需要 DIYLevel 与 Web Runtime 在特定版本以上才跑得起来。
+    ///
+    /// 复用 `RepositoryRelation`——「某 GUID 的版本必须在区间内」这个语义
+    /// 两边完全一样，没有再造一套的理由。
+    #[serde(
+        default,
+        alias = "requires",
+        deserialize_with = "deserialize_relations",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub relations: Vec<RepositoryRelation>,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_i18n: BTreeMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub builtin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// Release 缓存，与 `RepositoryConfig` 同一套字段与 TTL 语义。
+    #[serde(default)]
+    pub cached_releases: Vec<ReleaseInfo>,
+    #[serde(default)]
+    pub releases_cached_at: Option<i64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1256,6 +1357,8 @@ pub struct SettingsPatch {
     pub download_threads: Option<u32>,
     /// 只用内置仓库源（不访问远端 raw 入口）。
     pub builtin_sources_only: Option<bool>,
+    /// 只用内置地图源（不影响仓库源，反之亦然）。
+    pub builtin_map_sources_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1343,4 +1446,65 @@ fn default_true() -> bool {
 }
 fn default_download_threads() -> u32 {
     0
+}
+
+/// 一个地图仓库的界面模型。
+///
+/// 与 `MapRepositoryConfig` 的区别：只带界面要显示的内容（含最新 tag 与缓存
+/// 状态），不带 `asset_rules`、`download_threads` 这类内部参数 —— 那些改了
+/// 也不该影响展示。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_i18n: BTreeMap<String, String>,
+    pub provider: Provider,
+    pub username: String,
+    pub repository: String,
+    /// 绑定的本地关卡集名（info 里的 `levelSetName`）。
+    pub level_set_name: String,
+    /// 绑定的本地作者（info 里的 `author`）。
+    pub author: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_i18n: BTreeMap<String, String>,
+    pub enabled: bool,
+    pub builtin: bool,
+    /// 缓存里最新的 Release tag；没刷新过时为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_tag: Option<String>,
+    #[serde(default)]
+    pub cached_release_count: usize,
+    /// Release 缓存时间（Unix 毫秒），用于界面提示「几分钟前」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// 需要的框架与最低版本（来自 `relations`），供界面提示升级框架。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_frameworks: Vec<RequiredFramework>,
+    /// 这些依赖里**当前没满足**的那几条（已经对照本地已装版本判定）。
+    ///
+    /// 判定在后端做而不是前端：`relation_satisfied` 的语义（requires 要存在
+    /// 且在区间内、conflicts 在区间内才算冲突、compatible 要存在且在区间内）
+    /// 与 MOD 侧共用同一份实现，前端再判一次迟早两边结论不同。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmet_frameworks: Vec<RequiredFramework>,
+}
+
+/// 地图依赖的一个框架组件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequiredFramework {
+    pub guid: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub min_version: String,
+    /// 本地已装版本（未装时为空），让界面能说清「已装 0.9.9，需要 0.10.0」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
 }

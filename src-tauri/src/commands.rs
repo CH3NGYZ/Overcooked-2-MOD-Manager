@@ -1602,6 +1602,23 @@ pub fn save_settings(
             }
         );
     }
+    if let Some(value) = patch.builtin_map_sources_only {
+        config.builtin_map_sources_only = value;
+        /*
+         * 地图源不持久化源树，开关只影响「下次刷新从哪里读索引」，
+         * 所以这里不需要重建任何条目 —— 立刻用新入口加载一次，让开关的
+         * 效果当次可见，也让界面拿到与新入口一致的地图列表。
+         */
+        log::info!(
+            "「仅使用内置地图源」已{}：索引={}",
+            if value { "开启" } else { "关闭" },
+            if value {
+                crate::map_sources::BUILTIN_MAP_INDEX
+            } else {
+                "地区默认远端地址"
+            }
+        );
+    }
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!(
         "应用设置保存完成：界面缩放={}，自动检测游戏={}，启动检查更新={}",
@@ -5538,6 +5555,424 @@ pub fn import_level_sets(
     }
     log::info!("关卡集导入完成：数量={}", installed.len());
     Ok(LevelSetImportResult { installed })
+}
+
+/// 列出当前地区可用的地图（含 Release 缓存）。
+///
+/// 只读：不发起网络请求。缓存为空时界面显示「待检查」，用户点刷新才抓。
+#[tauri::command]
+pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
+    let mut config = state.config.load_or_default();
+    /*
+     * 第一次访问地图页时配置里还没有地图（内置快照未播种）：此时用打包的
+     * 地图源树补一次，让离线场景也有内容可显示。
+     *
+     * 只在「一条都没有」时播种，不做增量合并：用户删掉的条目不该在被访问
+     * 时复活。远程源树由显式刷新写入（见 `refresh_map_sources`）。
+     */
+    if config.map_repositories.is_empty() {
+        let bundled = crate::map_sources::bundled_map_tree();
+        if !bundled.is_empty() {
+            log::info!("地图列表为空，使用内置地图快照：数量={}", bundled.len());
+            config.map_repositories = bundled;
+            let _ = state.config.save(&config);
+        }
+    }
+    let maps = crate::map_sources::available_maps(&config, crate::config::current_user_region());
+    log::debug!("地图列表读取完成：数量={}", maps.len());
+    let installed = installed_plugin_versions(&state, &config);
+    Ok(maps
+        .iter()
+        .map(|map| map_to_info(map, installed.as_ref()))
+        .collect())
+}
+
+/// 刷新地图源树（索引 → 子源 → 地图），并保留同名条目的缓存与开关。
+///
+/// ## 回退条件与仓库源一致
+///
+/// 只有「官方入口 HTTP/网络失败」才试探内置快照；远程文档能读到但内容有问题
+/// （TOML 无效、缺必填字段）时直接报错，不能悄悄换成内置条目 —— 否则作者
+/// 刚发布的地图源写错了，用户看到的是旧的、看起来一切正常的内置列表。
+#[tauri::command]
+pub async fn refresh_map_sources(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
+    let builtin_only = state.config.load_or_default().builtin_map_sources_only;
+    let region = crate::config::current_user_region().to_string();
+    log::info!("开始刷新地图源：内置={}，地区={}", builtin_only, region);
+
+    let loaded = crate::map_sources::load_map_tree(&region, builtin_only).await;
+    let (maps, source) = match loaded {
+        Ok(maps) => (maps, "remote"),
+        Err(error) => {
+            /*
+             * 官方入口连不上：退回内置快照，但**保留远程入口** —— 下次刷新
+             * 仍然先请求远程。这与仓库源「回退只进行一次」的规则同源。
+             */
+            if builtin_only {
+                return Err(error.to_string());
+            }
+            log::warn!(
+                "地图源刷新失败，回退内置快照：原因={}",
+                crate::repository_sources::error_category(&error)
+            );
+            let bundled = crate::map_sources::bundled_map_tree();
+            if bundled.is_empty() {
+                return Err(error.to_string());
+            }
+            (bundled, "bundled-fallback")
+        }
+    };
+
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let mut config = state.config.load_or_default();
+    let changed = crate::map_sources::replace_maps_keeping_runtime_state(&mut config, maps);
+    if changed {
+        state
+            .config
+            .save(&config)
+            .map_err(|error| error.to_string())?;
+    }
+    log::info!(
+        "地图源刷新完成：来源={}，地图={}，配置已更新={}",
+        source,
+        config.map_repositories.len(),
+        changed
+    );
+    let installed = installed_plugin_versions(&state, &config);
+    Ok(crate::map_sources::available_maps(&config, &region)
+        .iter()
+        .map(|map| map_to_info(map, installed.as_ref()))
+        .collect())
+}
+
+/// 把内部地图配置转成 IPC 模型。
+///
+/// `installed` 给出本地已装的 GUID → 版本，供 `unmet_frameworks` 判定；
+/// 传 `None`（游戏未探测到、无法扫描）时只给出声明、不标「缺失」——
+/// 把「不知道」说成「缺依赖」会让用户去重装本来就装好的框架。
+fn map_to_info(
+    map: &crate::models::MapRepositoryConfig,
+    installed: Option<&std::collections::HashMap<String, Option<String>>>,
+) -> MapInfo {
+    let declared: Vec<RequiredFramework> = map
+        .relations
+        .iter()
+        .map(|relation| RequiredFramework {
+            guid: relation.guid.clone(),
+            min_version: relation.min_version.clone(),
+            installed_version: installed
+                .and_then(|table| table.get(&relation.guid.to_lowercase()))
+                .cloned()
+                .flatten(),
+        })
+        .collect();
+    let unmet: Vec<RequiredFramework> = match installed {
+        Some(_) => {
+            let missing = crate::map_sources::unmet_relations(map, |guid| {
+                installed
+                    .and_then(|table| table.get(&guid.trim().to_lowercase()))
+                    .cloned()
+                    .flatten()
+            });
+            let missing_guids: Vec<&str> = missing
+                .iter()
+                .map(|relation| relation.guid.as_str())
+                .collect();
+            declared
+                .iter()
+                .filter(|framework| {
+                    missing_guids
+                        .iter()
+                        .any(|guid| guid.eq_ignore_ascii_case(&framework.guid))
+                })
+                .cloned()
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    MapInfo {
+        id: map.id.clone(),
+        name: map.name.clone(),
+        name_i18n: map.name_i18n.clone(),
+        group: map.group.clone(),
+        group_i18n: map.group_i18n.clone(),
+        provider: map.provider.clone(),
+        username: map.username.clone(),
+        repository: map.repository.clone(),
+        level_set_name: map.level_set_name.clone(),
+        author: map.author.clone(),
+        note: map.note.clone(),
+        note_i18n: map.note_i18n.clone(),
+        enabled: map.enabled,
+        builtin: map.builtin,
+        latest_tag: map
+            .cached_releases
+            .first()
+            .map(|release| release.tag_name.clone()),
+        cached_release_count: map.cached_releases.len(),
+        cached_at: map.releases_cached_at,
+        last_error: map.last_error.clone(),
+        required_frameworks: declared,
+        unmet_frameworks: unmet,
+    }
+}
+
+/// 扫描一次本地已装插件，得到 GUID → 版本。
+///
+/// 地图页与两处刷新共用：每个地图卡片都要判定框架依赖，分三次扫描等于
+/// 把 BepInEx 目录读三遍。游戏目录不可用时返回 `None`（「无法判定」），
+/// 与「判定为缺失」区分开。
+fn installed_plugin_versions(
+    state: &AppState,
+    config: &crate::models::AppConfig,
+) -> Option<std::collections::HashMap<String, Option<String>>> {
+    let game_root = game::detect_game(config).path?;
+    let root = PathBuf::from(game_root);
+    let scanned =
+        mods::scan_mods_with_manifests(&root, config, Some(&state.config.manifests_dir()));
+    let mut table = std::collections::HashMap::new();
+    for item in scanned {
+        let Some(guid) = item.guid.as_deref().map(str::trim) else {
+            continue;
+        };
+        if guid.is_empty() {
+            continue;
+        }
+        // 同一个 GUID 可能有多个副本：记下最高的那个版本，
+        // 与「任一副本满足即算满足」的判定口径一致
+        let key = guid.to_lowercase();
+        let version = item.version.clone();
+        table
+            .entry(key)
+            .and_modify(|existing: &mut Option<String>| {
+                let keep_new = match (existing.as_deref(), version.as_deref()) {
+                    (Some(current), Some(candidate)) => {
+                        crate::releases::compare_release_versions(candidate, current)
+                            .is_some_and(|order| order.is_gt())
+                    }
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+                if keep_new {
+                    *existing = version.clone();
+                }
+            })
+            .or_insert(version);
+    }
+    Some(table)
+}
+
+/// 刷新一个地图仓库的 Release（10 分钟缓存，与 MOD 仓库同一套 TTL）。
+#[tauri::command]
+pub async fn refresh_map_releases(
+    state: State<'_, AppState>,
+    map_id: String,
+    force: Option<bool>,
+) -> Result<Vec<ReleaseInfo>, String> {
+    let force = force.unwrap_or(false);
+    let config = state.config.load_or_default();
+    let Some(map) = config
+        .map_repositories
+        .iter()
+        .find(|entry| entry.id == map_id)
+        .cloned()
+    else {
+        return Err("mapSource.mapMissing".into());
+    };
+    if !crate::map_sources::map_is_available(&map, crate::config::current_user_region()) {
+        return Err("source.repositoryUnavailableInRegion".into());
+    }
+
+    // 缓存命中直接返回，一个请求都不发（与 MOD 仓库同一条规则）
+    let now = now_millis();
+    if !force
+        && !map.cached_releases.is_empty()
+        && release_cache_is_fresh(map.releases_cached_at, now)
+    {
+        log::info!(
+            "地图 Release 命中缓存：地图={}，数量={}",
+            map.name,
+            map.cached_releases.len()
+        );
+        return Ok(map.cached_releases.clone());
+    }
+
+    let client = releases::build_client(config.network.timeout_seconds)
+        .map_err(|error| error.to_string())?;
+    /*
+     * Token 与代理列表都从 `release_probe` 投影出的 RepositoryConfig 取，
+     * 避免在多个调用点各写一遍「哪些字段是 Release 需要的」。
+     */
+    let probe = crate::map_sources::release_probe(&map);
+    let token = state.config.repository_api_token(&config, &probe);
+    let api_proxies = match map.provider {
+        Provider::Github => &config.github_proxies.github_api_proxies,
+        Provider::Gitee => &config.github_proxies.gitee_api_proxies,
+    };
+    let fetched = crate::map_sources::fetch_map_releases(
+        &client,
+        &map,
+        token.as_deref(),
+        config.auth.official_api_only,
+        api_proxies,
+    )
+    .await;
+
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let mut latest = state.config.load_or_default();
+    let Some(target) = latest
+        .map_repositories
+        .iter_mut()
+        .find(|entry| entry.id == map_id)
+    else {
+        return Err("mapSource.mapMissing".into());
+    };
+    match fetched {
+        Ok(releases) => {
+            target.cached_releases = releases.clone();
+            target.releases_cached_at = Some(now_millis());
+            target.last_error = None;
+            state
+                .config
+                .save(&latest)
+                .map_err(|error| error.to_string())?;
+            Ok(releases)
+        }
+        Err(error) => {
+            log::error!("地图 Release 刷新失败：地图={}，原因={}", map.name, error);
+            target.cached_releases.clear();
+            target.releases_cached_at = None;
+            target.last_error = Some(error.clone());
+            state
+                .config
+                .save(&latest)
+                .map_err(|save| save.to_string())?;
+            Err(error)
+        }
+    }
+}
+
+/// 从地图仓库安装一个 Release。
+///
+/// 流程与 MOD 在线安装同构：选资产 → 下载 → 校验 → 安装。差别只在最后一步：
+/// MOD 走安装清单，地图走「回收旧集 + 写入新集」。
+#[tauri::command]
+pub async fn install_map_release(
+    state: State<'_, AppState>,
+    map_id: String,
+    tag: Option<String>,
+) -> Result<LevelSetImportResult, String> {
+    archive::start_download();
+    let config = state.config.load_or_default();
+    let Some(map) = config
+        .map_repositories
+        .iter()
+        .find(|entry| entry.id == map_id)
+        .cloned()
+    else {
+        return Err("mapSource.mapMissing".into());
+    };
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    // 安装是新增内容，游戏运行时也允许（与本地 ZIP 导入同一条策略）
+    crate::level_sets::ensure_operation_allowed(
+        &game_root,
+        crate::level_sets::LevelSetOperation::Install,
+    )?;
+
+    let release = match tag.as_deref() {
+        Some(tag) => map
+            .cached_releases
+            .iter()
+            .find(|release| release.tag_name == tag)
+            .cloned()
+            .ok_or("mapSource.releaseMissing")?,
+        None => map
+            .cached_releases
+            .first()
+            .cloned()
+            .ok_or("source.noInstallableRelease")?,
+    };
+    let probe = crate::map_sources::release_probe(&map);
+    let asset = releases::select_install_asset(&probe, &release, None)
+        .ok_or("source.noMatchingAsset")?
+        .clone();
+
+    log::info!(
+        "开始安装地图：地图={}，Release={}，资产={}",
+        map.name,
+        release.tag_name,
+        asset.name
+    );
+    let client = releases::build_client(config.network.timeout_seconds)
+        .map_err(|error| error.to_string())?;
+    let reporter = archive::DownloadReporter::new(&map.name);
+    let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
+        &client,
+        &asset.download_url,
+        &state.config.cache_dir(),
+        &map.name,
+        &reporter,
+        map.download_threads,
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .await?;
+    /*
+     * 校验与 ZIP 完整性：坏包绝不能进游戏目录。
+     *
+     * Gitee 不提供 GitHub 那种 SHA-256 摘要，所以摘要校验只对 GitHub 生效；
+     * 长度与 ZIP 结构校验两边都做。
+     */
+    // size 是 u64（0 表示未知），只有正值才参与校验
+    let expected_size = (asset.size > 0).then_some(asset.size);
+    let digest = if map.provider == Provider::Github {
+        asset
+            .digest
+            .as_deref()
+            .and_then(|value| value.strip_prefix("sha256:"))
+    } else {
+        None
+    };
+    let validation = archive::validate_download_file(&temp, expected_size, digest)
+        .and_then(|_| archive::validate_zip(&temp));
+    if let Err(error) = validation {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
+
+    /*
+     * 交给关卡集安装器：按 ZIP 里 info 的集名落盘，并**先回收**同名关卡集。
+     *
+     * 传 `expected` 让安装器核对 ZIP 的关卡集是否就是这个仓库声明的那个；
+     * 不一致时它会在改动磁盘之前拒绝 —— 否则绑定错位，后续更新检测全失效。
+     */
+    let expected = crate::level_sets::ExpectedLevelSet {
+        level_set_name: map.level_set_name.clone(),
+        author: map.author.clone(),
+    };
+    let result = crate::level_sets::install_level_set(
+        &state.config.mod_recycle_bin_dir(),
+        &state.config.manifests_dir(),
+        &temp,
+        &game_root,
+        Some(expected),
+    );
+    let _ = fs::remove_file(&temp);
+    let installed = result?;
+    log::info!(
+        "地图安装完成：地图={}，版本={}，替换旧版本={}",
+        installed.metadata.name,
+        installed.metadata.version,
+        installed.replaced
+    );
+    Ok(LevelSetImportResult {
+        installed: vec![installed.dir_name],
+    })
 }
 
 /// 卸载 DIYLevel 框架（先自动备份，再按安装清单回收）。

@@ -1,0 +1,19 @@
+# 地图源索引：具体地图配置位于下方相对路径指向的子源文件。
+#
+# 结构与仓库源（repositories.toml）完全对称：
+#   · 本文件只声明子源，不直接放地图条目；
+#   · url 可以是完整 HTTPS 地址、内置资源名，或**相对本文件**的路径；
+#   · [[map_sources]] 的顺序决定源在地图页的展示顺序。
+#
+# 一个作者一个子源文件：同一位老师的多张地图放在同一个 TOML 里，
+# 这样新增地图不需要改索引。
+[[map_sources]]
+id = "maps-rw"
+url = "maps-rw.toml"
+builtin = true
+[map_sources.nickname_i18n]
+zh-CN = "RW - DIYLevel 地图"
+zh-TW = "RW - DIYLevel 地圖"
+en = "RW - DIYLevel maps"
+ko = "RW - DIYLevel 지도"
+ja = "RW - DIYLevel マップ"

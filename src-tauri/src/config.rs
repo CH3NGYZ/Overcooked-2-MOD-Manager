@@ -578,6 +578,7 @@ impl ConfigService {
             gitee_community_discovery,
             github_proxies: config.github_proxies.clone(),
             builtin_sources_only: config.builtin_sources_only,
+            builtin_map_sources_only: config.builtin_map_sources_only,
         }
     }
 
@@ -1023,6 +1024,8 @@ pub(crate) fn default_config() -> AppConfig {
         gitee_community_discovery: None,
         source_repository_ids: Default::default(),
         staged_release_cache: Default::default(),
+        map_repositories: Vec::new(),
+        builtin_map_sources_only: false,
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
         builtin_sources_only: false,
@@ -1637,7 +1640,16 @@ pub(crate) fn export_key(repo: &RepositoryExport) -> String {
     )
 }
 
-fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) -> RepositoryConfig {
+/// 从导出模型构造仓库配置。
+///
+/// `pub(crate)` 是因为地图仓库要借它做 Release 抓取投影（见
+/// `map_sources::release_probe`）：两份模型都需要「一个能喂给
+/// `fetch_releases` 的完整 RepositoryConfig」，而字段默认值只有这里知道。
+pub(crate) fn repository_from_export(
+    repo: &RepositoryExport,
+    id: String,
+    builtin: bool,
+) -> RepositoryConfig {
     let download_threads = match &repo.provider {
         Provider::Github => {
             if repo.download_threads == 0 {

@@ -126,19 +126,6 @@ pub struct LevelSetOnDisk {
     pub error: Option<String>,
 }
 
-impl LevelSetOnDisk {
-    /// 用于展示的名称：优先中文名，其次英文名，最后退回目录名。
-    ///
-    /// 这是**后端**的兜底，界面仍应按语言自行选择 `metadata.name_zh` /
-    /// `metadata.name`；这个字段只用于日志和「解析失败」时的占位。
-    pub fn display_name(&self) -> &str {
-        match &self.metadata {
-            Some(meta) if !meta.name.is_empty() => &meta.name,
-            _ => &self.dir_name,
-        }
-    }
-}
-
 /// 扫描一个游戏目录下的全部关卡集（启用与停用）。
 ///
 /// 顺序：先 `levels/` 再 `disabled/`，各自按目录名排序 —— 排序结果稳定，
@@ -699,7 +686,7 @@ mod zip_tests {
         let sets = scan_level_sets(&root);
         assert_eq!(sets.len(), 1);
         assert!(sets[0].enabled);
-        assert_eq!(sets[0].display_name(), "RW_LevelSet");
+        assert_eq!(sets[0].metadata.as_ref().unwrap().name, "RW_LevelSet");
         assert_eq!(sets[0].metadata.as_ref().unwrap().levels.len(), 10);
 
         std::fs::remove_dir_all(&root).unwrap();

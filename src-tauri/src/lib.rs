@@ -18,7 +18,9 @@ mod gitee_webview;
 mod github_proxies;
 mod install_guard;
 mod level_sets;
+// 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod locale_tag;
+mod map_sources;
 mod mod_config;
 mod mod_preview;
 mod models;
@@ -204,6 +206,10 @@ pub fn run() {
             commands::set_level_set_enabled,
             commands::inspect_level_set_zip,
             commands::import_level_sets,
+            commands::get_maps,
+            commands::refresh_map_sources,
+            commands::refresh_map_releases,
+            commands::install_map_release,
             commands::set_diy_level_enabled,
             commands::open_diy_level_directory,
             commands::backup_diy_level,

@@ -105,7 +105,12 @@ impl SourceLocation {
         Self::resolve(reference, None)
     }
 
-    fn resolve(reference: &str, parent: Option<&Self>) -> Result<Self, ConfigError> {
+    /// 解析相对当前文档的地址（子源、同仓库文件都走这里）。
+    ///
+    /// `pub(crate)`：地图源树与仓库源树共用同一套地址解析，包括重定向后的
+    /// 相对基准、raw 仓库根拼接与内置资源相对路径。复制一份只会得到两套
+    /// 会各自漂移的规则。
+    pub(crate) fn resolve(reference: &str, parent: Option<&Self>) -> Result<Self, ConfigError> {
         let reference = reference.trim();
         if reference.is_empty() {
             return Err(ConfigError::Invalid("source.addressEmpty".into()));
@@ -736,6 +741,117 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
         repository_count - config.repositories.len(),
         source_count - config.repository_sources.len(),
     )
+}
+
+/// 下载（或读取内置）一个源文档，再交给调用方解析。
+///
+/// 抽出来是因为地图源要读**同样形态**的文本文档（`maps.toml`），而下载这条
+/// 路上每一步都踩过坑：30 秒固定超时、禁缓存头、大小上限、重定向后的相对
+/// 地址解析、错误分类。复制一份只会得到两套迟早各自漂移的规则。
+///
+/// 返回解析后的结果，日志记录尽力而为 —— 解析失败时仍把状态码与字节数写进
+/// 日志，否则远程文档「下载成功但解析失败」这种情况无从区分。
+pub(crate) async fn load_text_document<T>(
+    location: &SourceLocation,
+    parse: impl Fn(&str, &SourceLocation) -> Result<T, ConfigError>,
+) -> Result<T, ConfigError> {
+    let timeout_seconds = SOURCE_DOCUMENT_TIMEOUT;
+    let SourceLocation::Remote(url) = location else {
+        let text = location.bundled_text()?;
+        log::info!(
+            "内置文档加载完成：地址={}",
+            safe_log_address(&location.address())
+        );
+        return parse(text, location);
+    };
+    let started_at = std::time::Instant::now();
+    let safe_url = safe_log_address(url.as_str());
+    log::info!(
+        "开始加载远程文档：地址={}，超时={}秒",
+        safe_url,
+        timeout_seconds
+    );
+    let client = releases::build_client(timeout_seconds).map_err(|error| {
+        log::error!(
+            "创建文档 HTTP 客户端失败：地址={}，原因={}",
+            safe_url,
+            error
+        );
+        ConfigError::Read(error.to_string())
+    })?;
+    let mut response = client
+        .get(url.clone())
+        .header("User-Agent", releases::APP_USER_AGENT)
+        .header(
+            reqwest::header::CACHE_CONTROL,
+            "no-cache, no-store, max-age=0",
+        )
+        .header(reqwest::header::PRAGMA, "no-cache")
+        .send()
+        .await
+        .map_err(|error| {
+            log::error!(
+                "请求远程文档失败：地址={}，超时={}，连接错误={}",
+                safe_url,
+                error.is_timeout(),
+                error.is_connect()
+            );
+            ConfigError::Read(error.to_string())
+        })?;
+    let status = response.status();
+    if let Err(error) = response.error_for_status_ref() {
+        log::error!(
+            "远程文档 HTTP 请求失败：地址={}，状态码={}",
+            safe_url,
+            status.as_u16()
+        );
+        return Err(ConfigError::Read(error.to_string()));
+    }
+    /*
+     * 重定向后文档的**真实地址**才是相对路径的基准。
+     *
+     * 源文档里写 `url = "sibling.toml"` 时，它相对的是最终落地的那个地址，
+     * 不是最初请求的地址 —— 少了这一步，走重定向的源会把子源解析到错误位置。
+     */
+    let resolved = remote_document_location(url, response.url().clone())?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        log::error!(
+            "读取远程文档响应失败：地址={}，已读取={}字节",
+            safe_url,
+            bytes.len()
+        );
+        ConfigError::Read(error.to_string())
+    })? {
+        if bytes.len() + chunk.len() > MAX_SOURCE_BYTES {
+            log::error!("远程文档超过大小限制：地址={}", safe_url);
+            return Err(ConfigError::Invalid("source.tooLarge".into()));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let byte_count = bytes.len();
+    let text = String::from_utf8(bytes).map_err(|error| {
+        log::error!("远程文档不是有效 UTF-8：地址={}，原因={}", safe_url, error);
+        ConfigError::Parse(error.to_string())
+    })?;
+    let result = parse(&text, &resolved);
+    match &result {
+        Ok(_) => log::info!(
+            "远程文档加载完成：地址={}，状态码={}，字节={}，耗时={}ms",
+            safe_url,
+            status.as_u16(),
+            byte_count,
+            started_at.elapsed().as_millis()
+        ),
+        Err(error) => log::error!(
+            "远程文档解析失败：地址={}，状态码={}，字节={}，错误类别={}",
+            safe_url,
+            status.as_u16(),
+            byte_count,
+            error_category(error)
+        ),
+    }
+    result
 }
 
 /// 读取一个源文档（远程地址或内置资源）。

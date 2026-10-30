@@ -803,6 +803,10 @@ min_version = "3.10.2"
 ///
 /// 内置文件是用户离线时的唯一来源，解析失败会静默把地图页清空 ——
 /// 所以用测试锁住「能解析出至少一张地图」与关键字段。
+///
+/// 另外两个内置地图文档被 `repository_sources` 的
+/// `NOT_REPOSITORY_DOCUMENTS` 登记为「非仓库类文档」，那边的
+/// `every_non_repository_document_is_registered` 会保证登记表不漏项。
 #[cfg(test)]
 mod bundled_tests {
     use super::*;

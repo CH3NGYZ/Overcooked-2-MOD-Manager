@@ -1551,10 +1551,27 @@ url = "mods/child.toml"
         );
     }
 
+    /*
+     * 这两类嵌入文档**不是**仓库源，各有自己的解析器与自己的回归测试：
+     *
+     * - `repositories-proxies.toml`：只有代理清单，没有 repositories；
+     * - `maps*.toml`：地图源（`[[maps]]` / `[[map_sources]]`），由
+     *   `map_sources::bundled_tests` 覆盖。
+     *
+     * 按名跳过而不是放宽断言：这条测试的价值就在「每个声称是仓库源的
+     * 嵌入文件都必须能被仓库解析器读懂」，放宽会让真正的坏文档混过去。
+     * 新增非仓库类嵌入文档时在这里登记，并为它补一份对应的解析测试。
+     */
+    const NOT_REPOSITORY_DOCUMENTS: &[&str] =
+        &["repositories-proxies.toml", "maps.toml", "maps-rw.toml"];
+
     #[test]
     fn all_bundled_source_documents_use_the_shared_parser() {
         for (path, _) in BUNDLED_SOURCES {
-            if path.eq_ignore_ascii_case("repositories-proxies.toml") {
+            if NOT_REPOSITORY_DOCUMENTS
+                .iter()
+                .any(|skipped| path.eq_ignore_ascii_case(skipped))
+            {
                 continue;
             }
             let location = SourceLocation::parse(path).unwrap();
@@ -1572,6 +1589,24 @@ url = "mods/child.toml"
                     );
                 }
             }
+        }
+    }
+
+    /// 登记表必须覆盖所有非仓库类文档：新增一个忘了登记，上面那条测试就会红，
+    /// 但红的原因是「地图文档解析失败」，容易被误读成解析器坏了。这里直接说明。
+    #[test]
+    fn every_non_repository_document_is_registered() {
+        for (path, _) in BUNDLED_SOURCES {
+            let location = SourceLocation::parse(path).unwrap();
+            if location.bundled_document().is_ok() {
+                continue;
+            }
+            assert!(
+                NOT_REPOSITORY_DOCUMENTS
+                    .iter()
+                    .any(|skipped| path.eq_ignore_ascii_case(skipped)),
+                "{path} 无法被仓库解析器读取，但没有登记为「非仓库类文档」"
+            );
         }
     }
 

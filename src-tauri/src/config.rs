@@ -1024,7 +1024,15 @@ pub(crate) fn default_config() -> AppConfig {
         gitee_community_discovery: None,
         source_repository_ids: Default::default(),
         staged_release_cache: Default::default(),
-        map_repositories: Vec::new(),
+        /*
+         * 新配置直接带上内置地图快照。
+         *
+         * 放在这里而不是「第一次读地图列表时补」：`get_maps` 是只读命令，
+         * 在里面写盘会绕开短操作锁，与「整份配置读取、修改与保存须持锁」
+         * 的边界冲突。内置快照是编译期资源，同步构造没有副作用；
+         * 用户下次刷新时会被远程源树整批替换。
+         */
+        map_repositories: crate::map_sources::bundled_map_tree(),
         builtin_map_sources_only: false,
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),

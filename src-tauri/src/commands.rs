@@ -5562,22 +5562,7 @@ pub fn import_level_sets(
 /// 只读：不发起网络请求。缓存为空时界面显示「待检查」，用户点刷新才抓。
 #[tauri::command]
 pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
-    let mut config = state.config.load_or_default();
-    /*
-     * 第一次访问地图页时配置里还没有地图（内置快照未播种）：此时用打包的
-     * 地图源树补一次，让离线场景也有内容可显示。
-     *
-     * 只在「一条都没有」时播种，不做增量合并：用户删掉的条目不该在被访问
-     * 时复活。远程源树由显式刷新写入（见 `refresh_map_sources`）。
-     */
-    if config.map_repositories.is_empty() {
-        let bundled = crate::map_sources::bundled_map_tree();
-        if !bundled.is_empty() {
-            log::info!("地图列表为空，使用内置地图快照：数量={}", bundled.len());
-            config.map_repositories = bundled;
-            let _ = state.config.save(&config);
-        }
-    }
+    let config = state.config.load_or_default();
     let maps = crate::map_sources::available_maps(&config, crate::config::current_user_region());
     log::debug!("地图列表读取完成：数量={}", maps.len());
     let installed = installed_plugin_versions(&state, &config);

@@ -405,6 +405,13 @@ export interface MapInfo {
   builtin: boolean
   /** 缓存里最新 Release tag；没刷新过时为空。 */
   latest_tag?: string | null
+  /**
+   * 缓存里最新的那一条 Release。
+   *
+   * 卡片复用时直接喂给版本号与下载量：`latest_tag` 只有字符串，
+   * 拿不到 `assets`（下载量）和 `prerelease`（版本标记样式）。
+   */
+  latest_release?: ReleaseInfo | null
   cached_release_count?: number
   cached_at?: number | null
   last_error?: string | null

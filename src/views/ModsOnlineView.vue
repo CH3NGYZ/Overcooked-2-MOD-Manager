@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
-import { ArrowUpCircleOutline, DownloadOutline, LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { prefetchAvatars } from '../avatars'
 import { useNotify } from '../useNotify'
@@ -11,7 +11,7 @@ import { repositoryInstallAction, repositoryStatus, type InstallAction, type Sta
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { primaryRelation, relationCardTag, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
-import { buttonColorFor, tagColorFor, tagColorForAny, type TagTone } from '../theme'
+import { tagColorFor, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
@@ -22,7 +22,7 @@ import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
-import ProviderIcon from '../components/ProviderIcon.vue'
+import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import type { Repository, RepositorySource } from '../types'
 
 const message = useNotify()
@@ -132,25 +132,39 @@ function installLabel(repo: Repository) {
   return t(INSTALL_LABELS[installActionOf(repo)])
 }
 
-/**
- * 主按钮的配色：动作 → 语义色调 + 视觉强度。
- *
- * 规则与标签共用同一个 tone 刻度（src/theme.ts）：
- *   安装 / 重装 → accent 实心（「装到最新」这一档，不需要警告）
- *   更新        → moderate 实心（需要用户注意的动作）
- *   刷新（失败重试）→ moderate 浅底（提示可以点这里，不该比旁边的标签更抢眼）
- */
-function installButtonStyle(repo: Repository) {
-  const action = installActionOf(repo)
-  if (action === 'refresh') return buttonColorFor('moderate', 'soft')
-  if (action === 'update') return buttonColorFor('moderate', 'solid')
-  return buttonColorFor('accent', 'solid')
-}
+
 
 /** 主按钮：刷新失败时重试该仓库的 Release，其余走安装预览链路。 */
 function runCardAction(repo: Repository) {
   if (installActionOf(repo) === 'refresh') void refreshRepository(repo)
   else void install(repo)
+}
+
+/**
+ * 卡片的依赖提示（给共享卡片组件用）。
+ *
+ * 组件只管展示，判定仍在这里 —— 「缺依赖 / 冲突」的语义来自
+ * `relationCardTag`，与 MOD 管理页共用同一份实现。
+ */
+function cardDependency(repo: Repository): CardDependencyTag | null {
+  const tag = relationTag(repo)
+  if (!tag) return null
+  return {
+    text: tag.text,
+    tone: tag.tone,
+    title: relationTagTitle(repo),
+    clickable: !!relationJumpId(repo),
+  }
+}
+
+/** 卡片的主按钮（给共享卡片组件用）。 */
+function cardAction(repo: Repository): CardAction {
+  return {
+    kind: installActionOf(repo),
+    label: installLabel(repo),
+    loading: !!installing.value[repo.id],
+    disabled: !!game.value?.kitchen_running || !!refreshing.value[repo.id],
+  }
 }
 
 /** 单仓刷新：与批量刷新共用引擎，只更新这一条仓库的缓存。 */
@@ -682,104 +696,22 @@ defineExpose({ refreshAll, visibleCount })
               </template>
 
               <div class="repo-grid">
-                <article v-for="repo in group.repos" :key="repo.id" class="repo-card" :data-focus-id="repo.id"
-                  :class="{ active: detailId === repo.id, 'focus-flash': highlightId === repo.id }"
-                  @click="detailId = repo.id">
-                  <div class="card-head">
-                    <ProviderIcon :provider="repo.provider" :owner="repo.username" :size="30" />
-                    <!--
-                      关系提示：**只做提示，不做入口**。
-                      真正的处理（卸冲突、换版本、装依赖）在点底部「安装」时
-                      由安装前检查一次跑完，所以这里不再放「去卸载」「安装依赖」
-                      按钮 —— 同一件事给两个入口，只会让人先去点标题前那个更显眼
-                      的按钮，结果装完依赖发现主包没装。
-
-                      标签本身可以点：跳到**依赖的**仓库并高亮它，与 MOD 管理页
-                      那个「缺依赖」标签的行为一致 —— 两处点同一个状态，落点应当
-                      相同。没有可安装来源时不可点（跳过去也无处可去）。
-                    -->
-                    <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
-                      class="state-tag dep-tag"
-                      :class="{ 'state-tag--link': !!relationJumpId(repo) }"
-                      :color="tagColorFor(relationTag(repo)!.tone)"
-                      :title="relationTagTitle(repo)"
-                      @click.stop="jumpToRelationRepository(repo)">
-                      {{ t(relationTag(repo)!.text) }}
-                    </n-tag>
-                    <span class="card-title">{{ repoName(repo) }}</span>
-                    <span class="stat stat-status">
-                      <!--
-                        标签配色：未安装类一律灰色；「已安装且可更新」用主题色对比色，
-                        与「重装 / 更新」按钮同色系；其余状态沿用状态语义色。
-                      -->
-                      <!--
-                        标签配色：未安装类灰色；最新版/已安装用主题色；
-                        可更新用对比色。全部由 theme.ts 的 statusToneColors 计算，
-                        通过 n-tag 原生 :color 下发，页面里不再写颜色。
-                      -->
-                      <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :color="tagColorForAny(statusOf(repo).tone)"
-                        :class="{ 'state-tag--link': hasLocalInstall(repo) }"
-                        :title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
-                        @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
-                    </span>
-                  </div>
-
-                  <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
-
-                  <div class="card-foot">
-                    <span class="stat stat-version">
-                      <span class="muted">{{ t('dialogs.latestVersion') }}</span>
-                      <span class="version-line">
-                        <!--
-                          两段式：主干用普通色，测试标记用 prerelease 等级色。
-                          数字序号渲染成灰底徽标（与分组标题的计数同一套外观），
-                          文字标记（如「测」）直接拼在后面。
-                        -->
-                        <b class="mono version-base">{{ versionParts(repo).base }}</b>
-                        <n-tag v-if="versionParts(repo).markerIsNumeric" size="tiny" :bordered="false"
-                          class="version-marker"
-                          :color="tagColorFor('moderate')">{{ versionParts(repo).marker }}</n-tag>
-                        <b v-else-if="versionParts(repo).marker" class="mono version-marker-text"
-                          :style="{ color: tagColorFor('moderate').textColor }">{{ versionParts(repo).marker }}</b>
-                        <!-- 刷新状态：转圈即表示该仓库正在拉取 Release -->
-                        <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
-                      </span>
-                    </span>
-                    <!--
-                      下载量：为 0 或没获取到整块隐藏，而不是显示「—」。
-                      一个永远显示破折号的统计项只会占地方，还让人怀疑数据坏了。
-                    -->
-                    <span v-if="downloadCount(repo)" class="stat card-downloads">
-                      <span class="muted">{{ t('dialogs.downloads') }}</span>
-                      <b>{{ downloadCount(repo)?.toLocaleString() }}</b>
-                    </span>
-                    <!--
-                      主按钮：安装（主题色）/ 重装、更新（对比色）/ 刷新（刷新失败的警告色）。
-                      文案、图标与动作都由 installActionOf 决定，不在模板里各自判断。
-                    -->
-                    <n-button size="tiny" class="card-install"
-                      :style="installButtonStyle(repo)"
-                      :loading="!!installing[repo.id]"
-                      :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
-                      <!--
-                        图标必须放在 #icon 具名槽：Naive 只用 IconSwitchTransition
-                        切换这个槽位的内容（图标 ↔ spinner）。放在默认插槽里会被
-                        渲染两份 —— 默认插槽的 children 既进图标槽、又作为文字前缀
-                        再渲染一次，loading 时就出现「spinner + SVG 并存」。
-                      -->
-                      <template #icon>
-                        <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
-                        <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
-                        <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
-                        <DownloadOutline v-else width="13" height="13" />
-                      </template>
-                      {{ installLabel(repo) }}
-                    </n-button>
-                  </div>
-
-                  <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
-                </article>
+                <OnlineCard v-for="repo in group.repos" :key="repo.id" :data-focus-id="repo.id"
+                  :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
+                  :note="repoNote(repo) || repo.repository"
+                  :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"
+                  :status-clickable="hasLocalInstall(repo)"
+                  :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
+                  :dependency="cardDependency(repo)"
+                  :version="versionParts(repo)" :refreshing="!!refreshing[repo.id]"
+                  :downloads="downloadCount(repo)"
+                  :action="cardAction(repo)"
+                  :error="repo.last_error" :active="detailId === repo.id"
+                  :focus-flash="highlightId === repo.id"
+                  @open="detailId = repo.id"
+                  @status-click="openInLocalMods(repo)"
+                  @dependency-click="jumpToRelationRepository(repo)"
+                  @action="runCardAction(repo)" />
               </div>
             </n-collapse-item>
           </n-collapse>
@@ -806,69 +738,23 @@ defineExpose({ refreshAll, visibleCount })
             </template>
             <!-- 社区仓库不分组：直接平铺卡片，没有分类标题 -->
             <div class="repo-grid community-grid">
-              <article v-for="repo in node.groups[0]?.repos ?? []" :key="repo.id" class="repo-card" :data-focus-id="repo.id"
-                :class="{ active: detailId === repo.id, 'focus-flash': highlightId === repo.id }"
-                @click="detailId = repo.id">
-                <div class="card-head">
-                  <ProviderIcon :provider="repo.provider" :owner="repo.username" :size="30" />
-                  <!-- 关系提示：社区仓库卡片与上方源码树卡片共用同一套判定（只提示，不做入口） -->
-                  <n-tag v-if="relationTag(repo)" size="tiny" :bordered="false"
-                    class="state-tag dep-tag"
-                    :class="{ 'state-tag--link': !!relationJumpId(repo) }"
-                    :color="tagColorFor(relationTag(repo)!.tone)"
-                    :title="relationTagTitle(repo)"
-                    @click.stop="jumpToRelationRepository(repo)">
-                    {{ t(relationTag(repo)!.text) }}
-                  </n-tag>
-                  <span class="card-title">{{ repoName(repo) }}</span>
-                  <span class="stat stat-status">
-                      <!--
-                        标签配色：未安装类灰色；最新版/已安装用主题色；
-                        可更新用对比色。全部由 theme.ts 的 statusToneColors 计算，
-                        通过 n-tag 原生 :color 下发，页面里不再写颜色。
-                      -->
-                      <n-tag size="tiny" :bordered="false" class="state-tag"
-                        :color="tagColorForAny(statusOf(repo).tone)"
-                        :class="{ 'state-tag--link': hasLocalInstall(repo) }"
-                        :title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
-                        @click.stop="openInLocalMods(repo)">{{ statusOf(repo).text }}</n-tag>
-                  </span>
-                </div>
-                <p class="card-desc">{{ repoNote(repo) || repo.repository }}</p>
-                <div class="card-foot">
-                  <span class="stat stat-version">
-                    <span class="muted">{{ t('dialogs.latestVersion') }}</span>
-                    <span class="version-line">
-                      <!-- 两段式同源码树卡片：主干普通色 + 测试标记用 prerelease 等级色 -->
-                      <b class="mono version-base">{{ versionParts(repo).base }}</b>
-                      <n-tag v-if="versionParts(repo).markerIsNumeric" size="tiny" :bordered="false"
-                        class="version-marker"
-                        :color="tagColorFor('moderate')">{{ versionParts(repo).marker }}</n-tag>
-                      <b v-else-if="versionParts(repo).marker" class="mono version-marker-text"
-                        :style="{ color: tagColorFor('moderate').textColor }">{{ versionParts(repo).marker }}</b>
-                      <RefreshOutline v-if="refreshing[repo.id]" class="spin-icon" width="12" height="12" />
-                    </span>
-                  </span>
-                  <span v-if="downloadCount(repo)" class="stat card-downloads">
-                    <span class="muted">{{ t('dialogs.downloads') }}</span>
-                    <b>{{ downloadCount(repo)?.toLocaleString() }}</b>
-                  </span>
-                  <n-button size="tiny" class="card-install"
-                    :style="installButtonStyle(repo)"
-                    :loading="!!installing[repo.id]"
-                    :disabled="!!game?.kitchen_running || !!refreshing[repo.id]" @click.stop="runCardAction(repo)">
-                    <!-- 图标放 #icon 槽，才会被 Naive 的 IconSwitchTransition 与 spinner 互换 -->
-                    <template #icon>
-                      <RefreshOutline v-if="installActionOf(repo) === 'refresh'" width="13" height="13" />
-                      <RefreshOutline v-else-if="installActionOf(repo) === 'reinstall'" width="13" height="13" />
-                      <ArrowUpCircleOutline v-else-if="installActionOf(repo) === 'update'" width="13" height="13" />
-                      <DownloadOutline v-else width="13" height="13" />
-                    </template>
-                    {{ installLabel(repo) }}
-                  </n-button>
-                </div>
-                <div v-if="repo.last_error" class="err muted">{{ repo.last_error }}</div>
-              </article>
+              <OnlineCard v-for="repo in node.groups[0]?.repos ?? []" :key="repo.id"
+                :data-focus-id="repo.id"
+                :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
+                :note="repoNote(repo) || repo.repository"
+                :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"
+                :status-clickable="hasLocalInstall(repo)"
+                :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
+                :dependency="cardDependency(repo)"
+                :version="versionParts(repo)" :refreshing="!!refreshing[repo.id]"
+                :downloads="downloadCount(repo)"
+                :action="cardAction(repo)"
+                :error="repo.last_error" :active="detailId === repo.id"
+                :focus-flash="highlightId === repo.id"
+                @open="detailId = repo.id"
+                @status-click="openInLocalMods(repo)"
+                @dependency-click="jumpToRelationRepository(repo)"
+                @action="runCardAction(repo)" />
             </div>
             <div v-if="!node.count" class="community-empty muted">{{ t('tools.noCommunityRepositoriesInThisChannel') }}</div>
           </n-collapse-item>
@@ -958,230 +844,16 @@ defineExpose({ refreshAll, visibleCount })
   margin: 2px 28px 6px 28px;
 }
 
-/* 卡片：圆角边缘 + 内部分区（标题行 / 描述 / 指标行） */
-.repo-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 12px;
-  background: var(--oc2-card);
-  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
-}
-.repo-card:hover {
-  border-color: var(--oc2-accent);
-  background: var(--oc2-row-hover);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .16);
-}
-.repo-card { cursor: pointer; }
-.repo-card.active {
-  border-color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 8%, var(--oc2-card));
-}
-/* 跨页跳转高亮：3 秒后自动褪去（时长由 crossLink.ts 控制） */
-.repo-card.focus-flash {
-  border-color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
-  /* 跳转落点确认：一次轮廓脉冲，与 MOD 管理页同一套（focus-pulse 见该页） */
-  animation: repo-focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-@keyframes repo-focus-pulse {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--oc2-accent) 70%, transparent); }
-  40%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--oc2-accent) 30%, transparent); }
-  100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .repo-card.focus-flash { animation: none; }
-}
-/* 有本地安装的状态标签可点击跳到 MOD 管理 */
-.state-tag--link { cursor: pointer; }
-.state-tag--link:hover { filter: brightness(1.25); }
-.card-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
 /*
- * 关系提示标签：固定在标题左侧、不随标题压缩消失。
- * 标题自己 flex:1 + 省略号，所以空间不足时先压标题，标签保持完整。
+ * 卡片、状态标签、版本号与主按钮的样式全部搬进 `OnlineCard.vue`：
+ * 地图下载页用同一个组件，两份样式从这里开始会各自漂移。
+ * 本页只保留网格容器与页内专属的浮动按钮转圈。
  */
-.card-head .dep-tag {
-  flex: 0 0 auto;
-}
-.card-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--oc2-text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card-install {
-  /*
-   * 按钮不可压缩：flex: 0 0 auto + nowrap。
-   * 卡片变窄时被牺牲的是左边的 .card-downloads（先压窄、再裁掉），
-   * 按钮永远保持完整宽度并贴住右边缘。
-   *
-   * margin-left: auto 把剩余空白全部推到左侧 —— 统计项靠左紧挨，
-   * 按钮贴右。空间不足时 flex 会先压缩 .card-downloads（它可收缩），
-   * 不会去动按钮。
-   */
-  flex: 0 0 auto;
-  margin-left: auto;
-  white-space: nowrap;
-}
-/*
- * 主按钮配色由 installButtonStyle() 通过 :style 内联下发，
- * 取值来自 theme.ts 的 buttonColorFor（与标签共用同一套 tone 刻度）。
- * 这里不再手写 --n-color 覆盖 —— 那样每加一种动作就要复制一整块变量。
- */
-.card-desc {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--oc2-text-3);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 37px;
-}
-.card-foot {
-  /*
-   * 单行 flex：版本号 → 下载量 → 按钮，从左到右。
-   *
-   * 空间不足时的挤压顺序由 .card-downloads 的 `flex: 0 1 auto` +
-   * `min-width: 0` + `overflow: hidden` 决定：它是唯一可收缩项，
-   * 会先被压窄、再整个被裁掉，而按钮 `flex: 0 0 auto` 永远保持完整、
-   * 钉在右下角。不做换行 —— 换行会让卡片高度参差，视觉上更乱。
-   *
-   * `align-items: end` 让统计块与按钮底部对齐。
-   */
-  display: flex;
-  align-items: flex-end;
-  gap: 14px;
-  padding-top: 8px;
-  border-top: 1px solid var(--oc2-row-line);
-  /* 防止任何子项溢出卡片右边缘 */
-  min-width: 0;
-}
-.stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  /* 宽度跟随内容，不再固定列宽 */
-  flex: 0 0 auto;
-  min-width: 0;
-  width: auto;
-  text-align: center;
-}
-/*
- * 版本号必须尽量完整显示：优先压缩下载量，不够时才压缩版本号。
- *
- * 压缩时同样强制单行 + 省略号：版本号是 1.9.9-beta.2 这种无空白长串，
- * 一旦允许折行，被压到 20px 宽时会逐字断成十几行（实测脚部高度从
- * 49px 涨到 107px），卡片高度随宽度剧烈跳动。
- */
-.stat-version {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 180px;
-  overflow: hidden;
-  white-space: nowrap;
-  word-break: normal;
-  overflow-wrap: normal;
-}
-.stat-version b {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/*
- * 下载量是「可牺牲」项：空间不足时先压窄它，压到 0 就整体隐藏。
- * 用 max-width 过渡而不是 display:none，避免布局跳动。
- */
-.card-downloads {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  /*
-   * 压窄时保持单行，让内容被 overflow 裁掉而不是折行。
-   *
-   * 两件事都要做：
-   *   · white-space: nowrap —— 不主动折行
-   *   · word-break: normal —— 覆盖 global.css 里给长串准备的
-   *     `word-break: break-all`，否则中文标签会在任意字间断开，
-   *     脚部高度从 49px 涨到 107px，卡片高度随宽度跳动。
-   */
-  white-space: nowrap;
-  word-break: normal;
-  overflow-wrap: normal;
-}
-/* 版本号可能带「· 预发布」后缀，允许比下载量宽松一点但仍随内容 */
-.stat-version { max-width: 180px; }
-/* 版本号 + 刷新转圈图标同排 */
-.version-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  max-width: 100%;
-}
-/*
- * 两段式版本号：主干用普通文字色，测试标记单独上色。
- *
- * 主干刻意不做成 prerelease 色 —— 用户先要读「这是哪个版本」，
- * 再读「是第几个测试版」。整串染成对比色会让主干版本号也变得难以与其他
- * 文本区分，反而降低扫读效率。
- */
-.version-base {
-  color: var(--oc2-text-1);
-}
-/* 数字序号的灰底徽标：与分组标题的计数同一套外观（n-tag + muted 色调） */
-.version-marker {
-  /* n-tag 内边距偏大，徽标要更紧凑才不挤占版本行 */
-  --n-height: 18px;
-  font-variant-numeric: tabular-nums;
-}
-/* 文字标记（如「测」）：只上色，不加背景 */
-.version-marker-text {
-  font-size: 11.5px;
-  font-weight: 600;
-}
 .spin-icon { flex: 0 0 auto; color: var(--oc2-accent); animation: oc2-spin .8s linear infinite; }
 @keyframes oc2-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .spin-icon { animation: none; }
 }
-.stat b { font-size: 12.5px; color: var(--oc2-text-1); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/*
- * 预发布版本：跟随「中度」严重度色（与「可更新」「预发布」标签同一档），
- * 不再用固定的琥珀色 —— 否则换主题色时版本号颜色和标签对不上。
- */
-.stat b.prerelease { color: var(--oc2-accent-contrast); }
-/*
- * 标题行的状态标签靠右，与下方安装按钮同列对齐。
- * 标签本身跟随文字宽度（不拉伸），外观与 MOD 管理页的 .state-tag 完全一致：
- * 圆角、内边距、字号都来自 global.css 的 .state-tag，这里只负责容器定位。
- */
-.card-head .stat-status {
-  margin-left: auto;
-  flex: 0 0 auto;
-  /* 覆盖 .stat 的固定列宽：标签宽度跟随文字，与 MOD 管理页一致 */
-  width: auto;
-  min-width: 0;
-  align-items: center;
-  justify-self: auto;
-}
-.err { color: #ee8585; }
 .releases {
   padding-top: 8px;
   border-top: 1px dashed var(--oc2-row-line);

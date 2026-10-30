@@ -202,9 +202,14 @@ export const api = {
    */
   refreshMapReleases: (mapId: string, force = false) =>
     invoke<ReleaseInfo[]>('refresh_map_releases', { mapId, force }),
-  /** 从地图仓库安装（会先回收同名旧关卡集）。 */
+  /**
+   * 从地图仓库安装（会先回收同名旧关卡集）。
+   *
+   * `locale` 用于下载进度标签：进度事件在下载过程中持续发出，
+   * 名称必须在开始前按界面语言算好。
+   */
   installMapRelease: (mapId: string, tag?: string) =>
-    invoke<{ installed: string[] }>('install_map_release', { mapId, tag }),
+    invoke<{ installed: string[] }>('install_map_release', { mapId, tag, locale: locale.value }),
   /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */
   setDiyLevelEnabled: (enabled: boolean) =>
     invoke<OperationResult>('set_diy_level_enabled', { enabled }),

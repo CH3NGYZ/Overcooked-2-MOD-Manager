@@ -238,33 +238,12 @@ export const levelSet: DomainMessages = {
     ko: '사용 가능한 지도 소스가 없습니다. 설정에서 지도 소스를 확인하거나 지도 관리에서 ZIP을 가져오세요.',
     ja: '利用できるマップソースがありません。設定でマップソースを確認するか、マップ管理で ZIP をインポートしてください。',
   },
-  builtinSource: {
-    'zh-CN': '内置',
-    'zh-TW': '內建',
-    en: 'Built-in',
-    ko: '내장',
-    ja: '内蔵',
-  },
   refreshAllHint: {
     'zh-CN': '刷新全部地图的 Release（忽略 10 分钟缓存）',
     'zh-TW': '重新整理全部地圖的 Release（忽略 10 分鐘快取）',
     en: 'Refresh releases for every map, ignoring the 10-minute cache',
     ko: '모든 지도의 Release를 새로 고칩니다(10분 캐시 무시)',
     ja: 'すべてのマップの Release を更新します（10 分キャッシュを無視）',
-  },
-  refreshFirstHint: {
-    'zh-CN': '请先刷新这张地图，拿到版本号后再安装',
-    'zh-TW': '請先重新整理這張地圖，取得版本號後再安裝',
-    en: 'Refresh this map first, then install once a version appears',
-    ko: '먼저 이 지도를 새로 고쳐 버전을 확인한 뒤 설치하세요',
-    ja: '先にこのマップを更新し、バージョンが出てからインストールしてください',
-  },
-  requiresFrameworks: {
-    'zh-CN': '需要 {list}',
-    'zh-TW': '需要 {list}',
-    en: 'Requires {list}',
-    ko: '필요: {list}',
-    ja: '必要: {list}',
   },
   installDone: {
     'zh-CN': '已安装地图「{name}」，到「地图管理」可以启用或停用',
@@ -286,6 +265,27 @@ export const levelSet: DomainMessages = {
     en: 'These requirements are not met yet, so the map will not load: {list}',
     ko: '다음 요구 사항이 충족되지 않아 지도가 로드되지 않습니다: {list}',
     ja: '次の前提が満たされていないため、マップは読み込まれません: {list}',
+  },
+  // 卡片上的「缺前置」标签（与 MOD 卡片的「缺依赖」对应）
+  missingFramework: {
+    'zh-CN': '缺前置',
+    'zh-TW': '缺前置',
+    en: 'Missing requirement',
+    ko: '필수 구성 요소 없음',
+    ja: '前提不足',
+  },
+  /*
+   * 地图卡片的「已拿到版本」状态。
+   *
+   * 刻意不说「最新版 / 可更新」：本地关卡集的版本要解析 info 才知道，
+   * 那是管理页的职责。这里只知道「线上有这些版本」。
+   */
+  releaseReady: {
+    'zh-CN': '线上有版本',
+    'zh-TW': '線上版本可用',
+    en: 'Available online',
+    ko: '온라인 버전 있음',
+    ja: 'オンラインに版あり',
   },
   refreshMapSources: {
     'zh-CN': '刷新地图源',

@@ -104,3 +104,36 @@ test('展示名按语言三级回退', () => {
   // 两者都空时退回目录名
   assert.equal(levelSetDisplayName(set({ name: '', name_zh: null }), 'zh-CN'), 'RW_LevelSet')
 })
+
+/*
+ * 界面层要守住的一条：**只有刷新到 Release 的地图才产生版本声明**。
+ * 没刷过 Release 的地图没有 tag，此时本地关卡集必须显示「未绑定」，
+ * 而不是被当成「最新版」—— 把「还没查」说成「已是最新」是错的结论，
+ * 用户会因此错过真实更新。
+ */
+test('地图没刷新到 Release 时不产生版本声明', () => {
+  const maps = [
+    // 刷新成功
+    { level_set_name: 'RW_LevelSet', author: 'RW', latest_tag: 'v0.73' },
+    // 没刷新过：latest_tag 缺失
+    { level_set_name: 'Other_Set', author: 'RW' },
+    // 刷新失败：latest_tag 为 null
+    { level_set_name: 'Third_Set', author: 'RW', latest_tag: null },
+  ]
+  // 界面里用 filter(latest_tag) 构造 refs —— 这里复现同一条规则
+  const refs = maps
+    .filter((map) => !!map.latest_tag)
+    .map((map) => ({
+      tag: map.latest_tag,
+      levelSetName: map.level_set_name,
+      author: map.author,
+    }))
+
+  assert.equal(mapVersionForLevelSet({ name: 'RW_LevelSet', author: 'RW' }, refs)?.tag, 'v0.73')
+  // 没刷新 → 没有声明 → 状态必须是未绑定
+  assert.equal(mapVersionForLevelSet({ name: 'Other_Set', author: 'RW' }, refs), undefined)
+  assert.equal(levelSetState(set({ name: 'Other_Set', version: '1.0' }),
+    mapVersionForLevelSet({ name: 'Other_Set', author: 'RW' }, refs)), 'unbound')
+  assert.equal(levelSetState(set({ name: 'Third_Set', version: '1.0' }),
+    mapVersionForLevelSet({ name: 'Third_Set', author: 'RW' }, refs)), 'unbound')
+})

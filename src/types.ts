@@ -161,6 +161,8 @@ export interface PublicConfig {
   github_proxies: GitHubProxyConfig
   /** 只用内置仓库源：官方入口不走 Gitee / GitHub raw 直链。 */
   builtin_sources_only?: boolean
+  /** 只用内置地图源（与仓库源开关相互独立）。 */
+  builtin_map_sources_only?: boolean
 }
 export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; has_residue: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
@@ -325,7 +327,7 @@ export interface TutorialStepConfig {
   title_i18n?: Partial<Record<TutorialLocale, string>>
   description_i18n?: Partial<Record<TutorialLocale, string>>
 }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string
@@ -368,4 +370,45 @@ export interface GitHubProxyPatch {
   github_api_proxies: GitHubProxy[]
   gitee_api_proxies: GitHubProxy[]
   avatar_proxies: GitHubProxy[]
+}
+
+/** 地图依赖的一个框架组件。 */
+export interface RequiredFramework {
+  guid: string
+  min_version?: string
+  /** 本地已装版本；未装时为空。 */
+  installed_version?: string | null
+}
+
+/**
+ * 一个地图仓库（地图下载页的展示单元）。
+ *
+ * 与 `Repository` 平行但不同模型：绑定靠 `level_set_name + author`，
+ * 不是 `plugin_guid`。共用的是卡片外观与下载流水线。
+ */
+export interface MapInfo {
+  id: string
+  name: string
+  name_i18n?: Record<string, string>
+  group?: string
+  group_i18n?: Record<string, string>
+  provider: Provider
+  username: string
+  repository: string
+  /** 绑定的本地关卡集名（info 里的 levelSetName）。 */
+  level_set_name: string
+  /** 绑定的本地作者（info 里的 author）。 */
+  author: string
+  note?: string
+  note_i18n?: Record<string, string>
+  enabled: boolean
+  builtin: boolean
+  /** 缓存里最新 Release tag；没刷新过时为空。 */
+  latest_tag?: string | null
+  cached_release_count?: number
+  cached_at?: number | null
+  last_error?: string | null
+  required_frameworks?: RequiredFramework[]
+  /** 这些依赖里当前没满足的那几条（后端已对照本地已装版本判定）。 */
+  unmet_frameworks?: RequiredFramework[]
 }

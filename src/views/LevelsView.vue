@@ -12,9 +12,11 @@ import {
   LEVEL_SET_STATE_TONES,
   levelSetDisplayName,
   levelSetState,
+  mapVersionForLevelSet,
   type LevelSetState,
+  type MapVersionRef,
 } from '../levelSetStatus.ts'
-import type { LevelSetInfo, ZipLevelSet } from '../types'
+import type { LevelSetInfo, MapInfo, ZipLevelSet } from '../types'
 
 /**
  * 地图管理页。
@@ -38,6 +40,28 @@ const sets = ref<LevelSetInfo[]>([])
 const loading = ref(true)
 const busy = ref<Record<string, boolean>>({})
 const importing = ref(false)
+/** 地图源声明的地图（用于把本地关卡集绑到在线版本）。 */
+const maps = ref<MapInfo[]>([])
+
+/**
+ * 从地图源算出「本地关卡集 → 在线版本」的对照表。
+ *
+ * 身份是 `author + levelSetName`，不是 `uid`：`uid` 是
+ * `MD5(baseUID + version)`，每发一版就变，拿它当身份会把每次更新都认成
+ * 新地图（见 `levelSetStatus.ts` 的 `isSameLevelSet`）。
+ *
+ * 只有刷新过 Release 的地图才有 tag —— 没刷新的地图不该让本地关卡集显示
+ * 「最新版」，那是无根据的结论。
+ */
+const versionRefs = computed<MapVersionRef[]>(() =>
+  maps.value
+    .filter((map) => !!map.latest_tag)
+    .map((map) => ({
+      tag: map.latest_tag as string,
+      levelSetName: map.level_set_name,
+      author: map.author,
+    })),
+)
 
 /** 从 ZIP 识别出的待导入关卡集。 */
 const pendingImport = ref<ZipLevelSet[]>([])
@@ -61,7 +85,16 @@ const sortedSets = computed(() =>
 async function load() {
   loading.value = sets.value.length === 0
   try {
-    sets.value = await api.levelSets()
+    /*
+     * 两次读取互不依赖，一起发出去。地图列表失败不该让本地关卡集消失 ——
+     * 那是最基础的信息，用户至少要看得到自己装了哪些图。
+     */
+    const [levelSets, mapList] = await Promise.all([
+      api.levelSets(),
+      api.maps().catch(() => [] as MapInfo[]),
+    ])
+    sets.value = levelSets
+    maps.value = mapList
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -73,9 +106,14 @@ onMounted(() => {
   void load()
 })
 
-/** 单集的展示状态。目前没有地图仓库，全部按「未绑定」处理。 */
+/**
+ * 单集的展示状态。
+ *
+ * `remote` 是地图源对这个关卡集的版本声明（`author + levelSetName` 匹配）；
+ * 没刷过 Release 的地图不产生声明 —— 把「还没查」显示成「最新版」是错的结论。
+ */
 function stateOf(set: LevelSetInfo): LevelSetState {
-  return levelSetState(set)
+  return levelSetState(set, mapVersionForLevelSet(set, versionRefs.value))
 }
 
 function stateTag(set: LevelSetInfo): { text: string; tone: ReturnType<typeof toneOf> } {
@@ -85,6 +123,17 @@ function stateTag(set: LevelSetInfo): { text: string; tone: ReturnType<typeof to
 
 function toneOf(state: LevelSetState) {
   return LEVEL_SET_STATE_TONES[state]
+}
+
+/** 状态说明：为什么是「未绑定」、为什么能更新。没有额外信息时不显示。 */
+function stateHint(set: LevelSetInfo): string {
+  const state = stateOf(set)
+  if (state === 'unbound') return t('levelSet.unboundHint')
+  if (state === 'update_available') {
+    const remote = mapVersionForLevelSet(set, versionRefs.value)
+    return remote ? t('levelSet.updateAvailableHint', { version: remote.tag }) : ''
+  }
+  return ''
 }
 
 /**
@@ -241,6 +290,8 @@ async function openLevelsDirectory() {
 
           <!-- 解析失败时把原因说清楚：目录名还在，开关仍然可用 -->
           <div v-if="set.error" class="level-error">{{ translateBackendMessage(set.error) }}</div>
+          <!-- 状态说明：未绑定 / 可更新时补一句原因，避免标签语义靠猜 -->
+          <div v-else-if="stateHint(set)" class="level-hint">{{ stateHint(set) }}</div>
         </div>
 
         <div class="level-tools">
@@ -334,12 +385,18 @@ async function openLevelsDirectory() {
   flex-wrap: wrap;
   gap: 10px;
   font-size: 12px;
-  color: var(--oc2-muted);
+  color: var(--oc2-text-3);
 }
 
 .level-error {
   font-size: 12px;
-  color: var(--oc2-danger);
+  color: var(--oc2-tone-critical-text);
+}
+
+.level-hint {
+  font-size: 12px;
+  color: var(--oc2-text-3);
+  line-height: 1.4;
 }
 
 .level-tools {

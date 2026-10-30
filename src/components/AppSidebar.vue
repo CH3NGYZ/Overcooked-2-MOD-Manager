@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { NScrollbar } from 'naive-ui'
 import {
   CloudDownloadOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline,
-  ColorWandOutline, MapOutline,
+  ColorWandOutline, MapOutline, AlbumsOutline,
 } from '@vicons/ionicons5'
 import { t } from '../i18n'
 
@@ -20,8 +20,10 @@ const mainItems = [
   { name: 'overview', title: 'nav.overview', icon: GridOutline },
   { name: 'mods-online', title: 'nav.modInstall', icon: CloudDownloadOutline },
   { name: 'mods-local', title: 'nav.modManager', icon: FileTrayFullOutline },
-  // 地图（DIYLevel 关卡集）与 MOD 是两套数据，但同属「内容管理」，放在一起
-  { name: 'levels', title: 'levelSet.title', icon: MapOutline },
+  // 地图（DIYLevel 关卡集）与 MOD 是两套数据，但同属「内容管理」，放在一起。
+  // 下载与管理分开两页：下载页要拉 Release（慢、需要网络），管理页只看本地磁盘。
+  { name: 'maps-online', title: 'levelSet.download', icon: MapOutline },
+  { name: 'levels', title: 'levelSet.title', icon: AlbumsOutline },
 ]
 /**
  * 分割线之下：与 MOD 管理配套的工具入口。

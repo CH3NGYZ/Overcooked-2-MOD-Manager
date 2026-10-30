@@ -320,7 +320,35 @@ async function toggleBuiltinSourcesOnly(value: boolean) {
   }
 }
 
-/* ===== API 凭据 ===== *//** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
+/* ===== 仅使用内置地图源 ===== */
+
+const builtinMapSourcesOnly = computed(() => config.value?.builtin_map_sources_only === true)
+const switchingBuiltinMapSources = ref(false)
+
+/**
+ * 切换「仅使用内置地图源」。
+ *
+ * 与仓库源开关**相互独立**：地图索引和仓库索引是两个文件，一个连不上
+ * 不代表另一个也连不上，所以不合并成一个开关。地图源树不持久化，这个
+ * 开关只决定下次刷新从哪里读索引。
+ */
+async function toggleBuiltinMapSourcesOnly(value: boolean) {
+  if (switchingBuiltinMapSources.value) return
+  switchingBuiltinMapSources.value = true
+  try {
+    config.value = await api.saveSettings({ builtin_map_sources_only: value })
+    message.success(value
+      ? t('modsOnline.switchedToBundledSourcesRefreshToApply')
+      : t('modsOnline.restoredOnlineSourcesRefreshToApply'))
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    switchingBuiltinMapSources.value = false
+  }
+}
+
+/* ===== API 凭据 ===== */
+/** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
 async function saveTokens() {
   savingTokens.value = true
   try {
@@ -463,6 +491,18 @@ async function clearTokens() {
       <template #right>
         <n-switch size="small" :value="builtinSourcesOnly" :loading="switchingBuiltinSources"
           @update:value="toggleBuiltinSourcesOnly" />
+      </template>
+    </SettingsRow>
+    <!--
+      仅使用内置地图源：与上面的仓库源开关并列但独立。
+      地图索引和仓库索引是两个文件，一个连不上不代表另一个也连不上；
+      合并成一个开关会让用户为了修复地图而关掉仓库的在线源。
+    -->
+    <SettingsRow :title="t('levelSet.useBundledMapSourcesOnly')"
+      :description="t('levelSet.useBundledMapSourcesOnlyHint')">
+      <template #right>
+        <n-switch size="small" :value="builtinMapSourcesOnly" :loading="switchingBuiltinMapSources"
+          @update:value="toggleBuiltinMapSourcesOnly" />
       </template>
     </SettingsRow>
   </SettingsGroup>

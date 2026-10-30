@@ -30,6 +30,7 @@ import type {
   UninstallLocalModResult,
   LevelSetInfo,
   ZipLevelSet,
+  MapInfo,
 } from '../types'
 
 let gameStateRevision = 0
@@ -181,6 +182,29 @@ export const api = {
    */
   importLevelSets: (zipPath: string, selected: string[]) =>
     invoke<{ installed: string[] }>('import_level_sets', { zipPath, selected }),
+
+  /*
+   * 地图下载：与 MOD 仓库同一套刷新与安装语义，只是数据模型不同。
+   */
+  /** 列出当前地区可用的地图（只读，不联网）。 */
+  maps: () => invoke<MapInfo[]>('get_maps'),
+  /**
+   * 刷新整棵地图源树（索引 → 子源 → 地图），返回刷新后的地图列表。
+   *
+   * 与 MOD 仓库源的区别：地图源树不持久化成一棵可编辑的源树，只是归类
+   * 方式，所以没有「刷新单个源」这个粒度。
+   */
+  refreshMapSources: () => invoke<MapInfo[]>('refresh_map_sources'),
+  /**
+   * 刷新一个地图的 Release 列表（10 分钟缓存）。
+   *
+   * `force` 由「用户主动点刷新」传入：那个动作的语义就是「现在就要最新的」。
+   */
+  refreshMapReleases: (mapId: string, force = false) =>
+    invoke<ReleaseInfo[]>('refresh_map_releases', { mapId, force }),
+  /** 从地图仓库安装（会先回收同名旧关卡集）。 */
+  installMapRelease: (mapId: string, tag?: string) =>
+    invoke<{ installed: string[] }>('install_map_release', { mapId, tag }),
   /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */
   setDiyLevelEnabled: (enabled: boolean) =>
     invoke<OperationResult>('set_diy_level_enabled', { enabled }),

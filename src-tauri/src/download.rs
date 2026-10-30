@@ -256,11 +256,11 @@ where
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         if is_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         while sources.len() + retiring.len() < policy.parallelism {
             if is_cancelled() {
-                return Err("下载已取消".into());
+                return Err("download.cancelled".into());
             }
             let Some((id, candidate)) = pending.pop_front() else {
                 break;
@@ -328,7 +328,7 @@ where
                 let source = sources.remove(&id);
                 match result {
                     Ok(Ok(mut completed)) => {
-                        if is_cancelled() { return Err("下载已取消".into()); }
+                        if is_cancelled() { return Err("download.cancelled".into()); }
                         // Drop all other request futures (and their temp-file
                         // guards) before handing the winner to installation.
                         drop(active);
@@ -344,7 +344,7 @@ where
                         }
                         return Ok(completed.0.take().unwrap());
                     }
-                    Ok(Err(error)) if error == "下载已取消" || is_cancelled() => return Err("下载已取消".into()),
+                    Ok(Err(error)) if error == "download.cancelled" || is_cancelled() => return Err("download.cancelled".into()),
                     Ok(Err(error)) if policy.terminal_error == Some(error.as_str()) => return Err(error),
                     Ok(Err(error)) => {
                         log::warn!("下载候选失败，补充其他候选：候选序号={}", id + 1);
@@ -354,7 +354,7 @@ where
                 }
             }
             _ = ticker.tick() => {
-                if is_cancelled() { return Err("下载已取消".into()); }
+                if is_cancelled() { return Err("download.cancelled".into()); }
                 let now = Instant::now();
                 let mut slow = sources.iter_mut().filter_map(|(id, source)| source.sample(now, policy).then_some(*id))
                     .collect::<Vec<_>>();
@@ -375,7 +375,7 @@ where
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| "没有可用的下载地址".into()))
+    Err(last_error.unwrap_or_else(|| "download.noCandidate".into()))
 }
 
 #[cfg(test)]

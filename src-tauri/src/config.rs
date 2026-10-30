@@ -74,13 +74,13 @@ pub fn current_user_region() -> &'static str {
 }
 
 pub fn validate_repository_source_region(region: Option<&str>) -> Result<(), ConfigError> {
-    let _ = normalize_repository_region_for_storage(region, "仓库源");
+    let _ = normalize_repository_region_for_storage(region, "config.labelSource");
     Ok(())
 }
 
 pub fn validate_repository_region(region: Option<&str>) -> Result<(), ConfigError> {
     validate_repository_source_region(region)
-        .map_err(|_| ConfigError::Invalid("适用地区无效，请选择中国大陆或非中国大陆".into()))
+        .map_err(|_| ConfigError::Invalid("config.invalidRegion".into()))
 }
 
 fn region_matches(configured_region: Option<&str>, region: &str) -> bool {
@@ -147,9 +147,9 @@ pub(crate) fn validate_repository_platform(
     if let Some(value) = platform.map(str::trim).filter(|value| !value.is_empty())
         && normalize_repository_platform(Some(value)).is_none()
     {
-        return Err(ConfigError::Invalid(format!(
-            "{} 的平台无效：{value}（可选 windows 或 macos，留空表示全平台）",
-            repository_name
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.invalidPlatform",
+            &[("repo", repository_name), ("value", value)],
         )));
     }
     Ok(())
@@ -245,15 +245,15 @@ pub(crate) fn localized_repository_name(repo: &RepositoryConfig, locale: Option<
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConfigError {
-    #[error("配置目录不可用: {0}")]
+    #[error("config.directoryUnavailableReason")]
     Directory(String),
-    #[error("配置读取失败: {0}")]
+    #[error("config.readFailedReason")]
     Read(String),
-    #[error("配置解析失败: {0}")]
+    #[error("config.parseFailedReason")]
     Parse(String),
-    #[error("配置写入失败: {0}")]
+    #[error("config.writeFailedReason")]
     Write(String),
-    #[error("配置格式无效: {0}")]
+    #[error("config.invalidFormatReason")]
     Invalid(String),
 }
 
@@ -432,7 +432,10 @@ impl ConfigService {
         for repository in &mut config.repositories {
             let normalized = normalize_repository_region_for_storage(
                 repository.region.as_deref(),
-                &format!("仓库 {}", repository.id),
+                &crate::locale_tag::with_params(
+                    "config.repositoryLabeled",
+                    &[("name", &repository.id.to_string())],
+                ),
             );
             if repository.region != normalized {
                 repository.region = normalized;
@@ -442,7 +445,10 @@ impl ConfigService {
         for source in &mut config.repository_sources {
             let normalized = normalize_repository_region_for_storage(
                 source.region.as_deref(),
-                &format!("仓库源 {}", source.id),
+                &crate::locale_tag::with_params(
+                    "source.labeled",
+                    &[("label", &source.id.to_string())],
+                ),
             );
             if source.region != normalized {
                 source.region = normalized;
@@ -707,19 +713,21 @@ impl ConfigService {
     pub fn validate_bundle(&self, text: &str) -> Result<RepositoryBundle, ConfigError> {
         log::debug!("开始校验仓库配置包：字节数={}", text.len());
         if text.len() > 1024 * 1024 {
-            return Err(ConfigError::Invalid("导入文件超过 1 MiB".into()));
+            return Err(ConfigError::Invalid("tutorial.importTooLarge".into()));
         }
-        let mut bundle: RepositoryBundle = toml::from_str(text)
-            .map_err(|e| ConfigError::Invalid(format!("TOML 解析失败: {e}")))?;
+        let mut bundle: RepositoryBundle = toml::from_str(text).map_err(|e| {
+            ConfigError::Invalid(crate::locale_tag::with_params(
+                "config.tomlParseFailed",
+                &[("reason", &e.to_string())],
+            ))
+        })?;
         if bundle.format != BUNDLE_FORMAT {
-            return Err(ConfigError::Invalid(
-                "format 不是 oc2-mod-repository-bundle".into(),
-            ));
+            return Err(ConfigError::Invalid("config.bundleFormatInvalid".into()));
         }
         if bundle.schema_version != 1 {
-            return Err(ConfigError::Invalid(format!(
-                "不支持 schema_version {}",
-                bundle.schema_version
+            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "config.unsupportedSchemaVersion",
+                &[("version", &bundle.schema_version.to_string())],
             )));
         }
         for repo in &mut bundle.repositories {
@@ -871,7 +879,10 @@ impl ConfigService {
                 match conflict {
                     "skip" => continue,
                     "keep_both" => {
-                        let imported_name = format!("{} (导入)", item_name);
+                        let imported_name = crate::locale_tag::with_params(
+                            "config.importedNameSuffix",
+                            &[("name", &item_name.to_string())],
+                        );
                         item.name_i18n.insert("zh-CN".into(), imported_name.clone());
                         item.name = imported_name;
                     }
@@ -1288,17 +1299,15 @@ pub(crate) fn normalize_repository_i18n(repo: &mut RepositoryExport) -> Result<(
     let name = repo
         .name_i18n
         .get("zh-CN")
-        .ok_or_else(|| ConfigError::Invalid("仓库缺少 name_i18n.zh-CN".into()))?;
+        .ok_or_else(|| ConfigError::Invalid("config.missingNameI18n".into()))?;
     if name.trim().is_empty() {
-        return Err(ConfigError::Invalid(
-            "仓库的 name_i18n.zh-CN 不能为空".into(),
-        ));
+        return Err(ConfigError::Invalid("config.emptyNameI18n".into()));
     }
     if !repo.group_i18n.contains_key("zh-CN") {
-        return Err(ConfigError::Invalid("仓库缺少 group_i18n.zh-CN".into()));
+        return Err(ConfigError::Invalid("config.missingGroupI18n".into()));
     }
     if !repo.note_i18n.contains_key("zh-CN") {
-        return Err(ConfigError::Invalid("仓库缺少 note_i18n.zh-CN".into()));
+        return Err(ConfigError::Invalid("config.missingNoteI18n".into()));
     }
     repo.name = name.trim().to_string();
     repo.group = repo.group_i18n["zh-CN"].clone();
@@ -1337,17 +1346,21 @@ fn migrate_repository_export_i18n(repo: &mut RepositoryExport) {
 pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
     validate_repository_region(repo.region.as_deref())?;
     validate_repository_platform(repo.platform.as_deref(), &repo.name)?;
-    crate::releases::repository_coordinates(&repo.username, &repo.repository)
-        .map_err(|error| ConfigError::Invalid(format!("{} 的项目主页无效: {error}", repo.name)))?;
+    crate::releases::repository_coordinates(&repo.username, &repo.repository).map_err(|error| {
+        ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.homepageInvalid",
+            &[("repo", &repo.name), ("reason", &error.to_string())],
+        ))
+    })?;
     if Path::new(&repo.install_target).is_absolute()
         || repo
             .install_target
             .split(['/', '\\'])
             .any(|part| part == "..")
     {
-        return Err(ConfigError::Invalid(format!(
-            "{} 的安装目录不安全",
-            repo.name
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.installTargetUnsafe",
+            &[("repo", &repo.name.to_string())],
         )));
     }
     match repo.download_mode {
@@ -1358,7 +1371,7 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
                     .iter()
                     .any(|rule| rule.value.trim().is_empty())
             {
-                return Err(ConfigError::Invalid("请创建至少一个有效的资产规则".into()));
+                return Err(ConfigError::Invalid("config.assetRuleRequired".into()));
             }
         }
         RepositoryDownloadMode::RepositoryFile => {
@@ -1376,7 +1389,7 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
                 .any(|rule| rule.rule_type != AssetRuleType::Exact)
             {
                 return Err(ConfigError::Invalid(
-                    "仓库文件模式的资产规则只支持具体文件".into(),
+                    "config.fileModeExactAssetsOnly".into(),
                 ));
             }
         }
@@ -1384,9 +1397,9 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
     if !repo.version_regex.trim().is_empty()
         && regex::Regex::new(repo.version_regex.trim()).is_err()
     {
-        return Err(ConfigError::Invalid(format!(
-            "{} 的版本号正则无效",
-            repo.name
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.versionRegexInvalid",
+            &[("repo", &repo.name.to_string())],
         )));
     }
     /*
@@ -1410,18 +1423,18 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
         let min = override_entry.min_version.trim();
         let max = override_entry.max_version.trim();
         if min.is_empty() && max.is_empty() {
-            return Err(ConfigError::Invalid(format!(
-                "{} 的 release_relations 必须至少指定 min_version 或 max_version",
-                repo.name
+            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "config.relationsEmpty",
+                &[("repo", &repo.name.to_string())],
             )));
         }
         for (label, value) in [("min_version", min), ("max_version", max)] {
             if !value.is_empty()
                 && crate::releases::compare_release_versions(value, value).is_none()
             {
-                return Err(ConfigError::Invalid(format!(
-                    "{} 的 release_relations {label} 无法解析：{value}",
-                    repo.name
+                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                    "config.relationsValueInvalid",
+                    &[("repo", &repo.name), ("label", label), ("value", value)],
                 )));
             }
         }
@@ -1430,9 +1443,9 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
             if crate::releases::compare_release_versions(min, max)
                 == Some(std::cmp::Ordering::Greater)
             {
-                return Err(ConfigError::Invalid(format!(
-                    "{} 的 release_relations 区间无效：min_version {min} 大于 max_version {max}",
-                    repo.name
+                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                    "config.relationsRangeInvalid",
+                    &[("repo", &repo.name), ("min", min), ("max", max)],
                 )));
             }
         }
@@ -1460,20 +1473,25 @@ fn validate_relation(
 ) -> Result<(), ConfigError> {
     let kind = relation.kind.as_str();
     if relation.guid.trim().is_empty() {
-        return Err(ConfigError::Invalid(format!(
-            "{repository_name} 的 {kind} 关系缺少 GUID"
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationMissingGuid",
+            &[("repo", repository_name), ("kind", kind)],
         )));
     }
     if relation.optional && relation.kind != RelationKind::Requires {
-        return Err(ConfigError::Invalid(format!(
-            "{repository_name} 的 {kind} 关系 {} 不能标记 optional：只有 requires 支持可选",
-            relation.guid.trim()
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationOptionalUnsupported",
+            &[
+                ("repo", repository_name),
+                ("kind", kind),
+                ("guid", relation.guid.trim()),
+            ],
         )));
     }
     if relation.prerelease.is_some() && relation.kind == RelationKind::Requires {
-        return Err(ConfigError::Invalid(format!(
-            "{repository_name} 的 requires 关系 {} 不能限定 prerelease：依赖版本请用版本区间表达",
-            relation.guid.trim()
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationRequiresPrerelease",
+            &[("repo", repository_name), ("guid", relation.guid.trim())],
         )));
     }
     if relation.kind != RelationKind::Requires
@@ -1481,8 +1499,9 @@ fn validate_relation(
         && !owner_guid.trim().is_empty()
         && relation.guid.trim().eq_ignore_ascii_case(owner_guid.trim())
     {
-        return Err(ConfigError::Invalid(format!(
-            "{repository_name} 的 {kind} 关系指向自己的 GUID，必须用 prerelease = true/false 区分发布线",
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationSelfGuid",
+            &[("repo", repository_name), ("kind", kind)],
         )));
     }
     for (label, value) in [
@@ -1490,9 +1509,15 @@ fn validate_relation(
         ("max_version", relation.max_version.trim()),
     ] {
         if !value.is_empty() && crate::releases::compare_release_versions(value, value).is_none() {
-            return Err(ConfigError::Invalid(format!(
-                "{repository_name} 的 {kind} 关系 {} {label} 无法解析：{value}",
-                relation.guid.trim()
+            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "config.relationValueInvalid",
+                &[
+                    ("repo", repository_name),
+                    ("kind", kind),
+                    ("guid", relation.guid.trim()),
+                    ("label", label),
+                    ("value", value),
+                ],
             )));
         }
     }
@@ -1502,9 +1527,15 @@ fn validate_relation(
         && !max.is_empty()
         && crate::releases::compare_release_versions(min, max) == Some(std::cmp::Ordering::Greater)
     {
-        return Err(ConfigError::Invalid(format!(
-            "{repository_name} 的 {kind} 关系 {} 版本区间无效：min_version {min} 大于 max_version {max}",
-            relation.guid.trim()
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationRangeInvalid",
+            &[
+                ("repo", repository_name),
+                ("kind", kind),
+                ("guid", relation.guid.trim()),
+                ("min", min),
+                ("max", max),
+            ],
         )));
     }
     Ok(())
@@ -1599,7 +1630,10 @@ fn repository_from_export(repo: &RepositoryExport, id: String, builtin: bool) ->
         file_path: repo.file_path.clone(),
         region: normalize_repository_region_for_storage(
             repo.region.as_deref(),
-            &format!("仓库 {}", repo.name),
+            &crate::locale_tag::with_params(
+                "config.repositoryLabeled",
+                &[("name", &repo.name.to_string())],
+            ),
         ),
         platform: normalize_repository_platform(repo.platform.as_deref()),
         channel: repo.channel.clone(),

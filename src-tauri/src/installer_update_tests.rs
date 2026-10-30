@@ -595,7 +595,7 @@ async fn cancellation_interrupts_gitee_without_starting_github() {
     })
     .await
     .unwrap();
-    assert_eq!(result.err().unwrap(), "下载已取消");
+    assert_eq!(result.err().unwrap(), "download.cancelled");
     assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
 
@@ -896,6 +896,6 @@ async fn cancellation_drops_the_whole_github_pool() {
     })
     .await
     .unwrap();
-    assert_eq!(result.err().unwrap(), "下载已取消");
+    assert_eq!(result.err().unwrap(), "download.cancelled");
     assert_eq!(server.requests.lock().unwrap().len(), 3);
 }

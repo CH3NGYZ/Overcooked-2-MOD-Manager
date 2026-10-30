@@ -8,11 +8,11 @@ const DATA_DIRECTORY: &str = "OC2ModManager";
 /// 数据根建立在安装目录内，与安装位置同生共死 —— 卸载时删目录即可清理，
 /// 不会在用户主目录留下孤儿配置、备份或回收站。
 pub(crate) fn install_dir() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|_| "无法确定程序所在目录")?;
+    let exe = std::env::current_exe().map_err(|_| "migrate.exeDirectoryUnknown")?;
     exe.parent()
         .filter(|parent| parent.is_absolute())
         .map(Path::to_path_buf)
-        .ok_or_else(|| "无法确定程序所在目录".into())
+        .ok_or_else(|| "migrate.exeDirectoryUnknown".into())
 }
 
 /// 数据根：安装目录下的 `OC2ModManager/` 子目录。

@@ -99,8 +99,8 @@ pub(crate) fn state(game: &Path, settings: &GameConfig) -> WinhttpState {
 pub(crate) fn set_enabled(game: &Path, settings: &GameConfig, enabled: bool) -> Result<(), String> {
     if Package::current(settings).native() {
         let script_path = crate::game::safe_game_path(game, "run_bepinex.sh")?;
-        let script = fs::read_to_string(&script_path)
-            .map_err(|_| "未找到原生 BepInEx 启动脚本，请先安装框架")?;
+        let script =
+            fs::read_to_string(&script_path).map_err(|_| "framework.nativeScriptMissing")?;
         let changed = set_script_enabled(&script, enabled)?;
         return fs::write(script_path, changed).map_err(|e| e.to_string());
     }
@@ -119,10 +119,8 @@ pub(crate) fn set_enabled(game: &Path, settings: &GameConfig, enabled: bool) -> 
             crate::archive::clear_readonly(&active)?;
             fs::rename(active, inactive).map_err(|e| e.to_string())
         }
-        (false, WinhttpState::Conflict) => {
-            Err("winhttp.dll 与禁用文件同时存在，请先切换为框架已启用状态".into())
-        }
-        (_, WinhttpState::Missing) => Err("未找到框架加载器，请先安装框架".into()),
+        (false, WinhttpState::Conflict) => Err("framework.loaderConflict".into()),
+        (_, WinhttpState::Missing) => Err("framework.loaderMissing".into()),
         _ => Ok(()),
     }
 }
@@ -130,7 +128,7 @@ pub(crate) fn set_enabled(game: &Path, settings: &GameConfig, enabled: bool) -> 
 pub(crate) fn prepare_native(game: &Path, package: Package) -> Result<(), String> {
     let script_path = crate::game::safe_game_path(game, "run_bepinex.sh")?;
     let script =
-        fs::read_to_string(&script_path).map_err(|_| "原生 BepInEx 包缺少 run_bepinex.sh")?;
+        fs::read_to_string(&script_path).map_err(|_| "framework.nativePackageMissingScript")?;
     let script = replace_assignment(&script, "executable_name", package.executable())?;
     let script = if package == Package::MacOS {
         repair_macos_overlay_script(&script)?
@@ -153,7 +151,7 @@ pub(crate) fn prepare_native(game: &Path, package: Package) -> Result<(), String
 pub(crate) fn repair_macos_overlay(game: &Path) -> Result<(), String> {
     let script_path = crate::game::safe_game_path(game, "run_bepinex.sh")?;
     let script = fs::read_to_string(&script_path)
-        .map_err(|_| "原生 BepInEx 包缺少 run_bepinex.sh".to_string())?;
+        .map_err(|_| "framework.nativePackageMissingScript".to_string())?;
     let script = repair_macos_overlay_script(&script)?;
     fs::write(&script_path, script).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -176,14 +174,14 @@ fn repair_macos_overlay_script(script: &str) -> Result<String, String> {
     const LOADER: &str = "if [ -z \"$DYLD_INSERT_LIBRARIES\" ]; then\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}\"\nelse\n    export DYLD_INSERT_LIBRARIES=\"${doorstop_name}:${DYLD_INSERT_LIBRARIES}\"\nfi\n";
     let patched = format!("{MARKER}{PATCH}{LOADER}");
     if script.matches(MARKER).count() != 1 {
-        return Err("无法识别 macOS BepInEx 启动脚本，无法修复 Steam Overlay".into());
+        return Err("framework.overlayScriptUnrecognized".into());
     }
     if script.contains(&patched) {
         return Ok(script);
     }
     let original = format!("{MARKER}{LOADER}");
     if !script.contains(&original) {
-        return Err("无法识别 macOS BepInEx 启动脚本，无法修复 Steam Overlay".into());
+        return Err("framework.overlayScriptUnrecognized".into());
     }
     Ok(script.replacen(&original, &patched, 1))
 }
@@ -243,7 +241,7 @@ fn replace_assignment(script: &str, name: &str, value: &str) -> Result<String, S
     let pattern =
         Regex::new(&format!(r"(?m)^{}=[^\n]*$", regex::escape(name))).map_err(|e| e.to_string())?;
     if pattern.find_iter(&script).count() != 1 {
-        return Err("无法识别原生 BepInEx 启动脚本，请重新安装框架".into());
+        return Err("framework.nativeScriptUnrecognized".into());
     }
     Ok(pattern
         .replace(&script, |_: &regex::Captures<'_>| {

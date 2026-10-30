@@ -97,7 +97,7 @@ fn parse_page(html: &str, page: usize) -> Result<TopicPage, String> {
     let list = document
         .select(&selectors().list)
         .next()
-        .ok_or("Gitee 社区网页结构无效或需要验证，请稍后重试")?;
+        .ok_or("community.giteeWebInvalid")?;
     let mut result = TopicPage {
         repositories: Vec::new(),
         has_next: false,
@@ -169,7 +169,7 @@ fn parse_page(html: &str, page: usize) -> Result<TopicPage, String> {
 }
 
 fn page_url(endpoint: &str, page: usize) -> Result<String, String> {
-    let mut url = Url::parse(endpoint).map_err(|_| "Gitee 社区网页地址无效")?;
+    let mut url = Url::parse(endpoint).map_err(|_| "community.giteeWebUrlInvalid")?;
     url.query_pairs_mut()
         .clear()
         .append_pair("page", &page.to_string());
@@ -225,7 +225,7 @@ where
             crate::repository_sources::safe_log_address(&url)
         );
         limits.before_request("official").await?;
-        let url = Url::parse(&url).map_err(|_| "Gitee 社区网页地址无效")?;
+        let url = Url::parse(&url).map_err(|_| "community.giteeWebUrlInvalid")?;
         let html = fetch(url, page).await?;
         let parsed = parse_page(&html, page)?;
         results.discovery.incomplete_results |= parsed.incomplete;

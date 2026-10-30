@@ -64,7 +64,7 @@ fn download_filename(url: &Url, disposition: Option<&str>) -> Result<String, Str
                             value
                         };
                         return supported_filename(value)
-                            .ok_or_else(|| "只支持 DLL 或 ZIP 文件".into());
+                            .ok_or_else(|| "mods.unsupportedFileType".into());
                     }
                 }
             }
@@ -73,7 +73,7 @@ fn download_filename(url: &Url, disposition: Option<&str>) -> Result<String, Str
     url.path_segments()
         .and_then(|mut parts| parts.next_back())
         .and_then(supported_filename)
-        .ok_or_else(|| "只支持 DLL 或 ZIP 文件".into())
+        .ok_or_else(|| "mods.unsupportedFileType".into())
 }
 
 fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
@@ -82,7 +82,7 @@ fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
         return archive::validate_zip(path);
     }
     // Reject HTML, renamed executables, and truncated files before installing a DLL.
-    let invalid = || "下载的文件不是有效的 DLL".to_string();
+    let invalid = || "direct.notDll".to_string();
     let mut file = File::open(path).map_err(|_| invalid())?;
     let mut dos = [0u8; 64];
     file.read_exact(&mut dos).map_err(|_| invalid())?;
@@ -114,13 +114,13 @@ pub(crate) async fn download_for_preview(
     url: &str,
 ) -> Result<(PathBuf, String), String> {
     archive::start_download();
-    let parsed = Url::parse(url.trim()).map_err(|_| "请输入有效的 HTTP 或 HTTPS 下载直链")?;
+    let parsed = Url::parse(url.trim()).map_err(|_| "direct.invalidUrl")?;
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()
         || parsed.password().is_some()
     {
-        return Err("请输入有效的 HTTP 或 HTTPS 下载直链".into());
+        return Err("direct.invalidUrl".into());
     }
     let config = state.config.load_or_default();
     let client = reqwest::Client::builder()
@@ -129,7 +129,7 @@ pub(crate) async fn download_for_preview(
         .read_timeout(Duration::from_secs(120))
         .user_agent(releases::APP_USER_AGENT)
         .build()
-        .map_err(|_| "无法创建下载客户端")?;
+        .map_err(|_| "direct.clientFailed")?;
     let candidate = DownloadCandidate {
         route: DownloadRoute::Direct,
         url: parsed.to_string(),
@@ -138,13 +138,13 @@ pub(crate) async fn download_for_preview(
         result = client.get(parsed.clone()).timeout(Duration::from_secs(5)).header(reqwest::header::RANGE, "bytes=0-0")
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send() => {
-            result.map_err(|_| "无法获取在线文件信息")?.error_for_status().map_err(|_| "无法获取在线文件信息")?
+            result.map_err(|_| "direct.infoFailed")?.error_for_status().map_err(|_| "direct.infoFailed")?
         }
         _ = async {
             while !archive::is_download_cancelled() {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        } => return Err("下载已取消".into()),
+        } => return Err("download.cancelled".into()),
     };
     let disposition = response
         .headers()
@@ -171,7 +171,7 @@ pub(crate) async fn download_for_preview(
                     client,
                     &candidate.url,
                     cache_dir,
-                    "在线文件",
+                    "direct.onlineFile",
                     &reporter,
                     // 与仓库资产下载一致的分片线程数
                     DIRECT_DOWNLOAD_THREADS,
@@ -190,7 +190,7 @@ pub(crate) async fn download_for_preview(
             // 路径是临时文件、没有 Release 元数据，所以 expected_size 留空，
             // 大小由下载源自己上报（有 Content-Length 时显示确定进度）。
             app: Some(app),
-            label: "在线文件",
+            label: "direct.onlineFile",
             expected_size: None,
         }),
     )
@@ -206,16 +206,16 @@ pub async fn install_online_mod(
     url: String,
 ) -> Result<crate::models::OperationResult, String> {
     archive::start_download();
-    let parsed = Url::parse(url.trim()).map_err(|_| "请输入有效的 HTTP 或 HTTPS 下载直链")?;
+    let parsed = Url::parse(url.trim()).map_err(|_| "direct.invalidUrl")?;
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()
         || parsed.password().is_some()
     {
-        return Err("请输入有效的 HTTP 或 HTTPS 下载直链".into());
+        return Err("direct.invalidUrl".into());
     }
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     // One direct candidate; no provider detection, API credentials or proxy configuration.
     let client = reqwest::Client::builder()
@@ -224,12 +224,15 @@ pub async fn install_online_mod(
         .read_timeout(Duration::from_secs(120))
         .user_agent(releases::APP_USER_AGENT)
         .build()
-        .map_err(|_| "无法创建下载客户端")?;
+        .map_err(|_| "direct.clientFailed")?;
     let candidate = DownloadCandidate {
         route: DownloadRoute::Direct,
         url: parsed.to_string(),
     };
-    archive::emit_progress_event(Some(&app), candidate_progress("在线文件", &candidate, 1, 1));
+    archive::emit_progress_event(
+        Some(&app),
+        candidate_progress("direct.onlineFile", &candidate, 1, 1),
+    );
     log::info!(
         "在线 MOD 直连下载：域名={}，线程数=32",
         parsed.host_str().unwrap_or_default()
@@ -238,13 +241,13 @@ pub async fn install_online_mod(
         result = client.get(parsed.clone()).timeout(Duration::from_secs(5)).header(reqwest::header::RANGE, "bytes=0-0")
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send() => {
-            result.map_err(|_| "无法获取在线文件信息")?.error_for_status().map_err(|_| "无法获取在线文件信息")?
+            result.map_err(|_| "direct.infoFailed")?.error_for_status().map_err(|_| "direct.infoFailed")?
         }
         _ = async {
             while !archive::is_download_cancelled() {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        } => return Err("下载已取消".into()),
+        } => return Err("download.cancelled".into()),
     };
     let disposition = response
         .headers()
@@ -271,7 +274,7 @@ pub async fn install_online_mod(
                     client,
                     &candidate.url,
                     cache_dir,
-                    "在线文件",
+                    "direct.onlineFile",
                     &reporter,
                     // 与仓库资产下载一致的分片线程数
                     DIRECT_DOWNLOAD_THREADS,
@@ -287,18 +290,18 @@ pub async fn install_online_mod(
         },
         Some(DownloadContext {
             app: Some(&app),
-            label: "在线文件",
+            label: "direct.onlineFile",
             expected_size: None,
         }),
     )
     .await?;
     let staging = cache_dir.join(format!("manual-{}", uuid::Uuid::new_v4()));
     let result = (|| {
-        fs::create_dir(&staging).map_err(|_| "无法创建安装临时目录")?;
+        fs::create_dir(&staging).map_err(|_| "direct.tempDirFailed")?;
         let source = staging.join(&filename);
-        fs::rename(&temp, &source).map_err(|_| "无法准备安装文件")?;
+        fs::rename(&temp, &source).map_err(|_| "direct.prepareFailed")?;
         if archive::is_download_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         install_manual_mod(&state, &source, Some(&game_root))
     })();

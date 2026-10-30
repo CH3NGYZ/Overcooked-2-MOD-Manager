@@ -228,7 +228,7 @@ fn inspect_dll(
             Path::new(&canonical_dll_file(path, game))
                 .file_stem()
                 .and_then(|value| value.to_str())
-                .unwrap_or("未知 MOD")
+                .unwrap_or("mods.unknownName")
                 .to_string()
         });
     /*
@@ -981,7 +981,7 @@ fn mark_duplicate_guids(mods: &mut [InstalledMod]) {
                 mods[index].name,
                 current
             );
-            mods[index].load_warning = Some("存在更高版本，建议卸载".into());
+            mods[index].load_warning = Some("mods.higherVersionPresent".into());
             // BepInEx loads the higher local copy, so the shadowed DLL is a
             // cleanup candidate rather than another pending online update.
             mods[index].update_available = false;

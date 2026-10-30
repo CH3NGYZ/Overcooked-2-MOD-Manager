@@ -44,6 +44,7 @@ export type DomainMessages = Record<string, Localized>
  * （`domain.key` 的组合是否真的存在）。
  */
 export const DOMAINS = [
+  // —— 界面域：按页面/区域归属 ——
   'common',      // 通用：确定/取消/保存/删除 等跨页面复用的词
   'nav',         // 侧栏、标题栏、页面标题
   'overview',    // 总览
@@ -55,28 +56,48 @@ export const DOMAINS = [
   'framework',   // BepInEx / DIYLevel 框架管理
   'dialogs',     // 独立弹窗：确认、导入导出、回收站、日志
   'tutorial',    // 教程
-  'error',       // **后端返回的错误 tag**
-  'message',     // **后端返回的成功/状态提示 tag**
+
+  // —— 后端域：tag 的第一段就是这里的名字 ——
+  'error',       // 早期批次：`error.<域>.<原因>`
+  'message',     // 早期批次：`message.<域>.<原因>`
+  'lock',        // 操作锁
+  'game',        // 游戏目录与运行状态
+  'mods',        // MOD 扫描、开关、安装
+  'modConfig',   // MOD 配置文件编辑
+  'modPreview',  // MOD 预览
+  'backup',      // 框架备份
+  'archive',     // ZIP 解压与安装
+  'download',    // 下载
+  'direct',      // 直链安装
+  'recycle',     // 回收站
+  'source',      // 仓库源与仓库
+  'proxy',       // 代理
+  'config',      // 配置读写
+  'community',   // 社区仓库搜索
+  'avatar',      // 头像
+  'readme',      // 仓库说明
+  'wine',        // Wine / CrossOver
+  'migrate',     // 更新迁移
+  'update',      // 管理器自更新
+  'log',         // 日志
+  'network',     // HTTP 客户端创建
 ] as const
 
 export type Domain = (typeof DOMAINS)[number]
 
 /**
- * 后端错误 tag 的约定。
+ * 后端 tag 的形态。
  *
- * 后端不再返回中文，而是返回 `error.<域>.<原因>` 形式的 tag；
- * 前端查 `error` 域取文案。带参数时后端把参数一并回传，形如
- * `error.backup.restoreFailed` + `{ path: 'D:\\...' }`。
+ * 后端不再返回中文，而是返回「**第一段是域**」的 tag：
  *
- * 为什么不用 HTTP 状态码那套数字码：tag 自解释，日志里一眼能看出
- * 是哪个环节失败，不需要对照表。
+ * - `error.<域>.<原因>` / `message.<域>.<原因>` —— 早期迁移批次，`error` 和
+ *   `message` 本身就是域，适合一眼分辨「这是错误还是成功提示」；
+ * - `<域>.<原因>` —— 全量迁移后的主流形态，如 `mods.higherVersionPresent`、
+ *   `game.notFound`。域直接就是 `mods` / `game`。
+ *
+ * 两种都合法，判定统一走 `i18n.global.te(tag)` 查表，不要用前缀白名单：
+ * 漏一个前缀就会有一条文案静默漏翻。
+ *
+ * 路由到哪个域由第一段决定，所以 `error.mods.x` 与 `mods.x` 可以同时存在，
+ * 前者进 `error` 域、后者进 `mods` 域，互不影响。
  */
-export const ERROR_TAG_PREFIX = 'error.'
-
-/**
- * 后端成功提示 tag 的前缀。
- *
- * 与错误对称：这些提示也由后端产出、前端翻译。之所以也要 tag 化，
- * 是因为它们常含关键信息（"备份保存在 D:\..."），英文用户看不懂等于没有。
- */
-export const MESSAGE_TAG_PREFIX = 'message.'

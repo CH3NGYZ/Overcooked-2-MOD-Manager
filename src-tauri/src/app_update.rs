@@ -29,13 +29,13 @@ impl UpdateTarget {
         let arch = match arch {
             "x86_64" => "x86_64",
             "aarch64" => "aarch64",
-            _ => return Err("当前平台或架构不支持自动更新，请手动更新".into()),
+            _ => return Err("update.platformUnsupported".into()),
         };
         let (os, kind) = match (os, bundle) {
             ("windows", Some("msi")) => ("windows", "msi"),
             ("windows", None | Some("exe")) => ("windows", "exe"),
             ("macos", None | Some("app")) => ("darwin", "app"),
-            _ => return Err("当前安装格式不支持自动更新，请手动更新".into()),
+            _ => return Err("update.formatUnsupported".into()),
         };
         Ok(Self { os, arch, kind })
     }
@@ -86,10 +86,10 @@ impl UpdateTarget {
 
 pub(crate) fn verify_download(bytes: &[u8], signature: &str, version: &str) -> Result<(), String> {
     let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
-        .map_err(|_| "更新签名公钥未配置")?;
+        .map_err(|_| "update.publicKeyMissing")?;
     let key = config["plugins"]["updater"]["pubkey"]
         .as_str()
-        .ok_or("更新签名公钥未配置")?;
+        .ok_or("update.publicKeyMissing")?;
     verify_with_key(bytes, signature, key, version)
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn verify_with_key(
     };
     verify().map_err(|error| {
         log::warn!("程序更新签名校验失败：{error}");
-        "更新签名校验失败，已停止安装".into()
+        "update.signatureInvalid".into()
     })
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn validate_update_metadata(
         || info.installer_url.as_deref() != Some(download_url.as_str())
         || signature != info.installer_signature
     {
-        return Err("更新清单与所选平台安装包不一致，已停止安装".into());
+        return Err("update.manifestPlatformMismatch".into());
     }
     Ok(())
 }
@@ -161,8 +161,12 @@ pub(crate) fn windows_installer_args(
     log: &std::path::Path,
 ) -> Result<Vec<std::ffi::OsString>, String> {
     use std::ffi::OsString;
-    let directory = executable.parent().ok_or("安装目录无效")?;
-    let target_directory = target_executable.parent().ok_or("安装目录无效")?;
+    let directory = executable
+        .parent()
+        .ok_or("migrate.invalidInstallDirectory")?;
+    let target_directory = target_executable
+        .parent()
+        .ok_or("migrate.invalidInstallDirectory")?;
     if directory.as_os_str().is_empty()
         || target_directory.as_os_str().is_empty()
         || [directory, target_directory, log].iter().any(|path| {
@@ -171,7 +175,7 @@ pub(crate) fn windows_installer_args(
                 .contains(['"', '\r', '\n', '\0'])
         })
     {
-        return Err("安装目录无效".into());
+        return Err("migrate.invalidInstallDirectory".into());
     }
     match kind {
         "exe" => {
@@ -203,7 +207,7 @@ pub(crate) fn windows_installer_args(
             }
             Ok(args)
         }
-        _ => Err("当前安装格式不支持自动更新，请手动更新".into()),
+        _ => Err("update.formatUnsupported".into()),
     }
 }
 

@@ -93,18 +93,18 @@ fn selected_root_for_package(selected: &Path, package: Package) -> Result<PathBu
             .file_name()
             .is_some_and(|name| name == package.executable())
     {
-        selected.parent().ok_or("所选厨房目录无效")?
+        selected.parent().ok_or("game.invalidDirectory")?
     } else {
         selected
     };
     if !executable_exists_for_package(root, package) {
         return Err(match package {
-            Package::Windows => "所选目录中没有 Overcooked2.exe",
-            Package::MacOS => "所选目录中没有 Overcooked2.app",
+            Package::Windows => "game.exeNotFound",
+            Package::MacOS => "game.appNotFound",
         }
         .into());
     }
-    fs::canonicalize(root).map_err(|_| "所选厨房目录无效".into())
+    fs::canonicalize(root).map_err(|_| "game.invalidDirectory".into())
 }
 
 struct GameLocation {
@@ -392,10 +392,7 @@ pub(crate) fn steam_launch_command(
 ) -> Result<std::process::Command, String> {
     #[cfg(unix)]
     if !Package::current(settings).native() {
-        let prefix = info
-            .wine_prefix
-            .as_deref()
-            .ok_or("无法确定游戏使用的 Wine 容器，请重新选择厨房目录")?;
+        let prefix = info.wine_prefix.as_deref().ok_or("wine.prefixUnknown")?;
         return crate::wine::steam_command(Path::new(prefix));
     }
     /*
@@ -424,7 +421,7 @@ fn native_steam_launch_command(platform: &str) -> Result<std::process::Command, 
             command.args(["-b", "com.valvesoftware.steam", "steam://rungameid/728880"]);
             command
         }
-        _ => return Err("当前平台不支持启动厨房".into()),
+        _ => return Err("game.unsupportedPlatform".into()),
     };
     command.stdin(std::process::Stdio::null());
     Ok(command)
@@ -452,7 +449,7 @@ pub fn is_crossover_running() -> bool {
 pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
     if is_game_running(game) {
         log::warn!("文件操作被拒绝：游戏仍在运行");
-        Err("《胡闹厨房2》正在运行，请先关闭后重试".into())
+        Err("game.running".into())
     } else {
         log::debug!("确认游戏已停止，可以执行文件操作");
         Ok(())
@@ -528,7 +525,7 @@ pub fn stop_game(game: &Path) -> Result<usize, String> {
         return Ok(targets.len());
     }
     log::warn!("停止游戏：强制结束后进程仍在运行");
-    Err("游戏进程仍在运行，请手动关闭".into())
+    Err("game.stillRunning".into())
 }
 
 /// 温和关闭的等待上限：足够游戏保存进度并退出，又不至于让用户干等。
@@ -616,13 +613,13 @@ pub fn safe_game_path(game: &Path, relative: &str) -> Result<PathBuf, String> {
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
         log::warn!("拒绝不安全游戏相对路径：{}", relative);
-        return Err("路径必须是游戏目录内的相对路径".into());
+        return Err("game.relativePathRequired".into());
     }
     let root = resolve_existing_ancestor(game)?;
     let candidate = resolve_existing_ancestor(&root.join(rel))?;
     if !candidate.starts_with(&root) {
         log::warn!("拒绝逃逸游戏目录的路径：{}", relative);
-        return Err("路径逃逸游戏目录".into());
+        return Err("archive.pathEscape".into());
     }
     log::trace!("解析游戏相对路径：{}", relative);
     Ok(candidate)
@@ -652,7 +649,7 @@ pub(crate) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> 
             Err(error) => return Err(error.to_string()),
         }
     }
-    Err("路径逃逸游戏目录".into())
+    Err("archive.pathEscape".into())
 }
 
 /// BepInEx and MOD assemblies remain PE files even for native Unix games.

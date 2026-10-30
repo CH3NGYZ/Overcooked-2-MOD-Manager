@@ -18,13 +18,15 @@ pub(crate) struct Migration {
 
 #[cfg(any(windows, test))]
 pub(crate) fn update_executable(executable: &Path) -> Result<PathBuf, String> {
-    let directory = executable.parent().ok_or("安装目录无效")?;
+    let directory = executable
+        .parent()
+        .ok_or("migrate.invalidInstallDirectory")?;
     if !install_guard::is_plugins_directory(directory)? {
         install_guard::validate_install_dir(directory)?;
         return Ok(executable.to_owned());
     }
     let target = dirs::data_local_dir()
-        .ok_or("无法确定默认安装目录")?
+        .ok_or("migrate.defaultDirectoryUnknown")?
         .join("OC2ModManager");
     install_guard::validate_install_dir(&target)?;
     Ok(target.join("OC2ModManager.exe"))
@@ -43,7 +45,7 @@ fn disjoint(source: &Path, target: &Path) -> Result<(), String> {
         PathBuf::from(target.to_string_lossy().to_lowercase()),
     );
     if source.starts_with(&target) || target.starts_with(&source) {
-        return Err("迁移目录重叠，已停止更新".into());
+        return Err("migrate.directoriesOverlap".into());
     }
     Ok(())
 }
@@ -55,11 +57,11 @@ fn reject_link(path: &Path) -> Result<(), String> {
     {
         use std::os::windows::fs::MetadataExt;
         if metadata.file_attributes() & 0x400 != 0 {
-            return Err("迁移数据包含目录链接，已保留原文件并停止更新".into());
+            return Err("migrate.containsLinks".into());
         }
     }
     if metadata.file_type().is_symlink() {
-        return Err("迁移数据包含目录链接，已保留原文件并停止更新".into());
+        return Err("migrate.containsLinks".into());
     }
     Ok(())
 }
@@ -83,7 +85,7 @@ impl Migration {
         if !install_guard::is_plugins_directory(source)?
             || !source.join("OC2ModManager.exe").is_file()
         {
-            return Err("原目录没有需要迁移的管理器".into());
+            return Err("migrate.noManagerFiles".into());
         }
         install_guard::validate_install_dir(target)?;
         disjoint(source, target)?;
@@ -127,7 +129,7 @@ impl Migration {
         self.validate()?;
         install_guard::validate_install_dir(&self.target)?;
         if !install_guard::is_plugins_directory(&self.source)? {
-            return Err("原安装目录发生变化，已保留原文件".into());
+            return Err("migrate.sourceChanged".into());
         }
         disjoint(&self.source, &self.target)?;
         for name in BINARY_NAMES {
@@ -169,7 +171,7 @@ impl Migration {
                     .file_name()
                     .is_some_and(|name| name.eq_ignore_ascii_case("plugins"))
         {
-            return Err("迁移路径或记录无效，已保留原文件".into());
+            return Err("migrate.recordInvalid".into());
         }
         install_guard::validate_install_dir(&self.target)?;
         disjoint(&self.source, &self.target)?;
@@ -222,13 +224,17 @@ fn launch_and_confirm(executable: &Path, log: &Path) -> Result<(), String> {
     }
     append_log(log, "Installer did not launch manager; retrying launch");
     let mut command = Command::new(executable);
-    command.current_dir(executable.parent().ok_or("安装目录无效")?);
+    command.current_dir(
+        executable
+            .parent()
+            .ok_or("migrate.invalidInstallDirectory")?,
+    );
     hide_console(&mut command);
-    command
-        .spawn()
-        .map_err(|error| format!("无法启动更新后的程序: {error}"))?;
+    command.spawn().map_err(|error| {
+        crate::locale_tag::with_params("migrate.launchFailed", &[("reason", &error.to_string())])
+    })?;
     if !wait_for_application(executable, Duration::from_secs(10)) {
-        return Err("安装成功，但新版本未能保持运行，请手动启动并查看日志".into());
+        return Err("migrate.newProcessNotStable".into());
     }
     append_log(log, "New manager process confirmed after retry");
     Ok(())
@@ -283,18 +289,20 @@ fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
             }
             result
         }
-        _ => Err("迁移更新参数无效".into()),
+        _ => Err("migrate.invalidArguments".into()),
     }
 }
 
 fn finish_legacy_migration(migration: &Migration) -> Result<(), String> {
     let executable = migration.target.join("OC2ModManager.exe");
-    let actual = game::read_file_version(&executable).ok_or("无法读取安装后的程序版本")?;
+    let actual =
+        game::read_file_version(&executable).ok_or("migrate.installedVersionUnreadable")?;
     if !version_matches(env!("CARGO_PKG_VERSION"), &actual) {
-        return Err("迁移后版本不符，已保留原管理器".into());
+        return Err("migrate.versionMismatch".into());
     }
     let log = crate::user_paths::logs_dir()?.join("update.log");
-    fs::create_dir_all(log.parent().ok_or("更新日志目录无效")?).map_err(|e| e.to_string())?;
+    fs::create_dir_all(log.parent().ok_or("migrate.logDirectoryInvalid")?)
+        .map_err(|e| e.to_string())?;
     launch_and_confirm(&executable, &log)?;
     migration.cleanup()?;
     append_log(&log, "Migration completed; old manager files removed");
@@ -318,7 +326,7 @@ fn wait_until_stopped(executable: &Path) -> Result<(), String> {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err("旧程序未能及时退出，未开始迁移".into());
+            return Err("migrate.oldProcessStillRunning".into());
         }
         std::thread::sleep(Duration::from_millis(250));
     }

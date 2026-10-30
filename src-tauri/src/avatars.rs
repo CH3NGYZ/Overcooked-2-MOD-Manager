@@ -147,7 +147,7 @@ pub async fn load(
 ) -> Result<Vec<u8>, String> {
     let owner = owner.trim();
     if owner.is_empty() {
-        return Err("头像需要仓库 owner".into());
+        return Err("avatar.ownerRequired".into());
     }
     if let Some(bytes) = read_cached(cache_dir, provider, owner) {
         log::debug!("头像命中缓存：provider={provider:?} owner={owner}");
@@ -190,7 +190,7 @@ async fn wait_for_cache(
             return Ok(bytes);
         }
     }
-    Err("等待头像下载超时".into())
+    Err("avatar.waitTimeout".into())
 }
 
 /// 按 Raw 代理候选竞速下载，成功后落盘。
@@ -230,7 +230,7 @@ async fn download_and_store(
     let candidates = crate::commands::ordered_asset_download_candidates(mode, &url, proxies);
     if candidates.is_empty() {
         log::warn!("头像没有可用下载候选：provider={provider:?} owner={owner}");
-        return Err("没有可用的头像下载源".into());
+        return Err("avatar.noSource".into());
     }
     log::info!(
         "开始下载头像：provider={provider:?} owner={owner} 候选数={}",
@@ -273,14 +273,14 @@ async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, St
             .send(),
     )
     .await
-    .map_err(|_| "头像请求超时".to_string())?
+    .map_err(|_| "avatar.requestTimeout".to_string())?
     .map_err(|error| error.without_url().to_string())?
     .error_for_status()
     .map_err(|error| error.to_string())?;
 
     let bytes = tokio::time::timeout(AVATAR_TIMEOUT, response.bytes())
         .await
-        .map_err(|_| "读取头像超时".to_string())?
+        .map_err(|_| "avatar.readTimeout".to_string())?
         .map_err(|error| error.to_string())?
         .to_vec();
     validate(&bytes).map(|_| bytes)
@@ -292,10 +292,13 @@ async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, St
 /// 缓存成图片，界面上变成破图 —— 那比回落到平台图标更糟。
 fn validate(bytes: &[u8]) -> Result<(), String> {
     if bytes.is_empty() {
-        return Err("头像内容为空".into());
+        return Err("avatar.emptyContent".into());
     }
     if bytes.len() > MAX_AVATAR_BYTES {
-        return Err(format!("头像超过大小上限：{} 字节", bytes.len()));
+        return Err(crate::locale_tag::with_params(
+            "avatar.tooLarge",
+            &[("bytes", &bytes.len().to_string())],
+        ));
     }
     let is_image = bytes.starts_with(&[0xFF, 0xD8]) // JPEG
         || bytes.starts_with(&[0x89, b'P', b'N', b'G']) // PNG
@@ -304,7 +307,7 @@ fn validate(bytes: &[u8]) -> Result<(), String> {
         || bytes.starts_with(b"<svg")
         || bytes.starts_with(b"<?xml");
     if !is_image {
-        return Err("下载到的内容不是图片".into());
+        return Err("avatar.notImage".into());
     }
     Ok(())
 }
@@ -317,7 +320,7 @@ fn store(
     bytes: &[u8],
 ) -> Result<(), String> {
     let path = cache_path(cache_dir, provider, owner);
-    let dir = path.parent().ok_or("头像缓存路径无效")?;
+    let dir = path.parent().ok_or("avatar.cachePathInvalid")?;
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let temp = path.with_extension("tmp");
     std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;

@@ -1,7 +1,7 @@
 use std::path::{Component, Path};
 
 const CHECK_FLAG: &str = "--validate-manager-install-dir";
-const ERROR: &str = "管理器不能安装到 BepInEx 目录或其子目录，请选择游戏目录外的位置。";
+const ERROR: &str = "config.installGuardBepInEx";
 
 /// 校验管理器安装目录。
 ///
@@ -85,7 +85,7 @@ fn show_error(language: &str) {
         use std::os::windows::ffi::OsStrExt;
         let message = match language {
             "2052" => ERROR,
-            "1028" => "管理器不能安裝到 BepInEx 目錄或其子目錄，請選擇遊戲目錄外的位置。",
+            "1028" => "config.installGuardBepInExTraditional",
             "1042" => {
                 "관리자를 BepInEx 폴더 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
             }

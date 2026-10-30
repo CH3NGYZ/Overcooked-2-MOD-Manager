@@ -165,14 +165,18 @@ fn synchronize_bundled_list(current: &mut Vec<GitHubProxy>, bundled: &[GitHubPro
 pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
     log::debug!("开始解析 GitHub 代理 TOML 清单：字节数={}", text.len());
     if text.len() > 1024 * 1024 {
-        return Err("GitHub 代理清单超过 1 MiB".into());
+        return Err("proxy.manifestTooLarge".into());
     }
-    let mut manifest: GitHubProxyManifest =
-        toml::from_str(text).map_err(|error| format!("GitHub 代理清单解析失败: {error}"))?;
+    let mut manifest: GitHubProxyManifest = toml::from_str(text).map_err(|error| {
+        crate::locale_tag::with_params(
+            "proxy.manifestParseFailed",
+            &[("reason", &error.to_string())],
+        )
+    })?;
     if manifest.schema_version != 1 {
-        return Err(format!(
-            "不支持 GitHub 代理清单版本 {}",
-            manifest.schema_version
+        return Err(crate::locale_tag::with_params(
+            "proxy.unsupportedManifestVersion",
+            &[("version", &manifest.schema_version.to_string())],
         ));
     }
     for proxy in manifest
@@ -193,7 +197,10 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         || manifest.gitee_api_proxies.len() > MAX_PROXY_COUNT
         || manifest.avatar_proxies.len() > MAX_PROXY_COUNT
     {
-        return Err(format!("每类代理最多允许 {MAX_PROXY_COUNT} 条"));
+        return Err(crate::locale_tag::with_params(
+            "proxy.tooManyEntries",
+            &[("max", &MAX_PROXY_COUNT.to_string())],
+        ));
     }
     let config = GitHubProxyConfig {
         release_proxies: deduplicate(manifest.release_proxies),
@@ -216,17 +223,20 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
 pub fn parse_userscript(text: &str) -> Result<GitHubProxyConfig, String> {
     log::debug!("开始解析 GitHub 代理用户脚本：字节数={}", text.len());
     if text.len() > 4 * 1024 * 1024 {
-        return Err("GitHub 代理脚本超过 4 MiB".into());
+        return Err("proxy.scriptTooLarge".into());
     }
     let release_array = extract_js_array(text, "download_url_us")?;
     let raw_array = extract_js_array(text, "raw_url")?;
     let mut release_proxies = parse_userscript_rows(release_array, false)?;
     let mut raw_proxies = parse_userscript_rows(raw_array, true)?;
     if release_proxies.is_empty() && raw_proxies.is_empty() {
-        return Err("GitHub 代理脚本中没有可识别的 Release 或 Raw 代理".into());
+        return Err("proxy.noUsableEntries".into());
     }
     if release_proxies.len() > MAX_PROXY_COUNT || raw_proxies.len() > MAX_PROXY_COUNT {
-        return Err(format!("每类代理最多允许 {MAX_PROXY_COUNT} 条"));
+        return Err(crate::locale_tag::with_params(
+            "proxy.tooManyEntries",
+            &[("max", &MAX_PROXY_COUNT.to_string())],
+        ));
     }
     for proxy in release_proxies.iter_mut().chain(raw_proxies.iter_mut()) {
         normalize_proxy(proxy)?;
@@ -252,14 +262,22 @@ fn extract_js_array<'a>(text: &'a str, variable: &str) -> Result<&'a str, String
         r"(?m)(?:\b(?:const|let|var)\s+|,)\s*{variable}\s*=\s*\["
     ))
     .map_err(|error| error.to_string())?;
-    let found = assignment
-        .find(text)
-        .ok_or_else(|| format!("代理脚本缺少 {variable} 列表"))?;
+    let found = assignment.find(text).ok_or_else(|| {
+        crate::locale_tag::with_params(
+            "proxy.missingVariableList",
+            &[("variable", &variable.to_string())],
+        )
+    })?;
     let open = text[found.end() - 1..]
         .char_indices()
         .next()
         .map(|(offset, _)| found.end() - 1 + offset)
-        .ok_or_else(|| format!("{variable} 列表不完整"))?;
+        .ok_or_else(|| {
+            crate::locale_tag::with_params(
+                "proxy.incompleteVariableList",
+                &[("variable", &variable.to_string())],
+            )
+        })?;
     let bytes = text.as_bytes();
     let mut index = open + 1;
     let mut depth = 1usize;
@@ -305,7 +323,10 @@ fn extract_js_array<'a>(text: &'a str, variable: &str) -> Result<&'a str, String
         }
         index += 1;
     }
-    Err(format!("{variable} 列表没有闭合"))
+    Err(crate::locale_tag::with_params(
+        "proxy.unclosedVariableList",
+        &[("variable", &variable.to_string())],
+    ))
 }
 
 fn parse_userscript_rows(array: &str, is_raw: bool) -> Result<Vec<GitHubProxy>, String> {
@@ -344,7 +365,7 @@ fn parse_userscript_rows(array: &str, is_raw: bool) -> Result<Vec<GitHubProxy>, 
             .map(str::to_string)
             .into_iter()
             .collect::<Vec<_>>();
-        if regions.is_empty() && !location.eq_ignore_ascii_case("其他") {
+        if regions.is_empty() && !location.eq_ignore_ascii_case("common.other") {
             regions.push(location);
         }
         proxies.push(GitHubProxy {
@@ -458,7 +479,10 @@ pub fn validate_config(mut config: GitHubProxyConfig) -> Result<GitHubProxyConfi
         || config.gitee_api_proxies.len() > MAX_PROXY_COUNT
         || config.avatar_proxies.len() > MAX_PROXY_COUNT
     {
-        return Err(format!("每类代理最多允许 {MAX_PROXY_COUNT} 条"));
+        return Err(crate::locale_tag::with_params(
+            "proxy.tooManyEntries",
+            &[("max", &MAX_PROXY_COUNT.to_string())],
+        ));
     }
     for proxy in config
         .release_proxies
@@ -557,8 +581,12 @@ fn protect_builtin_entries(
                 .any(|proxy| proxy.id.trim().eq_ignore_ascii_case(id))
         }) {
             log::warn!("拒绝删除或移动内置代理：类型={}，ID={}", kind, missing);
-            return Err(format!(
-                "内置 {kind} 代理不可删除或移动到其他类型: {missing}"
+            return Err(crate::locale_tag::with_params(
+                "proxy.builtinImmutable",
+                &[
+                    ("kind", &kind.to_string()),
+                    ("missing", &missing.to_string()),
+                ],
             ));
         }
     }
@@ -581,7 +609,7 @@ fn normalize_proxy(proxy: &mut GitHubProxy) -> Result<(), String> {
         .regions
         .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     if proxy.id.is_empty() || proxy.name.is_empty() || proxy.template.is_empty() {
-        return Err("代理 ID、名称和模板都不能为空".into());
+        return Err("proxy.fieldsRequired".into());
     }
     let mut probe = String::with_capacity(proxy.template.len());
     let mut rest = proxy.template.as_str();
@@ -591,21 +619,29 @@ fn normalize_proxy(proxy: &mut GitHubProxy) -> Result<(), String> {
         let end = rest[token_start..]
             .find('}')
             .map(|offset| token_start + offset)
-            .ok_or_else(|| "代理模板包含未闭合的占位符".to_string())?;
+            .ok_or_else(|| "proxy.unclosedPlaceholder".to_string())?;
         let token = &rest[token_start..end];
         if !PLACEHOLDERS.contains(&token) {
-            return Err(format!("代理模板占位符不受支持: {{{token}}}"));
+            return Err(crate::locale_tag::with_params(
+                "proxy.unsupportedPlaceholder",
+                &[("token", &token.to_string())],
+            ));
         }
         probe.push('x');
         rest = &rest[end + 1..];
     }
     probe.push_str(rest);
     if probe.contains('}') {
-        return Err("代理模板包含无效的大括号".into());
+        return Err("proxy.invalidBraces".into());
     }
-    let parsed = Url::parse(&probe).map_err(|error| format!("代理模板 URL 无效: {error}"))?;
+    let parsed = Url::parse(&probe).map_err(|error| {
+        crate::locale_tag::with_params(
+            "proxy.templateUrlInvalid",
+            &[("reason", &error.to_string())],
+        )
+    })?;
     if parsed.scheme() != "https" || parsed.host_str().is_none() {
-        return Err("GitHub 代理模板必须是 HTTPS URL".into());
+        return Err("proxy.templateMustBeHttps".into());
     }
     Ok(())
 }
@@ -964,7 +1000,10 @@ pub fn validate_unique_ids(config: &GitHubProxyConfig) -> Result<(), String> {
         let mut ids = HashSet::new();
         for proxy in proxies {
             if !ids.insert(proxy.id.to_ascii_lowercase()) {
-                return Err(format!("GitHub 代理 ID 重复: {}", proxy.id));
+                return Err(crate::locale_tag::with_params(
+                    "proxy.duplicateId",
+                    &[("id", &proxy.id.to_string())],
+                ));
             }
         }
     }

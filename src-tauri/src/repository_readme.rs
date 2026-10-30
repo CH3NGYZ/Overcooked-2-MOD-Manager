@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::State;
 
-const NOT_FOUND: &str = "文件不存在";
+const NOT_FOUND: &str = "readme.fileMissing";
 const MAX_README_BYTES: usize = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -59,14 +59,14 @@ impl ReadmeDownloads {
 
     fn begin(&self, id: &str) -> Result<ReadmeRequest<'_>, String> {
         if !Self::valid_id(id) {
-            return Err("仓库说明请求标识无效".into());
+            return Err("readme.invalidRequestId".into());
         }
-        let mut requests = self.requests.lock().map_err(|_| "操作锁异常")?;
+        let mut requests = self.requests.lock().map_err(|_| "lock.poisoned")?;
         requests.retain(|_, request| {
             request.started || request.created.elapsed() < Duration::from_secs(60)
         });
         if requests.len() >= 32 {
-            return Err("仓库说明请求过多，请稍后重试".into());
+            return Err("readme.tooManyRequests".into());
         }
         let request = requests.entry(id.into()).or_insert_with(|| RequestState {
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -74,7 +74,7 @@ impl ReadmeDownloads {
             created: Instant::now(),
         });
         if request.started {
-            return Err("正在读取仓库说明".into());
+            return Err("readme.loading".into());
         }
         request.started = true;
         Ok(ReadmeRequest {
@@ -132,13 +132,16 @@ async fn fetch_readme(
         return Err(NOT_FOUND.into());
     }
     if !status.is_success() {
-        return Err(format!("仓库说明下载失败：HTTP {status}"));
+        return Err(crate::locale_tag::with_params(
+            "readme.httpStatus",
+            &[("status", &status.to_string())],
+        ));
     }
     if response
         .content_length()
         .is_some_and(|size| size > MAX_README_BYTES as u64)
     {
-        return Err("仓库说明超过 2 MiB，无法展示".into());
+        return Err("readme.tooLarge".into());
     }
     let mut content = Vec::new();
     let mut progress = reporter.snapshot();
@@ -147,14 +150,14 @@ async fn fetch_readme(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         if content.len() + chunk.len() > MAX_README_BYTES {
-            return Err("仓库说明超过 2 MiB，无法展示".into());
+            return Err("readme.tooLarge".into());
         }
         content.extend_from_slice(&chunk);
         reporter.received(chunk.len() as u64);
         progress.downloaded = content.len() as u64;
         reporter.update(progress.clone());
     }
-    std::str::from_utf8(&content).map_err(|_| "仓库说明不是有效的 UTF-8 文本")?;
+    std::str::from_utf8(&content).map_err(|_| "readme.invalidUtf8")?;
     Ok(content)
 }
 
@@ -181,7 +184,7 @@ async fn download_repository_readme(
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
     if cancelled.load(Ordering::Acquire) {
-        return Err("下载已取消".into());
+        return Err("download.cancelled".into());
     }
     if *provider == Provider::Gitee {
         // Gitee Raw uses exactly one direct GET, never proxy racing or ranged downloads.
@@ -213,14 +216,14 @@ pub async fn get_repository_readme(
     let request = state.readme.begin(&request_id)?;
     let cancelled = &request.cancelled;
     let config = {
-        let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+        let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
         state.config.load_or_default()
     };
     let repo = config
         .repositories
         .iter()
         .find(|repo| repo.id == repository_id)
-        .ok_or("仓库不存在")?;
+        .ok_or("source.repositoryMissing")?;
     let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
     let result = async {
@@ -240,7 +243,7 @@ pub async fn get_repository_readme(
                         repository_id,
                         error
                     );
-                    "无法确定仓库默认分支".to_string()
+                    "readme.defaultBranchUnknown".to_string()
                 })?
         };
         let url = releases::repository_file_url(
@@ -268,7 +271,7 @@ pub async fn get_repository_readme(
         .await
         {
             Ok(bytes) => Ok(RepositoryReadme {
-                content: String::from_utf8(bytes).map_err(|_| "仓库说明不是有效的 UTF-8 文本")?,
+                content: String::from_utf8(bytes).map_err(|_| "readme.invalidUtf8")?,
                 exists: true,
                 url,
             }),
@@ -284,7 +287,7 @@ pub async fn get_repository_readme(
         biased;
         _ = async {
             while !cancelled.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(50)).await; }
-        } => Err("仓库说明读取已取消".into()),
+        } => Err("readme.cancelled".into()),
         result = result => result,
     }
 }

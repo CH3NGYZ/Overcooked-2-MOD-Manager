@@ -139,4 +139,18 @@ export const message: DomainMessages = {
     ko: 'MOD 패키지를 휴지통으로 옮겼습니다(파일 {count}개)',
     ja: 'MOD パッケージをゴミ箱へ移動しました（{count} ファイル）',
   },
+  'mods.bulkToggleEnabled': {
+    'zh-CN': '{count} 个 MOD 已启用',
+    'zh-TW': '{count} 個 MOD 已啟用',
+    en: '{count} MODs enabled',
+    ko: 'MOD {count}개를 활성화했습니다',
+    ja: '{count} 個の MOD を有効にしました',
+  },
+  'mods.bulkToggleDisabled': {
+    'zh-CN': '{count} 个 MOD 已禁用',
+    'zh-TW': '{count} 個 MOD 已停用',
+    en: '{count} MODs disabled',
+    ko: 'MOD {count}개를 비활성화했습니다',
+    ja: '{count} 個の MOD を無効にしました',
+  },
 }

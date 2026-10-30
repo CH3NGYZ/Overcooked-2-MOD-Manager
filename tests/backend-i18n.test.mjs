@@ -10,11 +10,11 @@ const SRC = new URL('../src/', import.meta.url)
  * 后端错误 tag → 前端文案的翻译链路。
  *
  * 这是本轮 i18n 改造的核心：后端不再返回中文（`Err("请打开游戏并确认…")`），
- * 只返回 `error.<域>.<原因>` 形式的 tag（可带 `?k=v` 内联参数），
- * 由前端按当前语言翻译。
+ * 只返回 tag（可带 `?k=v` 内联参数），由前端按当前语言翻译。
  *
- * 直接引真实模块：`src/locale/backend.ts` 只依赖 vue-i18n 与语言表，
- * 不碰 Vue 组件与 IPC，Node 里可直接执行。
+ * tag 形态以**第一段是域**为准（`mods.dllNotFound`、`game.notFound`）。
+ * 早期批次写成 `error.<域>.<原因>`（`error` 本身就是域），两种都支持 ——
+ * 判定统一走查表，见 `src/locale/backend.ts` 的 `isErrorTag`。
  */
 const { translateBackendMessage, isErrorTag, backendMessageOf } = await import(
   '../src/locale/backend.ts'
@@ -28,7 +28,7 @@ function inLocale(locale, tag) {
 }
 
 test('同一 tag 在五种语言下各自翻译', () => {
-  const tag = 'error.diyLevel.notRunning'
+  const tag = 'diyLevel.notRunning'
   assert.equal(inLocale('zh-CN', tag), '请打开游戏并确认 街机MOD 正在运行')
   assert.equal(inLocale('zh-TW', tag), '請開啟遊戲並確認主機實用工具正在執行')
   assert.match(inLocale('en', tag), /HostUtilities is running/)
@@ -36,30 +36,37 @@ test('同一 tag 在五种语言下各自翻译', () => {
   assert.match(inLocale('ja', tag), /ホストユーティリティ/)
 })
 
+test('裸域 tag 直接可翻译', () => {
+  // 后端统一发「第一段是域」的裸 tag，不需要任何前缀转换
+  assert.match(inLocale('en', 'mods.higherVersionPresent'), /newer version/i)
+  assert.match(inLocale('en', 'diyLevel.notRunning'), /HostUtilities/)
+  assert.match(inLocale('en', 'framework.cleanupFailed'), /clean up|BepInEx/i)
+})
+
 test('内联参数被解析并插值', () => {
-  // 后端产出形态：error.rename.nameTooLong?bytes=240&limit=238
-  const text = inLocale('en', 'error.rename.nameTooLong?bytes=240&limit=238')
+  // 后端产出形态：rename.nameTooLong?bytes=240&limit=238
+  const text = inLocale('en', 'rename.nameTooLong?bytes=240&limit=238')
   assert.match(text, /240/, `参数未插值：${text}`)
   assert.match(text, /238/, `参数未插值：${text}`)
   // 中文下同样插值，且不是裸 tag
-  const zh = inLocale('zh-CN', 'error.rename.nameTooLong?bytes=240&limit=238')
+  const zh = inLocale('zh-CN', 'rename.nameTooLong?bytes=240&limit=238')
   assert.match(zh, /240.*238/, `中文参数未插值：${zh}`)
-  assert.ok(!zh.includes('error.'), `不应显示裸 tag：${zh}`)
+  assert.ok(!zh.includes('rename.'), `不应显示裸 tag：${zh}`)
 })
 
 test('带路径参数的错误不会破坏插值（含反斜杠与冒号）', () => {
-  const tag = 'error.backup.recycleFailed?reason=busy&path=D%3A%5Cbackups%5CDIYLevel.backup-1'
+  const tag = 'backup.recycleFailed?reason=busy&path=D%3A%5Cbackups%5CDIYLevel.backup-1'
   const text = inLocale('en', tag)
   assert.match(text, /busy/)
   assert.match(text, /D:\\backups\\DIYLevel\.backup-1/, `路径未正确插值：${text}`)
 })
 
 test('未登记的 tag 原样返回，便于发现漏翻译', () => {
-  const text = inLocale('en', 'error.notRegistered.anywhere')
-  assert.equal(text, 'error.notRegistered.anywhere')
+  const text = inLocale('en', 'nothing.notRegistered')
+  assert.equal(text, 'nothing.notRegistered')
 })
 
-test('非 error.* 的中文串原样返回（迁移期兼容）', () => {
+test('非 tag 的中文串原样返回（迁移期兼容）', () => {
   // 尚未改造的命令仍返回中文整句，不能被当成 tag 硬翻
   const legacy = '备份完成: D:\\backups\\x'
   assert.equal(translateBackendMessage(legacy), legacy)
@@ -68,9 +75,9 @@ test('非 error.* 的中文串原样返回（迁移期兼容）', () => {
 
 test('backendMessageOf 收口 Error / 字符串 / 对象三种形态', () => {
   i18n.global.locale.value = 'en'
-  assert.match(backendMessageOf(new Error('error.diyLevel.notRunning')), /HostUtilities/)
-  assert.match(backendMessageOf('error.diyLevel.notRunning'), /HostUtilities/)
-  assert.match(backendMessageOf({ message: 'error.diyLevel.notRunning' }), /HostUtilities/)
+  assert.match(backendMessageOf(new Error('diyLevel.notRunning')), /HostUtilities/)
+  assert.match(backendMessageOf('diyLevel.notRunning'), /HostUtilities/)
+  assert.match(backendMessageOf({ message: 'diyLevel.notRunning' }), /HostUtilities/)
 })
 
 test('空值不产生文案', () => {
@@ -83,18 +90,18 @@ test('空值不产生文案', () => {
 
 test('卸载与回收站的 tag 在五语下都有翻译', () => {
   const tags = [
-    'error.mods.packageConfirmation',
-    'error.mods.unmanagedConfirmation',
-    'error.mods.unknownFiles',
-    'error.mods.dllNotInPackage',
-    'error.mods.dllNotFound',
-    'error.mods.notInPlugins',
-    'error.recycle.recordMissing',
-    'error.recycle.fileSharedByOtherPackage',
-    'error.recycle.insideModsDirectory',
-    'error.recycle.partialFailure',
-    'error.recycle.packageUpdated',
-    'error.recycle.wrongGameDirectory',
+    'mods.packageConfirmation',
+    'mods.unmanagedConfirmation',
+    'mods.unknownFiles',
+    'mods.dllNotInPackage',
+    'mods.dllNotFound',
+    'mods.notInPlugins',
+    'recycle.recordMissing',
+    'recycle.fileSharedByOtherPackage',
+    'recycle.insideModsDirectory',
+    'recycle.partialFailure',
+    'recycle.packageUpdated',
+    'recycle.wrongGameDirectory',
     'message.mods.movedToRecycleBin',
     'message.mods.deleted',
     'message.mods.packageMovedToRecycleBin',
@@ -116,12 +123,12 @@ test('回收站命令不再返回中文文案（源码级确认）', () => {
     'utf8',
   )
   for (const tag of [
-    'error.recycle.recordMissing',
-    'error.recycle.fileSharedByOtherPackage',
-    'error.recycle.insideModsDirectory',
-    'error.recycle.partialFailure',
-    'error.recycle.packageUpdated',
-    'error.recycle.wrongGameDirectory',
+    'recycle.recordMissing',
+    'recycle.fileSharedByOtherPackage',
+    'recycle.insideModsDirectory',
+    'recycle.partialFailure',
+    'recycle.packageUpdated',
+    'recycle.wrongGameDirectory',
   ]) {
     assert.ok(rust.includes(tag), `recycle_bin.rs 应包含 tag：${tag}`)
   }
@@ -138,18 +145,18 @@ test('回收站命令不再返回中文文案（源码级确认）', () => {
 
 test('仓库源导入的 tag 在五语下都有翻译', () => {
   const tags = [
-    'error.source.addressEmpty',
-    'error.source.addressInvalid',
-    'error.source.addressHasCredentials',
-    'error.source.builtinPathUnsafe',
-    'error.source.builtinNotToml',
-    'error.source.builtinFileMissing',
-    'error.source.notBuiltin',
-    'error.source.idOrNicknameEmpty',
-    'error.source.proxyNotHttps',
-    'error.source.proxyAddressInvalid',
-    'error.source.tooLarge',
-    'error.source.tomlInvalid',
+    'source.addressEmpty',
+    'source.addressInvalid',
+    'source.addressHasCredentials',
+    'source.builtinPathUnsafe',
+    'source.builtinNotToml',
+    'source.builtinFileMissing',
+    'source.notBuiltin',
+    'source.idOrNicknameEmpty',
+    'source.proxyNotHttps',
+    'source.proxyAddressInvalid',
+    'source.tooLarge',
+    'source.tomlInvalid',
   ]
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
     i18n.global.locale.value = locale
@@ -202,19 +209,19 @@ test('前端不直接显示后端 message（必须经过桥接层）', () => {
 
 test('下载与归档的 tag 在五语下都有翻译', () => {
   const tags = [
-    'error.download.cancelled',
-    'error.download.empty',
-    'error.download.incomplete',
-    'error.download.httpStatus',
-    'error.download.checksumFailed',
-    'error.download.checksumMismatch',
-    'error.download.chunkTooLong',
-    'error.download.chunkLengthMismatch',
-    'error.archive.invalidZipName',
-    'error.archive.unsafePath',
-    'error.archive.pathEscape',
-    'error.archive.noInstallableContent',
-    'error.archive.sourceEqualsTarget',
+    'download.cancelled',
+    'download.empty',
+    'download.incomplete',
+    'download.httpStatus',
+    'download.checksumFailed',
+    'download.checksumMismatch',
+    'download.chunkTooLong',
+    'download.chunkLengthMismatch',
+    'archive.invalidZipName',
+    'archive.unsafePath',
+    'archive.pathEscape',
+    'archive.noInstallableContent',
+    'archive.sourceEqualsTarget',
   ]
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
     i18n.global.locale.value = locale
@@ -228,9 +235,9 @@ test('下载与归档的 tag 在五语下都有翻译', () => {
 
 test('下载的 HTTP 状态与校验失败参数在五语下都插值', () => {
   const cases = [
-    ['error.download.httpStatus?status=404', /404/],
-    ['error.download.checksumMismatch?expected=abc&actual=def', /abc/],
-    ['error.archive.unsafePath?entry=..%2Fevil', /\.\./],
+    ['download.httpStatus?status=404', /404/],
+    ['download.checksumMismatch?expected=abc&actual=def', /abc/],
+    ['archive.unsafePath?entry=..%2Fevil', /\.\./],
   ]
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
     i18n.global.locale.value = locale
@@ -245,15 +252,15 @@ test('下载的 HTTP 状态与校验失败参数在五语下都插值', () => {
 
 test('框架备份与卸载的 tag 在五语下都有翻译', () => {
   const tags = [
-    'error.framework.bepinexMissing',
-    'error.framework.bepinexOnlyResidue',
-    'error.framework.alreadyInstalled',
-    'error.framework.diyLevelMissing',
-    'error.backup.notFound',
-    'error.backup.outsideRoot',
-    'error.backup.overlap',
-    'error.backup.recycleFailed',
-    'error.backup.noReclaimableFiles',
+    'framework.bepinexMissing',
+    'framework.bepinexOnlyResidue',
+    'framework.alreadyInstalled',
+    'framework.diyLevelMissing',
+    'backup.notFound',
+    'backup.outsideRoot',
+    'backup.overlap',
+    'backup.recycleFailed',
+    'backup.noReclaimableFiles',
     'message.backup.created',
     'message.backup.bepInExRestored',
     'message.backup.diyLevelRestored',
@@ -273,7 +280,7 @@ test('框架备份与卸载的 tag 在五语下都有翻译', () => {
 })
 
 test('框架 tag 的参数在每种语言下都插值', () => {
-  const tag = 'error.backup.recycleFailed?reason=busy&path=D%3A%5Cbackups%5Cx'
+  const tag = 'backup.recycleFailed?reason=busy&path=D%3A%5Cbackups%5Cx'
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
     i18n.global.locale.value = locale
     const text = translateBackendMessage(tag)
@@ -292,11 +299,11 @@ test('后端不再返回中文整句的框架错误（源码级确认）', () =>
     'utf8',
   )
   for (const tag of [
-    'error.framework.alreadyInstalled',
-    'error.framework.bepinexMissing',
-    'error.framework.bepinexOnlyResidue',
-    'error.framework.diyLevelMissing',
-    'error.backup.recycleFailed',
+    'framework.alreadyInstalled',
+    'framework.bepinexMissing',
+    'framework.bepinexOnlyResidue',
+    'framework.diyLevelMissing',
+    'backup.recycleFailed',
   ]) {
     assert.ok(rust.includes(tag), `commands.rs 应包含 tag：${tag}`)
   }

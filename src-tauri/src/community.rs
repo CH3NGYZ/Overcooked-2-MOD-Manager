@@ -157,10 +157,25 @@ pub fn source(provider: &Provider) -> RepositorySource {
     };
     RepositorySource {
         id: source_id(provider).into(),
-        nickname: format!("{name} 社区仓库"),
+        nickname: crate::locale_tag::with_params(
+            "community.labelSimplified",
+            &[("name", &name.to_string())],
+        ),
         nickname_i18n: [
-            ("zh-CN".into(), format!("{name} 社区仓库")),
-            ("zh-TW".into(), format!("{name} 社群倉庫")),
+            (
+                "zh-CN".into(),
+                crate::locale_tag::with_params(
+                    "community.labelSimplified",
+                    &[("name", &name.to_string())],
+                ),
+            ),
+            (
+                "zh-TW".into(),
+                crate::locale_tag::with_params(
+                    "community.labelTraditional",
+                    &[("name", &name.to_string())],
+                ),
+            ),
             ("en".into(), format!("{name} community repositories")),
             ("ko".into(), format!("{name} 커뮤니티 저장소")),
             ("ja".into(), format!("{name} コミュニティリポジトリ")),
@@ -288,8 +303,8 @@ impl SearchRateLimits {
 
     pub(crate) fn rate_limit_message(&self) -> &'static str {
         match self.provider {
-            Provider::Github => "GitHub 搜索触发速率限制，请稍后刷新",
-            Provider::Gitee => "Gitee 网页请求触发速率限制，请稍后刷新",
+            Provider::Github => "community.searchRateLimited",
+            Provider::Gitee => "community.giteeWebRateLimited",
         }
     }
 
@@ -342,7 +357,7 @@ fn rate_limit_delay(status: StatusCode, headers: &HeaderMap) -> Option<Duration>
 }
 
 fn page_url(endpoint: &str, page: usize) -> Result<String, String> {
-    let mut url = Url::parse(endpoint).map_err(|_| "GitHub 社区搜索地址无效")?;
+    let mut url = Url::parse(endpoint).map_err(|_| "community.searchUrlInvalid")?;
     url.query_pairs_mut()
         .clear()
         .append_pair("q", SEARCH_QUERY)
@@ -445,9 +460,12 @@ async fn fetch_page(
                 status,
                 StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
             ) {
-                "GitHub 搜索触发速率限制，请稍后刷新".into()
+                "community.searchRateLimited".into()
             } else {
-                format!("GitHub 社区搜索 HTTP {status}")
+                crate::locale_tag::with_params(
+                    "community.searchHttpStatus",
+                    &[("status", &status.to_string())],
+                )
             },
         );
     }
@@ -460,18 +478,18 @@ async fn fetch_page(
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
     {
-        return Err("GitHub 社区搜索响应过大".into());
+        return Err("community.searchResponseTooLarge".into());
     }
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return Err("GitHub 社区搜索响应过大".into());
+            return Err("community.searchResponseTooLarge".into());
         }
         bytes.extend_from_slice(&chunk);
     }
-    let value = serde_json::from_slice(&bytes).map_err(|_| "GitHub 社区搜索响应格式无效")?;
+    let value = serde_json::from_slice(&bytes).map_err(|_| "community.searchResponseInvalid")?;
     Ok((value, has_next))
 }
 
@@ -517,7 +535,7 @@ async fn fetch_page_from_targets(
     page: usize,
     limits: &mut SearchRateLimits,
 ) -> Result<(Value, bool), String> {
-    let mut last_error = "没有可用的 GitHub API 地址".to_string();
+    let mut last_error = "community.noApiTarget".to_string();
     for target in targets {
         log::info!(
             "正在请求 GitHub 社区仓库：页={}，渠道={}，地址={}",
@@ -539,7 +557,7 @@ async fn fetch_page_from_targets(
             {
                 return Ok((value, has_next));
             }
-            Ok(_) => last_error = "GitHub 社区搜索响应格式无效".into(),
+            Ok(_) => last_error = "community.searchResponseInvalid".into(),
             Err(error) => last_error = error,
         }
     }
@@ -692,10 +710,13 @@ pub async fn refresh_community_repositories(
 ) -> Result<PublicConfig, String> {
     let provider = provider.unwrap_or(Provider::Github);
     let search = state.community.for_provider(&provider);
-    let mut limits = search.limits.try_lock().map_err(|_| "社区仓库正在搜索")?;
+    let mut limits = search
+        .limits
+        .try_lock()
+        .map_err(|_| "community.searchInProgress")?;
     search.cancelled.store(false, Ordering::Release);
     let config = {
-        let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+        let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
         state.config.load_or_default()
     };
     let token = (provider == Provider::Github)
@@ -711,12 +732,12 @@ pub async fn refresh_community_repositories(
                 Provider::Gitee => crate::gitee_community::search_all(&app, state.config.cache_dir().join("gitee-webview"), &mut limits).await,
             }
         } => results?,
-        _ = async { while !search.cancelled.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => return Err("社区仓库搜索已取消".into()),
+        _ = async { while !search.cancelled.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => return Err("community.searchCancelled".into()),
     };
     let _cache_guard = state.repository_cache.lock().await;
-    let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+    let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
     if search.cancelled.load(Ordering::Acquire) {
-        return Err("社区仓库搜索已取消".into());
+        return Err("community.searchCancelled".into());
     }
     let mut config = state.config.load_or_default();
     let manifests = crate::archive::read_manifests(&state.config.manifests_dir());

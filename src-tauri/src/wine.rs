@@ -108,7 +108,7 @@ fn dll_overrides(previous: &str) -> String {
 #[cfg(target_os = "macos")]
 fn wine_command(prefix: &Path) -> Result<std::process::Command, String> {
     if !prefix.is_absolute() || !prefix.join("drive_c").is_dir() {
-        return Err("无法确定游戏使用的 Wine 容器，请重新选择厨房目录".into());
+        return Err("wine.prefixUnknown".into());
     }
     let mut command = {
         let mut apps = vec![PathBuf::from("/Applications/CrossOver.app")];
@@ -119,14 +119,14 @@ fn wine_command(prefix: &Path) -> Result<std::process::Command, String> {
             .into_iter()
             .map(|app| app.join("Contents/SharedSupport/CrossOver/bin/wine"))
             .find(|path| path.is_file())
-            .ok_or("请先安装 CrossOver，再启动 Wine 版厨房")?;
+            .ok_or("wine.crossOverMissing")?;
         let mut command = std::process::Command::new(wine);
         command
             .arg("--bottle")
-            .arg(prefix.file_name().ok_or("Wine 容器路径无效")?);
+            .arg(prefix.file_name().ok_or("wine.prefixInvalid")?);
         command.env(
             "CX_BOTTLE_PATH",
-            prefix.parent().ok_or("Wine 容器路径无效")?,
+            prefix.parent().ok_or("wine.prefixInvalid")?,
         );
         command
     };
@@ -145,7 +145,7 @@ pub(crate) fn steam_command(prefix: &Path) -> Result<std::process::Command, Stri
     let steam = steam_roots_in_prefix(prefix)
         .into_iter()
         .next()
-        .ok_or("Wine 容器中未找到 Windows Steam，请先完成安装")?
+        .ok_or("wine.steamMissing")?
         .join("steam.exe");
     let mut command = wine_command(prefix)?;
     command.arg(steam).args(["-applaunch", "728880"]);
@@ -181,7 +181,7 @@ pub(crate) fn configure_winhttp(prefix: &Path) -> Result<(), String> {
         .spawn()
         .map_err(|error| {
             log::warn!("Wine winhttp 配置进程启动失败：{error}");
-            "无法自动配置 Wine winhttp，请在目标容器的 winecfg 中手动设置".to_string()
+            "wine.winhttpFailed".to_string()
         })?;
     let started = std::time::Instant::now();
     loop {
@@ -191,7 +191,7 @@ pub(crate) fn configure_winhttp(prefix: &Path) -> Result<(), String> {
                 return Ok(());
             }
             Ok(Some(_)) => {
-                return Err("无法自动配置 Wine winhttp，请在目标容器的 winecfg 中手动设置".into());
+                return Err("wine.winhttpFailed".into());
             }
             Ok(None) if started.elapsed() < std::time::Duration::from_secs(20) => {
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -199,7 +199,7 @@ pub(crate) fn configure_winhttp(prefix: &Path) -> Result<(), String> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("Wine winhttp 自动配置超时，请在目标容器的 winecfg 中手动设置".into());
+                return Err("wine.winhttpTimeout".into());
             }
         }
     }

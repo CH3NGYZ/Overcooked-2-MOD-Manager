@@ -73,30 +73,31 @@ fn page_number(url: &Url) -> Option<usize> {
 
 fn snapshot_html(raw: &str, expected: &Url) -> Result<Option<String>, String> {
     if raw.len() > MAX_HTML_BYTES * 6 + 1024 {
-        return Err("Gitee 社区网页响应过大".into());
+        return Err("community.giteeWebTooLarge".into());
     }
     // Evaluation can be interrupted by the challenge's normal page reload.
     if matches!(raw, "null" | "") {
         return Ok(None);
     }
-    let snapshot: Snapshot = serde_json::from_str(raw).map_err(|_| "Gitee 社区网页读取失败")?;
+    let snapshot: Snapshot =
+        serde_json::from_str(raw).map_err(|_| "community.giteeWebReadFailed")?;
     match snapshot.state.as_str() {
         "waiting" => Ok(None),
-        "oversized" => Err("Gitee 社区网页响应过大".into()),
+        "oversized" => Err("community.giteeWebTooLarge".into()),
         "ready" => {
-            let actual = Url::parse(&snapshot.url).map_err(|_| "Gitee 社区网页地址无效")?;
+            let actual = Url::parse(&snapshot.url).map_err(|_| "community.giteeWebUrlInvalid")?;
             if !same_topic(&actual, expected) {
-                return Err("Gitee 社区网页地址无效".into());
+                return Err("community.giteeWebUrlInvalid".into());
             }
             if page_number(&actual) != page_number(expected) {
                 return Ok(None);
             }
             if snapshot.html.len() > MAX_HTML_BYTES {
-                return Err("Gitee 社区网页响应过大".into());
+                return Err("community.giteeWebTooLarge".into());
             }
             Ok(Some(snapshot.html))
         }
-        _ => Err("Gitee 社区网页读取失败".into()),
+        _ => Err("community.giteeWebReadFailed".into()),
     }
 }
 
@@ -124,7 +125,7 @@ impl<R: Runtime> TopicBrowser<R> {
         data_directory: PathBuf,
         options: BrowserOptions,
     ) -> Result<Self, String> {
-        std::fs::create_dir_all(&data_directory).map_err(|_| "无法创建 Gitee 验证浏览器")?;
+        std::fs::create_dir_all(&data_directory).map_err(|_| "community.giteeBrowserFailed")?;
         let endpoint = initial.clone();
         // No capability or remote IPC grant is added for this window. Rust reads
         // the DOM through native callbacks, never through commands exposed to Gitee.
@@ -144,7 +145,7 @@ impl<R: Runtime> TopicBrowser<R> {
         .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
         .devtools(false)
         .build()
-        .map_err(|_| "无法创建 Gitee 验证浏览器")?;
+        .map_err(|_| "community.giteeBrowserFailed")?;
         let closed = Arc::new(AtomicBool::new(false));
         let on_close = closed.clone();
         window.on_window_event(move |event| {
@@ -166,16 +167,16 @@ impl<R: Runtime> TopicBrowser<R> {
         if navigate {
             self.window
                 .navigate(url.clone())
-                .map_err(|_| "Gitee 社区网页读取失败")?;
+                .map_err(|_| "community.giteeWebReadFailed")?;
         }
         let started = Instant::now();
         let mut shown = false;
         loop {
             if self.closed.load(Ordering::Acquire) {
-                return Err("社区仓库搜索已取消".into());
+                return Err("community.searchCancelled".into());
             }
             if started.elapsed() >= self.options.page_timeout {
-                return Err("Gitee 网页验证超时，请稍后刷新".into());
+                return Err("community.giteeVerifyTimeout".into());
             }
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let sender = Mutex::new(Some(sender));
@@ -187,7 +188,7 @@ impl<R: Runtime> TopicBrowser<R> {
                         }
                     }
                 })
-                .map_err(|_| "Gitee 社区网页读取失败")?;
+                .map_err(|_| "community.giteeWebReadFailed")?;
             if let Ok(Ok(raw)) = tokio::time::timeout(EVALUATION_TIMEOUT, receiver).await {
                 if let Some(html) = snapshot_html(&raw, &url)? {
                     return Ok(html);
@@ -196,7 +197,7 @@ impl<R: Runtime> TopicBrowser<R> {
             if !shown && started.elapsed() >= self.options.interaction_after {
                 self.window
                     .show()
-                    .map_err(|_| "无法显示 Gitee 验证浏览器")?;
+                    .map_err(|_| "community.giteeBrowserShowFailed")?;
                 let _ = self.window.set_focus();
                 log::info!("Gitee 网页验证需要交互，已显示独立验证窗口；关闭窗口可取消搜索");
                 shown = true;

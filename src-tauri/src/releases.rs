@@ -123,9 +123,7 @@ pub fn repository_coordinates(
         || repository == "."
         || repository == ".."
     {
-        return Err(ReleaseError::InvalidUrl(
-            "项目用户和仓库必须是安全的单一路径片段".into(),
-        ));
+        return Err(ReleaseError::InvalidUrl("source.coordinateUnsafe".into()));
     }
     Ok((username.to_owned(), repository.to_owned()))
 }
@@ -186,7 +184,7 @@ pub fn repository_file_url(
     let file_path = file_path.trim();
     if file_path.contains(['*', '?']) {
         return Err(ReleaseError::InvalidUrl(
-            "仓库文件模式只支持具体文件路径，不支持通配和正则".into(),
+            "source.fileModeRequiresExactPath".into(),
         ));
     }
     if branch.is_empty()
@@ -200,16 +198,14 @@ pub fn repository_file_url(
             .split(['/', '\\'])
             .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return Err(ReleaseError::InvalidUrl(
-            "仓库文件分支或相对路径不安全".into(),
-        ));
+        return Err(ReleaseError::InvalidUrl("source.fileModePathUnsafe".into()));
     }
     let mut url =
         Url::parse(&homepage).map_err(|error| ReleaseError::InvalidUrl(error.to_string()))?;
     {
         let mut segments = url
             .path_segments_mut()
-            .map_err(|_| ReleaseError::InvalidUrl("无法创建仓库文件地址".into()))?;
+            .map_err(|_| ReleaseError::InvalidUrl("source.fileModeUrlFailed".into()))?;
         segments.pop_if_empty();
         segments.push("raw");
         if *provider == Provider::Github {
@@ -231,7 +227,7 @@ pub fn repository_file_name(file_path: &str) -> Result<String, ReleaseError> {
         .rsplit(['/', '\\'])
         .next()
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| ReleaseError::InvalidUrl("仓库文件路径缺少文件名".into()))?;
+        .ok_or_else(|| ReleaseError::InvalidUrl("source.fileModeNameMissing".into()))?;
     let bytes = encoded.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -239,9 +235,9 @@ pub fn repository_file_name(file_path: &str) -> Result<String, ReleaseError> {
         if bytes[index] == b'%' {
             let hex = bytes
                 .get(index + 1..index + 3)
-                .ok_or_else(|| ReleaseError::InvalidUrl("仓库文件名编码无效".into()))?;
+                .ok_or_else(|| ReleaseError::InvalidUrl("source.fileNameEncodingInvalid".into()))?;
             let value = u8::from_str_radix(std::str::from_utf8(hex).unwrap_or(""), 16)
-                .map_err(|_| ReleaseError::InvalidUrl("仓库文件名编码无效".into()))?;
+                .map_err(|_| ReleaseError::InvalidUrl("source.fileNameEncodingInvalid".into()))?;
             decoded.push(value);
             index += 3;
         } else {
@@ -250,9 +246,9 @@ pub fn repository_file_name(file_path: &str) -> Result<String, ReleaseError> {
         }
     }
     let name = String::from_utf8(decoded)
-        .map_err(|_| ReleaseError::InvalidUrl("仓库文件名不是有效 UTF-8".into()))?;
+        .map_err(|_| ReleaseError::InvalidUrl("source.fileNameNotUtf8".into()))?;
     if name.is_empty() || name.contains(['/', '\\', ':']) || name == "." || name == ".." {
-        return Err(ReleaseError::InvalidUrl("仓库文件名不安全".into()));
+        return Err(ReleaseError::InvalidUrl("source.fileNameUnsafe".into()));
     }
     Ok(name)
 }
@@ -698,7 +694,7 @@ async fn fetch_releases_from_targets(
                 api_target_kind(official, &url, request_token),
                 wait.as_secs()
             );
-            last_error = Some(ReleaseError::Http("API 限流冷却中".into()));
+            last_error = Some(ReleaseError::Http("source.apiRateLimited".into()));
             continue;
         }
         let target_kind = api_target_kind(official, &url, request_token);
@@ -1017,7 +1013,7 @@ pub async fn fetch_repository_default_branch(
                     .get("default_branch")
                     .and_then(Value::as_str)
                     .filter(|branch| !branch.trim().is_empty())
-                    .ok_or_else(|| ReleaseError::Json("仓库默认分支缺失".into()))?;
+                    .ok_or_else(|| ReleaseError::Json("source.defaultBranchMissing".into()))?;
                 repository_file_url(
                     &repo.provider,
                     &repo.username,
@@ -1059,7 +1055,7 @@ pub fn parse_release_json(
             "Release API 响应结构无效: provider={:?} expected=array_or_object",
             provider
         );
-        return Err(ReleaseError::Json("Release 响应不是数组或对象".into()));
+        return Err(ReleaseError::Json("source.releaseResponseInvalid".into()));
     };
     log::debug!(
         "开始解析 Release API 响应: provider={:?} item_count={}",

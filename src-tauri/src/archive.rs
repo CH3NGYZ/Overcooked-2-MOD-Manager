@@ -15,7 +15,7 @@ use uuid::Uuid;
 use zip::ZipArchive;
 
 static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
-const FIRST_BYTE_TIMEOUT_ERROR: &str = "下载首字节等待超过 5 秒";
+const FIRST_BYTE_TIMEOUT_ERROR: &str = "download.firstByteTimeout";
 
 pub fn cancel_download() {
     log::info!("收到下载取消请求");
@@ -454,7 +454,7 @@ async fn download_stream(
     first_byte_timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     if is_download_cancelled() {
-        return Err("error.download.cancelled".into());
+        return Err("download.cancelled".into());
     }
     reporter.update(DownloadProgress::connecting(label));
     let request = client
@@ -471,7 +471,7 @@ async fn download_stream(
     .map_err(|error| error.without_url().to_string())?;
     if !response.status().is_success() {
         return Err(crate::locale_tag::with_params(
-            "error.download.httpStatus",
+            "download.httpStatus",
             &[("status", &response.status().to_string())],
         ));
     }
@@ -496,7 +496,7 @@ async fn download_stream(
     let mut next_chunk = first_chunk;
     while let Some(chunk) = next_chunk {
         if is_download_cancelled() {
-            return Err("error.download.cancelled".into());
+            return Err("download.cancelled".into());
         }
         let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         file.write_all(&chunk).map_err(|error| error.to_string())?;
@@ -513,8 +513,12 @@ async fn download_stream(
         .map_err(|error| error.to_string())?
         .len();
     if actual != downloaded {
-        return Err(format!(
-            "下载文件落盘长度不完整: 文件为 {actual} 字节，实际收到 {downloaded} 字节"
+        return Err(crate::locale_tag::with_params(
+            "download.diskLengthMismatch",
+            &[
+                ("actual", &actual.to_string()),
+                ("downloaded", &downloaded.to_string()),
+            ],
         ));
     }
     emit_progress(reporter, label, downloaded, total, started.elapsed(), true);
@@ -544,7 +548,7 @@ async fn read_response_bytes(
         bytes.extend_from_slice(&chunk);
         if bytes.len() as u64 > expected {
             return Err(crate::locale_tag::with_params(
-                "error.download.chunkTooLong",
+                "download.chunkTooLong",
                 &[("bytes", &bytes.len().to_string())],
             ));
         }
@@ -552,7 +556,7 @@ async fn read_response_bytes(
     }
     if bytes.len() as u64 != expected {
         return Err(crate::locale_tag::with_params(
-            "error.download.chunkLengthMismatch",
+            "download.chunkLengthMismatch",
             &[("bytes", &bytes.len().to_string())],
         ));
     }
@@ -599,7 +603,7 @@ async fn download_ranges(
             let mut last_error_kind = "unknown";
             for attempt in 1..=3 {
                 if DOWNLOAD_CANCELLED.load(Ordering::Acquire) {
-                    return Err("error.download.cancelled".to_string());
+                    return Err("download.cancelled".to_string());
                 }
                 let request = client
                     .get(&url)
@@ -625,7 +629,7 @@ async fn download_ranges(
                             .get(reqwest::header::CONTENT_RANGE)
                             .and_then(|value| value.to_str().ok());
                         if actual_range != Some(expected_range.as_str()) {
-                            last_error = "服务器返回了错误的分段范围".into();
+                            last_error = "download.badRangeResponse".into();
                             last_error_kind = "invalid_content_range";
                             continue;
                         }
@@ -655,7 +659,10 @@ async fn download_ranges(
                     }
                     Ok(response) => {
                         let status = response.status().as_u16();
-                        last_error = format!("服务器不支持分段下载 (HTTP {status})");
+                        last_error = crate::locale_tag::with_params(
+                            "download.rangeUnsupported",
+                            &[("status", &status.to_string())],
+                        );
                         last_error_kind = "unexpected_http_status";
                     }
                     Err(error) => {
@@ -682,7 +689,7 @@ async fn download_ranges(
     .buffer_unordered(threads.clamp(1, 32) as usize);
     while let Some(result) = pending.next().await {
         if DOWNLOAD_CANCELLED.load(Ordering::Acquire) {
-            return Err("error.download.cancelled".into());
+            return Err("download.cancelled".into());
         }
         let (offset, bytes) = result?;
         output.seek(SeekFrom::Start(offset)).map_err(|error| {
@@ -730,8 +737,12 @@ async fn download_ranges(
         })?
         .len();
     if actual_size != total {
-        return Err(format!(
-            "分片下载落盘长度不完整: 文件为 {actual_size} 字节，预期 {total} 字节"
+        return Err(crate::locale_tag::with_params(
+            "download.chunkDiskLengthMismatch",
+            &[
+                ("actual", &actual_size.to_string()),
+                ("total", &total.to_string()),
+            ],
         ));
     }
     emit_progress(reporter, label, total, Some(total), started.elapsed(), true);
@@ -817,7 +828,7 @@ pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {
         if expected != actual {
             log::error!("SHA-256 校验失败：文件={}", path.display());
             return Err(crate::locale_tag::with_params(
-                "error.download.checksumMismatch",
+                "download.checksumMismatch",
                 &[
                     ("expected", &expected.to_string()),
                     ("actual", &actual.to_string()),
@@ -845,14 +856,14 @@ pub fn validate_download_file(
 
 fn validate_download_size(actual: u64, expected: Option<u64>) -> Result<(), String> {
     if actual == 0 {
-        return Err("error.download.empty".into());
+        return Err("download.empty".into());
     }
     if expected.is_some_and(|size| size != actual) {
         log::warn!(
             "下载长度不完整: 收到 {actual} 字节，预期 {} 字节",
             expected.unwrap()
         );
-        return Err("error.download.incomplete".into());
+        return Err("download.incomplete".into());
     }
     Ok(())
 }
@@ -871,7 +882,7 @@ pub fn validate_download_bytes(
             .to_ascii_lowercase();
         let actual = format!("{:x}", Sha256::digest(bytes));
         if actual != expected {
-            return Err("error.download.checksumFailed".into());
+            return Err("download.checksumFailed".into());
         }
     }
     Ok(())
@@ -899,13 +910,23 @@ pub(crate) fn extract_framework_zip_pending(
 pub fn validate_zip(zip_path: &Path) -> Result<(), String> {
     log::debug!("开始校验 ZIP：文件={}", zip_path.display());
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &e.to_string())])
+    })?;
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+        let mut entry = archive.by_index(index).map_err(|e| {
+            crate::locale_tag::with_params(
+                "archive.zipEntryReadFailed",
+                &[("reason", &e.to_string())],
+            )
+        })?;
         if !entry.is_dir() {
-            io::copy(&mut entry, &mut io::sink()).map_err(|e| format!("ZIP 内容校验失败: {e}"))?;
+            io::copy(&mut entry, &mut io::sink()).map_err(|e| {
+                crate::locale_tag::with_params(
+                    "archive.zipValidationFailed",
+                    &[("reason", &e.to_string())],
+                )
+            })?;
         }
     }
     log::info!(
@@ -1077,14 +1098,14 @@ fn safe_zip_stem(archive_name: &str) -> Result<&str, String> {
         .chars()
         .any(|character| matches!(character, '/' | '\\' | ':'))
     {
-        return Err("error.archive.invalidZipName".into());
+        return Err("archive.invalidZipName".into());
     }
     let stem = Path::new(archive_name)
         .file_stem()
         .and_then(|value| value.to_str())
-        .ok_or("error.archive.invalidZipName")?;
+        .ok_or("archive.invalidZipName")?;
     if stem.is_empty() || stem == "." || stem == ".." {
-        return Err("error.archive.invalidZipName".into());
+        return Err("archive.invalidZipName".into());
     }
     Ok(stem)
 }
@@ -1107,17 +1128,22 @@ fn wrapped_zip_target(install_target: &str, archive_name: &str) -> Result<String
 fn inspect_mod_zip(zip_path: &Path) -> Result<ModZipLayout, String> {
     log::trace!("检查 MOD ZIP 顶层布局：文件={}", zip_path.display());
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &e.to_string())])
+    })?;
     let mut top_level = HashSet::new();
     let mut directory_root = None;
     let mut only_root_dlls = !archive.is_empty();
 
     for index in 0..archive.len() {
-        let entry = archive
-            .by_index(index)
-            .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+        let entry = archive.by_index(index).map_err(|e| {
+            crate::locale_tag::with_params(
+                "archive.zipEntryReadFailed",
+                &[("reason", &e.to_string())],
+            )
+        })?;
         let path = entry.enclosed_name().ok_or_else(|| {
-            crate::locale_tag::with_params("error.archive.unsafePath", &[("entry", entry.name())])
+            crate::locale_tag::with_params("archive.unsafePath", &[("entry", entry.name())])
         })?;
         let components = path.components().collect::<Vec<_>>();
         let Some(root) = components.first() else {
@@ -1156,14 +1182,19 @@ fn inspect_mod_zip(zip_path: &Path) -> Result<ModZipLayout, String> {
 
 fn online_zip_strip_root(zip_path: &Path, install_target: &str) -> Result<Option<String>, String> {
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &e.to_string())])
+    })?;
     let mut file_paths = Vec::new();
     for index in 0..archive.len() {
-        let entry = archive
-            .by_index(index)
-            .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+        let entry = archive.by_index(index).map_err(|e| {
+            crate::locale_tag::with_params(
+                "archive.zipEntryReadFailed",
+                &[("reason", &e.to_string())],
+            )
+        })?;
         let path = entry.enclosed_name().ok_or_else(|| {
-            crate::locale_tag::with_params("error.archive.unsafePath", &[("entry", entry.name())])
+            crate::locale_tag::with_params("archive.unsafePath", &[("entry", entry.name())])
         })?;
         if !entry.is_dir() {
             file_paths.push(path.to_path_buf());
@@ -1308,7 +1339,7 @@ impl PendingModInstall {
     fn track_destination(&mut self, destination: &Path) -> Result<(), String> {
         if destination.is_dir() {
             return Err(crate::locale_tag::with_params(
-                "error.archive.targetExists",
+                "archive.targetExists",
                 &[("path", &destination.display().to_string())],
             ));
         }
@@ -1323,7 +1354,7 @@ impl PendingModInstall {
             .iter()
             .any(|parent| parent == &self.game_root || !parent.starts_with(&self.game_root))
         {
-            return Err("error.archive.pathEscape".into());
+            return Err("archive.pathEscape".into());
         }
         let snapshot = snapshot_path(destination)?;
         self.snapshots.push((destination.to_path_buf(), snapshot));
@@ -1368,7 +1399,7 @@ impl PendingModInstall {
                     .strip_prefix(&self.game_root)
                     .map_err(|e| e.to_string())?;
                 if safe_game_path(&self.game_root, &relative.to_string_lossy())? != directory {
-                    return Err("error.archive.pathEscape".into());
+                    return Err("archive.pathEscape".into());
                 }
                 match fs::remove_dir(&directory) {
                     Err(error)
@@ -1392,7 +1423,7 @@ impl PendingModInstall {
             }
         }
         if failed {
-            Err("操作失败，部分文件保留在回收站，请查看日志".into())
+            Err("recycle.partialFailure".into())
         } else {
             Ok(())
         }
@@ -1412,22 +1443,31 @@ fn zip_entry_destinations(
     strip_root: Option<&str>,
 ) -> Result<Vec<(usize, PathBuf)>, String> {
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &e.to_string())])
+    })?;
     let mut destinations = Vec::new();
     let mut unique = HashSet::new();
     for index in 0..archive.len() {
-        let entry = archive
-            .by_index(index)
-            .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+        let entry = archive.by_index(index).map_err(|e| {
+            crate::locale_tag::with_params(
+                "archive.zipEntryReadFailed",
+                &[("reason", &e.to_string())],
+            )
+        })?;
         let enclosed = entry.enclosed_name().ok_or_else(|| {
-            crate::locale_tag::with_params("error.archive.unsafePath", &[("entry", entry.name())])
+            crate::locale_tag::with_params("archive.unsafePath", &[("entry", entry.name())])
         })?;
         if entry.is_dir() {
             continue;
         }
         let relative_entry = if let Some(root) = strip_root {
-            strip_zip_root(&enclosed, root)
-                .ok_or_else(|| format!("ZIP 顶层目录不是预期的 {root}: {}", entry.name()))?
+            strip_zip_root(&enclosed, root).ok_or_else(|| {
+                crate::locale_tag::with_params(
+                    "archive.unexpectedRootDirectory",
+                    &[("root", root), ("entry", entry.name())],
+                )
+            })?
         } else {
             enclosed.to_path_buf()
         };
@@ -1435,14 +1475,14 @@ fn zip_entry_destinations(
         let destination = safe_game_path(game_root, &relative.to_string_lossy())?;
         if !unique.insert(destination.to_string_lossy().to_lowercase()) {
             return Err(crate::locale_tag::with_params(
-                "error.archive.targetExists",
+                "archive.targetExists",
                 &[("path", &destination.display().to_string())],
             ));
         }
         destinations.push((index, destination));
     }
     if destinations.is_empty() {
-        return Err("error.archive.noInstallableContent".into());
+        return Err("archive.noInstallableContent".into());
     }
     Ok(destinations)
 }
@@ -1455,13 +1495,18 @@ fn extract_zip_pending(
 ) -> Result<PendingModInstall, String> {
     let destinations = zip_entry_destinations(zip_path, game_root, target_dir, strip_root)?;
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("ZIP 读取失败: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &e.to_string())])
+    })?;
     let mut pending = PendingModInstall::new(game_root);
     let extraction = (|| -> Result<(), String> {
         for (index, destination) in destinations {
-            let mut entry = archive
-                .by_index(index)
-                .map_err(|e| format!("ZIP 条目读取失败: {e}"))?;
+            let mut entry = archive.by_index(index).map_err(|e| {
+                crate::locale_tag::with_params(
+                    "archive.zipEntryReadFailed",
+                    &[("reason", &e.to_string())],
+                )
+            })?;
             pending.track_destination(&destination)?;
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1539,7 +1584,7 @@ pub(crate) fn copy_asset_pending(
     if destination.try_exists().map_err(|e| e.to_string())?
         && same_file::is_same_file(asset_path, &destination).map_err(|e| e.to_string())?
     {
-        return Err("error.archive.sourceEqualsTarget".into());
+        return Err("archive.sourceEqualsTarget".into());
     }
     let mut pending = PendingModInstall::new(game_root);
     pending.track_destination(&destination)?;
@@ -1550,9 +1595,13 @@ pub(crate) fn copy_asset_pending(
     if let Err(error) = fs::copy(asset_path, &destination) {
         let restore_error = pending.rollback().err();
         let result = match restore_error {
-            Some(restore_error) => {
-                format!("复制 MOD 文件失败: {error}；恢复旧文件失败: {restore_error}")
-            }
+            Some(restore_error) => crate::locale_tag::with_params(
+                "archive.copyAndRestoreFailed",
+                &[
+                    ("error", &error.to_string()),
+                    ("restore", &restore_error.to_string()),
+                ],
+            ),
             None => error.to_string(),
         };
         log::error!(
@@ -1796,7 +1845,7 @@ mod tests {
             copy_asset_pending(&source, &root, "BepInEx/plugins", "Existing.dll")
                 .err()
                 .unwrap(),
-            "error.archive.sourceEqualsTarget"
+            "archive.sourceEqualsTarget"
         );
         assert!(fs::metadata(&source).unwrap().permissions().readonly());
         assert_eq!(fs::read(&source).unwrap(), b"original plugin");

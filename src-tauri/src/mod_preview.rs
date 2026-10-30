@@ -215,7 +215,9 @@ fn analyze_dll(path: &Path, display_path: &str) -> ModPreviewEntry {
 /// 分析 ZIP：遍历条目，仅解析 DLL（其余文件忽略）。
 fn analyze_zip(path: &Path, file_name: &str) -> Result<ModPreview, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|error| format!("ZIP 读取失败: {error}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|error| {
+        crate::locale_tag::with_params("archive.zipReadFailed2", &[("reason", &error.to_string())])
+    })?;
     let mut entries = Vec::new();
     // ZIP 里的 DLL 需要落到临时文件才能读 PE 版本资源。
     // 用一个自建临时目录而不是 tempfile crate（项目没有这个依赖），
@@ -224,14 +226,20 @@ fn analyze_zip(path: &Path, file_name: &str) -> Result<ModPreview, String> {
     fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
     let result = (|| -> Result<Vec<ModPreviewEntry>, String> {
         for index in 0..archive.len() {
-            let mut entry = archive
-                .by_index(index)
-                .map_err(|error| format!("ZIP 条目读取失败: {error}"))?;
+            let mut entry = archive.by_index(index).map_err(|error| {
+                crate::locale_tag::with_params(
+                    "archive.zipEntryReadFailed2",
+                    &[("reason", &error.to_string())],
+                )
+            })?;
             if entry.is_dir() {
                 continue;
             }
             let Some(enclosed) = entry.enclosed_name() else {
-                return Err(format!("拒绝不安全 ZIP 路径: {}", entry.name()));
+                return Err(crate::locale_tag::with_params(
+                    "archive.unsafePath2",
+                    &[("entry", &entry.name().to_string())],
+                ));
             };
             if !enclosed
                 .extension()
@@ -364,9 +372,9 @@ pub(crate) fn stage_downloaded_file(
     prerelease: bool,
 ) -> Result<ModPreview, String> {
     cleanup_stale_previews(state);
-    let extension = source_extension(file_name).ok_or("无法识别文件类型")?;
+    let extension = source_extension(file_name).ok_or("modPreview.unknownType")?;
     if extension != "dll" && extension != "zip" {
-        return Err("只支持 .dll 或 .zip 文件".into());
+        return Err("modPreview.unsupportedType".into());
     }
     let mut preview = if extension == "dll" {
         build_preview(vec![analyze_dll(source, file_name)], file_name)
@@ -407,12 +415,12 @@ pub async fn analyze_mod_source(
         ModSourceKind::Local => {
             let path = PathBuf::from(source.value.trim());
             if !path.is_file() {
-                return Err("所选文件不存在".into());
+                return Err("mods.fileMissing".into());
             }
             let name = path
                 .file_name()
                 .and_then(|value| value.to_str())
-                .ok_or("文件名无效")?
+                .ok_or("mods.invalidFileName")?
                 .to_string();
             (path, name)
         }
@@ -422,9 +430,9 @@ pub async fn analyze_mod_source(
             (path, name)
         }
     };
-    let extension = source_extension(&file_name).ok_or("无法识别文件类型")?;
+    let extension = source_extension(&file_name).ok_or("modPreview.unknownType")?;
     if extension != "dll" && extension != "zip" {
-        return Err("只支持 .dll 或 .zip 文件".into());
+        return Err("modPreview.unsupportedType".into());
     }
 
     log::info!(
@@ -471,12 +479,12 @@ pub fn confirm_mod_install(
 ) -> Result<OperationResult, String> {
     let dir = preview_root(&state).join(safe_preview_id(&preview_id)?);
     let file = fs::read_dir(&dir)
-        .map_err(|_| "预览已过期，请重新选择文件".to_string())?
+        .map_err(|_| "modPreview.expired".to_string())?
         .flatten()
         .map(|entry| entry.path())
         // 跳过来源元数据：它和安装包放在同一个暂存目录里
         .find(|path| path.is_file() && path.file_name().is_some_and(|name| name != ORIGIN_FILE))
-        .ok_or("预览已过期，请重新选择文件")?;
+        .ok_or("modPreview.expired")?;
     log::info!("确认安装预览文件：预览={preview_id}");
 
     /*
@@ -511,7 +519,7 @@ pub fn confirm_mod_install(
 
 /// 预览 id 必须是合法的 UUID，避免拼出跨目录路径。
 fn safe_preview_id(value: &str) -> Result<String, String> {
-    let parsed = Uuid::parse_str(value.trim()).map_err(|_| "预览标识无效".to_string())?;
+    let parsed = Uuid::parse_str(value.trim()).map_err(|_| "modPreview.invalidId".to_string())?;
     Ok(parsed.to_string())
 }
 

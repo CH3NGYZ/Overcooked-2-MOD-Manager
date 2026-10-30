@@ -6,7 +6,6 @@
  * 只有真正跑测试时才会暴露。Vite 也接受显式扩展名，所以两边都能用。
  */
 import { i18n } from './index.ts'
-import { ERROR_TAG_PREFIX, MESSAGE_TAG_PREFIX } from './types.ts'
 
 /**
  * 后端错误 → 用户可见文案。
@@ -36,10 +35,22 @@ export interface BackendErrorPayload {
   params?: Record<string, string | number>
 }
 
-/** 判断一个字符串是不是后端 tag（错误或成功提示）。 */
+/**
+ * 判断一个字符串是不是后端 tag。
+ *
+ * ## 为什么不再只看前缀
+ *
+ * 最早的迁移批次把 tag 写成 `error.<域>.<原因>` / `message.<域>.<原因>`，
+ * 后来全量迁移统一成「**第一段是域**」的形态（`mods.higherVersionPresent`、
+ * `game.notFound`）。两种都合法：`error` / `message` 只是众多域里的两个。
+ *
+ * 前缀判断因此不可靠 —— 裸域 tag 会被当成普通文本原样漏出去，界面显示
+ * `mods.higherVersionPresent`。改为**查表**：语言表里登记过就是 tag。
+ * 这样新增域不需要同步维护白名单，也不会因为漏一个前缀而静默失效。
+ */
 export function isErrorTag(value: string): boolean {
   const tag = value.trim()
-  return tag.startsWith(ERROR_TAG_PREFIX) || tag.startsWith(MESSAGE_TAG_PREFIX)
+  return i18n.global.te(tag)
 }
 
 /**
@@ -79,7 +90,7 @@ export function translateBackendMessage(
   const { tag, params } = payload
 
   /*
-   * 只有 `error.*` 才尝试翻译。
+   * 只有登记过的 tag 才尝试翻译。
    *
    * 其它中文串（成功提示、命令里的普通 message）在迁移完成前原样返回：
    * 它们是后端拼好的整句，没有 tag 可查，硬翻只会翻错。

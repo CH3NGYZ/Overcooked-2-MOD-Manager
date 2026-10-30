@@ -155,18 +155,18 @@ fn inspect_installer_manifest(
     target: crate::app_update::UpdateTarget,
     current_version: &semver::Version,
 ) -> Result<Option<AppUpdateInfo>, String> {
-    let manifest: tauri_plugin_updater::RemoteRelease =
-        serde_json::from_value(document.clone()).map_err(|_| "更新清单格式无效".to_string())?;
+    let manifest: tauri_plugin_updater::RemoteRelease = serde_json::from_value(document.clone())
+        .map_err(|_| "update.manifestInvalid".to_string())?;
     if !manifest.version.pre.is_empty() {
-        return Err("更新清单不是稳定版本".into());
+        return Err("update.manifestNotStable".into());
     }
     let key = target.manifest_key();
     let url = manifest
         .download_url(&key)
-        .map_err(|_| "更新中没有匹配的安装包")?;
+        .map_err(|_| "update.noMatchingPackage")?;
     let signature = manifest
         .signature(&key)
-        .map_err(|_| "更新清单或签名不可用，已停止安装")?
+        .map_err(|_| "update.manifestOrSignatureUnavailable")?
         .clone();
     let name = url
         .path_segments()
@@ -189,7 +189,7 @@ fn inspect_installer_manifest(
         || !target.matches_name(&name, &manifest.version)
         || signature.trim().is_empty()
     {
-        return Err("更新清单与所选平台安装包不一致，已停止安装".into());
+        return Err("update.manifestPlatformMismatch".into());
     }
     if manifest.version <= *current_version {
         return Ok(None);
@@ -234,20 +234,23 @@ async fn fetch_installer_manifest(
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .map_err(|_| "更新清单请求失败")?;
+            .map_err(|_| "update.manifestRequestFailed")?;
         if !response.status().is_success() {
-            return Err(format!("更新清单 HTTP {}", response.status().as_u16()));
+            return Err(crate::locale_tag::with_params(
+                "update.manifestHttpStatus",
+                &[("status", &response.status().as_u16().to_string())],
+            ));
         }
         let total = response.content_length();
         if total.is_some_and(|size| size > MAX_MANIFEST_BYTES as u64) {
-            return Err("更新清单过大".into());
+            return Err("update.manifestTooLarge".into());
         }
         let mut bytes = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| "更新清单读取失败")?;
+            let chunk = chunk.map_err(|_| "update.manifestReadFailed")?;
             if bytes.len().saturating_add(chunk.len()) > MAX_MANIFEST_BYTES {
-                return Err("更新清单过大".into());
+                return Err("update.manifestTooLarge".into());
             }
             bytes.extend_from_slice(&chunk);
             if let Some(reporter) = reporter {
@@ -258,7 +261,7 @@ async fn fetch_installer_manifest(
                 reporter.update(progress);
             }
         }
-        let document = serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效")?;
+        let document = serde_json::from_slice(&bytes).map_err(|_| "update.manifestInvalid")?;
         inspect_installer_manifest(channel, &document, target, current_version)
     };
     let cancellation = async {
@@ -271,7 +274,7 @@ async fn fetch_installer_manifest(
     };
     tokio::select! {
         biased;
-        _ = cancellation => Err("下载已取消".into()),
+        _ = cancellation => Err("download.cancelled".into()),
         result = request => result,
     }
 }
@@ -371,7 +374,7 @@ where
     Fut: std::future::Future<Output = Result<T, String>>,
 {
     if is_cancelled() {
-        return Err("下载已取消".into());
+        return Err("download.cancelled".into());
     }
     // Gitee never enters a parallel pool or uses proxy/range requests.
     if channels.len() == 1 && channels[0].provider == Provider::Gitee {
@@ -412,7 +415,7 @@ where
     let on_status = Mutex::new(on_status);
     for provider in [Provider::Gitee, Provider::Github] {
         if is_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         let group = channels
             .iter()
@@ -476,11 +479,11 @@ where
             }
         }
         if is_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         let selected = match selected {
             Ok(selected) => selected,
-            Err(error) if error == "下载已取消" => return Err(error),
+            Err(error) if error == "download.cancelled" => return Err(error),
             Err(_) => continue,
         };
         let result = match selected.info {
@@ -488,7 +491,7 @@ where
             None => Ok(InstallerRouteResult::Latest),
         };
         if is_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         match result {
             Ok(result) => {
@@ -499,7 +502,7 @@ where
                 }
                 return Ok(result);
             }
-            Err(error) if error == "下载已取消" => return Err(error),
+            Err(error) if error == "download.cancelled" => return Err(error),
             Err(error) => on_status.lock().unwrap()(installer_channel_status(
                 &selected.channel,
                 "failed",
@@ -520,8 +523,12 @@ async fn discover_installer_update(
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
-    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
-        .map_err(|e| format!("当前程序版本无效: {e}"))?;
+    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| {
+        crate::locale_tag::with_params(
+            "update.currentVersionInvalid",
+            &[("reason", &e.to_string())],
+        )
+    })?;
     let mut statuses: Vec<AppUpdateChannelStatus> = Vec::new();
     let result = run_installer_manifest_routes(
         &client,
@@ -620,7 +627,7 @@ pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     Ok(state.config.public_config(&config))
 }
@@ -686,9 +693,12 @@ pub fn write_frontend_log(level: String, message: String) -> Result<(), String> 
     log::trace!("写入前端日志：等级={}，长度={}", level, message.len());
     const MAX_FRONTEND_LOG_BYTES: usize = 64 * 1024;
     let message = if message.len() > MAX_FRONTEND_LOG_BYTES {
-        format!(
-            "{}...[前端日志已截断]",
-            &message[..message.floor_char_boundary(MAX_FRONTEND_LOG_BYTES)]
+        crate::locale_tag::with_params(
+            "log.frontendTruncated",
+            &[(
+                "text",
+                &&message[..message.floor_char_boundary(MAX_FRONTEND_LOG_BYTES)].to_string(),
+            )],
         )
     } else {
         message
@@ -720,7 +730,7 @@ pub fn save_mod_note(
 ) -> Result<OperationResult, String> {
     log::info!("保存 MOD 备注：文件={}", dll_file);
     let config = state.config.load_or_default();
-    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let installed = mods::scan_mods_with_manifests(
         Path::new(&game_root),
         &config,
@@ -729,14 +739,14 @@ pub fn save_mod_note(
     let selected = installed
         .iter()
         .find(|item| item.dll_file == dll_file)
-        .ok_or("找不到对应的已安装 MOD")?;
+        .ok_or("mods.installedNotFound")?;
     let note_key = mods::note_key(selected);
     // Scan outside the configuration transaction, then modify the latest
     // snapshot so a concurrent source/proxy refresh is preserved.
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     state.config.set_mod_note(&mut config, &note_key, &note);
     state.config.save(&config).map_err(|e| e.to_string())?;
@@ -748,9 +758,9 @@ pub fn save_mod_note(
     Ok(OperationResult {
         ok: true,
         message: if note.trim().is_empty() {
-            "MOD 备注已清除".into()
+            "mods.noteCleared".into()
         } else {
-            "MOD 备注已保存".into()
+            "mods.noteSaved".into()
         },
     })
 }
@@ -772,20 +782,20 @@ pub(crate) fn install_manual_mod(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     if expected_game_root.is_some_and(|expected| expected != game_root) {
-        return Err("厨房目录已变化，请重新添加模组".into());
+        return Err("game.directoryChanged".into());
     }
     if !source.is_file() {
-        return Err("所选文件不存在".into());
+        return Err("mods.fileMissing".into());
     }
     let file_name = source
         .file_name()
         .and_then(|value| value.to_str())
-        .ok_or("文件名无效")?;
+        .ok_or("mods.invalidFileName")?;
     let extension = source
         .extension()
         .and_then(|value| value.to_str())
@@ -813,13 +823,13 @@ pub(crate) fn install_manual_mod(
         let folder = source
             .file_stem()
             .and_then(|value| value.to_str())
-            .ok_or("ZIP 文件名无效")?;
+            .ok_or("archive.invalidZipName")?;
         if folder.is_empty()
             || folder.contains('/')
             || folder.contains('\\')
             || folder.contains(':')
         {
-            return Err("ZIP 文件名无效".into());
+            return Err("archive.invalidZipName".into());
         }
         let pending = archive::extract_local_mod_zip_pending(&source, &game_root, file_name)?;
         /*
@@ -834,11 +844,11 @@ pub(crate) fn install_manual_mod(
             .unwrap_or_else(|| folder.to_string());
         (pending, display)
     } else {
-        return Err("只支持 DLL 或 ZIP 文件".into());
+        return Err("mods.unsupportedFileType".into());
     };
     if pending.files().is_empty() {
         log::warn!("本地 MOD 没有可安装内容：名称={}", file_name);
-        return Err("所选文件没有可安装内容".into());
+        return Err("archive.noInstallableContent".into());
     }
     let manifest = archive::new_manifest(
         &repository_id,
@@ -867,7 +877,10 @@ pub(crate) fn install_manual_mod(
     );
     Ok(OperationResult {
         ok: true,
-        message: format!("{display_name} 安装完成"),
+        message: crate::locale_tag::with_params(
+            "mods.installCompleted",
+            &[("name", &display_name.to_string())],
+        ),
     })
 }
 
@@ -900,9 +913,9 @@ pub fn uninstall_local_mod(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let manifest_dir = state.config.manifests_dir();
     let manifests = archive::read_manifests(&manifest_dir);
@@ -962,7 +975,7 @@ pub fn uninstall_local_mod(
             );
             return Ok(UninstallLocalModResult {
                 ok: false,
-                message: "error.mods.packageConfirmation".into(),
+                message: "mods.packageConfirmation".into(),
                 requires_confirmation: false,
                 requires_package_confirmation: true,
                 package_id: Some(manifest.repository_id),
@@ -1057,7 +1070,7 @@ pub fn uninstall_local_mod(
         );
         return Ok(UninstallLocalModResult {
             ok: false,
-            message: "error.mods.unmanagedConfirmation".into(),
+            message: "mods.unmanagedConfirmation".into(),
             requires_confirmation: true,
             requires_package_confirmation: false,
             package_id: None,
@@ -1110,13 +1123,12 @@ pub fn uninstall_mod_dll(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let manifest_dir = state.config.manifests_dir();
-    let manifest = archive::read_manifest(&manifest_dir, &package_id)
-        .ok_or("没有安装清单，拒绝删除未知文件")?;
+    let manifest = archive::read_manifest(&manifest_dir, &package_id).ok_or("mods.unknownFiles")?;
     let safe_relative =
         mods::canonical_dll_name(&Path::new(&dll_file).to_string_lossy().replace('\\', "/"));
     if !manifest
@@ -1124,7 +1136,7 @@ pub fn uninstall_mod_dll(
         .iter()
         .any(|file| mods::canonical_dll_name(file).eq_ignore_ascii_case(&safe_relative))
     {
-        return Err("error.mods.dllNotInPackage".into());
+        return Err("mods.dllNotInPackage".into());
     }
     let installed = mods::scan_mods_with_manifests(&game_root, &config, Some(&manifest_dir));
     let package_mod_count = installed
@@ -1217,9 +1229,9 @@ pub fn toggle_local_mod(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let relative = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
     toggle_local_mod_file(&game_root, &relative, enabled)?;
@@ -1227,9 +1239,9 @@ pub fn toggle_local_mod(
     Ok(OperationResult {
         ok: true,
         message: if enabled {
-            "MOD 已启用".into()
+            "mods.enabled".into()
         } else {
-            "MOD 已禁用".into()
+            "mods.disabled".into()
         },
     })
 }
@@ -1243,13 +1255,13 @@ fn set_local_mod_file_state(
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
     {
-        return Err("只能切换 BepInEx/plugins 下的 DLL 文件".into());
+        return Err("mods.notInPlugins".into());
     }
     let plugins_root = game::safe_game_path(&game_root, "BepInEx/plugins")?;
     let enabled_path = game::safe_game_path(&game_root, &relative)?;
     let disabled_path = game::safe_game_path(&game_root, &mods::disabled_dll_file(&relative))?;
     if !enabled_path.starts_with(&plugins_root) || !disabled_path.starts_with(&plugins_root) {
-        return Err("只能切换 BepInEx/plugins 下的 DLL 文件".into());
+        return Err("mods.notInPlugins".into());
     }
     let (source, target) = if enabled {
         (&disabled_path, &enabled_path)
@@ -1262,13 +1274,13 @@ fn set_local_mod_file_state(
         (false, true) => return Ok(false),
         (false, false) => {
             return Err(if enabled {
-                "找不到已禁用的 MOD DLL 文件"
+                "mods.disabledDllMissing"
             } else {
-                "找不到已启用的 MOD DLL 文件"
+                "mods.enabledDllMissing"
             }
             .into());
         }
-        (true, true) => return Err("目标 MOD 文件已存在，无法切换".into()),
+        (true, true) => return Err("mods.toggleTargetExists".into()),
         (true, false) => {}
     }
     archive::clear_readonly(source)?;
@@ -1290,12 +1302,12 @@ pub fn toggle_local_mod_package(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let manifest = archive::read_manifest(&state.config.manifests_dir(), &package_id)
-        .ok_or("没有安装清单，无法切换 MOD 包")?;
+        .ok_or("mods.packageManifestMissing")?;
     let mut dll_files = manifest
         .files
         .iter()
@@ -1311,7 +1323,7 @@ pub fn toggle_local_mod_package(
         .collect::<Vec<_>>();
     dll_files.sort_by_key(|file| file.to_ascii_lowercase());
     if dll_files.is_empty() {
-        return Err("这个 MOD 包没有可切换的插件 DLL".into());
+        return Err("mods.packageNoToggleableDll".into());
     }
     let mut changed = Vec::new();
     for dll_file in dll_files {
@@ -1340,9 +1352,9 @@ pub fn toggle_local_mod_package(
     Ok(OperationResult {
         ok: true,
         message: if enabled {
-            "MOD 包已启用".into()
+            "mods.packageEnabled".into()
         } else {
-            "MOD 包已禁用".into()
+            "mods.packageDisabled".into()
         },
     })
 }
@@ -1366,9 +1378,9 @@ pub fn set_all_local_mods_enabled(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
     /*
@@ -1395,7 +1407,7 @@ pub fn set_all_local_mods_enabled(
     }
     dll_files.sort_by_key(|file| file.to_ascii_lowercase());
     if dll_files.is_empty() {
-        return Err("没有找到任何 MOD 插件 DLL".into());
+        return Err("mods.noPluginDll".into());
     }
 
     let mut changed = Vec::new();
@@ -1410,7 +1422,13 @@ pub fn set_all_local_mods_enabled(
                 for previous in changed.into_iter().rev() {
                     let _ = toggle_local_mod_file(&game_root, &previous, !enabled);
                 }
-                return Err(format!("切换到「{relative}」时失败：{error}"));
+                return Err(crate::locale_tag::with_params(
+                    "mods.toggleFailed",
+                    &[
+                        ("relative", &relative.to_string()),
+                        ("error", &error.to_string()),
+                    ],
+                ));
             }
         }
     }
@@ -1421,10 +1439,13 @@ pub fn set_all_local_mods_enabled(
     );
     Ok(OperationResult {
         ok: true,
-        message: format!(
-            "{} 个 MOD {}",
-            changed.len(),
-            if enabled { "已启用" } else { "已禁用" }
+        message: crate::locale_tag::with_params(
+            if enabled {
+                "message.mods.bulkToggleEnabled"
+            } else {
+                "message.mods.bulkToggleDisabled"
+            },
+            &[("count", &changed.len().to_string())],
         ),
     })
 }
@@ -1437,7 +1458,7 @@ pub fn save_settings(
     log::info!("保存应用设置");
     let previous_game = if let Some(runtime) = patch.game_runtime {
         if cfg!(windows) && runtime != GameRuntime::Native {
-            return Err("Windows 仅支持 Windows 版厨房".into());
+            return Err("game.windowsOnly".into());
         }
         let previous = state.config.load_or_default();
         if previous.game.runtime != runtime {
@@ -1452,13 +1473,13 @@ pub fn save_settings(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     if previous_game
         .as_ref()
         .is_some_and(|previous| *previous != config.game)
     {
-        return Err("厨房设置已变化，请重试".into());
+        return Err("game.settingsChanged".into());
     }
     if let Some(runtime) = patch.game_runtime {
         config.game.switch_runtime(runtime);
@@ -1600,7 +1621,7 @@ pub fn save_github_proxies(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut proxies = GitHubProxyConfig {
         release_proxies: patch.release_proxies,
         raw_proxies: patch.raw_proxies,
@@ -1684,11 +1705,13 @@ async fn read_github_proxy_source(
         let mut response = client.get(&source.url).send().await.map_err(|error| {
             ProxySourceReadError::new(
                 "request",
-                format!(
-                    "超时={}，连接错误={}，原因={}",
-                    error.is_timeout(),
-                    error.is_connect(),
-                    error.without_url()
+                crate::locale_tag::with_params(
+                    "proxy.downloadFailureDetail",
+                    &[
+                        ("timeout", &error.is_timeout().to_string()),
+                        ("connect", &error.is_connect().to_string()),
+                        ("reason", &error.without_url().to_string()),
+                    ],
                 ),
             )
         })?;
@@ -1707,7 +1730,10 @@ async fn read_github_proxy_source(
         let size_error = || {
             ProxySourceReadError::new(
                 "size",
-                format!("代理来源超过 {} MiB", max_bytes / (1024 * 1024)),
+                crate::locale_tag::with_params(
+                    "proxy.sourceTooLargeByMib",
+                    &[("mib", &(max_bytes / (1024 * 1024)).to_string())],
+                ),
             )
         };
         if response
@@ -1720,11 +1746,13 @@ async fn read_github_proxy_source(
         while let Some(chunk) = response.chunk().await.map_err(|error| {
             ProxySourceReadError::new(
                 "body",
-                format!(
-                    "已读取字节数={}，超时={}，原因={}",
-                    bytes.len(),
-                    error.is_timeout(),
-                    error.without_url()
+                crate::locale_tag::with_params(
+                    "proxy.readFailureDetail",
+                    &[
+                        ("bytes", &bytes.len().to_string()),
+                        ("timeout", &error.is_timeout().to_string()),
+                        ("reason", &error.without_url().to_string()),
+                    ],
                 ),
             )
         })? {
@@ -1742,12 +1770,15 @@ async fn read_github_proxy_source(
             started_at.elapsed().as_millis()
         );
         String::from_utf8(bytes)
-            .map_err(|_| ProxySourceReadError::new("utf8", "文件不是有效 UTF-8 文本"))?
+            .map_err(|_| ProxySourceReadError::new("utf8", "proxy.invalidUtf8"))?
     };
     if text.len() > max_bytes {
         return Err(ProxySourceReadError::new(
             "size",
-            format!("代理来源超过 {} MiB", max_bytes / (1024 * 1024)),
+            crate::locale_tag::with_params(
+                "proxy.sourceTooLargeByMib",
+                &[("mib", &(max_bytes / (1024 * 1024)).to_string())],
+            ),
         ));
     }
     log::debug!(
@@ -1764,13 +1795,9 @@ async fn read_github_proxy_source(
     // secret. Log the source/stage rather than untrusted document contents.
     .map_err(|error| {
         let reason = match error.as_str() {
-            "GitHub 代理脚本中没有可识别的 Release 或 Raw 代理" => {
-                "JS 文件没有可识别的 Release 或 Raw 代理"
-            }
-            "代理脚本缺少 download_url_us 列表" | "代理脚本缺少 raw_url 列表" => {
-                "JS 文件缺少 download_url_us 或 raw_url 列表"
-            }
-            _ => "文件格式、字段或代理条目校验失败",
+            "proxy.noUsableEntries" => "proxy.noUsableEntriesJs",
+            "proxy.missingDownloadList" | "proxy.missingRawList" => "proxy.missingDownloadListJs",
+            _ => "proxy.validationFailed",
         };
         ProxySourceReadError::new("parse", reason)
     })?;
@@ -1871,7 +1898,7 @@ pub async fn refresh_github_proxies(state: State<'_, AppState>) -> Result<Public
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     // merge_downloaded always supplies the complete bundled asset/API fallback
     // set, including when a userscript failed or contained no usable proxies.
     let mut config = state.config.load_or_default();
@@ -1935,7 +1962,7 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     if patch.clear {
         // 显式清除：把两个 Token 都恢复成空
@@ -1983,10 +2010,10 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
         let _guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         let mut config = state.config.load_or_default();
         if config.game != previous.game {
-            return Err("厨房设置已变化，请重试".into());
+            return Err("game.settingsChanged".into());
         }
         config.game.path = root.to_string_lossy().to_string();
         config.game.auto_detect = false;
@@ -2006,7 +2033,7 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
         let _guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         let mut config = state.config.load_or_default();
         config.game.path.clear();
         config.game.auto_detect = true;
@@ -2030,7 +2057,7 @@ pub async fn refresh_repository(
         .repositories
         .iter()
         .position(|repo| repo.id == repository_id)
-        .ok_or("仓库不存在")?;
+        .ok_or("source.repositoryMissing")?;
     /*
      * 不可用的仓库不刷新：`enabled=false`（用户关闭，或被官方仓库源覆盖的
      * 社区副本）与「地区不适用」（例如中国大陆下的 international 仓库）
@@ -2042,7 +2069,7 @@ pub async fn refresh_repository(
         &config.repositories[index],
         crate::config::current_user_region(),
     ) {
-        return Err("该仓库不在当前地区的 MOD 安装页展示，无法刷新".into());
+        return Err("source.repositoryUnavailableInRegion".into());
     }
     if config.repositories[index].download_mode == RepositoryDownloadMode::RepositoryFile {
         // 这条消息会直接展示在「刷新全部仓库源」的结果里，写成用户能看懂的话
@@ -2050,9 +2077,9 @@ pub async fn refresh_repository(
             "跳过仓库文件模式的 Release 刷新：仓库={}",
             config.repositories[index].name
         );
-        return Err(format!(
-            "无法刷新「{}」，仓库文件模式下无法探测版本号",
-            config.repositories[index].name
+        return Err(crate::locale_tag::with_params(
+            "source.fileModeNoVersion",
+            &[("repo", &config.repositories[index].name.to_string())],
         ));
     }
     let repo = config.repositories[index].clone();
@@ -2085,13 +2112,13 @@ pub async fn refresh_repository(
     let _operation_guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut latest_config = state.config.load_or_default();
     let latest_index = latest_config
         .repositories
         .iter()
         .position(|item| item.id == repository_id)
-        .ok_or("仓库已被删除")?;
+        .ok_or("source.repositoryRemoved")?;
     let latest_repo = &mut latest_config.repositories[latest_index];
     if latest_repo.username != repo.username
         || latest_repo.repository != repo.repository
@@ -2099,7 +2126,7 @@ pub async fn refresh_repository(
         || latest_repo.channel != repo.channel
         || latest_repo.download_mode != repo.download_mode
     {
-        return Err("仓库配置已更改，请重新刷新".into());
+        return Err("source.repositoryConfigChanged".into());
     }
 
     latest_repo.etag = None;
@@ -2141,7 +2168,7 @@ pub fn get_repository_releases(
         .repositories
         .iter()
         .find(|repo| repo.id == repository_id)
-        .ok_or("仓库不存在")?
+        .ok_or("source.repositoryMissing")?
         .cached_releases
         .clone())
 }
@@ -2163,13 +2190,13 @@ pub async fn install_bepinex(
     let package = crate::bepinex::Package::current(&config.game);
     let info = game::detect_game(&config);
     if !info.game_exists {
-        return Err("当前模式下未找到厨房可执行文件".into());
+        return Err("game.executableMissing".into());
     }
-    let game_root = info.path.as_deref().ok_or("尚未找到厨房目录")?;
+    let game_root = info.path.as_deref().ok_or("game.notFound")?;
     let game_root = PathBuf::from(game_root);
     game::ensure_game_stopped(&game_root)?;
     if info.bepinex.installed && !reinstall {
-        return Err("error.framework.alreadyInstalled".into());
+        return Err("framework.alreadyInstalled".into());
     }
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
@@ -2233,12 +2260,12 @@ pub async fn install_bepinex(
         let _guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         if state.config.load_or_default().game != config.game {
-            return Err("厨房设置已变化，请重试".into());
+            return Err("game.settingsChanged".into());
         }
         if archive::is_download_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         game::ensure_game_stopped(&game_root)?;
         install_framework_archive(
@@ -2264,14 +2291,11 @@ pub async fn install_bepinex(
                 let prefix = info.wine_prefix.map(PathBuf::from);
                 Some(
                     tauri::async_runtime::spawn_blocking(move || {
-                        let prefix =
-                            prefix.ok_or("无法确定游戏使用的 Wine 容器，请重新选择厨房目录")?;
+                        let prefix = prefix.ok_or("wine.prefixUnknown")?;
                         crate::wine::configure_winhttp(&prefix)
                     })
                     .await
-                    .unwrap_or_else(|_| {
-                        Err("无法自动配置 Wine winhttp，请在目标容器的 winecfg 中手动设置".into())
-                    }),
+                    .unwrap_or_else(|_| Err("wine.winhttpFailed".into())),
                 )
             } else {
                 None
@@ -2286,7 +2310,7 @@ pub async fn install_bepinex(
             Ok(BepInExInstallResult {
                 operation: OperationResult {
                     ok: true,
-                    message: "BepInEx 安装完成".into(),
+                    message: "framework.bepInExInstalled".into(),
                 },
                 wine_override_applied,
                 wine_override_error,
@@ -2295,9 +2319,9 @@ pub async fn install_bepinex(
         }
         Err(error) => {
             log::error!("BepInEx 安装失败：原因={}", error);
-            Err(format!(
-                "error.framework.installFailed?reason={}",
-                crate::locale_tag::encode(&error)
+            Err(crate::locale_tag::with_params(
+                "framework.installFailed",
+                &[("reason", &error)],
             ))
         }
     }
@@ -2330,7 +2354,7 @@ fn install_framework_archive(
      */
     let installed = crate::bepinex::installed(game_root);
     if installed && !reinstall {
-        return Err("error.framework.alreadyInstalled".into());
+        return Err("framework.alreadyInstalled".into());
     }
     /*
      * 只有真装过框架才做「整目录备份 → 删除重建 → 恢复 plugins/config」。
@@ -2384,7 +2408,7 @@ fn install_framework_archive(
                     "BepInEx 失败回滚未完成：备份={}，原因={restore}",
                     backup.display()
                 );
-                "error.framework.installFailedRollbackIncomplete".to_string()
+                "framework.installFailedRollbackIncomplete".to_string()
             })?;
         }
         return Err(error);
@@ -2399,22 +2423,22 @@ pub fn repair_native_bepinex_overlay(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     if std::env::consts::OS != "macos" || config.game.runtime != GameRuntime::Native {
-        return Err("Steam Overlay 修复仅适用于 macOS 原生运行模式".into());
+        return Err("framework.overlayMacNativeOnly".into());
     }
     let info = game::detect_game(&config);
     if !info.game_exists {
-        return Err("当前模式下未找到厨房可执行文件".into());
+        return Err("game.executableMissing".into());
     }
-    let game_root = PathBuf::from(info.path.ok_or("尚未找到游戏目录")?);
+    let game_root = PathBuf::from(info.path.ok_or("game.directoryMissing")?);
     game::ensure_game_stopped(&game_root)?;
     crate::bepinex::repair_macos_overlay(&game_root)?;
     log::info!("macOS Steam Overlay 注入修复完成");
     Ok(OperationResult {
         ok: true,
-        message: "Steam Overlay 注入修复完成".into(),
+        message: "framework.overlayRepaired".into(),
     })
 }
 
@@ -2424,10 +2448,10 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
-    let game_root = PathBuf::from(info.path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(info.path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let source = game_root.join("BepInEx");
     /*
@@ -2439,9 +2463,9 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
      */
     if !crate::bepinex::installed(&game_root) {
         return Err(if source.exists() {
-            "error.framework.bepinexOnlyResidue".into()
+            "framework.bepinexOnlyResidue".into()
         } else {
-            "error.framework.bepinexMissing".to_string()
+            "framework.bepinexMissing".to_string()
         });
     }
     ensure_copy_paths_disjoint(&source, &state.config.backups_dir())?;
@@ -2514,7 +2538,7 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
                     backup.display()
                 );
                 return Err(crate::locale_tag::with_params(
-                    "error.backup.recycleFailed",
+                    "backup.recycleFailed",
                     &[
                         ("reason", &error.to_string()),
                         ("path", &backup.display().to_string()),
@@ -2536,7 +2560,7 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
     let files = framework_manifest_files(&game_root);
     if files.is_empty() {
         return Err(crate::locale_tag::with_params(
-            "error.backup.noReclaimableFiles",
+            "backup.noReclaimableFiles",
             &[("path", &backup.display().to_string())],
         ));
     }
@@ -2574,7 +2598,7 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
             })
         }
         Err(error) => Err(crate::locale_tag::with_params(
-            "error.backup.recycleFailed",
+            "backup.recycleFailed",
             &[
                 ("reason", &error.to_string()),
                 ("path", &backup.display().to_string()),
@@ -2625,9 +2649,9 @@ pub fn backup_bepinex(state: State<'_, AppState>) -> Result<OperationResult, Str
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let backup = backup_framework(
         &game_root,
@@ -2655,9 +2679,9 @@ pub fn restore_bepinex(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let backup = validate_framework_backup_in(
         Path::new(&backup_path),
@@ -2687,18 +2711,18 @@ pub fn delete_bepinex_backup(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
-    let target = fs::canonicalize(&backup_path).map_err(|_| "备份目录不存在".to_string())?;
+    let target = fs::canonicalize(&backup_path).map_err(|_| "backup.notFound".to_string())?;
     let name = target
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
     if !name.starts_with("BepInEx.backup-") || !target.is_dir() {
-        return Err("只能删除 BepInEx 时间戳备份".into());
+        return Err("backup.wrongKindBepInEx".into());
     }
 
     let game_root = fs::canonicalize(&game_root).map_err(|e| e.to_string())?;
@@ -2708,7 +2732,7 @@ pub fn delete_bepinex_backup(
     let allowed = target.parent() == Some(game_root.as_path())
         || target.parent() == Some(manager_backup_root.as_path());
     if !allowed {
-        return Err("备份目录不在允许的备份位置".into());
+        return Err("backup.outsideRoot".into());
     }
 
     archive::clear_readonly(&target)?;
@@ -2775,7 +2799,7 @@ fn plan_asset_download_candidates(
 ) -> Result<Vec<AssetDownloadCandidate>, String> {
     let candidates = ordered_asset_download_candidates(mode, direct_url, proxy_urls);
     if mode == ProxyMode::Fixed && candidates.is_empty() {
-        return Err("全局 GitHub 代理列表中没有可用的代理".into());
+        return Err("proxy.noGlobalProxy".into());
     }
     Ok(candidates)
 }
@@ -2853,21 +2877,21 @@ pub async fn install_repository(
     );
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
-    let game_root = PathBuf::from(info.path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(info.path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     if info.bepinex.version.is_none() {
-        return Err("请先安装 BepInEx 框架，再安装 MOD".into());
+        return Err("framework.bepInExRequiredBeforeMods".into());
     }
     let repo = config
         .repositories
         .iter()
         .find(|repo| repo.id == repository_id)
-        .ok_or("仓库不存在")?
+        .ok_or("source.repositoryMissing")?
         .clone();
     // 安装要求仓库在当前地区可用；隐藏/地区不匹配的仓库不能作为安装入口
     if !crate::config::repository_is_available(&config, &repo, crate::config::current_user_region())
     {
-        return Err("该仓库不在当前地区的 MOD 安装页展示，无法从这里安装".into());
+        return Err("source.repositoryUnavailableForInstall".into());
     }
     /*
      * 用于下载进度标签与安装预览标题的显示名。
@@ -2963,9 +2987,9 @@ pub async fn install_repository(
                     })
                 })
                 .or_else(|| fetched_releases.first())
-                .ok_or("没有可安装的 Release")?;
+                .ok_or("source.noInstallableRelease")?;
             let asset = releases::select_install_asset(&repo, release, asset_name.as_deref())
-                .ok_or("没有匹配的 Release 资产")?;
+                .ok_or("source.noMatchingAsset")?;
             log::info!(
                 "已选择 Release 资产：仓库={}，版本={}，资产={}",
                 repo.name,
@@ -3111,7 +3135,10 @@ pub async fn install_repository(
         );
         return Ok(RepositoryInstallOutcome {
             ok: true,
-            message: format!("{} 已就绪", repo.name),
+            message: crate::locale_tag::with_params(
+                "mods.ready",
+                &[("name", &repo.name.to_string())],
+            ),
             preview: Some(preview),
         });
     }
@@ -3120,13 +3147,13 @@ pub async fn install_repository(
         let _guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         if archive::is_download_cancelled() {
-            return Err("下载已取消".into());
+            return Err("download.cancelled".into());
         }
         if game::is_game_running(&game_root) {
             log::warn!("下载期间检测到厨房重新启动，取消安装：仓库={}", repo.name);
-            return Err("下载期间厨房重新启动，安装已取消，旧版本未删除".into());
+            return Err("mods.gameRestartedDuringDownload".into());
         }
         let current_config = state.config.load_or_default();
         let install_repo =
@@ -3155,9 +3182,18 @@ pub async fn install_repository(
             Ok(RepositoryInstallOutcome {
                 ok: true,
                 message: if release_tag.is_empty() {
-                    format!("{} 安装完成", repo.name)
+                    crate::locale_tag::with_params(
+                        "mods.installCompletedSimple",
+                        &[("name", &repo.name.to_string())],
+                    )
                 } else {
-                    format!("{} {} 安装完成", repo.name, release_tag)
+                    crate::locale_tag::with_params(
+                        "mods.installCompletedWithVersion",
+                        &[
+                            ("name", &repo.name.to_string()),
+                            ("version", &release_tag.to_string()),
+                        ],
+                    )
                 },
                 preview: None,
             })
@@ -3175,7 +3211,7 @@ pub fn cancel_download() -> Result<OperationResult, String> {
     archive::cancel_download();
     Ok(OperationResult {
         ok: true,
-        message: "正在取消下载".into(),
+        message: "download.cancelling".into(),
     })
 }
 
@@ -3188,9 +3224,9 @@ pub fn uninstall_repository(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let package_id = if let Some(repo) = config
         .repositories
@@ -3202,7 +3238,7 @@ pub fn uninstall_repository(
         repository_id.clone()
     };
     let manifest = archive::read_manifest(&state.config.manifests_dir(), &package_id)
-        .ok_or("没有安装清单，拒绝删除未知文件")?;
+        .ok_or("mods.unknownFiles")?;
     if config.recycle_deleted_mods {
         let entry = recycle_bin::recycle_package(
             &state.config.mod_recycle_bin_dir(),
@@ -3245,7 +3281,7 @@ pub fn get_mod_recycle_bin(state: State<'_, AppState>) -> Result<Vec<ModRecycleE
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     recycle_bin::list(&state.config.mod_recycle_bin_dir()).map_err(|error| {
         log::warn!("读取 MOD 回收站失败：{}", error);
         error
@@ -3261,9 +3297,9 @@ pub fn restore_recycled_mod(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     let original = recycle_bin::original_game_path(&state.config.mod_recycle_bin_dir(), &id)?;
     game::ensure_game_stopped(&game_root)?;
     game::ensure_game_stopped(&original)?;
@@ -3279,7 +3315,7 @@ pub fn restore_recycled_mod(
     })?;
     Ok(OperationResult {
         ok: true,
-        message: "MOD 已从回收站恢复".into(),
+        message: "recycle.modRestored".into(),
     })
 }
 
@@ -3292,14 +3328,14 @@ pub fn delete_recycled_mod(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     recycle_bin::delete(&state.config.mod_recycle_bin_dir(), &id).map_err(|error| {
         log::warn!("彻底删除回收站 MOD 失败：ID={}，原因={}", id, error);
         error
     })?;
     Ok(OperationResult {
         ok: true,
-        message: "MOD 已彻底删除".into(),
+        message: "recycle.modPermanentlyDeleted".into(),
     })
 }
 
@@ -3309,7 +3345,7 @@ pub fn delete_all_recycled_mods(state: State<'_, AppState>) -> Result<OperationR
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let removed =
         recycle_bin::delete_all(&state.config.mod_recycle_bin_dir()).map_err(|error| {
             log::warn!("清空回收站失败：原因={}", error);
@@ -3317,7 +3353,10 @@ pub fn delete_all_recycled_mods(state: State<'_, AppState>) -> Result<OperationR
         })?;
     Ok(OperationResult {
         ok: true,
-        message: format!("已清空回收站（{removed} 条记录）"),
+        message: crate::locale_tag::with_params(
+            "recycle.emptied",
+            &[("count", &removed.to_string())],
+        ),
     })
 }
 
@@ -3348,13 +3387,13 @@ pub fn export_repositories_to_file(
     if !path.to_ascii_lowercase().ends_with(".oc2repo.toml")
         && !path.to_ascii_lowercase().ends_with(".toml")
     {
-        return Err("导出文件必须使用 .oc2repo.toml 或 .toml 扩展名".into());
+        return Err("config.exportExtensionInvalid".into());
     }
     fs::write(&path, text).map_err(|e| e.to_string())?;
     log::info!("仓库配置导出完成");
     Ok(OperationResult {
         ok: true,
-        message: format!("已导出到 {path}"),
+        message: crate::locale_tag::with_params("config.exported", &[("path", &path.to_string())]),
     })
 }
 
@@ -3369,7 +3408,7 @@ pub fn copy_repositories(
     clipboard.set_text(text).map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "仓库 TOML 已复制到剪贴板".into(),
+        message: "config.tomlCopied".into(),
     })
 }
 
@@ -3387,7 +3426,7 @@ pub fn copy_text(text: String) -> Result<OperationResult, String> {
     clipboard.set_text(text).map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "教程格式已复制".into(),
+        message: "tutorial.formatCopied".into(),
     })
 }
 
@@ -3537,10 +3576,10 @@ pub async fn push_colorful_name(
     name: String,
 ) -> Result<OperationResult, String> {
     if name.trim().is_empty() {
-        return Err("error.rename.nameEmpty".into());
+        return Err("rename.nameEmpty".into());
     }
     if name.chars().any(|character| character.is_control()) {
-        return Err("error.rename.nameHasControlChars".into());
+        return Err("rename.nameHasControlChars".into());
     }
     let units = name.encode_utf16().count();
     if units > COLORFUL_NAME_MAX_UNITS {
@@ -3587,7 +3626,12 @@ pub async fn push_colorful_name(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(1500))
         .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+        .map_err(|e| {
+            crate::locale_tag::with_params(
+                "network.clientCreateFailed",
+                &[("reason", &e.to_string())],
+            )
+        })?;
     let attempts = ports.into_iter().map(|port| {
         let client = client.clone();
         let name = &name;
@@ -3602,7 +3646,7 @@ pub async fn push_colorful_name(
                 log::info!("街机MOD 已接收多彩名字：端口={port}");
                 return Ok(OperationResult {
                     ok: true,
-                    message: "已推送到街机MOD".into(),
+                    message: "rename.pushed".into(),
                 });
             }
             ColorfulNameOutcome::Rejected(port, detail) => {
@@ -3617,15 +3661,15 @@ pub async fn push_colorful_name(
             "多彩名字推送失败：街机MOD 在端口 {rejected:?} 上拒绝请求，无响应的端口={unreachable:?}，检查街机MOD 是否已写出握手文件"
         );
         // 走到这里说明端口有人听、但没通过鉴权：对用户只有一种可执行的建议。
-        return Err("error.diyLevel.rejected".into());
+        return Err("diyLevel.rejected".into());
     }
     log::warn!("多彩名字推送失败：{unreachable:?} 端口均无响应");
-    Err("error.diyLevel.notRunning".into())
+    Err("diyLevel.notRunning".into())
 }
 
 fn parse_tutorial_document(text: &str) -> Result<TutorialDocument, String> {
     if text.len() > 1024 * 1024 {
-        return Err("教程配置超过 1 MiB".into());
+        return Err("tutorial.configTooLarge".into());
     }
     let trimmed = text.trim();
     let content = if trimmed.starts_with("```") {
@@ -3635,15 +3679,22 @@ fn parse_tutorial_document(text: &str) -> Result<TutorialDocument, String> {
         let end = body
             .iter()
             .rposition(|line| line.trim() == "```")
-            .ok_or_else(|| "教程配置代码块未闭合".to_string())?;
+            .ok_or_else(|| "tutorial.unclosedCodeBlock".to_string())?;
         body[..end].join("\n")
     } else {
         trimmed.to_string()
     };
-    let document = toml::from_str::<TutorialDocument>(&content)
-        .map_err(|error| format!("教程 TOML 格式无效：{error}"))?;
+    let document = toml::from_str::<TutorialDocument>(&content).map_err(|error| {
+        crate::locale_tag::with_params(
+            "tutorial.tomlInvalidReason",
+            &[("reason", &error.to_string())],
+        )
+    })?;
     if document.version != 1 {
-        return Err(format!("不支持的教程格式版本：{}", document.version));
+        return Err(crate::locale_tag::with_params(
+            "tutorial.unsupportedVersion",
+            &[("version", &document.version.to_string())],
+        ));
     }
     Ok(document)
 }
@@ -3664,8 +3715,9 @@ pub fn parse_tutorial_config(text: String) -> Result<Vec<TutorialStepConfig>, St
 #[tauri::command]
 pub fn serialize_tutorial_config(steps: Vec<TutorialStepConfig>) -> Result<String, String> {
     log::debug!("序列化教程配置：步骤数={}", steps.len());
-    toml::to_string_pretty(&TutorialDocument { version: 1, steps })
-        .map_err(|error| format!("教程 TOML 导出失败：{error}"))
+    toml::to_string_pretty(&TutorialDocument { version: 1, steps }).map_err(|error| {
+        crate::locale_tag::with_params("tutorial.exportFailed", &[("reason", &error.to_string())])
+    })
 }
 
 #[tauri::command]
@@ -3673,7 +3725,7 @@ pub fn read_text_file(path: String) -> Result<String, String> {
     log::debug!("读取文本文件");
     let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
     if metadata.len() > 1024 * 1024 {
-        return Err("导入文件超过 1 MiB".into());
+        return Err("tutorial.importTooLarge".into());
     }
     fs::read_to_string(path).map_err(|e| e.to_string())
 }
@@ -3706,7 +3758,7 @@ pub fn import_repositories(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     let bundle = state
         .config
@@ -3729,13 +3781,13 @@ pub async fn clear_repository_source_cache(
     source_ids: Vec<String>,
 ) -> Result<PublicConfig, String> {
     if source_ids.iter().any(|id| crate::community::is_source(id)) {
-        return Err("社区仓库源由自动搜索管理".into());
+        return Err("source.communityManaged".into());
     }
     let _cache_guard = state.repository_cache.lock().await;
     let _operation_guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     if source_ids.iter().any(|id| {
         !config
@@ -3743,7 +3795,7 @@ pub async fn clear_repository_source_cache(
             .iter()
             .any(|source| source.id == *id)
     }) {
-        return Err("仓库源不存在".into());
+        return Err("source.sourceMissing".into());
     }
     for source in config
         .repository_sources
@@ -3795,7 +3847,7 @@ async fn import_repository_source_into_config(
     builtin_fallback: bool,
 ) -> Result<RepositorySourceImportResult, String> {
     if crate::community::is_source(&source_id) {
-        return Err("社区仓库源由自动搜索管理".into());
+        return Err("source.communityManaged".into());
     }
     log::info!("开始刷新仓库源：源={}", source_id);
     // Clear this source and all descendants before loading. The lock is
@@ -3808,7 +3860,7 @@ async fn import_repository_source_into_config(
         let _operation_guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         let original_config = state.config.load_or_default();
         let Some(source) = original_config
             .repository_sources
@@ -3816,11 +3868,11 @@ async fn import_repository_source_into_config(
             .find(|source| source.id == source_id)
         else {
             log::warn!("刷新仓库源失败：源不存在，源={}", source_id);
-            return Err("仓库源不存在".into());
+            return Err("source.sourceMissing".into());
         };
         if !source.url.trim().eq_ignore_ascii_case(source_url.trim()) {
             log::warn!("刷新仓库源失败：请求地址与当前配置不一致，源={}", source_id);
-            return Err("仓库源地址与配置不一致".into());
+            return Err("source.addressMismatch".into());
         }
         let builtin_fallback_available = source.id == repository_sources::DEFAULT_INDEX_ID
             && [
@@ -3831,7 +3883,7 @@ async fn import_repository_source_into_config(
             && source.builtin
             && source.parent_id.is_none();
         if builtin_fallback && !builtin_fallback_available {
-            return Err("此仓库源不支持内置回退".into());
+            return Err("source.noBuiltinFallback".into());
         }
         let source_url = source.url.clone();
         log::info!(
@@ -3928,7 +3980,7 @@ async fn import_repository_source_into_config(
     let _operation_guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     config
         .repositories
@@ -4194,7 +4246,7 @@ pub fn save_repository_source(
     nickname_i18n: Option<std::collections::BTreeMap<String, String>>,
 ) -> Result<PublicConfig, String> {
     if id.as_deref().is_some_and(crate::community::is_source) {
-        return Err("社区仓库源由自动搜索管理".into());
+        return Err("source.communityManaged".into());
     }
     log::info!(
         "保存仓库源：操作={}",
@@ -4203,13 +4255,15 @@ pub fn save_repository_source(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     let nickname = nickname.trim();
     let url = url.trim();
-    Url::parse(url).map_err(|error| format!("仓库源地址无效: {error}"))?;
+    Url::parse(url).map_err(|error| {
+        crate::locale_tag::with_params("source.addressInvalid", &[("reason", &error.to_string())])
+    })?;
     if nickname.is_empty() || url.is_empty() {
-        return Err("仓库源昵称和地址不能为空".into());
+        return Err("source.nicknameOrAddressEmpty".into());
     }
     /*
      * 昵称只保存多语言表：单语参数作为 zh-CN 兜底写进表里。
@@ -4223,8 +4277,8 @@ pub fn save_repository_source(
     if !nickname_map.contains_key("zh-CN") {
         nickname_map.insert("zh-CN".into(), nickname.to_string());
     }
-    let effective_nickname =
-        crate::repository_sources::nickname_fallback(&nickname_map).ok_or("仓库源昵称不能为空")?;
+    let effective_nickname = crate::repository_sources::nickname_fallback(&nickname_map)
+        .ok_or("source.nicknameEmpty")?;
     let region = config
         .repository_sources
         .iter()
@@ -4235,16 +4289,16 @@ pub fn save_repository_source(
         Some(item.id.as_str()) != id.as_deref()
             && source_address_key(&item.url, item.region.as_deref()) == source_key
     }) {
-        return Err("仓库源地址已存在".into());
+        return Err("source.addressExists".into());
     }
     if let Some(id) = id {
         let source = config
             .repository_sources
             .iter_mut()
             .find(|item| item.id == id)
-            .ok_or("仓库源不存在")?;
+            .ok_or("source.sourceMissing")?;
         if source.builtin {
-            return Err("内置仓库源不能修改".into());
+            return Err("source.builtinCannotEdit".into());
         }
         source.nickname = effective_nickname;
         source.nickname_i18n = nickname_map;
@@ -4274,14 +4328,14 @@ pub fn save_repository_sources(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     let has_builtin_root = config
         .repository_sources
         .iter()
         .any(|source| source.builtin && source.parent_id.is_none());
     if !has_builtin_root {
-        return Err("缺少内置仓库源".into());
+        return Err("source.builtinMissing".into());
     }
     let builtin_ids = config
         .repository_sources
@@ -4339,7 +4393,7 @@ pub fn save_repository_sources(
         }
         let id = source.id.trim().to_string();
         if id.is_empty() {
-            return Err("仓库唯一 ID 不能为空".into());
+            return Err("config.repositoryIdEmpty".into());
         }
         if id.len() > 128
             || !id.bytes().enumerate().all(|(index, byte)| {
@@ -4347,7 +4401,7 @@ pub fn save_repository_sources(
                     && (index > 0 || byte.is_ascii_alphanumeric())
             })
         {
-            return Err("仓库唯一 ID 格式无效".into());
+            return Err("config.repositoryIdInvalid".into());
         }
         let url = source.url.trim().to_string();
         /*
@@ -4360,13 +4414,13 @@ pub fn save_repository_sources(
             nickname_map.insert("zh-CN".into(), source.nickname.trim().to_string());
         }
         let nickname = crate::repository_sources::nickname_fallback(&nickname_map)
-            .ok_or("仓库源昵称不能为空")?;
+            .ok_or("source.nicknameEmpty")?;
         if nickname.is_empty() || url.is_empty() {
-            return Err("仓库源昵称和地址不能为空".into());
+            return Err("source.nicknameOrAddressEmpty".into());
         }
         let normalized_region = crate::config::normalize_repository_region_for_storage(
             source.region.as_deref(),
-            &format!("仓库源 {}", id),
+            &crate::locale_tag::with_params("source.labeled", &[("label", &id.to_string())]),
         );
         crate::config::validate_repository_source_region(normalized_region.as_deref())
             .map_err(|error| error.to_string())?;
@@ -4378,13 +4432,13 @@ pub fn save_repository_sources(
                 && existing.url.eq_ignore_ascii_case(&url)
         });
         if matches!(location, SourceLocation::Bundled(_)) && !existing_bundled_child {
-            return Err("仓库源必须使用 HTTP 或 HTTPS 地址".into());
+            return Err("source.mustBeHttp".into());
         }
         if !seen_urls.insert(source_address_key(&url, normalized_region.as_deref())) {
-            return Err("仓库源地址已存在".into());
+            return Err("source.addressExists".into());
         }
         if !seen_ids.insert(id.clone()) {
-            return Err("仓库源标识重复".into());
+            return Err("source.idDuplicate".into());
         }
         ordered.push(RepositorySource {
             id,
@@ -4439,21 +4493,21 @@ pub fn delete_repository_source(
     id: String,
 ) -> Result<PublicConfig, String> {
     if crate::community::is_source(&id) {
-        return Err("社区仓库源由自动搜索管理".into());
+        return Err("source.communityManaged".into());
     }
     log::info!("删除仓库源：源={}", id);
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     let index = config
         .repository_sources
         .iter()
         .position(|item| item.id == id)
-        .ok_or("仓库源不存在")?;
+        .ok_or("source.sourceMissing")?;
     if config.repository_sources[index].builtin {
-        return Err("内置仓库源不能删除".into());
+        return Err("source.builtinCannotDelete".into());
     }
     let mut removed_ids = vec![id.clone()];
     let mut changed = true;
@@ -4495,7 +4549,7 @@ pub fn reorder_repository_sources(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     let builtin_roots = config
         .repository_sources
@@ -4504,7 +4558,7 @@ pub fn reorder_repository_sources(
         .cloned()
         .collect::<Vec<_>>();
     if builtin_roots.is_empty() {
-        return Err("缺少内置仓库源".into());
+        return Err("source.builtinMissing".into());
     }
     let builtin_ids = builtin_roots
         .iter()
@@ -4559,7 +4613,7 @@ pub fn save_repository(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     if patch.id.as_ref().is_some_and(|id| {
         config
@@ -4567,7 +4621,7 @@ pub fn save_repository(
             .iter()
             .any(|repo| repo.id == *id && crate::community::is_repository(repo))
     }) {
-        return Err("社区仓库由自动搜索管理，请导出后作为自定义仓库编辑".into());
+        return Err("config.communityRepositoryReadOnly".into());
     }
     let (username, repository) =
         releases::repository_coordinates(&patch.username, &patch.repository)
@@ -4579,7 +4633,7 @@ pub fn save_repository(
                 .iter()
                 .any(|rule| rule.value.trim().is_empty()))
     {
-        return Err("请创建至少一个有效的资产规则".into());
+        return Err("config.assetRuleRequired".into());
     }
     if patch.download_mode == RepositoryDownloadMode::RepositoryFile {
         releases::repository_file_url(
@@ -4593,14 +4647,17 @@ pub fn save_repository(
     }
     let normalized_region = crate::config::normalize_repository_region_for_storage(
         patch.region.as_deref(),
-        &format!("仓库 {}", patch.name),
+        &crate::locale_tag::with_params(
+            "config.repositoryLabeled",
+            &[("name", &patch.name.to_string())],
+        ),
     );
     crate::config::validate_repository_region(normalized_region.as_deref())
         .map_err(|error| error.to_string())?;
     if !patch.version_regex.trim().is_empty()
         && regex::Regex::new(patch.version_regex.trim()).is_err()
     {
-        return Err("版本号正则无效".into());
+        return Err("config.versionRegexInvalid".into());
     }
     let id = patch.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let existing_translations = config
@@ -4662,7 +4719,7 @@ pub fn save_repository(
         .get("zh-CN")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "仓库名称不能为空".to_string())?;
+        .ok_or_else(|| "config.repositoryNameEmpty".to_string())?;
     let group = group_i18n["zh-CN"].clone();
     let note = note_i18n["zh-CN"].clone();
     let download_threads = match &patch.provider {
@@ -4759,27 +4816,27 @@ pub fn delete_repository(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     let Some(index) = config
         .repositories
         .iter()
         .position(|repo| repo.id == repository_id)
     else {
-        return Err("仓库不存在".into());
+        return Err("source.repositoryMissing".into());
     };
     if config.repositories[index].builtin {
-        return Err("内置仓库不能删除，可禁用它".into());
+        return Err("config.builtinRepositoryCannotDelete".into());
     }
     if crate::community::is_repository(&config.repositories[index]) {
-        return Err("社区仓库由自动搜索管理，请导出后作为自定义仓库编辑".into());
+        return Err("config.communityRepositoryReadOnly".into());
     }
     config.repositories.remove(index);
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!("仓库删除完成：仓库={}", repository_id);
     Ok(OperationResult {
         ok: true,
-        message: "仓库已删除".into(),
+        message: "config.repositoryDeleted".into(),
     })
 }
 
@@ -4790,14 +4847,14 @@ pub fn stop_game(state: State<'_, AppState>) -> Result<OperationResult, String> 
     // 而游戏退出期间的其他只读操作（例如状态刷新）应继续可用。
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
-    let game_root = PathBuf::from(info.path.as_deref().ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
     let stopped = game::stop_game(&game_root)?;
     Ok(OperationResult {
         ok: true,
         message: if stopped == 0 {
-            "厨房当前未在运行".into()
+            "game.notRunning".into()
         } else {
-            "已停止厨房".into()
+            "game.stopped".into()
         },
     })
 }
@@ -4808,10 +4865,10 @@ pub fn launch_normal(state: State<'_, AppState>) -> Result<OperationResult, Stri
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
-    let game_root = PathBuf::from(info.path.as_deref().ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     if config.launch.auto_restore_winhttp {
         if matches!(
@@ -4836,10 +4893,10 @@ pub fn launch_no_mod(state: State<'_, AppState>) -> Result<OperationResult, Stri
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
-    let game_root = PathBuf::from(info.path.as_deref().ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     if crate::bepinex::state(&game_root, &config.game) != WinhttpState::Missing {
         crate::bepinex::set_enabled(&game_root, &config.game, false)?;
@@ -4859,9 +4916,9 @@ pub fn restore_mod(state: State<'_, AppState>) -> Result<OperationResult, String
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     if crate::bepinex::state(&game_root, &config.game) == WinhttpState::ModDisabled {
         crate::bepinex::set_enabled(&game_root, &config.game, true)?;
@@ -4869,7 +4926,7 @@ pub fn restore_mod(state: State<'_, AppState>) -> Result<OperationResult, String
     log::info!("框架状态恢复完成");
     Ok(OperationResult {
         ok: true,
-        message: "框架状态已恢复".into(),
+        message: "framework.stateRestored".into(),
     })
 }
 
@@ -4884,9 +4941,9 @@ pub fn switch_winhttp(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     /*
      * 未安装时直接拒绝。
@@ -4898,16 +4955,16 @@ pub fn switch_winhttp(
      * 这里是防止 IPC 被直接调用的兜底。
      */
     if !crate::bepinex::installed(&game_root) {
-        return Err("BepInEx 框架未安装，无法切换框架状态".into());
+        return Err("framework.notInstalledCannotToggle".into());
     }
     crate::bepinex::set_enabled(&game_root, &config.game, enabled)?;
     log::info!("框架状态切换完成：启用={}", enabled);
     Ok(OperationResult {
         ok: true,
         message: if enabled {
-            "框架已启用，尚未启动厨房".into()
+            "framework.enabledGameNotRunning".into()
         } else {
-            "框架已禁用，尚未启动厨房".into()
+            "framework.disabledGameNotRunning".into()
         },
     })
 }
@@ -4918,7 +4975,7 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, St
     window.open_devtools();
     Ok(OperationResult {
         ok: true,
-        message: "开发者控制台已打开".into(),
+        message: "tools.devConsoleOpened".into(),
     })
 }
 
@@ -4933,7 +4990,7 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
     config.ui_zoom = 1.0;
     for repo in &mut config.repositories {
@@ -4945,7 +5002,7 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::info!("界面缓存和 Release 缓存重置完成");
     Ok(OperationResult {
         ok: true,
-        message: "已清除缓存并重置界面".into(),
+        message: "tools.cacheCleared".into(),
     })
 }
 
@@ -4953,14 +5010,14 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
 pub fn open_game_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::debug!("打开游戏目录");
     let config = state.config.load_or_default();
-    let path = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let path = game::detect_game(&config).path.ok_or("game.notFound")?;
     external_open_command()
         .arg(path)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开游戏目录".into(),
+        message: "tools.gameDirOpened".into(),
     })
 }
 
@@ -4968,7 +5025,7 @@ pub fn open_game_directory(state: State<'_, AppState>) -> Result<OperationResult
 pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::debug!("打开 MOD 目录");
     let config = state.config.load_or_default();
-    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let plugins = PathBuf::from(game_root).join("BepInEx/plugins");
     fs::create_dir_all(&plugins).map_err(|e| e.to_string())?;
     external_open_command()
@@ -4977,7 +5034,7 @@ pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult,
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开模组目录".into(),
+        message: "tools.modsDirOpened".into(),
     })
 }
 
@@ -5015,7 +5072,7 @@ pub async fn get_repository_avatars(
         let _guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         (state.config.load_or_default(), state.config.cache_dir())
     };
     log::debug!("开始读取头像：请求数={}", owners.len());
@@ -5185,9 +5242,9 @@ pub fn set_diy_level_enabled(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     let installed =
         mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
@@ -5196,12 +5253,17 @@ pub fn set_diy_level_enabled(
             .as_deref()
             .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
     }) else {
-        return Err("error.framework.diyLevelMissing".into());
+        return Err("framework.diyLevelMissing".into());
     };
     if target.enabled == enabled {
         return Ok(OperationResult {
             ok: true,
-            message: if enabled { "已启用" } else { "已禁用" }.into(),
+            message: if enabled {
+                "mods.stateEnabled"
+            } else {
+                "mods.stateDisabled"
+            }
+            .into(),
         });
     }
     set_local_mod_file_state(&game_root, &target.dll_file, enabled)?;
@@ -5226,9 +5288,9 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
     let installed =
@@ -5238,7 +5300,7 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
             .as_deref()
             .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
     }) else {
-        return Err("error.framework.diyLevelMissing".into());
+        return Err("framework.diyLevelMissing".into());
     };
     let dll_file = target.dll_file.clone();
     let package_id = target.package_id.clone().unwrap_or_else(|| "manual".into());
@@ -5313,7 +5375,7 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
         Err(error) => {
             log::error!("DIYLevel 回收失败：原因={error}，备份={}", backup.display());
             Err(crate::locale_tag::with_params(
-                "error.backup.diyLevelRecycleFailed",
+                "backup.diyLevelRecycleFailed",
                 &[
                     ("reason", &error.to_string()),
                     ("path", &backup.display().to_string()),
@@ -5331,7 +5393,7 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
 #[tauri::command]
 pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     let config = state.config.load_or_default();
-    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let root = Path::new(&game_root);
     // 优先地图目录；框架装在别处时退回插件目录，至少能给用户一个能看的落点
     let levels = game::safe_game_path(root, "BepInEx/plugins/OC2DIYLevel/levels")?;
@@ -5360,9 +5422,9 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
     // 清单 ID 是动态的（仓库 id 或 manual-<uuid>），从当前扫描结果取
     let installed =
@@ -5375,7 +5437,7 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
                 .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
         })
         .and_then(|item| item.package_id.clone())
-        .ok_or("error.framework.diyLevelMissing")?;
+        .ok_or("framework.diyLevelMissing")?;
     let backup = backup_framework(
         &game_root,
         &state.config.backups_dir(),
@@ -5410,9 +5472,9 @@ pub fn restore_diy_level(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
     let backup = validate_framework_backup_in(
@@ -5466,7 +5528,7 @@ pub fn delete_diy_level_backup(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let target = validate_framework_backup_in(
         Path::new(&backup_path),
         &state.config.backups_dir(),
@@ -5491,10 +5553,10 @@ fn validate_diy_level_backup_in(backup_path: &Path, backup_root: &Path) -> Resul
 pub fn open_bepinex_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::debug!("打开 BepInEx 目录");
     let config = state.config.load_or_default();
-    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let framework = game::safe_game_path(Path::new(&game_root), "BepInEx")?;
     if !framework.is_dir() {
-        return Err("BepInEx 目录不存在，请重新检测框架状态".into());
+        return Err("framework.bepInExDirMissing".into());
     }
     external_open_command()
         .arg(&framework)
@@ -5502,7 +5564,7 @@ pub fn open_bepinex_directory(state: State<'_, AppState>) -> Result<OperationRes
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开 BepInEx 目录".into(),
+        message: "framework.bepInExDirOpened".into(),
     })
 }
 
@@ -5510,19 +5572,19 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
     let relative = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
     let normalized = relative.to_ascii_lowercase();
     if !normalized.starts_with("bepinex/plugins/") || !normalized.ends_with(".dll") {
-        return Err("只能定位 BepInEx/plugins 下的 MOD DLL 文件".into());
+        return Err("mods.onlyPluginsLocatable".into());
     }
     let plugins_root = game::safe_game_path(game_root, "BepInEx/plugins")?;
     for candidate in [relative.clone(), mods::disabled_dll_file(&relative)] {
         let path = game::safe_game_path(game_root, &candidate)?;
         if !path.starts_with(&plugins_root) {
-            return Err("只能定位 BepInEx/plugins 下的 MOD DLL 文件".into());
+            return Err("mods.onlyPluginsLocatable".into());
         }
         if path.is_file() {
             return Ok(path);
         }
     }
-    Err("MOD DLL 文件不存在，请重新扫描".into())
+    Err("mods.dllFileMissing".into())
 }
 
 fn mod_file_location_command(path: &Path) -> std::process::Command {
@@ -5570,17 +5632,17 @@ pub fn open_mod_file_location(
         let _guard = state
             .operation
             .lock()
-            .map_err(|_| "操作锁异常".to_string())?;
+            .map_err(|_| "lock.poisoned".to_string())?;
         state.config.load_or_default()
     };
-    let game_root = game::detect_game(&config).path.ok_or("尚未找到厨房目录")?;
+    let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let path = resolve_mod_file_for_location(Path::new(&game_root), &dll_file)?;
     mod_file_location_command(&path)
         .spawn()
         .map_err(|error| error.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开目录并定位 MOD DLL".into(),
+        message: "mods.fileLocationOpened".into(),
     })
 }
 
@@ -5593,14 +5655,14 @@ pub fn open_mod_logs_directory(
     let (game_root, guid, _) = resolve_mod_config(&state, &dll_file)?;
     let path = crate::mod_config::checked_logs_dir(&game_root, &guid)?;
     if !path.is_dir() {
-        return Err("该 MOD 没有日志目录".into());
+        return Err("mods.logsDirMissing".into());
     }
     mod_file_location_command(&path)
         .spawn()
         .map_err(|error| error.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开 MOD 日志目录".into(),
+        message: "mods.logsDirOpened".into(),
     })
 }
 
@@ -5626,16 +5688,16 @@ fn resolve_mod_config(
         .into_iter()
         .find(|item| item.dll_file.eq_ignore_ascii_case(&key))
         .and_then(|item| item.guid)
-        .ok_or("无法识别 MOD 的 GUID，请重新扫描")?;
+        .ok_or("mods.guidUnrecognized")?;
     Ok((root, guid, config.game.path))
 }
 
 fn resolve_config_game(state: &AppState) -> Result<(PathBuf, AppConfig), String> {
     let config = {
-        let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+        let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
         state.config.load_or_default()
     };
-    let root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     Ok((root, config))
 }
 
@@ -5690,10 +5752,10 @@ fn save_config_document(
     revision: &str,
     content: &str,
 ) -> Result<crate::mod_config::ModConfigDocument, String> {
-    let _guard = state.operation.lock().map_err(|_| "操作锁异常")?;
+    let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
     let config = state.config.load_or_default();
     if config.game.path != configured_path {
-        return Err("厨房目录已变化，请重新打开配置".into());
+        return Err("game.directoryChangedReopenConfig".into());
     }
     game::ensure_game_stopped(game_root)?;
     let result = crate::mod_config::save(game_root, guid, revision, content);
@@ -5710,7 +5772,7 @@ pub fn open_backup_directory(
         Some(path) => {
             let path = PathBuf::from(path);
             if !path.is_dir() {
-                return Err("备份目录不存在".into());
+                return Err("backup.notFound".into());
             }
             path
         }
@@ -5727,19 +5789,21 @@ pub fn open_backup_directory(
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开备份目录".into(),
+        message: "tools.backupDirOpened".into(),
     })
 }
 
 #[tauri::command]
 pub fn open_release_page(url: String) -> Result<OperationResult, String> {
     log::info!("打开 Release 页面");
-    let parsed = Url::parse(&url).map_err(|e| format!("发布页地址无效: {e}"))?;
+    let parsed = Url::parse(&url).map_err(|e| {
+        crate::locale_tag::with_params("update.pageInvalid", &[("reason", &e.to_string())])
+    })?;
     if parsed.scheme() != "https" {
-        return Err("发布页必须使用 HTTPS".into());
+        return Err("update.pageMustBeHttps".into());
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("发布页地址不能包含认证信息".into());
+        return Err("update.pageHasCredentials".into());
     }
     external_open_command()
         .arg(parsed.as_str())
@@ -5747,7 +5811,7 @@ pub fn open_release_page(url: String) -> Result<OperationResult, String> {
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已打开发布页".into(),
+        message: "update.pageOpenedDetail".into(),
     })
 }
 
@@ -5829,7 +5893,7 @@ pub fn relaunch_as_admin() -> Result<OperationResult, String> {
     if crate::is_elevated() {
         return Ok(OperationResult {
             ok: true,
-            message: "当前已是管理员权限".into(),
+            message: "update.alreadyElevated".into(),
         });
     }
     if crate::relaunch_elevated() {
@@ -5840,7 +5904,7 @@ pub fn relaunch_as_admin() -> Result<OperationResult, String> {
     }
     Ok(OperationResult {
         ok: false,
-        message: "未能获得管理员权限（可能取消了 UAC）".into(),
+        message: "update.elevationFailed".into(),
     })
 }
 
@@ -5877,7 +5941,7 @@ pub async fn check_app_update(
                     let status = installer_channel_status(
                         channel,
                         "failed",
-                        Some("更新检查初始化失败，已跳过自动更新".into()),
+                        Some("update.checkInitFailed".into()),
                     );
                     emit_installer_channel_status(&app, region, status.clone());
                     status
@@ -5899,7 +5963,7 @@ pub async fn check_app_update(
                     let status = installer_channel_status(
                         channel,
                         "failed",
-                        Some("更新检查超时，已跳过自动更新".into()),
+                        Some("update.checkTimeout".into()),
                     );
                     emit_installer_channel_status(&app, region, status.clone());
                     status
@@ -5937,7 +6001,7 @@ async fn download_installer(
     let mut stream = response.bytes_stream();
     let first_chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
         .await
-        .map_err(|_| "下载首字节等待超过 5 秒".to_string())?;
+        .map_err(|_| "download.firstByteTimeout".to_string())?;
     let mut next_chunk = first_chunk;
     while let Some(chunk) = next_chunk {
         let chunk = chunk.map_err(|error| error.to_string())?;
@@ -5948,10 +6012,10 @@ async fn download_installer(
         next_chunk = stream.next().await;
     }
     if downloaded == 0 {
-        return Err("下载文件为空".into());
+        return Err("download.empty".into());
     }
     if total.is_some_and(|expected| expected != downloaded) {
-        return Err("下载长度不完整".into());
+        return Err("download.incomplete".into());
     }
     archive::emit_progress(reporter, label, downloaded, total, started.elapsed(), true);
     log::info!("下载安装器文件完成：标签={}，字节数={}", label, downloaded);
@@ -5973,7 +6037,7 @@ async fn download_installer_with_timeout(
         Ok(result) => result,
         Err(_) => {
             log::warn!("下载安装器文件超过 30 秒：标签={}", label);
-            Err("单个安装包下载超过 30 秒，已跳过当前渠道".into())
+            Err("update.downloadTimeout".into())
         }
     }
 }
@@ -6043,7 +6107,7 @@ async fn download_verified_installer(
                     client,
                     &candidate.url,
                     &reporter,
-                    "正在下载程序更新",
+                    "update.downloadingInstaller",
                 )
                 .await
                 .and_then(|bytes| {
@@ -6078,7 +6142,7 @@ async fn download_verified_installer(
         },
         Some(DownloadContext {
             app,
-            label: "正在下载程序更新",
+            label: "update.downloadingInstaller",
             expected_size: info.download_size,
         }),
     )
@@ -6090,7 +6154,7 @@ async fn resolve_app_update(
     app: &AppHandle,
     info: &AppUpdateInfo,
 ) -> Result<tauri_plugin_updater::Update, String> {
-    let provider = info.provider.as_ref().ok_or("更新清单地址无效")?;
+    let provider = info.provider.as_ref().ok_or("update.manifestUrlInvalid")?;
     let channels = installer_sources_for_url(provider, &installer_manifest_url(provider));
     race_installer_channels(
         &channels,
@@ -6108,7 +6172,7 @@ async fn resolve_app_update_at(
     use tauri_plugin_updater::UpdaterExt;
     let target = crate::app_update::UpdateTarget::current()?;
     if target.kind != info.installer_type {
-        return Err("更新清单与所选平台安装包不一致，已停止安装".into());
+        return Err("update.manifestPlatformMismatch".into());
     }
     #[cfg(windows)]
     let installer_args = {
@@ -6125,9 +6189,9 @@ async fn resolve_app_update_at(
         )?
     };
     if archive::is_download_cancelled() {
-        return Err("下载已取消".into());
+        return Err("download.cancelled".into());
     }
-    let endpoint = Url::parse(url).map_err(|_| "更新清单地址无效")?;
+    let endpoint = Url::parse(url).map_err(|_| "update.manifestUrlInvalid")?;
     let builder = app
         .updater_builder()
         .target(target.manifest_key())
@@ -6164,7 +6228,7 @@ async fn resolve_app_update_at(
     };
     let result = tokio::select! {
         biased;
-        _ = cancellation => return Err("下载已取消".into()),
+        _ = cancellation => return Err("download.cancelled".into()),
         result = updater.check() => result,
     };
     match result {
@@ -6185,7 +6249,7 @@ async fn resolve_app_update_at(
             repository_sources::safe_log_address(url)
         ),
     }
-    Err("更新清单或签名不可用，已停止安装".into())
+    Err("update.manifestOrSignatureUnavailable".into())
 }
 
 struct VerifiedInstallerDownload {
@@ -6228,8 +6292,12 @@ async fn discover_and_download_installer_update(
     let download_client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
-    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
-        .map_err(|error| format!("当前程序版本无效: {error}"))?;
+    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| {
+        crate::locale_tag::with_params(
+            "update.currentVersionInvalid2",
+            &[("reason", &error.to_string())],
+        )
+    })?;
     let result = run_installer_manifest_routes(
         &client,
         &installer_manifest_sources(region),
@@ -6261,7 +6329,7 @@ async fn discover_and_download_installer_update(
         InstallerRouteResult::Latest => return Ok(InstallerDownloadAttempt::Latest),
         InstallerRouteResult::Failed => {}
     }
-    let message = "请手动更新管理器, 本次跳过更新.".to_string();
+    let message = "update.manualUpdateSkipped".to_string();
     emit_installer_phase(app, region, "skipped", Some(message.clone()), None);
     Ok(InstallerDownloadAttempt::Failed(message))
 }
@@ -6280,7 +6348,7 @@ pub async fn install_app_update(
             log::info!("安装器已是最新版本");
             return Ok(OperationResult {
                 ok: false,
-                message: "当前已是最新版本".into(),
+                message: "update.alreadyLatest".into(),
             });
         }
         InstallerDownloadAttempt::Failed(message) => {
@@ -6289,7 +6357,7 @@ pub async fn install_app_update(
         }
     };
     if archive::is_download_cancelled() {
-        return Err("下载已取消".into());
+        return Err("download.cancelled".into());
     }
     emit_installer_phase(
         &app,
@@ -6307,10 +6375,10 @@ pub async fn install_app_update(
     );
     tauri::async_runtime::spawn_blocking(move || download.update.install(&download.bytes))
         .await
-        .map_err(|_| "程序更新安装失败")?
+        .map_err(|_| "update.installFailed")?
         .map_err(|error| {
             log::error!("Tauri Updater 安装失败：{error}");
-            "程序更新安装失败，请手动更新".to_string()
+            "update.installFailedManual".to_string()
         })?;
     #[cfg(not(windows))]
     {
@@ -6321,7 +6389,7 @@ pub async fn install_app_update(
     Ok(OperationResult {
         ok: true,
         // Windows normally exits inside Update::install after spawning.
-        message: "更新安装器已启动，请等待安装完成".into(),
+        message: "update.installerStarted".into(),
     })
 }
 
@@ -6378,14 +6446,14 @@ fn collect_update_status(config: &AppConfig, installed: &[InstalledMod]) -> Vec<
 
 fn open_steam(settings: &GameConfig, info: &GameInfo) -> Result<OperationResult, String> {
     if !info.game_exists {
-        return Err("当前模式下未找到厨房可执行文件".into());
+        return Err("game.executableMissing".into());
     }
     game::steam_launch_command(settings, info)?
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "已请求 Steam 启动厨房，请在 Steam 中确认启动".into(),
+        message: "game.steamLaunchRequested".into(),
     })
 }
 
@@ -6566,7 +6634,7 @@ fn restore_framework_backup(
     manifest_id: &str,
 ) -> Result<(), String> {
     if !backup.is_dir() {
-        return Err("备份目录不存在".into());
+        return Err("backup.notFound".into());
     }
     // 恢复前的另存目录：放在备份根的同级，避开被还原的目录树
     let stamp = Utc::now().timestamp();
@@ -6641,17 +6709,17 @@ fn validate_framework_backup_in(
     backup_root: &Path,
     spec: &FrameworkBackupSpec,
 ) -> Result<PathBuf, String> {
-    let target = fs::canonicalize(backup_path).map_err(|_| "备份目录不存在".to_string())?;
-    let root = fs::canonicalize(backup_root).map_err(|_| "备份目录不可用".to_string())?;
+    let target = fs::canonicalize(backup_path).map_err(|_| "backup.notFound".to_string())?;
+    let root = fs::canonicalize(backup_root).map_err(|_| "backup.unavailable".to_string())?;
     let name = target
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
     if !name.starts_with(spec.prefix) || !target.is_dir() {
-        return Err("只能操作该框架的时间戳备份".into());
+        return Err("backup.wrongKind".into());
     }
     if target.parent() != Some(root.as_path()) {
-        return Err("备份目录不在允许的备份位置".into());
+        return Err("backup.outsideRoot".into());
     }
     Ok(target)
 }
@@ -6704,7 +6772,7 @@ fn repository_install_identity(
         })
         .collect::<Vec<_>>();
     if matches.len() > 1 {
-        return Err("同一仓库绑定了多个旧 MOD 包，请先在 MOD 管理中确认要替换的包".into());
+        return Err("mods.multipleOldPackages".into());
     }
     let mut result = repo.clone();
     if let Some(manifest) = matches.first() {
@@ -6729,22 +6797,22 @@ pub(crate) fn install_staged_repository(
     let _guard = state
         .operation
         .lock()
-        .map_err(|_| "操作锁异常".to_string())?;
+        .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("尚未找到厨房目录")?);
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
     let repo = config
         .repositories
         .iter()
         .find(|repo| repo.id == repository_id)
-        .ok_or("仓库不存在")?
+        .ok_or("source.repositoryMissing")?
         .clone();
 
     let download_name = staged_file
         .file_name()
         .and_then(|value| value.to_str())
-        .ok_or("文件名无效")?;
+        .ok_or("mods.invalidFileName")?;
 
     let manifests_dir = state.config.manifests_dir();
     // 沿用仓库安装的身份解析：源可能已从配置消失，但旧清单仍要能被找到
@@ -6771,9 +6839,18 @@ pub(crate) fn install_staged_repository(
     Ok(OperationResult {
         ok: true,
         message: if release_tag.is_empty() {
-            format!("{} 安装完成", repo.name)
+            crate::locale_tag::with_params(
+                "mods.installCompletedSimple",
+                &[("name", &repo.name.to_string())],
+            )
         } else {
-            format!("{} {} 安装完成", repo.name, release_tag)
+            crate::locale_tag::with_params(
+                "mods.installCompletedWithVersion",
+                &[
+                    ("name", &repo.name.to_string()),
+                    ("version", &release_tag.to_string()),
+                ],
+            )
         },
     })
 }
@@ -6842,7 +6919,7 @@ fn install_downloaded_repository(
             repo.id,
             error
         );
-        format!("文件回收失败，请尝试手动删除 mod。（{error}）")
+        crate::locale_tag::with_params("mods.recycleFailed", &[("reason", &error.to_string())])
     })?;
     if recycled.is_empty() {
         log::info!("安装前没有需要回收的同仓库旧包：仓库={}", repo.id);
@@ -6908,7 +6985,7 @@ fn install_downloaded_repository(
                     error,
                     restore_error
                 );
-                return Err("操作失败，部分文件保留在回收站，请查看日志".into());
+                return Err("recycle.partialFailure".into());
             }
         }
     } else if !keep_recycled {
@@ -6929,7 +7006,12 @@ fn install_downloaded_repository(
             }
         }
     }
-    installation.map_err(|error| format!("安装失败，已尝试回滚: {error}"))
+    installation.map_err(|error| {
+        crate::locale_tag::with_params(
+            "mods.installFailedRolledBack",
+            &[("reason", &error.to_string())],
+        )
+    })
 }
 
 fn bepinex_backup_path(backup_root: &Path) -> Result<PathBuf, String> {
@@ -6954,7 +7036,7 @@ fn restore_preserved_dirs(backup: &Path, game_root: &Path) -> Result<(), String>
 
 fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), String> {
     if !backup.is_dir() {
-        return Err("备份目录不存在".into());
+        return Err("backup.notFound".into());
     }
     let destination = game_root.join("BepInEx");
     ensure_copy_paths_disjoint(backup, &destination)?;
@@ -6988,19 +7070,20 @@ fn ensure_copy_paths_disjoint(source: &Path, destination: &Path) -> Result<(), S
         PathBuf::from(destination.to_string_lossy().to_lowercase()),
     );
     if source == destination {
-        return Err("备份目标与源目录是同一个目录，已停止操作以避免覆盖数据。".into());
+        return Err("backup.sameDirectory".into());
     }
     if source.starts_with(&destination) || destination.starts_with(&source) {
-        return Err(
-            "备份与框架目录重叠，已停止操作以避免递归复制。请把管理器安装到游戏目录外，或把数据目录移出 BepInEx。".into(),
-        );
+        return Err("backup.overlap".into());
     }
     Ok(())
 }
 
 fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     if !source.is_dir() {
-        return Err(format!("目录不存在: {}", source.display()));
+        return Err(crate::locale_tag::with_params(
+            "mods.directoryMissing",
+            &[("path", &source.display().to_string())],
+        ));
     }
     ensure_copy_paths_disjoint(source, destination)?;
     fs::create_dir_all(destination).map_err(|e| e.to_string())?;
@@ -9635,9 +9718,9 @@ fn builtin_tutorial_repositories_for_region(region: &str) -> Result<Vec<Reposito
         }
     }
     let host_utilities =
-        host_utilities.ok_or_else(|| "内置教程所需的主机实用 MOD 稳定版配置不存在".to_string())?;
+        host_utilities.ok_or_else(|| "tutorial.hostUtilitiesConfigMissing".to_string())?;
     let configuration_manager =
-        configuration_manager.ok_or_else(|| "内置教程所需的配置管理器配置不存在".to_string())?;
+        configuration_manager.ok_or_else(|| "tutorial.configManagerConfigMissing".to_string())?;
     Ok(vec![host_utilities, configuration_manager])
 }
 

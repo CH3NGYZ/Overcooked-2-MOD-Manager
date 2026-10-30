@@ -133,4 +133,11 @@ export const common: DomainMessages = {
     ko: '불러오는 중…',
     ja: '読み込み中…',
   },
+  other: {
+    'zh-CN': '其他',
+    'zh-TW': '其他',
+    en: 'Other',
+    ko: '기타',
+    ja: 'その他',
+  },
 }

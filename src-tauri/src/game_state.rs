@@ -97,7 +97,10 @@ impl GameStateObserver {
             // Loading may create or normalize the file. Remember its final stamp.
             self.config_stamp = file_stamp(&self.config.config_path());
         }
-        let settings = self.game_settings.as_ref().ok_or("游戏设置尚未初始化")?;
+        let settings = self
+            .game_settings
+            .as_ref()
+            .ok_or("game.settingsNotInitialized")?;
         let file_stamps = game_file_stamps(cached.as_ref(), &self.config.backups_dir());
         // With no detected path, framework stamps are empty. Watch the
         // discovery inputs instead so a later game installation is noticed
@@ -126,7 +129,7 @@ impl GameStateObserver {
         {
             game::detect_game_from_settings(settings)
         } else {
-            cached.clone().ok_or("游戏状态尚未初始化")?
+            cached.clone().ok_or("game.stateNotInitialized")?
         };
         next.kitchen_running = next.path.as_ref().is_some_and(|path| {
             game::is_game_running_with_system(Path::new(path), &mut self.processes)

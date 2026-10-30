@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 const LIMIT: usize = 2 * 1024 * 1024;
-const UNSAFE: &str = "MOD 配置路径不安全";
+const UNSAFE: &str = "modConfig.unsafePath";
 
 #[derive(Serialize)]
 pub struct ModConfigDocument {
@@ -39,8 +39,7 @@ fn checked_file(game: &Path, guid: &str) -> Result<PathBuf, String> {
         if matches!(part, Component::Prefix(_)) {
             continue;
         }
-        let metadata =
-            fs::symlink_metadata(&current).map_err(|_| "MOD 配置文件不存在或无法访问")?;
+        let metadata = fs::symlink_metadata(&current).map_err(|_| "modConfig.notFound")?;
         #[cfg(windows)]
         {
             use std::os::windows::fs::MetadataExt;
@@ -101,13 +100,13 @@ pub fn checked_logs_dir(game: &Path, guid: &str) -> Result<PathBuf, String> {
 }
 
 fn bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let file = fs::File::open(path).map_err(|_| "无法读取 MOD 配置文件")?;
+    let file = fs::File::open(path).map_err(|_| "modConfig.readFailed")?;
     let mut bytes = Vec::new();
     file.take((LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_| "无法读取 MOD 配置文件")?;
+        .map_err(|_| "modConfig.readFailed")?;
     if bytes.len() > LIMIT {
-        return Err("MOD 配置文件超过 2 MiB，无法编辑".into());
+        return Err("modConfig.tooLarge".into());
     }
     Ok(bytes)
 }
@@ -122,9 +121,9 @@ fn revision(path: &Path, bytes: &[u8]) -> String {
 
 fn document(path: &Path, guid: &str, bytes: &[u8]) -> Result<ModConfigDocument, String> {
     let content = std::str::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes))
-        .map_err(|_| "MOD 配置文件不是有效的 UTF-8 文本")?;
+        .map_err(|_| "modConfig.invalidUtf8")?;
     if content.contains('\0') {
-        return Err("MOD 配置文件不是有效的 UTF-8 文本".into());
+        return Err("modConfig.invalidUtf8".into());
     }
     Ok(ModConfigDocument {
         guid: guid.into(),
@@ -149,7 +148,7 @@ pub fn save(
     let original = bytes(&path)?;
     document(&path, guid, &original)?;
     if revision(&path, &original) != expected {
-        return Err("配置文件已被外部修改，请重新加载后再保存".into());
+        return Err("modConfig.externallyModified".into());
     }
     let mut replacement = Vec::new();
     if original.starts_with(&[0xef, 0xbb, 0xbf]) {
@@ -157,7 +156,7 @@ pub fn save(
     }
     replacement.extend_from_slice(content.as_bytes());
     if replacement.len() > LIMIT {
-        return Err("MOD 配置文件超过 2 MiB，无法编辑".into());
+        return Err("modConfig.tooLarge".into());
     }
     let result = document(&path, guid, &replacement)?;
     let temporary = path.with_file_name(format!(".oc2-config-{}.tmp", uuid::Uuid::new_v4()));
@@ -166,16 +165,16 @@ pub fn save(
             .write(true)
             .create_new(true)
             .open(&temporary)
-            .map_err(|_| "无法保存 MOD 配置文件")?;
+            .map_err(|_| "modConfig.saveFailed")?;
         file.write_all(&replacement)
             .and_then(|_| file.sync_all())
-            .map_err(|_| "无法保存 MOD 配置文件")?;
+            .map_err(|_| "modConfig.saveFailed")?;
         drop(file);
         checked_file(game, guid)?;
         if revision(&path, &bytes(&path)?) != expected {
-            return Err("配置文件已被外部修改，请重新加载后再保存".into());
+            return Err("modConfig.externallyModified".into());
         }
-        fs::rename(&temporary, &path).map_err(|_| "无法保存 MOD 配置文件".to_string())
+        fs::rename(&temporary, &path).map_err(|_| "modConfig.saveFailed".to_string())
     })();
     if temporary.exists() {
         let _ = fs::remove_file(&temporary);

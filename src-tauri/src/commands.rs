@@ -4200,18 +4200,17 @@ async fn import_repository_source_into_config(
         }
     }
     /*
-     * 清理暂存表里没人认领的条目。
+     * 不要在这里清空暂存表。
      *
-     * 走到这里说明所有源文档都已应用完毕：还在表里的 ID 属于已经从源文档
-     * 下线的仓库，缓存留着没有意义，而且会让配置文件越长越大。
+     * `apply_document` 是**逐源调用**的：一次整批刷新会对每个源各调一次。
+     * 早先在这里无条件 `clear()`，于是第一个源应用完就把**所有**源的暂存缓存
+     * 全丢了 —— 后面的源重建仓库时取不到自己的缓存，10 分钟缓存等于没做，
+     * 每次都把整棵树重打一遍（用户看到的就是「跳过缓存=false」却仍在请求）。
+     *
+     * 认领过的条目在上面 `remove` 时已经拿走了；剩下的属于「源文档里还没
+     * 应用到的源」，必须留到它们的 `apply_document` 跑完。整批刷新结束时
+     * 由 `prune_staged_release_cache` 统一清理。
      */
-    if !config.staged_release_cache.is_empty() {
-        log::debug!(
-            "丢弃未认领的暂存 Release 缓存：数量={}",
-            config.staged_release_cache.len()
-        );
-        config.staged_release_cache.clear();
-    }
     state.config.save(&config).map_err(|error| {
         log::error!("仓库源刷新后保存配置失败：源={}，原因={}", source_id, error);
         error.to_string()

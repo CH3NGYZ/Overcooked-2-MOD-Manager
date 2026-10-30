@@ -863,7 +863,26 @@ impl ConfigService {
                 if conflict == "overwrite" {
                     let id = existing.id.clone();
                     let builtin = existing.builtin;
+                    /*
+                     * 覆盖的是**仓库定义**（名字、坐标、资产规则、安装目录），
+                     * 不是 Release 缓存。
+                     *
+                     * `repository_from_export` 造出来的是全新对象，缓存字段
+                     * 一律为空。整批刷新时每个源文档都要走这里，如果连缓存一起
+                     * 覆盖，10 分钟缓存就永远命中不了 —— 每次刷新（含每次启动）
+                     * 都得把整棵仓库树的 API 重打一遍，实测 20+ 个仓库、几十个
+                     * 请求，还会固定撞上 Gitee/GitHub 的速率限制。
+                     *
+                     * 缓存是否过期由各仓库自己的 `releases_cached_at` 决定，
+                     * 与「源文档重新声明了这个仓库」无关。
+                     */
+                    let cached_releases = std::mem::take(&mut existing.cached_releases);
+                    let releases_cached_at = existing.releases_cached_at;
+                    let last_error = existing.last_error.clone();
                     *existing = repository_from_export(&item, id, builtin);
+                    existing.cached_releases = cached_releases;
+                    existing.releases_cached_at = releases_cached_at;
+                    existing.last_error = last_error;
                     imported_ids.push(existing.id.clone());
                 }
                 continue;

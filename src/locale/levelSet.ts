@@ -160,11 +160,11 @@ export const levelSet: DomainMessages = {
     ja: 'マップ管理',
   },
   noLevelSets: {
-    'zh-CN': '还没有安装任何地图。到「地图下载」页安装线上地图，或在那里用「安装地图」导入本地 ZIP。',
-    'zh-TW': '還沒有安裝任何地圖。到「地圖下載」頁安裝線上地圖，或在那裡用「安裝地圖」匯入本機 ZIP。',
-    en: 'No maps installed yet. Install maps from the Map Download page, or use "Install map" there to import a local ZIP.',
-    ko: '설치된 지도가 없습니다. 지도 다운로드 페이지에서 지도를 설치하거나, 거기서 "지도 설치"로 로컬 ZIP을 가져오세요.',
-    ja: 'マップがまだありません。「マップダウンロード」でマップをインストールするか、そこの「マップをインストール」でローカル ZIP をインポートしてください。',
+    'zh-CN': '还没有安装任何地图。到「地图安装」页安装线上地图，或在那里用「安装地图」导入本地 ZIP。',
+    'zh-TW': '還沒有安裝任何地圖。到「地圖安裝」頁安裝線上地圖，或在那裡用「安裝地圖」匯入本機 ZIP。',
+    en: 'No maps installed yet. Install maps from the Map Install page, or use "Install map" there to import a local ZIP.',
+    ko: '설치된 지도가 없습니다. 지도 설치 페이지에서 지도를 설치하거나, 거기서 "지도 설치"로 로컬 ZIP을 가져오세요.',
+    ja: 'マップがまだありません。「マップインストール」でマップをインストールするか、そこの「マップをインストール」でローカル ZIP をインポートしてください。',
   },
   importTitle: {
     'zh-CN': '导入地图',
@@ -243,14 +243,14 @@ export const levelSet: DomainMessages = {
     ko: '지도 {count}개를 모두 비활성화하면 게임에서 더 이상 로드되지 않습니다. 언제든 다시 활성화할 수 있습니다.',
     ja: 'マップ {count} 個をすべて無効化するとゲーム内で読み込まれなくなります。いつでも再度有効化できます。',
   },
-  // ===== 地图下载页 =====
-  // 地图下载（导航与页标题）
+  // ===== 地图安装页 =====
+  // 地图安装（导航与页标题）：与 MOD 安装页同一套命名，落地动作是安装而不是下载
   download: {
-    'zh-CN': '地图下载',
-    'zh-TW': '地圖下載',
-    en: 'Map Download',
-    ko: '지도 다운로드',
-    ja: 'マップダウンロード',
+    'zh-CN': '地图安装',
+    'zh-TW': '地圖安裝',
+    en: 'Map Install',
+    ko: '지도 설치',
+    ja: 'マップインストール',
   },
   mapCount: {
     'zh-CN': '张地图',
@@ -538,11 +538,11 @@ export const levelSet: DomainMessages = {
     ja: 'マップを削除',
   },
   viewInMapDownload: {
-    'zh-CN': '在「地图下载」中查看',
-    'zh-TW': '在「地圖下載」中檢視',
-    en: 'View in map downloads',
-    ko: '지도 다운로드에서 보기',
-    ja: 'マップのダウンロードで表示',
+    'zh-CN': '在「地图安装」中查看',
+    'zh-TW': '在「地圖安裝」中檢視',
+    en: 'View in map install',
+    ko: '지도 설치에서 보기',
+    ja: 'マップインストールで表示',
   },
   // 下载页卡片 · 刷新失败或版本不可比时的结论（对齐 MOD 的「无法检测更新」）
   cannotCheckUpdate: {

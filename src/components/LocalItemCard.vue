@@ -43,10 +43,26 @@ const props = defineProps<{
   disabled?: boolean
   /** 详情是否展开（展开动画由组件内的 n-collapse-transition 负责）。 */
   expanded?: boolean
+  /**
+   * 详情内容的刷新键。
+   *
+   * 详情挂在 `n-collapse-transition` 的稳定插槽里，父级换了数据它也不重新求值；
+   * 早先调用方靠「把卡片 key 带上状态」逼整张卡重建，代价是开关被重建、切换
+   * 动画直接消失。改成只让**详情子树**跟着这个键重建：外壳（开关）保持同一个
+   * DOM 节点，动画与展开状态都不受影响。
+   */
+  detailKey?: string | number
   /** 跨页跳转落点高亮。 */
   focusFlash?: boolean
   /** 页内按状态定位时的高亮。 */
   statusFlash?: boolean
+  /**
+   * 页内定位时给「本次落点」这一张多播一次脉冲的类名（`status-pulse-a` / `-b`）。
+   *
+   * 由页面经 `crossLink.statusPulseClass` 算出：所有命中卡片都亮着时，
+   * 只有这一张再闪一次，用户才知道「这次指的是它」。传空串表示不强调。
+   */
+  pulseClass?: string
   /** 工具栏最小列宽（页面按自己最多几个按钮算好，与下面两个值同源）。 */
   toolsMinWidth?: number
   /** 工具栏按钮间距，缺省由 CSS 回退到 8px。 */
@@ -102,7 +118,7 @@ function onToggle(value: boolean) {
 
 <template>
   <article class="mod-card"
-    :class="{ disabled, expanded, 'focus-flash': focusFlash, 'status-flash': statusFlash }"
+    :class="[{ disabled, expanded, 'focus-flash': focusFlash, 'status-flash': statusFlash }, pulseClass]"
     @click="onCardClick">
     <!-- 单行：左「开关 + 标题」… 右「状态标签 | 工具栏」 -->
     <div class="card-row">
@@ -132,7 +148,13 @@ function onToggle(value: boolean) {
     </div>
 
     <!-- 展开：用 Naive 自带的折叠过渡，不自己写动画 -->
-    <n-collapse-transition :show="!!expanded" display-directive="show">
+    <!--
+      刷新键落在 `n-collapse-transition` 本身，而不是里面的 `.card-detail`：
+      过渡组件的子插槽被父级渲染时当成稳定插槽（patchFlag 不含 DYNAMIC_SLOTS），
+      换里面元素的 key 它根本不会重新求值；换组件自身的 key 才会整个替换。
+      开关在 `.card-row` 里，与这里无关，动画因此不受影响。
+    -->
+    <n-collapse-transition :key="detailKey" :show="!!expanded" display-directive="show">
       <!-- 不阻止冒泡：点详情里的任意位置都算「点空白」，由页面的 document 监听收起 -->
       <div class="card-detail">
         <slot name="detail" />

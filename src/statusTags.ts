@@ -70,6 +70,13 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   duplicate_lower_version: { text: 'tools.olderVersion', tone: 'mild' },
   load_warning: { text: 'modsLocal.loadWarning', tone: 'critical' },
   disabled: { text: 'modsLocal.disabled', tone: 'muted' },
+  /**
+   * 开关状态里的「已启用」。
+   *
+   * 后端 labels 只有 `disabled`；页头把开关状态单独成组（N 已启用 / N 已禁用）
+   * 时需要一个对称的 key，所以在汇总层补出来，页头与卡片各自按自己的数据算。
+   */
+  enabled: { text: 'modsLocal.enabled2', tone: 'accent' },
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
   dependency: { text: 'tools.dependency', tone: 'muted' },
   /**
@@ -249,6 +256,7 @@ const WITHIN_TONE_ORDER: string[] = [
   'not_release_asset',
   'installed',
   'latest',
+  'enabled',
 ]
 
 /** 严重度分值：越小越需要用户处理。tone 优先，其次同档固定次序。 */

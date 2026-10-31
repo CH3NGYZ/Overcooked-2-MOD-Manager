@@ -8,7 +8,7 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useFocusHighlight, useMapLink, useRepositoryLink } from '../crossLink'
+import { statusPulseClass, useFocusHighlight, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
@@ -26,6 +26,7 @@ import {
   mapVersionForLevelSet,
   mapVersionRefs,
   type LevelSetCardTag,
+  type LevelSetTone,
 } from '../levelSetStatus.ts'
 import type { LevelSetInfo, MapInfo, Repository } from '../types'
 
@@ -69,6 +70,13 @@ const { linkToMap } = useMapLink()
 const { linkToRepository } = useRepositoryLink()
 /** 跨页跳转落点（从地图下载页点状态标签跳过来时带 `focus=<地图 id>`）。 */
 const { highlightId } = useFocusHighlight()
+/**
+ * 页内定位：页头的聚合标签点一下就跳到命中的卡片并高亮。
+ *
+ * 与 MOD 管理页共用同一套 `useStatusHighlight`（高亮时长、滚动居中、
+ * 展开组后等高度动画结束再滚），页面只负责算出「哪些卡片命中这个标签」。
+ */
+const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight()
 
 /** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
 const TOOL_BUTTON_WIDTH = 30
@@ -87,7 +95,6 @@ const deleting = ref<Record<string, boolean>>({})
 const expandedDir = ref<string | null>(null)
 
 const enabledCount = computed(() => sets.value.filter((set) => set.enabled).length)
-const disabledCount = computed(() => sets.value.filter((set) => !set.enabled).length)
 /** 游戏是否探测到 —— 没探测到时本地 MOD 列表必然为空，不能因此判「缺依赖」。 */
 const gameProbed = computed(() => !!game.value?.path)
 const kitchenRunning = computed(() => !!game.value?.kitchen_running)
@@ -309,6 +316,123 @@ function authorNamesOf(set: LevelSetInfo) {
 /** 卡片状态标签：先依赖提醒，再版本结论（由 `levelSetStatus` 统一排序）。 */
 function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
   return levelSetCardTags(set, maps.value, mods.value, gameProbed.value, repositories.value)
+}
+
+/** 页头聚合标签的一项。 */
+interface LevelStatusSummary {
+  key: string
+  text: string
+  tone: LevelSetTone
+  count: number
+}
+
+/**
+ * 标签 key 带上看 `kind`。
+ *
+ * 同一段文案在「依赖提醒」与「版本结论」里说的是两件事，共用一个 key 会让
+ * 页头定位把不相干的卡片也算命中。
+ */
+function tagKeyOf(tag: LevelSetCardTag) {
+  return `tag:${tag.kind}:${tag.text}`
+}
+
+/** 开关状态的两个合成 key（页头单独成组，与结论类标签分开）。 */
+const TOGGLE_KEYS = ['enabled', 'disabled'] as const
+
+/** 一张卡是否命中某个聚合标签（含开关状态的两个合成 key）。 */
+function matchesStatus(set: LevelSetInfo, key: string) {
+  if (key === 'enabled') return set.enabled
+  if (key === 'disabled') return !set.enabled
+  return tagsOf(set).some((tag) => tagKeyOf(tag) === key)
+}
+
+/**
+ * 页头「结论」组：卡片上真实存在的标签汇总（依赖提醒 + 版本结论）。
+ *
+ * 只汇总卡片上会出现的标签：页头每个标签都必须点得出落点，凑出来的分类
+ * 点下去没有任何卡片会亮，比不放更糟。
+ *
+ * 停用状态的卡片自己会显示「已禁用」，但它回答的是「开没开」而不是「版本
+ * 怎么样」，所以这里把它剔出去，交给下面的开关状态组 —— 否则同一件事会在
+ * 页头出现两次（「1 已禁用」并排两条）。
+ */
+const statusSummary = computed<LevelStatusSummary[]>(() => {
+  const buckets = new Map<string, LevelStatusSummary>()
+  const add = (key: string, text: string, tone: LevelSetTone) => {
+    const existing = buckets.get(key)
+    if (existing) existing.count += 1
+    else buckets.set(key, { key, text, tone, count: 1 })
+  }
+  for (const set of sortedSets.value) {
+    for (const tag of tagsOf(set)) {
+      if (tag.kind === 'state' && tag.text === 'modsLocal.disabled') continue
+      add(tagKeyOf(tag), tag.text, tag.tone)
+    }
+  }
+  /*
+   * 顺序：关系提醒 → 版本结论。同类里按数量降序，最常点的一类不用往右找。
+   * 判定顺序与卡片标签的排序同源（`levelSetCardTags` 也是先依赖后版本），
+   * 页头与卡片的阅读顺序因此一致。
+   */
+  const rank = (entry: LevelStatusSummary) =>
+    entry.key.startsWith('tag:dependency:') ? 0 : 1
+  return [...buckets.values()].sort(
+    (left, right) => rank(left) - rank(right) || right.count - left.count,
+  )
+})
+
+/** 页头「开关状态」组：固定「已启用 → 已禁用」，数量为 0 的不显示。 */
+const toggleSummary = computed<LevelStatusSummary[]>(() => {
+  const entries: LevelStatusSummary[] = []
+  for (const key of TOGGLE_KEYS) {
+    const count = sortedSets.value.filter((set) => matchesStatus(set, key)).length
+    if (!count) continue
+    entries.push({
+      key,
+      text: key === 'enabled' ? 'modsLocal.enabled2' : 'modsLocal.disabled',
+      tone: key === 'enabled' ? 'accent' : 'muted',
+      count,
+    })
+  }
+  return entries
+})
+
+/** 关卡集 → 所属折叠组：定位落在收起的组里得先展开，否则卡片根本没渲染。 */
+const groupKeyOfSet = computed(() => {
+  const index = new Map<string, string>()
+  for (const group of groups.value) {
+    for (const set of group.sets) index.set(set.dir_name, group.key)
+  }
+  return index
+})
+
+/** 同一个聚合标签连点：在命中的卡片之间循环，而不是一直停在第一张。 */
+const statusCursor = ref<{ key: string; index: number }>({ key: '', index: 0 })
+
+function locateStatus(key: string) {
+  const matches = sortedSets.value.filter((set) => matchesStatus(set, key))
+  if (!matches.length) return
+  const repeat = statusCursor.value.key === key
+  const start = repeat ? (statusCursor.value.index + 1) % matches.length : 0
+  statusCursor.value = { key, index: start }
+  const target = matches[start]
+  const groupKey = groupKeyOfSet.value.get(target.dir_name)
+  const needsExpand = !!groupKey && collapsedGroups.value.includes(groupKey)
+  if (groupKey && needsExpand) {
+    collapsedGroups.value = collapsedGroups.value.filter((value) => value !== groupKey)
+  }
+  focusStatus(
+    key,
+    () => document.querySelector<HTMLElement>(`[data-level-dir="${CSS.escape(target.dir_name)}"]`),
+    needsExpand,
+    target.dir_name,
+  )
+}
+
+/** 卡片高亮条件：页头正在定位的这个聚合标签是否命中它（可能同时命中多张）。 */
+function matchesActiveStatus(set: LevelSetInfo) {
+  const key = activeStatus.value
+  return !!key && matchesStatus(set, key)
 }
 
 /**
@@ -697,15 +821,31 @@ async function checkUpdates() {
 
 <template>
   <!-- 页头标题右侧：状态聚合，与 MOD 管理页同一套标签外观 -->
+  <!--
+    页头状态区与 MOD 管理页同一套交互（点一下定位并高亮，再点同一标签在命中
+    卡片之间循环），同一套分组：左「结论」（缺依赖 / 可更新 / 最新版…），
+    右「开关状态」（N 已启用 / N 已禁用），中间一条竖线断开。
+  -->
   <Teleport to="#page-header-title-extra" defer>
-    <n-tag v-if="enabledCount" size="small" :bordered="false" class="state-tag"
-      :color="tagColorFor('accent')">
-      {{ enabledCount }} {{ t('modsLocal.enabled2') }}
-    </n-tag>
-    <n-tag v-if="disabledCount" size="small" :bordered="false" class="state-tag"
-      :color="tagColorFor('muted')">
-      {{ disabledCount }} {{ t('modsLocal.disabled') }}
-    </n-tag>
+    <span class="header-tag-group">
+      <n-tag v-for="entry in statusSummary" :key="entry.key" size="small" :bordered="false"
+        class="state-tag state-tag--link" :color="tagColorFor(entry.tone)" role="button" tabindex="0"
+        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
+        @keydown.enter.prevent="locateStatus(entry.key)"
+        @keydown.space.prevent="locateStatus(entry.key)">
+        {{ entry.count }} {{ t(entry.text) }}
+      </n-tag>
+    </span>
+    <span v-if="statusSummary.length && toggleSummary.length" class="header-tag-divider" />
+    <span class="header-tag-group">
+      <n-tag v-for="entry in toggleSummary" :key="entry.key" size="small" :bordered="false"
+        class="state-tag state-tag--link" :color="tagColorFor(entry.tone)" role="button" tabindex="0"
+        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
+        @keydown.enter.prevent="locateStatus(entry.key)"
+        @keydown.space.prevent="locateStatus(entry.key)">
+        {{ entry.count }} {{ t(entry.text) }}
+      </n-tag>
+    </span>
   </Teleport>
 
   <!--
@@ -774,12 +914,17 @@ async function checkUpdates() {
 
         <div class="map-grid">
           <!--
-            key 带上 enabled：切换开关会把目录搬到 levels/ 或 disabled/，详情里的
-            「路径」跟着变；但详情挂在 `n-collapse-transition` 的稳定插槽里，只有
-            它自己的 `show` 变化才会重渲染 —— 展开状态下切开关会留着旧路径。
-            改 key 让这一个卡片重建，其它卡片的 key 没变、不受影响。
+            卡片 key 只用目录名。把 enabled 写进 key 会连整张卡片一起重建，
+            开关每次都是「新挂载」，Naive 的切换过渡动画因此整个消失（现象：点下去
+            没有滑动，状态已经是新的）。
+
+            但详情确实要跟着开关刷新：停用会把目录搬进 disabled/，详情里的「路径」
+            跟着变；而详情挂在 `n-collapse-transition` 的稳定插槽里，父级换了数据它
+            也不重新求值。这份刷新交给 `detail-key`：外壳与开关保持同一个 DOM 节点，
+            只让详情子树按状态重建。
           -->
-          <LocalItemCard v-for="set in node.sets" :key="`${set.dir_name}:${set.enabled}`"
+          <LocalItemCard v-for="set in node.sets" :key="set.dir_name"
+            :detail-key="`${set.dir_name}:${set.enabled}`"
             :data-level-dir="set.dir_name"
             :data-focus-id="focusIdOf(set)"
             :enabled="set.enabled"
@@ -789,6 +934,8 @@ async function checkUpdates() {
             :disabled="!set.enabled"
             :expanded="expandedDir === set.dir_name"
             :focus-flash="!!highlightId && highlightId === focusIdOf(set)"
+            :status-flash="matchesActiveStatus(set)"
+            :pulse-class="statusPulseClass(set.dir_name, pulseTarget, pulseSeq)"
             :tools-min-width="toolsMinWidth"
             :tool-gap="TOOL_GAP"
             :tool-button-width="TOOL_BUTTON_WIDTH"

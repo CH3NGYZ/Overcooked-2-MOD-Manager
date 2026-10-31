@@ -175,6 +175,15 @@ const COLLAPSE_SETTLE_MS = 340
  */
 export function useStatusHighlight() {
   const activeStatus = ref<string | null>(null)
+  /**
+   * 本次定位的落点锚点（卡片的 DOM 标识），以及它的点击序号。
+   *
+   * 页头聚合标签会同时命中多张卡，全都亮着时用户看不出「这次指的是哪一张」。
+   * 所以额外给落点那张卡再播一次脉冲（亮起 → 暗下），并用自增序号保证**同一张
+   * 卡连续点同一个标签**也会重播 —— 见 `statusPulseClass`。
+   */
+  const pulseTarget = ref<string | null>(null)
+  const pulseSeq = ref(0)
   let fadeTimer: number | undefined
   let settleTimer: number | undefined
   let cancelScroll: (() => void) | undefined
@@ -188,6 +197,7 @@ export function useStatusHighlight() {
     cancelScroll?.()
     cancelScroll = undefined
     activeStatus.value = null
+    pulseTarget.value = null
   }
 
   /**
@@ -195,10 +205,19 @@ export function useStatusHighlight() {
    * @param find            每次重试时重新查找目标卡片；返回 null 表示还没渲染
    * @param waitForCollapse 调用方刚展开了折叠容器：等高度动画结束再滚，
    *                        否则滚动会被随后撑开的内容带偏
+   * @param targetAnchor    本次落点的锚点（卡片自己的 DOM 标识）：只有它再播一次
+   *                        脉冲，用户才知道「这次指的是这一张」。缺省表示不强调单张。
    */
-  function focusStatus(statusKey: string, find: () => HTMLElement | null, waitForCollapse = false) {
+  function focusStatus(
+    statusKey: string,
+    find: () => HTMLElement | null,
+    waitForCollapse = false,
+    targetAnchor: string | null = null,
+  ) {
     stop()
     activeStatus.value = statusKey
+    pulseTarget.value = targetAnchor
+    pulseSeq.value += 1
     fadeTimer = window.setTimeout(stop, FOCUS_DURATION)
     const scroll = () => {
       if (disposed) return
@@ -213,5 +232,21 @@ export function useStatusHighlight() {
     stop()
   })
 
-  return { activeStatus, focusStatus }
+  return { activeStatus, focusStatus, pulseTarget, pulseSeq }
+}
+
+/**
+ * 落点卡片的脉冲类名（不命中返回空串）。
+ *
+ * 两个**同帧、不同名**的 keyframes 交替使用：CSS 动画只在 `animation-name`
+ * 变化时重播，同一个类名连点第二次不会有任何反馈。序号奇偶交替正好让每点一次
+ * 都换一个名字，于是「同一条标签连点」也能再亮一次。
+ */
+export function statusPulseClass(
+  anchor: string | null | undefined,
+  target: string | null,
+  seq: number,
+): string {
+  if (!anchor || !target || anchor !== target) return ''
+  return seq % 2 === 0 ? 'status-pulse-a' : 'status-pulse-b'
 }

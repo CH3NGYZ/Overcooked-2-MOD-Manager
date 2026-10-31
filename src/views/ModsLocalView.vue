@@ -25,7 +25,7 @@ import {
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
-import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { statusPulseClass, useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import DependencyTable from '../components/DependencyTable.vue'
@@ -174,7 +174,7 @@ const { highlightId } = useFocusHighlight()
  * 页内定位：点标题后的聚合标签，高亮该状态的全部 MOD 并把第一张居中。
  * 与跨页高亮同一套时长与滚动规则，只是不涉及路由。
  */
-const { activeStatus, focusStatus } = useStatusHighlight()
+const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight()
 
 /*
  * 固定按名称排序。
@@ -666,23 +666,29 @@ function onGroupsExpanded(names: string[]) {
  * （单 MOD 卡片 + 包外壳），不会把包内某一行单独高亮出来。
  */
 const statusSummaryTags = computed<StatusSummary[]>(() =>
-  summarizeUnits(
-    groups.value.flatMap((node) =>
-      node.packages.map((pkg) => ({
-        /*
-         * 与卡片渲染同源：单 MOD 用 `installedModTags` 的实际标签键
-         * （它含动态补上的 `prerelease`），多 DLL 包用包标题的 `statuses`。
-         *
-         * 不这样对齐会出现「卡片上有『预发布』，页头聚合里却没有」——
-         * 用户看到标签却找不到入口，也点不出高亮。
-         */
-        keys: pkg.grouped
-          ? pkg.statuses.map((entry) => entry.key)
-          : pkg.mods
-            .filter((mod) => !mod.is_dependency)
-            .flatMap((mod) => installedModTags(mod).map((tag) => tag.key)),
-      })),
-    ),
+  summarizeUnits(statusUnitNodes.value.map((unit) => ({ keys: unit.keys }))),
+)
+
+/**
+ * 开关状态的 key：页头把它们单独成组，与结论类标签分开。
+ *
+ * 「已启用 / 已禁用」回答的是「现在开没开」，「有更新 / 缺依赖 / 最新版」
+ * 回答的是「这个版本怎么样」。排在同一排里读起来像同一类结论。
+ */
+const TOGGLE_STATUS_KEYS = ['enabled', 'disabled'] as const
+
+const isToggleStatus = (key: string) =>
+  (TOGGLE_STATUS_KEYS as readonly string[]).includes(key)
+
+/** 结论类标签（有更新 / 缺依赖 / 最新版…）。 */
+const statusTagsPrimary = computed(() =>
+  statusSummaryTags.value.filter((entry) => !isToggleStatus(entry.key)),
+)
+
+/** 开关状态标签：固定「已启用 → 已禁用」的顺序，数量为 0 的不显示。 */
+const statusTagsToggle = computed(() =>
+  TOGGLE_STATUS_KEYS.map((key) => statusSummaryTags.value.find((entry) => entry.key === key)).filter(
+    (entry): entry is StatusSummary => !!entry,
   ),
 )
 
@@ -1084,6 +1090,21 @@ interface StatusUnitNode {
   mods: InstalledMod[]
 }
 
+/**
+ * 一个单元的开关状态 key（`enabled` / `disabled`）。
+ *
+ * 页头把「N 已启用 / N 已禁用」单独成组，与结论类标签分开；这两个 key 也
+ * 参与定位，所以直接并进单元的 keys —— `unitsWithStatus` 与聚合汇总共用
+ * 同一份数据，不必另写一套命中判定。
+ *
+ * 半开半关的包两边都不算：说它「已启用」会掩盖还有 DLL 被停用的事实。
+ */
+function enableKeysOf(mods: readonly InstalledMod[]): string[] {
+  if (mods.every((mod) => mod.enabled)) return ['enabled']
+  if (mods.every((mod) => !mod.enabled)) return ['disabled']
+  return []
+}
+
 const statusUnitNodes = computed<StatusUnitNode[]>(() => {
   const nodes: StatusUnitNode[] = []
   for (const group of groups.value) {
@@ -1091,7 +1112,7 @@ const statusUnitNodes = computed<StatusUnitNode[]>(() => {
       if (pkg.grouped) {
         nodes.push({
           anchor: `unit:${pkg.key}`,
-          keys: pkg.statuses.map((entry) => entry.key),
+          keys: [...pkg.statuses.map((entry) => entry.key), ...enableKeysOf(pkg.mods)],
           groupKey: group.key,
           packageKey: pkg.key,
           mods: pkg.mods,
@@ -1111,7 +1132,7 @@ const statusUnitNodes = computed<StatusUnitNode[]>(() => {
            * 用 labels 作命中键时，页头聚合会少一个「预发布」，
            * 就算它出现了，点了也定位不到任何卡片。
            */
-          keys: installedModTags(mod).map((tag) => tag.key),
+          keys: [...installedModTags(mod).map((tag) => tag.key), ...enableKeysOf([mod])],
           groupKey: group.key,
           packageKey: pkg.key,
           mods: [mod],
@@ -1167,6 +1188,7 @@ function locateStatus(statusKey: string) {
     statusKey,
     () => document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
     groupsOpened,
+    anchor,
   )
 }
 
@@ -1542,18 +1564,30 @@ function removePackage(node: ModPackageNode) {
 
 <template>
   <!--
-    页头标题右侧：整页状态聚合。
-    与每个 MOD 右侧的标签共用同一套 tone 与配色表，
-    所以颜色永远一致；数量为 0 的状态不显示，避免一排空标签。
+    页头标题右侧：整页状态聚合，分两组 —— 左「结论」（有更新 / 缺依赖 / 最新版…），
+    右「开关状态」（N 已启用 / N 已禁用），中间一条竖线断开。
+    两组共用同一套 tone 与配色表，颜色永远一致；数量为 0 的状态不显示。
   -->
   <Teleport to="#page-header-title-extra" defer>
-    <n-tag v-for="entry in statusSummaryTags" :key="entry.key" size="small" :bordered="false"
-      class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
-      :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
-      @keydown.enter.prevent="locateStatus(entry.key)"
-      @keydown.space.prevent="locateStatus(entry.key)">
-      {{ entry.count }} {{ t(entry.text) }}
-    </n-tag>
+    <span class="header-tag-group">
+      <n-tag v-for="entry in statusTagsPrimary" :key="entry.key" size="small" :bordered="false"
+        class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
+        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
+        @keydown.enter.prevent="locateStatus(entry.key)"
+        @keydown.space.prevent="locateStatus(entry.key)">
+        {{ entry.count }} {{ t(entry.text) }}
+      </n-tag>
+    </span>
+    <span v-if="statusTagsPrimary.length && statusTagsToggle.length" class="header-tag-divider" />
+    <span class="header-tag-group">
+      <n-tag v-for="entry in statusTagsToggle" :key="entry.key" size="small" :bordered="false"
+        class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
+        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
+        @keydown.enter.prevent="locateStatus(entry.key)"
+        @keydown.space.prevent="locateStatus(entry.key)">
+        {{ entry.count }} {{ t(entry.text) }}
+      </n-tag>
+    </span>
   </Teleport>
 
   <!--
@@ -1661,6 +1695,7 @@ function removePackage(node: ModPackageNode) {
               :expanded="isExpanded(mod.dll_file)"
               :focus-flash="highlightId === bindingRepositoryId(mod)"
               :status-flash="matchesActiveStatus(modAnchor(mod))"
+              :pulse-class="statusPulseClass(modAnchor(mod), pulseTarget, pulseSeq)"
               :tools-min-width="toolColumnWidth"
               :tool-gap="TOOL_GAP"
               :tool-button-width="TOOL_BUTTON_WIDTH"
@@ -1755,11 +1790,14 @@ function removePackage(node: ModPackageNode) {
             <section v-else class="package-shell"
               :data-focus-id="pkg.repositoryId"
               :data-mod-anchor="`unit:${pkg.key}`"
-              :class="{
-                expanded: isPackageExpanded(pkg.key),
-                'status-flash': matchesActiveStatus(`unit:${pkg.key}`),
-                'focus-flash': !!pkg.repositoryId && highlightId === pkg.repositoryId,
-              }">
+              :class="[
+                {
+                  expanded: isPackageExpanded(pkg.key),
+                  'status-flash': matchesActiveStatus(`unit:${pkg.key}`),
+                  'focus-flash': !!pkg.repositoryId && highlightId === pkg.repositoryId,
+                },
+                statusPulseClass(`unit:${pkg.key}`, pulseTarget, pulseSeq),
+              ]">
               <header class="package-head"
                 @click="togglePackage(pkg, $event)">
                 <!-- 左：开关 + 包名 + 子 MOD 数量（数量紧跟包名；「N 个」已表明这是包） -->

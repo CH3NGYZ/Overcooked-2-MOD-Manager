@@ -117,6 +117,8 @@ fn show_error(language: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // 只有 junction 那条 Windows 专属测试用得到 fs。
+    #[cfg(windows)]
     use std::fs;
 
     #[test]

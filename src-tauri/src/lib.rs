@@ -329,7 +329,9 @@ pub(crate) fn is_elevated() -> bool {
     // 非 Windows 没有 UAC；用 euid 判断是否 root。
     #[cfg(unix)]
     {
-        extern "C" {
+        // Rust 2024 要求 extern 块自身标 unsafe（旧写法只在 Windows 之外编译，
+        // 本机 Windows 检查不到，macOS 目标第一次跑 CI 就会红）。
+        unsafe extern "C" {
             fn geteuid() -> u32;
         }
         unsafe { geteuid() == 0 }

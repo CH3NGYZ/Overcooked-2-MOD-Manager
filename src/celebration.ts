@@ -13,6 +13,7 @@
  *   刷新、开关、删除这类高频操作不放 —— 天天见的东西不能每次都放烟花。
  */
 import { prefersReducedMotion } from './motion'
+import { api } from './services/tauri'
 
 /** 正在播放的动画数量：成功提示可能连点，避免两轮彩带叠在一起。 */
 let active = 0
@@ -43,20 +44,54 @@ function themeColors(): string[] {
  * 动画不该在用户已经进入下一步时还在背景里飘。
  */
 export async function celebrateInstall(): Promise<void> {
-  if (prefersReducedMotion()) return
+  if (prefersReducedMotion()) {
+    trace('info', '已跳过：系统偏好为「减少动态效果」')
+    return
+  }
   if (active > 0) return
   active += 1
   try {
     const { default: confetti } = await import('canvas-confetti')
+    /*
+     * 不用库的默认导出。
+     *
+     * 默认实例固定 `useWorker: true`：走 Web Worker + OffscreenCanvas，并且在
+     * `worker.init()` 里直接 `canvas.transferControlToOffscreen()`。库只对
+     * `new Worker(blob)` 做了 try/catch，没兜住 transferControlToOffscreen 抛异常，
+     * 抛了就整次庆祝静默失败 —— WKWebView（macOS）正好是这条路径上最容易出问题的
+     * 一种：能力检测能过，实际调用未必。我们一次只放 28×2 颗粒子，主线程完全够用，
+     * 所以自己建一个关掉 worker 的实例，绕开整条 OffscreenCanvas 链路。
+     */
+    const fire = confetti.create(undefined, { resize: true, useWorker: false })
     const colors = themeColors()
     const base = { particleCount: 28, spread: 62, startVelocity: 34, ticks: 110, colors, scalar: 0.9 }
     // 两侧同时起，形成中心向外的收束感，比单点爆发更「完成」
-    void confetti({ ...base, origin: { x: 0.28, y: 0.72 }, angle: 58 })
-    void confetti({ ...base, origin: { x: 0.72, y: 0.72 }, angle: 122 })
-  } catch {
-    // 彩带是锦上添花：加载失败绝不能让安装流程报错
+    void fire({ ...base, origin: { x: 0.28, y: 0.72 }, angle: 58 })
+      ?.catch((reason: unknown) => trace('warn', `播放失败：${describe(reason)}`))
+    void fire({ ...base, origin: { x: 0.72, y: 0.72 }, angle: 122 })
+      ?.catch((reason: unknown) => trace('warn', `播放失败：${describe(reason)}`))
+  } catch (reason) {
+    // 彩带是锦上添花：加载失败绝不能让安装流程报错，但要在日志里留下原因
+    trace('warn', `加载失败：${describe(reason)}`)
   } finally {
     // 让连点有最小间隔，但不阻塞调用方
     window.setTimeout(() => { active = Math.max(0, active - 1) }, 900)
   }
+}
+
+/** 错误转一行可读文本（写日志用，不抛）。 */
+function describe(reason: unknown): string {
+  if (reason instanceof Error) return `${reason.name}: ${reason.message}`
+  return String(reason)
+}
+
+/**
+ * 把庆祝动画的结果写进 `logs/frontend.log`。
+ *
+ * 为什么需要：装完没有彩带这件事，在 macOS 上只能靠日志区分「系统关了动效」
+ * 「库加载失败」还是「播放抛错」—— 用户看不到控制台，而这条链路全程 try/catch。
+ * 庆祝是低频事件（一次安装一行），不担心刷日志。
+ */
+function trace(level: 'info' | 'warn', message: string) {
+  void api.writeFrontendLog(level, `[celebration] ${message}`).catch(() => undefined)
 }

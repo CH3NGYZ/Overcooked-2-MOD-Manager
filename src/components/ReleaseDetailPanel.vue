@@ -371,7 +371,11 @@ watch(
             </div>
           </div>
 
-          <!-- 第二段：当前版本的提交日志（独立滚动，最大高度固定） -->
+          <!--
+            第二段：当前版本的提交日志。
+            高度跟着内容走，不设内滚动 —— 抽屉 body 本身会滚，再套一层内滚动
+            就是两级滚动（用户得先把指针移出日志框才能继续滚抽屉）。
+          -->
           <div class="release-log">
             <div class="log-head">
               <span class="muted">{{ t('modsLocal.releaseNotes') }}</span>
@@ -509,7 +513,13 @@ watch(
   gap: 12px;
   align-items: start;
 }
-/* 第二段：提交日志（独立滚动区域，最大高度固定） */
+/*
+ * 第二段：提交日志。
+ *
+ * 不设 max-height、不留内滚动：日志写多长就撑多高，整段由抽屉 body 统一滚动
+ * （与安装详情弹窗 `ModInstallDialog` 的口径一致）。原先固定 180px，长日志
+ * 要在框里单独滚，短日志又留一块空白。
+ */
 .release-log {
   display: flex;
   flex-direction: column;
@@ -532,16 +542,18 @@ watch(
   white-space: nowrap;
   max-width: 100%;
 }
+/*
+ * 日志框：高度由内容决定（没有 max-height、没有 overflow-y），长表格与长代码行
+ * 只在横向滚动，避免把抽屉撑出横向滚动条。
+ */
 .log-box {
-  max-height: 180px;
-  overflow-y: auto;
   padding: 8px 10px;
   border: 1px solid var(--oc2-row-line);
   border-radius: 8px;
   background: var(--oc2-card);
   font-size: 12px;
   line-height: 1.65;
-  overscroll-behavior: contain;
+  overflow-x: auto;
 }
 .log-box.log-empty {
   display: grid;

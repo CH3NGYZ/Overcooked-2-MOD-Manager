@@ -34,4 +34,21 @@ dist-ssr
 AGENTS.md
 GOAL.md
 PROGRESS.md
+PLAN.md
 .tmp/
+.dsh-ops/
+
+# Local-only tooling: stays on this machine, never pushed to the public repo
+nsis.lnk
+tools/
+/scripts/apply-backend-tag-params.mjs
+/scripts/apply-backend-tags.mjs
+/scripts/backend-tag-map.mjs
+/scripts/check-legacy-locale-chars.mjs
+/scripts/fix-rust-test-locale.mjs
+/scripts/migrate-legacy-locale.mjs
+/scripts/normalize-error-tags.mjs
+/scripts/rewrite-frontend-constants.mjs
+/scripts/rewrite-frontend-tags.mjs
+/scripts/rewrite-test-locale-assertions.mjs
+/scripts/verify-locale-mapping.mjs

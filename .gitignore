@@ -13,8 +13,7 @@ dist-ssr
 *.local
 .tauri
 /**/.*/
-# Generated frontend entry and local-only Windows build helpers
-/index.html
+# Local-only Windows build helpers（index.html 是 Vite 入口，必须跟踪：CI 干净检出没有它就无法 build）
 /build.bat
 /build.log
 /build with tag.bat
@@ -41,9 +40,10 @@ PLAN.md
 # Local-only tooling: stays on this machine, never pushed to the public repo
 nsis.lnk
 tools/
+# 迁移脚本与本地验收工具只留本机；backend-tag-map.mjs 除外——已跟踪的
+# tests/backend-tag-coverage.test.mjs 依赖它，CI 干净检出必须有。
 /scripts/apply-backend-tag-params.mjs
 /scripts/apply-backend-tags.mjs
-/scripts/backend-tag-map.mjs
 /scripts/check-legacy-locale-chars.mjs
 /scripts/fix-rust-test-locale.mjs
 /scripts/migrate-legacy-locale.mjs

@@ -156,6 +156,18 @@ pub struct LevelSetImportResult {
     pub installed: Vec<String>,
 }
 
+/// 一个已解析完、可以导入的地图来源（本地 ZIP 或下载直链）。
+///
+/// `staged` 表示 `path` 是管理器缓存目录里的临时文件：导入完成或用户取消后
+/// 要用 `discard_map_source` 清掉。本地 ZIP 只是被读取，`staged=false`，
+/// 文件始终归用户所有。
+#[derive(Debug, Clone, Serialize)]
+pub struct StagedMapSource {
+    pub path: String,
+    pub staged: bool,
+    pub sets: Vec<ZipLevelSet>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstalledModStatusLabel {

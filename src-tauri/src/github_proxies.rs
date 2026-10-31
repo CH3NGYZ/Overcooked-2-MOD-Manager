@@ -763,6 +763,54 @@ pub fn proxy_urls(
     urls
 }
 
+/// 从 raw 文件 URL 里取出分支与文件路径（供代理模板的 `{branch}` / `{path}` 展开）。
+///
+/// 支持两种仓库 raw 入口：
+/// - `https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`
+/// - `https://github.com` / `https://gitee.com` 的 `/{owner}/{repo}/raw/{ref}/{path}`
+///   （`raw/refs/heads/{branch}/{path}` 也接受）
+///
+/// 仓库文件模式下调用方本来就知道分支与路径；只有 URL 可用时（直链下载），
+/// 这里是唯一的推导实现。
+pub(crate) fn raw_branch_and_path(target: &str) -> (String, String) {
+    let Ok(url) = Url::parse(target) else {
+        return (String::new(), String::new());
+    };
+    let segments = url
+        .path_segments()
+        .map(|segments| segments.collect::<Vec<_>>())
+        .unwrap_or_default();
+    raw_branch_and_path_segments(url.host_str().unwrap_or_default(), &segments)
+}
+
+fn raw_branch_and_path_segments(host: &str, segments: &[&str]) -> (String, String) {
+    let branch_index = if host.eq_ignore_ascii_case("raw.githubusercontent.com") {
+        // 这个域名没有 `raw` 段：分支紧跟在 owner/repo 之后。
+        2
+    } else {
+        let Some(raw_index) = segments.iter().position(|part| *part == "raw") else {
+            return (String::new(), String::new());
+        };
+        if segments.get(raw_index + 1) == Some(&"refs")
+            && segments.get(raw_index + 2) == Some(&"heads")
+        {
+            raw_index + 3
+        } else {
+            raw_index + 1
+        }
+    };
+    let branch = segments
+        .get(branch_index)
+        .copied()
+        .unwrap_or_default()
+        .to_string();
+    let path = segments
+        .get(branch_index + 1..)
+        .unwrap_or_default()
+        .join("/");
+    (branch, path)
+}
+
 fn proxy_context(
     target: &str,
     is_raw: bool,
@@ -782,24 +830,10 @@ fn proxy_context(
         owner = segments.first().copied().unwrap_or_default().to_string();
         repo = segments.get(1).copied().unwrap_or_default().to_string();
         if is_raw {
-            if let Some(raw_index) = segments.iter().position(|part| *part == "raw") {
-                let branch_index = if segments.get(raw_index + 1) == Some(&"refs")
-                    && segments.get(raw_index + 2) == Some(&"heads")
-                {
-                    raw_index + 3
-                } else {
-                    raw_index + 1
-                };
-                branch = segments
-                    .get(branch_index)
-                    .copied()
-                    .unwrap_or_default()
-                    .to_string();
-                path = segments
-                    .get(branch_index + 1..)
-                    .unwrap_or_default()
-                    .join("/");
-            }
+            // 仓库配置已知分支与文件路径时由调用方的 `RawProxyContext` 覆盖；
+            // 只拿到 URL（直链下载）时用同一套推导，避免两处各写一遍。
+            (branch, path) =
+                raw_branch_and_path_segments(url.host_str().unwrap_or_default(), &segments);
         } else if let Some(download_index) = segments.iter().position(|part| *part == "download") {
             tag = segments
                 .get(download_index + 1)
@@ -1220,6 +1254,33 @@ const download_url_us = [
             [
                 "https://cdn.example/gh/acme/tool@release/1.x/bin/Release/My%20MOD.dll?source=https://raw.githubusercontent.com/acme/tool/release/1.x/bin/Release/My%20MOD.dll"
             ]
+        );
+    }
+
+    #[test]
+    fn raw_url_parts_are_derived_from_both_raw_entry_shapes() {
+        // raw.githubusercontent 的路径里没有 `raw` 段，分支紧跟在 owner/repo 之后
+        assert_eq!(
+            raw_branch_and_path("https://raw.githubusercontent.com/acme/tool/main/bin/mod.dll"),
+            ("main".to_string(), "bin/mod.dll".to_string())
+        );
+        // github / gitee 的仓库 raw 入口，含 refs/heads 写法
+        assert_eq!(
+            raw_branch_and_path("https://github.com/acme/tool/raw/dev/maps/plus.zip"),
+            ("dev".to_string(), "maps/plus.zip".to_string())
+        );
+        assert_eq!(
+            raw_branch_and_path("https://gitee.com/acme/tool/raw/refs/heads/main/a.zip"),
+            ("main".to_string(), "a.zip".to_string())
+        );
+        // 不是 raw 入口、也不是合法 URL 时给空值，由调用方决定怎么处理
+        assert_eq!(
+            raw_branch_and_path("https://github.com/acme/tool"),
+            (String::new(), String::new())
+        );
+        assert_eq!(
+            raw_branch_and_path("not a url"),
+            (String::new(), String::new())
         );
     }
 

@@ -2861,6 +2861,51 @@ pub(crate) fn asset_proxy_urls(
     )
 }
 
+/// 按平台与文件类型选代理组。
+///
+/// Gitee 没有代理（只有 API 代理，资产直连）；GitHub 的 Release 资产与
+/// raw 文件各用一组。MOD 仓库安装、地图 Release 安装与通用直链下载共用
+/// 这份选择，避免每个调用点各写一遍「哪些字段是 Release 需要的」。
+pub(crate) fn provider_proxy_entries<'a>(
+    config: &'a AppConfig,
+    provider: &Provider,
+    is_raw_file: bool,
+) -> &'a [GitHubProxy] {
+    if *provider == Provider::Gitee {
+        return &[];
+    }
+    if is_raw_file {
+        &config.github_proxies.raw_proxies
+    } else {
+        &config.github_proxies.release_proxies
+    }
+}
+
+/// 为一个远程 URL 规划完整文件下载候选（含代理展开与去重）。
+///
+/// 仓库/地图安装与直链下载共用同一套候选规则；代理模式按平台与地区取
+/// [`selected_asset_proxy_mode`] 的默认值（Gitee 恒直连）。返回值按实际
+/// 启用情况排序，长度 > 1 即表示调用方应当竞速。
+pub(crate) fn plan_remote_download_candidates(
+    config: &AppConfig,
+    provider: &Provider,
+    kind: crate::direct_mod::RemoteUrlKind,
+    url: &str,
+) -> Result<Vec<AssetDownloadCandidate>, String> {
+    let mode = selected_asset_proxy_mode(None, provider, crate::config::current_user_region());
+    let is_raw_file = kind == crate::direct_mod::RemoteUrlKind::Raw;
+    let entries = provider_proxy_entries(config, provider, is_raw_file);
+    // Raw 的代理模板要用 `{branch}` / `{path}`：仓库配置里已知的由调用方给出，
+    // 只有 URL 时由这条唯一实现推导。
+    let (branch, file_path) = if is_raw_file {
+        crate::github_proxies::raw_branch_and_path(url)
+    } else {
+        (String::new(), String::new())
+    };
+    let proxy_urls = asset_proxy_urls(entries, url, is_raw_file, &branch, &file_path, mode, None);
+    plan_asset_download_candidates(mode, url, proxy_urls)
+}
+
 fn plan_asset_download_candidates(
     mode: ProxyMode,
     direct_url: &str,
@@ -3077,15 +3122,7 @@ pub async fn install_repository(
             )
         }
     };
-    let proxy_entries: &[GitHubProxy] = if repo.provider == Provider::Github {
-        if is_raw_file {
-            &config.github_proxies.raw_proxies
-        } else {
-            &config.github_proxies.release_proxies
-        }
-    } else {
-        &[]
-    };
+    let proxy_entries = provider_proxy_entries(&config, &repo.provider, is_raw_file);
     let proxy_urls = asset_proxy_urls(
         proxy_entries,
         &download_url,
@@ -5613,19 +5650,14 @@ pub fn set_all_level_sets_enabled(
     })
 }
 
-/// 读一个 ZIP，列出其中的关卡集（不落盘，供导入前确认）。
+/// 把 ZIP 里识别出的关卡集转成 IPC 模型（`exists` 依赖当前游戏目录）。
 ///
-/// `exists` 标记目标位置是否已有同名目录 —— 界面据此提示「会回收旧版本」，
-/// 与真正安装时的判定保持一致。
-#[tauri::command]
-pub fn inspect_level_set_zip(
-    state: State<'_, AppState>,
-    zip_path: String,
-) -> Result<Vec<ZipLevelSet>, String> {
-    let config = state.config.load_or_default();
-    let path = PathBuf::from(&zip_path);
-    let sets = crate::level_sets::inspect_zip(&path)?;
-    let levels_dir = game::detect_game(&config)
+/// `inspect_level_set_zip`（本地导入前确认）与 `stage_map_source`（本地 /
+/// 直链地图来源）必须给出完全相同的行，否则同一个 ZIP 在两条入口上显示的
+/// 「会回收旧版本」提示会不一致。
+fn zip_level_sets(config: &AppConfig, path: &Path) -> Result<Vec<ZipLevelSet>, String> {
+    let sets = crate::level_sets::inspect_zip(path)?;
+    let levels_dir = game::detect_game(config)
         .path
         .map(|root| PathBuf::from(root).join("BepInEx/plugins/OC2DIYLevel/levels"));
     Ok(sets
@@ -5646,6 +5678,114 @@ pub fn inspect_level_set_zip(
             }
         })
         .collect())
+}
+
+/// 读一个 ZIP，列出其中的关卡集（不落盘，供导入前确认）。
+///
+/// `exists` 标记目标位置是否已有同名目录 —— 界面据此提示「会回收旧版本」，
+/// 与真正安装时的判定保持一致。
+#[tauri::command]
+pub fn inspect_level_set_zip(
+    state: State<'_, AppState>,
+    zip_path: String,
+) -> Result<Vec<ZipLevelSet>, String> {
+    let config = state.config.load_or_default();
+    zip_level_sets(&config, Path::new(&zip_path))
+}
+
+/// 准备一个地图来源：本地 ZIP 只解析，直链先下载到缓存目录。
+///
+/// 返回的 `path` 就是后续 `import_level_sets` 的输入；`staged=true` 时调用方
+/// 结束（导入完成或用户取消）后必须用 `discard_map_source` 清理，否则缓存
+/// 目录里会留下下载下来的 ZIP。
+#[tauri::command]
+pub async fn stage_map_source(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source: crate::mod_preview::ModSource,
+) -> Result<StagedMapSource, String> {
+    let config = state.config.load_or_default();
+    let (path, staged) = match &source.kind {
+        crate::mod_preview::ModSourceKind::Local => {
+            let path = PathBuf::from(source.value.trim());
+            if !path.is_file() {
+                return Err("mods.fileMissing".into());
+            }
+            let is_zip = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("zip"));
+            if !is_zip {
+                return Err("modPreview.unsupportedType".into());
+            }
+            (path, false)
+        }
+        crate::mod_preview::ModSourceKind::Url => {
+            let (temp, _file_name) = crate::direct_mod::download_remote_to_temp(
+                &app,
+                &state,
+                &source.value,
+                "levelSet.installMap",
+                crate::direct_mod::DIRECT_DOWNLOAD_THREADS,
+                crate::direct_mod::RemoteValidation::Zip,
+            )
+            .await?;
+            (temp, true)
+        }
+    };
+    // 解析失败时下载来的暂存文件没有后续用途，当场清掉，不留垃圾
+    let sets = match zip_level_sets(&config, &path) {
+        Ok(sets) => sets,
+        Err(error) => {
+            if staged {
+                let _ = fs::remove_file(&path);
+            }
+            return Err(error);
+        }
+    };
+    log::info!(
+        "地图来源已就绪：类型={:?}，暂存={}，关卡集={}",
+        source.kind,
+        staged,
+        sets.len()
+    );
+    Ok(StagedMapSource {
+        path: display_path(&path),
+        staged,
+        sets,
+    })
+}
+
+/// 校验「这个路径可以当作暂存文件丢弃」，返回解析后的真实路径。
+///
+/// 只接受 `cache_dir` 之内的普通文件；`None` 表示文件已经不在（重复清理、
+/// 或安装流程自己搬走了），调用方按成功处理。路径来自前端，必须先
+/// canonicalize 再比较 —— 否则 `..`、符号链接、目录联接都能绕过前缀判断。
+fn cache_file_to_discard(cache_dir: &Path, path: &str) -> Result<Option<PathBuf>, String> {
+    let Ok(target) = fs::canonicalize(path.trim()) else {
+        return Ok(None);
+    };
+    let cache_dir = fs::canonicalize(cache_dir).map_err(|_| "levelSet.outsideCache".to_string())?;
+    if !target.is_file() || !target.starts_with(&cache_dir) {
+        return Err("levelSet.outsideCache".into());
+    }
+    Ok(Some(target))
+}
+
+/// 丢弃一个已暂存的地图来源（只允许缓存目录内的文件）。
+///
+/// 暂存文件由 `stage_map_source` 落在缓存目录里；路径来自前端，不能当成
+/// 可信路径 —— 判定规则见 [`cache_file_to_discard`]。
+#[tauri::command]
+pub fn discard_map_source(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let Some(target) = cache_file_to_discard(&state.config.cache_dir(), &path)? else {
+        return Ok(());
+    };
+    fs::remove_file(&target).map_err(|error| {
+        crate::locale_tag::with_params("levelSet.deleteFailed", &[("reason", &error.to_string())])
+    })?;
+    log::info!("已清理暂存的地图来源：路径={}", display_path(&target));
+    Ok(())
 }
 
 /// 从本地 ZIP 导入选定的关卡集。
@@ -6060,26 +6200,16 @@ pub async fn install_map_release(
     /*
      * 下载候选：与 MOD 资产同一条路径。
      *
-     * 地图只分发 ZIP，所以 `is_raw_file` 恒为 false；代理模式按平台与地区取
-     * `selected_asset_proxy_mode` 的默认值（Gitee 恒直连）。
+     * 地图只分发 ZIP，所以按 Release 资产处理（不会进 Raw 分支）；
+     * 代理模式按平台与地区取 `selected_asset_proxy_mode` 的默认值
+     * （Gitee 恒直连）。
      */
-    let proxy_mode =
-        selected_asset_proxy_mode(None, &map.provider, crate::config::current_user_region());
-    let proxy_entries: &[GitHubProxy] = if map.provider == Provider::Github {
-        &config.github_proxies.release_proxies
-    } else {
-        &[]
-    };
-    let proxy_urls = asset_proxy_urls(
-        proxy_entries,
+    let candidates = plan_remote_download_candidates(
+        &config,
+        &map.provider,
+        crate::direct_mod::RemoteUrlKind::ReleaseAsset,
         &asset.download_url,
-        false,
-        "",
-        "",
-        proxy_mode,
-        None,
-    );
-    let candidates = plan_asset_download_candidates(proxy_mode, &asset.download_url, proxy_urls)?;
+    )?;
 
     // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
     let expected_size = (asset.size > 0).then_some(asset.size);
@@ -9242,6 +9372,81 @@ mod asset_download_strategy_tests {
     }
 
     #[test]
+    fn remote_urls_pick_their_own_proxy_group_and_gitee_stays_direct() {
+        use crate::direct_mod::RemoteUrlKind;
+        let mut config = crate::config::default_config();
+        config.github_proxies.release_proxies = vec![GitHubProxy {
+            id: "release-only".into(),
+            name: "Release".into(),
+            template: "https://release.example/{url}".into(),
+            regions: vec![],
+            description: String::new(),
+            enabled: true,
+            builtin: false,
+            remote: false,
+        }];
+        config.github_proxies.raw_proxies = vec![GitHubProxy {
+            id: "raw-only".into(),
+            name: "Raw".into(),
+            template: "https://raw.example/{owner}/{repo}@{branch}/{path}".into(),
+            regions: vec![],
+            description: String::new(),
+            enabled: true,
+            builtin: false,
+            remote: false,
+        }];
+
+        // Release 资产只用 release_proxies，raw 组不能混进来
+        let release_url = "https://github.com/acme/mod/releases/download/v1/mod.zip";
+        let release = plan_remote_download_candidates(
+            &config,
+            &Provider::Github,
+            RemoteUrlKind::ReleaseAsset,
+            release_url,
+        )
+        .unwrap();
+        assert!(
+            release
+                .iter()
+                .any(|candidate| candidate.url.contains("release.example"))
+        );
+        assert!(
+            !release
+                .iter()
+                .any(|candidate| candidate.url.contains("raw.example"))
+        );
+
+        // Raw 文件只用 raw_proxies，且模板里的分支/路径来自 URL 自身
+        let raw_url = "https://github.com/acme/mod/raw/main/bin/mod.dll";
+        let raw = plan_remote_download_candidates(
+            &config,
+            &Provider::Github,
+            RemoteUrlKind::Raw,
+            raw_url,
+        )
+        .unwrap();
+        assert!(
+            raw.iter()
+                .any(|candidate| candidate.url == "https://raw.example/acme/mod@main/bin/mod.dll")
+        );
+        assert!(
+            !raw.iter()
+                .any(|candidate| candidate.url.contains("release.example"))
+        );
+
+        // Gitee 没有资产代理：只剩直连候选
+        let gitee = plan_remote_download_candidates(
+            &config,
+            &Provider::Gitee,
+            RemoteUrlKind::ReleaseAsset,
+            "https://gitee.com/acme/mod/releases/download/v1/mod.zip",
+        )
+        .unwrap();
+        assert_eq!(gitee.len(), 1);
+        assert_eq!(gitee[0].route, AssetDownloadRoute::Direct);
+    }
+
+    #[test]
     fn connection_progress_identifies_route_without_leaking_asset_or_secrets() {
         let candidate = AssetDownloadCandidate {
             route: AssetDownloadRoute::Proxy,
@@ -9705,6 +9910,39 @@ mod asset_download_strategy_tests {
         .await;
         assert_eq!(result.unwrap_err(), "download.cancelled");
         assert_eq!(attempted, 1);
+    }
+}
+
+#[cfg(test)]
+mod map_source_staging_tests {
+    use super::*;
+
+    #[test]
+    fn discard_accepts_only_files_inside_the_cache_directory() {
+        let root = std::env::temp_dir().join(format!("oc2-stage-{}", uuid::Uuid::new_v4()));
+        let cache = root.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let staged = cache.join("staged.zip");
+        fs::write(&staged, b"zip").unwrap();
+        let outside = root.join("user.zip");
+        fs::write(&outside, b"zip").unwrap();
+
+        // 缓存目录内的普通文件：解析成真实路径，交给调用方删除
+        assert_eq!(
+            cache_file_to_discard(&cache, &staged.to_string_lossy()).unwrap(),
+            Some(fs::canonicalize(&staged).unwrap())
+        );
+        // 已经不在了：视为已清理，不报错
+        assert!(
+            cache_file_to_discard(&cache, &cache.join("missing.zip").to_string_lossy())
+                .unwrap()
+                .is_none()
+        );
+        // 缓存目录外的文件、以及目录本身都不是可丢弃的暂存文件
+        assert!(cache_file_to_discard(&cache, &outside.to_string_lossy()).is_err());
+        assert!(cache_file_to_discard(&cache, &cache.to_string_lossy()).is_err());
+        assert!(outside.exists(), "缓存目录外的文件不能被删除");
+        fs::remove_dir_all(root).unwrap();
     }
 }
 

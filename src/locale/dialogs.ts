@@ -255,6 +255,14 @@ export const dialogs: DomainMessages = {
     ko: '쓰려면 관리자 권한이 필요합니다',
     ja: '書き込むには管理者権限が必要です',
   },
+  // macOS 上游戏目录不可写时的做法：改目录权限，而不是提权运行管理器
+  fixFolderPermissionsInFinder: {
+    'zh-CN': '游戏目录不可写：在「访达」里给该目录（含 BepInEx）加上当前用户的读写权限',
+    'zh-TW': '遊戲目錄不可寫入：在「Finder」中為該目錄（含 BepInEx）加上目前使用者的讀寫權限',
+    en: 'The game folder is not writable: in Finder, give your user read/write access to it (and BepInEx)',
+    ko: '게임 폴더에 쓸 수 없습니다. Finder에서 해당 폴더(BepInEx 포함)에 현재 사용자의 읽기/쓰기 권한을 주세요',
+    ja: 'ゲームフォルダーに書き込めません。Finder でこのフォルダー（BepInEx を含む）に現在のユーザーの読み書き権限を付けてください',
+  },
   // 可写
   writable: {
     'zh-CN': '可写',

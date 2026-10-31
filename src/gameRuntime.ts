@@ -47,3 +47,20 @@ export function corefontsCommand(prefix?: string): string {
   // 单引号包裹 + 把内部单引号转成 '\''，是 shell 里最稳的转义方式
   return `WINEPREFIX='${prefix.replace(/'/g, "'\\''")}' winetricks corefonts`
 }
+
+/**
+ * 展示给用户的路径：去掉 Windows `canonicalize` 带来的 verbatim 前缀。
+ *
+ * 后端探测游戏目录时用的是规范化路径，Windows 上会带 `\\?\` 前缀
+ * （`\\?\E:\SteamLibrary\…`）。接口调用里它合法，但直接显示像是出了 bug、
+ * 放进编辑框也没法用。UNC 的 `\\?\UNC\server\share` 还原成
+ * `\\server\share`，其余原样返回（macOS 的路径不带这个前缀）。
+ */
+export function displayPath(path?: string): string {
+  const value = (path ?? '').trim()
+  if (!value) return ''
+  const unc = '\\\\?\\UNC\\'
+  if (value.startsWith(unc)) return `\\\\${value.slice(unc.length)}`
+  const verbatim = '\\\\?\\'
+  return value.startsWith(verbatim) ? value.slice(verbatim.length) : value
+}

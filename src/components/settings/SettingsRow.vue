@@ -10,6 +10,11 @@ const props = defineProps<{
   icon?: Component
   title: string
   description?: string
+  /**
+   * 说明行的悬停提示。说明被单行省略时（例如「游戏目录」显示完整路径）
+   * 用它在鼠标停留时给出全文，不必点开抽屉才知道截掉的是什么。
+   */
+  descriptionTitle?: string
   clickable?: boolean
 }>()
 
@@ -25,7 +30,7 @@ function onClick() {
     <span v-if="icon" class="ico"><component :is="icon" width="19" height="19" /></span>
     <span class="txt">
       <b>{{ title }}</b>
-      <small v-if="description">{{ description }}</small>
+      <small v-if="description" :title="descriptionTitle">{{ description }}</small>
     </span>
     <span class="right">
       <slot name="right" />

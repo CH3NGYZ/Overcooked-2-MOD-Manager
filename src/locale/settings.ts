@@ -23,14 +23,6 @@ export const settings: DomainMessages = {
     ko: '게임 폴더',
     ja: 'ゲームフォルダー',
   },
-  // 游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理
-  folderContainingTheGameAndBepinexDiylevelMapFrameworkPathsWillLiveHereToo: {
-    'zh-CN': '游戏与 BepInEx 框架所在目录；DIYLevel 自定义地图框架路径后续也在此管理',
-    'zh-TW': '遊戲與 BepInEx 框架所在目錄；DIYLevel 自訂地圖框架路徑後續也在此管理',
-    en: 'Folder containing the game and BepInEx; DIYLevel map framework paths will live here too',
-    ko: '게임과 BepInEx가 있는 폴더. DIYLevel 지도 프레임워크 경로도 여기서 관리합니다',
-    ja: 'ゲームとBepInExのあるフォルダー。DIYLevel マップフレームワークのパスもここで管理します',
-  },
   // 恢复默认路径
   resetPath: {
     'zh-CN': '恢复默认路径',

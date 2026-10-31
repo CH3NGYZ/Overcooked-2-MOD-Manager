@@ -874,27 +874,27 @@ pub struct AppConfig {
     pub builtin_sources_only: bool,
 }
 
+/// 游戏运行时。
+///
+/// 默认 `Native`（含 macOS）：原生版走 macOS BepInEx，不需要 CrossOver
+/// 容器，是「装好游戏就能装 MOD」的那条路；CrossOver 只是给还没换原生
+/// 框架的用户保留的选项，由用户自己切过去。Windows 只有原生一种，
+/// 这里的取值不影响它（见 `bepinex::Package::for_platform`）。
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum GameRuntime {
-    #[default]
     Wine,
+    #[default]
     Native,
-}
-
-fn default_game_runtime() -> GameRuntime {
-    if cfg!(windows) {
-        GameRuntime::Native
-    } else {
-        GameRuntime::Wine
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameConfig {
     pub path: String,
     pub auto_detect: bool,
-    #[serde(default = "default_game_runtime")]
+    /// `#[serde(default)]` 取 `GameRuntime::default()`：旧配置缺这个字段时
+    /// 与全新配置走同一个默认值，不在两处各写一遍平台判断。
+    #[serde(default)]
     pub runtime: GameRuntime,
 }
 
@@ -912,18 +912,20 @@ impl GameConfig {
 mod game_runtime_tests {
     use super::*;
 
+    /// 旧配置里没有 `runtime` 字段时必须落到原生：macOS 新装用户默认就是
+    /// 原生框架，而缺字段说明这份配置来自更早的版本，不该反过来把它
+    /// 推进 CrossOver 分支（那会去 Wine 容器里找游戏与 BepInEx）。
     #[test]
-    fn fresh_game_settings_default_to_wine_only_on_unix() {
-        let settings: GameConfig =
+    fn missing_and_fresh_game_settings_both_default_to_native() {
+        let missing: GameConfig =
             serde_json::from_str(r#"{"path":"","auto_detect":true}"#).unwrap();
-        assert_eq!(
-            settings.runtime,
-            if cfg!(windows) {
-                GameRuntime::Native
-            } else {
-                GameRuntime::Wine
-            }
-        );
+        assert_eq!(missing.runtime, GameRuntime::Native);
+        let fresh = GameConfig {
+            path: String::new(),
+            auto_detect: true,
+            runtime: GameRuntime::default(),
+        };
+        assert_eq!(fresh.runtime, GameRuntime::Native);
     }
 
     #[test]

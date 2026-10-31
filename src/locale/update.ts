@@ -71,6 +71,14 @@ export const update: DomainMessages = {
     ko: '관리자 권한을 얻지 못했습니다(UAC를 취소했을 수 있습니다)',
     ja: '管理者権限を取得できませんでした（UAC をキャンセルした可能性があります）',
   },
+  // macOS 不需要管理员权限：游戏与数据目录都归当前用户，改目录权限即可
+  elevationUnsupported: {
+    'zh-CN': 'macOS 不需要管理员权限：给游戏目录读写权限即可',
+    'zh-TW': 'macOS 不需要系統管理員權限：給遊戲目錄讀寫權限即可',
+    en: 'macOS does not need administrator rights: grant read/write access to the game folder',
+    ko: 'macOS에서는 관리자 권한이 필요하지 않습니다. 게임 폴더에 읽기/쓰기 권한을 주세요',
+    ja: 'macOS では管理者権限は不要です。ゲームフォルダーに読み書き権限を与えてください',
+  },
   formatUnsupported: {
     'zh-CN': '当前安装格式不支持自动更新，请手动更新',
     'zh-TW': '目前安裝格式不支援自動更新，請手動更新',

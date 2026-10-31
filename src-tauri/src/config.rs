@@ -1019,11 +1019,8 @@ pub(crate) fn default_config() -> AppConfig {
         game: GameConfig {
             path: String::new(),
             auto_detect: true,
-            runtime: if cfg!(windows) {
-                GameRuntime::Native
-            } else {
-                GameRuntime::Wine
-            },
+            // 与 serde 的字段默认值同一处定义：macOS 默认也走原生。
+            runtime: GameRuntime::default(),
         },
         network: NetworkConfig {
             timeout_seconds: 20,

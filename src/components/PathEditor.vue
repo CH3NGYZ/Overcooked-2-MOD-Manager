@@ -4,6 +4,7 @@ import { ref, watch } from 'vue'
 import { NButton, NInput } from 'naive-ui'
 import { FolderOpenOutline, SaveOutline } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
+import { displayPath } from '../gameRuntime'
 
 /**
  * 路径编辑字段集：输入 + 浏览 + 确认保存。
@@ -23,7 +24,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ save: [path: string] }>()
 
 const draft = ref('')
-watch(() => props.path, (value) => { draft.value = value }, { immediate: true })
+/*
+ * 后端给的是规范化路径（Windows 带 `\\?\` 前缀），显示与编辑都要去掉它：
+ * 用户在这里输入和确认的是自己认得的路径，verbatim 前缀只该留在接口里。
+ */
+watch(() => props.path, (value) => { draft.value = displayPath(value) }, { immediate: true })
 
 async function browse() {
   const dir = await api.chooseGameDirectory()
@@ -40,7 +45,7 @@ function save() {
 <template>
   <div class="path-editor">
     <div class="muted label">{{ t('overview.currentPath') }}</div>
-    <div class="mono current">{{ path || t('overview.notSet') }}</div>
+    <div class="mono current">{{ displayPath(path) || t('overview.notSet') }}</div>
     <n-input v-model:value="draft" clearable :placeholder="placeholder" />
     <div class="acts">
       <n-button secondary @click="browse"><FolderOpenOutline width="15" height="15" />{{ t('overview.browse2') }}</n-button>

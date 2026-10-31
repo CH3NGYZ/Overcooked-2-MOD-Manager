@@ -17,6 +17,7 @@ import { FOCUS_QUERY } from '../crossLink'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
+import { displayPath } from '../gameRuntime'
 import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
@@ -46,8 +47,16 @@ const showUpdate = ref(false)
 /* ===== 游戏版本（macOS：CrossOver / 原生） ===== */
 
 const isMacOS = computed(() => config.value?.platform === 'macos')
-const gameRuntime = computed<GameRuntime>(() => config.value?.game?.runtime ?? 'wine')
+/** 与后端 `GameRuntime::default()` 一致：macOS 新装也默认原生。 */
+const gameRuntime = computed<GameRuntime>(() => config.value?.game?.runtime ?? 'native')
 const switchingRuntime = ref(false)
+
+/**
+ * 「游戏目录」这一条的说明直接显示当前目录。
+ * 原来的说明句（「游戏与 BepInEx 框架所在目录……」）在第一次看过之后就
+ * 没有信息量了，而「现在到底指向哪里」才是每天都要看一眼的东西。
+ */
+const gamePathLabel = computed(() => displayPath(game.value?.path) || t('overview.notSet'))
 
 /**
  * 切换游戏运行时。
@@ -377,19 +386,21 @@ async function clearTokens() {
     <!--
       游戏版本（仅 macOS）：决定探测哪个安装、装哪份 BepInEx、启动走哪条链路。
       放在游戏目录之上 —— 运行时是路径探测的前提，先选运行时再选目录才符合因果。
-      CrossOver 走 Wine 容器里的 Windows 版；原生走 macOS 版 BepInEx。
+      原生在左、CrossOver 在右：原生是默认（macOS 版 BepInEx，不需要容器），
+      CrossOver 走 Wine 容器里的 Windows 版，是给还没换原生框架的人留的选项。
     -->
     <SettingsRow v-if="isMacOS" :title="t('framework.gameVersion')"
       :description="t('framework.runTheWindowsBuildThroughCrossoverOrUseTheNativeMacosBuild')">
       <template #right>
         <n-radio-group :value="gameRuntime" size="small" :disabled="switchingRuntime"
           @update:value="(value: GameRuntime) => switchRuntime(value)">
-          <n-radio-button value="wine">{{ t('CrossOver') }}</n-radio-button>
           <n-radio-button value="native">{{ t('framework.native') }}</n-radio-button>
+          <n-radio-button value="wine">{{ t('CrossOver') }}</n-radio-button>
         </n-radio-group>
       </template>
     </SettingsRow>
-    <SettingsRow :title="t('settings.gameDirectory')" :description="t('settings.folderContainingTheGameAndBepinexDiylevelMapFrameworkPathsWillLiveHereToo')">
+    <SettingsRow :title="t('settings.gameDirectory')" :description="gamePathLabel"
+      :description-title="gamePathLabel">
       <template #right>
         <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">
           <ArrowUndoOutline width="14" height="14" />{{ t('settings.resetPath') }}</n-button>
@@ -547,9 +558,13 @@ async function clearTokens() {
   <!--
     权限：应用默认以普通用户运行（启动不弹 UAC、文件拖放可用、
     更新时能正常关闭自己）。只有游戏目录不可写时才需要提权。
+    macOS 不显示「以管理员身份重启」：那边没有 UAC，提权只能整进程
+    以 root 重新启动，而这会带来 TCC 失效、配置与缓存变成 root 所有、
+    更新器无法自替换；游戏目录与数据根都在用户目录下，本来就归当前用户，
+    真正需要改的是目录权限本身。
   -->
   <SettingsGroup :title="t('dialogs.permissions')">
-    <SettingsRow :title="t('dialogs.runAsAdministrator')"
+    <SettingsRow v-if="!isMacOS" :title="t('dialogs.runAsAdministrator')"
       :description="permission?.elevated ? t('dialogs.administratorRightsAreActive') : t('dialogs.onlyNeededWhenTheGameFolderIsNotWritable')">
       <template #right>
         <n-tag size="small" :bordered="false" :type="permission?.elevated ? 'success' : 'default'">
@@ -560,7 +575,9 @@ async function clearTokens() {
       </template>
     </SettingsRow>
     <SettingsRow :title="t('dialogs.gameFolderWritable')"
-      :description="permission?.game_writable ? t('dialogs.modsCanBeInstalledAndRemovedDirectly') : t('dialogs.administratorRightsAreRequiredToWrite')">
+      :description="permission?.game_writable
+        ? t('dialogs.modsCanBeInstalledAndRemovedDirectly')
+        : (isMacOS ? t('dialogs.fixFolderPermissionsInFinder') : t('dialogs.administratorRightsAreRequiredToWrite'))">
       <template #right>
         <n-tag size="small" :bordered="false" :type="permission?.game_writable ? 'success' : 'warning'">
           {{ permission?.game_writable ? t('dialogs.writable') : t('dialogs.notWritable') }}

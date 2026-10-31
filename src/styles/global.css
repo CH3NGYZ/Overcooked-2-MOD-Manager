@@ -20,23 +20,45 @@
   --oc2-layer-busy: 4000;
   --oc2-layer-titlebar-menu: 5000;
 }
+/*
+ * macOS 的标题栏是两行（窗控一行 + 品牌一行），比 Windows 高。
+ *
+ * 这里用 `:has()` 由标题栏自己的类名驱动，而不是再养一份「平台 → 像素」的
+ * JS 常量：变量挂在 body 上，`body > .n-drawer-container` 的遮罩偏移、
+ * 消息容器的左边界都能直接读到，标题栏自身也通过继承拿到同一个值。
+ * 写死 56px 会让 macOS 的遮罩与标题栏错位一整条。
+ */
+body:has(.titlebar--mac) {
+  --oc2-titlebar-height: 72px;
+}
 
 /*
  * 自绘标题栏永远可拖动。
  *
- * Naive 的全屏遮罩与内容层都是 `position: fixed; inset: 0`，
- * 会盖住标题栏使其无法拖动。这里把两者顶部都让出标题栏高度，
- * 而不是把标题栏提到遮罩之上 —— 后者会让弹窗内容被标题栏遮住一条，
- * 让出空间后标题栏与弹窗各自完整。
+ * Naive 的全屏遮罩会盖住标题栏使其无法拖动。这里的做法是让遮罩与内容层
+ * 都从标题栏下沿开始，而不是把标题栏提到遮罩之上 —— 后者会让弹窗内容被
+ * 标题栏遮住一条，让出空间后标题栏与弹窗各自完整。
+ *
+ * 两种遮罩的**定位基准不同，必须分开写**，否则会「多算一遍标题栏」：
+ *
+ *   `n-modal`：`.n-modal-mask` 是 `position: fixed`，基准是视口，
+ *     所以要自己让出标题栏高度。
+ *   `n-drawer`：`.n-drawer-mask` 是 `position: absolute`，基准是
+ *     `.n-drawer-container` —— 而那个容器**已经**被下面那条规则下推了一个
+ *     标题栏高度。这里再写一次 `top` 就是重复计算：实测遮罩从 112px 才开始
+ *     （容器 56 + 遮罩 56），标题栏下方留出一条与标题栏等高、完全没变暗的空白。
+ *     遮罩只需铺满容器，偏移交给容器本体。
  *
  * 注意 Naive 的抽屉没有 `n-drawer-body-wrapper` 这一层：
  * 结构是 `.n-drawer-container > .n-drawer`（抽屉本体的绝对定位容器），
  * 该容器就是整屏 fixed 的那一层。只给不存在的 wrapper 写规则时，
  * 抽屉会连标题栏一起盖住，并且因为 z-index 远高于标题栏而挡住拖动。
  */
-body > .n-modal-container > .n-modal-mask,
-body > .n-drawer-container > .n-drawer-mask {
+body > .n-modal-container > .n-modal-mask {
   top: var(--oc2-titlebar-height);
+}
+body > .n-drawer-container > .n-drawer-mask {
+  top: 0;
 }
 body > .n-modal-container > .n-modal-body-wrapper,
 body > .n-drawer-container {

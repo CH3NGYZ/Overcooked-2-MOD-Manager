@@ -641,6 +641,7 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 
 - 索引文件是 `maps.toml`，条目是 `[[maps]]`，子源是 `[[map_sources]]`；
 - 一个地图仓库对应**恰好一个**关卡集，绑定身份是 `author` + `level_set_name`（与 ZIP 里 `info` 的值一致，忽略大小写）；
+- 地图下载页与地图管理页都按 `group_i18n` **折叠分组，语义是作者**（与 MOD 仓库的 `group` 按职责/相似性分类不同）；`author` 是绑定键、`group_i18n` 是展示名，两者可以不同；
 - 安装后会先回收同名的旧关卡集（进回收站），再写入新版本。
 
 完整的制作说明、ZIP 目录结构、必填字段、依赖声明与常见失败原因见 **[docs/map-sources.md](docs/map-sources.md)**。

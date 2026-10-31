@@ -505,6 +505,17 @@ export interface MapInfo {
   note_i18n?: Record<string, string>
   enabled: boolean
   builtin: boolean
+  /**
+   * 所属地图源（`None` = 没有源归属）。
+   *
+   * 后端不持久化地图源树：源只是「源 → 分类 → 地图」折叠结构的第一层，
+   * 所以归属与源名随每次加载源树写进条目本身，`get_maps` 原样透传。
+   * 前端据此排源分组，不能在页面里重新猜归属。
+   */
+  source_id?: string | null
+  /** 所属地图源的展示名（多语言表优先，单语言镜像兜底）。 */
+  source_name?: string
+  source_name_i18n?: Record<string, string>
   /** 缓存里最新 Release tag；没刷新过时为空。 */
   latest_tag?: string | null
   /**

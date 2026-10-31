@@ -1059,7 +1059,7 @@ function runPackageAction(pkg: ModPackageNode) {
 
 /** 单仓刷新：复用刷新引擎，只更新这一条仓库的缓存。 */
 async function refreshRepository(repo: Repository) {
-  // 用户主动点刷新 → 强制请求，不吃 10 分钟 Release 缓存
+  // 用户主动点刷新 → 强制请求，不吃 5 分钟 Release 缓存
   const error = await refreshOne(repo, true)
   if (error) message.error(error)
 }

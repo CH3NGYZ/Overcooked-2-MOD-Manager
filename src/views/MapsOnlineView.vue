@@ -14,11 +14,12 @@ import {
   useDialog,
 } from 'naive-ui'
 import { LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
-import { t, locale, pickI18n } from '../i18n'
+import { t, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
 import { tagColorForAny, type TagTone } from '../theme'
 import { useNotify } from '../useNotify'
+import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useRepositoryReadme } from '../composables/useRepositoryReadme'
@@ -40,6 +41,12 @@ import {
   type MapCardState,
 } from '../levelSetStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
+import {
+  useSourceGroupTree,
+  type SourceGroupEntry,
+  type SourceGroupLeaf,
+  type SourceGroupSource,
+} from '../composables/useSourceGroupTree'
 import ReleaseDetailPanel from '../components/ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
@@ -48,14 +55,17 @@ import InstallSourceCard from '../components/InstallSourceCard.vue'
 import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository, ZipLevelSet } from '../types'
 
 /**
- * 地图下载页。
+ * 地图安装页。
  *
  * ## 与 MOD 安装页的关系
  *
  * 这一页的结构是**照着 MOD 安装页复刻**的：同一个卡片组件（`OnlineCard.vue`）、
- * 同一套折叠树（分类标题 + 计数 + 每级刷新）、同一套页头（计数 → 搜索 → 安装）、
- * 同一套网格与按钮文案规则。用户在同一件事（「把线上这张图装到本地」）上不该
- * 看到两套长相。
+ * 同一套三层折叠树（源 → 分类 → 卡片，含每级计数与刷新）、同一套页头
+ * （计数 → 搜索 → 安装）、同一套网格与按钮文案规则。用户在同一件事
+ * （「把线上这张图装到本地」）上不该看到两套长相。
+ *
+ * 树本身的规则（分桶键、顺序、展开）只有一份实现：
+ * `composables/useSourceGroupTree.ts`，本页只把自己特有的数据投影进去。
  *
  * | 卡片字段 | MOD 安装页来源 | 地图来源 |
  * |---|---|---|
@@ -105,6 +115,8 @@ const maps = ref<MapInfo[]>([])
 const sets = ref<LevelSetInfo[]>([])
 const loading = ref(true)
 const refreshing = ref<Record<string, boolean>>({})
+/** 每个地图源的刷新状态（源树重拉 + 该源下全部 Release）。 */
+const refreshingSources = ref<Record<string, boolean>>({})
 const installing = ref<Record<string, boolean>>({})
 const refreshingAll = ref(false)
 /** 「安装地图」按钮的忙碌状态（选择 / 拖入 / 直链 → 暂存 → 识别 → 确认 → 落盘）。 */
@@ -113,8 +125,6 @@ const importing = ref(false)
 const installSourceOpen = ref(false)
 /** 详情抽屉里当前打开的地图 id（抽屉挂在页面级，卡片只负责打开）。 */
 const detailId = ref<string | null>(null)
-/** 展开的分类 key；空数组表示「用默认值（全展开）」。 */
-const openGroups = ref<string[]>([])
 
 /**
  * 游戏是否已探测。
@@ -206,51 +216,44 @@ const emptyDescription = computed(() =>
   maps.value.length && query.value ? t('levelSet.noMatchMaps') : t('levelSet.noMapSources'),
 )
 
-/** 一个折叠分类：key 取原始 group 值，label 取多语言展示名。 */
-interface MapGroup {
-  key: string
-  label: string
-  items: MapInfo[]
-}
-
-/**
- * 按 `group` 分桶。
+/* ===== 源 → 分类 → 地图 =====
  *
- * key 用原始值而不是翻译后的 label：切语言时不应把用户的展开状态清空。
- * 没有 group 的条目归到「其他」，与 MOD 安装页的「未分类仓库」同一处理。
- */
-const groups = computed<MapGroup[]>(() => {
-  const byKey = new Map<string, MapGroup>()
-  for (const map of maps.value) {
-    if (!matches(map)) continue
-    const key = map.group?.trim() || '__ungrouped__'
-    const bucket = byKey.get(key)
-    if (bucket) bucket.items.push(map)
-    else {
-      byKey.set(key, {
-        key,
-        label: pickI18n(map.group_i18n, map.group ?? '') || t('common.other'),
-        items: [map],
-      })
-    }
-  }
-  return [...byKey.values()].sort((left, right) =>
-    left.label.localeCompare(right.label, locale.value),
-  )
-})
-
-const allGroupKeys = computed(() => groups.value.map((group) => group.key))
-/**
- * 展开的分类：默认全展开，与 MOD 安装页的源树一致。
+ * 层级结构与 MOD 安装页完全对齐（同一个 `useSourceGroupTree`）：分桶键用
+ * 原文不用翻译名、顺序按源/条目的声明顺序不排序、搜索时强制全展开。
  *
- * 搜索时强制全展开：命中的卡片被折叠在别的分类里，等于搜索没生效。
+ * 本页特有的两件事由这里投影进去：
+ *
+ * - **源名挂在条目上**。地图源树在后端不落盘（源只是归类方式），所以每条
+ *   地图自带 `source_id` + `source_name(_i18n)`（加载源树时写入并持久化），
+ *   源顺序也就只能按条目首次出现的顺序读 —— 那正是源文档的声明顺序。
+ * - 没有「社区源」这一层特例，所有源都正常显示分类标题。
  */
-const expandedGroups = computed(() =>
-  query.value ? allGroupKeys.value : (openGroups.value.length ? openGroups.value : allGroupKeys.value),
+const treeEntries = computed<SourceGroupEntry<MapInfo>[]>(() =>
+  maps.value
+    .filter(matches)
+    .map((map) => ({
+      sourceId: map.source_id ?? '',
+      sourceLabel: pickI18n(map.source_name_i18n, map.source_name ?? ''),
+      group: map.group ?? '',
+      groupLabel: pickI18n(map.group_i18n, map.group ?? '') || t('common.other'),
+      item: map,
+    })),
+)
+
+const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } = useSourceGroupTree(
+  () => treeEntries.value,
+  () => ({
+    // 没有持久化源树：顺序 = 条目首次出现顺序 = 源文档的声明顺序
+    ungrouped: { id: '__none__', label: t('levelSet.uncategorizedMapSource') },
+  }),
+  () => !!query.value,
 )
 
 const anyRefreshing = computed(
-  () => refreshingAll.value || Object.keys(refreshing.value).length > 0,
+  () =>
+    refreshingAll.value
+    || Object.keys(refreshing.value).length > 0
+    || Object.keys(refreshingSources.value).length > 0,
 )
 
 async function loadMaps() {
@@ -278,6 +281,19 @@ async function loadLevelSets() {
   }
 }
 
+/**
+ * 预取 owner 头像 —— 与 MOD 安装页同一条链路、同一份实现。
+ *
+ * 卡片与详情抽屉的图标（`ProviderIcon`）只读 `avatars.ts` 的内存缓存，缓存
+ * 由这里批量填充：`prefetchAvatars` 按 `provider:owner` 去重，后端再按 owner
+ * 单飞 + 磁盘缓存（12 小时），所以同一 owner 只真正下载一次。地图的
+ * `provider` / `username` 与仓库同形，不需要为地图另写一份预取。
+ *
+ * `immediate` + `onMounted` 双触发与 MOD 安装页同因：首次进页面时 `maps`
+ * 还是空的，watch 不会触发；数据到了再触发一次，已有在途请求会复用。
+ */
+watch(maps, (list) => { void prefetchAvatars(list) }, { immediate: true })
+
 onMounted(() => {
   /*
    * 依赖提示与安装前检查都读 Dashboard 的 MOD 列表，而 Dashboard 由页面
@@ -287,6 +303,7 @@ onMounted(() => {
   void ensureLoaded()
   void loadMaps()
   void loadLevelSets()
+  void prefetchAvatars(maps.value)
 })
 
 /** 展示名：多语言表 → 单语言镜像 → 仓库坐标。 */
@@ -770,33 +787,77 @@ function runAction(map: MapInfo) {
 }
 
 /** 分类里是否有卡片正在刷新/安装（决定分类刷新按钮的转圈与禁用）。 */
-function groupRefreshing(group: MapGroup): boolean {
+function groupRefreshing(group: SourceGroupLeaf<MapInfo>): boolean {
   return group.items.some((map) => isRefreshing(map) || isInstalling(map))
 }
 
+/** 源里是否有卡片正在忙（决定源刷新按钮的转圈）。 */
+function sourceRefreshing(node: SourceGroupSource<MapInfo>): boolean {
+  if (refreshingSources.value[node.id]) return true
+  return node.groups.some((group) => group.items.some((map) => isRefreshing(map) || isInstalling(map)))
+}
+
 /**
- * 刷新一个分类下的全部 Release。
+ * 逐个刷新一批地图的 Release，返回失败信息。
  *
- * 与 MOD 安装页的分组刷新同一交互：按钮转圈、逐个请求、结束后统一重拉，
- * 单个失败不阻断同组其它条目，只在最后报一次错（逐个弹会让用户被错误淹没）。
+ * 单个失败不阻断同批其它条目：一次刷几十张图时逐条弹错会把用户淹掉，所以
+ * 错误交回调用方合并上报（与 MOD 安装页的批量刷新同一套做法）。
+ *
+ * 结束后把线上依赖声明写回本地清单并重读列表：卡片状态与依赖表要立刻反映
+ * 新缓存，否则用户刷完看到还是旧版本。
  */
-async function refreshGroup(group: MapGroup) {
-  if (refreshingAll.value || groupRefreshing(group)) return
-  let firstError: unknown = null
-  for (const map of group.items) {
+async function refreshReleases(list: MapInfo[]): Promise<string[]> {
+  const errors: string[] = []
+  for (const map of list) {
     if (isRefreshing(map) || isInstalling(map)) continue
     setFlag(refreshing, map.id, true)
     try {
       await api.refreshMapReleases(map.id, true)
     } catch (reason) {
-      if (firstError === null) firstError = reason
+      errors.push(backendMessageOf(reason))
     } finally {
       setFlag(refreshing, map.id, false)
     }
   }
-  if (firstError !== null) message.error(backendMessageOf(firstError))
   await syncDependencySnapshots()
   await loadMaps()
+  return errors
+}
+
+/**
+ * 刷新一个分类下的全部 Release。
+ *
+ * 只刷本分类内的 Release，不重拉源树：源文档是分类与地图的来源，只点一个
+ * 分类就把整棵源树清空重载没有意义。
+ */
+async function refreshGroup(group: SourceGroupLeaf<MapInfo>) {
+  if (refreshingAll.value || groupRefreshing(group)) return
+  const errors = await refreshReleases(group.items)
+  if (errors.length) message.error(errors[0])
+}
+
+/**
+ * 刷新一个源。
+ *
+ * 后端没有「只刷新一个源」的命令：地图源树的加载本身就是一次整体请求，
+ * 所以这里先重拉源树（可能新增/删除地图、改分组），再刷新这个源下的
+ * 全部 Release。重拉后按源 ID 重新取一次条目，不吃重拉前的旧对象。
+ */
+async function refreshSource(node: SourceGroupSource<MapInfo>) {
+  if (refreshingAll.value || refreshingSources.value[node.id]) return
+  setFlag(refreshingSources, node.id, true)
+  try {
+    try {
+      maps.value = await api.refreshMapSources()
+    } catch (reason) {
+      message.error(backendMessageOf(reason))
+    }
+    const scoped = maps.value.filter((map) => (map.source_id || '__none__') === node.id)
+    const errors = await refreshReleases(scoped)
+    if (errors.length) message.error(errors[0])
+  } finally {
+    setFlag(refreshingSources, node.id, false)
+  }
 }
 
 /**
@@ -810,21 +871,14 @@ async function refreshAll() {
   if (refreshingAll.value) return
   refreshingAll.value = true
   try {
-    maps.value = await api.refreshMapSources()
-  } catch (reason) {
-    // 源树失败仍然尝试刷新已有条目的 Release（缓存可能还能用）
-    message.error(backendMessageOf(reason))
-  }
-  try {
-    for (const map of maps.value) {
-      try {
-        await api.refreshMapReleases(map.id, true)
-      } catch (reason) {
-        message.error(backendMessageOf(reason))
-      }
+    try {
+      maps.value = await api.refreshMapSources()
+    } catch (reason) {
+      // 源树失败仍然尝试刷新已有条目的 Release（缓存可能还能用）
+      message.error(backendMessageOf(reason))
     }
-    await syncDependencySnapshots()
-    await loadMaps()
+    const errors = await refreshReleases(maps.value)
+    errors.forEach((error) => message.error(error))
   } finally {
     refreshingAll.value = false
   }
@@ -854,43 +908,64 @@ async function refreshAll() {
     <n-empty v-if="!loading && !visibleCount" class="empty" :description="emptyDescription" />
 
     <!--
-      折叠树与 MOD 安装页同形：分类标题（计数 + 刷新）+ 卡片网格。
-      地图源里没有第二层「源」，所以这里只折叠一层。
+      三层折叠树，与 MOD 安装页同形：源（计数 + 刷新）→ 分类（计数 + 刷新）
+      → 卡片网格。层级、缩进与刷新按钮的位置都与 MOD 安装页一致 —— 两页在
+      用户眼里是同一件事（「把线上这个东西装到本地」），不该是两套长相。
     -->
-    <n-collapse v-else :expanded-names="expandedGroups" class="source-collapse"
-      @update:expanded-names="(names: string[]) => { openGroups = names }">
-      <n-collapse-item v-for="group in groups" :key="group.key" :name="group.key">
+    <n-collapse v-else :expanded-names="sourcesExpanded" class="source-collapse"
+      @update:expanded-names="setOpenSources">
+      <n-collapse-item v-for="node in tree" :key="node.id" :name="node.id">
         <template #header>
           <div class="source-head">
-            <b>{{ group.label }}</b>
-            <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
-            <n-button size="tiny" quaternary class="group-refresh" :loading="groupRefreshing(group)"
-              :disabled="anyRefreshing" :title="t('modsOnline.refresh')" @click.stop="refreshGroup(group)">
+            <b>{{ node.label }}</b>
+            <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
+            <!-- 源刷新：重拉源树后刷新这个源下的全部 Release -->
+            <n-button size="tiny" quaternary class="group-refresh"
+              :loading="sourceRefreshing(node)" :disabled="anyRefreshing"
+              :title="t('modsOnline.refresh')" @click.stop="refreshSource(node)">
               <template #icon><RefreshOutline width="13" height="13" /></template>
             </n-button>
           </div>
         </template>
 
-        <div class="repo-grid">
-          <!-- 卡片就是 MOD 安装页那张：只把数据换成地图的 -->
-          <OnlineCard v-for="map in group.items" :key="map.id" :data-focus-id="map.id"
-            :provider="map.provider" :owner="map.username" :title="mapName(map)"
-            :note="mapNote(map)"
-            :status-text="statusOf(map).text" :status-tone="statusOf(map).tone"
-            :status-clickable="hasLocalMap(map)"
-            :status-title="hasLocalMap(map) ? t('levelSet.viewInMapManager') : undefined"
-            :dependency="dependencyOf(map)"
-            :version="versionOf(map)" :refreshing="isRefreshing(map)"
-            :downloads="downloadCount(map)"
-            :action="actionOf(map)"
-            :error="map.last_error"
-            :active="detailId === map.id"
-            :focus-flash="highlightId === map.id"
-            @open="detailId = map.id"
-            @status-click="openInLevelSets(map)"
-            @dependency-click="jumpToDependency(map)"
-            @action="runAction(map)" />
-        </div>
+        <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
+          @update:expanded-names="setOpenGroups">
+          <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
+            <template #header>
+              <div class="group-head">
+                <span>{{ group.label }}</span>
+                <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
+                <!-- 分类刷新：只刷新本分类内的地图，不影响其它分类 -->
+                <n-button size="tiny" quaternary class="group-refresh"
+                  :loading="groupRefreshing(group)" :disabled="anyRefreshing"
+                  :title="t('modsOnline.refresh')" @click.stop="refreshGroup(group)">
+                  <template #icon><RefreshOutline width="12" height="12" /></template>
+                </n-button>
+              </div>
+            </template>
+
+            <div class="repo-grid">
+              <!-- 卡片就是 MOD 安装页那张：只把数据换成地图的 -->
+              <OnlineCard v-for="map in group.items" :key="map.id" :data-focus-id="map.id"
+                :provider="map.provider" :owner="map.username" :title="mapName(map)"
+                :note="mapNote(map)"
+                :status-text="statusOf(map).text" :status-tone="statusOf(map).tone"
+                :status-clickable="hasLocalMap(map)"
+                :status-title="hasLocalMap(map) ? t('levelSet.viewInMapManager') : undefined"
+                :dependency="dependencyOf(map)"
+                :version="versionOf(map)" :refreshing="isRefreshing(map)"
+                :downloads="downloadCount(map)"
+                :action="actionOf(map)"
+                :error="map.last_error"
+                :active="detailId === map.id"
+                :focus-flash="highlightId === map.id"
+                @open="detailId = map.id"
+                @status-click="openInLevelSets(map)"
+                @dependency-click="jumpToDependency(map)"
+                @action="runAction(map)" />
+            </div>
+          </n-collapse-item>
+        </n-collapse>
       </n-collapse-item>
     </n-collapse>
   </n-spin>
@@ -997,14 +1072,16 @@ async function refreshAll() {
 }
 
 /*
- * 与 `ModsOnlineView.vue` 的 `.source-collapse` / `.source-head` / `.group-refresh`
- * / `.repo-grid` 保持同一份数值 —— 两页列表要看起来是同一个东西。
- * 卡片内部样式全在 `OnlineCard.vue`，这里只管列表骨架。
+ * 与 `ModsOnlineView.vue` 的 `.source-collapse` / `.source-head` /
+ * `.group-collapse` / `.group-head` / `.group-refresh` / `.repo-grid` 保持
+ * 同一份数值 —— 两页列表要看起来是同一个东西。卡片内部样式全在
+ * `OnlineCard.vue`，这里只管列表骨架。
  */
 .source-collapse {
   width: 100%;
 }
 
+/* 三级固定缩进：源 0、分类 14px、卡片 28px（与 MOD 安装页同一份数值） */
 .source-head {
   display: flex;
   align-items: center;
@@ -1015,6 +1092,19 @@ async function refreshAll() {
 .source-head b {
   font-size: 14px;
   color: var(--oc2-text-1);
+}
+
+.group-collapse {
+  margin: -4px 0 0 14px;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oc2-accent);
 }
 
 .group-refresh {

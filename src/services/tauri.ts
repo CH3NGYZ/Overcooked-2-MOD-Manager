@@ -83,7 +83,7 @@ export const api = {
   /**
    * 刷新单个仓库的 Release 列表。
    *
-   * 后端对 Release 列表有 10 分钟缓存：批量刷新、自动刷新、切页回来都直接
+   * 后端对 Release 列表有 5 分钟缓存：批量刷新、自动刷新、切页回来都直接
    * 读缓存，不再逐仓打 API。只有**用户主动点刷新**时才传 `force: true`，
    * 因为那个动作的语义就是「现在就要最新的」。
    */
@@ -257,7 +257,7 @@ export const api = {
    */
   refreshMapSources: () => invoke<MapInfo[]>('refresh_map_sources'),
   /**
-   * 刷新一个地图的 Release 列表（10 分钟缓存）。
+   * 刷新一个地图的 Release 列表（5 分钟缓存）。
    *
    * `force` 由「用户主动点刷新」传入：那个动作的语义就是「现在就要最新的」。
    */

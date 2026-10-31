@@ -273,8 +273,15 @@ export const levelSet: DomainMessages = {
     ko: '검색과 일치하는 지도가 없습니다. 다른 키워드를 입력해 보세요.',
     ja: '検索に一致するマップがありません。別のキーワードをお試しください。',
   },
+  uncategorizedMapSource: {
+    'zh-CN': '未归类地图源',
+    'zh-TW': '未分類地圖源',
+    en: 'Uncategorized map source',
+    ko: '분류되지 않은 지도 소스',
+    ja: '未分類のマップソース',
+  },
   refreshAllHint: {
-    'zh-CN': '刷新全部地图的 Release（忽略 10 分钟缓存）',
+    'zh-CN': '刷新全部地图的 Release（忽略 5 分钟缓存）',
     'zh-TW': '重新整理全部地圖的 Release（忽略 10 分鐘快取）',
     en: 'Refresh releases for every map, ignoring the 10-minute cache',
     ko: '모든 지도의 Release를 새로 고칩니다(10분 캐시 무시)',

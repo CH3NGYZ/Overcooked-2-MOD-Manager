@@ -1,19 +1,26 @@
 /**
- * 仓库 owner 头像的前端缓存层。
+ * 仓库 / 地图 owner 头像的前端缓存层。
  *
  * 三个职责，都只在这一个地方做：
- *   1. **按 `{provider}:{owner}` 去重**：一次刷新会刷出几十个仓库，很多属于
- *      同一个 owner（所有 BepInEx 插件都是 BepInEx）。同一个 key 只请求一次。
+ *   1. **按 `{provider}:{owner}` 去重**：一次刷新会刷出几十个条目，很多属于
+ *      同一个 owner（所有 BepInEx 插件都是 BepInEx）。同一个 key 只请求一次；
+ *      键归一化与批内去重的规则在 `avatarTargets.ts`，那是纯函数、Node 测试
+ *      直接覆盖，这里不重写一遍。
  *   2. **内存缓存**：同一会话内切换页面、重渲染都不再请求；磁盘缓存由后端
- *      负责，跨启动生效。
+ *      负责（12 小时 TTL，跨启动生效），前端永远优先读缓存。
  *   3. **失败即不记**：取不到的 owner 不进缓存，下次刷新会重试；但**本次**
  *      不会重复请求（`requested` 集合记录已尝试过的 key）。
  *
  * 组件只读 `avatarFor(provider, owner)`，返回 `null` 时自己回落到平台图标。
+ *
+ * 预取入口也只有 `prefetchAvatars` 一个：MOD 安装页与地图安装页各自把列表传
+ * 进来即可（两个模型都是 `{ provider, username }` 形状），不允许页面里再写
+ * 一份去重或另开请求。
  */
 import { ref } from 'vue'
 import { api } from './services/tauri'
-import type { Provider, Repository } from './types'
+import { avatarKey, pendingAvatarTargets, type AvatarSource } from './avatarTargets'
+import type { Provider } from './types'
 
 /** `provider:owner` → data URL。 */
 const cache = ref<Record<string, string>>({})
@@ -21,10 +28,6 @@ const cache = ref<Record<string, string>>({})
 const requested = new Set<string>()
 /** 正在进行的批量请求；并发调用合并到同一个 Promise。 */
 let inFlight: Promise<void> | null = null
-
-export function avatarKey(provider: Provider, owner: string): string {
-  return `${provider}:${owner.trim().toLowerCase()}`
-}
 
 /** 查一个 owner 的头像；没有返回 `null`。 */
 export function avatarFor(provider: Provider, owner: string | undefined): string | null {
@@ -46,28 +49,26 @@ export function clearAvatarCache() {
 }
 
 /**
- * 为一批仓库预取头像。
+ * 为一批条目（仓库 / 地图，只要带 `provider` + `username`）预取头像。
  *
  * 只请求「有 owner 且没请求过」的，其余直接跳过。多个调用方并发触发时
- * 共用同一个在途 Promise —— 否则页面挂载 + Dashboard 刷新各来一次，
+ * 共用同一个在途 Promise —— 否则页面挂载 + 列表刷新各来一次，
  * 会产生两倍请求。
  */
-export function prefetchAvatars(repositories: readonly Repository[]): Promise<void> {
-  const pending = new Map<string, { provider: Provider; owner: string }>()
-  for (const repo of repositories) {
-    const owner = repo.username?.trim()
-    if (!owner) continue
-    const key = avatarKey(repo.provider, owner)
-    if (requested.has(key) || cache.value[key]) continue
-    pending.set(key, { provider: repo.provider, owner })
-  }
-  if (!pending.size) return inFlight ?? Promise.resolve()
+export function prefetchAvatars(sources: readonly AvatarSource[]): Promise<void> {
+  const pending = pendingAvatarTargets(
+    sources,
+    (key) => requested.has(key) || !!cache.value[key],
+  )
+  if (!pending.length) return inFlight ?? Promise.resolve()
   if (inFlight) return inFlight
 
-  for (const key of pending.keys()) requested.add(key)
+  for (const target of pending) requested.add(target.key)
   inFlight = (async () => {
     try {
-      const result = await api.repositoryAvatars([...pending.values()])
+      const result = await api.repositoryAvatars(
+        pending.map(({ provider, owner }) => ({ provider, owner })),
+      )
       if (Object.keys(result).length) {
         cache.value = { ...cache.value, ...result }
       }

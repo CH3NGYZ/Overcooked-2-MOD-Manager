@@ -23,6 +23,12 @@ import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
+import {
+  useSourceGroupTree,
+  type SourceGroupEntry,
+  type SourceGroupLeaf,
+  type SourceGroupOrder,
+} from '../composables/useSourceGroupTree'
 import type { Repository, RepositorySource } from '../types'
 
 const message = useNotify()
@@ -172,7 +178,7 @@ function cardAction(repo: Repository): CardAction {
 
 /** 单仓刷新：与批量刷新共用引擎，只更新这一条仓库的缓存。 */
 async function refreshRepository(repo: Repository) {
-  // 用户主动点刷新 → 强制请求，不吃 10 分钟 Release 缓存
+  // 用户主动点刷新 → 强制请求，不吃 5 分钟 Release 缓存
   const error = await engine.refreshOne(repo, true)
   if (error) message.error(error)
 }
@@ -215,7 +221,8 @@ const detailRepo = computed(() => repositories.value.find((repo) => repo.id === 
  * 放在这里而不是每个卡片自己请求：一次刷新会同时刷出几十个仓库，很多属于
  * 同一个 owner（所有 BepInEx 插件都是 BepInEx）。`prefetchAvatars` 按
  * `provider:owner` 去重，后端再按 owner 单飞 + 磁盘缓存，所以同一 owner
- * 只会真正下载一次。
+ * 只会真正下载一次。地图安装页用的是**同一个** `prefetchAvatars`（入参只要
+ * `{ provider, username }`，两个模型都满足），不要在那边再写一份预取。
  *
  * `immediate` + `onMounted` 双触发是有意的：首次进入页面时 `repositories`
  * 可能还没数据（Dashboard 还在读），watch 不会触发；等数据到了再触发一次。
@@ -255,18 +262,6 @@ function repoName(repo: Repository) {
 }
 function repoGroup(repo: Repository) {
   return pickI18n(repo.group_i18n, repo.group || '') || t('dialogs.ungrouped')
-}
-/**
- * 分组键：与界面语言无关的稳定标识。
- *
- * 用 `group` 原文（不是翻译后的 label）作键，切语言时同一个分组的键不变，
- * 分桶结果和顺序都不受影响 —— 见 `tree` 里分桶处的说明。
- *
- * 空分组归入 `__ungrouped__`，避免把中文「未分组」这种翻译文案写进键里。
- */
-function repoGroupKey(repo: Repository) {
-  const raw = (repo.group || '').trim().toLowerCase()
-  return raw ? `group:${raw}` : '__ungrouped__'
 }
 /**
  * 卡片简介：note_i18n 取当前语言，用统一的 Markdown 渲染取纯文本摘要
@@ -370,113 +365,63 @@ function matches(repo: Repository) {
 const visibleCount = computed(() => repositories.value.filter(matches).length)
 
 /* ===== 分组树 ===== */
-interface GroupNode { key: string; label: string; repos: Repository[] }
-interface SourceNode {
-  source: RepositorySource
-  label: string
-  groups: GroupNode[]
-  count: number
-  community: boolean
-  /** 社区源只有一组且不显示分组标题。 */
-  flat: boolean
-}
 
-const openSources = ref<string[]>([])
-const openGroups = ref<string[]>([])
+/*
+ * 源 → 分类两级折叠（卡片是第三层，不是折叠节点）。
+ *
+ * 规则全部在 `useSourceGroupTree`：分桶键用原文而不是翻译名、顺序按源文档的
+ * 声明顺序不排序、搜索时强制全展开。地图下载页用**同一份实现** —— 两页各写
+ * 一套的结果已经出现过一次：一页按显示名排序，切个语言分组顺序就变了。
+ *
+ * 本页只负责把自己特有的两件事投影进去：源名来自 `repository_sources`
+ * （地图页的源名挂在条目上），社区源不分类。
+ */
+const treeEntries = computed<SourceGroupEntry<Repository>[]>(() =>
+  repositories.value
+    // 搜索过滤与「官方源已收录的不在社区源里重复展示」都在进树前完成
+    .filter((repo) => matches(repo) && !isDuplicateOfOfficial(repo))
+    .map((repo) => ({
+      sourceId: repo.source_id ?? '',
+      // 源名在源列表上，交给下面的 order；条目这一级不重复翻译
+      sourceLabel: '',
+      group: repo.group ?? '',
+      groupLabel: repoGroup(repo),
+      item: repo,
+    })),
+)
 
-const tree = computed<SourceNode[]>(() => {
-  const bySource = new Map<string, Repository[]>()
-  for (const repo of repositories.value) {
-    if (!matches(repo)) continue
-    // 官方源已收录的仓库不在社区源里重复展示
-    if (isDuplicateOfOfficial(repo)) continue
-    const key = repo.source_id ?? '__none__'
-    const list = bySource.get(key)
-    if (list) list.push(repo)
-    else bySource.set(key, [repo])
-  }
+/** 源顺序 = `config.repository_sources` 的持久化顺序（读取顺序 = 展示顺序）。 */
+const sourceOrder = computed<SourceGroupOrder[]>(() =>
+  sources.value.map((source) => ({
+    id: source.id,
+    label: pickI18n(source.nickname_i18n, source.nickname),
+  })),
+)
 
-  const nodes: SourceNode[] = []
-  const push = (source: RepositorySource, repos: Repository[]) => {
-    if (COMMUNITY_IDS.has(source.id)) {
-      // 社区仓库统一视为未分组：单组、无标题，直接平铺卡片。
-      nodes.push({
-        source,
-        label: pickI18n(source.nickname_i18n, source.nickname),
-        groups: [{ key: `${source.id}::flat`, label: '', repos }],
-        count: repos.length,
-        community: true,
-        flat: true,
-      })
-      return
-    }
-    /*
-     * 分桶用**分组键**而不是显示名。
-     *
-     * 显示名是翻译后的字符串，会随界面语言变化；拿它当 Map 键意味着切语言
-     * 等于换了一组桶，顺序也随之重排。分组键（`group:` + 规范化后的原文）
-     * 与语言无关，语言只影响 label 的展示。
-     */
-    const buckets = new Map<string, { label: string; repos: Repository[] }>()
-    // 首次出现的顺序 = 后端/源文档声明的顺序，分组保持这个顺序，不排序
-    const order: string[] = []
-    for (const repo of repos) {
-      const key = repoGroupKey(repo)
-      const existing = buckets.get(key)
-      if (existing) {
-        existing.repos.push(repo)
-      } else {
-        buckets.set(key, { label: repoGroup(repo), repos: [repo] })
-        order.push(key)
-      }
-    }
-    /*
-     * 按首次出现顺序输出：**不按分组名排序**。
-     *
-     * 原来用 `localeCompare` 按显示名排序，切语言后同一个分组换了名字、
-     * 顺序就变了 —— 用户看到的是「改个语言，MOD 安装页的分组全乱了」。
-     * 现在顺序完全由源文档里仓库的声明顺序决定，与语言无关。
-     * 「未分组」本来就在声明顺序里落在它实际出现的位置，不再强行垫底。
-     */
-    const groups: GroupNode[] = order.map((key) => {
-      const bucket = buckets.get(key)!
-      return { key: `${source.id}::${key}`, label: bucket.label, repos: bucket.repos }
-    })
-    nodes.push({
-      source,
-      label: pickI18n(source.nickname_i18n, source.nickname),
-      groups,
-      count: repos.length,
-      community: false,
-      flat: false,
-    })
-  }
+const {
+  tree,
+  setOpenSources,
+  setOpenGroups,
+  sourcesExpanded,
+  groupsExpanded,
+} = useSourceGroupTree(
+  () => treeEntries.value,
+  () => ({
+    order: sourceOrder.value,
+    ungrouped: { id: '__none__', label: t('dialogs.uncategorizedRepositories') },
+    /* 社区仓库统一视为未分组：单组、无分类标题，直接平铺卡片。 */
+    flat: (sourceId: string) => COMMUNITY_IDS.has(sourceId),
+  }),
+  () => !!query.value,
+)
 
-  // 按 config.repository_sources 的持久化顺序输出（读取顺序 = 展示顺序）
-  for (const source of sources.value) {
-    const repos = bySource.get(source.id)
-    if (!repos?.length) continue
-    push(source, repos)
-    bySource.delete(source.id)
-  }
-  const orphan = bySource.get('__none__')
-  if (orphan?.length) push({ id: '__none__', nickname: t('dialogs.uncategorizedRepositories'), url: '', builtin: false }, orphan)
-
-  // 社区源固定放最下方（内部仍保持原相对顺序）
-  const normal = nodes.filter((node) => !node.community)
-  const community = nodes.filter((node) => node.community)
-  return [...normal, ...community]
-})
-
-const hasCommunity = computed(() => tree.value.some((node) => node.community))
-const normalTree = computed(() => tree.value.filter((node) => !node.community))
-const communityTree = computed(() => tree.value.filter((node) => node.community))
-
-// 默认全部展开（源与分类），搜索时也保持展开以便直接看到结果。
-const allSourceKeys = computed(() => tree.value.map((node) => node.source.id))
-const allGroupKeys = computed(() => tree.value.flatMap((node) => (node.flat ? [] : node.groups.map((group) => group.key))))
-const sourcesExpanded = computed(() => (query.value ? allSourceKeys.value : (openSources.value.length ? openSources.value : allSourceKeys.value)))
-const groupsExpanded = computed(() => (query.value ? allGroupKeys.value : (openGroups.value.length ? openGroups.value : allGroupKeys.value)))
+/*
+ * 社区源固定放最下方（内部仍保持原有相对顺序）：它们未经官方索引校验，
+ * 混在官方源中间等于把「作者声明的仓库」和「搜索结果」当成同一件事。
+ */
+const normalTree = computed(() => tree.value.filter((node) => !COMMUNITY_IDS.has(node.id)))
+const communityTree = computed(() => tree.value.filter((node) => COMMUNITY_IDS.has(node.id)))
+const hasCommunity = computed(() => communityTree.value.length > 0)
 
 /* ===== 动作 ===== */
 
@@ -551,16 +496,16 @@ function statusOf(repo: Repository): RepoStatus {
  * 单个源的刷新按钮：先重拉该源文档（父源会连带刷新它声明的子源），
  * 再并行刷新刷新后属于这条源链的仓库。
  */
-async function refreshSource(node: SourceNode) {
+async function refreshSource(node: { id: string }) {
   // refreshSourceChain 内部已按租用完 reloadConfig，这里不再全量 load
-  const errors = await engine.refreshSourceChain(node.source.id)
+  const errors = await engine.refreshSourceChain(node.id)
   errors.forEach((error) => message.error(error))
   const ids = new Set<string>()
   const collect = (sourceId: string) => {
     ids.add(sourceId)
     for (const child of sources.value.filter((entry) => entry.parent_id === sourceId)) collect(child.id)
   }
-  collect(node.source.id)
+  collect(node.id)
   /*
    * 源文档刚拉回来的仓库也要按「真实存在」再过滤一次：
    * 与展示同一套判定，避免把地区专属仓库（例如中国大陆下的
@@ -584,17 +529,17 @@ async function refreshAll() {
  * 分组刷新：只刷新本组内的仓库 Release，不重拉源文档、不影响其它组。
  * 源文档（分组 / 仓库列表的来源）不在这里动，避免只点一个分组就把整棵源树清空重载。
  */
-async function refreshGroup(group: GroupNode) {
+async function refreshGroup(group: SourceGroupLeaf<Repository>) {
   // 组内不可用的仓库同样跳过刷新（分组由已筛选列表派生，这里再校验一次）
-  const errors = await engine.refreshMany(group.repos.filter(
+  const errors = await engine.refreshMany(group.items.filter(
     (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
   ))
   errors.forEach((error) => message.error(error))
 }
 
 /** 该组是否有仓库正在刷新（决定分组按钮的转圈）。 */
-function groupRefreshing(group: GroupNode) {
-  return group.repos.some((repo) => refreshing.value[repo.id])
+function groupRefreshing(group: SourceGroupLeaf<Repository>) {
+  return group.items.some((repo) => refreshing.value[repo.id])
 }
 
 function gameBlocked() {
@@ -666,14 +611,14 @@ defineExpose({ refreshAll, visibleCount })
 
     <template v-else>
       <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
-        @update:expanded-names="(names: string[]) => (openSources = names)">
-        <n-collapse-item v-for="node in normalTree" :key="node.source.id" :name="node.source.id">
+        @update:expanded-names="setOpenSources">
+        <n-collapse-item v-for="node in normalTree" :key="node.id" :name="node.id">
           <template #header>
             <div class="source-head">
               <b>{{ node.label }}</b>
               <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
               <n-button size="tiny" quaternary
-                :loading="sourceRefreshing[node.source.id] || node.groups.some((g) => g.repos.some((r) => refreshing[r.id]))"
+                :loading="sourceRefreshing[node.id] || node.groups.some((g) => g.items.some((r) => refreshing[r.id]))"
                 :disabled="anyRefreshing" @click.stop="refreshSource(node)">
                 <template #icon><RefreshOutline width="13" height="13" /></template>
               </n-button>
@@ -681,12 +626,12 @@ defineExpose({ refreshAll, visibleCount })
           </template>
 
           <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
-            @update:expanded-names="(names: string[]) => (openGroups = names)">
+            @update:expanded-names="setOpenGroups">
             <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
               <template #header>
                 <div class="group-head">
                   <span>{{ group.label }}</span>
-                  <n-tag size="tiny" :bordered="false">{{ group.repos.length }}</n-tag>
+                  <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
                   <!-- 分组刷新：只刷新本组内的仓库，不影响其它组 -->
                   <n-button size="tiny" quaternary class="group-refresh"
                     :loading="groupRefreshing(group)"
@@ -697,7 +642,7 @@ defineExpose({ refreshAll, visibleCount })
               </template>
 
               <div class="repo-grid">
-                <OnlineCard v-for="repo in group.repos" :key="repo.id" :data-focus-id="repo.id"
+                <OnlineCard v-for="repo in group.items" :key="repo.id" :data-focus-id="repo.id"
                   :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
                   :note="repoNote(repo) || repo.repository"
                   :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"
@@ -725,8 +670,8 @@ defineExpose({ refreshAll, visibleCount })
           <span>{{ t('dialogs.communityRepositories') }}</span>
         </div>
         <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
-          @update:expanded-names="(names: string[]) => (openSources = names)">
-          <n-collapse-item v-for="node in communityTree" :key="node.source.id" :name="node.source.id">
+          @update:expanded-names="setOpenSources">
+          <n-collapse-item v-for="node in communityTree" :key="node.id" :name="node.id">
             <template #header>
               <div class="source-head">
                 <b>{{ node.label }}</b>
@@ -739,7 +684,7 @@ defineExpose({ refreshAll, visibleCount })
             </template>
             <!-- 社区仓库不分组：直接平铺卡片，没有分类标题 -->
             <div class="repo-grid community-grid">
-              <OnlineCard v-for="repo in node.groups[0]?.repos ?? []" :key="repo.id"
+              <OnlineCard v-for="repo in node.groups[0]?.items ?? []" :key="repo.id"
                 :data-focus-id="repo.id"
                 :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
                 :note="repoNote(repo) || repo.repository"

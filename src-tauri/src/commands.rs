@@ -1,6 +1,7 @@
 use crate::archive;
 use crate::archive::DownloadRoute as AssetDownloadRoute;
 use crate::config::ConfigService;
+use crate::display_path::display_path;
 use crate::download::{
     DownloadCandidate as AssetDownloadCandidate, DownloadContext,
     try_download_candidates as try_asset_download_candidates,
@@ -683,7 +684,7 @@ fn read_log_at_path(path: &Path) -> Result<RustLog, String> {
         Err(error) => return Err(error.to_string()),
     };
     Ok(RustLog {
-        path: path.to_string_lossy().to_string(),
+        path: display_path(path),
         content,
     })
 }
@@ -3368,10 +3369,21 @@ pub fn get_mod_recycle_bin(state: State<'_, AppState>) -> Result<Vec<ModRecycleE
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
-    recycle_bin::list(&state.config.mod_recycle_bin_dir()).map_err(|error| {
-        log::warn!("读取 MOD 回收站失败：{}", error);
-        error
-    })
+    recycle_bin::list(&state.config.mod_recycle_bin_dir())
+        .map(|entries| {
+            // 记录里存的是删除时的 canonical 路径，只在送给前端时换成展示形态。
+            entries
+                .into_iter()
+                .map(|mut entry| {
+                    entry.game_path = display_path(&entry.game_path);
+                    entry
+                })
+                .collect()
+        })
+        .map_err(|error| {
+            log::warn!("读取 MOD 回收站失败：{}", error);
+            error
+        })
 }
 
 #[tauri::command]
@@ -5373,7 +5385,7 @@ fn list_diy_level_backups(backup_root: &Path) -> Vec<String> {
                 .starts_with(DIYLEVEL_BACKUP_PREFIX)
                 && entry.path().is_dir()
         })
-        .map(|entry| entry.path().to_string_lossy().to_string())
+        .map(|entry| display_path(entry.path()))
         .collect::<Vec<_>>();
     backups.sort();
     backups
@@ -5457,7 +5469,7 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
     LevelSetInfo {
         dir_name: set.dir_name,
         enabled: set.enabled,
-        path: display_absolute_path(&set.path),
+        path: display_path(&set.path),
         name: metadata
             .as_ref()
             .map(|meta| meta.name.clone())
@@ -6642,42 +6654,13 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
     Err("mods.dllFileMissing".into())
 }
 
-/// 把内部路径转成用户可读、可直接粘贴的形态。
+/// 系统文件管理器只认普通路径：交给 Explorer 之前统一过 `display_path`。
 ///
-/// 游戏目录来自 `game::detect_game` 的 `canonicalize`，在 Windows 上会带出
-/// `\\?\` / `\\?\UNC\` 前缀。这种 verbatim 写法粘进资源管理器地址栏、文本
-/// 编辑器或别人给的路径里都不认，所以**凡是要展示给用户的绝对路径**都过这里；
-/// UNC 还要还原成 `\\server\share` 的普通写法。
-fn display_absolute_path(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else {
-        text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
-    }
-}
-
-/// 把路径转成 Explorer 认得的形态。
-///
-/// Explorer 不按标准 argv 解析路径、也不接受 verbatim 形式，所以在
-/// `display_absolute_path` 之上再交给资源管理器。
-#[cfg(windows)]
-fn explorer_display_path(path: &Path) -> String {
-    display_absolute_path(path)
-}
-
-/// 在系统文件管理器里打开一个**目录**（不是选中文件）。
-///
-/// 与 `mod_file_location_command` 只差参数形态：那个用 `/select,` 选中文件，
-/// 这里把目录本身交给文件管理器。Windows 同样要剥掉 verbatim 前缀 ——
-/// `safe_game_path` 返回的是 `canonicalize` 之后的路径。
+/// `safe_game_path` 返回的是 `canonicalize` 之后的路径，Windows 上带出
+/// verbatim 前缀；Explorer 不按标准 argv 解析路径，也不接受这种写法。
 fn directory_open_command(path: &Path) -> std::process::Command {
-    #[cfg(windows)]
-    let target = explorer_display_path(path);
-    #[cfg(not(windows))]
-    let target = path.to_string_lossy().into_owned();
     let mut command = external_open_command();
-    command.arg(target);
+    command.arg(display_path(path));
     command
 }
 
@@ -6691,7 +6674,7 @@ fn mod_file_location_command(path: &Path) -> std::process::Command {
     #[cfg(windows)]
     {
         // Explorer expects ordinary drive/UNC paths, not canonical verbatim prefixes.
-        let selection = format!(r#"/select,"{}""#, explorer_display_path(path));
+        let selection = format!(r#"/select,"{}""#, display_path(path));
         let mut command = std::process::Command::new("explorer.exe");
         use std::os::windows::process::CommandExt;
         // Quote only the path: Explorer does not use the standard argv parser.
@@ -9054,25 +9037,6 @@ mod mod_file_location_tests {
             assert_eq!(command.get_program(), "explorer.exe");
             assert_eq!(command.get_args().collect::<Vec<_>>(), [expected]);
         }
-    }
-
-    /// 展示给用户的绝对路径不能带 `\\?\` 前缀（`canonicalize` 的产物）。
-    ///
-    /// 这条同时守着「普通路径原样返回」：重复调用不会越剥越短。
-    #[test]
-    fn display_absolute_path_removes_verbatim_prefixes() {
-        assert_eq!(
-            display_absolute_path(Path::new(r"\\?\C:\Games\Overcooked! 2\BepInEx")),
-            r"C:\Games\Overcooked! 2\BepInEx"
-        );
-        assert_eq!(
-            display_absolute_path(Path::new(r"\\?\UNC\server\share\levels")),
-            r"\\server\share\levels"
-        );
-        assert_eq!(
-            display_absolute_path(Path::new(r"C:\Games\OC2\levels")),
-            r"C:\Games\OC2\levels"
-        );
     }
 }
 

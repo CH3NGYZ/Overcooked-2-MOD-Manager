@@ -1,4 +1,5 @@
 use crate::bepinex::Package;
+use crate::display_path::display_path;
 use crate::models::{BepInExInfo, GameConfig, GameInfo, WinhttpState};
 use regex::Regex;
 use std::fs;
@@ -37,19 +38,26 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         .as_ref()
         .map(|value| crate::bepinex::state(value, config))
         .unwrap_or(WinhttpState::Missing);
+    /*
+     * 送给前端的路径统一走 display_path（剥 Windows verbatim 前缀、去多余
+     * 尾分隔符）。GameInfo.path 同时也会被 IPC 命令还原成 PathBuf 做文件操作，
+     * 普通长度路径上去掉 `\\?\` 不改变指向，展示形态和实际落点因此一致。
+     */
+    let path_text = path.as_ref().map(|p| display_path(p));
+    let steam_library = detected
+        .as_ref()
+        .map(|location| display_path(&location.library));
+    let steam_root = detected
+        .as_ref()
+        .map(|location| display_path(&location.steam_root));
+    let wine_prefix = detected
+        .and_then(|location| location.wine_prefix)
+        .map(|prefix| display_path(prefix));
     let result = GameInfo {
-        path: path.map(|p| p.to_string_lossy().to_string()),
-        steam_library: detected
-            .as_ref()
-            .map(|location| location.library.to_string_lossy().to_string()),
-        steam_root: detected
-            .as_ref()
-            .map(|location| location.steam_root.to_string_lossy().to_string()),
-        wine_prefix: detected.and_then(|location| {
-            location
-                .wine_prefix
-                .map(|prefix| prefix.to_string_lossy().to_string())
-        }),
+        path: path_text,
+        steam_library,
+        steam_root,
+        wine_prefix,
         game_exists,
         bepinex,
         kitchen_running,
@@ -88,23 +96,54 @@ pub(crate) fn selected_game_root(
 }
 
 fn selected_root_for_package(selected: &Path, package: Package) -> Result<PathBuf, String> {
-    let root = if package == Package::MacOS
-        && selected
-            .file_name()
-            .is_some_and(|name| name == package.executable())
-    {
-        selected.parent().ok_or("game.invalidDirectory")?
-    } else {
-        selected
-    };
-    if !executable_exists_for_package(root, package) {
+    let root = selection_root(selected, package);
+    if !executable_exists_for_package(&root, package) {
         return Err(match package {
             Package::Windows => "game.exeNotFound",
             Package::MacOS => "game.appNotFound",
         }
         .into());
     }
-    fs::canonicalize(root).map_err(|_| "game.invalidDirectory".into())
+    fs::canonicalize(&root).map_err(|_| "game.invalidDirectory".into())
+}
+
+/// 用户选中的路径 → 游戏根目录候选（纯路径运算，不访问磁盘）。
+///
+/// macOS 允许直接选游戏根、`Overcooked2.app` 包、包内的 `Contents/MacOS`
+/// 甚至其中的可执行文件：后三种都向上回溯到包含 `.app` 的那一层，和自动
+/// 探测得到同一个根字符串。Windows 包只接受游戏根。
+fn selection_root(selected: &Path, package: Package) -> PathBuf {
+    let selected = expand_home(selected);
+    if package != Package::MacOS {
+        return selected;
+    }
+    // 向上找 `.app` 组件本身（不是只比较最后一段），`Contents/MacOS` 也能覆盖。
+    let Some(app) = selected.ancestors().find(|candidate| {
+        candidate
+            .file_name()
+            .is_some_and(|name| name == package.executable())
+    }) else {
+        return selected;
+    };
+    app.parent().map(Path::to_path_buf).unwrap_or(selected)
+}
+
+/// 展开配置/选择器里的 `~`。
+///
+/// 只认开头的 `~` 或 `~/`、`~\`；`~user` 需要真实账户查询，不做猜测，原样返回。
+fn expand_home(path: &Path) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    let rest = match text {
+        "~" => "",
+        value if value.starts_with("~/") || value.starts_with("~\\") => &value[1..],
+        _ => return path.to_path_buf(),
+    };
+    let Some(home) = dirs::home_dir() else {
+        return path.to_path_buf();
+    };
+    home.join(rest.trim_start_matches(['/', '\\']))
 }
 
 struct GameLocation {
@@ -141,12 +180,22 @@ fn location(
 
 fn find_game_path(config: &GameConfig) -> Option<GameLocation> {
     if !config.path.trim().is_empty() {
-        let stored = PathBuf::from(&config.path);
+        /*
+         * 配置里的路径可能是旧版本存下的原样字符串：带 `\\?\` 前缀、结尾
+         * 斜杠、`~`，或 macOS 上直接指到 `Overcooked2.app` / `Contents/MacOS`。
+         * 先收敛成游戏根并 canonicalize（解析符号链接：macOS 的
+         * `/var` → `/private/var`），这样「用户选中」与「自动探测」落到同一个
+         * 字符串；路径不存在时 canonicalize 失败，退回原样路径，与旧行为一致。
+         */
+        let stored = normalize_path(selection_root(
+            Path::new(&config.path),
+            Package::current(config),
+        ));
         log::debug!("使用配置中的游戏路径：存在={}", stored.is_dir());
         // A Windows Steam library may live on a mapped drive outside drive_c.
         for steam in steam_root_paths(config) {
             for library in steam_libraries_from_roots(std::slice::from_ref(&steam)) {
-                if normalize_path(&stored).starts_with(normalize_path(&library)) {
+                if stored.starts_with(normalize_path(&library)) {
                     return Some(location(library, stored, &steam, config));
                 }
             }
@@ -158,21 +207,19 @@ fn find_game_path(config: &GameConfig) -> Option<GameLocation> {
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
-            if game_executable_exists(parent, config) {
+            // 便携目录同样 canonicalize，避免 `\\?\` 与普通写法混用。
+            let parent = normalize_path(parent);
+            if game_executable_exists(&parent, config) {
                 log::debug!("从程序目录探测到游戏");
-                return Some(location(
-                    parent.to_path_buf(),
-                    parent.to_path_buf(),
-                    parent,
-                    config,
-                ));
+                return Some(location(parent.clone(), parent.clone(), &parent, config));
             }
         }
     }
     for steam in steam_root_paths(config) {
         for library in steam_libraries_from_roots(std::slice::from_ref(&steam)) {
-            let game = library.join("steamapps/common/Overcooked! 2");
-            if game_executable_exists(&game, config) {
+            let candidate = library.join("steamapps/common/Overcooked! 2");
+            if game_executable_exists(&candidate, config) {
+                let game = normalize_path(&candidate);
                 log::debug!("从当前运行模式的 Steam 库探测到游戏");
                 return Some(location(library, game, &steam, config));
             }
@@ -304,7 +351,7 @@ pub fn detect_bepinex(game: &Path, backup_root: Option<&Path>) -> BepInExInfo {
                         .starts_with("BepInEx.backup-")
                         && entry.path().is_dir()
                 })
-                .map(|entry| entry.path().to_string_lossy().to_string())
+                .map(|entry| display_path(entry.path()))
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -943,6 +990,16 @@ mod tests {
             selected_root_for_package(&app, Package::MacOS).unwrap(),
             expected
         );
+        // 选到包内 `Contents/MacOS`（甚至其中的可执行文件）同样回到游戏根。
+        for selected in [
+            app.join("Contents/MacOS"),
+            app.join("Contents/MacOS/Overcooked2"),
+        ] {
+            assert_eq!(
+                selected_root_for_package(&selected, Package::MacOS).unwrap(),
+                expected
+            );
+        }
         assert!(executable_exists_for_package(&root, Package::MacOS));
         assert!(!executable_exists_for_package(&root, Package::Windows));
         fs::write(root.join("Overcooked2.exe"), b"fixture").unwrap();
@@ -955,6 +1012,76 @@ mod tests {
          * 游戏根）；Windows 包必须拒绝 —— 它不是游戏目录。
          */
         assert!(selected_root_for_package(&app, Package::Windows).is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    /// 用户选中的 `.app` / `Contents/MacOS` 必须回到同一个游戏根字符串。
+    #[test]
+    fn selection_root_maps_macos_bundle_and_contents_paths_to_the_game_root() {
+        let root = Path::new("/Games/Overcooked! 2").to_path_buf();
+        let app = root.join("Overcooked2.app");
+        for selected in [
+            root.clone(),
+            app.clone(),
+            app.join("Contents/MacOS"),
+            app.join("Contents/MacOS/Overcooked2"),
+        ] {
+            assert_eq!(selection_root(&selected, Package::MacOS), root);
+        }
+        // Windows 包不做向上回溯：`.app` 不是合法游戏根。
+        assert_eq!(selection_root(&app, Package::Windows), app);
+    }
+
+    #[test]
+    fn selection_expands_home_prefix_but_not_named_accounts() {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        assert_eq!(expand_home(Path::new("~")), home);
+        assert_eq!(
+            expand_home(Path::new("~/Games/Overcooked! 2")),
+            home.join("Games/Overcooked! 2")
+        );
+        // `~user` 需要真实账户查询，不猜测。
+        assert_eq!(
+            expand_home(Path::new("~someone/game")),
+            PathBuf::from("~someone/game")
+        );
+    }
+
+    /// 配置里历史写法的路径（结尾斜杠、`.`/`..` 段）与预期根收敛到同一字符串，
+    /// 输出给前端时再统一成 display_path 形态（无 verbatim 前缀）。
+    #[test]
+    fn configured_path_variants_converge_on_one_game_root() {
+        let fixture =
+            std::env::temp_dir().join(format!("oc2-path-variants-{}", uuid::Uuid::new_v4()));
+        let root = fixture.join("Overcooked! 2");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("Overcooked2.exe"), b"fixture").unwrap();
+        let canonical = fs::canonicalize(&root).unwrap();
+        let expected = display_path(&canonical);
+        for variant in [
+            root.to_string_lossy().into_owned(),
+            format!("{}/", root.to_string_lossy()),
+            format!("{}/sub/..", root.to_string_lossy()),
+        ] {
+            let config = GameConfig {
+                path: variant.clone(),
+                auto_detect: false,
+                runtime: crate::models::GameRuntime::Wine,
+            };
+            let detected = find_game_path(&config).expect(&variant);
+            assert_eq!(detected.game, canonical, "{variant}");
+            let info = detect_game_from_settings(&config);
+            assert_eq!(info.path.as_deref(), Some(expected.as_str()), "{variant}");
+            assert!(
+                !info
+                    .path
+                    .as_deref()
+                    .unwrap_or_default()
+                    .starts_with(r"\\?\")
+            );
+        }
         fs::remove_dir_all(fixture).unwrap();
     }
 

@@ -9,6 +9,8 @@ mod commands;
 mod community;
 mod config;
 mod direct_mod;
+// 展示用路径归一化：送给前端的路径只从这里出口，不参与 I/O
+mod display_path;
 mod download;
 mod game;
 mod game_state;

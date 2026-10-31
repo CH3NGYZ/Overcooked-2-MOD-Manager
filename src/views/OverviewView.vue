@@ -1,11 +1,15 @@
 <script setup lang="ts">
 /*
- * 总览页：四张卡片，每张回答一个「现在要不要管」的问题。
+ * 总览页：按「框架 / MOD / 地图」三个分区回答「现在要不要管」。
  *
- *   ｜BepInEx  ｜ 装没装、开没开 —— 没有它任何 MOD 都不生效
- *   ｜可更新   ｜ 有几项能升级 —— 点进去定位到第一条
- *   ｜仓库刷新 ｜ 有没有源挂了 —— 挂了的仓库拿不到版本信息
- *   ｜回收站   ｜ 攒了多少垃圾 —— 平时看不见、会一直涨
+ *   ｜框架区 ｜ BepInEx、DIYLevel 装没装、开没开 —— 没有它们任何内容都不生效
+ *   ｜MOD 区 ｜ 在线仓库有多少、挂了几个；本地装了多少、几个能升级
+ *   ｜地图区 ｜ 地图源有多少、刷新失败几张；本地装了多少、几张能升级
+ *
+ * 拆成三个分区而不是平铺六张卡：用户的心智顺序就是「先有框架，再有 MOD，
+ * 最后装地图」，分区标题把这条依赖顺序写进版面；每区最多两张卡，
+ * 一屏内能扫完一个主题。回收站卡片在这里删掉了 —— 它属于「工具」页的
+ * 维护入口，放在总览会让「现在要不要管」多出一个与游玩无关的计数。
  *
  * 刻意不做的东西：趋势折线（没有历史存储）、状态饼图（十几项画饼图没信息量）、
  * 操作时间线（没有审计日志）。这页是「装完就走」的控制台，不是监控面板。
@@ -18,38 +22,28 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NSwitch } from 'naive-ui'
 import {
-  AddCircleOutline, CloudDownloadOutline, RefreshOutline, SettingsOutline, TrashOutline,
+  AddCircleOutline, CloudDownloadOutline, RefreshOutline, SettingsOutline,
 } from '@vicons/ionicons5'
 import StatCard from '../components/StatCard.vue'
-import RecycleBinDialog from '../components/RecycleBinDialog.vue'
+import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
-import { tagColorFor } from '../theme'
 import { modUpdateAvailable } from '../statusTags'
 import { repositoryForMod } from '../modStatus'
+import {
+  levelSetState, mapForLevelSet, mapVersionForLevelSet, mapVersionRefs,
+} from '../levelSetStatus.ts'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
-import type { ModRecycleEntry } from '../types'
+import type { LevelSetInfo, MapInfo } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const router = useRouter()
 const message = useNotify()
 const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = useDashboard()
-
-/**
- * 次要计数的文字色 = 同卡按钮的填充色。
- *
- * `tagColorFor('moderate').textColor` 与 Naive `type="warning"` 按钮的
- * `warningColor` 是同一个值（都是主题对比色），所以文字与按钮永远同色，
- * 用户换主色时一起变。
- *
- * 用内联 style 而不是 CSS 变量：slot 内容渲染在 StatCard 内部，
- * 父组件的 scoped 选择器命中不到它，而 `:style` 不受 scoped 限制。
- */
-const toneText = computed(() => tagColorFor('moderate').textColor)
 
 const { refreshing } = useRepositoryRefresh()
 
@@ -93,26 +87,13 @@ const buttonLabel = computed(() => {
   return updatable.value.length ? t('overview.review') : t('overview.manage')
 })
 
-const recycleOpen = ref(false)
-const recycleEntries = ref<ModRecycleEntry[]>([])
-
 onMounted(() => {
   void ensureLoaded()
-  void loadRecycle()
   void loadDiyLevel()
+  void loadMaps()
 })
 
-/** 回收站条目：只用来在卡片上显示有多少待清理。 */
-async function loadRecycle() {
-  try {
-    recycleEntries.value = await api.getModRecycleBin()
-  } catch {
-    // 读取失败不该让整个总览报错：卡片退化成「—」即可
-    recycleEntries.value = []
-  }
-}
-
-/* ===== 卡片 1：BepInEx ===== */
+/* ===== 框架区：BepInEx ===== */
 
 const frameworkVersion = computed(() => game.value?.bepinex.version ?? '')
 const frameworkEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
@@ -156,7 +137,7 @@ function openFrameworkSettings() {
   void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'bepinex' } })
 }
 
-/* ===== 卡片 1b：DIYLevel 框架（紧跟 BepInEx） ===== */
+/* ===== 框架区：DIYLevel 框架（紧跟 BepInEx） ===== */
 
 /** DIYLevel 的稳定 GUID：与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
 const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
@@ -226,7 +207,7 @@ function openDiyLevelSettings() {
   void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'diylevel' } })
 }
 
-/* ===== 卡片 2：已安装 MOD（含可更新数量） ===== */
+/* ===== MOD 区：已安装 MOD（含可更新数量） ===== */
 
 const installedMods = computed(() => mods.value)
 
@@ -274,7 +255,7 @@ function openLocalMods() {
   void router.push({ name: 'mods-local', query: { [FOCUS_QUERY]: anchor } })
 }
 
-/* ===== 卡片 3：在线 MOD（含刷新失败提示） ===== */
+/* ===== MOD 区：在线 MOD（含刷新失败提示） ===== */
 
 /**
  * 当前地区可见的仓库 —— 口径与 MOD 安装页的「共 N 个仓库」一致
@@ -326,143 +307,255 @@ function openOnlineRepositories() {
   void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: first.id } })
 }
 
-/* ===== 卡片 4：回收站 ===== */
+/* ===== 地图区：在线地图 / 本地地图 ===== */
 
-const recycleCount = computed(() => recycleEntries.value.length)
-/** 回收站里累计的文件数：比条目数更能反映「攒了多少东西」。 */
-const recycleFiles = computed(() =>
-  recycleEntries.value.reduce((total, entry) => total + (entry.file_count ?? 0), 0))
+/** 地图源声明的全部条目（`api.maps()`），与地图下载页读同一份。 */
+const maps = ref<MapInfo[]>([])
+/** 本地关卡集（`api.levelSets()`），与地图管理页读同一份。 */
+const levelSets = ref<LevelSetInfo[]>([])
 
-const recycleSub = computed(() => {
-  if (!recycleCount.value) return t('overview.nothingDeletedYet')
-  return t('overview.deletedModsFilesTotal', {
-    count: recycleCount.value,
-    files: recycleFiles.value,
+/**
+ * 地图区两份数据：地图源的条目列表（在线）与本地扫描结果（本地）。
+ *
+ * 两者互不依赖，所以并行读；**各自失败只影响自己的卡片**，不互相清空
+ * （`api.maps()` 失败时地图下载页也会退化成空列表，口径一致）。
+ * 读取失败按 0 处理，不能让总览整页报错 —— 与本地 MOD / 框架卡片的做法
+ * 相同，数据没到就用空状态文案，布局不塌。
+ */
+async function loadMaps() {
+  const [sets, mapList] = await Promise.all([
+    api.levelSets().catch(() => [] as LevelSetInfo[]),
+    api.maps().catch(() => [] as MapInfo[]),
+  ])
+  levelSets.value = sets
+  maps.value = mapList
+}
+
+/**
+ * 「本地地图 → 在线版本」的对照表。
+ *
+ * 只有刷新过 Release 的地图才有 tag —— 没刷新的地图不该让本地关卡集显示
+ * 「最新版」，那是无根据的结论（见 `levelSetStatus.ts` 的 `mapVersionRefs`）。
+ * 这套判定与地图管理页的卡片状态同源，总览不另写一份比较逻辑。
+ */
+const mapVersionList = computed(() => mapVersionRefs(maps.value))
+
+/** 单张本地地图的状态：口径与地图管理页的 `stateOf` 完全一致。 */
+function mapStateOf(set: LevelSetInfo) {
+  return levelSetState(set, mapVersionForLevelSet(set, mapVersionList.value))
+}
+
+/** 其中 Release 刷新失败的地图源条目（`last_error` 非空）。 */
+const failedMaps = computed(() => maps.value.filter((map) => !!map.last_error))
+
+/** 可更新的本地地图：只有绑定了地图源、且源版本更高时才算。 */
+const updatableMaps = computed(() =>
+  levelSets.value.filter((set) => mapStateOf(set) === 'update_available'))
+
+const onlineMapsSub = computed(() => {
+  const total = maps.value.length
+  if (!total) return t('overview.noMapsLoadedYet')
+  if (!failedMaps.value.length) {
+    return t('overview.mapsAllHealthy', { count: total })
+  }
+  return t('overview.mapsFailedToRefresh', {
+    count: total,
+    failed: failedMaps.value.length,
   })
 })
 
-/** 打开回收站后重新统计：用户可能在里面彻底删除了几条。 */
-async function closeRecycle() {
-  recycleOpen.value = false
-  await loadRecycle()
+const localMapsSub = computed(() => {
+  const total = levelSets.value.length
+  if (!total) return t('overview.noMapsInstalled')
+  const updates = updatableMaps.value.length
+  return updates
+    ? t('overview.installedMapsCanUpdate', { count: total, updates })
+    : t('overview.installedMaps', { count: total })
+})
+
+/**
+ * 在线地图卡：有刷新失败 → 跳到地图下载页并高亮第一张失败地图；
+ * 全部正常 → 只跳转到下载页。
+ */
+function openOnlineMaps() {
+  const first = failedMaps.value[0]
+  if (!first) {
+    void router.push({ name: 'maps-online' })
+    return
+  }
+  void router.push({ name: 'maps-online', query: { [FOCUS_QUERY]: first.id } })
+}
+
+/**
+ * 本地地图卡：有更新 → 定位第一张有更新的地图。
+ *
+ * 管理页卡片的 `data-focus-id` 是它**绑定的地图 id**（见 `LevelsView`
+ * 的 `focusIdOf`，身份判定同为 `mapForLevelSet`），不是目录名，
+ * 所以这里也传地图 id，跳过去才能命中高亮。
+ */
+function openLocalMaps() {
+  const first = updatableMaps.value[0]
+  const mapId = first ? mapForLevelSet(first, maps.value)?.id : undefined
+  if (!mapId) {
+    void router.push({ name: 'levels' })
+    return
+  }
+  void router.push({ name: 'levels', query: { [FOCUS_QUERY]: mapId } })
 }
 </script>
 
 <template>
   <div class="overview">
     <div v-if="error" class="muted">{{ error }}</div>
-    <div v-else class="card-grid" :class="{ 'is-loading': loading }">
-      <!--
-        1. BepInEx：整张卡可点，跳设置页并自动展开框架抽屉。
-           开关单独放在右侧，点开关不会触发跳转（@click.stop）。
-      -->
-      <StatCard :label="t('framework.bepinexFramework')" :value="frameworkValue"
-        :sub="frameworkSub" :tone="frameworkOk ? 'success' : 'warning'"
-        clickable @click="openFrameworkSettings">
-        <template #action>
-          <n-switch v-if="frameworkOk" size="small" :value="frameworkEnabled"
-            :disabled="working" :title="t('overlays.frameworkEnabledGameLoadsMods')"
-            @click.stop @update:value="toggleFramework" />
-          <n-button v-else size="small" type="primary" @click.stop="openFrameworkSettings">
-            <template #icon><AddCircleOutline width="14" height="14" /></template>
-            {{ t('overlays.installFramework') }}
-          </n-button>
-        </template>
-      </StatCard>
-
-      <!--
-        1b. DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转），紧跟其后。
-            数值是启用状态，副标题给出版本与地图集数量。
-      -->
-      <StatCard :label="t('framework.diylevelFramework')" :value="diyLevelValue"
-        :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
-        clickable @click="openDiyLevelSettings">
-        <template #action>
-          <n-switch v-if="diyLevelOk" size="small" :value="diyLevelEnabled"
-            :disabled="working" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
-            @click.stop @update:value="toggleDiyLevel" />
-          <n-button v-else size="small" type="primary" @click.stop="openDiyLevelSettings">
-            <template #icon><AddCircleOutline width="14" height="14" /></template>
-            {{ t('overlays.installFramework') }}
-          </n-button>
-        </template>
-      </StatCard>
-
-      <!--
-        2. 在线 MOD：整张卡可点，跳 MOD 安装页。
-           主数值是可见仓库总数，旁边并列「N 刷新失败」。
-           有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
-      -->
-      <StatCard :label="t('overview.onlineMods')" :value="String(onlineRepositories.length)"
-        :sub="onlineSub"
-        :tone="failedRepositories.length ? 'warning' : 'success'"
-        clickable @click="openOnlineRepositories">
-        <template v-if="failedRepositories.length" #extra>
-          <span class="extra-sep">·</span>
-          <span class="extra-value" :style="{ color: toneText }">{{ failedRepositories.length }}</span>
-          <span class="extra-label" :style="{ color: toneText }">{{ t('tools.refreshFailed') }}</span>
-        </template>
-        <template #action>
-          <n-button size="small" :secondary="!failedRepositories.length"
-            :type="failedRepositories.length ? 'warning' : 'default'"
-            :disabled="!onlineRepositories.length" @click.stop="openOnlineRepositories">
-            <template #icon>
-              <RefreshOutline v-if="failedRepositories.length" width="14" height="14" />
-              <CloudDownloadOutline v-else width="14" height="14" />
-            </template>
-            {{ failedRepositories.length ? t('overview.refresh') : t('overview.browse') }}
-          </n-button>
-        </template>
-      </StatCard>
-
-      <!--
-        3. 本地 MOD：整张卡可点，跳 MOD 管理页。
-           主数值是安装总数，旁边并列「N 可更新」。
-           按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
-      -->
-      <StatCard :label="t('overview.localMods')" :value="String(installedMods.length)"
-        :sub="installedSub"
-        :tone="updatable.length ? 'warning' : 'success'"
-        clickable @click="openLocalMods">
-        <template v-if="updatable.length" #extra>
-          <span class="extra-sep">·</span>
-          <span class="extra-value" :style="{ color: toneText }">{{ updatable.length }}</span>
-          <span class="extra-label" :style="{ color: toneText }">{{ t('tools.update') }}</span>
-        </template>
-        <template #action>
+    <div v-else class="overview-groups" :class="{ 'is-loading': loading }">
+      <!-- 1. 框架区：BepInEx 与 DIYLevel 决定后面所有内容生不生效 -->
+      <SettingsGroup :title="t('overview.sectionFramework')">
+        <div class="card-grid">
           <!--
-            用 Naive 原生 loading：转圈 + 不可点。
-            检测期间按钮停用是刻意的 —— 数据还在变，跳过去定位到的可能是
-            即将被覆盖的旧结论。loading 只看「本地 MOD 相关仓库」，
-            不等整批刷新结束（见 localReposChecking）。
+            BepInEx：整张卡可点，跳设置页并自动展开框架抽屉。
+            开关单独放在右侧，点开关不会触发跳转（@click.stop）。
           -->
-          <n-button size="small" :secondary="!updatable.length"
-            :type="updatable.length ? 'warning' : 'default'"
-            :loading="localReposChecking"
-            :disabled="!installedMods.length" @click.stop="openLocalMods">
-            <template #icon>
-              <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
-              <SettingsOutline v-else width="14" height="14" />
+          <StatCard :label="t('framework.bepinexFramework')" :value="frameworkValue"
+            :sub="frameworkSub" :tone="frameworkOk ? 'success' : 'warning'"
+            clickable @click="openFrameworkSettings">
+            <template #action>
+              <n-switch v-if="frameworkOk" size="small" :value="frameworkEnabled"
+                :disabled="working" :title="t('overlays.frameworkEnabledGameLoadsMods')"
+                @click.stop @update:value="toggleFramework" />
+              <n-button v-else size="small" type="primary" @click.stop="openFrameworkSettings">
+                <template #icon><AddCircleOutline width="14" height="14" /></template>
+                {{ t('overlays.installFramework') }}
+              </n-button>
             </template>
-            {{ buttonLabel }}
-          </n-button>
-        </template>
-      </StatCard>
+          </StatCard>
 
-      <!-- 4. 回收站：唯一需要「主动清理」的累积项 -->
-      <StatCard :label="t('recycle.recycleBin')" :value="String(recycleCount)"
-        :sub="recycleSub" :tone="recycleCount ? 'warning' : 'default'">
-        <template #action>
-          <n-button size="small" secondary :disabled="!recycleCount" @click="recycleOpen = true">
-            <template #icon><TrashOutline width="14" height="14" /></template>
-            {{ t('recycle.openRecycleBin') }}
-          </n-button>
-        </template>
-      </StatCard>
+          <!--
+            DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转），紧跟其后。
+            数值是启用状态，副标题给出版本与地图集数量。
+          -->
+          <StatCard :label="t('framework.diylevelFramework')" :value="diyLevelValue"
+            :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
+            clickable @click="openDiyLevelSettings">
+            <template #action>
+              <n-switch v-if="diyLevelOk" size="small" :value="diyLevelEnabled"
+                :disabled="working" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
+                @click.stop @update:value="toggleDiyLevel" />
+              <n-button v-else size="small" type="primary" @click.stop="openDiyLevelSettings">
+                <template #icon><AddCircleOutline width="14" height="14" /></template>
+                {{ t('overlays.installFramework') }}
+              </n-button>
+            </template>
+          </StatCard>
+        </div>
+      </SettingsGroup>
+
+      <!-- 2. MOD 区：在线仓库的健康度与本地安装的更新情况 -->
+      <SettingsGroup :title="t('overview.sectionMods')">
+        <div class="card-grid">
+          <!--
+            在线 MOD：整张卡可点，跳 MOD 安装页。
+            主数值是可见仓库总数，旁边并列「N 刷新失败」。
+            有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
+          -->
+          <StatCard :label="t('overview.onlineMods')" :value="String(onlineRepositories.length)"
+            :extra="{ count: failedRepositories.length, label: t('tools.refreshFailed') }"
+            :sub="onlineSub"
+            :tone="failedRepositories.length ? 'warning' : 'success'"
+            clickable @click="openOnlineRepositories">
+            <template #action>
+              <n-button size="small" :secondary="!failedRepositories.length"
+                :type="failedRepositories.length ? 'warning' : 'default'"
+                :disabled="!onlineRepositories.length" @click.stop="openOnlineRepositories">
+                <template #icon>
+                  <RefreshOutline v-if="failedRepositories.length" width="14" height="14" />
+                  <CloudDownloadOutline v-else width="14" height="14" />
+                </template>
+                {{ failedRepositories.length ? t('overview.refresh') : t('overview.browse') }}
+              </n-button>
+            </template>
+          </StatCard>
+
+          <!--
+            本地 MOD：整张卡可点，跳 MOD 管理页。
+            主数值是安装总数，旁边并列「N 可更新」。
+            按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
+          -->
+          <StatCard :label="t('overview.localMods')" :value="String(installedMods.length)"
+            :extra="{ count: updatable.length, label: t('tools.update') }"
+            :sub="installedSub"
+            :tone="updatable.length ? 'warning' : 'success'"
+            clickable @click="openLocalMods">
+            <template #action>
+              <!--
+                用 Naive 原生 loading：转圈 + 不可点。
+                检测期间按钮停用是刻意的 —— 数据还在变，跳过去定位到的可能是
+                即将被覆盖的旧结论。loading 只看「本地 MOD 相关仓库」，
+                不等整批刷新结束（见 localReposChecking）。
+              -->
+              <n-button size="small" :secondary="!updatable.length"
+                :type="updatable.length ? 'warning' : 'default'"
+                :loading="localReposChecking"
+                :disabled="!installedMods.length" @click.stop="openLocalMods">
+                <template #icon>
+                  <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
+                  <SettingsOutline v-else width="14" height="14" />
+                </template>
+                {{ buttonLabel }}
+              </n-button>
+            </template>
+          </StatCard>
+        </div>
+      </SettingsGroup>
+
+      <!-- 3. 地图区：地图源的刷新情况与本地地图的更新情况 -->
+      <SettingsGroup :title="t('overview.sectionMaps')">
+        <div class="card-grid">
+          <!--
+            在线地图：主数值是地图源声明的条目数，并列「N 刷新失败」。
+            有失败时「去刷新」并高亮第一张失败地图；全部正常时「去安装」。
+          -->
+          <StatCard :label="t('overview.onlineMaps')" :value="String(maps.length)"
+            :extra="{ count: failedMaps.length, label: t('tools.refreshFailed') }"
+            :sub="onlineMapsSub"
+            :tone="failedMaps.length ? 'warning' : 'success'"
+            clickable @click="openOnlineMaps">
+            <template #action>
+              <n-button size="small" :secondary="!failedMaps.length"
+                :type="failedMaps.length ? 'warning' : 'default'"
+                :disabled="!maps.length" @click.stop="openOnlineMaps">
+                <template #icon>
+                  <RefreshOutline v-if="failedMaps.length" width="14" height="14" />
+                  <CloudDownloadOutline v-else width="14" height="14" />
+                </template>
+                {{ failedMaps.length ? t('overview.refresh') : t('overview.browse') }}
+              </n-button>
+            </template>
+          </StatCard>
+
+          <!--
+            本地地图：主数值是本地关卡集数量，并列「N 可更新」。
+            有更新 →「去更新」并定位第一张；无更新 →「去管理」。
+          -->
+          <StatCard :label="t('overview.localMaps')" :value="String(levelSets.length)"
+            :extra="{ count: updatableMaps.length, label: t('tools.update') }"
+            :sub="localMapsSub"
+            :tone="updatableMaps.length ? 'warning' : 'success'"
+            clickable @click="openLocalMaps">
+            <template #action>
+              <n-button size="small" :secondary="!updatableMaps.length"
+                :type="updatableMaps.length ? 'warning' : 'default'"
+                :disabled="!levelSets.length" @click.stop="openLocalMaps">
+                <template #icon>
+                  <CloudDownloadOutline v-if="updatableMaps.length" width="14" height="14" />
+                  <SettingsOutline v-else width="14" height="14" />
+                </template>
+                {{ updatableMaps.length ? t('overview.review') : t('overview.manage') }}
+              </n-button>
+            </template>
+          </StatCard>
+        </div>
+      </SettingsGroup>
     </div>
-
-    <RecycleBinDialog :show="recycleOpen"
-      @update:show="(value: boolean) => { if (!value) void closeRecycle() }" />
   </div>
 </template>
 
@@ -470,49 +563,19 @@ async function closeRecycle() {
 .overview {
   display: flex;
   flex-direction: column;
-  gap: 16px;
   /* 数据未到时不清空布局，避免卡片塌缩后再撑开 */
   min-height: 0;
 }
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-}
-.card-grid.is-loading { opacity: .6; }
-
-/* 次要计数（`4 · 2 可更新`）的样式**必须写在父组件**。
- *
- * slot 内容由父组件渲染并带父组件的 scoped 属性，所以写在 StatCard.vue
- * 里的 `.extra-value` 永远不会命中这些元素（表现是字号退回默认 14px）。
- * StatCard 只负责 `.stat-extra` 这一层容器（它自己渲染的）。
- *
- * 字号与主数值一致（30px）：这是同一句话的后半段，不该缩成小字。
- * 颜色由内联 `:style` 传入（见 toneText），与同卡按钮填充色同源；
- * 分隔符不上色，用中性灰。
- */
-.extra-sep {
-  color: var(--oc2-text-3);
-  font-size: 30px;
-  font-weight: 400;
-  line-height: 1.1;
-}
-.extra-value {
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1.1;
-}
-.extra-label {
-  font-size: 30px;
-  font-weight: 400;
-  line-height: 1.1;
-}
+.overview-groups.is-loading { opacity: .6; }
 
 /*
- * 窄窗口（含 150% 内容缩放下等效宽度变小）时四列会挤，
- * 退成两列而不是让卡片文字被压成多行。
+ * 每区固定两张卡：等分两列。用 `minmax(0, 1fr)` 而不是写死宽度，
+ * 卡片跟着内容区收放；窄窗口（含 150% 内容缩放下等效宽度变小）时
+ * 退成更窄的两列，也不会把卡片文字挤成多行或撑出边框。
  */
-@media (max-width: 1180px) {
-  .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 </style>

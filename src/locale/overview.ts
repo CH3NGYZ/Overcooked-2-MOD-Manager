@@ -151,6 +151,47 @@ export const overview: DomainMessages = {
     ko: '로컬 MOD',
     ja: 'ローカルMOD',
   },
+  // 在线地图
+  onlineMaps: {
+    'zh-CN': '在线地图',
+    'zh-TW': '線上地圖',
+    en: 'Online maps',
+    ko: '온라인 지도',
+    ja: 'オンライン地図',
+  },
+  // 本地地图
+  localMaps: {
+    'zh-CN': '本地地图',
+    'zh-TW': '本機地圖',
+    en: 'Local maps',
+    ko: '로컬 지도',
+    ja: 'ローカル地図',
+  },
+  // ===== 分区小标题（沿用设置页分组标题的强调色样式）=====
+  // 框架
+  sectionFramework: {
+    'zh-CN': '框架',
+    'zh-TW': '框架',
+    en: 'Framework',
+    ko: '프레임워크',
+    ja: 'フレームワーク',
+  },
+  // MOD
+  sectionMods: {
+    'zh-CN': 'MOD',
+    'zh-TW': 'MOD',
+    en: 'MODs',
+    ko: 'MOD',
+    ja: 'MOD',
+  },
+  // 地图
+  sectionMaps: {
+    'zh-CN': '地图',
+    'zh-TW': '地圖',
+    en: 'Maps',
+    ko: '지도',
+    ja: 'マップ',
+  },
   // 去刷新
   refresh: {
     'zh-CN': '去刷新',
@@ -199,21 +240,53 @@ export const overview: DomainMessages = {
     ko: '{count}개 모두 최신 버전',
     ja: '{count} 件すべて最新版',
   },
-  // 暂无已删除的 MOD
-  nothingDeletedYet: {
-    'zh-CN': '暂无已删除的 MOD',
-    'zh-TW': '暫無已刪除的 MOD',
-    en: 'Nothing deleted yet',
-    ko: '삭제된 MOD가 없습니다',
-    ja: '削除された MOD はありません',
+  // 共 {count} 张地图 · 全部正常
+  mapsAllHealthy: {
+    'zh-CN': '共 {count} 张地图 · 全部正常',
+    'zh-TW': '共 {count} 張地圖 · 全部正常',
+    en: '{count} maps · all healthy',
+    ko: '지도 {count}개 · 모두 정상',
+    ja: '地図 {count} 件 · すべて正常',
   },
-  // {count} 个已删除的 MOD，共 {files} 个文件
-  deletedModsFilesTotal: {
-    'zh-CN': '{count} 个已删除的 MOD，共 {files} 个文件',
-    'zh-TW': '{count} 個已刪除的 MOD，共 {files} 個檔案',
-    en: '{count} deleted MODs, {files} files total',
-    ko: '삭제된 MOD {count}개, 파일 {files}개',
-    ja: '削除済み MOD {count} 件、ファイル {files} 個',
+  // 共 {count} 张地图 · {failed} 张刷新失败
+  mapsFailedToRefresh: {
+    'zh-CN': '共 {count} 张地图 · {failed} 张刷新失败',
+    'zh-TW': '共 {count} 張地圖 · {failed} 張重新整理失敗',
+    en: '{count} maps · {failed} failed to refresh',
+    ko: '지도 {count}개 · {failed}개 새로 고침 실패',
+    ja: '地図 {count} 件 · {failed} 件が更新失敗',
+  },
+  // 尚未加载任何地图
+  noMapsLoadedYet: {
+    'zh-CN': '尚未加载任何地图',
+    'zh-TW': '尚未載入任何地圖',
+    en: 'No maps loaded yet',
+    ko: '아직 지도가 없습니다',
+    ja: '地図がまだありません',
+  },
+  // 共 {count} 张地图，其中 {updates} 张可更新
+  installedMapsCanUpdate: {
+    'zh-CN': '共 {count} 张地图，其中 {updates} 张可更新',
+    'zh-TW': '共 {count} 張地圖，其中 {updates} 張可更新',
+    en: '{count} maps installed, {updates} can update',
+    ko: '지도 {count}개 중 {updates}개 업데이트 가능',
+    ja: '地図 {count} 件中 {updates} 件が更新可能',
+  },
+  // 共 {count} 张地图
+  installedMaps: {
+    'zh-CN': '共 {count} 张地图',
+    'zh-TW': '共 {count} 張地圖',
+    en: '{count} maps installed',
+    ko: '지도 {count}개 설치됨',
+    ja: '地図 {count} 件インストール済み',
+  },
+  // 还没有安装任何地图
+  noMapsInstalled: {
+    'zh-CN': '还没有安装任何地图',
+    'zh-TW': '還沒有安裝任何地圖',
+    en: 'No maps installed yet',
+    ko: '아직 설치된 지도가 없습니다',
+    ja: 'インストール済みの地図はありません',
   },
   // 全部 MOD
   allMods: {

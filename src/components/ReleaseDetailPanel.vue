@@ -373,8 +373,8 @@ watch(
 
           <!--
             第二段：当前版本的提交日志。
-            高度跟着内容走，不设内滚动 —— 抽屉 body 本身会滚，再套一层内滚动
-            就是两级滚动（用户得先把指针移出日志框才能继续滚抽屉）。
+            日志占满抽屉里剩下的高度，超出就在框内上下滚动 —— 底部
+            「资产 / 安装」那一行必须常留在抽屉底边，不能被日志顶出去。
           -->
           <div class="release-log">
             <div class="log-head">
@@ -543,8 +543,14 @@ watch(
   max-width: 100%;
 }
 /*
- * 日志框：高度由内容决定（没有 max-height、没有 overflow-y），长表格与长代码行
- * 只在横向滚动，避免把抽屉撑出横向滚动条。
+ * 日志框：占满抽屉里剩下的高度，超出后在自己内部上下滚。
+ *
+ * 上限用「视口高度减去抽屉里其余部分」表达，而不是写死一个像素：窗口越大
+ * 日志越长，底部那一行始终落在抽屉底边附近。
+ *   - 短日志仍是内容高度（不会留白）；
+ *   - 长日志到上限后内滚，横向留给长代码行，不把抽屉撑出横向滚动条。
+ * 为什么不用 `position: sticky` 钉底部：n-tabs 的 pane 容器带 `overflow: hidden`，
+ * sticky 会以它为滚动容器，抽屉 body 滚动时不会生效。
  */
 .log-box {
   padding: 8px 10px;
@@ -554,6 +560,11 @@ watch(
   font-size: 12px;
   line-height: 1.65;
   overflow-x: auto;
+  /* 410px ≈ 面板头部 + 分段导航 + 指标区 + 日志标题 + 资产/安装行 + 内外留白 */
+  max-height: clamp(160px, calc(100vh - 410px), 640px);
+  overflow-y: auto;
+  /* 滚到日志两端时不要把抽屉一起带着滚 */
+  overscroll-behavior: contain;
 }
 .log-box.log-empty {
   display: grid;

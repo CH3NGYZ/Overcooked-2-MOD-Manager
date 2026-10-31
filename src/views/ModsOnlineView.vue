@@ -9,7 +9,7 @@ import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { primaryRelation, relationCardTag, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
+import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
 import { tagColorFor, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
@@ -144,7 +144,7 @@ function runCardAction(repo: Repository) {
  * 卡片的依赖提示（给共享卡片组件用）。
  *
  * 组件只管展示，判定仍在这里 —— 「缺依赖 / 冲突」的语义来自
- * `relationCardTag`，与 MOD 管理页共用同一份实现。
+ * `modRelations.dependencyTagFor`，四个页面共用同一份实现。
  */
 function cardDependency(repo: Repository): CardDependencyTag | null {
   const tag = relationTag(repo)
@@ -292,15 +292,13 @@ function unmetRelation(repo: Repository): RelationStatus | undefined {
 /**
  * 卡头那个关系标签该显示什么（`null` 表示不显示）。
  *
- * 显示规则本身在 `modRelations.ts` 的 `relationCardTag` 里（纯函数、可测），
- * 这里只负责把「冲突 / 缺依赖」映射成界面文案与色调。
+ * 判定与文案全部来自 `modRelations.dependencyTagFor` —— 与 MOD 管理页、
+ * 地图下载页、地图管理页共用同一份实现，四个页面不会各写一套「缺依赖」。
  */
 function relationTag(repo: Repository): { text: string; tone: TagTone } | null {
-  const tag = relationCardTag(unmetRelation(repo), hasLocalInstall(repo))
-  if (!tag) return null
-  return tag.kind === 'conflict'
-    ? { text: 'modsOnline.conflict', tone: 'critical' }
-    : { text: 'modsOnline.missingDep', tone: 'critical' }
+  const status = unmetRelation(repo)
+  const tag = dependencyTagFor(status ? [status] : [], hasLocalInstall(repo))
+  return tag ? { text: tag.text, tone: tag.tone } : null
 }
 
 /** 关系目标的来源名（用于标签提示）。 */

@@ -24,6 +24,7 @@
 // 带 .ts 扩展名：Node 24 直接执行 TS 时靠它解析相对导入；
 // 该文件同时被 Vite 打包，两种加载方式都要能用（与 statusTags 的写法一致）。
 import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
+import type { TagTone } from './theme'
 import type {
   InstalledMod, RelationKind, ReleaseInfo, Repository, RepositoryRelation,
 } from './types'
@@ -569,4 +570,53 @@ export function relationCardTag(
     return installed ? { kind: 'conflict' } : undefined
   }
   return { kind: 'missingDependency' }
+}
+
+/* ===== 卡片上的关系提醒标签（四个页面共用一条规则） ===== */
+
+/** 卡片「关系提醒」标签的展示口径（`text` 是 i18n key，视图层 `t()`）。 */
+export interface DependencyTagView {
+  /** 标签文案的 i18n key。 */
+  text: string
+  /** 色调：缺依赖与冲突都取 critical（与 MOD 卡片同一档）。 */
+  tone: Extract<TagTone, 'critical' | 'moderate'>
+  /** 判定来源：冲突 / 缺依赖（有可安装来源）/ 缺依赖（无来源）。 */
+  kind: 'conflict' | 'missingDependency' | 'installable'
+  /**
+   * 点标签该跳到的仓库卡片 id。
+   *
+   * 只有「依赖可安装」时才给：跳过去就是那张能补上依赖的卡；没有来源时
+   * 跳过去也无处可去，标签保持纯文字。
+   */
+  repositoryId?: string
+}
+
+/**
+ * 卡片上那条「关系提醒」标签。
+ *
+ * MOD 安装页、MOD 管理页、地图下载页、地图管理页共用**这一条**规则：
+ *   · 冲突 →「冲突」，且只在已安装的卡片上显示（见 `relationCardTag`）；
+ *   · 依赖没满足 → 一律「缺依赖」，有可安装来源时顺带给出跳转目标。
+ *
+ * 为什么不把「可安装」写成卡片标签：卡片上那枚标签回答的是「这张卡/这张图
+ * 现在能不能跑」，不是「去哪儿装」。能去哪儿装由「去安装」按钮与依赖表
+ * 的状态列（可安装 / 可更新）回答 —— 各说一件事，才不会互相打架。
+ */
+export function dependencyTagFor(
+  statuses: readonly RelationStatus[],
+  installed: boolean,
+): DependencyTagView | undefined {
+  const status = primaryRelation(statuses)
+  const tag = relationCardTag(status, installed)
+  if (!status || !tag) return undefined
+  if (tag.kind === 'conflict') {
+    return { text: 'modsOnline.conflict', tone: 'critical', kind: 'conflict' }
+  }
+  const repositoryId = status.state === 'installable' ? status.repository?.id : undefined
+  return {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: repositoryId ? 'installable' : 'missingDependency',
+    repositoryId,
+  }
 }

@@ -27,13 +27,15 @@ import { markdownSummary } from '../markdown'
 import { mapDependencyRows } from '../dependencyRows'
 import { matchedReleaseAssets } from '../repositoryAssets'
 import { repositoryIsAvailable } from '../repositoryAvailability'
-import { useFocusHighlight, useLevelSetLink } from '../crossLink'
+import { useFocusHighlight, useLevelSetLink, useRepositoryLink } from '../crossLink'
+import { dependencyTagFor } from '../modRelations'
 import {
   frameworkStates,
   levelSetForMap,
   mapCardAction,
   mapCardStatus,
   mapRelationRepository,
+  mapRelationStatuses,
   type FrameworkState,
   type MapCardState,
 } from '../levelSetStatus'
@@ -94,6 +96,8 @@ const dialog = useDialog()
 const { mods, game, config, load, ensureLoaded } = useDashboard()
 const { highlightId } = useFocusHighlight()
 const { linkToLevelSets } = useLevelSetLink()
+/** 缺依赖的落点：MOD 安装页里那张能补上依赖的仓库卡片（与 MOD 管理页一致）。 */
+const { linkToRepository } = useRepositoryLink()
 
 const maps = ref<MapInfo[]>([])
 const sets = ref<LevelSetInfo[]>([])
@@ -359,8 +363,9 @@ const { readme: detailReadme, loading: detailReadmeLoading, error: detailReadmeE
  * 满足时只写「已满足」——版本写在「要求」列，状态列只回答「现在行不行」。
  *
  * 满足情况仍由 Dashboard 已扫好的本地 MOD 判定，与卡片上的「缺依赖」标签、
- * 安装前检查弹窗共用同一份结论。地图的安装入口在设置页，因此行里不带跳转
- * （`mapDependencyRows` 固定 `mode: 'map'`、`jumpToRepository: false`）。
+ * 安装前检查弹窗共用同一份结论。未满足时与 MOD 侧同一套结论：线上有满足
+ * 区间的版本写「可安装 / 可更新」并带跳转（落到那张仓库卡片），没有来源才
+ * 写「缺依赖」。
  */
 const detailDependencies = computed<DependencyRow[]>(() =>
   mapDependencyRows(detailMap.value, {
@@ -523,18 +528,42 @@ async function openLink(url: string) {
 /**
  * 依赖提示标签。
  *
- * 地图的前置是框架而不是可安装的仓库，因此标签**不可点击** —— 点了也无处
- * 可去（框架入口在设置页），假装可点只会制造一次无反应的点击。
+ * 与 MOD 安装页共用 `dependencyTagFor` 一条规则：前置没满足就写「缺依赖」；
+ * 线上有能补上的仓库卡片时标签可点，落点是**那张仓库卡**（MOD 安装页）——
+ * 地图的前置（DIYLevel、Web Runtime）本身就是仓库里的 MOD，所以这条跳转
+ * 与 MOD 管理页的「缺依赖 → 去安装」是同一个去处。
  */
 function dependencyOf(map: MapInfo): CardDependencyTag | null {
-  const missing = frameworkStates(map, mods.value).filter((state) => !state.satisfied)
-  if (!missing.length || !gameProbed.value) return null
+  if (!gameProbed.value) return null
+  const tag = dependencyTagFor(
+    mapRelationStatuses(map, mods.value, repositories.value),
+    hasLocalMap(map),
+  )
+  if (!tag) return null
+  const missing = frameworkStates(map, mods.value, repositories.value)
+    .filter((state) => !state.satisfied)
   return {
-    text: t('levelSet.dependencyMissing'),
-    tone: 'critical',
-    title: t('levelSet.frameworksNotMet', { list: missing.map(describeFramework).join(' · ') }),
-    clickable: false,
+    text: tag.text,
+    tone: tag.tone,
+    title: missing.length
+      ? t('levelSet.frameworksNotMet', { list: missing.map(describeFramework).join(' · ') })
+      : undefined,
+    clickable: !!tag.repositoryId,
   }
+}
+
+/** 点依赖标签：跳到能提供它的那张仓库卡片（与 MOD 安装页同一个高亮机制）。 */
+function jumpToDependency(map: MapInfo) {
+  const tag = dependencyTagFor(
+    mapRelationStatuses(map, mods.value, repositories.value),
+    hasLocalMap(map),
+  )
+  if (tag?.repositoryId) linkToRepository(tag.repositoryId)
+}
+
+/** 依赖表里可跳的行：同样落到那张仓库卡片上。 */
+function openDependencyJump(row: DependencyRow) {
+  if (row.jump) linkToRepository(row.jump.id)
 }
 
 /** 主按钮文案：与 MOD 安装页共用同一批 key。 */
@@ -839,6 +868,7 @@ async function refreshAll() {
             :focus-flash="highlightId === map.id"
             @open="detailId = map.id"
             @status-click="openInLevelSets(map)"
+            @dependency-click="jumpToDependency(map)"
             @action="runAction(map)" />
         </div>
       </n-collapse-item>
@@ -875,6 +905,7 @@ async function refreshAll() {
         @update:version="(value: string) => { detailSelectedTag = value }"
         @update:asset="(value: string) => { detailSelectedAsset = value }"
         @open-link="(url: string) => { void openLink(url) }"
+        @dependency-jump="openDependencyJump"
         @install="installFromDetail" @refresh="refreshDetail">
         <!-- 头部状态：与卡片上是同一份结论（`statusOf`） -->
         <template #status>

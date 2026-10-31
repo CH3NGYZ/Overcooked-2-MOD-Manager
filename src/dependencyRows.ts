@@ -97,14 +97,13 @@ export type DependencyPickName = (
 /**
  * 表格的展示口径。
  *
- * - `mod`：依赖由安装页的仓库卡片满足，未满足时区分「可安装 / 可更新 /
- *   缺依赖」，并且可以跳过去解决；
- * - `map`：地图的依赖是框架，安装入口在设置页，所以未满足时只说事实
- *   （未安装 / 版本不符），不给按钮也不给跳转 —— 一个点了没反应的标签
- *   比纯文字更糟。
+ * 只有一套：依赖由「声明了同一 GUID 的在线仓库」满足，未满足时区分
+ * 「可安装 / 可更新 / 缺依赖」，能装的行可以跳过去解决。
+ *
+ * 地图曾经走另一套（「未安装 / 版本不符」且不可跳转），理由是「地图的依赖是
+ * 框架、安装入口在设置页」。这条理由不成立：地图声明的前置就是仓库里的 MOD
+ * （DIYLevel、Web Runtime 都有 `plugin_guid`），能装就该能给入口。
  */
-export type DependencyMode = 'mod' | 'map'
-
 export interface DependencyRowOptions {
   /** 本地已装 MOD（判断满足情况的对象）。 */
   mods?: readonly InstalledMod[]
@@ -116,9 +115,12 @@ export interface DependencyRowOptions {
   translate?: DependencyTranslate
   /** 名字本地化，缺省 zh-CN → 任意非空 → 回退值。 */
   pickName?: DependencyPickName
-  /** 展示口径，缺省 `mod`。 */
-  mode?: DependencyMode
-  /** 状态标签是否可跳转到仓库卡片（地图页永远 false）。 */
+  /**
+   * 状态标签是否可跳转到提供该依赖的仓库卡片。
+   *
+   * 四类调用方（MOD 安装 / MOD 管理 / 地图下载 / 地图管理）口径一致：
+   * 有可安装来源就跳，没有就不假装可点。
+   */
   jumpToRepository?: boolean
 }
 
@@ -221,7 +223,6 @@ export function dependencyTargetName(
  */
 function statusFor(
   status: RelationStatus,
-  mode: DependencyMode,
   translate: DependencyTranslate,
 ): { text: string; tone: TagTone } {
   const kind = status.relation.kind ?? 'requires'
@@ -245,15 +246,6 @@ function statusFor(
    */
   if (ok) return { text: translate('tools.satisfied'), tone: 'mild' }
 
-  if (mode === 'map') {
-    return status.installedVersion
-      ? {
-        text: translate('levelSet.versionMismatch', { version: status.installedVersion }),
-        tone: 'critical',
-      }
-      : { text: translate('levelSet.notInstalled'), tone: 'critical' }
-  }
-
   if (status.state !== 'installable') {
     return { text: translate('modsOnline.missingDep'), tone: 'critical' }
   }
@@ -274,13 +266,13 @@ export function dependencyRowFromRelation(
 ): DependencyRow {
   const {
     mods = [], repositories = [], ownerRepository,
-    translate = identityTranslate, mode = 'mod', jumpToRepository = false,
+    translate = identityTranslate, jumpToRepository = false,
   } = options
 
   const status = resolveRelation(relation, mods, repositories, ownerRepository)
   const kind = relation.kind ?? 'requires'
   const line = dependencyLine(relation)
-  const { text, tone } = statusFor(status, mode, translate)
+  const { text, tone } = statusFor(status, translate)
 
   const row: DependencyRow = {
     // key 必须带上发布线：同一 GUID 的「与测试版互斥 / 与正式版互斥」是两条
@@ -326,6 +318,8 @@ export function dependencyRowsFor(
   }
   return rows
 }
+
+/* ===== 卡片上的关系提醒标签 → 见 `modRelations.dependencyTagFor` ===== */
 
 /** 地图仓库声明的依赖（`required_frameworks` 是它的旧投影，见下方回退）。 */
 export function mapRelations(map: MapInfo | null | undefined): RepositoryRelation[] {
@@ -377,33 +371,36 @@ export function levelSetRelations(
 /** 已安装 MOD 的依赖表行（MOD 管理页 / 详情用）。 */
 export function installedModDependencyRows(
   mod: InstalledMod,
-  options: Omit<DependencyRowOptions, 'mode' | 'ownerRepository'> = {},
+  options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
 ): DependencyRow[] {
   const repositories = options.repositories ?? []
   return dependencyRowsFor(installedModRelations(mod, repositories), {
     ...options,
-    mode: 'mod',
     ownerRepository: repositoryForMod([...repositories], mod),
     jumpToRepository: options.jumpToRepository ?? true,
   })
 }
 
-/** 地图源条目的依赖表行（地图下载页详情用；依赖入口在设置页，不可跳仓库）。 */
+/**
+ * 地图源条目的依赖表行（地图下载页详情用）。
+ *
+ * 与 MOD 侧同一套口径：地图声明的前置（DIYLevel、Web Runtime）本身就是仓库
+ * 里的 MOD，能装就跳过去装，没有来源才是纯文字「缺依赖」。
+ */
 export function mapDependencyRows(
   map: MapInfo | null | undefined,
-  options: Omit<DependencyRowOptions, 'mode' | 'ownerRepository' | 'jumpToRepository'> = {},
+  options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
 ): DependencyRow[] {
   return dependencyRowsFor(mapRelations(map), {
     ...options,
-    mode: 'map',
-    jumpToRepository: false,
+    jumpToRepository: options.jumpToRepository ?? true,
   })
 }
 
-/** 本地关卡集的依赖表行（地图管理页详情用）。 */
+/** 本地关卡集的依赖表行（地图管理页详情用；与地图下载页同一口径）。 */
 export function levelSetDependencyRows(
   set: LevelSetInfo,
-  options: Omit<DependencyRowOptions, 'mode' | 'ownerRepository' | 'jumpToRepository'> & {
+  options: Omit<DependencyRowOptions, 'ownerRepository'> & {
     /**
      * 当前地图源列表（必填）。
      *
@@ -416,7 +413,6 @@ export function levelSetDependencyRows(
   const { maps, ...rest } = options
   return dependencyRowsFor(levelSetRelations(set, maps), {
     ...rest,
-    mode: 'map',
-    jumpToRepository: false,
+    jumpToRepository: rest.jumpToRepository ?? true,
   })
 }

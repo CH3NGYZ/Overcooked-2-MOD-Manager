@@ -78,6 +78,34 @@ function mod(overrides = {}) {
   }
 }
 
+/**
+ * 可安装来源：声明同一个 GUID、Release 模式、且有一个满足区间的 Release。
+ *
+ * 三个条件缺一，`installSourceFor` 都会判成「没有来源」，所以夹具里都要给。
+ */
+function repo(overrides = {}) {
+  return {
+    id: 'diy',
+    name: 'DIYLevel',
+    provider: 'github',
+    username: 'gua',
+    repository: 'diylevel',
+    plugin_guid: 'com.rw.diylevel',
+    download_mode: 'release',
+    channel: 'all',
+    enabled: true,
+    builtin: false,
+    cached_releases: [{
+      tag_name: 'v1.2.0',
+      version: '1.2.0',
+      draft: false,
+      prerelease: false,
+      assets: [],
+    }],
+    ...overrides,
+  }
+}
+
 test('身份比较用 author + levelSetName，忽略大小写与空白', () => {
   assert.ok(isSameLevelSet({ name: 'RW_LevelSet', author: 'RW' }, { name: 'rw_levelset ', author: ' rw' }))
   assert.ok(!isSameLevelSet({ name: 'RW_LevelSet', author: 'RW' }, { name: 'RW_LevelSet', author: 'Someone' }))
@@ -373,12 +401,23 @@ test('卡片标签：先依赖提醒，再版本结论', () => {
     latest_tag: 'v0.74',
   })
   const tags = levelSetCardTags(set({ version: '0.73' }), [target], [], true)
-  assert.deepEqual(tags.map((tag) => tag.text), ['levelSet.dependencyMissing', 'tools.update'])
+  // 文案与 MOD 卡片是同一枚 key（「缺依赖」三个字），不再自造「依赖缺失」
+  assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'tools.update'])
   assert.equal(tags[0].kind, 'dependency')
   assert.equal(tags[0].tone, 'critical')
   // 「有更新」带着绑定地图 id：点下去要落到下载页那张卡
   assert.equal(tags[1].kind, 'state')
   assert.equal(tags[1].mapId, 'map-rw')
+})
+
+test('卡片标签：缺的依赖线上能装时带上那张仓库卡片（与 MOD 管理页同一个落点）', () => {
+  const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel' }] })
+  const diy = repo({ id: 'diy', plugin_guid: 'com.rw.diylevel' })
+  const tags = levelSetCardTags(set(), [target], [], true, [diy])
+  assert.equal(tags[0].kind, 'dependency')
+  assert.equal(tags[0].text, 'modsOnline.missingDep')
+  // 有可安装来源 → 标签可点，落点是提供依赖的仓库卡，而不是这张图自己
+  assert.equal(tags[0].repositoryId, 'diy')
 })
 
 test('卡片标签：最新版也带跳转目标（与 MOD 管理页一致），未绑定没有目标', () => {
@@ -405,7 +444,7 @@ test('卡片标签：游戏未探测时不显示依赖缺失，但版本结论�
 test('卡片标签：停用且缺依赖时两条都显示（重新启用前就该知道）', () => {
   const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel' }] })
   const tags = levelSetCardTags(set({ enabled: false }), [target], [], true)
-  assert.deepEqual(tags.map((tag) => tag.text), ['levelSet.dependencyMissing', 'modsLocal.disabled'])
+  assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'modsLocal.disabled'])
 })
 
 // ---------------------------------------------------------------------------

@@ -226,24 +226,48 @@ test('冲突/兼容用自己那套措辞，不共用「已满足」', () => {
   assert.equal(compatible[0].status, 'tools.incompatible')
 })
 
-test('地图口径：未满足只说事实（未安装 / 版本不符），不给可安装按钮语义', () => {
+test('地图与 MOD 同一口径：可安装 / 可更新 / 缺依赖，不再自造「未安装」', () => {
   const satisfied = dependencyRowsFor(
     [{ kind: 'requires', guid: 'dev.diy', min_version: '1.0' }],
-    { mods: [mod({ guid: 'dev.diy', version: '19.0' })], translate: keyOf, mode: 'map' },
+    { mods: [mod({ guid: 'dev.diy', version: '19.0' })], translate: keyOf },
   )
   assert.equal(satisfied[0].status, 'tools.satisfied')
 
   const absent = dependencyRowsFor(
     [{ kind: 'requires', guid: 'dev.diy', min_version: '1.0' }],
-    { mods: [], translate: keyOf, mode: 'map' },
+    { mods: [], translate: keyOf },
   )
-  assert.equal(absent[0].status, 'levelSet.notInstalled')
+  assert.equal(absent[0].status, 'modsOnline.missingDep')
 
-  const mismatch = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0' }],
-    { mods: [mod({ guid: 'dev.diy', version: '1.0' })], translate: keyOf, mode: 'map' },
+  const installable = dependencyRowsFor(
+    [{ kind: 'requires', guid: 'dev.diy', min_version: '1.0' }],
+    {
+      mods: [],
+      repositories: [repo({
+        id: 'diy',
+        plugin_guid: 'dev.diy',
+        cached_releases: [{ tag_name: 'v1.2.0', version: '1.2.0', draft: false, prerelease: false }],
+      })],
+      translate: keyOf,
+    },
   )
-  assert.equal(mismatch[0].status, 'levelSet.versionMismatch({"version":"1.0"})')
+  assert.equal(installable[0].status, 'tools.installable')
+  assert.equal(installable[0].tone, 'moderate')
+
+  // 装了但版本不够 →「可更新」，与 MOD 卡片上的结论同一套
+  const outdated = dependencyRowsFor(
+    [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0' }],
+    {
+      mods: [mod({ guid: 'dev.diy', version: '1.0' })],
+      repositories: [repo({
+        id: 'diy',
+        plugin_guid: 'dev.diy',
+        cached_releases: [{ tag_name: 'v19.2', version: '19.2', draft: false, prerelease: false }],
+      })],
+      translate: keyOf,
+    },
+  )
+  assert.equal(outdated[0].status, 'tools.updatable')
 })
 
 /* ===== 行结构与过滤 ===== */
@@ -347,13 +371,19 @@ test('老快照没有 relations 时退回 required_frameworks 投影', () => {
   assert.deepEqual(relations, [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0', max_version: '' }])
 })
 
-test('地图页的行永不带跳转；本地关卡集与地图源条目共用同一套名字解析', () => {
+test('地图的行也带跳转：本地关卡集与地图源条目共用同一套名字解析与落点', () => {
   const map = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0' }] })
-  const diy = repo({ id: 'diy', plugin_guid: 'dev.diy', name_i18n: { 'zh-CN': 'DIYLevel' } })
+  const diy = repo({
+    id: 'diy',
+    plugin_guid: 'dev.diy',
+    name_i18n: { 'zh-CN': 'DIYLevel' },
+    cached_releases: [{ tag_name: 'v19.2', version: '19.2', draft: false, prerelease: false }],
+  })
   const rows = mapDependencyRows(map, { mods: [], repositories: [diy], translate: keyOf })
   assert.equal(rows[0].name, 'DIYLevel')
-  assert.equal(rows[0].status, 'levelSet.notInstalled')
-  assert.equal(rows[0].jump, undefined)
+  // 线上有满足区间的版本 → 「可安装」，并且落点是那张仓库卡（与 MOD 侧一致）
+  assert.equal(rows[0].status, 'tools.installable')
+  assert.equal(rows[0].jump?.id, 'diy')
 
   const levelRows = levelSetDependencyRows(levelSet(), {
     maps: [map], mods: [], repositories: [diy], translate: keyOf,

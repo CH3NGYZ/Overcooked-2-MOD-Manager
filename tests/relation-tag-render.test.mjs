@@ -5,14 +5,14 @@ import test from 'node:test'
 /**
  * 卡头「缺依赖」标签的渲染接线。
  *
- * `relationCardTag` 的纯逻辑由 `mod-relations.test.mjs` 覆盖（含未安装场景）。
+ * `dependencyTagFor` 的纯逻辑由 `mod-relations.test.mjs` 覆盖（含未安装场景）。
  * 但逻辑正确不等于**页面会用到它** —— 视图里可能是 `v-if="installed && tag"`，
  * 或者根本没调用。这类接线只能扫源码。
  *
  * 卡片模板已经下沉到 `OnlineCard.vue`（MOD 安装页与地图下载页共用），
  * 所以这条测试的落点也跟着分成两半：
  *
- *   · 视图侧：把关系判定交给 `relationCardTag`，不再自己判「装没装」；
+ *   · 视图侧：把关系判定交给 `dependencyTagFor`，不再自己判「装没装」；
  *   · 组件侧：模板只按传入的 `dependency` 渲染，不额外门控。
  *
  * 任何一半失效，规则都会被在渲染层悄悄推翻，而后端/纯函数测试仍然全绿。
@@ -20,11 +20,11 @@ import test from 'node:test'
 const VIEW = readFileSync(new URL('../src/views/ModsOnlineView.vue', import.meta.url), 'utf8')
 const CARD = readFileSync(new URL('../src/components/OnlineCard.vue', import.meta.url), 'utf8')
 
-test('安装页的卡头标签调用纯函数，而不是自己再判一次「装没装」', () => {
+test('安装页的卡头标签调用共享判定，而不是自己再判一次「装没装」', () => {
   assert.match(
     VIEW,
-    /relationCardTag\(\s*unmetRelation\(repo\)\s*,\s*hasLocalInstall\(repo\)\s*\)/,
-    '卡头标签必须走 relationCardTag，否则两处判定口径会分叉',
+    /dependencyTagFor\(\s*status\s*\?\s*\[status\]\s*:\s*\[\]\s*,\s*hasLocalInstall\(repo\)\s*\)/,
+    '卡头标签必须走 dependencyTagFor，否则四个页面的判定口径会分叉',
   )
 })
 

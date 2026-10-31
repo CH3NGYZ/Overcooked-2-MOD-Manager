@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
-import { FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
+import { DownloadOutline, FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { tagColorFor, tagColorForAny } from '../theme'
+import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useFocusHighlight, useMapLink } from '../crossLink'
+import { useFocusHighlight, useMapLink, useRepositoryLink } from '../crossLink'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
@@ -62,6 +62,12 @@ const message = useNotify()
 const dialog = useDialog()
 const { config, game, mods, ensureLoaded } = useDashboard()
 const { linkToMap } = useMapLink()
+/**
+ * 「缺依赖」的安装入口与 MOD 管理页同一个落点：跳到 MOD 安装页并高亮那张
+ * 能提供这个依赖的仓库卡片。地图的前置（DIYLevel、Web Runtime）本身就是
+ * 仓库里的 MOD，所以这条跳转对地图同样成立。
+ */
+const { linkToRepository } = useRepositoryLink()
 /** 跨页跳转落点（从地图下载页点状态标签跳过来时带 `focus=<地图 id>`）。 */
 const { highlightId } = useFocusHighlight()
 
@@ -294,16 +300,32 @@ function authorNamesOf(set: LevelSetInfo) {
 
 /** 卡片状态标签：先依赖提醒，再版本结论（由 `levelSetStatus` 统一排序）。 */
 function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
-  return levelSetCardTags(set, maps.value, mods.value, gameProbed.value)
+  return levelSetCardTags(set, maps.value, mods.value, gameProbed.value, repositories.value)
 }
 
 /** 绑定地图的框架依赖在本地是否满足。 */
 function boundFrameworks(set: LevelSetInfo): FrameworkState[] {
-  return frameworkStates(boundMapOf(set), mods.value)
+  return frameworkStates(boundMapOf(set), mods.value, repositories.value)
 }
 
 function missingFrameworks(set: LevelSetInfo): FrameworkState[] {
   return boundFrameworks(set).filter((state) => !state.satisfied)
+}
+
+/**
+ * 「缺依赖」标签的安装去处：能提供满足区间版本的仓库卡片 id。
+ *
+ * 与 MOD 管理页的「去安装」是同一条规则（`dependencyTagFor` 给的目标），
+ * 没有可安装来源时返回 `undefined` —— 此时既不出按钮，标签也不可点。
+ */
+function dependencyInstallTarget(set: LevelSetInfo): string | undefined {
+  return tagsOf(set).find((tag) => tag.kind === 'dependency' && tag.repositoryId)?.repositoryId
+}
+
+/** 点「去安装」：跳到 MOD 安装页并高亮那张能补上依赖的仓库卡片。 */
+function installDependency(set: LevelSetInfo) {
+  const target = dependencyInstallTarget(set)
+  if (target) linkToRepository(target)
 }
 
 /**
@@ -325,7 +347,10 @@ function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
 }
 
 function onTagClick(tag: LevelSetCardTag) {
-  if (tag.mapId) linkToMap(tag.mapId)
+  // 缺依赖：跳到**依赖的**仓库（与 MOD 管理页同一个落点）；没有来源时
+  // 标签不带 repositoryId，也就不会走到这里。
+  if (tag.repositoryId) linkToRepository(tag.repositoryId)
+  else if (tag.mapId) linkToMap(tag.mapId)
 }
 
 /**
@@ -350,7 +375,8 @@ function hintOf(set: LevelSetInfo): string {
  * 行不行」。声明来源也由它决定：绑定的地图还在配置里就用它的在线声明
  * （`relations`），地图源下线后才退回安装清单里的快照。
  *
- * 地图的安装入口在设置页 / 下载页，所以行里不带跳转（`mode: 'map'`）。
+ * 未满足时与 MOD 侧同一套结论：线上有满足区间的版本写「可安装 / 可更新」
+ * 并带跳转，没有来源才写「缺依赖」。
  */
 function dependencyRows(set: LevelSetInfo): DependencyRow[] {
   return levelSetDependencyRows(set, {
@@ -360,6 +386,11 @@ function dependencyRows(set: LevelSetInfo): DependencyRow[] {
     translate: t,
     pickName: pickI18n,
   })
+}
+
+/** 依赖表里可跳的行：跳到能提供它的仓库卡片（与 MOD 管理页同一个落点）。 */
+function openDependencyJump(row: DependencyRow) {
+  if (row.jump) linkToRepository(row.jump.id)
 }
 
 /**
@@ -735,12 +766,25 @@ async function checkUpdates() {
             :tool-button-width="TOOL_BUTTON_WIDTH"
             @toggle="(value: boolean) => toggle(set, value)"
             @activate="(card: HTMLElement) => activate(set, card)">
-            <!-- 状态标签：依赖缺失在前，版本结论在后；「有更新」可点跳下载页 -->
+            <!--
+              状态区：快捷动作 + 标签组。
+              「去安装」与 MOD 管理页同一规则（`dependencyTagFor`）：缺依赖且
+              线上有能补上的仓库卡片时才出现，点了跳到那张卡；没有来源就不出
+              按钮 —— 一个点了没反应的按钮比没有更糟。
+            -->
             <template #status>
+              <template v-if="dependencyInstallTarget(set)">
+                <n-button size="tiny" :style="buttonColorFor('critical', 'soft')"
+                  :title="t('overview.browse')" @click.stop="installDependency(set)">
+                  <DownloadOutline width="14" height="14" />
+                  {{ t('overview.browse') }}
+                </n-button>
+                <span class="tool-divider" />
+              </template>
               <span class="tag-group">
                 <n-tag v-for="tag in tagsOf(set)" :key="tag.kind + tag.text" size="tiny"
                   :bordered="false" class="state-tag"
-                  :class="{ 'state-tag--link': !!tag.mapId }"
+                  :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId) }"
                   :color="tagColorForAny(tag.tone)" :title="tagTitle(set, tag)"
                   @click.stop="onTagClick(tag)">
                   {{ t(tag.text) }}
@@ -844,7 +888,7 @@ async function checkUpdates() {
                 不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
               -->
               <div v-if="dependencyRows(set).length" class="detail-section">
-                <DependencyTable :rows="dependencyRows(set)" />
+                <DependencyTable :rows="dependencyRows(set)" @jump="openDependencyJump" />
               </div>
             </template>
           </LocalItemCard>

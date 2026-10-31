@@ -1,5 +1,5 @@
 import { compareVersions } from './modStatus.ts'
-import { resolveRelations } from './modRelations.ts'
+import { dependencyTagFor, resolveRelations, type RelationStatus } from './modRelations.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, Repository } from './types'
 
 /**
@@ -241,20 +241,33 @@ export interface FrameworkState {
 }
 
 /**
+ * 地图声明的关系在本地的解析结果（含「可安装来源」）。
+ *
+ * `repositories` 必须传：地图声明的前置就是仓库里的 MOD（DIYLevel、
+ * Web Runtime 都有 `plugin_guid`），不传的话每条依赖都会被判成「没有来源」，
+ * 地图页与 MOD 页就会对同一件事给出不同结论 —— 这正是两边口径要统一的地方。
+ */
+export function mapRelationStatuses(
+  map: MapInfo | null | undefined,
+  mods: readonly InstalledMod[],
+  repositories: readonly Repository[] = [],
+): RelationStatus[] {
+  if (!map) return []
+  return resolveRelations(mapRelationRepository(map), mods, repositories)
+}
+
+/**
  * 地图声明的框架依赖在本地的满足情况。
  *
  * 数据源是 Dashboard 已经扫好的 MOD 列表：地图页以前为了算这个让后端
- * 再全量扫一遍 `BepInEx/plugins`，加载时间白白翻倍。`resolveRelations`
- * 的第三个参数传空数组 —— 地图依赖的是框架，安装入口在设置页，
- * 不存在「从地图源安装依赖」这种来源。
+ * 再全量扫一遍 `BepInEx/plugins`，加载时间白白翻倍。
  */
 export function frameworkStates(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
+  repositories: readonly Repository[] = [],
 ): FrameworkState[] {
-  if (!map) return []
-  const statuses = resolveRelations(mapRelationRepository(map), mods, [])
-  return statuses.map((status) => ({
+  return mapRelationStatuses(map, mods, repositories).map((status) => ({
     guid: status.relation.guid,
     minVersion: status.relation.min_version?.trim() ?? '',
     installedVersion: status.installedVersion,
@@ -276,10 +289,11 @@ export function mapDependencyMissing(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
   gameProbed: boolean,
+  repositories: readonly Repository[] = [],
 ): boolean | null {
   if (!gameProbed) return null
   if (!map) return false
-  return frameworkStates(map, mods).some((state) => !state.satisfied)
+  return frameworkStates(map, mods, repositories).some((state) => !state.satisfied)
 }
 
 /** 关卡集卡片状态区的一个标签。 */
@@ -289,8 +303,13 @@ export interface LevelSetCardTag {
   tone: LevelSetTone
   /** 这个标签来自哪一类判定：依赖缺失与版本结论是两件事。 */
   kind: 'state' | 'dependency'
-  /** 可跳转的地图 id（只有「有更新」会带）：跳到下载页并高亮那张卡。 */
+  /**
+   * 「有更新」→ 跳到下载页并高亮那张卡；
+   * 「缺依赖」→ 跳到 MOD 安装页并高亮能提供这个依赖的仓库卡片。
+   */
   mapId?: string
+  /** 依赖的安装入口：能提供满足区间版本的仓库卡片 id（只有「缺依赖」会带）。 */
+  repositoryId?: string
 }
 
 /**
@@ -299,20 +318,31 @@ export interface LevelSetCardTag {
  * 顺序与 MOD 卡片一致：先「缺依赖」这类关系提醒，再版本结论 ——
  * 关系提醒说的是「装上能不能跑」，比「有没有新版」更该先被看到。
  *
- * 依赖缺失只在**能判定**（游戏已探测）且确实缺失时出现；
- * 停用的地图仍显示依赖缺失，因为用户重新启用前就该知道它还缺东西。
+ * 依赖提醒与 MOD 卡片共用 `dependencyTagFor` 一条规则：文案是「缺依赖」，
+ * 线上有可安装来源就带上仓库 id（标签可点，跳过去就能补上），没有来源就
+ * 只是纯文字。只在**能判定**（游戏已探测）时出现；停用的地图仍然显示，
+ * 因为用户重新启用前就该知道它还缺东西。
  */
 export function levelSetCardTags(
   set: LevelSetInfo,
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
   gameProbed: boolean,
+  repositories: readonly Repository[] = [],
 ): LevelSetCardTag[] {
   const bound = mapForLevelSet(set, maps)
   const tags: LevelSetCardTag[] = []
 
-  if (mapDependencyMissing(bound, mods, gameProbed) === true) {
-    tags.push({ text: 'levelSet.dependencyMissing', tone: 'critical', kind: 'dependency' })
+  if (gameProbed) {
+    const dependency = dependencyTagFor(mapRelationStatuses(bound, mods, repositories), true)
+    if (dependency) {
+      tags.push({
+        text: dependency.text,
+        tone: dependency.tone,
+        kind: 'dependency',
+        repositoryId: dependency.repositoryId,
+      })
+    }
   }
 
   const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))

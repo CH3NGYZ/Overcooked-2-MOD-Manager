@@ -128,7 +128,6 @@ const dependencyRows = computed<DependencyRow[]>(() => {
     ownerRepository: repo,
     translate: t,
     pickName: pickI18n,
-    mode: 'mod',
     jumpToRepository: true,
   })
 })

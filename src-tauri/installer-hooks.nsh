@@ -28,8 +28,10 @@ LangString OC2Migrating 1041 "マネージャーを既定のインストール�
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  CreateDirectory "$PROFILE\OC2ModManager"
-  FileOpen $0 "$PROFILE\OC2ModManager\install-language.txt" w
+  ; 数据根在用户「文档」下（程序用 Shell 已知文件夹 Documents 定位），
+  ; 安装语言标记必须写到同一处，首次启动才读得到。
+  CreateDirectory "$DOCUMENTS\OC2ModManager"
+  FileOpen $0 "$DOCUMENTS\OC2ModManager\install-language.txt" w
   ${If} $LANGUAGE == 2052
     FileWrite $0 "zh-CN"
   ${ElseIf} $LANGUAGE == 1028
@@ -52,8 +54,8 @@ LangString OC2Migrating 1041 "マネージャーを既定のインストール�
     ClearErrors
     Exec '"$INSTDIR\OC2ModManager.exe"'
     ${If} ${Errors}
-      CreateDirectory "$PROFILE\OC2ModManager\logs"
-      FileOpen $0 "$PROFILE\OC2ModManager\logs\update.log" a
+      CreateDirectory "$DOCUMENTS\OC2ModManager\logs"
+      FileOpen $0 "$DOCUMENTS\OC2ModManager\logs\update.log" a
       FileWrite $0 "NSIS: installation succeeded; automatic launch failed.$\r$\n"
       FileClose $0
     ${EndIf}

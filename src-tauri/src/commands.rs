@@ -6883,7 +6883,7 @@ pub struct PermissionStatus {
     pub elevated: bool,
     /// 游戏 MOD 目录是否可写：需要提权的唯一真实判据。
     pub game_writable: bool,
-    /// 管理器数据目录是否可写（安装目录内，正常应始终可写）。
+    /// 管理器数据目录是否可写（用户文档 / Application Support 下的数据根）。
     pub data_writable: bool,
 }
 
@@ -7806,15 +7806,14 @@ fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result<PathBuf, S
     /*
      * 只检查「框架目录」与「备份目录」互不包含，这才是递归复制的来源。
      *
-     * 这里曾经还有一段「管理器安装目录不能与备份目录重叠」的自检，那个判断
-     * 是恒真的：数据根一直放在 `install_dir()/OC2ModManager`，备份目录必然是
-     * 管理器安装目录的子目录。结果所有备份与卸载都被它拦死，用户会看到
-     * 「请把管理器安装到游戏目录外」这种无从处理的提示 —— 而管理器本来
-     * 就不在游戏目录里。
+     * 这里曾经还有一段「管理器安装目录不能与备份目录重叠」的自检：当年数据根
+     * 放在 `install_dir()/OC2ModManager`，备份目录必然是管理器安装目录的子目录，
+     * 这个判断恒真，结果所有备份与卸载都被它拦死，用户只看到「请把管理器安装
+     * 到游戏目录外」这种无从处理的提示 —— 而管理器本来就不在游戏目录里。
      *
-     * 真正需要防的场景（管理器被装在 `<游戏>/BepInEx/...` 里）已经被下面的
-     * 包含关系检查覆盖：那时备份目录也落在 BepInEx 内部。管理器把数据放在
-     * 自己目录下只是让两者同生共死，不构成递归风险。
+     * 现在数据根在用户文档目录，除非把管理器装进 BepInEx（安装校验已经拒绝），
+     * 备份源与备份目标天然不相交。保留这条检查纯属防御：将来的调用方如果把
+     * 备份目标指到游戏目录内，这里仍然会拦住递归复制。
      */
     ensure_copy_paths_disjoint(&game_root.join("BepInEx"), backup_root)?;
     let target = bepinex_backup_path(backup_root)?;

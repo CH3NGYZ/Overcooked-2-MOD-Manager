@@ -324,7 +324,9 @@ impl ConfigService {
         let root = crate::user_paths::root().map_err(ConfigError::Directory)?;
         fs::create_dir_all(&root).map_err(|e| {
             log::error!("创建配置目录失败：目录={}，原因={}", root.display(), e);
-            ConfigError::Directory(e.to_string())
+            // 带上完整路径：数据根已经不在安装目录里，用户需要知道到底是
+            // 哪个位置不可写（OneDrive 占位、只读的文档目录等）。
+            ConfigError::Directory(format!("{}: {e}", root.display()))
         })?;
         log::debug!("配置服务初始化完成：目录={}", root.display());
         Ok(Self {

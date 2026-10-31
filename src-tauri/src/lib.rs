@@ -39,6 +39,7 @@ mod wine;
 use chrono::Utc;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
@@ -70,8 +71,13 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let log_dir = user_paths::logs_dir()?;
-            fs::create_dir_all(&log_dir)?;
+            // 旧版本把数据放在安装目录里；先搬走再建日志目录，
+            // 这样同一卷上一次 rename 就能完成迁移。
+            let migration = user_paths::migrate_legacy_root();
+            let data_root = user_paths::root()?;
+            let log_dir = data_root.join("logs");
+            fs::create_dir_all(&log_dir)
+                .map_err(|error| format!("{}: {error}", log_dir.display()))?;
             let log_path = log_dir.clone();
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
@@ -97,14 +103,34 @@ pub fn run() {
                 std::io::Error::other(error.to_string())
             })?;
             app.manage(state);
+            // 迁移发生在日志插件初始化之前，结果在这里补记。
+            match migration {
+                user_paths::LegacyMigration::Moved { legacy, target } => log::info!(
+                    "已将旧数据目录迁移到新位置：旧={}，新={}",
+                    legacy.display(),
+                    target.display()
+                ),
+                user_paths::LegacyMigration::Failed {
+                    legacy,
+                    target,
+                    error,
+                } => log::warn!(
+                    "旧数据目录迁移未完成，继续使用新位置：旧={}，新={}，原因={}",
+                    legacy.display(),
+                    target.display(),
+                    error
+                ),
+                user_paths::LegacyMigration::None => {}
+            }
             log::info!(
                 "OC2 MOD Manager started; version={}",
                 env!("CARGO_PKG_VERSION")
             );
             if let Ok(executable) = std::env::current_exe() {
                 log::info!(
-                    "当前运行程序={}，Rust 日志目录={}",
+                    "当前运行程序={}，数据根={}，Rust 日志目录={}",
                     executable.display(),
+                    data_root.display(),
                     log_path.display()
                 );
             }
@@ -292,26 +318,37 @@ fn install_panic_logger() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         previous(panic);
-        let Ok(log_dir) = user_paths::logs_dir() else {
-            return;
-        };
-        if fs::create_dir_all(&log_dir).is_err() {
-            return;
+        let message = panic.to_string();
+        // 主路径：数据根里的 logs/crash.log。
+        if let Ok(log_dir) = user_paths::logs_dir() {
+            if append_panic_line(&log_dir.join("crash.log"), &message).is_ok() {
+                return;
+            }
         }
-        let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_dir.join("crash.log"))
-        else {
-            return;
-        };
-        let _ = writeln!(
-            file,
-            "[{}][panic] {}",
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-            panic
-        );
+        // 兜底：数据目录本身不可用时，至少把崩溃写进临时目录。
+        // 旧实现在这里直接 `return`，于是 macOS 上「启动即崩、没有任何日志」。
+        let fallback = std::env::temp_dir().join(PANIC_LOG_FALLBACK);
+        if let Err(error) = append_panic_line(&fallback, &message) {
+            eprintln!("panic 日志写入失败：{}（{error}）", fallback.display());
+        }
     }));
+}
+
+/// 数据目录不可用时的崩溃日志文件名（位于系统临时目录）。
+const PANIC_LOG_FALLBACK: &str = "oc2-modmanager-crash.log";
+
+/// 追加一条 panic 记录，必要时创建父目录。
+fn append_panic_line(path: &Path, message: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(
+        file,
+        "[{}][panic] {}",
+        Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+        message
+    )
 }
 
 /// 当前进程是否已具备管理员权限。
@@ -382,4 +419,24 @@ pub(crate) fn relaunch_elevated() -> bool {
 #[cfg(not(windows))]
 pub(crate) fn relaunch_elevated() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// panic 兜底路径必须能在目录不存在时自建父目录并追加写入：
+    /// 这条路径是「启动崩溃却没有任何日志」的唯一补救手段。
+    #[test]
+    fn appends_panic_lines_and_creates_missing_directories() {
+        let base = std::env::temp_dir().join(format!("oc2-panic-log-{}", uuid::Uuid::new_v4()));
+        let path = base.join("nested/crash.log");
+        append_panic_line(&path, "first").unwrap();
+        append_panic_line(&path, "second").unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("first"), "{content}");
+        assert!(content.contains("second"), "{content}");
+        assert_eq!(content.matches("[panic]").count(), 2, "{content}");
+        fs::remove_dir_all(base).unwrap();
+    }
 }

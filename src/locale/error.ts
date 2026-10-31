@@ -152,11 +152,11 @@ export const error: DomainMessages = {
     ja: '許可されたバックアップ場所にないフォルダーです',
   },
   'backup.overlap': {
-    'zh-CN': '备份与框架目录重叠，已停止操作以避免递归复制。请把管理器安装到游戏目录外，或把数据目录移出 BepInEx。',
-    'zh-TW': '備份與框架目錄重疊，已停止操作以避免遞迴複製。請把管理器安裝到遊戲目錄外，或把資料目錄移出 BepInEx。',
-    en: 'The backup and framework folders overlap, so the operation was stopped to avoid recursive copying. Install the manager outside the game folder, or move the data folder out of BepInEx.',
-    ko: '백업과 프레임워크 폴더가 겹쳐 재귀 복사를 막기 위해 작업을 중단했습니다. 관리자를 게임 폴더 밖에 설치하거나 데이터 폴더를 BepInEx 밖으로 옮기세요.',
-    ja: 'バックアップとフレームワークのフォルダーが重なっているため、再帰コピーを避けるべく中止しました。マネージャーをゲームフォルダーの外に置くか、データフォルダーを BepInEx の外へ移動してください。',
+    'zh-CN': '备份与框架目录重叠，已停止操作以避免递归复制。请确认游戏目录不在管理器数据目录内，且管理器没有安装在 BepInEx 里。',
+    'zh-TW': '備份與框架目錄重疊，已停止操作以避免遞迴複製。請確認遊戲目錄不在管理器資料目錄內，且管理器沒有安裝在 BepInEx 裡。',
+    en: 'The backup and framework folders overlap, so the operation was stopped to avoid recursive copying. Make sure the game folder is outside the manager data folder and the manager is not installed inside BepInEx.',
+    ko: '백업과 프레임워크 폴더가 겹쳐 재귀 복사를 막기 위해 작업을 중단했습니다. 게임 폴더가 관리자 데이터 폴더 안에 없고 관리자가 BepInEx 안에 설치되지 않았는지 확인하세요.',
+    ja: 'バックアップとフレームワークのフォルダーが重なっているため、再帰コピーを避けて中止しました。ゲームフォルダーがマネージャーのデータフォルダー内にないこと、マネージャーが BepInEx 内にインストールされていないことを確認してください。',
   },
   'backup.sameDirectory': {
     'zh-CN': '备份目标与源目录是同一个目录，已停止操作以避免覆盖数据。',

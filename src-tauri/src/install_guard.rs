@@ -5,10 +5,12 @@ const ERROR: &str = "config.installGuardBepInEx";
 
 /// 校验管理器安装目录。
 ///
-/// 禁止范围从原来的 `BepInEx/plugins` 扩展到**整个 `BepInEx`**：
-/// 数据目录（配置、备份、回收站、日志）现在跟着安装目录走，
-/// 只要管理器落在 BepInEx 里面，备份 BepInEx 时就会把备份自身
-/// 一起复制进去，下一轮再包含上一轮的备份 —— 无限递归膨胀。
+/// 禁止范围是**整个 `BepInEx` 树**：管理器备份与恢复框架时按整棵树快照，
+/// 管理器自身程序若在树内，恢复会把正在运行的可执行文件覆盖掉；游戏平台
+/// 校验、玩家手动清 BepInEx 也会顺手带走管理器。
+///
+/// 这条规则与数据根无关 —— 数据已经放在用户文档目录（macOS 是
+/// `~/Library/Application Support`），不再跟着安装目录走。
 pub(crate) fn validate_install_dir(directory: &Path) -> Result<(), String> {
     if directory.as_os_str().is_empty() || !directory.is_absolute() {
         return Err(ERROR.into());
@@ -153,8 +155,8 @@ mod tests {
         }
     }
 
-    /// 只要路径里出现 `BepInEx` 目录就拒绝：数据目录跟随安装目录，
-    /// 装在 BepInEx 内会让「备份 BepInEx」把备份自身一起复制进去。
+    /// 只要路径里出现 `BepInEx` 目录就拒绝：框架备份/恢复按整树快照，
+    /// 管理器在里面会被自己的恢复流程覆盖。
     #[test]
     fn rejects_anything_inside_bepinex() {
         let root = std::env::temp_dir();

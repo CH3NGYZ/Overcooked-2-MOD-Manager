@@ -20,17 +20,6 @@
   --oc2-layer-busy: 4000;
   --oc2-layer-titlebar-menu: 5000;
 }
-/*
- * macOS 的标题栏是两行（窗控一行 + 品牌一行），比 Windows 高。
- *
- * 这里用 `:has()` 由标题栏自己的类名驱动，而不是再养一份「平台 → 像素」的
- * JS 常量：变量挂在 body 上，`body > .n-drawer-container` 的遮罩偏移、
- * 消息容器的左边界都能直接读到，标题栏自身也通过继承拿到同一个值。
- * 写死 56px 会让 macOS 的遮罩与标题栏错位一整条。
- */
-body:has(.titlebar--mac) {
-  --oc2-titlebar-height: 72px;
-}
 
 /*
  * 自绘标题栏永远可拖动。

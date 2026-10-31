@@ -81,6 +81,30 @@ const canControlWindow = computed(() => isTauri())
  */
 const macChrome = isMacWindow()
 
+/**
+ * 窗控按钮的显示顺序。
+ *
+ * 两个平台用的是**同一组按钮**（同一套方形样式与图标），只是位置与顺序
+ * 左右对称：Windows 在右，读序 最小化 / 最大化 / 关闭；macOS 在左，
+ * 读序 关闭 / 最小化 / 最大化。模板只维护一份 DOM，位置靠 CSS `order`
+ * 换边、顺序靠这个数组，避免两套窗控各自演化。
+ */
+type ChromeAction = 'close' | 'minimize' | 'maximize'
+const chromeActions = computed<ChromeAction[]>(() =>
+  macChrome ? ['close', 'minimize', 'maximize'] : ['minimize', 'maximize', 'close'])
+
+function chromeTitle(action: ChromeAction): string {
+  if (action === 'close') return t('nav.close')
+  if (action === 'minimize') return t('nav.minimize')
+  return maximized.value ? t('nav.restore') : t('nav.maximize')
+}
+
+function runChrome(action: ChromeAction) {
+  if (action === 'close') void close()
+  else if (action === 'minimize') void minimize()
+  else void toggleMaximize()
+}
+
 /* ===== 厨房启动 / 停止（悬浮在应用图标上） ===== */
 
 const message = useNotify()
@@ -142,33 +166,6 @@ defineExpose({ onUnmountedCleanup })
 
 <template>
   <header class="titlebar" :class="{ 'titlebar--mac': macChrome }" data-tauri-drag-region>
-    <!--
-      macOS 第一行：窗控贴左上角，顺序按系统习惯 关闭 / 最小化 / 最大化
-      （红=关闭、黄=最小化、绿=缩放），三个圆点的图标默认隐藏、整组悬停才出现。
-      应用图标与标题放到**下一行** —— 红绿灯占住左上角后，品牌若还留在同一行，
-      标题会被整体推向中间，既不像系统窗口也浪费了左上角的位置。
-      Windows 不渲染这一行，仍是单行 + 右侧的方角按钮。
-    -->
-    <div v-if="canControlWindow && macChrome" class="titlebar-row chrome-row">
-      <div class="traffic">
-        <button class="dot close" type="button" :title="t('nav.close')" :aria-label="t('nav.close')" @click="close">
-          <CloseOutline width="9" height="9" />
-        </button>
-        <button class="dot min" type="button" :title="t('nav.minimize')" :aria-label="t('nav.minimize')" @click="minimize">
-          <RemoveOutline width="9" height="9" />
-        </button>
-        <button class="dot max" type="button" :title="maximized ? t('nav.restore') : t('nav.maximize')"
-          :aria-label="maximized ? t('nav.restore') : t('nav.maximize')" @click="toggleMaximize">
-          <ContractOutline v-if="maximized" width="9" height="9" />
-          <SquareOutline v-else width="8" height="8" />
-        </button>
-      </div>
-      <!-- 窗控右侧的空白仍然整段可拖动 -->
-      <div class="spacer" data-tauri-drag-region></div>
-    </div>
-
-    <!-- 第二行（Windows 上是唯一一行）：品牌 + 右侧控件 -->
-    <div class="titlebar-row main-row">
     <!-- 品牌：图标上悬浮启动/停止按钮 -->
     <div class="brand">
       <!--
@@ -249,22 +246,22 @@ defineExpose({ onUnmountedCleanup })
       </div>
     </n-popover>
 
-    <!-- 窗口控制：仅真实 Tauri 窗口显示；Windows 侧保持右侧的方角按钮 -->
-    <template v-if="canControlWindow && !macChrome">
+    <!--
+      窗口控制：仅真实 Tauri 窗口显示。
+      两个平台是**同一组按钮**（同一套方形样式与图标），macOS 靠 `order: -1`
+      整组移到最左，与 Windows 右侧形成镜像；顺序由 `chromeActions` 给出
+      （macOS 关闭/最小化/最大化，Windows 最小化/最大化/关闭）。
+    -->
+    <div v-if="canControlWindow" class="chrome-group">
       <span class="sep"></span>
-
-      <button class="win-btn" type="button" :title="t('nav.minimize')" :aria-label="t('nav.minimize')" @click="minimize">
-        <RemoveOutline width="16" height="16" />
+      <button v-for="action in chromeActions" :key="action" class="win-btn"
+        :class="{ danger: action === 'close' }" type="button"
+        :title="chromeTitle(action)" :aria-label="chromeTitle(action)" @click="runChrome(action)">
+        <CloseOutline v-if="action === 'close'" width="17" height="17" />
+        <ContractOutline v-else-if="action === 'maximize' && maximized" width="15" height="15" />
+        <SquareOutline v-else-if="action === 'maximize'" width="14" height="14" />
+        <RemoveOutline v-else width="16" height="16" />
       </button>
-      <button class="win-btn" type="button" :title="maximized ? t('nav.restore') : t('nav.maximize')"
-        :aria-label="maximized ? t('nav.restore') : t('nav.maximize')" @click="toggleMaximize">
-        <ContractOutline v-if="maximized" width="15" height="15" />
-        <SquareOutline v-else width="14" height="14" />
-      </button>
-      <button class="win-btn danger" type="button" :title="t('nav.close')" :aria-label="t('nav.close')" @click="close">
-        <CloseOutline width="17" height="17" />
-      </button>
-    </template>
     </div>
   </header>
 </template>
@@ -273,12 +270,11 @@ defineExpose({ onUnmountedCleanup })
 .titlebar {
   flex: 0 0 auto;
   height: var(--oc2-titlebar-height, 56px);
-  /* 纵向排列：Windows 只有一行；macOS 是「窗控行 + 品牌行」两行 */
+  /* 单行：两个平台的窗控都与品牌、右侧控件排在同一行，只是左右镜像 */
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  padding: 2px 8px 2px 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 14px;
   /*
    * 底色在侧栏色上叠一层很淡的主题色。
    *
@@ -301,14 +297,6 @@ defineExpose({ onUnmountedCleanup })
    */
   position: relative;
   z-index: 1;
-}
-/* 每一行横向铺满：Windows 上单行即全部内容，macOS 第一行是窗控 */
-.titlebar-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
 }
 .brand {
   display: flex;
@@ -459,37 +447,21 @@ defineExpose({ onUnmountedCleanup })
 }
 
 /*
- * macOS 窗控：三个 13px 圆点，颜色语义与系统一致。
- * 图标默认透明，整组悬停才浮现 —— 系统也是这个行为，且能避免在深色
- * 标题栏上出现三团深色噪点。圆点之间 8px，符合 macOS 的间距习惯。
+ * 窗控整组。
+ *
+ * Windows 留在右侧（自然顺序、与右侧内边距对称）；macOS 用 `order: -1`
+ * 提到最左 —— 与 Windows 左右镜像，按钮本身的方形样式与图标两边完全一致，
+ * 不套 macOS 的红绿灯圆点。
  */
-.traffic {
+.chrome-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0;
   flex: 0 0 auto;
-  /* 与右侧按钮区对称：给标题栏左缘留一点呼吸 */
-  padding: 0 6px 0 0;
 }
-.dot {
-  width: 13px;
-  height: 13px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  color: rgba(0, 0, 0, .58);
-  transition: filter .14s ease;
-}
-.dot > svg { opacity: 0; transition: opacity .12s ease; }
-.traffic:hover .dot > svg { opacity: 1; }
-.dot.close { background: #ff5f57; }
-.dot.min { background: #febc2e; }
-.dot.max { background: #28c840; }
-.dot:active { filter: brightness(.86); }
-.dot:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px; }
+.titlebar--mac .chrome-group { order: -1; }
+/* 窗控移到最左后，它和右侧控件之间隔着一整条拖动区，不再需要那条竖线 */
+.titlebar--mac .sep { display: none; }
 
 .win-btn {
   width: 40px;

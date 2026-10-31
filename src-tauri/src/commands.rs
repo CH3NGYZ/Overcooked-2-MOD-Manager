@@ -6766,13 +6766,30 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
     Err("mods.dllFileMissing".into())
 }
 
-/// 系统文件管理器只认普通路径：交给 Explorer 之前统一过 `display_path`。
+/// 交给系统文件管理器 / Shell 的路径串。
 ///
-/// `safe_game_path` 返回的是 `canonicalize` 之后的路径，Windows 上带出
-/// verbatim 前缀；Explorer 不按标准 argv 解析路径，也不接受这种写法。
+/// 在 `display_path` 之上多一步：Windows 下把正斜杠统一成反斜杠。
+/// 两层原因：
+///   · `safe_game_path` 返回 `canonicalize` 之后的路径，Windows 上带 `\\?\`
+///     verbatim 前缀，Explorer 不按标准 argv 解析、也不接受这种写法；
+///   · Explorer 的 `/select,` 参数解析**不认混合分隔符** —— 拿到
+///     `...\BepInEx/logs\xxx` 这种串时会解析失败并退回「此电脑」，
+///     而 `Path::join("BepInEx/logs")` 恰恰会把 `/` 原样留在路径里
+///     （2026-11 实测：菜单里的「查看日志」打不开日志目录）。
+/// 归一放在这个出口做，任何调用方都不会漏。
+fn shell_path(path: &Path) -> String {
+    let shown = display_path(path);
+    if cfg!(windows) {
+        shown.replace('/', "\\")
+    } else {
+        shown
+    }
+}
+
+/// 系统文件管理器只认普通路径：交给 Explorer 之前统一过 `shell_path`。
 fn directory_open_command(path: &Path) -> std::process::Command {
     let mut command = external_open_command();
-    command.arg(display_path(path));
+    command.arg(shell_path(path));
     command
 }
 
@@ -6786,7 +6803,7 @@ fn mod_file_location_command(path: &Path) -> std::process::Command {
     #[cfg(windows)]
     {
         // Explorer expects ordinary drive/UNC paths, not canonical verbatim prefixes.
-        let selection = format!(r#"/select,"{}""#, display_path(path));
+        let selection = format!(r#"/select,"{}""#, shell_path(path));
         let mut command = std::process::Command::new("explorer.exe");
         use std::os::windows::process::CommandExt;
         // Quote only the path: Explorer does not use the standard argv parser.

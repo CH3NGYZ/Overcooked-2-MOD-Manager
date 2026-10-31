@@ -26,7 +26,15 @@ fn checked_file(game: &Path, guid: &str) -> Result<PathBuf, String> {
     {
         return Err(UNSAFE.into());
     }
-    let path = game.join("BepInEx/config").join(format!("{guid}.cfg"));
+    /*
+     * 分隔符必须交给 `Path` 自己拼：`Path::join("BepInEx/config")` 只补分隔符、
+     * 不改写串内已有的 `/`，产物会变成 `...\BepInEx/config\xxx.cfg` 这种混合写法。
+     * Windows 的文件 API 容忍混合分隔符，所以 `metadata`/`read` 都正常；
+     * 但 Explorer 的 `/select,` 参数解析不容忍 —— 拿到混合路径时直接退回
+     * 「此电脑」（2026-11 实测，菜单里的「查看日志」因此打不开日志目录）。
+     * 拆成两段 join 才能保证出口永远是原生反斜杠。
+     */
+    let path = game.join("BepInEx").join("config").join(format!("{guid}.cfg"));
     if !path.is_absolute() {
         return Err(UNSAFE.into());
     }
@@ -86,7 +94,8 @@ pub fn checked_logs_dir(game: &Path, guid: &str) -> Result<PathBuf, String> {
     {
         return Err(UNSAFE.into());
     }
-    let path = game.join("BepInEx/logs").join(guid);
+    // 同 `checked_file`：拆成两段 join，保证出口是纯原生分隔符。
+    let path = game.join("BepInEx").join("logs").join(guid);
     if !path.is_absolute() {
         return Err(UNSAFE.into());
     }

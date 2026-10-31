@@ -4,6 +4,7 @@ import test from 'node:test'
 /** 关系判定：真实源码直接执行（纯函数，不依赖 Vue / Naive）。 */
 const {
   relationsForRelease, resolveRelation, resolveRelations, unmetRelations, primaryRelation, relationCardTag,
+  relationTargetRepository,
 } = await import('../src/modRelations.ts')
 
 function mod(overrides = {}) {
@@ -690,4 +691,60 @@ test('未安装且冲突 → 不显示（否则与「安装」按钮矛盾）', 
 test('没有未满足的关系 → 不显示', () => {
   assert.equal(relationCardTag(undefined, false), undefined)
   assert.equal(relationCardTag(undefined, true), undefined)
+})
+
+/* ===== 展示：关系目标解析（名字取仓库配置里的，不摊 GUID） ===== */
+
+const HU_GUID = 'com.ch3ngyz.plugin.HostUtilities'
+const STABLE_RELEASE = {
+  tag_name: '1.9.8', version: '1.9.8', name: '', body: '', prerelease: false, draft: false, assets: [],
+}
+const BETA_RELEASE = {
+  tag_name: '1.9.8.1', version: '1.9.8.1', name: '', body: '', prerelease: false, draft: false, assets: [],
+}
+
+test('展示：同一 GUID 按发布线定位到对应仓库', () => {
+  const stable = repo({
+    id: 'hu-stable', name: 'HostUtilities Stable', plugin_guid: HU_GUID,
+    cached_releases: [STABLE_RELEASE],
+  })
+  const beta = repo({
+    id: 'hu-beta', name: 'HostUtilities Beta', plugin_guid: HU_GUID,
+    cached_releases: [BETA_RELEASE],
+  })
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: true }, [stable, beta], 'hu-stable')?.id,
+    'hu-beta',
+    '正式版声明的「与测试版互斥」应指向测试版仓库',
+  )
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: false }, [stable, beta], 'hu-beta')?.id,
+    'hu-stable',
+    '测试版声明的「与正式版互斥」应指向正式版仓库',
+  )
+})
+
+test('展示：不限发布线时取第一个声明了该 GUID 的仓库', () => {
+  const first = repo({ id: 'a', name: 'A', plugin_guid: HU_GUID, cached_releases: [STABLE_RELEASE] })
+  const second = repo({ id: 'b', name: 'B', plugin_guid: HU_GUID, cached_releases: [BETA_RELEASE] })
+  assert.equal(relationTargetRepository({ kind: 'requires', guid: HU_GUID }, [first, second])?.id, 'a')
+})
+
+test('展示：排除声明方自己，避免自冲突显示成「指向自己」', () => {
+  const self = repo({ id: 'self', name: 'Self', plugin_guid: HU_GUID, cached_releases: [STABLE_RELEASE] })
+  assert.equal(relationTargetRepository({ kind: 'requires', guid: HU_GUID }, [self], 'self'), undefined)
+})
+
+test('展示：Release 未拉到时用另一条线兜底（不退回 GUID）', () => {
+  // 频道 all + 空缓存 → 发布线未知；声明方已排除，剩下的就是另一条线
+  const stable = repo({ id: 'hu-stable', name: 'Stable', plugin_guid: HU_GUID, cached_releases: [] })
+  const beta = repo({ id: 'hu-beta', name: 'Beta', plugin_guid: HU_GUID, cached_releases: [] })
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: true }, [stable, beta], 'hu-stable')?.id,
+    'hu-beta',
+  )
+})
+
+test('展示：没有仓库声明该 GUID → undefined（调用方退回 GUID）', () => {
+  assert.equal(relationTargetRepository({ guid: 'com.example.nobody' }, [repo()]), undefined)
 })

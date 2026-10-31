@@ -15,7 +15,7 @@ import { api } from '../services/tauri'
 import { pickI18n, t } from '../i18n'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
 import { matchedReleaseAssets } from '../repositoryAssets'
-import { resolveRelations, type RelationStatus } from '../modRelations'
+import { relationTargetRepository, resolveRelations, type RelationStatus } from '../modRelations'
 import { useRepositoryReadme } from '../composables/useRepositoryReadme'
 import ReleaseDetailPanel from './ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from './ReleaseDetailPanel.vue'
@@ -120,12 +120,28 @@ function requirementText(status: RelationStatus): string {
   return ''
 }
 
-/** 依赖目标的可读名：优先可安装来源的本地化名，其次本地 MOD 名，最后 GUID。 */
+/**
+ * 依赖目标的可读名。
+ *
+ * 优先用仓库配置里的展示名（作者已经写好了「主机实用 MOD（街机 MOD）测试版」
+ * 这类名字），而不是把关系里的 GUID 原样摊给用户；仓库都匹配不到时才退到
+ * 本地 MOD 名，最后才是 GUID。
+ *
+ * 冲突关系同样走这条路：`status.repository` 只在「换版本能解决冲突」时才有值，
+ * 发布线互斥的冲突永远是空的 —— 只认它取名就会退回 GUID。
+ */
 function dependencyName(status: RelationStatus): string {
   const target = status.repository
+    ?? relationTargetRepository(status.relation, props.repositories, props.repo?.id)
   if (target) return pickI18n(target.name_i18n, target.name) || status.relation.guid
   if (status.installedMod?.name) return status.installedMod.name
   return status.relation.guid
+}
+
+/** 关系的发布线小标：没写 `prerelease` 就是不限定（两条线都算）。 */
+function relationLine(relation: RelationStatus['relation']): DependencyRow['line'] {
+  if (relation.prerelease === undefined) return undefined
+  return relation.prerelease ? 'prerelease' : 'stable'
 }
 
 /** 状态文案：冲突/兼容与依赖是两套语义，不能共用「已满足」。 */
@@ -155,9 +171,10 @@ const dependencyRows = computed<DependencyRow[]>(() => {
   return statuses.map((status) => ({
     key: `${status.relation.guid}:${status.relation.kind ?? 'requires'}`,
     name: dependencyName(status),
-    // 关系名照原样填：表格只在出现非 requires 关系时才显示这一列，
-    // 那一列里 requires 行也要有自己的名字，不能留 `—`
+    // 关系与发布线都交原始枚举、由表格统一翻译：那一列只在出现非 requires
+    // 关系时渲染，requires 行也要有自己的名字，不能留空
     kind: status.relation.kind ?? 'requires',
+    line: relationLine(status.relation),
     requirement: requirementText(status),
     status: dependencyStatus(status),
     tone: status.state === 'ok'

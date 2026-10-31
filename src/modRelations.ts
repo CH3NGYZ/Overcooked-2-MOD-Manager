@@ -379,6 +379,55 @@ export function unmetRelations(statuses: readonly RelationStatus[]): RelationSta
   return statuses.filter((status) => status.state !== 'ok')
 }
 
+/* ===== 展示：关系目标是谁 ===== */
+
+/**
+ * 一个仓库当前属于哪条发布线。
+ *
+ * `true` = 预发布（测试版），`false` = 正式版，`undefined` = Release 还没拉到、
+ * 频道也没限定，暂时无法判断。判据与关系判定同一套（`isPrereleaseVersion`），
+ * 避免「卡片说是测试版、关系表却标正式版」。
+ */
+function repositoryReleaseLine(repo: Repository): boolean | undefined {
+  const release = (repo.cached_releases ?? []).find((entry) => !entry.draft)
+  if (release) return isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
+  if (repo.channel === 'beta') return true
+  if (repo.channel === 'stable') return false
+  return undefined
+}
+
+/**
+ * 关系目标在仓库列表里对应的那个 MOD（只用于展示名字）。
+ *
+ * 关系声明只记 GUID，界面直接摊一串 `com.ch3ngyz.plugin.HostUtilities` 用户
+ * 认不出是谁；而**同一个 GUID 可以有多条发布线**（正式版、测试版各一个仓库），
+ * 只按 GUID 匹配会挑到错的兄弟仓库。`prerelease` 三态正好把发布线也定下来：
+ * GUID + 发布线才能定位到唯一仓库，拿到作者写好的名字。
+ *
+ * `excludeRepositoryId` 传声明方自己：自冲突指向的是**另一条线**的仓库。
+ */
+export function relationTargetRepository(
+  relation: RepositoryRelation,
+  repositories: readonly Repository[],
+  excludeRepositoryId?: string,
+): Repository | undefined {
+  const candidates = repositories.filter((repo) =>
+    repo.id !== excludeRepositoryId
+    && !!repo.plugin_guid
+    && sameGuid(repo.plugin_guid, relation.guid))
+  if (!candidates.length) return undefined
+  const want = relation.prerelease
+  if (want === undefined) return candidates[0]
+  const exact = candidates.find((repo) => repositoryReleaseLine(repo) === want)
+  if (exact) return exact
+  /*
+   * Release 还没拉到时发布线未知（频道 `all`、缓存为空），精确匹配必然落空。
+   * 此时「未知」候选是唯一还能解释这条关系的仓库：声明方已被排除，另一条线
+   * 的仓库就剩在候选里。宁可先显示它的名字，也不要退回 GUID。
+   */
+  return candidates.find((repo) => repositoryReleaseLine(repo) === undefined)
+}
+
 /**
  * 挑出最该被卡片展示的那一条。
  *

@@ -1423,10 +1423,17 @@ const {
 
 /* ===== 包级操作 ===== */
 
-/** 包折叠状态：默认展开，只记住用户主动收起的包。 */
-const collapsedPackages = ref<string[]>([])
+/**
+ * 包折叠状态：默认收起，只记住用户主动展开的包。
+ *
+ * 记「展开」而不是「收起」：默认收起时若把当前已知包的 key 预填进一个
+ * collapsedPackages，那么之后新扫出来的包不在那份快照里，isPackageExpanded
+ * 会把它算成展开——用户得先看它摊开一次、再手动收起一遍才符合预期。
+ * 「集合里没有它」本身就是默认状态，新增包才不会漏。
+ */
+const expandedPackages = ref<string[]>([])
 function isPackageExpanded(key: string) {
-  return !collapsedPackages.value.includes(key)
+  return expandedPackages.value.includes(key)
 }
 
 /**
@@ -1443,13 +1450,37 @@ function togglePackage(node: ModPackageNode, event: MouseEvent) {
   const card = shell instanceof HTMLElement ? shell : null
   if (!opening) {
     collapseWithScroll(card, '.package-body', () => {
-      collapsedPackages.value = [...collapsedPackages.value, node.key]
+      expandedPackages.value = expandedPackages.value.filter((item) => item !== node.key)
     })
     return
   }
-  collapsedPackages.value = collapsedPackages.value.filter((item) => item !== node.key)
+  expandedPackages.value = [...expandedPackages.value, node.key]
   scrollAfterExpand(card, '.package-head', '.package-body')
 }
+
+/**
+ * 跨页 focus 落点：目标是一个多 DLL 包时先把它展开。
+ *
+ * 包默认收起，而 `?focus=` 只带一个仓库 id（总览页「本地 MOD 可更新 → 去更新」、
+ * MOD 安装页的状态标签都走这条路径）。不展开的话用户跳过来只看到一个收起的壳，
+ * 看不到真正要更新的那几行 —— 深链必须落到可见内容上。
+ *
+ * 只对包外壳生效：命中单 MOD 卡片时它的内容本来就直接可见，这里不改任何包的
+ * 折叠状态（用户手动收起过的包不该因为一次跳转被重新摊开）。
+ *
+ * 同时监听 `groups`：focus 在页面挂载时就已经写进 `highlightId`，而 Dashboard
+ * 可能还没加载完；只听 highlightId 会错过「数据到齐」那一刻。
+ */
+watch([highlightId, groups], () => {
+  const id = highlightId.value
+  if (!id) return
+  const hits = groups.value
+    .flatMap((group) => group.packages)
+    .filter((pkg) => pkg.grouped && pkg.repositoryId === id)
+    .map((pkg) => pkg.key)
+  const fresh = hits.filter((key) => !expandedPackages.value.includes(key))
+  if (fresh.length) expandedPackages.value = [...expandedPackages.value, ...fresh]
+}, { immediate: true })
 
 /** 包级开关：走后端已有的 toggle_local_mod_package，一次切换整包。 */
 async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {

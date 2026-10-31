@@ -39,8 +39,14 @@ const repositoryRefresh = useRepositoryRefresh()
 /* 页面滚动容器：n-scrollbar 实例 ref（scrollTo(x, y)，用于切页复位） */
 const pageScrollRef = ref<{ scrollTo: (x: number, y: number) => void } | null>(null)
 
-/** 侧栏导航顺序：决定页面切换时向上还是向下滑动。 */
-const NAV_ORDER = ['overview', 'framework', 'mods-online', 'mods-local', 'rename', 'tools', 'settings']
+/**
+ * 侧栏导航顺序：决定页面切换时向上还是向下滑动。
+ *
+ * 必须与 `AppSidebar` 的 sections 顺序一致（总览 → mod 区 → 地图区 → 工具），
+ * 并且**列全**每个路由名：漏掉的页面会让 `indexOf` 返回 -1，切过去时既不设
+ * 转场也不复位滚动（地图两页曾长期因此不走转场动画）。
+ */
+const NAV_ORDER = ['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'tools', 'settings']
 
 /**
  * 越靠下点击 → 新页面从下方滑入（page-down）；越靠上点击 → 从上方滑入（page-up）。

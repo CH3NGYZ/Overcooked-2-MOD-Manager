@@ -11,22 +11,45 @@ import { t } from '../i18n'
 const route = useRoute()
 
 /**
- * 主导航：功能入口。
+ * 主导航：功能入口，按功能域分组。
+ *
+ * 分组用数据表达（`sections`）而不是在模板里手写两条 `<div class="nav-divider" />`：
+ * 分割线数量必须恒等于「组数 - 1」，模板里写死就只能在加组时靠人记得补一条；
+ * 组间顺序也由数组顺序一处决定，而不是散在模板行之间。
  *
  * 「框架管理」不再单独占位 —— BepInEx 的管理已收进「设置 → 路径管理 →
  * BepInEx 框架管理」抽屉，和装一个 MOD 的复杂度相当，不值得常驻导航。
  */
-const mainItems = [
-  { name: 'overview', title: 'nav.overview', icon: GridOutline },
-  { name: 'mods-online', title: 'nav.modInstall', icon: CloudDownloadOutline },
-  { name: 'mods-local', title: 'nav.modManager', icon: FileTrayFullOutline },
-  // 地图（DIYLevel 关卡集）与 MOD 是两套数据，但同属「内容管理」，放在一起。
-  // 下载与管理分开两页：下载页要拉 Release（慢、需要网络），管理页只看本地磁盘。
-  { name: 'maps-online', title: 'levelSet.download', icon: MapOutline },
-  { name: 'levels', title: 'levelSet.title', icon: AlbumsOutline },
+const sections = [
+  // 总览是入口页，自成一档：它讲的是一屏之内的摘要，不属于任何具体内容域。
+  {
+    key: 'overview',
+    items: [
+      { name: 'overview', title: 'nav.overview', icon: GridOutline },
+    ],
+  },
+  // MOD 与地图（DIYLevel 关卡集）是两套数据，各自成组。
+  // 组内下载与管理分开两页：下载页要拉 Release（慢、需要网络），管理页只看本地磁盘。
+  {
+    key: 'mods',
+    items: [
+      { name: 'mods-online', title: 'nav.modInstall', icon: CloudDownloadOutline },
+      { name: 'mods-local', title: 'nav.modManager', icon: FileTrayFullOutline },
+    ],
+  },
+  {
+    key: 'maps',
+    items: [
+      { name: 'maps-online', title: 'levelSet.download', icon: MapOutline },
+      { name: 'levels', title: 'levelSet.title', icon: AlbumsOutline },
+    ],
+  },
 ]
 /**
- * 分割线之下：与 MOD 管理配套的工具入口。
+ * 最后一条分割线之下：与 MOD 管理配套的工具入口。
+ *
+ * 单独一个数组而不是 sections 里的一组：它不跟其它组并列（固定排在末尾，
+ * 且不参与「按功能域分组」的语义），模板里因此只有这一条分割线是显式的。
  *
  * 回收站**不在这里**：它是低频的维护功能，入口放在「工具」页的
  * 「回收站设置」分组里（打开回收站弹窗），不占主导航。
@@ -48,11 +71,15 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
     <!-- 可滚动导航：用 Naive 的 n-scrollbar（自带悬浮细滚动条，不占布局宽度） -->
     <n-scrollbar class="nav-scroll">
       <nav class="nav">
-        <router-link v-for="item in mainItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
-          :class="{ active: activeName === item.name }">
-          <component :is="item.icon" width="20" height="20" />
-          <span>{{ t(item.title) }}</span>
-        </router-link>
+        <!-- 组间分割线由组序号推出：第一组之前没有线，之后每组之前一条 -->
+        <template v-for="(section, index) in sections" :key="section.key">
+          <div v-if="index > 0" class="nav-divider" />
+          <router-link v-for="item in section.items" :key="item.name" :to="{ name: item.name }" class="nav-item"
+            :class="{ active: activeName === item.name }">
+            <component :is="item.icon" width="20" height="20" />
+            <span>{{ t(item.title) }}</span>
+          </router-link>
+        </template>
 
         <div class="nav-divider" />
 

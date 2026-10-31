@@ -4,6 +4,7 @@
 # 不需要改索引（maps.toml）。
 #
 # 字段说明（完整版见 docs/map-sources.md）：
+#   group_i18n               地图页的折叠分组 = 作者显示名（与绑定键 author 不同）
 #   level_set_name + author  绑定本地关卡集的身份，必须与 info 文件里的
 #                            levelSetName / author 完全一致（忽略大小写）
 #   asset_rules              选哪个 Release 资产，地图只分发 ZIP
@@ -16,11 +17,11 @@ name_i18n.zh-TW = "RW 關卡合集"
 name_i18n.en = "RW Level Pack"
 name_i18n.ko = "RW 레벨 팩"
 name_i18n.ja = "RW レベルパック"
-group_i18n.zh-CN = "RW"
-group_i18n.zh-TW = "RW"
-group_i18n.en = "RW"
-group_i18n.ko = "RW"
-group_i18n.ja = "RW"
+group_i18n.zh-CN = "RickWang"
+group_i18n.zh-TW = "RickWang"
+group_i18n.en = "RickWang"
+group_i18n.ko = "RickWang"
+group_i18n.ja = "RickWang"
 provider = "gitee"
 username = "ch3ngyz"
 repository = "DIYLevel-Maps-RW"

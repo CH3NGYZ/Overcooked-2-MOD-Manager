@@ -214,13 +214,26 @@ pub async fn load_document(location: &SourceLocation) -> Result<MapSourceDocumen
 ///   目前没有「用户手动隐藏地图」这个操作，保留旧值只会让作者下线的图复活。
 /// - 名字、资产规则、依赖版本改了就该立刻生效。
 ///
-/// 返回是否有条目变化（新增/删除/换序），供调用方决定要不要写盘。
+/// 返回是否有变化，供调用方决定要不要写盘。**「变化」必须包括只改展示字段的
+/// 情况**（分组、名字、备注、资产规则……）：ID 由「源 ID + author +
+/// level_set_name」派生，作者把分组从 `RW` 改成作者名时 ID 不变 —— 早先这里
+/// 只比 ID 和长度，于是线上改了分组，配置里永远是旧值，刷新多少次都不生效。
+/// 比较走序列化结果，以后加字段也不会漏掉。
 pub(crate) fn replace_maps_keeping_runtime_state(
     config: &mut AppConfig,
     fresh: Vec<MapRepositoryConfig>,
 ) -> bool {
-    let previous = std::mem::take(&mut config.map_repositories);
-    let before = previous.len();
+    let (merged, changed) =
+        merge_maps_keeping_runtime_state(std::mem::take(&mut config.map_repositories), fresh);
+    config.map_repositories = merged;
+    changed
+}
+
+/// `replace_maps_keeping_runtime_state` 的纯逻辑部分：不碰配置，便于直接测。
+fn merge_maps_keeping_runtime_state(
+    previous: Vec<MapRepositoryConfig>,
+    fresh: Vec<MapRepositoryConfig>,
+) -> (Vec<MapRepositoryConfig>, bool) {
     let mut merged = Vec::with_capacity(fresh.len());
     for mut map in fresh {
         if let Some(old) = previous.iter().find(|old| old.id == map.id) {
@@ -230,14 +243,17 @@ pub(crate) fn replace_maps_keeping_runtime_state(
         }
         merged.push(map);
     }
-    // 顺序来自源文档，长度变化也算变化
-    let changed = before != merged.len()
-        || previous
-            .iter()
-            .zip(merged.iter())
-            .any(|(old, new)| old.id != new.id);
-    config.map_repositories = merged;
-    changed
+    // 运行态字段刚刚从旧条目接回，所以整份比较等价于「声明字段有没有变」
+    let changed = match (
+        serde_json::to_string(&previous),
+        serde_json::to_string(&merged),
+    ) {
+        (Ok(old), Ok(new)) => old != new,
+        // 序列化失败时保守地算作有变化：宁可多写一次配置，也不能让作者改过的
+        // 声明被静默丢掉
+        _ => true,
+    };
+    (merged, changed)
 }
 
 /// 同步加载内置地图源树（索引 → 子源 → 地图）。
@@ -710,6 +726,44 @@ asset_rules = [{{ type = "exact", value = "map.zip" }}]
             build("maps-y", "RW", "RW_LevelSet")
         );
     }
+
+    /// 只改展示字段（分组名）也必须判定为「有变化」。
+    ///
+    /// 回归：ID 由「源 ID + author + level_set_name」派生，作者把 `group_i18n`
+    /// 从 `RW` 改成作者名时 ID 不变。早先的实现只比 ID 与长度，于是刷新回来的
+    /// 新分组被判成「没变化」、配置不写盘，界面永远显示旧分组。
+    #[test]
+    fn a_display_only_map_change_still_counts_as_change() {
+        let fresh = parse_document(&minimal("RW", "RW", "RW_LevelSet"), &bundled())
+            .unwrap()
+            .maps;
+        let mut stored = fresh.clone();
+        stored[0].id = "maps-rw::rw::rw_levelset".to_string();
+        stored[0].releases_cached_at = Some(1_700_000_000);
+        stored[0].last_error = Some("release.rateLimited".to_string());
+        let mut renamed = stored.clone();
+        renamed[0]
+            .group_i18n
+            .insert("zh-CN".to_string(), "RickWang".to_string());
+
+        // 内容相同 → 不算变化，避免每次刷新都写一次配置
+        let (same, changed) = merge_maps_keeping_runtime_state(stored.clone(), stored.clone());
+        assert!(!changed);
+        assert_eq!(same[0].releases_cached_at, Some(1_700_000_000));
+
+        // 只改 group_i18n（身份没变）→ 必须算变化，且保留 Release 缓存
+        let (merged, changed) = merge_maps_keeping_runtime_state(stored, renamed);
+        assert!(
+            changed,
+            "只改 group_i18n 也必须写盘，否则线上分组永远不生效"
+        );
+        assert_eq!(
+            merged[0].group_i18n.get("zh-CN").map(String::as_str),
+            Some("RickWang")
+        );
+        assert_eq!(merged[0].releases_cached_at, Some(1_700_000_000));
+        assert_eq!(merged[0].last_error.as_deref(), Some("release.rateLimited"));
+    }
 }
 
 /// 内置地图快照的回归测试。
@@ -748,6 +802,13 @@ mod bundled_tests {
         let map = &doc.maps[0];
         assert_eq!(map.level_set_name, "RW_LevelSet");
         assert_eq!(map.author, "RW");
+        // 分组是**作者显示名**（地图两页都按它折叠），与绑定键 `author` 是两件事：
+        // 绑定键必须与 info 逐字一致，展示名可以写作者更完整的名字。
+        assert_eq!(
+            map.group_i18n.get("zh-CN").map(String::as_str),
+            Some("RickWang"),
+            "内置快照的分组应写作者名"
+        );
         assert_eq!(map.provider, crate::models::Provider::Gitee);
         // 依赖必须声明：缺 DIYLevel 或 Web Runtime 时地图跑不起来
         assert!(

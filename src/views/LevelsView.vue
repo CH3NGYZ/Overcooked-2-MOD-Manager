@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
@@ -9,6 +9,8 @@ import { tagColorFor, tagColorForAny } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useFocusHighlight, useMapLink } from '../crossLink'
+import { levelSetDependencyRows } from '../dependencyRows'
+import { repositoryIsAvailable } from '../repositoryAvailability'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
@@ -23,7 +25,7 @@ import {
   type FrameworkState,
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
-import type { LevelSetInfo, MapInfo } from '../types'
+import type { LevelSetInfo, MapInfo, Repository } from '../types'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
@@ -104,6 +106,26 @@ const sortedSets = computed(() =>
 const versionRefs = computed(() => mapVersionRefs(maps.value))
 
 /**
+ * 在线 MOD 仓库，只留「在当前地区真实存在」的那些。
+ *
+ * 依赖表的名称与判定都要用它：地图的依赖是框架 MOD（DIYLevel / Web Runtime），
+ * 它们本身也是在线 MOD 仓库，作者在源文档里给它们起了名字。缺了这份列表，
+ * 名称会退化成 GUID、状态也会退化成「缺依赖」。
+ *
+ * 过滤口径与地图下载页、MOD 安装页完全一致 —— `repositoryIsAvailable` 是
+ * 地区 / 平台 / `enabled` 的唯一前端入口，页面不再另写一遍条件。
+ */
+const repositories = computed<Repository[]>(() =>
+  (config.value?.repositories ?? []).filter((repo) =>
+    repositoryIsAvailable(
+      repo,
+      config.value?.repository_sources,
+      config.value?.region,
+      config.value?.platform,
+    )),
+)
+
+/**
  * 首次进入：两端数据一起读。
  *
  * 两次读取互不依赖，一起发出去。地图列表失败不该让本地关卡集消失 ——
@@ -141,6 +163,12 @@ async function reloadSets() {
 
 onMounted(() => {
   /*
+   * 点击卡片行之外收起详情：`LocalItemCard` 只在卡片行 emit `activate`，
+   * 详情区的点击被它排除在外，「点详情收起」只能由页面在文档级实现
+   * （与 MOD 管理页同一套做法）。
+   */
+  document.addEventListener('click', onDocumentClick)
+  /*
    * 依赖缺失判定与「删除是否进回收站」都要读 Dashboard（mods / config），
    * 而 Dashboard 由页面自己按需加载。直接进本页时它可能还是空的：那时
    * 「依赖缺失」标签会消失、删除确认会退回默认文案 —— 都是无声的错误结论。
@@ -148,6 +176,11 @@ onMounted(() => {
    */
   void ensureLoaded()
   void load()
+})
+
+/** 文档级监听挂在页面之外，页面卸载必须解绑，否则会随每次进出累积。 */
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocumentClick)
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */
@@ -228,36 +261,60 @@ function hintOf(set: LevelSetInfo): string {
   return ''
 }
 
-/** 框架依赖的本地状态文案（优先说「已装什么版本」，再给结论）。 */
-function frameworkText(state: FrameworkState): string {
-  if (state.installedVersion) {
-    return state.satisfied
-      ? t('levelSet.installedVersion', { version: state.installedVersion })
-      : t('levelSet.versionMismatch', { version: state.installedVersion })
-  }
-  return t('levelSet.notInstalled')
-}
-
 /**
  * 依赖表行。
  *
- * 与地图下载页的详情、MOD 安装页的详情共用同一个表格组件
- * （`DependencyTable.vue`）：同一张地图在两个页面里看到的依赖必须长得一样，
- * 否则用户会怀疑哪边漏报了一条。
+ * 名称、状态文案与色调全部由 `dependencyRows.ts` 统一构造（四个页面共用
+ * 一份口径）：名称按「在线 MOD 仓库卡片名 → 本地已装 MOD 的包标题 → GUID」
+ * 解析，满足时只写「已满足」——版本写在「要求」列，状态列只回答「现在
+ * 行不行」。声明来源也由它决定：绑定的地图还在配置里就用它的在线声明
+ * （`relations`），地图源下线后才退回安装清单里的快照。
+ *
+ * 地图的安装入口在设置页 / 下载页，所以行里不带跳转（`mode: 'map'`）。
  */
 function dependencyRows(set: LevelSetInfo): DependencyRow[] {
-  return boundFrameworks(set).map((state) => ({
-    key: state.guid,
-    name: state.guid,
-    requirement: state.minVersion ? `≥ ${state.minVersion}` : '',
-    status: frameworkText(state),
-    tone: state.satisfied ? 'mild' : 'critical',
-  }))
+  return levelSetDependencyRows(set, {
+    maps: maps.value,
+    mods: mods.value,
+    repositories: repositories.value,
+    translate: t,
+    pickName: pickI18n,
+  })
 }
 
-/** 卡片行点击：展开自己，或收起已展开的那张。 */
+/**
+ * 卡片行点击：展开自己，或收起已展开的那张。
+ *
+ * 详情区不阻止冒泡（点详情里的文字/值等于「点空白」，由 `onDocumentClick`
+ * 收起），所以必须让文档监听知道这一次点击已经处理过：否则同一次点击里
+ * 这里先把该项 toggle 开，文档监听紧接着把它置回 `null`，内容只出现一帧
+ * ——折叠过渡动画还没播完就被打断，看起来像「点了没反应」。
+ */
+let cardClickHandled = false
+
 function activate(set: LevelSetInfo) {
+  cardClickHandled = true
   expandedDir.value = expandedDir.value === set.dir_name ? null : set.dir_name
+}
+
+/**
+ * 点击卡片行之外的地方收起已展开的详情。
+ *
+ * 「空白」包含详情区自身：展开后点详情里的任意文字、标签或值都算点空白，
+ * 应当收起（详情内容是只读的，没有需要保留点击的元素）。判定规则是「点击
+ * 目标是否属于这一行的顶栏」——落在 `.card-row`（开关 / 标题 / 状态标签 /
+ * 工具按钮）里说明用户在操作这一行，交给各自的 `@click.stop` 与处理函数，
+ * 不在这里收起，避免一次点击既展开又收起。
+ */
+function onDocumentClick(event: MouseEvent) {
+  if (cardClickHandled) {
+    cardClickHandled = false
+    return
+  }
+  if (expandedDir.value === null) return
+  const target = event.target
+  if (target instanceof Element && target.closest('.card-row')) return
+  expandedDir.value = null
 }
 
 /**
@@ -438,6 +495,12 @@ async function checkUpdates() {
   try {
     // 串行：地图数量少，而且用户要的是「逐张图正确」而不是最快的并发
     for (const id of targets.keys()) await api.refreshMapReleases(id, true)
+    /*
+     * 依赖快照同步：依赖只写在源文档里，刷新后按线上声明重写本地清单的
+     * 快照，地图源下线后依赖表才不会凭空消失。失败吞掉 —— 快照只是兜底
+     * 展示信息，不该让一次成功的检测更新变成报错。
+     */
+    await api.syncDependencySnapshots().catch(() => undefined)
     maps.value = await api.maps()
   } catch (reason) {
     message.error(backendMessageOf(reason))
@@ -598,9 +661,13 @@ async function checkUpdates() {
             </div>
           </div>
 
-          <!-- 依赖框架：本地缺失的标红，用户重新启用前就能看到；与下载页详情、MOD 安装页详情共用同一张依赖表 -->
-          <div v-if="boundFrameworks(set).length" class="detail-section">
-            <DependencyTable :rows="dependencyRows(set)" mono-name />
+          <!--
+            依赖声明：本地缺失的标红，用户重新启用前就能看到；与下载页详情、
+            MOD 安装页详情共用同一张依赖表（名称是人类可读的仓库名/包名，
+            不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
+          -->
+          <div v-if="dependencyRows(set).length" class="detail-section">
+            <DependencyTable :rows="dependencyRows(set)" />
           </div>
         </template>
       </LocalItemCard>

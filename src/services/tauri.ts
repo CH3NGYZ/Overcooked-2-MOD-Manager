@@ -9,6 +9,7 @@ import type {
   AppUpdatePhaseEvent,
   BepInExInstallResult,
   Dashboard,
+  DependencySyncResult,
   DiyLevelInfo,
   DownloadProgress,
   GameInfo,
@@ -87,6 +88,14 @@ export const api = {
    */
   refreshRepository: (repositoryId: string, force = false) =>
     invoke<ReleaseInfo[]>('refresh_repository', { repositoryId, force }),
+  /**
+   * 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
+   *
+   * 依赖只写在仓库源文档里，源下线或文档改版后本地就查不到了；所以安装时
+   * 固化一份，每次刷新完再按线上声明重写一遍 —— 在线与本地不一致时以在线
+   * 为准。返回实际改写的条数（0 = 本来就一致）。
+   */
+  syncDependencySnapshots: () => invoke<DependencySyncResult>('sync_dependency_snapshots'),
   /** 从源文档地址（raw / 远程 TOML）重新拉取并应用该仓库源。 */
   importRepositorySource: (sourceId: string, sourceUrl: string, builtinFallback = false) =>
     invoke<RepositorySourceImportResult>('import_repository_source', { sourceId, sourceUrl, builtinFallback }),

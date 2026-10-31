@@ -15,12 +15,13 @@ import { api } from '../services/tauri'
 import { pickI18n, t } from '../i18n'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
 import { matchedReleaseAssets } from '../repositoryAssets'
-import { relationTargetRepository, resolveRelations, type RelationStatus } from '../modRelations'
+import { relationsForRelease } from '../modRelations'
+import { dependencyRowsFor } from '../dependencyRows'
 import { useRepositoryLink } from '../crossLink'
 import { useRepositoryReadme } from '../composables/useRepositoryReadme'
 import ReleaseDetailPanel from './ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from './ReleaseDetailPanel.vue'
-import type { DependencyRow } from './DependencyTable.vue'
+import type { DependencyRow } from '../dependencyRows'
 import type { InstalledMod, Repository } from '../types'
 
 const props = withDefaults(defineProps<{
@@ -110,100 +111,25 @@ watch([() => props.repo?.id, selectedTag], () => { selectedAssetName.value = nul
 /* ===== 依赖表 ===== */
 
 /**
- * 版本区间的展示文本。
- *
- * 只写一端时用单边符号；两端都有时写成「区间」而不是 `≥x, ≤y` —— 后者
- * 跟到表格里太长，一眼看不出是闭区间。
- */
-function requirementText(status: RelationStatus): string {
-  const min = status.relation.min_version?.trim() ?? ''
-  const max = status.relation.max_version?.trim() ?? ''
-  if (min && max) return `${min} ~ ${max}`
-  if (min) return `≥ ${min}`
-  if (max) return `≤ ${max}`
-  return ''
-}
-
-/**
- * 依赖目标的可读名。
- *
- * 优先用仓库配置里的展示名（作者已经写好了「主机实用 MOD（街机 MOD）测试版」
- * 这类名字），而不是把关系里的 GUID 原样摊给用户；仓库都匹配不到时才退到
- * 本地 MOD 名，最后才是 GUID。
- *
- * 冲突关系同样走这条路：`status.repository` 只在「换版本能解决冲突」时才有值，
- * 发布线互斥的冲突永远是空的 —— 只认它取名就会退回 GUID。
- */
-function dependencyName(status: RelationStatus): string {
-  const target = status.repository
-    ?? relationTargetRepository(status.relation, props.repositories, props.repo?.id)
-  if (target) return pickI18n(target.name_i18n, target.name) || status.relation.guid
-  if (status.installedMod?.name) return status.installedMod.name
-  return status.relation.guid
-}
-
-/** 关系的发布线小标：没写 `prerelease` 就是不限定（两条线都算）。 */
-function relationLine(relation: RelationStatus['relation']): DependencyRow['line'] {
-  if (relation.prerelease === undefined) return undefined
-  return relation.prerelease ? 'prerelease' : 'stable'
-}
-
-/** 状态文案：冲突/兼容与依赖是两套语义，不能共用「已满足」。 */
-function dependencyStatus(status: RelationStatus): string {
-  const kind = status.relation.kind ?? 'requires'
-  if (kind === 'conflicts') {
-    return status.state === 'conflict' ? t('modsOnline.conflict') : t('tools.noConflict')
-  }
-  if (kind === 'compatible') {
-    return status.state === 'conflict' ? t('tools.incompatible') : t('tools.compatible')
-  }
-  if (status.state === 'ok') return t('tools.satisfied')
-  if (status.state !== 'installable') return t('modsOnline.missingDep')
-  /*
-   * 装了但版本不满足 → 「可更新」：安装页里有一份满足区间的版本，去把它装上。
-   * 没装 → 「可安装」。两者都要用户动手，但「更新已有的」和「装一个没有的」
-   * 是两件事，混成同一个词会让人以为本地根本没这个东西。
-   */
-  return status.installedMod ? t('tools.updatable') : t('tools.installable')
-}
-
-/**
  * 依赖表行。
  *
- * 判定走 `resolveRelations`（与安装前检查、卡片上的「缺依赖」标签同一份
- * 实现），版本按**当前选中的 Release** 传：仓库可以按版本区间声明不同关系
+ * 判定与取名都走 `dependencyRows.ts`（四个页面共用一份口径，见那里的注释）：
+ * 这片面板只负责把「当前选中的 Release」和 Dashboard 的两份数据递进去。
+ *
+ * 版本按**当前选中的 Release** 传：仓库可以按版本区间声明不同关系
  * （`release_relations`），拿最新版的关系去解释旧版本会给出错误结论。
  */
 const dependencyRows = computed<DependencyRow[]>(() => {
   const repo = props.repo
   if (!repo) return []
-  const statuses = resolveRelations(repo, props.mods, props.repositories, selectedRelease.value?.tag_name)
-  return statuses.map((status) => {
-    const line = relationLine(status.relation)
-    const row: DependencyRow = {
-      // key 必须带上发布线：同一 GUID + 同一 kind 的「与测试版互斥 / 与正式版
-      // 互斥」是两条不同的声明，只用 guid:kind 会让 v-for 出现重复 key
-      key: `${status.relation.guid}:${status.relation.kind ?? 'requires'}:${line ?? 'any'}`,
-      name: dependencyName(status),
-      // 关系与发布线都交原始枚举、由表格统一翻译：那一列只在出现非 requires
-      // 关系时渲染，requires 行也要有自己的名字，不能留空
-      kind: status.relation.kind ?? 'requires',
-      line,
-      requirement: requirementText(status),
-      status: dependencyStatus(status),
-      tone: status.state === 'ok'
-        ? 'mild' as const
-        : status.state === 'installable' ? 'moderate' as const : 'critical' as const,
-    }
-    /*
-     * 可安装 / 可更新都指向「能提供满足区间版本的仓库卡片」：那是唯一一处
-     * 点一下就能把依赖补上的地方，与卡片上的「缺依赖」标签落在同一个仓库。
-     * 缺依赖（线上根本没有这个 GUID）与冲突没有这种去处，标签保持纯文字。
-     */
-    if (status.state === 'installable' && status.repository) {
-      row.jump = { id: status.repository.id, title: t('modsOnline.viewDependencyInModInstall') }
-    }
-    return row
+  return dependencyRowsFor(relationsForRelease(repo, selectedRelease.value?.tag_name), {
+    mods: props.mods,
+    repositories: props.repositories,
+    ownerRepository: repo,
+    translate: t,
+    pickName: pickI18n,
+    mode: 'mod',
+    jumpToRepository: true,
   })
 })
 

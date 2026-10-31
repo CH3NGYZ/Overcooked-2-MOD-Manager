@@ -213,6 +213,21 @@ export interface LevelSetInfo {
   level_count: number
   /** 解析失败的原因（tag）；成功时无此字段。 */
   error?: string | null
+  /**
+   * 绑定的地图仓库 id（按 `level_set_name + author` 身份匹配）。
+   *
+   * 后端从配置里算出来：前端本来要自己 `mapForLevelSet` 一遍，但「这个集
+   * 有没有线上条目」在依赖表、删除确认、跳转三处都要用，交给后端一次算清
+   * 比每个使用点各匹配一次更不容易漂移。未绑定时为空。
+   */
+  map_id?: string | null
+  /**
+   * 依赖声明快照（来自地图依赖清单）。
+   *
+   * 在线地图条目还在时以在线为准（见 `dependencyRows.ts`）；这条只在仓库
+   * 下线/被删之后兜底，否则地图管理页的依赖表会凭空消失。
+   */
+  relations?: RepositoryRelation[]
 }
 
 /** ZIP 里识别出的一个关卡集（导入前确认用）。 */
@@ -230,7 +245,50 @@ export interface ZipLevelSet {
 
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
 export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'checking' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency' | 'missing_dependency' | 'dependency_conflict'
-export interface InstalledMod { repository_id?: string; repository_ids?: string[]; repository_binding?: RepositoryBinding | null; package_id?: string; package_name?: string; package_name_i18n?: Record<string, string>; package_mod_count?: number; group_i18n?: Record<string, string>; group?: string; prerelease?: boolean; name: string; title?: string; description?: string; product_name?: string; original_filename?: string; guid?: string; has_config?: boolean; has_logs?: boolean; plugin_name?: string; manual_install?: boolean; is_dependency?: boolean; company?: string; copyright?: string; dll_file: string; enabled: boolean; version?: string; version_source: string; update_available: boolean; labels?: InstalledModStatusLabel[]; duplicate_guid: boolean; duplicate_version?: boolean; load_warning?: string; note?: string; status: string }
+export interface InstalledMod {
+  repository_id?: string
+  repository_ids?: string[]
+  repository_binding?: RepositoryBinding | null
+  package_id?: string
+  package_name?: string
+  package_name_i18n?: Record<string, string>
+  package_mod_count?: number
+  group_i18n?: Record<string, string>
+  group?: string
+  prerelease?: boolean
+  name: string
+  title?: string
+  description?: string
+  product_name?: string
+  original_filename?: string
+  guid?: string
+  has_config?: boolean
+  has_logs?: boolean
+  plugin_name?: string
+  manual_install?: boolean
+  is_dependency?: boolean
+  company?: string
+  copyright?: string
+  dll_file: string
+  enabled: boolean
+  version?: string
+  version_source: string
+  update_available: boolean
+  labels?: InstalledModStatusLabel[]
+  duplicate_guid: boolean
+  duplicate_version?: boolean
+  load_warning?: string
+  note?: string
+  status: string
+  /**
+   * 依赖声明快照（安装时写入安装清单，刷新仓库后由 `sync_dependency_snapshots`
+   * 同步为线上声明）。
+   *
+   * 前端优先用在线仓库的 `relations`；仓库不在当前配置里（源下线、自定义源
+   * 被删）时退回这份，否则 MOD 管理页的依赖表会凭空消失。
+   */
+  relations?: RepositoryRelation[]
+}
 export interface ModConfigDocument { guid: string; file_name: string; content: string; revision: string }
 /** MOD 安装预览：本地文件 / 在线直链在安装前的解析结果。 */
 export type ModPreviewRole = 'mod' | 'dependency'
@@ -268,6 +326,13 @@ export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'b
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
+/**
+ * 依赖快照同步的结果（`sync_dependency_snapshots`）。
+ *
+ * 只回报「实际改写了多少条」：没变就不写盘，所以数字是 0 表示本地已经
+ * 和线上声明一致，不是失败。
+ */
+export interface DependencySyncResult { mods_updated: number; maps_updated: number }
 export interface BepInExInstallResult extends OperationResult { wine_override_applied: boolean; wine_override_error?: string; macos_overlay_repaired: boolean }
 export interface ModRecycleEntry {
   id: string
@@ -431,6 +496,13 @@ export interface MapInfo {
    */
   asset_rules?: AssetRule[]
   required_frameworks?: RequiredFramework[]
+  /**
+   * 仓库声明的全部关系（依赖 / 排斥 / 兼容，原始形态）。
+   *
+   * 与 `required_frameworks` 冗余但语义不同：那个只投影「依赖」给框架提示用，
+   * 这里保留原始声明（含冲突/兼容、发布线、可选标记），依赖表要照原样展示。
+   */
+  relations?: RepositoryRelation[]
   /**
    * 这些依赖里当前没满足的那几条。
    *

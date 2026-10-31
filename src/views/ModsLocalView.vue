@@ -22,9 +22,12 @@ import {
   summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
 } from '../statusTags'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
+import { installedModDependencyRows } from '../dependencyRows'
+import type { DependencyRow } from '../dependencyRows'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import DependencyTable from '../components/DependencyTable.vue'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
@@ -1176,6 +1179,61 @@ function packageTagTitle(pkg: ModPackageNode, tagKey: string): string | undefine
   return tagTargetTitle(tagKey, packageTagTargetId(pkg, tagKey))
 }
 
+/* ===== 依赖表 ===== */
+
+/**
+ * 单 MOD 卡片的依赖表行。
+ *
+ * 「用哪份关系声明、目标叫什么、满没满足」全部由 `installedModDependencyRows`
+ * 决定（四个页面共用一份口径，见 `dependencyRows.ts`）：绑定仓库还在配置里
+ * 就以线上声明为准，仓库下线了才退回安装清单快照。页面不重算这些，否则同一条
+ * 声明在安装页和管理页会给出两种结论。
+ *
+ * 刻意不做缓存：行依赖 `mods` / `repositories` 两个 Dashboard ref，函数里读
+ * `.value` 本身就是响应式的；另立一份按 dll_file 的缓存，就得在每次刷新后
+ * 额外失效一次，漏一处就会把上一次的满足情况留在界面上。一次解析只有几条关系。
+ */
+function modDependencyRows(mod: InstalledMod): DependencyRow[] {
+  // 纯依赖 DLL 不是声明方：关系挂在仓库/包上，给它单独画一张表只是噪音
+  if (mod.is_dependency) return []
+  return installedModDependencyRows(mod, {
+    mods: mods.value,
+    repositories: repositories.value,
+    translate: t,
+    pickName: pickI18n,
+  })
+}
+
+/**
+ * 多 DLL 包外壳的依赖表行。
+ *
+ * 包的关系声明挂在仓库上、整包共用，所以整包只出一张表，放在子卡片**上面**
+ * （先说这个包需要什么，再看里面有哪些 DLL）；子卡片不再各自显示，同一段声明
+ * 重复 N 次只是噪音。
+ *
+ * 代表成员取「非依赖且绑定了仓库」的那个：纯依赖 DLL 的清单快照里没有声明，
+ * 直接拿 `pkg.mods[0]` 当代表时，若它恰好是依赖 DLL（DIYLevel 这类包很常见），
+ * 整包的表会凭空消失。口径与 `packageAction` 取 base 一致。
+ */
+function packageDependencyRows(pkg: ModPackageNode): DependencyRow[] {
+  const owner = pkg.mods.find((mod) => !mod.is_dependency && !!repositoryForMod(repositories.value, mod))
+    ?? pkg.mods.find((mod) => !mod.is_dependency)
+    ?? pkg.mods[0]
+  return owner ? modDependencyRows(owner) : []
+}
+
+/**
+ * 依赖表状态标签的跳转：可安装 / 可更新的行落到 MOD 安装页那张仓库卡片。
+ *
+ * 与卡片上「缺依赖」标签走同一个入口（`linkToRepository` →
+ * `#/mods-online?focus=<id>`）；缺依赖、冲突这类线上没有解法的行不带
+ * `jump`，标签本来就不是可点样式，这里也就不可能被调用。
+ */
+function openDependencyJump(row: DependencyRow) {
+  const id = row.jump?.id
+  if (id) linkToRepository(id)
+}
+
 /** 绑定仓库展示：provider + owner/repo（@tag）。 */
 function bindingText(mod: InstalledMod) {
   const binding = mod.repository_binding
@@ -1577,6 +1635,13 @@ function removePackage(node: ModPackageNode) {
               <template #detail>
                 <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
                   :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
+                <!--
+                  依赖声明：和地图管理页详情一样，用一条虚线把表格与上面的安装信息隔开；
+                  没有声明时整块（含这条线）都不渲染，不留一条空分隔线。
+                -->
+                <div v-if="modDependencyRows(mod).length" class="detail-section">
+                  <DependencyTable :rows="modDependencyRows(mod)" @jump="openDependencyJump" />
+                </div>
               </template>
             </LocalItemCard>
 
@@ -1674,6 +1739,13 @@ function removePackage(node: ModPackageNode) {
               <!-- 包展开/收起：同样用 Naive 的折叠过渡 -->
               <n-collapse-transition :show="isPackageExpanded(pkg.key)" display-directive="show">
               <div class="package-body">
+                <!--
+                  整包共用一份依赖声明（关系挂在仓库上），所以只出一张表，且放在
+                  子卡片上面：先说这个包需要什么，再看里面有哪些 DLL。
+                -->
+                <div v-if="packageDependencyRows(pkg).length" class="detail-section">
+                  <DependencyTable :rows="packageDependencyRows(pkg)" @jump="openDependencyJump" />
+                </div>
                 <!--
                   包内子 DLL 行不是独立单元：不加定位锚点，也不参与状态高亮。
                   状态结论属于整个包，高亮只画在外壳上（见 package-shell）。
@@ -1902,6 +1974,18 @@ function removePackage(node: ModPackageNode) {
 .package-body .mod-card {
   --card-bg: var(--oc2-sunken);
   padding-right: calc(14px - 1px);
+}
+
+/*
+ * 详情区的依赖表分隔线：与地图管理页（LevelsView.vue）里那条 `.detail-section`
+ * **同名同值**。scoped 样式逐元素生效，两页各自编译一份、互相看不见，所以这不是
+ * 重复定义而是必须的两份；改这里必须同时改那边，否则同一张依赖表在两个页面的
+ * 上下留白会不一样。
+ */
+.detail-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--oc2-row-line);
 }
 
 /*

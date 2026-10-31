@@ -24,6 +24,7 @@ import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useRepositoryReadme } from '../composables/useRepositoryReadme'
 import { formatVersion, isPrereleaseVersion, versionDisplay } from '../modStatus'
 import { markdownSummary } from '../markdown'
+import { mapDependencyRows } from '../dependencyRows'
 import { matchedReleaseAssets } from '../repositoryAssets'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink } from '../crossLink'
@@ -352,18 +353,22 @@ const { readme: detailReadme, loading: detailReadmeLoading, error: detailReadmeE
 /**
  * 依赖框架表（说明 tab 里、备注上方）。
  *
- * 满足情况由 Dashboard 已扫好的本地 MOD 判定（`frameworkStates`），与卡片上的
- * 「缺依赖」标签、安装前检查弹窗共用同一份结论；GUID 是声明里的原始标识，
- * 没有友好的中文名可显示，所以名称列用等宽字体。
+ * 行由 `dependencyRows.ts` 统一构造，和 MOD 安装页详情、地图管理页详情是同
+ * 一份口径：名称按「在线 MOD 仓库卡片名 → 本地已装 MOD 的包标题 → GUID」
+ * 解析（依赖是框架 MOD，它们本身也是在线仓库，所以有作者起的名字可显示），
+ * 满足时只写「已满足」——版本写在「要求」列，状态列只回答「现在行不行」。
+ *
+ * 满足情况仍由 Dashboard 已扫好的本地 MOD 判定，与卡片上的「缺依赖」标签、
+ * 安装前检查弹窗共用同一份结论。地图的安装入口在设置页，因此行里不带跳转
+ * （`mapDependencyRows` 固定 `mode: 'map'`、`jumpToRepository: false`）。
  */
 const detailDependencies = computed<DependencyRow[]>(() =>
-  frameworkStates(detailMap.value, mods.value).map((state) => ({
-    key: state.guid,
-    name: state.guid,
-    requirement: state.minVersion ? `≥ ${state.minVersion}` : '',
-    status: frameworkStatus(state),
-    tone: state.satisfied ? 'mild' : 'critical',
-  })),
+  mapDependencyRows(detailMap.value, {
+    mods: mods.value,
+    repositories: repositories.value,
+    translate: t,
+    pickName: pickI18n,
+  }),
 )
 
 /* ===== 详情抽屉：版本选择与面板展示值 ===== */
@@ -509,16 +514,6 @@ function describeFramework(state: FrameworkState): string {
   return `${required}（${t('levelSet.installedVersion', { version: state.installedVersion })}）`
 }
 
-/** 详情面板里的一条框架行：满足时显示已装版本，不满足时说明缺什么。 */
-function frameworkStatus(state: FrameworkState): string {
-  if (state.installedVersion) {
-    return state.satisfied
-      ? t('levelSet.installedVersion', { version: state.installedVersion })
-      : t('levelSet.versionMismatch', { version: state.installedVersion })
-  }
-  return state.satisfied ? '' : t('levelSet.notInstalled')
-}
-
 /** 详情面板头部链接：交给后端用系统浏览器打开（与 MOD 详情同一入口）。 */
 async function openLink(url: string) {
   if (!url) return
@@ -573,12 +568,28 @@ function setFlag(flags: typeof refreshing, id: string, value: boolean) {
   flags.value = next
 }
 
+/**
+ * 把线上依赖声明同步进本地清单（`sync_dependency_snapshots`）。
+ *
+ * 依赖只写在源文档里：地图源下线、改版或换仓库后，本地清单里那份安装时
+ * 固化的快照就会过期，依赖表会显示成一条过时的结论。刷新完按线上声明重写
+ * 一遍，离线时依赖表才不会凭空消失。
+ *
+ * 失败**不弹错**：快照只是兜底展示信息，同步不上不该让一次成功的刷新
+ * 变成一条失败提示。
+ */
+async function syncDependencySnapshots() {
+  await api.syncDependencySnapshots().catch(() => undefined)
+}
+
 /** 刷新一张地图的 Release（用户主动点刷新 → 绕过缓存）。 */
 async function refresh(map: MapInfo) {
   if (isRefreshing(map) || isInstalling(map)) return
   setFlag(refreshing, map.id, true)
   try {
     await api.refreshMapReleases(map.id, true)
+    // 刷新完把线上依赖声明写回本地清单（离线时依赖表的兜底来源）
+    await syncDependencySnapshots()
     // Release 缓存变了，卡片与详情都要跟着更新
     await loadMaps()
   } catch (reason) {
@@ -613,6 +624,8 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
   try {
     await api.installMapRelease(map.id, targetTag, asset)
     message.success(t('levelSet.installDone', { name: mapName(map) }))
+    // 安装清单里的依赖快照按线上声明重写，紧接着的状态重读才不会用到旧快照
+    await syncDependencySnapshots()
     await loadLevelSets()
   } catch (reason) {
     message.error(backendMessageOf(reason))
@@ -733,6 +746,7 @@ async function refreshGroup(group: MapGroup) {
     }
   }
   if (firstError !== null) message.error(backendMessageOf(firstError))
+  await syncDependencySnapshots()
   await loadMaps()
 }
 
@@ -760,6 +774,7 @@ async function refreshAll() {
         message.error(backendMessageOf(reason))
       }
     }
+    await syncDependencySnapshots()
     await loadMaps()
   } finally {
     refreshingAll.value = false
@@ -849,7 +864,7 @@ async function refreshAll() {
         :meta-links="detailLinks" :note="detailNote"
         :readme-content="detailReadme?.content ?? ''" :readme-exists="!!detailReadme?.exists"
         :readme-loading="detailReadmeLoading" :readme-error="detailReadmeError"
-        :dependencies="detailDependencies" :dependencies-mono-name="true"
+        :dependencies="detailDependencies"
         :versions="detailVersions" :version="detailSelectedTag"
         :binding-label="t('levelSet.bindingIdentity')" :binding-value="detailBindingValue"
         :release-tag="detailReleaseTag" :published-at="detailRelease?.published_at ?? null"

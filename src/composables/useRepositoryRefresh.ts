@@ -464,6 +464,17 @@ async function refreshEverything(): Promise<string[]> {
       mods.value,
     )
     const releaseErrors = await refreshMany(ordered)
+    /*
+     * 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
+     *
+     * 依赖声明只存在于仓库源文档里：源下线、文档改版或用户删了自定义源之后，
+     * 本地已装 MOD 的依赖信息就只剩安装那一刻的快照。这里按刚刷新到的配置
+     * 重写一遍，保证「在线与本地不一致时以在线为准」。
+     *
+     * 失败吞掉是刻意的：快照是展示用的兜底信息，它同步不上不该让用户看到
+     * 一条整批刷新失败的提示 —— 刷新本身已经成功了。
+     */
+    await api.syncDependencySnapshots().catch(() => undefined)
     lastErrors.value = [...sourceErrors, ...fallbackErrors, ...communityErrors, ...releaseErrors]
     return lastErrors.value
   } finally {

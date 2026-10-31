@@ -9,45 +9,14 @@
  * `kind` / `line` 是两个例外：它们是关系声明里的原始枚举，不是判定结果，
  * 表格统一翻译成文案，调用方不必各写一套映射。
  */
-import type { RelationKind } from '../types'
+import type { DependencyRow } from '../dependencyRows'
 
-/**
- * 状态标签的跳转目标。
- *
- * 只有「点一下就能去解决」的状态才带它：可安装 / 可更新 都意味着安装页
- * 里有一张能提供满足区间版本的仓库卡片，跳过去就是解法的入口；缺依赖
- * （线上根本没有这个 GUID）与冲突没有可去的地方，保持纯文字。
+/*
+ * 行模型定义在 `dependencyRows.ts`：类型跟着构造逻辑走（目标名解析、状态
+ * 文案、跳转目标都在那边算），这里 re-export 只为兼容既有调用点 ——
+ * 「表格长什么样」和「一行是什么」不该分居两处。
  */
-export interface DependencyJump {
-  /** 目标仓库卡片的 `data-focus-id`（安装页据此高亮）。 */
-  id: string
-  /** 悬停说明（调用方已 `t()` 过），说清点了会跳到哪。 */
-  title: string
-}
-
-export interface DependencyRow {
-  /** 稳定 key（GUID / 仓库 id），用于 `v-for`。 */
-  key: string
-  /** 依赖目标名：仓库名、本地 MOD 名，或解析不出名字时的 GUID。 */
-  name: string
-  /** 关系种类；省略时按 `requires` 处理。 */
-  kind?: RelationKind
-  /**
-   * 关系限定的发布线（来自关系的 `prerelease` 三态）。
-   *
-   * `conflicts` 用它区分「排斥某个版本区间」与「和另一条发布线互斥」，
-   * 表格里额外标出「测试版 / 正式版」，用户不用去翻仓库配置才知道指的是哪条线。
-   */
-  line?: 'prerelease' | 'stable'
-  /** 版本要求文本（`≥ 1.2.0`、`1.0 ~ 2.0`）；空表示不限版本。 */
-  requirement?: string
-  /** 状态文案（已满足 / 可安装 / 可更新 / 缺依赖 / 冲突）。 */
-  status: string
-  /** 状态色调，走 `theme.ts` 的统一刻度。 */
-  tone?: 'accent' | 'mild' | 'moderate' | 'severe' | 'critical' | 'muted'
-  /** 有解法可去时给出目标，标签变成可点；省略表示这行无处可去。 */
-  jump?: DependencyJump
-}
+export type { DependencyJump, DependencyRow } from '../dependencyRows'
 </script>
 
 <script setup lang="ts">

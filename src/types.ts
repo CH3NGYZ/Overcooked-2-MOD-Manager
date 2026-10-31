@@ -238,6 +238,24 @@ export interface LevelSetInfo {
   relations?: RepositoryRelation[]
 }
 
+/**
+ * 后端暂存好的一份地图来源（`stage_map_source` 的返回）。
+ *
+ * 本地文件与在线直链走同一条「先暂存、再确认导入」的路：`path` 是后端能读到的
+ * ZIP 绝对路径，`sets` 是里面识别出的关卡集，与 `inspect_level_set_zip` 同构。
+ */
+export interface StagedMapSource {
+  /** ZIP 绝对路径（`staged` 为真时位于后端 cache 目录）。 */
+  path: string
+  /**
+   * `true` = 后端为这次安装下载/复制到 cache 的临时文件，导入结束必须
+   * `discard_map_source` 清理；`false` = 用户自己的本地文件，不能删。
+   */
+  staged: boolean
+  /** ZIP 里识别出的关卡集（空数组 = 不是有效关卡集包）。 */
+  sets: ZipLevelSet[]
+}
+
 /** ZIP 里识别出的一个关卡集（导入前确认用）。 */
 export interface ZipLevelSet {
   dir_name: string
@@ -329,7 +347,18 @@ export interface ModPreview {
   /** 仓库来源本次 Release 的提交日志（Markdown）；手动来源为空串。 */
   release_body: string
 }
-export type ModSourceKind = 'local' | 'url'
+/**
+ * 安装来源：`local` = 本地文件的绝对路径，`url` = 在线直链。
+ *
+ * MOD 与地图都用这两个来源，只有后续处理不同（前者解析成预览、后者暂存成
+ * 关卡集 ZIP），所以来源本身的形状只在这里定义一次。
+ */
+export interface InstallSource {
+  kind: 'local' | 'url'
+  /** 本地文件绝对路径，或在线直链 URL。 */
+  value: string
+}
+export type ModSourceKind = InstallSource['kind']
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }

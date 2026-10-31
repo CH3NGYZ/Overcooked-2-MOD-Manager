@@ -6,6 +6,7 @@ import { CloseOutline } from '@vicons/ionicons5'
 import { api, watchDownloadProgress } from '../services/tauri'
 import type { DownloadProgress } from '../types'
 import { useDashboard } from '../composables/useDashboardStore'
+import { translateBackendMessage } from '../locale/backend'
 
 const { refresh } = useDashboard()
 const progress = ref<DownloadProgress | null>(null)
@@ -106,7 +107,13 @@ async function cancel() {
     <Transition name="dl-card">
       <div v-if="visible && progress" class="dl-mask">
         <section class="dl-card" role="status" aria-live="polite">
-          <h3 class="dl-title">{{ progress.label }}</h3>
+          <!--
+            标题来自后端的 `label`，它是**混合形态**：地图/MOD 资产传的是已本地化的
+            名称（`RW 关卡合集`），直链与在线地图来源传的是 tag（`direct.onlineFile`、
+            `levelSet.installMap`）。走 `translateBackendMessage` 统一处理 ——
+            登记过的 tag 翻译成本地化文案，其它（含已经本地化的名字）原样返回。
+          -->
+          <h3 class="dl-title">{{ translateBackendMessage(progress.label) }}</h3>
 
           <!-- 准备阶段：走 Naive 的不确定进度动画；开始收字节后才走真实百分比 -->
           <div class="dl-progress-row">

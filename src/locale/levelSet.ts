@@ -496,6 +496,18 @@ export const levelSet: DomainMessages = {
     ko: '지도 삭제 실패: {reason}',
     ja: 'マップの削除に失敗しました: {reason}',
   },
+  /*
+   * 清理临时地图时目标不在管理器缓存目录里。
+   * 正常流程不会走到这里（暂存文件一定是后端自己下的），出现即说明前端传错了路径，
+   * 所以文案只说清「能清理的范围」，不诱导用户去重试。
+   */
+  outsideCache: {
+    'zh-CN': '只能清理管理器缓存目录里的临时地图文件',
+    'zh-TW': '只能清理管理器快取目錄裡的暫存地圖檔案',
+    en: 'Only temporary map files inside the manager cache folder can be cleaned up',
+    ko: '관리자 캐시 폴더 안의 임시 지도 파일만 정리할 수 있습니다',
+    ja: 'マネージャーのキャッシュフォルダー内の一時マップファイルのみ削除できます',
+  },
   releaseFiles: {
     'zh-CN': '该 Release 的文件',
     'zh-TW': '該 Release 的檔案',

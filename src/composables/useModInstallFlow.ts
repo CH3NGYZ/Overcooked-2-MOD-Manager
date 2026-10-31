@@ -5,7 +5,7 @@
  * MOD 安装）和仓库卡片共用同一份接线，避免每个入口各写一套状态机。
  *
  * 三段各自独立：
- *   ModInstallSourceDialog  取得预览（本地 / 直链 / 拖放）
+ *   InstallSourceCard       取得来源（本地 / 直链 / 拖放）
  *   ModInstallDialog        展示预览并确认
  *   useModInstallFlow       持有状态、串接两者、负责放弃时清理暂存
  *
@@ -13,16 +13,23 @@
  *   const flow = useModInstallFlow()
  *   flow.openSource()                  // 打开「选择来源」
  *   flow.openPreview(somePreview)      // 直接展示一份已有预览（仓库资产）
- *   模板里挂 <ModInstallSourceDialog v-model:show="flow.sourceOpen" ... />
+ *   模板里挂 <InstallSourceCard v-model:show="flow.sourceOpen"
+ *                             :busy="flow.sourceBusy" :pick-file="flow.pickSourceFile"
+ *                             @select="flow.handleSourceSelect" />
  *         和 <ModInstallDialog v-model:show="flow.previewOpen" ... />
  */
 import { ref } from 'vue'
 import { api } from '../services/tauri'
-import type { ModPreview } from '../types'
+import { useNotify } from '../useNotify'
+import { backendMessageOf } from '../locale/backend'
+import type { InstallSource, ModPreview } from '../types'
 
 export function useModInstallFlow(onInstalled?: () => void | Promise<void>) {
+  const message = useNotify()
   /** 「选择来源」面板是否打开。 */
   const sourceOpen = ref(false)
+  /** 来源卡片正在解析上一条来源（下载 / 预览），期间显示转圈。 */
+  const sourceBusy = ref(false)
   /** 「安装详情」面板是否打开。 */
   const previewOpen = ref(false)
   /** 当前展示的预览。 */
@@ -37,6 +44,32 @@ export function useModInstallFlow(onInstalled?: () => void | Promise<void>) {
   function openPreview(next: ModPreview) {
     preview.value = next
     previewOpen.value = true
+  }
+
+  /**
+   * 来源卡片给到的本地文件 / 直链：解析成预览后交给安装详情弹窗。
+   *
+   * 放在这里而不是两个页面各写一遍：MOD 安装页与 MOD 管理页的「本地选择 /
+   * 直链 / 拖放」确认后要做的事完全一样（解析 → 预览 → 失败提示）。
+   */
+  async function handleSourceSelect(source: InstallSource) {
+    if (sourceBusy.value) return
+    sourceBusy.value = true
+    try {
+      const next = await api.analyzeModSource(source.kind, source.value)
+      // 来源已经解析成功：先收起来源卡片，再打开安装详情
+      sourceOpen.value = false
+      openPreview(next)
+    } catch (reason) {
+      message.error(backendMessageOf(reason))
+    } finally {
+      sourceBusy.value = false
+    }
+  }
+
+  /** 来源卡片的文件选择器：MOD 只认 DLL / ZIP。 */
+  function pickSourceFile() {
+    return api.chooseModFile()
   }
 
   /**
@@ -56,7 +89,8 @@ export function useModInstallFlow(onInstalled?: () => void | Promise<void>) {
   }
 
   return {
-    sourceOpen, previewOpen, preview,
-    openSource, openPreview, discardPreview, handleInstalled,
+    sourceOpen, sourceBusy, previewOpen, preview,
+    openSource, openPreview, handleSourceSelect, pickSourceFile,
+    discardPreview, handleInstalled,
   }
 }

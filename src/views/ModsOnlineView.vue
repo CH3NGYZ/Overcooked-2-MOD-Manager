@@ -18,7 +18,7 @@ import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
-import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
+import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -55,10 +55,13 @@ const detailId = ref<string | null>(null)
  */
 const {
   sourceOpen: installSourceOpen,
+  sourceBusy: installSourceBusy,
   previewOpen: installPreviewOpen,
   preview: installPreview,
   openSource: openInstallSource,
   openPreview: openInstallPreview,
+  handleSourceSelect: handleInstallSourceSelect,
+  pickSourceFile: pickInstallSourceFile,
   discardPreview: discardInstallPreview,
   handleInstalled: handleInstallInstalled,
 } = useModInstallFlow(() => load())
@@ -795,8 +798,8 @@ defineExpose({ refreshAll, visibleCount })
     「安装 MOD」按钮走来源选择；仓库卡片的「安装 / 重装 / 更新」
     先用 preview_only 下载解析，然后直接把预览交给同一个详情弹窗。
   -->
-  <ModInstallSourceDialog v-model:show="installSourceOpen"
-    @preview="openInstallPreview" />
+  <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
+    :pick-file="pickInstallSourceFile" @select="handleInstallSourceSelect" />
   <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />

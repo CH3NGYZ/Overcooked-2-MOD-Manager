@@ -359,13 +359,13 @@ export const toolsUi: DomainMessages = {
     ko: 'MOD 패키지',
     ja: 'MOD パッケージ',
   },
-  // 把 .dll 或 .zip 拖到这里，或点击选择文件
-  dropADllOrZipHereOrClickToChooseAFile: {
-    'zh-CN': '把 .dll 或 .zip 拖到这里，或点击选择文件',
-    'zh-TW': '把 .dll 或 .zip 拖到這裡，或點擊選擇檔案',
-    en: 'Drop a .dll or .zip here, or click to choose a file',
-    ko: '.dll 또는 .zip을 여기로 끌어오거나 클릭해 선택하세요',
-    ja: '.dll または .zip をここにドロップするか、クリックして選択します',
+  // 把 {types} 拖到这里，或点击选择文件（{types} 形如「.dll / .zip」）
+  dropFilesHereOrClickToChoose: {
+    'zh-CN': '把 {types} 拖到这里，或点击选择文件',
+    'zh-TW': '把 {types} 拖到這裡，或點擊選擇檔案',
+    en: 'Drop a {types} file here, or click to choose one',
+    ko: '{types} 파일을 여기로 끌어오거나 클릭해 선택하세요',
+    ja: '{types} をここにドロップするか、クリックして選択します',
   },
   // 下载并解析
   downloadAndAnalyze: {
@@ -399,13 +399,13 @@ export const toolsUi: DomainMessages = {
     ko: '이 압축 파일에는 DLL이 없습니다',
     ja: 'このアーカイブに DLL は含まれていません',
   },
-  // 只支持 .dll 或 .zip 文件
-  onlyDllOrZipFilesAreSupported: {
-    'zh-CN': '只支持 .dll 或 .zip 文件',
-    'zh-TW': '只支援 .dll 或 .zip 檔案',
-    en: 'Only .dll or .zip files are supported',
-    ko: '.dll 또는 .zip 파일만 지원합니다',
-    ja: '.dll または .zip のみ対応しています',
+  // 只支持 {types} 文件（扩展名白名单由来源卡片的 accept 决定）
+  onlyFileTypesAreSupported: {
+    'zh-CN': '只支持 {types} 文件',
+    'zh-TW': '只支援 {types} 檔案',
+    en: 'Only {types} files are supported',
+    ko: '{types} 파일만 지원합니다',
+    ja: '{types} のみ対応しています',
   },
   // {count} 个 DLL · {mods} 个 MOD · {deps} 个依赖
   dllsModsDependencies: {
@@ -431,21 +431,21 @@ export const toolsUi: DomainMessages = {
     ko: '로컬 .dll 또는 .zip 파일을 선택하면 표준 배치 규칙으로 게임 폴더에 설치합니다',
     ja: 'ローカルの .dll または .zip を選ぶと、標準レイアウト規則でゲームフォルダーにインストールします',
   },
-  // 粘贴 zip 或 DLL 的下载直链，由管理器下载并解析。
-  pasteADirectDownloadUrlForAZipOrDllTheManagerDownloadsAndInspectsIt: {
-    'zh-CN': '粘贴 zip 或 DLL 的下载直链，由管理器下载并解析。',
-    'zh-TW': '貼上 zip 或 DLL 的下載直連，由管理器下載並解析。',
-    en: 'Paste a direct download URL for a zip or DLL; the manager downloads and inspects it.',
-    ko: 'zip 또는 DLL의 직접 다운로드 링크를 붙여넣으면 관리자가 내려받아 분석합니다',
-    ja: 'zip または DLL の直リンクを貼り付けると、マネージャーがダウンロードして解析します',
+  // 粘贴 {types} 文件的下载直链，由管理器下载并解析。
+  pasteADirectDownloadUrlForFiles: {
+    'zh-CN': '粘贴 {types} 文件的下载直链，由管理器下载并解析。',
+    'zh-TW': '貼上 {types} 檔案的下載直連，由管理器下載並解析。',
+    en: 'Paste a direct download URL for a {types} file; the manager downloads and analyzes it.',
+    ko: '{types} 파일의 직접 다운로드 링크를 붙여넣으면 관리자가 내려받아 분석합니다',
+    ja: '{types} ファイルの直リンクを貼り付けると、マネージャーがダウンロードして解析します',
   },
-  // 请输入 zip 或 DLL 的直链网址
-  enterADirectUrlToAZipOrDll: {
-    'zh-CN': '请输入 zip 或 DLL 的直链网址',
-    'zh-TW': '請輸入 zip 或 DLL 的直連網址',
-    en: 'Enter a direct URL to a zip or DLL',
-    ko: 'zip 또는 DLL 직접 링크를 입력하세요',
-    ja: 'zip または DLL の直リンクを入力してください',
+  // 请输入 {types} 文件的直链网址
+  enterADirectUrlForFiles: {
+    'zh-CN': '请输入 {types} 文件的直链网址',
+    'zh-TW': '請輸入 {types} 檔案的直連網址',
+    en: 'Enter a direct URL for a {types} file',
+    ko: '{types} 파일의 직접 링크를 입력하세요',
+    ja: '{types} ファイルの直リンクを入力してください',
   },
   // 删除 MOD 包
   deleteModPackage: {

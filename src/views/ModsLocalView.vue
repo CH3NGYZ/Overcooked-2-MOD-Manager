@@ -34,7 +34,7 @@ import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
-import ModInstallSourceDialog from '../components/ModInstallSourceDialog.vue'
+import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -1388,14 +1388,17 @@ async function openModsDirectory() {
 /**
  * 安装流程：来源选择 → 预览 → 确认安装。
  *
- * 三段都由共用组件承担（ModInstallSourceDialog / ModInstallDialog），
- * 本页只持有流程状态；拖放监听在来源组件里，暂存清理在流程 composable 里。
+ * 三段都由共用组件承担（InstallSourceCard / ModInstallDialog），
+ * 本页只持有流程状态；拖放监听在来源卡片里，暂存清理在流程 composable 里。
  */
 const {
   sourceOpen: installSourceOpen,
+  sourceBusy: installSourceBusy,
   previewOpen: installPreviewOpen,
   preview: installPreview,
   openPreview: openInstallPreview,
+  handleSourceSelect: handleInstallSourceSelect,
+  pickSourceFile: pickInstallSourceFile,
   discardPreview: discardInstallPreview,
   handleInstalled: handleInstallInstalled,
 } = useModInstallFlow(() => load())
@@ -1635,8 +1638,8 @@ function removePackage(node: ModPackageNode) {
     安装流程三段：来源选择 → 详情预览 → 确认安装。
     与 MOD 安装页、仓库卡片共用同一套组件与流程，信息完全一致。
   -->
-  <ModInstallSourceDialog v-model:show="installSourceOpen"
-    @preview="openInstallPreview" />
+  <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
+    :pick-file="pickInstallSourceFile" @select="handleInstallSourceSelect" />
   <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />

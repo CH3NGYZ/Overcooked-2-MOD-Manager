@@ -32,6 +32,7 @@ import type {
   LevelSetInfo,
   ZipLevelSet,
   MapInfo,
+  StagedMapSource,
 } from '../types'
 
 let gameStateRevision = 0
@@ -210,6 +211,22 @@ export const api = {
    */
   importLevelSets: (zipPath: string, selected: string[]) =>
     invoke<{ installed: string[] }>('import_level_sets', { zipPath, selected }),
+  /**
+   * 暂存一份地图来源（本地 ZIP 或在线直链），返回里面识别出的关卡集。
+   *
+   * 「安装地图」的本地文件、拖入、直链三个入口都先走这里：来源统一落到后端
+   * 可读的 ZIP 上，`inspect` 与「确认导入」因此只有一份实现。直链会下载到
+   * cache 并标记 `staged`，导入结束后由 `discardMapSource` 清理。
+   */
+  stageMapSource: (kind: 'local' | 'url', value: string) =>
+    invoke<StagedMapSource>('stage_map_source', { source: { kind, value } }),
+  /**
+   * 丢弃 `stageMapSource` 暂存的 ZIP（只删 cache 内的文件）。
+   *
+   * 导入成功 / 失败 / 用户取消都要调用，否则每下载一次地图就在 cache 里留一份。
+   * 不负责任务失败：清理失败不影响导入结果，缓存文件下次启动仍会被清理。
+   */
+  discardMapSource: (path: string) => invoke<void>('discard_map_source', { path }),
   /**
    * 在资源管理器中打开一个关卡集目录。
    *

@@ -44,7 +44,8 @@ import ReleaseDetailPanel from '../components/ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
-import type { LevelSetInfo, MapInfo, ReleaseInfo, Repository } from '../types'
+import InstallSourceCard from '../components/InstallSourceCard.vue'
+import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository, ZipLevelSet } from '../types'
 
 /**
  * 地图下载页。
@@ -79,7 +80,8 @@ import type { LevelSetInfo, MapInfo, ReleaseInfo, Repository } from '../types'
  * ## 安装入口在安装页
  *
  * 和「安装 MOD」一样，「安装地图」属于安装页：线上地图的卡片按钮在卡片上，
- * 本地 ZIP 走页头的「安装地图」。地图管理页只做管理，不放安装入口。
+ * 本地 ZIP / 拖入 / 直链走页头的「安装地图」来源卡片（与 MOD 两页是同一个
+ * `InstallSourceCard`）。地图管理页只做管理，不放安装入口。
  *
  * ## 跳转是双向的（与 MOD 两页一致）
  *
@@ -105,8 +107,10 @@ const loading = ref(true)
 const refreshing = ref<Record<string, boolean>>({})
 const installing = ref<Record<string, boolean>>({})
 const refreshingAll = ref(false)
-/** 「安装地图」按钮的忙碌状态（选 ZIP → 识别 → 确认 → 落盘）。 */
+/** 「安装地图」按钮的忙碌状态（选择 / 拖入 / 直链 → 暂存 → 识别 → 确认 → 落盘）。 */
 const importing = ref(false)
+/** 「安装地图」来源卡片是否打开。 */
+const installSourceOpen = ref(false)
 /** 详情抽屉里当前打开的地图 id（抽屉挂在页面级，卡片只负责打开）。 */
 const detailId = ref<string | null>(null)
 /** 展开的分类 key；空数组表示「用默认值（全展开）」。 */
@@ -664,28 +668,21 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
 }
 
 /**
- * 「安装地图」：从本地 ZIP 导入关卡集。
+ * 「检查结果 + 确认导入」—— 地图安装的唯一实现。
  *
- * 与「安装 MOD」同一职责定位 —— 线上装不进来的东西（作者发的离线包、
- * 自己整理的一堆图）走这个入口。流程与地图管理页原来那套一致：
- * 选 ZIP → 后端识别里面有哪些关卡集 → 确认 → 写入 `levels/`。
+ * 页头的「安装地图」来源卡片（本地选择 / 拖放 / 直链）最终都落到这里：后端
+ * 已经识别出 ZIP 里有哪些关卡集，这里负责确认弹窗、导入调用与暂存清理。
+ * 写两份的代价是确认文案、覆盖提示与「装完重读」的时机各漂各的。
  *
- * 落盘后必须重读本地关卡集：本页的卡片状态由它算出来，否则装完还是
- * 显示「安装」。地图源列表不会因此变化，不重拉。
+ * `staged` 为真表示 `path` 是后端下载到 cache 的临时文件：不论导入成功、失败
+ * 还是用户取消，结束时都要 `discard_map_source` 清掉，否则每装一次地图就在
+ * cache 里留一份 ZIP。用户自己的本地文件（`staged` 为假）绝不能删。
+ *
+ * 落盘后必须重读本地关卡集：本页的卡片状态由它算出来，否则装完还是显示
+ * 「安装」。地图源列表不会因此变化，不重拉。
  */
-async function pickZip() {
-  if (importing.value) return
-  let path: string | null
+async function importZipSets(path: string, found: ZipLevelSet[], staged: boolean) {
   try {
-    path = await api.chooseLevelSetZip()
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-    return
-  }
-  if (!path) return
-  importing.value = true
-  try {
-    const found = await api.inspectLevelSetZip(path)
     if (!found.length) {
       message.warning(t('levelSet.zipWithoutInfo'))
       return
@@ -722,6 +719,29 @@ async function pickZip() {
     const result = await api.importLevelSets(path, selected)
     message.success(t('levelSet.imported', { count: result.installed.length }))
     await loadLevelSets()
+  } catch (reason) {
+    message.error(backendMessageOf(reason))
+  } finally {
+    if (staged) await api.discardMapSource(path).catch(() => undefined)
+  }
+}
+
+/**
+ * 「安装地图」来源卡片：本地文件 / 拖入窗口 / 在线直链三个入口共用。
+ *
+ * 与「安装 MOD」同一职责定位 —— 线上装不进来的东西（作者发的离线包、自己
+ * 整理的图、挂在别处的直链）走这里。三者都先让后端暂存成一份 ZIP
+ * （`stage_map_source`）：暂存顺带做扩展名与 ZIP 结构校验，识别结果与
+ * `inspect_level_set_zip` 同构，所以确认导入只需要一份实现。
+ */
+async function handleInstallSourceSelect(source: InstallSource) {
+  if (importing.value) return
+  importing.value = true
+  try {
+    const staged = await api.stageMapSource(source.kind, source.value)
+    // 来源已经可用：先收起卡片，再交给确认弹窗
+    installSourceOpen.value = false
+    await importZipSets(staged.path, staged.sets, staged.staged)
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -825,7 +845,7 @@ async function refreshAll() {
       <template #prefix><SearchOutline width="14" height="14" /></template>
     </n-input>
     <n-button size="small" type="primary" :loading="importing" :disabled="importing"
-      @click="pickZip">
+      @click="installSourceOpen = true">
       <LinkOutline width="14" height="14" />{{ t('levelSet.installMap') }}
     </n-button>
   </Teleport>
@@ -917,10 +937,20 @@ async function refreshAll() {
     </n-drawer-content>
   </n-drawer>
 
-  <!-- 安装前检查：缺框架时先补装（与 MOD 安装页同一个弹窗与同一套执行顺序） -->
+  <!--
+    安装前检查：缺框架时先补装（与 MOD 安装页同一个弹窗与同一套执行顺序）
+  -->
   <InstallPlanDialog v-model:show="planGate.open.value" :plan="planGate.plan.value"
     :target-label="planGate.target.value"
     @finished="(ready: boolean) => { void planGate.finish(ready) }" />
+
+  <!--
+    「安装地图」来源卡片：与 MOD 两页同一个组件（本地选择 / 拖放 / 直链），
+    只是这里只收 ZIP、标题是「安装地图」。取到来源后统一经后端暂存再确认导入。
+  -->
+  <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
+    :title="t('levelSet.installMap')" :busy="importing" :pick-file="api.chooseLevelSetZip"
+    @select="handleInstallSourceSelect" />
 
   <!--
     整源刷新入口，与 MOD 安装页同一个位置与观感。

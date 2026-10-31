@@ -1112,6 +1112,7 @@ mod tests {
             Default::default(),
             Default::default(),
             vec![],
+            Vec::new(),
         );
         manifest.repository_binding = RepositoryBinding::from_release(&retained, "nightly");
         let found = repository_from_search(&item("Owner", "Official")).unwrap();
@@ -1165,6 +1166,7 @@ mod tests {
             Default::default(),
             Default::default(),
             vec![],
+            Vec::new(),
         );
         manifest.repository_binding = RepositoryBinding::from_release(&installed, "v1.0.0");
         let binding = manifest.repository_binding.clone();
@@ -1413,6 +1415,7 @@ mod tests {
             Default::default(),
             Default::default(),
             vec![],
+            Vec::new(),
         );
         manifest.repository_binding = RepositoryBinding::from_release(&found, "v1.0.0");
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({

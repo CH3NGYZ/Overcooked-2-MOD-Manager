@@ -859,6 +859,7 @@ pub(crate) fn install_manual_mod(
         archive::single_language(&display_name),
         archive::single_language(file_name),
         pending.files().to_vec(),
+        Vec::new(),
     );
     if let Err(error) = archive::write_manifest(&state.config.manifests_dir(), &manifest) {
         log::error!(
@@ -2479,6 +2480,7 @@ fn install_framework_archive(
             archive::single_language("BepInEx"),
             Default::default(),
             pending.files().to_vec(),
+            Vec::new(),
         );
         archive::write_manifest(manifests_dir, &manifest)?;
         pending.commit();
@@ -2653,6 +2655,7 @@ pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, 
         archive::single_language("BepInEx"),
         Default::default(),
         files,
+        Vec::new(),
     );
     archive::write_manifest(&manifests_dir, &fallback)?;
     match recycle_bin::recycle_package(
@@ -5423,6 +5426,10 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
         base_uid: metadata.as_ref().and_then(|meta| meta.base_uid.clone()),
         level_count: metadata.as_ref().map(|meta| meta.levels.len()).unwrap_or(0),
         error: set.error,
+        // 绑定与依赖快照由 `bind_map_relation_snapshot` 补：它需要配置与快照，
+        // 这里只负责把磁盘扫描结果转成模型
+        map_id: None,
+        relations: Vec::new(),
     }
 }
 
@@ -5437,8 +5444,46 @@ pub fn get_level_sets(state: State<'_, AppState>) -> Result<Vec<LevelSetInfo>, S
         return Ok(Vec::new());
     };
     let sets = crate::level_sets::scan_level_sets(&PathBuf::from(game_root));
+    // 快照只读一次：逐条关卡集都去读文件会变成几十次 IO
+    let snapshots = archive::read_map_relation_snapshots(&state.config.manifests_dir());
     log::debug!("关卡集列表读取完成：数量={}", sets.len());
-    Ok(sets.into_iter().map(level_set_to_info).collect())
+    Ok(sets
+        .into_iter()
+        .map(|set| {
+            let mut info = level_set_to_info(set);
+            bind_map_relation_snapshot(&mut info, &config, &snapshots);
+            info
+        })
+        .collect())
+}
+
+/// 给关卡集补上「绑定的地图仓库 id」与依赖快照。
+///
+/// 身份匹配走 `level_sets::level_set_identity_matches`（`levelSetName + author`，
+/// 忽略大小写与首尾空白，空名不匹配）；关系优先用地图依赖快照（安装时/上次
+/// 同步固化的），没有快照才退回仓库当前声明 —— 地图源被删之后依赖表仍在，
+/// 源还在时以线上声明为准。
+fn bind_map_relation_snapshot(
+    info: &mut LevelSetInfo,
+    config: &AppConfig,
+    snapshots: &MapRelationSnapshots,
+) {
+    let Some(map) = config.map_repositories.iter().find(|map| {
+        crate::level_sets::level_set_identity_matches(
+            &info.name,
+            &info.author,
+            &map.level_set_name,
+            &map.author,
+        )
+    }) else {
+        return;
+    };
+    info.map_id = Some(map.id.clone());
+    info.relations = snapshots
+        .entries
+        .get(&map.id)
+        .map(|entry| entry.relations.clone())
+        .unwrap_or_else(|| map.relations.clone());
 }
 
 /// 启用或停用一个关卡集（在 `levels/` 与 `disabled/` 之间移动目录）。
@@ -5794,6 +5839,7 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         cached_release_count: map.cached_releases.len(),
         cached_at: map.releases_cached_at,
         last_error: map.last_error.clone(),
+        relations: map.relations.clone(),
         required_frameworks: declared,
         unmet_frameworks: Vec::new(),
     }
@@ -6101,8 +6147,134 @@ pub async fn install_map_release(
         installed.metadata.version,
         installed.replaced
     );
+    /*
+     * 固化这张地图的依赖声明。
+     *
+     * 关系只存在于地图源文档里，源下线后本地无处可查；这里只落一个 JSON，
+     * 不碰游戏目录、不发请求。写失败只 warn —— 安装本身已经成功，不能因为
+     * 快照写不进去让用户看到一次失败的安装。
+     */
+    record_map_relation_snapshot(&state.config.manifests_dir(), &map);
     Ok(LevelSetImportResult {
         installed: vec![installed.dir_name],
+    })
+}
+
+/// 把一张地图仓库的依赖声明写进地图依赖快照（保留其它已有条目）。
+fn record_map_relation_snapshot(manifest_dir: &Path, map: &MapRepositoryConfig) {
+    let mut snapshots = archive::read_map_relation_snapshots(manifest_dir);
+    snapshots.entries.insert(
+        map.id.clone(),
+        MapRelationSnapshot {
+            repository_id: map.id.clone(),
+            level_set_name: map.level_set_name.clone(),
+            author: map.author.clone(),
+            relations: map.relations.clone(),
+        },
+    );
+    if let Err(error) = archive::write_map_relation_snapshots(manifest_dir, &snapshots) {
+        log::warn!("地图依赖快照写入失败：地图={}，原因={}", map.id, error);
+    }
+}
+
+/// 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
+///
+/// 依赖声明只存在于仓库源文档里，源下线/文件被删之后本地就查不到了；
+/// 所以安装时固化一份，刷新仓库后再按线上声明刷新 —— 在线与本地不一致时以在线为准。
+///
+/// 只读本地文件、不扫描游戏目录、不发网络请求，所以只取短的 `operation` 锁。
+#[tauri::command]
+pub fn sync_dependency_snapshots(
+    state: State<'_, AppState>,
+) -> Result<DependencySyncResult, String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let manifest_dir = state.config.manifests_dir();
+
+    let mut mods_updated = 0usize;
+    for mut manifest in archive::read_manifests(&manifest_dir) {
+        // `manual-` 开头是本地文件/在线直链安装：没有仓库，也就没有线上声明
+        if manifest.repository_id.starts_with("manual-") {
+            continue;
+        }
+        /*
+         * 仓库找不到时原样跳过、不清空：源还没刷新出来、地区/平台不适用、
+         * 自定义源被删都只是「当前查不到」，快照仍是已知的最新事实。
+         */
+        let Some(repo) = config
+            .repositories
+            .iter()
+            .find(|repo| repo.id == manifest.repository_id)
+        else {
+            continue;
+        };
+        let relations = mods::effective_relations(repo, Some(&manifest.release_tag));
+        if relations == manifest.relations {
+            continue;
+        }
+        manifest.relations = relations;
+        match archive::write_manifest(&manifest_dir, &manifest) {
+            Ok(()) => mods_updated += 1,
+            Err(error) => log::warn!(
+                "同步 MOD 依赖快照失败：仓库={}，原因={}",
+                manifest.repository_id,
+                error
+            ),
+        }
+    }
+
+    /*
+     * 地图快照整体重写：配置里没有的地图 id 直接消失 —— 地图源被删掉之后
+     * 这张图确实不再有线上声明，留着旧条目等于给用户看一份幽灵依赖。
+     */
+    let previous = archive::read_map_relation_snapshots(&manifest_dir);
+    let entries: BTreeMap<String, MapRelationSnapshot> = config
+        .map_repositories
+        .iter()
+        .filter(|map| map.enabled)
+        .map(|map| {
+            (
+                map.id.clone(),
+                MapRelationSnapshot {
+                    repository_id: map.id.clone(),
+                    level_set_name: map.level_set_name.clone(),
+                    author: map.author.clone(),
+                    relations: map.relations.clone(),
+                },
+            )
+        })
+        .collect();
+    let changed = entries
+        .iter()
+        .filter(|(id, entry)| previous.entries.get(*id) != Some(*entry))
+        .count()
+        + previous
+            .entries
+            .keys()
+            .filter(|id| !entries.contains_key(*id))
+            .count();
+    let mut maps_updated = 0usize;
+    if changed > 0 {
+        let snapshots = MapRelationSnapshots {
+            schema_version: crate::models::default_snapshot_schema_version(),
+            entries,
+        };
+        match archive::write_map_relation_snapshots(&manifest_dir, &snapshots) {
+            Ok(()) => maps_updated = changed,
+            Err(error) => log::warn!("同步地图依赖快照失败：原因={}", error),
+        }
+    }
+    log::info!(
+        "依赖快照同步完成：MOD={}，地图={}",
+        mods_updated,
+        maps_updated
+    );
+    Ok(DependencySyncResult {
+        mods_updated,
+        maps_updated,
     })
 }
 
@@ -7421,6 +7593,7 @@ fn backup_framework(
             archive::single_language("DIYLevel"),
             Default::default(),
             files,
+            Vec::new(),
         )
     });
     write_backup_manifest(&target, &manifest)?;
@@ -7583,6 +7756,7 @@ fn restore_framework_backup(
             archive::single_language("DIYLevel"),
             Default::default(),
             files,
+            Vec::new(),
         )
     });
     archive::write_manifest(manifests_dir, &manifest)?;
@@ -7853,6 +8027,7 @@ fn install_downloaded_repository(
             package_name_i18n,
             note_i18n,
             pending.files().to_vec(),
+            crate::mods::effective_relations(repo, Some(release_tag)),
         );
         manifest.repository_binding = RepositoryBinding::from_release(repo, release_tag);
         // 固化安装时的分组：之后即使源文档还没刷新出来（刚启动），
@@ -9590,6 +9765,7 @@ mod update_status_tests {
                     archive::single_language("Package"),
                     Default::default(),
                     files.to_vec(),
+                    Vec::new(),
                 ),
             )
             .unwrap();
@@ -9601,6 +9777,7 @@ mod update_status_tests {
                     archive::single_language("Peer"),
                     Default::default(),
                     vec!["BepInEx/plugins/Shared.dll".into()],
+                    Vec::new(),
                 ),
             )
             .unwrap();
@@ -9784,6 +9961,7 @@ mod update_status_tests {
             Default::default(),
             Default::default(),
             vec![],
+            Vec::new(),
         );
         other.repository_binding = RepositoryBinding::from_release(&old_repo, "v1.0.0");
         archive::write_manifest(&workspace.manifests, &other).unwrap();
@@ -9841,6 +10019,7 @@ mod update_status_tests {
                             archive::single_language("Old package"),
                             Default::default(),
                             old_files,
+                            Vec::new(),
                         ),
                     )
                     .unwrap();
@@ -9855,6 +10034,7 @@ mod update_status_tests {
                                 archive::single_language("Peer"),
                                 Default::default(),
                                 vec![shared.into()],
+                                Vec::new(),
                             ),
                         )
                         .unwrap();
@@ -9962,6 +10142,7 @@ mod update_status_tests {
                     Default::default(),
                     Default::default(),
                     files,
+                    Vec::new(),
                 ),
             )
             .unwrap();
@@ -10017,6 +10198,7 @@ mod update_status_tests {
                     Default::default(),
                     Default::default(),
                     vec!["BepInEx/plugins/Main.dll".into()],
+                    Vec::new(),
                 ),
             )
             .unwrap();
@@ -10070,6 +10252,7 @@ mod update_status_tests {
                             archive::single_language(id),
                             Default::default(),
                             vec![dll.into()],
+                            Vec::new(),
                         ),
                     )
                     .unwrap();

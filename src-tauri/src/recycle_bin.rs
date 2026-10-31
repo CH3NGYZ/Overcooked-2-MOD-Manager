@@ -1679,6 +1679,7 @@ mod tests {
                 note_i18n: crate::archive::single_language("original note"),
                 group_i18n: Default::default(),
                 prerelease: false,
+                relations: Vec::new(),
                 installed_at: "2026-10-07T00:00:00Z".into(),
                 files: files.iter().map(|file| (*file).into()).collect(),
             };

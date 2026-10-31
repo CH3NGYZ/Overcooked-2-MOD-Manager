@@ -362,6 +362,64 @@ fn is_safe_dir_name(dir_name: &str) -> bool {
     matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
+/// 两个关卡集身份是否相同：`level_set_name` 与 `author` 都 trim 后忽略大小写比较。
+///
+/// 空名视为解析失败，永不匹配 —— 否则所有读不出 `info` 的目录会抢同一张地图。
+/// 作者允许为空（官方导出的 `info` 常不写作者），空对空算相同。
+pub fn level_set_identity_matches(
+    level_set_name: &str,
+    author: &str,
+    other_level_set_name: &str,
+    other_author: &str,
+) -> bool {
+    let name = level_set_name.trim();
+    let other = other_level_set_name.trim();
+    !name.is_empty()
+        && !other.is_empty()
+        && name.eq_ignore_ascii_case(other)
+        && author.trim().eq_ignore_ascii_case(other_author.trim())
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::level_set_identity_matches;
+
+    #[test]
+    fn identity_matches_ignore_case_and_surrounding_whitespace() {
+        assert!(level_set_identity_matches(
+            "RW_LevelSet",
+            "RW",
+            " rw_levelset ",
+            " rw "
+        ));
+    }
+
+    #[test]
+    fn identity_requires_a_non_empty_level_set_name() {
+        // 空名 = info 没解析出来，不能把所有坏目录都算成同一张地图
+        assert!(!level_set_identity_matches("", "", "", ""));
+        assert!(!level_set_identity_matches("  ", "RW", "RW_LevelSet", "RW"));
+        assert!(!level_set_identity_matches("RW_LevelSet", "RW", "", "RW"));
+    }
+
+    #[test]
+    fn identity_compares_the_author_too() {
+        assert!(!level_set_identity_matches(
+            "RW_LevelSet",
+            "RW",
+            "RW_LevelSet",
+            "Other"
+        ));
+        // 官方导出的 info 常不写作者：两边都空算相同
+        assert!(level_set_identity_matches(
+            "RW_LevelSet",
+            "",
+            "RW_LevelSet",
+            ""
+        ));
+    }
+}
+
 /// 启用或停用一个关卡集：在 `levels/` 与 `disabled/` 之间移动整个目录。
 ///
 /// 返回值是移动后的新路径。目标位置已有同名目录时**拒绝**并返回错误 ——

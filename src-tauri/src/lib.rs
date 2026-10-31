@@ -156,6 +156,7 @@ pub fn run() {
             commands::set_game_path,
             commands::reset_game_path,
             commands::refresh_repository,
+            commands::sync_dependency_snapshots,
             community::refresh_community_repositories,
             community::cancel_community_search,
             repository_readme::get_repository_readme,

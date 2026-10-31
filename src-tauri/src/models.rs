@@ -111,6 +111,15 @@ pub struct LevelSetInfo {
     /// **解析失败不影响开关**：界面照常显示目录名，用户仍可把它移出去。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 绑定的地图仓库 id（按 `level_set_name + author` 身份匹配；未绑定为 `None`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_id: Option<String>,
+    /// 依赖快照（安装时/刷新地图源后写入地图依赖清单）。
+    ///
+    /// 与 MOD 侧同一套回退规则：绑定地图还在配置里时前端用线上声明，
+    /// 地图源被删之后退回这份快照。
+    #[serde(default)]
+    pub relations: Vec<RepositoryRelation>,
 }
 
 /// ZIP 里识别出的一个关卡集（导入前给用户确认用）。
@@ -201,6 +210,12 @@ pub struct InstalledMod {
     /// 安装的 Release 是否为预发布版本（来自安装清单快照）。
     #[serde(default)]
     pub prerelease: bool,
+    /// 依赖快照（安装时写入安装清单，刷新仓库后由 `sync_dependency_snapshots` 同步为线上声明）。
+    ///
+    /// 前端优先用在线仓库的 `relations`；仓库不在当前配置里（源下线/自定义源被删）
+    /// 时退回这份快照，否则 MOD 管理页的依赖表会凭空消失。
+    #[serde(default)]
+    pub relations: Vec<RepositoryRelation>,
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -1184,6 +1199,44 @@ pub struct MapRepositoryConfig {
     pub last_error: Option<String>,
 }
 
+/// 一张地图仓库的依赖快照。管理器的清单，不写进游戏目录。
+///
+/// 关卡集没有安装清单：`level_sets::install_level_set` 只把目录写进
+/// `BepInEx/plugins/OC2DIYLevel/levels|disabled`，`manifests/` 只在回收时用。
+/// 所以地图的依赖声明需要这份管理器侧的清单来固化。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MapRelationSnapshot {
+    pub repository_id: String,
+    pub level_set_name: String,
+    pub author: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<RepositoryRelation>,
+}
+
+/// `<data_root>/manifests/map-relations.json` 的整份内容。
+///
+/// 为什么不用一张清单一个文件：关卡集不是以仓库 id 落地在磁盘上的（身份是
+/// `info` 里的 `levelSetName + author`），读取时只做一次「身份→关系」查表，
+/// 单文件比几十个小文件省一次目录扫描。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapRelationSnapshots {
+    #[serde(default = "default_snapshot_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub entries: BTreeMap<String, MapRelationSnapshot>,
+}
+
+pub(crate) fn default_snapshot_schema_version() -> u32 {
+    1
+}
+
+/// `sync_dependency_snapshots` 的结果：本次真正改写了多少份清单。
+#[derive(Debug, Clone, Serialize)]
+pub struct DependencySyncResult {
+    pub mods_updated: usize,
+    pub maps_updated: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryBundle {
     pub format: String,
@@ -1510,6 +1563,12 @@ pub struct MapInfo {
     pub cached_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// 仓库声明的全部关系（依赖 / 排斥 / 兼容，原始形态）。
+    ///
+    /// `required_frameworks` 只投影「依赖」给框架提示用；依赖表要按原样展示，
+    /// 所以冲突/兼容、发布线、可选标记也必须给前端。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<RepositoryRelation>,
     /// 需要的框架与最低版本（来自 `relations`），供界面提示升级框架。
     ///
     /// 只有**声明**：`installed_version` 恒为 `None`，后端不再为此扫描本地插件。

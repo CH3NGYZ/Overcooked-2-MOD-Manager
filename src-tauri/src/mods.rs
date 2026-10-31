@@ -1,8 +1,8 @@
 use crate::archive::{self, InstallManifest};
 use crate::game::read_file_metadata;
 use crate::models::{
-    AppConfig, Channel, InstalledMod, InstalledModStatusLabel, RepositoryBinding, RepositoryConfig,
-    RepositoryDownloadMode,
+    AppConfig, Channel, InstalledMod, InstalledModStatusLabel, ReleaseRelationOverride,
+    RepositoryBinding, RepositoryConfig, RepositoryDownloadMode, RepositoryRelation,
 };
 use regex::Regex;
 use std::cmp::Ordering;
@@ -25,6 +25,66 @@ use walkdir::WalkDir;
 fn is_restore_staging_component(name: &std::ffi::OsStr) -> bool {
     name.to_str()
         .is_some_and(|text| text.contains(".before-restore-"))
+}
+
+/// 仓库对指定 Release 版本**生效**的关系表（`release_relations` 命中即整体替换）。
+///
+/// 与前端 `modRelations.ts::relationsForRelease` 同语义：所有命中的区间里取
+/// `min_version` 最高（下限为空视为最低优先级）的那条，整体替换仓库级
+/// `relations`；版本为空或没有覆盖表时用仓库级声明。
+///
+/// 为什么不合并：合并会让「新版降低要求」无法表达 —— 覆盖表的意图是
+/// 「这个版本区间用的是另一套依赖」。
+pub fn effective_relations(
+    repo: &RepositoryConfig,
+    release_version: Option<&str>,
+) -> Vec<RepositoryRelation> {
+    let base = repo.relations.clone();
+    let Some(current) = release_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return base;
+    };
+    if repo.release_relations.is_empty() {
+        return base;
+    }
+    let mut best: Option<(&ReleaseRelationOverride, &str)> = None;
+    for entry in &repo.release_relations {
+        let min = entry.min_version.trim();
+        let max = entry.max_version.trim();
+        // 区间比较不出来的版本（tag 不是可解析版本号）当作不命中：
+        // 用一套说不清依据的关系去固化依赖比空表更危险。
+        if !min.is_empty() {
+            match crate::releases::compare_release_versions(current, min) {
+                Some(ordering) if ordering.is_ge() => {}
+                _ => continue,
+            }
+        }
+        if !max.is_empty() {
+            match crate::releases::compare_release_versions(current, max) {
+                Some(ordering) if ordering.is_le() => {}
+                _ => continue,
+            }
+        }
+        let more_specific = match best {
+            None => true,
+            // 下限为空能匹配一切，不该压过更具体的规则
+            Some((_, best_min)) if best_min.is_empty() && !min.is_empty() => true,
+            Some((_, best_min)) if !best_min.is_empty() && !min.is_empty() => {
+                crate::releases::compare_release_versions(min, best_min)
+                    .is_some_and(|ordering| ordering.is_gt())
+            }
+            Some(_) => false,
+        };
+        if more_specific {
+            best = Some((entry, min));
+        }
+    }
+    match best {
+        Some((entry, _)) => entry.relations.clone(),
+        None => base,
+    }
 }
 
 pub fn scan_mods_with_manifests(
@@ -412,6 +472,13 @@ fn inspect_dll(
             || installed_version
                 .as_deref()
                 .is_some_and(crate::releases::is_prerelease_version),
+        /*
+         * 依赖快照：仓库还在配置里时前端用线上声明，仓库不在了（源下线/
+         * 自定义源被删）才退回这份快照 —— 否则依赖表会凭空消失。
+         */
+        relations: manifest
+            .map(|item| item.relations.clone())
+            .unwrap_or_default(),
         name,
         title: metadata.title,
         description: metadata.description,
@@ -1620,6 +1687,7 @@ mod tests {
             crate::archive::single_language("Package"),
             Default::default(),
             vec![relative.into()],
+            Vec::new(),
         );
         manifest.repository_binding =
             crate::models::RepositoryBinding::from_release(&bound, "v98.0.0");
@@ -1699,6 +1767,7 @@ mod tests {
             crate::archive::single_language("Package"),
             Default::default(),
             vec![relative.into()],
+            Vec::new(),
         );
         manifest.repository_binding =
             crate::models::RepositoryBinding::from_release(&beta, "v98.0.0-beta.1");
@@ -2009,6 +2078,7 @@ mod tests {
                 note_i18n: Default::default(),
                 group_i18n: Default::default(),
                 prerelease: false,
+                relations: Vec::new(),
                 installed_at: "2026-10-07T00:00:00Z".into(),
                 files: vec![relative.into()],
             };
@@ -2078,6 +2148,7 @@ mod tests {
             note_i18n: Default::default(),
             group_i18n: group_i18n.clone(),
             prerelease: false,
+            relations: Vec::new(),
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Grouped.dll".into()],
         };
@@ -2119,6 +2190,7 @@ mod tests {
             note_i18n: Default::default(),
             group_i18n: Default::default(),
             prerelease: true,
+            relations: Vec::new(),
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Pre.dll".into()],
         };
@@ -2172,6 +2244,7 @@ mod tests {
             note_i18n: Default::default(),
             group_i18n: Default::default(),
             prerelease: false,
+            relations: Vec::new(),
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Legacy.dll".into()],
         };
@@ -2309,6 +2382,7 @@ mod tests {
                 group_i18n: Default::default(),
                 group: String::new(),
                 prerelease: false,
+                relations: Vec::new(),
                 name: "Old".into(),
                 has_config: false,
                 has_logs: false,
@@ -2345,6 +2419,7 @@ mod tests {
                 group_i18n: Default::default(),
                 group: String::new(),
                 prerelease: false,
+                relations: Vec::new(),
                 name: "New".into(),
                 has_config: false,
                 has_logs: false,
@@ -2551,5 +2626,110 @@ mod tests {
         assert!(!super::is_restore_staging_component(std::ffi::OsStr::new(
             "before-restore"
         )));
+    }
+
+    fn requires(guid: &str, min: &str, max: &str) -> crate::models::RepositoryRelation {
+        crate::models::RepositoryRelation {
+            kind: crate::models::RelationKind::Requires,
+            guid: guid.into(),
+            min_version: min.into(),
+            max_version: max.into(),
+            prerelease: None,
+            optional: false,
+        }
+    }
+
+    fn override_entry(
+        min: &str,
+        max: &str,
+        relations: Vec<crate::models::RepositoryRelation>,
+    ) -> crate::models::ReleaseRelationOverride {
+        crate::models::ReleaseRelationOverride {
+            min_version: min.into(),
+            max_version: max.into(),
+            relations,
+        }
+    }
+
+    #[test]
+    fn effective_relations_falls_back_to_repository_declarations() {
+        let mut repo = binding_repository();
+        repo.relations = vec![requires("base.guid", "1.0.0", "")];
+        // 没有覆盖表、版本为空、版本只有空白：都用仓库级声明
+        assert_eq!(
+            super::effective_relations(&repo, Some("9.9.9")),
+            repo.relations
+        );
+        assert_eq!(super::effective_relations(&repo, None), repo.relations);
+        assert_eq!(
+            super::effective_relations(&repo, Some("  ")),
+            repo.relations
+        );
+    }
+
+    #[test]
+    fn effective_relations_replaces_the_whole_table_on_a_hit() {
+        let mut repo = binding_repository();
+        repo.relations = vec![
+            requires("base.guid", "1.0.0", ""),
+            requires("conflict.guid", "", ""),
+        ];
+        repo.release_relations = vec![override_entry(
+            "1.5.0",
+            "",
+            vec![requires("new.guid", "3.0.0", "")],
+        )];
+        let effective = super::effective_relations(&repo, Some("1.6.0"));
+        assert_eq!(effective, vec![requires("new.guid", "3.0.0", "")]);
+        // 整体替换，不是合并：旧表里的冲突项不能残留
+        assert!(!effective.iter().any(|item| item.guid == "conflict.guid"));
+        // 区间外的版本继续用仓库级声明
+        assert_eq!(
+            super::effective_relations(&repo, Some("1.4.9")),
+            repo.relations
+        );
+    }
+
+    #[test]
+    fn effective_relations_prefers_the_highest_lower_bound() {
+        let mut repo = binding_repository();
+        repo.release_relations = vec![
+            override_entry("", "", vec![requires("any.guid", "1.0.0", "")]),
+            override_entry("1.0.0", "", vec![requires("mid.guid", "2.0.0", "")]),
+            override_entry("2.0.0", "", vec![requires("high.guid", "3.0.0", "")]),
+        ];
+        assert_eq!(
+            super::effective_relations(&repo, Some("2.5.0")),
+            vec![requires("high.guid", "3.0.0", "")]
+        );
+        assert_eq!(
+            super::effective_relations(&repo, Some("1.5.0")),
+            vec![requires("mid.guid", "2.0.0", "")]
+        );
+        // 下限为空的覆盖表匹配一切，但优先级最低：没有更高的下限命中时才用它
+        assert_eq!(
+            super::effective_relations(&repo, Some("0.5.0")),
+            vec![requires("any.guid", "1.0.0", "")]
+        );
+    }
+
+    #[test]
+    fn effective_relations_treats_both_bounds_as_inclusive() {
+        let mut repo = binding_repository();
+        repo.release_relations = vec![override_entry(
+            "1.0.0",
+            "2.0.0",
+            vec![requires("ranged.guid", "1.0.0", "")],
+        )];
+        assert_eq!(
+            super::effective_relations(&repo, Some("1.0.0")),
+            vec![requires("ranged.guid", "1.0.0", "")]
+        );
+        assert_eq!(
+            super::effective_relations(&repo, Some("2.0.0")),
+            vec![requires("ranged.guid", "1.0.0", "")]
+        );
+        // 越界即不命中，退回仓库级（此处为空）
+        assert!(super::effective_relations(&repo, Some("2.0.1")).is_empty());
     }
 }

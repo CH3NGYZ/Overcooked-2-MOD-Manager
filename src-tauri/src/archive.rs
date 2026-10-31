@@ -177,6 +177,12 @@ pub struct InstallManifest {
     /// 否则 MOD 管理页没法在「最新版」旁边标出「预发布」。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub prerelease: bool,
+    /// 安装时仓库声明的关系快照（依赖/排斥/兼容）。
+    ///
+    /// 关系只存在于仓库源文档里，源下线或被删之后本地无处可查；
+    /// 安装那一刻固化一份，刷新仓库后由 `sync_dependency_snapshots` 按线上声明更新。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<crate::models::RepositoryRelation>,
     pub installed_at: String,
     pub files: Vec<String>,
 }
@@ -207,6 +213,8 @@ struct ManifestWire {
     note_i18n: BTreeMap<String, String>,
     #[serde(default)]
     prerelease: bool,
+    #[serde(default)]
+    relations: Vec<crate::models::RepositoryRelation>,
     installed_at: String,
     files: Vec<String>,
 }
@@ -239,6 +247,7 @@ impl From<ManifestWire> for InstallManifest {
             group_i18n,
             note_i18n,
             prerelease: wire.prerelease,
+            relations: wire.relations,
             installed_at: wire.installed_at,
             files: wire.files,
         }
@@ -1689,6 +1698,73 @@ pub fn read_manifests(manifest_dir: &Path) -> Vec<InstallManifest> {
     manifests
 }
 
+/// 地图依赖快照的文件名（与 MOD 安装清单同目录，但不是 TOML，`read_manifests` 不会读它）。
+const MAP_RELATION_SNAPSHOTS_FILE: &str = "map-relations.json";
+
+fn map_relations_path(manifest_dir: &Path) -> PathBuf {
+    manifest_dir.join(MAP_RELATION_SNAPSHOTS_FILE)
+}
+
+/// 读取地图依赖快照。
+///
+/// 缺失或损坏都返回默认值：这份文件只是「线上声明查不到时的回退」，
+/// 读不出来不该让地图管理页打不开，也不该覆盖用户已有的安装状态。
+pub fn read_map_relation_snapshots(manifest_dir: &Path) -> crate::models::MapRelationSnapshots {
+    let path = map_relations_path(manifest_dir);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            log::trace!(
+                "读取地图依赖快照失败或不存在：路径={}，原因={}",
+                path.display(),
+                error
+            );
+            return Default::default();
+        }
+    };
+    match serde_json::from_str(&text) {
+        Ok(snapshots) => snapshots,
+        Err(error) => {
+            log::warn!(
+                "解析地图依赖快照失败，按空快照处理：路径={}，原因={}",
+                path.display(),
+                error
+            );
+            Default::default()
+        }
+    }
+}
+
+/// 写入地图依赖快照（临时文件 + rename，与安装清单同一种落盘方式）。
+pub fn write_map_relation_snapshots(
+    manifest_dir: &Path,
+    snapshots: &crate::models::MapRelationSnapshots,
+) -> Result<(), String> {
+    fs::create_dir_all(manifest_dir).map_err(|e| e.to_string())?;
+    let path = map_relations_path(manifest_dir);
+    /*
+     * 写入一律标当前版本。
+     *
+     * 读出来的默认值（文件缺失或损坏）`schema_version` 是 0，直接回写会把
+     * 0 固化进文件；把版本归一到写入口，调用方就不必各自记得补。
+     */
+    let mut snapshots = snapshots.clone();
+    snapshots.schema_version = crate::models::default_snapshot_schema_version();
+    let text = serde_json::to_string_pretty(&snapshots).map_err(|e| e.to_string())?;
+    let temp = manifest_dir.join(format!(
+        "{}.{}.tmp",
+        MAP_RELATION_SNAPSHOTS_FILE,
+        Uuid::new_v4()
+    ));
+    fs::write(&temp, text).map_err(|e| e.to_string())?;
+    let result = fs::rename(&temp, &path).map_err(|e| e.to_string());
+    match &result {
+        Ok(()) => log::debug!("地图依赖快照写入完成：条目={}", snapshots.entries.len()),
+        Err(error) => log::error!("地图依赖快照写入失败：原因={}", error),
+    }
+    result
+}
+
 pub fn prune_empty_parent_dirs(game_root: &Path, path: &Path) -> Result<(), String> {
     log::trace!("清理空 MOD 目录：起点={}", path.display());
     let root = fs::canonicalize(game_root).unwrap_or_else(|_| game_root.to_path_buf());
@@ -1793,6 +1869,7 @@ pub fn new_manifest(
     package_name_i18n: BTreeMap<String, String>,
     note_i18n: BTreeMap<String, String>,
     files: Vec<String>,
+    relations: Vec<crate::models::RepositoryRelation>,
 ) -> InstallManifest {
     InstallManifest {
         repository_id: repository_id.into(),
@@ -1802,6 +1879,7 @@ pub fn new_manifest(
         group_i18n: BTreeMap::new(),
         note_i18n,
         prerelease: false,
+        relations,
         installed_at: Utc::now().to_rfc3339(),
         files,
     }
@@ -2292,6 +2370,7 @@ mod tests {
                 Default::default(),
                 Default::default(),
                 pending.files().to_vec(),
+                Vec::new(),
             );
             let blocked = root.join("blocked-manifests");
             fs::write(&blocked, b"not a directory").unwrap();
@@ -2672,6 +2751,7 @@ files = []
             single_language("包名 - GitHub"),
             single_language("备注"),
             vec!["a.dll".into()],
+            Vec::new(),
         );
         manifest.group_i18n = single_language("分组");
         let text = toml::to_string_pretty(&manifest).unwrap();
@@ -2691,5 +2771,143 @@ files = []
         map.insert("zh-CN".to_string(), "中文".to_string());
         assert_eq!(primary_translation(&map), "中文");
         assert_eq!(primary_translation(&BTreeMap::new()), "");
+    }
+
+    fn temp_manifest_dir(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("oc2-{tag}-{}", Uuid::new_v4()))
+    }
+
+    fn requires(guid: &str, min: &str) -> crate::models::RepositoryRelation {
+        crate::models::RepositoryRelation {
+            kind: crate::models::RelationKind::Requires,
+            guid: guid.into(),
+            min_version: min.into(),
+            max_version: String::new(),
+            prerelease: None,
+            optional: false,
+        }
+    }
+
+    /// `relations` 在 IPC/JSON 里的形状：只带非空字段，前端按原样展示。
+    #[test]
+    fn relation_serializes_with_only_its_non_empty_fields() {
+        assert_eq!(
+            serde_json::to_value(requires("dep.guid", "1.0.0")).unwrap(),
+            serde_json::json!({
+                "kind": "requires",
+                "guid": "dep.guid",
+                "min_version": "1.0.0",
+            })
+        );
+        let mut optional = requires("dep.guid", "");
+        optional.kind = crate::models::RelationKind::Conflicts;
+        optional.prerelease = Some(true);
+        optional.optional = true;
+        assert_eq!(
+            serde_json::to_value(&optional).unwrap(),
+            serde_json::json!({
+                "kind": "conflicts",
+                "guid": "dep.guid",
+                "prerelease": true,
+                "optional": true,
+            })
+        );
+    }
+
+    /// 依赖快照跟着安装清单一起落盘、一起读回来。
+    #[test]
+    fn manifest_round_trips_relation_snapshot() {
+        let dir = temp_manifest_dir("manifest-relations");
+        let manifest = new_manifest(
+            "repo",
+            "v1.0.0",
+            BTreeMap::new(),
+            BTreeMap::new(),
+            vec!["BepInEx/plugins/a.dll".into()],
+            vec![requires("dep.guid", "1.0.0")],
+        );
+        write_manifest(&dir, &manifest).unwrap();
+        let loaded = read_manifest(&dir, "repo").expect("清单应能读回");
+        assert_eq!(loaded.relations, vec![requires("dep.guid", "1.0.0")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 旧清单没有 `relations` 字段：读成空表，而不是解析失败。
+    #[test]
+    fn legacy_manifest_without_relations_reads_as_empty() {
+        let text = r#"
+repository_id = "legacy"
+release_tag = "v1.0.0"
+installed_at = "2026-01-01T00:00:00Z"
+files = ["BepInEx/plugins/a.dll"]
+"#;
+        let manifest: InstallManifest = toml::from_str(text).unwrap();
+        assert!(manifest.relations.is_empty());
+    }
+
+    /// 地图快照与安装清单同目录，但它不是 TOML，不能被当成一份清单。
+    #[test]
+    fn map_relation_snapshots_are_not_install_manifests() {
+        let dir = temp_manifest_dir("manifest-mixed");
+        write_manifest(
+            &dir,
+            &new_manifest(
+                "repo",
+                "v1.0.0",
+                BTreeMap::new(),
+                BTreeMap::new(),
+                vec!["BepInEx/plugins/a.dll".into()],
+                Vec::new(),
+            ),
+        )
+        .unwrap();
+        let mut snapshots = crate::models::MapRelationSnapshots::default();
+        snapshots.entries.insert(
+            "map".into(),
+            crate::models::MapRelationSnapshot {
+                repository_id: "map".into(),
+                level_set_name: "Set".into(),
+                author: "Author".into(),
+                relations: vec![requires("dep.guid", "1.0.0")],
+            },
+        );
+        write_map_relation_snapshots(&dir, &snapshots).unwrap();
+        assert_eq!(read_manifests(&dir).len(), 1, "只该读到那份 TOML 清单");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 地图快照写读往返；文件损坏或不存在时返回默认值，绝不 panic。
+    #[test]
+    fn map_relation_snapshots_round_trip_and_tolerate_broken_files() {
+        let dir = temp_manifest_dir("map-relations");
+        let mut snapshots = crate::models::MapRelationSnapshots::default();
+        snapshots.entries.insert(
+            "map".into(),
+            crate::models::MapRelationSnapshot {
+                repository_id: "map".into(),
+                level_set_name: "Set".into(),
+                author: "Author".into(),
+                relations: vec![requires("dep.guid", "1.0.0")],
+            },
+        );
+        write_map_relation_snapshots(&dir, &snapshots).unwrap();
+        let loaded = read_map_relation_snapshots(&dir);
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.entries["map"].level_set_name, "Set");
+        assert_eq!(
+            loaded.entries["map"].relations,
+            vec![requires("dep.guid", "1.0.0")]
+        );
+
+        // 损坏：返回默认值而不是 Err/panic
+        std::fs::write(dir.join("map-relations.json"), b"{ not json").unwrap();
+        assert!(read_map_relation_snapshots(&dir).entries.is_empty());
+        // 不存在：同样返回默认值
+        assert!(
+            read_map_relation_snapshots(&dir.join("missing"))
+                .entries
+                .is_empty()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

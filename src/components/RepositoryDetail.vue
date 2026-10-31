@@ -168,19 +168,24 @@ const dependencyRows = computed<DependencyRow[]>(() => {
   const repo = props.repo
   if (!repo) return []
   const statuses = resolveRelations(repo, props.mods, props.repositories, selectedRelease.value?.tag_name)
-  return statuses.map((status) => ({
-    key: `${status.relation.guid}:${status.relation.kind ?? 'requires'}`,
-    name: dependencyName(status),
-    // 关系与发布线都交原始枚举、由表格统一翻译：那一列只在出现非 requires
-    // 关系时渲染，requires 行也要有自己的名字，不能留空
-    kind: status.relation.kind ?? 'requires',
-    line: relationLine(status.relation),
-    requirement: requirementText(status),
-    status: dependencyStatus(status),
-    tone: status.state === 'ok'
-      ? 'mild' as const
-      : status.state === 'installable' ? 'moderate' as const : 'critical' as const,
-  }))
+  return statuses.map((status) => {
+    const line = relationLine(status.relation)
+    return {
+      // key 必须带上发布线：同一 GUID + 同一 kind 的「与测试版互斥 / 与正式版
+      // 互斥」是两条不同的声明，只用 guid:kind 会让 v-for 出现重复 key
+      key: `${status.relation.guid}:${status.relation.kind ?? 'requires'}:${line ?? 'any'}`,
+      name: dependencyName(status),
+      // 关系与发布线都交原始枚举、由表格统一翻译：那一列只在出现非 requires
+      // 关系时渲染，requires 行也要有自己的名字，不能留空
+      kind: status.relation.kind ?? 'requires',
+      line,
+      requirement: requirementText(status),
+      status: dependencyStatus(status),
+      tone: status.state === 'ok'
+        ? 'mild' as const
+        : status.state === 'installable' ? 'moderate' as const : 'critical' as const,
+    }
+  })
 })
 
 /** 仓库文件模式：安装行左侧直接显示 `branch/file_path`。 */

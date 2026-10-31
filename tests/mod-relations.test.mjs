@@ -748,3 +748,48 @@ test('展示：Release 未拉到时用另一条线兜底（不退回 GUID）', (
 test('展示：没有仓库声明该 GUID → undefined（调用方退回 GUID）', () => {
   assert.equal(relationTargetRepository({ guid: 'com.example.nobody' }, [repo()]), undefined)
 })
+
+test('展示：没有 Release 时按 channel 判发布线', () => {
+  const betaOnly = repo({ id: 'beta', plugin_guid: HU_GUID, channel: 'beta', cached_releases: [] })
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: true }, [betaOnly])?.id,
+    'beta',
+  )
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: false }, [betaOnly]),
+    undefined,
+    '限定正式版的关系不该匹配只发测试版的仓库',
+  )
+})
+
+test('展示：只有另一条线的仓库时返回 undefined', () => {
+  const stableOnly = repo({ id: 's', plugin_guid: HU_GUID, cached_releases: [STABLE_RELEASE] })
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: true }, [stableOnly]),
+    undefined,
+  )
+})
+
+test('展示：同仓同时发两条线时两种关系都能命中', () => {
+  const both = repo({
+    id: 'both', plugin_guid: HU_GUID, cached_releases: [STABLE_RELEASE, BETA_RELEASE],
+  })
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: true }, [both])?.id,
+    'both',
+  )
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: false }, [both])?.id,
+    'both',
+  )
+})
+
+test('展示：多个未知发布线候选时不猜兄弟仓库', () => {
+  const first = repo({ id: 'a', plugin_guid: HU_GUID, cached_releases: [] })
+  const second = repo({ id: 'b', plugin_guid: HU_GUID, cached_releases: [] })
+  assert.equal(
+    relationTargetRepository({ kind: 'conflicts', guid: HU_GUID, prerelease: true }, [first, second]),
+    undefined,
+    '两个候选的发布线都未知时，猜错会显示另一条线的仓库名，不如退回本地 MOD 名',
+  )
+})

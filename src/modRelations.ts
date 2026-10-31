@@ -382,17 +382,23 @@ export function unmetRelations(statuses: readonly RelationStatus[]): RelationSta
 /* ===== 展示：关系目标是谁 ===== */
 
 /**
- * 一个仓库当前属于哪条发布线。
+ * 一个仓库是否会发布某条发布线的 Release。
  *
- * `true` = 预发布（测试版），`false` = 正式版，`undefined` = Release 还没拉到、
- * 频道也没限定，暂时无法判断。判据与关系判定同一套（`isPrereleaseVersion`），
- * 避免「卡片说是测试版、关系表却标正式版」。
+ * `true` = 会，`false` = 不会，`undefined` = Release 还没拉到、频道也没限定，
+ * 暂时无法判断。
+ *
+ * 为什么问「会不会发布」而不是「当前属于哪条线」：同一个仓库可以同时发正式版
+ * 与测试版（`channel = all`），只看最新一条 Release 会把整仓判成其中一条，
+ * 另一条线的精确匹配就永远落空。
  */
-function repositoryReleaseLine(repo: Repository): boolean | undefined {
-  const release = (repo.cached_releases ?? []).find((entry) => !entry.draft)
-  if (release) return isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
-  if (repo.channel === 'beta') return true
-  if (repo.channel === 'stable') return false
+function publishesReleaseLine(repo: Repository, line: boolean): boolean | undefined {
+  const releases = (repo.cached_releases ?? []).filter((entry) => !entry.draft)
+  if (releases.length) {
+    return releases.some((entry) =>
+      isPrereleaseVersion(entry.tag_name || entry.version, entry.prerelease) === line)
+  }
+  if (repo.channel === 'beta') return line
+  if (repo.channel === 'stable') return !line
   return undefined
 }
 
@@ -418,14 +424,15 @@ export function relationTargetRepository(
   if (!candidates.length) return undefined
   const want = relation.prerelease
   if (want === undefined) return candidates[0]
-  const exact = candidates.find((repo) => repositoryReleaseLine(repo) === want)
+  const exact = candidates.find((repo) => publishesReleaseLine(repo, want) === true)
   if (exact) return exact
   /*
-   * Release 还没拉到时发布线未知（频道 `all`、缓存为空），精确匹配必然落空。
-   * 此时「未知」候选是唯一还能解释这条关系的仓库：声明方已被排除，另一条线
-   * 的仓库就剩在候选里。宁可先显示它的名字，也不要退回 GUID。
+   * Release 还没拉到时发布线未知（频道 `all`、缓存为空）。只剩一个未知候选时
+   * 它就是唯一还能解释这条关系的仓库（声明方已排除，另一条线就剩它）；多个未知
+   * 候选则无法判断是哪条线，宁可退回本地 MOD 名，也不猜一个错的兄弟仓库。
    */
-  return candidates.find((repo) => repositoryReleaseLine(repo) === undefined)
+  const unknowns = candidates.filter((repo) => publishesReleaseLine(repo, want) === undefined)
+  return unknowns.length === 1 ? unknowns[0] : undefined
 }
 
 /**

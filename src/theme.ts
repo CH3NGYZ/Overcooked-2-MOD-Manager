@@ -1,14 +1,19 @@
 import { computed, ref, watch } from 'vue'
 import { darkTheme, type GlobalTheme, type GlobalThemeOverrides } from 'naive-ui'
+import { systemPrefersDark, watchSystemTheme } from './systemTheme'
 
 /**
  * 主题能力（通用可扩展）：
- *   mode   —— 'dark' | 'light'（Naive UI 内置 darkTheme / null=light）
+ *   mode   —— 'dark' | 'light' | 'auto'（auto 跟随系统外观，见 systemTheme.ts；
+ *             从未选择过时默认 auto，存过值以存值为准）
  *   accent —— 主色调色板键；新增颜色只需在 ACCENTS 里加一行。
  * 两项都持久化到 localStorage，改完立即作用到 NConfigProvider 与 CSS 变量。
  */
 
-export type ThemeMode = 'dark' | 'light'
+/** 用户可见的主题选择；auto 表示跟随系统外观。 */
+export type ThemeMode = 'dark' | 'light' | 'auto'
+/** 真正作用到界面上的模式 —— auto 会先被解析成这两种之一。 */
+export type EffectiveThemeMode = 'dark' | 'light'
 export type AccentKey =
   | 'slate' | 'gray' | 'rose'
   | 'red' | 'orange' | 'amber'
@@ -53,7 +58,42 @@ const ACCENT_KEYS = ACCENTS.map((entry) => entry.key as string)
 /** 默认主色：琥珀色（未保存过选择时使用）。 */
 const DEFAULT_ACCENT: AccentKey = 'amber'
 
-export const themeMode = ref<ThemeMode>(localStorage.getItem(MODE_KEY) === 'light' ? 'light' : 'dark')
+/**
+ * 合法的持久化值。历史版本只存过 dark/light，读到非法值时当成「没选过」。
+ */
+const MODE_VALUES: ThemeMode[] = ['dark', 'light', 'auto']
+
+/**
+ * 从未选择过时跟随系统外观。
+ *
+ * 用户在新机器上第一次打开，界面应该和系统一致；一旦他自己点过主题按钮，
+ * 存下来的选择就是权威 —— 之后即使系统换外观也不再跟着变，只有选回
+ * 「跟随系统」才重新跟随。
+ */
+const DEFAULT_MODE: ThemeMode = 'auto'
+
+export const themeMode = ref<ThemeMode>(
+  MODE_VALUES.includes(localStorage.getItem(MODE_KEY) as ThemeMode)
+    ? (localStorage.getItem(MODE_KEY) as ThemeMode)
+    : DEFAULT_MODE,
+)
+
+/**
+ * 系统当前是否深色（只在 auto 下被读取）。
+ *
+ * 首次取值是同步的本地查询，不阻塞首帧；之后由 `watchSystemTheme` 更新 ——
+ * 它同时接 WebView 的 prefers-color-scheme 与宿主的 theme-changed 事件，
+ * 两个平台谁先通知都算数（见 systemTheme.ts 的平台说明）。
+ */
+const systemDark = ref(systemPrefersDark())
+watchSystemTheme((dark) => {
+  systemDark.value = dark
+})
+
+/** 真正生效的模式：auto 解析成系统当前外观，其余原样。界面配色一律读它。 */
+export const resolvedMode = computed<EffectiveThemeMode>(
+  () => (themeMode.value === 'auto' ? (systemDark.value ? 'dark' : 'light') : themeMode.value),
+)
 export const accentKey = ref<AccentKey>(
   ACCENT_KEYS.includes(localStorage.getItem(ACCENT_KEY) ?? '')
     ? (localStorage.getItem(ACCENT_KEY) as AccentKey)
@@ -75,9 +115,9 @@ export const accent = computed(() =>
 )
 
 /** Naive UI 主题对象：浅色用内置亮色（不传 theme）。 */
-export const naiveTheme = computed<GlobalTheme | null>(() => (themeMode.value === 'dark' ? darkTheme : null))
+export const naiveTheme = computed<GlobalTheme | null>(() => (resolvedMode.value === 'dark' ? darkTheme : null))
 
-export const isDark = computed(() => themeMode.value === 'dark')
+export const isDark = computed(() => resolvedMode.value === 'dark')
 
 /** 两种模式的表面色板，供组件内 scoped 样式与全局 CSS 变量使用。 */
 const SURFACES = {
@@ -93,7 +133,7 @@ const SURFACES = {
   },
 } as const
 
-export const surfaces = computed(() => SURFACES[themeMode.value])
+export const surfaces = computed(() => SURFACES[resolvedMode.value])
 
 /**
  * Naive UI 变量覆盖：随 mode + accent 变化。
@@ -106,7 +146,7 @@ export const surfaces = computed(() => SURFACES[themeMode.value])
 export const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const surface = surfaces.value
   const main = accent.value
-  const contrast = accentContrast(main.color, themeMode.value)
+  const contrast = accentContrast(main.color, resolvedMode.value)
   return {
     common: {
       fontFamily: "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
@@ -289,7 +329,7 @@ interface ToneSpec {
 }
 
 /** 深色/浅色无关的固定红：表达「数据/来源不可信」，不该随主题变浅。 */
-function criticalColor(mode: ThemeMode): string {
+function criticalColor(mode: EffectiveThemeMode): string {
   return mode === 'dark' ? '#f87171' : '#dc2626'
 }
 
@@ -297,14 +337,14 @@ function criticalColor(mode: ThemeMode): string {
 function toneSpecs(): Record<TagTone, ToneSpec> {
   const surface = surfaces.value
   const main = accent.value
-  const contrast = accentContrast(main.color, themeMode.value)
+  const contrast = accentContrast(main.color, resolvedMode.value)
   const muted = surface.text3
   return {
     accent: { color: main.color, tagTint: 0.82 },
     mild: { color: tint(contrast, muted, 0.32), tagTint: 0.9, tagBorderTint: 0.6 },
     moderate: { color: contrast, tagTint: 0.84 },
     severe: { color: contrast, tagTint: 0.74 },
-    critical: { color: criticalColor(themeMode.value), tagTint: 0.8 },
+    critical: { color: criticalColor(resolvedMode.value), tagTint: 0.8 },
     muted: { color: muted, tagTint: 0.86, tagBorderTint: 0.7 },
   }
 }
@@ -482,8 +522,8 @@ export function applyThemeCssVars() {
      * 取主色旋转 180° 的色相并保持相同的饱和度/亮度档位，
      * 因此切换主题色时它跟着变，而不是写死成某个颜色。
      */
-    '--oc2-accent-contrast': accentContrast(main.color, themeMode.value),
-    '--oc2-accent-contrast-hover': hoverOf(accentContrast(main.color, themeMode.value)),
+    '--oc2-accent-contrast': accentContrast(main.color, resolvedMode.value),
+    '--oc2-accent-contrast-hover': hoverOf(accentContrast(main.color, resolvedMode.value)),
   }
   /*
    * 每档语义色的 CSS 变量，供 scoped 样式使用（标签/按钮之外的自绘元素）。
@@ -497,15 +537,11 @@ export function applyThemeCssVars() {
     vars[`--oc2-tone-${tone}-text`] = value.textColor
   }
   for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value)
-  root.style.colorScheme = themeMode.value
-  document.documentElement.classList.toggle('dark', themeMode.value === 'dark')
+  root.style.colorScheme = resolvedMode.value
+  document.documentElement.classList.toggle('dark', resolvedMode.value === 'dark')
 }
 
-watch([themeMode, accentKey], applyThemeCssVars, { immediate: true })
-
-export function setThemeMode(mode: ThemeMode) {
-  themeMode.value = mode
-}
+watch([resolvedMode, accentKey], applyThemeCssVars, { immediate: true })
 
 export function setAccent(key: AccentKey) {
   accentKey.value = key
@@ -516,6 +552,13 @@ export function cycleAccent() {
   accentKey.value = ACCENTS[(index + 1) % ACCENTS.length].key
 }
 
-export function toggleMode() {
-  themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark'
+/**
+ * 三态循环：深色 → 浅色 → 跟随系统 → 深色。
+ *
+ * 标题栏那颗按钮按这个顺序切换，与三种图标一一对应（月亮 / 太阳 / 半明半暗）。
+ */
+export function cycleThemeMode() {
+  const order: ThemeMode[] = ['dark', 'light', 'auto']
+  const index = order.indexOf(themeMode.value)
+  themeMode.value = order[(index + 1) % order.length]
 }

@@ -111,6 +111,14 @@ export const nav: DomainMessages = {
     ko: '라이트',
     ja: 'ライト',
   },
+  // 跟随系统外观（深/浅由系统决定）
+  auto: {
+    'zh-CN': '跟随系统',
+    'zh-TW': '跟隨系統',
+    en: 'Follow system',
+    ko: '시스템 설정 따르기',
+    ja: 'システムに合わせる',
+  },
   // 主题色
   accent: {
     'zh-CN': '主题色',

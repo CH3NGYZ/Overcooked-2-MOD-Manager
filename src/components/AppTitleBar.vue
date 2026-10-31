@@ -3,10 +3,10 @@ import { computed, ref } from 'vue'
 import { NDropdown, NPopover, NSpin } from 'naive-ui'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  CloseOutline, ContrastOutline, ContractOutline, LanguageOutline, MoonOutline, PlayOutline,
-  RemoveOutline, SquareOutline, StopOutline, SunnyOutline,
+  CloseOutline, ContrastOutline, ContractOutline, ExpandOutline, LanguageOutline, MoonOutline,
+  PlayOutline, RemoveOutline, SquareOutline, StopOutline, SunnyOutline,
 } from '@vicons/ionicons5'
-import { ACCENTS, accentKey, cycleAccent, isDark, setAccent, setThemeMode, themeMode } from '../theme'
+import { ACCENTS, accentKey, cycleAccent, cycleThemeMode, isDark, resolvedMode, setAccent, themeMode } from '../theme'
 import { useNotify } from '../useNotify'
 import { currentLocaleLabel, locale, localeOptions, setLocale, t, type Locale } from '../i18n'
 import { useUiZoom } from '../composables/useUiZoom'
@@ -61,7 +61,19 @@ const accentLabel = (key: string) => t(ACCENT_NAMES[key] ?? key)
 /** 当前主题色块（触发器按钮用），矩阵里直接读 ACCENTS。 */
 const accentSwatch = computed(() => ACCENTS.find((entry) => entry.key === accentKey.value)?.swatch ?? '#14b8a6')
 
-const themeLabel = computed(() => (isDark.value ? t('nav.dark') : t('nav.light')))
+/**
+ * 主题按钮的提示文案。
+ *
+ * 三态里只有 auto 是「用户看不到结果」的：界面此刻到底是深还是浅，取决于
+ * 系统外观。所以 auto 下把当前实际模式缀在后面（`跟随系统 · 深色`），
+ * 否则用户点了两下会以为按钮没生效。
+ */
+const themeLabel = computed(() => {
+  if (themeMode.value === 'auto') {
+    return `${t('nav.auto')} · ${resolvedMode.value === 'dark' ? t('nav.dark') : t('nav.light')}`
+  }
+  return isDark.value ? t('nav.dark') : t('nav.light')
+})
 
 // 窗口控制：浏览器预览下按钮仍可见，但调用被安全吞掉（不抛错）。
 async function minimize() { await safeTauri(async () => appWindow?.minimize()) }
@@ -212,7 +224,7 @@ defineExpose({ onUnmountedCleanup })
       <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="onZoomSelect">
         <button class="pill" type="button" :title="t('nav.uiScale')">
-          <ContrastOutline width="15" height="15" />
+          <ExpandOutline width="15" height="15" />
           <span>{{ zoomPercent }}%</span>
           <span class="caret">▾</span>
         </button>
@@ -229,11 +241,16 @@ defineExpose({ onUnmountedCleanup })
         </button>
       </n-dropdown>
 
-      <!-- 主题模式 -->
-      <button class="pill icon-only" type="button" :title="themeLabel"
-        @click="setThemeMode(themeMode === 'dark' ? 'light' : 'dark')">
-        <MoonOutline v-if="isDark" width="16" height="16" />
-        <SunnyOutline v-else width="16" height="16" />
+      <!--
+        主题模式：三态循环 —— 深色 → 浅色 → 跟随系统 → 深色。
+        图标与状态一一对应（月亮 / 太阳 / 半明半暗），不用下拉：
+        这一颗是一键循环，多一层菜单反而多一次点击。
+      -->
+      <button class="pill icon-only" type="button" :title="themeLabel" :aria-label="themeLabel"
+        @click="cycleThemeMode">
+        <MoonOutline v-if="themeMode === 'dark'" width="16" height="16" />
+        <SunnyOutline v-else-if="themeMode === 'light'" width="16" height="16" />
+        <ContrastOutline v-else width="16" height="16" />
       </button>
 
       <!-- 主题色：3×3 色块矩阵，只显示颜色 -->

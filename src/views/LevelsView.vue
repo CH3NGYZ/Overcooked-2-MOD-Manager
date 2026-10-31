@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NButton, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
@@ -18,6 +18,7 @@ import {
   frameworkStates,
   levelSetCardTags,
   levelSetDisplayName,
+  levelSetGroup,
   levelSetState,
   mapForLevelSet,
   mapVersionForLevelSet,
@@ -104,6 +105,72 @@ const sortedSets = computed(() =>
  * 「最新版」，那是无根据的结论（见 `levelSetStatus.ts` 的 `mapVersionRefs`）。
  */
 const versionRefs = computed(() => mapVersionRefs(maps.value))
+
+/** 分组节点：一个折叠项 = 一个作者（地图的分组语义就是作者）。 */
+interface LevelSetGroupNode {
+  key: string
+  label: string
+  sets: LevelSetInfo[]
+}
+
+/**
+ * 本地关卡集按作者分组。
+ *
+ * 组顺序 = `sortedSets` 里首次出现的顺序，组内也保持 `sortedSets` 的顺序：
+ * 这里**不再排一次序**，否则同一个作者下的卡片顺序会和平铺时代不一致，
+ * 「启用在前、再按展示名」的既有观感会被打乱。
+ *
+ * 分组口径全部由 `levelSetStatus.ts` 的 `levelSetGroup` 决定（线上声明 →
+ * 本地 author → 未分组），页面只负责取展示名与折叠。
+ */
+const groups = computed<LevelSetGroupNode[]>(() => {
+  const buckets = new Map<string, { label: string; sets: LevelSetInfo[] }>()
+  for (const set of sortedSets.value) {
+    const group = levelSetGroup(set, maps.value)
+    let bucket = buckets.get(group.key)
+    if (!bucket) {
+      // 展示名按当前语言取；作者名没有多语言表时退回规范名本身，
+      // 两者都空才是「未分组」（`levelSetGroup` 已经把这种情况归到同一个键）
+      bucket = {
+        label: pickI18n(group.labelI18n, group.canonical) || t('dialogs.ungrouped'),
+        sets: [],
+      }
+      buckets.set(group.key, bucket)
+    }
+    bucket.sets.push(set)
+  }
+  return [...buckets.entries()].map(([key, bucket]) => ({ key, label: bucket.label, sets: bucket.sets }))
+})
+
+const allGroupKeys = computed(() => groups.value.map((group) => group.key))
+/** 默认全部展开：新出现的分组自动展开，用户的折叠选择单独记住。 */
+const collapsedGroups = ref<string[]>([])
+const groupsExpanded = computed(() =>
+  allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
+)
+function onGroupsExpanded(names: string[]) {
+  const open = new Set(names)
+  collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
+}
+
+/**
+ * 跨页跳转的落点如果落在收起的组里，先把那个组展开。
+ *
+ * `highlightId` 来自地图下载页的 `focus=<地图 id>`；折叠组的卡片根本不会
+ * 渲染，`useFocusHighlight` 靠 `data-focus-id` 找元素就一直落空（它最多重试
+ * 3 秒），高亮与滚动会静默失效。监听 `groups` 而不是只在挂载时判断一次：
+ * 路由参数比 `sets` / `maps` 先到是常态，等数据到了分组才有内容可查。
+ */
+function expandGroupForHighlight() {
+  const id = highlightId.value
+  if (!id) return
+  const hit = sets.value.find((set) => focusIdOf(set) === id)
+  if (!hit) return
+  const key = levelSetGroup(hit, maps.value).key
+  if (!collapsedGroups.value.includes(key)) return
+  collapsedGroups.value = collapsedGroups.value.filter((value) => value !== key)
+}
+watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 
 /**
  * 在线 MOD 仓库，只留「在当前地区真实存在」的那些。
@@ -567,111 +634,128 @@ async function checkUpdates() {
     <n-empty v-if="!loading && !sortedSets.length" class="empty"
       :description="t('levelSet.noLevelSets')" />
 
-    <div v-else class="level-list">
-      <LocalItemCard v-for="set in sortedSets" :key="set.dir_name"
-        :data-focus-id="focusIdOf(set)"
-        :enabled="set.enabled"
-        :toggle-loading="!!busy[set.dir_name]"
-        :title="levelSetDisplayName(set, locale)"
-        :title-tooltip="set.error ? translateBackendMessage(set.error) : levelSetDisplayName(set, locale)"
-        :disabled="!set.enabled"
-        :expanded="expandedDir === set.dir_name"
-        :focus-flash="!!highlightId && highlightId === focusIdOf(set)"
-        :tools-min-width="toolsMinWidth"
-        :tool-gap="TOOL_GAP"
-        :tool-button-width="TOOL_BUTTON_WIDTH"
-        @toggle="(value: boolean) => toggle(set, value)"
-        @activate="activate(set)">
-        <!-- 状态标签：依赖缺失在前，版本结论在后；「有更新」可点跳下载页 -->
-        <template #status>
-          <span class="tag-group">
-            <n-tag v-for="tag in tagsOf(set)" :key="tag.kind + tag.text" size="tiny"
-              :bordered="false" class="state-tag"
-              :class="{ 'state-tag--link': !!tag.mapId }"
-              :color="tagColorForAny(tag.tone)" :title="tagTitle(set, tag)"
-              @click.stop="onTagClick(tag)">
-              {{ t(tag.text) }}
-            </n-tag>
-          </span>
-        </template>
-
-        <!-- 工具栏：打开目录、删除（游戏运行时禁止删除） -->
-        <template #tools>
-          <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
-            @click.stop="openDirectory(set)">
-            <FolderOpenOutline width="14" height="14" />
-          </n-button>
-          <n-button size="tiny" quaternary type="error" :title="t('modsLocal.delete')"
-            :disabled="kitchenRunning || !!deleting[set.dir_name]"
-            :loading="!!deleting[set.dir_name]" @click.stop="remove(set)">
-            <TrashOutline width="14" height="14" />
-          </n-button>
-        </template>
-
-        <!-- 展开：元数据 + 绑定地图 + 框架依赖 -->
-        <template #detail>
-          <div class="detail-grid">
-            <div v-if="set.name_zh" class="detail-row">
-              <span class="detail-label">{{ t('levelSet.nameZh') }}</span>
-              <span class="detail-value">{{ set.name_zh }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">{{ t('modsLocal.author') }}</span>
-              <span class="detail-value">{{ set.author || '—' }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">{{ t('levelSet.version') }}</span>
-              <span class="detail-value">{{ set.version || '—' }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">{{ t('levelSet.levelCountLabel') }}</span>
-              <span class="detail-value">{{ set.level_count }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">{{ t('levelSet.directory') }}</span>
-              <span class="detail-value mono">{{ set.dir_name }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">{{ t('levelSet.location') }}</span>
-              <span class="detail-value mono">{{ set.enabled ? 'levels/' : 'disabled/' }}</span>
-            </div>
-            <!-- 解析失败：原因放在详情里，卡片行只留标签 -->
-            <div v-if="set.error" class="detail-row">
-              <span class="detail-label">{{ t('levelSet.parseError') }}</span>
-              <span class="detail-value is-error">{{ translateBackendMessage(set.error) }}</span>
-            </div>
-            <div v-if="hintOf(set)" class="detail-row">
-              <span class="detail-label">{{ t('levelSet.statusHint') }}</span>
-              <span class="detail-value">{{ hintOf(set) }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">{{ t('levelSet.boundMap') }}</span>
-              <span class="detail-value">
-                <template v-if="bindingOf(set)">
-                  {{ bindingOf(set)?.name }}
-                  <span v-if="bindingOf(set)?.tag" class="mono bound-tag">{{ bindingOf(set)?.tag }}</span>
-                  <!-- 反方向跳转：从管理页看这张图在下载页的样子 -->
-                  <n-button size="tiny" text type="primary" class="bound-link"
-                    @click.stop="linkToMap(bindingOf(set)?.map.id)">
-                    {{ t('levelSet.viewInMapDownload') }}
-                  </n-button>
-                </template>
-                <template v-else>—</template>
-              </span>
-            </div>
-          </div>
-
+    <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
+    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
+      @update:expanded-names="onGroupsExpanded">
+      <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
+        <template #header>
           <!--
-            依赖声明：本地缺失的标红，用户重新启用前就能看到；与下载页详情、
-            MOD 安装页详情共用同一张依赖表（名称是人类可读的仓库名/包名，
-            不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
+            分组标题只显示分组名。
+            计数（启用 / 停用）由页头聚合标签承担，组标题再挂一遍标签只会
+            把标题挤窄，并把同一信息说两次。
           -->
-          <div v-if="dependencyRows(set).length" class="detail-section">
-            <DependencyTable :rows="dependencyRows(set)" />
+          <div class="group-head">
+            <b>{{ node.label }}</b>
           </div>
         </template>
-      </LocalItemCard>
-    </div>
+
+        <div class="map-grid">
+          <LocalItemCard v-for="set in node.sets" :key="set.dir_name"
+            :data-focus-id="focusIdOf(set)"
+            :enabled="set.enabled"
+            :toggle-loading="!!busy[set.dir_name]"
+            :title="levelSetDisplayName(set, locale)"
+            :title-tooltip="set.error ? translateBackendMessage(set.error) : levelSetDisplayName(set, locale)"
+            :disabled="!set.enabled"
+            :expanded="expandedDir === set.dir_name"
+            :focus-flash="!!highlightId && highlightId === focusIdOf(set)"
+            :tools-min-width="toolsMinWidth"
+            :tool-gap="TOOL_GAP"
+            :tool-button-width="TOOL_BUTTON_WIDTH"
+            @toggle="(value: boolean) => toggle(set, value)"
+            @activate="activate(set)">
+            <!-- 状态标签：依赖缺失在前，版本结论在后；「有更新」可点跳下载页 -->
+            <template #status>
+              <span class="tag-group">
+                <n-tag v-for="tag in tagsOf(set)" :key="tag.kind + tag.text" size="tiny"
+                  :bordered="false" class="state-tag"
+                  :class="{ 'state-tag--link': !!tag.mapId }"
+                  :color="tagColorForAny(tag.tone)" :title="tagTitle(set, tag)"
+                  @click.stop="onTagClick(tag)">
+                  {{ t(tag.text) }}
+                </n-tag>
+              </span>
+            </template>
+
+            <!-- 工具栏：打开目录、删除（游戏运行时禁止删除） -->
+            <template #tools>
+              <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
+                @click.stop="openDirectory(set)">
+                <FolderOpenOutline width="14" height="14" />
+              </n-button>
+              <n-button size="tiny" quaternary type="error" :title="t('modsLocal.delete')"
+                :disabled="kitchenRunning || !!deleting[set.dir_name]"
+                :loading="!!deleting[set.dir_name]" @click.stop="remove(set)">
+                <TrashOutline width="14" height="14" />
+              </n-button>
+            </template>
+
+            <!-- 展开：元数据 + 绑定地图 + 框架依赖 -->
+            <template #detail>
+              <div class="detail-grid">
+                <div v-if="set.name_zh" class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.nameZh') }}</span>
+                  <span class="detail-value">{{ set.name_zh }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('modsLocal.author') }}</span>
+                  <span class="detail-value">{{ set.author || '—' }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.version') }}</span>
+                  <span class="detail-value">{{ set.version || '—' }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.levelCountLabel') }}</span>
+                  <span class="detail-value">{{ set.level_count }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.directory') }}</span>
+                  <span class="detail-value mono">{{ set.dir_name }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.location') }}</span>
+                  <span class="detail-value mono">{{ set.enabled ? 'levels/' : 'disabled/' }}</span>
+                </div>
+                <!-- 解析失败：原因放在详情里，卡片行只留标签 -->
+                <div v-if="set.error" class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.parseError') }}</span>
+                  <span class="detail-value is-error">{{ translateBackendMessage(set.error) }}</span>
+                </div>
+                <div v-if="hintOf(set)" class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.statusHint') }}</span>
+                  <span class="detail-value">{{ hintOf(set) }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.boundMap') }}</span>
+                  <span class="detail-value">
+                    <template v-if="bindingOf(set)">
+                      {{ bindingOf(set)?.name }}
+                      <span v-if="bindingOf(set)?.tag" class="mono bound-tag">{{ bindingOf(set)?.tag }}</span>
+                      <!-- 反方向跳转：从管理页看这张图在下载页的样子 -->
+                      <n-button size="tiny" text type="primary" class="bound-link"
+                        @click.stop="linkToMap(bindingOf(set)?.map.id)">
+                        {{ t('levelSet.viewInMapDownload') }}
+                      </n-button>
+                    </template>
+                    <template v-else>—</template>
+                  </span>
+                </div>
+              </div>
+
+              <!--
+                依赖声明：本地缺失的标红，用户重新启用前就能看到；与下载页详情、
+                MOD 安装页详情共用同一张依赖表（名称是人类可读的仓库名/包名，
+                不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
+              -->
+              <div v-if="dependencyRows(set).length" class="detail-section">
+                <DependencyTable :rows="dependencyRows(set)" />
+              </div>
+            </template>
+          </LocalItemCard>
+        </div>
+      </n-collapse-item>
+    </n-collapse>
   </n-spin>
 
   <!--
@@ -688,13 +772,37 @@ async function checkUpdates() {
 /* 页头批量分段控件的样式在 src/styles/global.css 的 `.bulk-switch`。 */
 
 /*
- * 列表：与 MOD 管理页的卡片列表同一竖向节奏（10px）。
- * 卡片外壳、悬停、展开动画都由 LocalItemCard 负责，这里只管插槽内容。
+ * 分组折叠：组标题行 + 组内单列卡片。
+ *
+ * 尺寸与 `ModsLocalView.vue` 的同名规则逐项对齐（14px 强调色标题、组内
+ * 卡片 10px 竖向节奏、左侧 14px 缩进），两页的分组看起来才是同一套。
+ * 卡片外壳、悬停、展开动画都由 LocalItemCard 负责，这里只管列表节奏。
  */
-.level-list {
+.group-collapse {
+  width: 100%;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.group-head b {
+  font-size: 14px;
+  color: var(--oc2-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-grid {
+  /* 每个卡片撑满容器宽度（单列纵向堆叠） */
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin: 2px 0 6px 14px;
 }
 
 /*

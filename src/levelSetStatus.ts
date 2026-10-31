@@ -347,6 +347,66 @@ export function levelSetDisplayName(
   return set.dir_name
 }
 
+/**
+ * 「未分组」的折叠键。
+ *
+ * 与 MOD 管理页的 `__ungrouped__` 同名同义，只是守卫常量放在这里，
+ * 视图层不再自己抄一遍字符串。
+ */
+export const LEVEL_SET_UNGROUPED_KEY = '__ungrouped__'
+
+/** 关卡集的展示分组：管理页上的一个折叠项。 */
+export interface LevelSetGroup {
+  /** 折叠状态用的稳定键：`group:<canonical 小写>`，或 `LEVEL_SET_UNGROUPED_KEY`。 */
+  key: string
+  /** 语言无关的规范名；未分组时为空串。 */
+  canonical: string
+  /**
+   * 分组名的多语言表。
+   *
+   * 回退到本地 `author` 时为空表 —— 作者名不是翻译，视图层用
+   * `pickI18n(labelI18n, canonical)` 就能同时覆盖「有译名」与「只有原名」两种。
+   */
+  labelI18n: Record<string, string>
+}
+
+/**
+ * 关卡集归到哪个分组（地图的分组语义就是**作者**）。
+ *
+ * ## 为什么线上优先、本地兜底
+ *
+ * 分组名有三个来源，权威性递减：
+ *
+ *   1. 绑定地图的 `group_i18n`（源文档里的作者 / 分组声明，可多语言）；
+ *   2. 绑定地图的单语镜像 `group`（手写或旧源文档可能只写单语）；
+ *   3. 本地 info 的 `author` —— 本地 ZIP 导入的地图没有线上条目，只剩这个。
+ *
+ * 顺序不能反过来：`author` 只是 AssetBundle 里的原始字符串，线上声明才是
+ * 「这张图现在归到哪个分组」的权威（作者改名、调整分组都以线上为准）。
+ * 这与 `levelSetCardTags` 判定版本时「以线上为准、本地兜底」是同一条口径。
+ *
+ * 三级都空（info 解析失败且未绑定任何地图）才是「未分组」。
+ */
+export function levelSetGroup(
+  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  maps: readonly MapInfo[],
+): LevelSetGroup {
+  const bound = mapForLevelSet(set, maps)
+  // 规范名固定取 zh-CN：折叠键必须与语言无关，否则切语言会重建键、
+  // 用户刚折叠的分组会突然展开（与 MOD 管理页的 modCategory 同一规则）
+  const declared = (bound?.group_i18n?.['zh-CN'] ?? '').trim() || (bound?.group ?? '').trim()
+  const canonical = declared || (set.author || '').trim()
+  if (!canonical) {
+    return { key: LEVEL_SET_UNGROUPED_KEY, canonical: '', labelI18n: {} }
+  }
+  return {
+    key: `group:${canonical.toLowerCase()}`,
+    canonical,
+    // 只有线上声明才有多语言表；回退到 author 时没有可翻译的文本
+    labelI18n: declared ? (bound?.group_i18n ?? {}) : {},
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 下载页卡片状态
 // ---------------------------------------------------------------------------

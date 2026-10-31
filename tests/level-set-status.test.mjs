@@ -24,10 +24,12 @@ const {
   frameworkStates,
   mapDependencyMissing,
   levelSetCardTags,
+  levelSetGroup,
   mapCardState,
   mapCardStatus,
   mapCardAction,
   LEVEL_SET_STATE_TAGS,
+  LEVEL_SET_UNGROUPED_KEY,
   MAP_CARD_STATE_TAGS,
   MAP_CARD_STATE_TONES,
 } = await import('../src/levelSetStatus.ts')
@@ -190,6 +192,67 @@ test('找绑定地图：忽略大小写与空白，集名为空时不匹配', ()
   assert.equal(mapForLevelSet({ name: 'Missing', author: 'RW' }, maps), undefined)
   // 解析失败的集（空名）不能和所有空名条目串在一起
   assert.equal(mapForLevelSet({ name: '', author: '' }, [map({ level_set_name: '', author: '' })]), undefined)
+})
+
+// ---------------------------------------------------------------------------
+// 管理页：分组（作者）与折叠键
+// ---------------------------------------------------------------------------
+
+test('分组：绑定了地图时用线上声明的分组，键与展示名分开', () => {
+  const bound = map({ group_i18n: { 'zh-CN': 'RW 的地图', en: 'RW Maps' } })
+  const group = levelSetGroup(set(), [bound])
+  // 规范名取 zh-CN：折叠键必须与语言无关，切语言不能重建键
+  assert.equal(group.canonical, 'RW 的地图')
+  assert.equal(group.key, 'group:rw 的地图')
+  // 展示名交给页面的 pickI18n，所以必须把整张多语言表交出去
+  assert.deepEqual(group.labelI18n, { 'zh-CN': 'RW 的地图', en: 'RW Maps' })
+})
+
+test('分组：线上没有分组时回退本地 info 的 author', () => {
+  // map() 默认没有 group / group_i18n（源文档里没声明作者分组）
+  const group = levelSetGroup(set(), [map()])
+  assert.equal(group.canonical, 'RW')
+  assert.equal(group.key, 'group:rw')
+  // 作者名不是翻译：labelI18n 为空，页面直接用 canonical 展示
+  assert.deepEqual(group.labelI18n, {})
+})
+
+test('分组：未绑定地图（本地 ZIP 导入）也用 author', () => {
+  const group = levelSetGroup(set({ author: '  Chef ' }), [])
+  assert.equal(group.canonical, 'Chef')
+  assert.equal(group.key, 'group:chef')
+  assert.deepEqual(group.labelI18n, {})
+})
+
+test('分组：没有线上分组、author 也空 → 未分组', () => {
+  assert.equal(LEVEL_SET_UNGROUPED_KEY, '__ungrouped__')
+  // info 解析失败（集名为空）绑定不上任何地图，作者也是空：只能是未分组
+  const group = levelSetGroup(
+    set({ name: '', author: '   ' }),
+    [map({ level_set_name: '', author: '' })],
+  )
+  assert.equal(group.key, LEVEL_SET_UNGROUPED_KEY)
+  assert.equal(group.canonical, '')
+  assert.deepEqual(group.labelI18n, {})
+})
+
+test('分组：大小写不同归一成同一个折叠键', () => {
+  // 作者在不同工具里导出时大小写常不一致；键必须相同，
+  // 否则同一个作者会被拆成两个折叠项
+  const upper = levelSetGroup(set({ author: 'RW' }), [])
+  const lower = levelSetGroup(set({ author: 'rw' }), [])
+  assert.equal(upper.key, lower.key)
+  // 展示名保留原始大小写（组标题取该组第一个成员的 canonical）
+  assert.equal(upper.canonical, 'RW')
+})
+
+test('分组：group_i18n 缺失但有单语 group 镜像时用 group', () => {
+  // 手写 / 旧源文档可能只写单语 group；后端读取时会折进 zh-CN，
+  // 但判定本身也要认这条，不能因为缺多语言表就退到 author
+  const group = levelSetGroup(set(), [map({ group: '街机 MOD' })])
+  assert.equal(group.canonical, '街机 MOD')
+  assert.equal(group.key, 'group:街机 mod')
+  assert.deepEqual(group.labelI18n, {})
 })
 
 test('地图投影成 Repository 时把 required_frameworks 变成 requires 依赖', () => {

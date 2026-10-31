@@ -452,24 +452,23 @@ defineExpose({ onUnmountedCleanup })
 }
 
 /*
- * 标题栏是**整体镜像**的两套排法，靠 `order` 换边，DOM 只有一份。
+ * 标题栏是**镜像**的两套排法，靠 `order` 换边，DOM 只有一份。
  *
- *   Windows（从左到右）：品牌 · 显示设置 · 窗口控制
- *   macOS （从左到右）：窗口控制 · 显示设置（反向） · 品牌（文字在左、图标在右）
+ *   Windows（从左到右）：品牌 · 拖拽区 · 显示设置 · 窗口控制
+ *   macOS （从左到右）：窗口控制 · 显示设置（反向） · 拖拽区 · 品牌（整体靠右）
  *
- * macOS 上九个元素排成一条左对齐的序列：
- *   关闭 / 缩小 / 放大 / 主题色 / 明暗 / 语言 / 缩放 / 标题 / 图标，
- * 也就是 Windows 那一行的镜像（窗控从最右挪到最左、四颗胶囊左右对调、
- * 品牌里的图标从最左挪到最右）。右侧空出来的一整条是拖动区。
+ * macOS 上：窗控从最右挪到最左、四颗胶囊左右对调、品牌整块贴到右边缘，
+ * 品牌内部也镜像 —— 版本号在标题左边、图标在最右，标题与小字整体右对齐。
  * `order` 全部显式写出：默认值 0 混在里面时，漏写一条就会把某块挤到错误位置。
  */
 .brand { order: 0; }
 .spacer { order: 1; }
 .toolbar-group { order: 2; }
 .chrome-group { order: 3; }
-.titlebar--mac .chrome-group { order: -3; }
-.titlebar--mac .toolbar-group { order: -2; }
-.titlebar--mac .brand { order: -1; }
+.titlebar--mac .chrome-group { order: 0; }
+.titlebar--mac .toolbar-group { order: 1; }
+.titlebar--mac .spacer { order: 2; }
+.titlebar--mac .brand { order: 3; }
 
 /* 显示设置四颗胶囊：整组不伸缩，内部间距与标题栏一致 */
 .toolbar-group {
@@ -483,7 +482,8 @@ defineExpose({ onUnmountedCleanup })
 .titlebar--mac .brand { flex-direction: row-reverse; }
 /* 文字块贴到图标右侧的那一侧，镜像后才不会在中间留一道缝 */
 .titlebar--mac .brand-text { align-items: flex-end; text-align: right; }
-.titlebar--mac .brand-title-row { justify-content: flex-end; }
+/* 版本号在标题左边，与 Windows 的「标题 版本号」左右对调 */
+.titlebar--mac .brand-title-row { flex-direction: row-reverse; justify-content: flex-end; }
 .titlebar--mac .sep { display: none; }
 
 /* 窗控整组：按钮之间不留额外间距，点击区由按钮自己的 40×32 提供 */

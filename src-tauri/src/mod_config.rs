@@ -34,7 +34,10 @@ fn checked_file(game: &Path, guid: &str) -> Result<PathBuf, String> {
      * 「此电脑」（2026-11 实测，菜单里的「查看日志」因此打不开日志目录）。
      * 拆成两段 join 才能保证出口永远是原生反斜杠。
      */
-    let path = game.join("BepInEx").join("config").join(format!("{guid}.cfg"));
+    let path = game
+        .join("BepInEx")
+        .join("config")
+        .join(format!("{guid}.cfg"));
     if !path.is_absolute() {
         return Err(UNSAFE.into());
     }

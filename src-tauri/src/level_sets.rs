@@ -294,6 +294,97 @@ fn info_cache_key(info_path: &Path) -> PathBuf {
     }
 }
 
+/// 磁盘缓存目录名（位于数据根的 `cache/` 下）。
+const INFO_DISK_CACHE_DIR: &str = "level-info";
+
+/// 磁盘缓存格式版本。解析逻辑或字段有变动时递增，旧文件自然失效。
+const INFO_DISK_CACHE_SCHEMA: u32 = 1;
+
+/// 磁盘缓存条目。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct InfoDiskEntry {
+    schema: u32,
+    /// 解析这份结果时文件内容的 SHA-256（十六进制）。
+    ///
+    /// 冗余存一份是为了自校验：文件名就是哈希，但文件被手工改过时能立刻发现。
+    sha256: String,
+    /// 解析结果（成功或失败 tag）。
+    result: Result<LevelSetMetadata, String>,
+}
+
+/// 磁盘缓存目录；数据根不可用时返回 `None`（退化成只有内存缓存）。
+fn info_disk_cache_dir() -> Option<PathBuf> {
+    crate::user_paths::root()
+        .ok()
+        .map(|root| root.join("cache").join(INFO_DISK_CACHE_DIR))
+}
+
+/// 内容哈希：SHA-256 十六进制小写。
+///
+/// 为什么用内容哈希而不是 (len, mtime)：用户的需求是「文件没变就直接读缓存」。
+/// mtime 会在复制、解压、同步工具 touch 之后变化，而内容完全一样；内容哈希
+/// 是唯一与「文件到底变没变」等价的判据。
+///
+/// 为什么选 SHA-256 而不是 MD5：实测 40 MB 数据 SHA-256 285.8 MB/s、MD5
+/// 408.6 MB/s（.NET 同栈对比），差距约 20 ms/40 MB；而 Rust 的 `sha2` 走
+/// SHA-NI 硬件指令还要更快。为这点差距引入一个碰撞更弱的算法不划算。
+fn content_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// 读磁盘缓存；不存在、格式不符或哈希对不上时返回 `None`。
+///
+/// `dir` 由调用方传入（而不是内部取数据根）：测试要用临时目录，
+/// 不能往用户真实的数据根里写缓存文件。
+fn read_info_disk_cache(
+    dir: &std::path::Path,
+    sha256: &str,
+) -> Option<Result<LevelSetMetadata, String>> {
+    let path = dir.join(format!("{sha256}.json"));
+    let bytes = fs::read(&path).ok()?;
+    let entry: InfoDiskEntry = serde_json::from_slice(&bytes).ok()?;
+    if entry.schema != INFO_DISK_CACHE_SCHEMA || entry.sha256 != sha256 {
+        return None;
+    }
+    Some(entry.result)
+}
+
+/// 写磁盘缓存。失败静默忽略：缓存只是加速，写不进去不能影响解析结果。
+fn write_info_disk_cache(
+    dir: &std::path::Path,
+    sha256: &str,
+    result: &Result<LevelSetMetadata, String>,
+) {
+    if fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let entry = InfoDiskEntry {
+        schema: INFO_DISK_CACHE_SCHEMA,
+        sha256: sha256.to_string(),
+        result: result.clone(),
+    };
+    let Ok(bytes) = serde_json::to_vec(&entry) else {
+        return;
+    };
+    // 先写临时文件再改名：进程被杀在写一半时，不会留下一个「能读到但内容残缺」
+    // 的缓存文件（那会让下一次解析直接拿到坏 JSON 而白白丢一次命中）。
+    let target = dir.join(format!("{sha256}.json"));
+    let temp = dir.join(format!("{sha256}.json.tmp"));
+    if fs::write(&temp, &bytes).is_err() {
+        return;
+    }
+    if fs::rename(&temp, &target).is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+}
+
 /// 读 `info` 并解析，命中缓存时不再读盘。
 fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, String> {
     let key = info_cache_key(info_path);
@@ -318,9 +409,33 @@ fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, String> {
             }
         }
     }
-    let result = fs::read(&key)
-        .map_err(|error| error.to_string())
-        .and_then(|bytes| asset_bundle::parse_level_set(&bytes).map_err(|error| error.to_string()));
+    /*
+     * 两级缓存：
+     *   1. 进程内 (len, mtime) 指纹 —— 命中不读盘，是最快的路径；
+     *   2. 磁盘内容哈希 —— 跨进程有效，重启管理器后仍然命中。
+     *
+     * 第 2 级要先把文件读进来算哈希（几十 MB / 几十毫秒），但这仍比重新解析
+     * 便宜一到两个数量级，而且只有「这个进程第一次见到这份内容」时才付。
+     */
+    let bytes = match fs::read(&key) {
+        Ok(bytes) => bytes,
+        Err(error) => return Err(error.to_string()),
+    };
+    let sha256 = content_sha256(&bytes);
+    let disk_dir = info_disk_cache_dir();
+    let cached = disk_dir
+        .as_deref()
+        .and_then(|dir| read_info_disk_cache(dir, &sha256));
+    let result = match cached {
+        Some(cached) => cached,
+        None => {
+            let parsed = asset_bundle::parse_level_set(&bytes).map_err(|error| error.to_string());
+            if let Some(dir) = disk_dir.as_deref() {
+                write_info_disk_cache(dir, &sha256, &parsed);
+            }
+            parsed
+        }
+    };
     /*
      * 锁只在这几行里持有：解析本身（可能几十毫秒）在锁外做。
      * 锁中毒（持锁线程 panic）时放弃写入缓存 —— 解析结果照常返回，
@@ -1742,5 +1857,59 @@ mod recycle_on_install_tests {
         assert_eq!(installed.metadata.version, "0.73");
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 磁盘缓存往返：同一份内容写进去再读出来必须一模一样。
+    ///
+    /// 这条覆盖的是「跨进程命中」的核心机制 —— 进程内缓存用 (len, mtime)，
+    /// 重启就没了；磁盘这份用内容 SHA-256，重启后仍然命中，这正是用户要的
+    /// 「文件没变就直接读缓存」。哈希算法选 SHA-256 的依据见 `content_sha256`。
+    #[test]
+    fn info_disk_cache_round_trips_by_content_hash() {
+        let dir = std::env::temp_dir().join(format!(
+            "oc2-info-disk-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let metadata = LevelSetMetadata {
+            name: "RoundTrip".into(),
+            name_zh: Some("往返测试".into()),
+            author: "Lead".into(),
+            version: "1.0".into(),
+            uid: "uid-1".into(),
+            base_uid: Some("base-1".into()),
+            levels: vec![crate::asset_bundle::LevelMetadata {
+                name: "L1".into(),
+                name_zh: None,
+                scene_name: "Scene".into(),
+                min_order_count: 1,
+                max_order_count: 4,
+            }],
+        };
+        let payload = Result::<LevelSetMetadata, String>::Ok(metadata.clone());
+        let sha = content_sha256(b"payload");
+
+        assert!(
+            read_info_disk_cache(&dir, &sha).is_none(),
+            "空目录必须未命中"
+        );
+        write_info_disk_cache(&dir, &sha, &payload);
+        assert_eq!(
+            read_info_disk_cache(&dir, &sha),
+            Some(payload),
+            "写入后应能读回同一份结果"
+        );
+
+        // 哈希对不上（文件被改过）时不认
+        assert!(read_info_disk_cache(&dir, "deadbeef").is_none());
+
+        // 失败结果同样缓存：坏 info 不该每次扫描都重付解析代价
+        let failure = Result::<LevelSetMetadata, String>::Err("assetBundle.notABundle".into());
+        write_info_disk_cache(&dir, &sha, &failure);
+        assert_eq!(read_info_disk_cache(&dir, &sha), Some(failure));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

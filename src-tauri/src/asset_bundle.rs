@@ -31,7 +31,11 @@
 use unityfs::{Reader, SerializedFile, UnityValue};
 
 /// 解析出来的关卡集元数据。
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// 可序列化是为了**磁盘缓存**：解析一份 info 在 debug 构建下要几秒，而内容
+/// 只在安装/替换关卡集时变。缓存键是文件内容的 SHA-256，与路径和 mtime 无关，
+/// 所以重命名、复制、重装到别的目录都能复用同一份结果。
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LevelSetMetadata {
     pub name: String,
     pub name_zh: Option<String>,
@@ -48,7 +52,7 @@ pub struct LevelSetMetadata {
 }
 
 /// 单个关卡的元数据。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LevelMetadata {
     pub name: String,
     pub name_zh: Option<String>,

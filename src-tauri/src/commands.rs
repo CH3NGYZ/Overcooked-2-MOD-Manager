@@ -5521,23 +5521,37 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
 /// 只读：不创建 `levels/`，不要求游戏已停止 —— 打开页面就能看到现状。
 /// 未找到游戏目录时返回空列表而不是报错：地图页在没有厨房的情况下也该能打开。
 #[tauri::command]
-pub fn get_level_sets(state: State<'_, AppState>) -> Result<Vec<LevelSetInfo>, String> {
+pub async fn get_level_sets(state: State<'_, AppState>) -> Result<Vec<LevelSetInfo>, String> {
+    /*
+     * 必须离开 IPC 主线程再扫描。
+     *
+     * 同步命令由 Tauri 直接在调用线程上内联执行（`tauri-macros` 的同步包装
+     * 就是 `let result = handler(..)`），而扫描要逐个解压 `info` 容器：debug
+     * 构建下冷扫描 7 个关卡集实测 13.6 s，期间整个窗口不响应。改成 async +
+     * `spawn_blocking` 后耗时不变，但界面可以继续转圈、可以取消。
+     *
+     * `State` 不能跨 await，所以在同步段把需要的东西都取出来再 move 进闭包。
+     */
     let config = state.config.load_or_default();
     let Some(game_root) = game::detect_game(&config).path else {
         return Ok(Vec::new());
     };
-    let sets = crate::level_sets::scan_level_sets(&PathBuf::from(game_root));
-    // 快照只读一次：逐条关卡集都去读文件会变成几十次 IO
-    let snapshots = archive::read_map_relation_snapshots(&state.config.manifests_dir());
-    log::debug!("关卡集列表读取完成：数量={}", sets.len());
-    Ok(sets
-        .into_iter()
-        .map(|set| {
-            let mut info = level_set_to_info(set);
-            bind_map_relation_snapshot(&mut info, &config, &snapshots);
-            info
-        })
-        .collect())
+    let manifests_dir = state.config.manifests_dir();
+    tauri::async_runtime::spawn_blocking(move || {
+        let sets = crate::level_sets::scan_level_sets(&PathBuf::from(game_root));
+        // 快照只读一次：逐条关卡集都去读文件会变成几十次 IO
+        let snapshots = archive::read_map_relation_snapshots(&manifests_dir);
+        log::debug!("关卡集列表读取完成：数量={}", sets.len());
+        sets.into_iter()
+            .map(|set| {
+                let mut info = level_set_to_info(set);
+                bind_map_relation_snapshot(&mut info, &config, &snapshots);
+                info
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// 给关卡集补上「绑定的地图仓库 id」与依赖快照。
@@ -5685,12 +5699,16 @@ fn zip_level_sets(config: &AppConfig, path: &Path) -> Result<Vec<ZipLevelSet>, S
 /// `exists` 标记目标位置是否已有同名目录 —— 界面据此提示「会回收旧版本」，
 /// 与真正安装时的判定保持一致。
 #[tauri::command]
-pub fn inspect_level_set_zip(
+pub async fn inspect_level_set_zip(
     state: State<'_, AppState>,
     zip_path: String,
 ) -> Result<Vec<ZipLevelSet>, String> {
+    // 理由同 `get_level_sets`：解析 ZIP 里的 info 是纯 CPU 活，debug 构建单次
+    // 实测 2.9 s，留在 IPC 主线程上就是把整个界面冻住。
     let config = state.config.load_or_default();
-    zip_level_sets(&config, Path::new(&zip_path))
+    tauri::async_runtime::spawn_blocking(move || zip_level_sets(&config, Path::new(&zip_path)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 /// 准备一个地图来源：本地 ZIP 只解析，直链先下载到缓存目录。

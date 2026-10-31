@@ -738,7 +738,9 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
   busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalMod(mod.dll_file, enabled)
-    result.ok ? message.success(result.message || (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled'))) : message.error(translateBackendMessage(result.message))
+    result.ok
+      ? message.success(result.message ? translateBackendMessage(result.message) : (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
+      : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }

@@ -150,10 +150,10 @@ watch(
 <template>
   <!--
     统一弹窗外壳：保存/关闭在固定 footer，中间整块留给编辑区。
-    尺寸上限由 AppModal 统一保证（宽 80% 视口、高 (视口 - 标题栏) × 90%）。
+    尺寸上限由 AppModal 统一保证（宽 95% 视口、高 (视口 - 标题栏) × 95%）。
   -->
   <AppModal :show="show" :mask-closable="false" display-directive="if" :title="title"
-    fill :scrollable="false" max-width="80%" max-height="90%"
+    fill :scrollable="false" max-width="95%" max-height="95%"
     @update:show="(value: boolean) => emit('update:show', value)">
     <div class="config-head">
       <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">{{ fileName || '—' }}</n-tag>

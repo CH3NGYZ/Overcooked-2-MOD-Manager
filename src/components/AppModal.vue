@@ -8,8 +8,8 @@
  *   2. 反过来，内容很短时又会被写成固定高度的弹窗拉出一大片空白。
  *
  * 规则：尺寸是「上限」而不是「定值」——
- *   宽：内容自然宽度，最多 max-width（默认 80vw / 1180px）
- *   高：内容自然高度，最多 max-height（默认 90vh）
+ *   宽：内容自然宽度，最多 max-width（默认标题栏下方区域的 95%）
+ *   高：内容自然高度，最多 max-height（默认标题栏下方区域的 95%）
  * 所以短内容自动收缩，长内容到上限后由中间区域滚动，
  * 头部与 #footer 始终固定，任何情况下都不会超出可视区域。
  *
@@ -76,8 +76,8 @@ const props = withDefaults(defineProps<{
    * 用百分比而不是 vw/vh：界面缩放是 WebView zoom，vw/vh 不随之缩放，
    * 高缩放下会算出比可见区域更大的尺寸。百分比相对已缩放的容器计算。
    */
-  maxWidth: '80%',
-  maxHeight: '90%',
+  maxWidth: '95%',
+  maxHeight: '95%',
   fill: false,
   scrollable: true,
   minHeight: '',

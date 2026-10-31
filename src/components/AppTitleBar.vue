@@ -141,13 +141,15 @@ defineExpose({ onUnmountedCleanup })
 </script>
 
 <template>
-  <header class="titlebar" data-tauri-drag-region>
+  <header class="titlebar" :class="{ 'titlebar--mac': macChrome }" data-tauri-drag-region>
     <!--
-      macOS：窗控在最左侧，顺序按系统习惯 关闭 / 最小化 / 最大化。
-      三个圆点的图标默认隐藏、整组悬停才出现，颜色语义与系统一致
-      （红=关闭、黄=最小化、绿=缩放）。Windows 仍是右侧的方角按钮。
+      macOS 第一行：窗控贴左上角，顺序按系统习惯 关闭 / 最小化 / 最大化
+      （红=关闭、黄=最小化、绿=缩放），三个圆点的图标默认隐藏、整组悬停才出现。
+      应用图标与标题放到**下一行** —— 红绿灯占住左上角后，品牌若还留在同一行，
+      标题会被整体推向中间，既不像系统窗口也浪费了左上角的位置。
+      Windows 不渲染这一行，仍是单行 + 右侧的方角按钮。
     -->
-    <template v-if="canControlWindow && macChrome">
+    <div v-if="canControlWindow && macChrome" class="titlebar-row chrome-row">
       <div class="traffic">
         <button class="dot close" type="button" :title="t('nav.close')" :aria-label="t('nav.close')" @click="close">
           <CloseOutline width="9" height="9" />
@@ -161,8 +163,12 @@ defineExpose({ onUnmountedCleanup })
           <SquareOutline v-else width="8" height="8" />
         </button>
       </div>
-    </template>
+      <!-- 窗控右侧的空白仍然整段可拖动 -->
+      <div class="spacer" data-tauri-drag-region></div>
+    </div>
 
+    <!-- 第二行（Windows 上是唯一一行）：品牌 + 右侧控件 -->
+    <div class="titlebar-row main-row">
     <!-- 品牌：图标上悬浮启动/停止按钮 -->
     <div class="brand">
       <!--
@@ -259,6 +265,7 @@ defineExpose({ onUnmountedCleanup })
         <CloseOutline width="17" height="17" />
       </button>
     </template>
+    </div>
   </header>
 </template>
 
@@ -266,12 +273,26 @@ defineExpose({ onUnmountedCleanup })
 .titlebar {
   flex: 0 0 auto;
   height: var(--oc2-titlebar-height, 56px);
+  /* 纵向排列：Windows 只有一行；macOS 是「窗控行 + 品牌行」两行 */
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 14px;
-  background: var(--oc2-rail);
-  border-bottom: 1px solid var(--oc2-rail-line);
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 2px 8px 2px 14px;
+  /*
+   * 底色在侧栏色上叠一层很淡的主题色。
+   *
+   * 纯侧栏色和内容区太接近（浅色主题下 #eef1f6 对白色卡片几乎分不出边界），
+   * 自绘标题栏看不出是一条独立的窗框；混进当前主题色以后，换任何配色都能
+   * 一眼认出「这是窗框、不是内容」。9% → 3% 的纵向渐变只做层次，不抢内容。
+   */
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--oc2-accent) 9%, var(--oc2-rail)) 0%,
+      color-mix(in srgb, var(--oc2-accent) 3%, var(--oc2-rail)) 100%
+    );
+  border-bottom: 1px solid color-mix(in srgb, var(--oc2-accent) 26%, var(--oc2-rail-line));
   user-select: none;
   /*
    * 标题栏不参与 z-index 竞争：全屏遮罩在 global.css 里让出了它的高度，
@@ -280,6 +301,14 @@ defineExpose({ onUnmountedCleanup })
    */
   position: relative;
   z-index: 1;
+}
+/* 每一行横向铺满：Windows 上单行即全部内容，macOS 第一行是窗控 */
+.titlebar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 .brand {
   display: flex;

@@ -13,6 +13,7 @@ import { useUiZoom } from '../composables/useUiZoom'
 import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
+import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
@@ -74,11 +75,16 @@ async function toggleMaximize() {
 async function close() { await safeTauri(async () => appWindow?.close()) }
 /** 浏览器预览不显示窗口控制（无窗口可控制）。 */
 const canControlWindow = computed(() => isTauri())
+/**
+ * macOS 的窗控在左侧、顺序是 关闭 / 最小化 / 最大化（绿点等于「缩放/全屏」）。
+ * 与 Windows 右侧的 最小化 / 最大化 / 关闭 相反，位置和顺序都要换。
+ */
+const macChrome = isMacWindow()
 
 /* ===== 厨房启动 / 停止（悬浮在应用图标上） ===== */
 
 const message = useNotify()
-const { game, load } = useDashboard()
+const { game, recheckGameState } = useDashboard()
 /** 启动/停止进行中，按钮显示 loading 并禁止重复点击。 */
 const launching = ref(false)
 /** 悬浮提示是否展开。 */
@@ -96,10 +102,11 @@ const canLaunch = computed(() => !!game.value?.path)
  *   - 启动：后端 `launch_normal` → `steam://rungameid/728880`（Steam 负责拉起游戏）；
  *   - 停止：Steam 没有「停止」协议，后端 `stop_game` 结束游戏进程。
  *
- * 命令返回后不立即刷新 Dashboard：进程启动/退出需要几秒，
- * 游戏状态由后端观察器每秒推送（`game-state-changed`），
- * 按钮会自动翻转。这里只在若干秒后补一次 `load()`，用于同步 MOD 扫描结果
- * （运行状态导致的可操作项变化），避免用旧快照覆盖刚收到的状态事件。
+ * 命令返回后不靠「猜几秒」：`stop_game` 内部已经重算快照并推送事件，
+ * 这里再主动重算一次让按钮当场摆正；启动时进程要几秒才出现，所以补几次
+ * 重算（每次只重算游戏状态，不重扫 MOD），直到按钮真的翻转就停。
+ * 之所以不建议在这里轮询 `load()`：那会把整份 Dashboard 连同 MOD 扫描
+ * 一起重做，几次下去比状态本身贵得多。
  */
 async function toggleGame() {
   if (launching.value) return
@@ -109,11 +116,10 @@ async function toggleGame() {
     const result = wasRunning ? await api.stopGame() : await api.launchNormal()
     result.ok ? message.success(translateBackendMessage(result.message)) : message.error(translateBackendMessage(result.message))
     if (result.ok) {
-      // 轮询几次，让按钮在观察器事件到达前也能尽快反映预期状态
       for (let attempt = 0; attempt < 6; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000))
-        await load()
+        await recheckGameState()
         if (kitchenRunning.value !== wasRunning) break
+        await new Promise((resolve) => window.setTimeout(resolve, 700))
       }
     }
   } catch (reason) {
@@ -136,6 +142,27 @@ defineExpose({ onUnmountedCleanup })
 
 <template>
   <header class="titlebar" data-tauri-drag-region>
+    <!--
+      macOS：窗控在最左侧，顺序按系统习惯 关闭 / 最小化 / 最大化。
+      三个圆点的图标默认隐藏、整组悬停才出现，颜色语义与系统一致
+      （红=关闭、黄=最小化、绿=缩放）。Windows 仍是右侧的方角按钮。
+    -->
+    <template v-if="canControlWindow && macChrome">
+      <div class="traffic">
+        <button class="dot close" type="button" :title="t('nav.close')" :aria-label="t('nav.close')" @click="close">
+          <CloseOutline width="9" height="9" />
+        </button>
+        <button class="dot min" type="button" :title="t('nav.minimize')" :aria-label="t('nav.minimize')" @click="minimize">
+          <RemoveOutline width="9" height="9" />
+        </button>
+        <button class="dot max" type="button" :title="maximized ? t('nav.restore') : t('nav.maximize')"
+          :aria-label="maximized ? t('nav.restore') : t('nav.maximize')" @click="toggleMaximize">
+          <ContractOutline v-if="maximized" width="9" height="9" />
+          <SquareOutline v-else width="8" height="8" />
+        </button>
+      </div>
+    </template>
+
     <!-- 品牌：图标上悬浮启动/停止按钮 -->
     <div class="brand">
       <!--
@@ -216,8 +243,8 @@ defineExpose({ onUnmountedCleanup })
       </div>
     </n-popover>
 
-    <!-- 窗口控制：仅真实 Tauri 窗口显示 -->
-    <template v-if="canControlWindow">
+    <!-- 窗口控制：仅真实 Tauri 窗口显示；Windows 侧保持右侧的方角按钮 -->
+    <template v-if="canControlWindow && !macChrome">
       <span class="sep"></span>
 
       <button class="win-btn" type="button" :title="t('nav.minimize')" :aria-label="t('nav.minimize')" @click="minimize">
@@ -401,6 +428,39 @@ defineExpose({ onUnmountedCleanup })
   width: 1px; height: 22px; margin: 0 2px;
   background: var(--oc2-rail-line);
 }
+
+/*
+ * macOS 窗控：三个 13px 圆点，颜色语义与系统一致。
+ * 图标默认透明，整组悬停才浮现 —— 系统也是这个行为，且能避免在深色
+ * 标题栏上出现三团深色噪点。圆点之间 8px，符合 macOS 的间距习惯。
+ */
+.traffic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  /* 与右侧按钮区对称：给标题栏左缘留一点呼吸 */
+  padding: 0 6px 0 0;
+}
+.dot {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: rgba(0, 0, 0, .58);
+  transition: filter .14s ease;
+}
+.dot > svg { opacity: 0; transition: opacity .12s ease; }
+.traffic:hover .dot > svg { opacity: 1; }
+.dot.close { background: #ff5f57; }
+.dot.min { background: #febc2e; }
+.dot.max { background: #28c840; }
+.dot:active { filter: brightness(.86); }
+.dot:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px; }
 
 .win-btn {
   width: 40px;

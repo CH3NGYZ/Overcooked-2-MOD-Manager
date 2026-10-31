@@ -260,7 +260,7 @@ defineExpose({ onUnmountedCleanup })
     <div v-if="canControlWindow" class="chrome-group">
       <span class="sep"></span>
       <button v-for="action in chromeActions" :key="action" class="win-btn"
-        :class="{ danger: action === 'close' }" type="button"
+        :class="`chrome-${action}`" type="button"
         :title="chromeTitle(action)" :aria-label="chromeTitle(action)" @click="runChrome(action)">
         <CloseOutline v-if="action === 'close'" width="17" height="17" />
         <ContractOutline v-else-if="action === 'maximize' && maximized" width="15" height="15" />
@@ -494,6 +494,14 @@ defineExpose({ onUnmountedCleanup })
   flex: 0 0 auto;
 }
 
+/*
+ * 窗控按钮：固定用「红=关闭 / 黄=最小化 / 绿=最大化」三色，两个平台一致。
+ *
+ * 颜色写死不走主题变量 —— 这是窗口级语义色（红灯就是关闭），跟着主题色走
+ * 会让「关掉窗口」变成一个看不出危险的按钮。底色取 macOS 红绿灯的亮色，
+ * 图标用深色保证对比度；悬停/按下再深一档，是「同一颜色的高对比版本」，
+ * 而不是换成另一种中性色 —— 否则用户以为按钮换了含义。
+ */
 .win-btn {
   width: 40px;
   height: 32px;
@@ -501,11 +509,20 @@ defineExpose({ onUnmountedCleanup })
   place-items: center;
   border: 0;
   border-radius: 8px;
-  background: transparent;
-  color: var(--oc2-text-2);
+  color: rgba(0, 0, 0, .55);
   cursor: pointer;
   transition: background-color .14s ease, color .14s ease;
 }
-.win-btn:hover { background: var(--oc2-row-hover); color: var(--oc2-text-1); }
-.win-btn.danger:hover { background: #d64550; color: #fff; }
+.win-btn.chrome-close { background: #ff5f57; }
+.win-btn.chrome-minimize { background: #febc2e; }
+.win-btn.chrome-maximize { background: #28c840; }
+.win-btn:hover { color: rgba(0, 0, 0, .92); }
+.win-btn.chrome-close:hover { background: #e0443e; }
+.win-btn.chrome-minimize:hover { background: #d9a01a; }
+.win-btn.chrome-maximize:hover { background: #1fa832; }
+.win-btn:active { color: rgba(0, 0, 0, .95); }
+.win-btn.chrome-close:active { background: #c9322d; }
+.win-btn.chrome-minimize:active { background: #bf8915; }
+.win-btn.chrome-maximize:active { background: #178a29; }
+.win-btn:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px; }
 </style>

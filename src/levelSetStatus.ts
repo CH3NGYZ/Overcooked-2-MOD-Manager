@@ -407,6 +407,41 @@ export function levelSetGroup(
   }
 }
 
+/** 关卡集作者的中英两个展示名。 */
+export interface LevelSetAuthorNames {
+  zh: string
+  en: string
+}
+
+/**
+ * 作者的「中文名 / 英文名」（地图管理页详情用）。
+ *
+ * info 里只存一份 `author`，作者的双语展示名只可能来自绑定地图的
+ * `group_i18n` —— 地图的分组语义就是作者，源文档可以给作者声明多种语言。
+ * 回退顺序与 `levelSetGroup` 同源：`group_i18n[语言]` → 单语镜像 `group`
+ * → 本地 `author`，所以这里不需要第二套口径。
+ *
+ * 为什么某一种语言没声明时用另一种语言顶上，而不是留空：两行是同一个作者
+ * 的两种写法，源文档常只声明 `zh-CN`（手工维护，很少有人补齐英文）。留空
+ * 会让详情里冒出「—」，看起来像数据丢了；两行显示同一串，也与「只写了单语
+ * `group`」时的表现一致。两种语言都没声明才回退 `author`。
+ */
+export function levelSetAuthorNames(
+  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  maps: readonly MapInfo[],
+): LevelSetAuthorNames {
+  const bound = mapForLevelSet(set, maps)
+  const i18n = bound?.group_i18n ?? {}
+  const single = (bound?.group ?? '').trim()
+  const zhDeclared = (i18n['zh-CN'] ?? '').trim() || single
+  const enDeclared = (i18n['en'] ?? '').trim() || single
+  const author = (set.author || '').trim()
+  return {
+    zh: zhDeclared || enDeclared || author,
+    en: enDeclared || zhDeclared || author,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 下载页卡片状态
 // ---------------------------------------------------------------------------

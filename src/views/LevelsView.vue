@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
@@ -11,11 +11,13 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { useFocusHighlight, useMapLink } from '../crossLink'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
+import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import {
   frameworkStates,
+  levelSetAuthorNames,
   levelSetCardTags,
   levelSetDisplayName,
   levelSetGroup,
@@ -279,6 +281,17 @@ function stateOf(set: LevelSetInfo) {
   return levelSetState(set, mapVersionForLevelSet(set, versionRefs.value))
 }
 
+/**
+ * 作者的中英展示名（详情里两行）。
+ *
+ * 取值全部交给 `levelSetAuthorNames`：线上声明的作者译名优先、本地 info 的
+ * `author` 兜底 —— 与分组标题（`levelSetGroup`）同一条回退链，页面不再自己
+ * 判断该读哪一级。
+ */
+function authorNamesOf(set: LevelSetInfo) {
+  return levelSetAuthorNames(set, maps.value)
+}
+
 /** 卡片状态标签：先依赖提醒，再版本结论（由 `levelSetStatus` 统一排序）。 */
 function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
   return levelSetCardTags(set, maps.value, mods.value, gameProbed.value)
@@ -356,12 +369,52 @@ function dependencyRows(set: LevelSetInfo): DependencyRow[] {
  * 收起），所以必须让文档监听知道这一次点击已经处理过：否则同一次点击里
  * 这里先把该项 toggle 开，文档监听紧接着把它置回 `null`，内容只出现一帧
  * ——折叠过渡动画还没播完就被打断，看起来像「点了没反应」。
+ *
+ * 展开 / 收起的滚动策略见 `expandScroll.ts`：这一张是用户点的，滚；
+ * 因展开 B 而被动收起的 A 不滚（单展开语义下 A 只是让位）。
  */
 let cardClickHandled = false
 
-function activate(set: LevelSetInfo) {
+/** 卡片元素锚点：批量/展开状态都由 ref 驱动，找 DOM 只能靠页面自己打的 `data-level-dir`。 */
+function cardOf(dirName: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-level-dir="${CSS.escape(dirName)}"]`)
+}
+
+function activate(set: LevelSetInfo, card?: HTMLElement) {
   cardClickHandled = true
-  expandedDir.value = expandedDir.value === set.dir_name ? null : set.dir_name
+  const previous = expandedDir.value
+  const opening = previous !== set.dir_name
+  if (!opening) {
+    // 收起：量位置、改状态都交给 collapseCardWithScroll —— 它必须在折叠前量，
+    // 再把展开那次滚动倒回去，折叠与回滚同时发生，看起来才是「原路收回去」。
+    const target = card ?? cardOf(set.dir_name)
+    const collapse = () => {
+      expandedDir.value = null
+    }
+    if (!target) {
+      collapse()
+      return
+    }
+    collapseCardWithScroll({ card: target, body: target.querySelector('.card-detail') }, collapse)
+    return
+  }
+  // 单展开语义：展开 B 会让 A 收起。A 在 B 上面时，收起动画会把 B 整体往上带，
+  // 量 B 的 top 时必须减掉 A 会缩掉的高度，否则会多滚一截。
+  const previousCard = previous ? cardOf(previous) : null
+  expandedDir.value = set.dir_name
+  if (!card) return
+  const anchor = card.querySelector('.card-row')
+  if (!anchor) return
+  void nextTick().then(() => {
+    scrollExpandedCardIntoView({
+      card,
+      anchor,
+      body: card.querySelector('.card-detail'),
+      collapsing: previousCard
+        ? { card: previousCard, body: previousCard.querySelector('.card-detail') }
+        : null,
+    })
+  })
 }
 
 /**
@@ -372,16 +425,27 @@ function activate(set: LevelSetInfo) {
  * 目标是否属于这一行的顶栏」——落在 `.card-row`（开关 / 标题 / 状态标签 /
  * 工具按钮）里说明用户在操作这一行，交给各自的 `@click.stop` 与处理函数，
  * 不在这里收起，避免一次点击既展开又收起。
+ *
+ * 收起后把展开那次滚动倒回去（单展开语义下它是唯一展开过的那张卡）。
  */
 function onDocumentClick(event: MouseEvent) {
   if (cardClickHandled) {
     cardClickHandled = false
     return
   }
-  if (expandedDir.value === null) return
+  const dirName = expandedDir.value
+  if (dirName === null) return
   const target = event.target
   if (target instanceof Element && target.closest('.card-row')) return
-  expandedDir.value = null
+  const card = cardOf(dirName)
+  const collapse = () => {
+    if (expandedDir.value === dirName) expandedDir.value = null
+  }
+  if (!card) {
+    collapse()
+    return
+  }
+  collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, collapse)
 }
 
 /**
@@ -650,7 +714,14 @@ async function checkUpdates() {
         </template>
 
         <div class="map-grid">
-          <LocalItemCard v-for="set in node.sets" :key="set.dir_name"
+          <!--
+            key 带上 enabled：切换开关会把目录搬到 levels/ 或 disabled/，详情里的
+            「路径」跟着变；但详情挂在 `n-collapse-transition` 的稳定插槽里，只有
+            它自己的 `show` 变化才会重渲染 —— 展开状态下切开关会留着旧路径。
+            改 key 让这一个卡片重建，其它卡片的 key 没变、不受影响。
+          -->
+          <LocalItemCard v-for="set in node.sets" :key="`${set.dir_name}:${set.enabled}`"
+            :data-level-dir="set.dir_name"
             :data-focus-id="focusIdOf(set)"
             :enabled="set.enabled"
             :toggle-loading="!!busy[set.dir_name]"
@@ -663,7 +734,7 @@ async function checkUpdates() {
             :tool-gap="TOOL_GAP"
             :tool-button-width="TOOL_BUTTON_WIDTH"
             @toggle="(value: boolean) => toggle(set, value)"
-            @activate="activate(set)">
+            @activate="(card: HTMLElement) => activate(set, card)">
             <!-- 状态标签：依赖缺失在前，版本结论在后；「有更新」可点跳下载页 -->
             <template #status>
               <span class="tag-group">
@@ -693,13 +764,28 @@ async function checkUpdates() {
             <!-- 展开：元数据 + 绑定地图 + 框架依赖 -->
             <template #detail>
               <div class="detail-grid">
-                <div v-if="set.name_zh" class="detail-row">
+                <!--
+                  固定四行版式（爸爸定的）：中文名+作者中文名 / 英文名+作者英文名 /
+                  版本+关卡数 / 路径。两列网格按 DOM 顺序两两成行，所以这里必须两个
+                  一对地交错写，不能按「先列四个名字」的语义顺序排。
+                  info 里本来就存了中/英两个集名，作者的译名则来自绑定地图源的
+                  `group_i18n`；缺哪个都显示 `—`，而不是留空让行消失。
+                -->
+                <div class="detail-row">
                   <span class="detail-label">{{ t('levelSet.nameZh') }}</span>
-                  <span class="detail-value">{{ set.name_zh }}</span>
+                  <span class="detail-value">{{ set.name_zh || '—' }}</span>
                 </div>
                 <div class="detail-row">
-                  <span class="detail-label">{{ t('modsLocal.author') }}</span>
-                  <span class="detail-value">{{ set.author || '—' }}</span>
+                  <span class="detail-label">{{ t('levelSet.authorZh') }}</span>
+                  <span class="detail-value">{{ authorNamesOf(set).zh || '—' }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.nameEn') }}</span>
+                  <span class="detail-value">{{ set.name || '—' }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">{{ t('levelSet.authorEn') }}</span>
+                  <span class="detail-value">{{ authorNamesOf(set).en || '—' }}</span>
                 </div>
                 <div class="detail-row">
                   <span class="detail-label">{{ t('levelSet.version') }}</span>
@@ -709,37 +795,46 @@ async function checkUpdates() {
                   <span class="detail-label">{{ t('levelSet.levelCountLabel') }}</span>
                   <span class="detail-value">{{ set.level_count }}</span>
                 </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.directory') }}</span>
-                  <span class="detail-value mono">{{ set.dir_name }}</span>
+                <!-- 绝对路径占满整行：半列宽度只够显示到盘符 -->
+                <div class="detail-row detail-row--wide">
+                  <span class="detail-label">{{ t('levelSet.path') }}</span>
+                  <span class="detail-value mono detail-value--path"
+                    :title="set.path || undefined">{{ set.path || '—' }}</span>
                 </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.location') }}</span>
-                  <span class="detail-value mono">{{ set.enabled ? 'levels/' : 'disabled/' }}</span>
-                </div>
-                <!-- 解析失败：原因放在详情里，卡片行只留标签 -->
-                <div v-if="set.error" class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.parseError') }}</span>
-                  <span class="detail-value is-error">{{ translateBackendMessage(set.error) }}</span>
-                </div>
-                <div v-if="hintOf(set)" class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.statusHint') }}</span>
-                  <span class="detail-value">{{ hintOf(set) }}</span>
-                </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.boundMap') }}</span>
-                  <span class="detail-value">
-                    <template v-if="bindingOf(set)">
-                      {{ bindingOf(set)?.name }}
-                      <span v-if="bindingOf(set)?.tag" class="mono bound-tag">{{ bindingOf(set)?.tag }}</span>
-                      <!-- 反方向跳转：从管理页看这张图在下载页的样子 -->
-                      <n-button size="tiny" text type="primary" class="bound-link"
-                        @click.stop="linkToMap(bindingOf(set)?.map.id)">
-                        {{ t('levelSet.viewInMapDownload') }}
-                      </n-button>
-                    </template>
-                    <template v-else>—</template>
-                  </span>
+              </div>
+
+              <!--
+                线上绑定与状态单独一节：这几项说的是「这张本地图在线上/游戏侧是
+                什么情况」，与上面四行「这张图本身是什么」不是同一类信息，混着排
+                会读不清，也会把上面固定的四行版式撑乱。
+              -->
+              <div class="detail-section">
+                <div class="detail-section-title">{{ t('levelSet.bindStatusSection') }}</div>
+                <div class="detail-grid">
+                  <div class="detail-row detail-row--wide">
+                    <span class="detail-label">{{ t('levelSet.boundMap') }}</span>
+                    <span class="detail-value">
+                      <template v-if="bindingOf(set)">
+                        {{ bindingOf(set)?.name }}
+                        <span v-if="bindingOf(set)?.tag" class="mono bound-tag">{{ bindingOf(set)?.tag }}</span>
+                        <!-- 反方向跳转：从管理页看这张图在下载页的样子 -->
+                        <n-button size="tiny" text type="primary" class="bound-link"
+                          @click.stop="linkToMap(bindingOf(set)?.map.id)">
+                          {{ t('levelSet.viewInMapDownload') }}
+                        </n-button>
+                      </template>
+                      <template v-else>—</template>
+                    </span>
+                  </div>
+                  <!-- 解析失败：原因放在详情里，卡片行只留标签 -->
+                  <div v-if="set.error" class="detail-row detail-row--wide">
+                    <span class="detail-label">{{ t('levelSet.parseError') }}</span>
+                    <span class="detail-value is-error">{{ translateBackendMessage(set.error) }}</span>
+                  </div>
+                  <div v-if="hintOf(set)" class="detail-row detail-row--wide">
+                    <span class="detail-label">{{ t('levelSet.statusHint') }}</span>
+                    <span class="detail-value">{{ hintOf(set) }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -834,7 +929,7 @@ async function checkUpdates() {
   filter: brightness(1.15);
 }
 
-/* 详情：两列信息网格，值允许换行（GUID / 目录名可能很长） */
+/* 详情：两列信息网格，值允许换行（作者名 / 状态说明可能很长） */
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -847,6 +942,11 @@ async function checkUpdates() {
   min-width: 0;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* 绝对路径单独占一行：半列宽度只够显示到盘符 */
+.detail-row--wide {
+  grid-column: 1 / -1;
 }
 
 .detail-label {
@@ -863,6 +963,16 @@ async function checkUpdates() {
 
 .detail-value.is-error {
   color: var(--oc2-tone-critical-text);
+}
+
+/*
+ * 路径单行不折行：折成两三行的绝对路径比省略号更难读，全文放在 title 里。
+ * 需要 `overflow: hidden` 才轮得到 `text-overflow`，否则只是溢出被裁。
+ */
+.detail-value--path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 浮动刷新按钮转圈：与 MOD 两页同一套观感（各自页面作用域） */
@@ -894,6 +1004,13 @@ async function checkUpdates() {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px dashed var(--oc2-row-line);
+}
+
+/* 分节小标题：只做分组提示，不抢上面四行主体的视觉重量 */
+.detail-section-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--oc2-text-3);
 }
 
 .empty {

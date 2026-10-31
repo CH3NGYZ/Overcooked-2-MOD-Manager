@@ -26,11 +26,17 @@
  * 拆分前 MOD 管理页是在 `<article>` 上直接监听原生 `click`（用于给 document
  * 级「点空白收起」打标记），组件是单根节点，页面仍可这样监听原生 click。
  */
-import { computed, useSlots } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue'
 import { NCollapseTransition, NSwitch } from 'naive-ui'
+import { trackStuckRows } from '../expandScroll'
+import type { StuckRowsTracker } from '../expandScroll'
 import type { CSSProperties } from 'vue'
 
-const props = defineProps<{
+/*
+ * `rowSticky` 必须显式给默认值：布尔 prop 不传时 Vue 的 Boolean 转换会把它当 false，
+ * 那样所有卡片的标题行都不会吸顶。用 withDefaults 才能表达「缺省开启」。
+ */
+const props = withDefaults(defineProps<{
   /** 开关当前值。 */
   enabled: boolean
   /** 开关的 loading（与该条目自己的异步操作绑定）。 */
@@ -43,7 +49,13 @@ const props = defineProps<{
   disabled?: boolean
   /** 详情是否展开（展开动画由组件内的 n-collapse-transition 负责）。 */
   expanded?: boolean
-  /** 跨页跳转落点高亮。 */
+  /**
+   * 展开时标题行是否吸顶，缺省开启。
+   *
+   * 多 DLL 包的子卡片要关掉：包外壳的标题行已经占住滚动区顶部，
+   * 两层同时吸顶只会互相盖住（`ModsLocalView.vue` 负责外壳标题那一层）。
+   */
+  rowSticky?: boolean  /** 跨页跳转落点高亮。 */
   focusFlash?: boolean
   /** 页内按状态定位时的高亮。 */
   statusFlash?: boolean
@@ -53,16 +65,48 @@ const props = defineProps<{
   toolGap?: number
   /** 工具栏单个按钮宽度，缺省由 CSS 回退到 30px。 */
   toolButtonWidth?: number
-}>()
+}>(), { rowSticky: true })
 
 const emit = defineEmits<{
   /** 开关变化：父级调后端并刷新。 */
   (event: 'toggle', value: boolean): void
-  /** 点击卡片行：父级自己决定展开 / 收起。 */
-  (event: 'activate'): void
+  /**
+   * 点击卡片行：父级自己决定展开 / 收起。
+   *
+   * 带上卡片根元素：页面要在展开 / 收起后按「优先向上展开」的规则滚动
+   * （`src/expandScroll.ts`），需要这张卡的 DOM，而不是按 key 再查一遍。
+   */
+  (event: 'activate', card: HTMLElement): void
 }>()
 
 const slots = useSlots()
+
+/**
+ * 标题行是否真的吸顶：详情展开、且调用方没关掉。
+ *
+ * 只有展开态才 sticky —— 收起时没有详情可看，标题行吸顶只是白占一条。
+ */
+const rowStickyActive = computed(() => !!props.expanded && props.rowSticky !== false)
+
+/** 标题行元素：吸顶行的贴边判定（`data-stuck`）要用它的实时位置。 */
+const rowEl = ref<HTMLElement | null>(null)
+let stuckTracker: StuckRowsTracker | null = null
+
+onMounted(() => {
+  stuckTracker = trackStuckRows(() => (rowStickyActive.value ? [rowEl.value] : []))
+})
+onBeforeUnmount(() => {
+  stuckTracker?.stop()
+  stuckTracker = null
+})
+/*
+ * 展开态切换后 sticky 才生效 / 失效：等这一帧渲染完重量一次。
+ * 关掉吸顶时 tracker 不再接管这一行，残留的贴边标记要自己摘掉。
+ */
+watch(rowStickyActive, (sticky) => {
+  if (!sticky) rowEl.value?.removeAttribute('data-stuck')
+  void nextTick().then(() => stuckTracker?.refresh())
+})
 
 /**
  * 把列宽与间距以 CSS 变量下发，让样式和页面的列宽计算共用同一组数字。
@@ -86,7 +130,8 @@ const toolGroupStyle = computed<CSSProperties>(() => {
 function onCardClick(event: MouseEvent) {
   const target = event.target
   if (target instanceof Element && target.closest('.card-detail')) return
-  emit('activate')
+  // 根节点是单元素 `<article>`，这里的 currentTarget 一定是卡片根
+  emit('activate', event.currentTarget as HTMLElement)
 }
 
 function onToggle(value: boolean) {
@@ -96,10 +141,10 @@ function onToggle(value: boolean) {
 
 <template>
   <article class="mod-card"
-    :class="{ disabled, expanded, 'focus-flash': focusFlash, 'status-flash': statusFlash }"
+    :class="{ disabled, expanded, 'row-sticky': rowStickyActive, 'focus-flash': focusFlash, 'status-flash': statusFlash }"
     @click="onCardClick">
     <!-- 单行：左「开关 + 标题」… 右「状态标签 | 工具栏」 -->
-    <div class="card-row">
+    <div ref="rowEl" class="card-row">
       <div class="card-left">
         <n-switch class="card-switch" size="small" :value="enabled" :loading="!!toggleLoading"
           @click.stop @update:value="onToggle" />
@@ -196,6 +241,44 @@ function onToggle(value: boolean) {
   justify-content: space-between;
   gap: 14px;
   min-width: 0;
+}
+/*
+ * 详情展开时标题行吸顶：用户继续往下滑，仍能看出这是哪一张卡。
+ *
+ * 只在展开态生效。底色用 `inherit` 取卡片自己的底色 —— 没吸顶时与卡片同色不可见，
+ * 吸顶后盖住从下面滚过去的详情内容，hover / 展开态的变色也自动跟上，不用抄第二份颜色。
+ * sticky 的移动范围是卡片自己的高度，滚过卡片底部它就跟着一起走了。
+ */
+.mod-card.row-sticky > .card-row {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: inherit;
+}
+/*
+ * 吸顶态：卡片上边框与圆角已经滚出视口，补一条贯穿卡片内边宽的顶边线，
+ * 看起来仍是一张完整的卡（而不是「被切了一半」）；底边再补一条分隔线，
+ * 说明下面的内容是滚过去的。
+ *
+ * 用绝对定位伪元素而不是给行加 border：border 会改变行高、把 sticky 的贴边位置
+ * 挪开 1px，也就不用为此改任何测量。
+ */
+.mod-card.row-sticky > .card-row[data-stuck]::before,
+.mod-card.row-sticky > .card-row[data-stuck]::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  right: -14px;
+  height: 1px;
+  pointer-events: none;
+}
+.mod-card.row-sticky > .card-row[data-stuck]::before {
+  top: 0;
+  background: var(--oc2-accent);
+}
+.mod-card.row-sticky > .card-row[data-stuck]::after {
+  bottom: 0;
+  background: var(--oc2-row-line);
 }
 .card-left {
   display: flex;

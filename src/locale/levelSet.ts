@@ -395,6 +395,34 @@ export const levelSet: DomainMessages = {
     ko: '중국어 이름',
     ja: '中国語名',
   },
+  nameEn: {
+    'zh-CN': '英文名',
+    'zh-TW': '英文名稱',
+    en: 'English name',
+    ko: '영어 이름',
+    ja: '英語名',
+  },
+  authorZh: {
+    'zh-CN': '作者中文名',
+    'zh-TW': '作者中文名稱',
+    en: 'Chinese author name',
+    ko: '제작자 중국어 이름',
+    ja: '作者の中国語名',
+  },
+  authorEn: {
+    'zh-CN': '作者英文名',
+    'zh-TW': '作者英文名稱',
+    en: 'English author name',
+    ko: '제작자 영어 이름',
+    ja: '作者の英語名',
+  },
+  path: {
+    'zh-CN': '路径',
+    'zh-TW': '路徑',
+    en: 'Path',
+    ko: '경로',
+    ja: 'パス',
+  },
   version: {
     'zh-CN': '版本',
     'zh-TW': '版本',
@@ -409,20 +437,6 @@ export const levelSet: DomainMessages = {
     ko: '레벨 수',
     ja: 'レベル数',
   },
-  directory: {
-    'zh-CN': '目录名',
-    'zh-TW': '目錄名稱',
-    en: 'Directory',
-    ko: '디렉터리 이름',
-    ja: 'ディレクトリ名',
-  },
-  location: {
-    'zh-CN': '位置',
-    'zh-TW': '位置',
-    en: 'Location',
-    ko: '위치',
-    ja: '場所',
-  },
   parseError: {
     'zh-CN': '解析错误',
     'zh-TW': '解析錯誤',
@@ -436,6 +450,14 @@ export const levelSet: DomainMessages = {
     en: 'Status',
     ko: '상태 설명',
     ja: '状態の説明',
+  },
+  // 详情里「线上绑定 / 状态」这一小节的标题，与上面四行元数据分开
+  bindStatusSection: {
+    'zh-CN': '线上绑定与状态',
+    'zh-TW': '線上綁定與狀態',
+    en: 'Online binding & status',
+    ko: '온라인 바인딩 및 상태',
+    ja: 'オンライン紐付けと状態',
   },
   notInstalled: {
     'zh-CN': '未安装',

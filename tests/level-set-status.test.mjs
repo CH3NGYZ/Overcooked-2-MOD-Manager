@@ -25,6 +25,7 @@ const {
   mapDependencyMissing,
   levelSetCardTags,
   levelSetGroup,
+  levelSetAuthorNames,
   mapCardState,
   mapCardStatus,
   mapCardAction,
@@ -37,6 +38,7 @@ const {
 function set(overrides = {}) {
   return {
     dir_name: 'RW_LevelSet',
+    path: 'C:/OC2/BepInEx/plugins/OC2DIYLevel/levels/RW_LevelSet',
     enabled: true,
     name: 'RW_LevelSet',
     name_zh: 'RW_关卡合集',
@@ -253,6 +255,45 @@ test('分组：group_i18n 缺失但有单语 group 镜像时用 group', () => {
   assert.equal(group.canonical, '街机 MOD')
   assert.equal(group.key, 'group:街机 mod')
   assert.deepEqual(group.labelI18n, {})
+})
+
+// ---------------------------------------------------------------------------
+// 管理页详情：作者的中英展示名
+// ---------------------------------------------------------------------------
+
+test('作者名：绑定地图声明了双语时中英不同', () => {
+  const names = levelSetAuthorNames(set(), [
+    map({ group_i18n: { 'zh-CN': 'RW 的地图', en: 'RW Maps' } }),
+  ])
+  assert.deepEqual(names, { zh: 'RW 的地图', en: 'RW Maps' })
+})
+
+test('作者名：只有单语 group 时两行同一串', () => {
+  const names = levelSetAuthorNames(set(), [map({ group: '街机 MOD' })])
+  assert.deepEqual(names, { zh: '街机 MOD', en: '街机 MOD' })
+})
+
+test('作者名：只声明一种语言时两行同一串，不留空', () => {
+  // 源文档常只写 zh-CN（手工维护，很少有人补英文）；留空会让详情里
+  // 出现「—」，看着像作者数据丢了
+  const names = levelSetAuthorNames(set(), [
+    map({ group_i18n: { 'zh-CN': 'RW 的地图' } }),
+  ])
+  assert.deepEqual(names, { zh: 'RW 的地图', en: 'RW 的地图' })
+})
+
+test('作者名：未绑定地图（本地 ZIP 导入）回退 info 的 author', () => {
+  const names = levelSetAuthorNames(set({ author: '  Chef ' }), [])
+  assert.deepEqual(names, { zh: 'Chef', en: 'Chef' })
+})
+
+test('作者名：线上与本地都为空时两行都空（视图显示 —）', () => {
+  // info 解析失败（集名为空）绑定不上任何地图，作者也为空
+  const names = levelSetAuthorNames(
+    set({ name: '', author: '   ' }),
+    [map({ level_set_name: '', author: '' })],
+  )
+  assert.deepEqual(names, { zh: '', en: '' })
 })
 
 test('地图投影成 Repository 时把 required_frameworks 变成 requires 依赖', () => {

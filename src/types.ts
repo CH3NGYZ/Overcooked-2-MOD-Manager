@@ -196,6 +196,14 @@ export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
 export interface LevelSetInfo {
   /** 目录名（唯一键，也是开关时移动的目录名）。 */
   dir_name: string
+  /**
+   * 关卡集目录的绝对路径。
+   *
+   * 开关会在 `levels/` 与 `disabled/` 之间移动整个目录，所以用户要知道的
+   * 不只是目录名，而是「它现在到底在磁盘哪里」。由后端按真实数据根给出，
+   * 前端不再自己拼游戏目录。
+   */
+  path: string
   /** `true` = 在 `levels/`；`false` = 在 `disabled/`。 */
   enabled: boolean
   /** info 里的英文集名；解析失败时为空。 */

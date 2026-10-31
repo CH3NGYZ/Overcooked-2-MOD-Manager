@@ -2,7 +2,9 @@
 import { t, locale } from '../i18n'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { PULSE_DURATION } from '../motion'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { collapseCardWithScroll, scrollExpandedCardIntoView, trackStuckRows } from '../expandScroll'
+import type { StuckRowsTracker } from '../expandScroll'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDialog } from 'naive-ui'
 import { useNotify } from '../useNotify'
 import {
@@ -763,6 +765,37 @@ function toggleExpand(dll: string) {
 function isExpanded(dll: string) {
   return !!expanded.value[dll]
 }
+
+/**
+ * 展开后的滚动（策略见 `expandScroll.ts`）：顺手记下这次滚动的起止，
+ * 收起时按它原样倒回去。
+ *
+ * 只有「用户自己点的这一张」滚：这里没有监听 `expanded`，所以批量收起、
+ * 重新渲染、跨页定位都不会顺带触发一次滚动。
+ */
+function scrollAfterExpand(card: HTMLElement | null | undefined, anchorSelector: string, bodySelector: string) {
+  if (!card) return
+  const anchor = card.querySelector(anchorSelector)
+  if (!anchor) return
+  void nextTick().then(() => {
+    scrollExpandedCardIntoView({ card, anchor, body: card.querySelector(bodySelector) })
+  })
+}
+
+/**
+ * 收起一张卡片：把状态改动交给 `collapseCardWithScroll` 里的回调。
+ *
+ * 顺序由它保证：先同步量折叠前的位置，再改状态让详情开始折，最后把展开那次滚动
+ * 倒回去（两者同时发生）。调用方自己先改状态的话，量到的就是折叠后的位置。
+ */
+function collapseWithScroll(card: HTMLElement | null | undefined, bodySelector: string, collapse: () => void) {
+  if (!card) {
+    collapse()
+    return
+  }
+  collapseCardWithScroll({ card, body: card.querySelector(bodySelector) }, collapse)
+}
+
 /**
  * 点击卡片顶栏展开/收起详情。
  *
@@ -780,7 +813,13 @@ function onCardClick(event: MouseEvent, mod: InstalledMod) {
   const target = event.target
   if (target instanceof Element && target.closest('.card-detail')) return
   cardClickHandled = true
+  const card = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  if (isExpanded(mod.dll_file)) {
+    collapseWithScroll(card, '.card-detail', () => toggleExpand(mod.dll_file))
+    return
+  }
   toggleExpand(mod.dll_file)
+  scrollAfterExpand(card, '.card-row', '.card-detail')
 }
 
 /**
@@ -794,6 +833,9 @@ function onCardClick(event: MouseEvent, mod: InstalledMod) {
  *   - `.tool-group` / `.card-switch`（按钮与开关自身）
  * 落在这些里面说明用户是在操作这一行，交给各自的 @click.stop / 处理函数，
  * 不在这里收起，避免一次点击既展开又收起。
+ *
+ * 收起后只有「同时只展开了这一张」时把展开那次滚动倒回去：一次收掉多张时
+ * 没有哪一张是用户正在看的那张，滚动只会把视图甩到别处。
  */
 function onDocumentClick(event: MouseEvent) {
   /*
@@ -810,9 +852,18 @@ function onDocumentClick(event: MouseEvent) {
   const target = event.target
   if (target instanceof Element && target.closest('.card-row, .package-head')) return
   // 只把已展开的项置为 false，不动其它键
-  const next = { ...expanded.value }
-  for (const key of openKeys) next[key] = false
-  expanded.value = next
+  const collapseAll = () => {
+    const current = expanded.value
+    const next = { ...current }
+    for (const key of Object.keys(current)) if (current[key]) next[key] = false
+    expanded.value = next
+  }
+  if (openKeys.length !== 1) {
+    collapseAll()
+    return
+  }
+  const card = document.querySelector<HTMLElement>(`[data-dll-file="${CSS.escape(openKeys[0])}"]`)
+  collapseWithScroll(card, '.card-detail', collapseAll)
 }
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
@@ -1378,10 +1429,55 @@ const collapsedPackages = ref<string[]>([])
 function isPackageExpanded(key: string) {
   return !collapsedPackages.value.includes(key)
 }
-function togglePackage(key: string) {
-  collapsedPackages.value = collapsedPackages.value.includes(key)
-    ? collapsedPackages.value.filter((item) => item !== key)
-    : [...collapsedPackages.value, key]
+
+/**
+ * 包标题行元素：吸顶判定（`data-stuck`）要拿实时位置，而 v-for 里没有稳定的 ref 名。
+ *
+ * 收集所有包（不分展开态）也无妨：`data-stuck` 的视觉规则只对
+ * `.package-shell.expanded > .package-head` 生效，收起的外壳多一个属性不可见。
+ */
+const packageHeadEls = new Map<string, HTMLElement>()
+
+function bindPackageHead(key: string, el: unknown) {
+  if (el instanceof HTMLElement) packageHeadEls.set(key, el)
+  else packageHeadEls.delete(key)
+}
+
+let packageStuckTracker: StuckRowsTracker | null = null
+
+onMounted(() => {
+  packageStuckTracker = trackStuckRows(() => [...packageHeadEls.values()])
+})
+onBeforeUnmount(() => {
+  packageStuckTracker?.stop()
+  packageStuckTracker = null
+})
+/**
+ * 包外壳的展开 / 收起。
+ *
+ * 滚动策略与单 MOD 卡片同一套（`expandScroll.ts`）：包 body 撑开后优先让整包可见，
+ * 收起时把展开那次滚动倒回去。收起必须交给 `collapseWithScroll`：它先量折叠前的
+ * 位置再改状态，自己先改就量不到了。
+ */
+function togglePackage(node: ModPackageNode, event: MouseEvent) {
+  const opening = !isPackageExpanded(node.key)
+  const head = event.currentTarget
+  const shell = head instanceof Element ? head.closest('.package-shell') : null
+  const card = shell instanceof HTMLElement ? shell : null
+  // 外壳的吸顶态跟着展开态走：状态换完再量一次，否则贴边标记要等用户滚动才更新
+  const refreshStuck = () => {
+    void nextTick().then(() => packageStuckTracker?.refresh())
+  }
+  if (!opening) {
+    collapseWithScroll(card, '.package-body', () => {
+      collapsedPackages.value = [...collapsedPackages.value, node.key]
+      refreshStuck()
+    })
+    return
+  }
+  collapsedPackages.value = collapsedPackages.value.filter((item) => item !== node.key)
+  refreshStuck()
+  scrollAfterExpand(card, '.package-head', '.package-body')
 }
 
 /** 包级开关：走后端已有的 toggle_local_mod_package，一次切换整包。 */
@@ -1551,6 +1647,7 @@ function removePackage(node: ModPackageNode) {
               onCardClick 要给 document 级的「点空白收起」打标记。
             -->
             <LocalItemCard v-if="!pkg.grouped" v-for="mod in pkg.mods" :key="mod.dll_file"
+              :data-dll-file="mod.dll_file"
               :data-focus-id="bindingRepositoryId(mod)"
               :data-mod-anchor="modAnchor(mod)"
               :enabled="mod.enabled"
@@ -1655,10 +1752,12 @@ function removePackage(node: ModPackageNode) {
               :data-focus-id="pkg.repositoryId"
               :data-mod-anchor="`unit:${pkg.key}`"
               :class="{
+                expanded: isPackageExpanded(pkg.key),
                 'status-flash': matchesActiveStatus(`unit:${pkg.key}`),
                 'focus-flash': !!pkg.repositoryId && highlightId === pkg.repositoryId,
               }">
-              <header class="package-head" @click="togglePackage(pkg.key)">
+              <header class="package-head" :ref="(el) => bindPackageHead(pkg.key, el)"
+                @click="togglePackage(pkg, $event)">
                 <!-- 左：开关 + 包名 + 子 MOD 数量（数量紧跟包名；「N 个」已表明这是包） -->
                 <div class="package-left">
                   <!--
@@ -1753,11 +1852,13 @@ function removePackage(node: ModPackageNode) {
                   所以不传 #status，组件会自己补 1px 隐形占位保持按钮列对齐。
                 -->
                 <LocalItemCard v-for="mod in pkg.mods" :key="mod.dll_file"
+                  :data-dll-file="mod.dll_file"
                   :enabled="mod.enabled"
                   :toggle-loading="!!busy[mod.dll_file]"
                   :title="modTitle(mod)"
                   :disabled="!mod.enabled"
                   :expanded="isExpanded(mod.dll_file)"
+                  :row-sticky="false"
                   :tools-min-width="toolColumnWidth"
                   :tool-gap="TOOL_GAP"
                   :tool-button-width="TOOL_BUTTON_WIDTH"
@@ -1869,6 +1970,43 @@ function removePackage(node: ModPackageNode) {
   cursor: pointer;
   user-select: none;
   min-width: 0;
+}
+/*
+ * 展开的外壳：包标题行吸顶。
+ *
+ * 包内子卡片都关掉了吸顶（`LocalItemCard` 的 `row-sticky`），顶部这一条只由包标题占用 ——
+ * 两层同时钉在 0 只会互相盖住，用户反而看不出自己展开的是哪个子 MOD。
+ *
+ * 底色用 `inherit` 取外壳自己的底色：吸顶时盖住从下面滚过去的子卡片，
+ * 未吸顶时与外壳同色、看不出来（hover / 高亮换底色时也自动跟上）。
+ */
+.package-shell.expanded > .package-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background-color: inherit;
+}
+/*
+ * 吸顶态：上边框已经跟着外壳滚出视口，补一条贯穿外壳内边宽的顶边线，
+ * 底边再补一条分隔线，说明子卡片是从下面滚过去的。
+ * 用绝对定位伪元素：加真边框会改行高，把吸顶的贴边位置挪开 1px。
+ */
+.package-shell.expanded > .package-head[data-stuck]::before,
+.package-shell.expanded > .package-head[data-stuck]::after {
+  content: '';
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  height: 1px;
+  pointer-events: none;
+}
+.package-shell.expanded > .package-head[data-stuck]::before {
+  top: 0;
+  background: var(--oc2-row-line);
+}
+.package-shell.expanded > .package-head[data-stuck]::after {
+  bottom: 0;
+  background: var(--oc2-row-line);
 }
 /* 左半：开关 + 包名 + 子 MOD 数量（数量紧跟包名） */
 .package-left {

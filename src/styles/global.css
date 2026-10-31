@@ -471,3 +471,31 @@ body {
   /* 单元格里的行内代码不额外加内边距，避免把列宽顶开 */
   padding: 0 3px;
 }
+
+/*
+ * 页头批量开关：二选一分段控件（MOD 管理 / 地图管理共用）。
+ *
+ * 复用 Naive 的 segment tabs 当互斥按钮，需要收三处：pane 内容（空 pane 自带
+ * padding，会把页头撑高）、tab 的纵向内边距（默认 6px，比同一行的小按钮高
+ * 一头）、宽度（固定窄宽、不参与剩余空间分配，也避免文案变化时抖动）。
+ *
+ * 选择器带上 `.page-header-actions`：Naive 的组件样式是运行时注入的，同权重
+ * 规则可能被它盖掉；多一层类名保证这里稳定生效。两个页面都只写
+ * `class="bulk-switch"`，不要再各自复制一份样式。
+ */
+.page-header-actions .bulk-switch {
+  flex: 0 0 auto;
+  width: 148px;
+}
+.page-header-actions .bulk-switch .n-tabs-nav { margin: 0; }
+.page-header-actions .bulk-switch .n-tab-pane { display: none; }
+.page-header-actions .bulk-switch .n-tabs-rail { padding: 2px; }
+.page-header-actions .bulk-switch .n-tabs-tab { padding: 2px 0; }
+.page-header-actions .bulk-switch .n-tabs-capsule {
+  transition: transform .3s var(--n-bezier), opacity .18s var(--n-bezier);
+}
+/*
+ * 部分启用：两个分段都不选中。Naive 的胶囊只在有选中项时重新定位，
+ * 保持原样会停在上一次选中的那一侧，读起来像「已经全开 / 全关」。
+ */
+.page-header-actions .bulk-switch.is-mixed .n-tabs-capsule { opacity: 0; }

@@ -176,9 +176,39 @@ export function installedModTags(mod: InstalledMod): StatusTag[] {
   return tags
 }
 
-/** 本地已装版本：优先安装清单记录的 Release tag，其次插件元数据版本。 */
+/**
+ * 本地已装版本：优先安装清单记录的 Release tag，其次插件元数据版本。
+ *
+ * 这是**展示用**版本（预发布判定、仓库卡片的已装版本）。判断「要不要提示
+ * 更新」一律用 `localCompareVersion`，两者在用户手动换过 DLL 时会分叉。
+ */
 export function localVersion(mod: InstalledMod): string | undefined {
   return mod.repository_binding?.tag || mod.version
+}
+
+/**
+ * 版本比较用的本地版本：清单记录的安装 tag 与 DLL 自报版本取较高者。
+ *
+ * 清单 tag 是「装的是哪个 Release」，DLL 版本是「磁盘上实际的文件版本」。
+ * 用户手动换过 DLL 时两者分叉，只看其中一边都会判错：
+ *   - 手动降级（DLL 低于清单 tag）：按 DLL 版本比，会把「安装时就是线上
+ *     最新版」的包误报成可更新 —— 用户主动降级不该被当成待更新；
+ *   - 手动升级（DLL 高于清单 tag）：按清单 tag 比，会漏掉「本地其实已经
+ *     是线上版本」，一直提示更新。
+ *
+ * 取较高者后，DLL 版本只能**抑制**更新、绝不会凭空制造一条更新；
+ * 线上真的发布了更高版本时，两种情况都照常报告。
+ *
+ * 后端 `mods.rs` 的 `binding_update_state` 用同一规则（`effective_local_version`），
+ * 两处必须一起改，否则刷新完成后前端会推翻后端结论。
+ */
+export function localCompareVersion(mod: InstalledMod): string | undefined {
+  const tag = mod.repository_binding?.tag
+  if (!tag) return mod.version
+  const dll = mod.version
+  if (!dll) return tag
+  const compared = compareVersions(dll, tag)
+  return compared !== null && compared > 0 ? dll : tag
 }
 
 /**
@@ -283,11 +313,14 @@ export function summarizeUnits(units: readonly StatusUnit[]): StatusSummary[] {
  * 不能像页头那样把包内 DLL 的结论数一遍（那会显示成「1 最新版」，
  * 暗示包里还有一个不是最新版的东西）。
  *
- * 因此这里把标签分成三类：
- *   1. 版本结论（最新版 / 可更新 / 检测中 / 版本未知 / 仓库刷新失败…）
+ * 因此这里把标签分成四类：
+ *   1. 预发布 —— 整包共用一个 tag，不带数量，与单个 MOD 一样放在最前；
+ *   2. 依赖告警（缺依赖 / 依赖冲突）—— 仓库 `relations` 挂在仓库上，
+ *      包内每个 DLL 都按同一份声明判定，所以这是包级结论：整包只出一条、
+ *      不带数量，与单个 MOD 卡片同一顺序同一语义；
+ *   3. 版本结论（最新版 / 可更新 / 检测中 / 版本未知 / 仓库刷新失败…）
  *      —— 整包只取最需要注意的那一条，不带数量；
- *   2. 预发布 —— 整包共用一个 tag，也不带数量，与单个 MOD 一样放在最前；
- *   3. 成员级告警（重复、低版本、加载警告）—— 确实可能只命中某几个 DLL，
+ *   4. 成员级告警（重复、低版本、加载警告）—— 确实可能只命中某几个 DLL，
  *      保留数量。
  *
  * 纯依赖 DLL 不参与：它没有版本语义，包内行已经单独标了「依赖」。
@@ -302,6 +335,15 @@ export interface PackageStatus {
 
 /** 这些标签描述的是包内某个 DLL 的状态，可能只命中一部分成员。 */
 const MEMBER_LEVEL_LABELS = new Set(['duplicate', 'duplicate_lower_version', 'load_warning'])
+
+/**
+ * 包级依赖告警：按严重度排列（冲突先于缺失）。
+ *
+ * 依赖声明来自仓库的 `[[repositories.relations]]`，整包共用一份：只要包内
+ * 任一成员判定出问题，整个包就不可用，结论属于包而不是某个 DLL。
+ * 因此包标题只出一条、不带数量 —— 与单 MOD 卡片上的「缺依赖」同义。
+ */
+const PACKAGE_DEPENDENCY_LABELS = ['dependency_conflict', 'missing_dependency'] as const
 
 export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] {
   const real = mods.filter((mod) => !mod.is_dependency)
@@ -323,6 +365,19 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
   if (prerelease) {
     const meta = STATUS_META.prerelease
     result.push({ key: 'prerelease', text: meta.text, tone: meta.tone })
+  }
+
+  /*
+   * 依赖告警：位置与单个 MOD 一致（预发布之后、版本结论之前）。
+   *
+   * 这类标签既不是版本结论、也不在成员级告警里，早期实现会**整条丢弃**：
+   * 仓库声明了 `requires` 但依赖被卸载时，单 MOD 显示「缺依赖」，
+   * 多 DLL 包的标题却什么都不说 —— 同一个包看起来「没问题」。
+   */
+  for (const key of PACKAGE_DEPENDENCY_LABELS) {
+    if (!present.has(key)) continue
+    const meta = STATUS_META[key]
+    result.push({ key, text: meta.text, tone: meta.tone })
   }
 
   // 版本结论互斥：整包只保留最需要注意的一条
@@ -398,7 +453,7 @@ export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]
   const matches = modsForRepository(installedMods, repo)
   const installed = matches.reduce<InstalledMod | undefined>((best, mod) => {
     if (!best) return mod
-    const compared = compareVersions(localVersion(mod), localVersion(best))
+    const compared = compareVersions(localCompareVersion(mod), localCompareVersion(best))
     return compared !== null && compared > 0 ? mod : best
   }, undefined)
 
@@ -413,7 +468,10 @@ export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]
   }
 
   if (!release) return tag('unknown')
-  const compared = compareVersions(release.version || release.tag_name, localVersion(installed))
+  const compared = compareVersions(
+    release.version || release.tag_name,
+    localCompareVersion(installed),
+  )
   if (compared === null) return tag('unknown')
   return compared > 0 ? tag('update_available') : tag('latest')
 }
@@ -431,7 +489,9 @@ export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]
  * 「返回可空的重算」+ 一层包装函数，结果总览页用错了一个 —— 刷新完 Release
  * 后管理页显示可更新、总览写着全部最新。合并成一个函数后没有选择空间。
  *
- * `mods.ts` 里的后端扫描用同样规则算 `update_available`，两者必须一致。
+ * `mods.ts` 里的后端扫描用同样规则算 `update_available`，两者必须一致：
+ * 「线上版本 > 本地有效版本」，本地有效版本 = max(清单 tag, DLL 版本)，
+ * 见 `localCompareVersion`（后端对应 `effective_local_version`）。
  */
 export type ModUpdateVerdict =
   /** 能按当前缓存判定。 */
@@ -448,7 +508,8 @@ export function modUpdateVerdict(mod: InstalledMod, repositories: Repository[]):
   if (repo.download_mode === 'repository_file') return { known: false }
   const release = repo.cached_releases[0]
   if (!release) return { known: false }
-  const compared = compareVersions(release.version || release.tag_name, localVersion(mod))
+  // 本地有效版本 = max(清单 tag, DLL 版本)，规则见 localCompareVersion
+  const compared = compareVersions(release.version || release.tag_name, localCompareVersion(mod))
   if (compared === null) return { known: false }
   return { known: true, updateAvailable: compared > 0 }
 }

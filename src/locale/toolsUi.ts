@@ -215,6 +215,70 @@ export const toolsUi: DomainMessages = {
     ko: '의존성',
     ja: '依存ファイル',
   },
+  // 依赖表：关系（requires / conflicts / compatible）
+  relation: {
+    'zh-CN': '关系',
+    'zh-TW': '關係',
+    en: 'Relation',
+    ko: '관계',
+    ja: '関係',
+  },
+  // 依赖表：版本要求
+  requirement: {
+    'zh-CN': '要求',
+    'zh-TW': '要求',
+    en: 'Requirement',
+    ko: '요구 사항',
+    ja: '要件',
+  },
+  // 依赖表：状态列
+  status: {
+    'zh-CN': '状态',
+    'zh-TW': '狀態',
+    en: 'Status',
+    ko: '상태',
+    ja: '状態',
+  },
+  // 依赖已满足（本地装了且版本在区间内）
+  satisfied: {
+    'zh-CN': '已满足',
+    'zh-TW': '已滿足',
+    en: 'Satisfied',
+    ko: '충족',
+    ja: '充足',
+  },
+  // 依赖未装、但线上有满足区间的版本可装
+  installable: {
+    'zh-CN': '可安装',
+    'zh-TW': '可安裝',
+    en: 'Installable',
+    ko: '설치 가능',
+    ja: 'インストール可',
+  },
+  // conflicts 关系未命中（对方不在冲突区间内）
+  noConflict: {
+    'zh-CN': '无冲突',
+    'zh-TW': '無衝突',
+    en: 'No conflict',
+    ko: '충돌 없음',
+    ja: '競合なし',
+  },
+  // compatible 关系满足
+  compatible: {
+    'zh-CN': '兼容',
+    'zh-TW': '相容',
+    en: 'Compatible',
+    ko: '호환',
+    ja: '互換',
+  },
+  // compatible 关系不满足
+  incompatible: {
+    'zh-CN': '不兼容',
+    'zh-TW': '不相容',
+    en: 'Incompatible',
+    ko: '비호환',
+    ja: '非互換',
+  },
   // 本地安装
   localInstall: {
     'zh-CN': '本地安装',

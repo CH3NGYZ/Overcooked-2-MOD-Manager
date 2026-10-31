@@ -1,5 +1,6 @@
 import { compareVersions } from './modStatus.ts'
-import type { LevelSetInfo } from './types'
+import { resolveRelations } from './modRelations.ts'
+import type { InstalledMod, LevelSetInfo, MapInfo, Repository } from './types'
 
 /**
  * 关卡集（地图）的状态判定。
@@ -14,6 +15,13 @@ import type { LevelSetInfo } from './types'
  *
  * 所以两者共用 `compareVersions` 这类纯工具，但状态机各写一份 —— 硬把
  * 「本地关卡集」塞进 `InstalledMod` 会让每个使用点都要判断「这是哪种」。
+ *
+ * ## 为什么不能引入 Vue / Naive
+ *
+ * 本模块被 `tests/level-set-status.test.mjs` 用 `node --test` 直接 import
+ * （Node 的 TS 类型擦除，没有 Vite 转译）。引入 `vue`、`naive-ui` 或
+ * `i18n` 都会让这个测试在进程启动时就崩掉，所以这里只做纯计算：
+ * 返回 **i18n key** 与色调，翻译与渲染留给视图层。
  */
 
 /** 关卡集的展示状态。 */
@@ -32,6 +40,15 @@ export type LevelSetState =
   | 'unbound'
   /** 无法比较版本（任一侧缺失）。 */
   | 'unknown'
+
+/**
+ * 状态色调。
+ *
+ * 刻意不复用 `theme.ts` 的 `TagTone`：那个模块依赖 Vue，本模块必须能被
+ * Node 直接引用。两个联合类型的取值保持一致（`theme.ts` 的
+ * `tagColorForAny` 接受任意字符串），新增档位时要同时改两处。
+ */
+export type LevelSetTone = 'accent' | 'moderate' | 'muted' | 'critical'
 
 /** 地图仓库对某个关卡集的版本声明。 */
 export interface MapVersionRef {
@@ -82,19 +99,18 @@ export function levelSetState(
 /** 状态 → 展示用的 tag（与 `modsLocal.*` 的命名保持同一套语义）。 */
 export const LEVEL_SET_STATE_TAGS: Record<LevelSetState, string> = {
   disabled: 'modsLocal.disabled',
-  unreadable: 'tools.versionUnknown',
+  unreadable: 'levelSet.parseFailed',
   update_available: 'tools.update',
   latest: 'modsLocal.latest',
-  ahead: 'modsLocal.latest',
+  // 「更高版本」不是「最新版」：本地比线上还新，结论与 MOD 页
+  // 「存在更高版本，建议卸载」同档，必须分开说，否则用户会以为不用更新
+  ahead: 'levelSet.higherVersion',
   unbound: 'modsLocal.unbound',
   unknown: 'tools.versionUnknown',
 }
 
 /** 状态 → 语义色调，与 MOD 侧共用同一档位。 */
-export const LEVEL_SET_STATE_TONES: Record<
-  LevelSetState,
-  'accent' | 'moderate' | 'muted' | 'critical'
-> = {
+export const LEVEL_SET_STATE_TONES: Record<LevelSetState, LevelSetTone> = {
   disabled: 'muted',
   unreadable: 'critical',
   update_available: 'moderate',
@@ -120,6 +136,199 @@ export function mapVersionForLevelSet(
 }
 
 /**
+ * 把地图源列表压成版本声明表。
+ *
+ * **只有刷新到 Release 的地图才产生声明。** 没刷过的地图 `latest_tag` 为空，
+ * 此时本地关卡集必须保持「未绑定」而不是被当成「最新版」—— 把「还没查」
+ * 说成「已是最新」是错的结论，用户会因此错过真实更新。
+ */
+export function mapVersionRefs(maps: readonly MapInfo[]): MapVersionRef[] {
+  return maps
+    .filter((map) => !!map.latest_tag)
+    .map((map) => ({
+      tag: map.latest_tag as string,
+      levelSetName: map.level_set_name,
+      author: map.author,
+    }))
+}
+
+/**
+ * 找本地关卡集绑定的地图源条目。
+ *
+ * 身份是 `level_set_name + author`（与 `mapVersionForLevelSet` 同一规则）。
+ * 集名为空（解析失败）时不做匹配：空字符串会与所有空名条目串在一起。
+ */
+export function mapForLevelSet(
+  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  maps: readonly MapInfo[],
+): MapInfo | undefined {
+  if (!set.name.trim()) return undefined
+  return maps.find((map) =>
+    isSameLevelSet(set, { name: map.level_set_name, author: map.author }))
+}
+
+/**
+ * 反过来：找一张地图在本地的关卡集。
+ *
+ * 与 `mapForLevelSet` 是同一个身份判定，方向相反 —— 下载页的卡片主体是
+ * 「地图源条目」，要知道它装没装、装的是哪一版，就得从地图找本地目录。
+ * 地图声明的地图名为空时同样不匹配（解析失败的地图不能认领任意空名集）。
+ */
+export function levelSetForMap(
+  map: Pick<MapInfo, 'level_set_name' | 'author'>,
+  sets: readonly LevelSetInfo[],
+): LevelSetInfo | undefined {
+  if (!map.level_set_name.trim()) return undefined
+  return sets.find((set) =>
+    isSameLevelSet({ name: map.level_set_name, author: map.author }, set))
+}
+
+/**
+ * 把一张地图投影成 `Repository`，仅供关系判定使用。
+ *
+ * 为什么需要投影：地图的框架依赖与 MOD 的插件依赖是**同一套模型**
+ * （`relations` + `required_frameworks`），判定逻辑已经写在 `modRelations.ts`
+ * 里。地图不是 `Repository`，但只要有 `relations` 就能复用那条管线，
+ * 不需要为地图再写一份依赖判定。
+ *
+ * 只填关系判定真正会读的字段，其余给安全默认值；新增字段时如果关系判定
+ * 会读它，记得同步这里（`mapRelationRepository` 是唯一的投影入口）。
+ */
+export function mapRelationRepository(map: MapInfo): Repository {
+  return {
+    id: map.id,
+    name: map.name,
+    name_i18n: map.name_i18n,
+    provider: map.provider,
+    username: map.username,
+    repository: map.repository,
+    // 下面这些字段关系判定不读，给安全默认值
+    download_mode: 'release',
+    branch: '',
+    file_path: '',
+    channel: 'all',
+    asset_rules: [],
+    install_target: '',
+    note: '',
+    plugin_guid: '',
+    local_product_name: '',
+    local_original_filename: '',
+    version_regex: '',
+    max_release_count: 10,
+    download_threads: 0,
+    enabled: map.enabled,
+    builtin: map.builtin,
+    // 契约里 `get_maps` 会填全部缓存 Release；老快照或手写测试对象可能没有
+    cached_releases: map.cached_releases ?? (map.latest_release ? [map.latest_release] : []),
+    relations: (map.required_frameworks ?? []).map((framework) => ({
+      kind: 'requires' as const,
+      guid: framework.guid,
+      min_version: framework.min_version ?? '',
+      max_version: '',
+    })),
+  }
+}
+
+/** 一条框架依赖在本地的满足情况。 */
+export interface FrameworkState {
+  guid: string
+  /** 依赖声明的最低版本（空表示不限）。 */
+  minVersion: string
+  /** 本地已装版本；未装时为空。 */
+  installedVersion: string | null
+  /** 已装且版本落在依赖声明的区间内。 */
+  satisfied: boolean
+}
+
+/**
+ * 地图声明的框架依赖在本地的满足情况。
+ *
+ * 数据源是 Dashboard 已经扫好的 MOD 列表：地图页以前为了算这个让后端
+ * 再全量扫一遍 `BepInEx/plugins`，加载时间白白翻倍。`resolveRelations`
+ * 的第三个参数传空数组 —— 地图依赖的是框架，安装入口在设置页，
+ * 不存在「从地图源安装依赖」这种来源。
+ */
+export function frameworkStates(
+  map: MapInfo | null | undefined,
+  mods: readonly InstalledMod[],
+): FrameworkState[] {
+  if (!map) return []
+  const statuses = resolveRelations(mapRelationRepository(map), mods, [])
+  return statuses.map((status) => ({
+    guid: status.relation.guid,
+    minVersion: status.relation.min_version?.trim() ?? '',
+    installedVersion: status.installedVersion,
+    satisfied: status.state === 'ok',
+  }))
+}
+
+/**
+ * 地图的框架依赖是否有缺失。
+ *
+ * `gameProbed` 为假（`game?.path` 为空）时返回 `null` —— 游戏都没探测到，
+ * 本地 MOD 列表必然是空的，此时判「缺依赖」是把「不知道」说成「缺」。
+ *
+ * DIYLevel 与 DIYLevel Web Runtime 任一缺失都算依赖缺失，但这里**不写死
+ * GUID**：判定完全由地图源里的 `required_frameworks` 声明驱动，GUID 只是
+ * 数据。
+ */
+export function mapDependencyMissing(
+  map: MapInfo | null | undefined,
+  mods: readonly InstalledMod[],
+  gameProbed: boolean,
+): boolean | null {
+  if (!gameProbed) return null
+  if (!map) return false
+  return frameworkStates(map, mods).some((state) => !state.satisfied)
+}
+
+/** 关卡集卡片状态区的一个标签。 */
+export interface LevelSetCardTag {
+  /** i18n key（视图层 `t()`）。 */
+  text: string
+  tone: LevelSetTone
+  /** 这个标签来自哪一类判定：依赖缺失与版本结论是两件事。 */
+  kind: 'state' | 'dependency'
+  /** 可跳转的地图 id（只有「有更新」会带）：跳到下载页并高亮那张卡。 */
+  mapId?: string
+}
+
+/**
+ * 关卡集卡片状态区的完整标签列表。
+ *
+ * 顺序与 MOD 卡片一致：先「缺依赖」这类关系提醒，再版本结论 ——
+ * 关系提醒说的是「装上能不能跑」，比「有没有新版」更该先被看到。
+ *
+ * 依赖缺失只在**能判定**（游戏已探测）且确实缺失时出现；
+ * 停用的地图仍显示依赖缺失，因为用户重新启用前就该知道它还缺东西。
+ */
+export function levelSetCardTags(
+  set: LevelSetInfo,
+  maps: readonly MapInfo[],
+  mods: readonly InstalledMod[],
+  gameProbed: boolean,
+): LevelSetCardTag[] {
+  const bound = mapForLevelSet(set, maps)
+  const tags: LevelSetCardTag[] = []
+
+  if (mapDependencyMissing(bound, mods, gameProbed) === true) {
+    tags.push({ text: 'levelSet.dependencyMissing', tone: 'critical', kind: 'dependency' })
+  }
+
+  const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
+  tags.push({
+    text: LEVEL_SET_STATE_TAGS[state],
+    tone: LEVEL_SET_STATE_TONES[state],
+    kind: 'state',
+    // 只要这个集绑定了地图，状态标签就允许跳回下载页并高亮那张卡 ——
+    // 与 MOD 管理页一致：「最新版」和「有更新」都是「去下载页看看」的入口。
+    // 未绑定（或没匹配上地图）没有目标，自然不可点。
+    mapId: bound?.id,
+  })
+  return tags
+}
+
+/**
  * 关卡集的展示名：优先中文名，其次英文名，最后退回目录名。
  *
  * 与 MOD 的 `pickI18n` 不同：这里没有多语言表，只有「中英两个字段 + 目录名」
@@ -136,4 +345,123 @@ export function levelSetDisplayName(
   if (english) return english
   if (chinese) return chinese
   return set.dir_name
+}
+
+// ---------------------------------------------------------------------------
+// 下载页卡片状态
+// ---------------------------------------------------------------------------
+
+/**
+ * 地图下载页卡片的状态标签。
+ *
+ * ## 为什么和「管理页」的状态不是同一套
+ *
+ * 管理页的主体是**本地关卡集**，要回答「这个已经装在盘上的集有没有新版」，
+ * 所以用 `LevelSetState`（含停用、解析失败、本地更高）。
+ *
+ * 下载页的主体是**地图源条目**，要回答 MOD 安装页那个问题：
+ * 「这东西我装了没 / 该点安装还是重装」。同一个字段在两种页面语义不同，
+ * 硬复用会让「已停用」这种纯本地状态出现在安装页，也会让「未安装」在管理
+ * 页无意义 —— 因此这里单列一套，但文案与色调全部复用 MOD 侧已有的 key，
+ * 保证两张页面的同一状态长得一样。
+ */
+export type MapCardState =
+  /** 本地没有，线上有 Release：可以装。 */
+  | 'not_installed'
+  /** 本地已装，但线上还没刷到 Release：知道装了，不知道是不是最新。 */
+  | 'installed'
+  /** 线上版本比本地高。 */
+  | 'update_available'
+  /** 与线上一致（或本地更高，例如作者预发布）。 */
+  | 'latest'
+  /** 刷新失败 / 版本无法比较：结论不可信，不能说「已是最新」。 */
+  | 'cannot_check'
+  /** 本地没装，线上也还没刷到：还不知道能不能装。 */
+  | 'not_refreshed'
+
+/** 状态 → i18n key。全部复用 MOD 侧已有条目（`cannotCheckUpdate` 除外）。 */
+export const MAP_CARD_STATE_TAGS: Record<MapCardState, string> = {
+  not_installed: 'overview.notInstalled',
+  installed: 'modsLocal.installed',
+  update_available: 'tools.update',
+  latest: 'modsLocal.latest',
+  // 与 MOD 的「刷新失败 → 无法检测更新」同一句结论，但在地图域里另有措辞：
+  // 地图刷新失败是源的问题，用户要重试的是「刷新」，不是重装
+  cannot_check: 'levelSet.cannotCheckUpdate',
+  not_refreshed: 'modsOnline.notRefreshed',
+}
+
+/** 状态 → 语义色调，与 MOD 侧同一档位。 */
+export const MAP_CARD_STATE_TONES: Record<MapCardState, LevelSetTone> = {
+  not_installed: 'muted',
+  installed: 'accent',
+  update_available: 'moderate',
+  latest: 'accent',
+  cannot_check: 'moderate',
+  not_refreshed: 'muted',
+}
+
+/**
+ * 算出下载页卡片的本地状态。
+ *
+ * 判定顺序刻意这样排：
+ *
+ * 1. `last_error` 优先 —— 刷新失败的缓存不能拿来下结论（AGENTS.md 里
+ *    「刷新失败的仓库缓存不能确认最新版或有更新」同一条规则）；
+ * 2. 没有 `latest_tag` 时不比版本，只说「装了」或「还没查到」；
+ * 3. 版本比较不出结果（info 解析失败、版本号不合法）时给「无法检测更新」，
+ *    而不是把空字符串当成「最新版」。
+ */
+export function mapCardState(
+  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'last_error'>,
+  sets: readonly LevelSetInfo[],
+): MapCardState {
+  if (map.last_error) return 'cannot_check'
+  const set = levelSetForMap(map, sets)
+  if (!map.latest_tag) return set ? 'installed' : 'not_refreshed'
+  if (!set) return 'not_installed'
+  const order = compareVersions(set.version, map.latest_tag)
+  if (order === null) return 'cannot_check'
+  return order < 0 ? 'update_available' : 'latest'
+}
+
+/** 下载页卡片状态区的渲染值。 */
+export interface MapCardStatus {
+  key: MapCardState
+  /** i18n key（视图层 `t()`）。 */
+  text: string
+  tone: LevelSetTone
+}
+
+/** `mapCardState` + 文案 + 色调，视图层直接用这一份。 */
+export function mapCardStatus(
+  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'last_error'>,
+  sets: readonly LevelSetInfo[],
+): MapCardStatus {
+  const key = mapCardState(map, sets)
+  return { key, text: MAP_CARD_STATE_TAGS[key], tone: MAP_CARD_STATE_TONES[key] }
+}
+
+/** 下载页卡片动作，含义与 `OnlineCard` 的 `CardActionKind` 对齐。 */
+export type MapCardAction = 'install' | 'reinstall' | 'update' | 'refresh'
+
+/**
+ * 卡片该给哪个按钮 —— 与 MOD 安装页同一套规则：
+ *
+ * - 没 Release 或刷新失败：只能「刷新」（没有 tag 无从安装）；
+ * - 本地没装：安装；
+ * - 本地版本更低：更新；
+ * - 已经装了（同版本、本地更高、或版本比不了）：重装 —— 重装是幂等的，
+ *   而「安装」在已装状态下会让用户以为会新增一份。
+ */
+export function mapCardAction(
+  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'last_error'>,
+  sets: readonly LevelSetInfo[],
+): MapCardAction {
+  if (map.last_error || !map.latest_tag) return 'refresh'
+  const set = levelSetForMap(map, sets)
+  if (!set) return 'install'
+  const order = compareVersions(set.version, map.latest_tag)
+  if (order !== null && order < 0) return 'update'
+  return 'reinstall'
 }

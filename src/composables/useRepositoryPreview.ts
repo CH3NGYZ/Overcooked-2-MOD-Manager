@@ -53,8 +53,12 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
    * 关系检查会真的卸载/安装东西，把它排在确认之前，等于拿用户的环境
    * 去试错 —— 可能已经卸掉了冲突 MOD，才发现用户根本不要这个测试版。
    * 下载仍放在最后，避免用户中途拒绝时白白下载整个安装包。
+   *
+   * `assetName` 是详情页资产下拉里选中的文件；不传（卡片上的安装按钮）时
+   * 后端按仓库 `asset_rules` 自动选。传了就必须能匹配到，否则后端报
+   * `noMatchingAsset` —— 界面显示哪个就下哪个，不静默换成别的。
    */
-  async function previewRepository(repo: Repository, tag?: string): Promise<void> {
+  async function previewRepository(repo: Repository, tag?: string, assetName?: string): Promise<void> {
     if (options.gameBlocked?.()) return
 
     const target = tag ?? repo.cached_releases[0]?.tag_name
@@ -112,7 +116,7 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
 
     options.onBusyChange?.(repo.id, true)
     try {
-      const outcome = await api.installRepository(repo.id, tag, true)
+      const outcome = await api.installRepository(repo.id, tag, true, assetName)
       if (!outcome.ok) {
         message.error(translateBackendMessage(outcome.message))
         return

@@ -223,6 +223,30 @@ export const modsLocal: DomainMessages = {
     ko: '패키지 삭제',
     ja: 'パッケージを削除',
   },
+  // 整包开关会同时切换包内 {count} 个子 MOD
+  packageSwitchHint: {
+    'zh-CN': '整包开关会同时切换包内 {count} 个子 MOD',
+    'zh-TW': '整包開關會同時切換包內 {count} 個子 MOD',
+    en: 'Toggling the package switches all {count} MODs inside it',
+    ko: '패키지 스위치는 패키지 내 MOD {count}개를 함께 전환합니다',
+    ja: 'パッケージのスイッチはパッケージ内の {count} 個の MOD をまとめて切り替えます',
+  },
+  // 已启用包内 {count} 个子 MOD
+  packageEnabledToast: {
+    'zh-CN': '已启用包内 {count} 个子 MOD',
+    'zh-TW': '已啟用包內 {count} 個子 MOD',
+    en: 'Enabled all {count} MODs in the package',
+    ko: '패키지 내 MOD {count}개를 활성화했습니다',
+    ja: 'パッケージ内の {count} 個の MOD を有効にしました',
+  },
+  // 已禁用包内 {count} 个子 MOD
+  packageDisabledToast: {
+    'zh-CN': '已禁用包内 {count} 个子 MOD',
+    'zh-TW': '已停用包內 {count} 個子 MOD',
+    en: 'Disabled all {count} MODs in the package',
+    ko: '패키지 내 MOD {count}개를 비활성화했습니다',
+    ja: 'パッケージ内の {count} 個の MOD を無効にしました',
+  },
   // 切换布局（卡片 / 横排）
   switchLayoutCardsRows: {
     'zh-CN': '切换布局（卡片 / 横排）',

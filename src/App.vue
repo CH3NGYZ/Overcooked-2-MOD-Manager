@@ -28,7 +28,10 @@ const resolvedTitle = computed(() => t(pageTitleOverride.value ?? (route.meta.ti
 /**
  * 安装器启动后的首次仓库刷新：与手动整源刷新走同一引擎。
  * 放在 App 层而不是 MOD 安装页，切换页面不会重复触发。
- * 教程系统接入后：入口处先 `deferStartupRefresh()`，教程结束再 `releaseStartupRefresh()`。
+ *
+ * 这里没有教程门控：V2 的前端教程系统已整体裁剪（见 AGENTS.md 第 9 节），
+ * 启动后直接刷新。若将来恢复教程，需要重新引入「教程开始前 defer、
+ * 结束再 release」的门控，否则教程还没播完仓库就先刷完了。
  */
 const repositoryRefresh = useRepositoryRefresh()
 

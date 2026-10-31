@@ -412,10 +412,32 @@ export interface MapInfo {
    * 拿不到 `assets`（下载量）和 `prerelease`（版本标记样式）。
    */
   latest_release?: ReleaseInfo | null
+  /**
+   * 缓存里的全部 Release（详情抽屉选版本用）。
+   *
+   * 卡片只需要最新一条，但「与 MOD 安装页对齐」的详情要允许用户装旧版本
+   * 回滚；只给最新一条时那个版本下拉没有内容。
+   */
+  cached_releases: ReleaseInfo[]
   cached_release_count?: number
   cached_at?: number | null
   last_error?: string | null
+  /**
+   * 选哪个 Release 资产（地图只分发 ZIP）。
+   *
+   * 与 `Repository.asset_rules` 同一语义、同一套 `exact`/`glob`/`regex` 规则，
+   * 由 `repositoryAssets.ts` 在前端镜像匹配 —— 详情页的资产下拉才能列出
+   * 「实际会被安装的那个文件」，而不是把 Release 里所有附件都摊出来。
+   */
+  asset_rules?: AssetRule[]
   required_frameworks?: RequiredFramework[]
-  /** 这些依赖里当前没满足的那几条（后端已对照本地已装版本判定）。 */
+  /**
+   * 这些依赖里当前没满足的那几条。
+   *
+   * 由**前端**用 Dashboard 里已经扫好的 MOD 判定（`resolveRelations` 与
+   * MOD 侧共用一份实现）。地图页以前让后端再全量扫一遍 `BepInEx/plugins`
+   * 只为拿 GUID → 版本，加载时间因此被浪费。字段保留兼容，但 `get_maps`
+   * 不再填充。
+   */
   unmet_frameworks?: RequiredFramework[]
 }

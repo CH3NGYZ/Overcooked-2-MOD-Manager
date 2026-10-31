@@ -373,3 +373,84 @@ test('modUpdateVerdict 无法判定时标记为 known:false', async () => {
   const dep = mod({ repository_id: 'repo-1', version: '1.0.0', is_dependency: true })
   assert.equal(modUpdateVerdict(dep, [repo()]).known, false)
 })
+
+/* ===== 包级依赖告警：与单 MOD 卡片同语义 ===== */
+
+test('仓库声明依赖被卸载后，多 DLL 包标题同样显示「缺依赖」', () => {
+  /*
+   * 真实 bug：关系标签既不是版本结论、也不在成员级告警里，多 DLL 包会被
+   * 整条丢弃 —— 同一个包的单 MOD 兄弟显示「缺依赖」，包标题却只有「最新版」。
+   * 依赖声明挂在仓库上，整包共用一份，所以这是包级结论、不带数量。
+   */
+  const tags = packageStatuses([
+    mod({ dll_file: 'pkg/Loader.dll', labels: ['missing_dependency', 'latest'] }),
+    mod({ dll_file: 'pkg/debugLog.dll', labels: ['latest'] }),
+  ])
+  assert.deepEqual(tags.map((t) => t.key), ['missing_dependency', 'latest'])
+  const dep = tags.find((t) => t.key === 'missing_dependency')
+  assert.equal(dep.tone, 'critical')
+  assert.equal(dep.count, undefined)
+})
+
+test('包级依赖标签与单 MOD 顺序一致：预发布 → 依赖 → 版本结论', () => {
+  const tags = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['missing_dependency', 'latest'], version: '1.0.0-beta.1' }),
+    mod({ dll_file: 'b.dll', labels: ['latest'], version: '1.0.0-beta.1' }),
+  ])
+  assert.deepEqual(tags.map((t) => t.key), ['prerelease', 'missing_dependency', 'latest'])
+})
+
+test('依赖冲突优先于缺依赖，且两者都只出一条', () => {
+  const tags = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['missing_dependency', 'latest'] }),
+    mod({ dll_file: 'b.dll', labels: ['dependency_conflict', 'latest'] }),
+  ])
+  assert.deepEqual(tags.map((t) => t.key), ['dependency_conflict', 'missing_dependency', 'latest'])
+})
+
+/* ===== 更新判定：线上版本 > max(清单 tag, DLL 版本) ===== */
+
+test('localCompareVersion 取清单 tag 与 DLL 版本较高者', async () => {
+  const { localCompareVersion } = await import('../src/statusTags.ts')
+  assert.equal(localCompareVersion(mod({ version: '1.2.0' })), '1.2.0')
+  // 手动降级：DLL 低于清单 tag，以清单 tag 为准，DLL 不会制造更新
+  assert.equal(localCompareVersion(mod({
+    version: '1.2.0',
+    repository_binding: { provider: 'github', owner: 'o', repository: 'r', tag: 'v2.0.0', channel: 'all' },
+  })), 'v2.0.0')
+  // 手动升级：DLL 高于清单 tag，以 DLL 为准
+  assert.equal(localCompareVersion(mod({
+    version: '2.1.0',
+    repository_binding: { provider: 'github', owner: 'o', repository: 'r', tag: 'v2.0.0', channel: 'all' },
+  })), '2.1.0')
+})
+
+test('手动降级不报可更新：清单 tag 就是线上最新版时显示最新版', () => {
+  const downgraded = mod({
+    repository_id: 'repo-1', version: '1.2.0', update_available: false, labels: ['latest'],
+    repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v2.0.0', channel: 'all' },
+  })
+  // repo() 缓存里的最新 Release 就是 v2.0.0，与清单 tag 相同
+  assert.equal(modUpdateAvailable(downgraded, [repo()]), false)
+})
+
+test('手动升级到线上同一版本后不再提示更新', () => {
+  const upgraded = mod({
+    repository_id: 'repo-1', version: '2.0.0', update_available: false, labels: ['latest'],
+    repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'all' },
+  })
+  assert.equal(modUpdateAvailable(upgraded, [repo()]), false)
+})
+
+test('线上真的发布更高版本时仍然提示更新', () => {
+  const older = mod({
+    repository_id: 'repo-1', version: '1.2.0', update_available: false, labels: ['latest'],
+    repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'all' },
+  })
+  const newer = repo({
+    cached_releases: [
+      { tag_name: 'v3.0.0', version: '3.0.0', name: '', body: '', prerelease: false, draft: false, assets: [] },
+    ],
+  })
+  assert.equal(modUpdateAvailable(older, [newer]), true)
+})

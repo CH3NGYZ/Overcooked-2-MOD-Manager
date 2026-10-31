@@ -455,4 +455,16 @@ export const error: DomainMessages = {
     ko: '저장소 소스 TOML 구문 분석 실패: {reason}',
     ja: 'リポジトリソースの TOML 解析に失敗しました：{reason}',
   },
+  /*
+   * Tauri 宿主返回的 `Command xxx not found` 不是后端 tag，是英文串。
+   * 常见场景：前端已热更新、正在跑的后端二进制还是旧的（新命令没编进去）。
+   * 由 `src/locale/backend.ts` 在识别出该形态时兜底使用。
+   */
+  'error.commandUnavailable': {
+    'zh-CN': '管理器没有命令 {command}，正在运行的版本可能和界面不一致；请重启管理器后重试',
+    'zh-TW': '管理器沒有命令 {command}，目前執行的版本可能與介面不一致；請重新啟動管理器後再試',
+    en: 'The manager has no command {command}. The running build differs from the UI; restart the manager and try again.',
+    ko: '관리자에 {command} 명령이 없습니다. 실행 중인 빌드가 화면과 다를 수 있으니 관리자를 다시 시작한 뒤 다시 시도하세요.',
+    ja: 'マネージャーに {command} コマンドがありません。実行中のビルドが画面と一致していない可能性があります。マネージャーを再起動してから再試行してください。',
+  },
 }

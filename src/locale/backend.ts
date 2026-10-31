@@ -90,22 +90,42 @@ export function translateBackendMessage(
   const { tag, params } = payload
 
   /*
+   * Tauri 宿主层的英文兜底：`Command set_all_level_sets_enabled not found`。
+   * 前端热更新比后端快时（或用户还在跑旧安装包），新命令在运行中的二进制里
+   * 不存在，宿主直接回这句英文 —— 它不是后端 tag，但同样要给用户一句可读、
+   * 可执行的提示，不能把 raw English 丢出来。
+   */
+  const missingCommand = /^Command (.+) not found$/i.exec(tag)
+  if (missingCommand) {
+    return i18n.global.t('error.commandUnavailable', { command: missingCommand[1] })
+  }
+
+  /*
    * 只有登记过的 tag 才尝试翻译。
    *
    * 其它中文串（成功提示、命令里的普通 message）在迁移完成前原样返回：
    * 它们是后端拼好的整句，没有 tag 可查，硬翻只会翻错。
-   */
-  if (!isErrorTag(tag)) return tag
-
-  /*
-   * vue-i18n 的 t() 在缺 key 时返回 key 本身（本项目关闭了 missingWarn）。
-   * 用这一点判断「这个 tag 有没有登记」：没登记就退回 tag 原文，
-   * 至少能让开发者看出是哪个 tag 没翻译，而不是显示一句空白。
+   * vue-i18n 的 t() 在缺 key 时返回 key 本身（本项目关闭了 missingWarn），
+   * 用这一点判断「这个 tag 有没有登记」。
    */
   const text = params
     ? i18n.global.t(tag, params as Record<string, unknown>)
     : i18n.global.t(tag)
-  return text === tag ? tag : text
+  if (text !== tag) return text
+
+  /*
+   * 兼容早期批次的 `error.<域>.<原因>` 形态：那时语言表把这类文案登记成
+   * `<域>.<原因>`（`framework.cleanupFailed`），去掉 `error.` 前缀再查一次。
+   * 新代码两种都能命中，不需要调用方关心自己拿到的是哪种形态。
+   */
+  if (tag.startsWith('error.')) {
+    const legacy = tag.slice('error.'.length)
+    const legacyText = params
+      ? i18n.global.t(legacy, params as Record<string, unknown>)
+      : i18n.global.t(legacy)
+    if (legacyText !== legacy) return legacyText
+  }
+  return tag
 }
 
 /**

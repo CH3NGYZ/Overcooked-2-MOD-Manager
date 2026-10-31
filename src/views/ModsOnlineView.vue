@@ -28,7 +28,7 @@ import type { Repository, RepositorySource } from '../types'
 const message = useNotify()
 const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
 
-/** 刷新引擎是模块级单例：启动刷新与页面挂载解耦，教程门控也在那里。 */
+/** 刷新引擎是模块级单例：启动刷新与页面挂载解耦（教程门控脚手架仍在引擎里，当前无调用方）。 */
 const engine = useRepositoryRefresh()
 /**
  * `anyRefreshing`：禁用按钮用（源文档阶段也算忙，避免重复触发）。
@@ -107,7 +107,7 @@ function openInstall() {
 const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 
 // 进入页面只复用现有数据，不触发刷新也不重新扫描；
-// 刷新由手动按钮、安装器启动或教程结束后的链路触发。
+// 刷新由手动按钮或安装器启动后的刷新链路触发。
 onMounted(() => { void ensureLoaded() })
 
 /**
@@ -611,8 +611,8 @@ function gameBlocked() {
  * 把解析结果交给 ModInstallDialog 展示，用户点「立即安装」才真正写入。
  * 下载与预发布确认都在 useRepositoryPreview 里，两个页面共用。
  */
-function install(repo: Repository, tag?: string) {
-  return previewRepository(repo, tag)
+function install(repo: Repository, tag?: string, asset?: string) {
+  return previewRepository(repo, tag, asset)
 }
 
 /**
@@ -628,11 +628,11 @@ function install(repo: Repository, tag?: string) {
  * 先关再装还有个附带好处：下载失败时用户看到的是干净的列表页 +
  * 错误提示，而不是「抽屉里什么都没变」的困惑。
  */
-function installFromDetail(tag?: string) {
+function installFromDetail(tag?: string, asset?: string) {
   const repo = detailRepo.value
   if (!repo) return
   detailId.value = null
-  return install(repo, tag)
+  return install(repo, tag, asset)
 }
 
 defineExpose({ refreshAll, visibleCount })
@@ -787,7 +787,8 @@ defineExpose({ refreshAll, visibleCount })
   <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
     <n-drawer-content v-if="detailRepo" :native-scrollbar="false" closable>
       <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="!!game?.kitchen_running"
-        @close="detailId = null" @install="(tag?: string) => installFromDetail(tag)" />
+        :mods="mods" :repositories="repositories"
+        @close="detailId = null" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />
     </n-drawer-content>
   </n-drawer>
 

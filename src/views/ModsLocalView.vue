@@ -7,7 +7,7 @@ import { useDialog } from 'naive-ui'
 import { useNotify } from '../useNotify'
 import {
   NButton, NCollapse, NCollapseItem, NCollapseTransition, NEmpty, NFloatButton,
-  NSpin, NSwitch, NTag,
+  NSpin, NSwitch, NTabPane, NTabs, NTag,
 } from 'naive-ui'
 import {
   ArrowUpCircleOutline, DocumentTextOutline, DownloadOutline, FolderOpenOutline, RefreshOutline,
@@ -25,6 +25,7 @@ import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import LocalItemCard from '../components/LocalItemCard.vue'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
@@ -313,11 +314,62 @@ const sortedMods = computed(() =>
  * 这两个动作服务「一次性切换所有 MOD」的场景，入口只能有一个：
  * MOD 管理页的页头。放在总览页是错的 —— 它管理的是 MOD，
  * 离 MOD 列表越近越容易理解后果（页面上每张卡的开关会一起变）。
+ *
+ * 页头上它是一个二选一分段控件（与发布详情面板「说明 / 下载安装」同款），
+ * 不再是一左一右两个各管一个方向的按钮：同一时刻只有「全开 / 全关」
+ * 两个互斥状态，分段的选中态天然表达「现在在哪一边、中间是混合」。
  */
 const bulkWorking = ref(false)
 const enabledModCount = computed(() => effectiveMods.value.filter((mod) => mod.enabled).length)
 const allModsEnabled = computed(() =>
   effectiveMods.value.length > 0 && enabledModCount.value === effectiveMods.value.length)
+
+/**
+ * 分段控件的选中值：全部启用 → `enable`，全部禁用 → `disable`，
+ * 部分启用 → 空串（没有选中项）。
+ *
+ * 由聚合状态推导，而不是另存「用户最后点了哪个」：
+ * 控件表达的是页面当前状态，存一份点击意图会在操作失败、确认框取消
+ * 或外部刷新之后和真实状态脱节。
+ *
+ * 混合态用空串哨兵而不是 `null` / `undefined`：Naive 的 `value` 只收
+ * `string | number`，传 `undefined` 会让它退回**非受控**模式 —— 点一下
+ * 就自己记住选中项，取消确认框后控件仍停在「全部禁用」上，正好是要避免
+ * 的那种假状态。空串则始终是受控的「没有匹配项」。
+ */
+type BulkSwitchValue = 'enable' | 'disable' | ''
+const bulkSwitchValue = computed<BulkSwitchValue>(() => {
+  if (!effectiveMods.value.length) return ''
+  if (allModsEnabled.value) return 'enable'
+  if (!enabledModCount.value) return 'disable'
+  return ''
+})
+
+/**
+ * 分段控件点击：只发起动作，不先改选中态。
+ *
+ * 禁用方向要过确认框：用户点「取消」时状态没变，控件也不能先跳到
+ * 「全部禁用」，否则会让人以为已经生效。
+ */
+function onBulkSwitch(value: string | number) {
+  if (value === 'enable') void setAllEnabled(true)
+  else if (value === 'disable') confirmDisableAll()
+}
+
+/**
+ * 列表重建令牌，只在批量切换成功后自增。
+ *
+ * 批量启停改了磁盘上每个 DLL 的名字（`.dll` ⇄ `.dll.disabled`），
+ * `await load()` 之后新状态确实进了 `mods`，单 DLL 卡片会跟着重渲染；
+ * 但**包内子卡片**的 `n-switch` 会停在旧状态（实测 25 个开关只有 21 个更新，
+ * DIYLevel 两个包的 4 个子卡片不动）—— 包 body 挂在 `n-collapse-transition`
+ * 的稳定插槽里，父级重渲染时插槽内容不会重新求值，子组件实例被复用了。
+ *
+ * 换掉整棵列表的 key 强制重建，比在每层插槽里补 key 可靠；
+ * 只在批量操作后重建：单点开关自带 busy 状态、本来就会更新，
+ * 无差别重建反而会打断展开状态与折叠动画。
+ */
+const listEpoch = ref(0)
 
 /**
  * 批量切换。
@@ -333,6 +385,8 @@ async function setAllEnabled(enabled: boolean) {
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
       await load()
+      // 见 listEpoch：批量后强制重建列表，让包内子开关跟上新状态
+      listEpoch.value += 1
     } else {
       message.error(translateBackendMessage(result.message))
     }
@@ -879,11 +933,27 @@ const actionByDll = computed<Record<string, StatusActionSpec>>(() => {
   return map
 })
 
+/**
+ * 包内携带依赖关系声明的成员（可能不存在）。
+ *
+ * 依赖关系挂在仓库上，包内只有绑了仓库的那个 DLL 才解析得出 `relationIssue`。
+ * 缺依赖 / 冲突的标签、按钮和跳转都必须按这个成员来，否则代表成员恰好是
+ * 那个没有仓库身份的 DLL 时，标签在、动作和跳转却解析不出来。
+ */
+function relationOwnerMod(pkg: ModPackageNode): InstalledMod | undefined {
+  return pkg.mods.find((mod) => relationIssueByDll.value[mod.dll_file])
+}
+
 /** 包标题的快捷动作：用包对外公开的状态集合判断。 */
 function packageAction(pkg: ModPackageNode) {
-  const first = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
-  if (!first) return undefined
-  return actionContext(pkg.statuses.map((entry) => entry.key), first)
+  const keys = pkg.statuses.map((entry) => entry.key)
+  const base = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
+  if (!base) return undefined
+  // 依赖类动作按「真正部署了关系的那一个成员」解析
+  const needsRelation = keys.some(
+    (key) => key === 'missing_dependency' || key === 'dependency_conflict',
+  )
+  return actionContext(keys, (needsRelation ? relationOwnerMod(pkg) : undefined) ?? base)
 }
 
 /**
@@ -915,7 +985,9 @@ function runPackageAction(pkg: ModPackageNode) {
   if (!context) return
   const first = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
   if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
-    if (first) uninstallConflict(first, context.conflictMod)
+    // 要卸的是「对方」，但当前这一方必须是真正声明关系的成员
+    const owner = relationOwnerMod(pkg) ?? first
+    if (owner) uninstallConflict(owner, context.conflictMod)
     return
   }
   if (!context.repository) return
@@ -1063,8 +1135,7 @@ function openTagTarget(mod: InstalledMod, tagKey: string) {
 }
 
 /** 标签的悬停提示：说清点了会跳到哪、为什么可跳/不可跳。 */
-function tagTitle(mod: InstalledMod, tagKey: string): string | undefined {
-  const target = tagTargetRepositoryId(mod, tagKey)
+function tagTargetTitle(tagKey: string, target: string | undefined): string | undefined {
   if (!target) {
     // 缺依赖但没有可安装来源：说明「没有地方可去」，而不是假装可点
     return tagKey === 'missing_dependency' ? t('modsOnline.noInstallableSource') : undefined
@@ -1072,6 +1143,10 @@ function tagTitle(mod: InstalledMod, tagKey: string): string | undefined {
   return tagKey === 'missing_dependency' || tagKey === 'dependency_conflict'
     ? t('modsOnline.viewDependencyInModInstall')
     : t('dialogs.viewInModInstall')
+}
+
+function tagTitle(mod: InstalledMod, tagKey: string): string | undefined {
+  return tagTargetTitle(tagKey, tagTargetRepositoryId(mod, tagKey))
 }
 
 /**
@@ -1094,6 +1169,11 @@ function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undef
 function openPackageTag(pkg: ModPackageNode, tagKey: string) {
   const id = packageTagTargetId(pkg, tagKey)
   if (id) linkToRepository(id)
+}
+
+/** 包标签的悬停提示：与单 MOD 卡片同一套文案（依赖类单独说明）。 */
+function packageTagTitle(pkg: ModPackageNode, tagKey: string): string | undefined {
+  return tagTargetTitle(tagKey, packageTagTargetId(pkg, tagKey))
 }
 
 /** 绑定仓库展示：provider + owner/repo（@tag）。 */
@@ -1253,9 +1333,19 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
   for (const mod of node.mods) busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalModPackage(packageId, enabled)
-    result.ok
-      ? message.success(result.message ? translateBackendMessage(result.message) : (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
-      : message.error(translateBackendMessage(result.message))
+    if (result.ok) {
+      /*
+       * 提示带上子 MOD 数量：整包开关一次改掉包内每个 DLL。
+       * 只说「MOD 包已启用」时，用户容易以为只是换了个标记位，
+       * 不知道自己顺手改了四个子 MOD —— 所以把数量说出来。
+       */
+      const count = node.mods.length
+      message.success(enabled
+        ? t('modsLocal.packageEnabledToast', { count })
+        : t('modsLocal.packageDisabledToast', { count }))
+    } else {
+      message.error(translateBackendMessage(result.message))
+    }
     await load()
   } catch (reason) {
     fail(reason)
@@ -1315,14 +1405,30 @@ function removePackage(node: ModPackageNode) {
     「再查一次」。
   -->
   <Teleport to="#page-header-actions" defer>
-    <n-button v-if="effectiveMods.length" size="small" secondary
-      :disabled="bulkWorking || allModsEnabled" @click="setAllEnabled(true)">
-      {{ t('overview.enableAll') }}
-    </n-button>
-    <n-button v-if="effectiveMods.length" size="small" secondary type="warning"
-      :disabled="bulkWorking || !enabledModCount" @click="confirmDisableAll">
-      {{ t('overview.disableAll') }}
-    </n-button>
+    <!--
+      批量开关：一个二选一分段控件（与发布详情面板「说明 / 下载安装」同款），
+      替代原来的两个按钮 —— 同一时刻只有全开 / 全关两种状态，是互斥选择。
+      · 全部启用 → 选中左侧；全部禁用 → 选中右侧；
+      · 部分启用 → 两个都不选中（空串哨兵），由 .is-mixed 隐掉选中胶囊，
+        否则胶囊会停在上一次的选中项上，看起来像已经全开 / 全关；
+      · 禁用方向仍走 confirmDisableAll()：整页 MOD 全部停用不是随手试的操作；
+      · 批量进行中两个分段都禁用，避免连点再发一批命令。
+    -->
+    <n-tabs v-if="effectiveMods.length" type="segment" animated class="bulk-switch"
+      :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
+      @update:value="onBulkSwitch">
+      <!--
+        文案走 `#tab` 槽而不是 `:tab` 属性：pane 没有任何子节点时，Naive 的
+        Tab 会把空占位当作默认槽渲染，`:tab` 的文案因此不显示（实测只剩一个
+        空胶囊）。给每个 pane 一个 `#tab` 槽就绕开了那条渲染路径。
+      -->
+      <n-tab-pane name="enable" :disabled="bulkWorking">
+        <template #tab>{{ t('overview.enableAll') }}</template>
+      </n-tab-pane>
+      <n-tab-pane name="disable" :disabled="bulkWorking">
+        <template #tab>{{ t('overview.disableAll') }}</template>
+      </n-tab-pane>
+    </n-tabs>
     <n-button size="small" secondary :loading="checkingUpdates" :disabled="checkingUpdates || refreshingAll"
       :title="t('overview.refreshOnlyTheRepositoriesYourInstalledModsAreBoundToAndCheckForNewVersions')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
@@ -1358,7 +1464,12 @@ function removePackage(node: ModPackageNode) {
     <n-empty v-if="!loading && !sortedMods.length" :description="t('modsLocal.noModsInstalled')" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
-    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
+    <!--
+      :key="listEpoch" 只由批量启停推进（见 script 里的 listEpoch）：
+      包内子卡片在折叠插槽里不会随父级重渲染更新，换 key 强制重建整棵列表。
+      分类折叠状态、卡片展开状态都在页面级的 ref 里，重建不会丢。
+    -->
+    <n-collapse v-else :key="listEpoch" :expanded-names="groupsExpanded" class="group-collapse"
       @update:expanded-names="onGroupsExpanded">
       <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
         <template #header>
@@ -1375,104 +1486,99 @@ function removePackage(node: ModPackageNode) {
 
         <div class="mod-grid">
           <template v-for="pkg in node.packages" :key="pkg.key">
-            <!-- 单 DLL 包：不套外壳，直接就是那张卡片 -->
-            <article v-if="!pkg.grouped" v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
+            <!--
+              单 DLL 包：不套外壳，直接就是那张卡片。
+              外壳（开关 + 标题 + 标签区 + 工具栏 + 展开）由 LocalItemCard 负责，
+              这里只提供数据、状态插槽与动作；原生 click 仍由页面处理 ——
+              onCardClick 要给 document 级的「点空白收起」打标记。
+            -->
+            <LocalItemCard v-if="!pkg.grouped" v-for="mod in pkg.mods" :key="mod.dll_file"
               :data-focus-id="bindingRepositoryId(mod)"
               :data-mod-anchor="modAnchor(mod)"
-              :class="{
-                disabled: !mod.enabled,
-                expanded: isExpanded(mod.dll_file),
-                'focus-flash': highlightId === bindingRepositoryId(mod),
-                'status-flash': matchesActiveStatus(modAnchor(mod)),
-              }" @click="onCardClick($event, mod)">
-
-              <!-- 单行：左「开关 + 标题」… 右「标签 | 工具栏」 -->
-              <div class="card-row">
-                <div class="card-left">
-                  <n-switch class="card-switch" size="small" :value="mod.enabled" :loading="!!busy[mod.dll_file]"
-                    @click.stop @update:value="(value: boolean) => toggle(mod, value)" />
-                  <b class="card-title" :title="singleModTitle(mod)">{{ singleModTitle(mod) }}</b>
-                </div>
-
-                <div class="card-right">
-                  <!--
-                    状态快捷动作：按钮由当前最需要注意的状态决定
-                    （可更新 → 更新、仓库刷新失败 → 刷新），
-                    规则集中在 statusActions.ts。与标签之间用竖线隔开，
-                    视觉上属于标签区的一部分（不是右侧工具栏的常规动作）。
-                  -->
-                  <template v-if="actionByDll[mod.dll_file]">
-                    <!-- 配色跟随触发它的状态档位，来自 theme.ts 的统一色阶 -->
-                    <n-button size="tiny" :style="buttonColorFor(actionByDll[mod.dll_file].tone, 'soft')"
-                      :title="t(actionByDll[mod.dll_file].label)"
-                      :loading="!!previewing[bindingRepositoryId(mod) ?? ''] || !!refreshing[bindingRepositoryId(mod) ?? '']"
-                      :disabled="!!game?.kitchen_running" @click.stop="runCardAction(mod)">
-                      <ArrowUpCircleOutline v-if="actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
-                      <DownloadOutline v-else-if="actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
-                      <TrashOutline v-else-if="actionByDll[mod.dll_file].kind === 'uninstall-conflict'" width="14" height="14" />
-                      <RefreshOutline v-else width="14" height="14" />
-                      {{ t(actionByDll[mod.dll_file].label) }}
-                    </n-button>
-                    <span class="tool-divider" />
-                  </template>
-
-                  <!--
-                    状态标签组：固定宽度按内容自适应，整体贴住分割线左侧。
-                    status-pulse：刷新完成后标签变化时播一次短暂高亮（见 isStatusPulsing）。
-                  -->
-                  <span class="tag-group" :class="{ 'status-pulse': isStatusPulsing(mod) }">
-                    <!--
-                      配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算。
-                      「缺依赖」/「冲突」跳到**依赖的**仓库；解析不出可安装来源时
-                      没有跳转目标，此时不给链接样式也不可点 —— 一个点了没反应、
-                      却长得像能点的标签比纯文字更糟。
-                    -->
-                    <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
-                      class="state-tag" :class="{ 'state-tag--link': !!tagTargetRepositoryId(mod, tag.key) }"
-                      :color="tagColorForAny(tag.tone)"
-                      :title="tagTitle(mod, tag.key)"
-                      @click.stop="openTagTarget(mod, tag.key)">{{ tag.text }}</n-tag>
-                  </span>
-
-                  <!-- 分割线：把标签区和操作按钮区分开 -->
+              :enabled="mod.enabled"
+              :toggle-loading="!!busy[mod.dll_file]"
+              :title="singleModTitle(mod)"
+              :disabled="!mod.enabled"
+              :expanded="isExpanded(mod.dll_file)"
+              :focus-flash="highlightId === bindingRepositoryId(mod)"
+              :status-flash="matchesActiveStatus(modAnchor(mod))"
+              :tools-min-width="toolColumnWidth"
+              :tool-gap="TOOL_GAP"
+              :tool-button-width="TOOL_BUTTON_WIDTH"
+              @toggle="(value: boolean) => toggle(mod, value)"
+              @click="onCardClick($event, mod)">
+              <template #status>
+                <!--
+                  状态快捷动作：按钮由当前最需要注意的状态决定
+                  （可更新 → 更新、仓库刷新失败 → 刷新），
+                  规则集中在 statusActions.ts。与标签之间用竖线隔开，
+                  视觉上属于标签区的一部分（不是右侧工具栏的常规动作）。
+                -->
+                <template v-if="actionByDll[mod.dll_file]">
+                  <!-- 配色跟随触发它的状态档位，来自 theme.ts 的统一色阶 -->
+                  <n-button size="tiny" :style="buttonColorFor(actionByDll[mod.dll_file].tone, 'soft')"
+                    :title="t(actionByDll[mod.dll_file].label)"
+                    :loading="!!previewing[bindingRepositoryId(mod) ?? ''] || !!refreshing[bindingRepositoryId(mod) ?? '']"
+                    :disabled="!!game?.kitchen_running" @click.stop="runCardAction(mod)">
+                    <ArrowUpCircleOutline v-if="actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
+                    <DownloadOutline v-else-if="actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
+                    <TrashOutline v-else-if="actionByDll[mod.dll_file].kind === 'uninstall-conflict'" width="14" height="14" />
+                    <RefreshOutline v-else width="14" height="14" />
+                    {{ t(actionByDll[mod.dll_file].label) }}
+                  </n-button>
                   <span class="tool-divider" />
+                </template>
 
-                  <!-- 工具栏：可选按钮在最左（用占位保持列宽），固定按钮贴右 -->
-                  <span class="tool-group" :style="toolGroupStyle">
-                    <!-- 查看日志：只有 BepInEx/logs/<guid> 存在时才显示；缺失时保留同宽占位 -->
-                    <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('modsLocal.viewLogs')"
-                      class="tool-optional" @click.stop="openLogs(mod)">
-                      <DocumentTextOutline width="14" height="14" />
-                    </n-button>
-                    <span v-else class="tool-placeholder" />
-                    <!-- 配置编辑：只有存在配置文件的 MOD 才有；缺失时保留同宽占位，
-                         这样「打开位置」「删除」始终落在最右侧同一列 -->
-                    <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('tools.editConfig')"
-                      class="tool-optional" @click.stop="editConfig(mod)">
-                      <SettingsOutline width="14" height="14" />
-                    </n-button>
-                    <span v-else class="tool-placeholder" />
-                    <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
-                      :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
-                      <FolderOpenOutline width="14" height="14" />
-                    </n-button>
-                    <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" :title="t('modsLocal.delete')"
-                      @click.stop="remove(mod)">
-                      <TrashOutline width="14" height="14" />
-                    </n-button>
-                  </span>
-                </div>
-              </div>
+                <!--
+                  状态标签组：宽度按内容自适应，整体贴住分割线左侧。
+                  status-pulse：刷新完成后标签变化时播一次短暂高亮（见 isStatusPulsing）。
+                -->
+                <span class="tag-group" :class="{ 'status-pulse': isStatusPulsing(mod) }">
+                  <!--
+                    配色走 Naive n-tag 原生 :color，由 theme.ts 统一计算。
+                    「缺依赖」/「冲突」跳到**依赖的**仓库；解析不出可安装来源时
+                    没有跳转目标，此时不给链接样式也不可点 —— 一个点了没反应、
+                    却长得像能点的标签比纯文字更糟。
+                  -->
+                  <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
+                    class="state-tag" :class="{ 'state-tag--link': !!tagTargetRepositoryId(mod, tag.key) }"
+                    :color="tagColorForAny(tag.tone)"
+                    :title="tagTitle(mod, tag.key)"
+                    @click.stop="openTagTarget(mod, tag.key)">{{ tag.text }}</n-tag>
+                </span>
+              </template>
 
-              <!-- 展开：用 Naive 自带的折叠过渡，不自己写动画 -->
-              <n-collapse-transition :show="isExpanded(mod.dll_file)" display-directive="show">
-                <!-- 不阻止冒泡：点详情里的任意位置都算「点空白」，由 onDocumentClick 收起 -->
-                <div class="card-detail">
-                  <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
-                    :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
-                </div>
-              </n-collapse-transition>
-            </article>
+              <!-- 工具栏：可选按钮在最左（用占位保持列宽），固定按钮贴右 -->
+              <template #tools>
+                <!-- 查看日志：只有 BepInEx/logs/<guid> 存在时才显示；缺失时保留同宽占位 -->
+                <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('modsLocal.viewLogs')"
+                  class="tool-optional" @click.stop="openLogs(mod)">
+                  <DocumentTextOutline width="14" height="14" />
+                </n-button>
+                <span v-else class="tool-placeholder" />
+                <!-- 配置编辑：只有存在配置文件的 MOD 才有；缺失时保留同宽占位，
+                     这样「打开位置」「删除」始终落在最右侧同一列 -->
+                <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('tools.editConfig')"
+                  class="tool-optional" @click.stop="editConfig(mod)">
+                  <SettingsOutline width="14" height="14" />
+                </n-button>
+                <span v-else class="tool-placeholder" />
+                <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
+                  :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
+                  <FolderOpenOutline width="14" height="14" />
+                </n-button>
+                <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running" :title="t('modsLocal.delete')"
+                  @click.stop="remove(mod)">
+                  <TrashOutline width="14" height="14" />
+                </n-button>
+              </template>
+
+              <!-- 不阻止冒泡：点详情里的任意位置都算「点空白」，由 onDocumentClick 收起 -->
+              <template #detail>
+                <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
+                  :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
+              </template>
+            </LocalItemCard>
 
             <!--
               多 DLL 包：折叠外壳 + 包级操作，内部仍是同样的卡片。
@@ -1494,9 +1600,12 @@ function removePackage(node: ModPackageNode) {
                     包级开关三态：全开 / 全关 / 部分。
                     Naive 的 indeterminate 会画一个加载圈，不像「开关中间态」，
                     所以这里仍用布尔值，靠 is-partial 类把滑块和轨道做半透明表达。
+                    title 说明它会一起切换包内每个子 MOD —— 只写「N 个」时
+                    用户未必意识到这一个开关等于四个。
                   -->
-                  <n-switch class="card-switch package-switch" size="small" :value="pkg.enabled"
+                  <n-switch class="package-switch" size="small" :value="pkg.enabled"
                     :loading="pkg.mods.some((m) => busy[m.dll_file])"
+                    :title="t('modsLocal.packageSwitchHint', { count: pkg.mods.length })"
                     :class="{ 'is-partial': pkg.partial }"
                     @click.stop @update:value="(value: boolean) => togglePackageEnabled(pkg, value)" />
                   <b class="package-title" :title="pkg.label">{{ pkg.label }}</b>
@@ -1524,7 +1633,7 @@ function removePackage(node: ModPackageNode) {
                       <RefreshOutline v-else width="14" height="14" />
                       {{ t(pkg.action.label) }}
                     </n-button>
-                    <span class="tool-divider" />
+                    <span class="package-divider" />
                   </template>
 
                   <!--
@@ -1537,9 +1646,7 @@ function removePackage(node: ModPackageNode) {
                     <n-tag v-for="entry in pkg.statuses" :key="entry.key" size="tiny" :bordered="false"
                       class="state-tag" :class="{ 'state-tag--link': !!packageTagTargetId(pkg, entry.key) }"
                       :color="tagColorForAny(entry.tone)"
-                      :title="packageTagTargetId(pkg, entry.key)
-                        ? t('dialogs.viewInModInstall')
-                        : undefined"
+                      :title="packageTagTitle(pkg, entry.key)"
                       @click.stop="openPackageTag(pkg, entry.key)">
                       {{ entry.count ? `${entry.count} ${t(entry.text)}` : t(entry.text) }}
                     </n-tag>
@@ -1549,13 +1656,13 @@ function removePackage(node: ModPackageNode) {
                       class="state-tag" :color="tagColorFor('accent')">{{ t('tools.partiallyEnabled') }}</n-tag>
                   </span>
 
-                  <span class="tool-divider" />
+                  <span class="package-divider" />
 
                   <!--
                     包标题与单 MOD 卡片是同一层级，工具栏必须用同一列宽，
                     这样删除按钮落在同一竖线；只有一个按钮时其余位置留空。
                   -->
-                  <span class="tool-group" :style="toolGroupStyle" @click.stop>
+                  <span class="package-tool-group" :style="toolGroupStyle" @click.stop>
                     <n-button size="tiny" quaternary type="error" :title="t('modsLocal.deletePackage')"
                       :disabled="game?.kitchen_running" @click="removePackage(pkg)">
                       <TrashOutline width="14" height="14" />
@@ -1570,63 +1677,50 @@ function removePackage(node: ModPackageNode) {
                 <!--
                   包内子 DLL 行不是独立单元：不加定位锚点，也不参与状态高亮。
                   状态结论属于整个包，高亮只画在外壳上（见 package-shell）。
+                  外壳仍由 LocalItemCard 提供；这些行没有状态标签，
+                  所以不传 #status，组件会自己补 1px 隐形占位保持按钮列对齐。
                 -->
-                <article v-for="mod in pkg.mods" :key="mod.dll_file" class="mod-card"
-                  :class="{
-                    disabled: !mod.enabled,
-                    expanded: isExpanded(mod.dll_file),
-                  }" @click="onCardClick($event, mod)">
-                  <div class="card-row">
-                    <div class="card-left">
-                      <n-switch class="card-switch" size="small" :value="mod.enabled" :loading="!!busy[mod.dll_file]"
-                        @click.stop @update:value="(value: boolean) => toggle(mod, value)" />
-                      <b class="card-title" :title="modTitle(mod)">{{ modTitle(mod) }}</b>
-                    </div>
+                <LocalItemCard v-for="mod in pkg.mods" :key="mod.dll_file"
+                  :enabled="mod.enabled"
+                  :toggle-loading="!!busy[mod.dll_file]"
+                  :title="modTitle(mod)"
+                  :disabled="!mod.enabled"
+                  :expanded="isExpanded(mod.dll_file)"
+                  :tools-min-width="toolColumnWidth"
+                  :tool-gap="TOOL_GAP"
+                  :tool-button-width="TOOL_BUTTON_WIDTH"
+                  @toggle="(value: boolean) => toggle(mod, value)"
+                  @click="onCardClick($event, mod)">
+                  <!--
+                    包内子 MOD 只保留三个操作（标签统一在包标题行）。
+                  -->
+                  <template #tools>
+                    <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('modsLocal.viewLogs')"
+                      class="tool-optional" @click.stop="openLogs(mod)">
+                      <DocumentTextOutline width="14" height="14" />
+                    </n-button>
+                    <span v-else class="tool-placeholder" />
+                    <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('tools.editConfig')"
+                      class="tool-optional" @click.stop="editConfig(mod)">
+                      <SettingsOutline width="14" height="14" />
+                    </n-button>
+                    <span v-else class="tool-placeholder" />
+                    <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
+                      :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
+                      <FolderOpenOutline width="14" height="14" />
+                    </n-button>
+                    <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running"
+                      :title="t('modsLocal.delete')" @click.stop="remove(mod)">
+                      <TrashOutline width="14" height="14" />
+                    </n-button>
+                  </template>
 
-                    <!--
-                      包内子 MOD 只保留三个操作（标签统一在包标题行）。
-                      这一行没有状态标签，所以不放分割线 —— 没有左侧内容时
-                      竖线只是一条悬空装饰。但分割线本身占了「1px 宽 + 1 个 gap」，
-                      去掉后必须用等宽的占位补回，否则这一行的按钮列会比
-                      包标题行、单 MOD 卡片右移 11px（gap 10 + 1px 线）。
-                    -->
-                    <div class="card-right">
-                      <span class="tool-divider-ghost" />
-                      <!--
-                        包内子 MOD 也用同一列宽：这一行是包内容但按钮仍需与
-                        包标题、单 MOD 卡片落在同一竖线，视觉上才是一整套工具栏。
-                      -->
-                      <span class="tool-group" :style="toolGroupStyle">
-                        <n-button v-if="mod.has_logs" size="tiny" quaternary :title="t('modsLocal.viewLogs')"
-                          class="tool-optional" @click.stop="openLogs(mod)">
-                          <DocumentTextOutline width="14" height="14" />
-                        </n-button>
-                        <span v-else class="tool-placeholder" />
-                        <n-button v-if="mod.has_config" size="tiny" quaternary :title="t('tools.editConfig')"
-                          class="tool-optional" @click.stop="editConfig(mod)">
-                          <SettingsOutline width="14" height="14" />
-                        </n-button>
-                        <span v-else class="tool-placeholder" />
-                        <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
-                          :disabled="game?.kitchen_running" @click.stop="openLocation(mod)">
-                          <FolderOpenOutline width="14" height="14" />
-                        </n-button>
-                        <n-button size="tiny" quaternary type="error" :disabled="game?.kitchen_running"
-                          :title="t('modsLocal.delete')" @click.stop="remove(mod)">
-                          <TrashOutline width="14" height="14" />
-                        </n-button>
-                      </span>
-                    </div>
-                  </div>
-
-                  <n-collapse-transition :show="isExpanded(mod.dll_file)" display-directive="show">
-                    <!-- 同上：详情区不拦冒泡，点任意位置都能收起 -->
-                    <div class="card-detail">
-                      <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
-                        :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
-                    </div>
-                  </n-collapse-transition>
-                </article>
+                  <!-- 同上：详情区不拦冒泡，点任意位置都能收起 -->
+                  <template #detail>
+                    <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
+                      :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
+                  </template>
+                </LocalItemCard>
               </div>
               </n-collapse-transition>
             </section>
@@ -1653,7 +1747,6 @@ function removePackage(node: ModPackageNode) {
 </template>
 
 <style scoped>
-.seg { display: flex; gap: 6px; }
 /* 分类折叠：分类标题行 + 内部单列 MOD 卡片 */
 .group-collapse { width: 100%; }
 .group-head {
@@ -1751,6 +1844,37 @@ function removePackage(node: ModPackageNode) {
   transform: translateX(calc(50% - 1px));
 }
 /*
+ * 包标题行的开关 / 分割线 / 工具列。
+ *
+ * 这几套样式必须留在父页面：卡片里的同名元素由 LocalItemCard 渲染
+ * （在组件自己的 scoped 样式里），包标题行则由父页面直接渲染。
+ * scoped 是逐元素生效的，两边各留一份，不能指望一条规则同时打两边。
+ */
+.package-switch { flex: 0 0 auto; }
+.package-divider {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 1px;
+  background: var(--oc2-row-line);
+}
+/*
+ * 包工具栏：与卡片内 .tool-group 用同一套列宽。
+ * gap 与按钮宽度来自 toolGroupStyle 下发的 CSS 变量（与 toolColumnWidth 同源），
+ * 所以包标题行与所有卡片的按钮列落在同一条竖线上。
+ */
+.package-tool-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--tool-gap, 8px);
+  flex: 0 0 auto;
+}
+.package-tool-group :deep(.n-button) {
+  width: var(--tool-button-width, 30px);
+  min-width: var(--tool-button-width, 30px);
+  padding: 0;
+}
+/*
  * 包内 DLL 列表：外壳留 14px 内边距 + 1px 边框。
  *
  * 子 MOD 行不必和单 MOD 行左对齐——它嵌在外壳里，左侧天然多一层外壳
@@ -1770,57 +1894,29 @@ function removePackage(node: ModPackageNode) {
  * 目标：按钮右边缘 → 子卡片右边框外沿 = 子卡片右边框外沿 → 外壳边框内沿。
  * 外壳内容区已留 14px，所以子卡片只需再留 `14px - 1px(自身边框) = 13px`，
  * 两段量出来才是 14 / 14 而不是 15 / 14。
+ *
+ * 底色只改变量不给背景：卡片内部还有 :hover / .expanded 会换底色，
+ * 在这里再写 background 就成了两个同优先级的规则抢同一属性，
+ * 结果取决于样式表顺序。--card-bg 是卡片自己的默认底色来源。
  */
 .package-body .mod-card {
-  background: var(--oc2-sunken);
+  --card-bg: var(--oc2-sunken);
   padding-right: calc(14px - 1px);
 }
 
-/* 卡片：单行三段 —— 左「开关 + 标题」，右「标签 + 删除」 */
-.mod-card {
-  display: flex;
-  flex-direction: column;
-  padding: 10px 14px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 12px;
-  background: var(--oc2-card);
-  cursor: pointer;
-  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
-}
-.mod-card:hover {
-  border-color: var(--oc2-accent);
-  background: var(--oc2-row-hover);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .16);
-}
-.mod-card.expanded {
-  border-color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 8%, var(--oc2-card));
-}
-.mod-card.disabled { opacity: .62; }
 /*
- * 定位高亮：3 秒后自动褪去（时长由 crossLink.ts 的 FOCUS_DURATION 控制）。
- * 两个类共用同一套视觉 —— focus-flash 是跨页跳转（单张），
- * status-flash 是页内聚合标签定位（可能同时命中多张）。
+ * 卡片自身的样式（.mod-card / .card-row / .card-* / .tool-*）已随外壳一起
+ * 下沉到 LocalItemCard.vue 的 scoped 样式里。卡片是子组件渲染的 DOM，
+ * 父级 scoped 规则只对父级自己的元素生效，留在这里只会变成永不命中的死规则。
+ * 父页面只保留包外壳（.package-*）和自己编译的插槽内容（.tag-group 等）。
  *
- * 入场再播一次 pulse：跳转把用户「送」到新位置后，静态换色容易被
- * 正在进行的滚动掩盖；一次轻微的轮廓脉冲能确认落点。
- * 只做 opacity/box-shadow —— 不缩放卡片，否则会抖动相邻行布局。
+ * 定位高亮脉冲：卡片用组件自己的 local-item-card-focus-pulse，
+ * 这里这份 keyframes 只服务下面的 .package-shell（包高亮画在外壳上）。
  */
-.mod-card.focus-flash,
-.mod-card.status-flash {
-  border-color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
-  animation: focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
 @keyframes focus-pulse {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--oc2-accent) 70%, transparent); }
   40%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--oc2-accent) 30%, transparent); }
   100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .mod-card.focus-flash,
-  .mod-card.status-flash { animation: none; }
 }
 /*
  * 包外壳的定位高亮：与单 MOD 卡片同一套视觉。
@@ -1878,48 +1974,16 @@ function removePackage(node: ModPackageNode) {
     100% { filter: brightness(1); }
   }
 }
-.card-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  min-width: 0;
-}
-.card-left {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  flex: 1;
-  min-width: 0;
-}
-/*
- * 右侧一行三段：[状态标签组] | [分割线] | [工具栏]
- * 三段都垂直居中、不换行，工具栏宽度按全页最多按钮数固定，
- * 所以每个 MOD 的按钮列都对齐在同一条竖线上。
- */
-.card-right {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-  gap: 10px;
-  flex: 0 0 auto;
-  min-width: 0;
-}
-/*
- * 右侧三段的定位策略：
- *   [tag-group 自适应] [divider 固定] [tool-group 固定宽度]
- * tag-group 宽度跟内容走，靠 flex-end 右对齐；分割线与工具栏列宽固定，
- * 所以所有行的分割线、按钮列都落在同一条竖线上。
- * 工具栏列宽由 toolColumnWidth 统一计算（4 个 30px 按钮 + 3 个 gap），
- * 模板里用 :style 下发，不再写死像素值。
- */
 /*
  * 状态标签组：宽度跟内容走，不再预留固定最小宽度。
  * 之前用 min-width: 128px 让所有行的标签区起点一致，但单个标签时
  * 右侧会空出一大片（截图里高亮框比「最新版」宽一倍）。
  * 现在靠 flex-end + 固定的分割线/工具栏列宽保证右对齐，
  * 标签少时容器就窄，视觉上没有空白。
+ *
+ * 这条规则留在父页面：包标题行的标签区直接由父模板渲染，
+ * 而单 MOD 卡片里的标签组位于 status 插槽内 —— 插槽内容由父页面编译，
+ * 带的是父级 scope id，所以父级规则照样命中。
  */
 .tag-group {
   display: flex;
@@ -1930,61 +1994,5 @@ function removePackage(node: ModPackageNode) {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-/* 竖分割线：只做视觉分隔，不占额外空间 */
-.tool-divider {
-  width: 1px;
-  height: 16px;
-  flex: 0 0 1px;
-  background: var(--oc2-row-line);
-}
-/*
- * 分割线的隐形占位：包内子 MOD 行没有标签区、也不想画竖线，
- * 但它必须占掉与 .tool-divider 相同的宽度（1px），
- * 否则父级 .card-right 的 10px gap 会少一段，按钮列整体右移。
- */
-.tool-divider-ghost {
-  width: 1px;
-  height: 1px;
-  flex: 0 0 1px;
-}
-/*
- * 工具栏：四个按钮位等距排布。
- * gap 与按钮宽度来自 toolGroupStyle 下发的 CSS 变量（与列宽计算同源），
- * 所以样式和 toolColumnWidth 永远不会对不上。
- */
-.tool-group {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--tool-gap, 8px);
-  flex: 0 0 auto;
-}
-.tool-group :deep(.n-button) {
-  width: var(--tool-button-width, 30px);
-  min-width: var(--tool-button-width, 30px);
-  padding: 0;
-}
-/* 没有日志/配置按钮时保留同宽占位，保证四个按钮列在每行都对齐 */
-.tool-placeholder {
-  width: var(--tool-button-width, 30px);
-  height: 1px;
-  flex: 0 0 var(--tool-button-width, 30px);
-}
-.card-switch { flex: 0 0 auto; }
-.card-title {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--oc2-text-1);
-  line-height: 1.35;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 展开：内容由 ModDetailGrid 渲染，动画交给 n-collapse-transition */
-.card-detail {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--oc2-row-line);
-}
+/* 页头批量分段控件的样式在 src/styles/global.css 的 `.bulk-switch`。 */
 </style>

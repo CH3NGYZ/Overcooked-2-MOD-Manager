@@ -67,7 +67,7 @@ const lastErrors = ref<string[]>([])
 /**
  * 启动刷新的门控状态：
  *   idle     → 还没安排（页面自行决定）
- *   deferred → 教程进行中，等教程结束
+ *   deferred → 被教程门控暂缓（V2 前端教程已裁剪，目前没有调用方）
  *   running  → 已开始
  *   done     → 已完成，不再自动触发
  */
@@ -472,9 +472,11 @@ async function refreshEverything(): Promise<string[]> {
 }
 
 /**
- * 安排启动刷新（安装器启动时调用一次）。
- * 教程系统接入后：教程进行中先调用 `deferStartupRefresh()`，
- * 教程结束再调用 `releaseStartupRefresh()`，刷新会在那一刻才开始。
+ * 安排启动刷新（安装器启动时由 `App.vue` 调用一次）。
+ *
+ * V2 的前端教程系统已整体裁剪，所以启动后立即刷新，没有门控。
+ * `deferStartupRefresh()` / `releaseStartupRefresh()` 是当时留下的门控脚手架，
+ * 目前没有任何调用方；如果确定不再恢复教程，可以连同 `deferred` 状态一起删。
  */
 function requestStartupRefresh() {
   if (startupState !== 'idle') return
@@ -482,13 +484,13 @@ function requestStartupRefresh() {
   void refreshEverything().finally(() => { startupState = 'done' })
 }
 
-/** 教程开始时暂缓启动刷新。 */
+/** 教程开始时暂缓启动刷新（当前没有调用方，见 `requestStartupRefresh`）。 */
 function deferStartupRefresh() {
   if (startupState !== 'idle') return
   startupState = 'deferred'
 }
 
-/** 教程结束/跳过时释放之前的暂缓，并立刻执行首次刷新。 */
+/** 教程结束/跳过时释放暂缓并立刻刷新（当前没有调用方，见 `requestStartupRefresh`）。 */
 function releaseStartupRefresh() {
   if (startupState === 'deferred' || startupState === 'idle') requestStartupRefresh()
 }

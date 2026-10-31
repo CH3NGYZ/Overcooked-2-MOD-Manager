@@ -126,10 +126,13 @@ export const api = {
    * `previewOnly` 为真时只下载并解析、不写入游戏目录，返回结果里带
    * `preview` —— 仓库卡片的「安装 / 重装 / 更新」走这条路径先进预览弹窗，
    * 用户确认后再调 `confirmModInstall`。
+   *
+   * `assetName` 是安装页下拉里选中的资产；不传时后端按 `asset_rules` 自动选。
+   * 必须与界面上显示的文件一致，否则会出现「选的 A、下载的 B」。
    */
-  installRepository: (repositoryId: string, tag?: string, previewOnly = false) =>
+  installRepository: (repositoryId: string, tag?: string, previewOnly = false, assetName?: string) =>
     invoke<RepositoryInstallOutcome>('install_repository', {
-      repositoryId, tag, previewOnly,
+      repositoryId, tag, previewOnly, assetName,
       // 后端按它选仓库的本地化名称（下载进度标签 + 安装预览标题）
       locale: locale.value,
     }),
@@ -172,6 +175,14 @@ export const api = {
    */
   setLevelSetEnabled: (dirName: string, enabled: boolean) =>
     invoke<OperationResult>('set_level_set_enabled', { dirName, enabled }),
+  /**
+   * 批量切换**全部**关卡集（地图管理页的「全部启用 / 全部禁用」）。
+   *
+   * 后端在一次操作锁里扫描磁盘真实状态、只切换需要变的目录；中途失败会
+   * 按逆序回滚，不会留下半开半关的列表。游戏运行时会整体拒绝。
+   */
+  setAllLevelSetsEnabled: (enabled: boolean) =>
+    invoke<OperationResult>('set_all_level_sets_enabled', { enabled }),
   /** 读 ZIP 列出其中的关卡集，不落盘。 */
   inspectLevelSetZip: (zipPath: string) =>
     invoke<ZipLevelSet[]>('inspect_level_set_zip', { zipPath }),
@@ -182,6 +193,22 @@ export const api = {
    */
   importLevelSets: (zipPath: string, selected: string[]) =>
     invoke<{ installed: string[] }>('import_level_sets', { zipPath, selected }),
+  /**
+   * 在资源管理器中打开一个关卡集目录。
+   *
+   * 只读操作：游戏运行时也允许。`enabled` 决定去 `levels/` 还是 `disabled/`
+   * 找 —— 目录名相同但位置不同的两个集不会互相指错。
+   */
+  openLevelSetDirectory: (dirName: string, enabled: boolean) =>
+    invoke<OperationResult>('open_level_set_directory', { dirName, enabled }),
+  /**
+   * 删除一个关卡集。
+   *
+   * 与 MOD 删除同一套策略：默认移入回收站（跟随 `recycle_deleted_mods`），
+   * 关闭回收时永久删除。移动目录在游戏运行时会被后端拒绝（`levelSet.gameRunning`）。
+   */
+  deleteLevelSet: (dirName: string, enabled: boolean) =>
+    invoke<OperationResult>('delete_level_set', { dirName, enabled }),
 
   /*
    * 地图下载：与 MOD 仓库同一套刷新与安装语义，只是数据模型不同。
@@ -205,11 +232,15 @@ export const api = {
   /**
    * 从地图仓库安装（会先回收同名旧关卡集）。
    *
+   * `assetName` 是详情页下拉里选中的资产；不传时后端按地图源的 `asset_rules`
+   * 自动选，与 MOD 安装完全同一条规则。
    * `locale` 用于下载进度标签：进度事件在下载过程中持续发出，
    * 名称必须在开始前按界面语言算好。
    */
-  installMapRelease: (mapId: string, tag?: string) =>
-    invoke<{ installed: string[] }>('install_map_release', { mapId, tag, locale: locale.value }),
+  installMapRelease: (mapId: string, tag?: string, assetName?: string) =>
+    invoke<{ installed: string[] }>('install_map_release', {
+      mapId, tag, assetName, locale: locale.value,
+    }),
   /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */
   setDiyLevelEnabled: (enabled: boolean) =>
     invoke<OperationResult>('set_diy_level_enabled', { enabled }),

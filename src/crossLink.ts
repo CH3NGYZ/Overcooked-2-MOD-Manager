@@ -35,6 +35,42 @@ export function useLocalModLink() {
   }
 }
 
+/**
+ * 地图版的「标签互跳」：
+ * 地图管理卡片上的「有更新」标签点击后跳到地图下载页，高亮对应地图卡片；
+ * 地图下载页的状态标签点击后跳到地图管理页，高亮绑定到该地图的本地关卡集。
+ *
+ * 与 MOD 版共用 `FOCUS_QUERY`、`useFocusHighlight` 和高亮时长，差别只在
+ * 目标路由与「高亮谁」的语义：MOD 用仓库 ID 串起两页，地图用地图 ID。
+ */
+/** 跳到地图下载页并高亮指定地图。 */
+export function useMapLink() {
+  const router = useRouter()
+  return {
+    linkToMap(mapId?: string) {
+      if (!mapId) return
+      void router.push({ name: 'maps-online', query: { [FOCUS_QUERY]: mapId } })
+    },
+  }
+}
+
+/**
+ * 跳到地图管理页并高亮绑定到该地图的本地关卡集。
+ *
+ * 传递的是**地图 id**：管理页卡片的 `data-focus-id` 就是绑定的地图 id，
+ * 这样「一个地图 ↔ 一个本地关卡集」在两侧用的是同一个锚点值，
+ * 不需要页面再按身份做第二次查找。
+ */
+export function useLevelSetLink() {
+  const router = useRouter()
+  return {
+    linkToLevelSets(mapId?: string) {
+      if (!mapId) return
+      void router.push({ name: 'levels', query: { [FOCUS_QUERY]: mapId } })
+    },
+  }
+}
+
 /** 卡片上的定位锚点选择器：跨页跳转与页内聚合标签共用同一套 DOM 标记。 */
 function focusSelector(id: string) {
   return `[data-focus-id="${CSS.escape(id)}"]`

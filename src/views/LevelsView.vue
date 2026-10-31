@@ -94,15 +94,21 @@ const kitchenRunning = computed(() => !!game.value?.kitchen_running)
 /** 删除走回收站还是直接删（与设置页同一开关，文案与后端行为都跟它走）。 */
 const recyclesOnDelete = computed(() => config.value?.recycle_deleted_mods !== false)
 
-/** 已排序：启用的在前，同组按展示名排。 */
+/**
+ * 已排序：只按当前语言的展示名排。
+ *
+ * 开关状态不参与比较：批量启用 / 停用会同时翻转整列，若 `enabled` 参与排序，
+ * 点一下整列次序就重排；单卡开关也会让那张卡当场跳到列表另一头。排序描述的是
+ * 「浏览顺序」，状态是卡片上的事实 —— 混在一起会让用户刚点过的卡片换位置，
+ * 看起来像点错了。
+ */
 const sortedSets = computed(() =>
-  [...sets.value].sort((left, right) => {
-    if (left.enabled !== right.enabled) return left.enabled ? -1 : 1
-    return levelSetDisplayName(left, locale.value).localeCompare(
+  [...sets.value].sort((left, right) =>
+    levelSetDisplayName(left, locale.value).localeCompare(
       levelSetDisplayName(right, locale.value),
       locale.value,
-    )
-  }),
+    ),
+  ),
 )
 
 /**
@@ -123,9 +129,10 @@ interface LevelSetGroupNode {
 /**
  * 本地关卡集按作者分组。
  *
- * 组顺序 = `sortedSets` 里首次出现的顺序，组内也保持 `sortedSets` 的顺序：
- * 这里**不再排一次序**，否则同一个作者下的卡片顺序会和平铺时代不一致，
- * 「启用在前、再按展示名」的既有观感会被打乱。
+ * 组顺序与组内卡片用同一把尺子：当前语言的作者展示名。组的先后若跟着数据
+ * 排列（关卡集的返回顺序）走，换语言、重新扫描或改卡片排序规则时组的位置
+ * 会漂移，用户记住的位置就没了；作者名排序与卡片名排序同源，整页才是
+ * 「按名字排」的一致观感。
  *
  * 分组口径全部由 `levelSetStatus.ts` 的 `levelSetGroup` 决定（线上声明 →
  * 本地 author → 未分组），页面只负责取展示名与折叠。
@@ -146,7 +153,9 @@ const groups = computed<LevelSetGroupNode[]>(() => {
     }
     bucket.sets.push(set)
   }
-  return [...buckets.entries()].map(([key, bucket]) => ({ key, label: bucket.label, sets: bucket.sets }))
+  return [...buckets.entries()]
+    .map(([key, bucket]) => ({ key, label: bucket.label, sets: bucket.sets }))
+    .sort((left, right) => left.label.localeCompare(right.label, locale.value))
 })
 
 const allGroupKeys = computed(() => groups.value.map((group) => group.key))
@@ -587,6 +596,24 @@ const bulkSwitchValue = computed<BulkSwitchValue>(() => {
 })
 
 /**
+ * 列表重建令牌，只在批量切换成功后自增。
+ *
+ * 批量启停后 `reloadSets()` 已经把新状态写进 `sets`，但折叠项里的卡片不会
+ * 重渲染：`n-collapse-item` 的内容区由 naive-ui 的 `CollapseItemContent` 拿着
+ * 稳定插槽（`_: 1`）去渲染内部的 `FadeInExpandTransition`，那个组件 vnode 的
+ * patchFlag 是 0，父级重渲染时 Vue 的 `shouldUpdateComponent` 直接跳过它，
+ * 插槽闭包不再求值，卡片停在批量切换前的开关状态。
+ *
+ * 单卡开关不会踩这个坑：它会把 `busy` 置位，而 `busy` 正好被卡片插槽读取，
+ * 折叠过渡因此自己收到依赖变化、重渲染并拿到页面最新的插槽；批量路径只改
+ * `sets`（页面 render 时读）与页头的 `bulkWorking`，卡片插槽里没有它们的依赖。
+ *
+ * 换掉整棵列表的 key 强制重建（与 MOD 管理页 `listEpoch` 同一套做法）：
+ * 展开状态都在页面级 ref（`expandedDir` / `collapsedGroups`）里，重建不丢。
+ */
+const listEpoch = ref(0)
+
+/**
  * 批量切换全部关卡集。
  *
  * 走后端一次操作锁：前端逐条切换会让每个目录都重新探测一次游戏目录，
@@ -600,6 +627,8 @@ async function setAllEnabled(enabled: boolean) {
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
       await reloadSets()
+      // 见 listEpoch：批量后强制重建折叠列表，让卡片重新读 enabled
+      listEpoch.value += 1
     } else {
       message.error(translateBackendMessage(result.message))
     }
@@ -724,7 +753,12 @@ async function checkUpdates() {
       :description="t('levelSet.noLevelSets')" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
-    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
+    <!--
+      :key="listEpoch" 只由批量切换推进（见 script 里的 listEpoch）：
+      折叠项内容挂在折叠过渡的稳定插槽里，批量改数据后不会重渲染，
+      换 key 强制重建整棵列表。
+    -->
+    <n-collapse v-else :key="listEpoch" :expanded-names="groupsExpanded" class="group-collapse"
       @update:expanded-names="onGroupsExpanded">
       <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
         <template #header>

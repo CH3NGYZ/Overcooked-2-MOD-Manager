@@ -40,8 +40,10 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         .unwrap_or(WinhttpState::Missing);
     /*
      * 送给前端的路径统一走 display_path（剥 Windows verbatim 前缀、去多余
-     * 尾分隔符）。GameInfo.path 同时也会被 IPC 命令还原成 PathBuf 做文件操作，
-     * 普通长度路径上去掉 `\\?\` 不改变指向，展示形态和实际落点因此一致。
+     * 尾分隔符）。去掉前缀不改变指向，但**改变字符串形态**：`fs::canonicalize`
+     * 返回的是 `\\?\E:\...`，本字段是 `E:\...`。任何拿它与 canonicalize 结果
+     * 做 `strip_prefix`/`starts_with` 比较的地方都必须改用 `safe_game_path`
+     * 的返回值做基准，否则前缀会静默失配（批量开关曾因此收集不到任何插件）。
      */
     let path_text = path.as_ref().map(|p| display_path(p));
     let steam_library = detected

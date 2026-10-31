@@ -1388,25 +1388,7 @@ pub fn set_all_local_mods_enabled(
      * 直接从磁盘扫描，不依赖 Dashboard 快照：
      * 快照可能过期，而用户点「全部启用」时期望覆盖磁盘上真实存在的每一个插件。
      */
-    let mut dll_files = Vec::new();
-    let plugins = game::safe_game_path(&game_root, "BepInEx/plugins")?;
-    for entry in walkdir::WalkDir::new(&plugins)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-    {
-        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        // `.dll.disabled` 与 `.dll` 都算插件；其他文件忽略
-        let is_plugin = name.ends_with(".dll") || name.ends_with(".dll.disabled");
-        if !is_plugin {
-            continue;
-        }
-        let Ok(relative) = entry.path().strip_prefix(&game_root) else {
-            continue;
-        };
-        dll_files.push(relative.to_string_lossy().replace('\\', "/"));
-    }
-    dll_files.sort_by_key(|file| file.to_ascii_lowercase());
+    let dll_files = mods::plugin_dll_files(&game_root)?;
     if dll_files.is_empty() {
         return Err("mods.noPluginDll".into());
     }

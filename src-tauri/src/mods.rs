@@ -87,12 +87,15 @@ pub fn effective_relations(
     }
 }
 
+/// 插件目录的游戏相对路径：扫描与批量开关必须落在同一处。
+const PLUGINS_DIR: &str = "BepInEx/plugins";
+
 pub fn scan_mods_with_manifests(
     game: &Path,
     config: &AppConfig,
     manifest_dir: Option<&Path>,
 ) -> Vec<InstalledMod> {
-    let plugins = game.join("BepInEx/plugins");
+    let plugins = game.join(PLUGINS_DIR);
     log::debug!("开始扫描本地 MOD：插件目录={}", plugins.display());
     if !plugins.is_dir() {
         log::warn!("插件目录不存在，跳过 MOD 扫描：{}", plugins.display());
@@ -190,6 +193,37 @@ fn is_disabled_mod_file(path: &Path) -> bool {
     path.to_string_lossy()
         .to_ascii_lowercase()
         .ends_with(".dll.disabled")
+}
+
+/**
+ * 收集 `BepInEx/plugins` 下全部插件 DLL（含 `.dll.disabled`），返回游戏相对路径。
+ *
+ * 相对路径一律以 `game::safe_game_path` 解析出的目录本身为基准剥离：它返回
+ * `canonicalize` 之后的路径（Windows 上是 `\\?\E:\...`），而 `GameInfo.path`
+ * 交给前端的是剥掉 verbatim 前缀的展示形态。把两者混着做 `strip_prefix` 会
+ * 静默失配 —— 批量开关曾因此一个文件都收集不到，报「没有找到任何 MOD 插件 DLL」。
+ */
+pub fn plugin_dll_files(game_root: &Path) -> Result<Vec<String>, String> {
+    let plugins = crate::game::safe_game_path(game_root, PLUGINS_DIR)?;
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&plugins)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        if !is_mod_file(entry.path()) {
+            continue;
+        }
+        let Ok(relative) = entry.path().strip_prefix(&plugins) else {
+            continue;
+        };
+        files.push(format!(
+            "{PLUGINS_DIR}/{}",
+            relative.to_string_lossy().replace('\\', "/")
+        ));
+    }
+    files.sort_by_key(|file| file.to_ascii_lowercase());
+    Ok(files)
 }
 
 pub fn canonical_dll_file(path: &Path, game: &Path) -> String {
@@ -2731,5 +2765,30 @@ mod tests {
         );
         // 越界即不命中，退回仓库级（此处为空）
         assert!(super::effective_relations(&repo, Some("2.0.1")).is_empty());
+    }
+
+    #[test]
+    fn plugin_dll_files_returns_game_relative_paths_for_a_lexical_root() {
+        let root = std::env::temp_dir().join(format!("oc2-plugin-dlls-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(plugins.join("Nested")).unwrap();
+        std::fs::write(plugins.join("Alpha.dll"), b"x").unwrap();
+        std::fs::write(plugins.join("Beta.dll.disabled"), b"x").unwrap();
+        std::fs::write(plugins.join("Nested/Gamma.dll"), b"x").unwrap();
+        std::fs::write(plugins.join("readme.txt"), b"x").unwrap();
+
+        // 入参是未 canonicalize 的路径（`detect_game().path` 就是这个形态），
+        // 与 safe_game_path 解析出的 verbatim 目录不是同一个字符串：
+        // 直接用入参做 strip_prefix 会一个文件都收集不到。
+        let files = super::plugin_dll_files(&root).unwrap();
+        assert_eq!(
+            files,
+            vec![
+                "BepInEx/plugins/Alpha.dll".to_string(),
+                "BepInEx/plugins/Beta.dll.disabled".to_string(),
+                "BepInEx/plugins/Nested/Gamma.dll".to_string(),
+            ]
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 }

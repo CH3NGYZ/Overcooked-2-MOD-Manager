@@ -112,8 +112,10 @@ export function repositoryIsAvailable(
  *
  * 与后端 `config::current_platform` 一致：只区分 macOS 与 Windows。
  *
- * Node 下没有 `navigator`（本模块要能被 `node --test` 直接引用），
- * 此时回落到 `windows`：测试里凡是关心平台的都用显式参数，不依赖这里。
+ * 平台来源是 `navigator.platform`：Tauri webview 里就是真实系统。Node 21+ 同样
+ * 提供了 `globalThis.navigator.platform`（本模块要能被 `node --test` 直接引用），
+ * 值也是宿主平台（macOS runner 上是 `MacIntel`），所以测试不能假设这里固定为
+ * windows —— 平台相关的断言要么显式传参，要么写成与平台无关的不变量。
  */
 function buildPlatform(): string {
   const platform = typeof navigator === 'undefined' ? '' : navigator.platform ?? ''

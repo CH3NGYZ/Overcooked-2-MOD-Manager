@@ -228,15 +228,23 @@ test('平台别名归一化（win / mac / osx / darwin）', () => {
 
 test('repositoryIsAvailable 把平台不适用当作「不存在」', () => {
   const macOnly = { enabled: true, region: undefined, source_id: undefined, platform: 'macos' }
+  const windowsOnly = { enabled: true, region: undefined, source_id: undefined, platform: 'windows' }
   assert.equal(repositoryIsAvailable(macOnly, undefined, undefined, 'macos'), true)
   assert.equal(repositoryIsAvailable(macOnly, undefined, undefined, 'windows'), false)
   /*
-   * 不传平台时按本机构建目标判断，而不是跳过过滤。
+   * 不传平台时按本机平台判断，而不是跳过过滤。
    * 「忘了传参数」若等于「平台限定失效」，那种失效没有任何报错，
    * 只会让本该隐藏的仓库悄悄出现在别的平台列表里。
-   * Node 下没有 navigator，回落到 windows，所以 macOS 专属仓库不可用。
+   *
+   * 不能断言「回落到 windows」：Node 21+ 已经提供 `globalThis.navigator`，
+   * 它的 `platform` 就是宿主平台（macOS runner 上是 MacIntel），早先这条断言
+   * 因此在两个 macOS 目标上红过。这里改断言与平台无关的不变量：两个互斥平台的
+   * 仓库恰好只有一个可用 —— 既证明回退真的按平台过滤，也不绑定具体平台。
    */
-  assert.equal(repositoryIsAvailable(macOnly, undefined, undefined), false)
+  const macAvailable = repositoryIsAvailable(macOnly, undefined, undefined)
+  const windowsAvailable = repositoryIsAvailable(windowsOnly, undefined, undefined)
+  assert.notEqual(macAvailable, windowsAvailable)
+  assert.equal(macAvailable || windowsAvailable, true)
 })
 
 /* 内置源：每个仓库都显式声明 platform，且只允许 macos 这一种限定。

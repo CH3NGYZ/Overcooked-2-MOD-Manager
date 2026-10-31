@@ -853,8 +853,7 @@ pub(crate) fn install_manual_mod(
     let manifest = archive::new_manifest(
         &repository_id,
         // release_tag 是「Release 版本标签」，手动安装没有 Release，保持空字符串。
-        // 之前这里塞了文件名，语义是错的，还会让 flag_manifest_version_mismatch
-        // 之类的逻辑把它当成版本号尝试解析。
+        // 之前这里塞了文件名，语义是错的，还会被更新判定相关的逻辑当成版本号尝试解析。
         "",
         // 手动安装没有仓库，包名与备注只有当前语言这一种写法
         archive::single_language(&display_name),
@@ -5475,6 +5474,54 @@ pub fn set_level_set_enabled(
     })
 }
 
+/// 批量切换全部关卡集（地图管理页的「全部启用 / 全部禁用」）。
+///
+/// 逐目录切换本身只是改名，但前端逐条发 IPC 时每条都要重新读配置、探测
+/// 游戏目录并抢一次操作锁 —— 地图一多就是一串重复开销。核心扫描与回滚在
+/// `level_sets::set_all_level_sets_enabled`（有测试），命令层只负责
+/// 加锁、定位游戏目录和把结果翻译成提示。
+#[tauri::command]
+pub fn set_all_level_sets_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    log::info!("批量切换全部关卡集：启用={}", enabled);
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    // 批量切换同样是移动目录，游戏运行时按同一策略拦下
+    crate::level_sets::ensure_operation_allowed(
+        &game_root,
+        crate::level_sets::LevelSetOperation::Toggle,
+    )?;
+    let changed = crate::level_sets::set_all_level_sets_enabled(&game_root, enabled)?;
+    if changed.is_empty() {
+        return Ok(OperationResult {
+            ok: true,
+            message: "message.levelSet.nothingToToggle".into(),
+        });
+    }
+    log::info!(
+        "批量切换关卡集完成：启用={}，变更数量={}",
+        enabled,
+        changed.len()
+    );
+    Ok(OperationResult {
+        ok: true,
+        message: crate::locale_tag::with_params(
+            if enabled {
+                "message.levelSet.bulkEnabled"
+            } else {
+                "message.levelSet.bulkDisabled"
+            },
+            &[("count", &changed.len().to_string())],
+        ),
+    })
+}
+
 /// 读一个 ZIP，列出其中的关卡集（不落盘，供导入前确认）。
 ///
 /// `exists` 标记目标位置是否已有同名目录 —— 界面据此提示「会回收旧版本」，
@@ -5557,19 +5604,85 @@ pub fn import_level_sets(
     Ok(LevelSetImportResult { installed })
 }
 
+/// 在系统文件管理器中打开一个关卡集目录。
+///
+/// 只读：不创建目录、不要求游戏已停止。前端只传目录名与「启用与否」，实际
+/// 路径由后端按 `OC2DIYLevel/{levels,disabled}` 拼出来 —— 参数不能指定任意
+/// 路径，`safe_game_path` 与 DIYLevel 归属检查都在 `level_sets` 里做。
+#[tauri::command]
+pub fn open_level_set_directory(
+    state: State<'_, AppState>,
+    dir_name: String,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    log::debug!("打开关卡集目录：目录={}，启用={}", dir_name, enabled);
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    let path = crate::level_sets::locate_level_set_directory(&game_root, &dir_name, enabled)?;
+    directory_open_command(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(OperationResult {
+        ok: true,
+        message: "message.levelSet.dirOpened".into(),
+    })
+}
+
+/// 删除一个关卡集（默认移入回收站，跟随 `recycle_deleted_mods`）。
+///
+/// 删除是**移动/移除目录**：DIYLevel 正在 `levels/` 下枚举并加载 `info` 时
+/// 把目录搬走，会让它读到半个文件。所以这里按 `Toggle` 的策略拦下运行中的
+/// 游戏，而不是按「安装」放行。
+#[tauri::command]
+pub fn delete_level_set(
+    state: State<'_, AppState>,
+    dir_name: String,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    log::info!("删除关卡集：目录={}，启用={}", dir_name, enabled);
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    crate::level_sets::ensure_operation_allowed(
+        &game_root,
+        crate::level_sets::LevelSetOperation::Toggle,
+    )?;
+    crate::level_sets::remove_level_set(
+        &state.config.mod_recycle_bin_dir(),
+        &state.config.manifests_dir(),
+        &game_root,
+        &dir_name,
+        enabled,
+        config.recycle_deleted_mods,
+    )?;
+    Ok(OperationResult {
+        ok: true,
+        message: if config.recycle_deleted_mods {
+            "message.levelSet.movedToRecycleBin".into()
+        } else {
+            "message.levelSet.deleted".into()
+        },
+    })
+}
+
 /// 列出当前地区可用的地图（含 Release 缓存）。
 ///
 /// 只读：不发起网络请求。缓存为空时界面显示「待检查」，用户点刷新才抓。
+///
+/// 这里**不再扫描 BepInEx/plugins**：以前为了算 `unmet_frameworks` 会调用
+/// `installed_plugin_versions`，而它内部是全量 MOD 扫描（读所有 DLL 的
+/// BepInEx 元数据 + 安装清单）。地图页因此要等一次与地图无关的扫描。
+/// 依赖判定改由前端用 Dashboard 已扫好的 MOD 列表计算，两边共用同一份
+/// 关系判定实现，结论不会分叉。
 #[tauri::command]
 pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
     let config = state.config.load_or_default();
     let maps = crate::map_sources::available_maps(&config, crate::config::current_user_region());
     log::debug!("地图列表读取完成：数量={}", maps.len());
-    let installed = installed_plugin_versions(&state, &config);
-    Ok(maps
-        .iter()
-        .map(|map| map_to_info(map, installed.as_ref()))
-        .collect())
+    Ok(maps.iter().map(map_to_info).collect())
 }
 
 /// 刷新地图源树（索引 → 子源 → 地图），并保留同名条目的缓存与开关。
@@ -5626,58 +5739,34 @@ pub async fn refresh_map_sources(state: State<'_, AppState>) -> Result<Vec<MapIn
         config.map_repositories.len(),
         changed
     );
-    let installed = installed_plugin_versions(&state, &config);
     Ok(crate::map_sources::available_maps(&config, &region)
         .iter()
-        .map(|map| map_to_info(map, installed.as_ref()))
+        .map(map_to_info)
         .collect())
 }
 
 /// 把内部地图配置转成 IPC 模型。
 ///
-/// `installed` 给出本地已装的 GUID → 版本，供 `unmet_frameworks` 判定；
-/// 传 `None`（游戏未探测到、无法扫描）时只给出声明、不标「缺失」——
-/// 把「不知道」说成「缺依赖」会让用户去重装本来就装好的框架。
-fn map_to_info(
-    map: &crate::models::MapRepositoryConfig,
-    installed: Option<&std::collections::HashMap<String, Option<String>>>,
-) -> MapInfo {
+/// ## 为什么这里不做依赖判定
+///
+/// 判定「哪个框架版本没满足」需要本地已装插件的 GUID → 版本，而拿到它必须
+/// 全量扫描 `BepInEx/plugins`（每个 DLL 读 BepInEx 元数据 + 安装清单）。地图页
+/// 打开时再扫一遍纯属重复劳动：Dashboard 早就扫好了同一份数据，前端拿它就能
+/// 用同一份关系判定实现算出结论。
+///
+/// 因此 `required_frameworks` 只给出**声明**（`installed_version` 恒为 `None`），
+/// `unmet_frameworks` 恒为空。字段保留是为了兼容尚未迁移的旧前端代码 ——
+/// 删字段会让它在 `map.unmet_frameworks ?? []` 之外的访问路径上崩掉。
+fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
     let declared: Vec<RequiredFramework> = map
         .relations
         .iter()
         .map(|relation| RequiredFramework {
             guid: relation.guid.clone(),
             min_version: relation.min_version.clone(),
-            installed_version: installed
-                .and_then(|table| table.get(&relation.guid.to_lowercase()))
-                .cloned()
-                .flatten(),
+            installed_version: None,
         })
         .collect();
-    let unmet: Vec<RequiredFramework> = match installed {
-        Some(_) => {
-            let missing = crate::map_sources::unmet_relations(map, |guid| {
-                installed
-                    .and_then(|table| table.get(&guid.trim().to_lowercase()))
-                    .cloned()
-                    .flatten()
-            });
-            let missing_guids: Vec<&str> = missing
-                .iter()
-                .map(|relation| relation.guid.as_str())
-                .collect();
-            declared
-                .iter()
-                .filter(|framework| {
-                    missing_guids
-                        .iter()
-                        .any(|guid| guid.eq_ignore_ascii_case(&framework.guid))
-                })
-                .cloned()
-                .collect()
-        }
-        None => Vec::new(),
-    };
     MapInfo {
         id: map.id.clone(),
         name: map.name.clone(),
@@ -5689,6 +5778,8 @@ fn map_to_info(
         repository: map.repository.clone(),
         level_set_name: map.level_set_name.clone(),
         author: map.author.clone(),
+        // 详情面板要标出「安装时会选哪个资产」，与后端自动匹配共用同一份规则
+        asset_rules: map.asset_rules.clone(),
         note: map.note.clone(),
         note_i18n: map.note_i18n.clone(),
         enabled: map.enabled,
@@ -5698,57 +5789,14 @@ fn map_to_info(
             .first()
             .map(|release| release.tag_name.clone()),
         latest_release: map.cached_releases.first().cloned(),
+        // 详情抽屉要列出可安装的版本（含回滚到旧版），只给最新一条不够
+        cached_releases: map.cached_releases.clone(),
         cached_release_count: map.cached_releases.len(),
         cached_at: map.releases_cached_at,
         last_error: map.last_error.clone(),
         required_frameworks: declared,
-        unmet_frameworks: unmet,
+        unmet_frameworks: Vec::new(),
     }
-}
-
-/// 扫描一次本地已装插件，得到 GUID → 版本。
-///
-/// 地图页与两处刷新共用：每个地图卡片都要判定框架依赖，分三次扫描等于
-/// 把 BepInEx 目录读三遍。游戏目录不可用时返回 `None`（「无法判定」），
-/// 与「判定为缺失」区分开。
-fn installed_plugin_versions(
-    state: &AppState,
-    config: &crate::models::AppConfig,
-) -> Option<std::collections::HashMap<String, Option<String>>> {
-    let game_root = game::detect_game(config).path?;
-    let root = PathBuf::from(game_root);
-    let scanned =
-        mods::scan_mods_with_manifests(&root, config, Some(&state.config.manifests_dir()));
-    let mut table = std::collections::HashMap::new();
-    for item in scanned {
-        let Some(guid) = item.guid.as_deref().map(str::trim) else {
-            continue;
-        };
-        if guid.is_empty() {
-            continue;
-        }
-        // 同一个 GUID 可能有多个副本：记下最高的那个版本，
-        // 与「任一副本满足即算满足」的判定口径一致
-        let key = guid.to_lowercase();
-        let version = item.version.clone();
-        table
-            .entry(key)
-            .and_modify(|existing: &mut Option<String>| {
-                let keep_new = match (existing.as_deref(), version.as_deref()) {
-                    (Some(current), Some(candidate)) => {
-                        crate::releases::compare_release_versions(candidate, current)
-                            .is_some_and(|order| order.is_gt())
-                    }
-                    (None, Some(_)) => true,
-                    _ => false,
-                };
-                if keep_new {
-                    *existing = version.clone();
-                }
-            })
-            .or_insert(version);
-    }
-    Some(table)
 }
 
 /// 刷新一个地图仓库的 Release（10 分钟缓存，与 MOD 仓库同一套 TTL）。
@@ -5859,10 +5907,19 @@ pub async fn install_map_release(
     state: State<'_, AppState>,
     map_id: String,
     tag: Option<String>,
+    asset_name: Option<String>,
     locale: Option<String>,
 ) -> Result<LevelSetImportResult, String> {
     // 取消标记只在命令入口重置，不能在等待元数据或补充候选之后重置
     archive::start_download();
+    // 与 `install_repository` 同口径：先把用户指定的版本与资产写进日志。
+    // 资产选不出来（`source.noMatchingAsset`）时，这行是唯一能看出他点了哪个资产的地方。
+    log::info!(
+        "开始安装地图：地图 ID={}，指定版本={}，指定资产={}",
+        map_id,
+        tag.as_deref().unwrap_or("自动选择"),
+        asset_name.as_deref().unwrap_or("自动匹配")
+    );
     let config = state.config.load_or_default();
     let Some(map) = config
         .map_repositories
@@ -5893,12 +5950,14 @@ pub async fn install_map_release(
             .ok_or("source.noInstallableRelease")?,
     };
     let probe = crate::map_sources::release_probe(&map);
-    let asset = releases::select_install_asset(&probe, &release, None)
+    // 指定资产时精确匹配该名字，未指定才按 `asset_rules` 自动选 ——
+    // 与 MOD 安装同一条 `select_install_asset`，不要在地图侧另写匹配。
+    let asset = releases::select_install_asset(&probe, &release, asset_name.as_deref())
         .ok_or("source.noMatchingAsset")?
         .clone();
 
     log::info!(
-        "开始安装地图：地图={}，Release={}，资产={}",
+        "地图安装资产已确定：地图={}，Release={}，资产={}",
         map.name,
         release.tag_name,
         asset.name
@@ -6357,6 +6416,36 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
     Err("mods.dllFileMissing".into())
 }
 
+/// 把路径转成 Explorer 认得的形态。
+///
+/// `canonicalize` 在 Windows 上会带出 `\\?\` / `\\?\UNC\` 前缀，而 Explorer
+/// 不按标准 argv 解析路径、也不接受 verbatim 形式。剥掉前缀；UNC 路径还要
+/// 还原成 `\\server\share` 的普通写法。
+#[cfg(windows)]
+fn explorer_display_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
+    }
+}
+
+/// 在系统文件管理器里打开一个**目录**（不是选中文件）。
+///
+/// 与 `mod_file_location_command` 只差参数形态：那个用 `/select,` 选中文件，
+/// 这里把目录本身交给文件管理器。Windows 同样要剥掉 verbatim 前缀 ——
+/// `safe_game_path` 返回的是 `canonicalize` 之后的路径。
+fn directory_open_command(path: &Path) -> std::process::Command {
+    #[cfg(windows)]
+    let target = explorer_display_path(path);
+    #[cfg(not(windows))]
+    let target = path.to_string_lossy().into_owned();
+    let mut command = external_open_command();
+    command.arg(target);
+    command
+}
+
 fn mod_file_location_command(path: &Path) -> std::process::Command {
     #[cfg(target_os = "macos")]
     {
@@ -6367,13 +6456,7 @@ fn mod_file_location_command(path: &Path) -> std::process::Command {
     #[cfg(windows)]
     {
         // Explorer expects ordinary drive/UNC paths, not canonical verbatim prefixes.
-        let path = path.to_string_lossy();
-        let shell_path = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
-            format!(r"\\{unc}")
-        } else {
-            path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
-        };
-        let selection = format!(r#"/select,"{shell_path}""#);
+        let selection = format!(r#"/select,"{}""#, explorer_display_path(path));
         let mut command = std::process::Command::new("explorer.exe");
         use std::os::windows::process::CommandExt;
         // Quote only the path: Explorer does not use the standard argv parser.
@@ -9724,7 +9807,9 @@ mod update_status_tests {
                 "v99.0.0".into()
             };
             let mut local = installed("release", "latest");
-            local.version = Some("100.0.0".into());
+            // DLL 元数据版本故意与清单 tag 不同、但低于线上版本：
+            // 更新结论按清单 tag 算，local_version 也显示清单 tag。
+            local.version = Some("0.9.0".into());
             local.repository_binding = RepositoryBinding::from_release(&repo, tag);
             let status = collect_update_status(&config(vec![repo]), &[local]);
             assert_eq!(status[0].local_version.as_deref(), Some(tag));

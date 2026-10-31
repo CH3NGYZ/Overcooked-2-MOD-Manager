@@ -96,7 +96,8 @@ pub fn scan_mods_with_manifests(
     annotate_package_counts(&mut installed);
     inherit_repository_from_sibling(&mut installed);
     mark_duplicate_guids(&mut installed);
-    flag_manifest_version_mismatch(&mut installed, &manifests);
+    // 更新判定只看「清单 tag vs 仓库 tag」；DLL 自报版本只参与抑制误报
+    // （见 effective_local_version），不再有「DLL 版本低于清单就标记可更新」的二次扫描。
     refresh_status_labels(&mut installed);
     let packages = installed
         .iter()
@@ -276,7 +277,9 @@ fn inspect_dll(
             (false, "not_release_asset")
         }
         _ => match repository_binding {
-            Some(binding) => binding_update_state(repository, binding),
+            Some(binding) => {
+                binding_update_state(repository, binding, installed_version.as_deref())
+            }
             None => repository_update_state(repository, installed_version.as_deref()),
         },
     };
@@ -552,9 +555,31 @@ fn bound_release<'a>(
     })
 }
 
+/// 版本比较用的本地版本：清单记录的安装 tag 与 DLL 自报版本取较高者。
+///
+/// 更新检测**以安装清单的 tag 为准**（它记录「这一包装的是哪个 Release」），
+/// DLL 自报的 BepInPlugin 版本只用来抑制误报：
+///   - 手动降级（DLL 低于清单 tag）：装的时候就是线上最新版，降级是用户自己
+///     的选择，不该被当成「待更新」；线上真的出了更高版本仍会照常提示；
+///   - 手动升级（DLL 高于清单 tag）：本地其实已经是线上那个版本，只按清单
+///     tag 比会一直提示更新。
+///
+/// 取较高者之后，DLL 版本只能**抑制**更新，绝不会凭空制造一条更新。
+/// 前端 `statusTags.ts` 的 `localCompareVersion` 是同一规则的镜像实现。
+fn effective_local_version(binding_tag: &str, dll_version: Option<&str>) -> String {
+    let Some(dll) = dll_version.filter(|value| !value.trim().is_empty()) else {
+        return binding_tag.to_string();
+    };
+    match crate::releases::compare_release_versions(dll, binding_tag) {
+        Some(std::cmp::Ordering::Greater) => dll.to_string(),
+        _ => binding_tag.to_string(),
+    }
+}
+
 fn binding_update_state(
     repo: Option<&RepositoryConfig>,
     binding: &RepositoryBinding,
+    dll_version: Option<&str>,
 ) -> (bool, &'static str) {
     let Some(repo) = repo else {
         return (false, "bound_repository_missing");
@@ -568,10 +593,15 @@ fn binding_update_state(
     if release.tag_name == binding.tag {
         return (false, "latest");
     }
+    // 本地有效版本：清单 tag 与 DLL 版本取较高者，DLL 只能抑制更新
+    let local = effective_local_version(&binding.tag, dll_version);
+    if release.tag_name == local {
+        return (false, "latest");
+    }
     // Exact tags also work for non-SemVer releases; comparable versions must
     // never turn an installed newer tag into a downgrade notification.
     // 用宽松多段比较：本项目允许 0.4.0.5 这类四段版本，且它高于 0.4.0。
-    let update = match crate::releases::compare_release_versions(&release.tag_name, &binding.tag) {
+    let update = match crate::releases::compare_release_versions(&release.tag_name, &local) {
         Some(ordering) => ordering == std::cmp::Ordering::Greater,
         _ => true,
     };
@@ -605,7 +635,7 @@ pub(crate) fn mod_update_state(
     installed: &InstalledMod,
 ) -> (bool, &'static str) {
     match installed.repository_binding.as_ref() {
-        Some(binding) => binding_update_state(Some(repo), binding),
+        Some(binding) => binding_update_state(Some(repo), binding, installed.version.as_deref()),
         None => repository_update_state(Some(repo), installed.version.as_deref()),
     }
 }
@@ -698,67 +728,6 @@ fn annotate_package_counts(mods: &mut [InstalledMod]) {
             .as_ref()
             .and_then(|id| counts.get(id).copied())
             .unwrap_or(0);
-    }
-}
-
-/// 单个 MOD 的「安装清单版本」与「DLL 实际版本」不一致时，标记为可更新。
-///
-/// 背景：绑定更新判定（`binding_update_state`）只比较「清单里的 tag」和
-/// 「远端最新 tag」。如果用户手动替换了 plugins 下的 DLL（或安装后又被别的
-/// 工具覆盖），DLL 自己报告的 BepInPlugin 版本可能低于清单记录的那次安装，
-/// 而清单 tag 仍等于远端最新 tag —— 结果会错误地显示「最新版」。
-///
-/// 规则边界（重要）：
-///   - 只处理**单 DLL 的 MOD**（`package_mod_count <= 1`）。MOD 包的版本
-///     不绑定任何单个 DLL，包的更新只按清单 tag 与仓库 tag 比较，这里不碰。
-///   - 只把状态升级为「可更新」，不会把已判定的更新降级；
-///   - 两者版本都不可比较（非 SemVer）时不做判断，避免误报；
-///   - DLL 版本高于清单版本不告警（用户可能已手动升级，远端也没有更新）。
-fn flag_manifest_version_mismatch(mods: &mut [InstalledMod], manifests: &[InstallManifest]) {
-    for item in mods.iter_mut() {
-        // MOD 包成员的版本由包统一判定，不参与逐 DLL 比较
-        if item.package_mod_count > 1 {
-            continue;
-        }
-        if item.update_available {
-            continue;
-        }
-        // 只对「已安装且绑定到某个 Release」的 MOD 有意义
-        let Some(binding) = item.repository_binding.as_ref() else {
-            continue;
-        };
-        let Some(manifest) = manifests.iter().find(|manifest| {
-            manifest
-                .files
-                .iter()
-                .any(|file| canonical_dll_name(file).eq_ignore_ascii_case(&item.dll_file))
-        }) else {
-            continue;
-        };
-        if manifest.release_tag.trim().is_empty() {
-            continue;
-        }
-        let Some(dll_version) = item
-            .version
-            .as_deref()
-            .and_then(crate::releases::parse_version)
-        else {
-            continue;
-        };
-        let Some(installed_tag_version) = crate::releases::parse_version(&binding.tag) else {
-            continue;
-        };
-        if dll_version >= installed_tag_version {
-            continue;
-        }
-        log::warn!(
-            "MOD 版本与安装清单不一致，标记为可更新：文件={}，DLL 版本={}，清单版本={}",
-            item.dll_file,
-            item.version.as_deref().unwrap_or("未知"),
-            binding.tag
-        );
-        item.update_available = true;
-        item.status = "update_available".into();
     }
 }
 
@@ -1161,66 +1130,108 @@ mod tests {
     }
 
     /*
-     * 单个 MOD：清单 tag 与远端最新 tag 相同（本来判「最新版」），
-     * 但 DLL 自己报告的版本低于清单记录的版本 —— 说明插件文件被替换过，
-     * 必须提示可更新，否则用户会一直看到一个版本号更低的「最新版」。
+     * 更新判定以安装清单的 tag 为准，DLL 自报版本只用来抑制误报。
+     *
+     * 用户手动把 DLL 降级到清单 tag 以下时，装的时候本来就是线上最新版，
+     * 降级是用户自己的选择，不该被报成「可更新」；线上真的出了更高版本
+     * 才照常提示。
      */
     #[test]
-    fn single_mod_reports_update_when_dll_version_is_below_manifest_tag() {
+    fn manual_downgrade_keeps_latest_until_remote_moves_forward() {
+        let mut repo = binding_repository();
+        repo.cached_releases = vec![high_cached_release()];
+        let binding = crate::models::RepositoryBinding::from_release(&repo, "v99.0.0").unwrap();
+        // 清单 tag 就是线上最新版，DLL 被替换成更旧的 1.2.0
+        assert_eq!(
+            super::binding_update_state(Some(&repo), &binding, Some("1.2.0")),
+            (false, "latest")
+        );
+        // 线上出现更高版本之后才提示更新
+        repo.cached_releases[0].tag_name = "v100.0.0".into();
+        repo.cached_releases[0].version = Some("100.0.0".into());
+        assert_eq!(
+            super::binding_update_state(Some(&repo), &binding, Some("1.2.0")),
+            (true, "update_available")
+        );
+    }
+
+    /*
+     * 用户手动升级 DLL（高于清单 tag）时，本地其实已经是线上那个版本，
+     * 不能因为清单 tag 旧就一直提示更新。
+     */
+    #[test]
+    fn manual_upgrade_suppresses_update_without_hiding_real_one() {
+        let mut repo = binding_repository();
+        repo.cached_releases = vec![high_cached_release()];
+        // 清单 tag 是旧版本 v1.0.0，DLL 已经是线上的 99.0.0
+        let binding = crate::models::RepositoryBinding::from_release(&repo, "v1.0.0").unwrap();
+        assert_eq!(
+            super::binding_update_state(Some(&repo), &binding, Some("99.0.0")),
+            (false, "latest")
+        );
+        // 线上再发新版本时仍然要提示
+        repo.cached_releases[0].tag_name = "v100.0.0".into();
+        repo.cached_releases[0].version = Some("100.0.0".into());
+        assert_eq!(
+            super::binding_update_state(Some(&repo), &binding, Some("99.0.0")),
+            (true, "update_available")
+        );
+    }
+
+    /// 本地有效版本 = max(清单 tag, DLL 版本)；不可比较的 DLL 版本退回清单 tag。
+    #[test]
+    fn effective_local_version_keeps_the_higher_side() {
+        assert_eq!(super::effective_local_version("v2.0.0", None), "v2.0.0");
+        assert_eq!(super::effective_local_version("v2.0.0", Some("")), "v2.0.0");
+        assert_eq!(
+            super::effective_local_version("v2.0.0", Some("1.2.0")),
+            "v2.0.0"
+        );
+        assert_eq!(
+            super::effective_local_version("v2.0.0", Some("2.1.0")),
+            "2.1.0"
+        );
+        assert_eq!(
+            super::effective_local_version("v2.0.0", Some("nightly")),
+            "v2.0.0"
+        );
+    }
+
+    /// 降级后的 DLL 仍然显示「最新版」而不是「可更新」。
+    #[test]
+    fn downgraded_dll_still_shows_latest_label() {
+        let mut repo = binding_repository();
+        repo.cached_releases = vec![high_cached_release()];
         let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
             "repository_id": "repo-1", "repository_ids": ["repo-1"],
             "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
             "enabled": true, "version": "1.2.0", "version_source": "BepInPlugin",
             "update_available": false, "duplicate_guid": false, "status": "latest",
             "repository_binding": {
-                "provider": "github", "owner": "o", "repository": "r",
-                "tag": "v2.0.0", "channel": "all"
+                "provider": "gitee", "owner": "example", "repository": "mod",
+                "tag": "v99.0.0", "channel": "all"
             }
         }))
         .unwrap();
-        let manifests = vec![manifest_with_tag(
-            "repo-1",
-            "v2.0.0",
-            "BepInEx/plugins/Example.dll",
-        )];
-        super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
+        let (update, status) = super::binding_update_state(
+            Some(&repo),
+            item.repository_binding.as_ref().unwrap(),
+            item.version.as_deref(),
+        );
+        item.update_available = update;
+        item.status = status.into();
         super::refresh_status_labels(std::slice::from_mut(&mut item));
-        assert!(item.update_available);
-        assert_eq!(item.status, "update_available");
+        assert!(!item.update_available);
+        assert_eq!(item.status, "latest");
         assert!(
             item.labels
-                .contains(&crate::models::InstalledModStatusLabel::UpdateAvailable)
+                .contains(&crate::models::InstalledModStatusLabel::Latest)
         );
         assert!(
             !item
                 .labels
-                .contains(&crate::models::InstalledModStatusLabel::Latest)
+                .contains(&crate::models::InstalledModStatusLabel::UpdateAvailable)
         );
-    }
-
-    /// DLL 版本与清单一致（或更高）时不应被误判为可更新。
-    #[test]
-    fn single_mod_keeps_latest_when_dll_version_matches_manifest_tag() {
-        for version in ["2.0.0", "2.1.0"] {
-            let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
-                "repository_id": "repo-1", "repository_ids": ["repo-1"],
-                "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
-                "enabled": true, "version": version, "version_source": "BepInPlugin",
-                "update_available": false, "duplicate_guid": false, "status": "latest",
-                "repository_binding": {
-                    "provider": "github", "owner": "o", "repository": "r",
-                    "tag": "v2.0.0", "channel": "all"
-                }
-            }))
-            .unwrap();
-            let manifests = vec![manifest_with_tag(
-                "repo-1",
-                "v2.0.0",
-                "BepInEx/plugins/Example.dll",
-            )];
-            super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
-            assert!(!item.update_available, "版本 {version} 不应被判为可更新");
-        }
     }
 
     /*
@@ -1252,6 +1263,7 @@ mod tests {
                 tag: "v1.0.0".into(),
                 channel: crate::models::Channel::All,
             },
+            None,
         );
         // 直接调绑定判定仍会返回 unknown —— 这是它本身的语义
         assert!(!update);
@@ -1261,72 +1273,6 @@ mod tests {
             super::repository_update_state(Some(&repo), Some("1.0.0")).1,
             "not_release_asset"
         );
-    }
-
-    /// MOD 包（成员数 >= 2）不参与逐 DLL 版本比较：包版本只按 tag 比较。
-    #[test]
-    fn package_members_are_not_flagged_by_dll_version_mismatch() {
-        let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
-            "repository_id": "repo-1", "repository_ids": ["repo-1"],
-            "package_id": "pkg-1", "package_name": "Pack",
-            "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
-            "enabled": true, "version": "1.2.0", "version_source": "BepInPlugin",
-            "update_available": false, "duplicate_guid": false, "status": "latest",
-            "repository_binding": {
-                "provider": "github", "owner": "o", "repository": "r",
-                "tag": "v2.0.0", "channel": "all"
-            }
-        }))
-        .unwrap();
-        // 包内两个成员：package_mod_count 由 annotate_package_counts 写入 2
-        item.package_mod_count = 2;
-        let manifests = vec![manifest_with_tag(
-            "repo-1",
-            "v2.0.0",
-            "BepInEx/plugins/Example.dll",
-        )];
-        super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
-        assert!(
-            !item.update_available,
-            "MOD 包成员不应按 DLL 版本单独判更新"
-        );
-    }
-
-    /// 非 SemVer 版本不做比较，避免把不可比的值误判成更新。
-    #[test]
-    fn unparsable_versions_do_not_trigger_the_mismatch_rule() {
-        let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
-            "repository_id": "repo-1", "repository_ids": ["repo-1"],
-            "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
-            "enabled": true, "version": "nightly", "version_source": "BepInPlugin",
-            "update_available": false, "duplicate_guid": false, "status": "latest",
-            "repository_binding": {
-                "provider": "github", "owner": "o", "repository": "r",
-                "tag": "latest-build", "channel": "all"
-            }
-        }))
-        .unwrap();
-        let manifests = vec![manifest_with_tag(
-            "repo-1",
-            "latest-build",
-            "BepInEx/plugins/Example.dll",
-        )];
-        super::flag_manifest_version_mismatch(std::slice::from_mut(&mut item), &manifests);
-        assert!(!item.update_available);
-    }
-
-    fn manifest_with_tag(
-        repository_id: &str,
-        tag: &str,
-        file: &str,
-    ) -> crate::archive::InstallManifest {
-        crate::archive::new_manifest(
-            repository_id,
-            tag,
-            Default::default(),
-            Default::default(),
-            vec![file.into()],
-        )
     }
 
     #[test]
@@ -1574,23 +1520,23 @@ mod tests {
             repo.cached_releases = vec![high_cached_release()];
             let binding = crate::models::RepositoryBinding::from_release(&repo, "v98.0.0").unwrap();
             assert_eq!(
-                super::binding_update_state(Some(&repo), &binding),
+                super::binding_update_state(Some(&repo), &binding, None),
                 (true, "update_available")
             );
             let mut current = binding.clone();
             current.tag = "v99.0.0".into();
             assert_eq!(
-                super::binding_update_state(Some(&repo), &current),
+                super::binding_update_state(Some(&repo), &current, None),
                 (false, "latest")
             );
             current.tag = "v100.0.0".into();
             assert_eq!(
-                super::binding_update_state(Some(&repo), &current),
+                super::binding_update_state(Some(&repo), &current, None),
                 (false, "latest")
             );
             repo.last_error = Some("request failed".into());
             assert_eq!(
-                super::binding_update_state(Some(&repo), &binding),
+                super::binding_update_state(Some(&repo), &binding, None),
                 (false, "repository_unavailable")
             );
         }
@@ -1613,13 +1559,13 @@ mod tests {
             "new-nightly"
         );
         assert_eq!(
-            super::binding_update_state(Some(&repo), &binding),
+            super::binding_update_state(Some(&repo), &binding, None),
             (true, "update_available")
         );
         let mut current = binding.clone();
         current.tag = "new-nightly".into();
         assert_eq!(
-            super::binding_update_state(Some(&repo), &current),
+            super::binding_update_state(Some(&repo), &current, None),
             (false, "latest")
         );
         repo.provider = crate::models::Provider::Github;
@@ -1630,7 +1576,7 @@ mod tests {
         repo.download_mode = crate::models::RepositoryDownloadMode::RepositoryFile;
         assert!(crate::models::RepositoryBinding::from_release(&repo, "tag").is_none());
         assert_eq!(
-            super::binding_update_state(None, &binding),
+            super::binding_update_state(None, &binding, None),
             (false, "bound_repository_missing")
         );
     }
@@ -1645,7 +1591,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut bytes = b"BepInPlugin".to_vec();
         bytes.extend_from_slice(&[1, 0]);
-        for value in ["com.example.guid", "Example", "100.0.0"] {
+        for value in ["com.example.guid", "Example", "98.5.0"] {
             bytes.push(value.len() as u8);
             bytes.extend_from_slice(value.as_bytes());
         }
@@ -1682,7 +1628,7 @@ mod tests {
         assert_eq!(scan.len(), 1);
         let installed = &scan[0];
         assert_eq!(installed.guid.as_deref(), Some("com.example.guid"));
-        assert_eq!(installed.version.as_deref(), Some("100.0.0"));
+        assert_eq!(installed.version.as_deref(), Some("98.5.0"));
         assert_eq!(
             installed.repository_id.as_deref(),
             Some("refreshed-source-id")
@@ -1725,7 +1671,7 @@ mod tests {
         let relative = "BepInEx/plugins/Example.dll";
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, plugin_blob("com.example.guid", "Example", "100.0.0")).unwrap();
+        std::fs::write(&path, plugin_blob("com.example.guid", "Example", "98.5.0")).unwrap();
         let mut stable = binding_repository();
         stable.id = "stable-track".into();
         stable.channel = crate::models::Channel::Stable;

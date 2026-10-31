@@ -20,7 +20,7 @@
 //! 关系表复用 `RepositoryRelation`：「某 GUID 的版本必须在区间内」这个语义
 //! 两边没有差别。
 use crate::config::ConfigError;
-use crate::models::{AppConfig, MapRepositoryConfig, RepositoryRelation};
+use crate::models::{AppConfig, MapRepositoryConfig};
 use crate::repository_sources::SourceLocation;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -486,48 +486,6 @@ pub(crate) fn map_repository_id(source_id: &str, map: &MapRepositoryConfig) -> S
     )
 }
 
-/// 一份地图的依赖是否满足（对照本地已安装的插件版本）。
-///
-/// 返回未满足的关系；空表示可以安装。这里只做**判定**，不负责安装依赖 ——
-/// 地图的前置是框架级组件（DIYLevel / Web Runtime），由用户在框架管理里装，
-/// 管理器不替他们决定版本。
-pub fn unmet_relations<'a>(
-    map: &'a MapRepositoryConfig,
-    installed: impl Fn(&str) -> Option<String>,
-) -> Vec<&'a RepositoryRelation> {
-    map.relations
-        .iter()
-        .filter(|relation| !relation_satisfied(relation, &installed))
-        .collect()
-}
-
-/// 单条关系是否满足。
-fn relation_satisfied(
-    relation: &RepositoryRelation,
-    installed: &impl Fn(&str) -> Option<String>,
-) -> bool {
-    use crate::models::RelationKind;
-    let Some(version) = installed(&relation.guid) else {
-        // 没装：依赖不满足，排斥/兼容满足（没装就没有冲突）
-        return relation.kind != RelationKind::Requires;
-    };
-    let min_ok = relation.min_version.trim().is_empty()
-        || crate::releases::compare_release_versions(&version, relation.min_version.trim())
-            .is_some_and(|order| order.is_ge());
-    let max_ok = relation.max_version.trim().is_empty()
-        || crate::releases::compare_release_versions(&version, relation.max_version.trim())
-            .is_some_and(|order| order.is_le());
-    let in_range = min_ok && max_ok;
-    match relation.kind {
-        // 依赖：必须在区间内
-        RelationKind::Requires => in_range,
-        // 排斥：在区间内才算冲突（不在区间内是「允许的版本」）
-        RelationKind::Conflicts => !in_range,
-        // 兼容：在区间内才算兼容
-        RelationKind::Compatible => in_range,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,51 +586,6 @@ asset_rules = [{{ type = "exact", value = "map.zip" }}]
         // 禁用一律不可见，与地区无关
         map.enabled = false;
         assert!(!map_is_available(&map, "international"));
-    }
-
-    #[test]
-    fn relations_require_the_minimum_framework_versions() {
-        let text = format!(
-            "{}\n{}",
-            minimal("M", "A", "S"),
-            r#"
-[[maps.relations]]
-kind = "requires"
-guid = "dev.gua.overcooked.diylevel"
-min_version = "0.10.0"
-
-[[maps.relations]]
-kind = "requires"
-guid = "oc2.oc2diylevelruntimewloader"
-min_version = "3.10.2"
-"#
-        );
-        let map = parse_document(&text, &bundled())
-            .unwrap()
-            .maps
-            .into_iter()
-            .next()
-            .unwrap();
-
-        // 都没装：两条都不满足
-        let unmet = unmet_relations(&map, |_| None);
-        assert_eq!(unmet.len(), 2);
-
-        // 装够了：都满足
-        let unmet = unmet_relations(&map, |guid| match guid {
-            "dev.gua.overcooked.diylevel" => Some("0.10.0".into()),
-            "oc2.oc2diylevelruntimewloader" => Some("3.10.2".into()),
-            _ => None,
-        });
-        assert!(unmet.is_empty());
-
-        // 框架版本偏低：仍然不满足
-        let unmet = unmet_relations(&map, |guid| match guid {
-            "dev.gua.overcooked.diylevel" => Some("0.9.9".into()),
-            "oc2.oc2diylevelruntimewloader" => Some("3.10.2".into()),
-            _ => None,
-        });
-        assert_eq!(unmet.len(), 1);
     }
 
     /*

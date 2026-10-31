@@ -219,11 +219,32 @@ pub async fn get_repository_readme(
         let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
         state.config.load_or_default()
     };
-    let repo = config
+    /*
+     * 地图下载页与 MOD 安装页共用同一个详情面板，README 请求的 id 可能来自
+     * `config.map_repositories`。先查 MOD 仓库；查不到再把地图投影成等价的
+     * 仓库配置 —— `release_probe` 就是 Release 抓取用的那份投影，README 走
+     * 同一条 Raw/代理/取消管线，不需要第二套实现。
+     */
+    let projected;
+    let (repo, origin) = match config
         .repositories
         .iter()
         .find(|repo| repo.id == repository_id)
-        .ok_or("source.repositoryMissing")?;
+    {
+        Some(repo) => (repo, "仓库"),
+        None => match config
+            .map_repositories
+            .iter()
+            .find(|map| map.id == repository_id)
+        {
+            Some(map) => {
+                projected = crate::map_sources::release_probe(map);
+                (&projected, "地图")
+            }
+            // 两个列表都没有：与以前同一个错误 tag，前端没有新分支
+            None => return Err("source.repositoryMissing".into()),
+        },
+    };
     let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
     let result = async {
@@ -239,8 +260,9 @@ pub async fn get_repository_readme(
                 .await
                 .map_err(|error| {
                     log::warn!(
-                        "读取仓库默认分支失败：仓库={}，原因={}",
+                        "读取仓库默认分支失败：id={}，来源={}，原因={}",
                         repository_id,
+                        origin,
                         error
                     );
                     "readme.defaultBranchUnknown".to_string()
@@ -255,8 +277,9 @@ pub async fn get_repository_readme(
         )
         .map_err(|error| error.to_string())?;
         log::info!(
-            "正在读取仓库说明：仓库={}，渠道={:?}，地址={}",
+            "正在读取仓库说明：id={}，来源={}，渠道={:?}，地址={}",
             repository_id,
+            origin,
             repo.provider,
             crate::repository_sources::safe_log_address(&url)
         );

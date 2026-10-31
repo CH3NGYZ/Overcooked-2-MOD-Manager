@@ -1451,8 +1451,10 @@ fn default_download_threads() -> u32 {
 /// 一个地图仓库的界面模型。
 ///
 /// 与 `MapRepositoryConfig` 的区别：只带界面要显示的内容（含最新 tag 与缓存
-/// 状态），不带 `asset_rules`、`download_threads` 这类内部参数 —— 那些改了
-/// 也不该影响展示。
+/// 状态）和 `asset_rules`，不带 `download_threads` 这类纯内部参数。
+///
+/// `asset_rules` 必须暴露：详情面板要标出「安装时会选哪个资产」，而自动匹配
+/// 由后端 `select_install_asset` 完成，前端只有拿到同一份规则才能镜像结论。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapInfo {
     pub id: String,
@@ -1470,6 +1472,12 @@ pub struct MapInfo {
     pub level_set_name: String,
     /// 绑定的本地作者（info 里的 `author`）。
     pub author: String,
+    /// 下载资产规则（与 `RepositoryConfig.asset_rules` 同语义）。
+    ///
+    /// 地图只分发 ZIP，资产却是作者随意命名的，所以必须把规则交给前端，
+    /// 让详情面板用同一套 exact/glob/regex 判定标出会被下载的那个资产。
+    #[serde(default)]
+    pub asset_rules: Vec<AssetRule>,
     #[serde(default)]
     pub note: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1485,6 +1493,15 @@ pub struct MapInfo {
     /// `assets` 算下载量、需要 `prerelease` 决定版本标记样式。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_release: Option<ReleaseInfo>,
+    /// 缓存里的全部 Release，供详情抽屉选版本（装旧版本回滚）。
+    ///
+    /// 与 `latest_release` 冗余但用途不同：那个回答「最新是哪一版」，这里回答
+    /// 「能装哪几版」。只给最新一条时，详情里的版本下拉没有内容可列。
+    ///
+    /// 不 skip：前端类型是必填数组（`cached_releases: ReleaseInfo[]`），没刷新过
+    /// 时也要拿到 `[]` 而不是 `undefined`。
+    #[serde(default)]
+    pub cached_releases: Vec<ReleaseInfo>,
     /// 当前地区可安装的 Release 数（与 `cached_release_count` 同源）。
     #[serde(default)]
     pub cached_release_count: usize,
@@ -1494,13 +1511,14 @@ pub struct MapInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     /// 需要的框架与最低版本（来自 `relations`），供界面提示升级框架。
+    ///
+    /// 只有**声明**：`installed_version` 恒为 `None`，后端不再为此扫描本地插件。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_frameworks: Vec<RequiredFramework>,
-    /// 这些依赖里**当前没满足**的那几条（已经对照本地已装版本判定）。
+    /// 兼容字段，当前恒为空。
     ///
-    /// 判定在后端做而不是前端：`relation_satisfied` 的语义（requires 要存在
-    /// 且在区间内、conflicts 在区间内才算冲突、compatible 要存在且在区间内）
-    /// 与 MOD 侧共用同一份实现，前端再判一次迟早两边结论不同。
+    /// 依赖判定已统一到前端 `modRelations.ts`（输入是 Dashboard 已扫好的本地
+    /// MOD 列表），后端不再保留第二份实现。字段留着只为旧前端读取时不崩。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet_frameworks: Vec<RequiredFramework>,
 }

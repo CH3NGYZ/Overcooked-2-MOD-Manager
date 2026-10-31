@@ -40,9 +40,12 @@
 //! - 目标目录已存在同名关卡集（由调用方决定覆盖与否）
 use crate::asset_bundle::{self, LevelSetMetadata};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 /// DIYLevel 框架目录（游戏相对路径）。与 `commands.rs` 的 `DIYLEVEL_DIR` 同源，
 /// 但这里是模块内的私有常量，避免两处互相依赖。
@@ -172,10 +175,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
             };
         }
     };
-    match fs::read(&info_path)
-        .map_err(|error| error.to_string())
-        .and_then(|bytes| asset_bundle::parse_level_set(&bytes).map_err(|error| error.to_string()))
-    {
+    match read_info_metadata(&info_path) {
         Ok(metadata) => LevelSetOnDisk {
             dir_name,
             enabled,
@@ -224,6 +224,144 @@ fn locate_info_file(directory: &Path) -> Option<PathBuf> {
     }
 }
 
+// ===== info 解析缓存 =====
+//
+// ## 为什么需要
+//
+// 地图管理页每次进入（以及每次开关、每次导入后刷新）都会重新扫描全部关卡集，
+// 而每个 `info` 都是一个 UnityFS 容器：解压数据块 + 走一遍 SerializedFile
+// 类型树。单集 1~3 ms 看着不多，但几十个集就是几十到上百毫秒，而这期间页面
+// 是空白的。文件内容只在「安装 / 替换关卡集」时才变，重复解析同一份字节
+// 纯属浪费。
+//
+// ## 为什么用 (len, mtime) 当指纹
+//
+// 不需要内容哈希：文件被替换时长度或修改时间几乎必然变化，而哈希要把整个
+// 文件读一遍 —— 那正是缓存想省掉的成本。指纹不一致就重解，一致就直接用。
+//
+// ## 为什么错误也缓存
+//
+// 坏掉的 `info` 在用户修好之前每次扫描都会失败。失败同样是解析的产物，
+// 缓存它不会让错误更隐蔽（指纹一变就重解），却能让「列表里有一个坏关卡集」
+// 这种常见状态不再反复付出解析代价。
+
+/// 单个 `info` 文件的解析结果缓存条目。
+struct InfoCacheEntry {
+    /// 解析时的文件长度。
+    len: u64,
+    /// 解析时的修改时间（Unix 纳秒）；拿不到时记 0。
+    mtime_nanos: u128,
+    /// 解析结果（成功或失败 tag）。
+    result: Result<LevelSetMetadata, String>,
+    /// 这个 key 累计**真正读盘解析**的次数（缓存命中不增加）。
+    ///
+    /// 只有测试读它：命中与否从返回值上看不出来（命中与不命中结果相同），
+    /// 而「第二次没有再解析」是缓存唯一的可断言证据。
+    parses: u32,
+}
+
+/// 缓存条数上限。
+///
+/// 关卡集数量是几十的量级，512 已远超真实规模。超限直接清空重来 ——
+/// 缓存只是加速，为它维护 LRU 淘汰反而多一份要出错的状态。
+const INFO_CACHE_LIMIT: usize = 512;
+
+fn info_cache() -> &'static Mutex<HashMap<PathBuf, InfoCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, InfoCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 缓存键：`info` 文件的绝对路径。
+///
+/// 用绝对路径而不是传入的原样路径：同一个 `info` 可能通过不同相对根被访问到，
+/// 统一成绝对路径才能共用同一条缓存。`current_dir` 失败时退回原路径 ——
+/// 那只可能发生在工作目录已被删除的极端情况，退化成不共享缓存也不会出错。
+fn info_cache_key(info_path: &Path) -> PathBuf {
+    if info_path.is_absolute() {
+        return info_path.to_path_buf();
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => cwd.join(info_path),
+        Err(_) => info_path.to_path_buf(),
+    }
+}
+
+/// 读 `info` 并解析，命中缓存时不再读盘。
+fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, String> {
+    let key = info_cache_key(info_path);
+    let (len, mtime_nanos) = match fs::metadata(&key) {
+        Ok(metadata) => (
+            metadata.len(),
+            metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|delta| delta.as_nanos())
+                .unwrap_or(0),
+        ),
+        // 元数据读不到就无从判断缓存是否仍然有效，直接报错 ——
+        // 与「不缓存时读文件失败」的行为保持一致，不悄悄返回旧结果
+        Err(error) => return Err(error.to_string()),
+    };
+    if let Ok(cache) = info_cache().lock() {
+        if let Some(entry) = cache.get(&key) {
+            if entry.len == len && entry.mtime_nanos == mtime_nanos {
+                return entry.result.clone();
+            }
+        }
+    }
+    let result = fs::read(&key)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| asset_bundle::parse_level_set(&bytes).map_err(|error| error.to_string()));
+    /*
+     * 锁只在这几行里持有：解析本身（可能几十毫秒）在锁外做。
+     * 锁中毒（持锁线程 panic）时放弃写入缓存 —— 解析结果照常返回，
+     * 下一次扫描会重新解析，正确性不受影响。
+     */
+    if let Ok(mut cache) = info_cache().lock() {
+        if cache.len() >= INFO_CACHE_LIMIT {
+            cache.clear();
+        }
+        let previous_parses = cache.get(&key).map(|entry| entry.parses).unwrap_or(0);
+        cache.insert(
+            key,
+            InfoCacheEntry {
+                len,
+                mtime_nanos,
+                result: result.clone(),
+                parses: previous_parses.saturating_add(1),
+            },
+        );
+    }
+    result
+}
+
+/// 缓存里某个 `info` 已经真正解析过几次（测试用）。
+#[cfg(test)]
+fn info_cache_parses(info_path: &Path) -> Option<u32> {
+    let cache = info_cache().lock().ok()?;
+    cache
+        .get(&info_cache_key(info_path))
+        .map(|entry| entry.parses)
+}
+
+/// 目录名是否是**单一路径片段**（不含分隔符、`..`、盘符、根）。
+///
+/// 关卡集目录名来自扫描结果或前端传参。允许 `..` 或分隔符就能把游戏目录之外
+/// 的目录搬进来 / 删掉，所以所有「按目录名定位」的地方都先过这里 ——
+/// 集中一处判定，不会出现某个入口忘了校验。
+///
+/// 判定用 `components()` 而不是查字符串里的 `/`、`\`：Windows 同时认两种分隔符，
+/// 而且 `C:`、`.`、`..` 这些写法必须先拆成组件才看得清。这里要求**恰好一个**
+/// `Normal` 组件，`a/b` 这种多段写法也会被拒。
+fn is_safe_dir_name(dir_name: &str) -> bool {
+    if dir_name.trim().is_empty() {
+        return false;
+    }
+    let mut components = Path::new(dir_name).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
 /// 启用或停用一个关卡集：在 `levels/` 与 `disabled/` 之间移动整个目录。
 ///
 /// 返回值是移动后的新路径。目标位置已有同名目录时**拒绝**并返回错误 ——
@@ -234,11 +372,7 @@ pub fn set_level_set_enabled(
     enabled: bool,
 ) -> Result<PathBuf, String> {
     // 目录名必须是单一路径片段：允许 `..` 或分隔符就能把任意目录搬进游戏目录
-    if dir_name.trim().is_empty()
-        || Path::new(dir_name)
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
+    if !is_safe_dir_name(dir_name) {
         log::warn!("拒绝不安全的关卡集目录名：{}", dir_name);
         return Err("levelSet.invalidName".into());
     }
@@ -289,6 +423,165 @@ pub fn set_level_set_enabled(
         destination.display()
     );
     Ok(destination)
+}
+
+/// 批量启用 / 停用全部关卡集，返回**实际**移动过的目录名。
+///
+/// 逐条调用 `set_level_set_enabled` 时每次都重新读目录，地图一多就是重复
+/// 遍历；这里先扫一次盘、只处理需要变的目录。中途失败按**逆序回滚**已经
+/// 移动的目录，保证列表不会停在半开半关的状态（与 MOD 的批量开关同语义）。
+///
+/// 空列表表示「本来就已经是目标状态」，调用方据此给出「无需切换」提示。
+pub fn set_all_level_sets_enabled(game_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
+    let targets: Vec<String> = scan_level_sets(game_root)
+        .into_iter()
+        .filter(|set| set.enabled != enabled)
+        .map(|set| set.dir_name)
+        .collect();
+    let mut changed: Vec<String> = Vec::new();
+    for dir_name in &targets {
+        match set_level_set_enabled(game_root, dir_name, enabled) {
+            Ok(_) => changed.push(dir_name.clone()),
+            Err(error) => {
+                log::error!(
+                    "批量切换关卡集失败，开始回滚：目录={}，原因={}",
+                    dir_name,
+                    error
+                );
+                for previous in changed.iter().rev() {
+                    if let Err(rollback) = set_level_set_enabled(game_root, previous, !enabled) {
+                        log::error!("批量切换回滚失败：目录={}，原因={}", previous, rollback);
+                    }
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// 定位一个关卡集目录，并确认它确实是 `OC2DIYLevel` 下的真实目录。
+///
+/// `enabled` 决定去 `levels/` 还是 `disabled/` 找：同名目录可能只存在于其中
+/// 一边，猜错就会操作到另一个关卡集（打开错目录、删错文件）。
+///
+/// 「打开目录」与「删除」都先走这里，路径校验只写一遍 —— 两个入口不会出现
+/// 一个严一个松，也不会因为某个入口将来漏改而让前端参数变成任意路径。
+pub fn locate_level_set_directory(
+    game_root: &Path,
+    dir_name: &str,
+    enabled: bool,
+) -> Result<PathBuf, String> {
+    if !is_safe_dir_name(dir_name) {
+        log::warn!("拒绝不安全的关卡集目录名：{}", dir_name);
+        return Err("levelSet.invalidName".into());
+    }
+    // 先确认框架目录本身在游戏内，再拼关卡集目录：safe_game_path 会解析最近的
+    // 已存在祖先，目录联接因此不能把目标指到游戏目录之外
+    let base = crate::game::safe_game_path(game_root, DIYLEVEL_DIR)?;
+    let relative = format!(
+        "{DIYLEVEL_DIR}/{}/{dir_name}",
+        if enabled { LEVELS_DIR } else { DISABLED_DIR }
+    );
+    let path = crate::game::safe_game_path(game_root, &relative)?;
+    if !path.starts_with(&base) || !path.is_dir() {
+        log::warn!(
+            "关卡集目录不存在或不在 DIYLevel 下：目录={}，期望={}",
+            dir_name,
+            path.display()
+        );
+        return Err("levelSet.notFound".into());
+    }
+    Ok(path)
+}
+
+/// 删除一个关卡集：跟随回收开关，要么整目录移进回收站，要么直接删除。
+///
+/// ## 为什么默认进回收站
+///
+/// 关卡集里常是作者精心调过的场景文件，删掉没有版本控制可回退。回收站按
+/// **文件**记账（恢复能逐路径还原、失败能逐文件回滚），所以这里先把目录展开
+/// 成文件列表再交给 `recycle_bin::stage` —— 与「安装时回收旧版本」走同一条
+/// 代码路径，回收站记录格式不会分叉。
+///
+/// ## 为什么空目录不进回收站
+///
+/// `stage` 会为它产生一条 0 文件的记录，用户点恢复什么也拿不回来。
+/// 直接移除更诚实。
+pub fn remove_level_set(
+    recycle_root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    dir_name: &str,
+    enabled: bool,
+    recycle: bool,
+) -> Result<(), String> {
+    let set_dir = locate_level_set_directory(game_root, dir_name, enabled)?;
+    if !recycle {
+        // 用户关掉了「删除 MOD 时优先放入回收站」：路径归属已校验，直接删
+        fs::remove_dir_all(&set_dir).map_err(|error| {
+            crate::locale_tag::with_params(
+                "levelSet.deleteFailed",
+                &[("reason", &error.to_string())],
+            )
+        })?;
+        log::info!("关卡集已删除（未进回收站）：目录={}", dir_name);
+        return Ok(());
+    }
+    let files = collect_files(game_root, &set_dir)?;
+    if files.is_empty() {
+        fs::remove_dir_all(&set_dir).map_err(|error| {
+            crate::locale_tag::with_params(
+                "levelSet.deleteFailed",
+                &[("reason", &error.to_string())],
+            )
+        })?;
+        log::info!("关卡集目录为空，已直接移除：目录={}", dir_name);
+        return Ok(());
+    }
+    // 回收记录用集名显示（界面语言下的名字）；info 读不出来时退回目录名
+    let name = read_level_set(set_dir.clone(), dir_name.to_string(), enabled)
+        .metadata
+        .map(|metadata| metadata.name)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| dir_name.to_string());
+    crate::recycle_bin::stage(
+        recycle_root,
+        manifests_dir,
+        game_root,
+        name,
+        None,
+        None,
+        Vec::new(),
+        files,
+        None,
+        &mut || Ok(()),
+    )?;
+    /*
+     * 回收只搬文件，目录壳会留在原地。不清掉它，扫描会把这个空目录当成
+     * 一个「缺 info」的坏关卡集继续显示在列表里。
+     */
+    remove_empty_directories(&set_dir);
+    log::info!("关卡集已移入回收站：目录={}", dir_name);
+    Ok(())
+}
+
+/// 自底向上删除空目录；非空目录保留。
+///
+/// 回收只搬文件、不搬目录，所以删完 / 回收完要清掉空壳。**只删空目录**：
+/// 里面还有没被搬走的文件（目录联接、被占用而搬不动的文件）时保留现场 ——
+/// 宁可留一个空壳让用户自己看，也不能静默丢掉文件。
+fn remove_empty_directories(path: &Path) {
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            remove_empty_directories(&entry.path());
+        }
+    }
+    // 非空时 remove_dir 会失败，正是我们要的「保留现场」
+    let _ = fs::remove_dir(path);
 }
 
 /// ZIP 里识别出的一个关卡集。
@@ -549,6 +842,41 @@ mod tests {
         let back = set_level_set_enabled(&root, "MySet", true).unwrap();
         assert_eq!(back, set);
         assert!(back.join("info_MySet").is_file());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn bulk_toggle_moves_every_set_and_skips_noop_ones() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-bulk-{}", uuid::Uuid::new_v4()));
+        let base = root.join(DIYLEVEL_DIR);
+        for name in ["A", "B"] {
+            std::fs::create_dir_all(base.join(LEVELS_DIR).join(name)).unwrap();
+        }
+        std::fs::create_dir_all(base.join(DISABLED_DIR).join("C")).unwrap();
+
+        // 停用：只移动当前启用的 A、B，已经在 disabled 的 C 不参与
+        let changed = set_all_level_sets_enabled(&root, false).unwrap();
+        assert_eq!(changed, vec!["A".to_string(), "B".to_string()]);
+        for name in ["A", "B", "C"] {
+            assert!(
+                base.join(DISABLED_DIR).join(name).is_dir(),
+                "{name} 应在 disabled"
+            );
+        }
+
+        // 全部已是禁用态：再关一次不产生移动
+        assert!(set_all_level_sets_enabled(&root, false).unwrap().is_empty());
+
+        // 启用：三个都回到 levels
+        let back = set_all_level_sets_enabled(&root, true).unwrap();
+        assert_eq!(back.len(), 3);
+        for name in ["A", "B", "C"] {
+            assert!(
+                base.join(LEVELS_DIR).join(name).is_dir(),
+                "{name} 应在 levels"
+            );
+        }
 
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -1017,6 +1345,147 @@ fn write_level_set(
         })?;
     }
     Ok(())
+}
+
+/// 关卡集管理新增行为的回归测试：info 解析缓存、目录定位、删除与回收。
+///
+/// 全部用例都在 `std::env::temp_dir()` 下自建临时目录，不依赖本机游戏目录，
+/// 任何机器上都能跑；缓存用例只关心「解析次数」和「结果是否跟着文件变」，
+/// 与真实关卡集内容无关。
+#[cfg(test)]
+mod map_management_tests {
+    use super::*;
+
+    /// 每个用例独立根目录，避免并行测试互相踩；用例结束自己删掉。
+    fn workspace(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("oc2-lv-{tag}-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let recycle = root.join("recycle");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(game.join(DIYLEVEL_DIR).join(LEVELS_DIR)).unwrap();
+        std::fs::create_dir_all(game.join(DIYLEVEL_DIR).join(DISABLED_DIR)).unwrap();
+        std::fs::create_dir_all(&recycle).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+        (root, game, recycle)
+    }
+
+    /// 缓存的命中与失效：同一文件第二次扫描不再解析，内容变了必须重新解析。
+    ///
+    /// 只有命中没有失效就是脏数据 —— 用户替换关卡集后界面还显示旧名字。
+    /// 所以这里同时验证：命中时计数不涨，文件换掉后计数 +1 且错误内容跟着变。
+    #[test]
+    fn info_cache_parses_once_until_the_file_changes() {
+        let (root, game, _recycle) = workspace("cache");
+        let set_dir = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("Cached");
+        std::fs::create_dir_all(&set_dir).unwrap();
+        let info = set_dir.join("info");
+        std::fs::write(&info, b"not a bundle").unwrap();
+
+        let first = scan_level_sets(&game);
+        assert_eq!(first.len(), 1);
+        let first_error = first[0].error.clone().expect("非 AssetBundle 应报错");
+        assert_eq!(
+            info_cache_parses(&info),
+            Some(1),
+            "首次扫描必须真正解析一次"
+        );
+
+        let second = scan_level_sets(&game);
+        assert_eq!(second[0].error.as_deref(), Some(first_error.as_str()));
+        assert_eq!(info_cache_parses(&info), Some(1), "文件没变时不该重复解析");
+
+        // 换掉内容且长度不同：len/mtime 指纹失效，必须重新解析并拿到新结果。
+        std::fs::write(&info, b"UnityFS\0\0\0\0\0\0\0\0\0\0\0\0").unwrap();
+        let third = scan_level_sets(&game);
+        assert_ne!(
+            third[0].error.as_deref(),
+            Some(first_error.as_str()),
+            "文件被替换后应重新解析并拿到新结果"
+        );
+        assert_eq!(info_cache_parses(&info), Some(2), "指纹变化应再解析一次");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 定位必须跟随 `enabled` 决定去 `levels/` 还是 `disabled/` 找。
+    ///
+    /// 传错一侧就会「打开了别的目录」或「删掉了本该保留的副本」，所以这条
+    /// 用同名目录只存在于一侧来验证，而不是只看是否成功。
+    #[test]
+    fn locating_respects_the_enabled_side() {
+        let (root, game, _recycle) = workspace("locate");
+        let enabled_dir = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("Same");
+        std::fs::create_dir_all(&enabled_dir).unwrap();
+
+        let located = locate_level_set_directory(&game, "Same", true).unwrap();
+        assert_eq!(located, enabled_dir.canonicalize().unwrap());
+        assert_eq!(
+            locate_level_set_directory(&game, "Same", false).unwrap_err(),
+            "levelSet.notFound",
+            "停用侧没有同名目录时必须报 notFound"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 开着回收站时，删除是「搬进回收站」而不是真删：记录里要能看到这两个文件。
+    #[test]
+    fn deleting_moves_the_set_into_the_recycle_bin() {
+        let (root, game, recycle) = workspace("recycle");
+        let manifests = root.join("manifests");
+        let set = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("MySet");
+        std::fs::create_dir_all(&set).unwrap();
+        std::fs::write(set.join("info"), b"placeholder").unwrap();
+        std::fs::write(set.join("s_myset_1"), b"level").unwrap();
+
+        remove_level_set(&recycle, &manifests, &game, "MySet", true, true).unwrap();
+
+        assert!(!set.exists(), "关卡集目录应已移走");
+        let records = crate::recycle_bin::list(&recycle).unwrap();
+        assert_eq!(records.len(), 1, "应产生一条回收记录");
+        assert_eq!(records[0].file_count, 2, "两个文件都应进回收记录");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 关掉回收站时直接删干净，且不留下空回收记录。
+    #[test]
+    fn deleting_without_recycling_removes_the_directory() {
+        let (root, game, recycle) = workspace("purge");
+        let manifests = root.join("manifests");
+        let set = game.join(DIYLEVEL_DIR).join(DISABLED_DIR).join("MySet");
+        std::fs::create_dir_all(&set).unwrap();
+        std::fs::write(set.join("info"), b"placeholder").unwrap();
+
+        // enabled=false：在 disabled/ 下找
+        remove_level_set(&recycle, &manifests, &game, "MySet", false, false).unwrap();
+
+        assert!(!set.exists(), "关卡集目录应已删除");
+        assert!(
+            crate::recycle_bin::list(&recycle).unwrap().is_empty(),
+            "关闭回收时不该产生记录"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 不安全的目录名必须在碰盘之前就被拒；不存在的目录报 notFound 而不是报别的错。
+    #[test]
+    fn deleting_rejects_unsafe_names_and_missing_sets() {
+        let (root, game, recycle) = workspace("guard");
+        let manifests = root.join("manifests");
+
+        for name in ["", "..", "../escape", "a/b", "C:evil"] {
+            let result = remove_level_set(&recycle, &manifests, &game, name, true, true);
+            assert!(result.is_err(), "应拒绝不安全的目录名 {name:?}");
+        }
+        assert_eq!(
+            remove_level_set(&recycle, &manifests, &game, "Missing", true, true).unwrap_err(),
+            "levelSet.notFound"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
 
 /// 「已存在就回收」的回归测试。

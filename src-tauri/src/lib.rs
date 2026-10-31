@@ -4,7 +4,6 @@ mod archive;
 // DIYLevel 关卡集的 info 是 Unity AssetBundle，关卡集名/作者/版本只能从里面解析
 mod asset_bundle;
 mod avatars;
-// 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod bepinex;
 mod commands;
 mod community;
@@ -17,9 +16,10 @@ mod gitee_community;
 mod gitee_webview;
 mod github_proxies;
 mod install_guard;
+// 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod level_sets;
-// 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod locale_tag;
+// 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod map_sources;
 mod mod_config;
 mod mod_preview;
@@ -57,7 +57,7 @@ pub fn run() {
      *
      * 现在改为按需提权：安装器默认 perUser 装到用户目录，游戏 MOD 目录
      * 通常也可直接写入；只有真的遇到「拒绝访问」时，才由前端提示用户
-     * 以管理员身份重启（见 `request_elevation` 命令）。
+     * 以管理员身份重启（见 `relaunch_as_admin` 命令）。
      */
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
@@ -204,8 +204,11 @@ pub fn run() {
             commands::get_diy_level_info,
             commands::get_level_sets,
             commands::set_level_set_enabled,
+            commands::set_all_level_sets_enabled,
             commands::inspect_level_set_zip,
             commands::import_level_sets,
+            commands::open_level_set_directory,
+            commands::delete_level_set,
             commands::get_maps,
             commands::refresh_map_sources,
             commands::refresh_map_releases,

@@ -146,6 +146,13 @@ fn try_read_serialized(reader: &mut Reader) -> Option<SerializedFile> {
     .ok()
 }
 
+/// 单个对象值得解析的大小上限。
+///
+/// 关卡集与关卡元数据对象是几百字节到几十 KB；超过这个量级的对象只可能是
+/// info 里附带的截图纹理或资源块，解析它们既不产出元数据，又会把逐字节展开
+/// 成 `UnityValue`，是地图列表加载慢的主因。见 `collect_level_set` 的说明。
+const MAX_METADATA_OBJECT_BYTES: usize = 1024 * 1024;
+
 /// 在一个 SerializedFile 里找出关卡集对象与它引用的关卡对象。
 ///
 /// ## 怎么认出是哪种 ScriptableObject
@@ -158,15 +165,36 @@ fn collect_level_set(file: &SerializedFile) -> Option<LevelSetMetadata> {
     let mut set_path_id = 0i64;
     let mut level_objects: Vec<(i64, LevelMetadata)> = Vec::new();
 
+    /*
+     * 对象数据是**小端**，而 `Reader::new` 默认大端。
+     *
+     * 不显式设置的话，`m_Name` 的 4 字节长度会被读成天文数字，随后整段
+     * 读空 —— 表现为「字段名全都对、值全是空串」，非常难查。
+     *
+     * Reader 在循环外建一次：`read_typetree` 内部用 `absolute_reader` 定位到
+     * 对象自己的区间，不会消费外层游标；而 `Reader::new(file.data.to_vec())`
+     * 会把整个 SerializedFile 复制一遍，放进循环等于按对象个数复制。
+     */
+    let mut object_reader = Reader::new(file.data.to_vec(), file.unity_version.clone());
+    object_reader.endian = file.endian;
+
     for object in &file.objects {
         /*
-         * 对象数据是**小端**，而 `Reader::new` 默认大端。
+         * 只解析**元数据量级**的对象。
          *
-         * 不显式设置的话，`m_Name` 的 4 字节长度会被读成天文数字，随后整段
-         * 读空 —— 表现为「字段名全都对、值全是空串」，非常难查。
+         * info 这个 bundle 里除了关卡集/关卡两个 ScriptableObject，还塞了
+         * 一张截图纹理（实测 RW 地图的 info 有 9.4 MB，其中绝大部分是它）。
+         * `read_typetree` 会把纹理的原始字节当成 `UnityValue` 数组逐字节展开，
+         * 一千万级别的元素，单张图就要几十秒 —— 地图列表的加载时间几乎全耗在
+         * 这一个没人读的对象上。
+         *
+         * 关卡集元数据是几百字节到几十 KB；真的超过 1 MiB 的对象不可能是它。
+         * 阈值而不是按类名过滤：`m_ClassName` 依赖导出工具是否写了类型树，
+         * 而大小是文件结构本身的事，遇到不认识的导出方式也不会误伤。
          */
-        let mut object_reader = Reader::new(file.data.to_vec(), file.unity_version.clone());
-        object_reader.endian = file.endian;
+        if object.byte_size > MAX_METADATA_OBJECT_BYTES {
+            continue;
+        }
         let Ok(value) = object.read_typetree(&mut object_reader, &[]) else {
             continue;
         };

@@ -167,30 +167,22 @@ export const overview: DomainMessages = {
     ko: '로컬 지도',
     ja: 'ローカル地図',
   },
-  // ===== 分区小标题（沿用设置页分组标题的强调色样式）=====
-  // 框架
-  sectionFramework: {
-    'zh-CN': '框架',
-    'zh-TW': '框架',
-    en: 'Framework',
-    ko: '프레임워크',
-    ja: 'フレームワーク',
+  // ===== 列小标题：总览左右两条链路 =====
+  // MOD 链路（框架 → 在线 → 本地）
+  modsChain: {
+    'zh-CN': 'MOD 链路',
+    'zh-TW': 'MOD 鏈路',
+    en: 'MOD chain',
+    ko: 'MOD 체인',
+    ja: 'MOD チェーン',
   },
-  // MOD
-  sectionMods: {
-    'zh-CN': 'MOD',
-    'zh-TW': 'MOD',
-    en: 'MODs',
-    ko: 'MOD',
-    ja: 'MOD',
-  },
-  // 地图
-  sectionMaps: {
-    'zh-CN': '地图',
-    'zh-TW': '地圖',
-    en: 'Maps',
-    ko: '지도',
-    ja: 'マップ',
+  // 地图链路（框架 → 在线 → 本地）
+  mapsChain: {
+    'zh-CN': '地图链路',
+    'zh-TW': '地圖鏈路',
+    en: 'Map chain',
+    ko: '지도 체인',
+    ja: 'マップチェーン',
   },
   // 去刷新
   refresh: {

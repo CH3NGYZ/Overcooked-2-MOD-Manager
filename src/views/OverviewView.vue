@@ -1,15 +1,16 @@
 <script setup lang="ts">
 /*
- * 总览页：按「框架 / MOD / 地图」三个分区回答「现在要不要管」。
+ * 总览页：把「框架 → 在线 → 本地」摆成两条纵列，回答「现在要不要管」。
  *
- *   ｜框架区 ｜ BepInEx、DIYLevel 装没装、开没开 —— 没有它们任何内容都不生效
- *   ｜MOD 区 ｜ 在线仓库有多少、挂了几个；本地装了多少、几个能升级
- *   ｜地图区 ｜ 地图源有多少、刷新失败几张；本地装了多少、几张能升级
+ *   ｜左列 MOD 链路 ｜ BepInEx → 在线 MOD → 本地 MOD
+ *   ｜右列 地图链路 ｜ DIYLevel → 在线地图 → 本地地图
  *
- * 拆成三个分区而不是平铺六张卡：用户的心智顺序就是「先有框架，再有 MOD，
- * 最后装地图」，分区标题把这条依赖顺序写进版面；每区最多两张卡，
- * 一屏内能扫完一个主题。回收站卡片在这里删掉了 —— 它属于「工具」页的
- * 维护入口，放在总览会让「现在要不要管」多出一个与游玩无关的计数。
+ * 不按「框架 / MOD / 地图」横着分三个区：那样每区只有两张卡，
+ * 用户得在三条横带之间来回跳，才能拼出「框架没装 → 后面的内容都不生效」
+ * 这个顺序；两列纵向排列后，一列自上而下就是实际操作顺序，
+ * 左右并排还能顺手对比「MOD 与地图各装了多少、各有几个要处理」。
+ * 回收站卡片在这里删掉了 —— 它属于「工具」页的维护入口，放在总览会让
+ * 「现在要不要管」多出一个与游玩无关的计数。
  *
  * 刻意不做的东西：趋势折线（没有历史存储）、状态饼图（十几项画饼图没信息量）、
  * 操作时间线（没有审计日志）。这页是「装完就走」的控制台，不是监控面板。
@@ -25,7 +26,6 @@ import {
   AddCircleOutline, CloudDownloadOutline, RefreshOutline, SettingsOutline,
 } from '@vicons/ionicons5'
 import StatCard from '../components/StatCard.vue'
-import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import { api } from '../services/tauri'
@@ -93,7 +93,7 @@ onMounted(() => {
   void loadMaps()
 })
 
-/* ===== 框架区：BepInEx ===== */
+/* ===== BepInEx 框架 ===== */
 
 const frameworkVersion = computed(() => game.value?.bepinex.version ?? '')
 const frameworkEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
@@ -137,7 +137,7 @@ function openFrameworkSettings() {
   void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'bepinex' } })
 }
 
-/* ===== 框架区：DIYLevel 框架（紧跟 BepInEx） ===== */
+/* ===== DIYLevel 框架 ===== */
 
 /** DIYLevel 的稳定 GUID：与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
 const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
@@ -207,7 +207,7 @@ function openDiyLevelSettings() {
   void router.push({ name: 'settings', query: { [FOCUS_QUERY]: 'diylevel' } })
 }
 
-/* ===== MOD 区：已安装 MOD（含可更新数量） ===== */
+/* ===== 已安装 MOD（含可更新数量） ===== */
 
 const installedMods = computed(() => mods.value)
 
@@ -255,7 +255,7 @@ function openLocalMods() {
   void router.push({ name: 'mods-local', query: { [FOCUS_QUERY]: anchor } })
 }
 
-/* ===== MOD 区：在线 MOD（含刷新失败提示） ===== */
+/* ===== 在线 MOD（含刷新失败提示） ===== */
 
 /**
  * 当前地区可见的仓库 —— 口径与 MOD 安装页的「共 N 个仓库」一致
@@ -307,7 +307,7 @@ function openOnlineRepositories() {
   void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: first.id } })
 }
 
-/* ===== 地图区：在线地图 / 本地地图 ===== */
+/* ===== 在线地图 / 本地地图 ===== */
 
 /** 地图源声明的全部条目（`api.maps()`），与地图下载页读同一份。 */
 const maps = ref<MapInfo[]>([])
@@ -407,10 +407,14 @@ function openLocalMaps() {
 <template>
   <div class="overview">
     <div v-if="error" class="muted">{{ error }}</div>
-    <div v-else class="overview-groups" :class="{ 'is-loading': loading }">
-      <!-- 1. 框架区：BepInEx 与 DIYLevel 决定后面所有内容生不生效 -->
-      <SettingsGroup :title="t('overview.sectionFramework')">
-        <div class="card-grid">
+    <div v-else class="overview-columns" :class="{ 'is-loading': loading }">
+      <!--
+        左列 MOD 链路：BepInEx → 在线 MOD → 本地 MOD。
+        顺序即操作顺序 —— 框架没装，下面两张卡的按钮都不可用。
+      -->
+      <section class="overview-column">
+        <h2 class="column-title">{{ t('overview.modsChain') }}</h2>
+        <div class="column-cards">
           <!--
             BepInEx：整张卡可点，跳设置页并自动展开框架抽屉。
             开关单独放在右侧，点开关不会触发跳转（@click.stop）。
@@ -429,29 +433,6 @@ function openLocalMaps() {
             </template>
           </StatCard>
 
-          <!--
-            DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转），紧跟其后。
-            数值是启用状态，副标题给出版本与地图集数量。
-          -->
-          <StatCard :label="t('framework.diylevelFramework')" :value="diyLevelValue"
-            :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
-            clickable @click="openDiyLevelSettings">
-            <template #action>
-              <n-switch v-if="diyLevelOk" size="small" :value="diyLevelEnabled"
-                :disabled="working" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
-                @click.stop @update:value="toggleDiyLevel" />
-              <n-button v-else size="small" type="primary" @click.stop="openDiyLevelSettings">
-                <template #icon><AddCircleOutline width="14" height="14" /></template>
-                {{ t('overlays.installFramework') }}
-              </n-button>
-            </template>
-          </StatCard>
-        </div>
-      </SettingsGroup>
-
-      <!-- 2. MOD 区：在线仓库的健康度与本地安装的更新情况 -->
-      <SettingsGroup :title="t('overview.sectionMods')">
-        <div class="card-grid">
           <!--
             在线 MOD：整张卡可点，跳 MOD 安装页。
             主数值是可见仓库总数，旁边并列「N 刷新失败」。
@@ -505,11 +486,39 @@ function openLocalMaps() {
             </template>
           </StatCard>
         </div>
-      </SettingsGroup>
+      </section>
 
-      <!-- 3. 地图区：地图源的刷新情况与本地地图的更新情况 -->
-      <SettingsGroup :title="t('overview.sectionMaps')">
-        <div class="card-grid">
+      <!--
+        两列之间的竖向分割线，把两条链路的边界画清楚；
+        纯装饰、无文字，读屏跳过。
+      -->
+      <div class="column-divider" aria-hidden="true"></div>
+
+      <!--
+        右列 地图链路：DIYLevel → 在线地图 → 本地地图。
+        框架卡同样放在列首 —— 没有 DIYLevel，自定义地图进游戏也不生效。
+      -->
+      <section class="overview-column">
+        <h2 class="column-title">{{ t('overview.mapsChain') }}</h2>
+        <div class="column-cards">
+          <!--
+            DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转）。
+            数值是启用状态，副标题给出版本与地图集数量。
+          -->
+          <StatCard :label="t('framework.diylevelFramework')" :value="diyLevelValue"
+            :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
+            clickable @click="openDiyLevelSettings">
+            <template #action>
+              <n-switch v-if="diyLevelOk" size="small" :value="diyLevelEnabled"
+                :disabled="working" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
+                @click.stop @update:value="toggleDiyLevel" />
+              <n-button v-else size="small" type="primary" @click.stop="openDiyLevelSettings">
+                <template #icon><AddCircleOutline width="14" height="14" /></template>
+                {{ t('overlays.installFramework') }}
+              </n-button>
+            </template>
+          </StatCard>
+
           <!--
             在线地图：主数值是地图源声明的条目数，并列「N 刷新失败」。
             有失败时「去刷新」并高亮第一张失败地图；全部正常时「去安装」。
@@ -554,7 +563,7 @@ function openLocalMaps() {
             </template>
           </StatCard>
         </div>
-      </SettingsGroup>
+      </section>
     </div>
   </div>
 </template>
@@ -566,16 +575,61 @@ function openLocalMaps() {
   /* 数据未到时不清空布局，避免卡片塌缩后再撑开 */
   min-height: 0;
 }
-.overview-groups.is-loading { opacity: .6; }
+.overview-columns.is-loading { opacity: .6; }
 
 /*
- * 每区固定两张卡：等分两列。用 `minmax(0, 1fr)` 而不是写死宽度，
- * 卡片跟着内容区收放；窄窗口（含 150% 内容缩放下等效宽度变小）时
- * 退成更窄的两列，也不会把卡片文字挤成多行或撑出边框。
+ * 两条纵向链路：等分两列、顶对齐，中间一条竖线。
+ *
+ * 用 `minmax(0, 1fr)` 而不是写死宽度，卡片跟着内容区收放：1280×720 窗口
+ * 在默认 150% 内容缩放下等效 CSS 宽度约 853px，列宽仍有 330px 左右，
+ * 卡片不会把文字挤成多行或撑出边框。两列也不设「窄了就叠成一列」的断点 ——
+ * 叠起来就变成「左边链路装完才发现右边」，并排对比的意义随之消失。
+ *
+ * 分割线单独占一个 1px 轨道，而不是塞进 gap 里的伪元素：两列宽都是 1fr，
+ * 加不加线都等宽；轨道两侧各留一个 16px 列间距，线不会贴到卡片边上，
+ * 也不用为了画线去压缩任何一列。
+ *
+ * `align-items: start`：两列各自只占内容高度，列底边不会被另一列拉长，
+ * 但首卡仍在同一条基线上（网格行起点）。
  */
-.card-grid {
+.overview-columns {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
   gap: 16px;
+  align-items: start;
+}
+/*
+ * `align-self: stretch` 让线跟随网格行高 —— 行高就是较高那一列的完整高度
+ * （列小标题 + 三张卡），所以不用写死高度，卡片变高变矮都自然贴合。
+ */
+.column-divider {
+  align-self: stretch;
+  width: 1px;
+  background: var(--oc2-row-line);
+}
+.overview-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/*
+ * 列小标题：标明这一列是哪条链路。
+ *
+ * 层级在页头 h1（23px / 650）之下、卡片之上：只有 12px、弱化文字色与字距，
+ * 扫视时先认出页面标题，再顺着小标题找到一列，不会被误读成第二个标题。
+ */
+.column-title {
+  margin: 0 0 10px;
+  color: var(--oc2-text-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.column-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
 }
 </style>

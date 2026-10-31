@@ -598,11 +598,9 @@ async function checkUpdates() {
             </div>
           </div>
 
-          <!-- 框架依赖：本地缺失的标红，用户重新启用前就能看到 -->
-          <!-- 依赖框架：与下载页详情、MOD 安装页详情共用同一张依赖表 -->
+          <!-- 依赖框架：本地缺失的标红，用户重新启用前就能看到；与下载页详情、MOD 安装页详情共用同一张依赖表 -->
           <div v-if="boundFrameworks(set).length" class="detail-section">
-            <DependencyTable :rows="dependencyRows(set)" :title="t('levelSet.requiredFrameworks')"
-              mono-name />
+            <DependencyTable :rows="dependencyRows(set)" mono-name />
           </div>
         </template>
       </LocalItemCard>

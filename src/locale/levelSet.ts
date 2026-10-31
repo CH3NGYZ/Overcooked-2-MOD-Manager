@@ -423,13 +423,6 @@ export const levelSet: DomainMessages = {
     ko: '위치',
     ja: '場所',
   },
-  requiredFrameworks: {
-    'zh-CN': '依赖框架',
-    'zh-TW': '依賴框架',
-    en: 'Required frameworks',
-    ko: '필수 프레임워크',
-    ja: '必要なフレームワーク',
-  },
   parseError: {
     'zh-CN': '解析错误',
     'zh-TW': '解析錯誤',

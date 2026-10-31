@@ -215,6 +215,14 @@ export const toolsUi: DomainMessages = {
     ko: '의존성',
     ja: '依存ファイル',
   },
+  // 依赖表：名称列（目标 MOD）
+  modColumn: {
+    'zh-CN': 'MOD',
+    'zh-TW': 'MOD',
+    en: 'MOD',
+    ko: 'MOD',
+    ja: 'MOD',
+  },
   // 依赖表：关系（requires / conflicts / compatible）
   relation: {
     'zh-CN': '关系',
@@ -222,6 +230,46 @@ export const toolsUi: DomainMessages = {
     en: 'Relation',
     ko: '관계',
     ja: '関係',
+  },
+  // 依赖表：关系值 requires
+  relationRequires: {
+    'zh-CN': '依赖',
+    'zh-TW': '相依',
+    en: 'Requires',
+    ko: '의존',
+    ja: '依存',
+  },
+  // 依赖表：关系值 conflicts（与指定版本区间互斥）
+  relationConflicts: {
+    'zh-CN': '排斥',
+    'zh-TW': '排斥',
+    en: 'Conflicts',
+    ko: '충돌',
+    ja: '競合',
+  },
+  // 依赖表：关系值 compatible
+  relationCompatible: {
+    'zh-CN': '兼容',
+    'zh-TW': '相容',
+    en: 'Compatible',
+    ko: '호환',
+    ja: '互換',
+  },
+  // 依赖表：关系只对测试版成立（与另一条发布线互斥）
+  testLine: {
+    'zh-CN': '测试版',
+    'zh-TW': '測試版',
+    en: 'Beta',
+    ko: '테스트 버전',
+    ja: 'テスト版',
+  },
+  // 依赖表：关系只对正式版成立
+  stableLine: {
+    'zh-CN': '正式版',
+    'zh-TW': '正式版',
+    en: 'Stable',
+    ko: '정식 버전',
+    ja: '正式版',
   },
   // 依赖表：版本要求
   requirement: {

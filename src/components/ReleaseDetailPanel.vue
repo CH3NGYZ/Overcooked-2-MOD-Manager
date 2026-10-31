@@ -100,8 +100,6 @@ const props = withDefaults(
     readmeError?: string
     /** 依赖声明（调用方算好并翻译）；固定排在备注上方，为空则整块不渲染。 */
     dependencies?: DependencyRow[]
-    /** 依赖表的标题；留空用「依赖」。 */
-    dependenciesTitle?: string
     /** 依赖目标名用等宽字体（地图声明的是 GUID；MOD 是仓库名，保持正文字体）。 */
     dependenciesMonoName?: boolean
 
@@ -159,7 +157,6 @@ const props = withDefaults(
     readmeLoading: false,
     readmeError: '',
     dependencies: () => [],
-    dependenciesTitle: '',
     dependenciesMonoName: false,
     versions: () => [],
     version: null,
@@ -323,8 +320,7 @@ watch(
           再讲「这是什么」。依赖为空时整块（含分割线）不渲染。
         -->
         <template v-if="dependencies.length">
-          <DependencyTable :rows="dependencies" :title="dependenciesTitle || t('tools.dependency')"
-            :mono-name="dependenciesMonoName" />
+          <DependencyTable :rows="dependencies" :mono-name="dependenciesMonoName" />
           <n-divider />
         </template>
 

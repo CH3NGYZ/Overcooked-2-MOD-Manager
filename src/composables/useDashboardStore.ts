@@ -41,6 +41,49 @@ export function startGameWatch() {
   if (watching) return
   watching = true
   void watchGameState(applyGame).catch(() => undefined)
+  startGameFocusWatch()
+}
+
+/**
+ * 主动重算一次游戏状态。
+ *
+ * 事件通道负责「进程出现/消失」的推送，但界面还有几个会落后的时机：
+ * 用户从游戏切回管理器、刚点完停止、某个操作因为 `game.running` 被拒。
+ * 那时按钮会卡在「停止游戏」、整页的破坏性操作全是灰的，而后端其实早就
+ * 判定为没在运行。这里让后端当场重算并推送，前端立刻收敛。
+ *
+ * 浏览器预览没有 IPC、旧安装包也没有这条命令 —— 都静默跳过，事件通道兜底。
+ */
+async function recheckGameState() {
+  try {
+    applyGame(await api.refreshGameState())
+  } catch {
+    // 见上：没有 IPC / 命令不存在都不该冒泡到界面
+  }
+}
+
+/**
+ * 切回窗口或标签页可见时补一次重算。
+ *
+ * macOS 上「游戏退出」最常见的情形就是用户先切走、在游戏里退出、再切回来；
+ * 那一瞬间观察器可能刚好错过变化，或者观察器已经因为单轮失败停过一轮。
+ * 用窗口焦点做触发点不增加常驻轮询，代价只有一次 IPC。
+ */
+let focusWatching = false
+function startGameFocusWatch() {
+  if (focusWatching || typeof window === 'undefined') return
+  focusWatching = true
+  let last = 0
+  const recheck = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+    const now = Date.now()
+    // focus 与 visibilitychange 常常一起触发，1 秒内只认第一次
+    if (now - last < 1000) return
+    last = now
+    void recheckGameState()
+  }
+  window.addEventListener('focus', recheck)
+  document.addEventListener('visibilitychange', recheck)
 }
 
 async function readDashboard() {
@@ -134,6 +177,6 @@ export function useDashboard() {
   return {
     dashboard, loading, backgroundLoading, error,
     config, game, mods, enabledModCount, updateCount, frameworkOk,
-    load, reloadConfig, applyConfigSnapshot, ensureLoaded, refresh,
+    load, reloadConfig, applyConfigSnapshot, ensureLoaded, refresh, recheckGameState,
   }
 }

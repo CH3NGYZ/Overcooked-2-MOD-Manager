@@ -220,6 +220,7 @@ pub fn run() {
             commands::delete_repository,
             commands::launch_normal,
             commands::stop_game,
+            commands::refresh_game_state,
             commands::launch_no_mod,
             commands::restore_mod,
             commands::switch_winhttp,

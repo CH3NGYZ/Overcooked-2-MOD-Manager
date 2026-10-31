@@ -3,7 +3,7 @@ use crate::models::{BepInExInfo, GameConfig, GameInfo, WinhttpState};
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
-use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use sysinfo::{Process, ProcessRefreshKind, ProcessStatus, System, UpdateKind};
 
 pub fn detect_game(config: &crate::models::AppConfig) -> GameInfo {
     detect_game_from_settings(&config.game)
@@ -344,7 +344,73 @@ pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> b
     system
         .processes()
         .values()
-        .any(|process| process_matches_game(&game, process.name(), process.exe(), process.cmd()))
+        .any(|process| process_looks_running(&game, process))
+}
+
+/// 当前被判定成「游戏」的进程，格式 `名字(PID)`，仅供诊断日志使用。
+///
+/// 误判时最需要知道的正是「到底是哪个进程」，而它只在这类低频路径
+/// （停止失败、用户手动重算）里取，不进入每秒一次的观察器热路径。
+pub(crate) fn running_processes(game: &Path) -> Vec<String> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessRefreshKind::new()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    let game = normalize_path(game);
+    system
+        .processes()
+        .values()
+        .filter(|process| process_looks_running(&game, process))
+        .map(|process| format!("{}({})", process.name(), process.pid()))
+        .collect()
+}
+
+/// 活着、且就是这款游戏的进程才算数。
+///
+/// 僵尸进程（已退出、父进程还没回收）仍留在进程表里，名字和命令行都还在，
+/// 但 `exe()` 取不到 —— 正好落进下面「名字像游戏、拿不到路径」的兜底分支，
+/// 于是游戏退出后永远显示运行中。macOS 上这类残留比 Windows 常见得多。
+fn process_looks_running(game: &Path, process: &Process) -> bool {
+    if matches!(
+        process.status(),
+        ProcessStatus::Zombie | ProcessStatus::Dead
+    ) {
+        return false;
+    }
+    process_matches_game(game, process.name(), process.exe(), process.cmd())
+}
+
+/// Wine / CrossOver 的常驻宿主进程：容器开着它们就在，与游戏是否运行无关。
+///
+/// macOS 上它们会长期带着「这次容器里启动过的程序路径」存活（`winemenubuilder`
+/// 生成 macOS 快捷方式时尤其容易卡住不退），若把名字带 wine 的进程一律当成
+/// 游戏，游戏退出后仍会报告运行中 —— 按钮停在「停止游戏」，所有要求游戏已
+/// 停止的操作全部被拒。Windows 没有这层宿主进程，所以只出现在 Mac。
+///
+/// 不包含 `wine` / `wine64-preloader` / `cxwinehelper`：CrossOver 里真正承载
+/// 游戏的那个进程就是它们之一，去掉会把「游戏确实在跑」也判成没跑。
+const WINE_HOST_PROCESSES: &[&str] = &[
+    "wineserver",
+    "wineboot",
+    "winedevice",
+    "winedbg",
+    "winemenubuilder",
+    "services.exe",
+    "explorer.exe",
+    "plugplay.exe",
+    "svchost.exe",
+    "rpcss.exe",
+    "conhost.exe",
+    "start.exe",
+    "steam.exe",
+    "steamwebhelper.exe",
+    "steamservice.exe",
+];
+
+fn is_wine_host_process(name: &str) -> bool {
+    WINE_HOST_PROCESSES.iter().any(|host| name.contains(host))
 }
 
 fn process_matches_game(
@@ -354,6 +420,9 @@ fn process_matches_game(
     args: &[String],
 ) -> bool {
     let name = name.to_ascii_lowercase();
+    if is_wine_host_process(&name) {
+        return false;
+    }
     let game_process = name.starts_with("overcooked");
     let wine_process = name.contains("wine") || name.contains("cxwinehelper");
     if !game_process && !wine_process {
@@ -482,9 +551,7 @@ pub fn stop_game(game: &Path) -> Result<usize, String> {
     let targets = system
         .processes()
         .iter()
-        .filter(|(_, process)| {
-            process_matches_game(&normalized, process.name(), process.exe(), process.cmd())
-        })
+        .filter(|(_, process)| process_looks_running(&normalized, process))
         .map(|(pid, _)| *pid)
         .collect::<Vec<_>>();
     if targets.is_empty() {
@@ -918,6 +985,41 @@ mod tests {
                 runtime: crate::models::GameRuntime::Wine,
             },
         )
+    }
+
+    /// macOS 上 Wine/CrossOver 的常驻宿主进程会带着启动过的程序路径活很久，
+    /// 不能算成「游戏在运行」—— 否则游戏退出后按钮永远停在「停止游戏」，
+    /// 所有要求游戏已停止的操作都会被拒。
+    #[test]
+    fn wine_host_processes_never_count_as_the_running_game() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/verification/game-processes");
+        let windows_path =
+            r"C:\Program Files (x86)\Steam\steamapps\common\Overcooked! 2\Overcooked2.exe";
+        for name in [
+            "wineserver",
+            "wineboot.exe",
+            "winedevice.exe",
+            "winemenubuilder.exe",
+            "winedbg",
+            "services.exe",
+            "explorer.exe",
+            "cxstart.exe",
+            "steam.exe",
+        ] {
+            assert!(
+                !process_matches_game(&root, name, None, &[windows_path.into()]),
+                "{name} 是 Wine 宿主进程，不能算作游戏"
+            );
+        }
+        // 真正承载游戏的宿主进程仍然算运行中（macOS CrossOver 只有它们可判）
+        for name in ["wine64-preloader", "cxwinehelper"] {
+            assert!(process_matches_game(
+                &root,
+                name,
+                None,
+                &[windows_path.into()]
+            ));
+        }
     }
 
     #[test]

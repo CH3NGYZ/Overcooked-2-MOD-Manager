@@ -148,6 +148,14 @@ export const api = {
   launchNormal: () => invoke<OperationResult>('launch_normal'),
   /** 停止厨房：Steam 没有停止协议，由管理器结束游戏进程。 */
   stopGame: () => invoke<OperationResult>('stop_game'),
+  /**
+   * 立刻重算游戏状态并返回最新快照。
+   *
+   * 观察器每秒推进一次、只在变化时推送；用户切回窗口、点完停止、或某次
+   * 操作因 `game.running` 被拒时，界面上的值可能还停在上一轮。主动拉一次
+   * 让按钮与各页的可用状态当场收敛，不必等下一轮观察。
+   */
+  refreshGameState: () => invoke<GameInfo>('refresh_game_state'),
   launchNoMod: () => invoke<OperationResult>('launch_no_mod'),
   switchWinhttp: (enabled: boolean) => invoke<OperationResult>('switch_winhttp', { enabled }),
   toggleLocalMod: (dllFile: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod', { dllFile, enabled }),

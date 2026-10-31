@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use sysinfo::System;
 use tauri::{AppHandle, Emitter, Manager};
 
-const GAME_STATE_EVENT: &str = "game-state-changed";
+pub(crate) const GAME_STATE_EVENT: &str = "game-state-changed";
 
 /// A single backend observer replaces frontend IPC polling. Stable ticks only
 /// inspect process metadata and a handful of filesystem timestamps; they do
@@ -19,6 +19,12 @@ pub(crate) fn start_observer(app: AppHandle) {
         let mut observer = GameStateObserver::new(config);
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        /*
+         * 单轮失败不再直接结束监听：观察器一停，界面就永远停在最后一次快照上
+         * （「游戏已经退出了，按钮还是停止游戏」）。锁中毒这类不可恢复的错误
+         * 会一直失败，所以连续失败到上限才退出，避免刷日志又保持可见。
+         */
+        let mut failures = 0_u32;
         loop {
             interval.tick().await;
             if app.get_webview_window("main").is_none() {
@@ -33,6 +39,7 @@ pub(crate) fn start_observer(app: AppHandle) {
             match result {
                 Ok((next, Ok(change))) => {
                     observer = next;
+                    failures = 0;
                     if let Some(info) = change {
                         log::info!(
                             "游戏状态变化：已找到游戏={}，BepInEx已安装={}，游戏运行={}，WinHTTP={:?}",
@@ -46,9 +53,14 @@ pub(crate) fn start_observer(app: AppHandle) {
                         }
                     }
                 }
-                Ok((_, Err(error))) => {
-                    log::error!("游戏状态监视器停止：{error}");
-                    break;
+                Ok((next, Err(error))) => {
+                    observer = next;
+                    failures += 1;
+                    log::error!("游戏状态监视器本轮失败（第 {failures} 次）：{error}");
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        log::error!("游戏状态监视器连续失败，停止监听");
+                        break;
+                    }
                 }
                 Err(error) => {
                     log::error!("游戏状态监视任务失败：{error}");
@@ -58,6 +70,9 @@ pub(crate) fn start_observer(app: AppHandle) {
         }
     });
 }
+
+/// 观察器连续失败多少次后放弃（锁中毒这类错误不会自愈）。
+const MAX_CONSECUTIVE_FAILURES: u32 = 10;
 
 struct GameStateObserver {
     config: ConfigService,

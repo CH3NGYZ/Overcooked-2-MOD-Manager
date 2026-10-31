@@ -203,54 +203,59 @@ defineExpose({ onUnmountedCleanup })
 
     <div class="spacer" data-tauri-drag-region></div>
 
-    <!-- 界面缩放：下拉选择（与语言下拉一致） -->
-    <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
-      @select="onZoomSelect">
-      <button class="pill" type="button" :title="t('nav.uiScale')">
-        <ContrastOutline width="15" height="15" />
-        <span>{{ zoomPercent }}%</span>
-        <span class="caret">▾</span>
-      </button>
-    </n-dropdown>
-
-    <!-- 语言 -->
-    <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale"
-      trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
-      @select="(key: Locale) => setLocale(key)">
-      <button class="pill" type="button" :title="t('nav.language')">
-        <LanguageOutline width="15" height="15" />
-        <span>{{ currentLocaleLabel }}</span>
-        <span class="caret">▾</span>
-      </button>
-    </n-dropdown>
-
-    <!-- 主题模式 -->
-    <button class="pill icon-only" type="button" :title="themeLabel"
-      @click="setThemeMode(themeMode === 'dark' ? 'light' : 'dark')">
-      <MoonOutline v-if="isDark" width="16" height="16" />
-      <SunnyOutline v-else width="16" height="16" />
-    </button>
-
-    <!-- 主题色：3×3 色块矩阵，只显示颜色 -->
-    <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw
-      :z-index="TITLEBAR_MENU_Z_INDEX">
-      <template #trigger>
-        <button class="pill icon-only" type="button" :title="t('nav.accent')" @contextmenu.prevent="cycleAccent">
-          <span class="swatch" :style="{ background: accentSwatch }"></span>
+    <!--
+      显示与外观：缩放 / 语言 / 明暗 / 主题色。
+      整组包一层，macOS 上靠 `order` 提到左侧、跟在窗控后面（右侧留给身份与主操作）。
+    -->
+    <div class="toolbar-group">
+      <!-- 界面缩放：下拉选择（与语言下拉一致） -->
+      <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
+        @select="onZoomSelect">
+        <button class="pill" type="button" :title="t('nav.uiScale')">
+          <ContrastOutline width="15" height="15" />
+          <span>{{ zoomPercent }}%</span>
+          <span class="caret">▾</span>
         </button>
-      </template>
-      <div class="accent-grid" role="listbox" :aria-label="t('nav.accent')">
-        <button v-for="entry in ACCENTS" :key="entry.key" type="button" class="accent-cell"
-          :class="{ active: entry.key === accentKey }" role="option" :aria-selected="entry.key === accentKey"
-          :title="accentLabel(entry.key)" :style="{ background: entry.swatch }" @click="setAccent(entry.key)" />
-      </div>
-    </n-popover>
+      </n-dropdown>
+
+      <!-- 语言 -->
+      <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale"
+        trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
+        @select="(key: Locale) => setLocale(key)">
+        <button class="pill" type="button" :title="t('nav.language')">
+          <LanguageOutline width="15" height="15" />
+          <span>{{ currentLocaleLabel }}</span>
+          <span class="caret">▾</span>
+        </button>
+      </n-dropdown>
+
+      <!-- 主题模式 -->
+      <button class="pill icon-only" type="button" :title="themeLabel"
+        @click="setThemeMode(themeMode === 'dark' ? 'light' : 'dark')">
+        <MoonOutline v-if="isDark" width="16" height="16" />
+        <SunnyOutline v-else width="16" height="16" />
+      </button>
+
+      <!-- 主题色：3×3 色块矩阵，只显示颜色 -->
+      <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw
+        :z-index="TITLEBAR_MENU_Z_INDEX">
+        <template #trigger>
+          <button class="pill icon-only" type="button" :title="t('nav.accent')" @contextmenu.prevent="cycleAccent">
+            <span class="swatch" :style="{ background: accentSwatch }"></span>
+          </button>
+        </template>
+        <div class="accent-grid" role="listbox" :aria-label="t('nav.accent')">
+          <button v-for="entry in ACCENTS" :key="entry.key" type="button" class="accent-cell"
+            :class="{ active: entry.key === accentKey }" role="option" :aria-selected="entry.key === accentKey"
+            :title="accentLabel(entry.key)" :style="{ background: entry.swatch }" @click="setAccent(entry.key)" />
+        </div>
+      </n-popover>
+    </div>
 
     <!--
       窗口控制：仅真实 Tauri 窗口显示。
-      两个平台是**同一组按钮**（同一套方形样式与图标），macOS 靠 `order: -1`
-      整组移到最左，与 Windows 右侧形成镜像；顺序由 `chromeActions` 给出
-      （macOS 关闭/最小化/最大化，Windows 最小化/最大化/关闭）。
+      两个平台是**同一组按钮**（同一套方形样式与图标），位置靠 `order` 换边：
+      Windows 在最右（最小化/最大化/关闭），macOS 在最左（关闭/最小化/最大化）。
     -->
     <div v-if="canControlWindow" class="chrome-group">
       <span class="sep"></span>
@@ -447,21 +452,47 @@ defineExpose({ onUnmountedCleanup })
 }
 
 /*
- * 窗控整组。
+ * 标题栏是**整体镜像**的两套排法，靠 `order` 换边，DOM 只有一份。
  *
- * Windows 留在右侧（自然顺序、与右侧内边距对称）；macOS 用 `order: -1`
- * 提到最左 —— 与 Windows 左右镜像，按钮本身的方形样式与图标两边完全一致，
- * 不套 macOS 的红绿灯圆点。
+ *   Windows（从左到右）：品牌 · 显示设置 · 窗口控制
+ *   macOS （从左到右）：窗口控制 · 显示设置（反向） · 品牌（文字在左、图标在右）
+ *
+ * macOS 上九个元素排成一条左对齐的序列：
+ *   关闭 / 缩小 / 放大 / 主题色 / 明暗 / 语言 / 缩放 / 标题 / 图标，
+ * 也就是 Windows 那一行的镜像（窗控从最右挪到最左、四颗胶囊左右对调、
+ * 品牌里的图标从最左挪到最右）。右侧空出来的一整条是拖动区。
+ * `order` 全部显式写出：默认值 0 混在里面时，漏写一条就会把某块挤到错误位置。
  */
+.brand { order: 0; }
+.spacer { order: 1; }
+.toolbar-group { order: 2; }
+.chrome-group { order: 3; }
+.titlebar--mac .chrome-group { order: -3; }
+.titlebar--mac .toolbar-group { order: -2; }
+.titlebar--mac .brand { order: -1; }
+
+/* 显示设置四颗胶囊：整组不伸缩，内部间距与标题栏一致 */
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+/* macOS：胶囊与品牌各自反向排列，读序与 Windows 严格镜像 */
+.titlebar--mac .toolbar-group { flex-direction: row-reverse; }
+.titlebar--mac .brand { flex-direction: row-reverse; }
+/* 文字块贴到图标右侧的那一侧，镜像后才不会在中间留一道缝 */
+.titlebar--mac .brand-text { align-items: flex-end; text-align: right; }
+.titlebar--mac .brand-title-row { justify-content: flex-end; }
+.titlebar--mac .sep { display: none; }
+
+/* 窗控整组：按钮之间不留额外间距，点击区由按钮自己的 40×32 提供 */
 .chrome-group {
   display: flex;
   align-items: center;
   gap: 0;
   flex: 0 0 auto;
 }
-.titlebar--mac .chrome-group { order: -1; }
-/* 窗控移到最左后，它和右侧控件之间隔着一整条拖动区，不再需要那条竖线 */
-.titlebar--mac .sep { display: none; }
 
 .win-btn {
   width: 40px;

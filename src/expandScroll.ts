@@ -167,12 +167,6 @@ export function collapseScrollDelta({
 /** Naive 滚动条容器的类名，向上找不到可滚动祖先时的兜底。 */
 const SCROLLBAR_CONTAINER = '.n-scrollbar-container'
 
-/** 吸顶行的标记属性：用 data-* 而不是 class，避免和 Vue 的 `:class` 互相覆盖。 */
-const STUCK_ATTRIBUTE = 'data-stuck'
-
-/** 吸顶判定的容差（px）：滚动位置常带小数，钉住时也可能差半像素。 */
-const STUCK_TOLERANCE = 1
-
 /**
  * 从卡片向上找真正在滚动的祖先。
  *
@@ -208,60 +202,13 @@ export function scrollInsetTop(container: HTMLElement): number {
   return Math.max(0, header.getBoundingClientRect().bottom - container.getBoundingClientRect().top)
 }
 
-export interface StuckRowsTracker {
-  /** 立刻重算一次：展开态变化、内容高度变化后调用（滚动与窗口尺寸会自动触发）。 */
-  refresh(): void
-  /** 解除监听。 */
-  stop(): void
-}
-
-/**
- * 维护一组「展开后吸顶的标题行」的吸顶标记（`data-stuck`）。
+/*
+ * 这里**没有**「吸顶行贴边标记」这类跟踪器。
  *
- * 不用 IntersectionObserver：吸顶行钉在边界上时**永远不会离开视口**，
- * 观察它自己分不出「钉住了」和「刚好滚到这里」；插哨兵元素又会动到页面 DOM。
- * 钉住时行顶与容器顶只差亚像素，每帧一次 rect 比较就够，行数是「当前展开的卡片 / 包」级别。
- *
- * 监听挂在 `document` 的捕获阶段：页面主滚动区是 Naive 的 `.n-scrollbar-container`，
- * 滚动事件不冒泡，捕获阶段才能不漏。不确定容器也能工作（每次重算时再解析）。
+ * 展开后标题行不吸顶（`LocalItemCard` / 包外壳都不再 `position: sticky`），
+ * 卡片详情滚到页头下沿这件事只由 `expansionScrollDelta` 的一次性滚动夹住：
+ * 用户滚下去以后标题就跟着内容走，不再需要实时判断「这一行有没有钉住」。
  */
-export function trackStuckRows(
-  rows: () => Array<Element | null | undefined>,
-): StuckRowsTracker {
-  let frame = 0
-  const measure = () => {
-    frame = 0
-    const list = rows().filter((row): row is Element => !!row)
-    if (!list.length) return
-    const container = resolveScrollContainer(list[0])
-    if (!container) return
-    const boundary = container.getBoundingClientRect().top
-    for (const row of list) {
-      const rowTop = row.getBoundingClientRect().top
-      row.toggleAttribute(STUCK_ATTRIBUTE, rowTop <= boundary + STUCK_TOLERANCE)
-    }
-  }
-  const schedule = () => {
-    if (frame) return
-    if (typeof requestAnimationFrame !== 'function') {
-      measure()
-      return
-    }
-    frame = requestAnimationFrame(measure)
-  }
-  document.addEventListener('scroll', schedule, { capture: true, passive: true })
-  window.addEventListener('resize', schedule)
-  schedule()
-  return {
-    refresh: schedule,
-    stop() {
-      if (frame) cancelAnimationFrame(frame)
-      frame = 0
-      document.removeEventListener('scroll', schedule, { capture: true })
-      window.removeEventListener('resize', schedule)
-    },
-  }
-}
 
 /**
  * 展开一张卡片：卡片外框用来看「当前高度与位置」，内容层用来推最终高度。

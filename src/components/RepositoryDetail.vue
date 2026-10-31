@@ -228,5 +228,6 @@ async function openUrl(url: string) {
     @update:asset="(value: string) => (selectedAssetName = value)"
     @open-link="(url: string) => { void openUrl(url) }"
     @dependency-jump="openDependencyJump"
+    @close="emit('close')"
     @install="(tag?: string, asset?: string) => emit('install', tag, asset)" />
 </template>

@@ -884,7 +884,7 @@ async function refreshAll() {
   -->
   <n-drawer :show="!!detailMap" :width="720" placement="right"
     @update:show="(value: boolean) => { if (!value) detailId = null }">
-    <n-drawer-content v-if="detailMap" :native-scrollbar="false" closable>
+    <n-drawer-content v-if="detailMap" :native-scrollbar="false" body-content-class="drawer-detail-body">
       <!--
         `:key` 必须有：面板自己持有「说明 / 下载安装」tab 状态，换地图要重置。
         版本选择的状态留在页面（`detailSelectedTag`），面板只发 `update:version`。
@@ -906,7 +906,7 @@ async function refreshAll() {
         @update:asset="(value: string) => { detailSelectedAsset = value }"
         @open-link="(url: string) => { void openLink(url) }"
         @dependency-jump="openDependencyJump"
-        @install="installFromDetail" @refresh="refreshDetail">
+        @install="installFromDetail" @refresh="refreshDetail" @close="detailId = null">
         <!-- 头部状态：与卡片上是同一份结论（`statusOf`） -->
         <template #status>
           <n-tag size="small" :color="tagColorForAny(detailStatus.tone)">

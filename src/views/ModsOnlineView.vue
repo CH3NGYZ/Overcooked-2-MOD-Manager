@@ -783,7 +783,7 @@ defineExpose({ refreshAll, visibleCount })
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
   <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
-    <n-drawer-content v-if="detailRepo" :native-scrollbar="false" closable>
+    <n-drawer-content v-if="detailRepo" :native-scrollbar="false" body-content-class="drawer-detail-body">
       <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="!!game?.kitchen_running"
         :mods="mods" :repositories="repositories"
         @close="detailId = null" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />

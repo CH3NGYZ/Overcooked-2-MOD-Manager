@@ -45,6 +45,23 @@ body > .n-drawer-container {
   height: auto;
 }
 /*
+ * 详情抽屉（MOD 安装 / 地图下载）的内容区：让面板铺满抽屉。
+ *
+ * 类名由两个视图 `n-drawer-content` 的 `body-content-class` 指定，落在
+ * `.n-scrollbar-content.n-drawer-body-content-wrapper` 上 —— 它是面板的**父层**。
+ * 抽屉内容被 teleport 到 body 下、面板的 scoped 样式够不到父层，所以规则留在这里。
+ *
+ * `min-height: 100%` 的百分比基准是 `.n-scrollbar-container`（它是 `.n-drawer-body`
+ * 的 flex 项，高度确定）。面板再靠 `flex: 1 0 auto` 被拉到抽屉底边（只涨不缩：抽屉
+ * 太矮时面板长出去、由抽屉 body 滚动）。少了这里，下载安装页就没有「确定的剩余高度」
+ * 可给日志框，只能回去用 `100vh - 常数` 估算，实测总会差几十像素把面板底边框顶出抽屉。
+ */
+.drawer-detail-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+/*
  * 折叠过渡：让「内容淡出」与「高度收缩」同步。
  *
  * Naive 的 fade-in-height-expand 里两者用了不同缓动：

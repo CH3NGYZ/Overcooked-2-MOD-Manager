@@ -66,7 +66,7 @@ export interface ReleaseDetailVersion {
 import { computed, nextTick, ref, watch } from 'vue'
 import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { DownloadOutline } from '@vicons/ionicons5'
+import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatFileSize } from '../repositoryAssets'
@@ -183,6 +183,8 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
+  /** 关闭面板（头部右上角的关闭按钮）。 */
+  close: []
   /** 版本下拉变化。 */
   'update:version': [value: string]
   /** 资产下拉变化。 */
@@ -288,7 +290,7 @@ watch(
 </script>
 
 <template>
-  <div class="detail">
+  <div class="detail" :class="{ 'detail--fill': activeTab === 'install' }">
     <header class="detail-head">
       <div class="head-main">
         <ProviderIcon :provider="provider" :owner="owner" :size="iconSize" />
@@ -310,8 +312,23 @@ watch(
           </small>
         </div>
       </div>
-      <!-- 状态标签（地图用它显示 最新版 / 有更新 / 依赖缺失）；MOD 不传则为空 -->
-      <slot name="status" />
+      <!--
+        右侧一组：状态标签 + 关闭按钮。
+
+        抽屉自己不再渲染 `n-drawer-header`（没有 title 时那一整行只有一个 X，
+        白占约 50px 高度），关闭入口挪到这里 —— 与标题同一行，内容整体上移。
+        抽屉仍可用 Esc 与点击遮罩关闭（`closeOnEsc`/`maskClosable` 都是默认开启）。
+      -->
+      <div class="head-side">
+        <!-- 状态标签（地图用它显示 最新版 / 有更新 / 依赖缺失）；MOD 不传则为空 -->
+        <slot name="status" />
+        <n-button class="detail-close" quaternary circle size="small"
+          :title="t('nav.close')" :aria-label="t('nav.close')" @click="emit('close')">
+          <template #icon>
+            <CloseOutline />
+          </template>
+        </n-button>
+      </div>
     </header>
 
     <!-- 分段切换：说明（依赖表 / 备注 / README）/ 下载安装（版本 / 日志 / 资产 / 安装） -->
@@ -354,7 +371,7 @@ watch(
       </n-tab-pane>
 
       <!-- 面板 2：下载安装（版本选择 / 提交日志 / 资产与安装） -->
-      <n-tab-pane name="install" :tab="t('tools.download')">
+      <n-tab-pane name="install" class="install-pane" :tab="t('tools.download')">
         <!-- 指标 + 安装合并区：版本下拉 / 版本绑定 / 资产信息 / 安装 -->
         <div class="summary">
           <div class="summary-row">
@@ -446,6 +463,18 @@ watch(
   background: var(--oc2-card);
   /* 面板切换由 n-tabs 自己裁剪，这里只兜底裁掉圆角外的内容 */
   overflow: clip;
+  /*
+   * 面板铺满抽屉内容区。
+   *
+   * 抽屉 `n-drawer-content` 的 body-content 容器带 `.drawer-detail-body`
+   * （规则在 global.css：flex 列 + `min-height: 100%`）：内容比抽屉短时，
+   * 面板被拉到抽屉底边；内容更长时面板按内容长高，由抽屉 body 滚动。
+   *
+   * `flex-shrink: 0` 是下限的保障：抽屉不够高时面板**不压缩**，而是照自身
+   * 内容高度长出去、让抽屉 body 出现滚动条。若允许收缩，下载安装页里
+   * 日志框的最小高度就会顶破父层、压到下面的资产/安装行上（实测重叠）。
+   */
+  flex: 1 0 auto;
 }
 /*
  * 分段切换用 Naive 的 n-tabs type="segment"：
@@ -459,12 +488,50 @@ watch(
   gap: 14px;
   padding-top: 12px;
 }
+/*
+ * 下载安装页：面板高度按「抽屉内容区」定死，日志框吃尽剩余高度。
+ *
+ * 目标：底部「资产 / 安装」那一行落在**抽屉内容区的底边**（看见面板自己的下边框），
+ * 长日志在日志框内滚，不把面板顶出抽屉。说明页**不加**这个类（按内容自然长高，
+ * 长 README 由抽屉 body 滚动）。
+ *
+ * 两条关键约束，缺一条就会出问题：
+ *
+ * 1. 每一层都必须是 flex 列：中间任何一层是 `height: auto` 的块级盒，
+ *    剩余高度就传不到日志框（早先用 `100vh - 410px` 估算正是因此差出几十像素）。
+ * 2. **用 `flex-basis` 表达「日志框的最小高度」，不要用 `min-height`**。
+ *    抽屉太矮时，若只给日志框写 `min-height: 120px`，它的父层 `.release-log`
+ *    仍会被压到 120 以下，日志框就会溢出父层、盖在下面的资产行上（实测重叠）。
+ *    改成 `flex-basis: 120px` 后，这条最小高度会计入**面板自身的内容高度**：
+ *    空间不足时面板没有可压缩的余地（`.detail` 是 `flex: 1 0 auto`，只涨不缩），
+ *    整块被撑高、由抽屉 body 滚动 —— 按钮被推下去但不会压住日志。
+ */
+.detail--fill .detail-tabs { flex: 1 1 auto; min-height: 0; }
+.detail--fill .detail-tabs :deep(.n-tabs-pane-wrapper) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.detail--fill .detail-tabs :deep(.install-pane) { flex: 1 1 auto; min-height: 0; }
+.detail--fill .summary { flex: 1 1 auto; min-height: 0; }
+.detail--fill .release-log { flex: 1 1 auto; min-height: 0; }
+/* 固定行不参与伸缩：只有日志框吸收剩余高度 */
+.detail--fill .summary-row,
+.detail--fill .log-head,
+.detail--fill .install-row { flex: 0 0 auto; }
+/* 120px 是日志框的最小高度，也是「抽屉已经不够高、该整块滚起来」的临界点 */
+.detail--fill .log-box { flex: 1 1 120px; min-height: 0; }
 .detail-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
+/* 右侧一组：状态标签 + 关闭按钮（抽屉自己不再渲染 header） */
+.head-side { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.detail-close { margin: -3px -4px 0 0; color: var(--oc2-text-3); }
+.detail-close:hover { color: var(--oc2-accent); }
 .head-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .head-text b { font-size: 16px; color: var(--oc2-text-1); }
@@ -543,12 +610,16 @@ watch(
   max-width: 100%;
 }
 /*
- * 日志框：占满抽屉里剩下的高度，超出后在自己内部上下滚。
+ * 日志框：下载安装页里占满面板剩下的高度，超出后在自己内部上下滚。
  *
- * 上限用「视口高度减去抽屉里其余部分」表达，而不是写死一个像素：窗口越大
- * 日志越长，底部那一行始终落在抽屉底边附近。
- *   - 短日志仍是内容高度（不会留白）；
- *   - 长日志到上限后内滚，横向留给长代码行，不把抽屉撑出横向滚动条。
+ * 高度不在这里定：面板在 `.detail--fill` 下按抽屉内容区定高，日志框靠
+ * `flex: 1 1 120px` 吃掉剩余空间（见上面 `.detail--fill` 那组规则）。
+ * 早先用 `max-height: clamp(160px, calc(100vh - 410px), 640px)` 估算「视口减去
+ * 其余部分」，那个常数会随面板头部、分段导航、行高一起漂移，实测在 720 高的窗口
+ * 里多算 47px，导致面板底边框被挤出抽屉、按钮贴着抽屉下沿。改成 flex 后由容器
+ * 自己决定，不再有常数。
+ *   - 短日志：仍然铺满（不留白，底部按钮行落在抽屉内容区底边）；
+ *   - 长日志：到上限后内滚，横向留给长代码行，不把抽屉撑出横向滚动条。
  * 为什么不用 `position: sticky` 钉底部：n-tabs 的 pane 容器带 `overflow: hidden`，
  * sticky 会以它为滚动容器，抽屉 body 滚动时不会生效。
  */
@@ -560,8 +631,6 @@ watch(
   font-size: 12px;
   line-height: 1.65;
   overflow-x: auto;
-  /* 410px ≈ 面板头部 + 分段导航 + 指标区 + 日志标题 + 资产/安装行 + 内外留白 */
-  max-height: clamp(160px, calc(100vh - 410px), 640px);
   overflow-y: auto;
   /* 滚到日志两端时不要把抽屉一起带着滚 */
   overscroll-behavior: contain;

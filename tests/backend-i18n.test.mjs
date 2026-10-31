@@ -221,6 +221,8 @@ test('前端不直接显示后端 message（必须经过桥接层）', () => {
   ]
   /** 后端字符串的来源。 */
   const BACKEND_VALUES = /(result|outcome|confirmed)\.message|reason instanceof Error \? reason\.message|String\(reason\)|String\(error\)/
+  /** 逐个接收点扫描用：每次用完重置 lastIndex，避免跨行/跨文件漂移。 */
+  const SINK_SCAN = DISPLAY_SINKS.map((re) => new RegExp(re.source, 'g'))
 
   for (const file of files) {
     const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
@@ -228,30 +230,31 @@ test('前端不直接显示后端 message（必须经过桥接层）', () => {
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i].trimStart()
       if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue
-      if (!DISPLAY_SINKS.some((re) => re.test(lines[i]))) continue
-      if (!BACKEND_VALUES.test(lines[i])) continue
       if (NOT_UI.test(lines[i])) continue
+      if (!DISPLAY_SINKS.some((re) => re.test(lines[i]))) continue
 
       /*
-       * 先看**当前行**：只要这一行自己就带桥接，直接放行。
+       * 逐个接收点判断，并且**从接收点本身**开始取语句，不先看整行。
        *
-       * 下面按语句扫描是为了认出跨行写法，但那个扫描在
-       * `result.ok ? message.success(translate…) : …` 里会在 `?` 处截断，
-       * 把已经桥接好的调用误判成裸用法 —— 所以不能只靠它。
+       * 旧写法是「本行出现过桥接就整行放行」，于是同一行两臂的三元
+       * `result.ok ? message.success(result.message || …) : message.error(translate…)`
+       * 里，裸用法被另一臂的桥接洗白 —— 护栏报绿，界面却弹出原始 tag
+       * `mods.disabled`。现在每个接收点各自取语句：谁裸谁上榜。
        */
-      if (BRIDGED.test(lines[i])) continue
-
-      /*
-       * 只取**当前语句**，不能取「后几行」。
-       *
-       * 曾经用后 4 行做窗口，结果 `result.ok ? A : message.error(translate…)`
-       * 这种三元表达式里，下一行的桥接把上一行的裸用法一起「洗白」了 ——
-       * 明明是同一处 bug，护栏却永远报绿。
-       */
-      const statement = collectStatement(lines, i)
-      if (BRIDGED.test(statement)) continue
-      if (SINK_FUNCTIONS.some((fn) => statement.includes(`${fn}(`))) continue
-      offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${i + 1}  ${lines[i].trim().slice(0, 90)}`)
+      let reported = false
+      for (const sink of SINK_SCAN) {
+        sink.lastIndex = 0
+        let match
+        while (!reported && (match = sink.exec(lines[i])) !== null) {
+          // 接收点本身就在桥接函数里（markFailed 内部已翻译）
+          if (SINK_FUNCTIONS.some((fn) => match[0].startsWith(fn))) continue
+          const statement = collectStatement(lines, i, match.index)
+          if (BRIDGED.test(statement)) continue
+          if (!BACKEND_VALUES.test(statement)) continue
+          offenders.push(`${file.replace(/.*[\\/]src[\\/]/, 'src/')}:${i + 1}  ${lines[i].trim().slice(0, 90)}`)
+          reported = true
+        }
+      }
     }
   }
   assert.deepEqual(offenders, [], `这些位置绕过了翻译桥接：\n  ${offenders.join('\n  ')}`)
@@ -264,12 +267,14 @@ test('前端不直接显示后端 message（必须经过桥接层）', () => {
  * 的 `?` `:`）为止。这样 `cond ? a : b` 的两臂各自独立，互相不会把对方的
  * 桥接借过来。
  */
-function collectStatement(lines, start) {
+function collectStatement(lines, start, column = 0) {
   let depth = 0
   let out = ''
   for (let i = start; i < lines.length; i += 1) {
     const line = lines[i]
-    for (let c = 0; c < line.length; c += 1) {
+    // 首行从接收点所在列开始：同一行另一臂的桥接不能被读进当前语句
+    const from = i === start ? column : 0
+    for (let c = from; c < line.length; c += 1) {
       const ch = line[c]
       if (ch === '(') depth += 1
       else if (ch === ')') depth -= 1

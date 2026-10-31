@@ -53,13 +53,17 @@ const props = withDefaults(defineProps<{
 
 const visible = computed(() => props.rows.length > 0)
 /**
- * 关系列只在「不止一种关系」时出现。
+ * 关系列只在出现「不止依赖」的关系时出现。
  *
  * 地图的 `required_frameworks` 投影出来全是 `requires`，MOD 的多数仓库也
  * 只声明依赖；这种情况下多一列同样的字只会占宽度。出现冲突/兼容声明时
  * 才需要这列来区分「必须存在」和「不能是这些版本」。
+ *
+ * 判据是「有没有非 requires 的行」而不是「有没有 kind」：调用方会给纯依赖
+ * 表也填上 `requires`，这样才能在混排时逐行显示真实关系名，而不是让
+ * requires 行留一个 `—`。
  */
-const showKind = computed(() => props.rows.some((row) => !!row.kind))
+const showKind = computed(() => props.rows.some((row) => !!row.kind && row.kind !== 'requires'))
 </script>
 
 <template>

@@ -155,8 +155,9 @@ const dependencyRows = computed<DependencyRow[]>(() => {
   return statuses.map((status) => ({
     key: `${status.relation.guid}:${status.relation.kind ?? 'requires'}`,
     name: dependencyName(status),
-    // 关系列只在出现非 requires 的关系时才有意义（表格自己判空）
-    kind: (status.relation.kind ?? 'requires') === 'requires' ? '' : (status.relation.kind ?? 'requires'),
+    // 关系名照原样填：表格只在出现非 requires 关系时才显示这一列，
+    // 那一列里 requires 行也要有自己的名字，不能留 `—`
+    kind: status.relation.kind ?? 'requires',
     requirement: requirementText(status),
     status: dependencyStatus(status),
     tone: status.state === 'ok'

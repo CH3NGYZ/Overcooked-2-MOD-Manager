@@ -52,3 +52,11 @@ tools/
 /scripts/rewrite-frontend-tags.mjs
 /scripts/rewrite-test-locale-assertions.mjs
 /scripts/verify-locale-mapping.mjs
+
+# Agent tuning, design notes and local launch helpers: kept local, never published
+.claude/
+docs/
+start rust.bat
+start test.bat
+tmp-*.png
+*.lnk

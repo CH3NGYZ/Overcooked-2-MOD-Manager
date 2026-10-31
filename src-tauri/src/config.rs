@@ -1039,7 +1039,13 @@ pub(crate) fn default_config() -> AppConfig {
             official_api_only: true,
         },
         repositories: Vec::new(),
-        repository_sources: builtin_repository_sources(),
+        /*
+         * 新配置的官方根源直接指向打包资源，与下面对应的开关保持同一个状态。
+         *
+         * V2 的仓库条目写在编译期快照里；远程索引还停在 V1 的内容（为了照顾
+         * 老用户暂时不改），所以这里不能再按地区选远端直链。
+         */
+        repository_sources: builtin_repository_sources_for_region(current_user_region(), true),
         community_discovery: None,
         gitee_community_discovery: None,
         source_repository_ids: Default::default(),
@@ -1049,14 +1055,16 @@ pub(crate) fn default_config() -> AppConfig {
          *
          * 放在这里而不是「第一次读地图列表时补」：`get_maps` 是只读命令，
          * 在里面写盘会绕开短操作锁，与「整份配置读取、修改与保存须持锁」
-         * 的边界冲突。内置快照是编译期资源，同步构造没有副作用；
-         * 用户下次刷新时会被远程源树整批替换。
+         * 的边界冲突。内置快照是编译期资源，同步构造没有副作用。
+         *
+         * 两个 `builtin_*_sources_only` 默认开启：快照就是 V2 的数据来源，
+         * 刷新时不该再去读远程索引 —— 那份索引仍停在 V1 的内容。
          */
         map_repositories: crate::map_sources::bundled_map_tree(),
-        builtin_map_sources_only: false,
+        builtin_map_sources_only: true,
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
-        builtin_sources_only: false,
+        builtin_sources_only: true,
     }
 }
 
@@ -1133,10 +1141,6 @@ fn contains_legacy_repository_proxy_fields(text: &str) -> bool {
         })
 }
 
-fn builtin_repository_sources() -> Vec<RepositorySource> {
-    builtin_repository_sources_for_region(current_user_region(), false)
-}
-
 /// 官方根源的地址：打开「仅用内置仓库源」时直接指向打包资源。
 ///
 /// `repositories.toml` 是内置索引的路径，`SourceLocation` 会把它解析成
@@ -1146,8 +1150,9 @@ pub(crate) fn builtin_repository_sources_for_region(
     region: &str,
     builtin_only: bool,
 ) -> Vec<RepositorySource> {
-    // Only the entry point is shipped with the application. Its children and
-    // repositories belong to the live index, not the embedded tutorial snapshot.
+    // Only the entry point is shipped with the application. Its children are
+    // file-relative names inside that index, so they resolve to bundled
+    // resources as well; the live index points them at remote raw URLs.
     vec![RepositorySource {
         id: crate::repository_sources::DEFAULT_INDEX_ID.into(),
         nickname: "官方仓库源".into(),
@@ -2268,25 +2273,102 @@ value = "RegionalMod.dll"
     }
 
     #[test]
-    fn default_config_uses_the_live_official_index_without_embedded_children() {
+    fn default_config_reads_the_bundled_index_only() {
         let config = default_config();
         assert!(config.repositories.is_empty());
         assert_eq!(config.repository_sources.len(), 1);
         let root = &config.repository_sources[0];
         assert_eq!(root.id, crate::repository_sources::DEFAULT_INDEX_ID);
-        assert_eq!(
-            root.url,
-            crate::repository_sources::default_index_url(current_user_region())
-        );
+        assert_eq!(root.url, crate::repository_sources::BUILTIN_INDEX);
         assert!(matches!(
             crate::repository_sources::SourceLocation::parse(&root.url).unwrap(),
-            crate::repository_sources::SourceLocation::Remote(_)
+            crate::repository_sources::SourceLocation::Bundled(_)
         ));
+        assert!(
+            config.builtin_sources_only,
+            "默认配置只读内置仓库索引，否则读到的还是停在 V1 的远程索引"
+        );
+        assert!(config.builtin_map_sources_only, "默认配置只读内置地图索引");
+        assert!(
+            !config.map_repositories.is_empty(),
+            "默认配置应当自带内置地图快照"
+        );
         assert!(config.repository_sources.iter().all(|source| source.builtin
             && source.parent_id.is_none()
             && repository_source_matches_region(source, current_user_region())));
         let serialized = toml::to_string(&config).unwrap();
         assert!(!serialized.contains("\n[proxies"));
+    }
+
+    /// 缺字段的旧配置按「只用内置」补齐，显式存了 `false` 的才回远程。
+    ///
+    /// V1 的配置里没有这两个开关：如果按 `bool` 的缺省 `false` 解析，
+    /// 升级到 V2 后会去读停在 V1 的远程索引，把内置快照覆盖掉。
+    #[test]
+    fn legacy_configs_without_the_bundled_switches_default_to_bundled() {
+        let full = toml::to_string_pretty(&default_config()).unwrap();
+        let without_switches = full
+            .lines()
+            .filter(|line| {
+                !line.starts_with("builtin_sources_only")
+                    && !line.starts_with("builtin_map_sources_only")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!without_switches.contains("builtin_sources_only"));
+        let migrated: AppConfig = toml::from_str(&without_switches).unwrap();
+        assert!(migrated.builtin_sources_only);
+        assert!(migrated.builtin_map_sources_only);
+
+        let mut value: toml::Value = toml::from_str(&full).unwrap();
+        let table = value.as_table_mut().unwrap();
+        table.insert("builtin_sources_only".into(), toml::Value::Boolean(false));
+        table.insert(
+            "builtin_map_sources_only".into(),
+            toml::Value::Boolean(false),
+        );
+        let explicit: AppConfig = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
+        assert!(!explicit.builtin_sources_only, "显式关闭必须保留用户的选择");
+        assert!(!explicit.builtin_map_sources_only);
+    }
+
+    /// 升级路径：V1 配置落盘后第一次读取，官方根要换到内置索引并写回磁盘。
+    #[test]
+    fn upgrading_a_v1_config_points_the_official_root_at_the_bundled_index() {
+        let service = ConfigService {
+            root: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target/test-config-load")
+                .join(Uuid::new_v4().to_string()),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        };
+        // V1：官方根指向远端，文件里没有这两个开关
+        let mut v1 = default_config();
+        v1.repository_sources = builtin_repository_sources_for_region(current_user_region(), false);
+        let text = toml::to_string_pretty(&v1)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                !line.starts_with("builtin_sources_only")
+                    && !line.starts_with("builtin_map_sources_only")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::create_dir_all(&service.root).unwrap();
+        fs::write(service.config_path(), text).unwrap();
+
+        let loaded = service.load().unwrap();
+        assert!(loaded.builtin_sources_only);
+        assert!(loaded.builtin_map_sources_only);
+        assert_eq!(
+            loaded.repository_sources[0].url,
+            crate::repository_sources::BUILTIN_INDEX,
+            "升级后官方根必须指向内置索引"
+        );
+        // 迁移必须落盘：否则每次启动都重跑一遍同步，中间还留着远端地址
+        let saved = fs::read_to_string(service.config_path()).unwrap();
+        assert!(saved.contains("builtin_sources_only = true"));
+        assert!(saved.contains("builtin_map_sources_only = true"));
+        fs::remove_dir_all(service.root).unwrap();
     }
 
     #[test]
@@ -2579,7 +2661,10 @@ value = "MOD.dll"
     /// 读取配置时按开关重建官方根，且保留自定义源与既有子源。
     #[test]
     fn config_load_applies_builtin_sources_only_to_the_official_root() {
+        // 从「开关关着时写下的配置」开始：官方根还指向远端，同步才有事可做。
         let mut config = default_config();
+        config.repository_sources =
+            builtin_repository_sources_for_region(current_user_region(), false);
         config.builtin_sources_only = true;
         config.repository_sources.push(RepositorySource {
             id: "custom".into(),

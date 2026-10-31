@@ -85,6 +85,12 @@ pub struct LevelSetInfo {
     pub dir_name: String,
     /// `true` = 在 `levels/`；`false` = 在 `disabled/`。
     pub enabled: bool,
+    /// 关卡集目录的绝对路径（原生分隔符；停用集在 `disabled/` 下）。
+    ///
+    /// 详情面板要把「目录名 + 位置」合成一行可直接打开的路径，所以由扫描
+    /// 结果原样带回，前端不再自己拼 `BepInEx/plugins/OC2DIYLevel/...` ——
+    /// 拼两份迟早漂移。
+    pub path: String,
     /// info 里的英文集名；解析失败时为空。
     #[serde(default)]
     pub name: String,
@@ -827,7 +833,12 @@ pub struct AppConfig {
     ///
     /// 打开后官方地图索引的 `url` 指向编译期嵌入的 `maps.toml`，
     /// 与仓库侧「仅使用内置仓库源」完全同一套语义。
-    #[serde(default)]
+    ///
+    /// 默认 `true`：V2 的地图条目只写在内置快照里，远程索引仍停在 V1 的
+    /// 内容（不能动，否则 V1 用户会读到还没适配的新条目）。缺字段的旧配置
+    /// 按 `true` 补齐，等于升级后自动切到内置快照；用户显式存了 `false`
+    /// 才回到远程索引。
+    #[serde(default = "default_true")]
     pub builtin_map_sources_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
@@ -855,9 +866,11 @@ pub struct AppConfig {
     /// 只用管理器自带的仓库源快照，不访问 Gitee / GitHub 的 raw 入口。
     ///
     /// 打开后官方根源的地址直接落到打包资源，不再按地区选择远端直链；
-    /// 这通常是「官方入口在这台机器上根本连不上」时的稳定退路，也让
-    /// 完全离线环境能列出仓库。自定义源不受影响 —— 那是用户明确添加的。
-    #[serde(default)]
+    /// 这也让完全离线环境能列出仓库。自定义源不受影响 —— 那是用户明确添加的。
+    ///
+    /// 默认 `true`，理由与 `builtin_map_sources_only` 相同：V2 的仓库条目
+    /// 只写在内置快照里，远程索引留给仍在用 V1 的用户。
+    #[serde(default = "default_true")]
     pub builtin_sources_only: bool,
 }
 

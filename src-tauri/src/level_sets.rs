@@ -120,6 +120,11 @@ pub struct LevelSetOnDisk {
     pub dir_name: String,
     /// `true` = 在 `levels/`，`false` = 在 `disabled/`。
     pub enabled: bool,
+    /// 目录的绝对路径（启用集 `levels/<目录名>`，停用集 `disabled/<目录名>`）。
+    ///
+    /// 由扫描时已经拼好的那个目录直接带出，不要在别处再拼一次 —— 基目录
+    /// 换个位置时只改一处。
+    pub path: PathBuf,
     /// 解析出的元数据；解析失败时为 `None`（仍可通过 `error` 看到原因）。
     pub metadata: Option<LevelSetMetadata>,
     /// 解析失败的原因（tag），成功时为 `None`。
@@ -170,6 +175,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
             return LevelSetOnDisk {
                 dir_name,
                 enabled,
+                path: directory,
                 metadata: None,
                 error: Some("levelSet.infoMissing".into()),
             };
@@ -179,6 +185,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
         Ok(metadata) => LevelSetOnDisk {
             dir_name,
             enabled,
+            path: directory,
             metadata: Some(metadata),
             error: None,
         },
@@ -192,6 +199,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
             LevelSetOnDisk {
                 dir_name,
                 enabled,
+                path: directory,
                 metadata: None,
                 error: Some(error),
             }
@@ -1461,6 +1469,59 @@ mod map_management_tests {
             "文件被替换后应重新解析并拿到新结果"
         );
         assert_eq!(info_cache_parses(&info), Some(2), "指纹变化应再解析一次");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 扫描要带回关卡集目录的真实绝对路径。
+    ///
+    /// 详情面板把它与目录名合成「路径」一行；停用集必须指向 `disabled/`，
+    /// 否则用户照抄出来的路径在磁盘上根本不存在。坏掉的关卡集（info 解析
+    /// 失败）同样要带路径 —— 认不出元数据不等于找不到目录。
+    #[test]
+    fn scan_reports_the_absolute_directory_path_for_both_sides() {
+        let (root, game, _recycle) = workspace("path");
+        let enabled_dir = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("EnabledSet");
+        let disabled_dir = game
+            .join(DIYLEVEL_DIR)
+            .join(DISABLED_DIR)
+            .join("DisabledSet");
+        std::fs::create_dir_all(&enabled_dir).unwrap();
+        std::fs::create_dir_all(&disabled_dir).unwrap();
+        std::fs::write(enabled_dir.join("info"), b"not a bundle").unwrap();
+        std::fs::write(disabled_dir.join("info"), b"not a bundle").unwrap();
+
+        let sets = scan_level_sets(&game);
+        assert_eq!(sets.len(), 2);
+        let enabled = sets
+            .iter()
+            .find(|set| set.dir_name == "EnabledSet")
+            .expect("应扫到启用集");
+        let disabled = sets
+            .iter()
+            .find(|set| set.dir_name == "DisabledSet")
+            .expect("应扫到停用集");
+
+        assert!(enabled.enabled);
+        assert_eq!(enabled.path, enabled_dir, "启用集应指向 levels/<目录名>");
+        assert!(enabled.path.is_absolute(), "路径必须是绝对路径");
+        assert!(
+            enabled
+                .path
+                .ends_with(Path::new(LEVELS_DIR).join("EnabledSet"))
+        );
+
+        assert!(!disabled.enabled);
+        assert_eq!(
+            disabled.path, disabled_dir,
+            "停用集应指向 disabled/<目录名>"
+        );
+        assert!(disabled.path.is_absolute(), "停用集路径也必须是绝对路径");
+        assert!(
+            disabled
+                .path
+                .ends_with(Path::new(DISABLED_DIR).join("DisabledSet"))
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }

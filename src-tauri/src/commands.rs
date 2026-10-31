@@ -5406,6 +5406,7 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
     LevelSetInfo {
         dir_name: set.dir_name,
         enabled: set.enabled,
+        path: display_absolute_path(&set.path),
         name: metadata
             .as_ref()
             .map(|meta| meta.name.clone())
@@ -5744,8 +5745,10 @@ pub async fn refresh_map_sources(state: State<'_, AppState>) -> Result<Vec<MapIn
     log::info!("开始刷新地图源：内置={}，地区={}", builtin_only, region);
 
     let loaded = crate::map_sources::load_map_tree(&region, builtin_only).await;
+    // 内置开关开着时成功路径读的就是快照，标签要跟实际来源一致 —— 这行是
+    // 「地图列表到底来自哪里」的唯一日志证据。
     let (maps, source) = match loaded {
-        Ok(maps) => (maps, "remote"),
+        Ok(maps) => (maps, if builtin_only { "bundled" } else { "remote" }),
         Err(error) => {
             /*
              * 官方入口连不上：退回内置快照，但**保留远程入口** —— 下次刷新
@@ -6588,19 +6591,28 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
     Err("mods.dllFileMissing".into())
 }
 
-/// 把路径转成 Explorer 认得的形态。
+/// 把内部路径转成用户可读、可直接粘贴的形态。
 ///
-/// `canonicalize` 在 Windows 上会带出 `\\?\` / `\\?\UNC\` 前缀，而 Explorer
-/// 不按标准 argv 解析路径、也不接受 verbatim 形式。剥掉前缀；UNC 路径还要
-/// 还原成 `\\server\share` 的普通写法。
-#[cfg(windows)]
-fn explorer_display_path(path: &Path) -> String {
-    let path = path.to_string_lossy();
-    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+/// 游戏目录来自 `game::detect_game` 的 `canonicalize`，在 Windows 上会带出
+/// `\\?\` / `\\?\UNC\` 前缀。这种 verbatim 写法粘进资源管理器地址栏、文本
+/// 编辑器或别人给的路径里都不认，所以**凡是要展示给用户的绝对路径**都过这里；
+/// UNC 还要还原成 `\\server\share` 的普通写法。
+fn display_absolute_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{unc}")
     } else {
-        path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
+        text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
     }
+}
+
+/// 把路径转成 Explorer 认得的形态。
+///
+/// Explorer 不按标准 argv 解析路径、也不接受 verbatim 形式，所以在
+/// `display_absolute_path` 之上再交给资源管理器。
+#[cfg(windows)]
+fn explorer_display_path(path: &Path) -> String {
+    display_absolute_path(path)
 }
 
 /// 在系统文件管理器里打开一个**目录**（不是选中文件）。
@@ -8979,6 +8991,25 @@ mod mod_file_location_tests {
             assert_eq!(command.get_args().collect::<Vec<_>>(), [expected]);
         }
     }
+
+    /// 展示给用户的绝对路径不能带 `\\?\` 前缀（`canonicalize` 的产物）。
+    ///
+    /// 这条同时守着「普通路径原样返回」：重复调用不会越剥越短。
+    #[test]
+    fn display_absolute_path_removes_verbatim_prefixes() {
+        assert_eq!(
+            display_absolute_path(Path::new(r"\\?\C:\Games\Overcooked! 2\BepInEx")),
+            r"C:\Games\Overcooked! 2\BepInEx"
+        );
+        assert_eq!(
+            display_absolute_path(Path::new(r"\\?\UNC\server\share\levels")),
+            r"\\server\share\levels"
+        );
+        assert_eq!(
+            display_absolute_path(Path::new(r"C:\Games\OC2\levels")),
+            r"C:\Games\OC2\levels"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -10872,6 +10903,21 @@ mod repository_source_refresh_tests {
     #[tokio::test]
     async fn bundled_fallback_keeps_remote_entry_and_rejects_custom_sources() {
         let state = test_state();
+        /*
+         * 这条用例验证的是「在线官方根失败 → 回退内置」。默认配置现在只读
+         * 内置索引（`default_config`），所以先显式切回在线入口：只有远端
+         * URL 才能触发 `builtin_fallback_available`。
+         *
+         * 根地址要一起换掉 —— `save` 会把这份配置写进读取缓存，随后的
+         * `load` 不会再跑一遍按开关重建官方根的逻辑。
+         */
+        let mut online = state.config.load().unwrap();
+        online.builtin_sources_only = false;
+        online.repository_sources = crate::config::builtin_repository_sources_for_region(
+            crate::config::current_user_region(),
+            false,
+        );
+        state.config.save(&online).unwrap();
         let mut config = state.config.load().unwrap();
         let root = config.repository_sources[0].clone();
         let custom = RepositorySource {
@@ -11147,6 +11193,15 @@ mod repository_source_refresh_tests {
     #[ignore = "requires access to the maintained official remote source"]
     async fn official_remote_index_loads_each_declared_child() {
         let state = test_state();
+        // 线上索引用例：默认配置只读内置快照，这里显式切回在线入口。
+        // `save` 会把配置放进读取缓存，所以根地址一并换掉。
+        let mut online = state.config.load().unwrap();
+        online.builtin_sources_only = false;
+        online.repository_sources = crate::config::builtin_repository_sources_for_region(
+            crate::config::current_user_region(),
+            false,
+        );
+        state.config.save(&online).unwrap();
         let config = state.config.load().unwrap();
         let root = config.repository_sources[0].clone();
         assert_eq!(

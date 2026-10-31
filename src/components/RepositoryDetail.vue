@@ -16,6 +16,7 @@ import { pickI18n, t } from '../i18n'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
 import { matchedReleaseAssets } from '../repositoryAssets'
 import { relationTargetRepository, resolveRelations, type RelationStatus } from '../modRelations'
+import { useRepositoryLink } from '../crossLink'
 import { useRepositoryReadme } from '../composables/useRepositoryReadme'
 import ReleaseDetailPanel from './ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from './ReleaseDetailPanel.vue'
@@ -44,6 +45,9 @@ const props = withDefaults(defineProps<{
 })
 /** install 携带选中的 tag 与资产（未选则用最新 / 按资产规则自动选）。 */
 const emit = defineEmits<{ close: []; install: [tag?: string, asset?: string]; back: [] }>()
+
+/** 依赖表里的跳转：与卡片上的「缺依赖」标签同一个入口（安装页 + `focus` 高亮）。 */
+const { linkToRepository } = useRepositoryLink()
 
 const name = computed(() => (props.repo ? pickI18n(props.repo.name_i18n, props.repo.name) : ''))
 const note = computed(() => (props.repo ? pickI18n(props.repo.note_i18n, props.repo.note || '') : ''))
@@ -154,7 +158,13 @@ function dependencyStatus(status: RelationStatus): string {
     return status.state === 'conflict' ? t('tools.incompatible') : t('tools.compatible')
   }
   if (status.state === 'ok') return t('tools.satisfied')
-  return status.state === 'installable' ? t('tools.installable') : t('modsOnline.missingDep')
+  if (status.state !== 'installable') return t('modsOnline.missingDep')
+  /*
+   * 装了但版本不满足 → 「可更新」：安装页里有一份满足区间的版本，去把它装上。
+   * 没装 → 「可安装」。两者都要用户动手，但「更新已有的」和「装一个没有的」
+   * 是两件事，混成同一个词会让人以为本地根本没这个东西。
+   */
+  return status.installedMod ? t('tools.updatable') : t('tools.installable')
 }
 
 /**
@@ -170,7 +180,7 @@ const dependencyRows = computed<DependencyRow[]>(() => {
   const statuses = resolveRelations(repo, props.mods, props.repositories, selectedRelease.value?.tag_name)
   return statuses.map((status) => {
     const line = relationLine(status.relation)
-    return {
+    const row: DependencyRow = {
       // key 必须带上发布线：同一 GUID + 同一 kind 的「与测试版互斥 / 与正式版
       // 互斥」是两条不同的声明，只用 guid:kind 会让 v-for 出现重复 key
       key: `${status.relation.guid}:${status.relation.kind ?? 'requires'}:${line ?? 'any'}`,
@@ -185,8 +195,29 @@ const dependencyRows = computed<DependencyRow[]>(() => {
         ? 'mild' as const
         : status.state === 'installable' ? 'moderate' as const : 'critical' as const,
     }
+    /*
+     * 可安装 / 可更新都指向「能提供满足区间版本的仓库卡片」：那是唯一一处
+     * 点一下就能把依赖补上的地方，与卡片上的「缺依赖」标签落在同一个仓库。
+     * 缺依赖（线上根本没有这个 GUID）与冲突没有这种去处，标签保持纯文字。
+     */
+    if (status.state === 'installable' && status.repository) {
+      row.jump = { id: status.repository.id, title: t('modsOnline.viewDependencyInModInstall') }
+    }
+    return row
   })
 })
+
+/**
+ * 依赖表里点「可安装 / 可更新」：先关抽屉，再跳到安装页那张仓库卡片。
+ *
+ * 抽屉是右侧浮层，不关掉的话目标卡片被遮罩盖住，用户会以为点了没反应。
+ */
+function openDependencyJump(row: DependencyRow) {
+  const id = row.jump?.id
+  if (!id) return
+  emit('close')
+  linkToRepository(id)
+}
 
 /** 仓库文件模式：安装行左侧直接显示 `branch/file_path`。 */
 const fileLabel = computed(() => {
@@ -271,5 +302,6 @@ async function openUrl(url: string) {
     @update:version="(value: string) => (selectedTag = value)"
     @update:asset="(value: string) => (selectedAssetName = value)"
     @open-link="(url: string) => { void openUrl(url) }"
+    @dependency-jump="openDependencyJump"
     @install="(tag?: string, asset?: string) => emit('install', tag, asset)" />
 </template>

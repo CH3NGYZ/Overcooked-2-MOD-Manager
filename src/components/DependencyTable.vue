@@ -11,6 +11,20 @@
  */
 import type { RelationKind } from '../types'
 
+/**
+ * 状态标签的跳转目标。
+ *
+ * 只有「点一下就能去解决」的状态才带它：可安装 / 可更新 都意味着安装页
+ * 里有一张能提供满足区间版本的仓库卡片，跳过去就是解法的入口；缺依赖
+ * （线上根本没有这个 GUID）与冲突没有可去的地方，保持纯文字。
+ */
+export interface DependencyJump {
+  /** 目标仓库卡片的 `data-focus-id`（安装页据此高亮）。 */
+  id: string
+  /** 悬停说明（调用方已 `t()` 过），说清点了会跳到哪。 */
+  title: string
+}
+
 export interface DependencyRow {
   /** 稳定 key（GUID / 仓库 id），用于 `v-for`。 */
   key: string
@@ -27,10 +41,12 @@ export interface DependencyRow {
   line?: 'prerelease' | 'stable'
   /** 版本要求文本（`≥ 1.2.0`、`1.0 ~ 2.0`）；空表示不限版本。 */
   requirement?: string
-  /** 状态文案（已满足 / 缺依赖 / 冲突）。 */
+  /** 状态文案（已满足 / 可安装 / 可更新 / 缺依赖 / 冲突）。 */
   status: string
   /** 状态色调，走 `theme.ts` 的统一刻度。 */
   tone?: 'accent' | 'mild' | 'moderate' | 'severe' | 'critical' | 'muted'
+  /** 有解法可去时给出目标，标签变成可点；省略表示这行无处可去。 */
+  jump?: DependencyJump
 }
 </script>
 
@@ -48,6 +64,11 @@ export interface DependencyRow {
  *
  * 表头就是标题（「MOD / 关系 / 要求 / 状态」），不再在表格上方重复一行
  * 「依赖」：用户看的是表格内容，标题只占高度。
+ *
+ * 状态列那枚标签与卡片上的状态标签是**同一档**（`.state-tag`，同一套
+ * `theme.ts` 色阶），不另起一种小标签：同一件事在全站长得不一样，用户会
+ * 以为它们是两回事。行带 `jump` 时标签变成可点标签并抛 `jump` 事件 ——
+ * 组件不认识路由，「跳到哪个页面哪张卡片」由调用方决定。
  */
 import { computed } from 'vue'
 import { NTag } from 'naive-ui'
@@ -64,6 +85,15 @@ const props = withDefaults(defineProps<{
 })
 
 const visible = computed(() => props.rows.length > 0)
+/** 状态标签被点击：只有带 `jump` 的行会发，调用方据此跳转。 */
+const emit = defineEmits<{ jump: [row: DependencyRow] }>()
+
+/** 标签可点时才发事件：不可点的标签点下去不该有任何反应。 */
+function clickStatus(row: DependencyRow) {
+  if (!row.jump) return
+  emit('jump', row)
+}
+
 /**
  * 关系列只在出现「不止依赖」的关系时出现。
  *
@@ -109,7 +139,12 @@ function lineLabel(line: DependencyRow['line']): string {
             </td>
             <td class="dep-req mono">{{ row.requirement || '-' }}</td>
             <td class="dep-state">
-              <n-tag size="tiny" :bordered="false" :color="tagColorForAny(row.tone ?? 'muted')">
+              <n-tag size="tiny" :bordered="false" class="state-tag"
+                :class="{ 'state-tag--link': !!row.jump }" :color="tagColorForAny(row.tone ?? 'muted')"
+                :title="row.jump?.title" :role="row.jump ? 'button' : undefined"
+                :tabindex="row.jump ? 0 : undefined"
+                @click="clickStatus(row)" @keydown.enter="clickStatus(row)"
+                @keydown.space.prevent="clickStatus(row)">
                 {{ row.status }}
               </n-tag>
             </td>
@@ -198,5 +233,14 @@ function lineLabel(line: DependencyRow['line']): string {
 
 .dep-state {
   white-space: nowrap;
+}
+
+/* 可点的状态标签与卡片上的同一套交互：指针 + 悬停提亮，不额外加下划线 */
+.state-tag--link {
+  cursor: pointer;
+}
+
+.state-tag--link:hover {
+  filter: brightness(1.25);
 }
 </style>

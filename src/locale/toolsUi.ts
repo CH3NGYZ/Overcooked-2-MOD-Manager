@@ -303,6 +303,14 @@ export const toolsUi: DomainMessages = {
     ko: '설치 가능',
     ja: 'インストール可',
   },
+  // 依赖已装但版本不满足：线上有满足区间的版本，去把它换上
+  updatable: {
+    'zh-CN': '可更新',
+    'zh-TW': '可更新',
+    en: 'Updatable',
+    ko: '업데이트 가능',
+    ja: '更新可能',
+  },
   // conflicts 关系未命中（对方不在冲突区间内）
   noConflict: {
     'zh-CN': '无冲突',

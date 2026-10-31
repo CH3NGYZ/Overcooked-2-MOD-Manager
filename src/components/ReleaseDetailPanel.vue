@@ -193,6 +193,8 @@ const emit = defineEmits<{
   install: [tag?: string, asset?: string]
   /** 主按钮：刷新（没有缓存 Release 时）。 */
   refresh: []
+  /** 依赖表里可点的状态标签被点击（跳到对应的仓库 / 本地卡片，由调用方决定）。 */
+  'dependency-jump': [row: DependencyRow]
 }>()
 
 /** 说明 / 下载安装；切换由面板自己持有，调用方换条目时用 `:key` 重置。 */
@@ -320,7 +322,8 @@ watch(
           再讲「这是什么」。依赖为空时整块（含分割线）不渲染。
         -->
         <template v-if="dependencies.length">
-          <DependencyTable :rows="dependencies" :mono-name="dependenciesMonoName" />
+          <DependencyTable :rows="dependencies" :mono-name="dependenciesMonoName"
+            @jump="(row) => emit('dependency-jump', row)" />
           <n-divider />
         </template>
 

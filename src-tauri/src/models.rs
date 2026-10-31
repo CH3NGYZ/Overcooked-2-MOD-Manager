@@ -687,7 +687,7 @@ pub struct ReleaseRelationOverride {
 /// 整批刷新期间暂存的 Release 缓存。
 ///
 /// 见 `AppConfig::staged_release_cache` 的说明：清理仓库前把缓存挪到这里，
-/// 按源文档重建仓库时再取回，避免 10 分钟缓存被「重建」这件事本身作废。
+/// 按源文档重建仓库时再取回，避免 5 分钟缓存被「重建」这件事本身作废。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StagedReleaseCache {
     #[serde(default)]
@@ -862,7 +862,7 @@ pub struct AppConfig {
     /// 整批刷新清掉仓库前，暂存的 Release 缓存（`repository_id` → 缓存）。
     ///
     /// 刷新流程是「先清空整棵源的仓库 → 再拉源文档 → 按源文档重建仓库」。
-    /// 重建出来的仓库是全新的，`cached_releases` 为空，于是 10 分钟缓存
+    /// 重建出来的仓库是全新的，`cached_releases` 为空，于是 5 分钟缓存
     /// **永远命中不了** —— 每次刷新都把整棵仓库树的 API 重打一遍（实测
     /// 20+ 个仓库、几十个请求，还固定撞速率限制）。
     ///
@@ -1217,6 +1217,16 @@ pub struct MapRepositoryConfig {
     pub builtin: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// 所属源的昵称：单语言镜像 + 多语言表。
+    ///
+    /// 后端**不持久化地图源树**（见 `map_sources::load_map_tree` 的说明），源
+    /// 只是归类方式；但界面要按「源 → 分类 → 地图」三层展示，源名必须能读到。
+    /// 所以加载源树时把昵称写进条目本身 —— `get_maps` 读的是持久化配置，
+    /// 只靠 `source_id` 拿不到作者写在 `[[map_sources]]` 里的昵称。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_name_i18n: BTreeMap<String, String>,
     /// Release 缓存，与 `RepositoryConfig` 同一套字段与 TTL 语义。
     #[serde(default)]
     pub cached_releases: Vec<ReleaseInfo>,
@@ -1564,6 +1574,17 @@ pub struct MapInfo {
     pub note_i18n: BTreeMap<String, String>,
     pub enabled: bool,
     pub builtin: bool,
+    /// 所属地图源：ID 与昵称（多语言表优先，单语言镜像兜底）。
+    ///
+    /// 地图源树不落盘（源只是归类方式，见 `map_sources`），归属与源名随每次
+    /// 加载写进条目，这里原样透传 —— 否则前端只能把「哪张图属于哪个源」
+    /// 重新猜一遍，页面的三层结构也就无从建立。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_name_i18n: BTreeMap<String, String>,
     /// 缓存里最新的 Release tag；没刷新过时为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_tag: Option<String>,

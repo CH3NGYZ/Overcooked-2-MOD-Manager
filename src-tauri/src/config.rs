@@ -428,6 +428,10 @@ impl ConfigService {
                         changed = true;
                     }
                 }
+                // 地图条目的源昵称是后加的字段：老配置里只有源 ID，
+                // 不补的话地图页的三层标题会显示成 `maps-rw` 这类 ID
+                changed |=
+                    crate::map_sources::fill_missing_source_names(&mut config.map_repositories);
                 if changed {
                     log::info!("配置需要迁移或同步，保存更新后的配置");
                     self.save(&config)?;
@@ -892,7 +896,7 @@ impl ConfigService {
                      *
                      * `repository_from_export` 造出来的是全新对象，缓存字段
                      * 一律为空。整批刷新时每个源文档都要走这里，如果连缓存一起
-                     * 覆盖，10 分钟缓存就永远命中不了 —— 每次刷新（含每次启动）
+                     * 覆盖，5 分钟缓存就永远命中不了 —— 每次刷新（含每次启动）
                      * 都得把整棵仓库树的 API 重打一遍，实测 20+ 个仓库、几十个
                      * 请求，还会固定撞上 Gitee/GitHub 的速率限制。
                      *

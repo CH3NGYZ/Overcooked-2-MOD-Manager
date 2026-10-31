@@ -2050,9 +2050,9 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
 ///
 /// 一次「刷新全部仓库源」会把整棵仓库树挨个打一遍 API：几十个仓库 × 每个
 /// 若干次请求，光是打开页面就要等几十秒，而且极容易撞上 GitHub/Gitee 的
-/// 速率限制。缓存 10 分钟后，重复刷新、切页再回来、重启管理器都直接读
+/// 速率限制。缓存 5 分钟后，重复刷新、切页再回来、重启管理器都直接读
 /// 已有结果，只有真正过期或用户**主动**点刷新时才重新请求。
-const RELEASE_CACHE_TTL_MS: i64 = 10 * 60 * 1000;
+const RELEASE_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 
 /// 当前 Unix 毫秒时间戳。
 fn now_millis() -> i64 {
@@ -2077,7 +2077,7 @@ fn release_cache_is_fresh(cached_at: Option<i64>, now: i64) -> bool {
 
 /// 刷新单个仓库的 Release 列表。
 ///
-/// `force = true` 跳过 10 分钟缓存强制请求 —— 用户手动点「刷新」时传，
+/// `force = true` 跳过 5 分钟缓存强制请求 —— 用户手动点「刷新」时传，
 /// 因为那个动作的语义就是「我要最新的」。批量刷新、自动刷新、切页回来
 /// 都传 `false`（或缺省）走缓存。
 #[tauri::command]
@@ -4231,7 +4231,7 @@ async fn import_repository_source_into_config(
                 /*
                  * 把清理阶段暂存的 Release 缓存接回来。
                  *
-                 * 不接的话，10 分钟缓存**永远命中不了**：整批刷新先删光仓库、
+                 * 不接的话，5 分钟缓存**永远命中不了**：整批刷新先删光仓库、
                  * 再从源文档重建，重建出来的是全新空仓库，于是每次刷新都把
                  * 整棵仓库树的 API 重打一遍（20+ 个仓库、几十个请求，还会撞
                  * Gitee 速率限制）。缓存本身没坏，只是被「重建」这件事丢了。
@@ -4254,7 +4254,7 @@ async fn import_repository_source_into_config(
      *
      * `apply_document` 是**逐源调用**的：一次整批刷新会对每个源各调一次。
      * 早先在这里无条件 `clear()`，于是第一个源应用完就把**所有**源的暂存缓存
-     * 全丢了 —— 后面的源重建仓库时取不到自己的缓存，10 分钟缓存等于没做，
+     * 全丢了 —— 后面的源重建仓库时取不到自己的缓存，5 分钟缓存等于没做，
      * 每次都把整棵树重打一遍（用户看到的就是「跳过缓存=false」却仍在请求）。
      *
      * 认领过的条目在上面 `remove` 时已经拿走了；剩下的属于「源文档里还没
@@ -6017,6 +6017,11 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         note_i18n: map.note_i18n.clone(),
         enabled: map.enabled,
         builtin: map.builtin,
+        // 源归属与源名：界面据此排「源 → 分类 → 地图」三层，
+        // 后端不持久化源树，这两样只存在于条目上（见 `map_sources`）
+        source_id: map.source_id.clone(),
+        source_name: map.source_name.clone(),
+        source_name_i18n: map.source_name_i18n.clone(),
         latest_tag: map
             .cached_releases
             .first()
@@ -6033,7 +6038,7 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
     }
 }
 
-/// 刷新一个地图仓库的 Release（10 分钟缓存，与 MOD 仓库同一套 TTL）。
+/// 刷新一个地图仓库的 Release（5 分钟缓存，与 MOD 仓库同一套 TTL）。
 #[tauri::command]
 pub async fn refresh_map_releases(
     state: State<'_, AppState>,
@@ -12308,7 +12313,7 @@ mod framework_backup_roundtrip_tests {
 
 /// Release 缓存有效期的判定。
 ///
-/// 这里是「每个仓库的 API 请求缓存 10 分钟」的核心逻辑：判错的后果很具体 ——
+/// 这里是「每个仓库的 API 请求缓存 5 分钟」的核心逻辑：判错的后果很具体 ——
 /// 判松了会把过期数据当最新（用户看不到新版本），判严了等于没有缓存
 /// （每次打开页面都把整棵仓库树重打一遍，撞速率限制）。
 #[cfg(test)]
@@ -12316,14 +12321,14 @@ mod release_cache_tests {
     use super::{RELEASE_CACHE_TTL_MS, now_millis, release_cache_is_fresh};
 
     #[test]
-    fn fresh_within_ten_minutes() {
+    fn fresh_within_five_minutes() {
         let now = 1_700_000_000_000;
         assert!(release_cache_is_fresh(Some(now), now), "刚写入应命中");
         assert!(
             release_cache_is_fresh(Some(now - RELEASE_CACHE_TTL_MS + 1), now),
             "差 1 毫秒到期仍算新鲜"
         );
-        assert_eq!(RELEASE_CACHE_TTL_MS, 10 * 60 * 1000);
+        assert_eq!(RELEASE_CACHE_TTL_MS, 5 * 60 * 1000);
     }
 
     #[test]

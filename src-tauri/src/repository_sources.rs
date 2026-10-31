@@ -699,7 +699,7 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
      * 清空这些源的仓库，但把 Release 缓存**暂存下来**。
      *
      * 早先的做法是整条 `retain` 掉仓库，于是列表重新拉回来、仓库重建之后
-     * `cached_releases` 与 `releases_cached_at` 都是空的 —— 10 分钟缓存
+     * `cached_releases` 与 `releases_cached_at` 都是空的 —— 5 分钟缓存
      * 永远不可能命中，每次刷新（含每次启动）都得把整棵仓库树的 API 重打
      * 一遍。实测 20+ 个仓库、每次几十个请求，还固定撞上 Gitee 的速率限制。
      *
@@ -1939,7 +1939,7 @@ region = "mainland-china"
 /// 整批刷新不能把 Release 缓存一起丢掉。
 ///
 /// 真实回归：清理源缓存会把整棵源的仓库删掉，源文档回来后再重建。重建出来的
-/// 仓库 `cached_releases` 为空，于是 10 分钟缓存**永远命中不了** —— 每次启动
+/// 仓库 `cached_releases` 为空，于是 5 分钟缓存**永远命中不了** —— 每次启动
 /// 都要把整棵仓库树的 API 重打一遍（20+ 个仓库、几十个请求，还固定撞 Gitee
 /// 的速率限制）。用户看日志就是「跳过缓存=false」却照样一路请求。
 #[cfg(test)]

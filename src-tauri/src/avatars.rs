@@ -2,8 +2,9 @@
 //!
 //! 头像不是关键数据，但有几个约束必须守住：
 //!
-//! 1. **缓存优先**。头像几乎不变，每次都联网既慢又浪费流量。落盘后
-//!    下次直接读文件，不发请求。
+//! 1. **缓存优先，但有有效期**。头像几乎不变，每次都联网既慢又浪费流量；
+//!    落盘后 12 小时内直接读文件、不发请求。超过 12 小时当作未命中重新
+//!    下载（用户偶尔会换头像，永久缓存会让界面一直显示旧图）。
 //! 2. **竞速下载**。GitHub 直连在部分网络下不可达，必须按现有 Raw 代理
 //!    候选竞速 —— 与 MOD 下载共用同一套候选顺序与代理配置，不另写一套。
 //! 3. **同一 owner 单飞**。一次刷新会同时刷出几十个仓库，其中很多属于
@@ -29,6 +30,16 @@ const MAX_AVATAR_BYTES: usize = 512 * 1024;
 
 /// 头像下载超时：比源文档短，因为它是纯装饰性内容，不值得让界面等太久。
 const AVATAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 头像磁盘缓存有效期：12 小时。
+///
+/// 头像是「几乎不变但偶尔会变」的数据：永久缓存会让换了头像的用户一直看到
+/// 旧图，完全不做缓存又每次启动都重下几十张。12 小时是这两者之间的折中 ——
+/// 一天顶多多下一次，换头像当天也能恢复。
+///
+/// 过期**不删文件**：只当作未命中重新下载，成功后覆盖原文件。这样下载失败
+/// 时文件还在（下次仍可尝试），也不会在缓存目录里留下一堆半删状态。
+const AVATAR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
 
 /// 缓存子目录名。
 const AVATAR_DIR: &str = "avatars";
@@ -120,13 +131,34 @@ fn direct_url(provider: &Provider, owner: &str) -> String {
     }
 }
 
-/// 读缓存；不存在或为空时返回 `None`。
+/// 缓存文件是否仍在有效期内（按修改时间算）。
+///
+/// 取不到修改时间（文件刚被外部工具改写、文件系统不提供）时按**过期**处理：
+/// 多下一次是可接受的代价，拿一份无法判定年龄的图当缓存更糟。
+/// 时钟回拨（文件修改时间早于系统时间很多）同理 —— 此时「年龄」不可信。
+fn cache_is_fresh(path: &std::path::Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return false;
+    };
+    let Ok(age) = std::time::SystemTime::now().duration_since(modified) else {
+        return false;
+    };
+    age < AVATAR_CACHE_TTL
+}
+
+/// 读缓存；不存在、为空或已过有效期时返回 `None`。
 pub fn read_cached(
     cache_dir: &std::path::Path,
     provider: &Provider,
     owner: &str,
 ) -> Option<Vec<u8>> {
     let path = cache_path(cache_dir, provider, owner);
+    if !cache_is_fresh(&path) {
+        return None;
+    }
     let bytes = std::fs::read(&path).ok()?;
     if bytes.is_empty() {
         return None;
@@ -386,6 +418,51 @@ mod tests {
             let key = response_key(&Provider::Github, owner);
             assert_eq!(key, format!("github:{}", owner.to_lowercase()), "{owner}");
         }
+    }
+
+    /*
+     * 头像缓存的有效期是 12 小时。这条规则有两面：
+     *   · 太短 → 每次启动都重下几十张图，白费流量且首屏变慢；
+     *   · 太长（或永久）→ 用户换了头像后界面一直显示旧图。
+     * 用文件修改时间判定，所以测试直接把 mtime 拨到过去，而不是等 12 小时。
+     */
+    #[test]
+    fn avatar_cache_expires_after_twelve_hours() {
+        let dir = std::env::temp_dir().join(format!(
+            "oc2-avatar-ttl-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // `cache_path` 会再套一层 `avatars/`，测试里要先把这层建出来
+        std::fs::create_dir_all(dir.join(AVATAR_DIR)).unwrap();
+        assert_eq!(
+            AVATAR_CACHE_TTL,
+            std::time::Duration::from_secs(12 * 60 * 60)
+        );
+
+        let path = cache_path(&dir, &Provider::Github, "someone");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\npayload").unwrap();
+        assert!(cache_is_fresh(&path), "刚写入的文件必须算新鲜");
+        assert!(
+            read_cached(&dir, &Provider::Github, "someone").is_some(),
+            "有效期内应直接命中磁盘缓存"
+        );
+
+        // 把修改时间拨到 TTL 之外 → 过期，read_cached 必须重新下载
+        let stale =
+            std::time::SystemTime::now() - AVATAR_CACHE_TTL - std::time::Duration::from_secs(60);
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(stale).unwrap();
+        drop(file);
+        assert!(!cache_is_fresh(&path), "超过 12 小时必须判过期");
+        assert!(
+            read_cached(&dir, &Provider::Github, "someone").is_none(),
+            "过期后不能再拿旧图当缓存"
+        );
+        assert!(path.is_file(), "过期只判未命中，不删文件");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

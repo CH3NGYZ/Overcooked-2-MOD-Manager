@@ -23,7 +23,7 @@ use crate::config::ConfigError;
 use crate::models::{AppConfig, MapRepositoryConfig};
 use crate::repository_sources::SourceLocation;
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 /// 内置地图索引的资源名。
 pub const BUILTIN_MAP_INDEX: &str = "maps.toml";
@@ -65,13 +65,20 @@ pub struct MapSourceDocument {
 
 /// 源文档里对子源的声明。
 ///
-/// 昵称与地区只影响展示和筛选：地图页按 `group` 分组，源名本身不显示，
-/// 所以这里只保留加载需要的最小字段集，避免维护一份没人读的配置。
+/// 昵称只影响展示，但**必须解析**：地图页按「源 → 分类 → 地图」三层展示，
+/// 源标题就来自这里。地图源树本身不落盘，所以加载时要把昵称写进每个条目
+/// （`MapRepositoryConfig::source_name`），否则 `get_maps` 读持久化配置时
+/// 只剩一个源 ID 可显示。
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapSourceDeclaration {
     pub id: String,
-    /// 子源地址：完整 URL、内置资源名，或**相对当前文档**的路径。
+    /// 源地址：完整 URL、内置资源名，或**相对当前文档**的路径。
     pub url: String,
+    /// 单语言镜像；源文档只写 `nickname_i18n` 时从 `zh-CN` 折进来。
+    #[serde(default)]
+    pub nickname: String,
+    #[serde(default)]
+    pub nickname_i18n: BTreeMap<String, String>,
     #[serde(default)]
     pub region: Option<String>,
     /// 是否属于内置树。省略时继承父源 —— 远程文档不能自行提权。
@@ -106,6 +113,10 @@ pub fn parse_document(
         fold_i18n_mirror(&mut entry.name, &entry.name_i18n);
         fold_i18n_mirror(&mut entry.group, &entry.group_i18n);
         fold_i18n_mirror(&mut entry.note, &entry.note_i18n);
+    }
+    // 子源同理：昵称只写多语言表就够，加载时折出单语言镜像随条目落盘
+    for child in &mut document.map_sources {
+        fold_i18n_mirror(&mut child.nickname, &child.nickname_i18n);
     }
 
     let mut seen = HashSet::new();
@@ -205,7 +216,7 @@ pub async fn load_document(location: &SourceLocation) -> Result<MapSourceDocumen
 
 /// 用新加载的地图列表替换配置里的地图，**保留同 ID 条目的 Release 缓存**。
 ///
-/// 每次刷新都是「源文档 → 全新条目」，直接替换会让 10 分钟缓存失效，
+/// 每次刷新都是「源文档 → 全新条目」，直接替换会让 5 分钟缓存失效，
 /// 于是每次刷新都把整批地图的 API 重打一遍（MOD 侧踩过完全相同的坑）。
 ///
 /// 只保留缓存与失败原因，其余字段以源文档为准：
@@ -256,6 +267,27 @@ fn merge_maps_keeping_runtime_state(
     (merged, changed)
 }
 
+/// 一个源在界面上的身份：ID + 昵称（单语言镜像与多语言表）。
+///
+/// 地图源树不落盘，所以这三样必须跟着每个地图条目走 —— 见
+/// `MapRepositoryConfig::source_name`。一份结构而不是三个散参数，是因为
+/// 它们总是一起出现（`attach` 一次写全），拆开容易漏写其中一个。
+#[derive(Debug, Clone, Default)]
+struct SourceLabel {
+    id: String,
+    name: String,
+    name_i18n: BTreeMap<String, String>,
+}
+
+impl SourceLabel {
+    /// 把源归属与源名写进条目。
+    fn attach(&self, map: &mut MapRepositoryConfig) {
+        map.source_id = Some(self.id.clone());
+        map.source_name = self.name.clone();
+        map.source_name_i18n = self.name_i18n.clone();
+    }
+}
+
 /// 同步加载内置地图源树（索引 → 子源 → 地图）。
 ///
 /// 只走编译期嵌入的资源，因此不需要网络、也没有失败路径。两个用途：
@@ -266,13 +298,17 @@ pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
     let Ok(index) = SourceLocation::parse(BUILTIN_MAP_INDEX) else {
         return collected;
     };
-    collect_bundled_maps(&index, DEFAULT_MAP_INDEX_ID, 0, &mut collected);
+    let root = SourceLabel {
+        id: DEFAULT_MAP_INDEX_ID.to_string(),
+        ..SourceLabel::default()
+    };
+    collect_bundled_maps(&index, &root, 0, &mut collected);
     collected
 }
 
 fn collect_bundled_maps(
     location: &SourceLocation,
-    source_id: &str,
+    label: &SourceLabel,
     depth: usize,
     collected: &mut Vec<MapRepositoryConfig>,
 ) {
@@ -283,9 +319,9 @@ fn collect_bundled_maps(
         return;
     };
     for mut map in document.maps {
-        map.source_id = Some(source_id.to_string());
+        label.attach(&mut map);
         map.builtin = true;
-        map.id = map_repository_id(source_id, &map);
+        map.id = map_repository_id(&label.id, &map);
         collected.push(map);
     }
     if depth + 1 > MAX_MAP_SOURCE_DEPTH {
@@ -295,7 +331,12 @@ fn collect_bundled_maps(
         let Ok(child_location) = SourceLocation::resolve(&child.url, Some(location)) else {
             continue;
         };
-        collect_bundled_maps(&child_location, child.id.trim(), depth + 1, collected);
+        let child_label = SourceLabel {
+            id: child.id.trim().to_string(),
+            name: child.nickname,
+            name_i18n: child.nickname_i18n,
+        };
+        collect_bundled_maps(&child_location, &child_label, depth + 1, collected);
     }
 }
 
@@ -331,6 +372,46 @@ pub fn available_maps(config: &AppConfig, current_region: &str) -> Vec<MapReposi
         .collect()
 }
 
+/// 老配置里的地图条目缺源昵称时，从内置源树补一次。
+///
+/// 昵称只在加载源树时写进条目，升级本身不会重新加载源树；不补的话地图页
+/// 的源标题会退化成源 ID（`maps-rw`）。内置树来自编译期嵌入的资源，没有
+/// 网络与失败路径，而且只有真的缺名字时才解析它；补齐后立即落盘，后续
+/// 读配置命中缓存直接跳过。远程索引独有的子源在下次刷新时自然覆盖。
+pub(crate) fn fill_missing_source_names(maps: &mut [MapRepositoryConfig]) -> bool {
+    fn missing(map: &MapRepositoryConfig) -> bool {
+        map.source_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+            && map.source_name.trim().is_empty()
+    }
+    if !maps.iter().any(missing) {
+        return false;
+    }
+    let mut names = std::collections::HashMap::new();
+    for map in bundled_map_tree() {
+        let Some(id) = map.source_id else {
+            continue;
+        };
+        names
+            .entry(id)
+            .or_insert((map.source_name, map.source_name_i18n));
+    }
+    let mut changed = false;
+    for map in maps.iter_mut() {
+        if !missing(map) {
+            continue;
+        }
+        let found = map.source_id.as_ref().and_then(|id| names.get(id).cloned());
+        if let Some((name, name_i18n)) = found {
+            map.source_name = name;
+            map.source_name_i18n = name_i18n;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// 地图源树的最大递归深度。
 ///
 /// 与仓库源一样按「索引 → 作者源 → （理论上还能再分）」设计，但不设上限
@@ -343,11 +424,14 @@ const MAX_MAP_SOURCE_DEPTH: usize = 3;
 /// ## 与 `repository_sources` 的差别
 ///
 /// 仓库侧要把源树**持久化**进 `repository_sources`，因为界面要展示父子源、
-/// 每个源有独立的错误状态与刷新按钮。地图页是一个扁平的分组卡片网格，
-/// 源只是归类方式，所以这里只产出地图条目本身（`source_id` 记录归属），
-/// 不额外维护一棵需要同步、清理、迁移的源树。
+/// 每个源有独立的错误状态与刷新按钮。地图侧仍然不维护这棵树：源在界面上
+/// 只是「源 → 分类 → 地图」三层折叠结构的第一层，因此每个条目自带
+/// 「源 ID + 源昵称」（`source_id` / `source_name` / `source_name_i18n`），
+/// 不额外造一棵需要同步、清理、迁移的源树。
 ///
 /// 加载顺序：索引 → 子源（深度优先、按声明顺序）→ 每个文档里的地图条目。
+/// 前端因此可以直接按条目首次出现的顺序排出源顺序，与 `[[map_sources]]` 的
+/// 声明顺序一致。
 pub async fn load_map_tree(
     region: &str,
     builtin_only: bool,
@@ -371,9 +455,13 @@ pub async fn load_map_tree(
         &index.address(),
         None,
     ));
+    let root = SourceLabel {
+        id: DEFAULT_MAP_INDEX_ID.to_string(),
+        ..SourceLabel::default()
+    };
     load_map_document(
         index,
-        DEFAULT_MAP_INDEX_ID,
+        &root,
         None,
         root_builtin,
         region,
@@ -390,7 +478,7 @@ pub async fn load_map_tree(
 #[allow(clippy::too_many_arguments)]
 async fn load_map_document(
     location: SourceLocation,
-    source_id: &str,
+    label: &SourceLabel,
     parent_id: Option<&str>,
     builtin: bool,
     region: &str,
@@ -400,12 +488,12 @@ async fn load_map_document(
 ) -> Result<(), ConfigError> {
     let document = load_document(&location).await?;
     for mut map in document.maps {
-        // 源归属只在本进程内有效：导出配置时写出的是作者本地的源 ID
-        map.source_id = Some(source_id.to_string());
+        // 源归属与源名只在本进程内有效：导出配置时写出的是作者本地的源 ID
+        label.attach(&mut map);
         map.builtin = builtin;
         // ID 必须跨刷新稳定：缓存、安装清单和「用户手动禁用」都挂在它上面。
         // 用「源 ID + 身份」派生，重建出来的地图能接回上一次的缓存。
-        map.id = map_repository_id(source_id, &map);
+        map.id = map_repository_id(&label.id, &map);
         collected.push(map);
     }
 
@@ -413,7 +501,7 @@ async fn load_map_document(
         if !document.map_sources.is_empty() {
             log::warn!(
                 "地图源层级超过上限，丢弃更深层的子源：源={}，上限={}",
-                source_id,
+                label.id,
                 MAX_MAP_SOURCE_DEPTH
             );
         }
@@ -451,11 +539,15 @@ async fn load_map_document(
          * 子源失败仍然继续加载其余子源 —— 一个作者的 TOML 404 不该让
          * 其他作者的地图从页面上消失。失败只记日志，索引层不因此报错。
          */
-        let child_id = child.id.trim().to_string();
+        let child_label = SourceLabel {
+            id: child.id.trim().to_string(),
+            name: child.nickname,
+            name_i18n: child.nickname_i18n,
+        };
         let boxed = Box::pin(load_map_document(
             child_location,
-            &child_id,
-            Some(parent_id.unwrap_or(source_id)),
+            &child_label,
+            Some(parent_id.unwrap_or(&label.id)),
             child_builtin,
             region,
             depth + 1,
@@ -464,7 +556,11 @@ async fn load_map_document(
         ))
         .await;
         if let Err(error) = boxed {
-            log::warn!("地图子源加载失败，跳过：源={}，原因={}", child_id, error);
+            log::warn!(
+                "地图子源加载失败，跳过：源={}，原因={}",
+                child_label.id,
+                error
+            );
         }
     }
     Ok(())
@@ -605,7 +701,7 @@ asset_rules = [{{ type = "exact", value = "map.zip" }}]
     }
 
     /*
-     * 刷新源树会整批重建地图条目。缓存必须跟着 ID 接回来，否则 10 分钟
+     * 刷新源树会整批重建地图条目。缓存必须跟着 ID 接回来，否则 5 分钟
      * TTL 形同虚设 —— 每次刷新都把整批地图的 API 重打一遍。
      *
      * 这条测试是「必须看着它红过一次」的守卫：把 224 行附近的

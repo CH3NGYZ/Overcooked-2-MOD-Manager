@@ -1,5 +1,7 @@
 import { compareVersions } from './modStatus.ts'
-import { dependencyTagFor, resolveRelations, type RelationStatus } from './modRelations.ts'
+import {
+  dependencyTagFor, resolveRelation, resolveRelations, type RelationStatus,
+} from './modRelations.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, Repository } from './types'
 
 /**
@@ -241,6 +243,26 @@ export interface FrameworkState {
 }
 
 /**
+ * 关卡集的关系声明解析结果（含「可安装来源」）。
+ *
+ * 声明来源与依赖表完全同一条链：绑定的地图还在配置里就用它的在线声明，
+ * 地图源下线（或本地导入的图没有线上条目）才退回安装清单里的快照
+ * （`set.relations`）。卡片标签与依赖表因此不会对同一张图说两套话 ——
+ * 早期卡片只按「绑定的在线地图」判，未绑定的图卡片上没有依赖提醒，
+ * 详情里却列着一条缺依赖。
+ */
+export function levelSetRelationStatuses(
+  set: Pick<LevelSetInfo, 'name' | 'author' | 'relations'>,
+  maps: readonly MapInfo[],
+  mods: readonly InstalledMod[],
+  repositories: readonly Repository[] = [],
+): RelationStatus[] {
+  const bound = mapForLevelSet(set, maps)
+  if (bound) return mapRelationStatuses(bound, mods, repositories)
+  return (set.relations ?? []).map((relation) => resolveRelation(relation, mods, repositories))
+}
+
+/**
  * 地图声明的关系在本地的解析结果（含「可安装来源」）。
  *
  * `repositories` 必须传：地图声明的前置就是仓库里的 MOD（DIYLevel、
@@ -334,7 +356,11 @@ export function levelSetCardTags(
   const tags: LevelSetCardTag[] = []
 
   if (gameProbed) {
-    const dependency = dependencyTagFor(mapRelationStatuses(bound, mods, repositories), true)
+    // 与依赖表同一条声明链：绑定的在线地图优先，没有就退回本地快照
+    const dependency = dependencyTagFor(
+      levelSetRelationStatuses(set, maps, mods, repositories),
+      true,
+    )
     if (dependency) {
       tags.push({
         text: dependency.text,

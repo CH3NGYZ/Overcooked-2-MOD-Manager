@@ -380,13 +380,6 @@ export const levelSet: DomainMessages = {
     ko: '더 높은 버전',
     ja: 'より新しいバージョン',
   },
-  dependencyMissing: {
-    'zh-CN': '依赖缺失',
-    'zh-TW': '依賴缺失',
-    en: 'Missing dependency',
-    ko: '의존성 없음',
-    ja: '依存関係不足',
-  },
   // ===== 地图管理页：展开详情 =====
   nameZh: {
     'zh-CN': '中文名',
@@ -458,20 +451,6 @@ export const levelSet: DomainMessages = {
     en: 'Online binding & status',
     ko: '온라인 바인딩 및 상태',
     ja: 'オンライン紐付けと状態',
-  },
-  notInstalled: {
-    'zh-CN': '未安装',
-    'zh-TW': '未安裝',
-    en: 'Not installed',
-    ko: '설치되지 않음',
-    ja: '未インストール',
-  },
-  versionMismatch: {
-    'zh-CN': '已装 {version}，不满足要求',
-    'zh-TW': '已裝 {version}，不滿足要求',
-    en: 'Installed {version}, which does not satisfy the requirement',
-    ko: '설치됨 {version}, 요구 사항을 충족하지 않음',
-    ja: 'インストール済み {version} は要件を満たしていません',
   },
   // ===== 地图详情抽屉 =====
   summary: {

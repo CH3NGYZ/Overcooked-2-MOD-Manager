@@ -16,16 +16,15 @@ import LocalItemCard from '../components/LocalItemCard.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import {
-  frameworkStates,
   levelSetAuthorNames,
   levelSetCardTags,
   levelSetDisplayName,
   levelSetGroup,
+  levelSetRelationStatuses,
   levelSetState,
   mapForLevelSet,
   mapVersionForLevelSet,
   mapVersionRefs,
-  type FrameworkState,
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
 import type { LevelSetInfo, MapInfo, Repository } from '../types'
@@ -303,15 +302,6 @@ function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
   return levelSetCardTags(set, maps.value, mods.value, gameProbed.value, repositories.value)
 }
 
-/** 绑定地图的框架依赖在本地是否满足。 */
-function boundFrameworks(set: LevelSetInfo): FrameworkState[] {
-  return frameworkStates(boundMapOf(set), mods.value, repositories.value)
-}
-
-function missingFrameworks(set: LevelSetInfo): FrameworkState[] {
-  return boundFrameworks(set).filter((state) => !state.satisfied)
-}
-
 /**
  * 「缺依赖」标签的安装去处：能提供满足区间版本的仓库卡片 id。
  *
@@ -331,16 +321,20 @@ function installDependency(set: LevelSetInfo) {
 /**
  * 标签悬停提示：标签本身很短，把「为什么」放在 title 里。
  *
- * - 依赖缺失：列出具体缺哪个前置、要求什么版本；
+ * - 缺依赖：列出**这条声明链**里没满足的 GUID 与版本要求（绑定的在线地图优先，
+ *   没有就退回本地快照 —— 与依赖表、标签本身同一条来源）；
  * - 有更新（可点）：说明点下去会去哪儿，避免用户以为是就地更新。
  */
 function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
   if (tag.kind === 'dependency') {
-    const missing = missingFrameworks(set)
-    const list = missing
-      .map((state) => `${state.guid}${state.minVersion ? ` ≥ ${state.minVersion}` : ''}`)
+    const list = levelSetRelationStatuses(set, maps.value, mods.value, repositories.value)
+      .filter((status) => status.state !== 'ok' && (status.relation.kind ?? 'requires') === 'requires')
+      .map((status) => {
+        const min = status.relation.min_version?.trim()
+        return `${status.relation.guid}${min ? ` ≥ ${min}` : ''}`
+      })
       .join(' · ')
-    return t('levelSet.frameworksNotMet', { list: list || t('levelSet.dependencyMissing') })
+    return t('levelSet.frameworksNotMet', { list: list || t('modsOnline.missingDep') })
   }
   if (tag.mapId) return t('levelSet.viewInMapDownload')
   return undefined

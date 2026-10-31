@@ -495,12 +495,14 @@ defineExpose({ onUnmountedCleanup })
 }
 
 /*
- * 窗控按钮：固定用「红=关闭 / 黄=最小化 / 绿=最大化」三色，两个平台一致。
+ * 窗控按钮：固定用「红=关闭 / 黄=最小化 / 绿=最大化」三种语义色，两个平台一致。
  *
- * 颜色写死不走主题变量 —— 这是窗口级语义色（红灯就是关闭），跟着主题色走
- * 会让「关掉窗口」变成一个看不出危险的按钮。底色取 macOS 红绿灯的亮色，
- * 图标用深色保证对比度；悬停/按下再深一档，是「同一颜色的高对比版本」，
- * 而不是换成另一种中性色 —— 否则用户以为按钮换了含义。
+ * 但只上**很淡的一层**：比标题栏自己那层主题色混色强一点点（14% vs 3–9%），
+ * 悬停再浓一档。三颗实心高饱和色块压在标题栏上会抢走品牌和内容的注意力，
+ * 而这些按钮一天点不了几次 —— 底色只用来「一眼分出哪个是关窗」。
+ *
+ * 颜色写死不走主题变量：红灯就是关闭，跟着主题色变会让「关窗口」看不出危险。
+ * 图标用常规文字色而不是同色系：淡底上的黄色字对比度太低，语义交给底色即可。
  */
 .win-btn {
   width: 40px;
@@ -509,20 +511,19 @@ defineExpose({ onUnmountedCleanup })
   place-items: center;
   border: 0;
   border-radius: 8px;
-  color: rgba(0, 0, 0, .55);
+  color: var(--oc2-text-2);
   cursor: pointer;
   transition: background-color .14s ease, color .14s ease;
 }
-.win-btn.chrome-close { background: #ff5f57; }
-.win-btn.chrome-minimize { background: #febc2e; }
-.win-btn.chrome-maximize { background: #28c840; }
-.win-btn:hover { color: rgba(0, 0, 0, .92); }
-.win-btn.chrome-close:hover { background: #e0443e; }
-.win-btn.chrome-minimize:hover { background: #d9a01a; }
-.win-btn.chrome-maximize:hover { background: #1fa832; }
-.win-btn:active { color: rgba(0, 0, 0, .95); }
-.win-btn.chrome-close:active { background: #c9322d; }
-.win-btn.chrome-minimize:active { background: #bf8915; }
-.win-btn.chrome-maximize:active { background: #178a29; }
+.win-btn.chrome-close { background: color-mix(in srgb, #ff5f57 14%, transparent); }
+.win-btn.chrome-minimize { background: color-mix(in srgb, #f5b31b 14%, transparent); }
+.win-btn.chrome-maximize { background: color-mix(in srgb, #2bb43c 14%, transparent); }
+.win-btn:hover { color: var(--oc2-text-1); }
+.win-btn.chrome-close:hover { background: color-mix(in srgb, #ff5f57 26%, transparent); }
+.win-btn.chrome-minimize:hover { background: color-mix(in srgb, #f5b31b 26%, transparent); }
+.win-btn.chrome-maximize:hover { background: color-mix(in srgb, #2bb43c 26%, transparent); }
+.win-btn.chrome-close:active { background: color-mix(in srgb, #ff5f57 34%, transparent); }
+.win-btn.chrome-minimize:active { background: color-mix(in srgb, #f5b31b 34%, transparent); }
+.win-btn.chrome-maximize:active { background: color-mix(in srgb, #2bb43c 34%, transparent); }
 .win-btn:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px; }
 </style>

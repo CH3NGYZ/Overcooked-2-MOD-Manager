@@ -594,4 +594,20 @@ export const levelSet: DomainMessages = {
     ko: '업데이트를 확인할 수 없음',
     ja: '更新を確認できません',
   },
+  // 地图详情 · 随包插件：与地图同目录、跟着整个集目录一起启停的 DLL
+  bundledPlugins: {
+    'zh-CN': '随包插件（{count}）',
+    'zh-TW': '隨包插件（{count}）',
+    en: 'Bundled plugins ({count})',
+    ko: '동봉 플러그인 ({count})',
+    ja: '同梱プラグイン（{count}）',
+  },
+  // 插件文件被单独改成 `.dll.disabled` 时的标记（正常情况跟着地图整目录启停）
+  pluginDisabled: {
+    'zh-CN': '未启用',
+    'zh-TW': '未啟用',
+    en: 'Disabled',
+    ko: '사용 안 함',
+    ja: '無効',
+  },
 }

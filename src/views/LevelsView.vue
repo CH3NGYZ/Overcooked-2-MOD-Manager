@@ -4,6 +4,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { DownloadOutline, FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
+import { formatVersion } from '../modStatus'
 import { api, watchLevelSetScan } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
@@ -1238,6 +1239,32 @@ async function checkUpdates() {
               </div>
 
               <!--
+                随包插件：与地图同处一个父目录、跟着整个集目录一起启停的 DLL。
+                它们是这张图的一部分（不是独立 MOD），所以缩进挂在集目录信息
+                后面；安装侧读 ZIP 条目，这里读磁盘目录，同一份
+                `mods::read_dll_details` 元数据，只是没有 ZIP 内路径。
+              -->
+              <div v-if="set.plugins?.length" class="detail-section">
+                <div class="detail-section-title">
+                  {{ t('levelSet.bundledPlugins', { count: set.plugins.length }) }}
+                </div>
+                <div class="plugin-list">
+                  <div v-for="plugin in set.plugins" :key="plugin.file_name" class="plugin-row">
+                    <span class="plugin-name" :title="plugin.file_name">
+                      {{ plugin.name?.trim() || plugin.file_name.replace(/\.dll$/i, '') }}
+                    </span>
+                    <span class="mono plugin-file" :title="plugin.file_name">{{ plugin.file_name }}</span>
+                    <span v-if="!plugin.enabled" class="plugin-off">{{ t('levelSet.pluginDisabled') }}</span>
+                    <span class="plugin-meta mono">
+                      {{ plugin.role === 'dependency'
+                        ? t('tools.dependency')
+                        : (formatVersion(plugin.version) || '—') }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!--
                 依赖声明：本地缺失的标红，用户重新启用前就能看到；与下载页详情、
                 MOD 安装页详情共用同一张依赖表（名称是人类可读的仓库名/包名，
                 不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
@@ -1403,6 +1430,59 @@ async function checkUpdates() {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px dashed var(--oc2-row-line);
+}
+
+/*
+ * 随包插件：一条一行 —— 名称 + 落盘文件名 + 版本，整行靠左紧凑排。
+ * 左侧缩进 22px 与安装详情弹窗里下级条目的缩进一致，表示「从属于这张图」；
+ * 文件名可能很长，用省略号收，全文在 title 里。
+ * 三者都不许撑开（`flex-grow: 0`）：撑到行尾的话，版本号会正好落在页面右下角
+ * 那个浮动刷新按钮底下，滚到卡片底部时版本被压掉一半。
+ */
+.plugin-list {
+  display: grid;
+  gap: 4px;
+}
+
+.plugin-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding-left: 22px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.plugin-name {
+  flex: 0 1 auto;
+  max-width: 40%;
+  color: var(--oc2-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-file {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--oc2-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 手动改成 `.dll.disabled` 的插件：正常情况它跟着地图整目录启停，出现这条说明有人单独动过。
+ * 用 moderate 档（「需要注意但不算错」，与可更新/刷新失败同档）而不是 muted，
+ * 灰字会被旁边的文件名吃掉。 */
+.plugin-off {
+  flex: 0 0 auto;
+  color: var(--oc2-tone-moderate-text);
+}
+
+.plugin-meta {
+  flex: 0 0 auto;
+  color: var(--oc2-text-2);
 }
 
 /* 分节小标题：只做分组提示，不抢上面四行主体的视觉重量 */

@@ -245,6 +245,13 @@ export interface LevelSetInfo {
    * 下线/被删之后兜底，否则地图管理页的依赖表会凭空消失。
    */
   relations?: RepositoryRelation[]
+  /**
+   * 目录里随地图一起落盘的插件 DLL（作者随包的修复/运行库）。
+   *
+   * 它们是这个地图集的一部分：与地图同处一个父目录、跟着整目录一起启停，
+   * 不进本地 MOD 列表（否则同一份文件会有「MOD 开关」和「地图开关」两套状态）。
+   */
+  plugins?: LevelSetPlugin[]
 }
 
 /**
@@ -266,17 +273,12 @@ export interface StagedMapSource {
 }
 
 /**
- * ZIP 里随某个关卡集一起落盘的插件 DLL。
+ * 一个 DLL 的元数据（BepInPlugin + PE 版本资源）。
  *
- * 和 `ModPreviewEntry` 是同一套元数据、同一套读取规则（后端只有
- * `mods::read_dll_details` 一份实现），差别只在来源：一个是用户在装 MOD，
- * 一个是地图作者随包带的修复插件 —— 界面上两者都用同一张详情卡片展示。
+ * MOD 预览、ZIP 随包插件、已安装地图集里的插件都用这一份：后端只有
+ * `mods::read_dll_details` 一个解析实现，字段也只有一个 `DllPluginInfo`。
  */
-export interface ZipLevelSetPlugin {
-  /** ZIP 内的条目路径（展示用，例如 `OC2DIYLevel/OC2DIYLevel.dll`）。 */
-  path: string
-  /** 落盘后的文件名：插件会被复制进关卡集目录根部。 */
-  file_name: string
+export interface DllPluginInfo {
   /** 读不出 BepInPlugin 也没有版本号时是 dependency（纯依赖库，不是插件）。 */
   role: ModPreviewRole
   name?: string | null
@@ -286,6 +288,32 @@ export interface ZipLevelSetPlugin {
   product_name?: string | null
   company?: string | null
   original_filename?: string | null
+}
+
+/**
+ * ZIP 里随某个关卡集一起落盘的插件 DLL。
+ *
+ * 和 `ModPreviewEntry` 是同一套元数据、同一套读取规则（后端只有
+ * `mods::read_dll_details` 一份实现），差别只在来源：一个是用户在装 MOD，
+ * 一个是地图作者随包带的修复插件 —— 界面上两者都用同一张详情卡片展示。
+ */
+export interface ZipLevelSetPlugin extends DllPluginInfo {
+  /** ZIP 内的条目路径（展示用，例如 `OC2DIYLevel/OC2DIYLevel.dll`）。 */
+  path: string
+  /** 落盘后的文件名：插件会被复制进关卡集目录根部。 */
+  file_name: string
+}
+
+/**
+ * 已安装关卡集目录里的一个插件 DLL。
+ *
+ * 与 `ZipLevelSetPlugin` 的区别：它已经在磁盘上，所以没有 ZIP 内路径，
+ * 多一个 `enabled`（`.dll.disabled` 记为未启用）。地图开关是整目录 rename，
+ * 所以正常情况下它跟着地图一起启停。
+ */
+export interface LevelSetPlugin extends DllPluginInfo {
+  file_name: string
+  enabled: boolean
 }
 
 /** ZIP 里识别出的一个关卡集（导入前确认用）。 */

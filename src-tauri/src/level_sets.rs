@@ -62,6 +62,18 @@ const LEVELS_DIR: &str = "levels";
 /// 「.disabled」的关卡集去加载 `info`，找不到就刷一条错误。
 const DISABLED_DIR: &str = "disabled";
 
+/// 关卡集目录里声明「外部 runtime 最低版本」的文件。
+///
+/// 由关卡集导出器写出，内容是**纯版本号**（实测 `3.10.2`、`3.8.8`）。
+const REQUIRES_FILE: &str = "requires.txt";
+
+/// 外部 runtime（Web Runtime Loader）的插件 GUID。
+///
+/// 与官方地图源里 `relations.guid` 写的值**必须一致**：`requires.txt` 与线上
+/// relation 是同一个要求的两处表述，guid 不同会让依赖表把它们当成两个插件，
+/// 各算一遍。
+const RUNTIME_WLOADER_GUID: &str = "oc2.oc2diylevelruntimewloader";
+
 /// 游戏运行时是否允许「移动目录」这类关卡集操作。
 ///
 /// ## 为什么安装可以、开关不行
@@ -133,6 +145,11 @@ pub struct LevelSetOnDisk {
     /// **解析失败不影响开关**：卡片照常显示目录名，用户仍然能把它移出去。
     /// 一个坏掉的关卡集不该让整个列表不可用。
     pub error: Option<String>,
+    /// `requires.txt` 声明的外部 runtime 最低版本；没有这个文件时为 `None`。
+    ///
+    /// 只对**本地安装**的包有意义：在线安装的地图以地图源的 `relations` 为准，
+    /// 这个值只用来在没有线上声明时兜底（见 `level_set_to_info`）。
+    pub required_runtime: Option<String>,
 }
 
 /// 扫描进度回调：`(已完成数, 总数, 当前读到的目录名)`。
@@ -244,6 +261,8 @@ pub fn scan_level_sets_with_progress(
 /// 带的 `info_<集名>`。先找前者，找不到再找唯一一个 `info_*` —— 两种都在
 /// 真实资源里出现过。
 fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelSetOnDisk {
+    // 与 info 无关，独立读取：info 读不出来时这个值照样能用
+    let required_runtime = read_required_runtime(&directory);
     let info_path = match locate_info_file(&directory) {
         Some(path) => path,
         None => {
@@ -253,6 +272,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
                 path: directory,
                 metadata: None,
                 error: Some("levelSet.infoMissing".into()),
+                required_runtime,
             };
         }
     };
@@ -263,6 +283,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
             path: directory,
             metadata: Some(metadata),
             error: None,
+            required_runtime,
         },
         Err(error) => {
             log::warn!(
@@ -277,9 +298,41 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
                 path: directory,
                 metadata: None,
                 error: Some(error),
+                required_runtime,
             }
         }
     }
+}
+
+/// 读 `requires.txt`：第一行有效内容就是要求的外部 runtime 最低版本。
+///
+/// 允许空行与 `#` 注释行（同目录的 `stub_levels.txt` 就带说明行）。文件缺失、
+/// 全是空行注释、或读不出来时返回 `None` —— 那种情况下界面不显示关系卡片。
+fn read_required_runtime(directory: &Path) -> Option<String> {
+    let text = fs::read_to_string(directory.join(REQUIRES_FILE)).ok()?;
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+}
+
+/// 把 `requires.txt` 的版本号做成一条 `requires` 关系。
+///
+/// guid 与地图源里写的完全一致，所以依赖表判定、缺依赖提示、「去安装」跳转
+/// 全部复用已有管线，不需要为本地包另写一套。
+pub fn runtime_relation(min_version: &str) -> Option<crate::models::RepositoryRelation> {
+    let min_version = min_version.trim();
+    if min_version.is_empty() {
+        return None;
+    }
+    Some(crate::models::RepositoryRelation {
+        kind: crate::models::RelationKind::Requires,
+        guid: RUNTIME_WLOADER_GUID.to_string(),
+        min_version: min_version.to_string(),
+        max_version: String::new(),
+        prerelease: None,
+        optional: false,
+    })
 }
 
 /// 找到关卡集的 `info` 文件。
@@ -613,22 +666,46 @@ fn is_safe_dir_name(dir_name: &str) -> bool {
     matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
-/// 两个关卡集身份是否相同：`level_set_name` 与 `author` 都 trim 后忽略大小写比较。
+/// 两个关卡集是否是同一张地图。
 ///
-/// 空名视为解析失败，永不匹配 —— 否则所有读不出 `info` 的目录会抢同一张地图。
-/// 作者允许为空（官方导出的 `info` 常不写作者），空对空算相同。
+/// 身份由三段构成：`levelSetName`（英文集名）+ `levelSetNameZH`（中文名）+
+/// `author`。只用前两段不够 —— 实测「胡闹糕中」与「胡闹达学」是同一个作者的
+/// 两张不同地图，英文集名与作者都写成 `GAODA / GAODA`，只有中文名不同。
+///
+/// 比较规则：
+/// - 英文集名：trim 后忽略大小写，**空名永不匹配**（空名说明 `info` 没解析
+///   出来，不能把所有坏目录都算成同一张图）。
+/// - 作者：trim 后忽略大小写，空对空算相同（官方导出的 `info` 常不写作者）。
+/// - 中文名：**两边都非空才比较**。地图源 TOML 可以只写英文集名与作者（老源
+///   都没有中文名），此时退回前两段的判定，与加入中文名之前的行为一致。
 pub fn level_set_identity_matches(
     level_set_name: &str,
+    name_zh: Option<&str>,
     author: &str,
     other_level_set_name: &str,
+    other_name_zh: Option<&str>,
     other_author: &str,
 ) -> bool {
     let name = level_set_name.trim();
     let other = other_level_set_name.trim();
-    !name.is_empty()
-        && !other.is_empty()
-        && name.eq_ignore_ascii_case(other)
-        && author.trim().eq_ignore_ascii_case(other_author.trim())
+    if name.is_empty() || other.is_empty() {
+        return false;
+    }
+    if !name.eq_ignore_ascii_case(other) {
+        return false;
+    }
+    if !author.trim().eq_ignore_ascii_case(other_author.trim()) {
+        return false;
+    }
+    match (
+        name_zh.map(str::trim).filter(|value| !value.is_empty()),
+        other_name_zh
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    ) {
+        (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -639,8 +716,10 @@ mod identity_tests {
     fn identity_matches_ignore_case_and_surrounding_whitespace() {
         assert!(level_set_identity_matches(
             "RW_LevelSet",
+            None,
             "RW",
             " rw_levelset ",
+            None,
             " rw "
         ));
     }
@@ -648,25 +727,74 @@ mod identity_tests {
     #[test]
     fn identity_requires_a_non_empty_level_set_name() {
         // 空名 = info 没解析出来，不能把所有坏目录都算成同一张地图
-        assert!(!level_set_identity_matches("", "", "", ""));
-        assert!(!level_set_identity_matches("  ", "RW", "RW_LevelSet", "RW"));
-        assert!(!level_set_identity_matches("RW_LevelSet", "RW", "", "RW"));
+        assert!(!level_set_identity_matches("", None, "", "", None, ""));
+        assert!(!level_set_identity_matches(
+            "  ",
+            None,
+            "RW",
+            "RW_LevelSet",
+            None,
+            "RW"
+        ));
+        assert!(!level_set_identity_matches(
+            "RW_LevelSet",
+            None,
+            "RW",
+            "",
+            None,
+            "RW"
+        ));
     }
 
     #[test]
     fn identity_compares_the_author_too() {
         assert!(!level_set_identity_matches(
             "RW_LevelSet",
+            None,
             "RW",
             "RW_LevelSet",
+            None,
             "Other"
         ));
         // 官方导出的 info 常不写作者：两边都空算相同
         assert!(level_set_identity_matches(
             "RW_LevelSet",
+            None,
             "",
             "RW_LevelSet",
+            None,
             ""
+        ));
+    }
+
+    #[test]
+    fn identity_separates_maps_that_only_differ_in_the_chinese_name() {
+        // 实测「胡闹糕中」与「胡闹达学」：英文集名与作者完全相同，只有中文名不同
+        assert!(!level_set_identity_matches(
+            "GAODA",
+            Some("胡闹糕中"),
+            "GAODA",
+            "GAODA",
+            Some("胡闹达学"),
+            "GAODA"
+        ));
+        // 同一张图升级：三段都不变，仍应判为同一张
+        assert!(level_set_identity_matches(
+            "GAODA",
+            Some("胡闹糕中"),
+            "GAODA",
+            "GAODA",
+            Some("胡闹糕中"),
+            "GAODA"
+        ));
+        // 地图源没写中文名（老源）时退回前两段，不能因为缺字段就绑不上
+        assert!(level_set_identity_matches(
+            "GAODA",
+            Some("胡闹糕中"),
+            "GAODA",
+            "GAODA",
+            None,
+            "GAODA"
         ));
     }
 }
@@ -922,7 +1050,18 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
      * 或者让「唯一 info」的判定失效。
      */
     let mut by_directory: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut info_entries: BTreeMap<String, usize> = BTreeMap::new();
+    /*
+     * 一个目录可能同时有多个 info，但只有其中一个是真正的关卡集。
+     *
+     * 实测「04_前置地图合集」的 `宜/` 目录里有 `info_yi`（真关卡集）与
+     * `info_yil`（连 `LevelSetInfoSO` 对象都没有，只是随包带进来的资源）。
+     * 早期实现按「目录 → 单个 info」记录，同目录后出现的覆盖前面那个，
+     * 留下哪个完全取决于 ZIP 条目顺序 —— 该包里 `info_yil` 排在后面，
+     * 于是整个 ZIP 报 `missingLevelSetInfo`，另外 19 个正常关卡集一起进不来。
+     *
+     * 所以这里保留全部候选，稍后逐个试解析，取第一个能读出关卡集的。
+     */
+    let mut info_candidates: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| {
             crate::locale_tag::with_params(
@@ -943,27 +1082,53 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
             .or_default()
             .push(name.clone());
         if is_info_file(&file_name) {
-            info_entries.insert(directory, index);
+            info_candidates.entry(directory).or_default().push(index);
         }
     }
 
-    if info_entries.is_empty() {
+    if info_candidates.is_empty() {
         return Err("levelSet.zipWithoutInfo".into());
     }
 
-    let mut imported = Vec::with_capacity(info_entries.len());
-    for (directory, index) in info_entries {
-        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let mut bytes = Vec::with_capacity(entry.size() as usize);
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        let metadata = asset_bundle::parse_level_set(&bytes).map_err(|error| {
-            crate::locale_tag::with_params(
+    /*
+     * 分两阶段：先解析出每个目录的元数据与「基础目录名」，再统一分配目录名。
+     *
+     * 不能边解析边分配：同一批里共用同一个集名的几张图，谁先谁后决定谁拿到
+     * 不带后缀的名字，而顺序又由 ZIP 条目与 BTreeMap 键序决定 —— 同样的包
+     * 两次导入可能得到不同目录名。
+     */
+    let mut parsed_sets: Vec<(String, LevelSetMetadata, String)> = Vec::new();
+    for (directory, candidates) in info_candidates {
+        let mut metadata: Option<LevelSetMetadata> = None;
+        let mut last_error = String::new();
+        for index in candidates {
+            let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+            let mut bytes = Vec::with_capacity(entry.size() as usize);
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+            match asset_bundle::parse_level_set(&bytes) {
+                Ok(parsed) => {
+                    metadata = Some(parsed);
+                    break;
+                }
+                Err(error) => {
+                    log::debug!(
+                        "候选 info 不是关卡集，继续试下一个：目录={}，条目序号={}，原因={}",
+                        directory,
+                        index,
+                        error
+                    );
+                    last_error = error.to_string();
+                }
+            }
+        }
+        let Some(metadata) = metadata else {
+            return Err(crate::locale_tag::with_params(
                 "levelSet.zipInfoInvalid",
-                &[("reason", &error.to_string())],
-            )
-        })?;
+                &[("reason", &last_error)],
+            ));
+        };
 
         /*
          * 关卡集目录名：用 info 里的英文集名，而不是 ZIP 里的目录名。
@@ -972,9 +1137,27 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
          * 而集名是作者在编辑器里真正填的名字，落到磁盘后还能和元数据对上。
          * 清理掉不能做目录名的字符。
          */
-        let dir_name = sanitize_dir_name(&metadata.name)
+        let base_name = sanitize_dir_name(&metadata.name)
             .or_else(|| sanitize_dir_name(&directory.rsplit('/').next().unwrap_or("")))
             .ok_or_else(|| "levelSet.invalidName".to_string())?;
+        parsed_sets.push((directory, metadata, base_name));
+    }
+
+    // 同一批里共用同一个基础名的有几张：大于 1 时它们**全部**带消歧后缀
+    let mut base_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, _, base_name) in &parsed_sets {
+        *base_counts.entry(base_name.to_lowercase()).or_default() += 1;
+    }
+
+    let mut imported = Vec::with_capacity(parsed_sets.len());
+    let mut taken_dir_names = std::collections::HashSet::new();
+    for (directory, metadata, base_name) in parsed_sets {
+        let allow_base = base_counts
+            .get(&base_name.to_lowercase())
+            .copied()
+            .unwrap_or(0)
+            < 2;
+        let dir_name = allocate_dir_name(&base_name, &metadata, &mut taken_dir_names, allow_base);
 
         let prefix = if directory.is_empty() {
             String::new()
@@ -1000,16 +1183,14 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
         });
     }
 
-    // 同名关卡集出现两次（例如 ZIP 里有 `a/info` 和 `b/info` 但集名相同）
-    let mut seen = std::collections::HashSet::new();
-    for set in &imported {
-        if !seen.insert(set.dir_name.clone()) {
-            return Err(crate::locale_tag::with_params(
-                "levelSet.zipDuplicate",
-                &[("name", &set.dir_name)],
-            ));
-        }
-    }
+    /*
+     * 目录名互不相同由 `allocate_dir_name` 保证：集名撞车时它会追加中文名、
+     * 作者或 uid 后缀，而不是像早期那样整包拒绝。
+     *
+     * 实测「05_无前置地图合集」里 `gaoda`（胡闹糕中）与 `daxue`（胡闹达学）
+     * 的英文集名与作者都写成 GAODA，只靠集名无法区分；中文名是唯一能把
+     * 它们分开、又不随版本变化的字段。
+     */
     log::info!(
         "ZIP 关卡集识别完成：文件={}，关卡集={}",
         zip_path.display(),
@@ -1038,20 +1219,67 @@ pub fn install_from_zip(
     }
 
     let levels_dir = game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR);
+    let disabled_dir = game_root.join(DIYLEVEL_DIR).join(DISABLED_DIR);
+
+    /*
+     * 目标目录名下已经有东西时：
+     *
+     * - **身份相同** → 仍按原规则拒绝，覆盖与否交给调用方（它可能想先移动
+     *   旧目录到 `disabled/`，或干脆让用户自己决定）。
+     * - **身份不同** → 换一个目录名并存。两个不同地图共用同一个英文集名与
+     *   作者是真实存在的（实测「胡闹糕中」与「胡闹达学」都是 GAODA/GAODA），
+     *   整批拒绝只会让用户既装不上新的、也不知道该删谁。
+     * - `disabled/` 下有同名目录也算占用：那是用户停用的数据，直接覆盖会丢。
+     */
+    let mut resolved: Vec<(String, &ImportedLevelSet)> = Vec::new();
+    let mut taken = collect_dir_names(&levels_dir);
+    taken.extend(collect_dir_names(&disabled_dir));
     for set in &targets {
-        let destination = levels_dir.join(&set.dir_name);
-        if destination.exists() {
-            return Err(crate::locale_tag::with_params(
-                "levelSet.targetExists",
-                &[("name", &set.dir_name)],
-            ));
+        let mut dir_name = set.dir_name.clone();
+        if taken.contains(&dir_name.to_lowercase()) {
+            let enabled_path = levels_dir.join(&dir_name);
+            let existing = read_level_set(enabled_path, dir_name.clone(), true);
+            /*
+             * 读不出 info 的目录（空目录、损坏、手动塞进来的东西）不算「另一张
+             * 地图」，而是「无法判断」—— 这种情况不替用户换名绕过，按原规则
+             * 拒绝，让他先处理掉那个目录。换名只用于**确证身份不同**的并存。
+             */
+            let Some(existing_meta) = existing.metadata.as_ref() else {
+                return Err(crate::locale_tag::with_params(
+                    "levelSet.targetExists",
+                    &[("name", &dir_name)],
+                ));
+            };
+            let same_identity = level_set_identity_matches(
+                &existing_meta.name,
+                existing_meta.name_zh.as_deref(),
+                &existing_meta.author,
+                &set.metadata.name,
+                set.metadata.name_zh.as_deref(),
+                &set.metadata.author,
+            );
+            if same_identity {
+                return Err(crate::locale_tag::with_params(
+                    "levelSet.targetExists",
+                    &[("name", &dir_name)],
+                ));
+            }
+            dir_name = allocate_dir_name(&dir_name, &set.metadata, &mut taken, false);
+            log::info!(
+                "导入的关卡集与已有目录不同身份，改用新目录名：原目录={}，新目录={}",
+                set.dir_name,
+                dir_name
+            );
+        } else {
+            taken.insert(dir_name.to_lowercase());
         }
+        resolved.push((dir_name, *set));
     }
 
     let mut installed = Vec::new();
-    for set in targets {
-        write_level_set(zip_path, game_root, set)?;
-        installed.push(set.dir_name.clone());
+    for (dir_name, set) in resolved {
+        write_level_set(zip_path, game_root, &dir_name, set)?;
+        installed.push(dir_name);
     }
     Ok(installed)
 }
@@ -1109,6 +1337,91 @@ fn sanitize_dir_name(name: &str) -> Option<String> {
     } else {
         Some(cleaned)
     }
+}
+
+/// 单个目录名的字符数上限。
+///
+/// 关卡集目录位于 `<游戏>/BepInEx/plugins/OC2DIYLevel/levels/` 下，Windows
+/// 默认 260 字符的路径上限还要留给里面的文件名（Unity 的 `.resS` 常与主文件同名同长）。
+/// 正常集名远低于这个值，这里只拦病态长名。
+const MAX_DIR_NAME_CHARS: usize = 48;
+
+/// 给关卡集挑一个在本批里不重名的目录名。
+///
+/// 只用英文集名不够：不同地图可能共用同一个集名（实测「胡闹糕中」与
+/// 「胡闹达学」都写 `GAODA`，作者也都是 `GAODA`）。撞车时按可读性依次追加
+/// 中文名、作者、uid 前缀，最后才退到数字后缀。
+///
+/// 中文名排第一是因为它区分度最高且**不随版本变化** —— 同一张图升级时目录名
+/// 保持不变，回收覆盖才能命中同一处。`uid` 是 `MD5(baseUID + version)`，每发
+/// 一版就变，只能当最后的兜底。
+///
+/// `allow_base` 为 `false` 时跳过基础名本身。同一批里有多张图共用这个基础名
+/// 时，调用方会对**每一张**都置 `false`，让它们一起带后缀，而不是「第一个
+/// 占住干净名字、其余加后缀」—— 后者会让目录名取决于条目顺序。
+fn allocate_dir_name(
+    base: &str,
+    metadata: &LevelSetMetadata,
+    taken: &mut std::collections::HashSet<String>,
+    allow_base: bool,
+) -> String {
+    let shorten = |value: &str| -> Option<String> {
+        let cleaned = sanitize_dir_name(value)?;
+        let shortened: String = cleaned.chars().take(MAX_DIR_NAME_CHARS).collect();
+        let shortened = shortened.trim_matches(['.', ' ']).to_string();
+        if shortened.is_empty() {
+            None
+        } else {
+            Some(shortened)
+        }
+    };
+
+    let base = shorten(base).unwrap_or_else(|| "LevelSet".to_string());
+    let mut candidates: Vec<String> = Vec::new();
+    if allow_base {
+        candidates.push(base.clone());
+    }
+    if let Some(name_zh) = metadata.name_zh.as_deref().and_then(shorten) {
+        candidates.push(format!("{base}_{name_zh}"));
+    }
+    if let Some(author) = shorten(&metadata.author) {
+        candidates.push(format!("{base}_{author}"));
+    }
+    let uid: String = metadata.uid.chars().take(8).collect();
+    if !uid.trim().is_empty() {
+        candidates.push(format!("{base}_{uid}"));
+    }
+
+    /*
+     * 按小写比较：Windows 与 macOS 的默认文件系统都不区分大小写，只比原串会
+     * 放过 `GAODA` 与 `gaoda` 这种「看起来不同、实际撞同一个目录」的组合。
+     */
+    for candidate in candidates {
+        if taken.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+    }
+    for suffix in 2u32.. {
+        let candidate = format!("{base}_{suffix}");
+        if taken.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+    }
+    unreachable!("数字后缀必然能找到一个空位")
+}
+
+/// 收集一个目录下所有子目录名（转小写），用于避开已占用的目录名。
+fn collect_dir_names(directory: &Path) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    let Ok(entries) = fs::read_dir(directory) else {
+        return names;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            names.insert(entry.file_name().to_string_lossy().to_lowercase());
+        }
+    }
+    names
 }
 
 /// 供 ZIP 读取测试用：把内存字节包成可 seek 的读取器。
@@ -1345,6 +1658,311 @@ mod zip_tests {
         assert!(result.is_err(), "目标已存在时应拒绝安装");
         std::fs::remove_dir_all(&root).unwrap();
     }
+
+    /// 只用于目录名分配测试的元数据。
+    fn metadata(name: &str, name_zh: Option<&str>, author: &str, uid: &str) -> LevelSetMetadata {
+        LevelSetMetadata {
+            name: name.into(),
+            name_zh: name_zh.map(str::to_string),
+            author: author.into(),
+            version: "1.0.0".into(),
+            uid: uid.into(),
+            base_uid: None,
+            levels: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn allocate_dir_name_disambiguates_with_the_chinese_name() {
+        /*
+         * 真实样本：同一个作者的两张地图，info 里英文集名与作者都写 GAODA，
+         * 只有中文名不同（胡闹糕中 / 胡闹达学）。它们必须落进不同目录，
+         * 否则后装的会把先装的当旧版本回收掉。
+         */
+        let mut taken = std::collections::HashSet::new();
+        let first = allocate_dir_name(
+            "GAODA",
+            &metadata("GAODA", Some("胡闹糕中"), "GAODA", "6040602f-aaaa"),
+            &mut taken,
+            false,
+        );
+        let second = allocate_dir_name(
+            "GAODA",
+            &metadata("GAODA", Some("胡闹达学"), "GAODA", "4b519ea0-bbbb"),
+            &mut taken,
+            false,
+        );
+        // 同一批共用一个集名时，两张都带后缀，谁也不独占「干净」名字
+        assert_eq!(first, "GAODA_胡闹糕中");
+        assert_eq!(second, "GAODA_胡闹达学");
+        assert_ne!(first.to_lowercase(), second.to_lowercase());
+    }
+
+    #[test]
+    fn allocate_dir_name_treats_case_only_differences_as_collisions() {
+        // Windows 与 macOS 的默认文件系统都不区分大小写：`GAODA` 与 `gaoda`
+        // 会落进同一个目录，只比原串会漏判。
+        let mut taken = std::collections::HashSet::new();
+        let first = allocate_dir_name("GAODA", &metadata("GAODA", None, "", ""), &mut taken, true);
+        let second = allocate_dir_name("gaoda", &metadata("gaoda", None, "", ""), &mut taken, true);
+        assert_eq!(first, "GAODA");
+        assert_ne!(second.to_lowercase(), first.to_lowercase());
+    }
+
+    #[test]
+    fn allocate_dir_name_falls_back_to_author_then_uid_then_number() {
+        let mut taken = std::collections::HashSet::new();
+        // 第一个直接拿到基础名
+        assert_eq!(
+            allocate_dir_name(
+                "S",
+                &metadata("S", None, "A1", "aaaa1111-2222"),
+                &mut taken,
+                true
+            ),
+            "S"
+        );
+        // 没中文名 → 用作者
+        assert_eq!(
+            allocate_dir_name(
+                "S",
+                &metadata("S", None, "A1", "bbbb2222-3333"),
+                &mut taken,
+                true
+            ),
+            "S_A1"
+        );
+        // 作者也撞了 → 用 uid 前 8 位
+        assert_eq!(
+            allocate_dir_name(
+                "S",
+                &metadata("S", None, "A1", "cccc3333-4444"),
+                &mut taken,
+                true
+            ),
+            "S_cccc3333"
+        );
+        // 三段全撞 → 数字兜底
+        assert_eq!(
+            allocate_dir_name(
+                "S",
+                &metadata("S", None, "A1", "cccc3333-4444"),
+                &mut taken,
+                true
+            ),
+            "S_2"
+        );
+    }
+
+    #[test]
+    fn allocate_dir_name_keeps_names_usable_as_directories() {
+        // 集名里的非法字符要先清理，超长要截断，否则建不目录
+        let mut taken = std::collections::HashSet::new();
+        let name = allocate_dir_name(
+            "a/b:c",
+            &metadata("a/b:c", Some("x/y"), "aut hor", ""),
+            &mut taken,
+            true,
+        );
+        assert_eq!(name, "a_b_c");
+        let long = "x".repeat(200);
+        let mut taken = std::collections::HashSet::new();
+        let name = allocate_dir_name(&long, &metadata(&long, None, "", ""), &mut taken, true);
+        assert!(name.chars().count() <= MAX_DIR_NAME_CHARS);
+    }
+
+    #[test]
+    fn collects_existing_directory_names_for_collision_checks() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-names-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("GAODA")).unwrap();
+        std::fs::create_dir_all(root.join("Other")).unwrap();
+        std::fs::write(root.join("file.txt"), b"x").unwrap();
+        let names = collect_dir_names(&root);
+        assert!(names.contains("gaoda"), "应收集到目录名并转小写");
+        assert!(names.contains("other"));
+        assert!(!names.contains("file.txt"), "文件不算占用目录名");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 造一个 ZIP：`entries` 是 (条目名, 内容) 列表。
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        use std::io::Write as _;
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    /// 从 `.tmp/rw.zip` 里读出一份真实 `info` 的字节。
+    fn real_info_bytes() -> Option<Vec<u8>> {
+        let zip = rw_zip()?;
+        let file = std::fs::File::open(zip).ok()?;
+        let mut archive = zip::ZipArchive::new(file).ok()?;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).ok()?;
+            if is_info_file(entry.name()) {
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).ok()?;
+                return Some(bytes);
+            }
+        }
+        None
+    }
+
+    #[test]
+    #[ignore = "需要 .tmp/rw.zip，用 --ignored 单独跑"]
+    fn picks_the_parsable_info_when_a_directory_has_several() {
+        /*
+         * 回归：「04_前置地图合集」的 `宜/` 目录里 `info_yi` 是真关卡集，
+         * `info_yil` 只是随包带进来的资源（没有 LevelSetInfoSO 对象）。
+         * 旧实现按目录只留一个 info，后者覆盖前者，于是整包报
+         * missingLevelSetInfo。现在必须逐个试解析，取能读出来的那个。
+         */
+        let Some(info) = real_info_bytes() else {
+            eprintln!("跳过：没有 .tmp/rw.zip");
+            return;
+        };
+        let zip_path =
+            std::env::temp_dir().join(format!("oc2-lv-multi-{}.zip", uuid::Uuid::new_v4()));
+        // 坏 info 故意排在后面：旧实现取最后一个，正好会踩到这个
+        write_zip(
+            &zip_path,
+            &[
+                ("Set/info_good", &info),
+                ("Set/info_bogus", b"not a unity bundle"),
+                ("Set/scene1", b"scene"),
+            ],
+        );
+
+        let sets =
+            inspect_zip(&zip_path).expect("同目录多个 info 时应取能解析的那个，而不是整包失败");
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].metadata.name, "RW_LevelSet");
+        assert_eq!(sets[0].dir_name, "RW_LevelSet");
+        assert_eq!(sets[0].files.len(), 3, "同目录的文件都要归到这个关卡集");
+
+        std::fs::remove_file(&zip_path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "需要 .tmp/rw.zip，用 --ignored 单独跑"]
+    fn reports_the_reason_when_every_info_in_a_directory_fails() {
+        // 全部候选都解析不出关卡集时才报错，而且错误里要有解析原因
+        let zip_path =
+            std::env::temp_dir().join(format!("oc2-lv-bad-{}.zip", uuid::Uuid::new_v4()));
+        write_zip(
+            &zip_path,
+            &[("Set/info_a", b"junk-a"), ("Set/info_b", b"junk-b")],
+        );
+        let error = inspect_zip(&zip_path).expect_err("全都解析不了时应失败");
+        assert!(error.starts_with("levelSet.zipInfoInvalid"), "实际={error}");
+        std::fs::remove_file(&zip_path).unwrap();
+    }
+
+    /// 用真实地图 ZIP 做端到端验证，路径由环境变量给出（仓库里不放几百 MB 的包）。
+    ///
+    /// `OC2_LEVEL_SET_REAL_ZIP=<zip 路径> cargo test --lib real_zip -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要 OC2_LEVEL_SET_REAL_ZIP 指向真实地图 ZIP"]
+    fn inspects_a_real_zip_from_the_environment() {
+        let Some(path) = std::env::var_os("OC2_LEVEL_SET_REAL_ZIP").map(PathBuf::from) else {
+            eprintln!("跳过：没有 OC2_LEVEL_SET_REAL_ZIP");
+            return;
+        };
+        let sets = inspect_zip(&path).expect("应能识别这个 ZIP");
+        assert!(!sets.is_empty(), "至少识别出一个关卡集");
+        let mut seen = std::collections::HashSet::new();
+        for set in &sets {
+            eprintln!(
+                "目录={} 集名={} 中文={:?} 作者={} 版本={} 关卡={} 文件={}",
+                set.dir_name,
+                set.metadata.name,
+                set.metadata.name_zh,
+                set.metadata.author,
+                set.metadata.version,
+                set.metadata.levels.len(),
+                set.files.len()
+            );
+            assert!(
+                seen.insert(set.dir_name.to_lowercase()),
+                "同一批里的目录名必须互不相同：{}",
+                set.dir_name
+            );
+        }
+    }
+}
+
+// ===== requires.txt：本地包自带的外部 runtime 要求 =====
+#[cfg(test)]
+mod requires_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_runtime_requirement_from_requires_txt() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-req-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // 没有文件 = 没有外部 runtime 要求，界面不显示关系卡片
+        assert_eq!(read_required_runtime(&root), None);
+
+        // 实测的真实内容：纯版本号（eon_v0.2.1 / tutu / mianhua_v1.4.2 都是它）
+        std::fs::write(root.join(REQUIRES_FILE), "3.10.2\n").unwrap();
+        assert_eq!(read_required_runtime(&root), Some("3.10.2".into()));
+
+        // 空行与 `#` 注释行要跳过（同目录的 stub_levels.txt 就带说明行）
+        std::fs::write(
+            root.join(REQUIRES_FILE),
+            "# 需要 Web Runtime\n\n  3.8.8  \n",
+        )
+        .unwrap();
+        assert_eq!(read_required_runtime(&root), Some("3.8.8".into()));
+
+        // 全是注释 → 等同于没有要求
+        std::fs::write(root.join(REQUIRES_FILE), "# nothing\n\n  \n").unwrap();
+        assert_eq!(read_required_runtime(&root), None);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn runtime_relation_matches_the_online_declaration_shape() {
+        /*
+         * 必须与地图源里那条 `guid = "oc2.oc2diylevelruntimewloader"` +
+         * `min_version = "3.10.2"` 完全同形：依赖表判定、缺依赖提示与跳转
+         * 都靠 guid 匹配，形状不同会让两份声明各自算一遍。
+         */
+        let relation = runtime_relation("3.10.2").expect("有版本号就该产出关系");
+        assert_eq!(relation.kind, crate::models::RelationKind::Requires);
+        assert_eq!(relation.guid, "oc2.oc2diylevelruntimewloader");
+        assert_eq!(relation.min_version, "3.10.2");
+        assert!(relation.max_version.is_empty(), "只声明下限");
+        assert!(!relation.optional, "缺依赖要提示，不能静默");
+        assert!(relation.prerelease.is_none());
+
+        // 空版本号不能造出一条「不限版本」的关系
+        assert!(runtime_relation("   ").is_none());
+    }
+
+    #[test]
+    fn scanning_reads_requires_txt_even_when_info_is_broken() {
+        // info 坏掉时开关照样要用，外观要求也不该因此丢掉
+        let game = std::env::temp_dir().join(format!("oc2-lv-req-scan-{}", uuid::Uuid::new_v4()));
+        let set = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("Broken");
+        std::fs::create_dir_all(&set).unwrap();
+        std::fs::write(set.join("info_broken"), b"not a bundle").unwrap();
+        std::fs::write(set.join(REQUIRES_FILE), "3.10.2").unwrap();
+
+        let sets = scan_level_sets(&game);
+        assert_eq!(sets.len(), 1);
+        assert!(sets[0].metadata.is_none(), "info 本身读不出来");
+        assert_eq!(sets[0].required_runtime.as_deref(), Some("3.10.2"));
+
+        std::fs::remove_dir_all(&game).unwrap();
+    }
 }
 
 // ===== 安装 / 更新：先回收已有的关卡集 =====
@@ -1472,12 +2090,15 @@ pub fn install_level_set(
      * 对不上，后续所有更新检测都失效 —— 与其埋这个雷，不如当场拒绝。
      */
     if let Some(expected) = &expected {
-        let name_matches = set
-            .metadata
-            .name
-            .eq_ignore_ascii_case(&expected.level_set_name);
-        let author_matches = set.metadata.author.eq_ignore_ascii_case(&expected.author);
-        if !name_matches || !author_matches {
+        let matches = level_set_identity_matches(
+            &set.metadata.name,
+            set.metadata.name_zh.as_deref(),
+            &set.metadata.author,
+            &expected.level_set_name,
+            expected.level_set_name_zh.as_deref(),
+            &expected.author,
+        );
+        if !matches {
             log::warn!(
                 "关卡集与仓库声明不一致：期望={} / {}，实际={} / {}",
                 expected.level_set_name,
@@ -1502,7 +2123,42 @@ pub fn install_level_set(
     }
 
     let levels_dir = game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR);
-    let destination = levels_dir.join(&set.dir_name);
+    let disabled_dir = game_root.join(DIYLEVEL_DIR).join(DISABLED_DIR);
+
+    /*
+     * 目标目录名可能已被**另一张**地图占用。
+     *
+     * 典型场景是两个不同地图的 `levelSetName` 与 `author` 完全相同（实测
+     * 「胡闹糕中」与「胡闹达学」都写 GAODA / GAODA）。目录名由集名派生，
+     * 后装的那个会把先装的当成旧版本回收掉 —— 界面上看起来只是「更新」，
+     * 实际丢了一张图。身份不同就必须换目录名，让两张真正并存。
+     */
+    let mut dir_name = set.dir_name.clone();
+    let mut destination = levels_dir.join(&dir_name);
+    if destination.is_dir() {
+        let existing = read_level_set(destination.clone(), dir_name.clone(), true);
+        let same_identity = existing.metadata.as_ref().is_some_and(|existing_meta| {
+            level_set_identity_matches(
+                &existing_meta.name,
+                existing_meta.name_zh.as_deref(),
+                &existing_meta.author,
+                &set.metadata.name,
+                set.metadata.name_zh.as_deref(),
+                &set.metadata.author,
+            )
+        });
+        if !same_identity {
+            let mut taken = collect_dir_names(&levels_dir);
+            taken.extend(collect_dir_names(&disabled_dir));
+            dir_name = allocate_dir_name(&dir_name, &set.metadata, &mut taken, false);
+            destination = levels_dir.join(&dir_name);
+            log::info!(
+                "目标目录已被另一张关卡集占用，改用新目录名并存：原目录={}，新目录={}",
+                set.dir_name,
+                dir_name
+            );
+        }
+    }
 
     /*
      * 已存在就回收 —— 在线更新、重复安装、本地更新三条路径都落在这一处。
@@ -1510,19 +2166,18 @@ pub fn install_level_set(
      * 同时检查 `disabled/` 下的同名目录：用户可能先停用了旧版本再装新的，
      * 那个旧目录仍然是他的数据，也该一并回收，否则启用时会撞名。
      */
-    let disabled_dir = game_root.join(DIYLEVEL_DIR).join(DISABLED_DIR);
     let mut recycled: Vec<String> = Vec::new();
-    for candidate in [destination.clone(), disabled_dir.join(&set.dir_name)] {
+    for candidate in [destination.clone(), disabled_dir.join(&dir_name)] {
         if !candidate.is_dir() {
             continue;
         }
-        let existing_meta = read_level_set(candidate.clone(), set.dir_name.clone(), true).metadata;
+        let existing_meta = read_level_set(candidate.clone(), dir_name.clone(), true).metadata;
         if let Some(record_id) = recycle_existing_level_set(
             recycle_root,
             manifests_dir,
             game_root,
             &candidate,
-            &set.dir_name,
+            &dir_name,
             existing_meta.as_ref(),
         )? {
             recycled.push(record_id);
@@ -1530,7 +2185,7 @@ pub fn install_level_set(
     }
 
     // 写入新内容；失败时把刚才回收的旧版本放回去
-    let write_result = write_level_set(zip_path, game_root, set);
+    let write_result = write_level_set(zip_path, game_root, &dir_name, set);
     if let Err(error) = write_result {
         log::error!("关卡集写入失败，尝试恢复已回收的旧版本：原因={}", error);
         for record_id in &recycled {
@@ -1559,7 +2214,7 @@ pub fn install_level_set(
         destination.display()
     );
     Ok(InstalledLevelSet {
-        dir_name: set.dir_name.clone(),
+        dir_name: dir_name.clone(),
         metadata: set.metadata.clone(),
         replaced: !recycled.is_empty(),
     })
@@ -1569,6 +2224,8 @@ pub fn install_level_set(
 #[derive(Debug, Clone)]
 pub struct ExpectedLevelSet {
     pub level_set_name: String,
+    /// 声明的中文名；老地图源不写这个字段，比对时退回英文集名 + 作者。
+    pub level_set_name_zh: Option<String>,
     pub author: String,
 }
 
@@ -1585,12 +2242,10 @@ pub struct InstalledLevelSet {
 fn write_level_set(
     zip_path: &Path,
     game_root: &Path,
+    dir_name: &str,
     set: &ImportedLevelSet,
 ) -> Result<(), String> {
-    let destination = game_root
-        .join(DIYLEVEL_DIR)
-        .join(LEVELS_DIR)
-        .join(&set.dir_name);
+    let destination = game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join(dir_name);
     fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
 
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
@@ -1952,6 +2607,7 @@ mod recycle_on_install_tests {
         // 仓库声明的是另一个关卡集：装进去会让绑定错位，后续更新检测全失效
         let wrong = ExpectedLevelSet {
             level_set_name: "SomethingElse".into(),
+            level_set_name_zh: None,
             author: "RW".into(),
         };
         let result = install_level_set(&recycle, &manifests, &zip, &game, Some(wrong));
@@ -1978,6 +2634,7 @@ mod recycle_on_install_tests {
 
         let expected = ExpectedLevelSet {
             level_set_name: "RW_LevelSet".into(),
+            level_set_name_zh: None,
             author: "RW".into(),
         };
         let installed =

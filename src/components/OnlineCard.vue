@@ -8,7 +8,7 @@
  * 主操作按钮，连 CSS 都是同一套 `--oc2-*` 变量。差异只在**数据从哪来**：
  *
  * - MOD 卡片的状态要对照已装插件的 GUID 与版本；
- * - 地图卡片的状态要对照本地关卡集的 `author + levelSetName`。
+ * - 地图卡片的状态要对照本地关卡集的 `author + levelSetName + levelSetNameZH`。
  *
  * 所以这里只做**展示**：所有状态、动作文案、按钮配色都由调用方算好后传入。
  * 组件不碰 `Repository` / `MapInfo` 任何一种模型 —— 一旦在这里 `instanceof`

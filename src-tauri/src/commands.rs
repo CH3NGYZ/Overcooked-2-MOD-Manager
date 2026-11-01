@@ -5531,12 +5531,24 @@ pub fn set_diy_level_enabled(
 // ===== 地图（DIYLevel 关卡集）管理 =====
 //
 // 与 MOD 管理是两套数据：MOD 靠 BepInPlugin 的 GUID 识别，关卡集靠 info 里的
-// `levelSetName + author`。界面复用同一套卡片样式，但扫描、开关、安装各自
+// `levelSetName + levelSetNameZH + author`。界面复用同一套卡片样式，但扫描、开关、安装各自
 // 独立 —— 硬把两者塞进一个模型会让每处调用都要判「这是 MOD 还是地图」。
 
 /// 把内部扫描结果转成 IPC 模型。
 fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
     let metadata = set.metadata;
+    /*
+     * `requires.txt` 是本地安装包自带的外部 runtime 要求（纯版本号）。
+     * 先在这里填成兜底依赖：`bind_map_relation_snapshot` 拿到线上声明时会覆盖它
+     * —— 线上优先，只有线上一条都没有时才用这份。没有 `requires.txt` 就保持
+     * 为空，界面也就不会显示关系卡片。
+     */
+    let fallback_relations: Vec<_> = set
+        .required_runtime
+        .as_deref()
+        .and_then(crate::level_sets::runtime_relation)
+        .into_iter()
+        .collect();
     LevelSetInfo {
         dir_name: set.dir_name,
         enabled: set.enabled,
@@ -5564,7 +5576,7 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
         // 绑定与依赖快照由 `bind_map_relation_snapshot` 补：它需要配置与快照，
         // 这里只负责把磁盘扫描结果转成模型
         map_id: None,
-        relations: Vec::new(),
+        relations: fallback_relations,
     }
 }
 
@@ -5628,8 +5640,9 @@ pub async fn get_level_sets(
 
 /// 给关卡集补上「绑定的地图仓库 id」与依赖快照。
 ///
-/// 身份匹配走 `level_sets::level_set_identity_matches`（`levelSetName + author`，
-/// 忽略大小写与首尾空白，空名不匹配）；关系优先用地图依赖快照（安装时/上次
+/// 身份匹配走 `level_sets::level_set_identity_matches`（`levelSetName +
+/// levelSetNameZH + author`，忽略大小写与首尾空白，空名不匹配；地图源没写
+/// 中文名时退回前两段）；关系优先用地图依赖快照（安装时/上次
 /// 同步固化的），没有快照才退回仓库当前声明 —— 地图源被删之后依赖表仍在，
 /// 源还在时以线上声明为准。
 fn bind_map_relation_snapshot(
@@ -5640,19 +5653,29 @@ fn bind_map_relation_snapshot(
     let Some(map) = config.map_repositories.iter().find(|map| {
         crate::level_sets::level_set_identity_matches(
             &info.name,
+            info.name_zh.as_deref(),
             &info.author,
             &map.level_set_name,
+            Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
             &map.author,
         )
     }) else {
         return;
     };
     info.map_id = Some(map.id.clone());
-    info.relations = snapshots
+    let relations = snapshots
         .entries
         .get(&map.id)
         .map(|entry| entry.relations.clone())
         .unwrap_or_else(|| map.relations.clone());
+    /*
+     * 线上一条声明都没有时，保留 `level_set_to_info` 用 `requires.txt` 填的兜底：
+     * 本地包自带的外部 runtime 要求，不该因为「绑定了地图源、但那个源没写
+     * relations」而消失。线上写了就一律以线上为准。
+     */
+    if !relations.is_empty() {
+        info.relations = relations;
+    }
 }
 
 /// 启用或停用一个关卡集（在 `levels/` 与 `disabled/` 之间移动目录）。
@@ -6100,6 +6123,7 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         username: map.username.clone(),
         repository: map.repository.clone(),
         level_set_name: map.level_set_name.clone(),
+        level_set_name_zh: map.level_set_name_zh.clone(),
         author: map.author.clone(),
         // 详情面板要标出「安装时会选哪个资产」，与后端自动匹配共用同一份规则
         asset_rules: map.asset_rules.clone(),
@@ -6403,6 +6427,7 @@ pub async fn install_map_release(
      */
     let expected = crate::level_sets::ExpectedLevelSet {
         level_set_name: map.level_set_name.clone(),
+        level_set_name_zh: Some(map.level_set_name_zh.clone()).filter(|value| !value.is_empty()),
         author: map.author.clone(),
     };
     let result = crate::level_sets::install_level_set(

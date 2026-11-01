@@ -53,7 +53,7 @@ import type { LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '..
  * 处于哪一档」，部分开启时两边都不选中才是真实状态。
  *
  * 数据模型仍然完全不同：MOD 是 BepInEx 插件（身份是 GUID），地图是
- * `levels/` 下的一个目录（身份是 `levelSetName + author`），所以没有把地图
+ * `levels/` 下的一个目录（身份是 `levelSetName + levelSetNameZH + author`），所以没有把地图
  * 塞进 `InstalledMod`。
  *
  * ## 数据来源与刷新状态

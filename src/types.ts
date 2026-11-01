@@ -231,7 +231,7 @@ export interface LevelSetInfo {
   /** 解析失败的原因（tag）；成功时无此字段。 */
   error?: string | null
   /**
-   * 绑定的地图仓库 id（按 `level_set_name + author` 身份匹配）。
+   * 绑定的地图仓库 id（按 `level_set_name + level_set_name_zh + author` 身份匹配）。
    *
    * 后端从配置里算出来：前端本来要自己 `mapForLevelSet` 一遍，但「这个集
    * 有没有线上条目」在依赖表、删除确认、跳转三处都要用，交给后端一次算清
@@ -494,7 +494,7 @@ export interface RequiredFramework {
 /**
  * 一个地图仓库（地图下载页的展示单元）。
  *
- * 与 `Repository` 平行但不同模型：绑定靠 `level_set_name + author`，
+ * 与 `Repository` 平行但不同模型：绑定靠 `level_set_name + level_set_name_zh + author`，
  * 不是 `plugin_guid`。共用的是卡片外观与下载流水线。
  */
 export interface MapInfo {
@@ -508,6 +508,14 @@ export interface MapInfo {
   repository: string
   /** 绑定的本地关卡集名（info 里的 levelSetName）。 */
   level_set_name: string
+  /**
+   * 绑定的本地中文名（info 里的 levelSetNameZH），可选。
+   *
+   * 英文集名与作者都可能撞车（实测「胡闹糕中」与「胡闹达学」是同一位作者的
+   * 两张图，都写 GAODA / GAODA），判「这张图装没装、装的是哪一版」必须一起看。
+   * 老地图源不写这个字段，此时退回前两者比较。
+   */
+  level_set_name_zh?: string
   /** 绑定的本地作者（info 里的 author）。 */
   author: string
   note?: string

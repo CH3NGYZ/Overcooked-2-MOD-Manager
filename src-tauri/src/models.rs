@@ -1162,7 +1162,7 @@ pub struct RepositoryExport {
 /// 与 `RepositoryConfig` 对称但**刻意不合并**：
 ///
 /// - MOD 仓库绑定本地插件靠 `plugin_guid`（DLL 内嵌元数据）；
-/// - 地图仓库绑定本地关卡集靠 `author + level_set_name`（info 里的字段）。
+/// - 地图仓库绑定本地关卡集靠 `author + level_set_name + level_set_name_zh`（info 里的字段）。
 ///
 /// 两者字段几乎没有交集（GUID / 产品名 / 关系表 vs 关卡集名 / 作者），
 /// 合并后每个使用点都要判断「这是哪种」。共用的是源树、Release 刷新与下载
@@ -1208,6 +1208,14 @@ pub struct MapRepositoryConfig {
     /// `MD5(baseUID + version)`，每发一版就变。
     #[serde(default)]
     pub level_set_name: String,
+    /// 本地关卡集的 `levelSetNameZH`（info 里的中文名），可选。
+    ///
+    /// 英文集名与作者都相同的两张地图只靠前两者分不开（实测「胡闹糕中」与
+    /// 「胡闹达学」是同一个作者的两张图，都写 `GAODA / GAODA`），中文名是
+    /// 唯一能区分、又不随版本变化的字段。老源不写它时退回前两者比较，
+    /// 行为与加入该字段之前完全一致。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub level_set_name_zh: String,
     /// 本地关卡集的 `author`（info 里的作者，官方导出常为空）。
     #[serde(default)]
     pub author: String,
@@ -1575,6 +1583,12 @@ pub struct MapInfo {
     pub repository: String,
     /// 绑定的本地关卡集名（info 里的 `levelSetName`）。
     pub level_set_name: String,
+    /// 绑定的本地中文名（info 里的 `levelSetNameZH`），可选。
+    ///
+    /// 英文集名与作者都相同的两张地图靠前两者分不开（实测「胡闹糕中」与
+    /// 「胡闹达学」都写 GAODA / GAODA），前端判「已安装 / 有新版」时必须一起看。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub level_set_name_zh: String,
     /// 绑定的本地作者（info 里的 `author`）。
     pub author: String,
     /// 下载资产规则（与 `RepositoryConfig.asset_rules` 同语义）。

@@ -13,7 +13,7 @@
 //!
 //! | | MOD 仓库 | 地图仓库 |
 //! |---|---|---|
-//! | 绑定本地 | `plugin_guid` 等 DLL 内嵌元数据 | `author + level_set_name` |
+//! | 绑定本地 | `plugin_guid` 等 DLL 内嵌元数据 | `author + level_set_name + level_set_name_zh` |
 //! | 安装单元 | MOD 包（可含多个 DLL） | 关卡集目录（恰好一个） |
 //! | 关系语义 | 插件依赖 | 框架依赖（DIYLevel / Web Runtime） |
 //!
@@ -148,16 +148,29 @@ fn fold_i18n_mirror(mirror: &mut String, table: &std::collections::BTreeMap<Stri
     }
 }
 
-/// 地图的身份键：`author + levelSetName`。
+/// 地图的身份键：`author + levelSetName`，写了中文名时再加上它。
 ///
 /// 与本地绑定的判定**必须**是同一个函数，否则「文档里去重用的键」和
 /// 「安装时比对的键」会分叉，表现为「文档里不重复，装的时候却说重复」。
+///
+/// 中文名只在**填写了**的时候参与：老源都没有这个字段，此时拼出的字符串与
+/// 旧版逐字节相同，去重结果与 `map_repository_id` 派生的 ID 都不变。
 pub fn map_identity(entry: &MapRepositoryConfig) -> String {
-    format!(
-        "{}\u{1}{}",
-        entry.author.trim().to_lowercase(),
-        entry.level_set_name.trim().to_lowercase()
-    )
+    let name_zh = entry.level_set_name_zh.trim().to_lowercase();
+    if name_zh.is_empty() {
+        format!(
+            "{}\u{1}{}",
+            entry.author.trim().to_lowercase(),
+            entry.level_set_name.trim().to_lowercase()
+        )
+    } else {
+        format!(
+            "{}\u{1}{}\u{1}{}",
+            entry.author.trim().to_lowercase(),
+            entry.level_set_name.trim().to_lowercase(),
+            name_zh
+        )
+    }
 }
 
 /// 单条地图的必填校验。
@@ -590,12 +603,40 @@ pub(crate) fn map_repository_id(source_id: &str, map: &MapRepositoryConfig) -> S
             .trim_matches('-')
             .to_string()
     };
-    format!(
+    let mut id = format!(
         "{}::{}::{}",
         slug(source_id),
         slug(&map.author),
         slug(&map.level_set_name)
-    )
+    );
+    /*
+     * 中文名只有填写时才追加一段：老源没有这个字段，拼出的 ID 与旧版逐字节
+     * 相同，已安装地图的绑定与缓存不会因为升级到这个版本而失联。
+     *
+     * 纯中文名 `slug` 之后会变成空串，那样两张同集名的地图仍会派生同一个
+     * ID，所以空 slug 时改用内容哈希 —— 只要中文名不同，ID 就不同。
+     */
+    let name_zh = map.level_set_name_zh.trim();
+    if !name_zh.is_empty() {
+        let slug_zh = slug(name_zh);
+        id.push_str("::");
+        if slug_zh.is_empty() {
+            id.push_str(&format!("~{}", short_hash(name_zh)));
+        } else {
+            id.push_str(&slug_zh);
+        }
+    }
+    id
+}
+
+/// 纯中文名经 `slug` 之后会变成空串，用内容哈希区分不同中文名。
+fn short_hash(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(value.as_bytes());
+    digest[..4]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]

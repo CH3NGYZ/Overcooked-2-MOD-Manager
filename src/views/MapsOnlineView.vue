@@ -329,7 +329,8 @@ function statusOf(map: MapInfo): { key: MapCardState; text: string; tone: TagTon
  * 本地是否已装这张图。
  *
  * 判据是「地图声明的关卡集身份能在本地找到」——同一个 `level_set_name +
- * author`。只有存在本地副本时，卡片状态才会落到「已安装 / 有更新 / 最新版」，
+ * level_set_name_zh + author`。只有存在本地副本时，卡片状态才会落到
+ * 「已安装 / 有更新 / 最新版」，
  * 也才有本地卡片可以跳过去。
  */
 function hasLocalMap(map: MapInfo): boolean {
@@ -486,7 +487,7 @@ const detailAuthor = computed(() => detailMap.value?.author ?? '')
  * 面板「版本绑定」位显示的身份。
  *
  * MOD 那一列放的是仓库坐标（`owner/repository`），地图没有「绑定到哪个仓库」
- * 这回事，对应的身份就是关卡集的 `levelSetName · author` —— 管理处卡片、
+ * 这回事，对应的身份就是关卡集的 `levelSetName · levelSetNameZH · author` —— 管理处卡片、
  * 展开详情和这里用同一份身份，位置也与 MOD 的版本绑定列对齐。
  */
 const detailBindingValue = computed(() => {

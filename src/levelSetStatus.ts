@@ -58,6 +58,8 @@ export interface MapVersionRef {
   tag: string
   /** 关卡集名（与 info 的 `levelSetName` 比对）。 */
   levelSetName: string
+  /** 中文名（与 info 的 `levelSetNameZH` 比对）；老地图源没有这个字段。 */
+  nameZh?: string
   /** 作者（与 info 的 `author` 比对）。 */
   author: string
 }
@@ -65,17 +67,27 @@ export interface MapVersionRef {
 /**
  * 判断两个关卡集是否是「同一个地图」。
  *
- * 用 `author + levelSetName`，**不用 uid**：uid 是 `MD5(baseUID + version)`，
- * 每发一版就变，拿它当身份会把每次更新都认成新地图。
+ * 身份是 `author + levelSetName`，填了中文名（`levelSetNameZH`）时再加一段，
+ * **不用 uid**：uid 是 `MD5(baseUID + version)`，每发一版就变，拿它当身份
+ * 会把每次更新都认成新地图。
+ *
+ * 必须带中文名，否则同一个作者的两张不同地图会互相认领 —— 实测「胡闹糕中」
+ * 与「胡闹达学」在 info 里都写 `GAODA / GAODA`，只靠英文集名与作者分不开。
+ * 中文名**两边都有才比较**：老地图源不写这个字段，此时退回前两段，行为与
+ * 加入中文名之前完全一致。
  *
  * 比较忽略大小写与首尾空白 —— 作者在不同工具里导出时大小写常不一致。
  */
 export function isSameLevelSet(
-  left: { name: string; author: string },
-  right: { name: string; author: string },
+  left: { name: string; author: string; nameZh?: string | null },
+  right: { name: string; author: string; nameZh?: string | null },
 ): boolean {
   const normalize = (value: string) => value.trim().toLowerCase()
-  return normalize(left.name) === normalize(right.name) && normalize(left.author) === normalize(right.author)
+  if (normalize(left.name) !== normalize(right.name)) return false
+  if (normalize(left.author) !== normalize(right.author)) return false
+  const leftZh = normalize(left.nameZh ?? '')
+  const rightZh = normalize(right.nameZh ?? '')
+  return !leftZh || !rightZh || leftZh === rightZh
 }
 
 /**
@@ -130,11 +142,15 @@ export const LEVEL_SET_STATE_TONES: Record<LevelSetState, LevelSetTone> = {
  * 的行为保持一致。
  */
 export function mapVersionForLevelSet(
-  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  set: Pick<LevelSetInfo, 'name' | 'author'> & { name_zh?: string | null },
   refs: readonly MapVersionRef[],
 ): MapVersionRef | undefined {
   if (!set.name.trim()) return undefined
-  return refs.find((ref) => isSameLevelSet(set, { name: ref.levelSetName, author: ref.author }))
+  return refs.find((ref) =>
+    isSameLevelSet(
+      { name: set.name, author: set.author, nameZh: set.name_zh },
+      { name: ref.levelSetName, author: ref.author, nameZh: ref.nameZh },
+    ))
 }
 
 /**
@@ -147,26 +163,36 @@ export function mapVersionForLevelSet(
 export function mapVersionRefs(maps: readonly MapInfo[]): MapVersionRef[] {
   return maps
     .filter((map) => !!map.latest_tag)
-    .map((map) => ({
-      tag: map.latest_tag as string,
-      levelSetName: map.level_set_name,
-      author: map.author,
-    }))
+    .map((map) => {
+      const ref: MapVersionRef = {
+        tag: map.latest_tag as string,
+        levelSetName: map.level_set_name,
+        author: map.author,
+      }
+      // 老地图源没有中文名时**不塞空字段**：下游按「两边都有才比较」判定，
+      // 塞个 undefined 只会让相等性比较与快照多出一层噪音
+      if (map.level_set_name_zh) ref.nameZh = map.level_set_name_zh
+      return ref
+    })
 }
 
 /**
  * 找本地关卡集绑定的地图源条目。
  *
- * 身份是 `level_set_name + author`（与 `mapVersionForLevelSet` 同一规则）。
+ * 身份是 `level_set_name + level_set_name_zh + author`（与
+ * `mapVersionForLevelSet` 同一规则）。
  * 集名为空（解析失败）时不做匹配：空字符串会与所有空名条目串在一起。
  */
 export function mapForLevelSet(
-  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  set: Pick<LevelSetInfo, 'name' | 'author'> & { name_zh?: string | null },
   maps: readonly MapInfo[],
 ): MapInfo | undefined {
   if (!set.name.trim()) return undefined
   return maps.find((map) =>
-    isSameLevelSet(set, { name: map.level_set_name, author: map.author }))
+    isSameLevelSet(
+      { name: set.name, author: set.author, nameZh: set.name_zh },
+      { name: map.level_set_name, author: map.author, nameZh: map.level_set_name_zh },
+    ))
 }
 
 /**
@@ -177,12 +203,15 @@ export function mapForLevelSet(
  * 地图声明的地图名为空时同样不匹配（解析失败的地图不能认领任意空名集）。
  */
 export function levelSetForMap(
-  map: Pick<MapInfo, 'level_set_name' | 'author'>,
+  map: Pick<MapInfo, 'level_set_name' | 'author'> & { level_set_name_zh?: string },
   sets: readonly LevelSetInfo[],
 ): LevelSetInfo | undefined {
   if (!map.level_set_name.trim()) return undefined
   return sets.find((set) =>
-    isSameLevelSet({ name: map.level_set_name, author: map.author }, set))
+    isSameLevelSet(
+      { name: map.level_set_name, author: map.author, nameZh: map.level_set_name_zh },
+      { name: set.name, author: set.author, nameZh: set.name_zh },
+    ))
 }
 
 /**

@@ -80,12 +80,30 @@ pub enum ParseError {
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 返回 tag，由前端翻译；冒号后是技术细节（原样展示，便于排查）
+        /*
+         * 返回 tag，由前端翻译。
+         *
+         * 技术细节必须走 `?reason=` 查询串，不能像以前那样拼成
+         * `assetBundle.corrupt:<细节>`：前端只认查询串形态，冒号后面那串会被
+         * 当成 tag 的一部分去查表，查不到就把整串原样显示给用户
+         * （实测界面里出现过 `assetBundle.corrupt:lzma: lzma data error`）。
+         */
         match self {
             Self::NotABundle => write!(f, "assetBundle.notABundle"),
-            Self::Corrupt(reason) => write!(f, "assetBundle.corrupt:{reason}"),
+            Self::Corrupt(reason) => write!(
+                f,
+                "{}",
+                crate::locale_tag::with_params("assetBundle.corrupt", &[("reason", reason)])
+            ),
             Self::MissingLevelSetInfo => write!(f, "assetBundle.missingLevelSetInfo"),
-            Self::Io(error) => write!(f, "assetBundle.ioFailed:{error}"),
+            Self::Io(error) => write!(
+                f,
+                "{}",
+                crate::locale_tag::with_params(
+                    "assetBundle.ioFailed",
+                    &[("reason", &error.to_string())]
+                )
+            ),
         }
     }
 }

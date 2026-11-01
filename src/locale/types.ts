@@ -67,6 +67,8 @@ export const DOMAINS = [
   'modConfig',   // MOD 配置文件编辑
   'modPreview',  // MOD 预览
   'levelSet',    // DIYLevel 关卡集（地图）的扫描、开关与导入
+  'assetBundle', // 关卡集 info 的 AssetBundle 解析（地图信息读不出来）
+  'mapSource',   // 地图源文档校验（maps.toml 与子源）
   'backup',      // 框架备份
   'archive',     // ZIP 解压与安装
   'download',    // 下载

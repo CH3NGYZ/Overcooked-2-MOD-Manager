@@ -373,7 +373,11 @@ fn info_cache_key(info_path: &Path) -> PathBuf {
 const INFO_DISK_CACHE_DIR: &str = "level-info";
 
 /// 磁盘缓存格式版本。解析逻辑或字段有变动时递增，旧文件自然失效。
-const INFO_DISK_CACHE_SCHEMA: u32 = 1;
+///
+/// 2：LZMA 解码从纯 Rust 的 `lzma-rs` 换成 liblzma。换之前 liblzma 的头部
+/// 参数写错，一批 `info` 解析失败并把**失败结果**写进了缓存；失败结果同样
+/// 按内容哈希命中，不递增版本的话修好的实现也会一直读到那份旧的失败。
+const INFO_DISK_CACHE_SCHEMA: u32 = 2;
 
 /// 磁盘缓存条目。
 #[derive(serde::Serialize, serde::Deserialize)]

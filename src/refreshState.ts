@@ -93,6 +93,20 @@ export interface RefreshState {
   refreshingSources: Ref<Record<string, boolean>>
   /** 整批刷新进行中。 */
   refreshingAll: Ref<boolean>
+  /**
+   * 条目集合正在被清空/重建：这段空窗期里**条目级状态无法表达进度**。
+   *
+   * 整批刷新先清空条目（仓库源缓存 / 地图列表），再逐个填回来。清空之后
+   * 条目本身就不存在了，`refreshing` / `queued` / `refreshingSources` 一个都
+   * 匹配不上 —— 卡片此时只有两种错误选择：显示马上会被推翻的旧结论，或者
+   * 退化成「未绑定」。所以这段窗口由这个标志统一兜住。
+   *
+   * **它不能等同于 `refreshingAll`**：后者覆盖整批（源文档 → 社区发现 →
+   * 全部条目），要一直亮到按钮恢复可点为止；而条目一填回来，条目级状态就是
+   * 准确的，这时再拿批次标志盖住所有条目，等于把「刷一个回来一个」压成
+   * 「整批一起回来」—— 用户看到所有卡片一起转、一起停，正是要避免的。
+   */
+  entryStateUnavailable: Ref<boolean>
   /** 「检查更新」批次进行中。 */
   checkingBound: Ref<boolean>
   /** 最近一次批次结果（单条刷新不覆盖）。 */
@@ -107,6 +121,8 @@ export interface RefreshState {
   setQueuedFlag: (id: string, value: boolean) => void
   /** 写源级标志。 */
   setSourceFlag: (id: string, value: boolean) => void
+  /** 开关「条目集合不可用」（批次实现在清空条目到填回之间自己调）。 */
+  setEntryStateUnavailable: (value: boolean) => void
   /** 打开某个批次标志（`full`/`bound` 有意义，其余是空操作）。 */
   beginBatch: (trigger: RefreshTrigger) => void
   /** 关闭某个批次标志。 */
@@ -143,6 +159,7 @@ export function createRefreshState(concurrency: number): RefreshState {
   const queued = ref<Record<string, boolean>>({})
   const refreshingSources = ref<Record<string, boolean>>({})
   const refreshingAll = ref(false)
+  const entryStateUnavailable = ref(false)
   const checkingBound = ref(false)
   const outcome = ref<RefreshOutcome | null>(null)
 
@@ -266,6 +283,7 @@ export function createRefreshState(concurrency: number): RefreshState {
     queued,
     refreshingSources,
     refreshingAll,
+    entryStateUnavailable,
     checkingBound,
     outcome,
     inFlight,
@@ -273,6 +291,7 @@ export function createRefreshState(concurrency: number): RefreshState {
     setItemFlag: (id, value) => writeFlag(refreshing, id, value),
     setQueuedFlag: (id, value) => writeFlag(queued, id, value),
     setSourceFlag: (id, value) => writeFlag(refreshingSources, id, value),
+    setEntryStateUnavailable: (value) => { entryStateUnavailable.value = value },
     beginBatch,
     endBatch,
     runSource,

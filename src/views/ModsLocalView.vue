@@ -107,11 +107,13 @@ const { remove } = useModRemoval({
  * 刷新状态：与 MOD 安装页共用同一份模块级状态。
  *
  * `refreshing` 按仓库、`sourceRefreshing` 按仓库源、`refreshingAll` 是整批
- * 「刷新全部」、`checkingBound` 是本页「检查更新」的批次态。谁发起刷新都改
- * 同一份状态，所以切页往返不丢，两页的标签会同时显示「刷新中」。
+ * 「刷新全部」（门控用，不参与卡片判定）、`entryStateUnavailable` 是仓库列表
+ * 正在清空重建（卡片判定唯一需要的批次兜底）、`checkingBound` 是本页「检查更新」
+ * 的批次态。谁发起刷新都改同一份状态，所以切页往返不丢，两页的标签会同时显示「刷新中」。
  */
 const {
-  refreshing, queued, sourceRefreshing, refreshingAll, checkingBound, outcome,
+  refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable,
+  checkingBound, outcome,
   refreshOne, refreshBoundRepositories,
 } = useRepositoryRefresh()
 
@@ -231,7 +233,7 @@ const refreshSnapshot = computed<RuntimeRefreshState>(() => ({
   refreshing: refreshing.value,
   queued: queued.value,
   sourceRefreshing: sourceRefreshing.value,
-  refreshingAll: refreshingAll.value,
+  entryStateUnavailable: entryStateUnavailable.value,
 }))
 
 /**

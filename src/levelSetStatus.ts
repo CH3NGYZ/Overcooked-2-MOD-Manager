@@ -342,12 +342,15 @@ export interface LevelSetCardTag {
  */
 export interface LevelSetRefreshingHint {
   /**
-   * 整源刷新进行中（下载页的「刷新全部」）。
+   * 地图列表正在清空/重建（整源刷新的源树阶段）。
    *
    * 它会把共享的地图列表清空再重建，这段时间所有关卡集都查不到绑定 ——
    * 只看 id 集合的话卡片会集体退化成「未绑定」，比过期结论更误导。
+   *
+   * 只该覆盖源树阶段：列表填回来之后条目级状态就是准确的，再用整源标志
+   * 盖住所有卡片，逐个返回的结果会被压成整批一起返回。
    */
-  all?: boolean
+  entryStateUnavailable?: boolean
   /** 正在重抓 Release 的地图 id。 */
   maps: ReadonlySet<string>
   /**
@@ -406,7 +409,7 @@ export function levelSetCardTags(
 
   const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
   const refreshingNow = !!refreshing && (
-    refreshing.all === true
+    refreshing.entryStateUnavailable === true
     || (!!bound && (
       refreshing.maps.has(bound.id)
       || !!refreshing.queued?.has(bound.id)

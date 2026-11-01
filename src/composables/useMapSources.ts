@@ -52,6 +52,15 @@ const refreshingSources = state.refreshingSources
 /** 整源刷新进行中（浮动按钮的转圈与整页遮罩都用它）。 */
 const refreshingAll = state.refreshingAll
 /**
+ * 列表正在清空/重建（整源刷新的源树阶段）。
+ *
+ * 卡片标签只认这个、不认 `refreshingAll`：`refreshAll` 会把共享的 `maps`
+ * 清空再重建，那段时间所有关卡集都查不到绑定，只能靠它兜住；而列表一填回来
+ * （`refreshReleases` 之前）就必须关掉，让条目级状态逐个接管 —— 否则整源
+ * 标志会把「刷一个回来一个」压成「整批一起回来」。
+ */
+const entryStateUnavailable = state.entryStateUnavailable
+/**
  * 「检查更新」批次进行中（只刷新本地已装地图绑定的那几张）。
  *
  * 与 `refreshingAll` 分开：整源刷新会清空列表并让下载页整页进入加载态，
@@ -273,6 +282,11 @@ async function refreshAll(
 ) {
   if (refreshingAll.value) return
   state.beginBatch('full')
+  /*
+   * 列表清空到源树填回来之间，按地图 id 的状态一个都匹配不上：这段空窗期
+   * 由 `entryStateUnavailable` 兜住卡片标签，Release 阶段开始前必须关掉。
+   */
+  state.setEntryStateUnavailable(true)
   const previous = maps.value
   maps.value = []
   try {
@@ -288,6 +302,11 @@ async function refreshAll(
      * trigger 传 `single`：整批的结果由下面统一写一条 `full`，
      * 否则这里会先把「上次检查」覆盖成半批数据（源树阶段的失败还没并进来）。
      */
+    /*
+     * 列表已填回来（源树失败时还原成旧列表，条目级状态同样可用），
+     * 从这里交给每条地图自己的状态 —— 保留整源标志会把所有卡片一起按住。
+     */
+    state.setEntryStateUnavailable(false)
     const result = await refreshReleases(maps.value, {
       trigger: 'single',
       priorityIds: options.priorityIds,
@@ -306,6 +325,7 @@ async function refreshAll(
       finishedAt: Date.now(),
     })
   } finally {
+    state.setEntryStateUnavailable(false)
     state.endBatch('full')
   }
 }
@@ -320,6 +340,7 @@ export function useMapSources() {
     refreshingSources,
     installing,
     refreshingAll,
+    entryStateUnavailable,
     checkingBound,
     anyRefreshing,
     outcome,

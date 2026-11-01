@@ -103,7 +103,7 @@ const sets = ref<LevelSetInfo[]>([])
  * 刷新态同理：`checkingBound` 记的是共享引擎的批次，页面局部 ref 熬不过切页。
  */
 const {
-  maps, refreshing, queued, refreshingSources, refreshingAll, checkingBound, outcome,
+  maps, refreshing, queued, refreshingSources, entryStateUnavailable, checkingBound, outcome,
   loadMaps, refreshBoundMaps,
 } = useMapSources()
 const loading = ref(true)
@@ -367,15 +367,17 @@ function authorNamesOf(set: LevelSetInfo) {
  * 刷新完成前「有更新 / 最新版」都是马上会被推翻的结论，用户点完「检查更新」
  * 却还看到刷新前的标签会以为按钮没生效。
  *
- * `all` 是整源刷新（下载页的「刷新全部」）那一档：它会把共享的 `maps` 清空
- * 再重建，这段时间**所有**关卡集都找不到绑定，只传 id 集合的话卡片会集体
- * 退化成「未绑定」——那比过期结论更误导。整批刷期间一律显示「刷新中」。
+ * `entryStateUnavailable` 是列表清空/重建（下载页「刷新全部」的源树阶段）
+ * 那一档：它会把共享的 `maps` 清空再重建，这段时间**所有**关卡集都找不到
+ * 绑定，只传 id 集合的话卡片会集体退化成「未绑定」——那比过期结论更误导。
+ * 列表填回来之后就必须关掉它，否则整源标志会把每张卡按住，逐个返回的结果
+ * 被压成整批一起返回。
  *
  * 每次重算都新建两个 Set：一次刷新最多几十个 id，且只在 `refreshing` /
- * `refreshingSources` / `refreshingAll` 变化（刷新的开始与结束）时重算，成本可忽略。
+ * `refreshingSources` / `entryStateUnavailable` 变化（刷新的开始与结束）时重算，成本可忽略。
  */
 const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
-  all: refreshingAll.value,
+  entryStateUnavailable: entryStateUnavailable.value,
   maps: new Set(Object.keys(refreshing.value)),
   queued: new Set(Object.keys(queued.value)),
   sources: new Set(Object.keys(refreshingSources.value)),

@@ -26,7 +26,15 @@ export interface RuntimeRefreshState {
   /** 排队中（已在这一批里、还没轮到）。 */
   queued: Record<string, boolean>
   sourceRefreshing: Record<string, boolean>
-  refreshingAll: boolean
+  /**
+   * 条目集合正在清空/重建（整批刷新的源文档与社区发现阶段）。
+   *
+   * 只有这段空窗期该由批次兜底：仓库列表被清掉后按仓库 id 的状态全都匹配
+   * 不上，卡片否则只能显示一个马上会过期的旧结论。**不能拿「整批刷新进行中」
+   * 代替它**——整批标志亮到 Release 阶段结束，用它判等于把每张卡都按住，
+   * 逐个返回的结果会被压成整批一起返回。
+   */
+  entryStateUnavailable: boolean
 }
 
 /**
@@ -36,9 +44,9 @@ export interface RuntimeRefreshState {
  *   · 该仓库自己正在抓 Release（`refreshing`）；
  *   · 它已经在这一批里排队（`queued`）—— 并发只有 4，20 个仓库里 16 个在排队，
  *     排队的不显示「刷新中」会让用户以为「只有那四个在查」；
- *   · 整批「刷新全部」正在进行（`refreshingAll`）；
- *   · 它所属的仓库源正在重拉文档（`sourceRefreshing`）—— 源文档阶段还没有
- *     按仓库发的 Release 请求，只有源级状态能反映进度。
+ *   · 仓库列表正在被清空重建（`entryStateUnavailable`）—— 整批刷新的源文档
+ *     阶段列表是空的，唯一能表达「正在刷新」的就是它；
+ *   · 它所属的仓库源正在重拉文档（`sourceRefreshing`）。
  *
  * 仓库文件（RAW）模式恒为 false：它没有版本可比较，刷新也不该把
  * 「已安装」改成「刷新中」。
@@ -55,7 +63,7 @@ export function repositoryRefreshing(
    */
   const refreshing = state.refreshing ?? {}
   const queued = state.queued ?? {}
-  if (refreshing[repo.id] || queued[repo.id] || state.refreshingAll) return true
+  if (refreshing[repo.id] || queued[repo.id] || state.entryStateUnavailable) return true
   return !!(repo.source_id && (state.sourceRefreshing ?? {})[repo.source_id])
 }
 

@@ -56,6 +56,16 @@ const sourceRefreshing = state.refreshingSources
 /** 整批刷新进行中（只有「刷新全部」这一条入口会置真）。 */
 const refreshingAll = state.refreshingAll
 /**
+ * 条目集合正在清空/重建（「刷新全部」的源文档与社区发现阶段）。
+ *
+ * 卡片标签只认这个、不认 `refreshingAll`：整批刷新会 `clearRepositorySourceCache`
+ * 把仓库列表清空，那段时间按仓库 id 的状态一个都匹配不上，只能靠它兜住；
+ * 而列表一填回来（`reloadConfig` 之后、Release 阶段开始前）就必须关掉，
+ * 让条目级的 `refreshing` / `queued` 逐个接管 —— 否则整批标志会把「刷一个
+ * 回来一个」压成「整批一起回来」。
+ */
+const entryStateUnavailable = state.entryStateUnavailable
+/**
  * 「检查更新」批次进行中（只刷新与本地已安装条目绑定的仓库）。
  *
  * 与 `refreshingAll` 分开是因为两者的**副作用范围**不同：
@@ -471,6 +481,11 @@ async function discoverCommunityRepositories(
 async function refreshEverything(): Promise<string[]> {
   if (refreshingAll.value) return []
   state.beginBatch('full')
+  /*
+   * 从清空源缓存到列表填回来，按仓库 id 的状态一个都匹配不上：这段空窗期
+   * 由 `entryStateUnavailable` 兜住卡片标签。Release 阶段开始前必须关掉。
+   */
+  state.setEntryStateUnavailable(true)
   lastErrors.value = []
   try {
     const { load, reloadConfig, applyConfigSnapshot, repositories, sources, region, platform } = store()
@@ -560,6 +575,14 @@ async function refreshEverything(): Promise<string[]> {
      * 否则这里会先把「上次检查」覆盖成半批数据（源文档与社区阶段的错误还没并进来）。
      * 已安装优先已下沉到 `runRepositoryBatch`，不必在这里再排一次。
      */
+    /*
+     * 仓库列表已由 `reloadConfig` 填回来，条目级状态从这里接管。
+     *
+     * 关掉批次兜底是「按仓库粒度返回」的前提：留着它，整批标志会把每张卡
+     * 都按在「刷新中」，直到最后一个仓库刷完才一起松开 —— 表现就是用户报的
+     * 「结果一批一起回来」。
+     */
+    state.setEntryStateUnavailable(false)
     const release = await runRepositoryBatch(available, { trigger: 'single' })
     /*
      * 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
@@ -587,6 +610,7 @@ async function refreshEverything(): Promise<string[]> {
     })
     return lastErrors.value
   } finally {
+    state.setEntryStateUnavailable(false)
     state.endBatch('full')
   }
 }
@@ -620,7 +644,8 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 
 export function useRepositoryRefresh() {
   return {
-    refreshing, queued, sourceRefreshing, refreshingAll, checkingBound, anyRefreshing, repositoriesLoading,
+    refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable,
+    checkingBound, anyRefreshing, repositoriesLoading,
     outcome, lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshBoundRepositories,
     refreshSourceChain, refreshSourceDocuments, refreshEverything,

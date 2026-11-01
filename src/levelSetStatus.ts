@@ -350,6 +350,13 @@ export interface LevelSetRefreshingHint {
   all?: boolean
   /** 正在重抓 Release 的地图 id。 */
   maps: ReadonlySet<string>
+  /**
+   * 这一批里排队、还没轮到重抓的地图 id。
+   *
+   * 与 `maps` 同等对待：并发只有 4，排队的不显示「刷新中」会让人以为
+   * 「只有那几张在查」。图标转不转另算，那是视图层的事。
+   */
+  queued?: ReadonlySet<string>
   /** 正在重拉文档的地图源 id。 */
   sources: ReadonlySet<string>
 }
@@ -402,6 +409,7 @@ export function levelSetCardTags(
     refreshing.all === true
     || (!!bound && (
       refreshing.maps.has(bound.id)
+      || !!refreshing.queued?.has(bound.id)
       || (!!bound.source_id && refreshing.sources.has(bound.source_id))
     ))
   )

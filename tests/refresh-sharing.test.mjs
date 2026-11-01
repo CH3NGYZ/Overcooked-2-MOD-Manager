@@ -35,10 +35,11 @@ const levelsView = read('src/views/LevelsView.vue')
 const mapsOnline = read('src/views/MapsOnlineView.vue')
 const modStatusTags = read('src/components/ModStatusTags.vue')
 const levelSetStatus = read('src/levelSetStatus.ts')
+const modRuntimeStatusSource = read('src/modRuntimeStatus.ts')
 
 test('刷新状态机只有一处实现，两个域都用它', () => {
   // 状态机自己：条目级 / 源级 / 批次级 + 并发 + 结果
-  for (const symbol of ['refreshing', 'refreshingSources', 'refreshingAll', 'checkingBound', 'outcome']) {
+  for (const symbol of ['refreshing', 'queued', 'refreshingSources', 'refreshingAll', 'checkingBound', 'outcome']) {
     assert.match(refreshState, new RegExp(`\\b${symbol}\\b`), `状态机缺 ${symbol}`)
   }
   assert.match(refreshState, /mapWithConcurrency\(/, '并发上限必须走共享限并发工具')
@@ -67,6 +68,21 @@ test('「刷一批带 Release 的条目」只有一处实现，两个域共用',
   ]) {
     assert.match(source, /refreshReleaseItem\(/, `${name} 的「刷一个条目」也要共用实现`)
   }
+})
+
+test('排队中也算「刷新中」：整批一开始所有目标都变灰', () => {
+  /*
+   * 并发只有 4，20 个仓库里 16 个在排队。只把「正在飞」当刷新中的话，
+   * 点一次检查更新只有 4 张卡变灰，用户会以为只查了四个。
+   */
+  assert.match(refreshState, /queued/, '状态机要有队列态')
+  assert.match(refreshState, /writeFlag\(queued/, 'batch 开始时整批入队')
+  // 两个域的「要不要显示刷新中」都要把排队算进去
+  assert.match(modRuntimeStatusSource, /state\.queued\[repo\.id\]/, 'MOD 侧排队也算刷新中')
+  assert.match(read('src/levelSetStatus.ts'), /refreshing\.queued\?\.has\(/, '地图侧排队也算刷新中')
+  // 页面把队列状态喂进判定
+  assert.match(modsLocal, /queued: queued\.value/)
+  assert.match(levelsView, /queued: new Set\(Object\.keys\(queued\.value\)\)/)
 })
 
 test('已安装优先下沉到批量实现，所有刷新入口自动生效', () => {

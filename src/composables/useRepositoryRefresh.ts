@@ -49,6 +49,8 @@ const REFRESH_CONCURRENCY = 4
 const state = createRefreshState(REFRESH_CONCURRENCY)
 /** 仓库 Release 正在刷新（按仓库 id）。 */
 const refreshing = state.refreshing
+/** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
+const queued = state.queued
 /** 源文档正在刷新（按源 id，含父源与子源）。 */
 const sourceRefreshing = state.refreshingSources
 /** 整批刷新进行中（只有「刷新全部」这一条入口会置真）。 */
@@ -599,7 +601,7 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 
 export function useRepositoryRefresh() {
   return {
-    refreshing, sourceRefreshing, refreshingAll, checkingBound, anyRefreshing, repositoriesLoading,
+    refreshing, queued, sourceRefreshing, refreshingAll, checkingBound, anyRefreshing, repositoriesLoading,
     outcome, lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshBoundRepositories,
     refreshSourceChain, refreshSourceDocuments, refreshEverything,

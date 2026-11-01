@@ -20,9 +20,11 @@ import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
  *   · 纯函数，Node 测试可以直接 import。
  */
 
-/** 刷新状态的只读快照（三个来源与引擎同名）。 */
+/** 刷新状态的只读快照（字段与引擎同名）。 */
 export interface RuntimeRefreshState {
   refreshing: Record<string, boolean>
+  /** 排队中（已在这一批里、还没轮到）。 */
+  queued: Record<string, boolean>
   sourceRefreshing: Record<string, boolean>
   refreshingAll: boolean
 }
@@ -32,6 +34,8 @@ export interface RuntimeRefreshState {
  *
  * 三处来源都要算上，漏一个就会出现「安装页在刷、管理页标签不动」：
  *   · 该仓库自己正在抓 Release（`refreshing`）；
+ *   · 它已经在这一批里排队（`queued`）—— 并发只有 4，20 个仓库里 16 个在排队，
+ *     排队的不显示「刷新中」会让用户以为「只有那四个在查」；
  *   · 整批「刷新全部」正在进行（`refreshingAll`）；
  *   · 它所属的仓库源正在重拉文档（`sourceRefreshing`）—— 源文档阶段还没有
  *     按仓库发的 Release 请求，只有源级状态能反映进度。
@@ -44,7 +48,7 @@ export function repositoryRefreshing(
   state: RuntimeRefreshState,
 ): boolean {
   if (!repo || repo.download_mode === 'repository_file') return false
-  if (state.refreshing[repo.id] || state.refreshingAll) return true
+  if (state.refreshing[repo.id] || state.queued[repo.id] || state.refreshingAll) return true
   return !!(repo.source_id && state.sourceRefreshing[repo.source_id])
 }
 

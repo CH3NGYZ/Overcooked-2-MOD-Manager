@@ -33,7 +33,7 @@ function mod(overrides = {}) {
   }
 }
 
-const idle = { refreshing: {}, sourceRefreshing: {}, refreshingAll: false }
+const idle = { refreshing: {}, queued: {}, sourceRefreshing: {}, refreshingAll: false }
 
 test('没有刷新时按缓存 Release 出结论', () => {
   const cold = runtimeModStatus(mod(), [mod()], [repo()], idle)
@@ -47,7 +47,7 @@ test('没有刷新时按缓存 Release 出结论', () => {
 })
 
 test('刷新中优先于缓存结论（否则点检查更新界面毫无反应）', () => {
-  const state = { refreshing: { r1: true }, sourceRefreshing: {}, refreshingAll: false }
+  const state = { refreshing: { r1: true }, queued: {}, sourceRefreshing: {}, refreshingAll: false }
   const result = runtimeModStatus(mod(), [mod()], [repo()], state)
   assert.deepEqual(result.mod.labels, ['refreshing'])
   assert.equal(result.refreshing, true)
@@ -55,23 +55,35 @@ test('刷新中优先于缓存结论（否则点检查更新界面毫无反应�
   assert.ok(!result.mod.labels.includes('latest'))
 })
 
+test('排队中（还没轮到）也算刷新中', () => {
+  /*
+   * 并发只有 4：20 个仓库里 16 个在排队。只把「正在飞」当刷新中的话，
+   * 用户点一次「检查更新」只会看到 4 张卡变灰，剩下 16 张还挂着旧结论，
+   * 看起来就像「只查了四个」。
+   */
+  const state = { refreshing: {}, queued: { r1: true }, sourceRefreshing: {}, refreshingAll: false }
+  const result = runtimeModStatus(mod(), [mod()], [repo()], state)
+  assert.deepEqual(result.mod.labels, ['refreshing'])
+  assert.equal(result.refreshing, true)
+})
+
 test('源文档阶段（整批/整源）也算刷新中', () => {
-  const all = { refreshing: {}, sourceRefreshing: {}, refreshingAll: true }
+  const all = { refreshing: {}, queued: {}, sourceRefreshing: {}, refreshingAll: true }
   assert.deepEqual(runtimeModStatus(mod(), [mod()], [repo()], all).mod.labels, ['refreshing'])
 
   // 源文档重拉时还没有按仓库发的请求，只能靠源级状态反映进度
-  const source = { refreshing: {}, sourceRefreshing: { 'src-a': true }, refreshingAll: false }
+  const source = { refreshing: {}, queued: {}, sourceRefreshing: { 'src-a': true }, refreshingAll: false }
   assert.deepEqual(runtimeModStatus(mod(), [mod()], [repo()], source).mod.labels, ['refreshing'])
 })
 
 test('无关的仓库在刷不影响这个 MOD', () => {
-  const state = { refreshing: { 'r9': true }, sourceRefreshing: { 'src-z': true }, refreshingAll: false }
+  const state = { refreshing: { 'r9': true }, queued: {}, sourceRefreshing: { 'src-z': true }, refreshingAll: false }
   assert.deepEqual(runtimeModStatus(mod(), [mod()], [repo()], state).mod.labels, ['latest'])
 })
 
 test('仓库文件（RAW）模式刷新时也不显示刷新中', () => {
   const raw = repo({ download_mode: 'repository_file', cached_releases: [] })
-  const state = { refreshing: { r1: true }, sourceRefreshing: {}, refreshingAll: false }
+  const state = { refreshing: { r1: true }, queued: {}, sourceRefreshing: {}, refreshingAll: false }
   const result = runtimeModStatus(mod({ labels: ['installed'] }), [mod()], [raw], state)
   assert.deepEqual(result.mod.labels, ['installed'])
   assert.equal(repositoryRefreshing(raw, state), false)
@@ -84,7 +96,7 @@ test('关系标签与「刷新中」并存，且关系始终在最前', () => {
     relations: [{ kind: 'requires', guid: 'com.b' }],
   })
   const target = mod({ guid: 'com.a' })
-  const state = { refreshing: { r1: true }, sourceRefreshing: {}, refreshingAll: false }
+  const state = { refreshing: { r1: true }, queued: {}, sourceRefreshing: {}, refreshingAll: false }
   const result = runtimeModStatus(target, [target], [withRelation], state)
   assert.equal(result.mod.labels[0], 'missing_dependency')
   assert.ok(result.mod.labels.includes('refreshing'))

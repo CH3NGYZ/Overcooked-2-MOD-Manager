@@ -45,6 +45,8 @@ const installing = ref<Record<string, boolean>>({})
 const state = createRefreshState(REFRESH_CONCURRENCY)
 /** 每张地图的 Release 刷新状态。 */
 const refreshing = state.refreshing
+/** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
+const queued = state.queued
 /** 每个地图源的刷新状态（源树重拉 + 该源下全部 Release）。 */
 const refreshingSources = state.refreshingSources
 /** 整源刷新进行中（浮动按钮的转圈与整页遮罩都用它）。 */
@@ -276,6 +278,7 @@ export function useMapSources() {
     maps,
     loading,
     refreshing,
+    queued,
     refreshingSources,
     installing,
     refreshingAll,

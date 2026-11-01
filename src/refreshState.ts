@@ -80,6 +80,15 @@ export interface RefreshBatch<T> {
 export interface RefreshState {
   /** 条目级：按 id。 */
   refreshing: Ref<Record<string, boolean>>
+  /**
+   * 排队中（还没轮到、但已在这一批里）：按 id。
+   *
+   * 与 `refreshing` 分开、但界面上**同等对待**：用户点「检查更新」时，
+   * 20 个仓库里只有 4 个能在飞，其余 16 个如果还显示旧结论，看起来就像
+   * 「只有这四个在查」。所以卡片要不要显示「刷新中」看的是
+   * 「在飞 ∪ 排队」，而按钮图标转不转只看「在飞」。
+   */
+  queued: Ref<Record<string, boolean>>
   /** 源级：按源 id（含父源与子源）。 */
   refreshingSources: Ref<Record<string, boolean>>
   /** 整批刷新进行中。 */
@@ -94,6 +103,8 @@ export interface RefreshState {
   anyRefreshing: ComputedRef<boolean>
   /** 写条目级标志（worker 自己调）。 */
   setItemFlag: (id: string, value: boolean) => void
+  /** 写队列标志（批次实现自己调）。 */
+  setQueuedFlag: (id: string, value: boolean) => void
   /** 写源级标志。 */
   setSourceFlag: (id: string, value: boolean) => void
   /** 打开某个批次标志（`full`/`bound` 有意义，其余是空操作）。 */
@@ -129,6 +140,7 @@ function batchFlagOf(trigger: RefreshTrigger): 'all' | 'bound' | null {
  */
 export function createRefreshState(concurrency: number): RefreshState {
   const refreshing = ref<Record<string, boolean>>({})
+  const queued = ref<Record<string, boolean>>({})
   const refreshingSources = ref<Record<string, boolean>>({})
   const refreshingAll = ref(false)
   const checkingBound = ref(false)
@@ -152,6 +164,7 @@ export function createRefreshState(concurrency: number): RefreshState {
     refreshingAll.value
     || checkingBound.value
     || inFlight.value > 0
+    || Object.keys(queued.value).length > 0
     || Object.keys(refreshingSources.value).length > 0,
   )
 
@@ -198,9 +211,20 @@ export function createRefreshState(concurrency: number): RefreshState {
       return !refreshing.value[id]
     })
 
+    /*
+     * 整批先入队：界面上「排队中」与「正在刷」都显示「刷新中」。
+     * 20 个仓库只有 4 个能在飞，其余如果还挂着旧结论，用户会以为
+     * 「只有这四个在查」—— 这也是管理页那群卡片要订阅队列的原因。
+     */
+    const queueIds = queue.map((item) => batch.idOf(item))
+    for (const id of queueIds) writeFlag(queued, id, true)
     beginBatch(batch.trigger)
     try {
-      const results = await mapWithConcurrency(queue, concurrency, (item) => batch.worker(item))
+      const results = await mapWithConcurrency(queue, concurrency, async (item) => {
+        // 轮到它了：从「排队中」挪到「正在刷」（同一个同步段，界面上不闪）
+        if (refreshing.value[batch.idOf(item)]) writeFlag(queued, batch.idOf(item), false)
+        return batch.worker(item)
+      })
       const errors = results.filter((error): error is string => !!error)
       await batch.finalize?.()
       const next: RefreshOutcome = {
@@ -217,12 +241,19 @@ export function createRefreshState(concurrency: number): RefreshState {
       publishOutcome(next)
       return next
     } finally {
+      /*
+       * 无论正常结束还是中途抛错都要清掉这一批的队列标记：留着会让那些卡片
+       * 永远停在「刷新中」，`anyRefreshing` 也会一直为真、所有刷新按钮变灰。
+       * 只清自己这批的 id —— 另一个批次可能正排在后面。
+       */
+      for (const id of queueIds) writeFlag(queued, id, false)
       endBatch(batch.trigger)
     }
   }
 
   return {
     refreshing,
+    queued,
     refreshingSources,
     refreshingAll,
     checkingBound,
@@ -230,6 +261,7 @@ export function createRefreshState(concurrency: number): RefreshState {
     inFlight,
     anyRefreshing,
     setItemFlag: (id, value) => writeFlag(refreshing, id, value),
+    setQueuedFlag: (id, value) => writeFlag(queued, id, value),
     setSourceFlag: (id, value) => writeFlag(refreshingSources, id, value),
     beginBatch,
     endBatch,

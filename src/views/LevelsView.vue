@@ -103,7 +103,8 @@ const sets = ref<LevelSetInfo[]>([])
  * 刷新态同理：`checkingBound` 记的是共享引擎的批次，页面局部 ref 熬不过切页。
  */
 const {
-  maps, refreshing, refreshingSources, refreshingAll, checkingBound, outcome, loadMaps, refreshBoundMaps,
+  maps, refreshing, queued, refreshingSources, refreshingAll, checkingBound, outcome,
+  loadMaps, refreshBoundMaps,
 } = useMapSources()
 const loading = ref(true)
 /**
@@ -376,6 +377,7 @@ function authorNamesOf(set: LevelSetInfo) {
 const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
   all: refreshingAll.value,
   maps: new Set(Object.keys(refreshing.value)),
+  queued: new Set(Object.keys(queued.value)),
   sources: new Set(Object.keys(refreshingSources.value)),
 }))
 

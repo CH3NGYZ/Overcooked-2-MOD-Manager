@@ -111,7 +111,7 @@ const { remove } = useModRemoval({
  * 同一份状态，所以切页往返不丢，两页的标签会同时显示「刷新中」。
  */
 const {
-  refreshing, sourceRefreshing, refreshingAll, checkingBound, outcome,
+  refreshing, queued, sourceRefreshing, refreshingAll, checkingBound, outcome,
   refreshOne, refreshBoundRepositories,
 } = useRepositoryRefresh()
 
@@ -229,6 +229,7 @@ async function refreshLocal() {
  */
 const refreshSnapshot = computed<RuntimeRefreshState>(() => ({
   refreshing: refreshing.value,
+  queued: queued.value,
   sourceRefreshing: sourceRefreshing.value,
   refreshingAll: refreshingAll.value,
 }))

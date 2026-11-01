@@ -386,6 +386,14 @@ export const log: DomainMessages = {
     ko: '프런트엔드 로그가 비어 있습니다',
     ja: 'フロントエンドログが空です',
   },
+  // 未知的日志类型
+  unknownKind: {
+    'zh-CN': '未知的日志类型',
+    'zh-TW': '未知的日誌類型',
+    en: 'Unknown log type',
+    ko: '알 수 없는 로그 유형',
+    ja: '不明なログ種別',
+  },
 }
 
 /** `error` 域里剩下的几个（框架安装回滚）。 */

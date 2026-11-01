@@ -159,6 +159,7 @@ pub fn run() {
             commands::read_rust_log,
             commands::read_frontend_log,
             commands::read_crash_log,
+            commands::clear_log,
             commands::write_frontend_log,
             commands::save_mod_note,
             commands::install_local_mod,

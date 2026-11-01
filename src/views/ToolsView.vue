@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
-import { NLog, NSelect, NTag } from 'naive-ui'
+import { NButton, NLog, NSelect, NTag, useDialog } from 'naive-ui'
 import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, MapOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
@@ -17,8 +17,11 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 type LogKind = 'rust' | 'frontend' | 'crash'
 
 const message = useNotify()
+const dialog = useDialog()
 const working = ref<Record<string, boolean>>({})
 const logOpen = ref(false)
+/** 当前弹窗在看哪一份日志；清空按这个走，不再猜路径。 */
+const logKind = ref<LogKind | null>(null)
 const logTitle = ref('')
 const logPath = ref('')
 const logContent = ref('')
@@ -97,11 +100,43 @@ async function openLog(kind: LogKind) {
   working.value[kind] = true
   try {
     const log = await meta.read()
+    logKind.value = kind
     logTitle.value = meta.title
     logPath.value = log.path
     logContent.value = log.content
     logOpen.value = true
   } catch (reason) { fail(reason) } finally { working.value[kind] = false }
+}
+
+/**
+ * 清空当前正在看的日志。
+ *
+ * 清空不可撤销，所以先过二次确认；清空后把后端回读到的内容直接写回界面，
+ * 不再单独调一次 read —— 两次 IPC 之间日志可能又写进新行，界面会显示
+ * 「点了清空但内容还在」。弹窗保持打开，用户能立刻看到空状态。
+ */
+const clearingLog = ref(false)
+function clearCurrentLog() {
+  const kind = logKind.value
+  if (!kind || clearingLog.value) return
+  dialog.warning({
+    title: t('tools.clearLog'),
+    content: t('tools.clearLogConfirm'),
+    positiveText: t('tools.clearLog'),
+    negativeText: t('recycle.cancel'),
+    onPositiveClick: async () => {
+      clearingLog.value = true
+      try {
+        const log = await api.clearLog(kind)
+        logContent.value = log.content
+        message.success(t('tools.logCleared'))
+      } catch (reason) {
+        fail(reason)
+      } finally {
+        clearingLog.value = false
+      }
+    },
+  })
 }
 
 async function devtools() {
@@ -246,6 +281,15 @@ async function clearLevels() {
     <div class="log-body">
       <n-log :log="filteredLog || t('tools.noLogsAtThisLevel')" :rows="60" :font-size="12" trim />
     </div>
+    <!--
+      清空放在 AppModal 的固定操作区：它不跟日志内容一起滚，
+      打开哪个日志、滚到哪里，按钮的位置都一样。
+    -->
+    <template #footer>
+      <n-button size="small" type="error" secondary :loading="clearingLog" @click="clearCurrentLog">
+        {{ t('tools.clearLog') }}
+      </n-button>
+    </template>
   </AppModal>
 </template>
 

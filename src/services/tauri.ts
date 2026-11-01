@@ -58,6 +58,8 @@ export const api = {
   readRustLog: () => invoke<RustLog>('read_rust_log'),
   readFrontendLog: () => invoke<RustLog>('read_frontend_log'),
   readCrashLog: () => invoke<RustLog>('read_crash_log'),
+  /** 清空一份日志并拿回清空后的内容（`kind` 是 rust/frontend/crash，后端白名单校验）。 */
+  clearLog: (kind: string) => invoke<RustLog>('clear_log', { kind }),
   writeFrontendLog: (level: string, message: string) => invoke<void>('write_frontend_log', { level, message }),
   saveModNote: (dllFile: string, note: string) => invoke<OperationResult>('save_mod_note', { dllFile, note }),
   /** MOD 在 BepInEx/config 下的配置文件（含 revision 防覆盖）。 */

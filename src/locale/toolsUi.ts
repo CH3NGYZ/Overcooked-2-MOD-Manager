@@ -975,4 +975,28 @@ export const toolsUi: DomainMessages = {
     ko: '(이 등급에는 로그가 없습니다)',
     ja: '（このレベルにログはありません）',
   },
+  // 清空日志
+  clearLog: {
+    'zh-CN': '清空日志',
+    'zh-TW': '清空日誌',
+    en: 'Clear log',
+    ko: '로그 지우기',
+    ja: 'ログを消去',
+  },
+  // 当前日志的全部内容将被清空，此操作不可撤销。继续吗？
+  clearLogConfirm: {
+    'zh-CN': '当前日志的全部内容将被清空，此操作不可撤销。继续吗？',
+    'zh-TW': '目前日誌的全部內容將被清空，此操作無法復原。繼續嗎？',
+    en: 'All content of this log will be cleared. This cannot be undone. Continue?',
+    ko: '현재 로그의 모든 내용이 지워집니다. 이 작업은 되돌릴 수 없습니다. 계속할까요?',
+    ja: '現在のログの内容をすべて消去します。この操作は元に戻せません。続行しますか？',
+  },
+  // 日志已清空
+  logCleared: {
+    'zh-CN': '日志已清空',
+    'zh-TW': '日誌已清空',
+    en: 'Log cleared',
+    ko: '로그를 지웠습니다',
+    ja: 'ログを消去しました',
+  },
 }

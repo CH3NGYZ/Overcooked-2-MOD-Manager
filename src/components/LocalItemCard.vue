@@ -244,7 +244,11 @@ function onToggle(value: boolean) {
 }
 .mod-card.expanded {
   border-color: var(--oc2-accent);
-  background: color-mix(in srgb, var(--oc2-accent) 8%, var(--oc2-card));
+  /*
+   * 基色走 --card-bg（与上面的常态底色同一个变量）：包内子卡片是下沉底色，
+   * 混在 --oc2-card 上会比包外壳的展开态更亮，两层展开后同色、边界消失。
+   */
+  background: color-mix(in srgb, var(--oc2-accent) 8%, var(--card-bg, var(--oc2-card)));
 }
 .mod-card.disabled { opacity: .62; }
 /*

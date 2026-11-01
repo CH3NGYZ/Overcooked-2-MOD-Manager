@@ -184,6 +184,13 @@ async function runAll() {
   } finally {
     running.value = false
   }
+  /*
+   * 全部处理成功就直接放行下一步：用户点「全部处理」时已经授权了这些改动
+   * （卸载/升级/装依赖），再点一次「完成」只是把同一个意思说两遍，
+   * 还让「装主包」白多一次点击。有失败或存在无法自动处理的提醒时仍停在这里，
+   * 那种情况需要用户自己判断要不要继续。
+   */
+  if (allOk.value) await close()
 }
 
 async function runUninstall(step: Step) {

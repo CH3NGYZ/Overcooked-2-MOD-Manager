@@ -16,9 +16,8 @@
 //! 必须被认成包，而不是单 mod。
 
 use crate::commands::AppState;
-use crate::game::read_file_metadata;
-use crate::models::OperationResult;
-use crate::mods::parse_bepin_plugin_metadata;
+use crate::models::{DllRole, OperationResult};
+use crate::mods::{MAX_DLL_BYTES, file_stem_name, read_dll_details};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
@@ -32,23 +31,13 @@ use zip::ZipArchive;
 const PREVIEW_DIR: &str = "mod-preview";
 /// 暂存有效期：超过这个时间的目录在启动时或新建预览时被清理。
 const PREVIEW_TTL: Duration = Duration::from_secs(60 * 60);
-/// 单个 DLL 允许读取的最大字节数（元数据只在头部，够用即可）。
-const MAX_DLL_BYTES: u64 = 32 * 1024 * 1024;
-
-/// 预览条目的角色：真正的 BepInEx 插件，还是纯依赖。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PreviewRole {
-    Mod,
-    Dependency,
-}
 
 /// 预览里的一行（一个 DLL）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ModPreviewEntry {
     /// 相对安装包根目录的路径，用于展示。
     pub path: String,
-    pub role: PreviewRole,
+    pub role: DllRole,
     /// 展示名称：BepInPlugin 名称 → PE 产品名 → 文件名。
     pub name: Option<String>,
     pub guid: Option<String>,
@@ -150,49 +139,14 @@ fn source_extension(name: &str) -> Option<String> {
         .map(|value| value.to_ascii_lowercase())
 }
 
-fn display_name_for(name: &str) -> String {
-    Path::new(name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(name)
-        .to_string()
-}
-
 /// 解析单个 DLL 的元数据。
 ///
-/// 顺序（与用户确认的规则一致）：
-///   1. BepInEx 插件元数据（BepInPlugin）：能读到就是 mod；
-///   2. 回退到 PE 版本资源里的产品名/标题；
-///   3. 仍然读不到有效 tag（名称+版本）时，认定为「依赖」。
+/// 规则只有一份，在 [`crate::mods::read_dll_details`]（BepInPlugin → PE 版本
+/// 资源 → 文件名兜底，角色由 guid/version 是否为空决定）；这里只把结果摊平成
+/// 预览行。`path` 是临时落盘文件，`display_path` 是包内相对路径（展示用）。
 fn analyze_dll(path: &Path, display_path: &str) -> ModPreviewEntry {
-    let bytes = File::open(path)
-        .ok()
-        .and_then(|file| {
-            let mut buffer = Vec::new();
-            file.take(MAX_DLL_BYTES).read_to_end(&mut buffer).ok()?;
-            Some(buffer)
-        })
-        .unwrap_or_default();
-    let plugin = parse_bepin_plugin_metadata(&bytes);
-    let metadata = read_file_metadata(path);
-
-    let name = plugin
-        .as_ref()
-        .and_then(|item| item.name.clone())
-        .or_else(|| metadata.product_name.clone())
-        .or_else(|| metadata.title.clone())
-        .or_else(|| Some(display_name_for(display_path)));
-    let version = plugin.as_ref().and_then(|item| item.version.clone());
-    let guid = plugin.as_ref().and_then(|item| item.guid.clone());
-
-    // 判定依赖：没有 BepInEx 插件标识（无 GUID），且也没有可比较的版本号。
-    let role = if guid.is_none() && version.is_none() {
-        PreviewRole::Dependency
-    } else {
-        PreviewRole::Mod
-    };
-    if role == PreviewRole::Dependency {
+    let details = read_dll_details(path, display_path);
+    if details.role == DllRole::Dependency {
         log::debug!(
             "MOD 预览：判定为依赖（未读出 BepInPlugin 元数据）：路径={}",
             display_path
@@ -200,15 +154,15 @@ fn analyze_dll(path: &Path, display_path: &str) -> ModPreviewEntry {
     }
     ModPreviewEntry {
         path: display_path.to_string(),
-        role,
-        name,
-        guid,
-        version,
-        title: metadata.title,
-        product_name: metadata.product_name,
-        company: metadata.company,
-        copyright: metadata.copyright,
-        original_filename: metadata.original_filename,
+        role: details.role,
+        name: details.name,
+        guid: details.guid,
+        version: details.version,
+        title: details.title,
+        product_name: details.product_name,
+        company: details.company,
+        copyright: details.copyright,
+        original_filename: details.original_filename,
     }
 }
 
@@ -268,14 +222,14 @@ fn build_preview(entries: Vec<ModPreviewEntry>, file_name: &str) -> ModPreview {
     let total_dlls = entries.len();
     let mod_count = entries
         .iter()
-        .filter(|entry| entry.role == PreviewRole::Mod)
+        .filter(|entry| entry.role == DllRole::Mod)
         .count();
     let dependency_count = total_dlls - mod_count;
     ModPreview {
         preview_id: Uuid::new_v4().to_string(),
         // 0 或 >= 2 个 DLL 都按包处理：只有恰好 1 个 DLL 才是单 mod。
         kind: if total_dlls == 1 { "single" } else { "package" },
-        package_name: display_name_for(file_name),
+        package_name: file_stem_name(file_name),
         file_name: file_name.to_string(),
         total_dlls,
         mod_count,
@@ -527,7 +481,7 @@ fn safe_preview_id(value: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    fn entry(role: PreviewRole) -> ModPreviewEntry {
+    fn entry(role: DllRole) -> ModPreviewEntry {
         ModPreviewEntry {
             path: "x.dll".into(),
             role,
@@ -544,7 +498,7 @@ mod tests {
 
     #[test]
     fn single_dll_is_a_single_mod() {
-        let preview = build_preview(vec![entry(PreviewRole::Mod)], "a.zip");
+        let preview = build_preview(vec![entry(DllRole::Mod)], "a.zip");
         assert_eq!(preview.kind, "single");
         assert_eq!(preview.total_dlls, 1);
         assert_eq!(preview.mod_count, 1);
@@ -556,7 +510,7 @@ mod tests {
     fn repository_origin_replaces_file_name_with_repository_name() {
         // 资产文件名是技术命名，用户认的是仓库名
         let mut preview = build_preview(
-            vec![entry(PreviewRole::Mod)],
+            vec![entry(DllRole::Mod)],
             "IMGUI.HiDPI.Patcher.Mono-v0.4.4.zip",
         );
         assert_eq!(preview.package_name, "IMGUI.HiDPI.Patcher.Mono-v0.4.4");
@@ -576,7 +530,7 @@ mod tests {
     #[test]
     fn empty_repository_name_keeps_filename_as_title() {
         // 仓库名为空时不能把标题清空，否则界面只剩一个空白标题
-        let mut preview = build_preview(vec![entry(PreviewRole::Mod)], "fallback.zip");
+        let mut preview = build_preview(vec![entry(DllRole::Mod)], "fallback.zip");
         apply_repository_origin(&mut preview, "   ", "", "");
         assert_eq!(preview.package_name, "fallback");
     }
@@ -584,7 +538,7 @@ mod tests {
     #[test]
     fn manual_origin_keeps_zip_name_as_title() {
         // 手动安装（本地文件 / 直链）不经过 apply_repository_origin，标题就是文件名
-        let preview = build_preview(vec![entry(PreviewRole::Mod)], "MyLocalModPack-v1.2.zip");
+        let preview = build_preview(vec![entry(DllRole::Mod)], "MyLocalModPack-v1.2.zip");
         assert_eq!(preview.origin, PreviewOrigin::Manual);
         assert_eq!(preview.package_name, "MyLocalModPack-v1.2");
         assert!(preview.release_tag.is_empty());
@@ -595,7 +549,7 @@ mod tests {
         // DIYLevel 那种情况：真正的插件 + 纯依赖，必须按包处理，
         // 「能否解析出 BepInPlugin」不决定它是不是包。
         let preview = build_preview(
-            vec![entry(PreviewRole::Mod), entry(PreviewRole::Dependency)],
+            vec![entry(DllRole::Mod), entry(DllRole::Dependency)],
             "DIYLevel.zip",
         );
         assert_eq!(preview.kind, "package");
@@ -606,10 +560,7 @@ mod tests {
 
     #[test]
     fn multiple_plugins_are_a_package() {
-        let preview = build_preview(
-            vec![entry(PreviewRole::Mod), entry(PreviewRole::Mod)],
-            "pack.zip",
-        );
+        let preview = build_preview(vec![entry(DllRole::Mod), entry(DllRole::Mod)], "pack.zip");
         assert_eq!(preview.kind, "package");
         assert_eq!(preview.mod_count, 2);
         assert_eq!(preview.dependency_count, 0);

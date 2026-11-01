@@ -143,6 +143,45 @@ pub struct LevelSetInfo {
     pub relations: Vec<RepositoryRelation>,
 }
 
+/// 一个 DLL 在安装预览里的角色：真正的 BepInEx 插件，还是纯依赖。
+///
+/// 这个枚举是角色判定的唯一权威：MOD 预览与地图包里的随包插件都按同一份
+/// 规则（有没有 BepInPlugin 的 GUID/版本）得出角色，序列化值固定为
+/// `mod` / `dependency`，前端 `ModPreviewRole` 依赖这两个字面量。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DllRole {
+    Mod,
+    Dependency,
+}
+
+/// 关卡集 ZIP 里的一个随包插件（作者附带、跟着地图一起装的修复 DLL）。
+///
+/// 前端把每个插件当成一个 MOD 展示「安装详情」，所以这里带出和 MOD 预览
+/// 同源的元数据；`path` 是 ZIP 内条目路径，`file_name` 才是落盘后的文件名。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZipLevelSetPlugin {
+    /// ZIP 内的条目路径（作者原始目录结构，仅供展示定位）。
+    pub path: String,
+    /// 落盘文件名：导入时插件被放进关卡集目录根，只用文件名。
+    pub file_name: String,
+    pub role: DllRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub company: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_filename: Option<String>,
+}
+
 /// ZIP 里识别出的一个关卡集（导入前给用户确认用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZipLevelSet {
@@ -163,12 +202,12 @@ pub struct ZipLevelSet {
     /// 目标位置是否已有同名目录（界面据此提示「将覆盖并回收旧版本」）。
     #[serde(default)]
     pub exists: bool,
-    /// 随这个关卡集一起装进集目录的插件文件名（作者随包的修复 DLL）。
+    /// 随这个关卡集一起装进集目录的插件（作者随包的修复 DLL）。
     ///
-    /// 界面用它说明「这个包会附带 2 个插件」，不用让用户自己猜 `file_count`
-    /// 里混进了什么。停用/启用整目录搬家时它们跟着一起走。
+    /// 界面把每个插件当成一个 MOD 展示名称/版本/作者等详情，不用让用户自己猜
+    /// `file_count` 里混进了什么。停用/启用整目录搬家时它们跟着一起走。
     #[serde(default)]
-    pub plugins: Vec<String>,
+    pub plugins: Vec<ZipLevelSetPlugin>,
 }
 
 /// ZIP 导入结果。
@@ -1674,4 +1713,41 @@ pub struct RequiredFramework {
     /// 本地已装版本（未装时为空），让界面能说清「已装 0.9.9，需要 0.10.0」。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_version: Option<String>,
+}
+
+/// 前端 `ModPreviewRole = 'mod' | 'dependency'` 与 `ZipLevelSetPlugin` 的字段名
+/// 都是 IPC 契约：这里直接钉住序列化结果，改枚举或字段名时先被这条用例拦下。
+#[cfg(test)]
+mod dll_role_tests {
+    use super::*;
+
+    #[test]
+    fn dll_role_and_plugin_fields_keep_their_json_names() {
+        assert_eq!(serde_json::to_string(&DllRole::Mod).unwrap(), "\"mod\"");
+        assert_eq!(
+            serde_json::to_string(&DllRole::Dependency).unwrap(),
+            "\"dependency\""
+        );
+
+        let plugin = ZipLevelSetPlugin {
+            path: "pkg/plugins/fix/Fix.dll".into(),
+            file_name: "Fix.dll".into(),
+            role: DllRole::Dependency,
+            name: Some("Fix".into()),
+            guid: None,
+            version: None,
+            title: None,
+            product_name: None,
+            company: None,
+            original_filename: None,
+        };
+        let json = serde_json::to_value(&plugin).unwrap();
+        assert_eq!(json["role"], "dependency");
+        assert_eq!(json["path"], "pkg/plugins/fix/Fix.dll");
+        assert_eq!(json["file_name"], "Fix.dll");
+        assert_eq!(json["name"], "Fix");
+        // 读不出的字段直接省略，前端按可选字段处理（不是空串/null）
+        assert!(json.get("guid").is_none());
+        assert!(json.get("title").is_none());
+    }
 }

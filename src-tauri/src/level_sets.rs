@@ -50,6 +50,7 @@
 //! - 同一关卡集在 ZIP 里出现两次
 //! - 目标目录已存在同名关卡集（由调用方决定覆盖与否）
 use crate::asset_bundle::{self, LevelSetMetadata};
+use crate::models::{DllRole, ZipLevelSetPlugin};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
@@ -1139,8 +1140,11 @@ pub struct ImportedLevelSet {
     ///
     /// 包含作者随包的修复插件（它们被归到集目录根，见 [`assign_plugins`]）。
     pub files: Vec<(String, String)>,
-    /// 随这个关卡集一起安装的插件文件名（只用于界面提示，落盘走 `files`）。
-    pub plugins: Vec<String>,
+    /// 随这个关卡集一起安装的插件（只用于界面提示，落盘走 `files`）。
+    ///
+    /// 元数据与 MOD 预览同源（[`crate::mods::read_dll_details`]）：界面把每个
+    /// 插件当成一个 MOD 展示名称/版本/作者，不再只给一串文件名。
+    pub plugins: Vec<ZipLevelSetPlugin>,
 }
 
 /// 目录名是否形如 `levels`（容忍 `levels包`、`LEVELS2` 这类作者写法）。
@@ -1383,10 +1387,77 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
     })
 }
 
+/// 读出 ZIP 内一个随包插件的元数据：条目 → scratch 临时文件 → 统一解析。
+///
+/// 任何一步失败都只降级成「按文件名显示的依赖」：这些字段只用来展示安装
+/// 详情，一个损坏的 DLL 不该让整份地图包识别失败（地图本身还是能装的）。
+fn read_zip_plugin_details<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    index: Option<usize>,
+    entry: &str,
+    scratch: Option<&Path>,
+) -> ZipLevelSetPlugin {
+    let file_name = entry.rsplit('/').next().unwrap_or(entry).to_string();
+    let fallback = |reason: &str| {
+        log::warn!(
+            "随包插件元数据读取失败，降级为文件名兜底：条目={}，原因={}",
+            entry,
+            reason
+        );
+        ZipLevelSetPlugin {
+            path: entry.to_string(),
+            file_name: file_name.clone(),
+            role: DllRole::Dependency,
+            name: Some(crate::mods::file_stem_name(&file_name)),
+            guid: None,
+            version: None,
+            title: None,
+            product_name: None,
+            company: None,
+            original_filename: None,
+        }
+    };
+    let Some(scratch) = scratch else {
+        return fallback("临时目录不可用");
+    };
+    let Some(index) = index else {
+        return fallback("条目索引缺失");
+    };
+    let temp = scratch.join(format!("{index}.dll"));
+    let extracted = (|| -> Result<(), String> {
+        let mut zip_entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        let mut bytes = Vec::new();
+        zip_entry
+            .by_ref()
+            .take(crate::mods::MAX_DLL_BYTES)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        fs::write(&temp, &bytes).map_err(|error| error.to_string())
+    })();
+    if let Err(reason) = extracted {
+        return fallback(&reason);
+    }
+    let details = crate::mods::read_dll_details(&temp, &file_name);
+    ZipLevelSetPlugin {
+        path: entry.to_string(),
+        file_name,
+        role: details.role,
+        name: details.name,
+        guid: details.guid,
+        version: details.version,
+        title: details.title,
+        product_name: details.product_name,
+        company: details.company,
+        original_filename: details.original_filename,
+    }
+}
+
 /// 读一个 ZIP 文件，按 `info` 识别出其中的关卡集。
 ///
-/// 只读条目清单与 `info` 内容，**不解压其它文件** —— 调用方拿到
-/// [`ImportedLevelSet::files`] 后按需写入，避免为了识别而先落盘一份临时副本。
+/// 地图文件不在这里解压 —— 调用方拿到 [`ImportedLevelSet::files`] 后按需写入，
+/// 避免为了识别而先落盘一份临时副本。唯一的例外是随包插件的 DLL：PE 版本资源
+/// 只能从真实文件读，所以它们会被落到一份 scratch 目录再解析
+/// （见 [`read_zip_plugin_details`]）。
 pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| {
@@ -1415,6 +1486,8 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
     let mut info_candidates: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     // ZIP 内全部文件条目名，供「包单位」把 plugins 子树里的 DLL 归到地图上
     let mut all_entries: Vec<String> = Vec::new();
+    // 条目名 → ZIP 索引：读随包插件内容时用它定位（`by_name` 每次线性扫中央目录）
+    let mut index_by_name: HashMap<String, usize> = HashMap::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| {
             crate::locale_tag::with_params(
@@ -1431,6 +1504,7 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
         }
         let (directory, file_name) = split_entry(&name);
         all_entries.push(name.clone());
+        index_by_name.insert(name.clone(), index);
         by_directory
             .entry(directory.clone())
             .or_default()
@@ -1509,6 +1583,23 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
      */
     let plugin_owner = assign_plugins(&all_entries, &parsed_sets);
 
+    /*
+     * 随包插件的 PE 版本资源只能从真实文件读：整份 ZIP 共用一份 scratch 目录，
+     * 识别结束即删。目录建不出来时降级（插件仍按文件名展示），不影响识别。
+     */
+    let mut scratch = (!plugin_owner.is_empty())
+        .then(|| std::env::temp_dir().join(format!("oc2-level-plugins-{}", uuid::Uuid::new_v4())));
+    if let Some(dir) = &scratch {
+        if let Err(error) = fs::create_dir_all(dir) {
+            log::warn!(
+                "随包插件元数据：临时目录创建失败，降级为文件名兜底：目录={}，原因={}",
+                dir.display(),
+                error
+            );
+            scratch = None;
+        }
+    }
+
     let mut imported = Vec::with_capacity(parsed_sets.len());
     let mut taken_dir_names = std::collections::HashSet::new();
     for (directory, metadata, base_name) in parsed_sets {
@@ -1543,19 +1634,28 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
          * 里生效。
          */
         let plugin_entries = plugin_owner.get(&directory).cloned().unwrap_or_default();
-        let plugin_names: Vec<String> = plugin_entries
-            .iter()
-            .map(|entry| entry.rsplit('/').next().unwrap_or(entry).to_string())
-            .collect();
-        for (entry, name) in plugin_entries.into_iter().zip(plugin_names.iter()) {
-            files.push((entry, name.clone()));
+        let mut plugins = Vec::with_capacity(plugin_entries.len());
+        for entry in &plugin_entries {
+            let plugin = read_zip_plugin_details(
+                &mut archive,
+                index_by_name.get(entry).copied(),
+                entry,
+                scratch.as_deref(),
+            );
+            // 落盘相对路径只取文件名 → 插件进集目录根，随目录一起开关
+            files.push((entry.clone(), plugin.file_name.clone()));
+            plugins.push(plugin);
         }
         imported.push(ImportedLevelSet {
             dir_name,
             metadata,
             files,
-            plugins: plugin_names,
+            plugins,
         });
+    }
+
+    if let Some(dir) = &scratch {
+        let _ = fs::remove_dir_all(dir);
     }
 
     /*
@@ -3430,11 +3530,30 @@ mod plugin_tests {
         let sets = inspect_zip(&zip).expect("应能识别这个包");
         assert_eq!(sets.len(), 1, "一个 info 就是一个关卡集");
         let set = &sets[0];
+        let plugin_names: Vec<&str> = set
+            .plugins
+            .iter()
+            .map(|plugin| plugin.file_name.as_str())
+            .collect();
         assert_eq!(
-            set.plugins,
-            vec!["First.dll".to_string(), "Second.dll".to_string()],
+            plugin_names,
+            vec!["First.dll", "Second.dll"],
             "两个插件都应归到这个集（按文件名排序）"
         );
+        // 假 DLL 读不出 BepInPlugin：降级成依赖 + 文件名兜底，识别本身不能失败
+        for plugin in &set.plugins {
+            assert_eq!(plugin.role, DllRole::Dependency);
+            assert_eq!(
+                plugin.name.as_deref(),
+                plugin.file_name.strip_suffix(".dll"),
+                "读不出元数据时展示名退回文件名（去扩展名）"
+            );
+            assert!(
+                plugin.path.starts_with("作者包/plugins包/fix/"),
+                "path 保留 ZIP 内条目路径：{}",
+                plugin.path
+            );
+        }
         // 落盘相对路径是纯文件名 → 写进集目录根，随目录一起开关
         for name in ["First.dll", "Second.dll"] {
             assert!(
@@ -3444,6 +3563,46 @@ mod plugin_tests {
                 "{name} 应作为集目录根下的文件被复制"
             );
         }
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 随包插件要带出 BepInPlugin 元数据：前端把它当一个 MOD 展示安装详情。
+    #[test]
+    fn bundled_plugin_carries_its_bepin_plugin_metadata() {
+        let Some(info) = real_info_bytes() else {
+            eprintln!("跳过：没有 .tmp/rw.zip 可取真实 info");
+            return;
+        };
+        let root =
+            std::env::temp_dir().join(format!("oc2-lv-plugin-meta-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("pack.zip");
+        let dll = crate::mods::plugin_blob(
+            "com.example.jonnylevelloader",
+            "Jonny Level Loader",
+            "3.4.1",
+        );
+        write_test_zip(
+            &zip,
+            &[
+                ("作者包/levels包/myset/info_x", &info),
+                ("作者包/plugins包/fix/JonnyLevelLoaderPlugin.dll", &dll),
+            ],
+        );
+
+        let sets = inspect_zip(&zip).expect("应能识别这个包");
+        assert_eq!(sets.len(), 1);
+        let plugin = &sets[0].plugins[0];
+        assert_eq!(
+            plugin.path, "作者包/plugins包/fix/JonnyLevelLoaderPlugin.dll",
+            "path 是 ZIP 内条目路径，file_name 才是落盘文件名"
+        );
+        assert_eq!(plugin.file_name, "JonnyLevelLoaderPlugin.dll");
+        assert_eq!(plugin.role, DllRole::Mod, "读出 BepInPlugin 就是 mod");
+        assert_eq!(plugin.name.as_deref(), Some("Jonny Level Loader"));
+        assert_eq!(plugin.guid.as_deref(), Some("com.example.jonnylevelloader"));
+        assert_eq!(plugin.version.as_deref(), Some("3.4.1"));
 
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -3475,7 +3634,10 @@ mod plugin_tests {
                 eprintln!(
                     "  集={} 插件={:?} 文件={}",
                     set.dir_name,
-                    set.plugins,
+                    set.plugins
+                        .iter()
+                        .map(|plugin| plugin.file_name.as_str())
+                        .collect::<Vec<_>>(),
                     set.files.len()
                 );
             }

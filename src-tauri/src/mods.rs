@@ -1,13 +1,14 @@
 use crate::archive::{self, InstallManifest};
 use crate::game::read_file_metadata;
 use crate::models::{
-    AppConfig, Channel, InstalledMod, InstalledModStatusLabel, ReleaseRelationOverride,
+    AppConfig, Channel, DllRole, InstalledMod, InstalledModStatusLabel, ReleaseRelationOverride,
     RepositoryBinding, RepositoryConfig, RepositoryDownloadMode, RepositoryRelation,
 };
 use regex::Regex;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -908,6 +909,90 @@ pub(crate) fn file_stem_name(file_name: &str) -> String {
         .to_string()
 }
 
+/// 元数据只在 DLL 头部，读这么多就够定位 BepInPlugin 与 PE 版本资源。
+///
+/// MOD 预览与地图包的随包插件共用这一个上限：同一份「读多少算够」的规则
+/// 不该在两个入口各写一个数字。
+pub(crate) const MAX_DLL_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 一个 DLL 的元数据解析结果。
+///
+/// `role` 的判定是安装预览与地图随包插件共用的唯一规则：读不出 BepInPlugin
+/// 的 GUID 与版本（`guid`、`version` 都空）就是纯依赖。
+#[derive(Debug, Clone)]
+pub(crate) struct DllDetails {
+    pub(crate) role: DllRole,
+    pub(crate) name: Option<String>,
+    pub(crate) guid: Option<String>,
+    pub(crate) version: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) product_name: Option<String>,
+    pub(crate) company: Option<String>,
+    pub(crate) copyright: Option<String>,
+    pub(crate) original_filename: Option<String>,
+}
+
+/// 解析单个 DLL 的元数据（安装预览与地图随包插件唯一入口）。
+///
+/// 顺序（与用户确认的规则一致）：
+///   1. BepInEx 插件元数据（BepInPlugin）：名称/版本/GUID 都取自这里；
+///   2. 名称读不出时，回退到 PE 版本资源里的产品名/标题；
+///   3. 连 GUID 与版本都读不出时，认定为「依赖」（纯依赖库，不是插件）。
+///
+/// PE 版本资源只能读真实文件，所以 ZIP 内的条目必须先由调用方落到临时文件。
+pub(crate) fn read_dll_details(path: &Path, display_name: &str) -> DllDetails {
+    let bytes = fs::File::open(path)
+        .ok()
+        .and_then(|file| {
+            let mut buffer = Vec::new();
+            file.take(MAX_DLL_BYTES).read_to_end(&mut buffer).ok()?;
+            Some(buffer)
+        })
+        .unwrap_or_default();
+    let plugin = parse_bepin_plugin_metadata(&bytes);
+    let metadata = read_file_metadata(path);
+
+    let name = plugin
+        .as_ref()
+        .and_then(|item| item.name.clone())
+        .or_else(|| metadata.product_name.clone())
+        .or_else(|| metadata.title.clone())
+        .or_else(|| Some(file_stem_name(display_name)));
+    let guid = plugin.as_ref().and_then(|item| item.guid.clone());
+    let version = plugin.as_ref().and_then(|item| item.version.clone());
+    let role = if guid.is_none() && version.is_none() {
+        DllRole::Dependency
+    } else {
+        DllRole::Mod
+    };
+    DllDetails {
+        role,
+        name,
+        guid,
+        version,
+        title: metadata.title,
+        product_name: metadata.product_name,
+        company: metadata.company,
+        copyright: metadata.copyright,
+        original_filename: metadata.original_filename,
+    }
+}
+
+/// 测试用的最小 BepInPlugin 字节序列（`[1,0]` 头 + 长度前缀字符串）。
+///
+/// 放在模块级而不是某个测试模块里：MOD 预览、地图随包插件两处用例都要造
+/// 「能读出元数据的假 DLL」，两份拷贝会随格式变化各自过期。
+#[cfg(test)]
+pub(crate) fn plugin_blob(guid: &str, name: &str, version: &str) -> Vec<u8> {
+    let mut bytes = b"BepInPlugin".to_vec();
+    bytes.extend_from_slice(&[1, 0]);
+    for value in [guid, name, version] {
+        bytes.push(value.len() as u8);
+        bytes.extend_from_slice(value.as_bytes());
+    }
+    bytes
+}
+
 pub(crate) fn parse_bepin_plugin_metadata(bytes: &[u8]) -> Option<PluginMetadata> {
     if !String::from_utf8_lossy(bytes).contains("BepInPlugin") {
         return None;
@@ -1186,15 +1271,7 @@ fn parse_mod_version_components(value: &str) -> Option<[u64; 4]> {
 
 #[cfg(test)]
 mod tests {
-    fn plugin_blob(guid: &str, name: &str, version: &str) -> Vec<u8> {
-        let mut bytes = b"BepInPlugin".to_vec();
-        bytes.extend_from_slice(&[1, 0]);
-        for value in [guid, name, version] {
-            bytes.push(value.len() as u8);
-            bytes.extend_from_slice(value.as_bytes());
-        }
-        bytes
-    }
+    use super::*;
 
     fn duplicate_configuration_manager(
         version: &str,
@@ -2339,6 +2416,35 @@ mod tests {
             .and_then(|item| item.version),
             Some("0.0.0".into())
         );
+    }
+
+    #[test]
+    fn dll_details_keep_role_and_name_fallbacks_in_one_place() {
+        let root = std::env::temp_dir().join(format!("oc2-dll-details-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // 有 BepInPlugin：角色是 mod，名称/版本/GUID 都取自插件元数据
+        let plugin_dll = root.join("Fancy.Plugin.dll");
+        std::fs::write(
+            &plugin_dll,
+            plugin_blob("com.example.fancy", "Fancy Plugin", "2.3.4"),
+        )
+        .unwrap();
+        let details = read_dll_details(&plugin_dll, "Fancy.Plugin.dll");
+        assert_eq!(details.role, DllRole::Mod);
+        assert_eq!(details.name.as_deref(), Some("Fancy Plugin"));
+        assert_eq!(details.guid.as_deref(), Some("com.example.fancy"));
+        assert_eq!(details.version.as_deref(), Some("2.3.4"));
+
+        // 读不出 BepInPlugin：角色是依赖，展示名退回文件名（去扩展名）
+        let plain_dll = root.join("LevelEditorStub.dll");
+        std::fs::write(&plain_dll, b"not a PE").unwrap();
+        let details = read_dll_details(&plain_dll, "LevelEditorStub.dll");
+        assert_eq!(details.role, DllRole::Dependency);
+        assert_eq!(details.name.as_deref(), Some("LevelEditorStub"));
+        assert!(details.guid.is_none() && details.version.is_none());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

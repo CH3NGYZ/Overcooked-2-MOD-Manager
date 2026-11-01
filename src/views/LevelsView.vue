@@ -1274,11 +1274,10 @@ async function checkUpdates() {
                 同一份 `mods::read_dll_details` 解析，只是没有 ZIP 内路径。
                 「这是随包插件」与版本号都跟在标题后面（`version` + `titleTag`），
                 不做左侧缩进：缩进只能表达从属，代价是整行往右推、右侧那列被挤窄。
+                这一节**不写分节标题**：卡片右端已经有「随包插件」标签，再加一行
+                「随包插件（N）」是把同一句话说两遍，还平白占掉一行高度。
               -->
               <div v-if="set.plugins?.length" class="detail-section">
-                <div class="detail-section-title">
-                  {{ t('levelSet.bundledPlugins', { count: set.plugins.length }) }}
-                </div>
                 <div class="plugin-list">
                   <LocalItemCard v-for="plugin in set.plugins" :key="plugin.file_name"
                     :switchable="false"
@@ -1348,7 +1347,7 @@ async function checkUpdates() {
                 MOD 安装页详情共用同一张依赖表（名称是人类可读的仓库名/包名，
                 不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
               -->
-              <div v-if="dependencyRows(set).length" class="detail-section">
+              <div v-if="dependencyRows(set).length" class="detail-section detail-section--table">
                 <DependencyTable :rows="dependencyRows(set)" @jump="openDependencyJump" />
               </div>
             </template>
@@ -1509,6 +1508,18 @@ async function checkUpdates() {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px dashed var(--oc2-row-line);
+}
+
+/*
+ * 依赖表专用的那一档：表格自己就有一圈边框和圆角，再叠一条虚线加两段留白，
+ * 等于把「这里换内容了」说两遍。这里只保留卡片内统一的 8px 节奏，不再画分隔线。
+ * 与 MOD 管理页（ModsLocalView.vue）同名同值 —— 两个页面的详情区都是块流
+ * （没有 flex gap 兜底），所以两处都是 8px。
+ */
+.detail-section--table {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 /*

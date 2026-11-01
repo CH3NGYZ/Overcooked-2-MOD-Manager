@@ -594,14 +594,6 @@ export const levelSet: DomainMessages = {
     ko: '업데이트를 확인할 수 없음',
     ja: '更新を確認できません',
   },
-  // 地图详情 · 随包插件：与地图同目录、跟着整个集目录一起启停的 DLL
-  bundledPlugins: {
-    'zh-CN': '随包插件（{count}）',
-    'zh-TW': '隨包插件（{count}）',
-    en: 'Bundled plugins ({count})',
-    ko: '동봉 플러그인 ({count})',
-    ja: '同梱プラグイン（{count}）',
-  },
   // 单张随包插件卡片右侧的角色标签：说明「这不是独立 MOD，是这张图自带的」
   bundledPlugin: {
     'zh-CN': '随包插件',

@@ -1754,10 +1754,11 @@ function removePackage(node: ModPackageNode) {
                 <ModDetailGrid :mod="mod" :binding-text="bindingText(mod)"
                   :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
                 <!--
-                  依赖声明：和地图管理页详情一样，用一条虚线把表格与上面的安装信息隔开；
-                  没有声明时整块（含这条线）都不渲染，不留一条空分隔线。
+                  依赖声明：和地图管理页详情一样，表格直接贴着上面的安装信息
+                  （`.detail-section--table` 去掉虚线与额外留白，只留 8px 节奏），
+                  因为表格自己就有一圈边框和圆角。没有声明时整块都不渲染。
                 -->
-                <div v-if="modDependencyRows(mod).length" class="detail-section">
+                <div v-if="modDependencyRows(mod).length" class="detail-section detail-section--table">
                   <DependencyTable :rows="modDependencyRows(mod)" @jump="openDependencyJump" />
                 </div>
               </template>
@@ -1920,7 +1921,7 @@ function removePackage(node: ModPackageNode) {
                   再看这个包对外要求什么；和地图管理页「信息 → 随包插件 →
                   依赖声明」同一顺序，两页不用记两套版式。
                 -->
-                <div v-if="packageDependencyRows(pkg).length" class="detail-section">
+                <div v-if="packageDependencyRows(pkg).length" class="detail-section detail-section--table">
                   <DependencyTable :rows="packageDependencyRows(pkg)" @jump="openDependencyJump" />
                 </div>
               </div>
@@ -2121,6 +2122,21 @@ function removePackage(node: ModPackageNode) {
   padding-top: 8px;
   border-top: 1px dashed var(--oc2-row-line);
 }
+
+/*
+ * 依赖表专用的那一档：表格自己就有一圈边框和圆角，再叠一条虚线加两段留白，
+ * 等于把「这里换内容了」说两遍；包内还会把「子卡片 → 依赖表」推得比子卡片
+ * 之间（8px）更松。这里只保留卡片内统一的 8px 节奏，不再画分隔线。
+ *
+ * 包内 `.package-body` 是 flex + `gap: 8px`，间距已经由 gap 给过，再叠 margin
+ * 就是 16px，所以那一处归零。与地图管理页（LevelsView.vue）同名同值。
+ */
+.detail-section--table {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
+.package-body .detail-section--table { margin-top: 0; }
 
 /*
  * 卡片自身的样式（.mod-card / .card-row / .card-* / .tool-*）已随外壳一起

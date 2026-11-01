@@ -15,7 +15,7 @@ import { statusPulseClass, useFocusHighlight, useMapLink, useRepositoryLink, use
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
-import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
+import { collapseCardWithScroll, naturalContentHeight, scrollExpandedCardIntoView } from '../expandScroll'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import PageLoading from '../components/PageLoading.vue'
 import RefreshResultTag from '../components/RefreshResultTag.vue'
@@ -26,6 +26,7 @@ import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
+import { useCardExpansion } from '../composables/useCardExpansion'
 import {
   levelSetAuthorNames,
   levelSetCardTags,
@@ -125,8 +126,12 @@ const scanProgress = ref<LevelSetScanProgress | null>(null)
 const busy = ref<Record<string, boolean>>({})
 /** 每个集自己的删除请求状态。 */
 const deleting = ref<Record<string, boolean>>({})
-/** 当前展开详情的目录名：一次只展开一个，点另一张卡就换过去。 */
-const expandedDir = ref<string | null>(null)
+/*
+ * 卡片展开状态（规则在 `useCardExpansion` 里）：外层是关卡集卡片，内层是集详情
+ * 里的随包插件。`singleOuter` 表示一次只展开一张集卡片，点另一张就换过去；
+ * 集卡片收起时它名下的插件展开状态一起清掉，下次展开是全新的集。
+ */
+const levelExpansion = useCardExpansion({ singleOuter: true })
 
 const enabledCount = computed(() => sets.value.filter((set) => set.enabled).length)
 /** 游戏是否探测到 —— 没探测到时本地 MOD 列表必然为空，不能因此判「缺依赖」。 */
@@ -671,15 +676,12 @@ function cardOf(dirName: string): HTMLElement | null {
 
 function activate(set: LevelSetInfo, card?: HTMLElement) {
   cardClickHandled = true
-  const previous = expandedDir.value
-  const opening = previous !== set.dir_name
-  if (!opening) {
+  const previous = levelExpansion.outerKeys.value[0] ?? null
+  if (levelExpansion.isOuterOpen(set.dir_name)) {
     // 收起：量位置、改状态都交给 collapseCardWithScroll —— 它必须在折叠前量，
     // 再把展开那次滚动倒回去，折叠与回滚同时发生，看起来才是「原路收回去」。
     const target = card ?? cardOf(set.dir_name)
-    const collapse = () => {
-      expandedDir.value = null
-    }
+    const collapse = () => levelExpansion.closeOuter(set.dir_name)
     if (!target) {
       collapse()
       return
@@ -690,7 +692,14 @@ function activate(set: LevelSetInfo, card?: HTMLElement) {
   // 单展开语义：展开 B 会让 A 收起。A 在 B 上面时，收起动画会把 B 整体往上带，
   // 量 B 的 top 时必须减掉 A 会缩掉的高度，否则会多滚一截。
   const previousCard = previous ? cardOf(previous) : null
-  expandedDir.value = set.dir_name
+  const previousBody = previousCard?.querySelector('.card-detail') ?? null
+  /*
+   * A 名下展开过的随包插件会被一起清掉（`useCardExpansion` 的规则），A 的详情
+   * 内容因此在改状态的同一步就变矮 —— 收掉的高度必须在改状态之前量，之后量会
+   * 低估，滚动就冲过头。
+   */
+  const shrink = previousCard && previousBody ? naturalContentHeight(previousBody) : 0
+  levelExpansion.openOuter(set.dir_name)
   if (!card) return
   const anchor = card.querySelector('.card-row')
   if (!anchor) return
@@ -700,25 +709,17 @@ function activate(set: LevelSetInfo, card?: HTMLElement) {
       anchor,
       body: card.querySelector('.card-detail'),
       collapsing: previousCard
-        ? { card: previousCard, body: previousCard.querySelector('.card-detail') }
+        ? { card: previousCard, body: previousBody, shrink }
         : null,
     })
   })
 }
 
-/**
- * 随包插件的展开状态。
- *
+/*
+ * 随包插件的展开状态在 `levelExpansion` 的内层里（键由 `useCardExpansion` 拼）。
  * 与集卡片不同：集是单展开（同时只看一张），插件是「查看某个 DLL 的信息」，
  * 用户可能想对比两个，所以按 `集目录 + 文件名` 记多份。
  */
-const expandedPlugins = ref<Record<string, boolean>>({})
-
-function pluginKey(set: LevelSetInfo, plugin: LevelSetPlugin) {
-  // 集目录与文件名之间用 NUL 分隔：两边都可能含空格、斜杠或点，
-  // 只有 NUL 不可能出现在文件系统名字里。
-  return `${set.dir_name}\u0000${plugin.file_name}`
-}
 
 /**
  * 随包插件卡片的展开 / 收起。
@@ -733,11 +734,8 @@ function togglePlugin(set: LevelSetInfo, plugin: LevelSetPlugin, card?: HTMLElem
   // 这次点击已经由插件卡片处理；不设标记的话，document 上「点空白收起」
   // 会顺手把外层的集卡片一起收掉，用户就看不到刚展开的插件详情了。
   cardClickHandled = true
-  const key = pluginKey(set, plugin)
-  const close = () => {
-    expandedPlugins.value[key] = false
-  }
-  if (expandedPlugins.value[key]) {
+  const close = () => levelExpansion.closeInner(set.dir_name, plugin.file_name)
+  if (levelExpansion.isInnerOpen(set.dir_name, plugin.file_name)) {
     if (!card) {
       close()
       return
@@ -745,7 +743,7 @@ function togglePlugin(set: LevelSetInfo, plugin: LevelSetPlugin, card?: HTMLElem
     collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, close)
     return
   }
-  expandedPlugins.value[key] = true
+  levelExpansion.openInner(set.dir_name, plugin.file_name)
   if (!card) return
   const anchor = card.querySelector('.card-row')
   if (!anchor) return
@@ -769,22 +767,16 @@ function nestedPluginCard(target: Element): HTMLElement | null {
 /**
  * 收起某张随包插件卡片。
  *
- * 键要从 DOM 上的 `data-plugin-of` / `data-plugin-file` 还原成 `pluginKey`：
- * 键里有 NUL（写不进 HTML 属性），所以卡片只带两个原始字段，这里再查回对应的
- * 集与插件。只在一次点击里走一次线性查找，代价可以忽略；拼键仍只有
- * `pluginKey` 一处实现。
+ * 卡片只带 `data-plugin-of` / `data-plugin-file` 两个原始字段（内层键里的 NUL
+ * 写不进 HTML 属性），拼键规则仍只有 `useCardExpansion` 一处实现。
  */
 function collapsePluginCard(card: HTMLElement) {
   const dirName = card.dataset.pluginOf
   const fileName = card.dataset.pluginFile
   if (!dirName || !fileName) return
-  const set = sets.value.find((item) => item.dir_name === dirName)
-  const plugin = set?.plugins?.find((item) => item.file_name === fileName)
-  if (!set || !plugin) return
-  const key = pluginKey(set, plugin)
-  if (!expandedPlugins.value[key]) return
+  if (!levelExpansion.isInnerOpen(dirName, fileName)) return
   collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, () => {
-    expandedPlugins.value[key] = false
+    levelExpansion.closeInner(dirName, fileName)
   })
 }
 
@@ -819,13 +811,11 @@ function onDocumentClick(event: MouseEvent) {
     collapsePluginCard(nested)
     return
   }
-  const dirName = expandedDir.value
+  const dirName = levelExpansion.outerKeys.value[0] ?? null
   if (dirName === null) return
   if (target instanceof Element && target.closest('.card-row')) return
   const card = cardOf(dirName)
-  const collapse = () => {
-    if (expandedDir.value === dirName) expandedDir.value = null
-  }
+  const collapse = () => levelExpansion.closeOuter(dirName)
   if (!card) {
     collapse()
     return
@@ -897,7 +887,7 @@ function remove(set: LevelSetInfo) {
           return
         }
         message.success(translateBackendMessage(result.message))
-        if (expandedDir.value === set.dir_name) expandedDir.value = null
+        levelExpansion.closeOuter(set.dir_name)
         await reloadSets()
       } catch (reason) {
         message.error(t('levelSet.deleteFailed', { reason: backendMessageOf(reason) }))
@@ -960,7 +950,7 @@ const bulkSwitchValue = computed<BulkSwitchValue>(() => {
  * `sets`（页面 render 时读）与页头的 `bulkWorking`，卡片插槽里没有它们的依赖。
  *
  * 换掉整棵列表的 key 强制重建（与 MOD 管理页 `listEpoch` 同一套做法）：
- * 展开状态都在页面级 ref（`expandedDir` / `collapsedGroups`）里，重建不丢。
+ * 展开状态都在页面级 ref（`levelExpansion` / `collapsedGroups`）里，重建不丢。
  */
 const listEpoch = ref(0)
 
@@ -1210,7 +1200,7 @@ async function checkUpdates() {
             :title-tooltip="set.error ? translateBackendMessage(set.error) : levelSetDisplayName(set, locale)"
             :version="formatVersion(set.version) || undefined"
             :disabled="!set.enabled"
-            :expanded="expandedDir === set.dir_name"
+            :expanded="levelExpansion.isOuterOpen(set.dir_name)"
             :focus-flash="!!highlightId && highlightId === focusIdOf(set)"
             :status-flash="matchesActiveStatus(set)"
             :pulse-class="statusPulseClass(set.dir_name, pulseTarget, pulseSeq)"
@@ -1358,7 +1348,7 @@ async function checkUpdates() {
                     :version="formatVersion(plugin.version) || undefined"
                     :title-tag="t('levelSet.bundledPlugin')"
                     :disabled="!plugin.enabled"
-                    :expanded="!!expandedPlugins[pluginKey(set, plugin)]"
+                    :expanded="levelExpansion.isInnerOpen(set.dir_name, plugin.file_name)"
                     @activate="(card: HTMLElement) => togglePlugin(set, plugin, card)">
                     <template #detail>
                       <div class="detail-grid">

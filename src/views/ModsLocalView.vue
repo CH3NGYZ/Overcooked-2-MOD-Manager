@@ -46,6 +46,7 @@ import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useModRemoval } from '../composables/useModRemoval'
+import { useCardExpansion } from '../composables/useCardExpansion'
 import type { InstalledMod, Repository } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
@@ -203,7 +204,15 @@ const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight(
  * sortBy 只会误导后续维护者。
  */
 const busy = ref<Record<string, boolean>>({})
-const expanded = ref<Record<string, boolean>>({})
+/*
+ * 卡片展开状态有两套，规则都在 `useCardExpansion` 里：
+ *   - `cardExpansion`：独立 MOD 卡片（外层，可多开）
+ *   - `packageExpansion`：包外壳（外层）+ 包内子 MOD / 随包依赖（内层）
+ * 拆成两套是因为两层的键空间不同：独立卡的键就是 `dll_file`，包内子卡的键是
+ * 「包 key + 文件名」—— 合成一个 record 时同名的 dll_file 会互相顶掉。
+ */
+const cardExpansion = useCardExpansion()
+const packageExpansion = useCardExpansion()
 
 // 切页面复用已有 Dashboard；开关/删除后仍用 load() 取最新扫描结果
 onMounted(() => {
@@ -738,13 +747,6 @@ function uninstallConflict(mod: InstalledMod, target: InstalledMod) {
   })
 }
 
-function toggleExpand(dll: string) {
-  expanded.value[dll] = !expanded.value[dll]
-}
-function isExpanded(dll: string) {
-  return !!expanded.value[dll]
-}
-
 /**
  * 展开后的滚动（策略见 `expandScroll.ts`）：顺手记下这次滚动的起止，
  * 收起时按它原样倒回去。
@@ -788,16 +790,28 @@ function collapseWithScroll(card: HTMLElement | null | undefined, bodySelector: 
  */
 let cardClickHandled = false
 
-function onCardClick(event: MouseEvent, mod: InstalledMod) {
+function onCardClick(event: MouseEvent, mod: InstalledMod, packageKey?: string) {
   const target = event.target
   if (target instanceof Element && target.closest('.card-detail')) return
   cardClickHandled = true
   const card = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
-  if (isExpanded(mod.dll_file)) {
-    collapseWithScroll(card, '.card-detail', () => toggleExpand(mod.dll_file))
+  /*
+   * 独立 MOD 卡片与包内子卡片分属两套状态（键空间不同，见 `cardExpansion` 的
+   * 注释），但交互必须完全一致：展开时滚到可见，收起时把展开那次滚动倒回去。
+   * 传了包 key 说明这是包内子卡，否则是独立卡。
+   */
+  const open = packageKey === undefined
+    ? cardExpansion.isOuterOpen(mod.dll_file)
+    : packageExpansion.isInnerOpen(packageKey, mod.dll_file)
+  const toggle = () => {
+    if (packageKey === undefined) cardExpansion.toggleOuter(mod.dll_file)
+    else packageExpansion.toggleInner(packageKey, mod.dll_file)
+  }
+  if (open) {
+    collapseWithScroll(card, '.card-detail', toggle)
     return
   }
-  toggleExpand(mod.dll_file)
+  toggle()
   scrollAfterExpand(card, '.card-row', '.card-detail')
 }
 
@@ -826,22 +840,27 @@ function onDocumentClick(event: MouseEvent) {
     cardClickHandled = false
     return
   }
-  const openKeys = Object.keys(expanded.value).filter((key) => expanded.value[key])
-  if (!openKeys.length) return
+  /*
+   * 展开中的卡片来自两套状态：独立 MOD 卡（外层）与包内子卡（内层）。
+   * 包外壳本身不参与「点空白收起」—— 点包标题行以外的地方只收子卡，包保持
+   * 展开（与改动前一致）；所以这里用 `closeAllInner` 而不是 `closeAll`。
+   */
+  const openCards = [
+    ...cardExpansion.outerKeys.value,
+    ...packageExpansion.innerKeys.value.map((key) => packageExpansion.childOf(key)),
+  ]
+  if (!openCards.length) return
   const target = event.target
   if (target instanceof Element && target.closest('.card-row, .package-head')) return
-  // 只把已展开的项置为 false，不动其它键
   const collapseAll = () => {
-    const current = expanded.value
-    const next = { ...current }
-    for (const key of Object.keys(current)) if (current[key]) next[key] = false
-    expanded.value = next
+    cardExpansion.closeAll()
+    packageExpansion.closeAllInner()
   }
-  if (openKeys.length !== 1) {
+  if (openCards.length !== 1) {
     collapseAll()
     return
   }
-  const card = document.querySelector<HTMLElement>(`[data-dll-file="${CSS.escape(openKeys[0])}"]`)
+  const card = document.querySelector<HTMLElement>(`[data-dll-file="${CSS.escape(openCards[0])}"]`)
   collapseWithScroll(card, '.card-detail', collapseAll)
 }
 onMounted(() => {
@@ -1418,18 +1437,11 @@ const {
 
 /* ===== 包级操作 ===== */
 
-/**
- * 包折叠状态：默认收起，只记住用户主动展开的包。
- *
- * 记「展开」而不是「收起」：默认收起时若把当前已知包的 key 预填进一个
- * collapsedPackages，那么之后新扫出来的包不在那份快照里，isPackageExpanded
- * 会把它算成展开——用户得先看它摊开一次、再手动收起一遍才符合预期。
- * 「集合里没有它」本身就是默认状态，新增包才不会漏。
+/*
+ * 包的折叠状态在 `packageExpansion` 里（与包内子卡同一份状态，收起时一起清）。
+ * 只记「用户展开过的包」而不是「收起过的包」：默认收起时，新扫出来的包不在
+ * 集合里，本身就是默认收起，不需要额外登记，也就不会漏。
  */
-const expandedPackages = ref<string[]>([])
-function isPackageExpanded(key: string) {
-  return expandedPackages.value.includes(key)
-}
 
 /**
  * 包外壳的展开 / 收起。
@@ -1439,17 +1451,17 @@ function isPackageExpanded(key: string) {
  * 位置再改状态，自己先改就量不到了。
  */
 function togglePackage(node: ModPackageNode, event: MouseEvent) {
-  const opening = !isPackageExpanded(node.key)
+  const opening = !packageExpansion.isOuterOpen(node.key)
   const head = event.currentTarget
   const shell = head instanceof Element ? head.closest('.package-shell') : null
   const card = shell instanceof HTMLElement ? shell : null
   if (!opening) {
-    collapseWithScroll(card, '.package-body', () => {
-      expandedPackages.value = expandedPackages.value.filter((item) => item !== node.key)
-    })
+    // 收起连带清掉包内子卡的展开状态（`useCardExpansion` 的规则）：
+    // 下次展开是一个全新的包，子卡要重新点开才展开。
+    collapseWithScroll(card, '.package-body', () => packageExpansion.closeOuter(node.key))
     return
   }
-  expandedPackages.value = [...expandedPackages.value, node.key]
+  packageExpansion.openOuter(node.key)
   scrollAfterExpand(card, '.package-head', '.package-body')
 }
 
@@ -1473,8 +1485,8 @@ watch([highlightId, groups], () => {
     .flatMap((group) => group.packages)
     .filter((pkg) => pkg.grouped && pkg.repositoryId === id)
     .map((pkg) => pkg.key)
-  const fresh = hits.filter((key) => !expandedPackages.value.includes(key))
-  if (fresh.length) expandedPackages.value = [...expandedPackages.value, ...fresh]
+  // `openOuter` 对已展开的包是空操作，不必先算差集
+  for (const key of hits) packageExpansion.openOuter(key)
 }, { immediate: true })
 
 /** 包级开关：走后端已有的 toggle_local_mod_package，一次切换整包。 */
@@ -1683,7 +1695,7 @@ function removePackage(node: ModPackageNode) {
               :version="formatVersion(mod.version) || undefined"
               :title-tag="mod.is_dependency ? t('modsLocal.bundledDependency') : undefined"
               :disabled="!mod.enabled"
-              :expanded="isExpanded(mod.dll_file)"
+              :expanded="cardExpansion.isOuterOpen(mod.dll_file)"
               :focus-flash="highlightId === bindingRepositoryId(mod)"
               :status-flash="matchesActiveStatus(modAnchor(mod))"
               :pulse-class="statusPulseClass(modAnchor(mod), pulseTarget, pulseSeq)"
@@ -1780,7 +1792,7 @@ function removePackage(node: ModPackageNode) {
               :data-mod-anchor="`unit:${pkg.key}`"
               :class="[
                 {
-                  expanded: isPackageExpanded(pkg.key),
+                  expanded: packageExpansion.isOuterOpen(pkg.key),
                   'status-flash': matchesActiveStatus(`unit:${pkg.key}`),
                   'focus-flash': !!pkg.repositoryId && highlightId === pkg.repositoryId,
                 },
@@ -1866,7 +1878,7 @@ function removePackage(node: ModPackageNode) {
               </header>
 
               <!-- 包展开/收起：同样用 Naive 的折叠过渡 -->
-              <n-collapse-transition :show="isPackageExpanded(pkg.key)" display-directive="show">
+              <n-collapse-transition :show="packageExpansion.isOuterOpen(pkg.key)" display-directive="show">
               <div class="package-body">
                 <!--
                   包内子 DLL 行不是独立单元：不加定位锚点，也不参与状态高亮。
@@ -1886,12 +1898,12 @@ function removePackage(node: ModPackageNode) {
                   :version="formatVersion(mod.version) || undefined"
                   :title-tag="mod.is_dependency ? t('modsLocal.bundledDependency') : undefined"
                   :disabled="!mod.enabled"
-                  :expanded="isExpanded(mod.dll_file)"
+                  :expanded="packageExpansion.isInnerOpen(pkg.key, mod.dll_file)"
                   :tools-min-width="toolColumnWidth"
                   :tool-gap="TOOL_GAP"
                   :tool-button-width="TOOL_BUTTON_WIDTH"
                   @toggle="(value: boolean) => toggle(mod, value)"
-                  @click="onCardClick($event, mod)">
+                  @click="onCardClick($event, mod, pkg.key)">
                   <!--
                     包内子 MOD 只保留三个操作（标签统一在包标题行）。
                   -->
@@ -1994,6 +2006,19 @@ function removePackage(node: ModPackageNode) {
   transition: border-color .16s ease, background-color .16s ease;
 }
 .package-shell:hover { border-color: color-mix(in srgb, var(--oc2-accent) 55%, var(--oc2-row-line)); }
+/*
+ * 包外壳展开：与单 MOD 卡片展开同一套视觉（accent 边框 + 8% accent 底色）。
+ * 不给外壳规则时，收起和展开长得一模一样，用户看不出「这个包点开了」。
+ * 底色按 `--oc2-card` 混合（不是 `--card-bg`）：包内子卡片用下沉底色
+ * （`.package-body .mod-card { --card-bg: var(--oc2-sunken) }`），外壳若跟着
+ * 子卡的基色走，展开后两者同色，包的边界就消失了。
+ * 放在 :hover 之后与 `.mod-card.expanded` 顺序一致；后面的 .status-flash /
+ * .focus-flash 用 12% 底色，定位高亮仍会盖过展开态。
+ */
+.package-shell.expanded {
+  border-color: var(--oc2-accent);
+  background: color-mix(in srgb, var(--oc2-accent) 8%, var(--oc2-card));
+}
 .package-head {
   display: flex;
   align-items: center;

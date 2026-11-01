@@ -13,14 +13,39 @@ use std::path::Path;
 ///
 /// - Windows 去掉 verbatim 前缀 `\\?\`；UNC 的 `\\?\UNC\server\share`
 ///   还原成 `\\server\share`；
-/// - 分隔符保持原生，不把 `\` 改成 `/`；
+/// - 分隔符统一成平台原生：Windows 上的 `/` 一律换成 `\`（见
+///   `normalize_separators` 里为什么 macOS 不反向转）；
 /// - 去掉多余的结尾分隔符，但保留根（`/`、`C:\`）；
 /// - 非 UTF-8 由 `to_string_lossy` 安全降级（替换成 U+FFFD），不 panic；
 /// - 空路径返回空串，重复调用结果不变。
 pub(crate) fn display_path(path: impl AsRef<Path>) -> String {
     let text = path.as_ref().to_string_lossy();
     let text = strip_verbatim_prefix(&text);
+    let text = normalize_separators(&text);
     trim_trailing_separators(&text)
+}
+
+/// 把混进路径里的 `/` 统一成 `\`（仅 Windows）。
+///
+/// 同一个绝对路径的各个片段来源不同：`game_root` 来自 `canonicalize`，分隔符
+/// 已经是原生的 `\`；而常量目录（`BepInEx/plugins/OC2DIYLevel`）按跨平台习惯
+/// 写成 `/`，`PathBuf::join` 只负责拼接、不会改写片段里的分隔符，拼出来就是
+/// `E:\...\Overcooked! 2\BepInEx/plugins/OC2DIYLevel\levels` 这种半截歪的样子。
+///
+/// macOS 不反向转：那边的 `/` 本来就是唯一分隔符，而 `\` 是**合法文件名字符**，
+/// 把 `\` 换成 `/` 会改坏真实路径。
+#[cfg(windows)]
+fn normalize_separators(value: &str) -> String {
+    if value.contains('/') {
+        value.replace('/', r"\")
+    } else {
+        value.to_string()
+    }
+}
+
+#[cfg(not(windows))]
+fn normalize_separators(value: &str) -> String {
+    value.to_string()
 }
 
 /// `\\?\` 规则；其余字符串原样返回。
@@ -98,8 +123,13 @@ mod tests {
 
     #[test]
     fn keeps_posix_paths_and_native_separators() {
-        let mac = "/Users/someone/Library/Application Support/Steam/steamapps/common/Overcooked! 2";
-        assert_eq!(display_path(Path::new(mac)), mac);
+        // POSIX 路径只可能在非 Windows 上出现：Windows 上 `/` 会被归一成 `\`。
+        #[cfg(not(windows))]
+        {
+            let mac =
+                "/Users/someone/Library/Application Support/Steam/steamapps/common/Overcooked! 2";
+            assert_eq!(display_path(Path::new(mac)), mac);
+        }
         // Windows 风格路径保留 `\`，不悄悄换成 `/`。
         assert_eq!(
             display_path(Path::new(r"E:\Games\Overcooked! 2\BepInEx")),
@@ -107,16 +137,53 @@ mod tests {
         );
     }
 
+    /// 拼接时片段自带 `/`（`DIYLEVEL_DIR` 这类跨平台常量）会留下半截歪的路径。
+    #[cfg(windows)]
+    #[test]
+    fn unifies_forward_slashes_on_windows() {
+        assert_eq!(
+            display_path(Path::new(
+                r"E:\Games\Overcooked! 2\BepInEx/plugins/OC2DIYLevel\levels/Hogwaffles"
+            )),
+            r"E:\Games\Overcooked! 2\BepInEx\plugins\OC2DIYLevel\levels\Hogwaffles"
+        );
+        // 先剥 verbatim 前缀再统一，两者互不干扰。
+        assert_eq!(
+            display_path(Path::new(r"\\?\E:\Games\OC2/BepInEx")),
+            r"E:\Games\OC2\BepInEx"
+        );
+        // 只有斜杠的写法也归一，且不会把 `C:\` 的尾分隔符吃掉。
+        assert_eq!(display_path(Path::new("C:/Games/OC2")), r"C:\Games\OC2");
+        assert_eq!(display_path(Path::new("C:/")), r"C:\");
+    }
+
+    /// macOS 上 `\` 是合法文件名字符，不能当分隔符改写。
+    #[cfg(not(windows))]
+    #[test]
+    fn leaves_backslashes_alone_off_windows() {
+        let path = r"/Users/me/OC2/BepInEx\weird/name";
+        assert_eq!(display_path(Path::new(path)), path);
+    }
+
     #[test]
     fn trims_redundant_trailing_separators_but_keeps_roots() {
-        assert_eq!(display_path(Path::new("/Users/me/game/")), "/Users/me/game");
-        assert_eq!(
-            display_path(Path::new("/Users/me/game///")),
-            "/Users/me/game"
-        );
-        assert_eq!(display_path(Path::new(r"E:\Games\OC2\")), r"E:\Games\OC2");
-        assert_eq!(display_path(Path::new("/")), "/");
-        assert_eq!(display_path(Path::new("/Users/me/game")), "/Users/me/game");
+        // POSIX 断言只在非 Windows 上成立（Windows 上 `/` 会先被归一成 `\`）。
+        #[cfg(not(windows))]
+        {
+            assert_eq!(display_path(Path::new("/Users/me/game/")), "/Users/me/game");
+            assert_eq!(
+                display_path(Path::new("/Users/me/game///")),
+                "/Users/me/game"
+            );
+            assert_eq!(display_path(Path::new("/")), "/");
+            assert_eq!(display_path(Path::new("/Users/me/game")), "/Users/me/game");
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(display_path(Path::new(r"E:\Games\OC2\")), r"E:\Games\OC2");
+            assert_eq!(display_path(Path::new(r"E:\Games\OC2\\\")), r"E:\Games\OC2");
+            assert_eq!(display_path(Path::new(r"\")), r"\");
+        }
     }
 
     #[test]

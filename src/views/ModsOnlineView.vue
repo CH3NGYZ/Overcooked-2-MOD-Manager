@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NSpin, NTag } from 'naive-ui'
+import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NTag } from 'naive-ui'
 import { LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { prefetchAvatars } from '../avatars'
@@ -16,6 +16,7 @@ import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
+import PageLoading from '../components/PageLoading.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
@@ -519,10 +520,35 @@ async function refreshSource(node: { id: string }) {
   releaseErrors.forEach((error) => message.error(error))
 }
 
+/** 整源刷新进行中（从点浮动按钮到第一张卡片重新出现）。 */
+const refreshPending = ref(false)
+
+/**
+ * 整页遮罩的显示条件。
+ *
+ * 首次加载：Dashboard 还在读（`loading`）。
+ * 整源刷新：从点按钮开始，到**第一张卡片重新出现**为止 —— 这是用户定的口径，
+ * 也是唯一说得通的：刷新一开始列表会被清空（卡片数掉到 0），这段时间没有任何
+ * 内容可看，必须显示加载态；等第一张卡回来就说明数据在流动，再盖着反而不如
+ * 让用户先看。
+ *
+ * 为什么不能直接用 `loading`：它只在应用第一次读 Dashboard 时为真，之后整源
+ * 刷新走的是 `backgroundLoading`（不显示整页遮罩）。结果是点刷新时列表一张张
+ * 冒出来、全程没有任何「正在加载」的反馈（实测点刷新后 852 帧采样里遮罩一次
+ * 都没出现）。
+ */
+const pageLoading = computed(() => loading.value || (refreshPending.value && visibleCount.value === 0))
+
 /** 整源刷新入口（仅浮动按钮调用；页头按钮已移除）。 */
 async function refreshAll() {
-  const errors = await engine.refreshEverything()
-  errors.forEach((error) => message.error(error))
+  refreshPending.value = true
+  try {
+    const errors = await engine.refreshEverything()
+    errors.forEach((error) => message.error(error))
+  } finally {
+    // 没有可用仓库 / 全部失败时列表一直是空的，只能在这里收尾，别把遮罩挂着
+    refreshPending.value = false
+  }
 }
 
 /**
@@ -606,8 +632,9 @@ defineExpose({ refreshAll, visibleCount })
       </n-button>
     </Teleport>
 
-  <n-spin :show="loading">
-    <n-empty v-if="!loading && !visibleCount" :description="t('tools.noMatchingRepositories')" class="empty" />
+  <PageLoading :show="pageLoading">
+    <template #status>{{ t('modsOnline.readingRepositorySources') }}</template>
+    <n-empty v-if="!pageLoading && !visibleCount" :description="t('tools.noMatchingRepositories')" class="empty" />
 
     <template v-else>
       <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
@@ -727,7 +754,7 @@ defineExpose({ refreshAll, visibleCount })
   <InstallPlanDialog v-model:show="installPlanOpen" :plan="installPlan"
     :target-label="installPlanTarget"
     @finished="(ready: boolean) => { void finishInstallPlan(ready) }" />
-  </n-spin>
+  </PageLoading>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
   <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">

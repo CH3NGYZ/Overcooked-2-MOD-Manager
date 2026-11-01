@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
+import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { DownloadOutline, FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
 import { api, watchLevelSetScan } from '../services/tauri'
@@ -14,6 +14,7 @@ import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
 import LocalItemCard from '../components/LocalItemCard.vue'
+import PageLoading from '../components/PageLoading.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import {
@@ -913,19 +914,15 @@ async function checkUpdates() {
     </n-button>
   </Teleport>
 
-  <n-spin :show="loading">
+  <PageLoading :show="loading">
     <!--
-      转圈条下面显示真实进度与当前读取的文件夹。
-      用 NSpin 自带的 #description 槽（官方位置就是 spinner 下方），不另做浮层：
-      槽只在 `show` 时参与渲染，扫完自然消失，不需要额外开关。
+      转圈下方显示真实进度与当前读取的文件夹。
       `done/total` 来自后端逐份上报，没拿到总数时只显示不确定文案，不编百分比。
     -->
-    <template #description>
-      <div class="scan-progress">
-        <span v-if="scanProgress">{{ t('levelSet.scanningProgress', { done: scanProgress.done, total: scanProgress.total }) }}</span>
-        <span v-else>{{ t('levelSet.scanningPreparing') }}</span>
-        <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
-      </div>
+    <template #status>
+      <span v-if="scanProgress">{{ t('levelSet.scanningProgress', { done: scanProgress.done, total: scanProgress.total }) }}</span>
+      <span v-else>{{ t('levelSet.scanningPreparing') }}</span>
+      <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
     </template>
     <n-empty v-if="!loading && !sortedSets.length" class="empty"
       :description="t('levelSet.noLevelSets')" />
@@ -1108,7 +1105,7 @@ async function checkUpdates() {
         </div>
       </n-collapse-item>
     </n-collapse>
-  </n-spin>
+  </PageLoading>
 
   <!--
     浮动按钮：重新扫描本地地图（只读磁盘，不碰地图源 Release）。
@@ -1275,23 +1272,11 @@ async function checkUpdates() {
 }
 
 /*
- * 转圈条下方的读取进度。
- *
- * 两行都居中排在 spinner 下：第一行「已读取 x/y」是确定进度，第二行是当前
- * 正在读的文件夹。文件夹名可能很长，单行省略 + title 给全文，避免把遮罩
- * 撑成两行宽度 —— 进度数字才是这一块的主信息。
+ * 加载遮罩里「正在读取的文件夹」那一行。
+ * 两行的排布与间距由 PageLoading 的 .page-loading-text 统一给，这里只补
+ * 内容差异：文件夹名可能很长，单行省略 + title 给全文 —— 进度数字才是
+ * 这一块的主信息。
  */
-.scan-progress {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  margin-top: 8px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--oc2-text-2);
-}
-
 .scan-folder {
   max-width: 56vw;
   overflow: hidden;

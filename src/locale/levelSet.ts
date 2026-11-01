@@ -175,6 +175,14 @@ export const levelSet: DomainMessages = {
     ja: '読み込み済み {done}/{total}',
   },
   // 正在读取：地图名（转圈条下方）
+  // 正在读取地图源（整页加载遮罩文案）
+  readingMapSources: {
+    'zh-CN': '正在读取地图源…',
+    'zh-TW': '正在讀取地圖來源…',
+    en: 'Reading map sources…',
+    ko: '지도 소스를 읽는 중…',
+    ja: 'マップソースを読み込み中…',
+  },
   scanningFolder: {
     'zh-CN': '正在读取：{name}',
     'zh-TW': '正在讀取：{name}',

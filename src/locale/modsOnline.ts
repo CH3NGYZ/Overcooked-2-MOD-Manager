@@ -15,6 +15,14 @@ export const modsOnline: DomainMessages = {
     ko: '저장소 {count}개',
     ja: 'リポジトリ {count} 件',
   },
+  // 正在读取仓库源（整页加载遮罩文案）
+  readingRepositorySources: {
+    'zh-CN': '正在读取仓库源…',
+    'zh-TW': '正在讀取倉庫來源…',
+    en: 'Reading repository sources…',
+    ko: '저장소 소스를 읽는 중…',
+    ja: 'リポジトリソースを読み込み中…',
+  },
   // 全部刷新
   refreshAll: {
     'zh-CN': '全部刷新',

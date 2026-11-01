@@ -9,7 +9,6 @@ import {
   NEmpty,
   NFloatButton,
   NInput,
-  NSpin,
   NTag,
   useDialog,
 } from 'naive-ui'
@@ -19,6 +18,7 @@ import { api } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
 import { tagColorForAny, type TagTone } from '../theme'
 import { useNotify } from '../useNotify'
+import PageLoading from '../components/PageLoading.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -867,15 +867,30 @@ async function refreshSource(node: SourceGroupSource<MapInfo>) {
  * 顺序不能反 —— 源树可能新增/删除了地图，先刷 Release 会给已经不存在的仓库
  * 发请求，新加的地图又拿不到版本。
  */
+/**
+ * 正在重拉地图源树（索引 → 子源）。
+ *
+ * 遮罩只覆盖这一段：地图列表刷新时**不清空**（新数据到了才整体替换），
+ * 所以「卡片数为 0」这种判据永远不成立 —— 那样只会看到浮动按钮自己在转圈，
+ * 现有卡片原样留着，用户完全看不出在重新读取。源树一回来卡片就能渲染，
+ * 正是「第一张卡出现就关」。
+ */
+const loadingMapSources = ref(false)
+
+const pageLoading = computed(() => loading.value || loadingMapSources.value)
+
 async function refreshAll() {
   if (refreshingAll.value) return
   refreshingAll.value = true
+  loadingMapSources.value = true
   try {
     try {
       maps.value = await api.refreshMapSources()
     } catch (reason) {
       // 源树失败仍然尝试刷新已有条目的 Release（缓存可能还能用）
       message.error(backendMessageOf(reason))
+    } finally {
+      loadingMapSources.value = false
     }
     const errors = await refreshReleases(maps.value)
     errors.forEach((error) => message.error(error))
@@ -904,8 +919,9 @@ async function refreshAll() {
     </n-button>
   </Teleport>
 
-  <n-spin :show="loading">
-    <n-empty v-if="!loading && !visibleCount" class="empty" :description="emptyDescription" />
+  <PageLoading :show="pageLoading">
+    <template #status>{{ t('levelSet.readingMapSources') }}</template>
+    <n-empty v-if="!pageLoading && !visibleCount" class="empty" :description="emptyDescription" />
 
     <!--
       三层折叠树，与 MOD 安装页同形：源（计数 + 刷新）→ 分类（计数 + 刷新）
@@ -968,7 +984,7 @@ async function refreshAll() {
         </n-collapse>
       </n-collapse-item>
     </n-collapse>
-  </n-spin>
+  </PageLoading>
 
   <!--
     详情抽屉：与 MOD 安装页是**同一个面板**（`ReleaseDetailPanel.vue` 只做版式）。

@@ -8,7 +8,7 @@ import { useDialog } from 'naive-ui'
 import { useNotify } from '../useNotify'
 import {
   NButton, NCollapse, NCollapseItem, NCollapseTransition, NEmpty, NFloatButton,
-  NSpin, NSwitch, NTabPane, NTabs, NTag,
+  NSwitch, NTabPane, NTabs, NTag,
 } from 'naive-ui'
 import {
   ArrowUpCircleOutline, DocumentTextOutline, DownloadOutline, FolderOpenOutline, RefreshOutline,
@@ -35,6 +35,7 @@ import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
+import PageLoading from '../components/PageLoading.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -1655,7 +1656,8 @@ function removePackage(node: ModPackageNode) {
     页头标题后的聚合标签已经承载了状态统计（数量、启用、可更新都在标签里），
     原来的 .toolbar 只重复这些数字，已无存在必要，移除。
   -->
-  <n-spin :show="loading">
+  <PageLoading :show="loading">
+    <template #status>{{ t('common.loading') }}</template>
     <n-empty v-if="!loading && !sortedMods.length" :description="t('modsLocal.noModsInstalled')" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
@@ -1945,7 +1947,7 @@ function removePackage(node: ModPackageNode) {
         </div>
       </n-collapse-item>
     </n-collapse>
-  </n-spin>
+  </PageLoading>
 
   <!-- 只保留排序切换（卡片已是唯一布局） -->
   <!--

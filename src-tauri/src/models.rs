@@ -141,6 +141,12 @@ pub struct LevelSetInfo {
     /// 地图源被删之后退回这份快照。
     #[serde(default)]
     pub relations: Vec<RepositoryRelation>,
+    /// 随这张地图集一起装进集目录的插件（作者随包的修复 DLL）。
+    ///
+    /// 绑定关系就是物理位置：DLL 与 `info` 同处集目录，扫描时按文件名读回，
+    /// 停用/启用整目录搬家时它们跟着一起走，导出地图包时整目录打包即可。
+    #[serde(default)]
+    pub plugins: Vec<LevelSetPlugin>,
 }
 
 /// 一个 DLL 在安装预览里的角色：真正的 BepInEx 插件，还是纯依赖。
@@ -155,16 +161,13 @@ pub enum DllRole {
     Dependency,
 }
 
-/// 关卡集 ZIP 里的一个随包插件（作者附带、跟着地图一起装的修复 DLL）。
+/// 一个随地图发布的 DLL 的元数据（ZIP 导入预览与本地扫描共用）。
 ///
-/// 前端把每个插件当成一个 MOD 展示「安装详情」，所以这里带出和 MOD 预览
-/// 同源的元数据；`path` 是 ZIP 内条目路径，`file_name` 才是落盘后的文件名。
+/// 两个场景读到的是同一份 [`crate::mods::read_dll_details`] 结果，所以字段
+/// 定义只留这一处：ZIP 里的随包插件与磁盘上的随包插件各自 `#[serde(flatten)]`
+/// 它，前端拿到的仍是平铺 JSON，字段名与 MOD 预览完全一致。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZipLevelSetPlugin {
-    /// ZIP 内的条目路径（作者原始目录结构，仅供展示定位）。
-    pub path: String,
-    /// 落盘文件名：导入时插件被放进关卡集目录根，只用文件名。
-    pub file_name: String,
+pub struct DllPluginInfo {
     pub role: DllRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -180,6 +183,31 @@ pub struct ZipLevelSetPlugin {
     pub company: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_filename: Option<String>,
+}
+
+/// 关卡集 ZIP 里的一个随包插件（作者附带、跟着地图一起装的修复 DLL）。
+///
+/// `path` 是 ZIP 内条目路径（作者原始目录结构，仅供展示定位），`file_name`
+/// 才是落盘后的文件名 —— 导入时插件被放进关卡集目录根，只用文件名。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZipLevelSetPlugin {
+    pub path: String,
+    pub file_name: String,
+    #[serde(flatten)]
+    pub info: DllPluginInfo,
+}
+
+/// 已经装在磁盘上的随包插件（扫描关卡集目录时读出）。
+///
+/// 与 [`ZipLevelSetPlugin`] 是同一个东西的两个阶段：导入后插件就躺在集目录
+/// 根里，扫描时按文件名读回来。`enabled` 只看文件后缀（`.dll.disabled` 是
+/// 手动禁用），与关卡集自身的开关（整目录搬家）不是一回事。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelSetPlugin {
+    pub file_name: String,
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub info: DllPluginInfo,
 }
 
 /// ZIP 里识别出的一个关卡集（导入前给用户确认用）。
@@ -1732,14 +1760,16 @@ mod dll_role_tests {
         let plugin = ZipLevelSetPlugin {
             path: "pkg/plugins/fix/Fix.dll".into(),
             file_name: "Fix.dll".into(),
-            role: DllRole::Dependency,
-            name: Some("Fix".into()),
-            guid: None,
-            version: None,
-            title: None,
-            product_name: None,
-            company: None,
-            original_filename: None,
+            info: DllPluginInfo {
+                role: DllRole::Dependency,
+                name: Some("Fix".into()),
+                guid: None,
+                version: None,
+                title: None,
+                product_name: None,
+                company: None,
+                original_filename: None,
+            },
         };
         let json = serde_json::to_value(&plugin).unwrap();
         assert_eq!(json["role"], "dependency");

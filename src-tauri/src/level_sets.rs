@@ -50,7 +50,7 @@
 //! - 同一关卡集在 ZIP 里出现两次
 //! - 目标目录已存在同名关卡集（由调用方决定覆盖与否）
 use crate::asset_bundle::{self, LevelSetMetadata};
-use crate::models::{DllRole, ZipLevelSetPlugin};
+use crate::models::{DllPluginInfo, DllRole, LevelSetPlugin, ZipLevelSetPlugin};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
@@ -79,7 +79,7 @@ const DISABLED_ROOT: &str = "BepInEx/cache/modmanager_disabled_maps";
 const LEGACY_DISABLED_ROOT: &str = "BepInEx/plugins/OC2DIYLevel/disabled";
 
 /// 启用中的关卡集根：`BepInEx/plugins/OC2DIYLevel/levels`。
-fn levels_root(game_root: &Path) -> PathBuf {
+pub(crate) fn levels_root(game_root: &Path) -> PathBuf {
     game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR)
 }
 
@@ -88,13 +88,18 @@ pub fn disabled_root(game_root: &Path) -> PathBuf {
     game_root.join(DISABLED_ROOT)
 }
 
+/// 旧停用根（在 `plugins/` 里）：只用于迁移，以及 MOD 扫描时把它排除掉。
+pub(crate) fn legacy_disabled_root(game_root: &Path) -> PathBuf {
+    game_root.join(LEGACY_DISABLED_ROOT)
+}
+
 /// 把旧停用根（在 `plugins/` 里）整批搬到新位置。
 ///
 /// 只在旧目录存在时动作：整体 rename 失败（目标已存在、跨卷等）就退化成逐项
 /// 搬迁，同名目录留在原地并记日志 —— 宁可少搬一个，也不覆盖用户的数据。
 /// 搬空后删掉旧目录壳，避免下次启动又扫到一遍。
 pub fn migrate_legacy_disabled_root(game_root: &Path) {
-    let legacy = game_root.join(LEGACY_DISABLED_ROOT);
+    let legacy = legacy_disabled_root(game_root);
     if !legacy.is_dir() {
         return;
     }
@@ -244,6 +249,11 @@ pub struct LevelSetOnDisk {
     /// 只对**本地安装**的包有意义：在线安装的地图以地图源的 `relations` 为准，
     /// 这个值只用来在没有线上声明时兜底（见 `level_set_to_info`）。
     pub required_runtime: Option<String>,
+    /// 随这张地图集一起装在集目录里的插件（作者随包的修复 DLL）。
+    ///
+    /// 绑定关系就是物理位置：DLL 与 `info` 同处集目录，扫描时按文件名读回。
+    /// 停用/启用整目录搬家时它们跟着一起走。
+    pub plugins: Vec<LevelSetPlugin>,
 }
 
 /// 扫描进度回调：`(已完成数, 总数, 当前读到的目录名)`。
@@ -360,8 +370,9 @@ pub fn scan_level_sets_with_progress(
 /// 带的 `info_<集名>`。先找前者，找不到再找唯一一个 `info_*` —— 两种都在
 /// 真实资源里出现过。
 fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelSetOnDisk {
-    // 与 info 无关，独立读取：info 读不出来时这个值照样能用
+    // 与 info 无关，独立读取：info 读不出来时这两个值照样能用
     let required_runtime = read_required_runtime(&directory);
+    let plugins = read_level_set_plugins(&directory);
     let info_path = match locate_info_file(&directory) {
         Some(path) => path,
         None => {
@@ -372,6 +383,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
                 metadata: None,
                 error: Some("levelSet.infoMissing".into()),
                 required_runtime,
+                plugins,
             };
         }
     };
@@ -383,6 +395,7 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
             metadata: Some(metadata),
             error: None,
             required_runtime,
+            plugins,
         },
         Err(error) => {
             log::warn!(
@@ -398,9 +411,50 @@ fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelS
                 metadata: None,
                 error: Some(error),
                 required_runtime,
+                plugins,
             }
         }
     }
+}
+
+/// 读集目录里的随包插件：DLL 与 `info` 同处一层，看到就绑，不猜名字。
+///
+/// 绑定关系不存额外的表 —— 插件导入后本来就被放进集目录根（见
+/// [`assign_plugins`]），扫描按文件名读回即可；停用/启用整目录搬家时它们
+/// 跟着走，导出地图包时整目录打包也不会漏。`.dll.disabled` 是手动禁用的
+/// 副本，照样带出，由 `enabled` 标出来。
+///
+/// 元数据与 MOD 预览同源（[`crate::mods::read_dll_details`]）。只有目录里真有
+/// DLL 才会去解析 PE，纯地图目录的扫描开销不变。
+fn read_level_set_plugins(directory: &Path) -> Vec<LevelSetPlugin> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut plugins: Vec<LevelSetPlugin> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let (base, enabled) = match file_name.strip_suffix(".disabled") {
+            Some(base) => (base, false),
+            None => (file_name, true),
+        };
+        if !base.to_lowercase().ends_with(".dll") {
+            continue;
+        }
+        let details = crate::mods::read_dll_details(&path, file_name);
+        plugins.push(LevelSetPlugin {
+            file_name: file_name.to_string(),
+            enabled,
+            info: details.into(),
+        });
+    }
+    plugins.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+    plugins
 }
 
 /// 读 `requires.txt`：第一行有效内容就是要求的外部 runtime 最低版本。
@@ -1186,8 +1240,10 @@ fn package_unit_root(directory: &str) -> String {
 
 /// 一个 DLL 条目所属的「包单位」根：它上方最近一层 `plugins*` 的父目录。
 ///
-/// 只认 `plugins*` 子树里的 DLL：作者随手塞在包根下的 DLL 归属无从判断，
-/// 猜错就会把无关插件塞进某张地图，宁可不认。
+/// 这是**第二级**归属规则，只处理「插件与地图分开打包」的情况 —— 与 `info`
+/// 同父目录的 DLL 在 [`assign_plugins`] 里已被第一级规则判掉。既不在
+/// `plugins*` 子树、也不在集目录里的 DLL 归属无从判断，猜错就会把无关插件
+/// 塞进某张地图，宁可不认。
 fn plugin_unit_root(entry: &str) -> Option<String> {
     let parts: Vec<&str> = entry.split('/').filter(|part| !part.is_empty()).collect();
     // 最后一段是文件名
@@ -1283,6 +1339,37 @@ fn assign_plugins(
     all_entries: &[String],
     sets: &[(String, LevelSetMetadata, String)],
 ) -> BTreeMap<String, Vec<String>> {
+    let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    /*
+     * 第一级（确定绑定）：DLL 与某张地图集的 `info` 同父目录，直接归它。
+     *
+     * 这是「地图 + 自己的修复 DLL」最直接的写法，也是导入后的磁盘形态（插件
+     * 落在集目录根）—— 不猜名字、不打分，看到就绑。导出地图包时整目录打包，
+     * 重新导入还会命中同一条规则，所以绑定关系不需要额外存一份。
+     */
+    let mut unresolved: Vec<&String> = Vec::new();
+    for entry in all_entries {
+        if !entry.to_lowercase().ends_with(".dll") {
+            continue;
+        }
+        let (directory, _) = split_entry(entry);
+        match sets
+            .iter()
+            .position(|(set_directory, _, _)| set_directory == &directory)
+        {
+            Some(index) => owners
+                .entry(sets[index].0.clone())
+                .or_default()
+                .push(entry.clone()),
+            None => unresolved.push(entry),
+        }
+    }
+
+    /*
+     * 第二级（推断绑定）：DLL 在 `plugins*` 子树里，按包单位归集再按名字打分。
+     * 作者把插件和地图分开打包时的兜底，猜不出来就归单位内排序第一张。
+     */
     // 单位根 → 该单位下的集
     let mut units: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, (directory, _, _)) in sets.iter().enumerate() {
@@ -1293,16 +1380,12 @@ fn assign_plugins(
     }
     // 单位根 → 该单位下的 DLL
     let mut pending: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for entry in all_entries {
-        if !entry.to_lowercase().ends_with(".dll") {
-            continue;
-        }
+    for entry in unresolved {
         if let Some(unit) = plugin_unit_root(entry) {
             pending.entry(unit).or_default().push(entry.clone());
         }
     }
 
-    let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (unit, entries) in pending {
         let mut member: Vec<usize> = units.get(&unit).cloned().unwrap_or_default();
         if member.is_empty() {
@@ -1407,14 +1490,16 @@ fn read_zip_plugin_details<R: Read + Seek>(
         ZipLevelSetPlugin {
             path: entry.to_string(),
             file_name: file_name.clone(),
-            role: DllRole::Dependency,
-            name: Some(crate::mods::file_stem_name(&file_name)),
-            guid: None,
-            version: None,
-            title: None,
-            product_name: None,
-            company: None,
-            original_filename: None,
+            info: DllPluginInfo {
+                role: DllRole::Dependency,
+                name: Some(crate::mods::file_stem_name(&file_name)),
+                guid: None,
+                version: None,
+                title: None,
+                product_name: None,
+                company: None,
+                original_filename: None,
+            },
         }
     };
     let Some(scratch) = scratch else {
@@ -1441,14 +1526,7 @@ fn read_zip_plugin_details<R: Read + Seek>(
     ZipLevelSetPlugin {
         path: entry.to_string(),
         file_name,
-        role: details.role,
-        name: details.name,
-        guid: details.guid,
-        version: details.version,
-        title: details.title,
-        product_name: details.product_name,
-        company: details.company,
-        original_filename: details.original_filename,
+        info: details.into(),
     }
 }
 
@@ -1642,8 +1720,12 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
                 entry,
                 scratch.as_deref(),
             );
-            // 落盘相对路径只取文件名 → 插件进集目录根，随目录一起开关
-            files.push((entry.clone(), plugin.file_name.clone()));
+            // 落盘相对路径只取文件名 → 插件进集目录根，随目录一起开关。
+            // 插件本来就躺在集目录里（第一级绑定）时 `files` 已经收过这一条，
+            // 再 push 会让安装事务重复写同一个文件、`file_count` 也跟着虚高。
+            if !files.iter().any(|(source, _)| source == entry) {
+                files.push((entry.clone(), plugin.file_name.clone()));
+            }
             plugins.push(plugin);
         }
         imported.push(ImportedLevelSet {
@@ -3399,7 +3481,8 @@ mod plugin_tests {
         );
         // 没有 plugins 层：归属无从判断，宁可忽略也不猜
         assert_eq!(plugin_unit_root("pack/loose.dll"), None);
-        // levels 下的 DLL 不是包插件
+        // 第二级（猜归属）不认 levels 下的 DLL：那种由第一级「与 info 同父目录」
+        // 直接绑定，不靠这里猜
         assert_eq!(plugin_unit_root("pack/levels/set/x.dll"), None);
     }
 
@@ -3542,9 +3625,9 @@ mod plugin_tests {
         );
         // 假 DLL 读不出 BepInPlugin：降级成依赖 + 文件名兜底，识别本身不能失败
         for plugin in &set.plugins {
-            assert_eq!(plugin.role, DllRole::Dependency);
+            assert_eq!(plugin.info.role, DllRole::Dependency);
             assert_eq!(
-                plugin.name.as_deref(),
+                plugin.info.name.as_deref(),
                 plugin.file_name.strip_suffix(".dll"),
                 "读不出元数据时展示名退回文件名（去扩展名）"
             );
@@ -3563,6 +3646,87 @@ mod plugin_tests {
                 "{name} 应作为集目录根下的文件被复制"
             );
         }
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 第一级绑定：DLL 与 info 同处一个父目录 → 名字毫不相干也绑这张图。
+    ///
+    /// 这是作者把「地图 + 它自己的修复 DLL」平铺进同一个集目录时的形态，
+    /// 也是管理器导出地图包时的落点，所以必须是确定绑定而不是猜名字。
+    #[test]
+    fn dll_beside_info_binds_to_that_level_set_without_name_matching() {
+        let Some(info) = real_info_bytes() else {
+            eprintln!("跳过：没有 .tmp/rw.zip 可取真实 info");
+            return;
+        };
+        let root =
+            std::env::temp_dir().join(format!("oc2-lv-plugin-sibling-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("pack.zip");
+        write_test_zip(
+            &zip,
+            &[
+                ("作者包/levels包/myset/info_x", &info),
+                ("作者包/levels包/myset/s_x_1", b"scene"),
+                // 名字与集名毫无关系：只靠「同父目录」绑定
+                ("作者包/levels包/myset/ZZZ_Unrelated.dll", b"dll"),
+            ],
+        );
+
+        let sets = inspect_zip(&zip).expect("应能识别这个包");
+        assert_eq!(sets.len(), 1, "一个 info 就是一个关卡集");
+        let set = &sets[0];
+        assert_eq!(
+            set.plugins
+                .iter()
+                .map(|plugin| plugin.file_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ZZZ_Unrelated.dll"],
+            "同目录的 DLL 应当绑到这个集"
+        );
+        // 它本来就在集目录里，`files` 已经收过；再当插件 push 一次会让安装
+        // 事务重复写同一个文件、`file_count` 也跟着虚高
+        let copies = set
+            .files
+            .iter()
+            .filter(|(source, _)| source.ends_with("ZZZ_Unrelated.dll"))
+            .count();
+        assert_eq!(copies, 1, "同一个文件只能出现在 files 里一次");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 扫描侧也要看到集目录里的随包 DLL：装完再打开地图页得能显示出来。
+    #[test]
+    fn scans_bundled_plugins_from_the_installed_level_set_directory() {
+        let root =
+            std::env::temp_dir().join(format!("oc2-lv-scan-plugins-{}", uuid::Uuid::new_v4()));
+        let set_dir = root.join("levels").join("MySet");
+        std::fs::create_dir_all(&set_dir).unwrap();
+        let dll = crate::mods::plugin_blob("com.example.bundled", "Bundled Fix", "2.1.0");
+        std::fs::write(set_dir.join("BundledFix.dll"), &dll).unwrap();
+        std::fs::write(set_dir.join("Disabled.dll.disabled"), &dll).unwrap();
+        // 非 DLL 不参与
+        std::fs::write(set_dir.join("info"), b"not an asset bundle").unwrap();
+
+        let set = read_level_set(set_dir.clone(), "MySet".to_string(), true);
+        let listed: Vec<(&str, bool)> = set
+            .plugins
+            .iter()
+            .map(|plugin| (plugin.file_name.as_str(), plugin.enabled))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![("BundledFix.dll", true), ("Disabled.dll.disabled", false)],
+            "按文件名排序，`.disabled` 记为未启用"
+        );
+        assert_eq!(set.plugins[0].info.role, DllRole::Mod);
+        assert_eq!(set.plugins[0].info.name.as_deref(), Some("Bundled Fix"));
+        assert_eq!(
+            set.plugins[0].info.guid.as_deref(),
+            Some("com.example.bundled")
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -3599,10 +3763,13 @@ mod plugin_tests {
             "path 是 ZIP 内条目路径，file_name 才是落盘文件名"
         );
         assert_eq!(plugin.file_name, "JonnyLevelLoaderPlugin.dll");
-        assert_eq!(plugin.role, DllRole::Mod, "读出 BepInPlugin 就是 mod");
-        assert_eq!(plugin.name.as_deref(), Some("Jonny Level Loader"));
-        assert_eq!(plugin.guid.as_deref(), Some("com.example.jonnylevelloader"));
-        assert_eq!(plugin.version.as_deref(), Some("3.4.1"));
+        assert_eq!(plugin.info.role, DllRole::Mod, "读出 BepInPlugin 就是 mod");
+        assert_eq!(plugin.info.name.as_deref(), Some("Jonny Level Loader"));
+        assert_eq!(
+            plugin.info.guid.as_deref(),
+            Some("com.example.jonnylevelloader")
+        );
+        assert_eq!(plugin.info.version.as_deref(), Some("3.4.1"));
 
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -97,6 +97,12 @@ pub fn scan_mods_with_manifests(
     manifest_dir: Option<&Path>,
 ) -> Vec<InstalledMod> {
     let plugins = game.join(PLUGINS_DIR);
+    // 关卡集目录里的 DLL 是地图的随包插件（见 `level_sets::assign_plugins`），
+    // 不是普通 MOD：它们跟着整个集目录一起开关（`levels/` ↔ `disabled/`
+    // 整目录搬家），再出现在 MOD 列表里会让用户单独改成 `.dll.disabled`，
+    // 两套开关状态互相打架。
+    let level_sets_root = crate::level_sets::levels_root(game);
+    let legacy_disabled_root = crate::level_sets::legacy_disabled_root(game);
     log::debug!("开始扫描本地 MOD：插件目录={}", plugins.display());
     if !plugins.is_dir() {
         log::warn!("插件目录不存在，跳过 MOD 扫描：{}", plugins.display());
@@ -123,6 +129,10 @@ pub fn scan_mods_with_manifests(
                             })
                         });
                 if inside_staging {
+                    continue;
+                }
+                let path = entry.path();
+                if path.starts_with(&level_sets_root) || path.starts_with(&legacy_disabled_root) {
                     continue;
                 }
                 paths.push(entry.into_path());
@@ -930,6 +940,22 @@ pub(crate) struct DllDetails {
     pub(crate) company: Option<String>,
     pub(crate) copyright: Option<String>,
     pub(crate) original_filename: Option<String>,
+}
+
+impl From<DllDetails> for crate::models::DllPluginInfo {
+    /// `copyright` 只给 MOD 详情用，地图随包插件的展示版式里没有这一项。
+    fn from(details: DllDetails) -> Self {
+        Self {
+            role: details.role,
+            name: details.name,
+            guid: details.guid,
+            version: details.version,
+            title: details.title,
+            product_name: details.product_name,
+            company: details.company,
+            original_filename: details.original_filename,
+        }
+    }
 }
 
 /// 解析单个 DLL 的元数据（安装预览与地图随包插件唯一入口）。
@@ -2742,6 +2768,53 @@ mod tests {
                 .iter()
                 .map(|item| &item.dll_file)
                 .collect::<Vec<_>>()
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 关卡集目录里的随包 DLL 归地图管，不能同时出现在本地 MOD 列表。
+    ///
+    /// 两套状态会打架：MOD 列表能把它改成 `.dll.disabled`，地图页又按
+    /// 「整目录 rename」开关，同一份文件于是有两个真相。
+    #[test]
+    fn bundled_level_set_plugins_are_not_scanned_as_mods() {
+        let root = std::env::temp_dir().join(format!("oc2-scan-map-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+
+        std::fs::create_dir_all(plugins.join("RealMod")).unwrap();
+        std::fs::write(
+            plugins.join("RealMod/Real.dll"),
+            plugin_blob("com.example.real", "Real", "1.0.0"),
+        )
+        .unwrap();
+
+        // 地图集目录：随包 DLL 与地图资源同处一个父目录
+        let set_dir = plugins.join("OC2DIYLevel/levels/MySet");
+        std::fs::create_dir_all(&set_dir).unwrap();
+        let bundled = set_dir.join("BundledFix.dll");
+        std::fs::write(
+            &bundled,
+            plugin_blob("com.example.bundled", "Bundled", "1.0.0"),
+        )
+        .unwrap();
+
+        // 前置条件：它确实是会被 is_mod_file 认下的文件（否则「扫不到」
+        // 可能是过滤谓词不认它，而不是排除生效）
+        assert!(bundled.is_file(), "夹具没建好，测试会空转");
+        assert!(super::is_mod_file(&bundled));
+
+        let config = crate::config::default_config();
+        let scanned = super::scan_mods_with_manifests(&root, &config, None);
+        let files: Vec<&str> = scanned.iter().map(|item| item.dll_file.as_str()).collect();
+        assert!(
+            !files.iter().any(|file| file.contains("levels")),
+            "关卡集目录里的 DLL 不应出现在 MOD 列表：{files:?}"
+        );
+        assert!(
+            files.iter().any(|file| file.ends_with("Real.dll")),
+            "真实 MOD 仍要扫到：{files:?}"
         );
 
         std::fs::remove_dir_all(&root).unwrap();

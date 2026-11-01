@@ -5577,6 +5577,8 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
         // 这里只负责把磁盘扫描结果转成模型
         map_id: None,
         relations: fallback_relations,
+        // 随包插件就是集目录里的 DLL（扫描时读回），与绑定/依赖无关
+        plugins: set.plugins,
     }
 }
 

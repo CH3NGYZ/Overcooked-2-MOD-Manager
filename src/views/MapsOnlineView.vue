@@ -105,20 +105,24 @@ import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository, Zip
  */
 const message = useNotify()
 const dialog = useDialog()
+import { useMapSources } from '../composables/useMapSources'
+
 const { mods, game, config, load, ensureLoaded } = useDashboard()
 const { highlightId } = useFocusHighlight()
 const { linkToLevelSets } = useLevelSetLink()
 /** 缺依赖的落点：MOD 安装页里那张能补上依赖的仓库卡片（与 MOD 管理页一致）。 */
 const { linkToRepository } = useRepositoryLink()
 
-const maps = ref<MapInfo[]>([])
+/*
+ * 地图源数据与刷新状态都来自模块级单例（`useMapSources`）。
+ * 放在模块作用域是为了「刷新中切走再切回来」时状态还在 —— 页面实例会被
+ * 卸载重建，挂在页面上的 ref 熬不过一次切页。理由详见该 composable 的注释。
+ */
+const {
+  maps, loading, refreshing, refreshingSources, installing, refreshingAll,
+  loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
+} = useMapSources()
 const sets = ref<LevelSetInfo[]>([])
-const loading = ref(true)
-const refreshing = ref<Record<string, boolean>>({})
-/** 每个地图源的刷新状态（源树重拉 + 该源下全部 Release）。 */
-const refreshingSources = ref<Record<string, boolean>>({})
-const installing = ref<Record<string, boolean>>({})
-const refreshingAll = ref(false)
 /** 「安装地图」按钮的忙碌状态（选择 / 拖入 / 直链 → 暂存 → 识别 → 确认 → 落盘）。 */
 const importing = ref(false)
 /** 「安装地图」来源卡片是否打开。 */
@@ -256,16 +260,6 @@ const anyRefreshing = computed(
     || Object.keys(refreshingSources.value).length > 0,
 )
 
-async function loadMaps() {
-  loading.value = maps.value.length === 0
-  try {
-    maps.value = await api.maps()
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    loading.value = false
-  }
-}
 
 /**
  * 读一次本地关卡集。
@@ -611,42 +605,12 @@ function actionOf(map: MapInfo): CardAction {
   }
 }
 
-function setFlag(flags: typeof refreshing, id: string, value: boolean) {
-  const next = { ...flags.value }
-  if (value) next[id] = true
-  else delete next[id]
-  flags.value = next
-}
 
-/**
- * 把线上依赖声明同步进本地清单（`sync_dependency_snapshots`）。
- *
- * 依赖只写在源文档里：地图源下线、改版或换仓库后，本地清单里那份安装时
- * 固化的快照就会过期，依赖表会显示成一条过时的结论。刷新完按线上声明重写
- * 一遍，离线时依赖表才不会凭空消失。
- *
- * 失败**不弹错**：快照只是兜底展示信息，同步不上不该让一次成功的刷新
- * 变成一条失败提示。
- */
-async function syncDependencySnapshots() {
-  await api.syncDependencySnapshots().catch(() => undefined)
-}
 
 /** 刷新一张地图的 Release（用户主动点刷新 → 绕过缓存）。 */
 async function refresh(map: MapInfo) {
-  if (isRefreshing(map) || isInstalling(map)) return
-  setFlag(refreshing, map.id, true)
-  try {
-    await api.refreshMapReleases(map.id, true)
-    // 刷新完把线上依赖声明写回本地清单（离线时依赖表的兜底来源）
-    await syncDependencySnapshots()
-    // Release 缓存变了，卡片与详情都要跟着更新
-    await loadMaps()
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    setFlag(refreshing, map.id, false)
-  }
+  const errors = await refreshReleases([map])
+  if (errors.length) message.error(errors[0])
 }
 
 /**
@@ -797,32 +761,6 @@ function sourceRefreshing(node: SourceGroupSource<MapInfo>): boolean {
   return node.groups.some((group) => group.items.some((map) => isRefreshing(map) || isInstalling(map)))
 }
 
-/**
- * 逐个刷新一批地图的 Release，返回失败信息。
- *
- * 单个失败不阻断同批其它条目：一次刷几十张图时逐条弹错会把用户淹掉，所以
- * 错误交回调用方合并上报（与 MOD 安装页的批量刷新同一套做法）。
- *
- * 结束后把线上依赖声明写回本地清单并重读列表：卡片状态与依赖表要立刻反映
- * 新缓存，否则用户刷完看到还是旧版本。
- */
-async function refreshReleases(list: MapInfo[]): Promise<string[]> {
-  const errors: string[] = []
-  for (const map of list) {
-    if (isRefreshing(map) || isInstalling(map)) continue
-    setFlag(refreshing, map.id, true)
-    try {
-      await api.refreshMapReleases(map.id, true)
-    } catch (reason) {
-      errors.push(backendMessageOf(reason))
-    } finally {
-      setFlag(refreshing, map.id, false)
-    }
-  }
-  await syncDependencySnapshots()
-  await loadMaps()
-  return errors
-}
 
 /**
  * 刷新一个分类下的全部 Release。
@@ -836,68 +774,17 @@ async function refreshGroup(group: SourceGroupLeaf<MapInfo>) {
   if (errors.length) message.error(errors[0])
 }
 
-/**
- * 刷新一个源。
- *
- * 后端没有「只刷新一个源」的命令：地图源树的加载本身就是一次整体请求，
- * 所以这里先重拉源树（可能新增/删除地图、改分组），再刷新这个源下的
- * 全部 Release。重拉后按源 ID 重新取一次条目，不吃重拉前的旧对象。
- */
-async function refreshSource(node: SourceGroupSource<MapInfo>) {
-  if (refreshingAll.value || refreshingSources.value[node.id]) return
-  setFlag(refreshingSources, node.id, true)
-  try {
-    try {
-      maps.value = await api.refreshMapSources()
-    } catch (reason) {
-      message.error(backendMessageOf(reason))
-    }
-    const scoped = maps.value.filter((map) => (map.source_id || '__none__') === node.id)
-    const errors = await refreshReleases(scoped)
-    if (errors.length) message.error(errors[0])
-  } finally {
-    setFlag(refreshingSources, node.id, false)
-  }
-}
 
 /**
- * 刷新全部。
+ * 整页遮罩的显示条件，与 MOD 安装页同一条判据：
+ * 「正在刷新 **且** 列表是空的」。
  *
- * 两步：先重拉源树（索引 → 子源，拿到最新的地图清单），再逐个仓库刷 Release。
- * 顺序不能反 —— 源树可能新增/删除了地图，先刷 Release 会给已经不存在的仓库
- * 发请求，新加的地图又拿不到版本。
+ * 刷新一开始就把列表清空（见 `refreshAll`），所以这条在这里是有意义的；
+ * 反过来，源树回来、第一张卡片能渲染时 `visibleCount` 立刻大于 0，遮罩当场
+ * 消失 —— 不需要在几个中间状态之间切换，也就不会有「遮罩闪两下」的抖动。
  */
-/**
- * 正在重拉地图源树（索引 → 子源）。
- *
- * 遮罩只覆盖这一段：地图列表刷新时**不清空**（新数据到了才整体替换），
- * 所以「卡片数为 0」这种判据永远不成立 —— 那样只会看到浮动按钮自己在转圈，
- * 现有卡片原样留着，用户完全看不出在重新读取。源树一回来卡片就能渲染，
- * 正是「第一张卡出现就关」。
- */
-const loadingMapSources = ref(false)
+const pageLoading = computed(() => loading.value || (refreshingAll.value && visibleCount.value === 0))
 
-const pageLoading = computed(() => loading.value || loadingMapSources.value)
-
-async function refreshAll() {
-  if (refreshingAll.value) return
-  refreshingAll.value = true
-  loadingMapSources.value = true
-  try {
-    try {
-      maps.value = await api.refreshMapSources()
-    } catch (reason) {
-      // 源树失败仍然尝试刷新已有条目的 Release（缓存可能还能用）
-      message.error(backendMessageOf(reason))
-    } finally {
-      loadingMapSources.value = false
-    }
-    const errors = await refreshReleases(maps.value)
-    errors.forEach((error) => message.error(error))
-  } finally {
-    refreshingAll.value = false
-  }
-}
 </script>
 
 <template>

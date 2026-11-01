@@ -520,35 +520,29 @@ async function refreshSource(node: { id: string }) {
   releaseErrors.forEach((error) => message.error(error))
 }
 
-/** 整源刷新进行中（从点浮动按钮到第一张卡片重新出现）。 */
-const refreshPending = ref(false)
-
 /**
- * 整页遮罩的显示条件。
+ * 整页遮罩的显示条件，与地图安装页同一条判据：
+ * 「正在整源刷新 **且** 列表是空的」。
  *
  * 首次加载：Dashboard 还在读（`loading`）。
- * 整源刷新：从点按钮开始，到**第一张卡片重新出现**为止 —— 这是用户定的口径，
- * 也是唯一说得通的：刷新一开始列表会被清空（卡片数掉到 0），这段时间没有任何
- * 内容可看，必须显示加载态；等第一张卡回来就说明数据在流动，再盖着反而不如
- * 让用户先看。
+ * 整源刷新：`refreshEverything()` 会先清空源缓存让列表当场变空，这段时间没有
+ * 任何内容可看，必须显示加载态；第一张卡回来立刻收起。
  *
- * 为什么不能直接用 `loading`：它只在应用第一次读 Dashboard 时为真，之后整源
- * 刷新走的是 `backgroundLoading`（不显示整页遮罩）。结果是点刷新时列表一张张
- * 冒出来、全程没有任何「正在加载」的反馈（实测点刷新后 852 帧采样里遮罩一次
- * 都没出现）。
+ * 为什么用引擎的 `refreshingAll` 而不是页面自己的标志：它在
+ * `useRepositoryRefresh` 里是模块级单例，刷新中切走再切回来时仍然是 true ——
+ * 页面级 ref 熬不过一次切页，那样用户切回来只会看到一个空列表加「没有仓库」，
+ * 完全不知道后台那次刷新还在跑。
+ *
+ * 为什么不能只看 `loading`：它只在应用第一次读 Dashboard 时为真，之后整源
+ * 刷新走的是 `backgroundLoading`（不显示整页遮罩）。实测点刷新后 852 帧采样
+ * 里遮罩一次都没出现。
  */
-const pageLoading = computed(() => loading.value || (refreshPending.value && visibleCount.value === 0))
+const pageLoading = computed(() => loading.value || (engine.refreshingAll.value && visibleCount.value === 0))
 
 /** 整源刷新入口（仅浮动按钮调用；页头按钮已移除）。 */
 async function refreshAll() {
-  refreshPending.value = true
-  try {
-    const errors = await engine.refreshEverything()
-    errors.forEach((error) => message.error(error))
-  } finally {
-    // 没有可用仓库 / 全部失败时列表一直是空的，只能在这里收尾，别把遮罩挂着
-    refreshPending.value = false
-  }
+  const errors = await engine.refreshEverything()
+  errors.forEach((error) => message.error(error))
 }
 
 /**

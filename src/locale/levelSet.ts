@@ -301,10 +301,10 @@ export const levelSet: DomainMessages = {
   },
   refreshAllHint: {
     'zh-CN': '刷新全部地图的 Release（忽略 5 分钟缓存）',
-    'zh-TW': '重新整理全部地圖的 Release（忽略 10 分鐘快取）',
-    en: 'Refresh releases for every map, ignoring the 10-minute cache',
-    ko: '모든 지도의 Release를 새로 고칩니다(10분 캐시 무시)',
-    ja: 'すべてのマップの Release を更新します（10 分キャッシュを無視）',
+    'zh-TW': '重新整理全部地圖的 Release（忽略 5 分鐘快取）',
+    en: 'Refresh releases for every map, ignoring the 5-minute cache',
+    ko: '모든 지도의 Release를 새로 고칩니다(5분 캐시 무시)',
+    ja: 'すべてのマップの Release を更新します（5 分キャッシュを無視）',
   },
   installMap: {
     'zh-CN': '安装地图',

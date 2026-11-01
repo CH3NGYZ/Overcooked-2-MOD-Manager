@@ -4,16 +4,27 @@
 //!
 //! ```text
 //! BepInEx/plugins/OC2DIYLevel/
-//!   ├─ levels/      ← 启用的关卡集
-//!   │    └─ <集名>/{info, s_*}
-//!   └─ disabled/    ← 停用的关卡集（与 levels 平级）
-//!        └─ <集名>/{info, s_*}
+//!   └─ levels/          ← 启用的关卡集
+//!        └─ <集名>/{info, s_*, 作者随包提供的 *.dll}
+//! BepInEx/cache/modmanager_disabled_maps/
+//!   └─ <集名>/          ← 停用的关卡集（与 levels 不在一起，见下）
 //! ```
 //!
 //! **开关就是移动整个目录**：`OC2DIYLevel.dll` 只枚举 `levels/*/`，它既不认识
-//! `disabled` 这个名字，也没有「禁用」标志位（反编译它的字符串表可以确认：
+//! 停用根的路径，也没有「禁用」标志位（反编译它的字符串表可以确认：
 //! `disable` 一次都没出现）。所以把目录移出去就等于卸载，移回来就等于重装，
 //! 没有任何需要同步的状态。
+//!
+//! ## 停用根为什么在 `plugins/` 之外
+//!
+//! BepInEx 5 **递归**扫描 `BepInEx/plugins/` 下的全部 `.dll`（游戏里
+//! `plugins/ConfigurationManager/`、`plugins/OC2DIYLevel/` 这些子目录插件能被
+//! 加载就是这条规则的证据）。关卡集目录里现在可能带着作者随包提供的修复插件
+//! （见 ZIP 导入的「包单位」规则），停用时若只是把目录从 `levels/` 挪到同级
+//! 的 `plugins/OC2DIYLevel/disabled/`，地图不加载了、但**插件下次启动照样被
+//! 加载** —— 那是「停用地图」最不该出现的结果。所以停用根放在
+//! `BepInEx/cache/modmanager_disabled_maps/`：仍在游戏目录内（同盘 rename，
+//! 瞬间完成），但不在 BepInEx 的任何扫描路径上。
 //!
 //! ## 为什么单关卡不做开关
 //!
@@ -55,12 +66,94 @@ const DIYLEVEL_DIR: &str = "BepInEx/plugins/OC2DIYLevel";
 /// 启用中的关卡集目录名。
 const LEVELS_DIR: &str = "levels";
 
-/// 停用的关卡集目录名。
+/// 停用关卡集的根（游戏相对路径）。
 ///
-/// 必须与 `levels` **平级**：DLL 只读 `levels/`，所以放在这里它就看不见。
-/// 不要改成 `levels/.disabled` 之类的嵌套路径 —— 那会被 DLL 当作一个叫
-/// 「.disabled」的关卡集去加载 `info`，找不到就刷一条错误。
-const DISABLED_DIR: &str = "disabled";
+/// 刻意**不在 `plugins/` 树里**：BepInEx 递归扫 `plugins/` 下所有 `.dll`，放
+/// 在那里停用的只是地图，作者随包的修复插件还会被加载。也不要用
+/// `levels/.disabled` 这种嵌套路径 —— DLL 会把 `.disabled` 当成一个关卡集去
+/// 读 `info`，找不到就刷错误。
+const DISABLED_ROOT: &str = "BepInEx/cache/modmanager_disabled_maps";
+
+/// 旧的停用根（`plugins/OC2DIYLevel/disabled`），只用于一次性迁移。
+const LEGACY_DISABLED_ROOT: &str = "BepInEx/plugins/OC2DIYLevel/disabled";
+
+/// 启用中的关卡集根：`BepInEx/plugins/OC2DIYLevel/levels`。
+fn levels_root(game_root: &Path) -> PathBuf {
+    game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR)
+}
+
+/// 停用中的关卡集根：`BepInEx/cache/modmanager_disabled_maps`。
+pub fn disabled_root(game_root: &Path) -> PathBuf {
+    game_root.join(DISABLED_ROOT)
+}
+
+/// 把旧停用根（在 `plugins/` 里）整批搬到新位置。
+///
+/// 只在旧目录存在时动作：整体 rename 失败（目标已存在、跨卷等）就退化成逐项
+/// 搬迁，同名目录留在原地并记日志 —— 宁可少搬一个，也不覆盖用户的数据。
+/// 搬空后删掉旧目录壳，避免下次启动又扫到一遍。
+pub fn migrate_legacy_disabled_root(game_root: &Path) {
+    let legacy = game_root.join(LEGACY_DISABLED_ROOT);
+    if !legacy.is_dir() {
+        return;
+    }
+    let target = disabled_root(game_root);
+    if fs::create_dir_all(&target).is_err() {
+        log::warn!("创建停用根失败，暂不迁移旧目录：{}", target.display());
+        return;
+    }
+    if !target
+        .read_dir()
+        .map(|mut it| it.next().is_some())
+        .unwrap_or(false)
+    {
+        match fs::rename(&legacy, &target) {
+            Ok(()) => {
+                log::info!(
+                    "旧停用根已整体迁移：从={}，到={}",
+                    legacy.display(),
+                    target.display()
+                );
+                return;
+            }
+            Err(error) => log::warn!(
+                "旧停用根整体迁移失败，改为逐项搬迁：从={}，原因={}",
+                legacy.display(),
+                error
+            ),
+        }
+    }
+    let Ok(entries) = fs::read_dir(&legacy) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if !kind.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let destination = target.join(&name);
+        if destination.exists() {
+            log::warn!(
+                "旧停用根里的目录与新位置同名，保留在旧位置：目录={}",
+                name.to_string_lossy()
+            );
+            continue;
+        }
+        match fs::rename(entry.path(), &destination) {
+            Ok(()) => log::info!("旧停用根逐项迁移：目录={}", name.to_string_lossy()),
+            Err(error) => log::warn!(
+                "旧停用根逐项迁移失败：目录={}，原因={}",
+                name.to_string_lossy(),
+                error
+            ),
+        }
+    }
+    // 只在真的空掉时删壳；还有搬不动的条目就留着现场
+    let _ = fs::remove_dir(&legacy);
+}
 
 /// 关卡集目录里声明「外部 runtime 最低版本」的文件。
 ///
@@ -177,13 +270,18 @@ pub fn scan_level_sets_with_progress(
     progress: ScanProgress<'_>,
 ) -> Vec<LevelSetOnDisk> {
     let base = game_root.join(DIYLEVEL_DIR);
+    // 旧版本的停用根在 `plugins/` 里，先搬走再枚举（见 `migrate_legacy_disabled_root`）
+    migrate_legacy_disabled_root(game_root);
     /*
      * 先把待解析的目标列全：并行之前必须先知道总数，才能给出「3/7」这种
      * 真实进度（转圈条下面要显示的就是它）。列目录本身只读元数据，很快。
      */
     let mut targets: Vec<(PathBuf, String, bool)> = Vec::new();
-    for (dir_name, enabled) in [(LEVELS_DIR, true), (DISABLED_DIR, false)] {
-        let Ok(entries) = fs::read_dir(base.join(dir_name)) else {
+    for (root, enabled) in [
+        (levels_root(game_root), true),
+        (disabled_root(game_root), false),
+    ] {
+        let Ok(entries) = fs::read_dir(&root) else {
             continue;
         };
         let mut names: Vec<String> = entries
@@ -193,7 +291,7 @@ pub fn scan_level_sets_with_progress(
             .collect();
         names.sort();
         for name in names {
-            targets.push((base.join(dir_name).join(&name), name, enabled));
+            targets.push((root.join(&name), name, enabled));
         }
     }
 
@@ -813,14 +911,13 @@ pub fn set_level_set_enabled(
         log::warn!("拒绝不安全的关卡集目录名：{}", dir_name);
         return Err("levelSet.invalidName".into());
     }
-    let base = game_root.join(DIYLEVEL_DIR);
-    let (from_dir, to_dir) = if enabled {
-        (DISABLED_DIR, LEVELS_DIR)
+    let (from_root, to_root) = if enabled {
+        (disabled_root(game_root), levels_root(game_root))
     } else {
-        (LEVELS_DIR, DISABLED_DIR)
+        (levels_root(game_root), disabled_root(game_root))
     };
-    let source = base.join(from_dir).join(dir_name);
-    let destination = base.join(to_dir).join(dir_name);
+    let source = from_root.join(dir_name);
+    let destination = to_root.join(dir_name);
     if !source.is_dir() {
         log::warn!(
             "关卡集不在预期位置：目录={}，期望={}",
@@ -899,8 +996,8 @@ pub fn set_all_level_sets_enabled(game_root: &Path, enabled: bool) -> Result<Vec
 
 /// 定位一个关卡集目录，并确认它确实是 `OC2DIYLevel` 下的真实目录。
 ///
-/// `enabled` 决定去 `levels/` 还是 `disabled/` 找：同名目录可能只存在于其中
-/// 一边，猜错就会操作到另一个关卡集（打开错目录、删错文件）。
+/// `enabled` 决定去 `levels/` 还是停用根找：同名目录可能只存在于其中一边，
+/// 猜错就会操作到另一个关卡集（打开错目录、删错文件）。
 ///
 /// 「打开目录」与「删除」都先走这里，路径校验只写一遍 —— 两个入口不会出现
 /// 一个严一个松，也不会因为某个入口将来漏改而让前端参数变成任意路径。
@@ -913,13 +1010,23 @@ pub fn locate_level_set_directory(
         log::warn!("拒绝不安全的关卡集目录名：{}", dir_name);
         return Err("levelSet.invalidName".into());
     }
-    // 先确认框架目录本身在游戏内，再拼关卡集目录：safe_game_path 会解析最近的
-    // 已存在祖先，目录联接因此不能把目标指到游戏目录之外
-    let base = crate::game::safe_game_path(game_root, DIYLEVEL_DIR)?;
-    let relative = format!(
-        "{DIYLEVEL_DIR}/{}/{dir_name}",
-        if enabled { LEVELS_DIR } else { DISABLED_DIR }
-    );
+    /*
+     * 先确认这一侧的根目录本身在游戏内，再拼关卡集目录：`safe_game_path` 会
+     * 解析最近的已存在祖先，目录联接因此不能把目标指到游戏目录之外。
+     * 两侧各有自己的根（启用侧在 plugins 里、停用侧在 cache 里），归属检查
+     * 必须对着各自的根做 —— 拿 DIYLevel 的根去校验停用侧会永远不通过。
+     */
+    let (base, relative) = if enabled {
+        (
+            crate::game::safe_game_path(game_root, DIYLEVEL_DIR)?,
+            format!("{DIYLEVEL_DIR}/{LEVELS_DIR}/{dir_name}"),
+        )
+    } else {
+        (
+            crate::game::safe_game_path(game_root, DISABLED_ROOT)?,
+            format!("{DISABLED_ROOT}/{dir_name}"),
+        )
+    };
     let path = crate::game::safe_game_path(game_root, &relative)?;
     if !path.starts_with(&base) || !path.is_dir() {
         log::warn!(
@@ -1029,7 +1136,251 @@ pub struct ImportedLevelSet {
     /// 该关卡集的 `info` 文件内容解析结果。
     pub metadata: LevelSetMetadata,
     /// ZIP 内该关卡集的文件：条目名 → 去掉关卡集前缀后的相对路径。
+    ///
+    /// 包含作者随包的修复插件（它们被归到集目录根，见 [`assign_plugins`]）。
     pub files: Vec<(String, String)>,
+    /// 随这个关卡集一起安装的插件文件名（只用于界面提示，落盘走 `files`）。
+    pub plugins: Vec<String>,
+}
+
+/// 目录名是否形如 `levels`（容忍 `levels包`、`LEVELS2` 这类作者写法）。
+fn is_levels_dir(name: &str) -> bool {
+    name.to_lowercase().starts_with("levels")
+}
+
+/// 目录名是否形如 `plugins`（容忍 `plugins包`、`Plugins`）。
+fn is_plugins_dir(name: &str) -> bool {
+    name.to_lowercase().starts_with("plugins")
+}
+
+/// 一个关卡集所属的「包单位」根：作者把地图与插件打在一起的那层目录。
+///
+/// 实测真实包都长这样：
+/// ```text
+/// jonny职业鼠鼠的图/
+///   ├─ levels包/jonnylevelset3.4.1/{info_jonny, s_jonny_*}
+///   └─ plugins包/Jonny_dll/{JonnyLevelLoaderPlugin.dll, JonnyLevelScripts.dll}
+/// ```
+/// 规则：从集目录往上找第一层 `levels*`，它的父目录就是单位根；路径里没有
+/// `levels*`（ZIP 根下直接就是集目录）时退回「集目录的父目录」。
+fn package_unit_root(directory: &str) -> String {
+    let parts: Vec<&str> = directory
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return String::new();
+    }
+    if let Some(index) = (0..parts.len().saturating_sub(1))
+        .rev()
+        .find(|index| is_levels_dir(parts[*index]))
+    {
+        return parts[..index].join("/");
+    }
+    parts[..parts.len() - 1].join("/")
+}
+
+/// 一个 DLL 条目所属的「包单位」根：它上方最近一层 `plugins*` 的父目录。
+///
+/// 只认 `plugins*` 子树里的 DLL：作者随手塞在包根下的 DLL 归属无从判断，
+/// 猜错就会把无关插件塞进某张地图，宁可不认。
+fn plugin_unit_root(entry: &str) -> Option<String> {
+    let parts: Vec<&str> = entry.split('/').filter(|part| !part.is_empty()).collect();
+    // 最后一段是文件名
+    let dirs = &parts[..parts.len().saturating_sub(1)];
+    let index = (0..dirs.len())
+        .rev()
+        .find(|index| is_plugins_dir(dirs[*index]))?;
+    Some(dirs[..index].join("/"))
+}
+
+/// 归一化名字：小写 + 只留字母数字（CJK 也算字母，作者的中文目录名因此保留）。
+fn normalize_name(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+/// 两个归一化名字的公共前缀长度（字符数）。
+fn common_prefix_len(left: &str, right: &str) -> usize {
+    left.chars()
+        .zip(right.chars())
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
+/// 公共前缀达到这个长度才认为「DLL 与这张地图有关」。
+///
+/// 4 是实测折中：`shz` 只有 3 个字符，但 `SHZTargetDrop.dll` 的父目录
+/// `shzhogwafflesdll` 与集名共享 13 个字符，仍能命中；而 3 个字符（`mod`、
+/// `fix`）几乎任何包都会误配。
+const PLUGIN_NAME_MATCH_MIN: usize = 4;
+
+/// 一个插件该归哪个关卡集。`member` 必须非空且已按目录名排序。
+///
+/// 只有一张集时直接归它（实测三个真实包都是这种）；多集时按名字相关性挑，
+/// 挑不出来就归单位内排序第一张 —— 不复制给多张，同一个 DLL 落两份会让
+/// BepInEx 加载两次。
+fn pick_level_set_for_plugin(
+    entry: &str,
+    sets: &[(String, LevelSetMetadata, String)],
+    member: &[usize],
+) -> usize {
+    if member.len() <= 1 {
+        return member[0];
+    }
+    let (directory, file_name) = split_entry(entry);
+    let stem = file_name
+        .rsplit_once('.')
+        .map(|(head, _)| head.to_string())
+        .unwrap_or_else(|| file_name.clone());
+    let folder = directory.rsplit('/').next().unwrap_or("").to_string();
+    let probes = [normalize_name(&stem), normalize_name(&folder)];
+    let mut scores: Vec<(usize, usize)> = member
+        .iter()
+        .map(|index| {
+            let (set_directory, metadata, _) = &sets[*index];
+            let set_folder = set_directory.rsplit('/').next().unwrap_or("");
+            let names = [
+                normalize_name(set_folder),
+                normalize_name(&metadata.name),
+                normalize_name(metadata.name_zh.as_deref().unwrap_or("")),
+            ];
+            let score = probes
+                .iter()
+                .flat_map(|probe| names.iter().map(move |name| common_prefix_len(probe, name)))
+                .max()
+                .unwrap_or(0);
+            (*index, score)
+        })
+        .collect();
+    let best = scores.iter().map(|(_, score)| *score).max().unwrap_or(0);
+    if best >= PLUGIN_NAME_MATCH_MIN {
+        let winners: Vec<usize> = scores
+            .iter()
+            .filter(|(_, score)| *score == best)
+            .map(|(index, _)| *index)
+            .collect();
+        if winners.len() == 1 {
+            return winners[0];
+        }
+    }
+    // 挑不出来：按目录名排序的第一张（`member` 已排序，结果不随 ZIP 条目顺序变）
+    scores.sort_by_key(|(index, _)| *index);
+    member[0]
+}
+
+/// 把 ZIP 里的插件归到各关卡集的目录：`集目录 → 归属的 DLL 条目名`。
+///
+/// 归过去之后它们会随 `files` 一起落进 `<levels>/<集名>/`，于是「启用/停用
+/// 整目录 rename」天然把作者的修复插件一起开关 —— 这正是「地图和 DLL 一起搬」。
+fn assign_plugins(
+    all_entries: &[String],
+    sets: &[(String, LevelSetMetadata, String)],
+) -> BTreeMap<String, Vec<String>> {
+    // 单位根 → 该单位下的集
+    let mut units: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, (directory, _, _)) in sets.iter().enumerate() {
+        units
+            .entry(package_unit_root(directory))
+            .or_default()
+            .push(index);
+    }
+    // 单位根 → 该单位下的 DLL
+    let mut pending: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for entry in all_entries {
+        if !entry.to_lowercase().ends_with(".dll") {
+            continue;
+        }
+        if let Some(unit) = plugin_unit_root(entry) {
+            pending.entry(unit).or_default().push(entry.clone());
+        }
+    }
+
+    let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (unit, entries) in pending {
+        let mut member: Vec<usize> = units.get(&unit).cloned().unwrap_or_default();
+        if member.is_empty() {
+            // 单位根对不上（集目录与 plugins 不在同一层包装里）：退化成
+            // 「集目录在 unit 之下」也算成员
+            member = sets
+                .iter()
+                .enumerate()
+                .filter(|(_, (directory, _, _))| {
+                    unit.is_empty()
+                        || directory == &unit
+                        || directory.starts_with(&format!("{unit}/"))
+                })
+                .map(|(index, _)| index)
+                .collect();
+        }
+        if member.is_empty() {
+            log::warn!("ZIP 里的插件找不到所属关卡集，已忽略：单位={}", unit);
+            continue;
+        }
+        member.sort_by(|left, right| sets[*left].0.cmp(&sets[*right].0));
+        for entry in entries {
+            let target = pick_level_set_for_plugin(&entry, sets, &member);
+            owners
+                .entry(sets[target].0.clone())
+                .or_default()
+                .push(entry);
+        }
+    }
+    for list in owners.values_mut() {
+        list.sort();
+        list.dedup();
+    }
+    owners
+}
+
+/// ZIP 里有什么：关卡集数量与 DLL 数量（拖放分类用，不解析 info）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZipContents {
+    /// 含 `info` 的目录数（>0 即视为地图包）。
+    pub map_sets: usize,
+    /// ZIP 里 `.dll` 条目数。
+    pub plugins: usize,
+}
+
+/// 判断一个 ZIP 是地图包还是 MOD 包（**只读条目名**，不解析 info）。
+///
+/// 判据刻意只有一条：**含 `info` 就是地图包**。地图包常带修复插件，只按
+/// 「有没有 DLL」判断会把它误判成 MOD；反过来纯 DLL 的包一定是 MOD。
+pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
+    let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &error.to_string())])
+    })?;
+    let mut info_dirs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut plugins = 0usize;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).map_err(|error| {
+            crate::locale_tag::with_params(
+                "archive.zipEntryReadFailed",
+                &[("reason", &error.to_string())],
+            )
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().replace('\\', "/");
+        if is_junk_entry(&name) {
+            continue;
+        }
+        let (directory, file_name) = split_entry(&name);
+        if is_info_file(&file_name) {
+            info_dirs.insert(directory);
+        }
+        if file_name.to_lowercase().ends_with(".dll") {
+            plugins += 1;
+        }
+    }
+    Ok(ZipContents {
+        map_sets: info_dirs.len(),
+        plugins,
+    })
 }
 
 /// 读一个 ZIP 文件，按 `info` 识别出其中的关卡集。
@@ -1062,6 +1413,8 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
      * 所以这里保留全部候选，稍后逐个试解析，取第一个能读出关卡集的。
      */
     let mut info_candidates: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    // ZIP 内全部文件条目名，供「包单位」把 plugins 子树里的 DLL 归到地图上
+    let mut all_entries: Vec<String> = Vec::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| {
             crate::locale_tag::with_params(
@@ -1077,6 +1430,7 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
             continue;
         }
         let (directory, file_name) = split_entry(&name);
+        all_entries.push(name.clone());
         by_directory
             .entry(directory.clone())
             .or_default()
@@ -1149,6 +1503,12 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
         *base_counts.entry(base_name.to_lowercase()).or_default() += 1;
     }
 
+    /*
+     * 插件归属先算一次再落盘：同一批里的集名还要做消歧，但归属看的是 ZIP 里
+     * 的原始目录，与最终目录名无关。
+     */
+    let plugin_owner = assign_plugins(&all_entries, &parsed_sets);
+
     let mut imported = Vec::with_capacity(parsed_sets.len());
     let mut taken_dir_names = std::collections::HashSet::new();
     for (directory, metadata, base_name) in parsed_sets {
@@ -1164,7 +1524,7 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
         } else {
             format!("{directory}/")
         };
-        let files = by_directory
+        let mut files: Vec<(String, String)> = by_directory
             .remove(&directory)
             .unwrap_or_default()
             .into_iter()
@@ -1176,10 +1536,25 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
                 (name, relative)
             })
             .collect();
+        /*
+         * 作者的修复插件跟着地图走：条目原来在 ZIP 的 plugins 子树里，落盘时
+         * 相对路径只取文件名，也就是放进集目录根。这样停用/启用（整目录
+         * rename）天然把插件和地图一起开关 —— 否则关掉地图、插件还在 BepInEx
+         * 里生效。
+         */
+        let plugin_entries = plugin_owner.get(&directory).cloned().unwrap_or_default();
+        let plugin_names: Vec<String> = plugin_entries
+            .iter()
+            .map(|entry| entry.rsplit('/').next().unwrap_or(entry).to_string())
+            .collect();
+        for (entry, name) in plugin_entries.into_iter().zip(plugin_names.iter()) {
+            files.push((entry, name.clone()));
+        }
         imported.push(ImportedLevelSet {
             dir_name,
             metadata,
             files,
+            plugins: plugin_names,
         });
     }
 
@@ -1192,9 +1567,10 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
      * 它们分开、又不随版本变化的字段。
      */
     log::info!(
-        "ZIP 关卡集识别完成：文件={}，关卡集={}",
+        "ZIP 关卡集识别完成：文件={}，关卡集={}，随包插件={}",
         zip_path.display(),
-        imported.len()
+        imported.len(),
+        imported.iter().map(|set| set.plugins.len()).sum::<usize>()
     );
     Ok(imported)
 }
@@ -1218,8 +1594,8 @@ pub fn install_from_zip(
         return Err("levelSet.nothingSelected".into());
     }
 
-    let levels_dir = game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR);
-    let disabled_dir = game_root.join(DIYLEVEL_DIR).join(DISABLED_DIR);
+    let levels_dir = levels_root(game_root);
+    let disabled_dir = disabled_root(game_root);
 
     /*
      * 目标目录名下已经有东西时：
@@ -1475,14 +1851,14 @@ mod tests {
         for name in ["A", "B"] {
             std::fs::create_dir_all(base.join(LEVELS_DIR).join(name)).unwrap();
         }
-        std::fs::create_dir_all(base.join(DISABLED_DIR).join("C")).unwrap();
+        std::fs::create_dir_all(disabled_root(&root).join("C")).unwrap();
 
         // 停用：只移动当前启用的 A、B，已经在 disabled 的 C 不参与
         let changed = set_all_level_sets_enabled(&root, false).unwrap();
         assert_eq!(changed, vec!["A".to_string(), "B".to_string()]);
         for name in ["A", "B", "C"] {
             assert!(
-                base.join(DISABLED_DIR).join(name).is_dir(),
+                disabled_root(&root).join(name).is_dir(),
                 "{name} 应在 disabled"
             );
         }
@@ -1508,7 +1884,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("oc2-lv-clash-{}", uuid::Uuid::new_v4()));
         let base = root.join(DIYLEVEL_DIR);
         std::fs::create_dir_all(base.join(LEVELS_DIR).join("Dup")).unwrap();
-        std::fs::create_dir_all(base.join(DISABLED_DIR).join("Dup")).unwrap();
+        std::fs::create_dir_all(disabled_root(&root).join("Dup")).unwrap();
 
         // 两边同名：覆盖会静默丢掉用户已有的那个，必须拒绝
         let result = set_level_set_enabled(&root, "Dup", false);
@@ -2122,8 +2498,8 @@ pub fn install_level_set(
         }
     }
 
-    let levels_dir = game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR);
-    let disabled_dir = game_root.join(DIYLEVEL_DIR).join(DISABLED_DIR);
+    let levels_dir = levels_root(game_root);
+    let disabled_dir = disabled_root(game_root);
 
     /*
      * 目标目录名可能已被**另一张**地图占用。
@@ -2245,7 +2621,7 @@ fn write_level_set(
     dir_name: &str,
     set: &ImportedLevelSet,
 ) -> Result<(), String> {
-    let destination = game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join(dir_name);
+    let destination = levels_root(game_root).join(dir_name);
     fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
 
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
@@ -2327,7 +2703,7 @@ mod map_management_tests {
         let recycle = root.join("recycle");
         let manifests = root.join("manifests");
         std::fs::create_dir_all(game.join(DIYLEVEL_DIR).join(LEVELS_DIR)).unwrap();
-        std::fs::create_dir_all(game.join(DIYLEVEL_DIR).join(DISABLED_DIR)).unwrap();
+        std::fs::create_dir_all(disabled_root(&game)).unwrap();
         std::fs::create_dir_all(&recycle).unwrap();
         std::fs::create_dir_all(&manifests).unwrap();
         (root, game, recycle)
@@ -2380,10 +2756,7 @@ mod map_management_tests {
     fn scan_reports_the_absolute_directory_path_for_both_sides() {
         let (root, game, _recycle) = workspace("path");
         let enabled_dir = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("EnabledSet");
-        let disabled_dir = game
-            .join(DIYLEVEL_DIR)
-            .join(DISABLED_DIR)
-            .join("DisabledSet");
+        let disabled_dir = disabled_root(&game).join("DisabledSet");
         std::fs::create_dir_all(&enabled_dir).unwrap();
         std::fs::create_dir_all(&disabled_dir).unwrap();
         std::fs::write(enabled_dir.join("info"), b"not a bundle").unwrap();
@@ -2418,7 +2791,7 @@ mod map_management_tests {
         assert!(
             disabled
                 .path
-                .ends_with(Path::new(DISABLED_DIR).join("DisabledSet"))
+                .ends_with(Path::new(DISABLED_ROOT).join("DisabledSet"))
         );
 
         std::fs::remove_dir_all(&root).unwrap();
@@ -2470,7 +2843,7 @@ mod map_management_tests {
     fn deleting_without_recycling_removes_the_directory() {
         let (root, game, recycle) = workspace("purge");
         let manifests = root.join("manifests");
-        let set = game.join(DIYLEVEL_DIR).join(DISABLED_DIR).join("MySet");
+        let set = disabled_root(&game).join("MySet");
         std::fs::create_dir_all(&set).unwrap();
         std::fs::write(set.join("info"), b"placeholder").unwrap();
 
@@ -2579,10 +2952,7 @@ mod recycle_on_install_tests {
          * 用户先停用了旧版本（在 disabled/），再装新的。
          * 那个旧目录仍是他的数据，必须一起回收 —— 否则启用时会撞名。
          */
-        let stale = game
-            .join(DIYLEVEL_DIR)
-            .join(DISABLED_DIR)
-            .join("RW_LevelSet");
+        let stale = disabled_root(&game).join("RW_LevelSet");
         std::fs::create_dir_all(&stale).unwrap();
         std::fs::write(stale.join("info"), b"stale").unwrap();
 
@@ -2755,15 +3125,14 @@ mod recycle_on_install_tests {
             std::thread::current().id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let base = root.join(DIYLEVEL_DIR);
         // 刻意乱序创建：目录项的读取顺序不代表扫描输出的顺序
-        let plan: [(&str, &[&str]); 2] = [
-            (LEVELS_DIR, &["zeta", "alpha", "mike"]),
-            (DISABLED_DIR, &["beta", "yankee"]),
+        let plan: [(PathBuf, &[&str]); 2] = [
+            (levels_root(&root), &["zeta", "alpha", "mike"]),
+            (disabled_root(&root), &["beta", "yankee"]),
         ];
         for (side, names) in plan {
             for &name in names {
-                std::fs::create_dir_all(base.join(side).join(name)).unwrap();
+                std::fs::create_dir_all(side.join(name)).unwrap();
             }
         }
 
@@ -2808,5 +3177,309 @@ mod recycle_on_install_tests {
         );
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+// ===== 包单位（levels 与 plugins 同包）与随包插件 =====
+#[cfg(test)]
+mod plugin_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    /// 造一个 ZIP：`entries` 是 (条目名, 内容) 列表。
+    fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    fn metadata(name: &str, name_zh: Option<&str>) -> LevelSetMetadata {
+        LevelSetMetadata {
+            name: name.to_string(),
+            name_zh: name_zh.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// 真实 `info` 的字节（从 `.tmp/rw.zip` 里取一份），没有就跳过。
+    fn real_info_bytes() -> Option<Vec<u8>> {
+        let zip = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.tmp/rw.zip");
+        if !zip.is_file() {
+            return None;
+        }
+        let file = std::fs::File::open(zip).ok()?;
+        let mut archive = zip::ZipArchive::new(file).ok()?;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).ok()?;
+            if is_info_file(entry.name()) {
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).ok()?;
+                return Some(bytes);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn disabled_root_lives_outside_the_bepinex_plugin_tree() {
+        let root = Path::new("C:/Game");
+        let disabled = disabled_root(root);
+        assert_eq!(
+            disabled,
+            root.join("BepInEx/cache/modmanager_disabled_maps"),
+            "停用根的位置是跨设备兼容约定，不要随手改"
+        );
+        // 关键断言：BepInEx 只递归扫 plugins/，所以停用根必须在它之外
+        let relative = disabled.strip_prefix(root).unwrap();
+        assert!(
+            !relative.components().any(|part| part
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("plugins")),
+            "停用根不能落在 plugins 树里，否则停用的地图带的修复 DLL 照样被加载"
+        );
+    }
+
+    #[test]
+    fn migrates_the_legacy_disabled_root() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-legacy-{}", uuid::Uuid::new_v4()));
+        let legacy = root.join(LEGACY_DISABLED_ROOT);
+        std::fs::create_dir_all(legacy.join("Old")).unwrap();
+        std::fs::write(legacy.join("Old/info"), b"x").unwrap();
+
+        migrate_legacy_disabled_root(&root);
+        assert!(
+            disabled_root(&root).join("Old/info").is_file(),
+            "旧停用根应整体搬到新位置"
+        );
+        assert!(!legacy.exists(), "搬空后旧目录壳应删掉");
+
+        // 两边都有时：不覆盖新位置，把旧目录原样留在原地
+        let legacy_c = root.join(LEGACY_DISABLED_ROOT);
+        std::fs::create_dir_all(legacy_c.join("Clash")).unwrap();
+        std::fs::write(legacy_c.join("Clash/info"), b"old").unwrap();
+        std::fs::create_dir_all(disabled_root(&root).join("Clash")).unwrap();
+        std::fs::write(disabled_root(&root).join("Clash/info"), b"new").unwrap();
+        migrate_legacy_disabled_root(&root);
+        assert_eq!(
+            std::fs::read(disabled_root(&root).join("Clash/info")).unwrap(),
+            b"new",
+            "同名目录不许覆盖新位置的数据"
+        );
+        assert!(legacy_c.join("Clash/info").is_file(), "冲突项留在旧位置");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn package_unit_root_follows_the_levels_directory() {
+        // 实测形状：<包名>/levels包/<集名>
+        assert_eq!(
+            package_unit_root("jonny职业鼠鼠的图/levels包/jonnylevelset3.4.1"),
+            "jonny职业鼠鼠的图"
+        );
+        // 英文 levels + 大小写
+        assert_eq!(package_unit_root("young_0.5/Levels/young_0.5"), "young_0.5");
+        // 没有 levels 层：单位根退回集目录的父级
+        assert_eq!(package_unit_root("pack/set"), "pack");
+        // ZIP 根下直接是集目录
+        assert_eq!(package_unit_root("set"), "");
+    }
+
+    #[test]
+    fn plugin_unit_root_only_accepts_dlls_under_plugins() {
+        assert_eq!(
+            plugin_unit_root("SHZ_Hogwaffles_v0.4/plugins包/SHZ_Hogwaffles_dll/SHZTargetDrop.dll"),
+            Some("SHZ_Hogwaffles_v0.4".to_string())
+        );
+        // 没有 plugins 层：归属无从判断，宁可忽略也不猜
+        assert_eq!(plugin_unit_root("pack/loose.dll"), None);
+        // levels 下的 DLL 不是包插件
+        assert_eq!(plugin_unit_root("pack/levels/set/x.dll"), None);
+    }
+
+    #[test]
+    fn picks_the_level_set_a_plugin_belongs_to() {
+        let sets = vec![
+            (
+                "unit/levels/alpha".to_string(),
+                metadata("Alpha", None),
+                "alpha".to_string(),
+            ),
+            (
+                "unit/levels/beta".to_string(),
+                metadata("Beta", None),
+                "beta".to_string(),
+            ),
+        ];
+        let member = [0usize, 1usize];
+        // 父目录名与集名共享前缀 → 归集名匹配的那张
+        assert_eq!(
+            pick_level_set_for_plugin("unit/plugins/BetaFix/BetaPatch.dll", &sets, &member),
+            1
+        );
+        assert_eq!(
+            pick_level_set_for_plugin("unit/plugins/AlphaFix/AlphaPatch.dll", &sets, &member),
+            0
+        );
+        // 名字完全无关：归排序第一张（不复制给多张，重复落盘会被加载两次）
+        assert_eq!(
+            pick_level_set_for_plugin("unit/plugins/xyz/zzz.dll", &sets, &member),
+            0
+        );
+        // 单集包直接归它
+        assert_eq!(
+            pick_level_set_for_plugin("unit/plugins/xyz/zzz.dll", &sets, &[1usize]),
+            1
+        );
+    }
+
+    #[test]
+    fn classifies_map_packages_mod_packages_and_junk() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-kind-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // 地图包：含 info，即使里面还有 DLL 也算地图包
+        let map_zip = root.join("map.zip");
+        write_test_zip(
+            &map_zip,
+            &[
+                ("pack/levels包/set/info_x", b"info"),
+                ("pack/levels包/set/s_1", b"s"),
+                ("pack/plugins包/fix/Fix.dll", b"dll"),
+            ],
+        );
+        assert_eq!(
+            classify_zip(&map_zip).unwrap(),
+            ZipContents {
+                map_sets: 1,
+                plugins: 1
+            }
+        );
+
+        // MOD 包：只有 DLL，没有 info
+        let mod_zip = root.join("mod.zip");
+        write_test_zip(
+            &mod_zip,
+            &[("Plugins/MyMod.dll", b"dll"), ("readme.txt", b"r")],
+        );
+        assert_eq!(
+            classify_zip(&mod_zip).unwrap(),
+            ZipContents {
+                map_sets: 0,
+                plugins: 1
+            }
+        );
+
+        // 什么都没有：既不是地图也不是 MOD
+        let junk_zip = root.join("junk.zip");
+        write_test_zip(&junk_zip, &[("readme.txt", b"r")]);
+        assert_eq!(
+            classify_zip(&junk_zip).unwrap(),
+            ZipContents {
+                map_sets: 0,
+                plugins: 0
+            }
+        );
+
+        // macOS 影子条目不算地图集，也不算插件
+        let mac_zip = root.join("mac.zip");
+        write_test_zip(
+            &mac_zip,
+            &[
+                ("__MACOSX/pack/._info", b"junk"),
+                ("__MACOSX/pack/._x.dll", b"junk"),
+            ],
+        );
+        assert_eq!(
+            classify_zip(&mac_zip).unwrap(),
+            ZipContents {
+                map_sets: 0,
+                plugins: 0
+            }
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 端到端：`levels + plugins` 包里，插件要跟着地图落进同一个集目录。
+    #[test]
+    fn assigns_plugins_from_the_same_package_unit() {
+        let Some(info) = real_info_bytes() else {
+            eprintln!("跳过：没有 .tmp/rw.zip 可取真实 info");
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("oc2-lv-plugin-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("pack.zip");
+        write_test_zip(
+            &zip,
+            &[
+                ("作者包/levels包/myset/info_x", &info),
+                ("作者包/levels包/myset/s_x_1", b"scene"),
+                ("作者包/plugins包/fix/First.dll", b"dll"),
+                ("作者包/plugins包/fix/Second.dll", b"dll"),
+            ],
+        );
+
+        let sets = inspect_zip(&zip).expect("应能识别这个包");
+        assert_eq!(sets.len(), 1, "一个 info 就是一个关卡集");
+        let set = &sets[0];
+        assert_eq!(
+            set.plugins,
+            vec!["First.dll".to_string(), "Second.dll".to_string()],
+            "两个插件都应归到这个集（按文件名排序）"
+        );
+        // 落盘相对路径是纯文件名 → 写进集目录根，随目录一起开关
+        for name in ["First.dll", "Second.dll"] {
+            assert!(
+                set.files
+                    .iter()
+                    .any(|(entry, relative)| entry.ends_with(name) && relative == name),
+                "{name} 应作为集目录根下的文件被复制"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 真实包验收：作者随包的修复 DLL 必须归到对应的地图集。
+    ///
+    /// `OC2_LEVEL_SET_PLUGIN_ZIPS="a.zip;b.zip" cargo test --lib real_packages -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要 OC2_LEVEL_SET_PLUGIN_ZIPS 指向真实的地图+插件包"]
+    fn real_packages_carry_their_own_plugin_dlls() {
+        let Some(raw) = std::env::var_os("OC2_LEVEL_SET_PLUGIN_ZIPS") else {
+            eprintln!("跳过：没有 OC2_LEVEL_SET_PLUGIN_ZIPS");
+            return;
+        };
+        let raw = raw.to_string_lossy().to_string();
+        for path in raw.split(';').filter(|part| !part.trim().is_empty()) {
+            let path = PathBuf::from(path.trim());
+            let contents = classify_zip(&path).expect("应能读条目");
+            assert!(contents.map_sets > 0, "真实包应含 info：{}", path.display());
+            assert!(
+                contents.plugins > 0,
+                "真实包应带修复 DLL：{}",
+                path.display()
+            );
+            let sets = inspect_zip(&path).expect("应能识别");
+            let total: usize = sets.iter().map(|set| set.plugins.len()).sum();
+            eprintln!("包={} 关卡集={} 插件={}", path.display(), sets.len(), total);
+            for set in &sets {
+                eprintln!(
+                    "  集={} 插件={:?} 文件={}",
+                    set.dir_name,
+                    set.plugins,
+                    set.files.len()
+                );
+            }
+            assert_eq!(total, contents.plugins, "每个 DLL 都应恰好归属一次");
+        }
     }
 }

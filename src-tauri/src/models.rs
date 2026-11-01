@@ -163,6 +163,12 @@ pub struct ZipLevelSet {
     /// 目标位置是否已有同名目录（界面据此提示「将覆盖并回收旧版本」）。
     #[serde(default)]
     pub exists: bool,
+    /// 随这个关卡集一起装进集目录的插件文件名（作者随包的修复 DLL）。
+    ///
+    /// 界面用它说明「这个包会附带 2 个插件」，不用让用户自己猜 `file_count`
+    /// 里混进了什么。停用/启用整目录搬家时它们跟着一起走。
+    #[serde(default)]
+    pub plugins: Vec<String>,
 }
 
 /// ZIP 导入结果。

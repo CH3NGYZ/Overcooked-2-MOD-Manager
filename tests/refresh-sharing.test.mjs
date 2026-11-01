@@ -58,16 +58,50 @@ test('刷新状态机只有一处实现，两个域都用它', () => {
 test('「刷一批带 Release 的条目」只有一处实现，两个域共用', () => {
   assert.match(releaseRefresh, /export function runReleaseBatch/)
   assert.match(releaseRefresh, /export async function refreshReleaseItem/)
+  assert.match(releaseRefresh, /export interface ReleaseFetchSpec/)
   assert.match(releaseRefresh, /export function prioritizeByIds/)
   // 两个域都得走它，而不是各自 mapWithConcurrency 一遍
   assert.match(repositoryEngine, /runReleaseBatch<Repository>\(/)
   assert.match(mapEngine, /runReleaseBatch<MapInfo>\(/)
-  for (const [name, source] of [
-    ['useRepositoryRefresh', repositoryEngine],
-    ['useMapSources', mapEngine],
+  /*
+   * 「刷一个条目」的三件事 —— 请求 / 成功写回 / 失败写回 —— 每个域只定义一次
+   * （`repositoryReleaseSpec` / `mapReleaseSpec`），单条刷新与批量刷新展开的是
+   * 同一份定义。这样落地时机只在 `releaseRefresh` 里实现一次，
+   * 域里不会各写一遍 try/catch 再各自决定什么时候写回。
+   */
+  for (const [name, source, spec] of [
+    ['useRepositoryRefresh', repositoryEngine, 'repositoryReleaseSpec'],
+    ['useMapSources', mapEngine, 'mapReleaseSpec'],
   ]) {
-    assert.match(source, /refreshReleaseItem\(/, `${name} 的「刷一个条目」也要共用实现`)
+    assert.match(source, new RegExp(`function ${spec}\\(`), `${name} 要有自己的 spec 定义`)
+    assert.match(source, new RegExp(`\\.\\.\\.${spec}\\(`), `${name} 的批量刷新要展开同一份 spec`)
+    assert.match(source, /ReleaseFetchSpec/, `${name} 要用共享的 spec 类型`)
   }
+})
+
+test('单条结果当场落地：排队标记在轮到时清掉，不等整批结束', () => {
+  /*
+   * 以前这里写成 `if (refreshing.value[id])` —— 那一刻它必然还没在飞，
+   * 条件永远不成立，排队标记要等整批 `finally` 才清。表现就是所有卡片一直
+   * 显示「刷新中」，直到最后一个请求回来才一起变成结论：用户看到的是
+   * 「结果一批一起回来」，而不是刷一个回来一个。
+   */
+  const runBatch = refreshState.slice(refreshState.indexOf('const runBatch'))
+  assert.match(runBatch, /writeFlag\(queued, batch\.idOf\(item\), false\)/)
+  assert.doesNotMatch(runBatch, /if \(refreshing\.value\[batch\.idOf\(item\)\]\)/)
+  // 写回必须早于关标志，否则会先闪一帧「不在刷新中、结论还是旧的」
+  const itemBody = releaseRefresh.slice(
+    releaseRefresh.indexOf('export async function refreshReleaseItem'),
+    releaseRefresh.indexOf('export function prioritizeByIds'),
+  )
+  assert.ok(
+    itemBody.indexOf('spec.apply?.') < itemBody.indexOf('state.setItemFlag(item.id, false)'),
+    '成功写回必须早于关闭「刷新中」标志',
+  )
+  assert.ok(
+    itemBody.indexOf('spec.fail?.') < itemBody.indexOf('state.setItemFlag(item.id, false)'),
+    '失败写回必须早于关闭「刷新中」标志',
+  )
 })
 
 test('排队中也算「刷新中」：整批一开始所有目标都变灰', () => {
@@ -78,7 +112,7 @@ test('排队中也算「刷新中」：整批一开始所有目标都变灰', ()
   assert.match(refreshState, /queued/, '状态机要有队列态')
   assert.match(refreshState, /writeFlag\(queued/, 'batch 开始时整批入队')
   // 两个域的「要不要显示刷新中」都要把排队算进去
-  assert.match(modRuntimeStatusSource, /state\.queued\[repo\.id\]/, 'MOD 侧排队也算刷新中')
+  assert.match(modRuntimeStatusSource, /queued\[repo\.id\]/, 'MOD 侧排队也算刷新中')
   assert.match(read('src/levelSetStatus.ts'), /refreshing\.queued\?\.has\(/, '地图侧排队也算刷新中')
   // 页面把队列状态喂进判定
   assert.match(modsLocal, /queued: queued\.value/)

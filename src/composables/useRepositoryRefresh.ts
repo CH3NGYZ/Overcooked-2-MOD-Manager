@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
 import { mapWithConcurrency } from '../concurrency'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
-import { refreshReleaseItem, runReleaseBatch } from '../releaseRefresh'
+import { refreshReleaseItem, runReleaseBatch, type ReleaseFetchSpec } from '../releaseRefresh'
 import { pickI18n, locale, t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
@@ -117,7 +117,11 @@ function store() {
 }
 
 /**
- * 单仓刷新：拿到 Release 后只更新这一条仓库的缓存，成功返回 null，失败返回错误文案。
+ * 仓库域「刷一个条目」的全部回调。
+ *
+ * 单条刷新（`refreshOne`）与批量刷新（`runRepositoryBatch`）都用**这一份定义**：
+ * 请求、成功写回、失败写回、错误文案只有一处，不会出现「单独点刷新会清
+ * `last_error`、检查更新却不清」这种两套行为。
  *
  * 这里刻意不调用 load()：全量重读会重新扫描游戏目录和每个 DLL，
  * 在滚动时刷新表现为明显卡顿。单个仓库的结果局部替换即可，
@@ -127,27 +131,42 @@ function store() {
  * 刷新走缓存才不会把整棵仓库树重打一遍；但用户点那颗刷新按钮时的语义
  * 就是「现在就要最新的」，必须绕过缓存。
  */
+function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<Repository> {
+  const force = options.force ?? false
+  return {
+    fetch: (item) => api.refreshRepository(item.id, force),
+    apply: (item, releases) => patchRepository(item.id, {
+      cached_releases: releases,
+      last_error: undefined,
+    }),
+    /*
+     * 失败写回与后端**同一条规则**（`refresh_repository` 的 Err 分支）：
+     * 缓存清空 + 置 `last_error`。不这么写的话，前端会保留旧 Release 并显示
+     * 「最新版」，直到整批结束的后端重扫才纠正。
+     */
+    fail: (item, message) => patchRepository(item.id, {
+      cached_releases: [],
+      last_error: message,
+    }),
+    // 原因来自后端，可能是 tag —— 拼进展示串之前必须翻译
+    errorText: (item, reason) => `${item.name}: ${backendMessageOf(reason)}`,
+  }
+}
+
+/** 单仓刷新（「刷一个回来一个」的最小单位）。 */
 async function refreshOne(repo: Repository, force = false): Promise<string | null> {
-  return refreshReleaseItem(state, repo, async () => {
-    try {
-      const releases = await api.refreshRepository(repo.id, force)
-      applyRepositoryReleases(repo.id, releases)
-      return null
-    } catch (reason) {
-      // 原因来自后端，可能是 tag —— 拼进展示串之前必须翻译
-      return `${repo.name}: ${backendMessageOf(reason)}`
-    }
-  })
+  return refreshReleaseItem(state, repo, repositoryReleaseSpec({ force }))
 }
 
 /**
- * 把单个仓库的新 Release 写回 Dashboard 快照。
+ * 只替换 Dashboard 快照里的**一个仓库**，其余仓库、MOD 列表和游戏状态沿用原对象。
  *
- * dashboard 是 shallowRef：必须整体替换引用才会触发视图更新，
- * 但只重建「这一条仓库」，其余仓库、MOD 列表和游戏状态沿用原对象，
- * 所以不会触发整页数据替换带来的重绘卡顿。
+ * dashboard 是 shallowRef：必须整体替换引用才会触发视图更新；只重建这一条
+ * 仓库，就不会触发整页数据替换带来的重绘卡顿。成功与失败都走这里 ——
+ * 失败路径早先是等整批 `load()`，于是同一批里成功的卡片一个个变、
+ * 失败的还挂着旧结论。
  */
-function applyRepositoryReleases(repositoryId: string, releases: Repository['cached_releases']) {
+function patchRepository(repositoryId: string, patch: Partial<Repository>) {
   const { dashboard } = useDashboard()
   const current = dashboard.value
   if (!current) return
@@ -155,7 +174,7 @@ function applyRepositoryReleases(repositoryId: string, releases: Repository['cac
   const index = config.repositories.findIndex((repo) => repo.id === repositoryId)
   if (index < 0) return
   const repositories = config.repositories.slice()
-  repositories[index] = { ...repositories[index], cached_releases: releases, last_error: undefined }
+  repositories[index] = { ...repositories[index], ...patch }
   dashboard.value = {
     ...current,
     config: { ...config, repositories },
@@ -193,7 +212,7 @@ async function runRepositoryBatch(
   return runReleaseBatch<Repository>({
     state,
     items: refreshable,
-    fetch: (repo) => refreshOne(repo, options.force ?? false),
+    ...repositoryReleaseSpec({ force: options.force }),
     trigger: options.trigger ?? 'partial',
     prioritize: (items) => prioritizeInstalledRepositories([...items], mods.value),
     finalize: () => store().load(),

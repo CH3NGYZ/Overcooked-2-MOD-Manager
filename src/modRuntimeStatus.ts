@@ -76,8 +76,11 @@ export interface RuntimeModStatus {
  *      必须排在结论前面：仓库通常已经有上一轮的 Release 缓存，先按缓存出
  *      结论的话，整批刷新期间每张卡都还挂着「最新版」—— 用户点完「检查更新」
  *      看不到任何反应，只会以为按钮没生效。
- *   2. 仓库有 Release 且版本可比 → 用缓存重算（刷新完立刻生效）
- *   3. 其余情况 → 保留后端扫描时的标签
+ *   2. 这个仓库这次刷新**失败**了（`last_error`）→ 「仓库刷新失败」。
+ *      失败是这一条自己的结果，刷新引擎在它失败的那一刻就写回了 `last_error`
+ *      （与后端清缓存、置错误的规则一致），所以不必等整批结束的后端重扫。
+ *   3. 仓库有 Release 且版本可比 → 用缓存重算（刷新完立刻生效）
+ *   4. 其余情况 → 保留后端扫描时的标签
  *
  * 关系判定（缺依赖 / 冲突）是另一件事，永远往标签最前面插，不参与上面的取舍。
  */
@@ -117,6 +120,26 @@ export function runtimeModStatus(
         labels: withRelation(replaceVersionConclusion(
           mod.labels as string[] | undefined,
           'refreshing',
+        ) as InstalledMod['labels']),
+      } as InstalledMod,
+    }
+  }
+
+  /*
+   * 刷新失败当场显示：`last_error` 由刷新引擎在该仓库失败的那一刻写回
+   * （与后端同一条规则：清缓存 + 置错）。判定顺序必须在「按缓存重算」之前 ——
+   * 失败时旧缓存已经被清空或不可信，再拿它出结论就会显示成一个假的最新版。
+   */
+  if (repo?.last_error) {
+    return {
+      issue,
+      refreshing,
+      mod: {
+        ...mod,
+        update_available: false,
+        labels: withRelation(replaceVersionConclusion(
+          mod.labels as string[] | undefined,
+          'repository_unavailable',
         ) as InstalledMod['labels']),
       } as InstalledMod,
     }

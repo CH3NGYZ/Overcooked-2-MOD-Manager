@@ -1,5 +1,5 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { mapWithConcurrency } from './concurrency'
+import { mapWithConcurrency } from './concurrency.ts'
 
 /**
  * 刷新状态机（MOD 仓库与地图共用同一份实现）。
@@ -221,8 +221,18 @@ export function createRefreshState(concurrency: number): RefreshState {
     beginBatch(batch.trigger)
     try {
       const results = await mapWithConcurrency(queue, concurrency, async (item) => {
-        // 轮到它了：从「排队中」挪到「正在刷」（同一个同步段，界面上不闪）
-        if (refreshing.value[batch.idOf(item)]) writeFlag(queued, batch.idOf(item), false)
+        /*
+         * 轮到它了：立刻退出「排队中」。
+         *
+         * worker 进来第一件事就是同步置 `refreshing[id]`，两次写落在同一个
+         * 同步段里，界面上不会闪出「既不在飞也不排队」的中间态。
+         *
+         * 这里以前写成 `if (refreshing.value[id])` —— 那一刻它**必然还没**
+         * 在飞，条件永远不成立，于是排队标记要等整批 `finally` 才清。后果是
+         * 每个目标都一直显示「刷新中」，直到最后一个请求回来才一起变成结论：
+         * 用户看到的就是「结果一批一起回来」，而不是刷一个回来一个。
+         */
+        writeFlag(queued, batch.idOf(item), false)
         return batch.worker(item)
       })
       const errors = results.filter((error): error is string => !!error)

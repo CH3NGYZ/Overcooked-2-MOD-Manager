@@ -20,7 +20,7 @@
 import { ref } from 'vue'
 import { api } from '../services/tauri'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
-import { prioritizeByIds, refreshReleaseItem, runReleaseBatch } from '../releaseRefresh'
+import { prioritizeByIds, runReleaseBatch, type ReleaseFetchSpec } from '../releaseRefresh'
 import { backendMessageOf } from '../locale/backend'
 import { useNotify, type Notify } from '../useNotify'
 import type { MapInfo } from '../types'
@@ -119,17 +119,55 @@ async function syncDependencySnapshots() {
  * 结束后把线上依赖声明写回本地清单并重读列表：卡片状态与依赖表要立刻反映
  * 新缓存，否则用户刷完看到还是旧版本。
  */
-/** 刷一张地图的 Release（用户主动点刷新 / 检查更新都走它）。 */
-async function refreshOneMap(map: MapInfo): Promise<string | null> {
-  return refreshReleaseItem(state, map, async () => {
-    try {
-      // 用户主动刷新 → 强制绕过 5 分钟 Release 缓存
-      await api.refreshMapReleases(map.id, true)
-      return null
-    } catch (reason) {
-      return backendMessageOf(reason)
-    }
-  })
+/**
+ * 地图域「刷一个条目」的全部回调：单条刷新与批量刷新共用这一份定义。
+ *
+ * 与仓库侧的 `repositoryReleaseSpec` 同构 —— 差别只有「请求哪个命令」
+ * 和「写回哪个对象」，其余（标志、写回时机、并发、结果收集）都在
+ * `releaseRefresh` / `refreshState` 里。
+ */
+function mapReleaseSpec(): ReleaseFetchSpec<MapInfo> {
+  return {
+    // 用户主动刷新 → 强制绕过 5 分钟 Release 缓存
+    fetch: (item) => api.refreshMapReleases(item.id, true),
+    /*
+     * 成功写回只替换这一张图，不等整批结束重载列表：`latest_tag` 取自缓存的
+     * 第一条，与后端 `map_to_info` 完全同一条规则（所以不必在前端另立判定）。
+     */
+    apply: (item, releases) => patchMap(item.id, {
+      cached_releases: releases,
+      latest_release: releases[0] ?? null,
+      latest_tag: releases[0]?.tag_name ?? null,
+      cached_release_count: releases.length,
+      cached_at: Date.now(),
+      last_error: null,
+    }),
+    /* 与后端 Err 分支同一规则：清缓存 + 置错，卡片当场显示「刷新失败」 */
+    fail: (item, message) => patchMap(item.id, {
+      cached_releases: [],
+      latest_release: null,
+      latest_tag: null,
+      cached_release_count: 0,
+      cached_at: null,
+      last_error: message,
+    }),
+    errorText: (_item, reason) => backendMessageOf(reason),
+  }
+}
+
+/**
+ * 只替换列表里的一行（不动其它地图的引用）。
+ *
+ * 地图没有 Dashboard 那样的外部 store，`maps` 就是唯一的真源，
+ * 所以「刷一张回来一张」必须在这里就地落地；整批结束的 `loadMaps()` 只负责
+ * 补齐依赖快照这类派生数据。
+ */
+function patchMap(mapId: string, patch: Partial<MapInfo>) {
+  const index = maps.value.findIndex((map) => map.id === mapId)
+  if (index < 0) return
+  const next = maps.value.slice()
+  next[index] = { ...next[index], ...patch }
+  maps.value = next
 }
 
 async function refreshReleases(
@@ -146,7 +184,7 @@ async function refreshReleases(
     state,
     // 正在安装的不能同时刷：安装要替换目录，刷新会读它的元数据
     items: list.filter((map) => !installing.value[map.id]),
-    fetch: refreshOneMap,
+    ...mapReleaseSpec(),
     trigger: options.trigger ?? 'partial',
     prioritize: priorityIds && priorityIds.size
       ? (items) => prioritizeByIds(items, priorityIds)

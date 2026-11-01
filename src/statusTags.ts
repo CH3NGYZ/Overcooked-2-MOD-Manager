@@ -58,13 +58,17 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    */
   repository_unavailable: { text: 'modsOnline.repositoryRefreshFailed', tone: 'moderate' },
   /**
-   * 正在检查：绑定的仓库正在抓取 Release，结论还没出来。
+   * 刷新中：绑定的仓库（或它所在的仓库源）正在重抓 Release，结论还没出来。
    *
    * 与 `unknown`（版本未知）语义不同：unknown 是「查完了也判断不出来」，
-   * checking 是「还在查」。混用会让刷新过程显示成「版本未知」，
+   * 刷新中是「还在查」。混用会让刷新过程显示成「版本未知」，
    * 用户会误以为已经出结果了。中性灰，因为此刻没有结论、也不需要动作。
+   *
+   * 文案是「刷新中」而不是「检测中」：这个状态由**刷新引擎**置位
+   * （MOD 安装页的刷新源/刷新全部、MOD 管理页的检查更新都会点亮它），
+   * 用户看到的是「后台在刷」，不是「这个 MOD 在自检」。
    */
-  checking: { text: 'tools.checking', tone: 'muted' },
+  refreshing: { text: 'tools.refreshing', tone: 'muted' },
   unknown: { text: 'tools.versionUnknown', tone: 'muted' },
   duplicate: { text: 'modsLocal.duplicate', tone: 'severe' },
   duplicate_lower_version: { text: 'tools.olderVersion', tone: 'mild' },
@@ -131,7 +135,7 @@ export const VERSION_CONCLUSION_LABELS = [
   'update_available',
   'not_release_asset',
   'installed',
-  'checking',
+  'refreshing',
   'unknown',
   'unbound',
   'bound_repository_missing',
@@ -232,7 +236,7 @@ const TONE_PRIORITY: Record<string, number> = {
   severe: 1,    // 重度：重复
   moderate: 2,  // 中度：可更新、仓库刷新失败、预发布
   mild: 3,      // 轻微：低版本
-  muted: 4,     // 中性：检测中、版本未知、未绑定、已禁用
+  muted: 4,     // 中性：刷新中、版本未知、未绑定、已禁用
   accent: 5,    // 正常：最新版、已安装
 }
 
@@ -248,7 +252,7 @@ const WITHIN_TONE_ORDER: string[] = [
   'prerelease',
   'refresh_failed',
   'duplicate_lower_version',
-  'checking',
+  'refreshing',
   'unknown',
   'unbound',
   'disabled',
@@ -326,7 +330,7 @@ export function summarizeUnits(units: readonly StatusUnit[]): StatusSummary[] {
  *   2. 依赖告警（缺依赖 / 依赖冲突）—— 仓库 `relations` 挂在仓库上，
  *      包内每个 DLL 都按同一份声明判定，所以这是包级结论：整包只出一条、
  *      不带数量，与单个 MOD 卡片同一顺序同一语义；
- *   3. 版本结论（最新版 / 可更新 / 检测中 / 版本未知 / 仓库刷新失败…）
+ *   3. 版本结论（最新版 / 可更新 / 刷新中 / 版本未知 / 仓库刷新失败…）
  *      —— 整包只取最需要注意的那一条，不带数量；
  *   4. 成员级告警（重复、低版本、加载警告）—— 确实可能只命中某几个 DLL，
  *      保留数量。

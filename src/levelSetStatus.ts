@@ -335,6 +335,26 @@ export interface LevelSetCardTag {
 }
 
 /**
+ * 正在刷新的对象（地图引擎 `useMapSources` 的实时状态）。
+ *
+ * 由视图层从单例里取出来传进来，本模块只做纯计算：这里不认 Vue、也不认
+ * 「刷新进行中」这个全局标志，只回答「这张图 / 它所在的源现在是否在刷」。
+ */
+export interface LevelSetRefreshingHint {
+  /**
+   * 整源刷新进行中（下载页的「刷新全部」）。
+   *
+   * 它会把共享的地图列表清空再重建，这段时间所有关卡集都查不到绑定 ——
+   * 只看 id 集合的话卡片会集体退化成「未绑定」，比过期结论更误导。
+   */
+  all?: boolean
+  /** 正在重抓 Release 的地图 id。 */
+  maps: ReadonlySet<string>
+  /** 正在重拉文档的地图源 id。 */
+  sources: ReadonlySet<string>
+}
+
+/**
  * 关卡集卡片状态区的完整标签列表。
  *
  * 顺序与 MOD 卡片一致：先「缺依赖」这类关系提醒，再版本结论 ——
@@ -344,6 +364,11 @@ export interface LevelSetCardTag {
  * 线上有可安装来源就带上仓库 id（标签可点，跳过去就能补上），没有来源就
  * 只是纯文字。只在**能判定**（游戏已探测）时出现；停用的地图仍然显示，
  * 因为用户重新启用前就该知道它还缺东西。
+ *
+ * 版本结论与「刷新中」互斥：刷新的那一刻旧的「有更新 / 最新版」就是过期
+ * 结论，继续显示会让用户以为已经查完了（与 MOD 侧的 `replaceVersionConclusion`
+ * 同一条规则）。三种情形都会点亮它：绑定地图自己在刷、它所在的源在重拉文档
+ * （此时一个 Release 都还没回来）、以及整源刷新（列表正在重建，绑定暂时查不到）。
  */
 export function levelSetCardTags(
   set: LevelSetInfo,
@@ -351,6 +376,7 @@ export function levelSetCardTags(
   mods: readonly InstalledMod[],
   gameProbed: boolean,
   repositories: readonly Repository[] = [],
+  refreshing?: LevelSetRefreshingHint,
 ): LevelSetCardTag[] {
   const bound = mapForLevelSet(set, maps)
   const tags: LevelSetCardTag[] = []
@@ -372,9 +398,16 @@ export function levelSetCardTags(
   }
 
   const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
+  const refreshingNow = !!refreshing && (
+    refreshing.all === true
+    || (!!bound && (
+      refreshing.maps.has(bound.id)
+      || (!!bound.source_id && refreshing.sources.has(bound.source_id))
+    ))
+  )
   tags.push({
-    text: LEVEL_SET_STATE_TAGS[state],
-    tone: LEVEL_SET_STATE_TONES[state],
+    text: refreshingNow ? 'tools.refreshing' : LEVEL_SET_STATE_TAGS[state],
+    tone: refreshingNow ? 'muted' : LEVEL_SET_STATE_TONES[state],
     kind: 'state',
     // 只要这个集绑定了地图，状态标签就允许跳回下载页并高亮那张卡 ——
     // 与 MOD 管理页一致：「最新版」和「有更新」都是「去下载页看看」的入口。

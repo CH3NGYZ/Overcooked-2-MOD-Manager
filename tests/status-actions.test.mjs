@@ -46,7 +46,7 @@ test('一条 MOD 带多个标签时取第一个有动作的', () => {
 test('没有需要动作的状态时不产生按钮', () => {
   for (const labels of [
     ['latest'],
-    ['checking'],
+    ['refreshing'],
     ['unknown'],
     ['disabled'],
     ['prerelease'],

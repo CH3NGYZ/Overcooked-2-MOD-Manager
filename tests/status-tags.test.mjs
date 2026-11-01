@@ -170,20 +170,20 @@ test('所有版本结论标签都登记在互斥组里', () => {
   }
 })
 
-test('检测中与版本未知是两个独立语义', () => {
-  // 刷新进行中 → 检测中（还在查）；查完但判断不出 → 版本未知。
+test('刷新中与版本未知是两个独立语义', () => {
+  // 刷新进行中 → 刷新中（还在查）；查完但判断不出 → 版本未知。
   // 混用会让刷新期间看起来已经有结论了。
-  assert.notEqual(STATUS_META.checking.text, STATUS_META.unknown.text)
-  assert.equal(STATUS_META.checking.text, 'tools.checking')
+  assert.notEqual(STATUS_META.refreshing.text, STATUS_META.unknown.text)
+  assert.equal(STATUS_META.refreshing.text, 'tools.refreshing')
   assert.equal(STATUS_META.unknown.text, 'tools.versionUnknown')
   // 两者都是中性档：此刻既没有结论也没有需要动作的东西
-  assert.equal(STATUS_META.checking.tone, 'muted')
+  assert.equal(STATUS_META.refreshing.tone, 'muted')
   assert.equal(STATUS_META.unknown.tone, 'muted')
   // 都参与版本结论互斥，不能同时出现
-  assert.equal(isVersionConclusion('checking'), true)
+  assert.equal(isVersionConclusion('refreshing'), true)
   assert.equal(isVersionConclusion('unknown'), true)
-  const replaced = replaceVersionConclusion(['unknown', 'duplicate'], 'checking')
-  assert.deepEqual(replaced, ['checking', 'duplicate'])
+  const replaced = replaceVersionConclusion(['unknown', 'duplicate'], 'refreshing')
+  assert.deepEqual(replaced, ['refreshing', 'duplicate'])
 })
 
 /* ===== MOD 包状态：以包为主体 ===== */
@@ -214,17 +214,17 @@ test('包内有更新时整包只出一条「可更新」，不是「2 个可更
 })
 
 test('包内状态不一致时取最需要注意的结论', () => {
-  // 可更新（moderate）比检测中（muted）更需要注意，应优先显示
+  // 可更新（moderate）比刷新中（muted）更需要注意，应优先显示
   const tags = packageStatuses([
-    mod({ dll_file: 'a.dll', labels: ['checking'] }),
+    mod({ dll_file: 'a.dll', labels: ['refreshing'] }),
     mod({ dll_file: 'b.dll', labels: ['update_available'], update_available: true }),
   ])
   assert.deepEqual(tags.map((t) => t.key), ['update_available'])
 })
 
-test('包内只有检测中时显示「检测中」，不再被最新版结论掩盖', () => {
-  const tags = packageStatuses([mod({ dll_file: 'a.dll', labels: ['checking'] })])
-  assert.deepEqual(tags.map((t) => t.key), ['checking'])
+test('包内只有刷新中时显示「刷新中」，不再被最新版结论掩盖', () => {
+  const tags = packageStatuses([mod({ dll_file: 'a.dll', labels: ['refreshing'] })])
+  assert.deepEqual(tags.map((t) => t.key), ['refreshing'])
   assert.equal(tags[0].count, undefined)
 })
 

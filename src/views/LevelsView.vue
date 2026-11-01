@@ -9,12 +9,15 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useMapSources } from '../composables/useMapSources'
 import { statusPulseClass, useFocusHighlight, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
+import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import PageLoading from '../components/PageLoading.vue'
+import RefreshResultTag from '../components/RefreshResultTag.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import {
@@ -28,6 +31,7 @@ import {
   mapVersionForLevelSet,
   mapVersionRefs,
   type LevelSetCardTag,
+  type LevelSetRefreshingHint,
   type LevelSetTone,
 } from '../levelSetStatus.ts'
 import type { LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '../types'
@@ -52,12 +56,16 @@ import type { LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '..
  * `levels/` 下的一个目录（身份是 `levelSetName + author`），所以没有把地图
  * 塞进 `InstalledMod`。
  *
- * ## 性能约定
+ * ## 数据来源与刷新状态
  *
- * 进入页面只读一次 `api.levelSets()` 与 `api.maps()`。开关、删除、批量开关
- * 只影响本地关卡集，之后**只重读关卡集**；地图源列表带 Release 缓存，
- * 与这些操作无关。「检测更新」是唯一重拉 Release 的入口，浮动刷新是唯一
- * 「两端都重读」的入口。
+ * 地图列表与刷新状态都来自 `useMapSources` 的模块级单例，与地图下载页是
+ * **同一份**：同一张地图不能在两页得出相反的版本结论，刷新态也必须熬得过
+ * 一次切页（挂在页面上的 ref 会随组件卸载一起消失）。
+ *
+ * 进入页面只读一次 `api.levelSets()`，地图列表交给 `loadMaps()`。开关、删除、
+ * 批量开关只影响本地关卡集，之后**只重读关卡集**；地图列表带 Release 缓存，
+ * 与这些操作无关。「检测更新」走 `refreshBoundMaps`（并发 4、强制绕过缓存），
+ * 是唯一重拉已装地图 Release 的入口；浮动刷新是唯一「两端都重读」的入口。
  */
 
 const message = useNotify()
@@ -86,8 +94,17 @@ const TOOL_GAP = 8
 const toolsMinWidth = TOOL_BUTTON_WIDTH * 2 + TOOL_GAP
 
 const sets = ref<LevelSetInfo[]>([])
-/** 地图源声明的地图（含 Release 缓存），只用于版本对照与依赖判定。 */
-const maps = ref<MapInfo[]>([])
+/**
+ * 地图源声明的地图与刷新状态，全部来自模块级单例（`useMapSources`）。
+ *
+ * 地图列表不能在本页再存一份副本：版本对照（`versionRefs`）、依赖判定与
+ * 卡片标签都读它，而地图下载页刷新 Release 后写的也是同一份数据 —— 两份副本
+ * 会让同一张图在两页得出相反的结论，且切页回来读到的是自己那份旧快照。
+ * 刷新态同理：`checkingBound` 记的是共享引擎的批次，页面局部 ref 熬不过切页。
+ */
+const {
+  maps, refreshing, refreshingSources, refreshingAll, checkingBound, outcome, loadMaps, refreshBoundMaps,
+} = useMapSources()
 const loading = ref(true)
 /**
  * 扫描进度（后端 `level-set-scan-progress` 逐份上报）。
@@ -225,9 +242,11 @@ const repositories = computed<Repository[]>(() =>
 )
 
 /**
- * 首次进入：两端数据一起读。
+ * 首次进入：关卡集与地图列表一起读。
  *
- * 两次读取互不依赖，一起发出去。地图列表失败不该让本地关卡集消失 ——
+ * 两次读取互不依赖，所以不串行。地图列表交给 `loadMaps()`：它把结果写进
+ * 单例、失败也自己提示，而且整源刷新进行中会**主动跳过** —— 切页回来时
+ * 不会用旧缓存把正在重建的列表盖掉。地图列表失败不该让本地关卡集消失，
  * 那是最基础的信息，用户至少要看得到自己装了哪些图。
  */
 async function load() {
@@ -235,12 +254,13 @@ async function load() {
   // 每次重新扫描都清掉上一次的进度，避免转圈条下面挂着过期的「5/7」
   scanProgress.value = null
   try {
-    const [levelSets, mapList] = await Promise.all([
-      api.levelSets(),
-      api.maps().catch(() => [] as MapInfo[]),
-    ])
+    /*
+     * 两读并发，但**都要等**：地图列表没回来时 `boundMapOf` 找不到绑定，
+     * 卡片会先显示一帧「未绑定」再跳成「有更新 / 最新版」—— 用户看到的是状态闪变。
+     * `loadMaps` 内部自己吞掉失败（只提示、不 reject），所以这里不会连累关卡集。
+     */
+    const levelSets = await Promise.all([api.levelSets(), loadMaps()]).then(([list]) => list)
     sets.value = levelSets
-    maps.value = mapList
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -252,7 +272,7 @@ async function load() {
  * 只重读关卡集。
  *
  * 开关 / 删除 / 导入改的都是 `levels/` 与 `disabled/` 下的目录，
- * 地图源列表（`api.maps()`）不会因此变化，重拉纯属浪费。
+ * 地图源列表（`useMapSources` 的 `maps`）不会因此变化，重拉纯属浪费。
  */
 async function reloadSets() {
   try {
@@ -339,9 +359,31 @@ function authorNamesOf(set: LevelSetInfo) {
   return levelSetAuthorNames(set, maps.value)
 }
 
+/**
+ * 正在重抓 Release 的地图 id 与正在重拉文档的地图源 id。
+ *
+ * 刷新期间版本结论标签要换成「刷新中」（`levelSetCardTags` 的第 6 个参数）：
+ * 刷新完成前「有更新 / 最新版」都是马上会被推翻的结论，用户点完「检查更新」
+ * 却还看到刷新前的标签会以为按钮没生效。
+ *
+ * `all` 是整源刷新（下载页的「刷新全部」）那一档：它会把共享的 `maps` 清空
+ * 再重建，这段时间**所有**关卡集都找不到绑定，只传 id 集合的话卡片会集体
+ * 退化成「未绑定」——那比过期结论更误导。整批刷期间一律显示「刷新中」。
+ *
+ * 每次重算都新建两个 Set：一次刷新最多几十个 id，且只在 `refreshing` /
+ * `refreshingSources` / `refreshingAll` 变化（刷新的开始与结束）时重算，成本可忽略。
+ */
+const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
+  all: refreshingAll.value,
+  maps: new Set(Object.keys(refreshing.value)),
+  sources: new Set(Object.keys(refreshingSources.value)),
+}))
+
 /** 卡片状态标签：先依赖提醒，再版本结论（由 `levelSetStatus` 统一排序）。 */
 function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
-  return levelSetCardTags(set, maps.value, mods.value, gameProbed.value, repositories.value)
+  return levelSetCardTags(
+    set, maps.value, mods.value, gameProbed.value, repositories.value, refreshingHint.value,
+  )
 }
 
 /** 页头聚合标签的一项。 */
@@ -813,10 +855,19 @@ function onBulkSwitch(value: string | number) {
   else if (value === 'disable') confirmDisableAll()
 }
 
-/** 检测更新：只刷新「本地已装地图绑定的地图」的 Release，与 MOD 管理页同一规则。 */
-const checkingUpdates = ref(false)
+/**
+ * 检查更新：只刷新「本地已装地图绑定的地图」的 Release，与 MOD 管理页同一规则。
+ *
+ * 走共享引擎的 `refreshBoundMaps`（并发 4 组、强制绕过缓存），不在本页自己
+ * 循环调后端命令：
+ *   · 刷新状态记在 `useMapSources` 的单例里，地图下载页的按钮与卡片会同时
+ *     进入刷新态，切页往返也不丢；
+ *   · 引擎收尾时自己同步依赖快照并重读地图列表，`versionRefs` 随之重算，
+ *     卡片标签（`stateOf` / `tagsOf`）当场变成新结论，页面不用手动再读一次。
+ */
 async function checkUpdates() {
-  if (checkingUpdates.value) return
+  // 同一时刻只跑一批：按钮的禁用态与共享单例同步，这里只是防住同一帧内的连点
+  if (checkingBound.value) return
   const targets = new Map<string, MapInfo>()
   for (const set of sets.value) {
     const map = boundMapOf(set)
@@ -826,21 +877,27 @@ async function checkUpdates() {
     message.warning(t('levelSet.noBoundMaps'))
     return
   }
-  checkingUpdates.value = true
   try {
-    // 串行：地图数量少，而且用户要的是「逐张图正确」而不是最快的并发
-    for (const id of targets.keys()) await api.refreshMapReleases(id, true)
     /*
-     * 依赖快照同步：依赖只写在源文档里，刷新后按线上声明重写本地清单的
-     * 快照，地图源下线后依赖表才不会凭空消失。失败吞掉 —— 快照只是兜底
-     * 展示信息，不该让一次成功的检测更新变成报错。
+     * `countUpdated` 由页面给：引擎只认识「地图源里的条目」，要判断「我这几张
+     * 本地地图里几个有新版本」必须读关卡集，那是本页的数据。
      */
-    await api.syncDependencySnapshots().catch(() => undefined)
-    maps.value = await api.maps()
+    const summary = await refreshBoundMaps([...targets.values()], {
+      countUpdated: () => sets.value.filter((set) => stateOf(set) === 'update_available').length,
+    })
+    // 逐条弹错：一次刷几十张图时合并成一句会把「哪张失败了」吞掉
+    summary.errors.forEach((error) => message.error(error))
+    /*
+     * 结果文案与页头那枚「上次检查」标签共用 `describeRefreshOutcome`。
+     * 只有真的刷到了地图才报数量：这些图可能刚好都在刷新中（例如下载页
+     * 正在刷同一批），此时队列为空、既没成功也没失败，
+     * 弹一句「已检查 0 张地图」只会让人以为哪里坏了。
+     */
+    if (!summary.errors.length && summary.refreshed > 0 && outcome.value) {
+      message.success(describeRefreshOutcome(outcome.value, 'maps'))
+    }
   } catch (reason) {
     message.error(backendMessageOf(reason))
-  } finally {
-    checkingUpdates.value = false
   }
 }
 </script>
@@ -872,11 +929,20 @@ async function checkUpdates() {
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
+    <!-- 「上次检查」摘要：与 MOD 管理页同一枚组件、同一套文案 -->
+    <template v-if="outcome">
+      <span class="header-tag-divider" />
+      <span class="header-tag-group">
+        <RefreshResultTag :outcome="outcome" domain="maps" />
+      </span>
+    </template>
   </Teleport>
 
   <!--
     页头右侧，从左到右：批量开关 → 检测更新 → 打开目录（与 MOD 管理页同序）。
     安装入口不在这页：它属于安装页的职责，见地图下载页的「安装地图」。
+    「检测更新」的忙碌态读共享单例的 `checkingBound`，而不是页面局部的 ref：
+    地图下载页也有一份刷新入口，同一批任务必须只有一个忙碌真相。
   -->
   <Teleport to="#page-header-actions" defer>
     <!--
@@ -903,7 +969,7 @@ async function checkUpdates() {
         <template #tab>{{ t('overview.disableAll') }}</template>
       </n-tab-pane>
     </n-tabs>
-    <n-button size="small" secondary :loading="checkingUpdates" :disabled="checkingUpdates || loading"
+    <n-button size="small" secondary :loading="checkingBound" :disabled="checkingBound || loading"
       :title="t('levelSet.checkUpdatesHint')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
       {{ t('overview.check') }}

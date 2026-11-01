@@ -16,26 +16,30 @@ import {
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import { primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
+import type { RelationStatus } from '../modRelations'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
-  installedModTags, modUpdateVerdict, replaceVersionConclusion,
-  summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
+  installedModTags, summarizeUnits, packageStatuses, type PackageStatus, type StatusSummary,
 } from '../statusTags'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
 import { statusPulseClass, useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
+import { tagTargetTitle } from '../tagTargets'
+import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import DependencyTable from '../components/DependencyTable.vue'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
+import ModStatusTags from '../components/ModStatusTags.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import PageLoading from '../components/PageLoading.vue'
+import RefreshResultTag from '../components/RefreshResultTag.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -99,40 +103,42 @@ const { remove } = useModRemoval({
   },
   onDone: () => load(),
 })
-/** 刷新状态：用于把「正在抓取 Release」的 MOD 显示成检查中而不是旧结论。 */
-const { refreshing, refreshingAll, refreshOne, refreshMany } = useRepositoryRefresh()
-
 /**
- * 检测更新：刷新**全部**仓库源与 Release，等价于 MOD 安装页的「刷新全部」。
+ * 刷新状态：与 MOD 安装页共用同一份模块级状态。
  *
- * 复用同一引擎入口（`refreshEverything`）而不是另写一条调用链：
- * 它会先清本次源的旧缓存、等排队请求结束，再重拉源文档并逐个刷新 Release，
- * 这些顺序是「刷新后不显示旧列表」的前提。这里自己拼调用顺序必然分叉。
+ * `refreshing` 按仓库、`sourceRefreshing` 按仓库源、`refreshingAll` 是整批
+ * 「刷新全部」、`checkingBound` 是本页「检查更新」的批次态。谁发起刷新都改
+ * 同一份状态，所以切页往返不丢，两页的标签会同时显示「刷新中」。
  */
-const checkingUpdates = ref(false)
+const {
+  refreshing, sourceRefreshing, refreshingAll, checkingBound, outcome,
+  refreshOne, refreshBoundRepositories,
+} = useRepositoryRefresh()
 
 /**
- * 检测更新：**只刷新与已安装 MOD 绑定的仓库**。
+ * 检查更新：**只刷新与已安装 MOD 绑定的仓库**。
  *
  * 与 MOD 安装页的「刷新全部」不是一回事：
  *   · 那边是「浏览可用 MOD」，要重新拉源文档、刷新所有仓库；
  *   · 这里是「我这几个 MOD 有没有新版」，只关心它们各自绑定的仓库。
  *
- * 复用 `refreshMany`（它本来就是「刷新给定的仓库列表」），不需要新后端命令：
- * 后端按仓库 ID 刷新 Release 的能力已经存在，只是这里传入的 ID 集合更小。
+ * 走引擎的 `refreshBoundRepositories`，不在页面里自己拼一批仓库去刷：
+ * 它负责强制绕过 5 分钟 Release 缓存、维护共享的批次态 `checkingBound`，
+ * 并在批量结束后统一重扫本地 MOD。页面自己拼批次，就会出现「这个页在转、
+ * 那个页不转」—— 谁发起请求决定了别的页面看到什么。
  *
  * 顺带的好处：装 4 个 MOD、来自 3 个仓库时只发 3 个 Release 请求，
  * 而不是二十多个 —— 更快，也不浪费匿名 API 额度。
  */
 async function checkUpdates() {
-  if (checkingUpdates.value || refreshingAll.value) return
+  if (checkingBound.value || refreshingAll.value) return
   /*
    * 收集「当前地区可见、且确实有本地 MOD 绑定」的仓库。
    *
    * 三点约束：
    *   · 用 `repositoryIsAvailable` 而不是只看 enabled —— 地区不适用等于
    *     该仓库不存在，不能给它发请求（否则会报「不属于当前下载渠道」）；
-   *   · 跳过 RAW 模式：它没有 Release 可查（`refreshMany` 内部也会跳过，
+   *   · 跳过 RAW 模式：它没有 Release 可查（引擎入口内部也会跳过，
    *     这里先滤掉避免无意义的排队）；
    *   · 同一仓库只刷一次：多个 MOD 常来自同一个仓库（同一个包里的多个 DLL）。
    */
@@ -154,16 +160,24 @@ async function checkUpdates() {
     return
   }
   void api.writeFrontendLog('info',
-    `检测更新：匹配到 ${targets.size} 个仓库（已安装 MOD 共 ${effectiveMods.value.length} 个）`)
+    `检查更新：匹配到 ${targets.size} 个仓库（已安装 MOD 共 ${effectiveMods.value.length} 个）`)
 
-  checkingUpdates.value = true
   try {
-    const errors = await refreshMany([...targets.values()])
-    errors.forEach((error) => message.error(error))
+    // 批次态（按钮转不转、可否再点）与批次结果都由引擎维护，页面不另存一份
+    const summary = await refreshBoundRepositories([...targets.values()])
+    summary.errors.forEach((error) => message.error(error))
+    /*
+     * 结果文案与页头那枚「上次检查」标签共用 `describeRefreshOutcome`：
+     * 同一批数据在两处永远说同一句话。
+     *
+     * 只有真的刷到了仓库才报数量：这些仓库可能刚好都在刷新中（例如刚在
+     * 安装页点过单仓刷新），此时队列为空、既没成功也没失败，
+     * 弹一句「已检查 0 个仓库」只会让人以为哪里坏了。
+     */
+    if (!summary.errors.length && summary.refreshed > 0 && outcome.value)
+      message.success(describeRefreshOutcome(outcome.value, 'repositories'))
   } catch (reason) {
     fail(reason)
-  } finally {
-    checkingUpdates.value = false
   }
 }
 
@@ -211,103 +225,42 @@ async function refreshLocal() {
 }
 
 /**
- * 把「后端扫描结果」和「当前仓库缓存」合成一份有效状态。
- *
- * 后端 `labels` / `update_available` 是扫描那一刻算的，而仓库 Release 是
- * 异步刷新回来的；刷新期间 Dashboard 不重读（会重扫磁盘），标签就会停在
- * 上一次的结果。这里用当前仓库缓存重算，让刷新结果立刻生效，
- * 且整个过程是纯内存计算 —— 刷一个仓库只影响它绑定的那几个 MOD。
- *
- * 三层来源，优先级从高到低：
- *   1. 仓库有 Release 且版本可比 → 用缓存重算（刷新完立刻生效）
- *   2. 该仓库正在刷新且没有可比 Release → 显示「检查中」，
- *      而不是拿上一次的旧结论冒充当前状态
- *   3. 其余情况 → 保留后端扫描时的标签
+ * 刷新状态快照：判定函数吃普通对象，避免把响应式细节带进纯逻辑模块。
  */
-const effectiveMods = computed<InstalledMod[]>(() =>
-  mods.value.map((mod) => {
-    /*
-     * 关系判定先算：它和版本结论是两件独立的事（可以同时「有更新」和
-     * 「缺依赖」/「冲突」），所以要各自往 labels 里加，不能互相替换。
-     */
-    const issue = relationIssue(mod)
-    const withRelation = (labels: InstalledMod['labels']): InstalledMod['labels'] => {
-      const base = (labels as string[] | undefined)
-        ?.filter((key) => key !== 'missing_dependency' && key !== 'dependency_conflict') ?? []
-      if (!issue) return base as InstalledMod['labels']
-      // 冲突比缺依赖更该被看见：缺依赖只是不工作，冲突可能已经让游戏崩了
-      const label = issue.state === 'conflict' ? 'dependency_conflict' : 'missing_dependency'
-      return [label, ...base] as InstalledMod['labels']
-    }
-
-    const verdict = modUpdateVerdict(mod, repositories.value)
-    if (verdict.known) {
-      /*
-       * 用统一函数替换版本结论，而不是自己拼数组。
-       * 之前的实现只过滤 latest/update_available，会把 not_release_asset、
-       * repository_unavailable 等旧结论留在原地，出现「最新版 + 仓库不可用」
-       * 这种自相矛盾的组合。
-       */
-      return {
-        ...mod,
-        update_available: verdict.updateAvailable,
-        labels: withRelation(replaceVersionConclusion(
-          mod.labels as string[] | undefined,
-          verdict.updateAvailable ? 'update_available' : 'latest',
-        ) as InstalledMod['labels']),
-      } as InstalledMod
-    }
-    // 仓库还在抓取：明确显示「检查中」，不把旧结论当现状。
-    // 但仓库文件（RAW）模式本来就没有版本可比较，刷新也不该让它变成
-    // 「版本未知」—— 它的语义就是「已安装」，保持原样即可。
-    const repo = repositoryForMod(repositories.value, mod)
-    if (repo && repo.download_mode !== 'repository_file' && isRepositoryRefreshing(repo.id)) {
-      return {
-        ...mod,
-        update_available: false,
-        labels: withRelation(replaceVersionConclusion(mod.labels as string[] | undefined, 'checking') as InstalledMod['labels']),
-      } as InstalledMod
-    }
-    return { ...mod, labels: withRelation(mod.labels) } as InstalledMod
-  }),
-)
+const refreshSnapshot = computed<RuntimeRefreshState>(() => ({
+  refreshing: refreshing.value,
+  sourceRefreshing: sourceRefreshing.value,
+  refreshingAll: refreshingAll.value,
+}))
 
 /**
- * 这个本地 MOD 与其它插件的第一个未满足关系（只看它自己绑定的仓库声明）。
+ * 每个 MOD 的运行期状态（合成后端扫描结果 + 当前仓库缓存 + 刷新状态）。
  *
- * 用**已安装版本**筛 `release_relations`：装的是 1.0 就该按 1.0 的要求算，
- * 而不是最新 Release 的要求。
- *
- * 只判断「有没有问题」，不决定「怎么处理」；冲突要卸载哪个 MOD 由
- * `status.installedMod` 给出。
+ * 判定逻辑在 `modRuntimeStatus`：卡片标签组件（`ModStatusTags`）调的是**同一个**
+ * 函数，所以页头聚合与每张卡永远不会一个说「刷新中」、一个说「最新版」。
  */
-function relationIssue(mod: InstalledMod) {
-  if (mod.is_dependency) return undefined
-  const repo = repositoryForMod(repositories.value, mod)
-  if (!repo) return undefined
-  const statuses = resolveRelations(repo, mods.value, repositories.value, mod.version)
-  return primaryRelation(statuses)
-}
+const runtimeStatuses = computed(() =>
+  mods.value.map((mod) => runtimeModStatus(
+    mod, mods.value, repositories.value, refreshSnapshot.value,
+  )))
+
+/** 列表与卡片实际用的 MOD（`labels` / `update_available` 已按运行期状态重算）。 */
+const effectiveMods = computed(() => runtimeStatuses.value.map((entry) => entry.mod))
 
 /**
  * 每个本地 MOD 的关系问题，按 dll_file 索引。
  *
- * 模板与动作处理都要读它（判断标签、决定卸载哪个 MOD、找可安装仓库），
- * 每次重算一遍全部关系太浪费，派生一次即可。
+ * 模板、动作处理与卡片标签组件都要读它（判断标签、决定卸载哪个 MOD、
+ * 找可安装仓库），关系判定已经算在 `runtimeStatuses` 里，这里只做索引。
  */
 const relationIssueByDll = computed<Record<string, RelationStatus>>(() => {
   const map: Record<string, RelationStatus> = {}
   for (const mod of mods.value) {
-    const issue = relationIssue(mod)
-    if (issue) map[mod.dll_file] = issue
+    const entry = runtimeStatuses.value.find((item) => item.mod.dll_file === mod.dll_file)
+    if (entry?.issue) map[mod.dll_file] = entry.issue
   }
   return map
 })
-
-/** 某个仓库当前是否正在抓取 Release（单仓刷新或整批刷新都算）。 */
-function isRepositoryRefreshing(repositoryId: string) {
-  return !!refreshing.value[repositoryId] || refreshingAll.value
-}
 
 /** 列表固定按标题排序（排序切换入口已移除，见上方说明）。 */
 const sortedMods = computed(() =>
@@ -455,7 +408,7 @@ interface ModGroupNode {
 const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
 
 /**
- * 状态变化脉冲：某个 MOD 的标签从「检查中」变成「最新版 / 可更新」时，
+ * 状态变化脉冲：某个 MOD 的标签从「刷新中」变成「最新版 / 可更新」时，
  * 给它的标签组播一次短暂高亮，让异步结果被看见。
  *
  * 只对「变化」触发：首次渲染不播（那是初始状态，不是变化）。
@@ -893,28 +846,16 @@ function statusSummary(mod: InstalledMod) {
   return modTags(mod).map((tag) => tag.text).join(' · ')
 }
 
-/** 该 MOD 绑定仓库的 id（优先安装清单，其次身份绑定），用于标签跳转。 */
+/** 该 MOD 绑定仓库的 id（优先安装清单，其次身份绑定），用于卡片的跨页定位。 */
 function bindingRepositoryId(mod: InstalledMod): string | undefined {
   return repositoryForMod(repositories.value, mod)?.id
 }
 
-/**
- * 标签点下去该跳到哪个仓库。
- *
- * 大多数标签（最新版 / 可更新 / 未绑定…）描述的是「这个 MOD 相对**自己**
- * 绑定的仓库」的结论，所以跳它自己的仓库。
- *
- * 「缺依赖」「冲突」不同：它们指向**另一个**插件。此时跳到自己的仓库只会
- * 让用户看着一张毫无问题的卡片，找不到该处理的目标。这两种标签的跳转
- * 必须落在关系解析出的那个仓库上；解析不出来（线上没有可安装来源）
- * 就返回 undefined，标签不可点。
+/*
+ * 标签点下去跳哪个仓库的逻辑已经下沉到 `tagTargets.ts`：
+ * 卡片标签由 `ModStatusTags` 组件自己渲染并处理点击（原因见该组件注释），
+ * 页面不再需要自己算一遍跳转目标。
  */
-function tagTargetRepositoryId(mod: InstalledMod, tagKey: string): string | undefined {
-  if (tagKey === 'missing_dependency' || tagKey === 'dependency_conflict') {
-    return relationJumpRepositoryId(relationIssueByDll.value[mod.dll_file])
-  }
-  return bindingRepositoryId(mod)
-}
 
 /**
  * 某个状态对应的按钮能不能真的执行。
@@ -1207,26 +1148,6 @@ function expandGroupsFor(matches: StatusUnitNode[]) {
  * 目标是 `tagTargetRepositoryId` 算出来的那个 id，所以「缺依赖」去的是
  * 依赖的仓库，其余标签去的是这个 MOD 自己的仓库。
  */
-function openTagTarget(mod: InstalledMod, tagKey: string) {
-  const id = tagTargetRepositoryId(mod, tagKey)
-  if (id) linkToRepository(id)
-}
-
-/** 标签的悬停提示：说清点了会跳到哪、为什么可跳/不可跳。 */
-function tagTargetTitle(tagKey: string, target: string | undefined): string | undefined {
-  if (!target) {
-    // 缺依赖但没有可安装来源：说明「没有地方可去」，而不是假装可点
-    return tagKey === 'missing_dependency' ? t('modsOnline.noInstallableSource') : undefined
-  }
-  return tagKey === 'missing_dependency' || tagKey === 'dependency_conflict'
-    ? t('modsOnline.viewDependencyInModInstall')
-    : t('dialogs.viewInModInstall')
-}
-
-function tagTitle(mod: InstalledMod, tagKey: string): string | undefined {
-  return tagTargetTitle(tagKey, tagTargetRepositoryId(mod, tagKey))
-}
-
 /**
  * 包标签点下去该跳到哪个仓库。
  *
@@ -1592,13 +1513,24 @@ function removePackage(node: ModPackageNode) {
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
+    <!--
+      「上次检查」摘要：刷新结果原来只以 toast 出现，一闪就没了，
+      用户过几分钟再看列表分不清「这些结论是刚刷的还是昨晚的」。
+      这里把它常驻，悬停能看到完成时间与失败原因。
+    -->
+    <template v-if="outcome">
+      <span class="header-tag-divider" />
+      <span class="header-tag-group">
+        <RefreshResultTag :outcome="outcome" domain="repositories" />
+      </span>
+    </template>
   </Teleport>
 
   <!--
-    页头右侧，从左到右：批量开关 → 检测更新 → 打开目录。
-    「检测更新」复用 MOD 安装页的刷新全部（同一个 refreshEverything 入口），
-    放在 MOD 管理页是因为用户在这里看到「可更新」后，最自然的下一步就是
-    「再查一次」。
+    页头右侧，从左到右：批量开关 → 检查更新 → 打开目录。
+    「检查更新」只刷绑定仓库（`refreshBoundRepositories`），状态与 MOD 安装页
+    是同一份：那边整体刷新或单源刷新时这里也会转，反过来也一样。放在 MOD 管理页
+    是因为用户在这里看到「可更新」后，最自然的下一步就是「再查一次」。
   -->
   <Teleport to="#page-header-actions" defer>
     <!--
@@ -1625,7 +1557,7 @@ function removePackage(node: ModPackageNode) {
         <template #tab>{{ t('overview.disableAll') }}</template>
       </n-tab-pane>
     </n-tabs>
-    <n-button size="small" secondary :loading="checkingUpdates" :disabled="checkingUpdates || refreshingAll"
+    <n-button size="small" secondary :loading="checkingBound" :disabled="checkingBound || refreshingAll"
       :title="t('overview.refreshOnlyTheRepositoriesYourInstalledModsAreBoundToAndCheckForNewVersions')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
       {{ t('overview.check') }}
@@ -1739,11 +1671,7 @@ function removePackage(node: ModPackageNode) {
                     没有跳转目标，此时不给链接样式也不可点 —— 一个点了没反应、
                     却长得像能点的标签比纯文字更糟。
                   -->
-                  <n-tag v-for="tag in modTags(mod)" :key="tag.key" size="tiny" :bordered="false"
-                    class="state-tag" :class="{ 'state-tag--link': !!tagTargetRepositoryId(mod, tag.key) }"
-                    :color="tagColorForAny(tag.tone)"
-                    :title="tagTitle(mod, tag.key)"
-                    @click.stop="openTagTarget(mod, tag.key)">{{ tag.text }}</n-tag>
+                  <ModStatusTags :dll-file="mod.dll_file" />
                 </span>
               </template>
 
@@ -1848,7 +1776,7 @@ function removePackage(node: ModPackageNode) {
                   </template>
 
                   <!--
-                    包状态标签：以包为主体。版本结论（最新版 / 可更新 / 检测中…）
+                    包状态标签：以包为主体。版本结论（最新版 / 可更新 / 刷新中…）
                     整包只有一条、不带数量；成员级告警（重复 / 低版本 / 加载警告）
                     才带数量，因为确实可能只命中包内某几个 DLL。
                     配色与单 MOD 行同源，点击跳到 MOD 安装页对应仓库。
@@ -2185,7 +2113,7 @@ function removePackage(node: ModPackageNode) {
   .spin-icon { animation: none; }
 }
 /*
- * 状态变化脉冲：刷新完成、标签从「检查中」变成确定状态时，
+ * 状态变化脉冲：刷新完成、标签从「刷新中」变成确定状态时，
  * 标签组轻微放大后回落并短暂提亮，让异步结果被看见。
  *
  * 用 scale + filter 而不是改颜色：颜色已由 tone 表达语义，

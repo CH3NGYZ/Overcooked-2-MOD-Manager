@@ -42,7 +42,7 @@ export interface StatusActionSpec {
  *   - `bound_repository_missing` → 刷新（仓库从配置里消失，重拉源可能找回）
  *
  * 刻意不登记的状态：
- *   - `unknown` / `checking`：还在查或查完也判断不出，刷新不一定有改善；
+ *   - `unknown` / `refreshing`：还在查（或查完也判断不出），刷新不一定有改善；
  *   - `duplicate` / `load_warning`：要用户自己删文件或改环境，不是一键动作；
  *   - `disabled` / `prerelease` / `latest`：无需动作。
  */

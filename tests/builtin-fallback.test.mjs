@@ -79,14 +79,15 @@ test('回退分支会继续展开子源，而不是只加载索引', () => {
 /* 子源展开必须发生在索引成功之后：索引失败时没有子源可展开。 */
 test('索引读取失败时提前返回，不继续展开子源', () => {
   const body = fallbackBody()
-  const errorBranch = body.slice(
-    body.indexOf('if (result.access_error)'),
-    body.indexOf('},', body.indexOf('if (result.access_error)')),
-  )
-  assert.ok(
-    errorBranch.includes('return'),
-    '索引失败分支必须先返回',
-  )
+  /*
+   * 索引阶段现在通过共享状态机的 `runSource` 收集错误（返回文案数组），
+   * 早退条件因此是「错误数组非空」，而不是旧的 `result.access_error`。
+   * 不变量没变：一旦索引失败就必须在展开子源之前返回。
+   */
+  const early = body.indexOf('if (rootErrors.length) return')
+  const expand = body.indexOf('refreshSourceChain(child.id')
+  assert.ok(early > 0, '索引失败后必须提前返回')
+  assert.ok(expand > early, '子源展开必须排在索引成功之后')
 })
 
 /* 回退也要报告子源失败，不能只在索引成功时清空错误。 */

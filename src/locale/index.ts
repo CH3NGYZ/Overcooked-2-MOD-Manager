@@ -41,6 +41,7 @@ import { toolsUi } from './toolsUi.ts'
 import { dialogs } from './dialogs.ts'
 import { renameUi } from './renameUi.ts'
 import { uiCommon } from './uiCommon.ts'
+import { refresh } from './refresh.ts'
 import { DOMAINS, LOCALE_CODES, type Domain, type DomainMessages, type Localized } from './types.ts'
 
 /**
@@ -142,6 +143,7 @@ const TABLES: DomainTable[] = [
   { domain: 'dialogs', messages: dialogs },
   { domain: 'rename', messages: renameUi },
   { domain: 'common', messages: uiCommon },
+  { domain: 'refresh', messages: refresh },
 ]
 
 /** 把一条五语文案按语言摊平。 */

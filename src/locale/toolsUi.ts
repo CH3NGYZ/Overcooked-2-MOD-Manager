@@ -783,6 +783,14 @@ export const toolsUi: DomainMessages = {
     ko: '확인 중',
     ja: '確認中',
   },
+  // 刷新中（绑定仓库 / 地图源的 Release 正在重抓）
+  refreshing: {
+    'zh-CN': '刷新中',
+    'zh-TW': '重新整理中',
+    en: 'Refreshing',
+    ko: '새로 고침 중',
+    ja: '更新中',
+  },
   // 正在检测更新
   checkingForUpdates: {
     'zh-CN': '正在检测更新',

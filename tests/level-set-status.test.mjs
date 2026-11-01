@@ -447,6 +447,47 @@ test('卡片标签：停用且缺依赖时两条都显示（重新启用前就�
   assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'modsLocal.disabled'])
 })
 
+test('卡片标签：绑定地图（或它所在的地图源）在刷新时显示「刷新中」，不再显示旧结论', () => {
+  const target = map({ latest_tag: 'v0.74', source_id: 'rw' })
+
+  // 这张图自己正在重抓 Release
+  const mapRefreshing = levelSetCardTags(
+    set({ version: '0.73' }), [target], [], true, [],
+    { maps: new Set(['map-rw']), sources: new Set() },
+  )
+  assert.deepEqual(mapRefreshing.map((tag) => tag.text), ['tools.refreshing'])
+  assert.equal(mapRefreshing[0].kind, 'state')
+  assert.equal(mapRefreshing[0].tone, 'muted')
+  // 与版本结论互斥：不能一边说「刷新中」一边还挂着过期的「有更新」
+  assert.equal(mapRefreshing[0].mapId, 'map-rw')
+
+  // 源文档在重拉：此刻一个 Release 都还没回来，也不能显示成「未绑定」
+  const sourceRefreshing = levelSetCardTags(
+    set({ version: '0.73' }), [map({ source_id: 'rw', latest_tag: undefined })], [], true, [],
+    { maps: new Set(), sources: new Set(['rw']) },
+  )
+  assert.deepEqual(sourceRefreshing.map((tag) => tag.text), ['tools.refreshing'])
+
+  // 整源刷新：共享列表被清空重建，绑定暂时查不到 —— 也不能显示「未绑定」
+  const allRefreshing = levelSetCardTags(
+    set({ version: '0.73' }), [], [], true, [],
+    { all: true, maps: new Set(), sources: new Set() },
+  )
+  assert.deepEqual(allRefreshing.map((tag) => tag.text), ['tools.refreshing'])
+
+  // 没在刷新时仍是正常结论（别把「刷新中」当成默认态）
+  const idle = levelSetCardTags(
+    set({ version: '0.73' }), [target], [], true, [],
+    { maps: new Set(), sources: new Set() },
+  )
+  assert.deepEqual(idle.map((tag) => tag.text), ['tools.update'])
+})
+
+test('卡片标签：不传刷新提示时行为与旧版一致（向后兼容）', () => {
+  const tags = levelSetCardTags(set({ version: '0.73' }), [map({ latest_tag: 'v0.73' })], [], true)
+  assert.deepEqual(tags.map((tag) => tag.text), ['modsLocal.latest'])
+})
+
 // ---------------------------------------------------------------------------
 // 下载页：地图 → 本地关卡集的反向绑定
 // ---------------------------------------------------------------------------

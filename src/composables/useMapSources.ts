@@ -17,24 +17,51 @@
  * 「谁在刷」。地图侧的数据是独立的一份（`maps`），没有对应的 store，
  * 所以数据和引擎一起放在这里。
  */
-import { ref, type Ref } from 'vue'
+import { ref } from 'vue'
 import { api } from '../services/tauri'
+import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
+import { prioritizeByIds, refreshReleaseItem, runReleaseBatch } from '../releaseRefresh'
 import { backendMessageOf } from '../locale/backend'
 import { useNotify, type Notify } from '../useNotify'
 import type { MapInfo } from '../types'
+
+/** 并行上限（4 组），与仓库侧 `useRepositoryRefresh` 的取值保持一致。 */
+const REFRESH_CONCURRENCY = 4
 
 /** 地图源声明的全部地图（含 Release 缓存）。 */
 const maps = ref<MapInfo[]>([])
 /** 首次读数据中（只影响整页加载态，不影响刷新）。 */
 const loading = ref(true)
-/** 每张地图的 Release 刷新状态。 */
-const refreshing = ref<Record<string, boolean>>({})
-/** 每个地图源的刷新状态（源树重拉 + 该源下全部 Release）。 */
-const refreshingSources = ref<Record<string, boolean>>({})
 /** 每张地图的安装状态。安装进行中切走再回来也要保持。 */
 const installing = ref<Record<string, boolean>>({})
+
+/**
+ * 刷新状态（与仓库侧 `useRepositoryRefresh` 同一份实现 `createRefreshState`）。
+ *
+ * 条目级 `refreshing`、源级 `refreshingSources`、整批 `refreshingAll`、
+ * 检查更新 `checkingBound` 与结果 `outcome` 全部来自它 —— 两套刷新的**规则**
+ * 只有一处，不会一边按 4 并发、另一边按串行，也不会一边算成功、另一边算失败。
+ */
+const state = createRefreshState(REFRESH_CONCURRENCY)
+/** 每张地图的 Release 刷新状态。 */
+const refreshing = state.refreshing
+/** 每个地图源的刷新状态（源树重拉 + 该源下全部 Release）。 */
+const refreshingSources = state.refreshingSources
 /** 整源刷新进行中（浮动按钮的转圈与整页遮罩都用它）。 */
-const refreshingAll = ref(false)
+const refreshingAll = state.refreshingAll
+/**
+ * 「检查更新」批次进行中（只刷新本地已装地图绑定的那几张）。
+ *
+ * 与 `refreshingAll` 分开：整源刷新会清空列表并让下载页整页进入加载态，
+ * 检查更新不动源树、不清列表。两个页面读同一个标志，
+ * 所以从地图管理页点「检查更新」时，下载页的刷新按钮也会跟着禁用。
+ */
+const checkingBound = state.checkingBound
+/** 最近一次批次结果（地图管理页的「上次检查」摘要读它）。 */
+const outcome = state.outcome
+
+/** 任一刷新活动：两个页面的按钮 loading / 禁用统一看它。 */
+const anyRefreshing = state.anyRefreshing
 
 /**
  * 通知入口。
@@ -45,7 +72,8 @@ const refreshingAll = ref(false)
  */
 let message: Notify | null = null
 
-function setFlag(flags: Ref<Record<string, boolean>>, id: string, value: boolean) {
+/** 写条目级标志（安装流程也会用它标记「正在安装」之外的刷新态）。 */
+function setFlag(flags: typeof refreshing, id: string, value: boolean) {
   const next = { ...flags.value }
   if (value) next[id] = true
   else delete next[id]
@@ -83,25 +111,88 @@ async function syncDependencySnapshots() {
  * 单个失败不阻断同批其它条目：一次刷几十张图时逐条弹错会把用户淹没，所以
  * 错误交回调用方合并上报（与 MOD 安装页的批量刷新同一套做法）。
  *
+ * 并发 4 组：原来是纯串行，7 张图要排 7 个来回；改成与仓库侧同一个上限后
+ * 检查更新明显变快，而 4 个并发也远达不到代理/API 的限流阈值。
+ *
  * 结束后把线上依赖声明写回本地清单并重读列表：卡片状态与依赖表要立刻反映
  * 新缓存，否则用户刷完看到还是旧版本。
  */
-async function refreshReleases(list: MapInfo[]): Promise<string[]> {
-  const errors: string[] = []
-  for (const map of list) {
-    if (refreshing.value[map.id] || installing.value[map.id]) continue
-    setFlag(refreshing, map.id, true)
+/** 刷一张地图的 Release（用户主动点刷新 / 检查更新都走它）。 */
+async function refreshOneMap(map: MapInfo): Promise<string | null> {
+  return refreshReleaseItem(state, map, async () => {
     try {
+      // 用户主动刷新 → 强制绕过 5 分钟 Release 缓存
       await api.refreshMapReleases(map.id, true)
+      return null
     } catch (reason) {
-      errors.push(backendMessageOf(reason))
-    } finally {
-      setFlag(refreshing, map.id, false)
+      return backendMessageOf(reason)
     }
-  }
-  await syncDependencySnapshots()
-  await loadMaps({ force: true })
-  return errors
+  })
+}
+
+async function refreshReleases(
+  list: MapInfo[],
+  options: {
+    trigger?: RefreshTrigger
+    /** 已装地图的 id：排到队首，先出结论。 */
+    priorityIds?: ReadonlySet<string>
+    countUpdated?: () => number
+  } = {},
+): Promise<RefreshOutcome> {
+  const priorityIds = options.priorityIds
+  return runReleaseBatch<MapInfo>({
+    state,
+    // 正在安装的不能同时刷：安装要替换目录，刷新会读它的元数据
+    items: list.filter((map) => !installing.value[map.id]),
+    fetch: refreshOneMap,
+    trigger: options.trigger ?? 'partial',
+    prioritize: priorityIds && priorityIds.size
+      ? (items) => prioritizeByIds(items, priorityIds)
+      : undefined,
+    finalize: async () => {
+      await syncDependencySnapshots()
+      await loadMaps({ force: true })
+    },
+    countUpdated: options.countUpdated,
+  })
+}
+
+/** 一次「检查更新」的结果：刷新了多少张图、其中多少有新版、哪些失败。 */
+export interface MapBoundRefreshSummary {
+  /** 实际进入刷新队列的地图数（已跳过正在刷新/安装中的）。 */
+  refreshed: number
+  /** 刷新后判定为「有新版」的关卡集数。 */
+  updated: number
+  /** 失败文案，调用方逐条提示。 */
+  errors: string[]
+}
+
+/**
+ * 检查更新：只刷新「本地已装关卡集绑定」的那几张地图，**强制**绕过缓存。
+ *
+ * ## 为什么由引擎暴露
+ *
+ * 地图管理页原来自己 `for` 循环调 `api.refreshMapReleases`，状态挂在页面
+ * 局部的 `checkingUpdates` 上 —— 于是同一件事在两页之间完全没有交汇：
+ * 管理页在刷、下载页的卡片不转，切走再回来按钮还会『假装没在刷』。
+ * 现在把入口收到这里，两个页面共用同一份 `refreshing` / `checkingBound`。
+ *
+ * ## 为什么不重拉源树
+ *
+ * 源树重拉会先清空该源下的地图条目再重建，缓存一起丢；检查更新只想知道
+ * 「这几张图有没有新版」，不该顺手把列表洗一遍。要源数据就点整源刷新。
+ */
+async function refreshBoundMaps(
+  targets: MapInfo[],
+  options: { countUpdated?: () => number } = {},
+): Promise<MapBoundRefreshSummary> {
+  /*
+   * 去重交给 `runBatch`（它按 id 去重并跳过正在刷的），这里只筛掉安装中的：
+   * 同一张图被两个页面同时点「检查更新」时，第二份请求没有意义。
+   */
+  const queue = targets.filter((map) => !installing.value[map.id])
+  const result = await refreshReleases(queue, { trigger: 'bound', ...options })
+  return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
 }
 
 /**
@@ -113,19 +204,17 @@ async function refreshReleases(list: MapInfo[]): Promise<string[]> {
  */
 async function refreshSource(node: { id: string }) {
   if (refreshingAll.value || refreshingSources.value[node.id]) return
-  setFlag(refreshingSources, node.id, true)
-  try {
+  await state.runSource(node.id, async () => {
     try {
       maps.value = await api.refreshMapSources()
     } catch (reason) {
       message?.error(backendMessageOf(reason))
     }
     const scoped = maps.value.filter((map) => (map.source_id || '__none__') === node.id)
-    const errors = await refreshReleases(scoped)
-    if (errors.length) message?.error(errors[0])
-  } finally {
-    setFlag(refreshingSources, node.id, false)
-  }
+    const result = await refreshReleases(scoped)
+    if (result.errors.length) message?.error(result.errors[0])
+    return result.errors
+  })
 }
 
 /**
@@ -139,22 +228,45 @@ async function refreshSource(node: { id: string }) {
  * 失败时把旧列表还原：源文档拉不到就白屏，用户会以为地图全没了；留着旧数据
  * 至少能看、能装，下一次刷新再试。
  */
-async function refreshAll() {
+async function refreshAll(
+  options: { countUpdated?: () => number; priorityIds?: ReadonlySet<string> } = {},
+) {
   if (refreshingAll.value) return
-  refreshingAll.value = true
+  state.beginBatch('full')
   const previous = maps.value
   maps.value = []
   try {
+    let sourceError: string | null = null
     try {
       maps.value = await api.refreshMapSources()
     } catch (reason) {
       maps.value = previous
-      message?.error(backendMessageOf(reason))
+      sourceError = backendMessageOf(reason)
+      message?.error(sourceError)
     }
-    const errors = await refreshReleases(maps.value)
-    errors.forEach((error) => message?.error(error))
+    /*
+     * trigger 传 `single`：整批的结果由下面统一写一条 `full`，
+     * 否则这里会先把「上次检查」覆盖成半批数据（源树阶段的失败还没并进来）。
+     */
+    const result = await refreshReleases(maps.value, {
+      trigger: 'single',
+      priorityIds: options.priorityIds,
+      countUpdated: options.countUpdated,
+    })
+    result.errors.forEach((error) => message?.error(error))
+    /*
+     * 源树阶段与条目阶段的错误在这里合并写成一条结果：源文档失败时
+     * 条目一条都没刷（`refreshed` 会是 0），摘要要能同时说清这两件事。
+     */
+    state.publishOutcome({
+      trigger: 'full',
+      refreshed: result.refreshed,
+      updated: result.updated,
+      errors: sourceError ? [sourceError, ...result.errors] : result.errors,
+      finishedAt: Date.now(),
+    })
   } finally {
-    refreshingAll.value = false
+    state.endBatch('full')
   }
 }
 
@@ -167,10 +279,14 @@ export function useMapSources() {
     refreshingSources,
     installing,
     refreshingAll,
+    checkingBound,
+    anyRefreshing,
+    outcome,
     loadMaps,
     refreshAll,
     refreshSource,
     refreshReleases,
+    refreshBoundMaps,
     setFlag,
     syncDependencySnapshots,
   }

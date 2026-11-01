@@ -57,6 +57,7 @@ export const DOMAINS = [
   'framework',   // BepInEx / DIYLevel 框架管理
   'dialogs',     // 独立弹窗：确认、导入导出、回收站、日志
   'tutorial',    // 教程
+  'refresh',     // 刷新批次的共享摘要（仓库 / 地图两侧同一套）
 
   // —— 后端域：tag 的第一段就是这里的名字 ——
   'error',       // 早期批次：`error.<域>.<原因>`

@@ -117,9 +117,13 @@ const { linkToRepository } = useRepositoryLink()
  * 地图源数据与刷新状态都来自模块级单例（`useMapSources`）。
  * 放在模块作用域是为了「刷新中切走再切回来」时状态还在 —— 页面实例会被
  * 卸载重建，挂在页面上的 ref 熬不过一次切页。理由详见该 composable 的注释。
+ *
+ * `anyRefreshing` 也读单例而不是本页自己拼：地图管理页点「检查更新」时，
+ * 本页的整源 / 分组刷新按钮必须一起禁用 —— 两页共用同一个刷新引擎，
+ * 忙碌状态也只能有一个真相。
  */
 const {
-  maps, loading, refreshing, refreshingSources, installing, refreshingAll,
+  maps, loading, refreshing, refreshingSources, installing, refreshingAll, anyRefreshing,
   loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
 } = useMapSources()
 const sets = ref<LevelSetInfo[]>([])
@@ -252,14 +256,6 @@ const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } =
   }),
   () => !!query.value,
 )
-
-const anyRefreshing = computed(
-  () =>
-    refreshingAll.value
-    || Object.keys(refreshing.value).length > 0
-    || Object.keys(refreshingSources.value).length > 0,
-)
-
 
 /**
  * 读一次本地关卡集。
@@ -609,8 +605,8 @@ function actionOf(map: MapInfo): CardAction {
 
 /** 刷新一张地图的 Release（用户主动点刷新 → 绕过缓存）。 */
 async function refresh(map: MapInfo) {
-  const errors = await refreshReleases([map])
-  if (errors.length) message.error(errors[0])
+  const result = await refreshReleases([map], { trigger: 'single' })
+  if (result.errors.length) message.error(result.errors[0])
 }
 
 /**
@@ -770,8 +766,8 @@ function sourceRefreshing(node: SourceGroupSource<MapInfo>): boolean {
  */
 async function refreshGroup(group: SourceGroupLeaf<MapInfo>) {
   if (refreshingAll.value || groupRefreshing(group)) return
-  const errors = await refreshReleases(group.items)
-  if (errors.length) message.error(errors[0])
+  const result = await refreshReleases(group.items)
+  if (result.errors.length) message.error(result.errors[0])
 }
 
 
@@ -932,10 +928,13 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
 
   <!--
     整源刷新入口，与 MOD 安装页同一个位置与观感。
-    - 禁用看 `refreshingAll`：源文档阶段也算忙，防止重复点。
-    - 图标一直转表示正在刷新（Release 缓存刷新期间用户需要明确反馈）。
+    - 禁用看共享的 `anyRefreshing`（不再只看 `refreshingAll`）：地图管理页正在
+      「检查更新」时同一批图也在刷，这时候再点整源刷新会并发两批请求、列表以
+      后完成的那批为准 —— 用户看到的是「刷新完又变回去」。
+    - 图标只在 `refreshingAll` 时转：单张图或管理页的检查更新不该让这个
+      「刷新全部」按钮一直转，那会让人以为整源刷新还没结束。
   -->
-  <n-float-button position="fixed" bottom="28" right="32" :disabled="refreshingAll"
+  <n-float-button position="fixed" bottom="28" right="32" :disabled="anyRefreshing"
     :tooltip="t('levelSet.refreshAllHint')" @click="refreshAll">
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': refreshingAll }" />
   </n-float-button>

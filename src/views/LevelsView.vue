@@ -720,12 +720,72 @@ function pluginKey(set: LevelSetInfo, plugin: LevelSetPlugin) {
   return `${set.dir_name}\u0000${plugin.file_name}`
 }
 
-function togglePlugin(set: LevelSetInfo, plugin: LevelSetPlugin) {
+/**
+ * 随包插件卡片的展开 / 收起。
+ *
+ * 二级卡片与集卡片走同一套滚动策略（`expandScroll.ts`）：展开时先让整卡可见、
+ * 放不下才把卡片外框钉到页头下沿，收起时把折叠后的卡片带到可视区正中。
+ * 不滚的话，插件卡片展开后底部会被视口切掉，用户得自己往下找。
+ *
+ * 只滚「用户点的这一张」：别的插件卡片被被动影响时没有调用点。
+ */
+function togglePlugin(set: LevelSetInfo, plugin: LevelSetPlugin, card?: HTMLElement) {
   // 这次点击已经由插件卡片处理；不设标记的话，document 上「点空白收起」
   // 会顺手把外层的集卡片一起收掉，用户就看不到刚展开的插件详情了。
   cardClickHandled = true
   const key = pluginKey(set, plugin)
-  expandedPlugins.value[key] = !expandedPlugins.value[key]
+  const close = () => {
+    expandedPlugins.value[key] = false
+  }
+  if (expandedPlugins.value[key]) {
+    if (!card) {
+      close()
+      return
+    }
+    collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, close)
+    return
+  }
+  expandedPlugins.value[key] = true
+  if (!card) return
+  const anchor = card.querySelector('.card-row')
+  if (!anchor) return
+  void nextTick().then(() => {
+    scrollExpandedCardIntoView({ card, anchor, body: card.querySelector('.card-detail') })
+  })
+}
+
+/**
+ * 点击落点所在的**二级卡片**（集详情里的随包插件卡）。
+ *
+ * 一级卡与二级卡渲染出来都是 `.mod-card`，靠「是否长在某个 `.card-detail` 里」
+ * 区分：随包插件卡片只可能出现在集详情内部，一级卡自己不在任何详情区里。
+ */
+function nestedPluginCard(target: Element): HTMLElement | null {
+  const card = target.closest('.mod-card')
+  if (!(card instanceof HTMLElement)) return null
+  return card.closest('.card-detail') ? card : null
+}
+
+/**
+ * 收起某张随包插件卡片。
+ *
+ * 键要从 DOM 上的 `data-plugin-of` / `data-plugin-file` 还原成 `pluginKey`：
+ * 键里有 NUL（写不进 HTML 属性），所以卡片只带两个原始字段，这里再查回对应的
+ * 集与插件。只在一次点击里走一次线性查找，代价可以忽略；拼键仍只有
+ * `pluginKey` 一处实现。
+ */
+function collapsePluginCard(card: HTMLElement) {
+  const dirName = card.dataset.pluginOf
+  const fileName = card.dataset.pluginFile
+  if (!dirName || !fileName) return
+  const set = sets.value.find((item) => item.dir_name === dirName)
+  const plugin = set?.plugins?.find((item) => item.file_name === fileName)
+  if (!set || !plugin) return
+  const key = pluginKey(set, plugin)
+  if (!expandedPlugins.value[key]) return
+  collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, () => {
+    expandedPlugins.value[key] = false
+  })
 }
 
 /** 插件卡片标题：BepInPlugin 名优先，读不到就用文件名去掉 `.dll` / `.dll.disabled`。 */
@@ -742,6 +802,10 @@ function pluginTitle(plugin: LevelSetPlugin) {
  * 工具按钮）里说明用户在操作这一行，交给各自的 `@click.stop` 与处理函数，
  * 不在这里收起，避免一次点击既展开又收起。
  *
+ * 二级卡片（集详情里的随包插件）要先认领：它的详情区同时落在集卡片的
+ * `.card-detail` 里，不先判它就会被当成「点空白」，把外层集卡片一起收掉
+ * （用户看到的就是「点插件详情，地图包整个收起来了」）。
+ *
  * 收起后把展开那次滚动倒回去（单展开语义下它是唯一展开过的那张卡）。
  */
 function onDocumentClick(event: MouseEvent) {
@@ -749,9 +813,14 @@ function onDocumentClick(event: MouseEvent) {
     cardClickHandled = false
     return
   }
+  const target = event.target
+  const nested = target instanceof Element ? nestedPluginCard(target) : null
+  if (nested) {
+    collapsePluginCard(nested)
+    return
+  }
   const dirName = expandedDir.value
   if (dirName === null) return
-  const target = event.target
   if (target instanceof Element && target.closest('.card-row')) return
   const card = cardOf(dirName)
   const collapse = () => {
@@ -1139,6 +1208,7 @@ async function checkUpdates() {
             :toggle-loading="!!busy[set.dir_name]"
             :title="levelSetDisplayName(set, locale)"
             :title-tooltip="set.error ? translateBackendMessage(set.error) : levelSetDisplayName(set, locale)"
+            :version="formatVersion(set.version) || undefined"
             :disabled="!set.enabled"
             :expanded="expandedDir === set.dir_name"
             :focus-flash="!!highlightId && highlightId === focusIdOf(set)"
@@ -1280,6 +1350,8 @@ async function checkUpdates() {
               <div v-if="set.plugins?.length" class="detail-section">
                 <div class="plugin-list">
                   <LocalItemCard v-for="plugin in set.plugins" :key="plugin.file_name"
+                    :data-plugin-of="set.dir_name"
+                    :data-plugin-file="plugin.file_name"
                     :switchable="false"
                     :title="pluginTitle(plugin)"
                     :title-tooltip="plugin.file_name"
@@ -1287,7 +1359,7 @@ async function checkUpdates() {
                     :title-tag="t('levelSet.bundledPlugin')"
                     :disabled="!plugin.enabled"
                     :expanded="!!expandedPlugins[pluginKey(set, plugin)]"
-                    @activate="togglePlugin(set, plugin)">
+                    @activate="(card: HTMLElement) => togglePlugin(set, plugin, card)">
                     <template #detail>
                       <div class="detail-grid">
                         <div class="detail-row">

@@ -289,10 +289,21 @@ onMounted(() => {
   gap: 8px;
   max-width: min(420px, 80vw);
   padding: 8px 14px;
-  border: 1px solid var(--oc2-accent);
+  border: 1px solid color-mix(in srgb, var(--oc2-accent) 75%, transparent);
   border-radius: 999px;
-  background: var(--oc2-surface);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--oc2-body) 45%, transparent);
+  /*
+   * 毛玻璃/亚克力。三层叠加，缺一层就退化成「半透明色块」：
+   *   · 底色取主题浮层那一档再降到七成（`--oc2-popover`，换主题色与明暗时一起变）；
+   *   · `backdrop-filter` 把背后的卡片糊掉，文字仍然压得住；
+   *   · `inset` 高光在上边缘留一道极淡亮线，这是亚克力与单纯半透明的主要区别。
+   * 旧值 `--oc2-surface` 全仓从未定义过，提示条其实一直没有底色（纯透明）。
+   */
+  background: color-mix(in srgb, var(--oc2-popover) 72%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--oc2-body) 55%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--oc2-text-1) 10%, transparent);
   color: var(--oc2-text-1);
   font-size: 12.5px;
   line-height: 1.3;

@@ -18,6 +18,12 @@ import { prefersReducedMotion } from './motion.ts'
  * 顶部边界不是 0 而是页头下沿（`scrollInsetTop`）：页头固定、不随内容滚动，
  * 卡片贴到 0 会被页头压住。边界每次调用时实测，不缓存（页头会换行、缩放会变）。
  *
+ * - **同时收起另一张**（地图管理页单展开）：被收起的那张在目标卡片之前时，收起会让
+ *   目标整体上移 `shrink`。展开后的滚动位置要同步减掉这段，标题才留在原地、卡片从
+ *   当前位置向下展开；只扣测量值不改滚动位置，卡片就会被上方那张的收起「挤上去」。
+ *   浏览器自带的滚动锚定会再补偿一次、与我们的滚动互相抵消，所以 `.page-scroll` 的
+ *   滚动容器关掉了 `overflow-anchor`（见 `global.css`）。
+ *
  * 只处理「用户自己点了展开 / 收起」这一次动作：因为展开另一张卡而被动收起的那张不滚
  * （地图管理页是单展开语义），跨页定位（`crossLink.ts`）与切页滚动（`pageTransition.ts`）
  * 也不受影响。
@@ -131,6 +137,51 @@ export function expansionScrollDelta({
   return { delta: clampDelta(delta, scrollTop, scrollMax), reason: 'reveal-bottom' }
 }
 
+/** 展开卡片时真正要滚到的 `scrollTop` 的输入。 */
+export interface ExpansionTargetFrame extends ExpansionFrame {
+  /** 展开前卡片自己的高度（`cardRect.height`）：滚动上限要按「长高了多少」修正。 */
+  cardHeight: number
+  /** 上方那张卡收起会让内容整体上移的距离；已在改状态之前量好，缺省 0。 */
+  shrink?: number
+}
+
+/**
+ * 展开卡片后的目标 `scrollTop`。
+ *
+ * 两步不能合并：`expansionScrollDelta` 回答的是「从标题现在的位置出发，还要往下滚多少
+ * 才能让卡片底边贴住可用底边」；而上方那张卡收起会让内容整体上移 `shrink`，等于替我们
+ * 滚了 `shrink`。所以目标位置是 `scrollTop + delta - shrink`。
+ *
+ * 反过来（把 `shrink` 预先扣进 `top` 再算 delta）等价于假定「滚动位置不动、内容自己上移」：
+ * 卡片会被上方那张的收起拽上去 —— 用户看到的就是「标题被挤上去、不是向下展开」。
+ */
+export function expansionTargetScrollTop({
+  top,
+  height,
+  cardHeight,
+  shrink = 0,
+  viewportHeight,
+  insetTop = 0,
+  bottomGap = EXPANSION_BOTTOM_GAP,
+  scrollTop,
+  scrollMax,
+}: ExpansionTargetFrame): number {
+  const usableBottom = viewportHeight - bottomGap
+  // 上方那张收起后，这张卡的外框在**内容坐标**里的位置（不随滚动变）。
+  const contentTop = scrollTop + top - shrink
+  // 标题留在原地时的滚动位置：上方替我们滚了 shrink，这里就要减掉它。
+  const restingTop = contentTop - top
+  // 从标题现在的位置看，底边还要往下露多少才能贴住可用底边。
+  const overflow = top + height - usableBottom
+  const revealing = overflow > 0 ? restingTop + overflow : restingTop
+  // 但不能把标题顶到上界之上（触顶后退化成向下溢出）；
+  // 标题早就在上界之上时不往上抢，就停在原地。
+  const capped = Math.max(restingTop, Math.min(revealing, contentTop - insetTop))
+  // 动画结束后的可滚动上限：这张卡撑高 `height - cardHeight`，上面那张缩掉 `shrink`。
+  const scrollMaxAfter = Math.max(0, scrollMax + height - cardHeight - shrink)
+  return Math.min(Math.max(capped, 0), scrollMaxAfter)
+}
+
 /**
  * 收起卡片时的滚动距离：把折叠后的卡片外框滚到可视区**正中**。
  *
@@ -228,10 +279,21 @@ export interface ExpandScrollTarget {
   /**
    * 同一时刻因为「展开了这一张」而自动收起的上一张卡。
    *
-   * 它位在目标卡片之前时，收起动画会把目标整体往上带：展开瞬间量到的 `top`
-   * 还是收起前的位置，必须减掉它会缩掉的高度才是稳定后的位置。
+   * 它位在目标卡片之前时，收起动画会把目标整体往上带 `shrink`：目标滚动位置要同步
+   * 减掉这段（`expansionTargetScrollTop` 负责），标题才留在原地、卡片向下展开。
    */
-  collapsing?: { card: Element; body: Element | null } | null
+  collapsing?: {
+    card: Element
+    body: Element | null
+    /**
+     * 已经量好的「这张卡会缩掉多少高度」。
+     *
+     * 默认在滚动前现量；但调用方如果在改状态的同一步里把这张卡的内层展开状态
+     * 一起清掉（外层收起连带清内层），内容会先变矮，现量就会低估 —— 那种情况
+     * 必须在改状态之前用 `naturalContentHeight` 量好传进来。
+     */
+    shrink?: number
+  } | null
 }
 
 /** 收起一张卡片时需要的元素。 */
@@ -259,8 +321,13 @@ function viewportOf(container: HTMLElement): ViewportFrame {
   }
 }
 
-/** 内容层的自然高度：包装层被 `max-height` 裁住时，`scrollHeight` 仍是完整内容高度。 */
-function naturalContentHeight(body: Element): number {
+/**
+ * 内容层的自然高度：包装层被 `max-height` 裁住时，`scrollHeight` 仍是完整内容高度。
+ *
+ * 调用方只在**改状态之前**量：折叠一开始内容就在变矮，之后量到的既不是折叠前
+ * 的高度，也不是折叠后的（后者恒为 0）。
+ */
+export function naturalContentHeight(body: Element): number {
   const wrapper = body.parentElement
   const content = body.getBoundingClientRect().height
   if (!wrapper) return content
@@ -279,9 +346,10 @@ function expandedCardHeight(card: Element, body: Element | null): number {
 /** 上一张卡收起时会把它下面的内容往上带多少像素；不在目标之前就是 0。 */
 function collapseShrinkAbove(collapsing: NonNullable<ExpandScrollTarget['collapsing']>, target: Element): number {
   if (collapsing.card === target) return 0
-  if (!collapsing.body) return 0
   const following = collapsing.card.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING
-  return following ? naturalContentHeight(collapsing.body) : 0
+  if (!following) return 0
+  if (collapsing.shrink !== undefined) return collapsing.shrink
+  return collapsing.body ? naturalContentHeight(collapsing.body) : 0
 }
 
 /** 等一帧再量：详情是本帧刚插进 DOM 的，等多一帧能拿到动画起始状态，也避开 Vue 的补丁过程。 */
@@ -305,22 +373,19 @@ export function scrollExpandedCardIntoView(target: ExpandScrollTarget): void {
     if (!container) return
     const view = viewportOf(container)
     const cardRect = card.getBoundingClientRect()
-    const shrink = collapsing ? collapseShrinkAbove(collapsing, card) : 0
-    // 对齐卡片外框（border box），不再从标题行算起：上边框与圆角必须留在视口里。
-    const top = cardRect.top - view.top - shrink
-    const height = expandedCardHeight(card, body)
-    // 滚动范围按「动画结束后」的内容高度算：这张卡会撑高这么多，被动收起的那张会缩掉那些。
-    const projectedMax = Math.max(0, view.scrollMax + height - cardRect.height - shrink)
-    const { delta } = expansionScrollDelta({
-      top,
-      height,
+    const targetScrollTop = expansionTargetScrollTop({
+      // 对齐卡片外框（border box），不再从标题行算起：上边框与圆角必须留在视口里。
+      top: cardRect.top - view.top,
+      height: expandedCardHeight(card, body),
+      cardHeight: cardRect.height,
+      shrink: collapsing ? collapseShrinkAbove(collapsing, card) : 0,
       viewportHeight: view.viewportHeight,
       insetTop: scrollInsetTop(container),
       scrollTop: view.scrollTop,
-      scrollMax: projectedMax,
+      scrollMax: view.scrollMax,
     })
-    if (delta === 0) return
-    applyScroll(container, view.scrollTop + delta)
+    if (Math.abs(targetScrollTop - view.scrollTop) < PIN_TOLERANCE) return
+    applyScroll(container, targetScrollTop)
   })
 }
 
@@ -426,15 +491,22 @@ function applyScroll(container: HTMLElement, target: number): void {
   }
 
   const step = (now: number) => {
-    // 用户自己滚了（滚轮 / 触摸 / 滚动条）：让位，不再抢 scrollTop
-    if (Math.abs(container.scrollTop - lastSet) > 2) {
+    const current = container.scrollTop
+    const reachable = scrollMaxOf(container)
+    /*
+     * 用户自己滚了（滚轮 / 触摸 / 滚动条）：让位，不再抢 scrollTop。
+     * 但内容变矮时浏览器会把 scrollTop 夹到新的上限，那也表现为
+     * 「位置被改了」—— 这一种必须继续跑：展开另一张卡时上面
+     * 那张同时收起，补偿滚动会被自己取消，卡片就被拽上去。
+     */
+    const clampedByContent = current < lastSet && lastSet > reachable
+    if (!clampedByContent && Math.abs(current - lastSet) > 2) {
       cancel()
       return
     }
     const progress = Math.min(1, (now - startedAt) / SCROLL_DURATION)
     const wanted = start + distance * easeInOutCubic(progress)
     // 每帧夹到「此刻」的可滚动范围：折叠动画还没结束时范围会比目标小
-    const reachable = scrollMaxOf(container)
     container.scrollTop = Math.min(wanted, reachable)
     lastSet = container.scrollTop
     if (progress < 1) {

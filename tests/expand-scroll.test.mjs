@@ -12,7 +12,8 @@ import test from 'node:test'
  * - 顶部边界是 `insetTop` 而不是 0（页头在滚动区上方占掉的那一截）；
  * - 收起把折叠后的卡片外框滚到可视区正中（上下邻居都留着，方便连着点开）。
  */
-const { expansionScrollDelta, collapseScrollDelta, EXPANSION_BOTTOM_GAP } = await import('../src/expandScroll.ts')
+const { expansionScrollDelta, expansionTargetScrollTop, collapseScrollDelta, EXPANSION_BOTTOM_GAP } =
+  await import('../src/expandScroll.ts')
 
 /** 视口 626 高：实测窗口里 `.page-scroll .n-scrollbar-container` 的可视高度。 */
 const VIEWPORT = 626
@@ -41,6 +42,21 @@ function collapse(overrides = {}) {
     viewportHeight: VIEWPORT,
     scrollTop: 120,
     scrollMaxAfter: 2000,
+    ...overrides,
+  })
+}
+
+/** 展开前的卡片高度：标题行 + 内边距 + 边框（与 COLLAPSED_H 同一个实测值）。 */
+const CARD_H = COLLAPSED_H
+
+function expandTarget(overrides = {}) {
+  return expansionTargetScrollTop({
+    top: 0,
+    height: 0,
+    cardHeight: CARD_H,
+    viewportHeight: VIEWPORT,
+    scrollTop: 0,
+    scrollMax: 1000,
     ...overrides,
   })
 }
@@ -182,4 +198,59 @@ test('收起：短页面上夹紧后卡片外框不会跑到页头之上', () =>
   const { delta } = collapse(frame)
   assert.equal(delta, 0)
   assert.ok(frame.top + delta >= 0)
+})
+
+test('展开目标：没有被动收起的卡片时，目标就是 scrollTop + delta', () => {
+  const frame = { top: 400, height: 300, scrollTop: 120, scrollMax: 2000 }
+  assert.equal(expandTarget(frame), 120 + expand(frame).delta)
+})
+
+test('展开目标：上方卡片收起把内容带上去多少，滚动位置就减多少（标题留在原地）', () => {
+  // 原地放得下（delta = 0），上方那张缩掉 380：只有把滚动位置也减掉 380，标题才不动。
+  assert.equal(expandTarget({ top: 100, height: 300, scrollTop: 900, shrink: 380 }), 900 - 380)
+})
+
+test('展开目标：撞底时标题只上移露底需要的距离，不被上方收起拽走', () => {
+  const top = 400
+  const height = 300
+  const scrollTop = 1000
+  const target = expandTarget({ top, height, scrollTop, scrollMax: 4000, shrink: 380 })
+  const reveal = top + height - USABLE_BOTTOM
+  assert.equal(target, scrollTop + reveal - 380)
+  // 标题最终位置 = top - reveal：只上移了露底那一段，没有被 380 全吃掉。
+  assert.equal(top - reveal, USABLE_BOTTOM - height)
+  assert.ok(top - reveal > 0)
+})
+
+test('展开目标：标题不会被上方收起挤到页头之上（下界夹到 0）', () => {
+  assert.equal(expandTarget({ top: 400, height: 300, scrollTop: 200, shrink: 380 }), 0)
+})
+
+test('展开目标：卡片比视口高时标题贴住顶部边界，其余向下溢出', () => {
+  const target = expandTarget({ top: 20, height: 900, scrollTop: 300, scrollMax: 4000, insetTop: 56 })
+  assert.equal(target, 300 + (20 - 56 < 0 ? 0 : 20 - 56))
+  assert.ok(target - 300 <= 20)
+})
+
+test('展开目标：夹进动画结束后的可滚动范围（上面缩掉、自己长高）', () => {
+  // scrollMaxAfter = 200 + 300 - 44 - 380 -> 0，滚动位置被压到 76
+  const target = expandTarget({ top: 400, height: 300, scrollTop: 900, scrollMax: 500, shrink: 380 })
+  // scrollMaxAfter = 500 + 300 - 44 - 380 = 376
+  assert.equal(target, 376)
+})
+
+test('展开目标：没有被动收起时与 delta 版本一致', () => {
+  const frame = { top: 400, height: 300, scrollTop: 900, scrollMax: 1000 }
+  const target = expandTarget(frame)
+  // scrollMaxAfter = 1000 + 300 - 44 = 1256；露底需要 86px，上限足够
+  assert.equal(target, 900 + 86)
+  assert.equal(target, 900 + expand(frame).delta)
+})
+
+test('展开目标：卡片比视口还高时，标题贴到上界、其余向下溢出', () => {
+  const insetTop = 56
+  const target = expandTarget({ top: 400, height: 900, scrollTop: 300, scrollMax: 4000, insetTop })
+  // 露底要 686px，但标题只能上移 400 - 56 = 344px（贴住上界）
+  assert.equal(target, 300 + 344)
+  assert.equal(400 - (target - 300), insetTop)
 })

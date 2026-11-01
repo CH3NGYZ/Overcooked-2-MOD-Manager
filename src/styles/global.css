@@ -201,6 +201,16 @@ body {
  * 都没有可参照的基准，整页加载态的容器会塌回内容高度（转圈偏上）。
  * 把内容层改成撑满容器高度的纵向 flex，短页面也能占满可视区。
  */
+/*
+ * 关掉浏览器滚动锚定（Chrome 默认 overflow-anchor: auto）。
+ * 展开/收起的滚动距离由 expandScroll.ts 显式算出并动画执行；卡片展开时若上方
+ * 另一张卡同时收起，浏览器会再自己补偿一次 scrollTop，两套补偿互相抵消 ——
+ * 实测「切换关卡集」后目标卡底边仍落在折叠线以下 222px。只关锚定，
+ * 滚动仍由那唯一一套实现接管。
+ */
+.page-scroll .n-scrollbar-container {
+  overflow-anchor: none;
+}
 .page-scroll .n-scrollbar-content {
   display: flex;
   flex-direction: column;

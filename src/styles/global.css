@@ -293,19 +293,6 @@ body {
 }
 
 /*
- * 地图导入确认：一张地图一块，作者给的修复插件缩进挂在它下面。
- * 正文由 `useLevelSetImport` 用 VNode 拼（字符串里的换行会被 HTML 折叠）。
- */
-.import-confirm { display: grid; gap: 8px; }
-.import-confirm-lead { margin: 0; }
-.import-confirm-set { display: grid; gap: 2px; }
-.import-confirm-name { font-weight: 600; }
-.import-confirm-plugins {
-  padding-left: 12px;
-  color: var(--oc2-text-3);
-  font-size: 12px;
-}
-/*
  * 页内定位的「再闪一下」：页头聚合标签会同时命中多张卡片（一起亮 3 秒），
  * 但用户看的是「这次指的是哪一张」——落点那张再播一次**底色**由亮到暗的闪烁。
  *

@@ -21,6 +21,7 @@ import RefreshResultTag from '../components/RefreshResultTag.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
+import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
@@ -297,7 +298,11 @@ async function reloadSets() {
  * 共用同一份，本页只负责装完重读关卡集。
  */
 const installSourceOpen = ref(false)
-const { importing, importSource } = useLevelSetImport(() => reloadSets())
+const {
+  importing, importSource,
+  previewOpen: importPreviewOpen, detail: importDetail,
+  confirmImport, discardImport,
+} = useLevelSetImport(() => reloadSets())
 
 async function handleInstallSourceSelect(source: InstallSource) {
   await importSource(source, {
@@ -1045,6 +1050,14 @@ async function checkUpdates() {
   <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
     :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
     :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
+
+  <!--
+    导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。
+    不接 `busy`：它在「等待确认」期间也为真（整个导入流程都算 busy），
+    而那时取消与立即安装恰恰必须能点；写盘期间弹窗已经收起，进度由页面按钮显示。
+  -->
+  <InstallDetailDialog v-model:show="importPreviewOpen" :model="importDetail"
+    @confirm="confirmImport" @discard="discardImport" />
 
   <PageLoading :show="loading">
     <!--

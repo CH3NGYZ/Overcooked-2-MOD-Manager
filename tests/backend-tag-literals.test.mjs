@@ -92,9 +92,6 @@ const NON_TAG = new Set([
   // 社区搜索/测试固件里的假 GUID 与假文件名
   'a.b', 'another.plugin', 'any.guid', 'base.guid', 'conflict.guid', 'dep.guid',
   'high.guid', 'mid.guid', 'new.guid', 'ranged.guid', 'unknown.guid',
-  'com.example.mod', 'com.example.ja', 'com.example.plugin', 'com.example.dep',
-  'com.example.owner', 'com.example.other', 'com.example.future', 'com.example.guid',
-  'com.example.main', 'com.example.real', 'com.example.recognized',
   'com.bepis.bepinex.configurationmanager', 'com.valvesoftware.steam',
   'com.ch3ngyz.plugin.HostUtilities', 'com.ch3ngyz.plugin.DIYLevel',
   'fixture.configurationmanager',
@@ -118,6 +115,17 @@ const NON_TAG = new Set([
 /** 早期形态：前端会去掉 `error.` 前缀重查一次，不必以完整形式登记。 */
 function isLegacyErrorTag(tag) {
   return tag.startsWith('error.')
+}
+
+/**
+ * 测试固件的命名空间：`com.example.*`。
+ *
+ * Rust 单测里造 BepInPlugin 元数据要写 GUID，逐条登记的话每加一个测试就得同步
+ * 改白名单，加漏了 CI 变红却跟真正的 tag 无关。命名空间整体豁免，同时把它写在
+ * 这里 —— 真实 tag 不可能落在 `com.example` 这个域下，豁免不会被误用。
+ */
+function isFixtureIdentifier(tag) {
+  return tag.startsWith('com.example.')
 }
 
 /** 收集 Rust 源码里所有 tag 形态的字面量。 */
@@ -149,7 +157,7 @@ test('后端 tag 字面量都登记进了语言表', () => {
   const missing = []
   const unknownDomain = []
   for (const [tag, where] of tags) {
-    if (flat.has(tag) || NON_TAG.has(tag) || isLegacyErrorTag(tag)) continue
+    if (flat.has(tag) || NON_TAG.has(tag) || isLegacyErrorTag(tag) || isFixtureIdentifier(tag)) continue
     const [domain, ...rest] = tag.split('.')
     if (!byDomain.has(domain)) {
       unknownDomain.push(`${tag}（域 ${domain} 没有登记）— ${where.slice(0, 2).join(', ')}`)

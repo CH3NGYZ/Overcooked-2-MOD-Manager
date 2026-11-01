@@ -265,6 +265,29 @@ export interface StagedMapSource {
   sets: ZipLevelSet[]
 }
 
+/**
+ * ZIP 里随某个关卡集一起落盘的插件 DLL。
+ *
+ * 和 `ModPreviewEntry` 是同一套元数据、同一套读取规则（后端只有
+ * `mods::read_dll_details` 一份实现），差别只在来源：一个是用户在装 MOD，
+ * 一个是地图作者随包带的修复插件 —— 界面上两者都用同一张详情卡片展示。
+ */
+export interface ZipLevelSetPlugin {
+  /** ZIP 内的条目路径（展示用，例如 `OC2DIYLevel/OC2DIYLevel.dll`）。 */
+  path: string
+  /** 落盘后的文件名：插件会被复制进关卡集目录根部。 */
+  file_name: string
+  /** 读不出 BepInPlugin 也没有版本号时是 dependency（纯依赖库，不是插件）。 */
+  role: ModPreviewRole
+  name?: string | null
+  guid?: string | null
+  version?: string | null
+  title?: string | null
+  product_name?: string | null
+  company?: string | null
+  original_filename?: string | null
+}
+
 /** ZIP 里识别出的一个关卡集（导入前确认用）。 */
 export interface ZipLevelSet {
   dir_name: string
@@ -276,8 +299,8 @@ export interface ZipLevelSet {
   file_count: number
   /** 目标位置是否已有同名目录（会回收旧版本）。 */
   exists: boolean
-  /** 随这个关卡集一起装进集目录的插件文件名（作者随包的修复 DLL）。 */
-  plugins: string[]
+  /** 随这个关卡集一起装进集目录的插件（作者随包的修复 DLL）。 */
+  plugins: ZipLevelSetPlugin[]
 }
 
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }

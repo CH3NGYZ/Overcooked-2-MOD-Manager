@@ -51,6 +51,7 @@ import type { ReleaseDetailLink } from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
+import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
@@ -131,8 +132,13 @@ const sets = ref<LevelSetInfo[]>([])
 /**
  * 「安装地图」的暂存 → 确认 → 导入交给共享实现（地图管理页的拖放用的是同一份）。
  * 本页只负责装完重读本地关卡集：卡片状态与按钮文案都由它算出来。
+ * 确认界面与 MOD 安装共用 `InstallDetailDialog`（一个地图集当一个 MOD 展示）。
  */
-const { importing, importSource } = useLevelSetImport(() => loadLevelSets())
+const {
+  importing, importSource,
+  previewOpen: importPreviewOpen, detail: importDetail,
+  confirmImport, discardImport,
+} = useLevelSetImport(() => loadLevelSets())
 /** 「安装地图」来源卡片是否打开。 */
 const installSourceOpen = ref(false)
 /** 详情抽屉里当前打开的地图 id（抽屉挂在页面级，卡片只负责打开）。 */
@@ -896,6 +902,14 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
   <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
     :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
     :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
+
+  <!--
+    导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。
+    不接 `busy`：它在「等待确认」期间也为真（整个导入流程都算 busy），
+    而那时取消与立即安装恰恰必须能点；写盘期间弹窗已经收起，进度由页面按钮显示。
+  -->
+  <InstallDetailDialog v-model:show="importPreviewOpen" :model="importDetail"
+    @confirm="confirmImport" @discard="discardImport" />
 
   <!--
     整源刷新入口，与 MOD 安装页同一个位置与观感。

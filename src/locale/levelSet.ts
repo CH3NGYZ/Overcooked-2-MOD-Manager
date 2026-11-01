@@ -198,26 +198,13 @@ export const levelSet: DomainMessages = {
     ko: '지도 폴더를 세는 중…',
     ja: 'マップフォルダを数えています…',
   },
-  importTitle: {
-    'zh-CN': '导入地图',
-    'zh-TW': '匯入地圖',
-    en: 'Import maps',
-    ko: '지도 가져오기',
-    ja: 'マップをインポート',
-  },
-  importConfirm: {
-    'zh-CN': '将安装 {count} 个地图。',
-    'zh-TW': '將安裝 {count} 個地圖。',
-    en: 'This will install {count} map(s).',
-    ko: '지도 {count}개를 설치합니다.',
-    ja: 'マップを {count} 個インストールします。',
-  },
-  importConfirmReplace: {
-    'zh-CN': '以下地图已存在，安装会先把旧版本移入回收站：{names}',
-    'zh-TW': '以下地圖已存在，安裝會先把舊版本移入資源回收筒：{names}',
-    en: 'These maps already exist; the old versions will be moved to the recycle bin first: {names}',
-    ko: '다음 지도가 이미 있습니다. 이전 버전은 먼저 휴지통으로 이동합니다: {names}',
-    ja: '以下のマップは既に存在します。インストール時に旧バージョンをゴミ箱へ移動します: {names}',
+  // 安装详情里某张图的目标目录已经存在：旧版本会先进回收站，再落新的
+  replaceHint: {
+    'zh-CN': '已有同名地图集：安装会先把旧版本移入回收站',
+    'zh-TW': '已有同名地圖集：安裝會先把舊版本移入資源回收筒',
+    en: 'This map set already exists: the old version is moved to the recycle bin first',
+    ko: '같은 이름의 지도 세트가 있습니다. 이전 버전은 먼저 휴지통으로 이동합니다',
+    ja: '同名のマップセットが既にあります。インストール時に旧バージョンをゴミ箱へ移動します',
   },
   imported: {
     'zh-CN': '已导入 {count} 个地图',
@@ -232,14 +219,6 @@ export const levelSet: DomainMessages = {
     en: '{count} levels',
     ko: '레벨 {count}개',
     ja: '{count} レベル',
-  },
-  // 地图包自带作者的修复插件（DLL）：会跟着这张图一起装进关卡集目录
-  withPlugins: {
-    'zh-CN': '随包插件：{names}',
-    'zh-TW': '隨包外掛：{names}',
-    en: 'Bundled plugins: {names}',
-    ko: '함께 포함된 플러그인: {names}',
-    ja: '同梱プラグイン: {names}',
   },
   toggleHint: {
     'zh-CN': '启用时地图放在 levels，停用时整个文件夹（含随包插件）移到 cache/modmanager_disabled_maps（游戏运行中暂不支持切换）',
@@ -476,6 +455,22 @@ export const levelSet: DomainMessages = {
     en: 'Levels',
     ko: '레벨 수',
     ja: 'レベル数',
+  },
+  // 安装详情：这个地图集在 levels/ 下的文件夹名（导入后就是这个目录）
+  installFolder: {
+    'zh-CN': '安装目录',
+    'zh-TW': '安裝目錄',
+    en: 'Install folder',
+    ko: '설치 폴더',
+    ja: 'インストール先',
+  },
+  // 安装详情：这个地图集一共有多少个文件（含随包插件）
+  fileCountLabel: {
+    'zh-CN': '文件数',
+    'zh-TW': '檔案數',
+    en: 'Files',
+    ko: '파일 수',
+    ja: 'ファイル数',
   },
   parseError: {
     'zh-CN': '解析错误',

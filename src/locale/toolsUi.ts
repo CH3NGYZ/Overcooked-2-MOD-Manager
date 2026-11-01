@@ -383,6 +383,22 @@ export const toolsUi: DomainMessages = {
     ko: 'MOD 패키지',
     ja: 'MOD パッケージ',
   },
+  // 地图包（拖入/选出的是含 info 的 ZIP）：安装详情头部的类型标签
+  mapPackage: {
+    'zh-CN': '地图包',
+    'zh-TW': '地圖包',
+    en: 'Map package',
+    ko: '지도 패키지',
+    ja: 'マップパッケージ',
+  },
+  // 地图包头部摘要：{dlls} 个 DLL（含随包插件）· {sets} 个地图集
+  mapPackageSummary: {
+    'zh-CN': '{dlls} 个 DLL · {sets} 个地图集',
+    'zh-TW': '{dlls} 個 DLL · {sets} 個地圖集',
+    en: '{dlls} DLLs · {sets} map sets',
+    ko: 'DLL {dlls}개 · 지도 세트 {sets}개',
+    ja: 'DLL {dlls} 件 · マップセット {sets} 件',
+  },
   // 把 {types} 拖到这里，或点击选择文件（{types} 形如「.dll / .zip」）
   dropFilesHereOrClickToChoose: {
     'zh-CN': '把 {types} 拖到这里，或点击选择文件',

@@ -27,9 +27,12 @@ const modsLocal = read('src/views/ModsLocalView.vue')
 const levels = read('src/views/LevelsView.vue')
 const dropRouting = read('src/composables/useDropRouting.ts')
 const installDialog = read('src/components/ModInstallDialog.vue')
+const detailDialog = read('src/components/InstallDetailDialog.vue')
+const installDetailSource = read('src/installDetail.ts')
 const importFlowSource = read('src/composables/useLevelSetImport.ts')
 const tauriService = read('src/services/tauri.ts')
 const rustLevelSets = read('src-tauri/src/level_sets.rs')
+const rustModels = read('src-tauri/src/models.rs')
 const rustCommands = read('src-tauri/src/commands.rs')
 const rustLib = read('src-tauri/src/lib.rs')
 
@@ -97,8 +100,14 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
   }
   // 共享实现里两条规矩：暂存文件必须清、本地文件绝不删
   const importFlow = read('src/composables/useLevelSetImport.ts')
-  assert.match(importFlow, /if \(staged\) await api\.discardMapSource\(path\)/)
+  assert.match(importFlow, /if \(stagedFile\) await api\.discardMapSource\(stagedFile\)\.catch\(/)
   assert.match(importFlow, /await onImported\?\.\(\)/, '装完要通知宿主重读')
+  // 确认界面也不再是一页一套：地图与 MOD 共用同一张详情卡片
+  for (const [name, source] of [['MapsOnlineView', mapsOnline], ['LevelsView', levels]]) {
+    assert.match(source, /<InstallDetailDialog/, `${name} 要用共用的安装详情弹窗`)
+  }
+  assert.match(installDialog, /<InstallDetailDialog/, 'MOD 安装也要用同一个详情弹窗')
+  assert.doesNotMatch(installDialog, /class="preview-row"/, '卡片样式只许留在共用弹窗里')
 })
 
 /**
@@ -163,18 +172,23 @@ test('停用根在 plugins 之外，且旧位置会一次性迁移', () => {
  * DLL 要落进对应关卡集目录，这样「停用地图」搬走整个文件夹时插件一起走。
  */
 test('地图包里的修复插件跟着关卡集目录走', () => {
-  assert.match(rustLevelSets, /pub plugins: Vec<String>/, '导入结果要带出插件清单')
+  assert.match(rustModels, /pub plugins: Vec<ZipLevelSetPlugin>/, '导入结果要带出插件清单')
   assert.match(rustLevelSets, /fn assign_plugins/, '插件归集只此一处')
   // 插件落在集目录根，不复制到多个集（重复 DLL 会被 BepInEx 加载两遍）
-  assert.match(importFlowSource, /levelSet\.withPlugins/, '确认弹窗要说明会装进哪些插件')
+  // 确认界面里插件是一个独立条目：和 MOD 预览同一套九项元数据，挂在所属地图集下面
+  assert.match(installDetailSource, /children: \(set\.plugins \?\? \[\]\)\.map\(dllEntry\)/)
+  assert.match(installDetailSource, /function dllFields/, 'DLL 的九项字段只定义一次')
 })
 
 /**
  * 兜底：没有 DLL 就没有可安装内容。拖入已被 acceptDrop 拦下，但选文件、直链、
  * 仓库资产仍可能送来这样的包 —— 这时只能取消，不能「装成功」。
+ *
+ * 判据下沉到 `installDetail.ts`（两种安装共用一份模型），禁用落在共用弹窗上：
+ * 两处都得成立，否则地图侧又会长出自己的判断。
  */
 test('零 DLL 的预览只能取消', () => {
-  assert.match(installDialog, /const hasInstallable = computed/)
-  assert.match(installDialog, /:disabled="!hasInstallable"/, '没有 DLL 时安装按钮必须禁用')
-  assert.match(installDialog, /nothingInstallableHere/, '空态要说清为什么装不了、该去哪')
+  assert.match(installDetailSource, /confirmable: preview\.total_dlls > 0/)
+  assert.match(detailDialog, /:disabled="!model\?\.confirmable"/, '没有内容时安装按钮必须禁用')
+  assert.match(installDetailSource, /nothingInstallableHere/, '空态要说清为什么装不了、该去哪')
 })

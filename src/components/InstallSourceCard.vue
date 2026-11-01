@@ -14,16 +14,16 @@
  * 三种取源方式：
  *   · 本地文件（`pickFile` 打开系统文件选择器）
  *   · 在线直链（只校验协议，能不能下载由宿主/后端判断）
- *   · 整窗拖放（Tauri webview 的 `onDragDropEvent` 给绝对路径，不是浏览器
- *     `File` 对象；浏览器预览里没有这个事件，`isTauri()` 挡掉）
+ *   · 整窗拖放 —— **监听不在这里**：拖放是窗口能力（管理页也要能拖），统一由
+ *     `useFileDrop` 注册，页面把 `dragActive` 传进来，本组件只负责点亮拖放区。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NButton, NInput, NSpin, NTabPane, NTabs } from 'naive-ui'
 import { LinkOutline } from '@vicons/ionicons5'
-import { isTauri } from '../runtime'
 import { t } from '../i18n'
 import { useNotify } from '../useNotify'
 import { backendMessageOf } from '../locale/backend'
+import { acceptLabel, matchesFileAccept } from '../dropAccept'
 import AppModal from './AppModal.vue'
 import type { InstallSource } from '../types'
 
@@ -46,10 +46,18 @@ const props = withDefaults(defineProps<{
    * 避免用户以为没反应又点一次。成功与否由宿主关闭卡片决定。
    */
   busy?: boolean
+  /**
+   * 拖拽是否悬停在窗口上（来自页面的 `useFileDrop`）。
+   *
+   * 只影响拖放区的高亮：接收与否、收下之后做什么都由页面决定，卡片不认识
+   * Tauri 的拖放事件，也就不会出现「卡片没打开就拖不进」这种情况。
+   */
+  dragActive?: boolean
 }>(), {
   accept: () => ['dll', 'zip'],
   title: '',
   busy: false,
+  dragActive: false,
 })
 
 const emit = defineEmits<{
@@ -61,21 +69,13 @@ const emit = defineEmits<{
 const message = useNotify()
 const sourceTab = ref<'local' | 'online'>('local')
 const url = ref('')
-const dragActive = ref(false)
 
-/**
- * 提示文案里的类型列表：`.dll / .zip`。
- *
- * 用语言无关的「/」连接而不是「或 / or / 또는」：扩展名本来就是英文，
- * 让每个语言表各自拼连接词只会多出五个容易写错的占位符。
- */
-const typeLabel = computed(() => props.accept.map((extension) => `.${extension}`).join(' / '))
+/** 提示文案里的类型列表：`.dll / .zip`（与拖放共用同一份格式化）。 */
+const typeLabel = computed(() => acceptLabel(props.accept))
 
-/** 扩展名白名单（`accept` 里都是代码里写死的字面量后缀，无需转义）。 */
-const acceptPattern = computed(() => new RegExp(`\\.(${props.accept.join('|')})$`, 'i'))
-
+/** 扩展名白名单判定（与拖放共用同一份实现）。 */
 function matchesAccept(path: string) {
-  return acceptPattern.value.test(path)
+  return matchesFileAccept(path, props.accept)
 }
 
 const open = ref(props.show)
@@ -117,47 +117,7 @@ function downloadOnline() {
   emit('select', { kind: 'url', value: trimmed })
 }
 
-/* ===== 拖放：Tauri 给绝对路径，不是浏览器 File 对象 ===== */
-
-let dragUnlisten: (() => void) | null = null
-
-onMounted(() => {
-  if (!isTauri() || dragUnlisten) return
-  void (async () => {
-    try {
-      const { getCurrentWebview } = await import('@tauri-apps/api/webview')
-      dragUnlisten = await getCurrentWebview().onDragDropEvent((event) => {
-        const payload = event.payload
-        if (payload.type === 'over' || payload.type === 'enter') {
-          dragActive.value = true
-          return
-        }
-        if (payload.type === 'leave') {
-          dragActive.value = false
-          return
-        }
-        if (payload.type !== 'drop') return
-        dragActive.value = false
-        // 宿主正在处理上一条来源：这次拖入直接忽略，避免并发两条安装流程
-        if (props.busy) return
-        const path = payload.paths?.[0]
-        if (!path) return
-        if (!matchesAccept(path)) {
-          message.warning(t('tools.onlyFileTypesAreSupported', { types: typeLabel.value }))
-          return
-        }
-        // 拖入即安装：自动打开卡片并把路径交给宿主，省掉「再点一次选择文件」
-        open.value = true
-        sourceTab.value = 'local'
-        emit('select', { kind: 'local', value: path })
-      })
-    } catch (reason) {
-      console.error('[drop] listener registration failed', reason)
-    }
-  })()
-})
-
-onBeforeUnmount(() => { dragUnlisten?.(); dragUnlisten = null })
+/* ===== 拖放区高亮：状态由页面的 useFileDrop 给，本组件不认识 Tauri 事件 ===== */
 </script>
 
 <template>

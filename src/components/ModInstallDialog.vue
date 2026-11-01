@@ -47,6 +47,14 @@ const message = useNotify()
 const installing = ref(false)
 
 /**
+ * 预览里没有任何 DLL 就没有可安装的内容：后端 `confirm_mod_install` 会把
+ * 这份预览当空包装掉，界面却在这时候喷彩花 —— 用户看到的是「装了但什么都没装」。
+ * 拖入的地图包会被 `acceptDrop` 提前拦到地图页，但来源卡片选文件、直链、
+ * 仓库资产都可能带上一个没有 DLL 的 ZIP，所以兜底放在这里：只能取消。
+ */
+const hasInstallable = computed(() => (props.preview?.total_dlls ?? 0) > 0)
+
+/**
  * 仓库来源才展示 Release 提交日志；本地文件与直链没有版本概念，整块不出现。
  * RAW 仓库虽然来源是仓库，但没有 Release，`release_tag` 为空，同样隐藏。
  */
@@ -227,7 +235,10 @@ async function confirm() {
           </n-collapse-transition>
         </article>
       </div>
-      <div v-else class="muted">{{ t('tools.thisArchiveContainsNoDllFiles') }}</div>
+      <div v-else class="empty-hint">
+        <div class="muted">{{ t('tools.thisArchiveContainsNoDllFiles') }}</div>
+        <div class="muted">{{ t('tools.nothingInstallableHere') }}</div>
+      </div>
 
 
       <!--
@@ -247,7 +258,7 @@ async function confirm() {
 
     <template #footer>
       <n-button secondary :disabled="installing" @click="requestDiscard">{{ t('recycle.cancel') }}</n-button>
-      <n-button type="primary" :loading="installing" @click="confirm">{{ t('tools.installNow') }}</n-button>
+      <n-button type="primary" :loading="installing" :disabled="!hasInstallable" @click="confirm">{{ t('tools.installNow') }}</n-button>
     </template>
   </AppModal>
 </template>
@@ -279,6 +290,13 @@ async function confirm() {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* 空态两行：一句话说清「没有 DLL」，一句话说清「所以装不了、地图包去哪」 */
+.empty-hint {
+  display: grid;
+  gap: 4px;
+  padding: 10px 4px;
+  line-height: 1.6;
 }
 .preview-row {
   display: flex;

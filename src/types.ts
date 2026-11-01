@@ -276,6 +276,8 @@ export interface ZipLevelSet {
   file_count: number
   /** 目标位置是否已有同名目录（会回收旧版本）。 */
   exists: boolean
+  /** 随这个关卡集一起装进集目录的插件文件名（作者随包的修复 DLL）。 */
+  plugins: string[]
 }
 
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
@@ -368,6 +370,19 @@ export interface InstallSource {
   value: string
 }
 export type ModSourceKind = InstallSource['kind']
+
+/**
+ * 拖进来的本地文件到底是什么包。
+ *
+ * 判据只有一条：**含 `info` 就是地图包**（地图包常带作者随包的修复插件，
+ * 只按「有没有 DLL」判断会把它误判成 MOD）。来源由后端 `classify_drop_source`
+ * 给出，前端两个域共用，不各自再判一次。
+ */
+export interface DropSourceKind {
+  kind: 'map' | 'mod' | 'unknown'
+  map_sets: number
+  plugins: number
+}
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }

@@ -9,7 +9,8 @@
   /*
    * 浮层层级。
    *
-   * 从下到上：页面内浮层 → 下载遮罩 → 全屏阻塞遮罩 → 标题栏弹层。
+   * 从下到上：页面内浮层 → 下载遮罩 → 整窗拖放提示 → 全屏阻塞遮罩 →
+   * 标题栏弹层。
    *
    * 标题栏的三个下拉（缩放 / 语言 / 主题色）必须高于其它所有浮层 ——
    * 它们挂在自绘标题栏上，是真窗口级的控件。此前用 Naive 默认的层级，
@@ -17,6 +18,8 @@
    */
   --oc2-layer-page: 2500;
   --oc2-layer-download: 2600;
+  /* 拖放提示条：只是一条不接收事件的提示，不参与遮挡顺序，放下载遮罩之上即可 */
+  --oc2-layer-drop: 2700;
   --oc2-layer-busy: 4000;
   --oc2-layer-titlebar-menu: 5000;
 }
@@ -285,6 +288,20 @@ body {
   word-break: break-all;
 }
 .muted {
+  color: var(--oc2-text-3);
+  font-size: 12px;
+}
+
+/*
+ * 地图导入确认：一张地图一块，作者给的修复插件缩进挂在它下面。
+ * 正文由 `useLevelSetImport` 用 VNode 拼（字符串里的换行会被 HTML 折叠）。
+ */
+.import-confirm { display: grid; gap: 8px; }
+.import-confirm-lead { margin: 0; }
+.import-confirm-set { display: grid; gap: 2px; }
+.import-confirm-name { font-weight: 600; }
+.import-confirm-plugins {
+  padding-left: 12px;
   color: var(--oc2-text-3);
   font-size: 12px;
 }

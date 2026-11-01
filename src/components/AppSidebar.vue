@@ -106,8 +106,10 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 <style scoped>
 /* Astral 式窄侧栏：图标在上、文字在下的方块导航；配色与组件风格仍走 Naive 主题。 */
 .sidebar {
-  width: 108px;
-  flex: 0 0 108px;
+  /* 宽度取自 global.css 的 `--oc2-rail-width`：拖放提示条等需要「内容区左边界」
+     的地方读同一个变量，不要在组件里再硬编码一份 108px。 */
+  width: var(--oc2-rail-width);
+  flex: 0 0 var(--oc2-rail-width);
   height: 100%;
   min-height: 0;
   display: flex;

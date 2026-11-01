@@ -10,6 +10,7 @@ import type {
   BepInExInstallResult,
   Dashboard,
   DependencySyncResult,
+  DropSourceKind,
   DiyLevelInfo,
   DownloadProgress,
   GameInfo,
@@ -204,6 +205,13 @@ export const api = {
    */
   setAllLevelSetsEnabled: (enabled: boolean) =>
     invoke<OperationResult>('set_all_level_sets_enabled', { enabled }),
+  /**
+   * 判断一个本地文件是地图包、MOD 包还是都不是。
+   *
+   * 拖放先过这里再决定走哪条链路：地图包即使带着修复插件也算地图包，
+   * 否则「拖地图到 MOD 页」会被装成一个 0 DLL 的空 MOD。
+   */
+  classifyDropSource: (path: string) => invoke<DropSourceKind>('classify_drop_source', { path }),
   /** 读 ZIP 列出其中的关卡集，不落盘。 */
   inspectLevelSetZip: (zipPath: string) =>
     invoke<ZipLevelSet[]>('inspect_level_set_zip', { zipPath }),

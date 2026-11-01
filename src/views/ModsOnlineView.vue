@@ -21,6 +21,8 @@ import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
+import { useFileDrop } from '../composables/useFileDrop'
+import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
@@ -73,6 +75,34 @@ const {
   handleInstalled: handleInstallInstalled,
 } = useModInstallFlow(() => load())
 
+/** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
+async function startDropInstall(path: string) {
+  openInstallSource()
+  await handleInstallSourceSelect({ kind: 'local', value: path })
+}
+
+const { acceptDrop } = useDropRouting()
+
+/**
+ * 整窗拖放：拖 DLL / ZIP 进来等价于点「安装 MOD」。
+ *
+ * 拖放是窗口能力（见 `useFileDrop`），四个 MOD / 地图页面各自声明一次；
+ * 来源卡片只负责显示高亮，不再自己挂监听 —— 以前监听挂在卡片里，能不能拖
+ * 取决于「这页碰巧挂没挂那张卡片」。
+ *
+ * 先过 `acceptDrop`：含 `info` 的 ZIP 是地图包（哪怕它也带 DLL），装进来
+ * 只会得到一个空预览，必须引导到地图安装页。
+ */
+const { dragActive } = useFileDrop({
+  accept: ['dll', 'zip'],
+  busy: () => installSourceBusy.value,
+  onDrop: (path) => {
+    void (async () => {
+      if (await acceptDrop(path, 'mod')) await startDropInstall(path)
+    })()
+  },
+})
+
 /** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先检查关系，再下载预览。 */
 const { previewRepository } = useRepositoryPreview(openInstallPreview, {
   gameBlocked,
@@ -118,7 +148,12 @@ const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
 
 // 进入页面只复用现有数据，不触发刷新也不重新扫描；
 // 刷新由手动按钮或安装器启动后的刷新链路触发。
-onMounted(() => { void ensureLoaded() })
+onMounted(() => {
+  void ensureLoaded()
+  // 从地图页「去安装」跳过来：路径已暂存在模块里，直接接着走预览
+  const pending = takePendingDrop('mod')
+  if (pending) void startDropInstall(pending)
+})
 
 /**
  * 主按钮动作：刷新失败 → 刷新，否则安装 / 重装 / 更新。
@@ -765,7 +800,8 @@ defineExpose({ refreshAll, visibleCount })
     先用 preview_only 下载解析，然后直接把预览交给同一个详情弹窗。
   -->
   <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
-    :pick-file="pickInstallSourceFile" @select="handleInstallSourceSelect" />
+    :drag-active="dragActive" :pick-file="pickInstallSourceFile"
+    @select="handleInstallSourceSelect" />
   <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />

@@ -10,7 +10,6 @@ import {
   NFloatButton,
   NInput,
   NTag,
-  useDialog,
 } from 'naive-ui'
 import { LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { t, pickI18n } from '../i18n'
@@ -52,7 +51,10 @@ import type { ReleaseDetailLink } from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
-import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository, ZipLevelSet } from '../types'
+import { useFileDrop } from '../composables/useFileDrop'
+import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
+import { useLevelSetImport } from '../composables/useLevelSetImport'
+import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository } from '../types'
 
 /**
  * 地图安装页。
@@ -104,7 +106,6 @@ import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository, Zip
  *   目标页与锚点：`#/levels` + 对应关卡集卡片的 `focus-flash`。
  */
 const message = useNotify()
-const dialog = useDialog()
 import { useMapSources } from '../composables/useMapSources'
 
 const { mods, game, config, load, ensureLoaded } = useDashboard()
@@ -127,8 +128,11 @@ const {
   loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
 } = useMapSources()
 const sets = ref<LevelSetInfo[]>([])
-/** 「安装地图」按钮的忙碌状态（选择 / 拖入 / 直链 → 暂存 → 识别 → 确认 → 落盘）。 */
-const importing = ref(false)
+/**
+ * 「安装地图」的暂存 → 确认 → 导入交给共享实现（地图管理页的拖放用的是同一份）。
+ * 本页只负责装完重读本地关卡集：卡片状态与按钮文案都由它算出来。
+ */
+const { importing, importSource } = useLevelSetImport(() => loadLevelSets())
 /** 「安装地图」来源卡片是否打开。 */
 const installSourceOpen = ref(false)
 /** 详情抽屉里当前打开的地图 id（抽屉挂在页面级，卡片只负责打开）。 */
@@ -294,6 +298,9 @@ onMounted(() => {
   void loadMaps()
   void loadLevelSets()
   void prefetchAvatars(maps.value)
+  // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
+  const pending = takePendingDrop('map')
+  if (pending) void startDropInstall(pending)
 })
 
 /** 展示名：多语言表 → 单语言镜像 → 仓库坐标。 */
@@ -646,86 +653,49 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
 }
 
 /**
- * 「检查结果 + 确认导入」—— 地图安装的唯一实现。
- *
- * 页头的「安装地图」来源卡片（本地选择 / 拖放 / 直链）最终都落到这里：后端
- * 已经识别出 ZIP 里有哪些关卡集，这里负责确认弹窗、导入调用与暂存清理。
- * 写两份的代价是确认文案、覆盖提示与「装完重读」的时机各漂各的。
- *
- * `staged` 为真表示 `path` 是后端下载到 cache 的临时文件：不论导入成功、失败
- * 还是用户取消，结束时都要 `discard_map_source` 清掉，否则每装一次地图就在
- * cache 里留一份 ZIP。用户自己的本地文件（`staged` 为假）绝不能删。
- *
- * 落盘后必须重读本地关卡集：本页的卡片状态由它算出来，否则装完还是显示
- * 「安装」。地图源列表不会因此变化，不重拉。
- */
-async function importZipSets(path: string, found: ZipLevelSet[], staged: boolean) {
-  try {
-    if (!found.length) {
-      message.warning(t('levelSet.zipWithoutInfo'))
-      return
-    }
-    const selected = found.map((set) => set.dir_name)
-    /*
-     * 用 Naive 的 dialog 而不是自绘弹窗：项目里所有确认都走它，
-     * 视觉与交互（点外部关闭、Esc、焦点）已经统一。
-     * 「会覆盖已有版本」时单独说明 —— 旧版本会先进回收站。
-     */
-    const replacing = found.filter((set) => set.exists)
-    const detail = replacing.length
-      ? t('levelSet.importConfirmReplace', {
-          names: replacing.map((set) => set.name || set.dir_name).join('、'),
-        })
-      : t('levelSet.importConfirm', { count: found.length })
-    const approved = await new Promise<boolean>((resolve) => {
-      dialog.warning({
-        title: t('levelSet.importTitle'),
-        content: `${detail}\n\n${found
-          .map(
-            (set) =>
-              `· ${set.name || set.dir_name}${set.author ? ` — ${set.author}` : ''}${set.version ? ` v${set.version}` : ''}（${t('levelSet.levelCount', { count: set.level_count })}）`,
-          )
-          .join('\n')}`,
-        positiveText: t('modsOnline.install'),
-        negativeText: t('recycle.cancel'),
-        onPositiveClick: () => resolve(true),
-        onNegativeClick: () => resolve(false),
-        onClose: () => resolve(false),
-      })
-    })
-    if (!approved) return
-    const result = await api.importLevelSets(path, selected)
-    message.success(t('levelSet.imported', { count: result.installed.length }))
-    await loadLevelSets()
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    if (staged) await api.discardMapSource(path).catch(() => undefined)
-  }
-}
-
-/**
  * 「安装地图」来源卡片：本地文件 / 拖入窗口 / 在线直链三个入口共用。
  *
  * 与「安装 MOD」同一职责定位 —— 线上装不进来的东西（作者发的离线包、自己
- * 整理的图、挂在别处的直链）走这里。三者都先让后端暂存成一份 ZIP
- * （`stage_map_source`）：暂存顺带做扩展名与 ZIP 结构校验，识别结果与
- * `inspect_level_set_zip` 同构，所以确认导入只需要一份实现。
+ * 整理的图、挂在别处的直链）走这里。暂存 → 确认 → 导入的实现下沉在
+ * `useLevelSetImport`：地图管理页的整窗拖放走的是同一份，两页的确认文案、
+ * 覆盖提示、暂存清理与「装完重读」因此不会各漂各的。
  */
 async function handleInstallSourceSelect(source: InstallSource) {
-  if (importing.value) return
-  importing.value = true
-  try {
-    const staged = await api.stageMapSource(source.kind, source.value)
+  await importSource(source, {
     // 来源已经可用：先收起卡片，再交给确认弹窗
-    installSourceOpen.value = false
-    await importZipSets(staged.path, staged.sets, staged.staged)
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    importing.value = false
-  }
+    onStaged: () => { installSourceOpen.value = false },
+  })
 }
+
+/**
+ * 拖入 / 跨页跳转过来的文件：先打开来源卡片再交给同一个处理函数。
+ *
+ * 卡片里的转圈是「正在暂存与识别」的唯一反馈 —— 识别一份上百 MB 的地图合集
+ * 要几十秒，没有反馈用户会以为没反应。
+ */
+async function startDropInstall(path: string) {
+  installSourceOpen.value = true
+  await handleInstallSourceSelect({ kind: 'local', value: path })
+}
+
+const { acceptDrop } = useDropRouting()
+
+/**
+ * 整窗拖放：拖一个 ZIP 进来等价于在本页点「安装地图」。
+ *
+ * 拖放是窗口能力而不是某张卡片的属性（见 `useFileDrop`），所以地图管理页也
+ * 能用同一条链路。先过 `acceptDrop`：纯 DLL 的包属于 MOD 域，要引导到 MOD
+ * 安装页，不能在这里报「ZIP 里没有 info」。
+ */
+const { dragActive } = useFileDrop({
+  accept: ['zip', 'dll'],
+  busy: () => importing.value,
+  onDrop: (path) => {
+    void (async () => {
+      if (await acceptDrop(path, 'map')) await startDropInstall(path)
+    })()
+  },
+})
 
 /** 详情抽屉里的安装：把当前选中的 tag 与资产一起传下去。 */
 function installFromDetail(tag?: string, asset?: string) {
@@ -924,8 +894,8 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
     只是这里只收 ZIP、标题是「安装地图」。取到来源后统一经后端暂存再确认导入。
   -->
   <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
-    :title="t('levelSet.installMap')" :busy="importing" :pick-file="api.chooseLevelSetZip"
-    @select="handleInstallSourceSelect" />
+    :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
+    :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
 
   <!--
     整源刷新入口，与 MOD 安装页同一个位置与观感。

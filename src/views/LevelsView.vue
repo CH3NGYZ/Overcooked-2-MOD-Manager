@@ -20,6 +20,10 @@ import PageLoading from '../components/PageLoading.vue'
 import RefreshResultTag from '../components/RefreshResultTag.vue'
 import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
+import InstallSourceCard from '../components/InstallSourceCard.vue'
+import { useFileDrop } from '../composables/useFileDrop'
+import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
+import { useLevelSetImport } from '../composables/useLevelSetImport'
 import {
   levelSetAuthorNames,
   levelSetCardTags,
@@ -34,16 +38,17 @@ import {
   type LevelSetRefreshingHint,
   type LevelSetTone,
 } from '../levelSetStatus.ts'
-import type { LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '../types'
+import type { InstallSource, LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '../types'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
  *
- * ## 安装入口在下载页
+ * ## 安装入口：本页只收本地包
  *
- * 「安装地图」（线上 Release + 本地 ZIP）和「安装 MOD」一样属于安装页的
- * 职责，入口因此在地图下载页（`MapsOnlineView.vue`）。本页只保留管理动作：
- * 启用/禁用（含全部启用 / 全部禁用）、检测更新、打开目录、删除。
+ * 线上 Release 的安装入口在地图下载页（`MapsOnlineView.vue`）—— 地图源与
+ * 版本只在那里。本页收的是「手上已经有一个 ZIP」的情况：把 ZIP 拖进窗口，
+ * 来源卡片会打开、识别出里面的关卡集并请用户确认，与下载页共用
+ * `useLevelSetImport` 那一份实现。
  *
  * ## 与 MOD 管理页的关系
  *
@@ -272,7 +277,7 @@ async function load() {
 /**
  * 只重读关卡集。
  *
- * 开关 / 删除 / 导入改的都是 `levels/` 与 `disabled/` 下的目录，
+ * 开关 / 删除 / 导入改的都是 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 下的目录，
  * 地图源列表（`useMapSources` 的 `maps`）不会因此变化，重拉纯属浪费。
  */
 async function reloadSets() {
@@ -283,6 +288,51 @@ async function reloadSets() {
     message.error(backendMessageOf(reason))
   }
 }
+
+/**
+ * 「安装地图」来源卡片：本地 ZIP / 整窗拖入 / 在线直链。
+ *
+ * 管理页也有本地安装入口（与 MOD 管理页一致）：用户手上已经是一个包时，不该
+ * 先切到下载页。暂存 → 确认 → 导入由 `useLevelSetImport` 承担，与地图下载页
+ * 共用同一份，本页只负责装完重读关卡集。
+ */
+const installSourceOpen = ref(false)
+const { importing, importSource } = useLevelSetImport(() => reloadSets())
+
+async function handleInstallSourceSelect(source: InstallSource) {
+  await importSource(source, {
+    // 来源已经可用：先收起卡片，再交给确认弹窗
+    onStaged: () => { installSourceOpen.value = false },
+  })
+}
+
+/** 拖入 / 跨页跳转过来的文件：确认属于地图域之后，走与来源卡片同一条链路。 */
+async function startDropInstall(path: string) {
+  installSourceOpen.value = true
+  await handleInstallSourceSelect({ kind: 'local', value: path })
+}
+
+const { acceptDrop } = useDropRouting()
+
+/**
+ * 整窗拖放：拖一个 ZIP 进来等价于点「安装地图」。
+ *
+ * 拖放以前挂在来源卡片里，于是「能不能拖」取决于「这页碰巧挂没挂卡片」——
+ * 本页当时连安装入口都没有，拖进来毫无反应。现在拖放是窗口能力
+ * （`useFileDrop`），四个 MOD / 地图页面各自声明一次。
+ *
+ * 先过 `acceptDrop`：纯 DLL 的包不是地图包，要引导到 MOD 安装页，而不是
+ * 在这里报「ZIP 里没有 info」。
+ */
+const { dragActive } = useFileDrop({
+  accept: ['zip', 'dll'],
+  busy: () => importing.value,
+  onDrop: (path) => {
+    void (async () => {
+      if (await acceptDrop(path, 'map')) await startDropInstall(path)
+    })()
+  },
+})
 
 /** 扫描进度事件的解绑函数（卸载时调用）。 */
 let unlistenScan: UnlistenFn | null = null
@@ -311,6 +361,9 @@ onMounted(() => {
     unlistenScan = unlisten
   })
   void load()
+  // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
+  const pending = takePendingDrop('map')
+  if (pending) void startDropInstall(pending)
 })
 
 /** 文档级监听挂在页面之外，页面卸载必须解绑，否则会随每次进出累积。 */
@@ -767,8 +820,8 @@ async function openLevelsDirectory() {
 
 /* ===== 批量开关 / 检测更新（与 MOD 管理页同职责） =====
  *
- * 安装入口不在这页：线上 Release 与本地 ZIP 都在地图下载页。这里只关心
- * 「已经在本地的地图」——启用/禁用、看有没有新版本、打开目录、删除。
+ * 安装入口只收本地 ZIP（拖进窗口，见页面顶部注释）；线上 Release 在地图下载页。
+ * 这里只关心「已经在本地的地图」——启用/禁用、看有没有新版本、打开目录、删除。
  */
 const bulkWorking = ref(false)
 /**
@@ -944,7 +997,7 @@ async function checkUpdates() {
 
   <!--
     页头右侧，从左到右：批量开关 → 检测更新 → 打开目录（与 MOD 管理页同序）。
-    安装入口不在这页：它属于安装页的职责，见地图下载页的「安装地图」。
+    安装入口在本页只走拖放：线上 Release 与「选文件 / 直链」都在地图下载页。
     「检测更新」的忙碌态读共享单例的 `checkingBound`，而不是页面局部的 ref：
     地图下载页也有一份刷新入口，同一批任务必须只有一个忙碌真相。
   -->
@@ -983,6 +1036,15 @@ async function checkUpdates() {
       {{ t('modsLocal.openFolder') }}
     </n-button>
   </Teleport>
+
+  <!--
+    本地 ZIP 的安装入口：拖入窗口即打开本卡片，识别出关卡集后请用户确认。
+    与地图下载页同一份组件与同一份导入实现，差别只是本页没有「选文件」按钮 ——
+    它是本页唯一的安装入口，平时不占页头位置。
+  -->
+  <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
+    :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
+    :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
 
   <PageLoading :show="loading">
     <!--
@@ -1023,7 +1085,7 @@ async function checkUpdates() {
             开关每次都是「新挂载」，Naive 的切换过渡动画因此整个消失（现象：点下去
             没有滑动，状态已经是新的）。
 
-            但详情确实要跟着开关刷新：停用会把目录搬进 disabled/，详情里的「路径」
+            但详情确实要跟着开关刷新：停用会把目录搬进 BepInEx/cache/modmanager_disabled_maps/，详情里的「路径」
             跟着变；而详情挂在 `n-collapse-transition` 的稳定插槽里，父级换了数据它
             也不重新求值。这份刷新交给 `detail-key`：外壳与开关保持同一个 DOM 节点，
             只让详情子树按状态重建。

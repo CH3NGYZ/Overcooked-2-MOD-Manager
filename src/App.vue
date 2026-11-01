@@ -3,10 +3,13 @@ import { NConfigProvider, NDialogProvider, NMessageProvider, NScrollbar } from '
 import { getVersion } from '@tauri-apps/api/app'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { CloudUploadOutline } from '@vicons/ionicons5'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTitleBar from './components/AppTitleBar.vue'
 import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
+import { acceptLabel } from './dropAccept'
+import { dragActive, dropAcceptTypes } from './composables/useFileDrop'
 import { startGameWatch } from './composables/useDashboardStore'
 import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
 import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition'
@@ -24,6 +27,19 @@ const showUpdate = ref(false)
 /** 页头标题：阶段覆盖值优先，否则用路由 meta；两者都过翻译表。 */
 const route = useRoute()
 const resolvedTitle = computed(() => t(pageTitleOverride.value ?? (route.meta.title as string) ?? ''))
+
+/**
+ * 整窗拖放提示条。
+ *
+ * Tauri 接管 WebView2 的拖放后，系统光标固定是「禁止」（UIPI 之外还有
+ * DROPEFFECT_NONE），CSS 改不了 —— 光看光标分不清这页到底能不能放文件。
+ * 所以在拖拽悬停期间给一条明确提示：这页接受什么、松手会发生什么。
+ *
+ * 没有页面注册拖放（总览 / 改名 / 工具 / 设置）时 `dropAcceptTypes` 为空，
+ * 提示不出现：那几页确实没有可导入的东西，提示反而是误导。
+ */
+const showDropHint = computed(() => dragActive.value && dropAcceptTypes.value.length > 0)
+const dropTypesLabel = computed(() => acceptLabel(dropAcceptTypes.value))
 
 /**
  * 安装器启动后的首次仓库刷新：与手动整源刷新走同一引擎。
@@ -126,8 +142,7 @@ onMounted(() => {
           <AppTitleBar :version="version" />
           <div class="app-body">
             <AppSidebar />
-            <main class="app-main">
-              <header class="page-header">
+            <main class="app-main">              <header class="page-header">
                 <div class="page-header-title">
                   <!--
                     标题固定在这里，不参与页面的滑动过渡。
@@ -154,6 +169,16 @@ onMounted(() => {
               </n-scrollbar>
             </main>
           </div>
+          <!--
+            整窗拖放提示条：`position: fixed` + 不接收指针事件，不参与布局也不挡住
+            页面上的任何东西（来源卡片打开时拖放区仍然能被点亮，它才是高亮对象）。
+          -->
+          <Transition name="drop-hint">
+            <div v-if="showDropHint" class="drop-hint" role="status" aria-live="polite">
+              <CloudUploadOutline width="16" height="16" class="drop-hint-icon" />
+              <span>{{ t('tools.releaseToInstall', { types: dropTypesLabel }) }}</span>
+            </div>
+          </Transition>
         </div>
         <UpdatePrompt v-model:show="showUpdate" :update="updateInfo" />
       </n-dialog-provider>
@@ -240,5 +265,51 @@ onMounted(() => {
   .page-down-leave-to,
   .page-up-enter-from,
   .page-up-leave-to { transform: none; }
+}
+
+/*
+ * 整窗拖放提示条。
+ *
+ * 定位基准是**内容区**而不是窗口：水平居中于「右侧不含侧栏」的那块，垂直放
+ * 在中下（`top: 62%`）。贴窗口底部居中时它会横跨侧栏与内容区，既不对齐任何
+ * 东西，也和右下角的浮动按钮抢同一片视线；页头那一带是各页自己的操作区
+ * （批量开关 / 检测更新 / 打开目录），摆上去会被当成又一个按钮。
+ *
+ * `pointer-events: none` 是硬要求 —— 拖拽期间任何挡住命中测试的元素都会让
+ * 「松开发生在提示条上」变成松开在提示条上而不是页面。
+ */
+.drop-hint {
+  position: fixed;
+  left: calc(var(--oc2-rail-width) + (100vw - var(--oc2-rail-width)) / 2);
+  top: 62%;
+  transform: translate(-50%, -50%);
+  z-index: var(--oc2-layer-drop);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, 80vw);
+  padding: 8px 14px;
+  border: 1px solid var(--oc2-accent);
+  border-radius: 999px;
+  background: var(--oc2-surface);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--oc2-body) 45%, transparent);
+  color: var(--oc2-text-1);
+  font-size: 12.5px;
+  line-height: 1.3;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drop-hint-icon { flex: 0 0 auto; color: var(--oc2-accent); }
+.drop-hint-enter-active,
+.drop-hint-leave-active {
+  transition: opacity .12s ease, transform .12s ease;
+}
+.drop-hint-enter-from,
+.drop-hint-leave-to { opacity: 0; transform: translate(-50%, calc(-50% + 6px)); }
+@media (prefers-reduced-motion: reduce) {
+  .drop-hint-enter-active,
+  .drop-hint-leave-active { transition: none; }
 }
 </style>

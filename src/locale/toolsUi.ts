@@ -391,6 +391,54 @@ export const toolsUi: DomainMessages = {
     ko: '{types} 파일을 여기로 끌어오거나 클릭해 선택하세요',
     ja: '{types} をここにドロップするか、クリックして選択します',
   },
+  // 这是地图包（把地图包拖到 MOD 侧时的弹窗标题）
+  mapPackageDetected: {
+    'zh-CN': '这是地图包',
+    'zh-TW': '這是地圖包',
+    en: 'This is a map package',
+    ko: '지도 패키지입니다',
+    ja: 'これはマップパッケージです',
+  },
+  // 这个 ZIP 里含地图资源（info 文件）……请到地图安装页导入
+  mapPackageDetectedHint: {
+    'zh-CN': '这个 ZIP 里包含地图资源（info 文件），不能当作 MOD 安装。请到地图安装页导入；作者随包的修复插件会一起装进地图目录，并随地图一起启停。',
+    'zh-TW': '這個 ZIP 裡包含地圖資源（info 檔案），不能當作 MOD 安裝。請到地圖安裝頁匯入；作者附帶的修復外掛會一起裝進地圖目錄，並隨地圖一起啟停。',
+    en: 'This ZIP contains map resources (info files), so it cannot be installed as a mod. Import it on the map install page — the bug-fix plugins bundled by the author are installed into the map folder and enabled/disabled together with the map.',
+    ko: '이 ZIP에는 지도 리소스(info 파일)가 들어 있어 MOD로 설치할 수 없습니다. 지도 설치 페이지에서 가져오세요. 제작자가 함께 넣은 수정 플러그인도 지도 폴더에 함께 설치되고 지도와 함께 켜고 꺼집니다.',
+    ja: 'この ZIP にはマップリソース（info ファイル）が含まれているため、MOD としてインストールできません。マップのインストール画面から取り込んでください。作者が同梱した修正プラグインもマップフォルダーに一緒にインストールされ、マップと一緒に有効／無効になります。',
+  },
+  // 这是 MOD 包（把 MOD 包拖到地图侧时的弹窗标题）
+  modPackageDetected: {
+    'zh-CN': '这是 MOD 包',
+    'zh-TW': '這是 MOD 包',
+    en: 'This is a mod package',
+    ko: 'MOD 패키지입니다',
+    ja: 'これは MOD パッケージです',
+  },
+  // 这个 ZIP 里没有地图资源（info），只有 DLL/插件……请到 MOD 安装页安装
+  modPackageDetectedHint: {
+    'zh-CN': '这个 ZIP 里没有地图资源（info 文件），只有 DLL / 插件，不能当作地图安装。请到 MOD 安装页安装。',
+    'zh-TW': '這個 ZIP 裡沒有地圖資源（info 檔案），只有 DLL / 外掛，不能當作地圖安裝。請到 MOD 安裝頁安裝。',
+    en: 'This ZIP has no map resources (info files) — only DLLs/plugins — so it cannot be installed as a map. Install it on the mod install page.',
+    ko: '이 ZIP에는 지도 리소스(info 파일)가 없고 DLL/플러그인만 있어 지도로 설치할 수 없습니다. MOD 설치 페이지에서 설치하세요.',
+    ja: 'この ZIP にはマップリソース（info ファイル）がなく、DLL／プラグインだけなのでマップとしてインストールできません。MOD のインストール画面からインストールしてください。',
+  },
+  // 既不是地图包（没有 info）也不是 MOD 包（没有 DLL），无法判断类型
+  unknownPackageHint: {
+    'zh-CN': '这个文件既不是地图包（没有 info 文件）也不是 MOD 包（没有 DLL），无法判断类型。',
+    'zh-TW': '這個檔案既不是地圖包（沒有 info 檔案）也不是 MOD 包（沒有 DLL），無法判斷類型。',
+    en: 'This file is neither a map package (no info file) nor a mod package (no DLL), so the type cannot be determined.',
+    ko: '이 파일은 지도 패키지(info 파일 없음)도 MOD 패키지(DLL 없음)도 아니어서 종류를 판단할 수 없습니다.',
+    ja: 'このファイルはマップパッケージ（info ファイルなし）でも MOD パッケージ（DLL なし）でもないため、種類を判定できません。',
+  },
+  // 松开即可安装 {types}（整窗拖放提示条；{types} 形如「.dll / .zip」）
+  releaseToInstall: {
+    'zh-CN': '松开即可安装 {types}',
+    'zh-TW': '放開即可安裝 {types}',
+    en: 'Release to install {types}',
+    ko: '놓으면 {types} 설치가 시작됩니다',
+    ja: '{types} を離すとインストールします',
+  },
   // 下载并解析
   downloadAndAnalyze: {
     'zh-CN': '下载并解析',
@@ -422,6 +470,22 @@ export const toolsUi: DomainMessages = {
     en: 'This archive contains no DLL files',
     ko: '이 압축 파일에는 DLL이 없습니다',
     ja: 'このアーカイブに DLL は含まれていません',
+  },
+  // 跨域弹窗的肯定按钮：点了就跳到对面的安装页并接着走安装流程
+  goToInstall: {
+    'zh-CN': '去安装',
+    'zh-TW': '去安裝',
+    en: 'Go install',
+    ko: '설치하러 가기',
+    ja: 'インストールへ',
+  },
+  // 没有 DLL 时说明「为什么装不了、该去哪」——安装按钮同时被禁用，只能取消
+  nothingInstallableHere: {
+    'zh-CN': '没有可安装的内容，无法继续。如果这是地图包，请到地图安装页导入。',
+    'zh-TW': '沒有可安裝的內容，無法繼續。如果這是地圖包，請到地圖安裝頁匯入。',
+    en: 'There is nothing to install here. If this is a map package, import it on the map install page.',
+    ko: '설치할 내용이 없습니다. 지도 패키지라면 지도 설치 페이지에서 가져오세요.',
+    ja: 'インストールできる内容がありません。マップパッケージの場合はマップインストールページからインポートしてください。',
   },
   // 只支持 {types} 文件（扩展名白名单由来源卡片的 accept 决定）
   onlyFileTypesAreSupported: {

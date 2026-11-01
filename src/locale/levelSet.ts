@@ -233,12 +233,20 @@ export const levelSet: DomainMessages = {
     ko: '레벨 {count}개',
     ja: '{count} レベル',
   },
+  // 地图包自带作者的修复插件（DLL）：会跟着这张图一起装进关卡集目录
+  withPlugins: {
+    'zh-CN': '随包插件：{names}',
+    'zh-TW': '隨包外掛：{names}',
+    en: 'Bundled plugins: {names}',
+    ko: '함께 포함된 플러그인: {names}',
+    ja: '同梱プラグイン: {names}',
+  },
   toggleHint: {
-    'zh-CN': '启用时地图放在 levels，停用时移到 disabled（游戏运行中暂不支持切换）',
-    'zh-TW': '啟用時地圖放在 levels，停用時移到 disabled（遊戲執行中暫不支援切換）',
-    en: 'Enabled maps live in levels; disabled ones move to disabled (not available while the game is running)',
-    ko: '활성화하면 levels, 비활성화하면 disabled로 이동합니다(게임 실행 중에는 지원되지 않음)',
-    ja: '有効時は levels、無効時は disabled に移動します（ゲーム実行中は切り替えできません）',
+    'zh-CN': '启用时地图放在 levels，停用时整个文件夹（含随包插件）移到 cache/modmanager_disabled_maps（游戏运行中暂不支持切换）',
+    'zh-TW': '啟用時地圖放在 levels，停用時整個資料夾（含隨包外掛）移到 cache/modmanager_disabled_maps（遊戲執行中暫不支援切換）',
+    en: 'Enabled maps live in levels; disabling moves the whole folder (bundled plugins included) to cache/modmanager_disabled_maps (not available while the game is running)',
+    ko: '활성화하면 levels, 비활성화하면 폴더 전체(함께 포함된 플러그인 포함)가 cache/modmanager_disabled_maps로 이동합니다(게임 실행 중에는 지원되지 않음)',
+    ja: '有効時は levels、無効時はフォルダ全体（同梱プラグインを含む）を cache/modmanager_disabled_maps へ移動します（ゲーム実行中は切り替えできません）',
   },
   rescanLocal: {
     'zh-CN': '重新扫描本地地图',

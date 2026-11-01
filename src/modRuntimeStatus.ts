@@ -48,8 +48,15 @@ export function repositoryRefreshing(
   state: RuntimeRefreshState,
 ): boolean {
   if (!repo || repo.download_mode === 'repository_file') return false
-  if (state.refreshing[repo.id] || state.queued[repo.id] || state.refreshingAll) return true
-  return !!(repo.source_id && state.sourceRefreshing[repo.source_id])
+  /*
+   * 三个记录都用 `?? {}` 兜底：热更新只换了其中一半模块时（旧页面状态对象
+   * 没有新字段），直接索引 `undefined[id]` 会让整页 computed 抛错、卡片全空。
+   * 这不是「防御性代码掩盖 bug」—— 字段缺失的正确答案就是「没有排队」。
+   */
+  const refreshing = state.refreshing ?? {}
+  const queued = state.queued ?? {}
+  if (refreshing[repo.id] || queued[repo.id] || state.refreshingAll) return true
+  return !!(repo.source_id && (state.sourceRefreshing ?? {})[repo.source_id])
 }
 
 export interface RuntimeModStatus {

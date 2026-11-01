@@ -175,8 +175,14 @@ test('地图包里的修复插件跟着关卡集目录走', () => {
   assert.match(rustModels, /pub plugins: Vec<ZipLevelSetPlugin>/, '导入结果要带出插件清单')
   assert.match(rustLevelSets, /fn assign_plugins/, '插件归集只此一处')
   // 插件落在集目录根，不复制到多个集（重复 DLL 会被 BepInEx 加载两遍）
-  // 确认界面里插件是一个独立条目：和 MOD 预览同一套九项元数据，挂在所属地图集下面
-  assert.match(installDetailSource, /children: \(set\.plugins \?\? \[\]\)\.map\(dllEntry\)/)
+  // 确认界面里插件是一个独立条目：和 MOD 预览同一套九项元数据，打「随包插件」
+  // 标签说明归属（不靠缩进），渲染侧再把它整批排到条目列表最底
+  assert.match(
+    installDetailSource,
+    /children: \(set\.plugins \?\? \[\]\)\.map\(\(plugin\) => dllEntry\(plugin, t\('levelSet\.bundledPlugin'\)\)\)/,
+  )
+  assert.match(installDetailSource, /tag\?: string/, '从属关系靠标签说明，不占版本号那一栏')
+  assert.match(detailDialog, /return \[\.\.\.top, \.\.\.children\]/, '随包插件在预览里排到所有地图集之后')
   assert.match(installDetailSource, /function dllFields/, 'DLL 的九项字段只定义一次')
 })
 

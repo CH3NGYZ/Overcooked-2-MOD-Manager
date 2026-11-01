@@ -123,6 +123,7 @@ test('地图包：一个地图集是一张卡，随包插件挂在它下面', ()
   assert.equal(child.title, 'Overcooked2 DIYLevel Plugin')
   assert.equal(child.subtitle, 'OC2DIYLevel/OC2DIYLevel.dll')
   assert.equal(child.meta, '0.10')
+  assert.equal(child.tag, '随包插件', '右侧标签说明它不是独立 MOD，而是这张图自带的')
   assert.deepEqual(LABELS_OF(child), ['名称', '版本', '标题', '产品名', '作者', '依赖', 'GUID', '原始文件名', '文件'])
   assert.equal(child.fields[5].value, '否', '读得出 BepInPlugin 的 DLL 不是依赖库')
   assert.equal(child.fields[6].value, 'dev.gua.overcooked.diylevel')
@@ -142,7 +143,7 @@ test('地图包：标题按「中文名 → 英文名 → 目录名」兜底，�
   assert.equal(model.entries[0].note, undefined, '不覆盖时不该出现提示')
 })
 
-test('地图包：读不出元数据的插件按依赖标注，并退回文件名当标题', () => {
+test('地图包：读不出元数据的插件照样打「随包插件」标签，并退回文件名当标题', () => {
   const model = levelSetImportDetail('/tmp/maps.zip', [
     levelSet({
       plugins: [plugin({
@@ -160,7 +161,8 @@ test('地图包：读不出元数据的插件按依赖标注，并退回文件�
 
   const [child] = model.entries[0].children
   assert.equal(child.title, 'UnityEngine', '没有插件名就用去掉 .dll 的文件名')
-  assert.equal(child.meta, '依赖', '依赖项右侧写「依赖」，不写破折号')
+  assert.equal(child.tag, '随包插件', '角色是 dependency 也照样是「随包插件」，归属比角色更重要')
+  assert.equal(child.meta, '—', '标签占掉「依赖」之后，版本号一栏老实写破折号')
   assert.equal(child.fields[5].value, '是')
   assert.equal(child.fields[1].value, '—', '没有版本号写破折号')
 })
@@ -185,7 +187,9 @@ test('MOD 预览：类型标签、计数摘要与「没有 DLL 就只能取消�
   }))
   assert.equal(single.head.kind, '单个 MOD')
   assert.equal(single.confirmable, true)
-  assert.equal(single.entries[1].meta, '依赖')
+  assert.equal(single.entries[1].tag, '依赖', '依赖项靠标签说明身份，版本号一栏不再被占用')
+  assert.equal(single.entries[1].meta, '—')
+  assert.equal(single.entries[0].tag, undefined, '普通 MOD 不打标签')
   assert.equal(single.emptyHint.length, 2, '空态文案常驻模型里，有内容时不渲染')
 })
 

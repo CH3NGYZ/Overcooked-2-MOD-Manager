@@ -40,7 +40,7 @@ import {
   type LevelSetRefreshingHint,
   type LevelSetTone,
 } from '../levelSetStatus.ts'
-import type { InstallSource, LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '../types'
+import type { InstallSource, LevelSetInfo, LevelSetPlugin, LevelSetScanProgress, MapInfo, Repository } from '../types'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
@@ -707,6 +707,33 @@ function activate(set: LevelSetInfo, card?: HTMLElement) {
 }
 
 /**
+ * 随包插件的展开状态。
+ *
+ * 与集卡片不同：集是单展开（同时只看一张），插件是「查看某个 DLL 的信息」，
+ * 用户可能想对比两个，所以按 `集目录 + 文件名` 记多份。
+ */
+const expandedPlugins = ref<Record<string, boolean>>({})
+
+function pluginKey(set: LevelSetInfo, plugin: LevelSetPlugin) {
+  // 集目录与文件名之间用 NUL 分隔：两边都可能含空格、斜杠或点，
+  // 只有 NUL 不可能出现在文件系统名字里。
+  return `${set.dir_name}\u0000${plugin.file_name}`
+}
+
+function togglePlugin(set: LevelSetInfo, plugin: LevelSetPlugin) {
+  // 这次点击已经由插件卡片处理；不设标记的话，document 上「点空白收起」
+  // 会顺手把外层的集卡片一起收掉，用户就看不到刚展开的插件详情了。
+  cardClickHandled = true
+  const key = pluginKey(set, plugin)
+  expandedPlugins.value[key] = !expandedPlugins.value[key]
+}
+
+/** 插件卡片标题：BepInPlugin 名优先，读不到就用文件名去掉 `.dll` / `.dll.disabled`。 */
+function pluginTitle(plugin: LevelSetPlugin) {
+  return plugin.name?.trim() || plugin.file_name.replace(/\.dll(\.disabled)?$/i, '')
+}
+
+/**
  * 点击卡片行之外的地方收起已展开的详情。
  *
  * 「空白」包含详情区自身：展开后点详情里的任意文字、标签或值都算点空白，
@@ -1240,27 +1267,79 @@ async function checkUpdates() {
 
               <!--
                 随包插件：与地图同处一个父目录、跟着整个集目录一起启停的 DLL。
-                它们是这张图的一部分（不是独立 MOD），所以缩进挂在集目录信息
-                后面；安装侧读 ZIP 条目，这里读磁盘目录，同一份
-                `mods::read_dll_details` 元数据，只是没有 ZIP 内路径。
+                它们是这张图的一部分（不是独立 MOD），所以复用 MOD 卡片的下沉
+                版本挂在这里。**没有开关**：启停由集目录的 rename 决定，单个
+                DLL 没有属于自己的开关状态，给一个会和集目录打架。点击卡片
+                展开这个 DLL 的元数据；安装侧读 ZIP 条目，这里读磁盘目录，
+                同一份 `mods::read_dll_details` 解析，只是没有 ZIP 内路径。
+                「这是随包插件」与版本号都跟在标题后面（`version` + `titleTag`），
+                不做左侧缩进：缩进只能表达从属，代价是整行往右推、右侧那列被挤窄。
               -->
               <div v-if="set.plugins?.length" class="detail-section">
                 <div class="detail-section-title">
                   {{ t('levelSet.bundledPlugins', { count: set.plugins.length }) }}
                 </div>
                 <div class="plugin-list">
-                  <div v-for="plugin in set.plugins" :key="plugin.file_name" class="plugin-row">
-                    <span class="plugin-name" :title="plugin.file_name">
-                      {{ plugin.name?.trim() || plugin.file_name.replace(/\.dll$/i, '') }}
-                    </span>
-                    <span class="mono plugin-file" :title="plugin.file_name">{{ plugin.file_name }}</span>
-                    <span v-if="!plugin.enabled" class="plugin-off">{{ t('levelSet.pluginDisabled') }}</span>
-                    <span class="plugin-meta mono">
-                      {{ plugin.role === 'dependency'
-                        ? t('tools.dependency')
-                        : (formatVersion(plugin.version) || '—') }}
-                    </span>
-                  </div>
+                  <LocalItemCard v-for="plugin in set.plugins" :key="plugin.file_name"
+                    :switchable="false"
+                    :title="pluginTitle(plugin)"
+                    :title-tooltip="plugin.file_name"
+                    :version="formatVersion(plugin.version) || undefined"
+                    :title-tag="t('levelSet.bundledPlugin')"
+                    :disabled="!plugin.enabled"
+                    :expanded="!!expandedPlugins[pluginKey(set, plugin)]"
+                    @activate="togglePlugin(set, plugin)">
+                    <template #detail>
+                      <div class="detail-grid">
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.name') }}</span>
+                          <span class="detail-value">{{ plugin.name || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">GUID</span>
+                          <span class="detail-value mono">{{ plugin.guid || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsOnline.versions') }}</span>
+                          <span class="detail-value mono">{{ formatVersion(plugin.version) || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.title') }}</span>
+                          <span class="detail-value">{{ plugin.title || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.productName') }}</span>
+                          <span class="detail-value">{{ plugin.product_name || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.author') }}</span>
+                          <span class="detail-value">{{ plugin.company || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.originalFilename') }}</span>
+                          <span class="detail-value mono">{{ plugin.original_filename || '—' }}</span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.role') }}</span>
+                          <span class="detail-value">
+                            {{ plugin.role === 'dependency'
+                              ? t('tools.dependency')
+                              : t('levelSet.pluginRoleMod') }}
+                          </span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.enabled') }}</span>
+                          <span class="detail-value">
+                            {{ plugin.enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled') }}
+                          </span>
+                        </div>
+                        <div class="detail-row">
+                          <span class="detail-label">{{ t('modsLocal.file2') }}</span>
+                          <span class="detail-value mono">{{ plugin.file_name }}</span>
+                        </div>
+                      </div>
+                    </template>
+                  </LocalItemCard>
                 </div>
               </div>
 
@@ -1433,56 +1512,17 @@ async function checkUpdates() {
 }
 
 /*
- * 随包插件：一条一行 —— 名称 + 落盘文件名 + 版本，整行靠左紧凑排。
- * 左侧缩进 22px 与安装详情弹窗里下级条目的缩进一致，表示「从属于这张图」；
- * 文件名可能很长，用省略号收，全文在 title 里。
- * 三者都不许撑开（`flex-grow: 0`）：撑到行尾的话，版本号会正好落在页面右下角
- * 那个浮动刷新按钮底下，滚到卡片底部时版本被压掉一半。
+ * 随包插件列表：与 MOD 管理页「包内子卡片」同一套视觉 —— 下沉底色，
+ * 让人看出它们是这张图的附属物而不是同级条目。
+ * 不再左缩进：「从属」由卡片标题后的「随包插件」标签说明，缩进只会把标题和
+ * 版本号一起往右推，右侧留白反而更多。
+ * `--card-bg` 是 `LocalItemCard` 自己读的变量，在容器上下发就能让每张子卡
+ * 换成下沉底，不必去改组件内部样式。
  */
 .plugin-list {
   display: grid;
-  gap: 4px;
-}
-
-.plugin-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
-  padding-left: 22px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.plugin-name {
-  flex: 0 1 auto;
-  max-width: 40%;
-  color: var(--oc2-text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plugin-file {
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--oc2-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 手动改成 `.dll.disabled` 的插件：正常情况它跟着地图整目录启停，出现这条说明有人单独动过。
- * 用 moderate 档（「需要注意但不算错」，与可更新/刷新失败同档）而不是 muted，
- * 灰字会被旁边的文件名吃掉。 */
-.plugin-off {
-  flex: 0 0 auto;
-  color: var(--oc2-tone-moderate-text);
-}
-
-.plugin-meta {
-  flex: 0 0 auto;
-  color: var(--oc2-text-2);
+  gap: 8px;
+  --card-bg: var(--oc2-sunken);
 }
 
 /* 分节小标题：只做分组提示，不抢上面四行主体的视觉重量 */

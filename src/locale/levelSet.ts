@@ -602,6 +602,14 @@ export const levelSet: DomainMessages = {
     ko: '동봉 플러그인 ({count})',
     ja: '同梱プラグイン（{count}）',
   },
+  // 单张随包插件卡片右侧的角色标签：说明「这不是独立 MOD，是这张图自带的」
+  bundledPlugin: {
+    'zh-CN': '随包插件',
+    'zh-TW': '隨包插件',
+    en: 'Bundled',
+    ko: '동봉',
+    ja: '同梱',
+  },
   // 插件文件被单独改成 `.dll.disabled` 时的标记（正常情况跟着地图整目录启停）
   pluginDisabled: {
     'zh-CN': '未启用',
@@ -609,5 +617,13 @@ export const levelSet: DomainMessages = {
     en: 'Disabled',
     ko: '사용 안 함',
     ja: '無効',
+  },
+  // 随包插件的角色：后端 `DllRole::Mod`（另一半是「依赖」）
+  pluginRoleMod: {
+    'zh-CN': '普通插件',
+    'zh-TW': '一般外掛',
+    en: 'Regular plugin',
+    ko: '일반 플러그인',
+    ja: '通常プラグイン',
   },
 }

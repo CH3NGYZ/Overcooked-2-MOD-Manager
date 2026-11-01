@@ -15,7 +15,7 @@ import {
   SettingsOutline, TrashOutline,
 } from '@vicons/ionicons5'
 import { api } from '../services/tauri'
-import { repositoryForMod } from '../modStatus'
+import { formatVersion, repositoryForMod } from '../modStatus'
 import type { RelationStatus } from '../modRelations'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
@@ -562,34 +562,42 @@ const groups = computed<ModGroupNode[]>(() => {
   }
 
   const toPackage = (key: string, list: InstalledMod[]): ModPackageNode => {
-    const enabledCount = list.filter((mod) => mod.enabled).length
+    /*
+     * 主 MOD 在前、依赖 DLL 在后：包内顺序要能一眼看出「哪个是本体、
+     * 哪些是它带的库」。依赖表格紧跟在整批子卡片之后（见模板），
+     * 于是整段读下来是「本体 → 它带的依赖 → 这个包还要求什么」。
+     */
+    const ordered = [...list].sort(
+      (a, b) => Number(!!a.is_dependency) - Number(!!b.is_dependency),
+    )
+    const enabledCount = ordered.filter((mod) => mod.enabled).length
     /*
      * 包标题：能认出绑定仓库就用仓库名，让「装的是哪个包」一眼可读；
      * 否则退回安装包名与插件名。整包成员共享一个仓库，所以同一包内
      * 各 DLL 仍由行内插件名区分，不会因为标题统一而重名。
      */
-    const label = list[0] ? displayTitle(list[0]) : ''
+    const label = ordered[0] ? displayTitle(ordered[0]) : ''
     /*
      * 包级状态：以整个包为主体，版本结论只留一条且不带数量
      * （包里只有一个 Release tag，说「1 最新版」会暗示还有别的东西）。
      * 实现见 statusTags.ts 的 packageStatuses。
      */
-    const statuses = packageStatuses(list)
+    const statuses = packageStatuses(ordered)
     /*
      * 包的仓库身份与快捷动作：整包成员共享同一个仓库，
      * 所以直接用「包内能绑定仓库的那一个」——与包标题、分组用的是同一代表。
      * 动作由包对外公开的状态集合解析（与单 MOD 共用 statusActions 的规则）。
      */
-    const repo = repositoryForMod(repositories.value, representative(list))
-    const representativeMod = representative(list)
+    const repo = repositoryForMod(repositories.value, representative(ordered))
+    const representativeMod = representative(ordered)
     const action = actionContext(statuses.map((entry) => entry.key), representativeMod)?.action
     return {
       key,
       label,
-      mods: list,
-      grouped: list.length >= 2,
-      enabled: enabledCount === list.length,
-      partial: enabledCount > 0 && enabledCount < list.length,
+      mods: ordered,
+      grouped: ordered.length >= 2,
+      enabled: enabledCount === ordered.length,
+      partial: enabledCount > 0 && enabledCount < ordered.length,
       statuses,
       action,
       repositoryId: repo?.id,
@@ -1213,8 +1221,8 @@ function modDependencyRows(mod: InstalledMod): DependencyRow[] {
 /**
  * 多 DLL 包外壳的依赖表行。
  *
- * 包的关系声明挂在仓库上、整包共用，所以整包只出一张表，放在子卡片**上面**
- * （先说这个包需要什么，再看里面有哪些 DLL）；子卡片不再各自显示，同一段声明
+ * 包的关系声明挂在仓库上、整包共用，所以整包只出一张表，放在整批子卡片**下面**
+ * （先看包里有什么，再看这个包对外要求什么）；子卡片不再各自显示，同一段声明
  * 重复 N 次只是噪音。
  *
  * 代表成员取「非依赖且绑定了仓库」的那个：纯依赖 DLL 的清单快照里没有声明，
@@ -1667,6 +1675,8 @@ function removePackage(node: ModPackageNode) {
               :enabled="mod.enabled"
               :toggle-loading="!!busy[mod.dll_file]"
               :title="singleModTitle(mod)"
+              :version="formatVersion(mod.version) || undefined"
+              :title-tag="mod.is_dependency ? t('modsLocal.bundledDependency') : undefined"
               :disabled="!mod.enabled"
               :expanded="isExpanded(mod.dll_file)"
               :focus-flash="highlightId === bindingRepositoryId(mod)"
@@ -1853,23 +1863,20 @@ function removePackage(node: ModPackageNode) {
               <n-collapse-transition :show="isPackageExpanded(pkg.key)" display-directive="show">
               <div class="package-body">
                 <!--
-                  整包共用一份依赖声明（关系挂在仓库上），所以只出一张表，且放在
-                  子卡片上面：先说这个包需要什么，再看里面有哪些 DLL。
-                -->
-                <div v-if="packageDependencyRows(pkg).length" class="detail-section">
-                  <DependencyTable :rows="packageDependencyRows(pkg)" @jump="openDependencyJump" />
-                </div>
-                <!--
                   包内子 DLL 行不是独立单元：不加定位锚点，也不参与状态高亮。
                   状态结论属于整个包，高亮只画在外壳上（见 package-shell）。
                   外壳仍由 LocalItemCard 提供；这些行没有状态标签，
                   所以不传 #status，组件会自己补 1px 隐形占位保持按钮列对齐。
+                  顺序是「主 MOD → 它带的依赖 DLL」：标题后带版本号，依赖项多一个
+                  灰色「随包依赖」标签（排序见 toPackage）。
                 -->
                 <LocalItemCard v-for="mod in pkg.mods" :key="mod.dll_file"
                   :data-dll-file="mod.dll_file"
                   :enabled="mod.enabled"
                   :toggle-loading="!!busy[mod.dll_file]"
                   :title="modTitle(mod)"
+                  :version="formatVersion(mod.version) || undefined"
+                  :title-tag="mod.is_dependency ? t('modsLocal.bundledDependency') : undefined"
                   :disabled="!mod.enabled"
                   :expanded="isExpanded(mod.dll_file)"
                   :tools-min-width="toolColumnWidth"
@@ -1907,6 +1914,15 @@ function removePackage(node: ModPackageNode) {
                       :status-summary="statusSummary(mod)" :package-count-text="packageCountText(mod)" />
                   </template>
                 </LocalItemCard>
+                <!--
+                  整包共用一份依赖声明（关系挂在仓库上），所以只出一张表。
+                  放整批子卡片**之后**：先看包里有什么（本体与它带的依赖），
+                  再看这个包对外要求什么；和地图管理页「信息 → 随包插件 →
+                  依赖声明」同一顺序，两页不用记两套版式。
+                -->
+                <div v-if="packageDependencyRows(pkg).length" class="detail-section">
+                  <DependencyTable :rows="packageDependencyRows(pkg)" @jump="openDependencyJump" />
+                </div>
               </div>
               </n-collapse-transition>
             </section>

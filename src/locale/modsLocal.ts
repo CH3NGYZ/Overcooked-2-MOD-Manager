@@ -343,6 +343,22 @@ export const modsLocal: DomainMessages = {
     ko: '플러그인 이름',
     ja: 'プラグイン名',
   },
+  // 角色（后端 `DllRole`：普通插件 / 依赖）
+  role: {
+    'zh-CN': '角色',
+    'zh-TW': '角色',
+    en: 'Role',
+    ko: '역할',
+    ja: '役割',
+  },
+  // 卡片标题后的灰色标签：这个 DLL 是包里的依赖库，不是独立 MOD
+  bundledDependency: {
+    'zh-CN': '随包依赖',
+    'zh-TW': '隨包依賴',
+    en: 'Bundled dependency',
+    ko: '동봉 의존성',
+    ja: '同梱依存',
+  },
   // 作者
   author: {
     'zh-CN': '作者',

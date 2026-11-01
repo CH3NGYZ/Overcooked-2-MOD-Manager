@@ -4,6 +4,7 @@
  *
  * 外壳与样式来自 MOD 管理页原来的 `.mod-card`：左侧「开关 + 标题」，
  * 右侧「状态标签区（含可选快捷动作）| 工具栏」，点击卡片行展开详情。
+ * 开关可以用 `switchable: false` 关掉（随包 DLL 这类不能单独启停的条目）。
  * 组件只负责**外壳与布局**：所有状态、文案、动作都由调用方算好后传入，
  * 组件不碰 `InstalledMod` / `LevelSetInfo` 任何一种模型 —— 一旦在这里
  * 判断业务类型，两页就会开始互相牵连。
@@ -27,18 +28,43 @@
  * 级「点空白收起」打标记），组件是单根节点，页面仍可这样监听原生 click。
  */
 import { computed, useSlots } from 'vue'
-import { NCollapseTransition, NSwitch } from 'naive-ui'
+import { NCollapseTransition, NSwitch, NTag } from 'naive-ui'
+import { tagColorFor } from '../theme'
 import type { CSSProperties } from 'vue'
 
 const props = defineProps<{
-  /** 开关当前值。 */
-  enabled: boolean
+  /** 开关当前值；`switchable: false` 时无意义。 */
+  enabled?: boolean
+  /**
+   * 是否显示左侧开关，缺省显示。
+   *
+   * 有些条目在磁盘上根本不能单独启停：关卡集里的随包 DLL 跟着整个集目录
+   * 一起开关（后端 `set_level_set_enabled` 是整目录 rename），给它们一个
+   * 开关会造出与集目录状态互相打架的第二套状态。这类调用方传 `false`，
+   * 卡片只留标题、状态标签与「点击查看」。
+   */
+  switchable?: boolean
   /** 开关的 loading（与该条目自己的异步操作绑定）。 */
   toggleLoading?: boolean
   /** 左侧标题（由调用方本地化并兜底）。 */
   title: string
   /** 标题的悬停提示，缺省用 title 自己。 */
   titleTooltip?: string
+  /**
+   * 标题后面的版本号。
+   *
+   * 取值走安装清单的 `version`：后端 `effective_local_version` 已经在清单 tag
+   * 与本地 DLL 自报版本之间取较高者，所以本地 DLL 版本更高时界面会直接显示
+   * 它，前端不用再读一次 DLL。
+   */
+  version?: string
+  /**
+   * 标题后面的灰色标签：说明这张卡是「依赖」还是「随包插件」。
+   *
+   * 放标题这一侧而不是右侧状态列：状态列回答「这个包/这张图现在什么情况」，
+   * 归属（它是不是独立 MOD）是另一回事，混在一列里两个标签会互相挤。
+   */
+  titleTag?: string
   /** 停用状态：整卡压暗。 */
   disabled?: boolean
   /** 详情是否展开（展开动画由组件内的 n-collapse-transition 负责）。 */
@@ -103,12 +129,20 @@ const toolGroupStyle = computed<CSSProperties>(() => {
  * 详情区内的点击不触发：详情区不拦冒泡，页面在 document 上监听「点空白
  * 收起」，这里再 toggle 一次就会「先展开、再收起」。同一个类名也是
  * 拆分前页面 `onCardClick` 的排除依据，不能改名。
+ *
+ * 判定必须限定在**自己这张卡**的详情区内：`closest('.card-detail')` 会一路
+ * 往上找到祖先卡片的详情区，而嵌套卡片（关卡集详情里的随包 DLL 卡片）的行
+ * 本来就长在外层详情区里 —— 只看 `closest` 会把它们的点击一并吞掉，
+ * 卡片变成点不开。
  */
 function onCardClick(event: MouseEvent) {
+  const root = event.currentTarget as HTMLElement
   const target = event.target
-  if (target instanceof Element && target.closest('.card-detail')) return
-  // 根节点是单元素 `<article>`，这里的 currentTarget 一定是卡片根
-  emit('activate', event.currentTarget as HTMLElement)
+  if (target instanceof Element) {
+    const detail = target.closest('.card-detail')
+    if (detail && root.contains(detail)) return
+  }
+  emit('activate', root)
 }
 
 function onToggle(value: boolean) {
@@ -123,25 +157,37 @@ function onToggle(value: boolean) {
     <!-- 单行：左「开关 + 标题」… 右「状态标签 | 工具栏」 -->
     <div class="card-row">
       <div class="card-left">
-        <n-switch class="card-switch" size="small" :value="enabled" :loading="!!toggleLoading"
-          @click.stop @update:value="onToggle" />
+        <n-switch v-if="switchable !== false" class="card-switch" size="small" :value="!!enabled"
+          :loading="!!toggleLoading" @click.stop @update:value="onToggle" />
         <b class="card-title" :title="titleTooltip ?? title">{{ title }}</b>
+        <!--
+          标题后面紧跟「版本号 + 角色标签」：两者都回答「这是什么」，
+          与右侧「现在什么情况」的状态列分开，互不挤占。
+        -->
+        <span v-if="version || titleTag" class="card-title-meta">
+          <span v-if="version" class="card-version mono">{{ version }}</span>
+          <n-tag v-if="titleTag" size="tiny" :bordered="false" :color="tagColorFor('muted')">
+            {{ titleTag }}
+          </n-tag>
+        </span>
       </div>
 
       <div class="card-right">
         <!--
-          status 插槽装状态标签与可选快捷动作；没有标签区的行（例如多 DLL
-          包的子卡片）不传这个插槽，用等宽的隐形分割线占位补回同一条竖线。
+          status 插槽装状态标签与可选快捷动作；tools 插槽装工具栏。
+          两个都缺时右列整块不渲染 —— 例如地图详情里的随包 DLL 卡片，
+          它们只需要「随包插件 + 版本号」，多画一条竖线和一格空工具栏
+          会让右侧凭空多出十几像素空白，还会把标签推离卡片边缘。
         -->
         <template v-if="slots.status">
           <slot name="status" />
           <!-- 分割线：把标签区和操作按钮区分开 -->
-          <span class="tool-divider" />
+          <span v-if="slots.tools" class="tool-divider" />
         </template>
-        <span v-else class="tool-divider-ghost" />
+        <span v-else-if="slots.tools" class="tool-divider-ghost" />
 
         <!-- 工具栏：可选按钮在最左（用占位保持列宽），固定按钮贴右 -->
-        <span class="tool-group" :style="toolGroupStyle">
+        <span v-if="slots.tools" class="tool-group" :style="toolGroupStyle">
           <slot name="tools" />
         </span>
       </div>
@@ -301,6 +347,17 @@ function onToggle(value: boolean) {
   flex: 0 0 var(--tool-button-width, 30px);
 }
 .card-switch { flex: 0 0 auto; }
+/* 标题后的「版本号 + 角色标签」：不参与收缩，标题过长时只省略标题自己 */
+.card-title-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.card-version {
+  font-size: 12px;
+  color: var(--oc2-text-3);
+}
 .card-title {
   font-size: 13.5px;
   font-weight: 600;

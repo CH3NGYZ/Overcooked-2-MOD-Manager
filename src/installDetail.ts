@@ -37,7 +37,14 @@ export interface InstallDetailEntry {
   title: string
   /** 标题下方那行灰字：DLL 是包内路径，地图集是「作者 · N 个关卡」。 */
   subtitle?: string
-  /** 收起态右侧那列：版本号；读不出元数据的依赖项显示「依赖」。 */
+  /**
+   * 收起态右侧版本号前面的角色标签：「依赖」/「随包插件」。
+   *
+   * 靠缩进表达从属关系时，右侧那列只能塞一个值（以前依赖项干脆把版本号
+   * 换成「依赖」两个字）；改成标签后版本号还能照常显示，条目也可以平铺。
+   */
+  tag?: string
+  /** 收起态右侧那列：版本号。 */
   meta?: string
   fields: InstallDetailField[]
   /** 卡片底部一行提示，例如「已有同名地图集，旧版本先进回收站」。 */
@@ -93,13 +100,12 @@ function dllTitle(entry: DllDetailSource): string {
 }
 
 /**
- * 收起态右侧那列。
+ * 收起态右侧那列：只有版本号。
  *
- * 依赖项显示「依赖」而不是破折号：破折号只说明「字段为空」，两个字才说明
- * 「为什么为空」—— 这类 DLL 本来就没有 BepInPlugin、没有版本。
+ * 「这是依赖、没有版本」这类信息改由 `tag` 表达，不再占用版本号的位置 ——
+ * 同一个位置一会儿是版本、一会儿是说明，扫一眼分不清是哪种。
  */
 function dllMeta(entry: DllDetailSource): string {
-  if (entry.role === 'dependency') return t('tools.dependency')
   return formatVersion(entry.version) || '—'
 }
 
@@ -122,11 +128,12 @@ function dllFields(entry: DllDetailSource): InstallDetailField[] {
 }
 
 /** 一张 DLL 卡片：MOD 包里的一个 DLL，或地图包里随某个地图集落盘的插件。 */
-function dllEntry(entry: DllDetailSource): InstallDetailEntry {
+function dllEntry(entry: DllDetailSource, tag?: string): InstallDetailEntry {
   return {
     key: entry.path,
     title: dllTitle(entry),
     subtitle: entry.path,
+    tag,
     meta: dllMeta(entry),
     fields: dllFields(entry),
   }
@@ -154,7 +161,9 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
         deps: preview.dependency_count,
       }),
     },
-    entries: preview.entries.map(dllEntry),
+    // 依赖项打「依赖」标签：它们不是用户主动装的 MOD，只是别的 MOD 要用
+    entries: preview.entries.map((entry) =>
+      dllEntry(entry, entry.role === 'dependency' ? t('tools.dependency') : undefined)),
     emptyHint: [t('tools.thisArchiveContainsNoDllFiles'), t('tools.nothingInstallableHere')],
     releaseLog: showReleaseLog ? { tag: preview.release_tag, html: renderReadme(releaseBody) } : null,
     confirmLabel: t('tools.installNow'),
@@ -167,9 +176,10 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
  * 地图 ZIP（已暂存并识别）→ 详情模型。
  *
  * 一个地图集就是一个 MOD：版本、作者、关卡数来自 `info`；随包插件是它下面
- * 的另一个「MOD」（元数据从 DLL 里读，和 MOD 预览同一套字段），缩进挂在
- * 所属地图集下面 —— 插件是跟着这张图一起装进集目录、一起启停的，平铺在
- * 顶级会让人以为可以单独装。
+ * 的另一个「MOD」（元数据从 DLL 里读，和 MOD 预览同一套字段）。插件挂在
+ * `children` 上而不是平铺进 `entries`：渲染侧要能按「先全部地图集、再全部
+ * 插件」重排，把它放到列表最底 —— 用户先确认要装哪几张图，再扫一眼会跟着
+ * 落盘的 DLL。
  */
 export function levelSetImportDetail(zipPath: string, sets: ZipLevelSet[]): InstallDetailModel {
   const pluginCount = sets.reduce((total, set) => total + (set.plugins?.length ?? 0), 0)
@@ -209,6 +219,8 @@ function levelSetEntry(set: ZipLevelSet): InstallDetailEntry {
       { label: t('levelSet.installFolder'), value: set.dir_name, mono: true, wide: true },
     ],
     note: set.exists ? t('levelSet.replaceHint') : undefined,
-    children: (set.plugins ?? []).map(dllEntry),
+    // 随包插件一律打「随包插件」标签：不管它自己是 Mod 还是 Dependency，
+    // 对用户来说都是「跟着这张图落盘、跟着这张图启停」的那一类
+    children: (set.plugins ?? []).map((plugin) => dllEntry(plugin, t('levelSet.bundledPlugin'))),
   }
 }

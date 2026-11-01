@@ -44,24 +44,31 @@ const emit = defineEmits<{
 }>()
 
 /**
- * 渲染行：顶级条目 + 它的下级条目（随包插件）。
+ * 渲染行：先全部顶级条目，再全部下级条目（随包插件）。
+ *
+ * 下级条目不缩进、也不跟在所属条目后面，而是整批排到列表最底 —— 缩进只能
+ * 表达「从属」，代价是右侧那列被挤窄、多张图各有插件时缩进层级还会叠起来；
+ * 改成平铺 + 右侧「随包插件」标签后，归属靠标签说明，版本号也回到自己该在
+ * 的位置。key 带上父条目，避免两张图的插件包内路径相同时撞 key。
  *
  * 用扁平数组渲染而不是递归组件：下级条目只有一个层级，卡片本身的样式
- * 与交互和顶级完全一样，只是左边多一道缩进表示从属关系。递归组件会为了
- * 一层嵌套多出一个文件，还得把展开状态传下去。
+ * 与交互和顶级完全一样。
  */
 interface DetailRow {
   entry: InstallDetailEntry
-  depth: number
+  key: string
 }
 
 const rows = computed<DetailRow[]>(() => {
-  const out: DetailRow[] = []
+  const top: DetailRow[] = []
+  const children: DetailRow[] = []
   for (const entry of props.model?.entries ?? []) {
-    out.push({ entry, depth: 0 })
-    for (const child of entry.children ?? []) out.push({ entry: child, depth: 1 })
+    top.push({ entry, key: entry.key })
+    for (const child of entry.children ?? []) {
+      children.push({ entry: child, key: `${entry.key}\u0000${child.key}` })
+    }
   }
-  return out
+  return [...top, ...children]
 })
 
 /**
@@ -103,13 +110,13 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
 
       <!--
         条目区：全都是同一张横排紧凑卡片。
-        收起态是「名称 + 淡灰副标题 …… 右侧版本」；点击展开完整元数据。
-        下级条目（随包插件）缩进排在它所属的地图集后面。
+        收起态是「名称 + 淡灰副标题 …… 角色标签 + 右侧版本」；点击展开完整元数据。
+        随包插件平铺在列表最底，靠右侧标签而不是缩进说明归属。
       -->
       <div v-if="rows.length" class="detail-list">
-        <article v-for="row in rows" :key="row.entry.key" class="detail-row"
-          :class="{ expanded: isExpanded(row.entry.key), child: row.depth > 0 }"
-          @click="toggle(row.entry.key)">
+        <article v-for="row in rows" :key="row.key" class="detail-row"
+          :class="{ expanded: isExpanded(row.key) }"
+          @click="toggle(row.key)">
           <div class="detail-row-line">
             <span class="detail-main">
               <b class="detail-name" :title="row.entry.title">{{ row.entry.title }}</b>
@@ -117,9 +124,14 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
                 {{ row.entry.subtitle }}
               </span>
             </span>
-            <span class="detail-meta mono">{{ row.entry.meta ?? '' }}</span>
+            <span class="detail-side">
+              <n-tag v-if="row.entry.tag" size="tiny" :bordered="false" :color="tagColorFor('muted')">
+                {{ row.entry.tag }}
+              </n-tag>
+              <span class="detail-meta mono">{{ row.entry.meta ?? '' }}</span>
+            </span>
           </div>
-          <n-collapse-transition :show="isExpanded(row.entry.key)" display-directive="show">
+          <n-collapse-transition :show="isExpanded(row.key)" display-directive="show">
             <div class="detail-row-fields">
               <div v-for="(field, index) in row.entry.fields" :key="index" class="detail-item"
                 :class="{ wide: field.wide }">
@@ -210,10 +222,17 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
 .detail-row:hover { border-color: var(--oc2-accent); background: var(--oc2-row-hover); }
 .detail-row.expanded { border-color: var(--oc2-accent); }
 /*
- * 下级条目（随包插件）缩进：它是跟着上面这张图一起装进集目录、一起启停的，
- * 左边让出一道就是「归属」这件事的全部说明。
+ * 右侧收尾列：角色标签 + 版本号。
+ *
+ * 两段贴在一起（8px），与左侧标题区之间由 .detail-row-line 的 14px gap 分开，
+ * 扫视时「这是随包插件 / 版本 2.2.6」是一组，不会被读成两个独立字段。
  */
-.detail-row.child { margin-left: 22px; }
+.detail-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
 .detail-row-line {
   display: flex;
   align-items: baseline;

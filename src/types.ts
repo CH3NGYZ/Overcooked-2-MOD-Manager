@@ -193,6 +193,15 @@ export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
  * 加载；关卡集是 `levels/` 下的一个目录、由 DIYLevel 读取。界面复用同一套
  * 卡片样式，模型刻意不合并 —— 合并后每个使用点都要判「这是哪种」。
  */
+export interface LevelSetScanProgress {
+  /** 已经解析完的份数。 */
+  done: number
+  /** 本次要解析的总份数（扫描开始时一次列目录得到）。 */
+  total: number
+  /** 正在读取的关卡集目录名。 */
+  current: string
+}
+
 export interface LevelSetInfo {
   /** 目录名（唯一键，也是开关时移动的目录名）。 */
   dir_name: string

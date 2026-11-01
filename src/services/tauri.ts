@@ -30,6 +30,7 @@ import type {
   TokenPatch,
   UninstallLocalModResult,
   LevelSetInfo,
+  LevelSetScanProgress,
   ZipLevelSet,
   MapInfo,
   StagedMapSource,
@@ -243,6 +244,17 @@ export const api = {
    */
   deleteLevelSet: (dirName: string, enabled: boolean) =>
     invoke<OperationResult>('delete_level_set', { dirName, enabled }),
+  /**
+   * 清空地图（关卡集）`info` 的解析缓存，返回删除的磁盘缓存文件数。
+   *
+   * 进程内与磁盘两级一起清 —— 只清一侧用户会觉得「点了没反应」：留内存的
+   * 命中就直接返回旧结果，留磁盘的下一次解析立刻读回同一份。
+   *
+   * 缓存的键是文件**内容哈希**，文件不改就永远命中。所以解析结果被旧版本
+   * 写错过、或想确认某份 `info` 到底能解析成什么，都得先清一次。清完不影响
+   * 已安装的地图，下次进入地图页 / 总览会重新解析并写回缓存。
+   */
+  clearLevelSetCache: () => invoke<number>('clear_level_set_cache'),
 
   /*
    * 地图下载：与 MOD 仓库同一套刷新与安装语义，只是数据模型不同。
@@ -354,6 +366,16 @@ export function watchGameState(callback: (game: GameInfo) => void): Promise<Unli
     gameStateRevision += 1
     callback(event.payload)
   })
+}
+
+/**
+ * 关卡集扫描进度（`get_level_sets` 执行期间逐份上报）。
+ *
+ * 首次进地图页要解析几十到上百 MB 的 `info`，转圈条下面靠它显示
+ * 「已读取 x/y」与「正在读取的文件夹」，否则用户分不出是在跑还是卡死。
+ */
+export function watchLevelSetScan(callback: (progress: LevelSetScanProgress) => void): Promise<UnlistenFn> {
+  return listen<LevelSetScanProgress>('level-set-scan-progress', (event) => callback(event.payload))
 }
 
 export function watchAppUpdatePhase(callback: (progress: AppUpdatePhaseEvent) => void): Promise<UnlistenFn> {

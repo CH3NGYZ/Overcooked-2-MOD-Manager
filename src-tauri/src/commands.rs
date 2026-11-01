@@ -5331,6 +5331,15 @@ pub fn clear_repository_avatars(state: State<'_, AppState>) -> Result<usize, Str
     crate::avatars::clear_cache(&state.config.cache_dir())
 }
 
+/// 清空地图（关卡集）`info` 的解析缓存，返回删除的磁盘缓存文件数。
+///
+/// 同步命令：只删文件与清一个内存映射，没有解析也没有 IO 等待，
+/// 放进 `spawn_blocking` 反而多一次线程切换。
+#[tauri::command]
+pub fn clear_level_set_cache() -> Result<usize, String> {
+    crate::level_sets::clear_info_cache()
+}
+
 /// DIYLevel 自定义关卡框架的稳定 GUID。
 ///
 /// 与仓库源里的 `plugin_guid`、安装清单、MOD 扫描用的是同一个标识 ——
@@ -5521,7 +5530,10 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
 /// 只读：不创建 `levels/`，不要求游戏已停止 —— 打开页面就能看到现状。
 /// 未找到游戏目录时返回空列表而不是报错：地图页在没有厨房的情况下也该能打开。
 #[tauri::command]
-pub async fn get_level_sets(state: State<'_, AppState>) -> Result<Vec<LevelSetInfo>, String> {
+pub async fn get_level_sets(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<LevelSetInfo>, String> {
     /*
      * 必须离开 IPC 主线程再扫描。
      *
@@ -5538,7 +5550,24 @@ pub async fn get_level_sets(state: State<'_, AppState>) -> Result<Vec<LevelSetIn
     };
     let manifests_dir = state.config.manifests_dir();
     tauri::async_runtime::spawn_blocking(move || {
-        let sets = crate::level_sets::scan_level_sets(&PathBuf::from(game_root));
+        /*
+         * 进度事件逐份发：解析发生在多个线程里，`emit` 本身线程安全。
+         * 发送失败（窗口已关、前端还没挂监听）不影响扫描结果，忽略即可。
+         */
+        let progress_app = app.clone();
+        let sets = crate::level_sets::scan_level_sets_with_progress(
+            &PathBuf::from(game_root),
+            &move |done, total, current| {
+                let _ = progress_app.emit(
+                    "level-set-scan-progress",
+                    LevelSetScanProgress {
+                        done,
+                        total,
+                        current: current.to_string(),
+                    },
+                );
+            },
+        );
         // 快照只读一次：逐条关卡集都去读文件会变成几十次 IO
         let snapshots = archive::read_map_relation_snapshots(&manifests_dir);
         log::debug!("关卡集列表读取完成：数量={}", sets.len());

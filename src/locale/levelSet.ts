@@ -166,6 +166,30 @@ export const levelSet: DomainMessages = {
     ko: '설치된 지도가 없습니다. 지도 설치 페이지에서 지도를 설치하거나, 거기서 "지도 설치"로 로컬 ZIP을 가져오세요.',
     ja: 'マップがまだありません。「マップインストール」でマップをインストールするか、そこの「マップをインストール」でローカル ZIP をインポートしてください。',
   },
+  // 读取进度：已读取 3/7（转圈条下方）
+  scanningProgress: {
+    'zh-CN': '已读取 {done}/{total}',
+    'zh-TW': '已讀取 {done}/{total}',
+    en: 'Read {done}/{total}',
+    ko: '{done}/{total} 읽음',
+    ja: '読み込み済み {done}/{total}',
+  },
+  // 正在读取：地图名（转圈条下方）
+  scanningFolder: {
+    'zh-CN': '正在读取：{name}',
+    'zh-TW': '正在讀取：{name}',
+    en: 'Reading: {name}',
+    ko: '읽는 중: {name}',
+    ja: '読み込み中: {name}',
+  },
+  // 正在统计地图文件夹（还没拿到总数时）
+  scanningPreparing: {
+    'zh-CN': '正在统计地图文件夹…',
+    'zh-TW': '正在統計地圖資料夾…',
+    en: 'Counting map folders…',
+    ko: '지도 폴더를 세는 중…',
+    ja: 'マップフォルダを数えています…',
+  },
   importTitle: {
     'zh-CN': '导入地图',
     'zh-TW': '匯入地圖',

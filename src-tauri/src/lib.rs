@@ -239,6 +239,7 @@ pub fn run() {
             commands::import_level_sets,
             commands::open_level_set_directory,
             commands::delete_level_set,
+            commands::clear_level_set_cache,
             commands::get_maps,
             commands::refresh_map_sources,
             commands::refresh_map_releases,

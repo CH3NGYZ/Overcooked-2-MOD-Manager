@@ -2,7 +2,7 @@
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { NLog, NSelect, NTag } from 'naive-ui'
-import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, MapOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
@@ -148,6 +148,26 @@ async function clearAvatars() {
     clearingAvatars.value = false
   }
 }
+
+/**
+ * 清除地图（关卡集）元数据缓存。
+ *
+ * 两层都在后端，这里没有前端副本要清：地图页每次进入都重新调 `api.levelSets()`，
+ * 只是那次调用会被缓存拦住。清完之后再进地图页就会真正重解析。
+ */
+const clearingLevels = ref(false)
+async function clearLevels() {
+  if (clearingLevels.value) return
+  clearingLevels.value = true
+  try {
+    const removed = await api.clearLevelSetCache()
+    message.success(t('tools.clearedCachedLevelInfoS', { count: removed }))
+  } catch (reason) {
+    message.error(backendMessageOf(reason))
+  } finally {
+    clearingLevels.value = false
+  }
+}
 </script>
 
 <template>
@@ -178,14 +198,18 @@ async function clearAvatars() {
   </SettingsGroup>
 
   <!--
-    缓存维护：头像缓存是「取过一次就不再请求」的本地数据，
-    偶尔会因为组织改名、代理换了张图而显示旧头像，需要手动清一次。
-    与回收站、日志并列放在工具页 —— 它是维护动作，不是配置项。
+    缓存维护：都是「取过一次就不再请求」的本地数据，过期或出错时只能手动清。
+    头像：组织改名、代理换了张图之后仍显示旧头像；
+    地图：缓存的键是 info 文件的内容哈希，解析结果被旧版本写错过就永远错下去。
+    与回收站、日志并列放在工具页 —— 它们是维护动作，不是配置项。
   -->
   <SettingsGroup :title="t('tools.cache')">
     <SettingsRow :icon="CloudOfflineOutline" :title="t('tools.clearAvatarCache')"
       :description="t('tools.deletesDownloadedRepositoryAvatarsTheyWillBeFetchedAgainTheNextTimeYouOpenTheModInstallPage')"
       clickable @click="clearAvatars" />
+    <SettingsRow :icon="MapOutline" :title="t('tools.clearLevelCache')"
+      :description="t('tools.deletesParsedMapInfoItWillBeReparsedTheNextTimeYouOpenTheMapPage')"
+      clickable @click="clearLevels" />
   </SettingsGroup>
 
   <SettingsGroup :title="t('tools.advanced')">

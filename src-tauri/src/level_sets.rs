@@ -44,6 +44,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
@@ -134,13 +135,36 @@ pub struct LevelSetOnDisk {
     pub error: Option<String>,
 }
 
-/// 扫描一个游戏目录下的全部关卡集（启用与停用）。
+/// 扫描进度回调：`(已完成数, 总数, 当前读到的目录名)`。
 ///
-/// 顺序：先 `levels/` 再 `disabled/`，各自按目录名排序 —— 排序结果稳定，
-/// 界面不会因为在两次扫描之间插入了一个新目录就整片重排。
+/// 要求 `Sync` 而不是 `FnMut`：多份 `info` 会被不同线程同时解析，进度自然来自
+/// 多个线程。实现方自己负责线程安全（命令层用 `AppHandle::emit`，它本身是线程安全的）。
+pub type ScanProgress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);
+
+/// 扫描一个游戏目录下的全部关卡集（启用与停用）。
 pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
+    scan_level_sets_with_progress(game_root, &|_, _, _| {})
+}
+
+/// 同上，但逐条上报进度。
+///
+/// **为什么并行**：解析一份 `info` 是「整份读入 → 算 SHA-256 → LZMA 解压整段
+/// 数据 → 解对象表」的独立 CPU 密集工作，彼此没有共享状态。真实目录里 7 个地图
+/// 合计 131 MB（最大一份 65 MB），串行时始终只有一个核心在干活 —— 冷扫描的
+/// 13.6 s 里大部分时间其它核心是空的。按 CPU 核数分片后这些工作真正重叠。
+///
+/// **顺序仍然确定**：并行只改变谁先算完，结果按原下标归位；排序口径维持
+/// 「先 `levels/` 再 `disabled/`，各自按目录名排序」，界面不会因为谁先跑完而重排。
+pub fn scan_level_sets_with_progress(
+    game_root: &Path,
+    progress: ScanProgress<'_>,
+) -> Vec<LevelSetOnDisk> {
     let base = game_root.join(DIYLEVEL_DIR);
-    let mut sets = Vec::new();
+    /*
+     * 先把待解析的目标列全：并行之前必须先知道总数，才能给出「3/7」这种
+     * 真实进度（转圈条下面要显示的就是它）。列目录本身只读元数据，很快。
+     */
+    let mut targets: Vec<(PathBuf, String, bool)> = Vec::new();
     for (dir_name, enabled) in [(LEVELS_DIR, true), (DISABLED_DIR, false)] {
         let Ok(entries) = fs::read_dir(base.join(dir_name)) else {
             continue;
@@ -152,14 +176,65 @@ pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
             .collect();
         names.sort();
         for name in names {
-            sets.push(read_level_set(
-                base.join(dir_name).join(&name),
-                name,
-                enabled,
-            ));
+            targets.push((base.join(dir_name).join(&name), name, enabled));
         }
     }
-    log::debug!("关卡集扫描完成：数量={}，根={}", sets.len(), base.display());
+
+    let total = targets.len();
+    progress(0, total, "");
+    if total == 0 {
+        log::debug!("关卡集扫描完成：数量=0，根={}", base.display());
+        return Vec::new();
+    }
+
+    /*
+     * 线程数取核数且不超过目标数：文件比核心少时多开线程只会多切换。
+     * 用下标原子取号而不是预先切片 —— 各份 `info` 大小差几十倍（这里最大的
+     * 65 MB、最小的 0.3 MB），切片会让拿到大文件的线程成为长尾，动态取号
+     * 才能让先空闲的线程去接下一个。
+     */
+    let workers = std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1)
+        .min(total);
+    let next = AtomicUsize::new(0);
+    let finished = AtomicUsize::new(0);
+    let parsed: Vec<(usize, LevelSetOnDisk)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut local: Vec<(usize, LevelSetOnDisk)> = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        if index >= total {
+                            break;
+                        }
+                        let (path, name, enabled) = &targets[index];
+                        local.push((index, read_level_set(path.clone(), name.clone(), *enabled)));
+                        let done = finished.fetch_add(1, Ordering::Relaxed) + 1;
+                        progress(done, total, name);
+                    }
+                    local
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            // 某个线程 panic 时丢掉它那一片，而不是让整次扫描失败：
+            // 少一张卡的元数据仍可显示目录名并开关，比整页报错好。
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
+    });
+
+    let mut ordered = parsed;
+    ordered.sort_by_key(|(index, _)| *index);
+    let sets: Vec<LevelSetOnDisk> = ordered.into_iter().map(|(_, set)| set).collect();
+    log::debug!(
+        "关卡集扫描完成：数量={}，根={}，并行度={}",
+        sets.len(),
+        base.display(),
+        workers
+    );
     sets
 }
 
@@ -382,6 +457,55 @@ fn write_info_disk_cache(
     }
     if fs::rename(&temp, &target).is_err() {
         let _ = fs::remove_file(&temp);
+    }
+}
+
+/// 清空磁盘缓存目录，返回删除的文件数。只删本模块写出的文件。
+///
+/// `dir` 由调用方传入的理由与读写一致：测试要用临时目录，不能动用户真实数据根。
+/// 目录里只认 `*.json` 与写一半的 `*.json.tmp` —— `cache/` 由多个模块共用，
+/// 不按文件名过滤会连带删掉别人的缓存。
+fn clear_info_disk_cache(dir: &Path) -> Result<usize, String> {
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let mut removed = 0usize;
+    for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let ours = matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("json") | Some("tmp")
+        );
+        if ours && path.is_file() && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// 清空 `info` 的两级解析缓存，返回删除的磁盘缓存文件数。
+///
+/// 两层都要清：只清磁盘的话，本进程的 `(len, mtime)` 命中仍会返回旧结果；
+/// 只清内存的话，下一次解析立刻从磁盘读回同一份 —— 两种都让用户觉得
+/// 「点了没反应」。这与头像缓存的处理是同一个理由。
+///
+/// 为什么需要手动清：缓存的键是**内容哈希**，只要文件内容不变就永远命中。
+/// 解析逻辑出过错（旧版本把某个字段读错）时，修好的版本面对同一份文件
+/// 仍会拿到那份错误结果，只有清掉缓存才会重新解析。
+pub fn clear_info_cache() -> Result<usize, String> {
+    match info_cache().lock() {
+        Ok(mut cache) => cache.clear(),
+        /*
+         * 锁中毒说明持锁线程 panic 过。这里与读路径的处理相反：读路径放弃写入
+         * （反正下次还会重新解析），而清空正是用户要的结果 —— 取回内部数据
+         * 继续清，否则按钮点了等于没点。
+         */
+        Err(poison) => poison.into_inner().clear(),
+    }
+    match info_disk_cache_dir() {
+        Some(dir) => clear_info_disk_cache(&dir),
+        None => Ok(0),
     }
 }
 
@@ -1911,5 +2035,117 @@ mod recycle_on_install_tests {
         assert_eq!(read_info_disk_cache(&dir, &sha), Some(failure));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 清缓存只清本模块的文件，别把 `cache/` 里邻居的缓存一起删了。
+    ///
+    /// 这条同时钉住返回值语义：前端拿它显示「已清除 N 份」，数字必须等于
+    /// 真正删掉的缓存份数（`*.json` 与写一半的 `*.json.tmp`），不含目录里的
+    /// 其它文件。
+    #[test]
+    fn clear_info_disk_cache_removes_only_our_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "oc2-info-clear-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let payload = Result::<LevelSetMetadata, String>::Err("assetBundle.notABundle".into());
+        let first = content_sha256(b"first");
+        let second = content_sha256(b"second");
+        write_info_disk_cache(&dir, &first, &payload);
+        write_info_disk_cache(&dir, &second, &payload);
+        // 模拟进程被杀在写一半时留下的临时文件
+        std::fs::write(dir.join("halfwritten.json.tmp"), b"{").unwrap();
+        // 邻居模块的缓存：不能被顺手删掉
+        std::fs::write(dir.join("keep-me.bin"), b"neighbour").unwrap();
+
+        let removed = clear_info_disk_cache(&dir).unwrap();
+        assert_eq!(removed, 3, "应删掉两份缓存与一个写一半的临时文件");
+        assert!(
+            read_info_disk_cache(&dir, &first).is_none(),
+            "清完之后必须未命中"
+        );
+        assert!(read_info_disk_cache(&dir, &second).is_none());
+        assert!(
+            dir.join("keep-me.bin").is_file(),
+            "目录里其它模块的文件不能删"
+        );
+
+        // 目录已空追删不是错误，返回 0
+        assert_eq!(clear_info_disk_cache(&dir).unwrap(), 0);
+        // 目录不存在同样返回 0，不报错
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(clear_info_disk_cache(&dir).unwrap(), 0);
+    }
+
+    /// 并行扫描必须保持串行时的顺序，进度必须是「真实完成数」。
+    ///
+    /// 真实目录里各份 `info` 大小差几十倍（0.3 MB 与 65 MB 并存），谁先算完
+    /// 完全不确定 —— 结果按原下标归位这件事只能靠断言钉住。这里不往目录里放
+    /// `info`：解析失败的集照样要出现在列表里（卡片仍能按目录名开关），顺带
+    /// 覆盖「坏集不阻塞扫描」。
+    #[test]
+    fn parallel_scan_keeps_order_and_reports_progress() {
+        let root = std::env::temp_dir().join(format!(
+            "oc2-level-scan-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let base = root.join(DIYLEVEL_DIR);
+        // 刻意乱序创建：目录项的读取顺序不代表扫描输出的顺序
+        let plan: [(&str, &[&str]); 2] = [
+            (LEVELS_DIR, &["zeta", "alpha", "mike"]),
+            (DISABLED_DIR, &["beta", "yankee"]),
+        ];
+        for (side, names) in plan {
+            for &name in names {
+                std::fs::create_dir_all(base.join(side).join(name)).unwrap();
+            }
+        }
+
+        let seen: Mutex<Vec<(usize, usize, String)>> = Mutex::new(Vec::new());
+        let sets = scan_level_sets_with_progress(&root, &|done, total, current| {
+            seen.lock()
+                .unwrap()
+                .push((done, total, current.to_string()));
+        });
+
+        let order: Vec<&str> = sets.iter().map(|set| set.dir_name.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["alpha", "mike", "zeta", "beta", "yankee"],
+            "并行不能打乱「先 levels 再 disabled、各自按名排序」"
+        );
+        assert!(
+            sets.iter()
+                .all(|set| set.error.as_deref() == Some("levelSet.infoMissing")),
+            "没有 info 的集要保留在列表里并带上原因"
+        );
+
+        let progress = seen.lock().unwrap();
+        assert_eq!(
+            progress
+                .first()
+                .map(|(done, total, current)| (*done, *total, current.as_str())),
+            Some((0, 5, "")),
+            "第一句进度是「还没开始，共 5 份」"
+        );
+        assert_eq!(
+            progress.last().map(|(done, total, _)| (*done, *total)),
+            Some((5, 5)),
+            "最后一句进度必须等于总数"
+        );
+        let mut done_values: Vec<usize> = progress.iter().map(|(done, _, _)| *done).collect();
+        done_values.sort_unstable();
+        assert_eq!(
+            done_values,
+            vec![0, 1, 2, 3, 4, 5],
+            "完成数必须逐份递增，不能跳号也不能重复"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

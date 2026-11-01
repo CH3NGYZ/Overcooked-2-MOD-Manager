@@ -359,6 +359,103 @@ mod tests {
             Err(ParseError::NotABundle)
         ));
     }
+
+    /// 真实目录的端到端耗时基准（`#[ignore]`，只在本地手动跑）。
+    ///
+    /// ```text
+    /// cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture bench_real_level_sets
+    /// ```
+    ///
+    /// 存在的意义是把「首次解析慢」拆成三段可比的数字：读盘、SHA-256、解压+解对象表。
+    /// 换哈希算法、换 LZMA 实现（纯 Rust `lzma-rs` ↔ liblzma 绑定）、改并行度时
+    /// 前后各跑一次，才谈得上「快了多少」。目录用 `OC2_BENCH_LEVELS` 覆盖，
+    /// 默认取开发者本机的游戏安装；没有目录就跳过（CI 上没有游戏）。
+    #[test]
+    #[ignore]
+    fn bench_real_level_sets() {
+        use sha2::{Digest, Sha256};
+        use std::time::{Duration, Instant};
+
+        let root =
+            std::path::PathBuf::from(std::env::var("OC2_BENCH_LEVELS").unwrap_or_else(|_| {
+                "E:/SteamLibrary/steamapps/common/Overcooked! 2/BepInEx/plugins/OC2DIYLevel".into()
+            }));
+        if !root.is_dir() {
+            eprintln!("跳过：没有关卡集目录（设置 OC2_BENCH_LEVELS 指向 OC2DIYLevel）");
+            return;
+        }
+
+        let mut targets: Vec<std::path::PathBuf> = Vec::new();
+        for side in ["levels", "disabled"] {
+            let Ok(entries) = std::fs::read_dir(root.join(side)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if !dir.is_dir() {
+                    continue;
+                }
+                let Ok(files) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for file in files.flatten() {
+                    let name = file.file_name().to_string_lossy().into_owned();
+                    if name.starts_with("info") {
+                        targets.push(file.path());
+                        break;
+                    }
+                }
+            }
+        }
+        targets.sort();
+        if targets.is_empty() {
+            eprintln!("跳过：{} 下一个关卡集都没找到", root.display());
+            return;
+        }
+
+        let (mut read_all, mut hash_all, mut parse_all) =
+            (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        for path in &targets {
+            let start = Instant::now();
+            let bytes = std::fs::read(path).expect("读取 info 失败");
+            let read = start.elapsed();
+
+            let start = Instant::now();
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            let _ = hasher.finalize();
+            let hash = start.elapsed();
+
+            let start = Instant::now();
+            let parsed = parse_level_set(&bytes);
+            let parse = start.elapsed();
+
+            read_all += read;
+            hash_all += hash;
+            parse_all += parse;
+            let label = path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            eprintln!(
+                "{label:>16} {:>7.1} MiB  读 {:>7.1} ms  哈希 {:>7.1} ms  解析 {:>8.1} ms  {}",
+                bytes.len() as f64 / (1024.0 * 1024.0),
+                read.as_secs_f64() * 1000.0,
+                hash.as_secs_f64() * 1000.0,
+                parse.as_secs_f64() * 1000.0,
+                if parsed.is_ok() { "ok" } else { "err" },
+            );
+        }
+        eprintln!(
+            "合计 {} 份：读 {:.0} ms  哈希 {:.0} ms  解析 {:.0} ms  → 串行总计 {:.0} ms",
+            targets.len(),
+            read_all.as_secs_f64() * 1000.0,
+            hash_all.as_secs_f64() * 1000.0,
+            parse_all.as_secs_f64() * 1000.0,
+            (read_all + hash_all + parse_all).as_secs_f64() * 1000.0,
+        );
+    }
 }
 
 // ===== UnityFS 容器解析 =====
@@ -416,20 +513,36 @@ fn decompress(
 /// 解一个 Unity 的 LZMA 块。
 ///
 /// Unity 的写法是 `[5 字节 LZMA1 properties][压缩数据]` —— 比标准 `.lzma`
-/// 容器少了那 8 字节的解压长度。`lzma-rs` 只认标准容器，所以这里**补回**
-/// 长度字段：`[5 字节 props][8 字节小端长度][压缩数据]`。
+/// 容器少了那 8 字节的解压长度，说明流里带 EOS marker。所以这里**补回**一个
+/// 13 字节的 alone 头，长度字段填「未知」：`[5 props][8 字节 u64::MAX][数据]`。
+///
+/// **为什么用 liblzma（`xz2`）而不是纯 Rust 的 `lzma-rs`**：实测同一批真实
+/// 地图（合计 131 MB）decompress+解对象表，`lzma-rs` 13584 ms、liblzma
+/// 4557 ms（debug 构建，见 `bench_real_level_sets`）；tutu 那一份 9202 ms →
+/// 2587 ms。C 实现编译期就带优化，因此 debug 构建同样快 —— 开发时进地图页
+/// 也从「等十几秒」变成「等几秒」。
 fn decompress_lzma_block(data: &[u8], uncompressed_size: usize) -> Result<Vec<u8>, ParseError> {
     if data.len() < 5 {
         return Err(ParseError::Corrupt("lzma properties truncated".into()));
     }
     let mut standard = Vec::with_capacity(data.len() + 8);
     standard.extend_from_slice(&data[..5]);
-    standard.extend_from_slice(&(uncompressed_size as u64).to_le_bytes());
+    /*
+     * 长度字段写 `u64::MAX`（= alone 头里的「未知长度」）而不是真实解压大小。
+     *
+     * Unity 既然省掉了这 8 字节，流里就带 EOS marker。liblzma 的 alone 解码器
+     * 看到「已知长度」就会按那个长度停，与 EOS 位置对不上时直接报 `data error`
+     * （实测 test_level / oc1_story 都栽在这里）；声明未知长度后它按 EOS 结束，
+     * 解出来的长度再由下面那句校验兜底。
+     */
+    standard.extend_from_slice(&u64::MAX.to_le_bytes());
     standard.extend_from_slice(&data[5..]);
 
-    let mut input = standard.as_slice();
+    let mut stream = xz2::stream::Stream::new_lzma_decoder(u64::MAX)
+        .map_err(|error| ParseError::Corrupt(format!("lzma: {error}")))?;
     let mut out = Vec::with_capacity(uncompressed_size);
-    lzma_rs::lzma_decompress(&mut input, &mut out)
+    stream
+        .process_vec(&standard, &mut out, xz2::stream::Action::Finish)
         .map_err(|error| ParseError::Corrupt(format!("lzma: {error}")))?;
     if out.len() != uncompressed_size {
         return Err(ParseError::Corrupt(format!(

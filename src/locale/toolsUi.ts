@@ -175,6 +175,30 @@ export const toolsUi: DomainMessages = {
     ko: '아바타 캐시 {count}개를 지웠습니다',
     ja: 'アバターキャッシュを {count} 件消去しました',
   },
+  // 清除地图缓存
+  clearLevelCache: {
+    'zh-CN': '清除地图缓存',
+    'zh-TW': '清除地圖快取',
+    en: 'Clear map cache',
+    ko: '지도 캐시 지우기',
+    ja: 'マップキャッシュを消去',
+  },
+  // 删除已解析的地图元数据；下次进入地图页会重新解析
+  deletesParsedMapInfoItWillBeReparsedTheNextTimeYouOpenTheMapPage: {
+    'zh-CN': '删除已解析的地图元数据；下次进入地图页会重新解析',
+    'zh-TW': '刪除已解析的地圖中繼資料；下次進入地圖頁會重新解析',
+    en: 'Deletes parsed map metadata. It will be parsed again the next time you open the map page.',
+    ko: '파싱된 지도 메타데이터를 삭제합니다. 다음에 지도 페이지를 열면 다시 파싱합니다.',
+    ja: '解析済みのマップメタデータを削除します。次にマップページを開いたときに再解析します。',
+  },
+  // 已清除 {count} 份地图缓存
+  clearedCachedLevelInfoS: {
+    'zh-CN': '已清除 {count} 份地图缓存',
+    'zh-TW': '已清除 {count} 份地圖快取',
+    en: 'Cleared {count} cached map record(s)',
+    ko: '지도 캐시 {count}개를 지웠습니다',
+    ja: 'マップキャッシュを {count} 件消去しました',
+  },
   // 安装 MOD
   installMod: {
     'zh-CN': '安装 MOD',

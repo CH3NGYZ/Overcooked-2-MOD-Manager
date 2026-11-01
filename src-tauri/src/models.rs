@@ -74,6 +74,21 @@ pub struct DiyLevelInfo {
     pub backups: Vec<String>,
 }
 
+/// 关卡集扫描进度（事件 `level-set-scan-progress` 的载荷）。
+///
+/// 首次进地图页要逐份解析 `info`（真实目录里 7 个地图合计 131 MB，最大一份
+/// 65 MB），期间界面只有一个转圈条 —— 用户看不出是在跑还是卡死。把「已解析
+/// 几份 / 共几份 / 正在读哪个目录」发出来，转圈条下面就有真实进度可看。
+///
+/// `done` 是**已完成**数而不是当前下标；`current` 是刚开始解析的那份（可能
+/// 与 `done` 指向同一份，因为完成与开始几乎同时），前端当「正在读取」显示。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelSetScanProgress {
+    pub done: usize,
+    pub total: usize,
+    pub current: String,
+}
+
 /// 一个 DIYLevel 关卡集（玩家口中的「地图」）在磁盘上的状态。
 ///
 /// 与 `InstalledMod` 的关系：两者都是「游戏目录里的东西 + 元数据」，但扫描源

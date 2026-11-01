@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NSpin, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { DownloadOutline, FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
-import { api } from '../services/tauri'
+import { api, watchLevelSetScan } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import { useNotify } from '../useNotify'
@@ -28,7 +29,7 @@ import {
   type LevelSetCardTag,
   type LevelSetTone,
 } from '../levelSetStatus.ts'
-import type { LevelSetInfo, MapInfo, Repository } from '../types'
+import type { LevelSetInfo, LevelSetScanProgress, MapInfo, Repository } from '../types'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
@@ -87,6 +88,13 @@ const sets = ref<LevelSetInfo[]>([])
 /** 地图源声明的地图（含 Release 缓存），只用于版本对照与依赖判定。 */
 const maps = ref<MapInfo[]>([])
 const loading = ref(true)
+/**
+ * 扫描进度（后端 `level-set-scan-progress` 逐份上报）。
+ *
+ * 只用来填转圈条下面的那两行；`null` 表示「还不知道总数」（刚发出请求、
+ * 后端还没列完目录），这时只显示不确定动画，不编一个假百分比。
+ */
+const scanProgress = ref<LevelSetScanProgress | null>(null)
 /** 每个集自己的开关请求状态（互不阻塞）。 */
 const busy = ref<Record<string, boolean>>({})
 /** 每个集自己的删除请求状态。 */
@@ -223,6 +231,8 @@ const repositories = computed<Repository[]>(() =>
  */
 async function load() {
   loading.value = sets.value.length === 0
+  // 每次重新扫描都清掉上一次的进度，避免转圈条下面挂着过期的「5/7」
+  scanProgress.value = null
   try {
     const [levelSets, mapList] = await Promise.all([
       api.levelSets(),
@@ -245,11 +255,15 @@ async function load() {
  */
 async function reloadSets() {
   try {
+    scanProgress.value = null
     sets.value = await api.levelSets()
   } catch (reason) {
     message.error(backendMessageOf(reason))
   }
 }
+
+/** 扫描进度事件的解绑函数（卸载时调用）。 */
+let unlistenScan: UnlistenFn | null = null
 
 onMounted(() => {
   /*
@@ -265,12 +279,23 @@ onMounted(() => {
    * 已有数据时 `ensureLoaded` 直接返回，不会重复扫描。
    */
   void ensureLoaded()
+  /*
+   * 扫描进度：本页只要在扫就会收到，解绑放在卸载里 —— 事件监听器不随页面
+   * 卸载自动消失，漏解绑会随每次进出累积（与文档级 click 同理）。
+   */
+  void watchLevelSetScan((progress) => {
+    scanProgress.value = progress
+  }).then((unlisten) => {
+    unlistenScan = unlisten
+  })
   void load()
 })
 
 /** 文档级监听挂在页面之外，页面卸载必须解绑，否则会随每次进出累积。 */
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick)
+  unlistenScan?.()
+  unlistenScan = null
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */
@@ -889,6 +914,19 @@ async function checkUpdates() {
   </Teleport>
 
   <n-spin :show="loading">
+    <!--
+      转圈条下面显示真实进度与当前读取的文件夹。
+      用 NSpin 自带的 #description 槽（官方位置就是 spinner 下方），不另做浮层：
+      槽只在 `show` 时参与渲染，扫完自然消失，不需要额外开关。
+      `done/total` 来自后端逐份上报，没拿到总数时只显示不确定文案，不编百分比。
+    -->
+    <template #description>
+      <div class="scan-progress">
+        <span v-if="scanProgress">{{ t('levelSet.scanningProgress', { done: scanProgress.done, total: scanProgress.total }) }}</span>
+        <span v-else>{{ t('levelSet.scanningPreparing') }}</span>
+        <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
+      </div>
+    </template>
     <n-empty v-if="!loading && !sortedSets.length" class="empty"
       :description="t('levelSet.noLevelSets')" />
 
@@ -1234,5 +1272,31 @@ async function checkUpdates() {
 
 .empty {
   padding: 48px 0;
+}
+
+/*
+ * 转圈条下方的读取进度。
+ *
+ * 两行都居中排在 spinner 下：第一行「已读取 x/y」是确定进度，第二行是当前
+ * 正在读的文件夹。文件夹名可能很长，单行省略 + title 给全文，避免把遮罩
+ * 撑成两行宽度 —— 进度数字才是这一块的主信息。
+ */
+.scan-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--oc2-text-2);
+}
+
+.scan-folder {
+  max-width: 56vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--oc2-text-3);
 }
 </style>

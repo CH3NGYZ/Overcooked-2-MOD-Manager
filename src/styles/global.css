@@ -443,8 +443,16 @@ body {
   position: absolute;
   inset: 0;
   transform: none;
-  display: grid;
-  place-items: center;
+  /*
+   * 必须是 flex 列，不能用 grid：body 里除了转圈还有 `#description` 槽
+   * （地图页在转圈条下面显示「已读取 x/y」与正在读取的文件夹）。grid 会把
+   * 这两者拆成两行并各自拉伸到半高 —— 实测转圈在顶部、文字在 400px 之外，
+   * 看起来是两块无关的东西。flex 列让它们贴在一起、整组居中。
+   */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 

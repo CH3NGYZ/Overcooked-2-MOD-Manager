@@ -105,7 +105,6 @@ dependencies = [
  "globset",
  "log",
  "lz4_flex 0.11.6",
- "lzma-rs",
  "minisign-verify",
  "regex",
  "reqwest 0.12.28",
@@ -131,6 +130,7 @@ dependencies = [
  "walkdir",
  "winapi",
  "winreg",
+ "xz2",
  "zip 2.4.2",
 ]
 

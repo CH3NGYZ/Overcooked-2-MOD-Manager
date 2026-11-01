@@ -47,7 +47,6 @@ same-file = "1"
 # 而这份资源恰恰用 LZMA 压缩数据块，用它会把压缩数据当原始数据。
 unityfs = "0.1"
 lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
-lzma-rs = "0.3"
 regex = "1"
 scraper = { version = "0.27", default-features = false }
 globset = "0.4"
@@ -59,6 +58,7 @@ base64 = "0.22"
 minisign-verify = "0.2.5"
 url = "2"
 thiserror = "2"
+xz2 = { version = "0.1.7", features = ["static"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

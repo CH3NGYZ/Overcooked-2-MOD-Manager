@@ -39,7 +39,7 @@ const modRuntimeStatusSource = read('src/modRuntimeStatus.ts')
 
 test('刷新状态机只有一处实现，两个域都用它', () => {
   // 状态机自己：条目级 / 源级 / 批次级 + 并发 + 结果
-  for (const symbol of ['refreshing', 'queued', 'refreshingSources', 'refreshingAll', 'checkingBound', 'outcome']) {
+  for (const symbol of ['refreshing', 'queued', 'refreshingSources', 'refreshingAll', 'entryStateUnavailable', 'checkingBound', 'outcome']) {
     assert.match(refreshState, new RegExp(`\\b${symbol}\\b`), `状态机缺 ${symbol}`)
   }
   assert.match(refreshState, /mapWithConcurrency\(/, '并发上限必须走共享限并发工具')
@@ -101,6 +101,33 @@ test('单条结果当场落地：排队标记在轮到时清掉，不等整批�
   assert.ok(
     itemBody.indexOf('spec.fail?.') < itemBody.indexOf('state.setItemFlag(item.id, false)'),
     '失败写回必须早于关闭「刷新中」标志',
+  )
+})
+
+test('整批标志不参与卡片判定：进度只能按条目粒度显示', () => {
+  /*
+   * `refreshingAll` 覆盖整批（源树 → 社区发现 → 全部条目），要亮到按钮恢复
+   * 可点为止 —— 它是**门控**用的。卡片判定如果吃它，整批期间每张卡都被按住，
+   * 逐个返回的结果被压成「整批一起回来」，正是用户报的现象。
+   *
+   * 卡片只认 `entryStateUnavailable`：它只在条目集合被清空重建的空窗期里为真，
+   * 列表填回来就必须关掉。
+   */
+  assert.match(modRuntimeStatusSource, /state\.entryStateUnavailable/, '卡片要读条目集合兜底')
+  assert.doesNotMatch(modRuntimeStatusSource, /refreshingAll/, '卡片判定不许读整批标志')
+  assert.match(modStatusTags, /entryStateUnavailable/, '标签组件要拿到条目集合兜底')
+  assert.doesNotMatch(modStatusTags, /refreshingAll/, '标签组件不许拿整批标志')
+
+  // 两个域都必须在进入 Release 阶段之前关掉兜底，否则又是整批按住
+  assert.match(
+    repositoryEngine,
+    /setEntryStateUnavailable\(false\)[\s\S]{0,400}?runRepositoryBatch\(available/,
+    '仓库侧进入 Release 阶段前要先关掉条目集合兜底',
+  )
+  assert.match(
+    mapEngine,
+    /setEntryStateUnavailable\(false\)[\s\S]{0,400}?refreshReleases\(maps\.value/,
+    '地图侧进入 Release 阶段前要先关掉条目集合兜底',
   )
 })
 
@@ -171,8 +198,8 @@ test('关卡集卡片能显示「刷新中」，并与版本结论互斥', () =>
   assert.match(levelSetStatus, /LevelSetRefreshingHint/)
   assert.match(levelSetStatus, /refreshing\.maps\.has\(/)
   assert.match(levelSetStatus, /refreshing\.sources\.has\(/)
-  // 整源刷新会把列表清空重建，这时绑定查不到，也必须显示「刷新中」而不是「未绑定」
-  assert.match(levelSetStatus, /refreshing\.all === true/)
+  // 列表清空重建期间绑定查不到，这时也必须显示「刷新中」而不是「未绑定」
+  assert.match(levelSetStatus, /refreshing\.entryStateUnavailable === true/)
   assert.match(levelSetStatus, /'tools\.refreshing'/)
   assert.match(levelsView, /refreshingHint/, '页面要把实时刷新状态传进标签判定')
 })

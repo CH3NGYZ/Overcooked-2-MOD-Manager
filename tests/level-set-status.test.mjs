@@ -471,7 +471,7 @@ test('卡片标签：绑定地图（或它所在的地图源）在刷新时显�
   // 整源刷新：共享列表被清空重建，绑定暂时查不到 —— 也不能显示「未绑定」
   const allRefreshing = levelSetCardTags(
     set({ version: '0.73' }), [], [], true, [],
-    { all: true, maps: new Set(), sources: new Set() },
+    { entryStateUnavailable: true, maps: new Set(), sources: new Set() },
   )
   assert.deepEqual(allRefreshing.map((tag) => tag.text), ['tools.refreshing'])
 

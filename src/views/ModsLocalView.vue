@@ -1667,11 +1667,16 @@ function removePackage(node: ModPackageNode) {
               外壳（开关 + 标题 + 标签区 + 工具栏 + 展开）由 LocalItemCard 负责，
               这里只提供数据、状态插槽与动作；原生 click 仍由页面处理 ——
               onCardClick 要给 document 级的「点空白收起」打标记。
+
+              `switchable` 只对随包依赖关掉：没有 BepInPlugin GUID 的库 DLL
+              不是独立 MOD，启停跟着所属包走，单独关掉只会让依赖它的主 MOD
+              加载失败（随包插件同理，见地图管理页的详情）。
             -->
             <LocalItemCard v-if="!pkg.grouped" v-for="mod in pkg.mods" :key="mod.dll_file"
               :data-dll-file="mod.dll_file"
               :data-focus-id="bindingRepositoryId(mod)"
               :data-mod-anchor="modAnchor(mod)"
+              :switchable="!mod.is_dependency"
               :enabled="mod.enabled"
               :toggle-loading="!!busy[mod.dll_file]"
               :title="singleModTitle(mod)"
@@ -1870,9 +1875,11 @@ function removePackage(node: ModPackageNode) {
                   所以不传 #status，组件会自己补 1px 隐形占位保持按钮列对齐。
                   顺序是「主 MOD → 它带的依赖 DLL」：标题后带版本号，依赖项多一个
                   灰色「随包依赖」标签（排序见 toPackage）。
+                  依赖行同样不给开关（理由见上面单 DLL 包那段注释）。
                 -->
                 <LocalItemCard v-for="mod in pkg.mods" :key="mod.dll_file"
                   :data-dll-file="mod.dll_file"
+                  :switchable="!mod.is_dependency"
                   :enabled="mod.enabled"
                   :toggle-loading="!!busy[mod.dll_file]"
                   :title="modTitle(mod)"

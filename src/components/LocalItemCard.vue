@@ -32,7 +32,7 @@ import { NCollapseTransition, NSwitch, NTag } from 'naive-ui'
 import { tagColorFor } from '../theme'
 import type { CSSProperties } from 'vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 开关当前值；`switchable: false` 时无意义。 */
   enabled?: boolean
   /**
@@ -95,7 +95,18 @@ const props = defineProps<{
   toolGap?: number
   /** 工具栏单个按钮宽度，缺省由 CSS 回退到 30px。 */
   toolButtonWidth?: number
-}>()
+}>(), {
+  /**
+   * 必须显式给 `true`，不能靠「缺省就是 undefined」。
+   *
+   * Vue 对类型为 `Boolean` 的 prop 有**缺省强制转换**：调用方没传时值是
+   * `false` 而不是 `undefined`（`resolvePropValue` 里的 boolean casting）。
+   * 所以 `switchable?: boolean` 一旦省略默认值，`switchable !== false` 对
+   * 所有「没传这个 prop」的调用方都恒为假 —— 普通 MOD 与普通地图的开关会
+   * 一起消失，而 `:switchable="false"` 的随包插件看起来「正常」，很难察觉。
+   */
+  switchable: true,
+})
 
 const emit = defineEmits<{
   /** 开关变化：父级调后端并刷新。 */

@@ -68,6 +68,9 @@ provider = "github"
 username = "kfyangc"
 repository = "Overcooked2-DIYChefFastInit"
 region = ""
+# 空串 = 该仓库在 Windows 与 macOS 都存在；`tests/repository-availability.test.mjs`
+# 要求每个仓库都显式声明，缺字段会被当成「平台不适用」而静默消失。
+platform = ""
 
 # 下载方式
 download_mode = "release"

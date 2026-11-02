@@ -142,7 +142,6 @@ const deleting = ref<Record<string, boolean>>({})
  * `reloadSets` 在这之前就定义了 —— 用可赋值的占位函数避开初始化顺序问题，
  * 默认空动作在闸门装上之前是安全的（那时根本没有订阅）。
  */
-let markSetsReloaded: () => void = () => {}
 /*
  * 卡片展开状态（规则在 `useCardExpansion` 里）：外层是关卡集卡片，内层是集详情
  * 里的随包插件。`singleOuter` 表示一次只展开一张集卡片，点另一张就换过去；
@@ -295,7 +294,6 @@ async function load() {
     message.error(backendMessageOf(reason))
   } finally {
     loading.value = false
-    markSetsReloaded()
   }
 }
 
@@ -311,8 +309,6 @@ async function reloadSets() {
     sets.value = await api.levelSets()
   } catch (reason) {
     message.error(backendMessageOf(reason))
-  } finally {
-    markSetsReloaded()
   }
 }
 
@@ -334,18 +330,17 @@ const {
 
 /*
  * 手动改磁盘也要刷新列表：用户在资源管理器里删掉一个集目录、或者别的工具往
- * `levels/` 里写东西时，后端 `level_watch` 会推一声 `level-sets-changed`。
- * 闸门（`useLevelSetsExternalChange`）负责判断这一声该不该读：页面自己刚读完
- * 就是自己写盘的回声（丢弃），开关/删除/导入半路上不读半成品，其余合并成一次。
+ * `levels/` 里写东西时，后端 `level_watch` 会推一声 `level-sets-changed`，
+ * 本页立刻重读。自己写盘的回声不单独区分（重扫实测几十毫秒，比漏一次外部
+ * 改动便宜得多，见 `src/levelSetsChangeGate.ts`）；只有操作半路上才丢弃。
  */
-const { touch: touchSetsReloaded } = useLevelSetsExternalChange(
+useLevelSetsExternalChange(
   reloadSets,
   busyReader(() => importing.value
     || loading.value
     || Object.values(busy.value).some(Boolean)
     || Object.values(deleting.value).some(Boolean)),
 )
-markSetsReloaded = touchSetsReloaded
 
 /**
  * 整窗进度遮罩：来源卡片没打开时才用。

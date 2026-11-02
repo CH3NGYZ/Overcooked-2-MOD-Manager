@@ -101,7 +101,9 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
   // 共享实现里两条规矩：暂存文件必须清、本地文件绝不删
   const importFlow = read('src/composables/useLevelSetImport.ts')
   assert.match(importFlow, /if \(stagedFile\) await api\.discardMapSource\(stagedFile\)\.catch\(/)
-  assert.match(importFlow, /await onImported\?\.\(\)/, '装完要通知宿主重读')
+  // 装完要通知宿主重读：默认走构造时的 onImported，Release 安装可传自己的收尾
+  assert.match(importFlow, /const afterImport = options\.afterImport \?\? onImported/, 'onImported 是默认的装完通知')
+  assert.match(importFlow, /await afterImport\?\.\(\)/, '装完要通知宿主重读')
   // 确认界面也不再是一页一套：地图与 MOD 共用同一张详情卡片
   for (const [name, source] of [['MapsOnlineView', mapsOnline], ['LevelsView', levels]]) {
     assert.match(source, /<InstallDetailDialog/, `${name} 要用共用的安装详情弹窗`)

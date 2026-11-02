@@ -49,8 +49,20 @@ function levelSet(overrides = {}) {
     version: '0.89',
     level_count: 10,
     file_count: 12,
-    exists: false,
+    conflicts: [],
     plugins: [],
+    ...overrides,
+  }
+}
+
+/** 一个已安装的同身份项（字段与后端 `InstallConflict` 一致）。 */
+function conflict(overrides = {}) {
+  return {
+    name: '音乐厨房',
+    version: '0.88',
+    handle: 'shz',
+    enabled: true,
+    same_version: false,
     ...overrides,
   }
 }
@@ -83,6 +95,7 @@ function modPreview(overrides = {}) {
     mod_count: 1,
     dependency_count: 0,
     entries: [],
+    conflicts: [],
     origin: 'manual',
     release_tag: '',
     release_body: '',
@@ -94,7 +107,7 @@ const LABELS_OF = (entry) => entry.fields.map((field) => field.label)
 
 test('地图包：一个地图集是一张卡，随包插件挂在它下面', () => {
   const model = levelSetImportDetail('D:\\下载\\SHZ v0.4.zip', [
-    levelSet({ exists: true, plugins: [plugin()] }),
+    levelSet({ plugins: [plugin()] }),
   ])
 
   assert.equal(model.title, '安装详情')
@@ -104,13 +117,14 @@ test('地图包：一个地图集是一张卡，随包插件挂在它下面', ()
   assert.equal(model.head.summary, '1 个 DLL · 1 个地图集')
   assert.equal(model.confirmable, true)
   assert.equal(model.releaseLog, null, '地图 ZIP 没有 Release 日志')
+  assert.deepEqual(model.conflicts, [], '没有同身份已安装项时冲突为空')
+  assert.equal(model.conflictHint, '')
 
   const [card] = model.entries
   // 标题用中文名（作者与玩家平时叫的那个），右侧那列是版本
   assert.equal(card.title, '音乐厨房')
   assert.equal(card.subtitle, '菊花梨 · 10 个关卡')
   assert.equal(card.meta, '0.89')
-  assert.equal(card.note, '已有同名地图集：安装会先把旧版本移入回收站')
   // 两列成对：中文名/英文名、作者/版本、关卡数/文件数，安装目录单独占整行
   assert.deepEqual(LABELS_OF(card), ['中文名', '英文名', '作者', '版本', '关卡数', '文件数', '安装目录'])
   assert.deepEqual(card.fields.map((field) => field.value), ['音乐厨房', 'SHZ', '菊花梨', '0.89', '10', '12', 'shz'])
@@ -140,7 +154,6 @@ test('地图包：标题按「中文名 → 英文名 → 目录名」兜底，�
   assert.deepEqual(model.entries.map((entry) => entry.title), ['Packed', 'b'])
   assert.deepEqual(model.entries[0].children, [], '没有插件时 children 是空数组，模板不用判空')
   assert.equal(model.entries[1].subtitle, '菊花梨 · 10 个关卡')
-  assert.equal(model.entries[0].note, undefined, '不覆盖时不该出现提示')
 })
 
 test('地图包：读不出元数据的插件照样打「随包插件」标签，并退回文件名当标题', () => {
@@ -210,6 +223,40 @@ test('Release 日志只在「仓库来源 + 有版本 + 有正文」时出现', 
   })).releaseLog, null)
 })
 
+test('冲突：清单按句柄去重保序，确认按钮改「卸载并安装」并带警示标题', () => {
+  const model = levelSetImportDetail('/tmp/maps.zip', [
+    levelSet({
+      conflicts: [
+        conflict(),
+        conflict({ handle: 'shz2', name: '另一张旧图', version: '0.9', same_version: true }),
+      ],
+    }),
+    // 同一已安装项只卸载一次：重复句柄保留第一次出现的行
+    levelSet({ dir_name: 'b', name: 'SHZ2', conflicts: [conflict()] }),
+  ])
+
+  assert.equal(model.confirmLabel, '卸载并安装')
+  assert.equal(model.conflictHint, '以下已安装内容与本次安装的 ID / 地图身份相同，需要先卸载再安装：')
+  assert.deepEqual(model.conflicts, [
+    { key: 'shz', name: '音乐厨房', version: '0.88', sameVersion: false },
+    { key: 'shz2', name: '另一张旧图', version: '0.9', sameVersion: true },
+  ])
+})
+
+test('冲突：MOD 预览与地图共用同一套冲突映射与按钮文案', () => {
+  const mod = modPreviewDetail(modPreview({
+    // 空版本在冲突行里写破折号，与条目右侧的兜底规则一致
+    conflicts: [conflict({ name: '旧版 MOD', handle: 'Old.dll', version: '' })],
+  }))
+
+  assert.equal(mod.confirmLabel, '卸载并安装')
+  assert.equal(mod.conflictHint, '以下已安装内容与本次安装的 ID / 地图身份相同，需要先卸载再安装：')
+  assert.deepEqual(mod.conflicts, [
+    { key: 'Old.dll', name: '旧版 MOD', version: '—', sameVersion: false },
+  ])
+  assert.equal(mod.entries.length, 0, '冲突不混进条目列表，而是单独一块警示')
+})
+
 test('两种安装共用同一套标题与底栏文案', () => {
   const mod = modPreviewDetail(modPreview())
   const map = levelSetImportDetail('/tmp/a.zip', [levelSet()])
@@ -218,6 +265,9 @@ test('两种安装共用同一套标题与底栏文案', () => {
   assert.equal(mod.cancelLabel, map.cancelLabel)
   assert.equal(mod.confirmLabel, '立即安装')
   assert.equal(mod.cancelLabel, '取消')
+  // 有冲突时两种安装也必须是同一个动作标签：先卸载再安装
+  assert.equal(modPreviewDetail(modPreview({ conflicts: [conflict()] })).confirmLabel,
+    levelSetImportDetail('/tmp/b.zip', [levelSet({ conflicts: [conflict()] })]).confirmLabel)
 })
 
 test('路径归一：Windows 反斜杠与 POSIX 斜杠都取到文件名', () => {

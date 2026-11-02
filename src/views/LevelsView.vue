@@ -23,6 +23,7 @@ import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
+import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
@@ -308,7 +309,19 @@ const {
   importing, importSource,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
+  zipProgress, zipProgressText,
 } = useLevelSetImport(() => reloadSets())
+
+/**
+ * 整窗进度遮罩：来源卡片没打开时才用。
+ *
+ * 卡片打开时（本地拖入 / 直链）进度显示在卡片里，不叠两个转圈；卡片刻意不接
+ * 这个遮罩的判据 —— 在线 Release 安装与确认后的写盘阶段没有卡片可显示，
+ * 那时遮罩是唯一能看到「到第几个了」的地方。
+ */
+const showZipOverlay = computed(
+  () => importing.value && !!zipProgress.value && !installSourceOpen.value,
+)
 
 async function handleInstallSourceSelect(source: InstallSource) {
   await importSource(source, {
@@ -1136,7 +1149,14 @@ async function checkUpdates() {
   -->
   <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
     :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
+    :read-progress-text="importing ? zipProgressText : ''"
     :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
+
+  <!--
+    来源卡片没打开时的进度（在线 Release 暂存、确认后的写盘阶段）：与卡片里
+    那行文案同一份数据，避免两处各写一套「到第几个了」。
+  -->
+  <BusyOverlay :show="showZipOverlay" :status="zipProgressText" />
 
   <!--
     导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。

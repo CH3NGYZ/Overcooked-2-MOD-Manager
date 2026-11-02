@@ -52,6 +52,7 @@ import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
+import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
@@ -138,9 +139,21 @@ const {
   importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
+  zipProgress, zipProgressText,
 } = useLevelSetImport(() => loadLevelSets())
 /** 「安装地图」来源卡片是否打开。 */
 const installSourceOpen = ref(false)
+
+/**
+ * 整窗进度遮罩：来源卡片没打开时才用。
+ *
+ * 本页在线安装是主路径，它没有来源卡片 —— 下载由 `DownloadStrip` 显示，
+ * 下载完的识别与写盘只能靠这里告诉用户「读到第几个 info / 写到第几张」；
+ * 卡片打开时进度显示在卡片里，不叠两个转圈。
+ */
+const showZipOverlay = computed(
+  () => importing.value && !!zipProgress.value && !installSourceOpen.value,
+)
 /** 详情抽屉里当前打开的地图 id（抽屉挂在页面级，卡片只负责打开）。 */
 const detailId = ref<string | null>(null)
 
@@ -912,7 +925,14 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
   -->
   <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
     :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
+    :read-progress-text="importing ? zipProgressText : ''"
     :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
+
+  <!--
+    来源卡片没打开时的进度（本页主路径的在线安装、确认后的写盘阶段）：与卡片里
+    那行文案同一份数据，避免两处各写一套「到第几个了」。
+  -->
+  <BusyOverlay :show="showZipOverlay" :status="zipProgressText" />
 
   <!--
     导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。

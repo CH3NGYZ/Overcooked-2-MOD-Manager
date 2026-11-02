@@ -21,6 +21,13 @@ defineProps<{
   show: boolean
   /** 显示在转圈下方的说明文字，例如「正在备份 BepInEx 框架…」 */
   description?: string
+  /**
+   * 第二行明细，例如「正在读取 xx/info_yi（2/13）」。
+   *
+   * 长任务只知道「在做」不够：识别一个上百 MB 的地图合集要几十秒，没有
+   * 「第几个 / 共几个」的具体进度，用户会以为程序卡死。
+   */
+  status?: string
 }>()
 </script>
 
@@ -31,7 +38,10 @@ defineProps<{
       否则它下面的页面会短暂点不动。
     -->
     <div v-if="show" class="busy-overlay" role="alert" aria-live="assertive" aria-busy="true">
-      <n-spin size="large" :description="description" />
+      <div class="busy-body">
+        <n-spin size="large" :description="description" />
+        <p v-if="status" class="busy-status" :title="status">{{ status }}</p>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -50,5 +60,22 @@ defineProps<{
   backdrop-filter: blur(2px);
   /* 遮住标题栏后不再需要让出顶部空间：这个状态本来就不允许操作 */
   cursor: progress;
+}
+/* 转圈与进度明细竖排：两行都在内容区正中，不随文字长度左右漂移 */
+.busy-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.busy-status {
+  max-width: min(70vw, 560px);
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--oc2-text-2);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

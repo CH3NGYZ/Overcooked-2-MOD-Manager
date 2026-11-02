@@ -198,6 +198,22 @@ export const levelSet: DomainMessages = {
     ko: '지도 폴더를 세는 중…',
     ja: 'マップフォルダを数えています…',
   },
+  // 识别来源 ZIP：正在读哪个 info、读到第几份（转圈条下方）
+  zipReading: {
+    'zh-CN': '正在读取 {name}（{done}/{total}）',
+    'zh-TW': '正在讀取 {name}（{done}/{total}）',
+    en: 'Reading {name} ({done}/{total})',
+    ko: '{name} 읽는 중 ({done}/{total})',
+    ja: '{name} を読み込み中（{done}/{total}）',
+  },
+  // 导入来源 ZIP：正在写第几张（确认后写盘阶段）
+  zipInstalling: {
+    'zh-CN': '正在写入 {name}（{done}/{total}）',
+    'zh-TW': '正在寫入 {name}（{done}/{total}）',
+    en: 'Writing {name} ({done}/{total})',
+    ko: '{name} 쓰는 중 ({done}/{total})',
+    ja: '{name} を書き込み中（{done}/{total}）',
+  },
   imported: {
     'zh-CN': '已导入 {count} 个地图',
     'zh-TW': '已匯入 {count} 個地圖',

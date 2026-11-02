@@ -212,6 +212,24 @@ export interface LevelSetScanProgress {
   current: string
 }
 
+/**
+ * 来源 ZIP 的识别 / 导入进度（后端 `level-set-zip-progress`）。
+ *
+ * 与 `LevelSetScanProgress` 的区别是读的对象：这一份读的是**来源 ZIP**
+ * （本地拖入 / 直链 / 在线 Release 下载来的），暂存阶段要识别里面的
+ * `info`，导入阶段要把它解压落盘。一个上百 MB 的合集在 debug 构建里要
+ * 几十秒，只转圈不报进度，用户分不清是在跑还是卡死。
+ */
+export interface LevelSetZipProgress {
+  /** `info` = 暂存阶段解析 ZIP 里的 info；`install` = 导入阶段写盘。 */
+  phase: 'info' | 'install'
+  /** 已完成数：`info` 阶段是已解析的目录数，`install` 阶段是已写入的关卡集数。 */
+  done: number
+  total: number
+  /** 正在处理的条目：`info` 阶段是 ZIP 内条目名，`install` 阶段是关卡集名。 */
+  current: string
+}
+
 export interface LevelSetInfo {
   /** 目录名（唯一键，也是开关时移动的目录名）。 */
   dir_name: string
@@ -287,7 +305,7 @@ export interface InstallConflict {
  * 后端暂存好的一份地图来源（`stage_map_source` 的返回）。
  *
  * 本地文件与在线直链走同一条「先暂存、再确认导入」的路：`path` 是后端能读到的
- * ZIP 绝对路径，`sets` 是里面识别出的关卡集，与 `inspect_level_set_zip` 同构。
+ * ZIP 绝对路径，`sets` 是里面识别出的关卡集（`inspect_zip_with_progress` 的产物）。
  */
 export interface StagedMapSource {
   /** ZIP 绝对路径（`staged` 为真时位于后端 cache 目录）。 */

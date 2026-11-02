@@ -32,7 +32,7 @@ import type {
   UninstallLocalModResult,
   LevelSetInfo,
   LevelSetScanProgress,
-  ZipLevelSet,
+  LevelSetZipProgress,
   MapInfo,
   StagedMapSource,
 } from '../types'
@@ -212,13 +212,12 @@ export const api = {
    * 否则「拖地图到 MOD 页」会被装成一个 0 DLL 的空 MOD。
    */
   classifyDropSource: (path: string) => invoke<DropSourceKind>('classify_drop_source', { path }),
-  /** 读 ZIP 列出其中的关卡集，不落盘。 */
-  inspectLevelSetZip: (zipPath: string) =>
-    invoke<ZipLevelSet[]>('inspect_level_set_zip', { zipPath }),
   /**
    * 从本地 ZIP 导入选定的关卡集。
    *
    * 已存在的同名关卡集会被回收（进回收站），不是直接删除。游戏运行时允许。
+   * 期间后端逐份发 `level-set-zip-progress`（`info` 阶段再识别一遍、`install`
+   * 阶段写盘），进度显示在来源卡片与整页遮罩上。
    */
   importLevelSets: (zipPath: string, selected: string[]) =>
     invoke<{ installed: string[] }>('import_level_sets', { zipPath, selected }),
@@ -389,6 +388,17 @@ export function watchGameState(callback: (game: GameInfo) => void): Promise<Unli
  */
 export function watchLevelSetScan(callback: (progress: LevelSetScanProgress) => void): Promise<UnlistenFn> {
   return listen<LevelSetScanProgress>('level-set-scan-progress', (event) => callback(event.payload))
+}
+
+/**
+ * 来源 ZIP 的识别 / 导入进度（`stage_map_source`、`stage_map_release` 与
+ * `import_level_sets` 执行期间逐份上报）。
+ *
+ * 与 `watchLevelSetScan` 的分工：那个读游戏目录里已落盘的关卡集，这个读
+ * 用户刚拖进来 / 刚下载的 ZIP —— 两种等待都要在转圈下面给出真实进度。
+ */
+export function watchLevelSetZipProgress(callback: (progress: LevelSetZipProgress) => void): Promise<UnlistenFn> {
+  return listen<LevelSetZipProgress>('level-set-zip-progress', (event) => callback(event.payload))
 }
 
 export function watchAppUpdatePhase(callback: (progress: AppUpdatePhaseEvent) => void): Promise<UnlistenFn> {

@@ -53,11 +53,19 @@ const props = withDefaults(defineProps<{
    * Tauri 的拖放事件，也就不会出现「卡片没打开就拖不进」这种情况。
    */
   dragActive?: boolean
+  /**
+   * 暂存 / 识别期间的一行进度文案（如「正在读取 xx/info_yi（2/13）」）。
+   *
+   * 由宿主把后端 `level-set-zip-progress` 格式化成文本传进来：本组件不认识
+   * 进度事件，也不该知道 `info` 与 `install` 两个阶段的区别。空串 = 不显示。
+   */
+  readProgressText?: string
 }>(), {
   accept: () => ['dll', 'zip'],
   title: '',
   busy: false,
   dragActive: false,
+  readProgressText: '',
 })
 
 const emit = defineEmits<{
@@ -134,7 +142,9 @@ function downloadOnline() {
         -->
         <div class="drop-zone" :class="{ active: dragActive, busy }"
           role="button" tabindex="0" @click="pickLocal" @keydown.enter.prevent="pickLocal">
-          <n-spin v-if="busy" size="small" />
+          <template v-if="busy">
+            <n-spin size="small" />
+          </template>
           <template v-else>
             <span class="drop-plus">+</span>
             <span class="drop-hint">{{ t('tools.dropFilesHereOrClickToChoose', { types: typeLabel }) }}</span>
@@ -154,6 +164,13 @@ function downloadOnline() {
         </div>
       </n-tab-pane>
     </n-tabs>
+    <!--
+      识别进度放在两个 tab 之外：本地文件走拖放区、在线直链走按钮，两条路都在识别同一份
+      ZIP，进度必须都能看到。文案由宿主按后端事件格式化，本组件只负责展示。
+    -->
+    <p v-if="busy && readProgressText" class="zip-progress" :title="readProgressText">
+      {{ readProgressText }}
+    </p>
   </AppModal>
 </template>
 
@@ -196,6 +213,18 @@ function downloadOnline() {
   font-size: 12.5px;
   color: var(--oc2-text-3);
   transition: color .16s ease;
+}
+/* 识别进度：放在 tab 下方，两个来源入口都能看到；条目名可能很长，省略不撑宽弹窗 */
+.zip-progress {
+  max-width: 100%;
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--oc2-text-3);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .online-form { display: flex; flex-direction: column; gap: 12px; }
 .actions { display: flex; justify-content: flex-end; }

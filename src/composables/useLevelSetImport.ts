@@ -10,20 +10,21 @@
  * 这里的职责只剩状态与顺序：暂存、打开详情、等用户表态、导入、清理暂存。
  *
  * 后端 `stage_map_source` 先把来源统一成一份可读 ZIP（本地文件原地引用、
- * 直链下载到 cache 并标记 `staged`），识别结果与 `inspect_level_set_zip` 同构，
- * 所以「确认导入」只需要一份实现。
+ * 直链下载到 cache 并标记 `staged`），识别结果就是 `level_sets::
+ * inspect_zip_with_progress` 的产物，所以「确认导入」只需要一份实现。
  *
  * 调用方只负责两件事：把来源交进来；导入成功后重读自己的关卡集列表。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { t } from '../i18n'
-import { api } from '../services/tauri'
+import { api, watchLevelSetZipProgress } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { levelSetImportDetail } from '../installDetail'
 import { uninstallConflicts, uninstallMapConflict } from '../installConflicts'
 import { backendMessageOf } from '../locale/backend'
 import type { InstallDetailModel } from '../installDetail'
-import type { InstallSource, StagedMapSource, ZipLevelSet } from '../types'
+import type { InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet } from '../types'
 
 /** 正在等用户确认的那一批：ZIP 位置 + 识别出的关卡集。 */
 interface PendingBatch {
@@ -38,6 +39,43 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   const pending = ref<PendingBatch | null>(null)
   /** 详情弹窗是否打开。 */
   const previewOpen = ref(false)
+
+  /**
+   * 来源 ZIP 的识别 / 导入进度（后端 `level-set-zip-progress`）。
+   *
+   * 三个入口（本地拖入、直链下载、在线 Release）都走后端同一条识别链，所以
+   * 进度共用一份：`info` 阶段说「正在读取哪个 info」，`install` 阶段说
+   * 「正在写第几张」。`null` = 当前没有可展示的进度（等待确认、或已经结束）。
+   */
+  const zipProgress = ref<LevelSetZipProgress | null>(null)
+  /**
+   * 进度文案；空串表示不显示。
+   *
+   * `done` 是**已完成数**：正在读的这一份还没算进去、正在写的这一张也刚开始，
+   * 所以文案里的序号是 `done + 1`；最后一份夹到 `total`，不出现「14/13」。
+   */
+  const zipProgressText = computed(() => {
+    const progress = zipProgress.value
+    if (!progress) return ''
+    const position = Math.min(progress.done + 1, progress.total)
+    return t(
+      progress.phase === 'install' ? 'levelSet.zipInstalling' : 'levelSet.zipReading',
+      { name: progress.current, done: position, total: progress.total },
+    )
+  })
+  /** 事件解绑函数：监听器不随页面卸载自动消失，必须自己收。 */
+  let unlistenZip: UnlistenFn | null = null
+  onMounted(() => {
+    void watchLevelSetZipProgress((progress) => {
+      zipProgress.value = progress
+    }).then((unlisten) => {
+      unlistenZip = unlisten
+    })
+  })
+  onUnmounted(() => {
+    unlistenZip?.()
+    unlistenZip = null
+  })
 
   /**
    * 详情面板模型：一个地图集当一个 MOD，随包插件缩进挂在它下面。
@@ -151,6 +189,8 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     closePreview()
     const selected = sets.map((set) => set.dir_name)
     const result = await api.importLevelSets(staged.path, selected)
+    // 写盘结束：后面还有依赖快照与重读，进度不该停在最后一张上
+    zipProgress.value = null
     message.success(options.successText?.(result.installed.length)
       ?? t('levelSet.imported', { count: result.installed.length }))
     await afterImport?.()
@@ -174,7 +214,11 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
      */
     let stagedFile: string | null = null
     try {
+      // 上一轮可能留下旧进度：暂存一开始先清空，避免显示上次的条目
+      zipProgress.value = null
       const staged = await api.stageMapSource(source.kind, source.value)
+      // 识别结束，接下来是确认弹窗：不能把「正在读取」留在界面上
+      zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
       options?.onStaged?.()
       await finishStaged(staged)
@@ -183,6 +227,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     } finally {
       // 不收弹窗：卸载失败时它要留着让用户处理后重试，成功与取消各自收过
       if (stagedFile) await api.discardMapSource(stagedFile).catch(() => undefined)
+      zipProgress.value = null
       importing.value = false
     }
   }
@@ -204,7 +249,10 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     importing.value = true
     let stagedFile: string | null = null
     try {
+      zipProgress.value = null
       const staged = await api.stageMapRelease(mapId, tag, assetName)
+      // 下载 + 识别结束：确认弹窗才是接下来的主角
+      zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
       return await finishStaged(staged, options)
     } catch (reason) {
@@ -213,9 +261,13 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     } finally {
       // 同上：弹窗开关只由 finishStaged 决定
       if (stagedFile) await api.discardMapSource(stagedFile).catch(() => undefined)
+      zipProgress.value = null
       importing.value = false
     }
   }
 
-  return { importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport }
+  return {
+    importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport,
+    zipProgress, zipProgressText,
+  }
 }

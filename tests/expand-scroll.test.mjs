@@ -20,6 +20,7 @@ const {
   collapseScrollDelta,
   resolveScrollInsets,
   needsScrollSettle,
+  takeOnce,
   SCROLL_SETTLE_ROUNDS,
   EXPANSION_BOTTOM_GAP,
 } = await import('../src/expandScroll.ts')
@@ -340,4 +341,25 @@ test('落位对账：最多补滚 SCROLL_SETTLE_ROUNDS 次', () => {
   assert.equal(needsScrollSettle({ ...frame, rounds: 2 }), false)
   // 调用方也可以收紧上限
   assert.equal(needsScrollSettle({ ...frame, rounds: 1, maxRounds: 1 }), false)
+})
+
+/*
+ * 收缩补偿是「改状态前量好的预估」，只在第一次计算里成立。
+ *
+ * 展开 B 会让上一张 A 收起：A 的详情高度在改状态那一刻量好、从目标滚动位置里减掉。
+ * 滚动开始后 A 真的收下去了，卡片 top 与可滚动上限都自带这段位移；落位对账重算时
+ * 再减一次，目标就落到当前滚动位置之上 —— 卡片反着滚回去（真机实测 −588px，
+ * 约等于 A 的详情高度）。所以这个量只能取一次。
+ */
+test('一次性补偿：第一次取改状态前量好的收缩量，之后恒为 0', () => {
+  const take = takeOnce(588)
+  assert.equal(take(), 588, '第一次用改状态前量好的收缩量')
+  assert.equal(take(), 0, '滚动开始后几何自带这段位移，再减就是补偿两遍')
+  assert.equal(take(), 0)
+})
+
+test('一次性补偿：没有上一张卡收起时恒为 0，普通展开不受影响', () => {
+  const take = takeOnce(0)
+  assert.equal(take(), 0)
+  assert.equal(take(), 0)
 })

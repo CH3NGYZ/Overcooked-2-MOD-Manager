@@ -24,9 +24,10 @@ const levels = read('LevelsView.vue')
 function bodyOf(source, name) {
   const start = source.indexOf(`function ${name}(`)
   assert.ok(start >= 0, `找不到函数 ${name}`)
-  const end = source.indexOf('\n}\n', start)
-  assert.ok(end > start, `函数 ${name} 没有结束`)
-  return source.slice(start, end)
+  // 源码在工作区可能是 CRLF（Windows 检出、git 的 autocrlf），两种换行都要认。
+  const closing = /\r?\n\}\r?\n/.exec(source.slice(start))
+  assert.ok(closing, `函数 ${name} 没有结束`)
+  return source.slice(start, start + closing.index + closing[0].length)
 }
 
 /** 页面里的展开状态实例个数：两层卡片只许有一份状态。 */
@@ -120,4 +121,21 @@ test('地图页：点空白先认领二级卡，命中只收这一张、不动�
   const collapse = bodyOf(levels, 'collapsePluginCard')
   assert.match(collapse, /levelExpansion\.closeInner\(dirName, fileName\)/)
   assert.doesNotMatch(collapse, /closeOuter/)
+})
+
+/**
+ * 收缩补偿的兑现次数只能靠源码守门：几何单测（`expand-scroll.test.mjs`）锁的是算式，
+ * 而 bug 出在「同一个算式被重算了几遍、每次都减同一个常量」这一层。
+ *
+ * 真机症状：展开 B 时 A 收起，先滚一截（+764px），落位对账 320ms 后反着滚回一截
+ * （−588px ≈ A 的详情高度），B 的底边比贴底位置更低。
+ */
+test('展开的落位重算不许再减第二遍上一张卡的收缩量', () => {
+  const source = readFileSync(new URL('../src/expandScroll.ts', import.meta.url), 'utf8')
+  const plan = bodyOf(source, 'expansionPlanOf')
+  assert.match(plan, /const takeShrink = takeOnce\(/, '收缩补偿必须走一次性凭证')
+  assert.match(plan, /shrink: takeShrink\(\)/, '每次测量都问凭证：第一次拿原值、之后恒为 0')
+  assert.doesNotMatch(plan, /shrink: collapsing \?/,
+    '不许回到「每次重算都按 collapsing 现算」：收缩完成后几何已含这段位移，再减=反向滚')
+  assert.match(plan, /recompute: measure/, '重算必须复用同一个测量函数，否则凭证只作用于第一次')
 })

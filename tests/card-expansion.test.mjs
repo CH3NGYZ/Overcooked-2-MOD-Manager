@@ -176,3 +176,31 @@ test('单展开域：独立卡与包外壳算同一级，交替展开时外层�
   cards.openOuter('mod:b.dll')
   assert.deepEqual(cards.outerKeys.value, ['mod:b.dll'])
 })
+
+test('单展开域：包外壳 → 独立卡的反向切换同样清掉包内子卡', () => {
+  const cards = useCardExpansion({ singleOuter: true })
+  cards.openOuter('pkg:one')
+  cards.openInner('pkg:one', 'one-sub.dll')
+
+  cards.openOuter('mod:b.dll')
+
+  assert.deepEqual(cards.outerKeys.value, ['mod:b.dll'])
+  assert.deepEqual(cards.innerKeys.value, [])
+})
+
+test('两页各只建一个单开实例，MOD 页独立卡与包外壳落在同一键空间', async () => {
+  const { readFileSync } = await import('node:fs')
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
+  const mods = read('src/views/ModsLocalView.vue')
+  const levels = read('src/views/LevelsView.vue')
+
+  // 一个页面一个实例：多建一个就会出现「独立卡与包同时摊开」的第二套状态。
+  assert.equal(mods.match(/useCardExpansion\(\{ singleOuter: true \}\)/g)?.length, 1)
+  assert.equal(levels.match(/useCardExpansion\(\{ singleOuter: true \}\)/g)?.length, 1)
+
+  // 独立卡与包外壳的键前缀不同，但都进同一个外层键空间，靠 singleOuter 互斥。
+  assert.match(mods, /const MOD_CARD_PREFIX = 'mod:'/)
+  assert.match(mods, /`pkg:\$\{mod\.package_id\}`/)
+  assert.doesNotMatch(mods, /expandedPackages|isPackageExpanded/)
+  assert.doesNotMatch(levels, /expandedDir|expandedPlugins|pluginKey/)
+})

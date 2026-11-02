@@ -195,6 +195,9 @@ export interface ExpansionTargetFrame extends ExpansionFrame {
  *
  * 反过来（把 `shrink` 预先扣进 `top` 再算 delta）等价于假定「滚动位置不动、内容自己上移」：
  * 卡片会被上方那张的收起拽上去 —— 用户看到的就是「标题被挤上去、不是向下展开」。
+ *
+ * `shrink` 是「这次测量时还没在几何里体现的收缩量」，不是常量：收缩一旦发生，卡片位置与
+ * 可滚动上限都已经含这段位移，重算必须传 0。
  */
 export function expansionTargetScrollTop({
   top,
@@ -456,6 +459,10 @@ export interface ExpandScrollTarget {
    *
    * 它位在目标卡片之前时，收起动画会把目标整体往上带 `shrink`：目标滚动位置要同步
    * 减掉这段（`expansionTargetScrollTop` 负责），标题才留在原地、卡片向下展开。
+   *
+   * 这段补偿**只兑现一次**：收缩真的发生后，几何（卡片位置、可滚动上限）本身就含
+   * 这段位移，重算再减就是补偿两遍 —— 卡片会被反着滚回去。兑现交给
+   * `expansionPlanOf` 里的 `takeOnce`。
    */
   collapsing?: {
     card: Element
@@ -524,13 +531,35 @@ function expandedCardHeight(card: Element, body: Element | null): number {
   return cardHeight - wrapper.getBoundingClientRect().height + naturalContentHeight(body)
 }
 
-/** 上一张卡收起时会把它下面的内容往上带多少像素；不在目标之前就是 0。 */
+/**
+ * 上一张卡收起时会把它下面的内容往上带多少像素；不在目标之前就是 0。
+ *
+ * 只在**改状态那一刻**调用：那时上一张卡还摊开着，量到的是收缩前的位置。滚动一开始
+ * 收缩就在真的发生，之后再量已经晚了一拍 —— 所以这个值要交给 `takeOnce` 兑现一次。
+ */
 function collapseShrinkAbove(collapsing: NonNullable<ExpandScrollTarget['collapsing']>, target: Element): number {
   if (collapsing.card === target) return 0
   const following = collapsing.card.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING
   if (!following) return 0
   if (collapsing.shrink !== undefined) return collapsing.shrink
   return collapsing.body ? naturalContentHeight(collapsing.body) : 0
+}
+
+/**
+ * 一次性数值：第一次取走原值，之后恒为 0。
+ *
+ * 上一张卡收起带来的位移只在改状态之前量得准；滚动一开始，那张卡在真的收，卡片位置与
+ * 可滚动上限都跟着变。把它当常量每次重算都减，就是补偿两遍 —— 目标会被算到当前滚动位置
+ * 之上，卡片反着滚回去（实测 −588px，约等于上一张卡的详情高度）。所以补偿是一张用一次
+ * 就作废的凭证，不是每次重算都要减的常量。
+ */
+export function takeOnce(value: number): () => number {
+  let left = value
+  return () => {
+    const current = left
+    left = 0
+    return current
+  }
 }
 
 /** 等一帧再量：详情是本帧刚插进 DOM 的，等多一帧能拿到动画起始状态，也避开 Vue 的补丁过程。 */
@@ -561,30 +590,33 @@ export function scrollExpandedCardIntoView(target: ExpandScrollTarget): void {
  * 展开的滚动计划：每次重算都重新量卡片与容器。
  *
  * 展开动画期间卡片在长高、容器可滚动上限也在变，所以对账不能复用第一次的几何。
+ * 只有「上一张卡收起带来的位移」不能重算 —— 它属于改状态那一刻，用 `takeOnce`
+ * 兑现一次；之后的测量看到的是已经含这段位移的几何。
  */
 function expansionPlanOf(target: ExpandScrollTarget): ScrollPlan | null {
   const { card, body, collapsing, container: declared, bounds } = target
   const container = scrollContainerOf(card, declared)
   if (!container) return null
-  const compute = (): ScrollPlan => {
+  const takeShrink = takeOnce(collapsing ? collapseShrinkAbove(collapsing, card) : 0)
+  const measure = (): ScrollPlan => {
     const view = viewportOf(container)
     const cardRect = card.getBoundingClientRect()
     const insets = resolveScrollInsets(container, bounds)
-    const scrollTop = expansionTargetScrollTop({
+    const targetTop = expansionTargetScrollTop({
       // 对齐卡片外框（border box），不再从标题行算起：上边框与圆角必须留在视口里。
       top: cardRect.top - view.top,
       height: expandedCardHeight(card, body),
       cardHeight: cardRect.height,
-      shrink: collapsing ? collapseShrinkAbove(collapsing, card) : 0,
+      shrink: takeShrink(),
       viewportHeight: view.viewportHeight,
       insetTop: insets.top,
       insetBottom: insets.bottom,
       scrollTop: view.scrollTop,
       scrollMax: view.scrollMax,
     })
-    return { container, target: scrollTop, scrollMax: view.scrollMax, recompute: compute }
+    return { container, target: targetTop, scrollMax: view.scrollMax, recompute: measure }
   }
-  return compute()
+  return measure()
 }
 
 /**

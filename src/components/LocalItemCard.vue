@@ -30,11 +30,21 @@
 import { computed, useSlots } from 'vue'
 import { NCollapseTransition, NSwitch, NTag } from 'naive-ui'
 import { tagColorFor } from '../theme'
+import { cardSwitchOn } from '../cardSwitchState'
 import type { CSSProperties } from 'vue'
 
 const props = withDefaults(defineProps<{
   /** 开关当前值；`switchable: false` 时无意义。 */
   enabled?: boolean
+  /**
+   * 开关状态的快照键（稳定身份，见 `src/cardSwitchState.ts`）。
+   *
+   * 批量启停时页面会先发布快照、折叠插槽随后才重渲染；卡片自己按这个键读
+   * 快照，开关值就不依赖「父级有没有把新 props 送进来」——即使插槽这次没
+   * 重新求值，开关也会以同一个 DOM 节点收到值变化、播 Naive 自带的过渡。
+   * 不传（或快照里还没有这个键）时回退 `enabled`。
+   */
+  switchKey?: string
   /**
    * 是否显示左侧开关，缺省显示。
    *
@@ -123,6 +133,14 @@ const emit = defineEmits<{
 const slots = useSlots()
 
 /**
+ * 开关实际显示的值：快照优先，没发布过才用 props。
+ *
+ * 这里读快照的另一个作用是把开关挂到快照的响应式依赖上 —— 批量操作发布新值后
+ * 卡片自己就会重渲染，不必等折叠插槽把新 props 送下来。
+ */
+const switchOn = computed(() => cardSwitchOn(props.switchKey, !!props.enabled))
+
+/**
  * 把列宽与间距以 CSS 变量下发，让样式和页面的列宽计算共用同一组数字。
  * 写死在两处（页面算列宽、卡片排间距）迟早会漂移。
  */
@@ -168,7 +186,7 @@ function onToggle(value: boolean) {
     <!-- 单行：左「开关 + 标题」… 右「状态标签 | 工具栏」 -->
     <div class="card-row">
       <div class="card-left">
-        <n-switch v-if="switchable !== false" class="card-switch" size="small" :value="!!enabled"
+        <n-switch v-if="switchable !== false" class="card-switch" size="small" :value="switchOn"
           :loading="!!toggleLoading" @click.stop @update:value="onToggle" />
         <b class="card-title" :title="titleTooltip ?? title">{{ title }}</b>
         <!--

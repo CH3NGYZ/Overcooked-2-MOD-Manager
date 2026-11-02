@@ -16,6 +16,10 @@ import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
+import {
+  cardSwitchOn, levelSetPluginSwitchKey, levelSetSwitchKey, publishCardSwitches,
+  type CardSwitchEntry,
+} from '../cardSwitchState'
 import { collapseCardWithScroll, naturalContentHeight, scrollExpandedCardIntoView } from '../expandScroll'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import PageLoading from '../components/PageLoading.vue'
@@ -297,6 +301,35 @@ async function reloadSets() {
     message.error(backendMessageOf(reason))
   }
 }
+
+/* ===== 开关快照 =====
+ *
+ * 页面把当前开关状态发布到 `cardSwitchState`，卡片在折叠插槽里按稳定键读它。
+ *
+ * 为什么不能只靠「换数据」：卡片挂在 `n-collapse-item` 的内容区里，那块内容由
+ * naive-ui 的 `CollapseItemContent` 拿稳定插槽渲染，父级重渲染时插槽闭包不会
+ * 重新求值 —— 只有插槽体里读到的响应式值变了才会重渲染。单卡开关一直正常，
+ * 是因为插槽读了 `busy[...]`；批量切换只改 `sets`，插槽里没有任何依赖它，
+ * 卡片和详情就停在旧状态。早先的做法是换整棵折叠列表的 key 强制重建，
+ * 代价是开关被重新挂载：新节点一上来就是目标状态，Naive 的值变化过渡
+ * 没有播的机会，用户看到的就是「一瞬间全变了」。
+ *
+ * 发布快照后，插槽里每张卡的 `cardSwitchOn(...)` 都变了，折叠过渡自己重渲染
+ * → 插槽整片重建 → 卡片以同一个 DOM 节点收到新 `value`，过渡照常播。
+ *
+ * `flush: 'post'` 不能省：要等页面 render 把新数据写进折叠项插槽之后再发布，
+ * 否则过渡重渲染拿到的还是上一轮的插槽闭包（旧列表）。
+ */
+watch(sets, (list) => {
+  const entries: CardSwitchEntry[] = []
+  for (const set of list) {
+    entries.push([levelSetSwitchKey(set.dir_name), set.enabled])
+    for (const plugin of set.plugins ?? []) {
+      entries.push([levelSetPluginSwitchKey(set.dir_name, plugin.file_name), plugin.enabled])
+    }
+  }
+  publishCardSwitches(entries)
+}, { immediate: true, flush: 'post' })
 
 /**
  * 「安装地图」来源卡片：本地 ZIP / 整窗拖入 / 在线直链。
@@ -952,24 +985,6 @@ const bulkSwitchValue = computed<BulkSwitchValue>(() => {
 })
 
 /**
- * 列表重建令牌，只在批量切换成功后自增。
- *
- * 批量启停后 `reloadSets()` 已经把新状态写进 `sets`，但折叠项里的卡片不会
- * 重渲染：`n-collapse-item` 的内容区由 naive-ui 的 `CollapseItemContent` 拿着
- * 稳定插槽（`_: 1`）去渲染内部的 `FadeInExpandTransition`，那个组件 vnode 的
- * patchFlag 是 0，父级重渲染时 Vue 的 `shouldUpdateComponent` 直接跳过它，
- * 插槽闭包不再求值，卡片停在批量切换前的开关状态。
- *
- * 单卡开关不会踩这个坑：它会把 `busy` 置位，而 `busy` 正好被卡片插槽读取，
- * 折叠过渡因此自己收到依赖变化、重渲染并拿到页面最新的插槽；批量路径只改
- * `sets`（页面 render 时读）与页头的 `bulkWorking`，卡片插槽里没有它们的依赖。
- *
- * 换掉整棵列表的 key 强制重建（与 MOD 管理页 `listEpoch` 同一套做法）：
- * 展开状态都在页面级 ref（`levelExpansion` / `collapsedGroups`）里，重建不丢。
- */
-const listEpoch = ref(0)
-
-/**
  * 批量切换全部关卡集。
  *
  * 走后端一次操作锁：前端逐条切换会让每个目录都重新探测一次游戏目录，
@@ -983,8 +998,6 @@ async function setAllEnabled(enabled: boolean) {
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
       await reloadSets()
-      // 见 listEpoch：批量后强制重建折叠列表，让卡片重新读 enabled
-      listEpoch.value += 1
     } else {
       message.error(translateBackendMessage(result.message))
     }
@@ -1182,12 +1195,7 @@ async function checkUpdates() {
       :description="t('levelSet.noLevelSets')" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
-    <!--
-      :key="listEpoch" 只由批量切换推进（见 script 里的 listEpoch）：
-      折叠项内容挂在折叠过渡的稳定插槽里，批量改数据后不会重渲染，
-      换 key 强制重建整棵列表。
-    -->
-    <n-collapse v-else :key="listEpoch" :expanded-names="groupsExpanded" class="group-collapse"
+    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
       @update:expanded-names="onGroupsExpanded">
       <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
         <template #header>
@@ -1216,7 +1224,8 @@ async function checkUpdates() {
             :detail-key="`${set.dir_name}:${set.enabled}`"
             :data-level-dir="set.dir_name"
             :data-focus-id="focusIdOf(set)"
-            :enabled="set.enabled"
+            :switch-key="levelSetSwitchKey(set.dir_name)"
+            :enabled="cardSwitchOn(levelSetSwitchKey(set.dir_name), set.enabled)"
             :toggle-loading="!!busy[set.dir_name]"
             :title="levelSetDisplayName(set, locale)"
             :title-tooltip="set.error ? translateBackendMessage(set.error) : levelSetDisplayName(set, locale)"
@@ -1361,10 +1370,17 @@ async function checkUpdates() {
               -->
               <div v-if="set.plugins?.length" class="detail-section">
                 <div class="plugin-list">
+                  <!--
+                    开关由集目录整体 rename 控制，这张卡没有开关；开关键与值照传 ——
+                    卡片判定开关值只有「快照优先、回退 props」一条规则，不按是否
+                    可开关分叉，页面插槽也因此统一在这里读一次快照。
+                  -->
                   <LocalItemCard v-for="plugin in set.plugins" :key="plugin.file_name"
                     :data-plugin-of="set.dir_name"
                     :data-plugin-file="plugin.file_name"
                     :switchable="false"
+                    :switch-key="levelSetPluginSwitchKey(set.dir_name, plugin.file_name)"
+                    :enabled="cardSwitchOn(levelSetPluginSwitchKey(set.dir_name, plugin.file_name), plugin.enabled)"
                     :title="pluginTitle(plugin)"
                     :title-tooltip="plugin.file_name"
                     :version="formatVersion(plugin.version) || undefined"

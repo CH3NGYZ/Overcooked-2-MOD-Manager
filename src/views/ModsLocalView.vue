@@ -29,6 +29,7 @@ import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
 import { tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
+import { cardSwitchOn, modSwitchKey, publishCardSwitches } from '../cardSwitchState'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import DependencyTable from '../components/DependencyTable.vue'
@@ -287,6 +288,29 @@ const sortedMods = computed(() =>
   [...effectiveMods.value].sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
 
+/* ===== 开关快照 =====
+ *
+ * 页面把当前开关状态发布到 `cardSwitchState`，卡片在折叠插槽里按稳定键读它。
+ *
+ * 为什么不能只靠 `load()` 换数据：卡片挂在 `n-collapse-item` 的内容区里，
+ * 那块内容由 naive-ui 的 `CollapseItemContent` 拿稳定插槽渲染，父级重渲染时
+ * 插槽闭包不会重新求值 —— 只有插槽体里读到的响应式值变了才会重渲染。
+ * 单卡开关一直正常，是因为插槽读了 `busy[...]`；批量启停只改 `mods`，
+ * 插槽里没有任何依赖它，所以开关和详情停在旧状态（实测 25 个开关只有 21 个
+ * 更新，包内子卡不动）。早先的做法是换整棵列表的 key 强制重建，
+ * 代价是开关被重新挂载：新节点一上来就是目标状态，Naive 的值变化过渡
+ * 没有播的机会，用户看到的就是「一瞬间全变了」。
+ *
+ * 发布快照后，插槽里每张卡的 `cardSwitchOn(...)` 都变了，折叠过渡自己重渲染
+ * → 插槽整片重建 → 卡片以同一个 DOM 节点收到新 `value`，过渡照常播。
+ *
+ * `flush: 'post'` 不能省：要等页面 render 把新数据写进折叠项插槽之后再发布，
+ * 否则过渡重渲染拿到的还是上一轮的插槽闭包（旧列表）。
+ */
+watch(mods, (list) => {
+  publishCardSwitches(list.map((mod) => [modSwitchKey(mod.dll_file), mod.enabled] as const))
+}, { immediate: true, flush: 'post' })
+
 /* ===== 全部启用 / 全部禁用 =====
  *
  * 这两个动作服务「一次性切换所有 MOD」的场景，入口只能有一个：
@@ -335,21 +359,6 @@ function onBulkSwitch(value: string | number) {
 }
 
 /**
- * 列表重建令牌，只在批量切换成功后自增。
- *
- * 批量启停改了磁盘上每个 DLL 的名字（`.dll` ⇄ `.dll.disabled`），
- * `await load()` 之后新状态确实进了 `mods`，单 DLL 卡片会跟着重渲染；
- * 但**包内子卡片**的 `n-switch` 会停在旧状态（实测 25 个开关只有 21 个更新，
- * DIYLevel 两个包的 4 个子卡片不动）—— 包 body 挂在 `n-collapse-transition`
- * 的稳定插槽里，父级重渲染时插槽内容不会重新求值，子组件实例被复用了。
- *
- * 换掉整棵列表的 key 强制重建，比在每层插槽里补 key 可靠；
- * 只在批量操作后重建：单点开关自带 busy 状态、本来就会更新，
- * 无差别重建反而会打断展开状态与折叠动画。
- */
-const listEpoch = ref(0)
-
-/**
  * 批量切换。
  *
  * 后端整体成功或整体回滚，不会留下半开半关的状态；
@@ -363,8 +372,6 @@ async function setAllEnabled(enabled: boolean) {
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
       await load()
-      // 见 listEpoch：批量后强制重建列表，让包内子开关跟上新状态
-      listEpoch.value += 1
     } else {
       message.error(translateBackendMessage(result.message))
     }
@@ -1654,12 +1661,7 @@ function removePackage(node: ModPackageNode) {
     <n-empty v-if="!loading && !sortedMods.length" :description="t('modsLocal.noModsInstalled')" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
-    <!--
-      :key="listEpoch" 只由批量启停推进（见 script 里的 listEpoch）：
-      包内子卡片在折叠插槽里不会随父级重渲染更新，换 key 强制重建整棵列表。
-      分类折叠状态、卡片展开状态都在页面级的 ref 里，重建不会丢。
-    -->
-    <n-collapse v-else :key="listEpoch" :expanded-names="groupsExpanded" class="group-collapse"
+    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
       @update:expanded-names="onGroupsExpanded">
       <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
         <template #header>
@@ -1691,7 +1693,8 @@ function removePackage(node: ModPackageNode) {
               :data-focus-id="bindingRepositoryId(mod)"
               :data-mod-anchor="modAnchor(mod)"
               :switchable="!mod.is_dependency"
-              :enabled="mod.enabled"
+              :switch-key="modSwitchKey(mod.dll_file)"
+              :enabled="cardSwitchOn(modSwitchKey(mod.dll_file), mod.enabled)"
               :toggle-loading="!!busy[mod.dll_file]"
               :title="singleModTitle(mod)"
               :version="formatVersion(mod.version) || undefined"
@@ -1894,7 +1897,8 @@ function removePackage(node: ModPackageNode) {
                 <LocalItemCard v-for="mod in pkg.mods" :key="mod.dll_file"
                   :data-dll-file="mod.dll_file"
                   :switchable="!mod.is_dependency"
-                  :enabled="mod.enabled"
+                  :switch-key="modSwitchKey(mod.dll_file)"
+                  :enabled="cardSwitchOn(modSwitchKey(mod.dll_file), mod.enabled)"
                   :toggle-loading="!!busy[mod.dll_file]"
                   :title="modTitle(mod)"
                   :version="formatVersion(mod.version) || undefined"

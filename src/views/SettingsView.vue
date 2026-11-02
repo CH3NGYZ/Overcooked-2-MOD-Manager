@@ -2,7 +2,7 @@
 import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NSwitch, NTag } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NSelect, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
@@ -269,6 +269,49 @@ async function savePreference(patch: Parameters<typeof api.saveSettings>[0], lab
   } catch (reason) { fail(reason) }
 }
 
+/* ===== 性能：元数据并行读取 ===== */
+
+/**
+ * 下拉能给出的并发上限。
+ *
+ * 128 线程的机器上没必要列出一百多行；后端本来也会把超过核心数的存储值
+ * clamp 回当前核心数，所以前端只保证「选项覆盖得了本机能选的范围」。
+ */
+const CONCURRENCY_LIMIT = 64
+/**
+ * 本机可用于读取文件的并行度。
+ *
+ * `navigator.hardwareConcurrency` 在部分 WebView（老系统、被裁剪的 WebView2）
+ * 上拿不到，取不到就按 4 兜底 —— 与地图 info 的后端默认值一致。
+ */
+const cpuCores = Math.min(Math.max(navigator.hardwareConcurrency || 4, 1), CONCURRENCY_LIMIT)
+
+/**
+ * 两个下拉共用的选项：`0` = 全部核心，其余 `1..N`。
+ *
+ * 放在 computed 里是因为选项文案要走 `t()`：切语言时下拉里的「全部核心」
+ * 必须跟着变，常量数组会一直停留在首次渲染的那一种语言。
+ */
+const concurrencyOptions = computed(() => [
+  { label: t('settings.allCores'), value: 0 },
+  ...Array.from({ length: cpuCores }, (_, index) => ({ label: String(index + 1), value: index + 1 })),
+])
+
+/**
+ * 存储值 → 下拉显示值。
+ *
+ * `0` 表示「全部核心」，原样显示；其余按本机核心数 clamp。
+ * **只改显示，不回写**：配置跟着用户走，换到 4 核机器上打开 8 核机器的配置时
+ * 显示 4，但不能把 8 悄悄改写成 4 —— 回到 8 核机器上还要恢复 8。
+ */
+function displayConcurrency(value: number) {
+  return value <= 0 ? 0 : Math.min(Math.max(value, 1), cpuCores)
+}
+
+/** MOD 侧默认全部核心；地图侧默认 4（后端 `AppConfig` 的默认值）。 */
+const modMetadataConcurrency = computed(() => displayConcurrency(config.value?.mod_metadata_concurrency ?? 0))
+const mapInfoConcurrency = computed(() => displayConcurrency(config.value?.map_info_concurrency ?? 4))
+
 /* ===== 删除行为：是否经过回收站 ===== */
 
 /** 关闭「优先放入回收站」的风险确认弹窗。 */
@@ -514,6 +557,28 @@ async function clearTokens() {
       <template #right>
         <n-switch size="small" :value="builtinMapSourcesOnly" :loading="switchingBuiltinMapSources"
           @update:value="toggleBuiltinMapSourcesOnly" />
+      </template>
+    </SettingsRow>
+  </SettingsGroup>
+
+  <!--
+    性能：元数据并行读取。
+    两项都只影响「同时读几个文件」，不改变任何结果，所以和开关类设置分开成组，
+    也没有「恢复默认」—— 下拉里的「全部核心」就是 MOD 侧的默认值。
+  -->
+  <SettingsGroup :title="t('settings.performance')">
+    <SettingsRow :title="t('settings.modMetadataConcurrency')"
+      :description="t('settings.modMetadataConcurrencyHint')">
+      <template #right>
+        <n-select :value="modMetadataConcurrency" size="small" style="width: 160px" :options="concurrencyOptions"
+          @update:value="(value: number) => savePreference({ mod_metadata_concurrency: value }, t('settings.modMetadataConcurrency'))" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :title="t('settings.mapInfoConcurrency')"
+      :description="t('settings.mapInfoConcurrencyHint')">
+      <template #right>
+        <n-select :value="mapInfoConcurrency" size="small" style="width: 160px" :options="concurrencyOptions"
+          @update:value="(value: number) => savePreference({ map_info_concurrency: value }, t('settings.mapInfoConcurrency'))" />
       </template>
     </SettingsRow>
   </SettingsGroup>

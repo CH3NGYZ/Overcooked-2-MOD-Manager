@@ -26,6 +26,7 @@ import { backup, modConfig, modPreview } from './modsFiles.ts'
 import { levelSet } from './levelSet.ts'
 import { mapSource } from './mapSource.ts'
 import { assetBundle } from './assetBundle.ts'
+import { metadataRead } from './metadataRead.ts'
 import { community, proxy } from './network.ts'
 import { source } from './source.ts'
 import { migrate, update } from './update.ts'
@@ -124,6 +125,7 @@ const TABLES: DomainTable[] = [
   { domain: 'levelSet', messages: levelSet },
   { domain: 'mapSource', messages: mapSource },
   { domain: 'assetBundle', messages: assetBundle },
+  { domain: 'metadataRead', messages: metadataRead },
   { domain: 'community', messages: community },
   { domain: 'proxy', messages: proxy },
   { domain: 'source', messages: source },

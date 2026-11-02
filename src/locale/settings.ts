@@ -55,4 +55,52 @@ export const settings: DomainMessages = {
     ko: '앱 업데이트',
     ja: 'アプリの更新',
   },
+  // 性能
+  performance: {
+    'zh-CN': '性能',
+    'zh-TW': '效能',
+    en: 'Performance',
+    ko: '성능',
+    ja: 'パフォーマンス',
+  },
+  // MOD 元数据并行读取
+  modMetadataConcurrency: {
+    'zh-CN': 'MOD 元数据并行读取',
+    'zh-TW': 'MOD 中繼資料並行讀取',
+    en: 'Parallel MOD metadata reads',
+    ko: 'MOD 메타데이터 병렬 읽기',
+    ja: 'MOD メタデータ並列読み込み',
+  },
+  // 读取 MOD 的 DLL 元数据时同时处理几个文件；默认使用全部核心
+  modMetadataConcurrencyHint: {
+    'zh-CN': '读取 MOD 的 DLL 元数据时同时处理几个文件；默认使用全部核心',
+    'zh-TW': '讀取 MOD 的 DLL 中繼資料時同時處理幾個檔案；預設使用全部核心',
+    en: 'How many DLLs are inspected at once; defaults to all CPU cores',
+    ko: 'MOD의 DLL 메타데이터를 동시에 몇 개까지 읽을지; 기본값은 모든 CPU 코어',
+    ja: 'MOD の DLL メタデータを同時にいくつ読むか。既定は全 CPU コア',
+  },
+  // 地图信息并行读取
+  mapInfoConcurrency: {
+    'zh-CN': '地图信息并行读取',
+    'zh-TW': '地圖資訊並行讀取',
+    en: 'Parallel map info reads',
+    ko: '지도 정보 병렬 읽기',
+    ja: 'マップ情報の並列読み込み',
+  },
+  // 解析地图 info 时同时处理几张地图；默认 4
+  mapInfoConcurrencyHint: {
+    'zh-CN': '解析地图 info 时同时处理几张地图；默认 4',
+    'zh-TW': '解析地圖 info 時同時處理幾張地圖；預設 4',
+    en: 'How many map `info` files are parsed at once; defaults to 4',
+    ko: '지도 info를 동시에 몇 개까지 파싱할지; 기본값 4',
+    ja: 'マップ info を同時にいくつ解析するか。既定 4',
+  },
+  // 全部核心
+  allCores: {
+    'zh-CN': '全部核心',
+    'zh-TW': '全部核心',
+    en: 'All cores',
+    ko: '모든 코어',
+    ja: 'すべてのコア',
+  },
 }

@@ -147,6 +147,16 @@ export interface PublicConfig {
   hide_unidentified_mods: boolean
   /** 删除 MOD 时先移入回收站；false = 直接删除，不可恢复。 */
   recycle_deleted_mods: boolean
+  /**
+   * 读取 MOD DLL 元数据的并发上限：0 = 全部 CPU 核心。
+   *
+   * 落盘值原样保存（允许 0，也允许超过当前机器核心数 —— 配置会跟着用户换机器），
+   * 真正使用时由后端 `metadata_read::resolve_concurrency` 解析成 `clamp(1, cores)`。
+   * 设置页下拉同理：只按本机核心数 clamp 显示，不回写。
+   */
+  mod_metadata_concurrency: number
+  /** 解析地图 `info` 的并发上限，语义同 `mod_metadata_concurrency`；默认 4。 */
+  map_info_concurrency: number
   tutorial_steps: TutorialStepConfig[]
   game: { path: string; auto_detect: boolean; runtime: GameRuntime }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean }
@@ -525,7 +535,7 @@ export interface TutorialStepConfig {
   title_i18n?: Partial<Record<TutorialLocale, string>>
   description_i18n?: Partial<Record<TutorialLocale, string>>
 }
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean }
+export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string

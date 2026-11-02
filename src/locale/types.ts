@@ -69,6 +69,7 @@ export const DOMAINS = [
   'modPreview',  // MOD 预览
   'levelSet',    // DIYLevel 关卡集（地图）的扫描、开关与导入
   'assetBundle', // 关卡集 info 的 AssetBundle 解析（地图信息读不出来）
+  'metadataRead', // 元数据批读中间层的任务级失败（单文件失败仍归各自域）
   'mapSource',   // 地图源文档校验（maps.toml 与子源）
   'backup',      // 框架备份
   'archive',     // ZIP 解压与安装

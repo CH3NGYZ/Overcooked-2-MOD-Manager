@@ -18,6 +18,7 @@ import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import PageLoading from '../components/PageLoading.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
+import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
@@ -73,6 +74,10 @@ const {
   pickSourceFile: pickInstallSourceFile,
   discardPreview: discardInstallPreview,
   handleInstalled: handleInstallInstalled,
+  checkOpen: installCheckOpen,
+  checkModel: installCheckModel,
+  executeCheck: executeInstallCheck,
+  finishCheck: finishInstallCheck,
 } = useModInstallFlow(() => load())
 
 /** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
@@ -795,13 +800,16 @@ defineExpose({ refreshAll, visibleCount })
   </n-drawer>
 
   <!--
-    安装流程三段：来源选择 → 详情预览 → 确认安装。
+    安装流程四段：来源选择 → 同身份冲突检查 → 详情预览 → 确认安装。
     「安装 MOD」按钮走来源选择；仓库卡片的「安装 / 重装 / 更新」
     先用 preview_only 下载解析，然后直接把预览交给同一个详情弹窗。
+    解析出来若本地已有同身份的旧装项，先在检查弹窗里卸干净再进详情。
   -->
   <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
     :drag-active="dragActive" :pick-file="pickInstallSourceFile"
     @select="handleInstallSourceSelect" />
+  <InstallCheckDialog v-model:show="installCheckOpen" :model="installCheckModel"
+    :execute="executeInstallCheck" @finished="finishInstallCheck" />
   <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />

@@ -38,6 +38,7 @@ import ModConfigEditor from '../components/ModConfigEditor.vue'
 import ModDetailGrid from '../components/ModDetailGrid.vue'
 import ModStatusTags from '../components/ModStatusTags.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
+import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import PageLoading from '../components/PageLoading.vue'
@@ -1369,6 +1370,10 @@ const {
   pickSourceFile: pickInstallSourceFile,
   discardPreview: discardInstallPreview,
   handleInstalled: handleInstallInstalled,
+  checkOpen: installCheckOpen,
+  checkModel: installCheckModel,
+  executeCheck: executeInstallCheck,
+  finishCheck: finishInstallCheck,
 } = useModInstallFlow(() => load())
 
 /** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
@@ -1635,12 +1640,15 @@ function removePackage(node: ModPackageNode) {
   </Teleport>
 
   <!--
-    安装流程三段：来源选择 → 详情预览 → 确认安装。
-    与 MOD 安装页、仓库卡片共用同一套组件与流程，信息完全一致。
+    安装流程四段：来源选择 → 同身份冲突检查 → 详情预览 → 确认安装。
+    与 MOD 安装页、仓库卡片共用同一套组件与流程，信息完全一致；
+    解析出来若本地已有同身份的旧装项，先在检查弹窗里卸干净再进详情。
   -->
   <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
     :drag-active="dragActive" :pick-file="pickInstallSourceFile"
     @select="handleInstallSourceSelect" />
+  <InstallCheckDialog v-model:show="installCheckOpen" :model="installCheckModel"
+    :execute="executeInstallCheck" @finished="finishInstallCheck" />
   <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
     @installed="handleInstallInstalled()"
     @discarded="discardInstallPreview" />

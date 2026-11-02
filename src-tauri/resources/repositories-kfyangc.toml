@@ -49,3 +49,59 @@ note_i18n.ja = """DIYLevel のマップ読み込み処理を最適化し、大�
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
 min_version = ""
+
+
+[[repositories]]
+enabled = true
+# 仓库基本信息
+name_i18n.zh-CN = "DIYChef 快速载入"
+name_i18n.zh-TW = "DIYChef 快速載入"
+name_i18n.en = "DIYChef Fast Init"
+name_i18n.ko = "DIYChef 빠른 로딩"
+name_i18n.ja = "DIYChef 高速読み込み"
+group_i18n.zh-CN = "DIYChef 优化"
+group_i18n.zh-TW = "DIYChef 優化"
+group_i18n.en = "DIYChef Optimization"
+group_i18n.ko = "DIYChef 최적화"
+group_i18n.ja = "DIYChef 最適化"
+provider = "github"
+username = "kfyangc"
+repository = "Overcooked2-DIYChefFastInit"
+region = ""
+
+# 下载方式
+download_mode = "release"
+
+# Release 参数
+channel = "all"
+max_release_count = 10
+download_threads = 1
+
+# 版本资产规则
+asset_rules = [{ type = "exact", value = "DIYChefFastInit.zip" }]
+
+# 本地 MOD 识别绑定
+plugin_guid = "dev.gua.overcooked.diychef"
+local_product_name = "DIYChefFastInit"
+local_original_filename = "DIYChefFastInit.dll"
+version_regex = ""
+
+# 安装目录
+install_target = "BepInEx/plugins"
+
+# 仓库备注
+note_i18n.zh-CN = """优化 DIYChef（厨房暖暖）的启动与厨师切换加载，通过厨师和帽子按需加载、内存缓存与持久化缓存，减少大量自定义资源带来的等待。
+
+**安装后，请将旧 MOD 目录中的 `Resources` 文件夹和 `prefer.txt` 移动到新的 MOD 目录，与 `DIYChefFastInit.dll` 放在同一目录下。**"""
+note_i18n.zh-TW = """最佳化 DIYChef（廚房暖暖）的啟動與廚師切換載入，透過廚師和帽子隨需載入、記憶體快取與持久化快取，減少大量自訂資源造成的等待。
+
+**安裝後，請將舊 MOD 目錄中的 `Resources` 資料夾和 `prefer.txt` 移動到新的 MOD 目錄，與 `DIYChefFastInit.dll` 放在同一目錄下。**"""
+note_i18n.en = """Optimizes DIYChef startup and chef switching with on-demand loading of chefs and hats, in-memory caching, and persistent caching to reduce waits when many custom resources are installed.
+
+**After installation, move the `Resources` folder and `prefer.txt` from the old MOD directory into the new MOD directory, alongside `DIYChefFastInit.dll`.**"""
+note_i18n.ko = """셰프와 모자의 온디맨드 로딩, 메모리 캐시 및 영구 캐시로 DIYChef 시작과 셰프 전환을 최적화하여, 많은 커스텀 리소스로 인한 대기 시간을 줄입니다.
+
+**설치 후 기존 MOD 폴더의 `Resources` 폴더와 `prefer.txt`를 새 MOD 폴더로 이동하여 `DIYChefFastInit.dll`과 같은 폴더에 두세요.**"""
+note_i18n.ja = """シェフと帽子のオンデマンド読み込み、メモリキャッシュ、永続キャッシュにより DIYChef の起動とシェフ切り替えを最適化し、大量のカスタムリソースによる待ち時間を短縮します。
+
+**インストール後、旧 MOD フォルダー内の `Resources` フォルダーと `prefer.txt` を新しい MOD フォルダーへ移動し、`DIYChefFastInit.dll` と同じフォルダーに配置してください。**"""

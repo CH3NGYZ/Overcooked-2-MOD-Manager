@@ -85,8 +85,15 @@ const rows = computed(() => props.model?.rows ?? [])
 /** 提醒类条目：无法自动处理，只能让用户知道。 */
 const blocked = computed(() => props.model?.blocked ?? [])
 
-/** 有可执行步骤，且都还没做。 */
-const pending = computed(() => rows.value.filter((row) => !done.value[row.key]))
+/**
+ * 还没处理成功的行。
+ *
+ * 判据是「不是 ok」而不是「没有状态」：失败的行必须仍然算待处理，否则
+ * `allDone` 会在失败后立刻成立，底栏的「全部处理」变成「完成」，用户再也
+ * 没有重试入口 —— 而失败往往只是游戏开着、文件被占用这类可当场解除的原因。
+ * 重复点「全部处理」时已成功的行会被跳过，所以不会重复卸载已经进回收站的项。
+ */
+const pending = computed(() => rows.value.filter((row) => done.value[row.key] !== 'ok'))
 const allDone = computed(() => rows.value.length > 0 && pending.value.length === 0)
 /** 全部成功：没有失败、没有提醒。 */
 const allOk = computed(() =>
@@ -99,7 +106,8 @@ async function runAll() {
   failures.value = []
   try {
     for (const row of rows.value) {
-      if (done.value[row.key]) continue
+      // 只跳过已成功的：失败的行要能重试，重复点一次就是重跑它们
+      if (done.value[row.key] === 'ok') continue
       try {
         await props.execute(row)
         done.value = { ...done.value, [row.key]: 'ok' }

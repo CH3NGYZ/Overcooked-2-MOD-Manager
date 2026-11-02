@@ -71,8 +71,13 @@ export function useInstallCheck() {
   /*
    * 弹窗被任何方式收起（叉掉、Esc、宿主自己关）都算放弃。
    * 正常关闭时 `finish` 已经先 resolve 过，这里只会命中「没有结论就关了」。
+   *
+   * 必须 `flush: 'sync'`：默认的 pre 调度会把同一个 tick 里的 open true→false
+   * 合并成一次，而 watch 的旧值是 false，于是判定「没变化」、回调根本不跑 ——
+   * 那一轮 await 就永远不结束，入口按钮从此转圈。真实链路里「打开后立刻被
+   * 收起」（宿主切页、父组件卸载、或代码里连开两轮）都可能落在同一个 tick。
    */
-  watch(open, (visible) => { if (!visible) resolve(false) })
+  watch(open, (visible) => { if (!visible) resolve(false) }, { flush: 'sync' })
 
   return { open, model, run, finish, execute }
 }

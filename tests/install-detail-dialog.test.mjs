@@ -53,3 +53,14 @@ test('弹窗内容区关掉滚动锚定，滚动只由 expandScroll 一套执行
   // 窗口放宽到 1200：这条规则块里还写着 scrollbar-gutter 等注释，限度太紧会误红
   assert.match(modal, /\.app-modal-scroll \{[\s\S]{0,1200}?overflow-anchor: none;/)
 })
+
+test('两处展开都显式声明弹窗滚动容器与顶部边界', () => {
+  // 内容还没溢出时 `.app-modal-scroll` 不算「可滚动祖先」，启发式找不到它；
+  // 弹窗也没有固定页头，顶部边界就是内容区自己的顶（0）。两处不传就会滚不到位。
+  const calls = [...dialog.matchAll(/scrollExpandedCardIntoView\(\{[\s\S]{0,400}?\n\s*\}\)/g)]
+  assert.equal(calls.length, 2, '展开滚动应只有外层条目与内层插件两处')
+  for (const [call] of calls) {
+    assert.match(call, /container: card\.closest<HTMLElement>\('\[data-scroll-container\]'\)/)
+    assert.match(call, /bounds: \{ top: 0 \}/)
+  }
+})

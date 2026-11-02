@@ -81,8 +81,11 @@ function detailBodyOf(card: Element) {
  * 点开 / 收起一级条目。
  *
  * 滚动交给 `expandScroll`（与管理页同一套规则）：展开时把卡片底边推到视口可用
- * 底边、放不下才退化成贴顶；收起时把折叠后的卡片滚到可视区正中。弹窗内容区是
- * `.app-modal-scroll`，`resolveScrollContainer` 会自己找到它，这里不传容器。
+ * 底边、放不下才退化成贴顶；收起时把折叠后的卡片滚到可视区正中。
+ *
+ * 容器必须显式传：弹窗内容区（`.app-modal-scroll`）在内容还没溢出时不算
+ * 「可滚动祖先」，`resolveScrollContainer` 找不到它，就会滚不到位、卡片底部被切。
+ * 顶部边界写 0 —— 弹窗没有固定页头，内容区自己的顶就是上界。
  */
 function onRowActivate(key: string, card: HTMLElement) {
   if (isOuterOpen(key)) {
@@ -97,13 +100,15 @@ function onRowActivate(key: string, card: HTMLElement) {
   void nextTick(() => {
     scrollExpandedCardIntoView({
       card,
+      container: card.closest<HTMLElement>('[data-scroll-container]'),
+      bounds: { top: 0 },
       anchor: card.querySelector('.detail-row-line') ?? card,
       body: detailBodyOf(card),
     })
   })
 }
 
-/** 点开 / 收起随包插件：外壳复用 `LocalItemCard`，滚动同一条规则。 */
+/** 点开 / 收起随包插件：外壳复用 `LocalItemCard`，滚动同一条规则（容器与上界同上）。 */
 function onNestedActivate(parentKey: string, childKey: string, card: HTMLElement) {
   if (isInnerOpen(parentKey, childKey)) {
     collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, () => expansion.closeInner(parentKey, childKey))
@@ -113,6 +118,8 @@ function onNestedActivate(parentKey: string, childKey: string, card: HTMLElement
   void nextTick(() => {
     scrollExpandedCardIntoView({
       card,
+      container: card.closest<HTMLElement>('[data-scroll-container]'),
+      bounds: { top: 0 },
       anchor: card.querySelector('.card-row') ?? card,
       body: card.querySelector('.card-detail'),
     })

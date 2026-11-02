@@ -9,11 +9,20 @@ import test from 'node:test'
  *
  * 口径：
  * - 展开用**卡片外框**（border box）的数字，不再是「标题行到卡片底边」；
- * - 顶部边界是 `insetTop` 而不是 0（页头在滚动区上方占掉的那一截）；
- * - 收起把折叠后的卡片外框滚到可视区正中（上下邻居都留着，方便连着点开）。
+ * - 顶部边界是 `insetTop` 而不是 0（页头在滚动区上方占掉的那一截），底部留白可被
+ *   `insetBottom` 覆盖（`bottomGap` 是旧名，只为兼容既有调用方）；
+ * - 收起把折叠后的卡片外框滚到可视区正中（底边默认不留白，显式给了才让出）；
+ * - 落位后按 `needsScrollSettle` 决定要不要补滚（弹窗滚动途中内容还在长高）。
  */
-const { expansionScrollDelta, expansionTargetScrollTop, collapseScrollDelta, EXPANSION_BOTTOM_GAP } =
-  await import('../src/expandScroll.ts')
+const {
+  expansionScrollDelta,
+  expansionTargetScrollTop,
+  collapseScrollDelta,
+  resolveScrollInsets,
+  needsScrollSettle,
+  SCROLL_SETTLE_ROUNDS,
+  EXPANSION_BOTTOM_GAP,
+} = await import('../src/expandScroll.ts')
 
 /** 视口 626 高：实测窗口里 `.page-scroll .n-scrollbar-container` 的可视高度。 */
 const VIEWPORT = 626
@@ -253,4 +262,82 @@ test('展开目标：卡片比视口还高时，标题贴到上界、其余向�
   // 露底要 686px，但标题只能上移 400 - 56 = 344px（贴住上界）
   assert.equal(target, 300 + 344)
   assert.equal(400 - (target - 300), insetTop)
+})
+
+test('展开：底边余量走 insetBottom，旧名 bottomGap 仍然生效', () => {
+  // 卡片 bottom 627：默认留 12px 要滚 13px；不留白只差 1px，留 40px 要滚 41px
+  assert.equal(expand({ top: 327, height: 300 }).delta, 13)
+  assert.equal(expand({ top: 327, height: 300, insetBottom: 0 }).delta, 1)
+  assert.equal(expand({ top: 327, height: 300, insetBottom: 40 }).delta, 41)
+  assert.equal(expand({ top: 327, height: 300, bottomGap: 0 }).delta, 1)
+  // 两个都给时以正式名 insetBottom 为准
+  assert.equal(expand({ top: 327, height: 300, insetBottom: 0, bottomGap: 40 }).delta, 1)
+})
+
+test('展开目标：底边余量同样走 insetBottom', () => {
+  const frame = { top: 300, height: 300, scrollTop: 100, scrollMax: 2000 }
+  // 默认留 12px：卡片 bottom 600 还在可用底边 614 之内，停在原地
+  assert.equal(expandTarget(frame), 100)
+  // 留 40px：可用底边 586，要把卡片往上推 14px
+  assert.equal(expandTarget({ ...frame, insetBottom: 40 }), 114)
+})
+
+test('收起：底边余量默认 0（居中上下对称），显式给了才让出', () => {
+  // 居中顶边 = (626 - 44) / 2 = 291
+  assert.equal(collapse({ top: 600 }).delta, 600 - MID_TOP)
+  // insetBottom 20：可用高度 606，居中顶边 = (626 - 20 - 44) / 2 = 281
+  assert.equal(collapse({ top: 600, insetBottom: 20 }).delta, 600 - 281)
+})
+
+test('边界解析：数字按 px，元素按实测边，缺省回到页面规则', () => {
+  const container = {
+    getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+    closest: () => null,
+  }
+  // 数字直接就是「距容器可视顶 / 距容器可视底」的 px
+  assert.deepEqual(resolveScrollInsets(container, { top: 24, bottom: 16 }), { top: 24, bottom: 16 })
+  // 顶部元素用自己的底边：页头下沿 160 - 容器顶 100 = 60
+  assert.equal(resolveScrollInsets(container, { top: { getBoundingClientRect: () => ({ bottom: 160 }) } }).top, 60)
+  // 底部元素用自己的顶边：容器底 500 - 工具条顶 460 = 40
+  assert.equal(resolveScrollInsets(container, { bottom: { getBoundingClientRect: () => ({ top: 460 }) } }).bottom, 40)
+  // 缺省：容器不在 .app-main 里时顶部 0，底部回到 12px 余量
+  assert.deepEqual(resolveScrollInsets(container), { top: 0, bottom: EXPANSION_BOTTOM_GAP })
+  // 弹窗：顶部写 0、底部不额外留白
+  assert.deepEqual(resolveScrollInsets(container, { top: 0 }, { bottom: 0 }), { top: 0, bottom: 0 })
+})
+
+test('边界解析：落在容器之外按 0 算，负留白不会把卡片推出容器', () => {
+  const container = {
+    getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+    closest: () => null,
+  }
+  assert.equal(resolveScrollInsets(container, { top: { getBoundingClientRect: () => ({ bottom: 80 }) } }).top, 0)
+  assert.equal(resolveScrollInsets(container, { bottom: { getBoundingClientRect: () => ({ top: 520 }) } }).bottom, 0)
+  assert.equal(resolveScrollInsets(container, { top: -20, bottom: -8 }).top, 0)
+})
+
+test('落位对账：内容变高、用户没滚过才补滚', () => {
+  const base = { scrollTop: 900, lastSet: 900, scrollMaxNow: 600, scrollMaxUsed: 400, rounds: 0 }
+  assert.equal(needsScrollSettle(base), true)
+  // 容器没有比计算时更高：目标没被夹短，补滚没意义
+  assert.equal(needsScrollSettle({ ...base, scrollMaxNow: 400 }), false)
+  // 亚像素增长不算内容长高（scrollHeight 取整、clientHeight 可能带小数）
+  assert.equal(needsScrollSettle({ ...base, scrollMaxNow: 400.5 }), false)
+})
+
+test('落位对账：用户自己滚过就让位', () => {
+  const base = { scrollMaxNow: 600, scrollMaxUsed: 400, rounds: 0 }
+  assert.equal(needsScrollSettle({ ...base, scrollTop: 905, lastSet: 900 }), false)
+  // 差在容差之内仍算滚动动画自己写的
+  assert.equal(needsScrollSettle({ ...base, scrollTop: 902, lastSet: 900 }), true)
+})
+
+test('落位对账：最多补滚 SCROLL_SETTLE_ROUNDS 次', () => {
+  const frame = { scrollTop: 900, lastSet: 900, scrollMaxNow: 600, scrollMaxUsed: 400 }
+  assert.equal(SCROLL_SETTLE_ROUNDS, 2)
+  assert.equal(needsScrollSettle({ ...frame, rounds: 0 }), true)
+  assert.equal(needsScrollSettle({ ...frame, rounds: 1 }), true)
+  assert.equal(needsScrollSettle({ ...frame, rounds: 2 }), false)
+  // 调用方也可以收紧上限
+  assert.equal(needsScrollSettle({ ...frame, rounds: 1, maxRounds: 1 }), false)
 })

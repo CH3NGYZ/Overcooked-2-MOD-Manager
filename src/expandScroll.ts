@@ -18,6 +18,13 @@ import { prefersReducedMotion } from './motion.ts'
  * 顶部边界不是 0 而是页头下沿（`scrollInsetTop`）：页头固定、不随内容滚动，
  * 卡片贴到 0 会被页头压住。边界每次调用时实测，不缓存（页头会换行、缩放会变）。
  *
+ * 滚动容器与上下边界都可以由调用方显式声明（`container` / `bounds`）：弹窗的内容区
+ * 在内容尚未溢出时不算「可滚动祖先」，启发式找不到它；弹窗也没有固定页头，顶部
+ * 边界就是内容区自己的顶。声明之后同一套规则直接套进弹窗，不必另写一份滚法。
+ *
+ * 展开落位后还要对账一次（`settle`）：弹窗在滚动途中内容仍在长高，单次量到的
+ * 可滚动上限会过时、滚到位时还差一截；对账只在用户没自己滚时补滚，最多两次。
+ *
  * - **同时收起另一张**（地图管理页单展开）：被收起的那张在目标卡片之前时，收起会让
  *   目标整体上移 `shrink`。展开后的滚动位置要同步减掉这段，标题才留在原地、卡片从
  *   当前位置向下展开；只扣测量值不改滚动位置，卡片就会被上方那张的收起「挤上去」。
@@ -33,6 +40,22 @@ import { prefersReducedMotion } from './motion.ts'
 
 /** 判定「已经贴住边界」的容差（px）：差这么点就不滚，避免一像素级的抖动。 */
 const PIN_TOLERANCE = 2
+
+/**
+ * 判定「用户自己滚了」的容差（px）。
+ *
+ * 滚动动画每帧写下的位置自带亚像素误差，与最后一次写入差一两像素仍算它自己写的；
+ * 超过才算用户抢走了滚动条，动画与落位对账都要让位。
+ */
+const USER_SCROLL_TOLERANCE = 2
+
+/**
+ * 落位对账最多补滚几次。
+ *
+ * 内容长高的动画（详情展开 0.3s）与滚动动画同量级，通常第一轮补滚就追平；
+ * 留两次是给弹窗这类「滚动途中还在继续长高」的容器，再多就变成和用户抢滚动条。
+ */
+export const SCROLL_SETTLE_ROUNDS = 2
 
 /**
  * 「整卡可见」判定与「底边对齐」都留出的空隙（px）。
@@ -63,7 +86,9 @@ export interface ExpansionFrame {
   viewportHeight: number
   /** 页头这类固定元素在滚动区顶部让出的高度；缺省 0（页头不在滚动区上方时）。 */
   insetTop?: number
-  /** 底边对齐时留出的空隙；缺省 `EXPANSION_BOTTOM_GAP`。 */
+  /** 底边对齐时留出的空隙（距容器可视底）；缺省 `EXPANSION_BOTTOM_GAP`。 */
+  insetBottom?: number
+  /** `insetBottom` 的旧名，仍被既有页面与测试传递；两者都给时以 `insetBottom` 为准。 */
   bottomGap?: number
   /** 容器当前 scrollTop。 */
   scrollTop: number
@@ -88,6 +113,13 @@ export interface CollapseFrame {
   viewportHeight: number
   /** 页头这类固定元素在滚动区顶部让出的高度；缺省 0。 */
   insetTop?: number
+  /**
+   * 底部让出的空隙（距容器可视底）；缺省 0。
+   *
+   * 收起是「把卡片居中」，上下本来对称，不需要像展开那样给底边留白；
+   * 只有调用方显式声明了底部边界（例如容器里另有固定工具条）时才让出它。
+   */
+  insetBottom?: number
   /** 容器当前 scrollTop。 */
   scrollTop: number
   /** 收起后的可滚动上限（内容变短之后），用来夹住居中目标。 */
@@ -108,9 +140,17 @@ function clampDelta(delta: number, scrollTop: number, scrollMax: number): number
 }
 
 /**
+ * 底边余量取哪个值：`insetBottom` 是正式名，`bottomGap` 是早期的名字（既有调用方
+ * 与测试还在传），两者都没有时才回到默认的 12px。
+ */
+function insetBottomOf(frame: Pick<ExpansionFrame, 'insetBottom' | 'bottomGap'>): number {
+  return frame.insetBottom ?? frame.bottomGap ?? EXPANSION_BOTTOM_GAP
+}
+
+/**
  * 展开卡片后的滚动距离。
  *
- * 1. `top + height` 还在「可用底边」（视口高度减去 `bottomGap`）之内：原地就能看全，不滚。
+ * 1. `top + height` 还在「可用底边」（视口高度减去 `insetBottom`）之内：原地就能看全，不滚。
  * 2. 否则先把内容上移 `top + height - 可用底边`，让卡片底边贴住可用底边。
  * 3. 但这样卡片外框会被顶到 `insetTop` 之上时，改成只上移到「外框贴边界」：
  *    `target = min(delta, top - insetTop)`；这个上限小于 0（外框早就在边界之上，
@@ -122,11 +162,12 @@ export function expansionScrollDelta({
   height,
   viewportHeight,
   insetTop = 0,
-  bottomGap = EXPANSION_BOTTOM_GAP,
+  insetBottom,
+  bottomGap,
   scrollTop,
   scrollMax,
 }: ExpansionFrame): ScrollDelta {
-  const usableBottom = viewportHeight - bottomGap
+  const usableBottom = viewportHeight - insetBottomOf({ insetBottom, bottomGap })
   const delta = top + height - usableBottom
   if (delta <= 0) return { delta: 0, reason: 'none' }
   // 最多只能把卡片顶推到「外框贴住页头下沿」，再往上卡片上边框与圆角就出界了。
@@ -162,11 +203,12 @@ export function expansionTargetScrollTop({
   shrink = 0,
   viewportHeight,
   insetTop = 0,
-  bottomGap = EXPANSION_BOTTOM_GAP,
+  insetBottom,
+  bottomGap,
   scrollTop,
   scrollMax,
 }: ExpansionTargetFrame): number {
-  const usableBottom = viewportHeight - bottomGap
+  const usableBottom = viewportHeight - insetBottomOf({ insetBottom, bottomGap })
   // 上方那张收起后，这张卡的外框在**内容坐标**里的位置（不随滚动变）。
   const contentTop = scrollTop + top - shrink
   // 标题留在原地时的滚动位置：上方替我们滚了 shrink，这里就要减掉它。
@@ -189,8 +231,9 @@ export function expansionTargetScrollTop({
  * 「同一个位置连着看几张详情」的效果。
  *
  * 居中 = 卡片顶边落在「页头下沿到视口底边」这段可视区里、扣掉卡片自己高度后剩下空间的
- * 一半处，卡片中心于是正好落在可视区中心。页头占掉的那一截不算可视区，所以目标是
- * `insetTop + (viewportHeight - insetTop - heightAfter) / 2`，不是整个视口的中线。
+ * 一半处，卡片中心于是正好落在可视区中心。页头与容器底部的固定工具条占掉的两截
+ * 不算可视区，所以目标是 `insetTop + (viewportHeight - insetTop - insetBottom - heightAfter) / 2`，
+ * 不是整个视口的中线。
  *
  * 卡片比可视区还高（折叠后一般不会）也照公式居中，不退化成贴顶 —— 贴顶会把
  * 卡片的中心推到视口之外，用户还得自己找。已经居中（±2px）就不滚。
@@ -203,14 +246,55 @@ export function collapseScrollDelta({
   heightAfter,
   viewportHeight,
   insetTop = 0,
+  insetBottom = 0,
   scrollTop,
   scrollMaxAfter,
 }: CollapseFrame): ScrollDelta {
   // 居中 = 让卡片顶边落在「视口里给这张卡剩下的空间」的一半处；卡片中心于是正好在可视区中心。
-  const centeredTop = insetTop + (viewportHeight - insetTop - heightAfter) / 2
+  // 底部让出的空隙同样从可用高度里扣掉，否则卡片中心会偏下。
+  const centeredTop = insetTop + (viewportHeight - insetTop - insetBottom - heightAfter) / 2
   const delta = top - centeredTop
   if (Math.abs(delta) <= PIN_TOLERANCE) return { delta: 0, reason: 'none' }
   return { delta: clampDelta(delta, scrollTop, scrollMaxAfter), reason: 'center' }
+}
+
+/** 落位对账的输入：用的是哪次滚动的落点、哪次测量的上限。 */
+export interface ScrollSettleFrame {
+  /** 当前 scrollTop。 */
+  scrollTop: number
+  /** 这次滚动最后一次写下的 scrollTop。 */
+  lastSet: number
+  /** 现在容器的可滚动上限。 */
+  scrollMaxNow: number
+  /** 计算目标时用的可滚动上限。 */
+  scrollMaxUsed: number
+  /** 已经补滚过几次。 */
+  rounds: number
+  /** 最多补滚几次；缺省 `SCROLL_SETTLE_ROUNDS`。 */
+  maxRounds?: number
+}
+
+/**
+ * 落位之后是否要再补滚一次。
+ *
+ * 展开动画与滚动同时进行：滚动途中内容还在变高，算目标时量到的可滚动上限会过时，
+ * 于是滚到位时底边还差一截（弹窗里展开随包插件最明显）。两种情况不补滚：
+ *
+ * - 用户自己滚了（当前位置与最后一次写入差出容差）：让位，不再抢滚动条；
+ * - 容器没有比计算时更高（含已达补滚上限）：目标没被夹短，再滚只是空转。
+ */
+export function needsScrollSettle({
+  scrollTop,
+  lastSet,
+  scrollMaxNow,
+  scrollMaxUsed,
+  rounds,
+  maxRounds = SCROLL_SETTLE_ROUNDS,
+}: ScrollSettleFrame): boolean {
+  if (rounds >= maxRounds) return false
+  if (Math.abs(scrollTop - lastSet) > USER_SCROLL_TOLERANCE) return false
+  // 0.5px 容差：scrollHeight 取整、clientHeight 可能带小数，亚像素变化不算内容长高。
+  return scrollMaxNow > scrollMaxUsed + 0.5
 }
 
 /* ===== DOM 侧：量尺寸 + 执行滚动 ===== */
@@ -253,6 +337,83 @@ export function scrollInsetTop(container: HTMLElement): number {
   return Math.max(0, header.getBoundingClientRect().bottom - container.getBoundingClientRect().top)
 }
 
+/**
+ * 显式声明滚动层的属性名。
+ *
+ * 弹窗内容区（`.app-modal-scroll`）在内容尚未溢出时不满足「scrollHeight > clientHeight」，
+ * 启发式找不到它；用属性声明后，即使卡片还没把内容撑高也能拿到正确的滚动容器。
+ */
+const SCROLL_CONTAINER_ATTR = 'data-scroll-container'
+
+/** 上下边界的数值口径：数字直接是 px，元素用自己的实测边（见 `resolveScrollInsets`）。 */
+export interface ScrollBounds {
+  /** 顶部边界：数字 = 相对容器可视顶的 px；元素 = 它的底边（固定页头、工具条）。 */
+  top?: number | HTMLElement
+  /** 底部边界：数字 = 距容器可视底的留白 px；元素 = 它的顶边（固定页脚、工具条）。 */
+  bottom?: number | HTMLElement
+}
+
+export interface ScrollInsets {
+  /** 距容器可视顶的 px。 */
+  top: number
+  /** 距容器可视底的 px。 */
+  bottom: number
+}
+
+/** `bounds` 没给边时用的底边余量：展开按卡片间距留白，收起是居中、不额外留。 */
+export interface ScrollInsetDefaults {
+  bottom?: number
+}
+
+/**
+ * 把 `bounds` 统一换成「距容器可视顶 / 距容器可视底」的 px。
+ *
+ * 元素边界在调用时实测相对容器的位置：页面里的固定页头会因窗口宽度换行、界面缩放
+ * 也会改变它，弹窗里的工具条还可能被别的内容挤动，缓存下来就会错。落在容器之外
+ * （算出来是负值）按 0 算，不让卡片滑出容器。
+ */
+export function resolveScrollInsets(
+  container: HTMLElement,
+  bounds: ScrollBounds = {},
+  defaults: ScrollInsetDefaults = {},
+): ScrollInsets {
+  const rect = container.getBoundingClientRect()
+  const top = bounds.top === undefined
+    ? scrollInsetTop(container)
+    : typeof bounds.top === 'number'
+      ? Math.max(0, bounds.top)
+      : Math.max(0, bounds.top.getBoundingClientRect().bottom - rect.top)
+  const bottom = bounds.bottom === undefined
+    ? (defaults.bottom ?? EXPANSION_BOTTOM_GAP)
+    : typeof bounds.bottom === 'number'
+      ? Math.max(0, bounds.bottom)
+      : Math.max(0, rect.bottom - bounds.bottom.getBoundingClientRect().top)
+  return { top, bottom }
+}
+
+/**
+ * 卡片所在滚动层的解析顺序：显式声明 → `data-scroll-container` 标记 → 「谁真的在滚」。
+ *
+ * 最后一步是页面场景的兜底（页面滚动区没有标记，靠内容溢出判定）；弹窗与抽屉用属性
+ * 声明，内容还没溢出时也能拿到容器，不必等它先溢出才发现自己找错了层。
+ */
+function scrollContainerOf(card: Element, declared?: HTMLElement | null): HTMLElement | null {
+  if (declared) return declared
+  const marked = card.closest(`[${SCROLL_CONTAINER_ATTR}]`)
+  if (marked instanceof HTMLElement) return marked
+  return resolveScrollContainer(card)
+}
+
+/**
+ * 按展开键找卡片。键由调用方决定（文件名 / 目录名，内层键还带父键前缀），直接落在
+ * `data-expand-key` 属性上；键里可能有引号或控制字符，拼进选择器前必须 `CSS.escape`。
+ * `root` 供另一页在局部子树里查找（同屏既有页面又有弹窗时不会串到别的树里）。
+ */
+export function cardByExpandKey(key: string, root: ParentNode = document): HTMLElement | null {
+  const found = root.querySelector(`[data-expand-key="${CSS.escape(key)}"]`)
+  return found instanceof HTMLElement ? found : null
+}
+
 /*
  * 这里**没有**「吸顶行贴边标记」这类跟踪器。
  *
@@ -272,10 +433,24 @@ export function scrollInsetTop(container: HTMLElement): number {
 export interface ExpandScrollTarget {
   /** 卡片根元素（`.mod-card` / 包外壳 `.package-shell`）。 */
   card: Element
-  /** 标题行元素（`.card-row` / `.package-head`）；只用来定位滚动容器，不参与对齐。 */
+  /**
+   * 标题行元素（`.card-row` / `.package-head`）。
+   *
+   * 它坐在卡片内部、与卡片同处一个滚动层；保留这个字段是因为页面调用点还在传
+   * （包外壳与子卡共用一个调用形状）。对齐与量高一律用 `card`，容器也不再从它定位。
+   */
   anchor: Element
   /** 展开后的内容层；拿不到时按卡片当前高度处理。 */
   body: Element | null
+  /** 显式声明的滚动容器；缺省按 `scrollContainerOf` 的顺序解析。 */
+  container?: HTMLElement | null
+  /**
+   * 上下边界。弹窗没有固定页头，顶部边界就是内容区自己的顶（写 0）；
+   * 页面缺省即可（顶部用页头下沿、底部留 `EXPANSION_BOTTOM_GAP`）。
+   */
+  bounds?: ScrollBounds
+  /** 落位对账是否开启，默认开（内容在滚动途中继续变高时补滚）。 */
+  settle?: boolean
   /**
    * 同一时刻因为「展开了这一张」而自动收起的上一张卡。
    *
@@ -302,6 +477,12 @@ export interface CollapseScrollTarget {
   card: Element
   /** 折叠后的内容层（`.card-detail` / `.package-body`），用来估算收起后短掉多少高度。 */
   body?: Element | null
+  /** 显式声明的滚动容器；缺省按 `scrollContainerOf` 的顺序解析。 */
+  container?: HTMLElement | null
+  /** 上下边界；收起是居中，底部只在调用方显式声明时才让出。 */
+  bounds?: ScrollBounds
+  /** 落位对账是否开启，默认开。 */
+  settle?: boolean
 }
 
 interface ViewportFrame {
@@ -362,31 +543,48 @@ function afterFrame(run: () => void): void {
 }
 
 /**
- * 展开后的滚动入口：等一帧 → 量 → 按 `expansionScrollDelta` 的结论滚。
+ * 展开后的滚动入口：等一帧 → 量 → 按 `expansionScrollDelta` 的结论滚，落位后对账。
  *
- * 调用方在 `nextTick()` 之后调用（此时详情已经渲染出来）；高度动画还在跑也没关系。
+ * 调用方在 `nextTick()` 之后调用（此时详情已经渲染出来）；高度动画还在跑也没关系，
+ * 目标每帧夹到当前可滚动范围，落位后由 `settle` 补滚。
  */
 export function scrollExpandedCardIntoView(target: ExpandScrollTarget): void {
   afterFrame(() => {
-    const { card, anchor, body, collapsing } = target
-    const container = resolveScrollContainer(anchor)
-    if (!container) return
+    const plan = expansionPlanOf(target)
+    if (!plan) return
+    if (Math.abs(plan.target - plan.container.scrollTop) < PIN_TOLERANCE) return
+    scrollAndSettle(plan, target.settle !== false)
+  })
+}
+
+/**
+ * 展开的滚动计划：每次重算都重新量卡片与容器。
+ *
+ * 展开动画期间卡片在长高、容器可滚动上限也在变，所以对账不能复用第一次的几何。
+ */
+function expansionPlanOf(target: ExpandScrollTarget): ScrollPlan | null {
+  const { card, body, collapsing, container: declared, bounds } = target
+  const container = scrollContainerOf(card, declared)
+  if (!container) return null
+  const compute = (): ScrollPlan => {
     const view = viewportOf(container)
     const cardRect = card.getBoundingClientRect()
-    const targetScrollTop = expansionTargetScrollTop({
+    const insets = resolveScrollInsets(container, bounds)
+    const scrollTop = expansionTargetScrollTop({
       // 对齐卡片外框（border box），不再从标题行算起：上边框与圆角必须留在视口里。
       top: cardRect.top - view.top,
       height: expandedCardHeight(card, body),
       cardHeight: cardRect.height,
       shrink: collapsing ? collapseShrinkAbove(collapsing, card) : 0,
       viewportHeight: view.viewportHeight,
-      insetTop: scrollInsetTop(container),
+      insetTop: insets.top,
+      insetBottom: insets.bottom,
       scrollTop: view.scrollTop,
       scrollMax: view.scrollMax,
     })
-    if (Math.abs(targetScrollTop - view.scrollTop) < PIN_TOLERANCE) return
-    applyScroll(container, targetScrollTop)
-  })
+    return { container, target: scrollTop, scrollMax: view.scrollMax, recompute: compute }
+  }
+  return compute()
 }
 
 /**
@@ -400,14 +598,15 @@ export function scrollExpandedCardIntoView(target: ExpandScrollTarget): void {
  * 批量收起不要调它 —— 那些场景里没有「用户正在看的那一张」。
  */
 export function collapseCardWithScroll(target: CollapseScrollTarget, collapse: () => void): void {
-  const { card, body } = target
-  const container = resolveScrollContainer(card)
+  const { card, body, container: declared, bounds } = target
+  const container = scrollContainerOf(card, declared)
   const view = container ? viewportOf(container) : null
   const rect = view ? card.getBoundingClientRect() : null
   const detailHeight = body ? naturalContentHeight(body) : 0
   const top = rect ? rect.top - view!.top : 0
   const heightAfter = Math.max(0, (rect?.height ?? 0) - detailHeight)
-  const insetTop = container ? scrollInsetTop(container) : 0
+  // 收起是居中，底边默认不额外留白；只有调用方显式声明底部边界时才让出它。
+  const insets = container ? resolveScrollInsets(container, bounds, { bottom: 0 }) : { top: 0, bottom: 0 }
   const scrollMaxAfter = view ? Math.max(0, view.scrollMax - detailHeight) : 0
   collapse()
   if (!container || !view) return
@@ -415,19 +614,68 @@ export function collapseCardWithScroll(target: CollapseScrollTarget, collapse: (
     top,
     heightAfter,
     viewportHeight: view.viewportHeight,
-    insetTop,
+    insetTop: insets.top,
+    insetBottom: insets.bottom,
     scrollTop: view.scrollTop,
     scrollMaxAfter,
   })
   if (delta === 0) return
-  applyScroll(container, view.scrollTop + delta)
+  /*
+   * 折叠后按当时的几何重新居中：内容只会变短，对账一般不会被触发；可一旦容器
+   * 因为别的动作变高（例如收起时另一张卡同时展开），补滚仍按同一套规则来。
+   */
+  const compute = (): ScrollPlan => {
+    const after = viewportOf(container)
+    const afterRect = card.getBoundingClientRect()
+    const again = collapseScrollDelta({
+      top: afterRect.top - after.top,
+      heightAfter: afterRect.height,
+      viewportHeight: after.viewportHeight,
+      insetTop: insets.top,
+      insetBottom: insets.bottom,
+      scrollTop: after.scrollTop,
+      scrollMaxAfter: scrollMaxOf(container),
+    })
+    return {
+      container,
+      target: after.scrollTop + again.delta,
+      scrollMax: scrollMaxOf(container),
+      recompute: compute,
+    }
+  }
+  scrollAndSettle({
+    container,
+    target: view.scrollTop + delta,
+    scrollMax: scrollMaxAfter,
+    recompute: compute,
+  }, target.settle !== false)
 }
 
-/** 正在跑的滚动动画：新的一次滚动要先把它停掉，避免两段动画抢同一个 scrollTop。 */
-let activeScroll: { cancel: () => void } | null = null
+/** 正在跑的滚动：新的一次滚动要先把它停掉，避免两段动画抢同一个 scrollTop。 */
+let activeScroll: ScrollRun | null = null
 
 /** 等「内容长到目标位置可滚」的最长时间（毫秒）：与详情展开动画同量级，多留一点余量。 */
 const REACHABLE_TIMEOUT = 420
+
+/** 一次滚动的句柄：落位对账要看它最后写下的位置，新滚动要能把它停掉。 */
+interface ScrollRun {
+  /** 这次滚动最后写下的 `scrollTop`。 */
+  lastSet(): number
+  /** 被后来的一次滚动取消时为真：对账不再补滚。 */
+  readonly cancelled: boolean
+  /** 落定（动画跑完 / 跳到目标 / 被取消）时 resolve。 */
+  readonly done: Promise<void>
+  /** 取消这次滚动并落定。 */
+  cancel(): void
+}
+
+/** 落位对账的一次计划：目标、计算它时用的可滚动上限、容器变高后的重算。 */
+interface ScrollPlan {
+  container: HTMLElement
+  target: number
+  scrollMax: number
+  recompute: () => ScrollPlan
+}
 
 function easeInOutCubic(progress: number): number {
   return progress < 0.5
@@ -440,55 +688,74 @@ function scrollMaxOf(container: HTMLElement): number {
 }
 
 /**
- * 立即滚动到目标；目标暂时滚不到（内容还在长高）时，等可滚动范围够了一次性跳过去。
+ * 滚到目标。
  *
- * 减少动效的用户不能看缓动，但也不能在内容还没长出来时就赋值 —— 那一刻的
- * `scrollTop` 会被浏览器夹回旧底，卡片底边永远贴不到视口底边。
+ * 减少动效的用户直接落位，但目标暂时滚不到（内容还在长高）时要等它够长：那一刻
+ * 赋值会被浏览器夹回旧底，卡片底边永远贴不到视口底边。
+ *
+ * 动画模式下每帧把目标夹到「此刻」的可滚动范围，滚动就能跟着内容一起长出来
+ * （原生 `scrollTo({ behavior: 'smooth' })` 在调用瞬间就把目标夹死，实测差出两百多像素）。
+ * 用户自己滚了就取消，不再抢滚动条。
  */
-function jumpScroll(container: HTMLElement, target: number): void {
-  if (target <= scrollMaxOf(container) + 0.5) {
-    container.scrollTop = Math.min(Math.max(target, 0), scrollMaxOf(container))
-    return
-  }
-  const startedAt = performance.now()
-  let frame = 0
-  const cancel = () => {
-    if (frame) cancelAnimationFrame(frame)
-    frame = 0
-    if (activeScroll?.cancel === cancel) activeScroll = null
-  }
-  const step = () => {
-    const max = scrollMaxOf(container)
-    if (max >= target - 0.5 || performance.now() - startedAt > REACHABLE_TIMEOUT) {
-      container.scrollTop = Math.min(Math.max(target, 0), max)
-      cancel()
-      return
-    }
-    frame = requestAnimationFrame(step)
-  }
-  activeScroll = { cancel }
-  frame = requestAnimationFrame(step)
-}
-
-function applyScroll(container: HTMLElement, target: number): void {
+function applyScroll(container: HTMLElement, target: number): ScrollRun {
   activeScroll?.cancel()
   activeScroll = null
-  if (prefersReducedMotion() || typeof requestAnimationFrame !== 'function') {
-    jumpScroll(container, target)
-    return
-  }
-  const start = container.scrollTop
-  const distance = target - start
-  if (Math.abs(distance) < 1) return
-  const startedAt = performance.now()
-  let lastSet = start
-  let frame = 0
 
-  const cancel = () => {
+  let cancelled = false
+  let lastSet = container.scrollTop
+  let frame = 0
+  let run: ScrollRun | null = null
+  let finish!: () => void
+  const done = new Promise<void>((resolve) => { finish = resolve })
+
+  /** 收尾：停掉等待中的帧、从全局登记里摘掉、让 `done` 落定。 */
+  const stop = () => {
     if (frame) cancelAnimationFrame(frame)
     frame = 0
-    if (activeScroll?.cancel === cancel) activeScroll = null
+    if (activeScroll === run) activeScroll = null
+    finish()
   }
+
+  /** 立即落位；目标暂时不可达时等它够长，最多等 `REACHABLE_TIMEOUT`。 */
+  const land = () => {
+    const startedAt = performance.now()
+    const step = () => {
+      const max = scrollMaxOf(container)
+      if (max >= target - 0.5 || performance.now() - startedAt > REACHABLE_TIMEOUT) {
+        container.scrollTop = Math.min(Math.max(target, 0), max)
+        lastSet = container.scrollTop
+        stop()
+        return
+      }
+      frame = requestAnimationFrame(step)
+    }
+    step()
+  }
+
+  run = {
+    lastSet: () => lastSet,
+    get cancelled() { return cancelled },
+    done,
+    cancel: () => {
+      if (cancelled) return
+      cancelled = true
+      stop()
+    },
+  }
+
+  if (prefersReducedMotion() || typeof requestAnimationFrame !== 'function') {
+    activeScroll = run
+    land()
+    return run
+  }
+
+  const start = container.scrollTop
+  const distance = target - start
+  if (Math.abs(distance) < 1) {
+    finish()
+    return run
+  }
+  const startedAt = performance.now()
 
   const step = (now: number) => {
     const current = container.scrollTop
@@ -500,13 +767,13 @@ function applyScroll(container: HTMLElement, target: number): void {
      * 那张同时收起，补偿滚动会被自己取消，卡片就被拽上去。
      */
     const clampedByContent = current < lastSet && lastSet > reachable
-    if (!clampedByContent && Math.abs(current - lastSet) > 2) {
-      cancel()
+    if (!clampedByContent && Math.abs(current - lastSet) > USER_SCROLL_TOLERANCE) {
+      stop()
       return
     }
     const progress = Math.min(1, (now - startedAt) / SCROLL_DURATION)
     const wanted = start + distance * easeInOutCubic(progress)
-    // 每帧夹到「此刻」的可滚动范围：折叠动画还没结束时范围会比目标小
+    // 每帧夹到「此刻」的可滚动范围：展开动画还没结束时范围会比目标小
     container.scrollTop = Math.min(wanted, reachable)
     lastSet = container.scrollTop
     if (progress < 1) {
@@ -515,9 +782,40 @@ function applyScroll(container: HTMLElement, target: number): void {
     }
     // 动画结束时范围应该已经稳定；还差一点就补上，避免停在一两像素外
     container.scrollTop = Math.min(Math.max(target, 0), scrollMaxOf(container))
-    cancel()
+    lastSet = container.scrollTop
+    stop()
   }
 
-  activeScroll = { cancel }
+  activeScroll = run
   frame = requestAnimationFrame(step)
+  return run
+}
+
+/**
+ * 滚到计划位置，落位后按 `needsScrollSettle` 对账补滚。
+ *
+ * 对账看的是这次滚动**最后写下的位置**而不是目标：动画被用户抢走时位置对不上，
+ * 直接让位；内容确实又长高了就重算目标再滚一次，最多 `SCROLL_SETTLE_ROUNDS` 次。
+ */
+function scrollAndSettle(plan: ScrollPlan, settle: boolean): void {
+  let current = plan
+  let rounds = 0
+  const step = () => {
+    const run = applyScroll(current.container, current.target)
+    if (!settle) return
+    void run.done.then(() => {
+      if (run.cancelled) return
+      if (!needsScrollSettle({
+        scrollTop: current.container.scrollTop,
+        lastSet: run.lastSet(),
+        scrollMaxNow: scrollMaxOf(current.container),
+        scrollMaxUsed: current.scrollMax,
+        rounds,
+      })) return
+      rounds += 1
+      current = current.recompute()
+      step()
+    })
+  }
+  step()
 }

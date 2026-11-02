@@ -14,6 +14,16 @@
  * 头部与 #footer 始终固定，任何情况下都不会超出可视区域。
  *
  * 关键实现细节（都是踩过的坑）：
+ *   · 高度一律交给浏览器布局：卡片 `height: auto`，只用 `max-height` 夹上限。
+ *     **不要在 JS 里给卡片写具体高度，也不要用 WAAPI 播宽高过渡。** 内层
+ *     `n-collapse-transition` 的 max-height 是逐帧长出来的；一旦把卡片钉在
+ *     「上一次量到的尺寸」上，那几帧里内容已经比卡片高，`overflow-y: auto`
+ *     的滚动条冒出来挤窄内容盒，文字换行、自然高度再变高 —— 「外层慢半拍 +
+ *     文字跳行 + 高度反向回缩」的反馈环就是这么来的。`auto` 高度与内容在同一
+ *     帧改变，滞后恒为 0，也不需要任何尺寸观察者。
+ *   · 仅靠 auto 还不够：`overflow-y: auto` 会在「内容跨过上限的那一瞬」改变
+ *     内容盒宽度。滚动层固定预留滚动条槽位（`scrollbar-gutter: stable`），
+ *     宽度不再跟高度互相追赶。
  *   · 高度约束必须用 :content-style 内联下发。Naive 的 .n-card-content 自带
  *     `flex: 1` 却**没有** `min-height: 0`，而 flex item 的 min-height 默认是
  *     auto —— 只靠外部 class 改不动，内容会把 card 撑破，并同时出现
@@ -22,15 +32,8 @@
  *     n-card 的同一个元素」上，内容区类名是 .n-card-content（不是
  *     .n-card__content）。
  */
-import { computed, nextTick, onBeforeUnmount, toRefs, useId, watch } from 'vue'
+import { computed, toRefs } from 'vue'
 import { NModal } from 'naive-ui'
-import {
-  MODAL_RESIZE_DURATION,
-  MODAL_RESIZE_EASING,
-  modalResizeKeyframes,
-  shouldAnimateModalResize,
-  type ModalSize,
-} from '../modalResize'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -166,6 +169,11 @@ function toCssLimit(value: string, axis: 'width' | 'height'): string {
   return trimmed
 }
 
+/*
+ * 卡片高度只有两种取值：`fill` 时是上限本身，否则交给内容（auto）。
+ * 右侧 `maxHeight` 负责夹住上限 —— 超限后 `.app-modal-scroll` 自己滚。
+ * 这里刻意不读、不写、不观察卡片尺寸：见文件头关于反馈环的说明。
+ */
 const modalStyle = computed(() => {
   const w = toCssLimit(widthLimit.value, 'width')
   const h = toCssLimit(heightLimit.value, 'height')
@@ -190,113 +198,13 @@ const contentStyle = {
   flexDirection: 'column' as const,
   overflow: 'hidden',
 }
-
-/* ===== 尺寸变化过渡 ===== */
-/*
- * 弹窗尺寸随内容变（切 tab、展开详情、错误提示出现），Naive 是直接跳过去的。
- * 这里观察卡片自己的尺寸，把「上一次 → 这一次」补成 200ms 的宽高过渡。
- *
- * 为什么用带实例号的类名去查卡片元素：`preset="card"` 下 Naive 把 `class`
- * 合到「同时带 `.n-modal` 与 `.n-card` 的同一个元素」上，而 `NModal` 组件实例
- * 的 `$el` 是一段 Teleport 注释节点，拿不到卡片本身。带实例号的类名让每个
- * 弹窗都能在自己的模板里定位到自己那张卡片（同时开两个弹窗也不会串）。
- */
-const instanceMarker = `app-modal-instance-${useId()}`
-
-let sizeObserver: ResizeObserver | null = null
-let sizeAnim: Animation | null = null
-let lastSize: ModalSize | null = null
-let lastViewport = { width: 0, height: 0 }
-/** 上一段过渡还没播完：期间 Observer 每帧都会回报中间尺寸，不能再起一段。 */
-let resizing = false
-
-function cardElement(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`.${instanceMarker}`)
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-function readSize(element: HTMLElement): ModalSize {
-  return { width: element.offsetWidth, height: element.offsetHeight }
-}
-
-function handleCardResize() {
-  const element = cardElement()
-  if (!element) return
-  const size = readSize(element)
-  const viewport = { width: window.innerWidth, height: window.innerHeight }
-  const viewportChanged =
-    viewport.width !== lastViewport.width || viewport.height !== lastViewport.height
-  lastViewport = viewport
-  const from = lastSize
-  lastSize = size
-  if (!from) return
-  const animate = shouldAnimateModalResize({
-    from,
-    to: size,
-    animating: resizing,
-    viewportChanged,
-    reducedMotion: prefersReducedMotion(),
-  })
-  if (!animate) return
-  sizeAnim?.cancel()
-  resizing = true
-  sizeAnim = element.animate(modalResizeKeyframes(from, size), {
-    duration: MODAL_RESIZE_DURATION,
-    easing: MODAL_RESIZE_EASING,
-  })
-  sizeAnim.finished
-    // cancel() 会让 finished reject，这不是错误
-    .catch(() => undefined)
-    .finally(() => {
-      resizing = false
-      sizeAnim = null
-    })
-}
-
-function observeCardSize() {
-  const element = cardElement()
-  if (!element) return
-  stopObservingCardSize()
-  lastSize = readSize(element)
-  lastViewport = { width: window.innerWidth, height: window.innerHeight }
-  sizeObserver = new ResizeObserver(handleCardResize)
-  sizeObserver.observe(element)
-}
-
-function stopObservingCardSize() {
-  sizeObserver?.disconnect()
-  sizeObserver = null
-  sizeAnim?.cancel()
-  sizeAnim = null
-  resizing = false
-  lastSize = null
-}
-
-/*
- * 只在弹窗真正显示时观察（`displayDirective: 'if'` 下关闭会把内容从 DOM 移除，
- * 观察一个已经消失的元素没有意义）。等一帧再查：Naive 是在 show 之后的渲染里
- * 才把卡片挂进 Teleport 目标的。
- */
-watch(visible, async (shown) => {
-  if (!shown) {
-    stopObservingCardSize()
-    return
-  }
-  await nextTick()
-  observeCardSize()
-}, { immediate: true })
-
-onBeforeUnmount(stopObservingCardSize)
 </script>
 
 <template>
   <n-modal :show="visible" preset="card" :title="heading || undefined" :bordered="hasBorder"
     :closable="allowClose" :mask-closable="allowClose && maskClosableEnabled" :close-on-esc="allowClose"
     :display-directive="directive" :to="mountTarget" class="app-modal"
-    :class="[extraClass, instanceMarker]" :style="modalStyle" :content-style="contentStyle"
+    :class="extraClass" :style="modalStyle" :content-style="contentStyle"
     @update:show="(value: boolean) => emit('update:show', value)"
     @after-leave="emit('after-leave')">
     <!-- 头部右侧附加内容（筛选器、计数等），透传 Naive 原生槽位 -->
@@ -308,7 +216,7 @@ onBeforeUnmount(stopObservingCardSize)
       scrollable=false：插槽内容直接成为内容区的 flex 子项，
       由它自己占满并管理滚动（配置编辑器的文本域需要确定高度才能撑满）。
     -->
-    <div v-if="scrollableContent" class="app-modal-scroll"
+    <div v-if="scrollableContent" class="app-modal-scroll" data-scroll-container
       :style="heightFloor ? { minHeight: heightFloor } : undefined">
       <slot />
     </div>
@@ -329,6 +237,13 @@ onBeforeUnmount(stopObservingCardSize)
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /*
+   * 固定预留滚动条槽位：内容跨过卡片高度上限时，滚动条出现/消失不再改变
+   * 内容盒宽度。否则宽度会跟着高度来回变（滚动条挤窄 → 文字换行 → 自然
+   * 高度变高 → 再挤一次），这正是「展开到一半摘要被挤成两行」的另一半成因。
+   * overlay 滚动条平台（macOS 默认）本来就不占宽度，这条在那里是无害的空操作。
+   */
+  scrollbar-gutter: stable;
   /*
    * 关掉浏览器滚动锚定（与 `.page-scroll .n-scrollbar-container` 同一条理由）：
    * 卡片展开 / 收起后的滚动距离由 `expandScroll.ts` 显式算出并动画执行，

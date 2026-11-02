@@ -50,5 +50,6 @@ test('整条 flex 链不收缩：内容超高只让弹窗内容区滚', () => {
 })
 
 test('弹窗内容区关掉滚动锚定，滚动只由 expandScroll 一套执行', () => {
-  assert.match(modal, /\.app-modal-scroll \{[\s\S]{0,400}?overflow-anchor: none;/)
+  // 窗口放宽到 1200：这条规则块里还写着 scrollbar-gutter 等注释，限度太紧会误红
+  assert.match(modal, /\.app-modal-scroll \{[\s\S]{0,1200}?overflow-anchor: none;/)
 })

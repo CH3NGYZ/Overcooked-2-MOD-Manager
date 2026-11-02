@@ -8,6 +8,7 @@ import { renderMermaidBlocks, renderReadme } from '../markdown'
 import AppModal from './AppModal.vue'
 import type { AppUpdateInfo } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 
 const props = defineProps<{ show: boolean; update: AppUpdateInfo | null }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
@@ -43,8 +44,18 @@ function close() {
 async function install() {
   installing.value = true
   phaseText.value = t('dialogs.preparingDownload')
+  /*
+   * 安装器包同样走下载管线：首字节超时这类失败要能原地重试。
+   * 重试只重跑这次安装，弹窗状态与更新信息都不动；标题用版本号，
+   * 失败卡片上能直接看出是哪一个版本没下下来。
+   */
+  const token = beginDownloadTask({
+    label: props.update ? `v${props.update.version}` : t('dialogs.update'),
+    retry: () => { void install() },
+  })
   try {
     const result = await api.installAppUpdate()
+    endDownloadTask(token)
     if (result.ok) {
       message.success(result.message
         ? translateBackendMessage(result.message)
@@ -56,6 +67,7 @@ async function install() {
       phaseText.value = ''
     }
   } catch (reason) {
+    failDownloadTask(token, reason)
     message.error(backendMessageOf(reason))
     phaseText.value = ''
   } finally {

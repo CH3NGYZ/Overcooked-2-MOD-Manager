@@ -24,6 +24,7 @@ import { levelSetImportDetail } from '../installDetail'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { uninstallConflicts, uninstallMapConflict } from '../installConflicts'
 import { backendMessageOf } from '../locale/backend'
+import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { useDashboard } from './useDashboardStore'
 import { useMapSources } from './useMapSources'
@@ -246,16 +247,29 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
      * 本地文件（`staged` 为假），绝不能删。
      */
     let stagedFile: string | null = null
+    /*
+     * 只有直链走下载管线（本地文件只读盘），所以只有直链需要「失败原地重试」。
+     * 重试 = 重新走一遍这个函数：失败发生在下载这一步，后面的确认与导入
+     * 都还没开始，不会重复执行已经成功过的步骤。
+     */
+    const token = source.kind === 'url'
+      ? beginDownloadTask({
+        label: t('levelSet.installMap'),
+        retry: () => { void importSource(source, options) },
+      })
+      : null
     try {
       // 上一轮可能留下旧进度：暂存一开始先清空，避免显示上次的条目
       zipProgress.value = null
       const staged = await api.stageMapSource(source.kind, source.value)
+      if (token !== null) endDownloadTask(token)
       // 识别结束，接下来是确认弹窗：不能把「正在读取」留在界面上
       zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
       options?.onStaged?.()
       await finishStaged(staged)
     } catch (reason) {
+      if (token !== null) failDownloadTask(token, reason)
       message.error(backendMessageOf(reason))
     } finally {
       // 不收弹窗：卸载失败时它要留着让用户处理后重试，成功与取消各自收过
@@ -263,6 +277,16 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       zipProgress.value = null
       importing.value = false
     }
+  }
+
+  /**
+   * 在线 Release 失败卡片上的标题：与下载进度的 label 同源（地图的本地化名）。
+   * 地图源还没加载时退回通用文案，不让卡片空着。
+   */
+  function releaseLabel(mapId: string): string {
+    const map = maps.value.find((entry) => entry.id === mapId)
+    if (!map) return t('levelSet.installMap')
+    return pickI18n(map.name_i18n, map.name) || t('levelSet.installMap')
   }
 
   /**
@@ -281,14 +305,24 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     if (importing.value) return false
     importing.value = true
     let stagedFile: string | null = null
+    /*
+     * 重试 = 重新下载并重新走确认链：失败发生在下载这一步时，确认与导入
+     * 都还没开始，不会把已经成功过的步骤再跑一遍。
+     */
+    const token = beginDownloadTask({
+      label: releaseLabel(mapId),
+      retry: () => { void installRelease(mapId, tag, assetName, options) },
+    })
     try {
       zipProgress.value = null
       const staged = await api.stageMapRelease(mapId, tag, assetName)
+      endDownloadTask(token)
       // 下载 + 识别结束：确认弹窗才是接下来的主角
       zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
       return await finishStaged(staged, options)
     } catch (reason) {
+      failDownloadTask(token, reason)
       message.error(backendMessageOf(reason))
       return false
     } finally {

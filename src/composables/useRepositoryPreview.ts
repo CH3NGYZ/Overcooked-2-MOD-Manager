@@ -12,8 +12,9 @@
 import { useDialog } from 'naive-ui'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
-import { t } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { isPrereleaseVersion } from '../modStatus'
 import type { ModPreview, Repository } from '../types'
 
@@ -114,23 +115,40 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
       if (!ready) return
     }
 
-    options.onBusyChange?.(repo.id, true)
-    try {
-      const outcome = await api.installRepository(repo.id, tag, true, assetName)
-      if (!outcome.ok) {
-        message.error(translateBackendMessage(outcome.message))
-        return
+    /*
+     * 下载这一段单独成函数：失败卡片上的「重试」要能原样再跑一次它。
+     * 预发布确认与关系检查不跟着重跑 —— 前者是用户意图，后者会真的
+     * 卸载/安装东西，它们在下载失败之前就已经做完了。
+     */
+    const download = async (): Promise<void> => {
+      const token = beginDownloadTask({
+        label: pickI18n(repo.name_i18n, repo.name),
+        retry: download,
+      })
+      options.onBusyChange?.(repo.id, true)
+      try {
+        const outcome = await api.installRepository(repo.id, tag, true, assetName)
+        // 走到这里说明 IPC 本身成功了：ok/message 是业务结论，不是下载故障
+        endDownloadTask(token)
+        if (!outcome.ok) {
+          message.error(translateBackendMessage(outcome.message))
+          return
+        }
+        if (!outcome.preview) {
+          message.error(t('modsOnline.downloadFinishedButNoInstallableContentWasParsed'))
+          return
+        }
+        openPreview(outcome.preview)
+      } catch (reason) {
+        // 后端的下载失败一律走 Err：这是唯一需要「原地重试」的情形
+        failDownloadTask(token, reason)
+        message.error(backendMessageOf(reason))
+      } finally {
+        options.onBusyChange?.(repo.id, false)
       }
-      if (!outcome.preview) {
-        message.error(t('modsOnline.downloadFinishedButNoInstallableContentWasParsed'))
-        return
-      }
-      openPreview(outcome.preview)
-    } catch (reason) {
-      message.error(backendMessageOf(reason))
-    } finally {
-      options.onBusyChange?.(repo.id, false)
     }
+
+    await download()
   }
 
   return { previewRepository }

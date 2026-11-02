@@ -21,6 +21,7 @@ import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NSpin, NTag } from 'naive-ui'
 import { t, pickI18n } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
+import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
@@ -218,15 +219,33 @@ async function runInstall(step: Step) {
     return
   }
   const tag = status.release?.tag_name
-  // 先下载预览，再直接确认安装：暂存目录与用户确认已在上一层完成
-  const outcome = await api.installRepository(target.id, tag, true)
-  if (!outcome.ok || !outcome.preview) {
-    markFailed(step, new Error(outcome.message || t('modsOnline.downloadFinishedButNoInstallableContentWasParsed')))
-    return
+  /**
+   * 下载 + 确认安装。
+   *
+   * 失败卡片上的「重试」重跑的就是这一个函数：确认安装依赖这次下载出来的
+   * 预览，两者拆不开；好处是它不重跑整张计划里已经完成的卸载与安装步骤。
+   * `endDownloadTask` 之后任务号已经失效，确认安装再抛错不会点亮下载卡片。
+   */
+  const install = async (): Promise<void> => {
+    const token = beginDownloadTask({ label: step.label, retry: install })
+    try {
+      // 先下载预览，再直接确认安装：暂存目录与用户确认已在上一层完成
+      const outcome = await api.installRepository(target.id, tag, true)
+      endDownloadTask(token)
+      if (!outcome.ok || !outcome.preview) {
+        markFailed(step, new Error(outcome.message || t('modsOnline.downloadFinishedButNoInstallableContentWasParsed')))
+        return
+      }
+      const confirmed = await api.confirmModInstall(outcome.preview.preview_id)
+      if (confirmed.ok) done.value = { ...done.value, [step.key]: 'ok' }
+      else markFailed(step, new Error(confirmed.message))
+    } catch (reason) {
+      failDownloadTask(token, reason)
+      // 交回 `runAll`：它负责标记这一步失败，并继续后面的步骤
+      throw reason
+    }
   }
-  const confirmed = await api.confirmModInstall(outcome.preview.preview_id)
-  if (confirmed.ok) done.value = { ...done.value, [step.key]: 'ok' }
-  else markFailed(step, new Error(confirmed.message))
+  await install()
 }
 
 function markFailed(step: Step, reason: unknown) {

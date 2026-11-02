@@ -21,7 +21,9 @@
 import { ref } from 'vue'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
+import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
+import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import type { InstallSource, ModPreview } from '../types'
 
 export function useModInstallFlow(onInstalled?: () => void | Promise<void>) {
@@ -55,12 +57,25 @@ export function useModInstallFlow(onInstalled?: () => void | Promise<void>) {
   async function handleSourceSelect(source: InstallSource) {
     if (sourceBusy.value) return
     sourceBusy.value = true
+    /*
+     * 直链要先把文件下载到临时目录才能解析，所以失败可能是下载失败
+     * （首字节超时等），要能在下载卡片上原地重试。本地文件只读盘，
+     * 失败与网络无关，重试只会得到同一个结果，不挂到下载卡片上。
+     */
+    const token = source.kind === 'url'
+      ? beginDownloadTask({
+        label: t('direct.onlineFile'),
+        retry: () => { void handleSourceSelect(source) },
+      })
+      : null
     try {
       const next = await api.analyzeModSource(source.kind, source.value)
+      if (token !== null) endDownloadTask(token)
       // 来源已经解析成功：先收起来源卡片，再打开安装详情
       sourceOpen.value = false
       openPreview(next)
     } catch (reason) {
+      if (token !== null) failDownloadTask(token, reason)
       message.error(backendMessageOf(reason))
     } finally {
       sourceBusy.value = false

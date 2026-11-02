@@ -26,6 +26,7 @@ import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { formatBackupLabel } from '../backupLabel'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
@@ -105,8 +106,17 @@ const isWineRuntime = computed(() => runtime.value !== 'native')
 /** 真正执行安装（引导之外的部分）。 */
 async function runInstall(reinstall: boolean) {
   installing.value = true
+  /*
+   * 框架包也是从网上下载的，首字节超时同样要能原地重试：重试只重跑这次
+   * 安装（引导步骤与页面状态都不动），失败原因由下载卡片显示。
+   */
+  const token = beginDownloadTask({
+    label: 'BepInEx',
+    retry: () => { void runInstall(reinstall) },
+  })
   try {
     const result = await api.installBepInEx(reinstall, installProvider.value)
+    endDownloadTask(token)
     await afterInstall(result)
     /*
      * 原生 macOS：安装成功后先修 Steam Overlay 注入，再弹启动命令引导。
@@ -124,6 +134,7 @@ async function runInstall(reinstall: boolean) {
       guidePhase.value = 'after-install'
     }
   } catch (reason) {
+    failDownloadTask(token, reason)
     fail(reason)
   } finally {
     installing.value = false

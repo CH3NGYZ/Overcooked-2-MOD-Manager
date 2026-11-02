@@ -495,6 +495,14 @@ export const toolsUi: DomainMessages = {
     ko: '다음 항목이 이번에 설치할 내용과 ID 또는 지도 식별자가 같아 먼저 제거해야 합니다:',
     ja: '以下は今回インストールする内容と ID / マップ識別子が同じため、先にアンインストールする必要があります：',
   },
+  // 安装「{name}」前，需要先卸载以下已安装内容：
+  beforeInstallingTargetMustBeUninstalledFirst: {
+    'zh-CN': '安装「{name}」前，需要先卸载以下已安装内容：',
+    'zh-TW': '安裝「{name}」前，需要先解除安裝以下已安裝內容：',
+    en: 'Before installing "{name}", the following installed items must be uninstalled:',
+    ko: '"{name}" 설치 전에 다음 설치된 항목을 먼저 제거해야 합니다:',
+    ja: '「{name}」をインストールする前に、以下のインストール済み項目をアンインストールする必要があります：',
+  },
   // 同版本（冲突行的行尾标签）
   installConflictSameVersion: {
     'zh-CN': '同版本',

@@ -611,6 +611,11 @@ mod tests {
             .iter()
             .filter(|outcome| outcome.error.is_some())
             .count();
+        for (request, outcome) in requests.iter().zip(&outcomes) {
+            if let Some(error) = &outcome.error {
+                eprintln!("失败：{}（{}）", request.path.display(), error);
+            }
+        }
         eprintln!(
             "元数据批读：文件={} 合计={:.1} MB 并行度={} 耗时={:.2} s 失败={}",
             requests.len(),

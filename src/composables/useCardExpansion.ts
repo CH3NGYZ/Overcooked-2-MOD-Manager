@@ -18,8 +18,9 @@ export interface CardExpansionOptions {
   /**
    * 外层是否互斥（同一时刻只展开一个）。
    *
-   * 地图管理页是单展开：一次只看一张集卡片，展开 B 会让 A 收起；
-   * MOD 管理页允许多个包同时展开（用户要对照两个包的子 MOD）。
+   * MOD 管理页与地图管理页都开这个：外层代表页面上的一个展示单元
+   * （独立 MOD 卡 / MOD 包外壳 / 关卡集卡片），同时摊开多张会把页面撑得很长，
+   * 用户也分不清刚点开的是哪一张。只给单开场景用的实例开它，多开域保持默认。
    */
   singleOuter?: boolean
 }
@@ -82,6 +83,19 @@ export function useCardExpansion(options: CardExpansionOptions = {}) {
     clearInnerOf(key)
   }
 
+  /**
+   * 只收起满足条件的外层键。
+   *
+   * 页面用它表达「点空白只收这一类卡片」（MOD 管理页的独立卡收、包外壳不收，
+   * 靠键前缀区分）。逐个走 `closeOuter` 而不是自己 filter `outerKeys`：
+   * 「外层收起连带清内层」这条规则只允许有一处实现。
+   */
+  function closeOuterWhere(predicate: (key: string) => boolean) {
+    for (const key of [...outerKeys.value]) {
+      if (predicate(key)) closeOuter(key)
+    }
+  }
+
   /** 切换外层；返回切换后是否展开（页面据此决定往哪个方向滚）。 */
   function toggleOuter(key: string) {
     if (isOuterOpen(key)) {
@@ -132,6 +146,7 @@ export function useCardExpansion(options: CardExpansionOptions = {}) {
     childOf,
     openOuter,
     closeOuter,
+    closeOuterWhere,
     toggleOuter,
     openInner,
     closeInner,

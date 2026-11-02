@@ -9,8 +9,8 @@ import test from 'node:test'
  * **外层收起时，它名下的内层展开状态一起清掉** —— 下次展开是一张全新的卡片，
  * 而不是上次留下的半开状态（那种状态下内层卡片用户得再点一次才收得回）。
  *
- * 另外两条：多开域（MOD 包）里清一个包不许动别的包；单展开域（地图集）里
- * 展开 B 时被动收起的 A 也必须清干净内层。
+ * 另外两条：多开域里清一个容器不许动别的容器；单展开域（MOD 管理页与地图
+ * 管理页）里展开 B 时被动收起的 A 也必须清干净内层。
  */
 const { useCardExpansion } = await import('../src/composables/useCardExpansion.ts')
 
@@ -134,4 +134,45 @@ test('childOf 还原内层键里的子键，父键与子键同名也不会串', 
 
   const [key] = cards.innerKeys.value
   assert.equal(cards.childOf(key), 'DIYLevel.dll')
+})
+
+test('closeOuterWhere 只收匹配的外层，且每个都连带清内层', () => {
+  const cards = useCardExpansion()
+  cards.openOuter('mod:a.dll')
+  cards.openOuter('pkg:one')
+  cards.openInner('mod:a.dll', 'a-sub.dll')
+  cards.openInner('pkg:one', 'one-sub.dll')
+
+  cards.closeOuterWhere((key) => key.startsWith('mod:'))
+
+  assert.equal(cards.isOuterOpen('mod:a.dll'), false)
+  assert.equal(cards.isOuterOpen('pkg:one'), true)
+  assert.equal(cards.isInnerOpen('mod:a.dll', 'a-sub.dll'), false)
+  assert.equal(cards.isInnerOpen('pkg:one', 'one-sub.dll'), true)
+})
+
+test('closeOuterWhere 没有命中时什么都不动（MOD 页点空白不收盘外壳）', () => {
+  const cards = useCardExpansion()
+  cards.openOuter('pkg:one')
+  cards.openInner('pkg:one', 'one-sub.dll')
+
+  cards.closeOuterWhere((key) => key.startsWith('mod:'))
+
+  assert.deepEqual(cards.outerKeys.value, ['pkg:one'])
+  assert.equal(cards.isInnerOpen('pkg:one', 'one-sub.dll'), true)
+})
+
+test('单展开域：独立卡与包外壳算同一级，交替展开时外层恒为 1', () => {
+  const cards = useCardExpansion({ singleOuter: true })
+
+  cards.openOuter('mod:a.dll')
+  assert.deepEqual(cards.outerKeys.value, ['mod:a.dll'])
+
+  cards.openInner('mod:a.dll', 'sub.dll')
+  cards.openOuter('pkg:one')
+  assert.deepEqual(cards.outerKeys.value, ['pkg:one'])
+  assert.equal(cards.isInnerOpen('mod:a.dll', 'sub.dll'), false)
+
+  cards.openOuter('mod:b.dll')
+  assert.deepEqual(cards.outerKeys.value, ['mod:b.dll'])
 })

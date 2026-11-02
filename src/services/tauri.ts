@@ -30,6 +30,7 @@ import type {
   SettingsPatch,
   TokenPatch,
   UninstallLocalModResult,
+  LevelSetFlattenReport,
   LevelSetInfo,
   LevelSetScanProgress,
   LevelSetZipProgress,
@@ -189,6 +190,15 @@ export const api = {
    */
   /** 列出全部关卡集（启用与停用）。只读，游戏运行时也可调用。 */
   levelSets: () => invoke<LevelSetInfo[]>('get_level_sets'),
+  /**
+   * 整理地图目录：把 `info` 埋在子文件夹里的目录搬成规范的 `levels/<集名>/`。
+   *
+   * 扫描口径只读 `levels` 的第一层（与游戏插件一致），所以嵌套的集在游戏里
+   * 本来就读不到。`dryRun` 只探测候选（不写盘、不要求关游戏），界面先用它
+   * 判断要不要提示用户；正式整理会搬文件并把清空的空壳移进回收站。
+   */
+  flattenLevelSets: (dryRun: boolean) =>
+    invoke<LevelSetFlattenReport>('flatten_level_sets', { dryRun }),
   /**
    * 启用或停用一个关卡集（移动目录）。
    *

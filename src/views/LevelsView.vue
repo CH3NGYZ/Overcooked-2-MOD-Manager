@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
-import { FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
+import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
 import { api, watchLevelSetScan } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
@@ -959,6 +959,62 @@ async function openLevelsDirectory() {
   }
 }
 
+/*
+ * 「整理地图目录」：把 info 埋在子文件夹里、游戏读不到的目录搬成规范结构。
+ *
+ * 扫描口径与游戏插件一致，只读 `levels` 的第一层 —— 嵌套的集在游戏里读不到，
+ * 本页列表里同样看不见（列表跟着插件口径走，不跟着磁盘口径走）。用户唯一的
+ * 线索是「明明装了却没出现」，所以这里先用 dry_run 探测：没有候选就不打扰，
+ * 有候选才说清要动几个、动之前确认。
+ */
+const organizing = ref(false)
+
+async function organizeLevelSets() {
+  if (organizing.value) return
+  organizing.value = true
+  let candidates = 0
+  try {
+    candidates = (await api.flattenLevelSets(true)).candidates.length
+  } catch (reason) {
+    message.error(backendMessageOf(reason))
+    return
+  } finally {
+    organizing.value = false
+  }
+  if (!candidates) {
+    message.info(t('levelSet.organizeNone'))
+    return
+  }
+  const instance = dialog.warning({
+    title: t('levelSet.organize'),
+    content: t('levelSet.organizeConfirm', { count: candidates }),
+    positiveText: t('levelSet.organize'),
+    negativeText: t('recycle.cancel'),
+    onPositiveClick: async () => {
+      markDialogBusy(instance)
+      organizing.value = true
+      try {
+        const report = await api.flattenLevelSets(false)
+        await reloadSets()
+        if (report.failed.length > 0) {
+          message.warning(t('levelSet.organizeFailed', {
+            count: report.failed.length,
+            detail: report.failed.join('；'),
+          }))
+        } else if (report.flattened > 0) {
+          message.success(t('levelSet.organizeDone', { count: report.flattened }))
+        } else {
+          message.info(t('levelSet.organizeNone'))
+        }
+      } catch (reason) {
+        message.error(backendMessageOf(reason))
+      } finally {
+        organizing.value = false
+      }
+    },
+  })
+}
+
 /* ===== 批量开关 / 检测更新（与 MOD 管理页同职责） =====
  *
  * 安装入口只收本地 ZIP（拖进窗口，见页面顶部注释）；线上 Release 在地图下载页。
@@ -1190,6 +1246,11 @@ provide(
       :title="t('levelSet.checkUpdatesHint')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
       {{ t('overview.check') }}
+    </n-button>
+    <n-button size="small" secondary :loading="organizing" :disabled="organizing || loading"
+      :title="t('levelSet.organizeHint')" @click="organizeLevelSets">
+      <template #icon><AlbumsOutline width="14" height="14" /></template>
+      {{ t('levelSet.organize') }}
     </n-button>
     <n-button size="small" secondary @click="openLevelsDirectory">
       <template #icon><FolderOpenOutline width="14" height="14" /></template>

@@ -144,6 +144,36 @@ test('地图包：一个地图集是一张卡，随包插件挂在它下面', ()
   assert.equal(child.fields[8].value, 'OC2DIYLevel/OC2DIYLevel.dll', '文件一栏写 ZIP 内路径')
 })
 
+test('BepInEx 表层包：随包插件多一行「安装到」，拍平形态保持九项', () => {
+  // 表层包的插件不在集目录里，位置由作者在 ZIP 里定死：只说「随包插件」而不说
+  // 落到哪，用户没法判断它是不是装进了自己会去查的那个目录。
+  const layered = levelSetImportDetail('/tmp/layered.zip', [
+    levelSet({
+      layout: 'bepinex',
+      plugins: [plugin({
+        path: 'BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll',
+        install_path: 'BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll',
+      })],
+    }),
+  ])
+  const [layeredChild] = layered.entries[0].children
+  assert.deepEqual(LABELS_OF(layeredChild),
+    ['名称', '版本', '标题', '产品名', '作者', '依赖', 'GUID', '原始文件名', '文件', '安装到'])
+  assert.equal(layeredChild.fields.at(-1).value, 'BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll')
+  assert.equal(layeredChild.fields.at(-1).wide, true, '路径占整行')
+  assert.equal(layeredChild.fields.at(-1).mono, true, '路径用等宽字体')
+
+  // 拍平形态（`install_path` 为空）不许多出这一行：它的位置就是集目录根，
+  // 写出来只会重复「文件」那一栏的信息。
+  for (const installPath of [undefined, null, '']) {
+    const flattened = levelSetImportDetail('/tmp/plain.zip', [
+      levelSet({ plugins: [plugin({ install_path: installPath })] }),
+    ])
+    assert.deepEqual(LABELS_OF(flattened.entries[0].children[0]),
+      ['名称', '版本', '标题', '产品名', '作者', '依赖', 'GUID', '原始文件名', '文件'])
+  }
+})
+
 test('地图包：标题按「中文名 → 英文名 → 目录名」兜底，没有插件就没有下级条目', () => {
   const model = levelSetImportDetail('/tmp/maps.zip', [
     levelSet({ dir_name: 'a', name_zh: null, name: 'Packed' }),

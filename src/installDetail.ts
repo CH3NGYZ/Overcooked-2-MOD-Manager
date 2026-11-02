@@ -111,6 +111,8 @@ interface DllDetailSource {
   product_name?: string | null
   company?: string | null
   original_filename?: string | null
+  /** BepInEx 表层包的落盘位置（相对游戏目录）；拍平形态没有。 */
+  install_path?: string | null
 }
 
 /** 路径 → 文件名（两种分隔符都认；ZIP 条目一律是 `/`）。 */
@@ -141,7 +143,7 @@ function dllMeta(entry: DllDetailSource): string {
 
 /** 一个 DLL 的九项元数据：顺序与前两格/后三格的分行方式都是固定版式。 */
 function dllFields(entry: DllDetailSource): InstallDetailField[] {
-  return [
+  const fields: InstallDetailField[] = [
     { label: t('modsLocal.name'), value: entry.name?.trim() || '—' },
     { label: t('modsOnline.versions'), value: formatVersion(entry.version) || '—', mono: true },
     { label: t('modsLocal.title'), value: entry.title?.trim() || '—' },
@@ -155,6 +157,16 @@ function dllFields(entry: DllDetailSource): InstallDetailField[] {
     { label: t('modsLocal.originalFilename'), value: entry.original_filename?.trim() || '—', mono: true, wide: true },
     { label: t('modsLocal.file2'), value: entry.path, mono: true, wide: true },
   ]
+  /*
+   * BepInEx 表层包的插件不搬进集目录，位置由作者在 ZIP 里定死。
+   * 九项元数据里的「文件」还是 ZIP 内路径，看不出会落到哪 —— 少了这一行，
+   * 用户没法判断「随包插件」是不是装到了他会去查的那个目录。
+   */
+  const installPath = entry.install_path?.trim()
+  if (installPath) {
+    fields.push({ label: t('levelSet.installPath'), value: installPath, mono: true, wide: true })
+  }
+  return fields
 }
 
 /** 一张 DLL 卡片：MOD 包里的一个 DLL，或地图包里随某个地图集落盘的插件。 */

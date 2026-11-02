@@ -100,6 +100,8 @@ const NON_TAG = new Set([
   'invalid.example', 'raw.example', 'release.example', 'remote.example',
   'second.example', 'selected.example', 'slow.example', 'halfwritten.json.tmp',
   'dll.disabled',
+  // 拍平测试里的随包资源文件名（作者真的这么命名，不是 tag）
+  'shared.assets',
   // 地图源测试里的示例值
   'oc2.pre', 'oc2.legacy', 'oc2.grouped', 'oc2.oc2diylevelruntimewloader',
   // 社区源的域名

@@ -212,6 +212,27 @@ export interface LevelSetScanProgress {
   current: string
 }
 
+/** 「一键拍平」探测到的一个候选目录。 */
+export interface LevelSetFlattenCandidate {
+  /** `levels/` 下的直接子目录名。 */
+  dir_name: string
+  /** 浅探测（≤3 层）找到的 `info` / `info_*` 文件数。 */
+  nested_infos: number
+}
+
+/**
+ * 「一键拍平」的结果。
+ *
+ * `dry_run` 只用来探测（不写盘，也不要求游戏关闭），此时 `candidates` 就是全部
+ * 结果；正式整理时 `flattened` / `failed` 才有值。
+ */
+export interface LevelSetFlattenReport {
+  candidates: LevelSetFlattenCandidate[]
+  flattened: number
+  /** 逐条失败记录，形如 `"<目录>: <原因>"`，原样展示给用户。 */
+  failed: string[]
+}
+
 /**
  * 来源 ZIP 的识别 / 导入进度（后端 `level-set-zip-progress`）。
  *
@@ -349,6 +370,14 @@ export interface ZipLevelSetPlugin extends DllPluginInfo {
   path: string
   /** 落盘后的文件名：插件会被复制进关卡集目录根部。 */
   file_name: string
+  /**
+   * 落盘位置（相对游戏目录，正斜杠）。
+   *
+   * 只有 BepInEx 表层包会带：那种包已经规划好目录，插件**不**搬进集目录，
+   * 而是留在 ZIP 指的 `BepInEx/plugins/**` 下，靠安装清单登记归属。拍平形态
+   * 没有这个值 —— 位置由集目录决定。
+   */
+  install_path?: string | null
 }
 
 /**
@@ -363,9 +392,20 @@ export interface LevelSetPlugin extends DllPluginInfo {
   enabled: boolean
 }
 
+/** 关卡集目录的落盘形态（与后端 `LevelSetLayout` 同名字面量）。 */
+export type LevelSetLayout = 'flattened' | 'bepinex'
+
 /** ZIP 里识别出的一个关卡集（导入前确认用）。 */
 export interface ZipLevelSet {
   dir_name: string
+  /**
+   * 落盘形态。
+   *
+   * `flattened`（历史形态）：管理器把每个集拍平成 `levels/<集名>/`，随包插件
+   * 也搬进集目录根。`bepinex`：作者已经把目录规划好（ZIP 顶层就是 `BepInEx/`），
+   * 按包内路径原样解压，插件留在 `BepInEx/plugins/**`。
+   */
+  layout?: LevelSetLayout
   name: string
   name_zh?: string | null
   author: string

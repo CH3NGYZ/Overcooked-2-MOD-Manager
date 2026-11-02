@@ -63,7 +63,7 @@ export interface ReleaseDetailVersion {
  *
  * 任何可选数据缺失都只是「那块不渲染」，不会有空白占位或塌版。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
@@ -72,6 +72,13 @@ import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatFileSize } from '../repositoryAssets'
 import DependencyTable, { type DependencyRow } from './DependencyTable.vue'
 import ProviderIcon from './ProviderIcon.vue'
+import {
+  fitsMinLogHeight,
+  releasePanelHeight,
+  RELEASE_LOG_MIN_HEIGHT,
+  wheelNeedsHandoff,
+  type ScrollBoxMetrics,
+} from '../releasePanelFit'
 
 const props = withDefaults(
   defineProps<{
@@ -275,22 +282,174 @@ function runPrimaryAction() {
 
 /* ===== Markdown / Mermaid ===== */
 const noteElement = ref<HTMLElement | null>(null)
-const logElement = ref<HTMLElement | null>(null)
 const readmeElement = ref<HTMLElement | null>(null)
 watch(
   [noteHtml, logHtml, readmeElement, () => props.readmeLoading],
   async () => {
     await nextTick()
     void renderMermaidBlocks(noteElement.value)
-    void renderMermaidBlocks(logElement.value)
+    void renderMermaidBlocks(logBoxElement.value)
     void renderMermaidBlocks(readmeElement.value)
   },
   { flush: 'post' },
 )
+
+/* ===== 下载安装 tab：把「资产 / 安装」一行钉在抽屉视口内 ===== */
+/*
+ * 面板高度 = 抽屉可视高度，日志框吃掉剩下的空间（有下限），安装行靠
+ * `margin-top: auto` 贴面板底边。高度必须用 JS 量一次抽屉：CSS 拿不到
+ * 「被 Naive 抽屉裁出来的可视高度」，而 `100vh - 常数` 那类估算会随着头部、
+ * 分段 tab、行高一起漂移（旧实现实测在 720 高的窗口里多算 47px）。
+ */
+const panelElement = ref<HTMLElement | null>(null)
+const logBoxElement = ref<HTMLElement | null>(null)
+/** 面板锁定的像素高度；`null` = 不锁（矮窗口回退，见 `fitInstallPanel`）。 */
+const fittedPanelHeight = ref<number | null>(null)
+
+const panelStyle = computed(() =>
+  fittedPanelHeight.value ? { height: `${fittedPanelHeight.value}px` } : undefined,
+)
+/* 日志框的下限只保证「不会被挤没」，剩余空间由面板内部的 flex 链分配。 */
+const logBoxStyle = computed(() =>
+  activeTab.value === 'install' ? { minHeight: `${RELEASE_LOG_MIN_HEIGHT}px` } : undefined,
+)
+
+let fitObserver: ResizeObserver | null = null
+let fitFrame = 0
+let scrollViewport: HTMLElement | null = null
+let fitting = false
+let fitPending = false
+
+function scrollBoxMetrics(element: HTMLElement | null): ScrollBoxMetrics | null {
+  if (!element) return null
+  return {
+    scrollTop: element.scrollTop,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }
+}
+
+/*
+ * 把面板锁成抽屉可视高度，剩下的空间交给面板内部的 flex 链分给日志框。
+ *
+ * 只量「抽屉被裁出来的可视高度」这一件 CSS 拿不到的事；面板定高之后日志框自己
+ * 会长高 / 内滚，不再需要量「除日志框以外的固定高度」那种会与渲染时序赛跑的值
+ * （先清内联高度再读，读到的是清掉之前的旧布局）。
+ *
+ * 唯一回退：窗口矮到日志框连最低高度都剩不下时不锁高度，让抽屉 body 自己滚 ——
+ * 硬锁会把安装行裁掉（`.detail` 是 `overflow: clip`），比滚动更糟。
+ */
+async function fitInstallPanel() {
+  const panel = panelElement.value
+  if (activeTab.value !== 'install' || !panel) {
+    fittedPanelHeight.value = null
+    return
+  }
+  const viewport = panel.closest('.n-scrollbar-container') as HTMLElement | null
+  const wrapper = panel.parentElement
+  if (!viewport || !wrapper) return
+  fitting = true
+  const wrapperStyle = getComputedStyle(wrapper)
+  const inset = parseFloat(wrapperStyle.paddingTop) + parseFloat(wrapperStyle.paddingBottom)
+  fittedPanelHeight.value = releasePanelHeight(viewport.clientHeight - inset)
+  await nextTick()
+  const logBox = logBoxElement.value
+  if (logBox && !fitsMinLogHeight(logBox.offsetHeight)) fittedPanelHeight.value = null
+  fitting = false
+  if (fitPending) {
+    fitPending = false
+    scheduleFitInstallPanel()
+  }
+}
+
+
+function scheduleFitInstallPanel() {
+  if (fitting) {
+    // 量测中不要并发进来：等这一轮写完高度后补跑一次。
+    fitPending = true
+    return
+  }
+  if (fitFrame) cancelAnimationFrame(fitFrame)
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = 0
+    void fitInstallPanel()
+  })
+}
+
+/*
+ * 滚到边界后把滚轮交给抽屉背后的页面。
+ *
+ * 抽屉被 Teleport 到 `body`，背后的 `.page-scroll` 不是它的滚动祖先，浏览器
+ * 自己的滚动链走不到那里：日志与抽屉都滚到头以后继续滚滚轮，页面应当接着滚。
+ */
+function onPanelWheel(event: WheelEvent) {
+  const viewport = scrollViewport
+  if (!viewport || event.ctrlKey) return
+  const page = document.querySelector('.page-scroll .n-scrollbar-container') as HTMLElement | null
+  const pageMetrics = scrollBoxMetrics(page)
+  const outerMetrics = scrollBoxMetrics(viewport)
+  if (!page || !pageMetrics || !outerMetrics) return
+  const logBox = logBoxElement.value
+  const target = event.target
+  const insideLog = logBox !== null && target instanceof Node && logBox.contains(target)
+  const handoff = wheelNeedsHandoff({
+    deltaY: event.deltaY,
+    inner: insideLog ? scrollBoxMetrics(logBox) : null,
+    outer: outerMetrics,
+    page: pageMetrics,
+  })
+  if (!handoff) return
+  page.scrollTop += event.deltaY
+  event.preventDefault()
+}
+
+onMounted(() => {
+  const panel = panelElement.value
+  const viewport = panel?.closest('.n-scrollbar-container') as HTMLElement | null
+  if (!panel || !viewport) return
+  scrollViewport = viewport
+  viewport.addEventListener('wheel', onPanelWheel, { passive: false })
+  /*
+   * 只观察不会因我们的高度改动而变形的节点：抽屉容器（窗口缩放）与几条固定行
+   * （宽度变化会让它们换行变高）。观察面板自己会和「写回高度」互相触发。
+   */
+  fitObserver = new ResizeObserver(() => scheduleFitInstallPanel())
+  fitObserver.observe(viewport)
+  for (const selector of ['.detail-head', '.n-tabs-nav', '.summary-row', '.log-head', '.install-row']) {
+    const element = panel.querySelector(selector)
+    if (element) fitObserver.observe(element)
+  }
+  if (activeTab.value === 'install') scheduleFitInstallPanel()
+})
+
+onBeforeUnmount(() => {
+  fitObserver?.disconnect()
+  fitObserver = null
+  scrollViewport?.removeEventListener('wheel', onPanelWheel)
+  scrollViewport = null
+  if (fitFrame) cancelAnimationFrame(fitFrame)
+  fitFrame = 0
+})
+
+watch(
+  [
+    activeTab,
+    hasLog,
+    logHtml,
+    () => props.version,
+    () => props.assetValue,
+    () => props.fileLabel,
+    () => props.releaseTag,
+    () => props.disabledLabel,
+  ],
+  scheduleFitInstallPanel,
+)
 </script>
 
 <template>
-  <div class="detail" :class="{ 'detail--fill': activeTab === 'install' }">
+  <div ref="panelElement" class="detail"
+    :class="{ 'detail--fill': activeTab === 'install' }"
+    :style="panelStyle">
     <header class="detail-head">
       <div class="head-main">
         <ProviderIcon :provider="provider" :owner="owner" :size="iconSize" />
@@ -404,8 +563,11 @@ watch(
               <!-- 预发布：元数据标记 或 版本号带 - 后缀 -->
               <n-tag v-if="prerelease" size="tiny" type="warning" :bordered="false">{{ t('modsOnline.preRelease') }}</n-tag>
             </div>
-            <div v-if="hasLog" ref="logElement" class="log-box markdown-body" v-html="logHtml"></div>
-            <div v-else class="log-box log-empty muted">{{ emptyLogText }}</div>
+            <div v-if="hasLog" ref="logBoxElement" class="log-box markdown-body" :style="logBoxStyle"
+              v-html="logHtml"></div>
+            <div v-else ref="logBoxElement" class="log-box log-empty muted" :style="logBoxStyle">
+              {{ emptyLogText }}
+            </div>
           </div>
 
           <!-- 资产选择 / 大小与下载次数 / 安装按钮 -->
@@ -478,6 +640,7 @@ watch(
    */
   flex: 1 0 auto;
 }
+/* 量测态：临时按内容长高，量完立刻换回锁定的像素高度（同一个任务内完成，不闪）。 */
 /*
  * 分段切换用 Naive 的 n-tabs type="segment"：
  * 撑满容器宽度、选中项自动使用主题色，这里只补一处间距。
@@ -491,30 +654,25 @@ watch(
   padding-top: 12px;
 }
 /*
- * 下载安装页：面板高度按「抽屉内容区」定死，剩余高度全部给日志框。
+ * 下载安装页：面板高度 = 抽屉可视高度，安装行钉在面板底边、留在视口内。
  *
- * 目标：**窗口够高时**面板底边框贴着抽屉内容区底边（看见面板自己的下边框）。
  * 说明页**不加**这个类（按内容自然长高，长 README 由抽屉 body 滚动）。
  *
- * 日志框的「最小高度」写成 `flex-basis: auto`，也就是它自己的文字高度：
- *   - 短日志：按内容占位、不预留空白，抽屉变矮时省下的空间还给下面的
- *     「资产 / 安装」行，按钮就能落进可视区；
- *   - 长日志：写多长就撑多高，安装行被挤到折叠线以下，由抽屉 body 滚动。
- * 早先把它固定成 `flex-basis: 180px`，短日志也占住 180px，抽屉一矮按钮就被
- * 挤出可视区（日志只有两行也一样），而这块空白没有任何内容在用。反方向也
- * 不行：给日志留 120px、拿「按钮必须可见」当约束时，短窗口里日志会被压成
- * 一条。取内容高度，两种极端都自然消解。
+ * 高度由 `fitInstallPanel()` 量出抽屉可视高度后写成内联像素（`panelStyle`），
+ * 面板内部每一层都是 flex 列，剩余高度一路传到日志框：日志长了在框内滚，
+ * 短了长高补齐，安装行靠 `margin-top: auto` 贴底。
+ *
+ * 为什么不能只靠 flex 自己长：日志一长，`.detail` 只涨不缩（`flex: 1 0 auto`），
+ * 面板跟着变高，安装行被推到抽屉折叠线以下 —— 用户得先滚抽屉才能看见按钮，
+ * 正是这次要修掉的行为。改成「锁面板高度 + 日志框内滚」后按钮恒在面板底边。
  *
  * 两条关键约束，缺一条就会出问题：
  *
  * 1. 每一层都必须是 flex 列：中间任何一层是 `height: auto` 的块级盒，
- *    剩余高度就传不到日志框（早先用 `100vh - 410px` 估算正是因此差出几十像素）。
- * 2. **用 `flex-basis` 表达「日志框的最小高度」，不要用 `min-height`**。
- *    抽屉太矮时，若只给日志框写 `min-height`，它的父层 `.release-log`
- *    仍会被压到更矮，日志框就会溢出父层、盖在下面的资产行上（实测重叠）。
- *    写成 `flex-basis` 后，这条最小高度会计入**面板自身的内容高度**：
- *    空间不足时面板没有可压缩的余地（`.detail` 是 `flex: 1 0 auto`，只涨不缩），
- *    整块被撑高、由抽屉 body 滚动 —— 按钮被推下去但不会压住日志。
+ *    高度就传不到日志框（早先用 `100vh - 410px` 估算正是因此差出几十像素）。
+ * 2. 视口连日志最低高度都放不下时（矮窗口），`fitInstallPanel` 回退成「不锁
+ *    面板高度」：此时面板按内容长高、由抽屉 body 滚动，按钮需要滚一下才可见。
+ *    硬锁高度会把安装行裁掉（`.detail` 是 `overflow: clip`），比滚动更糟。
  */
 .detail--fill .detail-tabs { flex: 1 1 auto; min-height: 0; }
 .detail--fill .detail-tabs :deep(.n-tabs-pane-wrapper) {
@@ -530,8 +688,10 @@ watch(
 .detail--fill .summary-row,
 .detail--fill .log-head,
 .detail--fill .install-row { flex: 0 0 auto; }
-/* 最小高度 = 日志自己的文字高度（auto → 内容高度），见上面那段说明 */
+/* 日志框吸收剩余高度：内容长了在框内滚，短了长高补齐，安装行靠 margin 贴底 */
 .detail--fill .log-box { flex: 1 1 auto; min-height: 0; }
+/* 日志与按钮之间的空白：短日志时把安装行顶到面板底边 */
+.detail--fill .install-row { margin-top: auto; }
 .detail-head {
   display: flex;
   align-items: flex-start;
@@ -593,9 +753,8 @@ watch(
 /*
  * 第二段：提交日志。
  *
- * 不设 max-height、不留内滚动：日志写多长就撑多高，整段由抽屉 body 统一滚动
- * （与安装详情弹窗 `ModInstallDialog` 的口径一致）。原先固定 180px，长日志
- * 要在框里单独滚，短日志又留一块空白。
+ * 高度由面板内部 flex 链分配（`.detail--fill .release-log` 吃掉剩余空间），
+ * 这里不写固定高度：短日志时长高、长日志时由内部的 `.log-box` 内滚。
  */
 .release-log {
   display: flex;
@@ -620,19 +779,15 @@ watch(
   max-width: 100%;
 }
 /*
- * 日志框：下载安装页里以「自己的文字高度」为下限，剩余高度为上限。
+ * 日志框：高度由面板的 flex 链分配（`.detail--fill .log-box`），只有下限
+ * `RELEASE_LOG_MIN_HEIGHT` 由 `logBoxStyle` 写成内联 `min-height` —— 它是
+ * `releasePanelFit.ts` 的唯一来源，别在这里再写一份常数。
  *
- * 高度不在这里定：面板在 `.detail--fill` 下按抽屉内容区定高，日志框靠
- * `flex: 1 1 auto`（= 内容高度起步）吃掉剩余空间（见上面 `.detail--fill` 那组规则）。
- *   - 短日志：窗口够高时被撑满、按钮行落在抽屉内容区底边；窗口变矮时按内容
- *     高度占位，把省下的空间让给下面的安装行；
- *   - 长日志：写多长就撑多高、由抽屉 body 滚动，不在框内单独滚。
- * 早先用 `max-height: clamp(160px, calc(100vh - 410px), 640px)` 估算「视口减去
- * 其余部分」，那个常数会随面板头部、分段导航、行高一起漂移，实测在 720 高的窗口
- * 里多算 47px，导致面板底边框被挤出抽屉、按钮贴着抽屉下沿。改成 flex 后由容器
- * 自己决定，不再有常数。
- * `overflow-y: auto` 只作兜底（面板被外部压矮时才内滚）；横向留在框内，
- * 长代码行不把抽屉撑出横向滚动条。
+ * 内容比可用高度高时**在框内滚动**，按钮因此不会被顶出视口。
+ * `overflow-y: auto` 是常态（长日志内滚）；横向留在框内，长代码行不把抽屉撑出
+ * 横向滚动条。
+ * `overscroll-behavior: auto`（不是 `contain`）：日志滚到两端后滚轮要能继续交给
+ * 抽屉 body，再由抽屉的 wheel 监听接力给背后的页面（`wheelNeedsHandoff`）。
  * 为什么不用 `position: sticky` 钉底部：n-tabs 的 pane 容器带 `overflow: hidden`，
  * sticky 会以它为滚动容器，抽屉 body 滚动时不会生效。
  */
@@ -645,8 +800,8 @@ watch(
   line-height: 1.65;
   overflow-x: auto;
   overflow-y: auto;
-  /* 滚到日志两端时不要把抽屉一起带着滚 */
-  overscroll-behavior: contain;
+  /* 滚到日志两端后把滚轮交给抽屉 body（`contain` 会把这条链掐断） */
+  overscroll-behavior: auto;
 }
 .log-box.log-empty {
   display: grid;

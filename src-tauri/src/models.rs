@@ -1361,6 +1361,10 @@ pub struct RepositoryExport {
 /// 两者字段几乎没有交集（GUID / 产品名 / 关系表 vs 关卡集名 / 作者），
 /// 合并后每个使用点都要判断「这是哪种」。共用的是源树、Release 刷新与下载
 /// 竞速这些**流水线**，不是模型。
+fn default_map_provider() -> Provider {
+    Provider::Github
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapRepositoryConfig {
     /// 稳定 ID。
@@ -1384,13 +1388,38 @@ pub struct MapRepositoryConfig {
     pub region: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
+    /// 条目可以省略：源文档顶部写了 `[bundle]` 时由它统一提供坐标，
+    /// 单条目自己写就覆盖。缺省按 GitHub —— 存量条目全在 GitHub 上，
+    /// 而「缺 provider 直接解析失败」会让只是漏写一行的作者整份源都发不出去。
+    #[serde(default = "default_map_provider")]
     pub provider: Provider,
+    /// 与 `provider` 同理：可以整组留给 `[bundle]` 提供，也可以自己写覆盖。
+    /// 校验（`validate_map_entry`）在继承之后才跑，所以「两条都空」仍然报错。
+    #[serde(default)]
     pub username: String,
+    #[serde(default)]
     pub repository: String,
     #[serde(default)]
     pub channel: Channel,
+    /// 只读这一个 Release。
+    ///
+    /// 空 = 老行为（列表里最新的那个）。非空时**不再按时间取最新**：直接把
+    /// 该 tag 的资产按 `asset_rules` 里的版本正则拆成多个「版本」，一个资产
+    /// 一条 Release（见 `map_sources::synthesize_releases`）。
+    ///
+    /// 这是「一个仓库装多个地图集」的落地方式：作者每张图只往自己的固定 tag
+    /// 里追加版本文件，条目靠 tag 区分，不必给每张图各开一个仓库。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
     #[serde(default = "default_max_release_count")]
     pub max_release_count: u32,
+    /// 强制最新版本号，空 = 按数字段比较取最大。
+    ///
+    /// 只有 tag 模式有意义：资产名里的版本号是作者手写的，`0.7` 在数字比较
+    /// 里小于 `0.69`，作者却可能认为前者更新。写了它就等于「按这个号发最新
+    /// 版」——前端判定也改成等值才算最新（见 `src/levelSetStatus.ts`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
     /// 选哪个资产：地图只分发 ZIP。
@@ -1812,6 +1841,12 @@ pub struct MapInfo {
     pub source_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_name_i18n: BTreeMap<String, String>,
+    /// 作者指定的「这就是最新版」的版本号；没写时为 `None`。
+    ///
+    /// 前端判定改的是**语义**而不是比较方式：写了它就不再比大小，只比等值
+    /// （资产名里的 `0.7` 与 `0.69` 用数字比较会得出反的结论）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
     /// 缓存里最新的 Release tag；没刷新过时为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_tag: Option<String>,

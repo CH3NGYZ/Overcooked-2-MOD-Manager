@@ -624,6 +624,65 @@ pub fn select_install_asset<'a>(
     })
 }
 
+/// 一个 Release 资产 URL 拆出来的仓库坐标。
+///
+/// 地图源允许把整份 TOML 放进 Release 资产
+/// （`.../releases/download/maps/map-sources.toml`）。这个地址既不是 raw 也没有
+/// 分支路径，`SourceLocation` 的相对解析救不了它（重定向后是 CDN 签名地址），
+/// 所以必须先认出来，再按 `(provider, username, repository)` 查 API 拿 size 与
+/// sha256 —— 校验信息只有 API 有。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseAssetReference {
+    pub provider: Provider,
+    pub username: String,
+    pub repository: String,
+    pub tag: String,
+    pub asset: String,
+}
+
+/// 识别 `/{owner}/{repo}/releases/download/{tag}/{file…}` 形态的资产地址。
+///
+/// 只认 github.com 与 gitee.com 两个宿主：代理地址的宿主是第三方域名，路径
+/// 也可能是任意重写，从代理 URL 反推仓库等于猜。原始地址已经够用。
+pub fn release_asset_reference(url: &Url) -> Option<ReleaseAssetReference> {
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    let provider = if host == "github.com" || host == "www.github.com" {
+        Provider::Github
+    } else if host == "gitee.com" || host == "www.gitee.com" {
+        Provider::Gitee
+    } else {
+        return None;
+    };
+    let segments = url
+        .path_segments()?
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if segments.len() < 6 || segments[2] != "releases" || segments[3] != "download" {
+        return None;
+    }
+    Some(ReleaseAssetReference {
+        provider,
+        username: segments[0].to_string(),
+        repository: segments[1].to_string(),
+        tag: segments[4].to_string(),
+        asset: segments[5..].join("/"),
+    })
+}
+
+/// Release 列表缓存的键：同一个仓库只该请求一次 API。
+///
+/// 小写归一：源文档里大小写随手写是常态（`CH3NGYZ` vs `ch3ngyz`），API 对
+/// 大小写不敏感，缓存却敏感 —— 不归一会让「同一个仓库」被算成两个，正好毁掉
+/// 这个缓存存在的意义。
+pub fn repository_cache_key(provider: Provider, username: &str, repository: &str) -> String {
+    format!(
+        "{:?}:{}:{}",
+        provider,
+        username.trim().to_lowercase(),
+        repository.trim().to_lowercase()
+    )
+}
+
 pub async fn fetch_releases(
     client: &Client,
     repo: &RepositoryConfig,

@@ -20,7 +20,10 @@
 //! 关系表复用 `RepositoryRelation`：「某 GUID 的版本必须在区间内」这个语义
 //! 两边没有差别。
 use crate::config::ConfigError;
-use crate::models::{AppConfig, MapRepositoryConfig};
+use crate::models::{
+    AppConfig, AssetRule, AssetRuleType, MapRepositoryConfig, Provider, ReleaseAsset, ReleaseInfo,
+    RepositoryConfig,
+};
 use crate::repository_sources::SourceLocation;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -57,10 +60,34 @@ pub fn default_map_index_url(region: &str) -> &'static str {
 /// 和「按主题拆成多份子源」两种组织方式都支持。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MapSourceDocument {
+    /// 条目的公共仓库坐标，省略时被逐条继承。
+    ///
+    /// 「一个 tag 装一个地图集的历史版本」意味着同一份文档里的条目几乎都是
+    /// 同一个仓库（作者自己的合集仓），逐条重写 `provider/username/repository`
+    /// 除了复制粘贴没有别的价值 —— 抄错一个字符就是一张装不上的地图。
+    #[serde(default)]
+    pub bundle: Option<MapBundleCoordinates>,
     #[serde(default)]
     pub maps: Vec<MapRepositoryConfig>,
     #[serde(default)]
     pub map_sources: Vec<MapSourceDeclaration>,
+}
+
+/// `[bundle]` 段：本文件条目的默认仓库坐标。
+///
+/// 只在条目**没写坐标**时继承（写了就用条目自己的）：文档里混放「同一个合集
+/// 仓的不同 tag」与「别的作者的独立仓库」是允许的，后者必须能盖过 bundle。
+///
+/// 作用范围是**当前文档**：子源是另一份文件，要继承就得自己再写一段。
+#[derive(Debug, Clone, Deserialize)]
+pub struct MapBundleCoordinates {
+    /// 省略时按 GitHub 处理（与 `Provider` 的默认值一致）。
+    #[serde(default)]
+    pub provider: Option<Provider>,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub repository: String,
 }
 
 /// 源文档里对子源的声明。
@@ -103,6 +130,28 @@ pub fn parse_document(
     })?;
 
     let mut document = document;
+    /*
+     * `[bundle]` 先于校验生效：条目继承坐标之后，「缺 username/repository」
+     * 才真的是作者漏写，而不是被 bundle 补过一轮的假阴性。
+     */
+    if let Some(bundle) = document.bundle.take() {
+        if bundle.username.trim().is_empty() || bundle.repository.trim().is_empty() {
+            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "mapSource.missingCoordinates",
+                &[("map", "[bundle]")],
+            )));
+        }
+        for entry in &mut document.maps {
+            if !entry.username.trim().is_empty() && !entry.repository.trim().is_empty() {
+                continue;
+            }
+            entry.username = bundle.username.clone();
+            entry.repository = bundle.repository.clone();
+            if let Some(provider) = bundle.provider.clone() {
+                entry.provider = provider;
+            }
+        }
+    }
     /*
      * `name` / `group` / `note` 的单语言镜像从 `*_i18n.zh-CN` 折进来。
      *
@@ -173,6 +222,40 @@ pub fn map_identity(entry: &MapRepositoryConfig) -> String {
     }
 }
 
+/// 条目声明的固定 Release tag（空串与缺省等价）。
+///
+/// 只认「有内容」的 tag：源文档里 `tag = ""` 是作者清空残留的写法，不能当成
+/// 「固定一个名叫空串的 tag」。
+pub(crate) fn map_tag(entry: &MapRepositoryConfig) -> Option<&str> {
+    entry
+        .tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+}
+
+/// tag 模式下负责「从资产名里抽版本号」的那条规则。
+///
+/// 必须同时满足：是正则、能编译、至少有一个捕获组（优先 `(?P<version>…)`，
+/// 否则取第 1 组）。锚定由调用方另外查 —— 这里只回答「能不能抽出版本」。
+fn version_rule(rules: &[AssetRule]) -> Option<&AssetRule> {
+    rules.iter().find(|rule| {
+        matches!(rule.rule_type, AssetRuleType::Regex)
+            && regex::Regex::new(&rule.value)
+                .map(|regex| regex.captures_len() > 1)
+                .unwrap_or(false)
+    })
+}
+
+/// 报错与日志里指代一张地图的统一写法：有名字用名字，没有用仓库坐标。
+fn map_label(entry: &MapRepositoryConfig) -> String {
+    if entry.name.trim().is_empty() {
+        format!("{}/{}", entry.username, entry.repository)
+    } else {
+        entry.name.clone()
+    }
+}
+
 /// 单条地图的必填校验。
 ///
 /// 只查「解析后一定会用到、缺失就没有意义」的字段：
@@ -186,11 +269,7 @@ fn validate_map_entry(
     entry: &MapRepositoryConfig,
     origin: &SourceLocation,
 ) -> Result<(), ConfigError> {
-    let label = if entry.name.trim().is_empty() {
-        format!("{}/{}", entry.username, entry.repository)
-    } else {
-        entry.name.clone()
-    };
+    let label = map_label(entry);
     if entry.level_set_name.trim().is_empty() {
         return Err(ConfigError::Invalid(crate::locale_tag::with_params(
             "mapSource.missingLevelSetName",
@@ -209,6 +288,26 @@ fn validate_map_entry(
             &[("map", &label)],
         )));
     }
+    if let Some(tag) = map_tag(entry) {
+        let rule = version_rule(&entry.asset_rules).ok_or_else(|| {
+            ConfigError::Invalid(crate::locale_tag::with_params(
+                "mapSource.assetRuleNeedsVersion",
+                &[("map", &label)],
+            ))
+        })?;
+        if !rule.value.starts_with('^') || !rule.value.ends_with('$') {
+            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "mapSource.regexNotAnchored",
+                &[("map", &label), ("asset", &rule.value)],
+            )));
+        }
+        log::debug!(
+            "地图条目使用固定 Tag：地图={}，tag={}，版本规则={}",
+            label,
+            tag,
+            rule.value
+        );
+    }
     log::debug!(
         "地图条目校验通过：地图={}，身份={}，来源={}",
         label,
@@ -223,8 +322,149 @@ fn validate_map_entry(
 /// 下载部分直接复用 `repository_sources` 的实现：超时（30 秒）、禁缓存头、
 /// 大小上限、重定向后的相对地址解析、错误分类 —— 这些逐项都踩过坑，复制一份
 /// 只会得到两套会各自漂移的规则。
-pub async fn load_document(location: &SourceLocation) -> Result<MapSourceDocument, ConfigError> {
-    crate::repository_sources::load_text_document(location, parse_document).await
+///
+/// 唯一的加成是「文档放在 Release 资产里」这一形态：先按资产地址反查仓库与
+/// tag，从 Release API 拿到 size 与 sha256，再带着这两项去竞速下载并校验。
+/// 拿不到校验信息时**退回普通下载**：校验是增强，不该变成新的失败点。
+pub(crate) async fn load_document(
+    location: &SourceLocation,
+    ctx: &MapSourceContext<'_>,
+) -> Result<MapSourceDocument, ConfigError> {
+    match verified_document(location, ctx).await {
+        Some(verified) => {
+            crate::repository_sources::load_verified_text_document(
+                location,
+                &verified,
+                parse_document,
+            )
+            .await
+        }
+        None => crate::repository_sources::load_text_document(location, parse_document).await,
+    }
+}
+
+/// 文档地址若是 Release 资产，就去 API 取它的 size/sha256 与下载候选。
+///
+/// 返回 `None` 表示「这份文档不需要/拿不到校验信息」，调用方按老路子读。
+/// 这里**不报错**：Release API 挂了不该让整个地图源树加载失败，作者写的
+/// 地址本身仍然可用 —— 只是少了摘要核对。
+async fn verified_document(
+    location: &SourceLocation,
+    ctx: &MapSourceContext<'_>,
+) -> Option<crate::repository_sources::VerifiedDocument> {
+    let SourceLocation::Remote(url) = location else {
+        return None;
+    };
+    let reference = crate::releases::release_asset_reference(url)?;
+    let probe = coordinate_probe(&reference);
+    let key = crate::releases::repository_cache_key(
+        reference.provider.clone(),
+        &reference.username,
+        &reference.repository,
+    );
+    let token = ctx.token(&reference.provider).map(str::to_string);
+    let official_api_only = ctx.config.auth.official_api_only;
+    let api_proxies = ctx.api_proxies(&reference.provider).to_vec();
+    let releases = match ctx
+        .cache
+        .list(key, ctx.pass_id, || async move {
+            crate::releases::fetch_releases(
+                ctx.client,
+                &probe,
+                token.as_deref(),
+                official_api_only,
+                &api_proxies,
+            )
+            .await
+            .map_err(|error| error.to_string())
+        })
+        .await
+    {
+        Ok(releases) => releases,
+        Err(error) => {
+            log::warn!(
+                "文档校验信息获取失败，退回普通下载：地址={}，原因={}",
+                crate::repository_sources::safe_log_address(url.as_str()),
+                error
+            );
+            return None;
+        }
+    };
+    let Some(release) = releases
+        .iter()
+        .find(|release| release.tag_name.trim() == reference.tag)
+    else {
+        log::warn!(
+            "文档所在 Release 不在仓库列表里，退回普通下载：地址={}，tag={}",
+            crate::repository_sources::safe_log_address(url.as_str()),
+            reference.tag
+        );
+        return None;
+    };
+    let Some(asset) = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == reference.asset)
+    else {
+        log::warn!(
+            "文档资产不在 Release 里，退回普通下载：地址={}，资产={}",
+            crate::repository_sources::safe_log_address(url.as_str()),
+            reference.asset
+        );
+        return None;
+    };
+    /*
+     * 候选走与普通资产下载同一条路由（直连 + 代理竞速），因为这就是一次资产
+     * 下载：只是产物是文本而不是 ZIP。
+     */
+    let candidates = match crate::commands::plan_remote_download_candidates(
+        ctx.config,
+        &reference.provider,
+        crate::direct_mod::RemoteUrlKind::ReleaseAsset,
+        url.as_str(),
+    ) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            log::warn!(
+                "文档下载候选规划失败，退回普通下载：地址={}，原因={}",
+                crate::repository_sources::safe_log_address(url.as_str()),
+                error
+            );
+            return None;
+        }
+    };
+    log::info!(
+        "文档带校验信息：地址={}，字节={}，摘要={}",
+        crate::repository_sources::safe_log_address(url.as_str()),
+        asset.size,
+        if asset.digest.is_some() { "有" } else { "无" }
+    );
+    Some(crate::repository_sources::VerifiedDocument {
+        // API 没给大小时不校验：`0` 会被当成「预期 0 字节」，反而拒掉正常文件
+        expected_size: (asset.size > 0).then_some(asset.size),
+        digest: asset.digest.clone(),
+        candidates,
+    })
+}
+
+/// 为「文档所在的仓库」造一个最小的 `RepositoryConfig`，只够取 Release 列表。
+fn coordinate_probe(reference: &crate::releases::ReleaseAssetReference) -> RepositoryConfig {
+    let export: crate::models::RepositoryExport = serde_json::from_value(serde_json::json!({
+        "name": format!("{}/{}", reference.username, reference.repository),
+        "name_i18n": {},
+        "group": "",
+        "group_i18n": {},
+        "provider": reference.provider,
+        "username": reference.username,
+        "repository": reference.repository,
+        "enabled": true,
+        "download_mode": "release",
+        "//": "文档可能落在很旧的 tag 里，列表要一次拿满",
+        "max_release_count": 100,
+        "install_target": "",
+    }))
+    .expect("文档校验投影的字段形状固定，构造失败说明模型改了默认值");
+    crate::config::repository_from_export(&export, "release-asset-document".to_string(), false)
 }
 
 /// 用新加载的地图列表替换配置里的地图，**保留同 ID 条目的 Release 缓存**。
@@ -445,9 +685,14 @@ const MAX_MAP_SOURCE_DEPTH: usize = 3;
 /// 加载顺序：索引 → 子源（深度优先、按声明顺序）→ 每个文档里的地图条目。
 /// 前端因此可以直接按条目首次出现的顺序排出源顺序，与 `[[map_sources]]` 的
 /// 声明顺序一致。
+///
+/// `ctx` 只为「文档放进 Release 资产」这一形态服务：那种地址要先问一次
+/// Release API 拿到 size/sha256 才能校验下载结果，而 API 请求必须按仓库
+/// 收敛（见 `release_cache`）。内置树与 raw 文档用不到它。
 pub async fn load_map_tree(
     region: &str,
     builtin_only: bool,
+    ctx: &MapSourceContext<'_>,
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
     let index_reference = if builtin_only {
         BUILTIN_MAP_INDEX
@@ -481,6 +726,7 @@ pub async fn load_map_tree(
         0,
         &mut visited,
         &mut collected,
+        ctx,
     )
     .await?;
     log::info!("地图源树加载完成：地图={}", collected.len());
@@ -498,8 +744,9 @@ async fn load_map_document(
     depth: usize,
     visited: &mut HashSet<(String, String)>,
     collected: &mut Vec<MapRepositoryConfig>,
+    ctx: &MapSourceContext<'_>,
 ) -> Result<(), ConfigError> {
-    let document = load_document(&location).await?;
+    let document = load_document(&location, ctx).await?;
     for mut map in document.maps {
         // 源归属与源名只在本进程内有效：导出配置时写出的是作者本地的源 ID
         label.attach(&mut map);
@@ -566,6 +813,7 @@ async fn load_map_document(
             depth + 1,
             visited,
             collected,
+            ctx,
         ))
         .await;
         if let Err(error) = boxed {
@@ -964,18 +1212,80 @@ mod bundled_tests {
 
     #[test]
     fn bundled_maps_are_discoverable_from_the_index() {
-        // 索引 → 子源 → 地图，整条链路能走通
+        /*
+         * 索引 → 子源 → 地图，整条链路能走通。
+         *
+         * 子源有两种：随包的内置文件（离线可读），和第三方维护、托管在
+         * Release 资产里的远程文档（必须联网）。后者在这里只校验地址形态 ——
+         * 单测不联网，能证明的是「索引没写坏、地址是可解析的 HTTPS」。
+         */
         let index = SourceLocation::parse(BUILTIN_MAP_INDEX).unwrap();
         let doc = parse_document(index.bundled_text().unwrap(), &index).unwrap();
         let mut total = doc.maps.len();
+        let mut bundled_children = 0;
+        let mut remote_children = 0;
         for child in &doc.map_sources {
             let location = SourceLocation::parse(&child.url).unwrap();
-            total += parse_document(location.bundled_text().unwrap(), &location)
-                .unwrap()
-                .maps
-                .len();
+            match &location {
+                SourceLocation::Bundled(_) => {
+                    bundled_children += 1;
+                    total += parse_document(location.bundled_text().unwrap(), &location)
+                        .unwrap()
+                        .maps
+                        .len();
+                }
+                SourceLocation::Remote(url) => {
+                    remote_children += 1;
+                    assert_eq!(
+                        url.scheme(),
+                        "https",
+                        "远程子源必须走 HTTPS：{}",
+                        crate::repository_sources::safe_log_address(url.as_str())
+                    );
+                }
+            }
         }
+        assert!(
+            bundled_children >= 1,
+            "索引里至少要有一个随包离线可读的子源"
+        );
+        assert!(
+            remote_children >= 1,
+            "第三方地图源应指向远程 Release 资产里的文档"
+        );
         assert!(total >= 1, "从索引出发应能至少找到一张地图");
+    }
+}
+
+/// 地图源加载期间的外部依赖：缓存、HTTP 客户端、配置、令牌、刷新批次。
+///
+/// 源树加载本身是纯解析，但「文档放进 Release 资产」这一形态要向 API 要
+/// size/sha256，而 API 请求必须按仓库收敛（一次刷新里同一个仓库只打一次，
+/// 见 `release_cache`）。显式传进来而不是让解析函数去读全局单例，测试才能
+/// 不联网地跑。
+pub struct MapSourceContext<'a> {
+    pub cache: &'a crate::release_cache::RepoReleaseCache,
+    pub client: &'a reqwest::Client,
+    pub config: &'a AppConfig,
+    pub github_token: Option<&'a str>,
+    pub gitee_token: Option<&'a str>,
+    /// 一次用户动作的批次身份：同一批次里同一个仓库只请求一次 Release API。
+    pub pass_id: Option<&'a str>,
+}
+
+impl MapSourceContext<'_> {
+    fn token(&self, provider: &Provider) -> Option<&str> {
+        match provider {
+            Provider::Github => self.github_token,
+            Provider::Gitee => self.gitee_token,
+        }
+    }
+
+    fn api_proxies(&self, provider: &Provider) -> &[crate::models::GitHubProxy] {
+        match provider {
+            Provider::Github => &self.config.github_proxies.github_api_proxies,
+            Provider::Gitee => &self.config.github_proxies.gitee_api_proxies,
+        }
     }
 }
 
@@ -990,6 +1300,17 @@ mod bundled_tests {
 /// 投影只填「取 Release 真正会读」的字段；其余用默认值。任何新增的
 /// Release 相关字段都要同时出现在这里，否则地图侧会拿到默认行为。
 pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::RepositoryConfig {
+    /*
+     * tag 模式下 `max_release_count` 的语义变了：它现在是「最多显示几个版本」，
+     * 与「列表要拉多少条」无关 —— 要读的那个 tag 可能落在很旧的位置，所以
+     * per_page 固定拉满。两个语义不能共用一个数，共用的后果是条目把
+     * `max_release_count` 写成 3（只想显示 3 个版本）之后就再也找不到自己的 tag。
+     */
+    let per_page = if map_tag(map).is_some() {
+        100
+    } else {
+        map.max_release_count
+    };
     // 借 `repository_from_export` 而不是手写字段：它掌握全部默认值，
     // 手写一份会在新增字段时静默落空。
     /*
@@ -1008,7 +1329,7 @@ pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::Reposit
         "enabled": map.enabled,
         "download_mode": "release",
         "channel": map.channel,
-        "max_release_count": map.max_release_count,
+        "max_release_count": per_page,
         "download_threads": map.download_threads,
         "asset_rules": map.asset_rules,
         "install_target": "",
@@ -1017,20 +1338,494 @@ pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::Reposit
     crate::config::repository_from_export(&export, map.id.clone(), map.builtin)
 }
 
-/// 刷新一个地图仓库的 Release 列表。
+/// 刷新一个地图仓库的 Release 列表（tag 模式下返回合成的版本列表）。
 ///
-/// 与仓库侧同一条路径：`fetch_releases` + `filter_channel`。缓存由调用方
-/// （命令层）读写，这里不碰配置。
+/// 与仓库侧同一条路径：`fetch_releases`。区别只有两处 —— 请求按仓库收敛
+/// （同一批里同一个仓库只打一次 API），以及 tag 模式下不「取最新那一条」，
+/// 而是把那个 tag 的资产逐个拆成版本。
 pub(crate) async fn fetch_map_releases(
-    client: &reqwest::Client,
+    ctx: &MapSourceContext<'_>,
     map: &MapRepositoryConfig,
-    token: Option<&str>,
-    official_api_only: bool,
-    api_proxies: &[crate::models::GitHubProxy],
-) -> Result<Vec<crate::models::ReleaseInfo>, String> {
+) -> Result<Vec<ReleaseInfo>, String> {
     let probe = release_probe(map);
-    crate::releases::fetch_releases(client, &probe, token, official_api_only, api_proxies)
-        .await
-        .map(|releases| crate::releases::filter_channel(releases, &map.channel))
-        .map_err(|error| error.to_string())
+    let key =
+        crate::releases::repository_cache_key(map.provider.clone(), &map.username, &map.repository);
+    let token = ctx.token(&map.provider).map(str::to_string);
+    let official_api_only = ctx.config.auth.official_api_only;
+    let api_proxies = ctx.api_proxies(&map.provider).to_vec();
+    let releases = ctx
+        .cache
+        .list(key, ctx.pass_id, || async move {
+            crate::releases::fetch_releases(
+                ctx.client,
+                &probe,
+                token.as_deref(),
+                official_api_only,
+                &api_proxies,
+            )
+            .await
+            .map_err(|error| error.to_string())
+        })
+        .await?;
+    match map_tag(map) {
+        /*
+         * tag 模式不走 `filter_channel`：渠道过滤的是 **Release**（稳定/预览），
+         * 而这里一个 Release 被拆成了「每个资产一个版本」—— 版本稳不稳定由
+         * 作者在条目里声明，不再由 Release 的 prerelease 标记决定。
+         * 硬过滤只会让写了 tag 的条目在 stable 渠道下整条消失。
+         */
+        Some(tag) => synthesize_releases(map, tag, releases.as_ref()),
+        None => Ok(crate::releases::filter_channel(
+            releases.as_ref().clone(),
+            &map.channel,
+        )),
+    }
+}
+
+/// 把一个 tag 的资产拆成「一个资产 = 一个版本」的 Release 列表。
+///
+/// ## 为什么是合成而不是新模型
+///
+/// 前端、安装流程（`stage_map_release`）、缓存字段、依赖快照全都按
+/// `Vec<ReleaseInfo>` 走。合成一份形状相同的列表，等于让「一个 tag 装一张图的
+/// 历史版本」在整条链路上零改动 —— 安装时按 `tag_name` 找到的那条 Release 里
+/// 就只有一个资产，正是它自己。
+///
+/// ## 取哪个数字当版本
+///
+/// 从资产名里用作者写的正则抽（`version_rule`）。这比解析 tag 名可靠：
+/// 一个 tag 里放的是多个文件，版本只在文件名里。抽出来的号同时充当
+/// `tag_name` —— 前端拿它当「版本号」显示、当「回滚到这一版」的标识。
+pub(crate) fn synthesize_releases(
+    map: &MapRepositoryConfig,
+    tag: &str,
+    releases: &[ReleaseInfo],
+) -> Result<Vec<ReleaseInfo>, String> {
+    let label = map_label(map);
+    let Some(release) = releases
+        .iter()
+        .find(|release| release.tag_name.trim() == tag)
+    else {
+        return Err(crate::locale_tag::with_params(
+            "mapSource.releaseTagNotFound",
+            &[("map", &label), ("tag", tag)],
+        ));
+    };
+    let Some(rule) = version_rule(&map.asset_rules) else {
+        return Err(crate::locale_tag::with_params(
+            "mapSource.assetRuleNeedsVersion",
+            &[("map", &label)],
+        ));
+    };
+    let regex = regex::Regex::new(&rule.value).map_err(|error| {
+        log::error!("地图版本规则无法编译：地图={}，原因={}", label, error);
+        crate::locale_tag::with_params("mapSource.assetRuleNeedsVersion", &[("map", &label)])
+    })?;
+    let mut versions: Vec<(String, ReleaseAsset)> = Vec::new();
+    for asset in &release.assets {
+        let Some(captures) = regex.captures(&asset.name) else {
+            continue;
+        };
+        /*
+         * 整串匹配才算：`asset_matches` 用的是 `is_match`（子串命中即真），
+         * 不锚定就会出现「同一个文件同时匹配出两个版本号」。解析阶段已经
+         * 要求规则写成 `^…$`，这里再判一次是因为配置里的旧条目可能没经过
+         * 这道校验。
+         */
+        let Some(whole) = captures.get(0) else {
+            continue;
+        };
+        if whole.start() != 0 || whole.end() != asset.name.len() {
+            log::debug!(
+                "资产名不是整串匹配，忽略：地图={}，资产={}",
+                label,
+                asset.name
+            );
+            continue;
+        }
+        let version = captures
+            .name("version")
+            .or_else(|| captures.get(1))
+            .map(|matched| matched.as_str().trim().to_string())
+            .unwrap_or_default();
+        if version.is_empty() {
+            continue;
+        }
+        if versions.iter().any(|(existing, _)| existing == &version) {
+            return Err(crate::locale_tag::with_params(
+                "mapSource.duplicateVersion",
+                &[("map", &label), ("version", &version)],
+            ));
+        }
+        versions.push((version, asset.clone()));
+    }
+    if versions.is_empty() {
+        return Err(crate::locale_tag::with_params(
+            "mapSource.noAssetInTag",
+            &[("map", &label), ("tag", tag)],
+        ));
+    }
+    /* 作者声明的「这就是最新版」必须真的存在，否则界面会把一张不存在的版本
+     * 标成最新，用户点安装却找不到资产。 */
+    let forced = map
+        .latest_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|version| !version.is_empty());
+    if let Some(forced) = forced
+        && !versions.iter().any(|(version, _)| version == forced)
+    {
+        return Err(crate::locale_tag::with_params(
+            "mapSource.latestVersionMissing",
+            &[("map", &label), ("version", forced)],
+        ));
+    }
+    versions.sort_by(|(left, _), (right, _)| newest_first(left, right));
+    if let Some(forced) = forced
+        && let Some(index) = versions.iter().position(|(version, _)| version == forced)
+    {
+        // 置顶而不是重排：其余版本仍按数字顺序，作者只说「它是最新」。
+        let entry = versions.remove(index);
+        versions.insert(0, entry);
+    }
+    // tag 模式下这个字段是「最多暴露几个版本」，见 `release_probe` 的说明
+    versions.truncate(map.max_release_count.clamp(1, 100) as usize);
+    Ok(versions
+        .into_iter()
+        .map(|(version, asset)| ReleaseInfo {
+            // 多个版本共用一个真实 Release，ID 只能留空：留着会让它们撞键
+            release_id: None,
+            tag_name: version.clone(),
+            version: Some(version.clone()),
+            name: format!("v{version}"),
+            body: release.body.clone(),
+            published_at: release.published_at.clone(),
+            // 渠道过滤已按作者声明跳过，这两个标记不能再参与判定
+            prerelease: false,
+            draft: false,
+            assets: vec![asset],
+        })
+        .collect())
+}
+
+/// 版本号里的数字段，用于排序。
+///
+/// 只按数字段比：`0.10` > `0.9`，`1.7.0` > `1.7`。段数不一致是常态（作者手写
+/// 的文件名），纯字符串比较会把 `0.10` 排到 `0.9` 前面，更错。
+fn version_parts(version: &str) -> Vec<u64> {
+    version
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+/// 新的排前面（降序）。
+fn newest_first(left: &str, right: &str) -> std::cmp::Ordering {
+    version_parts(right)
+        .cmp(&version_parts(left))
+        .then_with(|| right.cmp(left))
+}
+
+/*
+ * tag 模式（一个 tag 装一张图的历史版本）的纯函数测试。
+ *
+ * 全部不联网：`synthesize_releases` 只做「给定真实 Release + 条目声明 →
+ * 合成版本列表」，API 与缓存都在它之外。
+ */
+#[cfg(test)]
+mod tag_mode_tests {
+    use super::*;
+
+    const VERSION_RULE: &str = r#"{ type = "regex", value = '^rw_v(?P<version>[0-9.]+)\.zip$' }"#;
+
+    fn entry(rules: &str, extra: &str) -> MapRepositoryConfig {
+        let text = format!(
+            r#"
+[[maps]]
+name = "RW"
+provider = "github"
+username = "u"
+repository = "r"
+level_set_name = "RW_LevelSet"
+author = "RW"
+{extra}
+asset_rules = [{rules}]
+"#
+        );
+        parse_document(&text, &SourceLocation::parse("maps.toml").unwrap())
+            .unwrap()
+            .maps
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    fn tag_entry(extra: &str) -> MapRepositoryConfig {
+        entry(VERSION_RULE, extra)
+    }
+
+    fn release(tag: &str, assets: &[&str]) -> ReleaseInfo {
+        ReleaseInfo {
+            release_id: Some(7),
+            tag_name: tag.to_string(),
+            version: None,
+            name: "地图合集".to_string(),
+            body: "更新说明".to_string(),
+            published_at: Some("2026-01-01T00:00:00Z".to_string()),
+            prerelease: true,
+            draft: false,
+            assets: assets
+                .iter()
+                .map(|name| ReleaseAsset {
+                    name: name.to_string(),
+                    size: 1024,
+                    download_count: None,
+                    download_url: format!("https://github.com/u/r/releases/download/{tag}/{name}"),
+                    digest: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn tag_names(releases: &[ReleaseInfo]) -> Vec<&str> {
+        releases
+            .iter()
+            .map(|release| release.tag_name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn one_tag_becomes_one_release_per_asset() {
+        // 现实形态：一个 tag 里放同一张图的多个版本，文件名带版本号
+        let map = tag_entry("tag = \"maps\"");
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release("maps", &["rw_v0.22.zip", "rw_v0.78.zip"])],
+        )
+        .unwrap();
+        assert_eq!(tag_names(&releases), ["0.78", "0.22"]);
+        assert_eq!(releases[0].version.as_deref(), Some("0.78"));
+        assert_eq!(releases[0].name, "v0.78");
+        assert_eq!(releases[0].assets.len(), 1);
+        assert_eq!(releases[0].assets[0].name, "rw_v0.78.zip");
+        /*
+         * 两条版本共用同一个真实 Release，`release_id` 留空是刻意的：
+         * 前端拿它当列表键，重复的 ID 会让两条版本互相覆盖。
+         */
+        assert_eq!(releases[0].release_id, None);
+        // 渠道由作者在条目里声明，不再由 Release 的预发布标记决定
+        assert!(!releases[0].prerelease);
+        // 说明与时间仍来自真实 Release：版本列表要显示「这次更新了什么」
+        assert_eq!(releases[0].body, "更新说明");
+        assert_eq!(
+            releases[0].published_at.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn assets_that_do_not_match_the_rule_are_skipped() {
+        let map = tag_entry("tag = \"maps\"");
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release(
+                "maps",
+                &["rw_v0.22.zip", "readme.md", "source.zip"],
+            )],
+        )
+        .unwrap();
+        assert_eq!(tag_names(&releases), ["0.22"]);
+    }
+
+    #[test]
+    fn the_declared_latest_version_goes_first_without_reordering_the_rest() {
+        /*
+         * 作者认为 0.45 才是最新（0.7 与 0.69 那种「按数字比会排错」的现实问题）。
+         * 置顶只影响第一条，其余仍按版本号降序 —— 作者只说「它是最新」，没说
+         * 其余版本怎么排。
+         */
+        let map = tag_entry("tag = \"maps\"\nlatest_version = \"0.45\"");
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release(
+                "maps",
+                &["rw_v0.22.zip", "rw_v0.45.zip", "rw_v0.78.zip"],
+            )],
+        )
+        .unwrap();
+        assert_eq!(tag_names(&releases), ["0.45", "0.78", "0.22"]);
+    }
+
+    #[test]
+    fn versions_sort_by_numeric_segments() {
+        // 0.10 比 0.9 新：纯字符串比较会反着排
+        let map = tag_entry("tag = \"maps\"");
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release("maps", &["rw_v0.9.zip", "rw_v0.10.zip"])],
+        )
+        .unwrap();
+        assert_eq!(tag_names(&releases), ["0.10", "0.9"]);
+    }
+
+    #[test]
+    fn max_release_count_limits_how_many_versions_are_exposed() {
+        let map = tag_entry("tag = \"maps\"\nmax_release_count = 2");
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release(
+                "maps",
+                &["rw_v0.22.zip", "rw_v0.45.zip", "rw_v0.78.zip"],
+            )],
+        )
+        .unwrap();
+        // 截断留最新的两个，而不是列表里的前两个
+        assert_eq!(tag_names(&releases), ["0.78", "0.45"]);
+    }
+
+    #[test]
+    fn a_tag_that_is_not_in_the_repository_is_reported() {
+        let map = tag_entry("tag = \"maps\"");
+        let err =
+            synthesize_releases(&map, "typo", &[release("maps", &["rw_v0.22.zip"])]).unwrap_err();
+        assert!(err.contains("mapSource.releaseTagNotFound"), "{err}");
+    }
+
+    #[test]
+    fn a_tag_without_any_matching_asset_is_reported() {
+        let map = tag_entry("tag = \"maps\"");
+        let err =
+            synthesize_releases(&map, "maps", &[release("maps", &["notes.txt"])]).unwrap_err();
+        assert!(err.contains("mapSource.noAssetInTag"), "{err}");
+    }
+
+    #[test]
+    fn two_assets_that_yield_the_same_version_are_rejected() {
+        /*
+         * 版本号同时是「安装哪个资产」的标识。两个资产抽出同一个号，
+         * 安装时就只能瞎选一个 —— 宁可在刷新时明确报错。
+         */
+        let map = entry(
+            r#"{ type = "regex", value = '^rw_v(?P<version>[0-9.]+)(?:_alt)?\.zip$' }"#,
+            "tag = \"maps\"",
+        );
+        let err = synthesize_releases(
+            &map,
+            "maps",
+            &[release("maps", &["rw_v0.22.zip", "rw_v0.22_alt.zip"])],
+        )
+        .unwrap_err();
+        assert!(err.contains("mapSource.duplicateVersion"), "{err}");
+    }
+
+    #[test]
+    fn a_declared_latest_version_must_exist_in_the_tag() {
+        // 声明了一个不存在的版本：界面会把幽灵版本标成最新，点安装找不到资产
+        let map = tag_entry("tag = \"maps\"\nlatest_version = \"9.9\"");
+        let err =
+            synthesize_releases(&map, "maps", &[release("maps", &["rw_v0.22.zip"])]).unwrap_err();
+        assert!(err.contains("mapSource.latestVersionMissing"), "{err}");
+    }
+
+    #[test]
+    fn a_version_rule_without_anchors_is_rejected_at_parse_time() {
+        let text = format!(
+            r#"
+[[maps]]
+name = "RW"
+provider = "github"
+username = "u"
+repository = "r"
+level_set_name = "RW_LevelSet"
+author = "RW"
+tag = "maps"
+asset_rules = [{{ type = "regex", value = 'rw_v(?P<version>[0-9.]+)\.zip' }}]
+"#
+        );
+        let err = parse_document(&text, &SourceLocation::parse("maps.toml").unwrap()).unwrap_err();
+        // 不锚定就会「同一个文件匹配出两个版本号」，必须在加载时就拒绝
+        assert!(err.to_string().contains("mapSource.regexNotAnchored"));
+    }
+
+    #[test]
+    fn a_rule_without_a_version_group_is_rejected_at_parse_time() {
+        let text = format!(
+            r#"
+[[maps]]
+name = "RW"
+provider = "github"
+username = "u"
+repository = "r"
+level_set_name = "RW_LevelSet"
+author = "RW"
+tag = "maps"
+asset_rules = [{{ type = "regex", value = '^rw_v[0-9.]+\.zip$' }}]
+"#
+        );
+        let err = parse_document(&text, &SourceLocation::parse("maps.toml").unwrap()).unwrap_err();
+        assert!(err.to_string().contains("mapSource.assetRuleNeedsVersion"));
+    }
+
+    #[test]
+    fn an_exact_rule_is_enough_for_the_legacy_single_release_mode() {
+        // 没写 tag 的条目还是老语义：一条 Release 一个资产，不需要抽版本号
+        let map = entry(r#"{ type = "exact", value = "rw.zip" }"#, "");
+        assert_eq!(map_tag(&map), None);
+    }
+
+    #[test]
+    fn bundle_coordinates_are_inherited_only_by_entries_that_omit_them() {
+        let text = r#"
+[bundle]
+provider = "gitee"
+username = "QingyuQingxue"
+repository = "OC2-Map-Bundle"
+
+[[maps]]
+name = "A"
+level_set_name = "A_Set"
+author = "Qingyu"
+asset_rules = [{ type = "exact", value = "a.zip" }]
+
+[[maps]]
+name = "B"
+provider = "github"
+username = "other"
+repository = "repo"
+level_set_name = "B_Set"
+author = "Other"
+asset_rules = [{ type = "exact", value = "b.zip" }]
+"#;
+        let doc = parse_document(text, &SourceLocation::parse("maps.toml").unwrap()).unwrap();
+        assert_eq!(doc.maps[0].provider, Provider::Gitee);
+        assert_eq!(doc.maps[0].username, "QingyuQingxue");
+        assert_eq!(doc.maps[0].repository, "OC2-Map-Bundle");
+        // 显式写了坐标的条目不受 bundle 影响
+        assert_eq!(doc.maps[1].provider, Provider::Github);
+        assert_eq!(doc.maps[1].username, "other");
+        assert!(doc.bundle.is_none(), "bundle 已展开，不再留在文档上");
+    }
+
+    #[test]
+    fn a_bundle_without_coordinates_is_rejected() {
+        let text = r#"
+[bundle]
+username = ""
+repository = "OC2-Map-Bundle"
+
+[[maps]]
+name = "A"
+level_set_name = "A_Set"
+author = "Qingyu"
+asset_rules = [{ type = "exact", value = "a.zip" }]
+"#;
+        let err = parse_document(text, &SourceLocation::parse("maps.toml").unwrap()).unwrap_err();
+        assert!(err.to_string().contains("mapSource.missingCoordinates"));
+    }
 }

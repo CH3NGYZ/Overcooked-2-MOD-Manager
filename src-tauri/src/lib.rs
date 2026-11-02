@@ -32,6 +32,7 @@ mod mod_preview;
 mod models;
 mod mods;
 mod recycle_bin;
+mod release_cache;
 mod releases;
 mod repository_readme;
 mod repository_sources;

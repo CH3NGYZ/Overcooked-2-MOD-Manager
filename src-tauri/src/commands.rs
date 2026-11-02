@@ -587,6 +587,11 @@ pub struct AppState {
     pub game_state: Arc<Mutex<Option<GameInfo>>>,
     /// 关卡集目录监听：外部改动后通知前端重读（见 `level_watch`）。
     pub level_watch: Arc<crate::level_watch::LevelWatcher>,
+    /// 按仓库收敛的 Release 列表缓存（见 `release_cache`）。
+    ///
+    /// 一个合集仓的 Release 列表会被它下面的每张地图读到，还会被「文档放在
+    /// Release 资产里」时的 sha256 校验读到 —— 一次刷新里只该请求一次 API。
+    pub release_cache: Arc<crate::release_cache::RepoReleaseCache>,
 }
 
 impl AppState {
@@ -600,6 +605,7 @@ impl AppState {
             readme: Arc::new(crate::repository_readme::ReadmeDownloads::default()),
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
+            release_cache: Arc::new(crate::release_cache::RepoReleaseCache::default()),
         })
     }
 }
@@ -6423,12 +6429,36 @@ pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
 /// （TOML 无效、缺必填字段）时直接报错，不能悄悄换成内置条目 —— 否则作者
 /// 刚发布的地图源写错了，用户看到的是旧的、看起来一切正常的内置列表。
 #[tauri::command]
-pub async fn refresh_map_sources(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
-    let builtin_only = state.config.load_or_default().builtin_map_sources_only;
+pub async fn refresh_map_sources(
+    state: State<'_, AppState>,
+    pass_id: Option<String>,
+) -> Result<Vec<MapInfo>, String> {
+    let config = state.config.load_or_default();
+    let builtin_only = config.builtin_map_sources_only;
     let region = crate::config::current_user_region().to_string();
     log::info!("开始刷新地图源：内置={}，地区={}", builtin_only, region);
-
-    let loaded = crate::map_sources::load_map_tree(&region, builtin_only).await;
+    /*
+     * 源文档可以放在 Release 资产里，那时要先向同一个仓库的 API 取 size/sha256
+     * 才能校验。客户端与令牌在这里建一次、整棵源树共用；`pass_id` 是这次用户
+     * 动作的批次身份，让同一批里同一个仓库只请求一次列表 —— 索引里挂十几个
+     * 第三方源、其中几个指着同一个仓库时，这个去重就是匿名限流（60 次/小时）
+     * 下的生死线。
+     */
+    let client = releases::build_client(config.network.timeout_seconds)
+        .map_err(|error| error.to_string())?;
+    let github_token = state.config.api_token(&config, &Provider::Github);
+    let gitee_token = state.config.api_token(&config, &Provider::Gitee);
+    let loaded = {
+        let ctx = crate::map_sources::MapSourceContext {
+            cache: &state.release_cache,
+            client: &client,
+            config: &config,
+            github_token: github_token.as_deref(),
+            gitee_token: gitee_token.as_deref(),
+            pass_id: pass_id.as_deref(),
+        };
+        crate::map_sources::load_map_tree(&region, builtin_only, &ctx).await
+    };
     // 内置开关开着时成功路径读的就是快照，标签要跟实际来源一致 —— 这行是
     // 「地图列表到底来自哪里」的唯一日志证据。
     let (maps, source) = match loaded {
@@ -6522,6 +6552,12 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         source_id: map.source_id.clone(),
         source_name: map.source_name.clone(),
         source_name_i18n: map.source_name_i18n.clone(),
+        /*
+         * 作者钉死的版本号：有值时前端只比等值（本地更高也提示更新），
+         * 因为版本号是作者手写的自由文本，`0.7 > 0.69` 这种大小关系
+         * 不代表作者认为 0.7 更新。判定实现只有前端的 `mapUpdateState` 一处。
+         */
+        latest_version: map.latest_version.clone(),
         latest_tag: map
             .cached_releases
             .first()
@@ -6544,6 +6580,7 @@ pub async fn refresh_map_releases(
     state: State<'_, AppState>,
     map_id: String,
     force: Option<bool>,
+    pass_id: Option<String>,
 ) -> Result<Vec<ReleaseInfo>, String> {
     let force = force.unwrap_or(false);
     let config = state.config.load_or_default();
@@ -6575,24 +6612,19 @@ pub async fn refresh_map_releases(
 
     let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
-    /*
-     * Token 与代理列表都从 `release_probe` 投影出的 RepositoryConfig 取，
-     * 避免在多个调用点各写一遍「哪些字段是 Release 需要的」。
-     */
-    let probe = crate::map_sources::release_probe(&map);
-    let token = state.config.repository_api_token(&config, &probe);
-    let api_proxies = match map.provider {
-        Provider::Github => &config.github_proxies.github_api_proxies,
-        Provider::Gitee => &config.github_proxies.gitee_api_proxies,
+    let github_token = state.config.api_token(&config, &Provider::Github);
+    let gitee_token = state.config.api_token(&config, &Provider::Gitee);
+    let fetched = {
+        let ctx = crate::map_sources::MapSourceContext {
+            cache: &state.release_cache,
+            client: &client,
+            config: &config,
+            github_token: github_token.as_deref(),
+            gitee_token: gitee_token.as_deref(),
+            pass_id: pass_id.as_deref(),
+        };
+        crate::map_sources::fetch_map_releases(&ctx, &map).await
     };
-    let fetched = crate::map_sources::fetch_map_releases(
-        &client,
-        &map,
-        token.as_deref(),
-        config.auth.official_api_only,
-        api_proxies,
-    )
-    .await;
 
     let _guard = state
         .operation
@@ -9532,6 +9564,7 @@ mod mod_file_location_tests {
             readme: Arc::new(Default::default()),
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
+            release_cache: Arc::new(Default::default()),
         };
         let mut config = state.config.load().unwrap();
         config.game.path = workspace.game.to_string_lossy().into_owned();
@@ -11777,6 +11810,7 @@ mod repository_source_refresh_tests {
             readme: Arc::new(Default::default()),
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
+            release_cache: Arc::new(Default::default()),
         }
     }
 
@@ -12069,6 +12103,7 @@ mod repository_source_refresh_tests {
             readme: Arc::new(Default::default()),
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
+            release_cache: Arc::new(Default::default()),
         };
         refresh(&restarted, &root).await.unwrap();
         let restored = restarted.config.load().unwrap();

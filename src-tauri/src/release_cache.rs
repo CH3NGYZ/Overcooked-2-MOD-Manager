@@ -1,0 +1,224 @@
+//! 仓库级 Release 列表缓存。
+//!
+//! 一个仓库的 Release 列表现在会被好几处读：MOD 仓库本身、地图条目（同一个
+//! 合集仓里每张图占一个 tag），以及「文档放进 Release 资产」时的 sha256 校验。
+//! 各请求一次会把匿名额度（GitHub 只有 60 次/小时）当场用光，所以按仓库收敛成
+//! 一次请求。
+//!
+//! 两条复用规则，各自解决一件不同的事：
+//!
+//! - **同一个 pass**：一次用户点击 = 一个 pass id。同一 pass 内同一个仓库只请求
+//!   一次 ——「点一次检查更新，只打一次 API」靠的是这个显式身份，不是靠时间猜；
+//! - **60 秒 TTL**：刚取回来的列表就是「现在的最新数据」，一分钟内再要一次没有
+//!   任何信息增量。没有它，启动时的「先读源树、再刷条目」会把同一个仓库打两遍。
+//!
+//! 只缓存成功结果：失败写进去会让下一次重试直接拿到同一个错误。
+
+use crate::models::ReleaseInfo;
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// 没有 pass 时可用缓存的时长。
+///
+/// 比 Release 缓存的 5 分钟短得多：这一层只负责「同一次动作里别重复请求」，
+/// 不是给界面读的缓存。用户手点刷新能接受的最旧数据是「一分钟内」。
+pub const REPO_RELEASE_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// 过期条目保留多久才真正清掉。
+///
+/// 过期的不会被命中，留一会儿只为日志与调试；超过这个时长的条目在下次写入时
+/// 顺手清掉，避免长期驻留。
+const STALE_RETENTION: Duration = Duration::from_secs(600);
+
+struct Entry {
+    fetched_at: Instant,
+    /// 写这条缓存的 pass。`None` = 没有 pass 的请求写的。
+    pass_id: Option<String>,
+    releases: Arc<Vec<ReleaseInfo>>,
+}
+
+#[derive(Default)]
+pub struct RepoReleaseCache {
+    entries: Mutex<HashMap<String, Entry>>,
+    /// 每个仓库一把异步锁：并发进来的同一仓库请求只放行一个，其余的等它写完
+    /// 再命中缓存。std 的 Mutex 不能跨 await 持有，所以另开一份。
+    inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl RepoReleaseCache {
+    /// 取一份 Release 列表：能复用就不调用 `fetch`，不能才请求。
+    ///
+    /// `fetch` 是 `FnOnce`：命中时它根本不会被调用，闭包里准备的客户端与令牌
+    /// 也就白准备了 —— 这正是我们要的。
+    ///
+    /// `pass_id` 是「这一次用户动作」的身份，同一次动作里的所有读取都传同一个。
+    pub async fn list<F, Fut>(
+        &self,
+        key: String,
+        pass_id: Option<&str>,
+        fetch: F,
+    ) -> Result<Arc<Vec<ReleaseInfo>>, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Vec<ReleaseInfo>, String>>,
+    {
+        let gate = {
+            let mut inflight = self.inflight.lock().unwrap_or_else(|error| {
+                log::warn!("Release 缓存锁中毒，继续使用：{error}");
+                error.into_inner()
+            });
+            inflight
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        // 等锁期间前一个请求可能已经把结果写进去了，所以命中判定必须在拿到锁之后。
+        let _guard = gate.lock().await;
+        if let Some(hit) = self.hit(&key, pass_id) {
+            log::debug!("Release 列表命中仓库缓存：仓库={}", key);
+            return Ok(hit);
+        }
+        let releases = fetch().await?;
+        let shared = Arc::new(releases);
+        self.store(&key, pass_id.map(str::to_string), shared.clone());
+        Ok(shared)
+    }
+
+    fn hit(&self, key: &str, pass_id: Option<&str>) -> Option<Arc<Vec<ReleaseInfo>>> {
+        let entries = self.entries.lock().unwrap_or_else(|error| {
+            log::warn!("Release 缓存锁中毒，继续使用：{error}");
+            error.into_inner()
+        });
+        let entry = entries.get(key)?;
+        // `None == None` 不能算同一个 pass，否则无 pass 的调用会永远拿到旧列表。
+        if pass_id.is_some() && entry.pass_id.as_deref() == pass_id {
+            return Some(entry.releases.clone());
+        }
+        (entry.fetched_at.elapsed() < REPO_RELEASE_CACHE_TTL).then(|| entry.releases.clone())
+    }
+
+    fn store(&self, key: &str, pass_id: Option<String>, releases: Arc<Vec<ReleaseInfo>>) {
+        let mut entries = self.entries.lock().unwrap_or_else(|error| {
+            log::warn!("Release 缓存锁中毒，继续使用：{error}");
+            error.into_inner()
+        });
+        entries.retain(|_, entry| entry.fetched_at.elapsed() < STALE_RETENTION);
+        entries.insert(
+            key.to_string(),
+            Entry {
+                fetched_at: Instant::now(),
+                pass_id,
+                releases,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn run(
+        cache: &RepoReleaseCache,
+        key: &str,
+        pass_id: Option<&str>,
+        calls: &AtomicUsize,
+    ) -> Arc<Vec<ReleaseInfo>> {
+        cache
+            .list(key.to_string(), pass_id, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            })
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn second_read_without_pass_reuses_the_ttl_entry() {
+        let cache = RepoReleaseCache::default();
+        let calls = AtomicUsize::new(0);
+        let first = run(&cache, "github:a:b", None, &calls).await;
+        let second = run(&cache, "github:a:b", None, &calls).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test]
+    async fn same_pass_requests_once() {
+        /*
+         * 一次点击里「读源树（校验 TOML）→ 逐条刷 Release」会先后要同一份
+         * 列表，必须是同一次 API 请求 —— 这是用户明确要求的「点一次只打一次」。
+         */
+        let cache = RepoReleaseCache::default();
+        let calls = AtomicUsize::new(0);
+        let first = run(&cache, "github:a:b", Some("p1"), &calls).await;
+        let second = run(&cache, "github:a:b", Some("p1"), &calls).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test]
+    async fn cached_result_from_a_scan_is_reused_by_a_later_pass() {
+        /*
+         * 启动时没有 pass 的那次读取，与随后用户点刷新（新 pass）之间的间隔
+         * 通常不到一秒：两次请求同一份刚拿到的列表没有信息增量，只会烧额度。
+         */
+        let cache = RepoReleaseCache::default();
+        let calls = AtomicUsize::new(0);
+        run(&cache, "github:a:b", None, &calls).await;
+        run(&cache, "github:a:b", Some("p1"), &calls).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn different_repositories_do_not_share_entries() {
+        let cache = RepoReleaseCache::default();
+        let calls = AtomicUsize::new(0);
+        run(&cache, "github:a:one", None, &calls).await;
+        run(&cache, "github:a:two", None, &calls).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn failure_is_not_cached() {
+        let cache = RepoReleaseCache::default();
+        let calls = AtomicUsize::new(0);
+        let failed = cache
+            .list("github:a:b".to_string(), None, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                // 故意用一个非 tag 的失败串：缓存只关心「失败就不写」，与用户可见文案无关
+                Err("boom".to_string())
+            })
+            .await;
+        assert!(failed.is_err());
+        run(&cache, "github:a:b", None, &calls).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "失败不能挡住下一次重试");
+    }
+
+    #[test]
+    fn repository_cache_key_normalizes_case() {
+        assert_eq!(
+            crate::releases::repository_cache_key(
+                crate::models::Provider::Github,
+                " CH3NGYZ ",
+                "Overcooked-2-MOD-Manager-Repos"
+            ),
+            crate::releases::repository_cache_key(
+                crate::models::Provider::Github,
+                "ch3ngyz",
+                "overcooked-2-mod-manager-repos"
+            )
+        );
+    }
+
+    #[test]
+    fn repository_cache_key_separates_providers() {
+        assert_ne!(
+            crate::releases::repository_cache_key(crate::models::Provider::Github, "a", "b"),
+            crate::releases::repository_cache_key(crate::models::Provider::Gitee, "a", "b")
+        );
+    }
+}

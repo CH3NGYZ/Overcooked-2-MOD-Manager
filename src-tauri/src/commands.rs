@@ -1597,6 +1597,16 @@ pub fn save_settings(
     if let Some(value) = patch.download_threads {
         config.network.download_threads = value.clamp(1, 64);
     }
+    /*
+     * 元数据并行度：`0` 原样保存（= 全部核心，换机器后按新机器核心数跑），
+     * 其余夹到本机核心数以内 —— 存一个超过本机的值只会让下次扫描白等。
+     */
+    if let Some(value) = patch.mod_metadata_concurrency {
+        config.mod_metadata_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+    }
+    if let Some(value) = patch.map_info_concurrency {
+        config.map_info_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+    }
     if let Some(value) = patch.builtin_sources_only {
         config.builtin_sources_only = value;
         /*
@@ -5606,6 +5616,8 @@ pub async fn get_level_sets(
         return Ok(Vec::new());
     };
     let manifests_dir = state.config.manifests_dir();
+    // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
+    let info_workers = crate::metadata_read::workers_from(config.map_info_concurrency);
     tauri::async_runtime::spawn_blocking(move || {
         /*
          * 进度事件逐份发：解析发生在多个线程里，`emit` 本身线程安全。
@@ -5614,6 +5626,7 @@ pub async fn get_level_sets(
         let progress_app = app.clone();
         let sets = crate::level_sets::scan_level_sets_with_progress(
             &PathBuf::from(game_root),
+            info_workers,
             &move |done, total, current| {
                 let _ = progress_app.emit(
                     "level-set-scan-progress",
@@ -5771,11 +5784,22 @@ pub fn set_all_level_sets_enabled(
 /// 具体是哪一张无关，所以同一份列表挂到每个 `ZipLevelSet` 上，界面按
 /// `handle` 去重展示（单集 ZIP 与逐集拆分完全等价）。
 fn zip_level_sets(config: &AppConfig, path: &Path) -> Result<Vec<ZipLevelSet>, String> {
-    let sets = crate::level_sets::inspect_zip(path)?;
+    // 随包插件是 DLL（MOD 线），已装副本的身份是 `info`（地图线），两条线各有
+    // 自己的并行度设置。
+    let sets = crate::level_sets::inspect_zip_with_workers(
+        path,
+        crate::metadata_read::workers_from(config.mod_metadata_concurrency),
+    )?;
     let game_root = game::detect_game(config).path;
     let conflicts = game_root
         .as_deref()
-        .map(|root| crate::level_sets::find_install_conflicts(Path::new(root), &sets))
+        .map(|root| {
+            crate::level_sets::find_install_conflicts_with_workers(
+                Path::new(root),
+                &sets,
+                crate::metadata_read::workers_from(config.map_info_concurrency),
+            )
+        })
         .unwrap_or_default();
     Ok(sets
         .into_iter()
@@ -6000,11 +6024,13 @@ pub fn import_level_sets(
      * 悄悄跳过会让用户以为全装上了。
      */
     let mut installed = Vec::new();
+    let plugin_workers = crate::metadata_read::workers_from(config.mod_metadata_concurrency);
     for name in &selected {
-        let single = crate::level_sets::install_from_zip(
+        let single = crate::level_sets::install_from_zip_with_workers(
             &PathBuf::from(&zip_path),
             &game_root,
             std::slice::from_ref(name),
+            plugin_workers,
         )?;
         installed.extend(single);
     }

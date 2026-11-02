@@ -162,10 +162,29 @@ pub fn scan_mods_with_manifests(
     // Keep one logical MOD row and let the enabled copy win.
     paths.sort_by_key(|path| is_disabled_mod_file(path));
     let mut seen = HashSet::new();
-    let mut installed = paths
+    let paths = paths
         .into_iter()
         .filter(|path| seen.insert(canonical_dll_file(path, game).to_ascii_lowercase()))
-        .map(|path| inspect_dll(&path, game, config, &manifests))
+        .collect::<Vec<_>>();
+    /*
+     * 元数据读取彼此独立，交给中间层按上限并发（默认全部核心，设置里可调）。
+     * 结果按 `paths` 原顺序返回，卡片顺序与串行扫描时一致；某个文件读失败
+     * 只影响它自己那一行（占位成纯依赖）。
+     */
+    let requests = paths
+        .iter()
+        .map(|path| crate::metadata_read::MetadataRequest {
+            path: path.clone(),
+            display_name: canonical_dll_file(path, game),
+            kind: crate::metadata_read::MetadataKind::ModDll,
+        })
+        .collect::<Vec<_>>();
+    let workers = crate::metadata_read::workers_from(config.mod_metadata_concurrency);
+    let details = crate::metadata_read::read_metadata_batch(&requests, workers, &|_, _| {});
+    let mut installed = paths
+        .into_iter()
+        .zip(details)
+        .map(|(path, outcome)| inspect_dll(&path, &outcome, game, config, &manifests))
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
     inherit_repository_from_sibling(&mut installed);
@@ -184,12 +203,13 @@ pub fn scan_mods_with_manifests(
         .count();
     let duplicates = installed.iter().filter(|item| item.duplicate_guid).count();
     log::info!(
-        "本地 MOD 扫描完成：MOD数量={}，MOD包数量={}，可更新={}，重复身份={}，目录遍历错误={}",
+        "本地 MOD 扫描完成：MOD数量={}，MOD包数量={}，可更新={}，重复身份={}，目录遍历错误={}，并行度={}",
         installed.len(),
         packages,
         updates,
         duplicates,
-        traversal_errors
+        traversal_errors,
+        workers
     );
     installed
 }
@@ -258,28 +278,33 @@ pub fn disabled_dll_file(dll_file: &str) -> String {
     format!("{dll_file}.disabled")
 }
 
+/// 把一条 DLL 的元数据解析结果组装成一个 MOD 行。
+///
+/// 元数据由 `metadata_read` 的批次统一读出（`DllDetails`），本函数只做「读
+/// 磁盘状态 + 与安装清单/仓库对照」的装配 —— 不再自己解析 DLL 字节，否则
+/// 同一份文件会被读两遍（批次一遍、装配一遍）。
 fn inspect_dll(
     path: &Path,
+    outcome: &crate::metadata_read::MetadataOutcome,
     game: &Path,
     config: &AppConfig,
     manifests: &[InstallManifest],
 ) -> InstalledMod {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            log::warn!(
-                "读取 MOD 文件失败，按空元数据处理：文件={}，原因={}",
-                path.display(),
-                error
-            );
-            Vec::new()
-        }
-    };
-    let plugin = parse_bepin_plugin_metadata(&bytes);
-    let metadata = read_file_metadata(path);
-    let guid = plugin.as_ref().and_then(|item| item.guid.clone());
-    let plugin_version = plugin.as_ref().and_then(|item| item.version.clone());
-    let (installed_version, version_source) = choose_local_version(plugin_version.as_deref());
+    let details = outcome
+        .mod_dll()
+        .cloned()
+        .unwrap_or_else(|| placeholder_dll_details(&canonical_dll_file(path, game)));
+    let details = &details;
+    /*
+     * 版本号从中间层的统一出口取（`MetadataValue::version`）：MOD 与地图的
+     * 「本地版本」判定只看这一个值，不在各处认 `details.version` 字段。
+     */
+    let version = outcome
+        .value
+        .as_ref()
+        .and_then(crate::metadata_read::MetadataValue::version);
+    let (installed_version, version_source) = choose_local_version(version);
+    let guid = details.guid.clone();
     let dll_file = canonical_dll_file(path, game);
     let manifest = manifests
         .iter()
@@ -312,8 +337,8 @@ fn inspect_dll(
                 repository_matches_mod(
                     repo,
                     guid.as_deref(),
-                    metadata.product_name.as_deref(),
-                    metadata.original_filename.as_deref(),
+                    details.product_name.as_deref(),
+                    details.original_filename.as_deref(),
                     installed_version.as_deref(),
                 )
             }
@@ -351,23 +376,16 @@ fn inspect_dll(
         candidates.len(),
         repository.is_some()
     );
-    let name = plugin
-        .as_ref()
-        .and_then(|item| item.name.clone())
+    /*
+     * 显示名的回退链（BepInPlugin 名 → PE 产品名 → PE 标题 → 文件名）只有
+     * `read_dll_details` 一份实现：MOD 卡片、安装预览、地图随包插件必须显示
+     * 同一个名字，各自拼一串 `or_else` 迟早会分叉。
+     */
+    let name = details
+        .name
+        .clone()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            metadata
-                .product_name
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .unwrap_or_else(|| {
-            Path::new(&canonical_dll_file(path, game))
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("mods.unknownName")
-                .to_string()
-        });
+        .unwrap_or_else(|| "mods.unknownName".to_string());
     /*
      * 仓库文件（RAW）模式没有 Release 可比较，装的是一份固定文件。
      *
@@ -406,9 +424,9 @@ fn inspect_dll(
             remote.as_deref().unwrap_or("未知")
         );
     }
-    let product_name = metadata.product_name;
-    let original_filename = metadata.original_filename;
-    let plugin_name = plugin.and_then(|item| item.name);
+    let product_name = details.product_name.clone();
+    let original_filename = details.original_filename.clone();
+    let plugin_name = details.plugin_name.clone();
     let package_id = manifest.map(|item| item.repository_id.clone());
     /*
      * 包名的多语言快照 —— 清单里现在只有这一份。
@@ -525,8 +543,8 @@ fn inspect_dll(
             .map(|item| item.relations.clone())
             .unwrap_or_default(),
         name,
-        title: metadata.title,
-        description: metadata.description,
+        title: details.title.clone(),
+        description: details.description.clone(),
         product_name,
         original_filename,
         has_config: guid
@@ -537,8 +555,8 @@ fn inspect_dll(
             .is_some_and(|guid| crate::mod_config::logs_dir_exists(game, guid)),
         guid,
         plugin_name,
-        company: metadata.company,
-        copyright: metadata.copyright,
+        company: details.company.clone(),
+        copyright: details.copyright.clone(),
         dll_file,
         enabled,
         version: installed_version,
@@ -932,10 +950,17 @@ pub(crate) const MAX_DLL_BYTES: u64 = 32 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub(crate) struct DllDetails {
     pub(crate) role: DllRole,
+    /// 显示名（BepInPlugin 名 → PE 产品名 → PE 标题 → 文件名，四级回退的最终值）。
     pub(crate) name: Option<String>,
+    /// BepInPlugin 自报的插件名，**不含**任何回退值。
+    ///
+    /// 与 `name` 分开是因为「是不是纯依赖」必须按「有没有 BepInPlugin 元数据」
+    /// 判定：拿回退过的文件名当插件名，所有依赖库都会被认成普通 MOD。
+    pub(crate) plugin_name: Option<String>,
     pub(crate) guid: Option<String>,
     pub(crate) version: Option<String>,
     pub(crate) title: Option<String>,
+    pub(crate) description: Option<String>,
     pub(crate) product_name: Option<String>,
     pub(crate) company: Option<String>,
     pub(crate) copyright: Option<String>,
@@ -978,9 +1003,12 @@ pub(crate) fn read_dll_details(path: &Path, display_name: &str) -> DllDetails {
     let plugin = parse_bepin_plugin_metadata(&bytes);
     let metadata = read_file_metadata(path);
 
-    let name = plugin
+    let plugin_name = plugin
         .as_ref()
         .and_then(|item| item.name.clone())
+        .filter(|value| !value.trim().is_empty());
+    let name = plugin_name
+        .clone()
         .or_else(|| metadata.product_name.clone())
         .or_else(|| metadata.title.clone())
         .or_else(|| Some(file_stem_name(display_name)));
@@ -994,13 +1022,55 @@ pub(crate) fn read_dll_details(path: &Path, display_name: &str) -> DllDetails {
     DllDetails {
         role,
         name,
+        plugin_name,
         guid,
         version,
         title: metadata.title,
+        description: metadata.description,
         product_name: metadata.product_name,
         company: metadata.company,
         copyright: metadata.copyright,
         original_filename: metadata.original_filename,
+    }
+}
+
+/// 单个文件的 MOD 行（只在单元测试里用）：只读一份元数据，不起批次线程。
+///
+/// 生产的整目录扫描走 `read_metadata_batch`，这里只是为了把「读元数据」
+/// 这一步与断言用的装配分开，测试不必自己拼 `MetadataRequest`。
+#[cfg(test)]
+fn inspect_dll_at(
+    path: &Path,
+    game: &Path,
+    config: &AppConfig,
+    manifests: &[InstallManifest],
+) -> InstalledMod {
+    let requests = [crate::metadata_read::MetadataRequest {
+        path: path.to_path_buf(),
+        display_name: canonical_dll_file(path, game),
+        kind: crate::metadata_read::MetadataKind::ModDll,
+    }];
+    let outcomes = crate::metadata_read::read_metadata_batch(&requests, 1, &|_, _| {});
+    inspect_dll(path, &outcomes[0], game, config, manifests)
+}
+
+/// 读不出元数据时的占位：纯依赖、只有文件名。
+///
+/// 与「读出了文件但没有 BepInPlugin」的 `DllDetails` 同形，卡片上的差异只有
+/// 名称来源 —— 宁可显示文件名，也不要让一行 MOD 从列表里消失。
+pub(crate) fn placeholder_dll_details(display_name: &str) -> DllDetails {
+    DllDetails {
+        role: DllRole::Dependency,
+        name: Some(file_stem_name(display_name)),
+        plugin_name: None,
+        guid: None,
+        version: None,
+        title: None,
+        description: None,
+        product_name: None,
+        company: None,
+        copyright: None,
+        original_filename: None,
     }
 }
 
@@ -2223,7 +2293,7 @@ mod tests {
                 files: vec![relative.into()],
             };
             let installed =
-                super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+                super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
             assert_eq!(installed.version.as_deref(), Some(installed_version));
             assert_eq!(installed.repository_id.as_deref(), Some("raw"));
             assert_eq!(installed.repository_ids, vec!["raw"]);
@@ -2236,13 +2306,13 @@ mod tests {
                 "[General]\nEnabled = true\n",
             )
             .unwrap();
-            assert!(super::inspect_dll(&path, &root, &config, &[]).has_config);
-            let release_install = super::inspect_dll(&path, &root, &config, &[]);
+            assert!(super::inspect_dll_at(&path, &root, &config, &[]).has_config);
+            let release_install = super::inspect_dll_at(&path, &root, &config, &[]);
             assert_eq!(release_install.repository_id.as_deref(), Some("release"));
             assert!(release_install.update_available);
             let mut restricted = config;
             restricted.repositories[1].version_regex = r"^2\.".into();
-            let invalid_raw = super::inspect_dll(&path, &root, &restricted, &[manifest]);
+            let invalid_raw = super::inspect_dll_at(&path, &root, &restricted, &[manifest]);
             assert_eq!(invalid_raw.status, "unbound");
             assert!(!invalid_raw.update_available);
             assert!(invalid_raw.repository_ids.is_empty());
@@ -2292,7 +2362,8 @@ mod tests {
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Grouped.dll".into()],
         };
-        let installed = super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+        let installed =
+            super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
         assert_eq!(installed.group_i18n, group_i18n);
         assert_eq!(installed.group, "内容拓展");
         // 仓库已不在配置里 → 状态仍是未绑定，但分组信息不丢
@@ -2334,7 +2405,8 @@ mod tests {
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Pre.dll".into()],
         };
-        let installed = super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+        let installed =
+            super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
         assert!(installed.prerelease);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2388,7 +2460,8 @@ mod tests {
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec!["BepInEx/plugins/Legacy.dll".into()],
         };
-        let installed = super::inspect_dll(&path, &root, &config, std::slice::from_ref(&manifest));
+        let installed =
+            super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
         // 分组回退到仓库当前值
         assert_eq!(installed.group, "实用工具");
         assert_eq!(
@@ -2516,7 +2589,7 @@ mod tests {
             for suffix in [".dll", ".dll.disabled"] {
                 let path = plugins.join(format!("{name}{suffix}"));
                 std::fs::write(&path, &bytes).unwrap();
-                let installed = super::inspect_dll(&path, &root, &config, &[]);
+                let installed = super::inspect_dll_at(&path, &root, &config, &[]);
                 assert_eq!(installed.version, None, "{name}{suffix}");
                 assert_eq!(installed.version_source, "unknown", "{name}{suffix}");
                 assert!(!installed.update_available);

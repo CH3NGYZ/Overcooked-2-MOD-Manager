@@ -17,7 +17,10 @@
 
 use crate::commands::AppState;
 use crate::models::{DllRole, InstallConflict, InstalledMod, OperationResult};
-use crate::mods::{MAX_DLL_BYTES, compare_mod_versions, file_stem_name, read_dll_details};
+use crate::mods::{
+    DllDetails, MAX_DLL_BYTES, compare_mod_versions, file_stem_name, placeholder_dll_details,
+    read_dll_details,
+};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -147,13 +150,12 @@ fn source_extension(name: &str) -> Option<String> {
         .map(|value| value.to_ascii_lowercase())
 }
 
-/// 解析单个 DLL 的元数据。
+/// 把一份已解析的 DLL 元数据摊平成预览行。
 ///
-/// 规则只有一份，在 [`crate::mods::read_dll_details`]（BepInPlugin → PE 版本
-/// 资源 → 文件名兜底，角色由 guid/version 是否为空决定）；这里只把结果摊平成
-/// 预览行。`path` 是临时落盘文件，`display_path` 是包内相对路径（展示用）。
-fn analyze_dll(path: &Path, display_path: &str) -> ModPreviewEntry {
-    let details = read_dll_details(path, display_path);
+/// 解析规则只有一份，在 [`crate::mods::read_dll_details`]（BepInPlugin → PE
+/// 版本资源 → 文件名兜底，角色由 guid/version 是否为空决定），这里只负责
+/// 版式。`display_path` 是包内相对路径（展示用）。
+fn preview_entry(display_path: &str, details: &DllDetails) -> ModPreviewEntry {
     if details.role == DllRole::Dependency {
         log::debug!(
             "MOD 预览：判定为依赖（未读出 BepInPlugin 元数据）：路径={}",
@@ -163,30 +165,39 @@ fn analyze_dll(path: &Path, display_path: &str) -> ModPreviewEntry {
     ModPreviewEntry {
         path: display_path.to_string(),
         role: details.role,
-        name: details.name,
-        guid: details.guid,
-        version: details.version,
-        title: details.title,
-        product_name: details.product_name,
-        company: details.company,
-        copyright: details.copyright,
-        original_filename: details.original_filename,
+        name: details.name.clone(),
+        guid: details.guid.clone(),
+        version: details.version.clone(),
+        title: details.title.clone(),
+        product_name: details.product_name.clone(),
+        company: details.company.clone(),
+        copyright: details.copyright.clone(),
+        original_filename: details.original_filename.clone(),
     }
 }
 
+/// 单个 DLL 的预览行（不走批次：只有一个文件，批次只会多一次线程开销）。
+fn analyze_dll(path: &Path, display_path: &str) -> ModPreviewEntry {
+    preview_entry(display_path, &read_dll_details(path, display_path))
+}
+
 /// 分析 ZIP：遍历条目，仅解析 DLL（其余文件忽略）。
-fn analyze_zip(path: &Path, file_name: &str) -> Result<ModPreview, String> {
+///
+/// ZIP 里的 DLL 必须先落到临时文件才能读 PE 版本资源，所以先整批解压、再交给
+/// `metadata_read` 统一并发解析 —— 与本地 MOD 扫描、地图随包插件走同一条读取
+/// 路径，`workers` 就是 MOD 元数据并行度。
+fn analyze_zip(path: &Path, file_name: &str, workers: usize) -> Result<ModPreview, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|error| {
         crate::locale_tag::with_params("archive.zipReadFailed2", &[("reason", &error.to_string())])
     })?;
-    let mut entries = Vec::new();
     // ZIP 里的 DLL 需要落到临时文件才能读 PE 版本资源。
     // 用一个自建临时目录而不是 tempfile crate（项目没有这个依赖），
     // 分析结束立即删除。
     let scratch = std::env::temp_dir().join(format!("oc2-preview-{}", Uuid::new_v4()));
     fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
     let result = (|| -> Result<Vec<ModPreviewEntry>, String> {
+        let mut staged: Vec<(PathBuf, String)> = Vec::new();
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).map_err(|error| {
                 crate::locale_tag::with_params(
@@ -218,9 +229,32 @@ fn analyze_zip(path: &Path, file_name: &str) -> Result<ModPreview, String> {
                 .map_err(|error| error.to_string())?;
             let temp = scratch.join(format!("{index}.dll"));
             fs::write(&temp, &buffer).map_err(|error| error.to_string())?;
-            entries.push(analyze_dll(&temp, &display));
+            staged.push((temp, display));
         }
-        Ok(entries)
+        /*
+         * 解压完再统一读：解析彼此独立，交给中间层去重 + 限并发，结果按
+         * `staged` 原顺序返回，预览行的顺序与 ZIP 里的条目顺序一致。
+         */
+        let requests = staged
+            .iter()
+            .map(|(temp, display)| crate::metadata_read::MetadataRequest {
+                path: temp.clone(),
+                display_name: display.clone(),
+                kind: crate::metadata_read::MetadataKind::ModDll,
+            })
+            .collect::<Vec<_>>();
+        let outcomes = crate::metadata_read::read_metadata_batch(&requests, workers, &|_, _| {});
+        Ok(staged
+            .into_iter()
+            .zip(outcomes)
+            .map(|((_, display), outcome)| {
+                let details = outcome
+                    .mod_dll()
+                    .cloned()
+                    .unwrap_or_else(|| placeholder_dll_details(&display));
+                preview_entry(&display, &details)
+            })
+            .collect())
     })();
     let _ = fs::remove_dir_all(&scratch);
     Ok(build_preview(result?, file_name))
@@ -457,10 +491,12 @@ pub(crate) fn stage_downloaded_file(
     if extension != "dll" && extension != "zip" {
         return Err("modPreview.unsupportedType".into());
     }
+    let workers =
+        crate::metadata_read::workers_from(state.config.load_or_default().mod_metadata_concurrency);
     let mut preview = if extension == "dll" {
         build_preview(vec![analyze_dll(source, file_name)], file_name)
     } else {
-        analyze_zip(source, file_name)?
+        analyze_zip(source, file_name, workers)?
     };
     apply_repository_origin(&mut preview, repository_name, release_tag, release_body);
     attach_install_conflicts(state, &mut preview);
@@ -522,10 +558,12 @@ pub async fn analyze_mod_source(
         source.kind,
         file_name
     );
+    let workers =
+        crate::metadata_read::workers_from(state.config.load_or_default().mod_metadata_concurrency);
     let mut preview = if extension == "dll" {
         build_preview(vec![analyze_dll(&local_path, &file_name)], &file_name)
     } else {
-        analyze_zip(&local_path, &file_name)?
+        analyze_zip(&local_path, &file_name, workers)?
     };
     attach_install_conflicts(&state, &mut preview);
 

@@ -591,6 +591,8 @@ impl ConfigService {
             onboarding_seen_steps: config.onboarding_seen_steps.clone(),
             hide_unidentified_mods: config.hide_unidentified_mods,
             recycle_deleted_mods: config.recycle_deleted_mods,
+            mod_metadata_concurrency: config.mod_metadata_concurrency,
+            map_info_concurrency: config.map_info_concurrency,
             tutorial_steps: config.tutorial_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),
@@ -1019,6 +1021,9 @@ pub(crate) fn default_config() -> AppConfig {
         hide_unidentified_mods: true,
         // 默认开启：删除的 MOD 先进回收站，用户能反悔。
         recycle_deleted_mods: true,
+        // MOD 元数据默认跑满全部核心；地图 info 默认 4（常量在 metadata_read）。
+        mod_metadata_concurrency: crate::metadata_read::AUTO_CONCURRENCY,
+        map_info_concurrency: crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
         tutorial_steps: Vec::new(),
         game: GameConfig {
             path: String::new(),

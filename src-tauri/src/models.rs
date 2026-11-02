@@ -940,6 +940,18 @@ pub struct AppConfig {
     /// 先给出风险提示与二次确认才允许关闭。
     #[serde(default = "default_true")]
     pub recycle_deleted_mods: bool,
+    /// 读取 MOD 元数据（DLL）时最多同时处理几个文件。
+    ///
+    /// `0` = 全部 CPU 核心（默认）。用户可存任意正整数，真正执行前按当前机器
+    /// 的核心数夹紧（[`crate::metadata_read::resolve_concurrency`]），所以配置
+    /// 换机器仍然安全。
+    #[serde(default)]
+    pub mod_metadata_concurrency: u32,
+    /// 解析地图 `info` 时最多同时处理几份。
+    ///
+    /// `0` = 全部 CPU 核心；默认 4（[`crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY`]）。
+    #[serde(default = "default_map_info_concurrency")]
+    pub map_info_concurrency: u32,
     #[serde(default)]
     pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
@@ -1137,6 +1149,14 @@ fn default_hide_unidentified_mods() -> bool {
     true
 }
 
+/// 解析地图 `info` 的默认并发上限。
+///
+/// 值是 `metadata_read` 里那一个常量：配置默认值与运行时上限必须同源，
+/// 否则「默认 4」和「最多 4」会各说一套。
+fn default_map_info_concurrency() -> u32 {
+    crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicConfig {
     pub schema_version: u32,
@@ -1148,6 +1168,12 @@ pub struct PublicConfig {
     /// 删除 MOD 时先移入回收站；false = 直接删除（不可恢复）。
     #[serde(default = "default_true")]
     pub recycle_deleted_mods: bool,
+    /// MOD 元数据并行读取上限；`0` = 全部 CPU 核心。
+    #[serde(default)]
+    pub mod_metadata_concurrency: u32,
+    /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。
+    #[serde(default = "default_map_info_concurrency")]
+    pub map_info_concurrency: u32,
     #[serde(default)]
     pub tutorial_steps: Vec<TutorialStepConfig>,
     pub game: GameConfig,
@@ -1568,6 +1594,10 @@ pub struct SettingsPatch {
     pub official_api_only: Option<bool>,
     pub timeout_seconds: Option<u64>,
     pub download_threads: Option<u32>,
+    /// MOD 元数据并行读取上限；`0` = 全部 CPU 核心。超出核心数由后端夹紧。
+    pub mod_metadata_concurrency: Option<u32>,
+    /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。
+    pub map_info_concurrency: Option<u32>,
     /// 只用内置仓库源（不访问远端 raw 入口）。
     pub builtin_sources_only: Option<bool>,
     /// 只用内置地图源（不影响仓库源，反之亦然）。

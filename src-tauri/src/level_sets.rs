@@ -51,6 +51,7 @@
 //! - 目标目录已有**同身份**关卡集（安装前必须先卸载旧副本，见 `find_install_conflicts`）；
 //!   同名但身份不同会换名并存，等同「另一张图」。
 use crate::asset_bundle::{self, LevelSetMetadata};
+use crate::metadata_read::{MetadataKind, MetadataOutcome, MetadataRequest};
 use crate::models::{DllPluginInfo, DllRole, InstallConflict, LevelSetPlugin, ZipLevelSetPlugin};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -265,31 +266,143 @@ pub struct LevelSetOnDisk {
 pub type ScanProgress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);
 
 /// 扫描一个游戏目录下的全部关卡集（启用与停用）。
+///
+/// 单测与旧调用方的默认入口：并行度取 `map_info_concurrency` 的默认值（4）。
 pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
-    scan_level_sets_with_progress(game_root, &|_, _, _| {})
+    scan_level_sets_inner(
+        game_root,
+        crate::metadata_read::resolve_concurrency(
+            crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
+            crate::metadata_read::cores(),
+        ),
+        true,
+        &|_, _, _| {},
+    )
 }
 
-/// 同上，但逐条上报进度。
+/// 同上，但逐条上报进度，并按调用方解析好的并行度读。
 ///
 /// **为什么并行**：解析一份 `info` 是「整份读入 → 算 SHA-256 → LZMA 解压整段
-/// 数据 → 解对象表」的独立 CPU 密集工作，彼此没有共享状态。真实目录里 7 个地图
-/// 合计 131 MB（最大一份 65 MB），串行时始终只有一个核心在干活 —— 冷扫描的
-/// 13.6 s 里大部分时间其它核心是空的。按 CPU 核数分片后这些工作真正重叠。
+/// 数据 → 解对象表」的独立 CPU 密集工作，彼此没有共享状态。真实目录里 13 个
+/// 地图合计 337 MB（最大一份 101 MB），串行时始终只有一个核心在干活。
+///
+/// **为什么 info 与随包插件排同一批**：两者都由 [`crate::metadata_read`] 调度，
+/// 分开排队会让「info 比 DLL 慢几十倍」的长尾空着线程；同一批里动态取号，
+/// 谁先空闲谁接下一份。
 ///
 /// **顺序仍然确定**：并行只改变谁先算完，结果按原下标归位；排序口径维持
 /// 「先 `levels/` 再 `disabled/`，各自按目录名排序」，界面不会因为谁先跑完而重排。
 pub fn scan_level_sets_with_progress(
     game_root: &Path,
+    workers: usize,
+    progress: ScanProgress<'_>,
+) -> Vec<LevelSetOnDisk> {
+    scan_level_sets_inner(game_root, workers, true, progress)
+}
+
+/// 扫描本体：`migrate_legacy` 区分「地图页扫描」与「安装前身份扫描」。
+///
+/// 三段的理由：枚举只读目录与 `requires.txt`（很快，先拿到总数才能给出
+/// 「3/13」这种真实进度）；解析全部交给中间层按一批跑（info 与 DLL 混排）；
+/// 组装只做纯内存拼装，按原下标归位。
+fn scan_level_sets_inner(
+    game_root: &Path,
+    workers: usize,
+    migrate_legacy: bool,
     progress: ScanProgress<'_>,
 ) -> Vec<LevelSetOnDisk> {
     let base = game_root.join(DIYLEVEL_DIR);
     // 旧版本的停用根在 `plugins/` 里，先搬走再枚举（见 `migrate_legacy_disabled_root`）
-    migrate_legacy_disabled_root(game_root);
+    if migrate_legacy {
+        migrate_legacy_disabled_root(game_root);
+    }
+    let targets = collect_level_set_targets(game_root);
+    let total = targets.len();
+    progress(0, total, "");
+    if total == 0 {
+        log::debug!("关卡集扫描完成：数量=0，根={}", base.display());
+        return Vec::new();
+    }
+
     /*
-     * 先把待解析的目标列全：并行之前必须先知道总数，才能给出「3/7」这种
-     * 真实进度（转圈条下面要显示的就是它）。列目录本身只读元数据，很快。
+     * 一次批次装下全部 `info` 与随包插件：中间层负责按内容去重（同一份文件
+     * 被两个关卡集引用时只读一次）与动态取号调度。
      */
-    let mut targets: Vec<(PathBuf, String, bool)> = Vec::new();
+    let mut requests: Vec<MetadataRequest> = Vec::new();
+    let mut request_set: Vec<usize> = Vec::new();
+    let mut info_request: Vec<Option<usize>> = vec![None; total];
+    let mut plugin_requests: Vec<Vec<usize>> = vec![Vec::new(); total];
+    let pending: Vec<AtomicUsize> = (0..total).map(|_| AtomicUsize::new(0)).collect();
+    for (index, target) in targets.iter().enumerate() {
+        if let Some(info_path) = &target.info_path {
+            info_request[index] = Some(requests.len());
+            requests.push(MetadataRequest {
+                path: info_path.clone(),
+                display_name: String::new(),
+                kind: MetadataKind::LevelSetInfo,
+            });
+            request_set.push(index);
+            pending[index].fetch_add(1, Ordering::Relaxed);
+        }
+        for (path, file_name, _) in &target.plugins {
+            plugin_requests[index].push(requests.len());
+            requests.push(MetadataRequest {
+                path: path.clone(),
+                display_name: file_name.clone(),
+                kind: MetadataKind::ModDll,
+            });
+            request_set.push(index);
+            pending[index].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    let finished = AtomicUsize::new(0);
+    let outcomes = crate::metadata_read::read_metadata_batch(&requests, workers, &|index, _| {
+        /*
+         * 一张图的 `info` 与随包插件都读完才报它：进度数字等于「已出卡数量」，
+         * 而不是「已读文件数」—— 后者会在一张图内部跳好几次，进度条看着乱。
+         */
+        let set = request_set[index];
+        if pending[set].fetch_sub(1, Ordering::Relaxed) == 1 {
+            let done = finished.fetch_add(1, Ordering::Relaxed) + 1;
+            progress(done, total, &targets[set].dir_name);
+        }
+    });
+
+    /*
+     * 没有任何可读文件的目标（空目录、只有 `requires.txt`）进不了批次，
+     * 批次回调也就不会报它；补一次进度，保证最终「已读取 x/y」对齐。
+     */
+    let mut done = finished.load(Ordering::Relaxed);
+    for (index, target) in targets.iter().enumerate() {
+        if pending[index].load(Ordering::Relaxed) == 0 {
+            done += 1;
+            progress(done, total, &target.dir_name);
+        }
+    }
+
+    let mut outcomes: Vec<Option<MetadataOutcome>> = outcomes.into_iter().map(Some).collect();
+    let mut sets = Vec::with_capacity(total);
+    for (index, target) in targets.into_iter().enumerate() {
+        let info = info_request[index].and_then(|request| outcomes[request].take());
+        let plugins = plugin_requests[index]
+            .iter()
+            .map(|request| outcomes[*request].take())
+            .collect::<Vec<_>>();
+        sets.push(assemble_level_set(target, info, &plugins));
+    }
+    log::debug!(
+        "关卡集扫描完成：数量={}，根={}，并行度={}",
+        sets.len(),
+        base.display(),
+        workers
+    );
+    sets
+}
+
+/// 枚举一个游戏目录下全部关卡集目录（启用根 + 停用根，各自按目录名排序）。
+fn collect_level_set_targets(game_root: &Path) -> Vec<LevelSetTarget> {
+    let mut targets = Vec::new();
     for (root, enabled) in [
         (levels_root(game_root), true),
         (disabled_root(game_root), false),
@@ -304,159 +417,145 @@ pub fn scan_level_sets_with_progress(
             .collect();
         names.sort();
         for name in names {
-            targets.push((root.join(&name), name, enabled));
+            targets.push(LevelSetTarget::collect(root.join(&name), name, enabled));
         }
     }
-
-    let total = targets.len();
-    progress(0, total, "");
-    if total == 0 {
-        log::debug!("关卡集扫描完成：数量=0，根={}", base.display());
-        return Vec::new();
-    }
-
-    /*
-     * 线程数取核数且不超过目标数：文件比核心少时多开线程只会多切换。
-     * 用下标原子取号而不是预先切片 —— 各份 `info` 大小差几十倍（这里最大的
-     * 65 MB、最小的 0.3 MB），切片会让拿到大文件的线程成为长尾，动态取号
-     * 才能让先空闲的线程去接下一个。
-     */
-    let workers = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1)
-        .min(total);
-    let next = AtomicUsize::new(0);
-    let finished = AtomicUsize::new(0);
-    let parsed: Vec<(usize, LevelSetOnDisk)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut local: Vec<(usize, LevelSetOnDisk)> = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        if index >= total {
-                            break;
-                        }
-                        let (path, name, enabled) = &targets[index];
-                        local.push((index, read_level_set(path.clone(), name.clone(), *enabled)));
-                        let done = finished.fetch_add(1, Ordering::Relaxed) + 1;
-                        progress(done, total, name);
-                    }
-                    local
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            // 某个线程 panic 时丢掉它那一片，而不是让整次扫描失败：
-            // 少一张卡的元数据仍可显示目录名并开关，比整页报错好。
-            .flat_map(|handle| handle.join().unwrap_or_default())
-            .collect()
-    });
-
-    let mut ordered = parsed;
-    ordered.sort_by_key(|(index, _)| *index);
-    let sets: Vec<LevelSetOnDisk> = ordered.into_iter().map(|(_, set)| set).collect();
-    log::debug!(
-        "关卡集扫描完成：数量={}，根={}，并行度={}",
-        sets.len(),
-        base.display(),
-        workers
-    );
-    sets
+    targets
 }
 
-/// 读取单个关卡集目录。
-///
-/// `info` 的文件名有两种历史写法：固定名 `info`（DLL 认这个），以及导出工具
-/// 带的 `info_<集名>`。先找前者，找不到再找唯一一个 `info_*` —— 两种都在
-/// 真实资源里出现过。
-fn read_level_set(directory: PathBuf, dir_name: String, enabled: bool) -> LevelSetOnDisk {
-    // 与 info 无关，独立读取：info 读不出来时这两个值照样能用
-    let required_runtime = read_required_runtime(&directory);
-    let plugins = read_level_set_plugins(&directory);
-    let info_path = match locate_info_file(&directory) {
-        Some(path) => path,
-        None => {
-            return LevelSetOnDisk {
-                dir_name,
-                enabled,
-                path: directory,
-                metadata: None,
-                error: Some("levelSet.infoMissing".into()),
-                required_runtime,
-                plugins,
-            };
-        }
-    };
-    match read_info_metadata(&info_path) {
-        Ok(metadata) => LevelSetOnDisk {
+/// 一个待读的关卡集目录：只记录「去哪里读什么」，不碰 `info` 内容。
+struct LevelSetTarget {
+    directory: PathBuf,
+    dir_name: String,
+    enabled: bool,
+    required_runtime: Option<String>,
+    info_path: Option<PathBuf>,
+    /// 集目录顶层的随包插件：磁盘路径 + 落盘文件名 + 是否启用。
+    plugins: Vec<(PathBuf, String, bool)>,
+}
+
+impl LevelSetTarget {
+    fn collect(directory: PathBuf, dir_name: String, enabled: bool) -> Self {
+        // 与 info 无关，独立读取：info 读不出来时这两个值照样能用
+        let required_runtime = read_required_runtime(&directory);
+        let info_path = locate_info_file(&directory);
+        let plugins = collect_level_set_plugin_files(&directory);
+        Self {
+            directory,
             dir_name,
             enabled,
-            path: directory,
-            metadata: Some(metadata),
-            error: None,
             required_runtime,
+            info_path,
             plugins,
-        },
-        Err(error) => {
-            log::warn!(
-                "关卡集元数据解析失败：目录={}，文件={}，原因={}",
-                dir_name,
-                info_path.display(),
-                error
-            );
-            LevelSetOnDisk {
-                dir_name,
-                enabled,
-                path: directory,
-                metadata: None,
-                error: Some(error),
-                required_runtime,
-                plugins,
-            }
         }
     }
 }
 
-/// 读集目录里的随包插件：DLL 与 `info` 同处一层，看到就绑，不猜名字。
+/// 读集目录里的随包插件文件清单：DLL 与 `info` 同处一层，看到就绑，不猜名字。
 ///
 /// 绑定关系不存额外的表 —— 插件导入后本来就被放进集目录根（见
 /// [`assign_plugins`]），扫描按文件名读回即可；停用/启用整目录搬家时它们
 /// 跟着走，导出地图包时整目录打包也不会漏。`.dll.disabled` 是手动禁用的
 /// 副本，照样带出，由 `enabled` 标出来。
 ///
-/// 元数据与 MOD 预览同源（[`crate::mods::read_dll_details`]）。只有目录里真有
-/// DLL 才会去解析 PE，纯地图目录的扫描开销不变。
-fn read_level_set_plugins(directory: &Path) -> Vec<LevelSetPlugin> {
+/// 这里只列文件、不解析：元数据由 [`crate::metadata_read`] 统一按批次读，
+/// 与 MOD 预览同源（[`crate::mods::read_dll_details`]）。
+fn collect_level_set_plugin_files(directory: &Path) -> Vec<(PathBuf, String, bool)> {
     let Ok(entries) = fs::read_dir(directory) else {
         return Vec::new();
     };
-    let mut plugins: Vec<LevelSetPlugin> = Vec::new();
+    let mut plugins: Vec<(PathBuf, String, bool)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
             continue;
         }
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        let Some(name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+        else {
             continue;
         };
-        let (base, enabled) = match file_name.strip_suffix(".disabled") {
+        let (base, enabled) = match name.strip_suffix(".disabled") {
             Some(base) => (base, false),
-            None => (file_name, true),
+            None => (name.as_str(), true),
         };
         if !base.to_lowercase().ends_with(".dll") {
             continue;
         }
-        let details = crate::mods::read_dll_details(&path, file_name);
-        plugins.push(LevelSetPlugin {
-            file_name: file_name.to_string(),
-            enabled,
-            info: details.into(),
-        });
+        plugins.push((path, name, enabled));
     }
-    plugins.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+    plugins.sort_by(|left, right| left.1.cmp(&right.1));
     plugins
+}
+
+/// 把「目录清单 + 批次读到的元数据」组装成一张关卡集。
+///
+/// `info` 缺失或解析失败都只让这张卡带上 `error`，插件与 `requires.txt`
+/// 照常保留 —— 解析失败不影响开关（见 [`LevelSetOnDisk::error`]）。
+fn assemble_level_set(
+    target: LevelSetTarget,
+    info: Option<MetadataOutcome>,
+    plugins: &[Option<MetadataOutcome>],
+) -> LevelSetOnDisk {
+    let (metadata, error) = match (&target.info_path, info) {
+        (None, _) => (None, Some("levelSet.infoMissing".to_string())),
+        (Some(info_path), Some(outcome)) => match outcome.level_set_info() {
+            Some(metadata) => (Some(metadata.clone()), None),
+            None => {
+                let reason = outcome.error.clone().unwrap_or_default();
+                log::warn!(
+                    "关卡集元数据解析失败：目录={}，文件={}，原因={}",
+                    target.dir_name,
+                    info_path.display(),
+                    reason
+                );
+                (None, Some(reason))
+            }
+        },
+        // 批次返回的条数与请求一一对应，走不到这里；真到了也只当解析失败
+        (Some(_), None) => (None, Some(String::new())),
+    };
+    let plugins = target
+        .plugins
+        .iter()
+        .enumerate()
+        .map(|(index, (_, file_name, enabled))| LevelSetPlugin {
+            file_name: file_name.clone(),
+            enabled: *enabled,
+            info: plugins
+                .get(index)
+                .and_then(|outcome| outcome.as_ref())
+                .and_then(|outcome| outcome.mod_dll())
+                .cloned()
+                .map(DllPluginInfo::from)
+                .unwrap_or_else(|| fallback_plugin_info(file_name)),
+        })
+        .collect();
+    LevelSetOnDisk {
+        dir_name: target.dir_name,
+        enabled: target.enabled,
+        path: target.directory,
+        metadata,
+        error,
+        required_runtime: target.required_runtime,
+        plugins,
+    }
+}
+
+/// 读不出 DLL 元数据时的兜底：按文件名显示成一条依赖。
+fn fallback_plugin_info(file_name: &str) -> DllPluginInfo {
+    DllPluginInfo {
+        role: DllRole::Dependency,
+        name: Some(crate::mods::file_stem_name(file_name)),
+        guid: None,
+        version: None,
+        title: None,
+        product_name: None,
+        company: None,
+        original_filename: None,
+    }
 }
 
 /// 读 `requires.txt`：第一行有效内容就是要求的外部 runtime 最低版本。
@@ -722,7 +821,7 @@ pub fn clear_info_cache() -> Result<usize, String> {
 }
 
 /// 读 `info` 并解析，命中缓存时不再读盘。
-fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, String> {
+pub(crate) fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, String> {
     let key = info_cache_key(info_path);
     let (len, mtime_nanos) = match fs::metadata(&key) {
         Ok(metadata) => (
@@ -959,29 +1058,11 @@ mod identity_tests {
 /// 与 [`scan_level_sets`] 的差别只有三点：不迁移旧停用根、不要进度、解析不出
 /// `info` 的目录直接跳过（读不出身份就无法判定冲突，交给 `install_from_zip`
 /// 按目录名规则处理）。目录名排序，冲突行顺序才稳定。
-fn installed_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
-    let mut installed = Vec::new();
-    for (root, enabled) in [
-        (levels_root(game_root), true),
-        (disabled_root(game_root), false),
-    ] {
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        let mut names: Vec<String> = entries
-            .flatten()
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        for name in names {
-            let set = read_level_set(root.join(&name), name, enabled);
-            if set.metadata.is_some() {
-                installed.push(set);
-            }
-        }
-    }
-    installed
+fn installed_level_sets(game_root: &Path, workers: usize) -> Vec<LevelSetOnDisk> {
+    scan_level_sets_inner(game_root, workers, false, &|_, _, _| {})
+        .into_iter()
+        .filter(|set| set.metadata.is_some())
+        .collect()
 }
 
 /// 找出本次要导入的关卡集与本地已装副本的身份冲突。
@@ -992,8 +1073,25 @@ fn installed_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
 ///
 /// `sets` 是同一批（同一个 ZIP / 同一个 Release）里识别出的关卡集。目录名撞车
 /// 但身份不同不算冲突 —— 那是允许并存的另一张图，`install_from_zip` 会为它换名。
+#[cfg(test)]
 pub fn find_install_conflicts(game_root: &Path, sets: &[ImportedLevelSet]) -> Vec<InstallConflict> {
-    conflicts_with_installed(&installed_level_sets(game_root), sets)
+    find_install_conflicts_with_workers(
+        game_root,
+        sets,
+        crate::metadata_read::resolve_concurrency(
+            crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
+            crate::metadata_read::cores(),
+        ),
+    )
+}
+
+/// 同上，按调用方解析好的并行度读已装副本的 `info`。
+pub fn find_install_conflicts_with_workers(
+    game_root: &Path,
+    sets: &[ImportedLevelSet],
+    workers: usize,
+) -> Vec<InstallConflict> {
+    conflicts_with_installed(&installed_level_sets(game_root, workers), sets)
 }
 
 /// 纯函数部分：已装列表 × 待装列表 → 冲突行。
@@ -1487,8 +1585,8 @@ pub fn remove_level_set(
         return Ok(());
     }
     // 回收记录用集名显示（界面语言下的名字）；info 读不出来时退回目录名
-    let name = read_level_set(set_dir.clone(), dir_name.to_string(), enabled)
-        .metadata
+    let name = locate_info_file(&set_dir)
+        .and_then(|info| read_info_metadata(&info).ok())
         .map(|metadata| metadata.name)
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| dir_name.to_string());
@@ -1818,43 +1916,45 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
     })
 }
 
-/// 读出 ZIP 内一个随包插件的元数据：条目 → scratch 临时文件 → 统一解析。
+/// ZIP 内一个随包插件的解压准备结果。
+struct PreparedZipPlugin {
+    path: String,
+    file_name: String,
+    /// 落到 scratch 的真实文件；`None` 表示降级为文件名兜底。
+    temp: Option<PathBuf>,
+    /// 在批次请求里的下标（`temp` 为 `None` 时也是 `None`）。
+    request: Option<usize>,
+}
+
+/// 把 ZIP 内一个随包插件解到 scratch，供批次解析 PE 版本资源。
 ///
 /// 任何一步失败都只降级成「按文件名显示的依赖」：这些字段只用来展示安装
 /// 详情，一个损坏的 DLL 不该让整份地图包识别失败（地图本身还是能装的）。
-fn read_zip_plugin_details<R: Read + Seek>(
+fn prepare_zip_plugin<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     index: Option<usize>,
     entry: &str,
     scratch: Option<&Path>,
-) -> ZipLevelSetPlugin {
-    let file_name = entry.rsplit('/').next().unwrap_or(entry).to_string();
-    let fallback = |reason: &str| {
-        log::warn!(
-            "随包插件元数据读取失败，降级为文件名兜底：条目={}，原因={}",
-            entry,
-            reason
-        );
-        ZipLevelSetPlugin {
-            path: entry.to_string(),
-            file_name: file_name.clone(),
-            info: DllPluginInfo {
-                role: DllRole::Dependency,
-                name: Some(crate::mods::file_stem_name(&file_name)),
-                guid: None,
-                version: None,
-                title: None,
-                product_name: None,
-                company: None,
-                original_filename: None,
-            },
-        }
+) -> PreparedZipPlugin {
+    let mut prepared = PreparedZipPlugin {
+        path: entry.to_string(),
+        file_name: entry.rsplit('/').next().unwrap_or(entry).to_string(),
+        temp: None,
+        request: None,
     };
     let Some(scratch) = scratch else {
-        return fallback("临时目录不可用");
+        log::warn!(
+            "随包插件元数据读取失败，降级为文件名兜底：条目={}，原因=临时目录不可用",
+            entry
+        );
+        return prepared;
     };
     let Some(index) = index else {
-        return fallback("条目索引缺失");
+        log::warn!(
+            "随包插件元数据读取失败，降级为文件名兜底：条目={}，原因=条目索引缺失",
+            entry
+        );
+        return prepared;
     };
     let temp = scratch.join(format!("{index}.dll"));
     let extracted = (|| -> Result<(), String> {
@@ -1867,15 +1967,15 @@ fn read_zip_plugin_details<R: Read + Seek>(
             .map_err(|error| error.to_string())?;
         fs::write(&temp, &bytes).map_err(|error| error.to_string())
     })();
-    if let Err(reason) = extracted {
-        return fallback(&reason);
+    match extracted {
+        Ok(()) => prepared.temp = Some(temp),
+        Err(reason) => log::warn!(
+            "随包插件元数据读取失败，降级为文件名兜底：条目={}，原因={}",
+            entry,
+            reason
+        ),
     }
-    let details = crate::mods::read_dll_details(&temp, &file_name);
-    ZipLevelSetPlugin {
-        path: entry.to_string(),
-        file_name,
-        info: details.into(),
-    }
+    prepared
 }
 
 /// 读一个 ZIP 文件，按 `info` 识别出其中的关卡集。
@@ -1883,8 +1983,26 @@ fn read_zip_plugin_details<R: Read + Seek>(
 /// 地图文件不在这里解压 —— 调用方拿到 [`ImportedLevelSet::files`] 后按需写入，
 /// 避免为了识别而先落盘一份临时副本。唯一的例外是随包插件的 DLL：PE 版本资源
 /// 只能从真实文件读，所以它们会被落到一份 scratch 目录再解析
-/// （见 [`read_zip_plugin_details`]）。
+/// （见 [`prepare_zip_plugin`]）。
+#[cfg(test)]
 pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
+    inspect_zip_with_workers(
+        zip_path,
+        crate::metadata_read::resolve_concurrency(
+            crate::metadata_read::AUTO_CONCURRENCY,
+            crate::metadata_read::cores(),
+        ),
+    )
+}
+
+/// 同上，按调用方给的并行度解析随包插件。
+///
+/// 只并行 DLL：ZIP 内的 `info` 没有磁盘路径（直接读条目字节解析），走不了
+/// 按路径去重与内容缓存的那条中间层。
+pub fn inspect_zip_with_workers(
+    zip_path: &Path,
+    plugin_workers: usize,
+) -> Result<Vec<ImportedLevelSet>, String> {
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| {
         crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &error.to_string())])
@@ -2026,6 +2144,41 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
         }
     }
 
+    /*
+     * 插件条目先解到 scratch，再一次性按批次解析：解压是 ZIP 的顺序 IO，
+     * 解析是彼此独立的 PE 读取，分两段才能让多个 DLL 真正重叠。
+     */
+    let mut prepared_plugins: BTreeMap<String, Vec<PreparedZipPlugin>> = BTreeMap::new();
+    for (directory, entries) in &plugin_owner {
+        let prepared = entries
+            .iter()
+            .map(|entry| {
+                prepare_zip_plugin(
+                    &mut archive,
+                    index_by_name.get(entry).copied(),
+                    entry,
+                    scratch.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        prepared_plugins.insert(directory.clone(), prepared);
+    }
+    let mut requests: Vec<MetadataRequest> = Vec::new();
+    for prepared in prepared_plugins.values_mut() {
+        for plugin in prepared.iter_mut() {
+            let Some(temp) = plugin.temp.as_ref() else {
+                continue;
+            };
+            plugin.request = Some(requests.len());
+            requests.push(MetadataRequest {
+                path: temp.clone(),
+                display_name: plugin.file_name.clone(),
+                kind: MetadataKind::ModDll,
+            });
+        }
+    }
+    let outcomes = crate::metadata_read::read_metadata_batch(&requests, plugin_workers, &|_, _| {});
+
     let mut imported = Vec::with_capacity(parsed_sets.len());
     let mut taken_dir_names = std::collections::HashSet::new();
     for (directory, metadata, base_name) in parsed_sets {
@@ -2059,22 +2212,27 @@ pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
          * rename）天然把插件和地图一起开关 —— 否则关掉地图、插件还在 BepInEx
          * 里生效。
          */
-        let plugin_entries = plugin_owner.get(&directory).cloned().unwrap_or_default();
-        let mut plugins = Vec::with_capacity(plugin_entries.len());
-        for entry in &plugin_entries {
-            let plugin = read_zip_plugin_details(
-                &mut archive,
-                index_by_name.get(entry).copied(),
-                entry,
-                scratch.as_deref(),
-            );
+        let prepared = prepared_plugins.remove(&directory).unwrap_or_default();
+        let mut plugins = Vec::with_capacity(prepared.len());
+        for plugin in prepared {
             // 落盘相对路径只取文件名 → 插件进集目录根，随目录一起开关。
             // 插件本来就躺在集目录里（第一级绑定）时 `files` 已经收过这一条，
             // 再 push 会让安装事务重复写同一个文件、`file_count` 也跟着虚高。
-            if !files.iter().any(|(source, _)| source == entry) {
-                files.push((entry.clone(), plugin.file_name.clone()));
+            if !files.iter().any(|(source, _)| source == &plugin.path) {
+                files.push((plugin.path.clone(), plugin.file_name.clone()));
             }
-            plugins.push(plugin);
+            let info = plugin
+                .request
+                .and_then(|index| outcomes.get(index))
+                .and_then(|outcome| outcome.mod_dll())
+                .cloned()
+                .map(DllPluginInfo::from)
+                .unwrap_or_else(|| fallback_plugin_info(&plugin.file_name));
+            plugins.push(ZipLevelSetPlugin {
+                path: plugin.path,
+                file_name: plugin.file_name,
+                info,
+            });
         }
         imported.push(ImportedLevelSet {
             dir_name,
@@ -2115,12 +2273,13 @@ fn existing_level_set_metadata(
     disabled_dir: &Path,
     dir_name: &str,
 ) -> Option<LevelSetMetadata> {
-    for (root, enabled) in [(levels_dir, true), (disabled_dir, false)] {
+    for root in [levels_dir, disabled_dir] {
         let path = root.join(dir_name);
         if !path.is_dir() {
             continue;
         }
-        return read_level_set(path, dir_name.to_string(), enabled).metadata;
+        // 这里只需要身份（集名/中文名/作者），随包插件与 requires 都不必读
+        return locate_info_file(&path).and_then(|info| read_info_metadata(&info).ok());
     }
     None
 }
@@ -2131,12 +2290,31 @@ fn existing_level_set_metadata(
 /// 前必须先卸载旧副本（`find_install_conflicts` 报告、前端确认后逐个
 /// `delete_level_set`），这里不做隐式覆盖；同名但身份不同的目录会换名并存，
 /// 读不出身份的目录同样拒绝，不猜「用户想删哪个」。
+#[cfg(test)]
 pub fn install_from_zip(
     zip_path: &Path,
     game_root: &Path,
     selected: &[String],
 ) -> Result<Vec<String>, String> {
-    let sets = inspect_zip(zip_path)?;
+    install_from_zip_with_workers(
+        zip_path,
+        game_root,
+        selected,
+        crate::metadata_read::resolve_concurrency(
+            crate::metadata_read::AUTO_CONCURRENCY,
+            crate::metadata_read::cores(),
+        ),
+    )
+}
+
+/// 同上，按调用方给的并行度解析随包插件。
+pub fn install_from_zip_with_workers(
+    zip_path: &Path,
+    game_root: &Path,
+    selected: &[String],
+    plugin_workers: usize,
+) -> Result<Vec<String>, String> {
+    let sets = inspect_zip_with_workers(zip_path, plugin_workers)?;
     let targets: Vec<&ImportedLevelSet> = sets
         .iter()
         .filter(|set| selected.iter().any(|name| name == &set.dir_name))
@@ -3286,11 +3464,15 @@ mod cache_and_scan_tests {
         }
 
         let seen: Mutex<Vec<(usize, usize, String)>> = Mutex::new(Vec::new());
-        let sets = scan_level_sets_with_progress(&root, &|done, total, current| {
-            seen.lock()
-                .unwrap()
-                .push((done, total, current.to_string()));
-        });
+        let sets = scan_level_sets_with_progress(
+            &root,
+            crate::metadata_read::cores(),
+            &|done, total, current| {
+                seen.lock()
+                    .unwrap()
+                    .push((done, total, current.to_string()));
+            },
+        );
 
         let order: Vec<&str> = sets.iter().map(|set| set.dir_name.as_str()).collect();
         assert_eq!(
@@ -3677,7 +3859,22 @@ mod plugin_tests {
         // 非 DLL 不参与
         std::fs::write(set_dir.join("info"), b"not an asset bundle").unwrap();
 
-        let set = read_level_set(set_dir.clone(), "MySet".to_string(), true);
+        // 走与扫描同一条装配路径：列文件 → 一次批次读元数据 → 组装。
+        let target = LevelSetTarget::collect(set_dir.clone(), "MySet".to_string(), true);
+        let requests: Vec<_> = target
+            .plugins
+            .iter()
+            .map(
+                |(path, file_name, _)| crate::metadata_read::MetadataRequest {
+                    path: path.clone(),
+                    display_name: file_name.clone(),
+                    kind: crate::metadata_read::MetadataKind::ModDll,
+                },
+            )
+            .collect();
+        let outcomes = crate::metadata_read::read_metadata_batch(&requests, 2, &|_, _| {});
+        let plugins: Vec<_> = outcomes.into_iter().map(Some).collect();
+        let set = assemble_level_set(target, None, &plugins);
         let listed: Vec<(&str, bool)> = set
             .plugins
             .iter()

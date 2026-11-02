@@ -23,6 +23,8 @@ mod level_sets;
 mod locale_tag;
 // 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod map_sources;
+// 元数据并行读取的中间层：MOD 的 DLL 与地图的 info 都走它编排
+mod metadata_read;
 mod mod_config;
 mod mod_preview;
 mod models;

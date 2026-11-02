@@ -18,7 +18,7 @@
 import { t } from './i18n'
 import { renderReadme } from './markdown'
 import { formatVersion } from './modStatus'
-import type { ModPreview, ModPreviewRole, ZipLevelSet } from './types'
+import type { InstallConflict, ModPreview, ModPreviewRole, ZipLevelSet } from './types'
 
 /** 详情面板里的一格：左标签右值。 */
 export interface InstallDetailField {
@@ -47,10 +47,22 @@ export interface InstallDetailEntry {
   /** 收起态右侧那列：版本号。 */
   meta?: string
   fields: InstallDetailField[]
-  /** 卡片底部一行提示，例如「已有同名地图集，旧版本先进回收站」。 */
-  note?: string
   /** 归属这张卡的下级条目：随包插件挂在它所属的地图集下面。 */
   children?: InstallDetailEntry[]
+}
+
+/**
+ * 冲突列表里的一行：已安装、必须先卸载才能安装的同身份项。
+ *
+ * 只保留界面需要的四列；`key` 与卸载句柄同值（MOD 是 DLL 文件名，地图是
+ * 关卡集目录名），列表渲染与「正在卸载哪一行」都按它对齐。
+ */
+export interface InstallDetailConflict {
+  key: string
+  name: string
+  version: string
+  /** 已安装版本与本次要装的相同（行尾显示「同版本」灰标签）。 */
+  sameVersion: boolean
 }
 
 /** 一份待确认的安装：头部 + 条目 + 空态 + 底栏文案。 */
@@ -60,6 +72,10 @@ export interface InstallDetailModel {
   /** 头部：包名、类型标签、一行计数摘要。 */
   head: { name: string; kind: string; summary: string }
   entries: InstallDetailEntry[]
+  /** 已安装的同身份项；非空时先卸载再安装，标题区出现警示块。 */
+  conflicts: InstallDetailConflict[]
+  /** 警示块标题（无冲突时为空串，整块不渲染）。 */
+  conflictHint: string
   /** 没有任何条目时的说明行；空数组表示这种安装不该出现空态。 */
   emptyHint: string[]
   /** 仓库来源的 Release 日志（纯 Markdown 已渲染成安全 HTML）；没有就整块不出现。 */
@@ -140,6 +156,28 @@ function dllEntry(entry: DllDetailSource, tag?: string): InstallDetailEntry {
 }
 
 /**
+ * 冲突清单 → 警示块的行。
+ *
+ * 按卸载句柄去重并保持后端给出的顺序：同一个 MOD 包里可能有多个 DLL 命中
+ * 同一次安装，逐个卸载会让「顺序执行」的调用方对同一个文件重复操作。
+ */
+function conflictRows(conflicts: InstallConflict[] | undefined): InstallDetailConflict[] {
+  const seen = new Set<string>()
+  const rows: InstallDetailConflict[] = []
+  for (const conflict of conflicts ?? []) {
+    if (seen.has(conflict.handle)) continue
+    seen.add(conflict.handle)
+    rows.push({
+      key: conflict.handle,
+      name: conflict.name,
+      version: formatVersion(conflict.version) || '—',
+      sameVersion: conflict.same_version,
+    })
+  }
+  return rows
+}
+
+/**
  * MOD 安装预览 → 详情模型。
  *
  * 仓库来源且本次 Release 写了日志时才带日志区块：本地文件与直链没有版本
@@ -150,6 +188,7 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
   const showReleaseLog = preview.origin === 'repository'
     && preview.release_tag.trim() !== ''
     && releaseBody.trim() !== ''
+  const conflicts = conflictRows(preview.conflicts)
   return {
     title: t('tools.installDetails'),
     head: {
@@ -164,9 +203,11 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
     // 依赖项打「依赖」标签：它们不是用户主动装的 MOD，只是别的 MOD 要用
     entries: preview.entries.map((entry) =>
       dllEntry(entry, entry.role === 'dependency' ? t('tools.dependency') : undefined)),
+    conflicts,
+    conflictHint: conflicts.length > 0 ? t('tools.installConflictHint') : '',
     emptyHint: [t('tools.thisArchiveContainsNoDllFiles'), t('tools.nothingInstallableHere')],
     releaseLog: showReleaseLog ? { tag: preview.release_tag, html: renderReadme(releaseBody) } : null,
-    confirmLabel: t('tools.installNow'),
+    confirmLabel: conflicts.length > 0 ? t('tools.uninstallAndInstall') : t('tools.installNow'),
     cancelLabel: t('recycle.cancel'),
     confirmable: preview.total_dlls > 0,
   }
@@ -183,6 +224,7 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
  */
 export function levelSetImportDetail(zipPath: string, sets: ZipLevelSet[]): InstallDetailModel {
   const pluginCount = sets.reduce((total, set) => total + (set.plugins?.length ?? 0), 0)
+  const conflicts = conflictRows(sets.flatMap((set) => set.conflicts ?? []))
   return {
     title: t('tools.installDetails'),
     head: {
@@ -191,9 +233,11 @@ export function levelSetImportDetail(zipPath: string, sets: ZipLevelSet[]): Inst
       summary: t('tools.mapPackageSummary', { dlls: pluginCount, sets: sets.length }),
     },
     entries: sets.map(levelSetEntry),
+    conflicts,
+    conflictHint: conflicts.length > 0 ? t('tools.installConflictHint') : '',
     emptyHint: [],
     releaseLog: null,
-    confirmLabel: t('tools.installNow'),
+    confirmLabel: conflicts.length > 0 ? t('tools.uninstallAndInstall') : t('tools.installNow'),
     cancelLabel: t('recycle.cancel'),
     confirmable: sets.length > 0,
   }
@@ -218,7 +262,6 @@ function levelSetEntry(set: ZipLevelSet): InstallDetailEntry {
       { label: t('levelSet.fileCountLabel'), value: String(set.file_count) },
       { label: t('levelSet.installFolder'), value: set.dir_name, mono: true, wide: true },
     ],
-    note: set.exists ? t('levelSet.replaceHint') : undefined,
     // 随包插件一律打「随包插件」标签：不管它自己是 Mod 还是 Dependency，
     // 对用户来说都是「跟着这张图落盘、跟着这张图启停」的那一类
     children: (set.plugins ?? []).map((plugin) => dllEntry(plugin, t('levelSet.bundledPlugin'))),

@@ -16,13 +16,15 @@
  * 不持有预览副本 —— 否则调用方与弹窗各存一份，只有一方被更新时
  * 弹窗会打开但内容为空。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { celebrateInstall } from '../celebration'
 import { modPreviewDetail } from '../installDetail'
+import { uninstallConflicts, uninstallModConflict } from '../installConflicts'
+import { t } from '../i18n'
 import InstallDetailDialog from './InstallDetailDialog.vue'
-import type { ModPreview } from '../types'
+import type { InstallConflict, ModPreview } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const props = defineProps<{ show: boolean; preview: ModPreview | null }>()
@@ -45,6 +47,17 @@ const installing = ref(false)
 
 /** 预览 → 详情模型（含「有没有可安装的内容」这一判定，空包只能取消）。 */
 const detail = computed(() => (props.preview ? modPreviewDetail(props.preview) : null))
+
+/**
+ * 卸载失败后还没处理完的冲突。
+ *
+ * 弹窗在失败时保持打开，用户处理完外部原因（关游戏、手动删掉占用的那份）
+ * 会直接在同一个弹窗上再点一次；那时只能重试剩下的项，已经卸载的不能再卸，
+ * 否则第二次必然报「找不到」。预览换了（`preview_id` 变）就重置。
+ */
+const pendingConflicts = ref<InstallConflict[] | null>(null)
+const conflictsToUninstall = computed(() => pendingConflicts.value ?? props.preview?.conflicts ?? [])
+watch(() => props.preview?.preview_id, () => { pendingConflicts.value = null })
 
 /** 这次关闭是否由「用户放弃」触发（安装成功后不该再清理暂存）。 */
 const discarding = ref(false)
@@ -89,6 +102,24 @@ async function confirm() {
   if (!current) return
   installing.value = true
   try {
+    /*
+     * 冲突项先卸载（进回收站）再安装：同一个 DLL 已存在时后端预览会把它
+     * 列进 conflicts。卸载失败就中止 —— 此时还没调用 confirm，弹窗保持
+     * 打开让用户看清是哪一项没卸掉，不能关掉窗口假装安装完成。
+     */
+    if (conflictsToUninstall.value.length > 0) {
+      const uninstall = await uninstallConflicts(conflictsToUninstall.value, uninstallModConflict)
+      if (!uninstall.ok) {
+        // 只剩没卸掉的项：重试不会把已进回收站的那几份再删一次
+        pendingConflicts.value = uninstall.remaining
+        message.error(t('tools.installConflictFailed', {
+          name: uninstall.failed?.name ?? '',
+          reason: uninstall.reason ?? '',
+        }))
+        return
+      }
+      pendingConflicts.value = []
+    }
     const result = await api.confirmModInstall(current.preview_id)
     if (!result.ok) {
       message.error(translateBackendMessage(result.message))

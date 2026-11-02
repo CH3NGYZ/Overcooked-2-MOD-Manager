@@ -255,6 +255,25 @@ export interface LevelSetInfo {
 }
 
 /**
+ * 安装前扫描到的同身份已安装项。
+ *
+ * MOD 以 DLL 文件名为身份、地图以关卡集身份（名称 + 中文名 + 作者）匹配；
+ * 有冲突时必须先卸载（进回收站）再安装，`same_version` 只决定提示文案，
+ * 不改变「先卸载再安装」这个动作。
+ */
+export interface InstallConflict {
+  /** 展示名：MOD 的 BepInPlugin 名，或关卡集的显示名。 */
+  name: string
+  version: string
+  /** 卸载句柄：MOD 是 DLL 文件名，地图是关卡集目录名。 */
+  handle: string
+  /** 已安装项当前是否启用（地图开关是整目录 rename，MOD 是 `.disabled` 后缀）。 */
+  enabled: boolean
+  /** 已安装版本与本次安装版本相同。 */
+  same_version: boolean
+}
+
+/**
  * 后端暂存好的一份地图来源（`stage_map_source` 的返回）。
  *
  * 本地文件与在线直链走同一条「先暂存、再确认导入」的路：`path` 是后端能读到的
@@ -325,8 +344,8 @@ export interface ZipLevelSet {
   version: string
   level_count: number
   file_count: number
-  /** 目标位置是否已有同名目录（会回收旧版本）。 */
-  exists: boolean
+  /** 目标位置已安装的同身份关卡集；非空时必须先卸载再导入。 */
+  conflicts: InstallConflict[]
   /** 随这个关卡集一起装进集目录的插件（作者随包的修复 DLL）。 */
   plugins: ZipLevelSetPlugin[]
 }
@@ -402,6 +421,8 @@ export interface ModPreview {
   mod_count: number
   dependency_count: number
   entries: ModPreviewEntry[]
+  /** 已安装的同身份 MOD；非空时必须先卸载再安装。 */
+  conflicts: InstallConflict[]
   /** repository = 从在线仓库资产下载；manual = 本地文件或直链。 */
   origin: 'repository' | 'manual'
   /** 仓库来源本次 Release 的版本标签（如 v1.2.3）；手动来源为空串。 */

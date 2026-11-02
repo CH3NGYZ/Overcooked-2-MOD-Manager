@@ -135,7 +135,7 @@ const sets = ref<LevelSetInfo[]>([])
  * 确认界面与 MOD 安装共用 `InstallDetailDialog`（一个地图集当一个 MOD 展示）。
  */
 const {
-  importing, importSource,
+  importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
 } = useLevelSetImport(() => loadLevelSets())
@@ -628,8 +628,9 @@ async function refresh(map: MapInfo) {
  *
  * 顺序与 MOD 卡片完全一致：
  *   1. 安装前检查（依赖框架缺失 / 版本不够 → 能补就先补，不能补只提醒）
- *   2. 下载 + 校验（后端走候选竞速，进度由全局 DownloadStrip 显示）
- *   3. 落盘（先回收同名旧关卡集）
+ *   2. 下载 + 校验 + 识别（后端暂存资产，进度由全局 DownloadStrip 显示）
+ *   3. 确认详情（与本次安装身份相同的旧关卡集先卸载，失败即中止）
+ *   4. 落盘导入
  *
  * `asset` 是详情页资产下拉里选中的文件名：不传时后端按 `asset_rules` 自动选，
  * 与 MOD 安装同一条规则。
@@ -646,11 +647,21 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
 
   setFlag(installing, map.id, true)
   try {
-    await api.installMapRelease(map.id, targetTag, asset)
-    message.success(t('levelSet.installDone', { name: mapName(map) }))
-    // 安装清单里的依赖快照按线上声明重写，紧接着的状态重读才不会用到旧快照
-    await syncDependencySnapshots()
-    await loadLevelSets()
+    /*
+     * 后端只负责「下载资产 + 识别关卡集」的暂存，确认、冲突卸载与导入全部
+     * 走 `useLevelSetImport.installRelease`（与本地 ZIP / 直链同一份实现）。
+     * 安装后的依赖快照同步必须早于关卡集重读，否则卡片状态会按旧快照算，
+     * 所以这里把「快照 → 重读」作为 afterImport 传给共享实现；成功提示仍按
+     * 地图名说「安装完成」，与本地 ZIP 导入的「已导入 N 个」区分开。
+     */
+    await installRelease(map.id, targetTag, asset, {
+      afterImport: async () => {
+        // 安装清单里的依赖快照按线上声明重写，紧接着的状态重读才不会用到旧快照
+        await syncDependencySnapshots()
+        await loadLevelSets()
+      },
+      successText: () => t('levelSet.installDone', { name: mapName(map) }),
+    })
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {

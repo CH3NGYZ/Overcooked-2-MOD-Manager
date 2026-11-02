@@ -198,14 +198,6 @@ export const levelSet: DomainMessages = {
     ko: '지도 폴더를 세는 중…',
     ja: 'マップフォルダを数えています…',
   },
-  // 安装详情里某张图的目标目录已经存在：旧版本会先进回收站，再落新的
-  replaceHint: {
-    'zh-CN': '已有同名地图集：安装会先把旧版本移入回收站',
-    'zh-TW': '已有同名地圖集：安裝會先把舊版本移入資源回收筒',
-    en: 'This map set already exists: the old version is moved to the recycle bin first',
-    ko: '같은 이름의 지도 세트가 있습니다. 이전 버전은 먼저 휴지통으로 이동합니다',
-    ja: '同名のマップセットが既にあります。インストール時に旧バージョンをゴミ箱へ移動します',
-  },
   imported: {
     'zh-CN': '已导入 {count} 个地图',
     'zh-TW': '已匯入 {count} 個地圖',

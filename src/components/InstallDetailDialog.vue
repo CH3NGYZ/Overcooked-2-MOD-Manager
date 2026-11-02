@@ -109,6 +109,22 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
       </div>
 
       <!--
+        冲突警示：目标位置已有同身份的条目，安装前会先把它们卸载（进回收站）。
+        放在头部与条目列表之间 —— 用户第一眼该看到「这次安装会先移走什么」，
+        再往下看这次要装进什么；同版本与否只影响行尾标签，动作完全一样。
+      -->
+      <div v-if="model.conflicts.length" class="conflict-block" role="alert">
+        <div class="conflict-head">{{ model.conflictHint }}</div>
+        <div v-for="conflict in model.conflicts" :key="conflict.key" class="conflict-row">
+          <span class="conflict-name" :title="conflict.name">「{{ conflict.name }}」</span>
+          <span class="conflict-version mono">{{ conflict.version }}</span>
+          <n-tag v-if="conflict.sameVersion" size="tiny" :bordered="false" :color="tagColorFor('muted')">
+            {{ t('tools.installConflictSameVersion') }}
+          </n-tag>
+        </div>
+      </div>
+
+      <!--
         条目区：全都是同一张横排紧凑卡片。
         收起态是「名称 + 淡灰副标题 …… 角色标签 + 右侧版本」；点击展开完整元数据。
         随包插件平铺在列表最底，靠右侧标签而不是缩进说明归属。
@@ -139,7 +155,6 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
                 <b :class="{ mono: field.mono }">{{ field.value }}</b>
               </div>
             </div>
-            <div v-if="row.entry.note" class="detail-note">{{ row.entry.note }}</div>
           </n-collapse-transition>
         </article>
       </div>
@@ -290,15 +305,36 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
   color: var(--oc2-text-1);
   overflow-wrap: anywhere;
 }
-/* 卡片底部提示（例如「已有同名地图集，旧版本先进回收站」）：附在详情网格下面 */
-.detail-note {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--oc2-row-line);
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--oc2-text-3);
+/* 冲突警示块：语义色走主题变量，换明暗/主色时跟着变 */
+.conflict-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--oc2-tone-moderate-bg, #f59e0b) 32%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--oc2-tone-moderate-bg, #f59e0b) 10%, transparent);
 }
+.conflict-head {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--oc2-text-2);
+}
+.conflict-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.conflict-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--oc2-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conflict-version { font-size: 12px; color: var(--oc2-text-3); }
 /* Release 提交日志：与仓库详情抽屉的日志区块保持同一视觉语言 */
 .release-log { display: flex; flex-direction: column; gap: 6px; }
 .release-log-head {

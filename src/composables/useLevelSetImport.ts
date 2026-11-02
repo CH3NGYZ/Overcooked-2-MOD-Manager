@@ -20,9 +20,10 @@ import { t } from '../i18n'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { levelSetImportDetail } from '../installDetail'
+import { uninstallConflicts, uninstallMapConflict } from '../installConflicts'
 import { backendMessageOf } from '../locale/backend'
 import type { InstallDetailModel } from '../installDetail'
-import type { InstallSource, ZipLevelSet } from '../types'
+import type { InstallSource, StagedMapSource, ZipLevelSet } from '../types'
 
 /** 正在等用户确认的那一批：ZIP 位置 + 识别出的关卡集。 */
 interface PendingBatch {
@@ -86,6 +87,76 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     resolveApproval(false)
   }
 
+  /** 导入成功后的收尾与文案：两条来源各自不同，确认/卸载/导入本身是同一份。 */
+  interface FinishOptions {
+    /**
+     * 装完通知宿主。默认是构造时的 `onImported`；地图下载页的 Release 安装
+     * 需要先同步依赖快照再重读关卡集（否则卡片状态会用旧快照算），所以它
+     * 传自己的版本进来 —— 合并成两次扫描会白扫一遍全部地图。
+     */
+    afterImport?: () => void | Promise<void>
+    /** 成功提示：Release 安装按地图名说「安装完成」，本地导入只说数量。 */
+    successText?: (count: number) => string
+  }
+
+  /**
+   * 暂存成功之后的统一链：识别为空 → 确认 → 卸载冲突 → 导入 → 重读。
+   *
+   * 本地文件/直链暂存与在线 Release 暂存只差「怎么拿到这份 ZIP」，拿到之后
+   * 的确认、冲突处理、清理时机完全一样，所以只写这一份。
+   *
+   * 返回是否真的导入了：调用方据此决定要不要跑安装后的收尾（依赖快照等）。
+   */
+  async function finishStaged(
+    staged: StagedMapSource,
+    options: FinishOptions = {},
+  ): Promise<boolean> {
+    const afterImport = options.afterImport ?? onImported
+    if (!staged.sets.length) {
+      message.warning(t('levelSet.zipWithoutInfo'))
+      return false
+    }
+    if (!(await askApproval(staged.path, staged.sets))) return false
+    /*
+     * 冲突项必须先卸载（进回收站）才能导入：同一个地图身份已经装过时，
+     * 直接导入会让后端在回收旧目录与写入新目录之间打架。卸载失败就中止，
+     * 不能只装一半。
+     */
+    let sets = staged.sets
+    let conflicts = sets.flatMap((set) => set.conflicts ?? [])
+    while (conflicts.length > 0) {
+      const uninstall = await uninstallConflicts(conflicts, uninstallMapConflict)
+      if (uninstall.ok) break
+      message.error(t('tools.installConflictFailed', {
+        name: uninstall.failed?.name ?? '',
+        reason: uninstall.reason ?? '',
+      }))
+      /*
+       * 停在详情弹窗上让用户处理后重试：关掉弹窗等于把已暂存的 ZIP 作废，
+       * 在线安装还要重新下载一遍。列表按实际进度收缩，只剩没卸掉的项，
+       * 再点一次不会重复卸载已经进回收站的那几份。
+       */
+      const remaining = new Set(uninstall.remaining.map((conflict) => conflict.handle))
+      sets = sets.map((set) => ({
+        ...set,
+        conflicts: (set.conflicts ?? []).filter((conflict) => remaining.has(conflict.handle)),
+      }))
+      conflicts = sets.flatMap((set) => set.conflicts ?? [])
+      if (!(await askApproval(staged.path, sets))) return false
+    }
+    /*
+     * 用户表态后先收起弹窗再导入：写盘期间进度由页面按钮转圈，弹窗留着
+     * 会一直挂着「取消」按钮，看着像还能反悔。
+     */
+    closePreview()
+    const selected = sets.map((set) => set.dir_name)
+    const result = await api.importLevelSets(staged.path, selected)
+    message.success(options.successText?.(result.installed.length)
+      ?? t('levelSet.imported', { count: result.installed.length }))
+    await afterImport?.()
+    return true
+  }
+
   /**
    * 导入一个来源（本地路径或直链）。
    *
@@ -106,28 +177,45 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       const staged = await api.stageMapSource(source.kind, source.value)
       if (staged.staged) stagedFile = staged.path
       options?.onStaged?.()
-      if (!staged.sets.length) {
-        message.warning(t('levelSet.zipWithoutInfo'))
-        return
-      }
-      if (!(await askApproval(staged.path, staged.sets))) return
-      /*
-       * 用户表态后先收起弹窗再导入：写盘期间进度由页面按钮转圈，弹窗留着
-       * 会一直挂着「取消」按钮，看着像还能反悔。
-       */
-      closePreview()
-      const selected = staged.sets.map((set) => set.dir_name)
-      const result = await api.importLevelSets(staged.path, selected)
-      message.success(t('levelSet.imported', { count: result.installed.length }))
-      await onImported?.()
+      await finishStaged(staged)
     } catch (reason) {
       message.error(backendMessageOf(reason))
     } finally {
-      closePreview()
+      // 不收弹窗：卸载失败时它要留着让用户处理后重试，成功与取消各自收过
       if (stagedFile) await api.discardMapSource(stagedFile).catch(() => undefined)
       importing.value = false
     }
   }
 
-  return { importing, importSource, previewOpen, detail, confirmImport, discardImport }
+  /**
+   * 安装一个在线地图 Release（地图下载页的「安装」）。
+   *
+   * 与本地导入共用同一条确认链：后端只把「下载资产 + 识别关卡集」做成暂存，
+   * 剩下的与 ZIP 完全一样；暂存文件同样在 finally 里清掉（下载进 cache 的那份）。
+   * 返回是否装成功，调用方据此跑安装后的依赖快照同步。
+   */
+  async function installRelease(
+    mapId: string,
+    tag?: string,
+    assetName?: string,
+    options: FinishOptions = {},
+  ): Promise<boolean> {
+    if (importing.value) return false
+    importing.value = true
+    let stagedFile: string | null = null
+    try {
+      const staged = await api.stageMapRelease(mapId, tag, assetName)
+      if (staged.staged) stagedFile = staged.path
+      return await finishStaged(staged, options)
+    } catch (reason) {
+      message.error(backendMessageOf(reason))
+      return false
+    } finally {
+      // 同上：弹窗开关只由 finishStaged 决定
+      if (stagedFile) await api.discardMapSource(stagedFile).catch(() => undefined)
+      importing.value = false
+    }
+  }
+
+  return { importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport }
 }

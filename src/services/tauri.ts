@@ -286,15 +286,18 @@ export const api = {
   refreshMapReleases: (mapId: string, force = false) =>
     invoke<ReleaseInfo[]>('refresh_map_releases', { mapId, force }),
   /**
-   * 从地图仓库安装（会先回收同名旧关卡集）。
+   * 暂存一次地图 Release 安装（下载资产并识别其中的关卡集）。
    *
+   * 与本地文件/直链共用同一条「先暂存、再确认导入」的路：返回的 `sets`
+   * 带冲突报告，确认界面复用 `InstallDetailDialog`；`staged` 为真时导入结束
+   * 必须 `discardMapSource` 清理。
    * `assetName` 是详情页下拉里选中的资产；不传时后端按地图源的 `asset_rules`
    * 自动选，与 MOD 安装完全同一条规则。
    * `locale` 用于下载进度标签：进度事件在下载过程中持续发出，
    * 名称必须在开始前按界面语言算好。
    */
-  installMapRelease: (mapId: string, tag?: string, assetName?: string) =>
-    invoke<{ installed: string[] }>('install_map_release', {
+  stageMapRelease: (mapId: string, tag?: string, assetName?: string) =>
+    invoke<StagedMapSource>('stage_map_release', {
       mapId, tag, assetName, locale: locale.value,
     }),
   /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */

@@ -479,6 +479,38 @@ export const toolsUi: DomainMessages = {
     ko: '지금 설치',
     ja: '今すぐインストール',
   },
+  // 卸载并安装（有冲突时的确认按钮：先卸载旧版本再安装）
+  uninstallAndInstall: {
+    'zh-CN': '卸载并安装',
+    'zh-TW': '解除安裝並安裝',
+    en: 'Uninstall and install',
+    ko: '제거 후 설치',
+    ja: 'アンインストールしてインストール',
+  },
+  // 以下已安装内容与本次安装的 ID / 地图身份相同，需要先卸载再安装：
+  installConflictHint: {
+    'zh-CN': '以下已安装内容与本次安装的 ID / 地图身份相同，需要先卸载再安装：',
+    'zh-TW': '以下已安裝內容與本次安裝的 ID / 地圖身分相同，需要先解除安裝再安裝：',
+    en: 'The following installed items match this install by ID or map identity and must be uninstalled first:',
+    ko: '다음 항목이 이번에 설치할 내용과 ID 또는 지도 식별자가 같아 먼저 제거해야 합니다:',
+    ja: '以下は今回インストールする内容と ID / マップ識別子が同じため、先にアンインストールする必要があります：',
+  },
+  // 同版本（冲突行的行尾标签）
+  installConflictSameVersion: {
+    'zh-CN': '同版本',
+    'zh-TW': '同版本',
+    en: 'Same version',
+    ko: '같은 버전',
+    ja: '同じバージョン',
+  },
+  // 卸载「{name}」失败：{reason}，请手动卸载后重试
+  installConflictFailed: {
+    'zh-CN': '卸载「{name}」失败：{reason}，请手动卸载后重试',
+    'zh-TW': '解除安裝「{name}」失敗：{reason}，請手動解除安裝後再試',
+    en: 'Failed to uninstall "{name}": {reason}. Uninstall it manually and try again.',
+    ko: '"{name}" 제거에 실패했습니다: {reason}. 직접 제거한 뒤 다시 시도하세요.',
+    ja: '「{name}」のアンインストールに失敗しました: {reason}。手動でアンインストールしてから再試行してください。',
+  },
   // 这个压缩包里没有 DLL 文件
   thisArchiveContainsNoDllFiles: {
     'zh-CN': '这个压缩包里没有 DLL 文件',

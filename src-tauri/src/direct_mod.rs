@@ -174,10 +174,10 @@ fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
 
 /// 用一次 `bytes=0-0` 的 Range 请求探测文件名（顺带暴露 404/403 或登录页）。
 ///
-/// 探测本身也响应取消：用户点了取消后不应该再等这 5 秒超时。
+/// 探测本身也响应取消：用户点了取消后不应该再等满首字节超时。
 async fn probe_remote_filename(client: &reqwest::Client, parsed: &Url) -> Result<String, String> {
     let response = tokio::select! {
-        result = client.get(parsed.clone()).timeout(Duration::from_secs(5)).header(reqwest::header::RANGE, "bytes=0-0")
+        result = client.get(parsed.clone()).timeout(archive::FIRST_BYTE_TIMEOUT).header(reqwest::header::RANGE, "bytes=0-0")
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send() => {
             result.map_err(|_| "direct.infoFailed")?.error_for_status().map_err(|_| "direct.infoFailed")?
@@ -291,7 +291,7 @@ pub(crate) async fn download_remote_to_temp(
                     label,
                     &reporter,
                     threads,
-                    Some(Duration::from_secs(5)),
+                    Some(archive::FIRST_BYTE_TIMEOUT),
                 )
                 .await?;
                 let checked = match validation {

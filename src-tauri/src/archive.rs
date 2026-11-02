@@ -17,6 +17,14 @@ use zip::ZipArchive;
 static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
 const FIRST_BYTE_TIMEOUT_ERROR: &str = "download.firstByteTimeout";
 
+/// 「多久没有动静就判定这个下载源已死」的唯一判定线。
+///
+/// 这份文件的所有下载入口（Release 资产、直链、BepInEx 框架包、安装器）
+/// 共用它：竞速会同时向多个候选发请求，等太久会把一个坏源拖成整批失败，
+/// 太快又会误杀慢速但可用的源。它是网络判定而不是用户偏好，所以写死在这里，
+/// 不进配置、不开放修改。
+pub const FIRST_BYTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub fn cancel_download() {
     log::info!("收到下载取消请求");
     DOWNLOAD_CANCELLED.store(true, Ordering::Release);

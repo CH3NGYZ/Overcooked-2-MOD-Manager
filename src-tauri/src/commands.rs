@@ -2418,7 +2418,7 @@ pub async fn install_bepinex(
                     "BepInEx",
                     &reporter,
                     1,
-                    Some(std::time::Duration::from_secs(5)),
+                    Some(archive::FIRST_BYTE_TIMEOUT),
                 )
                 .await?;
                 if let Err(error) =
@@ -3339,7 +3339,7 @@ pub async fn install_repository(
                     label,
                     &reporter,
                     if racing { 1 } else { download_threads },
-                    Some(std::time::Duration::from_secs(5)),
+                    Some(archive::FIRST_BYTE_TIMEOUT),
                 )
                 .await?;
                 let validation = archive::validate_download_file(&temp, expected_size, digest)
@@ -6678,7 +6678,7 @@ pub async fn stage_map_release(
                     label,
                     &reporter,
                     if racing { 1 } else { configured_threads },
-                    Some(std::time::Duration::from_secs(5)),
+                    Some(archive::FIRST_BYTE_TIMEOUT),
                 )
                 .await?;
                 let validation = archive::validate_download_file(&temp, expected_size, digest)
@@ -7668,7 +7668,7 @@ async fn download_installer(
     let mut downloaded = 0_u64;
     let mut bytes = Vec::with_capacity(total.unwrap_or_default().min(64 * 1024 * 1024) as usize);
     let mut stream = response.bytes_stream();
-    let first_chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+    let first_chunk = tokio::time::timeout(archive::FIRST_BYTE_TIMEOUT, stream.next())
         .await
         .map_err(|_| "download.firstByteTimeout".to_string())?;
     let mut next_chunk = first_chunk;

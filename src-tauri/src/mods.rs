@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 /**
@@ -227,7 +227,14 @@ fn is_disabled_mod_file(path: &Path) -> bool {
 }
 
 /**
- * 收集 `BepInEx/plugins` 下全部插件 DLL（含 `.dll.disabled`），返回游戏相对路径。
+ * 收集 `BepInEx/plugins` 下属于**普通 MOD** 的插件 DLL（含 `.dll.disabled`），
+ * 返回游戏相对路径。
+ *
+ * 「关卡集目录里的 DLL 是地图的随包插件」这条规则必须与
+ * `scan_mods_with_manifests` 一致：它们跟着整个集目录一起开关（`levels/` ↔
+ * 停用根整目录搬家），再被当成 MOD 单独改 `.dll.disabled` 会与地图开关打架 ——
+ * 早期批量开关就是这样把地图随包插件一起 rename 掉的（日志里的「变更文件数」
+ * 比 MOD 数量多出几个）。
  *
  * 相对路径一律以 `game::safe_game_path` 解析出的目录本身为基准剥离：它返回
  * `canonicalize` 之后的路径（Windows 上是 `\\?\E:\...`），而 `GameInfo.path`
@@ -236,6 +243,25 @@ fn is_disabled_mod_file(path: &Path) -> bool {
  */
 pub fn plugin_dll_files(game_root: &Path) -> Result<Vec<String>, String> {
     let plugins = crate::game::safe_game_path(game_root, PLUGINS_DIR)?;
+    /*
+     * 排除项按「相对 `BepInEx/plugins`」比较：上面 `plugins` 是解析后的绝对
+     * 路径，而 `levels_root` 那类 helper 给的是按 `game_root` 拼出来的字面
+     * 路径，直接拿它跟解析后的条目路径比前缀会静默失配（与下面 strip_prefix
+     * 是同一类坑）。先用**字面** plugins 目录剥一次：绝对路径剥不掉相对前缀
+     * `BepInEx/plugins`，那样 map_roots 会静默为空、排除完全失效。
+     */
+    let lexical_plugins = game_root.join(PLUGINS_DIR);
+    let map_roots: Vec<PathBuf> = [
+        crate::level_sets::levels_root(game_root),
+        crate::level_sets::legacy_disabled_root(game_root),
+    ]
+    .iter()
+    .filter_map(|root| {
+        root.strip_prefix(&lexical_plugins)
+            .ok()
+            .map(Path::to_path_buf)
+    })
+    .collect();
     let mut files = Vec::new();
     for entry in WalkDir::new(&plugins)
         .into_iter()
@@ -248,6 +274,9 @@ pub fn plugin_dll_files(game_root: &Path) -> Result<Vec<String>, String> {
         let Ok(relative) = entry.path().strip_prefix(&plugins) else {
             continue;
         };
+        if map_roots.iter().any(|root| relative.starts_with(root)) {
+            continue;
+        }
         files.push(format!(
             "{PLUGINS_DIR}/{}",
             relative.to_string_lossy().replace('\\', "/")
@@ -3027,6 +3056,16 @@ mod tests {
         let root = std::env::temp_dir().join(format!("oc2-plugin-dlls-{}", uuid::Uuid::new_v4()));
         let plugins = root.join("BepInEx/plugins");
         std::fs::create_dir_all(plugins.join("Nested")).unwrap();
+        // 地图随包插件：与 `scan_mods_with_manifests` 一样不许当成普通 MOD
+        std::fs::create_dir_all(plugins.join("OC2DIYLevel/levels/SomeSet")).unwrap();
+        std::fs::create_dir_all(plugins.join("OC2DIYLevel/disabled")).unwrap();
+        std::fs::write(plugins.join("OC2DIYLevel/levels/SomeSet/Plugin.dll"), b"x").unwrap();
+        std::fs::write(
+            plugins.join("OC2DIYLevel/levels/SomeSet/Plugin.dll.disabled"),
+            b"x",
+        )
+        .unwrap();
+        std::fs::write(plugins.join("OC2DIYLevel/disabled/Other.dll"), b"x").unwrap();
         std::fs::write(plugins.join("Alpha.dll"), b"x").unwrap();
         std::fs::write(plugins.join("Beta.dll.disabled"), b"x").unwrap();
         std::fs::write(plugins.join("Nested/Gamma.dll"), b"x").unwrap();

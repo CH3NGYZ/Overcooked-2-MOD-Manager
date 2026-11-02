@@ -20,6 +20,8 @@ mod github_proxies;
 mod install_guard;
 // 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod level_sets;
+// 关卡集目录的外部变更监听：资源管理器里增删目录后让列表自动刷新
+mod level_watch;
 mod locale_tag;
 // 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod map_sources;

@@ -585,6 +585,8 @@ pub struct AppState {
     pub readme: Arc<crate::repository_readme::ReadmeDownloads>,
     // Display-only snapshot; file operations always inspect the live process.
     pub game_state: Arc<Mutex<Option<GameInfo>>>,
+    /// 关卡集目录监听：外部改动后通知前端重读（见 `level_watch`）。
+    pub level_watch: Arc<crate::level_watch::LevelWatcher>,
 }
 
 impl AppState {
@@ -597,6 +599,7 @@ impl AppState {
             community: Arc::new(crate::community::CommunitySearch::default()),
             readme: Arc::new(crate::repository_readme::ReadmeDownloads::default()),
             game_state: Arc::new(Mutex::new(None)),
+            level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
         })
     }
 }
@@ -5762,8 +5765,25 @@ pub async fn get_level_sets(
      */
     let config = state.config.load_or_default();
     let Some(game_root) = game::detect_game(&config).path else {
+        /*
+         * 游戏目录没了：旧监听还指着已经消失的路径，先停掉（空 roots 在
+         * `LevelWatcher::watch` 里就是「停掉现有监听」），下次检测到目录再建。
+         */
+        state.level_watch.watch(&app, Vec::new());
         return Ok(Vec::new());
     };
+    let game_root = PathBuf::from(game_root);
+    /*
+     * 目录监听跟着游戏目录走：`watch` 幂等，目标没变直接返回，游戏路径被
+     * 用户改掉时重建。这里仍在同步段，`State` 不能跨 await，先把它用掉。
+     */
+    state.level_watch.watch(
+        &app,
+        vec![
+            crate::level_sets::levels_root(&game_root),
+            crate::level_sets::disabled_root(&game_root),
+        ],
+    );
     let manifests_dir = state.config.manifests_dir();
     // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
     let info_workers = crate::metadata_read::workers_from(config.map_info_concurrency);
@@ -5774,7 +5794,7 @@ pub async fn get_level_sets(
          */
         let progress_app = app.clone();
         let sets = crate::level_sets::scan_level_sets_with_progress(
-            &PathBuf::from(game_root),
+            &game_root,
             info_workers,
             &move |done, total, current| {
                 let _ = progress_app.emit(
@@ -9433,6 +9453,7 @@ mod mod_file_location_tests {
             community: Arc::new(Default::default()),
             readme: Arc::new(Default::default()),
             game_state: Arc::new(Mutex::new(None)),
+            level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
         };
         let mut config = state.config.load().unwrap();
         config.game.path = workspace.game.to_string_lossy().into_owned();
@@ -11677,6 +11698,7 @@ mod repository_source_refresh_tests {
             community: Arc::new(Default::default()),
             readme: Arc::new(Default::default()),
             game_state: Arc::new(Mutex::new(None)),
+            level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
         }
     }
 
@@ -11968,6 +11990,7 @@ mod repository_source_refresh_tests {
             community: Arc::new(Default::default()),
             readme: Arc::new(Default::default()),
             game_state: Arc::new(Mutex::new(None)),
+            level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
         };
         refresh(&restarted, &root).await.unwrap();
         let restored = restarted.config.load().unwrap();

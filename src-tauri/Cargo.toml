@@ -40,6 +40,9 @@ sha2 = "0.10"
 zip = "2.2"
 walkdir = "2"
 same-file = "1"
+# 地图目录可能被资源管理器直接改（增删集目录、替换 info）：轮询大目录太贵，
+# 用系统的目录变更通知（Windows ReadDirectoryChangesW / macOS FSEvents）。
+notify = "8"
 # DIYLevel 的 info 文件是 Unity AssetBundle（UnityFS），关卡集名/作者/版本
 # 只能从里面解析。SerializedFile 与类型树交给 unityfs（UnityPy 的 Rust 移植）。
 #

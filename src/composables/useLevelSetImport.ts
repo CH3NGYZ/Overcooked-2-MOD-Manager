@@ -22,14 +22,19 @@ import { api, watchLevelSetZipProgress } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { levelSetImportDetail } from '../installDetail'
 import { levelSetDependencyRows } from '../dependencyRows'
-import { uninstallConflicts, uninstallMapConflict } from '../installConflicts'
+import { uninstallMapConflict } from '../installConflicts'
+import { conflictCheckModel } from '../installCheck'
 import { backendMessageOf } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { useDashboard } from './useDashboardStore'
+import { useInstallCheck } from './useInstallCheck'
 import { useMapSources } from './useMapSources'
+import type { InstallCheckRow } from '../installCheck'
 import type { InstallDetailModel } from '../installDetail'
-import type { InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet } from '../types'
+import type {
+  InstallConflict, InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet,
+} from '../types'
 
 /** 正在等用户确认的那一批：ZIP 位置 + 识别出的关卡集。 */
 interface PendingBatch {
@@ -58,6 +63,14 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   const pending = ref<PendingBatch | null>(null)
   /** 详情弹窗是否打开。 */
   const previewOpen = ref(false)
+
+  /**
+   * 同身份冲突的检查弹窗（共享的 `InstallCheckDialog`）。
+   *
+   * 与 `previewOpen` 一样，宿主视图只挂一个组件、绑这里的状态；「什么时候弹、
+   * 等结论、弹窗被收掉算放弃」全在本 composable 里，两页因此必然一致。
+   */
+  const importCheck = useInstallCheck()
 
   /**
    * 来源 ZIP 的识别 / 导入进度（后端 `level-set-zip-progress`）。
@@ -169,10 +182,68 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     afterImport?: () => void | Promise<void>
     /** 成功提示：Release 安装按地图名说「安装完成」，本地导入只说数量。 */
     successText?: (count: number) => string
+    /**
+     * 这次要装的地图名，只用于冲突检查的说明行（「安装「X」前…」）。
+     *
+     * 本地 ZIP 与直链没有可靠的目标名（暂存路径对用户没有意义），不传时
+     * 说明行用通用那句「以下已安装内容与本次安装的身份相同…」。
+     */
+    targetLabel?: string
   }
 
   /**
-   * 暂存成功之后的统一链：识别为空 → 确认 → 卸载冲突 → 导入 → 重读。
+   * 把各张卡的冲突表摊平成一份清单（按卸载句柄去重）。
+   *
+   * 去重必须在弹窗之前做：同一个已装目录可能在多张卡的冲突表里各出现一次
+   * （同身份的多份副本），而卸载只能执行一次 —— 第二次一定报「找不到」。
+   * 摊平后的下标就是检查行的 `index`，`execute` 据此取回要卸的那一项。
+   */
+  function collectConflicts(sets: readonly ZipLevelSet[]): InstallConflict[] {
+    const seen = new Set<string>()
+    const conflicts: InstallConflict[] = []
+    for (const set of sets) {
+      for (const conflict of set.conflicts ?? []) {
+        if (seen.has(conflict.handle)) continue
+        seen.add(conflict.handle)
+        conflicts.push(conflict)
+      }
+    }
+    return conflicts
+  }
+
+  /**
+   * 冲突前置门控：**在问「要不要装」之前**把同身份旧装项处理掉。
+   *
+   * 为什么不能等用户点了「立即安装」再卸：那个顺序里用户已经确认过一次，
+   * 卸载失败只能把详情弹窗留在原地，确认等于白点，还得再点一次。先处理冲突，
+   * 处理完自动进确认，用户只做一次决定。
+   *
+   * 返回处理后的关卡集列表；`null` 表示用户取消或仍有失败，整次导入到此为止。
+   * 成功时把冲突清空：那几项已经进了回收站，详情弹窗的冲突块不该再提示
+   * （`InstallDetailDialog` 里那块保留作兜底渲染，只是不再有数据）。
+   */
+  async function resolveConflicts(
+    sets: readonly ZipLevelSet[],
+    targetLabel?: string,
+  ): Promise<ZipLevelSet[] | null> {
+    const conflicts = collectConflicts(sets)
+    if (!conflicts.length) return [...sets]
+
+    const ready = await importCheck.run(
+      conflictCheckModel(conflicts, targetLabel ? { targetLabel } : {}),
+      async (row: InstallCheckRow) => {
+        const conflict = conflicts[row.index]
+        // 理论上取得到：模型与数组同源同序。取不到说明清单变了，按「已不在原位」处理
+        if (!conflict) throw new Error(t('levelSet.notFound'))
+        await uninstallMapConflict(conflict)
+      },
+    )
+    if (!ready) return null
+    return sets.map((set) => ({ ...set, conflicts: [] }))
+  }
+
+  /**
+   * 暂存成功之后的统一链：识别为空 → 处理冲突 → 确认 → 导入 → 重读。
    *
    * 本地文件/直链暂存与在线 Release 暂存只差「怎么拿到这份 ZIP」，拿到之后
    * 的确认、冲突处理、清理时机完全一样，所以只写这一份。
@@ -188,34 +259,15 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       message.warning(t('levelSet.zipWithoutInfo'))
       return false
     }
-    if (!(await askApproval(staged.path, staged.sets))) return false
     /*
-     * 冲突项必须先卸载（进回收站）才能导入：同一个地图身份已经装过时，
-     * 直接导入会让后端在回收旧目录与写入新目录之间打架。卸载失败就中止，
-     * 不能只装一半。
+     * 冲突先处理再问「要不要装」：同一个地图身份已经装过时，直接导入会让
+     * 后端在回收旧目录与写入新目录之间打架，而卸载失败时详情弹窗只能留在
+     * 原地 —— 用户等于白确认一次。取消/失败都中止整次导入（暂存由调用方
+     * 的 finally 清掉）。
      */
-    let sets = staged.sets
-    let conflicts = sets.flatMap((set) => set.conflicts ?? [])
-    while (conflicts.length > 0) {
-      const uninstall = await uninstallConflicts(conflicts, uninstallMapConflict)
-      if (uninstall.ok) break
-      message.error(t('tools.installConflictFailed', {
-        name: uninstall.failed?.name ?? '',
-        reason: uninstall.reason ?? '',
-      }))
-      /*
-       * 停在详情弹窗上让用户处理后重试：关掉弹窗等于把已暂存的 ZIP 作废，
-       * 在线安装还要重新下载一遍。列表按实际进度收缩，只剩没卸掉的项，
-       * 再点一次不会重复卸载已经进回收站的那几份。
-       */
-      const remaining = new Set(uninstall.remaining.map((conflict) => conflict.handle))
-      sets = sets.map((set) => ({
-        ...set,
-        conflicts: (set.conflicts ?? []).filter((conflict) => remaining.has(conflict.handle)),
-      }))
-      conflicts = sets.flatMap((set) => set.conflicts ?? [])
-      if (!(await askApproval(staged.path, sets))) return false
-    }
+    const sets = await resolveConflicts(staged.sets, options.targetLabel)
+    if (!sets) return false
+    if (!(await askApproval(staged.path, sets))) return false
     /*
      * 用户表态后先收起弹窗再导入：写盘期间进度由页面按钮转圈，弹窗留着
      * 会一直挂着「取消」按钮，看着像还能反悔。
@@ -320,7 +372,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       // 下载 + 识别结束：确认弹窗才是接下来的主角
       zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
-      return await finishStaged(staged, options)
+      return await finishStaged(staged, { ...options, targetLabel: options.targetLabel ?? releaseLabel(mapId) })
     } catch (reason) {
       failDownloadTask(token, reason)
       message.error(backendMessageOf(reason))
@@ -335,6 +387,6 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
 
   return {
     importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport,
-    zipProgress, zipProgressText,
+    importCheck, zipProgress, zipProgressText,
   }
 }

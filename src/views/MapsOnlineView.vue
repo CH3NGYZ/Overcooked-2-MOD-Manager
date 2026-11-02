@@ -50,6 +50,7 @@ import ReleaseDetailPanel from '../components/ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
+import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
@@ -139,6 +140,7 @@ const {
   importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
+  importCheck,
   zipProgress, zipProgressText,
 } = useLevelSetImport(() => loadLevelSets())
 /** 「安装地图」来源卡片是否打开。 */
@@ -933,6 +935,14 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
     那行文案同一份数据，避免两处各写一套「到第几个了」。
   -->
   <BusyOverlay :show="showZipOverlay" :status="zipProgressText" />
+
+  <!--
+    同身份冲突的检查：在「安装详情」之前挡一道（已有同一张地图时先卸载）。
+    与 MOD 安装、地图管理页共用同一个弹窗与同一套执行顺序。
+  -->
+  <InstallCheckDialog v-model:show="importCheck.open.value" :model="importCheck.model.value"
+    :execute="importCheck.execute"
+    @finished="(ready: boolean) => { void importCheck.finish(ready) }" />
 
   <!--
     导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。

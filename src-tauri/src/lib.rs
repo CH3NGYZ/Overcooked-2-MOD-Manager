@@ -238,7 +238,6 @@ pub fn run() {
             commands::get_level_sets,
             commands::set_level_set_enabled,
             commands::set_all_level_sets_enabled,
-            commands::inspect_level_set_zip,
             commands::classify_drop_source,
             commands::import_level_sets,
             commands::open_level_set_directory,

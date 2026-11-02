@@ -1986,22 +1986,29 @@ fn prepare_zip_plugin<R: Read + Seek>(
 /// （见 [`prepare_zip_plugin`]）。
 #[cfg(test)]
 pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
-    inspect_zip_with_workers(
-        zip_path,
-        crate::metadata_read::resolve_concurrency(
-            crate::metadata_read::AUTO_CONCURRENCY,
-            crate::metadata_read::cores(),
-        ),
-    )
+    // 测试不关心并发度与进度：两个并发度都取全核，回调空转
+    let workers = crate::metadata_read::resolve_concurrency(
+        crate::metadata_read::AUTO_CONCURRENCY,
+        crate::metadata_read::cores(),
+    );
+    inspect_zip_with_progress(zip_path, workers, workers, &|_, _, _| {})
 }
 
-/// 同上，按调用方给的并行度解析随包插件。
+/// 带进度的 ZIP 识别：`info` 按目录并行解析，其余流程与串行版一致。
 ///
-/// 只并行 DLL：ZIP 内的 `info` 没有磁盘路径（直接读条目字节解析），走不了
-/// 按路径去重与内容缓存的那条中间层。
-pub fn inspect_zip_with_workers(
+/// `progress(done, total, current)` 在**每份候选 `info` 开始解析前**回调：
+/// `done` 是已解析完的目录数（同一目录有多个候选 `info` 时它会停着不动），
+/// `total` 是待解析的目录数，`current` 是这一份的 ZIP 内条目名。
+///
+/// 为什么 `info` 也要并行：它是 UnityFS 容器，解析要解 LZMA 块，是纯 CPU 活；
+/// 一个几十集的合集串行解析实测要几十秒。ZIP 里的 `info` 没有磁盘路径
+/// （直接读条目字节），走不了 [`crate::metadata_read`] 的按路径中间层，
+/// 所以这里按「目录」分工，每个线程各自打开一份 `ZipArchive`。
+pub fn inspect_zip_with_progress(
     zip_path: &Path,
+    info_workers: usize,
     plugin_workers: usize,
+    progress: &(dyn Fn(usize, usize, &str) + Sync),
 ) -> Result<Vec<ImportedLevelSet>, String> {
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| {
@@ -2027,7 +2034,8 @@ pub fn inspect_zip_with_workers(
      *
      * 所以这里保留全部候选，稍后逐个试解析，取第一个能读出关卡集的。
      */
-    let mut info_candidates: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    // 候选条目：ZIP 下标 + 条目名（并行解析时每个线程要按条目名上报进度）
+    let mut info_candidates: BTreeMap<String, Vec<(usize, String)>> = BTreeMap::new();
     // ZIP 内全部文件条目名，供「包单位」把 plugins 子树里的 DLL 归到地图上
     let mut all_entries: Vec<String> = Vec::new();
     // 条目名 → ZIP 索引：读随包插件内容时用它定位（`by_name` 每次线性扫中央目录）
@@ -2054,7 +2062,10 @@ pub fn inspect_zip_with_workers(
             .or_default()
             .push(name.clone());
         if is_info_file(&file_name) {
-            info_candidates.entry(directory).or_default().push(index);
+            info_candidates
+                .entry(directory)
+                .or_default()
+                .push((index, name));
         }
     }
 
@@ -2063,45 +2074,25 @@ pub fn inspect_zip_with_workers(
     }
 
     /*
-     * 分两阶段：先解析出每个目录的元数据与「基础目录名」，再统一分配目录名。
+     * 分两阶段：先并行解析出每个目录的元数据与「基础目录名」，再统一分配目录名。
      *
      * 不能边解析边分配：同一批里共用同一个集名的几张图，谁先谁后决定谁拿到
      * 不带后缀的名字，而顺序又由 ZIP 条目与 BTreeMap 键序决定 —— 同样的包
      * 两次导入可能得到不同目录名。
      */
-    let mut parsed_sets: Vec<(String, LevelSetMetadata, String)> = Vec::new();
-    for (directory, candidates) in info_candidates {
-        let mut metadata: Option<LevelSetMetadata> = None;
-        let mut last_error = String::new();
-        for index in candidates {
-            let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
-            let mut bytes = Vec::with_capacity(entry.size() as usize);
-            entry
-                .read_to_end(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            match asset_bundle::parse_level_set(&bytes) {
-                Ok(parsed) => {
-                    metadata = Some(parsed);
-                    break;
-                }
-                Err(error) => {
-                    log::debug!(
-                        "候选 info 不是关卡集，继续试下一个：目录={}，条目序号={}，原因={}",
-                        directory,
-                        index,
-                        error
-                    );
-                    last_error = error.to_string();
-                }
-            }
-        }
-        let Some(metadata) = metadata else {
-            return Err(crate::locale_tag::with_params(
-                "levelSet.zipInfoInvalid",
-                &[("reason", &last_error)],
-            ));
-        };
+    let info_tasks: Vec<InfoDirectory> = info_candidates
+        .into_iter()
+        .map(|(directory, candidates)| InfoDirectory {
+            directory,
+            candidates,
+        })
+        .collect();
+    let parsed_metadata =
+        parse_zip_info_directories(zip_path, &info_tasks, info_workers, progress)?;
 
+    let mut parsed_sets: Vec<(String, LevelSetMetadata, String)> =
+        Vec::with_capacity(parsed_metadata.len());
+    for (directory, metadata) in parsed_metadata {
         /*
          * 关卡集目录名：用 info 里的英文集名，而不是 ZIP 里的目录名。
          *
@@ -2296,25 +2287,20 @@ pub fn install_from_zip(
     game_root: &Path,
     selected: &[String],
 ) -> Result<Vec<String>, String> {
-    install_from_zip_with_workers(
-        zip_path,
-        game_root,
-        selected,
-        crate::metadata_read::resolve_concurrency(
-            crate::metadata_read::AUTO_CONCURRENCY,
-            crate::metadata_read::cores(),
-        ),
-    )
+    let sets = inspect_zip(zip_path)?;
+    install_parsed_sets(&sets, zip_path, game_root, selected)
 }
 
-/// 同上，按调用方给的并行度解析随包插件。
-pub fn install_from_zip_with_workers(
+/// 把已经解析好的关卡集写进 `levels/`（`zip_path` 只用于回读文件内容）。
+///
+/// 识别与写盘拆开是为了多选导入只解析一次：`import_level_sets` 以前对每个
+/// 选中的关卡集各重新整包识别一遍 —— N 张合集就是 N 倍识别时间。
+pub fn install_parsed_sets(
+    sets: &[ImportedLevelSet],
     zip_path: &Path,
     game_root: &Path,
     selected: &[String],
-    plugin_workers: usize,
 ) -> Result<Vec<String>, String> {
-    let sets = inspect_zip_with_workers(zip_path, plugin_workers)?;
     let targets: Vec<&ImportedLevelSet> = sets
         .iter()
         .filter(|set| selected.iter().any(|name| name == &set.dir_name))
@@ -2389,6 +2375,167 @@ pub fn install_from_zip_with_workers(
         installed.push(dir_name);
     }
     Ok(installed)
+}
+
+/// 一个待解析的 `info` 目录：ZIP 内目录名 + 该目录下全部候选条目。
+struct InfoDirectory {
+    directory: String,
+    /// 候选条目：ZIP 条目下标 + 条目名（同一目录可能有多个 `info*`）。
+    candidates: Vec<(usize, String)>,
+}
+
+/// 一个目录的解析结果：成功时带元数据，失败时带最后一次失败原因。
+struct InfoOutcome {
+    metadata: Option<LevelSetMetadata>,
+    last_error: String,
+}
+
+/// 并行解析各目录的 `info`，返回按目录名排序的 `(目录名, 元数据)`。
+///
+/// 目录内仍按候选顺序逐个试解析，取第一个能读出关卡集的 —— 实测「04_前置
+/// 地图合集」的 `宜/` 里 `info_yi` 是真关卡集、`info_yil` 只是随包资源，
+/// 这个语义不能因为并行而改变。任一目录的全部候选都失败时整体报错（带最后
+/// 一次原因），与串行版一致。
+fn parse_zip_info_directories(
+    zip_path: &Path,
+    directories: &[InfoDirectory],
+    workers: usize,
+    progress: &(dyn Fn(usize, usize, &str) + Sync),
+) -> Result<Vec<(String, LevelSetMetadata)>, String> {
+    let total = directories.len();
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    let workers = workers.clamp(1, total);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let finished = std::sync::atomic::AtomicUsize::new(0);
+    let outcomes: Vec<std::sync::Mutex<Option<InfoOutcome>>> =
+        (0..total).map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                /*
+                 * 每个线程各自打开一份 ZIP：`ZipArchive` 的读句柄不是 `Sync`，
+                 * 共用一份就得加锁，等于把并行又串回去。中央目录只读一遍，
+                 * 代价远小于解析一个 `info`。
+                 */
+                let mut archive = match fs::File::open(zip_path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|file| {
+                        zip::ZipArchive::new(file).map_err(|error| {
+                            crate::locale_tag::with_params(
+                                "archive.zipReadFailed",
+                                &[("reason", &error.to_string())],
+                            )
+                        })
+                    }) {
+                    Ok(archive) => Some(archive),
+                    Err(reason) => {
+                        log::warn!(
+                            "ZIP 读取句柄打开失败，识别将整体失败：文件={}，原因={}",
+                            zip_path.display(),
+                            reason
+                        );
+                        None
+                    }
+                };
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(directory) = directories.get(index) else {
+                        break;
+                    };
+                    let mut outcome = InfoOutcome {
+                        metadata: None,
+                        last_error: String::new(),
+                    };
+                    for (entry_index, entry_name) in &directory.candidates {
+                        /*
+                         * 进度在**开始读这一份**时上报：同一目录有多个候选时
+                         * `done` 不变、`current` 换成下一个 `info` 文件名，
+                         * 用户能看出在重试而不是卡住。
+                         */
+                        progress(
+                            finished.load(std::sync::atomic::Ordering::Relaxed),
+                            total,
+                            entry_name,
+                        );
+                        let Some(archive) = archive.as_mut() else {
+                            outcome.last_error = "archive.zipReadFailed".to_string();
+                            break;
+                        };
+                        match read_zip_entry(archive, *entry_index) {
+                            Ok(bytes) => match asset_bundle::parse_level_set(&bytes) {
+                                Ok(parsed) => {
+                                    outcome.metadata = Some(parsed);
+                                    break;
+                                }
+                                Err(error) => {
+                                    log::debug!(
+                                        "候选 info 不是关卡集，继续试下一个：目录={}，条目={}，原因={}",
+                                        directory.directory,
+                                        entry_name,
+                                        error
+                                    );
+                                    outcome.last_error = error.to_string();
+                                }
+                            },
+                            Err(reason) => {
+                                log::warn!(
+                                    "候选 info 读取失败，继续试下一个：目录={}，条目={}，原因={}",
+                                    directory.directory,
+                                    entry_name,
+                                    reason
+                                );
+                                outcome.last_error = reason;
+                            }
+                        }
+                    }
+                    /*
+                     * 先记完成数再写槽位：下一份 `current` 的 `done` 才是真进度。
+                     * 槽位按任务下标回位，因此结果顺序与串行版完全一致。
+                     */
+                    finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if let Ok(mut slot) = outcomes[index].lock() {
+                        *slot = Some(outcome);
+                    }
+                }
+            });
+        }
+    });
+    let mut parsed = Vec::with_capacity(total);
+    for (index, directory) in directories.iter().enumerate() {
+        let outcome = outcomes[index]
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .unwrap_or_else(|| InfoOutcome {
+                metadata: None,
+                last_error: String::new(),
+            });
+        match outcome.metadata {
+            Some(metadata) => parsed.push((directory.directory.clone(), metadata)),
+            None => {
+                return Err(crate::locale_tag::with_params(
+                    "levelSet.zipInfoInvalid",
+                    &[("reason", &outcome.last_error)],
+                ));
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+/// 读出一个 ZIP 条目的全部字节（`info` 是自包含容器，识别不需要落盘）。
+fn read_zip_entry(
+    archive: &mut zip::ZipArchive<fs::File>,
+    index: usize,
+) -> Result<Vec<u8>, String> {
+    let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    entry
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(bytes)
 }
 
 /// 是否是 macOS 打包产生的垃圾条目。
@@ -2918,6 +3065,50 @@ mod zip_tests {
             }
         }
         None
+    }
+
+    /// 并行解析 `info` 时，每份候选都要**先上报进度再解析**。
+    ///
+    /// 用一份「全是垃圾 info」的 ZIP：识别整体失败，但进度回调必须已经走完
+    /// 三份候选 —— 界面上「正在读取哪个 info / 读到第几份」就靠这条链。
+    #[test]
+    fn reports_progress_for_every_info_candidate() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-progress-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let zip_path = root.join("broken.zip");
+        write_zip(
+            &zip_path,
+            &[
+                ("A/info_a", b"not a bundle"),
+                ("B/info_b", b"not a bundle"),
+                ("C/info_c", b"not a bundle"),
+            ],
+        );
+        let seen = std::sync::Mutex::new(Vec::<(usize, usize, String)>::new());
+        let error = inspect_zip_with_progress(&zip_path, 2, 2, &|done, total, current| {
+            seen.lock()
+                .unwrap()
+                .push((done, total, current.to_string()));
+        })
+        .expect_err("三份 info 都不是关卡集，识别应整体失败");
+        assert!(
+            error.contains("levelSet.zipInfoInvalid"),
+            "错误应带 tag：{error}"
+        );
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen.len(), 3, "每份候选都应上报一次进度");
+        assert!(
+            seen.iter()
+                .all(|(done, total, _)| *total == 3 && *done < *total),
+            "已完成数应始终小于总数：{seen:?}"
+        );
+        let mut names = seen
+            .iter()
+            .map(|(_, _, current)| current.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["A/info_a", "B/info_b", "C/info_c"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

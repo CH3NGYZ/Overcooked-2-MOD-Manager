@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 use url::Url;
 use uuid::Uuid;
@@ -564,14 +564,27 @@ async fn discover_installer_update(
     })
 }
 
+/// 应用状态：配置、串行化锁与几个进程内缓存。
+///
+/// `Clone` 是给重活用的：命令层把 `State` 克隆一份带进 `spawn_blocking`，
+/// 闭包里既能拿配置也能拿操作锁，不必为每个命令重写一遍参数列表。克隆的
+/// 都是句柄（配置服务与各 `Arc`），共享同一份数据，不是拷贝。
+#[derive(Clone)]
 pub struct AppState {
     pub config: ConfigService,
-    pub operation: Mutex<()>,
-    pub repository_cache: tokio::sync::Mutex<()>,
-    pub community: crate::community::CommunitySearch,
-    pub readme: crate::repository_readme::ReadmeDownloads,
+    /*
+     * 串行化「写游戏目录」的操作（安装、卸载、开关、回收站）。
+     *
+     * `Arc` 而不是裸 `Mutex`：重活（解压落盘、全量扫描）必须搬到
+     * `spawn_blocking` 里跑，锁的所有权也要跟着进闭包；同步命令在 IPC 线程
+     * 上内联执行，几秒的写盘就是几秒的窗口冻结。
+     */
+    pub operation: Arc<Mutex<()>>,
+    pub repository_cache: Arc<tokio::sync::Mutex<()>>,
+    pub community: Arc<crate::community::CommunitySearch>,
+    pub readme: Arc<crate::repository_readme::ReadmeDownloads>,
     // Display-only snapshot; file operations always inspect the live process.
-    pub game_state: Mutex<Option<GameInfo>>,
+    pub game_state: Arc<Mutex<Option<GameInfo>>>,
 }
 
 impl AppState {
@@ -579,17 +592,30 @@ impl AppState {
         log::debug!("创建应用状态");
         Ok(Self {
             config: ConfigService::new().map_err(|e| e.to_string())?,
-            operation: Mutex::new(()),
-            repository_cache: tokio::sync::Mutex::new(()),
-            community: crate::community::CommunitySearch::default(),
-            readme: crate::repository_readme::ReadmeDownloads::default(),
-            game_state: Mutex::new(None),
+            operation: Arc::new(Mutex::new(())),
+            repository_cache: Arc::new(tokio::sync::Mutex::new(())),
+            community: Arc::new(crate::community::CommunitySearch::default()),
+            readme: Arc::new(crate::repository_readme::ReadmeDownloads::default()),
+            game_state: Arc::new(Mutex::new(None)),
         })
     }
 }
 
 #[tauri::command]
-pub fn get_dashboard(state: State<'_, AppState>) -> Result<DashboardData, String> {
+pub async fn get_dashboard(state: State<'_, AppState>) -> Result<DashboardData, String> {
+    /*
+     * 第一次扫描要读全部 DLL 的元数据（之后走进程内缓存），debug 构建下能到
+     * 1 s 以上；同步命令在 IPC 线程上内联执行，这一段就是窗口卡死。搬到
+     * 阻塞线程池后耗时不变，但界面还能转圈、拖窗口。
+     */
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_dashboard_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`get_dashboard`] 的同步实现（在阻塞线程池里跑）。
+fn get_dashboard_blocking(state: &AppState) -> Result<DashboardData, String> {
     log::debug!("读取状态总览");
     let config = state.config.load_or_default();
     let game_info = game::detect_game(&config);
@@ -810,11 +836,17 @@ pub fn save_mod_note(
 }
 
 #[tauri::command]
-pub fn install_local_mod(
+pub async fn install_local_mod(
     state: State<'_, AppState>,
     source_path: String,
 ) -> Result<OperationResult, String> {
-    install_manual_mod(&state, &PathBuf::from(source_path), None)
+    // 解压 ZIP 落盘是重活：同步命令在 IPC 线程上跑，界面会整段冻住
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        install_manual_mod(&state, &PathBuf::from(source_path), None)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn install_manual_mod(
@@ -944,9 +976,24 @@ fn needs_package_confirmation(
 }
 
 #[tauri::command]
-pub fn uninstall_local_mod(
+pub async fn uninstall_local_mod(
     state: State<'_, AppState>,
     dll_file: String,
+    allow_unmanaged: bool,
+) -> Result<UninstallLocalModResult, String> {
+    // 判定「要不要整包确认」要先全量扫描已安装 MOD，再加上回收站的移动：重活
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        uninstall_local_mod_blocking(&state, &dll_file, allow_unmanaged)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [`uninstall_local_mod`] 的同步实现（在阻塞线程池里跑）。
+fn uninstall_local_mod_blocking(
+    state: &AppState,
+    dll_file: &str,
     allow_unmanaged: bool,
 ) -> Result<UninstallLocalModResult, String> {
     log::info!(
@@ -1154,10 +1201,25 @@ pub fn uninstall_local_mod(
 }
 
 #[tauri::command]
-pub fn uninstall_mod_dll(
+pub async fn uninstall_mod_dll(
     state: State<'_, AppState>,
     dll_file: String,
     package_id: String,
+) -> Result<OperationResult, String> {
+    // 与 `uninstall_local_mod` 同一条规则：扫描 + 回收是重活，别占 IPC 线程
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        uninstall_mod_dll_blocking(&state, &dll_file, &package_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [`uninstall_mod_dll`] 的同步实现（在阻塞线程池里跑）。
+fn uninstall_mod_dll_blocking(
+    state: &AppState,
+    dll_file: &str,
+    package_id: &str,
 ) -> Result<OperationResult, String> {
     log::info!(
         "开始删除 MOD 包内 DLL：包={}，文件={}",
@@ -1185,7 +1247,7 @@ pub fn uninstall_mod_dll(
     let installed = mods::scan_mods_with_manifests(&game_root, &config, Some(&manifest_dir));
     let package_mod_count = installed
         .iter()
-        .filter(|item| item.package_id.as_deref() == Some(package_id.as_str()))
+        .filter(|item| item.package_id.as_deref() == Some(package_id))
         .count();
     let safe_duplicate = installed
         .iter()
@@ -2564,7 +2626,16 @@ pub fn repair_native_bepinex_overlay(
 }
 
 #[tauri::command]
-pub fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn uninstall_bepinex(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    // 卸载前要把整个 BepInEx 目录快照到备份：几百 MB 的复制，不能占 IPC 线程
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || uninstall_bepinex_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`uninstall_bepinex`] 的同步实现（在阻塞线程池里跑）。
+fn uninstall_bepinex_blocking(state: &AppState) -> Result<OperationResult, String> {
     log::info!("开始卸载 BepInEx");
     let _guard = state
         .operation
@@ -2766,7 +2837,16 @@ fn framework_manifest_files(game_root: &Path) -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn backup_bepinex(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn backup_bepinex(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    // 整目录快照是重活：同步命令会把窗口冻在「备份中」那一刻
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup_bepinex_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`backup_bepinex`] 的同步实现（在阻塞线程池里跑）。
+fn backup_bepinex_blocking(state: &AppState) -> Result<OperationResult, String> {
     log::info!("开始备份 BepInEx");
     let _guard = state
         .operation
@@ -2793,9 +2873,21 @@ pub fn backup_bepinex(state: State<'_, AppState>) -> Result<OperationResult, Str
 }
 
 #[tauri::command]
-pub fn restore_bepinex(
+pub async fn restore_bepinex(
     state: State<'_, AppState>,
     backup_path: String,
+) -> Result<OperationResult, String> {
+    // 把整份备份写回游戏目录同样是重活：不能占 IPC 线程
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || restore_bepinex_blocking(&state, &backup_path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`restore_bepinex`] 的同步实现（在阻塞线程池里跑）。
+fn restore_bepinex_blocking(
+    state: &AppState,
+    backup_path: &str,
 ) -> Result<OperationResult, String> {
     log::info!("开始恢复 BepInEx 备份");
     let _guard = state
@@ -2825,9 +2917,23 @@ pub fn restore_bepinex(
 }
 
 #[tauri::command]
-pub fn delete_bepinex_backup(
+pub async fn delete_bepinex_backup(
     state: State<'_, AppState>,
     backup_path: String,
+) -> Result<OperationResult, String> {
+    // 删整目录按文件数计：大备份能到几秒，搬到阻塞线程池
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_bepinex_backup_blocking(&state, &backup_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [`delete_bepinex_backup`] 的同步实现（在阻塞线程池里跑）。
+fn delete_bepinex_backup_blocking(
+    state: &AppState,
+    backup_path: &str,
 ) -> Result<OperationResult, String> {
     log::info!("开始删除 BepInEx 备份");
     let _guard = state
@@ -3375,9 +3481,23 @@ pub fn cancel_download() -> Result<OperationResult, String> {
 }
 
 #[tauri::command]
-pub fn uninstall_repository(
+pub async fn uninstall_repository(
     state: State<'_, AppState>,
     repository_id: String,
+) -> Result<OperationResult, String> {
+    // 回收整包要解析安装清单并移动文件：重活，搬到阻塞线程池
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        uninstall_repository_blocking(&state, &repository_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [`uninstall_repository`] 的同步实现（在阻塞线程池里跑）。
+fn uninstall_repository_blocking(
+    state: &AppState,
+    repository_id: &str,
 ) -> Result<OperationResult, String> {
     log::info!("开始卸载在线仓库 MOD：仓库={}", repository_id);
     let _guard = state
@@ -3394,7 +3514,7 @@ pub fn uninstall_repository(
     {
         repository_install_identity(repo, &config, &state.config.manifests_dir())?.id
     } else {
-        repository_id.clone()
+        repository_id.to_string()
     };
     let manifest = archive::read_manifest(&state.config.manifests_dir(), &package_id)
         .ok_or("mods.unknownFiles")?;
@@ -3459,10 +3579,19 @@ pub fn get_mod_recycle_bin(state: State<'_, AppState>) -> Result<Vec<ModRecycleE
 }
 
 #[tauri::command]
-pub fn restore_recycled_mod(
+pub async fn restore_recycled_mod(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<OperationResult, String> {
+    // 回收站在数据根、游戏目录在别的盘时，恢复就是复制 + 删除：按 MB 计的重活
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || restore_recycled_mod_blocking(&state, &id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`restore_recycled_mod`] 的同步实现（在阻塞线程池里跑）。
+fn restore_recycled_mod_blocking(state: &AppState, id: &str) -> Result<OperationResult, String> {
     log::info!("请求恢复回收站 MOD：ID={}", id);
     let _guard = state
         .operation
@@ -3490,10 +3619,19 @@ pub fn restore_recycled_mod(
 }
 
 #[tauri::command]
-pub fn delete_recycled_mod(
+pub async fn delete_recycled_mod(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<OperationResult, String> {
+    // 彻底删除是磁盘删除，量大的包要几秒：不能占着 IPC 线程
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_recycled_mod_blocking(&state, &id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`delete_recycled_mod`] 的同步实现（在阻塞线程池里跑）。
+fn delete_recycled_mod_blocking(state: &AppState, id: &str) -> Result<OperationResult, String> {
     log::info!("请求彻底删除回收站 MOD：ID={}", id);
     let _guard = state
         .operation
@@ -3510,7 +3648,18 @@ pub fn delete_recycled_mod(
 }
 
 #[tauri::command]
-pub fn delete_all_recycled_mods(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn delete_all_recycled_mods(
+    state: State<'_, AppState>,
+) -> Result<OperationResult, String> {
+    // 清空回收站是整目录删除：重活，搬到阻塞线程池
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_all_recycled_mods_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`delete_all_recycled_mods`] 的同步实现（在阻塞线程池里跑）。
+fn delete_all_recycled_mods_blocking(state: &AppState) -> Result<OperationResult, String> {
     log::info!("请求清空回收站");
     let _guard = state
         .operation
@@ -5776,19 +5925,38 @@ pub fn set_all_level_sets_enabled(
 
 /// 把 ZIP 里识别出的关卡集转成 IPC 模型（冲突列表依赖当前游戏目录）。
 ///
-/// `inspect_level_set_zip`（本地导入前确认）、`stage_map_source`（本地 / 直链
-/// 地图来源）与 `stage_map_release`（在线地图 Release）必须给出完全相同的行，
-/// 否则同一个 ZIP 在不同入口上的「会卸载本地旧副本」提示会不一致。
+/// `stage_map_source`（本地 / 直链地图来源）与 `stage_map_release`（在线地图
+/// Release）必须给出完全相同的行，否则同一个 ZIP 在不同入口上的「会卸载本地
+/// 旧副本」提示会不一致。
+///
+/// 识别期间逐份发 `level-set-zip-progress`：一个上百 MB 的合集在 debug 构建
+/// 里要几十秒，界面只有转圈的话用户判断不了是在跑还是卡死。
 ///
 /// 冲突是**批次级**的：它回答「这次导入会与本地哪些副本撞身份」，与批次里
 /// 具体是哪一张无关，所以同一份列表挂到每个 `ZipLevelSet` 上，界面按
 /// `handle` 去重展示（单集 ZIP 与逐集拆分完全等价）。
-fn zip_level_sets(config: &AppConfig, path: &Path) -> Result<Vec<ZipLevelSet>, String> {
-    // 随包插件是 DLL（MOD 线），已装副本的身份是 `info`（地图线），两条线各有
-    // 自己的并行度设置。
-    let sets = crate::level_sets::inspect_zip_with_workers(
+fn zip_level_sets(
+    app: &AppHandle,
+    config: &AppConfig,
+    path: &Path,
+) -> Result<Vec<ZipLevelSet>, String> {
+    // `info` 是地图线、随包插件是 DLL（MOD 线），两条线各有自己的并行度设置。
+    let progress_app = app.clone();
+    let sets = crate::level_sets::inspect_zip_with_progress(
         path,
+        crate::metadata_read::workers_from(config.map_info_concurrency),
         crate::metadata_read::workers_from(config.mod_metadata_concurrency),
+        &move |done, total, current| {
+            let _ = progress_app.emit(
+                "level-set-zip-progress",
+                LevelSetZipProgress {
+                    phase: "info".into(),
+                    done,
+                    total,
+                    current: current.to_string(),
+                },
+            );
+        },
     )?;
     let game_root = game::detect_game(config).path;
     let conflicts = game_root
@@ -5878,23 +6046,6 @@ pub async fn classify_drop_source(path: String) -> Result<DropSourceKind, String
     .map_err(|error| error.to_string())?
 }
 
-/// 读一个 ZIP，列出其中的关卡集（不落盘，供导入前确认）。
-///
-/// `conflicts` 列出本地已有的同身份副本 —— 界面据此提示「将卸载旧版本」，
-/// 与真正安装时的判定保持一致。
-#[tauri::command]
-pub async fn inspect_level_set_zip(
-    state: State<'_, AppState>,
-    zip_path: String,
-) -> Result<Vec<ZipLevelSet>, String> {
-    // 理由同 `get_level_sets`：解析 ZIP 里的 info 是纯 CPU 活，debug 构建单次
-    // 实测 2.9 s，留在 IPC 主线程上就是把整个界面冻住。
-    let config = state.config.load_or_default();
-    tauri::async_runtime::spawn_blocking(move || zip_level_sets(&config, Path::new(&zip_path)))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
 /// 准备一个地图来源：本地 ZIP 只解析，直链先下载到缓存目录。
 ///
 /// 返回的 `path` 就是后续 `import_level_sets` 的输入；`staged=true` 时调用方
@@ -5936,7 +6087,7 @@ pub async fn stage_map_source(
         }
     };
     // 解析失败时下载来的暂存文件没有后续用途，当场清掉，不留垃圾
-    let sets = match zip_level_sets(&config, &path) {
+    let sets = match zip_level_sets(&app, &config, &path) {
         Ok(sets) => sets,
         Err(error) => {
             if staged {
@@ -5993,49 +6144,81 @@ pub fn discard_map_source(state: State<'_, AppState>, path: String) -> Result<()
 /// 从本地 ZIP 导入选定的关卡集。
 ///
 /// 已存在的同名关卡集会被**回收**（进回收站），而不是直接删除。
+///
+/// 两段都在阻塞线程池里跑：识别一个几十集的合集要几十秒，解压落盘同样按秒
+/// 计，同步命令会把整个窗口冻住（见 `get_level_sets` 的注释）。识别只做一次
+/// —— 以前每装一个集就整包重新 inspect 一遍，N 张合集就是 N 倍识别时间。
 #[tauri::command]
-pub fn import_level_sets(
+pub async fn import_level_sets(
+    app: AppHandle,
     state: State<'_, AppState>,
     zip_path: String,
     selected: Vec<String>,
 ) -> Result<LevelSetImportResult, String> {
-    log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
+    // `State` 不能跨 await：需要的值（配置快照、游戏根、操作锁）在同步段取好
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    /*
-     * 安装是新增内容，游戏运行时也允许 —— 写的是本次启动还没扫描过的新目录。
-     * 用策略而不是直接 `ensure_game_stopped`：开关仍然需要停止游戏，
-     * 两者的差异集中在一处声明。
-     */
-    crate::level_sets::ensure_operation_allowed(
-        &game_root,
-        crate::level_sets::LevelSetOperation::Install,
-    )?;
-
-    /*
-     * 逐个集安装，而不是一次性全装。
-     *
-     * `install_from_zip` 的签名是「一个 ZIP 一个集」，多集 ZIP 在这里循环调用；
-     * 任一失败就停下并保留已成功的（它们已经在磁盘上），错误如实上报 ——
-     * 悄悄跳过会让用户以为全装上了。
-     */
-    let mut installed = Vec::new();
-    let plugin_workers = crate::metadata_read::workers_from(config.mod_metadata_concurrency);
-    for name in &selected {
-        let single = crate::level_sets::install_from_zip_with_workers(
-            &PathBuf::from(&zip_path),
+    let operation = state.operation.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
+        let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
+        /*
+         * 安装是新增内容，游戏运行时也允许 —— 写的是本次启动还没扫描过的新目录。
+         * 用策略而不是直接 `ensure_game_stopped`：开关仍然需要停止游戏，
+         * 两者的差异集中在一处声明。
+         */
+        crate::level_sets::ensure_operation_allowed(
             &game_root,
-            std::slice::from_ref(name),
-            plugin_workers,
+            crate::level_sets::LevelSetOperation::Install,
         )?;
-        installed.extend(single);
-    }
-    log::info!("关卡集导入完成：数量={}", installed.len());
-    Ok(LevelSetImportResult { installed })
+        let zip = PathBuf::from(&zip_path);
+        let info_app = app.clone();
+        let sets = crate::level_sets::inspect_zip_with_progress(
+            &zip,
+            crate::metadata_read::workers_from(config.map_info_concurrency),
+            crate::metadata_read::workers_from(config.mod_metadata_concurrency),
+            &move |done, total, current| {
+                let _ = info_app.emit(
+                    "level-set-zip-progress",
+                    LevelSetZipProgress {
+                        phase: "info".into(),
+                        done,
+                        total,
+                        current: current.to_string(),
+                    },
+                );
+            },
+        )?;
+        /*
+         * 逐个集落盘，而不是一次性全装：任一失败就停下并保留已成功的（它们
+         * 已经在磁盘上），错误如实上报 —— 悄悄跳过会让用户以为全装上了。
+         * 每张开始前发一条 `install` 阶段进度，用户能看到卡在哪张图上。
+         */
+        let mut installed = Vec::new();
+        let total = selected.len();
+        for (index, name) in selected.iter().enumerate() {
+            let _ = app.emit(
+                "level-set-zip-progress",
+                LevelSetZipProgress {
+                    phase: "install".into(),
+                    done: index,
+                    total,
+                    current: name.clone(),
+                },
+            );
+            let single = crate::level_sets::install_parsed_sets(
+                &sets,
+                &zip,
+                &game_root,
+                std::slice::from_ref(name),
+            )?;
+            installed.extend(single);
+        }
+        log::info!("关卡集导入完成：数量={}", installed.len());
+        Ok(LevelSetImportResult { installed })
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// 在系统文件管理器中打开一个关卡集目录。
@@ -6068,9 +6251,24 @@ pub fn open_level_set_directory(
 /// 把目录搬走，会让它读到半个文件。所以这里按 `Toggle` 的策略拦下运行中的
 /// 游戏，而不是按「安装」放行。
 #[tauri::command]
-pub fn delete_level_set(
+pub async fn delete_level_set(
     state: State<'_, AppState>,
     dir_name: String,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    // 回收/删除要移动整个集目录（可能有上千个文件），不能占着 IPC 线程
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_level_set_blocking(&state, &dir_name, enabled)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [`delete_level_set`] 的同步实现（在阻塞线程池里跑）。
+fn delete_level_set_blocking(
+    state: &AppState,
+    dir_name: &str,
     enabled: bool,
 ) -> Result<OperationResult, String> {
     log::info!("删除关卡集：目录={}，启用={}", dir_name, enabled);
@@ -6518,13 +6716,14 @@ pub async fn stage_map_release(
      * - 冲突列表要随 `ZipLevelSet` 一起返回，确认界面靠它提示「将卸载本地
      *   哪些旧副本」。
      *
-     * 解析 `info` 是可能几秒的 CPU 工作，走 `spawn_blocking`（与
-     * `inspect_level_set_zip` 同一条规则）：不要占着异步线程把窗口拖死。
+     * 解析 `info` 是可能几秒的 CPU 工作，走 `spawn_blocking`：不要占着异步
+     * 线程把窗口拖死（与 `stage_map_source` 同一条规则）。
      */
     let config_for_parse = config.clone();
     let path_for_parse = temp.clone();
+    let app_for_parse = app.clone();
     let parsed = match tauri::async_runtime::spawn_blocking(move || {
-        zip_level_sets(&config_for_parse, &path_for_parse)
+        zip_level_sets(&app_for_parse, &config_for_parse, &path_for_parse)
     })
     .await
     {
@@ -9229,11 +9428,11 @@ mod mod_file_location_tests {
         let workspace = Workspace::new();
         let state = AppState {
             config: ConfigService::for_test(workspace.root.join("manager")),
-            operation: Mutex::new(()),
-            repository_cache: tokio::sync::Mutex::new(()),
-            community: Default::default(),
-            readme: Default::default(),
-            game_state: Mutex::new(None),
+            operation: Arc::new(Mutex::new(())),
+            repository_cache: Arc::new(tokio::sync::Mutex::new(())),
+            community: Arc::new(Default::default()),
+            readme: Arc::new(Default::default()),
+            game_state: Arc::new(Mutex::new(None)),
         };
         let mut config = state.config.load().unwrap();
         config.game.path = workspace.game.to_string_lossy().into_owned();
@@ -11473,11 +11672,11 @@ mod repository_source_refresh_tests {
                     .join("target/test-source-refresh")
                     .join(Uuid::new_v4().to_string()),
             ),
-            operation: Mutex::new(()),
-            repository_cache: tokio::sync::Mutex::new(()),
-            community: Default::default(),
-            readme: Default::default(),
-            game_state: Mutex::new(None),
+            operation: Arc::new(Mutex::new(())),
+            repository_cache: Arc::new(tokio::sync::Mutex::new(())),
+            community: Arc::new(Default::default()),
+            readme: Arc::new(Default::default()),
+            game_state: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -11764,11 +11963,11 @@ mod repository_source_refresh_tests {
             config: ConfigService::for_test(
                 state.config.config_path().parent().unwrap().to_path_buf(),
             ),
-            operation: Mutex::new(()),
-            repository_cache: tokio::sync::Mutex::new(()),
-            community: Default::default(),
-            readme: Default::default(),
-            game_state: Mutex::new(None),
+            operation: Arc::new(Mutex::new(())),
+            repository_cache: Arc::new(tokio::sync::Mutex::new(())),
+            community: Arc::new(Default::default()),
+            readme: Arc::new(Default::default()),
+            game_state: Arc::new(Mutex::new(None)),
         };
         refresh(&restarted, &root).await.unwrap();
         let restored = restarted.config.load().unwrap();

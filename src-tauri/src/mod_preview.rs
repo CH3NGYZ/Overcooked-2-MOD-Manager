@@ -594,9 +594,25 @@ pub fn cancel_mod_preview(state: State<'_, AppState>, preview_id: String) -> Res
 }
 
 #[tauri::command]
-pub fn confirm_mod_install(
+pub async fn confirm_mod_install(
     state: State<'_, AppState>,
     preview_id: String,
+) -> Result<OperationResult, String> {
+    /*
+     * 确认安装要做两件重活：把暂存的安装包解压进游戏目录（几百 MB 按秒计），
+     * 以及按仓库身份回收旧包。同步命令会在 IPC 线程上跑完这两件事，窗口整段
+     * 不响应；搬到阻塞线程池后耗时不变，界面仍可交互。
+     */
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || confirm_mod_install_blocking(&state, &preview_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`confirm_mod_install`] 的同步实现（在阻塞线程池里跑）。
+fn confirm_mod_install_blocking(
+    state: &AppState,
+    preview_id: &str,
 ) -> Result<OperationResult, String> {
     let dir = preview_root(&state).join(safe_preview_id(&preview_id)?);
     let file = fs::read_dir(&dir)

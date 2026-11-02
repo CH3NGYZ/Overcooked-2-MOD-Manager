@@ -361,15 +361,30 @@ pub async fn install_online_mod(
     .await?;
     let cache_dir = state.config.cache_dir();
     let staging = cache_dir.join(format!("manual-{}", uuid::Uuid::new_v4()));
-    let result = (|| {
-        fs::create_dir(&staging).map_err(|_| "direct.tempDirFailed")?;
+    let prepared: Result<PathBuf, String> = (|| {
+        fs::create_dir(&staging).map_err(|_| "direct.tempDirFailed".to_string())?;
         let source = staging.join(&filename);
-        fs::rename(&temp, &source).map_err(|_| "direct.prepareFailed")?;
+        fs::rename(&temp, &source).map_err(|_| "direct.prepareFailed".to_string())?;
         if archive::is_download_cancelled() {
             return Err("download.cancelled".into());
         }
-        install_manual_mod(&state, &source, Some(&game_root))
+        Ok(source)
     })();
+    let result = match prepared {
+        Ok(source) => {
+            /*
+             * 解压落盘 + 全量扫描游戏目录都是重活：`install_manual_mod` 同步
+             * 跑完会把 tokio worker 占住几秒，搬到阻塞线程池。
+             */
+            let state = state.inner().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                install_manual_mod(&state, &source, Some(&game_root))
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
+        Err(error) => Err(error),
+    };
     let _ = fs::remove_file(&temp);
     let _ = fs::remove_dir_all(&staging);
     result

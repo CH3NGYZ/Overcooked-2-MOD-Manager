@@ -89,6 +89,27 @@ pub struct LevelSetScanProgress {
     pub current: String,
 }
 
+/// ZIP 识别 / 导入进度（事件 `level-set-zip-progress` 的载荷）。
+///
+/// 这里和 `LevelSetScanProgress` 的区别是「读的是哪个 ZIP」：扫描读的是
+/// 游戏目录里已经落盘的关卡集，而这一份读的是本地拖入 / 直链下载 /
+/// 在线 Release 下载来的 ZIP —— 一个上百 MB 的合集在 debug 构建里识别要
+/// 几十秒，只转圈不给进度，用户无法判断是在跑还是卡死。
+///
+/// `phase` 区分同一条「暂存 → 确认 → 导入」链上的两个可感知阶段：
+/// - `info`：解析 ZIP 里的 `info`（暂存阶段，识别出这个包里有哪些关卡集）；
+/// - `install`：把选中的关卡集写进游戏目录（导入阶段，解压落盘）。
+///
+/// `done` 是**已完成**数而不是当前下标；`current` 是正在处理的那个条目
+/// （`info` 阶段是 ZIP 内条目路径，`install` 阶段是关卡集目录名）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelSetZipProgress {
+    pub phase: String,
+    pub done: usize,
+    pub total: usize,
+    pub current: String,
+}
+
 /// 一个 DIYLevel 关卡集（玩家口中的「地图」）在磁盘上的状态。
 ///
 /// 与 `InstalledMod` 的关系：两者都是「游戏目录里的东西 + 元数据」，但扫描源

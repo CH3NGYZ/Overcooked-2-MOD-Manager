@@ -1,30 +1,23 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
-import { DownloadOutline, FolderOpenOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
+import { FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
-import { formatVersion } from '../modStatus'
 import { api, watchLevelSetScan } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
+import { tagColorFor } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useMapSources } from '../composables/useMapSources'
-import { statusPulseClass, useFocusHighlight, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { useFocusHighlight, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
-import {
-  cardSwitchOn, levelSetPluginSwitchKey, levelSetSwitchKey, publishCardSwitches,
-  type CardSwitchEntry,
-} from '../cardSwitchState'
 import { collapseCardWithScroll, naturalContentHeight, scrollExpandedCardIntoView } from '../expandScroll'
-import LocalItemCard from '../components/LocalItemCard.vue'
 import PageLoading from '../components/PageLoading.vue'
 import RefreshResultTag from '../components/RefreshResultTag.vue'
-import DependencyTable from '../components/DependencyTable.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
@@ -34,6 +27,14 @@ import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useCardExpansion } from '../composables/useCardExpansion'
+import LevelSetGroupBody from '../components/LevelSetGroupBody.vue'
+import LevelSetGroupHeader from '../components/LevelSetGroupHeader.vue'
+import {
+  LEVEL_SET_GROUP_CTX,
+  TOOL_BUTTON_WIDTH,
+  TOOL_GAP,
+  type LevelSetGroupContext,
+} from '../components/levelSetGroupContext'
 import {
   levelSetAuthorNames,
   levelSetCardTags,
@@ -104,9 +105,8 @@ const { highlightId } = useFocusHighlight()
 const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight()
 
 /** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
-const TOOL_BUTTON_WIDTH = 30
-const TOOL_GAP = 8
-const toolsMinWidth = TOOL_BUTTON_WIDTH * 2 + TOOL_GAP
+/** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
+const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 2 + TOOL_GAP)
 
 const sets = ref<LevelSetInfo[]>([])
 /**
@@ -302,35 +302,6 @@ async function reloadSets() {
     message.error(backendMessageOf(reason))
   }
 }
-
-/* ===== 开关快照 =====
- *
- * 页面把当前开关状态发布到 `cardSwitchState`，卡片在折叠插槽里按稳定键读它。
- *
- * 为什么不能只靠「换数据」：卡片挂在 `n-collapse-item` 的内容区里，那块内容由
- * naive-ui 的 `CollapseItemContent` 拿稳定插槽渲染，父级重渲染时插槽闭包不会
- * 重新求值 —— 只有插槽体里读到的响应式值变了才会重渲染。单卡开关一直正常，
- * 是因为插槽读了 `busy[...]`；批量切换只改 `sets`，插槽里没有任何依赖它，
- * 卡片和详情就停在旧状态。早先的做法是换整棵折叠列表的 key 强制重建，
- * 代价是开关被重新挂载：新节点一上来就是目标状态，Naive 的值变化过渡
- * 没有播的机会，用户看到的就是「一瞬间全变了」。
- *
- * 发布快照后，插槽里每张卡的 `cardSwitchOn(...)` 都变了，折叠过渡自己重渲染
- * → 插槽整片重建 → 卡片以同一个 DOM 节点收到新 `value`，过渡照常播。
- *
- * `flush: 'post'` 不能省：要等页面 render 把新数据写进折叠项插槽之后再发布，
- * 否则过渡重渲染拿到的还是上一轮的插槽闭包（旧列表）。
- */
-watch(sets, (list) => {
-  const entries: CardSwitchEntry[] = []
-  for (const set of list) {
-    entries.push([levelSetSwitchKey(set.dir_name), set.enabled])
-    for (const plugin of set.plugins ?? []) {
-      entries.push([levelSetPluginSwitchKey(set.dir_name, plugin.file_name), plugin.enabled])
-    }
-  }
-  publishCardSwitches(entries)
-}, { immediate: true, flush: 'post' })
 
 /**
  * 「安装地图」来源卡片：本地 ZIP / 整窗拖入 / 在线直链。
@@ -1079,6 +1050,45 @@ async function checkUpdates() {
     message.error(backendMessageOf(reason))
   }
 }
+
+/**
+ * 折叠槽里的卡片由 `LevelSetGroupBody` 渲染（原因见 `levelSetGroupContext.ts`）。
+ * 这里把组数据与页面操作一次性交出去；`reactive()` 负责解包 ref/computed，
+ * 组件模板里读 `ctx.groups` / `ctx.busy[...]` 即等价于读本页状态。
+ */
+provide(
+  LEVEL_SET_GROUP_CTX,
+  reactive<LevelSetGroupContext>({
+    groups,
+    busy,
+    deleting,
+    expansion: levelExpansion,
+    highlightId,
+    pulseTarget,
+    pulseSeq,
+    toolsMinWidth,
+    kitchenRunning,
+    toggle,
+    activate,
+    tagsOf,
+    tagTitle,
+    onTagClick,
+    authorNamesOf,
+    bindingOf,
+    hintOf,
+    focusIdOf,
+    matchesActiveStatus,
+    dependencyInstallTarget,
+    installDependency,
+    removeSet: remove,
+    openDir: openDirectory,
+    pluginTitle,
+    togglePlugin,
+    dependencyRows,
+    openDependencyJump,
+    linkToMap,
+  }),
+)
 </script>
 
 <template>
@@ -1207,262 +1217,16 @@ async function checkUpdates() {
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
       @update:expanded-names="onGroupsExpanded">
+      <!--
+        折叠项里只挂组件、不写卡片：`n-collapse` 的动态 prop 只有
+        `expanded-names`，同组增删卡片时它可能拿到同一个数组引用，整棵子树
+        会被跳过。组标题与组内容各自有自己的渲染 effect，才跟得上数据。
+      -->
       <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
         <template #header>
-          <!--
-            分组标题只显示分组名。
-            计数（启用 / 停用）由页头聚合标签承担，组标题再挂一遍标签只会
-            把标题挤窄，并把同一信息说两次。
-          -->
-          <div class="group-head">
-            <b>{{ node.label }}</b>
-          </div>
+          <LevelSetGroupHeader :group-key="node.key" />
         </template>
-
-        <div class="map-grid">
-          <!--
-            卡片 key 只用目录名。把 enabled 写进 key 会连整张卡片一起重建，
-            开关每次都是「新挂载」，Naive 的切换过渡动画因此整个消失（现象：点下去
-            没有滑动，状态已经是新的）。
-
-            但详情确实要跟着开关刷新：停用会把目录搬进 BepInEx/cache/modmanager_disabled_maps/，详情里的「路径」
-            跟着变；而详情挂在 `n-collapse-transition` 的稳定插槽里，父级换了数据它
-            也不重新求值。这份刷新交给 `detail-key`：外壳与开关保持同一个 DOM 节点，
-            只让详情子树按状态重建。
-          -->
-          <LocalItemCard v-for="set in node.sets" :key="set.dir_name"
-            :detail-key="`${set.dir_name}:${set.enabled}`"
-            :data-level-dir="set.dir_name"
-            :data-focus-id="focusIdOf(set)"
-            :switch-key="levelSetSwitchKey(set.dir_name)"
-            :enabled="cardSwitchOn(levelSetSwitchKey(set.dir_name), set.enabled)"
-            :toggle-loading="!!busy[set.dir_name]"
-            :title="levelSetDisplayName(set, locale)"
-            :title-tooltip="set.error ? translateBackendMessage(set.error) : levelSetDisplayName(set, locale)"
-            :version="formatVersion(set.version) || undefined"
-            :disabled="!set.enabled"
-            :expanded="levelExpansion.isOuterOpen(set.dir_name)"
-            :focus-flash="!!highlightId && highlightId === focusIdOf(set)"
-            :status-flash="matchesActiveStatus(set)"
-            :pulse-class="statusPulseClass(set.dir_name, pulseTarget, pulseSeq)"
-            :tools-min-width="toolsMinWidth"
-            :tool-gap="TOOL_GAP"
-            :tool-button-width="TOOL_BUTTON_WIDTH"
-            @toggle="(value: boolean) => toggle(set, value)"
-            @activate="(card: HTMLElement) => activate(set, card)">
-            <!--
-              状态区：快捷动作 + 标签组。
-              「去安装」与 MOD 管理页同一规则（`dependencyTagFor`）：缺依赖且
-              线上有能补上的仓库卡片时才出现，点了跳到那张卡；没有来源就不出
-              按钮 —— 一个点了没反应的按钮比没有更糟。
-            -->
-            <template #status>
-              <template v-if="dependencyInstallTarget(set)">
-                <n-button size="tiny" :style="buttonColorFor('critical', 'soft')"
-                  :title="t('overview.browse')" @click.stop="installDependency(set)">
-                  <DownloadOutline width="14" height="14" />
-                  {{ t('overview.browse') }}
-                </n-button>
-                <span class="tool-divider" />
-              </template>
-              <span class="tag-group">
-                <n-tag v-for="tag in tagsOf(set)" :key="tag.kind + tag.text" size="tiny"
-                  :bordered="false" class="state-tag"
-                  :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId) }"
-                  :color="tagColorForAny(tag.tone)" :title="tagTitle(set, tag)"
-                  @click.stop="onTagClick(tag)">
-                  {{ t(tag.text) }}
-                </n-tag>
-              </span>
-            </template>
-
-            <!-- 工具栏：打开目录、删除（游戏运行时禁止删除） -->
-            <template #tools>
-              <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
-                @click.stop="openDirectory(set)">
-                <FolderOpenOutline width="14" height="14" />
-              </n-button>
-              <n-button size="tiny" quaternary type="error" :title="t('modsLocal.delete')"
-                :disabled="kitchenRunning || !!deleting[set.dir_name]"
-                :loading="!!deleting[set.dir_name]" @click.stop="remove(set)">
-                <TrashOutline width="14" height="14" />
-              </n-button>
-            </template>
-
-            <!-- 展开：元数据 + 绑定地图 + 框架依赖 -->
-            <template #detail>
-              <div class="detail-grid">
-                <!--
-                  固定四行版式（爸爸定的）：中文名+作者中文名 / 英文名+作者英文名 /
-                  版本+关卡数 / 路径。两列网格按 DOM 顺序两两成行，所以这里必须两个
-                  一对地交错写，不能按「先列四个名字」的语义顺序排。
-                  info 里本来就存了中/英两个集名，作者的译名则来自绑定地图源的
-                  `group_i18n`；缺哪个都显示 `—`，而不是留空让行消失。
-                -->
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.nameZh') }}</span>
-                  <span class="detail-value">{{ set.name_zh || '—' }}</span>
-                </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.authorZh') }}</span>
-                  <span class="detail-value">{{ authorNamesOf(set).zh || '—' }}</span>
-                </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.nameEn') }}</span>
-                  <span class="detail-value">{{ set.name || '—' }}</span>
-                </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.authorEn') }}</span>
-                  <span class="detail-value">{{ authorNamesOf(set).en || '—' }}</span>
-                </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.version') }}</span>
-                  <span class="detail-value">{{ set.version || '—' }}</span>
-                </div>
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('levelSet.levelCountLabel') }}</span>
-                  <span class="detail-value">{{ set.level_count }}</span>
-                </div>
-                <!-- 绝对路径占满整行：半列宽度只够显示到盘符 -->
-                <div class="detail-row detail-row--wide">
-                  <span class="detail-label">{{ t('levelSet.path') }}</span>
-                  <span class="detail-value mono detail-value--path"
-                    :title="set.path || undefined">{{ set.path || '—' }}</span>
-                </div>
-              </div>
-
-              <!--
-                线上绑定与状态单独一节：这几项说的是「这张本地图在线上/游戏侧是
-                什么情况」，与上面四行「这张图本身是什么」不是同一类信息，混着排
-                会读不清，也会把上面固定的四行版式撑乱。
-              -->
-              <div class="detail-section">
-                <div class="detail-section-title">{{ t('levelSet.bindStatusSection') }}</div>
-                <div class="detail-grid">
-                  <div class="detail-row detail-row--wide">
-                    <span class="detail-label">{{ t('levelSet.boundMap') }}</span>
-                    <span class="detail-value">
-                      <template v-if="bindingOf(set)">
-                        {{ bindingOf(set)?.name }}
-                        <span v-if="bindingOf(set)?.tag" class="mono bound-tag">{{ bindingOf(set)?.tag }}</span>
-                        <!-- 反方向跳转：从管理页看这张图在下载页的样子 -->
-                        <n-button size="tiny" text type="primary" class="bound-link"
-                          @click.stop="linkToMap(bindingOf(set)?.map.id)">
-                          {{ t('levelSet.viewInMapDownload') }}
-                        </n-button>
-                      </template>
-                      <template v-else>—</template>
-                    </span>
-                  </div>
-                  <!-- 解析失败：原因放在详情里，卡片行只留标签 -->
-                  <div v-if="set.error" class="detail-row detail-row--wide">
-                    <span class="detail-label">{{ t('levelSet.parseError') }}</span>
-                    <span class="detail-value is-error">{{ translateBackendMessage(set.error) }}</span>
-                  </div>
-                  <div v-if="hintOf(set)" class="detail-row detail-row--wide">
-                    <span class="detail-label">{{ t('levelSet.statusHint') }}</span>
-                    <span class="detail-value">{{ hintOf(set) }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <!--
-                随包插件：与地图同处一个父目录、跟着整个集目录一起启停的 DLL。
-                它们是这张图的一部分（不是独立 MOD），所以复用 MOD 卡片的下沉
-                版本挂在这里。**没有开关**：启停由集目录的 rename 决定，单个
-                DLL 没有属于自己的开关状态，给一个会和集目录打架。点击卡片
-                展开这个 DLL 的元数据；安装侧读 ZIP 条目，这里读磁盘目录，
-                同一份 `mods::read_dll_details` 解析，只是没有 ZIP 内路径。
-                「这是随包插件」与版本号都跟在标题后面（`version` + `titleTag`），
-                不做左侧缩进：缩进只能表达从属，代价是整行往右推、右侧那列被挤窄。
-                这一节**不写分节标题**：卡片右端已经有「随包插件」标签，再加一行
-                「随包插件（N）」是把同一句话说两遍，还平白占掉一行高度。
-              -->
-              <div v-if="set.plugins?.length" class="detail-section">
-                <div class="plugin-list">
-                  <!--
-                    开关由集目录整体 rename 控制，这张卡没有开关；开关键与值照传 ——
-                    卡片判定开关值只有「快照优先、回退 props」一条规则，不按是否
-                    可开关分叉，页面插槽也因此统一在这里读一次快照。
-                  -->
-                  <LocalItemCard v-for="plugin in set.plugins" :key="plugin.file_name"
-                    :data-plugin-of="set.dir_name"
-                    :data-plugin-file="plugin.file_name"
-                    :switchable="false"
-                    :switch-key="levelSetPluginSwitchKey(set.dir_name, plugin.file_name)"
-                    :enabled="cardSwitchOn(levelSetPluginSwitchKey(set.dir_name, plugin.file_name), plugin.enabled)"
-                    :title="pluginTitle(plugin)"
-                    :title-tooltip="plugin.file_name"
-                    :version="formatVersion(plugin.version) || undefined"
-                    :title-tag="t('levelSet.bundledPlugin')"
-                    :disabled="!plugin.enabled"
-                    :expanded="levelExpansion.isInnerOpen(set.dir_name, plugin.file_name)"
-                    @activate="(card: HTMLElement) => togglePlugin(set, plugin, card)">
-                    <template #detail>
-                      <div class="detail-grid">
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.name') }}</span>
-                          <span class="detail-value">{{ plugin.name || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">GUID</span>
-                          <span class="detail-value mono">{{ plugin.guid || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsOnline.versions') }}</span>
-                          <span class="detail-value mono">{{ formatVersion(plugin.version) || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.title') }}</span>
-                          <span class="detail-value">{{ plugin.title || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.productName') }}</span>
-                          <span class="detail-value">{{ plugin.product_name || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.author') }}</span>
-                          <span class="detail-value">{{ plugin.company || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.originalFilename') }}</span>
-                          <span class="detail-value mono">{{ plugin.original_filename || '—' }}</span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.role') }}</span>
-                          <span class="detail-value">
-                            {{ plugin.role === 'dependency'
-                              ? t('tools.dependency')
-                              : t('levelSet.pluginRoleMod') }}
-                          </span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.enabled') }}</span>
-                          <span class="detail-value">
-                            {{ plugin.enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled') }}
-                          </span>
-                        </div>
-                        <div class="detail-row">
-                          <span class="detail-label">{{ t('modsLocal.file2') }}</span>
-                          <span class="detail-value mono">{{ plugin.file_name }}</span>
-                        </div>
-                      </div>
-                    </template>
-                  </LocalItemCard>
-                </div>
-              </div>
-
-              <!--
-                依赖声明：本地缺失的标红，用户重新启用前就能看到；与下载页详情、
-                MOD 安装页详情共用同一张依赖表（名称是人类可读的仓库名/包名，
-                不再需要等宽字体）。没有声明时整块不渲染，不留空分隔线。
-              -->
-              <div v-if="dependencyRows(set).length" class="detail-section detail-section--table">
-                <DependencyTable :rows="dependencyRows(set)" @jump="openDependencyJump" />
-              </div>
-            </template>
-          </LocalItemCard>
-        </div>
+        <LevelSetGroupBody :group-key="node.key" />
       </n-collapse-item>
     </n-collapse>
   </PageLoading>
@@ -1480,58 +1244,8 @@ async function checkUpdates() {
 <style scoped>
 /* 页头批量分段控件的样式在 src/styles/global.css 的 `.bulk-switch`。 */
 
-/*
- * 分组折叠：组标题行 + 组内单列卡片。
- *
- * 尺寸与 `ModsLocalView.vue` 的同名规则逐项对齐（14px 强调色标题、组内
- * 卡片 10px 竖向节奏、左侧 14px 缩进），两页的分组看起来才是同一套。
- * 卡片外壳、悬停、展开动画都由 LocalItemCard 负责，这里只管列表节奏。
- */
 .group-collapse {
   width: 100%;
-}
-
-.group-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-
-.group-head b {
-  font-size: 14px;
-  color: var(--oc2-accent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.map-grid {
-  /* 每个卡片撑满容器宽度（单列纵向堆叠） */
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 2px 0 6px 14px;
-}
-
-/*
- * 状态标签组。
- *
- * 这段样式属于**页面作用域**：标签是挂在 LocalItemCard 的 status 插槽里的，
- * 组件的 scoped 规则命中不到插槽内容。不在这里定义就会丢掉 flex 与间距，
- * 标签会换行、贴不住右侧工具栏。
- *
- * 与 MOD 管理页一致：单行不换行，超出就裁掉。地图最多两个标签
- * （依赖缺失 + 版本结论），换行会让卡片比同列表的其它卡片高出一截。
- */
-.tag-group {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
 }
 
 /* 「有更新」可点：手型 + 悬停提亮，无点击目标的标签保持默认光标 */
@@ -1541,52 +1255,6 @@ async function checkUpdates() {
 
 .state-tag--link:hover {
   filter: brightness(1.15);
-}
-
-/* 详情：两列信息网格，值允许换行（作者名 / 状态说明可能很长） */
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 18px;
-}
-
-.detail-row {
-  display: flex;
-  gap: 10px;
-  min-width: 0;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* 绝对路径单独占一行：半列宽度只够显示到盘符 */
-.detail-row--wide {
-  grid-column: 1 / -1;
-}
-
-.detail-label {
-  flex: 0 0 auto;
-  min-width: 64px;
-  color: var(--oc2-text-3);
-}
-
-.detail-value {
-  min-width: 0;
-  color: var(--oc2-text-2);
-  overflow-wrap: anywhere;
-}
-
-.detail-value.is-error {
-  color: var(--oc2-tone-critical-text);
-}
-
-/*
- * 路径单行不折行：折成两三行的绝对路径比省略号更难读，全文放在 title 里。
- * 需要 `overflow: hidden` 才轮得到 `text-overflow`，否则只是溢出被裁。
- */
-.detail-value--path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* 浮动刷新按钮转圈：与 MOD 两页同一套观感（各自页面作用域） */
@@ -1602,55 +1270,6 @@ async function checkUpdates() {
 
 @media (prefers-reduced-motion: reduce) {
   .spin-icon { animation: none; }
-}
-
-/* 等宽文本用全局 `.mono`（styles/global.css），这里只补详情行的间距 */
-.bound-tag {
-  margin-left: 6px;
-  color: var(--oc2-text-3);
-}
-
-.bound-link {
-  margin-left: 8px;
-}
-
-.detail-section {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--oc2-row-line);
-}
-
-/*
- * 依赖表专用的那一档：表格自己就有一圈边框和圆角，再叠一条虚线加两段留白，
- * 等于把「这里换内容了」说两遍。这里只保留卡片内统一的 8px 节奏，不再画分隔线。
- * 与 MOD 管理页（ModsLocalView.vue）同名同值 —— 两个页面的详情区都是块流
- * （没有 flex gap 兜底），所以两处都是 8px。
- */
-.detail-section--table {
-  margin-top: 8px;
-  padding-top: 0;
-  border-top: 0;
-}
-
-/*
- * 随包插件列表：与 MOD 管理页「包内子卡片」同一套视觉 —— 下沉底色，
- * 让人看出它们是这张图的附属物而不是同级条目。
- * 不再左缩进：「从属」由卡片标题后的「随包插件」标签说明，缩进只会把标题和
- * 版本号一起往右推，右侧留白反而更多。
- * `--card-bg` 是 `LocalItemCard` 自己读的变量，在容器上下发就能让每张子卡
- * 换成下沉底，不必去改组件内部样式。
- */
-.plugin-list {
-  display: grid;
-  gap: 8px;
-  --card-bg: var(--oc2-sunken);
-}
-
-/* 分节小标题：只做分组提示，不抢上面四行主体的视觉重量 */
-.detail-section-title {
-  margin-bottom: 6px;
-  font-size: 12px;
-  color: var(--oc2-text-3);
 }
 
 .empty {

@@ -28,6 +28,8 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 const refreshState = read('src/refreshState.ts')
 const releaseRefresh = read('src/releaseRefresh.ts')
 const repositoryEngine = read('src/composables/useRepositoryRefresh.ts')
+/** 分类里的卡片已下沉到 ModGroupBody（折叠槽索引见 `group-body-wiring.test.mjs`）。 */
+const modGroupBody = read('src/components/ModGroupBody.vue')
 const mapEngine = read('src/composables/useMapSources.ts')
 const modsLocal = read('src/views/ModsLocalView.vue')
 const modsOnline = read('src/views/ModsOnlineView.vue')
@@ -171,8 +173,8 @@ test('卡片标签由自订阅组件渲染，不依赖折叠插槽重渲染', ()
    */
   assert.match(modStatusTags, /useRepositoryRefresh\(\)/, '标签组件要自己读刷新状态')
   assert.match(modStatusTags, /runtimeModStatus\(/, '标签内容与页头聚合共用同一份判定')
-  assert.match(modsLocal, /<ModStatusTags :dll-file="mod\.dll_file" \/>/, '卡片要改用该组件')
-  assert.doesNotMatch(modsLocal, /v-for="tag in modTags\(mod\)"/, '旧的页面内联标签必须删掉')
+  assert.match(modGroupBody, /<ModStatusTags :dll-file="mod\.dll_file" \/>/, '卡片要改用该组件')
+  assert.doesNotMatch(modGroupBody, /v-for="tag in modTags\(mod\)"/, '旧的页面内联标签必须删掉')
 })
 
 test('地图管理页改用共享单例，不再自己存一份地图数据或循环调后端', () => {

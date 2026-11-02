@@ -19,6 +19,11 @@ import test from 'node:test'
 const read = (name) => readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8')
 const modsLocal = read('ModsLocalView.vue')
 const levels = read('LevelsView.vue')
+/** 组内容已下沉成独立组件（见 `group-body-wiring.test.mjs`），卡片标记去那里读。 */
+const readBody = (name) =>
+  readFileSync(new URL(`../src/components/${name}`, import.meta.url), 'utf8')
+const modGroupBody = readBody('ModGroupBody.vue')
+const levelGroupBody = readBody('LevelSetGroupBody.vue')
 
 /** 抓出某个函数体（从 `function 名(` 到下一个顶格 `}`），用来判断顺序。 */
 function bodyOf(source, name) {
@@ -55,10 +60,13 @@ test('MOD 页：独立卡与包外壳共用一套外层键，卡片带滚动定�
   assert.match(modsLocal, /const MOD_CARD_PREFIX = 'mod:'/)
   assert.match(modsLocal, /function modCardKey\(dllFile: string\)/)
   // 外层键必须落在 DOM 上：被动收起时要按它找回上一张卡量收缩量。
-  assert.match(modsLocal, /:data-expand-key="modCardKey\(mod\.dll_file\)"/)
-  assert.match(modsLocal, /:data-expand-key="pkg\.key"/)
-  assert.match(modsLocal, /:expanded="expansion\.isOuterOpen\(modCardKey\(mod\.dll_file\)\)"/)
-  assert.match(modsLocal, /expanded: expansion\.isOuterOpen\(pkg\.key\)/)
+  assert.match(modGroupBody, /:data-expand-key="ctx\.modCardKey\(mod\.dll_file\)"/)
+  assert.match(modGroupBody, /:data-expand-key="pkg\.key"/)
+  assert.match(
+    modGroupBody,
+    /:expanded="ctx\.expansion\.isOuterOpen\(ctx\.modCardKey\(mod\.dll_file\)\)"/,
+  )
+  assert.match(modGroupBody, /expanded: ctx\.expansion\.isOuterOpen\(pkg\.key\)/)
 })
 
 test('MOD 页：外层展开统一走 expandWithScroll，先量收缩量再改状态、滚动只滚一次', () => {
@@ -86,12 +94,12 @@ test('MOD 页：按键找卡片复用 expandScroll 的 cardByExpandKey（不自�
 
 test('MOD 页：包内子卡与随包依赖带包 key，落进内层状态而不是外层', () => {
   // 模板：包体里的每一张子卡（含 is_dependency 的依赖行）都把 pkg.key 传给点击处理。
-  assert.match(modsLocal, /@click="onCardClick\(\$event, mod, pkg\.key\)"/)
-  assert.match(modsLocal, /:expanded="expansion\.isInnerOpen\(pkg\.key, mod\.dll_file\)"/)
+  assert.match(modGroupBody, /@click="ctx\.onCardClick\(\$event, mod, pkg\.key\)"/)
+  assert.match(modGroupBody, /:expanded="ctx\.expansion\.isInnerOpen\(pkg\.key, mod\.dll_file\)"/)
   assert.match(modsLocal, /expansion\.openInner\(packageKey, mod\.dll_file\)/)
   assert.match(modsLocal, /expansion\.closeInner\(packageKey, mod\.dll_file\)/)
   // 依赖行与子 MOD 同一张卡片、同一条路径，只是关掉开关与标签文案。
-  assert.match(modsLocal, /:switchable="!mod\.is_dependency"/)
+  assert.match(modGroupBody, /:switchable="!mod\.is_dependency"/)
 })
 
 test('MOD 页：收起外壳连带清内层，点空白只收独立卡与内层、不许收盘外壳', () => {
@@ -116,8 +124,8 @@ test('地图页：点空白先认领二级卡，命中只收这一张、不动�
   const doc = bodyOf(levels, 'onDocumentClick')
   assert.ok(doc.indexOf('nestedPluginCard(target)') < doc.indexOf('levelExpansion.closeOuter(dirName)'),
     '必须先在点空白里认领插件卡，否则点插件详情会把整张集收掉')
-  assert.match(levels, /:data-plugin-of="set\.dir_name"/)
-  assert.match(levels, /:data-plugin-file="plugin\.file_name"/)
+  assert.match(levelGroupBody, /:data-plugin-of="set\.dir_name"/)
+  assert.match(levelGroupBody, /:data-plugin-file="plugin\.file_name"/)
   const collapse = bodyOf(levels, 'collapsePluginCard')
   assert.match(collapse, /levelExpansion\.closeInner\(dirName, fileName\)/)
   assert.doesNotMatch(collapse, /closeOuter/)

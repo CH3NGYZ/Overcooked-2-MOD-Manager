@@ -1226,18 +1226,18 @@ fn original_manifest(
         if !record.removed_manifest_files.is_empty() || record.release_tag.is_some() {
             return Err(INVALID_RECORD.into());
         }
-        for file in &record.files {
-            let relative = mods::canonical_dll_name(&file.relative);
-            let parts = relative.split('/').collect::<Vec<_>>();
-            if parts.len() < 3
-                || !parts[0].eq_ignore_ascii_case("BepInEx")
-                || !parts[1].eq_ignore_ascii_case("plugins")
-                || !Path::new(&relative)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
-            {
-                return Err(INVALID_RECORD.into());
-            }
+        /*
+         * 非包记录没有要合并的安装清单：散装 DLL 与关卡集整目录都走这条路径
+         * （`level_sets::remove_level_set` 把目录展开成文件列表再 `stage`），
+         * 所以不能再要求「必须是 BepInEx/plugins 下的 .dll」—— 关卡集的 `info`
+         * 与场景文件会被这条判定当成坏记录，恢复永远报 invalidRecord。
+         * 清单快照只可能和 `package_id` 一起出现，多出 `manifest.toml` 才是坏记录。
+         */
+        if checked_path(directory, "manifest.toml")?
+            .try_exists()
+            .map_err(io_error)?
+        {
+            return Err(INVALID_RECORD.into());
         }
         return Ok(None);
     };
@@ -2580,6 +2580,81 @@ mod tests {
             fs::read(workspace.manifests.join("peer.toml")).unwrap(),
             peer_original
         );
+    }
+
+    /// 关卡集按整目录回收（`package_id` 为 None、没有清单快照），恢复要把
+    /// `info` 与场景文件原样搬回去 —— 不能因为它们不是 .dll 就判成坏记录。
+    #[test]
+    fn restore_level_set_files_staged_without_package() {
+        let workspace = Workspace::new();
+        let info = "BepInEx/plugins/OC2DIYLevel/levels/Test Set/info";
+        let scene = "BepInEx/plugins/OC2DIYLevel/levels/Test Set/s_test_1";
+        let requires = "BepInEx/plugins/OC2DIYLevel/levels/Test Set/requires.txt";
+        workspace.write(info, b"info bytes");
+        workspace.write(scene, b"scene bytes");
+        workspace.write(requires, b"runtime");
+        let entry = stage(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            "Test Set".into(),
+            None,
+            None,
+            Vec::new(),
+            vec![info.into(), scene.into(), requires.into()],
+            None,
+            &mut || Ok(()),
+        )
+        .unwrap();
+        assert!(!workspace.game.join(info).exists());
+        restore(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &entry.id,
+        )
+        .unwrap();
+        assert_eq!(fs::read(workspace.game.join(info)).unwrap(), b"info bytes");
+        assert_eq!(
+            fs::read(workspace.game.join(scene)).unwrap(),
+            b"scene bytes"
+        );
+        assert_eq!(fs::read(workspace.game.join(requires)).unwrap(), b"runtime");
+        assert!(list(&workspace.recycle).unwrap().is_empty());
+    }
+
+    /// 没有 `package_id` 却带着清单快照的记录是坏记录（台账不一致），
+    /// 不能静默跳过清单合并把文件搬回去。
+    #[test]
+    fn restore_rejects_record_with_snapshot_but_no_package_id() {
+        let workspace = Workspace::new();
+        workspace.write(A, b"plugin");
+        let entry = stage(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            "Loose plugin".into(),
+            None,
+            None,
+            Vec::new(),
+            vec![A.into()],
+            None,
+            &mut || Ok(()),
+        )
+        .unwrap();
+        let directory = workspace.recycle.join(&entry.id);
+        fs::write(directory.join("manifest.toml"), b"snapshot").unwrap();
+        assert_eq!(
+            restore(
+                &workspace.recycle,
+                &workspace.manifests,
+                &workspace.game,
+                &entry.id,
+            )
+            .unwrap_err(),
+            INVALID_RECORD
+        );
+        assert!(!workspace.game.join(A).exists());
     }
 
     #[test]

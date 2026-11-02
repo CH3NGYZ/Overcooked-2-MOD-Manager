@@ -103,6 +103,17 @@ pub fn scan_mods_with_manifests(
     // 两套开关状态互相打架。
     let level_sets_root = crate::level_sets::levels_root(game);
     let legacy_disabled_root = crate::level_sets::legacy_disabled_root(game);
+    /*
+     * BepInEx 表层包的随包插件登记在 `manifests/level-set-plugins.json`：它们
+     * 物理上躺在 `BepInEx/plugins/` 下（作者规划好的位置，不能搬走），归属却是
+     * 地图集。出现在 MOD 列表里会让用户单独禁用一张地图的插件，与地图的
+     * 装卸语义打架 —— 与下面排除 `levels/` 是同一层规则。
+     */
+    let registered: HashSet<String> = manifest_dir
+        .map(crate::level_sets::registered_plugin_paths)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     log::debug!("开始扫描本地 MOD：插件目录={}", plugins.display());
     if !plugins.is_dir() {
         log::warn!("插件目录不存在，跳过 MOD 扫描：{}", plugins.display());
@@ -133,6 +144,19 @@ pub fn scan_mods_with_manifests(
                 }
                 let path = entry.path();
                 if path.starts_with(&level_sets_root) || path.starts_with(&legacy_disabled_root) {
+                    continue;
+                }
+                /*
+                 * 登记表里的路径是「相对游戏目录、正斜杠、小写比较」。这里用
+                 * 字面 `game` 剥前缀，不能拿 canonicalize 后的路径混着比
+                 * （与 `plugin_dll_files` 里注释的同一类坑）。
+                 */
+                let registered_hit = path
+                    .strip_prefix(game)
+                    .ok()
+                    .map(|relative| relative.to_string_lossy().replace('\\', "/").to_lowercase())
+                    .is_some_and(|relative| registered.contains(&relative));
+                if registered_hit {
                     continue;
                 }
                 paths.push(entry.into_path());
@@ -240,9 +264,22 @@ fn is_disabled_mod_file(path: &Path) -> bool {
  * `canonicalize` 之后的路径（Windows 上是 `\\?\E:\...`），而 `GameInfo.path`
  * 交给前端的是剥掉 verbatim 前缀的展示形态。把两者混着做 `strip_prefix` 会
  * 静默失配 —— 批量开关曾因此一个文件都收集不到，报「没有找到任何 MOD 插件 DLL」。
+ *
+ * BepInEx 表层包的随包插件也在这个目录里（作者规划好的位置），但归属是地图集，
+ * 由 `manifests/level-set-plugins.json` 登记。批量开关必须跳过它们，否则会把
+ * 一张地图的插件改成 `.dll.disabled` —— 与地图开关打架，而且卸载地图时登记的
+ * 路径已经不存在了。
  */
-pub fn plugin_dll_files(game_root: &Path) -> Result<Vec<String>, String> {
+pub fn plugin_dll_files(
+    game_root: &Path,
+    manifest_dir: Option<&Path>,
+) -> Result<Vec<String>, String> {
     let plugins = crate::game::safe_game_path(game_root, PLUGINS_DIR)?;
+    let registered: HashSet<String> = manifest_dir
+        .map(crate::level_sets::registered_plugin_paths)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     /*
      * 排除项按「相对 `BepInEx/plugins`」比较：上面 `plugins` 是解析后的绝对
      * 路径，而 `levels_root` 那类 helper 给的是按 `game_root` 拼出来的字面
@@ -277,10 +314,14 @@ pub fn plugin_dll_files(game_root: &Path) -> Result<Vec<String>, String> {
         if map_roots.iter().any(|root| relative.starts_with(root)) {
             continue;
         }
-        files.push(format!(
+        let dll_file = format!(
             "{PLUGINS_DIR}/{}",
             relative.to_string_lossy().replace('\\', "/")
-        ));
+        );
+        if registered.contains(&dll_file.to_lowercase()) {
+            continue;
+        }
+        files.push(dll_file);
     }
     files.sort_by_key(|file| file.to_ascii_lowercase());
     Ok(files)
@@ -3074,7 +3115,7 @@ mod tests {
         // 入参是未 canonicalize 的路径（`detect_game().path` 就是这个形态），
         // 与 safe_game_path 解析出的 verbatim 目录不是同一个字符串：
         // 直接用入参做 strip_prefix 会一个文件都收集不到。
-        let files = super::plugin_dll_files(&root).unwrap();
+        let files = super::plugin_dll_files(&root, None).unwrap();
         assert_eq!(
             files,
             vec![
@@ -3084,5 +3125,54 @@ mod tests {
             ]
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 登记在 `manifests/level-set-plugins.json` 的 DLL 归地图管，不许出现在
+    /// MOD 列表或批量启停清单里；去掉登记后又必须能扫到（否则这条测试只是
+    /// 在证明「文件没建成」）。
+    #[test]
+    fn registered_level_set_plugins_are_not_scanned_as_mods() {
+        let root = std::env::temp_dir().join(format!("oc2-registry-scan-{}", uuid::Uuid::new_v4()));
+        let plugins = root.join("BepInEx/plugins");
+        std::fs::create_dir_all(plugins.join("Fix")).unwrap();
+        std::fs::write(
+            plugins.join("Real.dll"),
+            plugin_blob("com.example.real", "Real", "1.0.0"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugins.join("Fix/Fix.dll"),
+            plugin_blob("com.example.fix", "Fix", "1.0.0"),
+        )
+        .unwrap();
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(&manifests).unwrap();
+        std::fs::write(
+            manifests.join(crate::level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+            r#"{"version":1,"entries":[{"dll":"BepInEx/plugins/Fix/Fix.dll","owner":{"name":"Set"}}]}"#,
+        )
+        .unwrap();
+
+        let config = crate::config::default_config();
+        let scanned = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
+        let names: Vec<&str> = scanned.iter().map(|item| item.dll_file.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["BepInEx/plugins/Real.dll"],
+            "登记 DLL 不该出现在 MOD 列表"
+        );
+
+        let files = super::plugin_dll_files(&root, Some(&manifests)).unwrap();
+        assert_eq!(files, vec!["BepInEx/plugins/Real.dll".to_string()]);
+
+        let without = super::scan_mods_with_manifests(&root, &config, None);
+        assert!(
+            without
+                .iter()
+                .any(|item| item.dll_file.ends_with("Fix.dll")),
+            "去掉登记后应重新被当成 MOD"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

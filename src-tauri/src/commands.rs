@@ -1496,7 +1496,7 @@ pub fn set_all_local_mods_enabled(
      * 直接从磁盘扫描，不依赖 Dashboard 快照：
      * 快照可能过期，而用户点「全部启用」时期望覆盖磁盘上真实存在的每一个插件。
      */
-    let dll_files = mods::plugin_dll_files(&game_root)?;
+    let dll_files = mods::plugin_dll_files(&game_root, Some(&state.config.manifests_dir()))?;
     if dll_files.is_empty() {
         return Err("mods.noPluginDll".into());
     }
@@ -5795,6 +5795,7 @@ pub async fn get_level_sets(
         let progress_app = app.clone();
         let sets = crate::level_sets::scan_level_sets_with_progress(
             &game_root,
+            Some(&manifests_dir),
             info_workers,
             &move |done, total, current| {
                 let _ = progress_app.emit(
@@ -5994,6 +5995,7 @@ fn zip_level_sets(
         .map(|set| ZipLevelSet {
             conflicts: conflicts.clone(),
             dir_name: set.dir_name,
+            layout: set.layout,
             name: set.metadata.name,
             name_zh: set.metadata.name_zh,
             author: set.metadata.author,
@@ -6178,6 +6180,7 @@ pub async fn import_level_sets(
     // `State` 不能跨 await：需要的值（配置快照、游戏根、操作锁）在同步段取好
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    let manifests_dir = state.config.manifests_dir();
     let operation = state.operation.clone();
     tauri::async_runtime::spawn_blocking(move || {
         log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
@@ -6210,6 +6213,34 @@ pub async fn import_level_sets(
             },
         )?;
         /*
+         * BepInEx 表层包是整包语义：一次解压写完整份目录结构，不能按集循环
+         * （循环会重复解压同一个 ZIP、重复写登记表）。历史形态仍逐个集落盘，
+         * 任一失败就停下并保留已成功的（它们已经在磁盘上），错误如实上报。
+         */
+        if sets
+            .iter()
+            .any(|set| set.layout == crate::models::LevelSetLayout::Bepinex)
+        {
+            let _ = app.emit(
+                "level-set-zip-progress",
+                LevelSetZipProgress {
+                    phase: "install".into(),
+                    done: 0,
+                    total: selected.len(),
+                    current: String::new(),
+                },
+            );
+            let installed = crate::level_sets::install_parsed_sets(
+                &sets,
+                &zip,
+                &game_root,
+                &manifests_dir,
+                &selected,
+            )?;
+            log::info!("关卡集导入完成（BepInEx 表层包）：数量={}", installed.len());
+            return Ok(LevelSetImportResult { installed });
+        }
+        /*
          * 逐个集落盘，而不是一次性全装：任一失败就停下并保留已成功的（它们
          * 已经在磁盘上），错误如实上报 —— 悄悄跳过会让用户以为全装上了。
          * 每张开始前发一条 `install` 阶段进度，用户能看到卡在哪张图上。
@@ -6230,6 +6261,7 @@ pub async fn import_level_sets(
                 &sets,
                 &zip,
                 &game_root,
+                &manifests_dir,
                 std::slice::from_ref(name),
             )?;
             installed.extend(single);
@@ -6318,6 +6350,52 @@ fn delete_level_set_blocking(
             "message.levelSet.deleted".into()
         },
     })
+}
+
+/// 一键拍平：把 `levels/` 下嵌套了几层的关卡集整理成扫描认得的规范目录。
+///
+/// `dry_run=true` 只探测候选、不写盘（页头按钮据此显示「有几个目录可以整理」）。
+/// 真正的搬移要整目录 rename，按 `Toggle` 策略拦下运行中的游戏并占操作锁。
+#[tauri::command]
+pub async fn flatten_level_sets(
+    state: State<'_, AppState>,
+    dry_run: bool,
+) -> Result<LevelSetFlattenReport, String> {
+    // 搬移可能涉及上千个文件，不能占着 IPC 线程
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || flatten_level_sets_blocking(&state, dry_run))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// [`flatten_level_sets`] 的同步实现（在阻塞线程池里跑）。
+fn flatten_level_sets_blocking(
+    state: &AppState,
+    dry_run: bool,
+) -> Result<LevelSetFlattenReport, String> {
+    let config = state.config.load_or_default();
+    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    let recycle_root = state.config.mod_recycle_bin_dir();
+    let manifests_dir = state.config.manifests_dir();
+    if dry_run {
+        // 探测只读：不锁操作、不要求游戏停止
+        return crate::level_sets::flatten_level_sets(
+            &game_root,
+            &recycle_root,
+            &manifests_dir,
+            true,
+        );
+    }
+    log::info!("开始整理地图目录：游戏目录={}", game_root.display());
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    crate::level_sets::ensure_operation_allowed(
+        &game_root,
+        crate::level_sets::LevelSetOperation::Toggle,
+    )?;
+    crate::level_sets::flatten_level_sets(&game_root, &recycle_root, &manifests_dir, false)
 }
 
 /// 列出当前地区可用的地图（含 Release 缓存）。

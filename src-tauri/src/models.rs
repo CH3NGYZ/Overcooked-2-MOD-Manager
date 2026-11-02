@@ -209,13 +209,57 @@ pub struct DllPluginInfo {
 /// 关卡集 ZIP 里的一个随包插件（作者附带、跟着地图一起装的修复 DLL）。
 ///
 /// `path` 是 ZIP 内条目路径（作者原始目录结构，仅供展示定位），`file_name`
-/// 才是落盘后的文件名 —— 导入时插件被放进关卡集目录根，只用文件名。
+/// 才是落盘后的文件名 —— 拍平形态导入时插件被放进关卡集目录根，只用文件名。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZipLevelSetPlugin {
     pub path: String,
     pub file_name: String,
+    /// 落盘位置（相对游戏目录、正斜杠归一化）。
+    ///
+    /// 只有 BepInEx 表层包会带：那种包按 ZIP 内路径原样解压，插件留在
+    /// `BepInEx/plugins/**` 里，界面用它在安装详情里说明「将安装到 …」。
+    /// 拍平形态没有这个值 —— 插件落进集目录根，位置由集目录决定。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_path: Option<String>,
     #[serde(flatten)]
     pub info: DllPluginInfo,
+}
+
+/// 关卡集目录的落盘形态。
+///
+/// `flattened` 是历史形态：ZIP 里的每个集拍平成 `levels/<集名>/`，随包插件
+/// 也搬进集目录根。`bepinex` 是「BepInEx 表层包」：作者已经把目录规划好，
+/// 导入时按 ZIP 内路径原样解压，插件留在 `BepInEx/plugins/**`，靠
+/// `manifests/level-set-plugins.json` 的登记表绑定到集身份。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LevelSetLayout {
+    #[default]
+    Flattened,
+    Bepinex,
+}
+
+/// 「一键拍平」的一个候选目录（`dry_run` 只返回这些，不写盘）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelSetFlattenCandidate {
+    /// `levels/` 下的直接子目录名。
+    pub dir_name: String,
+    /// 浅探测（≤3 层）找到的 `info` / `info_*` 文件数。
+    pub nested_infos: usize,
+}
+
+/// 「一键拍平」的结果。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LevelSetFlattenReport {
+    /// 探测到的候选目录；`dry_run=true` 时这就是全部结果。
+    #[serde(default)]
+    pub candidates: Vec<LevelSetFlattenCandidate>,
+    /// 实际拍平出来的关卡集数。
+    #[serde(default)]
+    pub flattened: usize,
+    /// 逐条失败记录（`"<目录>: <原因>"`），前端原样展示。
+    #[serde(default)]
+    pub failed: Vec<String>,
 }
 
 /// 已经装在磁盘上的随包插件（扫描关卡集目录时读出）。
@@ -260,6 +304,9 @@ pub struct InstallConflict {
 pub struct ZipLevelSet {
     /// 导入后使用的目录名（由集名推导，已清理非法字符）。
     pub dir_name: String,
+    /// 落盘形态：`flattened`（历史）或 `bepinex`（表层包原样解压）。
+    #[serde(default)]
+    pub layout: LevelSetLayout,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_zh: Option<String>,
@@ -1838,6 +1885,7 @@ mod dll_role_tests {
         let plugin = ZipLevelSetPlugin {
             path: "pkg/plugins/fix/Fix.dll".into(),
             file_name: "Fix.dll".into(),
+            install_path: None,
             info: DllPluginInfo {
                 role: DllRole::Dependency,
                 name: Some("Fix".into()),

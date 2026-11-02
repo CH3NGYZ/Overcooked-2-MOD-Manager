@@ -52,7 +52,11 @@
 //!   同名但身份不同会换名并存，等同「另一张图」。
 use crate::asset_bundle::{self, LevelSetMetadata};
 use crate::metadata_read::{MetadataKind, MetadataOutcome, MetadataRequest};
-use crate::models::{DllPluginInfo, DllRole, InstallConflict, LevelSetPlugin, ZipLevelSetPlugin};
+use crate::models::{
+    DllPluginInfo, DllRole, InstallConflict, LevelSetFlattenCandidate, LevelSetFlattenReport,
+    LevelSetLayout, LevelSetPlugin, ZipLevelSetPlugin,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -271,6 +275,7 @@ pub type ScanProgress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);
 pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
     scan_level_sets_inner(
         game_root,
+        None,
         crate::metadata_read::resolve_concurrency(
             crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
             crate::metadata_read::cores(),
@@ -292,12 +297,17 @@ pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
 ///
 /// **顺序仍然确定**：并行只改变谁先算完，结果按原下标归位；排序口径维持
 /// 「先 `levels/` 再 `disabled/`，各自按目录名排序」，界面不会因为谁先跑完而重排。
+///
+/// `manifests_dir` 用来读 BepInEx 表层包的随包插件登记表：那些 DLL 不在集
+/// 目录里，归属只能按登记的身份匹配（见 [`read_registered_plugins`]）。传
+/// `None` 时只看集目录（安装前身份扫描、单测都不需要登记表）。
 pub fn scan_level_sets_with_progress(
     game_root: &Path,
+    manifests_dir: Option<&Path>,
     workers: usize,
     progress: ScanProgress<'_>,
 ) -> Vec<LevelSetOnDisk> {
-    scan_level_sets_inner(game_root, workers, true, progress)
+    scan_level_sets_inner(game_root, manifests_dir, workers, true, progress)
 }
 
 /// 扫描本体：`migrate_legacy` 区分「地图页扫描」与「安装前身份扫描」。
@@ -307,6 +317,7 @@ pub fn scan_level_sets_with_progress(
 /// 组装只做纯内存拼装，按原下标归位。
 fn scan_level_sets_inner(
     game_root: &Path,
+    manifests_dir: Option<&Path>,
     workers: usize,
     migrate_legacy: bool,
     progress: ScanProgress<'_>,
@@ -329,7 +340,7 @@ fn scan_level_sets_inner(
      * 被两个关卡集引用时只读一次）与动态取号调度。
      */
     let mut requests: Vec<MetadataRequest> = Vec::new();
-    let mut request_set: Vec<usize> = Vec::new();
+    let mut request_set: Vec<Option<usize>> = Vec::new();
     let mut info_request: Vec<Option<usize>> = vec![None; total];
     let mut plugin_requests: Vec<Vec<usize>> = vec![Vec::new(); total];
     let pending: Vec<AtomicUsize> = (0..total).map(|_| AtomicUsize::new(0)).collect();
@@ -341,7 +352,7 @@ fn scan_level_sets_inner(
                 display_name: String::new(),
                 kind: MetadataKind::LevelSetInfo,
             });
-            request_set.push(index);
+            request_set.push(Some(index));
             pending[index].fetch_add(1, Ordering::Relaxed);
         }
         for (path, file_name, _) in &target.plugins {
@@ -351,9 +362,48 @@ fn scan_level_sets_inner(
                 display_name: file_name.clone(),
                 kind: MetadataKind::ModDll,
             });
-            request_set.push(index);
+            request_set.push(Some(index));
             pending[index].fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /*
+     * BepInEx 表层包的随包插件不在集目录里，归属只能按登记表的身份匹配
+     * （见 `read_registered_plugins`）。它们与 `info` 塞进同一批：DLL 元数据
+     * 读取彼此独立，合批才能让线程池始终有活干。
+     *
+     * 过期记录（文件已被手动删掉）与「已被手工搬回集目录」的条目不再请求：
+     * 前者读不到，后者会与集目录顶层 DLL 重复成两张卡。
+     */
+    let registered = manifests_dir
+        .map(read_registered_plugins)
+        .unwrap_or_default();
+    let active_registered: Vec<&RegisteredLevelSetPlugin> = registered
+        .iter()
+        .filter(|entry| {
+            let path = game_root.join(&entry.dll);
+            path.is_file()
+                && !targets
+                    .iter()
+                    .any(|target| target.plugins.iter().any(|(local, _, _)| local == &path))
+        })
+        .collect();
+    let mut registered_requests: Vec<usize> = Vec::with_capacity(active_registered.len());
+    for entry in &active_registered {
+        let file_name = entry
+            .dll
+            .rsplit('/')
+            .next()
+            .unwrap_or(&entry.dll)
+            .to_string();
+        registered_requests.push(requests.len());
+        requests.push(MetadataRequest {
+            path: game_root.join(&entry.dll),
+            display_name: file_name,
+            kind: MetadataKind::ModDll,
+        });
+        // 登记项不属于任何一张卡，进度只按「出卡数」算
+        request_set.push(None);
     }
 
     let finished = AtomicUsize::new(0);
@@ -362,7 +412,9 @@ fn scan_level_sets_inner(
          * 一张图的 `info` 与随包插件都读完才报它：进度数字等于「已出卡数量」，
          * 而不是「已读文件数」—— 后者会在一张图内部跳好几次，进度条看着乱。
          */
-        let set = request_set[index];
+        let Some(set) = request_set[index] else {
+            return;
+        };
         if pending[set].fetch_sub(1, Ordering::Relaxed) == 1 {
             let done = finished.fetch_add(1, Ordering::Relaxed) + 1;
             progress(done, total, &targets[set].dir_name);
@@ -382,6 +434,10 @@ fn scan_level_sets_inner(
     }
 
     let mut outcomes: Vec<Option<MetadataOutcome>> = outcomes.into_iter().map(Some).collect();
+    let registered_outcomes: Vec<Option<MetadataOutcome>> = registered_requests
+        .iter()
+        .map(|request| outcomes[*request].take())
+        .collect();
     let mut sets = Vec::with_capacity(total);
     for (index, target) in targets.into_iter().enumerate() {
         let info = info_request[index].and_then(|request| outcomes[request].take());
@@ -389,7 +445,52 @@ fn scan_level_sets_inner(
             .iter()
             .map(|request| outcomes[*request].take())
             .collect::<Vec<_>>();
-        sets.push(assemble_level_set(target, info, &plugins));
+        /*
+         * 登记 DLL 按身份归属到集：一个表层包可能带多张图，登记表按
+         * `levelSetName + name_zh + author` 匹配，与冲突判定同一套规则。
+         * `info` 读不出来的集拿不到身份，也就不认领任何登记项。
+         */
+        let registered_plugins = info
+            .as_ref()
+            .and_then(|outcome| outcome.level_set_info())
+            .map(|metadata| {
+                active_registered
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(reg_index, entry)| {
+                        if !entry.owner.matches(metadata) {
+                            return None;
+                        }
+                        let file_name = entry
+                            .dll
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&entry.dll)
+                            .to_string();
+                        // 登记项的元数据按 reg_index 对齐（registered_outcomes 就是按
+                        // registered_requests 顺序建的），不能拿 requests 里的全局下标去索引。
+                        let info = registered_outcomes
+                            .get(reg_index)
+                            .and_then(|outcome| outcome.as_ref())
+                            .and_then(|outcome| outcome.mod_dll())
+                            .cloned()
+                            .map(DllPluginInfo::from)
+                            .unwrap_or_else(|| fallback_plugin_info(&file_name));
+                        Some(LevelSetPlugin {
+                            file_name,
+                            enabled: true,
+                            info,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        sets.push(assemble_level_set(
+            target,
+            info,
+            &plugins,
+            registered_plugins,
+        ));
     }
     log::debug!(
         "关卡集扫描完成：数量={}，根={}，并行度={}",
@@ -458,6 +559,10 @@ impl LevelSetTarget {
 /// 跟着走，导出地图包时整目录打包也不会漏。`.dll.disabled` 是手动禁用的
 /// 副本，照样带出，由 `enabled` 标出来。
 ///
+/// BepInEx 表层包是例外：插件按作者规划留在 `BepInEx/plugins/**`，不在集目录
+/// 里，归属由 `manifests/level-set-plugins.json` 登记（[`read_registered_plugins`]），
+/// 扫描时按身份并入（见 `scan_level_sets_inner`）。
+///
 /// 这里只列文件、不解析：元数据由 [`crate::metadata_read`] 统一按批次读，
 /// 与 MOD 预览同源（[`crate::mods::read_dll_details`]）。
 fn collect_level_set_plugin_files(directory: &Path) -> Vec<(PathBuf, String, bool)> {
@@ -494,10 +599,14 @@ fn collect_level_set_plugin_files(directory: &Path) -> Vec<(PathBuf, String, boo
 ///
 /// `info` 缺失或解析失败都只让这张卡带上 `error`，插件与 `requires.txt`
 /// 照常保留 —— 解析失败不影响开关（见 [`LevelSetOnDisk::error`]）。
+///
+/// `registered_plugins` 是 BepInEx 表层包登记在 `manifests/level-set-plugins.json`
+/// 里、归属这张图的 DLL：它们不在集目录里，位置与元数据都由调用方按身份匹配好。
 fn assemble_level_set(
     target: LevelSetTarget,
     info: Option<MetadataOutcome>,
     plugins: &[Option<MetadataOutcome>],
+    registered_plugins: Vec<LevelSetPlugin>,
 ) -> LevelSetOnDisk {
     let (metadata, error) = match (&target.info_path, info) {
         (None, _) => (None, Some("levelSet.infoMissing".to_string())),
@@ -517,7 +626,7 @@ fn assemble_level_set(
         // 批次返回的条数与请求一一对应，走不到这里；真到了也只当解析失败
         (Some(_), None) => (None, Some(String::new())),
     };
-    let plugins = target
+    let mut plugins: Vec<LevelSetPlugin> = target
         .plugins
         .iter()
         .enumerate()
@@ -533,6 +642,8 @@ fn assemble_level_set(
                 .unwrap_or_else(|| fallback_plugin_info(file_name)),
         })
         .collect();
+    plugins.extend(registered_plugins);
+    plugins.sort_by(|left, right| left.file_name.cmp(&right.file_name));
     LevelSetOnDisk {
         dir_name: target.dir_name,
         enabled: target.enabled,
@@ -612,6 +723,184 @@ fn locate_info_file(directory: &Path) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+// ===== 随包插件登记表 =====
+//
+// BepInEx 表层包按 ZIP 内路径原样解压，插件留在 `BepInEx/plugins/**`，不再与
+// `info` 同处集目录。绑定关系因此没法靠物理位置读回（见 `collect_level_set_plugin_files`
+// 的注释），改成一张显式登记表：`manifests/level-set-plugins.json`。没有它，
+// 这些 DLL 会被 MOD 扫描当成普通 MOD，用户能单独禁用它 —— 与「随地图一起
+// 装卸」的语义打架。
+//
+// 表里只记「DLL 相对游戏目录的路径 + 归属集身份」，不记名称/版本：那些仍由
+// 扫描时按 DLL 内容读（`mods::read_dll_details`），与 MOD 预览同源。
+
+/// 登记表文件名（`manifests/` 下）。
+pub const LEVEL_SET_PLUGIN_REGISTRY: &str = "level-set-plugins.json";
+
+/// 登记表结构版本：格式变化时递增，读到不认识的更高版本按空表处理。
+const LEVEL_SET_PLUGIN_REGISTRY_VERSION: u32 = 1;
+
+/// 登记表里的关卡集身份（`levelSetName + levelSetNameZH + author`）。
+///
+/// 与 `level_set_identity_matches` 同一套规则：中文名允许为空（老资源不写），
+/// 空英文名不匹配任何东西。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LevelSetPluginOwner {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub name_zh: String,
+    #[serde(default)]
+    pub author: String,
+}
+
+impl LevelSetPluginOwner {
+    pub fn from_metadata(metadata: &LevelSetMetadata) -> Self {
+        Self {
+            name: metadata.name.clone(),
+            name_zh: metadata.name_zh.clone().unwrap_or_default(),
+            author: metadata.author.clone(),
+        }
+    }
+
+    /// 与一张已解析的关卡集是否同一身份。
+    pub fn matches(&self, metadata: &LevelSetMetadata) -> bool {
+        level_set_identity_matches(
+            &metadata.name,
+            metadata.name_zh.as_deref(),
+            &metadata.author,
+            &self.name,
+            Some(self.name_zh.as_str()).filter(|value| !value.is_empty()),
+            &self.author,
+        )
+    }
+}
+
+/// 登记表里的一条：一个随包 DLL 与它的归属集身份。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisteredLevelSetPlugin {
+    /// 相对游戏目录的路径，正斜杠归一化（`BepInEx/plugins/X/Y.dll`）。
+    pub dll: String,
+    #[serde(default)]
+    pub owner: LevelSetPluginOwner,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LevelSetPluginRegistryFile {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    entries: Vec<RegisteredLevelSetPlugin>,
+}
+
+fn registry_path(manifests_dir: &Path) -> PathBuf {
+    manifests_dir.join(LEVEL_SET_PLUGIN_REGISTRY)
+}
+
+/// 归一化登记路径：正斜杠、去掉 `./` 前缀、必须是安全的相对路径。
+///
+/// 登记表是磁盘上的普通 JSON，可能被用户手改；路径直接参与「跳过 MOD 扫描」
+/// 与「卸载时删文件」，所以读到不安全的值一律丢弃而不是原样使用。
+fn normalize_registered_dll(dll: &str) -> Option<String> {
+    let normalized = dll.trim().replace('\\', "/");
+    let normalized = normalized.trim_start_matches("./").to_string();
+    if !is_safe_relative(&normalized) {
+        return None;
+    }
+    Some(normalized)
+}
+
+/// 读登记表。
+///
+/// 文件不存在、解析失败、版本比当前新都返回空表：登记表只影响「哪些 DLL 归
+/// 地图」，坏掉时退回「都算 MOD」的旧行为，不能让整次扫描失败。
+pub fn read_registered_plugins(manifests_dir: &Path) -> Vec<RegisteredLevelSetPlugin> {
+    let path = registry_path(manifests_dir);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let parsed: LevelSetPluginRegistryFile = match serde_json::from_str(&text) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            log::warn!(
+                "随包插件登记表解析失败，按空表处理：文件={}，原因={}",
+                path.display(),
+                error
+            );
+            return Vec::new();
+        }
+    };
+    if parsed.version > LEVEL_SET_PLUGIN_REGISTRY_VERSION {
+        log::warn!(
+            "随包插件登记表版本比当前程序新，按空表处理：文件={}，版本={}",
+            path.display(),
+            parsed.version
+        );
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    parsed
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            let dll = normalize_registered_dll(&entry.dll)?;
+            if !seen.insert(dll.to_lowercase()) {
+                return None;
+            }
+            Some(RegisteredLevelSetPlugin {
+                dll,
+                owner: entry.owner,
+            })
+        })
+        .collect()
+}
+
+/// 写登记表（先写临时文件再改名，与安装清单同一手法：中途失败不会留下半个 JSON）。
+pub fn write_registered_plugins(
+    manifests_dir: &Path,
+    entries: &[RegisteredLevelSetPlugin],
+) -> Result<(), String> {
+    fs::create_dir_all(manifests_dir).map_err(|error| error.to_string())?;
+    let file = LevelSetPluginRegistryFile {
+        version: LEVEL_SET_PLUGIN_REGISTRY_VERSION,
+        entries: entries.to_vec(),
+    };
+    let text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())?;
+    let path = registry_path(manifests_dir);
+    let temp = manifests_dir.join(format!(
+        "{LEVEL_SET_PLUGIN_REGISTRY}.{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(&temp, text).map_err(|error| error.to_string())?;
+    fs::rename(&temp, &path).map_err(|error| {
+        let _ = fs::remove_file(&temp);
+        error.to_string()
+    })
+}
+
+/// 登记表里全部 DLL 的路径（小写、正斜杠），供 MOD 扫描避让。
+pub fn registered_plugin_paths(manifests_dir: &Path) -> Vec<String> {
+    read_registered_plugins(manifests_dir)
+        .into_iter()
+        .map(|entry| entry.dll.to_lowercase())
+        .collect()
+}
+
+/// 把新登记的条目并进已有登记表：同一个 DLL 以新归属为准（重装 / 换包）。
+fn merge_registered_plugins(
+    existing: Vec<RegisteredLevelSetPlugin>,
+    added: Vec<RegisteredLevelSetPlugin>,
+) -> Vec<RegisteredLevelSetPlugin> {
+    let mut merged = existing;
+    for entry in added {
+        let key = entry.dll.to_lowercase();
+        merged.retain(|current| current.dll.to_lowercase() != key);
+        merged.push(entry);
+    }
+    merged.sort_by(|left, right| left.dll.to_lowercase().cmp(&right.dll.to_lowercase()));
+    merged
 }
 
 // ===== info 解析缓存 =====
@@ -1059,7 +1348,8 @@ mod identity_tests {
 /// `info` 的目录直接跳过（读不出身份就无法判定冲突，交给 `install_from_zip`
 /// 按目录名规则处理）。目录名排序，冲突行顺序才稳定。
 fn installed_level_sets(game_root: &Path, workers: usize) -> Vec<LevelSetOnDisk> {
-    scan_level_sets_inner(game_root, workers, false, &|_, _, _| {})
+    // 冲突判定只看身份（info），不需要随包插件，所以不传登记表
+    scan_level_sets_inner(game_root, None, workers, false, &|_, _, _| {})
         .into_iter()
         .filter(|set| set.metadata.is_some())
         .collect()
@@ -1190,6 +1480,7 @@ mod conflict_tests {
             metadata,
             files: Vec::new(),
             plugins: Vec::new(),
+            layout: LevelSetLayout::Flattened,
         }
     }
 
@@ -1358,7 +1649,13 @@ mod conflict_tests {
             "同名但身份不同的停用目录不算冲突"
         );
 
-        let installed = install_from_zip(&zip, &game, &["RW_LevelSet".to_string()]).unwrap();
+        let installed = install_from_zip(
+            &zip,
+            &game,
+            &game.join("manifests"),
+            &["RW_LevelSet".to_string()],
+        )
+        .unwrap();
         assert_eq!(installed.len(), 1);
         assert_ne!(
             installed[0], "RW_LevelSet",
@@ -1562,6 +1859,29 @@ pub fn remove_level_set(
     recycle: bool,
 ) -> Result<(), String> {
     let set_dir = locate_level_set_directory(game_root, dir_name, enabled)?;
+    /*
+     * BepInEx 表层包的随包插件不在集目录里：按身份从登记表里取出属于它的
+     * DLL，卸载时一起回收并清掉登记 —— 否则插件留在 `BepInEx/plugins` 里
+     * 继续被加载，用户以为「地图删干净了」。
+     */
+    let metadata = locate_info_file(&set_dir).and_then(|info| read_info_metadata(&info).ok());
+    let registered = read_registered_plugins(manifests_dir);
+    let owned: Vec<RegisteredLevelSetPlugin> = match &metadata {
+        Some(metadata) => registered
+            .iter()
+            .filter(|entry| entry.owner.matches(metadata))
+            .cloned()
+            .collect(),
+        // 读不出身份就不猜：只删集目录，登记表保持原样（过期记录扫描会跳过）
+        None => Vec::new(),
+    };
+    let registered_files: Vec<String> = owned
+        .iter()
+        .filter(|entry| game_root.join(&entry.dll).is_file())
+        .map(|entry| entry.dll.clone())
+        .collect();
+    let plugins_root = game_root.join("BepInEx/plugins");
+
     if !recycle {
         // 用户关掉了「删除 MOD 时优先放入回收站」：路径归属已校验，直接删
         fs::remove_dir_all(&set_dir).map_err(|error| {
@@ -1570,10 +1890,24 @@ pub fn remove_level_set(
                 &[("reason", &error.to_string())],
             )
         })?;
+        for dll in &registered_files {
+            let path = game_root.join(dll);
+            if let Err(error) = fs::remove_file(&path) {
+                log::warn!(
+                    "随包插件删除失败，文件可能已被占用：文件={}，原因={}",
+                    path.display(),
+                    error
+                );
+                continue;
+            }
+            remove_empty_parents(&path, &plugins_root);
+        }
+        forget_registered_plugins(manifests_dir, &registered, &owned, dir_name);
         log::info!("关卡集已删除（未进回收站）：目录={}", dir_name);
         return Ok(());
     }
-    let files = collect_files(game_root, &set_dir)?;
+    let mut files = collect_files(game_root, &set_dir)?;
+    files.extend(registered_files.iter().cloned());
     if files.is_empty() {
         fs::remove_dir_all(&set_dir).map_err(|error| {
             crate::locale_tag::with_params(
@@ -1581,13 +1915,14 @@ pub fn remove_level_set(
                 &[("reason", &error.to_string())],
             )
         })?;
+        forget_registered_plugins(manifests_dir, &registered, &owned, dir_name);
         log::info!("关卡集目录为空，已直接移除：目录={}", dir_name);
         return Ok(());
     }
     // 回收记录用集名显示（界面语言下的名字）；info 读不出来时退回目录名
-    let name = locate_info_file(&set_dir)
-        .and_then(|info| read_info_metadata(&info).ok())
-        .map(|metadata| metadata.name)
+    let name = metadata
+        .as_ref()
+        .map(|metadata| metadata.name.clone())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| dir_name.to_string());
     crate::recycle_bin::stage(
@@ -1607,8 +1942,40 @@ pub fn remove_level_set(
      * 一个「缺 info」的坏关卡集继续显示在列表里。
      */
     remove_empty_directories(&set_dir);
+    for dll in &registered_files {
+        remove_empty_parents(&game_root.join(dll), &plugins_root);
+    }
+    forget_registered_plugins(manifests_dir, &registered, &owned, dir_name);
     log::info!("关卡集已移入回收站：目录={}", dir_name);
     Ok(())
+}
+
+/// 从登记表里删掉 `owned` 里的条目（卸载关卡集时用）。
+///
+/// 写失败只 warn：集目录与 DLL 已经处理完，这里失败最多留下几条指向不存在
+/// 文件的记录 —— 扫描会跳过它们，不值得把「卸载成功」变成错误。
+fn forget_registered_plugins(
+    manifests_dir: &Path,
+    registered: &[RegisteredLevelSetPlugin],
+    owned: &[RegisteredLevelSetPlugin],
+    dir_name: &str,
+) {
+    if owned.is_empty() {
+        return;
+    }
+    let owned_keys: HashSet<String> = owned.iter().map(|entry| entry.dll.to_lowercase()).collect();
+    let remaining: Vec<RegisteredLevelSetPlugin> = registered
+        .iter()
+        .filter(|entry| !owned_keys.contains(&entry.dll.to_lowercase()))
+        .cloned()
+        .collect();
+    if let Err(error) = write_registered_plugins(manifests_dir, &remaining) {
+        log::warn!(
+            "清随包插件登记失败，可能留下指向不存在文件的记录：目录={}，原因={}",
+            dir_name,
+            error
+        );
+    }
 }
 
 /// 自底向上删除空目录；非空目录保留。
@@ -1629,11 +1996,459 @@ fn remove_empty_directories(path: &Path) {
     let _ = fs::remove_dir(path);
 }
 
+// ===== 一键拍平 =====
+//
+// 扫描口径刻意只读 `levels` 下第一层：递归会把停用根、插件目录、备份目录都
+// 扫进来，也会让「一个 info 就是一个集」的判定失效。作者多层打包的目录因此
+// 扫不出来 —— 与其让扫描猜，不如提供一次显式的整理动作：把嵌套的集搬成
+// `levels/<规范集名>/`，之后一切照旧。
+
+/// 浅探测层数上限：`levels/<目录>` 自身算第 0 层，最多再往下 3 层找 `info`。
+const FLATTEN_PROBE_DEPTH: usize = 3;
+
+/// 有界浅探测：找出一个目录里（≤3 层）全部 `info` / `info_*` 文件。
+fn find_nested_info_files(directory: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![(directory.to_path_buf(), 0usize)];
+    while let Some((current, depth)) = stack.pop() {
+        if depth > FLATTEN_PROBE_DEPTH {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        let mut children: Vec<PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                children.push(path);
+                continue;
+            }
+            if !kind.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if is_info_file(&name) {
+                found.push(path);
+            }
+        }
+        children.sort();
+        for child in children {
+            stack.push((child, depth + 1));
+        }
+    }
+    found.sort();
+    found
+}
+
+/// 递归列出一个目录下的全部文件，路径相对该目录、正斜杠归一化。
+fn collect_relative_files(directory: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(directory).follow_links(false) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Ok(relative) = entry.path().strip_prefix(directory) else {
+            continue;
+        };
+        files.push(relative.to_string_lossy().replace('\\', "/"));
+    }
+    files.sort();
+    files
+}
+
+/// `path` 相对 `base` 的正斜杠路径（`path == base` 时是空串）。
+fn relative_forward(base: &Path, path: &Path) -> String {
+    path.strip_prefix(base)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
+}
+
+/// 拍平计划里的一个关卡集。
+struct PlannedFlattenSet {
+    /// `levels/` 下的直接子目录名（失败记录按它归属）。
+    outer: String,
+    info_path: PathBuf,
+    metadata: LevelSetMetadata,
+    /// 由集名派生的基础目录名（还没做撞车消歧）。
+    base_name: String,
+    /// 最终目录名（消歧后）。
+    dir_name: String,
+    /// 与 `info` 同目录、要一起搬走的文件（不含其它可解析的 `info*`）。
+    resources: Vec<PathBuf>,
+    /// 归属这个集的 DLL（作者放在 `plugins*` 子树里）。
+    plugins: Vec<PathBuf>,
+    /// 这些 DLL 同目录的资源文件。
+    plugin_resources: Vec<PathBuf>,
+}
+
+/// 一键拍平：把 `levels/<目录>` 里嵌套的关卡集搬成 `levels/<规范集名>/`。
+///
+/// `dry_run` 只探测、不写盘。真正的搬移按外层目录分组：一个外层目录要么整体
+/// 成功、要么整体回滚 —— 半个搬完的目录比不动更难收拾。
+///
+/// 空出来的嵌套壳与「没归到任何集」的剩余文件进回收站，不直接删除：它们可能
+/// 是作者随包的资源或说明，静默删掉就找不回来了。
+pub fn flatten_level_sets(
+    game_root: &Path,
+    recycle_root: &Path,
+    manifests_dir: &Path,
+    dry_run: bool,
+) -> Result<LevelSetFlattenReport, String> {
+    flatten_level_sets_with(game_root, recycle_root, manifests_dir, dry_run, &|path| {
+        read_info_metadata(path)
+    })
+}
+
+/// 拍平本体：`parse_info` 可注入，单测用它喂假元数据（不依赖真实 `info` 字节）。
+fn flatten_level_sets_with<F>(
+    game_root: &Path,
+    recycle_root: &Path,
+    manifests_dir: &Path,
+    dry_run: bool,
+    parse_info: &F,
+) -> Result<LevelSetFlattenReport, String>
+where
+    F: Fn(&Path) -> Result<LevelSetMetadata, String>,
+{
+    let levels_dir = levels_root(game_root);
+    if !levels_dir.is_dir() {
+        return Ok(LevelSetFlattenReport::default());
+    }
+    let mut names: Vec<String> = fs::read_dir(&levels_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+
+    let mut candidates = Vec::new();
+    for name in &names {
+        let directory = levels_dir.join(name);
+        // 顶层就有 `info` 的目录本来就是一张卡，扫描认得出，不需要整理
+        if locate_info_file(&directory).is_some() {
+            continue;
+        }
+        let nested = find_nested_info_files(&directory);
+        if nested.is_empty() {
+            continue;
+        }
+        candidates.push(LevelSetFlattenCandidate {
+            dir_name: name.clone(),
+            nested_infos: nested.len(),
+        });
+    }
+    if dry_run {
+        return Ok(LevelSetFlattenReport {
+            candidates,
+            flattened: 0,
+            failed: Vec::new(),
+        });
+    }
+
+    let mut plans: Vec<PlannedFlattenSet> = Vec::new();
+    let mut base_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for candidate in &candidates {
+        let outer_dir = levels_dir.join(&candidate.dir_name);
+        let entries = collect_relative_files(&outer_dir);
+        // 解析每份嵌套 info；解析不出来的当随包资源（实测 `宜/` 里的 `info_yil`）
+        let mut parsed: Vec<(PathBuf, LevelSetMetadata)> = Vec::new();
+        for info_path in find_nested_info_files(&outer_dir) {
+            match parse_info(&info_path) {
+                Ok(metadata) => parsed.push((info_path, metadata)),
+                Err(reason) => log::debug!(
+                    "拍平：嵌套 info 不是关卡集，按资源保留：文件={}，原因={}",
+                    info_path.display(),
+                    reason
+                ),
+            }
+        }
+        if parsed.is_empty() {
+            log::info!(
+                "拍平：目录里没有可识别的关卡集，跳过：目录={}",
+                candidate.dir_name
+            );
+            continue;
+        }
+        /*
+         * 插件归属复用 ZIP 导入的两级规则：`assign_plugins` 只认「与 info 同
+         * 目录」和「`plugins*` 子树」两种位置，正好覆盖作者的真实写法。
+         */
+        let set_dirs: Vec<(String, LevelSetMetadata, String)> = parsed
+            .iter()
+            .map(|(info_path, metadata)| {
+                let source_dir = info_path.parent().unwrap_or(&outer_dir);
+                let relative = relative_forward(&outer_dir, source_dir);
+                let base = sanitize_dir_name(&metadata.name)
+                    .or_else(|| {
+                        source_dir
+                            .file_name()
+                            .and_then(|name| sanitize_dir_name(&name.to_string_lossy()))
+                    })
+                    .unwrap_or_else(|| "LevelSet".to_string());
+                (relative, metadata.clone(), base)
+            })
+            .collect();
+        let plugin_owner = assign_plugins(&entries, &set_dirs);
+        // 同一批里多张集共用同一个基础名时全部带后缀（与 ZIP 导入同规则）
+        for (_, _, base) in &set_dirs {
+            *base_counts.entry(base.to_lowercase()).or_default() += 1;
+        }
+        // 同目录资源只归第一张集：两个集共处一目录时资源归属无从判断
+        let mut claimed: HashSet<PathBuf> = HashSet::new();
+        /*
+         * 只有**可解析**的 info 属于各自的集；解析不出来的 info*（实测
+         * `宜/` 里的 `info_yil`）是随包资源，跟着第一张集一起搬走。
+         */
+        let parsed_infos: HashSet<PathBuf> = parsed.iter().map(|(path, _)| path.clone()).collect();
+        for (index, (info_path, metadata)) in parsed.into_iter().enumerate() {
+            let source_dir = info_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| outer_dir.clone());
+            let mut resources = Vec::new();
+            if let Ok(siblings) = fs::read_dir(&source_dir) {
+                let mut siblings: Vec<_> = siblings.flatten().collect();
+                siblings.sort_by_key(|entry| entry.file_name());
+                for sibling in siblings {
+                    if !sibling.file_type().is_ok_and(|kind| kind.is_file()) {
+                        continue;
+                    }
+                    let path = sibling.path();
+                    let name = sibling.file_name().to_string_lossy().into_owned();
+                    if parsed_infos.contains(&path) || name.to_lowercase().ends_with(".dll") {
+                        continue;
+                    }
+                    if claimed.insert(path.clone()) {
+                        resources.push(path);
+                    }
+                }
+            }
+            let mut plugins = Vec::new();
+            let mut plugin_resources = Vec::new();
+            for entry in plugin_owner
+                .get(&set_dirs[index].0)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let path = outer_dir.join(&entry);
+                if !path.is_file() {
+                    continue;
+                }
+                if !claimed.insert(path.clone()) {
+                    continue;
+                }
+                plugins.push(path.clone());
+                // 插件同目录的资源（配置、依赖文件）一起搬，否则插件找不到它们
+                if let Some(parent) = path.parent() {
+                    if let Ok(siblings) = fs::read_dir(parent) {
+                        let mut siblings: Vec<_> = siblings.flatten().collect();
+                        siblings.sort_by_key(|entry| entry.file_name());
+                        for sibling in siblings {
+                            if !sibling.file_type().is_ok_and(|kind| kind.is_file()) {
+                                continue;
+                            }
+                            let sibling_path = sibling.path();
+                            let name = sibling.file_name().to_string_lossy().into_owned();
+                            if name.to_lowercase().ends_with(".dll") {
+                                continue;
+                            }
+                            if claimed.insert(sibling_path.clone()) {
+                                plugin_resources.push(sibling_path);
+                            }
+                        }
+                    }
+                }
+            }
+            plans.push(PlannedFlattenSet {
+                outer: candidate.dir_name.clone(),
+                info_path,
+                metadata,
+                base_name: set_dirs[index].2.clone(),
+                dir_name: String::new(),
+                resources,
+                plugins,
+                plugin_resources,
+            });
+        }
+    }
+
+    /*
+     * 目录名与 ZIP 导入同一套消歧：先避开 levels 与停用根里已有的目录名，
+     * 同一批重名的全部带后缀 —— 结果不取决于目录遍历顺序。
+     */
+    let mut taken = collect_dir_names(&levels_dir);
+    taken.extend(collect_dir_names(&disabled_root(game_root)));
+    for plan in &mut plans {
+        let allow_base = base_counts
+            .get(&plan.base_name.to_lowercase())
+            .copied()
+            .unwrap_or(0)
+            < 2;
+        plan.dir_name = allocate_dir_name(&plan.base_name, &plan.metadata, &mut taken, allow_base);
+    }
+
+    let mut flattened = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for candidate in &candidates {
+        let indices: Vec<usize> = plans
+            .iter()
+            .enumerate()
+            .filter(|(_, plan)| plan.outer == candidate.dir_name)
+            .map(|(index, _)| index)
+            .collect();
+        if indices.is_empty() {
+            continue;
+        }
+        let outer_dir = levels_dir.join(&candidate.dir_name);
+        let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut created: Vec<PathBuf> = Vec::new();
+        match execute_flatten_group(&plans, &indices, &levels_dir, &mut moved, &mut created) {
+            Ok(count) => {
+                flattened += count;
+                let leftovers = collect_files(game_root, &outer_dir).unwrap_or_default();
+                if !leftovers.is_empty() {
+                    if let Err(error) = crate::recycle_bin::stage(
+                        recycle_root,
+                        manifests_dir,
+                        game_root,
+                        candidate.dir_name.clone(),
+                        None,
+                        None,
+                        Vec::new(),
+                        leftovers,
+                        None,
+                        &mut || Ok(()),
+                    ) {
+                        log::warn!(
+                            "拍平：目录剩余文件进回收站失败，保留现场：目录={}，原因={}",
+                            candidate.dir_name,
+                            error
+                        );
+                    }
+                }
+                remove_empty_directories(&outer_dir);
+                log::info!("拍平完成：目录={}，关卡集={}", candidate.dir_name, count);
+            }
+            Err(reason) => {
+                rollback_flatten_group(&moved, &created);
+                log::warn!("拍平失败：目录={}，原因={}", candidate.dir_name, reason);
+                failed.push(format!("{}: {}", candidate.dir_name, reason));
+            }
+        }
+    }
+    log::info!(
+        "一键拍平完成：候选={}，成功={}，失败={}",
+        candidates.len(),
+        flattened,
+        failed.len()
+    );
+    Ok(LevelSetFlattenReport {
+        candidates,
+        flattened,
+        failed,
+    })
+}
+
+/// 执行一个外层目录下的全部搬移；任一步失败由调用方回滚。
+fn execute_flatten_group(
+    plans: &[PlannedFlattenSet],
+    indices: &[usize],
+    levels_dir: &Path,
+    moved: &mut Vec<(PathBuf, PathBuf)>,
+    created: &mut Vec<PathBuf>,
+) -> Result<usize, String> {
+    for &index in indices {
+        let plan = &plans[index];
+        let target = levels_dir.join(&plan.dir_name);
+        if target.exists() {
+            return Err(crate::locale_tag::with_params(
+                "levelSet.targetExists",
+                &[("name", &plan.dir_name)],
+            ));
+        }
+        fs::create_dir_all(&target).map_err(|error| error.to_string())?;
+        created.push(target.clone());
+        // `info_*` 落成固定名 `info`：DLL 只认这个（与 ZIP 导入同一规则）
+        move_flatten_file(&plan.info_path, &target.join("info"), moved)?;
+        for resource in &plan.resources {
+            let Some(name) = resource.file_name() else {
+                continue;
+            };
+            move_flatten_file(resource, &target.join(name), moved)?;
+        }
+        for plugin in &plan.plugins {
+            let Some(name) = plugin.file_name() else {
+                continue;
+            };
+            move_flatten_file(plugin, &target.join(name), moved)?;
+        }
+        for resource in &plan.plugin_resources {
+            let Some(name) = resource.file_name() else {
+                continue;
+            };
+            move_flatten_file(resource, &target.join(name), moved)?;
+        }
+    }
+    Ok(indices.len())
+}
+
+/// 搬一个文件并记下「从哪到哪」，供失败时逆序还原。
+fn move_flatten_file(
+    from: &Path,
+    to: &Path,
+    moved: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<(), String> {
+    if to.exists() {
+        return Err(crate::locale_tag::with_params(
+            "levelSet.targetExists",
+            &[("name", &to.to_string_lossy().to_string())],
+        ));
+    }
+    fs::rename(from, to).map_err(|error| {
+        crate::locale_tag::with_params("levelSet.writeFailed", &[("reason", &error.to_string())])
+    })?;
+    moved.push((from.to_path_buf(), to.to_path_buf()));
+    Ok(())
+}
+
+/// 回滚一个外层目录的搬移：文件逆序搬回原处，再删掉新建的集目录。
+fn rollback_flatten_group(moved: &[(PathBuf, PathBuf)], created: &[PathBuf]) {
+    for (from, to) in moved.iter().rev() {
+        if let Some(parent) = from.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if fs::rename(to, from).is_err() {
+            log::warn!(
+                "拍平回滚失败，文件留在新位置：从={}，到={}",
+                to.display(),
+                from.display()
+            );
+        }
+    }
+    for directory in created.iter().rev() {
+        remove_empty_directories(directory);
+    }
+}
+
 /// ZIP 里识别出的一个关卡集。
 #[derive(Debug, Clone)]
 pub struct ImportedLevelSet {
     /// 导入后使用的目录名。
     pub dir_name: String,
+    /// 落盘形态：拍平（历史）还是 BepInEx 表层包原样解压。
+    ///
+    /// 安装流程按它分叉：表层包不改名、不搬插件，只把 ZIP 内路径原样落到
+    /// 游戏目录并登记插件归属（见 [`install_bepinex_layer_sets`]）。
+    pub layout: LevelSetLayout,
     /// 该关卡集的 `info` 文件内容解析结果。
     pub metadata: LevelSetMetadata,
     /// ZIP 内该关卡集的文件：条目名 → 去掉关卡集前缀后的相对路径。
@@ -1978,6 +2793,221 @@ fn prepare_zip_plugin<R: Read + Seek>(
     prepared
 }
 
+// ===== BepInEx 表层包 =====
+//
+// 社区包有两种形态：历史形态是「一堆 `info` + `s_*` + `plugins` 子树」，导入时
+// 拍平成 `levels/<集名>/`；另一种是作者直接把整个 BepInEx 目录规划好（顶层就是
+// `BepInEx/plugins/...`）。后者再拍平会破坏作者放好的结构（插件被搬进集目录、
+// `plugins/X/` 旁边的资源找不到），所以按 ZIP 内路径原样解压，插件留在
+// `BepInEx/plugins/**`，归属写进登记表。
+
+/// ZIP 内 `BepInEx/plugins/` 前缀（小写比较；条目名已归一化成 `/`）。
+const BEPINEX_PLUGINS_PREFIX: &str = "bepinex/plugins/";
+
+/// ZIP 内 DIYLevel 的 `levels/` 根前缀（小写比较）。
+const BEPINEX_LEVELS_PREFIX: &str = "bepinex/plugins/oc2diylevel/levels/";
+
+fn is_bepinex_layer_entry(name: &str) -> bool {
+    name.to_lowercase().starts_with(BEPINEX_PLUGINS_PREFIX)
+}
+
+/// ZIP 是否是 BepInEx 表层包：存在 `BepInEx/plugins/` 前缀的条目。
+///
+/// 大小写不敏感（作者在 Windows 上打包，`BepInEx` / `bepinex` 都可能写出来），
+/// 条目名在上层已归一化成正斜杠并剔掉 `__MACOSX/` 垃圾。
+fn is_bepinex_layer_zip(entries: &[String]) -> bool {
+    entries.iter().any(|entry| is_bepinex_layer_entry(entry))
+}
+
+/// `levels/` 根下的直接子目录名（原始大小写）；不是直接子目录时返回 `None`。
+///
+/// 只认直接子目录：更深层的东西（作者塞在集目录里的子目录、备份目录）按原样
+/// 解压，不单独成卡 —— 一张卡必须对应一个 `info`。
+fn bepinex_level_set_dir_name(directory: &str) -> Option<&str> {
+    let lower = directory.to_lowercase();
+    let rest = lower.strip_prefix(BEPINEX_LEVELS_PREFIX)?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    directory.rsplit('/').next()
+}
+
+/// 识别一个 BepInEx 表层包：`levels/` 根的直接子目录是关卡集，其余
+/// `BepInEx/plugins/**` 的 DLL 是随包插件。
+fn inspect_bepinex_layer(
+    zip_path: &Path,
+    all_entries: &[String],
+    by_directory: &BTreeMap<String, Vec<String>>,
+    index_by_name: &HashMap<String, usize>,
+    info_candidates: BTreeMap<String, Vec<(usize, String)>>,
+    info_workers: usize,
+    plugin_workers: usize,
+    progress: &(dyn Fn(usize, usize, &str) + Sync),
+) -> Result<Vec<ImportedLevelSet>, String> {
+    // 同名（仅大小写不同）目录只取第一个：Windows 上它们是同一个目录
+    let mut set_directories: BTreeMap<String, (String, Vec<(usize, String)>)> = BTreeMap::new();
+    for (directory, candidates) in info_candidates {
+        if bepinex_level_set_dir_name(&directory).is_none() {
+            continue;
+        }
+        set_directories
+            .entry(directory.to_lowercase())
+            .or_insert((directory, candidates));
+    }
+    if set_directories.is_empty() {
+        return Err("levelSet.zipWithoutInfo".into());
+    }
+    let info_tasks: Vec<InfoDirectory> = set_directories
+        .into_values()
+        .map(|(directory, candidates)| InfoDirectory {
+            directory,
+            candidates,
+        })
+        .collect();
+    /*
+     * 表层包里 `levels/<目录>` 是作者规划好的位置，杂项文件（备份 info、说明）
+     * 不该让整包识别失败，所以用宽松模式：解析不出来的目录跳过。
+     */
+    let parsed_metadata =
+        parse_zip_info_directories(zip_path, &info_tasks, info_workers, false, progress)?;
+
+    // 目录名用 ZIP 里的真实目录名：表层包按原样解压，不替作者改名
+    let mut parsed_sets: Vec<(String, LevelSetMetadata, String)> = Vec::new();
+    for (directory, metadata) in parsed_metadata {
+        let Some(dir_name) = directory.rsplit('/').next().map(str::to_string) else {
+            continue;
+        };
+        parsed_sets.push((directory, metadata, dir_name));
+    }
+    if parsed_sets.is_empty() {
+        return Err("levelSet.zipWithoutInfo".into());
+    }
+
+    /*
+     * 随包插件 = `BepInEx/plugins/` 下、不在 `levels/` 根里的 DLL。
+     *
+     * 归属复用历史形态的两级规则（`assign_plugins`）：表层包的目录名与集名
+     * 通常对得上，按名字打分能挑出正确的集；挑不出来时归排序第一张，结果确定。
+     */
+    let plugin_entries: Vec<String> = all_entries
+        .iter()
+        .filter(|entry| entry.to_lowercase().ends_with(".dll"))
+        .filter(|entry| {
+            let lower = entry.to_lowercase();
+            is_bepinex_layer_entry(&lower) && !lower.starts_with(BEPINEX_LEVELS_PREFIX)
+        })
+        .cloned()
+        .collect();
+    let plugin_owner = assign_plugins(&plugin_entries, &parsed_sets);
+
+    let mut scratch = (!plugin_owner.is_empty())
+        .then(|| std::env::temp_dir().join(format!("oc2-level-plugins-{}", uuid::Uuid::new_v4())));
+    if let Some(dir) = &scratch {
+        if let Err(error) = fs::create_dir_all(dir) {
+            log::warn!(
+                "随包插件元数据：临时目录创建失败，降级为文件名兜底：目录={}，原因={}",
+                dir.display(),
+                error
+            );
+            scratch = None;
+        }
+    }
+    let mut prepared_plugins: BTreeMap<String, Vec<PreparedZipPlugin>> = BTreeMap::new();
+    {
+        let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+            crate::locale_tag::with_params(
+                "archive.zipReadFailed",
+                &[("reason", &error.to_string())],
+            )
+        })?;
+        for (directory, entries) in &plugin_owner {
+            let prepared = entries
+                .iter()
+                .map(|entry| {
+                    prepare_zip_plugin(
+                        &mut archive,
+                        index_by_name.get(entry).copied(),
+                        entry,
+                        scratch.as_deref(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            prepared_plugins.insert(directory.clone(), prepared);
+        }
+    }
+    let mut requests: Vec<MetadataRequest> = Vec::new();
+    for prepared in prepared_plugins.values_mut() {
+        for plugin in prepared.iter_mut() {
+            let Some(temp) = plugin.temp.as_ref() else {
+                continue;
+            };
+            plugin.request = Some(requests.len());
+            requests.push(MetadataRequest {
+                path: temp.clone(),
+                display_name: plugin.file_name.clone(),
+                kind: MetadataKind::ModDll,
+            });
+        }
+    }
+    let outcomes = crate::metadata_read::read_metadata_batch(&requests, plugin_workers, &|_, _| {});
+
+    let mut imported = Vec::with_capacity(parsed_sets.len());
+    for (directory, metadata, dir_name) in parsed_sets {
+        let prefix = format!("{directory}/");
+        let files: Vec<(String, String)> = by_directory
+            .get(&directory)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|name| {
+                let relative = name
+                    .strip_prefix(&prefix)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| name.clone());
+                (name, relative)
+            })
+            .collect();
+        let prepared = prepared_plugins.remove(&directory).unwrap_or_default();
+        let plugins = prepared
+            .into_iter()
+            .map(|plugin| {
+                let info = plugin
+                    .request
+                    .and_then(|index| outcomes.get(index))
+                    .and_then(|outcome| outcome.mod_dll())
+                    .cloned()
+                    .map(DllPluginInfo::from)
+                    .unwrap_or_else(|| fallback_plugin_info(&plugin.file_name));
+                ZipLevelSetPlugin {
+                    // 表层包的插件不搬位置：落盘路径就是 ZIP 内条目路径
+                    install_path: Some(plugin.path.clone()),
+                    path: plugin.path,
+                    file_name: plugin.file_name,
+                    info,
+                }
+            })
+            .collect();
+        imported.push(ImportedLevelSet {
+            dir_name,
+            layout: LevelSetLayout::Bepinex,
+            metadata,
+            files,
+            plugins,
+        });
+    }
+    if let Some(dir) = &scratch {
+        let _ = fs::remove_dir_all(dir);
+    }
+    log::info!(
+        "BepInEx 表层包识别完成：文件={}，关卡集={}，随包插件={}",
+        zip_path.display(),
+        imported.len(),
+        imported.iter().map(|set| set.plugins.len()).sum::<usize>()
+    );
+    Ok(imported)
+}
+
 /// 读一个 ZIP 文件，按 `info` 识别出其中的关卡集。
 ///
 /// 地图文件不在这里解压 —— 调用方拿到 [`ImportedLevelSet::files`] 后按需写入，
@@ -2069,6 +3099,23 @@ pub fn inspect_zip_with_progress(
         }
     }
 
+    /*
+     * BepInEx 表层包先判：它的 `info` 也在 ZIP 里，但落盘形态完全不同
+     * （原样解压 + 登记表），必须走另一条识别路径。
+     */
+    if is_bepinex_layer_zip(&all_entries) {
+        return inspect_bepinex_layer(
+            zip_path,
+            &all_entries,
+            &by_directory,
+            &index_by_name,
+            info_candidates,
+            info_workers,
+            plugin_workers,
+            progress,
+        );
+    }
+
     if info_candidates.is_empty() {
         return Err("levelSet.zipWithoutInfo".into());
     }
@@ -2088,7 +3135,7 @@ pub fn inspect_zip_with_progress(
         })
         .collect();
     let parsed_metadata =
-        parse_zip_info_directories(zip_path, &info_tasks, info_workers, progress)?;
+        parse_zip_info_directories(zip_path, &info_tasks, info_workers, true, progress)?;
 
     let mut parsed_sets: Vec<(String, LevelSetMetadata, String)> =
         Vec::with_capacity(parsed_metadata.len());
@@ -2222,11 +3269,13 @@ pub fn inspect_zip_with_progress(
             plugins.push(ZipLevelSetPlugin {
                 path: plugin.path,
                 file_name: plugin.file_name,
+                install_path: None,
                 info,
             });
         }
         imported.push(ImportedLevelSet {
             dir_name,
+            layout: LevelSetLayout::Flattened,
             metadata,
             files,
             plugins,
@@ -2285,10 +3334,11 @@ fn existing_level_set_metadata(
 pub fn install_from_zip(
     zip_path: &Path,
     game_root: &Path,
+    manifests_dir: &Path,
     selected: &[String],
 ) -> Result<Vec<String>, String> {
     let sets = inspect_zip(zip_path)?;
-    install_parsed_sets(&sets, zip_path, game_root, selected)
+    install_parsed_sets(&sets, zip_path, game_root, manifests_dir, selected)
 }
 
 /// 把已经解析好的关卡集写进 `levels/`（`zip_path` 只用于回读文件内容）。
@@ -2299,6 +3349,7 @@ pub fn install_parsed_sets(
     sets: &[ImportedLevelSet],
     zip_path: &Path,
     game_root: &Path,
+    manifests_dir: &Path,
     selected: &[String],
 ) -> Result<Vec<String>, String> {
     let targets: Vec<&ImportedLevelSet> = sets
@@ -2307,6 +3358,24 @@ pub fn install_parsed_sets(
         .collect();
     if targets.is_empty() {
         return Err("levelSet.nothingSelected".into());
+    }
+
+    /*
+     * 表层包与历史形态是两条完全不同的落盘路径：前者按 ZIP 内路径原样解压
+     * 并登记插件归属，后者拍平成 `levels/<集名>/`。混选不该出现（同一个 ZIP
+     * 只有一种形态），真出现时按表层包处理会漏掉拍平语义，直接拒绝更诚实。
+     */
+    let bepinex_layer = targets
+        .iter()
+        .any(|set| set.layout == LevelSetLayout::Bepinex);
+    if bepinex_layer {
+        if targets
+            .iter()
+            .any(|set| set.layout != LevelSetLayout::Bepinex)
+        {
+            return Err("levelSet.nothingSelected".into());
+        }
+        return install_bepinex_layer_sets(sets, &targets, zip_path, game_root, manifests_dir);
     }
 
     let levels_dir = levels_root(game_root);
@@ -2377,6 +3446,260 @@ pub fn install_parsed_sets(
     Ok(installed)
 }
 
+/// 覆盖已有文件时最多回滚多少字节：地图包不该带超大文件，超过就拒绝覆盖，
+/// 免得为了回滚把几百 MB 读进内存。
+const MAX_OVERWRITE_ROLLBACK_BYTES: u64 = 16 * 1024 * 1024;
+
+/// 把 BepInEx 表层包按 ZIP 内路径原样解压到游戏目录，并登记随包插件归属。
+///
+/// 与历史形态的差异：
+/// - 不拍平、不改目录名：`BepInEx/plugins/OC2DIYLevel/levels/<集>/` 就是作者
+///   规划好的位置，扫描按「`levels` 下第一层」照样能认出来。
+/// - 插件不搬进集目录：它们留在 `BepInEx/plugins/**`，绑定关系写进登记表，
+///   MOD 扫描据此避让（见 `mods::scan_mods_with_manifests`）。
+///
+/// 解压范围按选择收窄：`levels/` 下未选中的集目录与属于未选中集的插件都不
+/// 落盘 —— 否则用户只勾了一张图，另一张也进了游戏目录，返回的 `installed`
+/// 还与界面选择对不上。
+fn install_bepinex_layer_sets(
+    all_sets: &[ImportedLevelSet],
+    targets: &[&ImportedLevelSet],
+    zip_path: &Path,
+    game_root: &Path,
+    manifests_dir: &Path,
+) -> Result<Vec<String>, String> {
+    let levels_dir = levels_root(game_root);
+    let disabled_dir = disabled_root(game_root);
+    for set in targets {
+        if !is_safe_dir_name(&set.dir_name) {
+            return Err("levelSet.invalidName".into());
+        }
+        /*
+         * 表层包不换名：目录名是作者写死在 ZIP 里的。已存在就拒绝，先让用户
+         * 卸载旧副本（同身份冲突已由 `find_install_conflicts` 报给前端）。
+         */
+        if levels_dir.join(&set.dir_name).exists() || disabled_dir.join(&set.dir_name).exists() {
+            return Err(crate::locale_tag::with_params(
+                "levelSet.targetExists",
+                &[("name", &set.dir_name)],
+            ));
+        }
+    }
+
+    let selected_dirs: HashSet<String> = targets
+        .iter()
+        .map(|set| set.dir_name.to_lowercase())
+        .collect();
+    // 全部集的插件归属（含未选中的）：解压时据此跳过未选中集的插件
+    let mut owned_plugins: HashMap<String, bool> = HashMap::new();
+    for set in all_sets {
+        let selected = selected_dirs.contains(&set.dir_name.to_lowercase());
+        for plugin in &set.plugins {
+            let Some(path) = plugin.install_path.as_ref() else {
+                continue;
+            };
+            owned_plugins.insert(path.to_lowercase(), selected);
+        }
+    }
+
+    /*
+     * 先写登记表再解压：解压中途失败时 DLL 已经落盘却没有登记，它们会出现在
+     * MOD 列表里（用户能单独禁用一张地图的插件）。反过来先登记、失败再回滚
+     * 登记表，最坏只是表里多几条指向不存在文件的记录 —— 扫描会跳过它们。
+     */
+    let previous = read_registered_plugins(manifests_dir);
+    let mut added = Vec::new();
+    for set in targets {
+        let owner = LevelSetPluginOwner::from_metadata(&set.metadata);
+        for plugin in &set.plugins {
+            let Some(dll) = plugin.install_path.as_ref() else {
+                continue;
+            };
+            added.push(RegisteredLevelSetPlugin {
+                dll: dll.clone(),
+                owner: owner.clone(),
+            });
+        }
+    }
+    let added_count = added.len();
+    write_registered_plugins(
+        manifests_dir,
+        &merge_registered_plugins(previous.clone(), added),
+    )?;
+
+    if let Err(reason) = extract_bepinex_layer(zip_path, game_root, &selected_dirs, &owned_plugins)
+    {
+        if let Err(error) = write_registered_plugins(manifests_dir, &previous) {
+            log::warn!(
+                "随包插件登记表回滚失败，可能留下指向不存在文件的记录：原因={}",
+                error
+            );
+        }
+        return Err(reason);
+    }
+    log::info!(
+        "BepInEx 表层包导入完成：文件={}，关卡集={}，登记插件={}",
+        zip_path.display(),
+        targets.len(),
+        added_count
+    );
+    Ok(targets.iter().map(|set| set.dir_name.clone()).collect())
+}
+
+/// 解压 BepInEx 表层包（`levels/` 下只落选中的集，插件按归属过滤）。
+///
+/// 失败时把本次创建的文件删掉、覆盖的文件写回原字节：安装要么完整、要么
+/// 什么都没发生，留下半个 BepInEx 目录比报错更糟。
+fn extract_bepinex_layer(
+    zip_path: &Path,
+    game_root: &Path,
+    selected_dirs: &HashSet<String>,
+    owned_plugins: &HashMap<String, bool>,
+) -> Result<(), String> {
+    let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+        crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &error.to_string())])
+    })?;
+    let mut created: Vec<PathBuf> = Vec::new();
+    let mut created_dirs: Vec<PathBuf> = Vec::new();
+    let mut overwritten: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    let result = extract_bepinex_layer_entries(
+        &mut archive,
+        game_root,
+        selected_dirs,
+        owned_plugins,
+        &mut created,
+        &mut created_dirs,
+        &mut overwritten,
+    );
+    if let Err(reason) = result {
+        for path in created.iter().rev() {
+            let _ = fs::remove_file(path);
+        }
+        /*
+         * 只删本次新建的目录：`BepInEx/plugins` 这类原有目录即使被搬空也
+         * 不能动 —— 回滚的目标是「恢复原样」，不是清理游戏目录。
+         */
+        for directory in created_dirs.iter().rev() {
+            let _ = fs::remove_dir(directory);
+        }
+        for (path, bytes) in overwritten.iter().rev() {
+            if let Err(error) = fs::write(path, bytes) {
+                log::warn!(
+                    "解压回滚失败，文件保持新内容：文件={}，原因={}",
+                    path.display(),
+                    error
+                );
+            }
+        }
+        log::warn!(
+            "BepInEx 表层包解压失败，已回滚：文件={}，原因={}",
+            zip_path.display(),
+            reason
+        );
+        return Err(reason);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_bepinex_layer_entries(
+    archive: &mut zip::ZipArchive<fs::File>,
+    game_root: &Path,
+    selected_dirs: &HashSet<String>,
+    owned_plugins: &HashMap<String, bool>,
+    created: &mut Vec<PathBuf>,
+    created_dirs: &mut Vec<PathBuf>,
+    overwritten: &mut Vec<(PathBuf, Vec<u8>)>,
+) -> Result<(), String> {
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| {
+            crate::locale_tag::with_params(
+                "archive.zipEntryReadFailed",
+                &[("reason", &error.to_string())],
+            )
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().replace('\\', "/");
+        if is_junk_entry(&name) {
+            continue;
+        }
+        if !is_safe_relative(&name) {
+            log::warn!("拒绝不安全的 ZIP 条目：条目={}", name);
+            return Err("archive.pathEscape".into());
+        }
+        let lower = name.to_lowercase();
+        if lower.starts_with(BEPINEX_LEVELS_PREFIX) {
+            let rest = &lower[BEPINEX_LEVELS_PREFIX.len()..];
+            let first = rest.split('/').next().unwrap_or_default();
+            if !selected_dirs.contains(first) {
+                continue;
+            }
+        }
+        if lower.ends_with(".dll") && owned_plugins.get(&lower) == Some(&false) {
+            continue;
+        }
+        let target = game_root.join(&name);
+        if let Some(parent) = target.parent() {
+            /*
+             * 记下本次新建的目录链：失败回滚时只删这些，原有目录（哪怕是空的
+             * `BepInEx/plugins`）保持原样。
+             */
+            let mut missing: Vec<PathBuf> = Vec::new();
+            let mut cursor = Some(parent);
+            while let Some(directory) = cursor {
+                if directory.exists() || !directory.starts_with(game_root) {
+                    break;
+                }
+                missing.push(directory.to_path_buf());
+                cursor = directory.parent();
+            }
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            created_dirs.extend(missing.into_iter().rev());
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if target.exists() {
+            let metadata = fs::metadata(&target).map_err(|error| error.to_string())?;
+            if metadata.len() > MAX_OVERWRITE_ROLLBACK_BYTES {
+                return Err(crate::locale_tag::with_params(
+                    "levelSet.targetExists",
+                    &[("name", &name)],
+                ));
+            }
+            let previous = fs::read(&target).map_err(|error| error.to_string())?;
+            overwritten.push((target.clone(), previous));
+        } else {
+            created.push(target.clone());
+        }
+        fs::write(&target, &bytes).map_err(|error| {
+            crate::locale_tag::with_params(
+                "levelSet.writeFailed",
+                &[("reason", &error.to_string())],
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// 自底向上删空目录，直到 `stop`（不含）。非空目录立刻停手。
+fn remove_empty_parents(path: &Path, stop: &Path) {
+    let mut current = path.parent();
+    while let Some(directory) = current {
+        if directory == stop || !directory.starts_with(stop) {
+            break;
+        }
+        if fs::remove_dir(directory).is_err() {
+            break;
+        }
+        current = directory.parent();
+    }
+}
+
 /// 一个待解析的 `info` 目录：ZIP 内目录名 + 该目录下全部候选条目。
 struct InfoDirectory {
     directory: String,
@@ -2400,6 +3723,7 @@ fn parse_zip_info_directories(
     zip_path: &Path,
     directories: &[InfoDirectory],
     workers: usize,
+    strict: bool,
     progress: &(dyn Fn(usize, usize, &str) + Sync),
 ) -> Result<Vec<(String, LevelSetMetadata)>, String> {
     let total = directories.len();
@@ -2514,6 +3838,20 @@ fn parse_zip_info_directories(
             });
         match outcome.metadata {
             Some(metadata) => parsed.push((directory.directory.clone(), metadata)),
+            /*
+             * `strict` 是历史形态的语义：ZIP 里任何一张卡读不出来都整体报错，
+             * 用户看到的是「这个包有问题」而不是「悄悄少了几张」。
+             *
+             * BepInEx 表层包相反：`levels/` 下可能有作者留下的备份目录、说明
+             * 用的 `info_*`，它们本来就不是关卡集，不能因此让整包进不来。
+             */
+            None if !strict => {
+                log::warn!(
+                    "ZIP 内目录没有可识别的 info，跳过：目录={}，原因={}",
+                    directory.directory,
+                    outcome.last_error
+                );
+            }
             None => {
                 return Err(crate::locale_tag::with_params(
                     "levelSet.zipInfoInvalid",
@@ -2871,8 +4209,13 @@ mod zip_tests {
         let root = std::env::temp_dir().join(format!("oc2-lv-zip-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join(DIYLEVEL_DIR)).unwrap();
 
-        let installed =
-            install_from_zip(&zip, &root, &["RW_LevelSet".to_string()]).expect("应能安装");
+        let installed = install_from_zip(
+            &zip,
+            &root,
+            &root.join("manifests"),
+            &["RW_LevelSet".to_string()],
+        )
+        .expect("应能安装");
         assert_eq!(installed, vec!["RW_LevelSet".to_string()]);
 
         let destination = root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("RW_LevelSet");
@@ -2908,7 +4251,12 @@ mod zip_tests {
         std::fs::create_dir_all(&existing).unwrap();
 
         // 覆盖会静默丢掉用户已有的关卡集（可能是自己改过的版本）
-        let result = install_from_zip(&zip, &root, &["RW_LevelSet".to_string()]);
+        let result = install_from_zip(
+            &zip,
+            &root,
+            &root.join("manifests"),
+            &["RW_LevelSet".to_string()],
+        );
         assert!(result.is_err(), "目标已存在时应拒绝安装");
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -3657,6 +5005,7 @@ mod cache_and_scan_tests {
         let seen: Mutex<Vec<(usize, usize, String)>> = Mutex::new(Vec::new());
         let sets = scan_level_sets_with_progress(
             &root,
+            None,
             crate::metadata_read::cores(),
             &|done, total, current| {
                 seen.lock()
@@ -3745,6 +5094,19 @@ mod plugin_tests {
             }
         }
         None
+    }
+
+    /// 每个用例独立根目录，避免并行测试互相踩；用例结束自己删掉。
+    fn workspace(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("oc2-lv-{tag}-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let recycle = root.join("recycle");
+        let manifests = root.join("manifests");
+        std::fs::create_dir_all(game.join(DIYLEVEL_DIR).join(LEVELS_DIR)).unwrap();
+        std::fs::create_dir_all(disabled_root(&game)).unwrap();
+        std::fs::create_dir_all(&recycle).unwrap();
+        std::fs::create_dir_all(&manifests).unwrap();
+        (root, game, recycle)
     }
 
     #[test]
@@ -4065,7 +5427,7 @@ mod plugin_tests {
             .collect();
         let outcomes = crate::metadata_read::read_metadata_batch(&requests, 2, &|_, _| {});
         let plugins: Vec<_> = outcomes.into_iter().map(Some).collect();
-        let set = assemble_level_set(target, None, &plugins);
+        let set = assemble_level_set(target, None, &plugins, Vec::new());
         let listed: Vec<(&str, bool)> = set
             .plugins
             .iter()
@@ -4165,5 +5527,347 @@ mod plugin_tests {
             }
             assert_eq!(total, contents.plugins, "每个 DLL 都应恰好归属一次");
         }
+    }
+
+    /// BepInEx 表层包的判定：只看 `BepInEx/plugins/` 前缀，且只有 `levels/`
+    /// 根的直接子目录算关卡集。
+    #[test]
+    fn bepinex_layer_detection_is_case_insensitive_and_shallow() {
+        assert!(is_bepinex_layer_entry("BepInEx/plugins/Fix/Fix.dll"));
+        assert!(is_bepinex_layer_entry("bepinex/PLUGINS/x.dll"));
+        assert!(!is_bepinex_layer_entry("BepInEx/config/x.cfg"));
+        assert!(!is_bepinex_layer_entry("levels/Set/info"));
+        assert!(is_bepinex_layer_zip(&[
+            "BepInEx/plugins/OC2DIYLevel/levels/Set/info".to_string()
+        ]));
+        assert!(!is_bepinex_layer_zip(&["levels/Set/info".to_string()]));
+
+        assert_eq!(
+            bepinex_level_set_dir_name("BepInEx/plugins/OC2DIYLevel/levels/MySet"),
+            Some("MySet"),
+            "目录名保留 ZIP 里的原始大小写"
+        );
+        assert_eq!(
+            bepinex_level_set_dir_name("BepInEx/plugins/OC2DIYLevel/levels"),
+            None,
+            "levels 根本身不是关卡集"
+        );
+        assert_eq!(
+            bepinex_level_set_dir_name("BepInEx/plugins/OC2DIYLevel/levels/A/B"),
+            None,
+            "只有直接子目录成卡，更深的目录按原样解压"
+        );
+    }
+
+    /// 登记表：读写往返、路径归一化、坏数据只丢自己、合并以新归属为准。
+    #[test]
+    fn plugin_registry_round_trips_and_normalizes_paths() {
+        let (root, _game, _recycle) = workspace("registry");
+        let manifests = root.join("manifests");
+        assert!(
+            read_registered_plugins(&manifests).is_empty(),
+            "没有登记表时按空表处理"
+        );
+
+        let owner = LevelSetPluginOwner {
+            name: "RW_LevelSet".into(),
+            name_zh: "七池的地图".into(),
+            author: "七池".into(),
+        };
+        write_registered_plugins(
+            &manifests,
+            &[RegisteredLevelSetPlugin {
+                dll: "BepInEx/plugins/Fix/Fix.dll".into(),
+                owner: owner.clone(),
+            }],
+        )
+        .unwrap();
+
+        let read = read_registered_plugins(&manifests);
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].dll, "BepInEx/plugins/Fix/Fix.dll");
+        assert_eq!(read[0].owner, owner);
+        assert_eq!(
+            registered_plugin_paths(&manifests),
+            vec!["bepinex/plugins/fix/fix.dll".to_string()],
+            "MOD 扫描按小写比对"
+        );
+
+        // 反斜杠与 `./` 前缀归一化；同一路径大小写不同只留一条
+        std::fs::write(
+            registry_path(&manifests),
+            r#"{"version":1,"entries":[{"dll":".\\BepInEx\\plugins\\Fix\\Fix.dll","owner":{"name":"A"}},{"dll":"BepInEx/plugins/Fix/Fix.dll","owner":{"name":"B"}}]}"#,
+        )
+        .unwrap();
+        let read = read_registered_plugins(&manifests);
+        assert_eq!(read.len(), 1, "同一路径大小写不同应去重");
+        assert_eq!(read[0].dll, "BepInEx/plugins/Fix/Fix.dll");
+
+        // 不安全路径整条丢弃，且不拖垮整张表
+        std::fs::write(
+            registry_path(&manifests),
+            r#"{"version":1,"entries":[{"dll":"../evil.dll"},{"dll":"BepInEx/plugins/Ok.dll"}]}"#,
+        )
+        .unwrap();
+        let read = read_registered_plugins(&manifests);
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].dll, "BepInEx/plugins/Ok.dll");
+
+        // 同一个 DLL 重新登记时以新归属为准
+        let merged = merge_registered_plugins(
+            vec![RegisteredLevelSetPlugin {
+                dll: "BepInEx/plugins/Fix/Fix.dll".into(),
+                owner: LevelSetPluginOwner::default(),
+            }],
+            vec![RegisteredLevelSetPlugin {
+                dll: "bepinex/plugins/fix/fix.dll".into(),
+                owner: owner.clone(),
+            }],
+        );
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].owner, owner);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 拍平：嵌套集搬成 `levels/<规范名>/`，info 改名、资源与插件跟着走、
+    /// 空壳进回收站。
+    #[test]
+    fn flattening_moves_nested_level_sets_into_canonical_directories() {
+        let (root, game, recycle) = workspace("flatten");
+        let manifests = root.join("manifests");
+        let levels = levels_root(&game);
+
+        let pear = levels.join("pear9.5关卡/levels包/PearSet");
+        std::fs::create_dir_all(&pear).unwrap();
+        std::fs::write(pear.join("info"), b"PearSet").unwrap();
+        std::fs::write(pear.join("shared.assets"), b"assets").unwrap();
+        let other = levels.join("pear9.5关卡/levels包/OtherSet");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("info"), b"OtherSet").unwrap();
+        let plugin_dir = levels.join("pear9.5关卡/plugins包/PearSetFix");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("PearSetFix.dll"), b"dll").unwrap();
+        std::fs::write(plugin_dir.join("PearSetFix.cfg"), b"cfg").unwrap();
+        // 顶层已有 info 的目录扫描认得出，不该进候选
+        let healthy = levels.join("HealthySet");
+        std::fs::create_dir_all(&healthy).unwrap();
+        std::fs::write(healthy.join("info"), b"HealthySet").unwrap();
+
+        let parse = |path: &Path| -> Result<LevelSetMetadata, String> {
+            let name = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            Ok(metadata(&name, None))
+        };
+
+        let report = flatten_level_sets_with(&game, &recycle, &manifests, true, &parse).unwrap();
+        assert_eq!(report.candidates.len(), 1);
+        assert_eq!(report.candidates[0].dir_name, "pear9.5关卡");
+        assert_eq!(report.candidates[0].nested_infos, 2);
+        assert_eq!(report.flattened, 0);
+        assert!(pear.join("info").is_file(), "dry_run 不许动磁盘");
+
+        let report = flatten_level_sets_with(&game, &recycle, &manifests, false, &parse).unwrap();
+        assert_eq!(report.flattened, 2);
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(levels.join("PearSet/info").is_file(), "info 落成固定名");
+        assert!(levels.join("PearSet/shared.assets").is_file());
+        assert!(levels.join("OtherSet/info").is_file());
+        assert!(
+            levels.join("PearSet/PearSetFix.dll").is_file(),
+            "插件按名字归到 PearSet"
+        );
+        assert!(
+            levels.join("PearSet/PearSetFix.cfg").is_file(),
+            "插件同目录资源一起搬"
+        );
+        assert!(
+            !levels.join("pear9.5关卡").exists(),
+            "清空的嵌套壳应进回收站"
+        );
+        assert!(healthy.join("info").is_file(), "正常目录不受影响");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 探测有上限：`levels/<外层>` 下超过 3 层的 info 不当候选。
+    #[test]
+    fn flatten_probe_is_bounded_to_three_levels() {
+        let (root, game, recycle) = workspace("flatten-depth");
+        let manifests = root.join("manifests");
+        let levels = levels_root(&game);
+        let within = levels.join("within/l1/l2/l3");
+        std::fs::create_dir_all(&within).unwrap();
+        std::fs::write(within.join("info"), b"x").unwrap();
+        let beyond = levels.join("beyond/l1/l2/l3/l4");
+        std::fs::create_dir_all(&beyond).unwrap();
+        std::fs::write(beyond.join("info"), b"x").unwrap();
+
+        let report =
+            flatten_level_sets_with(&game, &recycle, &manifests, true, &|_: &Path| -> Result<
+                LevelSetMetadata,
+                String,
+            > {
+                Err("skip".into())
+            })
+            .unwrap();
+        let names: Vec<&str> = report
+            .candidates
+            .iter()
+            .map(|candidate| candidate.dir_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["within"], "第 4 层及更深的 info 不该被探测到");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 同一外层目录里后一张集失败时，前面已经搬走的文件必须整体还原。
+    #[test]
+    fn flatten_rolls_back_the_whole_group_on_failure() {
+        let (root, game, recycle) = workspace("flatten-rollback");
+        let manifests = root.join("manifests");
+        let levels = levels_root(&game);
+        let alpha = levels.join("broken/levels包/AlphaSet");
+        std::fs::create_dir_all(&alpha).unwrap();
+        std::fs::write(alpha.join("info"), b"AlphaSet").unwrap();
+        let beta = levels.join("broken/levels包/BetaSet");
+        std::fs::create_dir_all(&beta).unwrap();
+        std::fs::write(beta.join("info"), b"BetaSet").unwrap();
+        // 用一个同名**文件**占住 BetaSet：`collect_dir_names` 只收目录，换名
+        // 阶段发现不了，执行到「目标已存在」时才失败 —— 正是要验的中间失败
+        std::fs::write(levels.join("BetaSet"), b"blocker").unwrap();
+
+        let parse = |path: &Path| -> Result<LevelSetMetadata, String> {
+            let name = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            Ok(metadata(&name, None))
+        };
+        let report = flatten_level_sets_with(&game, &recycle, &manifests, false, &parse).unwrap();
+
+        assert_eq!(report.flattened, 0);
+        assert_eq!(report.failed.len(), 1, "失败要逐条记录");
+        assert!(report.failed[0].contains("broken"), "{:?}", report.failed);
+        assert!(alpha.join("info").is_file(), "已搬走的文件要还原");
+        assert!(beta.join("info").is_file());
+        assert!(
+            !levels.join("AlphaSet").exists(),
+            "回滚要删掉本次新建的目录"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// BepInEx 表层包：`levels/` 直接子目录成一张卡，插件带 ZIP 内原路径。
+    #[test]
+    fn bepinex_layer_zip_becomes_one_set_with_install_paths() {
+        let Some(info) = real_info_bytes() else {
+            return;
+        };
+        let (root, _game, _recycle) = workspace("bepinex-inspect");
+        let zip = root.join("layer.zip");
+        write_test_zip(
+            &zip,
+            &[
+                (
+                    "BepInEx/plugins/OC2DIYLevel/levels/RW_LevelSet/info",
+                    info.as_slice(),
+                ),
+                ("BepInEx/plugins/Fix/Fix.dll", b"not a real dll"),
+            ],
+        );
+
+        let sets = inspect_zip(&zip).unwrap();
+        assert_eq!(sets.len(), 1);
+        let set = &sets[0];
+        assert_eq!(set.dir_name, "RW_LevelSet");
+        assert_eq!(set.layout, LevelSetLayout::Bepinex);
+        assert_eq!(set.plugins.len(), 1);
+        assert_eq!(set.plugins[0].file_name, "Fix.dll");
+        assert_eq!(
+            set.plugins[0].install_path.as_deref(),
+            Some("BepInEx/plugins/Fix/Fix.dll"),
+            "表层包插件按 ZIP 内原路径落盘"
+        );
+        assert!(!set.files.is_empty());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 表层包端到端：原样解压、登记归属、扫描并入、MOD 避让、卸载一起进回收站。
+    #[test]
+    fn bepinex_layer_install_registers_plugins_and_uninstall_recycles_them() {
+        let Some(info) = real_info_bytes() else {
+            return;
+        };
+        let (root, game, recycle) = workspace("bepinex-install");
+        let manifests = root.join("manifests");
+        let zip = root.join("layer.zip");
+        write_test_zip(
+            &zip,
+            &[
+                (
+                    "BepInEx/plugins/OC2DIYLevel/levels/RW_LevelSet/info",
+                    info.as_slice(),
+                ),
+                ("BepInEx/plugins/Fix/Fix.dll", b"not a real dll"),
+            ],
+        );
+
+        let installed = install_from_zip(&zip, &game, &manifests, &["RW_LevelSet".to_string()])
+            .expect("表层包应能安装");
+        assert_eq!(installed, vec!["RW_LevelSet".to_string()]);
+        assert!(
+            game.join("BepInEx/plugins/OC2DIYLevel/levels/RW_LevelSet/info")
+                .is_file(),
+            "ZIP 内路径原样落盘"
+        );
+        let plugin = game.join("BepInEx/plugins/Fix/Fix.dll");
+        assert!(plugin.is_file());
+
+        let registered = read_registered_plugins(&manifests);
+        assert_eq!(registered.len(), 1);
+        assert_eq!(registered[0].dll, "BepInEx/plugins/Fix/Fix.dll");
+
+        // 扫描按身份并入「随包插件」
+        let sets = scan_level_sets_with_progress(
+            &game,
+            Some(&manifests),
+            crate::metadata_read::cores(),
+            &|_, _, _| {},
+        );
+        assert_eq!(sets.len(), 1);
+        assert!(
+            sets[0]
+                .plugins
+                .iter()
+                .any(|plugin| plugin.file_name == "Fix.dll"),
+            "登记 DLL 应出现在该集的随包插件里：{:?}",
+            sets[0]
+                .plugins
+                .iter()
+                .map(|plugin| plugin.file_name.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        // MOD 管理页不许出现它
+        let mods = crate::mods::scan_mods_with_manifests(
+            &game,
+            &crate::config::default_config(),
+            Some(&manifests),
+        );
+        assert!(
+            !mods.iter().any(|item| item.dll_file.ends_with("Fix.dll")),
+            "登记 DLL 不是普通 MOD"
+        );
+
+        // 卸载：集目录与登记 DLL 一起进回收站，登记表清空
+        remove_level_set(&recycle, &manifests, &game, "RW_LevelSet", true, true).unwrap();
+        assert!(
+            !game
+                .join("BepInEx/plugins/OC2DIYLevel/levels/RW_LevelSet")
+                .exists()
+        );
+        assert!(!plugin.exists(), "登记 DLL 应随关卡集一起进回收站");
+        assert!(read_registered_plugins(&manifests).is_empty(), "登记要清掉");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

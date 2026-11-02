@@ -56,6 +56,12 @@ export type LevelSetTone = 'accent' | 'moderate' | 'muted' | 'critical'
 export interface MapVersionRef {
   /** Release tag（例如 `v0.73`）。 */
   tag: string
+  /**
+   * 源文档钉死的版本（`[[maps]].latest_version`）。
+   *
+   * 非空时不做大小比较，只问「本地装的是不是这一版」—— 见 `mapUpdateState`。
+   */
+  latestVersion?: string | null
   /** 关卡集名（与 info 的 `levelSetName` 比对）。 */
   levelSetName: string
   /** 中文名（与 info 的 `levelSetNameZH` 比对）；老地图源没有这个字段。 */
@@ -91,6 +97,45 @@ export function isSameLevelSet(
 }
 
 /**
+ * 本地版本与线上声明比较后的结论。
+ *
+ * 与 `LevelSetState` 的版本分支同名同义（`update_available` / `latest` /
+ * `ahead`），多一个 `unknown` 表示「比不出来」：管理页状态、下载页卡片状态、
+ * 下载页按钮三处都从这里取结论，不允许各写一份比较。
+ */
+export type MapVersionOrder = 'latest' | 'update_available' | 'ahead' | 'unknown'
+
+/**
+ * 「本地版本 vs 线上声明」的唯一判定。
+ *
+ * 平时按版本大小比：本地低 = 有更新，高 = `ahead`（作者的预发布或 tag 回退）。
+ *
+ * 源文档写了 `latest_version` 时规则换成**等值**：作者已经指定「这就是最新版」，
+ * 不再比大小 —— 资产名里的版本号是手写的，`0.7` 按数字段比反而小于 `0.69`，
+ * 比大小会得出反的结论；本地更高也只说明作者要用户回退到这一版。
+ * 等值仍走 `compareVersions`：`v0.7`、`0.7.0` 与源文档写的 `0.7` 是同一版，
+ * 字符串直比会让用户被反复提示更新。
+ *
+ * 本地版本为空或不可解析时：钉死版本模式下算 `update_available`（没装上指定
+ * 版本就是没到位），普通模式仍是 `unknown`（不把「不知道」说成「有更新」）。
+ */
+export function mapUpdateState(
+  localVersion: string | null | undefined,
+  remote: Pick<MapVersionRef, 'tag' | 'latestVersion'> | null | undefined,
+): MapVersionOrder {
+  if (!remote) return 'unknown'
+  const forced = remote.latestVersion?.trim()
+  if (forced) {
+    return compareVersions(localVersion, forced) === 0 ? 'latest' : 'update_available'
+  }
+  const order = compareVersions(localVersion, remote.tag)
+  if (order === null) return 'unknown'
+  if (order < 0) return 'update_available'
+  if (order > 0) return 'ahead'
+  return 'latest'
+}
+
+/**
  * 从一个关卡集与其绑定的仓库版本，算出展示状态。
  *
  * `remote` 为 `undefined` 表示没有绑定（本地导入）或仓库还没刷新。
@@ -103,11 +148,10 @@ export function levelSetState(
   if (!set.enabled) return 'disabled'
   if (set.error) return 'unreadable'
   if (!remote) return 'unbound'
-  const order = compareVersions(set.version, remote.tag)
-  if (order === null) return 'unknown'
-  if (order < 0) return 'update_available'
-  if (order > 0) return 'ahead'
-  return 'latest'
+  const order = mapUpdateState(set.version, remote)
+  // 除 `unknown` 外，版本结论与 `LevelSetState` 的版本分支同名，直接透传
+  if (order === 'unknown') return 'unknown'
+  return order
 }
 
 /** 状态 → 展示用的 tag（与 `modsLocal.*` 的命名保持同一套语义）。 */
@@ -159,6 +203,9 @@ export function mapVersionForLevelSet(
  * **只有刷新到 Release 的地图才产生声明。** 没刷过的地图 `latest_tag` 为空，
  * 此时本地关卡集必须保持「未绑定」而不是被当成「最新版」—— 把「还没查」
  * 说成「已是最新」是错的结论，用户会因此错过真实更新。
+ *
+ * 源文档钉死的 `latest_version` 随声明一起带出：怎么比由 `mapUpdateState`
+ * 一处决定，调用方不需要知道这次是比大小还是比等值。
  */
 export function mapVersionRefs(maps: readonly MapInfo[]): MapVersionRef[] {
   return maps
@@ -169,6 +216,9 @@ export function mapVersionRefs(maps: readonly MapInfo[]): MapVersionRef[] {
         levelSetName: map.level_set_name,
         author: map.author,
       }
+      // 钉死版本只在有值时带上，理由同下面的中文名：空字段只会给快照加噪音
+      const forced = map.latest_version?.trim()
+      if (forced) ref.latestVersion = forced
       // 老地图源没有中文名时**不塞空字段**：下游按「两边都有才比较」判定，
       // 塞个 undefined 只会让相等性比较与快照多出一层噪音
       if (map.level_set_name_zh) ref.nameZh = map.level_set_name_zh
@@ -635,18 +685,24 @@ export const MAP_CARD_STATE_TONES: Record<MapCardState, LevelSetTone> = {
  * 2. 没有 `latest_tag` 时不比版本，只说「装了」或「还没查到」；
  * 3. 版本比较不出结果（info 解析失败、版本号不合法）时给「无法检测更新」，
  *    而不是把空字符串当成「最新版」。
+ *
+ * 版本结论本身走 `mapUpdateState`：源文档钉死 `latest_version` 时只比等值，
+ * 下载页与管理页因此不会对同一张图给出两个结论。
  */
 export function mapCardState(
-  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'last_error'>,
+  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'latest_version' | 'last_error'>,
   sets: readonly LevelSetInfo[],
 ): MapCardState {
   if (map.last_error) return 'cannot_check'
   const set = levelSetForMap(map, sets)
   if (!map.latest_tag) return set ? 'installed' : 'not_refreshed'
   if (!set) return 'not_installed'
-  const order = compareVersions(set.version, map.latest_tag)
-  if (order === null) return 'cannot_check'
-  return order < 0 ? 'update_available' : 'latest'
+  const order = mapUpdateState(set.version, {
+    tag: map.latest_tag,
+    latestVersion: map.latest_version,
+  })
+  if (order === 'unknown') return 'cannot_check'
+  return order === 'update_available' ? 'update_available' : 'latest'
 }
 
 /** 下载页卡片状态区的渲染值。 */
@@ -659,7 +715,7 @@ export interface MapCardStatus {
 
 /** `mapCardState` + 文案 + 色调，视图层直接用这一份。 */
 export function mapCardStatus(
-  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'last_error'>,
+  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'latest_version' | 'last_error'>,
   sets: readonly LevelSetInfo[],
 ): MapCardStatus {
   const key = mapCardState(map, sets)
@@ -679,13 +735,15 @@ export type MapCardAction = 'install' | 'reinstall' | 'update' | 'refresh'
  *   而「安装」在已装状态下会让用户以为会新增一份。
  */
 export function mapCardAction(
-  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'last_error'>,
+  map: Pick<MapInfo, 'level_set_name' | 'author' | 'latest_tag' | 'latest_version' | 'last_error'>,
   sets: readonly LevelSetInfo[],
 ): MapCardAction {
   if (map.last_error || !map.latest_tag) return 'refresh'
   const set = levelSetForMap(map, sets)
   if (!set) return 'install'
-  const order = compareVersions(set.version, map.latest_tag)
-  if (order !== null && order < 0) return 'update'
-  return 'reinstall'
+  const order = mapUpdateState(set.version, {
+    tag: map.latest_tag,
+    latestVersion: map.latest_version,
+  })
+  return order === 'update_available' ? 'update' : 'reinstall'
 }

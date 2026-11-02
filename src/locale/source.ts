@@ -325,4 +325,11 @@ export const source: DomainMessages = {
     ko: '이 저장소는 비활성화되어 새로 고치지 않습니다',
     ja: 'このリポジトリは無効なため更新されません',
   },
+  relativeChildInReleaseAsset: {
+    'zh-CN': 'Release 资产里的源文档不能引用相对路径的子源：{source}',
+    'zh-TW': 'Release 資產裡的源文件不能引用相對路徑的子來源：{source}',
+    en: 'A source document inside a release asset cannot reference a relative child source: {source}',
+    ko: '릴리스 에셋의 소스 문서는 상대 경로 하위 소스를 참조할 수 없습니다: {source}',
+    ja: 'リリースアセット内のソース文書は相対パスの子ソースを参照できません：{source}',
+  },
 }

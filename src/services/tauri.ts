@@ -285,15 +285,21 @@ export const api = {
    *
    * 与 MOD 仓库源的区别：地图源树不持久化成一棵可编辑的源树，只是归类
    * 方式，所以没有「刷新单个源」这个粒度。
+   *
+   * `passId` 是「同一次用户点击」的批次号，与随后的 `refreshMapReleases`
+   * 共用：tag 模式下同一次加载要为同一个仓库的多个版本取资产，后端按它去重。
    */
-  refreshMapSources: () => invoke<MapInfo[]>('refresh_map_sources'),
+  refreshMapSources: (passId?: string) =>
+    invoke<MapInfo[]>('refresh_map_sources', { passId }),
   /**
    * 刷新一个地图的 Release 列表（5 分钟缓存）。
    *
    * `force` 由「用户主动点刷新」传入：那个动作的语义就是「现在就要最新的」。
+   * `passId` 与 `refreshMapSources` 是同一个批次号：tag 模式下同一批会为同一
+   * 仓库的多个版本各要一次资产列表，后端按它把同批请求合并成一次。
    */
-  refreshMapReleases: (mapId: string, force = false) =>
-    invoke<ReleaseInfo[]>('refresh_map_releases', { mapId, force }),
+  refreshMapReleases: (mapId: string, force = false, passId?: string) =>
+    invoke<ReleaseInfo[]>('refresh_map_releases', { mapId, force, passId }),
   /**
    * 暂存一次地图 Release 安装（下载资产并识别其中的关卡集）。
    *

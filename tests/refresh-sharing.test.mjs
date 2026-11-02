@@ -217,3 +217,31 @@ test('刷新结果有统一结构，两个域都能回传摘要', () => {
   assert.match(outcomeText, /export function describeRefreshOutcome/)
   assert.match(read('src/components/RefreshResultTag.vue'), /describeRefreshOutcome\(/)
 })
+
+test('一次用户动作只生成一个刷新批次号，源树与 Release 共用它', () => {
+  /*
+   * tag 模式下后端按 `passId` 把同批内同一个仓库的 Release 请求合并成一次。
+   * 源树阶段与 Release 阶段各造一个编号就等于没传：同一次点击会按地图数
+   * 把同一个 API 打一遍。
+   */
+  assert.match(mapEngine, /function newPassId\(\)/, '批次号只能由这一个生成器产出')
+  assert.match(mapEngine, /api\.refreshMapReleases\(item\.id, true, passId\)/, 'Release 请求要带批次号')
+  for (const call of [
+    'refreshReleases(scoped, { passId })',
+    "refreshReleases(queue, { trigger: 'bound', passId",
+  ]) {
+    assert.ok(mapEngine.includes(call), `缺少同批透传：${call}`)
+  }
+  // 检查更新必须先重拉源树：Release 列表是照源文档的 tag 声明合成的
+  const bound = mapEngine.slice(
+    mapEngine.indexOf('async function refreshBoundMaps'),
+    mapEngine.indexOf('async function refreshSource'),
+  )
+  const reload = bound.indexOf('api.refreshMapSources(passId)')
+  const release = bound.indexOf("trigger: 'bound'")
+  assert.ok(reload >= 0 && reload < release, '检查更新要先重拉源树，再刷 Release')
+  // 服务层两个命令都要透传（Tauri v2 的参数键是 camelCase）
+  const tauriService = read('src/services/tauri.ts')
+  assert.match(tauriService, /invoke<MapInfo\[\]>\('refresh_map_sources', \{ passId \}\)/)
+  assert.match(tauriService, /invoke<ReleaseInfo\[\]>\('refresh_map_releases', \{ mapId, force, passId \}\)/)
+})

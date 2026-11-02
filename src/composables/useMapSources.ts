@@ -28,6 +28,22 @@ import type { MapInfo } from '../types'
 /** 并行上限（4 组），与仓库侧 `useRepositoryRefresh` 的取值保持一致。 */
 const REFRESH_CONCURRENCY = 4
 
+/**
+ * 「同一次用户点击的刷新批次」编号（模块级递增）。
+ *
+ * tag 模式下，一个仓库的多个版本资产会被合成多条 Release；整源刷新一次会
+ * 扇出几十张地图，其中常有多条来自同一个仓库。后端按这个编号把同批内同
+ * 仓库的 Release 请求合并成一次，否则一次点击会按地图数打 API。
+ *
+ * 编号必须由**发起动作的地方**生成，并贯穿该动作的全部请求（源树 → Release）：
+ * 在 `refreshReleases` 里各自现造就等于每批都是新批次，去重完全失效。
+ */
+let passSeq = 0
+function newPassId(): string {
+  passSeq += 1
+  return `${Date.now().toString(36)}-${passSeq}`
+}
+
 /** 地图源声明的全部地图（含 Release 缓存）。 */
 const maps = ref<MapInfo[]>([])
 /** 首次读数据中（只影响整页加载态，不影响刷新）。 */
@@ -135,10 +151,10 @@ async function syncDependencySnapshots() {
  * 和「写回哪个对象」，其余（标志、写回时机、并发、结果收集）都在
  * `releaseRefresh` / `refreshState` 里。
  */
-function mapReleaseSpec(): ReleaseFetchSpec<MapInfo> {
+function mapReleaseSpec(passId: string): ReleaseFetchSpec<MapInfo> {
   return {
-    // 用户主动刷新 → 强制绕过 5 分钟 Release 缓存
-    fetch: (item) => api.refreshMapReleases(item.id, true),
+    // 用户主动刷新 → 强制绕过 5 分钟 Release 缓存；同批同仓库的请求由后端按 passId 合并
+    fetch: (item) => api.refreshMapReleases(item.id, true, passId),
     /*
      * 成功写回只替换这一张图，不等整批结束重载列表：`latest_tag` 取自缓存的
      * 第一条，与后端 `map_to_info` 完全同一条规则（所以不必在前端另立判定）。
@@ -186,14 +202,20 @@ async function refreshReleases(
     /** 已装地图的 id：排到队首，先出结论。 */
     priorityIds?: ReadonlySet<string>
     countUpdated?: () => number
+    /**
+     * 同一个用户动作的批次号：调用方已经生成了就透传（源树与 Release 必须
+     * 同一批），单点刷新这类独立动作不传，由这里新生成一个。
+     */
+    passId?: string
   } = {},
 ): Promise<RefreshOutcome> {
   const priorityIds = options.priorityIds
+  const passId = options.passId ?? newPassId()
   return runReleaseBatch<MapInfo>({
     state,
     // 正在安装的不能同时刷：安装要替换目录，刷新会读它的元数据
     items: list.filter((map) => !installing.value[map.id]),
-    ...mapReleaseSpec(),
+    ...mapReleaseSpec(passId),
     trigger: options.trigger ?? 'partial',
     prioritize: priorityIds && priorityIds.size
       ? (items) => prioritizeByIds(items, priorityIds)
@@ -217,7 +239,8 @@ export interface MapBoundRefreshSummary {
 }
 
 /**
- * 检查更新：只刷新「本地已装关卡集绑定」的那几张地图，**强制**绕过缓存。
+ * 检查更新：先重拉一次源树，再只刷新「本地已装关卡集绑定」的那几张地图，
+ * **强制**绕过缓存。
  *
  * ## 为什么由引擎暴露
  *
@@ -226,22 +249,60 @@ export interface MapBoundRefreshSummary {
  * 管理页在刷、下载页的卡片不转，切走再回来按钮还会『假装没在刷』。
  * 现在把入口收到这里，两个页面共用同一份 `refreshing` / `checkingBound`。
  *
- * ## 为什么不重拉源树
+ * ## 为什么先重拉源树
  *
- * 源树重拉会先清空该源下的地图条目再重建，缓存一起丢；检查更新只想知道
- * 「这几张图有没有新版」，不该顺手把列表洗一遍。要源数据就点整源刷新。
+ * tag 模式的地图条目把 `tag` / `latest_version` 写在源文档里，Release 列表
+ * 是照这份声明合成的。拿页面上的旧条目直接去刷 Release，等于按上次的声明
+ * 问后端；源文档改了 `asset_rules` 或换了 tag 时，刷回来的还是一份过期资产表。
+ * 所以一次点击固定是「一次 TOML + 一次 Release 批次」，两者共用 `passId`，
+ * 后端据此把同批内同一个仓库的 Release 请求合并成一次。
+ *
+ * 源树拉取失败时保留旧列表继续刷：比整次检查更新直接失败有用，至少还能
+ * 确认本地装的是不是最新。重拉不清空列表（与整源刷新不同）：这里的语义
+ * 是「顺手更新声明」，不是「重看一遍源」。
  */
 async function refreshBoundMaps(
   targets: MapInfo[],
   options: { countUpdated?: () => number } = {},
 ): Promise<MapBoundRefreshSummary> {
   /*
-   * 去重交给 `runBatch`（它按 id 去重并跳过正在刷的），这里只筛掉安装中的：
-   * 同一张图被两个页面同时点「检查更新」时，第二份请求没有意义。
+   * 同一时刻只跑一批：整源刷新在重建列表时再重拉源树，两个响应会交替写
+   * `maps`；自己已经在跑时再进来一批，等于把同一份源文档请求两次。
+   * 页面按钮此时已经禁用，这里防的是同一帧内的连点。
    */
-  const queue = targets.filter((map) => !installing.value[map.id])
-  const result = await refreshReleases(queue, { trigger: 'bound', ...options })
-  return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
+  if (refreshingAll.value || checkingBound.value) {
+    return { refreshed: 0, updated: 0, errors: [] }
+  }
+  const passId = newPassId()
+  /*
+   * 批次标志要盖住整段动作（含源树阶段）：只靠 `runReleaseBatch` 打开标志，
+   * 源树请求那几百毫秒里按钮还是可点的，连点就会把同一份 TOML 拉两遍。
+   */
+  state.beginBatch('bound')
+  try {
+    try {
+      maps.value = await api.refreshMapSources(passId)
+    } catch (reason) {
+      // 不动 `maps.value`：旧列表还能看、能装，下一次刷新再试
+      message?.error(backendMessageOf(reason))
+    }
+    /*
+     * 按 id 取重拉后的条目：旧对象可能已被替换（版本、tag、资产规则都可能变），
+     * 拿它刷 Release 会把结果写回一份已经过期的声明上。
+     * 找不到（条目已下线）就退回原对象 —— 由后端报错，卡片显示刷新失败。
+     *
+     * 去重仍交给 `runBatch`（按 id 去重并跳过正在刷的），这里只筛掉安装中的：
+     * 同一张图被两个页面同时点「检查更新」时，第二份请求没有意义。
+     */
+    const byId = new Map(maps.value.map((map) => [map.id, map]))
+    const queue = targets
+      .map((map) => byId.get(map.id) ?? map)
+      .filter((map) => !installing.value[map.id])
+    const result = await refreshReleases(queue, { trigger: 'bound', passId, ...options })
+    return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
+  } finally {
+    state.endBatch('bound')
+  }
 }
 
 /**
@@ -253,14 +314,16 @@ async function refreshBoundMaps(
  */
 async function refreshSource(node: { id: string }) {
   if (refreshingAll.value || refreshingSources.value[node.id]) return
+  // 一次点击一个批次号：源树与随后这个源的 Release 必须被后端认成同一批
+  const passId = newPassId()
   await state.runSource(node.id, async () => {
     try {
-      maps.value = await api.refreshMapSources()
+      maps.value = await api.refreshMapSources(passId)
     } catch (reason) {
       message?.error(backendMessageOf(reason))
     }
     const scoped = maps.value.filter((map) => (map.source_id || '__none__') === node.id)
-    const result = await refreshReleases(scoped)
+    const result = await refreshReleases(scoped, { passId })
     if (result.errors.length) message?.error(result.errors[0])
     return result.errors
   })
@@ -281,6 +344,8 @@ async function refreshAll(
   options: { countUpdated?: () => number; priorityIds?: ReadonlySet<string> } = {},
 ) {
   if (refreshingAll.value) return
+  // 一次点击只有一个批次号：源树阶段与 Release 阶段必须被后端认成同一批
+  const passId = newPassId()
   state.beginBatch('full')
   /*
    * 列表清空到源树填回来之间，按地图 id 的状态一个都匹配不上：这段空窗期
@@ -292,7 +357,7 @@ async function refreshAll(
   try {
     let sourceError: string | null = null
     try {
-      maps.value = await api.refreshMapSources()
+      maps.value = await api.refreshMapSources(passId)
     } catch (reason) {
       maps.value = previous
       sourceError = backendMessageOf(reason)
@@ -309,6 +374,7 @@ async function refreshAll(
     state.setEntryStateUnavailable(false)
     const result = await refreshReleases(maps.value, {
       trigger: 'single',
+      passId,
       priorityIds: options.priorityIds,
       countUpdated: options.countUpdated,
     })

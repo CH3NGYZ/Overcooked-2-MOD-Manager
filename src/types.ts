@@ -691,6 +691,13 @@ export interface MapInfo {
   /** 缓存里最新 Release tag；没刷新过时为空。 */
   latest_tag?: string | null
   /**
+   * 源文档钉死的「用户应该装的版本」（`[[maps]].latest_version`）。
+   *
+   * 资产名里的版本号是作者手写的，`0.7` 按数字段比较反而小于 `0.69`；
+   * 写了它就是「这就是最新版」，前端只比等值、不比大小（见 `mapUpdateState`）。
+   */
+  latest_version?: string | null
+  /**
    * 缓存里最新的那一条 Release。
    *
    * 卡片复用时直接喂给版本号与下载量：`latest_tag` 只有字符串，

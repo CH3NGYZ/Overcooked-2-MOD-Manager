@@ -10,13 +10,16 @@
  * 这样两个域不再各写一套卡片：MOD 与地图的差别只在数据来源（DLL 清单 /
  * `info` 解析结果），展示与交互完全一致。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { NButton, NCollapseTransition, NTag } from 'naive-ui'
 import DependencyTable from './DependencyTable.vue'
 import { tagColorFor } from '../theme'
 import { formatVersion } from '../modStatus'
 import { t } from '../i18n'
 import AppModal from './AppModal.vue'
+import LocalItemCard from './LocalItemCard.vue'
+import { useCardExpansion } from '../composables/useCardExpansion'
+import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
 import type { InstallDetailEntry, InstallDetailModel } from '../installDetail'
 
 const props = defineProps<{
@@ -61,34 +64,63 @@ const rows = computed<DetailRow[]>(() =>
   (props.model?.entries ?? []).map((entry) => ({ entry, key: entry.key })))
 
 /**
- * 条目展开状态：默认全部收起，只记展开的 key。
+ * 条目展开状态：两级卡片共用 `useCardExpansion`（与 MOD 管理页、地图管理页同一份实现）。
  *
- * 收起态是「名称 …… 版本」一行，用户不关心细节时整块只有几行高，
- * 提交日志因此能拿到更大的可视范围。
+ * 外层是地图集 / MOD，内层是它的随包插件。硬规则与管理页一致：外层收起时连带
+ * 清掉它的内层，下次展开是一张全新的、没点开过的卡片。
  */
-const expandedKeys = ref<string[]>([])
-function isExpanded(key: string) {
-  return expandedKeys.value.includes(key)
+const expansion = useCardExpansion()
+const { isOuterOpen, isInnerOpen } = expansion
+
+/** 展开区的内容层：展开滚动要按它的自然高度算「卡片最终会有多高」。 */
+function detailBodyOf(card: Element) {
+  return card.querySelector('.detail-body')
 }
+
 /**
- * 下级条目（随包插件）的展开 key：父条目 + `\u0000` + 子 key。
+ * 点开 / 收起一级条目。
  *
- * 两张图的插件包内路径可能相同，只按子 key 记会让它们联动展开。
+ * 滚动交给 `expandScroll`（与管理页同一套规则）：展开时把卡片底边推到视口可用
+ * 底边、放不下才退化成贴顶；收起时把折叠后的卡片滚到可视区正中。弹窗内容区是
+ * `.app-modal-scroll`，`resolveScrollContainer` 会自己找到它，这里不传容器。
  */
-function nestedKey(parentKey: string, childKey: string) {
-  return `${parentKey}\u0000${childKey}`
-}
-function toggle(key: string) {
-  if (isExpanded(key)) {
-    // 收起父条目连带清掉它的下级：下次展开应该是全新、未点开的卡片
-    const prefix = `${key}\u0000`
-    expandedKeys.value = expandedKeys.value.filter((item) => item !== key && !item.startsWith(prefix))
+function onRowActivate(key: string, card: HTMLElement) {
+  if (isOuterOpen(key)) {
+    collapseCardWithScroll({ card, body: detailBodyOf(card) }, () => expansion.closeOuter(key))
     return
   }
-  expandedKeys.value = [...expandedKeys.value, key]
+  expansion.openOuter(key)
+  /*
+   * 内容层要等这一帧渲染完才拿得到：`n-collapse-transition` 在收起状态下
+   * 不渲染插槽（折叠时子节点是注释占位），点开的那一刻 `querySelector` 还是空。
+   */
+  void nextTick(() => {
+    scrollExpandedCardIntoView({
+      card,
+      anchor: card.querySelector('.detail-row-line') ?? card,
+      body: detailBodyOf(card),
+    })
+  })
 }
+
+/** 点开 / 收起随包插件：外壳复用 `LocalItemCard`，滚动同一条规则。 */
+function onNestedActivate(parentKey: string, childKey: string, card: HTMLElement) {
+  if (isInnerOpen(parentKey, childKey)) {
+    collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, () => expansion.closeInner(parentKey, childKey))
+    return
+  }
+  expansion.openInner(parentKey, childKey)
+  void nextTick(() => {
+    scrollExpandedCardIntoView({
+      card,
+      anchor: card.querySelector('.card-row') ?? card,
+      body: card.querySelector('.card-detail'),
+    })
+  })
+}
+
 /** 每次打开都从全部收起开始：上一份包展开过哪几条，对下一份没有意义。 */
-watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
+watch(() => props.show, (open) => { if (open) expansion.closeAll() })
 </script>
 
 <template>
@@ -132,8 +164,8 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
       -->
       <div v-if="rows.length" class="detail-list">
         <article v-for="row in rows" :key="row.key" class="detail-row"
-          :class="{ expanded: isExpanded(row.key) }"
-          @click="toggle(row.key)">
+          :class="{ expanded: isOuterOpen(row.key) }"
+          @click="onRowActivate(row.key, $event.currentTarget as HTMLElement)">
           <div class="detail-row-line">
             <span class="detail-main">
               <b class="detail-name" :title="row.entry.title">{{ row.entry.title }}</b>
@@ -148,55 +180,45 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
               <span class="detail-meta mono">{{ row.entry.meta ?? '' }}</span>
             </span>
           </div>
-          <n-collapse-transition :show="isExpanded(row.key)" display-directive="show">
-            <div class="detail-row-fields">
-              <div v-for="(field, index) in row.entry.fields" :key="index" class="detail-item"
-                :class="{ wide: field.wide }">
-                <span class="muted">{{ field.label }}</span>
-                <b :class="{ mono: field.mono }">{{ field.value }}</b>
-              </div>
-            </div>
-            <!--
-              随包插件：跟着这张图落盘、跟着这张图启停的 DLL，所以缩进在所属
-              条目里，而不是另起一批列表行。点开插件本身还能看它的元数据。
-            -->
-            <div v-if="row.entry.children?.length" class="detail-plugins" @click.stop>
-              <article v-for="child in row.entry.children" :key="child.key"
-                class="detail-row detail-row--nested"
-                :class="{ expanded: isExpanded(nestedKey(row.key, child.key)) }"
-                @click.stop="toggle(nestedKey(row.key, child.key))">
-                <div class="detail-row-line">
-                  <span class="detail-main">
-                    <b class="detail-name" :title="child.title">{{ child.title }}</b>
-                    <span v-if="child.subtitle" class="detail-sub mono" :title="child.subtitle">
-                      {{ child.subtitle }}
-                    </span>
-                  </span>
-                  <span class="detail-side">
-                    <n-tag v-if="child.tag" size="tiny" :bordered="false" :color="tagColorFor('muted')">
-                      {{ child.tag }}
-                    </n-tag>
-                    <span class="detail-meta mono">{{ child.meta ?? '' }}</span>
-                  </span>
+          <n-collapse-transition :show="isOuterOpen(row.key)" display-directive="show">
+            <!-- 内容层单独包一层：展开滚动按它的自然高度算卡片最终高度 -->
+            <div class="detail-body" @click.stop>
+              <div class="detail-row-fields">
+                <div v-for="(field, index) in row.entry.fields" :key="index" class="detail-item"
+                  :class="{ wide: field.wide }">
+                  <span class="muted">{{ field.label }}</span>
+                  <b :class="{ mono: field.mono }">{{ field.value }}</b>
                 </div>
-                <n-collapse-transition :show="isExpanded(nestedKey(row.key, child.key))"
-                  display-directive="show">
-                  <div class="detail-row-fields">
-                    <div v-for="(field, index) in child.fields" :key="index" class="detail-item"
-                      :class="{ wide: field.wide }">
-                      <span class="muted">{{ field.label }}</span>
-                      <b :class="{ mono: field.mono }">{{ field.value }}</b>
+              </div>
+              <!--
+                随包插件：外壳直接复用管理页的 LocalItemCard —— 标题后的版本号、
+                灰色「随包插件」标签、点开看 DLL 元数据，与管理页同一套版式。
+                它们跟着这张图落盘、跟着这张图启停，所以缩进在所属条目里。
+              -->
+              <div v-if="row.entry.children?.length" class="detail-plugins">
+                <LocalItemCard v-for="child in row.entry.children" :key="child.key"
+                  :switchable="false" :title="child.title" :version="child.meta"
+                  :titleTag="child.tag" :expanded="isInnerOpen(row.key, child.key)"
+                  @activate="(card: HTMLElement) => onNestedActivate(row.key, child.key, card)">
+                  <template #detail>
+                    <div class="detail-row-fields detail-row-fields--nested">
+                      <div v-for="(field, index) in child.fields" :key="index" class="detail-item"
+                        :class="{ wide: field.wide }">
+                        <span class="muted">{{ field.label }}</span>
+                        <b :class="{ mono: field.mono }">{{ field.value }}</b>
+                      </div>
                     </div>
-                  </div>
-                </n-collapse-transition>
-              </article>
-            </div>
-            <!-- 依赖表：与地图管理页同一份组件与判定；弹窗里不提供跳转 -->
-            <div v-if="row.entry.dependencies?.length" class="detail-deps" @click.stop>
-              <DependencyTable :rows="row.entry.dependencies" />
+                  </template>
+                </LocalItemCard>
+              </div>
+              <!-- 依赖表：与地图管理页同一份组件与判定；弹窗里不提供跳转 -->
+              <div v-if="row.entry.dependencies?.length" class="detail-deps">
+                <DependencyTable :rows="row.entry.dependencies" />
+              </div>
             </div>
           </n-collapse-transition>
         </article>
+
       </div>
       <!-- 空态：没有可安装的内容时说明「为什么」以及「该去哪里」 -->
       <div v-else-if="model.emptyHint.length" class="empty-hint">
@@ -234,6 +256,12 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /*
+   * 整条 flex 链一律不收缩：内容比弹窗高时，压缩会把卡片内部网格压扁、
+   * 后面的随包插件与依赖表按压扁后的位置叠上来（实测用户截图里的错位）。
+   * 高度超出就交给 `.app-modal-scroll` 滚，卡片自身永远保持完整版式。
+   */
+  flex: 0 0 auto;
 }
 .detail-head {
   display: flex;
@@ -251,6 +279,7 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 0 0 auto;
 }
 /* 空态两行：一句话说清「没有内容」，一句话说清「所以装不了、地图包去哪」 */
 .empty-hint {
@@ -272,6 +301,7 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
   border-radius: 10px;
   background: var(--oc2-card);
   cursor: pointer;
+  flex: 0 0 auto;
   transition: border-color .16s ease, background-color .16s ease;
 }
 .detail-row:hover { border-color: var(--oc2-accent); background: var(--oc2-row-hover); }
@@ -289,10 +319,18 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
   padding-top: 10px;
   border-top: 1px solid var(--oc2-row-line);
 }
-.detail-row--nested {
-  margin-left: 10px;
-  padding: 8px 10px;
-  background: var(--oc2-sunken);
+/*
+ * 随包插件卡片复用 LocalItemCard，底色走它的 `--card-bg`：
+ * 与管理页 `.package-body` 里的子卡片同样用下沉底色，两处一眼是同一个层级。
+ */
+.detail-plugins .mod-card {
+  --card-bg: var(--oc2-sunken);
+}
+/* 嵌套卡片的详情区不需要再套一条分隔线：卡片外框已经把它分开 */
+.detail-row-fields--nested {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 .detail-deps {
   margin-top: 10px;

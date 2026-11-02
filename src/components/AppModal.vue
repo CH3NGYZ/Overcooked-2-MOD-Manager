@@ -329,6 +329,13 @@ onBeforeUnmount(stopObservingCardSize)
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /*
+   * 关掉浏览器滚动锚定（与 `.page-scroll .n-scrollbar-container` 同一条理由）：
+   * 卡片展开 / 收起后的滚动距离由 `expandScroll.ts` 显式算出并动画执行，
+   * Chrome 默认的锚定会在这个基础上再补偿一次 scrollTop，两套补偿互相抵消 ——
+   * 动画第一帧就被判定成「用户自己滚了」而中止，卡片底边停在视口外。
+   */
+  overflow-anchor: none;
   /* 给滚动条一点呼吸，避免贴着卡片内边距 */
   padding-right: 2px;
 }

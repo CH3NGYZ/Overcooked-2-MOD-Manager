@@ -951,6 +951,14 @@ export const toolsUi: DomainMessages = {
     ko: '준비 중…',
     ja: '準備中…',
   },
+  // 下载失败
+  downloadFailed: {
+    'zh-CN': '下载失败',
+    'zh-TW': '下載失敗',
+    en: 'Download failed',
+    ko: '다운로드 실패',
+    ja: 'ダウンロード失敗',
+  },
   // 正在连接下载源…
   connectingToDownloadSource: {
     'zh-CN': '正在连接下载源…',

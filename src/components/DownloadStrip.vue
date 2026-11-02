@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { NButton, NProgress } from 'naive-ui'
 import { CloseOutline } from '@vicons/ionicons5'
 import { api, watchDownloadProgress } from '../services/tauri'
 import type { DownloadProgress } from '../types'
 import { useDashboard } from '../composables/useDashboardStore'
 import { translateBackendMessage } from '../locale/backend'
+import { dismissDownloadFailure, downloadTaskState, retryDownloadTask } from '../downloadTask'
 
 const { refresh } = useDashboard()
 const progress = ref<DownloadProgress | null>(null)
 let unlisten: (() => void) | null = null
+
+/** 当前是否有下载任务、以及最近一次失败（失败态由调用方报告，见 downloadTask.ts）。 */
+const running = computed(() => downloadTaskState.running)
+const failure = computed(() => downloadTaskState.failure)
 
 function percentValue(value: { downloaded: number; total?: number }): number {
   if (!value.total) return 0
@@ -26,11 +31,16 @@ const indeterminate = computed(() => {
 })
 
 /**
- * 卡片可见性：有任务就显示，直到 finished。
+ * 卡片可见性：有正在跑的下载，或有一条需要用户处理的失败。
  *
  * 连接、切换、竞速阶段都要显示 —— 用户需要看到「正在连」而不是空白等待。
+ * 失败态必须能独立显示：那时后端已经不再发任何事件，`progress` 是空的。
+ * 进度还必须挂在 `running` 上：失败或收尾之后，迟到的 `download-progress`
+ * 不能把卡片重新拉起来显示一个永远不动的 0%。
  */
 const visible = computed(() => {
+  if (failure.value) return true
+  if (!running.value) return false
   const value = progress.value
   if (!value || value.finished) return false
   return true
@@ -82,12 +92,20 @@ const routeText = computed(() => {
 })
 
 void watchDownloadProgress((value) => {
+  // 失败态已经接管卡片：此时到达的事件只能是失败任务迟到的尾巴
+  if (failure.value) return
   progress.value = value
   if (value.finished) {
     progress.value = null
     void refresh()
   }
 }).then((un) => { unlisten = un })
+
+/*
+ * 换任务时清掉上一轮的进度：新下载要等自己的第一个事件，不能先显示上一次
+ * 的百分比 —— 失败后点重试时最明显，否则卡片会先闪一下旧的进度再归零。
+ */
+watch(() => running.value?.id ?? null, () => { progress.value = null })
 
 onUnmounted(() => { unlisten?.() })
 
@@ -102,11 +120,36 @@ async function cancel() {
 </script>
 
 <template>
-  <!-- 下载进度卡片：居中浮层，不占用页面布局 -->
+  <!-- 下载进度 / 下载失败卡片：居中浮层，不占用页面布局 -->
   <Teleport to="body">
     <Transition name="dl-card">
-      <div v-if="visible && progress" class="dl-mask">
-        <section class="dl-card" role="status" aria-live="polite">
+      <div v-if="visible" class="dl-mask">
+        <!--
+          失败态：后端失败路径不发事件，所以这张卡片由调用方通过
+          `failDownloadTask` 点亮（见 downloadTask.ts）。卡片不消失，让用户在
+          原地重试，不要求他回到页面重新点一遍下载。
+        -->
+        <section v-if="failure" class="dl-card dl-card-error" role="alert" aria-live="assertive">
+          <h3 class="dl-title">{{ t('tools.downloadFailed') }}</h3>
+          <div class="dl-bar">
+            <!-- 失败没有百分比可言：红色整条表示「这次下载终止」，不画 0% 的假进度 -->
+            <n-progress type="line" status="error" :percentage="100" :show-indicator="false"
+              :height="6" :border-radius="3" />
+          </div>
+          <p class="dl-error-label">{{ translateBackendMessage(failure.label) }}</p>
+          <!-- 原因已经由 `backendMessageOf` 翻译过，后端 tag 不会漏到界面上 -->
+          <p class="dl-error-reason">{{ failure.message }}</p>
+          <div class="dl-actions">
+            <n-button type="primary" size="small" @click="retryDownloadTask">
+              {{ t('common.action.retry') }}
+            </n-button>
+            <n-button secondary size="small" @click="dismissDownloadFailure">
+              {{ t('nav.close') }}
+            </n-button>
+          </div>
+        </section>
+
+        <section v-else-if="progress" class="dl-card" role="status" aria-live="polite">
           <!--
             标题来自后端的 `label`，它是**混合形态**：地图/MOD 资产传的是已本地化的
             名称（`RW 关卡合集`），直链与在线地图来源传的是 tag（`direct.onlineFile`、
@@ -223,7 +266,26 @@ async function cancel() {
 .dl-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 14px;
+}
+/* 失败态：边框与原因用错误色，与页面里其它错误提示同一档颜色 */
+.dl-card-error {
+  border-color: rgba(238, 133, 133, .55);
+}
+.dl-error-label {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--oc2-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dl-error-reason {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #ee8585;
 }
 .dl-card-enter-active,
 .dl-card-leave-active {

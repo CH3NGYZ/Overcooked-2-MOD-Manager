@@ -57,6 +57,15 @@ const props = withDefaults(defineProps<{
   bordered?: boolean
   maskClosable?: boolean
   /**
+   * 是否允许用户自行关闭弹窗（点遮罩、按 Esc、点右上角关闭按钮）。
+   *
+   * 默认 `true`：三条隐式关闭路径全部可用，与加这个 prop 之前的行为一致。
+   * 只有「确认危险操作」这类必须明确二选一的弹窗传 `false` ——
+   * 误点遮罩或按 Esc 不能等于放弃，用户只能在底部按钮里选。
+   * 底部按钮走 `update:show` 显式事件，不受这个 prop 影响。
+   */
+  closable?: boolean
+  /**
    * `if` = 关闭时真正从 DOM 移除内容。
    * 只 v-show 会让内部的大型内容（如文本域滚动位置、富文本）留在不可见
    * 容器里继续参与布局计算。
@@ -83,6 +92,7 @@ const props = withDefaults(defineProps<{
   minHeight: '',
   bordered: false,
   maskClosable: true,
+  closable: true,
   displayDirective: 'if',
   cardClass: '',
   to: undefined,
@@ -112,7 +122,8 @@ const {
   scrollable: scrollableContent,
   minHeight: heightFloor,
   bordered: hasBorder,
-  maskClosable: closable,
+  maskClosable: maskClosableEnabled,
+  closable: allowClose,
   displayDirective: directive,
   cardClass: extraClass,
   to: mountTarget,
@@ -176,7 +187,8 @@ const contentStyle = {
 
 <template>
   <n-modal :show="visible" preset="card" :title="heading || undefined" :bordered="hasBorder"
-    :mask-closable="closable" :display-directive="directive" :to="mountTarget" class="app-modal"
+    :closable="allowClose" :mask-closable="allowClose && maskClosableEnabled" :close-on-esc="allowClose"
+    :display-directive="directive" :to="mountTarget" class="app-modal"
     :class="extraClass" :style="modalStyle" :content-style="contentStyle"
     @update:show="(value: boolean) => emit('update:show', value)"
     @after-leave="emit('after-leave')">

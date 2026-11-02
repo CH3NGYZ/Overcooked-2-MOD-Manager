@@ -589,7 +589,7 @@ async function clearTokens() {
     而不是让开关一拨就生效。
   -->
   <AppModal :show="recycleRiskOpen" :title="t('recycle.turnOffRecycleBinProtection')" max-width="min(520px, 92%)"
-    @update:show="(value: boolean) => (recycleRiskOpen = value)">
+    :closable="false" @update:show="(value: boolean) => (recycleRiskOpen = value)">
     <div class="recycle-risk">
       <p class="recycle-risk-lead">{{ t('recycle.withThisOffDeletingAModRemovesItsFilesAndInstallManifestImmediatelyInsteadOfMovingThemToTheRecycleBin') }}</p>
       <p class="recycle-risk-note">{{ t('recycle.thisCannotBeUndoneDeletedModsAreUnrecoverableAndOverwritingAnInstallAlsoDiscardsThePreviousVersionConfirmThatYouReallyWantToBypassTheRecycleBin') }}</p>

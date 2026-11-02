@@ -401,6 +401,18 @@ export function watchLevelSetZipProgress(callback: (progress: LevelSetZipProgres
   return listen<LevelSetZipProgress>('level-set-zip-progress', (event) => callback(event.payload))
 }
 
+/**
+ * 「磁盘上的关卡集变了」。
+ *
+ * 后端 `level_watch` 递归盯着 `levels` 与停用目录，按 600ms 防抖压成一声；
+ * 用户在资源管理器里删掉一个集、或别的工具往这个目录写东西时，页面靠它
+ * 自动重读，不必让用户回去点刷新。载荷为空 —— 事件只表达「该重读了」，
+ * 差异由重读本身给出。
+ */
+export function watchLevelSetsChanged(callback: () => void): Promise<UnlistenFn> {
+  return listen('level-sets-changed', () => callback())
+}
+
 export function watchAppUpdatePhase(callback: (progress: AppUpdatePhaseEvent) => void): Promise<UnlistenFn> {
   return listen<AppUpdatePhaseEvent>('app-update-phase', (event) => callback(event.payload))
 }

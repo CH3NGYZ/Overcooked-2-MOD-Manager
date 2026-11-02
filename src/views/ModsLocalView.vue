@@ -28,6 +28,7 @@ import { statusPulseClass, useFocusHighlight, useRepositoryLink, useStatusHighli
 import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
 import { tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
+import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
 import DependencyTable from '../components/DependencyTable.vue'
@@ -1522,12 +1523,13 @@ function removePackage(node: ModPackageNode) {
   const first = node.mods[0]
   if (!first) return
   const confirm = deletePackageConfirm.value
-  dialog.warning({
+  const instance = dialog.warning({
     title: t('tools.deleteModPackage'),
     content: confirm.body(node.label, node.mods.length),
     positiveText: confirm.action,
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      markDialogBusy(instance)
       for (const mod of node.mods) busy.value[mod.dll_file] = true
       try {
         const result = await api.uninstallLocalMod(first.dll_file, true)

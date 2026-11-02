@@ -27,6 +27,7 @@ import { pickI18n, t } from '../../i18n'
 import { tagColorFor } from '../../theme'
 import { formatBackupLabel } from '../../backupLabel'
 import { backendMessageOf, translateBackendMessage } from '../../locale/backend'
+import { markDialogBusy } from '../../dialogBusy'
 import { useDashboard } from '../../composables/useDashboardStore'
 import { useRepositoryLink } from '../../crossLink'
 import BusyOverlay from '../BusyOverlay.vue'
@@ -142,12 +143,13 @@ async function toggle(value: boolean) {
  * —— 用户点的是框架级卸载，不是在 MOD 列表里删单个 DLL。
  */
 function uninstall() {
-  dialog.warning({
+  const instance = dialog.warning({
     title: t('framework.uninstallDiylevelFramework'),
     content: t('framework.theWholeDiylevelFolderIsBackedUpBeforeUninstallingCustomMapsInsideAreMovedToTheRecycleBinTooContinue'),
     positiveText: t('overlays.uninstallFramework'),
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      markDialogBusy(instance)
       working.value = true
       busyText.value = t('framework.backingUpAndUninstallingDiylevel')
       try {

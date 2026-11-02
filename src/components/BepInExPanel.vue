@@ -26,6 +26,7 @@ import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { formatBackupLabel } from '../backupLabel'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
 import ModConfigEditor from './ModConfigEditor.vue'
 import BepInExSetupGuide from './BepInExSetupGuide.vue'
@@ -157,7 +158,7 @@ function onGuideConfirmed() {
 }
 
 function uninstall() {
-  dialog.warning({
+  const instance = dialog.warning({
     title: t('recycle.uninstallBepinex'),
     /*
      * 卸载只回收框架自己的文件（core、doorstop 库、根目录加载器），
@@ -168,6 +169,7 @@ function uninstall() {
     positiveText: t('recycle.uninstall'),
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      markDialogBusy(instance)
       working.value = true
       // 卸载 = 先整目录备份，再按清单回收，两步都是磁盘操作，要遮罩
       busyText.value = t('overlays.backingUpAndRemovingTheBepinexFramework')

@@ -21,6 +21,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { markDialogBusy } from '../dialogBusy'
 import type { InstalledMod } from '../types'
 
 export interface RemovalCopy {
@@ -58,18 +59,19 @@ export function useModRemoval(options: ModRemovalOptions) {
    */
   function remove(mod: InstalledMod, copy?: RemovalCopy) {
     const fallback = options.deleteCopy()
-    dialog.warning({
+    const instance = dialog.warning({
       title: copy?.title ?? t('modsLocal.deleteMod'),
       content: copy ? copy.body(options.titleOf(mod)) : fallback.body(options.titleOf(mod)),
       positiveText: fallback.action,
       negativeText: t('recycle.cancel'),
       async onPositiveClick() {
+        markDialogBusy(instance)
         options.onBusy?.(mod, true)
         try {
           const result = await api.uninstallLocalMod(mod.dll_file)
           if (result.requires_package_confirmation || result.requires_confirmation) {
             // 后端此时还没删任何东西（ok=false），确认后才带 allow_unmanaged 重试
-            dialog.warning({
+            const packageInstance = dialog.warning({
               title: t('modsLocal.thisModBelongsToAPackage'),
               content: t('modsLocal.itSharesAPackageWithModsDeleteThemTogether', {
                 count: result.package_mod_names?.length ?? 0,
@@ -77,6 +79,7 @@ export function useModRemoval(options: ModRemovalOptions) {
               positiveText: t('modsLocal.deletePackage'),
               negativeText: t('recycle.cancel'),
               async onPositiveClick() {
+                markDialogBusy(packageInstance)
                 const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
                 packageResult.ok
                   ? message.success(translateBackendMessage(packageResult.message) || fallback.done)

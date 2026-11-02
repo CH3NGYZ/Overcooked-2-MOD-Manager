@@ -15,6 +15,7 @@ import { statusPulseClass, useFocusHighlight, useMapLink, useRepositoryLink, use
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
+import { markDialogBusy } from '../dialogBusy'
 import { collapseCardWithScroll, naturalContentHeight, scrollExpandedCardIntoView } from '../expandScroll'
 import LocalItemCard from '../components/LocalItemCard.vue'
 import PageLoading from '../components/PageLoading.vue'
@@ -884,7 +885,7 @@ function remove(set: LevelSetInfo) {
   if (deleting.value[set.dir_name] || kitchenRunning.value) return
   const name = levelSetDisplayName(set, locale.value)
   const recycle = recyclesOnDelete.value
-  dialog.warning({
+  const instance = dialog.warning({
     title: t('levelSet.deleteTitle'),
     content: recycle
       ? t('modsLocal.willBeMovedToTheRecycleBinAndCanBeRestoredContinue', { name })
@@ -892,6 +893,7 @@ function remove(set: LevelSetInfo) {
     positiveText: recycle ? t('modsLocal.moveToRecycleBin') : t('modsLocal.deletePermanently'),
     negativeText: t('recycle.cancel'),
     onPositiveClick: async () => {
+      markDialogBusy(instance)
       deleting.value = { ...deleting.value, [set.dir_name]: true }
       try {
         const result = await api.deleteLevelSet(set.dir_name, set.enabled)

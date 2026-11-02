@@ -16,9 +16,11 @@
 //! 必须被认成包，而不是单 mod。
 
 use crate::commands::AppState;
-use crate::models::{DllRole, OperationResult};
-use crate::mods::{MAX_DLL_BYTES, file_stem_name, read_dll_details};
+use crate::models::{DllRole, InstallConflict, InstalledMod, OperationResult};
+use crate::mods::{MAX_DLL_BYTES, compare_mod_versions, file_stem_name, read_dll_details};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -68,6 +70,12 @@ pub struct ModPreview {
     pub dependency_count: usize,
     /// 逐 DLL 的解析结果（按包内顺序）。
     pub entries: Vec<ModPreviewEntry>,
+    /// 本地已有的同身份 MOD（安装前要卸载的那些）。
+    ///
+    /// 只在 `analyze_mod_source` / `stage_downloaded_file` 里填；安装预览模型
+    /// 直接复用，前端据此在确认界面先提示「将卸载本地旧副本」。
+    #[serde(default)]
+    pub conflicts: Vec<InstallConflict>,
     /// 来源：`repository` 表示从在线仓库资产下载，`manual` 表示本地文件或直链。
     /// 界面据此决定是否展示 Release 日志区块。
     pub origin: PreviewOrigin,
@@ -235,6 +243,7 @@ fn build_preview(entries: Vec<ModPreviewEntry>, file_name: &str) -> ModPreview {
         mod_count,
         dependency_count,
         entries,
+        conflicts: Vec::new(),
         // 默认按手动来源构造；仓库安装会把这两个字段改写为实际 Release 信息。
         origin: PreviewOrigin::Manual,
         release_tag: String::new(),
@@ -262,6 +271,124 @@ fn apply_repository_origin(
     }
     preview.release_tag = release_tag.to_string();
     preview.release_body = release_body.to_string();
+}
+
+/// 找出「这次要装的 MOD」与本地已装副本的身份冲突。
+///
+/// 只报告、不卸载：卸载由前端确认后逐个走 `uninstall_local_mod` 的整包语义
+/// （它按安装清单回收整包），安装事务里不掺卸载。同一个 MOD 不管版本相同、
+/// 升级还是降级都算同一个东西 —— 并存只会得到两份互相顶掉的 DLL。
+///
+/// 匹配规则（唯一实现，前端不要另判）：
+///   · 只看 `role == DllRole::Mod` 的条目：纯依赖不算冲突源，依赖是随包带着
+///     的 DLL，装成依赖不会顶掉本地同一个插件；
+///   · 两边都有 GUID 时只比 GUID：它是 BepInPlugin 的稳定身份，不同作者可能
+///     起同名 DLL，但不会共用 GUID；
+///   · 任一方缺 GUID（读不出元数据）才退回比名字，忽略大小写与首尾空白；
+///     两边名字都空时不算命中，否则「读不出元数据」会把所有同类包都判成冲突。
+///
+/// 命中项按安装包去重：同一个包里的多个 DLL 属于同一次卸载（`uninstall_local_mod`
+/// 是整包语义），每组只报一条，`handle` 取该组第一份命中的 `dll_file`。
+/// 顺序沿用 `installed` 的顺序，不排序 —— 界面按列表顺序展示才与 MOD 管理页一致。
+pub fn find_install_conflicts(
+    installed: &[InstalledMod],
+    entries: &[ModPreviewEntry],
+) -> Vec<InstallConflict> {
+    let candidates: Vec<&ModPreviewEntry> = entries
+        .iter()
+        .filter(|entry| entry.role == DllRole::Mod)
+        .collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut groups: HashSet<String> = HashSet::new();
+    let mut conflicts = Vec::new();
+    for existing in installed {
+        let Some(entry) = candidates
+            .iter()
+            .find(|entry| same_plugin(entry, existing))
+            .copied()
+        else {
+            continue;
+        };
+        // 包 ID 是「同一次卸载」的粒度；没有包 ID（单 MOD）才按 DLL 分组。
+        let group = trimmed(existing.package_id.as_deref())
+            .map(str::to_string)
+            .unwrap_or_else(|| existing.dll_file.clone());
+        if !groups.insert(group) {
+            continue;
+        }
+        conflicts.push(InstallConflict {
+            name: conflict_name(existing),
+            version: existing.version.clone().unwrap_or_default(),
+            handle: existing.dll_file.clone(),
+            enabled: existing.enabled,
+            same_version: same_version(entry.version.as_deref(), existing.version.as_deref()),
+        });
+    }
+    conflicts
+}
+
+/// 给预览补上冲突列表（安装入口在 `build_preview` 之后、`stage_local` 之前调）。
+///
+/// 探测不到游戏目录时留空：没装游戏就没有已装副本。扫描走
+/// `mods::scan_mods_with_manifests`（与 MOD 管理页同一份），所以「包内副本」
+/// 这类整包视角与界面显示的完全一致。
+fn attach_install_conflicts(state: &AppState, preview: &mut ModPreview) {
+    let config = state.config.load_or_default();
+    let Some(game_root) = crate::game::detect_game(&config).path else {
+        return;
+    };
+    let installed = crate::mods::scan_mods_with_manifests(
+        Path::new(&game_root),
+        &config,
+        Some(&state.config.manifests_dir()),
+    );
+    preview.conflicts = find_install_conflicts(&installed, &preview.entries);
+}
+
+/// 预览条目与本地已装 MOD 是否指同一个插件。
+fn same_plugin(entry: &ModPreviewEntry, installed: &InstalledMod) -> bool {
+    if let (Some(entry_guid), Some(installed_guid)) = (
+        trimmed(entry.guid.as_deref()),
+        trimmed(installed.guid.as_deref()),
+    ) {
+        return entry_guid.eq_ignore_ascii_case(installed_guid);
+    }
+    let Some(entry_name) = trimmed(entry.name.as_deref()) else {
+        return false;
+    };
+    let installed_name = installed.name.trim();
+    !installed_name.is_empty() && entry_name.eq_ignore_ascii_case(installed_name)
+}
+
+/// 冲突行的展示名：包名优先（一个包里多个 DLL 时用户认包），缺省回落插件名。
+fn conflict_name(installed: &InstalledMod) -> String {
+    trimmed(installed.package_name.as_deref())
+        .unwrap_or(installed.name.trim())
+        .to_string()
+}
+
+/// 本次要装的版本与本地已装是否相同。
+///
+/// 两边都有版本号时先按 BepInEx 的数字段比较（`mods::compare_mod_versions`，
+/// 与「本地谁在生效」同一把尺子）；读不出数字段说明作者写的不是版本号，
+/// 退回原文比较。缺失方按空串参与比较 —— 两边都读不出时算相同。
+fn same_version(target: Option<&str>, local: Option<&str>) -> bool {
+    let target = target.unwrap_or_default().trim();
+    let local = local.unwrap_or_default().trim();
+    if target.is_empty() || local.is_empty() {
+        return target == local;
+    }
+    match compare_mod_versions(target, local) {
+        Some(ordering) => ordering == Ordering::Equal,
+        None => target == local,
+    }
+}
+
+/// `Option<&str>` 去掉首尾空白后的非空值；空白字符串等同于「没有」。
+fn trimmed(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 /// 把源文件复制/下载到暂存目录，返回暂存里的文件路径。
@@ -336,6 +463,7 @@ pub(crate) fn stage_downloaded_file(
         analyze_zip(source, file_name)?
     };
     apply_repository_origin(&mut preview, repository_name, release_tag, release_body);
+    attach_install_conflicts(state, &mut preview);
     stage_local(state, &preview, source)?;
     // 记录来源：确认安装时要回到仓库安装路径，才知道回收哪个仓库的旧包
     write_origin_record(
@@ -394,11 +522,12 @@ pub async fn analyze_mod_source(
         source.kind,
         file_name
     );
-    let preview = if extension == "dll" {
+    let mut preview = if extension == "dll" {
         build_preview(vec![analyze_dll(&local_path, &file_name)], &file_name)
     } else {
         analyze_zip(&local_path, &file_name)?
     };
+    attach_install_conflicts(&state, &mut preview);
 
     // 暂存目录用 preview_id 命名，confirm / cancel 靠它找回文件。
     stage_local(&state, &preview, &local_path)?;
@@ -607,5 +736,222 @@ mod tests {
         assert_eq!(parsed.repository_id, "repo-2");
         assert!(parsed.release_tag.is_empty());
         assert!(!parsed.prerelease);
+    }
+
+    /// 本地已装 MOD 的最小构造：默认字段与真实扫描一致，测试只写关心的字段。
+    fn installed_mod(dll_file: &str, extra: serde_json::Value) -> InstalledMod {
+        let mut base = serde_json::json!({
+            "name": dll_file, "dll_file": dll_file, "enabled": true,
+            "version_source": "BepInPlugin", "update_available": false,
+            "duplicate_guid": false, "status": "latest",
+        });
+        if let (Some(base_map), Some(extra_map)) = (base.as_object_mut(), extra.as_object()) {
+            for (key, value) in extra_map {
+                base_map.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::from_value(base).unwrap()
+    }
+
+    fn preview_entry(
+        path: &str,
+        role: DllRole,
+        name: Option<&str>,
+        guid: Option<&str>,
+        version: Option<&str>,
+    ) -> ModPreviewEntry {
+        ModPreviewEntry {
+            path: path.into(),
+            role,
+            name: name.map(str::to_string),
+            guid: guid.map(str::to_string),
+            version: version.map(str::to_string),
+            title: None,
+            product_name: None,
+            company: None,
+            copyright: None,
+            original_filename: None,
+        }
+    }
+
+    #[test]
+    fn conflicts_match_by_guid_ignoring_case_and_whitespace() {
+        // 同一个 GUID 就是同一个插件：名字被改过也算冲突，卸载句柄用本地那份。
+        let installed = vec![installed_mod(
+            "BepInEx/plugins/FastThrow.dll",
+            serde_json::json!({
+                "guid": "com.example.fastthrow", "version": "1.2.0",
+                "package_id": "repo-fast-throw", "package_name": "快速投掷修复包",
+            }),
+        )];
+        let entries = vec![preview_entry(
+            "FastThrow.dll",
+            DllRole::Mod,
+            Some("另一个显示名"),
+            Some("  COM.Example.FastThrow "),
+            Some("1.2.0"),
+        )];
+
+        let conflicts = find_install_conflicts(&installed, &entries);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].name, "快速投掷修复包");
+        assert_eq!(conflicts[0].version, "1.2.0");
+        assert_eq!(conflicts[0].handle, "BepInEx/plugins/FastThrow.dll");
+        assert!(conflicts[0].enabled);
+        assert!(conflicts[0].same_version);
+    }
+
+    #[test]
+    fn conflicts_fall_back_to_name_when_either_side_lacks_a_guid() {
+        // 读不出 BepInPlugin 的 DLL 只有名字可比；名字两边都空时不能算同一份。
+        let installed = vec![installed_mod(
+            "BepInEx/plugins/Plain.dll",
+            serde_json::json!({ "name": "PlainMod" }),
+        )];
+        assert_eq!(
+            find_install_conflicts(
+                &installed,
+                &[preview_entry(
+                    "Plain.dll",
+                    DllRole::Mod,
+                    Some(" plainmod "),
+                    Some("com.example.plain"),
+                    None,
+                )],
+            )
+            .len(),
+            1
+        );
+        assert!(
+            find_install_conflicts(
+                &installed,
+                &[preview_entry("Plain.dll", DllRole::Mod, None, None, None)],
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn differing_guids_are_not_conflicts_even_with_the_same_name() {
+        // 不同作者可能起同名 DLL，但不会共用 GUID：GUID 都在时以 GUID 为准。
+        let installed = vec![installed_mod(
+            "BepInEx/plugins/Shared.dll",
+            serde_json::json!({ "guid": "com.author-a.shared", "name": "Shared" }),
+        )];
+        let entries = vec![preview_entry(
+            "Shared.dll",
+            DllRole::Mod,
+            Some("Shared"),
+            Some("com.author-b.shared"),
+            None,
+        )];
+        assert!(find_install_conflicts(&installed, &entries).is_empty());
+    }
+
+    #[test]
+    fn dependency_entries_never_count_as_conflicts() {
+        // 依赖是随包带的 DLL，装成依赖不会顶掉本地同一个插件，不该提示卸载。
+        let installed = vec![installed_mod(
+            "BepInEx/plugins/Runtime.dll",
+            serde_json::json!({ "guid": "com.example.runtime", "version": "2.0.0" }),
+        )];
+        let entries = vec![preview_entry(
+            "Runtime.dll",
+            DllRole::Dependency,
+            Some("Runtime"),
+            Some("com.example.runtime"),
+            Some("2.0.0"),
+        )];
+        assert!(find_install_conflicts(&installed, &entries).is_empty());
+    }
+
+    #[test]
+    fn conflicts_are_deduplicated_per_installed_package() {
+        // 同一个包里的两个 DLL 属于同一次卸载：只报一条，句柄取第一份命中的。
+        let installed = vec![
+            installed_mod(
+                "BepInEx/plugins/Pack/Main.dll",
+                serde_json::json!({
+                    "name": "Main", "guid": "com.example.pack.main", "version": "1.0.0",
+                    "package_id": "repo-pack", "package_name": "测试包",
+                }),
+            ),
+            installed_mod(
+                "BepInEx/plugins/Pack/Extra.dll",
+                serde_json::json!({
+                    "name": "Extra", "guid": "com.example.pack.extra", "version": "1.0.0",
+                    "package_id": "repo-pack", "package_name": "测试包",
+                }),
+            ),
+        ];
+        let entries = vec![
+            preview_entry(
+                "Main.dll",
+                DllRole::Mod,
+                Some("Main"),
+                Some("com.example.pack.main"),
+                Some("1.0.0"),
+            ),
+            preview_entry(
+                "Extra.dll",
+                DllRole::Mod,
+                Some("Extra"),
+                Some("com.example.pack.extra"),
+                Some("1.0.0"),
+            ),
+        ];
+
+        let conflicts = find_install_conflicts(&installed, &entries);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].handle, "BepInEx/plugins/Pack/Main.dll");
+    }
+
+    #[test]
+    fn conflicts_keep_installed_order_and_report_disabled_copies() {
+        // 已有重复副本要全部列出（关着的也要卸），顺序沿用本地扫描顺序。
+        let installed = vec![
+            installed_mod(
+                "BepInEx/plugins/A.dll",
+                serde_json::json!({ "name": "A", "guid": "com.example.a", "version": "1.0" }),
+            ),
+            installed_mod(
+                "BepInEx/plugins/A-disabled.dll.disabled",
+                serde_json::json!({
+                    "name": "A", "guid": "com.example.a", "version": "1.0", "enabled": false,
+                }),
+            ),
+        ];
+        let entries = vec![preview_entry(
+            "A.dll",
+            DllRole::Mod,
+            Some("A"),
+            Some("com.example.a"),
+            Some("1.0"),
+        )];
+
+        let conflicts = find_install_conflicts(&installed, &entries);
+        assert_eq!(conflicts.len(), 2);
+        assert_eq!(conflicts[0].handle, "BepInEx/plugins/A.dll");
+        assert!(conflicts[0].enabled);
+        assert_eq!(
+            conflicts[1].handle,
+            "BepInEx/plugins/A-disabled.dll.disabled"
+        );
+        assert!(!conflicts[1].enabled);
+    }
+
+    #[test]
+    fn same_version_follows_bepinex_numeric_comparison() {
+        // 「重装」还是「版本变化」必须与本地谁的版本更新判定同一把尺子：
+        // 1.0 与 1.0.0 是同一个版本，1.9.8 与 1.9.8.1 不是。
+        assert!(same_version(Some("1.0"), Some("1.0.0")));
+        assert!(!same_version(Some("1.9.8"), Some("1.9.8.1")));
+        assert!(same_version(Some(" v1.2.3 "), Some("1.2.3")));
+        // 不是纯数字版本号：退回原文比较
+        assert!(same_version(Some("final"), Some("final")));
+        assert!(!same_version(Some("final"), Some("latest")));
+        // 两边都读不出时算相同，只有一边读不出时不能声称同版本
+        assert!(same_version(None, None));
+        assert!(!same_version(Some("1.0"), None));
     }
 }

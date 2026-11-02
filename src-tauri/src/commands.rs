@@ -5761,33 +5761,34 @@ pub fn set_all_level_sets_enabled(
     })
 }
 
-/// 把 ZIP 里识别出的关卡集转成 IPC 模型（`exists` 依赖当前游戏目录）。
+/// 把 ZIP 里识别出的关卡集转成 IPC 模型（冲突列表依赖当前游戏目录）。
 ///
-/// `inspect_level_set_zip`（本地导入前确认）与 `stage_map_source`（本地 /
-/// 直链地图来源）必须给出完全相同的行，否则同一个 ZIP 在两条入口上显示的
-/// 「会回收旧版本」提示会不一致。
+/// `inspect_level_set_zip`（本地导入前确认）、`stage_map_source`（本地 / 直链
+/// 地图来源）与 `stage_map_release`（在线地图 Release）必须给出完全相同的行，
+/// 否则同一个 ZIP 在不同入口上的「会卸载本地旧副本」提示会不一致。
+///
+/// 冲突是**批次级**的：它回答「这次导入会与本地哪些副本撞身份」，与批次里
+/// 具体是哪一张无关，所以同一份列表挂到每个 `ZipLevelSet` 上，界面按
+/// `handle` 去重展示（单集 ZIP 与逐集拆分完全等价）。
 fn zip_level_sets(config: &AppConfig, path: &Path) -> Result<Vec<ZipLevelSet>, String> {
     let sets = crate::level_sets::inspect_zip(path)?;
-    let levels_dir = game::detect_game(config)
-        .path
-        .map(|root| PathBuf::from(root).join("BepInEx/plugins/OC2DIYLevel/levels"));
+    let game_root = game::detect_game(config).path;
+    let conflicts = game_root
+        .as_deref()
+        .map(|root| crate::level_sets::find_install_conflicts(Path::new(root), &sets))
+        .unwrap_or_default();
     Ok(sets
         .into_iter()
-        .map(|set| {
-            let exists = levels_dir
-                .as_ref()
-                .is_some_and(|dir| dir.join(&set.dir_name).exists());
-            ZipLevelSet {
-                exists,
-                dir_name: set.dir_name,
-                name: set.metadata.name,
-                name_zh: set.metadata.name_zh,
-                author: set.metadata.author,
-                version: set.metadata.version,
-                level_count: set.metadata.levels.len(),
-                file_count: set.files.len(),
-                plugins: set.plugins,
-            }
+        .map(|set| ZipLevelSet {
+            conflicts: conflicts.clone(),
+            dir_name: set.dir_name,
+            name: set.metadata.name,
+            name_zh: set.metadata.name_zh,
+            author: set.metadata.author,
+            version: set.metadata.version,
+            level_count: set.metadata.levels.len(),
+            file_count: set.files.len(),
+            plugins: set.plugins,
         })
         .collect())
 }
@@ -5855,7 +5856,7 @@ pub async fn classify_drop_source(path: String) -> Result<DropSourceKind, String
 
 /// 读一个 ZIP，列出其中的关卡集（不落盘，供导入前确认）。
 ///
-/// `exists` 标记目标位置是否已有同名目录 —— 界面据此提示「会回收旧版本」，
+/// `conflicts` 列出本地已有的同身份副本 —— 界面据此提示「将卸载旧版本」，
 /// 与真正安装时的判定保持一致。
 #[tauri::command]
 pub async fn inspect_level_set_zip(
@@ -5994,10 +5995,9 @@ pub fn import_level_sets(
     /*
      * 逐个集安装，而不是一次性全装。
      *
-     * `install_level_set` 负责「先回收再写入」，但它的签名是「一个 ZIP 一个集」。
-     * 多集 ZIP 在这里循环调用；任一失败就停下并保留已成功的（它们已经在
-     * 磁盘上且各自的旧版本已回收），错误如实上报 —— 悄悄跳过会让用户以为
-     * 全装上了。
+     * `install_from_zip` 的签名是「一个 ZIP 一个集」，多集 ZIP 在这里循环调用；
+     * 任一失败就停下并保留已成功的（它们已经在磁盘上），错误如实上报 ——
+     * 悄悄跳过会让用户以为全装上了。
      */
     let mut installed = Vec::new();
     for name in &selected {
@@ -6309,30 +6309,34 @@ pub async fn refresh_map_releases(
     }
 }
 
-/// 从地图仓库安装一个 Release。
+/// 把一个地图 Release 暂存成「可确认的导入来源」。
 ///
-/// 流程与 MOD 在线安装同构：选资产 → 下载 → 校验 → 安装。差别只在最后一步：
-/// MOD 走安装清单，地图走「回收旧集 + 写入新集」。
+/// 两段式与本地 ZIP 导入同构：这一步只做「选资产 → 下载 → 校验 → 识别 → 报告
+/// 冲突」，用户确认后才由 `import_level_sets`（`install_from_zip`）真正写入
+/// `levels/`。这样地图与 MOD 一样，安装前就能看到「将卸载本地哪些旧副本」。
 ///
 /// 下载**完全复用** MOD 的候选规划与竞速协调器：GitHub 按自动直连 / 自动代理
 /// 生成多个完整文件源并竞速（最多三个并行，慢的让位），Gitee 只直连且单线程。
 /// 地图以前是单源直下，中国大陆走 Gitee 时慢得没有退路，走 GitHub 时又用不上
 /// 用户配好的代理。
+///
+/// 暂存文件落在缓存目录（`staged = true`）：导入完成或用户取消后必须用
+/// `discard_map_source` 清掉。
 #[tauri::command]
-pub async fn install_map_release(
+pub async fn stage_map_release(
     app: AppHandle,
     state: State<'_, AppState>,
     map_id: String,
     tag: Option<String>,
     asset_name: Option<String>,
     locale: Option<String>,
-) -> Result<LevelSetImportResult, String> {
+) -> Result<StagedMapSource, String> {
     // 取消标记只在命令入口重置，不能在等待元数据或补充候选之后重置
     archive::start_download();
     // 与 `install_repository` 同口径：先把用户指定的版本与资产写进日志。
     // 资产选不出来（`source.noMatchingAsset`）时，这行是唯一能看出他点了哪个资产的地方。
     log::info!(
-        "开始安装地图：地图 ID={}，指定版本={}，指定资产={}",
+        "开始暂存地图来源：地图 ID={}，指定版本={}，指定资产={}",
         map_id,
         tag.as_deref().unwrap_or("自动选择"),
         asset_name.as_deref().unwrap_or("自动匹配")
@@ -6346,13 +6350,10 @@ pub async fn install_map_release(
     else {
         return Err("mapSource.mapMissing".into());
     };
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    // 安装是新增内容，游戏运行时也允许（与本地 ZIP 导入同一条策略）
-    crate::level_sets::ensure_operation_allowed(
-        &game_root,
-        crate::level_sets::LevelSetOperation::Install,
-    )?;
-
+    /*
+     * 暂存不写游戏目录，所以不探测游戏目录、也不拦「游戏正在运行」：
+     * 真正的写入在 `import_level_sets`，那里仍会校验 `game.notFound` 与运行状态。
+     */
     let release = match tag.as_deref() {
         Some(tag) => map
             .cached_releases
@@ -6484,59 +6485,104 @@ pub async fn install_map_release(
     })?;
 
     /*
-     * 交给关卡集安装器：按 ZIP 里 info 的集名落盘，并**先回收**同名关卡集。
+     * 识别 + 身份校验在暂存阶段做完：
      *
-     * 传 `expected` 让安装器核对 ZIP 的关卡集是否就是这个仓库声明的那个；
-     * 不一致时它会在改动磁盘之前拒绝 —— 否则绑定错位，后续更新检测全失效。
+     * - 仓库声明与实际 ZIP 不一致时，等用户确认完再报错太晚：界面已经展示了
+     *   一份要装的地图集，而安装必然失败；
+     * - 冲突列表要随 `ZipLevelSet` 一起返回，确认界面靠它提示「将卸载本地
+     *   哪些旧副本」。
+     *
+     * 解析 `info` 是可能几秒的 CPU 工作，走 `spawn_blocking`（与
+     * `inspect_level_set_zip` 同一条规则）：不要占着异步线程把窗口拖死。
      */
-    let expected = crate::level_sets::ExpectedLevelSet {
-        level_set_name: map.level_set_name.clone(),
-        level_set_name_zh: Some(map.level_set_name_zh.clone()).filter(|value| !value.is_empty()),
-        author: map.author.clone(),
+    let config_for_parse = config.clone();
+    let path_for_parse = temp.clone();
+    let parsed = match tauri::async_runtime::spawn_blocking(move || {
+        zip_level_sets(&config_for_parse, &path_for_parse)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(error.to_string()),
     };
-    let result = crate::level_sets::install_level_set(
-        &state.config.mod_recycle_bin_dir(),
-        &state.config.manifests_dir(),
-        &temp,
-        &game_root,
-        Some(expected),
-    );
-    let _ = fs::remove_file(&temp);
-    let installed = result?;
+    let sets = match parsed {
+        Ok(sets) => sets,
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+    };
+    if let Err(error) = validate_map_release_sets(&sets, &map) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
     log::info!(
-        "地图安装完成：地图={}，版本={}，替换旧版本={}",
-        installed.metadata.name,
-        installed.metadata.version,
-        installed.replaced
+        "地图 Release 已暂存：地图={}，版本={}，资产={}，关卡集={}，冲突={}",
+        map.name,
+        release.tag_name,
+        download_name,
+        sets.len(),
+        sets.first().map(|set| set.conflicts.len()).unwrap_or(0)
     );
-    /*
-     * 固化这张地图的依赖声明。
-     *
-     * 关系只存在于地图源文档里，源下线后本地无处可查；这里只落一个 JSON，
-     * 不碰游戏目录、不发请求。写失败只 warn —— 安装本身已经成功，不能因为
-     * 快照写不进去让用户看到一次失败的安装。
-     */
-    record_map_relation_snapshot(&state.config.manifests_dir(), &map);
-    Ok(LevelSetImportResult {
-        installed: vec![installed.dir_name],
+    Ok(StagedMapSource {
+        path: display_path(&temp),
+        staged: true,
+        sets,
     })
 }
 
-/// 把一张地图仓库的依赖声明写进地图依赖快照（保留其它已有条目）。
-fn record_map_relation_snapshot(manifest_dir: &Path, map: &MapRepositoryConfig) {
-    let mut snapshots = archive::read_map_relation_snapshots(manifest_dir);
-    snapshots.entries.insert(
-        map.id.clone(),
-        MapRelationSnapshot {
-            repository_id: map.id.clone(),
-            level_set_name: map.level_set_name.clone(),
-            author: map.author.clone(),
-            relations: map.relations.clone(),
-        },
-    );
-    if let Err(error) = archive::write_map_relation_snapshots(manifest_dir, &snapshots) {
-        log::warn!("地图依赖快照写入失败：地图={}，原因={}", map.id, error);
+/// 校验暂存到的关卡集与地图仓库声明的身份一致。
+///
+/// 这是原先「安装前才做」的校验，前移到暂存阶段：两段式确认发生在用户看到
+/// 列表之后，声明与内容不一致时必须在展示前就失败。绑定身份是
+/// `levelSetName + levelSetNameZH + author`（与扫描、开关、依赖判定共用
+/// `level_set_identity_matches`），不一致会让绑定错位、后续更新检测全失效，
+/// 宁可不装。
+fn validate_map_release_sets(
+    sets: &[ZipLevelSet],
+    map: &MapRepositoryConfig,
+) -> Result<(), String> {
+    if sets.len() != 1 {
+        log::warn!(
+            "在线安装的地图 ZIP 应只含一个关卡集：地图={}，实际={}",
+            map.name,
+            sets.len()
+        );
+        return Err(crate::locale_tag::with_params(
+            "levelSet.zipMultipleForRepository",
+            &[("count", &sets.len().to_string())],
+        ));
     }
+    let set = &sets[0];
+    let matches = crate::level_sets::level_set_identity_matches(
+        &set.name,
+        set.name_zh.as_deref(),
+        &set.author,
+        &map.level_set_name,
+        Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
+        &map.author,
+    );
+    if matches {
+        return Ok(());
+    }
+    log::warn!(
+        "关卡集与仓库声明不一致：地图={}，期望={} / {}，实际={} / {}",
+        map.name,
+        map.level_set_name,
+        map.author,
+        set.name,
+        set.author
+    );
+    Err(crate::locale_tag::with_params(
+        "levelSet.zipMismatch",
+        &[
+            (
+                "expected",
+                &format!("{} / {}", map.level_set_name, map.author),
+            ),
+            ("actual", &format!("{} / {}", set.name, set.author)),
+        ],
+    ))
 }
 
 /// 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
@@ -10144,6 +10190,82 @@ mod map_source_staging_tests {
         assert!(cache_file_to_discard(&cache, &cache.to_string_lossy()).is_err());
         assert!(outside.exists(), "缓存目录外的文件不能被删除");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn zip_level_set(name: &str, name_zh: Option<&str>, author: &str) -> ZipLevelSet {
+        serde_json::from_value(serde_json::json!({
+            "dir_name": name,
+            "name": name,
+            "name_zh": name_zh,
+            "author": author,
+            "version": "0.73",
+        }))
+        .unwrap()
+    }
+
+    fn map_repository(level_set_name: &str, name_zh: &str, author: &str) -> MapRepositoryConfig {
+        serde_json::from_value(serde_json::json!({
+            "provider": "github",
+            "username": "CH3NGYZ",
+            "repository": "Overcooked-2-MOD-Manager-Repos",
+            "level_set_name": level_set_name,
+            "level_set_name_zh": name_zh,
+            "author": author,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_matching_map_release_is_accepted_without_the_chinese_name() {
+        // 老地图源不写中文名：退回「英文集名 + 作者」比较，与安装前一样能过
+        let map = map_repository("RW_LevelSet", "", "RW");
+        assert!(
+            validate_map_release_sets(&[zip_level_set("RW_LevelSet", None, "RW")], &map).is_ok()
+        );
+        // 中文名两边都有才比较：写对了也要能过
+        let map = map_repository("GAODA", "胡闹糕中", "GAODA");
+        assert!(
+            validate_map_release_sets(&[zip_level_set("GAODA", Some("胡闹糕中"), "GAODA")], &map)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_mismatched_map_release_is_rejected_before_the_user_confirms() {
+        // 声明与实际不一致：装进去会让绑定错位、更新检测全失效，必须在暂存阶段失败
+        let map = map_repository("GAODA", "胡闹糕中", "GAODA");
+        let error =
+            validate_map_release_sets(&[zip_level_set("GAODA", Some("胡闹达学"), "GAODA")], &map)
+                .unwrap_err();
+        assert!(
+            error.starts_with("levelSet.zipMismatch?expected="),
+            "错误必须是带 expected/actual 的 tag：{error}"
+        );
+        assert!(error.contains("actual="), "{error}");
+    }
+
+    #[test]
+    fn a_multi_set_map_release_is_rejected() {
+        // 一个地图仓库只对应一张图：拿到多集 ZIP 说明资产选错了
+        let map = map_repository("RW_LevelSet", "", "RW");
+        let error = validate_map_release_sets(
+            &[
+                zip_level_set("RW_LevelSet", None, "RW"),
+                zip_level_set("Other", None, "Other"),
+            ],
+            &map,
+        )
+        .unwrap_err();
+        assert_eq!(error, "levelSet.zipMultipleForRepository?count=2");
+    }
+
+    #[test]
+    fn zip_level_set_json_carries_conflicts_and_no_exists_flag() {
+        // 前端契约：`exists`（同名即冲突）已删除，改为 `conflicts` 列表 ——
+        // 同名不同身份的目录允许并存，不能再用「有同名目录」当冲突判据。
+        let value = serde_json::to_value(zip_level_set("RW_LevelSet", None, "RW")).unwrap();
+        assert!(value.get("conflicts").is_some(), "{value}");
+        assert!(value.get("exists").is_none(), "{value}");
     }
 }
 

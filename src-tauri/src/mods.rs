@@ -1274,7 +1274,10 @@ pub(crate) fn is_safe_replacement_mod(target: &InstalledMod, peer: &InstalledMod
 /// 两者各司其职：
 ///   · 本地副本谁在生效 → 纯数字段比较（跟随 BepInEx）
 ///   · 线上是否有新版   → semver（`1.9.8` 确实是 `1.9.8-beta.1` 的升级）
-fn compare_mod_versions(left: &str, right: &str) -> Option<Ordering> {
+///
+/// `mod_preview::find_install_conflicts` 判断「本次要装的版本与本地已装是否
+/// 相同」也用它：同一份 DLL 换不换版本，该跟 BepInEx 的判定一致。
+pub(crate) fn compare_mod_versions(left: &str, right: &str) -> Option<Ordering> {
     Some(parse_mod_version_components(left)?.cmp(&parse_mod_version_components(right)?))
 }
 

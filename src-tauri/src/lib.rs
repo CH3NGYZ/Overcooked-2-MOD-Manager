@@ -245,7 +245,7 @@ pub fn run() {
             commands::get_maps,
             commands::refresh_map_sources,
             commands::refresh_map_releases,
-            commands::install_map_release,
+            commands::stage_map_release,
             commands::stage_map_source,
             commands::discard_map_source,
             commands::set_diy_level_enabled,

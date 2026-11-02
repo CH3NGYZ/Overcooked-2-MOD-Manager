@@ -640,7 +640,9 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 地图（DIYLevel 自定义关卡集）使用**另一条独立的索引链**，不与 MOD 仓库源混用：
 
 - 索引文件是 `maps.toml`，条目是 `[[maps]]`，子源是 `[[map_sources]]`；
-- 一个地图仓库对应**恰好一个**关卡集，绑定身份是 `author` + `level_set_name`（与 ZIP 里 `info` 的值一致，忽略大小写）；
+- 绑定身份是 `author` + `level_set_name`（与 ZIP 里 `info` 的值一致，忽略大小写）；
+- 一个地图仓库既可以只放一张图（默认：取列表里最新那条 Release），也可以放多张图：条目写 `tag` 就只读那个 Release，并把里面的每个资产当成这张图的一个版本（`asset_rules` 的正则负责抽版本号）；同一份文档还可以用 `[bundle]` 统一写仓库坐标；
+- 子源 `url` 既可以是相对路径、内置资源名，也可以是 **Release 资产地址**（第三方源把自己的 `map-sources.toml` 发布在 Release 里时用这种写法：先向 API 取 size/sha256，再竞速下载并校验）；
 - 地图下载页与地图管理页都按 `group_i18n` **折叠分组，语义是作者**（与 MOD 仓库的 `group` 按职责/相似性分类不同）；`author` 是绑定键、`group_i18n` 是展示名，两者可以不同；
 - 安装后会先回收同名的旧关卡集（进回收站），再写入新版本。
 
@@ -657,6 +659,7 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 - [ ] Release 模式仓库至少有一条有效的 `asset_rules`；仓库文件模式已填写有效的 `branch` 和 `file_path`。
 - [ ] Release 模式的资产规则能匹配 Release 中真实存在的文件名；仓库文件模式的 `file_path` 指向分支中真实存在的文件。
 - [ ] `plugin_guid`、`local_product_name`、`local_original_filename` 与 DLL 实际信息一致。
+- [ ] 用 tag 模式的地图条目：版本正则写成 `^…$` 整串锚定并带捕获组，同一 tag 内不出现两个相同版本号。
 - [ ] `install_target` 是相对路径，没有绝对路径和 `..`。
 - [ ] `[[repository_sources]]` 的 `id` 不重复，子源没有循环引用。
 - [ ] 每个 `[[repository_sources]]` 都有只含多语言表的 `nickname_i18n`，且 `zh-CN` 非空；没有残留单语 `nickname`。

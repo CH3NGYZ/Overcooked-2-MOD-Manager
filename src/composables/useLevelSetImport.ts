@@ -6,7 +6,7 @@
  * 暂存清理与「装完重读」的时机各漂各的 —— 用户会在两页看到不同的东西。
  *
  * 确认界面不再是自拼的 `dialog.warning`：把每个地图集当成一个 MOD、随包插件
- * 当成它下面那张卡，交给和 MOD 安装共用的 `InstallDetailDialog` 展示。所以
+ * 与依赖表挂在它下面，交给和 MOD 安装共用的 `InstallDetailDialog` 展示。所以
  * 这里的职责只剩状态与顺序：暂存、打开详情、等用户表态、导入、清理暂存。
  *
  * 后端 `stage_map_source` 先把来源统一成一份可读 ZIP（本地文件原地引用、
@@ -17,12 +17,16 @@
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { t } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { api, watchLevelSetZipProgress } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { levelSetImportDetail } from '../installDetail'
+import { levelSetDependencyRows } from '../dependencyRows'
 import { uninstallConflicts, uninstallMapConflict } from '../installConflicts'
 import { backendMessageOf } from '../locale/backend'
+import { repositoryIsAvailable } from '../repositoryAvailability'
+import { useDashboard } from './useDashboardStore'
+import { useMapSources } from './useMapSources'
 import type { InstallDetailModel } from '../installDetail'
 import type { InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet } from '../types'
 
@@ -34,6 +38,20 @@ interface PendingBatch {
 
 export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   const message = useNotify()
+  /*
+   * 依赖表的数据来源：Dashboard 的已装 MOD 与配置里的仓库、地图源的在线条目。
+   * 确认界面里的集还没落盘，后端不会为它生成关系快照，所以关系只能在
+   * 「身份匹配到在线地图 → 否则本地 ZIP 能带出的快照」这条链上现算。
+   * 这两个都是模块级单例，取用不会额外触发请求。
+   */
+  const { config, mods } = useDashboard()
+  const { maps } = useMapSources()
+  const repositories = computed(() => {
+    const current = config.value
+    if (!current) return []
+    return current.repositories.filter((repo) =>
+      repositoryIsAvailable(repo, current.repository_sources, current.region, current.platform))
+  })
   /** 正在处理一份来源：暂存 / 识别 / 等确认 / 导入，期间入口按钮转圈并禁用。 */
   const importing = ref(false)
   const pending = ref<PendingBatch | null>(null)
@@ -84,7 +102,22 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
    * 计数摘要要跟着变（`t()` 在 computed 里被执行，locale 变化会被追踪）。
    */
   const detail = computed<InstallDetailModel | null>(() =>
-    pending.value ? levelSetImportDetail(pending.value.path, pending.value.sets) : null)
+    pending.value
+      ? levelSetImportDetail(pending.value.path, pending.value.sets, {
+          /*
+           * 弹窗里不做依赖跳转：跳走会把「等用户确认」的导入流程留在原地，
+           * 回来还得重新识别一遍 ZIP。状态列只答「够不够」，不引导离开。
+           */
+          dependencies: (set) => levelSetDependencyRows(set, {
+            maps: maps.value,
+            mods: mods.value,
+            repositories: repositories.value,
+            translate: t,
+            pickName: pickI18n,
+            jumpToRepository: false,
+          }),
+        })
+      : null)
 
   /** 「立即安装」与「取消」的结论，交回 `importSource` 里那个 await。 */
   let settleApproval: ((approved: boolean) => void) | null = null

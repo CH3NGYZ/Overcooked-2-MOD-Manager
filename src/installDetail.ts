@@ -18,6 +18,7 @@
 import { t } from './i18n'
 import { renderReadme } from './markdown'
 import { formatVersion } from './modStatus'
+import type { DependencyRow } from './dependencyRows'
 import type { InstallConflict, ModPreview, ModPreviewRole, ZipLevelSet } from './types'
 
 /** 详情面板里的一格：左标签右值。 */
@@ -47,8 +48,21 @@ export interface InstallDetailEntry {
   /** 收起态右侧那列：版本号。 */
   meta?: string
   fields: InstallDetailField[]
-  /** 归属这张卡的下级条目：随包插件挂在它所属的地图集下面。 */
+  /**
+   * 归属这张卡的下级条目：随包插件挂在它所属的地图集下面。
+   *
+   * 渲染侧把它们放进所属卡片的展开区（缩进一层），所以收起时整张卡仍然
+   * 只有一行 —— 用户先确认要装哪几张图，点开哪张才看到它会带进哪些 DLL。
+   */
   children?: InstallDetailEntry[]
+  /**
+   * 这张卡的依赖声明（MOD / 要求 / 状态），与地图管理页详情里那份同一口径。
+   *
+   * ZIP 里的集还没落盘，后端不会为它算关系快照，所以这份由前端在造模型时
+   * 注入（`useLevelSetImport` 接 Dashboard 与地图源）。没有声明的条目是空
+   * 数组，渲染侧据此整块不出现。
+   */
+  dependencies?: DependencyRow[]
 }
 
 /**
@@ -217,12 +231,19 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
  * 地图 ZIP（已暂存并识别）→ 详情模型。
  *
  * 一个地图集就是一个 MOD：版本、作者、关卡数来自 `info`；随包插件是它下面
- * 的另一个「MOD」（元数据从 DLL 里读，和 MOD 预览同一套字段）。插件挂在
- * `children` 上而不是平铺进 `entries`：渲染侧要能按「先全部地图集、再全部
- * 插件」重排，把它放到列表最底 —— 用户先确认要装哪几张图，再扫一眼会跟着
- * 落盘的 DLL。
+ * 的另一个「MOD」（元数据从 DLL 里读，和 MOD 预览同一套字段），挂在该集的
+ * `children` 上；依赖声明同样挂在该集上（`dependencies`），渲染侧把两者放进
+ * 这张卡的展开区 —— 与地图管理页的「信息 → 随包插件 → 依赖表」同一顺序。
+ *
+ * `options.dependencies` 是唯一的外部输入：ZIP 里的集还没落盘，关系要在前端
+ * 用「身份匹配到在线地图 → 否则本地快照」算出来，所以由宿主注入而不是在这里
+ * 读全局状态。
  */
-export function levelSetImportDetail(zipPath: string, sets: ZipLevelSet[]): InstallDetailModel {
+export function levelSetImportDetail(
+  zipPath: string,
+  sets: ZipLevelSet[],
+  options: { dependencies?: (set: ZipLevelSet) => DependencyRow[] } = {},
+): InstallDetailModel {
   const pluginCount = sets.reduce((total, set) => total + (set.plugins?.length ?? 0), 0)
   const conflicts = conflictRows(sets.flatMap((set) => set.conflicts ?? []))
   return {
@@ -232,7 +253,7 @@ export function levelSetImportDetail(zipPath: string, sets: ZipLevelSet[]): Inst
       kind: t('tools.mapPackage'),
       summary: t('tools.mapPackageSummary', { dlls: pluginCount, sets: sets.length }),
     },
-    entries: sets.map(levelSetEntry),
+    entries: sets.map((set) => levelSetEntry(set, options.dependencies?.(set) ?? [])),
     conflicts,
     conflictHint: conflicts.length > 0 ? t('tools.installConflictHint') : '',
     emptyHint: [],
@@ -244,7 +265,7 @@ export function levelSetImportDetail(zipPath: string, sets: ZipLevelSet[]): Inst
 }
 
 /** 一张地图集卡片：标题用中文名（作者与玩家平时叫的那个），没有才退回英文名/目录名。 */
-function levelSetEntry(set: ZipLevelSet): InstallDetailEntry {
+function levelSetEntry(set: ZipLevelSet, dependencies: DependencyRow[]): InstallDetailEntry {
   const subtitle = [set.author?.trim(), t('levelSet.levelCount', { count: set.level_count })]
     .filter(Boolean)
     .join(' · ')
@@ -265,5 +286,6 @@ function levelSetEntry(set: ZipLevelSet): InstallDetailEntry {
     // 随包插件一律打「随包插件」标签：不管它自己是 Mod 还是 Dependency，
     // 对用户来说都是「跟着这张图落盘、跟着这张图启停」的那一类
     children: (set.plugins ?? []).map((plugin) => dllEntry(plugin, t('levelSet.bundledPlugin'))),
+    dependencies,
   }
 }

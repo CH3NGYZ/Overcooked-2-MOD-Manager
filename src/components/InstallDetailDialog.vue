@@ -12,6 +12,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { NButton, NCollapseTransition, NTag } from 'naive-ui'
+import DependencyTable from './DependencyTable.vue'
 import { tagColorFor } from '../theme'
 import { formatVersion } from '../modStatus'
 import { t } from '../i18n'
@@ -44,32 +45,20 @@ const emit = defineEmits<{
 }>()
 
 /**
- * 渲染行：先全部顶级条目，再全部下级条目（随包插件）。
+ * 渲染行：只列顶级条目（地图集 / MOD）。
  *
- * 下级条目不缩进、也不跟在所属条目后面，而是整批排到列表最底 —— 缩进只能
- * 表达「从属」，代价是右侧那列被挤窄、多张图各有插件时缩进层级还会叠起来；
- * 改成平铺 + 右侧「随包插件」标签后，归属靠标签说明，版本号也回到自己该在
- * 的位置。key 带上父条目，避免两张图的插件包内路径相同时撞 key。
- *
- * 用扁平数组渲染而不是递归组件：下级条目只有一个层级，卡片本身的样式
- * 与交互和顶级完全一样。
+ * 随包插件与依赖表不占列表行 —— 它们挂在所属条目的 `children` /
+ * `dependencies` 上，只有点开那张卡才出现在展开区里。这样收起态永远是一张卡
+ * 一行：用户先确认「要装哪几张图」，再逐张看它会带进哪些 DLL、依赖够不够，
+ * 与地图管理页详情的「信息 → 随包插件 → 依赖表」同一顺序。
  */
 interface DetailRow {
   entry: InstallDetailEntry
   key: string
 }
 
-const rows = computed<DetailRow[]>(() => {
-  const top: DetailRow[] = []
-  const children: DetailRow[] = []
-  for (const entry of props.model?.entries ?? []) {
-    top.push({ entry, key: entry.key })
-    for (const child of entry.children ?? []) {
-      children.push({ entry: child, key: `${entry.key}\u0000${child.key}` })
-    }
-  }
-  return [...top, ...children]
-})
+const rows = computed<DetailRow[]>(() =>
+  (props.model?.entries ?? []).map((entry) => ({ entry, key: entry.key })))
 
 /**
  * 条目展开状态：默认全部收起，只记展开的 key。
@@ -81,10 +70,22 @@ const expandedKeys = ref<string[]>([])
 function isExpanded(key: string) {
   return expandedKeys.value.includes(key)
 }
+/**
+ * 下级条目（随包插件）的展开 key：父条目 + `\u0000` + 子 key。
+ *
+ * 两张图的插件包内路径可能相同，只按子 key 记会让它们联动展开。
+ */
+function nestedKey(parentKey: string, childKey: string) {
+  return `${parentKey}\u0000${childKey}`
+}
 function toggle(key: string) {
-  expandedKeys.value = isExpanded(key)
-    ? expandedKeys.value.filter((item) => item !== key)
-    : [...expandedKeys.value, key]
+  if (isExpanded(key)) {
+    // 收起父条目连带清掉它的下级：下次展开应该是全新、未点开的卡片
+    const prefix = `${key}\u0000`
+    expandedKeys.value = expandedKeys.value.filter((item) => item !== key && !item.startsWith(prefix))
+    return
+  }
+  expandedKeys.value = [...expandedKeys.value, key]
 }
 /** 每次打开都从全部收起开始：上一份包展开过哪几条，对下一份没有意义。 */
 watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
@@ -125,9 +126,9 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
       </div>
 
       <!--
-        条目区：全都是同一张横排紧凑卡片。
-        收起态是「名称 + 淡灰副标题 …… 角色标签 + 右侧版本」；点击展开完整元数据。
-        随包插件平铺在列表最底，靠右侧标签而不是缩进说明归属。
+        条目区：一级条目（地图集 / MOD）各占一张横排紧凑卡片。
+        收起态是「名称 + 淡灰副标题 …… 角色标签 + 右侧版本」；点开才看到
+        九项元数据、随包插件与依赖表 —— 与地图管理页详情的层级完全一致。
       -->
       <div v-if="rows.length" class="detail-list">
         <article v-for="row in rows" :key="row.key" class="detail-row"
@@ -154,6 +155,45 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
                 <span class="muted">{{ field.label }}</span>
                 <b :class="{ mono: field.mono }">{{ field.value }}</b>
               </div>
+            </div>
+            <!--
+              随包插件：跟着这张图落盘、跟着这张图启停的 DLL，所以缩进在所属
+              条目里，而不是另起一批列表行。点开插件本身还能看它的元数据。
+            -->
+            <div v-if="row.entry.children?.length" class="detail-plugins" @click.stop>
+              <article v-for="child in row.entry.children" :key="child.key"
+                class="detail-row detail-row--nested"
+                :class="{ expanded: isExpanded(nestedKey(row.key, child.key)) }"
+                @click.stop="toggle(nestedKey(row.key, child.key))">
+                <div class="detail-row-line">
+                  <span class="detail-main">
+                    <b class="detail-name" :title="child.title">{{ child.title }}</b>
+                    <span v-if="child.subtitle" class="detail-sub mono" :title="child.subtitle">
+                      {{ child.subtitle }}
+                    </span>
+                  </span>
+                  <span class="detail-side">
+                    <n-tag v-if="child.tag" size="tiny" :bordered="false" :color="tagColorFor('muted')">
+                      {{ child.tag }}
+                    </n-tag>
+                    <span class="detail-meta mono">{{ child.meta ?? '' }}</span>
+                  </span>
+                </div>
+                <n-collapse-transition :show="isExpanded(nestedKey(row.key, child.key))"
+                  display-directive="show">
+                  <div class="detail-row-fields">
+                    <div v-for="(field, index) in child.fields" :key="index" class="detail-item"
+                      :class="{ wide: field.wide }">
+                      <span class="muted">{{ field.label }}</span>
+                      <b :class="{ mono: field.mono }">{{ field.value }}</b>
+                    </div>
+                  </div>
+                </n-collapse-transition>
+              </article>
+            </div>
+            <!-- 依赖表：与地图管理页同一份组件与判定；弹窗里不提供跳转 -->
+            <div v-if="row.entry.dependencies?.length" class="detail-deps" @click.stop>
+              <DependencyTable :rows="row.entry.dependencies" />
             </div>
           </n-collapse-transition>
         </article>
@@ -236,6 +276,29 @@ watch(() => props.show, (open) => { if (open) expandedKeys.value = [] })
 }
 .detail-row:hover { border-color: var(--oc2-accent); background: var(--oc2-row-hover); }
 .detail-row.expanded { border-color: var(--oc2-accent); }
+/*
+ * 展开区里的两个从属区块：随包插件、依赖表。
+ * 各用一条分隔线起头，和上面九项元数据网格同一层级语言；插件缩进成更深一层
+ * 的卡片（它是这张图的附属物），依赖表是纯表格、不再套卡片。
+ */
+.detail-plugins {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--oc2-row-line);
+}
+.detail-row--nested {
+  margin-left: 10px;
+  padding: 8px 10px;
+  background: var(--oc2-sunken);
+}
+.detail-deps {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--oc2-row-line);
+}
 /*
  * 右侧收尾列：角色标签 + 版本号。
  *

@@ -156,6 +156,24 @@ test('地图包：标题按「中文名 → 英文名 → 目录名」兜底，�
   assert.equal(model.entries[1].subtitle, '菊花梨 · 10 个关卡')
 })
 
+test('地图包：依赖表挂在所属地图集上，没有声明就是空数组', () => {
+  const runtime = {
+    key: 'oc2.oc2diylevelruntimewloader',
+    name: 'DIYLevel Web 前置',
+    requirement: '≥ 3.10.2',
+    status: '已满足',
+    tone: 'ok',
+  }
+  const model = levelSetImportDetail('/tmp/maps.zip', [levelSet(), levelSet({ dir_name: 'b' })], {
+    dependencies: (set) => (set.dir_name === 'shz' ? [runtime] : []),
+  })
+
+  assert.deepEqual(model.entries[0].dependencies, [runtime], '依赖跟着地图集走，不另起条目')
+  assert.deepEqual(model.entries[1].dependencies, [], '没有声明时是空数组，渲染侧整块不出现')
+  assert.deepEqual(levelSetImportDetail('/tmp/maps.zip', [levelSet()]).entries[0].dependencies, [],
+    '不传注入函数时同样是空数组')
+})
+
 test('地图包：读不出元数据的插件照样打「随包插件」标签，并退回文件名当标题', () => {
   const model = levelSetImportDetail('/tmp/maps.zip', [
     levelSet({

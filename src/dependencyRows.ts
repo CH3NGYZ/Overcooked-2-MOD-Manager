@@ -358,9 +358,21 @@ export function installedModRelations(
   return relationsForRelease(repo, mod.version ?? null)
 }
 
+/**
+ * 计算关卡集依赖时真正需要的字段。
+ *
+ * ZIP 导入确认弹窗里的集还没落盘，只有 `info` 解析出来的身份与版本
+ * （`ZipLevelSet`），没有 `uid`、`path`、`plugins` 这些已安装侧字段；而
+ * 「绑定了哪张在线地图」只取决于身份（中文名 + 英文名 + 作者）与本地关系
+ * 快照。把入参收窄到这个交集，确认界面与地图管理页才能共用同一套依赖判定，
+ * 而不是给弹窗另写一份只看快照的简化版。
+ */
+export type LevelSetRelationSource =
+  Pick<LevelSetInfo, 'name' | 'author' | 'relations'> & { name_zh?: string | null }
+
 /** 一个关卡集该用哪份关系声明（在线地图 → 本地快照）。 */
 export function levelSetRelations(
-  set: LevelSetInfo,
+  set: LevelSetRelationSource,
   maps: readonly MapInfo[],
 ): RepositoryRelation[] {
   const bound = mapForLevelSet(set, maps)
@@ -399,7 +411,7 @@ export function mapDependencyRows(
 
 /** 本地关卡集的依赖表行（地图管理页详情用；与地图下载页同一口径）。 */
 export function levelSetDependencyRows(
-  set: LevelSetInfo,
+  set: LevelSetRelationSource,
   options: Omit<DependencyRowOptions, 'ownerRepository'> & {
     /**
      * 当前地图源列表（必填）。

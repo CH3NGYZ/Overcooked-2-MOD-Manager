@@ -22,8 +22,15 @@
  *     n-card 的同一个元素」上，内容区类名是 .n-card-content（不是
  *     .n-card__content）。
  */
-import { computed, toRefs } from 'vue'
+import { computed, nextTick, onBeforeUnmount, toRefs, useId, watch } from 'vue'
 import { NModal } from 'naive-ui'
+import {
+  MODAL_RESIZE_DURATION,
+  MODAL_RESIZE_EASING,
+  modalResizeKeyframes,
+  shouldAnimateModalResize,
+  type ModalSize,
+} from '../modalResize'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -183,13 +190,113 @@ const contentStyle = {
   flexDirection: 'column' as const,
   overflow: 'hidden',
 }
+
+/* ===== 尺寸变化过渡 ===== */
+/*
+ * 弹窗尺寸随内容变（切 tab、展开详情、错误提示出现），Naive 是直接跳过去的。
+ * 这里观察卡片自己的尺寸，把「上一次 → 这一次」补成 200ms 的宽高过渡。
+ *
+ * 为什么用带实例号的类名去查卡片元素：`preset="card"` 下 Naive 把 `class`
+ * 合到「同时带 `.n-modal` 与 `.n-card` 的同一个元素」上，而 `NModal` 组件实例
+ * 的 `$el` 是一段 Teleport 注释节点，拿不到卡片本身。带实例号的类名让每个
+ * 弹窗都能在自己的模板里定位到自己那张卡片（同时开两个弹窗也不会串）。
+ */
+const instanceMarker = `app-modal-instance-${useId()}`
+
+let sizeObserver: ResizeObserver | null = null
+let sizeAnim: Animation | null = null
+let lastSize: ModalSize | null = null
+let lastViewport = { width: 0, height: 0 }
+/** 上一段过渡还没播完：期间 Observer 每帧都会回报中间尺寸，不能再起一段。 */
+let resizing = false
+
+function cardElement(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`.${instanceMarker}`)
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function readSize(element: HTMLElement): ModalSize {
+  return { width: element.offsetWidth, height: element.offsetHeight }
+}
+
+function handleCardResize() {
+  const element = cardElement()
+  if (!element) return
+  const size = readSize(element)
+  const viewport = { width: window.innerWidth, height: window.innerHeight }
+  const viewportChanged =
+    viewport.width !== lastViewport.width || viewport.height !== lastViewport.height
+  lastViewport = viewport
+  const from = lastSize
+  lastSize = size
+  if (!from) return
+  const animate = shouldAnimateModalResize({
+    from,
+    to: size,
+    animating: resizing,
+    viewportChanged,
+    reducedMotion: prefersReducedMotion(),
+  })
+  if (!animate) return
+  sizeAnim?.cancel()
+  resizing = true
+  sizeAnim = element.animate(modalResizeKeyframes(from, size), {
+    duration: MODAL_RESIZE_DURATION,
+    easing: MODAL_RESIZE_EASING,
+  })
+  sizeAnim.finished
+    // cancel() 会让 finished reject，这不是错误
+    .catch(() => undefined)
+    .finally(() => {
+      resizing = false
+      sizeAnim = null
+    })
+}
+
+function observeCardSize() {
+  const element = cardElement()
+  if (!element) return
+  stopObservingCardSize()
+  lastSize = readSize(element)
+  lastViewport = { width: window.innerWidth, height: window.innerHeight }
+  sizeObserver = new ResizeObserver(handleCardResize)
+  sizeObserver.observe(element)
+}
+
+function stopObservingCardSize() {
+  sizeObserver?.disconnect()
+  sizeObserver = null
+  sizeAnim?.cancel()
+  sizeAnim = null
+  resizing = false
+  lastSize = null
+}
+
+/*
+ * 只在弹窗真正显示时观察（`displayDirective: 'if'` 下关闭会把内容从 DOM 移除，
+ * 观察一个已经消失的元素没有意义）。等一帧再查：Naive 是在 show 之后的渲染里
+ * 才把卡片挂进 Teleport 目标的。
+ */
+watch(visible, async (shown) => {
+  if (!shown) {
+    stopObservingCardSize()
+    return
+  }
+  await nextTick()
+  observeCardSize()
+}, { immediate: true })
+
+onBeforeUnmount(stopObservingCardSize)
 </script>
 
 <template>
   <n-modal :show="visible" preset="card" :title="heading || undefined" :bordered="hasBorder"
     :closable="allowClose" :mask-closable="allowClose && maskClosableEnabled" :close-on-esc="allowClose"
     :display-directive="directive" :to="mountTarget" class="app-modal"
-    :class="extraClass" :style="modalStyle" :content-style="contentStyle"
+    :class="[extraClass, instanceMarker]" :style="modalStyle" :content-style="contentStyle"
     @update:show="(value: boolean) => emit('update:show', value)"
     @after-leave="emit('after-leave')">
     <!-- 头部右侧附加内容（筛选器、计数等），透传 Naive 原生槽位 -->

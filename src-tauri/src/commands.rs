@@ -6449,6 +6449,8 @@ pub async fn refresh_map_sources(
             github_token: github_token.as_deref(),
             gitee_token: gitee_token.as_deref(),
             pass_id: pass_id.as_deref(),
+            // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
+            previous: &config.map_repositories,
         };
         crate::map_sources::load_map_tree(&region, builtin_only, &ctx).await
     };
@@ -6615,6 +6617,8 @@ pub async fn refresh_map_releases(
             github_token: github_token.as_deref(),
             gitee_token: gitee_token.as_deref(),
             pass_id: pass_id.as_deref(),
+            // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
+            previous: &config.map_repositories,
         };
         crate::map_sources::fetch_map_releases(&ctx, &map).await
     };

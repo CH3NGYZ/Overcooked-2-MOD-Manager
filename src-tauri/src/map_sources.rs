@@ -90,17 +90,65 @@ pub struct MapBundleCoordinates {
     pub repository: String,
 }
 
+/// 一个地图源以什么方式变成地图条目。
+///
+/// 三种形态对应三种真实的作者习惯，而不是三个功能开关：
+///
+/// - `document`：作者自己维护一份 `[[maps]]` TOML（历史形态，保留兼容）。
+/// - `repository`：**整个仓库就是一张地图**，每个 Release 是它的一个版本
+///   （`max_release_count` 决定显示几个版本）。
+/// - `release-tags`：**一个 tag 一张地图**。作者把「该地图的元数据」写进
+///   Release note 里的 `<!-- oc2-map ... -->` 块，管理器读完整仓的 Release
+///   就地把条目生成出来 —— 作者不再需要维护、同步一份集中式索引。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MapSourceMode {
+    #[default]
+    Document,
+    Repository,
+    ReleaseTags,
+}
+
 /// 源文档里对子源的声明。
 ///
 /// 昵称只影响展示，但**必须解析**：地图页按「源 → 分类 → 地图」三层展示，
 /// 源标题就来自这里。地图源树本身不落盘，所以加载时要把昵称写进每个条目
 /// （`MapRepositoryConfig::source_name`），否则 `get_maps` 读持久化配置时
 /// 只剩一个源 ID 可显示。
+///
+/// `mode` 决定后面哪些字段有意义：`document` 只读 `url`；另两种读仓库坐标
+/// （`provider` / `username` / `repository`），`repository` 还读 `map` 子表。
+/// 字段共用一张结构而不是三种声明，是因为它们总是并列出现在同一份索引里，
+/// 拆成三个 enum 变体只会让 TOML 的写法随模式变形、作者更难写对。
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapSourceDeclaration {
     pub id: String,
+    #[serde(default)]
+    pub mode: MapSourceMode,
     /// 源地址：完整 URL、内置资源名，或**相对当前文档**的路径。
+    /// 仅 `mode = "document"` 使用。
+    #[serde(default)]
     pub url: String,
+    /// 声明级仓库坐标：`repository` / `release-tags` 模式下的仓库。
+    ///
+    /// 单仓库地图也可以在 `[map_sources.map]` 里逐条写坐标；两处都写时
+    /// **以这里为准** —— 源声明是「这个源指向哪个仓库」的地方，条目里的
+    /// 坐标只是同一信息的另一种摆放方式。
+    #[serde(default)]
+    pub provider: Option<Provider>,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub repository: String,
+    /// 单仓库地图的条目本体（`mode = "repository"`）。
+    #[serde(default)]
+    pub map: Option<MapRepositoryConfig>,
+    /// `release-tags` 模式每次向 API 要多少条 Release（默认 50）。
+    #[serde(default)]
+    pub page_size: Option<u32>,
+    /// `release-tags` 最多翻几页（默认 20，防止一份超大仓库拖死刷新）。
+    #[serde(default)]
+    pub max_pages: Option<u32>,
     /// 单语言镜像；源文档只写 `nickname_i18n` 时从 `zh-CN` 折进来。
     #[serde(default)]
     pub nickname: String,
@@ -177,6 +225,12 @@ pub fn parse_document(
     // 子源同理：昵称只写多语言表就够，加载时折出单语言镜像随条目落盘
     for child in &mut document.map_sources {
         fold_i18n_mirror(&mut child.nickname, &child.nickname_i18n);
+        if let Some(map) = child.map.as_mut() {
+            fold_i18n_mirror(&mut map.name, &map.name_i18n);
+            fold_i18n_mirror(&mut map.group, &map.group_i18n);
+            fold_i18n_mirror(&mut map.note, &map.note_i18n);
+        }
+        validate_declaration(child, origin)?;
     }
 
     /*
@@ -218,6 +272,69 @@ fn fold_i18n_mirror(mirror: &mut String, table: &std::collections::BTreeMap<Stri
     }
     if let Some(value) = table.get("zh-CN").filter(|value| !value.trim().is_empty()) {
         *mirror = value.clone();
+    }
+}
+
+/// 按声明模式校验子源：只校验该模式真正会读的字段。
+///
+/// 三种模式的必填项不同，合成一份「全都必填」的校验只会逼作者写无意义的
+/// 占位值（例如给单仓库源补一个永远用不到的 `url`）。
+fn validate_declaration(
+    declaration: &MapSourceDeclaration,
+    origin: &SourceLocation,
+) -> Result<(), ConfigError> {
+    let source = declaration.id.trim();
+    match declaration.mode {
+        MapSourceMode::Document => {
+            if declaration.url.trim().is_empty() {
+                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                    "mapSource.declarationMissingUrl",
+                    &[("source", source)],
+                )));
+            }
+        }
+        MapSourceMode::Repository => {
+            let Some(map) = declaration.map.as_ref() else {
+                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                    "mapSource.declarationMissingMap",
+                    &[("source", source)],
+                )));
+            };
+            let mut probe = map.clone();
+            apply_declaration_coordinates(&mut probe, declaration);
+            validate_map_entry(&probe, origin)?;
+        }
+        MapSourceMode::ReleaseTags => {
+            if declaration.username.trim().is_empty() || declaration.repository.trim().is_empty() {
+                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                    "mapSource.missingCoordinates",
+                    &[("map", source)],
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把声明级的仓库坐标/地区写进条目；条目自己写了的坐标不覆盖。
+///
+/// provider 例外：声明级写了就一律采用 ——「这个源指向哪个仓库」是源级的事实，
+/// 逐条写 provider 只会制造「同一源里有一条指向另一个站点」的怪状态。
+fn apply_declaration_coordinates(
+    map: &mut MapRepositoryConfig,
+    declaration: &MapSourceDeclaration,
+) {
+    if let Some(provider) = declaration.provider.clone() {
+        map.provider = provider;
+    }
+    if map.username.trim().is_empty() {
+        map.username = declaration.username.trim().to_string();
+    }
+    if map.repository.trim().is_empty() {
+        map.repository = declaration.repository.trim().to_string();
+    }
+    if map.region.is_none() {
+        map.region = declaration.region.clone();
     }
 }
 
@@ -605,13 +722,41 @@ fn collect_bundled_maps(
         return;
     }
     for child in document.map_sources {
-        let Ok(child_location) = SourceLocation::resolve(&child.url, Some(location)) else {
-            continue;
-        };
+        // clone 而不是移动：下面还要把整条声明交给 `build_declaration_map`
         let child_label = SourceLabel {
             id: child.id.trim().to_string(),
-            name: child.nickname,
-            name_i18n: child.nickname_i18n,
+            name: child.nickname.clone(),
+            name_i18n: child.nickname_i18n.clone(),
+        };
+        match child.mode {
+            /*
+             * 单仓库地图的条目就写在这份索引里，不需要网络：内置树照样能
+             * 立刻把它变成一张可用地图（首次启动、离线都有内容）。
+             */
+            MapSourceMode::Repository => {
+                match build_declaration_map(&child, &child_label, true, location) {
+                    Ok(map) => collected.push(map),
+                    Err(error) => log::warn!(
+                        "内置地图源里的单仓库条目无效，跳过：源={}，原因={}",
+                        child_label.id,
+                        error
+                    ),
+                }
+                continue;
+            }
+            /*
+             * release-tags 必须联网把整个仓库的 Release 读下来才知道有哪些
+             * 地图；内置树的约定是「不联网也能读到东西」，所以这里只能跳过，
+             * 等第一次刷新源树后条目才出现。
+             */
+            MapSourceMode::ReleaseTags => {
+                log::debug!("内置地图源树跳过联网型源：源={}", child_label.id);
+                continue;
+            }
+            MapSourceMode::Document => {}
+        }
+        let Ok(child_location) = SourceLocation::resolve(&child.url, Some(location)) else {
+            continue;
         };
         collect_bundled_maps(&child_location, &child_label, depth + 1, collected);
     }
@@ -781,22 +926,67 @@ async fn load_map_document(
         collected.push(map);
     }
 
-    if depth + 1 > MAX_MAP_SOURCE_DEPTH {
-        if !document.map_sources.is_empty() {
-            log::warn!(
-                "地图源层级超过上限，丢弃更深层的子源：源={}，上限={}",
-                label.id,
-                MAX_MAP_SOURCE_DEPTH
-            );
-        }
-        return Ok(());
-    }
-
     for child in document.map_sources {
         // 地区不匹配的子源整个跳过：它的地址对当前用户没有意义，
         // 请求它只会换来一次 404 和一条无从处理的错误
         if !child_matches_region(child.region.as_deref(), region) {
             log::debug!("跳过地区不匹配的地图子源：源={}", child.id);
+            continue;
+        }
+        // 远程文档不能自行提权：省略时继承父源
+        let child_builtin = builtin && child.builtin.unwrap_or(true);
+        let child_label = SourceLabel {
+            id: child.id.trim().to_string(),
+            name: child.nickname.clone(),
+            name_i18n: child.nickname_i18n.clone(),
+        };
+        match child.mode {
+            /*
+             * 单仓库地图：整仓 = 一张图，条目本体写在声明里，这里只是补齐
+             * 源归属与 ID。不递归，因此不受层级上限约束。
+             */
+            MapSourceMode::Repository => {
+                match build_declaration_map(&child, &child_label, child_builtin, &location) {
+                    Ok(map) => collected.push(map),
+                    Err(error) => log::warn!(
+                        "单仓库地图源声明无效，跳过：源={}，原因={}",
+                        child_label.id,
+                        error
+                    ),
+                }
+                continue;
+            }
+            /*
+             * 单仓多 Release：一个 tag 一张图，元数据来自各自的 Release note。
+             * 一次读完整仓的 Release（按 page_size 翻页），把条目拼出来；
+             * 同一份地图源的全部条目共用 child_label，前端因此把它们归到
+             * 同一个源下面。
+             */
+            MapSourceMode::ReleaseTags => {
+                match load_release_tag_maps(&child, &child_label, child_builtin, &location, ctx)
+                    .await
+                {
+                    Ok(maps) => collected.extend(maps),
+                    Err(error) => log::warn!(
+                        "按 Release note 生成地图失败，跳过：源={}，原因={}",
+                        child_label.id,
+                        error
+                    ),
+                }
+                continue;
+            }
+            MapSourceMode::Document => {}
+        }
+        /*
+         * 子源失败仍然继续加载其余子源 —— 一个作者的 TOML 404 不该让
+         * 其他作者的地图从页面上消失。失败只记日志，索引层不因此报错。
+         */
+        if depth + 1 > MAX_MAP_SOURCE_DEPTH {
+            log::warn!(
+                "地图源层级超过上限，丢弃更深层的子源：源={}，上限={}",
+                child_label.id,
+                MAX_MAP_SOURCE_DEPTH
+            );
             continue;
         }
         let child_location = match SourceLocation::resolve(&child.url, Some(&location)) {
@@ -817,17 +1007,6 @@ async fn load_map_document(
             log::warn!("检测到地图源循环引用，跳过：源={}", child.id);
             continue;
         }
-        // 远程文档不能自行提权：省略时继承父源
-        let child_builtin = builtin && child.builtin.unwrap_or(true);
-        /*
-         * 子源失败仍然继续加载其余子源 —— 一个作者的 TOML 404 不该让
-         * 其他作者的地图从页面上消失。失败只记日志，索引层不因此报错。
-         */
-        let child_label = SourceLabel {
-            id: child.id.trim().to_string(),
-            name: child.nickname,
-            name_i18n: child.nickname_i18n,
-        };
         let boxed = Box::pin(load_map_document(
             child_location,
             &child_label,
@@ -849,6 +1028,299 @@ async fn load_map_document(
         }
     }
     Ok(())
+}
+
+/// `release-tags` 模式每次向 API 要多少条 Release（默认值）。
+const RELEASE_TAG_PAGE_SIZE: u32 = 50;
+
+/// `release-tags` 模式最多翻几页。
+///
+/// 50 × 20 = 1000 个 Release 已经是「一个人几年的产出」量级；设上限只是
+/// 为了防止一份异常仓库（几千个 tag）让一次刷新迟迟不结束。
+const RELEASE_TAG_MAX_PAGES: u32 = 20;
+
+/// 把「单仓库地图」声明变成一张地图条目。
+///
+/// 声明里的 `[map_sources.map]` 就是条目本体，这里只补三样它不该重复写的
+/// 东西：源归属、内置标记、跨刷新稳定的 ID。
+fn build_declaration_map(
+    declaration: &MapSourceDeclaration,
+    label: &SourceLabel,
+    builtin: bool,
+    origin: &SourceLocation,
+) -> Result<MapRepositoryConfig, ConfigError> {
+    let mut map = declaration.map.clone().ok_or_else(|| {
+        ConfigError::Invalid(crate::locale_tag::with_params(
+            "mapSource.declarationMissingMap",
+            &[("source", declaration.id.trim())],
+        ))
+    })?;
+    apply_declaration_coordinates(&mut map, declaration);
+    label.attach(&mut map);
+    map.builtin = builtin;
+    map.id = map_repository_id(&label.id, &map);
+    validate_map_entry(&map, origin)?;
+    Ok(map)
+}
+
+/// 「单仓多 Release」源要读哪个仓库。
+///
+/// 只为复用 `release_cache` 与 `fetch_releases` 的限流/代理/重试链路：
+/// 那条链路吃的是 `RepositoryConfig`，为地图再造一条抓取路径等于把规则
+/// 复制一遍，迟早两边行为不一致。
+fn declaration_probe(
+    declaration: &MapSourceDeclaration,
+    per_page: u32,
+) -> crate::models::RepositoryConfig {
+    let export: crate::models::RepositoryExport = serde_json::from_value(serde_json::json!({
+        "name": declaration.nickname,
+        "name_i18n": declaration.nickname_i18n,
+        "group": declaration.nickname,
+        "group_i18n": declaration.nickname_i18n,
+        "provider": declaration.provider.clone().unwrap_or(Provider::Github),
+        "username": declaration.username.trim(),
+        "repository": declaration.repository.trim(),
+        "enabled": true,
+        "download_mode": "release",
+        "max_release_count": per_page,
+        "install_target": "",
+    }))
+    .expect("地图源投影的字段形状固定，构造失败说明模型改了默认值");
+    crate::config::repository_from_export(
+        &export,
+        declaration.id.trim().to_string(),
+        declaration.builtin.unwrap_or(false),
+    )
+}
+
+/// 读一个「单仓多 Release」源，把每个 Release note 里的元数据块变成一张地图。
+///
+/// 一个 tag 只描述一张地图：note 里的块缺 `level_set_name` 或读不出来就跳过
+/// 那一条（记 warn），绝不猜。整份结果共用同一个 `label`，前端因此把它们
+/// 归在同一个源下面。
+async fn load_release_tag_maps(
+    declaration: &MapSourceDeclaration,
+    label: &SourceLabel,
+    builtin: bool,
+    origin: &SourceLocation,
+    ctx: &MapSourceContext<'_>,
+) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
+    let provider = declaration.provider.clone().unwrap_or(Provider::Github);
+    let page_size = declaration
+        .page_size
+        .unwrap_or(RELEASE_TAG_PAGE_SIZE)
+        .clamp(1, 100);
+    let max_pages = declaration
+        .max_pages
+        .unwrap_or(RELEASE_TAG_MAX_PAGES)
+        .clamp(1, 100);
+    let probe = declaration_probe(declaration, page_size);
+    /*
+     * 缓存键加 `::all` 后缀：同一个仓库的「首页 10 条」与「全部分页」不是
+     * 同一份数据，共用键要么让地图源读到不完整列表，要么让 MOD 侧拿到全量。
+     */
+    let key = format!(
+        "{}::all",
+        crate::releases::repository_cache_key(
+            provider.clone(),
+            &declaration.username,
+            &declaration.repository,
+        )
+    );
+    let token = ctx.token(&provider).map(str::to_string);
+    let official_api_only = ctx.config.auth.official_api_only;
+    let api_proxies = ctx.api_proxies(&provider).to_vec();
+    let releases = match ctx
+        .cache
+        .list(key, ctx.pass_id, || async move {
+            crate::releases::fetch_all_releases(
+                ctx.client,
+                &probe,
+                page_size,
+                max_pages,
+                token.as_deref(),
+                official_api_only,
+                &api_proxies,
+            )
+            .await
+            .map_err(|error| error.to_string())
+        })
+        .await
+    {
+        Ok(releases) => releases,
+        Err(error) => {
+            /*
+             * 取不到就沿用上一次成功时生成的条目：第三方源不该因为一次限流
+             * 或断网从地图页整块消失（用户会以为作者下架了地图）。首次运行
+             * 没有旧条目时就是空，下一次刷新补上。
+             */
+            let previous = ctx.previous_for(&label.id);
+            log::warn!(
+                "按 Release note 生成地图失败，沿用上次结果：源={}，原因={}，沿用={}",
+                label.id,
+                error,
+                previous.len()
+            );
+            return Ok(previous);
+        }
+    };
+
+    let mut maps = Vec::new();
+    let mut seen = HashSet::new();
+    for release in releases.iter() {
+        let tag = release.tag_name.trim();
+        if tag.is_empty() {
+            continue;
+        }
+        let note = match crate::map_note::parse_release_note(&release.body) {
+            Ok(Some(note)) => note,
+            Ok(None) => {
+                // 没有块就是这个 Release 不是地图（例如只是普通更新说明）
+                log::debug!(
+                    "Release note 没有 oc2-map 块，跳过：源={}，tag={}",
+                    label.id,
+                    tag
+                );
+                continue;
+            }
+            Err(reason) => {
+                log::warn!(
+                    "Release note 的 oc2-map 块无效，跳过：源={}，tag={}，原因={}",
+                    label.id,
+                    tag,
+                    reason
+                );
+                continue;
+            }
+        };
+        let Some(rule) =
+            crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), &release.assets)
+        else {
+            log::warn!(
+                "Release 里没有能提取版本号的地图包，跳过：源={}，tag={}",
+                label.id,
+                tag
+            );
+            continue;
+        };
+        match note_block_map(declaration, label, &note, tag, rule, builtin, origin) {
+            Ok(map) => {
+                if !seen.insert(map_identity(&map)) {
+                    log::warn!(
+                        "同一个源里有两张身份相同的地图，跳过后者：源={}，tag={}",
+                        label.id,
+                        tag
+                    );
+                    continue;
+                }
+                maps.push(map);
+            }
+            Err(error) => log::warn!(
+                "Release note 生成的条目无效，跳过：源={}，tag={}，原因={}",
+                label.id,
+                tag,
+                error
+            ),
+        }
+    }
+    log::info!(
+        "按 Release note 生成地图完成：源={}，Release={}，地图={}",
+        label.id,
+        releases.len(),
+        maps.len()
+    );
+    Ok(maps)
+}
+
+/// 把一个 Release 的 note 元数据拼成地图条目。
+///
+/// 走 JSON 而不是手写结构体：`MapRepositoryConfig` 字段很多、多数有默认值，
+/// 只写这次真正来自 note 的字段，其余交给 serde 默认值 —— 与
+/// `release_probe` 同一条理由。
+#[allow(clippy::too_many_arguments)]
+fn note_block_map(
+    declaration: &MapSourceDeclaration,
+    label: &SourceLabel,
+    note: &crate::map_note::NoteBlock,
+    tag: &str,
+    rule: crate::models::AssetRule,
+    builtin: bool,
+    origin: &SourceLocation,
+) -> Result<MapRepositoryConfig, ConfigError> {
+    let metadata = &note.metadata;
+    /*
+     * 显示名兜底：作者只写了关卡集名时，卡片标题就用它。不兜的话卡片会退化
+     * 成 `username/repository`，而同一个仓库里所有地图都长一个样。
+     */
+    let mut name_i18n = metadata.name_i18n.clone();
+    if name_i18n.is_empty() {
+        let fallback = if metadata.level_set_name_zh.trim().is_empty() {
+            metadata.level_set_name.trim()
+        } else {
+            metadata.level_set_name_zh.trim()
+        };
+        name_i18n.insert("zh-CN".to_string(), fallback.to_string());
+    }
+    // 分类默认与显示名一致：一个 tag 一张图，逐张地图自成一类，
+    // 前端的三层结构里「每张卡都挂在自己的分类下」比「全部挤进无分类」清楚
+    let group_i18n = if metadata.group_i18n.is_empty() {
+        name_i18n.clone()
+    } else {
+        metadata.group_i18n.clone()
+    };
+    /*
+     * 单语言镜像必须在这里折出来：`get_maps` 只透传 `name`/`group`，前端拿
+     * 到空串时会退回 `username/repository`，一个仓库多张图就全长一个样。
+     */
+    let name = name_i18n
+        .get("zh-CN")
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    let group = group_i18n
+        .get("zh-CN")
+        .map(|value| value.trim().to_string())
+        .unwrap_or_else(|| name.clone());
+    /*
+     * 卡片短语只来自块里的 `note_i18n`（五语）。块外正文不是卡片说明 ——
+     * 它是「这个版本的更新说明」，由 `synthesize_releases` 清洗后进版本详情的
+     * 提交日志。两处展示同一次 API 的数据，没有第三处要喂。
+     */
+    let mut note_i18n = metadata.note_i18n.clone();
+    if note_i18n.is_empty() && !metadata.note.trim().is_empty() {
+        note_i18n.insert("zh-CN".to_string(), metadata.note.trim().to_string());
+    }
+    let note_text = note_i18n
+        .get("zh-CN")
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    let value = serde_json::json!({
+        "provider": declaration.provider.clone().unwrap_or(Provider::Github),
+        "username": declaration.username.trim(),
+        "repository": declaration.repository.trim(),
+        // tag 是这张地图在仓库里的唯一标识：一个 Release = 一张地图，
+        // 版本列表从这个 tag 的资产里按 asset 规则拆
+        "tag": tag,
+        "level_set_name": metadata.level_set_name.trim(),
+        "level_set_name_zh": metadata.level_set_name_zh.trim(),
+        "author": metadata.author.trim(),
+        "name": name,
+        "group": group,
+        "name_i18n": name_i18n,
+        "group_i18n": group_i18n,
+        "note": note_text,
+        "note_i18n": note_i18n,
+        "asset_rules": [rule],
+        "latest_version": metadata.latest_version,
+        "relations": metadata.relations(),
+        "enabled": true,
+    });
+    let mut map: MapRepositoryConfig =
+        serde_json::from_value(value).expect("note 块的字段形状与 MapRepositoryConfig 一致");
+    label.attach(&mut map);
+    map.builtin = builtin;
+    map.id = map_repository_id(&label.id, &map);
+    validate_map_entry(&map, origin)?;
+    Ok(map)
 }
 
 /// 子源声明的地区是否适用于当前地区（空 = 所有地区）。
@@ -1187,30 +1659,57 @@ asset_rules = [{{ type = "exact", value = "map.zip" }}]
 mod bundled_tests {
     use super::*;
 
-    #[test]
-    fn builtin_map_index_declares_a_child_source() {
-        let doc = parse_document(
-            SourceLocation::parse(BUILTIN_MAP_INDEX)
-                .unwrap()
-                .bundled_text()
-                .unwrap(),
-            &SourceLocation::parse(BUILTIN_MAP_INDEX).unwrap(),
-        )
-        .expect("内置 maps.toml 应能解析");
-        assert!(!doc.map_sources.is_empty(), "索引里应有子源");
-        // 索引本身不放地图，地图在子源里
-        assert!(doc.maps.is_empty(), "索引不该直接声明地图");
+    fn index_location() -> SourceLocation {
+        SourceLocation::parse(BUILTIN_MAP_INDEX).expect("内置索引应该可解析")
+    }
+
+    fn index_document() -> MapSourceDocument {
+        let location = index_location();
+        parse_document(location.bundled_text().unwrap(), &location)
+            .expect("内置 maps.toml 应能解析")
+    }
+
+    fn declaration(id: &str) -> MapSourceDeclaration {
+        index_document()
+            .map_sources
+            .into_iter()
+            .find(|source| source.id == id)
+            .unwrap_or_else(|| panic!("索引里应有源 {id}"))
     }
 
     #[test]
-    fn builtin_rw_source_declares_the_published_map() {
-        let location = SourceLocation::parse("maps-rw.toml").unwrap();
-        let doc = parse_document(location.bundled_text().unwrap(), &location)
-            .expect("内置 maps-rw.toml 应能解析");
-        assert_eq!(doc.maps.len(), 1, "RW 子源目前只有一张地图");
-        let map = &doc.maps[0];
+    fn builtin_map_index_declares_only_sources() {
+        let doc = index_document();
+        assert!(doc.maps.is_empty(), "索引只声明源，条目在各自源里");
+        assert!(
+            doc.map_sources.len() >= 2,
+            "索引应同时有单仓库源与 release-tags 源"
+        );
+    }
+
+    /// RW：单仓库地图 —— 整仓一张图，条目内联在索引里，离线也能直接可用。
+    #[test]
+    fn builtin_rw_source_is_a_single_repository_map() {
+        let source = declaration("maps-rw");
+        assert_eq!(source.mode, MapSourceMode::Repository);
+        assert_eq!(source.provider, Some(crate::models::Provider::Gitee));
+        assert_eq!(source.username, "ch3ngyz");
+        assert_eq!(source.repository, "DIYLevel-Maps-RW");
+        assert!(source.map.is_some(), "单仓库源必须内联条目本体");
+
+        let label = SourceLabel {
+            id: source.id.clone(),
+            ..SourceLabel::default()
+        };
+        let map = build_declaration_map(&source, &label, true, &index_location())
+            .expect("单仓库地图条目应能构造");
         assert_eq!(map.level_set_name, "RW_LevelSet");
         assert_eq!(map.author, "RW");
+        assert!(
+            map.id.starts_with("maps-rw::"),
+            "ID 必须带源前缀：{}",
+            map.id
+        );
         // 分组是**作者显示名**（地图两页都按它折叠），与绑定键 `author` 是两件事：
         // 绑定键必须与 info 逐字一致，展示名可以写作者更完整的名字。
         assert_eq!(
@@ -1219,6 +1718,7 @@ mod bundled_tests {
             "内置快照的分组应写作者名"
         );
         assert_eq!(map.provider, crate::models::Provider::Gitee);
+        assert!(!map.asset_rules.is_empty(), "必须声明版本资产规则");
         // 依赖必须声明：缺 DIYLevel 或 Web Runtime 时地图跑不起来
         assert!(
             map.relations
@@ -1234,92 +1734,36 @@ mod bundled_tests {
         );
     }
 
-    /// 清雨青雪合集：三个 tag 各装一张图，身份必须与各 tag 里 `info` 的值一致。
+    /// 第三方源：一个 tag 一张图，元数据跟着各自 Release note 走。
     ///
-    /// 这几项是从真实 ZIP 的 `info` 里读出来的（`real_zip` 那条 ignored 测试
-    /// 用的同一份数据）。`CHAN Set` 里的空格与 `nono` 的空作者是最容易被
-    /// 「顺手修正」的两处 —— 改一个字符，装完就认不出本地关卡集了。
+    /// 单测不联网，所以这里只锁「声明写得对」；真正解析 note 块的逻辑在
+    /// `map_note` 的单测里（纯函数、离线可跑）。
     #[test]
-    fn builtin_qingyuqingxue_source_declares_three_tag_mode_maps() {
-        let location = SourceLocation::parse("maps-qingyuqingxue.toml").unwrap();
-        let doc = parse_document(location.bundled_text().unwrap(), &location)
-            .expect("内置 maps-qingyuqingxue.toml 应能解析");
-        assert_eq!(doc.maps.len(), 3, "三个 tag 各一张图");
-
-        let mut tags = Vec::new();
-        for map in &doc.maps {
-            // tag 模式的三件套：固定 tag、带版本捕获且整串锚定的正则
-            tags.push(map_tag(map).expect("每条都应写死 tag"));
-            let rule = version_rule(&map.asset_rules).expect("每条都应有版本正则");
-            assert!(
-                rule.value.starts_with('^') && rule.value.ends_with('$'),
-                "版本正则必须整串锚定：{}",
-                rule.value
-            );
-            // `[bundle]` 的坐标要真的落到条目上（否则取 Release 时 404）
-            assert_eq!(map.provider, crate::models::Provider::Github);
-            assert_eq!(map.username, "QingyuQingxue");
-            assert_eq!(map.repository, "OC2-Map-Bundle");
-        }
-        tags.sort_unstable();
-        assert_eq!(tags, ["blni", "chan", "daxue"]);
-
-        let by_tag = |tag: &str| {
-            doc.maps
-                .iter()
-                .find(|map| map_tag(map) == Some(tag))
-                .expect("tag 必须存在")
-        };
-        // 胡闹达学：英文名与作者都叫 GAODA，只有中文名能把它和同作者另一张图分开
-        assert_eq!(by_tag("daxue").level_set_name, "GAODA");
-        assert_eq!(by_tag("daxue").level_set_name_zh, "胡闹达学");
-        assert_eq!(by_tag("daxue").author, "GAODA");
-        assert_eq!(by_tag("chan").level_set_name, "CHAN Set");
-        assert_eq!(by_tag("chan").author, "chanchan");
-        assert_eq!(by_tag("blni").level_set_name, "nono");
-        assert_eq!(by_tag("blni").author, "", "info 里没写作者，绑定按空串比对");
+    fn builtin_community_source_declares_release_tags_mode() {
+        let source = declaration("community-maps");
+        assert_eq!(source.mode, MapSourceMode::ReleaseTags);
+        assert_eq!(source.provider, Some(crate::models::Provider::Github));
+        assert_eq!(source.username, "CH3NGYZ");
+        assert_eq!(source.repository, "oc2");
+        assert_eq!(source.page_size, Some(50), "一次读 50 个 Release");
+        assert!(source.map.is_none(), "release-tags 不需要内联条目");
     }
 
+    /// 内置树（离线）里只有内联条目；release-tags 源必须联网才有地图。
+    ///
+    /// 这条断言同时守住两件事：首启/断网时地图页不是空的（RW 那张在），
+    /// 以及「内置树不偷偷联网/不伪造 tag 条目」。
     #[test]
-    fn bundled_maps_are_discoverable_from_the_index() {
-        /*
-         * 索引 → 子源 → 地图，整条链路能走通。
-         *
-         * 子源有两种：随包的内置文件（离线可读），和第三方维护、托管在
-         * Release 资产里的远程文档（必须联网）。第三方那份现在是内置快照
-         * （作者删掉了原先放文档的 tag），所以这里**不要求**存在远程子源；
-         * 远程形态出现时只校验地址形态 —— 单测不联网，能证明的是「索引没
-         * 写坏、地址是可解析的 HTTPS」。
-         */
-        let index = SourceLocation::parse(BUILTIN_MAP_INDEX).unwrap();
-        let doc = parse_document(index.bundled_text().unwrap(), &index).unwrap();
-        let mut total = doc.maps.len();
-        let mut bundled_children = 0;
-        for child in &doc.map_sources {
-            let location = SourceLocation::parse(&child.url).unwrap();
-            match &location {
-                SourceLocation::Bundled(_) => {
-                    bundled_children += 1;
-                    total += parse_document(location.bundled_text().unwrap(), &location)
-                        .unwrap()
-                        .maps
-                        .len();
-                }
-                SourceLocation::Remote(url) => {
-                    assert_eq!(
-                        url.scheme(),
-                        "https",
-                        "远程子源必须走 HTTPS：{}",
-                        crate::repository_sources::safe_log_address(url.as_str())
-                    );
-                }
-            }
-        }
-        assert!(
-            bundled_children >= 1,
-            "索引里至少要有一个随包离线可读的子源"
+    fn bundled_tree_is_offline_and_holds_the_inline_map() {
+        let maps = bundled_map_tree();
+        assert_eq!(
+            maps.len(),
+            1,
+            "内置树只含单仓库地图；tag 源要联网读 Release 才有条目"
         );
-        assert!(total >= 1, "从索引出发应能至少找到一张地图");
+        assert_eq!(maps[0].source_id.as_deref(), Some("maps-rw"));
+        assert!(maps[0].builtin, "内置树里的条目都应标成 builtin");
+        assert_eq!(maps[0].level_set_name, "RW_LevelSet");
     }
 }
 
@@ -1337,6 +1781,12 @@ pub struct MapSourceContext<'a> {
     pub gitee_token: Option<&'a str>,
     /// 一次用户动作的批次身份：同一批次里同一个仓库只请求一次 Release API。
     pub pass_id: Option<&'a str>,
+    /// 上一次加载出来的条目。
+    ///
+    /// 只给「需要联网才能变成列表」的源兜底：那些源取不到 API 时不能整块
+    /// 消失（用户会以为作者下架了），沿用旧条目比清空诚实。文档型源不用它 ——
+    /// 文档取不到本来就有内置树兜底。
+    pub previous: &'a [MapRepositoryConfig],
 }
 
 impl MapSourceContext<'_> {
@@ -1352,6 +1802,15 @@ impl MapSourceContext<'_> {
             Provider::Github => &self.config.github_proxies.github_api_proxies,
             Provider::Gitee => &self.config.github_proxies.gitee_api_proxies,
         }
+    }
+
+    /// 上一次成功生成、属于这个源的条目。
+    fn previous_for(&self, source_id: &str) -> Vec<MapRepositoryConfig> {
+        self.previous
+            .iter()
+            .filter(|map| map.source_id.as_deref() == Some(source_id))
+            .cloned()
+            .collect()
     }
 }
 
@@ -1564,7 +2023,9 @@ pub(crate) fn synthesize_releases(
             tag_name: version.clone(),
             version: Some(version.clone()),
             name: format!("v{version}"),
-            body: release.body.clone(),
+            // 版本详情里显示的是作者写给人看的说明，元数据块是给管理器的，
+            // 不该跟着 body 一起流到界面上（它是 HTML 注释，但别指望渲染器）
+            body: crate::map_note::strip_note_block(&release.body),
             published_at: release.published_at.clone(),
             // 渠道过滤已按作者声明跳过，这两个标记不能再参与判定
             prerelease: false,
@@ -1591,6 +2052,246 @@ fn newest_first(left: &str, right: &str) -> std::cmp::Ordering {
     version_parts(right)
         .cmp(&version_parts(left))
         .then_with(|| right.cmp(left))
+}
+
+/*
+ * 「源怎么变成地图条目」三种模式的回归测试。
+ *
+ * 全部不联网：`build_declaration_map` 与 `note_block_map` 都是纯函数，
+ * 输入是声明与 note 文本，API 与缓存都在它们之外。
+ */
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    fn origin() -> SourceLocation {
+        SourceLocation::parse(BUILTIN_MAP_INDEX).expect("内置索引应该可解析")
+    }
+
+    fn parse(text: &str) -> Result<MapSourceDocument, ConfigError> {
+        parse_document(text, &origin())
+    }
+
+    fn error_tag(result: Result<MapSourceDocument, ConfigError>) -> String {
+        match result {
+            Ok(_) => panic!("应当报错"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_repository_source_builds_one_inline_map() {
+        let doc = parse(
+            r#"
+[[map_sources]]
+id = "solo"
+mode = "repository"
+provider = "gitee"
+username = "u"
+repository = "r"
+[map_sources.map]
+name_i18n.zh-CN = "单仓地图"
+level_set_name = "Solo"
+author = "A"
+asset_rules = [{ type = "glob", value = "solo_v*.zip" }]
+[[map_sources.map.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"
+min_version = "0.10.0"
+"#,
+        )
+        .unwrap();
+        let source = &doc.map_sources[0];
+        assert_eq!(source.mode, MapSourceMode::Repository);
+        assert_eq!(
+            source.map.as_ref().unwrap().name,
+            "单仓地图",
+            "单语言镜像应从 zh-CN 折出来"
+        );
+        let label = SourceLabel {
+            id: source.id.clone(),
+            ..SourceLabel::default()
+        };
+        let map = build_declaration_map(source, &label, true, &origin()).unwrap();
+        // 声明级坐标落到条目上，否则取 Release 时 404
+        assert_eq!(map.provider, crate::models::Provider::Gitee);
+        assert_eq!(map.username, "u");
+        assert_eq!(map.repository, "r");
+        assert_eq!(map.id, map_repository_id("solo", &map));
+        assert_eq!(map.relations.len(), 1);
+        assert!(map.builtin);
+    }
+
+    #[test]
+    fn a_document_source_must_carry_a_url() {
+        let tag = error_tag(parse("[[map_sources]]\nid = \"x\"\n"));
+        assert!(tag.contains("mapSource.declarationMissingUrl"), "{tag}");
+    }
+
+    #[test]
+    fn a_repository_source_must_carry_its_map_entry() {
+        let tag = error_tag(parse(
+            "[[map_sources]]\nid = \"x\"\nmode = \"repository\"\nusername = \"u\"\nrepository = \"r\"\n",
+        ));
+        assert!(tag.contains("mapSource.declarationMissingMap"), "{tag}");
+    }
+
+    #[test]
+    fn a_release_tags_source_must_name_its_repository() {
+        let tag = error_tag(parse(
+            "[[map_sources]]\nid = \"x\"\nmode = \"release-tags\"\n",
+        ));
+        assert!(tag.contains("mapSource.missingCoordinates"), "{tag}");
+    }
+
+    #[test]
+    fn a_release_note_block_becomes_a_tag_mode_entry() {
+        let body = r#"共 2 张关卡。
+
+<!-- oc2-map
+level_set_name = "GAODA"
+level_set_name_zh = "胡闹达学"
+author = "GAODA"
+name_i18n.zh-CN = "胡闹达学"
+name_i18n.en = "GAODA"
+note_i18n.zh-CN = "两张关卡，需要 DIYLevel。"
+asset = "daxue_v${version}.zip"
+latest_version = "0.3.2"
+requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
+-->
+"#;
+        let doc = parse(
+            "[[map_sources]]\nid = \"community\"\nmode = \"release-tags\"\nprovider = \"github\"\nusername = \"CH3NGYZ\"\nrepository = \"oc2\"\n",
+        )
+        .unwrap();
+        let declaration = &doc.map_sources[0];
+        let note = crate::map_note::parse_release_note(body).unwrap().unwrap();
+        let rule = crate::map_note::versioned_asset_rule(
+            note.metadata.asset.as_deref(),
+            &[crate::models::ReleaseAsset {
+                name: "daxue_v0.3.2.zip".to_string(),
+                size: 1,
+                download_count: None,
+                download_url: String::new(),
+                digest: None,
+            }],
+        )
+        .unwrap();
+        let label = SourceLabel {
+            id: declaration.id.clone(),
+            name: "社区地图仓库".to_string(),
+            ..SourceLabel::default()
+        };
+        let map =
+            note_block_map(declaration, &label, &note, "daxue", rule, true, &origin()).unwrap();
+
+        // 一个 tag 一张地图：tag 来自 Release，身份来自 note 里的块
+        assert_eq!(map_tag(&map), Some("daxue"));
+        assert_eq!(map.level_set_name, "GAODA");
+        assert_eq!(map.level_set_name_zh, "胡闹达学");
+        assert_eq!(map.author, "GAODA");
+        // 卡片短语只来自块里的 note_i18n，单语言镜像跟着折出来
+        assert_eq!(
+            map.note_i18n.get("zh-CN").map(String::as_str),
+            Some("两张关卡，需要 DIYLevel。")
+        );
+        assert_eq!(map.note, "两张关卡，需要 DIYLevel。");
+        assert_eq!(map.name, "胡闹达学", "显示名单语言镜像必须折出来");
+        assert!(map.id.starts_with("community::"), "{}", map.id);
+        assert_eq!(map.source_id.as_deref(), Some("community"));
+        assert_eq!(map.relations.len(), 1);
+        assert_eq!(map.latest_version.as_deref(), Some("0.3.2"));
+        // 版本号从资产名里按模板抽，规则必须整串锚定
+        assert_eq!(map.asset_rules.len(), 1);
+        assert!(map.asset_rules[0].value.starts_with('^'));
+        assert!(map.asset_rules[0].value.ends_with('$'));
+    }
+
+    /// 真机联网回归：内置索引 → 单仓库地图 + release-tags 源 → 真实条目。
+    ///
+    /// 默认 `#[ignore]`：单测不联网。改完 tag 源或 `map_note` 的字段后手动跑一次：
+    ///
+    /// ```text
+    /// cargo test --manifest-path src-tauri/Cargo.toml --lib \
+    ///   real_release_tag_source_builds_maps -- --ignored --nocapture
+    /// ```
+    ///
+    /// 它验证的是整条真实链路：`maps.toml` → `load_map_tree` → 分页读完全部
+    /// Release → 解析每份 note 的 oc2-map 块 → 生成带版本规则的地图条目。
+    #[ignore]
+    #[tokio::test]
+    async fn real_release_tag_source_builds_maps() {
+        let config = crate::config::default_config();
+        let cache = crate::release_cache::RepoReleaseCache::default();
+        let client = crate::releases::build_client(config.network.timeout_seconds)
+            .expect("HTTP 客户端应可创建");
+        let ctx = MapSourceContext {
+            cache: &cache,
+            client: &client,
+            config: &config,
+            github_token: None,
+            gitee_token: None,
+            pass_id: Some("real-release-tags"),
+            previous: &[],
+        };
+        let maps = load_map_tree(crate::config::current_user_region(), true, &ctx)
+            .await
+            .expect("内置索引应能加载");
+
+        // 单仓库地图（RW）离线就有；三张 tag 模式地图来自真实 Release note
+        assert!(
+            maps.iter().any(|map| map.level_set_name == "RW_LevelSet"),
+            "单仓库地图应来自内联条目：{}",
+            maps.len()
+        );
+        let mut tags: Vec<&str> = maps
+            .iter()
+            .filter(|map| map.source_id.as_deref() == Some("community-maps"))
+            .filter_map(|map| map.tag.as_deref())
+            .collect();
+        tags.sort_unstable();
+        assert_eq!(
+            tags,
+            ["blni", "chan", "daxue"],
+            "三份 Release note 应各生成一张图"
+        );
+
+        let gaoda = maps
+            .iter()
+            .find(|map| map.level_set_name == "GAODA")
+            .expect("胡闹达学应在列表里");
+        assert_eq!(gaoda.author, "GAODA");
+        assert_eq!(gaoda.level_set_name_zh, "胡闹达学");
+        assert_eq!(gaoda.provider, crate::models::Provider::Github);
+        assert_eq!(gaoda.username, "CH3NGYZ");
+        assert_eq!(gaoda.repository, "oc2");
+        assert!(
+            !gaoda.note_i18n.get("zh-CN").is_none_or(String::is_empty),
+            "卡片说明应来自 note_i18n：{:?}",
+            gaoda.note_i18n.keys().collect::<Vec<_>>()
+        );
+        assert!(gaoda.name_i18n.contains_key("en"));
+        assert!(
+            gaoda
+                .asset_rules
+                .iter()
+                .any(|rule| rule.value.starts_with('^') && rule.value.ends_with('$')),
+            "版本规则必须整串锚定"
+        );
+        assert_eq!(gaoda.latest_version.as_deref(), Some("0.3.2"));
+        assert!(
+            gaoda
+                .relations
+                .iter()
+                .any(|relation| relation.guid == "dev.gua.overcooked.diylevel")
+        );
+
+        // 没有元数据块的 Release（Dmm）不该混进来
+        assert!(
+            maps.iter().all(|map| map.tag.as_deref() != Some("Dmm")),
+            "没有 oc2-map 块的 Release 必须被跳过"
+        );
+    }
 }
 
 /*

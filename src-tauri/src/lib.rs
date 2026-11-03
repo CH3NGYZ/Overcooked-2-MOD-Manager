@@ -25,6 +25,9 @@ mod level_watch;
 mod locale_tag;
 // 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod map_sources;
+// Release note 里的地图元数据块（`<!-- oc2-map ... -->`）：一个仓库放多张地图时
+// 每张地图的信息跟着自己的 Release 走，不再需要一份集中式 TOML
+mod map_note;
 // 元数据并行读取的中间层：MOD 的 DLL 与地图的 info 都走它编排
 mod metadata_read;
 mod mod_config;

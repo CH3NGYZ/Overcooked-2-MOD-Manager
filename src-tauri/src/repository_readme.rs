@@ -220,30 +220,16 @@ pub async fn get_repository_readme(
         state.config.load_or_default()
     };
     /*
-     * 地图下载页与 MOD 安装页共用同一个详情面板，README 请求的 id 可能来自
-     * `config.map_repositories`。先查 MOD 仓库；查不到再把地图投影成等价的
-     * 仓库配置 —— `release_probe` 就是 Release 抓取用的那份投影，README 走
-     * 同一条 Raw/代理/取消管线，不需要第二套实现。
+     * 只认 MOD 仓库。地图详情不再拉仓库 README：README 是**仓库级**的，
+     * 一个仓库多张地图（一个 tag 一张图）时把它塞进每张图的详情只会串味。
+     * 地图的说明来自条目自己的 `note_i18n`，长文是那个版本 Release note 的正文。
      */
-    let projected;
-    let (repo, origin) = match config
+    let Some(repo) = config
         .repositories
         .iter()
         .find(|repo| repo.id == repository_id)
-    {
-        Some(repo) => (repo, "仓库"),
-        None => match config
-            .map_repositories
-            .iter()
-            .find(|map| map.id == repository_id)
-        {
-            Some(map) => {
-                projected = crate::map_sources::release_probe(map);
-                (&projected, "地图")
-            }
-            // 两个列表都没有：与以前同一个错误 tag，前端没有新分支
-            None => return Err("source.repositoryMissing".into()),
-        },
+    else {
+        return Err("source.repositoryMissing".into());
     };
     let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
@@ -259,12 +245,7 @@ pub async fn get_repository_readme(
             releases::fetch_repository_default_branch(&client, repo, token.as_deref(), proxies)
                 .await
                 .map_err(|error| {
-                    log::warn!(
-                        "读取仓库默认分支失败：id={}，来源={}，原因={}",
-                        repository_id,
-                        origin,
-                        error
-                    );
+                    log::warn!("读取仓库默认分支失败：id={}，原因={}", repository_id, error);
                     "readme.defaultBranchUnknown".to_string()
                 })?
         };
@@ -277,9 +258,8 @@ pub async fn get_repository_readme(
         )
         .map_err(|error| error.to_string())?;
         log::info!(
-            "正在读取仓库说明：id={}，来源={}，渠道={:?}，地址={}",
+            "正在读取仓库说明：id={}，渠道={:?}，地址={}",
             repository_id,
-            origin,
             repo.provider,
             crate::repository_sources::safe_log_address(&url)
         );

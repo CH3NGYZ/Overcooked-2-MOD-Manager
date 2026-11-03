@@ -828,6 +828,33 @@ test('关系标签：装着旧版且线上有满足区间的版本 → 可更新
   })
 })
 
+test('关系标签：卡片自己没装时不显示「可安装 / 可更新」', () => {
+  const status = resolveRelation(DEP, [], [repo()])
+  assert.equal(status.state, 'installable')
+  assert.equal(
+    dependencyTagFor([status], false),
+    undefined,
+    '未安装的卡片头上不该出现描述依赖状态的「可安装」标签',
+  )
+  const upgrade = resolveRelation(
+    { kind: 'requires', guid: 'com.example.dep', min_version: '2.0.0' },
+    [mod({ guid: 'com.example.dep', version: '1.5.0' })],
+    [repo()],
+  )
+  assert.equal(upgrade.state, 'installable')
+  assert.equal(dependencyTagFor([upgrade], false), undefined)
+})
+
+test('关系标签：卡片自己没装、依赖线上也没有来源 → 仍报缺依赖', () => {
+  const status = resolveRelation(DEP, [], [])
+  assert.equal(status.state, 'missing')
+  assert.deepEqual(dependencyTagFor([status], false), {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
+  })
+})
+
 test('关系标签：线上没有满足区间的 Release → 才是缺依赖（严重，不可点）', () => {
   const status = resolveRelation(DEP, [], [])
   assert.equal(status.state, 'missing')

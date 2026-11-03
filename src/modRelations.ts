@@ -599,13 +599,17 @@ export interface DependencyTagView {
  *
  * MOD 安装页、MOD 管理页、地图下载页、地图管理页共用**这一条**规则：
  *   · 冲突 →「冲突」，且只在已安装的卡片上显示（见 `relationCardTag`）；
- *   · 依赖没满足但有候选版本 → 装了旧版写「可更新」，没装写「可安装」；
- *   · 依赖没满足且线上没有满足区间的 Release →「缺依赖」。
+ *   · 已装的卡片依赖没满足、但有候选版本 → 装了旧版写「可更新」，没装写「可安装」；
+ *   · 依赖没满足且线上没有满足区间的 Release →「缺依赖」（未安装的卡片也显示）。
  *
- * 后两种必须分开说：明明点一下就能补上，界面却写「缺依赖」，用户会以为
- * 这张卡/这张图没救。文案与状态色跟依赖表（`dependencyRows.statusFor`）
- * 用同一套词 —— 卡片、依赖表、按钮说的是同一件事，不该一处「可更新」、
- * 一处「缺依赖」。
+ * 第二种只在已安装的卡片上出现：卡片自己还没装时，这条标签描述的是依赖的
+ * 状态，却挂在「能不能装」的卡片头上，读起来像在说这张卡可安装。真正的
+ * 补装动作发生在安装时（`needsInstallCheck`）与依赖表里，卡片头不必多这一枚。
+ *
+ * 「可更新 / 可安装」与「缺依赖」必须分开说：明明点一下就能补上，界面却写
+ * 「缺依赖」，用户会以为这张卡/这张图没救。文案与状态色跟依赖表
+ * （`dependencyRows.statusFor`）用同一套词 —— 卡片、依赖表、按钮说的是同一
+ * 件事，不该一处「可更新」、一处「缺依赖」。
  */
 export function dependencyTagFor(
   statuses: readonly RelationStatus[],
@@ -620,8 +624,12 @@ export function dependencyTagFor(
   /*
    * `installable` 表示「有仓库能给出满足区间的 Release」：本地装着旧版是
    * 升级，没装是补装。与依赖表的两条文案一一对应，不再统一写「缺依赖」。
+   *
+   * 卡片自己还没装时直接不显示：这时它说的是依赖装没装，挂在未安装的卡片
+   * 头上会被读成「这张卡/这张图可安装」。
    */
   if (status.state === 'installable' && status.repository) {
+    if (!installed) return undefined
     return {
       text: status.installedMod ? 'tools.updatable' : 'tools.installable',
       tone: 'moderate',

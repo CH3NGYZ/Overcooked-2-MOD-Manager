@@ -1827,8 +1827,7 @@ mod tests {
                 "network": {
                     "timeout_seconds": 5,
                     "download_threads": 1,
-                    "max_retry_count": 3,
-                    "check_updates_on_start": false
+                    "max_retry_count": 3
                 },
                 "launch": {
                     "ask_user_to_start_from_steam": false,

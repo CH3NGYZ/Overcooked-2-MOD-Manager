@@ -73,9 +73,7 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
-min_version = ""
 
 [[repositories.relations]]
 kind = "compatible"
 guid = "com.ch3ngyz.plugin.diylevel.sorting"
-min_version = ""

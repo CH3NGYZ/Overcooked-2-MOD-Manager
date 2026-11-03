@@ -698,8 +698,11 @@ pub fn runtime_relation(min_version: &str) -> Option<crate::models::RepositoryRe
     Some(crate::models::RepositoryRelation {
         kind: crate::models::RelationKind::Requires,
         guid: RUNTIME_WLOADER_GUID.to_string(),
-        min_version: min_version.to_string(),
-        max_version: String::new(),
+        version: if min_version.trim().is_empty() {
+            String::new()
+        } else {
+            format!(">={}", min_version.trim())
+        },
         prerelease: None,
         optional: false,
     })
@@ -4589,8 +4592,7 @@ mod requires_tests {
         let relation = runtime_relation("3.10.2").expect("有版本号就该产出关系");
         assert_eq!(relation.kind, crate::models::RelationKind::Requires);
         assert_eq!(relation.guid, "oc2.oc2diylevelruntimewloader");
-        assert_eq!(relation.min_version, "3.10.2");
-        assert!(relation.max_version.is_empty(), "只声明下限");
+        assert_eq!(relation.version, ">=3.10.2", "只声明下限");
         assert!(!relation.optional, "缺依赖要提示，不能静默");
         assert!(relation.prerelease.is_none());
 

@@ -71,18 +71,18 @@
 # [[map_sources.map.relations]]
 # kind = "requires"
 # guid = "dev.gua.overcooked.diylevel"
-# min_version = "0.10.0"
+# version = ">=0.10.0"
 
 # [[map_sources.map.relations]]
 # kind = "requires"
 # guid = "oc2.oc2diylevelruntimewloader"
-# min_version = "3.10.2"
+# version = ">=3.10.2"
 
 # # DIYLevel FastInit：即使不用 Web Runtime 也要装，地图载入靠它做快速初始化
 # [[map_sources.map.relations]]
 # kind = "requires"
 # guid = "oc2.diylevel.fastinit"
-# min_version = "1.7.0"
+# version = ">=1.7.0"
 
 
 # 第三方地图仓库：一个 tag 一个地图集，元数据跟着 Release note 走。
@@ -101,7 +101,7 @@ repository = "OC2-Map-Bundle"
 page_size = 100
 max_pages = 10
 [map_sources.nickname_i18n]
-zh-CN = "社区地图仓库"
+zh-CN = "社区地图仓库 (由清雨青雪维护)"
 zh-TW = "社群地圖倉庫"
 en = "Community map repository"
 ko = "커뮤니티 지도 저장소"

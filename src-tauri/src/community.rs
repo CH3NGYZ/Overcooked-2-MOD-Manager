@@ -821,7 +821,7 @@ mod tests {
         let mut config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "ui_zoom": 1.5,
             "game": { "path": "" },
-            "network": { "timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false },
+            "network": { "timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3 },
             "launch": { "ask_user_to_start_from_steam": false, "auto_restore_winhttp": false },
             "auth": { "github_token": "", "gitee_token": "", "official_api_only": true },
             "repositories": []
@@ -1101,11 +1101,12 @@ mod tests {
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[official, retained, removed]
-        })).unwrap();
+        }))
+        .unwrap();
         let mut manifest = crate::archive::new_manifest(
             "old-id",
             "nightly",
@@ -1191,11 +1192,12 @@ mod tests {
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[official, custom, gitee, installed.clone()]
-        })).unwrap();
+        }))
+        .unwrap();
         merge_results(
             &mut config,
             &Provider::Github,
@@ -1274,7 +1276,7 @@ mod tests {
             let mut config: AppConfig = serde_json::from_value(serde_json::json!({
                 "schema_version":1,"ui_zoom":1.5,
                 "game":{"path":""},
-                "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+                "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
                 "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
                 "auth":{"github_token":"","gitee_token":"","official_api_only":true},
                 "repository_sources":[
@@ -1353,7 +1355,7 @@ mod tests {
         let config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repository_sources":[],
@@ -1421,7 +1423,7 @@ mod tests {
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[github, official, found],

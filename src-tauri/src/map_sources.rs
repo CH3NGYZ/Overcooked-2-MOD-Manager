@@ -1314,6 +1314,7 @@ fn note_block_map(
         "asset_rules": [rule],
         "latest_version": metadata.latest_version,
         "relations": metadata.relations(),
+        "release_relations": metadata.release_relation_overrides(),
         "enabled": true,
     });
     let mut map: MapRepositoryConfig =
@@ -2053,7 +2054,7 @@ asset_rules = [{ type = "glob", value = "solo_v*.zip" }]
 [[map_sources.map.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
-min_version = "0.10.0"
+version = ">=0.10.0"
 "#,
         )
         .unwrap();

@@ -520,19 +520,20 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = "19.0"
+version = ">=19.0"
 
 [[repositories.relations]]
 kind = "conflicts"
 guid = "com.example.old-thing"
-max_version = "1.9"
+version = "<1.9"
 ```
 
 字段说明：
 
 - `guid`（必填）：被约束插件的 BepInPlugin GUID，比较时忽略大小写。
 - `kind`：`requires`（默认）、`conflicts`、`compatible`。**省略 `kind` 时按 `requires` 处理**，兼容早期的纯依赖写法。
-- `min_version` / `max_version`：闭区间上下限，都可省略；四段写法与 beta 语义一致（`1.9.8.1` ≡ `1.9.8-beta.1`）。
+- `version`：版本区间，写法与 pip 的 requirement specifier 一致 —— 逗号分隔的多个条件取**同时满足**（AND）：`""` 或 `"*"` 不限版本、`>=1.8.0`、`>1.8.0`、`<=2.0.0`、`<2.0.0`、`==1.8.7`（`=1.8.7` 同义）、`!=1.8.8`；组合写 `">=1.8.0,<2.0.0"`。**比较符必须写出来**：裸版本号（`version = "1.8.0"`）会被拒绝 —— 老写法里 `min_version = "1.8.0"` 是「至少 1.8.0」，若把裸值按「恰好等于」解释会把要求静默收窄。`~=`（兼容某段）**不支持**：本项目的版本号有 4 段写法（`1.9.8.1` ≡ `1.9.8-beta.1`），`~=1.9.8` 锁到哪一段有歧义，请写 `">=1.9.8,<1.10"`。
+- 版本比较沿用四段与 beta 语义：`1.9.8.1` ≡ `1.9.8-beta.1`，`v` 前缀忽略。
 - `prerelease`：只在 `conflicts` / `compatible` 上使用。不写 = 正式版和测试版都算；`true` = 只匹配测试版；`false` = 只匹配正式版。
 - `optional`：只在 `requires` 上使用，缺失时不提示。
 
@@ -544,14 +545,15 @@ max_version = "1.9"
 
 ```toml
 [[repositories.release_relations]]
-min_version = "1.8.0"
-max_version = "2.0.0"
+version = ">=1.8.0,<2.0.0"
 relations = [
-  { kind = "requires", guid = "com.bepis.bepinex.configurationmanager", min_version = "19.0" },
+  { kind = "requires", guid = "com.bepis.bepinex.configurationmanager", version = ">=19.0" },
 ]
 ```
 
-规则：所有区间命中的条目里，取 `min_version` 最高的那条，其 `relations` **整体替换**仓库级 `relations`（不是合并 —— 合并会让「新版降低要求」无法表达）。两端都留空会被拒绝，因为那等同于「匹配所有版本」。
+规则：所有 `version` 命中的条目里，取**区间下限最高**的那条（下限相同取先出现的），其 `relations` **整体替换**仓库级 `relations`（不是合并 —— 合并会让「新版降低要求」无法表达）。`version` 留空（或不写）会被拒绝，因为那等同于「匹配所有版本」，作者会以为自己限定了范围。
+
+内层 `relations` 与仓库级的写法、字段完全一致（同样是 `[[…]]` 表数组，条目里也可以写 `prerelease` / `optional`）。
 
 ### 正式版与测试版互斥
 
@@ -647,6 +649,7 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 - 卡片说明取元数据块里的 `note_i18n`（没有就显示「此地图暂无说明」）；块外面的正文是这个版本的更新日志，显示在版本详情的「提交日志」里；
 - `document` 模式的条目写 `tag` 就只读那个 Release，并把里面的每个资产当成这张图的一个版本（`asset_rules` 的正则负责抽版本号）；同一份文档还可以用 `[bundle]` 统一写仓库坐标；
 - 地图下载页与地图管理页都按 `group_i18n` **折叠分组，语义是作者**（与 MOD 仓库的 `group` 按职责/相似性分类不同）；`author` 是绑定键、`group_i18n` 是展示名，两者可以不同；
+- 地图条目同样支持 `relations` 与 `release_relations`（`[[maps.release_relations]]`，按地图版本覆盖依赖，规则与 MOD 仓库一致）；
 - 安装后会先回收同名的旧关卡集（进回收站），再写入新版本。
 
 完整的制作说明、ZIP 目录结构、必填字段、依赖声明与常见失败原因见 **[docs/map-sources.md](docs/map-sources.md)**。
@@ -670,7 +673,7 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 - [ ] 多语言源昵称、MOD 名称、分组和简介使用固定语言键，且对应的表放在正确的条目下。
 - [ ] 声明了 `relations` 时使用 `[[repositories.relations]]` 表数组写法，没有写成 `relations.guid = "..."` 的点号形式。
 - [ ] 指向自己 GUID 的 `conflicts` / `compatible` 关系都写了 `prerelease`。
-- [ ] 每条 `release_relations` 至少填了 `min_version` 或 `max_version` 之一，且 `min` 不大于 `max`。
+- [ ] 每条 `release_relations` 都写了非空的 `version` 区间；区间里带比较符（裸版本号会被拒绝），下限不高于上限，没有使用 `~=`。
 - [ ] 需要按地区显示时，为仓库源或仓库填写 `region = "chinese_mainland"` 或 `region = "international"`；省略表示所有地区，仓库和所属源的限制必须同时满足。
 - [ ] 相对路径对应当前仓库和分支中的实际文件，完整直链返回 TOML 原文。
 - [ ] Release 模式的 `channel` 符合预期，省略时为 `all`；填写了 `version_regex` 时，正则能匹配预期的本地版本。

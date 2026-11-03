@@ -1042,7 +1042,6 @@ pub(crate) fn default_config() -> AppConfig {
             timeout_seconds: 20,
             download_threads: 32,
             max_retry_count: 3,
-            check_updates_on_start: true,
         },
         launch: LaunchConfig {
             ask_user_to_start_from_steam: true,
@@ -1514,41 +1513,13 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
         validate_relation(relation, &repo.name, &repo.plugin_guid)?;
     }
     /*
-     * 按 Release 覆盖的关系表也要校验，且区间不能两端全空。
+     * 按 Release 覆盖的关系表也要校验，且区间不能为空。
      *
-     * 两端全空意味着「匹配任何版本」，那和在 `relations` 里直接写没有区别，
+     * 不写区间意味着「匹配任何版本」，那和在 `relations` 里直接写没有区别，
      * 但作者会以为自己限定了范围。在导入阶段拒绝，比等它悄悄生效好。
      */
     for override_entry in &repo.release_relations {
-        let min = override_entry.min_version.trim();
-        let max = override_entry.max_version.trim();
-        if min.is_empty() && max.is_empty() {
-            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                "config.relationsEmpty",
-                &[("repo", &repo.name.to_string())],
-            )));
-        }
-        for (label, value) in [("min_version", min), ("max_version", max)] {
-            if !value.is_empty()
-                && crate::releases::compare_release_versions(value, value).is_none()
-            {
-                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                    "config.relationsValueInvalid",
-                    &[("repo", &repo.name), ("label", label), ("value", value)],
-                )));
-            }
-        }
-        if !min.is_empty() && !max.is_empty() {
-            // 区间反了（min > max）永远匹配不到任何版本，属于配置错误
-            if crate::releases::compare_release_versions(min, max)
-                == Some(std::cmp::Ordering::Greater)
-            {
-                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                    "config.relationsRangeInvalid",
-                    &[("repo", &repo.name), ("min", min), ("max", max)],
-                )));
-            }
-        }
+        validate_release_override(&override_entry.version, &repo.name)?;
         for relation in &override_entry.relations {
             validate_relation(relation, &repo.name, &repo.plugin_guid)?;
         }
@@ -1604,41 +1575,65 @@ fn validate_relation(
             &[("repo", repository_name), ("kind", kind)],
         )));
     }
-    for (label, value) in [
-        ("min_version", relation.min_version.trim()),
-        ("max_version", relation.max_version.trim()),
-    ] {
-        if !value.is_empty() && crate::releases::compare_release_versions(value, value).is_none() {
-            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                "config.relationValueInvalid",
-                &[
-                    ("repo", repository_name),
-                    ("kind", kind),
-                    ("guid", relation.guid.trim()),
-                    ("label", label),
-                    ("value", value),
-                ],
-            )));
-        }
-    }
-    let min = relation.min_version.trim();
-    let max = relation.max_version.trim();
-    if !min.is_empty()
-        && !max.is_empty()
-        && crate::releases::compare_release_versions(min, max) == Some(std::cmp::Ordering::Greater)
-    {
+    if let Err(problem) = check_version_spec(relation.version.trim()) {
         return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-            "config.relationRangeInvalid",
+            match problem {
+                // 写反的区间（`>=2.0,<1.0`）永远命中不到版本，报「区间无效」
+                VersionSpecProblem::EmptyInterval => "config.relationRangeInvalid",
+                VersionSpecProblem::Unparsable => "config.relationValueInvalid",
+            },
             &[
                 ("repo", repository_name),
                 ("kind", kind),
                 ("guid", relation.guid.trim()),
-                ("min", min),
-                ("max", max),
+                ("value", relation.version.trim()),
             ],
         )));
     }
     Ok(())
+}
+
+/// 版本区间校验的两种失败：读不懂，或者读懂了但永远匹配不到版本。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VersionSpecProblem {
+    Unparsable,
+    EmptyInterval,
+}
+
+/// 解析并验证一段版本区间；空串表示不限版本，合法。
+///
+/// 抽成一处是因为关系条目与按版本覆盖表要同一条判据，只是提示文案不同。
+fn check_version_spec(spec: &str) -> Result<(), VersionSpecProblem> {
+    let range = crate::version_range::VersionRange::parse(spec)
+        .map_err(|_| VersionSpecProblem::Unparsable)?;
+    if range.is_empty_interval(crate::releases::compare_release_versions) {
+        return Err(VersionSpecProblem::EmptyInterval);
+    }
+    Ok(())
+}
+
+/// 覆盖表的版本区间：必须解析得出来，并且不能是「不限」。
+///
+/// 不写区间等于让它匹配任何版本，效果与直接改 `relations` 相同，但作者
+/// 会以为自己限定了范围 —— 这种「以为写了对配置」的错误在导入阶段拒绝。
+fn validate_release_override(spec: &str, repository_name: &str) -> Result<(), ConfigError> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationsEmpty",
+            &[("repo", repository_name)],
+        )));
+    }
+    match check_version_spec(spec) {
+        Ok(()) => Ok(()),
+        Err(problem) => Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            match problem {
+                VersionSpecProblem::EmptyInterval => "config.relationsRangeInvalid",
+                VersionSpecProblem::Unparsable => "config.relationsValueInvalid",
+            },
+            &[("repo", repository_name), ("value", spec)],
+        ))),
+    }
 }
 
 pub(crate) fn repo_key(repo: &RepositoryConfig) -> String {
@@ -3777,12 +3772,11 @@ mod dependency_validation_tests {
         }
     }
 
-    fn relation(kind: RelationKind, min: &str, max: &str, optional: bool) -> RepositoryRelation {
+    fn relation(kind: RelationKind, version: &str, optional: bool) -> RepositoryRelation {
         RepositoryRelation {
             kind,
             guid: "com.example.dep".into(),
-            min_version: min.into(),
-            max_version: max.into(),
+            version: version.into(),
             prerelease: None,
             optional,
         }
@@ -3797,43 +3791,51 @@ mod dependency_validation_tests {
      */
     #[test]
     fn relation_without_guid_is_rejected() {
-        let mut entry = relation(RelationKind::Requires, "", "", false);
+        let mut entry = relation(RelationKind::Requires, "", false);
         entry.guid = "   ".into();
         assert!(validate_repository(&base_export(vec![entry])).is_err());
     }
 
     #[test]
     fn relation_with_unparsable_min_version_is_rejected() {
-        let entry = relation(RelationKind::Requires, "not-a-version", "", false);
+        let entry = relation(RelationKind::Requires, ">=not-a-version", false);
         assert!(validate_repository(&base_export(vec![entry])).is_err());
     }
 
     #[test]
     fn relation_with_unparsable_max_version_is_rejected() {
-        let entry = relation(RelationKind::Compatible, "", "not-a-version", false);
+        let entry = relation(RelationKind::Compatible, "<=not-a-version", false);
         assert!(validate_repository(&base_export(vec![entry])).is_err());
     }
 
     /// 区间反了（min > max）永远匹配不到任何插件，属于配置错误。
     #[test]
     fn inverted_relation_range_is_rejected() {
-        let entry = relation(RelationKind::Conflicts, "2.0", "1.0", false);
+        let entry = relation(RelationKind::Conflicts, ">=2.0,<=1.0", false);
         assert!(validate_repository(&base_export(vec![entry])).is_err());
     }
 
     /// 合法关系（含四段 beta 序号写法）应当通过。
     #[test]
     fn valid_relations_pass() {
-        for min_version in ["", "1.8.7", "1.8.7.2", "1.8.7-beta.2"] {
-            let entry = relation(RelationKind::Requires, min_version, "", false);
+        for version in ["", "*", ">=1.8.7", ">=1.8.7.2", ">=1.8.7-beta.2", "==1.8.7"] {
+            let entry = relation(RelationKind::Requires, version, false);
             assert!(
                 validate_repository(&base_export(vec![entry])).is_ok(),
-                "min_version={min_version}"
+                "version={version}"
+            );
+        }
+        // 裸版本号没有比较符，迁移自 min_version 时会静默收窄成「恰好等于」
+        for version in ["1.8.7", "1.8.7,<=2.0"] {
+            let entry = relation(RelationKind::Requires, version, false);
+            assert!(
+                validate_repository(&base_export(vec![entry])).is_err(),
+                "version={version}"
             );
         }
         // conflicts / compatible 同样接受双端区间
         for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
-            let entry = relation(kind, "1.0", "2.0", false);
+            let entry = relation(kind, ">=1.0,<=2.0", false);
             assert!(
                 validate_repository(&base_export(vec![entry])).is_ok(),
                 "kind={}",
@@ -3846,7 +3848,7 @@ mod dependency_validation_tests {
     #[test]
     fn optional_is_rejected_for_non_requirement_relations() {
         for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
-            let entry = relation(kind, "", "", true);
+            let entry = relation(kind, "", true);
             let error = validate_repository(&base_export(vec![entry])).unwrap_err();
             assert!(
                 error.to_string().contains("relationOptionalUnsupported"),
@@ -3860,8 +3862,7 @@ mod dependency_validation_tests {
     fn release_relations_without_any_bound_is_rejected() {
         let mut export = base_export(Vec::new());
         export.release_relations.push(ReleaseRelationOverride {
-            min_version: String::new(),
-            max_version: String::new(),
+            version: String::new(),
             relations: Vec::new(),
         });
         let error = validate_repository(&export).unwrap_err();
@@ -3879,7 +3880,7 @@ mod dependency_validation_tests {
     fn self_conflict_without_prerelease_flag_is_rejected() {
         let mut export = base_export(Vec::new());
         export.plugin_guid = "com.example.owner".into();
-        let mut entry = relation(RelationKind::Conflicts, "", "", false);
+        let mut entry = relation(RelationKind::Conflicts, "", false);
         entry.guid = "com.example.owner".into();
         export.relations = vec![entry];
         let error = validate_repository(&export).unwrap_err();
@@ -3892,7 +3893,7 @@ mod dependency_validation_tests {
         for flag in [true, false] {
             let mut export = base_export(Vec::new());
             export.plugin_guid = "com.example.owner".into();
-            let mut entry = relation(RelationKind::Conflicts, "", "", false);
+            let mut entry = relation(RelationKind::Conflicts, "", false);
             entry.guid = "com.example.owner".into();
             entry.prerelease = Some(flag);
             export.relations = vec![entry];
@@ -3903,7 +3904,7 @@ mod dependency_validation_tests {
     /// `prerelease` 不能用在依赖上：那是「必须是测试版依赖」，语义应写进版本区间。
     #[test]
     fn prerelease_is_rejected_for_requires() {
-        let mut entry = relation(RelationKind::Requires, "", "", false);
+        let mut entry = relation(RelationKind::Requires, "", false);
         entry.prerelease = Some(true);
         let error = validate_repository(&base_export(vec![entry])).unwrap_err();
         assert!(
@@ -3985,8 +3986,7 @@ max_version = "2.0"
             "com.bepis.bepinex.configurationmanager"
         );
         assert_eq!(v.relations[1].kind, RelationKind::Conflicts);
-        assert_eq!(v.relations[1].min_version, "1.8.7");
-        assert_eq!(v.relations[1].max_version, "2.0");
+        assert_eq!(v.relations[1].version, ">=1.8.7,<=2.0");
         assert!(!v.relations[1].optional);
     }
 
@@ -4015,7 +4015,7 @@ optional = true
         let v = toml::from_str::<RepositoryExport>(legacy).expect("旧字段名应当继续可读");
         assert_eq!(v.relations.len(), 1);
         assert_eq!(v.relations[0].kind, RelationKind::Requires);
-        assert_eq!(v.relations[0].min_version, "1.8.7");
+        assert_eq!(v.relations[0].version, ">=1.8.7");
         assert!(v.relations[0].optional);
     }
 

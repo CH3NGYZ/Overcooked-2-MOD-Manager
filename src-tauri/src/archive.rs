@@ -2789,8 +2789,11 @@ files = []
         crate::models::RepositoryRelation {
             kind: crate::models::RelationKind::Requires,
             guid: guid.into(),
-            min_version: min.into(),
-            max_version: String::new(),
+            version: if min.trim().is_empty() {
+                String::new()
+            } else {
+                format!(">={}", min.trim())
+            },
             prerelease: None,
             optional: false,
         }
@@ -2804,7 +2807,7 @@ files = []
             serde_json::json!({
                 "kind": "requires",
                 "guid": "dep.guid",
-                "min_version": "1.0.0",
+                "version": ">=1.0.0",
             })
         );
         let mut optional = requires("dep.guid", "");
@@ -2877,6 +2880,7 @@ files = ["BepInEx/plugins/a.dll"]
                 level_set_name: "Set".into(),
                 author: "Author".into(),
                 relations: vec![requires("dep.guid", "1.0.0")],
+                release_relations: Vec::new(),
             },
         );
         write_map_relation_snapshots(&dir, &snapshots).unwrap();
@@ -2896,6 +2900,7 @@ files = ["BepInEx/plugins/a.dll"]
                 level_set_name: "Set".into(),
                 author: "Author".into(),
                 relations: vec![requires("dep.guid", "1.0.0")],
+                release_relations: Vec::new(),
             },
         );
         write_map_relation_snapshots(&dir, &snapshots).unwrap();

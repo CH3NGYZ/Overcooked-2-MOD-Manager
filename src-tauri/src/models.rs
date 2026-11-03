@@ -651,7 +651,8 @@ pub struct AssetRule {
 /// - `conflicts`  目标**若存在**且版本落在区间内 → 冲突，需要卸载。
 /// - `compatible` 目标**若存在**，版本必须落在区间内 → 否则不兼容，需要卸载。
 ///
-/// 三者共用 `min_version`/`max_version`：不写就是该端不设限制。
+/// 三者共用 `version` 版本区间（pip 风格 `">=1.8.0,<2.0.0"`）：不写或写 `*`
+/// 就是不设限制。
 /// 放在一张表里而不是三张表，是为了让作者按「跟谁有关系」组织配置，
 /// 而不是按「哪种关系」拆成三处；前端也只需要一条判定管线。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -695,12 +696,14 @@ pub struct RepositoryRelation {
     pub kind: RelationKind,
     /// 目标插件的 GUID（比较时忽略大小写）。
     pub guid: String,
-    /// 版本区间下限（含）；空字符串表示不限下限。
+    /// 版本区间；空字符串表示不限版本。
+    ///
+    /// 语法见 `version_range`：逗号分隔的多个条件是 AND，支持
+    /// `>=` / `>` / `<=` / `<` / `==`（`=` 同义）/ `!=` / `*`。
+    /// 旧写法 `min_version` / `max_version` 仍能反序列化（由
+    /// `deserialize_relations` 折成这个字段），序列化只写 `version`。
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub min_version: String,
-    /// 版本区间上限（含）；空字符串表示不限上限。
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub max_version: String,
+    pub version: String,
     /// 只对**预发布版本**成立（三态）。
     ///
     /// - 不写（`None`）：正式版与预发布版都算
@@ -740,6 +743,9 @@ where
         kind: String,
         #[serde(default)]
         guid: String,
+        #[serde(default)]
+        version: String,
+        /// 旧写法，仍接受：与 `max_version` 一起折成 `version`。
         #[serde(default)]
         min_version: String,
         #[serde(default)]
@@ -791,16 +797,38 @@ where
             };
             kind
         };
+        let version = relation_version(
+            entry.version.trim(),
+            entry.min_version.trim(),
+            entry.max_version.trim(),
+            entry.guid.trim(),
+        );
         relations.push(RepositoryRelation {
             kind,
             guid: entry.guid,
-            min_version: entry.min_version,
-            max_version: entry.max_version,
+            version,
             prerelease: entry.prerelease,
             optional: entry.optional,
         });
     }
     Ok(relations)
+}
+
+/// 关系的版本区间：新字段 `version` 优先，旧 `min_version`/`max_version` 折成它。
+///
+/// 两者同时出现按新字段处理并记一条 warn —— 那是迁移期手写了两套写法，
+/// 猜「哪个更想要」不如用明确的优先级；旧字段迟早会从仓库源里消失。
+fn relation_version(version: &str, min_version: &str, max_version: &str, guid: &str) -> String {
+    let legacy = crate::version_range::fold_bounds(min_version, max_version);
+    if version.is_empty() {
+        return legacy;
+    }
+    if !legacy.is_empty() {
+        log::warn!(
+            "关系同时写了 version 与 min_version/max_version，按 version 处理：guid={guid}，version={version}，legacy={legacy}"
+        );
+    }
+    version.to_string()
 }
 
 /// 仓库级字段名：出现在关系条目里几乎一定是位置写错了。
@@ -839,32 +867,58 @@ const REPOSITORY_FIELD_NAMES: &[&str] = &[
 ///
 /// ```toml
 /// [[repositories.release_relations]]
-/// min_version = "1.8.0"        # 从 1.8.0（含）起
-/// max_version = "2.0.0"        # 到 2.0.0（含）为止；留空表示不设上限
-/// relations = [{ kind = "requires", guid = "...", min_version = "19.0" }]
+/// version = ">=1.8.0,<2.0.0"   # 只对这段版本生效
+/// relations = [{ kind = "requires", guid = "...", version = ">=19.0" }]
 /// ```
 ///
-/// 匹配规则：所有**区间命中**的条目里，取 `min_version` 最高的那条，
+/// 匹配规则：所有**区间命中**的条目里，取区间下限最高的那条，
 /// 其 `relations` 整体替换仓库级 `relations`（不是合并 —— 合并会让
-/// 「新版降低要求」无法表达）。
+/// 「新版降低要求」无法表达）。下限相同取先出现的一条。
 ///
-/// 两个边界都留空是错误配置：那样它会匹配任何版本，等同于直接改
-/// `relations`，但在校验阶段就拒绝，避免「以为写了区间其实没限」。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// `version` 留空（或不写）是错误配置：那样它会匹配任何版本，等同于直接改
+/// `relations`，所以在校验阶段就拒绝，避免「以为写了区间其实没限」。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ReleaseRelationOverride {
-    /// 生效的 Release 版本下限（含）。空表示不限下限。
+    /// 这张覆盖表生效的 Release 版本区间；空表示不限（校验阶段拒绝）。
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub min_version: String,
-    /// 生效的 Release 版本上限（含）。空表示不限上限。
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub max_version: String,
+    pub version: String,
     /// 命中的区间内使用的关系表（整体替换，不合并）。
-    #[serde(
-        default,
-        alias = "requires",
-        deserialize_with = "deserialize_relations"
-    )]
+    #[serde(default, alias = "requires")]
     pub relations: Vec<RepositoryRelation>,
+}
+
+impl<'de> Deserialize<'de> for ReleaseRelationOverride {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            version: String,
+            /// 旧写法，仍接受：与 `max_version` 一起折成 `version`。
+            #[serde(default)]
+            min_version: String,
+            #[serde(default)]
+            max_version: String,
+            #[serde(
+                default,
+                alias = "requires",
+                deserialize_with = "deserialize_relations"
+            )]
+            relations: Vec<RepositoryRelation>,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            version: relation_version(
+                wire.version.trim(),
+                wire.min_version.trim(),
+                wire.max_version.trim(),
+                "<release_relations>",
+            ),
+            relations: wire.relations,
+        })
+    }
 }
 
 /// 整批刷新期间暂存的 Release 缓存。
@@ -1220,7 +1274,6 @@ pub struct NetworkConfig {
     pub timeout_seconds: u64,
     pub download_threads: u32,
     pub max_retry_count: u32,
-    pub check_updates_on_start: bool,
 }
 fn default_max_release_count() -> u32 {
     10
@@ -1479,6 +1532,13 @@ pub struct MapRepositoryConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub relations: Vec<RepositoryRelation>,
+    /// 按地图版本覆盖上面的关系表（与仓库源 `release_relations` 同语义）。
+    ///
+    /// 同一个地图集的大版本可能依赖不同版本的 DIYLevel / Web Runtime，
+    /// 一张固定表表达不了；命中区间的那张整体替换，见
+    /// `mods::effective_map_relations`。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_relations: Vec<ReleaseRelationOverride>,
     #[serde(default)]
     pub note: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1520,6 +1580,10 @@ pub struct MapRelationSnapshot {
     pub author: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<RepositoryRelation>,
+    /// 按版本覆盖的依赖表：快照必须带上它，否则「已经装了 1.x、线上声明的是
+    /// 2.x 的依赖」时，依赖表会显示成 2.x 那一套。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_relations: Vec<ReleaseRelationOverride>,
 }
 
 /// `<data_root>/manifests/map-relations.json` 的整份内容。
@@ -1710,7 +1774,6 @@ pub struct SettingsPatch {
     pub recycle_deleted_mods: Option<bool>,
     pub game_path: Option<String>,
     pub game_runtime: Option<GameRuntime>,
-    pub check_updates_on_start: Option<bool>,
     pub official_api_only: Option<bool>,
     pub timeout_seconds: Option<u64>,
     pub download_threads: Option<u32>,
@@ -1905,7 +1968,10 @@ pub struct MapInfo {
     /// 所以冲突/兼容、发布线、可选标记也必须给前端。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<RepositoryRelation>,
-    /// 需要的框架与最低版本（来自 `relations`），供界面提示升级框架。
+    /// 按地图版本覆盖 `relations` 的表（前端按「要装/已装版本」选一张）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_relations: Vec<ReleaseRelationOverride>,
+    /// 需要的框架与版本要求（来自 `relations`），供界面提示升级框架。
     ///
     /// 只有**声明**：`installed_version` 恒为 `None`，后端不再为此扫描本地插件。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1922,9 +1988,10 @@ pub struct MapInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequiredFramework {
     pub guid: String,
+    /// 版本区间表达式（与 `RepositoryRelation.version` 同一语法）。
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub min_version: String,
-    /// 本地已装版本（未装时为空），让界面能说清「已装 0.9.9，需要 0.10.0」。
+    pub version: String,
+    /// 本地已装版本（未装时为空），让界面能说清「已装 0.9.9，需要 >=0.10.0」。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_version: Option<String>,
 }

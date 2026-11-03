@@ -593,6 +593,19 @@ pub struct AppState {
     /// 一个合集仓的 Release 列表会被它下面的每张地图读到，还会被「文档放在
     /// Release 资产里」时的 sha256 校验读到 —— 一次刷新里只该请求一次 API。
     pub release_cache: Arc<crate::release_cache::RepoReleaseCache>,
+    /// 程序更新检查的 5 分钟缓存（启动时恒检测，见 `check_app_update`）。
+    pub app_update_check: Arc<Mutex<Option<CachedAppUpdateCheck>>>,
+}
+
+/// 上一次成功的程序更新检查结果。
+///
+/// 只缓存成功结果：全部通道失败或超时的那一份不能占住缓存，否则用户在这
+/// 5 分钟里连手动重试都会拿到同一份失败结论。
+pub struct CachedAppUpdateCheck {
+    /// 结果对应的更新渠道地区；地区变了旧结果没有意义（清单地址不同）。
+    region: String,
+    checked_at: i64,
+    result: AppUpdateCheckResult,
 }
 
 impl AppState {
@@ -607,6 +620,7 @@ impl AppState {
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
             release_cache: Arc::new(crate::release_cache::RepoReleaseCache::default()),
+            app_update_check: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -1598,9 +1612,6 @@ pub fn save_settings(
     if let Some(path) = patch.game_path {
         config.game.path = path;
     }
-    if let Some(value) = patch.check_updates_on_start {
-        config.network.check_updates_on_start = value;
-    }
     if let Some(value) = patch.official_api_only {
         config.auth.official_api_only = value;
     }
@@ -1677,11 +1688,7 @@ pub fn save_settings(
         );
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
-    log::info!(
-        "应用设置保存完成：界面缩放={}，启动检查更新={}",
-        config.ui_zoom,
-        config.network.check_updates_on_start
-    );
+    log::info!("应用设置保存完成：界面缩放={}", config.ui_zoom);
     Ok(state.config.public_config(&config))
 }
 
@@ -2125,6 +2132,13 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
 /// 已有结果，只有真正过期或用户**主动**点刷新时才重新请求。
 const RELEASE_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 
+/// 程序更新检查结果的缓存时限。
+///
+/// 启动时恒检测，所以「启动 → 立刻点检查 → 再切回设置页」会在几十秒内
+/// 反复打同一份安装器清单；5 分钟内重复调用直接复用上一次的成功结果。
+/// 手动检测传 `force = true` 绕过（与仓库刷新同一条规则）。
+const APP_UPDATE_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
+
 /// 当前 Unix 毫秒时间戳。
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -2133,15 +2147,16 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-/// 这份 Release 缓存是否仍在有效期内。
+/// 这份缓存是否仍在有效期内。
 ///
 /// `None` 时间戳（旧配置、从未成功获取）一律视为过期 —— 宁可多请求一次，
-/// 也不要拿一份来源不明的列表去判断「有没有更新」。
-fn release_cache_is_fresh(cached_at: Option<i64>, now: i64) -> bool {
+/// 也不要拿一份来源不明的数据去判断「有没有更新」。Release 列表与程序更新
+/// 检查共用这一份判定，时限各自由调用方传入（两者都按 5 分钟的约定）。
+fn cache_is_fresh(cached_at: Option<i64>, now: i64, ttl_ms: i64) -> bool {
     match cached_at {
         // 时钟回拨（now < cached_at）也算过期：说明系统时间被改过，
         // 此时的「新鲜度」不可信。
-        Some(at) => now >= at && now - at < RELEASE_CACHE_TTL_MS,
+        Some(at) => now >= at && now - at < ttl_ms,
         None => false,
     }
 }
@@ -2206,7 +2221,7 @@ pub async fn refresh_repository(
      */
     if !force
         && !repo.cached_releases.is_empty()
-        && release_cache_is_fresh(repo.releases_cached_at, now_millis())
+        && cache_is_fresh(repo.releases_cached_at, now_millis(), RELEASE_CACHE_TTL_MS)
     {
         log::info!(
             "仓库 Release 命中缓存：仓库={}，数量={}，缓存时间={:?}",
@@ -5745,11 +5760,21 @@ fn bind_map_relation_snapshot(
         return;
     };
     info.map_id = Some(map.id.clone());
-    let relations = snapshots
-        .entries
-        .get(&map.id)
-        .map(|entry| entry.relations.clone())
-        .unwrap_or_else(|| map.relations.clone());
+    /*
+     * 声明表与按版本覆盖表都优先取快照（安装/上次同步固化的那份），没有快照
+     * 才用仓库当前声明。随后按**本地装着的这个版本**选覆盖表 —— 已装 1.x 的
+     * 关卡集不该按线上 2.x 的依赖去判定。
+     */
+    let (declared, overrides) = match snapshots.entries.get(&map.id) {
+        Some(entry) => (entry.relations.clone(), entry.release_relations.clone()),
+        None => (map.relations.clone(), map.release_relations.clone()),
+    };
+    let installed_version =
+        Some(info.version.as_str()).filter(|version| !version.trim().is_empty());
+    let relations = match crate::mods::select_release_relations(&overrides, installed_version) {
+        Some(selected) => selected.to_vec(),
+        None => declared,
+    };
     /*
      * 线上一条声明都没有时，保留 `level_set_to_info` 用 `requires.txt` 填的兜底：
      * 本地包自带的外部 runtime 要求，不该因为「绑定了地图源、但那个源没写
@@ -6411,15 +6436,24 @@ pub async fn refresh_map_sources(
 /// `unmet_frameworks` 恒为空。字段保留是为了兼容尚未迁移的旧前端代码 ——
 /// 删字段会让它在 `map.unmet_frameworks ?? []` 之外的访问路径上崩掉。
 fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
-    let declared: Vec<RequiredFramework> = map
-        .relations
-        .iter()
-        .map(|relation| RequiredFramework {
-            guid: relation.guid.clone(),
-            min_version: relation.min_version.clone(),
-            installed_version: None,
-        })
-        .collect();
+    /*
+     * 覆盖表按「这张卡现在代表哪个版本」选：作者钉死的 `latest_version`
+     * 优先，其次是最新一次拉到的 Release tag；两个都没有就只看固定声明。
+     */
+    let release_version = map.latest_version.as_deref().or_else(|| {
+        map.cached_releases
+            .first()
+            .map(|release| release.tag_name.as_str())
+    });
+    let declared: Vec<RequiredFramework> =
+        crate::mods::effective_map_relations(map, release_version)
+            .iter()
+            .map(|relation| RequiredFramework {
+                guid: relation.guid.clone(),
+                version: relation.version.clone(),
+                installed_version: None,
+            })
+            .collect();
     MapInfo {
         id: map.id.clone(),
         name: map.name.clone(),
@@ -6460,6 +6494,7 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         cached_at: map.releases_cached_at,
         last_error: map.last_error.clone(),
         relations: map.relations.clone(),
+        release_relations: map.release_relations.clone(),
         required_frameworks: declared,
         unmet_frameworks: Vec::new(),
     }
@@ -6491,7 +6526,7 @@ pub async fn refresh_map_releases(
     let now = now_millis();
     if !force
         && !map.cached_releases.is_empty()
-        && release_cache_is_fresh(map.releases_cached_at, now)
+        && cache_is_fresh(map.releases_cached_at, now, RELEASE_CACHE_TTL_MS)
     {
         log::info!(
             "地图 Release 命中缓存：地图={}，数量={}",
@@ -6899,6 +6934,7 @@ pub fn sync_dependency_snapshots(
                     level_set_name: map.level_set_name.clone(),
                     author: map.author.clone(),
                     relations: map.relations.clone(),
+                    release_relations: map.release_relations.clone(),
                 },
             )
         })
@@ -7533,13 +7569,26 @@ pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
     locale: Option<String>,
+    force: Option<bool>,
 ) -> Result<AppUpdateCheckResult, String> {
-    log::info!("开始检查安装器更新");
     let _ = locale;
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(
-            5 * installer_manifest_sources(detect_installer_region()).len() as u64 + 10,
-        ),
+    let force = force.unwrap_or(false);
+    let region = detect_installer_region();
+    log::info!("开始检查安装器更新：跳过缓存={force}");
+    /*
+     * 启动时恒检测，所以这个命令每次启动都会跑；5 分钟内重复调用直接返回
+     * 上一次的成功结果。只缓存成功结果 —— 全部通道失败/超时的结论不能占住
+     * 缓存，否则用户在这 5 分钟里连手动重试都会拿到同一份失败结论。
+     * 手动检测传 force=true（与仓库刷新同一条规则）。
+     */
+    if !force {
+        if let Some(cached) = app_update_cache_get(&state, region) {
+            log::info!("安装器更新检查命中 5 分钟缓存，跳过网络请求");
+            return Ok(cached);
+        }
+    }
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(5 * installer_manifest_sources(region).len() as u64 + 10),
         discover_installer_update(&state, &app),
     )
     .await
@@ -7550,53 +7599,71 @@ pub async fn check_app_update(
                 result.update.is_some(),
                 result.all_failed
             );
-            Ok(result)
+            result
         }
         Ok(Err(error)) => {
-            let region = detect_installer_region();
             log::error!("安装器更新检查初始化失败: {error}");
-            let channels = installer_manifest_sources(region)
-                .iter()
-                .map(|channel| {
-                    let status = installer_channel_status(
-                        channel,
-                        "failed",
-                        Some("update.checkInitFailed".into()),
-                    );
-                    emit_installer_channel_status(&app, region, status.clone());
-                    status
-                })
-                .collect();
-            Ok(AppUpdateCheckResult {
-                update: None,
-                channels,
-                all_failed: true,
-                region: region.as_str().into(),
-            })
+            failed_app_update_check(&app, region, "update.checkInitFailed")
         }
         Err(_) => {
             log::warn!("安装器更新检查超过总超时，已跳过自动更新");
-            let region = detect_installer_region();
-            let channels = installer_manifest_sources(region)
-                .iter()
-                .map(|channel| {
-                    let status = installer_channel_status(
-                        channel,
-                        "failed",
-                        Some("update.checkTimeout".into()),
-                    );
-                    emit_installer_channel_status(&app, region, status.clone());
-                    status
-                })
-                .collect();
-            Ok(AppUpdateCheckResult {
-                update: None,
-                channels,
-                all_failed: true,
-                region: region.as_str().into(),
-            })
+            failed_app_update_check(&app, region, "update.checkTimeout")
         }
+    };
+    if !result.all_failed {
+        app_update_cache_store(&state, &result);
     }
+    Ok(result)
+}
+
+/// 整次检查失败时的结果：每个通道都标成失败，前端照旧逐条显示原因。
+fn failed_app_update_check(
+    app: &AppHandle,
+    region: InstallerRegion,
+    tag: &str,
+) -> AppUpdateCheckResult {
+    let channels = installer_manifest_sources(region)
+        .iter()
+        .map(|channel| {
+            let status = installer_channel_status(channel, "failed", Some(tag.into()));
+            emit_installer_channel_status(app, region, status.clone());
+            status
+        })
+        .collect();
+    AppUpdateCheckResult {
+        update: None,
+        channels,
+        all_failed: true,
+        region: region.as_str().into(),
+    }
+}
+
+/// 命中的缓存结果；地区不一致或已过期都算未命中。
+fn app_update_cache_get(state: &AppState, region: InstallerRegion) -> Option<AppUpdateCheckResult> {
+    let guard = state.app_update_check.lock().ok()?;
+    let cached = guard.as_ref()?;
+    if cached.region != region.as_str() {
+        return None;
+    }
+    if !cache_is_fresh(
+        Some(cached.checked_at),
+        now_millis(),
+        APP_UPDATE_CACHE_TTL_MS,
+    ) {
+        return None;
+    }
+    Some(cached.result.clone())
+}
+
+fn app_update_cache_store(state: &AppState, result: &AppUpdateCheckResult) {
+    let Ok(mut guard) = state.app_update_check.lock() else {
+        return;
+    };
+    *guard = Some(CachedAppUpdateCheck {
+        region: result.region.clone(),
+        checked_at: now_millis(),
+        result: result.clone(),
+    });
 }
 
 async fn download_installer(
@@ -9384,6 +9451,7 @@ mod mod_file_location_tests {
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
             release_cache: Arc::new(Default::default()),
+            app_update_check: Arc::new(Mutex::new(None)),
         };
         let mut config = state.config.load().unwrap();
         config.game.path = workspace.game.to_string_lossy().into_owned();
@@ -11332,7 +11400,7 @@ mod update_status_tests {
             "schema_version": 1, "ui_zoom": 1.5,
             "game": {"path": ""},
             "network": {"timeout_seconds": 5, "download_threads": 1,
-                "max_retry_count": 3, "check_updates_on_start": false},
+                "max_retry_count": 3},
             "launch": {"ask_user_to_start_from_steam": false, "auto_restore_winhttp": false},
             "auth": {"github_token": "", "gitee_token": "", "official_api_only": true},
             "repositories": repositories
@@ -11542,6 +11610,7 @@ mod repository_source_refresh_tests {
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
             release_cache: Arc::new(Default::default()),
+            app_update_check: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -11835,6 +11904,7 @@ mod repository_source_refresh_tests {
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
             release_cache: Arc::new(Default::default()),
+            app_update_check: Arc::new(Mutex::new(None)),
         };
         refresh(&restarted, &root).await.unwrap();
         let restored = restarted.config.load().unwrap();
@@ -12659,39 +12729,52 @@ mod framework_backup_roundtrip_tests {
     }
 }
 
-/// Release 缓存有效期的判定。
+/// 缓存有效期的判定（仓库 Release 列表 / 地图 Release 列表 / 程序更新检查）。
 ///
-/// 这里是「每个仓库的 API 请求缓存 5 分钟」的核心逻辑：判错的后果很具体 ——
+/// 这里是「网络结果缓存 5 分钟」的核心逻辑：判错的后果很具体 ——
 /// 判松了会把过期数据当最新（用户看不到新版本），判严了等于没有缓存
 /// （每次打开页面都把整棵仓库树重打一遍，撞速率限制）。
 #[cfg(test)]
-mod release_cache_tests {
-    use super::{RELEASE_CACHE_TTL_MS, now_millis, release_cache_is_fresh};
+mod cache_ttl_tests {
+    use super::{APP_UPDATE_CACHE_TTL_MS, RELEASE_CACHE_TTL_MS, cache_is_fresh, now_millis};
+
+    #[test]
+    fn every_network_cache_uses_five_minutes() {
+        assert_eq!(RELEASE_CACHE_TTL_MS, 5 * 60 * 1000);
+        assert_eq!(APP_UPDATE_CACHE_TTL_MS, 5 * 60 * 1000);
+    }
 
     #[test]
     fn fresh_within_five_minutes() {
         let now = 1_700_000_000_000;
-        assert!(release_cache_is_fresh(Some(now), now), "刚写入应命中");
         assert!(
-            release_cache_is_fresh(Some(now - RELEASE_CACHE_TTL_MS + 1), now),
+            cache_is_fresh(Some(now), now, RELEASE_CACHE_TTL_MS),
+            "刚写入应命中"
+        );
+        assert!(
+            cache_is_fresh(
+                Some(now - RELEASE_CACHE_TTL_MS + 1),
+                now,
+                RELEASE_CACHE_TTL_MS
+            ),
             "差 1 毫秒到期仍算新鲜"
         );
-        assert_eq!(RELEASE_CACHE_TTL_MS, 5 * 60 * 1000);
     }
 
     #[test]
     fn expired_at_and_after_ttl() {
         let now = 1_700_000_000_000;
         assert!(
-            !release_cache_is_fresh(Some(now - RELEASE_CACHE_TTL_MS), now),
+            !cache_is_fresh(Some(now - RELEASE_CACHE_TTL_MS), now, RELEASE_CACHE_TTL_MS),
             "正好到期即失效"
         );
-        assert!(!release_cache_is_fresh(
+        assert!(!cache_is_fresh(
             Some(now - RELEASE_CACHE_TTL_MS - 1),
-            now
+            now,
+            RELEASE_CACHE_TTL_MS
         ));
         assert!(
-            !release_cache_is_fresh(Some(now - 86_400_000), now),
+            !cache_is_fresh(Some(now - 86_400_000), now, RELEASE_CACHE_TTL_MS),
             "隔天必失效"
         );
     }
@@ -12700,7 +12783,16 @@ mod release_cache_tests {
     fn missing_timestamp_is_expired() {
         // 旧版本配置没有这个字段，或从未成功获取过 —— 必须重新请求，
         // 不能拿一份来源不明的列表去判断「有没有更新」。
-        assert!(!release_cache_is_fresh(None, 1_700_000_000_000));
+        assert!(!cache_is_fresh(
+            None,
+            1_700_000_000_000,
+            RELEASE_CACHE_TTL_MS
+        ));
+        assert!(!cache_is_fresh(
+            None,
+            1_700_000_000_000,
+            APP_UPDATE_CACHE_TTL_MS
+        ));
     }
 
     #[test]
@@ -12708,7 +12800,16 @@ mod release_cache_tests {
         // 系统时间被调早：此时 now < cached_at，差值算出来是负数，
         // 如果不判方向就会永远命中缓存。
         let now = 1_700_000_000_000;
-        assert!(!release_cache_is_fresh(Some(now + 60_000), now));
+        assert!(!cache_is_fresh(
+            Some(now + 60_000),
+            now,
+            RELEASE_CACHE_TTL_MS
+        ));
+        assert!(!cache_is_fresh(
+            Some(now + 60_000),
+            now,
+            APP_UPDATE_CACHE_TTL_MS
+        ));
     }
 
     #[test]

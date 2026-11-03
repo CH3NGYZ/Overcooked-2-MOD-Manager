@@ -1,8 +1,9 @@
 use crate::archive::{self, InstallManifest};
 use crate::game::read_file_metadata;
 use crate::models::{
-    AppConfig, Channel, DllRole, InstalledMod, InstalledModStatusLabel, ReleaseRelationOverride,
-    RepositoryBinding, RepositoryConfig, RepositoryDownloadMode, RepositoryRelation,
+    AppConfig, Channel, DllRole, InstalledMod, InstalledModStatusLabel, MapRepositoryConfig,
+    ReleaseRelationOverride, RepositoryBinding, RepositoryConfig, RepositoryDownloadMode,
+    RepositoryRelation,
 };
 use regex::Regex;
 use std::cmp::Ordering;
@@ -28,63 +29,81 @@ fn is_restore_staging_component(name: &std::ffi::OsStr) -> bool {
         .is_some_and(|text| text.contains(".before-restore-"))
 }
 
-/// 仓库对指定 Release 版本**生效**的关系表（`release_relations` 命中即整体替换）。
+/// 从覆盖表里挑出对指定版本生效的那一张；没有命中返回 `None`。
 ///
 /// 与前端 `modRelations.ts::relationsForRelease` 同语义：所有命中的区间里取
-/// `min_version` 最高（下限为空视为最低优先级）的那条，整体替换仓库级
-/// `relations`；版本为空或没有覆盖表时用仓库级声明。
+/// 区间下限最高（下限为空视为最低优先级）的那条，下限相同时取先出现的一条。
 ///
 /// 为什么不合并：合并会让「新版降低要求」无法表达 —— 覆盖表的意图是
-/// 「这个版本区间用的是另一套依赖」。
+/// 「这个版本区间用的是另一套依赖」，作者改一张表就得到一套完整语义。
+pub(crate) fn select_release_relations<'a>(
+    overrides: &'a [ReleaseRelationOverride],
+    release_version: Option<&str>,
+) -> Option<&'a [RepositoryRelation]> {
+    let current = release_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if overrides.is_empty() {
+        return None;
+    }
+    let compare = crate::releases::compare_release_versions;
+    let mut best: Option<(&ReleaseRelationOverride, Option<String>)> = None;
+    for entry in overrides {
+        let Ok(range) = crate::version_range::VersionRange::parse(entry.version.trim()) else {
+            // 校验阶段已经拦过；走到这里说明配置是内存里拼的，按不命中处理。
+            log::warn!("忽略无法解析的版本区间：区间={}", entry.version);
+            continue;
+        };
+        /*
+         * 区间比较不出来的版本（tag 不是可解析版本号）一律不命中：用一套
+         * 说不清依据的关系去固化依赖，比退回仓库级声明更危险。
+         */
+        if !range.matches(current, compare) {
+            continue;
+        }
+        let lower = range.lower_bound(compare).map(str::to_string);
+        let more_specific = match best.as_ref() {
+            None => true,
+            // 下限为空能匹配一切，不该压过更具体的规则
+            Some((_, best_lower)) => match (best_lower.as_deref(), lower.as_deref()) {
+                (None, Some(_)) => true,
+                (Some(_), None) | (None, None) => false,
+                (Some(best_min), Some(candidate)) => {
+                    compare(candidate, best_min).is_some_and(|ordering| ordering.is_gt())
+                }
+            },
+        };
+        if more_specific {
+            best = Some((entry, lower));
+        }
+    }
+    best.map(|(entry, _)| entry.relations.as_slice())
+}
+
+/// 仓库对指定 Release 版本**生效**的关系表（`release_relations` 命中即整体替换）。
+///
+/// 版本为空、没有覆盖表、或没有命中时都用仓库级 `relations`。
 pub fn effective_relations(
     repo: &RepositoryConfig,
     release_version: Option<&str>,
 ) -> Vec<RepositoryRelation> {
-    let base = repo.relations.clone();
-    let Some(current) = release_version
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return base;
-    };
-    if repo.release_relations.is_empty() {
-        return base;
+    match select_release_relations(&repo.release_relations, release_version) {
+        Some(relations) => relations.to_vec(),
+        None => repo.relations.clone(),
     }
-    let mut best: Option<(&ReleaseRelationOverride, &str)> = None;
-    for entry in &repo.release_relations {
-        let min = entry.min_version.trim();
-        let max = entry.max_version.trim();
-        // 区间比较不出来的版本（tag 不是可解析版本号）当作不命中：
-        // 用一套说不清依据的关系去固化依赖比空表更危险。
-        if !min.is_empty() {
-            match crate::releases::compare_release_versions(current, min) {
-                Some(ordering) if ordering.is_ge() => {}
-                _ => continue,
-            }
-        }
-        if !max.is_empty() {
-            match crate::releases::compare_release_versions(current, max) {
-                Some(ordering) if ordering.is_le() => {}
-                _ => continue,
-            }
-        }
-        let more_specific = match best {
-            None => true,
-            // 下限为空能匹配一切，不该压过更具体的规则
-            Some((_, best_min)) if best_min.is_empty() && !min.is_empty() => true,
-            Some((_, best_min)) if !best_min.is_empty() && !min.is_empty() => {
-                crate::releases::compare_release_versions(min, best_min)
-                    .is_some_and(|ordering| ordering.is_gt())
-            }
-            Some(_) => false,
-        };
-        if more_specific {
-            best = Some((entry, min));
-        }
-    }
-    match best {
-        Some((entry, _)) => entry.relations.clone(),
-        None => base,
+}
+
+/// 地图源对指定地图版本**生效**的关系表（`[[maps.release_relations]]`）。
+///
+/// 与 MOD 仓库同一条规则：同一个地图集的大版本可能依赖不同版本的 DIYLevel
+/// 或 Web Runtime，一张固定表表达不了，命中的那张整体替换 `map.relations`。
+pub fn effective_map_relations(
+    map: &MapRepositoryConfig,
+    release_version: Option<&str>,
+) -> Vec<RepositoryRelation> {
+    match select_release_relations(&map.release_relations, release_version) {
+        Some(relations) => relations.to_vec(),
+        None => map.relations.clone(),
     }
 }
 
@@ -1955,11 +1974,12 @@ mod tests {
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1, "ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[misleading, bound]
-        })).unwrap();
+        }))
+        .unwrap();
         let manifests = root.join("manifests");
         let mut manifest = crate::archive::new_manifest(
             "old-source-id",
@@ -2035,11 +2055,12 @@ mod tests {
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1, "ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[stable, beta]
-        })).unwrap();
+        }))
+        .unwrap();
         let manifests = root.join("manifests");
         let mut manifest = crate::archive::new_manifest(
             "package",
@@ -2343,13 +2364,14 @@ mod tests {
             release.id = "release".into();
             release.download_mode = crate::models::RepositoryDownloadMode::Release;
             let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
-            "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
-            "auth":{"github_token":"","gitee_token":"","official_api_only":true},
-            "repositories":[release,raw]
-        })).unwrap();
+                "schema_version":1,"ui_zoom":1.5,
+                "game":{"path":""},
+                "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
+                "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
+                "auth":{"github_token":"","gitee_token":"","official_api_only":true},
+                "repositories":[release,raw]
+            }))
+            .unwrap();
             let manifest = crate::archive::InstallManifest {
                 repository_id: "raw".into(),
                 release_tag: String::new(),
@@ -2412,11 +2434,12 @@ mod tests {
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[]
-        })).unwrap();
+        }))
+        .unwrap();
         let mut group_i18n = std::collections::BTreeMap::new();
         group_i18n.insert("zh-CN".into(), "内容拓展".to_string());
         group_i18n.insert("en".into(), "Content".to_string());
@@ -2458,11 +2481,12 @@ mod tests {
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[]
-        })).unwrap();
+        }))
+        .unwrap();
         let manifest = crate::archive::InstallManifest {
             repository_id: "pre-repo".into(),
             release_tag: "v2.0.0-beta.1".into(),
@@ -2511,11 +2535,12 @@ mod tests {
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
-            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
+            "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
             "repositories":[repository]
-        })).unwrap();
+        }))
+        .unwrap();
 
         // 旧清单：分组与绑定都为空
         let manifest = crate::archive::InstallManifest {
@@ -2629,11 +2654,12 @@ mod tests {
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "ui_zoom": 1.5,
             "game": {"path": ""},
-            "network": {"timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false},
+            "network": {"timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3},
             "launch": {"ask_user_to_start_from_steam": false, "auto_restore_winhttp": false},
             "auth": {"github_token": "", "gitee_token": "", "official_api_only": true},
             "repositories": []
-        })).unwrap();
+        }))
+        .unwrap();
         let mut truncated = plugin_blob("dev.gua.overcooked.diylevel", "DIYLevel", "0.10.0");
         truncated.pop();
         let cases = [
@@ -2987,25 +3013,22 @@ mod tests {
         )));
     }
 
-    fn requires(guid: &str, min: &str, max: &str) -> crate::models::RepositoryRelation {
+    fn requires(guid: &str, version: &str) -> crate::models::RepositoryRelation {
         crate::models::RepositoryRelation {
             kind: crate::models::RelationKind::Requires,
             guid: guid.into(),
-            min_version: min.into(),
-            max_version: max.into(),
+            version: version.into(),
             prerelease: None,
             optional: false,
         }
     }
 
     fn override_entry(
-        min: &str,
-        max: &str,
+        version: &str,
         relations: Vec<crate::models::RepositoryRelation>,
     ) -> crate::models::ReleaseRelationOverride {
         crate::models::ReleaseRelationOverride {
-            min_version: min.into(),
-            max_version: max.into(),
+            version: version.into(),
             relations,
         }
     }
@@ -3013,7 +3036,7 @@ mod tests {
     #[test]
     fn effective_relations_falls_back_to_repository_declarations() {
         let mut repo = binding_repository();
-        repo.relations = vec![requires("base.guid", "1.0.0", "")];
+        repo.relations = vec![requires("base.guid", ">=1.0.0")];
         // 没有覆盖表、版本为空、版本只有空白：都用仓库级声明
         assert_eq!(
             super::effective_relations(&repo, Some("9.9.9")),
@@ -3030,16 +3053,15 @@ mod tests {
     fn effective_relations_replaces_the_whole_table_on_a_hit() {
         let mut repo = binding_repository();
         repo.relations = vec![
-            requires("base.guid", "1.0.0", ""),
-            requires("conflict.guid", "", ""),
+            requires("base.guid", ">=1.0.0"),
+            requires("conflict.guid", ""),
         ];
         repo.release_relations = vec![override_entry(
-            "1.5.0",
-            "",
-            vec![requires("new.guid", "3.0.0", "")],
+            ">=1.5.0",
+            vec![requires("new.guid", ">=3.0.0")],
         )];
         let effective = super::effective_relations(&repo, Some("1.6.0"));
-        assert_eq!(effective, vec![requires("new.guid", "3.0.0", "")]);
+        assert_eq!(effective, vec![requires("new.guid", ">=3.0.0")]);
         // 整体替换，不是合并：旧表里的冲突项不能残留
         assert!(!effective.iter().any(|item| item.guid == "conflict.guid"));
         // 区间外的版本继续用仓库级声明
@@ -3053,22 +3075,22 @@ mod tests {
     fn effective_relations_prefers_the_highest_lower_bound() {
         let mut repo = binding_repository();
         repo.release_relations = vec![
-            override_entry("", "", vec![requires("any.guid", "1.0.0", "")]),
-            override_entry("1.0.0", "", vec![requires("mid.guid", "2.0.0", "")]),
-            override_entry("2.0.0", "", vec![requires("high.guid", "3.0.0", "")]),
+            override_entry("*", vec![requires("any.guid", ">=1.0.0")]),
+            override_entry(">=1.0.0", vec![requires("mid.guid", ">=2.0.0")]),
+            override_entry(">=2.0.0", vec![requires("high.guid", ">=3.0.0")]),
         ];
         assert_eq!(
             super::effective_relations(&repo, Some("2.5.0")),
-            vec![requires("high.guid", "3.0.0", "")]
+            vec![requires("high.guid", ">=3.0.0")]
         );
         assert_eq!(
             super::effective_relations(&repo, Some("1.5.0")),
-            vec![requires("mid.guid", "2.0.0", "")]
+            vec![requires("mid.guid", ">=2.0.0")]
         );
         // 下限为空的覆盖表匹配一切，但优先级最低：没有更高的下限命中时才用它
         assert_eq!(
             super::effective_relations(&repo, Some("0.5.0")),
-            vec![requires("any.guid", "1.0.0", "")]
+            vec![requires("any.guid", ">=1.0.0")]
         );
     }
 
@@ -3076,20 +3098,110 @@ mod tests {
     fn effective_relations_treats_both_bounds_as_inclusive() {
         let mut repo = binding_repository();
         repo.release_relations = vec![override_entry(
-            "1.0.0",
-            "2.0.0",
-            vec![requires("ranged.guid", "1.0.0", "")],
+            ">=1.0.0,<=2.0.0",
+            vec![requires("ranged.guid", ">=1.0.0")],
         )];
         assert_eq!(
             super::effective_relations(&repo, Some("1.0.0")),
-            vec![requires("ranged.guid", "1.0.0", "")]
+            vec![requires("ranged.guid", ">=1.0.0")]
         );
         assert_eq!(
             super::effective_relations(&repo, Some("2.0.0")),
-            vec![requires("ranged.guid", "1.0.0", "")]
+            vec![requires("ranged.guid", ">=1.0.0")]
         );
         // 越界即不命中，退回仓库级（此处为空）
         assert!(super::effective_relations(&repo, Some("2.0.1")).is_empty());
+    }
+
+    #[test]
+    fn effective_relations_honours_open_ended_intervals() {
+        let mut repo = binding_repository();
+        repo.relations = vec![requires("base.guid", "")];
+        repo.release_relations = vec![
+            override_entry(">=2.0.0", vec![requires("modern.guid", ">=4.0.0")]),
+            override_entry("<2.0.0", vec![requires("legacy.guid", ">=1.0.0")]),
+        ];
+        assert_eq!(
+            super::effective_relations(&repo, Some("2.0.0")),
+            vec![requires("modern.guid", ">=4.0.0")]
+        );
+        assert_eq!(
+            super::effective_relations(&repo, Some("1.9.9")),
+            vec![requires("legacy.guid", ">=1.0.0")]
+        );
+        // 两边看起来都命中的版本里，下限更高的那张赢
+        repo.release_relations = vec![
+            override_entry(">=1.0.0", vec![requires("wide.guid", "")]),
+            override_entry(">=1.5.0,<1.6.0", vec![requires("narrow.guid", "")]),
+        ];
+        assert_eq!(
+            super::effective_relations(&repo, Some("1.5.2")),
+            vec![requires("narrow.guid", "")]
+        );
+        // 不可解析的 tag 不命中，退回仓库级声明
+        assert_eq!(
+            super::effective_relations(&repo, Some("nightly")),
+            repo.relations
+        );
+    }
+
+    /// 用源文档造一张地图条目：顺手覆盖 `[[maps.release_relations]]` 的解析。
+    fn map_entry(release_relations: &str) -> crate::models::MapRepositoryConfig {
+        let text = format!(
+            r#"
+[[maps]]
+name = "Map"
+provider = "github"
+username = "u"
+repository = "r"
+level_set_name = "Map_Set"
+author = "A"
+asset_rules = [{{ type = "glob", value = "map_v*.zip" }}]
+relations = [{{ kind = "requires", guid = "base.guid", version = ">=0.10.0" }}]
+{release_relations}
+"#
+        );
+        crate::map_sources::parse_document(
+            &text,
+            &crate::repository_sources::SourceLocation::parse("maps.toml").unwrap(),
+        )
+        .unwrap()
+        .maps
+        .into_iter()
+        .next()
+        .unwrap()
+    }
+
+    #[test]
+    fn effective_map_relations_uses_the_map_override_table() {
+        let map = map_entry(
+            r#"
+[[maps.release_relations]]
+version = ">=2.0.0"
+relations = [{ kind = "requires", guid = "new.guid", version = ">=0.20.0" }]
+
+[[maps.release_relations]]
+version = ">=1.0.0,<2.0.0"
+relations = [{ kind = "requires", guid = "old.guid", version = ">=0.15.0" }]
+"#,
+        );
+        assert_eq!(
+            super::effective_map_relations(&map, Some("2.1.0")),
+            vec![requires("new.guid", ">=0.20.0")]
+        );
+        assert_eq!(
+            super::effective_map_relations(&map, Some("1.4.0")),
+            vec![requires("old.guid", ">=0.15.0")]
+        );
+        // 没有覆盖版本 / 没有命中：退回地图自己的声明
+        assert_eq!(
+            super::effective_map_relations(&map, Some("0.9.0")),
+            vec![requires("base.guid", ">=0.10.0")]
+        );
+        assert_eq!(
+            super::effective_map_relations(&map, None),
+            vec![requires("base.guid", ">=0.10.0")]
+        );
     }
 
     #[test]

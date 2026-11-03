@@ -164,7 +164,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 # 与测试版互斥
 [[repositories.relations]]
@@ -240,7 +239,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 # 与正式版互斥
 [[repositories.relations]]
@@ -316,7 +314,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 # 与测试版互斥
 [[repositories.relations]]
@@ -397,7 +394,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 # 与正式版互斥
 [[repositories.relations]]

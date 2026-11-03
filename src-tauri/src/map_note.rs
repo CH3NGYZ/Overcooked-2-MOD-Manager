@@ -31,7 +31,10 @@
 //! 三张表按 `RelationKind` 展开成 `RepositoryRelation`。剩下的字段（provider、
 //! username、repository、tag、asset_rules 的形态）由解析方按「源声明 + Release
 //! 实际资产」补齐 —— 那些是仓库坐标，写在每份 note 里只会重复。
-use crate::models::{AssetRule, AssetRuleType, RelationKind, ReleaseAsset, RepositoryRelation};
+use crate::models::{
+    AssetRule, AssetRuleType, RelationKind, ReleaseAsset, ReleaseRelationOverride,
+    RepositoryRelation,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -80,6 +83,13 @@ pub struct MapNoteMetadata {
     /// 作者声明的「这就是最新版」。
     #[serde(default)]
     pub latest_version: Option<String>,
+    /// 按地图版本覆盖下面三张表的整表（`[[release_relations]]`）。
+    ///
+    /// 与源文档 `[[maps.release_relations]]` 同构：命中区间的那张整体替换
+    /// `requires`/`compatible`/`conflicts`，用来表达「2.0 起依赖 Web Runtime
+    /// 0.20 而不是 0.10」。多数地图用不到，留空即可。
+    #[serde(default)]
+    pub release_relations: Vec<NoteReleaseRelations>,
     #[serde(default)]
     pub requires: BTreeMap<String, RelationSpec>,
     #[serde(default)]
@@ -92,15 +102,21 @@ pub struct MapNoteMetadata {
 ///
 /// ```toml
 /// requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0,<=0.11.9" }
-/// conflicts = { "oc2.oc2diylevelruntimewloader" = { min_version = "4.0.0", prerelease = true } }
+/// conflicts = { "oc2.oc2diylevelruntimewloader" = { version = ">=4.0.0", prerelease = true } }
 /// ```
 ///
+/// 区间语法与仓库源、管理器配置完全一致（见 `version_range`）；显式表只在
+/// 需要 `prerelease` / `optional` 时用，`version` 留空表示不限版本。
+/// 旧写法 `min_version` / `max_version` 仍能读，由 `fold_bounds` 折成区间。
 /// 与 `oc2-info` 的 `--requires` / `--compatible` / `--conflicts` 参数同构。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum RelationSpec {
     Range(String),
     Detailed {
+        #[serde(default)]
+        version: String,
+        /// 旧写法，仍接受。
         #[serde(default)]
         min_version: String,
         #[serde(default)]
@@ -113,88 +129,57 @@ pub enum RelationSpec {
 }
 
 impl RelationSpec {
-    /// 展开成 (下限, 上限, 预发布三态, 可选)。区间写错返回 `None`。
-    fn bounds(&self) -> Option<(String, String, Option<bool>, bool)> {
-        match self {
-            Self::Range(raw) => {
-                let (min_version, max_version) = parse_range(raw)?;
-                Some((min_version, max_version, None, false))
-            }
+    /// 展开成 (规范化区间, 预发布三态, 可选)。区间写错返回 `None`。
+    ///
+    /// 规范化让两种写法落到同一段文本上（`=1.2` → `==1.2`、旧
+    /// `min_version = "1.0"` → `>=1.0`），前端与 `oc2-info` 都只需认一种形态。
+    fn spec(&self) -> Option<(String, Option<bool>, bool)> {
+        let (raw, prerelease, optional) = match self {
+            Self::Range(raw) => (raw.trim().to_string(), None, false),
             Self::Detailed {
+                version,
                 min_version,
                 max_version,
                 prerelease,
                 optional,
-            } => Some((
-                min_version.trim().to_string(),
-                max_version.trim().to_string(),
-                *prerelease,
-                *optional,
-            )),
-        }
-    }
-}
-
-/// 解析区间字符串：`*`、`>=1.0`、`<=2.0`、`=1.2`，以及它们的逗号组合。
-///
-/// 只接受闭区间写法。`>1.0` 这种开区间在项目里没有语义（版本比较是离散的
-/// 数字段），接受它只会让作者以为自己表达了「大于」，实际边界却含糊。
-///
-/// 返回 `(下限, 上限)`，空串表示该端不限。
-pub fn parse_range(raw: &str) -> Option<(String, String)> {
-    let raw = raw.trim();
-    if raw.is_empty() || raw == "*" {
-        return Some((String::new(), String::new()));
-    }
-    let mut min_version = String::new();
-    let mut max_version = String::new();
-    for part in raw.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            return None;
-        }
-        let (target, value) = if let Some(value) = part.strip_prefix(">=") {
-            (Bound::Min, value)
-        } else if let Some(value) = part.strip_prefix("<=") {
-            (Bound::Max, value)
-        } else if let Some(value) = part.strip_prefix('=') {
-            (Bound::Exact, value)
-        } else {
-            return None;
+            } => {
+                let raw = if version.trim().is_empty() {
+                    crate::version_range::fold_bounds(min_version.trim(), max_version.trim())
+                } else {
+                    version.trim().to_string()
+                };
+                (raw, *prerelease, *optional)
+            }
         };
-        let value = value.trim();
-        if value.is_empty() {
-            return None;
-        }
-        match target {
-            Bound::Min => {
-                if !min_version.is_empty() {
-                    return None;
-                }
-                min_version = value.to_string();
-            }
-            Bound::Max => {
-                if !max_version.is_empty() {
-                    return None;
-                }
-                max_version = value.to_string();
-            }
-            Bound::Exact => {
-                if !min_version.is_empty() || !max_version.is_empty() {
-                    return None;
-                }
-                min_version = value.to_string();
-                max_version = value.to_string();
-            }
-        }
+        let range = crate::version_range::VersionRange::parse(&raw).ok()?;
+        Some((range.canonical(), prerelease, optional))
     }
-    Some((min_version, max_version))
 }
 
-enum Bound {
-    Min,
-    Max,
-    Exact,
+/// Release note 里的一张按版本覆盖表（`[[release_relations]]`）。
+///
+/// 内层写法和块里的三张关系表一致（`requires` / `compatible` / `conflicts`
+/// 各一张 GUID → 区间映射），这样作者可以直接把某一段关系从上面搬下来换掉
+/// 区间，`tools/oc2-info --print` 也是按这个形态读写的；同时接受
+/// `relations = [{ kind, guid, version }]`，方便从源文档的同名表整段复制。
+#[derive(Debug, Clone, Deserialize)]
+pub struct NoteReleaseRelations {
+    /// 覆盖表生效的版本区间。
+    #[serde(default)]
+    pub version: String,
+    /// 旧写法，仍接受。
+    #[serde(default)]
+    pub min_version: String,
+    #[serde(default)]
+    pub max_version: String,
+    #[serde(default)]
+    pub requires: BTreeMap<String, RelationSpec>,
+    #[serde(default)]
+    pub compatible: BTreeMap<String, RelationSpec>,
+    #[serde(default)]
+    pub conflicts: BTreeMap<String, RelationSpec>,
+    #[serde(default)]
+    pub relations: Vec<RepositoryRelation>,
 }
 
 impl MapNoteMetadata {
@@ -209,6 +194,55 @@ impl MapNoteMetadata {
         push_relations(&mut relations, RelationKind::Conflicts, &self.conflicts);
         relations
     }
+
+    /// 块里的按版本覆盖表，转成与源文档同名表一致的模型。
+    ///
+    /// 没有写区间（或不写 `*`）的覆盖表会被丢掉并记 warn：它会匹配任何版本，
+    /// 效果等于直接改上面三张表，作者却以为自己限定了范围。
+    pub fn release_relation_overrides(&self) -> Vec<ReleaseRelationOverride> {
+        let mut overrides = Vec::new();
+        for entry in &self.release_relations {
+            let raw = if entry.version.trim().is_empty() {
+                crate::version_range::fold_bounds(
+                    entry.min_version.trim(),
+                    entry.max_version.trim(),
+                )
+            } else {
+                entry.version.trim().to_string()
+            };
+            let range = match crate::version_range::VersionRange::parse(&raw) {
+                Ok(range) => range,
+                Err(error) => {
+                    log::warn!(
+                        "Release note 里的覆盖表区间无法解析，已忽略：区间={raw}，原因={error}"
+                    );
+                    continue;
+                }
+            };
+            if range.is_any() {
+                log::warn!("Release note 里的覆盖表没有写版本区间，已忽略");
+                continue;
+            }
+            let mut relations = Vec::new();
+            push_relations(&mut relations, RelationKind::Requires, &entry.requires);
+            push_relations(&mut relations, RelationKind::Compatible, &entry.compatible);
+            push_relations(&mut relations, RelationKind::Conflicts, &entry.conflicts);
+            // 「可选的冲突」没有含义，只有 requires 保留 optional
+            relations.extend(entry.relations.iter().map(|relation| RepositoryRelation {
+                optional: relation.optional && matches!(relation.kind, RelationKind::Requires),
+                ..relation.clone()
+            }));
+            if relations.is_empty() {
+                log::warn!("Release note 里的覆盖表没有任何关系，已忽略");
+                continue;
+            }
+            overrides.push(ReleaseRelationOverride {
+                version: range.canonical(),
+                relations,
+            });
+        }
+        overrides
+    }
 }
 
 fn push_relations(
@@ -221,7 +255,7 @@ fn push_relations(
         if guid.is_empty() {
             continue;
         }
-        let Some((min_version, max_version, prerelease, optional)) = spec.bounds() else {
+        let Some((version, prerelease, optional)) = spec.spec() else {
             log::warn!(
                 "Release note 里的关系区间无法解析，跳过这一条：关系={}，目标={}",
                 kind.as_str(),
@@ -232,8 +266,7 @@ fn push_relations(
         relations.push(RepositoryRelation {
             kind,
             guid: guid.to_string(),
-            min_version,
-            max_version,
+            version,
             // 「可选的冲突」没有含义，只有 requires 保留 optional
             optional: optional && matches!(kind, RelationKind::Requires),
             prerelease,
@@ -454,7 +487,7 @@ name_i18n.en = "nono"
             r#"level_set_name = "A"
 requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
 compatible = { "dev.gua.overcooked.diylevel" = ">=0.10.0,<=0.11.9" }
-conflicts = { "oc2.oc2diylevelruntimewloader" = { min_version = "4.0.0", prerelease = true } }
+conflicts = { "oc2.oc2diylevelruntimewloader" = { version = ">=4.0.0", prerelease = true } }
 "#,
             "",
         ))
@@ -466,49 +499,60 @@ conflicts = { "oc2.oc2diylevelruntimewloader" = { min_version = "4.0.0", prerele
             .iter()
             .find(|relation| relation.kind == RelationKind::Requires)
             .unwrap();
-        assert_eq!(requires.min_version, "0.10.0");
-        assert!(requires.max_version.is_empty());
+        assert_eq!(requires.version, ">=0.10.0");
         let compatible = relations
             .iter()
             .find(|relation| relation.kind == RelationKind::Compatible)
             .unwrap();
-        assert_eq!(compatible.min_version, "0.10.0");
-        assert_eq!(compatible.max_version, "0.11.9");
+        assert_eq!(compatible.version, ">=0.10.0,<=0.11.9");
         let conflicts = relations
             .iter()
             .find(|relation| relation.kind == RelationKind::Conflicts)
             .unwrap();
-        assert_eq!(conflicts.min_version, "4.0.0");
+        assert_eq!(conflicts.version, ">=4.0.0");
         assert_eq!(conflicts.prerelease, Some(true));
     }
 
+    #[derive(serde::Deserialize)]
+    struct Holder {
+        value: RelationSpec,
+    }
+
+    /// 关系值规范化到 `version` 文本：两种写法落到同一段话上。
+    fn normalized(toml_value: &str) -> Option<String> {
+        let holder: Holder = toml::from_str(&format!("value = {toml_value}")).ok()?;
+        holder.value.spec().map(|(version, _, _)| version)
+    }
+
     #[test]
-    fn a_star_range_means_no_bounds() {
-        assert_eq!(parse_range("*"), Some((String::new(), String::new())));
+    fn relation_specs_are_normalized_to_one_version_string() {
+        assert_eq!(normalized("\"*\""), Some(String::new()));
+        assert_eq!(normalized("\"\""), Some(String::new()));
+        assert_eq!(normalized("\">=1.0\""), Some(">=1.0".into()));
+        assert_eq!(normalized("\">=1.0,<2.0\""), Some(">=1.0,<2.0".into()));
+        // 单个 `=` 统一成 `==`，开区间保留（版本比较是离散的，边界明确）
+        assert_eq!(normalized("\"=1.2\""), Some("==1.2".into()));
+        assert_eq!(normalized("\">1.0\""), Some(">1.0".into()));
+        // 显式表同样接受，旧 min/max 折成区间
         assert_eq!(
-            parse_range(">=1.0"),
-            Some(("1.0".to_string(), String::new()))
-        );
-        assert_eq!(
-            parse_range("=1.2"),
-            Some(("1.2".to_string(), "1.2".to_string()))
+            normalized("{ min_version = \"1.0\", max_version = \"2.0\" }"),
+            Some(">=1.0,<=2.0".into())
         );
     }
 
     #[test]
-    fn open_ranges_are_rejected() {
-        // 项目里没有开区间语义，含糊地接受只会让作者以为边界是想要的
-        assert_eq!(parse_range(">1.0"), None);
-        assert_eq!(parse_range("<2.0"), None);
-        assert_eq!(parse_range("1.0"), None);
-        assert_eq!(parse_range(">=1.0,>=2.0"), None);
+    fn malformed_relation_specs_are_rejected() {
+        // 缺比较符、`~=`、空条件都不是合法区间，绝不能静默当成「不限」
+        assert_eq!(normalized("\"1.0\""), None);
+        assert_eq!(normalized("\"~=1.0\""), None);
+        assert_eq!(normalized("\">=1.0,\""), None);
     }
 
     #[test]
     fn a_bad_relation_is_skipped_instead_of_dropping_the_map() {
         let block = parse_release_note(&body(
             r#"level_set_name = "A"
-requires = { "com.example.badloader" = ">1.0", "com.example.loader" = ">=2.0" }
+requires = { "com.example.badloader" = "1.0", "com.example.loader" = ">=2.0" }
 "#,
             "",
         ))
@@ -517,6 +561,53 @@ requires = { "com.example.badloader" = ">1.0", "com.example.loader" = ">=2.0" }
         let relations = block.metadata.relations();
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].guid, "com.example.loader");
+    }
+
+    /// 块里的 `[[release_relations]]` 按版本覆盖依赖，内层是块自己的三张表写法。
+    #[test]
+    fn release_relations_override_the_relations_for_that_version() {
+        let block = parse_release_note(&body(
+            r#"level_set_name = "A"
+requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
+
+[[release_relations]]
+version = ">=2.0.0"
+requires = { "dev.gua.overcooked.diylevel" = ">=0.12.0" }
+compatible = { "com.example.sorting" = "*" }
+
+[[release_relations]]
+version = ">=2.1.0,<3.0.0"
+relations = [
+  { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = ">=0.13.0", optional = true },
+]
+
+[[release_relations]]
+version = "*"
+requires = { "dev.gua.overcooked.diylevel" = ">=9.9.9" }
+
+[[release_relations]]
+requires = { "dev.gua.overcooked.diylevel" = ">=9.9.9" }
+"#,
+            "",
+        ))
+        .unwrap()
+        .unwrap();
+        let overrides = block.metadata.release_relation_overrides();
+        // 不限版本与没写区间的那两张被丢掉，只留真正限定了版本的两张
+        assert_eq!(overrides.len(), 2, "{overrides:?}");
+        assert_eq!(overrides[0].version, ">=2.0.0");
+        assert_eq!(overrides[0].relations.len(), 2);
+        assert!(
+            overrides[0]
+                .relations
+                .iter()
+                .any(|relation| relation.kind == RelationKind::Compatible)
+        );
+        assert_eq!(overrides[1].version, ">=2.1.0,<3.0.0");
+        assert_eq!(overrides[1].relations.len(), 1);
+        assert_eq!(overrides[1].relations[0].version, ">=0.13.0");
+        // 覆盖表里的 optional 只对依赖有意义
+        assert!(overrides[1].relations[0].optional);
     }
 
     #[test]

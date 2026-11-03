@@ -66,7 +66,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 [[repositories]]
 enabled = true
@@ -129,7 +128,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 
 [[repositories]]
@@ -205,13 +203,11 @@ MOD の機能：
 [[repositories.relations]]
 kind = "requires"
 guid = "com.bepis.bepinex.configurationmanager"
-min_version = ""
 
 # 依赖 DIYLevel
 [[repositories.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
-min_version = ""
 
 
 [[repositories]]
@@ -306,7 +302,6 @@ note_i18n.ja = """
 [[repositories.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
-min_version = ""
 
 
 [[repositories]]
@@ -391,7 +386,6 @@ DIYLevel がレベルリソースの読み込みに失敗した場合（前提 M
 [[repositories.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
-min_version = ""
 
 
 [[repositories]]
@@ -471,7 +465,6 @@ DIYLevel と多数のマップをインストールした後、リザルト画�
 [[repositories.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
-min_version = ""
 
 
 [[repositories]]

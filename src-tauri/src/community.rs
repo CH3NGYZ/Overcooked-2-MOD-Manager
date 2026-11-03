@@ -820,7 +820,7 @@ mod tests {
          */
         let mut config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "ui_zoom": 1.5,
-            "game": { "path": "", "auto_detect": false },
+            "game": { "path": "" },
             "network": { "timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false },
             "launch": { "ask_user_to_start_from_steam": false, "auto_restore_winhttp": false },
             "auth": { "github_token": "", "gitee_token": "", "official_api_only": true },
@@ -1100,7 +1100,7 @@ mod tests {
         let removed = repository_from_search(&item("Owner", "Removed")).unwrap();
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -1190,7 +1190,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -1273,7 +1273,7 @@ mod tests {
                     .unwrap();
             let mut config: AppConfig = serde_json::from_value(serde_json::json!({
                 "schema_version":1,"ui_zoom":1.5,
-                "game":{"path":"","auto_detect":false},
+                "game":{"path":""},
                 "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
                 "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
                 "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -1352,7 +1352,7 @@ mod tests {
         assert!(!bundled.is_empty(), "内置快照应当包含仓库条目");
         let config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -1420,7 +1420,7 @@ mod tests {
         manifest.repository_binding = RepositoryBinding::from_release(&found, "v1.0.0");
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},

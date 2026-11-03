@@ -1823,7 +1823,7 @@ mod tests {
                 "schema_version": 1,
                 "ui_zoom": 1.5,
                 "hide_unidentified_mods": hide_unidentified,
-                "game": {"path": "", "auto_detect": false},
+                "game": {"path": ""},
                 "network": {
                     "timeout_seconds": 5,
                     "download_threads": 1,

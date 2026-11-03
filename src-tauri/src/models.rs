@@ -1046,11 +1046,10 @@ pub struct AppConfig {
     /// 打开后官方地图索引的 `url` 指向编译期嵌入的 `maps.toml`，
     /// 与仓库侧「仅使用内置仓库源」完全同一套语义。
     ///
-    /// 默认 `true`：V2 的地图条目只写在内置快照里，远程索引仍停在 V1 的
-    /// 内容（不能动，否则 V1 用户会读到还没适配的新条目）。缺字段的旧配置
-    /// 按 `true` 补齐，等于升级后自动切到内置快照；用户显式存了 `false`
-    /// 才回到远程索引。
-    #[serde(default = "default_true")]
+    /// 默认 `false`：先读远端索引，读不到时 `refresh_map_sources` 才回退到
+    /// 内置快照。缺字段的配置按 `false` 补齐（旧版本写的 `true` 由
+    /// `config::migrate_bundled_source_switches` 一次性迁走）。
+    #[serde(default)]
     pub builtin_map_sources_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
@@ -1080,9 +1079,9 @@ pub struct AppConfig {
     /// 打开后官方根源的地址直接落到打包资源，不再按地区选择远端直链；
     /// 这也让完全离线环境能列出仓库。自定义源不受影响 —— 那是用户明确添加的。
     ///
-    /// 默认 `true`，理由与 `builtin_map_sources_only` 相同：V2 的仓库条目
-    /// 只写在内置快照里，远程索引留给仍在用 V1 的用户。
-    #[serde(default = "default_true")]
+    /// 默认 `false`，理由与 `builtin_map_sources_only` 相同：远端索引是数据
+    /// 来源，内置快照只是读不到时的回退。
+    #[serde(default)]
     pub builtin_sources_only: bool,
 }
 
@@ -1118,8 +1117,12 @@ pub enum GameRuntime {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameConfig {
+    /// 用户手动选定的游戏目录。空 = 没有手动设置，启动时自动探测。
+    ///
+    /// 自动探测没有开关：写死路径优先，没有写死路径就去程序目录与各 Steam
+    /// 库里找（见 `game::find_game_path`）—— 一个「关掉就永远找不到游戏」的
+    /// 开关没有实际用途，曾经有过的 `auto_detect` 字段因此被删除。
     pub path: String,
-    pub auto_detect: bool,
     /// `#[serde(default)]` 取 `GameRuntime::default()`：旧配置缺这个字段时
     /// 与全新配置走同一个默认值，不在两处各写一遍平台判断。
     #[serde(default)]
@@ -1130,8 +1133,8 @@ impl GameConfig {
     pub(crate) fn switch_runtime(&mut self, runtime: GameRuntime) {
         if self.runtime != runtime {
             self.runtime = runtime;
+            // 两种运行时的游戏目录完全不同，旧路径在新运行时下必然失效。
             self.path.clear();
-            self.auto_detect = true;
         }
     }
 }
@@ -1145,30 +1148,29 @@ mod game_runtime_tests {
     /// 推进 CrossOver 分支（那会去 Wine 容器里找游戏与 BepInEx）。
     #[test]
     fn missing_and_fresh_game_settings_both_default_to_native() {
-        let missing: GameConfig =
-            serde_json::from_str(r#"{"path":"","auto_detect":true}"#).unwrap();
+        let missing: GameConfig = serde_json::from_str(r#"{"path":""}"#).unwrap();
         assert_eq!(missing.runtime, GameRuntime::Native);
+        // 旧配置里的 `auto_detect` 字段已删除：多出来的键被忽略，不影响迁移。
+        let legacy: GameConfig =
+            serde_json::from_str(r#"{"path":"","auto_detect":false}"#).unwrap();
+        assert_eq!(legacy.runtime, GameRuntime::Native);
         let fresh = GameConfig {
             path: String::new(),
-            auto_detect: true,
             runtime: GameRuntime::default(),
         };
         assert_eq!(fresh.runtime, GameRuntime::Native);
     }
 
     #[test]
-    fn switching_runtime_clears_only_the_selected_path_and_reenables_detection() {
+    fn switching_runtime_clears_the_selected_path() {
         let mut settings = GameConfig {
             path: "old Windows game directory".into(),
-            auto_detect: false,
             runtime: GameRuntime::Wine,
         };
         settings.switch_runtime(GameRuntime::Wine);
         assert_eq!(settings.path, "old Windows game directory");
-        assert!(!settings.auto_detect);
         settings.switch_runtime(GameRuntime::Native);
         assert!(settings.path.is_empty());
-        assert!(settings.auto_detect);
         let persisted = serde_json::to_string(&settings).unwrap();
         assert_eq!(
             serde_json::from_str::<GameConfig>(&persisted).unwrap(),
@@ -1707,7 +1709,6 @@ pub struct SettingsPatch {
     /// 删除 MOD 时先移入回收站（默认 true）。关闭即直接删除，不可恢复。
     pub recycle_deleted_mods: Option<bool>,
     pub game_path: Option<String>,
-    pub auto_detect: Option<bool>,
     pub game_runtime: Option<GameRuntime>,
     pub check_updates_on_start: Option<bool>,
     pub official_api_only: Option<bool>,

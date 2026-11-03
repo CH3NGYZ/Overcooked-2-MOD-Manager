@@ -1598,9 +1598,6 @@ pub fn save_settings(
     if let Some(path) = patch.game_path {
         config.game.path = path;
     }
-    if let Some(value) = patch.auto_detect {
-        config.game.auto_detect = value;
-    }
     if let Some(value) = patch.check_updates_on_start {
         config.network.check_updates_on_start = value;
     }
@@ -1681,9 +1678,8 @@ pub fn save_settings(
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!(
-        "应用设置保存完成：界面缩放={}，自动检测游戏={}，启动检查更新={}",
+        "应用设置保存完成：界面缩放={}，启动检查更新={}",
         config.ui_zoom,
-        config.game.auto_detect,
         config.network.check_updates_on_start
     );
     Ok(state.config.public_config(&config))
@@ -2093,7 +2089,6 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
             return Err("game.settingsChanged".into());
         }
         config.game.path = root.to_string_lossy().to_string();
-        config.game.auto_detect = false;
         state.config.save(&config).map_err(|e| e.to_string())?;
         config
     };
@@ -2105,7 +2100,7 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
 
 #[tauri::command]
 pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
-    log::info!("重置游戏目录并启用自动检测");
+    log::info!("重置游戏目录");
     let config = {
         let _guard = state
             .operation
@@ -2113,7 +2108,6 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
             .map_err(|_| "lock.poisoned".to_string())?;
         let mut config = state.config.load_or_default();
         config.game.path.clear();
-        config.game.auto_detect = true;
         state.config.save(&config).map_err(|e| e.to_string())?;
         config
     };
@@ -9393,7 +9387,6 @@ mod mod_file_location_tests {
         };
         let mut config = state.config.load().unwrap();
         config.game.path = workspace.game.to_string_lossy().into_owned();
-        config.game.auto_detect = false;
         state.config.save(&config).unwrap();
         let (game, resolved) = resolve_config_game(&state).unwrap();
         assert_eq!(game, workspace.game);
@@ -11337,7 +11330,7 @@ mod update_status_tests {
     fn config(repositories: Vec<RepositoryConfig>) -> AppConfig {
         serde_json::from_value(serde_json::json!({
             "schema_version": 1, "ui_zoom": 1.5,
-            "game": {"path": "", "auto_detect": false},
+            "game": {"path": ""},
             "network": {"timeout_seconds": 5, "download_threads": 1,
                 "max_retry_count": 3, "check_updates_on_start": false},
             "launch": {"ask_user_to_start_from_steam": false, "auto_restore_winhttp": false},

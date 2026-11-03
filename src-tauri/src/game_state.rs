@@ -125,18 +125,16 @@ impl GameStateObserver {
             .portable_game_root
             .as_ref()
             .map(|root| root.join(executable_name));
-        let discovery_changed = if settings.auto_detect
-            && settings.path.is_empty()
-            && cached.as_ref().is_none_or(|info| info.path.is_none())
-        {
-            self.missing_game_probe.refresh(
-                &game::steam_root_paths(settings),
-                portable_candidate.as_deref(),
-                executable_name,
-            )
-        } else {
-            false
-        };
+        let discovery_changed =
+            if settings.path.is_empty() && cached.as_ref().is_none_or(|info| info.path.is_none()) {
+                self.missing_game_probe.refresh(
+                    &game::steam_root_paths(settings),
+                    portable_candidate.as_deref(),
+                    executable_name,
+                )
+            } else {
+                false
+            };
         let mut next = if settings_changed
             || cached.is_none()
             || file_stamps != self.file_stamps
@@ -357,7 +355,6 @@ mod tests {
         fs::write(root.join("Overcooked2.exe"), []).unwrap();
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
-            auto_detect: false,
             runtime: crate::models::GameRuntime::Wine,
         };
         let before = game::detect_game_from_settings(&settings);
@@ -381,7 +378,6 @@ mod tests {
         fs::create_dir_all(root.join("BepInEx/config")).unwrap();
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
-            auto_detect: false,
             runtime: crate::models::GameRuntime::Wine,
         };
         let backups = root.join("backups");
@@ -420,7 +416,6 @@ mod tests {
         fs::write(root.join("winhttp.dll"), b"loader").unwrap();
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
-            auto_detect: false,
             runtime: crate::models::GameRuntime::Wine,
         };
         let backups = root.join("backups");
@@ -541,7 +536,6 @@ mod tests {
         let root = std::env::temp_dir().join(format!("oc2-configured-{}", uuid::Uuid::new_v4()));
         let settings = GameConfig {
             path: root.to_string_lossy().into_owned(),
-            auto_detect: false,
             runtime: crate::models::GameRuntime::Wine,
         };
         let before = game::detect_game_from_settings(&settings);

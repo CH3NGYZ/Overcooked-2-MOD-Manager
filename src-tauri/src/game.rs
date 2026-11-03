@@ -204,9 +204,6 @@ fn find_game_path(config: &GameConfig) -> Option<GameLocation> {
         }
         return Some(location(stored.clone(), stored.clone(), &stored, config));
     }
-    if !config.auto_detect {
-        return None;
-    }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
             // 便携目录同样 canonicalize，避免 `\\?\` 与普通写法混用。
@@ -1438,7 +1435,6 @@ mod tests {
         ] {
             let config = GameConfig {
                 path: variant.clone(),
-                auto_detect: false,
                 runtime: crate::models::GameRuntime::Wine,
             };
             let detected = find_game_path(&config).expect(&variant);
@@ -1475,7 +1471,6 @@ mod tests {
             root,
             &GameConfig {
                 path: String::new(),
-                auto_detect: false,
                 runtime: crate::models::GameRuntime::Wine,
             },
         )

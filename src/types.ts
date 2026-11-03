@@ -153,7 +153,7 @@ export interface PublicConfig {
   map_info_concurrency: number
   /** 已经看过的教程步骤 id；启动时只播不在里面的步骤。 */
   tutorial_watched_steps?: string[]
-  game: { path: string; auto_detect: boolean; runtime: GameRuntime }
+  game: { path: string; runtime: GameRuntime }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
   official_api_only: boolean
@@ -578,7 +578,7 @@ export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: 
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
-export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
+export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string

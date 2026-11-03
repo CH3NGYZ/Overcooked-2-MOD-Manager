@@ -53,12 +53,12 @@ export const tutorialSettings: DomainMessages = {
   },
   'settings.switches.body': {
     'zh-CN':
-      '长期生效的开关都在这里：自动探测游戏路径、删除是否先进回收站、离线时只用内置源。关掉回收站后删除不可恢复。',
+      '长期生效的开关都在这里：删除是否先进回收站、离线时只用内置源。关掉回收站后删除不可恢复。',
     'zh-TW':
-      '長期生效的開關都在這裡：自動偵測遊戲路徑、刪除是否先進資源回收筒、離線時只用內建來源。關掉回收筒後刪除無法復原。',
-    en: 'These switches stick: auto-detect the game folder, send deleted files to the recycle bin, use only bundled sources offline. With the recycle bin off, deletes are permanent.',
-    ko: '한 번 정하면 계속 적용됩니다. 게임 경로 자동 탐지, 삭제 시 휴지통 사용, 오프라인에서 내장 소스만 사용. 휴지통을 끄면 삭제는 되돌릴 수 없습니다.',
-    ja: '一度決めたら効き続けます。ゲームの自動検出、削除時にゴミ箱へ入れるか、オフラインで内蔵ソースのみ使うか。ゴミ箱を切ると削除は取り消せません。',
+      '長期生效的開關都在這裡：刪除是否先進資源回收筒、離線時只用內建來源。關掉回收筒後刪除無法復原。',
+    en: 'These switches stick: send deleted files to the recycle bin, use only bundled sources offline. With the recycle bin off, deletes are permanent.',
+    ko: '한 번 정하면 계속 적용됩니다. 삭제 시 휴지통 사용, 오프라인에서 내장 소스만 사용. 휴지통을 끄면 삭제는 되돌릴 수 없습니다.',
+    ja: '一度決めたら効き続けます。削除時にゴミ箱へ入れるか、オフラインで内蔵ソースのみ使うか。ゴミ箱を切ると削除は取り消せません。',
   },
   'settings.performance.title': {
     'zh-CN': '并发读取',

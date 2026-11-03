@@ -1954,7 +1954,7 @@ mod tests {
         misleading.repository = "unrelated".into();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1, "ui_zoom":1.5,
-            "game":{"path":"", "auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -2034,7 +2034,7 @@ mod tests {
         beta.cached_releases = vec![beta_release];
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1, "ui_zoom":1.5,
-            "game":{"path":"", "auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -2344,7 +2344,7 @@ mod tests {
             release.download_mode = crate::models::RepositoryDownloadMode::Release;
             let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -2411,7 +2411,7 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -2457,7 +2457,7 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -2510,7 +2510,7 @@ mod tests {
             .insert("en".into(), "Utilities".into());
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
-            "game":{"path":"","auto_detect":false},
+            "game":{"path":""},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
             "auth":{"github_token":"","gitee_token":"","official_api_only":true},
@@ -2628,7 +2628,7 @@ mod tests {
         std::fs::create_dir_all(&plugins).unwrap();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "ui_zoom": 1.5,
-            "game": {"path": "", "auto_detect": false},
+            "game": {"path": ""},
             "network": {"timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false},
             "launch": {"ask_user_to_start_from_steam": false, "auto_restore_winhttp": false},
             "auth": {"github_token": "", "gitee_token": "", "official_api_only": true},

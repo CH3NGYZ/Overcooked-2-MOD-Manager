@@ -522,12 +522,6 @@ async function clearTokens() {
 
   <!-- 通用设置 -->
   <SettingsGroup :title="t('overview.general')" data-tutorial="settings-switches">
-    <SettingsRow :title="t('overview.autoDetectGamePath')" :description="t('overview.probeSteamLibrariesOnLaunchAndRefresh')">
-      <template #right>
-        <n-switch size="small" :value="config?.game?.auto_detect"
-          @update:value="(value: boolean) => savePreference({ auto_detect: value }, t('common.saved'))" />
-      </template>
-    </SettingsRow>
     <SettingsRow :title="t('recycle.moveDeletedModsToTheRecycleBin')"
       :description="t('recycle.whenOffDeletedFilesAreRemovedPermanently')">
       <template #right>

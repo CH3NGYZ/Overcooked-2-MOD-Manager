@@ -416,22 +416,6 @@ export const overview: DomainMessages = {
     ko: '관리자 시작 시 새 버전을 확인합니다. 설정에서 끌 수 있습니다',
     ja: 'マネージャー起動時に新バージョンを確認します（設定で無効化できます）',
   },
-  // 自动检测游戏路径
-  autoDetectGamePath: {
-    'zh-CN': '自动检测游戏路径',
-    'zh-TW': '自動偵測遊戲路徑',
-    en: 'Auto-detect game path',
-    ko: '게임 경로 자동 감지',
-    ja: 'ゲームパスを自動検出',
-  },
-  // 启动与刷新时自动探测 Steam 库
-  probeSteamLibrariesOnLaunchAndRefresh: {
-    'zh-CN': '启动与刷新时自动探测 Steam 库',
-    'zh-TW': '啟動與重新整理時自動探測 Steam 庫',
-    en: 'Probe Steam libraries on launch and refresh',
-    ko: '시작·새로 고침 시 Steam 라이브러리를 탐색합니다',
-    ja: '起動時と更新時にSteamライブラリを検出します',
-  },
   // 关于
   about: {
     'zh-CN': '关于',

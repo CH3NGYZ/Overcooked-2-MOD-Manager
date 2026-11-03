@@ -1234,20 +1234,67 @@ mod bundled_tests {
         );
     }
 
+    /// 清雨青雪合集：三个 tag 各装一张图，身份必须与各 tag 里 `info` 的值一致。
+    ///
+    /// 这几项是从真实 ZIP 的 `info` 里读出来的（`real_zip` 那条 ignored 测试
+    /// 用的同一份数据）。`CHAN Set` 里的空格与 `nono` 的空作者是最容易被
+    /// 「顺手修正」的两处 —— 改一个字符，装完就认不出本地关卡集了。
+    #[test]
+    fn builtin_qingyuqingxue_source_declares_three_tag_mode_maps() {
+        let location = SourceLocation::parse("maps-qingyuqingxue.toml").unwrap();
+        let doc = parse_document(location.bundled_text().unwrap(), &location)
+            .expect("内置 maps-qingyuqingxue.toml 应能解析");
+        assert_eq!(doc.maps.len(), 3, "三个 tag 各一张图");
+
+        let mut tags = Vec::new();
+        for map in &doc.maps {
+            // tag 模式的三件套：固定 tag、带版本捕获且整串锚定的正则
+            tags.push(map_tag(map).expect("每条都应写死 tag"));
+            let rule = version_rule(&map.asset_rules).expect("每条都应有版本正则");
+            assert!(
+                rule.value.starts_with('^') && rule.value.ends_with('$'),
+                "版本正则必须整串锚定：{}",
+                rule.value
+            );
+            // `[bundle]` 的坐标要真的落到条目上（否则取 Release 时 404）
+            assert_eq!(map.provider, crate::models::Provider::Github);
+            assert_eq!(map.username, "QingyuQingxue");
+            assert_eq!(map.repository, "OC2-Map-Bundle");
+        }
+        tags.sort_unstable();
+        assert_eq!(tags, ["blni", "chan", "daxue"]);
+
+        let by_tag = |tag: &str| {
+            doc.maps
+                .iter()
+                .find(|map| map_tag(map) == Some(tag))
+                .expect("tag 必须存在")
+        };
+        // 胡闹达学：英文名与作者都叫 GAODA，只有中文名能把它和同作者另一张图分开
+        assert_eq!(by_tag("daxue").level_set_name, "GAODA");
+        assert_eq!(by_tag("daxue").level_set_name_zh, "胡闹达学");
+        assert_eq!(by_tag("daxue").author, "GAODA");
+        assert_eq!(by_tag("chan").level_set_name, "CHAN Set");
+        assert_eq!(by_tag("chan").author, "chanchan");
+        assert_eq!(by_tag("blni").level_set_name, "nono");
+        assert_eq!(by_tag("blni").author, "", "info 里没写作者，绑定按空串比对");
+    }
+
     #[test]
     fn bundled_maps_are_discoverable_from_the_index() {
         /*
          * 索引 → 子源 → 地图，整条链路能走通。
          *
          * 子源有两种：随包的内置文件（离线可读），和第三方维护、托管在
-         * Release 资产里的远程文档（必须联网）。后者在这里只校验地址形态 ——
-         * 单测不联网，能证明的是「索引没写坏、地址是可解析的 HTTPS」。
+         * Release 资产里的远程文档（必须联网）。第三方那份现在是内置快照
+         * （作者删掉了原先放文档的 tag），所以这里**不要求**存在远程子源；
+         * 远程形态出现时只校验地址形态 —— 单测不联网，能证明的是「索引没
+         * 写坏、地址是可解析的 HTTPS」。
          */
         let index = SourceLocation::parse(BUILTIN_MAP_INDEX).unwrap();
         let doc = parse_document(index.bundled_text().unwrap(), &index).unwrap();
         let mut total = doc.maps.len();
         let mut bundled_children = 0;
-        let mut remote_children = 0;
         for child in &doc.map_sources {
             let location = SourceLocation::parse(&child.url).unwrap();
             match &location {
@@ -1259,7 +1306,6 @@ mod bundled_tests {
                         .len();
                 }
                 SourceLocation::Remote(url) => {
-                    remote_children += 1;
                     assert_eq!(
                         url.scheme(),
                         "https",
@@ -1272,10 +1318,6 @@ mod bundled_tests {
         assert!(
             bundled_children >= 1,
             "索引里至少要有一个随包离线可读的子源"
-        );
-        assert!(
-            remote_children >= 1,
-            "第三方地图源应指向远程 Release 资产里的文档"
         );
         assert!(total >= 1, "从索引出发应能至少找到一张地图");
     }

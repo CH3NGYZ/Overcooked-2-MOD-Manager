@@ -1742,8 +1742,12 @@ url = "mods/child.toml"
      * 嵌入文件都必须能被仓库解析器读懂」，放宽会让真正的坏文档混过去。
      * 新增非仓库类嵌入文档时在这里登记，并为它补一份对应的解析测试。
      */
-    const NOT_REPOSITORY_DOCUMENTS: &[&str] =
-        &["repositories-proxies.toml", "maps.toml", "maps-rw.toml"];
+    const NOT_REPOSITORY_DOCUMENTS: &[&str] = &[
+        "repositories-proxies.toml",
+        "maps.toml",
+        "maps-rw.toml",
+        "maps-qingyuqingxue.toml",
+    ];
 
     #[test]
     fn all_bundled_source_documents_use_the_shared_parser() {

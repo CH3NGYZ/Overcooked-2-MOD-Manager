@@ -350,8 +350,15 @@ mod tests {
         assert!(watch_plan(&[]).is_empty());
     }
 
+    /// 没有事件时绝不能按窗口空转通知。
+    ///
+    /// 与「一串事件只通知一次」合起来才排除了「固定周期通知」那种实现：只测
+    /// 并发发事件的版本在慢机器上会翻车 —— 发送线程被调度器抢占超过窗口时，
+    /// 防抖线程确实经历了一段安静窗口、完全有理由先通知一次，而用例按秒表
+    /// 断言「此刻必须还没通知」。所以事件先在同一个线程里全部塞进通道，再
+    /// 启动循环，发送与防抖不并发。
     #[test]
-    fn burst_of_events_emits_once_after_the_quiet_window() {
+    fn an_idle_channel_never_notifies() {
         let (sender, receiver) = mpsc::channel::<()>();
         let hits = Arc::new(AtomicUsize::new(0));
         let counter = hits.clone();
@@ -360,18 +367,33 @@ mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
             })
         });
+        std::thread::sleep(Duration::from_millis(260));
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "没有事件时不能通知");
+        drop(sender);
+        thread.join().expect("通道关闭后监听循环退出");
+    }
+
+    #[test]
+    fn burst_of_events_emits_once_after_the_quiet_window() {
+        let (sender, receiver) = mpsc::channel::<()>();
+        // 先把整串事件塞满通道再启动循环：发送与防抖不并发，窗口内的调度抖动
+        // 不会凭空造出一个「安静的窗口」（原因见上一个用例）。
         for _ in 0..500 {
             sender.send(()).expect("发送事件");
         }
-        // 事件还在流里时不能通知：窗口是「安静 80ms」，不是固定 80ms 一次
-        std::thread::sleep(Duration::from_millis(40));
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let thread = std::thread::spawn(move || {
+            debounce_loop(receiver, Duration::from_millis(80), || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            })
+        });
         let deadline = Instant::now() + Duration::from_secs(2);
         while hits.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(hits.load(Ordering::SeqCst), 1, "一串事件只通知一次");
-        // 再安静一会儿也不该补发
+        // 再安静一会儿也不该补发：pending 已被清掉，窗口空转不通知
         std::thread::sleep(Duration::from_millis(150));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         drop(sender);

@@ -18,19 +18,25 @@ en = "RW - DIYLevel maps"
 ko = "RW - DIYLevel 지도"
 ja = "RW - DIYLevel マップ"
 
-# 第三方地图源：文档本身放在该仓库的 Release 资产里（tag `maps`）。
+# 第三方地图源：清雨青雪的地图合集（一个 tag 一张图，条目全在子源文件里）。
 #
-# 这种「文档进 Release 资产」的形态与普通子源有两点不同，都由后端处理：
-#   · 加载前先向同一个仓库的 API 取该资产的 size/sha256，再竞速下载并校验
-#     （没有校验信息时退回单次直连，校验是增强而不是新的失败点）；
-#   · 文档里**不能再写相对子源** —— Release 资产地址会跳到签名 URL，相对
+# 当前 `url` 指向**随包内置的子源文件**（相对本文件解析），内容是从三个 tag 的
+# ZIP 里读出来的快照。作者过去把文档发成 Release 资产
+# （`.../releases/download/<tag>/map-sources.toml`），那种形态由后端自动处理；
+# 等他重新发布后把这一行换回资产地址即可，子源文件与条目一个字都不用改。
+#
+# 两种形态的差别（都由后端处理）：
+#   · 文档在 Release 资产里时，加载前先向同一个仓库的 API 取该资产的 size/
+#     sha256，再竞速下载并校验（没有校验信息时退回单次直连，校验是增强而不是
+#     新的失败点）；
+#   · 那种文档里**不能再写相对子源** —— Release 资产地址会跳到签名 URL，相对
 #     路径必然解析错，后端会直接报 `source.relativeChildInReleaseAsset`。
 #
 # `builtin = true` 与「是否为官方维护」无关：它在这里的含义是「内置快照里
 # 登记过的源，开内置模式也要加载」。第三方源不登记就会被默认配置整条跳过。
 [[map_sources]]
 id = "qingyuqingxue-bundle"
-url = "https://github.com/QingyuQingxue/OC2-Map-Bundle/releases/download/maps/map-sources.toml"
+url = "maps-qingyuqingxue.toml"
 builtin = true
 [map_sources.nickname_i18n]
 zh-CN = "由清雨青雪维护的地图源，更新较慢请谅解"

@@ -1,0 +1,142 @@
+# 清雨青雪维护的地图合集（github.com/QingyuQingxue/OC2-Map-Bundle）。
+#
+# 一个 tag 装一张图：条目写死 `tag`，那个 Release 里每个 ZIP 资产就是这张图的
+# 一个版本（tag 模式，语义见 docs/map-sources.md 第 3.5 节）。三张图同属一个
+# 仓库，坐标写在 `[bundle]` 里统一给。
+#
+# 本文件是**随包内置的快照**：maps.toml 里这个子源目前指向本文件（相对路径）。
+# 作者重新把 map-sources.toml 发成 Release 资产之后，只需把 maps.toml 里那条
+# `url` 换回资产地址，下面的条目一个字都不用改。
+#
+# 身份字段（`level_set_name` / `level_set_name_zh` / `author`）与备注里的关卡数
+# 都是从各 tag 的 ZIP 内 `info`（UnityFS 里的 LevelSetInfoSO）逐个读出来的，
+# 必须与 info 逐字一致（忽略大小写），否则装完认不出本地关卡集。
+
+[bundle]
+provider = "github"
+username = "QingyuQingxue"
+repository = "OC2-Map-Bundle"
+
+# ---------------------------------------------------------------------------
+# 胡闹达学（info：levelSetName=GAODA / levelSetNameZH=胡闹达学 / author=GAODA）
+#
+# 已知的元数据不一致：资产名写 v0.3.2，info 里的版本号却是 0.3.1。所以装完这版
+# 卡片会一直显示「有更新」（本地 0.3.1 对比线上 0.3.2）—— 这是作者自己的号没对齐，
+# 不是缺少 `latest_version`：钉死版本走等值比较，结论同样是「不是指定版本」。
+# ---------------------------------------------------------------------------
+[[maps]]
+enabled = true
+name_i18n.zh-CN = "胡闹达学"
+name_i18n.zh-TW = "胡鬧達學"
+name_i18n.en = "GAODA"
+name_i18n.ko = "GAODA"
+name_i18n.ja = "GAODA"
+group_i18n.zh-CN = "GAODA"
+group_i18n.zh-TW = "GAODA"
+group_i18n.en = "GAODA"
+group_i18n.ko = "GAODA"
+group_i18n.ja = "GAODA"
+
+# 只读这个 tag 的 Release：daxue_v0.3.2.zip → 版本 0.3.2
+tag = "daxue"
+asset_rules = [
+  { type = "regex", value = '^daxue_v(?P<version>[0-9.]+)\.zip$' },
+]
+
+level_set_name = "GAODA"
+level_set_name_zh = "胡闹达学"
+author = "GAODA"
+
+note_i18n.zh-CN = "共 2 张关卡。需要 DIYLevel 框架。"
+note_i18n.zh-TW = "共 2 張關卡。需要 DIYLevel 框架。"
+note_i18n.en = "Two levels. Requires the DIYLevel framework."
+note_i18n.ko = "레벨 2개. DIYLevel 프레임워크가 필요합니다."
+note_i18n.ja = "レベル 2 種。DIYLevel フレームワークが必要です。"
+
+[[maps.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"
+min_version = "0.10.0"
+
+# ---------------------------------------------------------------------------
+# 婵的美食铺（info：levelSetName=CHAN Set / levelSetNameZH=婵的美食铺 / author=chanchan）
+# ---------------------------------------------------------------------------
+[[maps]]
+enabled = true
+name_i18n.zh-CN = "婵的美食铺"
+name_i18n.zh-TW = "嬋的美食鋪"
+name_i18n.en = "CHAN Set"
+name_i18n.ko = "CHAN Set"
+name_i18n.ja = "CHAN Set"
+group_i18n.zh-CN = "chanchan"
+group_i18n.zh-TW = "chanchan"
+group_i18n.en = "chanchan"
+group_i18n.ko = "chanchan"
+group_i18n.ja = "chanchan"
+
+# chan_v1.0.zip → 版本 1.0
+tag = "chan"
+asset_rules = [
+  { type = "regex", value = '^chan_v(?P<version>[0-9.]+)\.zip$' },
+]
+
+level_set_name = "CHAN Set"
+level_set_name_zh = "婵的美食铺"
+author = "chanchan"
+
+note_i18n.zh-CN = "共 10 张关卡，其中含 Web 运行时关卡（包内 requires.txt 要求 Web Runtime ≥ 3.10.2）。"
+note_i18n.zh-TW = "共 10 張關卡，其中含 Web 執行階段關卡（包內 requires.txt 要求 Web Runtime ≥ 3.10.2）。"
+note_i18n.en = "Ten levels, including Web Runtime levels (the bundled requires.txt asks for Web Runtime >= 3.10.2)."
+note_i18n.ko = "레벨 10개. Web 런타임 레벨을 포함합니다(패키지의 requires.txt가 Web Runtime 3.10.2 이상 요구)."
+note_i18n.ja = "レベル 10 種。Web ランタイムのレベルを含みます（同梱の requires.txt が Web Runtime 3.10.2 以上を要求）。"
+
+# 依赖声明必须写在地图字段之后：`[[maps.relations]]` 之后的所有键都属于那张表。
+[[maps.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"
+min_version = "0.10.0"
+
+[[maps.relations]]
+kind = "requires"
+guid = "oc2.oc2diylevelruntimewloader"
+min_version = "3.10.2"
+
+# ---------------------------------------------------------------------------
+# 小no（info：levelSetName=nono / levelSetNameZH=小no / author=空）
+#
+# info 里没写作者，所以 `author = ""` —— 绑定判定也按空串比对。分组名取作者
+# 包目录里的署名 `小NO`（ZIP 内目录 `blni_v2.1(小NO)`），只是展示用，不影响绑定。
+# ---------------------------------------------------------------------------
+[[maps]]
+enabled = true
+name_i18n.zh-CN = "小no"
+name_i18n.zh-TW = "小no"
+name_i18n.en = "nono"
+name_i18n.ko = "nono"
+name_i18n.ja = "nono"
+group_i18n.zh-CN = "小NO"
+group_i18n.zh-TW = "小NO"
+group_i18n.en = "小NO"
+group_i18n.ko = "小NO"
+group_i18n.ja = "小NO"
+
+# blni_v2.1.zip → 版本 2.1
+tag = "blni"
+asset_rules = [
+  { type = "regex", value = '^blni_v(?P<version>[0-9.]+)\.zip$' },
+]
+
+level_set_name = "nono"
+level_set_name_zh = "小no"
+author = ""
+
+note_i18n.zh-CN = "共 3 张关卡。需要 DIYLevel 框架。"
+note_i18n.zh-TW = "共 3 張關卡。需要 DIYLevel 框架。"
+note_i18n.en = "Three levels. Requires the DIYLevel framework."
+note_i18n.ko = "레벨 3개. DIYLevel 프레임워크가 필요합니다."
+note_i18n.ja = "レベル 3 種。DIYLevel フレームワークが必要です。"
+
+[[maps.relations]]
+kind = "requires"
+guid = "dev.gua.overcooked.diylevel"
+min_version = "0.10.0"

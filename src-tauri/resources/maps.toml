@@ -18,89 +18,89 @@
 # 索引忘了更新」这种半死状态。
 #
 # [[map_sources]] 的顺序决定源在地图页的展示顺序。
-[[map_sources]]
-# 单仓库地图：仓库里每个 Release 都是这张图的一个版本。
-id = "maps-rw"
-mode = "repository"
-builtin = true
-provider = "gitee"
-username = "ch3ngyz"
-repository = "DIYLevel-Maps-RW"
-[map_sources.nickname_i18n]
-zh-CN = "RW - DIYLevel 地图"
-zh-TW = "RW - DIYLevel 地圖"
-en = "RW - DIYLevel maps"
-ko = "RW - DIYLevel 지도"
-ja = "RW - DIYLevel マップ"
+# [[map_sources]]
+# # 单仓库地图：仓库里每个 Release 都是这张图的一个版本。
+# id = "maps-rw"
+# mode = "repository"
+# builtin = true
+# provider = "gitee"
+# username = "ch3ngyz"
+# repository = "DIYLevel-Maps-RW"
+# [map_sources.nickname_i18n]
+# zh-CN = "RW - DIYLevel 地图"
+# zh-TW = "RW - DIYLevel 地圖"
+# en = "RW - DIYLevel maps"
+# ko = "RW - DIYLevel 지도"
+# ja = "RW - DIYLevel マップ"
 
-[map_sources.map]
-enabled = true
-name_i18n.zh-CN = "RW 关卡合集"
-name_i18n.zh-TW = "RW 關卡合集"
-name_i18n.en = "RW Level Pack"
-name_i18n.ko = "RW 레벨 팩"
-name_i18n.ja = "RW レベルパック"
-group_i18n.zh-CN = "RickWang"
-group_i18n.zh-TW = "RickWang"
-group_i18n.en = "RickWang"
-group_i18n.ko = "RickWang"
-group_i18n.ja = "RickWang"
+# [map_sources.map]
+# enabled = true
+# name_i18n.zh-CN = "RW 关卡合集"
+# name_i18n.zh-TW = "RW 關卡合集"
+# name_i18n.en = "RW Level Pack"
+# name_i18n.ko = "RW 레벨 팩"
+# name_i18n.ja = "RW レベルパック"
+# group_i18n.zh-CN = "RickWang"
+# group_i18n.zh-TW = "RickWang"
+# group_i18n.en = "RickWang"
+# group_i18n.ko = "RickWang"
+# group_i18n.ja = "RickWang"
 
-# 下载方式
-channel = "all"
-max_release_count = 10
-download_threads = 32
+# # 下载方式
+# channel = "all"
+# max_release_count = 10
+# download_threads = 32
 
-# 版本资产规则：该仓库的资产名为 rw_v0.73.zip 之类
-asset_rules = [
-  { type = "glob", value = "rw_v*.zip" },
-]
-latest_version = '0.73'
+# # 版本资产规则：该仓库的资产名为 rw_v0.73.zip 之类
+# asset_rules = [
+#   { type = "glob", value = "rw_v*.zip" },
+# ]
+# latest_version = '0.73'
 
-# 本地关卡集识别绑定（info 里的 levelSetName / author）
-level_set_name = "RW_LevelSet"
-author = "RW"
+# # 本地关卡集识别绑定（info 里的 levelSetName / author）
+# level_set_name = "RW_LevelSet"
+# author = "RW"
 
-note_i18n.zh-CN = "包含 10 张由 RW 制作的自定义关卡，需要在设置里启用 DIYLevel 框架。"
-note_i18n.zh-TW = "包含 10 張由 RW 製作的自訂關卡，需要在設定裡啟用 DIYLevel 框架。"
-note_i18n.en = "Ten custom levels by RW. Requires the DIYLevel framework to be enabled in settings."
-note_i18n.ko = "RW가 제작한 커스텀 레벨 10개. 설정에서 DIYLevel 프레임워크를 활성화해야 합니다."
-note_i18n.ja = "RW 制作のカスタムレベル 10 種。設定で DIYLevel フレームワークを有効にする必要があります。"
+# note_i18n.zh-CN = "包含 10 张由 RW 制作的自定义关卡，需要在设置里启用 DIYLevel 框架。"
+# note_i18n.zh-TW = "包含 10 張由 RW 製作的自訂關卡，需要在設定裡啟用 DIYLevel 框架。"
+# note_i18n.en = "Ten custom levels by RW. Requires the DIYLevel framework to be enabled in settings."
+# note_i18n.ko = "RW가 제작한 커스텀 레벨 10개. 설정에서 DIYLevel 프레임워크를 활성화해야 합니다."
+# note_i18n.ja = "RW 制作のカスタムレベル 10 種。設定で DIYLevel フレームワークを有効にする必要があります。"
 
-# 运行前置：地图由 DIYLevel 读取，Web Runtime 提供联网能力
-[[map_sources.map.relations]]
-kind = "requires"
-guid = "dev.gua.overcooked.diylevel"
-min_version = "0.10.0"
+# # 运行前置：地图由 DIYLevel 读取，Web Runtime 提供联网能力
+# [[map_sources.map.relations]]
+# kind = "requires"
+# guid = "dev.gua.overcooked.diylevel"
+# min_version = "0.10.0"
 
-[[map_sources.map.relations]]
-kind = "requires"
-guid = "oc2.oc2diylevelruntimewloader"
-min_version = "3.10.2"
+# [[map_sources.map.relations]]
+# kind = "requires"
+# guid = "oc2.oc2diylevelruntimewloader"
+# min_version = "3.10.2"
 
-# DIYLevel FastInit：即使不用 Web Runtime 也要装，地图载入靠它做快速初始化
-[[map_sources.map.relations]]
-kind = "requires"
-guid = "oc2.diylevel.fastinit"
-min_version = "1.7.0"
+# # DIYLevel FastInit：即使不用 Web Runtime 也要装，地图载入靠它做快速初始化
+# [[map_sources.map.relations]]
+# kind = "requires"
+# guid = "oc2.diylevel.fastinit"
+# min_version = "1.7.0"
 
-# 第三方地图仓库：一个 tag 一张图，元数据跟着 Release note 走。
+
+# 第三方地图仓库：一个 tag 一个地图集，元数据跟着 Release note 走。
 #
-# 当前指向 CH3NGYZ/oc2（测试期镜像仓）：里面每张地图是一个独立 Release，
+# 当前指向 CH3NGYZ/oc2（测试期镜像仓）：里面每个 tag 都是一个独立的地图集，
 # note 里带 <!-- oc2-map --> 块。等原作者完善自己的仓库后，只需要改这里的
 # provider / username / repository 三行，其它字段与条目一个字都不用动。
 #
-# page_size 是「一次读 50 个 Release」：不满一页就停，最多翻 max_pages 页；
+# page_size 是「一次读 100 个 Release」：不满一页就停，最多翻 max_pages 页；
 # 中途失败会保留已取到的部分，整仓都取不到时沿用上一次的条目。
 [[map_sources]]
 id = "community-maps"
 mode = "release-tags"
-builtin = true
 provider = "github"
 username = "CH3NGYZ"
 repository = "oc2"
-page_size = 50
-max_pages = 20
+page_size = 100
+max_pages = 10
 [map_sources.nickname_i18n]
 zh-CN = "社区地图仓库"
 zh-TW = "社群地圖倉庫"

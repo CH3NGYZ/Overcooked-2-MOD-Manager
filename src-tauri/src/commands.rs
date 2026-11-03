@@ -5236,18 +5236,31 @@ fn refresh_game_snapshot(state: &AppState, app: &AppHandle) -> Result<GameInfo, 
 }
 
 #[tauri::command]
-pub fn stop_game(app: AppHandle, state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn stop_game(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<OperationResult, String> {
     log::info!("收到停止厨房请求");
     // 结束进程不需要操作锁：锁是给配置/清单提交用的，
     // 而游戏退出期间的其他只读操作（例如状态刷新）应继续可用。
+    // `State` 不能跨 await，先克隆出 `AppState`（克隆的是配置服务与各 `Arc` 句柄）。
+    let state = state.inner().clone();
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
     let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
     /*
+     * 温和关闭最多等 20 秒、强制结束再等 6 秒，整段都要放在阻塞线程池里：
+     * Tauri 的同步命令在 IPC 主线程内联执行，等待期间窗口会完全无响应。
+     *
      * 停止失败时把「被判定成游戏」的进程名记下来：这类失败几乎都是同名的
      * 宿主进程或残留进程造成的，没有进程名就只剩「停止不了」这一句。
      */
-    let result = game::stop_game(&game_root);
+    let result = tauri::async_runtime::spawn_blocking({
+        let game_root = game_root.clone();
+        move || game::stop_game(&game_root)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     if let Err(error) = &result {
         log::warn!(
             "停止厨房失败：{error}；判定为游戏运行的进程={:?}",
@@ -5256,7 +5269,7 @@ pub fn stop_game(app: AppHandle, state: State<'_, AppState>) -> Result<Operation
     }
     let stopped = result?;
     // 停完立刻重算并推送：用户点完按钮就该看到「启动游戏」，不再等观察器。
-    refresh_game_snapshot(state.inner(), &app)?;
+    refresh_game_snapshot(&state, &app)?;
     Ok(OperationResult {
         ok: true,
         message: if stopped == 0 {

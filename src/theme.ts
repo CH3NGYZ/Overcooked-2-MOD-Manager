@@ -123,12 +123,14 @@ export const isDark = computed(() => resolvedMode.value === 'dark')
 const SURFACES = {
   dark: {
     body: '#131417', card: '#1e2025', popover: '#23252b', rail: '#16181c', railLine: '#232a33',
-    row: '#1b1e24', rowLine: '#262c35', rowHover: '#21262e', sunken: '#181b20',
+    row: '#1b1e24', rowLine: '#262c35', rowHover: '#21262e', tile: '#232830', hoverLine: '#34404d',
+    sunken: '#181b20',
     text1: '#e8edf3', text2: '#c3cdd8', text3: '#8d9bab', text4: '#617081', divider: '#273341',
   },
   light: {
     body: '#f4f6fa', card: '#ffffff', popover: '#ffffff', rail: '#eef1f6', railLine: '#dbe1ea',
-    row: '#ffffff', rowLine: '#e2e7ef', rowHover: '#f6f8fc', sunken: '#f0f3f8',
+    row: '#ffffff', rowLine: '#e2e7ef', rowHover: '#f6f8fc', tile: '#eef1f6', hoverLine: '#c9d3e0',
+    sunken: '#f0f3f8',
     text1: '#1c2430', text2: '#3f4b5b', text3: '#6b7789', text4: '#8f9aab', divider: '#e2e7ef',
   },
 } as const
@@ -507,6 +509,8 @@ export function applyThemeCssVars() {
     '--oc2-row': surface.row,
     '--oc2-row-line': surface.rowLine,
     '--oc2-row-hover': surface.rowHover,
+    '--oc2-tile': surface.tile,
+    '--oc2-hover-line': surface.hoverLine,
     '--oc2-sunken': surface.sunken,
     '--oc2-text-1': surface.text1,
     '--oc2-text-2': surface.text2,

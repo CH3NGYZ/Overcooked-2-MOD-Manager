@@ -55,7 +55,7 @@ function onClick() {
 }
 .row.clickable:hover {
   background: var(--oc2-row-hover);
-  border-color: #34404d;
+  border-color: var(--oc2-hover-line);
 }
 .ico {
   flex: 0 0 auto;
@@ -64,7 +64,7 @@ function onClick() {
   display: grid;
   place-items: center;
   border-radius: 9px;
-  background: #232830;
+  background: var(--oc2-tile);
   color: var(--oc2-text-2);
 }
 .txt {

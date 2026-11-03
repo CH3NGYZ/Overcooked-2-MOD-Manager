@@ -271,3 +271,11 @@ note_i18n.ja = '''
 [[repositories.relations]]
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
+min_version = ""
+# 分版本依赖
+[[repositories.release_relations]]
+min_version = "3.10.2"
+max_version = "3.10.2"
+relations = [
+  { kind = "requires", guid = "dev.gua.overcooked.diylevel", min_version = "0.10.0" },
+]

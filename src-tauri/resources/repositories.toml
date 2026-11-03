@@ -38,27 +38,15 @@ ja = "Azhe - ゲーム修正 - RedNote @Azhe是阿哲 - ID:5566308341"
 
 
 [[repository_sources]]
-id = "repositories-gua"
-url = "repositories-gua.toml"
+id = "repositories-qingyuqingxue"
+url = "repositories-qingyuqingxue.toml"
 builtin=false
 [repository_sources.nickname_i18n]
-zh-CN = "G_U_A"
-zh-TW = "G_U_A"
-en = "G_U_A"
-ko = "G_U_A"
-ja = "G_U_A"
-
-
-[[repository_sources]]
-id = "repositories-guojia99"
-url = "repositories-guojia99.toml"
-builtin=false
-[repository_sources.nickname_i18n]
-zh-CN = "嘉吖 - DIYLevel Web前置"
-zh-TW = "嘉吖 - DIYLevel Web前置"
-en = "嘉吖 - DIYLevel Web Runtime"
-ko = "嘉吖 - DIYLevel Web 런타임"
-ja = "嘉吖 - DIYLevel Web ランタイム"
+zh-CN = "小红书 @清雨青雪 - ID:94575050243"
+zh-TW = "小红书 @清雨青雪 - ID:94575050243"
+en = "RedNote @清雨青雪 - ID:94575050243"
+ko = "RedNote @清雨青雪 - ID:94575050243"
+ja = "RedNote @清雨青雪 - ID:94575050243"
 
 
 [[repository_sources]]
@@ -86,15 +74,27 @@ ja = "RedNote @纸沫 - ID:5696399896"
 
 
 [[repository_sources]]
-id = "repositories-qingyuqingxue"
-url = "repositories-qingyuqingxue.toml"
+id = "repositories-guojia99"
+url = "repositories-guojia99.toml"
 builtin=false
 [repository_sources.nickname_i18n]
-zh-CN = "小红书 @清雨青雪 - ID:94575050243"
-zh-TW = "小红书 @清雨青雪 - ID:94575050243"
-en = "RedNote @清雨青雪 - ID:94575050243"
-ko = "RedNote @清雨青雪 - ID:94575050243"
-ja = "RedNote @清雨青雪 - ID:94575050243"
+zh-CN = "嘉吖 - DIYLevel Web前置"
+zh-TW = "嘉吖 - DIYLevel Web前置"
+en = "嘉吖 - DIYLevel Web Runtime"
+ko = "嘉吖 - DIYLevel Web 런타임"
+ja = "嘉吖 - DIYLevel Web ランタイム"
+
+
+[[repository_sources]]
+id = "repositories-gua"
+url = "repositories-gua.toml"
+builtin=false
+[repository_sources.nickname_i18n]
+zh-CN = "G_U_A"
+zh-TW = "G_U_A"
+en = "G_U_A"
+ko = "G_U_A"
+ja = "G_U_A"
 
 
 # 桥接源索引

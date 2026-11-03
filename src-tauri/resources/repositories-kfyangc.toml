@@ -49,7 +49,13 @@ note_i18n.ja = """DIYLevel のマップ読み込み処理を最適化し、大�
 kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
 min_version = ""
-
+# 分版本依赖
+[[repositories.release_relations]]
+min_version = "1.7.0"
+max_version = "1.7.0"
+relations = [
+  { kind = "requires", guid = "dev.gua.overcooked.diylevel", min_version = "0.10.0" },
+]
 
 [[repositories]]
 enabled = true

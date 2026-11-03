@@ -2297,9 +2297,11 @@ value = "RegionalMod.dll"
             "默认配置只读内置仓库索引，否则读到的还是停在 V1 的远程索引"
         );
         assert!(config.builtin_map_sources_only, "默认配置只读内置地图索引");
+        // 内置地图索引只有 release-tags 源：条目来自各 Release note，离线解析
+        // 不出地图（首启/断网地图页为空，联网刷新后才有）。
         assert!(
-            !config.map_repositories.is_empty(),
-            "默认配置应当自带内置地图快照"
+            config.map_repositories.is_empty(),
+            "内置地图索引没有内联条目，离线不应凭空生成地图"
         );
         assert!(config.repository_sources.iter().all(|source| source.builtin
             && source.parent_id.is_none()

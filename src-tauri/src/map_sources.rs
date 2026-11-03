@@ -684,9 +684,11 @@ impl SourceLabel {
 
 /// 同步加载内置地图源树（索引 → 子源 → 地图）。
 ///
-/// 只走编译期嵌入的资源，因此不需要网络、也没有失败路径。两个用途：
-/// 1. 首次刷新前给地图页一个可用的初始列表（不必先等一次网络往返）；
-/// 2. 远程索引整体不可用时的回退，与仓库侧的官方源回退同一套条件。
+/// 只走编译期嵌入的资源，因此不需要网络、也没有失败路径。内置索引只声明
+/// `release-tags` 源时结果必然为空（`collect_bundled_maps` 会跳过联网型源）：
+/// 它仍用于两件事 —— 内置索引里若出现 `repository` / `document` 形式的条目，
+/// 先给地图页一个无需网络的初始列表；远程索引整体不可用时的回退（与仓库侧
+/// 的官方源回退同一套条件）。
 pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
     let mut collected = Vec::new();
     let Ok(index) = SourceLocation::parse(BUILTIN_MAP_INDEX) else {
@@ -1649,12 +1651,14 @@ asset_rules = [{{ type = "exact", value = "map.zip" }}]
 
 /// 内置地图快照的回归测试。
 ///
-/// 内置文件是用户离线时的唯一来源，解析失败会静默把地图页清空 ——
-/// 所以用测试锁住「能解析出至少一张地图」与关键字段。
+/// 内置索引现在只声明第三方地图仓库（`release-tags`）：条目来自各 Release
+/// note，离线解析不出任何地图，首启/断网时地图页为空（联网刷新后才有；
+/// 刷新失败沿用上次成功生成的条目）。所以这里锁的不再是「至少一张地图」，
+/// 而是「索引能解析、声明字段正确、内置树不偷偷联网」。
 ///
-/// 另外两个内置地图文档被 `repository_sources` 的
-/// `NOT_REPOSITORY_DOCUMENTS` 登记为「非仓库类文档」，那边的
-/// `every_non_repository_document_is_registered` 会保证登记表不漏项。
+/// 另外 `repository_sources` 的 `NOT_REPOSITORY_DOCUMENTS` 登记了非仓库类
+/// 文档，那边的 `every_non_repository_document_is_registered` 会保证登记表
+/// 不漏项。
 #[cfg(test)]
 mod bundled_tests {
     use super::*;
@@ -1681,57 +1685,12 @@ mod bundled_tests {
     fn builtin_map_index_declares_only_sources() {
         let doc = index_document();
         assert!(doc.maps.is_empty(), "索引只声明源，条目在各自源里");
-        assert!(
-            doc.map_sources.len() >= 2,
-            "索引应同时有单仓库源与 release-tags 源"
-        );
-    }
-
-    /// RW：单仓库地图 —— 整仓一张图，条目内联在索引里，离线也能直接可用。
-    #[test]
-    fn builtin_rw_source_is_a_single_repository_map() {
-        let source = declaration("maps-rw");
-        assert_eq!(source.mode, MapSourceMode::Repository);
-        assert_eq!(source.provider, Some(crate::models::Provider::Gitee));
-        assert_eq!(source.username, "ch3ngyz");
-        assert_eq!(source.repository, "DIYLevel-Maps-RW");
-        assert!(source.map.is_some(), "单仓库源必须内联条目本体");
-
-        let label = SourceLabel {
-            id: source.id.clone(),
-            ..SourceLabel::default()
-        };
-        let map = build_declaration_map(&source, &label, true, &index_location())
-            .expect("单仓库地图条目应能构造");
-        assert_eq!(map.level_set_name, "RW_LevelSet");
-        assert_eq!(map.author, "RW");
-        assert!(
-            map.id.starts_with("maps-rw::"),
-            "ID 必须带源前缀：{}",
-            map.id
-        );
-        // 分组是**作者显示名**（地图两页都按它折叠），与绑定键 `author` 是两件事：
-        // 绑定键必须与 info 逐字一致，展示名可以写作者更完整的名字。
         assert_eq!(
-            map.group_i18n.get("zh-CN").map(String::as_str),
-            Some("RickWang"),
-            "内置快照的分组应写作者名"
+            doc.map_sources.len(),
+            1,
+            "内置索引只保留第三方地图仓库（release-tags）"
         );
-        assert_eq!(map.provider, crate::models::Provider::Gitee);
-        assert!(!map.asset_rules.is_empty(), "必须声明版本资产规则");
-        // 依赖必须声明：缺 DIYLevel 或 Web Runtime 时地图跑不起来
-        assert!(
-            map.relations
-                .iter()
-                .any(|relation| relation.guid == "dev.gua.overcooked.diylevel"),
-            "应声明 DIYLevel 依赖"
-        );
-        assert!(
-            map.relations
-                .iter()
-                .any(|relation| relation.guid == "oc2.oc2diylevelruntimewloader"),
-            "应声明 Web Runtime 依赖"
-        );
+        assert_eq!(doc.map_sources[0].id, "community-maps");
     }
 
     /// 第三方源：一个 tag 一张图，元数据跟着各自 Release note 走。
@@ -1745,25 +1704,22 @@ mod bundled_tests {
         assert_eq!(source.provider, Some(crate::models::Provider::Github));
         assert_eq!(source.username, "CH3NGYZ");
         assert_eq!(source.repository, "oc2");
-        assert_eq!(source.page_size, Some(50), "一次读 50 个 Release");
+        assert_eq!(source.page_size, Some(100), "一次读 100 个 Release");
+        assert_eq!(source.max_pages, Some(10), "最多翻 10 页");
         assert!(source.map.is_none(), "release-tags 不需要内联条目");
     }
 
-    /// 内置树（离线）里只有内联条目；release-tags 源必须联网才有地图。
+    /// 内置树（离线）为空：唯一的源是 `release-tags`，条目要联网读 Release
+    /// note 才生成。
     ///
-    /// 这条断言同时守住两件事：首启/断网时地图页不是空的（RW 那张在），
-    /// 以及「内置树不偷偷联网/不伪造 tag 条目」。
+    /// 这条断言守住「内置树不偷偷联网、不伪造 tag 条目」；离线首启的空地图页
+    /// 是这套配置的已知代价（要内置离线地图就再加一个 `repository` 源）。
     #[test]
-    fn bundled_tree_is_offline_and_holds_the_inline_map() {
-        let maps = bundled_map_tree();
-        assert_eq!(
-            maps.len(),
-            1,
-            "内置树只含单仓库地图；tag 源要联网读 Release 才有条目"
+    fn bundled_tree_is_empty_offline() {
+        assert!(
+            bundled_map_tree().is_empty(),
+            "内置索引只有 release-tags 源：离线解析不出条目"
         );
-        assert_eq!(maps[0].source_id.as_deref(), Some("maps-rw"));
-        assert!(maps[0].builtin, "内置树里的条目都应标成 builtin");
-        assert_eq!(maps[0].level_set_name, "RW_LevelSet");
     }
 }
 

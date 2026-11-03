@@ -1702,8 +1702,8 @@ mod bundled_tests {
         let source = declaration("community-maps");
         assert_eq!(source.mode, MapSourceMode::ReleaseTags);
         assert_eq!(source.provider, Some(crate::models::Provider::Github));
-        assert_eq!(source.username, "CH3NGYZ");
-        assert_eq!(source.repository, "oc2");
+        assert_eq!(source.username, "QingyuQingxue");
+        assert_eq!(source.repository, "OC2-Map-Bundle");
         assert_eq!(source.page_size, Some(100), "一次读 100 个 Release");
         assert_eq!(source.max_pages, Some(10), "最多翻 10 页");
         assert!(source.map.is_none(), "release-tags 不需要内联条目");

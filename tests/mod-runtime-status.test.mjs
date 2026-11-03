@@ -127,6 +127,45 @@ test('关系标签与「刷新中」并存，且关系始终在最前', () => {
   assert.equal(result.issue?.state, 'missing')
 })
 
+test('依赖有候选版本时挂「可安装」，不再写「缺依赖」', () => {
+  /*
+   * 线上有满足区间的 Release：用户点「去安装」跳到那个仓库就补上了。
+   * 上一版在这里仍挂「缺依赖」（critical），和地图卡、依赖表说的都不一样。
+   */
+  const owner = repo({
+    plugin_guid: 'com.a',
+    relations: [{ kind: 'requires', guid: 'com.b' }],
+  })
+  const provider = repo({
+    id: 'dep-repo',
+    username: 'dep',
+    plugin_guid: 'com.b',
+    cached_releases: [release('2.0.0')],
+  })
+  const target = mod({ guid: 'com.a' })
+  const result = runtimeModStatus(target, [target], [owner, provider], idle)
+  assert.equal(result.issue?.state, 'installable')
+  assert.equal(result.mod.labels[0], 'dependency_installable')
+})
+
+test('依赖装着旧版且线上有够新的版本 → 挂「可更新」', () => {
+  const owner = repo({
+    plugin_guid: 'com.a',
+    relations: [{ kind: 'requires', guid: 'com.b', min_version: '2.0.0' }],
+  })
+  const provider = repo({
+    id: 'dep-repo',
+    username: 'dep',
+    plugin_guid: 'com.b',
+    cached_releases: [release('2.0.0')],
+  })
+  const target = mod({ guid: 'com.a' })
+  const stale = mod({ guid: 'com.b', dll_file: 'Dep.dll', version: '1.5.0' })
+  const result = runtimeModStatus(target, [target, stale], [owner, provider], idle)
+  assert.equal(result.issue?.state, 'installable')
+  assert.equal(result.mod.labels[0], 'dependency_updatable')
+})
+
 test('未绑定仓库的 MOD 保持后端标签', () => {
   const result = runtimeModStatus(
     mod({ repository_id: undefined, labels: ['unbound'] }), [mod()], [], idle)

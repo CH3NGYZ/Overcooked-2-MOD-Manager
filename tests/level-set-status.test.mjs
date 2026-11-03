@@ -411,12 +411,14 @@ test('卡片标签：先依赖提醒，再版本结论', () => {
   assert.equal(tags[1].mapId, 'map-rw')
 })
 
-test('卡片标签：缺的依赖线上能装时带上那张仓库卡片（与 MOD 管理页同一个落点）', () => {
+test('卡片标签：缺的依赖线上能装时写「可安装」并带上那张仓库卡片', () => {
   const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel' }] })
   const diy = repo({ id: 'diy', plugin_guid: 'com.rw.diylevel' })
   const tags = levelSetCardTags(set(), [target], [], true, [diy])
   assert.equal(tags[0].kind, 'dependency')
-  assert.equal(tags[0].text, 'modsOnline.missingDep')
+  // 有候选版本就不是「缺依赖」：点一下「去安装」就能补上，不必先把用户吓住
+  assert.equal(tags[0].text, 'tools.installable')
+  assert.equal(tags[0].tone, 'moderate')
   // 有可安装来源 → 标签可点，落点是提供依赖的仓库卡，而不是这张图自己
   assert.equal(tags[0].repositoryId, 'diy')
 })

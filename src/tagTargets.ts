@@ -11,13 +11,32 @@ import { t } from './i18n'
  * 原来这份判定写在 MOD 管理页里，卡片标签下沉成组件后必须共用同一份 ——
  * 两处各写一遍时，点「缺依赖」在一处跳到依赖仓库、另一处跳到自己的仓库。
  */
+/**
+ * 依赖类标签：点的目标是**能提供依赖的那个仓库**，不是这张卡自己绑定的。
+ *
+ * 「可更新 / 可安装」与「缺依赖」在这一点上完全一样 —— 它们说的都是另一个
+ * 插件，跳到自己绑定仓库只会看到一张没问题的卡。`dependency_conflict`
+ * 同理（要卸的是对方）。
+ */
+const DEPENDENCY_TAGS = new Set([
+  'missing_dependency',
+  'dependency_conflict',
+  'dependency_installable',
+  'dependency_updatable',
+])
+
+/** 这枚标签是不是「依赖类」（决定跳转目标与提示文案，见上）。 */
+export function isDependencyTag(tagKey: string): boolean {
+  return DEPENDENCY_TAGS.has(tagKey)
+}
+
 export function tagTargetId(
   tagKey: string,
   boundRepositoryId: string | undefined,
   /** 依赖仓库 id：由调用方从 `RelationStatus` 解析（`relationJumpRepositoryId`）。 */
   dependencyRepositoryId?: string,
 ): string | undefined {
-  if (tagKey === 'missing_dependency' || tagKey === 'dependency_conflict') {
+  if (DEPENDENCY_TAGS.has(tagKey)) {
     return dependencyRepositoryId
   }
   return boundRepositoryId
@@ -31,9 +50,10 @@ export function tagTargetId(
  */
 export function tagTargetTitle(tagKey: string, target: string | undefined): string | undefined {
   if (!target) {
+    // 「可更新/可安装」找不到目标时说的是同一件事：线上没有满足区间的版本
     return tagKey === 'missing_dependency' ? t('modsOnline.noInstallableSource') : undefined
   }
-  return tagKey === 'missing_dependency' || tagKey === 'dependency_conflict'
+  return isDependencyTag(tagKey)
     ? t('modsOnline.viewDependencyInModInstall')
     : t('dialogs.viewInModInstall')
 }

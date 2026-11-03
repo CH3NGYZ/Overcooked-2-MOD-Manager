@@ -29,7 +29,7 @@ import { installedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
-import { tagTargetTitle } from '../tagTargets'
+import { isDependencyTag, tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
@@ -1007,9 +1007,7 @@ function packageAction(pkg: ModPackageNode) {
   const base = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
   if (!base) return undefined
   // 依赖类动作按「真正部署了关系的那一个成员」解析
-  const needsRelation = keys.some(
-    (key) => key === 'missing_dependency' || key === 'dependency_conflict',
-  )
+  const needsRelation = keys.some((key) => isDependencyTag(key))
   return actionContext(keys, (needsRelation ? relationOwnerMod(pkg) : undefined) ?? base)
 }
 
@@ -1209,7 +1207,7 @@ function expandGroupsFor(matches: StatusUnitNode[]) {
  * 依赖仓库 —— 包是多个 DLL 的聚合，缺依赖的可能是其中某一个。
  */
 function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undefined {
-  if (tagKey === 'missing_dependency' || tagKey === 'dependency_conflict') {
+  if (isDependencyTag(tagKey)) {
     for (const mod of pkg.mods) {
       const repository = relationIssueByDll.value[mod.dll_file]?.repository
       if (repository) return repository.id

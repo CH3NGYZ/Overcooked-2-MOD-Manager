@@ -578,9 +578,12 @@ export function relationCardTag(
 export interface DependencyTagView {
   /** 标签文案的 i18n key。 */
   text: string
-  /** 色调：缺依赖与冲突都取 critical（与 MOD 卡片同一档）。 */
+  /**
+   * 色调：冲突与「没救的缺依赖」取 critical；能补上（可更新 / 可安装）取
+   * moderate —— 有办法解决的事不该比没救的事看起来更严重。
+   */
   tone: Extract<TagTone, 'critical' | 'moderate'>
-  /** 判定来源：冲突 / 缺依赖（有可安装来源）/ 缺依赖（无来源）。 */
+  /** 判定来源：冲突 / 缺依赖且无来源 / 缺依赖但有候选版本（可更新、可安装）。 */
   kind: 'conflict' | 'missingDependency' | 'installable'
   /**
    * 点标签该跳到的仓库卡片 id。
@@ -596,11 +599,13 @@ export interface DependencyTagView {
  *
  * MOD 安装页、MOD 管理页、地图下载页、地图管理页共用**这一条**规则：
  *   · 冲突 →「冲突」，且只在已安装的卡片上显示（见 `relationCardTag`）；
- *   · 依赖没满足 → 一律「缺依赖」，有可安装来源时顺带给出跳转目标。
+ *   · 依赖没满足但有候选版本 → 装了旧版写「可更新」，没装写「可安装」；
+ *   · 依赖没满足且线上没有满足区间的 Release →「缺依赖」。
  *
- * 为什么不把「可安装」写成卡片标签：卡片上那枚标签回答的是「这张卡/这张图
- * 现在能不能跑」，不是「去哪儿装」。能去哪儿装由「去安装」按钮与依赖表
- * 的状态列（可安装 / 可更新）回答 —— 各说一件事，才不会互相打架。
+ * 后两种必须分开说：明明点一下就能补上，界面却写「缺依赖」，用户会以为
+ * 这张卡/这张图没救。文案与状态色跟依赖表（`dependencyRows.statusFor`）
+ * 用同一套词 —— 卡片、依赖表、按钮说的是同一件事，不该一处「可更新」、
+ * 一处「缺依赖」。
  */
 export function dependencyTagFor(
   statuses: readonly RelationStatus[],
@@ -612,11 +617,17 @@ export function dependencyTagFor(
   if (tag.kind === 'conflict') {
     return { text: 'modsOnline.conflict', tone: 'critical', kind: 'conflict' }
   }
-  const repositoryId = status.state === 'installable' ? status.repository?.id : undefined
-  return {
-    text: 'modsOnline.missingDep',
-    tone: 'critical',
-    kind: repositoryId ? 'installable' : 'missingDependency',
-    repositoryId,
+  /*
+   * `installable` 表示「有仓库能给出满足区间的 Release」：本地装着旧版是
+   * 升级，没装是补装。与依赖表的两条文案一一对应，不再统一写「缺依赖」。
+   */
+  if (status.state === 'installable' && status.repository) {
+    return {
+      text: status.installedMod ? 'tools.updatable' : 'tools.installable',
+      tone: 'moderate',
+      kind: 'installable',
+      repositoryId: status.repository.id,
+    }
   }
+  return { text: 'modsOnline.missingDep', tone: 'critical', kind: 'missingDependency' }
 }

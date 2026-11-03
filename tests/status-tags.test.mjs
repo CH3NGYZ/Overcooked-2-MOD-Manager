@@ -408,6 +408,28 @@ test('依赖冲突优先于缺依赖，且两者都只出一条', () => {
   assert.deepEqual(tags.map((t) => t.key), ['dependency_conflict', 'missing_dependency', 'latest'])
 })
 
+test('包标题认得「可安装 / 可更新」，且与缺依赖同位置、中档色', () => {
+  /*
+   * 依赖没满足但有候选版本时，单 MOD 卡与地图卡都改口说「可安装 / 可更新」。
+   * 包标题必须一起认 —— 否则一个多 DLL 包的标题会把这两枚标签当成未知
+   * 标签丢掉（或按 muted 灰掉），包标题与成员卡片说的就不是一回事了。
+   */
+  const installable = packageStatuses([
+    mod({ dll_file: 'pkg/A.dll', labels: ['dependency_installable', 'latest'] }),
+    mod({ dll_file: 'pkg/B.dll', labels: ['latest'] }),
+  ])
+  assert.deepEqual(installable.map((t) => t.key), ['dependency_installable', 'latest'])
+  assert.equal(installable[0].tone, 'moderate')
+  assert.equal(installable[0].text, 'tools.installable')
+
+  const updatable = packageStatuses([
+    mod({ dll_file: 'a.dll', labels: ['dependency_updatable', 'latest'] }),
+  ])
+  assert.deepEqual(updatable.map((t) => t.key), ['dependency_updatable', 'latest'])
+  assert.equal(updatable[0].tone, 'moderate')
+  assert.equal(updatable[0].text, 'tools.updatable')
+})
+
 /* ===== 更新判定：线上版本 > max(清单 tag, DLL 版本) ===== */
 
 test('localCompareVersion 取清单 tag 与 DLL 版本较高者', async () => {

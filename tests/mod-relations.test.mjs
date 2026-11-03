@@ -4,7 +4,7 @@ import test from 'node:test'
 /** 关系判定：真实源码直接执行（纯函数，不依赖 Vue / Naive）。 */
 const {
   relationsForRelease, resolveRelation, resolveRelations, unmetRelations, primaryRelation, relationCardTag,
-  relationTargetRepository,
+  relationTargetRepository, dependencyTagFor,
 } = await import('../src/modRelations.ts')
 
 function mod(overrides = {}) {
@@ -792,4 +792,48 @@ test('展示：多个未知发布线候选时不猜兄弟仓库', () => {
     undefined,
     '两个候选的发布线都未知时，猜错会显示另一条线的仓库名，不如退回本地 MOD 名',
   )
+})
+
+/* ===== 卡片关系标签的三种说法：冲突 / 可更新·可安装 / 缺依赖 ===== */
+
+/*
+ * 真实反馈：地图包依赖的 DIYLevel 线上发了新版，卡片却写「缺依赖」，
+ * 用户以为这张图没救 —— 其实点「去安装」跳到那个仓库就修好了。
+ *
+ * 现在三种说法与依赖表（`dependencyRows.statusFor`）同一套词：有候选版本
+ * 就写「可更新 / 可安装」，线上连候选都没有才是真的「缺依赖」。
+ */
+
+test('关系标签：依赖没装但线上能装 → 可安装（中档，带仓库）', () => {
+  const status = resolveRelation(DEP, [], [repo()])
+  assert.equal(status.state, 'installable')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'tools.installable',
+    tone: 'moderate',
+    kind: 'installable',
+    repositoryId: 'dep-repo',
+  })
+})
+
+test('关系标签：装着旧版且线上有满足区间的版本 → 可更新（中档，带仓库）', () => {
+  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '2.0.0' }
+  const status = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.5.0' })], [repo()])
+  assert.equal(status.state, 'installable')
+  assert.notEqual(status.installedMod, undefined, '本地那一份是「升级」而不是「补装」的依据')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'tools.updatable',
+    tone: 'moderate',
+    kind: 'installable',
+    repositoryId: 'dep-repo',
+  })
+})
+
+test('关系标签：线上没有满足区间的 Release → 才是缺依赖（严重，不可点）', () => {
+  const status = resolveRelation(DEP, [], [])
+  assert.equal(status.state, 'missing')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
+  })
 })

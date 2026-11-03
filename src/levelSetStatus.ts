@@ -534,13 +534,17 @@ export interface LevelSetCardAction {
  * 一张地图卡片当前该给哪个一键动作。
  *
  * 优先序与 MOD 管理页一致（`statusActions.ts` 的 `ACTION_PRIORITY`）：
- * 冲突 > 可更新 > 缺依赖。理由相同 —— 冲突会让整张图跑不起来，比「有没有
+ * 冲突 > 可更新 > 依赖待补。理由相同 —— 冲突会让整张图跑不起来，比「有没有
  * 新版」更紧急；而「去安装」只是跳转，用户随时能点，不该盖住真正的修复入口。
+ *
+ * 最后那一档原来只叫「缺依赖」，现在带上了「可更新 / 可安装」（见
+ * `modRelations.dependencyTagFor`）：三者都是同一个入口——跳到能提供依赖的
+ * 仓库装/升级那个插件，所以按钮文案与色调统一按中档处理。
  *
  * 不给出动作的情况：
  *   · 停用 / info 解析失败：状态本身就不完整，先让用户处理卡片的开关；
  *   · 可更新但没有绑定到在线地图：没有可下载的来源；
- *   · 缺依赖但线上没有满足区间的仓库：按钮点了没反应，比没有按钮更糟
+ *   · 线上没有满足区间的仓库（真·缺依赖）：按钮点了没反应，比没有按钮更糟
  *     （沿用 `modRelations.dependencyTagFor` 只给可安装项 `repositoryId` 的规则）。
  */
 export function levelSetCardAction(
@@ -581,7 +585,7 @@ export function levelSetCardAction(
     return {
       kind: 'install-dependency',
       label: 'overview.browse',
-      tone: 'critical',
+      tone: 'moderate',
       repositoryId: dependency.repositoryId,
     }
   }

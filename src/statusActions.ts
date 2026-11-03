@@ -57,6 +57,12 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
    */
   missing_dependency: { kind: 'install-dependency', label: 'overview.browse', tone: 'critical' },
   /*
+   * 依赖能补上（可更新 / 可安装）→ 同样是「去安装」，色调用 moderate：
+   * 对应的标签是中档，按钮跟着中档，才看得出「这件事有解」。
+   */
+  dependency_updatable: { kind: 'install-dependency', label: 'overview.browse', tone: 'moderate' },
+  dependency_installable: { kind: 'install-dependency', label: 'overview.browse', tone: 'moderate' },
+  /*
    * 冲突 → 「去卸载」。与「冲突」标签同档同色。
    *
    * 冲突不能靠安装解决 —— 装什么都不会让「你不该装它」变成「该装」，

@@ -9,8 +9,11 @@ import test from 'node:test'
  * 所以按源码文本守住 —— 一旦有人把随包插件换回手写卡片、把展开滚动摘掉，
  * 这里会直接变红，而不是等爸爸在真机上发现错位。
  */
-const dialog = readFileSync(new URL('../src/components/InstallDetailDialog.vue', import.meta.url), 'utf8')
-const modal = readFileSync(new URL('../src/components/AppModal.vue', import.meta.url), 'utf8')
+// Windows 上 actions/checkout 的 core.autocrlf 会把工作区换成 CRLF，而下面的断言
+// 都按 `\n` 写（要匹配「这行之后紧跟那行」），所以读入时统一成 LF 再比对。
+const readSource = file => readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const dialog = readSource('../src/components/InstallDetailDialog.vue')
+const modal = readSource('../src/components/AppModal.vue')
 
 test('随包插件复用管理页的 LocalItemCard，而不是手写一份卡片', () => {
   assert.match(dialog, /import LocalItemCard from '\.\/LocalItemCard\.vue'/)

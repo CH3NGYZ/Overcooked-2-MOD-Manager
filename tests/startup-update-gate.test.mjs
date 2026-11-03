@@ -24,9 +24,10 @@ test('启动更新检查先读配置开关，再决定是否请求', () => {
 test('开关读取来自 api.config()，且关闭时不发请求', () => {
   const mountBlock = app.slice(app.indexOf('onMounted('), app.indexOf('</script>'))
   assert.match(mountBlock, /api\.config\(\)/, '启动检查必须从 api.config() 取真实配置')
+  // 读配置失败时 `config` 仍是 null，同样要当作「开关关闭」提前返回。
   assert.match(
     mountBlock,
-    /if \(!config\.network\.check_updates_on_start\) return/,
+    /if \(!config\?\.network\.check_updates_on_start\) return/,
     '开关关闭时必须提前返回，不能继续调用 checkAppUpdate',
   )
 })

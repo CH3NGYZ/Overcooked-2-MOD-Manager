@@ -125,7 +125,7 @@ fn reveal_on_windows(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
 
     use winapi::shared::minwindef::{DWORD, UINT};
-    use winapi::shared::winerror::{ERROR_FILE_NOT_FOUND, HRESULT, S_FALSE, S_OK};
+    use winapi::shared::winerror::{HRESULT, S_FALSE, S_OK};
     use winapi::um::combaseapi::CoUninitialize;
     use winapi::um::objbase::CoInitialize;
     use winapi::um::shlobj::SHOpenFolderAndSelectItems;
@@ -169,9 +169,18 @@ fn reveal_on_windows(path: &Path) -> Result<(), String> {
      * 而 shell 的项标识列表不认这个前缀。与 `open_path` 一样先过 `shell_path`：
      * 剥前缀、统一分隔符，否则定位会直接失败（不是「选中了别的目录」那么轻）。
      */
-    let target = wide(std::ffi::OsStr::new(&shell_path(path)));
+    let target_path = shell_path(path);
+    let target = wide(std::ffi::OsStr::new(&target_path));
     let pidl = unsafe { ILCreateFromPathW(target.as_ptr()) };
     if pidl.is_null() {
+        /*
+         * 拿不到 PIDL 说明 shell 不认这个项（未挂载的卷、已失效的网络位置、
+         * 路径形态不对）。父目录通常还打得开，先送用户到那里。
+         */
+        log::warn!("定位文件失败：ILCreateFromPathW 返回空，路径={target_path}");
+        if let Some(parent) = path.parent() {
+            return finish(open_path(parent));
+        }
         return finish(Err(failure()));
     }
 
@@ -190,23 +199,15 @@ fn reveal_on_windows(path: &Path) -> Result<(), String> {
         return finish(Ok(()));
     }
     /*
-     * 该路径没有可用的 shell 文件夹视图时（典型：网络路径、未挂载的卷），
-     * `SHOpenFolderAndSelectItems` 回 `HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)`。
-     * 退回打开父目录：选中做不到，至少把用户送到正确位置。
+     * 选中做不到时退回打开父目录，至少把用户送到正确位置。已知会回
+     * `HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)` 的情形：网络路径、未挂载的卷；
+     * 其余失败码同样只影响「选中」这一件事，没必要让用户连目录都打不开。
      */
-    if result == hresult_from_win32(ERROR_FILE_NOT_FOUND) {
-        if let Some(parent) = path.parent() {
-            return finish(open_path(parent));
-        }
+    log::warn!("定位文件失败：SHOpenFolderAndSelectItems 返回 0x{result:08X}，路径={target_path}");
+    if let Some(parent) = path.parent() {
+        return finish(open_path(parent));
     }
     finish(Err(failure()))
-}
-
-/// `HRESULT_FROM_WIN32` 宏的等价实现（winapi 0.3 没有导出它）。
-#[cfg(windows)]
-fn hresult_from_win32(code: u32) -> i32 {
-    // facility 7 = FACILITY_WIN32，severity 位表示失败。
-    (0x8007_0000u32 | (code & 0xFFFF)) as i32
 }
 
 #[cfg(test)]

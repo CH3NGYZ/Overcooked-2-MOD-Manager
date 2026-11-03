@@ -199,7 +199,13 @@ async function checkUpdates() {
 
 /** 状态标签跳转：点标签跳到 MOD 安装页，并高亮对应仓库卡片 3 秒。 */
 const { linkToRepository } = useRepositoryLink()
-/** 从 MOD 安装页跳回来时，高亮绑定到该仓库的 MOD 卡片 3 秒并滚动到它。 */
+/**
+ * 从 MOD 安装页跳回来时，高亮绑定到该仓库的 MOD 卡片 3 秒并滚动到它。
+ *
+ * 只高亮 + 滚到视口中间，**不展开卡片**：卡片根节点的 `[data-focus-id]` 在收起
+ * 状态下也在 DOM 里，展开与否该由用户自己决定 —— 自动摊开第一张会把其余命中
+ * 挤出视口，也违背「跳过来只是让我看到它」的预期。
+ */
 const { highlightId } = useFocusHighlight()
 /**
  * 页内定位：点标题后的聚合标签，高亮该状态的全部 MOD 并把第一张居中。
@@ -1475,42 +1481,6 @@ function togglePackage(node: ModPackageNode, event: MouseEvent) {
   }
   expandWithScroll(card, node.key, '.package-head', '.package-body', () => expansion.openOuter(node.key))
 }
-
-/**
- * 跨页 focus 落点：把命中的**第一张**卡片展开。
- *
- * 包默认收起，而 `?focus=` 只带一个仓库 id（总览页「本地 MOD 可更新 → 去更新」、
- * MOD 安装页的状态标签都走这条路径）。不展开的话用户跳过来只看到一个收起的壳，
- * 看不到真正要更新的那几行 —— 深链必须落到可见内容上。
- *
- * 外层是单展开的，所以只能摊开一张：优先包（整包才是展示单元），没有包命中才
- * 展开第一个命中的独立卡；其余命中的卡片仍由 `highlightId` 高亮，只是不展开。
- * 展开统一走 `expandWithScroll`，reveal 滚动因此只有一次。
- *
- * 同时监听 `groups`：focus 在页面挂载时就已经写进 `highlightId`，而 Dashboard
- * 可能还没加载完；只听 highlightId 会错过「数据到齐」那一刻。
- */
-watch([highlightId, groups], () => {
-  const id = highlightId.value
-  if (!id) return
-  const packages = groups.value.flatMap((group) => group.packages)
-  const hitPackage = packages.find((pkg) => pkg.grouped && pkg.repositoryId === id)
-  if (hitPackage) {
-    // 已经展开就不再滚一次：数据刷新（groups 变化）也会走进这里
-    if (!expansion.isOuterOpen(hitPackage.key)) {
-      expandWithScroll(null, hitPackage.key, '.package-head', '.package-body', () => expansion.openOuter(hitPackage.key))
-    }
-    return
-  }
-  const hitMod = packages
-    .filter((pkg) => !pkg.grouped)
-    .flatMap((pkg) => pkg.mods)
-    .find((mod) => bindingRepositoryId(mod) === id)
-  if (!hitMod) return
-  const key = modCardKey(hitMod.dll_file)
-  if (expansion.isOuterOpen(key)) return
-  expandWithScroll(null, key, '.card-row', '.card-detail', () => expansion.openOuter(key))
-}, { immediate: true })
 
 /** 包级开关：走后端已有的 toggle_local_mod_package，一次切换整包。 */
 async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {

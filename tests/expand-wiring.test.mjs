@@ -79,11 +79,21 @@ test('MOD 页：外层展开统一走 expandWithScroll，先量收缩量再改�
   // 展开后的滚动都等 nextTick：折叠时不渲染插槽，提前查是 null。
   assert.ok(body.indexOf('nextTick') < body.indexOf('scrollExpandedCardIntoView'))
 
-  // 三条展开路径（独立卡点击、包外壳点击、跨页 focus）都走同一个入口。
+  // 两条展开路径（独立卡点击、包外壳点击）都走同一个入口。
   assert.match(modsLocal, /expandWithScroll\(card,\s*key,\s*'\.card-row',\s*'\.card-detail'/)
   assert.match(modsLocal, /expandWithScroll\(card,\s*node\.key,\s*'\.package-head',\s*'\.package-body'/)
-  assert.match(modsLocal, /expandWithScroll\(null,\s*hitPackage\.key,/)
-  assert.match(modsLocal, /expandWithScroll\(null,\s*key,\s*'\.card-row'/)
+})
+
+/**
+ * 跨页 `?focus=` 只做「跳转 + 高亮 + 滚到视口中间」，**不展开卡片**：
+ * 卡片根节点的 `[data-focus-id]` 收起时也在 DOM 里，高亮与滚动都找得到它。
+ * 自动展开会把其余命中挤出视口，也让用户失去「先看看有哪些」的机会。
+ */
+test('MOD 页：跨页 focus 不自动展开卡片（只高亮）', () => {
+  assert.doesNotMatch(modsLocal, /expandWithScroll\(null,/,
+    '跨页 focus 只许高亮与滚动，不许调 expandWithScroll 自动摊开卡片')
+  assert.doesNotMatch(modsLocal, /watch\(\[highlightId,\s*groups\]/,
+    '删掉的跨页展开 watch 不许回来')
 })
 
 test('MOD 页：按键找卡片复用 expandScroll 的 cardByExpandKey（不自己写一份选择器）', () => {

@@ -56,6 +56,7 @@ import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
+import { useLevelSetScan } from '../composables/useLevelSetScan'
 import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository } from '../types'
 
 /**
@@ -81,7 +82,7 @@ import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository } fr
  *
  * 早先这里只按「有没有 Release」显示「可安装 / 未刷新」，与 MOD 安装页的
  * 「未安装 / 已安装 / 有更新 / 最新版」不是一回事，用户因此觉得两页不像。
- * 现在进页面补一次 `api.levelSets()`（后端对 `info` 有解析缓存，这一次调用
+ * 现在进页面补一次 `scanLevelSets()`（后端对 `info` 有解析缓存，这一次调用
  * 换来的是每张卡都能回答「我装没装、要不要更新」）。
  *
  * ## 依赖判定为什么在前端
@@ -130,6 +131,13 @@ const {
   loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
 } = useMapSources()
 const sets = ref<LevelSetInfo[]>([])
+/**
+ * 本地关卡集扫描的唯一入口。
+ *
+ * 状态与进度是 `useLevelSetScan` 的模块级单例：别的页面正在读时这里也在读，
+ * 总览页的卡片因此看得到这次扫描（反过来同理）。
+ */
+const { scanLevelSets } = useLevelSetScan()
 /**
  * 「安装地图」的暂存 → 确认 → 导入交给共享实现（地图管理页的拖放用的是同一份）。
  * 本页只负责装完重读本地关卡集：卡片状态与按钮文案都由它算出来。
@@ -289,7 +297,7 @@ const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } =
  */
 async function loadLevelSets() {
   try {
-    sets.value = await api.levelSets()
+    sets.value = await scanLevelSets()
   } catch (reason) {
     message.warning(backendMessageOf(reason))
   }

@@ -187,7 +187,7 @@ async function clearAvatars() {
 /**
  * 清除地图（关卡集）元数据缓存。
  *
- * 两层都在后端，这里没有前端副本要清：地图页每次进入都重新调 `api.levelSets()`，
+ * 两层都在后端，这里没有前端副本要清：地图页每次进入都重新调 `scanLevelSets()`，
  * 只是那次调用会被缓存拦住。清完之后再进地图页就会真正重解析。
  */
 const clearingLevels = ref(false)

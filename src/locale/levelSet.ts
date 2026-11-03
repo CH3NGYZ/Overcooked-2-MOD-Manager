@@ -166,6 +166,14 @@ export const levelSet: DomainMessages = {
     ko: '설치된 지도가 없습니다. 지도 설치 페이지에서 지도를 설치하거나, 거기서 "지도 설치"로 로컬 ZIP을 가져오세요.',
     ja: 'マップがまだありません。「マップインストール」でマップをインストールするか、そこの「マップをインストール」でローカル ZIP をインポートしてください。',
   },
+  // 读取中（总览页「本地地图」卡按钮在扫描期间的文案，按钮同时转圈）
+  scanning: {
+    'zh-CN': '读取中',
+    'zh-TW': '讀取中',
+    en: 'Reading',
+    ko: '읽는 중',
+    ja: '読み込み中',
+  },
   // 读取进度：已读取 3/7（转圈条下方）
   scanningProgress: {
     'zh-CN': '已读取 {done}/{total}',
@@ -174,7 +182,6 @@ export const levelSet: DomainMessages = {
     ko: '{done}/{total} 읽음',
     ja: '読み込み済み {done}/{total}',
   },
-  // 正在读取：地图名（转圈条下方）
   // 正在读取地图源（整页加载遮罩文案）
   readingMapSources: {
     'zh-CN': '正在读取地图源…',
@@ -196,6 +203,7 @@ export const levelSet: DomainMessages = {
     ko: '이 지도에는 아직 설명이 없습니다',
     ja: 'このマップにはまだ説明がありません',
   },
+  // 正在读取：地图名（转圈条下方）
   scanningFolder: {
     'zh-CN': '正在读取：{name}',
     'zh-TW': '正在讀取：{name}',

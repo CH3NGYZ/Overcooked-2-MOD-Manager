@@ -28,6 +28,7 @@ import {
 import StatCard from '../components/StatCard.vue'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
@@ -46,6 +47,8 @@ const message = useNotify()
 const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = useDashboard()
 
 const { refreshing } = useRepositoryRefresh()
+/** 本地地图扫描状态（`useLevelSetScan` 的模块级单例，切页不丢）。 */
+const { scanning: levelSetScanning, scanLevelSets } = useLevelSetScan()
 
 /**
  * 「本地 MOD 相关仓库正在检查」。
@@ -311,7 +314,7 @@ function openOnlineRepositories() {
 
 /** 地图源声明的全部条目（`api.maps()`），与地图下载页读同一份。 */
 const maps = ref<MapInfo[]>([])
-/** 本地关卡集（`api.levelSets()`），与地图管理页读同一份。 */
+/** 本地关卡集（`scanLevelSets()`），与地图管理页读同一份。 */
 const levelSets = ref<LevelSetInfo[]>([])
 
 /**
@@ -324,7 +327,9 @@ const levelSets = ref<LevelSetInfo[]>([])
  */
 async function loadMaps() {
   const [sets, mapList] = await Promise.all([
-    api.levelSets().catch(() => [] as LevelSetInfo[]),
+    // 走 `useLevelSetScan` 的唯一入口：扫描状态与进度是共享的，直接调 api 会让
+    // 卡片看不到这次读取（也看不到别的页面发起的那一次）。
+    scanLevelSets().catch(() => [] as LevelSetInfo[]),
     api.maps().catch(() => [] as MapInfo[]),
   ])
   levelSets.value = sets
@@ -364,13 +369,37 @@ const onlineMapsSub = computed(() => {
   })
 })
 
+/**
+ * 主数值：读本地地图期间不显示 0。
+ *
+ * 列表还没回来时 0 不是结论，只是「还不知道」—— 与「读取中」的按钮并排放着
+ * 会让人以为一张地图都没装。未知一律显示破折号。
+ */
+const localMapsValue = computed(() =>
+  levelSetScanning.value && !levelSets.value.length ? '—' : String(levelSets.value.length))
+
 const localMapsSub = computed(() => {
   const total = levelSets.value.length
-  if (!total) return t('overview.noMapsInstalled')
+  // 读取期间「还没有安装任何地图」同样是没有根据的结论。
+  if (!total) {
+    return levelSetScanning.value ? t('levelSet.scanningPreparing') : t('overview.noMapsInstalled')
+  }
   const updates = updatableMaps.value.length
   return updates
     ? t('overview.installedMapsCanUpdate', { count: total, updates })
     : t('overview.installedMaps', { count: total })
+})
+
+/**
+ * 本地地图卡的按钮文案：读取中 → 「读取中」+ 转圈；读完 → 「去更新」/「去管理」。
+ *
+ * 与本地 MOD 卡（`buttonLabel`）同一套交互：正在读的时候不让用户跳走，避免
+ * 跳到一半列表又变。扫描状态来自 `useLevelSetScan` 的模块级单例，所以任何
+ * 页面发起读取时这里都会转。
+ */
+const localMapsButtonLabel = computed(() => {
+  if (levelSetScanning.value) return t('levelSet.scanning')
+  return updatableMaps.value.length ? t('overview.review') : t('overview.manage')
 })
 
 /**
@@ -545,7 +574,7 @@ function openLocalMaps() {
             本地地图：主数值是本地关卡集数量，并列「N 可更新」。
             有更新 →「去更新」并定位第一张；无更新 →「去管理」。
           -->
-          <StatCard :label="t('overview.localMaps')" :value="String(levelSets.length)"
+          <StatCard :label="t('overview.localMaps')" :value="localMapsValue"
             :extra="{ count: updatableMaps.length, label: t('tools.update') }"
             :sub="localMapsSub"
             :tone="updatableMaps.length ? 'warning' : 'success'"
@@ -553,12 +582,13 @@ function openLocalMaps() {
             <template #action>
               <n-button size="small" :secondary="!updatableMaps.length"
                 :type="updatableMaps.length ? 'warning' : 'default'"
+                :loading="levelSetScanning"
                 :disabled="!levelSets.length" @click.stop="openLocalMaps">
-                <template #icon>
+                <template v-if="!levelSetScanning" #icon>
                   <CloudDownloadOutline v-if="updatableMaps.length" width="14" height="14" />
                   <SettingsOutline v-else width="14" height="14" />
                 </template>
-                {{ updatableMaps.length ? t('overview.review') : t('overview.manage') }}
+                {{ localMapsButtonLabel }}
               </n-button>
             </template>
           </StatCard>

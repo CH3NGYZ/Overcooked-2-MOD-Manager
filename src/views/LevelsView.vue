@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { t, locale, pickI18n } from '../i18n'
-import { api, watchLevelSetScan } from '../services/tauri'
+import { api } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { tagColorFor } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useMapSources } from '../composables/useMapSources'
+import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
@@ -56,7 +56,7 @@ import {
   type LevelSetRefreshingHint,
   type LevelSetTone,
 } from '../levelSetStatus.ts'
-import type { InstallSource, LevelSetInfo, LevelSetPlugin, LevelSetScanProgress, MapInfo, Repository } from '../types'
+import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, Repository } from '../types'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
@@ -85,7 +85,7 @@ import type { InstallSource, LevelSetInfo, LevelSetPlugin, LevelSetScanProgress,
  * **同一份**：同一张地图不能在两页得出相反的版本结论，刷新态也必须熬得过
  * 一次切页（挂在页面上的 ref 会随组件卸载一起消失）。
  *
- * 进入页面只读一次 `api.levelSets()`，地图列表交给 `loadMaps()`。开关、删除、
+ * 进入页面只读一次本地关卡集（`scanLevelSets()`），地图列表交给 `loadMaps()`。开关、删除、
  * 批量开关只影响本地关卡集，之后**只重读关卡集**；地图列表带 Release 缓存，
  * 与这些操作无关。「检测更新」走 `refreshBoundMaps`（并发 4、强制绕过缓存），
  * 是唯一重拉已装地图 Release 的入口；浮动刷新是唯一「两端都重读」的入口。
@@ -133,12 +133,12 @@ const {
 } = useMapSources()
 const loading = ref(true)
 /**
- * 扫描进度（后端 `level-set-scan-progress` 逐份上报）。
+ * 扫描进度（后端 `level-set-scan-progress` 逐份上报，订阅在 `useLevelSetScan` 里）。
  *
  * 只用来填转圈条下面的那两行；`null` 表示「还不知道总数」（刚发出请求、
  * 后端还没列完目录），这时只显示不确定动画，不编一个假百分比。
  */
-const scanProgress = ref<LevelSetScanProgress | null>(null)
+const { progress: scanProgress, scanLevelSets } = useLevelSetScan()
 /** 每个集自己的开关请求状态（互不阻塞）。 */
 const busy = ref<Record<string, boolean>>({})
 /** 每个集自己的删除请求状态。 */
@@ -289,15 +289,16 @@ const repositories = computed<Repository[]>(() =>
  */
 async function load() {
   loading.value = sets.value.length === 0
-  // 每次重新扫描都清掉上一次的进度，避免转圈条下面挂着过期的「5/7」
-  scanProgress.value = null
   try {
     /*
      * 两读并发，但**都要等**：地图列表没回来时 `boundMapOf` 找不到绑定，
      * 卡片会先显示一帧「未绑定」再跳成「有更新 / 最新版」—— 用户看到的是状态闪变。
      * `loadMaps` 内部自己吞掉失败（只提示、不 reject），所以这里不会连累关卡集。
+     *
+     * 关卡集走 `scanLevelSets()`（`useLevelSetScan` 的单例入口）：它自己清进度、
+     * 维护「正在读取」，总览页的本地地图卡读的也是这一份状态。
      */
-    const levelSets = await Promise.all([api.levelSets(), loadMaps()]).then(([list]) => list)
+    const levelSets = await Promise.all([scanLevelSets(), loadMaps()]).then(([list]) => list)
     sets.value = levelSets
   } catch (reason) {
     message.error(backendMessageOf(reason))
@@ -314,8 +315,7 @@ async function load() {
  */
 async function reloadSets() {
   try {
-    scanProgress.value = null
-    sets.value = await api.levelSets()
+    sets.value = await scanLevelSets()
   } catch (reason) {
     message.error(backendMessageOf(reason))
   }
@@ -414,9 +414,6 @@ const { dragActive } = useFileDrop({
   },
 })
 
-/** 扫描进度事件的解绑函数（卸载时调用）。 */
-let unlistenScan: UnlistenFn | null = null
-
 onMounted(() => {
   /*
    * 点击卡片行之外收起详情：`LocalItemCard` 只在卡片行 emit `activate`，
@@ -431,15 +428,6 @@ onMounted(() => {
    * 已有数据时 `ensureLoaded` 直接返回，不会重复扫描。
    */
   void ensureLoaded()
-  /*
-   * 扫描进度：本页只要在扫就会收到，解绑放在卸载里 —— 事件监听器不随页面
-   * 卸载自动消失，漏解绑会随每次进出累积（与文档级 click 同理）。
-   */
-  void watchLevelSetScan((progress) => {
-    scanProgress.value = progress
-  }).then((unlisten) => {
-    unlistenScan = unlisten
-  })
   void load()
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
@@ -449,8 +437,6 @@ onMounted(() => {
 /** 文档级监听挂在页面之外，页面卸载必须解绑，否则会随每次进出累积。 */
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick)
-  unlistenScan?.()
-  unlistenScan = null
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */

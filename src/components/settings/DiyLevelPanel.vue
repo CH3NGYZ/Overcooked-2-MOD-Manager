@@ -369,7 +369,7 @@ onMounted(() => { void refresh() })
 .panel-head-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .panel-title { font-size: 14px; font-weight: 600; color: var(--oc2-text-1); }
 .panel-version { font-size: 12px; }
-.state-tag { font-size: 11px; }
+/* .state-tag 的字号由 global.css 的 .state-tag.n-tag 统一给，这里不再抄一份 */
 .panel-metric { font-size: 11px; }
 
 .panel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }

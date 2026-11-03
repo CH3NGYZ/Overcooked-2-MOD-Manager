@@ -66,10 +66,16 @@ xz2 = { version = "0.1.7", features = ["static"] }
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 winapi = { version = "0.3", features = [
+    "combaseapi",
     "dpapi",
+    "minwindef",
+    "objbase",
     "shellapi",
+    "shlobj",
     "securitybaseapi",
+    "shtypes",
     "winbase",
+    "winerror",
     "processthreadsapi",
     "winuser",
     "winver",

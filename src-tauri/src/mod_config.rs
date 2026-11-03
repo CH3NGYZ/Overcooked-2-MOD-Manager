@@ -30,9 +30,10 @@ fn checked_file(game: &Path, guid: &str) -> Result<PathBuf, String> {
      * 分隔符必须交给 `Path` 自己拼：`Path::join("BepInEx/config")` 只补分隔符、
      * 不改写串内已有的 `/`，产物会变成 `...\BepInEx/config\xxx.cfg` 这种混合写法。
      * Windows 的文件 API 容忍混合分隔符，所以 `metadata`/`read` 都正常；
-     * 但 Explorer 的 `/select,` 参数解析不容忍 —— 拿到混合路径时直接退回
-     * 「此电脑」（2026-11 实测，菜单里的「查看日志」因此打不开日志目录）。
-     * 拆成两段 join 才能保证出口永远是原生反斜杠。
+     * 但这条路径还会被交给系统 Shell：早期用 `explorer.exe /select,` 时混合分隔符
+     * 会让它直接退回「此电脑」（2026-11 实测，菜单里的「查看日志」因此打不开）。
+     * 定位入口已换成 `shell_open::reveal_in_file_manager`（SHOpenFolderAndSelectItems，
+     * 没有命令行解析），拆成两段 join 仍然保留：不让中间层依赖下游一定会归一。
      */
     let path = game
         .join("BepInEx")

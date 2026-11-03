@@ -36,6 +36,8 @@ mod release_cache;
 mod releases;
 mod repository_readme;
 mod repository_sources;
+// 系统 Shell 交互：打开目录/URL 与在文件管理器中定位（不硬编码 explorer.exe）
+mod shell_open;
 mod update_migration;
 mod user_paths;
 #[cfg(any(target_os = "macos", test))]

@@ -456,6 +456,27 @@ export const error: DomainMessages = {
     ja: 'リポジトリソースの TOML 解析に失敗しました：{reason}',
   },
   /*
+   * 系统 Shell 打开 / 定位失败（`src-tauri/src/shell_open.rs`）。
+   *
+   * 两个入口都不再调 explorer.exe：`openFailed` 的 `reason` 是 ShellExecuteW
+   * 的原始错误码（2/3 找不到、5 拒绝访问、31 没有关联程序），`revealFailed`
+   * 带的是没定位成功的路径。
+   */
+  'shell.openFailed': {
+    'zh-CN': '系统没能打开这个位置（错误码 {reason}），请检查默认打开方式',
+    'zh-TW': '系統沒能開啟這個位置（錯誤代碼 {reason}），請檢查預設開啟方式',
+    en: 'The system could not open this location (code {reason}). Check the default handler.',
+    ko: '시스템이 이 위치를 열지 못했습니다(코드 {reason}). 기본 연결 프로그램을 확인하세요.',
+    ja: 'システムがこの場所を開けませんでした（コード {reason}）。既定の関連付けを確認してください。',
+  },
+  'shell.revealFailed': {
+    'zh-CN': '没能在文件管理器中定位这个位置：{path}',
+    'zh-TW': '沒能在檔案管理員中定位這個位置：{path}',
+    en: 'Could not reveal this location in the file manager: {path}',
+    ko: '파일 관리자에서 이 위치를 찾을 수 없습니다: {path}',
+    ja: 'ファイルマネージャーでこの場所を表示できませんでした：{path}',
+  },
+  /*
    * Tauri 宿主返回的 `Command xxx not found` 不是后端 tag，是英文串。
    * 常见场景：前端已热更新、正在跑的后端二进制还是旧的（新命令没编进去）。
    * 由 `src/locale/backend.ts` 在识别出该形态时兜底使用。

@@ -12,6 +12,7 @@ use crate::mods;
 use crate::recycle_bin;
 use crate::releases;
 use crate::repository_sources::{self, SourceLocation, source_address_key};
+use crate::shell_open;
 use chrono::Utc;
 use futures_util::StreamExt;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -5421,10 +5422,7 @@ pub fn open_game_directory(state: State<'_, AppState>) -> Result<OperationResult
     log::debug!("打开游戏目录");
     let config = state.config.load_or_default();
     let path = game::detect_game(&config).path.ok_or("game.notFound")?;
-    external_open_command()
-        .arg(path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    shell_open::open_path(Path::new(&path))?;
     Ok(OperationResult {
         ok: true,
         message: "tools.gameDirOpened".into(),
@@ -5438,10 +5436,7 @@ pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult,
     let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let plugins = PathBuf::from(game_root).join("BepInEx/plugins");
     fs::create_dir_all(&plugins).map_err(|e| e.to_string())?;
-    external_open_command()
-        .arg(&plugins)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    shell_open::open_path(&plugins)?;
     Ok(OperationResult {
         ok: true,
         message: "tools.modsDirOpened".into(),
@@ -6294,9 +6289,7 @@ pub fn open_level_set_directory(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     let path = crate::level_sets::locate_level_set_directory(&game_root, &dir_name, enabled)?;
-    directory_open_command(&path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    shell_open::open_path(&path)?;
     Ok(OperationResult {
         ok: true,
         message: "message.levelSet.dirOpened".into(),
@@ -7169,10 +7162,7 @@ pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationR
     } else {
         return Err("error.framework.diyLevelDirMissing?path=BepInEx/plugins/OC2DIYLevel".into());
     };
-    external_open_command()
-        .arg(&target)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    shell_open::open_path(&target)?;
     Ok(OperationResult {
         ok: true,
         message: "message.framework.diyLevelDirOpened".into(),
@@ -7322,10 +7312,7 @@ pub fn open_bepinex_directory(state: State<'_, AppState>) -> Result<OperationRes
     if !framework.is_dir() {
         return Err("framework.bepInExDirMissing".into());
     }
-    external_open_command()
-        .arg(&framework)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    shell_open::open_path(&framework)?;
     Ok(OperationResult {
         ok: true,
         message: "framework.bepInExDirOpened".into(),
@@ -7351,62 +7338,6 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
     Err("mods.dllFileMissing".into())
 }
 
-/// 交给系统文件管理器 / Shell 的路径串。
-///
-/// 在 `display_path` 之上多一步：Windows 下把正斜杠统一成反斜杠。
-/// 两层原因：
-///   · `safe_game_path` 返回 `canonicalize` 之后的路径，Windows 上带 `\\?\`
-///     verbatim 前缀，Explorer 不按标准 argv 解析、也不接受这种写法；
-///   · Explorer 的 `/select,` 参数解析**不认混合分隔符** —— 拿到
-///     `...\BepInEx/logs\xxx` 这种串时会解析失败并退回「此电脑」，
-///     而 `Path::join("BepInEx/logs")` 恰恰会把 `/` 原样留在路径里
-///     （2026-11 实测：菜单里的「查看日志」打不开日志目录）。
-/// 归一放在这个出口做，任何调用方都不会漏。
-fn shell_path(path: &Path) -> String {
-    let shown = display_path(path);
-    if cfg!(windows) {
-        shown.replace('/', "\\")
-    } else {
-        shown
-    }
-}
-
-/// 系统文件管理器只认普通路径：交给 Explorer 之前统一过 `shell_path`。
-fn directory_open_command(path: &Path) -> std::process::Command {
-    let mut command = external_open_command();
-    command.arg(shell_path(path));
-    command
-}
-
-fn mod_file_location_command(path: &Path) -> std::process::Command {
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = external_open_command();
-        command.arg("-R").arg(path);
-        return command;
-    }
-    #[cfg(windows)]
-    {
-        // Explorer expects ordinary drive/UNC paths, not canonical verbatim prefixes.
-        let selection = format!(r#"/select,"{}""#, shell_path(path));
-        let mut command = std::process::Command::new("explorer.exe");
-        use std::os::windows::process::CommandExt;
-        // Quote only the path: Explorer does not use the standard argv parser.
-        command.raw_arg(selection);
-        command
-    }
-}
-
-fn external_open_command() -> std::process::Command {
-    #[cfg(windows)]
-    let program = "explorer.exe";
-    #[cfg(target_os = "macos")]
-    let program = "open";
-    let mut command = std::process::Command::new(program);
-    command.stdin(std::process::Stdio::null());
-    command
-}
-
 #[tauri::command]
 pub fn open_mod_file_location(
     state: State<'_, AppState>,
@@ -7422,9 +7353,7 @@ pub fn open_mod_file_location(
     };
     let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let path = resolve_mod_file_for_location(Path::new(&game_root), &dll_file)?;
-    mod_file_location_command(&path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    shell_open::reveal_in_file_manager(&path)?;
     Ok(OperationResult {
         ok: true,
         message: "mods.fileLocationOpened".into(),
@@ -7442,9 +7371,7 @@ pub fn open_mod_logs_directory(
     if !path.is_dir() {
         return Err("mods.logsDirMissing".into());
     }
-    mod_file_location_command(&path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    shell_open::reveal_in_file_manager(&path)?;
     Ok(OperationResult {
         ok: true,
         message: "mods.logsDirOpened".into(),
@@ -7568,10 +7495,7 @@ pub fn open_backup_directory(
         }
     };
     log::debug!("打开备份目录：路径={}", path.display());
-    external_open_command()
-        .arg(&path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    shell_open::open_path(&path)?;
     Ok(OperationResult {
         ok: true,
         message: "tools.backupDirOpened".into(),
@@ -7590,10 +7514,7 @@ pub fn open_release_page(url: String) -> Result<OperationResult, String> {
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("update.pageHasCredentials".into());
     }
-    external_open_command()
-        .arg(parsed.as_str())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    shell_open::open_url(parsed.as_str())?;
     Ok(OperationResult {
         ok: true,
         message: "update.pageOpenedDetail".into(),
@@ -8247,9 +8168,7 @@ fn open_steam(settings: &GameConfig, info: &GameInfo) -> Result<OperationResult,
     if !info.game_exists {
         return Err("game.executableMissing".into());
     }
-    game::steam_launch_command(settings, info)?
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    game::steam_launch_command(settings, info)?;
     Ok(OperationResult {
         ok: true,
         message: "game.steamLaunchRequested".into(),
@@ -9730,29 +9649,6 @@ mod mod_file_location_tests {
             resolve_mod_file_for_location(&workspace.game, "BepInEx/plugins/Directory.dll")
                 .is_err()
         );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn explorer_selection_quotes_paths_and_removes_verbatim_prefixes() {
-        for (source, expected) in [
-            (
-                r"C:\Games\厨房 MOD,包\Example DLL.dll",
-                r#"/select,"C:\Games\厨房 MOD,包\Example DLL.dll""#,
-            ),
-            (
-                r"\\?\C:\Games\厨房 MOD,包\Example.dll.disabled",
-                r#"/select,"C:\Games\厨房 MOD,包\Example.dll.disabled""#,
-            ),
-            (
-                r"\\?\UNC\server\共享 MOD\Example.dll",
-                r#"/select,"\\server\共享 MOD\Example.dll""#,
-            ),
-        ] {
-            let command = mod_file_location_command(Path::new(source));
-            assert_eq!(command.get_program(), "explorer.exe");
-            assert_eq!(command.get_args().collect::<Vec<_>>(), [expected]);
-        }
     }
 }
 

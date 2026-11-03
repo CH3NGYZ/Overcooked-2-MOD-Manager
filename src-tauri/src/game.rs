@@ -504,45 +504,64 @@ fn process_matches_game(
             .any(|arg| arg.to_ascii_lowercase().contains("overcooked2.exe"))
 }
 
-pub(crate) fn steam_launch_command(
-    settings: &GameConfig,
-    info: &GameInfo,
-) -> Result<std::process::Command, String> {
+pub(crate) fn steam_launch_command(settings: &GameConfig, info: &GameInfo) -> Result<(), String> {
     #[cfg(unix)]
     if !Package::current(settings).native() {
         let prefix = info.wine_prefix.as_deref().ok_or("wine.prefixUnknown")?;
-        return crate::wine::steam_command(Path::new(prefix));
+        return crate::wine::steam_command(Path::new(prefix))?
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string());
     }
     /*
-     * Windows 与 macOS 原生走平台自己的启动命令。`settings` / `info`
+     * Windows 与 macOS 原生走平台自己的启动方式。`settings` / `info`
      * 在这条路径上都不用，显式标记避免未使用警告 —— 它们的取值只在
      * macOS 的 Wine 分支里需要。
      */
     #[cfg(windows)]
     let _ = (settings, info);
-    native_steam_launch_command(std::env::consts::OS)
+    native_steam_launch(std::env::consts::OS)
 }
 
-/// 原生模式下启动厨房的命令。
+/// 启动厨房时请求的 Steam URL。
+const STEAM_RUN_URL: &str = "steam://rungameid/728880";
+
+/// 原生模式的启动方式。
 ///
-/// 只有 Windows 与 macOS 两个分支：本项目不再发布 Linux 版本。
-fn native_steam_launch_command(platform: &str) -> Result<std::process::Command, String> {
-    let mut command = match platform {
-        "windows" => {
-            let mut command = std::process::Command::new("explorer.exe");
-            command.arg("steam://rungameid/728880");
-            command
-        }
-        "macos" => {
-            let mut command = std::process::Command::new("open");
-            // CrossOver can export a same-named Steam app; target the native bundle.
-            command.args(["-b", "com.valvesoftware.steam", "steam://rungameid/728880"]);
-            command
-        }
-        _ => return Err("game.unsupportedPlatform".into()),
-    };
-    command.stdin(std::process::Stdio::null());
-    Ok(command)
+/// 抽成纯函数是为了让「Windows 走协议关联、macOS 指名 Steam bundle」这条规则
+/// 能被测试钉住 —— 真正执行的两个入口一个走 ShellExecute、一个起子进程，
+/// 单测里都断言不了。
+#[derive(Debug, PartialEq, Eq)]
+enum SteamStrategy {
+    /// 交给系统默认协议处理器（Windows：`ShellExecuteW`）。
+    ///
+    /// 不要退回 `explorer.exe steam://...`：那是借资源管理器当中转，绕过了
+    /// 协议关联，用户把 Steam 关联改到别处时就会失效。
+    ProtocolHandler,
+    /// 用 `open -b <bundle>` 指名应用：CrossOver 会导出同名 Steam app，
+    /// 只按协议打开有几率起错那个。
+    OpenBundle(&'static str),
+}
+
+fn steam_launch_strategy(platform: &str) -> Result<SteamStrategy, String> {
+    match platform {
+        "windows" => Ok(SteamStrategy::ProtocolHandler),
+        "macos" => Ok(SteamStrategy::OpenBundle("com.valvesoftware.steam")),
+        _ => Err("game.unsupportedPlatform".into()),
+    }
+}
+
+/// 原生模式下启动厨房：只有 Windows 与 macOS 两条路径。
+fn native_steam_launch(platform: &str) -> Result<(), String> {
+    match steam_launch_strategy(platform)? {
+        SteamStrategy::ProtocolHandler => crate::shell_open::open_url(STEAM_RUN_URL),
+        SteamStrategy::OpenBundle(bundle) => std::process::Command::new("open")
+            .args(["-b", bundle, STEAM_RUN_URL])
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+    }
 }
 
 /// Check if CrossOver is running (macOS only)
@@ -1089,20 +1108,16 @@ mod tests {
 
     #[test]
     fn native_steam_launch_uses_the_platform_handler() {
-        let command = native_steam_launch_command("windows").unwrap();
-        assert_eq!(command.get_program(), "explorer.exe");
         assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["steam://rungameid/728880"]
+            steam_launch_strategy("windows").unwrap(),
+            SteamStrategy::ProtocolHandler
         );
-        let command = native_steam_launch_command("macos").unwrap();
-        assert_eq!(command.get_program(), "open");
         assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["-b", "com.valvesoftware.steam", "steam://rungameid/728880"]
+            steam_launch_strategy("macos").unwrap(),
+            SteamStrategy::OpenBundle("com.valvesoftware.steam")
         );
         // 未列入的平台名一律拒绝：本项目只支持 Windows 与 macOS。
-        assert!(native_steam_launch_command("linux").is_err());
+        assert!(steam_launch_strategy("linux").is_err());
     }
 
     fn winhttp_state(root: &Path) -> WinhttpState {

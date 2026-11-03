@@ -7,7 +7,8 @@ import type { TutorialStep } from './types'
  * 这一页全是「改一次、长期生效」的路径与开关，所以顺序不是页面从上到下的
  * 顺序，而是**按用户理解的因果**排的：先给方向（管理器凭什么找到游戏，
  * macOS 上还要先决定原生还是 CrossOver），再讲会长期改变行为的开关，
- * 然后是只影响速度不影响结果的并发，最后才是启动时的一次联网检查。
+ * 然后是只影响速度不影响结果的并发。启动时的联网检查排在开关前：它是
+ * 「更新从哪来」的前提，界面上也就在开关上面。
  *
  * 游戏目录之后紧接着是两个框架行：这两行是「装完游戏就要处理」的东西，
  * 而且就在游戏目录下面，分别讲一步比合成一个框更清楚。macOS 的「游戏类型」
@@ -52,6 +53,13 @@ export const settingsSteps: TutorialStep[] = [
     route: 'settings',
   },
   {
+    id: 'settings-update',
+    titleKey: 'tutorial.settings.update.title',
+    bodyKey: 'tutorial.settings.update.body',
+    target: '[data-tutorial="settings-update"]',
+    route: 'settings',
+  },
+  {
     id: 'settings-switches',
     titleKey: 'tutorial.settings.switches.title',
     bodyKey: 'tutorial.settings.switches.body',
@@ -63,13 +71,6 @@ export const settingsSteps: TutorialStep[] = [
     titleKey: 'tutorial.settings.performance.title',
     bodyKey: 'tutorial.settings.performance.body',
     target: '[data-tutorial="settings-performance"]',
-    route: 'settings',
-  },
-  {
-    id: 'settings-update',
-    titleKey: 'tutorial.settings.update.title',
-    bodyKey: 'tutorial.settings.update.body',
-    target: '[data-tutorial="settings-update"]',
     route: 'settings',
   },
 ]

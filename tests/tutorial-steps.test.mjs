@@ -88,9 +88,9 @@ const EXPECTED_IDS = [
   'settings-game-path',
   'settings-bepinex',
   'settings-diylevel',
+  'settings-update',
   'settings-switches',
   'settings-performance',
-  'settings-update',
 ]
 
 /** 全部教程语言表（都登记在 `tutorial` 域下，key 是「域内相对 key」）。 */

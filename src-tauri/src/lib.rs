@@ -43,8 +43,10 @@ mod repository_sources;
 mod shell_open;
 mod update_migration;
 mod user_paths;
+// 版本区间语法（`version = ">=1.8,<2"`）：std-only，工具 `tools/oc2-info` 也复用
 #[cfg(any(target_os = "macos", test))]
 mod user_region;
+mod version_range;
 #[cfg(any(unix, test))]
 mod wine;
 

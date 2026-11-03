@@ -541,7 +541,7 @@ export interface LevelSetCardAction {
  *   · 停用 / info 解析失败：状态本身就不完整，先让用户处理卡片的开关；
  *   · 可更新但没有绑定到在线地图：没有可下载的来源；
  *   · 缺依赖但线上没有满足区间的仓库：按钮点了没反应，比没有按钮更糟
- *     （与 `dependencyInstallTarget` 同一条规则）。
+ *     （沿用 `modRelations.dependencyTagFor` 只给可安装项 `repositoryId` 的规则）。
  */
 export function levelSetCardAction(
   set: LevelSetInfo,

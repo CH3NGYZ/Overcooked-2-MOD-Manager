@@ -464,6 +464,13 @@ const normalTree = computed(() => tree.value.filter((node) => !COMMUNITY_IDS.has
 const communityTree = computed(() => tree.value.filter((node) => COMMUNITY_IDS.has(node.id)))
 const hasCommunity = computed(() => communityTree.value.length > 0)
 
+/*
+ * 内置教程要指「第一张仓库卡」，但卡片是按分组 v-for 出来的，不能给每张都
+ * 加同名的 `data-tutorial`：重复 key 时 `querySelector` 落到哪一张取决于
+ * DOM 顺序，教程就变成了随机指一张。只认整棵树里的第一个单条。
+ */
+const tutorialCardId = computed(() => tree.value[0]?.groups[0]?.items[0]?.id ?? null)
+
 /* ===== 动作 ===== */
 
 function latest(repo: Repository) {
@@ -658,7 +665,7 @@ defineExpose({ refreshAll, visibleCount })
     <Teleport to="#page-header-actions" defer>
       <span class="header-count muted">{{ t('modsOnline.repositories', { count: visibleCount }) }}</span>
       <n-input v-model:value="search" clearable size="small" class="header-search"
-        :placeholder="t('dialogs.search')">
+        data-tutorial="mods-online-search" :placeholder="t('dialogs.search')">
         <template #prefix><SearchOutline width="14" height="14" /></template>
       </n-input>
       <n-button size="small" type="primary" @click="openInstall">
@@ -704,6 +711,7 @@ defineExpose({ refreshAll, visibleCount })
 
               <div class="repo-grid">
                 <OnlineCard v-for="repo in group.items" :key="repo.id" :data-focus-id="repo.id"
+                  :data-tutorial="repo.id === tutorialCardId ? 'mods-online-card' : undefined"
                   :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
                   :note="repoNote(repo) || repo.repository"
                   :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"
@@ -747,6 +755,7 @@ defineExpose({ refreshAll, visibleCount })
             <div class="repo-grid community-grid">
               <OnlineCard v-for="repo in node.groups[0]?.items ?? []" :key="repo.id"
                 :data-focus-id="repo.id"
+                :data-tutorial="repo.id === tutorialCardId ? 'mods-online-card' : undefined"
                 :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
                 :note="repoNote(repo) || repo.repository"
                 :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"

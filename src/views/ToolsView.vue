@@ -2,7 +2,7 @@
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { NButton, NLog, NSelect, NTag, useDialog } from 'naive-ui'
-import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, MapOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, MapOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
@@ -12,6 +12,7 @@ import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
 import { api } from '../services/tauri'
 import type { RustLog } from '../types'
+import { replayTutorial } from '../tutorial/engine'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 type LogKind = 'rust' | 'frontend' | 'crash'
@@ -207,7 +208,7 @@ async function clearLevels() {
 
 <template>
   <SettingsGroup :title="t('tools.supportDevelopment')">
-    <div class="sponsor-card">
+    <div class="sponsor-card" data-tutorial="tools-sponsor">
       <div class="sponsor-body">
         <img :src="sponsorImage" alt="赞助二维码" class="sponsor-img" />
         <div class="sponsor-text">
@@ -218,7 +219,7 @@ async function clearLevels() {
     </div>
   </SettingsGroup>
 
-  <SettingsGroup :title="t('tools.logs')">
+  <SettingsGroup :title="t('tools.logs')" data-tutorial="tools-logs">
     <SettingsRow :icon="ServerOutline" :title="t('tools.openRustLog')" :description="t('tools.detailedRecordOfInstallsDownloadsAndFileOperations')"
       clickable @click="openLog('rust')" />
     <SettingsRow :icon="DocumentTextOutline" :title="t('tools.openFrontendLog')" :description="t('tools.uiRenderingAndIpcCalls')" clickable
@@ -227,7 +228,7 @@ async function clearLevels() {
       @click="openLog('crash')" />
   </SettingsGroup>
 
-  <SettingsGroup :title="t('recycle.recycleBin')">
+  <SettingsGroup :title="t('recycle.recycleBin')" data-tutorial="tools-recycle">
     <SettingsRow :icon="TrashOutline" :title="t('recycle.openRecycleBin')"
       :description="t('recycle.reviewDeletedModsRestoreThemOrDeletePermanently')" clickable @click="recycleOpen = true" />
   </SettingsGroup>
@@ -238,7 +239,7 @@ async function clearLevels() {
     地图：缓存的键是 info 文件的内容哈希，解析结果被旧版本写错过就永远错下去。
     与回收站、日志并列放在工具页 —— 它们是维护动作，不是配置项。
   -->
-  <SettingsGroup :title="t('tools.cache')">
+  <SettingsGroup :title="t('tools.cache')" data-tutorial="tools-cache">
     <SettingsRow :icon="CloudOfflineOutline" :title="t('tools.clearAvatarCache')"
       :description="t('tools.deletesDownloadedRepositoryAvatarsTheyWillBeFetchedAgainTheNextTimeYouOpenTheModInstallPage')"
       clickable @click="clearAvatars" />
@@ -247,11 +248,19 @@ async function clearLevels() {
       clickable @click="clearLevels" />
   </SettingsGroup>
 
-  <SettingsGroup :title="t('tools.advanced')">
+  <SettingsGroup :title="t('tools.advanced')" data-tutorial="tools-advanced">
     <SettingsRow :icon="TerminalOutline" :title="t('tools.openDeveloperTools')" :description="t('tools.webviewDeveloperConsoleDebugging')" clickable
       @click="devtools" />
     <SettingsRow :icon="BuildOutline" :title="t('tools.resetWindowState')" :description="t('tools.restoreTheDefaultLayoutWhenTheWindowIsMisplaced')" clickable
       @click="resetUi" />
+    <!--
+      教程默认只在首次启动播一次，之后想再看只能从这里进来。
+      放在「高级」而不是单独开一组：它是一次性的界面动作，不是配置项。
+      整行可点（与「打开回收站」同一个 SettingsRow 交互）：这类「点进去做一件事」
+      的入口不该额外放按钮，否则一行动作被拆成「标题 + 按钮」两个焦点。
+    -->
+    <SettingsRow :icon="RefreshOutline" :title="t('tutorial.replay')"
+      :description="t('tutorial.replayDescription')" clickable @click="replayTutorial" />
   </SettingsGroup>
 
   <!-- 回收站浏览弹窗：唯一入口就在上面的「打开回收站」 -->

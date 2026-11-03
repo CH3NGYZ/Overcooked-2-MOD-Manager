@@ -184,7 +184,8 @@ defineExpose({ onUnmountedCleanup })
         brand-mark-wrap 不能带 data-tauri-drag-region：
         Tauri 的拖拽区域会在 mousedown 时接管事件，子元素按钮就点不动了。
       -->
-      <div class="brand-mark-wrap" @mouseenter="gameHover = true" @mouseleave="gameHover = false">
+      <div class="brand-mark-wrap" data-tutorial="titlebar-game-toggle" @mouseenter="gameHover = true"
+        @mouseleave="gameHover = false">
         <img class="brand-mark" :src="appIcon" alt="" />
         <!--
           悬浮在应用图标上的启动/停止按钮。
@@ -223,7 +224,7 @@ defineExpose({ onUnmountedCleanup })
       <!-- 界面缩放：下拉选择（与语言下拉一致） -->
       <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="onZoomSelect">
-        <button class="pill" type="button" :title="t('nav.uiScale')">
+        <button class="pill" type="button" data-tutorial="titlebar-zoom" :title="t('nav.uiScale')">
           <ExpandOutline width="15" height="15" />
           <span>{{ zoomPercent }}%</span>
           <span class="caret">▾</span>
@@ -234,7 +235,7 @@ defineExpose({ onUnmountedCleanup })
       <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale"
         trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="(key: Locale) => setLocale(key)">
-        <button class="pill" type="button" :title="t('nav.language')">
+        <button class="pill" type="button" data-tutorial="titlebar-language" :title="t('nav.language')">
           <LanguageOutline width="15" height="15" />
           <span>{{ currentLocaleLabel }}</span>
           <span class="caret">▾</span>
@@ -246,8 +247,8 @@ defineExpose({ onUnmountedCleanup })
         图标与状态一一对应（月亮 / 太阳 / 半明半暗），不用下拉：
         这一颗是一键循环，多一层菜单反而多一次点击。
       -->
-      <button class="pill icon-only" type="button" :title="themeLabel" :aria-label="themeLabel"
-        @click="cycleThemeMode">
+      <button class="pill icon-only" type="button" data-tutorial="titlebar-theme-mode" :title="themeLabel"
+        :aria-label="themeLabel" @click="cycleThemeMode">
         <MoonOutline v-if="themeMode === 'dark'" width="16" height="16" />
         <SunnyOutline v-else-if="themeMode === 'light'" width="16" height="16" />
         <ContrastOutline v-else width="16" height="16" />
@@ -257,7 +258,8 @@ defineExpose({ onUnmountedCleanup })
       <n-popover trigger="click" placement="bottom-end" :show-arrow="false" raw
         :z-index="TITLEBAR_MENU_Z_INDEX">
         <template #trigger>
-          <button class="pill icon-only" type="button" :title="t('nav.accent')" @contextmenu.prevent="cycleAccent">
+          <button class="pill icon-only" type="button" data-tutorial="titlebar-accent" :title="t('nav.accent')"
+            @contextmenu.prevent="cycleAccent">
             <span class="swatch" :style="{ background: accentSwatch }"></span>
           </button>
         </template>

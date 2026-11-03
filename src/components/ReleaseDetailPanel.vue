@@ -448,7 +448,7 @@ watch(
 </script>
 
 <template>
-  <div ref="panelElement" class="detail"
+  <div ref="panelElement" class="detail" data-tutorial="detail-panel"
     :class="{ 'detail--fill': activeTab === 'install' }"
     :style="panelStyle">
     <header class="detail-head">

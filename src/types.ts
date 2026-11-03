@@ -23,9 +23,6 @@ export interface GitHubProxyConfig {
   /** 头像专用代理：能服务任意 URL 的那类（纯 `{url}` 包装）。 */
   avatar_proxies: GitHubProxy[]
 }
-export type TutorialLocale = 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja'
-export type TutorialScenario = 'live' | 'overview' | 'framework-missing' | 'framework-channel' | 'framework-installing' | 'framework-ready' | 'framework-backup' | 'mod-management' | 'repository-loading' | 'repository-ready' | 'source-manager' | 'repository-editor' | 'repository-install' | 'release-select' | 'download-progress' | 'sponsor' | 'completion'
-
 export interface AssetRule { type: AssetRuleType; value: string }
 export interface RepositoryBinding { provider: Provider; owner: string; repository: string; tag: string; channel: Channel }
 export interface CommunityDiscovery { repository_ids: string[]; total_count: number; incomplete_results: boolean; truncated: boolean }
@@ -136,14 +133,11 @@ export interface Repository {
   cached_releases: ReleaseInfo[]
   last_error?: string
 }
-// Read-only bundled configuration used to seed isolated tutorial scenes.
-export type TutorialRepositoryConfig = Omit<Repository, 'id' | 'builtin' | 'cached_releases'>
 export interface PublicConfig {
   schema_version: number
   platform: AppPlatform
   region: string
   ui_zoom: number
-  onboarding_seen_steps: string[]
   hide_unidentified_mods: boolean
   /** 删除 MOD 时先移入回收站；false = 直接删除，不可恢复。 */
   recycle_deleted_mods: boolean
@@ -157,7 +151,8 @@ export interface PublicConfig {
   mod_metadata_concurrency: number
   /** 解析地图 `info` 的并发上限，语义同 `mod_metadata_concurrency`；默认 0（全部核心）。 */
   map_info_concurrency: number
-  tutorial_steps: TutorialStepConfig[]
+  /** 已经看过的教程步骤 id；启动时只播不在里面的步骤。 */
+  tutorial_watched_steps?: string[]
   game: { path: string; auto_detect: boolean; runtime: GameRuntime }
   network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
@@ -583,17 +578,7 @@ export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: 
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
-export interface TutorialStepConfig {
-  id: string
-  selector: string
-  view?: string
-  scenario?: TutorialScenario
-  title: string
-  description: string
-  title_i18n?: Partial<Record<TutorialLocale, string>>
-  description_i18n?: Partial<Record<TutorialLocale, string>>
-}
-export interface SettingsPatch { ui_zoom?: number; onboarding_seen_steps?: string[]; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; tutorial_steps?: TutorialStepConfig[]; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number }
+export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; auto_detect?: boolean; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string

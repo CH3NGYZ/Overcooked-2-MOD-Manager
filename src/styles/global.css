@@ -22,6 +22,14 @@
   --oc2-layer-drop: 2700;
   --oc2-layer-busy: 4000;
   --oc2-layer-titlebar-menu: 5000;
+  /*
+   * 内置教程：高于标题栏弹层。
+   *
+   * 教程要指标题栏上的缩放/语言/主题色，洒下来的遮罩与卡片必须能盖住
+   * 那三个下拉的弹层（5000），否则高亮框旁边会露出没被压暗的菜单。
+   * 教程结束即整层卸载，不会长期挡住标题栏弹层。
+   */
+  --oc2-layer-tutorial: 6000;
 }
 
 /*
@@ -588,3 +596,146 @@ body {
  * 保持原样会停在上一次选中的那一侧，读起来像「已经全开 / 全关」。
  */
 .page-header-actions .bulk-switch.is-mixed .n-tabs-capsule { opacity: 0; }
+
+/*
+ * 内置教程覆盖层（src/components/TutorialOverlay.vue）。
+ *
+ * 层级见 :root 的 --oc2-layer-tutorial。遮罩不是几块面板，而是高亮环自己的
+ * 一层 `box-shadow: 0 0 0 100vmax`：环与遮罩共享同一份几何，切步时不会出现
+ * 面板互相叠深或漏缝。阴影属于浮层（环是浮层的 position: fixed 子元素），
+ * 不会被目标所在的 overflow 容器裁掉 —— 只有把阴影加在**目标元素**上才会。
+ *
+ * 遮罩只负责“压暗”，点击由根节点统一接管，所以所有装饰层 pointer-events: none ——
+ * 这样点高亮区和点暗处是同一套行为，不需要按洞的边界做命中判定。
+ */
+.tutorial-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--oc2-layer-tutorial);
+  cursor: pointer;
+}
+
+/* 没有高亮目标时的整屏底板（引导卡） */
+.tutorial-veil {
+  position: fixed;
+  inset: 0;
+  background: var(--oc2-tutorial-veil);
+  pointer-events: none;
+  animation: tutorial-veil-in .2s ease-out;
+}
+
+@keyframes tutorial-veil-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/*
+ * 高亮描边 + 遮罩：同一个元素。第二层 100vmax 的阴影就是挖洞后的遮罩，
+ * 遮罩因此永远与描边共享一份几何。
+ *
+ * 这里**不加 left/top/width/height 过渡**：几何由 engine 的逐帧跟随（rAF）
+ * 每帧写入真实位置。再加 200ms 过渡，环在抽屉滑入、页面滚动途中就会一直
+ * 落后目标一截，阴影跟着环走，用户看到的是“遮罩延迟”。切步的位移也交给
+ * 跟随，环一帧到位，不做插值。
+ */
+.tutorial-ring {
+  position: fixed;
+  border: 2px solid var(--oc2-accent);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--oc2-accent) 20%, transparent),
+    0 0 0 100vmax var(--oc2-tutorial-veil);
+  pointer-events: none;
+}
+
+.tutorial-card {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  background: var(--oc2-popover);
+  border: 1px solid var(--oc2-divider);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .34), 0 2px 6px rgba(0, 0, 0, .16);
+  color: var(--oc2-text-1);
+  cursor: default;
+  outline: none;
+  transition:
+    left .28s cubic-bezier(.4, 0, .2, 1),
+    top .28s cubic-bezier(.4, 0, .2, 1);
+}
+
+.tutorial-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 20px;
+}
+
+.tutorial-card-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--oc2-text-3);
+}
+
+.tutorial-card-skip { color: var(--oc2-text-3); }
+
+.tutorial-card-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--oc2-sunken);
+  overflow: hidden;
+}
+
+.tutorial-card-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--oc2-accent);
+  transition: width .3s cubic-bezier(.4, 0, .2, 1);
+}
+
+.tutorial-card-title {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--oc2-text-1);
+}
+
+.tutorial-card-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.68;
+  color: var(--oc2-text-2);
+  white-space: pre-line;
+}
+
+.tutorial-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.tutorial-card-hint {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--oc2-text-4);
+}
+
+.tutorial-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-veil,
+  .tutorial-card,
+  .tutorial-card-progress > span { transition: none; }
+}

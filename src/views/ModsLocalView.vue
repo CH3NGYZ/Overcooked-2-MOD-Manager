@@ -34,6 +34,7 @@ import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import { withDemoMods } from '../tutorial/demo'
 import ModGroupBody from '../components/ModGroupBody.vue'
 import ModGroupHeader from '../components/ModGroupHeader.vue'
 import {
@@ -63,7 +64,15 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, ensureLoaded, loading, mods, game, config } = useDashboard()
+const { load, ensureLoaded, loading, dashboard, game, config } = useDashboard()
+
+/**
+ * 本页展示的 MOD 列表 = 真实 Dashboard ∪ 教程示例卡。
+ *
+ * 只改展示层、不改 store：教程一结束 `withDemoMods` 立刻返回原始数组，
+ * 页面不需要任何清理。真实列表非空时也不会混进示例（见 `tutorial/demo.ts`）。
+ */
+const mods = computed(() => withDemoMods(dashboard.value?.mods ?? []))
 
 /**
  * 删除是否经过回收站。
@@ -1597,7 +1606,8 @@ provide(
     两组共用同一套 tone 与配色表，颜色永远一致；数量为 0 的状态不显示。
   -->
   <Teleport to="#page-header-title-extra" defer>
-    <span class="header-tag-group">
+    <!-- 教程只认这一组：带数字的状态标签是「整页统计 + 点击定位」的入口 -->
+    <span class="header-tag-group" data-tutorial="mods-local-tags">
       <n-tag v-for="entry in statusTagsPrimary" :key="entry.key" size="small" :bordered="false"
         class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
         :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
@@ -1646,7 +1656,7 @@ provide(
       · 批量进行中两个分段都禁用，避免连点再发一批命令。
     -->
     <n-tabs v-if="effectiveMods.length" type="segment" animated class="bulk-switch"
-      :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
+      data-tutorial="mods-local-bulk" :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
       @update:value="onBulkSwitch">
       <!--
         文案走 `#tab` 槽而不是 `:tab` 属性：pane 没有任何子节点时，Naive 的
@@ -1661,11 +1671,12 @@ provide(
       </n-tab-pane>
     </n-tabs>
     <n-button size="small" secondary :loading="checkingBound" :disabled="checkingBound || refreshingAll"
+      data-tutorial="mods-local-actions"
       :title="t('overview.refreshOnlyTheRepositoriesYourInstalledModsAreBoundToAndCheckForNewVersions')" @click="checkUpdates">
       <template #icon><RefreshOutline width="14" height="14" /></template>
       {{ t('overview.check') }}
     </n-button>
-    <n-button size="small" secondary @click="openModsDirectory">
+    <n-button size="small" secondary data-tutorial="mods-local-open-dir" @click="openModsDirectory">
       <FolderOpenOutline width="14" height="14" />{{ t('modsLocal.openFolder') }}
     </n-button>
   </Teleport>

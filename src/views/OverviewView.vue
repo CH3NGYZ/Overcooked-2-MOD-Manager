@@ -441,14 +441,15 @@ function openLocalMaps() {
         左列 MOD 链路：BepInEx → 在线 MOD → 本地 MOD。
         顺序即操作顺序 —— 框架没装，下面两张卡的按钮都不可用。
       -->
-      <section class="overview-column">
+      <section class="overview-column" data-tutorial="overview-column-mods">
         <h2 class="column-title">{{ t('overview.modsChain') }}</h2>
         <div class="column-cards">
           <!--
             BepInEx：整张卡可点，跳设置页并自动展开框架抽屉。
             开关单独放在右侧，点开关不会触发跳转（@click.stop）。
           -->
-          <StatCard :label="t('framework.bepinexFramework')" :value="frameworkValue"
+          <StatCard data-tutorial="overview-card-bepinex"
+            :label="t('framework.bepinexFramework')" :value="frameworkValue"
             :sub="frameworkSub" :tone="frameworkOk ? 'success' : 'warning'"
             clickable @click="openFrameworkSettings">
             <template #action>
@@ -467,7 +468,8 @@ function openLocalMaps() {
             主数值是可见仓库总数，旁边并列「N 刷新失败」。
             有失败时按钮「去刷新」并高亮第一个失败仓库；全部正常时「去安装」。
           -->
-          <StatCard :label="t('overview.onlineMods')" :value="String(onlineRepositories.length)"
+          <StatCard data-tutorial="overview-card-online-mods"
+            :label="t('overview.onlineMods')" :value="String(onlineRepositories.length)"
             :extra="{ count: failedRepositories.length, label: t('tools.refreshFailed') }"
             :sub="onlineSub"
             :tone="failedRepositories.length ? 'warning' : 'success'"
@@ -490,7 +492,8 @@ function openLocalMaps() {
             主数值是安装总数，旁边并列「N 可更新」。
             按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
           -->
-          <StatCard :label="t('overview.localMods')" :value="String(installedMods.length)"
+          <StatCard data-tutorial="overview-card-local-mods"
+            :label="t('overview.localMods')" :value="String(installedMods.length)"
             :extra="{ count: updatable.length, label: t('tools.update') }"
             :sub="installedSub"
             :tone="updatable.length ? 'warning' : 'success'"
@@ -527,14 +530,15 @@ function openLocalMaps() {
         右列 地图链路：DIYLevel → 在线地图 → 本地地图。
         框架卡同样放在列首 —— 没有 DIYLevel，自定义地图进游戏也不生效。
       -->
-      <section class="overview-column">
+      <section class="overview-column" data-tutorial="overview-column-maps">
         <h2 class="column-title">{{ t('overview.mapsChain') }}</h2>
         <div class="column-cards">
           <!--
             DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转）。
             数值是启用状态，副标题给出版本与地图集数量。
           -->
-          <StatCard :label="t('framework.diylevelFramework')" :value="diyLevelValue"
+          <StatCard data-tutorial="overview-card-diy-level"
+            :label="t('framework.diylevelFramework')" :value="diyLevelValue"
             :sub="diyLevelSub" :tone="diyLevelOk ? 'success' : 'warning'"
             clickable @click="openDiyLevelSettings">
             <template #action>
@@ -552,7 +556,8 @@ function openLocalMaps() {
             在线地图：主数值是地图源声明的条目数，并列「N 刷新失败」。
             有失败时「去刷新」并高亮第一张失败地图；全部正常时「去安装」。
           -->
-          <StatCard :label="t('overview.onlineMaps')" :value="String(maps.length)"
+          <StatCard data-tutorial="overview-card-online-maps"
+            :label="t('overview.onlineMaps')" :value="String(maps.length)"
             :extra="{ count: failedMaps.length, label: t('tools.refreshFailed') }"
             :sub="onlineMapsSub"
             :tone="failedMaps.length ? 'warning' : 'success'"
@@ -574,7 +579,8 @@ function openLocalMaps() {
             本地地图：主数值是本地关卡集数量，并列「N 可更新」。
             有更新 →「去更新」并定位第一张；无更新 →「去管理」。
           -->
-          <StatCard :label="t('overview.localMaps')" :value="localMapsValue"
+          <StatCard data-tutorial="overview-card-local-maps"
+            :label="t('overview.localMaps')" :value="localMapsValue"
             :extra="{ count: updatableMaps.length, label: t('tools.update') }"
             :sub="localMapsSub"
             :tone="updatableMaps.length ? 'warning' : 'success'"

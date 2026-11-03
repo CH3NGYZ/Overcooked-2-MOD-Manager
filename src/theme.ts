@@ -528,6 +528,11 @@ export function applyThemeCssVars() {
      */
     '--oc2-accent-contrast': accentContrast(main.color, resolvedMode.value),
     '--oc2-accent-contrast-hover': hoverOf(accentContrast(main.color, resolvedMode.value)),
+    /*
+     * 内置教程的压暗色。深色模式用近乎纯黑压住底色，浅色模式换成
+     * 低透明度的冷灰 —— 浅色下同样强度的黑会把整页压成灰，看不清高亮区域。
+     */
+    '--oc2-tutorial-veil': resolvedMode.value === 'dark' ? 'rgba(4, 8, 12, .74)' : 'rgba(18, 26, 38, .42)',
   }
   /*
    * 每档语义色的 CSS 变量，供 scoped 样式使用（标签/按钮之外的自绘元素）。

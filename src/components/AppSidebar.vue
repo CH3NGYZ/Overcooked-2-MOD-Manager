@@ -19,6 +19,10 @@ const route = useRoute()
  *
  * 「框架管理」不再单独占位 —— BepInEx 的管理已收进「设置 → 路径管理 →
  * BepInEx 框架管理」抽屉，和装一个 MOD 的复杂度相当，不值得常驻导航。
+ *
+ * 每个导航项都带 `data-tutorial="nav-<路由名>"`（模板里由 `item.name` 拼出）：
+ * 内置教程在三段主流程换页前要把高亮挪到侧栏对应的格子上，锚点必须落在
+ * `<router-link>` 自身，框住的是整行而不是内部图标。
  */
 const sections = [
   // 总览是入口页，自成一档：它讲的是一屏之内的摘要，不属于任何具体内容域。
@@ -67,7 +71,7 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" data-tutorial="app-sidebar">
     <!-- 可滚动导航：用 Naive 的 n-scrollbar（自带悬浮细滚动条，不占布局宽度） -->
     <n-scrollbar class="nav-scroll">
       <nav class="nav">
@@ -75,7 +79,7 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
         <template v-for="(section, index) in sections" :key="section.key">
           <div v-if="index > 0" class="nav-divider" />
           <router-link v-for="item in section.items" :key="item.name" :to="{ name: item.name }" class="nav-item"
-            :class="{ active: activeName === item.name }">
+            :class="{ active: activeName === item.name }" :data-tutorial="'nav-' + item.name">
             <component :is="item.icon" width="20" height="20" />
             <span>{{ t(item.title) }}</span>
           </router-link>
@@ -84,7 +88,7 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
         <div class="nav-divider" />
 
         <router-link v-for="item in extraItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
-          :class="{ active: activeName === item.name }">
+          :class="{ active: activeName === item.name }" :data-tutorial="'nav-' + item.name">
           <component :is="item.icon" width="20" height="20" />
           <span>{{ t(item.title) }}</span>
         </router-link>
@@ -94,7 +98,7 @@ const activeName = computed(() => (route.name as string) ?? 'overview')
     <!-- 固定区：横条紧贴 nav 底部，不留空白；工具与设置不随上方滚动 -->
     <nav class="nav nav-bottom">
       <router-link v-for="item in bottomItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
-        :class="{ active: activeName === item.name }">
+        :class="{ active: activeName === item.name }" :data-tutorial="'nav-' + item.name">
         <component :is="item.icon" width="20" height="20" />
         <span>{{ t(item.title) }}</span>
       </router-link>

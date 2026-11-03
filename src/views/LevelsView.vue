@@ -118,6 +118,7 @@ const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight(
 /** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
 const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 2 + TOOL_GAP)
 
+/** 本页展示的关卡集 = 磁盘扫描结果；`useLevelSetScan` 是唯一读取入口。 */
 const sets = ref<LevelSetInfo[]>([])
 /**
  * 地图源声明的地图与刷新状态，全部来自模块级单例（`useMapSources`）。

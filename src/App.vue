@@ -8,6 +8,7 @@ import AppSidebar from './components/AppSidebar.vue'
 import AppTitleBar from './components/AppTitleBar.vue'
 import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
+import TutorialOverlay from './components/TutorialOverlay.vue'
 import { acceptLabel } from './dropAccept'
 import { dragActive, dropAcceptTypes } from './composables/useFileDrop'
 import { startGameWatch } from './composables/useDashboardStore'
@@ -17,9 +18,10 @@ import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition
 import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api } from './services/tauri'
 import { isTauri } from './runtime'
-import type { AppUpdateInfo } from './types'
+import type { AppUpdateInfo, PublicConfig } from './types'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
+import { setTutorialProgressSink, onTutorialSettled, startTutorialIfFirstRun } from './tutorial/engine'
 
 const version = ref('')
 const updateInfo = ref<AppUpdateInfo | null>(null)
@@ -46,9 +48,8 @@ const dropTypesLabel = computed(() => acceptLabel(dropAcceptTypes.value))
  * 安装器启动后的首次仓库刷新：与手动整源刷新走同一引擎。
  * 放在 App 层而不是 MOD 安装页，切换页面不会重复触发。
  *
- * 这里没有教程门控：V2 的前端教程系统已整体裁剪（见 AGENTS.md 第 9 节），
- * 启动后直接刷新。若将来恢复教程，需要重新引入「教程开始前 defer、
- * 结束再 release」的门控，否则教程还没播完仓库就先刷完了。
+ * 门控在下面的 `onMounted` 里：先注册 `onTutorialSettled`，再决定是否启动
+ * 教程，刷新总在教程之后发生，不会在遮罩底下转圈。
  */
 const repositoryRefresh = useRepositoryRefresh()
 
@@ -104,32 +105,67 @@ function onPageBeforeEnter() {
 
 onMounted(() => {
   startGameWatch()
-  // 浏览器预览没有 Tauri IPC：跳过版本读取与启动更新检查，避免控制台噪音。
-  if (!isTauri()) return
-  getVersion().then((value) => { version.value = value }).catch(() => undefined)
   /*
-   * 启动更新检查必须先读配置：设置里的「启动时检查程序更新」关闭后
-   * 不能再发起 check_app_update，否则 F5 重载（onMounted 重跑）仍会弹窗。
-   * 配置读取失败按关闭处理，失败静默（手动检查在设置页）。
+   * 教程进度写回 config.toml：引擎只负责「哪些步骤看过了」，落盘在这里接。
+   * 写失败不影响播放 —— 进度是新版教程的体验优化，不是启动前提。
    */
-  api.config()
-    .then((config) => {
-      if (!config.network.check_updates_on_start) return
-      return api.checkAppUpdate('zh-CN').then((result) => {
-        if (result.update && !result.all_failed) {
-          updateInfo.value = result.update
-          showUpdate.value = true
-        }
-      })
+  setTutorialProgressSink((ids) => {
+    api.saveSettings({ tutorial_watched_steps: ids }).catch(() => undefined)
+  })
+  /*
+   * 启动刷新推迟到教程结束（讲完或跳过）：教程期间满屏刷新转圈会盖住
+   * 要讲的卡片，用户读卡片时数据还在跳。没在教程里时 onTutorialSettled
+   * 立刻回调，行为与没有教程时一致。
+   *
+   * 注意顺序：必须先注册这个回调、再启动教程。否则 `api.config()` 还没
+   * 回来时 onTutorialSettled 会因为「当前没在教程里」直接放行刷新。
+   */
+  const settleRefresh = () => {
+    onTutorialSettled(() => {
+      repositoryRefresh.requestStartupRefresh()
+      /*
+       * 地图源也要在启动时自动读一次：`release-tags` 源（一个仓库放多张地图）的
+       * 地图只能联网读 Release note 才知道，内置快照里没有。只读源树、不刷
+       * 每张图的 Release，与上面 MOD 仓库的启动刷新同一时机、同一层级。
+       */
+      requestMapSourcesStartupRefresh()
     })
-    .catch(() => undefined)
-  repositoryRefresh.requestStartupRefresh()
-  /*
-   * 地图源也要在启动时自动读一次：`release-tags` 源（一个仓库放多张地图）的
-   * 地图只能联网读 Release note 才知道，内置快照里没有。只读源树、不刷
-   * 每张图的 Release，与上面 MOD 仓库的启动刷新同一时机、同一层级。
-   */
-  requestMapSourcesStartupRefresh()
+  }
+  // 浏览器预览没有 Tauri IPC：跳过版本读取与启动更新检查，避免控制台噪音。
+  if (!isTauri()) {
+    startTutorialIfFirstRun()
+    settleRefresh()
+    return
+  }
+  getVersion().then((value) => { version.value = value }).catch(() => undefined)
+  void (async () => {
+    /*
+     * 一次配置读取服务两件事：教程进度（只播没看过的步骤）与
+     * 「启动时检查程序更新」开关（关闭后不能再发起 check_app_update，
+     * 否则 F5 重载时 onMounted 重跑仍会弹窗）。
+     *
+     * 读不到配置也要让教程按「都没看过」跑：不能因为一次 IPC 失败，
+     * 让首启用户永远看不到教程。失败静默，手动检查在设置页。
+     */
+    let config: PublicConfig | null = null
+    try {
+      config = await api.config()
+    } catch {
+      // 按首次启动处理
+    }
+    startTutorialIfFirstRun(config?.tutorial_watched_steps ?? [])
+    settleRefresh()
+    if (!config?.network.check_updates_on_start) return
+    try {
+      const result = await api.checkAppUpdate('zh-CN')
+      if (result.update && !result.all_failed) {
+        updateInfo.value = result.update
+        showUpdate.value = true
+      }
+    } catch {
+      // 启动更新检查失败静默：手动检查在设置页
+    }
+  })()
 })
 </script>
 
@@ -188,6 +224,8 @@ onMounted(() => {
           </Transition>
         </div>
         <UpdatePrompt v-model:show="showUpdate" :update="updateInfo" />
+        <!-- 内置教程覆盖层：Teleport 到 body，自己接管点击/滚轮/方向键 -->
+        <TutorialOverlay />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

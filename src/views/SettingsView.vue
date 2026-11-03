@@ -433,7 +433,8 @@ async function clearTokens() {
       CrossOver 走 Wine 容器里的 Windows 版，是给还没换原生框架的人留的选项。
     -->
     <SettingsRow v-if="isMacOS" :title="t('framework.gameVersion')"
-      :description="t('framework.runTheWindowsBuildThroughCrossoverOrUseTheNativeMacosBuild')">
+      :description="t('framework.runTheWindowsBuildThroughCrossoverOrUseTheNativeMacosBuild')"
+      data-tutorial="settings-game-runtime">
       <template #right>
         <n-radio-group :value="gameRuntime" size="small" :disabled="switchingRuntime"
           @update:value="(value: GameRuntime) => switchRuntime(value)">
@@ -443,7 +444,7 @@ async function clearTokens() {
       </template>
     </SettingsRow>
     <SettingsRow :title="t('settings.gameDirectory')" :description="gamePathLabel"
-      :description-title="gamePathLabel">
+      :description-title="gamePathLabel" data-tutorial="settings-game-path">
       <template #right>
         <n-button size="small" secondary :disabled="savingPath" @click.stop="resetGamePath">
           <ArrowUndoOutline width="14" height="14" />{{ t('settings.resetPath') }}</n-button>
@@ -459,7 +460,7 @@ async function clearTokens() {
       框架管理和装一个 MOD 差不多复杂，不值得占常驻导航位。
     -->
     <SettingsRow :title="t('framework.bepinexFramework2')"
-      :description="bepinexSummary">
+      :description="bepinexSummary" data-tutorial="settings-bepinex">
       <template #right>
         <n-tag size="small" :bordered="false" class="state-tag" :color="tagColorFor(bepinexOk ? 'accent' : 'moderate')">
           {{ bepinexOk ? t('modsLocal.installed') : t('overview.notInstalled') }}
@@ -476,7 +477,7 @@ async function clearTokens() {
       同一类东西两种交互会让人不知道该去哪儿找。
     -->
     <SettingsRow :title="t('framework.diylevelFramework2')"
-      :description="diyLevelSummary">
+      :description="diyLevelSummary" data-tutorial="settings-diylevel">
       <template #right>
         <n-tag size="small" :bordered="false" class="state-tag"
           :color="tagColorFor(diyLevelInstalled ? 'accent' : 'moderate')">
@@ -509,7 +510,7 @@ async function clearTokens() {
     手动检测不在这里 —— 它和版本号是同一件事，放在最下方「关于」的版本号旁边，
     那里用户才看得到「我现在是什么版本」。
   -->
-  <SettingsGroup :title="t('settings.appUpdate')">
+  <SettingsGroup :title="t('settings.appUpdate')" data-tutorial="settings-update">
     <SettingsRow :title="t('overview.checkForUpdatesOnStartup')"
       :description="t('overview.checkForANewVersionWhenTheManagerStartsCanBeTurnedOffInSettings')">
       <template #right>
@@ -520,7 +521,7 @@ async function clearTokens() {
   </SettingsGroup>
 
   <!-- 通用设置 -->
-  <SettingsGroup :title="t('overview.general')">
+  <SettingsGroup :title="t('overview.general')" data-tutorial="settings-switches">
     <SettingsRow :title="t('overview.autoDetectGamePath')" :description="t('overview.probeSteamLibrariesOnLaunchAndRefresh')">
       <template #right>
         <n-switch size="small" :value="config?.game?.auto_detect"
@@ -566,7 +567,7 @@ async function clearTokens() {
     两项都只影响「同时读几个文件」，不改变任何结果，所以和开关类设置分开成组，
     也没有「恢复默认」—— 下拉里的「全部核心」就是 MOD 侧的默认值。
   -->
-  <SettingsGroup :title="t('settings.performance')">
+  <SettingsGroup :title="t('settings.performance')" data-tutorial="settings-performance">
     <SettingsRow :title="t('settings.modMetadataConcurrency')"
       :description="t('settings.modMetadataConcurrencyHint')">
       <template #right>

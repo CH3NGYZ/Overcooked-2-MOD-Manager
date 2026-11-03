@@ -18,7 +18,6 @@ import {
   readme,
   renameBackend,
   toolsBackend,
-  tutorialBackend,
   wine,
 } from './misc.ts'
 import { mods } from './mods.ts'
@@ -43,6 +42,11 @@ import { dialogs } from './dialogs.ts'
 import { renameUi } from './renameUi.ts'
 import { uiCommon } from './uiCommon.ts'
 import { refresh } from './refresh.ts'
+import { tutorialChrome } from './tutorialChrome.ts'
+import { tutorialMods } from './tutorialMods.ts'
+import { tutorialOverview } from './tutorialOverview.ts'
+import { tutorialSettings } from './tutorialSettings.ts'
+import { tutorialTools } from './tutorialTools.ts'
 import { DOMAINS, LOCALE_CODES, type Domain, type DomainMessages, type Localized } from './types.ts'
 
 /**
@@ -112,7 +116,12 @@ const TABLES: DomainTable[] = [
   { domain: 'avatar', messages: avatar },
   { domain: 'readme', messages: readme },
   { domain: 'wine', messages: wine },
-  { domain: 'tutorial', messages: tutorialBackend },
+  { domain: 'tutorial', messages: tutorialChrome },
+  // 内置教程按屏幕拆表：域内 key 用子域段（'overview.…' / 'tools.…'），拼成 tutorial.<子域>.<键>
+  { domain: 'tutorial', messages: tutorialOverview },
+  { domain: 'tutorial', messages: tutorialMods },
+  { domain: 'tutorial', messages: tutorialTools },
+  { domain: 'tutorial', messages: tutorialSettings },
   { domain: 'tools', messages: toolsBackend },
   { domain: 'lock', messages: lock },
   { domain: 'log', messages: log },

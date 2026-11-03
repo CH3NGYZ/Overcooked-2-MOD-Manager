@@ -113,6 +113,17 @@ pub struct MapSourceDeclaration {
     pub builtin: Option<bool>,
 }
 
+/// 文档是否托管在 Release 资产里（`.../releases/download/<tag>/<asset>`）。
+///
+/// 资产地址没有分支结构，`SourceLocation::resolve` 拿它当基底只会拼出一个
+/// 不存在的 URL，所以这种文档里声明子源必须当场报错。
+fn is_release_asset_document(origin: &SourceLocation) -> bool {
+    match origin {
+        SourceLocation::Remote(url) => crate::releases::release_asset_reference(url).is_some(),
+        _ => false,
+    }
+}
+
 /// 解析地图源文档。
 ///
 /// 与仓库源解析相比刻意宽松：地图只有一个「必须」字段（`level_set_name`），
@@ -166,6 +177,19 @@ pub fn parse_document(
     // 子源同理：昵称只写多语言表就够，加载时折出单语言镜像随条目落盘
     for child in &mut document.map_sources {
         fold_i18n_mirror(&mut child.nickname, &child.nickname_i18n);
+    }
+
+    /*
+     * 资产里的文档不许声明子源：Release 资产地址没有分支结构，相对路径
+     * 拼出来的只会是坏 URL。明确报错，别让作者以为子源加载成功了。
+     */
+    if let Some(child) = document.map_sources.first()
+        && is_release_asset_document(origin)
+    {
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "mapSource.assetDocumentSubSources",
+            &[("source", &child.id.trim().to_string())],
+        )));
     }
 
     let mut seen = HashSet::new();
@@ -1671,6 +1695,38 @@ asset_rules = [{rules}]
         )
         .unwrap();
         assert_eq!(tag_names(&releases), ["0.10", "0.9"]);
+    }
+
+    #[test]
+    fn an_asset_hosted_document_may_not_declare_sub_sources() {
+        let text = r#"
+[[maps]]
+name = "M"
+provider = "github"
+username = "u"
+repository = "r"
+level_set_name = "S"
+author = "A"
+enabled = true
+asset_rules = [{ type = "exact", value = "map.zip" }]
+
+[[map_sources]]
+id = "child"
+nickname = "Child"
+url = "child.toml"
+"#;
+        let asset = SourceLocation::parse(
+            "https://github.com/RW/RW/releases/download/maps/map-sources.toml",
+        )
+        .unwrap();
+        let error = parse_document(text, &asset).unwrap_err();
+        assert!(
+            format!("{error:?}").contains("mapSource.assetDocumentSubSources"),
+            "{error:?}"
+        );
+        // 放在普通地址上的同一份文档仍然可以声明子源
+        let plain = SourceLocation::parse("maps.toml").unwrap();
+        assert!(parse_document(text, &plain).is_ok());
     }
 
     #[test]

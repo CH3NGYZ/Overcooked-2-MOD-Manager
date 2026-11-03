@@ -85,6 +85,13 @@ export const mapSource: DomainMessages = {
     ko: '지정한 최신 버전을 설치 파일에서 찾을 수 없습니다: {map} ({version})',
     ja: '指定された最新バージョンがアセットに見つかりません：{map}（{version}）',
   },
+  assetDocumentSubSources: {
+    'zh-CN': '托管在 Release 资产里的地图源文档不能声明子源：{source}',
+    'zh-TW': '託管在 Release 資產裡的地圖來源文件不能宣告子來源：{source}',
+    en: 'A map source document hosted in a release asset may not declare child sources: {source}',
+    ko: '릴리스 자산에 호스팅된 지도 소스 문서는 하위 소스를 선언할 수 없습니다: {source}',
+    ja: 'Release アセットで配布されるマップソース文書は子ソースを宣言できません：{source}',
+  },
   regexNotAnchored: {
     'zh-CN': '安装包规则的正则必须用 ^ 和 $ 锚定：{map}（{asset}）',
     'zh-TW': '安裝包規則的正規表示式必須用 ^ 與 $ 錨定：{map}（{asset}）',

@@ -308,9 +308,9 @@ function displayConcurrency(value: number) {
   return value <= 0 ? 0 : Math.min(Math.max(value, 1), cpuCores)
 }
 
-/** MOD 侧默认全部核心；地图侧默认 4（后端 `AppConfig` 的默认值）。 */
+/** MOD 与地图两侧默认都用全部核心（后端 `AppConfig` 的默认值同为 0）。 */
 const modMetadataConcurrency = computed(() => displayConcurrency(config.value?.mod_metadata_concurrency ?? 0))
-const mapInfoConcurrency = computed(() => displayConcurrency(config.value?.map_info_concurrency ?? 4))
+const mapInfoConcurrency = computed(() => displayConcurrency(config.value?.map_info_concurrency ?? 0))
 
 /* ===== 删除行为：是否经过回收站 ===== */
 

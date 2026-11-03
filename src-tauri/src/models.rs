@@ -1017,7 +1017,7 @@ pub struct AppConfig {
     pub mod_metadata_concurrency: u32,
     /// 解析地图 `info` 时最多同时处理几份。
     ///
-    /// `0` = 全部 CPU 核心；默认 4（[`crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY`]）。
+    /// `0` = 全部 CPU 核心（默认，[`crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY`]）。
     #[serde(default = "default_map_info_concurrency")]
     pub map_info_concurrency: u32,
     #[serde(default)]

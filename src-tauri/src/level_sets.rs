@@ -271,7 +271,7 @@ pub type ScanProgress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);
 
 /// 扫描一个游戏目录下的全部关卡集（启用与停用）。
 ///
-/// 单测与旧调用方的默认入口：并行度取 `map_info_concurrency` 的默认值（4）。
+/// 单测与旧调用方的默认入口：并行度取 `map_info_concurrency` 的默认值（全部核心）。
 pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
     scan_level_sets_inner(
         game_root,
@@ -424,10 +424,15 @@ fn scan_level_sets_inner(
     /*
      * 没有任何可读文件的目标（空目录、只有 `requires.txt`）进不了批次，
      * 批次回调也就不会报它；补一次进度，保证最终「已读取 x/y」对齐。
+     *
+     * 只补**真的没有请求**的目标。按 `pending == 0` 判断是错的：有请求的
+     * 目标读完后计数同样是 0，会被当成「没进批次」再报一遍，进度条最后冲到
+     * 2×总数（实测 54 张图收尾显示 108/54）。请求数在建批次时已经知道，
+     * 直接看它，不再用运行期计数反推。
      */
     let mut done = finished.load(Ordering::Relaxed);
     for (index, target) in targets.iter().enumerate() {
-        if pending[index].load(Ordering::Relaxed) == 0 {
+        if info_request[index].is_none() && plugin_requests[index].is_empty() {
             done += 1;
             progress(done, total, &target.dir_name);
         }
@@ -5867,6 +5872,49 @@ mod plugin_tests {
         );
         assert!(!plugin.exists(), "登记 DLL 应随关卡集一起进回收站");
         assert!(read_registered_plugins(&manifests).is_empty(), "登记要清掉");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 扫描进度按「出卡数量」严格递增，收尾正好停在总数上。
+    ///
+    /// 回归：补报「没有可读文件」的目标时曾把已完成的目标再报一遍（它们的
+    /// `pending` 计数同样归零），54 张图收尾显示成 108/54。
+    #[test]
+    fn scan_progress_counts_each_level_set_exactly_once() {
+        let root = std::env::temp_dir().join(format!("oc2-lv-progress-{}", uuid::Uuid::new_v4()));
+        let levels = root.join("BepInEx/plugins/OC2DIYLevel/levels");
+        // 空目录与只有 requires.txt 的目录都进不了批次，只能靠补报
+        std::fs::create_dir_all(levels.join("Empty")).unwrap();
+        std::fs::create_dir_all(levels.join("RequiresOnly")).unwrap();
+        std::fs::write(levels.join("RequiresOnly/requires.txt"), "").unwrap();
+        // 有 info 就会进批次：内容无效只让解析失败，不影响进度已报一次
+        std::fs::create_dir_all(levels.join("WithInfo")).unwrap();
+        std::fs::write(levels.join("WithInfo/info"), b"not an asset bundle").unwrap();
+
+        let reports = std::sync::Mutex::new(Vec::<(usize, usize)>::new());
+        scan_level_sets_with_progress(&root, None, 2, &|done, total, _| {
+            reports.lock().unwrap().push((done, total));
+        });
+
+        let reports = reports.into_inner().unwrap();
+        assert_eq!(reports.first(), Some(&(0, 3)), "首帧必须从 0/3 开始");
+        assert_eq!(
+            reports.last(),
+            Some(&(3, 3)),
+            "收尾必须正好对齐总数，实际={reports:?}"
+        );
+        assert_eq!(
+            reports.len(),
+            4,
+            "每张图只报一次（含首帧 0/3）：{reports:?}"
+        );
+        assert!(
+            reports
+                .windows(2)
+                .all(|pair| pair[1].0 > pair[0].0 && pair[1].1 == pair[0].1),
+            "进度必须严格递增且总数不变：{reports:?}"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }

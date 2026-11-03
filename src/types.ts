@@ -155,7 +155,7 @@ export interface PublicConfig {
    * 设置页下拉同理：只按本机核心数 clamp 显示，不回写。
    */
   mod_metadata_concurrency: number
-  /** 解析地图 `info` 的并发上限，语义同 `mod_metadata_concurrency`；默认 4。 */
+  /** 解析地图 `info` 的并发上限，语义同 `mod_metadata_concurrency`；默认 0（全部核心）。 */
   map_info_concurrency: number
   tutorial_steps: TutorialStepConfig[]
   game: { path: string; auto_detect: boolean; runtime: GameRuntime }

@@ -87,13 +87,13 @@ export const settings: DomainMessages = {
     ko: '지도 정보 병렬 읽기',
     ja: 'マップ情報の並列読み込み',
   },
-  // 解析地图 info 时同时处理几张地图；默认 4
+  // 解析地图 info 时同时处理几张地图；默认全部核心
   mapInfoConcurrencyHint: {
-    'zh-CN': '解析地图 info 时同时处理几张地图；默认 4',
-    'zh-TW': '解析地圖 info 時同時處理幾張地圖；預設 4',
-    en: 'How many map `info` files are parsed at once; defaults to 4',
-    ko: '지도 info를 동시에 몇 개까지 파싱할지; 기본값 4',
-    ja: 'マップ info を同時にいくつ解析するか。既定 4',
+    'zh-CN': '解析地图 info 时同时处理几张地图；默认全部核心',
+    'zh-TW': '解析地圖 info 時同時處理幾張地圖；預設全部核心',
+    en: 'How many map `info` files are parsed at once; defaults to all CPU cores',
+    ko: '지도 info를 동시에 몇 개까지 파싱할지; 기본값은 모든 CPU 코어',
+    ja: 'マップ info を同時にいくつ解析するか。既定は全 CPU コア',
   },
   // 全部核心
   allCores: {

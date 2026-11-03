@@ -164,7 +164,12 @@ fn reveal_on_windows(path: &Path) -> Result<(), String> {
         result
     };
 
-    let target = wide(path.as_os_str());
+    /*
+     * 调用方传进来的是 canonicalize 后的路径，Windows 上是 `\\?\` verbatim 形态，
+     * 而 shell 的项标识列表不认这个前缀。与 `open_path` 一样先过 `shell_path`：
+     * 剥前缀、统一分隔符，否则定位会直接失败（不是「选中了别的目录」那么轻）。
+     */
+    let target = wide(std::ffi::OsStr::new(&shell_path(path)));
     let pidl = unsafe { ILCreateFromPathW(target.as_ptr()) };
     if pidl.is_null() {
         return finish(Err(failure()));

@@ -151,7 +151,7 @@ test('依赖有候选版本时挂「可安装」，不再写「缺依赖」', ()
 test('依赖装着旧版且线上有够新的版本 → 挂「可更新」', () => {
   const owner = repo({
     plugin_guid: 'com.a',
-    relations: [{ kind: 'requires', guid: 'com.b', min_version: '2.0.0' }],
+    relations: [{ kind: 'requires', guid: 'com.b', version: '>=2.0.0' }],
   })
   const provider = repo({
     id: 'dep-repo',

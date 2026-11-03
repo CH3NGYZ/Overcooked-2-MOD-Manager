@@ -4,7 +4,7 @@ import test from 'node:test'
 /** 关系判定：真实源码直接执行（纯函数，不依赖 Vue / Naive）。 */
 const {
   relationsForRelease, resolveRelation, resolveRelations, unmetRelations, primaryRelation, relationCardTag,
-  relationTargetRepository, dependencyTagFor,
+  relationTargetRepository, dependencyTagFor, relationsForMapRelease,
 } = await import('../src/modRelations.ts')
 
 function mod(overrides = {}) {
@@ -63,22 +63,22 @@ test('GUID 比较忽略大小写与空白', () => {
  * 版本约束：已装但太旧仍然算不满足，并且要给「可安装」入口 ——
  * 用户需要的是升级到够新的版本，不是再装一遍。
  */
-test('已装但低于 min_version → 仍要提示，并给可安装来源', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '2.0.0' }
+test('已装但低于下限 → 仍要提示，并给可安装来源', () => {
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=2.0.0' }
   const status = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.5.0' })], [repo()])
   assert.equal(status.state, 'installable')
   assert.equal(status.installedVersion, '1.5.0')
 })
 
 test('版本刚好达标 → ok', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '2.0.0' }
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=2.0.0' }
   const status = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '2.0.0' })], [])
   assert.equal(status.state, 'ok')
 })
 
 /* 上限：依赖库在 3.0 改了接口，这个 MOD 只能配 ≤2.x 的版本。 */
-test('已装但高于 max_version → 也算不满足', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', max_version: '2.0.0' }
+test('已装但高于上限 → 也算不满足', () => {
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '<=2.0.0' }
   const above = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '3.0.0' })], [])
   assert.equal(above.state, 'missing', '高于上限不该算满足')
   const equal = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '2.0.0' })], [])
@@ -88,7 +88,7 @@ test('已装但高于 max_version → 也算不满足', () => {
 })
 
 test('双端区间：只有落在 [min, max] 内才算满足', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '2.0', max_version: '2.9' }
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=2.0,<=2.9' }
   for (const version of ['2.0', '2.5', '2.9']) {
     assert.equal(
       resolveRelation(dep, [mod({ guid: 'com.example.dep', version })], []).state, 'ok', version)
@@ -100,7 +100,7 @@ test('双端区间：只有落在 [min, max] 内才算满足', () => {
 })
 
 test('本地没有版本号时，有版本要求就按不满足处理', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '1.0.0' }
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=1.0.0' }
   const status = resolveRelation(dep, [mod({ guid: 'com.example.dep' })], [])
   assert.equal(status.state, 'missing')
   assert.equal(status.installedVersion, null)
@@ -108,7 +108,7 @@ test('本地没有版本号时，有版本要求就按不满足处理', () => {
 
 /* 四段 = beta 序号：1.8.7.2 等价于 1.8.7-beta.2，两者都不满足 1.8.7。 */
 test('版本比较沿用项目的四段 beta 语义', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '1.8.7' }
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=1.8.7' }
   const beta = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.8.7.2' })], [])
   assert.equal(beta.state, 'missing', 'beta 低于同号正式版')
   const stable = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.8.7' })], [])
@@ -135,7 +135,7 @@ test('冲突关系：对方没装 → ok', () => {
 })
 
 test('冲突关系：对方装了且落在区间内 → conflict，并指出要卸哪个', () => {
-  const dep = { kind: 'conflicts', guid: 'com.example.dep', max_version: '2.0' }
+  const dep = { kind: 'conflicts', guid: 'com.example.dep', version: '<=2.0' }
   const installed = [mod({ name: 'Old Dep', guid: 'com.example.dep', version: '1.5' })]
   const status = resolveRelation(dep, installed, [])
   assert.equal(status.state, 'conflict')
@@ -143,7 +143,7 @@ test('冲突关系：对方装了且落在区间内 → conflict，并指出要�
 })
 
 test('冲突关系：对方版本不在区间内 → ok（只排斥特定版本）', () => {
-  const dep = { kind: 'conflicts', guid: 'com.example.dep', min_version: '1.0', max_version: '2.0' }
+  const dep = { kind: 'conflicts', guid: 'com.example.dep', version: '>=1.0,<=2.0' }
   const installed = [mod({ guid: 'com.example.dep', version: '3.0' })]
   assert.equal(resolveRelation(dep, installed, []).state, 'ok')
 })
@@ -157,18 +157,18 @@ test('冲突关系：装了被禁用的对方也算冲突（禁用不等于没�
 /* ===== compatible：兼容列表 ===== */
 
 test('兼容关系：对方没装 → ok（不兼容只在对方存在时成立）', () => {
-  const dep = { kind: 'compatible', guid: 'com.example.dep', min_version: '2.0' }
+  const dep = { kind: 'compatible', guid: 'com.example.dep', version: '>=2.0' }
   assert.equal(resolveRelation(dep, [], []).state, 'ok')
 })
 
 test('兼容关系：对方版本在区间内 → ok', () => {
-  const dep = { kind: 'compatible', guid: 'com.example.dep', min_version: '2.0', max_version: '3.0' }
+  const dep = { kind: 'compatible', guid: 'com.example.dep', version: '>=2.0,<=3.0' }
   const installed = [mod({ guid: 'com.example.dep', version: '2.5' })]
   assert.equal(resolveRelation(dep, installed, []).state, 'ok')
 })
 
 test('兼容关系：对方版本超出区间 → conflict', () => {
-  const dep = { kind: 'compatible', guid: 'com.example.dep', min_version: '2.0', max_version: '3.0' }
+  const dep = { kind: 'compatible', guid: 'com.example.dep', version: '>=2.0,<=3.0' }
   const installed = [mod({ name: 'Future Dep', guid: 'com.example.dep', version: '4.0' })]
   const status = resolveRelation(dep, installed, [])
   assert.equal(status.state, 'conflict')
@@ -232,64 +232,63 @@ test('primaryRelation 优先返回冲突，其次可安装，最后只提示的'
  */
 test('relationsForRelease 按版本选最高的匹配覆盖', () => {
   const owner = repo({
-    relations: [{ kind: 'requires', guid: 'b', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'b', version: '>=2.0' }],
     release_relations: [
-      { min_version: '1.1', relations: [{ kind: 'requires', guid: 'b', min_version: '3.0' }] },
-      { min_version: '1.5', relations: [{ kind: 'requires', guid: 'b', min_version: '4.0' }] },
+      { version: '>=1.1', relations: [{ kind: 'requires', guid: 'b', version: '>=3.0' }] },
+      { version: '>=1.5', relations: [{ kind: 'requires', guid: 'b', version: '>=4.0' }] },
     ],
   })
   // 1.0 低于所有覆盖门槛 → 用默认
-  assert.equal(relationsForRelease(owner, '1.0')[0].min_version, '2.0')
+  assert.equal(relationsForRelease(owner, '1.0')[0].version, '>=2.0')
   // 1.1 命中第一条
-  assert.equal(relationsForRelease(owner, '1.1')[0].min_version, '3.0')
+  assert.equal(relationsForRelease(owner, '1.1')[0].version, '>=3.0')
   // 1.6 命中更高那条（取最大匹配，不是第一条匹配）
-  assert.equal(relationsForRelease(owner, '1.6')[0].min_version, '4.0')
+  assert.equal(relationsForRelease(owner, '1.6')[0].version, '>=4.0')
 })
 
 /* 上限也是区间的一部分：命中区间之外要回到默认值。 */
-test('relationsForRelease 尊重 max_version 上限', () => {
+test('relationsForRelease 尊重区间上限', () => {
   const owner = repo({
-    relations: [{ kind: 'requires', guid: 'b', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'b', version: '>=2.0' }],
     release_relations: [{
-      min_version: '1.1',
-      max_version: '1.9',
-      relations: [{ kind: 'requires', guid: 'b', min_version: '3.0' }],
+      version: '>=1.1,<=1.9',
+      relations: [{ kind: 'requires', guid: 'b', version: '>=3.0' }],
     }],
   })
-  assert.equal(relationsForRelease(owner, '1.5')[0].min_version, '3.0', '区间内应命中')
-  assert.equal(relationsForRelease(owner, '2.0')[0].min_version, '2.0', '超过上限应回默认')
-  assert.equal(relationsForRelease(owner, '1.0')[0].min_version, '2.0', '低于下限应回默认')
+  assert.equal(relationsForRelease(owner, '1.5')[0].version, '>=3.0', '区间内应命中')
+  assert.equal(relationsForRelease(owner, '2.0')[0].version, '>=2.0', '超过上限应回默认')
+  assert.equal(relationsForRelease(owner, '1.0')[0].version, '>=2.0', '低于下限应回默认')
 })
 
 /* 只写上限也应当是合法区间（例如「2.0 之前用它」）。 */
 test('relationsForRelease 允许只写上限', () => {
   const owner = repo({
-    relations: [{ kind: 'requires', guid: 'b', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'b', version: '>=2.0' }],
     release_relations: [{
-      max_version: '2.0',
-      relations: [{ kind: 'requires', guid: 'b', min_version: '9.0' }],
+      version: '<=2.0',
+      relations: [{ kind: 'requires', guid: 'b', version: '>=9.0' }],
     }],
   })
-  assert.equal(relationsForRelease(owner, '1.0')[0].min_version, '9.0')
-  assert.equal(relationsForRelease(owner, '2.1')[0].min_version, '2.0')
+  assert.equal(relationsForRelease(owner, '1.0')[0].version, '>=9.0')
+  assert.equal(relationsForRelease(owner, '2.1')[0].version, '>=2.0')
 })
 
 test('没有版本号时只用仓库级默认声明', () => {
   const owner = repo({
-    relations: [{ kind: 'requires', guid: 'b', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'b', version: '>=2.0' }],
     release_relations: [
-      { min_version: '1.0', relations: [{ kind: 'requires', guid: 'b', min_version: '9.0' }] },
+      { version: '>=1.0', relations: [{ kind: 'requires', guid: 'b', version: '>=9.0' }] },
     ],
   })
-  assert.equal(relationsForRelease(owner, null)[0].min_version, '2.0')
-  assert.equal(relationsForRelease(owner, '')[0].min_version, '2.0')
+  assert.equal(relationsForRelease(owner, null)[0].version, '>=2.0')
+  assert.equal(relationsForRelease(owner, '')[0].version, '>=2.0')
 })
 
 test('覆盖是整体替换而不是合并', () => {
   const owner = repo({
-    relations: [{ kind: 'requires', guid: 'old', min_version: '' }],
+    relations: [{ kind: 'requires', guid: 'old' }],
     release_relations: [
-      { min_version: '2.0', relations: [{ kind: 'requires', guid: 'new', min_version: '' }] },
+      { version: '>=2.0', relations: [{ kind: 'requires', guid: 'new' }] },
     ],
   })
   const result = relationsForRelease(owner, '2.0')
@@ -300,19 +299,19 @@ test('覆盖是整体替换而不是合并', () => {
 test('release_relations 可以同时覆盖依赖与冲突', () => {
   const owner = repo({
     id: 'owner', plugin_guid: 'owner',
-    relations: [{ kind: 'requires', guid: 'b', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'b', version: '>=2.0' }],
     release_relations: [{
-      min_version: '2.0',
+      version: '>=2.0',
       relations: [
-        { kind: 'requires', guid: 'b', min_version: '3.0' },
-        { kind: 'conflicts', guid: 'legacy', max_version: '1.0' },
+        { kind: 'requires', guid: 'b', version: '>=3.0' },
+        { kind: 'conflicts', guid: 'legacy', version: '<=1.0' },
       ],
     }],
   })
   const statuses = resolveRelations(owner, [], [], '2.5')
   assert.equal(statuses.length, 2)
   assert.equal(statuses[0].relation.kind, 'requires')
-  assert.equal(statuses[0].relation.min_version, '3.0')
+  assert.equal(statuses[0].relation.version, '>=3.0')
   assert.equal(statuses[1].relation.kind, 'conflicts')
 })
 
@@ -320,9 +319,9 @@ test('resolveRelations 接受 releaseVersion 并按覆盖后的声明判定', ()
   const b = repo({ id: 'b-repo', plugin_guid: 'b', name: 'B' })
   const owner = repo({
     id: 'owner', plugin_guid: 'owner', name: 'Owner',
-    relations: [{ kind: 'requires', guid: 'b', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'b', version: '>=2.0' }],
     release_relations: [
-      { min_version: '1.1', relations: [{ kind: 'requires', guid: 'b', min_version: '3.0' }] },
+      { version: '>=1.1', relations: [{ kind: 'requires', guid: 'b', version: '>=3.0' }] },
     ],
   })
   // 本地 B 是 2.5：默认要求（≥2.0）满足，但 1.1 的要求（≥3.0）不满足
@@ -346,7 +345,7 @@ test('resolveRelations 接受 releaseVersion 并按覆盖后的声明判定', ()
 
 /* 来源仓库里的 Release 必须落在要求区间内，否则不算可安装来源。 */
 test('来源仓库没有满足区间的版本时不提供安装入口', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '9.0' }
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=9.0' }
   // rep() 的缓存里只有 v2.0.0
   assert.equal(resolveRelation(dep, [], [repo()]).state, 'missing')
 
@@ -414,7 +413,7 @@ test('缺依赖且没有可安装版本 → 进 blocked（只提醒）', () => {
 test('冲突且有可用版本 → 进 install（换版本而不是卸载）', () => {
   const owner = repo({
     ...OWNER,
-    relations: [{ kind: 'conflicts', guid: 'com.example.dep', max_version: '1.0' }],
+    relations: [{ kind: 'conflicts', guid: 'com.example.dep', version: '<=1.0' }],
   })
   const installed = [mod({ guid: 'com.example.dep', version: '0.9' })]
   // repo() 的缓存是 v2.0.0，2.0 不在 [.., 1.0] 冲突区间内 → 可用
@@ -441,7 +440,7 @@ test('兼容关系不满足且线上有区间内版本 → 进 install（升级/
   const owner = repo({
     ...OWNER,
     relations: [{
-      kind: 'compatible', guid: 'com.example.dep', min_version: '2.0', max_version: '3.0',
+      kind: 'compatible', guid: 'com.example.dep', version: '>=2.0,<=3.0',
     }],
   })
   const installed = [mod({ guid: 'com.example.dep', version: '1.0' })]
@@ -455,7 +454,7 @@ test('兼容关系不满足且没有区间内版本 → 进 blocked（卸载解�
   const owner = repo({
     ...OWNER,
     relations: [{
-      kind: 'compatible', guid: 'com.example.dep', min_version: '5.0', max_version: '6.0',
+      kind: 'compatible', guid: 'com.example.dep', version: '>=5.0,<=6.0',
     }],
   })
   const installed = [mod({ guid: 'com.example.dep', version: '1.0' })]
@@ -486,9 +485,9 @@ test('计划能同时包含卸载、安装与提醒', () => {
 test('安装前计划按目标 Release 版本选关系表', () => {
   const owner = repo({
     ...OWNER,
-    relations: [{ kind: 'requires', guid: 'com.example.dep', min_version: '2.0' }],
+    relations: [{ kind: 'requires', guid: 'com.example.dep', version: '>=2.0' }],
     release_relations: [
-      { min_version: '2.0', relations: [] },
+      { version: '>=2.0', relations: [] },
     ],
   })
   // 装 2.0：覆盖后关系表为空 → 无需任何动作
@@ -632,7 +631,7 @@ test('没有关系问题时也没有跳转目标', () => {
 test('冲突关系的跳转目标同样取关系仓库', () => {
   const installed = [mod({ guid: 'com.example.dep', version: '0.9' })]
   const status = resolveRelation(
-    { kind: 'conflicts', guid: 'com.example.dep', max_version: '1.0' },
+    { kind: 'conflicts', guid: 'com.example.dep', version: '<=1.0' },
     installed,
     [repo()],
   )
@@ -670,7 +669,7 @@ test('已安装且缺依赖 → 显示缺依赖标签', () => {
 test('已安装且冲突 → 显示冲突标签', () => {
   const installed = [mod({ guid: 'com.example.dep', version: '0.9' })]
   const status = resolveRelation(
-    { kind: 'conflicts', guid: 'com.example.dep', max_version: '1.0' },
+    { kind: 'conflicts', guid: 'com.example.dep', version: '<=1.0' },
     installed,
     [],
   )
@@ -816,7 +815,7 @@ test('关系标签：依赖没装但线上能装 → 可安装（中档，带仓
 })
 
 test('关系标签：装着旧版且线上有满足区间的版本 → 可更新（中档，带仓库）', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep', min_version: '2.0.0' }
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=2.0.0' }
   const status = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.5.0' })], [repo()])
   assert.equal(status.state, 'installable')
   assert.notEqual(status.installedMod, undefined, '本地那一份是「升级」而不是「补装」的依据')
@@ -837,7 +836,7 @@ test('关系标签：卡片自己没装时不显示「可安装 / 可更新」',
     '未安装的卡片头上不该出现描述依赖状态的「可安装」标签',
   )
   const upgrade = resolveRelation(
-    { kind: 'requires', guid: 'com.example.dep', min_version: '2.0.0' },
+    { kind: 'requires', guid: 'com.example.dep', version: '>=2.0.0' },
     [mod({ guid: 'com.example.dep', version: '1.5.0' })],
     [repo()],
   )
@@ -855,8 +854,64 @@ test('关系标签：卡片自己没装、依赖线上也没有来源 → 仍报
   })
 })
 
+/* ===== 地图按版本覆盖表：与仓库共用同一套「命中 + 下限最高」规则 ===== */
+
+test('地图覆盖表：命中取区间下限最高的一张整体替换，未命中回落默认表', () => {
+  const map = {
+    relations: [{ kind: 'requires', guid: 'base.guid' }],
+    release_relations: [
+      { version: '>=1.1', relations: [{ kind: 'requires', guid: 'mid.guid' }] },
+      { version: '>=1.5,<2.0', relations: [{ kind: 'requires', guid: 'new.guid' }] },
+    ],
+  }
+  assert.deepEqual(
+    relationsForMapRelease(map, '1.2').map((relation) => relation.guid),
+    ['mid.guid'],
+  )
+  assert.deepEqual(
+    relationsForMapRelease(map, '1.6').map((relation) => relation.guid),
+    ['new.guid'],
+  )
+  // 被上限排除后回落到仍命中的那张（>=1.1 没有上限），而不是默认表
+  assert.deepEqual(
+    relationsForMapRelease(map, '2.5').map((relation) => relation.guid),
+    ['mid.guid'],
+  )
+  // 没有目标版本时无从判断，按默认表
+  assert.deepEqual(
+    relationsForMapRelease(map, null).map((relation) => relation.guid),
+    ['base.guid'],
+  )
+})
+
+test('地图覆盖表：没有 relations 时先用 required_frameworks 兜底，再套覆盖表', () => {
+  const map = {
+    required_frameworks: [{ guid: 'dev.diy', version: '>=19.0' }],
+    release_relations: [
+      { version: '>=2.0', relations: [{ kind: 'requires', guid: 'dev.diy', version: '>=20.0' }] },
+    ],
+  }
+  assert.deepEqual(relationsForMapRelease(map, '1.0'), [
+    { kind: 'requires', guid: 'dev.diy', version: '>=19.0' },
+  ])
+  assert.deepEqual(relationsForMapRelease(map, '2.5'), [
+    { kind: 'requires', guid: 'dev.diy', version: '>=20.0' },
+  ])
+})
+
 test('关系标签：线上没有满足区间的 Release → 才是缺依赖（严重，不可点）', () => {
   const status = resolveRelation(DEP, [], [])
+  assert.equal(status.state, 'missing')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
+  })
+})
+
+test('关系标签：区间把线上版本全排除时不显示「可更新」', () => {
+  const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=9.0.0' }
+  const status = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.5.0' })], [repo()])
   assert.equal(status.state, 'missing')
   assert.deepEqual(dependencyTagFor([status], true), {
     text: 'modsOnline.missingDep',

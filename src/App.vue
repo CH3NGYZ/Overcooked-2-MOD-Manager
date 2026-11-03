@@ -140,9 +140,10 @@ onMounted(() => {
   getVersion().then((value) => { version.value = value }).catch(() => undefined)
   void (async () => {
     /*
-     * 一次配置读取服务两件事：教程进度（只播没看过的步骤）与
-     * 「启动时检查程序更新」开关（关闭后不能再发起 check_app_update，
-     * 否则 F5 重载时 onMounted 重跑仍会弹窗）。
+     * 配置读取只服务教程进度（只播没看过的步骤）。
+     *
+     * 启动更新检查恒开：接口本身有 5 分钟缓存（后端按地区记一份成功结果），
+     * F5 重载重跑 onMounted 也只会在缓存过期时真的再请求一次。
      *
      * 读不到配置也要让教程按「都没看过」跑：不能因为一次 IPC 失败，
      * 让首启用户永远看不到教程。失败静默，手动检查在设置页。
@@ -155,7 +156,6 @@ onMounted(() => {
     }
     startTutorialIfFirstRun(config?.tutorial_watched_steps ?? [])
     settleRefresh()
-    if (!config?.network.check_updates_on_start) return
     try {
       const result = await api.checkAppUpdate('zh-CN')
       if (result.update && !result.all_failed) {

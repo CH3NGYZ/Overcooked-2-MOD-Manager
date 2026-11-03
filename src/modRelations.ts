@@ -24,9 +24,11 @@
 // 带 .ts 扩展名：Node 24 直接执行 TS 时靠它解析相对导入；
 // 该文件同时被 Vite 打包，两种加载方式都要能用（与 statusTags 的写法一致）。
 import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
+import { parseVersionSpec, versionMatches } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
-  InstalledMod, RelationKind, ReleaseInfo, Repository, RepositoryRelation,
+  InstalledMod, MapInfo, RelationKind, ReleaseInfo, ReleaseRelationOverride, Repository,
+  RepositoryRelation,
 } from './types'
 
 export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict'
@@ -55,82 +57,110 @@ function sameGuid(left: string, right: string): boolean {
 }
 
 /**
- * 版本是否落在 `[min, max]` 区间内（两端都可省略）。
+ * 区间表达式里能当「下限」用的最高版本（`>=` / `>` / `==`），没有则空串。
  *
- * 规则：
- *   - 两端都没写 → 只要存在就算满足
- *   - 写了任一端但本地没版本号 → 按不满足处理（无法证明满足）
- *   - 低于 `min_version` 或高于 `max_version` → 不满足
- *   - 任一方无法解析 → 按不满足处理（宁可提示，也不要静默放过）
+ * 只用于「多条覆盖规则都命中时选最具体的一条」：下限越高，说明规则越针对
+ * 当前版本。解析失败按「没有下限」处理，与配置校验拒绝非法表达式的口径
+ * 一致 —— 判定层不该替配置层报错。
  */
-export function versionInRange(
-  installed: string | null | undefined,
-  minVersion?: string,
-  maxVersion?: string,
+function versionSpecLowerBound(spec: string | null | undefined): string {
+  const clauses = parseVersionSpec(spec ?? '')
+  if (!clauses) return ''
+  let best = ''
+  for (const clause of clauses) {
+    if (clause.op !== '>=' && clause.op !== '>' && clause.op !== '==') continue
+    if (!best || (compareVersions(clause.version, best) ?? 0) > 0) best = clause.version
+  }
+  return best
+}
+
+/**
+ * 版本是否满足一条区间表达式。
+ *
+ * 空表达式（`""` / `"*"`）表示不设版本要求：只要目标存在就算满足，
+ * 哪怕本地读不出版本号 —— 这与「写了要求但读不出版本」必须判不满足
+ * 是两件事（后者无法证明满足）。
+ */
+function matchesVersionSpec(
+  spec: string | null | undefined,
+  version: string | null | undefined,
 ): boolean {
-  const min = minVersion?.trim()
-  const max = maxVersion?.trim()
-  if (!min && !max) return true
-  if (!installed?.trim()) return false
-  if (min) {
-    const compared = compareVersions(installed, min)
-    if (compared === null || compared < 0) return false
+  const text = spec?.trim() ?? ''
+  if (!text || text === '*') return true
+  return versionMatches(text, version ?? '')
+}
+
+/**
+ * 按版本区间挑出适用的关系表（MOD 仓库与地图条目共用）。
+ *
+ * 默认值是仓库/地图级 `relations`；`release_relations` 里所有命中的条目中
+ * 取**下限最高**的那条，用它的 `relations` **整体替换**默认值（不是合并 ——
+ * 合并会让「新版本降低要求」无法表达）。下限相同取先出现的那条：
+ * 同一段版本写了两条规则时，顺序就是作者表达的优先级。
+ *
+ * 传空 `releaseVersion` 时只用默认值：调用方拿不到版本号时，
+ * 无法判断该用哪条覆盖规则，硬套一条会比不给更糟。
+ */
+function pickReleaseRelations(
+  base: readonly RepositoryRelation[],
+  overrides: readonly ReleaseRelationOverride[] | undefined,
+  releaseVersion: string | null | undefined,
+): RepositoryRelation[] {
+  const current = releaseVersion?.trim() ?? ''
+  if (!current || !overrides?.length) return [...base]
+
+  let best: ReleaseRelationOverride | undefined
+  let bestBound = ''
+  for (const override of overrides) {
+    const spec = override.version?.trim() ?? ''
+    if (!spec || !versionMatches(spec, current)) continue
+    const bound = versionSpecLowerBound(spec)
+    if (!best) {
+      best = override
+      bestBound = bound
+      continue
+    }
+    // 有下限的规则压过没有下限的；都有下限时取更高的。相等保留先出现的。
+    if (bound && (!bestBound || (compareVersions(bound, bestBound) ?? 0) > 0)) {
+      best = override
+      bestBound = bound
+    }
   }
-  if (max) {
-    const compared = compareVersions(installed, max)
-    // 高于上限同样不满足：依赖库可能在更高版本改了接口
-    if (compared === null || compared > 0) return false
-  }
-  return true
+  return best ? [...(best.relations ?? [])] : [...base]
 }
 
 /**
  * 取某个 Release 版本适用的关系表。
  *
- * 仓库级 `relations` 是默认值；`release_relations` 里的条目按**版本区间**
- * （`min_version` ≤ 当前 Release 版本 ≤ `max_version`，两端都可省略）
- * 筛选，取「下限最高」的那条命中区间，用它的 `relations` **整体替换**
- * 默认值（不是合并 —— 合并会让「新版本降低要求」无法表达）。
- *
- * 传空 `releaseVersion` 时只用默认值：调用方拿不到版本号时，
- * 无法判断该用哪条覆盖规则，硬套一条会比不给更糟。
+ * `releaseVersion` 是**这次要装（或当前展示）的版本**，不是本地已装版本：
+ * 覆盖规则按它筛，因为不同大版本可能声明不同关系（1.0 依赖 B≥2，1.1 依赖 B≥3）。
  */
 export function relationsForRelease(
   repo: Repository,
   releaseVersion: string | null | undefined,
 ): RepositoryRelation[] {
-  const base = repo.relations ?? []
-  const overrides = repo.release_relations ?? []
-  const current = releaseVersion?.trim()
-  if (!current || !overrides.length) return base
+  return pickReleaseRelations(repo.relations ?? [], repo.release_relations, releaseVersion)
+}
 
-  let best: { relations: RepositoryRelation[]; lowerBound: string } | undefined
-  for (const override of overrides) {
-    const min = override.min_version?.trim() ?? ''
-    const max = override.max_version?.trim() ?? ''
-    // 下限：当前版本 >= min（未填下限视为不限）
-    if (min) {
-      const compared = compareVersions(current, min)
-      if (compared === null || compared < 0) continue
-    }
-    // 上限：当前版本 <= max（未填上限视为不限）
-    if (max) {
-      const compared = compareVersions(current, max)
-      if (compared === null || compared > 0) continue
-    }
-    /*
-     * 多条都命中后取下限最高的（最贴近当前版本的那条）。
-     *
-     * 下限为空视为「最低优先级」：它能匹配一切，不该压过更具体的规则
-     * （例如同时写了「≥1.0 全部」和「≥1.8 特别是这个」时，1.9 应命中后者）。
-     */
-    const isMoreSpecific = !best
-      || (best.lowerBound === '' && min !== '')
-      || (best.lowerBound !== '' && min !== ''
-        && (compareVersions(min, best.lowerBound) ?? 0) > 0)
-    if (isMoreSpecific) best = { relations: override.relations ?? [], lowerBound: min }
-  }
-  return best ? best.relations : base
+/**
+ * 取地图条目在某个 Release 版本下的关系表。
+ *
+ * 地图与 MOD 共用同一套关系模型与同一份覆盖规则，差别只在默认声明的来源：
+ * `relations` 是原始声明，`required_frameworks` 是后端给框架提示用的
+ * 「依赖」投影（老地图源只有后者），两者都没写时为空。
+ */
+export function relationsForMapRelease(
+  map: Pick<MapInfo, 'relations' | 'required_frameworks' | 'release_relations'>,
+  releaseVersion?: string | null,
+): RepositoryRelation[] {
+  const base = map.relations?.length
+    ? map.relations
+    : (map.required_frameworks ?? []).map((framework) => ({
+      kind: 'requires' as const,
+      guid: framework.guid,
+      version: framework.version ?? '',
+    }))
+  return pickReleaseRelations(base, map.release_relations, releaseVersion)
 }
 
 /** 本地所有装了某个 GUID 的 MOD（含被禁用的 —— 禁用不等于没装）。 */
@@ -150,34 +180,32 @@ function isPrereleaseCopy(mod: InstalledMod): boolean {
 }
 
 /**
- * 这条关系是否适用于该本地 MOD（版本区间 + 预发布三态）。
+ * 这条关系是否适用于该本地 MOD（版本要求 + 预发布三态）。
  *
  * `prerelease` 不写表示两种都算；写了就只在「是不是预发布」相符时才成立。
- * 它先于版本区间判断：区间是「哪些版本」，这个标志是「哪条发布线」。
+ * 它先于版本要求判断：区间是「哪些版本」，这个标志是「哪条发布线」。
  */
 function relationMatchesCopy(relation: RepositoryRelation, mod: InstalledMod): boolean {
   const wantPrerelease = relation.prerelease
   if (wantPrerelease !== undefined && isPrereleaseCopy(mod) !== wantPrerelease) return false
-  return versionInRange(mod.version, relation.min_version, relation.max_version)
+  return matchesVersionSpec(relation.version, mod.version)
 }
 
 /**
- * 在来源仓库里挑一个**满足区间**的 Release。
+ * 在来源仓库里挑一个**满足版本要求**的 Release。
  *
  * 为什么不能只看仓库：要求 B ≥2.0 而该仓库最高版本只有 1.9 时，
  * 装了也解决不了依赖 —— 那种情况必须归为「没有可安装来源」，
  * 而不是给一个点了也没用的按钮。
  *
  * `cached_releases` 已按后端顺序（新的在前）排列，所以从前往后找第一个
- * 满足区间的即可。默认跳过草稿与预发布，避免自动装到测试版；
+ * 满足要求的即可。默认跳过草稿与预发布，避免自动装到测试版；
  * 只有当关系显式要求 `prerelease = true` 时才接受预发布 Release。
  */
 function matchingRelease(
   repo: Repository,
   relation: RepositoryRelation,
 ): ReleaseInfo | undefined {
-  const min = relation.min_version?.trim()
-  const max = relation.max_version?.trim()
   const wantPrerelease = relation.prerelease
   return (repo.cached_releases ?? []).find((release) => {
     if (release.draft) return false
@@ -189,7 +217,7 @@ function matchingRelease(
     } else if (prerelease) {
       return false
     }
-    return versionInRange(version, min, max)
+    return matchesVersionSpec(relation.version, version)
   })
 }
 
@@ -198,7 +226,7 @@ function matchingRelease(
  *
  * 要求仓库本身可用（地区/启用已由调用方筛过）、是 Release 模式、
  * 且缓存里有满足区间的 Release。RAW 仓库不能用来满足关系 ——
- * 它没有版本概念，也没法比较 `min_version`。
+ * 它没有版本概念，也没法比较版本要求。
  *
  * `excludeRepositoryId` 排除仓库自身：一个 MOD 声明关于自己的关系时，
  * 「装自己」既解决不了依赖也消不掉冲突，只会产生一个点不动按钮。
@@ -321,17 +349,15 @@ export function belongsToRepository(mod: InstalledMod, repo: Repository): boolea
 /**
  * 为冲突关系找一个「装上就不冲突」的版本。
  *
- * 需要的是**不命中**这条关系的版本 —— 通常比冲突区间更新（修复了冲突）
- * 或更旧（还没引入冲突）。只在「纯版本区间冲突」时使用；发布线互斥
- * （写了 `prerelease`）不走这条路，原因见 `resolveRelation`。
+ * 需要的是**不满足**这条关系版本要求的版本 —— 通常比冲突区间更新
+ * （修复了冲突）或更旧（还没引入冲突）。只在「纯版本冲突」时使用；
+ * 发布线互斥（写了 `prerelease`）不走这条路，原因见 `resolveRelation`。
  */
 function compatibleSourceFor(
   relation: RepositoryRelation,
   repositories: readonly Repository[],
   excludeRepositoryId?: string,
 ): { repository: Repository; release: ReleaseInfo } | undefined {
-  const min = relation.min_version?.trim()
-  const max = relation.max_version?.trim()
   for (const repo of repositories) {
     if (repo.id === excludeRepositoryId) continue
     if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, relation.guid)) continue
@@ -339,8 +365,8 @@ function compatibleSourceFor(
     const release = (repo.cached_releases ?? []).find((entry) => {
       if (entry.draft || entry.prerelease) return false
       const version = entry.tag_name || entry.version
-      // 只要不命中区间就可用
-      return !versionInRange(version, min, max)
+      // 只要不满足版本要求就可用
+      return !matchesVersionSpec(relation.version, version)
     })
     if (release) return { repository: repo, release }
   }

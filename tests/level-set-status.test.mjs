@@ -328,14 +328,14 @@ test('作者名：线上与本地都为空时两行都空（视图显示 —）'
 test('地图投影成 Repository 时把 required_frameworks 变成 requires 依赖', () => {
   const repo = mapRelationRepository(map({
     required_frameworks: [
-      { guid: 'com.rw.diylevel', min_version: '1.0.0' },
-      { guid: 'com.rw.diylevel.web', min_version: '' },
+      { guid: 'com.rw.diylevel', version: '>=1.0.0' },
+      { guid: 'com.rw.diylevel.web', version: '' },
     ],
   }))
   assert.equal(repo.id, 'map-rw')
   assert.deepEqual(repo.relations, [
-    { kind: 'requires', guid: 'com.rw.diylevel', min_version: '1.0.0', max_version: '' },
-    { kind: 'requires', guid: 'com.rw.diylevel.web', min_version: '', max_version: '' },
+    { kind: 'requires', guid: 'com.rw.diylevel', version: '>=1.0.0' },
+    { kind: 'requires', guid: 'com.rw.diylevel.web', version: '' },
   ])
 })
 
@@ -348,11 +348,11 @@ test('没有 cached_releases 时用 latest_release 兜底，保持仓库同形',
 })
 
 test('框架依赖：装了且在区间内才算满足', () => {
-  const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel', min_version: '1.0.0' }] })
+  const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel', version: '>=1.0.0' }] })
   const ok = frameworkStates(target, [mod({ version: '1.1.0' })])
   assert.deepEqual(ok, [{
     guid: 'com.rw.diylevel',
-    minVersion: '1.0.0',
+    version: '>=1.0.0',
     installedVersion: '1.1.0',
     satisfied: true,
   }])

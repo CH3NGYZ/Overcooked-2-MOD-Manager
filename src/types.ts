@@ -50,19 +50,22 @@ export interface ReleaseInfo {
  * - `conflicts`  目标存在且版本落在区间内 → 冲突，需要卸载
  * - `compatible` 目标存在时版本必须落在区间内；否则不兼容，需要卸载
  *
- * 三者共用 `min_version`/`max_version`：不写就是该端不设限制。
+ * 三者共用 `version`：不写（或写 `*`）就是不限版本。
  */
 export type RelationKind = 'requires' | 'conflicts' | 'compatible'
 
-/** 一条关系声明：对某个 GUID 的版本区间要求。 */
+/** 一条关系声明：对某个 GUID 的版本要求（pip 风格区间表达式）。 */
 export interface RepositoryRelation {
   /** 省略时按 `requires` 处理（历史写法只写 guid）。 */
   kind?: RelationKind
   guid: string
-  /** 版本区间下限（含）；空字符串表示不限。 */
-  min_version?: string
-  /** 版本区间上限（含）；空字符串表示不限。 */
-  max_version?: string
+  /**
+   * 版本要求，pip 风格区间表达式：`>=1.8.0,<2.0.0`、`==1.2.3`、`!=1.0`…
+   *
+   * 空字符串（或缺省）表示不限版本。判定统一走 `versionSpec.ts` 的
+   * `versionMatches`，前端不再有第二套区间比较。
+   */
+  version?: string
   /**
    * 只对预发布版本成立（三态）。
    *
@@ -82,14 +85,17 @@ export interface RepositoryRelation {
  * 按 Release 版本覆盖关系表。
  *
  * 同一 MOD 的不同大版本可以依赖不同版本的基础库。匹配规则：
- * 所有区间命中的条目里取 `min_version` 最高的那条，其 `relations`
+ * 所有区间命中的条目里取**下限最高**的那条，其 `relations`
  * 整体替换仓库级 `relations`（不合并）。
  */
 export interface ReleaseRelationOverride {
-  /** 生效的最低 Release 版本（含）；空表示不限。 */
-  min_version?: string
-  /** 生效的最高 Release 版本（含）；空表示不限。 */
-  max_version?: string
+  /**
+   * 这条覆盖表适用的 Release 版本（pip 风格区间表达式）。
+   *
+   * 必填且必须能解析：空表达式等于匹配一切，会让下面每条覆盖规则都
+   * 生效，配置错误不该被静默当成「全版本」。
+   */
+  version: string
   relations: RepositoryRelation[]
 }
 
@@ -154,7 +160,7 @@ export interface PublicConfig {
   /** 已经看过的教程步骤 id；启动时只播不在里面的步骤。 */
   tutorial_watched_steps?: string[]
   game: { path: string; runtime: GameRuntime }
-  network: { timeout_seconds: number; download_threads: number; max_retry_count: number; check_updates_on_start: boolean }
+  network: { timeout_seconds: number; download_threads: number; max_retry_count: number }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
   official_api_only: boolean
   github_token_set: boolean
@@ -578,7 +584,7 @@ export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: 
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
-export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; check_updates_on_start?: boolean; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
+export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string
@@ -626,7 +632,8 @@ export interface GitHubProxyPatch {
 /** 地图依赖的一个框架组件。 */
 export interface RequiredFramework {
   guid: string
-  min_version?: string
+  /** 版本要求（pip 风格区间表达式）；空表示不限。 */
+  version?: string
   /** 本地已装版本；未装时为空。 */
   installed_version?: string | null
 }
@@ -715,6 +722,13 @@ export interface MapInfo {
    * 这里保留原始声明（含冲突/兼容、发布线、可选标记），依赖表要照原样展示。
    */
   relations?: RepositoryRelation[]
+  /**
+   * 按 Release 版本覆盖关系表（与 MOD 仓库同一语义、同一实现）。
+   *
+   * 同一张地图的不同版本可能依赖不同框架版本；命中哪条由 `versionMatches`
+   * 判定，取**区间下限最高**的那条整体替换 `relations`（不合并）。
+   */
+  release_relations?: ReleaseRelationOverride[]
   /**
    * 这些依赖里当前没满足的那几条。
    *

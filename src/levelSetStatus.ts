@@ -1,6 +1,7 @@
 import { compareVersions } from './modStatus.ts'
 import {
-  dependencyTagFor, resolveRelation, resolveRelations, type RelationStatus,
+  dependencyTagFor, relationsForMapRelease, resolveRelation, resolveRelations,
+  type RelationStatus,
 } from './modRelations.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, Repository } from './types'
 
@@ -275,7 +276,44 @@ export function levelSetForMap(
  * 只填关系判定真正会读的字段，其余给安全默认值；新增字段时如果关系判定
  * 会读它，记得同步这里（`mapRelationRepository` 是唯一的投影入口）。
  */
-export function mapRelationRepository(map: MapInfo): Repository {
+/**
+ * 一张地图「将要安装 / 当前展示」的 Release 版本。
+ *
+ * 优先用后端缓存的最新 tag（用户点安装取的就是它）；源的 `latest_version`
+ * 是作者钉死的版本声明，只在没有 tag 时兜底。全都为空时返回 null ——
+ * 调用方拿不到版本就只能用仓库级默认关系表。
+ */
+export function mapReleaseVersion(
+  map: Pick<MapInfo, 'latest_tag' | 'latest_version' | 'latest_release'> | null | undefined,
+): string | null {
+  if (!map) return null
+  const tag = map.latest_tag?.trim()
+    || map.latest_release?.tag_name?.trim()
+    || map.latest_release?.version?.trim()
+    || map.latest_version?.trim()
+  return tag || null
+}
+
+/**
+ * 把一张地图投影成 `Repository`，仅供关系判定使用。
+ *
+ * 为什么需要投影：地图的框架依赖与 MOD 的插件依赖是**同一套模型**
+ * （`relations` + `required_frameworks`），判定逻辑已经写在 `modRelations.ts`
+ * 里。地图不是 `Repository`，但只要有 `relations` 就能复用那条管线，
+ * 不需要为地图再写一份依赖判定。
+ *
+ * `version` 是这次要判定/安装的 Release 版本：覆盖表（`release_relations`）
+ * 按它选表，不传则用当前最新版本（`mapReleaseVersion`）。关系已经在这里
+ * 定好，调用方不用再把版本传给 `resolveRelations` —— 传了也只会因为投影里
+ * 没有覆盖表而原样返回。
+ *
+ * 只填关系判定真正会读的字段，其余给安全默认值；新增字段时如果关系判定
+ * 会读它，记得同步这里（`mapRelationRepository` 是唯一的投影入口）。
+ */
+export function mapRelationRepository(
+  map: MapInfo,
+  version?: string | null,
+): Repository {
   return {
     id: map.id,
     name: map.name,
@@ -301,20 +339,15 @@ export function mapRelationRepository(map: MapInfo): Repository {
     builtin: map.builtin,
     // 契约里 `get_maps` 会填全部缓存 Release；老快照或手写测试对象可能没有
     cached_releases: map.cached_releases ?? (map.latest_release ? [map.latest_release] : []),
-    relations: (map.required_frameworks ?? []).map((framework) => ({
-      kind: 'requires' as const,
-      guid: framework.guid,
-      min_version: framework.min_version ?? '',
-      max_version: '',
-    })),
+    relations: relationsForMapRelease(map, version ?? mapReleaseVersion(map)),
   }
 }
 
 /** 一条框架依赖在本地的满足情况。 */
 export interface FrameworkState {
   guid: string
-  /** 依赖声明的最低版本（空表示不限）。 */
-  minVersion: string
+  /** 依赖声明的版本要求（区间表达式原文，空表示不限）。 */
+  version: string
   /** 本地已装版本；未装时为空。 */
   installedVersion: string | null
   /** 已装且版本落在依赖声明的区间内。 */
@@ -331,13 +364,15 @@ export interface FrameworkState {
  * 详情里却列着一条缺依赖。
  */
 export function levelSetRelationStatuses(
-  set: Pick<LevelSetInfo, 'name' | 'author' | 'relations'>,
+  set: Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'>,
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
   repositories: readonly Repository[] = [],
 ): RelationStatus[] {
   const bound = mapForLevelSet(set, maps)
-  if (bound) return mapRelationStatuses(bound, mods, repositories)
+  // 已安装的图按**本地版本**取覆盖表：卡片说的是「这一版跑不跑得起来」，
+  // 不是「最新版要不要什么」。
+  if (bound) return mapRelationStatuses(bound, mods, repositories, set.version)
   return (set.relations ?? []).map((relation) => resolveRelation(relation, mods, repositories))
 }
 
@@ -347,14 +382,17 @@ export function levelSetRelationStatuses(
  * `repositories` 必须传：地图声明的前置就是仓库里的 MOD（DIYLevel、
  * Web Runtime 都有 `plugin_guid`），不传的话每条依赖都会被判成「没有来源」，
  * 地图页与 MOD 页就会对同一件事给出不同结论 —— 这正是两边口径要统一的地方。
+ *
+ * `version` 是这次要安装的 Release 版本（不传用最新版），用于选版本覆盖表。
  */
 export function mapRelationStatuses(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
   repositories: readonly Repository[] = [],
+  version?: string | null,
 ): RelationStatus[] {
   if (!map) return []
-  return resolveRelations(mapRelationRepository(map), mods, repositories)
+  return resolveRelations(mapRelationRepository(map, version), mods, repositories)
 }
 
 /**
@@ -370,7 +408,7 @@ export function frameworkStates(
 ): FrameworkState[] {
   return mapRelationStatuses(map, mods, repositories).map((status) => ({
     guid: status.relation.guid,
-    minVersion: status.relation.min_version?.trim() ?? '',
+    version: status.relation.version?.trim() ?? '',
     installedVersion: status.installedVersion,
     satisfied: status.state === 'ok',
   }))

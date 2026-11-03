@@ -408,13 +408,13 @@ export const overview: DomainMessages = {
     ko: '시작 시 업데이트 확인',
     ja: '起動時に更新を確認',
   },
-  // 启动管理器时检查新版本，可在设置中关闭
-  checkForANewVersionWhenTheManagerStartsCanBeTurnedOffInSettings: {
-    'zh-CN': '启动管理器时检查新版本，可在设置中关闭',
-    'zh-TW': '啟動管理器時檢查新版本，可在設定中關閉',
-    en: 'Check for a new version when the manager starts; can be turned off in settings',
-    ko: '관리자 시작 시 새 버전을 확인합니다. 설정에서 끌 수 있습니다',
-    ja: 'マネージャー起動時に新バージョンを確認します（設定で無効化できます）',
+  // 启动检查恒开，说明启动时会做什么
+  checkForUpdatesOnStartupHint: {
+    'zh-CN': '每次启动都会自动检查一次新版本，查到后提示，不会静默安装',
+    'zh-TW': '每次啟動都會自動檢查一次新版本，查到後提示，不會靜默安裝',
+    en: 'Checked once on every launch; you get a prompt, never a silent install',
+    ko: '실행할 때마다 새 버전을 한 번 확인하며, 찾으면 알려 주고 자동으로 설치하지 않습니다',
+    ja: '起動のたびに新バージョンを確認し、見つかると通知します（自動ではインストールしません）',
   },
   // 关于
   about: {

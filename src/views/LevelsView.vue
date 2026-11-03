@@ -14,6 +14,7 @@ import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
+import { formatVersionSpec } from '../versionSpec'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
@@ -676,7 +677,7 @@ async function runCardAction(set: LevelSetInfo) {
   const map = mapForLevelSet(set, maps.value)
   if (!map) return
   const targetTag = map.latest_tag ?? undefined
-  if (!(await planGate.run(mapRelationRepository(map), targetTag))) return
+  if (!(await planGate.run(mapRelationRepository(map, targetTag), targetTag))) return
   actionInFlight.value = set.dir_name
   try {
     await installRelease(map.id, targetTag, undefined, {
@@ -703,8 +704,8 @@ function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
     const list = levelSetRelationStatuses(set, maps.value, mods.value, repositories.value)
       .filter((status) => status.state !== 'ok' && (status.relation.kind ?? 'requires') === 'requires')
       .map((status) => {
-        const min = status.relation.min_version?.trim()
-        return `${status.relation.guid}${min ? ` ≥ ${min}` : ''}`
+        const spec = formatVersionSpec(status.relation.version ?? '')
+        return `${status.relation.guid}${spec ? ` ${spec}` : ''}`
       })
       .join(' · ')
     return t('levelSet.frameworksNotMet', { list: list || t('modsOnline.missingDep') })

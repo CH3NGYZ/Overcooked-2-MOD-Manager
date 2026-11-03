@@ -25,12 +25,14 @@
  */
 import {
   relationTargetRepository,
+  relationsForMapRelease,
   resolveRelation,
   relationsForRelease,
   type RelationStatus,
 } from './modRelations.ts'
 import { isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
-import { mapForLevelSet } from './levelSetStatus.ts'
+import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
+import { formatVersionSpec } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
   InstalledMod, LevelSetInfo, MapInfo, RelationKind, Repository, RepositoryRelation,
@@ -64,7 +66,7 @@ export interface DependencyRow {
    * 表格里额外标出「测试版 / 正式版」。
    */
   line?: 'prerelease' | 'stable'
-  /** 版本要求文本（`≥ 1.2.0`、`1.0 ~ 2.0`）；空表示不限版本。 */
+  /** 版本要求文本（区间表达式原文，如 `>=1.2.0,<2.0.0`）；空表示不限版本。 */
   requirement?: string
   /** 状态文案（已满足 / 可安装 / 可更新 / 缺依赖 / 冲突 / 未安装 …）。 */
   status: string
@@ -122,6 +124,12 @@ export interface DependencyRowOptions {
    * 有可安装来源就跳，没有就不假装可点。
    */
   jumpToRepository?: boolean
+  /**
+   * 要判定的版本（地图域）：地图详情里选中哪个 Release，依赖表就看哪一版
+   * 的 `release_relations`。省略时用「将要安装的最新版」，已安装的地图集
+   * 传自己的本地版本。
+   */
+  version?: string | null
 }
 
 const identityTranslate: DependencyTranslate = (key) => key
@@ -138,14 +146,14 @@ function sameGuid(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase()
 }
 
-/** 版本区间文本：两端都有时写成区间，只有一端时用单边符号。 */
+/**
+ * 版本要求文本：区间表达式按可读形式原样展示（`>=1.2.0,<2.0.0`）。
+ *
+ * 前端没有第二套「下限/上限」结构了，所以这里也不能把表达式再拆成
+ * `≥ x` / `x ~ y` —— 那会把 `!=1.3`、`>1.0` 这类单条件表达不出来。
+ */
 export function dependencyRequirement(relation: RepositoryRelation): string {
-  const min = relation.min_version?.trim() ?? ''
-  const max = relation.max_version?.trim() ?? ''
-  if (min && max) return `${min} ~ ${max}`
-  if (min) return `≥ ${min}`
-  if (max) return `≤ ${max}`
-  return ''
+  return formatVersionSpec(relation.version ?? '')
 }
 
 /** 关系的发布线小标：没写 `prerelease` 就是不限定（两条线都算）。 */
@@ -321,20 +329,18 @@ export function dependencyRowsFor(
 
 /* ===== 卡片上的关系提醒标签 → 见 `modRelations.dependencyTagFor` ===== */
 
-/** 地图仓库声明的依赖（`required_frameworks` 是它的旧投影，见下方回退）。 */
-export function mapRelations(map: MapInfo | null | undefined): RepositoryRelation[] {
+/**
+ * 地图仓库声明的关系（`required_frameworks` 是它的旧投影，见下方回退）。
+ *
+ * `version` 是这次要安装的 Release 版本：覆盖表（`release_relations`）按它选；
+ * 不传时用当前最新版（`mapReleaseVersion`）—— 卡片上「将要安装的版本」正是它。
+ */
+export function mapRelations(
+  map: MapInfo | null | undefined,
+  version?: string | null,
+): RepositoryRelation[] {
   if (!map) return []
-  if (map.relations?.length) return map.relations
-  /*
-   * 后端尚未带上原始关系时的回退：`required_frameworks` 只投影了「依赖」，
-   * 丢掉冲突/兼容声明。它足够让旧快照继续工作，但不是长期形态。
-   */
-  return (map.required_frameworks ?? []).map((framework) => ({
-    kind: 'requires' as const,
-    guid: framework.guid,
-    min_version: framework.min_version ?? '',
-    max_version: '',
-  }))
+  return relationsForMapRelease(map, version ?? mapReleaseVersion(map))
 }
 
 /**
@@ -368,7 +374,7 @@ export function installedModRelations(
  * 而不是给弹窗另写一份只看快照的简化版。
  */
 export type LevelSetRelationSource =
-  Pick<LevelSetInfo, 'name' | 'author' | 'relations'> & { name_zh?: string | null }
+  Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'> & { name_zh?: string | null }
 
 /** 一个关卡集该用哪份关系声明（在线地图 → 本地快照）。 */
 export function levelSetRelations(
@@ -376,7 +382,9 @@ export function levelSetRelations(
   maps: readonly MapInfo[],
 ): RepositoryRelation[] {
   const bound = mapForLevelSet(set, maps)
-  if (bound) return mapRelations(bound)
+  // 已安装的集按**本地版本**取覆盖表：依赖表回答的是「这一版缺什么」，
+  // 不是「最新版要不要什么」。本地版本读不出（空串）时退回默认声明。
+  if (bound) return mapRelations(bound, set.version)
   return set.relations ?? []
 }
 
@@ -403,7 +411,7 @@ export function mapDependencyRows(
   map: MapInfo | null | undefined,
   options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
 ): DependencyRow[] {
-  return dependencyRowsFor(mapRelations(map), {
+  return dependencyRowsFor(mapRelations(map, options.version), {
     ...options,
     jumpToRepository: options.jumpToRepository ?? true,
   })

@@ -241,7 +241,7 @@ async function saveGamePath(path: string) {
 async function checkUpdate() {
   checking.value = true
   try {
-    updateResult.value = await api.checkAppUpdate('zh-CN')
+    updateResult.value = await api.checkAppUpdate('zh-CN', true)
     if (updateResult.value.update) {
       // 检测到更新：与启动时相同的弹窗，更新/取消。
       updateInfo.value = updateResult.value.update
@@ -506,16 +506,16 @@ async function clearTokens() {
   </n-drawer>
 
   <!--
-    程序更新：只留一个「是否启动时自动检测」开关。
-    手动检测不在这里 —— 它和版本号是同一件事，放在最下方「关于」的版本号旁边，
-    那里用户才看得到「我现在是什么版本」。
+    程序更新：启动检查恒开，没有开关。
+    保留成一条只读说明，既解释启动时会做什么，也是教程 `settings-update`
+    步骤的高亮锚点。手动检测不在这里 —— 它和版本号是同一件事，放在最下方
+    「关于」的版本号旁边，那里用户才看得到「我现在是什么版本」。
   -->
   <SettingsGroup :title="t('settings.appUpdate')" data-tutorial="settings-update">
     <SettingsRow :title="t('overview.checkForUpdatesOnStartup')"
-      :description="t('overview.checkForANewVersionWhenTheManagerStartsCanBeTurnedOffInSettings')">
+      :description="t('overview.checkForUpdatesOnStartupHint')">
       <template #right>
-        <n-switch size="small" :value="config?.network.check_updates_on_start"
-          @update:value="(value: boolean) => savePreference({ check_updates_on_start: value }, t('common.saved'))" />
+        <n-tag size="small" :bordered="false" type="success">{{ t('settings.alwaysOn') }}</n-tag>
       </template>
     </SettingsRow>
   </SettingsGroup>

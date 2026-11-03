@@ -356,7 +356,15 @@ export const api = {
    */
   refreshCommunityRepositories: (provider: Provider) =>
     invoke<PublicConfig>('refresh_community_repositories', { provider }),
-  checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja') => invoke<AppUpdateCheckResult>('check_app_update', { locale }),
+  /**
+   * 查一次新版本。
+   *
+   * 不传 `force` 就走缓存：后端按地区缓存成功结果 5 分钟，启动检查与
+   * 窗口重新聚焦都用缓存；用户点「检查更新」必须传 `force: true`，
+   * 否则他会看到一次「已是最新」的旧结论。
+   */
+  checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja', force = false) =>
+    invoke<AppUpdateCheckResult>('check_app_update', { locale, force }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
   /** 选择要导入的地图 ZIP。 */

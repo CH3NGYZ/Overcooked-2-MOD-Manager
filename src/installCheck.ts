@@ -14,6 +14,7 @@
  */
 import { pickI18n, t } from './i18n'
 import { formatVersion } from './modStatus'
+import { formatVersionSpec } from './versionSpec'
 import type { InstallPlan, RelationStatus } from './modRelations'
 import type { InstallConflict } from './types'
 
@@ -122,9 +123,8 @@ function compare(left: string, right: string): number | null {
 function blockedText(status: RelationStatus): string {
   const kind = status.relation.kind ?? 'requires'
   const target = status.installedMod?.name ?? status.relation.guid
-  const min = status.relation.min_version?.trim()
-  const max = status.relation.max_version?.trim()
-  const range = min && max ? `${min} ~ ${max}` : min ? `≥${min}` : max ? `≤${max}` : ''
+  // 关系声明已经是区间表达式，原样展示即可（`>=1.8.0,<2.0.0`）
+  const range = formatVersionSpec(status.relation.version ?? '')
 
   if (kind === 'compatible') {
     // 兼容列表：只能提醒版本不对，卸载对方没有意义

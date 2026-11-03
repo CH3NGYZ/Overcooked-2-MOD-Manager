@@ -24,6 +24,7 @@ import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { formatVersion, isPrereleaseVersion, versionDisplay } from '../modStatus'
 import { markdownSummary } from '../markdown'
 import { mapDependencyRows } from '../dependencyRows'
+import { formatVersionSpec } from '../versionSpec'
 import { matchedReleaseAssets } from '../repositoryAssets'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink, useRepositoryLink } from '../crossLink'
@@ -424,6 +425,9 @@ const detailDependencies = computed<DependencyRow[]>(() =>
     repositories: repositories.value,
     translate: t,
     pickName: pickI18n,
+    // 选中哪个 Release 就看哪一版的关系声明：覆盖表（release_relations）
+    // 回答的是「这一版缺什么」，显示最新版的要求会误导准备装旧版的用户。
+    version: detailRelease.value?.tag_name ?? null,
   }),
 )
 
@@ -565,7 +569,8 @@ function downloadCount(map: MapInfo): number | null {
 
 /** 一条框架依赖的展示文案：GUID 太抽象，补上「已装多少」。 */
 function describeFramework(state: FrameworkState): string {
-  const required = state.minVersion ? `${state.guid} ≥ ${state.minVersion}` : state.guid
+  const spec = formatVersionSpec(state.version)
+  const required = spec ? `${state.guid} ${spec}` : state.guid
   if (!state.installedVersion) return required
   return `${required}（${t('levelSet.installedVersion', { version: state.installedVersion })}）`
 }
@@ -668,7 +673,7 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
   if (isInstalling(map) || isRefreshing(map)) return
   const targetTag = tag ?? map.latest_tag ?? undefined
   // 前置检查：地图缺框架时装上也跑不起来，必须先让用户看到
-  const ready = await planGate.run(mapRelationRepository(map), targetTag)
+  const ready = await planGate.run(mapRelationRepository(map, targetTag), targetTag)
   if (!ready) return
 
   setFlag(installing, map.id, true)

@@ -91,7 +91,8 @@ const NON_TAG = new Set([
   'dev.gua.overcooked.diylevel',
   // 社区搜索/测试固件里的假 GUID 与假文件名
   'a.b', 'another.plugin', 'any.guid', 'base.guid', 'conflict.guid', 'dep.guid',
-  'high.guid', 'mid.guid', 'new.guid', 'ranged.guid', 'unknown.guid',
+  'high.guid', 'legacy.guid', 'mid.guid', 'modern.guid', 'narrow.guid',
+  'new.guid', 'old.guid', 'ranged.guid', 'unknown.guid', 'wide.guid',
   'com.bepis.bepinex.configurationmanager', 'com.valvesoftware.steam',
   'com.ch3ngyz.plugin.HostUtilities', 'com.ch3ngyz.plugin.DIYLevel',
   'fixture.configurationmanager',

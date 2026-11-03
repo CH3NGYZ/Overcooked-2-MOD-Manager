@@ -3,31 +3,41 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 /**
- * 启动更新检查的开关契约。
+ * 启动更新检查的契约。
  *
- * 用户反馈：在设置里关闭「启动时检查程序更新」后按 F5（webview 重载，
- * onMounted 重跑）仍会弹出更新提示。原因是 App.vue 的 onMounted 无条件
- * 调用 check_app_update，从未读取 config.network.check_updates_on_start。
+ * 「启动时检查程序更新」开关已按用户要求删除 —— 启动恒检测；省请求交给后端：
+ * `check_app_update` 按地区缓存成功结果 5 分钟，前端只有用户手动检测时才传
+ * `force: true` 绕过缓存。
  *
- * 这里直接对真实源码断言顺序：必须先读配置并判断该字段，才允许发起检查。
+ * 两件事都在真实源码上钉住：谁把开关读回来、谁让手动检测也吃缓存，这里先红。
  */
 const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+const settings = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
+const services = readFileSync(new URL('../src/services/tauri.ts', import.meta.url), 'utf8')
+const commands = readFileSync(new URL('../src-tauri/src/commands.rs', import.meta.url), 'utf8')
 
-test('启动更新检查先读配置开关，再决定是否请求', () => {
-  const gate = app.indexOf('check_updates_on_start')
-  const call = app.indexOf("checkAppUpdate('zh-CN')")
-  assert.ok(gate !== -1, 'App.vue 未读取 check_updates_on_start，启动检查会绕过设置开关')
-  assert.ok(call !== -1, 'App.vue 未包含启动更新检查调用')
-  assert.ok(gate < call, '必须先在启动路径上判断开关，再调用 checkAppUpdate')
+test('启动更新检查恒开，不再有开关门控', () => {
+  const mountBlock = app.slice(app.indexOf('onMounted('), app.indexOf('</script>'))
+  assert.equal(app.includes('check_updates_on_start'), false, 'App.vue 仍在读已删除的开关')
+  assert.match(mountBlock, /api\.config\(\)/, '启动路径要先读配置（教程进度也用它）')
+  assert.match(mountBlock, /api\.checkAppUpdate\('zh-CN'\)/, '启动路径必须无条件发起一次检查')
 })
 
-test('开关读取来自 api.config()，且关闭时不发请求', () => {
-  const mountBlock = app.slice(app.indexOf('onMounted('), app.indexOf('</script>'))
-  assert.match(mountBlock, /api\.config\(\)/, '启动检查必须从 api.config() 取真实配置')
-  // 读配置失败时 `config` 仍是 null，同样要当作「开关关闭」提前返回。
+test('手动检测绕过 5 分钟缓存', () => {
   assert.match(
-    mountBlock,
-    /if \(!config\?\.network\.check_updates_on_start\) return/,
-    '开关关闭时必须提前返回，不能继续调用 checkAppUpdate',
+    services,
+    /checkAppUpdate: \(locale: [^)]*force = false\)/,
+    '服务层 checkAppUpdate 必须带 force 参数（默认走缓存）',
   )
+  assert.match(
+    settings,
+    /api\.checkAppUpdate\('zh-CN', true\)/,
+    '设置页「检查更新」必须传 force: true，否则会拿缓存当结论',
+  )
+})
+
+test('后端按地区缓存更新检查结果 5 分钟', () => {
+  assert.match(commands, /const APP_UPDATE_CACHE_TTL_MS: i64 = 5 \* 60 \* 1000;/, '缺少 5 分钟缓存常量')
+  assert.match(commands, /fn app_update_cache_get\(/, '缺少缓存读取实现')
+  assert.match(commands, /fn app_update_cache_store\(/, '缺少缓存写入实现')
 })

@@ -164,19 +164,19 @@ test('本地化回退顺序可由调用方接管（视图传 pickI18n）', () =>
 
 test('满足时只写「已满足」，不把已装版本写进状态列', () => {
   const rows = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.fw', min_version: '1.0' }],
+    [{ kind: 'requires', guid: 'dev.fw', version: '>=1.0' }],
     { mods: [mod({ guid: 'dev.fw', version: '1.4.2' })], translate: keyOf },
   )
   assert.equal(rows.length, 1)
   assert.equal(rows[0].status, 'tools.satisfied')
   assert.equal(rows[0].tone, 'mild')
-  assert.equal(rows[0].requirement, '≥ 1.0')
+  assert.equal(rows[0].requirement, '>=1.0')
 })
 
 test('装了但版本不满足 → 可更新；没装但线上有满足区间的版本 → 可安装', () => {
   const source = repo({ id: 'fw', plugin_guid: 'dev.fw', cached_releases: [release('1.5.0')] })
   const outdated = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.fw', min_version: '1.2' }],
+    [{ kind: 'requires', guid: 'dev.fw', version: '>=1.2' }],
     {
       mods: [mod({ guid: 'dev.fw', version: '1.0.0' })],
       repositories: [source],
@@ -189,7 +189,7 @@ test('装了但版本不满足 → 可更新；没装但线上有满足区间的
   assert.equal(outdated[0].jump?.id, 'fw')
 
   const absent = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.fw', min_version: '1.2' }],
+    [{ kind: 'requires', guid: 'dev.fw', version: '>=1.2' }],
     { mods: [], repositories: [source], translate: keyOf, jumpToRepository: true },
   )
   assert.equal(absent[0].status, 'tools.installable')
@@ -220,7 +220,7 @@ test('冲突/兼容用自己那套措辞，不共用「已满足」', () => {
   assert.equal(clear[0].status, 'tools.noConflict')
 
   const compatible = dependencyRowsFor(
-    [{ kind: 'compatible', guid: 'dev.x', max_version: '1.0' }],
+    [{ kind: 'compatible', guid: 'dev.x', version: '<=1.0' }],
     { mods: [mod({ guid: 'dev.x', version: '9.9' })], translate: keyOf },
   )
   assert.equal(compatible[0].status, 'tools.incompatible')
@@ -228,19 +228,19 @@ test('冲突/兼容用自己那套措辞，不共用「已满足」', () => {
 
 test('地图与 MOD 同一口径：可安装 / 可更新 / 缺依赖，不再自造「未安装」', () => {
   const satisfied = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.diy', min_version: '1.0' }],
+    [{ kind: 'requires', guid: 'dev.diy', version: '>=1.0' }],
     { mods: [mod({ guid: 'dev.diy', version: '19.0' })], translate: keyOf },
   )
   assert.equal(satisfied[0].status, 'tools.satisfied')
 
   const absent = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.diy', min_version: '1.0' }],
+    [{ kind: 'requires', guid: 'dev.diy', version: '>=1.0' }],
     { mods: [], translate: keyOf },
   )
   assert.equal(absent[0].status, 'modsOnline.missingDep')
 
   const installable = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.diy', min_version: '1.0' }],
+    [{ kind: 'requires', guid: 'dev.diy', version: '>=1.0' }],
     {
       mods: [],
       repositories: [repo({
@@ -256,7 +256,7 @@ test('地图与 MOD 同一口径：可安装 / 可更新 / 缺依赖，不再自
 
   // 装了但版本不够 →「可更新」，与 MOD 卡片上的结论同一套
   const outdated = dependencyRowsFor(
-    [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0' }],
+    [{ kind: 'requires', guid: 'dev.diy', version: '>=19.0' }],
     {
       mods: [mod({ guid: 'dev.diy', version: '1.0' })],
       repositories: [repo({
@@ -295,9 +295,9 @@ test('key 带发布线：同 GUID 的「与正式版互斥 / 与测试版互斥�
 })
 
 test('版本要求文本：单边与区间两种写法', () => {
-  assert.equal(dependencyRequirement({ guid: 'a', min_version: '1.0' }), '≥ 1.0')
-  assert.equal(dependencyRequirement({ guid: 'a', max_version: '2.0' }), '≤ 2.0')
-  assert.equal(dependencyRequirement({ guid: 'a', min_version: '1.0', max_version: '2.0' }), '1.0 ~ 2.0')
+  assert.equal(dependencyRequirement({ guid: 'a', version: '>=1.0' }), '>=1.0')
+  assert.equal(dependencyRequirement({ guid: 'a', version: '<=2.0' }), '<=2.0')
+  assert.equal(dependencyRequirement({ guid: 'a', version: '>=1.0,<=2.0' }), '>=1.0,<=2.0')
   assert.equal(dependencyRequirement({ guid: 'a' }), '')
 })
 
@@ -319,7 +319,7 @@ test('已安装 MOD 的关系声明：绑定仓库在线时以在线为准（含
     plugin_guid: 'dev.cursor',
     relations: [{ kind: 'requires', guid: 'dev.old' }],
     release_relations: [
-      { min_version: '2.0', relations: [{ kind: 'requires', guid: 'dev.new', min_version: '3.0' }] },
+      { version: '>=2.0', relations: [{ kind: 'requires', guid: 'dev.new', version: '>=3.0' }] },
     ],
   })
   const installed = mod({ repository_id: 'cursor', guid: 'dev.cursor', version: '2.4.0', relations: [{ guid: 'dev.snapshot' }] })
@@ -340,7 +340,7 @@ test('MOD 管理页的行：用已装版本筛 release_relations，名称走在�
     plugin_guid: 'dev.cursor',
     name_i18n: { 'zh-CN': '光标 MOD' },
     release_relations: [
-      { min_version: '2.0', relations: [{ kind: 'requires', guid: 'dev.fw', min_version: '2.0' }] },
+      { version: '>=2.0', relations: [{ kind: 'requires', guid: 'dev.fw', version: '>=2.0' }] },
     ],
   })
   const fw = repo({ id: 'fw', plugin_guid: 'dev.fw', name_i18n: { 'zh-CN': '框架' }, cached_releases: [release('2.1.0')] })
@@ -354,7 +354,7 @@ test('MOD 管理页的行：用已装版本筛 release_relations，名称走在�
 })
 
 test('地图关系：在线条目在就按在线，不在才用本地快照', () => {
-  const online = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0' }] })
+  const online = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', version: '>=19.0' }] })
   assert.deepEqual(
     levelSetRelations(levelSet(), [online]).map((relation) => relation.guid),
     ['dev.diy'],
@@ -365,14 +365,77 @@ test('地图关系：在线条目在就按在线，不在才用本地快照', ()
   )
 })
 
+test('已安装关卡集按自己的版本取覆盖表，不跟最新版走', () => {
+  const online = mapInfo({
+    latest_tag: 'v2.0.0',
+    relations: [{ kind: 'requires', guid: 'dev.old', version: '>=1.0' }],
+    release_relations: [
+      { version: '>=2.0', relations: [{ kind: 'requires', guid: 'dev.new', version: '>=2.0' }] },
+    ],
+  })
+  assert.deepEqual(
+    levelSetRelations(levelSet({ version: '1.4.0' }), [online]).map((relation) => relation.guid),
+    ['dev.old'],
+  )
+  assert.deepEqual(
+    levelSetRelations(levelSet({ version: '2.1.0' }), [online]).map((relation) => relation.guid),
+    ['dev.new'],
+  )
+})
+
 test('老快照没有 relations 时退回 required_frameworks 投影', () => {
-  const legacy = mapInfo({ required_frameworks: [{ guid: 'dev.diy', min_version: '19.0' }] })
+  const legacy = mapInfo({ required_frameworks: [{ guid: 'dev.diy', version: '>=19.0' }] })
   const relations = mapRelations(legacy)
-  assert.deepEqual(relations, [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0', max_version: '' }])
+  assert.deepEqual(relations, [{ kind: 'requires', guid: 'dev.diy', version: '>=19.0' }])
+})
+
+test('地图覆盖表按版本命中，取区间下限最高的那张（整体替换）', () => {
+  const map = mapInfo({
+    relations: [{ kind: 'requires', guid: 'dev.base', version: '>=1.0' }],
+    release_relations: [
+      { version: '>=1.1', relations: [{ kind: 'requires', guid: 'dev.mid', version: '>=1.0' }] },
+      { version: '>=1.5,<2.0', relations: [{ kind: 'requires', guid: 'dev.new', version: '>=1.0' }] },
+    ],
+  })
+  assert.deepEqual(mapRelations(map, '1.0').map((relation) => relation.guid), ['dev.base'])
+  assert.deepEqual(mapRelations(map, '1.2').map((relation) => relation.guid), ['dev.mid'])
+  // 两条都命中时取下限更高的那条，而不是先出现的
+  assert.deepEqual(mapRelations(map, '1.6').map((relation) => relation.guid), ['dev.new'])
+  // 被上限排除后回落到仍命中的那条；低于所有下限才回默认声明
+  assert.deepEqual(mapRelations(map, '2.1').map((relation) => relation.guid), ['dev.mid'])
+  assert.deepEqual(mapRelations(map, '0.9').map((relation) => relation.guid), ['dev.base'])
+})
+
+test('地图覆盖表下限相同时先出现的生效（与后端同一条规则）', () => {
+  const map = mapInfo({
+    release_relations: [
+      { version: '>=1.0', relations: [{ kind: 'requires', guid: 'dev.first' }] },
+      { version: '>=1.0', relations: [{ kind: 'requires', guid: 'dev.second' }] },
+    ],
+  })
+  assert.deepEqual(mapRelations(map, '1.5').map((relation) => relation.guid), ['dev.first'])
+})
+
+test('地图卡片依赖跟「将要安装的版本」走：默认 latest_tag，选中旧版用旧版声明', () => {
+  const map = mapInfo({
+    latest_tag: 'v2.0.0',
+    relations: [{ kind: 'requires', guid: 'dev.old', version: '>=1.0' }],
+    release_relations: [
+      { version: '>=2.0', relations: [{ kind: 'requires', guid: 'dev.new', version: '>=2.0' }] },
+    ],
+  })
+  assert.deepEqual(
+    mapDependencyRows(map, { mods: [], translate: keyOf }).map((row) => row.name),
+    ['dev.new'],
+  )
+  assert.deepEqual(
+    mapDependencyRows(map, { mods: [], translate: keyOf, version: 'v1.4.0' }).map((row) => row.name),
+    ['dev.old'],
+  )
 })
 
 test('地图的行也带跳转：本地关卡集与地图源条目共用同一套名字解析与落点', () => {
-  const map = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', min_version: '19.0' }] })
+  const map = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', version: '>=19.0' }] })
   const diy = repo({
     id: 'diy',
     plugin_guid: 'dev.diy',

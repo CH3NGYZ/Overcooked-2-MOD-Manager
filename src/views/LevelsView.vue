@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
 import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -10,7 +11,8 @@ import { tagColorFor } from '../theme'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useMapSources } from '../composables/useMapSources'
-import { useFocusHighlight, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
@@ -22,6 +24,7 @@ import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import InstallCheckDialog from '../components/InstallCheckDialog.vue'
+import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
@@ -38,14 +41,17 @@ import {
 } from '../components/levelSetGroupContext'
 import {
   levelSetAuthorNames,
+  levelSetCardAction,
   levelSetCardTags,
   levelSetDisplayName,
   levelSetGroup,
   levelSetRelationStatuses,
   levelSetState,
   mapForLevelSet,
+  mapRelationRepository,
   mapVersionForLevelSet,
   mapVersionRefs,
+  type LevelSetCardAction,
   type LevelSetCardTag,
   type LevelSetRefreshingHint,
   type LevelSetTone,
@@ -95,6 +101,9 @@ const { linkToMap } = useMapLink()
  * 仓库里的 MOD，所以这条跳转对地图同样成立。
  */
 const { linkToRepository } = useRepositoryLink()
+/** 依赖版本冲突的落点：MOD 管理页里那张装错的依赖（没有仓库绑定时只跳页）。 */
+const { linkToLocalMods } = useLocalModLink()
+const router = useRouter()
 /** 跨页跳转落点（从地图下载页点状态标签跳过来时带 `focus=<地图 id>`）。 */
 const { highlightId } = useFocusHighlight()
 /**
@@ -120,7 +129,7 @@ const sets = ref<LevelSetInfo[]>([])
  */
 const {
   maps, refreshing, queued, refreshingSources, entryStateUnavailable, checkingBound, outcome,
-  loadMaps, refreshBoundMaps,
+  loadMaps, refreshBoundMaps, syncDependencySnapshots,
 } = useMapSources()
 const loading = ref(true)
 /**
@@ -321,12 +330,29 @@ async function reloadSets() {
  */
 const installSourceOpen = ref(false)
 const {
-  importing, importSource,
+  importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
   importCheck,
   zipProgress, zipProgressText,
 } = useLevelSetImport(() => reloadSets())
+
+/**
+ * 卡片「更新」按钮的安装前检查。
+ *
+ * 与地图下载页用的是同一份 `useInstallPlanGate` + `mapRelationRepository`
+ * 投影：管理页的「更新」如果跳过检查，把一张新增了依赖的地图装上去，
+ * 用户会得到「更新完反而跑不起来」。`gameBlocked` 恒 false —— 地图导入允许
+ * 在游戏运行时进行（与本地 ZIP / 在线安装同一条策略）。
+ */
+const planGate = useInstallPlanGate({
+  mods: () => mods.value,
+  repositories: () => repositories.value,
+  gameBlocked: () => false,
+  onApplied: () => reloadSets(),
+})
+/** 正在执行「更新」的卡片（目录名）；同一时刻只允许一个。 */
+const actionInFlight = ref<string | null>(null)
 
 /*
  * 手动改磁盘也要刷新列表：用户在资源管理器里删掉一个集目录、或者别的工具往
@@ -615,19 +641,67 @@ function matchesActiveStatus(set: LevelSetInfo) {
 }
 
 /**
- * 「缺依赖」标签的安装去处：能提供满足区间版本的仓库卡片 id。
+ * 卡片状态区的一键动作。
  *
- * 与 MOD 管理页的「去安装」是同一条规则（`dependencyTagFor` 给的目标），
- * 没有可安装来源时返回 `undefined` —— 此时既不出按钮，标签也不可点。
+ * 规则全部由 `levelSetCardAction` 决定（纯函数，Node 直接测）：依赖版本冲突 >
+ * 可更新 > 缺依赖。本页只负责把动作执行出来。
  */
-function dependencyInstallTarget(set: LevelSetInfo): string | undefined {
-  return tagsOf(set).find((tag) => tag.kind === 'dependency' && tag.repositoryId)?.repositoryId
+function actionOf(set: LevelSetInfo): LevelSetCardAction | undefined {
+  return levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value)
 }
 
-/** 点「去安装」：跳到 MOD 安装页并高亮那张能补上依赖的仓库卡片。 */
-function installDependency(set: LevelSetInfo) {
-  const target = dependencyInstallTarget(set)
-  if (target) linkToRepository(target)
+/** 这张卡的动作正在执行（按钮转圈）。 */
+function actionBusy(set: LevelSetInfo) {
+  return actionInFlight.value === set.dir_name
+}
+
+/**
+ * 别的动作正占着安装链路时禁用其余「更新」按钮。
+ *
+ * 跳转类动作（去安装 / 处理冲突）不占用链路，照常可点 —— 它们不改磁盘。
+ */
+function actionDisabled(set: LevelSetInfo) {
+  return actionOf(set)?.kind === 'update' && importing.value && !actionBusy(set)
+}
+
+/**
+ * 执行卡片动作。
+ *
+ * 「更新」复用地图下载页那条链：安装前检查 → 下载并暂存 Release → 确认详情
+ * （同身份旧图先卸载）→ 导入。落盘后先同步依赖快照再重读关卡集，否则卡片
+ * 状态会按旧快照算（与地图下载页的安装顺序一致）。
+ */
+async function runCardAction(set: LevelSetInfo) {
+  const action = actionOf(set)
+  if (!action) return
+  if (action.kind === 'install-dependency') {
+    if (action.repositoryId) linkToRepository(action.repositoryId)
+    return
+  }
+  if (action.kind === 'review-conflict') {
+    // 冲突的是一个装错版本的 MOD：能定位到它绑定的仓库就高亮那张卡，
+    // 没绑仓库的只能落到 MOD 管理页让用户自己找 —— 仍比点了没反应好。
+    if (action.repositoryId) linkToLocalMods(action.repositoryId)
+    else void router.push({ name: 'mods-local' })
+    return
+  }
+
+  const map = mapForLevelSet(set, maps.value)
+  if (!map) return
+  const targetTag = map.latest_tag ?? undefined
+  if (!(await planGate.run(mapRelationRepository(map), targetTag))) return
+  actionInFlight.value = set.dir_name
+  try {
+    await installRelease(map.id, targetTag, undefined, {
+      afterImport: async () => {
+        await syncDependencySnapshots()
+        await reloadSets()
+      },
+      successText: () => t('levelSet.installDone', { name: levelSetDisplayName(set, locale.value) }),
+    })
+  } finally {
+    actionInFlight.value = null
+  }
 }
 
 /**
@@ -1157,8 +1231,10 @@ provide(
     hintOf,
     focusIdOf,
     matchesActiveStatus,
-    dependencyInstallTarget,
-    installDependency,
+    actionOf,
+    actionBusy,
+    actionDisabled,
+    runCardAction,
     removeSet: remove,
     openDir: openDirectory,
     pluginTitle,
@@ -1278,6 +1354,14 @@ provide(
     @finished="(ready: boolean) => { void importCheck.finish(ready) }" />
 
   <!--
+    卡片「更新」的安装前检查：与地图下载页共用同一个弹窗与执行顺序。
+    没有需要处理的关系时 `planGate.run` 直接放行，不弹空窗。
+  -->
+  <InstallPlanDialog v-model:show="planGate.open.value" :plan="planGate.plan.value"
+    :target-label="planGate.target.value"
+    @finished="(ready: boolean) => { void planGate.finish(ready) }" />
+
+  <!--
     导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。
     不接 `busy`：它在「等待确认」期间也为真（整个导入流程都算 busy），
     而那时取消与立即安装恰恰必须能点；写盘期间弹窗已经收起，进度由页面按钮显示。
@@ -1332,14 +1416,7 @@ provide(
   width: 100%;
 }
 
-/* 「有更新」可点：手型 + 悬停提亮，无点击目标的标签保持默认光标 */
-.state-tag--link {
-  cursor: pointer;
-}
-
-.state-tag--link:hover {
-  filter: brightness(1.15);
-}
+/* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 
 /* 浮动刷新按钮转圈：与 MOD 两页同一套观感（各自页面作用域） */
 .spin-icon {

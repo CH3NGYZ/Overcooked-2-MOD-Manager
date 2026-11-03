@@ -507,6 +507,87 @@ export function levelSetCardTags(
   return tags
 }
 
+/** 地图管理卡片上的一键动作类型。 */
+export type LevelSetCardActionKind = 'update' | 'install-dependency' | 'review-conflict'
+
+/**
+ * 地图管理卡片状态区的一键动作。
+ *
+ * 与 MOD 管理页的 `StatusActionSpec` 同一职责边界：这里只回答「显示什么按钮、
+ * 点了去哪儿」，真正执行（预检 / 下载 / 导入 / 跳转）留在视图层 —— 本模块
+ * 不能依赖 Vue、i18n 或任何 IPC。
+ */
+export interface LevelSetCardAction {
+  kind: LevelSetCardActionKind
+  /** 按钮文案的 i18n key。 */
+  label: string
+  tone: LevelSetTone
+  /** `update` 要装的地图 id。 */
+  mapId?: string
+  /** `install-dependency` / `review-conflict` 要跳转的 MOD 仓库 id。 */
+  repositoryId?: string
+  /** `review-conflict` 命中的 GUID，用来在提示里说清是哪一个依赖。 */
+  guid?: string
+}
+
+/**
+ * 一张地图卡片当前该给哪个一键动作。
+ *
+ * 优先序与 MOD 管理页一致（`statusActions.ts` 的 `ACTION_PRIORITY`）：
+ * 冲突 > 可更新 > 缺依赖。理由相同 —— 冲突会让整张图跑不起来，比「有没有
+ * 新版」更紧急；而「去安装」只是跳转，用户随时能点，不该盖住真正的修复入口。
+ *
+ * 不给出动作的情况：
+ *   · 停用 / info 解析失败：状态本身就不完整，先让用户处理卡片的开关；
+ *   · 可更新但没有绑定到在线地图：没有可下载的来源；
+ *   · 缺依赖但线上没有满足区间的仓库：按钮点了没反应，比没有按钮更糟
+ *     （与 `dependencyInstallTarget` 同一条规则）。
+ */
+export function levelSetCardAction(
+  set: LevelSetInfo,
+  maps: readonly MapInfo[],
+  mods: readonly InstalledMod[],
+  gameProbed: boolean,
+  repositories: readonly Repository[] = [],
+): LevelSetCardAction | undefined {
+  if (!set.enabled || set.error) return undefined
+  const statuses = gameProbed
+    ? levelSetRelationStatuses(set, maps, mods, repositories)
+    : []
+  const conflict = statuses.find((status) => status.state === 'conflict' && status.installedMod)
+  if (conflict?.installedMod) {
+    return {
+      kind: 'review-conflict',
+      label: 'levelSet.resolveConflict',
+      tone: 'critical',
+      repositoryId: conflict.installedMod.repository_id,
+      guid: conflict.relation.guid,
+    }
+  }
+
+  const bound = mapForLevelSet(set, maps)
+  const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
+  if (state === 'update_available' && bound?.latest_tag) {
+    return {
+      kind: 'update',
+      label: 'dialogs.update',
+      tone: 'moderate',
+      mapId: bound.id,
+    }
+  }
+
+  const dependency = dependencyTagFor(statuses, true)
+  if (dependency?.kind === 'installable' && dependency.repositoryId) {
+    return {
+      kind: 'install-dependency',
+      label: 'overview.browse',
+      tone: 'critical',
+      repositoryId: dependency.repositoryId,
+    }
+  }
+  return undefined
+}
+
 /**
  * 关卡集的展示名：优先中文名，其次英文名，最后退回目录名。
  *

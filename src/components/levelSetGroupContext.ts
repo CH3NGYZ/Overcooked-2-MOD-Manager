@@ -1,5 +1,5 @@
 import type { ComputedRef, CSSProperties, InjectionKey, Ref, UnwrapNestedRefs } from 'vue'
-import type { LevelSetAuthorNames, LevelSetCardTag } from '../levelSetStatus'
+import type { LevelSetAuthorNames, LevelSetCardAction, LevelSetCardTag } from '../levelSetStatus'
 import type { DependencyRow } from './DependencyTable.vue'
 import type { StatusActionSpec } from '../statusActions'
 import type { PackageStatus } from '../statusTags'
@@ -80,13 +80,18 @@ export interface LevelSetGroupContext {
   tagsOf(set: LevelSetInfo): LevelSetCardTag[]
   tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined
   onTagClick(tag: LevelSetCardTag): void
+  /** 卡片状态区的一键动作（可更新 / 缺依赖 / 依赖版本冲突）。 */
+  actionOf(set: LevelSetInfo): LevelSetCardAction | undefined
+  /** 这一个动作正在执行（按钮转圈）。 */
+  actionBusy(set: LevelSetInfo): boolean
+  /** 别的导入 / 更新占着安装链路，按钮禁用。 */
+  actionDisabled(set: LevelSetInfo): boolean
+  runCardAction(set: LevelSetInfo): void | Promise<void>
   authorNamesOf(set: LevelSetInfo): LevelSetAuthorNames
   bindingOf(set: LevelSetInfo): { map: MapInfo; name: string; tag: string } | undefined
   hintOf(set: LevelSetInfo): string
   focusIdOf(set: LevelSetInfo): string | undefined
   matchesActiveStatus(set: LevelSetInfo): boolean
-  dependencyInstallTarget(set: LevelSetInfo): string | undefined
-  installDependency(set: LevelSetInfo): void
   removeSet(set: LevelSetInfo): void | Promise<void>
   openDir(set: LevelSetInfo): void | Promise<void>
   pluginTitle(plugin: LevelSetPlugin): string

@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { NButton, NTag } from 'naive-ui'
-import { DownloadOutline, FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
+import { AlertCircleOutline, ArrowUpCircleOutline, DownloadOutline, FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale } from '../i18n'
 import { formatVersion } from '../modStatus'
 import { translateBackendMessage } from '../locale/backend'
 import { statusPulseClass } from '../crossLink'
 import { buttonColorFor, tagColorForAny } from '../theme'
-import { levelSetDisplayName } from '../levelSetStatus'
+import { levelSetDisplayName, type LevelSetCardAction } from '../levelSetStatus'
 import LocalItemCard from './LocalItemCard.vue'
 import DependencyTable from './DependencyTable.vue'
 import { LEVEL_SET_GROUP_CTX, TOOL_BUTTON_WIDTH, TOOL_GAP } from './levelSetGroupContext'
+import type { LevelSetInfo } from '../types'
 
 /**
  * 一个分组里的地图卡片（`LevelsView` 折叠项的内容区）。
@@ -32,6 +33,23 @@ const ctx = inject(LEVEL_SET_GROUP_CTX)!
 const sets = computed(
   () => ctx.groups.find((group) => group.key === props.groupKey)?.sets ?? [],
 )
+
+/** 图标按动作类型取；模板里据此渲染唯一那颗按钮。 */
+const ACTION_ICONS: Record<LevelSetCardAction['kind'], typeof DownloadOutline> = {
+  update: ArrowUpCircleOutline,
+  'install-dependency': DownloadOutline,
+  'review-conflict': AlertCircleOutline,
+}
+
+/**
+ * 一张卡最多一个动作，这里用数组包一层是为了让模板只调用一次
+ * `ctx.actionOf` 并顺带拿到类型收窄（`v-if="ctx.actionOf(set)"` 不会把
+ * 后面的 `action.tone` 变窄成非空）。
+ */
+function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
+  const action = ctx.actionOf(set)
+  return action ? [action] : []
+}
 </script>
 
 <template>
@@ -67,16 +85,18 @@ const sets = computed(
       @activate="(card: HTMLElement) => ctx.activate(set, card)">
       <!--
         状态区：快捷动作 + 标签组。
-        「去安装」与 MOD 管理页同一规则（`dependencyTagFor`）：缺依赖且
-        线上有能补上的仓库卡片时才出现，点了跳到那张卡；没有来源就不出
-        按钮 —— 一个点了没反应的按钮比没有更糟。
+        与 MOD 管理页同一规则（`levelSetCardAction`）：依赖版本冲突 →「处理
+        冲突」跳 MOD 页；地图可更新 →「更新」就地走安装前检查 + 下载导入；
+        缺依赖且线上有能补上的仓库卡片 →「去安装」跳那张卡。没有可执行目标
+        就不出按钮 —— 一个点了没反应的按钮比没有更糟。
       -->
       <template #status>
-        <template v-if="ctx.dependencyInstallTarget(set)">
-          <n-button size="tiny" :style="buttonColorFor('critical', 'soft')"
-            :title="t('overview.browse')" @click.stop="ctx.installDependency(set)">
-            <DownloadOutline width="14" height="14" />
-            {{ t('overview.browse') }}
+        <template v-for="action in actionsOf(set)" :key="action.kind">
+          <n-button size="tiny" :style="buttonColorFor(action.tone, 'soft')"
+            :title="t(action.label)" :loading="ctx.actionBusy(set)"
+            :disabled="ctx.actionDisabled(set)" @click.stop="ctx.runCardAction(set)">
+            <component :is="ACTION_ICONS[action.kind]" width="14" height="14" />
+            {{ t(action.label) }}
           </n-button>
           <span class="tool-divider" />
         </template>
@@ -298,14 +318,7 @@ const sets = computed(
   overflow: hidden;
 }
 
-/* 「有更新」可点：手型 + 悬停提亮，无点击目标的标签保持默认光标 */
-.state-tag--link {
-  cursor: pointer;
-}
-
-.state-tag--link:hover {
-  filter: brightness(1.15);
-}
+/* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 
 /* 详情：两列信息网格，值允许换行（作者名 / 状态说明可能很长） */
 .detail-grid {

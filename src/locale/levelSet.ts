@@ -656,6 +656,14 @@ export const levelSet: DomainMessages = {
     ko: '지도 설치에서 보기',
     ja: 'マップインストールで表示',
   },
+  // 地图卡片「有依赖版本冲突」时的一键动作：跳到 MOD 管理页处理装错版本的依赖
+  resolveConflict: {
+    'zh-CN': '处理冲突',
+    'zh-TW': '處理衝突',
+    en: 'Resolve conflict',
+    ko: '충돌 해결',
+    ja: '競合を解決',
+  },
   // 下载页卡片 · 刷新失败或版本不可比时的结论（对齐 MOD 的「无法检测更新」）
   cannotCheckUpdate: {
     'zh-CN': '无法检测更新',

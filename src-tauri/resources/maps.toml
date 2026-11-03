@@ -87,9 +87,8 @@
 
 # 第三方地图仓库：一个 tag 一个地图集，元数据跟着 Release note 走。
 #
-# 当前指向 CH3NGYZ/oc2（测试期镜像仓）：里面每个 tag 都是一个独立的地图集，
-# note 里带 <!-- oc2-map --> 块。等原作者完善自己的仓库后，只需要改这里的
-# provider / username / repository 三行，其它字段与条目一个字都不用动。
+# 当前指向 QingyuQingxue/OC2-Map-Bundle：里面每个 tag 都是一个独立的地图集，
+# note 里带 <!-- oc2-map --> 块。
 #
 # page_size 是「一次读 100 个 Release」：不满一页就停，最多翻 max_pages 页；
 # 中途失败会保留已取到的部分，整仓都取不到时沿用上一次的条目。
@@ -97,8 +96,8 @@
 id = "community-maps"
 mode = "release-tags"
 provider = "github"
-username = "CH3NGYZ"
-repository = "oc2"
+username = "QingyuQingxue"
+repository = "OC2-Map-Bundle"
 page_size = 100
 max_pages = 10
 [map_sources.nickname_i18n]

@@ -48,9 +48,10 @@ export interface ReleaseDetailVersion {
  *
  * ## 模块差异怎么表达
  *
- * - **说明区**：`note` 是纯 Markdown 源；`readme-*` 一组是仓库 README，
- *   两个页面都拉（后端 `get_repository_readme` 同时认 MOD 仓库与地图仓库的
- *   id），拉不到就整块收起。
+ * - **说明区**：`note` 是纯 Markdown 源。`readme-*` 一组是仓库 README，
+ *   **只有 MOD 详情拉**（`get_repository_readme`）；地图详情不传这些 prop，
+ *   于是整块不渲染 —— 仓库 README 是仓库级的，一个仓库多张地图时会串味，
+ *   地图的说明只来自这张图自己的 `note_i18n`，长文跟着版本走（提交日志）。
  * - **依赖表**：`dependencies` 由调用方算好（地图是 `required_frameworks`，
  *   MOD 是 `relations`），固定排在**说明 tab 的备注上方**，与备注之间用
  *   分割线隔开。为空时整块不渲染。

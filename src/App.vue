@@ -11,6 +11,7 @@ import UpdatePrompt from './components/UpdatePrompt.vue'
 import { acceptLabel } from './dropAccept'
 import { dragActive, dropAcceptTypes } from './composables/useFileDrop'
 import { startGameWatch } from './composables/useDashboardStore'
+import { requestMapSourcesStartupRefresh } from './composables/useMapSources'
 import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
 import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition'
 import { pageTitleOverride, resetPageHeader } from './pageHeader'
@@ -123,6 +124,12 @@ onMounted(() => {
     })
     .catch(() => undefined)
   repositoryRefresh.requestStartupRefresh()
+  /*
+   * 地图源也要在启动时自动读一次：`release-tags` 源（一个仓库放多张地图）的
+   * 地图只能联网读 Release note 才知道，内置快照里没有。只读源树、不刷
+   * 每张图的 Release，与上面 MOD 仓库的启动刷新同一时机、同一层级。
+   */
+  requestMapSourcesStartupRefresh()
 })
 </script>
 

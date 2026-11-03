@@ -128,6 +128,41 @@ async function loadMaps(options: { force?: boolean } = {}) {
   }
 }
 
+/**
+ * 启动时静默重读一次地图源树。
+ *
+ * `release-tags` 源的地图不在内置快照里（要先联网读 Release note 才知道有
+ * 哪几张图），不自动读的话新用户只看到单仓库地图，「把地图仓库写进源里就能
+ * 用」这个承诺就落空了。
+ *
+ * 只读**源树**、不刷每张图的 Release：启动阶段替用户把几十个 Release 列表
+ * 全拉一遍不值得，那部分仍由「刷新 / 刷新全部 / 检查更新」触发。
+ *
+ * 失败静默：启动时弹一条网络错误没有意义，用户手动刷新时会看到同一条。
+ * 与 MOD 仓库的启动刷新同一条规则 —— 挂在 App 层，切页不重复触发。
+ *
+ * 导出成模块级函数而不是挂在 `useMapSources()` 上：调用方是 App.vue 的
+ * setup，而 App 自己就是 `n-message-provider` 的提供者 —— 那里调
+ * `useMapSources()` 会去 `useNotify()`，反过来要求 provider 已经挂好，
+ * 组件树还没建就先崩了。这条链不需要消息实例。
+ */
+let startupState: 'idle' | 'running' | 'done' = 'idle'
+export function requestMapSourcesStartupRefresh() {
+  if (startupState !== 'idle') return
+  startupState = 'running'
+  const passId = newPassId()
+  void api
+    .refreshMapSources(passId)
+    .then((list) => {
+      maps.value = list
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      loading.value = false
+      startupState = 'done'
+    })
+}
+
 async function syncDependencySnapshots() {
   await api.syncDependencySnapshots().catch(() => undefined)
 }

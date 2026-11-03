@@ -183,6 +183,19 @@ export const levelSet: DomainMessages = {
     ko: '지도 소스를 읽는 중…',
     ja: 'マップソースを読み込み中…',
   },
+  /*
+   * 地图没有说明时的兜底文案。
+   *
+   * 以前这里显示仓库名，一个仓库多张地图时每张卡都长一个样；直接说「暂无
+   * 说明」至少不会误导用户以为那就是这张图的介绍。
+   */
+  mapNoNote: {
+    'zh-CN': '此地图暂无说明',
+    'zh-TW': '此地圖暫無說明',
+    en: 'No description for this map yet',
+    ko: '이 지도에는 아직 설명이 없습니다',
+    ja: 'このマップにはまだ説明がありません',
+  },
   scanningFolder: {
     'zh-CN': '正在读取：{name}',
     'zh-TW': '正在讀取：{name}',

@@ -3,10 +3,10 @@
  *
  * ## 为什么抽出来
  *
- * MOD 安装页的仓库详情（`RepositoryDetail.vue`）与地图下载页的地图详情
- * （`MapsOnlineView.vue` 的抽屉）要展示**同一个** README：后端
- * `get_repository_readme` 现在同时认 MOD 仓库 id 与地图仓库 id，前端就不该再
- * 各写一份「请求 → 取消 → 切条目重置」。
+ * MOD 安装页的仓库详情（`RepositoryDetail.vue`）要展示 README：请求 → 取消 →
+ * 切条目重置这条链最容易写漏。地图详情**不**用这条链 —— 地图的说明来自
+ * 条目自己的 `note_i18n`，长文跟着版本（Release note 正文）走，仓库 README
+ * 是仓库级的，一个仓库多张地图时会串味。
  *
  * 两份实现里只要有一处忘了 cancel，切换条目的慢旧响应就会覆盖新条目的
  * README —— 用户点开 B 却看到 A 的说明，而且没有任何报错。

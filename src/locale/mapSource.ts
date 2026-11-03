@@ -99,4 +99,18 @@ export const mapSource: DomainMessages = {
     ko: '설치 파일 규칙의 정규식은 ^와 $로 고정해야 합니다: {map} ({asset})',
     ja: 'アセット規則の正規表現は ^ と $ で固定する必要があります：{map}（{asset}）',
   },
+  declarationMissingUrl: {
+    'zh-CN': '文档型地图源缺少 url：{source}',
+    'zh-TW': '文件型地圖來源缺少 url：{source}',
+    en: 'A document map source is missing its url: {source}',
+    ko: '문서형 지도 소스에 url이 없습니다: {source}',
+    ja: 'ドキュメント型マップソースに url がありません：{source}',
+  },
+  declarationMissingMap: {
+    'zh-CN': '单仓库地图源缺少 [map_sources.map] 条目：{source}',
+    'zh-TW': '單倉庫地圖來源缺少 [map_sources.map] 條目：{source}',
+    en: 'A single-repository map source is missing its [map_sources.map] entry: {source}',
+    ko: '단일 저장소 지도 소스에 [map_sources.map] 항목이 없습니다: {source}',
+    ja: '単一リポジトリのマップソースに [map_sources.map] エントリがありません：{source}',
+  },
 }

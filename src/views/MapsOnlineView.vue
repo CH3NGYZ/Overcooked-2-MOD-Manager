@@ -21,7 +21,6 @@ import PageLoading from '../components/PageLoading.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
-import { useRepositoryReadme } from '../composables/useRepositoryReadme'
 import { formatVersion, isPrereleaseVersion, versionDisplay } from '../modStatus'
 import { markdownSummary } from '../markdown'
 import { mapDependencyRows } from '../dependencyRows'
@@ -329,9 +328,16 @@ function mapName(map: MapInfo): string {
   return pickI18n(map.name_i18n, map.name) || `${map.username}/${map.repository}`
 }
 
-/** 简介：下载页要留足说明，用户才知道这张图是什么。 */
+/**
+ * 简介：下载页要留足说明，用户才知道这张图是什么。
+ *
+ * 没有说明时不再退回仓库名 —— 一个仓库多张图时，仓库名会把每张卡写成一个样，
+ * 用户看不出这是哪张图；直接说明「暂无说明」更诚实。
+ */
 function mapNote(map: MapInfo): string {
-  return markdownSummary(pickI18n(map.note_i18n, map.note ?? '')) || map.repository
+  return (
+    markdownSummary(pickI18n(map.note_i18n, map.note ?? '')) || t('levelSet.mapNoNote')
+  )
 }
 
 function isRefreshing(map: MapInfo): boolean {
@@ -384,15 +390,12 @@ const detailStatus = computed(() =>
     : { key: 'not_refreshed' as MapCardState, text: '', tone: 'muted' as TagTone },
 )
 
-/**
- * 详情抽屉的 README。
- *
- * 后端 `get_repository_readme` 同时认 MOD 仓库 id 与地图仓库 id，所以地图
- * 详情和 MOD 详情用同一个 composable：拉不到（仓库没有 README.md）时
- * `exists = false`，面板整块收起，不会留一段空白。
+/*
+ * 地图详情不再有 README 区块：仓库 README 是**仓库级**的，一个仓库多张地图时
+ * 把它塞进每张图的详情只会串味。说明 tab 显示这张图自己的 `note_i18n`
+ * （来自 Release note 的 oc2-map 块），长文（块外的 Release note 正文）跟着
+ * 版本走，显示在「下载安装」的提交日志里 —— 两处用的是同一次 API 拿到的数据。
  */
-const { readme: detailReadme, loading: detailReadmeLoading, error: detailReadmeError } =
-  useRepositoryReadme(() => detailMap.value?.id ?? null)
 
 /**
  * 依赖框架表（说明 tab 里、备注上方）。
@@ -889,8 +892,7 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
       <ReleaseDetailPanel :key="detailMap.id" :title="detailName" :provider="detailProvider"
         :owner="detailOwner" :repository="detailRepository" :icon-size="34"
         :meta-links="detailLinks" :note="detailNote"
-        :readme-content="detailReadme?.content ?? ''" :readme-exists="!!detailReadme?.exists"
-        :readme-loading="detailReadmeLoading" :readme-error="detailReadmeError"
+        :note-empty-text="t('levelSet.mapNoNote')"
         :dependencies="detailDependencies"
         :versions="detailVersions" :version="detailSelectedTag"
         :binding-label="t('levelSet.bindingIdentity')" :binding-value="detailBindingValue"

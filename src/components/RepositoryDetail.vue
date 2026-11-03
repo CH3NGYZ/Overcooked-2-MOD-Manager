@@ -7,8 +7,8 @@
  * 这里只留 MOD 侧真正独有的数据：缓存 Release、资产规则匹配、依赖关系判定、
  * 仓库链接地址。
  *
- * README 的拉取与取消在 `useRepositoryReadme`：地图下载页的地图详情要用同一份
- * 实现（后端 `get_repository_readme` 两种 id 都认）。
+ * README 的拉取与取消在 `useRepositoryReadme`：只有 MOD 详情需要它。地图详情
+ * 用条目自己的 `note_i18n` 当说明，仓库 README 不参与（仓库级内容会串味）。
  */
 import { computed, ref, watch } from 'vue'
 import { api } from '../services/tauri'

@@ -639,10 +639,13 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 
 地图（DIYLevel 自定义关卡集）使用**另一条独立的索引链**，不与 MOD 仓库源混用：
 
-- 索引文件是 `maps.toml`，条目是 `[[maps]]`，子源是 `[[map_sources]]`；
+- 索引文件是 `maps.toml`，整个文件只放 `[[map_sources]]` 源声明；`mode` 决定这个源怎么取条目：
+  - `mode = "repository"`：一个仓库一张图，条目内联在 `[map_sources.map]`，字段与老的 `[[maps]]` 完全一致，离线可用；
+  - `mode = "release-tags"`：一个 Release = 一张地图，地图元数据写在该 Release note 的隐藏 `<!-- oc2-map -->` 块里（身份、五语 name/note、`asset` 模板、`latest_version`、`requires`/`compatible`/`conflicts`）；管理器按页（默认 50 条）读完整个仓库的 Release，整份组合成一个地图源；
+  - `mode = "document"`（缺省，老形态）：`url` 指向一份 `[[maps]]` 子源文档；子源 `url` 既可以是相对路径、内置资源名，也可以是 **Release 资产地址**（第三方源把自己的 `map-sources.toml` 发布在 Release 里时用这种写法：先向 API 取 size/sha256，再竞速下载并校验）；
 - 绑定身份是 `author` + `level_set_name`（与 ZIP 里 `info` 的值一致，忽略大小写）；
-- 一个地图仓库既可以只放一张图（默认：取列表里最新那条 Release），也可以放多张图：条目写 `tag` 就只读那个 Release，并把里面的每个资产当成这张图的一个版本（`asset_rules` 的正则负责抽版本号）；同一份文档还可以用 `[bundle]` 统一写仓库坐标；
-- 子源 `url` 既可以是相对路径、内置资源名，也可以是 **Release 资产地址**（第三方源把自己的 `map-sources.toml` 发布在 Release 里时用这种写法：先向 API 取 size/sha256，再竞速下载并校验）；
+- 卡片说明取元数据块里的 `note_i18n`（没有就显示「此地图暂无说明」）；块外面的正文是这个版本的更新日志，显示在版本详情的「提交日志」里；
+- `document` 模式的条目写 `tag` 就只读那个 Release，并把里面的每个资产当成这张图的一个版本（`asset_rules` 的正则负责抽版本号）；同一份文档还可以用 `[bundle]` 统一写仓库坐标；
 - 地图下载页与地图管理页都按 `group_i18n` **折叠分组，语义是作者**（与 MOD 仓库的 `group` 按职责/相似性分类不同）；`author` 是绑定键、`group_i18n` 是展示名，两者可以不同；
 - 安装后会先回收同名的旧关卡集（进回收站），再写入新版本。
 

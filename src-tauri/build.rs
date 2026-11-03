@@ -38,9 +38,6 @@ fn embed_repository_sources() {
                 && path
                     .extension()
                     .is_some_and(|extension| extension == "toml")
-                && path
-                    .file_name()
-                    .is_none_or(|name| name != "builtin-tutorial.toml")
             {
                 files.push(path);
             }

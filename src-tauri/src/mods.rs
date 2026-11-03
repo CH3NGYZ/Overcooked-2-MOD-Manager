@@ -1953,7 +1953,7 @@ mod tests {
         misleading.id = "dll-matching-but-wrong-repository".into();
         misleading.repository = "unrelated".into();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1, "ui_zoom":1.5, "onboarding_seen_steps":[],
+            "schema_version":1, "ui_zoom":1.5,
             "game":{"path":"", "auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -2033,7 +2033,7 @@ mod tests {
         beta_release.prerelease = true;
         beta.cached_releases = vec![beta_release];
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1, "ui_zoom":1.5, "onboarding_seen_steps":[],
+            "schema_version":1, "ui_zoom":1.5,
             "game":{"path":"", "auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -2343,7 +2343,7 @@ mod tests {
             release.id = "release".into();
             release.download_mode = crate::models::RepositoryDownloadMode::Release;
             let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -2410,7 +2410,7 @@ mod tests {
         }
         std::fs::write(&path, bytes).unwrap();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -2456,7 +2456,7 @@ mod tests {
         }
         std::fs::write(&path, bytes).unwrap();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -2509,7 +2509,7 @@ mod tests {
             .group_i18n
             .insert("en".into(), "Utilities".into());
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -2627,7 +2627,7 @@ mod tests {
         let plugins = root.join("BepInEx/plugins");
         std::fs::create_dir_all(&plugins).unwrap();
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version": 1, "ui_zoom": 1.5, "onboarding_seen_steps": [],
+            "schema_version": 1, "ui_zoom": 1.5,
             "game": {"path": "", "auto_detect": false},
             "network": {"timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false},
             "launch": {"ask_user_to_start_from_steam": false, "auto_restore_winhttp": false},

@@ -588,12 +588,11 @@ impl ConfigService {
             platform: std::env::consts::OS.into(),
             region: current_user_region().into(),
             ui_zoom: config.ui_zoom,
-            onboarding_seen_steps: config.onboarding_seen_steps.clone(),
             hide_unidentified_mods: config.hide_unidentified_mods,
             recycle_deleted_mods: config.recycle_deleted_mods,
             mod_metadata_concurrency: config.mod_metadata_concurrency,
             map_info_concurrency: config.map_info_concurrency,
-            tutorial_steps: config.tutorial_steps.clone(),
+            tutorial_watched_steps: config.tutorial_watched_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),
             launch: config.launch.clone(),
@@ -750,7 +749,7 @@ impl ConfigService {
     pub fn validate_bundle(&self, text: &str) -> Result<RepositoryBundle, ConfigError> {
         log::debug!("开始校验仓库配置包：字节数={}", text.len());
         if text.len() > 1024 * 1024 {
-            return Err(ConfigError::Invalid("tutorial.importTooLarge".into()));
+            return Err(ConfigError::Invalid("source.tooLarge".into()));
         }
         let mut bundle: RepositoryBundle = toml::from_str(text).map_err(|e| {
             ConfigError::Invalid(crate::locale_tag::with_params(
@@ -1017,14 +1016,14 @@ pub(crate) fn default_config() -> AppConfig {
     AppConfig {
         schema_version: 1,
         ui_zoom: 1.5,
-        onboarding_seen_steps: Vec::new(),
         hide_unidentified_mods: true,
         // 默认开启：删除的 MOD 先进回收站，用户能反悔。
         recycle_deleted_mods: true,
         // MOD 元数据默认跑满全部核心；地图 info 默认 4（常量在 metadata_read）。
         mod_metadata_concurrency: crate::metadata_read::AUTO_CONCURRENCY,
         map_info_concurrency: crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
-        tutorial_steps: Vec::new(),
+        // 全新配置没看过任何教程步骤，首次启动会完整播一遍。
+        tutorial_watched_steps: Vec::new(),
         game: GameConfig {
             path: String::new(),
             auto_detect: true,
@@ -1255,7 +1254,7 @@ fn merge_builtin_repository_sources(
         .collect::<std::collections::HashSet<_>>();
     let before = config.repositories.len();
     // Old source-less fallback cards and obsolete regional source trees are
-    // replaced by the ordinary source loader after the tutorial completes.
+    // replaced by the ordinary source loader on the next read.
     config.repositories.retain(|repository| {
         !(repository.builtin && repository.source_id.is_none())
             && repository

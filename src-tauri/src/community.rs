@@ -819,7 +819,7 @@ mod tests {
          * 这样以后如果重新引入平台限制，测试会因为行为变化而失败。
          */
         let mut config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version": 1, "ui_zoom": 1.5, "onboarding_seen_steps": [],
+            "schema_version": 1, "ui_zoom": 1.5,
             "game": { "path": "", "auto_detect": false },
             "network": { "timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3, "check_updates_on_start": false },
             "launch": { "ask_user_to_start_from_steam": false, "auto_restore_winhttp": false },
@@ -1099,7 +1099,7 @@ mod tests {
         retained.enabled = false;
         let removed = repository_from_search(&item("Owner", "Removed")).unwrap();
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -1189,7 +1189,7 @@ mod tests {
             .map(|repo| repo.id.clone())
             .collect::<Vec<_>>();
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -1272,7 +1272,7 @@ mod tests {
                 repository_from_coordinates(&provider, "owner", "LISTED", "main", "community")
                     .unwrap();
             let mut config: AppConfig = serde_json::from_value(serde_json::json!({
-                "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+                "schema_version":1,"ui_zoom":1.5,
                 "game":{"path":"","auto_detect":false},
                 "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
                 "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -1351,7 +1351,7 @@ mod tests {
         let bundled = crate::repository_sources::bundled_repository_configs();
         assert!(!bundled.is_empty(), "内置快照应当包含仓库条目");
         let config: AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},
@@ -1419,7 +1419,7 @@ mod tests {
         );
         manifest.repository_binding = RepositoryBinding::from_release(&found, "v1.0.0");
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"ui_zoom":1.5,"onboarding_seen_steps":[],
+            "schema_version":1,"ui_zoom":1.5,
             "game":{"path":"","auto_detect":false},
             "network":{"timeout_seconds":5,"download_threads":1,"max_retry_count":3,"check_updates_on_start":false},
             "launch":{"ask_user_to_start_from_steam":false,"auto_restore_winhttp":false},

@@ -256,8 +256,6 @@ export const ENTRIES = {
   'MOD 包已彻底删除': 'recycle.packagePermanentlyDeleted',
   '导出文件必须使用 .oc2repo.toml 或 .toml 扩展名': 'config.exportExtensionInvalid',
   '仓库 TOML 已复制到剪贴板': 'config.tomlCopied',
-  '教程格式已复制': 'tutorial.formatCopied',
-  '教程格式无效': 'tutorial.formatInvalid',
 
   // ===== 状态提示（无参数）=====
   '正在取消下载': 'download.cancelling',
@@ -268,11 +266,6 @@ export const ENTRIES = {
   '前端日志为空': 'log.frontendEmpty',
 
   // ===== 教程 =====
-  '教程配置超过 1 MiB': 'tutorial.configTooLarge',
-  '教程配置代码块未闭合': 'tutorial.unclosedCodeBlock',
-  '教程 TOML 格式无效': 'tutorial.tomlInvalid',
-  '导入文件超过 1 MiB': 'tutorial.importTooLarge',
-  '教程步骤不能为空': 'tutorial.stepsEmpty',
 
   // ===== 仓库源编辑 =====
   '社区仓库源由自动搜索管理': 'source.communityManaged',
@@ -347,8 +340,6 @@ export const ENTRIES = {
 
   // ===== 安装与回滚（补充）=====
   '同一仓库绑定了多个旧 MOD 包，请先在 MOD 管理中确认要替换的包': 'mods.multipleOldPackages',
-  '内置教程所需的主机实用 MOD 稳定版配置不存在': 'tutorial.hostUtilitiesConfigMissing',
-  '内置教程所需的配置管理器配置不存在': 'tutorial.configManagerConfigMissing',
 
   // ===== 社区仓库 =====
   'GitHub 搜索触发速率限制，请稍后刷新': 'community.githubRateLimited',
@@ -543,9 +534,6 @@ export const TEMPLATE_ENTRIES = {
   '{}...[前端日志已截断]': 'log.frontendTruncated',
   '超时={}，连接错误={}，原因={}': 'proxy.downloadFailureDetail',
   '已读取字节数={}，超时={}，原因={}': 'proxy.readFailureDetail',
-  '教程 TOML 格式无效：{error}': 'tutorial.tomlInvalidReason',
-  '不支持的教程格式版本：{}': 'tutorial.unsupportedVersion',
-  '教程 TOML 导出失败：{error}': 'tutorial.exportFailed',
   '仓库源 {}': 'source.labeled',
   '仓库 {}': 'config.repositoryLabeled',
   '发布页地址无效: {e}': 'update.pageInvalid',
@@ -676,9 +664,6 @@ export const TEMPLATE_PARAMS = {
   'proxy.unsupportedPlaceholder': ['token'],
   'proxy.templateUrlInvalid': ['reason'],
   'proxy.duplicateId': ['id'],
-  'tutorial.tomlInvalidReason': ['reason'],
-  'tutorial.unsupportedVersion': ['version'],
-  'tutorial.exportFailed': ['reason'],
   'source.labeled': ['label'],
   'config.repositoryLabeled': ['name'],
   'readme.httpStatus': ['status'],

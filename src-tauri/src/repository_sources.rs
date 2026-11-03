@@ -1186,7 +1186,7 @@ mod tests {
     #[test]
     fn source_cache_clearing_removes_complete_trees_and_preserves_settings() {
         let mut config: AppConfig = serde_json::from_value(serde_json::json!({
-            "schema_version": 1, "ui_zoom": 1.5, "onboarding_seen_steps": [],
+            "schema_version": 1, "ui_zoom": 1.5,
             "game": {"path": "custom-game", "auto_detect": false},
             "network": {"timeout_seconds": 5, "download_threads": 1,
                 "max_retry_count": 3, "check_updates_on_start": false},
@@ -1724,7 +1724,7 @@ url = "mods/child.toml"
             assert!(SourceLocation::parse(reference).is_err(), "{reference}");
         }
         assert!(
-            SourceLocation::parse("builtin-tutorial.toml")
+            SourceLocation::parse("not-a-bundled-source.toml")
                 .unwrap()
                 .bundled_document()
                 .is_err()

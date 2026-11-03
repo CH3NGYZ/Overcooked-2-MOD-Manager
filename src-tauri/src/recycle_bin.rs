@@ -1822,7 +1822,6 @@ mod tests {
             let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
                 "schema_version": 1,
                 "ui_zoom": 1.5,
-                "onboarding_seen_steps": [],
                 "hide_unidentified_mods": hide_unidentified,
                 "game": {"path": "", "auto_detect": false},
                 "network": {

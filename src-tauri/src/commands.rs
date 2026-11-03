@@ -1585,13 +1585,6 @@ pub fn save_settings(
     if let Some(value) = patch.ui_zoom {
         config.ui_zoom = value.clamp(1.0, 2.0);
     }
-    if let Some(steps) = patch.onboarding_seen_steps {
-        config.onboarding_seen_steps = steps
-            .into_iter()
-            .map(|step| step.trim().to_string())
-            .filter(|step| !step.is_empty())
-            .collect();
-    }
     if let Some(value) = patch.hide_unidentified_mods {
         config.hide_unidentified_mods = value;
     }
@@ -1601,55 +1594,6 @@ pub fn save_settings(
             log::warn!("用户关闭「删除 MOD 时优先放入回收站」：此后删除将直接移除文件");
         }
         config.recycle_deleted_mods = value;
-    }
-    if let Some(steps) = patch.tutorial_steps {
-        config.tutorial_steps = steps
-            .into_iter()
-            .filter_map(|mut step| {
-                step.id = step.id.trim().to_string();
-                step.selector = step.selector.trim().to_string();
-                step.title = step.title.trim().to_string();
-                step.description = step.description.trim().to_string();
-                step.title_i18n.retain(|locale, text| {
-                    matches!(locale.as_str(), "zh-CN" | "zh-TW" | "en" | "ko" | "ja")
-                        && !text.trim().is_empty()
-                });
-                for text in step.title_i18n.values_mut() {
-                    *text = text.trim().to_string();
-                }
-                step.description_i18n.retain(|locale, text| {
-                    matches!(locale.as_str(), "zh-CN" | "zh-TW" | "en" | "ko" | "ja")
-                        && !text.trim().is_empty()
-                });
-                for text in step.description_i18n.values_mut() {
-                    *text = text.trim().to_string();
-                }
-                if step.title.is_empty() {
-                    step.title = step.title_i18n.get("zh-CN").cloned().unwrap_or_default();
-                }
-                if step.description.is_empty() {
-                    step.description = step
-                        .description_i18n
-                        .get("zh-CN")
-                        .cloned()
-                        .unwrap_or_default();
-                }
-                step.view = step
-                    .view
-                    .take()
-                    .map(|view| view.trim().to_string())
-                    .filter(|view| !view.is_empty());
-                if step.id.is_empty()
-                    || step.selector.is_empty()
-                    || step.title.is_empty()
-                    || step.description.is_empty()
-                {
-                    None
-                } else {
-                    Some(step)
-                }
-            })
-            .collect();
     }
     if let Some(path) = patch.game_path {
         config.game.path = path;
@@ -1678,6 +1622,14 @@ pub fn save_settings(
     }
     if let Some(value) = patch.map_info_concurrency {
         config.map_info_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+    }
+    /*
+     * 教程进度：前端每走一步就把「已看过」的 id 整批发来，这里做并集。
+     * 不校验 id 是否还存在 —— 步骤表在前端，旧配置里可能留着已经删掉的
+     * 步骤 id；校验只会让升级后的第一次保存把历史悄悄抹掉。
+     */
+    if let Some(steps) = &patch.tutorial_watched_steps {
+        config.record_tutorial_steps(steps);
     }
     if let Some(value) = patch.builtin_sources_only {
         config.builtin_sources_only = value;
@@ -3755,7 +3707,7 @@ pub fn copy_text(text: String) -> Result<OperationResult, String> {
     clipboard.set_text(text).map_err(|e| e.to_string())?;
     Ok(OperationResult {
         ok: true,
-        message: "tutorial.formatCopied".into(),
+        message: "common.action.copied".into(),
     })
 }
 
@@ -3994,69 +3946,6 @@ pub async fn push_colorful_name(
     }
     log::warn!("多彩名字推送失败：{unreachable:?} 端口均无响应");
     Err("diyLevel.notRunning".into())
-}
-
-fn parse_tutorial_document(text: &str) -> Result<TutorialDocument, String> {
-    if text.len() > 1024 * 1024 {
-        return Err("tutorial.configTooLarge".into());
-    }
-    let trimmed = text.trim();
-    let content = if trimmed.starts_with("```") {
-        let mut lines = trimmed.lines();
-        let _ = lines.next();
-        let body = lines.collect::<Vec<_>>();
-        let end = body
-            .iter()
-            .rposition(|line| line.trim() == "```")
-            .ok_or_else(|| "tutorial.unclosedCodeBlock".to_string())?;
-        body[..end].join("\n")
-    } else {
-        trimmed.to_string()
-    };
-    let document = toml::from_str::<TutorialDocument>(&content).map_err(|error| {
-        crate::locale_tag::with_params(
-            "tutorial.tomlInvalidReason",
-            &[("reason", &error.to_string())],
-        )
-    })?;
-    if document.version != 1 {
-        return Err(crate::locale_tag::with_params(
-            "tutorial.unsupportedVersion",
-            &[("version", &document.version.to_string())],
-        ));
-    }
-    Ok(document)
-}
-
-#[tauri::command]
-pub fn get_builtin_tutorial() -> Result<Vec<TutorialStepConfig>, String> {
-    log::debug!("读取内置教程配置");
-    parse_tutorial_document(include_str!("../resources/builtin-tutorial.toml"))
-        .map(|document| document.steps)
-}
-
-#[tauri::command]
-pub fn parse_tutorial_config(text: String) -> Result<Vec<TutorialStepConfig>, String> {
-    log::debug!("解析教程配置：长度={}", text.len());
-    parse_tutorial_document(&text).map(|document| document.steps)
-}
-
-#[tauri::command]
-pub fn serialize_tutorial_config(steps: Vec<TutorialStepConfig>) -> Result<String, String> {
-    log::debug!("序列化教程配置：步骤数={}", steps.len());
-    toml::to_string_pretty(&TutorialDocument { version: 1, steps }).map_err(|error| {
-        crate::locale_tag::with_params("tutorial.exportFailed", &[("reason", &error.to_string())])
-    })
-}
-
-#[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
-    log::debug!("读取文本文件");
-    let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
-    if metadata.len() > 1024 * 1024 {
-        return Err("tutorial.importTooLarge".into());
-    }
-    fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -10176,7 +10065,7 @@ mod asset_download_strategy_tests {
                 .any(|candidate| candidate.url.starts_with("https://cached-proxy.example/"))
         );
 
-        // Tutorial completion refreshes and persists a new available snapshot.
+        // A later save persists the newly available snapshot.
         let next_success = GitHubProxyConfig {
             release_proxies: vec![proxy("current-remote", "current-proxy.example", true, true)],
             ..GitHubProxyConfig::default()
@@ -11447,7 +11336,7 @@ mod update_status_tests {
 
     fn config(repositories: Vec<RepositoryConfig>) -> AppConfig {
         serde_json::from_value(serde_json::json!({
-            "schema_version": 1, "ui_zoom": 1.5, "onboarding_seen_steps": [],
+            "schema_version": 1, "ui_zoom": 1.5,
             "game": {"path": "", "auto_detect": false},
             "network": {"timeout_seconds": 5, "download_threads": 1,
                 "max_retry_count": 3, "check_updates_on_start": false},
@@ -11639,70 +11528,6 @@ mod log_tests {
         assert_eq!(fs::metadata(&path).unwrap().len(), content.len() as u64);
         fs::remove_file(path).unwrap();
     }
-}
-
-fn builtin_tutorial_repositories_for_region(region: &str) -> Result<Vec<RepositoryExport>, String> {
-    let mut pending = vec![(
-        SourceLocation::parse(repository_sources::BUILTIN_INDEX)
-            .map_err(|error| error.to_string())?,
-        None,
-    )];
-    let mut visited = HashSet::new();
-    let mut host_utilities = None;
-    let mut configuration_manager = None;
-    while let Some((location, source_id)) = pending.pop() {
-        // Tutorial data reads embedded resources only: no network, configuration
-        // writes, installed MOD scans or real release-cache mutations.
-        if !matches!(location, SourceLocation::Bundled(_)) || !visited.insert(location.address()) {
-            continue;
-        }
-        let document = location
-            .bundled_document()
-            .map_err(|error| error.to_string())?;
-        for mut repository in document.repositories {
-            let configured_region =
-                crate::config::normalize_repository_region(repository.region.as_deref());
-            if !configured_region.is_empty() && configured_region != region {
-                continue;
-            }
-            repository.source_id = source_id.clone();
-            if repository.repository == "Overcooked-2-HostUtilities-Stable-Releases" {
-                host_utilities.get_or_insert(repository);
-            } else if repository.repository == "BepInEx.ConfigurationManager" {
-                configuration_manager.get_or_insert(repository);
-            }
-        }
-        if host_utilities.is_some() && configuration_manager.is_some() {
-            break;
-        }
-        for source in document.repository_sources.into_iter().rev() {
-            let configured_region =
-                crate::config::normalize_repository_region(source.region.as_deref());
-            if configured_region.is_empty() || configured_region == region {
-                pending.push((
-                    SourceLocation::parse(&source.url).map_err(|error| error.to_string())?,
-                    Some(source.id),
-                ));
-            }
-        }
-    }
-    let host_utilities =
-        host_utilities.ok_or_else(|| "tutorial.hostUtilitiesConfigMissing".to_string())?;
-    let configuration_manager =
-        configuration_manager.ok_or_else(|| "tutorial.configManagerConfigMissing".to_string())?;
-    Ok(vec![host_utilities, configuration_manager])
-}
-
-#[tauri::command]
-pub fn get_builtin_tutorial_repositories() -> Result<Vec<RepositoryExport>, String> {
-    let region = crate::config::current_user_region();
-    let repositories = builtin_tutorial_repositories_for_region(region)?;
-    log::debug!(
-        "已读取内置教程 MOD 配置：地区={}，仓库数={}",
-        region,
-        repositories.len()
-    );
-    Ok(repositories)
 }
 
 #[cfg(test)]
@@ -12105,51 +11930,6 @@ mod repository_source_refresh_tests {
     }
 }
 
-#[cfg(test)]
-mod builtin_tutorial_repository_tests {
-    use super::*;
-
-    #[test]
-    fn tutorial_repository_uses_bundled_configuration_for_each_region_without_legacy_urls() {
-        let source = SourceLocation::parse("repositories-azhe-hostutilities.toml").unwrap();
-        let document = source.bundled_document().unwrap();
-        for (region, provider) in [
-            (crate::config::REGION_CHINESE_MAINLAND, Provider::Gitee),
-            (crate::config::REGION_INTERNATIONAL, Provider::Github),
-        ] {
-            let repositories = builtin_tutorial_repositories_for_region(region).unwrap();
-            assert_eq!(repositories.len(), 2);
-            let expected = document
-                .repositories
-                .iter()
-                .find(|repository| {
-                    repository.repository == "Overcooked-2-HostUtilities-Stable-Releases"
-                        && repository.provider == provider
-                        && {
-                            let configured_region = crate::config::normalize_repository_region(
-                                repository.region.as_deref(),
-                            );
-                            configured_region.is_empty() || configured_region == region
-                        }
-                })
-                .unwrap();
-            let mut actual = repositories[0].clone();
-            assert_eq!(actual.provider, provider);
-            assert_eq!(
-                actual.source_id.as_deref(),
-                Some("repositories-azhe-hostutilities")
-            );
-            actual.source_id = expected.source_id.clone();
-            assert_eq!(
-                serde_json::to_value(&actual).unwrap(),
-                serde_json::to_value(expected).unwrap()
-            );
-            assert!(serde_json::to_value(&actual).unwrap().get("url").is_none());
-            assert_eq!(repositories[1].repository, "BepInEx.ConfigurationManager");
-        }
-    }
-}
-
 /// 多彩名字推送的请求契约。
 ///
 /// MOD 的 `DisplayNameWebService.IsValidToken` 在没有 `X-OC2-Token` 时只认
@@ -12363,7 +12143,7 @@ mod colorful_name_push_tests {
         let body = source
             .split("pub async fn push_colorful_name")
             .nth(1)
-            .and_then(|tail| tail.split("fn parse_tutorial_document").next())
+            .and_then(|tail| tail.split("fn preview_repository_import").next())
             .expect("push_colorful_name 函数体应当可定位");
         // 注释里会引用这个字段名来说明为什么不能用它，先剥掉块注释与行注释再断言。
         let code = strip_comments(body);

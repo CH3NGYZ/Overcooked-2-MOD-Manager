@@ -998,7 +998,6 @@ pub struct RepositoryConfig {
 pub struct AppConfig {
     pub schema_version: u32,
     pub ui_zoom: f64,
-    pub onboarding_seen_steps: Vec<String>,
     #[serde(default = "default_hide_unidentified_mods")]
     pub hide_unidentified_mods: bool,
     /// 删除 MOD（含覆盖安装前清理旧包）时是否先移入回收站。
@@ -1020,8 +1019,14 @@ pub struct AppConfig {
     /// `0` = 全部 CPU 核心（默认，[`crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY`]）。
     #[serde(default = "default_map_info_concurrency")]
     pub map_info_concurrency: u32,
-    #[serde(default)]
-    pub tutorial_steps: Vec<TutorialStepConfig>,
+    /// 已经看过的教程步骤 id（前端步骤表的 `id`）。
+    ///
+    /// 教程步骤是只增不改的清单：更新后新加的步骤 id 不在这个集合里，
+    /// 启动时只播这些新步骤，老步骤不再重复。id 由前端维护、后端只做
+    /// 并集与保存，所以这里不校验「是否存在这个步骤」—— 校验只会让
+    /// 删改过步骤表的版本把历史悄悄抹掉。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tutorial_watched_steps: Vec<String>,
     pub game: GameConfig,
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
@@ -1079,6 +1084,22 @@ pub struct AppConfig {
     /// 只写在内置快照里，远程索引留给仍在用 V1 的用户。
     #[serde(default = "default_true")]
     pub builtin_sources_only: bool,
+}
+
+impl AppConfig {
+    /// 把「已经看过」的教程步骤 id 并进配置。
+    ///
+    /// 并集而不是覆盖：重播与跳步可能在不同次运行里交错回写，谁的 id 都
+    /// 不该丢。顺序保留首次写入的先后，空白与重复值直接跳过。
+    pub(crate) fn record_tutorial_steps(&mut self, ids: &[String]) {
+        for id in ids {
+            let id = id.trim();
+            if id.is_empty() || self.tutorial_watched_steps.iter().any(|seen| seen == id) {
+                continue;
+            }
+            self.tutorial_watched_steps.push(id.to_owned());
+        }
+    }
 }
 
 /// 游戏运行时。
@@ -1159,6 +1180,39 @@ mod game_runtime_tests {
     }
 }
 
+#[cfg(test)]
+mod tutorial_progress_tests {
+    use super::*;
+
+    /// 前端每走一步都会整批发一次；并集去重是唯一合并规则。
+    #[test]
+    fn watched_step_ids_are_merged_as_a_deduped_union() {
+        let mut config = crate::config::default_config();
+        config.record_tutorial_steps(&["intro".into(), "sidebar".into()]);
+        // 重播时又发了一遍老 id，并带上新 id：老的不能重复、顺序不动。
+        config.record_tutorial_steps(&[
+            " sidebar ".into(),
+            "sidebar-mods-online".into(),
+            String::new(),
+        ]);
+        assert_eq!(
+            config.tutorial_watched_steps,
+            vec!["intro", "sidebar", "sidebar-mods-online"]
+        );
+    }
+
+    /// 旧配置缺字段时反序列化成空集合，序列化时整个键都不写。
+    #[test]
+    fn missing_field_round_trips_as_empty_and_stays_out_of_json() {
+        let raw = serde_json::to_value(crate::config::default_config()).unwrap();
+        assert!(raw.get("tutorial_watched_steps").is_none());
+        let mut config = crate::config::default_config();
+        config.record_tutorial_steps(&["intro".into()]);
+        let raw = serde_json::to_value(&config).unwrap();
+        assert_eq!(raw["tutorial_watched_steps"], serde_json::json!(["intro"]));
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
     pub timeout_seconds: u64,
@@ -1183,36 +1237,6 @@ pub struct AuthConfig {
     pub official_api_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TutorialStepConfig {
-    pub id: String,
-    pub selector: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub view: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scenario: Option<String>,
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub title_i18n: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub description_i18n: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TutorialDocument {
-    #[serde(default = "default_tutorial_version")]
-    pub version: u32,
-    #[serde(default)]
-    pub steps: Vec<TutorialStepConfig>,
-}
-
-fn default_tutorial_version() -> u32 {
-    1
-}
-
 fn default_hide_unidentified_mods() -> bool {
     true
 }
@@ -1231,7 +1255,6 @@ pub struct PublicConfig {
     pub platform: String,
     pub region: String,
     pub ui_zoom: f64,
-    pub onboarding_seen_steps: Vec<String>,
     pub hide_unidentified_mods: bool,
     /// 删除 MOD 时先移入回收站；false = 直接删除（不可恢复）。
     #[serde(default = "default_true")]
@@ -1242,8 +1265,9 @@ pub struct PublicConfig {
     /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。
     #[serde(default = "default_map_info_concurrency")]
     pub map_info_concurrency: u32,
+    /// 已经看过的教程步骤 id；启动教程时只播不在里面的步骤。
     #[serde(default)]
-    pub tutorial_steps: Vec<TutorialStepConfig>,
+    pub tutorial_watched_steps: Vec<String>,
     pub game: GameConfig,
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
@@ -1679,11 +1703,9 @@ pub struct DashboardData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsPatch {
     pub ui_zoom: Option<f64>,
-    pub onboarding_seen_steps: Option<Vec<String>>,
     pub hide_unidentified_mods: Option<bool>,
     /// 删除 MOD 时先移入回收站（默认 true）。关闭即直接删除，不可恢复。
     pub recycle_deleted_mods: Option<bool>,
-    pub tutorial_steps: Option<Vec<TutorialStepConfig>>,
     pub game_path: Option<String>,
     pub auto_detect: Option<bool>,
     pub game_runtime: Option<GameRuntime>,
@@ -1695,6 +1717,9 @@ pub struct SettingsPatch {
     pub mod_metadata_concurrency: Option<u32>,
     /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。
     pub map_info_concurrency: Option<u32>,
+    /// 这次「已经看过」的教程步骤 id；后端把它并进配置里的集合。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tutorial_watched_steps: Option<Vec<String>>,
     /// 只用内置仓库源（不访问远端 raw 入口）。
     pub builtin_sources_only: Option<bool>,
     /// 只用内置地图源（不影响仓库源，反之亦然）。

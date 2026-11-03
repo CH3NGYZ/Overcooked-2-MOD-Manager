@@ -540,9 +540,7 @@ const packages = computed(
   .package-shell.focus-flash { animation: none; }
 }
 
-/* 可点击的状态标签：手型 + hover 反馈，表示能跳到 MOD 安装页 */
-.state-tag--link { cursor: pointer; }
-.state-tag--link:hover { filter: brightness(1.25); }
+/* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 
 /*
  * 状态变化脉冲：刷新完成、标签从「刷新中」变成确定状态时，

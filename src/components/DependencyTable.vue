@@ -204,12 +204,5 @@ function lineLabel(line: DependencyRow['line']): string {
   white-space: nowrap;
 }
 
-/* 可点的状态标签与卡片上的同一套交互：指针 + 悬停提亮，不额外加下划线 */
-.state-tag--link {
-  cursor: pointer;
-}
-
-.state-tag--link:hover {
-  filter: brightness(1.25);
-}
+/* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 </style>

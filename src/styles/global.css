@@ -465,6 +465,24 @@ body {
 .state-tag--strong.n-tag { font-weight: 700; }
 
 /*
+ * 可点跳转 / 页内定位的状态标签：手型 + 悬停提亮并压一圈同色描边。
+ *
+ * 状态标签大多渲染在各页 `LocalItemCard` 的插槽里，插槽内容带的是**页面**的
+ * scoped 作用域，所以这条规则只能放全局（各页各抄一份时亮度已经在 1.15/1.25
+ * 之间飘过）。描边用 `currentColor`，自动跟随 Naive `:color` 下发的状态色。
+ */
+.state-tag--link.n-tag {
+  cursor: pointer;
+  transition: filter .12s ease, box-shadow .12s ease;
+}
+.state-tag--link.n-tag:hover {
+  filter: brightness(1.28);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, currentColor 62%, transparent),
+    0 0 0 2px color-mix(in srgb, currentColor 20%, transparent);
+}
+
+/*
  * 按钮内 icon 与文字的间距。
  *
  * Naive 把 icon 和文字都放在 .n-button__content 里（display: flex），

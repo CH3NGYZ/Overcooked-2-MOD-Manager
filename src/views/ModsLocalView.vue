@@ -1768,9 +1768,7 @@ provide(
 /* 分类折叠：分类标题行 + 内部单列 MOD 卡片 */
 .group-collapse { width: 100%; }
 
-/* 可点击的状态标签：手型 + hover 反馈，表示能跳到 MOD 安装页 */
-.state-tag--link { cursor: pointer; }
-.state-tag--link:hover { filter: brightness(1.25); }
+/* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 
 /* 本地刷新进行中：图标自转（类由刷新按钮绑定） */
 .spin-icon { animation: oc2-local-spin .8s linear infinite; }

@@ -227,9 +227,7 @@ function runAction() {
 @media (prefers-reduced-motion: reduce) {
   .online-card.focus-flash { animation: none; }
 }
-/* 可点跳转的标签：与静态标签区分 */
-.state-tag--link { cursor: pointer; }
-.state-tag--link:hover { filter: brightness(1.25); }
+/* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 
 .card-head {
   display: flex;

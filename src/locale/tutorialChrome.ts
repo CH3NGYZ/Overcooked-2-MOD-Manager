@@ -194,7 +194,15 @@ export const tutorialChrome: DomainMessages = {
     ko: '완료',
     ja: '完了',
   },
-  hint: {
+  // 进度数字本身只显示「3 / 42」，读屏软件念不出含义，另外给它一条能念出来的说明。
+  stepProgress: {
+    'zh-CN': '第 {n} 步，共 {total} 步',
+    'zh-TW': '第 {n} 步，共 {total} 步',
+    en: 'Step {n} of {total}',
+    ko: '{total}단계 중 {n}단계',
+    ja: '{total} ステップ中 {n} ステップ',
+  },
+  cardHint: {
     'zh-CN': '点击任意位置继续 · 滚轮或 ← ↑ ↓ → 方向键切换',
     'zh-TW': '點擊任意位置繼續 · 滾輪或 ← ↑ ↓ → 方向鍵切換',
     en: 'Click anywhere to continue · wheel or arrow keys to move',
@@ -242,5 +250,61 @@ export const tutorialChrome: DomainMessages = {
     en: 'Tutorial sample',
     ko: '튜토리얼 예시',
     ja: 'チュートリアルのサンプル',
+  },
+  /*
+   * 教程期间的在线示例源（`src/tutorial/demo.ts` 的示例仓库 / 示例地图）。
+   *
+   * 两个安装页在教程期间整体换成这一份内置数据：教程讲的是固定的「源分组 →
+   * 卡片 → 详情」路径，真实配置为空、或网络根本连不上时，那几步没有东西可指。
+   * 文案都带「示例 / Sample」，用户一眼看得出不是真实仓库。
+   */
+  'demo.sourceName': {
+    'zh-CN': '示例仓库源',
+    'zh-TW': '範例倉庫源',
+    en: 'Sample repository source',
+    ko: '예시 저장소 소스',
+    ja: 'サンプルリポジトリソース',
+  },
+  'demo.group': {
+    'zh-CN': '示例分类',
+    'zh-TW': '範例分類',
+    en: 'Sample category',
+    ko: '예시 분류',
+    ja: 'サンプルカテゴリ',
+  },
+  'demo.mapA': {
+    'zh-CN': '示例地图 · 夜市厨房',
+    'zh-TW': '範例地圖 · 夜市廚房',
+    en: 'Sample map · Night-market kitchen',
+    ko: '예시 지도 · 야시장 주방',
+    ja: 'サンプルマップ・夜市のキッチン',
+  },
+  'demo.mapB': {
+    'zh-CN': '示例地图 · 雪原列车',
+    'zh-TW': '範例地圖 · 雪原列車',
+    en: 'Sample map · Snowfield train',
+    ko: '예시 지도 · 설원 열차',
+    ja: 'サンプルマップ・雪原列車',
+  },
+  'demo.repoNote': {
+    'zh-CN': '教程期间的示例仓库，用来演示卡片、版本与安装入口。它不对应任何真实仓库，也不会下载任何文件。',
+    'zh-TW': '教學期間的範例倉庫，用來示範卡片、版本與安裝入口。它不對應任何真實倉庫，也不會下載任何檔案。',
+    en: 'A sample repository shown during the tour to demonstrate cards, versions and the install entry. It does not correspond to a real repository and never downloads anything.',
+    ko: '투어 중 카드, 버전, 설치 진입점을 보여 주기 위한 예시 저장소입니다. 실제 저장소가 아니며 아무것도 내려받지 않습니다.',
+    ja: 'ツアー中にカード・バージョン・インストール入口を説明するためのサンプルリポジトリです。実在するリポジトリではなく、何もダウンロードしません。',
+  },
+  'demo.repoReadme': {
+    'zh-CN': '# 示例仓库\n\n这是教程期间显示的示例数据，不对应任何真实仓库。\n\n- 安装 MOD 时，管理器先下载并解析 DLL，确认内容后才写入游戏目录。\n- 版本列表来自仓库的 Release，可以选旧版本回滚。\n- 真实数据会在教程结束后自动刷新。',
+    'zh-TW': '# 範例倉庫\n\n這是教學期間顯示的範例資料，不對應任何真實倉庫。\n\n- 安裝 MOD 時，管理器先下載並解析 DLL，確認內容後才寫入遊戲目錄。\n- 版本列表來自倉庫的 Release，可以選舊版本回溯。\n- 真實資料會在教學結束後自動重新整理。',
+    en: '# Sample repository\n\nThis is sample data shown during the tour; it does not correspond to a real repository.\n\n- When installing a mod, the manager downloads and parses the DLL first, and only writes into the game folder after confirming the contents.\n- The version list comes from the repository releases, so you can roll back to an older version.\n- Real data refreshes automatically once the tour ends.',
+    ko: '# 예시 저장소\n\n투어 중 표시되는 예시 데이터이며 실제 저장소가 아닙니다.\n\n- MOD를 설치할 때 관리자는 먼저 DLL을 내려받아 분석하고, 내용을 확인한 뒤에 게임 폴더에 기록합니다.\n- 버전 목록은 저장소의 릴리스에서 오며, 이전 버전으로 되돌릴 수 있습니다.\n- 투어가 끝나면 실제 데이터가 자동으로 새로 고쳐집니다.',
+    ja: '# サンプルリポジトリ\n\nツアー中に表示されるサンプルデータで、実在するリポジトリではありません。\n\n- MOD をインストールするときは、まず DLL をダウンロードして解析し、内容を確認してからゲームフォルダーへ書き込みます。\n- バージョン一覧はリポジトリのリリースから取得し、古いバージョンへ戻すこともできます。\n- 実際のデータはツアー終了後に自動で更新されます。',
+  },
+  'demo.releaseBody': {
+    'zh-CN': '示例版本说明：没有真实下载内容，只在教程里演示版本与依赖的展示方式。',
+    'zh-TW': '範例版本說明：沒有真實下載內容，只在教學裡示範版本與依賴的呈現方式。',
+    en: 'Sample release notes: there is nothing to download; this only demonstrates how versions and dependencies are shown in the tour.',
+    ko: '예시 릴리스 노트: 실제 내려받을 내용이 없으며, 투어에서 버전과 의존성을 보여 주기 위한 것입니다.',
+    ja: 'サンプルリリースノート：実際のダウンロード内容はなく、ツアーでバージョンと依存関係の見せ方を示すためのものです。',
   },
 }

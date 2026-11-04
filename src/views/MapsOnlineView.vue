@@ -59,6 +59,7 @@ import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
 import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository } from '../types'
+import { withDemoMaps } from '../tutorial/demo'
 
 /**
  * 地图安装页。
@@ -128,9 +129,18 @@ const { linkToRepository } = useRepositoryLink()
  * 忙碌状态也只能有一个真相。
  */
 const {
-  maps, loading, refreshing, refreshingSources, installing, refreshingAll, anyRefreshing,
+  maps: realMaps, loading, refreshing, refreshingSources, installing, refreshingAll, anyRefreshing,
   loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
 } = useMapSources()
+/**
+ * 教程期间地图列表整体换成内置示例数据（与 MOD 安装页同一套 `withDemo*`，
+ * 理由见 `tutorial/demo.ts` 的文件头）：地图源要联网才有条目，首启连不上源
+ * 时教程那几步没有卡片可指。
+ *
+ * 用 computed 包一层而不是改名到每个使用点：计数、搜索、分组树与详情抽屉
+ * 全都读 `maps.value`，这里换掉数据源即可，展示逻辑一行不用动。
+ */
+const maps = computed<MapInfo[]>(() => withDemoMaps(realMaps.value))
 const sets = ref<LevelSetInfo[]>([])
 /**
  * 本地关卡集扫描的唯一入口。

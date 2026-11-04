@@ -19,6 +19,7 @@
 import { onUnmounted, ref, watch } from 'vue'
 import { api } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
+import { demoReadme } from '../tutorial/demo'
 import type { RepositoryReadme } from '../types'
 
 export function useRepositoryReadme(sourceId: () => string | null | undefined) {
@@ -40,6 +41,16 @@ export function useRepositoryReadme(sourceId: () => string | null | undefined) {
     readme.value = null
     error.value = ''
     if (!id) return
+    /*
+     * 教程示例仓库没有真实 id：请求必然失败，抽屉里会显示一块红色报错。
+     * 内置说明直接给（`demoReadme` 只在演示态且 id 带示例前缀时返回内容），
+     * 这里同时挡住了「按不存在 id 打一次网络」。
+     */
+    const sample = demoReadme(id)
+    if (sample) {
+      readme.value = sample
+      return
+    }
     const request = crypto.randomUUID()
     requestId = request
     loading.value = true

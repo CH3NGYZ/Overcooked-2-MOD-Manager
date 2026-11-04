@@ -34,6 +34,7 @@ import {
   type SourceGroupOrder,
 } from '../composables/useSourceGroupTree'
 import type { Repository, RepositorySource } from '../types'
+import { withDemoRepositories, withDemoSources } from '../tutorial/demo'
 
 const message = useNotify()
 const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
@@ -246,13 +247,26 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
  * 地区不匹配的仓库不只是不显示：它也不会被刷新，
  * 所以不会出现「看不见的仓库刷新失败」这种无处处理的报错。
  */
-const repositories = computed<Repository[]>(() =>
-  (config.value?.repositories ?? []).filter((repo) =>
-    repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
+/*
+ * 教程期间这两个列表整体换成内置示例源（`withDemo*`）：教程讲的是固定的
+ * 「源分组 → 卡片 → 详情」路径，真实配置为空、或首启连不上源时那几步没有
+ * 东西可指。合并只发生在展示层（见 `tutorial/demo.ts` 的边界说明），教程
+ * 一结束这两个 computed 当场回到真实数据。
+ *
+ * 源必须先换：`repositoryIsAvailable` 会查「所属源是否存在」，只换仓库不换源，
+ * 示例卡片会被全部滤掉。
+ */
+const sources = computed<RepositorySource[]>(() =>
+  withDemoSources(
+    (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
   ),
 )
-const sources = computed<RepositorySource[]>(() =>
-  (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
+const repositories = computed<Repository[]>(() =>
+  withDemoRepositories(
+    (config.value?.repositories ?? []).filter((repo) =>
+      repositoryIsAvailable(repo, sources.value, currentRegion.value, config.value?.platform),
+    ),
+  ),
 )
 const detailRepo = computed(() => repositories.value.find((repo) => repo.id === detailId.value) ?? null)
 

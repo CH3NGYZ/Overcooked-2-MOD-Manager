@@ -20,6 +20,7 @@
 import { ref } from 'vue'
 import { api } from './services/tauri'
 import { avatarKey, pendingAvatarTargets, type AvatarSource } from './avatarTargets'
+import { isDemoOwner } from './tutorial/demo'
 import type { Provider } from './types'
 
 /** `provider:owner` → data URL。 */
@@ -57,7 +58,12 @@ export function clearAvatarCache() {
  */
 export function prefetchAvatars(sources: readonly AvatarSource[]): Promise<void> {
   const pending = pendingAvatarTargets(
-    sources,
+    /*
+     * 教程示例条目的 owner 并不存在（`tutorial/demo.ts` 的 `isDemoOwner`），
+     * 请求必然 404：跳过它们，否则每次教程都会在日志里留下一次失败，
+     * 离线时还要白等一轮超时。示例卡片回落到平台图标，本来就是这个样子。
+     */
+    sources.filter((source) => !isDemoOwner(source.username)),
     (key) => requested.has(key) || !!cache.value[key],
   )
   if (!pending.length) return inFlight ?? Promise.resolve()

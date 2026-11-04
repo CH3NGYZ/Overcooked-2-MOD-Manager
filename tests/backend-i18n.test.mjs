@@ -399,3 +399,18 @@ test('后端不再返回中文整句的框架错误（源码级确认）', () =>
     assert.ok(!rust.includes(legacy), `commands.rs 不应再含中文文案：${legacy}`)
   }
 })
+
+test('在线卡片自己翻译刷新失败原因，不把裸 tag 摆到界面上', () => {
+  /*
+   * `last_error` 是刷新引擎从后端原样写回的**原始**值（tag 可以带 `?k=v`
+   * 参数，例如 `mapSource.noAssetInTag?map=…&tag=…`）。两个在线页都把它
+   * 直接传给 `OnlineCard`，所以翻译必须落在卡片里 —— 漏一处界面就是一长串
+   * 百分号编码，而失败弹窗里同一件事却是中文。
+   */
+  const card = readFileSync(new URL('../src/components/OnlineCard.vue', import.meta.url), 'utf8')
+  assert.ok(
+    card.includes('translateBackendMessage(error)'),
+    'OnlineCard 必须用 translateBackendMessage 渲染 error',
+  )
+  assert.ok(!card.includes('{{ error }}'), 'OnlineCard 不能直接渲染裸 error')
+})

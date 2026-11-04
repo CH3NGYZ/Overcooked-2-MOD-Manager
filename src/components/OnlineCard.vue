@@ -24,6 +24,7 @@ import { NButton, NTag } from 'naive-ui'
 import { ArrowUpCircleOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
 import { buttonColorFor, tagColorFor, tagColorForAny, type TagTone } from '../theme'
 import { t } from '../i18n'
+import { translateBackendMessage } from '../locale/backend'
 import type { VersionDisplay } from '../modStatus'
 import ProviderIcon from './ProviderIcon.vue'
 
@@ -64,6 +65,13 @@ const props = defineProps<{
   refreshing?: boolean
   downloads?: number | null
   action: CardAction
+  /**
+   * 该行刷新失败的**原始**错误：后端 tag（可带 `?k=v` 参数）或普通整句。
+   *
+   * 刷新引擎只负责把后端给的原样写回 `last_error`（它还兼任「这一行失败了」
+   * 的判据），翻译在**这里**做一次 —— 卡片是两个在线页共用的展示层，漏在
+   * 某个调用点就会把 `mapSource.noAssetInTag?map=…` 这种裸 tag 直接摆到界面上。
+   */
   error?: string | null
   /** 详情抽屉选中态。 */
   active?: boolean
@@ -182,7 +190,7 @@ function runAction() {
       </n-button>
     </div>
 
-    <div v-if="error" class="err muted">{{ error }}</div>
+    <div v-if="error" class="err muted">{{ translateBackendMessage(error) }}</div>
   </article>
 </template>
 

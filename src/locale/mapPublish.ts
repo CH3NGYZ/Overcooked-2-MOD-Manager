@@ -198,11 +198,11 @@ export const mapPublish: DomainMessages = {
     ja: '{count} 件のリポジトリを検出しました',
   },
   repositoryEmptyInstall: {
-    'zh-CN': '还没有授权任何仓库：先点上面的「安装 App 并选择仓库」。',
-    'zh-TW': '還沒有授權任何倉庫：先點上面的「安裝 App 並選擇倉庫」。',
-    en: 'No repositories authorized yet. Use "Install the app and pick repositories" above first.',
-    ko: '아직 권한이 부여된 저장소가 없습니다. 위의 "앱 설치 및 저장소 선택"을 먼저 실행하세요.',
-    ja: 'まだ許可されたリポジトリがありません。先に上の「アプリをインストールしてリポジトリを選択」を実行してください。',
+    'zh-CN': '还没有授权任何仓库：先点下面的「安装 App 并选择仓库」。',
+    'zh-TW': '還沒有授權任何倉庫：先點下面的「安裝 App 並選擇倉庫」。',
+    en: 'No repositories authorized yet. Use "Install the app and pick repositories" below first.',
+    ko: '아직 권한이 부여된 저장소가 없습니다. 아래의 "앱 설치 및 저장소 선택"을 먼저 실행하세요.',
+    ja: 'まだ許可されたリポジトリがありません。先に下の「アプリをインストールしてリポジトリを選択」を実行してください。',
   },
   createRepositoryLimited: {
     'zh-CN': '当前安装只授权了部分仓库，新建的仓库不在范围内；去安装页勾选它，或改成「全部仓库」。',

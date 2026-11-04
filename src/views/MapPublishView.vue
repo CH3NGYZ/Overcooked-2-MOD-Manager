@@ -625,7 +625,7 @@ function confirmDeleteAsset(asset: PublishAsset) {
             <n-button v-if="needsInstall" size="small" type="primary" @click="startInstall">
               {{ installWaiting ? t('mapPublish.reopenInstallPage') : t('mapPublish.installAppNow') }}
             </n-button>
-            <n-button size="small" :type="needsInstall ? 'default' : 'primary'" @click="openSettings">
+            <n-button v-if="!needsInstall" size="small" type="primary" @click="openSettings">
               {{ t('mapPublish.selectRepository') }}
             </n-button>
           </div>

@@ -1309,11 +1309,35 @@ pub struct PublishAsset {
     pub size: u64,
 }
 
+/// 「新增资产」时对本地 ZIP 的识别结果。
+///
+/// 版本号有两个来源：ZIP 文件名（写进 `latest_mapset_version`，也是附件名模板
+/// 里 `${version}` 的值）与 `info` 里的版本（写进 `latest_info_version`）。地图源
+/// 消费端只从附件名抽版本，`info` 版本留给作者核对，两者不一致时界面会提示。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PublishZipInspection {
+    /// ZIP 文件名（不含目录）。
+    pub file_name: String,
+    /// 从 ZIP 文件名解析出的版本号；解析不出为空串，界面让作者手填。
+    pub mapset_version: String,
+    /// `info` 里的版本号。
+    pub info_version: String,
+    pub level_set_name: String,
+    pub level_set_name_zh: String,
+    pub author: String,
+    pub level_count: usize,
+    pub file_count: usize,
+    /// ZIP 里识别出的关卡集数量：>1 说明是合集，需要作者确认上传哪一张。
+    pub set_count: usize,
+    /// `requires.txt` 声明的最低 runtime 版本（GUID → 版本区间）。
+    pub requires: BTreeMap<String, String>,
+}
+
 /// 上传页看到的「一版地图」，就是仓库里的一个 Release。
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishRelease {
     pub id: u64,
-    /// tag 名就是版本号（地图源读 `tag_name` 当版本）。
+    /// tag 是这张地图在仓库里的唯一标识（一个 tag = 一张地图集），不是版本号。
     pub tag: String,
     pub title: String,
     pub draft: bool,
@@ -1368,7 +1392,7 @@ pub struct PublishSaveRequest {
     /// 有值 = 改这一版；空 = 新建一版（Release 会自动建 tag）。
     #[serde(default)]
     pub release_id: Option<u64>,
-    /// 也就是版本号；消费端直接拿它当版本。
+    /// 地图集的地图 ID：一个 tag 一张图，版本号写在附件名里。
     pub tag: String,
     #[serde(default)]
     pub title: String,
@@ -1451,8 +1475,6 @@ mod game_runtime_tests {
 
 #[cfg(test)]
 mod tutorial_progress_tests {
-    use super::*;
-
     /// 前端每走一步都会整批发一次；并集去重是唯一合并规则。
     #[test]
     fn watched_step_ids_are_merged_as_a_deduped_union() {

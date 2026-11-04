@@ -22,7 +22,7 @@
 //! 为一个只在授权时存在的临时状态给每一处都加一行不值得。它的寿命就是一次
 //! 授权（最长 [`AUTHORIZE_TIMEOUT`]），放模块级 `Mutex` 最省事，进程退出即丢。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,7 +44,7 @@ use crate::map_note::{
 use crate::models::{
     OperationResult, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,
     PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease, PublishRepository,
-    PublishRepositoryList, PublishSaveRequest, PublishUploadRequest,
+    PublishRepositoryList, PublishSaveRequest, PublishUploadRequest, PublishZipInspection,
 };
 use crate::releases::APP_USER_AGENT;
 
@@ -330,23 +330,35 @@ fn validate_coordinates(owner: &str, repository: &str) -> Result<(String, String
     Ok((owner.to_string(), repository.to_string()))
 }
 
-/// tag 就是给消费端看的版本号，必须是纯版本：`1.2.0` 而不是 `v1.2.0`。
+/// tag 是**一张地图**在仓库里的唯一 ID，不是版本号。
 ///
-/// 首字符限定数字，是因为 `load_release_tag_maps` 把 `tag_name` 直接当版本写进
-/// 卡片；带 `v` 前缀的 tag 与「本地已装的 1.2.0」永远不相等，用户会一直看到
-/// 「可更新」。
+/// 消费端（`map_sources::load_release_tag_maps`）只把这个字符串当身份写进
+/// `MapRepositoryConfig.tag`；版本号来自该 Release 的附件名 —— 管理器用
+/// `map_note::versioned_asset_rule(metadata.asset, assets)` 的正则从附件名里抽
+/// `[0-9]+(?:\.[0-9]+)*`。所以 tag 可以是 `chan`、中文名，只要是一个合法的
+/// git ref；同名 tag 下换附件就是发新版本。
+///
+/// 拒绝项取自 git 的 ref 规则：空格、`~ ^ : ? * [ \`、`..`、`@{`、控制字符、
+/// `/`（保持「一个 tag 一张图」的平面结构，也避免进 URL 时编码歧义）、`.` 或
+/// `-` 开头（前者 git 不认，后者会被当成命令行选项）、`.` 结尾、`.lock` 结尾
+/// （git 自己也不允许）以及超长值。
 fn validate_tag(tag: &str) -> Result<String, String> {
     let tag = tag.trim();
-    let starts_with_digit = tag
-        .chars()
-        .next()
-        .map(|item| item.is_ascii_digit())
-        .unwrap_or(false);
-    let body_ok = tag.len() <= 100
-        && tag
-            .chars()
-            .all(|item| item.is_ascii_alphanumeric() || matches!(item, '.' | '-' | '+'));
-    if !starts_with_digit || !body_ok {
+    let lower = tag.to_lowercase();
+    let forbidden = |item: char| {
+        item.is_control() || matches!(item, ' ' | '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+    };
+    let ok = !tag.is_empty()
+        && tag.len() <= 100
+        && !tag.starts_with('-')
+        && !tag.starts_with('.')
+        && !tag.ends_with('.')
+        && !lower.ends_with(".lock")
+        && !tag.contains('/')
+        && !tag.contains("..")
+        && !tag.contains("@{")
+        && !tag.chars().any(forbidden);
+    if !ok {
         return Err(invalid_tag(tag));
     }
     Ok(tag.to_string())
@@ -1304,8 +1316,8 @@ pub async fn list_publish_releases(
         .into_iter()
         .map(release_from_api)
         .collect::<Vec<_>>();
-    // 版本高的在前；用字符串比较只能算「大致」，但卡片本来就按版本号排，
-    // 这里只需要稳定的展示顺序。
+    // tag 是地图身份、不是版本号，按它排没有语义，只提供一个稳定顺序；
+    // 真正的版本号来自各 Release 的附件名。
     result.sort_by(|left, right| right.tag.cmp(&left.tag));
     log::info!(
         "发布页 Release 列表加载完成：仓库={owner}/{repository}，条目={}",
@@ -1422,9 +1434,11 @@ pub async fn delete_publish_release(
     );
     if request.delete_tag {
         let tag = validate_tag(&request.tag)?;
+        // tag 允许中文等非 ASCII 字符，进 URL 路径前必须百分号编码。
+        let tag_path = encode_component(&tag);
         let response = authorized(
             client.delete(format!(
-                "{API_ENDPOINT}/repos/{owner}/{repository}/git/refs/tags/{tag}"
+                "{API_ENDPOINT}/repos/{owner}/{repository}/git/refs/tags/{tag_path}"
             )),
             &token,
         )
@@ -1529,11 +1543,139 @@ pub async fn delete_publish_asset(
     })
 }
 
+/// 从 ZIP 文件名里取版本号：取最后一段「数字和点」。
+///
+/// 作者的地图包通常叫 `gaoda-1.2.0.zip`，版本号只出现在文件名里；这个名字就是
+/// Release note 的 `latest_mapset_version`（地图源按附件名抽版本，见
+/// `map_note::versioned_asset_rule`）。解析不出就返回空串，界面让作者手填。
+///
+/// 优先多段（`1.2.0` 比 `1` 更像版本号），没有多段时才退回最后一段纯数字。
+/// 文件名只有日期（`2026-11-04`）时只能取到 `04` —— 这种名字本来就没有版本，
+/// 界面上填错的成本只是改两个字。
+fn version_from_file_name(stem: &str) -> String {
+    let mut runs: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in stem.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            runs.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        runs.push(current);
+    }
+    let valid = |run: &String| {
+        let trimmed = run.trim_matches('.');
+        !trimmed.is_empty()
+            && trimmed
+                .split('.')
+                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    };
+    runs.iter()
+        .rev()
+        .find(|run| valid(run) && run.trim_matches('.').contains('.'))
+        .or_else(|| runs.iter().rev().find(|run| valid(run)))
+        .map(|run| run.trim_matches('.').to_string())
+        .unwrap_or_default()
+}
+
+/// 从 ZIP 里读关卡集根目录的 `requires.txt`：第一行有效内容是最低 runtime 版本。
+///
+/// 与已安装目录同一条判定（`level_sets::read_required_runtime` 只看集目录根）：
+/// 只认相对路径恰好等于 `requires.txt` 的条目，子目录里的同名文件不算。
+fn zip_required_runtime(path: &std::path::Path, files: &[(String, String)]) -> Option<String> {
+    let entry_name = files
+        .iter()
+        .find(|(_, relative)| relative.eq_ignore_ascii_case("requires.txt"))?
+        .0
+        .clone();
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name(&entry_name).ok()?;
+    let mut text = String::new();
+    entry.read_to_string(&mut text).ok()?;
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+}
+
+fn inspect_publish_zip_blocking(path: &std::path::Path) -> Result<PublishZipInspection, String> {
+    if !path.is_file() {
+        return Err("mapPublish.zipUnreadable".to_string());
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    // 发布页只需要一张图的身份与版本；合集 ZIP 也先全部识别出来，让界面能
+    // 明确告诉作者「这个包里有多张图」，而不是悄悄挑第一张。
+    let sets = crate::level_sets::inspect_zip_with_progress(
+        path,
+        crate::metadata_read::workers_from(crate::metadata_read::AUTO_CONCURRENCY),
+        crate::metadata_read::workers_from(crate::metadata_read::AUTO_CONCURRENCY),
+        &|_, _, _| {},
+    )?;
+    let first = sets
+        .first()
+        .ok_or_else(|| "mapPublish.zipNoLevelSet".to_string())?;
+    let requires = zip_required_runtime(path, &first.files)
+        .and_then(|min_version| crate::level_sets::runtime_relation(&min_version))
+        .map(|relation| {
+            let mut table = BTreeMap::new();
+            table.insert(relation.guid, relation.version);
+            table
+        })
+        .unwrap_or_default();
+    Ok(PublishZipInspection {
+        file_name,
+        mapset_version: version_from_file_name(stem),
+        info_version: first.metadata.version.clone(),
+        level_set_name: first.metadata.name.clone(),
+        level_set_name_zh: first.metadata.name_zh.clone().unwrap_or_default(),
+        author: first.metadata.author.clone(),
+        level_count: first.metadata.levels.len(),
+        file_count: first.files.len(),
+        set_count: sets.len(),
+        requires,
+    })
+}
+
+/// 识别一个本地地图 ZIP：作者在「新增资产」弹窗里拖进来或选中时就调它。
+///
+/// 会解析 `info`（UnityFS + LZMA），属于重活，必须走 `spawn_blocking`：
+/// 同步命令会冻住主线程（见 `AGENTS.md` 第 5 节）。
+#[tauri::command]
+pub async fn inspect_publish_zip(path: String) -> Result<PublishZipInspection, String> {
+    let path = std::path::PathBuf::from(path.trim());
+    tauri::async_runtime::spawn_blocking(move || inspect_publish_zip_blocking(&path))
+        .await
+        .map_err(|error| request_error(&error.to_string()))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::map_note::NOTE_BLOCK_OPEN;
     use crate::models::MapPublishMetadata;
+
+    #[test]
+    fn zip_file_names_carry_the_version() {
+        assert_eq!(version_from_file_name("gaoda"), "");
+        assert_eq!(version_from_file_name("gaoda-1.2.0"), "1.2.0");
+        assert_eq!(version_from_file_name("GAODA_1.0.3_beta"), "1.0.3");
+        assert_eq!(version_from_file_name("地图-3.4"), "3.4");
+        assert_eq!(version_from_file_name("v2"), "2");
+        assert_eq!(version_from_file_name("gaoda..1.2."), "1.2");
+        // 只有日期的名字本来就没有版本：取到 04，界面让作者改。
+        assert_eq!(version_from_file_name("2026-11-04"), "04");
+    }
 
     #[test]
     fn slugs_reject_path_tricks() {
@@ -1547,12 +1689,21 @@ mod tests {
     }
 
     #[test]
-    fn tags_are_plain_versions_without_a_v_prefix() {
-        assert_eq!(validate_tag(" 1.2.0 ").unwrap(), "1.2.0");
+    fn tags_are_map_ids_that_only_need_to_be_git_refs() {
+        // tag 是地图身份：chan、中文名都行，同名 tag 下换附件就是发新版。
+        assert_eq!(validate_tag(" chan ").unwrap(), "chan");
+        assert_eq!(validate_tag("大厨-合集").unwrap(), "大厨-合集");
         assert_eq!(validate_tag("1.2.0-beta.1").unwrap(), "1.2.0-beta.1");
-        assert!(validate_tag("v1.2.0").is_err());
+        // 以前被当成「版本号必须无 v 前缀」拦掉的值，现在都是合法的地图 ID。
+        assert_eq!(validate_tag("v1.2.0").unwrap(), "v1.2.0");
         assert!(validate_tag("").is_err());
+        assert!(validate_tag("a b").is_err());
+        assert!(validate_tag("-v1").is_err());
         assert!(validate_tag("1.2.0/..").is_err());
+        assert!(validate_tag("maps/chan").is_err());
+        assert!(validate_tag("a..b").is_err());
+        assert!(validate_tag("a:b").is_err());
+        assert!(validate_tag("x.lock").is_err());
     }
 
     #[test]

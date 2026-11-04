@@ -761,3 +761,123 @@ export interface MapInfo {
    */
   unmet_frameworks?: RequiredFramework[]
 }
+
+/* ===== 地图发布（GitHub Release）===== */
+
+/*
+ * 这些字段名照抄后端 serde 的定义：Tauri 只把命令**顶层参数**从 camelCase
+ * 转成 snake_case，嵌套结构体（`request`、`metadata`）原样反序列化，写成
+ * camelCase 会被 serde 当成缺省值 —— 表现为「保存成功但元数据全空」。
+ */
+
+export interface PublishAuthState {
+  authenticated: boolean
+  login: string
+  client_id: string
+  /** GitHub App 安装入口：仓库可见范围由「安装时勾了哪些仓库」决定。 */
+  install_url: string
+  /** 构建时有没有注入 GitHub App 的 Client Secret（没有就换不到 Token）。 */
+  secret_configured: boolean
+}
+
+/** 一次 GitHub App 用户授权的入口：浏览器地址与回调等待上限（秒）。 */
+export interface PublishAuthorization {
+  authorize_url: string
+  expires_in: number
+}
+
+/**
+ * 轮询结果。
+ *
+ * `pending` 只表示回调还没到；`failed` 的 reason 是后端完整 tag（含查询串），
+ * 前端必须走 `translateBackendMessage` 翻译，不能直接显示。
+ */
+export type PublishAuthPoll =
+  | { status: 'pending' }
+  | { status: 'authorized'; login: string }
+  | { status: 'expired' }
+  | { status: 'denied' }
+  | { status: 'failed'; reason: string }
+
+export interface PublishRepository {
+  owner: string
+  name: string
+  full_name: string
+  private: boolean
+  default_branch: string
+  topics: string[]
+  push: boolean
+}
+
+export interface PublishAsset {
+  id: number
+  name: string
+  size: number
+}
+
+/**
+ * Release 说明里 `<!-- oc2-map -->` 块的投影。
+ *
+ * `asset` 是**带 `${version}` 占位符的模板**（后端生成时用），上传附件前要
+ * 用当前 tag 渲染成真实文件名，否则管理器按模板匹配不到 ZIP。
+ */
+export interface MapPublishMetadata {
+  level_set_name: string
+  level_set_name_zh: string
+  author: string
+  name_i18n: Record<string, string>
+  group_i18n: Record<string, string>
+  note_i18n: Record<string, string>
+  asset: string
+  latest_mapset_version: string
+  latest_info_version: string
+  requires: Record<string, string>
+  compatible: Record<string, string>
+  conflicts: Record<string, string>
+}
+
+export interface PublishRelease {
+  id: number
+  tag: string
+  title: string
+  draft: boolean
+  prerelease: boolean
+  created_at: string
+  published_at: string | null
+  body: string
+  assets: PublishAsset[]
+  /** null = 这个 Release 不是地图（说明里没有 oc2-map 块）。 */
+  metadata: MapPublishMetadata | null
+}
+
+export interface PublishSaveRequest {
+  owner: string
+  repository: string
+  /** null = 新建（GitHub 按 tag 自动建），有值 = 修改这一版。 */
+  release_id: number | null
+  tag: string
+  title: string
+  body: string
+  draft: boolean
+  prerelease: boolean
+  metadata: MapPublishMetadata
+}
+
+export interface PublishUploadRequest {
+  owner: string
+  repository: string
+  release_id: number
+  /** 本地 ZIP 的绝对路径。 */
+  path: string
+  /** 只允许 `A-Z a-z 0-9 . _ -`，上限 256 MiB。 */
+  name: string
+}
+
+export interface PublishDeleteReleaseRequest {
+  owner: string
+  repository: string
+  release_id: number
+  tag: string
+  /** 是否顺手删掉同名 git tag；tag 已不存在时后端视为成功。 */
+  delete_tag: boolean
+}

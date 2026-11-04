@@ -38,6 +38,7 @@ import { modsOnline } from './modsOnline.ts'
 import { modsLocal } from './modsLocal.ts'
 import { settings } from './settings.ts'
 import { toolsUi } from './toolsUi.ts'
+import { mapPublish } from './mapPublish.ts'
 import { dialogs } from './dialogs.ts'
 import { renameUi } from './renameUi.ts'
 import { uiCommon } from './uiCommon.ts'
@@ -151,6 +152,7 @@ const TABLES: DomainTable[] = [
   { domain: 'modsLocal', messages: modsLocal },
   { domain: 'settings', messages: settings },
   { domain: 'tools', messages: toolsUi },
+  { domain: 'mapPublish', messages: mapPublish },
   { domain: 'dialogs', messages: dialogs },
   { domain: 'rename', messages: renameUi },
   { domain: 'common', messages: uiCommon },

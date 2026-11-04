@@ -64,7 +64,7 @@ const pageScrollRef = ref<{ scrollTo: (x: number, y: number) => void } | null>(n
  * 并且**列全**每个路由名：漏掉的页面会让 `indexOf` 返回 -1，切过去时既不设
  * 转场也不复位滚动（地图两页曾长期因此不走转场动画）。
  */
-const NAV_ORDER = ['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'tools', 'settings']
+const NAV_ORDER = ['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'tools', 'settings', 'map-publish']
 
 /**
  * 越靠下点击 → 新页面从下方滑入（page-down）；越靠上点击 → 从上方滑入（page-up）。

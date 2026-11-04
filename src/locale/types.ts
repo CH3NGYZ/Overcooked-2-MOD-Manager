@@ -53,6 +53,7 @@ export const DOMAINS = [
   'modsLocal',   // MOD 管理页
   'rename',      // 改多彩名
   'tools',       // 工具页
+  'mapPublish',  // 地图上传页
   'settings',    // 设置页（含框架管理抽屉）
   'framework',   // BepInEx / DIYLevel 框架管理
   'dialogs',     // 独立弹窗：确认、导入导出、回收站、日志

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { NButton, NLog, NSelect, NTag, useDialog } from 'naive-ui'
-import { BuildOutline, CloudOfflineOutline, DocumentTextOutline, MapOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BuildOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
@@ -19,6 +20,7 @@ type LogKind = 'rust' | 'frontend' | 'crash'
 
 const message = useNotify()
 const dialog = useDialog()
+const router = useRouter()
 const working = ref<Record<string, boolean>>({})
 const logOpen = ref(false)
 /** 当前弹窗在看哪一份日志；清空按这个走，不再猜路径。 */
@@ -217,6 +219,16 @@ async function clearLevels() {
         </div>
       </div>
     </div>
+  </SettingsGroup>
+
+  <!--
+    地图发布页只服务地图作者，用户量小，所以不进侧栏：入口放在工具页，
+    与「发布」有关的动作集中在这里，不占用所有用户都要看的导航。
+  -->
+  <SettingsGroup :title="t('mapPublish.title')">
+    <SettingsRow :icon="CloudUploadOutline" :title="t('mapPublish.publishEntry')"
+      :description="t('mapPublish.subtitle')" :description-title="t('mapPublish.subtitle')" clickable
+      @click="router.push('/map-publish')" />
   </SettingsGroup>
 
   <SettingsGroup :title="t('tools.logs')" data-tutorial="tools-logs">

@@ -209,4 +209,19 @@ export const message: DomainMessages = {
     ko: '모든 지도가 이미 이 상태입니다',
     ja: 'すべてのマップが既にその状態です',
   },
+  // 地图发布页的写操作结果（后端 `OperationResult.message`）
+  'mapPublish.releaseDeleted': {
+    'zh-CN': '版本已删除',
+    'zh-TW': '版本已刪除',
+    en: 'Release deleted',
+    ko: '릴리스가 삭제되었습니다',
+    ja: 'リリースを削除しました',
+  },
+  'mapPublish.assetDeleted': {
+    'zh-CN': '附件已删除',
+    'zh-TW': '附件已刪除',
+    en: 'Asset deleted',
+    ko: '첨부 파일이 삭제되었습니다',
+    ja: '添付ファイルを削除しました',
+  },
 }

@@ -35,6 +35,15 @@ import type {
   LevelSetScanProgress,
   LevelSetZipProgress,
   MapInfo,
+  PublishAsset,
+  PublishAuthPoll,
+  PublishAuthState,
+  PublishAuthorization,
+  PublishDeleteReleaseRequest,
+  PublishRelease,
+  PublishRepository,
+  PublishSaveRequest,
+  PublishUploadRequest,
   StagedMapSource,
 } from '../types'
 
@@ -390,6 +399,38 @@ export const api = {
   confirmModInstall: (previewId: string) => invoke<OperationResult>('confirm_mod_install', { previewId }),
   /** 取消预览，删除暂存。 */
   cancelModPreview: (previewId: string) => invoke<void>('cancel_mod_preview', { previewId }),
+
+  /* ===== 地图发布（GitHub Release）===== */
+
+  /** 当前登录状态：不联网，进页面先调。 */
+  mapPublishState: () => invoke<PublishAuthState>('map_publish_state'),
+  /** 启动 GitHub App 用户授权：后端自己打开系统浏览器并监听本机回调端口。 */
+  startGithubAuthorization: () => invoke<PublishAuthorization>('start_github_authorization'),
+  /** 前端每秒查一次；推荐直接轮询，不要在这里加延迟。 */
+  pollGithubAuthorization: () => invoke<PublishAuthPoll>('poll_github_authorization'),
+  /** 取消待授权流程，释放本机回调端口（离开上传页时必须调）。 */
+  cancelGithubAuthorization: () => invoke<void>('cancel_github_authorization'),
+  signOutMapPublish: () => invoke<PublishAuthState>('sign_out_map_publish'),
+  /** 只返回当前账号有推送权限的仓库，带 map-source 标签的排在前面。 */
+  listPublishRepositories: () => invoke<PublishRepository[]>('list_publish_repositories'),
+  /**
+   * 新建仓库。
+   *
+   * 顶层参数用 camelCase（Tauri 负责转 snake_case）；后端创建时会 auto_init
+   * 并自动打上 overcooked-2 / bepinex / map-source 三个 topic。
+   */
+  createPublishRepository: (name: string, isPrivate: boolean, description: string) =>
+    invoke<PublishRepository>('create_publish_repository', { name, private: isPrivate, description }),
+  listPublishReleases: (owner: string, repository: string) =>
+    invoke<PublishRelease[]>('list_publish_releases', { owner, repository }),
+  savePublishRelease: (request: PublishSaveRequest) =>
+    invoke<PublishRelease>('save_publish_release', { request }),
+  deletePublishRelease: (request: PublishDeleteReleaseRequest) =>
+    invoke<OperationResult>('delete_publish_release', { request }),
+  uploadPublishAsset: (request: PublishUploadRequest) =>
+    invoke<PublishAsset>('upload_publish_asset', { request }),
+  deletePublishAsset: (owner: string, repository: string, assetId: number) =>
+    invoke<OperationResult>('delete_publish_asset', { owner, repository, assetId }),
 }
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

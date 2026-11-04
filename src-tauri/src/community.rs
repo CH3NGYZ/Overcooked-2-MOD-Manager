@@ -1,8 +1,8 @@
 use crate::archive::InstallManifest;
 use crate::commands::AppState;
 use crate::models::{
-    AppConfig, CommunityDiscovery, GitHubProxy, Provider, PublicConfig, RepositoryConfig,
-    RepositorySource,
+    AppConfig, CommunityDiscovery, CommunityMapRepository, GitHubProxy, Provider, PublicConfig,
+    RepositoryConfig, RepositorySource,
 };
 use crate::{github_proxies, releases};
 use futures_util::StreamExt;
@@ -19,7 +19,19 @@ pub const SOURCE_ID: &str = "github-community";
 pub const GITEE_SOURCE_ID: &str = "gitee-community";
 pub const SEARCH_ENDPOINT: &str = "https://api.github.com/search/repositories";
 pub const PAGE_SIZE: usize = 10;
-const SEARCH_QUERY: &str = "topic:overcooked-2 topic:bepinex topic:mod";
+/// 搜索式只锁定两个必然成立的 topic。
+///
+/// `mod` / `map` 不是准入条件而是**分流条件**：写进搜索式就只能搜到标了
+/// 三个标签的仓库 —— 只标了 `overcooked-2` + `bepinex` + `map` 的地图源
+/// 会被整个漏掉，而这恰恰是新版地图源约定的第三个标签。准入与分流分开，
+/// 作者怎么标都不会让仓库消失。
+const SEARCH_QUERY: &str = "topic:overcooked-2 topic:bepinex";
+/// 命中结果必须同时带这两个 topic 才算社区仓库。
+///
+/// 两个平台的发现入口共用这一份口径：GitHub 走 Search API 的仓库对象，
+/// Gitee 走话题页 HTML，判据必须是同一条，否则同一次刷新两边会给出
+/// 互相矛盾的「准入」结果。
+pub(crate) const REQUIRED_TOPICS: [&str; 2] = ["overcooked-2", "bepinex"];
 const RESULT_LIMIT: usize = 1000;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(6100);
@@ -366,29 +378,78 @@ fn page_url(endpoint: &str, page: usize) -> Result<String, String> {
     Ok(url.into())
 }
 
-fn repository_from_search(item: &Value) -> Option<RepositoryConfig> {
-    if item.get("private")?.as_bool()?
-        || !["overcooked-2", "bepinex", "mod"].iter().all(|topic| {
-            item.get("topics")
-                .and_then(Value::as_array)
-                .is_some_and(|topics| topics.iter().any(|value| value.as_str() == Some(topic)))
-        })
+/// 一条搜索命中最终算哪种仓库。
+///
+/// `Skip` 与 `Invalid` 的差别只在「要不要报告发现不完整」：仓库带了准入
+/// topic 却没标 `mod` / `map` 的，是「用 BepInEx 的胡闹厨房仓库」，既不是
+/// MOD 也不是地图源，静默丢弃；连坐标都读不出来才是真的格式异常，要计入
+/// `incomplete_results` 让用户知道这次发现不完整。
+enum SearchHit {
+    Mod(RepositoryConfig),
+    Map(CommunityMapRepository),
+    Skip,
+    Invalid,
+}
+
+fn classify_search_item(item: &Value) -> SearchHit {
+    let Some(topics) = item.get("topics").and_then(Value::as_array).map(|topics| {
+        topics
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<HashSet<_>>()
+    }) else {
+        return SearchHit::Invalid;
+    };
+    let has_topic = |topic: &str| topics.iter().any(|value| *value == topic);
+    if item.get("private").and_then(Value::as_bool) != Some(false)
+        || !REQUIRED_TOPICS.iter().all(|topic| has_topic(topic))
     {
-        return None;
+        return SearchHit::Skip;
     }
-    let owner = item.get("owner")?.get("login")?.as_str()?;
-    let name = item.get("name")?.as_str()?;
-    repository_from_coordinates(
-        &Provider::Github,
-        owner,
-        name,
-        item.get("default_branch")
+    let (Some(owner), Some(name)) = (
+        item.get("owner")
+            .and_then(|owner| owner.get("login"))
+            .and_then(Value::as_str),
+        item.get("name").and_then(Value::as_str),
+    ) else {
+        return SearchHit::Invalid;
+    };
+    let Ok((owner, name)) = releases::repository_coordinates(owner, name) else {
+        return SearchHit::Invalid;
+    };
+    /*
+     * `mod` 优先：同时标了两个 topic 的仓库按 MOD 仓库收。否则它的 Release
+     * 会被 MOD 页与地图页各刷一遍，同一个仓库在两处显示两份身份。
+     */
+    if has_topic("mod") {
+        let branch = item
+            .get("default_branch")
             .and_then(Value::as_str)
-            .unwrap_or_default(),
-        item.get("description")
+            .unwrap_or_default();
+        let note = item
+            .get("description")
             .and_then(Value::as_str)
-            .unwrap_or_default(),
-    )
+            .unwrap_or_default();
+        return repository_from_coordinates(&Provider::Github, &owner, &name, branch, note)
+            .map_or(SearchHit::Invalid, SearchHit::Mod);
+    }
+    if has_topic("map") {
+        return SearchHit::Map(CommunityMapRepository {
+            provider: Provider::Github,
+            username: owner,
+            repository: name,
+        });
+    }
+    SearchHit::Skip
+}
+
+/// 只关心「这条命中能不能当 MOD 仓库」的调用方用这个包装。
+#[cfg(test)]
+fn repository_from_search(item: &Value) -> Option<RepositoryConfig> {
+    match classify_search_item(item) {
+        SearchHit::Mod(repository) => Some(repository),
+        _ => None,
+    }
 }
 
 pub(crate) fn repository_from_coordinates(
@@ -495,6 +556,7 @@ async fn fetch_page(
 
 pub(crate) struct SearchResults {
     pub(crate) repositories: Vec<RepositoryConfig>,
+    pub(crate) map_repositories: Vec<CommunityMapRepository>,
     pub(crate) discovery: CommunityDiscovery,
 }
 
@@ -572,10 +634,18 @@ async fn search_all(
     limits: &mut SearchRateLimits,
 ) -> Result<SearchResults, String> {
     let mut results = SearchResults {
+        map_repositories: Vec::new(),
         repositories: Vec::new(),
         discovery: CommunityDiscovery::default(),
     };
     let mut seen = HashSet::new();
+    /*
+     * 「发现是否完整」只能按**读过的条目**算，不能按收下的仓库算：
+     * 搜索式放开了 `mod` / `map` 的分流，绝大多数命中都是既不是 MOD 也不是
+     * 地图源的仓库（`SearchHit::Skip`），用 `repositories.len()` 去比总数
+     * 会永远小于 `total_count`，这个标志就失去意义了。
+     */
+    let mut processed = 0usize;
     for page in 1..=RESULT_LIMIT / PAGE_SIZE {
         let official = page_url(endpoint, page)?;
         let (value, has_next) = fetch_page_from_targets(
@@ -591,18 +661,36 @@ async fn search_all(
         results.discovery.truncated |= total > RESULT_LIMIT as u64;
         let items = value["items"].as_array().unwrap();
         for item in items {
-            if let Some(repo) = repository_from_search(item) {
-                if seen.insert(repo.id.clone()) {
-                    results.repositories.push(repo);
+            processed += 1;
+            match classify_search_item(item) {
+                SearchHit::Mod(repository) => {
+                    if seen.insert(repository.id.clone()) {
+                        results.repositories.push(repository);
+                    }
                 }
-            } else {
-                results.discovery.incomplete_results = true;
+                /*
+                 * 地图源仓库不进 `repositories`，没有仓库 ID，去重键用坐标。
+                 * 两者共用一个 `seen` 不会冲突：仓库 ID 是 `community-<hex>`。
+                 */
+                SearchHit::Map(repository) => {
+                    let key = format!(
+                        "{}/{}",
+                        repository.username.to_ascii_lowercase(),
+                        repository.repository.to_ascii_lowercase()
+                    );
+                    if seen.insert(key) {
+                        results.map_repositories.push(repository);
+                    }
+                }
+                SearchHit::Skip => {}
+                SearchHit::Invalid => results.discovery.incomplete_results = true,
             }
         }
         log::info!(
-            "GitHub 社区搜索分页完成：页={}，已发现={}，API总数={}",
+            "GitHub 社区搜索分页完成：页={}，MOD={}，地图源={}，API总数={}",
             page,
             results.repositories.len(),
+            results.map_repositories.len(),
             total
         );
         if items.is_empty()
@@ -616,8 +704,7 @@ async fn search_all(
         .iter()
         .map(|repo| repo.id.clone())
         .collect();
-    if results.repositories.len() < results.discovery.total_count.min(RESULT_LIMIT as u64) as usize
-    {
+    if processed < results.discovery.total_count.min(RESULT_LIMIT as u64) as usize {
         results.discovery.incomplete_results = true;
     }
     Ok(results)
@@ -696,6 +783,16 @@ fn merge_results(
     discovery
         .repository_ids
         .retain(|id| visible_ids.contains(id));
+    /*
+     * 地图源仓库只按平台整体替换：它们没有「用户手动隐藏」这类本地状态，
+     * 不需要像 MOD 仓库那样与旧条目逐个合并 —— 发现结果就是全部真相。
+     */
+    config
+        .community_map_repositories
+        .retain(|repository| repository.provider != *provider);
+    config
+        .community_map_repositories
+        .extend(results.map_repositories);
     match provider {
         Provider::Github => config.community_discovery = Some(discovery),
         Provider::Gitee => config.gitee_community_discovery = Some(discovery),
@@ -896,6 +993,105 @@ mod tests {
         invalid["topics"] = serde_json::json!(["overcooked-2", "bepinex"]);
         assert!(repository_from_search(&invalid).is_none());
         assert!(repository_from_search(&item("../owner", "Mod")).is_none());
+    }
+
+    fn item_with_topics(owner: &str, name: &str, topics: &[&str]) -> Value {
+        serde_json::json!({"owner": {"login": owner}, "name": name, "private": false,
+            "topics": topics, "default_branch": "develop"})
+    }
+
+    #[test]
+    fn search_query_only_requires_overcooked_two_and_bepinex() {
+        assert_eq!(SEARCH_QUERY, "topic:overcooked-2 topic:bepinex");
+        assert_eq!(REQUIRED_TOPICS, ["overcooked-2", "bepinex"]);
+    }
+
+    #[tokio::test]
+    async fn repositories_are_split_by_the_mod_and_map_topics() {
+        let (url, task) = server(vec![(
+            200,
+            String::new(),
+            page(
+                vec![
+                    item_with_topics("Owner", "Mod", &["overcooked-2", "bepinex", "mod"]),
+                    item_with_topics("Owner", "Map", &["overcooked-2", "bepinex", "map"]),
+                    item_with_topics("Owner", "Both", &["overcooked-2", "bepinex", "mod", "map"]),
+                    item_with_topics("Owner", "Plain", &["overcooked-2", "bepinex"]),
+                ],
+                4,
+            ),
+        )]);
+        let result = search_all(
+            &Client::new(),
+            &format!("{url}/search"),
+            None,
+            &[],
+            &mut limits(),
+        )
+        .await
+        .unwrap();
+        task.join().unwrap();
+        assert_eq!(
+            result
+                .repositories
+                .iter()
+                .map(|repo| repo.repository.as_str())
+                .collect::<Vec<_>>(),
+            ["Mod", "Both"]
+        );
+        assert_eq!(result.map_repositories.len(), 1);
+        assert_eq!(result.map_repositories[0].username, "Owner");
+        assert_eq!(result.map_repositories[0].repository, "Map");
+        assert_eq!(result.map_repositories[0].provider, Provider::Github);
+        /*
+         * 既没标 `mod` 也没标 `map` 的仓库是很正常的结果（只是用 BepInEx
+         * 的胡闹厨房仓库），不能算成「这次发现不完整」。
+         */
+        assert!(!result.discovery.incomplete_results);
+    }
+
+    #[test]
+    fn merge_replaces_only_the_discovered_platform_map_repositories() {
+        let mut config = crate::config::default_config();
+        config.community_map_repositories = vec![
+            CommunityMapRepository {
+                provider: Provider::Github,
+                username: "Old".into(),
+                repository: "Map".into(),
+            },
+            CommunityMapRepository {
+                provider: Provider::Gitee,
+                username: "Keep".into(),
+                repository: "Map".into(),
+            },
+        ];
+        merge_results(
+            &mut config,
+            &Provider::Github,
+            SearchResults {
+                repositories: Vec::new(),
+                map_repositories: vec![CommunityMapRepository {
+                    provider: Provider::Github,
+                    username: "New".into(),
+                    repository: "Map".into(),
+                }],
+                discovery: CommunityDiscovery::default(),
+            },
+            &[],
+        );
+        assert_eq!(config.community_map_repositories.len(), 2);
+        assert!(
+            config
+                .community_map_repositories
+                .iter()
+                .any(|repository| repository.username == "New")
+        );
+        assert!(
+            config
+                .community_map_repositories
+                .iter()
+                .any(|repository| repository.provider == Provider::Gitee)
+        );
     }
 
     #[test]
@@ -1121,6 +1317,7 @@ mod tests {
             &mut config,
             &Provider::Github,
             SearchResults {
+                map_repositories: Vec::new(),
                 discovery: CommunityDiscovery {
                     repository_ids: vec![found.id.clone()],
                     total_count: 1,
@@ -1202,6 +1399,7 @@ mod tests {
             &mut config,
             &Provider::Github,
             SearchResults {
+                map_repositories: Vec::new(),
                 discovery: CommunityDiscovery {
                     repository_ids: found.iter().map(|repo| repo.id.clone()).collect(),
                     total_count: 3,
@@ -1241,6 +1439,7 @@ mod tests {
             &mut config,
             &Provider::Github,
             SearchResults {
+                map_repositories: Vec::new(),
                 repositories: vec![],
                 discovery: CommunityDiscovery::default(),
             },
@@ -1290,6 +1489,7 @@ mod tests {
                 &mut config,
                 &provider,
                 SearchResults {
+                    map_repositories: Vec::new(),
                     discovery: CommunityDiscovery {
                         repository_ids: vec![found.id.clone()],
                         total_count: 1,
@@ -1435,6 +1635,7 @@ mod tests {
             &mut config,
             &Provider::Gitee,
             SearchResults {
+                map_repositories: Vec::new(),
                 discovery: CommunityDiscovery {
                     repository_ids: vec![found.id.clone(), unique.id.clone()],
                     total_count: 2,
@@ -1494,6 +1695,7 @@ mod tests {
             &mut config,
             &Provider::Gitee,
             SearchResults {
+                map_repositories: Vec::new(),
                 repositories: vec![],
                 discovery: CommunityDiscovery::default(),
             },

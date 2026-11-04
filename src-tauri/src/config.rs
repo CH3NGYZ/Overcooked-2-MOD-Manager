@@ -1063,6 +1063,7 @@ pub(crate) fn default_config() -> AppConfig {
         repository_sources: builtin_repository_sources_for_region(current_user_region(), false),
         community_discovery: None,
         gitee_community_discovery: None,
+        community_map_repositories: Vec::new(),
         source_repository_ids: Default::default(),
         staged_release_cache: Default::default(),
         /*

@@ -1,5 +1,5 @@
 use crate::community::{SearchRateLimits, SearchResults, repository_from_coordinates};
-use crate::models::{CommunityDiscovery, Provider, RepositoryConfig};
+use crate::models::{CommunityDiscovery, CommunityMapRepository, Provider, RepositoryConfig};
 use scraper::{ElementRef, Html, Selector};
 use std::collections::HashSet;
 use std::future::Future;
@@ -69,9 +69,9 @@ fn repository_coordinates(item: ElementRef<'_>) -> Option<(String, String)> {
     crate::releases::repository_coordinates(owner, repository).ok()
 }
 
-fn has_required_topics(item: ElementRef<'_>) -> bool {
-    let topics = item
-        .select(&selectors().topics)
+/// 一个列表项带的 topic（小写）。
+fn topics_of(item: ElementRef<'_>) -> HashSet<String> {
+    item.select(&selectors().topics)
         .filter_map(|link| trusted_gitee_link(link.value().attr("href")?))
         .filter_map(|url| {
             let segments = url.path_segments()?.collect::<Vec<_>>();
@@ -80,14 +80,36 @@ fn has_required_topics(item: ElementRef<'_>) -> bool {
                 _ => None,
             }
         })
-        .collect::<HashSet<_>>();
-    ["overcooked-2", "bepinex", "mod"]
+        .collect()
+}
+
+/// 列表项该进哪一栏。
+enum TopicKind {
+    Mod,
+    Map,
+}
+
+/// 准入与分流：两个必填 topic 都在才收，再看 `mod` / `map` 决定去处。
+///
+/// `mod` 优先：同时标了两个 topic 的仓库按 MOD 仓库收，否则它的 Release
+/// 会被 MOD 页与地图页各刷一遍。两个分流 topic 都没标的列表项静默跳过 ——
+/// 只是「用 BepInEx 的胡闹厨房仓库」，不是发现失败。
+fn classify_topics(topics: &HashSet<String>) -> Option<TopicKind> {
+    if !crate::community::REQUIRED_TOPICS
         .iter()
         .all(|topic| topics.contains(*topic))
+    {
+        return None;
+    }
+    if topics.contains("mod") {
+        return Some(TopicKind::Mod);
+    }
+    topics.contains("map").then_some(TopicKind::Map)
 }
 
 struct TopicPage {
     repositories: Vec<RepositoryConfig>,
+    map_repositories: Vec<CommunityMapRepository>,
     has_next: bool,
     incomplete: bool,
 }
@@ -100,6 +122,7 @@ fn parse_page(html: &str, page: usize) -> Result<TopicPage, String> {
         .ok_or("community.giteeWebInvalid")?;
     let mut result = TopicPage {
         repositories: Vec::new(),
+        map_repositories: Vec::new(),
         has_next: false,
         incomplete: false,
     };
@@ -115,9 +138,9 @@ fn parse_page(html: &str, page: usize) -> Result<TopicPage, String> {
             result.incomplete = true;
             continue;
         };
-        if !has_required_topics(item) {
+        let Some(kind) = classify_topics(&topics_of(item)) else {
             continue;
-        }
+        };
         let note = item
             .select(&selectors().description)
             .next()
@@ -133,12 +156,21 @@ fn parse_page(html: &str, page: usize) -> Result<TopicPage, String> {
                     .join(" ")
             })
             .unwrap_or_default();
-        if let Some(repository) =
-            repository_from_coordinates(&Provider::Gitee, &owner, &name, "", &note)
-        {
-            result.repositories.push(repository);
-        } else {
-            result.incomplete = true;
+        match kind {
+            TopicKind::Mod => {
+                if let Some(repository) =
+                    repository_from_coordinates(&Provider::Gitee, &owner, &name, "", &note)
+                {
+                    result.repositories.push(repository);
+                } else {
+                    result.incomplete = true;
+                }
+            }
+            TopicKind::Map => result.map_repositories.push(CommunityMapRepository {
+                provider: Provider::Gitee,
+                username: owner,
+                repository: name,
+            }),
         }
     }
     for link in document.select(&selectors().pagination) {
@@ -213,6 +245,7 @@ where
     Fut: Future<Output = Result<String, String>>,
 {
     let mut results = SearchResults {
+        map_repositories: Vec::new(),
         repositories: Vec::new(),
         discovery: CommunityDiscovery::default(),
     };
@@ -240,6 +273,16 @@ where
                 }
             }
         }
+        for repository in parsed.map_repositories {
+            let key = format!(
+                "{}/{}",
+                repository.username.to_ascii_lowercase(),
+                repository.repository.to_ascii_lowercase()
+            );
+            if seen.insert(key) {
+                results.map_repositories.push(repository);
+            }
+        }
         log::info!(
             "Gitee 社区网页解析完成：页={}，新增={}，已发现={}，存在后续页={}",
             page,
@@ -254,7 +297,12 @@ where
             results.discovery.truncated = true;
         }
     }
-    results.discovery.total_count = results.repositories.len() as u64;
+    /*
+     * `total_count` 是「这次发现到多少仓库」（两类都算），与 MOD 仓库 ID
+     * 列表不同：地图源仓库不进 `repositories`，但用户眼里它们同样是发现结果。
+     */
+    results.discovery.total_count =
+        (results.repositories.len() + results.map_repositories.len()) as u64;
     results.discovery.repository_ids = results
         .repositories
         .iter()
@@ -353,6 +401,45 @@ mod tests {
             .repositories
             .is_empty()
         );
+    }
+
+    #[test]
+    fn map_topic_repositories_are_discovered_separately_from_mod_repositories() {
+        let raw = |href: &str, topics: &[&str]| {
+            let links = topics
+                .iter()
+                .map(|topic| {
+                    format!("<a class='project-label-item-box' href='/explore/topic/{topic}'>t</a>")
+                })
+                .collect::<String>();
+            format!(
+                "<div class='item explore-repo__list-item'>\
+                 <a class='project-namespace-path' href='{href}'>x</a>\
+                 <div class='project-desc' title='desc'></div>{links}</div>"
+            )
+        };
+        let html = format!(
+            "<div class='explore-repo__list'>{}{}{}{}</div>",
+            raw("/Owner/Mod", &["overcooked-2", "bepinex", "mod"]),
+            raw("/Owner/MapPack", &["overcooked-2", "bepinex", "map"]),
+            raw("/Owner/Both", &["overcooked-2", "bepinex", "mod", "map"]),
+            raw("/Owner/Plain", &["overcooked-2", "bepinex"]),
+        );
+        let parsed = parse_page(&html, 1).unwrap();
+        assert_eq!(
+            parsed
+                .repositories
+                .iter()
+                .map(|repo| repo.repository.as_str())
+                .collect::<Vec<_>>(),
+            ["Mod", "Both"]
+        );
+        assert_eq!(parsed.map_repositories.len(), 1);
+        assert_eq!(parsed.map_repositories[0].username, "Owner");
+        assert_eq!(parsed.map_repositories[0].repository, "MapPack");
+        assert_eq!(parsed.map_repositories[0].provider, Provider::Gitee);
+        // 两个分流 topic 都没标不是发现失败
+        assert!(!parsed.incomplete);
     }
 
     #[test]

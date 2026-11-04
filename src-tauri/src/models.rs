@@ -563,6 +563,19 @@ pub struct CommunityDiscovery {
     pub truncated: bool,
 }
 
+/// 社区发现得到的「地图源仓库」坐标。
+///
+/// 与 `CommunityDiscovery` 分开存：MOD 仓库发现的结果要落成完整的
+/// `RepositoryConfig` 进 `repositories`（有开关、缓存、安装绑定），
+/// 地图侧的仓库只是一句「去这个仓库读 Release note」—— 地图条目要等
+/// 地图源树加载时按 `release-tags` 规则现展开，不能提前固化成本地缓存。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunityMapRepository {
+    pub provider: Provider,
+    pub username: String,
+    pub repository: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyMode {
@@ -1120,6 +1133,13 @@ pub struct AppConfig {
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gitee_community_discovery: Option<CommunityDiscovery>,
+    /// 社区地图发现：带 `map` topic 的仓库（两个平台各一份，发现时整体替换）。
+    ///
+    /// 只存坐标而不存条目：地图条目依赖各 Release note 里的 `oc2-map` 块，
+    /// 每次地图源刷新都要重新读一遍，缓存下来反而会有「作者删了版本、本地
+    /// 还留着」的陈旧数据。所以这里没有缓存与开关，也不需要迁移旧配置。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub community_map_repositories: Vec<CommunityMapRepository>,
     // Identity only: no source documents, repository settings or Release cache.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_repository_ids: BTreeMap<String, String>,

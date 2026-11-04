@@ -77,7 +77,10 @@ export function setLocale(value: Locale) {
 /**
  * 从多语言映射里按当前界面语言取文案，缺失时回退。
  *
- * 回退顺序：完整标记 → `zh-CN` → 任意第一个非空值 → `fallback`。
+ * 回退顺序：完整标记 → `en` → `zh-CN` → 任意第一个非空值 → `fallback`。
+ * 英文排在中文前面：源文档与 Release note 的英文覆盖率最高，非中文玩家看
+ * 到英文名还能核对，看到中文名只是几个认不出的字；中文是维护者的母语，
+ * 通常只会多出中文这一种，所以它当第二保底。
  * 取「任意第一个」是为了兼容源文档只写了一两种语言的情况——
  * 显示一个外语名称总比显示空白好。
  *
@@ -91,8 +94,10 @@ export function pickI18n(
   if (!map) return fallback
   const exact = map[locale.value]
   if (exact && exact.trim()) return exact
-  const chinese = map['zh-CN']
-  if (chinese && chinese.trim()) return chinese
+  for (const key of ['en', 'zh-CN']) {
+    const value = map[key]
+    if (value && value.trim()) return value
+  }
   for (const value of Object.values(map)) {
     if (value && value.trim()) return value
   }

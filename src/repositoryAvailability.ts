@@ -126,11 +126,13 @@ function buildPlatform(): string {
 export const OFFICIAL_INDEX_ID = 'official-repository-index'
 
 /**
- * 源的显示名：`nickname_i18n` 按界面语言选，缺失回落到 zh-CN 再回落到镜像值。
+ * 源的显示名：`nickname_i18n` 按界面语言选，缺失回落到英文、再回落到
+ * zh-CN 与镜像值。
  *
  * 这里**不 import `i18n.ts`**：本模块要能被 Node 测试直接引用，而 i18n
- * 依赖 Naive UI 的语言包。规则与 `pickI18n` 一致（精确语言 → zh-CN →
- * 第一个非空 → 兜底值），只少了「当前语言」这个响应式来源 —— 调用方传入。
+ * 依赖 Naive UI 的语言包。规则与 `pickI18n` 一致（精确语言 → en →
+ * zh-CN → 第一个非空 → 兜底值），只少了「当前语言」这个响应式来源 ——
+ * 调用方传入。
  */
 function sourceNickname(
   source: Pick<RepositorySource, 'nickname' | 'nickname_i18n'>,
@@ -142,8 +144,10 @@ function sourceNickname(
       const exact = map[locale]
       if (exact && exact.trim()) return exact
     }
-    const chinese = map['zh-CN']
-    if (chinese && chinese.trim()) return chinese
+    for (const key of ['en', 'zh-CN']) {
+      const value = map[key]
+      if (value && value.trim()) return value
+    }
     for (const value of Object.values(map)) {
       if (value && value.trim()) return value
     }

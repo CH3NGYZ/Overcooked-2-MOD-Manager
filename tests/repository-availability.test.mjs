@@ -185,16 +185,34 @@ test('回退判定按当前语言匹配报错前缀', () => {
   )
 })
 
-test('不传语言时按 zh-CN 兜底匹配', () => {
+test('不传语言时按英文兜底匹配', () => {
+  // 没有当前语言时与「缺语言」同一条保底顺序：en → zh-CN
+  assert.equal(
+    shouldFallbackToBuiltin(localizedSources, [], ['Official repositories: timeout']),
+    true,
+  )
   assert.equal(
     shouldFallbackToBuiltin(localizedSources, [], ['官方仓库源: timeout']),
-    true,
+    false,
   )
 })
 
 test('没有翻译表时退回单语镜像值', () => {
   const legacy = [{ id: OFFICIAL_INDEX_ID, nickname: '官方仓库源', parent_id: undefined }]
   assert.equal(shouldFallbackToBuiltin(legacy, [], ['官方仓库源: timeout']), true)
+})
+
+test('缺当前语言时先回退英文、再回退中文', () => {
+  // 与 `pickI18n` 同一口径：源文档与 Release note 的英文覆盖率最高，
+  // 韩文界面缺 ko 时该用英文名；中文只是第二保底
+  assert.equal(
+    shouldFallbackToBuiltin(localizedSources, [], ['Official repositories: timeout'], 'ko'),
+    true,
+  )
+  assert.equal(
+    shouldFallbackToBuiltin(localizedSources, [], ['官方仓库源: timeout'], 'ko'),
+    false,
+  )
 })
 
 /* ===== 平台限定（与 region 同语义层）===== */

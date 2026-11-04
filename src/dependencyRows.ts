@@ -89,8 +89,8 @@ export type DependencyTranslate = (key: string, params?: Record<string, string |
  * 本地化名字取值函数。
  *
  * 默认实现够测试用，但**视图必须传 `pickI18n`**：它才是全站「当前语言 →
- * zh-CN → 任意非空」的唯一口径，在依赖表里另写一份回退顺序迟早会和其他
- * 地方不一致。
+ * en → zh-CN → 任意非空」的唯一口径，在依赖表里另写一份回退顺序迟早会和
+ * 其他地方不一致。
  */
 export type DependencyPickName = (
   map: Record<string, string> | undefined,

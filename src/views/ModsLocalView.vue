@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t, locale } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { tagColorForAny } from '../theme'
 import { PULSE_DURATION } from '../motion'
 import {
@@ -458,11 +458,6 @@ onBeforeUnmount(() => {
   for (const timer of pulseTimers.values()) window.clearTimeout(timer)
   pulseTimers.clear()
 })
-
-function pickI18n(map: Record<string, string> | undefined, fallback: string): string {
-  if (!map) return fallback
-  return map[locale.value] || map['zh-CN'] || Object.values(map)[0] || fallback
-}
 
 /**
  * MOD 的分类：优先用安装清单里的分组快照（后端 `group_i18n`）。

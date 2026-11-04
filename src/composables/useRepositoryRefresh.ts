@@ -554,6 +554,8 @@ async function refreshEverything(): Promise<string[]> {
      * 任一平台失败只记录，不影响另一平台，也不影响整批刷新。
      */
     const communityErrors = await discoverCommunityRepositories(applyConfigSnapshot)
+    // 配置已经写回（或发现失败也不该让地图刷新无限等），地图源树可以读了
+    markCommunityDiscovered()
 
     /*
      * 已安装优先：先把本地装过的 MOD 所绑定的仓库排到队首。
@@ -610,9 +612,37 @@ async function refreshEverything(): Promise<string[]> {
     })
     return lastErrors.value
   } finally {
+    // 发现阶段之前就抛错时也要兑现：地图启动刷新等在它后面，不能永远挂着
+    markCommunityDiscovered()
     state.setEntryStateUnavailable(false)
     state.endBatch('full')
   }
+}
+
+/**
+ * 「社区发现阶段已经结束」信号。
+ *
+ * 地图源树也在启动时刷新一次，而社区发现的地图源仓库是**写进配置**、由
+ * 地图源树读的。两件事在启动时并发发起的话，地图那边很可能先跑完、读到的
+ * 还是不含社区仓库的旧配置 —— 首启就看不到社区地图，得等用户手动刷新地图页。
+ *
+ * 所以把「发现写完了」做成可等待的信号，让地图启动刷新挂在这里：只等社区
+ * 搜索（几秒），不等后面的 Release 批次。
+ */
+let communityDiscovered: Promise<void> = Promise.resolve()
+let settleCommunityDiscovered: () => void = () => {}
+
+function resetCommunityDiscoverySignal() {
+  communityDiscovered = new Promise<void>((resolve) => { settleCommunityDiscovered = resolve })
+}
+
+/** 等本轮启动刷新把社区发现写完（没在刷新时立刻兑现）。 */
+function whenCommunityDiscovered(): Promise<void> {
+  return communityDiscovered
+}
+
+function markCommunityDiscovered() {
+  settleCommunityDiscovered()
 }
 
 /**
@@ -625,6 +655,7 @@ async function refreshEverything(): Promise<string[]> {
 function requestStartupRefresh() {
   if (startupState !== 'idle') return
   startupState = 'running'
+  resetCommunityDiscoverySignal()
   void refreshEverything().finally(() => { startupState = 'done' })
 }
 
@@ -650,5 +681,6 @@ export function useRepositoryRefresh() {
     refreshOne, refreshMany, refreshBoundRepositories,
     refreshSourceChain, refreshSourceDocuments, refreshEverything,
     requestStartupRefresh, deferStartupRefresh, releaseStartupRefresh,
+    whenCommunityDiscovered,
   }
 }

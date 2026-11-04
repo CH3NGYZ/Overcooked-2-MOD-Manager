@@ -284,11 +284,6 @@ fn validate_version_token(token: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 语法校验（不需要排序规则的场景：内置源自检、CLI 参数、配置保存）。
-pub fn is_valid_spec(spec: &str) -> bool {
-    VersionRange::parse(spec).is_ok()
-}
-
 /// 把旧的两端写法折成新写法：`min_version` + `max_version` → `version`。
 ///
 /// 老配置、老 Release note、老源文档里都是两端写法，必须继续读得懂；

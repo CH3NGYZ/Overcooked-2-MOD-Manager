@@ -669,6 +669,15 @@ impl ConfigService {
         config.auth.github_publish_login.clear();
     }
 
+    /// 上次装 App 的 installation id；0 表示还没装过（或记录已失效被清掉）。
+    pub(crate) fn publish_installation_id(&self, config: &AppConfig) -> u64 {
+        config.auth.github_publish_installation_id
+    }
+
+    pub fn set_publish_installation_id(&self, config: &mut AppConfig, id: u64) {
+        config.auth.github_publish_installation_id = id;
+    }
+
     pub fn set_mod_note(&self, config: &mut AppConfig, key: &str, note: &str) {
         config.mod_notes.retain(|item| item.key != key);
         let note = note.trim();
@@ -1070,6 +1079,7 @@ pub(crate) fn default_config() -> AppConfig {
             official_api_only: true,
             github_publish_token: String::new(),
             github_publish_login: String::new(),
+            github_publish_installation_id: 0,
         },
         repositories: Vec::new(),
         /*

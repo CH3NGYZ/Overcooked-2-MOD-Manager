@@ -42,9 +42,9 @@ use crate::map_note::{
     VERSION_PLACEHOLDER, publish_metadata_from_note, render_release_body, strip_note_block,
 };
 use crate::models::{
-    OperationResult, PublishAsset, PublishAuthPoll, PublishAuthState, PublishAuthorization,
-    PublishDeleteReleaseRequest, PublishRelease, PublishRepository, PublishRepositoryList,
-    PublishSaveRequest, PublishUploadRequest,
+    OperationResult, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,
+    PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease, PublishRepository,
+    PublishRepositoryList, PublishSaveRequest, PublishUploadRequest,
 };
 use crate::releases::APP_USER_AGENT;
 
@@ -67,8 +67,15 @@ const UPLOAD_ENDPOINT: &str = "https://uploads.github.com";
 const CALLBACK_ADDR: &str = "127.0.0.1:55748";
 const CALLBACK_URL: &str = "http://127.0.0.1:55748/callback";
 const CALLBACK_PATH: &str = "/callback";
-/// 等回调的上限：GitHub 的授权码有效期是 10 分钟，留 5 分钟够用又不会一直占端口。
-const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(300);
+/// 等回调的上限：授权码本身有 10 分钟，但「装 App + 勾仓库」两分钟足够，
+/// 超时就当这次作废，别把本机端口占上五分钟。
+const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// 上一轮授权还没结束就再点一次时，端口还在旧监听手里。监听线程每 120 ms 看一次
+/// 取消标志，所以重试两秒足够；直接 bind 失败会让用户看到「端口被占用」而浏览器
+/// 根本没打开，只能干等到上一轮超时。
+const BIND_RETRIES: usize = 25;
+const BIND_RETRY_DELAY: Duration = Duration::from_millis(80);
 
 const API_VERSION: &str = "2022-11-28";
 
@@ -86,7 +93,8 @@ const UPLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 /// 一次授权里等回调的状态：回调线程把 `code` 塞进 `outcome`，换 Token 仍在异步
 /// 命令里做（线程里没有 tokio runtime，硬塞一个阻塞客户端只会多一条网络实现）。
 struct PendingAuthorization {
-    verifier: String,
+    /// PKCE 只在纯 OAuth 授权时才有；安装页那条路没有 code_challenge。
+    verifier: Option<String>,
     cancel: Arc<AtomicBool>,
     outcome: Arc<Mutex<CallbackOutcome>>,
 }
@@ -98,6 +106,8 @@ enum CallbackOutcome {
     Exchanging,
     Code {
         code: String,
+        /// 安装页回调会带上刚装好的 installation id；纯 OAuth 授权没有。
+        installation: Option<u64>,
     },
     Failed(String),
 }
@@ -122,6 +132,13 @@ struct TokenResponse {
 struct ApiInstallation {
     id: u64,
     /// `all` 表示这次安装覆盖账号下全部仓库（含以后新建的）。
+    #[serde(default)]
+    repository_selection: String,
+}
+
+/// `GET /user/installations/{id}`：直查一次安装，只用到仓库范围。
+#[derive(Deserialize)]
+struct ApiInstallationDetail {
     #[serde(default)]
     repository_selection: String,
 }
@@ -189,15 +206,6 @@ struct ApiRelease {
     body: String,
     #[serde(default)]
     assets: Vec<ApiAsset>,
-}
-
-#[derive(serde::Serialize)]
-struct AccessTokenForm<'a> {
-    client_id: &'a str,
-    client_secret: &'a str,
-    code: &'a str,
-    redirect_uri: &'a str,
-    code_verifier: &'a str,
 }
 
 // —— 错误 tag ——
@@ -466,6 +474,36 @@ fn clear_pending_auth() {
     }
 }
 
+/// 取消并丢弃当前待授权流程，把回调端口让出来。
+fn release_pending_auth() {
+    if let Ok(mut pending) = PENDING_AUTH.lock() {
+        if let Some(flow) = pending.take() {
+            flow.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// 占住回调端口：上一轮授权没结束时先取消，再等它松手。
+fn bind_callback_listener() -> Result<TcpListener, String> {
+    let mut last_error = None;
+    for attempt in 0..BIND_RETRIES {
+        if attempt > 0 {
+            std::thread::sleep(BIND_RETRY_DELAY);
+        }
+        release_pending_auth();
+        match TcpListener::bind(CALLBACK_ADDR) {
+            Ok(listener) => return Ok(listener),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    let error = last_error.expect("至少尝试过一次 bind");
+    log::warn!("本机授权回调端口被占用：{error}");
+    Err(with_params(
+        "mapPublish.callbackUnavailable",
+        &[("reason", &error.to_string())],
+    ))
+}
+
 fn finish_callback(outcome: &Mutex<CallbackOutcome>, result: CallbackOutcome) {
     if let Ok(mut guard) = outcome.lock() {
         *guard = result;
@@ -489,46 +527,78 @@ async fn get_json<T: serde::de::DeserializeOwned>(
         .map_err(|error| request_error(&error.to_string()))
 }
 
+/// 这次授权该打开哪个页面。
+///
+/// 没记下 installation id 的第一次去安装页：装 App 与勾仓库一步完成，回调带回
+/// `installation_id`；记下了就只重新授权 —— 已安装的账号进安装页会停在配置页，
+/// 根本不会回调本机。
+///
+/// `force_authorize` 是「装过 App 但没记下 id」的兜底：那条路进安装页不会回调，
+/// 只能改走 OAuth 把 Token 拿回来，再靠列安装把 id 补记上。
+fn authorization_target(
+    known: u64,
+    nonce: &str,
+    force_authorize: bool,
+) -> (PublishAuthMode, String, Option<String>) {
+    if known == 0 && !force_authorize {
+        return (
+            PublishAuthMode::Install,
+            format!("{PUBLISH_INSTALL_URL}?state={}", encode_component(nonce)),
+            None,
+        );
+    }
+    let verifier = random_token();
+    let challenge = code_challenge(&verifier);
+    let url = format!(
+        "{AUTHORIZE_ENDPOINT}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
+        encode_component(GITHUB_APP_CLIENT_ID),
+        encode_component(CALLBACK_URL),
+        encode_component(nonce),
+        encode_component(&challenge),
+    );
+    (PublishAuthMode::Authorize, url, Some(verifier))
+}
+
 /// 启动一次授权：先占住本机端口，再打开浏览器。
 ///
 /// 顺序不能反：浏览器回到 `127.0.0.1:55748` 只认这一次连接，先开浏览器再 `bind`
 /// 会把回调丢在地上，用户看到的是「授权成功但软件没反应」。
+///
+/// 打开的页面分两种，由「有没有记下 installation id」决定：
+/// - 没记下（第一次用）：直接去 App 安装页。用户在 GitHub 上勾仓库的同时完成
+///   授权，回调会带回 `code` + `installation_id` —— 装 App 和选仓库是一步。
+/// - 记下了（之前装过）：只走 OAuth 授权。安装页对已安装的账号会停在配置页、
+///   不会回调本机；而仓库范围按记下的 id 直查，本来就是最新的。
+///
+/// `force_authorize` 来自前端的「改用 GitHub 登录」：装过 App 却没记下 id 的用户
+/// 只有这条路能拿到 Token，拿到之后列一次安装就把 id 补记上了。
 #[tauri::command]
-pub async fn start_github_authorization() -> Result<PublishAuthorization, String> {
+pub async fn start_github_authorization(
+    state: State<'_, AppState>,
+    force_authorize: Option<bool>,
+) -> Result<PublishAuthorization, String> {
     client_secret()?;
-    let listener = TcpListener::bind(CALLBACK_ADDR).map_err(|error| {
-        log::warn!("本机授权回调端口被占用：{error}");
-        with_params(
-            "mapPublish.callbackUnavailable",
-            &[("reason", &error.to_string())],
-        )
-    })?;
-    let state = random_token();
-    let verifier = random_token();
-    let challenge = code_challenge(&verifier);
+    let known = {
+        let config = state.config.load_or_default();
+        state.config.publish_installation_id(&config)
+    };
+    let listener = bind_callback_listener()?;
+    let nonce = random_token();
+    let (mode, authorize_url, verifier) =
+        authorization_target(known, &nonce, force_authorize.unwrap_or(false));
     let outcome = Arc::new(Mutex::new(CallbackOutcome::Pending));
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut pending = PENDING_AUTH
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
-        if let Some(previous) = pending.take() {
-            previous.cancel.store(true, Ordering::Relaxed);
-        }
         *pending = Some(PendingAuthorization {
             verifier,
             cancel: cancel.clone(),
             outcome: outcome.clone(),
         });
     }
-    spawn_callback_listener(listener, state.clone(), cancel, outcome);
-    let authorize_url = format!(
-        "{AUTHORIZE_ENDPOINT}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
-        encode_component(GITHUB_APP_CLIENT_ID),
-        encode_component(CALLBACK_URL),
-        encode_component(&state),
-        encode_component(&challenge),
-    );
+    spawn_callback_listener(listener, nonce, cancel, outcome);
     if let Err(error) = crate::shell_open::open_url(&authorize_url) {
         clear_pending_auth();
         return Err(with_params(
@@ -536,10 +606,11 @@ pub async fn start_github_authorization() -> Result<PublishAuthorization, String
             &[("reason", &error)],
         ));
     }
-    log::info!("GitHub 授权页已在系统浏览器打开，等待本机回调");
+    log::info!("GitHub 授权页已在系统浏览器打开（模式={mode:?}），等待本机回调");
     Ok(PublishAuthorization {
         authorize_url,
         expires_in: AUTHORIZE_TIMEOUT.as_secs(),
+        mode,
     })
 }
 
@@ -579,7 +650,7 @@ pub async fn poll_github_authorization(
             clear_pending_auth();
             Ok(auth_failure(reason))
         }
-        CallbackOutcome::Code { code } => {
+        CallbackOutcome::Code { code, installation } => {
             {
                 let mut guard = outcome.lock().map_err(|_| "lock.poisoned".to_string())?;
                 if !matches!(*guard, CallbackOutcome::Code { .. }) {
@@ -587,18 +658,23 @@ pub async fn poll_github_authorization(
                 }
                 *guard = CallbackOutcome::Exchanging;
             }
-            match exchange_code(&code, &verifier).await {
+            match exchange_code(&code, verifier.as_deref()).await {
                 Ok((token, login)) => {
                     {
                         let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
                         let mut config = service.load_or_default();
                         service.set_publish_token(&mut config, &token, &login);
+                        // 安装页回调带回的 id 就是「这次勾了哪些仓库」的答案：
+                        // 记下来之后列仓库按 id 直查，不用等 /user/installations。
+                        if let Some(installation) = installation {
+                            service.set_publish_installation_id(&mut config, installation);
+                        }
                         service
                             .save(&config)
                             .map_err(|error| action_error("save-token", &error.to_string()))?;
                     }
                     clear_pending_auth();
-                    log::info!("GitHub 发布 Token 已保存：用户={login}");
+                    log::info!("GitHub 发布 Token 已保存：用户={login}，安装={installation:?}");
                     Ok(PublishAuthPoll::Authorized { login })
                 }
                 Err(reason) => {
@@ -620,19 +696,24 @@ fn auth_failure(reason: String) -> PublishAuthPoll {
     }
 }
 
-async fn exchange_code(code: &str, verifier: &str) -> Result<(String, String), String> {
+async fn exchange_code(code: &str, verifier: Option<&str>) -> Result<(String, String), String> {
     let secret = client_secret()?;
     let client = api_client()?;
+    let mut form = vec![
+        ("client_id", GITHUB_APP_CLIENT_ID),
+        ("client_secret", secret),
+        ("code", code),
+        ("redirect_uri", CALLBACK_URL),
+    ];
+    // 只有发起过 PKCE 挑战的流程才带 verifier；安装页那条路没有挑战，
+    // 硬带上会被 GitHub 当成不匹配。
+    if let Some(verifier) = verifier {
+        form.push(("code_verifier", verifier));
+    }
     let response = client
         .post(ACCESS_TOKEN_ENDPOINT)
         .header("Accept", "application/json")
-        .form(&AccessTokenForm {
-            client_id: GITHUB_APP_CLIENT_ID,
-            client_secret: secret,
-            code,
-            redirect_uri: CALLBACK_URL,
-            code_verifier: verifier,
-        })
+        .form(&form)
         .send()
         .await
         .map_err(|error| request_error(&error.to_string()))?;
@@ -776,6 +857,12 @@ fn handle_callback(
         finish_callback(outcome, result);
         return true;
     }
+    // 安装页那条路会把刚装好的 installation id 一起带回来，它就是「用户勾了
+    // 哪些仓库」的答案；纯 OAuth 授权没有这个参数。
+    let installation = params
+        .get("installation_id")
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|id| *id > 0);
     match params.get("code").filter(|code| !code.is_empty()) {
         Some(code) => {
             let _ = write_callback_page(
@@ -787,22 +874,34 @@ fn handle_callback(
                 outcome,
                 CallbackOutcome::Code {
                     code: code.to_string(),
+                    installation,
                 },
             );
             true
         }
         None => {
+            // 装上了却没有授权码：App 设置里没勾「Request user authorization
+            // (OAuth) during installation」，那条路根本不会回传 code。
+            let installed_only = installation.is_some();
             let _ = write_callback_page(
                 &mut stream,
                 "400 Bad Request",
-                "回调里没有授权码，请回到管理器重试。",
+                if installed_only {
+                    "已安装 App，但没有拿到授权码：请回到管理器按提示检查 App 设置。"
+                } else {
+                    "回调里没有授权码，请回到管理器重试。"
+                },
             );
             finish_callback(
                 outcome,
-                CallbackOutcome::Failed(with_params(
-                    "mapPublish.authorizationFailed",
-                    &[("reason", "missing code")],
-                )),
+                CallbackOutcome::Failed(if installed_only {
+                    "mapPublish.installNotConfigured".to_string()
+                } else {
+                    with_params(
+                        "mapPublish.authorizationFailed",
+                        &[("reason", "missing code")],
+                    )
+                }),
             );
             true
         }
@@ -895,6 +994,7 @@ pub fn map_publish_state(state: State<'_, AppState>) -> PublishAuthState {
         login: config.auth.github_publish_login.clone(),
         client_id: GITHUB_APP_CLIENT_ID.to_string(),
         install_url: PUBLISH_INSTALL_URL.to_string(),
+        installed: state.config.publish_installation_id(&config) > 0,
         secret_configured: !GITHUB_APP_CLIENT_SECRET.is_empty(),
     }
 }
@@ -921,6 +1021,12 @@ pub fn sign_out_map_publish(state: State<'_, AppState>) -> Result<PublishAuthSta
         login: String::new(),
         client_id: GITHUB_APP_CLIENT_ID.to_string(),
         install_url: PUBLISH_INSTALL_URL.to_string(),
+        // 退出登录不动 installation id：用户在 GitHub 上改仓库范围时它不变，
+        // 下次登录还能按它直查。
+        installed: {
+            let config = state.config.load_or_default();
+            state.config.publish_installation_id(&config) > 0
+        },
         secret_configured: !GITHUB_APP_CLIENT_SECRET.is_empty(),
     })
 }
@@ -931,12 +1037,40 @@ pub fn sign_out_map_publish(state: State<'_, AppState>) -> Result<PublishAuthSta
 ///
 /// GitHub App 的仓库来源是「安装」而不是「账号」：先读 `/user/installations`，
 /// 再逐个读该安装下可访问的仓库。作者在安装时勾了哪几个，这里就只有哪几个。
+///
+/// 记下的 installation id 要**先直查一次再并入**，不能只信 `/user/installations`：
+/// 后者是最终一致的，刚在 GitHub 勾完仓库时它可能还是空的（实测退出重登后有
+/// 25 秒空窗），而按 id 直查立刻就能拿到刚勾的那一份。
 #[tauri::command]
 pub async fn list_publish_repositories(
     state: State<'_, AppState>,
 ) -> Result<PublishRepositoryList, String> {
+    let service = state.config.clone();
     let token = publish_token(&state)?;
     let client = api_client()?;
+    let known = {
+        let config = service.load_or_default();
+        service.publish_installation_id(&config)
+    };
+    let mut installation_ids: Vec<u64> = Vec::new();
+    let mut all_repositories = false;
+    let mut result: Vec<PublishRepository> = Vec::new();
+    if known > 0 {
+        match remembered_installation_repositories(&client, &token, known).await {
+            Ok(Some((selection, repositories))) => {
+                all_repositories = selection == "all";
+                installation_ids.push(known);
+                log::info!("按记录的安装 {known} 直查：可写仓库={}", repositories.len());
+                result.extend(repositories);
+            }
+            Ok(None) => {
+                // App 被卸载（或换了账号）：这条记忆没用了，清掉退回归档路径。
+                log::info!("记录的安装 {known} 在 GitHub 上已不存在，忘记它");
+                remember_installation_id(&service, &state, 0);
+            }
+            Err(reason) => return Err(reason),
+        }
+    }
     let installations: ApiInstallationList = get_json(
         &client,
         &token,
@@ -944,34 +1078,23 @@ pub async fn list_publish_repositories(
         "list-installations",
     )
     .await?;
-    let installation_count = installations.installations.len();
-    // 「全部仓库」的安装才会把以后新建的仓库自动纳进来；只授权部分仓库时，
-    // 新建出来的仓库不在安装范围里，推不上去 —— 界面据此关掉「新建仓库」。
-    let all_repositories = installations
-        .installations
-        .iter()
-        .any(|installation| installation.repository_selection == "all");
-    let mut result = Vec::new();
-    for installation in installations.installations {
-        let url = format!(
-            "{API_ENDPOINT}/user/installations/{}/repositories?per_page={RELEASE_PAGE_SIZE}",
-            installation.id
-        );
-        let repositories: ApiInstallationRepositories =
-            get_json(&client, &token, &url, "list-installation-repositories").await?;
-        for repository in repositories.repositories {
-            // 安装范围内的仓库默认按可写处理；只读的情况由写命令自己的 403 兜底。
-            if !repository
-                .permissions
-                .as_ref()
-                .map(|permissions| permissions.push)
-                .unwrap_or(true)
-            {
-                continue;
-            }
-            result.push(repository_from_api(repository));
+    for installation in &installations.installations {
+        // 「全部仓库」的安装才会把以后新建的仓库自动纳进来；只授权部分仓库时，
+        // 新建出来的仓库不在安装范围里，推不上去 —— 界面据此关掉「新建仓库」。
+        if installation.repository_selection == "all" {
+            all_repositories = true;
         }
+        if installation_ids.contains(&installation.id) {
+            continue;
+        }
+        installation_ids.push(installation.id);
+        result.extend(installation_repositories(&client, &token, installation.id).await?);
     }
+    // 只有一个安装却还没记下来（老用户第一次升级就没有回调可等）：顺手记下。
+    if known == 0 && installation_ids.len() == 1 {
+        remember_installation_id(&service, &state, installation_ids[0]);
+    }
+    let installation_count = installation_ids.len();
     // 已经是地图源的仓库排前面：作者多半是回来改自己已有的地图仓库。
     result.sort_by(|left, right| {
         let left_source = left.topics.iter().any(|topic| topic == "map-source");
@@ -991,6 +1114,83 @@ pub async fn list_publish_repositories(
         all_repositories,
         repositories: result,
     })
+}
+
+/// 读一次安装下可访问的仓库（安装范围内的都按可写处理；只读的情况由写命令
+/// 自己的 403 兜底）。
+async fn installation_repositories(
+    client: &reqwest::Client,
+    token: &str,
+    installation: u64,
+) -> Result<Vec<PublishRepository>, String> {
+    let url = format!(
+        "{API_ENDPOINT}/user/installations/{installation}/repositories?per_page={RELEASE_PAGE_SIZE}"
+    );
+    let repositories: ApiInstallationRepositories =
+        get_json(client, token, &url, "list-installation-repositories").await?;
+    Ok(writable_repositories(repositories))
+}
+
+/// 按记忆里的 id 直查一次：顺带取仓库范围。404 说明这次安装已经不在（App 被
+/// 卸载或换了账号），返回 `None` 让调用方清掉记忆。
+async fn remembered_installation_repositories(
+    client: &reqwest::Client,
+    token: &str,
+    installation: u64,
+) -> Result<Option<(String, Vec<PublishRepository>)>, String> {
+    let response = authorized(
+        client.get(&format!("{API_ENDPOINT}/user/installations/{installation}")),
+        token,
+    )
+    .send()
+    .await
+    .map_err(|error| request_error(&error.to_string()))?;
+    // `ensure_success` 会把 404 变成 Err，所以这里必须先看状态码。
+    if response.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    let detail: ApiInstallationDetail = ensure_success(response, "get-installation")
+        .await?
+        .json()
+        .await
+        .map_err(|error| request_error(&error.to_string()))?;
+    let repositories = installation_repositories(client, token, installation).await?;
+    Ok(Some((detail.repository_selection, repositories)))
+}
+
+fn writable_repositories(list: ApiInstallationRepositories) -> Vec<PublishRepository> {
+    list.repositories
+        .into_iter()
+        .filter(|repository| {
+            repository
+                .permissions
+                .as_ref()
+                .map(|permissions| permissions.push)
+                .unwrap_or(true)
+        })
+        .map(repository_from_api)
+        .collect()
+}
+
+/// 记下（或清掉，`installation == 0`）这次安装的 id。写失败只记一条 warn：
+/// 记不住只意味着下次还要走一遍安装页，不该让列仓库失败。
+fn remember_installation_id(
+    service: &crate::config::ConfigService,
+    state: &AppState,
+    installation: u64,
+) {
+    let Ok(_guard) = state.operation.lock() else {
+        log::warn!("记录安装 id 跳过：操作锁不可用");
+        return;
+    };
+    let mut config = service.load_or_default();
+    if service.publish_installation_id(&config) == installation {
+        return;
+    }
+    service.set_publish_installation_id(&mut config, installation);
+    if let Err(error) = service.save(&config) {
+        log::warn!("记录安装 id 失败：{error}");
+    }
 }
 
 /// 新建一个地图仓库并自动打上三个标签。
@@ -1370,6 +1570,31 @@ mod tests {
     fn asset_name_encoding_escapes_reserved_characters() {
         assert_eq!(encode_component("a b.zip"), "a%20b.zip");
         assert_eq!(encode_component("a&b"), "a%26b");
+    }
+
+    #[test]
+    fn first_sign_in_opens_the_install_page_and_later_ones_do_not() {
+        let (mode, url, verifier) = authorization_target(0, "nonce-1", false);
+        assert_eq!(mode, PublishAuthMode::Install);
+        assert!(url.starts_with(PUBLISH_INSTALL_URL));
+        assert!(url.ends_with("?state=nonce-1"));
+        // 安装页那条路没有 PKCE 挑战，硬带 verifier 会被 GitHub 判成不匹配。
+        assert!(verifier.is_none());
+
+        let (mode, url, verifier) = authorization_target(18334019, "nonce-2", false);
+        assert_eq!(mode, PublishAuthMode::Authorize);
+        assert!(url.starts_with(AUTHORIZE_ENDPOINT));
+        assert!(url.contains("client_id=Iv23liMDOtLBrrkv781U"));
+        assert!(url.contains("state=nonce-2"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(verifier.is_some());
+
+        // 装过 App 却没记下 installation id：安装页不会再回调本机，
+        // 用户点「改用 GitHub 登录」时必须走 OAuth 那条。
+        let (mode, url, verifier) = authorization_target(0, "nonce-3", true);
+        assert_eq!(mode, PublishAuthMode::Authorize);
+        assert!(url.starts_with(AUTHORIZE_ENDPOINT));
+        assert!(verifier.is_some());
     }
 
     #[test]

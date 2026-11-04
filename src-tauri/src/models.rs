@@ -1224,11 +1224,25 @@ impl GameConfig {
     }
 }
 
+/// 这次授权打开的是哪个页面。
+///
+/// `install` = 还没装过 App，直接去安装页：装 App 与勾仓库一步完成，回调会把
+/// `installation_id` 一起带回来；`authorize` = 已经装过，只重新授权，不再经过
+/// 安装页 —— GitHub 对已安装的账号会停在配置页，不会回调本机。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishAuthMode {
+    Install,
+    Authorize,
+}
+
 /// 授权流程启动后的返回：系统浏览器已经打开，前端可以给出备用链接。
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishAuthorization {
     pub authorize_url: String,
     pub expires_in: u64,
+    /// 前端据此决定按钮是「安装 App 并选择仓库」还是「登录 GitHub」。
+    pub mode: PublishAuthMode,
 }
 
 /// 授权轮询结果。
@@ -1256,6 +1270,8 @@ pub struct PublishAuthState {
     pub login: String,
     pub client_id: String,
     pub install_url: String,
+    /// 已经记下上次安装的 installation id：有它时登录只重新授权，不再回安装页。
+    pub installed: bool,
     pub secret_configured: bool,
 }
 
@@ -1497,6 +1513,14 @@ pub struct AuthConfig {
     /// device flow 授权到的 GitHub 登录名，只用于界面显示「以谁的身份发布」。
     #[serde(default)]
     pub github_publish_login: String,
+    /// 上次安装 App 时回调带回来的 installation id；0 = 还不知道。
+    ///
+    /// 存它只是为了绕开一件事：`/user/installations` 是最终一致的，刚在 GitHub
+    /// 上勾完仓库时它能空几十秒（实测退出重登后有 25 秒空窗），而按 id 直查
+    /// `/user/installations/{id}/repositories` 立刻就是用户刚勾的那一份。
+    /// 退出登录不清它：用户在 GitHub 上改仓库范围时这个 id 不会变。
+    #[serde(default)]
+    pub github_publish_installation_id: u64,
 }
 
 fn default_hide_unidentified_mods() -> bool {

@@ -1,7 +1,7 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
-import { defaultTemplate, isMapVersion, renderAssetName } from '../mapPublishAsset'
+import { parsePublishPermissionFailure, type PublishPermissionFailure } from '../mapPublishFlow'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useNotify } from '../useNotify'
 import type {
@@ -30,46 +30,20 @@ export interface SaveReleaseInput {
   body: string
   draft: boolean
   prerelease: boolean
-  metadata: MapPublishMetadata
+  /**
+   * 有值 = 同时写回 Release note 的 `oc2-map` 块；省略 = 只改 Release 的
+   * 标题 / 正文 / 草稿状态。
+   *
+   * 发布页的三步式里只有第三步带 metadata：块是消费端识别地图的唯一依据，
+   * 让前两步也写块会出现「附件还没传、块里已经宣布新版本」。
+   */
+  metadata?: MapPublishMetadata
 }
 
 export interface CreateRepositoryInput {
   name: string
   description: string
   private: boolean
-}
-
-/**
- * 某一版要上传的附件名 = 元数据模板 + 这一版的版本号。
- *
- * tag 是地图身份、不参与命名；版本号只存在于附件名里（管理器用
- * `versioned_asset_rule` 从附件名抽），所以必须显式传版本号。渲染规则在
- * `mapPublishAsset.ts`，与发布页的预览共用一份。
- */
-export function assetNameFor(release: PublishRelease, version: string): string {
-  return renderAssetName(
-    release.metadata?.asset ?? '',
-    release.metadata?.level_set_name ?? '',
-    version,
-  )
-}
-
-/** 这个 Release 还没有 `oc2-map` 块时的空元数据（新增第一份资产时补上）。 */
-function blankMetadata(): MapPublishMetadata {
-  return {
-    level_set_name: '',
-    level_set_name_zh: '',
-    author: '',
-    name_i18n: {},
-    group_i18n: {},
-    note_i18n: {},
-    asset: '',
-    latest_mapset_version: '',
-    latest_info_version: '',
-    requires: {},
-    compatible: {},
-    conflicts: {},
-  }
 }
 
 /**
@@ -96,11 +70,18 @@ export function useMapPublish() {
   const selectedFullName = ref<string | null>(null)
   const creatingRepository = ref(false)
 
-  /** 选中仓库的标签检查结果；`missing` 非空时页面顶部给一键补打的按钮。 */
+  /** 选中仓库的标签检查结果；`missing` 非空时页面顶部只提醒作者去仓库设置里加。 */
   const repositoryTopics = ref<PublishRepositoryTopics | null>(null)
   const topicsLoading = ref(false)
-  const fixingTopics = ref(false)
   const missingTopics = computed(() => repositoryTopics.value?.missing ?? [])
+
+  /**
+   * 写操作被 GitHub 拒绝的权限 / 限流原因。
+   *
+   * 与普通错误不同：403 不是重试就能解决的（要么改 App 权限再授权，要么等
+   * 限流窗口过去），所以界面要留一条常驻引导，并且写成功一次才收起。
+   */
+  const permissionFailure = ref<PublishPermissionFailure | null>(null)
 
   const releases = ref<PublishRelease[]>([])
   const releasesLoading = ref(false)
@@ -109,10 +90,8 @@ export function useMapPublish() {
 
   const uploading = ref(false)
   const deletingAsset = ref(false)
-  /** 「新增资产」弹窗里正在识别 ZIP（解析 `info` 可能要几十秒）。 */
+  /** 正在识别拖进来的 ZIP（解析 `info` 可能要几十秒）。 */
   const inspecting = ref(false)
-  /** 上传附件 + 写回 Release note 的整段。 */
-  const publishing = ref(false)
 
   /** 授权到本 App 的安装数量；0 表示还没装过 App。 */
   const installationCount = ref(0)
@@ -145,7 +124,14 @@ export function useMapPublish() {
   )
 
   function fail(reason: unknown) {
+    const blocked = parsePublishPermissionFailure(reason)
+    if (blocked) permissionFailure.value = blocked
     message.error(backendMessageOf(reason))
+  }
+
+  /** 引导横幅收起：重新授权成功或任何一次写操作成功都算「已恢复」。 */
+  function clearPermissionFailure() {
+    permissionFailure.value = null
   }
 
   function clearPoll() {
@@ -204,6 +190,8 @@ export function useMapPublish() {
       authorization.value = null
       authPhase.value = 'idle'
       authFailure.value = ''
+      // 重新授权就是来换「权限更大的令牌」的：横幅留到下一次写失败再说。
+      permissionFailure.value = null
       await refreshAuth()
       await loadRepositories()
       if (mode === 'install' && repositories.value.length > 0) {
@@ -395,7 +383,7 @@ export function useMapPublish() {
   }
 
   /**
-   * 选中仓库就只读查一次标签：缺了界面顶部给一键补打。
+   * 选中仓库就只读查一次标签：缺了界面顶部只提醒作者去仓库设置里加。
    *
    * 标签只影响社区发现与地图源识别，读失败（网络抖动、Token 权限变窄）不该弹错
    * 打断作者 —— 静默当成「未知」，下次切仓库或刷新页面再查。
@@ -415,28 +403,6 @@ export function useMapPublish() {
       if (epoch === topicsEpoch) repositoryTopics.value = null
     } finally {
       if (epoch === topicsEpoch) topicsLoading.value = false
-    }
-  }
-
-  /** 一键补齐缺失标签；成功后顺手更新仓库列表，卡片上的 map-source 标记不落后。 */
-  async function fixTopics(): Promise<boolean> {
-    const target = selectedCoordinates()
-    if (!target || fixingTopics.value) return false
-    fixingTopics.value = true
-    try {
-      const result = await api.ensurePublishRepositoryTopics(target.owner, target.repository)
-      topicsEpoch += 1
-      repositoryTopics.value = result
-      repositories.value = repositories.value.map((item) =>
-        item.full_name === selectedFullName.value ? { ...item, topics: result.topics } : item,
-      )
-      message.success(t('mapPublish.topicsFixed'))
-      return true
-    } catch (reason) {
-      fail(reason)
-      return false
-    } finally {
-      fixingTopics.value = false
     }
   }
 
@@ -481,6 +447,7 @@ export function useMapPublish() {
         prerelease: input.prerelease,
         metadata: input.metadata,
       })
+      permissionFailure.value = null
       if (!options.quiet) message.success(t('mapPublish.saved'))
       await loadReleases()
       return saved
@@ -519,24 +486,16 @@ export function useMapPublish() {
     }
   }
 
-  async function uploadAsset(release: PublishRelease, path: string, version: string): Promise<boolean> {
+  /**
+   * 上传一版地图 ZIP 附件。
+   *
+   * 附件名（含版本号）由页面按 `asset` 模板渲染好再传进来：渲染规则在
+   * `mapPublishAsset.ts`，与页面上「会上传成什么名字」的预览共用一份；
+   * 这里只负责落盘、刷新列表与收起权限引导。
+   */
+  async function uploadAsset(release: PublishRelease, path: string, name: string): Promise<boolean> {
     const repository = selectedRepository.value
     if (!repository || uploading.value) return false
-    const versionText = version.trim()
-    if (!versionText) {
-      message.warning(t('mapPublish.missingVersion'))
-      return false
-    }
-    if (!isMapVersion(versionText)) {
-      message.warning(t('mapPublish.invalidVersion', { value: versionText }))
-      return false
-    }
-    const name = assetNameFor(release, versionText)
-    if (!name) {
-      // 模板里没有版本占位符：传上去管理器也抽不出版本，先拦住。
-      message.warning(t('mapPublish.assetNeedsVersion'))
-      return false
-    }
     uploading.value = true
     try {
       await api.uploadPublishAsset({
@@ -546,6 +505,7 @@ export function useMapPublish() {
         path,
         name,
       })
+      permissionFailure.value = null
       message.success(t('mapPublish.uploaded'))
       await loadReleases()
       return true
@@ -569,86 +529,6 @@ export function useMapPublish() {
       return null
     } finally {
       inspecting.value = false
-    }
-  }
-
-  /**
-   * 「新增资产」：上传 ZIP 附件，再把这一版的版本号写回 Release note。
-   *
-   * 两步的顺序不能反：先落附件（消费端按附件名抽版本），再改 note 的
-   * `latest_mapset_version`。note 写失败时附件已经传上去了，所以只提示
-   * 「附件已传、说明没更新」，并把列表刷新出来让作者手动重试。
-   */
-  async function publishVersion(
-    release: PublishRelease,
-    path: string,
-    version: string,
-    inspection: PublishZipInspection,
-  ): Promise<boolean> {
-    const repository = selectedRepository.value
-    if (!repository || publishing.value) return false
-    const versionText = version.trim()
-    if (!versionText) {
-      message.warning(t('mapPublish.missingVersion'))
-      return false
-    }
-    if (!isMapVersion(versionText)) {
-      message.warning(t('mapPublish.invalidVersion', { value: versionText }))
-      return false
-    }
-    const base = release.metadata ?? blankMetadata()
-    // 老 Release 可能还没有关卡集名（第一次上传），用这次识别出来的补上，
-    // 否则默认模板会渲染成 `-1.2.0.zip`。
-    const levelSetName = base.level_set_name.trim() || inspection.level_set_name.trim()
-    const name = renderAssetName(base.asset, levelSetName, versionText)
-    if (!name) {
-      message.warning(t('mapPublish.assetNeedsVersion'))
-      return false
-    }
-    publishing.value = true
-    try {
-      await api.uploadPublishAsset({
-        owner: repository.owner,
-        repository: repository.name,
-        release_id: release.id,
-        path,
-        name,
-      })
-      const saved = await saveRelease(
-        {
-          releaseId: release.id,
-          tag: release.tag,
-          title: release.title,
-          body: release.body,
-          draft: release.draft,
-          prerelease: release.prerelease,
-          metadata: {
-            ...base,
-            level_set_name: levelSetName,
-            level_set_name_zh: base.level_set_name_zh.trim() || inspection.level_set_name_zh.trim(),
-            author: base.author.trim() || inspection.author.trim(),
-            asset: base.asset.trim() || defaultTemplate(levelSetName),
-            latest_mapset_version: versionText,
-            latest_info_version: inspection.info_version.trim() || base.latest_info_version,
-            requires:
-              Object.keys(base.requires).length > 0 ? base.requires : inspection.requires,
-          },
-        },
-        { quiet: true },
-      )
-      if (!saved) {
-        await loadReleases()
-        message.warning(t('mapPublish.publishedWithoutNote', { name }))
-        return false
-      }
-      await loadReleases()
-      message.success(t('mapPublish.versionPublished', { version: versionText }))
-      return true
-    } catch (reason) {
-      fail(reason)
-      return false
-    } finally {
-      publishing.value = false
     }
   }
 
@@ -694,8 +574,8 @@ export function useMapPublish() {
     creatingRepository,
     repositoryTopics,
     topicsLoading,
-    fixingTopics,
     missingTopics,
+    permissionFailure,
     releases,
     releasesLoading,
     savingRelease,
@@ -703,7 +583,6 @@ export function useMapPublish() {
     uploading,
     deletingAsset,
     inspecting,
-    publishing,
     loadState,
     startSignIn,
     startSignInAnyway,
@@ -711,7 +590,7 @@ export function useMapPublish() {
     signOut,
     refreshRepositories,
     refreshTopics,
-    fixTopics,
+    clearPermissionFailure,
     selectRepository,
     createRepository,
     saveRelease,
@@ -719,6 +598,5 @@ export function useMapPublish() {
     uploadAsset,
     deleteAsset,
     inspectZip,
-    publishVersion,
   }
 }

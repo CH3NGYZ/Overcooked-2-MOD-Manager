@@ -910,7 +910,11 @@ export interface PublishSaveRequest {
   body: string
   draft: boolean
   prerelease: boolean
-  metadata: MapPublishMetadata
+  /**
+   * 省略 = 只改 Release 的标题 / 正文 / 草稿状态，不碰 note 里的 `oc2-map`
+   * 块；发布页三步式里只有第三步（写回地图信息）会带它。
+   */
+  metadata?: MapPublishMetadata
 }
 
 export interface PublishUploadRequest {

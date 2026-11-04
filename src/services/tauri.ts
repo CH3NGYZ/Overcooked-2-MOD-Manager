@@ -438,12 +438,9 @@ export const api = {
   /** 识别本地地图 ZIP（版本号、info、requires）；重活，后端在 spawn_blocking 里跑。 */
   inspectPublishZip: (path: string) =>
     invoke<PublishZipInspection>('inspect_publish_zip', { path }),
-  /** 只读检查仓库标签：缺 map-source 之类时界面顶部给一键补打。 */
+  /** 只读检查仓库标签：缺 map-source 之类时界面顶部提示作者去仓库设置里加。 */
   publishRepositoryTopics: (owner: string, repository: string) =>
     invoke<PublishRepositoryTopics>('publish_repository_topics', { owner, repository }),
-  /** 合并写入缺失标签（后端先读再整体 PUT，不动作者自己的标签）。 */
-  ensurePublishRepositoryTopics: (owner: string, repository: string) =>
-    invoke<PublishRepositoryTopics>('ensure_publish_repository_topics', { owner, repository }),
 }
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

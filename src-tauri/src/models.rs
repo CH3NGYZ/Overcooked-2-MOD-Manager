@@ -1333,6 +1333,14 @@ pub struct PublishZipInspection {
     pub requires: BTreeMap<String, String>,
 }
 
+/// 仓库标签检查结果：`required` 是发布页要求的三件套，`missing` 为空表示齐全。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PublishRepositoryTopics {
+    pub topics: Vec<String>,
+    pub required: Vec<String>,
+    pub missing: Vec<String>,
+}
+
 /// 上传页看到的「一版地图」，就是仓库里的一个 Release。
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishRelease {

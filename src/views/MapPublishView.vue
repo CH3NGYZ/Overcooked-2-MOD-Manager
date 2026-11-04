@@ -56,6 +56,9 @@ const {
   publishing,
   inspecting,
   deletingAsset,
+  missingTopics,
+  fixingTopics,
+  fixTopics,
   loadState,
   startSignIn,
   startSignInAnyway,
@@ -769,6 +772,18 @@ function confirmDeleteAsset(asset: PublishAsset) {
         {{ mode === 'list' ? t('mapPublish.mapSets') : t('mapPublish.mapManagement') }}
       </h2>
 
+      <!-- 选了仓库就查一次标签：缺 map-source 之类，地图页就收不到这个仓库 -->
+      <div v-if="missingTopics.length" class="panel topics-banner">
+        <div class="topics-text">
+          <span class="topics-title">{{ t('mapPublish.topicsMissingTitle') }}</span>
+          <p class="hint no-top">{{ t('mapPublish.topicsMissingHint', { topics: missingTopics.join(', ') }) }}</p>
+        </div>
+        <n-button size="small" type="primary" :loading="fixingTopics" :disabled="fixingTopics"
+          @click="fixTopics">
+          {{ t('mapPublish.fixTopics') }}
+        </n-button>
+      </div>
+
       <!-- 地图集列表：一个 tag 一张卡 -->
       <div v-if="mode === 'list'" class="panel">
         <div class="panel-head">
@@ -1086,6 +1101,17 @@ function confirmDeleteAsset(asset: PublishAsset) {
   background: var(--oc2-row);
 }
 .assets-panel { margin-top: 16px; }
+
+.topics-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-color: var(--oc2-accent);
+}
+.topics-text { min-width: 0; }
+.topics-title { font-size: 13px; font-weight: 700; }
 
 .hint {
   margin: 8px 0 0;

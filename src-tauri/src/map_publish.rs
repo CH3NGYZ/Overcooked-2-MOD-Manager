@@ -44,7 +44,8 @@ use crate::map_note::{
 use crate::models::{
     OperationResult, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,
     PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease, PublishRepository,
-    PublishRepositoryList, PublishSaveRequest, PublishUploadRequest, PublishZipInspection,
+    PublishRepositoryList, PublishRepositoryTopics, PublishSaveRequest, PublishUploadRequest,
+    PublishZipInspection,
 };
 use crate::releases::APP_USER_AGENT;
 
@@ -79,9 +80,17 @@ const BIND_RETRY_DELAY: Duration = Duration::from_millis(80);
 
 const API_VERSION: &str = "2022-11-28";
 
-/// 新仓库自动打上的标签。`overcooked-2` + `bepinex` 是社区发现的准入口径，
-/// `map-source` 是「这是地图源仓库」的约定标记（见 `docs/map-sources.md` 3.8）。
+/// 地图仓库必须有的标签。`overcooked-2` + `bepinex` 是社区发现的准入口径，
+/// `map-source` 是「这是地图源仓库」的约定标记（见 `docs/map-sources.md` 3.8）；
+/// MOD 仓库的第三个标签换成 `mod`（`community::classify_search_item` 据此分流）。
 const PUBLISH_TOPICS: [&str; 3] = ["overcooked-2", "bepinex", "map-source"];
+
+fn publish_topics() -> Vec<String> {
+    PUBLISH_TOPICS
+        .iter()
+        .map(|topic| (*topic).to_string())
+        .collect()
+}
 
 const RELEASE_PAGE_SIZE: u32 = 100;
 /// 单份附件上限。GitHub 允许到 2 GiB，但这里是整份读进内存再上传的，
@@ -1237,7 +1246,8 @@ pub async fn create_publish_repository(
         .map_err(|error| request_error(&error.to_string()))?;
     log::info!("已新建地图仓库：{}", repository.full_name);
 
-    let topics = set_repository_topics(&client, &token, &repository.full_name).await;
+    let topics =
+        set_repository_topics(&client, &token, &repository.full_name, &publish_topics()).await;
     let topics = match topics {
         Ok(topics) => topics,
         Err(error) => {
@@ -1254,12 +1264,14 @@ pub async fn create_publish_repository(
     Ok(result)
 }
 
+/// 覆盖式写入标签：GitHub 的 PUT 语义是**整体替换**，调用方要带上原来的标签。
 async fn set_repository_topics(
     client: &reqwest::Client,
     token: &str,
     full_name: &str,
+    names: &[String],
 ) -> Result<Vec<String>, String> {
-    let body = json!({ "names": PUBLISH_TOPICS });
+    let body = json!({ "names": names });
     let response = authorized(
         client.put(format!("{API_ENDPOINT}/repos/{full_name}/topics")),
         token,
@@ -1282,12 +1294,92 @@ async fn set_repository_topics(
                 .filter_map(|name| name.as_str().map(str::to_string))
                 .collect()
         })
-        .unwrap_or_else(|| {
-            PUBLISH_TOPICS
+        .unwrap_or_else(|| names.to_vec()))
+}
+
+/// 仓库已有的标签里缺了哪些必需标签。GitHub 的标签一律小写，比较时不看大小写。
+fn missing_topics(topics: &[String]) -> Vec<String> {
+    PUBLISH_TOPICS
+        .iter()
+        .filter(|required| {
+            !topics
                 .iter()
-                .map(|topic| (*topic).to_string())
+                .any(|topic| topic.eq_ignore_ascii_case(required))
+        })
+        .map(|required| (*required).to_string())
+        .collect()
+}
+
+async fn fetch_repository_topics(
+    client: &reqwest::Client,
+    token: &str,
+    full_name: &str,
+) -> Result<Vec<String>, String> {
+    let value: serde_json::Value = get_json(
+        client,
+        token,
+        &format!("{API_ENDPOINT}/repos/{full_name}/topics"),
+        "get-topics",
+    )
+    .await?;
+    Ok(value
+        .get("names")
+        .and_then(|names| names.as_array())
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str().map(str::to_string))
                 .collect()
-        }))
+        })
+        .unwrap_or_default())
+}
+
+fn topics_report(topics: Vec<String>) -> PublishRepositoryTopics {
+    let missing = missing_topics(&topics);
+    PublishRepositoryTopics {
+        topics,
+        required: publish_topics(),
+        missing,
+    }
+}
+
+/// 只读检查：选中仓库后立刻问一次标签齐不齐，缺了界面顶部给一键补打的按钮。
+#[tauri::command]
+pub async fn publish_repository_topics(
+    state: State<'_, AppState>,
+    owner: String,
+    repository: String,
+) -> Result<PublishRepositoryTopics, String> {
+    let (owner, repository) = validate_coordinates(&owner, &repository)?;
+    let token = publish_token(&state)?;
+    let client = api_client()?;
+    let full_name = format!("{owner}/{repository}");
+    let topics = fetch_repository_topics(&client, &token, &full_name).await?;
+    Ok(topics_report(topics))
+}
+
+/// 一键补齐：先读当前标签再合并写入，只补缺的那几个，不动作者自己的标签。
+#[tauri::command]
+pub async fn ensure_publish_repository_topics(
+    state: State<'_, AppState>,
+    owner: String,
+    repository: String,
+) -> Result<PublishRepositoryTopics, String> {
+    let (owner, repository) = validate_coordinates(&owner, &repository)?;
+    let token = publish_token(&state)?;
+    let client = api_client()?;
+    let full_name = format!("{owner}/{repository}");
+    let mut merged = fetch_repository_topics(&client, &token, &full_name).await?;
+    for required in PUBLISH_TOPICS {
+        if !merged
+            .iter()
+            .any(|topic| topic.eq_ignore_ascii_case(required))
+        {
+            merged.push(required.to_string());
+        }
+    }
+    let topics = set_repository_topics(&client, &token, &full_name, &merged).await?;
+    Ok(topics_report(topics))
 }
 
 // —— Release ——
@@ -1675,6 +1767,24 @@ mod tests {
         assert_eq!(version_from_file_name("gaoda..1.2."), "1.2");
         // 只有日期的名字本来就没有版本：取到 04，界面让作者改。
         assert_eq!(version_from_file_name("2026-11-04"), "04");
+    }
+
+    #[test]
+    fn missing_topics_only_lists_the_ones_absent() {
+        assert_eq!(
+            missing_topics(&["overcooked-2".to_string(), "bepinex".to_string()]),
+            vec!["map-source".to_string()]
+        );
+        assert!(missing_topics(&publish_topics()).is_empty());
+        assert!(
+            missing_topics(&[
+                "Overcooked-2".to_string(),
+                "bepinex".to_string(),
+                "map-source".to_string(),
+                "extra".to_string(),
+            ])
+            .is_empty()
+        );
     }
 
     #[test]

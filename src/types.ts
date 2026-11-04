@@ -858,6 +858,13 @@ export interface PublishZipInspection {
   requires: Record<string, string>
 }
 
+/** 仓库标签检查结果：`missing` 为空表示三个标签齐全。 */
+export interface PublishRepositoryTopics {
+  topics: string[]
+  required: string[]
+  missing: string[]
+}
+
 /**
  * Release 说明里 `<!-- oc2-map -->` 块的投影。
  *

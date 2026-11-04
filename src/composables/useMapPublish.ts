@@ -11,6 +11,7 @@ import type {
   PublishAuthorization,
   PublishRelease,
   PublishRepository,
+  PublishRepositoryTopics,
   PublishZipInspection,
 } from '../types'
 
@@ -95,6 +96,12 @@ export function useMapPublish() {
   const selectedFullName = ref<string | null>(null)
   const creatingRepository = ref(false)
 
+  /** 选中仓库的标签检查结果；`missing` 非空时页面顶部给一键补打的按钮。 */
+  const repositoryTopics = ref<PublishRepositoryTopics | null>(null)
+  const topicsLoading = ref(false)
+  const fixingTopics = ref(false)
+  const missingTopics = computed(() => repositoryTopics.value?.missing ?? [])
+
   const releases = ref<PublishRelease[]>([])
   const releasesLoading = ref(false)
   const savingRelease = ref(false)
@@ -117,6 +124,8 @@ export function useMapPublish() {
   let pollEpoch = 0
   /** 切仓库时丢弃上一份 Release 请求的迟到结果。 */
   let releasesEpoch = 0
+  /** 同上，标签请求也要认这一份。 */
+  let topicsEpoch = 0
   const authenticated = computed(() => auth.value?.authenticated === true)
   const selectedRepository = computed(
     () => repositories.value.find((item) => item.full_name === selectedFullName.value) ?? null,
@@ -269,6 +278,7 @@ export function useMapPublish() {
       selectedFullName.value = list[0]?.full_name ?? null
     }
     await loadReleases()
+    await refreshTopics()
   }
 
   async function loadRepositories() {
@@ -314,6 +324,7 @@ export function useMapPublish() {
       : null
     releases.value = []
     await loadReleases()
+    await refreshTopics()
   }
 
   async function beginAuthorization(forceAuthorize: boolean) {
@@ -364,11 +375,68 @@ export function useMapPublish() {
       releasesEpoch += 1
       installationCount.value = 0
       allRepositories.value = false
+      repositoryTopics.value = null
+      topicsEpoch += 1
       message.success(t('mapPublish.signedOut'))
     } catch (reason) {
       fail(reason)
     } finally {
       signingOut.value = false
+    }
+  }
+
+  /** `owner/name` 拆成后端要的两段；拼不出来就当没选仓库。 */
+  function selectedCoordinates(): { owner: string; repository: string } | null {
+    const fullName = selectedFullName.value
+    if (!fullName) return null
+    const slash = fullName.indexOf('/')
+    if (slash <= 0 || slash === fullName.length - 1) return null
+    return { owner: fullName.slice(0, slash), repository: fullName.slice(slash + 1) }
+  }
+
+  /**
+   * 选中仓库就只读查一次标签：缺了界面顶部给一键补打。
+   *
+   * 标签只影响社区发现与地图源识别，读失败（网络抖动、Token 权限变窄）不该弹错
+   * 打断作者 —— 静默当成「未知」，下次切仓库或刷新页面再查。
+   */
+  async function refreshTopics() {
+    const target = selectedCoordinates()
+    if (!target) {
+      repositoryTopics.value = null
+      return
+    }
+    const epoch = ++topicsEpoch
+    topicsLoading.value = true
+    try {
+      const result = await api.publishRepositoryTopics(target.owner, target.repository)
+      if (epoch === topicsEpoch) repositoryTopics.value = result
+    } catch {
+      if (epoch === topicsEpoch) repositoryTopics.value = null
+    } finally {
+      if (epoch === topicsEpoch) topicsLoading.value = false
+    }
+  }
+
+  /** 一键补齐缺失标签；成功后顺手更新仓库列表，卡片上的 map-source 标记不落后。 */
+  async function fixTopics(): Promise<boolean> {
+    const target = selectedCoordinates()
+    if (!target || fixingTopics.value) return false
+    fixingTopics.value = true
+    try {
+      const result = await api.ensurePublishRepositoryTopics(target.owner, target.repository)
+      topicsEpoch += 1
+      repositoryTopics.value = result
+      repositories.value = repositories.value.map((item) =>
+        item.full_name === selectedFullName.value ? { ...item, topics: result.topics } : item,
+      )
+      message.success(t('mapPublish.topicsFixed'))
+      return true
+    } catch (reason) {
+      fail(reason)
+      return false
+    } finally {
+      fixingTopics.value = false
     }
   }
 
@@ -624,6 +692,10 @@ export function useMapPublish() {
     selectedFullName,
     selectedRepository,
     creatingRepository,
+    repositoryTopics,
+    topicsLoading,
+    fixingTopics,
+    missingTopics,
     releases,
     releasesLoading,
     savingRelease,
@@ -638,6 +710,8 @@ export function useMapPublish() {
     cancelSignIn,
     signOut,
     refreshRepositories,
+    refreshTopics,
+    fixTopics,
     selectRepository,
     createRepository,
     saveRelease,

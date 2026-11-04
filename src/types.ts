@@ -683,12 +683,23 @@ export interface MapInfo {
   /** 缓存里最新 Release tag；没刷新过时为空。 */
   latest_tag?: string | null
   /**
-   * 源文档钉死的「用户应该装的版本」（`[[maps]].latest_version`）。
+   * 源文档钉死的「用户应该装的版本」（`[[maps]].latest_mapset_version`，即地图包版本）。
    *
    * 资产名里的版本号是作者手写的，`0.7` 按数字段比较反而小于 `0.69`；
    * 写了它就是「这就是最新版」，前端只比等值、不比大小（见 `mapUpdateState`）。
+   * 旧块里的 `latest_version` 由后端 alias 兼容，前端只认新名字。
    */
-  latest_version?: string | null
+  latest_mapset_version?: string | null
+  /**
+   * 最新 Release 里 **`info` 文件内的版本号**（`latest_info_version`）。
+   *
+   * 与上面的 `latest_mapset_version` 分工不同：那个是地图包（Release）的版本，由作者
+   * 定义；这一份是包内 info 自己写的版本。两者平时相同，作者升了包版本却忘了
+   * 改 info 里的版本号时才会不同 —— 此时拿本地 info 版本与它比，才能认出
+   * 「装的已经是最新」（见 `levelSetStatus.ts::mapUpdateState`）。老地图源没有
+   * 这个字段时判定自动退回包版本比较。
+   */
+  latest_info_version?: string | null
   /**
    * 缓存里最新的那一条 Release。
    *

@@ -286,7 +286,7 @@ export interface MapBoundRefreshSummary {
  *
  * ## 为什么先重拉源树
  *
- * tag 模式的地图条目把 `tag` / `latest_version` 写在源文档里，Release 列表
+ * tag 模式的地图条目把 `tag` / `latest_mapset_version` 写在源文档里，Release 列表
  * 是照这份声明合成的。拿页面上的旧条目直接去刷 Release，等于按上次的声明
  * 问后端；源文档改了 `asset_rules` 或换了 tag 时，刷回来的还是一份过期资产表。
  * 所以一次点击固定是「一次 TOML + 一次 Release 批次」，两者共用 `passId`，

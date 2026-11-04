@@ -10,6 +10,7 @@ import type {
   PublishAuthorization,
   PublishRelease,
   PublishRepository,
+  PublishRepositoryList,
 } from '../types'
 
 /**
@@ -92,15 +93,36 @@ export function useMapPublish() {
   const uploading = ref(false)
   const deletingAsset = ref(false)
 
+  /** 正在等用户到 GitHub 安装页勾选仓库（登录成功但还没装 App）。 */
+  const installWaiting = ref(false)
+  /** 授权到本 App 的安装数量；0 表示还没安装，必须先走安装页。 */
+  const installationCount = ref(0)
+  /** 有安装范围是「全部仓库」时，新建的仓库才自动在授权范围内。 */
+  const allRepositories = ref(false)
+
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   /** 每次 `clearPoll` 递增：卸载 / 重新登录后迟到的轮询结果必须丢弃。 */
   let pollEpoch = 0
   /** 切仓库时丢弃上一份 Release 请求的迟到结果。 */
   let releasesEpoch = 0
+  /** 安装 App 的轮询：GitHub 不回调本机，只能盯 installations 什么时候非空。 */
+  let installTimer: ReturnType<typeof setTimeout> | null = null
+  let installEpoch = 0
+  let installPolls = 0
 
   const authenticated = computed(() => auth.value?.authenticated === true)
   const selectedRepository = computed(
     () => repositories.value.find((item) => item.full_name === selectedFullName.value) ?? null,
+  )
+
+  /**
+   * 已登录但一个安装都没有 = GitHub App 还没装到任何仓库上。
+   *
+   * 这时的空列表不是「账号里没有仓库」，而是「还没选仓库范围」：界面要给安装这一步，
+   * 而不是让用户去新建一个（新建的仓库也不在授权范围里，推不上去）。
+   */
+  const needsInstall = computed(
+    () => authenticated.value && authReady.value && installationCount.value === 0,
   )
 
   function fail(reason: unknown) {
@@ -115,9 +137,18 @@ export function useMapPublish() {
     }
   }
 
+  function stopInstallPoll() {
+    installEpoch += 1
+    if (installTimer !== null) {
+      clearTimeout(installTimer)
+      installTimer = null
+    }
+  }
+
   // 离开页面必须让后端关掉本机回调端口；否则下一次登录会因端口被占用失败。
   onUnmounted(() => {
     clearPoll()
+    stopInstallPoll()
     void api.cancelGithubAuthorization().catch(() => {})
   })
 
@@ -163,6 +194,8 @@ export function useMapPublish() {
       message.success(t('mapPublish.signInSuccess'))
       await refreshAuth()
       await loadRepositories()
+      // 登录只是第一步：一个安装都没有时直接进「安装 App 并选择仓库」。
+      if (needsInstall.value) await startInstall()
       return
     }
     clearPoll()
@@ -220,21 +253,98 @@ export function useMapPublish() {
     }
   }
 
+  /** 写入仓库列表并纠正选中项：普通刷新与安装完成后的检测共用一份落地逻辑。 */
+  async function adoptRepositories(list: PublishRepository[]) {
+    repositories.value = list
+    const keep = selectedFullName.value
+    if (!keep || !list.some((item) => item.full_name === keep)) {
+      selectedFullName.value = list[0]?.full_name ?? null
+    }
+    await loadReleases()
+  }
+
   async function loadRepositories() {
     if (repositoriesLoading.value) return
     repositoriesLoading.value = true
     try {
       const list = await api.listPublishRepositories()
-      repositories.value = list
-      const keep = selectedFullName.value
-      if (!keep || !list.some((item) => item.full_name === keep)) {
-        selectedFullName.value = list[0]?.full_name ?? null
+      installationCount.value = list.installations
+      allRepositories.value = list.all_repositories
+      await adoptRepositories(list.repositories)
+      if (list.repositories.length > 0) {
+        stopInstallPoll()
+        installWaiting.value = false
       }
-      await loadReleases()
     } catch (reason) {
       fail(reason)
     } finally {
       repositoriesLoading.value = false
+    }
+  }
+
+  /** 安装页跳回来通常几秒到几十秒；GitHub 不回调本机，只能盯 installations。 */
+  const INSTALL_POLL_INTERVAL_MS = 3000
+  /** 最多自动查 5 分钟，之后改手动：再点一次「重新打开安装页」就重新开始等。 */
+  const INSTALL_POLL_LIMIT = 100
+
+  /** 打开 GitHub App 安装页：仓库范围就是在这一页勾的。 */
+  async function openInstallPage() {
+    const url = auth.value?.install_url
+    if (!url) return
+    try {
+      const result = await api.openReleasePage(url)
+      if (!result.ok) message.error(translateBackendMessage(result.message))
+    } catch (reason) {
+      fail(reason)
+    }
+  }
+
+  /** 登录后的第二步：打开安装页并开始等，装完把仓库列表接上。 */
+  async function startInstall() {
+    if (!needsInstall.value) return
+    installPolls = 0
+    installWaiting.value = true
+    await openInstallPage()
+    scheduleInstallPoll()
+  }
+
+  function scheduleInstallPoll() {
+    stopInstallPoll()
+    const epoch = installEpoch
+    installTimer = setTimeout(() => {
+      installTimer = null
+      void pollInstallation(epoch)
+    }, INSTALL_POLL_INTERVAL_MS)
+  }
+
+  async function pollInstallation(epoch: number) {
+    if (epoch !== installEpoch) return
+    let list: PublishRepositoryList
+    try {
+      list = await api.listPublishRepositories()
+    } catch {
+      // 安装期间一次网络失败不该让等待结束：下一轮再试。
+      if (epoch === installEpoch) scheduleInstallPoll()
+      return
+    }
+    if (epoch !== installEpoch) return
+    if (list.installations === 0) {
+      installPolls += 1
+      if (installPolls >= INSTALL_POLL_LIMIT) {
+        stopInstallPoll()
+        installWaiting.value = false
+        return
+      }
+      scheduleInstallPoll()
+      return
+    }
+    stopInstallPoll()
+    installWaiting.value = false
+    installationCount.value = list.installations
+    allRepositories.value = list.all_repositories
+    await adoptRepositories(list.repositories)
+    if (list.repositories.length > 0) {
+      message.success(t('mapPublish.installationDetected', { count: list.repositories.length }))
     }
   }
 
@@ -287,6 +397,10 @@ export function useMapPublish() {
       selectedFullName.value = null
       releases.value = []
       releasesEpoch += 1
+      stopInstallPoll()
+      installWaiting.value = false
+      installationCount.value = 0
+      allRepositories.value = false
       message.success(t('mapPublish.signedOut'))
     } catch (reason) {
       fail(reason)
@@ -420,6 +534,12 @@ export function useMapPublish() {
     authReady,
     authLoading,
     authenticated,
+    needsInstall,
+    installWaiting,
+    installationCount,
+    allRepositories,
+    openInstallPage,
+    startInstall,
     signingIn,
     signingOut,
     authorization,

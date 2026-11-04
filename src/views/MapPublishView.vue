@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref, watch } from 'vue'
-import { NButton, NCheckbox, NInput, NSelect, NSpin, NSwitch, NTag, useDialog } from 'naive-ui'
-import { RefreshOutline } from '@vicons/ionicons5'
+import { NButton, NCheckbox, NInput, NPopover, NSpin, NSwitch, NTag, useDialog } from 'naive-ui'
+import { RefreshOutline, SettingsOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { api } from '../services/tauri'
 import PageLoading from '../components/PageLoading.vue'
@@ -29,6 +29,11 @@ const {
   authReady,
   authLoading,
   authenticated,
+  needsInstall,
+  installWaiting,
+  allRepositories,
+  openInstallPage,
+  startInstall,
   signingIn,
   signingOut,
   authorization,
@@ -135,14 +140,26 @@ const pickedZipName = computed(() => {
   return path.split(/[\\/]/).pop() ?? path
 })
 
-const repositoryOptions = computed(() =>
-  repositories.value.map((repository) => ({
-    label: repository.private
-      ? `${repository.full_name} · ${t('mapPublish.repositoryPrivate')}`
-      : repository.full_name,
-    value: repository.full_name,
-  })),
-)
+/* GitHub 账号与仓库范围收在页头设置面板里，主区只留当前仓库的 Release。 */
+const settingsOpen = ref(false)
+const repositoryFilter = ref('')
+
+const filteredRepositories = computed(() => {
+  const keyword = repositoryFilter.value.trim().toLowerCase()
+  if (!keyword) return repositories.value
+  return repositories.value.filter((repository) => repository.full_name.toLowerCase().includes(keyword))
+})
+
+function openSettings() {
+  settingsOpen.value = true
+}
+
+/** 选完仓库收起面板：主区的 Release 列表随即换成这个仓库的。 */
+function chooseRepository(fullName: string) {
+  settingsOpen.value = false
+  repositoryFilter.value = ''
+  void selectRepository(fullName)
+}
 
 /**
  * 解析「一行一条」的清单。
@@ -333,12 +350,6 @@ function reopenAuthorization() {
   if (url) void openExternal(url)
 }
 
-/** 仓库可见范围由 GitHub App 安装时勾选的仓库决定，列表为空时这是唯一出路。 */
-function openInstall() {
-  const url = auth.value?.install_url
-  if (url) void openExternal(url)
-}
-
 /* ===== 新建仓库 ===== */
 
 const createOpen = ref(false)
@@ -416,17 +427,24 @@ function confirmDeleteAsset(asset: PublishAsset) {
       <template #icon><RefreshOutline width="14" height="14" /></template>
       {{ t('common.action.refresh') }}
     </n-button>
-  </Teleport>
 
-  <PageLoading :show="authLoading">
-    <template #status>{{ t('common.loading') }}</template>
+    <!--
+      GitHub 账号与仓库范围都在这里，主区只留「当前仓库的 Release」。
+      面板里不用 n-select：它的下拉是 teleport 到 body 的，点选项会被 popover
+      当成外面点了一下而立刻收起。仓库列表自己渲染，搜索框也只筛本地数组。
+    -->
+    <n-popover v-model:show="settingsOpen" trigger="click" placement="bottom-end" :show-arrow="false" raw
+      :z-index="2400">
+      <template #trigger>
+        <n-button size="small" :title="t('mapPublish.settings')" :aria-label="t('mapPublish.settings')">
+          <template #icon><SettingsOutline width="14" height="14" /></template>
+          {{ t('mapPublish.settings') }}
+        </n-button>
+      </template>
 
-    <p class="page-intro muted">{{ t('mapPublish.subtitle') }}</p>
+      <div class="publish-settings">
+        <h3 class="settings-title">{{ t('mapPublish.account') }}</h3>
 
-    <!-- 登录：GitHub App 用户授权（系统浏览器 + 本机回调），这里只显示进度与入口 -->
-    <section class="group">
-      <h2 class="group-title">{{ t('mapPublish.signIn') }}</h2>
-      <div class="panel">
         <div v-if="!authReady" class="state-line">
           <n-spin size="small" />
           <span>{{ t('common.loading') }}</span>
@@ -435,15 +453,13 @@ function confirmDeleteAsset(asset: PublishAsset) {
         <template v-else-if="authenticated">
           <div class="signed-in">
             <span class="signed-in-text">{{ t('mapPublish.signedInAs', { login: auth?.login ?? '' }) }}</span>
-            <n-button size="small" :loading="signingOut" :disabled="signingOut" @click="signOut">
+            <n-button size="tiny" :loading="signingOut" :disabled="signingOut" @click="signOut">
               {{ t('mapPublish.signOut') }}
             </n-button>
           </div>
-          <div class="auth-block">
-            <p class="hint no-top">{{ t('mapPublish.installAppHint') }}</p>
-            <div class="code-actions">
-              <n-button size="small" @click="openInstall">{{ t('mapPublish.installApp') }}</n-button>
-            </div>
+          <p class="hint no-top">{{ t('mapPublish.installAppHint') }}</p>
+          <div class="code-actions">
+            <n-button size="tiny" @click="openInstallPage">{{ t('mapPublish.installApp') }}</n-button>
           </div>
         </template>
 
@@ -451,8 +467,8 @@ function confirmDeleteAsset(asset: PublishAsset) {
           <p class="hint no-top">{{ t('mapPublish.waiting') }}</p>
           <code class="auth-url mono">{{ authorization.authorize_url }}</code>
           <div class="code-actions">
-            <n-button size="small" @click="reopenAuthorization">{{ t('mapPublish.reopenBrowser') }}</n-button>
-            <n-button size="small" @click="cancelSignIn">{{ t('mapPublish.cancelSignIn') }}</n-button>
+            <n-button size="tiny" @click="reopenAuthorization">{{ t('mapPublish.reopenBrowser') }}</n-button>
+            <n-button size="tiny" @click="cancelSignIn">{{ t('mapPublish.cancelSignIn') }}</n-button>
           </div>
         </div>
 
@@ -462,65 +478,163 @@ function confirmDeleteAsset(asset: PublishAsset) {
           <p v-else-if="authPhase === 'expired'" class="warn no-top">{{ t('mapPublish.expired') }}</p>
           <p v-else-if="authPhase === 'denied'" class="warn no-top">{{ t('mapPublish.denied') }}</p>
           <p v-else-if="authPhase === 'failed'" class="warn no-top">{{ authFailure }}</p>
-          <div>
-            <n-button size="small" type="primary" :loading="signingIn"
+          <div class="code-actions">
+            <n-button size="tiny" type="primary" :loading="signingIn"
               :disabled="signingIn || (auth !== null && !auth.secret_configured)" @click="startSignIn">
               {{ t('mapPublish.signIn') }}
             </n-button>
           </div>
         </div>
+
+        <template v-if="authenticated">
+          <div class="settings-divider" />
+          <h3 class="settings-title">{{ t('mapPublish.repositories') }}</h3>
+
+          <div v-if="needsInstall" class="auth-block">
+            <p class="state-line">
+              <n-spin v-if="installWaiting" size="small" />
+              <span>{{ installWaiting ? t('mapPublish.installWaiting') : t('mapPublish.installStepHint') }}</span>
+            </p>
+            <p class="hint no-top">{{ t('mapPublish.repositoryEmptyInstall') }}</p>
+            <div class="code-actions">
+              <n-button size="tiny" type="primary" @click="startInstall">
+                {{ installWaiting ? t('mapPublish.reopenInstallPage') : t('mapPublish.installAppNow') }}
+              </n-button>
+            </div>
+          </div>
+
+          <template v-else>
+            <div class="repo-tools">
+              <n-input v-model:value="repositoryFilter" size="tiny" clearable
+                :placeholder="t('mapPublish.searchRepository')" />
+              <n-button size="tiny" :disabled="creatingRepository" @click="createOpen = !createOpen">
+                {{ t('mapPublish.createRepository') }}
+              </n-button>
+            </div>
+
+            <div v-if="repositoriesLoading" class="state-line">
+              <n-spin size="small" />
+              <span>{{ t('common.loading') }}</span>
+            </div>
+            <ul v-else-if="filteredRepositories.length" class="repo-list">
+              <li v-for="repository in filteredRepositories" :key="repository.full_name">
+                <button type="button" class="repo-item"
+                  :class="{ active: repository.full_name === selectedFullName }"
+                  @click="chooseRepository(repository.full_name)">
+                  <span class="repo-name mono">{{ repository.full_name }}</span>
+                  <n-tag v-if="repository.topics.includes('map-source')" size="tiny" type="success" :bordered="false">
+                    map-source
+                  </n-tag>
+                </button>
+              </li>
+            </ul>
+            <p v-else-if="repositories.length" class="hint no-top">{{ t('mapPublish.searchRepositoryEmpty') }}</p>
+            <p v-else class="hint no-top">{{ t('mapPublish.repositoryEmpty') }}</p>
+
+            <p class="hint no-top">{{ t('mapPublish.repositoryHint') }}</p>
+            <p v-if="!allRepositories" class="hint no-top">{{ t('mapPublish.createRepositoryLimited') }}</p>
+
+            <div v-if="createOpen" class="create-form">
+              <p class="hint no-top">{{ t('mapPublish.createRepositoryHint') }}</p>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">{{ t('mapPublish.repositoryName') }}</span>
+                  <n-input v-model:value="newRepository.name" size="small" />
+                </div>
+                <div class="field">
+                  <span class="field-label">{{ t('mapPublish.repositoryDescription') }}</span>
+                  <n-input v-model:value="newRepository.description" size="small" />
+                </div>
+                <div class="field span-2 switch-field">
+                  <div>
+                    <span class="field-label">{{ t('mapPublish.repositoryPrivate') }}</span>
+                    <p class="hint no-top">{{ t('mapPublish.repositoryPrivateHint') }}</p>
+                  </div>
+                  <n-switch v-model:value="newRepository.private" size="small" />
+                </div>
+              </div>
+              <div class="actions">
+                <n-button size="tiny" type="primary" :loading="creatingRepository" :disabled="creatingRepository"
+                  @click="submitCreateRepository">
+                  {{ t('mapPublish.create') }}
+                </n-button>
+                <n-button size="tiny" :disabled="creatingRepository" @click="createOpen = false">
+                  {{ t('common.action.cancel') }}
+                </n-button>
+              </div>
+            </div>
+          </template>
+        </template>
+      </div>
+    </n-popover>
+  </Teleport>
+
+  <PageLoading :show="authLoading">
+    <template #status>{{ t('common.loading') }}</template>
+
+    <p class="page-intro muted">{{ t('mapPublish.subtitle') }}</p>
+
+    <!-- 未登录：主区只留登录入口，账号与仓库范围都在右上角设置面板里 -->
+    <section v-if="!authenticated" class="group">
+      <h2 class="group-title">{{ t('mapPublish.signIn') }}</h2>
+      <div class="panel">
+        <div v-if="!authReady" class="state-line">
+          <n-spin size="small" />
+          <span>{{ t('common.loading') }}</span>
+        </div>
+        <template v-else>
+          <p class="hint no-top">{{ t('mapPublish.connectRequired') }}</p>
+          <p v-if="auth && !auth.secret_configured" class="warn no-top">{{ t('mapPublish.secretMissing') }}</p>
+          <p v-else-if="authPhase === 'expired'" class="warn no-top">{{ t('mapPublish.expired') }}</p>
+          <p v-else-if="authPhase === 'denied'" class="warn no-top">{{ t('mapPublish.denied') }}</p>
+          <p v-else-if="authPhase === 'failed'" class="warn no-top">{{ authFailure }}</p>
+          <p v-if="authorization" class="hint">{{ t('mapPublish.waiting') }}</p>
+          <div class="actions">
+            <n-button size="small" type="primary" :loading="signingIn"
+              :disabled="signingIn || (auth !== null && !auth.secret_configured)" @click="startSignIn">
+              {{ t('mapPublish.signIn') }}
+            </n-button>
+            <n-button v-if="authorization" size="small" @click="reopenAuthorization">
+              {{ t('mapPublish.reopenBrowser') }}
+            </n-button>
+            <n-button v-if="authorization" size="small" @click="cancelSignIn">
+              {{ t('mapPublish.cancelSignIn') }}
+            </n-button>
+          </div>
+        </template>
       </div>
     </section>
 
-    <!-- 仓库：只列有 push 权限的，map-source 由后端排前 -->
-    <section v-if="authReady && authenticated" class="group">
+    <!-- 已登录但还没定下仓库：安装 App 与选仓库都在设置面板里，这里只引导一次 -->
+    <section v-else-if="!selectedRepository" class="group">
       <h2 class="group-title">{{ t('mapPublish.repositories') }}</h2>
       <div class="panel">
-        <div class="repo-row">
-          <n-select class="repo-select" size="small" :value="selectedFullName" :options="repositoryOptions"
-            :placeholder="t('mapPublish.selectRepository')" :disabled="repositoriesLoading"
-            @update:value="selectRepository" />
-          <n-button size="small" :disabled="creatingRepository" @click="createOpen = !createOpen">
-            {{ t('mapPublish.createRepository') }}
-          </n-button>
+        <div v-if="repositoriesLoading" class="state-line">
+          <n-spin size="small" />
+          <span>{{ t('common.loading') }}</span>
         </div>
-        <p class="hint">{{ t('mapPublish.repositoryHint') }}</p>
-        <p v-if="!repositoriesLoading && !repositories.length" class="hint">{{ t('mapPublish.repositoryEmpty') }}</p>
-
-        <div v-if="createOpen" class="create-form">
-          <p class="hint no-top">{{ t('mapPublish.createRepositoryHint') }}</p>
-          <div class="form-grid">
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.repositoryName') }}</span>
-              <n-input v-model:value="newRepository.name" size="small" />
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.repositoryDescription') }}</span>
-              <n-input v-model:value="newRepository.description" size="small" />
-            </div>
-            <div class="field span-2 switch-field">
-              <div>
-                <span class="field-label">{{ t('mapPublish.repositoryPrivate') }}</span>
-                <p class="hint no-top">{{ t('mapPublish.repositoryPrivateHint') }}</p>
-              </div>
-              <n-switch v-model:value="newRepository.private" size="small" />
-            </div>
-          </div>
+        <template v-else>
+          <p v-if="needsInstall" class="hint no-top">{{ t('mapPublish.installStepHint') }}</p>
+          <p v-else-if="!repositories.length" class="hint no-top">{{ t('mapPublish.repositoryEmpty') }}</p>
+          <p v-else class="hint no-top">{{ t('mapPublish.chooseRepositoryHint') }}</p>
+          <p v-if="installWaiting" class="state-line">
+            <n-spin size="small" />
+            <span>{{ t('mapPublish.installWaiting') }}</span>
+          </p>
           <div class="actions">
-            <n-button size="small" type="primary" :loading="creatingRepository" :disabled="creatingRepository"
-              @click="submitCreateRepository">
-              {{ t('mapPublish.create') }}
+            <n-button v-if="needsInstall" size="small" type="primary" @click="startInstall">
+              {{ installWaiting ? t('mapPublish.reopenInstallPage') : t('mapPublish.installAppNow') }}
             </n-button>
-            <n-button size="small" :disabled="creatingRepository" @click="createOpen = false">
-              {{ t('common.action.cancel') }}
+            <n-button size="small" :type="needsInstall ? 'default' : 'primary'" @click="openSettings">
+              {{ t('mapPublish.selectRepository') }}
             </n-button>
           </div>
-        </div>
+        </template>
       </div>
     </section>
 
-    <!-- 版本列表 / 编辑表单：同一块区域，二者只出现一个 -->
-    <section v-if="authReady && authenticated" class="group">
+    <!-- 仓库已定：主区只剩这个仓库的 Release（地图），GitHub 管理都在设置面板里 -->
+    <section v-else class="group">
       <h2 class="group-title">
         {{ formOpen ? (editingId === null ? t('mapPublish.newRelease') : t('mapPublish.editRelease')) : t('mapPublish.releases') }}
       </h2>
@@ -671,12 +785,12 @@ function confirmDeleteAsset(asset: PublishAsset) {
 
       <div v-else class="panel">
         <div class="panel-head">
-          <span v-if="selectedRepository" class="muted mono">{{ selectedRepository.full_name }}</span>
-          <span v-else class="muted">{{ t('mapPublish.noSelection') }}</span>
-          <n-button size="small" type="primary" :disabled="!selectedRepository || releasesLoading" @click="startNew">
+          <span class="muted mono">{{ selectedRepository?.full_name ?? '' }}</span>
+          <n-button size="small" type="primary" :disabled="releasesLoading" @click="startNew">
             {{ t('mapPublish.newRelease') }}
           </n-button>
         </div>
+        <p class="hint no-top">{{ t('mapPublish.repositoryScopeHint') }}</p>
 
         <div v-if="releasesLoading" class="state-line">
           <n-spin size="small" />
@@ -779,8 +893,75 @@ function confirmDeleteAsset(asset: PublishAsset) {
 }
 .code-actions { display: flex; gap: 10px; }
 
-.repo-row { display: flex; align-items: center; gap: 10px; }
-.repo-select { flex: 1 1 auto; min-width: 0; max-width: 520px; }
+/* 页头设置面板：popover 的 raw 内容，样式跟着组件作用域走（teleport 只搬 DOM 不搬 scope id） */
+.publish-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  max-height: min(72vh, 600px);
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 12px;
+  background: var(--oc2-popover);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .42);
+}
+.settings-title {
+  margin: 0;
+  color: var(--oc2-accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.settings-divider { height: 1px; margin: 2px 0; background: var(--oc2-divider); }
+
+.repo-tools { display: flex; align-items: center; gap: 8px; }
+.repo-tools .n-input { flex: 1 1 auto; min-width: 0; }
+
+.repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.repo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--oc2-text-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.repo-item:hover { background: var(--oc2-tile); }
+.repo-item.active {
+  border-color: var(--oc2-accent);
+  background: var(--oc2-tile);
+  color: var(--oc2-text-1);
+}
+.repo-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 面板比页面窄：新建仓库表单收成一列，按钮行也收紧 */
+.publish-settings .form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.publish-settings .actions { margin-top: 10px; }
+.publish-settings .create-form { margin-top: 10px; padding-top: 10px; }
 
 .create-form {
   margin-top: 14px;

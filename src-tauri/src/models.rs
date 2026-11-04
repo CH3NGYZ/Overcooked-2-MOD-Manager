@@ -1272,6 +1272,19 @@ pub struct PublishRepository {
     pub push: bool,
 }
 
+/// 发布页的仓库列表。
+///
+/// 光有仓库列表不够：`installations == 0` 说明 GitHub App 还没装到这个账号上，
+/// 这时必须先走安装页勾选仓库，而不是让用户对着空列表「先新建一个」。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishRepositoryList {
+    /// 授权到本 App 的安装数量；0 = 还没安装。
+    pub installations: usize,
+    /// 是否有安装范围是「全部仓库」：只有这时新建的仓库才自动落在授权范围内。
+    pub all_repositories: bool,
+    pub repositories: Vec<PublishRepository>,
+}
+
 /// 一个 Release 附件。
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishAsset {

@@ -42,6 +42,7 @@ import type {
   PublishDeleteReleaseRequest,
   PublishRelease,
   PublishRepository,
+  PublishRepositoryList,
   PublishSaveRequest,
   PublishUploadRequest,
   StagedMapSource,
@@ -411,8 +412,8 @@ export const api = {
   /** 取消待授权流程，释放本机回调端口（离开上传页时必须调）。 */
   cancelGithubAuthorization: () => invoke<void>('cancel_github_authorization'),
   signOutMapPublish: () => invoke<PublishAuthState>('sign_out_map_publish'),
-  /** 只返回当前账号有推送权限的仓库，带 map-source 标签的排在前面。 */
-  listPublishRepositories: () => invoke<PublishRepository[]>('list_publish_repositories'),
+  /** 当前账号安装范围内的仓库，带 map-source 标签的排在前面。 */
+  listPublishRepositories: () => invoke<PublishRepositoryList>('list_publish_repositories'),
   /**
    * 新建仓库。
    *

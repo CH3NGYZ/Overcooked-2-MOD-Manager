@@ -43,8 +43,8 @@ use crate::map_note::{
 };
 use crate::models::{
     OperationResult, PublishAsset, PublishAuthPoll, PublishAuthState, PublishAuthorization,
-    PublishDeleteReleaseRequest, PublishRelease, PublishRepository, PublishSaveRequest,
-    PublishUploadRequest,
+    PublishDeleteReleaseRequest, PublishRelease, PublishRepository, PublishRepositoryList,
+    PublishSaveRequest, PublishUploadRequest,
 };
 use crate::releases::APP_USER_AGENT;
 
@@ -121,6 +121,9 @@ struct TokenResponse {
 #[derive(Deserialize)]
 struct ApiInstallation {
     id: u64,
+    /// `all` 表示这次安装覆盖账号下全部仓库（含以后新建的）。
+    #[serde(default)]
+    repository_selection: String,
 }
 
 #[derive(Deserialize)]
@@ -931,7 +934,7 @@ pub fn sign_out_map_publish(state: State<'_, AppState>) -> Result<PublishAuthSta
 #[tauri::command]
 pub async fn list_publish_repositories(
     state: State<'_, AppState>,
-) -> Result<Vec<PublishRepository>, String> {
+) -> Result<PublishRepositoryList, String> {
     let token = publish_token(&state)?;
     let client = api_client()?;
     let installations: ApiInstallationList = get_json(
@@ -941,6 +944,13 @@ pub async fn list_publish_repositories(
         "list-installations",
     )
     .await?;
+    let installation_count = installations.installations.len();
+    // 「全部仓库」的安装才会把以后新建的仓库自动纳进来；只授权部分仓库时，
+    // 新建出来的仓库不在安装范围里，推不上去 —— 界面据此关掉「新建仓库」。
+    let all_repositories = installations
+        .installations
+        .iter()
+        .any(|installation| installation.repository_selection == "all");
     let mut result = Vec::new();
     for installation in installations.installations {
         let url = format!(
@@ -971,8 +981,16 @@ pub async fn list_publish_repositories(
             .then_with(|| left.full_name.cmp(&right.full_name))
     });
     result.dedup_by(|left, right| left.full_name == right.full_name);
-    log::info!("发布页仓库列表加载完成：可写仓库={}", result.len());
-    Ok(result)
+    log::info!(
+        "发布页仓库列表加载完成：安装={}，可写仓库={}",
+        installation_count,
+        result.len()
+    );
+    Ok(PublishRepositoryList {
+        installations: installation_count,
+        all_repositories,
+        repositories: result,
+    })
 }
 
 /// 新建一个地图仓库并自动打上三个标签。

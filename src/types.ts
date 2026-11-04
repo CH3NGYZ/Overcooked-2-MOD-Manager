@@ -809,6 +809,15 @@ export interface PublishRepository {
   push: boolean
 }
 
+/** 发布页的仓库列表：安装数量与安装范围决定「新建仓库」能不能用。 */
+export interface PublishRepositoryList {
+  /** 授权到本 App 的安装数量；0 = 还没安装，必须先去安装页勾仓库。 */
+  installations: number
+  /** 有安装范围是「全部仓库」时，新建的仓库才自动在授权范围内。 */
+  all_repositories: boolean
+  repositories: PublishRepository[]
+}
+
 export interface PublishAsset {
   id: number
   name: string

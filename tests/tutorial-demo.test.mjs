@@ -142,6 +142,31 @@ test('示例数据的唯一键互不冲突', () => {
   }
 })
 
+test('示例仓库与示例地图的键在各自域内也不重复', () => {
+  startTutorialDemo()
+  try {
+    const repositories = withDemoRepositories([])
+    // 仓库身份（plugin_guid）是「仓库 ↔ 本地 MOD」绑定的键，撞车会让两张卡
+    // 都指向同一个本地条目；产品名与 DLL 名也参与本地匹配，必须各自唯一
+    assert.equal(new Set(repositories.map((repo) => repo.plugin_guid)).size, repositories.length)
+    assert.equal(new Set(repositories.map((repo) => repo.local_product_name)).size, repositories.length)
+    assert.equal(new Set(repositories.map((repo) => repo.local_original_filename)).size, repositories.length)
+
+    const maps = withDemoMaps([])
+    // 地图按「英文名 + 中文名 + 作者」判同一张图，示例只给英文名，用空串补齐
+    assert.equal(new Set(maps.map((map) => `${map.level_set_name}::${map.author}`)).size, maps.length)
+    // 每张地图的 latest_* 必须指向自己的第一条 Release，否则卡片版本号与详情对不上
+    for (const map of maps) {
+      const latest = map.cached_releases[0]
+      assert.equal(map.latest_tag, latest.tag_name)
+      assert.equal(map.latest_mapset_version, latest.version)
+      assert.equal(map.latest_release, latest)
+    }
+  } finally {
+    stopTutorialDemo()
+  }
+})
+
 /** 一条真实来源 / 仓库 / 地图的最小形状；只用于「整体替换 + 结束后回原引用」。 */
 function realSource() {
   return { id: 'real.source', nickname: 'Real Source', url: 'https://example.com/repositories.toml', builtin: false }

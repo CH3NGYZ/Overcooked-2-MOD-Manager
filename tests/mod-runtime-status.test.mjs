@@ -127,10 +127,11 @@ test('关系标签与「刷新中」并存，且关系始终在最前', () => {
   assert.equal(result.issue?.state, 'missing')
 })
 
-test('依赖有候选版本时挂「可安装」，不再写「缺依赖」', () => {
+test('必须依赖有候选版本时仍挂「缺依赖」（能不能补上不改变缺了这件事）', () => {
   /*
-   * 线上有满足区间的 Release：用户点「去安装」跳到那个仓库就补上了。
-   * 上一版在这里仍挂「缺依赖」（critical），和地图卡、依赖表说的都不一样。
+   * 用户 2026-11-04 的口径：`requires` 是必须依赖，缺了就是缺依赖。
+   * 线上有可安装来源只是让「去安装」按钮可用，不把结论改成「可安装」——
+   * 否则卡片读起来像「有东西想装」，而不是「这个 MOD 现在跑不起来」。
    */
   const owner = repo({
     plugin_guid: 'com.a',
@@ -145,10 +146,10 @@ test('依赖有候选版本时挂「可安装」，不再写「缺依赖」', ()
   const target = mod({ guid: 'com.a' })
   const result = runtimeModStatus(target, [target], [owner, provider], idle)
   assert.equal(result.issue?.state, 'installable')
-  assert.equal(result.mod.labels[0], 'dependency_installable')
+  assert.equal(result.mod.labels[0], 'missing_dependency')
 })
 
-test('依赖装着旧版且线上有够新的版本 → 挂「可更新」', () => {
+test('必须依赖装着旧版且线上有够新的版本 → 仍是「缺依赖」', () => {
   const owner = repo({
     plugin_guid: 'com.a',
     relations: [{ kind: 'requires', guid: 'com.b', version: '>=2.0.0' }],
@@ -163,7 +164,7 @@ test('依赖装着旧版且线上有够新的版本 → 挂「可更新」', () 
   const stale = mod({ guid: 'com.b', dll_file: 'Dep.dll', version: '1.5.0' })
   const result = runtimeModStatus(target, [target, stale], [owner, provider], idle)
   assert.equal(result.issue?.state, 'installable')
-  assert.equal(result.mod.labels[0], 'dependency_updatable')
+  assert.equal(result.mod.labels[0], 'missing_dependency')
 })
 
 test('未绑定仓库的 MOD 保持后端标签', () => {

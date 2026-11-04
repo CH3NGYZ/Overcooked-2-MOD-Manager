@@ -188,8 +188,16 @@ watch(() => props.show, (open) => { if (open) expansion.closeAll() })
             </span>
           </div>
           <n-collapse-transition :show="isOuterOpen(row.key)" display-directive="show">
-            <!-- 内容层单独包一层：展开滚动按它的自然高度算卡片最终高度 -->
-            <div class="detail-body" @click.stop>
+            <!--
+              内容层单独包一层：展开滚动按它的自然高度算卡片最终高度。
+
+              这一层**不能整块 `@click.stop`**：展开出来的字段区就是这张卡的正文，
+              点它应当等于点卡片本身（收起这一条）。整块吞掉点击会让用户找不到
+              收回来的地方 —— 那时卡片底部往往已经滚到视口外，只能再去找上面那行
+              标题。真正自己处理点击的两块（随包插件卡、依赖表里的动作）在下面
+              各自 `@click.stop`，不让它们连带把外层收掉。
+            -->
+            <div class="detail-body">
               <div class="detail-row-fields">
                 <div v-for="(field, index) in row.entry.fields" :key="index" class="detail-item"
                   :class="{ wide: field.wide }">
@@ -202,7 +210,7 @@ watch(() => props.show, (open) => { if (open) expansion.closeAll() })
                 灰色「随包插件」标签、点开看 DLL 元数据，与管理页同一套版式。
                 它们跟着这张图落盘、跟着这张图启停，所以缩进在所属条目里。
               -->
-              <div v-if="row.entry.children?.length" class="detail-plugins">
+              <div v-if="row.entry.children?.length" class="detail-plugins" @click.stop>
                 <LocalItemCard v-for="child in row.entry.children" :key="child.key"
                   :switchable="false" :title="child.title" :version="child.meta"
                   :titleTag="child.tag" :expanded="isInnerOpen(row.key, child.key)"
@@ -219,7 +227,7 @@ watch(() => props.show, (open) => { if (open) expansion.closeAll() })
                 </LocalItemCard>
               </div>
               <!-- 依赖表：与地图管理页同一份组件与判定；弹窗里不提供跳转 -->
-              <div v-if="row.entry.dependencies?.length" class="detail-deps">
+              <div v-if="row.entry.dependencies?.length" class="detail-deps" @click.stop>
                 <DependencyTable :rows="row.entry.dependencies" />
               </div>
             </div>

@@ -135,13 +135,13 @@ export const modsOnline: DomainMessages = {
     ko: '의존성 없음',
     ja: '依存不足',
   },
-  // 冲突
+  // 有冲突（被动描述：卡片自己装上了，但和别的插件撞了，唯一出路是卸载）
   conflict: {
-    'zh-CN': '冲突',
-    'zh-TW': '衝突',
-    en: 'Conflict',
-    ko: '충돌',
-    ja: '競合',
+    'zh-CN': '有冲突',
+    'zh-TW': '有衝突',
+    en: 'Has conflict',
+    ko: '충돌 있음',
+    ja: '競合あり',
   },
   // 去卸载
   uninstall: {

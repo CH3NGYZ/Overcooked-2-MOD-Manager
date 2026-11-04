@@ -639,26 +639,28 @@ test('冲突关系的跳转目标同样取关系仓库', () => {
   assert.equal(relationJumpRepositoryId(status), 'dep-repo')
 })
 
-/* ===== 卡头关系标签：未安装的卡也要能看到缺依赖 ===== */
+/* ===== 卡头关系标签：只在已安装的卡片上出现 ===== */
 
 /*
- * 真实反馈：关卡包（DIYLevel 地图包）卡片上看不到「缺依赖」，也没有提示
- * 要先装前置，装上才发现跑不起来。
+ * 用户 2026-11-04 定的口径：关卡 / MOD 还没安装时不要显示「缺依赖」—— 这枚
+ * 标签描述的是「装完之后因为别的插件而跑不起来」，挂在未安装的卡片上会被读成
+ * 「这张图 / 这个 MOD 本身有问题」，而主按钮明明是「安装」。
  *
- * 「包」和「单个 MOD」的差别只是 DLL 数量，依赖信息不该因未安装而消失。
- * 唯一例外是冲突：未安装的卡片挂「冲突」会和底部的「安装」按钮自相矛盾。
+ * 未安装的卡片只回答「能不能装」；依赖是否满足交给安装前检查与依赖表（那里
+ * 本来就是装之前能看到的完整清单）。已安装之后再报才有意义：用户卸掉了前置、
+ * 或换了不兼容的版本，这时标签与「已安装」状态自洽，也直接指向要修的东西。
  */
 
-test('未安装且缺依赖 → 仍显示缺依赖标签', () => {
+test('未安装且缺依赖 → 不显示（关系提醒只在已安装卡片上有意义）', () => {
   const status = resolveRelation(DEP, [], [repo()])
   assert.equal(status.state, 'installable')
-  assert.deepEqual(relationCardTag(status, false), { kind: 'missingDependency' })
+  assert.equal(relationCardTag(status, false), undefined)
 })
 
-test('未安装且没有可安装来源的依赖 → 仍显示缺依赖标签', () => {
+test('未安装且没有可安装来源的依赖 → 不显示', () => {
   const status = resolveRelation(DEP, [], [])
   assert.equal(status.state, 'missing')
-  assert.deepEqual(relationCardTag(status, false), { kind: 'missingDependency' })
+  assert.equal(relationCardTag(status, false), undefined)
 })
 
 test('已安装且缺依赖 → 显示缺依赖标签', () => {
@@ -793,19 +795,47 @@ test('展示：多个未知发布线候选时不猜兄弟仓库', () => {
   )
 })
 
-/* ===== 卡片关系标签的三种说法：冲突 / 可更新·可安装 / 缺依赖 ===== */
+/* ===== 卡片关系标签：必须依赖缺了是缺依赖，兼容关系缺了是可安装，冲突是有冲突 ===== */
 
 /*
- * 真实反馈：地图包依赖的 DIYLevel 线上发了新版，卡片却写「缺依赖」，
- * 用户以为这张图没救 —— 其实点「去安装」跳到那个仓库就修好了。
+ * 用户口径（2026-11-04）：`requires` 是必须依赖，线上能不能一键补上不改变
+ * 「它现在缺了」这件事 —— 卡头必须写「缺依赖」，不能写成「可安装」，否则读
+ * 起来像「有东西想装」而不是「这个 MOD 现在跑不起来」。`compatible` 才是
+ * 「可安装」（换到区间内的版本就兼容），`conflicts` 是「有冲突」且唯一出路
+ * 是卸载。
  *
- * 现在三种说法与依赖表（`dependencyRows.statusFor`）同一套词：有候选版本
- * 就写「可更新 / 可安装」，线上连候选都没有才是真的「缺依赖」。
+ * 依赖表（`dependencyRows.statusFor`）仍按「可安装 / 可更新 / 缺依赖」三档
+ * 说怎么补 —— 两处不是同一句话：卡片说明现状，依赖表说明动作。
  */
 
-test('关系标签：依赖没装但线上能装 → 可安装（中档，带仓库）', () => {
+test('关系标签：必须依赖没装且线上能装 → 仍是「缺依赖」（标签可点）', () => {
   const status = resolveRelation(DEP, [], [repo()])
-  assert.equal(status.state, 'installable')
+  assert.equal(status.state, 'installable', '线上有候选版本成立，但它不改变卡头的说法')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
+    repositoryId: 'dep-repo',
+  })
+})
+
+test('关系标签：必须依赖线上没有来源 → 「缺依赖」且不可点', () => {
+  const status = resolveRelation(DEP, [], [])
+  assert.equal(status.state, 'missing')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
+  })
+})
+
+test('关系标签：兼容关系装了区间外的版本 → 「可安装」（换到区间内就兼容）', () => {
+  const status = resolveRelation(
+    { kind: 'compatible', guid: 'com.example.dep', version: '>=2.0.0' },
+    [mod({ guid: 'com.example.dep', version: '1.5.0' })],
+    [repo()],
+  )
+  assert.equal(status.state, 'conflict', '兼容不满足与冲突同样是「必须处理」，靠 relation.kind 区分说法')
   assert.deepEqual(dependencyTagFor([status], true), {
     text: 'tools.installable',
     tone: 'moderate',
@@ -814,26 +844,40 @@ test('关系标签：依赖没装但线上能装 → 可安装（中档，带仓
   })
 })
 
-test('关系标签：装着旧版且线上有满足区间的版本 → 可更新（中档，带仓库）', () => {
+test('关系标签：冲突关系命中 → 「有冲突」（critical，不带跳转目标）', () => {
+  const status = resolveRelation(
+    { kind: 'conflicts', guid: 'com.example.dep' },
+    [mod({ guid: 'com.example.dep' })],
+    [],
+  )
+  assert.equal(status.state, 'conflict')
+  assert.deepEqual(dependencyTagFor([status], true), {
+    text: 'modsOnline.conflict',
+    tone: 'critical',
+    kind: 'conflict',
+  })
+})
+
+test('关系标签：必须依赖装着旧版且线上有新版 → 仍是「缺依赖」（不是「可更新」）', () => {
   const dep = { kind: 'requires', guid: 'com.example.dep', version: '>=2.0.0' }
   const status = resolveRelation(dep, [mod({ guid: 'com.example.dep', version: '1.5.0' })], [repo()])
   assert.equal(status.state, 'installable')
-  assert.notEqual(status.installedMod, undefined, '本地那一份是「升级」而不是「补装」的依据')
+  assert.notEqual(status.installedMod, undefined, '候选是「升级」而不是「补装」')
   assert.deepEqual(dependencyTagFor([status], true), {
-    text: 'tools.updatable',
-    tone: 'moderate',
-    kind: 'installable',
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
     repositoryId: 'dep-repo',
   })
 })
 
-test('关系标签：卡片自己没装时不显示「可安装 / 可更新」', () => {
+test('关系标签：卡片自己没装时不显示任何关系提醒', () => {
   const status = resolveRelation(DEP, [], [repo()])
   assert.equal(status.state, 'installable')
   assert.equal(
     dependencyTagFor([status], false),
     undefined,
-    '未安装的卡片头上不该出现描述依赖状态的「可安装」标签',
+    '未安装的卡片头上不该出现描述依赖状态的关系提醒',
   )
   const upgrade = resolveRelation(
     { kind: 'requires', guid: 'com.example.dep', version: '>=2.0.0' },
@@ -844,14 +888,10 @@ test('关系标签：卡片自己没装时不显示「可安装 / 可更新」',
   assert.equal(dependencyTagFor([upgrade], false), undefined)
 })
 
-test('关系标签：卡片自己没装、依赖线上也没有来源 → 仍报缺依赖', () => {
+test('关系标签：卡片自己没装、依赖线上也没有来源 → 不显示', () => {
   const status = resolveRelation(DEP, [], [])
   assert.equal(status.state, 'missing')
-  assert.deepEqual(dependencyTagFor([status], false), {
-    text: 'modsOnline.missingDep',
-    tone: 'critical',
-    kind: 'missingDependency',
-  })
+  assert.equal(dependencyTagFor([status], false), undefined)
 })
 
 /* ===== 地图按版本覆盖表：与仓库共用同一套「命中 + 下限最高」规则 ===== */

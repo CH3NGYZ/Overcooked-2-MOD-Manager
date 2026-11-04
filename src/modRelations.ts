@@ -75,6 +75,31 @@ function versionSpecLowerBound(spec: string | null | undefined): string {
 }
 
 /**
+ * 两条同类关系里更严格的一条（包级依赖表合并用）。
+ *
+ * 多 DLL 包里每个成员按自己的版本筛 `release_relations`，同一个 GUID 可能拿到
+ * 不同要求：低版本成员只有仓库级声明（不设区间），高版本成员命中覆盖规则
+ * （`>=0.10.0`）。包对外只需要一个结论，取更严的那条 —— 「至少满足到哪」才有
+ * 意义，取松的会把真实的缺依赖藏起来。
+ *
+ * 只对 `requires` 有严格性概念：`conflicts` / `compatible` 的区间表达的是
+ * 「允许的范围」，两个声明并存时该并集而不是取一，所以原样保留先出现的。
+ */
+export function stricterRelation(
+  left: RepositoryRelation,
+  right: RepositoryRelation,
+): RepositoryRelation {
+  if ((left.kind ?? 'requires') !== 'requires' || (right.kind ?? 'requires') !== 'requires') {
+    return left
+  }
+  const rightBound = versionSpecLowerBound(right.version)
+  if (!rightBound) return left
+  const leftBound = versionSpecLowerBound(left.version)
+  if (!leftBound) return right
+  return (compareVersions(rightBound, leftBound) ?? 0) > 0 ? right : left
+}
+
+/**
  * 版本是否满足一条区间表达式。
  *
  * 空表达式（`""` / `"*"`）表示不设版本要求：只要目标存在就算满足，
@@ -573,29 +598,28 @@ export function planHasActions(plan: InstallPlan): boolean {
 /**
  * 卡头那个关系标签该显示什么（`undefined` 表示不显示）。
  *
- * ## 为什么判据是「状态种类」而不是「装没装」
+ * ## 判据是「这张卡装没装」，不是关系种类
  *
- * 早期实现「只在已安装的卡片上显示」，理由是关系对未安装的卡是前置条件，
- * 交给安装前检查即可。这个理由只对**冲突**成立：
+ * 关系提醒描述的是**装上之后**会不会因为别的插件而跑不起来，所以它只在卡片
+ * 自己已经安装时才有意义（用户 2026-11-04 定的口径：未安装的卡片上不要出现
+ * 「缺依赖」）。卡片没装时那一行唯一该说的是「能不能装」；依赖是否满足交给
+ * 安装前检查与依赖表 —— 那里本来就是装之前能看到的完整清单。
  *
- *   - 冲突：用户装了稳定版街机 MOD，测试版卡片会解析出
- *     `conflicts{prerelease:false}`。未安装的卡片上冒出红色「冲突」会让用户
- *     以为要卸载什么，而底部按钮明明是「安装」—— 两个控件自相矛盾。
- *   - 缺依赖：恰恰相反，它是**装之前就该知道**的信息。关卡包这类 MOD 缺少
- *     前置就跑不起来，用户看到的却是一张普通的「安装」卡片，装上才发现装不了。
+ * 早期实现让「缺依赖」在未安装卡片上也显示，理由是「装之前就该知道」。实际
+ * 效果是：未安装的地图卡片挂着红色「缺依赖」，用户读成「这张图有问题」，而
+ * 主按钮明明是「安装」。冲突同理 —— 未安装却标「冲突」，用户不知道该卸载
+ * 什么，只有「安装」按钮可点。
  *
- * 所以：冲突只在已安装时显示，依赖两处都显示。这同时保证「包」和「单个 MOD」
- * 行为一致 —— 两者的差别只是 DLL 数量，依赖信息不该因此消失。
+ * 已安装之后再报才有意义：用户手动卸掉了前置、或换了不兼容的版本 —— 这时
+ * 卡片上的「缺依赖 / 冲突」与「已安装」自洽，也直接指向要修的东西。
  */
 export function relationCardTag(
   status: RelationStatus | undefined,
   installed: boolean,
-): { kind: 'conflict' | 'missingDependency' } | undefined {
-  if (!status) return undefined
-  if (status.state === 'conflict') {
-    return installed ? { kind: 'conflict' } : undefined
-  }
-  return { kind: 'missingDependency' }
+): { kind: 'conflict' | 'missingDependency' | 'installable' } | undefined {
+  if (!installed) return undefined
+  const view = relationTagView(status)
+  return view ? { kind: view.kind } : undefined
 }
 
 /* ===== 卡片上的关系提醒标签（四个页面共用一条规则） ===== */
@@ -605,63 +629,86 @@ export interface DependencyTagView {
   /** 标签文案的 i18n key。 */
   text: string
   /**
-   * 色调：冲突与「没救的缺依赖」取 critical；能补上（可更新 / 可安装）取
+   * 色调：冲突与「缺依赖」取 critical；兼容关系差一个版本（可安装）取
    * moderate —— 有办法解决的事不该比没救的事看起来更严重。
    */
   tone: Extract<TagTone, 'critical' | 'moderate'>
-  /** 判定来源：冲突 / 缺依赖且无来源 / 缺依赖但有候选版本（可更新、可安装）。 */
+  /** 判定来源：冲突 / 必须依赖缺了 / 兼容版本不在区间（可安装）。 */
   kind: 'conflict' | 'missingDependency' | 'installable'
   /**
    * 点标签该跳到的仓库卡片 id。
    *
-   * 只有「依赖可安装」时才给：跳过去就是那张能补上依赖的卡；没有来源时
-   * 跳过去也无处可去，标签保持纯文字。
+   * 只有「有落点」时才给：缺依赖有候选仓库、兼容关系有可换的版本都带；
+   * 冲突与无来源的缺依赖跳过去也无处可去，标签保持纯文字。
    */
   repositoryId?: string
 }
 
 /**
- * 卡片上那条「关系提醒」标签。
+ * 一条未满足的关系该显示成哪枚提醒。
  *
- * MOD 安装页、MOD 管理页、地图下载页、地图管理页共用**这一条**规则：
- *   · 冲突 →「冲突」，且只在已安装的卡片上显示（见 `relationCardTag`）；
- *   · 已装的卡片依赖没满足、但有候选版本 → 装了旧版写「可更新」，没装写「可安装」；
- *   · 依赖没满足且线上没有满足区间的 Release →「缺依赖」（未安装的卡片也显示）。
+ * 卡片标签（`dependencyTagFor`）、MOD 卡片状态标签
+ * （`modRuntimeStatus.relationStatusLabel`）、地图卡片（`levelSetStatus`）
+ * 全部走这一处 —— 三处各写一套时，同一个依赖在不同页面会得到不同结论。
  *
- * 第二种只在已安装的卡片上出现：卡片自己还没装时，这条标签描述的是依赖的
- * 状态，却挂在「能不能装」的卡片头上，读起来像在说这张卡可安装。真正的
- * 补装动作发生在安装时（`needsInstallCheck`）与依赖表里，卡片头不必多这一枚。
+ * 三种关系说三件不同的事（用户 2026-11-04 定的口径）：
+ *   · `requires`（必须依赖）：缺了就是缺了，**线上能不能一键补上不改变这件
+ *     事** —— 一律写「缺依赖」。写成「可安装」时卡片读起来像「有东西想装」，
+ *     而不是「这个 MOD 现在跑不起来」，必须依赖的强制性消失了。
+ *   · `compatible`（兼容）：要求「对方存在时版本落在区间内」，线上有满足区间
+ *     的版本就是「可安装」，换到那个版本就兼容。
+ *   · `conflicts`（冲突）：目标是「你不该装它」，换版本也清不干净旧文件，
+ *     唯一出路是卸载 —— 写「有冲突」。
  *
- * 「可更新 / 可安装」与「缺依赖」必须分开说：明明点一下就能补上，界面却写
- * 「缺依赖」，用户会以为这张卡/这张图没救。文案与状态色跟依赖表
- * （`dependencyRows.statusFor`）用同一套词 —— 卡片、依赖表、按钮说的是同一
- * 件事，不该一处「可更新」、一处「缺依赖」。
+ * `repositoryId` 只在点标签能落到那张仓库卡时给：`requires` 有候选仓库也带
+ * 上（跳过去就能补装），只有线上真的没有来源才不带（标签不可点）。
+ */
+export function relationTagView(status: RelationStatus | undefined): DependencyTagView | undefined {
+  if (!status || status.state === 'ok') return undefined
+  const kind = status.relation.kind ?? 'requires'
+  /*
+   * 先按 `kind` 分派，再看 `state`：`compatible` 不满足时 `resolveRelation`
+   * 返回的也是 `state: 'conflict'`（「必须处理」这件事相同），先判 state
+   * 会把兼容关系读成冲突，把「换个版本就能兼容」错说成「只能卸载」。
+   */
+  if (kind === 'compatible') {
+    if (status.repository) {
+      return {
+        text: 'tools.installable',
+        tone: 'moderate',
+        kind: 'installable',
+        repositoryId: status.repository.id,
+      }
+    }
+    return { text: 'tools.incompatible', tone: 'critical', kind: 'missingDependency' }
+  }
+  if (kind === 'conflicts' || status.state === 'conflict') {
+    return { text: 'modsOnline.conflict', tone: 'critical', kind: 'conflict' }
+  }
+  const view: DependencyTagView = {
+    text: 'modsOnline.missingDep',
+    tone: 'critical',
+    kind: 'missingDependency',
+  }
+  // 只在点得动时才带目标：留一个 `repositoryId: undefined` 的键会让「有没有
+  // 落点」有「键不存在」和「键存在但为空」两种表示，消费者与测试都得猜。
+  if (status.repository) view.repositoryId = status.repository.id
+  return view
+}
+
+/**
+ * 卡片上那条「关系提醒」标签（MOD 安装 / MOD 管理 / 地图下载 / 地图管理
+ * 四页共用；`undefined` = 不显示）。
+ *
+ * 只回答两件事：卡片自己装没装（没装一律不显示 —— 关系提醒描述的是「装上
+ * 之后会不会因为别的插件跑不起来」，挂在未安装的卡片上会被读成「这张卡/这张
+ * 图本身有问题」，而主按钮明明是「安装」），以及未满足的关系该说哪句话
+ * （`relationTagView`）。
  */
 export function dependencyTagFor(
   statuses: readonly RelationStatus[],
   installed: boolean,
 ): DependencyTagView | undefined {
-  const status = primaryRelation(statuses)
-  const tag = relationCardTag(status, installed)
-  if (!status || !tag) return undefined
-  if (tag.kind === 'conflict') {
-    return { text: 'modsOnline.conflict', tone: 'critical', kind: 'conflict' }
-  }
-  /*
-   * `installable` 表示「有仓库能给出满足区间的 Release」：本地装着旧版是
-   * 升级，没装是补装。与依赖表的两条文案一一对应，不再统一写「缺依赖」。
-   *
-   * 卡片自己还没装时直接不显示：这时它说的是依赖装没装，挂在未安装的卡片
-   * 头上会被读成「这张卡/这张图可安装」。
-   */
-  if (status.state === 'installable' && status.repository) {
-    if (!installed) return undefined
-    return {
-      text: status.installedMod ? 'tools.updatable' : 'tools.installable',
-      tone: 'moderate',
-      kind: 'installable',
-      repositoryId: status.repository.id,
-    }
-  }
-  return { text: 'modsOnline.missingDep', tone: 'critical', kind: 'missingDependency' }
+  if (!installed) return undefined
+  return relationTagView(primaryRelation(statuses))
 }

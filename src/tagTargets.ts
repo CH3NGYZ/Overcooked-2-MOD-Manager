@@ -14,15 +14,14 @@ import { t } from './i18n'
 /**
  * 依赖类标签：点的目标是**能提供依赖的那个仓库**，不是这张卡自己绑定的。
  *
- * 「可更新 / 可安装」与「缺依赖」在这一点上完全一样 —— 它们说的都是另一个
- * 插件，跳到自己绑定仓库只会看到一张没问题的卡。`dependency_conflict`
- * 同理（要卸的是对方）。
+ * 「可安装」与「缺依赖」在这一点上完全一样 —— 它们说的都是另一个插件，
+ * 跳到自己绑定仓库只会看到一张没问题的卡。`dependency_conflict` 同理
+ * （要卸的是对方）。
  */
 const DEPENDENCY_TAGS = new Set([
   'missing_dependency',
   'dependency_conflict',
   'dependency_installable',
-  'dependency_updatable',
 ])
 
 /** 这枚标签是不是「依赖类」（决定跳转目标与提示文案，见上）。 */

@@ -92,16 +92,14 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    */
   missing_dependency: { text: 'modsOnline.missingDep', tone: 'critical' },
   /**
-   * 依赖能补上：线上有满足区间的 Release，本地没装（可安装）或装着旧版
-   * （可更新）。
+   * 兼容关系差一个版本：线上有落在兼容区间里的 Release 可换。
    *
-   * 与「缺依赖」分开两档，是因为两者对用户的意义完全相反：「缺依赖」是
-   * 「这东西现在跑不了、线上也没有」，而这里点一下按钮就能修好。文案与
-   * 依赖表（`dependencyRows.statusFor` 的 `tools.installable` /
-   * `tools.updatable`）用同一套词，卡片与表格不会各说一种。
+   * 与「缺依赖」分开两档，是因为两者对用户的意义相反：「缺依赖」是「必须
+   * 的东西没有」，而这里点一下按钮就能修好。文案与依赖表
+   * （`dependencyRows.statusFor` 的 `tools.installable`）用同一套词，卡片与
+   * 表格不会各说一种。
    */
   dependency_installable: { text: 'tools.installable', tone: 'moderate' },
-  dependency_updatable: { text: 'tools.updatable', tone: 'moderate' },
   /**
    * 关系冲突：装了不该装的（`conflicts` 命中），或对方版本不在兼容区间内
    * （`compatible` 不满足）。
@@ -258,7 +256,6 @@ const WITHIN_TONE_ORDER: string[] = [
   'missing_dependency',
   'bound_repository_missing',
   'repository_unavailable',
-  'dependency_updatable',
   'dependency_installable',
   'duplicate',
   'update_available',
@@ -371,7 +368,6 @@ const MEMBER_LEVEL_LABELS = new Set(['duplicate', 'duplicate_lower_version', 'lo
 const PACKAGE_DEPENDENCY_LABELS = [
   'dependency_conflict',
   'missing_dependency',
-  'dependency_updatable',
   'dependency_installable',
 ] as const
 

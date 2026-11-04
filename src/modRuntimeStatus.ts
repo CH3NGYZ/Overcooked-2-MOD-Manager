@@ -1,6 +1,6 @@
 import type { InstalledMod, InstalledModStatusLabel, Repository } from './types'
 import { repositoryForMod } from './modStatus.ts'
-import { primaryRelation, resolveRelations, type RelationStatus } from './modRelations.ts'
+import { primaryRelation, relationTagView, resolveRelations, type RelationStatus } from './modRelations.ts'
 import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
 
 /**
@@ -81,29 +81,23 @@ const RELATION_LABELS = new Set<string>([
   'missing_dependency',
   'dependency_conflict',
   'dependency_installable',
-  'dependency_updatable',
 ])
 
 /**
  * 关系问题该挂哪一枚标签。
  *
- * 与卡片标签（`modRelations.dependencyTagFor`）、依赖表
- * （`dependencyRows.statusFor`）共用同一套词汇：冲突 →「冲突」；线上有
- * 满足区间的候选版本 →「可更新」（本地装着旧版）/「可安装」（没装）；
- * 线上连候选都没有才是「缺依赖」。
- *
- * 上一版把可安装的也写成「缺依赖」：用户明明点一下「去安装」就能补上，
- * 卡片却像在说这 MOD 没救 —— 三处口径必须一致。
+ * 与卡片标签（`modRelations.relationTagView` / `dependencyTagFor`）同一份
+ * 口径：`requires` 缺了就是「缺依赖」（线上能不能补上不改变这件事）；
+ * `compatible` 有满足区间的版本可换才是「可安装」；`conflicts` 是
+ * 「有冲突」，唯一出路是卸载。
  */
 export function relationStatusLabel(
   issue: RelationStatus | undefined,
 ): InstalledModStatusLabel | undefined {
-  if (!issue) return undefined
-  // 冲突比「能不能补上」更该被看见：冲突可能已经让游戏崩了
-  if (issue.state === 'conflict') return 'dependency_conflict'
-  if (issue.state === 'installable' && issue.repository) {
-    return issue.installedMod ? 'dependency_updatable' : 'dependency_installable'
-  }
+  const view = relationTagView(issue)
+  if (!view) return undefined
+  if (view.kind === 'conflict') return 'dependency_conflict'
+  if (view.kind === 'installable') return 'dependency_installable'
   return 'missing_dependency'
 }
 

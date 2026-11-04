@@ -42,8 +42,15 @@ test('内容层在展开之后才查：折叠时 n-collapse-transition 不渲染
   assert.match(dialog, /expansion\.openInner\(parentKey, childKey\)\n[\s\S]{0,300}?void nextTick\(/)
 })
 
-test('内容层单独包一层，供滚动策略量自然高度', () => {
-  assert.match(dialog, /<div class="detail-body" @click\.stop>/)
+test('内容层不与卡片点击抢事件：字段区可收起，子卡与依赖表各自 stop', () => {
+  // `.detail-body` 整块不许 `@click.stop`：展开出来的字段区就是这张卡的正文，
+  // 点它应当等于点卡片（收起）。整块吞掉点击，展开后就没有收回来的地方 ——
+  // 那时卡片底部往往已经滚出视口，用户只能再去找上面那行标题。
+  assert.match(dialog, /<div class="detail-body">/)
+  assert.doesNotMatch(dialog, /class="detail-body"[^>]*@click\.stop/)
+  // 真正自己处理点击的两块各自拦一下，不让子卡展开 / 依赖跳转连带收起外层
+  assert.match(dialog, /class="detail-plugins" @click\.stop/)
+  assert.match(dialog, /class="detail-deps" @click\.stop/)
   assert.match(dialog, /return card\.querySelector\('\.detail-body'\)/)
 })
 

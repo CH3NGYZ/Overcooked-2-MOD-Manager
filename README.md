@@ -646,7 +646,7 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
   - `mode = "release-tags"`：一个 Release = 一张地图，地图元数据写在该 Release note 的隐藏 `<!-- oc2-map -->` 块里（身份、五语 name/note、`asset` 模板、`latest_mapset_version`（旧名 `latest_version` 仍认）与 `latest_info_version`、`requires`/`compatible`/`conflicts`）；管理器按页（默认 50 条）读完整个仓库的 Release，整份组合成一个地图源；
   - `mode = "document"`（缺省，老形态）：`url` 指向一份 `[[maps]]` 子源文档；子源 `url` 既可以是相对路径、内置资源名，也可以是 **Release 资产地址**（第三方源把自己的 `map-sources.toml` 发布在 Release 里时用这种写法：先向 API 取 size/sha256，再竞速下载并校验）；
 - 绑定身份是 `author` + `level_set_name`（与 ZIP 里 `info` 的值一致，忽略大小写）；
-- 卡片说明取元数据块里的 `note_i18n`（没有就显示「此地图暂无说明」）；块外面的正文是这个版本的更新日志，显示在版本详情的「提交日志」里；
+- 卡片说明取元数据块里的 `note_i18n`（按界面语言选，缺失退回单语言 `note`，两者都没有才显示「此地图暂无说明」；`repository` / `document` 形态的条目走同一套回退）；块外面的正文是这个版本的更新日志，显示在版本详情的「提交日志」里；
 - `document` 模式的条目写 `tag` 就只读那个 Release，并把里面的每个资产当成这张图的一个版本（`asset_rules` 的正则负责抽版本号）；同一份文档还可以用 `[bundle]` 统一写仓库坐标；
 - 地图下载页与地图管理页都按 `group_i18n` **折叠分组，语义是作者**（与 MOD 仓库的 `group` 按职责/相似性分类不同）；`author` 是绑定键、`group_i18n` 是展示名，两者可以不同；
 - 地图条目同样支持 `relations` 与 `release_relations`（`[[maps.release_relations]]`，按地图版本覆盖依赖，规则与 MOD 仓库一致）；

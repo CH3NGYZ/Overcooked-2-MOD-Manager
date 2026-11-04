@@ -286,6 +286,27 @@ test('分组：group_i18n 缺失但有单语 group 镜像时用 group', () => {
   assert.deepEqual(group.labelI18n, {})
 })
 
+test('分组：地图源被删后只剩快照分组时仍按快照分组', () => {
+  // `map_group_i18n` 由后端从地图依赖快照（manifests/map-relations.json）补进来：
+  // 线上条目已经没了，本地装着的这张图不该掉回裸作者名
+  const group = levelSetGroup(
+    set({ map_group_i18n: { 'zh-CN': 'RW 的地图', en: 'RW Maps' } }),
+    [map()],
+  )
+  assert.equal(group.canonical, 'RW 的地图')
+  assert.equal(group.key, 'group:rw 的地图')
+  assert.deepEqual(group.labelI18n, { 'zh-CN': 'RW 的地图', en: 'RW Maps' })
+})
+
+test('分组：只声明英文分组时用英文，不退成作者名', () => {
+  // 英文覆盖率最高、中文只是第二保底：作者只补了英文名时，分组标题
+  // 该显示英文名，而不是因为「没有 zh-CN」就掉回 info 的 author
+  const group = levelSetGroup(set(), [map({ group_i18n: { en: 'RW Maps' } })])
+  assert.equal(group.canonical, 'RW Maps')
+  assert.equal(group.key, 'group:rw maps')
+  assert.deepEqual(group.labelI18n, { en: 'RW Maps' })
+})
+
 // ---------------------------------------------------------------------------
 // 管理页详情：作者的中英展示名
 // ---------------------------------------------------------------------------
@@ -309,6 +330,21 @@ test('作者名：只声明一种语言时两行同一串，不留空', () => {
     map({ group_i18n: { 'zh-CN': 'RW 的地图' } }),
   ])
   assert.deepEqual(names, { zh: 'RW 的地图', en: 'RW 的地图' })
+})
+
+test('作者名：快照分组参与中英两名（源被删后仍显示作者双语）', () => {
+  const names = levelSetAuthorNames(
+    set({ map_group_i18n: { 'zh-CN': 'RW 的地图', en: 'RW Maps' } }),
+    [map()],
+  )
+  assert.deepEqual(names, { zh: 'RW 的地图', en: 'RW Maps' })
+})
+
+test('作者名：只声明英文时中文行也用英文串，不留空', () => {
+  const names = levelSetAuthorNames(set(), [
+    map({ group_i18n: { en: 'RW Maps' } }),
+  ])
+  assert.deepEqual(names, { zh: 'RW Maps', en: 'RW Maps' })
 })
 
 test('作者名：未绑定地图（本地 ZIP 导入）回退 info 的 author', () => {

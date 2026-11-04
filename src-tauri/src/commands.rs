@@ -5650,6 +5650,10 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
         // 绑定与依赖快照由 `bind_map_relation_snapshot` 补：它需要配置与快照，
         // 这里只负责把磁盘扫描结果转成模型
         map_id: None,
+        // 分组与依赖一样由 `bind_map_relation_snapshot` 补：它需要配置与快照，
+        // 这里只负责把磁盘扫描结果转成模型；都查不到时前端回退 info 的 author
+        map_group_i18n: BTreeMap::new(),
+        map_group: None,
         relations: fallback_relations,
         // 随包插件就是集目录里的 DLL（扫描时读回），与绑定/依赖无关
         plugins: set.plugins,
@@ -5735,11 +5739,12 @@ pub async fn get_level_sets(
     .map_err(|error| error.to_string())
 }
 
-/// 给关卡集补上「绑定的地图仓库 id」与依赖快照。
+/// 给关卡集补上「绑定的地图仓库 id」、分组与依赖快照。
 ///
 /// 身份匹配走 `level_sets::level_set_identity_matches`（`levelSetName +
 /// levelSetNameZH + author`，忽略大小写与首尾空白，空名不匹配；地图源没写
-/// 中文名时退回前两段）；关系优先用地图依赖快照（安装时/上次
+/// 中文名时退回前两段）；分组取「绑定地图的当前声明 → 快照」，都查不到就留空
+/// 交给前端回退 info 里的作者名；关系优先用地图依赖快照（安装时/上次
 /// 同步固化的），没有快照才退回仓库当前声明 —— 地图源被删之后依赖表仍在，
 /// 源还在时以线上声明为准。
 fn bind_map_relation_snapshot(
@@ -5747,7 +5752,7 @@ fn bind_map_relation_snapshot(
     config: &AppConfig,
     snapshots: &MapRelationSnapshots,
 ) {
-    let Some(map) = config.map_repositories.iter().find(|map| {
+    let bound = config.map_repositories.iter().find(|map| {
         crate::level_sets::level_set_identity_matches(
             &info.name,
             info.name_zh.as_deref(),
@@ -5756,7 +5761,46 @@ fn bind_map_relation_snapshot(
             Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
             &map.author,
         )
-    }) else {
+    });
+    /*
+     * 分组来源：绑定地图的当前声明 → 快照（先按地图 id，再按身份找）。
+     *
+     * 地图源被删掉之后配置里已经没有这条，但快照还记着「这张图归到哪个
+     * 作者」—— 管理页的折叠分组与详情里的作者中英两名都靠它。两处都没有
+     * 就留空，前端回退 info 里的本地 `author`。
+     */
+    let snapshot = bound
+        .and_then(|map| snapshots.entries.get(&map.id))
+        .or_else(|| {
+            snapshots.entries.values().find(|entry| {
+                crate::level_sets::level_set_identity_matches(
+                    &info.name,
+                    info.name_zh.as_deref(),
+                    &info.author,
+                    &entry.level_set_name,
+                    None,
+                    &entry.author,
+                )
+            })
+        });
+    let mut group_i18n = bound.map(|map| map.group_i18n.clone()).unwrap_or_default();
+    let mut group = bound
+        .map(|map| map.group.trim().to_string())
+        .unwrap_or_default();
+    if let Some(entry) = snapshot
+        && group_i18n.is_empty()
+        && group.is_empty()
+    {
+        group_i18n = entry.group_i18n.clone();
+        group = entry.group.trim().to_string();
+    }
+    if !group_i18n.is_empty() {
+        info.map_group_i18n = group_i18n;
+    }
+    if !group.is_empty() {
+        info.map_group = Some(group);
+    }
+    let Some(map) = bound else {
         return;
     };
     info.map_id = Some(map.id.clone());
@@ -6919,11 +6963,13 @@ pub fn sync_dependency_snapshots(
     }
 
     /*
-     * 地图快照整体重写：配置里没有的地图 id 直接消失 —— 地图源被删掉之后
-     * 这张图确实不再有线上声明，留着旧条目等于给用户看一份幽灵依赖。
+     * 地图快照整体重写，但配置里已经没有的 id **只保留分组**：地图源被删之后
+     * 这张图确实不再有线上依赖声明，留着旧 relations 等于给用户看一份幽灵
+     * 依赖；可「它归到哪个作者」是安装时的事实，管理页的折叠分组与详情里的
+     * 作者名还要靠它。没有分组的旧条目没有保留价值，直接丢掉。
      */
     let previous = archive::read_map_relation_snapshots(&manifest_dir);
-    let entries: BTreeMap<String, MapRelationSnapshot> = config
+    let mut entries: BTreeMap<String, MapRelationSnapshot> = config
         .map_repositories
         .iter()
         .filter(|map| map.enabled)
@@ -6934,12 +6980,29 @@ pub fn sync_dependency_snapshots(
                     repository_id: map.id.clone(),
                     level_set_name: map.level_set_name.clone(),
                     author: map.author.clone(),
+                    group_i18n: map.group_i18n.clone(),
+                    group: map.group.clone(),
                     relations: map.relations.clone(),
                     release_relations: map.release_relations.clone(),
                 },
             )
         })
         .collect();
+    for (id, entry) in &previous.entries {
+        if entries.contains_key(id)
+            || (entry.group_i18n.is_empty() && entry.group.trim().is_empty())
+        {
+            continue;
+        }
+        entries.insert(
+            id.clone(),
+            MapRelationSnapshot {
+                relations: Vec::new(),
+                release_relations: Vec::new(),
+                ..entry.clone()
+            },
+        );
+    }
     let changed = entries
         .iter()
         .filter(|(id, entry)| previous.entries.get(*id) != Some(*entry))

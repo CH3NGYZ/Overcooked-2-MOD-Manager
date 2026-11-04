@@ -296,11 +296,14 @@ fn push_relations(
 /// 一份 note 解析出来的东西。
 ///
 /// 元数据块是给管理器的机器可读部分，其中 `note_i18n` 是卡片上的简短说明；
-/// 块外的正文不进这里的任何字段 —— 它属于「这个版本的更新说明」，由
-/// `strip_note_block` 在合成版本列表时清洗后交给详情面板显示。
+/// `body` 是块外的正文（已剥掉声明块）：它主要是「这个版本的更新说明」，
+/// 由 `synthesize_releases` 交给详情面板显示，作者没写 `note_i18n` 时
+/// 地图卡片也拿它当说明。
 #[derive(Debug, Clone)]
 pub struct NoteBlock {
     pub metadata: MapNoteMetadata,
+    /// 去掉元数据块之后的正文（首尾空白已裁掉）。
+    pub body: String,
 }
 
 /// 从 Release note 正文里解析元数据块。
@@ -319,7 +322,10 @@ pub fn parse_release_note(body: &str) -> Result<Option<NoteBlock>, String> {
     if metadata.level_set_name.trim().is_empty() {
         return Err("oc2-map 块缺少 level_set_name".to_string());
     }
-    Ok(Some(NoteBlock { metadata }))
+    Ok(Some(NoteBlock {
+        metadata,
+        body: strip_note_block(body),
+    }))
 }
 
 /// 去掉元数据块、只留作者写的正文；没有块时原样返回（去首尾空白）。
@@ -487,6 +493,8 @@ note_i18n.en = "Two levels."
         );
         // 块外正文是「这个版本的更新说明」，清洗后交给版本详情显示
         assert_eq!(strip_note_block(&text), "## 玩法\n\n需要 DIYLevel。");
+        // 解析结果也带一份同样的正文，作者没写 note_i18n 时卡片拿它当说明
+        assert_eq!(block.body, "## 玩法\n\n需要 DIYLevel。");
     }
 
     #[test]

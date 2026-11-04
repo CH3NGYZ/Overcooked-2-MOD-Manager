@@ -713,31 +713,51 @@ export interface LevelSetGroup {
   labelI18n: Record<string, string>
 }
 
+/** 多语言表里第一个非空值；键顺序不稳定，只用来判断「声明过没有」。 */
+function firstNonEmpty(map: Record<string, string> | undefined): string {
+  if (!map) return ''
+  for (const value of Object.values(map)) {
+    if (value && value.trim()) return value.trim()
+  }
+  return ''
+}
+
 /**
  * 关卡集归到哪个分组（地图的分组语义就是**作者**）。
  *
- * ## 为什么线上优先、本地兜底
- *
- * 分组名有三个来源，权威性递减：
+ * ## 分组名的四级来源
  *
  *   1. 绑定地图的 `group_i18n`（源文档里的作者 / 分组声明，可多语言）；
  *   2. 绑定地图的单语镜像 `group`（手写或旧源文档可能只写单语）；
- *   3. 本地 info 的 `author` —— 本地 ZIP 导入的地图没有线上条目，只剩这个。
+ *   3. 后端固化的分组快照 `set.map_group_i18n` / `set.map_group` —— 地图源
+ *      被删掉之后绑定关系已经不在了，只有这份安装时留下的快照还记得
+ *      「这张图归到哪个作者」；
+ *   4. 本地 info 的 `author` —— 本地 ZIP 导入的地图没有线上条目，只剩这个。
  *
  * 顺序不能反过来：`author` 只是 AssetBundle 里的原始字符串，线上声明才是
  * 「这张图现在归到哪个分组」的权威（作者改名、调整分组都以线上为准）。
  * 这与 `levelSetCardTags` 判定版本时「以线上为准、本地兜底」是同一条口径。
  *
- * 三级都空（info 解析失败且未绑定任何地图）才是「未分组」。
+ * 最后一级是 `author`，所以任何能读出作者的地图都有分组；只有 info 解析
+ * 失败（集名与作者都读不出来）才会落到「未分组」。
  */
 export function levelSetGroup(
-  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  set: Pick<LevelSetInfo, 'name' | 'author' | 'map_group' | 'map_group_i18n'>,
   maps: readonly MapInfo[],
 ): LevelSetGroup {
   const bound = mapForLevelSet(set, maps)
-  // 规范名固定取 zh-CN：折叠键必须与语言无关，否则切语言会重建键、
-  // 用户刚折叠的分组会突然展开（与 MOD 管理页的 modCategory 同一规则）
-  const declared = (bound?.group_i18n?.['zh-CN'] ?? '').trim() || (bound?.group ?? '').trim()
+  // 绑定地图声明过分组就用它，否则用后端固化的快照（源文档已被删的情况）
+  const groupI18n = firstNonEmpty(bound?.group_i18n)
+    ? (bound?.group_i18n ?? {})
+    : (set.map_group_i18n ?? {})
+  const single = (bound?.group ?? '').trim() || (set.map_group ?? '').trim()
+  /*
+   * 规范名固定取 zh-CN：折叠键必须与语言无关，否则切语言会重建键、
+   * 用户刚折叠的分组会突然展开（与 MOD 管理页的 modCategory 同一规则）。
+   * 只声明了英文（或别的语言）也算「作者声明过分组」，不能退成作者名 ——
+   * 否则同一个分组会随源文档补没补中文而换键。
+   */
+  const declared = (groupI18n['zh-CN'] ?? '').trim() || single || firstNonEmpty(groupI18n)
   const canonical = declared || (set.author || '').trim()
   if (!canonical) {
     return { key: LEVEL_SET_UNGROUPED_KEY, canonical: '', labelI18n: {} }
@@ -745,8 +765,8 @@ export function levelSetGroup(
   return {
     key: `group:${canonical.toLowerCase()}`,
     canonical,
-    // 只有线上声明才有多语言表；回退到 author 时没有可翻译的文本
-    labelI18n: declared ? (bound?.group_i18n ?? {}) : {},
+    // 只有声明（多语言表或单语镜像）才有多语言文本；回退到 author 时没有
+    labelI18n: declared ? groupI18n : {},
   }
 }
 
@@ -759,10 +779,11 @@ export interface LevelSetAuthorNames {
 /**
  * 作者的「中文名 / 英文名」（地图管理页详情用）。
  *
- * info 里只存一份 `author`，作者的双语展示名只可能来自绑定地图的
- * `group_i18n` —— 地图的分组语义就是作者，源文档可以给作者声明多种语言。
- * 回退顺序与 `levelSetGroup` 同源：`group_i18n[语言]` → 单语镜像 `group`
- * → 本地 `author`，所以这里不需要第二套口径。
+ * info 里只存一份 `author`，作者的双语展示名只可能来自分组声明：绑定地图的
+ * `group_i18n`，或地图源被删后后端留下的 `set.map_group_i18n` 快照 ——
+ * 地图的分组语义就是作者，源文档可以给作者声明多种语言。回退顺序与
+ * `levelSetGroup` 同源：`group_i18n[语言]` → 单语镜像
+ * （`group` / `set.map_group`）→ 本地 `author`，所以这里不需要第二套口径。
  *
  * 为什么某一种语言没声明时用另一种语言顶上，而不是留空：两行是同一个作者
  * 的两种写法，源文档常只声明 `zh-CN`（手工维护，很少有人补齐英文）。留空
@@ -770,12 +791,14 @@ export interface LevelSetAuthorNames {
  * `group`」时的表现一致。两种语言都没声明才回退 `author`。
  */
 export function levelSetAuthorNames(
-  set: Pick<LevelSetInfo, 'name' | 'author'>,
+  set: Pick<LevelSetInfo, 'name' | 'author' | 'map_group' | 'map_group_i18n'>,
   maps: readonly MapInfo[],
 ): LevelSetAuthorNames {
   const bound = mapForLevelSet(set, maps)
-  const i18n = bound?.group_i18n ?? {}
-  const single = (bound?.group ?? '').trim()
+  const i18n = firstNonEmpty(bound?.group_i18n)
+    ? (bound?.group_i18n ?? {})
+    : (set.map_group_i18n ?? {})
+  const single = (bound?.group ?? '').trim() || (set.map_group ?? '').trim()
   const zhDeclared = (i18n['zh-CN'] ?? '').trim() || single
   const enDeclared = (i18n['en'] ?? '').trim() || single
   const author = (set.author || '').trim()

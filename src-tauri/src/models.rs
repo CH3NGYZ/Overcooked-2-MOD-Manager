@@ -156,6 +156,17 @@ pub struct LevelSetInfo {
     /// 绑定的地图仓库 id（按 `level_set_name + author` 身份匹配；未绑定为 `None`）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map_id: Option<String>,
+    /// 线上声明的分组多语言表（地图的分组语义就是作者）。
+    ///
+    /// 来源是「绑定地图的当前声明 → 安装时固化的地图依赖快照」：地图没有
+    /// MOD 那样的安装清单，源文档被删或一直刷新失败时分组就无处可查，而
+    /// 管理页的折叠分组与详情里的作者中英两名都要靠它稳定。两处都查不到时
+    /// 留空，前端回退 info 里的本地 `author`。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub map_group_i18n: BTreeMap<String, String>,
+    /// 分组的单语镜像（旧源文档只写 `group` 时用它）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_group: Option<String>,
     /// 依赖快照（安装时/刷新地图源后写入地图依赖清单）。
     ///
     /// 与 MOD 侧同一套回退规则：绑定地图还在配置里时前端用线上声明，
@@ -1592,6 +1603,15 @@ pub struct MapRelationSnapshot {
     pub repository_id: String,
     pub level_set_name: String,
     pub author: String,
+    /// 安装/同步那一刻线上声明的分组（分组语义就是作者）。
+    ///
+    /// 地图源被删掉之后这张图不再有线上条目，分组只剩这份快照记着；
+    /// 没有它，管理页只能显示 info 里的裸作者名，作者声明的中英两名全丢。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_i18n: BTreeMap<String, String>,
+    /// 分组的单语镜像（旧源文档只写 `group` 时用它）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<RepositoryRelation>,
     /// 按版本覆盖的依赖表：快照必须带上它，否则「已经装了 1.x、线上声明的是

@@ -1251,45 +1251,81 @@ fn note_block_map(
 ) -> Result<MapRepositoryConfig, ConfigError> {
     let metadata = &note.metadata;
     /*
-     * 显示名兜底：作者只写了关卡集名时，卡片标题就用它。不兜的话卡片会退化
-     * 成 `username/repository`，而同一个仓库里所有地图都长一个样。
+     * 显示名逐语言兜底：缺 `zh-CN` 用 `level_set_name_zh`，缺 `en` 用
+     * `level_set_name` —— 这两个名字 info 里本来就有，作者只是没另写一份
+     * 多语言表。不兜的话卡片会退化成 `username/repository`，同一个仓库里
+     * 所有地图都长一个样。
      */
     let mut name_i18n = metadata.name_i18n.clone();
-    if name_i18n.is_empty() {
-        let fallback = if metadata.level_set_name_zh.trim().is_empty() {
-            metadata.level_set_name.trim()
-        } else {
-            metadata.level_set_name_zh.trim()
-        };
-        name_i18n.insert("zh-CN".to_string(), fallback.to_string());
+    if name_i18n
+        .get("zh-CN")
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        let zh = metadata.level_set_name_zh.trim();
+        if !zh.is_empty() {
+            name_i18n.insert("zh-CN".to_string(), zh.to_string());
+        }
     }
-    // 分类默认与显示名一致：一个 tag 一张图，逐张地图自成一类，
-    // 前端的三层结构里「每张卡都挂在自己的分类下」比「全部挤进无分类」清楚
-    let group_i18n = if metadata.group_i18n.is_empty() {
-        name_i18n.clone()
-    } else {
+    if name_i18n
+        .get("en")
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        let en = metadata.level_set_name.trim();
+        if !en.is_empty() {
+            name_i18n.insert("en".to_string(), en.to_string());
+        }
+    }
+    /*
+     * 分类默认回填**作者名**：地图的分组语义就是作者，同一个仓库里同一作者的
+     * 几张图应该并排；作者没写（官方导出常为空）才退回显示名，至少不让卡片
+     * 掉进「无分类」。
+     */
+    let group_i18n = if !metadata.group_i18n.is_empty() {
         metadata.group_i18n.clone()
+    } else {
+        let author = metadata.author.trim();
+        if author.is_empty() {
+            name_i18n.clone()
+        } else {
+            BTreeMap::from([("zh-CN".to_string(), author.to_string())])
+        }
     };
     /*
      * 单语言镜像必须在这里折出来：`get_maps` 只透传 `name`/`group`，前端拿
      * 到空串时会退回 `username/repository`，一个仓库多张图就全长一个样。
      */
+    // 单语镜像与多语言表同一优先级：没有中文名就用英文名，两者都是 info 里的名字
     let name = name_i18n
         .get("zh-CN")
         .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            name_i18n
+                .get("en")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_default();
     let group = group_i18n
         .get("zh-CN")
         .map(|value| value.trim().to_string())
         .unwrap_or_else(|| name.clone());
     /*
-     * 卡片短语只来自块里的 `note_i18n`（五语）。块外正文不是卡片说明 ——
-     * 它是「这个版本的更新说明」，由 `synthesize_releases` 清洗后进版本详情的
-     * 提交日志。两处展示同一次 API 的数据，没有第三处要喂。
+     * 卡片短语优先级：块里的 `note_i18n`（五语）→ 块里的单语 `note` → 块外正文。
+     * 很多作者只发「正文写介绍 + 一个 oc2-map 声明块」，正文本来就是这张图的
+     * 说明，丢掉它卡片上只剩「暂无说明」。正文同时是版本详情的提交日志，两处
+     * 展示同一次 API 的数据，没有第三处要喂；块标记已由 `parse_release_note` 剥掉。
      */
     let mut note_i18n = metadata.note_i18n.clone();
-    if note_i18n.is_empty() && !metadata.note.trim().is_empty() {
-        note_i18n.insert("zh-CN".to_string(), metadata.note.trim().to_string());
+    if note_i18n.is_empty() {
+        let fallback = if metadata.note.trim().is_empty() {
+            note.body.trim()
+        } else {
+            metadata.note.trim()
+        };
+        if !fallback.is_empty() {
+            note_i18n.insert("zh-CN".to_string(), fallback.to_string());
+        }
     }
     let note_text = note_i18n
         .get("zh-CN")
@@ -2155,6 +2191,12 @@ requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
             Some("两张关卡，需要 DIYLevel。")
         );
         assert_eq!(map.note, "两张关卡，需要 DIYLevel。");
+        // 块里没写 group：用作者名回填（分组语义就是作者）
+        assert_eq!(map.group, "GAODA");
+        assert_eq!(
+            map.group_i18n.get("zh-CN").map(String::as_str),
+            Some("GAODA")
+        );
         assert_eq!(map.name, "胡闹达学", "显示名单语言镜像必须折出来");
         assert!(map.id.starts_with("community::"), "{}", map.id);
         assert_eq!(map.source_id.as_deref(), Some("community"));
@@ -2166,6 +2208,69 @@ requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
         assert_eq!(map.asset_rules.len(), 1);
         assert!(map.asset_rules[0].value.starts_with('^'));
         assert!(map.asset_rules[0].value.ends_with('$'));
+    }
+
+    #[test]
+    fn a_block_without_declared_names_falls_back_to_info_and_the_release_body() {
+        // 只写身份和资产、其余全靠 info 与正文，是最常见的发布方式：显示名要
+        // 逐语言回填（zh-CN ← level_set_name_zh，en ← level_set_name），分组
+        // 回填作者，卡片说明用块外正文 —— 少兜任何一条，卡片就退化成仓库坐标
+        // 或「暂无说明」
+        let source = r#"共 2 张关卡，需要 DIYLevel。
+
+<!-- oc2-map
+level_set_name = "GAODA"
+level_set_name_zh = "胡闹达学"
+author = "GAODA"
+asset = "daxue_v${version}.zip"
+-->
+"#;
+        let note = crate::map_note::parse_release_note(source)
+            .unwrap()
+            .unwrap();
+        assert_eq!(note.body, "共 2 张关卡，需要 DIYLevel。");
+        let rule = crate::map_note::versioned_asset_rule(
+            note.metadata.asset.as_deref(),
+            &[crate::models::ReleaseAsset {
+                name: "daxue_v0.3.2.zip".to_string(),
+                size: 1,
+                download_count: None,
+                download_url: String::new(),
+                digest: None,
+            }],
+        )
+        .unwrap();
+        let doc = parse(
+            "[[map_sources]]\nid = \"community\"\nmode = \"release-tags\"\nprovider = \"github\"\nusername = \"CH3NGYZ\"\nrepository = \"oc2\"\n",
+        )
+        .unwrap();
+        let declaration = &doc.map_sources[0];
+        let label = SourceLabel {
+            id: declaration.id.clone(),
+            name: "社区地图仓库".to_string(),
+            ..SourceLabel::default()
+        };
+        let map =
+            note_block_map(declaration, &label, &note, "daxue", rule, true, &origin()).unwrap();
+        // 显示名逐语言回填
+        assert_eq!(
+            map.name_i18n.get("zh-CN").map(String::as_str),
+            Some("胡闹达学")
+        );
+        assert_eq!(map.name_i18n.get("en").map(String::as_str), Some("GAODA"));
+        assert_eq!(map.name, "胡闹达学");
+        // 分组回填作者
+        assert_eq!(map.group, "GAODA");
+        assert_eq!(
+            map.group_i18n.get("zh-CN").map(String::as_str),
+            Some("GAODA")
+        );
+        // 卡片说明回填块外正文
+        assert_eq!(map.note, "共 2 张关卡，需要 DIYLevel。");
+        assert_eq!(
+            map.note_i18n.get("zh-CN").map(String::as_str),
+            Some("共 2 张关卡，需要 DIYLevel。")
+        );
     }
 
     /// 真机联网回归：内置索引 → 单仓库地图 + release-tags 源 → 真实条目。

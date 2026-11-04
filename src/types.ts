@@ -289,6 +289,17 @@ export interface LevelSetInfo {
    */
   map_id?: string | null
   /**
+   * 线上声明的分组多语言表（地图的分组语义就是作者）。
+   *
+   * 后端按「绑定地图的当前声明 → 安装时固化的 `map-relations.json` 快照」
+   * 填进来：地图没有 MOD 那样的安装清单，源文档被删或一直刷新失败时分组
+   * 就无处可查，而管理页的折叠分组与详情里的作者中英两名都要靠它稳定。
+   * 两者都没有时前端回退 info 里的本地 `author`。
+   */
+  map_group_i18n?: Record<string, string>
+  /** 分组的单语镜像（旧源文档只写 `group` 时用它）。 */
+  map_group?: string | null
+  /**
    * 依赖声明快照（来自地图依赖清单）。
    *
    * 在线地图条目还在时以在线为准（见 `dependencyRows.ts`）；这条只在仓库

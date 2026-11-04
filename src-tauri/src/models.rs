@@ -1411,7 +1411,9 @@ pub struct PublishSaveRequest {
     pub draft: bool,
     #[serde(default)]
     pub prerelease: bool,
-    pub metadata: MapPublishMetadata,
+    /// 三步式发布里只有第三步带它；省略 = 只改标题 / 正文 / 草稿状态。
+    #[serde(default)]
+    pub metadata: Option<MapPublishMetadata>,
 }
 
 /// 上传附件请求。

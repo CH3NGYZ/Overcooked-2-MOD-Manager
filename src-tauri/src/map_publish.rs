@@ -274,8 +274,59 @@ fn authorized(request: reqwest::RequestBuilder, token: &str) -> reqwest::Request
         .header("Authorization", format!("Bearer {token}"))
 }
 
+/// 取一个响应头的文本值；缺失或不是 UTF-8 都当成没有。
+fn header_text(response: &reqwest::Response, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// 把一次失败的写操作分类成前端能据此引导用户的 tag。
+///
+/// 403 混着三种完全不同的情况：App 声明里缺权限、被限流、以及令牌权限够但仓库
+/// 没授权给这个安装。GitHub 会把还缺的权限放在 `x-accepted-github-permissions`
+/// （形如 `contents=write`），限流则把剩余次数置 0；两个信号都没有时只能按通用
+/// 无权限报，让用户自己去 App 设置里核对。
+fn classify_write_failure(
+    status: u16,
+    accepted_permissions: Option<&str>,
+    rate_remaining: Option<&str>,
+    rate_reset: Option<&str>,
+    detail: &str,
+) -> Option<String> {
+    match status {
+        401 => Some("mapPublish.unauthorized".to_string()),
+        403 => {
+            if let Some(permissions) = accepted_permissions {
+                return Some(with_params(
+                    "mapPublish.missingPermission",
+                    &[("permission", permissions)],
+                ));
+            }
+            let limited =
+                rate_remaining == Some("0") || detail.to_ascii_lowercase().contains("rate limit");
+            if limited {
+                return Some(with_params(
+                    "mapPublish.rateLimited",
+                    &[("reset", rate_reset.unwrap_or_default())],
+                ));
+            }
+            Some(with_params("mapPublish.forbidden", &[("reason", detail)]))
+        }
+        404 => Some(with_params("mapPublish.notFound", &[("reason", detail)])),
+        422 => Some(with_params("mapPublish.rejected", &[("reason", detail)])),
+        _ => None,
+    }
+}
+
 /// 把非 2xx 的响应翻成 tag。GitHub 的错误正文里 `message` 是给人看的原因，
 /// 直接当参数带给前端 —— 比只显示状态码有用得多。
+///
+/// 403 的分类要看响应头，所以必须在 `text()` 消费响应之前取出来。
 async fn ensure_success(
     response: reqwest::Response,
     action: &str,
@@ -284,6 +335,9 @@ async fn ensure_success(
     if status.is_success() {
         return Ok(response);
     }
+    let accepted = header_text(&response, "x-accepted-github-permissions");
+    let rate_remaining = header_text(&response, "x-ratelimit-remaining");
+    let rate_reset = header_text(&response, "x-ratelimit-reset");
     let body = response.text().await.unwrap_or_default();
     let detail = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
@@ -298,13 +352,14 @@ async fn ensure_success(
         "GitHub 写操作失败：动作={action}，状态={}，详情={detail}",
         status.as_u16()
     );
-    match status.as_u16() {
-        401 => Err("mapPublish.unauthorized".to_string()),
-        403 => Err(with_params("mapPublish.forbidden", &[("reason", &detail)])),
-        404 => Err(with_params("mapPublish.notFound", &[("reason", &detail)])),
-        422 => Err(with_params("mapPublish.rejected", &[("reason", &detail)])),
-        _ => Err(action_error(action, &detail)),
-    }
+    Err(classify_write_failure(
+        status.as_u16(),
+        accepted.as_deref(),
+        rate_remaining.as_deref(),
+        rate_reset.as_deref(),
+        &detail,
+    )
+    .unwrap_or_else(|| action_error(action, &detail)))
 }
 
 /// 取出发布用的 Token；没有就让用户先登录。
@@ -1343,7 +1398,7 @@ fn topics_report(topics: Vec<String>) -> PublishRepositoryTopics {
     }
 }
 
-/// 只读检查：选中仓库后立刻问一次标签齐不齐，缺了界面顶部给一键补打的按钮。
+/// 只读检查：选中仓库后立刻问一次标签齐不齐，缺了界面顶部提醒作者自己去仓库设置里补。
 #[tauri::command]
 pub async fn publish_repository_topics(
     state: State<'_, AppState>,
@@ -1355,30 +1410,6 @@ pub async fn publish_repository_topics(
     let client = api_client()?;
     let full_name = format!("{owner}/{repository}");
     let topics = fetch_repository_topics(&client, &token, &full_name).await?;
-    Ok(topics_report(topics))
-}
-
-/// 一键补齐：先读当前标签再合并写入，只补缺的那几个，不动作者自己的标签。
-#[tauri::command]
-pub async fn ensure_publish_repository_topics(
-    state: State<'_, AppState>,
-    owner: String,
-    repository: String,
-) -> Result<PublishRepositoryTopics, String> {
-    let (owner, repository) = validate_coordinates(&owner, &repository)?;
-    let token = publish_token(&state)?;
-    let client = api_client()?;
-    let full_name = format!("{owner}/{repository}");
-    let mut merged = fetch_repository_topics(&client, &token, &full_name).await?;
-    for required in PUBLISH_TOPICS {
-        if !merged
-            .iter()
-            .any(|topic| topic.eq_ignore_ascii_case(required))
-        {
-            merged.push(required.to_string());
-        }
-    }
-    let topics = set_repository_topics(&client, &token, &full_name, &merged).await?;
     Ok(topics_report(topics))
 }
 
@@ -1426,30 +1457,36 @@ pub async fn save_publish_release(
     let token = publish_token(&state)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
     let tag = validate_tag(&request.tag)?;
-    let mut metadata = request.metadata.clone();
-    metadata.level_set_name = metadata.level_set_name.trim().to_string();
-    metadata.level_set_name_zh = metadata.level_set_name_zh.trim().to_string();
-    metadata.author = metadata.author.trim().to_string();
-    if metadata.level_set_name.is_empty() {
-        return Err("mapPublish.missingLevelSetName".to_string());
-    }
-    if metadata.asset.trim().is_empty() {
-        // 一个版本一个 ZIP：默认按关卡集名生成模板，作者只需要照着传附件。
-        let slug = metadata
-            .level_set_name
-            .chars()
-            .map(|item| {
-                if item.is_ascii_alphanumeric() {
-                    item.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect::<String>();
-        let slug = slug.trim_matches('-');
-        metadata.asset = format!("{slug}-{VERSION_PLACEHOLDER}.zip");
-    }
-    let body = render_release_body(&metadata, &request.body);
+    // 三步式发布：第一步建 Release、第二步传附件，第三步才带 metadata 写块。
+    // 没有 metadata 就按原样写正文：只改标题/正文，或先建一个还没有块的 Release。
+    let body = match request.metadata.clone() {
+        Some(mut metadata) => {
+            metadata.level_set_name = metadata.level_set_name.trim().to_string();
+            metadata.level_set_name_zh = metadata.level_set_name_zh.trim().to_string();
+            metadata.author = metadata.author.trim().to_string();
+            if metadata.level_set_name.is_empty() {
+                return Err("mapPublish.missingLevelSetName".to_string());
+            }
+            if metadata.asset.trim().is_empty() {
+                // 一个版本一个 ZIP：默认按关卡集名生成模板，作者只需要照着传附件。
+                let slug = metadata
+                    .level_set_name
+                    .chars()
+                    .map(|item| {
+                        if item.is_ascii_alphanumeric() {
+                            item.to_ascii_lowercase()
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect::<String>();
+                let slug = slug.trim_matches('-');
+                metadata.asset = format!("{slug}-{VERSION_PLACEHOLDER}.zip");
+            }
+            render_release_body(&metadata, &request.body)
+        }
+        None => request.body.clone(),
+    };
     let client = api_client()?;
     let response = match request.release_id {
         Some(release_id) => {
@@ -1756,6 +1793,79 @@ mod tests {
     use super::*;
     use crate::map_note::NOTE_BLOCK_OPEN;
     use crate::models::MapPublishMetadata;
+
+    #[test]
+    fn forbidden_without_headers_still_reports_the_github_message() {
+        let tag = classify_write_failure(
+            403,
+            None,
+            None,
+            None,
+            "Resource not accessible by integration",
+        )
+        .expect("403 必须归类");
+        assert!(tag.starts_with("mapPublish.forbidden?reason="), "{tag}");
+        assert!(tag.contains("Resource%20not%20accessible"), "{tag}");
+    }
+
+    #[test]
+    fn accepted_permissions_become_a_permission_hint() {
+        let tag = classify_write_failure(
+            403,
+            Some("contents=write,administration=write"),
+            None,
+            None,
+            "Resource not accessible by integration",
+        )
+        .expect("403 必须归类");
+        assert_eq!(
+            tag,
+            "mapPublish.missingPermission?permission=contents%3Dwrite%2Cadministration%3Dwrite"
+        );
+    }
+
+    #[test]
+    fn rate_limited_writes_carry_the_reset_time() {
+        let tag = classify_write_failure(
+            403,
+            None,
+            Some("0"),
+            Some("1762264817"),
+            "API rate limit exceeded",
+        )
+        .expect("403 必须归类");
+        assert_eq!(tag, "mapPublish.rateLimited?reset=1762264817");
+        // 次要限流的正文里有 "rate limit"，但没有 x-ratelimit-reset 头。
+        let secondary = classify_write_failure(
+            403,
+            None,
+            None,
+            None,
+            "You have exceeded a secondary rate limit",
+        )
+        .expect("次要限流也必须归类");
+        assert_eq!(secondary, "mapPublish.rateLimited?reset=");
+    }
+
+    #[test]
+    fn other_statuses_map_to_their_own_tags() {
+        assert_eq!(
+            classify_write_failure(401, None, None, None, "Bad credentials"),
+            Some("mapPublish.unauthorized".to_string())
+        );
+        assert!(
+            classify_write_failure(404, None, None, None, "Not Found")
+                .expect("404 必须归类")
+                .starts_with("mapPublish.notFound?reason=")
+        );
+        assert!(
+            classify_write_failure(422, None, None, None, "Validation Failed")
+                .expect("422 必须归类")
+                .starts_with("mapPublish.rejected?reason=")
+        );
+        // 其它状态交给动作名兜底，分类函数不吞掉它。
+        assert_eq!(classify_write_failure(500, None, None, None, "boom"), None);
+    }
 
     #[test]
     fn zip_file_names_carry_the_version() {

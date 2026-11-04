@@ -33,8 +33,8 @@
 //! username、repository、tag、asset_rules 的形态）由解析方按「源声明 + Release
 //! 实际资产」补齐 —— 那些是仓库坐标，写在每份 note 里只会重复。
 use crate::models::{
-    AssetRule, AssetRuleType, RelationKind, ReleaseAsset, ReleaseRelationOverride,
-    RepositoryRelation,
+    AssetRule, AssetRuleType, MapPublishMetadata, RelationKind, ReleaseAsset,
+    ReleaseRelationOverride, RepositoryRelation,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -148,6 +148,32 @@ pub enum RelationSpec {
 }
 
 impl RelationSpec {
+    /// 上传页展示用的区间文本。
+    ///
+    /// 能规范化就规范化（`=1.2` → `==1.2`），写错的区间原样返回 —— 上传页
+    /// 不该因为作者上一版手抖写坏了一个区间，就把这张地图的元数据整份丢掉。
+    pub(crate) fn display_range(&self) -> String {
+        if let Some((range, _, _)) = self.spec() {
+            return range;
+        }
+        match self {
+            Self::Range(raw) => raw.trim().to_string(),
+            Self::Detailed {
+                version,
+                min_version,
+                max_version,
+                ..
+            } => {
+                let version = version.trim();
+                if version.is_empty() {
+                    crate::version_range::fold_bounds(min_version.trim(), max_version.trim())
+                } else {
+                    version.to_string()
+                }
+            }
+        }
+    }
+
     /// 展开成 (规范化区间, 预发布三态, 可选)。区间写错返回 `None`。
     ///
     /// 规范化让两种写法落到同一段文本上（`=1.2` → `==1.2`、旧
@@ -421,6 +447,166 @@ fn rule_from_asset_name(name: &str) -> Option<AssetRule> {
     })
 }
 
+/// 解析模型 → 上传页可编辑形态。
+pub fn publish_metadata_from_note(note: &MapNoteMetadata) -> MapPublishMetadata {
+    let relations = |table: &std::collections::BTreeMap<String, RelationSpec>| {
+        table
+            .iter()
+            .map(|(guid, spec)| (guid.clone(), spec.display_range()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    MapPublishMetadata {
+        level_set_name: note.level_set_name.clone(),
+        level_set_name_zh: note.level_set_name_zh.clone(),
+        author: note.author.clone(),
+        name_i18n: note.name_i18n.clone(),
+        group_i18n: note.group_i18n.clone(),
+        note_i18n: note.note_i18n.clone(),
+        asset: note.asset.clone().unwrap_or_default(),
+        latest_mapset_version: note.latest_mapset_version.clone().unwrap_or_default(),
+        latest_info_version: note.latest_info_version.clone().unwrap_or_default(),
+        requires: relations(&note.requires),
+        compatible: relations(&note.compatible),
+        conflicts: relations(&note.conflicts),
+    }
+}
+
+fn canonical_range(raw: &str) -> String {
+    crate::version_range::VersionRange::parse(raw.trim())
+        .map(|range| range.canonical())
+        .unwrap_or_else(|_| raw.trim().to_string())
+}
+
+/// 渲染 `<!-- oc2-map -->` 元数据块（以换行结尾）。
+///
+/// 这是**写侧的唯一实现**：上传页用它把表单写成 note，
+/// `tools/oc2-info` 将来也改为复用这一份，避免「读得懂、写出来对不上」。
+pub fn render_metadata_block(metadata: &MapPublishMetadata) -> String {
+    let mut lines: Vec<(String, String)> = Vec::new();
+    let push = |key: &str, value: &str, lines: &mut Vec<(String, String)>| {
+        let value = value.trim();
+        if !value.is_empty() {
+            lines.push((key.to_string(), toml_string(value)));
+        }
+    };
+    push("level_set_name", &metadata.level_set_name, &mut lines);
+    push("level_set_name_zh", &metadata.level_set_name_zh, &mut lines);
+    push("author", &metadata.author, &mut lines);
+    for (locale, value) in &metadata.name_i18n {
+        if !value.trim().is_empty() {
+            lines.push((
+                format!("name_i18n.{}", locale.trim()),
+                toml_string(value.trim()),
+            ));
+        }
+    }
+    for (locale, value) in &metadata.group_i18n {
+        if !value.trim().is_empty() {
+            lines.push((
+                format!("group_i18n.{}", locale.trim()),
+                toml_string(value.trim()),
+            ));
+        }
+    }
+    for (locale, value) in &metadata.note_i18n {
+        if !value.trim().is_empty() {
+            lines.push((
+                format!("note_i18n.{}", locale.trim()),
+                toml_string(value.trim()),
+            ));
+        }
+    }
+    push("asset", &metadata.asset, &mut lines);
+    push(
+        "latest_mapset_version",
+        &metadata.latest_mapset_version,
+        &mut lines,
+    );
+    push(
+        "latest_info_version",
+        &metadata.latest_info_version,
+        &mut lines,
+    );
+    for (key, table) in [
+        ("requires", &metadata.requires),
+        ("compatible", &metadata.compatible),
+        ("conflicts", &metadata.conflicts),
+    ] {
+        if let Some(rendered) = render_inline_table(table) {
+            lines.push((key.to_string(), rendered));
+        }
+    }
+
+    let width = lines
+        .iter()
+        .map(|(key, _)| key.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut block = String::from(NOTE_BLOCK_OPEN);
+    block.push('\n');
+    for (key, value) in &lines {
+        block.push_str(key);
+        block.push_str(&" ".repeat(width - key.chars().count()));
+        block.push_str(" = ");
+        block.push_str(value);
+        block.push('\n');
+    }
+    block.push_str(NOTE_BLOCK_CLOSE);
+    block.push('\n');
+    block
+}
+
+/// 元数据块 + 块外的更新说明，一起构成 Release 的 `body`。
+pub fn render_release_body(metadata: &MapPublishMetadata, body: &str) -> String {
+    let block = render_metadata_block(metadata);
+    let body = body.trim();
+    if body.is_empty() {
+        block
+    } else {
+        format!("{block}\n{body}\n")
+    }
+}
+
+fn render_inline_table(table: &std::collections::BTreeMap<String, String>) -> Option<String> {
+    let mut entries = Vec::new();
+    for (guid, range) in table {
+        let guid = guid.trim();
+        let range = range.trim();
+        if guid.is_empty() || range.is_empty() {
+            continue;
+        }
+        entries.push(format!(
+            "{} = {}",
+            toml_string(guid),
+            toml_string(&canonical_range(range))
+        ));
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(format!("{{ {} }}", entries.join(", ")))
+}
+
+/// TOML 基本字符串转义：只做必需的四种（反斜杠、引号、换行、制表符），
+/// 其余控制字符走 `\u` 转义，避免把作者的换行写成裸换行让整块 TOML 失效。
+fn toml_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04X}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,6 +654,94 @@ latest_version = "0.42"
         assert_eq!(metadata.normalized_info_version(), None);
         metadata.latest_info_version = Some(" 0.69 ".to_string());
         assert_eq!(metadata.normalized_info_version().as_deref(), Some("0.69"));
+    }
+
+    #[test]
+    fn rendered_metadata_round_trips_through_the_parser() {
+        let metadata = MapPublishMetadata {
+            level_set_name: "GAODA".into(),
+            level_set_name_zh: "胡闹达学".into(),
+            author: "GAODA".into(),
+            name_i18n: [("zh-CN".to_string(), "胡闹达学".to_string())]
+                .into_iter()
+                .collect(),
+            group_i18n: [("zh-CN".to_string(), "GAODA".to_string())]
+                .into_iter()
+                .collect(),
+            note_i18n: [("en".to_string(), "Two levels.".to_string())]
+                .into_iter()
+                .collect(),
+            asset: "daxue_v${version}.zip".into(),
+            latest_mapset_version: "0.3.2".into(),
+            latest_info_version: "0.3.2".into(),
+            requires: [(
+                "dev.gua.overcooked.diylevel".to_string(),
+                ">=0.10.0".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            compatible: Default::default(),
+            conflicts: [(
+                "oc2.oc2diylevelruntimewloader".to_string(),
+                ">=4.0.0".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let body = render_release_body(&metadata, "## 更新\n\n修了贴图。");
+        let parsed = parse_release_note(&body).unwrap().unwrap();
+        assert_eq!(parsed.metadata.level_set_name, "GAODA");
+        assert_eq!(parsed.metadata.level_set_name_zh, "胡闹达学");
+        assert_eq!(
+            parsed.metadata.asset.as_deref(),
+            Some("daxue_v${version}.zip")
+        );
+        assert_eq!(
+            parsed.metadata.latest_mapset_version.as_deref(),
+            Some("0.3.2")
+        );
+        assert_eq!(
+            parsed.metadata.name_i18n.get("zh-CN").map(String::as_str),
+            Some("胡闹达学")
+        );
+        assert_eq!(
+            parsed.metadata.note_i18n.get("en").map(String::as_str),
+            Some("Two levels.")
+        );
+        // 关系表回读成同一份 GUID → 规范化区间
+        let relations = parsed.metadata.relations();
+        assert_eq!(relations.len(), 2);
+        // 顺序固定为 requires → compatible → conflicts
+        assert_eq!(relations[0].guid, "dev.gua.overcooked.diylevel");
+        assert_eq!(relations[0].version, ">=0.10.0");
+        assert_eq!(relations[1].guid, "oc2.oc2diylevelruntimewloader");
+        assert_eq!(relations[1].version, ">=4.0.0");
+        // 块外正文原样保留
+        assert_eq!(parsed.body, "## 更新\n\n修了贴图。");
+        // 再折回上传页形态，字段不丢
+        let back = publish_metadata_from_note(&parsed.metadata);
+        assert_eq!(back.asset, "daxue_v${version}.zip");
+        assert_eq!(
+            back.conflicts
+                .get("oc2.oc2diylevelruntimewloader")
+                .map(String::as_str),
+            Some(">=4.0.0")
+        );
+    }
+
+    #[test]
+    fn a_rendered_block_without_optional_fields_stays_parseable() {
+        let metadata = MapPublishMetadata {
+            level_set_name: "GAODA".into(),
+            author: "GAODA".into(),
+            ..Default::default()
+        };
+        let body = render_release_body(&metadata, "");
+        let parsed = parse_release_note(&body).unwrap().unwrap();
+        assert_eq!(parsed.metadata.level_set_name, "GAODA");
+        assert!(parsed.metadata.name_i18n.is_empty());
+        assert!(parsed.metadata.requires.is_empty());
+        assert_eq!(parsed.body, "");
     }
 
     #[test]

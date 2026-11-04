@@ -1224,6 +1224,159 @@ impl GameConfig {
     }
 }
 
+/// 授权流程启动后的返回：系统浏览器已经打开，前端可以给出备用链接。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishAuthorization {
+    pub authorize_url: String,
+    pub expires_in: u64,
+}
+
+/// 授权轮询结果。
+///
+/// 用 `status` 而不是 `Result`：等待、过期、拒绝都是正常分支，不该在前端被当成
+/// 异常弹红字。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PublishAuthPoll {
+    Pending,
+    Authorized { login: String },
+    Expired,
+    Denied,
+    Failed { reason: String },
+}
+
+/// 上传页的授权状态（登录名与 client_id 都是明文，Token 本身不出后端）。
+///
+/// `install_url` 是 GitHub App 的安装入口（安装时可以选择「Only select
+/// repositories」）；`secret_configured` 为 false 说明这个构建没有注入 Client
+/// Secret，根本换不到 Token，界面要直接说清楚而不是点登录才报错。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishAuthState {
+    pub authenticated: bool,
+    pub login: String,
+    pub client_id: String,
+    pub install_url: String,
+    pub secret_configured: bool,
+}
+
+/// 上传页可选的一个地图仓库。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishRepository {
+    pub owner: String,
+    pub name: String,
+    pub full_name: String,
+    pub private: bool,
+    pub default_branch: String,
+    pub topics: Vec<String>,
+    /// 当前令牌对这个仓库有没有 push 权限（只读仓库不允许发布）。
+    pub push: bool,
+}
+
+/// 一个 Release 附件。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishAsset {
+    pub id: u64,
+    pub name: String,
+    pub size: u64,
+}
+
+/// 上传页看到的「一版地图」，就是仓库里的一个 Release。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishRelease {
+    pub id: u64,
+    /// tag 名就是版本号（地图源读 `tag_name` 当版本）。
+    pub tag: String,
+    pub title: String,
+    pub draft: bool,
+    pub prerelease: bool,
+    pub created_at: String,
+    pub published_at: Option<String>,
+    /// 块外面的说明文字（`oc2-map` 块已剥掉）。
+    pub body: String,
+    pub assets: Vec<PublishAsset>,
+    /// 解析出的元数据；没有 `oc2-map` 块（不是地图 Release）时为 None。
+    pub metadata: Option<MapPublishMetadata>,
+}
+
+/// 前端编辑并提交的元数据。
+///
+/// 与 `map_note::MapNoteMetadata` 的差别只有关系表：这里用「GUID → 区间字符串」，
+/// 覆盖了 `tools/oc2-info` 命令行能表达的全部形态；带 `prerelease` / `optional`
+/// 的显式表与 `[[release_relations]]` 属于进阶写法，上传页不做，手写 note 仍可表达。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapPublishMetadata {
+    #[serde(default)]
+    pub level_set_name: String,
+    #[serde(default)]
+    pub level_set_name_zh: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub name_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub group_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub note_i18n: BTreeMap<String, String>,
+    #[serde(default)]
+    pub asset: String,
+    #[serde(default)]
+    pub latest_mapset_version: String,
+    #[serde(default)]
+    pub latest_info_version: String,
+    #[serde(default)]
+    pub requires: BTreeMap<String, String>,
+    #[serde(default)]
+    pub compatible: BTreeMap<String, String>,
+    #[serde(default)]
+    pub conflicts: BTreeMap<String, String>,
+}
+
+/// 新建或修改一版地图的请求。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublishSaveRequest {
+    pub owner: String,
+    pub repository: String,
+    /// 有值 = 改这一版；空 = 新建一版（Release 会自动建 tag）。
+    #[serde(default)]
+    pub release_id: Option<u64>,
+    /// 也就是版本号；消费端直接拿它当版本。
+    pub tag: String,
+    #[serde(default)]
+    pub title: String,
+    /// 块外面的说明文字。
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
+    pub metadata: MapPublishMetadata,
+}
+
+/// 上传附件请求。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublishUploadRequest {
+    pub owner: String,
+    pub repository: String,
+    pub release_id: u64,
+    /// 本地 ZIP 的绝对路径。
+    pub path: String,
+    /// 附件名（地图源按 `asset` 模板里的 `${version}` 从名字里抽版本）。
+    pub name: String,
+}
+
+/// 删除一版地图的请求。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublishDeleteReleaseRequest {
+    pub owner: String,
+    pub repository: String,
+    pub release_id: u64,
+    /// 删 Release 之后要不要顺手删同名 tag（标签模式下留孤儿 tag 会让
+    /// 作者以为自己还发布了这一版）。
+    pub tag: String,
+    pub delete_tag: bool,
+}
+
 #[cfg(test)]
 mod game_runtime_tests {
     use super::*;
@@ -1321,6 +1474,16 @@ pub struct AuthConfig {
     pub github_token: String,
     pub gitee_token: String,
     pub official_api_only: bool,
+    /// 地图上传页用 device flow 取得的 GitHub 令牌（DPAPI 保护）。
+    ///
+    /// 单独存一份而不是复用 `github_token`：device flow 申请的范围是
+    /// `public_repo`，直接覆盖用户手填的 PAT 会把读 API 的权限悄悄降下来；
+    /// 两份并存时读路径继续用用户的 PAT，发布路径优先用这一份。
+    #[serde(default)]
+    pub github_publish_token: String,
+    /// device flow 授权到的 GitHub 登录名，只用于界面显示「以谁的身份发布」。
+    #[serde(default)]
+    pub github_publish_login: String,
 }
 
 fn default_hide_unidentified_mods() -> bool {
@@ -1360,6 +1523,10 @@ pub struct PublicConfig {
     pub official_api_only: bool,
     pub github_token_set: bool,
     pub gitee_token_set: bool,
+    #[serde(default)]
+    pub github_publish_token_set: bool,
+    #[serde(default)]
+    pub github_publish_login: String,
     pub repositories: Vec<RepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,

@@ -89,6 +89,8 @@ const NON_TAG = new Set([
   'common.other',
   // DIYLevel 框架的稳定 GUID（与仓库源、安装清单共用同一标识）
   'dev.gua.overcooked.diylevel',
+  // 同上 GUID 的短写，只在地图发布模块的单测固件里出现
+  'dev.gua.diylevel',
   // 社区搜索/测试固件里的假 GUID 与假文件名
   'a.b', 'another.plugin', 'any.guid', 'base.guid', 'conflict.guid', 'dep.guid',
   'high.guid', 'legacy.guid', 'mid.guid', 'modern.guid', 'narrow.guid',

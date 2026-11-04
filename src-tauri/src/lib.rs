@@ -28,6 +28,8 @@ mod map_sources;
 // Release note 里的地图元数据块（`<!-- oc2-map ... -->`）：一个仓库放多张地图时
 // 每张地图的信息跟着自己的 Release 走，不再需要一份集中式 TOML
 mod map_note;
+// 社区地图上传：GitHub device flow 登录 + 仓库 / Release / 附件写操作
+mod map_publish;
 // 元数据并行读取的中间层：MOD 的 DLL 与地图的 info 都走它编排
 mod metadata_read;
 mod mod_config;
@@ -200,6 +202,18 @@ pub fn run() {
             commands::sync_dependency_snapshots,
             community::refresh_community_repositories,
             community::cancel_community_search,
+            map_publish::start_github_authorization,
+            map_publish::poll_github_authorization,
+            map_publish::cancel_github_authorization,
+            map_publish::map_publish_state,
+            map_publish::sign_out_map_publish,
+            map_publish::list_publish_repositories,
+            map_publish::create_publish_repository,
+            map_publish::list_publish_releases,
+            map_publish::save_publish_release,
+            map_publish::delete_publish_release,
+            map_publish::upload_publish_asset,
+            map_publish::delete_publish_asset,
             repository_readme::get_repository_readme,
             repository_readme::cancel_repository_readme,
             commands::get_repository_releases,

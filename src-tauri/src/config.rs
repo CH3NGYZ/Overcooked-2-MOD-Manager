@@ -601,6 +601,8 @@ impl ConfigService {
             official_api_only: config.auth.official_api_only,
             github_token_set: !config.auth.github_token.is_empty(),
             gitee_token_set: !config.auth.gitee_token.is_empty(),
+            github_publish_token_set: !config.auth.github_publish_token.is_empty(),
+            github_publish_login: config.auth.github_publish_login.clone(),
             repositories,
             repository_sources: config.repository_sources.clone(),
             community_discovery,
@@ -650,6 +652,21 @@ impl ConfigService {
             Provider::Github => &config.auth.github_token,
             Provider::Gitee => &config.auth.gitee_token,
         })
+    }
+
+    /// 地图上传页的器件：device flow 拿到的令牌单独一份，读路径不受影响。
+    pub(crate) fn publish_token(&self, config: &AppConfig) -> Option<String> {
+        reveal_secret(&config.auth.github_publish_token)
+    }
+
+    pub fn set_publish_token(&self, config: &mut AppConfig, token: &str, login: &str) {
+        config.auth.github_publish_token = protect_secret(token.trim()).unwrap_or_default();
+        config.auth.github_publish_login = login.trim().to_string();
+    }
+
+    pub fn clear_publish_token(&self, config: &mut AppConfig) {
+        config.auth.github_publish_token.clear();
+        config.auth.github_publish_login.clear();
     }
 
     pub fn set_mod_note(&self, config: &mut AppConfig, key: &str, note: &str) {
@@ -1051,6 +1068,8 @@ pub(crate) fn default_config() -> AppConfig {
             github_token: String::new(),
             gitee_token: String::new(),
             official_api_only: true,
+            github_publish_token: String::new(),
+            github_publish_login: String::new(),
         },
         repositories: Vec::new(),
         /*

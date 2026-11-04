@@ -1,7 +1,31 @@
 fn main() {
     embed_repository_sources();
+    embed_github_app_secret();
     link_windows_test_manifest();
     tauri_build::build()
+}
+
+/// GitHub App 的 Client Secret 不进仓库：优先读环境变量（CI 用 secret），
+/// 其次读被忽略的 `.tmp/github-app-secret.txt`（本机构建）。两处都没有时注入
+/// 空串，上传页会在换 Token 时报 `mapPublish.missingClientSecret`，不会静默失败。
+fn embed_github_app_secret() {
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let local = manifest
+        .join("..")
+        .join(".tmp")
+        .join("github-app-secret.txt");
+    println!("cargo:rerun-if-env-changed=OC2_GITHUB_APP_CLIENT_SECRET");
+    println!("cargo:rerun-if-changed={}", local.display());
+    let secret = std::env::var("OC2_GITHUB_APP_CLIENT_SECRET")
+        .ok()
+        .or_else(|| std::fs::read_to_string(&local).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    let output =
+        std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("github_app.rs");
+    let generated = format!("pub const GITHUB_APP_CLIENT_SECRET: &str = {secret:?};\n");
+    std::fs::write(output, generated).expect("无法写入 GitHub App 凭据");
 }
 
 fn link_windows_test_manifest() {

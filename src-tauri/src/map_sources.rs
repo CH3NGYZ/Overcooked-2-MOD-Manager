@@ -1312,7 +1312,8 @@ fn note_block_map(
         "note": note_text,
         "note_i18n": note_i18n,
         "asset_rules": [rule],
-        "latest_version": metadata.latest_version,
+        "latest_mapset_version": metadata.latest_mapset_version,
+        "latest_info_version": metadata.normalized_info_version(),
         "relations": metadata.relations(),
         "release_relations": metadata.release_relation_overrides(),
         "enabled": true,
@@ -1950,7 +1951,7 @@ pub(crate) fn synthesize_releases(
     /* 作者声明的「这就是最新版」必须真的存在，否则界面会把一张不存在的版本
      * 标成最新，用户点安装却找不到资产。 */
     let forced = map
-        .latest_version
+        .latest_mapset_version
         .as_deref()
         .map(str::trim)
         .filter(|version| !version.is_empty());
@@ -2113,7 +2114,8 @@ name_i18n.zh-CN = "胡闹达学"
 name_i18n.en = "GAODA"
 note_i18n.zh-CN = "两张关卡，需要 DIYLevel。"
 asset = "daxue_v${version}.zip"
-latest_version = "0.3.2"
+latest_mapset_version = "0.3.2"
+latest_info_version = "0.3.1"
 requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
 -->
 "#;
@@ -2157,7 +2159,9 @@ requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
         assert!(map.id.starts_with("community::"), "{}", map.id);
         assert_eq!(map.source_id.as_deref(), Some("community"));
         assert_eq!(map.relations.len(), 1);
-        assert_eq!(map.latest_version.as_deref(), Some("0.3.2"));
+        assert_eq!(map.latest_mapset_version.as_deref(), Some("0.3.2"));
+        // 包版本与 info 版本是两个字段：这里刻意写成不同值，验证两者各自透传
+        assert_eq!(map.latest_info_version.as_deref(), Some("0.3.1"));
         // 版本号从资产名里按模板抽，规则必须整串锚定
         assert_eq!(map.asset_rules.len(), 1);
         assert!(map.asset_rules[0].value.starts_with('^'));
@@ -2235,7 +2239,7 @@ requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
                 .any(|rule| rule.value.starts_with('^') && rule.value.ends_with('$')),
             "版本规则必须整串锚定"
         );
-        assert_eq!(gaoda.latest_version.as_deref(), Some("0.3.2"));
+        assert_eq!(gaoda.latest_mapset_version.as_deref(), Some("0.3.2"));
         assert!(
             gaoda
                 .relations

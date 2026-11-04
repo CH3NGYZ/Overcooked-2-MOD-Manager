@@ -6437,10 +6437,10 @@ pub async fn refresh_map_sources(
 /// 删字段会让它在 `map.unmet_frameworks ?? []` 之外的访问路径上崩掉。
 fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
     /*
-     * 覆盖表按「这张卡现在代表哪个版本」选：作者钉死的 `latest_version`
+     * 覆盖表按「这张卡现在代表哪个版本」选：作者钉死的 `latest_mapset_version`
      * 优先，其次是最新一次拉到的 Release tag；两个都没有就只看固定声明。
      */
-    let release_version = map.latest_version.as_deref().or_else(|| {
+    let release_version = map.latest_mapset_version.as_deref().or_else(|| {
         map.cached_releases
             .first()
             .map(|release| release.tag_name.as_str())
@@ -6482,7 +6482,8 @@ fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
          * 因为版本号是作者手写的自由文本，`0.7 > 0.69` 这种大小关系
          * 不代表作者认为 0.7 更新。判定实现只有前端的 `mapUpdateState` 一处。
          */
-        latest_version: map.latest_version.clone(),
+        latest_mapset_version: map.latest_mapset_version.clone(),
+        latest_info_version: map.latest_info_version.clone(),
         latest_tag: map
             .cached_releases
             .first()

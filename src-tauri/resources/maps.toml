@@ -55,7 +55,7 @@
 # asset_rules = [
 #   { type = "glob", value = "rw_v*.zip" },
 # ]
-# latest_version = '0.73'
+# latest_mapset_version = '0.73'
 
 # # 本地关卡集识别绑定（info 里的 levelSetName / author）
 # level_set_name = "RW_LevelSet"

@@ -10,14 +10,15 @@
 //!
 //! ```text
 //! <!-- oc2-map
-//! level_set_name    = "GAODA"
-//! level_set_name_zh = "胡闹达学"
-//! author            = "GAODA"
-//! name_i18n.zh-CN   = "胡闹达学"
-//! name_i18n.en      = "GAODA"
-//! asset             = "daxue_v${version}.zip"
-//! latest_version    = "0.3.2"
-//! requires          = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
+//! level_set_name        = "GAODA"
+//! level_set_name_zh     = "胡闹达学"
+//! author                = "GAODA"
+//! name_i18n.zh-CN       = "胡闹达学"
+//! name_i18n.en          = "GAODA"
+//! asset                 = "daxue_v${version}.zip"
+//! latest_mapset_version = "0.3.2"
+//! latest_info_version   = "0.3.2"
+//! requires              = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
 //! -->
 //! ```
 //!
@@ -80,9 +81,19 @@ pub struct MapNoteMetadata {
     /// 安装包名模板，`${version}` 由资产名里的实际版本号替换。
     #[serde(default)]
     pub asset: Option<String>,
-    /// 作者声明的「这就是最新版」。
+    /// 作者声明的「这就是最新版」（**地图包**版本）。
+    ///
+    /// 旧名 `latest_version` 仍可反序列化：已经发布出去的 Release note 写的就是
+    /// 那个名字，改名不能把那些地图的声明变成「没写」（那样它们会退回按 tag
+    /// 比较，正是这个字段要消除的歧义）。
+    #[serde(default, alias = "latest_version")]
+    pub latest_mapset_version: Option<String>,
+    /// 这次 Release 里 `info` 文件**内**的版本号（`tools/oc2-info` 自动取）。
+    ///
+    /// 与 `latest_mapset_version`（作者定义的地图包版本）平时相同；作者升了包版本却忘了
+    /// 改 info 里的版本号时会不同，那时管理器按这一项判断本地装的是不是最新版。
     #[serde(default)]
-    pub latest_version: Option<String>,
+    pub latest_info_version: Option<String>,
     /// 按地图版本覆盖下面三张表的整表（`[[release_relations]]`）。
     ///
     /// 与源文档 `[[maps.release_relations]]` 同构：命中区间的那张整体替换
@@ -96,6 +107,14 @@ pub struct MapNoteMetadata {
     pub compatible: BTreeMap<String, RelationSpec>,
     #[serde(default)]
     pub conflicts: BTreeMap<String, RelationSpec>,
+}
+
+impl MapNoteMetadata {
+    /// 归一化后的 `latest_info_version`（手写块的首尾空白不可控）。
+    pub fn normalized_info_version(&self) -> Option<String> {
+        let value = self.latest_info_version.as_deref()?.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }
 }
 
 /// 关系值的两种写法：区间字符串，或显式表。
@@ -417,6 +436,32 @@ mod tests {
     #[test]
     fn a_release_without_the_block_is_not_a_map() {
         assert!(parse_release_note("只是普通的更新说明").unwrap().is_none());
+    }
+
+    #[test]
+    fn the_legacy_latest_version_field_still_parses() {
+        // 改名不能作废已发布的 Release note：旧名必须继续认得，否则那些地图
+        // 的「这就是最新版」直接变成没写，退回按 tag 比较。
+        let text = body(
+            r#"level_set_name = "GAODA"
+author = "GAODA"
+latest_version = "0.42"
+"#,
+            "",
+        );
+        let note = parse_release_note(&text).unwrap().unwrap();
+        assert_eq!(note.metadata.latest_mapset_version.as_deref(), Some("0.42"));
+    }
+
+    #[test]
+    fn latest_info_version_is_trimmed_and_empty_dropped() {
+        let mut metadata = MapNoteMetadata::default();
+        assert_eq!(metadata.normalized_info_version(), None);
+        // 只有空白等于没写：空串版本号进到前端会变成「一直在更新」
+        metadata.latest_info_version = Some("   ".to_string());
+        assert_eq!(metadata.normalized_info_version(), None);
+        metadata.latest_info_version = Some(" 0.69 ".to_string());
+        assert_eq!(metadata.normalized_info_version().as_deref(), Some("0.69"));
     }
 
     #[test]

@@ -1492,13 +1492,27 @@ pub struct MapRepositoryConfig {
     pub tag: Option<String>,
     #[serde(default = "default_max_release_count")]
     pub max_release_count: u32,
-    /// 强制最新版本号，空 = 按数字段比较取最大。
+    /// 强制最新**地图包版本**，空 = 按数字段比较取最大。
     ///
     /// 只有 tag 模式有意义：资产名里的版本号是作者手写的，`0.7` 在数字比较
     /// 里小于 `0.69`，作者却可能认为前者更新。写了它就等于「按这个号发最新
     /// 版」——前端判定也改成等值才算最新（见 `src/levelSetStatus.ts`）。
+    ///
+    /// 旧名 `latest_version` 依旧可反序列化：已发布出去的地图源文档用的就是它。
+    #[serde(
+        default,
+        alias = "latest_version",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub latest_mapset_version: Option<String>,
+    /// 最新 Release 里 `info` 文件**内**的版本号（Release note 块的
+    /// `latest_info_version`，由 `tools/oc2-info` 自动取）。
+    ///
+    /// `latest_mapset_version` 是作者定义的地图包版本，这一项是包内 info 自报的版本。
+    /// 两者平时相同；作者升了包版本却忘了改 info 版本号时会不同，那时按包版本
+    /// 比较会让用户永远看到「可更新」，前端改用这一项确认「装的就是最新版」。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_version: Option<String>,
+    pub latest_info_version: Option<String>,
     #[serde(default = "default_download_threads")]
     pub download_threads: u32,
     /// 选哪个资产：地图只分发 ZIP。
@@ -1930,12 +1944,18 @@ pub struct MapInfo {
     pub source_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_name_i18n: BTreeMap<String, String>,
-    /// 作者指定的「这就是最新版」的版本号；没写时为 `None`。
+    /// 作者指定的「这就是最新版」的**地图包版本**；没写时为 `None`。
     ///
     /// 前端判定改的是**语义**而不是比较方式：写了它就不再比大小，只比等值
     /// （资产名里的 `0.7` 与 `0.69` 用数字比较会得出反的结论）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_version: Option<String>,
+    pub latest_mapset_version: Option<String>,
+    /// 最新 Release 里 `info` 文件内的版本号；源没声明时为 `None`。
+    ///
+    /// 前端拿它与本地扫出的 `LevelSetInfo.version` 比：相等即「装的就是这一版」，
+    /// 作者忘没忘改 info 里的版本号都不影响结论。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_info_version: Option<String>,
     /// 缓存里最新的 Release tag；没刷新过时为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_tag: Option<String>,

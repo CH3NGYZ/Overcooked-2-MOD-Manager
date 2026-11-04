@@ -24,7 +24,8 @@ import { registerHooks } from 'node:module'
  *   - 重复开始（重播时先 exit 再 start）叠成两倍卡。
  *
  * 所以这里从真实模块出发逐条钉住。示例名字走 `i18n.global.t`，Node 里没有
- * 语言存储，回落到默认语言（zh-CN），只断言「不是 key 原文、且带示例字样」。
+ * 语言存储，回落到默认语言（zh-CN），因此只断言「不是 key 原文」，不锁死具体
+ * 文案 —— 换名字不该让测试红，名字在两页之间对不上才是问题。
  *
  * ## 为什么注册解析钩子
  *
@@ -87,13 +88,14 @@ test('教程运行中且列表为空时补上示例卡片', () => {
     assert.equal(demoActive.value, true)
     const mods = withDemoMods([])
     assert.equal(mods.length, 2)
-    // 名字必须看得懂是示例，不能是语言表 key 原文
+    // 标题取语言表里的社区 MOD 名（BepInEx 配置管理器 / 街机 MOD），
+    // 但必须来自 `t()`、不是 key 原文，且两张卡不能同名
     for (const mod of mods) {
       assert.ok(mod.title && mod.title.length > 0, '示例 MOD 必须有标题')
       assert.ok(!mod.title.startsWith('tutorial.'), `标题不应是 key 原文：${mod.title}`)
-      assert.match(mod.title, /示例|Sample|サンプル|예시|範例/)
       assert.equal(mod.enabled, true)
     }
+    assert.equal(new Set(mods.map((mod) => mod.title)).size, mods.length, '两张示例 MOD 不能同名')
   } finally {
     stopTutorialDemo()
   }
@@ -200,11 +202,15 @@ test('教程期间在线来源 / 仓库 / 地图整体替换真实数据', () =>
       assert.ok(map.level_set_name && map.author, '示例地图必须有关卡集身份')
     }
 
-    // 名字走语言表，必须看得懂是「示例」，不能是 key 原文
-    for (const repo of demoRepositories) {
-      assert.ok(!/^tutorial\./.test(repo.name), `仓库名不该是 key 原文：${repo.name}`)
-      assert.match(repo.name, /示例|Sample|サンプル|예시|範例/)
-    }
+    // 在线仓库与本地示例 MOD 讲的是同一批名字：教程从「安装页」跳到「管理页」，
+    // 用户看到的应该还是同两张卡，不能这边叫 A、那边叫 B
+    const localTitles = withDemoMods([])
+      .map((mod) => mod.title)
+      .sort()
+    assert.deepEqual(demoRepositories.map((repo) => repo.name).sort(), localTitles)
+    assert.ok(!/^tutorial\./.test(demoRepositories[0].name), '仓库名不该是 key 原文')
+
+    // 示例地图仍带「示例」字样：那一步讲的是「内容包长什么样」，不是某个具体社区地图
     for (const map of demoMaps) {
       assert.match(map.name, /示例|Sample|サンプル|예시|範例/)
     }

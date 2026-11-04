@@ -38,8 +38,9 @@ import type {
  *   · 示例仓库与示例地图的 owner 是一个不存在的账号，头像预取必须跳过
  *     （`isDemoOwner`）；示例条目的 README 由 `demoReadme` 直接给内置内容，
  *     不去请求后端（那会按一个不存在的 id 打网络）。
- *   · 示例名字都带「示例 / Sample」字样（`tutorial.demo.*`），用户看得出
- *     这不是自己装的东西。
+ *   · 标题取社区常见的 MOD 名（BepInEx 配置管理器 / 街机 MOD），让教程里
+ *     那一屏就是用户真正会看到的样子；「这是演示数据」由仓库说明、README
+ *     与示例 GUID 前缀承担。
  *   · 教程浮层接管全部点击（点哪儿都是「下一步」），示例卡片不可能被点到，
  *     因此不会触发开关、删除、安装这些写操作；示例资产地址写成 `.invalid`，
  *     万一谁真的发起了下载，也会当场失败而不是打到别的站点。
@@ -98,14 +99,14 @@ function buildDemoMods(): InstalledMod[] {
     {
       name: t('tutorial.demo.modA'),
       title: t('tutorial.demo.modA'),
-      product_name: 'TutorialDemoModA',
-      original_filename: 'TutorialDemoModA.dll',
+      product_name: 'BepInEx.ConfigurationManager',
+      original_filename: 'BepInEx.ConfigurationManager.dll',
       guid: 'oc2.tutorial.demo.mod-a',
-      company: 'OC2 MOD Manager',
+      company: 'BepInEx',
       copyright: t('tutorial.demo.author'),
-      dll_file: 'TutorialDemoModA.dll',
+      dll_file: 'BepInEx.ConfigurationManager.dll',
       enabled: true,
-      version: '1.2.0',
+      version: '17.1',
       version_source: 'metadata',
       update_available: false,
       duplicate_guid: false,
@@ -118,12 +119,12 @@ function buildDemoMods(): InstalledMod[] {
     {
       name: t('tutorial.demo.modB'),
       title: t('tutorial.demo.modB'),
-      product_name: 'TutorialDemoModB',
-      original_filename: 'TutorialDemoModB.dll',
+      product_name: 'ArcadeMod',
+      original_filename: 'ArcadeMod.dll',
       guid: 'oc2.tutorial.demo.mod-b',
       company: 'OC2 MOD Manager',
       copyright: t('tutorial.demo.author'),
-      dll_file: 'TutorialDemoModB.dll',
+      dll_file: 'ArcadeMod.dll',
       enabled: true,
       version: '1.0.4',
       version_source: 'metadata',
@@ -144,10 +145,16 @@ interface DemoVersion {
   downloads: number
 }
 
-/** 一条示例 Release：卡片要的版本号、下载量与资产下拉都由它提供。 */
-function demoRelease(version: DemoVersion): ReleaseInfo {
+/**
+ * 一条示例 Release：卡片要的版本号、下载量与资产下拉都由它提供。
+ *
+ * `assetBase` 必填：资产名会显示在版本下拉与资产列表里，写死示例名会跟卡片
+ * 标题对不上。注意别直接写 `versions.map(demoRelease)` —— 数组 `map` 会把
+ * 下标当第二个参数传进来。
+ */
+function demoRelease(version: DemoVersion, assetBase: string): ReleaseInfo {
   const asset: ReleaseAsset = {
-    name: `TutorialSample-${version.tag}.zip`,
+    name: `${assetBase}-${version.tag}.zip`,
     size: 2_411_520,
     download_count: version.downloads,
     download_url: DEMO_DOWNLOAD_URL,
@@ -168,6 +175,11 @@ interface DemoRepositorySpec {
   id: string
   title: string
   guid: string
+  /** 本地已装匹配用的产品名 / DLL 名：与本地示例 MOD 那张卡保持同一组名字。 */
+  productName: string
+  dllName: string
+  /** Release 资产名前缀（`<assetBase>-<tag>.zip`）。 */
+  assetBase: string
   versions: DemoVersion[]
 }
 
@@ -190,14 +202,14 @@ function demoRepository(spec: DemoRepositorySpec): Repository {
     note: t('tutorial.demo.repoNote'),
     source_id: DEMO_SOURCE_ID,
     plugin_guid: spec.guid,
-    local_product_name: spec.title,
-    local_original_filename: 'TutorialSample.dll',
+    local_product_name: spec.productName,
+    local_original_filename: spec.dllName,
     version_regex: '',
     max_release_count: 10,
     download_threads: 4,
     enabled: true,
     builtin: true,
-    cached_releases: spec.versions.map(demoRelease),
+    cached_releases: spec.versions.map((version) => demoRelease(version, spec.assetBase)),
   }
 }
 
@@ -209,7 +221,7 @@ interface DemoMapSpec {
 }
 
 function demoMap(spec: DemoMapSpec): MapInfo {
-  const releases = spec.versions.map(demoRelease)
+  const releases = spec.versions.map((version) => demoRelease(version, 'TutorialSampleMap'))
   const latest = releases[0] ?? null
   return {
     id: spec.id,
@@ -254,15 +266,21 @@ function buildDemoRepositories(): Repository[] {
       id: `${DEMO_ID_PREFIX}repo-a`,
       title: t('tutorial.demo.modA'),
       guid: 'oc2.tutorial.demo.repo-a',
+      productName: 'BepInEx.ConfigurationManager',
+      dllName: 'BepInEx.ConfigurationManager.dll',
+      assetBase: 'BepInEx.ConfigurationManager',
       versions: [
-        { tag: '1.2.0', published: '2026-05-18T09:00:00Z', downloads: 4120 },
-        { tag: '1.1.0', published: '2026-03-02T09:00:00Z', downloads: 2870 },
+        { tag: '17.1', published: '2026-05-18T09:00:00Z', downloads: 4120 },
+        { tag: '17.0', published: '2026-03-02T09:00:00Z', downloads: 2870 },
       ],
     }),
     demoRepository({
       id: `${DEMO_ID_PREFIX}repo-b`,
       title: t('tutorial.demo.modB'),
       guid: 'oc2.tutorial.demo.repo-b',
+      productName: 'ArcadeMod',
+      dllName: 'ArcadeMod.dll',
+      assetBase: 'ArcadeMod',
       versions: [{ tag: '1.0.4', published: '2026-04-11T09:00:00Z', downloads: 1560 }],
     }),
   ]

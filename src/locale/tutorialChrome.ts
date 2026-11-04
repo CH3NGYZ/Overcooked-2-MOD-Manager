@@ -227,22 +227,23 @@ export const tutorialChrome: DomainMessages = {
    * 教程示例数据（`src/tutorial/demo.ts`）。
    *
    * 新用户磁盘上没有 MOD，「MOD 管理」页连一张卡都不渲染，教程那一步就
-   * 无从框选；教程期间前端补两张带「示例」字样的卡片。名字必须一眼看出
-   * 不是自己的东西，所以都带「示例 / Sample」。
+   * 无从框选；教程期间前端补两张卡片。标题取社区里最常见的两个 MOD 名
+   * （BepInEx 配置管理器 / 街机 MOD），教程讲的版式才像用户真正会看到的
+   * 那一屏；「这是演示数据」由仓库说明、README 与示例 GUID 前缀承担。
    */
   'demo.modA': {
-    'zh-CN': '示例 MOD · 自动上菜助手',
-    'zh-TW': '範例 MOD · 自動上菜助手',
-    en: 'Sample mod · Auto-serve helper',
-    ko: '예시 MOD · 자동 서빙 도우미',
-    ja: 'サンプル MOD・自動配膳ヘルパー',
+    'zh-CN': 'BepInEx 配置管理器',
+    'zh-TW': 'BepInEx 設定管理器',
+    en: 'BepInEx Configuration Manager',
+    ko: 'BepInEx 구성 관리자',
+    ja: 'BepInEx コンフィグマネージャー',
   },
   'demo.modB': {
-    'zh-CN': '示例 MOD · 连击计时器',
-    'zh-TW': '範例 MOD · 連擊計時器',
-    en: 'Sample mod · Combo timer',
-    ko: '예시 MOD · 콤보 타이머',
-    ja: 'サンプル MOD・コンボタイマー',
+    'zh-CN': '街机 MOD',
+    'zh-TW': '街機 MOD',
+    en: 'Arcade Mod',
+    ko: '아케이드 MOD',
+    ja: 'アーケード MOD',
   },
   'demo.author': {
     'zh-CN': '教程示例',
@@ -256,7 +257,8 @@ export const tutorialChrome: DomainMessages = {
    *
    * 两个安装页在教程期间整体换成这一份内置数据：教程讲的是固定的「源分组 →
    * 卡片 → 详情」路径，真实配置为空、或网络根本连不上时，那几步没有东西可指。
-   * 文案都带「示例 / Sample」，用户一眼看得出不是真实仓库。
+   * 源名与分类名都带「示例 / Sample」，用户一眼看得出不是真实仓库；卡片标题
+   * 反过来取社区常见 MOD 名（见上方 `demo.modA`），让教程讲的那一屏更像真的。
    */
   'demo.sourceName': {
     'zh-CN': '示例仓库源',

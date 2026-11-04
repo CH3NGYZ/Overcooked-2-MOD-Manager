@@ -245,7 +245,8 @@ watch(
         role="dialog" aria-modal="true" :aria-label="title" tabindex="-1" @click.stop @wheel.stop
         @keydown.stop>
         <div class="tutorial-card-head">
-          <span class="tutorial-card-count">{{ tutorial.index.value + 1 }} / {{ tutorial.total.value }}</span>
+          <span class="tutorial-card-count"
+            :aria-label="t('tutorial.stepProgress', { n: tutorial.index.value + 1, total: tutorial.total.value })">{{ tutorial.index.value + 1 }} / {{ tutorial.total.value }}</span>
           <n-button class="tutorial-card-skip" size="tiny" quaternary @click.stop="exitTutorial">
             {{ t('tutorial.skip') }}
           </n-button>
@@ -256,7 +257,7 @@ watch(
         <h3 class="tutorial-card-title">{{ title }}</h3>
         <p class="tutorial-card-body">{{ body }}</p>
         <div class="tutorial-card-foot">
-          <span class="tutorial-card-hint">{{ t('tutorial.hint') }}</span>
+          <span class="tutorial-card-hint">{{ t('tutorial.cardHint') }}</span>
           <div class="tutorial-card-actions">
             <n-button v-if="tutorial.index.value > 0" size="small" secondary @click.stop="prevStep">
               {{ t('tutorial.prev') }}

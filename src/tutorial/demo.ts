@@ -122,7 +122,9 @@ function buildDemoMods(): InstalledMod[] {
       product_name: 'ArcadeMod',
       original_filename: 'ArcadeMod.dll',
       guid: 'oc2.tutorial.demo.mod-b',
-      company: 'OC2 MOD Manager',
+      // 厂商照社区里街机 MOD 的作者写，卡片详情的「公司」一栏才像真的；
+      // 「这是演示数据」由 GUID 前缀与仓库说明承担，不靠厂商字段。
+      company: 'CH3NGYZ',
       copyright: t('tutorial.demo.author'),
       dll_file: 'ArcadeMod.dll',
       enabled: true,

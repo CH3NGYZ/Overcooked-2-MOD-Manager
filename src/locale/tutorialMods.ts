@@ -164,10 +164,10 @@ export const tutorialMods: DomainMessages = {
     ja: 'ローカル MOD のカード',
   },
   'mods.localCard.body': {
-    'zh-CN': '一行就是一个 MOD：左边开关，中间标题带版本号，右边是状态标签和删除、配置等按钮，点卡片展开详情。（本地还没装 MOD 时，教程会补两张带「示例」字样的卡片。）',
-    'zh-TW': '一行就是一個 MOD：左邊開關，中間標題帶版本號，右邊是狀態標籤和刪除、設定等按鈕，點卡片展開詳情。（本機還沒裝 MOD 時，教學會補兩張帶「範例」字樣的卡片。）',
-    en: 'One row per MOD: switch on the left, title and version in the middle, tags and actions on the right. Click to expand details. (If nothing is installed yet, the tutorial shows two sample cards marked “Sample”.)',
-    ko: '한 줄이 MOD 하나입니다. 왼쪽은 스위치, 가운데는 버전이 붙은 제목, 오른쪽은 상태 태그와 삭제·설정 버튼이고, 카드를 클릭하면 상세가 펼쳐집니다. (아직 설치된 MOD가 없으면 튜토리얼이 “예시”라고 표시된 카드 두 개를 대신 보여 줍니다.)',
-    ja: '1 行が 1 つの MOD です。左がスイッチ、中央がバージョン付きのタイトル、右が状態タグと削除・設定ボタン。カードをクリックすると詳細が開きます。(まだ MOD を入れていない場合、チュートリアルでは「サンプル」と付いたカードを 2 枚表示します。)',
+    'zh-CN': '一行就是一个 MOD：左边开关，中间标题带版本号，右边是状态标签和删除、配置等按钮，点卡片展开详情。（本地还没装 MOD 时，教程会补两张示例卡片，用来演示版式。）',
+    'zh-TW': '一行就是一個 MOD：左邊開關，中間標題帶版本號，右邊是狀態標籤和刪除、設定等按鈕，點卡片展開詳情。（本機還沒裝 MOD 時，教學會補兩張範例卡片，用來示範版式。）',
+    en: 'One row per MOD: switch on the left, title and version in the middle, tags and actions on the right. Click to expand details. (If nothing is installed yet, the tour fills in two sample cards so the layout has something to show.)',
+    ko: '한 줄이 MOD 하나입니다. 왼쪽은 스위치, 가운데는 버전이 붙은 제목, 오른쪽은 상태 태그와 삭제·설정 버튼이고, 카드를 클릭하면 상세가 펼쳐집니다. (아직 설치된 MOD가 없으면 튜토리얼이 예시 카드 두 개를 대신 보여 줍니다.)',
+    ja: '1 行が 1 つの MOD です。左がスイッチ、中央がバージョン付きのタイトル、右が状態タグと削除・設定ボタン。カードをクリックすると詳細が開きます。(まだ MOD を入れていない場合、チュートリアルがサンプルカードを 2 枚表示します。)',
   },
 }

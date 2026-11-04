@@ -18,6 +18,7 @@ const {
   dependencyRowFromRelation,
   installedModRelations,
   installedModDependencyRows,
+  mergedModDependencyRows,
   levelSetRelations,
   levelSetDependencyRows,
   mapRelations,
@@ -351,6 +352,54 @@ test('MOD 管理页的行：用已装版本筛 release_relations，名称走在�
   assert.equal(rows.length, 1)
   assert.equal(rows[0].name, '框架')
   assert.equal(rows[0].status, 'tools.installable')
+})
+
+test('包外壳的依赖表合并全部成员：高版本成员的覆盖规则不会被低版本成员盖掉', () => {
+  const bundle = repo({
+    id: 'bundle',
+    plugin_guid: 'dev.bundle',
+    name_i18n: { 'zh-CN': '前置包' },
+    relations: [{ kind: 'requires', guid: 'dev.diy' }],
+    release_relations: [
+      { version: '==3.10.2', relations: [{ kind: 'requires', guid: 'dev.diy', version: '>=0.10.0' }] },
+    ],
+  })
+  const diy = repo({
+    id: 'diy',
+    plugin_guid: 'dev.diy',
+    name_i18n: { 'zh-CN': 'DIYLevel' },
+    cached_releases: [release('0.10.0')],
+  })
+  const installedDiy = mod({
+    name: 'DIYLevel.dll',
+    dll_file: 'DIYLevel.dll',
+    guid: 'dev.diy',
+    version: '0.9.9',
+  })
+  // 同一个包里的两支 DLL：只有 3.10.2 命中覆盖规则，2.0.0 只有仓库级声明
+  const low = mod({
+    name: 'debugLog.dll',
+    dll_file: 'debugLog.dll',
+    repository_id: 'bundle',
+    guid: 'dev.bundle.debug',
+    version: '2.0.0',
+  })
+  const high = mod({
+    name: 'Loader.dll',
+    dll_file: 'Loader.dll',
+    repository_id: 'bundle',
+    guid: 'dev.bundle',
+    version: '3.10.2',
+  })
+  const options = { mods: [installedDiy], repositories: [bundle, diy], translate: keyOf }
+
+  // 只按低版本成员算：仓库级声明不设区间 → 「已满足」，与包标题的「缺依赖」自相矛盾
+  assert.equal(installedModDependencyRows(low, options)[0].status, 'tools.satisfied')
+
+  // 合并后取严：>=0.10.0 遇上本地 0.9.9 → 依赖表说可更新；包标题按新规则写「缺依赖」，两者指向同一件事（那个前置要升级）
+  const merged = mergedModDependencyRows([low, high], options)
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].status, 'tools.updatable')
 })
 
 test('地图关系：在线条目在就按在线，不在才用本地快照', () => {

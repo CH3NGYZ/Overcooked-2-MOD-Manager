@@ -25,7 +25,7 @@ import {
   installedModTags, summarizeUnits, packageStatuses, type StatusSummary,
 } from '../statusTags'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
-import { installedModDependencyRows } from '../dependencyRows'
+import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
 import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
 import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
@@ -711,18 +711,34 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
 }
 
 /**
- * 冲突的「去卸载」：确认后卸掉关系里指名的那个 MOD。
+ * 「去卸载」：把关系里点名的那张已安装卡片滚到视口中间并高亮。
  *
- * 只卸冲突对方，不动声明方 —— 声明方是用户想留下的那个（它是当前看板
- * 卡片的归属），卸错了就要重新装一遍。多个 MOD 同时冲突时也只处理
- * 当前这条关系，逐个解决比一次卸一堆更可控。
+ * 冲突的收尾确实是卸载「对方」，但这里不直接弹确认框：用户点的是 A 卡上的
+ * 「去卸载」，要卸的却可能是 B —— 直接弹框等于让人对着一张还没见过的卡签字，
+ * 卸错了还得重装一遍。先把 B 带到他眼前，删不删由他在那张卡上决定；从 B 的
+ * 卡片删也走同一条 `remove` 流程（含后端要求整包确认的分支）。
+ *
+ * 分类收起时卡片不渲染（折叠体是 `n-collapse` 的内容插槽），`querySelector`
+ * 会一直找不到，所以先展开目标所在的分类，并把「刚展开过」交给 `focusStatus`
+ * 等高度动画结束再滚。`dependency_conflict` 只是用来点亮同状态的卡片，
+ * 真正的落点由 `targetAnchor` 的脉冲指出来。
  */
-function uninstallConflict(mod: InstalledMod, target: InstalledMod) {
-  remove(target, {
-    title: t('modsOnline.uninstallConflictingMod'),
-    body: (name) => t('modsOnline.isIncompatibleWithAndMustBeUninstalledContinue',
-      { name, owner: modTitle(mod) }),
-  })
+function locateConflict(target: InstalledMod) {
+  const anchor = modAnchor(target)
+  const groupKey = groups.value.find((group) =>
+    group.packages.some((pkg) => pkg.mods.some((mod) => mod.dll_file === target.dll_file)),
+  )?.key
+  let opened = false
+  if (groupKey && collapsedGroups.value.includes(groupKey)) {
+    collapsedGroups.value = collapsedGroups.value.filter((value) => value !== groupKey)
+    opened = true
+  }
+  focusStatus(
+    'dependency_conflict',
+    () => document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
+    opened,
+    anchor,
+  )
 }
 
 /**
@@ -1027,7 +1043,7 @@ function packageAction(pkg: ModPackageNode) {
  *   - update：预下载 → 安装详情弹窗 → 用户确认（与仓库卡片安装同一套）
  *   - refresh：只重拉这一条仓库的 Release，不下载任何文件
  *   - install-dependency：跳到 MOD 安装页并定位到该仓库卡片
- *   - uninstall-conflict：确认后卸载关系里指名的那个 MOD
+ *   - uninstall-conflict：跳到关系里指名的那个 MOD 卡片上（由用户自己决定删不删）
  */
 function runCardAction(mod: InstalledMod) {
   const context = cardAction(mod)
@@ -1038,7 +1054,7 @@ function runCardAction(mod: InstalledMod) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
     linkToRepository(context.repository.id)
   } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
-    uninstallConflict(mod, context.conflictMod)
+    locateConflict(context.conflictMod)
   } else if (context.repository) {
     void refreshRepository(context.repository)
   }
@@ -1047,11 +1063,9 @@ function runCardAction(mod: InstalledMod) {
 function runPackageAction(pkg: ModPackageNode) {
   const context = packageAction(pkg)
   if (!context) return
-  const first = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
   if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
-    // 要卸的是「对方」，但当前这一方必须是真正声明关系的成员
-    const owner = relationOwnerMod(pkg) ?? first
-    if (owner) uninstallConflict(owner, context.conflictMod)
+    // 要卸的是「对方」；先带用户到那张卡上（见 `locateConflict`）
+    locateConflict(context.conflictMod)
     return
   }
   if (!context.repository) return
@@ -1262,21 +1276,24 @@ function modDependencyRows(mod: InstalledMod): DependencyRow[] {
 }
 
 /**
- * 多 DLL 包外壳的依赖表行。
+ * 多 DLL 包外壳的依赖表行：合并包内每个成员自己的关系表。
  *
  * 包的关系声明挂在仓库上、整包共用，所以整包只出一张表，放在整批子卡片**下面**
  * （先看包里有什么，再看这个包对外要求什么）；子卡片不再各自显示，同一段声明
  * 重复 N 次只是噪音。
  *
- * 代表成员取「非依赖且绑定了仓库」的那个：纯依赖 DLL 的清单快照里没有声明，
- * 直接拿 `pkg.mods[0]` 当代表时，若它恰好是依赖 DLL（DIYLevel 这类包很常见），
- * 整包的表会凭空消失。口径与 `packageAction` 取 base 一致。
+ * 不能只取一个代表成员：`release_relations` 按已装版本筛，一支 3.10.2 的 DLL
+ * 命中 `==3.10.2` 规则要求「DIYLevel ≥ 0.10.0」，另一支 2.0.0 只拿到仓库级
+ * 声明（不设区间）。只取首个成员会让表里写「已满足」、包标题却按另一支算出
+ * 「缺依赖」—— 同一张卡上下自相矛盾。合并口径见 `mergedModDependencyRows`。
  */
 function packageDependencyRows(pkg: ModPackageNode): DependencyRow[] {
-  const owner = pkg.mods.find((mod) => !mod.is_dependency && !!repositoryForMod(repositories.value, mod))
-    ?? pkg.mods.find((mod) => !mod.is_dependency)
-    ?? pkg.mods[0]
-  return owner ? modDependencyRows(owner) : []
+  return mergedModDependencyRows(pkg.mods.filter((mod) => !mod.is_dependency), {
+    mods: mods.value,
+    repositories: repositories.value,
+    translate: t,
+    pickName: pickI18n,
+  })
 }
 
 /**

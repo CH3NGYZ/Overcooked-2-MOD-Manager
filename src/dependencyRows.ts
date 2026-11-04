@@ -28,6 +28,7 @@ import {
   relationsForMapRelease,
   resolveRelation,
   relationsForRelease,
+  stricterRelation,
   type RelationStatus,
 } from './modRelations.ts'
 import { isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
@@ -407,6 +408,48 @@ export function installedModDependencyRows(
  * 与 MOD 侧同一套口径：地图声明的前置（DIYLevel、Web Runtime）本身就是仓库
  * 里的 MOD，能装就跳过去装，没有来源才是纯文字「缺依赖」。
  */
+/**
+ * 多 DLL 包外壳的依赖表行：把包内每个成员自己的关系表合起来看。
+ *
+ * ## 为什么不能只取一个代表成员
+ *
+ * 包的关系声明挂在仓库上，但 `release_relations` 按**已装版本**筛：一个包里
+ * 装着 3.10.2 与 2.0.0 两支 DLL 时，前者命中 `==3.10.2` 覆盖规则（要求
+ * DIYLevel ≥ 0.10.0），后者只有仓库级声明（不设区间）。只取首个成员当代表，
+ * 依赖表就会随成员顺序变脸：表里写「已满足」，包标题却按另一支成员算出
+ * 「缺依赖」—— 同一张卡上下自相矛盾，用户只能来问「低版本怎么还显示缺依赖」。
+ *
+ * 合并口径：按 `(kind, guid)` 去重，`requires` 取区间下限更高的一条
+ * （`stricterRelation`），其余种类保留先出现的。包对外只该有一个结论。
+ */
+export function mergedModDependencyRows(
+  members: readonly InstalledMod[],
+  options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
+): DependencyRow[] {
+  const repositories = options.repositories ?? []
+  const merged: RepositoryRelation[] = []
+  let ownerRepository: Repository | undefined
+  for (const mod of members) {
+    if (mod.is_dependency) continue
+    ownerRepository ??= repositoryForMod([...repositories], mod)
+    for (const relation of installedModRelations(mod, repositories)) {
+      const kind = relation.kind ?? 'requires'
+      const guid = relation.guid.trim().toLowerCase()
+      const index = merged.findIndex((existing) => (
+        (existing.kind ?? 'requires') === kind && existing.guid.trim().toLowerCase() === guid
+      ))
+      if (index < 0) merged.push(relation)
+      else merged[index] = stricterRelation(merged[index], relation)
+    }
+  }
+  if (!merged.length) return []
+  return dependencyRowsFor(merged, {
+    ...options,
+    ownerRepository,
+    jumpToRepository: options.jumpToRepository ?? true,
+  })
+}
+
 export function mapDependencyRows(
   map: MapInfo | null | undefined,
   options: Omit<DependencyRowOptions, 'ownerRepository'> = {},

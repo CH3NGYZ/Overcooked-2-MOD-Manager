@@ -839,10 +839,30 @@ export interface PublishAsset {
 }
 
 /**
+ * 「新增资产」时后端对本地 ZIP 的识别结果。
+ *
+ * `mapset_version` 来自 ZIP 文件名（要写进 `latest_mapset_version` 并渲染进
+ * 附件名），`info_version` 来自包内 `info`（写进 `latest_info_version` 供作者
+ * 核对）。`set_count > 1` 说明拖进来的是合集，界面必须提示作者。
+ */
+export interface PublishZipInspection {
+  file_name: string
+  mapset_version: string
+  info_version: string
+  level_set_name: string
+  level_set_name_zh: string
+  author: string
+  level_count: number
+  file_count: number
+  set_count: number
+  requires: Record<string, string>
+}
+
+/**
  * Release 说明里 `<!-- oc2-map -->` 块的投影。
  *
  * `asset` 是**带 `${version}` 占位符的模板**（后端生成时用），上传附件前要
- * 用当前 tag 渲染成真实文件名，否则管理器按模板匹配不到 ZIP。
+ * 用这一版的版本号渲染成真实文件名，否则管理器按模板匹配不到 ZIP。
  */
 export interface MapPublishMetadata {
   level_set_name: string

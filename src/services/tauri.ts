@@ -45,6 +45,7 @@ import type {
   PublishRepositoryList,
   PublishSaveRequest,
   PublishUploadRequest,
+  PublishZipInspection,
   StagedMapSource,
 } from '../types'
 
@@ -433,6 +434,9 @@ export const api = {
     invoke<PublishAsset>('upload_publish_asset', { request }),
   deletePublishAsset: (owner: string, repository: string, assetId: number) =>
     invoke<OperationResult>('delete_publish_asset', { owner, repository, assetId }),
+  /** 识别本地地图 ZIP（版本号、info、requires）；重活，后端在 spawn_blocking 里跑。 */
+  inspectPublishZip: (path: string) =>
+    invoke<PublishZipInspection>('inspect_publish_zip', { path }),
 }
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

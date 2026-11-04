@@ -1,6 +1,7 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
+import { defaultTemplate, isMapVersion, renderAssetName } from '../mapPublishAsset'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useNotify } from '../useNotify'
 import type {
@@ -10,6 +11,7 @@ import type {
   PublishAuthorization,
   PublishRelease,
   PublishRepository,
+  PublishZipInspection,
 } from '../types'
 
 /**
@@ -37,27 +39,36 @@ export interface CreateRepositoryInput {
 }
 
 /**
- * 把元数据里的附件模板渲染成这一版的真实附件名。
+ * 某一版要上传的附件名 = 元数据模板 + 这一版的版本号。
  *
- * 后端保存时若 `asset` 为空会生成 `<slug>-${version}.zip`，管理器再用
- * `versioned_asset_rule` 把模板变成按版本匹配的正则；上传的附件名必须与
- * 渲染结果完全一致，否则发布出去的地图在管理器里找不到 ZIP。
+ * tag 是地图身份、不参与命名；版本号只存在于附件名里（管理器用
+ * `versioned_asset_rule` 从附件名抽），所以必须显式传版本号。渲染规则在
+ * `mapPublishAsset.ts`，与发布页的预览共用一份。
  */
-export function assetNameFor(release: PublishRelease): string {
-  const template = release.metadata?.asset.trim() ?? ''
-  const fallback = `${release.tag}.zip`
-  if (!template) return fallback
-  return safeAssetName(template.split('${version}').join(release.tag), fallback)
+export function assetNameFor(release: PublishRelease, version: string): string {
+  return renderAssetName(
+    release.metadata?.asset ?? '',
+    release.metadata?.level_set_name ?? '',
+    version,
+  )
 }
 
-/** 附件名只允许 `A-Z a-z 0-9 . _ -`，其余字符替换成 `-`（GitHub 查询串会变形）。 */
-function safeAssetName(name: string, fallback: string): string {
-  const cleaned = name
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/-{2,}/g, '-')
-    .replace(/^[.-]+|[.-]+$/g, '')
-    .slice(0, 200)
-  return cleaned || fallback
+/** 这个 Release 还没有 `oc2-map` 块时的空元数据（新增第一份资产时补上）。 */
+function blankMetadata(): MapPublishMetadata {
+  return {
+    level_set_name: '',
+    level_set_name_zh: '',
+    author: '',
+    name_i18n: {},
+    group_i18n: {},
+    note_i18n: {},
+    asset: '',
+    latest_mapset_version: '',
+    latest_info_version: '',
+    requires: {},
+    compatible: {},
+    conflicts: {},
+  }
 }
 
 /**
@@ -91,6 +102,10 @@ export function useMapPublish() {
 
   const uploading = ref(false)
   const deletingAsset = ref(false)
+  /** 「新增资产」弹窗里正在识别 ZIP（解析 `info` 可能要几十秒）。 */
+  const inspecting = ref(false)
+  /** 上传附件 + 写回 Release note 的整段。 */
+  const publishing = ref(false)
 
   /** 授权到本 App 的安装数量；0 表示还没装过 App。 */
   const installationCount = ref(0)
@@ -379,7 +394,10 @@ export function useMapPublish() {
     }
   }
 
-  async function saveRelease(input: SaveReleaseInput): Promise<PublishRelease | null> {
+  async function saveRelease(
+    input: SaveReleaseInput,
+    options: { quiet?: boolean } = {},
+  ): Promise<PublishRelease | null> {
     const repository = selectedRepository.value
     if (!repository || savingRelease.value) return null
     savingRelease.value = true
@@ -395,7 +413,7 @@ export function useMapPublish() {
         prerelease: input.prerelease,
         metadata: input.metadata,
       })
-      message.success(t('mapPublish.saved'))
+      if (!options.quiet) message.success(t('mapPublish.saved'))
       await loadReleases()
       return saved
     } catch (reason) {
@@ -433,9 +451,24 @@ export function useMapPublish() {
     }
   }
 
-  async function uploadAsset(release: PublishRelease, path: string): Promise<boolean> {
+  async function uploadAsset(release: PublishRelease, path: string, version: string): Promise<boolean> {
     const repository = selectedRepository.value
     if (!repository || uploading.value) return false
+    const versionText = version.trim()
+    if (!versionText) {
+      message.warning(t('mapPublish.missingVersion'))
+      return false
+    }
+    if (!isMapVersion(versionText)) {
+      message.warning(t('mapPublish.invalidVersion', { value: versionText }))
+      return false
+    }
+    const name = assetNameFor(release, versionText)
+    if (!name) {
+      // 模板里没有版本占位符：传上去管理器也抽不出版本，先拦住。
+      message.warning(t('mapPublish.assetNeedsVersion'))
+      return false
+    }
     uploading.value = true
     try {
       await api.uploadPublishAsset({
@@ -443,7 +476,7 @@ export function useMapPublish() {
         repository: repository.name,
         release_id: release.id,
         path,
-        name: assetNameFor(release),
+        name,
       })
       message.success(t('mapPublish.uploaded'))
       await loadReleases()
@@ -453,6 +486,101 @@ export function useMapPublish() {
       return false
     } finally {
       uploading.value = false
+    }
+  }
+
+
+  /** 识别本地 ZIP：`info` 解析是重活，后端在 spawn_blocking 里跑。 */
+  async function inspectZip(path: string): Promise<PublishZipInspection | null> {
+    if (inspecting.value) return null
+    inspecting.value = true
+    try {
+      return await api.inspectPublishZip(path)
+    } catch (reason) {
+      fail(reason)
+      return null
+    } finally {
+      inspecting.value = false
+    }
+  }
+
+  /**
+   * 「新增资产」：上传 ZIP 附件，再把这一版的版本号写回 Release note。
+   *
+   * 两步的顺序不能反：先落附件（消费端按附件名抽版本），再改 note 的
+   * `latest_mapset_version`。note 写失败时附件已经传上去了，所以只提示
+   * 「附件已传、说明没更新」，并把列表刷新出来让作者手动重试。
+   */
+  async function publishVersion(
+    release: PublishRelease,
+    path: string,
+    version: string,
+    inspection: PublishZipInspection,
+  ): Promise<boolean> {
+    const repository = selectedRepository.value
+    if (!repository || publishing.value) return false
+    const versionText = version.trim()
+    if (!versionText) {
+      message.warning(t('mapPublish.missingVersion'))
+      return false
+    }
+    if (!isMapVersion(versionText)) {
+      message.warning(t('mapPublish.invalidVersion', { value: versionText }))
+      return false
+    }
+    const base = release.metadata ?? blankMetadata()
+    // 老 Release 可能还没有关卡集名（第一次上传），用这次识别出来的补上，
+    // 否则默认模板会渲染成 `-1.2.0.zip`。
+    const levelSetName = base.level_set_name.trim() || inspection.level_set_name.trim()
+    const name = renderAssetName(base.asset, levelSetName, versionText)
+    if (!name) {
+      message.warning(t('mapPublish.assetNeedsVersion'))
+      return false
+    }
+    publishing.value = true
+    try {
+      await api.uploadPublishAsset({
+        owner: repository.owner,
+        repository: repository.name,
+        release_id: release.id,
+        path,
+        name,
+      })
+      const saved = await saveRelease(
+        {
+          releaseId: release.id,
+          tag: release.tag,
+          title: release.title,
+          body: release.body,
+          draft: release.draft,
+          prerelease: release.prerelease,
+          metadata: {
+            ...base,
+            level_set_name: levelSetName,
+            level_set_name_zh: base.level_set_name_zh.trim() || inspection.level_set_name_zh.trim(),
+            author: base.author.trim() || inspection.author.trim(),
+            asset: base.asset.trim() || defaultTemplate(levelSetName),
+            latest_mapset_version: versionText,
+            latest_info_version: inspection.info_version.trim() || base.latest_info_version,
+            requires:
+              Object.keys(base.requires).length > 0 ? base.requires : inspection.requires,
+          },
+        },
+        { quiet: true },
+      )
+      if (!saved) {
+        await loadReleases()
+        message.warning(t('mapPublish.publishedWithoutNote', { name }))
+        return false
+      }
+      await loadReleases()
+      message.success(t('mapPublish.versionPublished', { version: versionText }))
+      return true
+    } catch (reason) {
+      fail(reason)
+      return false
+    } finally {
+      publishing.value = false
     }
   }
 
@@ -502,6 +630,8 @@ export function useMapPublish() {
     deletingRelease,
     uploading,
     deletingAsset,
+    inspecting,
+    publishing,
     loadState,
     startSignIn,
     startSignInAnyway,
@@ -514,5 +644,7 @@ export function useMapPublish() {
     deleteRelease,
     uploadAsset,
     deleteAsset,
+    inspectZip,
+    publishVersion,
   }
 }

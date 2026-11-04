@@ -30,10 +30,8 @@ const {
   authLoading,
   authenticated,
   needsInstall,
-  installWaiting,
   allRepositories,
   openInstallPage,
-  startInstall,
   signingIn,
   signingOut,
   authorization,
@@ -52,6 +50,7 @@ const {
   deletingAsset,
   loadState,
   startSignIn,
+  startSignInAnyway,
   cancelSignIn,
   signOut,
   refreshRepositories,
@@ -465,9 +464,15 @@ function confirmDeleteAsset(asset: PublishAsset) {
 
         <div v-else-if="authorization" class="auth-block">
           <p class="hint no-top">{{ t('mapPublish.waiting') }}</p>
+          <p v-if="authorization.mode === 'install'" class="hint no-top">
+            {{ t('mapPublish.installFallbackHint') }}
+          </p>
           <code class="auth-url mono">{{ authorization.authorize_url }}</code>
           <div class="code-actions">
             <n-button size="tiny" @click="reopenAuthorization">{{ t('mapPublish.reopenBrowser') }}</n-button>
+            <n-button v-if="authorization.mode === 'install'" size="tiny" @click="startSignInAnyway">
+              {{ t('mapPublish.signInAnyway') }}
+            </n-button>
             <n-button size="tiny" @click="cancelSignIn">{{ t('mapPublish.cancelSignIn') }}</n-button>
           </div>
         </div>
@@ -491,14 +496,12 @@ function confirmDeleteAsset(asset: PublishAsset) {
           <h3 class="settings-title">{{ t('mapPublish.repositories') }}</h3>
 
           <div v-if="needsInstall" class="auth-block">
-            <p class="state-line">
-              <n-spin v-if="installWaiting" size="small" />
-              <span>{{ installWaiting ? t('mapPublish.installWaiting') : t('mapPublish.installStepHint') }}</span>
-            </p>
+            <p class="hint no-top">{{ t('mapPublish.installStepHint') }}</p>
             <p class="hint no-top">{{ t('mapPublish.repositoryEmptyInstall') }}</p>
             <div class="code-actions">
-              <n-button size="tiny" type="primary" @click="startInstall">
-                {{ installWaiting ? t('mapPublish.reopenInstallPage') : t('mapPublish.installAppNow') }}
+              <n-button size="tiny" type="primary" :loading="signingIn" :disabled="signingIn"
+                @click="startSignIn">
+                {{ t('mapPublish.installAppNow') }}
               </n-button>
             </div>
           </div>
@@ -574,25 +577,35 @@ function confirmDeleteAsset(asset: PublishAsset) {
 
     <p class="page-intro muted">{{ t('mapPublish.subtitle') }}</p>
 
-    <!-- 未登录：主区只留登录入口，账号与仓库范围都在右上角设置面板里 -->
+    <!-- 未登录：主区只留入口；没装过 App 时按钮直接打开安装页，装与选仓库一步完成 -->
     <section v-if="!authenticated" class="group">
-      <h2 class="group-title">{{ t('mapPublish.signIn') }}</h2>
+      <h2 class="group-title">
+        {{ auth?.installed ? t('mapPublish.signIn') : t('mapPublish.installAppNow') }}
+      </h2>
       <div class="panel">
         <div v-if="!authReady" class="state-line">
           <n-spin size="small" />
           <span>{{ t('common.loading') }}</span>
         </div>
         <template v-else>
-          <p class="hint no-top">{{ t('mapPublish.connectRequired') }}</p>
+          <p class="hint no-top">
+            {{ auth?.installed ? t('mapPublish.connectRequired') : t('mapPublish.installStepHint') }}
+          </p>
           <p v-if="auth && !auth.secret_configured" class="warn no-top">{{ t('mapPublish.secretMissing') }}</p>
           <p v-else-if="authPhase === 'expired'" class="warn no-top">{{ t('mapPublish.expired') }}</p>
           <p v-else-if="authPhase === 'denied'" class="warn no-top">{{ t('mapPublish.denied') }}</p>
           <p v-else-if="authPhase === 'failed'" class="warn no-top">{{ authFailure }}</p>
           <p v-if="authorization" class="hint">{{ t('mapPublish.waiting') }}</p>
+          <p class="hint no-top">
+            {{ t('mapPublish.installFallbackHint') }}
+          </p>
           <div class="actions">
             <n-button size="small" type="primary" :loading="signingIn"
               :disabled="signingIn || (auth !== null && !auth.secret_configured)" @click="startSignIn">
-              {{ t('mapPublish.signIn') }}
+              {{ auth?.installed ? t('mapPublish.signIn') : t('mapPublish.installAppNow') }}
+            </n-button>
+            <n-button size="small" @click="startSignInAnyway">
+              {{ t('mapPublish.signInAnyway') }}
             </n-button>
             <n-button v-if="authorization" size="small" @click="reopenAuthorization">
               {{ t('mapPublish.reopenBrowser') }}
@@ -617,16 +630,26 @@ function confirmDeleteAsset(asset: PublishAsset) {
           <p v-if="needsInstall" class="hint no-top">{{ t('mapPublish.installStepHint') }}</p>
           <p v-else-if="!repositories.length" class="hint no-top">{{ t('mapPublish.repositoryEmpty') }}</p>
           <p v-else class="hint no-top">{{ t('mapPublish.chooseRepositoryHint') }}</p>
-          <p v-if="installWaiting" class="state-line">
-            <n-spin size="small" />
-            <span>{{ t('mapPublish.installWaiting') }}</span>
+          <p v-if="authorization" class="hint no-top">{{ t('mapPublish.waiting') }}</p>
+          <p class="hint no-top">
+            {{ t('mapPublish.installFallbackHint') }}
           </p>
           <div class="actions">
-            <n-button v-if="needsInstall" size="small" type="primary" @click="startInstall">
-              {{ installWaiting ? t('mapPublish.reopenInstallPage') : t('mapPublish.installAppNow') }}
+            <n-button v-if="needsInstall" size="small" type="primary" :loading="signingIn"
+              :disabled="signingIn" @click="startSignIn">
+              {{ t('mapPublish.installAppNow') }}
+            </n-button>
+            <n-button size="small" @click="startSignInAnyway">
+              {{ t('mapPublish.signInAnyway') }}
             </n-button>
             <n-button v-if="!needsInstall" size="small" type="primary" @click="openSettings">
               {{ t('mapPublish.selectRepository') }}
+            </n-button>
+            <n-button v-if="authorization" size="small" @click="reopenAuthorization">
+              {{ t('mapPublish.reopenBrowser') }}
+            </n-button>
+            <n-button v-if="authorization" size="small" @click="cancelSignIn">
+              {{ t('mapPublish.cancelSignIn') }}
             </n-button>
           </div>
         </template>

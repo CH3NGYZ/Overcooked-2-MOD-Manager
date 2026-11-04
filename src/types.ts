@@ -776,6 +776,13 @@ export interface PublishAuthState {
   client_id: string
   /** GitHub App 安装入口：仓库可见范围由「安装时勾了哪些仓库」决定。 */
   install_url: string
+  /**
+   * 已经记下上次安装的 installation id。
+   *
+   * 为 true 时登录只重新授权（不再经过安装页），列仓库也按这个 id 直查 ——
+   * `/user/installations` 是最终一致的，刚装完时它可能还返回空。
+   */
+  installed: boolean
   /** 构建时有没有注入 GitHub App 的 Client Secret（没有就换不到 Token）。 */
   secret_configured: boolean
 }
@@ -784,6 +791,13 @@ export interface PublishAuthState {
 export interface PublishAuthorization {
   authorize_url: string
   expires_in: number
+  /**
+   * 这次打开的是哪个页面。
+   *
+   * `install` 是 App 安装页（第一次用，装 App 与勾仓库一步完成，回调带回
+   * `installation_id`）；`authorize` 是纯 OAuth 授权（已经装过）。
+   */
+  mode: 'install' | 'authorize'
 }
 
 /**

@@ -406,7 +406,8 @@ export const api = {
   /** 当前登录状态：不联网，进页面先调。 */
   mapPublishState: () => invoke<PublishAuthState>('map_publish_state'),
   /** 启动 GitHub App 用户授权：后端自己打开系统浏览器并监听本机回调端口。 */
-  startGithubAuthorization: () => invoke<PublishAuthorization>('start_github_authorization'),
+  startGithubAuthorization: (forceAuthorize = false) =>
+    invoke<PublishAuthorization>('start_github_authorization', { forceAuthorize }),
   /** 前端每秒查一次；推荐直接轮询，不要在这里加延迟。 */
   pollGithubAuthorization: () => invoke<PublishAuthPoll>('poll_github_authorization'),
   /** 取消待授权流程，释放本机回调端口（离开上传页时必须调）。 */

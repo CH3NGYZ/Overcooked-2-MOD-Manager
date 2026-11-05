@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -8,11 +9,33 @@ import { BUILD_KEYS, RELEASE_OWNER, RELEASE_REPO } from './release-lib.mjs'
 export const MAX_CACHE_BYTES = 1800 * 1024 * 1024
 export const CACHE_DIRECTORY = 'src-tauri/target/ci-build-cache'
 const manifestReserve = 64 * 1024
-const prefix = 'oc2-build-v1-'
+const prefix = 'oc2-build-v2-'
+const legacyFixedPrefix = 'oc2-build-v1-'
 
-export function cacheKey(target) {
+/**
+ * 依赖指纹：npm 与 Cargo 的 lock 文件一起算，任一变化就换新键。
+ *
+ * 键带指纹是为了让 main 上的刷新任务能先用 `lookup-only` 判断「缓存是否
+ * 已是最新」——依赖没变时命中同一个键，刷新任务几秒结束，不必再跑一遍
+ * 三平台完整构建。tag 构建用前缀 `restore-keys` 仍能命中旧指纹的缓存。
+ */
+function dependencyHash(root) {
+  const hash = createHash('sha256')
+  for (const file of ['package-lock.json', 'src-tauri/Cargo.lock']) {
+    hash.update(readFileSync(join(root, file)))
+  }
+  return hash.digest('hex').slice(0, 12)
+}
+
+export function cacheKey(target, root = process.cwd()) {
   if (!Object.hasOwn(BUILD_KEYS, target)) throw new Error('Unsupported build-cache target')
-  return `${prefix}${target}`
+  return `${prefix}${target}-${dependencyHash(root)}`
+}
+
+/** 同 target 的前缀键：`restore-keys` 与旧键清理都用它。 */
+export function cacheKeyPrefix(target) {
+  if (!Object.hasOwn(BUILD_KEYS, target)) throw new Error('Unsupported build-cache target')
+  return `${prefix}${target}-`
 }
 
 function below(base, path) {
@@ -183,8 +206,12 @@ function legacyNodePrefix(target) {
 
 export function managedCache(key, target) {
   cacheKey(target)
-  return typeof key === 'string' && (key === cacheKey(target) || key.startsWith(legacyNodePrefix(target))
-    || new RegExp(`^v[0-9]+-rust-${target}-build-`).test(key))
+  return typeof key === 'string' && (
+    key.startsWith(cacheKeyPrefix(target))
+    || key === `${legacyFixedPrefix}${target}`
+    || key.startsWith(legacyNodePrefix(target))
+    || new RegExp(`^v[0-9]+-rust-${target}-build-`).test(key)
+  )
 }
 
 export function cacheRefreshSource(env = process.env, event) {
@@ -281,6 +308,15 @@ async function main() {
     return
   }
   cacheKey(target)
+  /*
+   * `init` 只解析键与路径，不需要 Rust 工具链：刷新任务用它做 `lookup-only`
+   * 预检时，命中缓存就应当在安装 Rust 之前结束，几秒收工。
+   */
+  if (command === 'init') {
+    appendFileSync(process.env.GITHUB_OUTPUT, `key=${cacheKey(target)}\nrestore-key=${cacheKeyPrefix(target)}\npath=${CACHE_DIRECTORY}\n`)
+    appendFileSync(process.env.GITHUB_ENV, `NPM_CONFIG_CACHE=${cacheContext({ target }).npmCache}\n`)
+    return
+  }
   if (command === 'verify') {
     authorizeCacheRefresh()
     await new BuildCacheAPI().verify(target, { attempts: 3 })
@@ -289,10 +325,7 @@ async function main() {
   const compiler = spawnSync('rustc', ['--version', '--verbose'], { encoding: 'utf8', windowsHide: true })
   if (compiler.status !== 0) throw new Error('Cannot identify the build-cache Rust toolchain')
   const context = cacheContext({ target, rustc: compiler.stdout.trim() })
-  if (command === 'init') {
-    appendFileSync(process.env.GITHUB_OUTPUT, `key=${cacheKey(target)}\npath=${CACHE_DIRECTORY}\n`)
-    appendFileSync(process.env.GITHUB_ENV, `NPM_CONFIG_CACHE=${context.npmCache}\n`)
-  } else if (command === 'restore') {
+  if (command === 'restore') {
     try { hydrateCache(context) } catch {
       console.warn('Shared cache could not be restored; proceeding with a cold build')
     }

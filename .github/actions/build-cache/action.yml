@@ -4,13 +4,20 @@ inputs:
   target:
     description: Rust desktop target
     required: true
+  lookup-only:
+    description: Only check whether the current snapshot exists; never download it
+    required: false
+    default: 'false'
 outputs:
   key:
-    description: Fixed platform cache key
+    description: Current platform cache key (dependency fingerprint included)
     value: ${{ steps.context.outputs.key }}
   path:
     description: Bounded snapshot directory
     value: ${{ steps.context.outputs.path }}
+  cache-hit:
+    description: Whether the current snapshot already exists
+    value: ${{ inputs.lookup-only == 'true' && steps.lookup.outputs.cache-hit || steps.restore.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -20,12 +27,26 @@ runs:
       env:
         CACHE_TARGET: ${{ inputs.target }}
       run: node scripts/build-cache.mjs init "$CACHE_TARGET"
-    - name: Restore the main platform snapshot
+    - name: Check whether the snapshot is current
+      id: lookup
+      if: inputs.lookup-only == 'true'
       uses: actions/cache/restore@v4
       with:
         key: ${{ steps.context.outputs.key }}
         path: ${{ steps.context.outputs.path }}
+        lookup-only: true
+    - name: Restore the main platform snapshot
+      id: restore
+      if: inputs.lookup-only != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        key: ${{ steps.context.outputs.key }}
+        path: ${{ steps.context.outputs.path }}
+        restore-keys: |
+          ${{ steps.context.outputs.restore-key }}
+          oc2-build-v1-${{ inputs.target }}
     - name: Restore npm downloads and Cargo dependencies
+      if: inputs.lookup-only != 'true'
       shell: bash
       env:
         CACHE_TARGET: ${{ inputs.target }}

@@ -12,7 +12,6 @@ import {
 } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { formatVersion } from '../modStatus'
-import { statusPulseClass } from '../crossLink'
 import { buttonColorFor, tagColorFor, tagColorForAny } from '../theme'
 import DependencyTable from './DependencyTable.vue'
 import LocalItemCard from './LocalItemCard.vue'
@@ -65,8 +64,6 @@ const packages = computed(
         :disabled="!mod.enabled"
         :expanded="ctx.expansion.isOuterOpen(ctx.modCardKey(mod.dll_file))"
         :focus-flash="ctx.highlightId === ctx.bindingRepositoryId(mod)"
-        :status-flash="ctx.matchesActiveStatus(ctx.modAnchor(mod))"
-        :pulse-class="statusPulseClass(ctx.modAnchor(mod), ctx.pulseTarget, ctx.pulseSeq)"
         :tools-min-width="ctx.toolsMinWidth"
         :tool-gap="TOOL_GAP"
         :tool-button-width="TOOL_BUTTON_WIDTH"
@@ -159,14 +156,10 @@ const packages = computed(
         :data-expand-key="pkg.key"
         :data-focus-id="pkg.repositoryId"
         :data-mod-anchor="`unit:${pkg.key}`"
-        :class="[
-          {
-            expanded: ctx.expansion.isOuterOpen(pkg.key),
-            'status-flash': ctx.matchesActiveStatus(`unit:${pkg.key}`),
-            'focus-flash': !!pkg.repositoryId && ctx.highlightId === pkg.repositoryId,
-          },
-          statusPulseClass(`unit:${pkg.key}`, ctx.pulseTarget, ctx.pulseSeq),
-        ]">
+        :class="{
+          expanded: ctx.expansion.isOuterOpen(pkg.key),
+          'focus-flash': !!pkg.repositoryId && ctx.highlightId === pkg.repositoryId,
+        }">
         <header class="package-head"
           @click="ctx.togglePackage(pkg, $event)">
           <!-- 左：开关 + 包名 + 子 MOD 数量（数量紧跟包名；「N 个」已表明这是包） -->
@@ -348,8 +341,8 @@ const packages = computed(
  * 底色按 `--oc2-card` 混合（不是 `--card-bg`）：包内子卡片用下沉底色
  * （`.package-body .mod-card { --card-bg: var(--oc2-sunken) }`），外壳若跟着
  * 子卡的基色走，展开后两者同色，包的边界就消失了。
- * 放在 :hover 之后与 `.mod-card.expanded` 顺序一致；后面的 .status-flash /
- * .focus-flash 用 12% 底色，定位高亮仍会盖过展开态。
+ * 放在 :hover 之后与 `.mod-card.expanded` 顺序一致；后面的 .focus-flash
+ * 用 12% 底色，跨页定位高亮仍会盖过展开态。
  */
 .package-shell.expanded {
   border-color: var(--oc2-accent);
@@ -521,14 +514,10 @@ const packages = computed(
   100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent); }
 }
 /*
- * 包外壳的定位高亮：与单 MOD 卡片同一套视觉。
- * 两个来源都落在这里：
- *   · status-flash —— 点包自己的状态标签（页内聚合定位）
- *   · focus-flash  —— 从 MOD 安装页点「最新版」等标签跨页跳过来
- * 包是页面上的一个展示单元，两种情况都该高亮整个外壳，
- * 而不是包内某个 DLL 行 —— 结论属于包，不属于某一个子 MOD。
+ * 包外壳的跨页定位高亮：与单 MOD 卡片同一套视觉。
+ * 包是页面上的一个展示单元，高亮整个外壳，而不是包内某个 DLL 行 ——
+ * 结论属于包，不属于某一个子 MOD。
  */
-.package-shell.status-flash,
 .package-shell.focus-flash {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 12%, var(--oc2-card));
@@ -536,7 +525,6 @@ const packages = computed(
   animation: focus-pulse 1200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  .package-shell.status-flash,
   .package-shell.focus-flash { animation: none; }
 }
 

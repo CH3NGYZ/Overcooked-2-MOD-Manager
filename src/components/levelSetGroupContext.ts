@@ -71,8 +71,6 @@ export interface LevelSetGroupContext {
   deleting: Ref<Record<string, boolean>>
   expansion: GroupExpansion
   highlightId: Ref<string | null>
-  pulseTarget: Ref<string | null>
-  pulseSeq: Ref<number>
   toolsMinWidth: ComputedRef<number>
   kitchenRunning: ComputedRef<boolean>
   toggle(set: LevelSetInfo, enabled: boolean): void | Promise<void>
@@ -91,7 +89,6 @@ export interface LevelSetGroupContext {
   bindingOf(set: LevelSetInfo): { map: MapInfo; name: string; tag: string } | undefined
   hintOf(set: LevelSetInfo): string
   focusIdOf(set: LevelSetInfo): string | undefined
-  matchesActiveStatus(set: LevelSetInfo): boolean
   removeSet(set: LevelSetInfo): void | Promise<void>
   openDir(set: LevelSetInfo): void | Promise<void>
   pluginTitle(plugin: LevelSetPlugin): string
@@ -111,8 +108,6 @@ export interface ModGroupContext {
   busy: Ref<Record<string, boolean>>
   expansion: GroupExpansion
   highlightId: Ref<string | null>
-  pulseTarget: Ref<string | null>
-  pulseSeq: Ref<number>
   toolsMinWidth: ComputedRef<number>
   toolGroupStyle: ComputedRef<CSSProperties>
   kitchenRunning: ComputedRef<boolean>
@@ -139,7 +134,6 @@ export interface ModGroupContext {
   modDependencyRows(mod: InstalledMod): DependencyRow[]
   packageDependencyRows(pkg: ModPackageNode): DependencyRow[]
   openDependencyJump(row: DependencyRow): void
-  matchesActiveStatus(anchor: string | null | undefined): boolean
   togglePackage(pkg: ModPackageNode, event: MouseEvent): void
   togglePackageEnabled(pkg: ModPackageNode, enabled: boolean): void | Promise<void>
   removePackage(pkg: ModPackageNode): void | Promise<void>

@@ -13,6 +13,11 @@ export const FOCUS_QUERY = 'focus'
 /** 高亮持续时间（毫秒）。 */
 export const FOCUS_DURATION = 3000
 
+/** 把卡片滚到视口中间（等它渲染出来再滚），供页内跳转复用同一套重试逻辑。 */
+export function revealCard(find: () => HTMLElement | null) {
+  return scrollIntoViewWhenReady(find)
+}
+
 /** 跳到 MOD 安装页并高亮指定仓库。 */
 export function useRepositoryLink() {
   const router = useRouter()
@@ -163,90 +168,4 @@ export function useFocusHighlight() {
   return { highlightId, focus, stop }
 }
 
-/** 折叠展开的高度动画时长：Naive 的 fade-in-height-expand 为 0.3s。 */
-const COLLAPSE_SETTLE_MS = 340
-
-/**
- * 页内「按状态定位」：点击页面标题后的聚合标签时，
- * 把所有命中的卡片一起高亮，并把 DOM 顺序第一张滚到视口中间。
- *
- * 与跨页的 useFocusHighlight 共用高亮时长和滚动逻辑，区别是不涉及路由，
- * 且高亮条件是一个状态 key —— 卡片 labels 含它就命中，可以同时命中多张。
- */
-export function useStatusHighlight() {
-  const activeStatus = ref<string | null>(null)
-  /**
-   * 本次定位的落点锚点（卡片的 DOM 标识），以及它的点击序号。
-   *
-   * 页头聚合标签会同时命中多张卡，全都亮着时用户看不出「这次指的是哪一张」。
-   * 所以额外给落点那张卡再播一次脉冲（亮起 → 暗下），并用自增序号保证**同一张
-   * 卡连续点同一个标签**也会重播 —— 见 `statusPulseClass`。
-   */
-  const pulseTarget = ref<string | null>(null)
-  const pulseSeq = ref(0)
-  let fadeTimer: number | undefined
-  let settleTimer: number | undefined
-  let cancelScroll: (() => void) | undefined
-  let disposed = false
-
-  function stop() {
-    if (fadeTimer !== undefined) window.clearTimeout(fadeTimer)
-    if (settleTimer !== undefined) window.clearTimeout(settleTimer)
-    fadeTimer = undefined
-    settleTimer = undefined
-    cancelScroll?.()
-    cancelScroll = undefined
-    activeStatus.value = null
-    pulseTarget.value = null
-  }
-
-  /**
-   * @param statusKey       高亮条件：卡片标签含此 key 即命中
-   * @param find            每次重试时重新查找目标卡片；返回 null 表示还没渲染
-   * @param waitForCollapse 调用方刚展开了折叠容器：等高度动画结束再滚，
-   *                        否则滚动会被随后撑开的内容带偏
-   * @param targetAnchor    本次落点的锚点（卡片自己的 DOM 标识）：只有它再播一次
-   *                        脉冲，用户才知道「这次指的是这一张」。缺省表示不强调单张。
-   */
-  function focusStatus(
-    statusKey: string,
-    find: () => HTMLElement | null,
-    waitForCollapse = false,
-    targetAnchor: string | null = null,
-  ) {
-    stop()
-    activeStatus.value = statusKey
-    pulseTarget.value = targetAnchor
-    pulseSeq.value += 1
-    fadeTimer = window.setTimeout(stop, FOCUS_DURATION)
-    const scroll = () => {
-      if (disposed) return
-      cancelScroll = scrollIntoViewWhenReady(find)
-    }
-    if (waitForCollapse) settleTimer = window.setTimeout(scroll, COLLAPSE_SETTLE_MS)
-    else scroll()
-  }
-
-  onBeforeUnmount(() => {
-    disposed = true
-    stop()
-  })
-
-  return { activeStatus, focusStatus, pulseTarget, pulseSeq }
-}
-
-/**
- * 落点卡片的脉冲类名（不命中返回空串）。
- *
- * 两个**同帧、不同名**的 keyframes 交替使用：CSS 动画只在 `animation-name`
- * 变化时重播，同一个类名连点第二次不会有任何反馈。序号奇偶交替正好让每点一次
- * 都换一个名字，于是「同一条标签连点」也能再亮一次。
- */
-export function statusPulseClass(
-  anchor: string | null | undefined,
-  target: string | null,
-  seq: number,
-): string {
-  if (!anchor || !target || anchor !== target) return ''
-  return seq % 2 === 0 ? 'status-pulse-a' : 'status-pulse-b'
-}
+/* 页头状态标签已改为列表筛选（`useListVisibility`），页内状态定位与脉冲不再需要。 */

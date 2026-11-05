@@ -5,7 +5,6 @@ import { AlertCircleOutline, ArrowUpCircleOutline, DownloadOutline, FolderOpenOu
 import { t, locale } from '../i18n'
 import { formatVersion } from '../modStatus'
 import { translateBackendMessage } from '../locale/backend'
-import { statusPulseClass } from '../crossLink'
 import { buttonColorFor, tagColorForAny } from '../theme'
 import { levelSetDisplayName, type LevelSetCardAction } from '../levelSetStatus'
 import LocalItemCard from './LocalItemCard.vue'
@@ -76,8 +75,6 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
       :disabled="!set.enabled"
       :expanded="ctx.expansion.isOuterOpen(set.dir_name)"
       :focus-flash="!!ctx.highlightId && ctx.highlightId === ctx.focusIdOf(set)"
-      :status-flash="ctx.matchesActiveStatus(set)"
-      :pulse-class="statusPulseClass(set.dir_name, ctx.pulseTarget, ctx.pulseSeq)"
       :tools-min-width="ctx.toolsMinWidth"
       :tool-gap="TOOL_GAP"
       :tool-button-width="TOOL_BUTTON_WIDTH"

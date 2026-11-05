@@ -310,79 +310,7 @@ body {
   font-size: 12px;
 }
 
-/*
- * 页内定位的「再闪一下」：页头聚合标签会同时命中多张卡片（一起亮 3 秒），
- * 但用户看的是「这次指的是哪一张」——落点那张再播一次**底色**由亮到暗的闪烁。
- *
- * 底色用伪元素的整块填充，而不是给元素本身加 animation：卡片自己已经有
- * focus-flash 的 animation，同一个 `animation` 属性会互相覆盖。
- * 也不做边框/光圈：卡片本来就有一圈边框高亮，再闪边框看不出差别。
- *
- * 两个同帧、不同名的 keyframes 是故意的：CSS 动画只在 animation-name 变化时
- * 重播，同一个名字连点第二次不会有任何反馈；`crossLink.statusPulseClass`
- * 按点击序号奇偶交替类名，于是同一条标签连点也能再亮一次。
- */
-.status-pulse-a,
-.status-pulse-b {
-  position: relative;
-}
-.status-pulse-a::after,
-.status-pulse-b::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: color-mix(in srgb, var(--oc2-accent) 26%, transparent);
-  pointer-events: none;
-  opacity: 0;
-  /*
-   * 底色闪一下的节奏（总长 2000ms，百分比换算成绝对时间）：
-   *   0 → 25%（500ms）亮起；25% → 75%（1000ms）停在最高亮度；
-   *   75% → 100%（500ms）暗回原样。
-   * 这 2 秒之后落点卡的底色恢复普通高亮，第 3 秒整页高亮一起暗下
-   * （时长由 `crossLink.ts` 的 FOCUS_DURATION 控制）。
-   * 保持 1 秒是为了让「点到了哪张」看得清：只一掠而过时，滚动一结束就认不出目标。
-   */
-  animation: status-pulse-a 2000ms linear;
-}
-.status-pulse-b::after {
-  animation-name: status-pulse-b;
-}
-@keyframes status-pulse-a {
-  0% {
-    opacity: 0;
-  }
-  25% {
-    opacity: 1;
-  }
-  75% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-@keyframes status-pulse-b {
-  0% {
-    opacity: 0;
-  }
-  25% {
-    opacity: 1;
-  }
-  75% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .status-pulse-a::after,
-  .status-pulse-b::after {
-    animation: none;
-    opacity: 0;
-  }
-}
+/* 页头状态标签已改为列表筛选，落点脉冲样式随 `useStatusHighlight` 一起移除。 */
 /*
  * 页头标题区的标签分组：结论类标签（有更新 / 缺依赖 / 最新版…）与开关状态
  * （N 已启用 / N 已禁用）说的不是一件事，混在一排里读起来像同一类结论。
@@ -488,6 +416,16 @@ body {
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, currentColor 62%, transparent),
     0 0 0 2px color-mix(in srgb, currentColor 20%, transparent);
+}
+/*
+ * 页头状态标签的筛选选中态：与悬停描边同源但常驻，让「现在只显示这个
+ * 状态」一眼可见。MOD 管理页与地图管理页共用这一条规则。
+ */
+.state-tag--active.n-tag {
+  filter: brightness(1.18);
+  box-shadow:
+    inset 0 0 0 1px currentColor,
+    0 0 0 2px color-mix(in srgb, currentColor 30%, transparent);
 }
 
 /*

@@ -28,7 +28,8 @@ import {
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
-import { useFocusHighlight, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { revealCard, useFocusHighlight, useRepositoryLink } from '../crossLink'
+import { useListVisibility } from '../composables/useListVisibility'
 import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
 import { isDependencyTag, tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
@@ -217,11 +218,7 @@ const { linkToRepository } = useRepositoryLink()
  * 挤出视口，也违背「跳过来只是让我看到它」的预期。
  */
 const { highlightId } = useFocusHighlight()
-/**
- * 页内定位：点标题后的聚合标签，高亮该状态的全部 MOD 并把第一张居中。
- * 与跨页高亮同一套时长与滚动规则，只是不涉及路由。
- */
-const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight()
+/* 页头聚合标签现在切换列表可见性（见下方 `visibility`）；跨页定位只保留 `useFocusHighlight`。 */
 
 /*
  * 固定按名称排序。
@@ -321,6 +318,12 @@ const relationIssueByDll = computed<Record<string, RelationStatus>>(() => {
  */
 const search = ref('')
 const query = computed(() => search.value.trim().toLowerCase())
+/** 搜索词 + 状态标签共用一份可见性规则（与地图管理页同一实现）。 */
+const visibility = useListVisibility(query, {
+  noData: () => t('modsLocal.noModsInstalled'),
+  noQueryMatch: () => t('modsLocal.noMatchMods'),
+  noStatusMatch: () => t('common.noStatusMatch'),
+})
 
 /** 卡片标题可能来自绑定仓库名或包名快照，纯模块看不到，作为额外文字拼进来。 */
 function searchExtra(mod: InstalledMod) {
@@ -334,11 +337,9 @@ const sortedMods = computed(() =>
     .sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
 
-/** 「没装 MOD」与「搜不到」是两件事，空态不能都说成没装。 */
+/** 三种空态的判定在共享的可见性规则里。 */
 const emptyDescription = computed(() =>
-  effectiveMods.value.length && query.value
-    ? t('modsLocal.noMatchMods')
-    : t('modsLocal.noModsInstalled'),
+  visibility.emptyText(effectiveMods.value.length > 0, visibleGroups.value.length),
 )
 
 /* ===== 全部启用 / 全部禁用 =====
@@ -624,21 +625,18 @@ const groups = computed<ModGroupNode[]>(() => {
     }))
 })
 
-const allGroupKeys = computed(() => groups.value.map((node) => node.key))
+const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))
 /** 默认全部展开：新出现的分类自动展开，用户的折叠选择单独记住。 */
 const collapsedGroups = ref<string[]>([])
-/** 搜索时强制全展开：命中卡可能落在用户收起的分类里，不能让它藏在折叠层后面。 */
+/** 筛选时（搜索或状态）强制全展开：命中卡不能藏在收起的分类后面。 */
 const groupsExpanded = computed(() =>
-  query.value
+  visibility.forceExpand.value
     ? allGroupKeys.value
     : allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
 )
 function onGroupsExpanded(names: string[]) {
-  /*
-   * 搜索期间的折叠只对应筛选后的分类，记下来会在清空搜索时把用户原本的
-   * 折叠状态冲掉，所以这段时间不落库；此时展开状态由 `query` 单独决定。
-   */
-  if (query.value) return
+  // 筛选期间的折叠不落库，清空后用户原本的折叠状态才不会丢
+  if (visibility.ignoringCollapse()) return
   const open = new Set(names)
   collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
 }
@@ -748,26 +746,22 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
  * 卡片删也走同一条 `remove` 流程（含后端要求整包确认的分支）。
  *
  * 分类收起时卡片不渲染（折叠体是 `n-collapse` 的内容插槽），`querySelector`
- * 会一直找不到，所以先展开目标所在的分类，并把「刚展开过」交给 `focusStatus`
- * 等高度动画结束再滚。`dependency_conflict` 只是用来点亮同状态的卡片，
- * 真正的落点由 `targetAnchor` 的脉冲指出来。
+ * 会一直找不到，所以先展开目标所在的分类，等展开动画结束再滚。状态标签已改为
+ * 列表筛选，这里只滚动定位，不再播状态脉冲。
  */
 function locateConflict(target: InstalledMod) {
   const anchor = modAnchor(target)
   const groupKey = groups.value.find((group) =>
     group.packages.some((pkg) => pkg.mods.some((mod) => mod.dll_file === target.dll_file)),
   )?.key
-  let opened = false
   if (groupKey && collapsedGroups.value.includes(groupKey)) {
     collapsedGroups.value = collapsedGroups.value.filter((value) => value !== groupKey)
-    opened = true
   }
-  focusStatus(
-    'dependency_conflict',
-    () => document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
-    opened,
-    anchor,
-  )
+  window.setTimeout(() => {
+    revealCard(() =>
+      document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
+    )
+  }, 320)
 }
 
 /**
@@ -1118,22 +1112,16 @@ function modAnchor(mod: InstalledMod) {
 }
 
 /**
- * 按状态定位时的「单元」：单 MOD 一个，多 DLL 包整包一个。
+ * 状态筛选的「单元」：单 MOD 一个，多 DLL 包整包一个。
  *
- * 包是页面上的一个整体（一个外壳、一条标题、一个版本结论），
- * 点它的状态标签时应当高亮这个外壳，而不是把包内某个 DLL 行单独
- * 描出来 —— 那样看起来像「这个 DLL 有问题」，而实际结论属于整个包。
+ * 包是页面上的一个整体（一个外壳、一条标题、一个版本结论），状态结论也属于
+ * 整包；筛选时按整包一起显示或一起隐藏，不能把包内 DLL 拆开判断。
  */
 interface StatusUnitNode {
-  /** 稳定的 DOM 锚点（单 MOD 用 dll_file，包用包键）。 */
-  anchor: string
   /** 命中时的状态集合，与 `packageStatuses` / 单 MOD 标签同源。 */
   keys: string[]
-  /** 该单元所在的分类与包键，用于定位前展开折叠容器。 */
-  groupKey: string
+  /** 所属包键：筛选结果据此收窄 `groups`。 */
   packageKey: string
-  /** 单元内的成员（单 MOD 或包内全部 DLL），供分类/包展开使用。 */
-  mods: InstalledMod[]
 }
 
 /**
@@ -1157,11 +1145,8 @@ const statusUnitNodes = computed<StatusUnitNode[]>(() => {
     for (const pkg of group.packages) {
       if (pkg.grouped) {
         nodes.push({
-          anchor: `unit:${pkg.key}`,
           keys: [...pkg.statuses.map((entry) => entry.key), ...enableKeysOf(pkg.mods)],
-          groupKey: group.key,
           packageKey: pkg.key,
-          mods: pkg.mods,
         })
         continue
       }
@@ -1169,19 +1154,14 @@ const statusUnitNodes = computed<StatusUnitNode[]>(() => {
       for (const mod of pkg.mods) {
         if (mod.is_dependency) continue
         nodes.push({
-          anchor: modAnchor(mod),
           /*
            * 取「卡片实际渲染的标签键」，而不是裸 `mod.labels`。
-           *
-           * 两者不等价：`installedModTags()` 会**动态补上** `prerelease`
-           * （版本号带 -beta / 四段序号时），它不在后端 labels 里。
-           * 用 labels 作命中键时，页头聚合会少一个「预发布」，
-           * 就算它出现了，点了也定位不到任何卡片。
+           * `installedModTags()` 会动态补上 `prerelease`（版本号带 -beta /
+           * 四段序号时），它不在后端 labels 里；用裸 labels 会让页头少一个
+           * 「预发布」，点了也筛不出对应卡片。
            */
           keys: [...installedModTags(mod).map((tag) => tag.key), ...enableKeysOf([mod])],
-          groupKey: group.key,
           packageKey: pkg.key,
-          mods: [mod],
         })
       }
     }
@@ -1189,62 +1169,28 @@ const statusUnitNodes = computed<StatusUnitNode[]>(() => {
   return nodes
 })
 
-/** 命中该状态的全部单元（按页面展示顺序）。 */
-function unitsWithStatus(statusKey: string) {
-  return statusUnitNodes.value.filter((unit) => unit.keys.includes(statusKey))
-}
-
 /**
- * 当前页内定位的状态是否命中该单元。
- *
- * 单 MOD 卡片传自己的锚点，包外壳传 `unit:<包键>`；因此包内子 DLL 行
- * 不会因为「包命中了」而被逐个高亮。命中集合按状态缓存成 Set，
- * 避免每张卡片渲染时都重新扫一遍全部单元。
+ * 状态筛选按「包」收窄：包内多个 DLL 共享一个状态结论，整包一起显示或一起
+ * 隐藏。页头计数仍读 `statusUnitNodes`（筛选前的全量），否则筛完之后其它
+ * 标签会全部归零、没法再点回来。
  */
-const activeStatusAnchors = computed(() => {
-  const status = activeStatus.value
-  if (!status) return new Set<string>()
-  return new Set(unitsWithStatus(status).map((unit) => unit.anchor))
-})
-
-function matchesActiveStatus(anchor: string) {
-  return activeStatusAnchors.value.has(anchor)
-}
-
-/** 当前轮到的命中项序号：重复点击同一标签时逐张轮换，而不是每次回到第一张。 */
-const statusCursor = ref<{ key: string; index: number }>({ key: '', index: 0 })
-
-/**
- * 点聚合标签：高亮该状态的全部单元，并把下一张命中项滚到视口中间。
- *
- * 命中项可能分布在收起的分类里：先把它们全部展开，
- * 展开带 0.3s 高度动画，所以滚动要等动画结束（由 focusStatus 负责）。
- */
-function locateStatus(statusKey: string) {
-  const matches = unitsWithStatus(statusKey)
-  if (!matches.length) return
-
-  const sameTag = statusCursor.value.key === statusKey
-  const start = sameTag ? (statusCursor.value.index + 1) % matches.length : 0
-  statusCursor.value = { key: statusKey, index: start }
-  const anchor = matches[start].anchor
-
-  const groupsOpened = expandGroupsFor(matches)
-  focusStatus(
-    statusKey,
-    () => document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
-    groupsOpened,
-    anchor,
-  )
-}
-
-/** 展开命中单元所在的分类；返回是否真的展开了收起的分类。 */
-function expandGroupsFor(matches: StatusUnitNode[]) {
-  const keys = new Set(matches.map((unit) => unit.groupKey))
-  const before = collapsedGroups.value.length
-  collapsedGroups.value = collapsedGroups.value.filter((key) => !keys.has(key))
-  return collapsedGroups.value.length !== before
-}
+const visiblePackageKeys = computed(
+  () =>
+    new Set(
+      statusUnitNodes.value
+        .filter((unit) => visibility.statusMatches(unit.keys))
+        .map((unit) => unit.packageKey),
+    ),
+)
+const visibleGroups = computed(() =>
+  groups.value
+    .map((node) => ({
+      ...node,
+      packages: node.packages.filter((pkg) => visiblePackageKeys.value.has(pkg.key)),
+    }))
+    .filter((node) => node.packages.length > 0),
+)
+const visibleUnitCount = computed(() => visiblePackageKeys.value.size)
 
 /**
  * 点击状态标签：跳到 MOD 安装页并高亮**该标签指向的**仓库卡片。
@@ -1601,12 +1547,10 @@ const kitchenRunning = computed(() => !!game.value?.kitchen_running)
 provide(
   MOD_GROUP_CTX,
   reactive<ModGroupContext>({
-    groups,
+    groups: visibleGroups,
     busy,
     expansion,
     highlightId,
-    pulseTarget,
-    pulseSeq,
     toolsMinWidth: toolColumnWidth,
     toolGroupStyle,
     kitchenRunning,
@@ -1633,7 +1577,6 @@ provide(
     modDependencyRows,
     packageDependencyRows,
     openDependencyJump,
-    matchesActiveStatus,
     togglePackage,
     togglePackageEnabled,
     removePackage,
@@ -1655,20 +1598,22 @@ provide(
     <!-- 教程只认这一组：带数字的状态标签是「整页统计 + 点击定位」的入口 -->
     <span class="header-tag-group" data-tutorial="mods-local-tags">
       <n-tag v-for="entry in statusTagsPrimary" :key="entry.key" size="small" :bordered="false"
-        class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
-        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
-        @keydown.enter.prevent="locateStatus(entry.key)"
-        @keydown.space.prevent="locateStatus(entry.key)">
+        class="state-tag state-tag--link" :class="{ 'state-tag--active': visibility.isStatusActive(entry.key) }"
+        :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
+        :title="t('common.filterByStatus')" @click="visibility.toggleStatus(entry.key)"
+        @keydown.enter.prevent="visibility.toggleStatus(entry.key)"
+        @keydown.space.prevent="visibility.toggleStatus(entry.key)">
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
     <span v-if="statusTagsPrimary.length && statusTagsToggle.length" class="header-tag-divider" />
     <span class="header-tag-group">
       <n-tag v-for="entry in statusTagsToggle" :key="entry.key" size="small" :bordered="false"
-        class="state-tag state-tag--link" :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
-        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
-        @keydown.enter.prevent="locateStatus(entry.key)"
-        @keydown.space.prevent="locateStatus(entry.key)">
+        class="state-tag state-tag--link" :class="{ 'state-tag--active': visibility.isStatusActive(entry.key) }"
+        :color="tagColorForAny(entry.tone)" role="button" tabindex="0"
+        :title="t('common.filterByStatus')" @click="visibility.toggleStatus(entry.key)"
+        @keydown.enter.prevent="visibility.toggleStatus(entry.key)"
+        @keydown.space.prevent="visibility.toggleStatus(entry.key)">
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
@@ -1697,7 +1642,7 @@ provide(
       一次操作锁、作用于全部本地 MOD，搜索期间先收起，避免把筛选结果
       误当成它的作用范围。
     -->
-    <span v-if="query" class="header-count muted">{{ sortedMods.length }} / {{ effectiveMods.length }}</span>
+    <span v-if="visibility.filtering" class="header-count muted">{{ visibility.countLabel(visibleUnitCount, statusUnitNodes.length) }}</span>
     <n-input v-model:value="search" clearable size="small" class="header-search"
       :placeholder="t('dialogs.search')">
       <template #prefix><SearchOutline width="14" height="14" /></template>
@@ -1711,7 +1656,7 @@ provide(
       · 禁用方向仍走 confirmDisableAll()：整页 MOD 全部停用不是随手试的操作；
       · 批量进行中两个分段都禁用，避免连点再发一批命令。
     -->
-    <n-tabs v-if="effectiveMods.length && !query" type="segment" animated class="bulk-switch"
+    <n-tabs v-if="visibility.showBulkSwitch(effectiveMods.length > 0)" type="segment" animated class="bulk-switch"
       data-tutorial="mods-local-bulk" :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
       @update:value="onBulkSwitch">
       <!--
@@ -1764,7 +1709,7 @@ provide(
   -->
   <PageLoading :show="loading">
     <template #status>{{ t('common.loading') }}</template>
-    <n-empty v-if="!loading && !sortedMods.length" :description="emptyDescription" class="empty" />
+    <n-empty v-if="!loading && !visibleGroups.length" :description="emptyDescription" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
@@ -1774,7 +1719,7 @@ provide(
         `expanded-names`，同分类增删卡时它可能拿到同一个数组引用，整棵子树
         会被跳过。分类标题与分类内容各自有自己的渲染 effect，才跟得上数据。
       -->
-      <n-collapse-item v-for="node in groups" :key="node.key" :name="node.key">
+      <n-collapse-item v-for="node in visibleGroups" :key="node.key" :name="node.key">
         <template #header>
           <ModGroupHeader :group-key="node.key" />
         </template>

@@ -81,15 +81,6 @@ const props = withDefaults(defineProps<{
   detailKey?: string | number
   /** 跨页跳转落点高亮。 */
   focusFlash?: boolean
-  /** 页内按状态定位时的高亮。 */
-  statusFlash?: boolean
-  /**
-   * 页内定位时给「本次落点」这一张多播一次脉冲的类名（`status-pulse-a` / `-b`）。
-   *
-   * 由页面经 `crossLink.statusPulseClass` 算出：所有命中卡片都亮着时，
-   * 只有这一张再闪一次，用户才知道「这次指的是它」。传空串表示不强调。
-   */
-  pulseClass?: string
   /** 工具栏最小列宽（页面按自己最多几个按钮算好，与下面两个值同源）。 */
   toolsMinWidth?: number
   /** 工具栏按钮间距，缺省由 CSS 回退到 8px。 */
@@ -164,7 +155,7 @@ function onToggle(value: boolean) {
 
 <template>
   <article class="mod-card"
-    :class="[{ disabled, expanded, 'focus-flash': focusFlash, 'status-flash': statusFlash }, pulseClass]"
+    :class="[{ disabled, expanded, 'focus-flash': focusFlash }]"
     @click="onCardClick">
     <!-- 单行：左「开关 + 标题」… 右「状态标签 | 工具栏」 -->
     <div class="card-row">
@@ -253,9 +244,7 @@ function onToggle(value: boolean) {
 }
 .mod-card.disabled { opacity: .62; }
 /*
- * 定位高亮：3 秒后自动褪去（时长由 crossLink.ts 的 FOCUS_DURATION 控制）。
- * 两个类共用同一套视觉 —— focus-flash 是跨页跳转（单张），
- * status-flash 是页内聚合标签定位（可能同时命中多张）。
+ * 跨页跳转落点高亮：3 秒后自动褪去（时长由 crossLink.ts 的 FOCUS_DURATION 控制）。
  *
  * 入场再播一次 pulse：跳转把用户「送」到新位置后，静态换色容易被
  * 正在进行的滚动掩盖；一次轻微的轮廓脉冲能确认落点。
@@ -264,8 +253,7 @@ function onToggle(value: boolean) {
  * keyframes 名带组件前缀：keyframes 是全局的，和页面里给包外壳用的
  * `focus-pulse` 同名会互相覆盖。
  */
-.mod-card.focus-flash,
-.mod-card.status-flash {
+.mod-card.focus-flash {
   border-color: var(--oc2-accent);
   background: color-mix(in srgb, var(--oc2-accent) 16%, var(--oc2-card));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent);
@@ -277,8 +265,7 @@ function onToggle(value: boolean) {
   100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 45%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mod-card.focus-flash,
-  .mod-card.status-flash { animation: none; }
+  .mod-card.focus-flash { animation: none; }
 }
 /*
  * 标题行**不吸顶**。

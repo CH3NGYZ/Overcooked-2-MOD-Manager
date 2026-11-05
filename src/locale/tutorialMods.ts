@@ -108,11 +108,11 @@ export const tutorialMods: DomainMessages = {
     ja: '状態タグで絞り込み',
   },
   'mods.localTags.body': {
-    'zh-CN': '页头这几个带数字的标签是整页统计：点一下滚到并高亮符合的卡片。数量为 0 的状态不显示。',
-    'zh-TW': '頁頭這幾個帶數字的標籤是整頁統計：點一下會捲到並高亮符合的卡片。數量為 0 的狀態不顯示。',
-    en: 'These counted tags summarise the whole page: click one to jump to and highlight the matching cards. States with zero items stay hidden.',
-    ko: '숫자가 붙은 태그는 페이지 전체 통계입니다. 클릭하면 해당 카드로 이동해 강조하고, 0개인 상태는 표시하지 않습니다.',
-    ja: '数字付きのタグはページ全体の集計です。クリックすると該当カードまで移動して強調表示します。0 件の状態は出ません。',
+    'zh-CN': '页头这几个带数字的标签是整页统计：点一下只留下该状态的卡片，再点一次恢复全览。数量为 0 的状态不显示。',
+    'zh-TW': '頁頭這幾個帶數字的標籤是整頁統計：點一下只留下該狀態的卡片，再點一次恢復全覽。數量為 0 的狀態不顯示。',
+    en: 'These counted tags summarise the whole page: click one to show only cards with that status, click again to see everything. States with zero items stay hidden.',
+    ko: '숫자가 붙은 태그는 페이지 전체 통계입니다. 클릭하면 해당 상태의 카드만 남고, 다시 클릭하면 전체가 표시됩니다. 0개인 상태는 표시하지 않습니다.',
+    ja: '数字付きのタグはページ全体の集計です。クリックするとその状態のカードだけが残り、もう一度クリックで全表示に戻ります。0 件の状態は出ません。',
   },
   'mods.localBulk.title': {
     'zh-CN': '全部启用 / 全部禁用',

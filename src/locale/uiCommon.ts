@@ -23,6 +23,22 @@ export const uiCommon: DomainMessages = {
     ko: '기본값 복원',
     ja: '既定に戻す',
   },
+  // 按此状态筛选列表，再点一次取消
+  filterByStatus: {
+    'zh-CN': '按此状态筛选列表，再点一次取消',
+    'zh-TW': '依此狀態篩選清單，再點一次取消',
+    en: 'Filter the list by this status; click again to clear',
+    ko: '이 상태로 목록을 필터링합니다. 다시 클릭하면 해제됩니다',
+    ja: 'この状態で一覧を絞り込みます。もう一度クリックで解除',
+  },
+  // 当前状态下没有可显示的项
+  noStatusMatch: {
+    'zh-CN': '当前状态下没有可显示的项，再点一次标签取消筛选。',
+    'zh-TW': '目前狀態下沒有可顯示的項目，再點一次標籤取消篩選。',
+    en: 'Nothing to show for this status. Click the tag again to clear the filter.',
+    ko: '이 상태로 표시할 항목이 없습니다. 태그를 다시 클릭하면 필터가 해제됩니다.',
+    ja: 'この状態では表示する項目がありません。タグをもう一度クリックすると解除されます。',
+  },
   // 已保存
   saved: {
     'zh-CN': '已保存',

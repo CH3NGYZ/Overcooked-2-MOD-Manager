@@ -12,7 +12,8 @@ import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useMapSources } from '../composables/useMapSources'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
-import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink, useStatusHighlight } from '../crossLink'
+import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink } from '../crossLink'
+import { useListVisibility } from '../composables/useListVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { formatVersionSpec } from '../versionSpec'
@@ -108,13 +109,7 @@ const { linkToLocalMods } = useLocalModLink()
 const router = useRouter()
 /** 跨页跳转落点（从地图下载页点状态标签跳过来时带 `focus=<地图 id>`）。 */
 const { highlightId } = useFocusHighlight()
-/**
- * 页内定位：页头的聚合标签点一下就跳到命中的卡片并高亮。
- *
- * 与 MOD 管理页共用同一套 `useStatusHighlight`（高亮时长、滚动居中、
- * 展开组后等高度动画结束再滚），页面只负责算出「哪些卡片命中这个标签」。
- */
-const { activeStatus, focusStatus, pulseTarget, pulseSeq } = useStatusHighlight()
+/* 页头聚合标签现在切换列表可见性（见下方 `visibility`）；跨页定位只保留 `useFocusHighlight`。 */
 
 /** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
 /** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
@@ -184,6 +179,21 @@ const recyclesOnDelete = computed(() => config.value?.recycle_deleted_mods !== f
  */
 const search = ref('')
 const query = computed(() => search.value.trim().toLowerCase())
+/** 搜索词 + 状态标签共用一份可见性规则（与 MOD 管理页同一实现）。 */
+const visibility = useListVisibility(query, {
+  noData: () => t('levelSet.noLevelSets'),
+  noQueryMatch: () => t('levelSet.noMatchMaps'),
+  noStatusMatch: () => t('common.noStatusMatch'),
+})
+
+/** 一张卡属于哪些页头状态 key：结论标签 + 开关状态。 */
+function statusKeysOf(set: LevelSetInfo): string[] {
+  return [...tagsOf(set).map(tagKeyOf), set.enabled ? 'enabled' : 'disabled']
+}
+/** 状态筛选只收窄展示集合；页头计数仍读 `sortedSets`（筛选前）。 */
+const visibleSets = computed(() =>
+  sortedSets.value.filter((set) => visibility.statusMatches(statusKeysOf(set))),
+)
 
 /** 详情行里的绑定地图名与 tag 来自模块级单例，纯模块看不到，额外拼进来。 */
 function searchExtra(set: LevelSetInfo) {
@@ -202,9 +212,9 @@ const sortedSets = computed(() =>
     ),
 )
 
-/** 「没装地图」与「搜不到」是两件事，空态不能都说成没装。 */
+/** 三种空态的判定在共享的可见性规则里。 */
 const emptyDescription = computed(() =>
-  sets.value.length && query.value ? t('levelSet.noMatchMaps') : t('levelSet.noLevelSets'),
+  visibility.emptyText(sets.value.length > 0, visibleSets.value.length),
 )
 
 /**
@@ -235,7 +245,7 @@ interface LevelSetGroupNode {
  */
 const groups = computed<LevelSetGroupNode[]>(() => {
   const buckets = new Map<string, { label: string; sets: LevelSetInfo[] }>()
-  for (const set of sortedSets.value) {
+  for (const set of visibleSets.value) {
     const group = levelSetGroup(set, maps.value)
     let bucket = buckets.get(group.key)
     if (!bucket) {
@@ -257,18 +267,15 @@ const groups = computed<LevelSetGroupNode[]>(() => {
 const allGroupKeys = computed(() => groups.value.map((group) => group.key))
 /** 默认全部展开：新出现的分组自动展开，用户的折叠选择单独记住。 */
 const collapsedGroups = ref<string[]>([])
-/** 搜索时强制全展开：命中卡可能落在用户收起的作者分组里。 */
+/** 筛选时（搜索或状态）强制全展开：命中卡不能藏在收起的作者分组后面。 */
 const groupsExpanded = computed(() =>
-  query.value
+  visibility.forceExpand.value
     ? allGroupKeys.value
     : allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
 )
 function onGroupsExpanded(names: string[]) {
-  /*
-   * 搜索期间的折叠只对应筛选后的分组，记下来会在清空搜索时把用户原本的
-   * 折叠状态冲掉，所以这段时间不落库；此时展开状态由 `query` 单独决定。
-   */
-  if (query.value) return
+  // 筛选期间的折叠不落库，清空后用户原本的折叠状态才不会丢
+  if (visibility.ignoringCollapse()) return
   const open = new Set(names)
   collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
 }
@@ -621,43 +628,7 @@ const toggleSummary = computed<LevelStatusSummary[]>(() => {
   return entries
 })
 
-/** 关卡集 → 所属折叠组：定位落在收起的组里得先展开，否则卡片根本没渲染。 */
-const groupKeyOfSet = computed(() => {
-  const index = new Map<string, string>()
-  for (const group of groups.value) {
-    for (const set of group.sets) index.set(set.dir_name, group.key)
-  }
-  return index
-})
-
-/** 同一个聚合标签连点：在命中的卡片之间循环，而不是一直停在第一张。 */
-const statusCursor = ref<{ key: string; index: number }>({ key: '', index: 0 })
-
-function locateStatus(key: string) {
-  const matches = sortedSets.value.filter((set) => matchesStatus(set, key))
-  if (!matches.length) return
-  const repeat = statusCursor.value.key === key
-  const start = repeat ? (statusCursor.value.index + 1) % matches.length : 0
-  statusCursor.value = { key, index: start }
-  const target = matches[start]
-  const groupKey = groupKeyOfSet.value.get(target.dir_name)
-  const needsExpand = !!groupKey && collapsedGroups.value.includes(groupKey)
-  if (groupKey && needsExpand) {
-    collapsedGroups.value = collapsedGroups.value.filter((value) => value !== groupKey)
-  }
-  focusStatus(
-    key,
-    () => document.querySelector<HTMLElement>(`[data-level-dir="${CSS.escape(target.dir_name)}"]`),
-    needsExpand,
-    target.dir_name,
-  )
-}
-
-/** 卡片高亮条件：页头正在定位的这个聚合标签是否命中它（可能同时命中多张）。 */
-function matchesActiveStatus(set: LevelSetInfo) {
-  const key = activeStatus.value
-  return !!key && matchesStatus(set, key)
-}
+/* 页头标签改为列表筛选：命中判定与计数都在 `visibleSets` / `visibility`，不再需要页内定位与高亮。 */
 
 /**
  * 卡片状态区的一键动作。
@@ -1236,8 +1207,6 @@ provide(
     deleting,
     expansion: levelExpansion,
     highlightId,
-    pulseTarget,
-    pulseSeq,
     toolsMinWidth,
     kitchenRunning,
     toggle,
@@ -1249,7 +1218,6 @@ provide(
     bindingOf,
     hintOf,
     focusIdOf,
-    matchesActiveStatus,
     actionOf,
     actionBusy,
     actionDisabled,
@@ -1275,20 +1243,22 @@ provide(
   <Teleport to="#page-header-title-extra" defer>
     <span class="header-tag-group">
       <n-tag v-for="entry in statusSummary" :key="entry.key" size="small" :bordered="false"
-        class="state-tag state-tag--link" :color="tagColorFor(entry.tone)" role="button" tabindex="0"
-        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
-        @keydown.enter.prevent="locateStatus(entry.key)"
-        @keydown.space.prevent="locateStatus(entry.key)">
+        class="state-tag state-tag--link" :class="{ 'state-tag--active': visibility.isStatusActive(entry.key) }"
+        :color="tagColorFor(entry.tone)" role="button" tabindex="0"
+        :title="t('common.filterByStatus')" @click="visibility.toggleStatus(entry.key)"
+        @keydown.enter.prevent="visibility.toggleStatus(entry.key)"
+        @keydown.space.prevent="visibility.toggleStatus(entry.key)">
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
     <span v-if="statusSummary.length && toggleSummary.length" class="header-tag-divider" />
     <span class="header-tag-group">
       <n-tag v-for="entry in toggleSummary" :key="entry.key" size="small" :bordered="false"
-        class="state-tag state-tag--link" :color="tagColorFor(entry.tone)" role="button" tabindex="0"
-        :title="t('modsOnline.locateOnThisPage')" @click="locateStatus(entry.key)"
-        @keydown.enter.prevent="locateStatus(entry.key)"
-        @keydown.space.prevent="locateStatus(entry.key)">
+        class="state-tag state-tag--link" :class="{ 'state-tag--active': visibility.isStatusActive(entry.key) }"
+        :color="tagColorFor(entry.tone)" role="button" tabindex="0"
+        :title="t('common.filterByStatus')" @click="visibility.toggleStatus(entry.key)"
+        @keydown.enter.prevent="visibility.toggleStatus(entry.key)"
+        @keydown.space.prevent="visibility.toggleStatus(entry.key)">
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
@@ -1313,7 +1283,7 @@ provide(
       一次操作锁、作用于全部关卡集，搜索期间先收起，避免把筛选结果
       误当成它的作用范围。
     -->
-    <span v-if="query" class="header-count muted">{{ sortedSets.length }} / {{ sets.length }}</span>
+    <span v-if="visibility.filtering" class="header-count muted">{{ visibility.countLabel(visibleSets.length, sortedSets.length) }}</span>
     <n-input v-model:value="search" clearable size="small" class="header-search"
       :placeholder="t('dialogs.search')">
       <template #prefix><SearchOutline width="14" height="14" /></template>
@@ -1327,7 +1297,7 @@ provide(
       · 停用方向仍走 confirmDisableAll()：整页地图一起停用不是随手试的操作；
       · 批量进行中两个分段都禁用，避免连点再发一批命令。
     -->
-    <n-tabs v-if="sets.length && !query" type="segment" animated class="bulk-switch"
+    <n-tabs v-if="visibility.showBulkSwitch(sets.length > 0)" type="segment" animated class="bulk-switch"
       :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
       @update:value="onBulkSwitch">
       <!--
@@ -1408,7 +1378,7 @@ provide(
       <span v-else>{{ t('levelSet.scanningPreparing') }}</span>
       <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
     </template>
-    <n-empty v-if="!loading && !sortedSets.length" class="empty"
+    <n-empty v-if="!loading && !visibleSets.length" class="empty"
       :description="emptyDescription" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->

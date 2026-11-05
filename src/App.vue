@@ -10,7 +10,7 @@ import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
 import TutorialOverlay from './components/TutorialOverlay.vue'
 import { acceptLabel } from './dropAccept'
-import { dragActive, dropAcceptTypes } from './composables/useFileDrop'
+import { dragActive, dropAcceptTypes, dropHintSource } from './composables/useFileDrop'
 import { startGameWatch } from './composables/useDashboardStore'
 import { requestMapSourcesStartupRefresh } from './composables/useMapSources'
 import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
@@ -43,6 +43,10 @@ const resolvedTitle = computed(() => t(pageTitleOverride.value ?? (route.meta.ti
  */
 const showDropHint = computed(() => dragActive.value && dropAcceptTypes.value.length > 0)
 const dropTypesLabel = computed(() => acceptLabel(dropAcceptTypes.value))
+/** 页面可以自带一句提示；没带就用默认的「松手安装」。 */
+const dropHintText = computed(
+  () => dropHintSource.value?.() ?? t('tools.releaseToInstall', { types: dropTypesLabel.value }),
+)
 
 /**
  * 安装器启动后的首次仓库刷新：与手动整源刷新走同一引擎。
@@ -225,7 +229,7 @@ onMounted(() => {
           <Transition name="drop-hint">
             <div v-if="showDropHint" class="drop-hint" role="status" aria-live="polite">
               <CloudUploadOutline width="16" height="16" class="drop-hint-icon" />
-              <span>{{ t('tools.releaseToInstall', { types: dropTypesLabel }) }}</span>
+              <span>{{ dropHintText }}</span>
             </div>
           </Transition>
         </div>

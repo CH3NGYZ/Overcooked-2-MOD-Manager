@@ -16,7 +16,7 @@
  *    过渡（旧页先卸载），正常不会有第二个；万一两个同时在线，以新页为准。
  * 3. 扩展名判定与「点击选择文件」共用 `dropAccept.ts`，两个入口不会各判一套。
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { isTauri } from '../runtime'
 import { t } from '../i18n'
@@ -34,11 +34,21 @@ export const dragActive = ref(false)
 /** 当前页面接受的文件类型（全窗提示层用它拼文案）；没有消费者时为空。 */
 export const dropAcceptTypes = ref<string[]>([])
 
+/**
+ * 当前页面的提示文案来源。
+ *
+ * 发布页拖入是「读取待发布的 ZIP」，其他页面是「松手安装」，同一句默认文案
+ * 会让作者以为发布页也会装包。存函数而不是存字符串：切换语言时提示条要跟着变。
+ */
+export const dropHintSource = shallowRef<(() => string) | null>(null)
+
 interface DropConsumer {
   accept: string[]
   notify: Notify
   /** 上一条来源还在处理：这次拖入直接忽略，避免并发两条安装流程。 */
   busy?: () => boolean
+  /** 本页专属的提示文案；不传就用默认的「松开即可安装」。 */
+  hint?: () => string
   onDrop: (path: string) => void
 }
 
@@ -50,6 +60,7 @@ let listener: Promise<void> | null = null
 function syncAcceptTypes() {
   const current = consumers[consumers.length - 1]
   dropAcceptTypes.value = current ? [...current.accept] : []
+  dropHintSource.value = current?.hint ?? null
 }
 
 async function registerListener() {
@@ -100,6 +111,8 @@ export function useFileDrop(options: {
   accept: string[]
   /** 忙碌判定：返回 true 时忽略这次拖入。 */
   busy?: () => boolean
+  /** 本页专属的提示文案；不传就用默认的「松开即可安装」。 */
+  hint?: () => string
   /** 收到一个通过校验的本地绝对路径（Tauri 给的是路径，不是浏览器的 File）。 */
   onDrop: (path: string) => void
 }) {
@@ -108,6 +121,7 @@ export function useFileDrop(options: {
     accept: options.accept,
     notify,
     busy: options.busy,
+    hint: options.hint,
     onDrop: options.onDrop,
   }
 

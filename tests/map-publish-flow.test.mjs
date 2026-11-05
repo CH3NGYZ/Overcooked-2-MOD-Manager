@@ -10,11 +10,11 @@ import test from 'node:test'
  * 等一下）。
  */
 const {
-  PUBLISH_PANEL_ORDER,
   PUBLISH_STEP_ORDER,
   defaultMapTag,
   missingPublishInputs,
   parsePublishPermissionFailure,
+  reorderVersionRows,
   permissionScopeKey,
 } = await import('../src/mapPublishFlow.ts')
 
@@ -22,9 +22,27 @@ test('三步执行顺序固定：先 Release，再 ZIP，最后写块', () => {
   assert.deepEqual([...PUBLISH_STEP_ORDER], ['release', 'asset', 'metadata'])
 })
 
-test('面板顺序把 ZIP 提到最上面，执行顺序不受影响', () => {
-  assert.deepEqual([...PUBLISH_PANEL_ORDER], ['asset', 'release', 'metadata'])
-  assert.notDeepEqual([...PUBLISH_PANEL_ORDER], [...PUBLISH_STEP_ORDER])
+test('拖动只改存储顺序：显示反转，存储仍是旧→新', () => {
+  const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+  // 显示顺序是 c, b, a；把显示第一行（最新版）拖到最后一行
+  const moved = reorderVersionRows(rows, 0, 2)
+  assert.deepEqual(
+    moved.map((row) => row.id),
+    ['c', 'a', 'b'],
+  )
+  // 原数组不被修改
+  assert.deepEqual(
+    rows.map((row) => row.id),
+    ['a', 'b', 'c'],
+  )
+})
+
+test('拖动到原位或越界时不改变顺序', () => {
+  const rows = ['a', 'b', 'c']
+  assert.deepEqual(reorderVersionRows(rows, 1, 1), ['a', 'b', 'c'])
+  assert.deepEqual(reorderVersionRows(rows, 9, 0), ['a', 'b', 'c'])
+  // 越界夹到最后一行：最新版被拖到显示末尾，存储里就落到最前
+  assert.deepEqual(reorderVersionRows(rows, 0, 99), ['c', 'a', 'b'])
 })
 
 test('什么都没填时三步全缺（返回顺序跟执行顺序）', () => {

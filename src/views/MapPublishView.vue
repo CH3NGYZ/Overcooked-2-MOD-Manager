@@ -12,10 +12,11 @@ import {
   NTag,
   useDialog,
 } from 'naive-ui'
-import { RefreshOutline, ReorderThreeOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
+import { RefreshOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { api } from '../services/tauri'
 import PageLoading from '../components/PageLoading.vue'
+import VersionOrderTable from '../components/publish/VersionOrderTable.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useMapPublish } from '../composables/useMapPublish'
 import {
@@ -34,29 +35,38 @@ import {
   defaultMapTag,
   missingPublishInputs,
   permissionScopeKey,
+  type AssetVersionRow,
   type PublishStepId,
 } from '../mapPublishFlow'
 import { markDialogBusy } from '../dialogBusy'
-import { formatFileSize } from '../repositoryAssets'
 import { useNotify } from '../useNotify'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import type { MapPublishMetadata, PublishRelease, PublishZipInspection } from '../types'
+import type { MapPublishMetadata, PublishAsset, PublishRelease, PublishZipInspection } from '../types'
+
 
 /**
  * 地图发布页 —— 作者把地图 ZIP 作为 GitHub Release 发出去的唯一入口。
  *
- * 口径：**一个 tag 就是一张地图集**，版本号只写在附件名里。列表按地图集
- * 展示；进到某张地图集里才是「地图管理」，固定三步：上传这一版的 ZIP →
- * 发布信息 → 写回 oc2-map 信息。
+ * 口径：**一个 tag 就是一张地图集**，版本号只写在附件名里。进到某张地图集里
+ * 只有两个动作：
+ *
+ * 1. **发布这一版**：拖入 ZIP → 建/改 Release → 传附件 → 写 `oc2-map` 块，
+ *    一次点按走完（`publishVersion`），三段进度就地显示，失败可单独重试。
+ * 2. **保存地图资料**：基本信息、多语言、版本顺序、关系表、GitHub 页面，
+ *    一个保存按钮（`saveDocument`）—— 它是**唯一**的写块入口。
+ *
+ * 为什么这样分：块里的版本表与正文是同一份文档，两个按钮各写一半会互相覆盖；
+ * 以前「修改信息」发的是不带 metadata 的 PATCH，正文里的块在读取时已被剥掉，
+ * 一次只改标题就能把块整块抹掉（地图会从管理器的地图列表里消失）。
  *
  * 为什么 ZIP 在最前面：tag 与版本号本来就应该由文件名决定（`tag_v版本号.zip`），
- * 先选包才能把发布信息填对；而附件必须挂在已存在的 Release 上，所以真正
- * 上传时如果还没有 Release，会先按第 2 步的信息建一个（见 `runUploadStep`）。
+ * 先选包才能把发布信息填对；附件必须挂在已存在的 Release 上，所以新建地图集时
+ * 先建 Release（不带块），等第一个附件传成再写块 —— 先写块会让一张零版本的图
+ * 立刻出现在管理器里。
  *
- * 最下面的「版本排序表」是这张地图的权威顺序：作者拖动资产排序、给每一版
- * 标上 info 版本号，写进 oc2-map 块的 `asset_versions` 数组。管理器据此判断
- * 谁是最新版 —— 数字比较排不出的 `3.4.1-fix` 与「资产版本号和 info 版本号
- * 不一致导致一直提示更新」两个问题都由它解决。
+ * 「版本顺序」是这张地图的权威顺序：显示从新到旧、存储仍是旧→新，写进
+ * `asset_versions` 数组；管理器据此判断谁是最新版 —— 数字比较排不出的
+ * `3.4.1-fix` 与「资产版本号和 info 版本号不一致导致一直提示更新」都由它解决。
  *
  * 与地图下载页的关系：这一页只负责「写 GitHub」，不读地图源。作者保存后，
  * 管理器下一次刷新地图源就会从 Release note 的 oc2-map 块读到这张地图。
@@ -91,7 +101,6 @@ const {
   deletingRelease,
   inspecting,
   uploading,
-  deletingAsset,
   missingTopics,
   permissionFailure,
   loadState,
@@ -316,30 +325,37 @@ function applyMetadata(metadata: MapPublishMetadata | null) {
   Object.assign(metadataDraft, draft)
 }
 
+/** 文档有未保存改动：保存按钮旁边显示徽标。 */
+const dirty = ref(false)
+/** resetForm 正在灌数据：这一轮 watch 不该把表单标脏。 */
+let applyingDocument = false
+
 function resetForm(release: PublishRelease | null, metadata: MapPublishMetadata | null = release?.metadata ?? null) {
+  applyingDocument = true
   form.tag = release?.tag ?? ''
   form.title = release?.title ?? ''
   form.body = release?.body ?? ''
   form.draft = release?.draft ?? false
   form.prerelease = release?.prerelease ?? false
   applyMetadata(metadata)
+  // 表单写完后一拍再清脏标记：深 watch 在本轮同步代码跑完才执行
+  void nextTick(() => {
+    dirty.value = false
+    applyingDocument = false
+  })
 }
 
 /* ===== 版本排序表 ===== */
 
 /**
- * 排序表的一行 = 一批资产的版本号。顺序就是从旧到新，最后一行是最新版。
+ * 排序表 = 一批资产的版本号。**存储顺序永远是从旧到新**（`oc2-map` 块的
+ * `asset_versions` 契约：末项是最新版）；界面显示时反转成「最新在最上」，
+ * 反转只发生在组件渲染与拖动换算里（见 `VersionOrderTable`）。
  *
  * 表里**不存附件名**：附件名由资产规则渲染 `mapsetVersion` 得到（见 `assetNameOf`），
  * 所以改规则不需要重建整张表。`mapsetVersion` 可以写成 `3.4.1-fix`：数字比较排不出
  * 这种后缀，顺序只能由作者拖动决定。
  */
-interface AssetVersionRow {
-  mapsetVersion: string
-  infoVersion: string
-  size: number
-}
-
 const assetRows = ref<AssetVersionRow[]>([])
 
 /** 这一行对应的附件名：用当前资产规则渲染它的 mapsetVersion。 */
@@ -347,79 +363,66 @@ function assetNameOf(row: AssetVersionRow): string {
   return effectiveRule.value ? renderAssetName(effectiveRule.value, '', row.mapsetVersion) : ''
 }
 
-/** 表里排过的按表顺序；没进表的（刚上传还没排）按数字版本降序排在后面。 */
+/**
+ * 表里排过的按表顺序；没进表的（刚上传还没保存）按版本升序接在后面。
+ *
+ * 匹配附件的方式与后端 `synthesize_releases` 对齐：先按规则渲染出的文件名找，
+ * 再退回「文件名里抽出的版本号等于表里的版本」。**找不到对应附件的表项直接丢**
+ * —— 作者删掉一版后，表里留着一条指向空气的记录只会让下一次保存把它写回去。
+ */
 function versionRowsOf(release: PublishRelease | null): AssetVersionRow[] {
   const rule = effectiveRule.value
   const assets = release?.assets ?? []
   const byName = new Map(assets.map((asset) => [asset.name, asset]))
+  const byVersion = new Map<string, PublishAsset>()
+  for (const asset of assets) {
+    const version = (rule ? versionFromRule(rule, asset.name) : null) ?? versionFromAssetName(asset.name)
+    if (version && !byVersion.has(version)) byVersion.set(version, asset)
+  }
   const rows: AssetVersionRow[] = []
   for (const entry of release?.metadata?.asset_versions ?? []) {
     const mapsetVersion = entry.mapset_version.trim()
     if (!mapsetVersion) continue
-    const name = rule ? renderAssetName(rule, '', mapsetVersion) : ''
-    const asset = name ? byName.get(name) : undefined
-    if (asset) byName.delete(name)
-    rows.push({
-      mapsetVersion,
-      infoVersion: entry.info_version.trim(),
-      size: asset?.size ?? 0,
-    })
+    const rendered = rule ? renderAssetName(rule, '', mapsetVersion) : ''
+    const asset = (rendered ? byName.get(rendered) : undefined) ?? byVersion.get(mapsetVersion)
+    if (!asset) continue
+    byName.delete(asset.name)
+    byVersion.delete(mapsetVersion)
+    rows.push({ mapsetVersion, infoVersion: entry.info_version.trim(), size: asset.size })
   }
   const rest = [...byName.values()].sort((left, right) =>
-    compareMapVersions(versionFromAssetName(right.name), versionFromAssetName(left.name)),
+    compareMapVersions(versionFromAssetName(left.name), versionFromAssetName(right.name)),
   )
   for (const asset of rest) {
-    rows.push({
-      mapsetVersion: versionFromAssetName(asset.name),
-      infoVersion: '',
-      size: asset.size,
-    })
+    rows.push({ mapsetVersion: versionFromAssetName(asset.name), infoVersion: '', size: asset.size })
   }
   return rows
 }
 
-/** 最新版就是最后一行；两个派生字段都从它来。 */
-const latestRow = computed<AssetVersionRow | null>(() => assetRows.value[assetRows.value.length - 1] ?? null)
+/** 存储顺序的末项就是最新版：`latest_*` 两个字段都取自它。 */
+const latestRow = computed(() => assetRows.value[assetRows.value.length - 1] ?? null)
 
-const dragIndex = ref(-1)
-const dropIndex = ref(-1)
-
-function onDragStart(index: number, event: DragEvent) {
-  dragIndex.value = index
-  dropIndex.value = index
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', String(index))
-  }
+/** 删一版：确认框在页面里，组件只负责把行交回来。 */
+function removeVersionRow(row: AssetVersionRow) {
+  void confirmDeleteAsset(assetNameOf(row))
 }
 
-function onDragOver(index: number) {
-  if (dragIndex.value < 0) return
-  dropIndex.value = index
-}
-
-function onDragEnd() {
-  dragIndex.value = -1
-  dropIndex.value = -1
-}
-
-function onDrop(index: number) {
-  const from = dragIndex.value
-  dragIndex.value = -1
-  dropIndex.value = -1
-  if (from < 0 || from === index) return
-  const rows = assetRows.value.slice()
-  const [moved] = rows.splice(from, 1)
-  rows.splice(index, 0, moved)
-  assetRows.value = rows
-}
+// 文档脏标记：表单、资料草稿、排序表任何一处改动都算未保存。必须放在
+// `assetRows` 之后 —— watch 的 getter 创建时立刻执行，提前引用会撞 TDZ。
+watch(
+  () => [form, metadataDraft, assetRows.value],
+  () => {
+    if (!applyingDocument) dirty.value = true
+  },
+  { deep: true },
+)
 
 function openManagement(release: PublishRelease) {
   activeTag.value = release.tag
   createdRelease.value = null
   rejectPending()
   lastUploaded.value = ''
-  lastFailedStep.value = null
+  resetPublishSteps()
   resetForm(release)
   mode.value = 'manage'
 }
@@ -435,7 +438,7 @@ function openCreate() {
   createdRelease.value = null
   rejectPending()
   lastUploaded.value = ''
-  lastFailedStep.value = null
+  resetPublishSteps()
   resetForm(null, null)
   mode.value = 'create'
 }
@@ -446,23 +449,33 @@ function backToList() {
   createdRelease.value = null
   rejectPending()
   lastUploaded.value = ''
-  lastFailedStep.value = null
+  resetPublishSteps()
   resetForm(null, null)
 }
 
 /* 换仓库时旧表单没有意义：tag 与地图信息都属于上一个仓库。 */
 watch(selectedFullName, backToList)
 
-/* ===== 三步式：上传 ZIP → 发布信息 → 写回地图信息 ===== */
+/* ===== 发布：一个动作 = 建/改 Release → 传附件 → 写块 ===== */
 
-/** 当前正在跑哪一步；同一时刻只允许一步在跑（一键执行时逐段串起来）。 */
+/** 当前正在跑的写动作；发布与保存资料共用，同一时刻只允许一个。 */
 const stepBusy = ref<PublishStepId | null>(null)
-/** 「一键按顺序执行」整段在跑：按钮转圈，同时挡掉单独点某一步。 */
-const runningAll = ref(false)
-/** 上一次失败在哪一步：权限横幅上的「重试这一步」按它重跑。 */
-const lastFailedStep = ref<PublishStepId | null>(null)
-/** 上一次上传成功后的附件名：步骤 1 留在界面上给作者确认。 */
+/** 上一次上传成功后的附件名：留在发布卡上给作者确认。 */
 const lastUploaded = ref('')
+
+type PublishStepState = 'pending' | 'active' | 'done' | 'failed'
+
+/**
+ * 发布三段各自的进度。
+ *
+ * 作者只点一次「发布这一版」，这里负责让他看见卡在哪一段：失败的那一行变红，
+ * 附件已经传成、只有写块失败时可以单独重试。
+ */
+const publishSteps = reactive<Record<PublishStepId, PublishStepState>>({
+  release: 'pending',
+  asset: 'pending',
+  metadata: 'pending',
+})
 
 const pending = reactive({
   /** 当前待上传的文件路径（改过名就是缓存里的副本）。 */
@@ -537,27 +550,34 @@ function versionFromFileName(fileName: string): string {
 const busyAny = computed(
   () =>
     stepBusy.value !== null ||
-    runningAll.value ||
     savingRelease.value ||
     uploading.value ||
     inspecting.value ||
     renaming.value,
 )
 
-const stepReleaseDone = computed(() => workingRelease.value !== null)
-const stepAssetDone = computed(() => lastUploaded.value !== '' || assetRows.value.length > 0)
-const stepMetadataDone = computed(() => Boolean(workingRelease.value?.metadata))
+/** 三段里有没有跑过：跑过才显示进度，免得新建页一进来就三行「待处理」。 */
+const publishVisible = computed(() => PUBLISH_STEP_ORDER.some((step) => publishSteps[step] !== 'pending'))
+/** 有失败的一段：发布卡里出现「重试」按钮。 */
+const hasFailedStep = computed(() => PUBLISH_STEP_ORDER.some((step) => publishSteps[step] === 'failed'))
+/** 换地图 / 回列表时把上一张图的进度清掉。 */
+function resetPublishSteps() {
+  for (const step of PUBLISH_STEP_ORDER) publishSteps[step] = 'pending'
+}
+/** 发布按钮的可用性：还缺输入或正在忙就点不动。 */
+const canPublish = computed(() => !busyAny.value && missingInputs.value.length === 0)
 
 /**
- * 一键执行还缺的输入；空数组才允许点。
+ * 发布还缺的输入；空数组才允许点「发布这一版」。
  *
- * 这里**不看** `stepReleaseDone`：新建地图集时正是要去建 Release，把它算进
- * 前置会让新建页永远提示「缺发布信息」。
+ * 这里**不看** Release 是否已存在：新建地图集时正是要去建它，把它算进前置
+ * 会让新建页永远点不动。
  */
 const missingInputs = computed(() =>
   missingPublishInputs({
     tag: form.tag,
-    assetName: nameOk.value ? pending.fileName : '',
+    // 附件名由规则渲染，本地文件叫什么都能传：能算出版本号就算齐了
+    assetName: canonicalName.value,
     versionText: pending.version,
     levelSetName: metadataDraft.levelSetName,
   }),
@@ -702,66 +722,54 @@ async function renamePendingZip() {
 }
 
 /**
- * 第二步：新建模式下创建 Release（不带块），地图管理下只改标题 / 正文 / 状态。
+ * 新建 Release：只写标题 / 正文 / 状态，**不带 oc2-map 块**。
  *
- * 新建时先查一遍同名 tag：GitHub 允许在已有 tag 上建 Release，但那样会把
- * 另一张图的附件挂到同一个身份下，消费端会当成同一张图的两版。
+ * 块要等第一个附件传成功之后再写（见 `publishVersion`）：先写块会让一张零版本
+ * 的图立刻出现在管理器的地图列表里。新建时先查一遍同名 tag —— GitHub 允许在
+ * 已有 tag 上建 Release，那样会把另一张图的附件挂到同一个身份下。
  */
-async function runReleaseStep(): Promise<boolean> {
+async function createReleaseOnly(): Promise<boolean> {
   if (!selectedRepository.value) {
     message.warning(t('mapPublish.noSelection'))
     return false
   }
-  if (stepBusy.value !== null) return false
   const tag = form.tag.trim()
   if (!tag) {
     message.warning(t('mapPublish.tagHint'))
     return false
   }
-  const release = workingRelease.value
-  if (!release && releases.value.some((item) => item.tag === tag)) {
+  if (releases.value.some((item) => item.tag === tag)) {
     message.warning(t('mapPublish.tagExists', { tag }))
     return false
   }
-  stepBusy.value = 'release'
-  try {
-    const saved = await saveRelease({
-      releaseId: release?.id ?? null,
-      tag,
-      title: form.title.trim(),
-      body: form.body,
-      draft: form.draft,
-      prerelease: form.prerelease,
-    })
-    if (!saved) {
-      lastFailedStep.value = 'release'
-      return false
-    }
-    createdRelease.value = saved
-    activeTag.value = saved.tag
-    form.tag = saved.tag
-    lastFailedStep.value = null
-    return true
-  } finally {
-    stepBusy.value = null
-  }
+  const saved = await saveRelease({
+    releaseId: null,
+    tag,
+    title: form.title.trim(),
+    body: form.body,
+    draft: form.draft,
+    prerelease: form.prerelease,
+  })
+  if (!saved) return false
+  createdRelease.value = saved
+  activeTag.value = saved.tag
+  form.tag = saved.tag
+  return true
 }
 
 /**
- * 第一步：把这一版的 ZIP 传成 Release 附件（版本号在文件名里）。
+ * 把选中的 ZIP 传成 Release 附件（版本号在文件名里）。
  *
- * ZIP 排在最前面，但附件必须挂在已存在的 Release 上，所以还没有 Release 时
- * 先按第 2 步填好的信息建一个 —— 作者按面板顺序点下来就能一路走通。
+ * 附件必须挂在已存在的 Release 上；调用方保证 `workingRelease` 已经就绪。
  */
-async function runUploadStep(): Promise<boolean> {
-  if (stepBusy.value !== null) return false
+async function uploadPending(): Promise<boolean> {
   const zip = pending.inspection
   if (!pending.path || !zip) {
     message.warning(t('mapPublish.needZip'))
     return false
   }
-  if (!nameOk.value) {
-    message.warning(t('mapPublish.zipUploadBlocked', { name: canonicalName.value || '—' }))
+  if (!canonicalName.value) {
+    message.warning(t('mapPublish.zipNameInvalid'))
     return false
   }
   const version = pending.version.trim()
@@ -769,40 +777,33 @@ async function runUploadStep(): Promise<boolean> {
     message.warning(t('mapPublish.invalidVersion', { value: version }))
     return false
   }
-  if (!workingRelease.value) {
-    const created = await runReleaseStep()
-    if (!created) return false
-  }
   const release = workingRelease.value
   if (!release) return false
   const name = canonicalName.value
   const infoVersion = zip.info_version.trim()
-  stepBusy.value = 'asset'
-  try {
-    const ok = await uploadAsset(release, pending.path, name)
-    if (!ok) {
-      lastFailedStep.value = 'asset'
-      return false
-    }
-    lastUploaded.value = name
-    rejectPending()
-    // 上传会重刷 Release 列表，排序表随之重建：等它落地再补这一版的 info 版本号。
-    await nextTick()
-    const row = assetRows.value.find((item) => item.mapsetVersion === version)
-    if (row) {
-      if (infoVersion) row.infoVersion = infoVersion
-    } else {
-      assetRows.value.push({ mapsetVersion: version, infoVersion, size: 0 })
-    }
-    lastFailedStep.value = null
-    return true
-  } finally {
-    stepBusy.value = null
+  const ok = await uploadAsset(release, pending.path, name)
+  if (!ok) return false
+  lastUploaded.value = name
+  rejectPending()
+  // 上传会重刷 Release 列表，排序表随之重建：等它落地再补这一版的 info 版本号。
+  await nextTick()
+  const row = assetRows.value.find((item) => item.mapsetVersion === version)
+  if (row) {
+    if (infoVersion) row.infoVersion = infoVersion
+  } else {
+    assetRows.value.push({ mapsetVersion: version, infoVersion, size: 0 })
   }
+  return true
 }
 
-/** 第三步：把当前表单写回 Release note 的 `oc2-map` 块（唯一写块的地方）。 */
-async function runMetadataStep(): Promise<boolean> {
+/**
+ * 保存地图资料：标题 / 正文 / 状态 + `oc2-map` 块，**唯一的写块入口**。
+ *
+ * 绝不发「不带 metadata 的 PATCH」：后端在 metadata 为空时原样写正文，而正文里
+ * 的块在读取时已经被剥掉 —— 那样一次「只改标题」就会把块整块抹掉，地图直接从
+ * 管理器的地图列表里消失。
+ */
+async function saveDocument(): Promise<boolean> {
   const release = workingRelease.value
   if (!release) {
     message.warning(t('mapPublish.needReleaseFirst'))
@@ -828,15 +829,25 @@ async function runMetadataStep(): Promise<boolean> {
       prerelease: form.prerelease,
       metadata: buildMetadata(),
     })
-    if (!saved) {
-      lastFailedStep.value = 'metadata'
-      return false
-    }
+    if (!saved) return false
     resetForm(saved)
-    lastFailedStep.value = null
     return true
   } finally {
     stepBusy.value = null
+  }
+}
+
+/** 进度行的状态文案：active 单独一档，其余复用已有的「已完成 / 待处理」。 */
+function publishStateText(state: PublishStepState): string {
+  switch (state) {
+    case 'active':
+      return t('mapPublish.stepActive')
+    case 'done':
+      return t('mapPublish.stepDone')
+    case 'failed':
+      return t('mapPublish.stepFailed')
+    case 'pending':
+      return t('mapPublish.stepPending')
   }
 }
 
@@ -923,53 +934,78 @@ function buildMetadata(): MapPublishMetadata {
   }
 }
 
-/** 一键按顺序执行：哪一步失败就停在哪一步，改完可以只重试那一步。 */
-async function runAllSteps() {
-  if (busyAny.value) return
+/**
+ * 发布这一版：一次点按走完 建/改 Release → 传附件 → 写块。
+ *
+ * 任一段失败就停在那一段：附件没传成时块不写（否则块里会宣布一个下载不到的
+ * 版本）；附件传成、只有写块失败时可以单独重试写块。
+ */
+async function publishVersion(): Promise<boolean> {
+  if (busyAny.value) return false
   if (missingInputs.value.length > 0) {
     message.warning(
       t('mapPublish.sequenceNeed', { steps: missingInputs.value.map(stepTitle).join(' / ') }),
     )
-    return
+    return false
   }
-  runningAll.value = true
+  for (const step of PUBLISH_STEP_ORDER) publishSteps[step] = 'pending'
   let done = 0
-  let failed: PublishStepId | null = null
   try {
-    for (const step of PUBLISH_STEP_ORDER) {
-      const runner =
-        step === 'release' ? runReleaseStep : step === 'asset' ? runUploadStep : runMetadataStep
-      const ok = await runner()
-      if (!ok) {
-        failed = step
-        break
-      }
-      done += 1
+    publishSteps.release = 'active'
+    stepBusy.value = 'release'
+    if (workingRelease.value) {
+      publishSteps.release = 'done'
+    } else {
+      publishSteps.release = (await createReleaseOnly()) ? 'done' : 'failed'
+      if (publishSteps.release === 'failed') return false
     }
+    done += 1
+
+    publishSteps.asset = 'active'
+    stepBusy.value = 'asset'
+    publishSteps.asset = (await uploadPending()) ? 'done' : 'failed'
+    if (publishSteps.asset === 'failed') return false
+    done += 1
+
+    publishSteps.metadata = 'active'
+    // 交还占用：saveDocument 自己会设 stepBusy，带着 'asset' 进去会被它的重入保护挡掉
+    stepBusy.value = null
+    publishSteps.metadata = (await saveDocument()) ? 'done' : 'failed'
+    if (publishSteps.metadata === 'failed') return false
+    done += 1
+
+    message.success(t('mapPublish.publishDone'))
+    return true
   } finally {
-    runningAll.value = false
+    stepBusy.value = null
+    const failed = PUBLISH_STEP_ORDER.find((step) => publishSteps[step] === 'failed')
+    if (failed) {
+      message.warning(t('mapPublish.sequenceStopped', { step: stepTitle(failed), done }))
+    }
   }
-  if (failed) {
-    message.warning(t('mapPublish.sequenceStopped', { step: stepTitle(failed), done }))
-    return
-  }
-  message.success(t('mapPublish.sequenceDone', { count: done }))
 }
 
-async function retryFailedStep() {
-  const step = lastFailedStep.value
-  if (!step) return
-  if (step === 'release') await runReleaseStep()
-  else if (step === 'asset') await runUploadStep()
-  else await runMetadataStep()
+/** 发布卡里的「重试」：只有写块失败时补写块，其余从头再发一次。 */
+async function retryFailed() {
+  if (publishSteps.metadata === 'failed') {
+    publishSteps.metadata = 'active'
+    const saved = await saveDocument()
+    publishSteps.metadata = saved ? 'done' : 'failed'
+    return
+  }
+  if (publishSteps.release === 'failed' || publishSteps.asset === 'failed') {
+    await publishVersion()
+  }
 }
 
 /*
  * 窗口拖放由页面声明：地图管理与新建地图集两态都收 ZIP，拖进来只识别、不
- * 自动上传。列表页没有「当前地图集」，拖进来不做事（全窗提示条仍会说明只收 ZIP）。
+ * 自动上传。提示条文案也跟着这页走 —— 这里松手是「读取待发布的 ZIP」，不是
+ * 「安装」，默认那句会让作者以为松手就把包装进游戏。
  */
 const { dragActive } = useFileDrop({
   accept: ['zip'],
+  hint: () => t('mapPublish.dropToInspect'),
   busy: () => mode.value === 'list' || busyAny.value,
   onDrop: (path) => {
     if (mode.value === 'list') return
@@ -1373,7 +1409,7 @@ function confirmDeleteAsset(name: string) {
       </div>
 
       <template v-else>
-        <!-- 一张地图集 = 三步：上传 ZIP → 发布信息 → 写回地图信息；也能一键跑完 -->
+        <!-- 一张地图集 = 身份条 + 两个动作：发布这一版 / 保存地图资料 -->
         <div class="panel publish-head">
           <div class="panel-head">
             <div class="manage-head">
@@ -1386,10 +1422,26 @@ function confirmDeleteAsset(name: string) {
               <n-tag size="tiny" :bordered="false">
                 {{ workingRelease ? t('mapPublish.mapManagement') : t('mapPublish.newMapSet') }}
               </n-tag>
+              <n-tag v-if="form.draft" size="tiny" type="warning" :bordered="false">
+                {{ t('mapPublish.draft') }}
+              </n-tag>
+              <n-tag v-if="form.prerelease" size="tiny" type="info" :bordered="false">
+                {{ t('mapPublish.prerelease') }}
+              </n-tag>
             </div>
-            <n-button size="small" :disabled="busyAny" @click="backToList">
-              {{ t('mapPublish.backToMapSets') }}
-            </n-button>
+            <div class="head-actions">
+              <span v-if="workingRelease" class="muted identity-versions">
+                {{
+                  t('mapPublish.identityVersions', {
+                    count: workingRelease.assets.length,
+                    latest: latestRow?.mapsetVersion || '—',
+                  })
+                }}
+              </span>
+              <n-button size="small" :disabled="busyAny" @click="backToList">
+                {{ t('mapPublish.backToMapSets') }}
+              </n-button>
+            </div>
           </div>
           <p class="hint no-top">{{ t('mapPublish.flowHint') }}</p>
         </div>
@@ -1418,23 +1470,22 @@ function confirmDeleteAsset(name: string) {
               @click="startSignInAnyway">
               {{ t('mapPublish.reauthorize') }}
             </n-button>
-            <n-button v-if="lastFailedStep && !permissionFailure.rateLimited" size="small"
-              :disabled="busyAny" @click="retryFailedStep">
+            <n-button v-if="hasFailedStep && !permissionFailure.rateLimited" size="small"
+              :disabled="busyAny" @click="retryFailed">
               {{ t('mapPublish.retryStep') }}
             </n-button>
           </div>
         </div>
 
-        <!-- 步骤 1：上传这一版的 ZIP —— 文件名决定 tag 与版本号，识别结果直接回填下方 -->
-        <div class="panel step-panel">
-          <div class="step-head">
-            <span class="step-index">1</span>
-            <h3 class="sub-title">{{ t('mapPublish.stepAssetTitle') }}</h3>
-            <n-tag size="tiny" :type="stepAssetDone ? 'success' : 'default'" :bordered="false">
-              {{ stepAssetDone ? t('mapPublish.stepDone') : t('mapPublish.stepPending') }}
-            </n-tag>
+        <!-- ① 发布这一版：一次点按走完 建/改 Release → 传附件 → 写块 -->
+        <div class="panel publish-card">
+          <div class="panel-head">
+            <h3 class="sub-title">{{ t('mapPublish.publishCardTitle') }}</h3>
+            <span v-if="lastUploaded" class="muted uploaded-note">
+              {{ t('mapPublish.uploadedAs', { name: lastUploaded }) }}
+            </span>
           </div>
-          <p class="hint no-top">{{ t('mapPublish.stepAssetHint') }}</p>
+          <p class="hint no-top">{{ t('mapPublish.publishCardHint') }}</p>
 
           <div class="drop-zone" :class="{ active: dragActive }" role="button" tabindex="0"
             @click="pickPendingZip" @keydown.enter="pickPendingZip">
@@ -1466,20 +1517,20 @@ function confirmDeleteAsset(name: string) {
                   :placeholder="t('mapPublish.zipVersionPlaceholder')" :disabled="busyAny" />
               </div>
               <div class="field">
+                <span class="field-label">{{ t('mapPublish.zipNameLabel') }}</span>
+                <code class="mono rule-text">{{ canonicalName || '—' }}</code>
+                <p v-if="nameOk" class="ok no-top">{{ t('mapPublish.zipNameOk') }}</p>
+                <p v-else-if="canonicalName" class="hint">
+                  {{ t('mapPublish.zipNameWillUploadAs', { name: canonicalName }) }}
+                </p>
+                <p v-else class="warn no-top">{{ t('mapPublish.zipNameInvalid') }}</p>
+              </div>
+              <div class="field">
                 <span class="field-label">{{ t('mapPublish.zipRuleLabel') }}</span>
                 <code class="mono rule-text">{{ effectiveRule || '—' }}</code>
                 <p class="hint">
                   {{ existingRule ? t('mapPublish.zipRuleFromExisting') : t('mapPublish.zipRuleLocked') }}
                 </p>
-              </div>
-              <div class="field">
-                <span class="field-label">{{ t('mapPublish.zipNameLabel') }}</span>
-                <code class="mono rule-text">{{ canonicalName || '—' }}</code>
-                <p v-if="nameOk" class="ok no-top">{{ t('mapPublish.zipNameOk') }}</p>
-                <p v-else-if="canonicalName" class="warn no-top">
-                  {{ t('mapPublish.zipNameNeedsRename', { name: canonicalName }) }}
-                </p>
-                <p v-else class="warn no-top">{{ t('mapPublish.zipNameInvalid') }}</p>
               </div>
             </div>
 
@@ -1518,74 +1569,38 @@ function confirmDeleteAsset(name: string) {
               :disabled="busyAny || !pending.path || !canonicalName || nameOk" @click="renamePendingZip">
               {{ t('mapPublish.zipRename') }}
             </n-button>
-            <n-button size="small" type="primary" :loading="stepBusy === 'asset'"
-              :disabled="busyAny || !nameOk" @click="runUploadStep">
-              {{ stepReleaseDone ? t('mapPublish.uploadZip') : t('mapPublish.createReleaseAndUpload') }}
+            <n-button size="small" type="primary" :loading="stepBusy !== null"
+              :disabled="!canPublish" @click="publishVersion">
+              {{ workingRelease ? t('mapPublish.publishVersion') : t('mapPublish.publishFirstVersion') }}
             </n-button>
-            <span v-if="lastUploaded" class="muted uploaded-note">
-              {{ t('mapPublish.uploadedAs', { name: lastUploaded }) }}
-            </span>
-          </div>
-          <p v-if="!stepReleaseDone" class="hint no-top">{{ t('mapPublish.zipUploadCreatesRelease') }}</p>
-        </div>
-
-        <!-- 步骤 2：Release 基本信息（标题 / 说明正文）；已有 Release 时按钮是「修改信息」 -->
-        <div class="panel step-panel">
-          <div class="step-head">
-            <span class="step-index">2</span>
-            <h3 class="sub-title">{{ t('mapPublish.stepReleaseTitle') }}</h3>
-            <n-tag size="tiny" :type="stepReleaseDone ? 'success' : 'default'" :bordered="false">
-              {{ stepReleaseDone ? t('mapPublish.stepDone') : t('mapPublish.stepPending') }}
-            </n-tag>
-          </div>
-          <p class="hint no-top">{{ t('mapPublish.stepReleaseHint') }}</p>
-
-          <div class="form-grid">
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.zipTagLabel') }}</span>
-              <code class="mono rule-text">{{ form.tag.trim() || '—' }}</code>
-              <p class="hint">{{ t('mapPublish.tagHint') }}</p>
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.titleLabel') }}</span>
-              <n-input v-model:value="form.title" size="small" :disabled="busyAny" />
-            </div>
-            <div class="field span-2">
-              <span class="field-label">{{ t('mapPublish.bodyLabel') }}</span>
-              <n-input v-model:value="form.body" type="textarea" :autosize="{ minRows: 4, maxRows: 12 }"
-                :disabled="busyAny" />
-              <p class="hint">{{ t('mapPublish.bodyHint') }}</p>
-            </div>
-            <div class="field span-2 switch-field">
-              <label class="switch-label">
-                <n-switch v-model:value="form.draft" size="small" :disabled="busyAny" />
-                <span>{{ t('mapPublish.draft') }}</span>
-              </label>
-              <label class="switch-label">
-                <n-switch v-model:value="form.prerelease" size="small" :disabled="busyAny" />
-                <span>{{ t('mapPublish.prerelease') }}</span>
-              </label>
-            </div>
+            <span class="muted">{{ sequenceHint }}</span>
           </div>
 
-          <div class="actions">
-            <n-button size="small" type="primary" :loading="stepBusy === 'release'"
-              :disabled="busyAny || !form.tag.trim()" @click="runReleaseStep">
-              {{ stepReleaseDone ? t('mapPublish.editReleaseInfo') : t('mapPublish.createRelease') }}
+          <!-- 三段进度：跑过之后才出现，失败的那一行留在原地等重试 -->
+          <ul v-if="publishVisible" class="publish-progress">
+            <li v-for="step in PUBLISH_STEP_ORDER" :key="step" :class="publishSteps[step]">
+              <span class="progress-dot" />
+              <span class="progress-label">{{ stepTitle(step) }}</span>
+              <span class="progress-state">{{ publishStateText(publishSteps[step]) }}</span>
+            </li>
+          </ul>
+          <div v-if="hasFailedStep" class="actions">
+            <n-button size="small" :disabled="busyAny" @click="retryFailed">
+              {{ t('mapPublish.retryStep') }}
             </n-button>
           </div>
         </div>
 
-        <!-- 步骤 3：写回 oc2-map 块 —— 只有这一步会让地图在管理器里可见 -->
-        <div class="panel step-panel">
-          <div class="step-head">
-            <span class="step-index">3</span>
-            <h3 class="sub-title">{{ t('mapPublish.stepMetadataTitle') }}</h3>
-            <n-tag size="tiny" :type="stepMetadataDone ? 'success' : 'default'" :bordered="false">
-              {{ stepMetadataDone ? t('mapPublish.stepDone') : t('mapPublish.stepPending') }}
+        <!-- ② 地图资料：唯一写块入口（正文与 oc2-map 块一起写） -->
+        <div class="panel document-card">
+          <div class="panel-head">
+            <h3 class="sub-title">{{ t('mapPublish.documentCardTitle') }}</h3>
+            <n-tag v-if="dirty" size="tiny" type="warning" :bordered="false">
+              {{ t('mapPublish.unsaved') }}
             </n-tag>
           </div>
-          <p class="hint no-top">{{ t('mapPublish.stepMetadataHint') }}</p>
+          <p class="hint no-top">{{ t('mapPublish.documentCardHint') }}</p>
+          <p v-if="!workingRelease" class="warn no-top">{{ t('mapPublish.documentNeedsRelease') }}</p>
 
           <p class="field-section-title">{{ t('mapPublish.metadataSectionBasic') }}</p>
           <div class="form-grid">
@@ -1631,8 +1646,18 @@ function confirmDeleteAsset(name: string) {
             </n-collapse-item>
           </n-collapse>
 
+          <!-- 版本顺序：显示从新到旧，存储仍是旧→新；拖动与两个版本号都写进块 -->
+          <n-collapse class="advanced" :default-expanded-names="['versions']">
+            <n-collapse-item :title="t('mapPublish.versionOrderSection')" name="versions">
+              <p class="hint no-top">{{ t('mapPublish.versionOrderHint') }}</p>
+              <p v-if="!assetRows.length" class="hint">{{ t('mapPublish.versionMapEmpty') }}</p>
+              <VersionOrderTable v-else v-model:rows="assetRows" :name-of="assetNameOf" :disabled="busyAny"
+                @remove="removeVersionRow" />
+            </n-collapse-item>
+          </n-collapse>
+
           <!-- 高级设置：关系表与派生版本号，默认收起 —— 大多数版本不用碰。
-               assets 规则只在上面的 ZIP 卡里展示，这里不再重复一份。 -->
+               assets 规则只在发布卡里展示，这里不再重复一份。 -->
           <n-collapse class="advanced">
             <n-collapse-item :title="t('mapPublish.advancedSettings')" name="advanced">
               <p class="hint no-top">{{ t('mapPublish.advancedHint') }}</p>
@@ -1671,70 +1696,41 @@ function confirmDeleteAsset(name: string) {
             </n-collapse-item>
           </n-collapse>
 
+          <!-- GitHub 页面：标题 / 正文 / 状态。保存时与块一起写，只改正文不会把块冲掉 -->
+          <n-collapse class="advanced">
+            <n-collapse-item :title="t('mapPublish.githubPageSection')" name="github">
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">{{ t('mapPublish.titleLabel') }}</span>
+                  <n-input v-model:value="form.title" size="small" :disabled="busyAny" />
+                </div>
+                <div class="field span-2">
+                  <span class="field-label">{{ t('mapPublish.bodyLabel') }}</span>
+                  <n-input v-model:value="form.body" type="textarea" :autosize="{ minRows: 4, maxRows: 12 }"
+                    :disabled="busyAny" />
+                  <p class="hint">{{ t('mapPublish.bodyHint') }}</p>
+                </div>
+                <div class="field span-2 switch-field">
+                  <label class="switch-label">
+                    <n-switch v-model:value="form.draft" size="small" :disabled="busyAny" />
+                    <span>{{ t('mapPublish.draft') }}</span>
+                  </label>
+                  <label class="switch-label">
+                    <n-switch v-model:value="form.prerelease" size="small" :disabled="busyAny" />
+                    <span>{{ t('mapPublish.prerelease') }}</span>
+                  </label>
+                </div>
+              </div>
+            </n-collapse-item>
+          </n-collapse>
+
           <div class="actions">
             <n-button size="small" type="primary" :loading="stepBusy === 'metadata'"
-              :disabled="busyAny || !stepReleaseDone || !metadataDraft.levelSetName.trim()"
-              @click="runMetadataStep">
+              :disabled="busyAny || !workingRelease || !metadataDraft.levelSetName.trim()"
+              @click="saveDocument">
               {{ t('mapPublish.saveMetadata') }}
             </n-button>
-          </div>
-        </div>
-
-        <!-- 一键按顺序执行：三步都就绪时才建议用 -->
-        <div class="panel sequence-panel">
-          <div class="topics-text">
-            <span class="topics-title">{{ t('mapPublish.sequenceTitle') }}</span>
-            <p class="hint no-top">{{ sequenceHint }}</p>
-          </div>
-          <n-button size="small" type="primary" :loading="runningAll" :disabled="busyAny"
-            @click="runAllSteps">
-            {{ t('mapPublish.runAll') }}
-          </n-button>
-        </div>
-
-        <!-- 版本排序表：拖动决定谁是「最新版」，两个版本号都写进 oc2-map 块 -->
-        <div v-if="workingRelease" class="panel version-map-panel">
-          <div class="panel-head">
-            <h3 class="sub-title">{{ t('mapPublish.versionMapTitle') }}</h3>
-            <span class="muted">{{ assetRows.length }}</span>
-          </div>
-          <p class="hint no-top">{{ t('mapPublish.versionMapHint') }}</p>
-          <p v-if="!assetRows.length" class="hint">{{ t('mapPublish.versionMapEmpty') }}</p>
-          <ul v-else class="version-list">
-            <li v-for="(row, index) in assetRows" :key="index" class="version-row"
-              :class="{
-                dragging: dragIndex === index,
-                'drop-target': dragIndex >= 0 && dropIndex === index && dragIndex !== index,
-              }" @dragover.prevent="onDragOver(index)" @drop.prevent="onDrop(index)">
-              <span class="drag-handle" draggable="true" :title="t('mapPublish.versionMapDragHint')"
-                @dragstart="onDragStart(index, $event)" @dragend="onDragEnd">
-                <ReorderThreeOutline width="16" height="16" />
-              </span>
-              <span class="version-index">{{ index + 1 }}</span>
-              <div class="version-main">
-                <code class="mono version-asset">{{ assetNameOf(row) || row.mapsetVersion }}</code>
-                <span class="muted">{{ formatFileSize(row.size) }}</span>
-              </div>
-              <div class="version-fields">
-                <n-input v-model:value="row.mapsetVersion" size="tiny"
-                  :placeholder="t('mapPublish.versionMapMapset')" :disabled="busyAny" />
-                <n-input v-model:value="row.infoVersion" size="tiny"
-                  :placeholder="t('mapPublish.versionMapInfo')" :disabled="busyAny" />
-              </div>
-              <n-tag v-if="index === assetRows.length - 1" size="tiny" type="success" :bordered="false">
-                {{ t('mapPublish.versionMapLatest') }}
-              </n-tag>
-              <n-button size="tiny" type="error" secondary :disabled="deletingAsset || busyAny || !assetNameOf(row)"
-                @click="confirmDeleteAsset(assetNameOf(row))">
-                {{ t('mapPublish.deleteAsset') }}
-              </n-button>
-            </li>
-          </ul>
-          <div v-if="assetRows.length" class="actions">
-            <n-button size="small" type="primary" :loading="stepBusy === 'metadata'"
-              :disabled="busyAny || !stepReleaseDone" @click="runMetadataStep">
-              {{ t('mapPublish.versionMapSave') }}
-            </n-button>
+            <span v-if="dirty" class="muted">{{ t('mapPublish.unsavedHint') }}</span>
           </div>
         </div>
       </template>
@@ -2008,37 +2004,53 @@ function confirmDeleteAsset(name: string) {
 .inspection-grid > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .inspection-grid span { font-size: 12px; color: var(--oc2-text-2); overflow-wrap: anywhere; }
 
-/* ===== 三步式发布 ===== */
+/* ===== 发布页：身份条 + 两个动作卡 ===== */
 
 .publish-head { margin-bottom: 16px; }
-.step-panel { margin-top: 16px; }
-.step-head {
+
+.head-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
 }
-.step-head .sub-title { margin: 0; }
-.step-index {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--oc2-accent);
-  color: var(--oc2-body);
-  font-size: 12px;
-  font-weight: 700;
-}
+.identity-versions { font-size: 12px; }
 
-.sequence-panel {
+.publish-card,
+.document-card { margin-top: 16px; }
+.publish-card .panel-head .sub-title,
+.document-card .panel-head .sub-title { margin: 0; }
+
+/* 三段进度：跑过之后才出现，失败的那一行留在原地等重试 */
+.publish-progress {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.publish-progress li {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--oc2-text-3);
 }
+.publish-progress .progress-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--oc2-row-line);
+}
+.publish-progress li.active { color: var(--oc2-text-1); }
+.publish-progress li.active .progress-dot { background: var(--oc2-accent); }
+.publish-progress li.done { color: var(--oc2-text-2); }
+.publish-progress li.done .progress-dot { background: color-mix(in srgb, #16b364 78%, var(--oc2-text-1)); }
+.publish-progress li.failed { color: color-mix(in srgb, #e5484d 82%, var(--oc2-text-1)); }
+.publish-progress li.failed .progress-dot { background: color-mix(in srgb, #e5484d 82%, var(--oc2-text-1)); }
+.publish-progress .progress-state { margin-left: auto; }
 
 .permission-banner {
   display: flex;
@@ -2117,72 +2129,4 @@ function confirmDeleteAsset(name: string) {
   margin-top: 6px;
 }
 
-/* 版本排序表：一行 = 一个 Release 附件，拖动手柄在最左，两个版本号在右 */
-.version-map-panel { margin-top: 16px; }
-
-.version-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.version-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 10px;
-  background: var(--oc2-tile);
-}
-.version-row.dragging { opacity: .5; }
-.version-row.drop-target {
-  border-color: var(--oc2-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 22%, transparent);
-}
-
-.drag-handle {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  color: var(--oc2-text-3);
-  cursor: grab;
-}
-.drag-handle:active { cursor: grabbing; }
-
-.version-index {
-  flex: 0 0 auto;
-  min-width: 16px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--oc2-text-3);
-  text-align: right;
-}
-
-.version-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.version-asset {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.version-main .muted { flex: 0 0 auto; font-size: 12px; }
-
-.version-fields {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-.version-fields .n-input { width: 104px; }
 </style>

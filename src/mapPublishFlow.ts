@@ -18,13 +18,6 @@ export type PublishStepId = 'release' | 'asset' | 'metadata'
 /** 执行顺序：没有 Release 就没有地方挂附件，元数据也要落在已有 Release 上。 */
 export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'asset', 'metadata']
 
-/**
- * 面板顺序：ZIP 在最上面 —— 新地图的 tag 与版本号都从 ZIP 名里拆，先选包再填
- * 发布信息。执行顺序仍是 `PUBLISH_STEP_ORDER`，两者不能合并：界面先看到的
- * 不一定是能先跑的。
- */
-export const PUBLISH_PANEL_ORDER: readonly PublishStepId[] = ['asset', 'release', 'metadata']
-
 export interface PublishInputState {
   /** 已确定的 tag（新地图从 ZIP 名来，已有地图用现有 tag）。 */
   tag: string
@@ -140,4 +133,35 @@ export function permissionScopeKey(permission: string): PublishPermissionScope {
   if (text.includes('administration')) return 'administration'
   if (text.includes('metadata')) return 'metadata'
   return 'other'
+}
+
+/**
+ * 排序表的一行 = 一批资产的版本号。
+ *
+ * `mapsetVersion` 写进 `asset_versions`（末项 = 最新），`infoVersion` 取自 ZIP 里的
+ * info，管理器按它判断有没有新版。表里不存附件名：附件名由资产规则渲染得到。
+ */
+export interface AssetVersionRow {
+  mapsetVersion: string
+  infoVersion: string
+  size: number
+}
+
+/**
+ * 排序表拖动：入参与返回值都是**存储顺序**（旧→新），下标是**显示顺序**
+ * （最新在最上，即存储的反向）。
+ *
+ * 只在这里做一次反转，页面与组件都不自己算：两处各反转一次会互相抵消，
+ * 拖动看起来完全没反应。原数组不修改。
+ */
+export function reorderVersionRows<T>(rows: readonly T[], fromDisplay: number, toDisplay: number): T[] {
+  const display = [...rows].reverse()
+  if (fromDisplay < 0 || fromDisplay >= display.length) return [...rows]
+  const to = Math.max(0, Math.min(display.length - 1, toDisplay))
+  if (fromDisplay === to) return [...rows]
+  const moved = display[fromDisplay]
+  if (moved === undefined) return [...rows]
+  display.splice(fromDisplay, 1)
+  display.splice(to, 0, moved)
+  return display.reverse()
 }

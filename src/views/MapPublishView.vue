@@ -177,6 +177,15 @@ function displayName(release: PublishRelease): string {
   return release.metadata?.level_set_name.trim() || release.title.trim() || release.tag
 }
 
+/* 身份条：标题与 tag 相同时只留一个，避免「mianhua mianhua」这种重复。 */
+const identityTag = computed(() => (workingRelease.value?.tag || form.tag.trim()).trim())
+const identityTitle = computed(() =>
+  (workingRelease.value ? displayName(workingRelease.value) : form.title.trim()).trim(),
+)
+const identityShowsTitle = computed(
+  () => identityTitle.value !== '' && identityTitle.value !== identityTag.value,
+)
+
 /* ===== 地图信息表单（新建与编信息共用一份） ===== */
 
 interface FormState {
@@ -1394,9 +1403,7 @@ function confirmDeleteAsset(name: string) {
               <code class="release-tag mono">
                 {{ workingRelease?.tag || form.tag.trim() || t('mapPublish.newMapSet') }}
               </code>
-              <span class="release-title">
-                {{ workingRelease ? displayName(workingRelease) : form.title.trim() }}
-              </span>
+              <span v-if="identityShowsTitle" class="release-title">{{ identityTitle }}</span>
               <n-tag size="tiny" :bordered="false">
                 {{ workingRelease ? t('mapPublish.mapManagement') : t('mapPublish.newMapSet') }}
               </n-tag>

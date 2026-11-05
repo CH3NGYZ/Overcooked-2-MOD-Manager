@@ -2231,6 +2231,28 @@ pub(crate) fn synthesize_releases(
         .collect())
 }
 
+/// 暂存地图 Release 时挑出要下载的那个资产。
+///
+/// 指定资产名时精确匹配（详情抽屉把选中的文件传下来）；未指定时分两种形态：
+/// - tag 模式：`cached_releases` 是 `synthesize_releases` 拆出来的合成版本，
+///   每条只带一个已经按版本表或版本规则选中的资产，直接用它。
+/// - 普通模式：与 MOD 安装共用 `select_install_asset` 的 `asset_rules` 匹配。
+///
+/// 版本表接受 `3.4.1-fix` 这类自由文本版本，而 `asset_rules` 的版本正则通常
+/// 只写 `[0-9.]+`。tag 模式下再按规则过一遍会把唯一资产筛掉，卡片一键安装
+/// 报 `source.noMatchingAsset`，而抽屉因为传了资产名不受影响。
+pub(crate) fn select_map_stage_asset<'a>(
+    map: &MapRepositoryConfig,
+    release: &'a ReleaseInfo,
+    asset_name: Option<&str>,
+) -> Option<&'a ReleaseAsset> {
+    if asset_name.is_none() && map_tag(map).is_some() {
+        return release.assets.first();
+    }
+    let probe = release_probe(map);
+    crate::releases::select_install_asset(&probe, release, asset_name)
+}
+
 /// 把版本号渲染回资产名：`^gaoda_v(?P<version>[0-9.]+)\.zip$` + `3.4.1-fix`
 /// 得到 `gaoda_v3.4.1-fix.zip`。
 ///
@@ -2719,6 +2741,44 @@ asset_rules = [{rules}]
             .iter()
             .map(|release| release.tag_name.as_str())
             .collect()
+    }
+
+    #[test]
+    fn tag_mode_auto_select_keeps_a_free_text_version_asset() {
+        // 版本表末项是 `0.78-fix`，规则只写数字段，自动匹配按理会落空
+        let map = tag_entry("tag = \"maps\"");
+        let mut staged = release("maps", &["rw_v0.78-fix.zip"]);
+        staged.release_id = None;
+        staged.tag_name = "0.78-fix".to_string();
+        staged.version = Some("0.78-fix".to_string());
+        assert!(!crate::releases::asset_matches(
+            &staged.assets[0],
+            &map.asset_rules
+        ));
+        assert_eq!(
+            select_map_stage_asset(&map, &staged, None).map(|asset| asset.name.as_str()),
+            Some("rw_v0.78-fix.zip")
+        );
+        // 明确指定的资产名仍要精确匹配，错名字不能偷偷装成别的文件
+        assert!(select_map_stage_asset(&map, &staged, Some("rw_v0.78.zip")).is_none());
+    }
+
+    #[test]
+    fn release_mode_still_filters_assets_by_rules() {
+        // 没写 tag 就是普通 Release 模式：规则不认的资产不能自动选中
+        let map = tag_entry("");
+        let unmatched = release("v0.78", &["rw_v0.78-fix.zip"]);
+        assert!(select_map_stage_asset(&map, &unmatched, None).is_none());
+        assert_eq!(
+            select_map_stage_asset(&map, &unmatched, Some("rw_v0.78-fix.zip"))
+                .map(|asset| asset.name.as_str()),
+            Some("rw_v0.78-fix.zip")
+        );
+        let matched = release("v0.78", &["rw_v0.78.zip"]);
+        assert_eq!(
+            select_map_stage_asset(&map, &matched, None).map(|asset| asset.name.as_str()),
+            Some("rw_v0.78.zip")
+        );
     }
 
     #[test]

@@ -6705,10 +6705,11 @@ pub async fn stage_map_release(
             .cloned()
             .ok_or("source.noInstallableRelease")?,
     };
-    let probe = crate::map_sources::release_probe(&map);
-    // 指定资产时精确匹配该名字，未指定才按 `asset_rules` 自动选 ——
-    // 与 MOD 安装同一条 `select_install_asset`，不要在地图侧另写匹配。
-    let asset = releases::select_install_asset(&probe, &release, asset_name.as_deref())
+    /*
+     * 指定资产名时精确匹配；未指定时普通地图仍按 `asset_rules` 自动选，
+     * tag 模式直接用合成版本自带的唯一资产（见 `select_map_stage_asset`）。
+     */
+    let asset = crate::map_sources::select_map_stage_asset(&map, &release, asset_name.as_deref())
         .ok_or("source.noMatchingAsset")?
         .clone();
 

@@ -39,6 +39,14 @@ export const modsLocal: DomainMessages = {
     ko: '설치된 MOD 없음',
     ja: 'MODは未インストールです',
   },
+  // 没有匹配的 MOD
+  noMatchMods: {
+    'zh-CN': '没有匹配的 MOD，换个关键词试试。',
+    'zh-TW': '沒有符合的 MOD，換個關鍵字試試。',
+    en: 'No MODs match your search. Try a different keyword.',
+    ko: '검색과 일치하는 MOD가 없습니다. 다른 키워드를 입력해 보세요.',
+    ja: '検索に一致する MOD がありません。別のキーワードをお試しください。',
+  },
   // 有更新
   update: {
     'zh-CN': '有更新',

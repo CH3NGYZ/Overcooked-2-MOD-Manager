@@ -12,11 +12,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
 import { useDialog } from 'naive-ui'
 import { useNotify } from '../useNotify'
 import {
-  NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag,
+  NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NInput, NTabPane, NTabs, NTag,
 } from 'naive-ui'
 import {
-  FolderOpenOutline, RefreshOutline,
+  FolderOpenOutline, RefreshOutline, SearchOutline,
 } from '@vicons/ionicons5'
+import { matchesLocalSearch, modSearchText } from '../localItemSearch'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
 import type { RelationStatus } from '../modRelations'
@@ -312,9 +313,32 @@ const relationIssueByDll = computed<Record<string, RelationStatus>>(() => {
   return map
 })
 
+/* ===== 搜索 =====
+ *
+ * 纯前端过滤，只收窄本页的展示集合：刷新、依赖快照与批量开关仍按全部本地
+ * MOD 走。命中范围见 `localItemSearch` 的字段白名单 —— 卡片上看得见的名称、
+ * 作者、分类、版本号、来源都算，路径、GUID、状态枚举这些内部数据不算。
+ */
+const search = ref('')
+const query = computed(() => search.value.trim().toLowerCase())
+
+/** 卡片标题可能来自绑定仓库名或包名快照，纯模块看不到，作为额外文字拼进来。 */
+function searchExtra(mod: InstalledMod) {
+  return [displayTitle(mod), singleModTitle(mod)]
+}
+
 /** 列表固定按标题排序（排序切换入口已移除，见上方说明）。 */
 const sortedMods = computed(() =>
-  [...effectiveMods.value].sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
+  [...effectiveMods.value]
+    .filter((mod) => matchesLocalSearch(query.value, modSearchText(mod), ...searchExtra(mod)))
+    .sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
+)
+
+/** 「没装 MOD」与「搜不到」是两件事，空态不能都说成没装。 */
+const emptyDescription = computed(() =>
+  effectiveMods.value.length && query.value
+    ? t('modsLocal.noMatchMods')
+    : t('modsLocal.noModsInstalled'),
 )
 
 /* ===== 全部启用 / 全部禁用 =====
@@ -603,8 +627,18 @@ const groups = computed<ModGroupNode[]>(() => {
 const allGroupKeys = computed(() => groups.value.map((node) => node.key))
 /** 默认全部展开：新出现的分类自动展开，用户的折叠选择单独记住。 */
 const collapsedGroups = ref<string[]>([])
-const groupsExpanded = computed(() => allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)))
+/** 搜索时强制全展开：命中卡可能落在用户收起的分类里，不能让它藏在折叠层后面。 */
+const groupsExpanded = computed(() =>
+  query.value
+    ? allGroupKeys.value
+    : allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
+)
 function onGroupsExpanded(names: string[]) {
+  /*
+   * 搜索期间的折叠只对应筛选后的分类，记下来会在清空搜索时把用户原本的
+   * 折叠状态冲掉，所以这段时间不落库；此时展开状态由 `query` 单独决定。
+   */
+  if (query.value) return
   const open = new Set(names)
   collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
 }
@@ -1659,6 +1693,16 @@ provide(
   -->
   <Teleport to="#page-header-actions" defer>
     <!--
+      搜索框与在线页同一位置。有词时显示「命中 / 全部」；批量开关走后端
+      一次操作锁、作用于全部本地 MOD，搜索期间先收起，避免把筛选结果
+      误当成它的作用范围。
+    -->
+    <span v-if="query" class="header-count muted">{{ sortedMods.length }} / {{ effectiveMods.length }}</span>
+    <n-input v-model:value="search" clearable size="small" class="header-search"
+      :placeholder="t('dialogs.search')">
+      <template #prefix><SearchOutline width="14" height="14" /></template>
+    </n-input>
+    <!--
       批量开关：一个二选一分段控件（与发布详情面板「说明 / 下载安装」同款），
       替代原来的两个按钮 —— 同一时刻只有全开 / 全关两种状态，是互斥选择。
       · 全部启用 → 选中左侧；全部禁用 → 选中右侧；
@@ -1667,7 +1711,7 @@ provide(
       · 禁用方向仍走 confirmDisableAll()：整页 MOD 全部停用不是随手试的操作；
       · 批量进行中两个分段都禁用，避免连点再发一批命令。
     -->
-    <n-tabs v-if="effectiveMods.length" type="segment" animated class="bulk-switch"
+    <n-tabs v-if="effectiveMods.length && !query" type="segment" animated class="bulk-switch"
       data-tutorial="mods-local-bulk" :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
       @update:value="onBulkSwitch">
       <!--
@@ -1720,7 +1764,7 @@ provide(
   -->
   <PageLoading :show="loading">
     <template #status>{{ t('common.loading') }}</template>
-    <n-empty v-if="!loading && !sortedMods.length" :description="t('modsLocal.noModsInstalled')" class="empty" />
+    <n-empty v-if="!loading && !sortedMods.length" :description="emptyDescription" class="empty" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
@@ -1756,6 +1800,10 @@ provide(
 </template>
 
 <style scoped>
+/* 页头搜索框是操作区里唯一能收缩的项（数值与在线页一致） */
+.header-search { width: 240px; flex: 0 1 240px; min-width: 120px; }
+.header-count { white-space: nowrap; flex: 0 0 auto; }
+
 /* 分类折叠：分类标题行 + 内部单列 MOD 卡片 */
 .group-collapse { width: 100%; }
 

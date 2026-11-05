@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
-import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
+import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NInput, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
+import { AlbumsOutline, FolderOpenOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { matchesLocalSearch, levelSetSearchText } from '../localItemSearch'
 import { t, locale, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
@@ -175,13 +176,35 @@ const recyclesOnDelete = computed(() => config.value?.recycle_deleted_mods !== f
  * 「浏览顺序」，状态是卡片上的事实 —— 混在一起会让用户刚点过的卡片换位置，
  * 看起来像点错了。
  */
+/* ===== 搜索 =====
+ *
+ * 纯前端过滤，只收窄本页的展示集合：扫描、版本对照、批量开关与检测更新
+ * 仍按全部关卡集走。命中范围见 `localItemSearch` 的字段白名单 —— 名称、
+ * 作者、分组、版本号、随包插件算，路径、uid、内部 id 不算。
+ */
+const search = ref('')
+const query = computed(() => search.value.trim().toLowerCase())
+
+/** 详情行里的绑定地图名与 tag 来自模块级单例，纯模块看不到，额外拼进来。 */
+function searchExtra(set: LevelSetInfo) {
+  const binding = bindingOf(set)
+  return [binding?.name, binding?.tag]
+}
+
 const sortedSets = computed(() =>
-  [...sets.value].sort((left, right) =>
-    levelSetDisplayName(left, locale.value).localeCompare(
-      levelSetDisplayName(right, locale.value),
-      locale.value,
+  [...sets.value]
+    .filter((set) => matchesLocalSearch(query.value, levelSetSearchText(set), ...searchExtra(set)))
+    .sort((left, right) =>
+      levelSetDisplayName(left, locale.value).localeCompare(
+        levelSetDisplayName(right, locale.value),
+        locale.value,
+      ),
     ),
-  ),
+)
+
+/** 「没装地图」与「搜不到」是两件事，空态不能都说成没装。 */
+const emptyDescription = computed(() =>
+  sets.value.length && query.value ? t('levelSet.noMatchMaps') : t('levelSet.noLevelSets'),
 )
 
 /**
@@ -234,10 +257,18 @@ const groups = computed<LevelSetGroupNode[]>(() => {
 const allGroupKeys = computed(() => groups.value.map((group) => group.key))
 /** 默认全部展开：新出现的分组自动展开，用户的折叠选择单独记住。 */
 const collapsedGroups = ref<string[]>([])
+/** 搜索时强制全展开：命中卡可能落在用户收起的作者分组里。 */
 const groupsExpanded = computed(() =>
-  allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
+  query.value
+    ? allGroupKeys.value
+    : allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
 )
 function onGroupsExpanded(names: string[]) {
+  /*
+   * 搜索期间的折叠只对应筛选后的分组，记下来会在清空搜索时把用户原本的
+   * 折叠状态冲掉，所以这段时间不落库；此时展开状态由 `query` 单独决定。
+   */
+  if (query.value) return
   const open = new Set(names)
   collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
 }
@@ -1278,6 +1309,16 @@ provide(
   -->
   <Teleport to="#page-header-actions" defer>
     <!--
+      搜索框与在线页同一位置。有词时显示「命中 / 全部」；批量开关走后端
+      一次操作锁、作用于全部关卡集，搜索期间先收起，避免把筛选结果
+      误当成它的作用范围。
+    -->
+    <span v-if="query" class="header-count muted">{{ sortedSets.length }} / {{ sets.length }}</span>
+    <n-input v-model:value="search" clearable size="small" class="header-search"
+      :placeholder="t('dialogs.search')">
+      <template #prefix><SearchOutline width="14" height="14" /></template>
+    </n-input>
+    <!--
       批量开关：一个二选一分段控件（与 MOD 管理页、发布详情面板同款），
       替代原来的两个按钮 —— 同一时刻只有全开 / 全关两种状态，是互斥选择。
       · 全部启用 → 选中左侧；全部停用 → 选中右侧；
@@ -1286,7 +1327,7 @@ provide(
       · 停用方向仍走 confirmDisableAll()：整页地图一起停用不是随手试的操作；
       · 批量进行中两个分段都禁用，避免连点再发一批命令。
     -->
-    <n-tabs v-if="sets.length" type="segment" animated class="bulk-switch"
+    <n-tabs v-if="sets.length && !query" type="segment" animated class="bulk-switch"
       :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
       @update:value="onBulkSwitch">
       <!--
@@ -1368,7 +1409,7 @@ provide(
       <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
     </template>
     <n-empty v-if="!loading && !sortedSets.length" class="empty"
-      :description="t('levelSet.noLevelSets')" />
+      :description="emptyDescription" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
@@ -1399,6 +1440,10 @@ provide(
 
 <style scoped>
 /* 页头批量分段控件的样式在 src/styles/global.css 的 `.bulk-switch`。 */
+
+/* 页头搜索框是操作区里唯一能收缩的项（数值与在线页一致） */
+.header-search { width: 240px; flex: 0 1 240px; min-width: 120px; }
+.header-count { white-space: nowrap; flex: 0 0 auto; }
 
 .group-collapse {
   width: 100%;

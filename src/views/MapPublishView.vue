@@ -1,18 +1,33 @@
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref, watch } from 'vue'
-import { NButton, NCheckbox, NInput, NPopover, NSpin, NSwitch, NTag, useDialog } from 'naive-ui'
-import { RefreshOutline, SettingsOutline } from '@vicons/ionicons5'
+import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import {
+  NButton,
+  NCheckbox,
+  NCollapse,
+  NCollapseItem,
+  NInput,
+  NPopover,
+  NSpin,
+  NSwitch,
+  NTag,
+  useDialog,
+} from 'naive-ui'
+import { RefreshOutline, ReorderThreeOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { api } from '../services/tauri'
 import PageLoading from '../components/PageLoading.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useMapPublish } from '../composables/useMapPublish'
 import {
-  defaultTemplate,
-  isMapVersion,
+  assetRuleFrom,
+  compareMapVersions,
+  composeAssetRule,
+  isVersionText,
   latestVersionOf,
+  parseVersionedZipName,
   renderAssetName,
   versionFromAssetName,
+  versionFromRule,
 } from '../mapPublishAsset'
 import {
   PUBLISH_STEP_ORDER,
@@ -25,14 +40,23 @@ import { markDialogBusy } from '../dialogBusy'
 import { formatFileSize } from '../repositoryAssets'
 import { useNotify } from '../useNotify'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import type { MapPublishMetadata, PublishAsset, PublishRelease, PublishZipInspection } from '../types'
+import type { MapPublishMetadata, PublishRelease, PublishZipInspection } from '../types'
 
 /**
  * 地图发布页 —— 作者把地图 ZIP 作为 GitHub Release 发出去的唯一入口。
  *
  * 口径：**一个 tag 就是一张地图集**，版本号只写在附件名里。列表按地图集
- * 展示；进到某张地图集里才是「地图管理」，发布 / 更新固定走三步：发布信息 →
- * 上传这一版的 ZIP → 写回 oc2-map 信息，最下面是这张地图已有的资产。
+ * 展示；进到某张地图集里才是「地图管理」，固定三步：上传这一版的 ZIP →
+ * 发布信息 → 写回 oc2-map 信息。
+ *
+ * 为什么 ZIP 在最前面：tag 与版本号本来就应该由文件名决定（`tag_v版本号.zip`），
+ * 先选包才能把发布信息填对；而附件必须挂在已存在的 Release 上，所以真正
+ * 上传时如果还没有 Release，会先按第 2 步的信息建一个（见 `runUploadStep`）。
+ *
+ * 最下面的「版本排序表」是这张地图的权威顺序：作者拖动资产排序、给每一版
+ * 标上 info 版本号，写进 oc2-map 块的 `asset_versions` 数组。管理器据此判断
+ * 谁是最新版 —— 数字比较排不出的 `3.4.1-fix` 与「资产版本号和 info 版本号
+ * 不一致导致一直提示更新」两个问题都由它解决。
  *
  * 与地图下载页的关系：这一页只负责「写 GitHub」，不读地图源。作者保存后，
  * 管理器下一次刷新地图源就会从 Release note 的 oc2-map 块读到这张地图。
@@ -94,15 +118,15 @@ type ViewMode = 'list' | 'manage' | 'create'
 const mode = ref<ViewMode>('list')
 /** 正在管理的地图集：用 tag 定位，`releases` 刷新后自动跟着换新对象。 */
 const activeTag = ref('')
-/** 新建模式下第一步创建出来的 Release；第二、三步都挂在它上面。 */
+/** 新建模式下上传/建 Release 之后拿到的对象；上传与写块都挂在它上面。 */
 const createdRelease = ref<PublishRelease | null>(null)
 
 /**
  * 当前正在编辑的那张地图集的 Release。
  *
  * 「地图管理」按 tag 去最新列表里找（刷新后拿到的是新对象）；「新建地图集」
- * 在第一步成功前是 null，成功后按创建结果找 —— 后面的上传与写块都需要一个
- * 真实存在的 Release id。
+ * 在第一次写出 Release 之前是 null，之后按创建结果找 —— 上传与写块都需要
+ * 一个真实存在的 Release id。
  */
 const workingRelease = computed(() => {
   const tag = mode.value === 'manage' ? activeTag.value : (createdRelease.value?.tag ?? '')
@@ -110,8 +134,14 @@ const workingRelease = computed(() => {
   return releases.value.find((item) => item.tag === tag) ?? createdRelease.value
 })
 
-/** 一张地图集「当前算哪一版」：附件名里的最大版本，老 Release 退回 metadata。 */
+/** 已存在地图集的 tag：新建模式下第一次写出 Release 之后也固定下来。 */
+const existingTag = computed(() => workingRelease.value?.tag ?? '')
+
+/** 一张地图集「当前算哪一版」：排序表尾优先，其次附件名里的最大版本。 */
 function latestVersionOfRelease(release: PublishRelease): string {
+  const table = release.metadata?.asset_versions ?? []
+  const last = table[table.length - 1]
+  if (last?.mapset_version.trim()) return last.mapset_version.trim()
   return (
     latestVersionOf(release.assets.map((asset) => asset.name)) ||
     release.metadata?.latest_mapset_version.trim() ||
@@ -126,7 +156,7 @@ function displayName(release: PublishRelease): string {
 /* ===== 地图信息表单（新建与编信息共用一份） ===== */
 
 interface FormState {
-  /** 地图 ID（git tag）：一张地图一个，创建后不能改。 */
+  /** 地图 ID（git tag）：一张地图一个，由 ZIP 文件名决定，创建后不能改。 */
   tag: string
   title: string
   body: string
@@ -134,25 +164,39 @@ interface FormState {
   prerelease: boolean
 }
 
-/**
- * 元数据里三张 `Record<string, string>` 在界面上是文本域。
- *
- * 一行一条 `key = value` 比表格好写也好粘贴：作者本来就在 info / 源文档里
- * 维护这类清单，直接复制过来即可，不需要逐行点「添加」。
- */
+/** 关系表的一行：左边 GUID、右边版本区间。 */
+interface RelationRow {
+  guid: string
+  range: string
+}
+
+type RelationKind = 'requires' | 'compatible' | 'conflicts'
+
+const RELATION_KINDS: readonly RelationKind[] = ['requires', 'compatible', 'conflicts']
+
+/** 三张关系表的标题在 computed 里取，切语言时跟着变（不要在模板里 t(变量)）。 */
+const relationKinds = computed(() =>
+  RELATION_KINDS.map((id) => ({
+    id,
+    label:
+      id === 'requires'
+        ? t('mapPublish.requires')
+        : id === 'compatible'
+          ? t('mapPublish.compatible')
+          : t('mapPublish.conflicts'),
+  })),
+)
+
 interface MetadataDraft {
   levelSetName: string
   levelSetNameZh: string
   author: string
-  asset: string
-  latestMapsetVersion: string
-  latestInfoVersion: string
   nameI18n: string
   noteI18n: string
   groupI18n: string
-  requires: string
-  compatible: string
-  conflicts: string
+  requires: RelationRow[]
+  compatible: RelationRow[]
+  conflicts: RelationRow[]
 }
 
 function blankMetadataDraft(): MetadataDraft {
@@ -160,15 +204,12 @@ function blankMetadataDraft(): MetadataDraft {
     levelSetName: '',
     levelSetNameZh: '',
     author: '',
-    asset: '',
-    latestMapsetVersion: '',
-    latestInfoVersion: '',
     nameI18n: '',
     noteI18n: '',
     groupI18n: '',
-    requires: '',
-    compatible: '',
-    conflicts: '',
+    requires: [],
+    compatible: [],
+    conflicts: [],
   }
 }
 
@@ -197,11 +238,11 @@ function chooseRepository(fullName: string) {
 }
 
 /**
- * 解析「一行一条」的清单。
+ * 解析「一行一条」的清单（多语言表用）。
  *
- * 关系值本身带 `>=` / `<=`，所以不能简单按第一个 `=` 切：等号紧跟在比较
- * 运算符后面时属于值，不是分隔符。`GUID >= 4.0.0` 这种没写分隔等号的写法
- * 也收，作者从别处粘贴时常是这一种。
+ * 值本身可能带 `=`，所以不能简单按第一个 `=` 切：等号紧跟在比较运算符后面
+ * 时属于值，不是分隔符。`key value` 这种没写等号的写法也收，作者从别处
+ * 粘贴时常是这一种。
  */
 function parsePairs(text: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -227,19 +268,36 @@ function parsePairs(text: string): Record<string, string> {
   return result
 }
 
-/** 版本区间统一写成 `>=4.0.0`（后端解析器接受空格，但存进 block 时没必要保留）。 */
-function parseRelations(text: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const [key, value] of Object.entries(parsePairs(text))) {
-    result[key] = value.replace(/^([<>=!~]+)\s+/, '$1')
-  }
-  return result
-}
-
 function pairsToText(record: Record<string, string>): string {
   return Object.entries(record)
     .map(([key, value]) => `${key} = ${value}`)
     .join('\n')
+}
+
+function recordToRows(record: Record<string, string>): RelationRow[] {
+  return Object.entries(record).map(([guid, range]) => ({ guid, range }))
+}
+
+/**
+ * 关系表存盘前的归一化：版本区间统一写成 `>=4.0.0`（后端解析器接受空格，
+ * 但存进 block 时没必要保留）；空 GUID 的行直接丢掉，界面上加错了不算数。
+ */
+function relationsToRecord(rows: readonly RelationRow[]): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const row of rows) {
+    const guid = row.guid.trim()
+    if (!guid) continue
+    result[guid] = row.range.trim().replace(/^([<>=!~]+)\s+/, '$1')
+  }
+  return result
+}
+
+function addRelationRow(kind: RelationKind) {
+  metadataDraft[kind].push({ guid: '', range: '' })
+}
+
+function removeRelationRow(kind: RelationKind, index: number) {
+  metadataDraft[kind].splice(index, 1)
 }
 
 function applyMetadata(metadata: MapPublishMetadata | null) {
@@ -248,15 +306,12 @@ function applyMetadata(metadata: MapPublishMetadata | null) {
     draft.levelSetName = metadata.level_set_name
     draft.levelSetNameZh = metadata.level_set_name_zh
     draft.author = metadata.author
-    draft.asset = metadata.asset
-    draft.latestMapsetVersion = metadata.latest_mapset_version
-    draft.latestInfoVersion = metadata.latest_info_version
     draft.nameI18n = pairsToText(metadata.name_i18n)
     draft.noteI18n = pairsToText(metadata.note_i18n)
     draft.groupI18n = pairsToText(metadata.group_i18n)
-    draft.requires = pairsToText(metadata.requires)
-    draft.compatible = pairsToText(metadata.compatible)
-    draft.conflicts = pairsToText(metadata.conflicts)
+    draft.requires = recordToRows(metadata.requires)
+    draft.compatible = recordToRows(metadata.compatible)
+    draft.conflicts = recordToRows(metadata.conflicts)
   }
   Object.assign(metadataDraft, draft)
 }
@@ -270,21 +325,93 @@ function resetForm(release: PublishRelease | null, metadata: MapPublishMetadata 
   applyMetadata(metadata)
 }
 
-function buildMetadata(): MapPublishMetadata {
-  return {
-    level_set_name: metadataDraft.levelSetName.trim(),
-    level_set_name_zh: metadataDraft.levelSetNameZh.trim(),
-    author: metadataDraft.author.trim(),
-    name_i18n: parsePairs(metadataDraft.nameI18n),
-    group_i18n: parsePairs(metadataDraft.groupI18n),
-    note_i18n: parsePairs(metadataDraft.noteI18n),
-    asset: metadataDraft.asset.trim(),
-    latest_mapset_version: metadataDraft.latestMapsetVersion.trim(),
-    latest_info_version: metadataDraft.latestInfoVersion.trim(),
-    requires: parseRelations(metadataDraft.requires),
-    compatible: parseRelations(metadataDraft.compatible),
-    conflicts: parseRelations(metadataDraft.conflicts),
+/* ===== 版本排序表 ===== */
+
+/**
+ * 排序表的一行 = 一批资产的版本号。顺序就是从旧到新，最后一行是最新版。
+ *
+ * 表里**不存附件名**：附件名由资产规则渲染 `mapsetVersion` 得到（见 `assetNameOf`），
+ * 所以改规则不需要重建整张表。`mapsetVersion` 可以写成 `3.4.1-fix`：数字比较排不出
+ * 这种后缀，顺序只能由作者拖动决定。
+ */
+interface AssetVersionRow {
+  mapsetVersion: string
+  infoVersion: string
+  size: number
+}
+
+const assetRows = ref<AssetVersionRow[]>([])
+
+/** 这一行对应的附件名：用当前资产规则渲染它的 mapsetVersion。 */
+function assetNameOf(row: AssetVersionRow): string {
+  return effectiveRule.value ? renderAssetName(effectiveRule.value, '', row.mapsetVersion) : ''
+}
+
+/** 表里排过的按表顺序；没进表的（刚上传还没排）按数字版本降序排在后面。 */
+function versionRowsOf(release: PublishRelease | null): AssetVersionRow[] {
+  const rule = effectiveRule.value
+  const assets = release?.assets ?? []
+  const byName = new Map(assets.map((asset) => [asset.name, asset]))
+  const rows: AssetVersionRow[] = []
+  for (const entry of release?.metadata?.asset_versions ?? []) {
+    const mapsetVersion = entry.mapset_version.trim()
+    if (!mapsetVersion) continue
+    const name = rule ? renderAssetName(rule, '', mapsetVersion) : ''
+    const asset = name ? byName.get(name) : undefined
+    if (asset) byName.delete(name)
+    rows.push({
+      mapsetVersion,
+      infoVersion: entry.info_version.trim(),
+      size: asset?.size ?? 0,
+    })
   }
+  const rest = [...byName.values()].sort((left, right) =>
+    compareMapVersions(versionFromAssetName(right.name), versionFromAssetName(left.name)),
+  )
+  for (const asset of rest) {
+    rows.push({
+      mapsetVersion: versionFromAssetName(asset.name),
+      infoVersion: '',
+      size: asset.size,
+    })
+  }
+  return rows
+}
+
+/** 最新版就是最后一行；两个派生字段都从它来。 */
+const latestRow = computed<AssetVersionRow | null>(() => assetRows.value[assetRows.value.length - 1] ?? null)
+
+const dragIndex = ref(-1)
+const dropIndex = ref(-1)
+
+function onDragStart(index: number, event: DragEvent) {
+  dragIndex.value = index
+  dropIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+function onDragOver(index: number) {
+  if (dragIndex.value < 0) return
+  dropIndex.value = index
+}
+
+function onDragEnd() {
+  dragIndex.value = -1
+  dropIndex.value = -1
+}
+
+function onDrop(index: number) {
+  const from = dragIndex.value
+  dragIndex.value = -1
+  dropIndex.value = -1
+  if (from < 0 || from === index) return
+  const rows = assetRows.value.slice()
+  const [moved] = rows.splice(from, 1)
+  rows.splice(index, 0, moved)
+  assetRows.value = rows
 }
 
 function openManagement(release: PublishRelease) {
@@ -298,7 +425,7 @@ function openManagement(release: PublishRelease) {
 }
 
 /**
- * 新建地图集：从空白开始，靠拖进来的第一个 ZIP 回填名字、作者与依赖。
+ * 新建地图集：从空白开始，靠拖进来的第一个 ZIP 回填 tag、名字、作者与依赖。
  *
  * 不从上一张图复制元数据：关卡集名与作者必须是被发布的那张图的，复制过来
  * 一旦忘了改，写出去的块会顶着别人的身份（消费端按身份判断是不是同一张图）。
@@ -326,7 +453,7 @@ function backToList() {
 /* 换仓库时旧表单没有意义：tag 与地图信息都属于上一个仓库。 */
 watch(selectedFullName, backToList)
 
-/* ===== 三步式：发布信息 → 上传 ZIP → 写回地图信息 ===== */
+/* ===== 三步式：上传 ZIP → 发布信息 → 写回地图信息 ===== */
 
 /** 当前正在跑哪一步；同一时刻只允许一步在跑（一键执行时逐段串起来）。 */
 const stepBusy = ref<PublishStepId | null>(null)
@@ -334,30 +461,78 @@ const stepBusy = ref<PublishStepId | null>(null)
 const runningAll = ref(false)
 /** 上一次失败在哪一步：权限横幅上的「重试这一步」按它重跑。 */
 const lastFailedStep = ref<PublishStepId | null>(null)
-/** 上一次上传成功后的附件名：步骤 2 留在界面上给作者确认。 */
+/** 上一次上传成功后的附件名：步骤 1 留在界面上给作者确认。 */
 const lastUploaded = ref('')
 
 const pending = reactive({
+  /** 当前待上传的文件路径（改过名就是缓存里的副本）。 */
   path: '',
+  /** 当前文件名，只用于展示与「是否符合规则」的比较。 */
+  fileName: '',
+  /** 这一版的版本号文本：写进附件名，也写进排序表的 mapset_version。 */
   version: '',
   inspection: null as PublishZipInspection | null,
 })
 
-const pendingZipName = computed(() => {
-  const path = pending.path
-  if (!path) return ''
-  return path.split(/[\\/]/).pop() ?? path
+/** 正在把选中的 ZIP 复制成规范文件名。 */
+const renaming = ref(false)
+
+/** 这张地图已有的资产规则：块里写了就用块的，否则从现有附件名反推。 */
+const existingRule = computed(() => {
+  const declared = workingRelease.value?.metadata?.asset.trim() ?? ''
+  if (declared) return declared
+  const names = workingRelease.value?.assets.map((asset) => asset.name) ?? []
+  return names.length ? assetRuleFrom('', names) : ''
 })
 
-/** 渲染附件名用的关卡集名：表单优先，其次是刚识别出来的。 */
-const pendingLevelSetName = computed(
-  () => metadataDraft.levelSetName.trim() || pending.inspection?.level_set_name.trim() || '',
+/**
+ * 这张地图的资产规则。
+ *
+ * 新地图由 ZIP 名里的 tag 组合（`tag_v${version}.zip`），之后不再改；已有地图
+ * 沿用块里写的规则 —— 改规则会让历史附件全部抽不出版本号。
+ */
+const effectiveRule = computed(() => {
+  if (existingRule.value) return existingRule.value
+  const tag = form.tag.trim() || defaultMapTag(pending.inspection?.level_set_name ?? '')
+  return tag ? composeAssetRule(tag) : ''
+})
+
+/** 按规则渲染出的目标文件名：这就是附件名，也是本地副本的名字。 */
+const canonicalName = computed(() => (effectiveRule.value ? renderAssetName(effectiveRule.value, '', pending.version) : ''))
+
+/** 选中的文件名是否已经等于目标文件名；不等就先改名再上传。 */
+const nameOk = computed(() => pending.fileName !== '' && canonicalName.value !== '' && pending.fileName === canonicalName.value)
+
+/*
+ * 附件集合或资产规则一变就重建排序表：上传、删除、保存后刷新列表都走这里。
+ * 键里带上表里的 mapset 版本顺序，保存过的新顺序才会生效；单纯拖动不触发。
+ * 必须放在 `effectiveRule` 之后：`immediate` 会在 setup 期间立刻读它。
+ */
+watch(
+  () => {
+    const release = workingRelease.value
+    if (!release) return ''
+    return [
+      release.id,
+      effectiveRule.value,
+      release.assets.map((asset) => asset.name).join('|'),
+      (release.metadata?.asset_versions ?? []).map((entry) => entry.mapset_version).join('|'),
+    ].join('::')
+  },
+  () => {
+    assetRows.value = versionRowsOf(workingRelease.value)
+  },
+  { immediate: true },
 )
 
-/** 会上传成什么名字：模板（留空按关卡集名生成）+ 这一版的版本号。 */
-const pendingAssetName = computed(() =>
-  renderAssetName(metadataDraft.asset, pendingLevelSetName.value, pending.version),
-)
+/** 文件名里能读出的版本号：优先按规则抽，其次按 `_v` 约定，最后退回数字段。 */
+function versionFromFileName(fileName: string): string {
+  return (
+    versionFromRule(effectiveRule.value, fileName) ??
+    parseVersionedZipName(fileName)?.version ??
+    versionFromAssetName(fileName)
+  )
+}
 
 const busyAny = computed(
   () =>
@@ -365,24 +540,25 @@ const busyAny = computed(
     runningAll.value ||
     savingRelease.value ||
     uploading.value ||
-    inspecting.value,
+    inspecting.value ||
+    renaming.value,
 )
 
 const stepReleaseDone = computed(() => workingRelease.value !== null)
-const stepAssetDone = computed(() => lastUploaded.value !== '')
+const stepAssetDone = computed(() => lastUploaded.value !== '' || assetRows.value.length > 0)
 const stepMetadataDone = computed(() => Boolean(workingRelease.value?.metadata))
 
 /**
  * 一键执行还缺的输入；空数组才允许点。
  *
- * 这里**不看** `stepReleaseDone`：新建地图集时第一步正是去建 Release，把它
- * 算进前置会让新建页永远提示「缺发布信息」。
+ * 这里**不看** `stepReleaseDone`：新建地图集时正是要去建 Release，把它算进
+ * 前置会让新建页永远提示「缺发布信息」。
  */
 const missingInputs = computed(() =>
   missingPublishInputs({
     tag: form.tag,
-    zipReady: pending.path !== '' && pending.inspection !== null,
-    assetVersion: pending.version,
+    assetName: nameOk.value ? pending.fileName : '',
+    versionText: pending.version,
     levelSetName: metadataDraft.levelSetName,
   }),
 )
@@ -429,6 +605,7 @@ const permissionResetText = computed(() => {
 
 function rejectPending() {
   pending.path = ''
+  pending.fileName = ''
   pending.version = ''
   pending.inspection = null
 }
@@ -442,11 +619,10 @@ function requiresText(record: Record<string, string>): string {
 /**
  * 识别结果回填表单。
  *
- * 名称 / 作者 / 依赖只在还空着时填：作者可能已经手写过，不能被第二个 ZIP
- * 覆盖；两个版本字段相反，它们描述的就是「这次上传的这一版」，直接覆盖。
+ * 名字 / 作者 / 依赖只在还空着时填：作者可能已经手写过，不能被第二个 ZIP
+ * 覆盖。tag 与版本号相反，它们描述的就是「这个包」，直接覆盖。
  */
 function applyInspection(result: PublishZipInspection) {
-  if (!form.tag.trim()) form.tag = defaultMapTag(result.level_set_name)
   if (!form.title.trim()) {
     form.title = result.level_set_name.trim() || result.level_set_name_zh.trim()
   }
@@ -459,29 +635,35 @@ function applyInspection(result: PublishZipInspection) {
   if (!metadataDraft.author.trim() && result.author.trim()) {
     metadataDraft.author = result.author.trim()
   }
-  if (!metadataDraft.asset.trim() && result.level_set_name.trim()) {
-    metadataDraft.asset = defaultTemplate(result.level_set_name)
-  }
-  if (result.info_version.trim()) metadataDraft.latestInfoVersion = result.info_version.trim()
-  if (Object.keys(parsePairs(metadataDraft.requires)).length === 0 && Object.keys(result.requires).length > 0) {
-    metadataDraft.requires = pairsToText(result.requires)
+  if (metadataDraft.requires.length === 0 && Object.keys(result.requires).length > 0) {
+    metadataDraft.requires = recordToRows(result.requires)
   }
 }
 
-/** 拖入 / 选择本地 ZIP：只识别并回填，不上传（上传是第二步的按钮）。 */
+/**
+ * 拖入 / 选择本地 ZIP：只识别并算出版本号，不上传（上传是这一卡的按钮）。
+ *
+ * 已有地图集的 tag 不跟着文件名走：文件名里的 xxx 是作者随手起的，tag 才是
+ * 这张图的身份，必须保持原值，靠改名把文件名对齐到规则。
+ */
 async function loadPendingZip(path: string) {
   pending.path = path
+  pending.fileName = path.split(/[\\/]/).pop() ?? path
+  pending.version = ''
   pending.inspection = null
   const result = await inspectZip(path)
   if (!result) {
-    pending.path = ''
+    rejectPending()
     return
   }
   pending.inspection = result
-  // ZIP 名里的版本 = 这一版的版本号（写进附件名与 latest_mapset_version）。
-  pending.version = result.mapset_version.trim() || versionFromAssetName(result.file_name)
+  if (result.file_name.trim()) pending.fileName = result.file_name.trim()
+  if (!existingTag.value) {
+    const parsed = parseVersionedZipName(pending.fileName)
+    if (parsed) form.tag = parsed.tag
+  }
+  pending.version = versionFromFileName(pending.fileName) || result.info_version.trim()
   applyInspection(result)
-  if (pending.version.trim()) metadataDraft.latestMapsetVersion = pending.version.trim()
 }
 
 async function pickPendingZip() {
@@ -494,7 +676,33 @@ async function pickPendingZip() {
 }
 
 /**
- * 第一步：新建模式下创建 Release（不带块），地图管理下只改标题 / 正文 / 状态。
+ * 把选中的 ZIP 复制成规范文件名（`tag_v版本号.zip`）。
+ *
+ * 不重命名用户的原始文件：作者手里的包可能叫别的名字，改名只是为了附件名
+ * 符合 `asset` 规则；后端把副本放到缓存目录，上传读这份。
+ */
+async function renamePendingZip() {
+  const name = canonicalName.value
+  if (!pending.path || !name) return
+  if (!isVersionText(pending.version.trim())) {
+    message.warning(t('mapPublish.invalidVersion', { value: pending.version }))
+    return
+  }
+  renaming.value = true
+  try {
+    const staged = await api.stagePublishZip(pending.path, name)
+    pending.path = staged
+    pending.fileName = name
+    message.success(t('mapPublish.zipRenamed', { name }))
+  } catch (reason) {
+    message.error(backendMessageOf(reason))
+  } finally {
+    renaming.value = false
+  }
+}
+
+/**
+ * 第二步：新建模式下创建 Release（不带块），地图管理下只改标题 / 正文 / 状态。
  *
  * 新建时先查一遍同名 tag：GitHub 允许在已有 tag 上建 Release，但那样会把
  * 另一张图的附件挂到同一个身份下，消费端会当成同一张图的两版。
@@ -539,34 +747,36 @@ async function runReleaseStep(): Promise<boolean> {
   }
 }
 
-/** 第二步：把拖进来的 ZIP 作为这一版的附件传上去（版本号在文件名里）。 */
+/**
+ * 第一步：把这一版的 ZIP 传成 Release 附件（版本号在文件名里）。
+ *
+ * ZIP 排在最前面，但附件必须挂在已存在的 Release 上，所以还没有 Release 时
+ * 先按第 2 步填好的信息建一个 —— 作者按面板顺序点下来就能一路走通。
+ */
 async function runUploadStep(): Promise<boolean> {
-  const release = workingRelease.value
-  if (!release) {
-    message.warning(t('mapPublish.needReleaseFirst'))
-    return false
-  }
+  if (stepBusy.value !== null) return false
   const zip = pending.inspection
   if (!pending.path || !zip) {
     message.warning(t('mapPublish.needZip'))
     return false
   }
-  if (stepBusy.value !== null) return false
-  const version = pending.version.trim()
-  if (!version) {
-    message.warning(t('mapPublish.missingVersion'))
+  if (!nameOk.value) {
+    message.warning(t('mapPublish.zipUploadBlocked', { name: canonicalName.value || '—' }))
     return false
   }
-  if (!isMapVersion(version)) {
+  const version = pending.version.trim()
+  if (!isVersionText(version)) {
     message.warning(t('mapPublish.invalidVersion', { value: version }))
     return false
   }
-  const name = pendingAssetName.value
-  if (!name) {
-    // 模板里没有版本占位符：传上去管理器也抽不出版本，先拦住。
-    message.warning(t('mapPublish.assetNeedsVersion'))
-    return false
+  if (!workingRelease.value) {
+    const created = await runReleaseStep()
+    if (!created) return false
   }
+  const release = workingRelease.value
+  if (!release) return false
+  const name = canonicalName.value
+  const infoVersion = zip.info_version.trim()
   stepBusy.value = 'asset'
   try {
     const ok = await uploadAsset(release, pending.path, name)
@@ -574,10 +784,16 @@ async function runUploadStep(): Promise<boolean> {
       lastFailedStep.value = 'asset'
       return false
     }
-    metadataDraft.latestMapsetVersion = version
-    if (zip.info_version.trim()) metadataDraft.latestInfoVersion = zip.info_version.trim()
     lastUploaded.value = name
     rejectPending()
+    // 上传会重刷 Release 列表，排序表随之重建：等它落地再补这一版的 info 版本号。
+    await nextTick()
+    const row = assetRows.value.find((item) => item.mapsetVersion === version)
+    if (row) {
+      if (infoVersion) row.infoVersion = infoVersion
+    } else {
+      assetRows.value.push({ mapsetVersion: version, infoVersion, size: 0 })
+    }
     lastFailedStep.value = null
     return true
   } finally {
@@ -595,6 +811,10 @@ async function runMetadataStep(): Promise<boolean> {
   if (stepBusy.value !== null) return false
   if (!metadataDraft.levelSetName.trim()) {
     message.warning(t('mapPublish.missingLevelSetName'))
+    return false
+  }
+  if (i18nMissing.value.length > 0) {
+    message.warning(t('mapPublish.i18nRequiredMissing', { fields: i18nMissing.value.join(' / ') }))
     return false
   }
   stepBusy.value = 'metadata'
@@ -617,6 +837,89 @@ async function runMetadataStep(): Promise<boolean> {
     return true
   } finally {
     stepBusy.value = null
+  }
+}
+
+/** 多语言表的三个输入框：顺序与界面一致，标签在脚本里取（模板不写动态 t()）。 */
+const I18N_FIELDS = [
+  { id: 'nameI18n', labelKey: 'mapPublish.nameI18n' },
+  { id: 'groupI18n', labelKey: 'mapPublish.groupI18n' },
+  { id: 'noteI18n', labelKey: 'mapPublish.noteI18n' },
+] as const
+
+/** 只强制这两种语言：管理器读不到别的语言时会自己回退，不该拦着作者保存。 */
+const REQUIRED_I18N_LANGUAGES = ['zh-CN', 'en'] as const
+
+function i18nTables(): Array<{ label: string; table: Record<string, string> }> {
+  return I18N_FIELDS.map((field) => ({
+    label: t(field.labelKey),
+    table: parsePairs(metadataDraft[field.id]),
+  }))
+}
+
+/**
+ * 填了多语言就必须写 zh-CN 与 en —— 回退链只在这两种齐全时才是确定的；
+ * 三个框全空不算「填了」，保存时由 defaultI18nTables() 按规则补。
+ */
+const i18nMissing = computed(() => {
+  const missing: string[] = []
+  for (const { label, table } of i18nTables()) {
+    if (!Object.keys(table).length) continue
+    const lacks = REQUIRED_I18N_LANGUAGES.filter((language) => !table[language]?.trim())
+    if (lacks.length) missing.push(`${label}（${lacks.join(' / ')}）`)
+  }
+  return missing
+})
+
+/**
+ * 没写多语言时的默认值：显示名用地图集的中英名，分组名用作者（作者不分语言），
+ * 说明留空 —— 管理器会退回块里的单语言 note 或「暂无说明」。
+ */
+function defaultI18nTables(): Pick<MapPublishMetadata, 'name_i18n' | 'group_i18n' | 'note_i18n'> {
+  const en = metadataDraft.levelSetName.trim()
+  const zh = metadataDraft.levelSetNameZh.trim() || en
+  const author = metadataDraft.author.trim()
+  const name: Record<string, string> = {}
+  if (zh) name['zh-CN'] = zh
+  if (en) name.en = en
+  return {
+    name_i18n: name,
+    group_i18n: author ? { 'zh-CN': author, en: author } : {},
+    note_i18n: {},
+  }
+}
+
+function buildI18n(): Pick<MapPublishMetadata, 'name_i18n' | 'group_i18n' | 'note_i18n'> {
+  const fallback = defaultI18nTables()
+  const [name, group, note] = i18nTables()
+  return {
+    name_i18n: Object.keys(name.table).length ? name.table : fallback.name_i18n,
+    group_i18n: Object.keys(group.table).length ? group.table : fallback.group_i18n,
+    note_i18n: Object.keys(note.table).length ? note.table : fallback.note_i18n,
+  }
+}
+
+function buildMetadata(): MapPublishMetadata {
+  const rows = assetRows.value.filter((row) => row.mapsetVersion.trim())
+  const i18n = buildI18n()
+  return {
+    level_set_name: metadataDraft.levelSetName.trim(),
+    level_set_name_zh: metadataDraft.levelSetNameZh.trim(),
+    author: metadataDraft.author.trim(),
+    name_i18n: i18n.name_i18n,
+    group_i18n: i18n.group_i18n,
+    note_i18n: i18n.note_i18n,
+    asset: effectiveRule.value,
+    // 两个派生字段以排序表为准：表尾就是最新版。后端保存时会用同一口径覆盖。
+    latest_mapset_version: latestRow.value?.mapsetVersion.trim() ?? '',
+    latest_info_version: latestRow.value?.infoVersion.trim() ?? '',
+    asset_versions: rows.map((row) => ({
+      mapset_version: row.mapsetVersion.trim(),
+      info_version: row.infoVersion.trim(),
+    })),
+    requires: relationsToRecord(metadataDraft.requires),
+    compatible: relationsToRecord(metadataDraft.compatible),
+    conflicts: relationsToRecord(metadataDraft.conflicts),
   }
 }
 
@@ -747,7 +1050,10 @@ function confirmDeleteRelease(release: PublishRelease) {
   })
 }
 
-function confirmDeleteAsset(asset: PublishAsset) {
+/** 删掉一个版本：排序表里这一行也会跟着消失（附件是唯一事实）。 */
+function confirmDeleteAsset(name: string) {
+  const asset = workingRelease.value?.assets.find((item) => item.name === name)
+  if (!asset) return
   const instance = dialog.warning({
     title: t('mapPublish.deleteAsset'),
     content: t('mapPublish.deleteAssetConfirm', { name: asset.name }),
@@ -1067,7 +1373,7 @@ function confirmDeleteAsset(asset: PublishAsset) {
       </div>
 
       <template v-else>
-        <!-- 一张地图集 = 三步：发布信息 → 上传 ZIP → 写回地图信息；也能一键跑完 -->
+        <!-- 一张地图集 = 三步：上传 ZIP → 发布信息 → 写回地图信息；也能一键跑完 -->
         <div class="panel publish-head">
           <div class="panel-head">
             <div class="manage-head">
@@ -1119,58 +1425,10 @@ function confirmDeleteAsset(asset: PublishAsset) {
           </div>
         </div>
 
-        <!-- 步骤 1：Release 基本信息（tag / 标题 / 说明正文） -->
+        <!-- 步骤 1：上传这一版的 ZIP —— 文件名决定 tag 与版本号，识别结果直接回填下方 -->
         <div class="panel step-panel">
           <div class="step-head">
             <span class="step-index">1</span>
-            <h3 class="sub-title">{{ t('mapPublish.stepReleaseTitle') }}</h3>
-            <n-tag size="tiny" :type="stepReleaseDone ? 'success' : 'default'" :bordered="false">
-              {{ stepReleaseDone ? t('mapPublish.stepDone') : t('mapPublish.stepPending') }}
-            </n-tag>
-          </div>
-          <p class="hint no-top">{{ t('mapPublish.stepReleaseHint') }}</p>
-
-          <div class="form-grid">
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.tagLabel') }}</span>
-              <n-input v-model:value="form.tag" size="small" placeholder="chan"
-                :disabled="stepReleaseDone || busyAny" />
-              <p class="hint">{{ t('mapPublish.tagHint') }}</p>
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.titleLabel') }}</span>
-              <n-input v-model:value="form.title" size="small" :disabled="busyAny" />
-            </div>
-            <div class="field span-2">
-              <span class="field-label">{{ t('mapPublish.bodyLabel') }}</span>
-              <n-input v-model:value="form.body" type="textarea" :autosize="{ minRows: 4, maxRows: 12 }"
-                :disabled="busyAny" />
-              <p class="hint">{{ t('mapPublish.bodyHint') }}</p>
-            </div>
-            <div class="field span-2 switch-field">
-              <label class="switch-label">
-                <n-switch v-model:value="form.draft" size="small" :disabled="busyAny" />
-                <span>{{ t('mapPublish.draft') }}</span>
-              </label>
-              <label class="switch-label">
-                <n-switch v-model:value="form.prerelease" size="small" :disabled="busyAny" />
-                <span>{{ t('mapPublish.prerelease') }}</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="actions">
-            <n-button size="small" type="primary" :loading="stepBusy === 'release'"
-              :disabled="busyAny || !form.tag.trim()" @click="runReleaseStep">
-              {{ stepReleaseDone ? t('mapPublish.saveReleaseInfo') : t('mapPublish.createRelease') }}
-            </n-button>
-          </div>
-        </div>
-
-        <!-- 步骤 2：上传这一版的 ZIP（拖进来先识别，改完版本号再上传） -->
-        <div class="panel step-panel">
-          <div class="step-head">
-            <span class="step-index">2</span>
             <h3 class="sub-title">{{ t('mapPublish.stepAssetTitle') }}</h3>
             <n-tag size="tiny" :type="stepAssetDone ? 'success' : 'default'" :bordered="false">
               {{ stepAssetDone ? t('mapPublish.stepDone') : t('mapPublish.stepPending') }}
@@ -1182,7 +1440,7 @@ function confirmDeleteAsset(asset: PublishAsset) {
             @click="pickPendingZip" @keydown.enter="pickPendingZip">
             <p class="drop-title">{{ t('mapPublish.dropZone') }}</p>
             <p class="hint no-top">{{ t('mapPublish.addAssetHint') }}</p>
-            <p v-if="pendingZipName" class="mono picked-zip">{{ pendingZipName }}</p>
+            <p v-if="pending.fileName" class="mono picked-zip">{{ pending.fileName }}</p>
           </div>
 
           <div v-if="inspecting" class="state-line">
@@ -1191,6 +1449,41 @@ function confirmDeleteAsset(asset: PublishAsset) {
           </div>
 
           <template v-if="pending.inspection">
+            <p class="field-section-title">{{ t('mapPublish.zipSectionRule') }}</p>
+            <div class="form-grid">
+              <div class="field">
+                <span class="field-label">{{ t('mapPublish.zipTagLabel') }}</span>
+                <n-input v-model:value="form.tag" size="small"
+                  :placeholder="t('mapPublish.zipTagPlaceholder')"
+                  :disabled="Boolean(existingTag) || busyAny" />
+                <p v-if="existingTag" class="hint">
+                  {{ t('mapPublish.zipTagLocked', { tag: existingTag }) }}
+                </p>
+              </div>
+              <div class="field">
+                <span class="field-label">{{ t('mapPublish.zipVersionLabel') }}</span>
+                <n-input v-model:value="pending.version" size="small"
+                  :placeholder="t('mapPublish.zipVersionPlaceholder')" :disabled="busyAny" />
+              </div>
+              <div class="field">
+                <span class="field-label">{{ t('mapPublish.zipRuleLabel') }}</span>
+                <code class="mono rule-text">{{ effectiveRule || '—' }}</code>
+                <p class="hint">
+                  {{ existingRule ? t('mapPublish.zipRuleFromExisting') : t('mapPublish.zipRuleLocked') }}
+                </p>
+              </div>
+              <div class="field">
+                <span class="field-label">{{ t('mapPublish.zipNameLabel') }}</span>
+                <code class="mono rule-text">{{ canonicalName || '—' }}</code>
+                <p v-if="nameOk" class="ok no-top">{{ t('mapPublish.zipNameOk') }}</p>
+                <p v-else-if="canonicalName" class="warn no-top">
+                  {{ t('mapPublish.zipNameNeedsRename', { name: canonicalName }) }}
+                </p>
+                <p v-else class="warn no-top">{{ t('mapPublish.zipNameInvalid') }}</p>
+              </div>
+            </div>
+
+            <p class="field-section-title">{{ t('mapPublish.zipSectionInspection') }}</p>
             <div class="inspection-grid">
               <div>
                 <span class="field-label">{{ t('mapPublish.inspectionMapsetVersion') }}</span>
@@ -1218,31 +1511,68 @@ function confirmDeleteAsset(asset: PublishAsset) {
             <p v-if="pending.inspection.set_count > 1" class="warn no-top">
               {{ t('mapPublish.inspectionMultiple', { count: pending.inspection.set_count }) }}
             </p>
-
-            <div class="form-grid">
-              <div class="field">
-                <span class="field-label">{{ t('mapPublish.releaseVersionLabel') }}</span>
-                <n-input v-model:value="pending.version" size="small" placeholder="1.2.0"
-                  :disabled="busyAny" />
-                <p class="hint">{{ t('mapPublish.releaseVersionHint') }}</p>
-                <p v-if="!pending.version.trim()" class="warn no-top">{{ t('mapPublish.versionFromNameMissing') }}</p>
-              </div>
-              <div class="field">
-                <span class="field-label">{{ t('mapPublish.assetExpected', { name: pendingAssetName || '—' }) }}</span>
-                <p v-if="!pendingAssetName" class="warn no-top">{{ t('mapPublish.assetNeedsVersion') }}</p>
-                <p v-else class="hint no-top">{{ t('mapPublish.uploadHint') }}</p>
-              </div>
-            </div>
           </template>
 
           <div class="actions">
+            <n-button size="small" :loading="renaming"
+              :disabled="busyAny || !pending.path || !canonicalName || nameOk" @click="renamePendingZip">
+              {{ t('mapPublish.zipRename') }}
+            </n-button>
             <n-button size="small" type="primary" :loading="stepBusy === 'asset'"
-              :disabled="busyAny || !stepReleaseDone || !pendingAssetName" @click="runUploadStep">
-              {{ t('mapPublish.uploadZip') }}
+              :disabled="busyAny || !nameOk" @click="runUploadStep">
+              {{ stepReleaseDone ? t('mapPublish.uploadZip') : t('mapPublish.createReleaseAndUpload') }}
             </n-button>
             <span v-if="lastUploaded" class="muted uploaded-note">
               {{ t('mapPublish.uploadedAs', { name: lastUploaded }) }}
             </span>
+          </div>
+          <p v-if="!stepReleaseDone" class="hint no-top">{{ t('mapPublish.zipUploadCreatesRelease') }}</p>
+        </div>
+
+        <!-- 步骤 2：Release 基本信息（标题 / 说明正文）；已有 Release 时按钮是「修改信息」 -->
+        <div class="panel step-panel">
+          <div class="step-head">
+            <span class="step-index">2</span>
+            <h3 class="sub-title">{{ t('mapPublish.stepReleaseTitle') }}</h3>
+            <n-tag size="tiny" :type="stepReleaseDone ? 'success' : 'default'" :bordered="false">
+              {{ stepReleaseDone ? t('mapPublish.stepDone') : t('mapPublish.stepPending') }}
+            </n-tag>
+          </div>
+          <p class="hint no-top">{{ t('mapPublish.stepReleaseHint') }}</p>
+
+          <div class="form-grid">
+            <div class="field">
+              <span class="field-label">{{ t('mapPublish.zipTagLabel') }}</span>
+              <code class="mono rule-text">{{ form.tag.trim() || '—' }}</code>
+              <p class="hint">{{ t('mapPublish.tagHint') }}</p>
+            </div>
+            <div class="field">
+              <span class="field-label">{{ t('mapPublish.titleLabel') }}</span>
+              <n-input v-model:value="form.title" size="small" :disabled="busyAny" />
+            </div>
+            <div class="field span-2">
+              <span class="field-label">{{ t('mapPublish.bodyLabel') }}</span>
+              <n-input v-model:value="form.body" type="textarea" :autosize="{ minRows: 4, maxRows: 12 }"
+                :disabled="busyAny" />
+              <p class="hint">{{ t('mapPublish.bodyHint') }}</p>
+            </div>
+            <div class="field span-2 switch-field">
+              <label class="switch-label">
+                <n-switch v-model:value="form.draft" size="small" :disabled="busyAny" />
+                <span>{{ t('mapPublish.draft') }}</span>
+              </label>
+              <label class="switch-label">
+                <n-switch v-model:value="form.prerelease" size="small" :disabled="busyAny" />
+                <span>{{ t('mapPublish.prerelease') }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="actions">
+            <n-button size="small" type="primary" :loading="stepBusy === 'release'"
+              :disabled="busyAny || !form.tag.trim()" @click="runReleaseStep">
+              {{ stepReleaseDone ? t('mapPublish.editReleaseInfo') : t('mapPublish.createRelease') }}
+            </n-button>
           </div>
         </div>
 
@@ -1257,6 +1587,7 @@ function confirmDeleteAsset(asset: PublishAsset) {
           </div>
           <p class="hint no-top">{{ t('mapPublish.stepMetadataHint') }}</p>
 
+          <p class="field-section-title">{{ t('mapPublish.metadataSectionBasic') }}</p>
           <div class="form-grid">
             <div class="field">
               <span class="field-label">{{ t('mapPublish.levelSetName') }}</span>
@@ -1270,58 +1601,75 @@ function confirmDeleteAsset(asset: PublishAsset) {
               <span class="field-label">{{ t('mapPublish.author') }}</span>
               <n-input v-model:value="metadataDraft.author" size="small" :disabled="busyAny" />
             </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.assetTemplate') }}</span>
-              <n-input v-model:value="metadataDraft.asset" size="small" placeholder="gaoda-${version}.zip"
-                :disabled="busyAny" />
-              <p class="hint">{{ t('mapPublish.assetHint') }}</p>
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.latestMapsetVersion') }}</span>
-              <n-input v-model:value="metadataDraft.latestMapsetVersion" size="small" :disabled="busyAny" />
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.latestInfoVersion') }}</span>
-              <n-input v-model:value="metadataDraft.latestInfoVersion" size="small" :disabled="busyAny" />
-            </div>
-            <div class="field span-2">
-              <p class="hint no-top">{{ t('mapPublish.versionHint') }}</p>
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.nameI18n') }}</span>
-              <n-input v-model:value="metadataDraft.nameI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                :disabled="busyAny" />
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.groupI18n') }}</span>
-              <n-input v-model:value="metadataDraft.groupI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                :disabled="busyAny" />
-            </div>
-            <div class="field span-2">
-              <span class="field-label">{{ t('mapPublish.noteI18n') }}</span>
-              <n-input v-model:value="metadataDraft.noteI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                :disabled="busyAny" />
-              <p class="hint">{{ t('mapPublish.i18nHint') }}</p>
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.requires') }}</span>
-              <n-input v-model:value="metadataDraft.requires" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                :disabled="busyAny" />
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.compatible') }}</span>
-              <n-input v-model:value="metadataDraft.compatible" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                :disabled="busyAny" />
-            </div>
-            <div class="field">
-              <span class="field-label">{{ t('mapPublish.conflicts') }}</span>
-              <n-input v-model:value="metadataDraft.conflicts" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                :disabled="busyAny" />
-            </div>
-            <div class="field">
-              <p class="hint align-end">{{ t('mapPublish.relationHint') }}</p>
-            </div>
           </div>
+
+          <!-- 多语言：默认收起；三个框全空时保存按规则补 zh-CN / en，填了就必须两种都有 -->
+          <n-collapse class="advanced">
+            <n-collapse-item :title="t('mapPublish.i18nSettings')" name="i18n">
+              <p class="hint no-top">{{ t('mapPublish.i18nAutoHint') }}</p>
+              <p class="hint no-top">{{ t('mapPublish.i18nHint') }}</p>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">{{ t('mapPublish.nameI18n') }}</span>
+                  <n-input v-model:value="metadataDraft.nameI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
+                    :disabled="busyAny" />
+                </div>
+                <div class="field">
+                  <span class="field-label">{{ t('mapPublish.groupI18n') }}</span>
+                  <n-input v-model:value="metadataDraft.groupI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
+                    :disabled="busyAny" />
+                </div>
+                <div class="field span-2">
+                  <span class="field-label">{{ t('mapPublish.noteI18n') }}</span>
+                  <n-input v-model:value="metadataDraft.noteI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
+                    :disabled="busyAny" />
+                </div>
+              </div>
+              <p v-if="i18nMissing.length" class="warn no-top">
+                {{ t('mapPublish.i18nRequiredMissing', { fields: i18nMissing.join(' / ') }) }}
+              </p>
+            </n-collapse-item>
+          </n-collapse>
+
+          <!-- 高级设置：关系表与派生版本号，默认收起 —— 大多数版本不用碰。
+               assets 规则只在上面的 ZIP 卡里展示，这里不再重复一份。 -->
+          <n-collapse class="advanced">
+            <n-collapse-item :title="t('mapPublish.advancedSettings')" name="advanced">
+              <p class="hint no-top">{{ t('mapPublish.advancedHint') }}</p>
+
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">{{ t('mapPublish.latestVersion') }}</span>
+                  <code class="mono rule-text">
+                    {{ latestRow?.mapsetVersion || '—' }} · {{ latestRow?.infoVersion || '—' }}
+                  </code>
+                  <p class="hint">{{ t('mapPublish.versionHint') }}</p>
+                </div>
+              </div>
+
+              <div v-for="kind in relationKinds" :key="kind.id" class="relation-block">
+                <div class="relation-head">
+                  <span class="field-label">{{ kind.label }}</span>
+                  <n-button size="tiny" secondary :disabled="busyAny" @click="addRelationRow(kind.id)">
+                    {{ t('mapPublish.relationAddRow') }}
+                  </n-button>
+                </div>
+                <p v-if="!metadataDraft[kind.id].length" class="hint no-top">
+                  {{ t('mapPublish.relationEmpty') }}
+                </p>
+                <div v-for="(row, index) in metadataDraft[kind.id]" :key="index" class="relation-row">
+                  <n-input v-model:value="row.guid" size="small"
+                    :placeholder="t('mapPublish.relationGuidPlaceholder')" :disabled="busyAny" />
+                  <n-input v-model:value="row.range" size="small"
+                    :placeholder="t('mapPublish.relationRangePlaceholder')" :disabled="busyAny" />
+                  <n-button size="small" quaternary circle :title="t('mapPublish.relationRemoveRow')"
+                    :disabled="busyAny" @click="removeRelationRow(kind.id, index)">
+                    <template #icon><TrashOutline width="15" height="15" /></template>
+                  </n-button>
+                </div>
+              </div>
+            </n-collapse-item>
+          </n-collapse>
 
           <div class="actions">
             <n-button size="small" type="primary" :loading="stepBusy === 'metadata'"
@@ -1344,27 +1692,50 @@ function confirmDeleteAsset(asset: PublishAsset) {
           </n-button>
         </div>
 
-        <!-- 已有资产：一个附件 = 一个版本，版本号在文件名里 -->
-        <div v-if="workingRelease" class="panel assets-panel">
+        <!-- 版本排序表：拖动决定谁是「最新版」，两个版本号都写进 oc2-map 块 -->
+        <div v-if="workingRelease" class="panel version-map-panel">
           <div class="panel-head">
-            <h3 class="sub-title">{{ t('mapPublish.assets') }}</h3>
-            <span class="muted">{{ workingRelease.assets.length }}</span>
+            <h3 class="sub-title">{{ t('mapPublish.versionMapTitle') }}</h3>
+            <span class="muted">{{ assetRows.length }}</span>
           </div>
-          <p class="hint no-top">{{ t('mapPublish.assetsHint') }}</p>
-          <p v-if="!workingRelease.assets.length" class="hint">{{ t('mapPublish.assetEmpty') }}</p>
-          <ul v-else class="asset-list">
-            <li v-for="asset in workingRelease.assets" :key="asset.id" class="asset-row">
-              <code class="mono">{{ asset.name }}</code>
-              <n-tag v-if="versionFromAssetName(asset.name)" size="tiny" :bordered="false">
-                {{ versionFromAssetName(asset.name) }}
+          <p class="hint no-top">{{ t('mapPublish.versionMapHint') }}</p>
+          <p v-if="!assetRows.length" class="hint">{{ t('mapPublish.versionMapEmpty') }}</p>
+          <ul v-else class="version-list">
+            <li v-for="(row, index) in assetRows" :key="index" class="version-row"
+              :class="{
+                dragging: dragIndex === index,
+                'drop-target': dragIndex >= 0 && dropIndex === index && dragIndex !== index,
+              }" @dragover.prevent="onDragOver(index)" @drop.prevent="onDrop(index)">
+              <span class="drag-handle" draggable="true" :title="t('mapPublish.versionMapDragHint')"
+                @dragstart="onDragStart(index, $event)" @dragend="onDragEnd">
+                <ReorderThreeOutline width="16" height="16" />
+              </span>
+              <span class="version-index">{{ index + 1 }}</span>
+              <div class="version-main">
+                <code class="mono version-asset">{{ assetNameOf(row) || row.mapsetVersion }}</code>
+                <span class="muted">{{ formatFileSize(row.size) }}</span>
+              </div>
+              <div class="version-fields">
+                <n-input v-model:value="row.mapsetVersion" size="tiny"
+                  :placeholder="t('mapPublish.versionMapMapset')" :disabled="busyAny" />
+                <n-input v-model:value="row.infoVersion" size="tiny"
+                  :placeholder="t('mapPublish.versionMapInfo')" :disabled="busyAny" />
+              </div>
+              <n-tag v-if="index === assetRows.length - 1" size="tiny" type="success" :bordered="false">
+                {{ t('mapPublish.versionMapLatest') }}
               </n-tag>
-              <span class="muted">{{ formatFileSize(asset.size) }}</span>
-              <n-button size="tiny" type="error" secondary :disabled="deletingAsset"
-                @click="confirmDeleteAsset(asset)">
+              <n-button size="tiny" type="error" secondary :disabled="deletingAsset || busyAny || !assetNameOf(row)"
+                @click="confirmDeleteAsset(assetNameOf(row))">
                 {{ t('mapPublish.deleteAsset') }}
               </n-button>
             </li>
           </ul>
+          <div v-if="assetRows.length" class="actions">
+            <n-button size="small" type="primary" :loading="stepBusy === 'metadata'"
+              :disabled="busyAny || !stepReleaseDone" @click="runMetadataStep">
+              {{ t('mapPublish.versionMapSave') }}
+            </n-button>
+          </div>
         </div>
       </template>
     </section>
@@ -1396,7 +1767,6 @@ function confirmDeleteAsset(asset: PublishAsset) {
   border-radius: 12px;
   background: var(--oc2-row);
 }
-.assets-panel { margin-top: 16px; }
 
 .topics-banner {
   display: flex;
@@ -1566,7 +1936,7 @@ function confirmDeleteAsset(asset: PublishAsset) {
 .manage-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 
 .release-list,
-.asset-list {
+.version-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1597,25 +1967,6 @@ function confirmDeleteAsset(asset: PublishAsset) {
   max-width: 420px;
 }
 .release-actions { display: flex; gap: 8px; flex: 0 0 auto; }
-
-.asset-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 10px;
-  background: var(--oc2-tile);
-}
-.asset-row code {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.asset-row .muted { flex: 0 0 auto; font-size: 12px; }
 
 .picked-zip {
   font-size: 12px;
@@ -1718,4 +2069,120 @@ function confirmDeleteAsset(asset: PublishAsset) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 只读派生值（资产规则 / 目标文件名 / tag）：等宽一行，太长就换行不撑宽 */
+.rule-text {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* 「符合规则」用绿色：主题色是琥珀，成功态得自己混一档（明暗两套都读得清） */
+.ok {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: color-mix(in srgb, #16b364 78%, var(--oc2-text-1));
+}
+
+/* 高级设置 / 多语言：默认收起，展开后与上面的基础字段拉开一点距离 */
+.advanced { margin-top: 14px; }
+
+/* 分区标题：把「Tag 与版本」「ZIP 里的信息」「基础信息」从字段堆里分出来 */
+.field-section-title {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--oc2-divider);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--oc2-text-2);
+}
+.field-section-title + .form-grid,
+.field-section-title + .inspection-grid { margin-top: 10px; }
+
+/* 关系表：一行两个输入框（左 GUID、右版本区间）+ 删除 */
+.relation-block { margin-top: 14px; }
+.relation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.relation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* 版本排序表：一行 = 一个 Release 附件，拖动手柄在最左，两个版本号在右 */
+.version-map-panel { margin-top: 16px; }
+
+.version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--oc2-row-line);
+  border-radius: 10px;
+  background: var(--oc2-tile);
+}
+.version-row.dragging { opacity: .5; }
+.version-row.drop-target {
+  border-color: var(--oc2-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc2-accent) 22%, transparent);
+}
+
+.drag-handle {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--oc2-text-3);
+  cursor: grab;
+}
+.drag-handle:active { cursor: grabbing; }
+
+.version-index {
+  flex: 0 0 auto;
+  min-width: 16px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--oc2-text-3);
+  text-align: right;
+}
+
+.version-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.version-asset {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.version-main .muted { flex: 0 0 auto; font-size: 12px; }
+
+.version-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.version-fields .n-input { width: 104px; }
 </style>

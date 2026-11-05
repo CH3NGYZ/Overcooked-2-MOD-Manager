@@ -241,8 +241,17 @@ export const api = {
    * 期间后端逐份发 `level-set-zip-progress`（`info` 阶段再识别一遍、`install`
    * 阶段写盘），进度显示在来源卡片与整页遮罩上。
    */
-  importLevelSets: (zipPath: string, selected: string[]) =>
-    invoke<{ installed: string[] }>('import_level_sets', { zipPath, selected }),
+  /*
+   * `mapsetVersion` 是这次装的资产版本号（Release 的 tag_name）：后端写进安装
+   * 清单的关系快照，之后判「有没有新版」先比它。本地 ZIP 与直链不知道来源
+   * 版本，传 `null` 表示不写。
+   */
+  importLevelSets: (zipPath: string, selected: string[], mapsetVersion?: string) =>
+    invoke<{ installed: string[] }>('import_level_sets', {
+      zipPath,
+      selected,
+      mapsetVersion: mapsetVersion ?? null,
+    }),
   /**
    * 暂存一份地图来源（本地 ZIP 或在线直链），返回里面识别出的关卡集。
    *
@@ -438,6 +447,13 @@ export const api = {
   /** 识别本地地图 ZIP（版本号、info、requires）；重活，后端在 spawn_blocking 里跑。 */
   inspectPublishZip: (path: string) =>
     invoke<PublishZipInspection>('inspect_publish_zip', { path }),
+  /**
+   * 把选中的 ZIP 复制成规范文件名（`tag_v版本号.zip`）供上传。
+   *
+   * 不改用户的原始文件；返回副本的绝对路径，后续上传读这份。
+   */
+  stagePublishZip: (path: string, fileName: string) =>
+    invoke<string>('stage_publish_zip', { path, fileName }),
   /** 只读检查仓库标签：缺 map-source 之类时界面顶部提示作者去仓库设置里加。 */
   publishRepositoryTopics: (owner: string, repository: string) =>
     invoke<PublishRepositoryTopics>('publish_repository_topics', { owner, repository }),

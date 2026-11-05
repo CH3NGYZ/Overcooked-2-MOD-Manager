@@ -272,6 +272,15 @@ export interface LevelSetInfo {
   author: string
   /** 地图自己的版本号（与 Release tag 比对）。 */
   version: string
+  /**
+   * 安装/更新那一刻的资产版本（Release 的 tag_name，如 `3.4.1-fix`）。
+   *
+   * 作者发修复版时常忘记改 info 里的版本号（`3.4.1-fix` 与 `3.4.1` 的 `version`
+   * 都是 `3.4.1`），只比 info 版本分不出装的是不是最新资产，所以安装时把当时的
+   * 资产版本记进 `map-relations.json` 快照，扫描时按身份回填到这里。
+   * 本地 ZIP 导入或老版本装的没有记录，为空串。
+   */
+  installed_mapset_version?: string
   /** MD5(baseUID + version)：随版本变化，不能当稳定身份。 */
   uid: string
   /** 稳定身份（老导出可能为空）。 */
@@ -866,6 +875,22 @@ export interface PublishRepositoryTopics {
 }
 
 /**
+ * 版本排序表的一项：一批资产在「谁是最新版」里的位置。
+ *
+ * 数组顺序就是从旧到新，表尾就是最新版。作者发修复版时常忘记改 info 版本
+ * （`3.4.1-fix` 与 `3.4.1` 的 info 版本都是 `3.4.1`），只靠版本号比大小分不出
+ * 新旧，所以顺序由作者拖动决定并写进块里。
+ *
+ * 表里**不存附件名**：附件名由 `asset` 规则渲染 `mapset_version` 得到。
+ */
+export interface AssetVersionEntry {
+  /** 这一版的资产版本号，允许 `3.4.1-fix` 这种带后缀的文本。 */
+  mapset_version: string
+  /** 这一版的 info 版本号（ZIP 里 info 的版本）。 */
+  info_version: string
+}
+
+/**
  * Release 说明里 `<!-- oc2-map -->` 块的投影。
  *
  * `asset` 是**带 `${version}` 占位符的模板**（后端生成时用），上传附件前要
@@ -881,6 +906,7 @@ export interface MapPublishMetadata {
   asset: string
   latest_mapset_version: string
   latest_info_version: string
+  asset_versions: AssetVersionEntry[]
   requires: Record<string, string>
   compatible: Record<string, string>
   conflicts: Record<string, string>

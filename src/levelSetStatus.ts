@@ -130,9 +130,26 @@ export type MapVersionOrder = 'latest' | 'update_available' | 'ahead' | 'unknown
  *
  * 判定顺序：
  *
- * 1. `latestInfoVersion` 与本地版本都非空 → 按大小比 info 版本（相等 = 最新）；
- * 2. 否则 `latest_mapset_version` 非空 → 只比等值（见下）；
- * 3. 否则与 Release tag 比大小。
+ * 1. 本地记录了安装时的资产版本、线上也声明了 `latest_mapset_version` →
+ *    只比等值（见「资产版本」一节）；
+ * 2. 否则 `latestInfoVersion` 与本地版本都非空 → 按大小比 info 版本（相等 = 最新）；
+ * 3. 否则 `latest_mapset_version` 非空 → 只比等值（见下）；
+ * 4. 否则与 Release tag 比大小。
+ *
+ * ## 资产版本
+ *
+ * `3.4.1-fix` 与 `3.4.1` 包里的 info 版本都是 `3.4.1`，但 `-fix` 确实是新版
+ * （针对 3.4.1 的修复）。只看 info 版本会把装了 `3.4.1` 的用户判成「最新」，
+ * 永远收不到修复版。所以安装/更新地图时把当时的资产版本记进
+ * `map-relations.json` 快照，判定先拿它与线上最新资产版本**比等值**：
+ *
+ * - 相等 = 已经是最新资产；
+ * - 不等 = 可更新。
+ *
+ * 这里**不比大小**：谁是最新由作者的版本排序表决定，而不是版本号本身。
+ * `3.4.1-fix` 在 semver 里是 `3.4.1` 的预发布（按大小比更低），比大小会把
+ * 修复版判成旧版，正好反了。老用户没有记录时退回 info 版本比较，不会凭空
+ * 报「有更新」。
  *
  * ## 钉死版本（`latest_mapset_version`）
  *
@@ -148,8 +165,14 @@ export type MapVersionOrder = 'latest' | 'update_available' | 'ahead' | 'unknown
 export function mapUpdateState(
   localVersion: string | null | undefined,
   remote: Pick<MapVersionRef, 'tag' | 'latestMapsetVersion' | 'latestInfoVersion'> | null | undefined,
+  localAssetVersion?: string | null,
 ): MapVersionOrder {
   if (!remote) return 'unknown'
+  const assetVersion = localAssetVersion?.trim()
+  const latestAsset = remote.latestMapsetVersion?.trim()
+  if (assetVersion && latestAsset) {
+    return assetVersion.toLowerCase() === latestAsset.toLowerCase() ? 'latest' : 'update_available'
+  }
   const infoVersion = remote.latestInfoVersion?.trim()
   const local = localVersion?.trim()
   if (infoVersion && local) {
@@ -178,14 +201,14 @@ export function mapUpdateState(
  * `remote` 为 `undefined` 表示没有绑定（本地导入）或仓库还没刷新。
  */
 export function levelSetState(
-  set: Pick<LevelSetInfo, 'enabled' | 'version' | 'error'>,
+  set: Pick<LevelSetInfo, 'enabled' | 'version' | 'error'> & { installed_mapset_version?: string },
   remote?: MapVersionRef | null,
 ): LevelSetState {
   // 停用优先：用户关掉的东西不该显示「可更新」，那会催他去更新一个不用的地图
   if (!set.enabled) return 'disabled'
   if (set.error) return 'unreadable'
   if (!remote) return 'unbound'
-  const order = mapUpdateState(set.version, remote)
+  const order = mapUpdateState(set.version, remote, set.installed_mapset_version)
   // 除 `unknown` 外，版本结论与 `LevelSetState` 的版本分支同名，直接透传
   if (order === 'unknown') return 'unknown'
   return order
@@ -893,7 +916,7 @@ export function mapCardState(
     tag: map.latest_tag,
     latestMapsetVersion: map.latest_mapset_version,
     latestInfoVersion: map.latest_info_version ?? undefined,
-  })
+  }, set.installed_mapset_version)
   if (order === 'unknown') return 'cannot_check'
   return order === 'update_available' ? 'update_available' : 'latest'
 }
@@ -946,6 +969,6 @@ export function mapCardAction(
     tag: map.latest_tag,
     latestMapsetVersion: map.latest_mapset_version,
     latestInfoVersion: map.latest_info_version ?? undefined,
-  })
+  }, set.installed_mapset_version)
   return order === 'update_available' ? 'update' : 'reinstall'
 }

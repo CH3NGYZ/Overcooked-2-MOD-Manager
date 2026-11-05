@@ -11,20 +11,27 @@
 
 // 带 `.ts` 扩展名：Node 的 `--test` 直接跑源码（类型剥离不做补全），Vite 与
 // `allowImportingTsExtensions` 都接受这种写法。
-import { isMapVersion, levelSetSlug } from './mapPublishAsset.ts'
+import { isVersionText, levelSetSlug } from './mapPublishAsset.ts'
 
 export type PublishStepId = 'release' | 'asset' | 'metadata'
 
-/** 固定顺序：没有 Release 就没有地方挂附件，元数据也要落在已有 Release 上。 */
+/** 执行顺序：没有 Release 就没有地方挂附件，元数据也要落在已有 Release 上。 */
 export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'asset', 'metadata']
 
+/**
+ * 面板顺序：ZIP 在最上面 —— 新地图的 tag 与版本号都从 ZIP 名里拆，先选包再填
+ * 发布信息。执行顺序仍是 `PUBLISH_STEP_ORDER`，两者不能合并：界面先看到的
+ * 不一定是能先跑的。
+ */
+export const PUBLISH_PANEL_ORDER: readonly PublishStepId[] = ['asset', 'release', 'metadata']
+
 export interface PublishInputState {
-  /** 地图集 ID（git tag）—— 第一步就拿它去建 Release。 */
+  /** 已确定的 tag（新地图从 ZIP 名来，已有地图用现有 tag）。 */
   tag: string
-  /** 是否已经拖入一个可上传的 ZIP 并识别完。 */
-  zipReady: boolean
-  /** 这一版的版本号（来自 ZIP 名，可手改）。 */
-  assetVersion: string
+  /** 规范化后的资产文件名；空 = 还没选到合规的 ZIP。 */
+  assetName: string
+  /** 这一版的版本号文本（允许 `3.4.1-fix` 这种后缀）。 */
+  versionText: string
   /** oc2-map 块里的关卡集英文名，写块时必须非空。 */
   levelSetName: string
 }
@@ -32,14 +39,16 @@ export interface PublishInputState {
 /**
  * 「一键按顺序执行」还缺哪些输入。
  *
- * 只判作者手上的输入，**不判 Release 是否已存在**：第一步本身就去建它，按
- * 「步骤是否已经做完」判会让新建页永远点不动一键执行。每一步自己的前置
- * （Release 存在、ZIP 已选……）由各自的执行函数再校验一次。
+ * 只判作者手上的输入，**不判 Release 是否已存在**：执行时第一步本身就去建它，
+ * 按「步骤是否已经做完」判会让新建页永远点不动一键执行。每一步自己的前置
+ * （Release 存在、ZIP 已上传……）由各自的执行函数再校验一次。
+ *
+ * 返回顺序跟 `PUBLISH_STEP_ORDER`（执行顺序），不是面板顺序。
  */
 export function missingPublishInputs(input: PublishInputState): PublishStepId[] {
   const missing: PublishStepId[] = []
   if (!input.tag.trim()) missing.push('release')
-  if (!input.zipReady || !isMapVersion(input.assetVersion)) missing.push('asset')
+  if (!input.assetName.trim() || !isVersionText(input.versionText)) missing.push('asset')
   if (!input.levelSetName.trim()) missing.push('metadata')
   return missing
 }

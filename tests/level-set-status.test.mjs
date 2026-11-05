@@ -775,3 +775,60 @@ test('mapVersionRefs 带出最新 Release 的 info 版本，空值不塞', () =>
     [{ tag: 'v0.7', levelSetName: 'RW_LevelSet', author: 'RW' }],
   )
 })
+
+// ---------------------------------------------------------------------------
+// 资产版本（`installed_mapset_version`）
+//
+// 作者发修复版时常忘记改 info 版本号：`3.4.1-fix` 与 `3.4.1` 包里的 info 版本
+// 都是 `3.4.1`，但 `-fix` 确实是新版。只看 info 版本会把装了 `3.4.1` 的用户
+// 判成「最新」，永远收不到修复版。安装/更新时记下当时的资产版本，判定先比它。
+// ---------------------------------------------------------------------------
+
+/** 线上声明：最新资产版本是 `3.4.1-fix`，info 版本仍是 `3.4.1`。 */
+const fixRef = {
+  tag: 'v3.4.1-fix',
+  latestMapsetVersion: '3.4.1-fix',
+  latestInfoVersion: '3.4.1',
+  levelSetName: 'RW_LevelSet',
+  author: 'RW',
+}
+
+test('装了 3.4.1 的用户能收到 3.4.1-fix 的更新', () => {
+  // info 版本相同（都是 3.4.1），只比 info 会判 latest —— 这正是要修的问题
+  assert.equal(mapUpdateState('3.4.1', fixRef), 'latest')
+  // 有资产版本记录后按资产版本判：3.4.1 ≠ 3.4.1-fix
+  assert.equal(mapUpdateState('3.4.1', fixRef, '3.4.1'), 'update_available')
+  assert.equal(mapUpdateState('3.4.1', fixRef, ' 3.4.1-FIX '), 'latest')
+})
+
+test('装了修复版就不再提示更新', () => {
+  assert.equal(mapUpdateState('3.4.1', fixRef, '3.4.1-fix'), 'latest')
+  // 不比大小：`3.4.1-fix` 在 semver 里是 3.4.1 的预发布，比大小会判成 ahead
+  assert.equal(mapUpdateState('3.4.1', fixRef, '3.4.1'), 'update_available')
+})
+
+test('没有安装记录时退回 info 版本比较，不凭空报更新', () => {
+  // 老版本装的地图没有记录（空串 / undefined / null 三种写法都要走老路径）
+  assert.equal(mapUpdateState('3.4.1', fixRef, ''), 'latest')
+  assert.equal(mapUpdateState('3.4.1', fixRef, undefined), 'latest')
+  assert.equal(mapUpdateState('3.4.1', fixRef, null), 'latest')
+  // 线上没有钉死版本时也走老路径（本地记录帮不上忙，只能比 tag）
+  assert.equal(mapUpdateState('3.4.1', { tag: 'v3.4.2' }, '3.4.1'), 'update_available')
+})
+
+test('管理页、下载页卡片与按钮都用资产版本判定', () => {
+  const bound = map({
+    latest_tag: 'v3.4.1-fix',
+    latest_mapset_version: '3.4.1-fix',
+    latest_info_version: '3.4.1',
+  })
+  const installed = set({ version: '3.4.1', installed_mapset_version: '3.4.1' })
+  assert.equal(levelSetState(installed, mapVersionForLevelSet(installed, mapVersionRefs([bound]))), 'update_available')
+  assert.equal(mapCardState(bound, [installed]), 'update_available')
+  assert.equal(mapCardAction(bound, [installed]), 'update')
+  // 装了修复版：三处都判最新 / 重装
+  const fixed = set({ version: '3.4.1', installed_mapset_version: '3.4.1-fix' })
+  assert.equal(levelSetState(fixed, mapVersionForLevelSet(fixed, mapVersionRefs([bound]))), 'latest')
+  assert.equal(mapCardState(bound, [fixed]), 'latest')
+  assert.equal(mapCardAction(bound, [fixed]), 'reinstall')
+})

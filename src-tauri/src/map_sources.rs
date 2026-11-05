@@ -1482,8 +1482,10 @@ fn note_block_map(
         "note": note_text,
         "note_i18n": note_i18n,
         "asset_rules": [rule],
-        "latest_mapset_version": metadata.latest_mapset_version,
+        // 表非空时它才是最新版：块里的标量是旧块的历史残留
+        "latest_mapset_version": metadata.derived_mapset_version(),
         "latest_info_version": metadata.normalized_info_version(),
+        "asset_versions": metadata.asset_versions,
         "relations": metadata.relations(),
         "release_relations": metadata.release_relation_overrides(),
         "enabled": true,
@@ -2095,6 +2097,13 @@ pub(crate) async fn fetch_map_releases(
 /// 从资产名里用作者写的正则抽（`version_rule`）。这比解析 tag 名可靠：
 /// 一个 tag 里放的是多个文件，版本只在文件名里。抽出来的号同时充当
 /// `tag_name` —— 前端拿它当「版本号」显示、当「回滚到这一版」的标识。
+///
+/// ## 作者排过序的表优先
+///
+/// `asset_versions` 非空时顺序与版本号都由它决定（末项最新，输出反转）：
+/// 文件名里抽不出 `3.4.1-fix`，数字段比较也排不出「0.7 比 0.69 新」。表外的
+/// 资产才退回按数字段降序，接在表内条目后面。表里只存版本号，附件名由
+/// `asset_rules` 的版本规则反转渲染出来（见 `asset_name_for_version`）。
 pub(crate) fn synthesize_releases(
     map: &MapRepositoryConfig,
     tag: &str,
@@ -2120,43 +2129,53 @@ pub(crate) fn synthesize_releases(
         log::error!("地图版本规则无法编译：地图={}，原因={}", label, error);
         crate::locale_tag::with_params("mapSource.assetRuleNeedsVersion", &[("map", &label)])
     })?;
+    /*
+     * 版本列表有两个来源，顺序不同：
+     *
+     * 1. 作者在 `asset_versions` 里排过序的：顺序就是新旧顺序（末项最新），
+     *    版本号直接用它写的 `mapset_version`。这是唯一能把 `3.4.1-fix` 与
+     *    「0.7 比 0.69 新」排对的来源 —— 文件名里的数字段表达不了。
+     * 2. 表里没提的资产：退回用作者写的正则抽版本，再按数字段降序接在后面。
+     *
+     * 表里写了但这一版已经没有的资产直接跳过：作者删了文件不算错误。
+     */
     let mut versions: Vec<(String, ReleaseAsset)> = Vec::new();
-    for asset in &release.assets {
-        let Some(captures) = regex.captures(&asset.name) else {
-            continue;
-        };
-        /*
-         * 整串匹配才算：`asset_matches` 用的是 `is_match`（子串命中即真），
-         * 不锚定就会出现「同一个文件同时匹配出两个版本号」。解析阶段已经
-         * 要求规则写成 `^…$`，这里再判一次是因为配置里的旧条目可能没经过
-         * 这道校验。
-         */
-        let Some(whole) = captures.get(0) else {
-            continue;
-        };
-        if whole.start() != 0 || whole.end() != asset.name.len() {
-            log::debug!(
-                "资产名不是整串匹配，忽略：地图={}，资产={}",
-                label,
-                asset.name
-            );
-            continue;
-        }
-        let version = captures
-            .name("version")
-            .or_else(|| captures.get(1))
-            .map(|matched| matched.as_str().trim().to_string())
-            .unwrap_or_default();
+    let mut listed: Vec<String> = Vec::new();
+    for entry in map.asset_versions.iter().rev() {
+        let version = entry.mapset_version.trim();
         if version.is_empty() {
             continue;
         }
-        if versions.iter().any(|(existing, _)| existing == &version) {
-            return Err(crate::locale_tag::with_params(
-                "mapSource.duplicateVersion",
-                &[("map", &label), ("version", &version)],
-            ));
+        /* 表里没有附件名：按作者的 asset 规则把版本号渲染回文件名。规则反向渲染
+         * 不出来时退一步，找版本段正好等于它的那个资产。 */
+        let declared = asset_name_for_version(&map.asset_rules, version);
+        let asset = declared
+            .as_ref()
+            .and_then(|name| release.assets.iter().find(|asset| &asset.name == name))
+            .or_else(|| {
+                release.assets.iter().find(|asset| {
+                    matched_version(&label, &regex, asset).as_deref() == Some(version)
+                })
+            });
+        let Some(asset) = asset else {
+            log::debug!(
+                "版本表里的版本在这一版里找不到对应资产，跳过：地图={label}，版本={version}"
+            );
+            continue;
+        };
+        push_version(&mut versions, version.to_string(), asset, &label)?;
+        listed.push(asset.name.clone());
+    }
+    let listed_count = versions.len();
+    for asset in &release.assets {
+        // 已经按版本表进来的资产不再算一次，否则会撞出重复版本
+        if listed.iter().any(|name| name == &asset.name) {
+            continue;
         }
-        versions.push((version, asset.clone()));
+        let Some(version) = matched_version(&label, &regex, asset) else {
+            continue;
+        };
+        push_version(&mut versions, version, asset, &label)?;
     }
     if versions.is_empty() {
         return Err(crate::locale_tag::with_params(
@@ -2179,8 +2198,11 @@ pub(crate) fn synthesize_releases(
             &[("map", &label), ("version", forced)],
         ));
     }
-    versions.sort_by(|(left, _), (right, _)| newest_first(left, right));
-    if let Some(forced) = forced
+    // 只有表外的部分按数字段降序：表内保持作者给的顺序（表非空时顺序即结论，
+    // 再按 `latest_mapset_version` 置顶反而会把表尾挤下去）
+    versions[listed_count..].sort_by(|(left, _), (right, _)| newest_first(left, right));
+    if map.asset_versions.is_empty()
+        && let Some(forced) = forced
         && let Some(index) = versions.iter().position(|(version, _)| version == forced)
     {
         // 置顶而不是重排：其余版本仍按数字顺序，作者只说「它是最新」。
@@ -2207,6 +2229,97 @@ pub(crate) fn synthesize_releases(
             assets: vec![asset],
         })
         .collect())
+}
+
+/// 把版本号渲染回资产名：`^gaoda_v(?P<version>[0-9.]+)\.zip$` + `3.4.1-fix`
+/// 得到 `gaoda_v3.4.1-fix.zip`。
+///
+/// 版本表里只存版本号（附件名由 asset 规则唯一决定），而规则本身是正则，
+/// 这里做的是反过来渲染：取版本组前后的字面量、还原 `\.` 这类转义。规则里
+/// 用到其它正则构造（字符类、分组、分支、量词）时不猜，返回 None —— 猜错会
+/// 指向一个不存在的文件，宁可由调用方退回按版本段比对附件名。
+fn asset_name_for_version(rules: &[AssetRule], version: &str) -> Option<String> {
+    rules.iter().find_map(|rule| {
+        let body = rule.value.trim().strip_prefix('^')?.strip_suffix('$')?;
+        let start = body.find("(?P<version>")?;
+        let rest = &body[start + "(?P<version>".len()..];
+        // 版本组里可能套着非捕获组 `(?:...)`，逐层配平括号找它的结尾
+        let mut depth = 1usize;
+        let mut end = None;
+        for (index, character) in rest.char_indices() {
+            match character {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let prefix = literal_from_pattern(&body[..start])?;
+        let suffix = literal_from_pattern(&rest[end? + 1..])?;
+        Some(format!("{prefix}{version}{suffix}"))
+    })
+}
+
+/// 把正则里的字面量段还原成原文；碰到真正的正则构造就放弃。
+fn literal_from_pattern(pattern: &str) -> Option<String> {
+    let mut out = String::with_capacity(pattern.len());
+    let mut characters = pattern.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => out.push(characters.next()?),
+            '[' | '(' | ')' | '|' | '+' | '*' | '?' | '{' | '}' | '^' | '$' => return None,
+            other => out.push(other),
+        }
+    }
+    Some(out)
+}
+
+/// 按作者的版本规则从资产名里抽版本号；整串匹配才算命中。
+///
+/// `asset_matches` 用的是 `is_match`（子串命中即真），不锚定就会出现「同一个
+/// 文件同时匹配出两个版本号」。解析阶段已经要求规则写成 `^…$`，这里再判一次
+/// 是因为配置里的旧条目可能没经过那道校验。
+fn matched_version(label: &str, regex: &regex::Regex, asset: &ReleaseAsset) -> Option<String> {
+    let captures = regex.captures(&asset.name)?;
+    let whole = captures.get(0)?;
+    if whole.start() != 0 || whole.end() != asset.name.len() {
+        log::debug!(
+            "资产名不是整串匹配，忽略：地图={label}，资产={}",
+            asset.name
+        );
+        return None;
+    }
+    let version = captures
+        .name("version")
+        .or_else(|| captures.get(1))?
+        .as_str()
+        .trim();
+    (!version.is_empty()).then(|| version.to_string())
+}
+
+/// 追加一条版本；同一个版本号出现两次直接报错。
+///
+/// 版本号同时是「装哪个资产」的唯一标识：两个文件抽出同一个号，安装时只能
+/// 瞎选一个，宁可在刷新阶段就明确报错。
+fn push_version(
+    versions: &mut Vec<(String, ReleaseAsset)>,
+    version: String,
+    asset: &ReleaseAsset,
+    label: &str,
+) -> Result<(), String> {
+    if versions.iter().any(|(existing, _)| existing == &version) {
+        return Err(crate::locale_tag::with_params(
+            "mapSource.duplicateVersion",
+            &[("map", label), ("version", &version)],
+        ));
+    }
+    versions.push((version, asset.clone()));
+    Ok(())
 }
 
 /// 版本号里的数字段，用于排序。
@@ -2855,6 +2968,62 @@ asset_rules = [{ type = "exact", value = "b.zip" }]
         assert_eq!(doc.maps[1].provider, Provider::Github);
         assert_eq!(doc.maps[1].username, "other");
         assert!(doc.bundle.is_none(), "bundle 已展开，不再留在文档上");
+    }
+
+    #[test]
+    fn asset_versions_keep_the_authors_order_and_accept_any_version_text() {
+        /*
+         * 现实里的两个坑：`3.4.1-fix` 这种后缀按文件名的版本规则抽不出来；
+         * 「0.7 比 0.69 新」按数字段也排不对。排序表就是作者替这两件事下的
+         * 结论，读侧只按表走（表尾最新 → 输出反转）。
+         */
+        let map = tag_entry(&format!(
+            "tag = \"maps\"\nasset_versions = [\n{}\n]",
+            [
+                r#"{ mapset_version = "0.7", info_version = "0.7" }"#,
+                r#"{ mapset_version = "3.4.1-fix", info_version = "3.4.1" }"#,
+            ]
+            .join(",\n"),
+        ));
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release("maps", &["rw_v0.7.zip", "rw_v3.4.1-fix.zip"])],
+        )
+        .unwrap();
+        assert_eq!(tag_names(&releases), ["3.4.1-fix", "0.7"]);
+        assert_eq!(releases[0].assets[0].name, "rw_v3.4.1-fix.zip");
+    }
+
+    #[test]
+    fn assets_outside_the_table_go_after_it_in_numeric_order() {
+        let map = tag_entry(&format!(
+            "tag = \"maps\"\nasset_versions = [ {} ]",
+            r#"{ mapset_version = "0.22" }"#,
+        ));
+        let releases = synthesize_releases(
+            &map,
+            "maps",
+            &[release(
+                "maps",
+                &["rw_v0.22.zip", "rw_v0.45.zip", "rw_v0.78.zip"],
+            )],
+        )
+        .unwrap();
+        // 表里点过名的先来，其余仍按数字降序
+        assert_eq!(tag_names(&releases), ["0.22", "0.78", "0.45"]);
+    }
+
+    #[test]
+    fn a_table_entry_without_its_asset_is_skipped() {
+        let map = tag_entry(&format!(
+            "tag = \"maps\"\nasset_versions = [ {} ]",
+            r#"{ mapset_version = "0.99" }"#,
+        ));
+        let releases =
+            synthesize_releases(&map, "maps", &[release("maps", &["rw_v0.22.zip"])]).unwrap();
+        // 表里写了但文件已经删掉的版本不能凭空出现在列表里
+        assert_eq!(tag_names(&releases), ["0.22"]);
     }
 
     #[test]

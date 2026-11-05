@@ -5647,9 +5647,10 @@ fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> LevelSetInfo {
         base_uid: metadata.as_ref().and_then(|meta| meta.base_uid.clone()),
         level_count: metadata.as_ref().map(|meta| meta.levels.len()).unwrap_or(0),
         error: set.error,
-        // 绑定与依赖快照由 `bind_map_relation_snapshot` 补：它需要配置与快照，
-        // 这里只负责把磁盘扫描结果转成模型
+        // 绑定、依赖快照与资产版本都由 `bind_map_relation_snapshot` 补：它需要
+        // 配置与快照，这里只负责把磁盘扫描结果转成模型
         map_id: None,
+        installed_mapset_version: String::new(),
         // 分组与依赖一样由 `bind_map_relation_snapshot` 补：它需要配置与快照，
         // 这里只负责把磁盘扫描结果转成模型；都查不到时前端回退 info 的 author
         map_group_i18n: BTreeMap::new(),
@@ -5800,6 +5801,13 @@ fn bind_map_relation_snapshot(
     if !group.is_empty() {
         info.map_group = Some(group);
     }
+    /*
+     * 资产版本只有快照里有（安装时记的），未绑定的地图也要填：地图源被删之后
+     * 界面仍要靠它判「装的是不是最新资产」，留空就只能退回比 info 版本。
+     */
+    info.installed_mapset_version = snapshot
+        .map(|entry| entry.installed_mapset_version.trim().to_string())
+        .unwrap_or_default();
     let Some(map) = bound else {
         return;
     };
@@ -6142,6 +6150,7 @@ pub async fn import_level_sets(
     state: State<'_, AppState>,
     zip_path: String,
     selected: Vec<String>,
+    mapset_version: Option<String>,
 ) -> Result<LevelSetImportResult, String> {
     // `State` 不能跨 await：需要的值（配置快照、游戏根、操作锁）在同步段取好
     let config = state.config.load_or_default();
@@ -6202,6 +6211,7 @@ pub async fn import_level_sets(
                 &game_root,
                 &manifests_dir,
                 &selected,
+                mapset_version.as_deref(),
             )?;
             log::info!("关卡集导入完成（BepInEx 表层包）：数量={}", installed.len());
             return Ok(LevelSetImportResult { installed });
@@ -6229,6 +6239,7 @@ pub async fn import_level_sets(
                 &game_root,
                 &manifests_dir,
                 std::slice::from_ref(name),
+                mapset_version.as_deref(),
             )?;
             installed.extend(single);
         }
@@ -6969,11 +6980,33 @@ pub fn sync_dependency_snapshots(
      * 作者名还要靠它。没有分组的旧条目没有保留价值，直接丢掉。
      */
     let previous = archive::read_map_relation_snapshots(&manifest_dir);
+    /*
+     * 资产版本搬回重建后的条目：它是安装那一刻的事实，线上声明里没有这一项。
+     * 不搬的话每次刷新地图源都会把「本地装的是 3.4.1-fix」抹掉，界面又退回
+     * 只比 info 版本 —— 而那正是分不出 `-fix` 的情况。
+     */
     let mut entries: BTreeMap<String, MapRelationSnapshot> = config
         .map_repositories
         .iter()
         .filter(|map| map.enabled)
         .map(|map| {
+            let installed_mapset_version = previous
+                .entries
+                .get(&map.id)
+                .or_else(|| {
+                    previous.entries.values().find(|entry| {
+                        crate::level_sets::level_set_identity_matches(
+                            &map.level_set_name,
+                            Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
+                            &map.author,
+                            &entry.level_set_name,
+                            None,
+                            &entry.author,
+                        )
+                    })
+                })
+                .map(|entry| entry.installed_mapset_version.clone())
+                .unwrap_or_default();
             (
                 map.id.clone(),
                 MapRelationSnapshot {
@@ -6984,13 +7017,17 @@ pub fn sync_dependency_snapshots(
                     group: map.group.clone(),
                     relations: map.relations.clone(),
                     release_relations: map.release_relations.clone(),
+                    installed_mapset_version,
                 },
             )
         })
         .collect();
     for (id, entry) in &previous.entries {
+        // 资产版本与分组同理：源被删掉之后这条记录仍然有用，不能一起清理掉
         if entries.contains_key(id)
-            || (entry.group_i18n.is_empty() && entry.group.trim().is_empty())
+            || (entry.group_i18n.is_empty()
+                && entry.group.trim().is_empty()
+                && entry.installed_mapset_version.is_empty())
         {
             continue;
         }

@@ -33,7 +33,7 @@
 //! username、repository、tag、asset_rules 的形态）由解析方按「源声明 + Release
 //! 实际资产」补齐 —— 那些是仓库坐标，写在每份 note 里只会重复。
 use crate::models::{
-    AssetRule, AssetRuleType, MapPublishMetadata, RelationKind, ReleaseAsset,
+    AssetRule, AssetRuleType, AssetVersionEntry, MapPublishMetadata, RelationKind, ReleaseAsset,
     ReleaseRelationOverride, RepositoryRelation,
 };
 use serde::Deserialize;
@@ -94,6 +94,12 @@ pub struct MapNoteMetadata {
     /// 改 info 里的版本号时会不同，那时管理器按这一项判断本地装的是不是最新版。
     #[serde(default)]
     pub latest_info_version: Option<String>,
+    /// 版本表（`asset_versions`）：数组顺序就是新旧顺序，末项最新。
+    ///
+    /// 版本号从文件名抽时排不出 `3.4.1-fix`，数字段比较也排不出「0.7 比 0.69
+    /// 新」。作者排一次序，读侧就按这个顺序当成版本列表，不再猜。
+    #[serde(default)]
+    pub asset_versions: Vec<AssetVersionEntry>,
     /// 按地图版本覆盖下面三张表的整表（`[[release_relations]]`）。
     ///
     /// 与源文档 `[[maps.release_relations]]` 同构：命中区间的那张整体替换
@@ -110,11 +116,39 @@ pub struct MapNoteMetadata {
 }
 
 impl MapNoteMetadata {
-    /// 归一化后的 `latest_info_version`（手写块的首尾空白不可控）。
-    pub fn normalized_info_version(&self) -> Option<String> {
-        let value = self.latest_info_version.as_deref()?.trim();
-        (!value.is_empty()).then(|| value.to_string())
+    /// 排序表非空时，表尾就是最新版（按**地图包**版本）。
+    ///
+    /// 从表尾往前找第一个非空项，而不是直接取最后一格：作者删掉某一版的版本号
+    /// 时，不该让整张图从「有最新版」退化成「版本未知」。表里一个版本号都没写
+    /// 才退回块自己的 `latest_mapset_version`（老块只写它）。
+    pub fn derived_mapset_version(&self) -> Option<String> {
+        self.last_asset_version(|entry| &entry.mapset_version)
+            .or_else(|| normalize_version(self.latest_mapset_version.as_deref()))
     }
+
+    /// 排序表非空时，表尾的 `info` 版本就是最新版的 info 版本。
+    pub fn derived_info_version(&self) -> Option<String> {
+        self.last_asset_version(|entry| &entry.info_version)
+            .or_else(|| normalize_version(self.latest_info_version.as_deref()))
+    }
+
+    /// 归一化后的最新 info 版本（手写块的首尾空白不可控）。
+    pub fn normalized_info_version(&self) -> Option<String> {
+        self.derived_info_version()
+    }
+
+    fn last_asset_version(&self, field: impl Fn(&AssetVersionEntry) -> &String) -> Option<String> {
+        self.asset_versions
+            .iter()
+            .rev()
+            .find_map(|entry| normalize_version(Some(field(entry).as_str())))
+    }
+}
+
+/// 去掉首尾空白；空串等于没写（空版本号进到前端会变成「一直在更新」）。
+fn normalize_version(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// 关系值的两种写法：区间字符串，或显式表。
@@ -463,8 +497,10 @@ pub fn publish_metadata_from_note(note: &MapNoteMetadata) -> MapPublishMetadata 
         group_i18n: note.group_i18n.clone(),
         note_i18n: note.note_i18n.clone(),
         asset: note.asset.clone().unwrap_or_default(),
-        latest_mapset_version: note.latest_mapset_version.clone().unwrap_or_default(),
-        latest_info_version: note.latest_info_version.clone().unwrap_or_default(),
+        // 表非空时块里的 latest_* 只是历史残留，派生的才是最新版
+        latest_mapset_version: note.derived_mapset_version().unwrap_or_default(),
+        latest_info_version: note.derived_info_version().unwrap_or_default(),
+        asset_versions: note.asset_versions.clone(),
         requires: relations(&note.requires),
         compatible: relations(&note.compatible),
         conflicts: relations(&note.conflicts),
@@ -481,6 +517,9 @@ fn canonical_range(raw: &str) -> String {
 ///
 /// 这是**写侧的唯一实现**：上传页用它把表单写成 note，
 /// `tools/oc2-info` 将来也改为复用这一份，避免「读得懂、写出来对不上」。
+///
+/// `asset_versions` 一律排在所有标量键之后：它是跨行数组，夹在标量键中间会
+/// 把 `key = value` 的对齐打散，读起来也像另一段。
 pub fn render_metadata_block(metadata: &MapPublishMetadata) -> String {
     let mut lines: Vec<(String, String)> = Vec::new();
     let push = |key: &str, value: &str, lines: &mut Vec<(String, String)>| {
@@ -550,6 +589,36 @@ pub fn render_metadata_block(metadata: &MapPublishMetadata) -> String {
         block.push_str(" = ");
         block.push_str(value);
         block.push('\n');
+    }
+    /*
+     * 数组排在所有标量键之后（见函数文档）。空值不写：解析端有 default，
+     * round-trip 不会因为缺键丢信息；两项都空的条目整条丢掉。
+     */
+    let rows = metadata
+        .asset_versions
+        .iter()
+        .filter_map(|entry| {
+            let mut parts: Vec<String> = Vec::new();
+            for (key, value) in [
+                ("mapset_version", entry.mapset_version.trim()),
+                ("info_version", entry.info_version.trim()),
+            ] {
+                if !value.is_empty() {
+                    parts.push(format!("{key} = {}", toml_string(value)));
+                }
+            }
+            (!parts.is_empty()).then(|| format!("{{ {} }}", parts.join(", ")))
+        })
+        .collect::<Vec<_>>();
+    if !rows.is_empty() {
+        block.push('\n');
+        block.push_str("asset_versions = [\n");
+        for row in &rows {
+            block.push_str("  ");
+            block.push_str(row);
+            block.push_str(",\n");
+        }
+        block.push_str("]\n");
     }
     block.push_str(NOTE_BLOCK_CLOSE);
     block.push('\n');
@@ -674,6 +743,16 @@ latest_version = "0.42"
             asset: "daxue_v${version}.zip".into(),
             latest_mapset_version: "0.3.2".into(),
             latest_info_version: "0.3.2".into(),
+            asset_versions: vec![
+                AssetVersionEntry {
+                    mapset_version: "3.4.1".to_string(),
+                    info_version: "3.4.1".to_string(),
+                },
+                AssetVersionEntry {
+                    mapset_version: "3.4.1-fix".to_string(),
+                    info_version: "3.4.1".to_string(),
+                },
+            ],
             requires: [(
                 "dev.gua.overcooked.diylevel".to_string(),
                 ">=0.10.0".to_string(),
@@ -695,6 +774,22 @@ latest_version = "0.42"
         assert_eq!(
             parsed.metadata.asset.as_deref(),
             Some("daxue_v${version}.zip")
+        );
+        // 版本表顺序即语义：渲染一次再读回来必须原样，末项才是最新
+        assert_eq!(parsed.metadata.asset_versions.len(), 2);
+        assert_eq!(parsed.metadata.asset_versions[0].mapset_version, "3.4.1");
+        assert_eq!(
+            parsed.metadata.asset_versions[1].mapset_version,
+            "3.4.1-fix"
+        );
+        assert_eq!(parsed.metadata.asset_versions[1].info_version, "3.4.1");
+        assert_eq!(
+            parsed.metadata.derived_mapset_version().as_deref(),
+            Some("3.4.1-fix")
+        );
+        assert_eq!(
+            parsed.metadata.derived_info_version().as_deref(),
+            Some("3.4.1")
         );
         assert_eq!(
             parsed.metadata.latest_mapset_version.as_deref(),
@@ -721,6 +816,8 @@ latest_version = "0.42"
         // 再折回上传页形态，字段不丢
         let back = publish_metadata_from_note(&parsed.metadata);
         assert_eq!(back.asset, "daxue_v${version}.zip");
+        assert_eq!(back.asset_versions.len(), 2);
+        assert_eq!(back.latest_mapset_version, "3.4.1-fix");
         assert_eq!(
             back.conflicts
                 .get("oc2.oc2diylevelruntimewloader")
@@ -977,5 +1074,123 @@ requires = { "dev.gua.overcooked.diylevel" = ">=9.9.9" }
     fn a_release_without_any_versioned_zip_is_skipped() {
         assert!(versioned_asset_rule(None, &[asset("levels.zip")]).is_none());
         assert!(versioned_asset_rule(None, &[asset("readme.md")]).is_none());
+    }
+
+    #[test]
+    fn the_table_tail_supplies_the_derived_latest_versions() {
+        /*
+         * 表尾最新，块里的 `latest_*` 是上一版的残留：作者改了顺序却不改那两个
+         * 标量时，读侧必须按表走，否则刚发的新版会被当成旧版。
+         */
+        let text = body(
+            r#"level_set_name = "GAODA"
+author = "GAODA"
+latest_mapset_version = "0.7"
+latest_info_version = "0.7"
+
+asset_versions = [
+  { mapset_version = "0.7", info_version = "0.7" },
+  { mapset_version = "0.69", info_version = "0.69-fix" },
+]
+"#,
+            "",
+        );
+        let note = parse_release_note(&text).unwrap().unwrap();
+        assert_eq!(
+            note.metadata.derived_mapset_version().as_deref(),
+            Some("0.69")
+        );
+        assert_eq!(
+            note.metadata.derived_info_version().as_deref(),
+            Some("0.69-fix")
+        );
+        // 折回上传页形态时表一起带走，否则作者一编辑就把顺序丢了
+        let metadata = publish_metadata_from_note(&note.metadata);
+        assert_eq!(metadata.latest_mapset_version, "0.69");
+        assert_eq!(metadata.latest_info_version, "0.69-fix");
+        assert_eq!(metadata.asset_versions.len(), 2);
+        assert_eq!(metadata.asset_versions[1].mapset_version, "0.69");
+    }
+
+    #[test]
+    fn a_table_tail_with_empty_versions_falls_back_to_the_entry_above() {
+        let mut metadata = MapNoteMetadata {
+            latest_mapset_version: Some("0.7".to_string()),
+            latest_info_version: Some("0.7".to_string()),
+            asset_versions: vec![
+                AssetVersionEntry {
+                    mapset_version: "0.7".to_string(),
+                    info_version: "0.7".to_string(),
+                },
+                AssetVersionEntry {
+                    mapset_version: "  ".to_string(),
+                    info_version: String::new(),
+                },
+            ],
+            ..MapNoteMetadata::default()
+        };
+        // 作者删了某一版的版本号，不该让整张图失去「最新版是谁」
+        assert_eq!(metadata.derived_mapset_version().as_deref(), Some("0.7"));
+        assert_eq!(metadata.derived_info_version().as_deref(), Some("0.7"));
+        // 表里一个版本号都没有时才退回块自己的标量
+        metadata.asset_versions.clear();
+        assert_eq!(metadata.derived_mapset_version().as_deref(), Some("0.7"));
+    }
+
+    #[test]
+    fn a_rendered_table_comes_after_every_scalar_key() {
+        let metadata = MapPublishMetadata {
+            level_set_name: "GAODA".into(),
+            author: "GAODA".into(),
+            asset: "gaoda_v${version}.zip".into(),
+            latest_mapset_version: "3.4.1-fix".into(),
+            requires: [(
+                "dev.gua.overcooked.diylevel".to_string(),
+                ">=0.10.0".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            asset_versions: vec![
+                AssetVersionEntry {
+                    mapset_version: "0.7".to_string(),
+                    info_version: "0.7".to_string(),
+                },
+                AssetVersionEntry {
+                    mapset_version: "3.4.1-fix".to_string(),
+                    info_version: "3.4.1".to_string(),
+                },
+            ],
+            ..MapPublishMetadata::default()
+        };
+        let block = render_metadata_block(&metadata);
+        let table_at = block
+            .find("asset_versions = [")
+            .expect("版本表必须被渲染出来");
+        let requires_at = block.find("latest_mapset_version = ").expect("标量键照旧");
+        assert!(requires_at < table_at, "{block}");
+        // 表里的非数字版本号原样落盘：`3.4.1-fix` 不能被当成非法版本丢掉
+        assert!(block.contains(r#""3.4.1-fix""#), "{block}");
+        let parsed = parse_release_note(&body(&block_body(&block), "")).unwrap();
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.metadata.asset_versions.len(), 2);
+        assert_eq!(
+            parsed.metadata.asset_versions[0].mapset_version,
+            "0.7".to_string()
+        );
+        assert_eq!(
+            parsed.metadata.derived_mapset_version().as_deref(),
+            Some("3.4.1-fix")
+        );
+    }
+
+    /// 去掉块的起止标记，只留 TOML 正文（`body()` 会自己再套一层）。
+    fn block_body(block: &str) -> String {
+        block
+            .trim()
+            .trim_start_matches(NOTE_BLOCK_OPEN)
+            .trim()
+            .trim_end_matches(NOTE_BLOCK_CLOSE)
+            .trim()
+            .to_string()
     }
 }

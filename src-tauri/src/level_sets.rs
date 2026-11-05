@@ -3346,7 +3346,7 @@ pub fn install_from_zip(
     selected: &[String],
 ) -> Result<Vec<String>, String> {
     let sets = inspect_zip(zip_path)?;
-    install_parsed_sets(&sets, zip_path, game_root, manifests_dir, selected)
+    install_parsed_sets(&sets, zip_path, game_root, manifests_dir, selected, None)
 }
 
 /// 把已经解析好的关卡集写进 `levels/`（`zip_path` 只用于回读文件内容）。
@@ -3359,6 +3359,7 @@ pub fn install_parsed_sets(
     game_root: &Path,
     manifests_dir: &Path,
     selected: &[String],
+    mapset_version: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let targets: Vec<&ImportedLevelSet> = sets
         .iter()
@@ -3383,7 +3384,14 @@ pub fn install_parsed_sets(
         {
             return Err("levelSet.nothingSelected".into());
         }
-        return install_bepinex_layer_sets(sets, &targets, zip_path, game_root, manifests_dir);
+        return install_bepinex_layer_sets(
+            sets,
+            &targets,
+            zip_path,
+            game_root,
+            manifests_dir,
+            mapset_version,
+        );
     }
 
     let levels_dir = levels_root(game_root);
@@ -3447,10 +3455,12 @@ pub fn install_parsed_sets(
     }
 
     let mut installed = Vec::new();
-    for (dir_name, set) in resolved {
-        write_level_set(zip_path, game_root, &dir_name, set)?;
-        installed.push(dir_name);
+    for (dir_name, set) in &resolved {
+        write_level_set(zip_path, game_root, dir_name, set)?;
+        installed.push(dir_name.clone());
     }
+    let installed_sets: Vec<&ImportedLevelSet> = resolved.iter().map(|(_, set)| *set).collect();
+    record_installed_mapset_versions(manifests_dir, &installed_sets, mapset_version);
     Ok(installed)
 }
 
@@ -3475,6 +3485,7 @@ fn install_bepinex_layer_sets(
     zip_path: &Path,
     game_root: &Path,
     manifests_dir: &Path,
+    mapset_version: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let levels_dir = levels_root(game_root);
     let disabled_dir = disabled_root(game_root);
@@ -3551,6 +3562,7 @@ fn install_bepinex_layer_sets(
         targets.len(),
         added_count
     );
+    record_installed_mapset_versions(manifests_dir, targets, mapset_version);
     Ok(targets.iter().map(|set| set.dir_name.clone()).collect())
 }
 
@@ -4615,6 +4627,79 @@ mod requires_tests {
         assert_eq!(sets[0].required_runtime.as_deref(), Some("3.10.2"));
 
         std::fs::remove_dir_all(&game).unwrap();
+    }
+}
+
+/// 把本次装进去的关卡集的资产版本记进地图依赖快照。
+///
+/// 「装的是哪个资产」只有安装那一刻知道：`info` 里的版本号不等于资产版本
+/// （作者发 `3.4.1-fix` 修复版时常忘了改 info，两个包都写 `3.4.1`），而
+/// `MapRepositoryConfig` 里那两个 `latest_*` 说的是线上最新，不是本地装着什么。
+///
+/// 快照按地图 id 建表，本地 ZIP 导入没有 id，所以这里按身份找条目；一条都没有
+/// 就补一条以身份为键的条目 —— `sync_dependency_snapshots` 重建快照时会把它
+/// 搬到配置里那条上，源被删掉时则一直留着。
+fn record_installed_mapset_versions(
+    manifests_dir: &Path,
+    sets: &[&ImportedLevelSet],
+    mapset_version: Option<&str>,
+) {
+    let Some(version) = mapset_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    if sets.is_empty() {
+        return;
+    }
+    let mut snapshots = crate::archive::read_map_relation_snapshots(manifests_dir);
+    for set in sets {
+        let metadata = &set.metadata;
+        let matched_key = snapshots.entries.iter().find_map(|(key, entry)| {
+            level_set_identity_matches(
+                &metadata.name,
+                metadata.name_zh.as_deref(),
+                &metadata.author,
+                &entry.level_set_name,
+                None,
+                &entry.author,
+            )
+            .then(|| key.clone())
+        });
+        match matched_key {
+            Some(key) => {
+                if let Some(entry) = snapshots.entries.get_mut(&key) {
+                    entry.installed_mapset_version = version.to_string();
+                }
+            }
+            None => {
+                snapshots.entries.insert(
+                    format!(
+                        "installed:{}:{}",
+                        metadata.author.trim(),
+                        metadata.name.trim()
+                    ),
+                    crate::models::MapRelationSnapshot {
+                        repository_id: String::new(),
+                        level_set_name: metadata.name.clone(),
+                        author: metadata.author.clone(),
+                        group_i18n: Default::default(),
+                        group: String::new(),
+                        relations: Vec::new(),
+                        release_relations: Vec::new(),
+                        installed_mapset_version: version.to_string(),
+                    },
+                );
+            }
+        }
+    }
+    if let Err(error) = crate::archive::write_map_relation_snapshots(manifests_dir, &snapshots) {
+        log::warn!(
+            "记录关卡集资产版本失败：目录={}，原因={}",
+            manifests_dir.display(),
+            error
+        );
     }
 }
 
@@ -5919,5 +6004,69 @@ mod plugin_tests {
         );
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod mapset_version_tests {
+    use super::*;
+
+    fn imported(name: &str, author: &str) -> ImportedLevelSet {
+        ImportedLevelSet {
+            dir_name: name.to_string(),
+            layout: LevelSetLayout::Flattened,
+            metadata: crate::asset_bundle::LevelSetMetadata {
+                name: name.to_string(),
+                author: author.to_string(),
+                ..Default::default()
+            },
+            files: Vec::new(),
+            plugins: Vec::new(),
+        }
+    }
+
+    /// 安装时记的资产版本要能按身份写进已有条目；表里没有这条时补一条，别丢版本；
+    /// 不传版本（本地 ZIP 导入）时一个字节都不该改。
+    #[test]
+    fn installed_asset_version_follows_identity_and_survives_missing_entries() {
+        let dir = std::env::temp_dir().join(format!("oc2-mapset-version-{}", uuid::Uuid::new_v4()));
+        let mut snapshots = crate::models::MapRelationSnapshots::default();
+        snapshots.entries.insert(
+            "map".into(),
+            crate::models::MapRelationSnapshot {
+                repository_id: "map".into(),
+                level_set_name: "Set".into(),
+                author: "Author".into(),
+                group_i18n: Default::default(),
+                group: String::new(),
+                relations: Vec::new(),
+                release_relations: Vec::new(),
+                installed_mapset_version: String::new(),
+            },
+        );
+        crate::archive::write_map_relation_snapshots(&dir, &snapshots).unwrap();
+
+        let set = imported("Set", "Author");
+        record_installed_mapset_versions(&dir, &[&set], Some(" 3.4.1-fix "));
+        let after = crate::archive::read_map_relation_snapshots(&dir);
+        assert_eq!(after.entries["map"].installed_mapset_version, "3.4.1-fix");
+
+        let other = imported("Other", "Someone");
+        record_installed_mapset_versions(&dir, &[&other], Some("0.7"));
+        let after = crate::archive::read_map_relation_snapshots(&dir);
+        assert_eq!(after.entries.len(), 2);
+        assert_eq!(
+            after.entries["installed:Someone:Other"].installed_mapset_version,
+            "0.7"
+        );
+
+        record_installed_mapset_versions(&dir, &[&set], None);
+        assert_eq!(
+            crate::archive::read_map_relation_snapshots(&dir).entries["map"]
+                .installed_mapset_version,
+            "3.4.1-fix"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

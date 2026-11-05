@@ -37,15 +37,16 @@ use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::commands::AppState;
+use crate::display_path::display_path;
 use crate::locale_tag::with_params;
 use crate::map_note::{
     VERSION_PLACEHOLDER, publish_metadata_from_note, render_release_body, strip_note_block,
 };
 use crate::models::{
-    OperationResult, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,
-    PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease, PublishRepository,
-    PublishRepositoryList, PublishRepositoryTopics, PublishSaveRequest, PublishUploadRequest,
-    PublishZipInspection,
+    MapPublishMetadata, OperationResult, PublishAsset, PublishAuthMode, PublishAuthPoll,
+    PublishAuthState, PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease,
+    PublishRepository, PublishRepositoryList, PublishRepositoryTopics, PublishSaveRequest,
+    PublishUploadRequest, PublishZipInspection,
 };
 use crate::releases::APP_USER_AGENT;
 
@@ -1449,6 +1450,24 @@ pub async fn list_publish_releases(
     Ok(result)
 }
 
+/// 排序表非空时用表尾覆盖 `latest_*`。
+///
+/// 表是作者刚排好的，块里那两个标量是上一版的残留；不覆盖的话新 Release 会
+/// 带着旧的「最新版」发出去，管理器下次刷新就把旧版当成最新。
+fn apply_table_tail(metadata: &mut MapPublishMetadata) {
+    let Some(last) = metadata.asset_versions.last() else {
+        return;
+    };
+    let mapset_version = last.mapset_version.trim();
+    if !mapset_version.is_empty() {
+        metadata.latest_mapset_version = mapset_version.to_string();
+    }
+    let info_version = last.info_version.trim();
+    if !info_version.is_empty() {
+        metadata.latest_info_version = info_version.to_string();
+    }
+}
+
 #[tauri::command]
 pub async fn save_publish_release(
     state: State<'_, AppState>,
@@ -1481,8 +1500,11 @@ pub async fn save_publish_release(
                     })
                     .collect::<String>();
                 let slug = slug.trim_matches('-');
-                metadata.asset = format!("{slug}-{VERSION_PLACEHOLDER}.zip");
+                // 附件名带上 `_v`：与手动命名的 `gaoda_v1.2.0.zip` 一致，
+                // 版本规则一眼能看出从哪段抽版本号
+                metadata.asset = format!("{slug}_v{VERSION_PLACEHOLDER}.zip");
             }
+            apply_table_tail(&mut metadata);
             render_release_body(&metadata, &request.body)
         }
         None => request.body.clone(),
@@ -1788,11 +1810,79 @@ pub async fn inspect_publish_zip(path: String) -> Result<PublishZipInspection, S
         .map_err(|error| request_error(&error.to_string()))?
 }
 
+/// Release 附件暂存目录（数据根下 `cache/publish-staging`）。
+const PUBLISH_STAGING_DIR: &str = "publish-staging";
+
+/// 把作者选中的本地 ZIP 复制成 Release 附件该用的名字。
+///
+/// 上传时附件名必须等于块里 `asset` 模板替换出版本后的样子，而用户手里的文件
+/// 名通常不是；复制到数据根的暂存目录再上传，既不改用户原文件，也让上传只认
+/// 一个确定的路径（界面可以在写块之后、上传之前反复重试）。
+#[tauri::command]
+pub async fn stage_publish_zip(
+    state: State<'_, AppState>,
+    path: String,
+    file_name: String,
+) -> Result<String, String> {
+    // `State` 不能跨 await，先把要用的路径取出来再进阻塞线程池（几十 MB 的
+    // 复制是 IO 活，同步命令会冻住主线程，见 `AGENTS.md` 第 5 节）
+    let staging = state.config.cache_dir().join(PUBLISH_STAGING_DIR);
+    tauri::async_runtime::spawn_blocking(move || {
+        stage_publish_zip_into(&staging, &path, &file_name)
+    })
+    .await
+    .map_err(|error| request_error(&error.to_string()))?
+}
+
+/// [`stage_publish_zip`] 的同步实现（拆出来才能在临时目录上测）。
+fn stage_publish_zip_into(
+    staging: &std::path::Path,
+    path: &str,
+    file_name: &str,
+) -> Result<String, String> {
+    let file_name = validate_asset_name(file_name)?;
+    // 只收 ZIP：发布页第二步传的就是地图包，别的文件传上去没人装得下
+    if !file_name.to_ascii_lowercase().ends_with(".zip") {
+        return Err(invalid_asset("extension"));
+    }
+    let source = std::path::PathBuf::from(path.trim());
+    let is_zip = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"));
+    if !is_zip || !source.is_file() {
+        log::warn!(
+            "暂存发布附件失败：源文件不是可读的 ZIP，路径={}",
+            display_path(&source)
+        );
+        return Err("mapPublish.zipUnreadable".to_string());
+    }
+    std::fs::create_dir_all(staging).map_err(|error| {
+        log::error!(
+            "创建发布附件暂存目录失败：目录={}，原因={error}",
+            display_path(staging)
+        );
+        action_error("stage", &error.to_string())
+    })?;
+    let target = staging.join(&file_name);
+    // 覆盖同名暂存文件是有意的：同一版重试上传时不该越攒越多
+    std::fs::copy(&source, &target).map_err(|error| {
+        log::error!(
+            "复制发布附件失败：源={}，目标={}，原因={error}",
+            display_path(&source),
+            display_path(&target)
+        );
+        action_error("stage", &error.to_string())
+    })?;
+    log::info!("发布附件已暂存：目标={}", display_path(&target));
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::map_note::NOTE_BLOCK_OPEN;
-    use crate::models::MapPublishMetadata;
+    use crate::models::{AssetVersionEntry, MapPublishMetadata};
 
     #[test]
     fn forbidden_without_headers_still_reports_the_github_message() {
@@ -1994,5 +2084,71 @@ mod tests {
         );
         assert_eq!(block.body.trim(), "首个版本");
         assert!(body.starts_with(NOTE_BLOCK_OPEN));
+    }
+
+    #[test]
+    fn the_table_tail_overrides_the_stale_latest_versions() {
+        let mut metadata = MapPublishMetadata {
+            latest_mapset_version: "0.7".to_string(),
+            latest_info_version: "0.7".to_string(),
+            asset_versions: vec![
+                AssetVersionEntry {
+                    mapset_version: "0.7".to_string(),
+                    info_version: "0.7".to_string(),
+                },
+                AssetVersionEntry {
+                    mapset_version: " 0.69 ".to_string(),
+                    info_version: "0.69".to_string(),
+                },
+            ],
+            ..MapPublishMetadata::default()
+        };
+        apply_table_tail(&mut metadata);
+        assert_eq!(metadata.latest_mapset_version, "0.69");
+        assert_eq!(metadata.latest_info_version, "0.69");
+        // 表尾那一格的版本号空着时不能把已有值抹成空
+        metadata.asset_versions.push(AssetVersionEntry::default());
+        apply_table_tail(&mut metadata);
+        assert_eq!(metadata.latest_mapset_version, "0.69");
+        // 空表完全不动：老源的 latest_* 仍然只有一个来源
+        metadata.asset_versions.clear();
+        apply_table_tail(&mut metadata);
+        assert_eq!(metadata.latest_mapset_version, "0.69");
+    }
+
+    #[test]
+    fn a_staged_zip_is_copied_under_the_release_name() {
+        let root = std::env::temp_dir().join(format!("oc2-publish-stage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("我的 地图-v1.zip");
+        std::fs::write(&source, b"zip-bytes").unwrap();
+        let staging = root.join("staging");
+        let staged =
+            stage_publish_zip_into(&staging, source.to_str().unwrap(), "gaoda_v1.2.0.zip").unwrap();
+        assert_eq!(
+            std::path::Path::new(&staged)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("gaoda_v1.2.0.zip")
+        );
+        assert_eq!(std::fs::read(&staged).unwrap(), b"zip-bytes");
+        // 用户手里的原文件原样留着
+        assert!(source.is_file());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn staging_rejects_anything_that_is_not_a_readable_zip() {
+        let root = std::env::temp_dir().join(format!("oc2-publish-stage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let text = root.join("notes.txt");
+        std::fs::write(&text, b"nope").unwrap();
+        // 附件名必须是 ZIP
+        assert!(stage_publish_zip_into(&root, text.to_str().unwrap(), "gaoda_v1.0.0.txt").is_err());
+        // 源文件本身也必须是 ZIP
+        assert!(stage_publish_zip_into(&root, text.to_str().unwrap(), "gaoda_v1.0.0.zip").is_err());
+        // 不存在的源文件
+        assert!(stage_publish_zip_into(&root, "", "gaoda_v1.0.0.zip").is_err());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

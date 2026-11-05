@@ -2883,6 +2883,7 @@ files = ["BepInEx/plugins/a.dll"]
                 group: String::new(),
                 relations: vec![requires("dep.guid", "1.0.0")],
                 release_relations: Vec::new(),
+                installed_mapset_version: String::new(),
             },
         );
         write_map_relation_snapshots(&dir, &snapshots).unwrap();
@@ -2905,6 +2906,7 @@ files = ["BepInEx/plugins/a.dll"]
                 group: String::new(),
                 relations: vec![requires("dep.guid", "1.0.0")],
                 release_relations: Vec::new(),
+                installed_mapset_version: String::new(),
             },
         );
         write_map_relation_snapshots(&dir, &snapshots).unwrap();

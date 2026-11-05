@@ -139,6 +139,13 @@ pub struct LevelSetInfo {
     /// info 里的版本号（地图自己的版本，与 Release tag 比对）。
     #[serde(default)]
     pub version: String,
+    /// 安装那一刻记下的资产版本（Release tag，如 `3.4.1-fix`）。
+    ///
+    /// info 版本判不出「装的是不是最新资产」：作者发 `-fix` 修复版时常常忘了
+    /// 改 info，两个包的 info 版本都是 `3.4.1`。空串表示没有记录（本地 ZIP
+    /// 导入、老数据），前端退回比 info 版本。
+    #[serde(default)]
+    pub installed_mapset_version: String,
     /// info 里的 uid（= MD5(baseUID + version)，随版本变化，不能当稳定身份）。
     #[serde(default)]
     pub uid: String,
@@ -1359,6 +1366,21 @@ pub struct PublishRelease {
     pub metadata: Option<MapPublishMetadata>,
 }
 
+/// 版本表里的一项：某一版地图的「资产版本 + info 版本」。
+///
+/// 用数组而不是 map：顺序本身就是信息（末项最新），拖动排序就是移动元素。
+/// 附件名不存进表里 —— 它由作者的 asset 规则渲染 `mapset_version` 得到，
+/// 再存一份副本只会在改名之后与规则对不上。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetVersionEntry {
+    /// 作者定义的地图包版本号；允许 `3.4.1-fix` 这种带后缀的写法。
+    #[serde(default)]
+    pub mapset_version: String,
+    /// 这一版 ZIP 里 `info` 自报的版本号，判「装的是不是最新」用它。
+    #[serde(default)]
+    pub info_version: String,
+}
+
 /// 前端编辑并提交的元数据。
 ///
 /// 与 `map_note::MapNoteMetadata` 的差别只有关系表：这里用「GUID → 区间字符串」，
@@ -1390,6 +1412,9 @@ pub struct MapPublishMetadata {
     pub compatible: BTreeMap<String, String>,
     #[serde(default)]
     pub conflicts: BTreeMap<String, String>,
+    /// 版本表（末项最新）；空表 = 退回按附件名里的数字段排。
+    #[serde(default)]
+    pub asset_versions: Vec<AssetVersionEntry>,
 }
 
 /// 新建或修改一版地图的请求。
@@ -1785,6 +1810,12 @@ pub struct MapRepositoryConfig {
     /// 选哪个资产：地图只分发 ZIP。
     #[serde(default)]
     pub asset_rules: Vec<AssetRule>,
+    /// 版本表（来自 Release note 的 `asset_versions`，末项最新）。
+    ///
+    /// 决定「谁是最新版」和版本列表的展示顺序；空表表示这份源没排过序，
+    /// 退回按附件名里的数字段降序。
+    #[serde(default)]
+    pub asset_versions: Vec<AssetVersionEntry>,
     /// 本地关卡集的 `levelSetName`（info 里的英文名）。
     ///
     /// 与 `author` 一起构成绑定身份。不能用 `uid`：它是
@@ -1874,6 +1905,12 @@ pub struct MapRelationSnapshot {
     /// 2.x 的依赖」时，依赖表会显示成 2.x 那一套。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub release_relations: Vec<ReleaseRelationOverride>,
+    /// 安装/更新那一刻的资产版本（Release 的 tag_name，如 `3.4.1-fix`）。
+    ///
+    /// 本地 info 里的版本号可能与资产版本不一致（作者发修复版时常忘了改 info），
+    /// 只靠 info 版本无法判断装的是不是最新资产，所以安装时记下来。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub installed_mapset_version: String,
 }
 
 /// `<data_root>/manifests/map-relations.json` 的整份内容。

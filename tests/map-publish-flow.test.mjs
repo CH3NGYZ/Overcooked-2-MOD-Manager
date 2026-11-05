@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 /**
- * 发布页三步式流程（`src/mapPublishFlow.ts`）。
+ * 发布页的流程逻辑（`src/mapPublishFlow.ts`）。
  *
- * 锁四件事：执行顺序与面板顺序是两套（面板 ZIP 在最上面，执行仍先建 Release）、
- * 一键执行还缺哪些输入、默认 tag 的形状（tag 是地图身份，必须是合法 git ref）、
- * 以及 403 的两类原因能不能从后端 tag 里认出来（权限不足要引导改 App，限流只要
- * 等一下）。
+ * 锁五件事：执行顺序固定（先建 Release，再传 ZIP，最后写块）、拖动排序只改存储
+ * 顺序（显示反转，存储仍是旧→新）、发布还缺哪些输入、默认 tag 的形状（tag 是
+ * 地图身份，必须是合法 git ref），以及 403 的两类原因能不能从后端 tag 里认出来
+ * （权限不足要引导改 App，限流只要等一下）。
  */
 const {
   PUBLISH_STEP_ORDER,

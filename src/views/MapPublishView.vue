@@ -38,6 +38,21 @@ import {
   type AssetVersionRow,
   type PublishStepId,
 } from '../mapPublishFlow'
+import {
+  I18N_FIELD_ORDER,
+  MAP_I18N_LANGUAGES,
+  MAP_I18N_LANGUAGE_LABELS,
+  blankI18nField,
+  defaultI18nValues,
+  extraLanguages,
+  followDefaults,
+  i18nDraftFrom,
+  i18nTableOf,
+  missingRequiredLanguages,
+  type I18nDefaults,
+  type I18nFieldDraft,
+  type I18nFieldId,
+} from '../mapPublishI18n'
 import { markDialogBusy } from '../dialogBusy'
 import { useNotify } from '../useNotify'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
@@ -200,9 +215,9 @@ interface MetadataDraft {
   levelSetName: string
   levelSetNameZh: string
   author: string
-  nameI18n: string
-  noteI18n: string
-  groupI18n: string
+  nameI18n: I18nFieldDraft
+  noteI18n: I18nFieldDraft
+  groupI18n: I18nFieldDraft
   requires: RelationRow[]
   compatible: RelationRow[]
   conflicts: RelationRow[]
@@ -213,9 +228,9 @@ function blankMetadataDraft(): MetadataDraft {
     levelSetName: '',
     levelSetNameZh: '',
     author: '',
-    nameI18n: '',
-    noteI18n: '',
-    groupI18n: '',
+    nameI18n: blankI18nField(),
+    noteI18n: blankI18nField(),
+    groupI18n: blankI18nField(),
     requires: [],
     compatible: [],
     conflicts: [],
@@ -244,43 +259,6 @@ function chooseRepository(fullName: string) {
   settingsOpen.value = false
   repositoryFilter.value = ''
   void selectRepository(fullName)
-}
-
-/**
- * 解析「一行一条」的清单（多语言表用）。
- *
- * 值本身可能带 `=`，所以不能简单按第一个 `=` 切：等号紧跟在比较运算符后面
- * 时属于值，不是分隔符。`key value` 这种没写等号的写法也收，作者从别处
- * 粘贴时常是这一种。
- */
-function parsePairs(text: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    let split = -1
-    for (let index = 1; index < line.length; index += 1) {
-      if (line[index] === '=' && !'=<>~!'.includes(line[index - 1])) {
-        split = index
-        break
-      }
-    }
-    if (split === -1) {
-      const matched = line.match(/^(\S+)\s+([<>=!~].+)$/)
-      if (matched) result[matched[1]] = matched[2].trim()
-      continue
-    }
-    const key = line.slice(0, split).trim()
-    if (!key) continue
-    result[key] = line.slice(split + 1).trim()
-  }
-  return result
-}
-
-function pairsToText(record: Record<string, string>): string {
-  return Object.entries(record)
-    .map(([key, value]) => `${key} = ${value}`)
-    .join('\n')
 }
 
 function recordToRows(record: Record<string, string>): RelationRow[] {
@@ -315,13 +293,18 @@ function applyMetadata(metadata: MapPublishMetadata | null) {
     draft.levelSetName = metadata.level_set_name
     draft.levelSetNameZh = metadata.level_set_name_zh
     draft.author = metadata.author
-    draft.nameI18n = pairsToText(metadata.name_i18n)
-    draft.noteI18n = pairsToText(metadata.note_i18n)
-    draft.groupI18n = pairsToText(metadata.group_i18n)
     draft.requires = recordToRows(metadata.requires)
     draft.compatible = recordToRows(metadata.compatible)
     draft.conflicts = recordToRows(metadata.conflicts)
   }
+  const defaults: I18nDefaults = {
+    levelSetName: draft.levelSetName,
+    levelSetNameZh: draft.levelSetNameZh,
+    author: draft.author,
+  }
+  draft.nameI18n = i18nDraftFrom('nameI18n', metadata?.name_i18n, defaults)
+  draft.noteI18n = i18nDraftFrom('noteI18n', metadata?.note_i18n, defaults)
+  draft.groupI18n = i18nDraftFrom('groupI18n', metadata?.group_i18n, defaults)
   Object.assign(metadataDraft, draft)
 }
 
@@ -329,6 +312,21 @@ function applyMetadata(metadata: MapPublishMetadata | null) {
 const dirty = ref(false)
 /** resetForm 正在灌数据：这一轮 watch 不该把表单标脏。 */
 let applyingDocument = false
+
+/**
+ * 基本信息一改，没被作者动过的多语言行跟着变：显示名取地图集中英名、分组名取
+ * 作者。动过的行不动 —— 作者手写的就是他要的。
+ */
+watch(
+  () => [metadataDraft.levelSetName, metadataDraft.levelSetNameZh, metadataDraft.author],
+  () => {
+    if (applyingDocument) return
+    const defaults = i18nDefaults()
+    for (const field of I18N_FIELD_ORDER) {
+      metadataDraft[field.id] = followDefaults(metadataDraft[field.id], field.id, defaults)
+    }
+  },
+)
 
 function resetForm(release: PublishRelease | null, metadata: MapPublishMetadata | null = release?.metadata ?? null) {
   applyingDocument = true
@@ -851,63 +849,43 @@ function publishStateText(state: PublishStepState): string {
   }
 }
 
-/** 多语言表的三个输入框：顺序与界面一致，标签在脚本里取（模板不写动态 t()）。 */
-const I18N_FIELDS = [
-  { id: 'nameI18n', labelKey: 'mapPublish.nameI18n' },
-  { id: 'groupI18n', labelKey: 'mapPublish.groupI18n' },
-  { id: 'noteI18n', labelKey: 'mapPublish.noteI18n' },
-] as const
+/** 当前基本信息算出的默认值：作者没动过的行跟着它走。 */
+function i18nDefaults(): I18nDefaults {
+  return {
+    levelSetName: metadataDraft.levelSetName,
+    levelSetNameZh: metadataDraft.levelSetNameZh,
+    author: metadataDraft.author,
+  }
+}
 
-/** 只强制这两种语言：管理器读不到别的语言时会自己回退，不该拦着作者保存。 */
-const REQUIRED_I18N_LANGUAGES = ['zh-CN', 'en'] as const
-
-function i18nTables(): Array<{ label: string; table: Record<string, string> }> {
-  return I18N_FIELDS.map((field) => ({
-    label: t(field.labelKey),
-    table: parsePairs(metadataDraft[field.id]),
-  }))
+/** 改一行：写值并记住这行是作者自己写的，默认值不再覆盖它。 */
+function setI18nValue(field: I18nFieldId, language: string, value: string) {
+  const draft = metadataDraft[field]
+  draft.values[language] = value
+  draft.touched[language] = true
 }
 
 /**
  * 填了多语言就必须写 zh-CN 与 en —— 回退链只在这两种齐全时才是确定的；
- * 三个框全空不算「填了」，保存时由 defaultI18nTables() 按规则补。
+ * 三张表全空不算「填了」，保存时按默认值补。
  */
 const i18nMissing = computed(() => {
   const missing: string[] = []
-  for (const { label, table } of i18nTables()) {
-    if (!Object.keys(table).length) continue
-    const lacks = REQUIRED_I18N_LANGUAGES.filter((language) => !table[language]?.trim())
-    if (lacks.length) missing.push(`${label}（${lacks.join(' / ')}）`)
+  for (const field of I18N_FIELD_ORDER) {
+    const lacks = missingRequiredLanguages(metadataDraft[field.id])
+    if (lacks.length) missing.push(`${t(field.labelKey)}（${lacks.join(' / ')}）`)
   }
   return missing
 })
 
-/**
- * 没写多语言时的默认值：显示名用地图集的中英名，分组名用作者（作者不分语言），
- * 说明留空 —— 管理器会退回块里的单语言 note 或「暂无说明」。
- */
-function defaultI18nTables(): Pick<MapPublishMetadata, 'name_i18n' | 'group_i18n' | 'note_i18n'> {
-  const en = metadataDraft.levelSetName.trim()
-  const zh = metadataDraft.levelSetNameZh.trim() || en
-  const author = metadataDraft.author.trim()
-  const name: Record<string, string> = {}
-  if (zh) name['zh-CN'] = zh
-  if (en) name.en = en
-  return {
-    name_i18n: name,
-    group_i18n: author ? { 'zh-CN': author, en: author } : {},
-    note_i18n: {},
-  }
-}
-
+/** 草稿 → 块里的表；整张表为空时退回默认值（只写 zh-CN 与 en）。 */
 function buildI18n(): Pick<MapPublishMetadata, 'name_i18n' | 'group_i18n' | 'note_i18n'> {
-  const fallback = defaultI18nTables()
-  const [name, group, note] = i18nTables()
-  return {
-    name_i18n: Object.keys(name.table).length ? name.table : fallback.name_i18n,
-    group_i18n: Object.keys(group.table).length ? group.table : fallback.group_i18n,
-    note_i18n: Object.keys(note.table).length ? note.table : fallback.note_i18n,
+  const defaults = i18nDefaults()
+  const pick = (field: I18nFieldId) => {
+    const table = i18nTableOf(metadataDraft[field])
+    return Object.keys(table).length ? table : defaultI18nValues(field, defaults)
   }
+  return { name_i18n: pick('nameI18n'), group_i18n: pick('groupI18n'), note_i18n: pick('noteI18n') }
 }
 
 function buildMetadata(): MapPublishMetadata {
@@ -1618,27 +1596,28 @@ function confirmDeleteAsset(name: string) {
             </div>
           </div>
 
-          <!-- 多语言：默认收起；三个框全空时保存按规则补 zh-CN / en，填了就必须两种都有 -->
+          <!-- 多语言：默认收起；一行一种语言，没填的行保存时按规则补，填了就必须有 zh-CN 与 en -->
           <n-collapse class="advanced">
             <n-collapse-item :title="t('mapPublish.i18nSettings')" name="i18n">
               <p class="hint no-top">{{ t('mapPublish.i18nAutoHint') }}</p>
               <p class="hint no-top">{{ t('mapPublish.i18nHint') }}</p>
-              <div class="form-grid">
-                <div class="field">
-                  <span class="field-label">{{ t('mapPublish.nameI18n') }}</span>
-                  <n-input v-model:value="metadataDraft.nameI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                    :disabled="busyAny" />
+              <div v-for="field in I18N_FIELD_ORDER" :key="field.id" class="i18n-field">
+                <span class="field-label">{{ t(field.labelKey) }}</span>
+                <div class="i18n-rows">
+                  <label v-for="language in MAP_I18N_LANGUAGES" :key="language" class="i18n-row">
+                    <span class="i18n-lang">{{ MAP_I18N_LANGUAGE_LABELS[language] }}</span>
+                    <n-input size="small" :value="metadataDraft[field.id].values[language] ?? ''"
+                      :disabled="busyAny"
+                      @update:value="(value) => setI18nValue(field.id, language, value)" />
+                  </label>
                 </div>
-                <div class="field">
-                  <span class="field-label">{{ t('mapPublish.groupI18n') }}</span>
-                  <n-input v-model:value="metadataDraft.groupI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                    :disabled="busyAny" />
-                </div>
-                <div class="field span-2">
-                  <span class="field-label">{{ t('mapPublish.noteI18n') }}</span>
-                  <n-input v-model:value="metadataDraft.noteI18n" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
-                    :disabled="busyAny" />
-                </div>
+                <p v-if="extraLanguages(metadataDraft[field.id]).length" class="hint no-top">
+                  {{
+                    t('mapPublish.i18nExtraKept', {
+                      languages: extraLanguages(metadataDraft[field.id]).join(' / '),
+                    })
+                  }}
+                </p>
               </div>
               <p v-if="i18nMissing.length" class="warn no-top">
                 {{ t('mapPublish.i18nRequiredMissing', { fields: i18nMissing.join(' / ') }) }}
@@ -2018,6 +1997,11 @@ function confirmDeleteAsset(name: string) {
 
 .publish-card,
 .document-card { margin-top: 16px; }
+.i18n-field { margin-top: 14px; }
+.i18n-rows { display: flex; flex-direction: column; gap: 6px; }
+.i18n-row { display: flex; align-items: center; gap: 10px; }
+.i18n-lang { flex: 0 0 88px; font-size: 12px; color: var(--oc2-text-3); }
+
 .publish-card .panel-head .sub-title,
 .document-card .panel-head .sub-title { margin: 0; }
 

@@ -42,6 +42,9 @@ PLAN.md
 # Local-only tooling: stays on this machine, never pushed to the public repo
 nsis.lnk
 tools/
+# Product locale tables are not local-only tooling.
+!src/locale/tools/
+!src/locale/tools/**
 # 迁移脚本与本地验收工具只留本机；backend-tag-map.mjs 除外——已跟踪的
 # tests/backend-tag-coverage.test.mjs 依赖它，CI 干净检出必须有。
 /scripts/apply-backend-tag-params.mjs

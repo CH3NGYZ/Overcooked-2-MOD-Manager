@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { mapPublish } from '../src/locale/mapPublish.ts'
+import { mapPublish } from '../src/locale/mapPublish/index.ts'
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8')
 
 test('发布检查使用社区地图 topic，仓库只能由用户自行创建', () => {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
 import { versionRowsOf, reconcileVersionRows, unregisteredReleaseVersions, upsertPublishRelease, releaseAssetRule } from '../src/mapPublishRelease.ts'
-import { mapPublish } from '../src/locale/mapPublish.ts'
+import { mapPublish } from '../src/locale/mapPublish/index.ts'
 import { publishZipIssue } from '../src/mapPublishFlow.ts'
 
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8').replace(/\r\n/g, '\n')

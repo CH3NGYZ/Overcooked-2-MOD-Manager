@@ -60,6 +60,7 @@ export function useMapPublishDraft() {
       release_relations: buildOverrides(draft.releaseRelations),
     }
   }
-  const invalidRelation = computed(() => relationIssue(draft, draft.releaseRelations))
-  return { draft, reset, applyInspection, missingFields, invalidRelation, setI18nValue, buildFields }
+  const invalidRelation = computed(() => relationIssue(draft, []))
+  const invalidVersionRelation = computed(() => relationIssue(emptyRelationTables(), draft.releaseRelations))
+  return { draft, reset, applyInspection, missingFields, invalidRelation, invalidVersionRelation, setI18nValue, buildFields }
 }

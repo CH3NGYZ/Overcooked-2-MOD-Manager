@@ -30,8 +30,8 @@ const ready = {
   versionCount: 1,
 }
 
-test('三步导航顺序固定：Release 信息、ZIP、地图资料', () => {
-  assert.deepEqual([...PUBLISH_STEP_ORDER], ['release', 'asset', 'metadata'])
+test('四步导航顺序固定：Release 信息、ZIP、地图资料、版本管理', () => {
+  assert.deepEqual([...PUBLISH_STEP_ORDER], ['release', 'asset', 'metadata', 'versions'])
 })
 
 test('没有 Release 时只能停在第一步', () => {
@@ -40,9 +40,11 @@ test('没有 Release 时只能停在第一步', () => {
   assert.equal(stepAvailable('metadata', false), false)
   assert.equal(stepAvailable('asset', true), true)
   assert.equal(stepAvailable('metadata', true), true)
+  assert.equal(stepAvailable('versions', false), false)
+  assert.equal(stepAvailable('versions', true), true)
 })
 
-test('输入齐全时三步各自都能保存', () => {
+test('输入齐全时四步各自都能保存', () => {
   for (const step of PUBLISH_STEP_ORDER) assert.deepEqual(stepIssues(step, ready), [])
 })
 
@@ -65,9 +67,10 @@ test('上传 ZIP 不要求地图资料齐全', () => {
   assert.deepEqual(stepIssues('asset', { ...ready, versionText: '3.4.1-fix' }), [])
 })
 
-test('地图资料要求关卡集名与至少一个版本', () => {
+test('地图资料与版本分别校验：只有版本管理要求版本表非空', () => {
   assert.deepEqual(stepIssues('metadata', { ...ready, levelSetName: '  ' }), ['levelSetName'])
-  assert.deepEqual(stepIssues('metadata', { ...ready, versionCount: 0 }), ['versionRows'])
+  assert.deepEqual(stepIssues('metadata', { ...ready, versionCount: 0 }), [])
+  assert.deepEqual(stepIssues('versions', { ...ready, versionCount: 0 }), ['versionRows'])
   // 与 ZIP 是否选好无关
   assert.deepEqual(stepIssues('metadata', { ...ready, assetName: '', versionText: '' }), [])
 })

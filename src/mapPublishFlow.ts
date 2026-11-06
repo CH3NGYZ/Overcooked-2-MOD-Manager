@@ -1,14 +1,13 @@
 /**
- * 发布页三个步骤的纯逻辑。
+ * 发布页四个步骤的纯逻辑。
  *
- * 一张地图集的三件事**各自保存、互不捆绑**：
+ * 一张地图集的发布信息、上传、地图信息与版本管理分别操作：
  *
  * 1. `release`：GitHub Release 的固定 tag 与发布说明。新地图在这里建 Release；
  *    已有地图只改这些字段，后端保留原有的 oc2-map 块。
  * 2. `asset`：上传这一版的 ZIP 附件。只写附件，不碰块。
- * 3. `metadata`：写 oc2-map 块（名称、多语言、版本表、关系表）。**只有登记进版本表
- *    的附件才对玩家可见**（消费端 `synthesize_releases` 在有表时只认表内附件），所以
- *    「上传」与「发布给玩家」被明确拆成两步，中间失败不会露出半成品。
+ * 3. `metadata`：多语言与默认关系；已有块保存时保留版本配置，新建草稿交第四步首次提交。
+ * 4. `versions`：排序与资产关系，登记版本后玩家才可见；保存不夹带地图信息草稿。
  *
  * 纯模块（不依赖 Vue / i18n / 组件）：`tests/map-publish-flow.test.mjs` 直接
  * import；页面与 composable 只负责发请求与显示。
@@ -19,14 +18,14 @@
 import type { PublishZipInspection } from './types.ts'
 import { isVersionText, levelSetSlug } from './mapPublishAsset.ts'
 
-export type PublishStepId = 'release' | 'asset' | 'metadata'
+export type PublishStepId = 'release' | 'asset' | 'metadata' | 'versions'
 
 /** 导航顺序：没有 Release 就没有地方挂附件，块也要写在已有 Release 上。 */
-export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'asset', 'metadata']
+export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'asset', 'metadata', 'versions']
 
-/** 上传完成后必须保存地图资料，不能回退去改 Release 或再次上传。 */
+/** 上传完成后可编辑地图信息与版本，完成版本登记前不能重复上传。 */
 export function stepAvailable(step: PublishStepId, releaseExists: boolean, uploadPending = false): boolean {
-  if (uploadPending) return releaseExists && step === 'metadata'
+  if (uploadPending) return releaseExists && (step === 'metadata' || step === 'versions')
   return step === 'release' || releaseExists
 }
 
@@ -50,8 +49,7 @@ export interface StepInput {
 /**
  * 每一步各自的前置条件。
  *
- * 写块要求版本表非空：块是消费端识别地图的依据，零版本的块会让一张下载不到的
- * 图出现在管理器里。
+ * 地图信息要求身份；版本管理要求非空版本表，防止空表退回扫描全部附件的旧格式。
  */
 export function stepIssues(step: PublishStepId, input: StepInput): StepIssue[] {
   const issues: StepIssue[] = []
@@ -67,6 +65,10 @@ export function stepIssues(step: PublishStepId, input: StepInput): StepIssue[] {
     case 'metadata':
       if (!input.releaseExists) issues.push('release')
       if (!input.levelSetName.trim()) issues.push('levelSetName')
+      break
+    case 'versions':
+      if (!input.releaseExists) issues.push('release')
+      if (!input.levelSetName.trim()) issues.push('levelSetName')
       if (input.versionCount === 0) issues.push('versionRows')
       break
   }
@@ -76,7 +78,7 @@ export function stepIssues(step: PublishStepId, input: StepInput): StepIssue[] {
 /**
  * 已上传但还没登记进远端版本表的版本（保持 `rows` 的顺序）。
  *
- * 这些附件在 GitHub 上已经存在，但玩家看不到；界面据此提示作者去第三步保存。
+ * 这些附件在 GitHub 上已经存在，但玩家看不到；界面据此提示作者去第四步保存。
  */
 export function unregisteredVersions(
   rows: readonly string[],

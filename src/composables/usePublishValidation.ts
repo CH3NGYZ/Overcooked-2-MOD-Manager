@@ -2,7 +2,7 @@ import { nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
 
 /** 必填反馈只管理 DOM 生命周期，不决定业务缺项。 */
 export function usePublishValidation(root: Ref<HTMLElement | null>) {
-  const metadataSection = ref<'i18n' | 'versions' | 'relations'>('i18n')
+  const metadataSection = ref<'i18n' | 'relations'>('i18n')
   let timer: ReturnType<typeof setTimeout> | undefined
   let target: HTMLElement | null = null
   let epoch = 0
@@ -16,7 +16,7 @@ export function usePublishValidation(root: Ref<HTMLElement | null>) {
     clear()
     const current = epoch
     if (field.startsWith('i18n-')) metadataSection.value = 'i18n'
-    if (field.startsWith('relation-')) metadataSection.value = 'relations'
+    if (field.startsWith('relation-default-')) metadataSection.value = 'relations'
     await nextTick()
     if (current !== epoch) return
     target = root.value?.querySelector<HTMLElement>(`[data-validation-field="${field}"]`) ?? null

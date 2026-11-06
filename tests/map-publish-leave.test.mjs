@@ -4,20 +4,22 @@ import { readFileSync } from 'node:fs'
 import { stepAvailable } from '../src/mapPublishFlow.ts'
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
-test('上传完成但未保存时，仅第三步可用；已有地图正常打开时不锁步', () => {
+test('上传完成但未登记时，只可编辑第三、四步；已有地图不锁步', () => {
   for (const exists of [false, true]) {
     assert.equal(stepAvailable('release', exists, true), false)
     assert.equal(stepAvailable('asset', exists, true), false)
     assert.equal(stepAvailable('metadata', exists, true), exists)
+    assert.equal(stepAvailable('versions', exists, true), exists)
   }
-  for (const step of ['release', 'asset', 'metadata']) assert.equal(stepAvailable(step, true, false), true)
+  for (const step of ['release', 'asset', 'metadata', 'versions']) assert.equal(stepAvailable(step, true, false), true)
 })
 
 test('本次上传按服务器 ID 和固定仓库清理，保存失败不丢清理记录', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
   assert.match(editor, /pendingUpload\.value = \{ id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name \}/)
   assert.match(editor, /if \(!await publish.deleteAsset\(uploaded.id, uploaded\)\) return false\s+pendingUpload.value = null/)
-  assert.match(editor, /if \(!saved \|\| epoch !== editorEpoch\) return false\s+pendingUpload.value = null\s+resetToList\(\)/)
+  assert.match(editor, /if \(!saved \|\| epoch !== editorEpoch\) return false\s+if \(step === 'versions'\) \{\s+pendingUpload.value = null/)
+  assert.doesNotMatch(editor.slice(editor.indexOf('async function saveDocument(')), /resetToList\(\)/)
   assert.match(editor, /if \(await leave.requestLeave\(\)\) resetToList\(\)/)
   for (const action of ['loadPendingZip', 'pickPendingZip', 'saveReleaseStep', 'uploadPending']) {
     const body = editor.slice(editor.indexOf(`async function ${action}(`))
@@ -60,6 +62,6 @@ test('地图集为带表头的表格，上传后的设置/刷新/删除不得绕
   assert.match(view, /:disabled="!authenticated \|\| busyAny \|\| awaitingMetadata"/)
   assert.match(view, /:disabled="busyAny \|\| awaitingMetadata"/)
   assert.match(view, /busy: \(\) => busyAny.value \|\| awaitingMetadata.value/)
-  assert.match(read('src/components/publish/PublishMetadataStep.vue'), /:remove-disabled="awaitingMetadata"/)
+  assert.match(read('src/components/publish/PublishVersionsStep.vue'), /:remove-disabled="awaitingMetadata"/)
   assert.doesNotMatch(view, /mapPublish.subtitle|mapPublish.flowHint/)
 })

@@ -1,5 +1,6 @@
 import type { RelationKind, ReleaseRelationOverride, RepositoryRelation } from './types.ts'
-import { formatVersionSpec, parseVersionSpec } from './versionSpec.ts'
+import { formatVersionSpec, parseVersionSpec, versionMatches } from './versionSpec.ts'
+import { pickReleaseRelations } from './modRelations.ts'
 
 export const RELATION_KINDS: readonly RelationKind[] = ['requires', 'compatible', 'conflicts']
 export interface RelationRow { guid: string; range: string; prerelease?: boolean; optional?: boolean }
@@ -32,6 +33,24 @@ export function buildOverrides(entries: readonly PublishRelationOverride[]): Rel
       prerelease: row.prerelease, optional: row.optional,
     }))),
   }))
+}
+
+/** 单资产编辑只新增/复用等值覆盖，绝不把命中的宽区间改成单版本。 */
+export function assetRelationOverride(
+  defaults: RelationTables, entries: PublishRelationOverride[], version: string,
+): number {
+  const exact = entries.findIndex(entry => {
+    const clauses = parseVersionSpec(entry.version)
+    return clauses?.length === 1 && clauses[0]?.op === '==' && versionMatches(entry.version, version)
+  })
+  // 放到最前：与宽区间下限相同时，消费端按声明顺序决定优先级。
+  const tables = exact >= 0 ? entries.splice(exact, 1)[0]! : overrideDrafts([{
+    version: `==${version}`,
+    relations: pickReleaseRelations(buildOverrides([{ version: '', ...defaults }])[0]!.relations,
+      buildOverrides(entries), version),
+  }])[0]!
+  entries.unshift(tables)
+  return 0
 }
 
 /** 返回界面字段标识；版本区间的解析复用唯一实现，不在发布页另造语法。 */

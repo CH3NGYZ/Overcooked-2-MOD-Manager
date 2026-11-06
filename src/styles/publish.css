@@ -55,7 +55,7 @@
 .map-publish .field-label { font-size: 12px; font-weight: 600; color: var(--oc2-text-2); }
 .map-publish .switch-field { flex-direction: row !important; align-items: center; gap: 18px !important; }
 .map-publish .sub-title { margin: 0 0 4px; font-size: 13.5px; font-weight: 650; }
-.map-publish .actions { display: flex; gap: 10px; margin-top: 18px; }
+.map-publish .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .map-publish .panel-head {
   display: flex;
   align-items: center;
@@ -169,7 +169,7 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-/* 资料页：三个分区一次只显示一个，表格溢出只在自身容器内横向滚动。 */
+/* 资料与版本分步编辑，表格溢出只在自身容器内横向滚动。 */
 .map-publish .metadata-tabs { margin-bottom: 14px; }
 .map-publish .section-count { margin-left: 4px; font-size: 11px; color: var(--oc2-text-3); }
 .map-publish .metadata-section { min-width: 0; }
@@ -204,7 +204,8 @@
 .map-publish .version-table thead th:nth-child(4) { width: 15%; }
 .map-publish .version-table thead th:nth-child(5) { width: 96px; }
 .map-publish .version-table thead th:nth-child(6) { width: 84px; }
-.map-publish .version-table thead th:last-child { width: 96px; }
+.map-publish .version-table thead th:last-child { width: 166px; }
+.map-publish .version-actions { display: flex; justify-content: center; gap: 8px; }
 .map-publish .version-table td:first-child,
 .map-publish .version-table td:nth-child(5),
 .map-publish .version-table td:nth-child(6),

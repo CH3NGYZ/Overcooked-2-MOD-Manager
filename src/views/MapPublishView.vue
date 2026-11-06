@@ -10,6 +10,7 @@ import PublishReleaseList from '../components/publish/PublishReleaseList.vue'
 import PublishReleaseStep from '../components/publish/PublishReleaseStep.vue'
 import PublishAssetStep from '../components/publish/PublishAssetStep.vue'
 import PublishMetadataStep from '../components/publish/PublishMetadataStep.vue'
+import PublishVersionsStep from '../components/publish/PublishVersionsStep.vue'
 import { useMapPublish } from '../composables/useMapPublish'
 import { useMapPublishEditor } from '../composables/useMapPublishEditor'
 import { useFileDrop } from '../composables/useFileDrop'
@@ -21,7 +22,7 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import type { PublishRelease } from '../types'
 import '../styles/publish.css'
 
-/** 发布信息 → 上传 ZIP → 地图资料分别保存；已有地图默认上传，新建从发布信息开始。 */
+/** 发布信息 → 上传 ZIP → 地图信息 → 版本管理；已有地图可直接进入版本管理。 */
 const message = useNotify()
 const dialog = useDialog()
 const publish = useMapPublish()
@@ -47,6 +48,8 @@ function stepTitle(step: PublishStepId): string {
       return t('mapPublish.stepAssetTitle')
     case 'metadata':
       return t('mapPublish.stepMetadataTitle')
+    case 'versions':
+      return t('mapPublish.stepVersionsTitle')
   }
 }
 
@@ -321,7 +324,8 @@ function confirmDeleteAsset(name: string) {
         <PublishReleaseStep v-if="activeStep === 'release'" :editor="editor" />
         <PublishAssetStep v-else-if="activeStep === 'asset'" :editor="editor" :drag-active="dragActive"
           :inspecting="inspecting" :upload-progress="uploadProgress" />
-        <PublishMetadataStep v-else :editor="editor" @remove="confirmDeleteAsset" />
+        <PublishMetadataStep v-else-if="activeStep === 'metadata'" :editor="editor" />
+        <PublishVersionsStep v-else :editor="editor" @remove="confirmDeleteAsset" />
       </template>
     </section>
   </PageLoading>

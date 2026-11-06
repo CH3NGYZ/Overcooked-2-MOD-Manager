@@ -126,7 +126,7 @@ function matchesVersionSpec(
  * 传空 `releaseVersion` 时只用默认值：调用方拿不到版本号时，
  * 无法判断该用哪条覆盖规则，硬套一条会比不给更糟。
  */
-function pickReleaseRelations(
+export function pickReleaseRelations(
   base: readonly RepositoryRelation[],
   overrides: readonly ReleaseRelationOverride[] | undefined,
   releaseVersion: string | null | undefined,

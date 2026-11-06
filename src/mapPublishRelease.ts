@@ -1,6 +1,6 @@
 import { composeAssetRule, compareMapVersions, latestVersionOf, renderAssetName, versionFromValidAsset } from './mapPublishAsset.ts'
 import { unregisteredVersions, type AssetVersionRow } from './mapPublishFlow.ts'
-import type { PublishRelease } from './types'
+import type { MapPublishMetadata, PublishRelease } from './types'
 
 export function displayName(release: PublishRelease): string {
   return release.metadata?.level_set_name.trim() || release.title.trim() || release.tag
@@ -60,6 +60,21 @@ export function unregisteredReleaseVersions(release: PublishRelease): string[] {
 
 export function assetNameForRow(release: PublishRelease, row: AssetVersionRow): string {
   return renderAssetName(releaseAssetRule(release), '', row.mapsetVersion)
+}
+
+/** 每一步只替换自己负责的字段；另一步未保存的草稿不能顺带发布。 */
+export function metadataForStep(
+  step: 'metadata' | 'versions', saved: MapPublishMetadata | null, draft: MapPublishMetadata,
+): MapPublishMetadata {
+  if (!saved) return draft
+  const versions = step === 'versions' ? draft : saved
+  const details = step === 'metadata' ? draft : saved
+  return { ...details, asset: saved.asset,
+    asset_versions: versions.asset_versions,
+    latest_mapset_version: versions.latest_mapset_version,
+    latest_info_version: versions.latest_info_version,
+    release_relations: versions.release_relations,
+  }
 }
 
 export function upsertPublishRelease(releases: readonly PublishRelease[], saved: PublishRelease): PublishRelease[] {

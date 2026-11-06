@@ -76,11 +76,11 @@ export const mapPublish: DomainMessages = {
     'zh-CN': '选择单个资产版本', 'zh-TW': '選擇單一資產版本', en: 'Select one asset version', ko: '첨부 버전 선택', ja: '単一のアセットバージョンを選択',
   },
   versionRelationsHint: {
-    'zh-CN': '按 mapset_version 匹配，不按 info_version。==0.9 仅限该版，>=0.9 表示区间。命中后整组替换默认的三张表；多条命中时取下限最高的一条，下限相同取先出现的一条。新增时复制默认关系。',
-    'zh-TW': '依 mapset_version 匹配，而非 info_version。==0.9 僅限該版，>=0.9 表示區間。命中後整組取代預設的三張表；多條命中時取下限最高的一條，下限相同取先出現的一條。新增時複製預設關係。',
-    en: 'Matches mapset_version, not info_version. Use ==0.9 for one version or >=0.9 for a range. A match replaces all three default tables. The highest lower bound wins; ties use the first entry. New overrides copy the defaults.',
-    ko: 'info_version이 아닌 mapset_version에 적용합니다. 단일 버전은 ==0.9, 범위는 >=0.9로 지정합니다. 일치하면 기본 표 3개를 모두 대체합니다. 하한이 가장 높은 항목이 우선하며 같으면 첫 항목을 사용합니다. 새 항목은 기본 관계를 복사합니다.',
-    ja: 'info_version ではなく mapset_version に適用します。単一版は ==0.9、範囲は >=0.9 で指定します。一致すると既定の3表をすべて置き換えます。下限が最も高い項目を優先し、同じなら先の項目を使います。追加時は既定の関係をコピーします。',
+    'zh-CN': '按 mapset_version 匹配，不按 info_version。==0.9 仅限该版，>=0.9 表示区间。命中后整组替换默认的三张表；多条命中时取下限最高的一条，下限相同取先出现的一条。手动新增复制默认关系；点资产行「关系」复制该版生效关系，不改变已有范围。',
+    'zh-TW': '依 mapset_version 匹配，而非 info_version。==0.9 僅限該版，>=0.9 表示區間。命中後整組取代預設的三張表；多條命中時取下限最高的一條，下限相同取先出現的一條。手動新增複製預設關係；點資產列「關係」複製該版生效關係，不改動既有範圍。',
+    en: 'Matches mapset_version, not info_version. Use ==0.9 for one version or >=0.9 for a range. A match replaces all three default tables. The highest lower bound wins; ties use the first entry. Manual overrides copy the defaults; an asset’s Relations action copies its effective relations without changing existing ranges.',
+    ko: 'info_version이 아닌 mapset_version에 적용합니다. 단일 버전은 ==0.9, 범위는 >=0.9로 지정합니다. 일치하면 기본 표 3개를 모두 대체합니다. 하한이 가장 높은 항목이 우선하며 같으면 첫 항목을 사용합니다. 수동 추가는 기본 관계를 복사하고, 첨부 항목의 관계 버튼은 기존 범위를 바꾸지 않고 해당 버전에 적용된 관계를 복사합니다.',
+    ja: 'info_version ではなく mapset_version に適用します。単一版は ==0.9、範囲は >=0.9 で指定します。一致すると既定の3表をすべて置き換えます。下限が最も高い項目を優先し、同じなら先の項目を使います。手動追加では既定の関係を、アセット行の「関係」ではその版の有効な関係をコピーします。既存の範囲は変更しません。',
   },
   invalidRelations: {
     'zh-CN': '请检查关系：GUID 不能为空或重复，版本范围须合法；版本覆盖必须指定范围且至少有一条关系。',
@@ -118,11 +118,11 @@ export const mapPublish: DomainMessages = {
     ja: 'サイズ',
   },
   uploadNeedsSave: {
-    'zh-CN': 'ZIP 已上传，请保存地图信息；退出将删除本次上传。',
-    'zh-TW': 'ZIP 已上傳，請儲存地圖資訊；離開將刪除本次上傳。',
-    en: 'ZIP uploaded. Save map info to finish; leaving deletes this upload.',
-    ko: 'ZIP 업로드 완료. 지도 정보를 저장하세요. 나가면 이번 업로드가 삭제됩니다.',
-    ja: 'ZIP をアップロードしました。マップ情報を保存してください。中断すると今回の ZIP を削除します。',
+    'zh-CN': 'ZIP 已上传，请在版本管理中保存完成登记；退出将删除本次上传。',
+    'zh-TW': 'ZIP 已上傳，請在版本管理中儲存完成登記；離開將刪除本次上傳。',
+    en: 'ZIP uploaded. Save in version management to register it; leaving deletes this upload.',
+    ko: 'ZIP 업로드 완료. 버전 관리에서 저장해 등록하세요. 나가면 이번 업로드가 삭제됩니다.',
+    ja: 'ZIP をアップロードしました。バージョン管理で保存して登録してください。中断すると今回の ZIP を削除します。',
   },
   discardUploadTitle: {
     'zh-CN': '放弃本次上传？',
@@ -132,11 +132,11 @@ export const mapPublish: DomainMessages = {
     ja: '今回のアップロードを破棄しますか？',
   },
   discardUploadConfirm: {
-    'zh-CN': '地图信息尚未保存。退出前将删除 GitHub 上的 {name}，不会影响已有版本和本地 ZIP。',
-    'zh-TW': '地圖資訊尚未儲存。離開前將刪除 GitHub 上的 {name}，不影響已有版本與本機 ZIP。',
-    en: 'Map info is not saved. Leaving deletes {name} from GitHub. Existing versions and your local ZIP are kept.',
-    ko: '지도 정보가 저장되지 않았습니다. 나가기 전에 GitHub의 {name}을 삭제합니다. 기존 버전과 로컬 ZIP은 유지됩니다.',
-    ja: 'マップ情報が未保存です。中断すると GitHub の {name} を削除します。既存バージョンとローカル ZIP は残ります。',
+    'zh-CN': '本次上传尚未登记。退出前将删除 GitHub 上的 {name}，不会影响已有版本和本地 ZIP。',
+    'zh-TW': '本次上傳尚未登記。離開前將刪除 GitHub 上的 {name}，不影響已有版本與本機 ZIP。',
+    en: 'This upload is not registered. Leaving deletes {name} from GitHub. Existing versions and your local ZIP are kept.',
+    ko: '이번 업로드가 등록되지 않았습니다. 나가기 전에 GitHub의 {name}을 삭제합니다. 기존 버전과 로컬 ZIP은 유지됩니다.',
+    ja: '今回の ZIP は未登録です。中断すると GitHub の {name} を削除します。既存バージョンとローカル ZIP は残ります。',
   },
   deleteAndLeave: {
     'zh-CN': '删除并退出',
@@ -1237,6 +1237,18 @@ export const mapPublish: DomainMessages = {
     en: 'Upload ZIP',
     ko: 'ZIP 업로드',
     ja: 'ZIP をアップロード',
+  },
+  stepVersionsTitle: {
+    'zh-CN': '版本管理', 'zh-TW': '版本管理', en: 'Version management', ko: '버전 관리', ja: 'バージョン管理',
+  },
+  saveVersions: {
+    'zh-CN': '保存版本信息', 'zh-TW': '儲存版本資訊', en: 'Save versions', ko: '버전 정보 저장', ja: 'バージョン情報を保存',
+  },
+  assetRelations: {
+    'zh-CN': '关系', 'zh-TW': '關係', en: 'Relations', ko: '관계', ja: '関係',
+  },
+  continueToVersions: {
+    'zh-CN': '下一步：版本管理', 'zh-TW': '下一步：版本管理', en: 'Next: version management', ko: '다음: 버전 관리', ja: '次へ：バージョン管理',
   },
   stepMetadataTitle: {
     'zh-CN': '地图信息',

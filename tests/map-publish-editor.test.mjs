@@ -42,7 +42,7 @@ test('显式附件规则优先，列表更新只替换目标 Release', () => {
   assert.deepEqual(upsertPublishRelease([other], saved), [saved, other])
 })
 
-test('View 单次会话与三步子组件保持 400 行边界', () => {
+test('View 单次会话与四步子组件保持 400 行边界', () => {
   const view = read('src/views/MapPublishView.vue')
   assert.equal((view.match(/useMapPublish\(\)/g) ?? []).length, 1)
   const files = readdirSync(new URL('../src/components/publish/', import.meta.url)).map(n => 'src/components/publish/' + n)
@@ -55,14 +55,16 @@ test('View 单次会话与三步子组件保持 400 行边界', () => {
   assert.match(view, /!canSelectStep\(step\)/)
 })
 
-test('三步保存、info 版本与前置同名附件检查不退回一键发布', () => {
+test('四步保存、info 版本与前置同名附件检查不退回一键发布', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
   assert.match(editor, /function openManagement[\s\S]*?activeStep\.value = 'asset'/)
   assert.match(editor, /function openCreate[\s\S]*?activeStep\.value = 'release'/)
   assert.match(editor, /const version = result\.info_version\.trim\(\)/)
   assert.match(editor, /asset: existingRule\.value/)
   assert.match(editor, /release\.assets\.some\(asset => asset\.name === name\)/)
-  assert.match(editor, /body: form\.body, metadata: buildMetadata\(\)/)
+  assert.match(editor, /metadata: metadataForStep\(step, release.metadata, buildMetadata\(\)\)/)
+  assert.match(editor, /body: release.body/)
+  assert.match(editor, /step === 'versions'[\s\S]*pendingUpload.value = null/)
   assert.doesNotMatch(editor, /publishVersion|missingPublishInputs|versionFromFileName|resetPublishSteps/)
   const session = read('src/composables/useMapPublish.ts')
   assert.doesNotMatch(session.slice(session.indexOf('async function saveRelease('), session.indexOf('async function deleteRelease(')), /loadReleases\(/)
@@ -70,7 +72,7 @@ test('三步保存、info 版本与前置同名附件检查不退回一键发布
 })
 
 test('必填按钮可点、缺项脉冲可重播并清理，动画只改边框', () => {
-  for (const step of ['Release', 'Asset', 'Metadata']) {
+  for (const step of ['Release', 'Asset', 'Metadata', 'Versions']) {
     const text = read(`src/components/publish/Publish${step}Step.vue`)
     assert.match(text, /:disabled="busyAny"/)
     assert.doesNotMatch(text, /canPublish|missingInputs|sequenceNeed|bodyHint/)
@@ -87,25 +89,30 @@ test('必填按钮可点、缺项脉冲可重播并清理，动画只改边框',
   assert.match(css, /prefers-reduced-motion: reduce/)
 })
 
-test('资料页三个分区一次只显示一个，内容都是真表格', () => {
+test('资料只保留多语言和默认关系，独立第四步负责版本表和资产覆盖', () => {
   const step = read('src/components/publish/PublishMetadataStep.vue')
   assert.match(step, /<n-tabs v-model:value="metadataSection"[^>]*type="segment"/)
-  for (const name of ['i18n', 'versions', 'relations']) assert.match(step, new RegExp(`<n-tab-pane name="${name}"[^>]*><template #tab>`))
+  for (const name of ['i18n', 'relations']) assert.match(step, new RegExp(`<n-tab-pane name="${name}"[^>]*><template #tab>`))
   // 空面板只当分段按钮，表格在外层 v-if 里渲染，草稿更新不经过组件库缓存的插槽。
   assert.doesNotMatch(step, /<n-tab-pane[^>]*>(?!<template #tab>)/)
   assert.match(step, /<section v-if="metadataSection === 'i18n'"/)
-  assert.match(step, /<section v-else-if="metadataSection === 'versions'"/)
+  assert.doesNotMatch(step, /name="versions"|VersionOrderTable|draft.releaseRelations/)
   assert.match(step, /<n-table class="metadata-table i18n-table"/)
   assert.match(step, /v-for="language in MAP_I18N_LANGUAGES"/)
   assert.match(step, /v-for="field in I18N_FIELD_ORDER"/)
   assert.match(step, /:data-validation-field="`i18n-\$\{field\.id\}-\$\{language\}`"/)
-  assert.equal((step.match(/<PublishRelationTables /g) ?? []).length, 2)
+  assert.equal((step.match(/<PublishRelationTables /g) ?? []).length, 1)
+  const versions = read('src/components/publish/PublishVersionsStep.vue')
+  assert.match(versions, /<VersionOrderTable/)
+  assert.match(versions, /@relations="editRelations"/)
+  assert.match(versions, /<PublishRelationTables/)
+  assert.match(versions, /saveDocument\('versions'\)/)
   const relations = read('src/components/publish/PublishRelationTables.vue')
   assert.match(relations, /<section v-for="kind in kinds"/)
   assert.match(relations, /<n-table class="metadata-table relations-table"/)
   assert.match(relations, /mapPublish.relationAddRow/)
-  assert.match(step, /draft.releaseRelations/)
-  assert.match(step, /value: `==\$\{row.mapsetVersion\}`/)
+  assert.match(versions, /draft.releaseRelations/)
+  assert.match(versions, /assetRelationOverride\(draft, draft.releaseRelations, row.mapsetVersion\)/)
   assert.doesNotMatch(relations, /rowgroup|rowspan/)
   assert.doesNotMatch(step, /n-collapse|relation-row|i18n-rows/)
   const table = read('src/components/publish/VersionOrderTable.vue')
@@ -155,7 +162,7 @@ test('识别表先挂载再校验，不符保留表格且不得污染草稿或�
 })
 
 test('发布新增文案五语全部登记', () => {
-  for (const key of ['createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'relationsOptional', 'defaultRelations', 'versionRelations', 'addVersionRelations', 'removeVersionRelations', 'assetVersionRange', 'selectAssetVersion', 'versionRelationsHint', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
+  for (const key of ['stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'relationsOptional', 'defaultRelations', 'versionRelations', 'addVersionRelations', 'removeVersionRelations', 'assetVersionRange', 'selectAssetVersion', 'versionRelationsHint', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
     for (const language of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(mapPublish[key][language]?.trim(), `${key}/${language}`)
   }
 })

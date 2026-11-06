@@ -5,14 +5,14 @@ import { useNotify } from '../useNotify'
 import { backendMessageOf } from '../locale/backend'
 import { renderAssetName } from '../mapPublishAsset'
 import { stepAvailable, stepIssues, publishZipIssue, type PublishZipIssue, type PublishStepId, type AssetVersionRow } from '../mapPublishFlow'
-import { assetNameForRow, reconcileVersionRows, releaseAssetRule, unregisteredReleaseVersions, versionRowsOf } from '../mapPublishRelease'
+import { assetNameForRow, metadataForStep, reconcileVersionRows, releaseAssetRule, unregisteredReleaseVersions, versionRowsOf } from '../mapPublishRelease'
 import { useMapPublishDraft } from './useMapPublishDraft'
 import { usePublishValidation } from './usePublishValidation'
 import { usePublishLeaveGuard } from './usePublishLeaveGuard'
 import type { useMapPublish } from './useMapPublish'
 import type { MapPublishMetadata, PublishRelease, PublishZipInspection } from '../types'
 
-/** 三步分别写入：Release → ZIP → 地图资料。会话由 View 创建并传入，不能再建一份。 */
+/** 四步共享同一会话；资料与版本分别保存，不夹带另一页签的未保存草稿。 */
 export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, root: Ref<HTMLElement | null>) {
   const message = useNotify()
   const document = useMapPublishDraft()
@@ -23,7 +23,8 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   const stepBusy = ref<PublishStepId | null>(null)
   const form = reactive({ tag: '', body: '' })
   const assetRows = ref<AssetVersionRow[]>([])
-  const dirty = ref(false)
+  const metadataDirty = ref(false)
+  const versionsDirty = ref(false)
   const pendingUpload = ref<{ id: number; name: string; owner: string; repository: string } | null>(null)
   const awaitingMetadata = computed(() => pendingUpload.value !== null)
   const pendingIdentity = ref<PublishZipInspection | MapPublishMetadata | null>(null)
@@ -58,11 +59,19 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   })
   const busyAny = computed(() => operationBusy.value || leave.confirming.value)
   const canSelectStep = (step: PublishStepId) => stepAvailable(step, Boolean(workingRelease.value), awaitingMetadata.value)
-  watch(() => [form, document.draft, assetRows.value], () => {
-    if (!applying) dirty.value = true
+  watch(() => [document.draft.levelSetName, document.draft.levelSetNameZh, document.draft.author,
+    document.draft.nameI18n, document.draft.groupI18n, document.draft.noteI18n,
+    document.draft.requires, document.draft.compatible, document.draft.conflicts], () => {
+    if (!applying) metadataDirty.value = true
+  }, { deep: true, flush: 'sync' })
+  watch(() => [assetRows.value, document.draft.releaseRelations], () => {
+    if (!applying) versionsDirty.value = true
   }, { deep: true, flush: 'sync' })
   watch(workingRelease, (release, before) => {
-    if (release && before?.id === release.id) assetRows.value = reconcileVersionRows(assetRows.value, release)
+    if (release && before?.id === release.id) {
+      const rows = reconcileVersionRows(assetRows.value, release)
+      if (JSON.stringify(rows) !== JSON.stringify(assetRows.value)) assetRows.value = rows
+    }
   }, { flush: 'sync' })
 
   function rejectPending() {
@@ -80,7 +89,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
       assetRows.value = versionRowsOf(release)
       pendingIdentity.value = release?.metadata ?? null
       rejectPending()
-      dirty.value = false
+      metadataDirty.value = versionsDirty.value = false
     } finally { applying = false }
   }
   function openManagement(release: PublishRelease) {
@@ -151,6 +160,11 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
     if (step === 'metadata' && document.invalidRelation.value) {
       message.warning(t('mapPublish.invalidRelations'))
       await validation.pulse(document.invalidRelation.value)
+      return false
+    }
+    if (step === 'versions' && document.invalidVersionRelation.value) {
+      message.warning(t('mapPublish.invalidRelations'))
+      await validation.pulse(document.invalidVersionRelation.value)
       return false
     }
     return true
@@ -248,23 +262,38 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
       })),
     }
   }
-  async function saveDocument(): Promise<boolean> {
-    if (busyAny.value || !await validate('metadata') || busyAny.value) return false
+  async function saveDocument(step: 'metadata' | 'versions' = 'metadata'): Promise<boolean> {
+    if (busyAny.value || !await validate(step) || busyAny.value) return false
     const release = workingRelease.value
     if (!release) return false
+    // 首次提交必须带完整版本表；空表在旧格式消费端代表扫描全部附件。
+    if (!release.metadata) {
+      if (step === 'metadata') { activeStep.value = 'versions'; return true }
+      if (document.missingFields.value.length || document.invalidRelation.value) {
+        activeStep.value = 'metadata'
+        await nextTick()
+        await validate('metadata')
+        return false
+      }
+    }
     const epoch = editorEpoch
-    stepBusy.value = 'metadata'
+    stepBusy.value = step
     try {
-      const saved = await publish.saveRelease({ releaseId: release.id, tag: release.tag, body: form.body, metadata: buildMetadata() })
+      const saved = await publish.saveRelease({ releaseId: release.id, tag: release.tag, body: release.body,
+        metadata: metadataForStep(step, release.metadata, buildMetadata()) })
       if (!saved || epoch !== editorEpoch) return false
-      pendingUpload.value = null
-      resetToList()
+      if (step === 'versions') {
+        pendingUpload.value = null
+        versionsDirty.value = false
+        if (!release.metadata) metadataDirty.value = false
+      } else metadataDirty.value = false
+      activeStep.value = 'versions'
       return true
     } finally { stepBusy.value = null }
   }
   const assetNameOf = (row: AssetVersionRow) => workingRelease.value ? assetNameForRow(workingRelease.value, row) : ''
   return {
-    mode, activeTag, activeStep, stepBusy, form, document, assetRows, dirty, awaitingMetadata, pending,
+    mode, activeTag, activeStep, stepBusy, form, document, assetRows, metadataDirty, versionsDirty, awaitingMetadata, pending,
     workingRelease, canonicalName, inspectionError, latestRow, unregistered, busyAny, validation, canSelectStep,
     openManagement, openCreate, backToList, selectStep, loadPendingZip, pickPendingZip,
     saveReleaseStep, uploadPending, saveDocument, assetNameOf,

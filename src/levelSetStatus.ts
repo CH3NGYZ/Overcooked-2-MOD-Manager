@@ -171,7 +171,12 @@ export function mapUpdateState(
   const assetVersion = localAssetVersion?.trim()
   const latestAsset = remote.latestMapsetVersion?.trim()
   if (assetVersion && latestAsset) {
-    return assetVersion.toLowerCase() === latestAsset.toLowerCase() ? 'latest' : 'update_available'
+    // 资产版本与 info 版本使用同一套宽松版本语义：`v1.5.1`、`1.5.1.0`
+    // 和 `1.5.1` 是同一版。这里不能直接字符串比较，否则已安装的同一资产
+    // 也会被误报为可更新，并且会跳过后面的 info 版本判定。
+    const assetOrder = compareVersions(assetVersion.toLowerCase(), latestAsset.toLowerCase())
+    if (assetOrder === null) return 'unknown'
+    return assetOrder === 0 ? 'latest' : 'update_available'
   }
   const infoVersion = remote.latestInfoVersion?.trim()
   const local = localVersion?.trim()

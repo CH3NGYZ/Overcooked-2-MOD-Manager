@@ -2878,6 +2878,7 @@ files = ["BepInEx/plugins/a.dll"]
             crate::models::MapRelationSnapshot {
                 repository_id: "map".into(),
                 level_set_name: "Set".into(),
+                level_set_name_zh: String::new(),
                 author: "Author".into(),
                 group_i18n: BTreeMap::new(),
                 group: String::new(),
@@ -2901,6 +2902,7 @@ files = ["BepInEx/plugins/a.dll"]
             crate::models::MapRelationSnapshot {
                 repository_id: "map".into(),
                 level_set_name: "Set".into(),
+                level_set_name_zh: String::new(),
                 author: "Author".into(),
                 group_i18n: BTreeMap::new(),
                 group: String::new(),

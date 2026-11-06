@@ -343,11 +343,19 @@ export interface InstallConflict {
   same_version: boolean
 }
 
+/** 在线暂存实际选中的资产版本，只属于声明的主地图。 */
+export interface MapInstallOrigin {
+  level_set_name: string
+  level_set_name_zh: string
+  author: string
+  mapset_version: string
+}
+
 /**
- * 后端暂存好的一份地图来源（`stage_map_source` 的返回）。
+ * 后端暂存好的一份地图来源（`stage_map_source` / `stage_map_release` 的返回）。
  *
- * 本地文件与在线直链走同一条「先暂存、再确认导入」的路：`path` 是后端能读到的
- * ZIP 绝对路径，`sets` 是里面识别出的关卡集（`inspect_zip_with_progress` 的产物）。
+ * `path` 是后端能读到的 ZIP 绝对路径，`sets` 是里面识别出的关卡集。
+ * 在线来源的 `origin` 由后端确定，确认导入时原样回传。
  */
 export interface StagedMapSource {
   /** ZIP 绝对路径（`staged` 为真时位于后端 cache 目录）。 */
@@ -359,6 +367,7 @@ export interface StagedMapSource {
   staged: boolean
   /** ZIP 里识别出的关卡集（空数组 = 不是有效关卡集包）。 */
   sets: ZipLevelSet[]
+  origin?: MapInstallOrigin | null
 }
 
 /**
@@ -815,6 +824,24 @@ export interface PublishAuthorization {
  * `pending` 只表示回调还没到；`failed` 的 reason 是后端完整 tag（含查询串），
  * 前端必须走 `translateBackendMessage` 翻译，不能直接显示。
  */
+/**
+ * 进入发布页时会话检查的结论（后端 `PublishSessionOutcome`）。
+ *
+ * `reauthorize`：令牌失效且刷新不了，本地令牌已清除；`unavailable`：网络或
+ * GitHub 暂时不可用，本地令牌保留。两者的 `reason` 都是语言表 tag。
+ */
+export type PublishSessionOutcome =
+  | { status: 'signed_out' }
+  | { status: 'valid' }
+  | { status: 'refreshed' }
+  | { status: 'reauthorize'; reason: string }
+  | { status: 'unavailable'; reason: string }
+
+export interface PublishSessionCheck {
+  outcome: PublishSessionOutcome
+  auth: PublishAuthState
+}
+
 export type PublishAuthPoll =
   | { status: 'pending' }
   | { status: 'authorized'; login: string }
@@ -907,6 +934,7 @@ export interface MapPublishMetadata {
   latest_mapset_version: string
   latest_info_version: string
   asset_versions: AssetVersionEntry[]
+  release_relations?: ReleaseRelationOverride[]
   requires: Record<string, string>
   compatible: Record<string, string>
   conflicts: Record<string, string>
@@ -932,25 +960,23 @@ export interface PublishSaveRequest {
   /** null = 新建（GitHub 按 tag 自动建），有值 = 修改这一版。 */
   release_id: number | null
   tag: string
-  title: string
   body: string
-  draft: boolean
-  prerelease: boolean
-  /**
-   * 省略 = 只改 Release 的标题 / 正文 / 草稿状态，不碰 note 里的 `oc2-map`
-   * 块；发布页三步式里只有第三步（写回地图信息）会带它。
-   */
+  /** 发布页三步式里只有第三步（写回地图信息）会带它。 */
   metadata?: MapPublishMetadata
+}
+
+export interface PublishUploadProgress {
+  sent: number
+  total: number
+  phase: 'uploading' | 'confirming' | 'done'
 }
 
 export interface PublishUploadRequest {
   owner: string
   repository: string
   release_id: number
-  /** 本地 ZIP 的绝对路径。 */
+  /** 本地 ZIP 的绝对路径；附件名由后端从 ZIP 版本和 Release 规则生成。 */
   path: string
-  /** 只允许 `A-Z a-z 0-9 . _ -`，上限 256 MiB。 */
-  name: string
 }
 
 export interface PublishDeleteReleaseRequest {

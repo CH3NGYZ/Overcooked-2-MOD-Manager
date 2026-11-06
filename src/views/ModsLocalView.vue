@@ -333,9 +333,24 @@ function searchExtra(mod: InstalledMod) {
 /** 列表固定按标题排序（排序切换入口已移除，见上方说明）。 */
 const sortedMods = computed(() =>
   [...effectiveMods.value]
-    .filter((mod) => matchesLocalSearch(query.value, modSearchText(mod), ...searchExtra(mod)))
     .sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
+
+/** 搜索命中任一成员时，整个 MOD 包都保留，避免展开后包内卡片消失。 */
+function packageKeyOf(mod: InstalledMod) {
+  return mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
+}
+
+const searchMatchedPackageKeys = computed(() => {
+  if (!query.value) return null
+  const keys = new Set<string>()
+  for (const mod of effectiveMods.value) {
+    if (matchesLocalSearch(query.value, modSearchText(mod), ...searchExtra(mod))) {
+      keys.add(packageKeyOf(mod))
+    }
+  }
+  return keys
+})
 
 /** 三种空态的判定在共享的可见性规则里。 */
 const emptyDescription = computed(() =>
@@ -543,7 +558,7 @@ const groups = computed<ModGroupNode[]>(() => {
    */
   const packagesByKey = new Map<string, InstalledMod[]>()
   for (const mod of sortedMods.value) {
-    const packageKey = mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
+    const packageKey = packageKeyOf(mod)
     const list = packagesByKey.get(packageKey)
     if (list) list.push(mod)
     else packagesByKey.set(packageKey, [mod])
@@ -621,8 +636,11 @@ const groups = computed<ModGroupNode[]>(() => {
     .map(([key, { label, packages }]) => ({
       key,
       label,
-      packages: [...packages.entries()].map(([pkgKey, list]) => toPackage(pkgKey, list)),
+      packages: [...packages.entries()]
+        .filter(([pkgKey]) => searchMatchedPackageKeys.value === null || searchMatchedPackageKeys.value.has(pkgKey))
+        .map(([pkgKey, list]) => toPackage(pkgKey, list)),
     }))
+    .filter((group) => group.packages.length > 0)
 })
 
 const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))

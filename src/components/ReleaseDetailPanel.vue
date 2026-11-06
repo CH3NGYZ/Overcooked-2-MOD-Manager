@@ -64,21 +64,19 @@ export interface ReleaseDetailVersion {
  *
  * 任何可选数据缺失都只是「那块不渲染」，不会有空白占位或塌版。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
-import { formatFileSize } from '../repositoryAssets'
+import { formatFileSize, formatLocalDateTime } from '../repositoryAssets'
 import DependencyTable, { type DependencyRow } from './DependencyTable.vue'
 import ProviderIcon from './ProviderIcon.vue'
 import {
   fitsMinLogHeight,
   releasePanelHeight,
   RELEASE_LOG_MIN_HEIGHT,
-  wheelNeedsHandoff,
-  type ScrollBoxMetrics,
 } from '../releasePanelFit'
 
 const props = withDefaults(
@@ -232,7 +230,8 @@ const emptyNoteText = computed(() => props.noteEmptyText || t('tools.thisReposit
 /* ===== 下载安装 tab ===== */
 const versionText = computed(() => props.versionFallback || props.version || '—')
 const bindingText = computed(() => props.bindingLabel || t('tools.versionBinding'))
-const publishedDay = computed(() => (props.publishedAt ? props.publishedAt.slice(0, 10) : ''))
+/** 资产区用本地时间的时分秒；UTC 的 `published_at` 直接截日期会跨时区错位。 */
+const publishedDateTime = computed(() => formatLocalDateTime(props.publishedAt))
 const logHtml = computed(() => renderReadme(props.releaseNotes.trim()))
 const hasLog = computed(() => !!props.releaseNotes.trim())
 const emptyLogText = computed(() => props.logEmptyText || t('modsLocal.thisReleaseHasNoNotes'))
@@ -244,6 +243,58 @@ const versionOptions = computed<SelectOption[]>(() =>
 const assetOptions = computed<SelectOption[]>(() =>
   props.assets.map((asset) => ({ label: asset.name, value: asset.name })),
 )
+
+/**
+ * 资产选项：文件名在左，发布时间 / 大小 / 下载次数在右。
+ *
+ * 这些信息原本是下拉外的一排标签，会挤占安装行宽度；收进选项后，收起状态
+ * 只显示文件名（见下面 `.asset-option-meta` 的隐藏规则），展开时才带附属
+ * 信息。菜单会 teleport 到 body，scoped 样式够不到，所以布局用内联样式。
+ */
+function renderAssetLabel(option: SelectOption) {
+  const asset = props.assets.find((item) => item.name === option.value)
+  if (!asset) return String(option.label ?? '')
+  const meta = [
+    h(DownloadOutline, { width: 12, height: 12 }),
+    h('span', String(asset.download_count ?? 0)),
+    h('span', { style: { opacity: '.55' } }, '·'),
+    h('span', formatFileSize(asset.size)),
+  ]
+  if (publishedDateTime.value) {
+    meta.push(h('span', { style: { opacity: '.55' } }, '·'))
+    meta.push(h('span', publishedDateTime.value))
+  }
+  return h(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '16px',
+        width: '100%',
+      },
+    },
+    [
+      h('span', { class: 'mono', style: { fontSize: '12px' } }, asset.name),
+      h(
+        'span',
+        {
+          class: 'asset-option-meta',
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            fontSize: '11px',
+            color: 'var(--oc2-text-3)',
+            whiteSpace: 'nowrap',
+          },
+        },
+        meta,
+      ),
+    ],
+  )
+}
 
 /** 当前选中的资产（下拉模式）：找不到就回落到第一个。 */
 const selectedAsset = computed<ReleaseDetailAsset | null>(
@@ -317,18 +368,9 @@ const logBoxStyle = computed(() =>
 
 let fitObserver: ResizeObserver | null = null
 let fitFrame = 0
-let scrollViewport: HTMLElement | null = null
 let fitting = false
 let fitPending = false
 
-function scrollBoxMetrics(element: HTMLElement | null): ScrollBoxMetrics | null {
-  if (!element) return null
-  return {
-    scrollTop: element.scrollTop,
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }
-}
 
 /*
  * 把面板锁成抽屉可视高度，剩下的空间交给面板内部的 flex 链分给日志框。
@@ -342,20 +384,63 @@ function scrollBoxMetrics(element: HTMLElement | null): ScrollBoxMetrics | null 
  */
 async function fitInstallPanel() {
   const panel = panelElement.value
-  if (activeTab.value !== 'install' || !panel) {
+  if (!panel) {
     fittedPanelHeight.value = null
     return
   }
+  /*
+   * 说明页不重算：`.n-scrollbar-container` 的 clientHeight 在内容不足时会
+   * 缩到内容高度（实测 391），拿它量出来的面板高度只有 359 —— 从安装页切
+   * 过来就会「坍缩」。这里保留安装页量出的锁定高度，说明页在锁定高度内滚动。
+   */
+  if (activeTab.value !== 'install') return
   const viewport = panel.closest('.n-scrollbar-container') as HTMLElement | null
   const wrapper = panel.parentElement
+  const drawer = panel.closest('.n-drawer') as HTMLElement | null
   if (!viewport || !wrapper) return
   fitting = true
   const wrapperStyle = getComputedStyle(wrapper)
   const inset = parseFloat(wrapperStyle.paddingTop) + parseFloat(wrapperStyle.paddingBottom)
-  fittedPanelHeight.value = releasePanelHeight(viewport.clientHeight - inset)
+  /*
+   * 用抽屉的**固定高度**算可用空间，而不是 `.n-scrollbar-container` 的
+   * clientHeight：后者在内容不足时会缩到内容高度（实测 391），面板被锁得
+   * 过矮，日志框的 min-height 溢出后就会盖住安装行。
+   */
+  const drawerRect = drawer?.getBoundingClientRect()
+  const panelRect = panel.getBoundingClientRect()
+  const available = drawerRect
+    ? drawerRect.height - (panelRect.top - drawerRect.top) - parseFloat(wrapperStyle.paddingBottom)
+    : viewport.clientHeight - inset
+  fittedPanelHeight.value = releasePanelHeight(available)
   await nextTick()
-  const logBox = logBoxElement.value
-  if (logBox && !fitsMinLogHeight(logBox.offsetHeight)) fittedPanelHeight.value = null
+  /*
+   * 只有安装页有日志框可量；说明页保留锁定高度，切 tab 时面板不会突然坍缩。
+   *
+   * 日志框连最低高度都放不下、或者被 min-height 撑出面板底边时，回退成
+   * 「不锁高度」：面板按内容长高，安装行落在日志框下方、由抽屉 body 滚动，
+   * 而不是日志框溢出后盖在安装行上。
+   */
+  if (activeTab.value === 'install') {
+    const logBox = logBoxElement.value
+    const installRow = panel.querySelector<HTMLElement>('.install-row')
+    if (logBox) {
+      // 等一帧再量：高度写回 DOM 后布局才稳定，立刻量会读到切换前的中间态
+      await new Promise(requestAnimationFrame)
+      const logRect = logBox.getBoundingClientRect()
+      const panelRect = panel.getBoundingClientRect()
+      const installRect = installRow?.getBoundingClientRect()
+      /*
+       * 放不下就回退成「不锁高度」：日志框被 min-height 撑出面板、或者已经
+       * 压到安装行头上时，硬锁只会让安装行被盖住；不锁则面板按内容长高，
+       * 安装行正常落在日志框下方，由抽屉 body 滚动。
+       */
+      if (!fitsMinLogHeight(logBox.offsetHeight)
+        || logRect.bottom > panelRect.bottom + 0.5
+        || (installRect !== undefined && logRect.bottom > installRect.top + 0.5)) {
+        fittedPanelHeight.value = null
+      }
+    }
+  }
   fitting = false
   if (fitPending) {
     fitPending = false
@@ -377,39 +462,11 @@ function scheduleFitInstallPanel() {
   })
 }
 
-/*
- * 滚到边界后把滚轮交给抽屉背后的页面。
- *
- * 抽屉被 Teleport 到 `body`，背后的 `.page-scroll` 不是它的滚动祖先，浏览器
- * 自己的滚动链走不到那里：日志与抽屉都滚到头以后继续滚滚轮，页面应当接着滚。
- */
-function onPanelWheel(event: WheelEvent) {
-  const viewport = scrollViewport
-  if (!viewport || event.ctrlKey) return
-  const page = document.querySelector('.page-scroll .n-scrollbar-container') as HTMLElement | null
-  const pageMetrics = scrollBoxMetrics(page)
-  const outerMetrics = scrollBoxMetrics(viewport)
-  if (!page || !pageMetrics || !outerMetrics) return
-  const logBox = logBoxElement.value
-  const target = event.target
-  const insideLog = logBox !== null && target instanceof Node && logBox.contains(target)
-  const handoff = wheelNeedsHandoff({
-    deltaY: event.deltaY,
-    inner: insideLog ? scrollBoxMetrics(logBox) : null,
-    outer: outerMetrics,
-    page: pageMetrics,
-  })
-  if (!handoff) return
-  page.scrollTop += event.deltaY
-  event.preventDefault()
-}
 
 onMounted(() => {
   const panel = panelElement.value
   const viewport = panel?.closest('.n-scrollbar-container') as HTMLElement | null
   if (!panel || !viewport) return
-  scrollViewport = viewport
-  viewport.addEventListener('wheel', onPanelWheel, { passive: false })
   /*
    * 只观察不会因我们的高度改动而变形的节点：抽屉容器（窗口缩放）与几条固定行
    * （宽度变化会让它们换行变高）。观察面板自己会和「写回高度」互相触发。
@@ -426,8 +483,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   fitObserver?.disconnect()
   fitObserver = null
-  scrollViewport?.removeEventListener('wheel', onPanelWheel)
-  scrollViewport = null
   if (fitFrame) cancelAnimationFrame(fitFrame)
   fitFrame = 0
 })
@@ -449,7 +504,7 @@ watch(
 
 <template>
   <div ref="panelElement" class="detail" data-tutorial="detail-panel"
-    :class="{ 'detail--fill': activeTab === 'install' }"
+    :class="{ 'detail--fill': fittedPanelHeight !== null }"
     :style="panelStyle">
     <header class="detail-head">
       <div class="head-main">
@@ -492,8 +547,13 @@ watch(
     </header>
 
     <!-- 分段切换：说明（依赖表 / 备注 / README）/ 下载安装（版本 / 日志 / 资产 / 安装） -->
-    <n-tabs v-model:value="activeTab" type="segment" animated class="detail-tabs">
-      <n-tab-pane name="info" :tab="t('tools.details')">
+    <!--
+      不用 `animated`：它会给 pane 内容做高度收缩/展开动画，切到说明页时
+      日志框高度从最大化被压到 0，看起来就是「突然坍缩」。面板高度已经由
+      `fitInstallPanel` 锁定，这里只需要新内容淡入。
+    -->
+    <n-tabs v-model:value="activeTab" type="segment" class="detail-tabs">
+      <n-tab-pane name="info" class="info-pane" :tab="t('tools.details')">
         <!--
           依赖表固定在备注**上方**并用分割线隔开：先回答「装上要什么」，
           再讲「这是什么」。依赖为空时整块（含分割线）不渲染。
@@ -556,14 +616,6 @@ watch(
             挤到折叠线以下、由抽屉滚动。
           -->
           <div class="release-log">
-            <div class="log-head">
-              <span class="muted">{{ t('modsLocal.releaseNotes') }}</span>
-              <!-- 优先显示 Release tag（原始写法），name 为空时也用它 -->
-              <b class="mono">{{ releaseTag || '—' }}</b>
-              <span v-if="publishedDay" class="muted">{{ publishedDay }}</span>
-              <!-- 预发布：元数据标记 或 版本号带 - 后缀 -->
-              <n-tag v-if="prerelease" size="tiny" type="warning" :bordered="false">{{ t('modsOnline.preRelease') }}</n-tag>
-            </div>
             <div v-if="hasLog" ref="logBoxElement" class="log-box markdown-body" :style="logBoxStyle"
               v-html="logHtml"></div>
             <div v-else ref="logBoxElement" class="log-box log-empty muted" :style="logBoxStyle">
@@ -578,26 +630,14 @@ watch(
               :value="selectedAsset?.name ?? null"
               :options="assetOptions"
               :placeholder="t('tools.selectFile')"
+              :render-label="renderAssetLabel"
+              :menu-props="{ style: { minWidth: '440px' } }"
               @update:value="(value: string) => emit('update:asset', value)" />
             <span v-else-if="fileLabel" class="asset-select-file mono">{{ fileLabel }}</span>
             <span v-else class="asset-select-file muted">{{ emptyAssetText }}</span>
 
-            <!-- 中右：大小与下载次数 -->
-            <div class="asset-stats">
-              <template v-if="fileLabel">
-                <span class="muted">{{ fileHintText }}</span>
-              </template>
-              <template v-else-if="selectedAsset">
-                <span class="stat-item">
-                  <span class="muted">{{ t('tools.size') }}</span>
-                  <b>{{ formatFileSize(selectedAsset.size) }}</b>
-                </span>
-                <span class="stat-item">
-                  <span class="muted">{{ t('dialogs.downloads') }}</span>
-                  <b>{{ (selectedAsset.download_count ?? 0).toLocaleString() }}</b>
-                </span>
-              </template>
-            </div>
+            <!-- 资产模式的附属信息已收进下拉选项；仓库文件模式仍需要一句说明 -->
+            <span v-if="fileLabel" class="muted file-hint">{{ fileHintText }}</span>
 
             <!-- 最右：安装 / 刷新 -->
             <n-button type="primary" :loading="actionLoading" :disabled="actionDisabled" @click="runPrimaryAction">
@@ -683,6 +723,18 @@ watch(
   min-height: 0;
 }
 .detail--fill .detail-tabs :deep(.install-pane) { flex: 1 1 auto; min-height: 0; }
+/* 切换 tab 时新 pane 淡入，避免硬切；高度由面板锁定，不参与动画 */
+.detail-tabs :deep(.n-tab-pane) { animation: detail-pane-in .16s ease; }
+@keyframes detail-pane-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* 说明页同样占满锁定高度：内容长了在页内滚，切 tab 时面板高度不变 */
+.detail--fill .detail-tabs :deep(.info-pane) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 .detail--fill .summary { flex: 1 1 auto; min-height: 0; }
 .detail--fill .release-log { flex: 1 1 auto; min-height: 0; }
 /* 固定行不参与伸缩：只有日志框吸收剩余高度 */
@@ -787,8 +839,13 @@ watch(
  * 内容比可用高度高时**在框内滚动**，按钮因此不会被顶出视口。
  * `overflow-y: auto` 是常态（长日志内滚）；横向留在框内，长代码行不把抽屉撑出
  * 横向滚动条。
- * `overscroll-behavior: auto`（不是 `contain`）：日志滚到两端后滚轮要能继续交给
- * 抽屉 body，再由抽屉的 wheel 监听接力给背后的页面（`wheelNeedsHandoff`）。
+ *
+ * `overscroll-behavior: auto`（**不能是 contain**）：日志内容不足、或滚到两端时，
+ * 滚轮必须继续交给父级 —— 抽屉自己的 `.n-scrollbar-container` 才是「整个右侧
+ * 卡片」真正能滚的那一层。之前写 contain 把链条掐死在日志框里，滚轮落在日志框
+ * 上时整个面板一动不动；只要日志框放手，原生滚动链就会把这次滚轮交给抽屉，
+ * 而抽屉那层在 global.css 里是 contain，滚到底也不会外溢到背后的地图列表。
+ *
  * 为什么不用 `position: sticky` 钉底部：n-tabs 的 pane 容器带 `overflow: hidden`，
  * sticky 会以它为滚动容器，抽屉 body 滚动时不会生效。
  */
@@ -801,7 +858,6 @@ watch(
   line-height: 1.65;
   overflow-x: auto;
   overflow-y: auto;
-  /* 滚到日志两端后把滚轮交给抽屉 body（`contain` 会把这条链掐断） */
   overscroll-behavior: auto;
 }
 .log-box.log-empty {
@@ -872,46 +928,40 @@ watch(
   display: flex;
   align-items: center;
   gap: 12px;
+  /* 一行放到底：资产占满剩余宽度，安装按钮固定在最右 */
+  flex-wrap: nowrap;
   padding-top: 8px;
   border-top: 1px solid var(--oc2-row-line);
 }
 .asset-select {
-  /* 下拉吸收多余水平空间，统计项保持紧凑贴靠安装按钮 */
-  flex: 1 1 240px;
-  min-width: 140px;
-  max-width: 420px;
+  /* 下拉吸收所有剩余空间，不再设上限 */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
 }
 .asset-select-file {
-  flex: 1 1 240px;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 420px;
+  max-width: none;
   font-size: 12px;
   color: var(--oc2-text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.asset-stats {
-  /* 统计项自然宽度，整体靠右紧贴安装按钮；多余空隙落在下拉与统计之间 */
-  flex: 0 0 auto;
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  font-size: 12px;
-}
-.stat-item {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
+/* 安装按钮不参与收缩，永远贴最右 */
+.install-row :deep(.n-button) { flex: 0 0 auto; }
+/* 仓库文件模式的说明文字：空间不足时省略，不挤压文件名与按钮 */
+.file-hint {
+  flex: 0 1 auto;
   min-width: 0;
-}
-.stat-item b {
-  color: var(--oc2-text-1);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 收起状态只显示文件名：附属信息留在展开的选项里 */
+.asset-select :deep(.n-base-selection-label .asset-option-meta) { display: none; }
 /* 分隔线由 Naive 的 n-divider 负责，这里只收紧它的上下间距 */
 .detail-tabs :deep(.n-divider) { margin: 2px 0; }
 /* 备注区与 README 用同一套 Markdown 样式，这里只补外层间距。 */

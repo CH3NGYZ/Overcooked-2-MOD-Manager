@@ -654,18 +654,44 @@ impl ConfigService {
         })
     }
 
-    /// 地图上传页的器件：device flow 拿到的令牌单独一份，读路径不受影响。
+    /// 地图发布页的 access token：GitHub App 授权拿到的那一份，读路径不受影响。
     pub(crate) fn publish_token(&self, config: &AppConfig) -> Option<String> {
         reveal_secret(&config.auth.github_publish_token)
     }
 
-    pub fn set_publish_token(&self, config: &mut AppConfig, token: &str, login: &str) {
-        config.auth.github_publish_token = protect_secret(token.trim()).unwrap_or_default();
+    /// 与 access token 配对的 refresh token；App 关闭了令牌过期时没有。
+    pub(crate) fn publish_refresh_token(&self, config: &AppConfig) -> Option<String> {
+        reveal_secret(&config.auth.github_publish_refresh_token)
+    }
+
+    /// 写入一组发布令牌（首次授权或刷新后的轮换结果）。
+    ///
+    /// 加密失败必须报错：吞掉错误会写出空令牌，界面却显示「登录成功」，下一次
+    /// 进页面才莫名其妙地掉线。refresh token 一并覆盖 —— 刷新后旧的已经作废。
+    pub fn set_publish_tokens(
+        &self,
+        config: &mut AppConfig,
+        tokens: &PublishTokens,
+        login: &str,
+    ) -> io::Result<()> {
+        let access = protect_secret(tokens.access_token.trim())?;
+        let refresh = match tokens.refresh_token.as_deref().map(str::trim) {
+            Some(value) if !value.is_empty() => protect_secret(value)?,
+            _ => String::new(),
+        };
+        config.auth.github_publish_token = access;
+        config.auth.github_publish_refresh_token = refresh;
+        config.auth.github_publish_token_expires_at = tokens.expires_at;
+        config.auth.github_publish_refresh_expires_at = tokens.refresh_expires_at;
         config.auth.github_publish_login = login.trim().to_string();
+        Ok(())
     }
 
     pub fn clear_publish_token(&self, config: &mut AppConfig) {
         config.auth.github_publish_token.clear();
+        config.auth.github_publish_refresh_token.clear();
+        config.auth.github_publish_token_expires_at = None;
+        config.auth.github_publish_refresh_expires_at = None;
         config.auth.github_publish_login.clear();
     }
 
@@ -1078,6 +1104,9 @@ pub(crate) fn default_config() -> AppConfig {
             gitee_token: String::new(),
             official_api_only: true,
             github_publish_token: String::new(),
+            github_publish_refresh_token: String::new(),
+            github_publish_token_expires_at: None,
+            github_publish_refresh_expires_at: None,
             github_publish_login: String::new(),
             github_publish_installation_id: 0,
         },
@@ -1625,7 +1654,7 @@ fn validate_relation(
 
 /// 版本区间校验的两种失败：读不懂，或者读懂了但永远匹配不到版本。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VersionSpecProblem {
+pub(crate) enum VersionSpecProblem {
     Unparsable,
     EmptyInterval,
 }
@@ -1633,7 +1662,7 @@ enum VersionSpecProblem {
 /// 解析并验证一段版本区间；空串表示不限版本，合法。
 ///
 /// 抽成一处是因为关系条目与按版本覆盖表要同一条判据，只是提示文案不同。
-fn check_version_spec(spec: &str) -> Result<(), VersionSpecProblem> {
+pub(crate) fn check_version_spec(spec: &str) -> Result<(), VersionSpecProblem> {
     let range = crate::version_range::VersionRange::parse(spec)
         .map_err(|_| VersionSpecProblem::Unparsable)?;
     if range.is_empty_interval(crate::releases::compare_release_versions) {

@@ -5779,7 +5779,7 @@ fn bind_map_relation_snapshot(
                     info.name_zh.as_deref(),
                     &info.author,
                     &entry.level_set_name,
-                    None,
+                    Some(entry.level_set_name_zh.as_str()),
                     &entry.author,
                 )
             })
@@ -5805,9 +5805,14 @@ fn bind_map_relation_snapshot(
      * 资产版本只有快照里有（安装时记的），未绑定的地图也要填：地图源被删之后
      * 界面仍要靠它判「装的是不是最新资产」，留空就只能退回比 info 版本。
      */
-    info.installed_mapset_version = snapshot
-        .map(|entry| entry.installed_mapset_version.trim().to_string())
-        .unwrap_or_default();
+    info.installed_mapset_version = crate::level_sets::installed_mapset_version(
+        snapshots,
+        bound.map(|map| map.id.as_str()),
+        &info.name,
+        info.name_zh.as_deref(),
+        &info.author,
+    )
+    .to_string();
     let Some(map) = bound else {
         return;
     };
@@ -6102,6 +6107,7 @@ pub async fn stage_map_source(
         path: display_path(&path),
         staged,
         sets,
+        origin: None,
     })
 }
 
@@ -6139,7 +6145,7 @@ pub fn discard_map_source(state: State<'_, AppState>, path: String) -> Result<()
 
 /// 从本地 ZIP 导入选定的关卡集。
 ///
-/// 已存在的同名关卡集会被**回收**（进回收站），而不是直接删除。
+/// 同身份旧装项由前端安装前检查先卸载，导入阶段拒绝覆盖。
 ///
 /// 两段都在阻塞线程池里跑：识别一个几十集的合集要几十秒，解压落盘同样按秒
 /// 计，同步命令会把整个窗口冻住（见 `get_level_sets` 的注释）。识别只做一次
@@ -6150,7 +6156,7 @@ pub async fn import_level_sets(
     state: State<'_, AppState>,
     zip_path: String,
     selected: Vec<String>,
-    mapset_version: Option<String>,
+    origin: Option<MapInstallOrigin>,
 ) -> Result<LevelSetImportResult, String> {
     // `State` 不能跨 await：需要的值（配置快照、游戏根、操作锁）在同步段取好
     let config = state.config.load_or_default();
@@ -6211,7 +6217,7 @@ pub async fn import_level_sets(
                 &game_root,
                 &manifests_dir,
                 &selected,
-                mapset_version.as_deref(),
+                origin.as_ref(),
             )?;
             log::info!("关卡集导入完成（BepInEx 表层包）：数量={}", installed.len());
             return Ok(LevelSetImportResult { installed });
@@ -6239,7 +6245,7 @@ pub async fn import_level_sets(
                 &game_root,
                 &manifests_dir,
                 std::slice::from_ref(name),
-                mapset_version.as_deref(),
+                origin.as_ref(),
             )?;
             installed.extend(single);
         }
@@ -6852,10 +6858,13 @@ pub async fn stage_map_release(
             return Err(error);
         }
     };
-    if let Err(error) = validate_map_release_sets(&sets, &map) {
-        let _ = fs::remove_file(&temp);
-        return Err(error);
-    }
+    let primary = match validate_map_release_sets(&sets, &map) {
+        Ok(primary) => primary,
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+    };
     log::info!(
         "地图 Release 已暂存：地图={}，版本={}，资产={}，关卡集={}，冲突={}",
         map.name,
@@ -6864,47 +6873,46 @@ pub async fn stage_map_release(
         sets.len(),
         sets.first().map(|set| set.conflicts.len()).unwrap_or(0)
     );
+    let origin = MapInstallOrigin {
+        level_set_name: primary.name.clone(),
+        level_set_name_zh: primary.name_zh.clone().unwrap_or_default(),
+        author: primary.author.clone(),
+        mapset_version: release.tag_name.clone(),
+    };
     Ok(StagedMapSource {
         path: display_path(&temp),
         staged: true,
         sets,
+        origin: Some(origin),
     })
 }
 
-/// 校验暂存到的关卡集与地图仓库声明的身份一致。
+/// 校验在线地图 Release ZIP 是否包含与仓库声明身份匹配的主地图。
 ///
-/// 这是原先「安装前才做」的校验，前移到暂存阶段：两段式确认发生在用户看到
-/// 列表之后，声明与内容不一致时必须在展示前就失败。绑定身份是
-/// `levelSetName + levelSetNameZH + author`（与扫描、开关、依赖判定共用
-/// `level_set_identity_matches`），不一致会让绑定错位、后续更新检测全失效，
-/// 宁可不装。
-fn validate_map_release_sets(
-    sets: &[ZipLevelSet],
-    map: &MapRepositoryConfig,
-) -> Result<(), String> {
-    if sets.len() != 1 {
-        log::warn!(
-            "在线安装的地图 ZIP 应只含一个关卡集：地图={}，实际={}",
-            map.name,
-            sets.len()
-        );
-        return Err(crate::locale_tag::with_params(
-            "levelSet.zipMultipleForRepository",
-            &[("count", &sets.len().to_string())],
-        ));
-    }
-    let set = &sets[0];
-    let matches = crate::level_sets::level_set_identity_matches(
+/// ZIP 可以额外携带前置地图或其它关卡集：它们保留在同一导入批次中，后续按各自
+/// 身份处理冲突；只有主地图必须与仓库声明相符，以免更新绑定错位。
+fn map_release_set_matches(set: &ZipLevelSet, map: &MapRepositoryConfig) -> bool {
+    crate::level_sets::level_set_identity_matches(
         &set.name,
         set.name_zh.as_deref(),
         &set.author,
         &map.level_set_name,
         Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
         &map.author,
-    );
-    if matches {
-        return Ok(());
+    )
+}
+
+fn validate_map_release_sets<'a>(
+    sets: &'a [ZipLevelSet],
+    map: &MapRepositoryConfig,
+) -> Result<&'a ZipLevelSet, String> {
+    if sets.is_empty() {
+        return Err("levelSet.zipWithoutInfo".into());
     }
+    if let Some(primary) = sets.iter().find(|set| map_release_set_matches(set, map)) {
+        return Ok(primary);
+    }
+    let set = &sets[0];
     log::warn!(
         "关卡集与仓库声明不一致：地图={}，期望={} / {}，实际={} / {}",
         map.name,
@@ -6991,28 +6999,20 @@ pub fn sync_dependency_snapshots(
         .iter()
         .filter(|map| map.enabled)
         .map(|map| {
-            let installed_mapset_version = previous
-                .entries
-                .get(&map.id)
-                .or_else(|| {
-                    previous.entries.values().find(|entry| {
-                        crate::level_sets::level_set_identity_matches(
-                            &map.level_set_name,
-                            Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
-                            &map.author,
-                            &entry.level_set_name,
-                            None,
-                            &entry.author,
-                        )
-                    })
-                })
-                .map(|entry| entry.installed_mapset_version.clone())
-                .unwrap_or_default();
+            let installed_mapset_version = crate::level_sets::installed_mapset_version(
+                &previous,
+                Some(&map.id),
+                &map.level_set_name,
+                Some(&map.level_set_name_zh),
+                &map.author,
+            )
+            .to_string();
             (
                 map.id.clone(),
                 MapRelationSnapshot {
                     repository_id: map.id.clone(),
                     level_set_name: map.level_set_name.clone(),
+                    level_set_name_zh: map.level_set_name_zh.clone(),
                     author: map.author.clone(),
                     group_i18n: map.group_i18n.clone(),
                     group: map.group.clone(),
@@ -10567,18 +10567,112 @@ mod map_source_staging_tests {
     }
 
     #[test]
-    fn a_multi_set_map_release_is_rejected() {
-        // 一个地图仓库只对应一张图：拿到多集 ZIP 说明资产选错了
+    fn a_multi_set_map_release_is_accepted_when_declared_set_is_present() {
+        let map = map_repository("RW_LevelSet", "", "RW");
+        assert!(
+            validate_map_release_sets(
+                &[
+                    zip_level_set("RW_LevelSet", None, "RW"),
+                    zip_level_set("Other", None, "Other"),
+                ],
+                &map,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_multi_set_map_release_still_requires_declared_identity() {
         let map = map_repository("RW_LevelSet", "", "RW");
         let error = validate_map_release_sets(
             &[
-                zip_level_set("RW_LevelSet", None, "RW"),
-                zip_level_set("Other", None, "Other"),
+                zip_level_set("Wrong", None, "Other"),
+                zip_level_set("Another", None, "Other"),
             ],
             &map,
         )
         .unwrap_err();
-        assert_eq!(error, "levelSet.zipMultipleForRepository?count=2");
+        assert!(
+            error.starts_with("levelSet.zipMismatch?expected="),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn declared_primary_is_selected_even_when_bundled_map_is_first() {
+        let map = map_repository("pear", "梨之盛宴", "Author");
+        let sets = vec![
+            zip_level_set("Music", Some("音乐厨房"), "Author"),
+            zip_level_set("pear", Some("梨之盛宴"), "Author"),
+        ];
+        assert_eq!(validate_map_release_sets(&sets, &map).unwrap().name, "pear");
+    }
+
+    #[test]
+    #[ignore = "需要 OC2_PEAR_REAL_ZIP 指向 pear_v11.0.zip；只安装到临时目录"]
+    fn real_pear_bundle_install_and_scan_keep_versions_separate() {
+        let path = PathBuf::from(std::env::var_os("OC2_PEAR_REAL_ZIP").expect("OC2_PEAR_REAL_ZIP"));
+        let sets = crate::level_sets::inspect_zip(&path).unwrap();
+        let primary = sets.iter().find(|set| set.metadata.name == "pear").unwrap();
+        let bundled = sets
+            .iter()
+            .find(|set| set.metadata.name == "Music")
+            .unwrap();
+        assert_eq!(primary.metadata.version, "11.0");
+        assert_eq!(bundled.metadata.version, "1.1");
+        let origin = MapInstallOrigin {
+            level_set_name: primary.metadata.name.clone(),
+            level_set_name_zh: primary.metadata.name_zh.clone().unwrap_or_default(),
+            author: primary.metadata.author.clone(),
+            mapset_version: "11.0".into(),
+        };
+        let root = std::env::temp_dir().join(format!("oc2-real-pear-{}", uuid::Uuid::new_v4()));
+        let game = root.join("game");
+        let manifests = root.join("manifests");
+        fs::create_dir_all(&game).unwrap();
+        let selected: Vec<_> = sets.iter().map(|set| set.dir_name.clone()).collect();
+        let installed = crate::level_sets::install_parsed_sets(
+            &sets,
+            &path,
+            &game,
+            &manifests,
+            &selected,
+            Some(&origin),
+        )
+        .unwrap();
+        assert_eq!(installed.len(), 2);
+        let mut config = crate::config::default_config();
+        let mut map = map_repository("pear", "梨之盛宴", &origin.author);
+        map.id = "pear-source".into();
+        config.map_repositories = vec![map];
+        let snapshots = archive::read_map_relation_snapshots(&manifests);
+        let mut infos: Vec<_> = crate::level_sets::scan_level_sets(&game)
+            .into_iter()
+            .map(level_set_to_info)
+            .collect();
+        assert_eq!(infos.len(), 2);
+        for info in &mut infos {
+            bind_map_relation_snapshot(info, &config, &snapshots);
+            assert!(info.error.is_none(), "{:?}", info.error);
+            match info.name.as_str() {
+                "pear" => {
+                    assert_eq!(info.version, "11.0");
+                    assert_eq!(info.installed_mapset_version, "11.0");
+                    assert_eq!(info.map_id.as_deref(), Some("pear-source"));
+                }
+                "Music" => {
+                    assert_eq!(info.version, "1.1");
+                    assert!(info.installed_mapset_version.is_empty());
+                    assert!(info.map_id.is_none());
+                }
+                other => panic!("unexpected level set: {other}"),
+            }
+            eprintln!(
+                "name={} info={} installed_asset={} map_id={:?}",
+                info.name, info.version, info.installed_mapset_version, info.map_id
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

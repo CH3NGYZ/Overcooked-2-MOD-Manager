@@ -206,6 +206,7 @@ pub fn run() {
             map_publish::poll_github_authorization,
             map_publish::cancel_github_authorization,
             map_publish::map_publish_state,
+            map_publish::check_publish_session,
             map_publish::sign_out_map_publish,
             map_publish::list_publish_repositories,
             map_publish::create_publish_repository,

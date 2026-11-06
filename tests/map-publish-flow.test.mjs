@@ -4,22 +4,78 @@ import test from 'node:test'
 /**
  * 发布页的流程逻辑（`src/mapPublishFlow.ts`）。
  *
- * 锁五件事：执行顺序固定（先建 Release，再传 ZIP，最后写块）、拖动排序只改存储
- * 顺序（显示反转，存储仍是旧→新）、发布还缺哪些输入、默认 tag 的形状（tag 是
- * 地图身份，必须是合法 git ref），以及 403 的两类原因能不能从后端 tag 里认出来
- * （权限不足要引导改 App，限流只要等一下）。
+ * 锁这几件事：三个步骤的导航顺序与可达条件（没有 Release 只能停在第一步）、
+ * 每一步各自的前置（互不捆绑）、哪些版本已上传但还没登记、拖动排序只改存储
+ * 顺序、默认 tag 的形状，以及 403 的两类原因能不能从后端 tag 里认出来。
  */
 const {
   PUBLISH_STEP_ORDER,
   defaultMapTag,
-  missingPublishInputs,
+  isMapPublishTag,
+  zipIdentityMismatch,
+  stepAvailable,
+  stepIssues,
+  unregisteredVersions,
   parsePublishPermissionFailure,
   reorderVersionRows,
   permissionScopeKey,
 } = await import('../src/mapPublishFlow.ts')
 
-test('三步执行顺序固定：先 Release，再 ZIP，最后写块', () => {
+const ready = {
+  tag: 'gaoda',
+  releaseExists: true,
+  assetName: 'gaoda_v1.2.0.zip',
+  versionText: '1.2.0',
+  levelSetName: 'GAODA',
+  versionCount: 1,
+}
+
+test('三步导航顺序固定：Release 信息、ZIP、地图资料', () => {
   assert.deepEqual([...PUBLISH_STEP_ORDER], ['release', 'asset', 'metadata'])
+})
+
+test('没有 Release 时只能停在第一步', () => {
+  assert.equal(stepAvailable('release', false), true)
+  assert.equal(stepAvailable('asset', false), false)
+  assert.equal(stepAvailable('metadata', false), false)
+  assert.equal(stepAvailable('asset', true), true)
+  assert.equal(stepAvailable('metadata', true), true)
+})
+
+test('输入齐全时三步各自都能保存', () => {
+  for (const step of PUBLISH_STEP_ORDER) assert.deepEqual(stepIssues(step, ready), [])
+})
+
+test('Release 信息只要 tag，不要求 ZIP 或地图资料', () => {
+  assert.deepEqual(
+    stepIssues('release', { ...ready, releaseExists: false, assetName: '', versionText: '', levelSetName: '' }),
+    [],
+  )
+  assert.deepEqual(stepIssues('release', { ...ready, tag: '  ' }), ['tag'])
+})
+
+test('上传 ZIP 不要求地图资料齐全', () => {
+  assert.deepEqual(stepIssues('asset', { ...ready, levelSetName: '', versionCount: 0 }), [])
+  assert.deepEqual(stepIssues('asset', { ...ready, releaseExists: false }), ['release'])
+  assert.deepEqual(stepIssues('asset', { ...ready, assetName: ' ' }), ['zip'])
+  // 带 v 前缀或空格的不是版本号文本：附件名里抽不出版本，先拦住
+  assert.deepEqual(stepIssues('asset', { ...ready, versionText: 'v1.2.0' }), ['version'])
+  assert.deepEqual(stepIssues('asset', { ...ready, versionText: '1.2.0 beta' }), ['version'])
+  // 带后缀的版本号是合法输入
+  assert.deepEqual(stepIssues('asset', { ...ready, versionText: '3.4.1-fix' }), [])
+})
+
+test('地图资料要求关卡集名与至少一个版本', () => {
+  assert.deepEqual(stepIssues('metadata', { ...ready, levelSetName: '  ' }), ['levelSetName'])
+  assert.deepEqual(stepIssues('metadata', { ...ready, versionCount: 0 }), ['versionRows'])
+  // 与 ZIP 是否选好无关
+  assert.deepEqual(stepIssues('metadata', { ...ready, assetName: '', versionText: '' }), [])
+})
+
+test('已上传未登记的版本按表顺序列出', () => {
+  assert.deepEqual(unregisteredVersions(['0.1', '0.2', '0.3'], ['0.1']), ['0.2', '0.3'])
+  assert.deepEqual(unregisteredVersions(['0.1'], [' 0.1 ']), [])
+  assert.deepEqual(unregisteredVersions(['', '0.2'], []), ['0.2'])
 })
 
 test('拖动只改存储顺序：显示反转，存储仍是旧→新', () => {
@@ -45,77 +101,27 @@ test('拖动到原位或越界时不改变顺序', () => {
   assert.deepEqual(reorderVersionRows(rows, 0, 99), ['c', 'a', 'b'])
 })
 
-test('什么都没填时三步全缺（返回顺序跟执行顺序）', () => {
-  assert.deepEqual(
-    missingPublishInputs({ tag: '', assetName: '', versionText: '', levelSetName: '' }),
-    ['release', 'asset', 'metadata'],
-  )
-})
-
-test('输入齐了就能一键执行，Release 还没建不算缺', () => {
-  assert.deepEqual(
-    missingPublishInputs({
-      tag: 'gaoda',
-      assetName: 'gaoda_v1.2.0.zip',
-      versionText: '1.2.0',
-      levelSetName: 'GAODA',
-    }),
-    [],
-  )
-})
-
-test('ZIP 没选或版本号文本不合法时，资产这一步算没准备好', () => {
-  const base = { tag: 'gaoda', levelSetName: 'GAODA' }
-  assert.deepEqual(missingPublishInputs({ ...base, assetName: '', versionText: '1.2.0' }), [
-    'asset',
-  ])
-  assert.deepEqual(missingPublishInputs({ ...base, assetName: '   ', versionText: '1.2.0' }), [
-    'asset',
-  ])
-  assert.deepEqual(missingPublishInputs({ ...base, assetName: 'gaoda_v.zip', versionText: '' }), [
-    'asset',
-  ])
-  // 带 v 前缀的不是版本号文本：附件名里抽不出版本，先拦住。
-  assert.deepEqual(
-    missingPublishInputs({ ...base, assetName: 'gaoda_v1.2.0.zip', versionText: 'v1.2.0' }),
-    ['asset'],
-  )
-  assert.deepEqual(
-    missingPublishInputs({ ...base, assetName: 'gaoda_v1.2.0.zip', versionText: '1.2.0 beta' }),
-    ['asset'],
-  )
-})
-
-test('排序表里的带后缀版本号是合法输入', () => {
-  assert.deepEqual(
-    missingPublishInputs({
-      tag: 'dmm',
-      assetName: 'dmm_v3.4.1-fix.zip',
-      versionText: '3.4.1-fix',
-      levelSetName: 'DMM',
-    }),
-    [],
-  )
-})
-
-test('关卡集名缺失时第三步不放过', () => {
-  assert.deepEqual(
-    missingPublishInputs({
-      tag: 'gaoda',
-      assetName: 'gaoda_v1.2.0.zip',
-      versionText: '1.2.0',
-      levelSetName: '  ',
-    }),
-    ['metadata'],
-  )
-})
-
 test('默认 tag 符合 git ref：小写、只留字母数字与横线', () => {
   assert.equal(defaultMapTag('GAODA'), 'gaoda')
   assert.equal(defaultMapTag('Map 2'), 'map-2')
   // 中文名没有 ASCII 字母数字，给不出默认值就留空让作者自己填。
   assert.equal(defaultMapTag('大厨'), '')
   assert.equal(defaultMapTag('  -GAODA-  '), 'gaoda')
+})
+
+test('发布 tag 只允许 ASCII 字母数字', () => {
+  assert.equal(isMapPublishTag('Map2026'), true)
+  for (const value of ['', 'has space', 'pin-yin', '中文', 'a_b', 'a.b']) {
+    assert.equal(isMapPublishTag(value), false)
+  }
+})
+
+test('ZIP 身份比较三个字段并严格比较空值', () => {
+  const metadata = { level_set_name: 'Map', level_set_name_zh: '地图', author: 'Alice' }
+  assert.equal(zipIdentityMismatch(metadata, { ...metadata }), false)
+  assert.equal(zipIdentityMismatch(metadata, { ...metadata, author: 'Bob' }), true)
+  assert.equal(zipIdentityMismatch(metadata, { ...metadata, level_set_name_zh: '' }), true)
+  assert.equal(zipIdentityMismatch({ ...metadata, author: '' }, { ...metadata, author: 'Alice' }), true)
 })
 
 test('权限失败的 tag 解出权限名与限流时间', () => {

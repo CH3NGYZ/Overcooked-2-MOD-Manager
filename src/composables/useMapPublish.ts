@@ -4,7 +4,9 @@ import { t } from '../i18n'
 import { parsePublishPermissionFailure, type PublishPermissionFailure } from '../mapPublishFlow'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useNotify } from '../useNotify'
+import { upsertPublishRelease } from '../mapPublishRelease'
 import type {
+  PublishAsset,
   MapPublishMetadata,
   PublishAuthPoll,
   PublishAuthState,
@@ -13,6 +15,7 @@ import type {
   PublishRepository,
   PublishRepositoryTopics,
   PublishZipInspection,
+  PublishUploadProgress,
 } from '../types'
 
 /**
@@ -26,16 +29,11 @@ export type AuthPhase = 'idle' | 'waiting' | 'expired' | 'denied' | 'failed'
 export interface SaveReleaseInput {
   releaseId: number | null
   tag: string
-  title: string
   body: string
-  draft: boolean
-  prerelease: boolean
   /**
-   * 有值 = 同时写回 Release note 的 `oc2-map` 块；省略 = 只改 Release 的
-   * 标题 / 正文 / 草稿状态。
-   *
-   * 发布页的三步式里只有第三步带 metadata：块是消费端识别地图的唯一依据，
-   * 让前两步也写块会出现「附件还没传、块里已经宣布新版本」。
+   * 有值 = 同时重写 Release note 的 `oc2-map` 块；省略时后端读远端正文并保留原块。
+   * 只有「地图资料」步骤带 metadata：块是消费端识别地图的唯一依据，版本表
+   * 里登记过的附件才对玩家可见。
    */
   metadata?: MapPublishMetadata
 }
@@ -89,6 +87,9 @@ export function useMapPublish() {
   const deletingRelease = ref(false)
 
   const uploading = ref(false)
+  const uploadProgress = ref<PublishUploadProgress | null>(null)
+  let disposed = false
+  onUnmounted(() => { disposed = true })
   const deletingAsset = ref(false)
   /** 正在识别拖进来的 ZIP（解析 `info` 可能要几十秒）。 */
   const inspecting = ref(false)
@@ -243,12 +244,26 @@ export function useMapPublish() {
     }
   }
 
-  /** 进页面：先读本地登录态（不联网），已登录再拉仓库与版本。 */
+  /**
+   * 进页面：先检查一次会话，再拉仓库与版本。
+   *
+   * 这是**唯一**会刷新令牌的地方：access token 失效时后端用 refresh token 换一对新的
+   * 并落盘；刷新不了就清掉本地令牌、界面回到登录态。网络失败不清令牌，只提示。
+   */
   async function loadState() {
     if (authLoading.value) return
     authLoading.value = true
     try {
-      auth.value = await api.mapPublishState()
+      const check = await api.checkPublishSession()
+      auth.value = check.auth
+      const outcome = check.outcome
+      if (outcome.status === 'reauthorize') {
+        authPhase.value = 'failed'
+        authFailure.value = translateBackendMessage(outcome.reason)
+        message.warning(authFailure.value)
+      } else if (outcome.status === 'unavailable') {
+        message.warning(t('mapPublish.sessionCheckUnavailable', { reason: translateBackendMessage(outcome.reason) }))
+      }
       if (auth.value.authenticated) await loadRepositories()
     } catch (reason) {
       fail(reason)
@@ -441,15 +456,16 @@ export function useMapPublish() {
         repository: repository.name,
         release_id: input.releaseId,
         tag: input.tag,
-        title: input.title,
         body: input.body,
-        draft: input.draft,
-        prerelease: input.prerelease,
         metadata: input.metadata,
       })
       permissionFailure.value = null
       if (!options.quiet) message.success(t('mapPublish.saved'))
-      await loadReleases()
+      if (!disposed && selectedRepository.value?.full_name === repository.full_name) {
+        releasesEpoch += 1
+        releasesLoading.value = false
+        releases.value = upsertPublishRelease(releases.value, saved)
+      }
       return saved
     } catch (reason) {
       fail(reason)
@@ -489,30 +505,41 @@ export function useMapPublish() {
   /**
    * 上传一版地图 ZIP 附件。
    *
-   * 附件名（含版本号）由页面按 `asset` 模板渲染好再传进来：渲染规则在
-   * `mapPublishAsset.ts`，与页面上「会上传成什么名字」的预览共用一份；
-   * 这里只负责落盘、刷新列表与收起权限引导。
+   * 附件名（含版本号）由后端根据 ZIP 检查结果和 Release 的 `asset` 规则生成；
+   * 这里只负责传路径、合并服务器确认的附件与收起权限引导。
    */
-  async function uploadAsset(release: PublishRelease, path: string, name: string): Promise<boolean> {
+  async function uploadAsset(release: PublishRelease, path: string): Promise<PublishAsset | null> {
     const repository = selectedRepository.value
-    if (!repository || uploading.value) return false
+    if (!repository || uploading.value) return null
     uploading.value = true
+    uploadProgress.value = { sent: 0, total: 0, phase: 'uploading' }
+    let acceptingProgress = true
     try {
-      await api.uploadPublishAsset({
+      const uploaded = await api.uploadPublishAsset({
         owner: repository.owner,
         repository: repository.name,
         release_id: release.id,
         path,
-        name,
+      }, (progress) => {
+        if (!disposed && acceptingProgress) uploadProgress.value = progress.phase === 'done' ? null : progress
       })
       permissionFailure.value = null
       message.success(t('mapPublish.uploaded'))
-      await loadReleases()
-      return true
+      if (!disposed && selectedRepository.value?.full_name === repository.full_name) {
+        releasesEpoch += 1
+        releasesLoading.value = false
+        const current = releases.value.find(item => item.id === release.id) ?? release
+        releases.value = upsertPublishRelease(releases.value, {
+          ...current, assets: [...current.assets.filter(item => item.id !== uploaded.id), uploaded],
+        })
+      }
+      return uploaded
     } catch (reason) {
       fail(reason)
-      return false
+      return null
     } finally {
+      acceptingProgress = false
+      uploadProgress.value = null
       uploading.value = false
     }
   }
@@ -532,18 +559,23 @@ export function useMapPublish() {
     }
   }
 
-  async function deleteAsset(assetId: number): Promise<boolean> {
-    const repository = selectedRepository.value
-    if (!repository || deletingAsset.value) return false
+  async function deleteAsset(assetId: number, coordinates = selectedCoordinates()): Promise<boolean> {
+    if (!coordinates || deletingAsset.value) return false
     deletingAsset.value = true
     try {
-      const result = await api.deletePublishAsset(repository.owner, repository.name, assetId)
+      const result = await api.deletePublishAsset(coordinates.owner, coordinates.repository, assetId)
       if (!result.ok) {
         message.error(translateBackendMessage(result.message))
         return false
       }
       message.success(translateBackendMessage(result.message) || t('mapPublish.deleted'))
-      await loadReleases()
+      if (selectedFullName.value === `${coordinates.owner}/${coordinates.repository}`) {
+        releasesEpoch += 1
+        releasesLoading.value = false
+        releases.value = releases.value.map(release => ({
+          ...release, assets: release.assets.filter(asset => asset.id !== assetId),
+        }))
+      }
       return true
     } catch (reason) {
       fail(reason)
@@ -581,6 +613,7 @@ export function useMapPublish() {
     savingRelease,
     deletingRelease,
     uploading,
+    uploadProgress,
     deletingAsset,
     inspecting,
     loadState,

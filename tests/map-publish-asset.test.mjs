@@ -74,8 +74,12 @@ test('模板 + 版本号渲染出真正会上传的附件名', () => {
   // 非法版本号 / 模板里没有占位符：返回空串，让上传前拦下来
   assert.equal(renderAssetName('gaoda-${version}.zip', '', 'v1.2.0'), '')
   assert.equal(renderAssetName('gaoda.zip', 'GAODA', '1.2.0'), '')
-  // 中文与空格在附件名里必须变成 -
-  assert.equal(renderAssetName('Gaoda ${version} 合集.zip', '', '1.2.0'), 'Gaoda-1.2.0-.zip')
+  // 已有显式模板和后缀原样保留，与后端上传名一致。
+  assert.equal(renderAssetName('Gaoda ${version} 合集.zip', '', '1.2.0'), 'Gaoda 1.2.0 合集.zip')
+  assert.equal(renderAssetName('Map_v${version}.zip', '', '1.0+build'), 'Map_v1.0+build.zip')
+  assert.equal(renderAssetName('../${version}.zip', '', '1'), '')
+  assert.equal(renderAssetName('dir/${version}.zip', '', '1'), '')
+  assert.equal(renderAssetName('a'.repeat(201) + '${version}.zip', '', '1'), '')
   // 纯中文关卡集名的默认模板里 slug 为空，只剩 `_v`，与后端逐字一致，不能被「清理」掉
   assert.equal(renderAssetName('', '大厨', '1.2.0'), '_v1.2.0.zip')
 })
@@ -103,7 +107,7 @@ test('从 xxx_v<version>.zip 拆出 tag 与版本号', () => {
 
 test('新地图的资产规则由 tag 组合，抽版本号按整串匹配', () => {
   assert.equal(composeAssetRule('dmm'), `dmm_v${ASSET_VERSION_PLACEHOLDER}.zip`)
-  assert.equal(composeAssetRule(' Gaoda Map '), `Gaoda-Map_v${ASSET_VERSION_PLACEHOLDER}.zip`)
+  assert.equal(composeAssetRule(' Gaoda Map '), `Gaoda Map_v${ASSET_VERSION_PLACEHOLDER}.zip`)
 
   const rule = composeAssetRule('dmm')
   assert.equal(versionFromRule(rule, 'dmm_v3.4.1.zip'), '3.4.1')

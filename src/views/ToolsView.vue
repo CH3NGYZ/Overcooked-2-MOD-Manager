@@ -30,8 +30,12 @@ const logPath = ref('')
 const logContent = ref('')
 
 /**
- * 地图发布入口开关。发布流程只对作者开放，验收完成前不在工具页露出；
- * 放开时把这个值改为 true 并删掉本常量，路由 `/map-publish` 始终保留。
+ * 地图发布入口开关。发布流程只对作者开放，工具页这一项长期收起；
+ * 放开时把这个值改为 true 并删掉本常量。
+ *
+ * 路由 `/map-publish` 始终保留，作者的进入方式改成标题栏隐蔽入口：
+ * 3 秒内连点版本号 5 次（见 `secretEntry.ts` / `App.vue::openSecretEntry`）。
+ * 所以这里即使为 false，页面也仍然可达。
  */
 const MAP_PUBLISH_ENTRY_ENABLED = false
 

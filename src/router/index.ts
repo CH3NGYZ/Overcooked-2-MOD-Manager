@@ -9,7 +9,7 @@ export const routes = [
   { path: '/rename', name: 'rename', meta: { title: 'rename.colorfulName' }, component: () => import('../views/RenameView.vue') },
   { path: '/tools', name: 'tools', meta: { title: 'nav.tools' }, component: () => import('../views/ToolsView.vue') },
   { path: '/settings', name: 'settings', meta: { title: 'nav.settings' }, component: () => import('../views/SettingsView.vue') },
-  // 地图发布页：作者专用，入口在工具页，不进侧栏
+  // 地图发布页：作者专用，不进侧栏；工具页入口收起后由标题栏连点版本号解锁
   { path: '/map-publish', name: 'map-publish', meta: { title: 'mapPublish.title' }, component: () => import('../views/MapPublishView.vue') },
 ]
 

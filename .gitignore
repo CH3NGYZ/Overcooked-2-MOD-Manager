@@ -13,6 +13,8 @@ dist-ssr
 *.local
 .tauri
 /**/.*/
+!src-tauri/.cargo/
+!src-tauri/.cargo/config.toml
 # Local-only Windows build helpers（index.html 是 Vite 入口，必须跟踪：CI 干净检出没有它就无法 build）
 /build.bat
 /build.log

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 // 只读当前界面语言（用于让后端选择仓库的本地化名称）；不引入任何 UI 依赖
@@ -35,9 +35,11 @@ import type {
   LevelSetScanProgress,
   LevelSetZipProgress,
   MapInfo,
+  MapInstallOrigin,
   PublishAsset,
   PublishAuthPoll,
   PublishAuthState,
+  PublishSessionCheck,
   PublishAuthorization,
   PublishDeleteReleaseRequest,
   PublishRelease,
@@ -45,6 +47,7 @@ import type {
   PublishRepositoryList,
   PublishSaveRequest,
   PublishUploadRequest,
+  PublishUploadProgress,
   PublishRepositoryTopics,
   PublishZipInspection,
   StagedMapSource,
@@ -237,20 +240,16 @@ export const api = {
   /**
    * 从本地 ZIP 导入选定的关卡集。
    *
-   * 已存在的同名关卡集会被回收（进回收站），不是直接删除。游戏运行时允许。
+   * 同身份旧装项由安装前检查先卸载，导入阶段拒绝覆盖。游戏运行时允许。
    * 期间后端逐份发 `level-set-zip-progress`（`info` 阶段再识别一遍、`install`
    * 阶段写盘），进度显示在来源卡片与整页遮罩上。
    */
-  /*
-   * `mapsetVersion` 是这次装的资产版本号（Release 的 tag_name）：后端写进安装
-   * 清单的关系快照，之后判「有没有新版」先比它。本地 ZIP 与直链不知道来源
-   * 版本，传 `null` 表示不写。
-   */
-  importLevelSets: (zipPath: string, selected: string[], mapsetVersion?: string) =>
+  // 原样回传暂存阶段确认的主地图身份和资产版本，不从首个 info 或请求 tag 猜。
+  importLevelSets: (zipPath: string, selected: string[], origin?: MapInstallOrigin | null) =>
     invoke<{ installed: string[] }>('import_level_sets', {
       zipPath,
       selected,
-      mapsetVersion: mapsetVersion ?? null,
+      origin: origin ?? null,
     }),
   /**
    * 暂存一份地图来源（本地 ZIP 或在线直链），返回里面识别出的关卡集。
@@ -416,6 +415,8 @@ export const api = {
 
   /** 当前登录状态：不联网，进页面先调。 */
   mapPublishState: () => invoke<PublishAuthState>('map_publish_state'),
+  /** 进入发布页时调一次：验证令牌，失效时用 refresh token 换新（只有这里会刷新）。 */
+  checkPublishSession: () => invoke<PublishSessionCheck>('check_publish_session'),
   /** 启动 GitHub App 用户授权：后端自己打开系统浏览器并监听本机回调端口。 */
   startGithubAuthorization: (forceAuthorize = false) =>
     invoke<PublishAuthorization>('start_github_authorization', { forceAuthorize }),
@@ -440,8 +441,16 @@ export const api = {
     invoke<PublishRelease>('save_publish_release', { request }),
   deletePublishRelease: (request: PublishDeleteReleaseRequest) =>
     invoke<OperationResult>('delete_publish_release', { request }),
-  uploadPublishAsset: (request: PublishUploadRequest) =>
-    invoke<PublishAsset>('upload_publish_asset', { request }),
+  uploadPublishAsset: async (request: PublishUploadRequest, onProgress: (value: PublishUploadProgress) => void) => {
+    const progress = new Channel<PublishUploadProgress>()
+    let active = true
+    progress.onmessage = (value) => { if (active) onProgress(value) }
+    try {
+      return await invoke<PublishAsset>('upload_publish_asset', { request, onProgress: progress })
+    } finally {
+      active = false
+    }
+  },
   deletePublishAsset: (owner: string, repository: string, assetId: number) =>
     invoke<OperationResult>('delete_publish_asset', { owner, repository, assetId }),
   /** 识别本地地图 ZIP（版本号、info、requires）；重活，后端在 spawn_blocking 里跑。 */

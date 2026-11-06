@@ -807,6 +807,13 @@ test('装了修复版就不再提示更新', () => {
   assert.equal(mapUpdateState('3.4.1', fixRef, '3.4.1'), 'update_available')
 })
 
+test('资产版本比较归一化 v 前缀和补零，避免 1.5.1 误报更新', () => {
+  const ref = { ...fixRef, latestMapsetVersion: '1.5.1' }
+  assert.equal(mapUpdateState('1.5.1', ref, 'v1.5.1'), 'latest')
+  assert.equal(mapUpdateState('1.5.1', ref, '1.5.1.0'), 'latest')
+  assert.equal(mapUpdateState('1.5.1', ref, '1.5.2'), 'update_available')
+})
+
 test('没有安装记录时退回 info 版本比较，不凭空报更新', () => {
   // 老版本装的地图没有记录（空串 / undefined / null 三种写法都要走老路径）
   assert.equal(mapUpdateState('3.4.1', fixRef, ''), 'latest')

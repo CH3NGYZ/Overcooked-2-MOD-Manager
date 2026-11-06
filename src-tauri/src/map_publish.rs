@@ -40,15 +40,20 @@ use crate::commands::AppState;
 use crate::display_path::display_path;
 use crate::locale_tag::with_params;
 use crate::map_note::{
-    VERSION_PLACEHOLDER, publish_metadata_from_note, render_release_body, strip_note_block,
+    VERSION_PLACEHOLDER, publish_metadata_from_note, render_release_body,
+    replace_body_keeping_block, strip_note_block,
 };
 use crate::models::{
     MapPublishMetadata, OperationResult, PublishAsset, PublishAuthMode, PublishAuthPoll,
     PublishAuthState, PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease,
     PublishRepository, PublishRepositoryList, PublishRepositoryTopics, PublishSaveRequest,
-    PublishUploadRequest, PublishZipInspection,
+    PublishSessionCheck, PublishSessionOutcome, PublishTokens, PublishUploadRequest,
+    PublishZipInspection,
 };
 use crate::releases::APP_USER_AGENT;
+
+#[path = "map_publish_zip_cache.rs"]
+mod zip_cache;
 
 // Client Secret 由 `build.rs` 在编译期注入（环境变量，或本机被忽略的
 // `.tmp/github-app-secret.txt`），仓库里既没有明文也不该有。
@@ -127,14 +132,54 @@ static PENDING_AUTH: Mutex<Option<PendingAuthorization>> = Mutex::new(None);
 // —— 线上数据结构：只声明用得到的字段 ——
 
 /// `/login/oauth/access_token` 的响应：成功给 Token，失败给 `error`。
+///
+/// 授权码换令牌与 refresh token 换令牌是同一个端点、同一种响应。App 开启了
+/// 「令牌过期」（或授权时带了 `offline_access`）才会有后三个字段；关掉时只有
+/// `access_token`，那张令牌不过期，也就不需要刷新。
 #[derive(Deserialize)]
 struct TokenResponse {
     #[serde(default)]
     access_token: Option<String>,
     #[serde(default)]
+    refresh_token: Option<String>,
+    /// access token 剩余秒数（GitHub 固定 8 小时）。
+    #[serde(default)]
+    expires_in: Option<i64>,
+    /// refresh token 剩余秒数（GitHub 固定 6 个月）。
+    #[serde(default)]
+    refresh_token_expires_in: Option<i64>,
+    #[serde(default)]
     error: Option<String>,
     #[serde(default)]
     error_description: Option<String>,
+}
+
+/// 把成功响应换算成要落盘的一组令牌；access token 为空时返回 `None`。
+///
+/// 剩余秒数在这里一次性换成绝对时刻：落盘的是「几点过期」，下次进页面
+/// 不需要知道这张令牌是什么时候拿到的。
+fn tokens_from_response(body: &TokenResponse, now: i64) -> Option<PublishTokens> {
+    let access_token = body
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?
+        .to_string();
+    let refresh_token = body
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string);
+    let at = |seconds: Option<i64>| seconds.filter(|value| *value > 0).map(|value| now + value);
+    Some(PublishTokens {
+        access_token,
+        expires_at: at(body.expires_in),
+        refresh_expires_at: refresh_token
+            .as_ref()
+            .and(at(body.refresh_token_expires_in)),
+        refresh_token,
+    })
 }
 
 /// `/user/installations` 里的一条安装记录（只用到 id）。
@@ -429,15 +474,26 @@ fn validate_tag(tag: &str) -> Result<String, String> {
     Ok(tag.to_string())
 }
 
-/// 附件名放行 `A-Z a-z 0-9 . _ -`；其余字符会让 `?name=` 查询串变形。
+fn validate_new_tag(tag: &str) -> Result<String, String> {
+    let tag = tag.trim();
+    if tag.is_empty() || tag.len() > 100 || !tag.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(invalid_tag(tag));
+    }
+    Ok(tag.to_string())
+}
+
+/// 附件名必须是单个安全文件名；旧 tag 和显式模板可包含中文。
 fn validate_asset_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     let ok = !name.is_empty()
         && name.len() <= 200
         && !name.starts_with('.')
-        && name
-            .chars()
-            .all(|item| item.is_ascii_alphanumeric() || matches!(item, '.' | '_' | '-'));
+        && name.chars().all(|item| {
+            !item.is_control()
+                && !matches!(item, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+        && !name.ends_with('.')
+        && !name.ends_with(' ');
     if !ok {
         return Err(invalid_asset("name"));
     }
@@ -626,8 +682,10 @@ fn authorization_target(
     }
     let verifier = random_token();
     let challenge = code_challenge(&verifier);
+    // `offline_access` 是 GitHub App 唯一认的 scope：它不加任何权限，只要求发
+    // 会过期的 access token + refresh token。App 设置里关了令牌过期时也生效。
     let url = format!(
-        "{AUTHORIZE_ENDPOINT}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
+        "{AUTHORIZE_ENDPOINT}?client_id={}&redirect_uri={}&scope=offline_access&state={}&code_challenge={}&code_challenge_method=S256",
         encode_component(GITHUB_APP_CLIENT_ID),
         encode_component(CALLBACK_URL),
         encode_component(nonce),
@@ -736,11 +794,13 @@ pub async fn poll_github_authorization(
                 *guard = CallbackOutcome::Exchanging;
             }
             match exchange_code(&code, verifier.as_deref()).await {
-                Ok((token, login)) => {
+                Ok((tokens, login)) => {
                     {
                         let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
                         let mut config = service.load_or_default();
-                        service.set_publish_token(&mut config, &token, &login);
+                        service
+                            .set_publish_tokens(&mut config, &tokens, &login)
+                            .map_err(|error| action_error("save-token", &error.to_string()))?;
                         // 安装页回调带回的 id 就是「这次勾了哪些仓库」的答案：
                         // 记下来之后列仓库按 id 直查，不用等 /user/installations。
                         if let Some(installation) = installation {
@@ -751,7 +811,10 @@ pub async fn poll_github_authorization(
                             .map_err(|error| action_error("save-token", &error.to_string()))?;
                     }
                     clear_pending_auth();
-                    log::info!("GitHub 发布 Token 已保存：用户={login}，安装={installation:?}");
+                    log::info!(
+                        "GitHub 发布 Token 已保存：用户={login}，安装={installation:?}，可刷新={}",
+                        tokens.refresh_token.is_some()
+                    );
                     Ok(PublishAuthPoll::Authorized { login })
                 }
                 Err(reason) => {
@@ -773,7 +836,10 @@ fn auth_failure(reason: String) -> PublishAuthPoll {
     }
 }
 
-async fn exchange_code(code: &str, verifier: Option<&str>) -> Result<(String, String), String> {
+async fn exchange_code(
+    code: &str,
+    verifier: Option<&str>,
+) -> Result<(PublishTokens, String), String> {
     let secret = client_secret()?;
     let client = api_client()?;
     let mut form = vec![
@@ -810,11 +876,258 @@ async fn exchange_code(code: &str, verifier: Option<&str>) -> Result<(String, St
             _ => with_params("mapPublish.authorizationFailed", &[("reason", reason)]),
         });
     }
-    let Some(token) = body.access_token.filter(|token| !token.trim().is_empty()) else {
+    let Some(tokens) = tokens_from_response(&body, chrono::Utc::now().timestamp()) else {
         return Err(action_error("access-token", "empty token"));
     };
-    let login = fetch_login(&client, &token).await?;
-    Ok((token, login))
+    let login = fetch_login(&client, &tokens.access_token).await?;
+    Ok((tokens, login))
+}
+
+// —— 会话检查与令牌刷新 ——
+
+/// access token 还剩不到这么多秒就当作已过期，直接刷新：省一次注定 401 的 `/user`，
+/// 也避免刚检查完、点上传时恰好过期。
+const ACCESS_EXPIRY_MARGIN_SECS: i64 = 120;
+
+/// 会话检查期间只允许一个刷新在跑。
+///
+/// refresh token 是一次性的：两次并发刷新时第二次拿的是已作废的旧 token，GitHub
+/// 会拒绝，而按「被拒绝 = 失效」处理就会把第一次刚换到的新令牌清掉。
+static SESSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 按本地记下的过期时刻判断 access token 是否已经（或即将）失效。
+/// 不知道过期时刻（不过期的令牌、旧配置）就交给 `/user` 去判。
+fn access_token_expired(expires_at: Option<i64>, now: i64) -> bool {
+    expires_at.is_some_and(|at| now + ACCESS_EXPIRY_MARGIN_SECS >= at)
+}
+
+/// refresh token 还能不能用：要有，且没过本地记下的过期时刻。
+fn refresh_token_usable(refresh: Option<&str>, refresh_expires_at: Option<i64>, now: i64) -> bool {
+    refresh.is_some_and(|value| !value.trim().is_empty())
+        && refresh_expires_at.is_none_or(|at| now < at)
+}
+
+/// 一次 `/user` 探测的结论：令牌可用、被 GitHub 判失效、或者网络 / 服务暂时不可用。
+#[derive(Debug, PartialEq, Eq)]
+enum TokenProbe {
+    Valid(String),
+    Rejected,
+    Unavailable(String),
+}
+
+async fn probe_token(client: &reqwest::Client, token: &str) -> TokenProbe {
+    let response = match authorized(client.get(format!("{API_ENDPOINT}/user")), token)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => return TokenProbe::Unavailable(request_error(&error.to_string())),
+    };
+    let status = response.status().as_u16();
+    // 只有 401 说明令牌本身失效；403/5xx 是权限或服务问题，刷新也救不回来。
+    if status == 401 {
+        return TokenProbe::Rejected;
+    }
+    match ensure_success(response, "user").await {
+        Ok(response) => match response.json::<ApiUser>().await {
+            Ok(user) => TokenProbe::Valid(user.login),
+            Err(error) => TokenProbe::Unavailable(request_error(&error.to_string())),
+        },
+        Err(reason) => TokenProbe::Unavailable(reason),
+    }
+}
+
+/// 一次 refresh 请求的结论。
+#[derive(Debug, PartialEq, Eq)]
+enum RefreshResult {
+    Refreshed(PublishTokens),
+    /// GitHub 明确拒绝（refresh token 失效 / 被撤销 / 应用配置不符）：只能重新授权。
+    Rejected(String),
+    /// 网络或服务暂时不可用：本地令牌保留，下次进页面再试。
+    Unavailable(String),
+}
+
+/// 刷新失败的 `error` 字段 → 语言表 tag。
+///
+/// `bad_refresh_token` 是最常见的一种（过期、已用过、被撤销都报它）；其余按通用
+/// 「授权失效」处理，原因原样带上方便排查。
+fn refresh_rejection_reason(error: &str, description: Option<&str>) -> String {
+    match error {
+        "bad_refresh_token" => "mapPublish.sessionExpired".to_string(),
+        _ => with_params(
+            "mapPublish.sessionRefreshRejected",
+            &[("reason", description.unwrap_or(error))],
+        ),
+    }
+}
+
+async fn refresh_tokens(client: &reqwest::Client, refresh_token: &str) -> RefreshResult {
+    let secret = match client_secret() {
+        Ok(secret) => secret,
+        Err(reason) => return RefreshResult::Unavailable(reason),
+    };
+    let form = [
+        ("client_id", GITHUB_APP_CLIENT_ID),
+        ("client_secret", secret),
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ];
+    let response = match client
+        .post(ACCESS_TOKEN_ENDPOINT)
+        .header("Accept", "application/json")
+        .form(&form)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => return RefreshResult::Unavailable(request_error(&error.to_string())),
+    };
+    if !response.status().is_success() {
+        // 这个端点的业务错误都是 200 + `error` 字段；非 2xx 是服务本身出了问题。
+        let status = response.status().as_u16();
+        return RefreshResult::Unavailable(action_error(
+            "refresh-token",
+            &format!("HTTP {status}"),
+        ));
+    }
+    let body: TokenResponse = match response.json().await {
+        Ok(body) => body,
+        Err(error) => return RefreshResult::Unavailable(request_error(&error.to_string())),
+    };
+    if let Some(error) = body.error.as_deref() {
+        log::warn!(
+            "GitHub 刷新发布 Token 被拒绝：{error}（{}）",
+            body.error_description.as_deref().unwrap_or_default()
+        );
+        return RefreshResult::Rejected(refresh_rejection_reason(
+            error,
+            body.error_description.as_deref(),
+        ));
+    }
+    match tokens_from_response(&body, chrono::Utc::now().timestamp()) {
+        Some(tokens) => RefreshResult::Refreshed(tokens),
+        None => RefreshResult::Unavailable(action_error("refresh-token", "empty token")),
+    }
+}
+
+fn publish_auth_state(state: &AppState) -> PublishAuthState {
+    let config = state.config.load_or_default();
+    PublishAuthState {
+        authenticated: state.config.publish_token(&config).is_some(),
+        login: config.auth.github_publish_login.clone(),
+        client_id: GITHUB_APP_CLIENT_ID.to_string(),
+        install_url: PUBLISH_INSTALL_URL.to_string(),
+        installed: state.config.publish_installation_id(&config) > 0,
+        secret_configured: !GITHUB_APP_CLIENT_SECRET.is_empty(),
+    }
+}
+
+/// 令牌失效且救不回来：清掉本地令牌（installation id 保留），让界面回到登录态。
+fn drop_publish_tokens(state: &AppState) -> Result<(), String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let mut config = state.config.load_or_default();
+    state.config.clear_publish_token(&mut config);
+    state
+        .config
+        .save(&config)
+        .map_err(|error| action_error("sign-out", &error.to_string()))
+}
+
+fn store_refreshed_tokens(
+    state: &AppState,
+    tokens: &PublishTokens,
+    login: &str,
+) -> Result<(), String> {
+    let _guard = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let mut config = state.config.load_or_default();
+    state
+        .config
+        .set_publish_tokens(&mut config, tokens, login)
+        .map_err(|error| action_error("save-token", &error.to_string()))?;
+    state
+        .config
+        .save(&config)
+        .map_err(|error| action_error("save-token", &error.to_string()))
+}
+
+/// 进入地图发布页时检查一次登录状态；access token 失效时用 refresh token 换新。
+///
+/// 只有这一个入口会刷新：页面里的其他请求遇到 401 只报错，不在请求链里暗中
+/// 换令牌（约定见 `docs/map-publish.md`）。网络失败不清令牌 —— 断网不等于掉线。
+#[tauri::command]
+pub async fn check_publish_session(
+    state: State<'_, AppState>,
+) -> Result<PublishSessionCheck, String> {
+    let _session = SESSION_LOCK.lock().await;
+    let outcome = check_session_once(&state).await?;
+    Ok(PublishSessionCheck {
+        outcome,
+        auth: publish_auth_state(&state),
+    })
+}
+
+async fn check_session_once(state: &AppState) -> Result<PublishSessionOutcome, String> {
+    let config = state.config.load_or_default();
+    let Some(access_token) = state.config.publish_token(&config) else {
+        return Ok(PublishSessionOutcome::SignedOut);
+    };
+    let refresh_token = state.config.publish_refresh_token(&config);
+    let login = config.auth.github_publish_login.clone();
+    let now = chrono::Utc::now().timestamp();
+    let client = api_client()?;
+
+    if !access_token_expired(config.auth.github_publish_token_expires_at, now) {
+        match probe_token(&client, &access_token).await {
+            TokenProbe::Valid(_) => return Ok(PublishSessionOutcome::Valid),
+            TokenProbe::Unavailable(reason) => {
+                log::warn!("发布页会话检查失败（保留本地令牌）：{reason}");
+                return Ok(PublishSessionOutcome::Unavailable { reason });
+            }
+            TokenProbe::Rejected => log::info!("发布 access token 已失效，尝试刷新"),
+        }
+    } else {
+        log::info!("发布 access token 已到期，尝试刷新");
+    }
+
+    if !refresh_token_usable(
+        refresh_token.as_deref(),
+        config.auth.github_publish_refresh_expires_at,
+        now,
+    ) {
+        drop_publish_tokens(state)?;
+        log::info!("发布令牌无法刷新（没有或已过期 refresh token），已清除，需重新授权");
+        return Ok(PublishSessionOutcome::Reauthorize {
+            reason: "mapPublish.sessionExpired".to_string(),
+        });
+    }
+    let refresh_token = refresh_token.unwrap_or_default();
+    match refresh_tokens(&client, &refresh_token).await {
+        RefreshResult::Refreshed(tokens) => {
+            // 旧的一对已经作废：先落盘，再查登录名（查失败也不能丢新令牌）。
+            store_refreshed_tokens(state, &tokens, &login)?;
+            if let TokenProbe::Valid(fresh) = probe_token(&client, &tokens.access_token).await
+                && fresh != login
+            {
+                store_refreshed_tokens(state, &tokens, &fresh)?;
+            }
+            log::info!("发布令牌已刷新并保存");
+            Ok(PublishSessionOutcome::Refreshed)
+        }
+        RefreshResult::Rejected(reason) => {
+            drop_publish_tokens(state)?;
+            Ok(PublishSessionOutcome::Reauthorize { reason })
+        }
+        RefreshResult::Unavailable(reason) => {
+            log::warn!("刷新发布令牌暂时失败（保留本地令牌）：{reason}");
+            Ok(PublishSessionOutcome::Unavailable { reason })
+        }
+    }
 }
 
 /// 后台等一次回调。用 std 线程而不是 tokio：这里只做「accept 一次 + 读一行请求」，
@@ -1064,16 +1377,7 @@ async fn fetch_login(client: &reqwest::Client, token: &str) -> Result<String, St
 /// 读当前登录状态。前端进页面先调这个，不联网。
 #[tauri::command]
 pub fn map_publish_state(state: State<'_, AppState>) -> PublishAuthState {
-    let config = state.config.load_or_default();
-    let authenticated = state.config.publish_token(&config).is_some();
-    PublishAuthState {
-        authenticated,
-        login: config.auth.github_publish_login.clone(),
-        client_id: GITHUB_APP_CLIENT_ID.to_string(),
-        install_url: PUBLISH_INSTALL_URL.to_string(),
-        installed: state.config.publish_installation_id(&config) > 0,
-        secret_configured: !GITHUB_APP_CLIENT_SECRET.is_empty(),
-    }
+    publish_auth_state(&state)
 }
 
 /// 退出发布登录：只清发布 Token，用户自己的 API Token 不动。
@@ -1093,19 +1397,9 @@ pub fn sign_out_map_publish(state: State<'_, AppState>) -> Result<PublishAuthSta
     }
     clear_pending_auth();
     log::info!("已退出 GitHub 发布登录");
-    Ok(PublishAuthState {
-        authenticated: false,
-        login: String::new(),
-        client_id: GITHUB_APP_CLIENT_ID.to_string(),
-        install_url: PUBLISH_INSTALL_URL.to_string(),
-        // 退出登录不动 installation id：用户在 GitHub 上改仓库范围时它不变，
-        // 下次登录还能按它直查。
-        installed: {
-            let config = state.config.load_or_default();
-            state.config.publish_installation_id(&config) > 0
-        },
-        secret_configured: !GITHUB_APP_CLIENT_SECRET.is_empty(),
-    })
+    // 退出登录不动 installation id：用户在 GitHub 上改仓库范围时它不变，
+    // 下次登录还能按它直查。
+    Ok(publish_auth_state(&state))
 }
 
 // —— 仓库 ——
@@ -1468,6 +1762,37 @@ fn apply_table_tail(metadata: &mut MapPublishMetadata) {
     }
 }
 
+fn validate_publish_relations(metadata: &MapPublishMetadata) -> Result<(), String> {
+    let invalid = || "mapPublish.invalidRelations".to_string();
+    for table in [
+        &metadata.requires,
+        &metadata.compatible,
+        &metadata.conflicts,
+    ] {
+        for (guid, range) in table {
+            if guid.trim().is_empty() {
+                return Err(invalid());
+            }
+            crate::config::check_version_spec(range).map_err(|_| invalid())?;
+        }
+    }
+    for entry in &metadata.release_relations {
+        let range =
+            crate::version_range::VersionRange::parse(&entry.version).map_err(|_| invalid())?;
+        if range.is_any() || entry.relations.is_empty() {
+            return Err(invalid());
+        }
+        crate::config::check_version_spec(&entry.version).map_err(|_| invalid())?;
+        for relation in &entry.relations {
+            if relation.guid.trim().is_empty() {
+                return Err(invalid());
+            }
+            crate::config::check_version_spec(&relation.version).map_err(|_| invalid())?;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_publish_release(
     state: State<'_, AppState>,
@@ -1475,41 +1800,63 @@ pub async fn save_publish_release(
 ) -> Result<PublishRelease, String> {
     let token = publish_token(&state)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
-    let tag = validate_tag(&request.tag)?;
-    // 三步式发布：第一步建 Release、第二步传附件，第三步才带 metadata 写块。
-    // 没有 metadata 就按原样写正文：只改标题/正文，或先建一个还没有块的 Release。
+    let tag = if request.release_id.is_none() {
+        validate_new_tag(&request.tag)?
+    } else {
+        validate_tag(&request.tag)?
+    };
+    let client = api_client()?;
+    // 三个步骤各写各的：
+    // - 带 metadata（「地图资料」步骤）：块与正文一起重写；
+    // - 不带 metadata、改已有 Release（「Release 信息」步骤）：读远端正文，
+    //   **保留原有的 oc2-map 块**，只换块外文字 —— 前端拿到的正文已剥掉块；
+    // - 不带 metadata、新建：原样写正文（此时还没有块）。
     let body = match request.metadata.clone() {
         Some(mut metadata) => {
+            validate_publish_relations(&metadata)?;
             metadata.level_set_name = metadata.level_set_name.trim().to_string();
             metadata.level_set_name_zh = metadata.level_set_name_zh.trim().to_string();
             metadata.author = metadata.author.trim().to_string();
             if metadata.level_set_name.is_empty() {
                 return Err("mapPublish.missingLevelSetName".to_string());
             }
-            if metadata.asset.trim().is_empty() {
-                // 一个版本一个 ZIP：默认按关卡集名生成模板，作者只需要照着传附件。
-                let slug = metadata
-                    .level_set_name
-                    .chars()
-                    .map(|item| {
-                        if item.is_ascii_alphanumeric() {
-                            item.to_ascii_lowercase()
-                        } else {
-                            '-'
-                        }
-                    })
-                    .collect::<String>();
-                let slug = slug.trim_matches('-');
-                // 附件名带上 `_v`：与手动命名的 `gaoda_v1.2.0.zip` 一致，
-                // 版本规则一眼能看出从哪段抽版本号
-                metadata.asset = format!("{slug}_v{VERSION_PLACEHOLDER}.zip");
+            // 身份锁：已有 oc2-map 块时，英文名 / 中文名 / 作者不允许被改写，
+            // 否则已安装的用户会因身份不符而检测错乱。
+            if let Some(release_id) = request.release_id {
+                let remote: ApiRelease = get_json(
+                    &client,
+                    &token,
+                    &format!("{API_ENDPOINT}/repos/{owner}/{repository}/releases/{release_id}"),
+                    "read-release",
+                )
+                .await?;
+                if let Ok(Some(note)) = crate::map_note::parse_release_note(&remote.body) {
+                    let locked = &note.metadata;
+                    if locked.level_set_name != metadata.level_set_name
+                        || locked.level_set_name_zh != metadata.level_set_name_zh
+                        || locked.author != metadata.author
+                    {
+                        return Err("mapPublish.zipIdentityMismatch".to_string());
+                    }
+                }
             }
             apply_table_tail(&mut metadata);
             render_release_body(&metadata, &request.body)
         }
-        None => request.body.clone(),
+        None => match request.release_id {
+            Some(release_id) => {
+                let remote: ApiRelease = get_json(
+                    &client,
+                    &token,
+                    &format!("{API_ENDPOINT}/repos/{owner}/{repository}/releases/{release_id}"),
+                    "read-release",
+                )
+                .await?;
+                replace_body_keeping_block(&remote.body, &request.body)
+            }
+            None => request.body.clone(),
+        },
     };
-    let client = api_client()?;
     let response = match request.release_id {
         Some(release_id) => {
             authorized(
@@ -1520,10 +1867,10 @@ pub async fn save_publish_release(
             )
             .json(&json!({
                 "tag_name": tag,
-                "name": request.title.trim(),
+                "name": tag,
                 "body": body,
-                "draft": request.draft,
-                "prerelease": request.prerelease,
+                "draft": false,
+                "prerelease": false,
             }))
             .send()
             .await
@@ -1537,10 +1884,10 @@ pub async fn save_publish_release(
             )
             .json(&json!({
                 "tag_name": tag,
-                "name": request.title.trim(),
+                "name": tag,
                 "body": body,
-                "draft": request.draft,
-                "prerelease": request.prerelease,
+                "draft": false,
+                "prerelease": false,
             }))
             .send()
             .await
@@ -1620,11 +1967,36 @@ pub async fn delete_publish_release(
 pub async fn upload_publish_asset(
     state: State<'_, AppState>,
     request: PublishUploadRequest,
+    on_progress: tauri::ipc::Channel<crate::models::PublishUploadProgress>,
 ) -> Result<PublishAsset, String> {
     let token = publish_token(&state)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
-    let name = validate_asset_name(&request.name)?;
+    let client = api_client()?;
+    let remote: ApiRelease = get_json(
+        &client,
+        &token,
+        &format!(
+            "{API_ENDPOINT}/repos/{owner}/{repository}/releases/{}",
+            request.release_id
+        ),
+        "read-release",
+    )
+    .await?;
     let path = std::path::PathBuf::from(request.path.trim());
+    let inspect_path = path.clone();
+    let inspection =
+        tauri::async_runtime::spawn_blocking(move || zip_cache::inspect(&inspect_path))
+            .await
+            .map_err(|error| request_error(&error.to_string()))??;
+    let note =
+        crate::map_note::parse_release_note(&remote.body).map_err(|error| invalid_asset(&error))?;
+    validate_zip_identity(note.as_ref().map(|note| &note.metadata), &inspection)?;
+    let name = upload_asset_name(
+        &remote.tag_name,
+        note.as_ref()
+            .and_then(|note| note.metadata.asset.as_deref()),
+        &inspection.info_version,
+    )?;
     let file_meta = std::fs::metadata(&path).map_err(|error| invalid_asset(&error.to_string()))?;
     if !file_meta.is_file() {
         return Err(invalid_asset("not a file"));
@@ -1635,12 +2007,39 @@ pub async fn upload_publish_asset(
             &[("limit", &(MAX_ASSET_BYTES / 1024 / 1024).to_string())],
         ));
     }
-    // 整份读进内存再上传：地图合集 ZIP 是可接受的量级（上限 256 MiB），
-    // 换来的是不需要额外引 tokio 的 fs/stream 特性与第二套流式代码。
-    let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(&path))
+    let total = file_meta.len();
+    let file = tokio::fs::File::open(&path)
         .await
-        .map_err(|error| request_error(&error.to_string()))?
         .map_err(|error| invalid_asset(&error.to_string()))?;
+    let progress = on_progress.clone();
+    let _ = progress.send(crate::models::PublishUploadProgress {
+        sent: 0,
+        total,
+        phase: "uploading",
+    });
+    let stream = futures_util::stream::try_unfold((file, 0u64), move |(mut file, sent)| {
+        let progress = progress.clone();
+        async move {
+            use tokio::io::AsyncReadExt;
+            let mut buffer = vec![0u8; 64 * 1024];
+            let count = file.read(&mut buffer).await?;
+            if count == 0 {
+                return Ok::<_, std::io::Error>(None);
+            }
+            buffer.truncate(count);
+            let sent = sent + count as u64;
+            let _ = progress.send(crate::models::PublishUploadProgress {
+                sent,
+                total,
+                phase: if sent >= total {
+                    "confirming"
+                } else {
+                    "uploading"
+                },
+            });
+            Ok(Some((buffer, (file, sent))))
+        }
+    });
     let client = upload_client()?;
     let url = format!(
         "{UPLOAD_ENDPOINT}/repos/{owner}/{repository}/releases/{}/assets?name={}",
@@ -1649,7 +2048,8 @@ pub async fn upload_publish_asset(
     );
     let response = authorized(client.post(url.as_str()), &token)
         .header("Content-Type", "application/zip")
-        .body(bytes)
+        .header("Content-Length", total)
+        .body(reqwest::Body::wrap_stream(stream))
         .send()
         .await
         .map_err(|error| request_error(&error.to_string()))?;
@@ -1664,7 +2064,48 @@ pub async fn upload_publish_asset(
         asset.name,
         asset.size
     );
+    let _ = on_progress.send(crate::models::PublishUploadProgress {
+        sent: total,
+        total,
+        phase: "done",
+    });
     Ok(asset_from_api(asset))
+}
+
+fn validate_zip_identity(
+    metadata: Option<&crate::map_note::MapNoteMetadata>,
+    inspection: &PublishZipInspection,
+) -> Result<(), String> {
+    if inspection.set_count != 1 {
+        return Err(invalid_asset("ZIP must contain exactly one level set"));
+    }
+    if let Some(metadata) = metadata {
+        if metadata.level_set_name != inspection.level_set_name
+            || metadata.level_set_name_zh != inspection.level_set_name_zh
+            || metadata.author != inspection.author
+        {
+            return Err("mapPublish.zipIdentityMismatch".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn upload_asset_name(tag: &str, template: Option<&str>, version: &str) -> Result<String, String> {
+    if version.is_empty() {
+        return Err(invalid_asset("missing info version"));
+    }
+    let default_template = format!("{tag}_v{VERSION_PLACEHOLDER}.zip");
+    let template = template
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&default_template);
+    if !template.contains(VERSION_PLACEHOLDER) {
+        return Err(invalid_asset("missing version placeholder"));
+    }
+    let name = validate_asset_name(&template.replace(VERSION_PLACEHOLDER, version))?;
+    if !name.to_ascii_lowercase().ends_with(".zip") {
+        return Err(invalid_asset("extension"));
+    }
+    Ok(name)
 }
 
 #[tauri::command]
@@ -1805,7 +2246,7 @@ fn inspect_publish_zip_blocking(path: &std::path::Path) -> Result<PublishZipInsp
 #[tauri::command]
 pub async fn inspect_publish_zip(path: String) -> Result<PublishZipInspection, String> {
     let path = std::path::PathBuf::from(path.trim());
-    tauri::async_runtime::spawn_blocking(move || inspect_publish_zip_blocking(&path))
+    tauri::async_runtime::spawn_blocking(move || zip_cache::inspect(&path))
         .await
         .map_err(|error| request_error(&error.to_string()))?
 }
@@ -1864,8 +2305,10 @@ fn stage_publish_zip_into(
         );
         action_error("stage", &error.to_string())
     })?;
+    // 每次使用独立目录，重试或源文件本身在暂存目录时也不会覆盖原文件。
+    let staging = staging.join(uuid::Uuid::new_v4().simple().to_string());
+    std::fs::create_dir(&staging).map_err(|error| action_error("stage", &error.to_string()))?;
     let target = staging.join(&file_name);
-    // 覆盖同名暂存文件是有意的：同一版重试上传时不该越攒越多
     std::fs::copy(&source, &target).map_err(|error| {
         log::error!(
             "复制发布附件失败：源={}，目标={}，原因={error}",
@@ -1883,6 +2326,102 @@ mod tests {
     use super::*;
     use crate::map_note::NOTE_BLOCK_OPEN;
     use crate::models::{AssetVersionEntry, MapPublishMetadata};
+
+    #[test]
+    fn publishing_rejects_invalid_relation_overrides_before_writing() {
+        let mut metadata: MapPublishMetadata = serde_json::from_value(serde_json::json!({
+            "release_relations": [{ "version": ">=0.9", "relations": [
+                { "kind": "requires", "guid": "dep", "version": ">=1.7" }
+            ] }]
+        }))
+        .unwrap();
+        assert!(validate_publish_relations(&metadata).is_ok());
+        for version in ["", "*", "~=1", ">=2,<1"] {
+            metadata.release_relations[0].version = version.to_string();
+            assert_eq!(
+                validate_publish_relations(&metadata).unwrap_err(),
+                "mapPublish.invalidRelations"
+            );
+        }
+        metadata.release_relations[0].version = "==0.1".to_string();
+        metadata.release_relations[0].relations[0].version = ">=2,<1".to_string();
+        assert!(validate_publish_relations(&metadata).is_err());
+        metadata.release_relations[0].relations.clear();
+        assert!(validate_publish_relations(&metadata).is_err());
+        metadata.release_relations.clear();
+        metadata.requires.insert("dep".to_string(), "".to_string());
+        assert!(validate_publish_relations(&metadata).is_ok());
+    }
+
+    fn token_body(json: &str) -> TokenResponse {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn expiring_token_responses_become_absolute_deadlines() {
+        let body = token_body(
+            r#"{"access_token":"ghu_a","expires_in":28800,"refresh_token":"ghr_b",
+                "refresh_token_expires_in":15897600,"scope":"","token_type":"bearer"}"#,
+        );
+        let tokens = tokens_from_response(&body, 1_000).unwrap();
+        assert_eq!(tokens.access_token, "ghu_a");
+        assert_eq!(tokens.refresh_token.as_deref(), Some("ghr_b"));
+        assert_eq!(tokens.expires_at, Some(1_000 + 28_800));
+        assert_eq!(tokens.refresh_expires_at, Some(1_000 + 15_897_600));
+    }
+
+    #[test]
+    fn non_expiring_token_responses_have_no_refresh_side() {
+        // App 关了令牌过期：只有 access_token，不过期，也不需要刷新
+        let tokens =
+            tokens_from_response(&token_body(r#"{"access_token":"ghu_a"}"#), 1_000).unwrap();
+        assert_eq!(tokens.refresh_token, None);
+        assert_eq!(tokens.expires_at, None);
+        assert_eq!(tokens.refresh_expires_at, None);
+        assert!(tokens_from_response(&token_body(r#"{"access_token":"  "}"#), 1).is_none());
+        assert!(tokens_from_response(&token_body(r#"{"error":"bad_refresh_token"}"#), 1).is_none());
+    }
+
+    #[test]
+    fn access_tokens_count_as_expired_shortly_before_the_deadline() {
+        assert!(!access_token_expired(None, 10_000));
+        assert!(!access_token_expired(
+            Some(10_000 + ACCESS_EXPIRY_MARGIN_SECS + 1),
+            10_000
+        ));
+        assert!(access_token_expired(
+            Some(10_000 + ACCESS_EXPIRY_MARGIN_SECS),
+            10_000
+        ));
+        assert!(access_token_expired(Some(9_000), 10_000));
+    }
+
+    #[test]
+    fn refresh_tokens_must_exist_and_be_unexpired() {
+        assert!(refresh_token_usable(Some("ghr_b"), None, 10));
+        assert!(refresh_token_usable(Some("ghr_b"), Some(11), 10));
+        assert!(!refresh_token_usable(Some("ghr_b"), Some(10), 10));
+        assert!(!refresh_token_usable(Some(" "), None, 10));
+        assert!(!refresh_token_usable(None, None, 10));
+    }
+
+    #[test]
+    fn refresh_rejections_map_to_reauthorize_tags() {
+        assert_eq!(
+            refresh_rejection_reason("bad_refresh_token", Some("expired")),
+            "mapPublish.sessionExpired"
+        );
+        assert!(
+            refresh_rejection_reason("unauthorized_client", Some("nope"))
+                .starts_with("mapPublish.sessionRefreshRejected?")
+        );
+    }
+
+    #[test]
+    fn the_authorize_url_requests_offline_access() {
+        let (_, url, _) = authorization_target(1, "nonce", false);
+        assert!(url.contains("scope=offline_access"));
+    }
 
     #[test]
     fn forbidden_without_headers_still_reports_the_github_message() {
@@ -2017,14 +2556,28 @@ mod tests {
     }
 
     #[test]
-    fn asset_names_stay_url_safe() {
+    fn asset_names_keep_unicode_but_reject_path_and_reserved_characters() {
         assert_eq!(
             validate_asset_name("gaoda-1.2.0.zip").unwrap(),
             "gaoda-1.2.0.zip"
         );
-        assert!(validate_asset_name("地图.zip").is_err());
-        assert!(validate_asset_name("").is_err());
-        assert!(validate_asset_name(".hidden").is_err());
+        // 作者的中文文件名原样上传；进 URL 时由 encode_component 按 UTF-8 字节编码。
+        assert_eq!(validate_asset_name(" 地图.zip ").unwrap(), "地图.zip");
+        assert_eq!(encode_component("地图.zip"), "%E5%9C%B0%E5%9B%BE.zip");
+        for bad in [
+            "",
+            ".hidden",
+            "a/b.zip",
+            "a\\b.zip",
+            "a:b.zip",
+            "a?b.zip",
+            "a|b.zip",
+            "a\u{7}.zip",
+            "map.",
+        ] {
+            assert!(validate_asset_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_asset_name(&"a".repeat(201)).is_err());
     }
 
     #[test]

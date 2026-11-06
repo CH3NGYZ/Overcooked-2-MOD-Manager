@@ -1,0 +1,4 @@
+# Reuse Rust compiler outputs across clean builds and Cargo target directories.
+# Install with: cargo install sccache --locked
+[build]
+rustc-wrapper = "sccache"

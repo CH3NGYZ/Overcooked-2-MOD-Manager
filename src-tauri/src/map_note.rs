@@ -33,7 +33,7 @@
 //! username、repository、tag、asset_rules 的形态）由解析方按「源声明 + Release
 //! 实际资产」补齐 —— 那些是仓库坐标，写在每份 note 里只会重复。
 use crate::models::{
-    AssetRule, AssetRuleType, AssetVersionEntry, MapPublishMetadata, RelationKind, ReleaseAsset,
+    AssetRule, AssetRuleType, AssetVersionEntry, MapPublishMetadata, RelationKind,
     ReleaseRelationOverride, RepositoryRelation,
 };
 use serde::Deserialize;
@@ -118,30 +118,27 @@ pub struct MapNoteMetadata {
 impl MapNoteMetadata {
     /// 排序表非空时，表尾就是最新版（按**地图包**版本）。
     ///
-    /// 从表尾往前找第一个非空项，而不是直接取最后一格：作者删掉某一版的版本号
-    /// 时，不该让整张图从「有最新版」退化成「版本未知」。表里一个版本号都没写
-    /// 才退回块自己的 `latest_mapset_version`（老块只写它）。
+    /// 表尾是作者写下的权威结论：末项为空就是「最新版未知」，不向更早的版本
+    /// 或块里的旧标量借值（借来的会把旧包当成最新版）。只有完全没有版本表的老块
+    /// 才读 `latest_mapset_version`。
     pub fn derived_mapset_version(&self) -> Option<String> {
-        self.last_asset_version(|entry| &entry.mapset_version)
-            .or_else(|| normalize_version(self.latest_mapset_version.as_deref()))
+        match self.asset_versions.last() {
+            Some(entry) => normalize_version(Some(&entry.mapset_version)),
+            None => normalize_version(self.latest_mapset_version.as_deref()),
+        }
     }
 
     /// 排序表非空时，表尾的 `info` 版本就是最新版的 info 版本。
     pub fn derived_info_version(&self) -> Option<String> {
-        self.last_asset_version(|entry| &entry.info_version)
-            .or_else(|| normalize_version(self.latest_info_version.as_deref()))
+        match self.asset_versions.last() {
+            Some(entry) => normalize_version(Some(&entry.info_version)),
+            None => normalize_version(self.latest_info_version.as_deref()),
+        }
     }
 
     /// 归一化后的最新 info 版本（手写块的首尾空白不可控）。
     pub fn normalized_info_version(&self) -> Option<String> {
         self.derived_info_version()
-    }
-
-    fn last_asset_version(&self, field: impl Fn(&AssetVersionEntry) -> &String) -> Option<String> {
-        self.asset_versions
-            .iter()
-            .rev()
-            .find_map(|entry| normalize_version(Some(field(entry).as_str())))
     }
 }
 
@@ -426,8 +423,12 @@ fn block_span(body: &str) -> Option<(usize, usize)> {
 ///
 /// 之所以必须有版本号：地图的「版本」既是界面上的数字，也是安装时挑哪个
 /// 资产的标识（见 `map_sources::synthesize_releases`）。
-pub fn versioned_asset_rule(template: Option<&str>, assets: &[ReleaseAsset]) -> Option<AssetRule> {
-    if let Some(template) = template.map(str::trim).filter(|value| !value.is_empty()) {
+pub fn versioned_asset_rule(template: Option<&str>, tag: &str) -> Option<AssetRule> {
+    let default_template = format!("{tag}_v{VERSION_PLACEHOLDER}.zip");
+    let template = template
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&default_template);
+    {
         if template.contains(VERSION_PLACEHOLDER) {
             return Some(AssetRule {
                 rule_type: AssetRuleType::Regex,
@@ -441,10 +442,6 @@ pub fn versioned_asset_rule(template: Option<&str>, assets: &[ReleaseAsset]) -> 
         );
         return None;
     }
-    assets
-        .iter()
-        .filter(|asset| asset.name.to_ascii_lowercase().ends_with(".zip"))
-        .find_map(|asset| rule_from_asset_name(asset.name.trim()))
 }
 
 /// `daxue_v${version}.zip` → `^daxue_v(?P<version>[0-9]+(?:\.[0-9]+)*)\.zip$`。
@@ -461,24 +458,6 @@ fn template_rule(template: &str) -> String {
     pattern.push_str(&regex::escape(rest));
     pattern.push('$');
     pattern
-}
-
-/// 从资产名里认出第一段版本号，拼出只匹配这一个文件的规则。
-///
-/// 名字里只有一段数字序列时这是「模板」最粗的还原；两段数字（`daxue_v0.3.2`）
-/// 靠 `VERSION_PATTERN` 的贪婪点号段吃下整段。
-fn rule_from_asset_name(name: &str) -> Option<AssetRule> {
-    let pattern = regex::Regex::new(VERSION_PATTERN).expect("版本号正则固定且可编译");
-    let found = pattern.find(name)?;
-    Some(AssetRule {
-        rule_type: AssetRuleType::Regex,
-        value: format!(
-            "^{}(?P<version>{}){}$",
-            regex::escape(&name[..found.start()]),
-            VERSION_PATTERN,
-            regex::escape(&name[found.end()..])
-        ),
-    })
 }
 
 /// 解析模型 → 上传页可编辑形态。
@@ -504,12 +483,19 @@ pub fn publish_metadata_from_note(note: &MapNoteMetadata) -> MapPublishMetadata 
         requires: relations(&note.requires),
         compatible: relations(&note.compatible),
         conflicts: relations(&note.conflicts),
+        release_relations: note.release_relation_overrides(),
     }
 }
 
 fn canonical_range(raw: &str) -> String {
     crate::version_range::VersionRange::parse(raw.trim())
-        .map(|range| range.canonical())
+        .map(|range| {
+            if range.is_any() {
+                "*".to_string()
+            } else {
+                range.canonical()
+            }
+        })
         .unwrap_or_else(|_| raw.trim().to_string())
 }
 
@@ -556,16 +542,6 @@ pub fn render_metadata_block(metadata: &MapPublishMetadata) -> String {
         }
     }
     push("asset", &metadata.asset, &mut lines);
-    push(
-        "latest_mapset_version",
-        &metadata.latest_mapset_version,
-        &mut lines,
-    );
-    push(
-        "latest_info_version",
-        &metadata.latest_info_version,
-        &mut lines,
-    );
     for (key, table) in [
         ("requires", &metadata.requires),
         ("compatible", &metadata.compatible),
@@ -620,9 +596,97 @@ pub fn render_metadata_block(metadata: &MapPublishMetadata) -> String {
         }
         block.push_str("]\n");
     }
+    // TOML 数组表必须放在所有顶层键之后，否则后面的版本表/语言键会落入最后一个覆盖表。
+    for entry in &metadata.release_relations {
+        block.push_str("\n[[release_relations]]\nversion = ");
+        block.push_str(&toml_string(&canonical_range(&entry.version)));
+        block.push('\n');
+        // 同 GUID 的 stable/beta 声明不能塞进映射（重复 TOML 键）；使用解析器已有的数组形态。
+        let mut keys = std::collections::HashSet::new();
+        if entry
+            .relations
+            .iter()
+            .any(|row| !keys.insert((row.kind.as_str(), row.guid.trim())))
+        {
+            let rows = entry
+                .relations
+                .iter()
+                .map(|row| {
+                    let mut fields = vec![
+                        format!("kind = {}", toml_string(row.kind.as_str())),
+                        format!("guid = {}", toml_string(row.guid.trim())),
+                        format!(
+                            "version = {}",
+                            toml_string(
+                                &crate::version_range::VersionRange::parse(&row.version)
+                                    .map(|range| range.canonical())
+                                    .unwrap_or_else(|_| row.version.clone())
+                            )
+                        ),
+                    ];
+                    if let Some(prerelease) = row.prerelease {
+                        fields.push(format!("prerelease = {prerelease}"));
+                    }
+                    if row.optional {
+                        fields.push("optional = true".to_string());
+                    }
+                    format!("{{ {} }}", fields.join(", "))
+                })
+                .collect::<Vec<_>>();
+            block.push_str(&format!("relations = [{}]\n", rows.join(", ")));
+            continue;
+        }
+        for kind in [
+            RelationKind::Requires,
+            RelationKind::Compatible,
+            RelationKind::Conflicts,
+        ] {
+            let rows = entry
+                .relations
+                .iter()
+                .filter(|row| row.kind == kind)
+                .map(|row| {
+                    let range = canonical_range(&row.version);
+                    let value = if row.prerelease.is_some() || row.optional {
+                        let mut fields = vec![format!("version = {}", toml_string(&range))];
+                        if let Some(prerelease) = row.prerelease {
+                            fields.push(format!("prerelease = {prerelease}"));
+                        }
+                        if row.optional {
+                            fields.push("optional = true".to_string());
+                        }
+                        format!("{{ {} }}", fields.join(", "))
+                    } else {
+                        toml_string(&range)
+                    };
+                    format!("{} = {value}", toml_string(row.guid.trim()))
+                })
+                .collect::<Vec<_>>();
+            if !rows.is_empty() {
+                block.push_str(&format!("{} = {{ {} }}\n", kind.as_str(), rows.join(", ")));
+            }
+        }
+    }
     block.push_str(NOTE_BLOCK_CLOSE);
     block.push('\n');
     block
+}
+
+/// 只换块外的说明文字，远端原有的元数据块原样保留。
+///
+/// 「只保存 Release 信息」走这里：前端拿到的正文已经剥掉了块，直接写回会把块
+/// 整块抹掉（地图从管理器的列表里消失）。远端没有块时就是新正文本身。
+pub fn replace_body_keeping_block(remote: &str, body: &str) -> String {
+    let body = body.trim();
+    let Some((start, end)) = block_span(remote) else {
+        return body.to_string();
+    };
+    let block = remote[start..end].trim_end();
+    if body.is_empty() {
+        format!("{block}\n")
+    } else {
+        format!("{block}\n\n{body}\n")
+    }
 }
 
 /// 元数据块 + 块外的更新说明，一起构成 Release 的 `body`。
@@ -641,7 +705,7 @@ fn render_inline_table(table: &std::collections::BTreeMap<String, String>) -> Op
     for (guid, range) in table {
         let guid = guid.trim();
         let range = range.trim();
-        if guid.is_empty() || range.is_empty() {
+        if guid.is_empty() {
             continue;
         }
         entries.push(format!(
@@ -680,18 +744,101 @@ fn toml_string(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn body(block: &str, note: &str) -> String {
-        format!("{note}\n\n<!-- oc2-map\n{block}\n-->\n")
+    #[test]
+    fn published_version_relations_round_trip_without_changing_asset_order() {
+        let text = body(
+            r#"level_set_name = "Map"
+author = "Author"
+asset_versions = [{ mapset_version = "0.9", info_version = "0.0.9" }, { mapset_version = "0.1", info_version = "0.0.10" }]
+requires = { "global" = ">=1" }
+[[release_relations]]
+version = ">=0.9"
+requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0", "oc2.diylevel.fastinit" = ">=1.7.0", "oc2.oc2diylevelruntimewloader" = ">=3.10.2" }
+compatible = { "compat" = { version = "*", prerelease = false } }
+[[release_relations]]
+version = "==0.1"
+requires = { "only-this-version" = { version = "*", optional = true } }
+"#,
+            "release note",
+        );
+        let parsed = parse_release_note(&text).unwrap().unwrap();
+        let metadata = publish_metadata_from_note(&parsed.metadata);
+        let rendered = render_release_body(&metadata, &parsed.body);
+        assert!(
+            rendered.find("asset_versions").unwrap()
+                < rendered.find("[[release_relations]]").unwrap()
+        );
+        assert!(rendered.contains("requires = {"));
+        let back = parse_release_note(&rendered).unwrap().unwrap();
+        let overrides = back.metadata.release_relation_overrides();
+        assert_eq!(overrides, metadata.release_relations);
+        assert_eq!(
+            back.metadata.derived_mapset_version().as_deref(),
+            Some("0.1")
+        );
+        assert_eq!(
+            back.metadata.derived_info_version().as_deref(),
+            Some("0.0.10")
+        );
+        assert_eq!(back.metadata.relations()[0].guid, "global");
+        assert_eq!(back.body, "release note");
+        assert_eq!(
+            crate::mods::select_release_relations(&overrides, Some("0.9"))
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            crate::mods::select_release_relations(&overrides, Some("0.1")).unwrap()[0].guid,
+            "only-this-version"
+        );
+        assert!(crate::mods::select_release_relations(&overrides, Some("0.0.9")).is_none());
+        let mut duplicate = metadata;
+        let relation = duplicate.release_relations[0]
+            .relations
+            .last()
+            .unwrap()
+            .clone();
+        duplicate.release_relations[0]
+            .relations
+            .push(RepositoryRelation {
+                prerelease: Some(true),
+                ..relation
+            });
+        let rendered = render_metadata_block(&duplicate);
+        assert!(rendered.contains("relations = ["));
+        let back = parse_release_note(&rendered).unwrap().unwrap();
+        assert_eq!(
+            back.metadata.release_relation_overrides(),
+            duplicate.release_relations
+        );
     }
 
-    fn asset(name: &str) -> ReleaseAsset {
-        ReleaseAsset {
-            name: name.to_string(),
-            size: 1024,
-            download_count: None,
-            download_url: format!("https://github.com/u/r/releases/download/t/{name}"),
-            digest: None,
-        }
+    #[test]
+    fn replacing_the_body_keeps_the_existing_block() {
+        let metadata = MapPublishMetadata {
+            level_set_name: "Gaoda".to_string(),
+            ..MapPublishMetadata::default()
+        };
+        let remote = render_release_body(&metadata, "旧说明");
+        let updated = replace_body_keeping_block(&remote, "新说明");
+        let parsed = parse_release_note(&updated).unwrap().expect("block kept");
+        assert_eq!(parsed.metadata.level_set_name, "Gaoda");
+        assert_eq!(parsed.body, "新说明");
+        assert!(!updated.contains("旧说明"));
+        // 清空说明也不能把块带走
+        let emptied = replace_body_keeping_block(&remote, "  ");
+        assert!(parse_release_note(&emptied).unwrap().is_some());
+        assert_eq!(strip_note_block(&emptied), "");
+    }
+
+    #[test]
+    fn replacing_the_body_without_a_block_is_just_the_new_text() {
+        assert_eq!(replace_body_keeping_block("old", " new "), "new");
+    }
+
+    fn body(block: &str, note: &str) -> String {
+        format!("{note}\n\n<!-- oc2-map\n{block}\n-->\n")
     }
 
     #[test]
@@ -760,6 +907,7 @@ latest_version = "0.42"
             .into_iter()
             .collect(),
             compatible: Default::default(),
+            release_relations: Vec::new(),
             conflicts: [(
                 "oc2.oc2diylevelruntimewloader".to_string(),
                 ">=4.0.0".to_string(),
@@ -791,10 +939,10 @@ latest_version = "0.42"
             parsed.metadata.derived_info_version().as_deref(),
             Some("3.4.1")
         );
-        assert_eq!(
-            parsed.metadata.latest_mapset_version.as_deref(),
-            Some("0.3.2")
-        );
+        // 新块不再写 latest_* 标量：最新版只来自表尾，写了反而会与表打架
+        assert!(!body.contains("latest_mapset_version"), "{body}");
+        assert!(!body.contains("latest_info_version"), "{body}");
+        assert_eq!(parsed.metadata.latest_mapset_version, None);
         assert_eq!(
             parsed.metadata.name_i18n.get("zh-CN").map(String::as_str),
             Some("胡闹达学")
@@ -1036,7 +1184,7 @@ requires = { "dev.gua.overcooked.diylevel" = ">=9.9.9" }
 
     #[test]
     fn the_asset_template_becomes_an_anchored_regex() {
-        let rule = versioned_asset_rule(Some("daxue_v${version}.zip"), &[]).unwrap();
+        let rule = versioned_asset_rule(Some("daxue_v${version}.zip"), "DifferentTag").unwrap();
         assert_eq!(rule.rule_type, AssetRuleType::Regex);
         assert_eq!(
             rule.value,
@@ -1052,12 +1200,12 @@ requires = { "dev.gua.overcooked.diylevel" = ">=9.9.9" }
 
     #[test]
     fn a_template_without_a_version_placeholder_is_reported() {
-        assert!(versioned_asset_rule(Some("daxue.zip"), &[]).is_none());
+        assert!(versioned_asset_rule(Some("daxue.zip"), "daxue").is_none());
     }
 
     #[test]
-    fn without_a_template_the_first_zip_asset_gives_the_rule() {
-        let rule = versioned_asset_rule(None, &[asset("blni_v2.1.zip")]).unwrap();
+    fn without_a_template_the_original_tag_gives_the_rule() {
+        let rule = versioned_asset_rule(None, "blni").unwrap();
         let regex = regex::Regex::new(&rule.value).unwrap();
         let captures = regex.captures("blni_v2.1.zip").expect("同一命名形状应命中");
         assert_eq!(
@@ -1071,9 +1219,13 @@ requires = { "dev.gua.overcooked.diylevel" = ">=9.9.9" }
     }
 
     #[test]
-    fn a_release_without_any_versioned_zip_is_skipped() {
-        assert!(versioned_asset_rule(None, &[asset("levels.zip")]).is_none());
-        assert!(versioned_asset_rule(None, &[asset("readme.md")]).is_none());
+    fn default_template_preserves_tag_case_and_escapes_legacy_characters() {
+        let rule = versioned_asset_rule(None, "My.Map中文").unwrap();
+        let regex = regex::Regex::new(&rule.value).unwrap();
+        assert!(regex.is_match("My.Map中文_v1.2.zip"));
+        assert!(!regex.is_match("my.map中文_v1.2.zip"));
+        assert!(!regex.is_match("MyXMap中文_v1.2.zip"));
+        assert!(!regex.is_match("unrelated_v1.2.zip"));
     }
 
     #[test]
@@ -1113,7 +1265,7 @@ asset_versions = [
     }
 
     #[test]
-    fn a_table_tail_with_empty_versions_falls_back_to_the_entry_above() {
+    fn an_empty_table_tail_means_unknown_instead_of_borrowing_older_versions() {
         let mut metadata = MapNoteMetadata {
             latest_mapset_version: Some("0.7".to_string()),
             latest_info_version: Some("0.7".to_string()),
@@ -1129,12 +1281,13 @@ asset_versions = [
             ],
             ..MapNoteMetadata::default()
         };
-        // 作者删了某一版的版本号，不该让整张图失去「最新版是谁」
-        assert_eq!(metadata.derived_mapset_version().as_deref(), Some("0.7"));
-        assert_eq!(metadata.derived_info_version().as_deref(), Some("0.7"));
-        // 表里一个版本号都没有时才退回块自己的标量
+        // 版本表非空时，末项即权威；末项空值不能从旧标量或更早版本借值。
+        assert_eq!(metadata.derived_mapset_version(), None);
+        assert_eq!(metadata.derived_info_version(), None);
+        // 只有完全没有版本表时才读旧标量字段。
         metadata.asset_versions.clear();
         assert_eq!(metadata.derived_mapset_version().as_deref(), Some("0.7"));
+        assert_eq!(metadata.derived_info_version().as_deref(), Some("0.7"));
     }
 
     #[test]
@@ -1163,11 +1316,17 @@ asset_versions = [
             ..MapPublishMetadata::default()
         };
         let block = render_metadata_block(&metadata);
-        let table_at = block
-            .find("asset_versions = [")
-            .expect("版本表必须被渲染出来");
-        let requires_at = block.find("latest_mapset_version = ").expect("标量键照旧");
-        assert!(requires_at < table_at, "{block}");
+        // 键会按最长键对齐补空格，按行取键名定位，不匹配字面的 `asset = `。
+        let line_of = |wanted: &str| {
+            block
+                .lines()
+                .position(|line| line.split_once('=').map(|(key, _)| key.trim()) == Some(wanted))
+        };
+        let table_at = line_of("asset_versions").expect("版本表必须被渲染出来");
+        let scalar_at = line_of("asset").expect("标量键照旧");
+        assert!(scalar_at < table_at, "{block}");
+        // latest_* 由表尾派生，不再落盘
+        assert!(!block.contains("latest_mapset_version"), "{block}");
         // 表里的非数字版本号原样落盘：`3.4.1-fix` 不能被当成非法版本丢掉
         assert!(block.contains(r#""3.4.1-fix""#), "{block}");
         let parsed = parse_release_note(&body(&block_body(&block), "")).unwrap();

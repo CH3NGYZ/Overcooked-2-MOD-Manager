@@ -60,11 +60,20 @@ body > .n-modal-container > .n-modal-mask {
 body > .n-drawer-container > .n-drawer-mask {
   top: 0;
 }
-body > .n-modal-container > .n-modal-body-wrapper,
-body > .n-drawer-container {
+body > .n-modal-container > .n-modal-body-wrapper {
   top: var(--oc2-titlebar-height);
   bottom: 0;
   height: auto;
+}
+/*
+ * 抽屉必须占满标题栏以下的高度。`height: auto` 会让容器缩到内容高度
+ * （详情面板实测只有 388），面板按它锁高后日志框的 min-height 溢出，
+ * 安装行就被压在日志框下面。
+ */
+body > .n-drawer-container {
+  top: var(--oc2-titlebar-height);
+  bottom: 0;
+  height: calc(100vh - var(--oc2-titlebar-height));
 }
 /*
  * 详情抽屉（MOD 安装 / 地图下载）的内容区：让面板铺满抽屉。
@@ -82,6 +91,34 @@ body > .n-drawer-container {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+}
+/*
+ * 详情抽屉内部滚动不外溢：滚到两端时把滚动链掐在抽屉这一层，不再传给背后的页面。
+ *
+ * 抽屉真正的滚动容器是 `.n-drawer-body.n-scrollbar > .n-scrollbar-container`
+ * （实测 `overflow-y: scroll`，内容层 `.drawer-detail-body` 是它的子节点），
+ * 外壳 `.n-drawer-body` 是 `overflow: hidden` 的滚动容器 —— 两处都写，滚轮在
+ * 抽屉任何位置都不会穿透。
+ *
+ * 分工：`.log-box` 是 `overscroll-behavior: auto`，滚轮在里面（包括内容不足、
+ * 完全不可滚时）或滚到两端后都会把链条**交给这一层**，让整个右侧面板滚起来；
+ * 这一层再用 `contain` 掐断往外的一跳。两层都写 contain 会把链条掐死在日志框里，
+ * 表现为「滚轮落在提交日志上，整个卡片一动不动」。
+ *
+ * 只用 `overscroll-behavior`，不用 `pointer-events: none` 冻结整页：那样抽屉打开时
+ * 页面变成死的，过严且没必要，遮罩层本来就挡住点击了。
+ */
+body > .n-drawer-container .n-drawer-body,
+body > .n-drawer-container .n-scrollbar-container {
+  overscroll-behavior: contain;
+}
+/*
+ * 下拉选项的内容区占满整行：`render-label` 里用 `justify-content: space-between`
+ * 把附属信息推到右侧时，才能贴到勾选图标前，而不是停在内容区右缘。
+ */
+.n-base-select-option__content {
+  flex: 1;
+  min-width: 0;
 }
 /*
  * 折叠过渡：让「内容淡出」与「高度收缩」同步。

@@ -1329,8 +1329,7 @@ async fn load_release_tag_maps(
                 continue;
             }
         };
-        let Some(rule) =
-            crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), &release.assets)
+        let Some(rule) = crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), tag)
         else {
             log::warn!(
                 "Release 里没有能提取版本号的地图包，跳过：源={}，tag={}",
@@ -2130,17 +2129,10 @@ pub(crate) fn synthesize_releases(
         crate::locale_tag::with_params("mapSource.assetRuleNeedsVersion", &[("map", &label)])
     })?;
     /*
-     * 版本列表有两个来源，顺序不同：
-     *
-     * 1. 作者在 `asset_versions` 里排过序的：顺序就是新旧顺序（末项最新），
-     *    版本号直接用它写的 `mapset_version`。这是唯一能把 `3.4.1-fix` 与
-     *    「0.7 比 0.69 新」排对的来源 —— 文件名里的数字段表达不了。
-     * 2. 表里没提的资产：退回用作者写的正则抽版本，再按数字段降序接在后面。
-     *
-     * 表里写了但这一版已经没有的资产直接跳过：作者删了文件不算错误。
+     * 有版本表时，数组顺序与版本号均为权威；只暴露表内仍存在的资产。
+     * 没有版本表时，兼容旧 Release，按显式 asset 规则扫描匹配附件。
      */
     let mut versions: Vec<(String, ReleaseAsset)> = Vec::new();
-    let mut listed: Vec<String> = Vec::new();
     for entry in map.asset_versions.iter().rev() {
         let version = entry.mapset_version.trim();
         if version.is_empty() {
@@ -2164,18 +2156,17 @@ pub(crate) fn synthesize_releases(
             continue;
         };
         push_version(&mut versions, version.to_string(), asset, &label)?;
-        listed.push(asset.name.clone());
     }
     let listed_count = versions.len();
-    for asset in &release.assets {
-        // 已经按版本表进来的资产不再算一次，否则会撞出重复版本
-        if listed.iter().any(|name| name == &asset.name) {
-            continue;
+    // 版本表存在时是唯一公开清单，表外附件不能自动暴露；只有旧格式没有版本表时，
+    // 才扫描全部附件兼容历史地图。
+    if map.asset_versions.is_empty() {
+        for asset in &release.assets {
+            let Some(version) = matched_version(&label, &regex, asset) else {
+                continue;
+            };
+            push_version(&mut versions, version, asset, &label)?;
         }
-        let Some(version) = matched_version(&label, &regex, asset) else {
-            continue;
-        };
-        push_version(&mut versions, version, asset, &label)?;
     }
     if versions.is_empty() {
         return Err(crate::locale_tag::with_params(
@@ -2476,17 +2467,8 @@ requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
         .unwrap();
         let declaration = &doc.map_sources[0];
         let note = crate::map_note::parse_release_note(body).unwrap().unwrap();
-        let rule = crate::map_note::versioned_asset_rule(
-            note.metadata.asset.as_deref(),
-            &[crate::models::ReleaseAsset {
-                name: "daxue_v0.3.2.zip".to_string(),
-                size: 1,
-                download_count: None,
-                download_url: String::new(),
-                digest: None,
-            }],
-        )
-        .unwrap();
+        let rule =
+            crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), "daxue").unwrap();
         let label = SourceLabel {
             id: declaration.id.clone(),
             name: "社区地图仓库".to_string(),
@@ -2544,17 +2526,8 @@ asset = "daxue_v${version}.zip"
             .unwrap()
             .unwrap();
         assert_eq!(note.body, "共 2 张关卡，需要 DIYLevel。");
-        let rule = crate::map_note::versioned_asset_rule(
-            note.metadata.asset.as_deref(),
-            &[crate::models::ReleaseAsset {
-                name: "daxue_v0.3.2.zip".to_string(),
-                size: 1,
-                download_count: None,
-                download_url: String::new(),
-                digest: None,
-            }],
-        )
-        .unwrap();
+        let rule =
+            crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), "daxue").unwrap();
         let doc = parse(
             "[[map_sources]]\nid = \"community\"\nmode = \"release-tags\"\nprovider = \"github\"\nusername = \"CH3NGYZ\"\nrepository = \"oc2\"\n",
         )
@@ -3056,7 +3029,7 @@ asset_rules = [{ type = "exact", value = "b.zip" }]
     }
 
     #[test]
-    fn assets_outside_the_table_go_after_it_in_numeric_order() {
+    fn assets_outside_the_table_stay_hidden() {
         let map = tag_entry(&format!(
             "tag = \"maps\"\nasset_versions = [ {} ]",
             r#"{ mapset_version = "0.22" }"#,
@@ -3070,20 +3043,40 @@ asset_rules = [{ type = "exact", value = "b.zip" }]
             )],
         )
         .unwrap();
-        // 表里点过名的先来，其余仍按数字降序
-        assert_eq!(tag_names(&releases), ["0.22", "0.78", "0.45"]);
+        // 有版本表时它就是唯一公开清单：未登记的附件（上传后未保存资料）不自动暴露
+        assert_eq!(tag_names(&releases), ["0.22"]);
+        // 没有版本表的旧 Release 仍按规则扫描全部附件，并按数字段降序
+        let legacy = synthesize_releases(
+            &tag_entry("tag = \"maps\""),
+            "maps",
+            &[release(
+                "maps",
+                &["rw_v0.22.zip", "rw_v0.45.zip", "rw_v0.78.zip"],
+            )],
+        )
+        .unwrap();
+        assert_eq!(tag_names(&legacy), ["0.78", "0.45", "0.22"]);
     }
 
     #[test]
     fn a_table_entry_without_its_asset_is_skipped() {
         let map = tag_entry(&format!(
-            "tag = \"maps\"\nasset_versions = [ {} ]",
-            r#"{ mapset_version = "0.99" }"#,
+            "tag = \"maps\"\nasset_versions = [ {}, {} ]",
+            r#"{ mapset_version = "0.22" }"#, r#"{ mapset_version = "0.99" }"#,
         ));
         let releases =
             synthesize_releases(&map, "maps", &[release("maps", &["rw_v0.22.zip"])]).unwrap();
         // 表里写了但文件已经删掉的版本不能凭空出现在列表里
         assert_eq!(tag_names(&releases), ["0.22"]);
+        // 表里一项都对不上时报错，不退回扫描表外附件
+        let only_missing = tag_entry(&format!(
+            "tag = \"maps\"\nasset_versions = [ {} ]",
+            r#"{ mapset_version = "0.99" }"#,
+        ));
+        let error =
+            synthesize_releases(&only_missing, "maps", &[release("maps", &["rw_v0.22.zip"])])
+                .unwrap_err();
+        assert!(error.starts_with("mapSource.noAssetInTag"), "{error}");
     }
 
     #[test]

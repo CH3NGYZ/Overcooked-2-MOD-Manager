@@ -1,9 +1,14 @@
 /**
- * 发布页三步式流程的纯逻辑。
+ * 发布页三个步骤的纯逻辑。
  *
- * 作者发一张地图要依次做三件事：①建/改 Release 基本信息 ②上传这一版的 ZIP
- * ③把 oc2-map 块写回 Release note。第三步是**唯一**写块的地方 —— 前两步只写
- * Release 字段与附件，最后一步才对消费端生效，所以顺序不能省。
+ * 一张地图集的三件事**各自保存、互不捆绑**：
+ *
+ * 1. `release`：GitHub Release 的固定 tag 与发布说明。新地图在这里建 Release；
+ *    已有地图只改这些字段，后端保留原有的 oc2-map 块。
+ * 2. `asset`：上传这一版的 ZIP 附件。只写附件，不碰块。
+ * 3. `metadata`：写 oc2-map 块（名称、多语言、版本表、关系表）。**只有登记进版本表
+ *    的附件才对玩家可见**（消费端 `synthesize_releases` 在有表时只认表内附件），所以
+ *    「上传」与「发布给玩家」被明确拆成两步，中间失败不会露出半成品。
  *
  * 纯模块（不依赖 Vue / i18n / 组件）：`tests/map-publish-flow.test.mjs` 直接
  * import；页面与 composable 只负责发请求与显示。
@@ -11,39 +16,74 @@
 
 // 带 `.ts` 扩展名：Node 的 `--test` 直接跑源码（类型剥离不做补全），Vite 与
 // `allowImportingTsExtensions` 都接受这种写法。
+import type { PublishZipInspection } from './types.ts'
 import { isVersionText, levelSetSlug } from './mapPublishAsset.ts'
 
 export type PublishStepId = 'release' | 'asset' | 'metadata'
 
-/** 执行顺序：没有 Release 就没有地方挂附件，元数据也要落在已有 Release 上。 */
+/** 导航顺序：没有 Release 就没有地方挂附件，块也要写在已有 Release 上。 */
 export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'asset', 'metadata']
 
-export interface PublishInputState {
-  /** 已确定的 tag（新地图从 ZIP 名来，已有地图用现有 tag）。 */
+/** 上传完成后必须保存地图资料，不能回退去改 Release 或再次上传。 */
+export function stepAvailable(step: PublishStepId, releaseExists: boolean, uploadPending = false): boolean {
+  if (uploadPending) return releaseExists && step === 'metadata'
+  return step === 'release' || releaseExists
+}
+
+/** 某一步保存前还缺什么；空数组才允许点这一步的保存按钮。 */
+export type StepIssue = 'tag' | 'release' | 'zip' | 'version' | 'levelSetName' | 'versionRows'
+
+export interface StepInput {
+  /** 已确定的 tag（新地图由作者填写，已有地图用现有 tag）。 */
   tag: string
-  /** 规范化后的资产文件名；空 = 还没选到合规的 ZIP。 */
+  releaseExists: boolean
+  /** 按资产规则渲染出的附件名；空 = 还没选到能算出名字的 ZIP。 */
   assetName: string
   /** 这一版的版本号文本（允许 `3.4.1-fix` 这种后缀）。 */
   versionText: string
   /** oc2-map 块里的关卡集英文名，写块时必须非空。 */
   levelSetName: string
+  /** 版本表里的行数（只算对得上附件的行）。 */
+  versionCount: number
 }
 
 /**
- * 「一键按顺序执行」还缺哪些输入。
+ * 每一步各自的前置条件。
  *
- * 只判作者手上的输入，**不判 Release 是否已存在**：执行时第一步本身就去建它，
- * 按「步骤是否已经做完」判会让新建页永远点不动一键执行。每一步自己的前置
- * （Release 存在、ZIP 已上传……）由各自的执行函数再校验一次。
- *
- * 返回顺序跟 `PUBLISH_STEP_ORDER`（执行顺序），不是面板顺序。
+ * 写块要求版本表非空：块是消费端识别地图的依据，零版本的块会让一张下载不到的
+ * 图出现在管理器里。
  */
-export function missingPublishInputs(input: PublishInputState): PublishStepId[] {
-  const missing: PublishStepId[] = []
-  if (!input.tag.trim()) missing.push('release')
-  if (!input.assetName.trim() || !isVersionText(input.versionText)) missing.push('asset')
-  if (!input.levelSetName.trim()) missing.push('metadata')
-  return missing
+export function stepIssues(step: PublishStepId, input: StepInput): StepIssue[] {
+  const issues: StepIssue[] = []
+  switch (step) {
+    case 'release':
+      if (!isMapPublishTag(input.tag.trim())) issues.push('tag')
+      break
+    case 'asset':
+      if (!input.releaseExists) issues.push('release')
+      if (!input.assetName.trim()) issues.push('zip')
+      if (!isVersionText(input.versionText.trim())) issues.push('version')
+      break
+    case 'metadata':
+      if (!input.releaseExists) issues.push('release')
+      if (!input.levelSetName.trim()) issues.push('levelSetName')
+      if (input.versionCount === 0) issues.push('versionRows')
+      break
+  }
+  return issues
+}
+
+/**
+ * 已上传但还没登记进远端版本表的版本（保持 `rows` 的顺序）。
+ *
+ * 这些附件在 GitHub 上已经存在，但玩家看不到；界面据此提示作者去第三步保存。
+ */
+export function unregisteredVersions(
+  rows: readonly string[],
+  registered: readonly string[],
+): string[] {
+  const saved = new Set(registered.map((version) => version.trim()).filter(Boolean))
+  return rows.map((version) => version.trim()).filter((version) => version && !saved.has(version))
 }
 
 /**
@@ -55,6 +95,34 @@ export function missingPublishInputs(input: PublishInputState): PublishStepId[] 
  */
 export function defaultMapTag(levelSetName: string): string {
   return levelSetSlug(levelSetName).slice(0, 100).replace(/^[-.]+|-+$/g, '')
+}
+
+/** Tag 输入只接受 ASCII 字母与数字。 */
+export function isMapPublishTag(value: string): boolean {
+  return /^[A-Za-z0-9]+$/.test(value)
+}
+
+/** 比较 ZIP 身份的三个字段，空值也参与比较。 */
+export function zipIdentityMismatch(
+  metadata: { level_set_name: string; level_set_name_zh: string; author: string },
+  inspection: { level_set_name: string; level_set_name_zh: string; author: string },
+): boolean {
+  return metadata.level_set_name !== inspection.level_set_name ||
+    metadata.level_set_name_zh !== inspection.level_set_name_zh ||
+    metadata.author !== inspection.author
+}
+
+export type PublishZipIssue = 'multiple' | 'version' | 'identity'
+
+/** 展示识别结果后再判可上传性；失败的结果仍用于只读表格，不能写入资料草稿。 */
+export function publishZipIssue(
+  inspection: PublishZipInspection,
+  identity: Pick<PublishZipInspection, 'level_set_name' | 'level_set_name_zh' | 'author'> | null,
+): PublishZipIssue | null {
+  if (inspection.set_count !== 1) return 'multiple'
+  if (!isVersionText(inspection.info_version.trim())) return 'version'
+  if (identity && zipIdentityMismatch(identity, inspection)) return 'identity'
+  return null
 }
 
 /**

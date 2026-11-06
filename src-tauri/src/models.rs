@@ -357,6 +357,15 @@ pub struct LevelSetImportResult {
     pub installed: Vec<String>,
 }
 
+/// 在线暂存实际选中的版本及其主地图身份；资产版本不能广播给 ZIP 内其它地图。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapInstallOrigin {
+    pub level_set_name: String,
+    pub level_set_name_zh: String,
+    pub author: String,
+    pub mapset_version: String,
+}
+
 /// 一个已解析完、可以导入的地图来源（本地 ZIP 或下载直链）。
 ///
 /// `staged` 表示 `path` 是管理器缓存目录里的临时文件：导入完成或用户取消后
@@ -367,6 +376,7 @@ pub struct StagedMapSource {
     pub path: String,
     pub staged: bool,
     pub sets: Vec<ZipLevelSet>,
+    pub origin: Option<MapInstallOrigin>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1266,6 +1276,31 @@ pub enum PublishAuthPoll {
     Failed { reason: String },
 }
 
+/// 进入发布页时检查一次登录状态的结论。
+///
+/// - `valid`：本地令牌可用，没有刷新；
+/// - `refreshed`：access token 失效，已用 refresh token 换到新的一对并落盘；
+/// - `reauthorize`：令牌失效且无法刷新（没有 / 过期 / 被拒绝），本地令牌已清掉，
+///   界面要请用户重新授权；`reason` 是语言表 tag；
+/// - `unavailable`：网络或 GitHub 暂时不可用，**本地令牌原样保留**，只提示；
+/// - `signed_out`：本来就没登录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PublishSessionOutcome {
+    SignedOut,
+    Valid,
+    Refreshed,
+    Reauthorize { reason: String },
+    Unavailable { reason: String },
+}
+
+/// 会话检查的返回：结论 + 检查之后的授权状态（刷新或清除后会变）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishSessionCheck {
+    pub outcome: PublishSessionOutcome,
+    pub auth: PublishAuthState,
+}
+
 /// 上传页的授权状态（登录名与 client_id 都是明文，Token 本身不出后端）。
 ///
 /// `install_url` 是 GitHub App 的安装入口（安装时可以选择「Only select
@@ -1384,8 +1419,8 @@ pub struct AssetVersionEntry {
 /// 前端编辑并提交的元数据。
 ///
 /// 与 `map_note::MapNoteMetadata` 的差别只有关系表：这里用「GUID → 区间字符串」，
-/// 覆盖了 `tools/oc2-info` 命令行能表达的全部形态；带 `prerelease` / `optional`
-/// 的显式表与 `[[release_relations]]` 属于进阶写法，上传页不做，手写 note 仍可表达。
+/// 默认关系用简写表；按资产版本的覆盖关系复用 `ReleaseRelationOverride`，
+/// 读写时保留其中的 `prerelease` / `optional`，避免编辑版本区间丢掉原声明。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MapPublishMetadata {
     #[serde(default)]
@@ -1415,6 +1450,8 @@ pub struct MapPublishMetadata {
     /// 版本表（末项最新）；空表 = 退回按附件名里的数字段排。
     #[serde(default)]
     pub asset_versions: Vec<AssetVersionEntry>,
+    #[serde(default)]
+    pub release_relations: Vec<ReleaseRelationOverride>,
 }
 
 /// 新建或修改一版地图的请求。
@@ -1427,16 +1464,10 @@ pub struct PublishSaveRequest {
     pub release_id: Option<u64>,
     /// 地图集的地图 ID：一个 tag 一张图，版本号写在附件名里。
     pub tag: String,
-    #[serde(default)]
-    pub title: String,
     /// 块外面的说明文字。
     #[serde(default)]
     pub body: String,
-    #[serde(default)]
-    pub draft: bool,
-    #[serde(default)]
-    pub prerelease: bool,
-    /// 三步式发布里只有第三步带它；省略 = 只改标题 / 正文 / 草稿状态。
+    /// 三步式发布里只有第三步带它；省略时保留远端已有的 `oc2-map` 块。
     #[serde(default)]
     pub metadata: Option<MapPublishMetadata>,
 }
@@ -1447,10 +1478,16 @@ pub struct PublishUploadRequest {
     pub owner: String,
     pub repository: String,
     pub release_id: u64,
-    /// 本地 ZIP 的绝对路径。
+    /// 本地 ZIP 的绝对路径；附件名由后端从 ZIP 版本和 Release 规则生成。
     pub path: String,
-    /// 附件名（地图源按 `asset` 模板里的 `${version}` 从名字里抽版本）。
-    pub name: String,
+}
+
+/// 上传进度：已读入 HTTP 请求流的字节数；done 表示服务端确认成功。
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishUploadProgress {
+    pub sent: u64,
+    pub total: u64,
+    pub phase: &'static str,
 }
 
 /// 删除一版地图的请求。
@@ -1555,19 +1592,42 @@ pub struct LaunchConfig {
     pub auto_restore_winhttp: bool,
 }
 
+/// 一组 GitHub App 用户令牌（首次授权或刷新的结果），时刻都是 Unix 秒。
+///
+/// 只在后端流转，不序列化给前端：令牌本身不出后端。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<i64>,
+    pub refresh_expires_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     pub github_token: String,
     pub gitee_token: String,
     pub official_api_only: bool,
-    /// 地图上传页用 device flow 取得的 GitHub 令牌（DPAPI 保护）。
+    /// 地图发布页经 GitHub App 用户授权取得的 access token（DPAPI 保护）。
     ///
-    /// 单独存一份而不是复用 `github_token`：device flow 申请的范围是
-    /// `public_repo`，直接覆盖用户手填的 PAT 会把读 API 的权限悄悄降下来；
-    /// 两份并存时读路径继续用用户的 PAT，发布路径优先用这一份。
+    /// 单独存一份而不是复用 `github_token`：App 令牌只覆盖安装时勾选的仓库，
+    /// 直接覆盖用户手填的 PAT 会把读 API 的权限悄悄降下来；两份并存时读路径
+    /// 继续用用户的 PAT，发布路径只用这一份。
     #[serde(default)]
     pub github_publish_token: String,
-    /// device flow 授权到的 GitHub 登录名，只用于界面显示「以谁的身份发布」。
+    /// 与 access token 配对的 refresh token（DPAPI 保护）；App 关闭了令牌过期时为空。
+    ///
+    /// GitHub 每次刷新都会**同时轮换**两者：旧 refresh token 立即作废，所以新的一对
+    /// 必须一起落盘，不能只换 access token。
+    #[serde(default)]
+    pub github_publish_refresh_token: String,
+    /// access token 的过期时刻（Unix 秒）；`None` = 令牌不过期或旧配置没记。
+    #[serde(default)]
+    pub github_publish_token_expires_at: Option<i64>,
+    /// refresh token 的过期时刻（Unix 秒）；过了就只能重新授权。
+    #[serde(default)]
+    pub github_publish_refresh_expires_at: Option<i64>,
+    /// 授权到的 GitHub 登录名，只用于界面显示「以谁的身份发布」。
     #[serde(default)]
     pub github_publish_login: String,
     /// 上次安装 App 时回调带回来的 installation id；0 = 还不知道。
@@ -1889,6 +1949,8 @@ pub struct MapRepositoryConfig {
 pub struct MapRelationSnapshot {
     pub repository_id: String,
     pub level_set_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub level_set_name_zh: String,
     pub author: String,
     /// 安装/同步那一刻线上声明的分组（分组语义就是作者）。
     ///

@@ -62,3 +62,18 @@ export function formatFileSize(bytes: number | undefined | null): string {
   while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1 }
   return `${value.toFixed(index ? 1 : 0)} ${units[index]}`
 }
+
+/**
+ * 把 ISO 时间按**本地时区**格式化成 `YYYY-MM-DD HH:mm:ss`。
+ *
+ * Release 的 `published_at` 是 UTC（`2026-11-04T07:56:21Z`），直接截前 10 位
+ * 会把「本地 11 月 4 日 15:56」显示成「11 月 4 日」甚至跨日错位。空值与
+ * 解析失败返回空串，调用方据此不渲染这一项。
+ */
+export function formatLocalDateTime(value: string | null | undefined): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}

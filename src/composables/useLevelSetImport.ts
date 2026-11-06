@@ -189,13 +189,6 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
      * 说明行用通用那句「以下已安装内容与本次安装的身份相同…」。
      */
     targetLabel?: string
-    /**
-     * 这次装的资产版本号（Release 的 tag_name），写进安装清单的关系快照。
-     *
-     * 判「有没有新版」先比它：`3.4.1-fix` 与 `3.4.1` 的 info 版本都是 `3.4.1`，
-     * 只比 info 版本永远分不出谁装了修复版。本地 ZIP / 直链没有来源版本，不传。
-     */
-    mapsetVersion?: string
   }
 
   /**
@@ -281,7 +274,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
      */
     closePreview()
     const selected = sets.map((set) => set.dir_name)
-    const result = await api.importLevelSets(staged.path, selected, options.mapsetVersion)
+    const result = await api.importLevelSets(staged.path, selected, staged.origin)
     // 写盘结束：后面还有依赖快照与重读，进度不该停在最后一张上
     zipProgress.value = null
     message.success(options.successText?.(result.installed.length)
@@ -381,8 +374,6 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       if (staged.staged) stagedFile = staged.path
       return await finishStaged(staged, {
         ...options,
-        // 在线安装知道装的是哪一版：写进快照，判更新时先比它（见 FinishOptions）
-        mapsetVersion: tag ?? options.mapsetVersion,
         targetLabel: options.targetLabel ?? releaseLabel(mapId),
       })
     } catch (reason) {

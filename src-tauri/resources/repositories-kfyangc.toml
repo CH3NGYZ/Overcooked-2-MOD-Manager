@@ -1,11 +1,11 @@
 [[repositories]]
 enabled = true
 # 仓库基本信息
-name_i18n.zh-CN = "DIYLevel 快速载入"
-name_i18n.zh-TW = "DIYLevel 快速載入"
-name_i18n.en = "DIYLevel Fast Init"
-name_i18n.ko = "DIYLevel 빠른 로딩"
-name_i18n.ja = "DIYLevel 高速読み込み"
+name_i18n.zh-CN = "自制地图 快速载入 (卡餐车加速)"
+name_i18n.zh-TW = "自製地圖 快速載入 (卡餐車加速)"
+name_i18n.en = "Custom Maps - Faster Resource Loading"
+name_i18n.ko = "커스텀 맵 - 리소스 로딩 가속"
+name_i18n.ja = "カスタムマップ - リソース読み込み高速化"
 group_i18n.zh-CN = "DIYLevel 优化"
 group_i18n.zh-TW = "DIYLevel 優化"
 group_i18n.en = "DIYLevel Optimization"
@@ -38,11 +38,16 @@ version_regex = ""
 install_target = "BepInEx/plugins"
 
 # 仓库备注
-note_i18n.zh-CN = """优化 DIYLevel 加载地图流程，避免进入餐车时因大量关卡资源加载而长时间卡顿。"""
-note_i18n.zh-TW = """最佳化 DIYLevel 載入地圖的流程，避免進入餐車時因大量關卡資源載入而長時間卡頓。"""
-note_i18n.en = """Optimized the DIYLevel map loading process to prevent long freezes when entering the food truck due to loading a large number of level assets."""
-note_i18n.ko = """DIYLevel의 맵 로딩 과정을 최적화하여, 다량의 레벨 리소스를 불러오는 동안 푸드 트럭 진입 시 장시간 멈추는 현상을 방지했습니다."""
-note_i18n.ja = """DIYLevel のマップ読み込み処理を最適化し、大量のレベルリソースの読み込みによってフードトラックに入る際に長時間固まるのを防ぎます。"""
+note_i18n.zh-CN = """优化 `DIYLevel（自定义地图）` 在餐车读取资源文件时的卡顿，减少进入餐车时的等待。
+**注意事项：安装 `1.7.0` 版本后，首次启动游戏进入餐车时会在后台加载并解压地图资源包。耗时根据地图数量从几十秒到几分钟不等，请耐心等待；加载进度请查看屏幕右上角的 `DIY info checking`。**"""
+note_i18n.zh-TW = """最佳化 `DIYLevel（自訂地圖）` 在餐車讀取資源檔案時的卡頓，減少進入餐車時的等待。
+**注意事項：安裝 `1.7.0` 版本後，首次啟動遊戲進入餐車時會在背景載入並解壓地圖資源包。耗時依地圖數量從數十秒到數分鐘不等，請耐心等待；載入進度請查看螢幕右上角的 `DIY info checking`。**"""
+note_i18n.en = """Speeds up `DIYLevel` resource loading to reduce the delay when entering the food truck.
+**Note: After installing version `1.7.0`, the first time you launch the game and enter the food truck, map resource packs are loaded and extracted in the background. This may take tens of seconds to several minutes depending on the number of maps. Please wait; check the `DIY info checking` progress in the upper-right corner of the screen.**"""
+note_i18n.ko = """`DIYLevel` 리소스 로딩을 가속하여 푸드 트럭 진입 시의 지연을 줄입니다.
+**주의사항: `1.7.0` 버전 설치 후 게임을 처음 실행해 푸드 트럭에 들어가면 백그라운드에서 맵 리소스 팩을 불러오고 압축을 풉니다. 맵 수에 따라 수십 초에서 몇 분까지 걸릴 수 있으니 기다려 주세요. 화면 오른쪽 위의 `DIY info checking` 진행 상태를 확인하세요.**"""
+note_i18n.ja = """`DIYLevel` のリソース読み込みを高速化し、フードトラックに入る際の待ち時間を短縮します。
+**注意事項：バージョン `1.7.0` のインストール後、ゲームを初めて起動してフードトラックに入ると、バックグラウンドでマップリソースパックの読み込みと展開が行われます。マップ数によって数十秒から数分かかる場合がありますので、そのままお待ちください。画面右上の `DIY info checking` の進行状況を確認してください。**"""
 
 # 依赖 DIYLevel
 [[repositories.relations]]
@@ -52,17 +57,17 @@ guid = "dev.gua.overcooked.diylevel"
 [[repositories.release_relations]]
 version = "==1.7.0"
 relations = [
-  { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = ">=0.10.0" },
+  { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = "==0.10.0" },
 ]
 
 [[repositories]]
 enabled = true
 # 仓库基本信息
-name_i18n.zh-CN = "DIYChef 快速载入"
-name_i18n.zh-TW = "DIYChef 快速載入"
-name_i18n.en = "DIYChef Fast Init"
-name_i18n.ko = "DIYChef 빠른 로딩"
-name_i18n.ja = "DIYChef 高速読み込み"
+name_i18n.zh-CN = "厨房暖暖 快速载入 (卡餐车加速)"
+name_i18n.zh-TW = "廚房暖暖 快速載入 (卡餐車加速)"
+name_i18n.en = "DIYChef - Faster Resource Loading"
+name_i18n.ko = "DIYChef - 리소스 로딩 가속"
+name_i18n.ja = "DIYChef - リソース読み込み高速化"
 group_i18n.zh-CN = "DIYChef 优化"
 group_i18n.zh-TW = "DIYChef 優化"
 group_i18n.en = "DIYChef Optimization"
@@ -97,18 +102,13 @@ version_regex = ""
 install_target = "BepInEx/plugins"
 
 # 仓库备注
-note_i18n.zh-CN = """优化 DIYChef（厨房暖暖）的启动与厨师切换加载，通过厨师和帽子按需加载、内存缓存与持久化缓存，减少大量自定义资源带来的等待。
-
-**安装后，请将旧 MOD 目录中的 `Resources` 文件夹和 `prefer.txt` 移动到新的 MOD 目录，与 `DIYChefFastInit.dll` 放在同一目录下。**"""
-note_i18n.zh-TW = """最佳化 DIYChef（廚房暖暖）的啟動與廚師切換載入，透過廚師和帽子隨需載入、記憶體快取與持久化快取，減少大量自訂資源造成的等待。
-
-**安裝後，請將舊 MOD 目錄中的 `Resources` 資料夾和 `prefer.txt` 移動到新的 MOD 目錄，與 `DIYChefFastInit.dll` 放在同一目錄下。**"""
-note_i18n.en = """Optimizes DIYChef startup and chef switching with on-demand loading of chefs and hats, in-memory caching, and persistent caching to reduce waits when many custom resources are installed.
-
-**After installation, move the `Resources` folder and `prefer.txt` from the old MOD directory into the new MOD directory, alongside `DIYChefFastInit.dll`.**"""
-note_i18n.ko = """셰프와 모자의 온디맨드 로딩, 메모리 캐시 및 영구 캐시로 DIYChef 시작과 셰프 전환을 최적화하여, 많은 커스텀 리소스로 인한 대기 시간을 줄입니다.
-
-**설치 후 기존 MOD 폴더의 `Resources` 폴더와 `prefer.txt`를 새 MOD 폴더로 이동하여 `DIYChefFastInit.dll`과 같은 폴더에 두세요.**"""
-note_i18n.ja = """シェフと帽子のオンデマンド読み込み、メモリキャッシュ、永続キャッシュにより DIYChef の起動とシェフ切り替えを最適化し、大量のカスタムリソースによる待ち時間を短縮します。
-
-**インストール後、旧 MOD フォルダー内の `Resources` フォルダーと `prefer.txt` を新しい MOD フォルダーへ移動し、`DIYChefFastInit.dll` と同じフォルダーに配置してください。**"""
+note_i18n.zh-CN = """优化 `DIYChef（自定义厨师）` 在餐车读取厨师资源文件时的卡顿，减少进入餐车时的等待。
+**注意事项：安装后，请手动将 `OC2DIYChef` 目录下的 `Resources` 文件夹和 `prefer.txt` 移动到 `OC2DIYChef-FastInit` 下，与 `DIYChefFastInit.dll` 放在同一目录下。重复文件请选择替换。**"""
+note_i18n.zh-TW = """最佳化 `DIYChef（自訂廚師）` 在餐車讀取廚師資源檔案時的卡頓，減少進入餐車時的等待。
+**注意事項：安裝後，請手動將 `OC2DIYChef` 目錄下的 `Resources` 資料夾和 `prefer.txt` 移動到 `OC2DIYChef-FastInit` 下，與 `DIYChefFastInit.dll` 放在同一目錄下。若有重複檔案，請選擇取代。**"""
+note_i18n.en = """Speeds up `DIYChef` resource loading to reduce the delay when entering the food truck.
+**Note: After installation, manually move the `Resources` folder and `prefer.txt` from the `OC2DIYChef` directory into `OC2DIYChef-FastInit`, alongside `DIYChefFastInit.dll`. **"""
+note_i18n.ko = """`DIYChef` 리소스 로딩을 가속하여 푸드 트럭 진입 시의 지연을 줄입니다.
+**주의사항: 설치 후 `OC2DIYChef` 디렉터리의 `Resources` 폴더와 `prefer.txt`를 `OC2DIYChef-FastInit`으로 직접 옮기고 `DIYChefFastInit.dll`과 같은 폴더에 두세요. 중복 파일이 있으면 바꾸기를 선택하세요.**"""
+note_i18n.ja = """`DIYChef` のリソース読み込みを高速化し、フードトラックに入る際の待ち時間を短縮します。
+**注意事項：インストール後、`OC2DIYChef` ディレクトリ内の `Resources` フォルダーと `prefer.txt` を手動で `OC2DIYChef-FastInit` へ移動し、`DIYChefFastInit.dll` と同じフォルダーに配置してください。重複ファイルがある場合は「置き換え」を選択してください。**"""

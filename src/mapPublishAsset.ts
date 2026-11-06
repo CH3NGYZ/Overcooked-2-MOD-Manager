@@ -74,18 +74,16 @@ export function safeAssetName(name: string): string {
     .slice(0, 200)
 }
 
-/**
- * 渲染这一版的附件名。
- *
- * `template` 留空时按后端规则用关卡集名生成。版本号不是「版本号文本」、或模板
- * 里根本没有 `${version}` 占位符（管理器抽不出版本）时返回空串，由调用方提示作者。
- */
+/** 模板渲染只校验、不改写：必须与后端 upload_asset_name 的实际名称一致。 */
 export function renderAssetName(template: string, levelSetName: string, version: string): string {
   const versionText = version.trim()
   if (!isVersionText(versionText)) return ''
   const source = template.trim() || defaultTemplate(levelSetName)
   if (!source.includes(ASSET_VERSION_PLACEHOLDER)) return ''
-  return safeAssetName(source.split(ASSET_VERSION_PLACEHOLDER).join(versionText))
+  const name = source.split(ASSET_VERSION_PLACEHOLDER).join(versionText).trim()
+  if (!name || new TextEncoder().encode(name).length > 200 || name.startsWith('.') ||
+    name.endsWith('.') || /[\u0000-\u001f\u007f-\u009f/\\:*?"<>|]/.test(name)) return ''
+  return name
 }
 
 /** 附件名末尾的压缩包扩展名；只剥这些，不能把 `1.2.0` 的 `.0` 当成扩展名。 */
@@ -158,9 +156,9 @@ export function parseVersionedZipName(fileName: string): { tag: string; version:
   return { tag, version: match[2] }
 }
 
-/** 新地图的资产模板：`<tag>_v${version}.zip`（tag 先过 `safeAssetName`）。 */
+/** 默认模板保留已存在的 tag；新建 tag 在第一步另行校验为 ASCII 字母数字。 */
 export function composeAssetRule(tag: string): string {
-  return `${safeAssetName(tag.trim())}_v${ASSET_VERSION_PLACEHOLDER}.zip`
+  return `${tag.trim()}_v${ASSET_VERSION_PLACEHOLDER}.zip`
 }
 
 /** 正则元字符转义；模板里的普通字符要按字面匹配。 */
@@ -193,6 +191,11 @@ export function versionFromRule(rule: string, fileName: string): string | null {
   if (!match) return null
   const version = match[1]
   return version ? version : null
+}
+
+/** 仅在已知的附件模板匹配时返回版本，保留版本后缀。 */
+export function versionFromValidAsset(rule: string, fileName: string): string | null {
+  return versionFromRule(rule, fileName)
 }
 
 /** 附件名里第一段数字版本号；与后端 `rule_from_asset_name` 的 `find` 同规则。 */

@@ -1,37 +1,49 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { assetRelationOverride, buildOverrides, emptyRelationTables, overrideDrafts } from '../src/mapPublishRelations.ts'
+import { assetRelationOverride, withAssetRelations, buildOverrides, emptyRelationTables, overrideDrafts } from '../src/mapPublishRelations.ts'
 import { metadataForStep } from '../src/mapPublishRelease.ts'
 import { pickReleaseRelations } from '../src/modRelations.ts'
 
 const relation = guid => ({ kind: 'requires', guid, version: '>=1', optional: true, prerelease: false })
-test('单资产编辑复制生效关系而不收窄宽区间；同下限的等值覆盖优先且只影响该版', () => {
+test('弹窗读取当前生效关系的副本，打开、编辑或取消都不修改原声明', () => {
   const defaults = { ...emptyRelationTables(), requires: [{ guid: 'default', range: '*' }] }
   const drafts = overrideDrafts([{ version: '>=1', relations: [relation('range')] }])
-  assetRelationOverride(defaults, drafts, '1')
-  assert.equal(drafts[0].version, '==1')
-  assert.equal(drafts[1].version, '>=1')
-  assert.equal(drafts[0].requires[0].guid, 'range')
-  drafts[0].requires[0].guid = 'specific'
-  const saved = buildOverrides(drafts)
+  const snapshot = structuredClone(drafts)
+  const entry = assetRelationOverride(defaults, drafts, '1')
+  assert.equal(entry.version, '==1')
+  assert.equal(entry.requires[0].guid, 'range')
+  entry.requires[0].guid = 'specific'
+  assert.deepEqual(drafts, snapshot)
+  assert.equal(defaults.requires[0].guid, 'default')
+  const savedDrafts = withAssetRelations(drafts, '1', entry)
+  assert.equal(savedDrafts[1].version, '>=1')
+  const saved = buildOverrides(savedDrafts)
   assert.equal(pickReleaseRelations([], saved, '1')[0].guid, 'specific')
   assert.equal(pickReleaseRelations([], saved, '2')[0].guid, 'range')
   assert.equal(saved[0].relations[0].optional, true)
   assert.equal(saved[0].relations[0].prerelease, false)
-  assert.equal(defaults.requires[0].guid, 'default')
-  assetRelationOverride(defaults, drafts, '1.0')
-  assert.equal(drafts.length, 2, '语义相同的等值覆盖复用，不生成重复项')
-  assert.equal(drafts[0].requires[0].guid, 'specific')
+  entry.requires[0].guid = 'changed-after-confirm'
+  assert.equal(savedDrafts[0].requires[0].guid, 'specific')
+  const reopened = assetRelationOverride(defaults, savedDrafts, '1.0')
+  const replaced = withAssetRelations(savedDrafts, '1.0', reopened)
+  assert.equal(replaced.length, 2, '语义相同的等值覆盖替换，不生成重复项')
+  assert.equal(replaced[0].requires[0].guid, 'specific')
 })
 
-test('没有覆盖时从默认表深复制，兄弟资产独立编辑', () => {
+test('没有覆盖时复制默认表，各资产独立编辑，恢复继承只移除该版等值项', () => {
   const defaults = { ...emptyRelationTables(), compatible: [{ guid: 'base', range: '' }] }
-  const drafts = []
-  assetRelationOverride(defaults, drafts, '1')
-  assetRelationOverride(defaults, drafts, '2')
-  drafts[0].compatible[0].guid = 'changed'
-  assert.equal(drafts[1].compatible[0].guid, 'base')
+  const first = assetRelationOverride(defaults, [], '1')
+  const second = assetRelationOverride(defaults, [], '2')
+  first.compatible[0].guid = 'changed'
+  assert.equal(second.compatible[0].guid, 'base')
   assert.equal(defaults.compatible[0].guid, 'base')
+  const range = overrideDrafts([{ version: '>=1', relations: [relation('wide')] }])
+  const drafts = withAssetRelations(withAssetRelations(range, '1', first), '2', second)
+  const inherited = withAssetRelations(drafts, '1.0', null)
+  assert.deepEqual(inherited.map(entry => entry.version), ['==2', '>=1'])
+  assert.equal(pickReleaseRelations([], buildOverrides(inherited), '1')[0].guid, 'wide')
+  assert.equal(drafts.length, 3)
+  assert.deepEqual(withAssetRelations([], '1', null), [])
 })
 
 test('地图资料与版本保存互不夹带草稿，初次提交包含完整块', () => {

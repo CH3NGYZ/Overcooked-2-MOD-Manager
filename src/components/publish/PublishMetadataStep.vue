@@ -57,11 +57,7 @@ function isRequired(field: I18nFieldId, language: string) {
     </section>
 
     <section v-else class="metadata-section" :aria-label="t('mapPublish.relationsSection')">
-      <p class="hint no-top">{{ t('mapPublish.relationsOptional') }}</p>
-      <div class="relation-default">
-        <div class="relation-scope-head"><h4>{{ t('mapPublish.defaultRelations') }}</h4></div>
-        <PublishRelationTables :tables="draft" prefix="relation-default" :disabled="busyAny" @update="(kind, rows) => draft[kind] = rows" />
-      </div>
+      <PublishRelationTables :tables="draft" prefix="relation-default" :disabled="busyAny" @update="(kind, rows) => draft[kind] = rows" />
     </section>
     <div class="metadata-footer">
       <n-button size="small" type="primary" :loading="stepBusy === 'metadata'" :disabled="busyAny" @click="() => saveDocument()">{{ workingRelease?.metadata ? t('mapPublish.saveMetadata') : t('mapPublish.continueToVersions') }}</n-button>

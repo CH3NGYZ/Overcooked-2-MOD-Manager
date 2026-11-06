@@ -50,38 +50,6 @@ export const mapPublish: DomainMessages = {
     ko: '관계',
     ja: '関係',
   },
-  relationsOptional: {
-    'zh-CN': '可选：按 GUID 声明依赖、兼容或冲突的 MOD。',
-    'zh-TW': '可選：依 GUID 宣告依賴、相容或衝突的 MOD。',
-    en: 'Optional: declare required, compatible or conflicting MODs by GUID.',
-    ko: '선택 사항: GUID로 필요·호환·충돌 MOD를 지정합니다.',
-    ja: '任意：GUID で依存・互換・競合する MOD を指定します。',
-  },
-  defaultRelations: {
-    'zh-CN': '默认关系', 'zh-TW': '預設關係', en: 'Default relations', ko: '기본 관계', ja: '既定の関係',
-  },
-  versionRelations: {
-    'zh-CN': '按资产版本覆盖', 'zh-TW': '依資產版本覆寫', en: 'Asset-version overrides', ko: '첨부 버전별 재정의', ja: 'アセットバージョン別の上書き',
-  },
-  addVersionRelations: {
-    'zh-CN': '添加版本关系', 'zh-TW': '新增版本關係', en: 'Add version override', ko: '버전 관계 추가', ja: 'バージョン関係を追加',
-  },
-  removeVersionRelations: {
-    'zh-CN': '删除此版本关系', 'zh-TW': '刪除此版本關係', en: 'Remove this override', ko: '이 버전 관계 삭제', ja: 'この上書きを削除',
-  },
-  assetVersionRange: {
-    'zh-CN': '资产版本范围', 'zh-TW': '資產版本範圍', en: 'Asset version range', ko: '첨부 버전 범위', ja: 'アセットバージョン範囲',
-  },
-  selectAssetVersion: {
-    'zh-CN': '选择单个资产版本', 'zh-TW': '選擇單一資產版本', en: 'Select one asset version', ko: '첨부 버전 선택', ja: '単一のアセットバージョンを選択',
-  },
-  versionRelationsHint: {
-    'zh-CN': '按 mapset_version 匹配，不按 info_version。==0.9 仅限该版，>=0.9 表示区间。命中后整组替换默认的三张表；多条命中时取下限最高的一条，下限相同取先出现的一条。手动新增复制默认关系；点资产行「关系」复制该版生效关系，不改变已有范围。',
-    'zh-TW': '依 mapset_version 匹配，而非 info_version。==0.9 僅限該版，>=0.9 表示區間。命中後整組取代預設的三張表；多條命中時取下限最高的一條，下限相同取先出現的一條。手動新增複製預設關係；點資產列「關係」複製該版生效關係，不改動既有範圍。',
-    en: 'Matches mapset_version, not info_version. Use ==0.9 for one version or >=0.9 for a range. A match replaces all three default tables. The highest lower bound wins; ties use the first entry. Manual overrides copy the defaults; an asset’s Relations action copies its effective relations without changing existing ranges.',
-    ko: 'info_version이 아닌 mapset_version에 적용합니다. 단일 버전은 ==0.9, 범위는 >=0.9로 지정합니다. 일치하면 기본 표 3개를 모두 대체합니다. 하한이 가장 높은 항목이 우선하며 같으면 첫 항목을 사용합니다. 수동 추가는 기본 관계를 복사하고, 첨부 항목의 관계 버튼은 기존 범위를 바꾸지 않고 해당 버전에 적용된 관계를 복사합니다.',
-    ja: 'info_version ではなく mapset_version に適用します。単一版は ==0.9、範囲は >=0.9 で指定します。一致すると既定の3表をすべて置き換えます。下限が最も高い項目を優先し、同じなら先の項目を使います。手動追加では既定の関係を、アセット行の「関係」ではその版の有効な関係をコピーします。既存の範囲は変更しません。',
-  },
   invalidRelations: {
     'zh-CN': '请检查关系：GUID 不能为空或重复，版本范围须合法；版本覆盖必须指定范围且至少有一条关系。',
     'zh-TW': '請檢查關係：GUID 不可空白或重複，版本範圍須有效；版本覆寫必須指定範圍且至少有一條關係。',
@@ -1245,7 +1213,24 @@ export const mapPublish: DomainMessages = {
     'zh-CN': '保存版本信息', 'zh-TW': '儲存版本資訊', en: 'Save versions', ko: '버전 정보 저장', ja: 'バージョン情報を保存',
   },
   assetRelations: {
-    'zh-CN': '关系', 'zh-TW': '關係', en: 'Relations', ko: '관계', ja: '関係',
+    'zh-CN': '依赖', 'zh-TW': '依賴', en: 'Dependencies', ko: '의존성', ja: '依存関係',
+  },
+  versionsReadOnly: {
+    'zh-CN': '资产版本和 info 版本不可编辑；如需修改，请删除该附件后重新上传 ZIP。',
+    'zh-TW': '資產版本與 info 版本不可編輯；如需修改，請刪除該附件後重新上傳 ZIP。',
+    en: 'Asset and info versions are read-only. To change them, delete the asset and upload the ZIP again.',
+    ko: '첨부 버전과 info 버전은 수정할 수 없습니다. 변경하려면 첨부 파일을 삭제하고 ZIP을 다시 업로드하세요.',
+    ja: 'アセットと info のバージョンは編集できません。変更するには添付を削除し、ZIP を再アップロードしてください。',
+  },
+  assetRelationsHint: {
+    'zh-CN': '仅配置此资产版本的依赖、兼容与冲突。确定后写入草稿，再点「保存版本信息」提交。恢复继承只移除此版本的专属配置，继续使用已有范围或地图信息中的关系。',
+    'zh-TW': '僅設定此資產版本的依賴、相容與衝突。確定後寫入草稿，再按「儲存版本資訊」提交。恢復繼承只移除此版本的專屬設定，繼續使用既有範圍或地圖資訊中的關係。',
+    en: 'Configure dependencies, compatibility and conflicts for this asset version only. Confirm to update the draft, then select Save versions to publish. Restore inheritance removes only this version’s configuration and uses existing ranges or map relations.',
+    ko: '이 첨부 버전의 의존성·호환·충돌만 설정합니다. 확인 후 버전 정보 저장을 눌러 게시하세요. 상속 복원은 이 버전의 전용 설정만 제거하고 기존 범위 또는 지도 관계를 사용합니다.',
+    ja: 'このアセット版の依存・互換・競合のみを設定します。確定後「バージョン情報を保存」で公開します。継承に戻すと、この版の専用設定のみを削除し、既存の範囲またはマップの関係を使用します。',
+  },
+  inheritRelations: {
+    'zh-CN': '恢复继承', 'zh-TW': '恢復繼承', en: 'Restore inheritance', ko: '상속 복원', ja: '継承に戻す',
   },
   continueToVersions: {
     'zh-CN': '下一步：版本管理', 'zh-TW': '下一步：版本管理', en: 'Next: version management', ko: '다음: 버전 관리', ja: '次へ：バージョン管理',

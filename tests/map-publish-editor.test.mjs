@@ -22,7 +22,7 @@ test('发布表保留作者顺序、追加表外版本并排除不匹配与缺�
   assert.deepEqual(versionRowsOf(null), [])
 })
 
-test('上传与删除合并不覆盖未保存的排序和 info 版本', () => {
+test('上传与删除合并保留待保存的排序和本次上传识别的 info 版本', () => {
   const rows = [{ mapsetVersion: '1', infoVersion: 'edited', size: 0 }, { mapsetVersion: '2', infoVersion: 'custom', size: 0 }]
   const updated = reconcileVersionRows(rows, release)
   assert.deepEqual(updated.map(r => [r.mapsetVersion, r.infoVersion]), [['1', 'edited'], ['2', 'custom'], ['3-fix', '']])
@@ -113,10 +113,19 @@ test('资料只保留多语言和默认关系，独立第四步负责版本表�
   assert.match(relations, /mapPublish.relationAddRow/)
   assert.match(versions, /draft.releaseRelations/)
   assert.match(versions, /assetRelationOverride\(draft, draft.releaseRelations, row.mapsetVersion\)/)
+  assert.match(versions, /<AppModal :show="relationsOpen"/)
+  assert.match(versions, /const validation = usePublishValidation\(relationRoot\)/)
+  assert.match(versions, /relationIssue\(emptyRelationTables\(\), \[entry\]\)/)
+  assert.match(versions, /withAssetRelations\(draft.releaseRelations, editingVersion.value, entry\)/)
+  assert.doesNotMatch(versions, /addOverride|v-model:value="entry.version"|relation-scope-head|mapPublish.versionRelations/)
+  assert.doesNotMatch(step, /mapPublish.relationsOptional|mapPublish.defaultRelations/)
   assert.doesNotMatch(relations, /rowgroup|rowspan/)
   assert.doesNotMatch(step, /n-collapse|relation-row|i18n-rows/)
   const table = read('src/components/publish/VersionOrderTable.vue')
   assert.equal((table.match(/<th scope="col">/g) ?? []).length, 7)
+  assert.doesNotMatch(table, /NInput|n-input|v-model:value="row\.(infoVersion|mapsetVersion)"/)
+  assert.match(table, /\{\{ row.infoVersion \|\| '—' \}\}/)
+  assert.equal(mapPublish.assetRelations['zh-CN'], '依赖')
   assert.match(table, /const displayRows = computed\(\(\) => \[\.\.\.rows\.value\]\.reverse\(\)\)/)
   assert.match(table, /reorderVersionRows\(rows\.value, from, to\)/)
   assert.match(table, /event\.altKey/)
@@ -162,7 +171,7 @@ test('识别表先挂载再校验，不符保留表格且不得污染草稿或�
 })
 
 test('发布新增文案五语全部登记', () => {
-  for (const key of ['stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'relationsOptional', 'defaultRelations', 'versionRelations', 'addVersionRelations', 'removeVersionRelations', 'assetVersionRange', 'selectAssetVersion', 'versionRelationsHint', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
+  for (const key of ['stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'versionsReadOnly', 'assetRelationsHint', 'inheritRelations', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
     for (const language of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(mapPublish[key][language]?.trim(), `${key}/${language}`)
   }
 })

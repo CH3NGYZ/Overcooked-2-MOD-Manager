@@ -35,22 +35,33 @@ export function buildOverrides(entries: readonly PublishRelationOverride[]): Rel
   }))
 }
 
-/** 单资产编辑只新增/复用等值覆盖，绝不把命中的宽区间改成单版本。 */
+function isExactAsset(entry: PublishRelationOverride, version: string): boolean {
+  const clauses = parseVersionSpec(entry.version)
+  return clauses?.length === 1 && clauses[0]?.op === '==' && versionMatches(entry.version, version)
+}
+
+/** 弹窗只编辑副本；打开或取消不能插入覆盖，也不能改变声明顺序。 */
 export function assetRelationOverride(
-  defaults: RelationTables, entries: PublishRelationOverride[], version: string,
-): number {
-  const exact = entries.findIndex(entry => {
-    const clauses = parseVersionSpec(entry.version)
-    return clauses?.length === 1 && clauses[0]?.op === '==' && versionMatches(entry.version, version)
-  })
-  // 放到最前：与宽区间下限相同时，消费端按声明顺序决定优先级。
-  const tables = exact >= 0 ? entries.splice(exact, 1)[0]! : overrideDrafts([{
+  defaults: RelationTables, entries: readonly PublishRelationOverride[], version: string,
+): PublishRelationOverride {
+  return overrideDrafts([{
     version: `==${version}`,
     relations: pickReleaseRelations(buildOverrides([{ version: '', ...defaults }])[0]!.relations,
       buildOverrides(entries), version),
   }])[0]!
-  entries.unshift(tables)
-  return 0
+}
+
+/** 只替换该资产的等值声明；null 恢复继承，宽区间和兄弟版本始终保留。 */
+export function withAssetRelations(
+  entries: readonly PublishRelationOverride[], version: string, tables: RelationTables | null,
+): PublishRelationOverride[] {
+  const remaining = entries.filter(entry => !isExactAsset(entry, version))
+  // 前置处理同下限优先级，复制行以隔离关闭后的弹窗草稿。
+  return tables ? [{ version: `==${version}`,
+    requires: tables.requires.map(row => ({ ...row })),
+    compatible: tables.compatible.map(row => ({ ...row })),
+    conflicts: tables.conflicts.map(row => ({ ...row })),
+  }, ...remaining] : remaining
 }
 
 /** 返回界面字段标识；版本区间的解析复用唯一实现，不在发布页另造语法。 */

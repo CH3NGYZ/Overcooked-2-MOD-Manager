@@ -38,7 +38,7 @@ export function versionRowsOf(release: PublishRelease | null): AssetVersionRow[]
   return rows
 }
 
-/** 上传或删除附件不能抹掉尚未保存的排序与 info 版本修正。 */
+/** 上传或删除附件不能抹掉尚未保存的排序与本次上传识别出的 info 版本。 */
 export function reconcileVersionRows(rows: readonly AssetVersionRow[], release: PublishRelease): AssetVersionRow[] {
   const remaining = new Map(versionRowsOf(release).map(row => [row.mapsetVersion, row]))
   const result: AssetVersionRow[] = []

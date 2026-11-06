@@ -255,7 +255,7 @@ function confirmDeleteAsset(name: string) {
         :releases="releases" :releases-loading="releasesLoading" :deleting-release="deletingRelease"
         @create="openCreate" @open="openManagement" @delete="confirmDeleteRelease" />
       <template v-else>
-        <!-- 身份固定；三个步骤分别保存。 -->
+        <!-- 身份固定；资料与版本分步保存。 -->
         <div class="panel publish-head">
           <div class="panel-head">
             <div class="manage-head">

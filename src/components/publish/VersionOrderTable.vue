@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NInput, NTable, NTag } from 'naive-ui'
+import { NButton, NTable, NTag } from 'naive-ui'
 import { ReorderThreeOutline } from '@vicons/ionicons5'
 import { t } from '../../i18n'
 import { formatFileSize } from '../../repositoryAssets'
@@ -75,7 +75,7 @@ function onKeydown(event: KeyboardEvent, index: number) {
           </button></td>
           <th scope="row" class="version-asset mono">{{ nameOf(row) || row.mapsetVersion }}</th>
           <td class="mono">{{ row.mapsetVersion }}</td>
-          <td><n-input v-model:value="row.infoVersion" size="small" :input-props="{ 'aria-label': t('mapPublish.versionMapInfo') }" :disabled="disabled" /></td>
+          <td class="mono">{{ row.infoVersion || '—' }}</td>
           <td class="mono">{{ formatFileSize(row.size) }}</td>
           <td><n-tag v-if="index === 0" size="small" type="success" :bordered="false">{{ t('mapPublish.versionMapLatest') }}</n-tag><span v-else class="muted">—</span></td>
           <td><div class="version-actions">

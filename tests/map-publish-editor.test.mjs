@@ -64,7 +64,7 @@ test('编辑页复用标题覆盖与受控分段导航，返回仍走原离开�
   assert.match(header, /<n-button v-else[^>]*:disabled="busyAny"[^>]*@click="backToList"/)
   assert.match(header, /mapPublish.backToMapSets/)
   assert.doesNotMatch(view, /publish-head|identityTitle|identityVersions|mapPublish.mapManagement/)
-  assert.match(view, /<n-tabs :value="activeStep" type="segment"/)
+  assert.match(view, /<n-tabs v-if="!selectingZip" :value="activeStep" type="segment"/)
   assert.match(view, /@update:value="selectStep"/)
   assert.match(view, /<n-tab-pane v-for="\(step, index\) in PUBLISH_STEP_ORDER"[^>]*:name="step"[\s\S]*?:disabled="busyAny \|\| !canSelectStep\(step\)"/)
   assert.match(view, /<template #tab>\{\{ index \+ 1 \}\}. \{\{ stepTitle\(step\) \}\}<\/template>/)
@@ -79,18 +79,36 @@ test('编辑页复用标题覆盖与受控分段导航，返回仍走原离开�
 
 test('四步保存、info 版本与前置同名附件检查不退回一键发布', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
-  assert.match(editor, /function openManagement[\s\S]*?activeStep\.value = 'asset'/)
+  assert.match(editor, /function openManagement[\s\S]*?activeStep\.value = 'versions'/)
   assert.match(editor, /function openCreate[\s\S]*?activeStep\.value = 'release'/)
   assert.match(editor, /const version = result\.info_version\.trim\(\)/)
   assert.match(editor, /asset: existingRule\.value/)
   assert.match(editor, /release\.assets\.some\(asset => asset\.name === name\)/)
-  assert.match(editor, /metadata: metadataForStep\(step, release.metadata, buildMetadata\(\)\)/)
-  assert.match(editor, /body: release.body/)
+  assert.match(editor, /metadata: complete \? buildMetadata\(\) : metadataForStep\(step, release.metadata, buildMetadata\(\)\)/)
+  assert.match(editor, /body: complete \? form.body : release.body/)
   assert.match(editor, /step === 'versions'[\s\S]*pendingUpload.value = null/)
   assert.doesNotMatch(editor, /publishVersion|missingPublishInputs|versionFromFileName|resetPublishSteps/)
   const session = read('src/composables/useMapPublish.ts')
   assert.doesNotMatch(session.slice(session.indexOf('async function saveRelease('), session.indexOf('async function deleteRelease(')), /loadReleases\(/)
   assert.doesNotMatch(session.slice(session.indexOf('async function uploadAsset('), session.indexOf('async function inspectZip(')), /loadReleases\(/)
+})
+
+test('本地准备先于远端创建，完整登记与独立维护使用不同保存边界', () => {
+  const editor = read('src/composables/useMapPublishEditor.ts')
+  const release = editor.slice(editor.indexOf('async function saveReleaseStep('), editor.indexOf('async function uploadPending('))
+  assert.ok(release.indexOf('if (preparing.value)') < release.indexOf('publish.saveRelease('))
+  assert.doesNotMatch(release, /releaseId: null/)
+  const upload = editor.slice(editor.indexOf('async function uploadPending('), editor.indexOf('function buildMetadata('))
+  assert.match(upload, /validate\('release'\)[\s\S]*validate\('metadata'\)[\s\S]*validate\('asset'\)/)
+  assert.match(upload, /if \(!release\) \{[\s\S]*releaseId: null[\s\S]*activeTag.value = release.tag/)
+  assert.ok(upload.indexOf('publish.saveRelease(') < upload.indexOf('publish.uploadAsset('))
+  assert.ok(editor.includes('awaitingMetadata.value || !release.metadata'))
+  assert.ok(editor.includes('if (!workingRelease.value && !tagEdited)'))
+  assert.match(read('src/components/publish/PublishReleaseStep.vue'), /@update:value="setTag"/)
+  const guard = read('src/composables/usePublishLeaveGuard.ts')
+  assert.match(guard, /!uploadedName.value && !dirty.value/)
+  assert.match(guard, /mapPublish.discardDraftConfirm/)
+  assert.match(read('src/components/publish/PublishAssetStep.vue'), /pending.inspection.file_size/)
 })
 
 test('必填按钮可点、缺项脉冲可重播并清理，动画只改边框', () => {
@@ -181,10 +199,10 @@ test('识别表先挂载再校验，不符保留表格且不得污染草稿或�
   const flush = load.indexOf('await nextTick()')
   const check = load.indexOf('publishZipIssue(result, locked)')
   const stop = load.indexOf('if (pending.issue) return')
-  const apply = load.indexOf('document.applyInspection(result)')
+  const apply = load.indexOf('document.applyInspection(result, !workingRelease.value?.metadata)')
   assert.ok(preview > 0 && preview < flush && flush < check && check < stop && stop < apply)
   assert.doesNotMatch(load.slice(preview), /rejectPending\(/)
-  assert.match(editor, /step === 'asset' && pending\.inspection && !pending\.accepted/)
+  assert.match(editor, /step === 'asset' && !pending\.accepted/)
   const asset = read('src/components/publish/PublishAssetStep.vue')
   assert.match(asset, /<n-table class="inspection-table"/)
   assert.match(asset, /<th scope="row">/)
@@ -193,7 +211,7 @@ test('识别表先挂载再校验，不符保留表格且不得污染草稿或�
 })
 
 test('发布新增文案五语全部登记', () => {
-  for (const key of ['editTitle', 'stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'versionsReadOnly', 'assetRelationsHint', 'inheritRelations', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
+  for (const key of ['editTitle', 'stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'selectZipTitle', 'continueToMetadata', 'continueToUpload', 'confirmUpload', 'confirmPublish', 'saveChangelog', 'discardDraftTitle', 'discardDraftConfirm', 'discardAndLeave', 'zipReadyHint', 'changelogHint', 'uploadConfirmationHint', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'versionsReadOnly', 'assetRelationsHint', 'inheritRelations', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
     for (const language of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(mapPublish[key][language]?.trim(), `${key}/${language}`)
   }
 })

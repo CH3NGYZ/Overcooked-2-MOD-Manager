@@ -3,7 +3,7 @@ import { NButton, NInput } from 'naive-ui'
 import { t } from '../../i18n'
 import type { MapPublishEditor } from '../../composables/useMapPublishEditor'
 const props = defineProps<{ editor: MapPublishEditor }>()
-const { form, workingRelease, busyAny, stepBusy, saveReleaseStep } = props.editor
+const { form, workingRelease, busyAny, stepBusy, preparing, setTag, saveReleaseStep } = props.editor
 const allowTag = (value: string) => /^[A-Za-z0-9]*$/.test(value)
 </script>
 
@@ -16,7 +16,7 @@ const allowTag = (value: string) => /^[A-Za-z0-9]*$/.test(value)
           <span v-if="!workingRelease" class="required-mark" aria-hidden="true">*</span>
         </label>
         <code v-if="workingRelease" class="mono rule-text">{{ workingRelease.tag }}</code>
-        <n-input v-else v-model:value="form.tag" size="small" :allow-input="allowTag"
+        <n-input v-else :value="form.tag" @update:value="setTag" size="small" :allow-input="allowTag"
           :input-props="{ id: 'publish-tag', 'aria-required': true }"
           :placeholder="t('mapPublish.tagPlaceholder')" :disabled="busyAny" />
       </div>
@@ -26,9 +26,10 @@ const allowTag = (value: string) => /^[A-Za-z0-9]*$/.test(value)
           :input-props="{ id: 'publish-body' }" :disabled="busyAny" />
       </div>
     </div>
+    <p class="hint">{{ t('mapPublish.changelogHint') }}</p>
     <div class="actions">
       <n-button size="small" type="primary" :loading="stepBusy === 'release'" :disabled="busyAny" @click="saveReleaseStep">
-        {{ workingRelease ? t('mapPublish.saveAndNext') : t('mapPublish.createRelease') }}
+        {{ preparing ? t('mapPublish.continueToMetadata') : t('mapPublish.saveChangelog') }}
       </n-button>
     </div>
   </div>

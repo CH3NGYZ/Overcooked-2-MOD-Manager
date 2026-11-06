@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs'
 import { stepAvailable } from '../src/mapPublishFlow.ts'
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
-test('上传完成但未登记时，只可编辑第三、四步；已有地图不锁步', () => {
+test('上传完成未登记时只禁重复上传，日志资料可改但留在草稿', () => {
   for (const exists of [false, true]) {
-    assert.equal(stepAvailable('release', exists, true), false)
+    assert.equal(stepAvailable('release', exists, true), exists)
     assert.equal(stepAvailable('asset', exists, true), false)
     assert.equal(stepAvailable('metadata', exists, true), exists)
     assert.equal(stepAvailable('versions', exists, true), exists)
@@ -21,7 +21,7 @@ test('本次上传按服务器 ID 和固定仓库清理，保存失败不丢清�
   assert.match(editor, /if \(!saved \|\| epoch !== editorEpoch\) return false\s+if \(step === 'versions'\) \{\s+pendingUpload.value = null/)
   assert.doesNotMatch(editor.slice(editor.indexOf('async function saveDocument(')), /resetToList\(\)/)
   assert.match(editor, /if \(await leave.requestLeave\(\)\) resetToList\(\)/)
-  for (const action of ['loadPendingZip', 'pickPendingZip', 'saveReleaseStep', 'uploadPending']) {
+  for (const action of ['loadPendingZip', 'pickPendingZip', 'uploadPending']) {
     const body = editor.slice(editor.indexOf(`async function ${action}(`))
     assert.match(body.slice(0, body.indexOf('\n  }')), /awaitingMetadata.value/)
   }

@@ -134,20 +134,6 @@ export const mapPublish: DomainMessages = {
     ko: '첨부 파일 {name}이 이미 있습니다. 기존 파일을 처리하거나 새 버전을 선택하세요.',
     ja: '添付ファイル {name} は既に存在します。既存のファイルを確認するか、新しいバージョンを選択してください。',
   },
-  saveAndNext: {
-    'zh-CN': '保存并下一步',
-    'zh-TW': '儲存並下一步',
-    en: 'Save and continue',
-    ko: '저장 후 다음',
-    ja: '保存して次へ',
-  },
-  createRelease: {
-    'zh-CN': '新建 Release',
-    'zh-TW': '新增 Release',
-    en: 'Create release',
-    ko: '릴리스 만들기',
-    ja: 'リリースを作成',
-  },
   title: {
     'zh-CN': '地图发布',
     'zh-TW': '地圖發布',
@@ -415,11 +401,11 @@ export const mapPublish: DomainMessages = {
     ja: 'マップセットの一意の ID',
   },
   tagPlaceholder: {
-    'zh-CN': '示例 ditu123；仅英文字母和数字，不支持空格或特殊字符，推荐拼音。',
-    'zh-TW': '範例 ditu123；僅英文字母和數字，不支援空格或特殊字元，建議使用拼音。',
-    en: 'Example: ditu123. English letters and digits only; no spaces or special characters. Pinyin is recommended.',
-    ko: '예: ditu123. 영문자와 숫자만 사용할 수 있으며 공백이나 특수 문자는 지원하지 않습니다. 병음을 권장합니다.',
-    ja: '例：ditu123。英字と数字のみ使用でき、空白や特殊文字は使用できません。ピンインを推奨します。',
+    'zh-CN': "从 info 英文名生成，可修改；仅英文字母和数字。",
+    'zh-TW': "從 info 英文名產生，可修改；僅英文字母與數字。",
+    en: "Suggested from the info name; editable, ASCII letters and digits only.",
+    ko: "info 영문 이름에서 제안됩니다. 영문자와 숫자만 사용할 수 있습니다.",
+    ja: "info の英語名から提案します。英数字のみで変更できます。",
   },
   releaseVersionLabel: {
     'zh-CN': '本次版本号',
@@ -436,11 +422,11 @@ export const mapPublish: DomainMessages = {
     ja: 'バージョン（例：1.2.0）は ZIP 内の info から自動的に読み取ります。添付ファイル名の生成と更新の検出に使用します。',
   },
   bodyLabel: {
-    'zh-CN': '发布说明',
-    'zh-TW': '發布說明',
-    en: 'Release notes',
-    ko: '릴리스 노트',
-    ja: 'リリースノート',
+    'zh-CN': "更新日志",
+    'zh-TW': "更新日誌",
+    en: "Changelog",
+    ko: "변경 기록",
+    ja: "更新履歴",
   },
   noMetadata: {
     'zh-CN': '待填写地图信息',
@@ -1143,19 +1129,132 @@ export const mapPublish: DomainMessages = {
     ko: '승인 콜백을 받을 수 없습니다: {reason}',
     ja: '承認コールバックを受信できません：{reason}',
   },
+
+  stepAssetTitle: {
+    'zh-CN': "上传确认",
+    'zh-TW': "上傳確認",
+    en: "Upload confirmation",
+    ko: "업로드 확인",
+    ja: "アップロード確認",
+  },
+
+  selectZipTitle: {
+    'zh-CN': "选择地图 ZIP",
+    'zh-TW': "選擇地圖 ZIP",
+    en: "Choose a map ZIP",
+    ko: "지도 ZIP 선택",
+    ja: "マップ ZIP を選択",
+  },
+
+  continueToMetadata: {
+    'zh-CN': "下一步：地图信息",
+    'zh-TW': "下一步：地圖資訊",
+    en: "Next: map info",
+    ko: "다음: 지도 정보",
+    ja: "次へ：マップ情報",
+  },
+
+  continueToUpload: {
+    'zh-CN': "下一步：上传确认",
+    'zh-TW': "下一步：上傳確認",
+    en: "Next: upload confirmation",
+    ko: "다음: 업로드 확인",
+    ja: "次へ：アップロード確認",
+  },
+
+  saveChangelog: {
+    'zh-CN': "保存更新日志",
+    'zh-TW': "儲存更新日誌",
+    en: "Save changelog",
+    ko: "변경 기록 저장",
+    ja: "更新履歴を保存",
+  },
+
+  confirmUpload: {
+    'zh-CN': "确认并上传",
+    'zh-TW': "確認並上傳",
+    en: "Confirm and upload",
+    ko: "확인 후 업로드",
+    ja: "確認してアップロード",
+  },
+
+  confirmPublish: {
+    'zh-CN': "确认发布",
+    'zh-TW': "確認發布",
+    en: "Confirm publication",
+    ko: "게시 확인",
+    ja: "公開を確定",
+  },
+
+  uploadNewVersion: {
+    'zh-CN': "上传新版",
+    'zh-TW': "上傳新版",
+    en: "Upload a new version",
+    ko: "새 버전 업로드",
+    ja: "新バージョンをアップロード",
+  },
+
+  zipReadyHint: {
+    'zh-CN': "已选择，尚未上传。单地图、版本和身份检查通过；上传前仍会重新核对。",
+    'zh-TW': "已選擇，尚未上傳。單地圖、版本與身分檢查通過；上傳前仍會重新核對。",
+    en: "Selected, not uploaded. Single-map, version and identity checks passed; the server checks again before upload.",
+    ko: "선택되었지만 아직 업로드되지 않았습니다. 단일 지도, 버전 및 신원 검사를 통과했으며 업로드 전에 다시 확인합니다.",
+    ja: "選択済み、未アップロードです。単一マップ・バージョン・識別情報の検証を通過しました。アップロード前に再確認します。",
+  },
+
+  changelogHint: {
+    'zh-CN': "同一地图的所有版本共用这份日志。建议按版本小标题追加，保留历史；这不是地图简介。",
+    'zh-TW': "同一地圖的所有版本共用這份日誌。建議按版本小標題追加，保留歷史；這不是地圖簡介。",
+    en: "All versions share this changelog. Append version headings to preserve history; this is not the map description.",
+    ko: "모든 버전이 이 변경 기록을 공유합니다. 버전별 제목으로 내용을 추가해 기록을 보존하세요. 지도 소개와는 다릅니다.",
+    ja: "全バージョンで共有する更新履歴です。版ごとの見出しで追記し、過去の履歴を残してください。マップ紹介とは別です。",
+  },
+
+  uploadConfirmationHint: {
+    'zh-CN': "核对上述信息后再上传：此时才创建或复用 Release。上传成功后仍需在版本管理中确认发布，才完成登记。",
+    'zh-TW': "核對上述資訊後再上傳：此時才建立或重用 Release。上傳成功後仍須在版本管理中確認發布，才完成登記。",
+    en: "Review before uploading. The release is created or reused only now. After upload, confirm publication in version management to register it.",
+    ko: "정보를 확인한 후 업로드하세요. 이때 릴리스를 생성하거나 재사용합니다. 업로드 후 버전 관리에서 게시를 확인해야 등록됩니다.",
+    ja: "内容を確認してアップロードしてください。この時点で Release を作成または再利用します。アップロード後、バージョン管理で公開を確定すると登録完了です。",
+  },
+
+  discardDraftTitle: {
+    'zh-CN': "放弃未保存内容？",
+    'zh-TW': "放棄未儲存內容？",
+    en: "Discard unsaved changes?",
+    ko: "저장하지 않은 변경을 버릴까요?",
+    ja: "未保存の変更を破棄しますか？",
+  },
+
+  discardDraftConfirm: {
+    'zh-CN': "本地草稿尚未保存，离开会丢弃这些修改；不会删除本地 ZIP 或已有 Release。",
+    'zh-TW': "本機草稿尚未儲存，離開會放棄這些修改；不會刪除本機 ZIP 或既有 Release。",
+    en: "Leaving discards unsaved local changes. The local ZIP and existing releases are not deleted.",
+    ko: "나가면 저장하지 않은 로컬 변경이 삭제됩니다. 로컬 ZIP과 기존 릴리스는 삭제하지 않습니다.",
+    ja: "移動すると未保存の下書きを破棄します。ローカル ZIP や既存の Release は削除しません。",
+  },
+
+  discardAndLeave: {
+    'zh-CN': "放弃并离开",
+    'zh-TW': "放棄並離開",
+    en: "Discard and leave",
+    ko: "버리고 나가기",
+    ja: "破棄して移動",
+  },
+
+  tagExists: {
+    'zh-CN': "ID「{tag}」已被使用，请返回地图集列表编辑它，或填写另一个 ID。",
+    'zh-TW': "ID「{tag}」已被使用，請返回地圖集列表編輯它，或填寫另一個 ID。",
+    en: "ID “{tag}” is already used. Edit it from the map set list or enter another ID.",
+    ko: "ID \"{tag}\"가 이미 사용 중입니다. 목록에서 해당 지도를 편집하거나 다른 ID를 입력하세요.",
+    ja: "ID「{tag}」は使用中です。一覧から編集するか別の ID を入力してください。",
+  },
   stepReleaseTitle: {
     'zh-CN': '发布信息',
     'zh-TW': '發布資訊',
     en: 'Release info',
     ko: '릴리스 정보',
     ja: 'リリース情報',
-  },
-  stepAssetTitle: {
-    'zh-CN': '上传 ZIP',
-    'zh-TW': '上傳 ZIP',
-    en: 'Upload ZIP',
-    ko: 'ZIP 업로드',
-    ja: 'ZIP をアップロード',
   },
   stepVersionsTitle: {
     'zh-CN': '版本管理', 'zh-TW': '版本管理', en: 'Version management', ko: '버전 관리', ja: 'バージョン管理',
@@ -1249,26 +1348,12 @@ export const mapPublish: DomainMessages = {
     ko: '저장 안 됨',
     ja: '未保存',
   },
-  needReleaseFirst: {
-    'zh-CN': '先完成第一步（创建 Release）。',
-    'zh-TW': '先完成第一步（建立 Release）。',
-    en: 'Create the release first.',
-    ko: '먼저 릴리스를 만드세요.',
-    ja: '先にリリースを作成してください。',
-  },
   needZip: {
     'zh-CN': '先拖入这一版的 ZIP。',
     'zh-TW': '先拖入這一版的 ZIP。',
     en: "Drop this version's ZIP first.",
     ko: '먼저 이 버전의 ZIP을 끌어다 놓으세요.',
     ja: '先にこのバージョンの ZIP をドロップしてください。',
-  },
-  tagExists: {
-    'zh-CN': 'tag「{tag}」已经有 Release 了：请在「地图管理」里更新它，或换一个 tag。',
-    'zh-TW': 'tag「{tag}」已經有 Release 了：請在「地圖管理」裡更新它，或換一個 tag。',
-    en: 'A release with tag “{tag}” already exists — update it in Map management, or use another tag.',
-    ko: 'tag "{tag}"에 이미 릴리스가 있습니다. "지도 관리"에서 업데이트하거나 다른 tag를 사용하세요.',
-    ja: 'tag「{tag}」のリリースは既にあります。「マップ管理」で更新するか、別の tag を使ってください。',
   },
   topicsFixHint: {
     'zh-CN': '在仓库的 Settings → Topics 里补上这些标签即可；管理器不会替你改。',

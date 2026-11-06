@@ -4,7 +4,7 @@ import test from 'node:test'
 /**
  * 发布页的流程逻辑（`src/mapPublishFlow.ts`）。
  *
- * 锁这几件事：三个步骤的导航顺序与可达条件（没有 Release 只能停在第一步）、
+ * 锁这几件事：四个步骤的导航顺序与可达条件（无 Release 也可准备草稿）、
  * 每一步各自的前置（互不捆绑）、哪些版本已上传但还没登记、拖动排序只改存储
  * 顺序、默认 tag 的形状，以及 403 的两类原因能不能从后端 tag 里认出来。
  */
@@ -30,12 +30,14 @@ const ready = {
   versionCount: 1,
 }
 
-test('四步导航顺序固定：Release 信息、ZIP、地图资料、版本管理', () => {
-  assert.deepEqual([...PUBLISH_STEP_ORDER], ['release', 'asset', 'metadata', 'versions'])
+test('四步导航顺序固定：发布信息、地图信息、上传确认、版本管理', () => {
+  assert.deepEqual([...PUBLISH_STEP_ORDER], ['release', 'metadata', 'asset', 'versions'])
 })
 
-test('没有 Release 时只能停在第一步', () => {
-  assert.equal(stepAvailable('release', false), true)
+test('未选 ZIP 留在选择入口，本地识别通过即可准备前三步', () => {
+  assert.equal(stepAvailable('release', false), false)
+  for (const step of ['release', 'metadata', 'asset']) assert.equal(stepAvailable(step, false, false, true), true)
+  assert.equal(stepAvailable('versions', false, false, true), false)
   assert.equal(stepAvailable('asset', false), false)
   assert.equal(stepAvailable('metadata', false), false)
   assert.equal(stepAvailable('asset', true), true)
@@ -58,7 +60,8 @@ test('Release 信息只要 tag，不要求 ZIP 或地图资料', () => {
 
 test('上传 ZIP 不要求地图资料齐全', () => {
   assert.deepEqual(stepIssues('asset', { ...ready, levelSetName: '', versionCount: 0 }), [])
-  assert.deepEqual(stepIssues('asset', { ...ready, releaseExists: false }), ['release'])
+  assert.deepEqual(stepIssues('asset', { ...ready, releaseExists: false }), [])
+  assert.deepEqual(stepIssues('asset', { ...ready, releaseExists: false, tag: '' }), ['tag'])
   assert.deepEqual(stepIssues('asset', { ...ready, assetName: ' ' }), ['zip'])
   // 带 v 前缀或空格的不是版本号文本：附件名里抽不出版本，先拦住
   assert.deepEqual(stepIssues('asset', { ...ready, versionText: 'v1.2.0' }), ['version'])
@@ -104,12 +107,12 @@ test('拖动到原位或越界时不改变顺序', () => {
   assert.deepEqual(reorderVersionRows(rows, 0, 99), ['c', 'a', 'b'])
 })
 
-test('默认 tag 符合 git ref：小写、只留字母数字与横线', () => {
-  assert.equal(defaultMapTag('GAODA'), 'gaoda')
-  assert.equal(defaultMapTag('Map 2'), 'map-2')
+test('默认 tag 来自 info 英文名，保留大小写 ASCII 字母数字', () => {
+  assert.equal(defaultMapTag('GAODA'), 'GAODA')
+  assert.equal(defaultMapTag('My Kitchen! 2'), 'MyKitchen2')
   // 中文名没有 ASCII 字母数字，给不出默认值就留空让作者自己填。
   assert.equal(defaultMapTag('大厨'), '')
-  assert.equal(defaultMapTag('  -GAODA-  '), 'gaoda')
+  assert.equal(defaultMapTag('  -GAODA-  '), 'GAODA')
 })
 
 test('发布 tag 只允许 ASCII 字母数字', () => {

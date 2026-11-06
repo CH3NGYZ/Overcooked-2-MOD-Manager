@@ -874,15 +874,10 @@ export interface PublishAsset {
   size: number
 }
 
-/**
- * 「新增资产」时后端对本地 ZIP 的识别结果。
- *
- * `mapset_version` 来自 ZIP 文件名（要写进 `latest_mapset_version` 并渲染进
- * 附件名），`info_version` 来自包内 `info`（写进 `latest_info_version` 供作者
- * 核对）。`set_count > 1` 说明拖进来的是合集，界面必须提示作者。
- */
+/** 本地 ZIP 摘要：上传取 info_version；原文件名的 mapset_version 仅供核对。set_count 必须为 1。 */
 export interface PublishZipInspection {
   file_name: string
+  file_size: number
   mapset_version: string
   info_version: string
   level_set_name: string

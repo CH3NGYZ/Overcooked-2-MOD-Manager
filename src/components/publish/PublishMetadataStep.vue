@@ -7,7 +7,7 @@ import { RELATION_KINDS } from '../../mapPublishRelations'
 import PublishRelationTables from './PublishRelationTables.vue'
 import type { MapPublishEditor } from '../../composables/useMapPublishEditor'
 const props = defineProps<{ editor: MapPublishEditor }>()
-const { metadataDirty, busyAny, stepBusy, workingRelease, saveDocument } = props.editor
+const { metadataDirty, busyAny, stepBusy, preparing, awaitingMetadata, saveDocument } = props.editor
 const { draft, setI18nValue } = props.editor.document
 const { metadataSection } = props.editor.validation
 const relationCount = computed(() => RELATION_KINDS.reduce((count, kind) => count + draft[kind].length, 0))
@@ -60,7 +60,7 @@ function isRequired(field: I18nFieldId, language: string) {
       <PublishRelationTables :tables="draft" prefix="relation-default" :disabled="busyAny" @update="(kind, rows) => draft[kind] = rows" />
     </section>
     <div class="metadata-footer">
-      <n-button size="small" type="primary" :loading="stepBusy === 'metadata'" :disabled="busyAny" @click="() => saveDocument()">{{ workingRelease?.metadata ? t('mapPublish.saveMetadata') : t('mapPublish.continueToVersions') }}</n-button>
+      <n-button size="small" type="primary" :loading="stepBusy === 'metadata'" :disabled="busyAny" @click="() => saveDocument()">{{ preparing ? (awaitingMetadata ? t('mapPublish.continueToVersions') : t('mapPublish.continueToUpload')) : t('mapPublish.saveMetadata') }}</n-button>
     </div>
   </div>
 </template>

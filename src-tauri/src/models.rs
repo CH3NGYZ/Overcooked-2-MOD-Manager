@@ -1351,16 +1351,14 @@ pub struct PublishAsset {
     pub size: u64,
 }
 
-/// 「新增资产」时对本地 ZIP 的识别结果。
-///
-/// 版本号有两个来源：ZIP 文件名（写进 `latest_mapset_version`，也是附件名模板
-/// 里 `${version}` 的值）与 `info` 里的版本（写进 `latest_info_version`）。地图源
-/// 消费端只从附件名抽版本，`info` 版本留给作者核对，两者不一致时界面会提示。
+/// 本地 ZIP 识别摘要。发布前从 info 取版本，原文件名版本仅供核对。
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PublishZipInspection {
     /// ZIP 文件名（不含目录）。
     pub file_name: String,
-    /// 从 ZIP 文件名解析出的版本号；解析不出为空串，界面让作者手填。
+    /// 本地 ZIP 的字节数，用于上传前确认。
+    pub file_size: u64,
+    /// 原 ZIP 文件名里的版本；仅供核对，不能作为上传版本。
     pub mapset_version: String,
     /// `info` 里的版本号。
     pub info_version: String,
@@ -1369,7 +1367,7 @@ pub struct PublishZipInspection {
     pub author: String,
     pub level_count: usize,
     pub file_count: usize,
-    /// ZIP 里识别出的关卡集数量：>1 说明是合集，需要作者确认上传哪一张。
+    /// 发布只接受单地图，数量不为 1 时拒绝上传。
     pub set_count: usize,
     /// `requires.txt` 声明的最低 runtime 版本（GUID → 版本区间）。
     pub requires: BTreeMap<String, String>,

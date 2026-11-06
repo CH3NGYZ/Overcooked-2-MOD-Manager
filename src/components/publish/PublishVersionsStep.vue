@@ -12,7 +12,7 @@ import VersionOrderTable from './VersionOrderTable.vue'
 import PublishRelationTables from './PublishRelationTables.vue'
 const props = defineProps<{ editor: MapPublishEditor }>()
 const emit = defineEmits<{ remove: [name: string] }>()
-const { assetRows, assetNameOf, busyAny, awaitingMetadata, stepBusy, versionsDirty, saveDocument } = props.editor
+const { assetRows, assetNameOf, busyAny, awaitingMetadata, stepBusy, versionsDirty, saveDocument, selectStep } = props.editor
 const { draft } = props.editor.document
 const message = useNotify()
 const relationRoot = ref<HTMLElement | null>(null)
@@ -64,7 +64,8 @@ async function confirmRelations() {
     <VersionOrderTable v-else v-model:rows="assetRows" :name-of="assetNameOf" :disabled="busyAny" :remove-disabled="awaitingMetadata"
       @remove="emit('remove', assetNameOf($event))" @relations="editRelations" />
     <div class="metadata-footer">
-      <n-button size="small" type="primary" :loading="stepBusy === 'versions'" :disabled="busyAny" @click="() => saveDocument('versions')">{{ t('mapPublish.saveVersions') }}</n-button>
+      <n-button v-if="!awaitingMetadata" size="small" :disabled="busyAny" @click="selectStep('asset')">{{ t('mapPublish.uploadNewVersion') }}</n-button>
+      <n-button size="small" type="primary" :loading="stepBusy === 'versions'" :disabled="busyAny" @click="() => saveDocument('versions')">{{ awaitingMetadata ? t('mapPublish.confirmPublish') : t('mapPublish.saveVersions') }}</n-button>
     </div>
   </div>
   <AppModal :show="relationsOpen" :title="`${t('mapPublish.assetRelations')} · ${editingVersion}`"

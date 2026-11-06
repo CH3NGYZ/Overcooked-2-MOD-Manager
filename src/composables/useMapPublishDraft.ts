@@ -13,6 +13,7 @@ export function useMapPublishDraft() {
     releaseRelations: [] as PublishRelationOverride[],
   })
   let applying = false
+  let inferredRequires = JSON.stringify(draft.requires)
   const defaults = () => ({ levelSetName: draft.levelSetName, levelSetNameZh: draft.levelSetNameZh, author: draft.author })
   watch(() => [draft.levelSetName, draft.levelSetNameZh, draft.author], () => {
     if (applying) return
@@ -26,6 +27,7 @@ export function useMapPublishDraft() {
       draft.levelSetNameZh = metadata?.level_set_name_zh ?? ''
       draft.author = metadata?.author ?? ''
       for (const kind of RELATION_KINDS) draft[kind] = recordToRows(metadata?.[kind] ?? {})
+      inferredRequires = JSON.stringify(draft.requires)
       draft.releaseRelations = overrideDrafts(metadata?.release_relations)
       draft.nameI18n = i18nDraftFrom('nameI18n', metadata?.name_i18n, defaults())
       draft.groupI18n = i18nDraftFrom('groupI18n', metadata?.group_i18n, defaults())
@@ -33,11 +35,15 @@ export function useMapPublishDraft() {
     } finally { applying = false }
   }
 
-  function applyInspection(zip: PublishZipInspection) {
+  function applyInspection(zip: PublishZipInspection, inferRelations: boolean) {
     draft.levelSetName = zip.level_set_name
     draft.levelSetNameZh = zip.level_set_name_zh
     draft.author = zip.author
-    if (!draft.requires.length) draft.requires = recordToRows(zip.requires)
+    // 重选包时更新未手改的推导值，不能留下上一份 ZIP 的依赖。
+    if (inferRelations && JSON.stringify(draft.requires) === inferredRequires) {
+      draft.requires = recordToRows(zip.requires)
+      inferredRequires = JSON.stringify(draft.requires)
+    }
   }
 
   const missingFields = computed(() => I18N_FIELD_ORDER.flatMap(field =>

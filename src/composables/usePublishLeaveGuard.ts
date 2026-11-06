@@ -12,6 +12,7 @@ export function usePublishLeaveGuard(
   busy: Readonly<Ref<boolean>>,
   uploadedName: Readonly<Ref<string>>,
   discard: () => Promise<boolean>,
+  dirty: Readonly<Ref<boolean>>,
 ) {
   const dialog = useDialog()
   const message = useNotify()
@@ -21,7 +22,7 @@ export function usePublishLeaveGuard(
   function requestLeave(): Promise<boolean> {
     if (request) return request
     if (busy.value) return Promise.resolve(false)
-    if (!uploadedName.value) return Promise.resolve(true)
+    if (!uploadedName.value && !dirty.value) return Promise.resolve(true)
     confirming.value = true
     request = new Promise<boolean>(resolve => {
       let settled = false
@@ -34,9 +35,9 @@ export function usePublishLeaveGuard(
         resolve(ok)
       }
       const instance = dialog.warning({
-        title: t('mapPublish.discardUploadTitle'),
-        content: t('mapPublish.discardUploadConfirm', { name: uploadedName.value }),
-        positiveText: t('mapPublish.deleteAndLeave'),
+        title: uploadedName.value ? t('mapPublish.discardUploadTitle') : t('mapPublish.discardDraftTitle'),
+        content: uploadedName.value ? t('mapPublish.discardUploadConfirm', { name: uploadedName.value }) : t('mapPublish.discardDraftConfirm'),
+        positiveText: uploadedName.value ? t('mapPublish.deleteAndLeave') : t('mapPublish.discardAndLeave'),
         negativeText: t('mapPublish.continueEditing'),
         onPositiveClick: async () => {
           if (instance.loading) return false
@@ -88,7 +89,7 @@ export function usePublishLeaveGuard(
     } catch (reason) { if (!disposed) message.error(backendMessageOf(reason)) }
   }
   function preventReload(event: BeforeUnloadEvent) {
-    if (!busy.value && !uploadedName.value) return
+    if (!busy.value && !uploadedName.value && !dirty.value) return
     event.preventDefault()
     event.returnValue = ''
   }

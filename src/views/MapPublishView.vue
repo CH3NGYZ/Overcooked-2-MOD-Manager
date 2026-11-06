@@ -22,7 +22,7 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import type { PublishRelease } from '../types'
 import '../styles/publish.css'
 
-/** 发布信息 → 上传 ZIP → 地图信息 → 版本管理；已有地图可直接进入版本管理。 */
+/** ZIP 本地选择 → 发布信息 → 地图信息 → 上传确认 → 版本管理。 */
 const message = useNotify()
 const dialog = useDialog()
 const publish = useMapPublish()
@@ -33,7 +33,7 @@ const { auth, authReady, authLoading, authenticated, needsInstall, openInstallPa
   cancelSignIn, refreshRepositories, deleteRelease, deleteAsset } = publish
 const editorRoot = ref<HTMLElement | null>(null)
 const editor = useMapPublishEditor(publish, editorRoot)
-const { mode, activeTag, activeStep, workingRelease, unregistered, busyAny, awaitingMetadata, canSelectStep,
+const { mode, activeTag, activeStep, selectingZip, pending, workingRelease, unregistered, busyAny, awaitingMetadata, canSelectStep,
   openCreate, openManagement, backToList, selectStep, loadPendingZip } = editor
 const settingsOpen = ref(false)
 const openSettings = () => { settingsOpen.value = true }
@@ -285,20 +285,21 @@ function confirmDeleteAsset(name: string) {
           </div>
         </div>
 
+        <p v-if="pending.accepted && activeStep !== 'asset'" class="hint">{{ pending.fileName }} · {{ t('mapPublish.zipReadyHint') }}</p>
         <p v-if="awaitingMetadata" class="warn">{{ t('mapPublish.uploadNeedsSave') }}</p>
         <p v-else-if="unregistered.length" class="warn">
           {{ t('mapPublish.unregisteredVersions', { count: unregistered.length }) }}
         </p>
-        <n-tabs :value="activeStep" type="segment" size="large" class="publish-step-nav"
+        <n-tabs v-if="!selectingZip" :value="activeStep" type="segment" size="large" class="publish-step-nav"
           :aria-label="t('mapPublish.editTitle')" @update:value="selectStep">
           <n-tab-pane v-for="(step, index) in PUBLISH_STEP_ORDER" :key="step" :name="step"
             :disabled="busyAny || !canSelectStep(step)">
             <template #tab>{{ index + 1 }}. {{ stepTitle(step) }}</template>
           </n-tab-pane>
         </n-tabs>
-        <PublishReleaseStep v-if="activeStep === 'release'" :editor="editor" />
-        <PublishAssetStep v-else-if="activeStep === 'asset'" :editor="editor" :drag-active="dragActive"
+        <PublishAssetStep v-if="selectingZip || activeStep === 'asset'" :editor="editor" :drag-active="dragActive"
           :inspecting="inspecting" :upload-progress="uploadProgress" />
+        <PublishReleaseStep v-else-if="activeStep === 'release'" :editor="editor" />
         <PublishMetadataStep v-else-if="activeStep === 'metadata'" :editor="editor" />
         <PublishVersionsStep v-else :editor="editor" @remove="confirmDeleteAsset" />
       </template>

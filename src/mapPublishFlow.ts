@@ -1,32 +1,19 @@
-/**
- * 发布页四个步骤的纯逻辑。
- *
- * 一张地图集的发布信息、上传、地图信息与版本管理分别操作：
- *
- * 1. `release`：GitHub Release 的固定 tag 与发布说明。新地图在这里建 Release；
- *    已有地图只改这些字段，后端保留原有的 oc2-map 块。
- * 2. `asset`：上传这一版的 ZIP 附件。只写附件，不碰块。
- * 3. `metadata`：多语言与默认关系；已有块保存时保留版本配置，新建草稿交第四步首次提交。
- * 4. `versions`：排序与资产关系，登记版本后玩家才可见；保存不夹带地图信息草稿。
- *
- * 纯模块（不依赖 Vue / i18n / 组件）：`tests/map-publish-flow.test.mjs` 直接
- * import；页面与 composable 只负责发请求与显示。
- */
+/** 本地准备与远端上传分离；版本登记是发布完成边界。 */
 
 // 带 `.ts` 扩展名：Node 的 `--test` 直接跑源码（类型剥离不做补全），Vite 与
 // `allowImportingTsExtensions` 都接受这种写法。
 import type { PublishZipInspection } from './types.ts'
-import { isVersionText, levelSetSlug } from './mapPublishAsset.ts'
+import { isVersionText } from './mapPublishAsset.ts'
 
 export type PublishStepId = 'release' | 'asset' | 'metadata' | 'versions'
 
-/** 导航顺序：没有 Release 就没有地方挂附件，块也要写在已有 Release 上。 */
-export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'asset', 'metadata', 'versions']
+/** 先准备本地资料，确认上传才创建 Release。 */
+export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'metadata', 'asset', 'versions']
 
-/** 上传完成后可编辑地图信息与版本，完成版本登记前不能重复上传。 */
-export function stepAvailable(step: PublishStepId, releaseExists: boolean, uploadPending = false): boolean {
-  if (uploadPending) return releaseExists && (step === 'metadata' || step === 'versions')
-  return step === 'release' || releaseExists
+export function stepAvailable(step: PublishStepId, releaseExists: boolean, uploadPending = false, zipReady = false): boolean {
+  if (uploadPending) return releaseExists && step !== 'asset'
+  if (step === 'versions') return releaseExists
+  return releaseExists || zipReady
 }
 
 /** 某一步保存前还缺什么；空数组才允许点这一步的保存按钮。 */
@@ -58,12 +45,11 @@ export function stepIssues(step: PublishStepId, input: StepInput): StepIssue[] {
       if (!isMapPublishTag(input.tag.trim())) issues.push('tag')
       break
     case 'asset':
-      if (!input.releaseExists) issues.push('release')
+      if (!input.releaseExists && !isMapPublishTag(input.tag.trim())) issues.push('tag')
       if (!input.assetName.trim()) issues.push('zip')
       if (!isVersionText(input.versionText.trim())) issues.push('version')
       break
     case 'metadata':
-      if (!input.releaseExists) issues.push('release')
       if (!input.levelSetName.trim()) issues.push('levelSetName')
       break
     case 'versions':
@@ -88,15 +74,9 @@ export function unregisteredVersions(
   return rows.map((version) => version.trim()).filter((version) => version && !saved.has(version))
 }
 
-/**
- * 地图集名 → 默认 tag。
- *
- * tag 是这张地图在仓库里的身份（一个 tag 一张图），不是版本号；作者可以随意
- * 改，这里只给一个符合 git ref 规则的起点：小写字母数字与 `-`，去掉首尾横线。
- * 名字里没有 ASCII 字母数字时返回空串，由作者自己填（中文 tag 也是合法的）。
- */
+/** 包内英文名只提供建议，不改身份；没有 ASCII 字母数字就交给作者填写。 */
 export function defaultMapTag(levelSetName: string): string {
-  return levelSetSlug(levelSetName).slice(0, 100).replace(/^[-.]+|-+$/g, '')
+  return levelSetName.replace(/[^A-Za-z0-9]/g, '').slice(0, 100)
 }
 
 /** Tag 输入只接受 ASCII 字母与数字。 */

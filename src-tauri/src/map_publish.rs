@@ -2137,6 +2137,9 @@ fn inspect_publish_zip_blocking(path: &std::path::Path) -> Result<PublishZipInsp
         })
         .unwrap_or_default();
     Ok(PublishZipInspection {
+        file_size: std::fs::metadata(path)
+            .map_err(|_| "mapPublish.zipUnreadable".to_string())?
+            .len(),
         file_name,
         mapset_version: version_from_file_name(stem),
         info_version: first.metadata.version.clone(),
@@ -2150,7 +2153,7 @@ fn inspect_publish_zip_blocking(path: &std::path::Path) -> Result<PublishZipInsp
     })
 }
 
-/// 识别一个本地地图 ZIP：作者在「新增资产」弹窗里拖进来或选中时就调它。
+/// 选择或拖入地图 ZIP 时本地识别，不要求已有 Release。
 ///
 /// 会解析 `info`（UnityFS + LZMA），属于重活，必须走 `spawn_blocking`：
 /// 同步命令会冻住主线程（见 `AGENTS.md` 第 5 节）。

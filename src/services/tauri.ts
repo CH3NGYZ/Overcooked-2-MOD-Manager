@@ -43,7 +43,6 @@ import type {
   PublishAuthorization,
   PublishDeleteReleaseRequest,
   PublishRelease,
-  PublishRepository,
   PublishRepositoryList,
   PublishSaveRequest,
   PublishUploadRequest,
@@ -425,16 +424,8 @@ export const api = {
   /** 取消待授权流程，释放本机回调端口（离开上传页时必须调）。 */
   cancelGithubAuthorization: () => invoke<void>('cancel_github_authorization'),
   signOutMapPublish: () => invoke<PublishAuthState>('sign_out_map_publish'),
-  /** 当前账号安装范围内的仓库，带 map-source 标签的排在前面。 */
+  /** 当前账号安装范围内的仓库，带 map 标签的排在前面。 */
   listPublishRepositories: () => invoke<PublishRepositoryList>('list_publish_repositories'),
-  /**
-   * 新建仓库。
-   *
-   * 顶层参数用 camelCase（Tauri 负责转 snake_case）；后端创建时会 auto_init
-   * 并自动打上 overcooked-2 / bepinex / map-source 三个 topic。
-   */
-  createPublishRepository: (name: string, isPrivate: boolean, description: string) =>
-    invoke<PublishRepository>('create_publish_repository', { name, private: isPrivate, description }),
   listPublishReleases: (owner: string, repository: string) =>
     invoke<PublishRelease[]>('list_publish_releases', { owner, repository }),
   savePublishRelease: (request: PublishSaveRequest) =>
@@ -463,7 +454,7 @@ export const api = {
    */
   stagePublishZip: (path: string, fileName: string) =>
     invoke<string>('stage_publish_zip', { path, fileName }),
-  /** 只读检查仓库标签：缺 map-source 之类时界面顶部提示作者去仓库设置里加。 */
+  /** 只读检查仓库标签：缺 map 之类时界面顶部提示作者去仓库设置里加。 */
   publishRepositoryTopics: (owner: string, repository: string) =>
     invoke<PublishRepositoryTopics>('publish_repository_topics', { owner, repository }),
 }

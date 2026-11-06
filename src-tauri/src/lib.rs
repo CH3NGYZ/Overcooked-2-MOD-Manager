@@ -209,7 +209,6 @@ pub fn run() {
             map_publish::check_publish_session,
             map_publish::sign_out_map_publish,
             map_publish::list_publish_repositories,
-            map_publish::create_publish_repository,
             map_publish::list_publish_releases,
             map_publish::save_publish_release,
             map_publish::delete_publish_release,

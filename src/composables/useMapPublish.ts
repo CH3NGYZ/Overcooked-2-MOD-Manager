@@ -38,12 +38,6 @@ export interface SaveReleaseInput {
   metadata?: MapPublishMetadata
 }
 
-export interface CreateRepositoryInput {
-  name: string
-  description: string
-  private: boolean
-}
-
 /**
  * 地图发布页的状态机。
  *
@@ -66,7 +60,6 @@ export function useMapPublish() {
   const repositories = ref<PublishRepository[]>([])
   const repositoriesLoading = ref(false)
   const selectedFullName = ref<string | null>(null)
-  const creatingRepository = ref(false)
 
   /** 选中仓库的标签检查结果；`missing` 非空时页面顶部只提醒作者去仓库设置里加。 */
   const repositoryTopics = ref<PublishRepositoryTopics | null>(null)
@@ -421,28 +414,6 @@ export function useMapPublish() {
     }
   }
 
-  async function createRepository(input: CreateRepositoryInput): Promise<PublishRepository | null> {
-    if (creatingRepository.value) return null
-    creatingRepository.value = true
-    try {
-      const created = await api.createPublishRepository(
-        input.name.trim(),
-        input.private,
-        input.description.trim(),
-      )
-      repositories.value = [created, ...repositories.value.filter((item) => item.full_name !== created.full_name)]
-      selectedFullName.value = created.full_name
-      await loadReleases()
-      message.success(t('mapPublish.repositoryCreated'))
-      return created
-    } catch (reason) {
-      fail(reason)
-      return null
-    } finally {
-      creatingRepository.value = false
-    }
-  }
-
   async function saveRelease(
     input: SaveReleaseInput,
     options: { quiet?: boolean } = {},
@@ -603,7 +574,6 @@ export function useMapPublish() {
     repositoriesLoading,
     selectedFullName,
     selectedRepository,
-    creatingRepository,
     repositoryTopics,
     topicsLoading,
     missingTopics,
@@ -625,7 +595,6 @@ export function useMapPublish() {
     refreshTopics,
     clearPermissionFailure,
     selectRepository,
-    createRepository,
     saveRelease,
     deleteRelease,
     uploadAsset,

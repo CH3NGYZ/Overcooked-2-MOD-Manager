@@ -245,7 +245,7 @@ function confirmDeleteAsset(name: string) {
     <section v-else class="group">
       <h2 v-if="mode === 'list'" class="group-title">{{ t('mapPublish.mapSets') }}</h2>
 
-      <!-- 选了仓库就查一次标签：缺 map-source 之类，地图页就收不到这个仓库 -->
+      <!-- 选了仓库就查一次标签：缺 map 之类，地图页就收不到这个仓库 -->
       <div v-if="missingTopics.length" class="panel topics-banner">
         <div class="topics-text">
           <span class="topics-title">{{ t('mapPublish.topicsMissingTitle') }}</span>

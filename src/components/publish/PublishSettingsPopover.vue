@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { NButton, NInput, NPopover, NSpin, NSwitch, NTag } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
+import { NButton, NInput, NPopover, NSpin, NTag } from 'naive-ui'
 import { SettingsOutline } from '@vicons/ionicons5'
 import { t } from '../../i18n'
 import { api } from '../../services/tauri'
@@ -12,8 +12,8 @@ const settingsOpen = defineModel<boolean>('show', { default: false })
 watch(() => props.disabled, disabled => { if (disabled) settingsOpen.value = false })
 const { auth, authReady, authenticated, needsInstall, allRepositories, openInstallPage,
   signingIn, signingOut, authorization, authPhase, authFailure, repositories, repositoriesLoading,
-  selectedFullName, creatingRepository, startSignIn, startSignInAnyway, cancelSignIn,
-  signOut, selectRepository, createRepository } = props.publish
+  selectedFullName, startSignIn, startSignInAnyway, cancelSignIn,
+  signOut, selectRepository } = props.publish
 const message = useNotify()
 const repositoryFilter = ref('')
 const filteredRepositories = computed(() => repositories.value.filter(repository =>
@@ -31,17 +31,6 @@ async function reopenAuthorization() {
     const result = await api.openReleasePage(url)
     if (!result.ok) message.error(translateBackendMessage(result.message))
   } catch (reason) { message.error(backendMessageOf(reason)) }
-}
-const createOpen = ref(false)
-const newRepository = reactive({ name: '', description: '', private: false })
-async function submitCreateRepository() {
-  if (props.disabled) return
-  const name = newRepository.name.trim()
-  if (!name) { message.warning(t('mapPublish.repositoryName')); return }
-  const created = await createRepository({ name, description: newRepository.description.trim(), private: newRepository.private })
-  if (!created) return
-  createOpen.value = false
-  Object.assign(newRepository, { name: '', description: '', private: false })
 }
 </script>
 
@@ -124,9 +113,6 @@ async function submitCreateRepository() {
             <div class="repo-tools">
               <n-input v-model:value="repositoryFilter" size="tiny" clearable
                 :placeholder="t('mapPublish.searchRepository')" />
-              <n-button size="tiny" :disabled="creatingRepository || disabled" @click="createOpen = !createOpen">
-                {{ t('mapPublish.createRepository') }}
-              </n-button>
             </div>
 
             <div v-if="repositoriesLoading" class="state-line">
@@ -139,8 +125,8 @@ async function submitCreateRepository() {
                   :class="{ active: repository.full_name === selectedFullName }"
                   :disabled="disabled" @click="chooseRepository(repository.full_name)">
                   <span class="repo-name mono">{{ repository.full_name }}</span>
-                  <n-tag v-if="repository.topics.includes('map-source')" size="tiny" type="success" :bordered="false">
-                    map-source
+                  <n-tag v-if="repository.topics.includes('map')" size="tiny" type="success" :bordered="false">
+                    map
                   </n-tag>
                 </button>
               </li>
@@ -149,37 +135,9 @@ async function submitCreateRepository() {
             <p v-else class="hint no-top">{{ t('mapPublish.repositoryEmpty') }}</p>
 
             <p class="hint no-top">{{ t('mapPublish.repositoryHint') }}</p>
-            <p v-if="!allRepositories" class="hint no-top">{{ t('mapPublish.createRepositoryLimited') }}</p>
+            <p v-if="!allRepositories" class="hint no-top">{{ t('mapPublish.repositoryScopeHint') }}</p>
 
-            <div v-if="createOpen" class="create-form">
-              <p class="hint no-top">{{ t('mapPublish.createRepositoryHint') }}</p>
-              <div class="form-grid">
-                <div class="field">
-                  <span class="field-label">{{ t('mapPublish.repositoryName') }}</span>
-                  <n-input v-model:value="newRepository.name" size="small" />
-                </div>
-                <div class="field">
-                  <span class="field-label">{{ t('mapPublish.repositoryDescription') }}</span>
-                  <n-input v-model:value="newRepository.description" size="small" />
-                </div>
-                <div class="field span-2 switch-field">
-                  <div>
-                    <span class="field-label">{{ t('mapPublish.repositoryPrivate') }}</span>
-                    <p class="hint no-top">{{ t('mapPublish.repositoryPrivateHint') }}</p>
-                  </div>
-                  <n-switch v-model:value="newRepository.private" size="small" />
-                </div>
-              </div>
-              <div class="actions">
-                <n-button size="tiny" type="primary" :loading="creatingRepository" :disabled="creatingRepository || disabled"
-                  @click="submitCreateRepository">
-                  {{ t('mapPublish.create') }}
-                </n-button>
-                <n-button size="tiny" :disabled="creatingRepository || disabled" @click="createOpen = false">
-                  {{ t('common.action.cancel') }}
-                </n-button>
-              </div>
-            </div>
+            <p class="hint no-top">{{ t('mapPublish.manualRepositoryHint') }}</p>
           </template>
         </template>
       </div>
@@ -269,16 +227,4 @@ async function submitCreateRepository() {
   white-space: nowrap;
 }
 
-/* 面板比页面窄：新建仓库表单收成一列，按钮行也收紧 */
-.publish-settings .form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.publish-settings .actions { margin-top: 10px; }
-.publish-settings .create-form { margin-top: 10px; padding-top: 10px; }
-
-.create-form {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--oc2-divider);
-}
-
-.switch-field { flex-direction: row !important; align-items: center; }
 </style>

@@ -86,10 +86,8 @@ const BIND_RETRY_DELAY: Duration = Duration::from_millis(80);
 
 const API_VERSION: &str = "2022-11-28";
 
-/// 地图仓库必须有的标签。`overcooked-2` + `bepinex` 是社区发现的准入口径，
-/// `map-source` 是「这是地图源仓库」的约定标记（见 `docs/map-sources.md` 3.8）；
-/// MOD 仓库的第三个标签换成 `mod`（`community::classify_search_item` 据此分流）。
-const PUBLISH_TOPICS: [&str; 3] = ["overcooked-2", "bepinex", "map-source"];
+/// 发布检查与社区发现使用同一组地图仓库标签。
+const PUBLISH_TOPICS: [&str; 3] = ["overcooked-2", "bepinex", "map"];
 
 fn publish_topics() -> Vec<String> {
     PUBLISH_TOPICS
@@ -285,10 +283,6 @@ fn invalid_repository(value: &str) -> String {
 
 fn invalid_tag(value: &str) -> String {
     with_params("mapPublish.invalidTag", &[("value", value)])
-}
-
-fn invalid_name(value: &str) -> String {
-    with_params("mapPublish.invalidName", &[("value", value)])
 }
 
 fn invalid_asset(reason: &str) -> String {
@@ -1468,8 +1462,8 @@ pub async fn list_publish_repositories(
     let installation_count = installation_ids.len();
     // 已经是地图源的仓库排前面：作者多半是回来改自己已有的地图仓库。
     result.sort_by(|left, right| {
-        let left_source = left.topics.iter().any(|topic| topic == "map-source");
-        let right_source = right.topics.iter().any(|topic| topic == "map-source");
+        let left_source = left.topics.iter().any(|topic| topic == "map");
+        let right_source = right.topics.iter().any(|topic| topic == "map");
         right_source
             .cmp(&left_source)
             .then_with(|| left.full_name.cmp(&right.full_name))
@@ -1562,89 +1556,6 @@ fn remember_installation_id(
     if let Err(error) = service.save(&config) {
         log::warn!("记录安装 id 失败：{error}");
     }
-}
-
-/// 新建一个地图仓库并自动打上三个标签。
-#[tauri::command]
-pub async fn create_publish_repository(
-    state: State<'_, AppState>,
-    name: String,
-    private: bool,
-    description: String,
-) -> Result<PublishRepository, String> {
-    let token = publish_token(&state)?;
-    let name = name.trim().to_string();
-    if !valid_slug(&name) {
-        return Err(invalid_name(&name));
-    }
-    let client = api_client()?;
-    let response = authorized(client.post(format!("{API_ENDPOINT}/user/repos")), &token)
-        .json(&json!({
-            "name": name,
-            "description": description.trim(),
-            "private": private,
-            // 必须有初始提交，否则建不了 tag（Release 会对着默认分支打 tag）。
-            "auto_init": true,
-        }))
-        .send()
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
-    let repository: ApiRepository = ensure_success(response, "create-repository")
-        .await?
-        .json()
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
-    log::info!("已新建地图仓库：{}", repository.full_name);
-
-    let topics =
-        set_repository_topics(&client, &token, &repository.full_name, &publish_topics()).await;
-    let topics = match topics {
-        Ok(topics) => topics,
-        Err(error) => {
-            // 仓库已经建成了；标签没打上只影响社区发现，不该让整个动作失败。
-            log::warn!(
-                "新仓库的标签设置失败（仓库已创建，可稍后重试）：{}，原因={error}",
-                repository.full_name
-            );
-            repository.topics.clone()
-        }
-    };
-    let mut result = repository_from_api(repository);
-    result.topics = topics;
-    Ok(result)
-}
-
-/// 覆盖式写入标签：GitHub 的 PUT 语义是**整体替换**，调用方要带上原来的标签。
-async fn set_repository_topics(
-    client: &reqwest::Client,
-    token: &str,
-    full_name: &str,
-    names: &[String],
-) -> Result<Vec<String>, String> {
-    let body = json!({ "names": names });
-    let response = authorized(
-        client.put(format!("{API_ENDPOINT}/repos/{full_name}/topics")),
-        token,
-    )
-    .json(&body)
-    .send()
-    .await
-    .map_err(|error| request_error(&error.to_string()))?;
-    let value: serde_json::Value = ensure_success(response, "set-topics")
-        .await?
-        .json()
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
-    Ok(value
-        .get("names")
-        .and_then(|names| names.as_array())
-        .map(|names| {
-            names
-                .iter()
-                .filter_map(|name| name.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_else(|| names.to_vec()))
 }
 
 /// 仓库已有的标签里缺了哪些必需标签。GitHub 的标签一律小写，比较时不看大小写。
@@ -2512,14 +2423,14 @@ mod tests {
     fn missing_topics_only_lists_the_ones_absent() {
         assert_eq!(
             missing_topics(&["overcooked-2".to_string(), "bepinex".to_string()]),
-            vec!["map-source".to_string()]
+            vec!["map".to_string()]
         );
         assert!(missing_topics(&publish_topics()).is_empty());
         assert!(
             missing_topics(&[
                 "Overcooked-2".to_string(),
                 "bepinex".to_string(),
-                "map-source".to_string(),
+                "map".to_string(),
                 "extra".to_string(),
             ])
             .is_empty()
@@ -2529,7 +2440,7 @@ mod tests {
     #[test]
     fn slugs_reject_path_tricks() {
         assert!(valid_slug("CH3NGYZ"));
-        assert!(valid_slug("oc2-map-source.v2"));
+        assert!(valid_slug("oc2-map.v2"));
         assert!(!valid_slug(""));
         assert!(!valid_slug("../etc"));
         assert!(!valid_slug("owner/repo"));

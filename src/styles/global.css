@@ -552,17 +552,25 @@ body {
  * 一头）、宽度（固定窄宽、不参与剩余空间分配，也避免文案变化时抖动）。
  *
  * 选择器带上 `.page-header-actions`：Naive 的组件样式是运行时注入的，同权重
- * 规则可能被它盖掉；多一层类名保证这里稳定生效。两个页面都只写
- * `class="bulk-switch"`，不要再各自复制一份样式。
+ * 规则可能被它盖掉；多一层类名保证这里稳定生效。两页通过
+ * HeaderBulkSwitch 共用图标、提示、键盘操作与部分态，不各写一份。
  */
 .page-header-actions .bulk-switch {
   flex: 0 0 auto;
-  width: 148px;
+  width: 68px;
 }
 .page-header-actions .bulk-switch .n-tabs-nav { margin: 0; }
 .page-header-actions .bulk-switch .n-tab-pane { display: none; }
 .page-header-actions .bulk-switch .n-tabs-rail { padding: 2px; }
-.page-header-actions .bulk-switch .n-tabs-tab { padding: 2px 0; }
+.page-header-actions .bulk-switch .n-tabs-tab { padding: 0; }
+.page-header-actions .bulk-switch .n-tabs-tab__label { width: 100%; }
+.page-header-actions .bulk-switch .bulk-switch-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 24px;
+}
 .page-header-actions .bulk-switch .n-tabs-capsule {
   transition: transform .3s var(--n-bezier), opacity .18s var(--n-bezier);
 }

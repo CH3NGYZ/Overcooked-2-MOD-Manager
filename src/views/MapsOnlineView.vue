@@ -8,16 +8,17 @@ import {
   NDrawerContent,
   NEmpty,
   NFloatButton,
-  NInput,
   NTag,
 } from 'naive-ui'
-import { LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
 import { t, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
 import { tagColorForAny, type TagTone } from '../theme'
 import { useNotify } from '../useNotify'
 import PageLoading from '../components/PageLoading.vue'
+import HeaderIconAction from '../components/HeaderIconAction.vue'
+import HeaderSearch from '../components/HeaderSearch.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -822,14 +823,11 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
   -->
   <Teleport to="#page-header-actions" defer>
     <span class="header-count muted">{{ visibleCount }} {{ t('levelSet.mapCount') }}</span>
-    <n-input v-model:value="search" clearable size="small" class="header-search"
-      :placeholder="t('dialogs.search')">
-      <template #prefix><SearchOutline width="14" height="14" /></template>
-    </n-input>
-    <n-button size="small" type="primary" :loading="importing" :disabled="importing"
+    <HeaderSearch v-model:value="search" />
+    <HeaderIconAction type="primary" :label="t('levelSet.installMap')" :loading="importing" :disabled="importing"
       @click="installSourceOpen = true">
-      <LinkOutline width="14" height="14" />{{ t('levelSet.installMap') }}
-    </n-button>
+      <LinkOutline width="16" height="16" aria-hidden="true" />
+    </HeaderIconAction>
   </Teleport>
 
   <PageLoading :show="pageLoading">
@@ -1006,15 +1004,6 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
   font-size: 12.5px;
 }
 
-/*
- * 搜索框是操作区里唯一能收缩的项（数值与 MOD 安装页一致）：
- * 窗口变窄时它先变短，计数与按钮保持完整。
- */
-.header-search {
-  width: 240px;
-  flex: 0 1 240px;
-  min-width: 120px;
-}
 
 /* 浮动刷新按钮转圈（本页作用域，keyframes 名称与其它页区分） */
 .spin-icon {

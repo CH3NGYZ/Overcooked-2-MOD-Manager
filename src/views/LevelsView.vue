@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NCollapse, NCollapseItem, NEmpty, NFloatButton, NInput, NTabPane, NTabs, NTag, useDialog } from 'naive-ui'
-import { AlbumsOutline, FolderOpenOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { NCollapse, NCollapseItem, NEmpty, NFloatButton, NTag, useDialog } from 'naive-ui'
+import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { matchesLocalSearch, levelSetSearchText } from '../localItemSearch'
 import { t, locale, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
@@ -22,6 +22,9 @@ import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
 import { collapseCardWithScroll, naturalContentHeight, scrollExpandedCardIntoView } from '../expandScroll'
 import PageLoading from '../components/PageLoading.vue'
+import HeaderIconAction from '../components/HeaderIconAction.vue'
+import HeaderSearch from '../components/HeaderSearch.vue'
+import HeaderBulkSwitch from '../components/HeaderBulkSwitch.vue'
 import RefreshResultTag from '../components/RefreshResultTag.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
@@ -1284,10 +1287,7 @@ provide(
       误当成它的作用范围。
     -->
     <span v-if="visibility.filtering" class="header-count muted">{{ visibility.countLabel(visibleSets.length, sortedSets.length) }}</span>
-    <n-input v-model:value="search" clearable size="small" class="header-search"
-      :placeholder="t('dialogs.search')">
-      <template #prefix><SearchOutline width="14" height="14" /></template>
-    </n-input>
+    <HeaderSearch v-model:value="search" />
     <!--
       批量开关：一个二选一分段控件（与 MOD 管理页、发布详情面板同款），
       替代原来的两个按钮 —— 同一时刻只有全开 / 全关两种状态，是互斥选择。
@@ -1297,35 +1297,19 @@ provide(
       · 停用方向仍走 confirmDisableAll()：整页地图一起停用不是随手试的操作；
       · 批量进行中两个分段都禁用，避免连点再发一批命令。
     -->
-    <n-tabs v-if="visibility.showBulkSwitch(sets.length > 0)" type="segment" animated class="bulk-switch"
-      :class="{ 'is-mixed': !bulkSwitchValue }" :value="bulkSwitchValue"
-      @update:value="onBulkSwitch">
-      <!--
-        文案走 `#tab` 槽而不是 `:tab` 属性：pane 没有任何子节点时，Naive 的
-        Tab 会把空占位当作默认槽渲染，`:tab` 的文案因此不显示（实测只剩一个
-        空胶囊）。给每个 pane 一个 `#tab` 槽就绕开了那条渲染路径。
-      -->
-      <n-tab-pane name="enable" :disabled="bulkWorking">
-        <template #tab>{{ t('overview.enableAll') }}</template>
-      </n-tab-pane>
-      <n-tab-pane name="disable" :disabled="bulkWorking">
-        <template #tab>{{ t('overview.disableAll') }}</template>
-      </n-tab-pane>
-    </n-tabs>
-    <n-button size="small" secondary :loading="checkingBound" :disabled="checkingBound || loading"
-      :title="t('levelSet.checkUpdatesHint')" @click="checkUpdates">
-      <template #icon><RefreshOutline width="14" height="14" /></template>
-      {{ t('overview.check') }}
-    </n-button>
-    <n-button size="small" secondary :loading="organizing" :disabled="organizing || loading"
-      :title="t('levelSet.organizeHint')" @click="organizeLevelSets">
-      <template #icon><AlbumsOutline width="14" height="14" /></template>
-      {{ t('levelSet.organize') }}
-    </n-button>
-    <n-button size="small" secondary @click="openLevelsDirectory">
-      <template #icon><FolderOpenOutline width="14" height="14" /></template>
-      {{ t('modsLocal.openFolder') }}
-    </n-button>
+    <HeaderBulkSwitch v-if="visibility.showBulkSwitch(sets.length > 0)"
+      :value="bulkSwitchValue" :disabled="bulkWorking" @change="onBulkSwitch" />
+    <HeaderIconAction secondary :label="t('overview.check')" :loading="checkingBound" :disabled="checkingBound || loading"
+      :description="t('levelSet.checkUpdatesHint')" @click="checkUpdates">
+      <RefreshOutline width="16" height="16" aria-hidden="true" />
+    </HeaderIconAction>
+    <HeaderIconAction secondary :label="t('levelSet.organize')" :loading="organizing" :disabled="organizing || loading"
+      :description="t('levelSet.organizeHint')" @click="organizeLevelSets">
+      <AlbumsOutline width="16" height="16" aria-hidden="true" />
+    </HeaderIconAction>
+    <HeaderIconAction secondary :label="t('modsLocal.openFolder')" @click="openLevelsDirectory">
+      <FolderOpenOutline width="16" height="16" aria-hidden="true" />
+    </HeaderIconAction>
   </Teleport>
 
   <!--
@@ -1411,8 +1395,6 @@ provide(
 <style scoped>
 /* 页头批量分段控件的样式在 src/styles/global.css 的 `.bulk-switch`。 */
 
-/* 页头搜索框是操作区里唯一能收缩的项（数值与在线页一致） */
-.header-search { width: 240px; flex: 0 1 240px; min-width: 120px; }
 .header-count { white-space: nowrap; flex: 0 0 auto; }
 
 .group-collapse {

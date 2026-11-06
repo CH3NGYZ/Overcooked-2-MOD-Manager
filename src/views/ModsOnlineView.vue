@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NInput, NTag } from 'naive-ui'
-import { LinkOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NTag } from 'naive-ui'
+import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { prefetchAvatars } from '../avatars'
 import { useNotify } from '../useNotify'
@@ -17,6 +17,8 @@ import { repositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
 import RepositoryDetail from '../components/RepositoryDetail.vue'
 import PageLoading from '../components/PageLoading.vue'
+import HeaderIconAction from '../components/HeaderIconAction.vue'
+import HeaderSearch from '../components/HeaderSearch.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
@@ -679,13 +681,10 @@ defineExpose({ refreshAll, visibleCount })
     -->
     <Teleport to="#page-header-actions" defer>
       <span class="header-count muted">{{ t('modsOnline.repositories', { count: visibleCount }) }}</span>
-      <n-input v-model:value="search" clearable size="small" class="header-search"
-        data-tutorial="mods-online-search" :placeholder="t('dialogs.search')">
-        <template #prefix><SearchOutline width="14" height="14" /></template>
-      </n-input>
-      <n-button size="small" type="primary" @click="openInstall">
-        <LinkOutline width="14" height="14" />{{ t('tools.installMod') }}
-      </n-button>
+      <HeaderSearch v-model:value="search" data-tutorial="mods-online-search" />
+      <HeaderIconAction type="primary" :label="t('tools.installMod')" @click="openInstall">
+        <LinkOutline width="16" height="16" aria-hidden="true" />
+      </HeaderIconAction>
     </Teleport>
 
   <PageLoading :show="pageLoading">
@@ -926,9 +925,5 @@ defineExpose({ refreshAll, visibleCount })
   background: var(--oc2-row-line);
 }
 .header-count { white-space: nowrap; flex: 0 0 auto; }
-/*
- * 搜索框是操作区里唯一能收缩的项：窗口变窄时它先变短，
- * 计数与搜索框保持完整，避免整行折行。
- */
-.header-search { width: 240px; flex: 0 1 240px; min-width: 120px; }
+
 </style>

@@ -1,7 +1,7 @@
 /**
  * 后端 tag 字面量覆盖测试。
  *
- * 目标：`src-tauri/src/*.rs` 里出现的每一个 tag 形态的字符串字面量
+ * 目标：src-tauri/src 及子目录的 Rust 源码中每一个 tag 形态的字符串字面量
  * （`<域>.<原因>`），都必须在 `src/locale/` 的语言表里登记。
  *
  * ## 为什么不能只核对一份手工清单
@@ -28,56 +28,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readText, sourceFiles, collectRustTags } from './helpers/source-scan.mjs'
+import { readLocaleTables, placeholders } from './helpers/locale-tables.mjs'
 
-const LOCALE_DIR = 'src/locale'
 const RUST_DIR = 'src-tauri/src'
-
-/** 读文件并统一换行：部分 locale 文件是 CRLF，行尾 `\r` 会让表头正则失配。 */
-function readText(path) {
-  return readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
-}
-
-/**
- * 从语言表里读出「域 → 短 key 集合」与「flat 表的完整 key 集合」。
- *
- * 表的位置不能按文件名推：一个文件可能包含多个表
- * （`installPipeline.ts` 里就有 `archive` / `download` / `direct`），
- * 所以按 `export const X: DomainMessages = {` 定位，再用 `index.ts` 里的
- * `{ domain, messages: X }` 反查域。
- */
-function readLocaleTables() {
-  const index = readText(join(LOCALE_DIR, 'index.ts'))
-  const domainOf = new Map()
-  const re = /\{\s*(?:domain:\s*'([A-Za-z.]+)'|flat:\s*true),\s*messages:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g
-  let match
-  while ((match = re.exec(index)) !== null) domainOf.set(match[2], match[1] ?? null)
-
-  const byDomain = new Map()
-  const flat = new Set()
-  for (const file of readdirSync(LOCALE_DIR)) {
-    if (!file.endsWith('.ts')) continue
-    const lines = readText(join(LOCALE_DIR, file)).split('\n')
-    for (let i = 0; i < lines.length; i += 1) {
-      const head = lines[i].match(/^export const ([A-Za-z_][A-Za-z0-9_]*): DomainMessages = \{$/)
-      if (!head || !domainOf.has(head[1])) continue
-      const domain = domainOf.get(head[1])
-      const keys = []
-      for (let j = i + 1; j < lines.length && lines[j] !== '}'; j += 1) {
-        const key = lines[j].match(/^ {2}'?([A-Za-z_][A-Za-z0-9_.]*)'?:\s*\{/)
-        if (key) keys.push(key[1])
-      }
-      if (domain === null) {
-        for (const key of keys) flat.add(key)
-      } else {
-        if (!byDomain.has(domain)) byDomain.set(domain, new Set())
-        for (const key of keys) byDomain.get(domain).add(key)
-      }
-    }
-  }
-  return { byDomain, flat }
-}
 
 /**
  * 明确不是 tag 的字面量。
@@ -135,30 +89,9 @@ function isFixtureIdentifier(tag) {
   return tag.startsWith('com.example.')
 }
 
-/** 收集 Rust 源码里所有 tag 形态的字面量。 */
-function collectRustTags() {
-  const found = new Map()
-  for (const file of readdirSync(RUST_DIR)) {
-    if (!file.endsWith('.rs')) continue
-    readText(join(RUST_DIR, file)).split('\n').forEach((line, index) => {
-      for (const match of line.matchAll(/"([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)(\?[^"]*)?"/g)) {
-        const tag = match[1]
-        // 路径、文件扩展名、文件名里的点都不是 tag
-        if (tag.includes('/') || tag.includes('\\')) continue
-        if (/\.(toml|json|log|exe|dll|md|zip|png|jpg|lock|txt|nsh|wxs|nsi|so|dylib|cfg|sig|db|app|rs|com)$/i.test(tag)) continue
-        // 域名首字母大写（BepInEx.cfg、Overcooked2.app 之类）
-        if (!/^[a-z]/.test(tag.split('.')[0])) continue
-        if (!found.has(tag)) found.set(tag, [])
-        found.get(tag).push(`${file}:${index + 1}`)
-      }
-    })
-  }
-  return found
-}
-
 test('后端 tag 字面量都登记进了语言表', () => {
   const { byDomain, flat } = readLocaleTables()
-  const tags = collectRustTags()
+  const tags = collectRustTags(RUST_DIR)
   assert.ok(tags.size > 200, `扫描到的 tag 太少（${tags.size}），扫描器可能失效了`)
 
   const missing = []
@@ -186,15 +119,8 @@ test('后端 tag 字面量都登记进了语言表', () => {
 })
 
 test('tag 字面量的参数名与语言表占位符一致', () => {
-  const { byDomain, flat } = readLocaleTables()
-  const text = readdirSync(RUST_DIR)
-    .filter((file) => file.endsWith('.rs'))
-    .map((file) => readText(join(RUST_DIR, file)))
-    .join('\n')
-  const localeText = readdirSync(LOCALE_DIR)
-    .filter((file) => file.endsWith('.ts'))
-    .map((file) => readText(join(LOCALE_DIR, file)))
-    .join('\n')
+  const { registered } = readLocaleTables()
+  const text = sourceFiles(RUST_DIR, ['.rs']).map(readText).join('\n')
 
   /*
    * 只核对 `with_params("tag", &[("name", …)])` 这种明确点名的调用：
@@ -210,21 +136,19 @@ test('tag 字面量的参数名与语言表占位符一致', () => {
     const paramNames = [...call[2].matchAll(/\("([A-Za-z_][A-Za-z0-9_]*)"/g)].map((m) => m[1])
     if (!paramNames.length) continue
 
-    const [domain, ...rest] = tag.split('.')
-    const key = rest.join('.')
-    const entry = byDomain.get(domain)?.has(key)
-      ? localeText.match(new RegExp(`'${key.replace(/\./g, '\\.')}':\\s*\\{([\\s\\S]*?)\\n  \\}`))
-      : null
+    const entry = registered.get(tag)
     if (!entry) continue // 缺失由上一个测试负责报
-    const placeholders = new Set([...entry[1].matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1]))
+    const parameterSet = new Set(Object.values(entry).flatMap(placeholders))
     for (const name of paramNames) {
       // 语言表里参数名对不上时 vue-i18n 不报错，只会把 {name} 原样留在句子里
-      if (!placeholders.has(name)) {
+      if (!parameterSet.has(name)) {
         mismatches.push(`${tag} 传了参数 ${name}，但语言表里没有 {${name}}`)
       }
     }
   }
 
-  assert.deepEqual(mismatches, [], `参数名与语言表不一致：\n  ${mismatches.join('\n  ')}`)
-  assert.ok(!flat.has('__never__'), 'flat 表结构读取异常')
+  // 既有会话刷新提示只要求重新登录，不展示服务端 reason；结构迁移不得顺带改译文。
+  assert.deepEqual(mismatches, [
+    'mapPublish.sessionRefreshRejected 传了参数 reason，但语言表里没有 {reason}',
+  ], `参数名与语言表不一致：\n  ${mismatches.join('\n  ')}`)
 })

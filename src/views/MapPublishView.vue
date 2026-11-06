@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
-import { NButton, NCheckbox, NSpin, NTag, useDialog } from 'naive-ui'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NButton, NCheckbox, NSpin, NTabPane, NTabs, useDialog } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { api } from '../services/tauri'
@@ -14,7 +14,7 @@ import PublishVersionsStep from '../components/publish/PublishVersionsStep.vue'
 import { useMapPublish } from '../composables/useMapPublish'
 import { useMapPublishEditor } from '../composables/useMapPublishEditor'
 import { useFileDrop } from '../composables/useFileDrop'
-import { displayName } from '../mapPublishRelease'
+import { setPageTitleOverride } from '../pageHeader'
 import { PUBLISH_STEP_ORDER, permissionScopeKey, type PublishStepId } from '../mapPublishFlow'
 import { markDialogBusy } from '../dialogBusy'
 import { useNotify } from '../useNotify'
@@ -33,13 +33,13 @@ const { auth, authReady, authLoading, authenticated, needsInstall, openInstallPa
   cancelSignIn, refreshRepositories, deleteRelease, deleteAsset } = publish
 const editorRoot = ref<HTMLElement | null>(null)
 const editor = useMapPublishEditor(publish, editorRoot)
-const { mode, activeTag, activeStep, form, workingRelease, latestRow, unregistered, busyAny, awaitingMetadata, canSelectStep,
+const { mode, activeTag, activeStep, workingRelease, unregistered, busyAny, awaitingMetadata, canSelectStep,
   openCreate, openManagement, backToList, selectStep, loadPendingZip } = editor
 const settingsOpen = ref(false)
 const openSettings = () => { settingsOpen.value = true }
 onMounted(loadState)
-const identityTitle = computed(() => workingRelease.value ? displayName(workingRelease.value) : form.tag.trim())
-const identityShowsTitle = computed(() => Boolean(identityTitle.value && identityTitle.value !== form.tag.trim()))
+watch(mode, value => setPageTitleOverride(value === 'list' ? null : 'mapPublish.editTitle'), { immediate: true })
+onBeforeUnmount(() => setPageTitleOverride(null))
 function stepTitle(step: PublishStepId): string {
   switch (step) {
     case 'release':
@@ -146,12 +146,17 @@ function confirmDeleteAsset(name: string) {
 
 <template>
   <Teleport to="#page-header-actions" defer>
-    <n-button size="small" :loading="repositoriesLoading || releasesLoading" :disabled="!authenticated || busyAny || awaitingMetadata"
-      @click="refreshRepositories">
-      <template #icon><RefreshOutline width="14" height="14" /></template>
-      {{ t('common.action.refresh') }}
+    <template v-if="mode === 'list'">
+      <n-button size="small" :loading="repositoriesLoading || releasesLoading" :disabled="!authenticated || busyAny || awaitingMetadata"
+        @click="refreshRepositories">
+        <template #icon><RefreshOutline width="14" height="14" /></template>
+        {{ t('common.action.refresh') }}
+      </n-button>
+      <PublishSettingsPopover v-model:show="settingsOpen" :publish="publish" :disabled="busyAny || awaitingMetadata" />
+    </template>
+    <n-button v-else size="small" :disabled="busyAny" @click="backToList">
+      {{ t('mapPublish.backToMapSets') }}
     </n-button>
-    <PublishSettingsPopover v-model:show="settingsOpen" :publish="publish" :disabled="busyAny || awaitingMetadata" />
   </Teleport>
   <div ref="editorRoot" class="map-publish">
   <PageLoading :show="authLoading">
@@ -236,11 +241,9 @@ function confirmDeleteAsset(name: string) {
       </div>
     </section>
 
-    <!-- 仓库已定：主区在地图集列表 / 地图管理 / 新建地图集之间切换 -->
+    <!-- 同一路由的列表与编辑状态分别使用发布/编辑页头。 -->
     <section v-else class="group">
-      <h2 class="group-title">
-        {{ mode === 'list' ? t('mapPublish.mapSets') : t('mapPublish.mapManagement') }}
-      </h2>
+      <h2 v-if="mode === 'list'" class="group-title">{{ t('mapPublish.mapSets') }}</h2>
 
       <!-- 选了仓库就查一次标签：缺 map-source 之类，地图页就收不到这个仓库 -->
       <div v-if="missingTopics.length" class="panel topics-banner">
@@ -255,34 +258,6 @@ function confirmDeleteAsset(name: string) {
         :releases="releases" :releases-loading="releasesLoading" :deleting-release="deletingRelease"
         @create="openCreate" @open="openManagement" @delete="confirmDeleteRelease" />
       <template v-else>
-        <!-- 身份固定；资料与版本分步保存。 -->
-        <div class="panel publish-head">
-          <div class="panel-head">
-            <div class="manage-head">
-              <code class="release-tag mono">
-                {{ workingRelease?.tag || form.tag.trim() || t('mapPublish.newMapSet') }}
-              </code>
-              <span v-if="identityShowsTitle" class="release-title">{{ identityTitle }}</span>
-              <n-tag size="tiny" :bordered="false">
-                {{ workingRelease ? t('mapPublish.mapManagement') : t('mapPublish.newMapSet') }}
-              </n-tag>
-            </div>
-            <div class="head-actions">
-              <span v-if="workingRelease" class="muted identity-versions">
-                {{
-                  t('mapPublish.identityVersions', {
-                    count: workingRelease.assets.length,
-                    latest: latestRow?.mapsetVersion || '—',
-                  })
-                }}
-              </span>
-              <n-button size="small" :disabled="busyAny" @click="backToList">
-                {{ t('mapPublish.backToMapSets') }}
-              </n-button>
-            </div>
-          </div>
-        </div>
-
         <!-- 缺权限 / 被限流的常驻引导：写失败后出现，写成功一次自动收起 -->
         <div v-if="permissionFailure" class="panel permission-banner">
           <div class="topics-text">
@@ -314,13 +289,13 @@ function confirmDeleteAsset(name: string) {
         <p v-else-if="unregistered.length" class="warn">
           {{ t('mapPublish.unregisteredVersions', { count: unregistered.length }) }}
         </p>
-        <nav class="publish-step-nav" :aria-label="t('mapPublish.title')">
-          <n-button v-for="(step, index) in PUBLISH_STEP_ORDER" :key="step" size="small"
-            :type="activeStep === step ? 'primary' : 'default'" :aria-current="activeStep === step ? 'step' : undefined"
-            :disabled="busyAny || !canSelectStep(step)" @click="selectStep(step)">
-            {{ index + 1 }}. {{ stepTitle(step) }}
-          </n-button>
-        </nav>
+        <n-tabs :value="activeStep" type="segment" size="large" class="publish-step-nav"
+          :aria-label="t('mapPublish.editTitle')" @update:value="selectStep">
+          <n-tab-pane v-for="(step, index) in PUBLISH_STEP_ORDER" :key="step" :name="step"
+            :disabled="busyAny || !canSelectStep(step)">
+            <template #tab>{{ index + 1 }}. {{ stepTitle(step) }}</template>
+          </n-tab-pane>
+        </n-tabs>
         <PublishReleaseStep v-if="activeStep === 'release'" :editor="editor" />
         <PublishAssetStep v-else-if="activeStep === 'asset'" :editor="editor" :drag-active="dragActive"
           :inspecting="inspecting" :upload-progress="uploadProgress" />

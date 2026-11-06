@@ -294,7 +294,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   const assetNameOf = (row: AssetVersionRow) => workingRelease.value ? assetNameForRow(workingRelease.value, row) : ''
   return {
     mode, activeTag, activeStep, stepBusy, form, document, assetRows, metadataDirty, versionsDirty, awaitingMetadata, pending,
-    workingRelease, canonicalName, inspectionError, latestRow, unregistered, busyAny, validation, canSelectStep,
+    workingRelease, canonicalName, inspectionError, unregistered, busyAny, validation, canSelectStep,
     openManagement, openCreate, backToList, selectStep, loadPendingZip, pickPendingZip,
     saveReleaseStep, uploadPending, saveDocument, assetNameOf,
   }

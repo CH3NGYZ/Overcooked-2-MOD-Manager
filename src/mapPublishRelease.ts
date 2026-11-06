@@ -2,10 +2,6 @@ import { composeAssetRule, compareMapVersions, latestVersionOf, renderAssetName,
 import { unregisteredVersions, type AssetVersionRow } from './mapPublishFlow.ts'
 import type { MapPublishMetadata, PublishRelease } from './types'
 
-export function displayName(release: PublishRelease): string {
-  return release.metadata?.level_set_name.trim() || release.title.trim() || release.tag
-}
-
 export function latestVersionOfRelease(release: PublishRelease): string {
   return release.metadata?.asset_versions.at(-1)?.mapset_version.trim() ||
     latestVersionOf(release.assets.map(asset => asset.name)) ||

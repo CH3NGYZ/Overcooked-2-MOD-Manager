@@ -891,6 +891,13 @@ export const mapPublish: DomainMessages = {
     ko: '새 지도 세트',
     ja: '新しいマップセット',
   },
+  editTitle: {
+    'zh-CN': '地图编辑',
+    'zh-TW': '地圖編輯',
+    en: 'Map editor',
+    ko: '지도 편집',
+    ja: 'マップ編集',
+  },
   mapManagement: {
     'zh-CN': '地图管理',
     'zh-TW': '地圖管理',
@@ -1290,13 +1297,6 @@ export const mapPublish: DomainMessages = {
     en: 'Drag to reorder. The top version is the latest.',
     ko: '드래그해 정렬하세요. 맨 위가 최신 버전입니다.',
     ja: 'ドラッグして並べ替えます。一番上が最新版です。',
-  },
-  identityVersions: {
-    'zh-CN': '已有 {count} 版 · 最新 {latest}',
-    'zh-TW': '已有 {count} 版 · 最新 {latest}',
-    en: '{count} versions · latest {latest}',
-    ko: '{count}개 버전 · 최신 {latest}',
-    ja: '{count} 版 · 最新 {latest}',
   },
   unsaved: {
     'zh-CN': '未保存',

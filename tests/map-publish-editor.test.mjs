@@ -55,6 +55,28 @@ test('View 单次会话与四步子组件保持 400 行边界', () => {
   assert.match(view, /!canSelectStep\(step\)/)
 })
 
+test('编辑页复用标题覆盖与受控分段导航，返回仍走原离开保护', () => {
+  const view = read('src/views/MapPublishView.vue')
+  assert.match(view, /watch\(mode, value => setPageTitleOverride\(value === 'list' \? null : 'mapPublish.editTitle'\)/)
+  assert.match(view, /onBeforeUnmount\(\(\) => setPageTitleOverride\(null\)\)/)
+  const header = view.slice(view.indexOf('<Teleport'), view.indexOf('</Teleport>'))
+  assert.match(header, /<template v-if="mode === 'list'">[\s\S]*PublishSettingsPopover/)
+  assert.match(header, /<n-button v-else[^>]*:disabled="busyAny"[^>]*@click="backToList"/)
+  assert.match(header, /mapPublish.backToMapSets/)
+  assert.doesNotMatch(view, /publish-head|identityTitle|identityVersions|mapPublish.mapManagement/)
+  assert.match(view, /<n-tabs :value="activeStep" type="segment"/)
+  assert.match(view, /@update:value="selectStep"/)
+  assert.match(view, /<n-tab-pane v-for="\(step, index\) in PUBLISH_STEP_ORDER"[^>]*:name="step"[\s\S]*?:disabled="busyAny \|\| !canSelectStep\(step\)"/)
+  assert.match(view, /<template #tab>\{\{ index \+ 1 \}\}. \{\{ stepTitle\(step\) \}\}<\/template>/)
+  assert.doesNotMatch(view, /v-model:value="activeStep"/)
+  const css = read('src/styles/publish.css')
+  assert.match(css, /\.publish-step-nav \.n-tab-pane \{ display: none; \}/)
+  assert.match(css, /\.publish-step-nav \.n-tabs-rail \{ align-items: stretch; \}/)
+  assert.match(css, /\.publish-step-nav \.n-tabs-tab-wrapper \{[^}]*min-width: 0;[^}]*align-items: stretch;/)
+  assert.match(css, /\.publish-step-nav \+ \.panel \{ margin-top: 16px; \}/)
+  assert.equal(mapPublish.editTitle['zh-CN'], '地图编辑')
+})
+
 test('四步保存、info 版本与前置同名附件检查不退回一键发布', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
   assert.match(editor, /function openManagement[\s\S]*?activeStep\.value = 'asset'/)
@@ -171,7 +193,7 @@ test('识别表先挂载再校验，不符保留表格且不得污染草稿或�
 })
 
 test('发布新增文案五语全部登记', () => {
-  for (const key of ['stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'versionsReadOnly', 'assetRelationsHint', 'inheritRelations', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
+  for (const key of ['editTitle', 'stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'createRelease', 'saveAndNext', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'versionsReadOnly', 'assetRelationsHint', 'inheritRelations', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
     for (const language of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(mapPublish[key][language]?.trim(), `${key}/${language}`)
   }
 })

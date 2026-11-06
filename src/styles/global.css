@@ -30,6 +30,7 @@
    * 教程结束即整层卸载，不会长期挡住标题栏弹层。
    */
   --oc2-layer-tutorial: 6000;
+  --oc2-layer-update-progress: 6200;
 }
 
 /*

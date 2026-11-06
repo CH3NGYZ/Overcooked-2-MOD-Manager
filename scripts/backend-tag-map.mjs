@@ -336,7 +336,6 @@ export const ENTRIES = {
   '程序更新安装失败': 'update.installFailed',
   '程序更新安装失败，请手动更新': 'update.installFailedManual',
   '更新安装器已启动，请等待安装完成': 'update.installerStarted',
-  '请手动更新管理器, 本次跳过更新.': 'update.manualUpdateSkipped',
 
   // ===== 安装与回滚（补充）=====
   '同一仓库绑定了多个旧 MOD 包，请先在 MOD 管理中确认要替换的包': 'mods.multipleOldPackages',

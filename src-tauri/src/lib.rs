@@ -17,6 +17,7 @@ mod game_state;
 mod gitee_community;
 mod gitee_webview;
 mod github_proxies;
+mod github_proxy_runtime;
 mod install_guard;
 // 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod level_sets;
@@ -79,7 +80,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
-        .on_window_event(gitee_webview::close_with_main)
+        .on_window_event(|window, event| {
+            if window.label() == "main" && archive::app_update_in_progress() {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                }
+            }
+            gitee_webview::close_with_main(window, event);
+        })
         .plugin(
             tauri_plugin_updater::Builder::new()
                 .header("User-Agent", releases::APP_USER_AGENT)
@@ -118,7 +126,13 @@ pub fn run() {
                 log::error!("初始化应用状态失败：{error}");
                 std::io::Error::other(error.to_string())
             })?;
+            let proxy_config = state.config.clone();
             app.manage(state);
+            tauri::async_runtime::spawn(async move {
+                if proxy_config.refresh_proxies().await.is_err() {
+                    log::warn!("启动线上代理清单不可用，继续使用随包清单");
+                }
+            });
             // 迁移发生在日志插件初始化之前，结果在这里补记。
             match migration {
                 user_paths::LegacyMigration::Moved { legacy, target } => log::info!(
@@ -150,17 +164,6 @@ pub fn run() {
                     log_path.display()
                 );
             }
-            let region = config::current_user_region();
-            match repository_sources::github_proxy_sources(region) {
-                Ok(sources) => {
-                    let scripts = sources.iter().filter(|source| source.format == github_proxies::ProxySourceFormat::UserScript).collect::<Vec<_>>();
-                    log::info!("GitHub 代理 JS 启动同步已排队：地区={}，JS 来源数={}，等待界面初始化及教程结束", region, scripts.len());
-                    for source in scripts {
-                        log::info!("GitHub 代理 JS 待请求地址={}", repository_sources::safe_log_address(&source.url));
-                    }
-                }
-                Err(error) => log::error!("GitHub 代理 JS 启动配置读取失败：错误类别={}", repository_sources::error_category(&error)),
-            }
             set_initial_window_size(app);
             present_startup_window(app);
             game_state::start_observer(app.handle().clone());
@@ -191,7 +194,6 @@ pub fn run() {
             commands::toggle_local_mod_package,
             commands::set_all_local_mods_enabled,
             commands::save_settings,
-            commands::save_github_proxies,
             commands::refresh_github_proxies,
             commands::save_tokens,
             commands::detect_game,
@@ -295,8 +297,18 @@ pub fn run() {
             commands::check_app_update,
             commands::install_app_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                if archive::app_update_in_progress() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 /// Start the manager at 80% of the current monitor's work area while keeping

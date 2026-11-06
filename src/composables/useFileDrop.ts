@@ -21,6 +21,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { isTauri } from '../runtime'
 import { t } from '../i18n'
 import { useNotify, type Notify } from '../useNotify'
+import { appUpdateState } from '../appUpdateState'
 import { acceptLabel, matchesFileAccept } from '../dropAccept'
 
 /**
@@ -68,6 +69,10 @@ async function registerListener() {
   listener = (async () => {
     try {
       await getCurrentWebview().onDragDropEvent((event) => {
+        if (appUpdateState.stage !== 'idle') {
+          dragActive.value = false
+          return
+        }
         const payload = event.payload
         if (payload.type === 'over' || payload.type === 'enter') {
           dragActive.value = true

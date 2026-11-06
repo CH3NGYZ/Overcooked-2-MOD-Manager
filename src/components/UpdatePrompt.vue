@@ -1,101 +1,118 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { api, watchAppUpdatePhase } from '../services/tauri'
-import { useNotify } from '../useNotify'
 import { renderMermaidBlocks, renderReadme } from '../markdown'
 import AppModal from './AppModal.vue'
-import type { AppUpdateInfo } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
+import { beginDownloadTask, endDownloadTask } from '../downloadTask'
+import { appUpdateState, beginAppUpdate, finishAppUpdate } from '../appUpdateState'
 
-const props = defineProps<{ show: boolean; update: AppUpdateInfo | null }>()
-const emit = defineEmits<{ 'update:show': [value: boolean] }>()
-
-const message = useNotify()
-const installing = ref(false)
+const update = computed(() => appUpdateState.update)
+const show = computed(() => appUpdateState.stage !== 'idle')
+const installing = computed(() => appUpdateState.stage === 'installing')
+const busy = computed(() => installing.value || appUpdateState.stage === 'handoff')
+const manual = computed(() => appUpdateState.stage === 'manual')
+const failureDetail = computed(() => {
+  const text = translateBackendMessage(appUpdateState.error)
+  return text === t('update.manualRequired') ? '' : text
+})
 const phaseText = ref('')
+const openingRelease = ref(false)
+const releaseError = ref('')
 
-let unlisten: (() => void) | null = null
-void watchAppUpdatePhase((event) => {
-  if (event.message) phaseText.value = event.message
-}).then((un) => { unlisten = un })
-onUnmounted(() => { unlisten?.() })
-
-const bodyText = computed(() => props.update?.body?.trim() || t('dialogs.noReleaseNotesWereProvided'))
-/** 更新日志按 Markdown 渲染（与 note/README 同一函数）。 */
-const bodyHtml = computed(() => renderReadme(props.update?.body?.trim() || ''))
-/** 更新日志里也可能有 mermaid 图，渲染后补一次 SVG 转换。 */
-const bodyElement = ref<HTMLElement | null>(null)
-watch(
-  [bodyHtml, () => props.show],
-  async () => {
-    await nextTick()
-    if (props.show) void renderMermaidBlocks(bodyElement.value)
-  },
-  { flush: 'post' },
-)
-
-function close() {
-  emit('update:show', false)
+let disposed = false
+const listeners: (() => void)[] = []
+function keepListener(unlisten: () => void) {
+  if (disposed) unlisten()
+  else listeners.push(unlisten)
 }
+void watchAppUpdatePhase((event) => {
+  if (installing.value && event.message) phaseText.value = event.message
+}).then(keepListener).catch(() => undefined)
+
+function preventReload(event: BeforeUnloadEvent) {
+  if (!busy.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => {
+  window.addEventListener('beforeunload', preventReload)
+})
+onUnmounted(() => {
+  disposed = true
+  listeners.forEach(unlisten => unlisten())
+  window.removeEventListener('beforeunload', preventReload)
+})
+
+const bodyText = computed(() => update.value?.body?.trim() || t('dialogs.noReleaseNotesWereProvided'))
+const bodyHtml = computed(() => renderReadme(update.value?.body?.trim() || ''))
+const bodyElement = ref<HTMLElement | null>(null)
+watch([bodyHtml, show], async () => {
+  await nextTick()
+  if (show.value) void renderMermaidBlocks(bodyElement.value)
+}, { flush: 'post' })
 
 async function install() {
-  installing.value = true
+  if (!beginAppUpdate()) return
   phaseText.value = t('dialogs.preparingDownload')
-  /*
-   * 安装器包同样走下载管线：首字节超时这类失败要能原地重试。
-   * 重试只重跑这次安装，弹窗状态与更新信息都不动；标题用版本号，
-   * 失败卡片上能直接看出是哪一个版本没下下来。
-   */
+  // 最终失败由强制更新弹窗接管，不产生可关闭/重试的普通下载失败卡。
   const token = beginDownloadTask({
-    label: props.update ? `v${props.update.version}` : t('dialogs.update'),
-    retry: () => { void install() },
+    label: update.value ? `v${update.value.version}` : t('dialogs.update'),
+    retry: install,
   })
   try {
     const result = await api.installAppUpdate()
-    endDownloadTask(token)
-    if (result.ok) {
-      message.success(result.message
-        ? translateBackendMessage(result.message)
-        : t('dialogs.updateInstallStartedTheAppWillExitAutomatically'))
-      phaseText.value = ''
-      close()
-    } else {
-      message.error(translateBackendMessage(result.message))
-      phaseText.value = ''
-    }
+    finishAppUpdate(result.ok, result.message)
+    phaseText.value = result.ok ? (result.message || 'update.installerStarted') : ''
   } catch (reason) {
-    failDownloadTask(token, reason)
-    message.error(backendMessageOf(reason))
+    finishAppUpdate(false, backendMessageOf(reason))
     phaseText.value = ''
   } finally {
-    installing.value = false
+    endDownloadTask(token)
+  }
+}
+
+async function openRelease() {
+  if (!manual.value || openingRelease.value) return
+  openingRelease.value = true
+  releaseError.value = ''
+  try {
+    const result = await api.openUpdateRepository()
+    if (!result.ok) releaseError.value = translateBackendMessage(result.message)
+  } catch (reason) {
+    releaseError.value = backendMessageOf(reason)
+  } finally {
+    openingRelease.value = false
   }
 }
 </script>
 
 <template>
-  <!-- 复用统一弹窗外壳：尺寸随内容自适应，更新日志再长也不会超出视口 -->
-  <AppModal :show="show" :mask-closable="false" max-width="min(520px, 92%)"
-    max-height="85%" min-height="160px" @update:show="close">
+  <AppModal :show="show" :closable="false" :mask-closable="false"
+    :z-index="6100" card-class="mandatory-update" max-width="min(520px, 92%)"
+    max-height="85%" min-height="160px">
     <div class="update-body">
-      <h2 class="title">
-        发现新版本<span v-if="update">: v{{ update.version }}</span>
-      </h2>
-      <div v-if="update" class="version-line muted">
-        当前 v{{ update.current_version }} → 新版 v{{ update.version }}
-        <span v-if="update.provider">（{{ update.provider === 'gitee' ? 'Gitee 渠道' : 'GitHub 渠道' }}）</span>
+      <h2 class="title">{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
+      <div v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</div>
+      <p class="update-requirement">{{ t(manual ? 'update.manualRequired' : 'update.required') }}</p>
+      <div v-if="manual && failureDetail" class="update-error" role="alert">
+        {{ failureDetail }}
       </div>
+      <div v-if="releaseError" class="update-error" role="alert">{{ releaseError }}</div>
       <div class="body-label muted">{{ t('dialogs.whatSNew') }}</div>
       <div v-if="bodyHtml" ref="bodyElement" class="body markdown-body" v-html="bodyHtml"></div>
       <div v-else class="body">{{ bodyText }}</div>
-      <div v-if="phaseText" class="phase">{{ phaseText }}</div>
+      <div v-if="phaseText" class="phase" role="status">{{ translateBackendMessage(phaseText) }}</div>
     </div>
     <template #footer>
-      <n-button quaternary :disabled="installing" @click="close">{{ t('recycle.cancel') }}</n-button>
-      <n-button type="primary" :loading="installing" @click="install">{{ t('dialogs.update') }}</n-button>
+      <n-button v-if="manual" type="primary" :loading="openingRelease" @click="openRelease">
+        {{ t('dialogs.openReleasePage') }}
+      </n-button>
+      <n-button v-else type="primary" :loading="busy" :disabled="busy" @click="install">
+        {{ t('dialogs.update') }}
+      </n-button>
     </template>
   </AppModal>
 </template>
@@ -107,6 +124,8 @@ async function install() {
   flex-direction: column;
   gap: 6px;
 }
+.update-requirement { margin: 0 0 8px; color: var(--oc2-text-2); }
+.update-error { color: var(--oc2-accent); overflow-wrap: anywhere; }
 .title {
   margin: 0 0 6px;
   font-size: 21px;

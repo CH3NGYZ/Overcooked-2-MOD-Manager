@@ -13,6 +13,7 @@ import { useUiZoom } from '../composables/useUiZoom'
 import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
+import { appUpdateState } from '../appUpdateState'
 import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
@@ -31,6 +32,7 @@ const emit = defineEmits<{ secretEntry: [] }>()
  */
 let versionTaps: number[] = []
 function onVersionTap() {
+  if (appUpdateState.stage !== 'idle') return
   versionTaps = recordTap(versionTaps, Date.now(), SECRET_ENTRY_WINDOW_MS)
   if (!tapSequenceReady(versionTaps)) return
   versionTaps = []
@@ -102,7 +104,11 @@ async function toggleMaximize() {
     maximized.value = await appWindow.isMaximized().catch(() => false)
   })
 }
-async function close() { await safeTauri(async () => appWindow?.close()) }
+const updateBusy = computed(() => ['installing', 'handoff'].includes(appUpdateState.stage))
+async function close() {
+  if (updateBusy.value) return
+  await safeTauri(async () => appWindow?.close())
+}
 /** 浏览器预览不显示窗口控制（无窗口可控制）。 */
 const canControlWindow = computed(() => isTauri())
 /**
@@ -147,7 +153,7 @@ const gameHover = ref(false)
 /** 游戏是否在运行：来自后端游戏状态观察器，前端不自己探测。 */
 const kitchenRunning = computed(() => !!game.value?.kitchen_running)
 /** 有游戏目录才允许启动。 */
-const canLaunch = computed(() => !!game.value?.path)
+const canLaunch = computed(() => !!game.value?.path && appUpdateState.stage === 'idle')
 
 /**
  * 切换厨房运行状态。
@@ -163,7 +169,7 @@ const canLaunch = computed(() => !!game.value?.path)
  * 一起重做，几次下去比状态本身贵得多。
  */
 async function toggleGame() {
-  if (launching.value) return
+  if (launching.value || appUpdateState.stage !== 'idle') return
   launching.value = true
   const wasRunning = kitchenRunning.value
   try {
@@ -303,6 +309,7 @@ defineExpose({ onUnmountedCleanup })
       <span class="sep"></span>
       <button v-for="action in chromeActions" :key="action" class="win-btn"
         :class="`chrome-${action}`" type="button"
+        :disabled="action === 'close' && updateBusy"
         :title="chromeTitle(action)" :aria-label="chromeTitle(action)" @click="runChrome(action)">
         <CloseOutline v-if="action === 'close'" width="17" height="17" />
         <ContractOutline v-else-if="action === 'maximize' && maximized" width="15" height="15" />

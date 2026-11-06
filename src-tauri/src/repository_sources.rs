@@ -1,5 +1,5 @@
 use crate::config::{ConfigError, validate_repository, validate_repository_source_region};
-use crate::models::{AppConfig, GitHubProxy, RepositoryExport};
+use crate::models::{AppConfig, RepositoryExport};
 use crate::releases;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashSet;
@@ -244,11 +244,10 @@ impl SourceLocation {
         let document = parse_document(text, self);
         match &document {
             Ok(document) => log::debug!(
-                "内置仓库源解析完成：地址={}，仓库={}，子源={}，代理源={}",
+                "内置仓库源解析完成：地址={}，仓库={}，子源={}",
                 safe_log_address(&self.address()),
                 document.repositories.len(),
-                document.repository_sources.len(),
-                document.github_proxy_sources.len()
+                document.repository_sources.len()
             ),
             Err(error) => log::error!(
                 "内置仓库源解析失败：地址={}，错误类别={}",
@@ -440,113 +439,6 @@ pub struct RepositorySourceDocument {
     pub repositories: Vec<RepositoryExport>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySourceDeclaration>,
-    #[serde(default)]
-    pub github_proxy_sources: Vec<GitHubProxySourceDeclaration>,
-    /// API proxy entries may be declared directly in the repository index so
-    /// the maintained `repositories.toml` remains the source of truth.
-    #[serde(default)]
-    pub github_api_proxies: Vec<GitHubProxy>,
-    #[serde(default)]
-    pub gitee_api_proxies: Vec<GitHubProxy>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GitHubProxySourceDeclaration {
-    pub url: String,
-    #[serde(default)]
-    pub region: Option<String>,
-    #[serde(default)]
-    pub format: Option<String>,
-    #[serde(default)]
-    pub base_url: Option<String>,
-}
-
-/// Resolve the built-in proxy manifests for one user region.
-///
-/// A manifest without `region` (or with an empty value) is intentionally
-/// shared by every region. Region-specific manifests remain restricted to
-/// their matching channel.
-pub fn github_proxy_sources(
-    region: &str,
-) -> Result<Vec<crate::github_proxies::ProxySource>, ConfigError> {
-    log::debug!("读取 GitHub 代理来源配置：地区={}", region);
-    let location = SourceLocation::parse(BUILTIN_INDEX)?;
-    let document = location.bundled_document()?;
-    let region = crate::config::normalize_repository_region(Some(region));
-    let sources = document
-        .github_proxy_sources
-        .into_iter()
-        .filter(|source| proxy_source_matches_region(source.region.as_deref(), &region))
-        .map(|source| {
-            let format = match source.format.as_deref().unwrap_or("toml") {
-                "toml" => crate::github_proxies::ProxySourceFormat::Toml,
-                "userscript" => crate::github_proxies::ProxySourceFormat::UserScript,
-                other => {
-                    return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                        "proxy.unsupportedFormat",
-                        &[("format", &other.to_string())],
-                    )));
-                }
-            };
-            let resolved = match Url::parse(&source.url) {
-                Ok(url) => SourceLocation::remote(url)?,
-                Err(url::ParseError::RelativeUrlWithoutBase) => {
-                    let base = source
-                        .base_url
-                        .as_deref()
-                        .map(SourceLocation::parse)
-                        .transpose()?
-                        .unwrap_or_else(|| location.clone());
-                    SourceLocation::resolve(&source.url, Some(&base))?
-                }
-                Err(error) => {
-                    return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                        "source.proxyAddressInvalid",
-                        &[("reason", &error.to_string())],
-                    )));
-                }
-            };
-            let (url, bundled) = match resolved {
-                SourceLocation::Remote(url) => {
-                    if url.scheme() != "https" || url.host_str().is_none() {
-                        return Err(ConfigError::Invalid("source.proxyNotHttps".into()));
-                    }
-                    (url.to_string(), false)
-                }
-                SourceLocation::Bundled(path) => (path, true),
-            };
-            Ok(crate::github_proxies::ProxySource {
-                url,
-                format,
-                bundled,
-            })
-        })
-        .collect::<Vec<_>>();
-    if sources.is_empty() {
-        log::warn!("未找到 GitHub 代理来源配置：地区={}", region);
-        return Err(ConfigError::Read(crate::locale_tag::with_params(
-            "source.proxyManifestMissing",
-            &[("region", &region.to_string())],
-        )));
-    }
-    let sources = sources.into_iter().collect::<Result<Vec<_>, _>>();
-    if let Ok(sources) = &sources {
-        log::info!(
-            "GitHub 代理来源解析完成：地区={}，来源数={}",
-            region,
-            sources.len()
-        );
-    }
-    sources
-}
-
-fn proxy_source_matches_region(configured_region: Option<&str>, region: &str) -> bool {
-    configured_region
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none_or(|configured| {
-            crate::config::normalize_repository_region(Some(configured)) == region
-        })
 }
 
 pub(crate) fn source_address_key(url: &str, region: Option<&str>) -> (String, String) {
@@ -579,12 +471,7 @@ pub(crate) fn parse_document(
             &[("reason", &error.to_string())],
         ))
     })?;
-    if document.repositories.is_empty()
-        && document.repository_sources.is_empty()
-        && document.github_proxy_sources.is_empty()
-        && document.github_api_proxies.is_empty()
-        && document.gitee_api_proxies.is_empty()
-    {
+    if document.repositories.is_empty() && document.repository_sources.is_empty() {
         return Err(ConfigError::Invalid("source.emptyDocument".into()));
     }
     for repository in &mut document.repositories {
@@ -610,45 +497,6 @@ pub(crate) fn parse_document(
         repository.platform =
             crate::config::normalize_repository_platform(repository.platform.as_deref());
         validate_repository(repository)?;
-    }
-    for proxy_source in &mut document.github_proxy_sources {
-        proxy_source.region = crate::config::normalize_repository_region_for_storage(
-            proxy_source.region.as_deref(),
-            "source.proxySourceLabel",
-        );
-        validate_repository_source_region(proxy_source.region.as_deref())?;
-        match proxy_source.format.as_deref().unwrap_or("toml") {
-            "toml" | "userscript" => {}
-            other => {
-                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                    "proxy.unsupportedFormat",
-                    &[("format", &other.to_string())],
-                )));
-            }
-        }
-        let resolved = match Url::parse(&proxy_source.url) {
-            Ok(url) => SourceLocation::remote(url)?,
-            Err(url::ParseError::RelativeUrlWithoutBase) => {
-                let base = proxy_source
-                    .base_url
-                    .as_deref()
-                    .map(SourceLocation::parse)
-                    .transpose()?
-                    .unwrap_or_else(|| location.clone());
-                SourceLocation::resolve(&proxy_source.url, Some(&base))?
-            }
-            Err(error) => {
-                return Err(ConfigError::Invalid(crate::locale_tag::with_params(
-                    "source.proxyAddressInvalid",
-                    &[("reason", &error.to_string())],
-                )));
-            }
-        };
-        if let SourceLocation::Remote(url) = resolved {
-            if url.scheme() != "https" || url.host_str().is_none() {
-                return Err(ConfigError::Invalid("source.proxyNotHttps".into()));
-            }
-        }
     }
     let mut ids = std::collections::HashSet::new();
     let mut urls = std::collections::HashSet::new();
@@ -676,13 +524,10 @@ pub(crate) fn parse_document(
         .repository_sources
         .retain(|source| urls.insert(source_address_key(&source.url, source.region.as_deref())));
     log::debug!(
-        "仓库源文档解析完成：地址={}，仓库={}，子源={}，代理源={}，GitHub API代理={}，Gitee API代理={}",
+        "仓库源文档解析完成：地址={}，仓库={}，子源={}",
         safe_log_address(&location.address()),
         document.repositories.len(),
-        document.repository_sources.len(),
-        document.github_proxy_sources.len(),
-        document.github_api_proxies.len(),
-        document.gitee_api_proxies.len()
+        document.repository_sources.len()
     );
     Ok(document)
 }
@@ -981,7 +826,7 @@ pub(crate) async fn load_verified_text_document<T>(
 }
 
 /// 竞速分支里的单次下载：读字节、报进度、按 API 给的 size/digest 校验。
-async fn fetch_document_bytes(
+pub(crate) async fn fetch_document_bytes(
     client: &reqwest::Client,
     url: &str,
     reporter: &crate::archive::DownloadReporter,
@@ -1049,13 +894,10 @@ pub async fn load_document(
         log::info!("开始加载内置仓库源：地址={}", safe_url);
         let document = location.bundled_document()?;
         log::info!(
-            "内置仓库源加载完成：地址={}，仓库={}，子源={}，代理源={}，GitHub API代理={}，Gitee API代理={}",
+            "内置仓库源加载完成：地址={}，仓库={}，子源={}",
             safe_url,
             document.repositories.len(),
-            document.repository_sources.len(),
-            document.github_proxy_sources.len(),
-            document.github_api_proxies.len(),
-            document.gitee_api_proxies.len()
+            document.repository_sources.len()
         );
         return Ok(document);
     };
@@ -1475,63 +1317,6 @@ mod tests {
             safe_log_address("repositories-proxies.toml"),
             "repositories-proxies.toml"
         );
-    }
-
-    #[test]
-    fn proxy_sources_keep_region_order_format_and_relative_resolution() {
-        let mainland = github_proxy_sources("chinese_mainland").unwrap();
-        assert_eq!(mainland.len(), 2);
-        assert_eq!(mainland[0].url, "repositories-proxies.toml");
-        assert!(mainland[0].bundled);
-        assert_eq!(
-            mainland[1].format,
-            crate::github_proxies::ProxySourceFormat::UserScript
-        );
-        let international = github_proxy_sources("international").unwrap();
-        assert_eq!(international.len(), 2);
-        assert_eq!(international[0].url, "repositories-proxies.toml");
-        assert!(international[0].bundled);
-        assert_eq!(
-            international[1].format,
-            crate::github_proxies::ProxySourceFormat::UserScript
-        );
-    }
-
-    #[test]
-    fn unscoped_proxy_sources_are_available_in_every_region() {
-        assert!(proxy_source_matches_region(None, "chinese_mainland"));
-        assert!(proxy_source_matches_region(Some(""), "international"));
-        assert!(proxy_source_matches_region(
-            Some("chinese_mainland"),
-            "chinese_mainland"
-        ));
-        assert!(!proxy_source_matches_region(
-            Some("chinese_mainland"),
-            "international"
-        ));
-    }
-
-    #[test]
-    fn unscoped_proxy_source_is_preserved_when_parsing_a_manifest() {
-        let location = SourceLocation::parse("repositories.toml").unwrap();
-        let document = parse_document(
-            r#"
-[[github_proxy_sources]]
-url = "repositories-proxies.toml"
-"#,
-            &location,
-        )
-        .unwrap();
-        let source = &document.github_proxy_sources[0];
-        assert!(source.region.is_none());
-        assert!(proxy_source_matches_region(
-            source.region.as_deref(),
-            "chinese_mainland"
-        ));
-        assert!(proxy_source_matches_region(
-            source.region.as_deref(),
-            "international"
-        ));
     }
 
     #[test]

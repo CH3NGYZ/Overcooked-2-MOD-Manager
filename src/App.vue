@@ -18,14 +18,13 @@ import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition
 import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api } from './services/tauri'
 import { isTauri } from './runtime'
-import type { AppUpdateInfo, PublicConfig } from './types'
+import type { PublicConfig } from './types'
+import { appUpdateState, requireAppUpdate } from './appUpdateState'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
 import { setTutorialProgressSink, onTutorialSettled, startTutorialIfFirstRun } from './tutorial/engine'
 
 const version = ref('')
-const updateInfo = ref<AppUpdateInfo | null>(null)
-const showUpdate = ref(false)
 
 /** 页头标题：阶段覆盖值优先，否则用路由 meta；两者都过翻译表。 */
 const route = useRoute()
@@ -181,8 +180,7 @@ onMounted(() => {
     try {
       const result = await api.checkAppUpdate('zh-CN')
       if (result.update && !result.all_failed) {
-        updateInfo.value = result.update
-        showUpdate.value = true
+        requireAppUpdate(result.update)
       }
     } catch {
       // 启动更新检查失败静默：手动检查在设置页
@@ -205,7 +203,7 @@ onMounted(() => {
       <n-dialog-provider>
         <div class="app-shell">
           <AppTitleBar :version="version" @secret-entry="openSecretEntry" />
-          <div class="app-body">
+          <div class="app-body" :inert="appUpdateState.stage !== 'idle'">
             <AppSidebar />
             <main class="app-main">              <header class="page-header">
                 <div class="page-header-title">
@@ -245,9 +243,9 @@ onMounted(() => {
             </div>
           </Transition>
         </div>
-        <UpdatePrompt v-model:show="showUpdate" :update="updateInfo" />
-        <!-- 内置教程覆盖层：Teleport 到 body，自己接管点击/滚轮/方向键 -->
-        <TutorialOverlay />
+        <UpdatePrompt />
+        <!-- 强制更新优先，卸载教程浮层也会解除它的键盘/滚轮监听。 -->
+        <TutorialOverlay v-if="appUpdateState.stage === 'idle'" />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

@@ -650,14 +650,6 @@ export interface RepositoryPatch {
   official_api_only?: boolean
   enabled: boolean
 }
-export interface GitHubProxyPatch {
-  release_proxies: GitHubProxy[]
-  raw_proxies: GitHubProxy[]
-  github_api_proxies: GitHubProxy[]
-  gitee_api_proxies: GitHubProxy[]
-  avatar_proxies: GitHubProxy[]
-}
-
 /** 地图依赖的一个框架组件。 */
 export interface RequiredFramework {
   guid: string

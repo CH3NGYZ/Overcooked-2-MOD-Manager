@@ -244,7 +244,7 @@ async fn download_and_store(
      * 实测 8 个 raw 代理全部取不到 `github.com/{owner}.png`（403/404）——
      * 它们的模板都按 `{owner}/{repo}/{branch}/{path}` 设计，头像 URL 没有
      * 这些分段。真正能取到的是「纯 {url} 包装」型代理，所以头像有独立
-     * 名单 `avatar_proxies`，不跟随另外两组一起变。
+     * 名单 `avatar_proxies`，与其他分组一起由同一份清单替换。
      *
      * `is_raw_file = false` 同样必须：raw 模式会把目标重写成
      * `raw.githubusercontent.com/{owner}/{repo}/main/{path}`，头像拆不出
@@ -259,7 +259,7 @@ async fn download_and_store(
         mode,
         None,
     );
-    let candidates = crate::commands::ordered_asset_download_candidates(mode, &url, proxies);
+    let candidates = crate::download::ordered_asset_download_candidates(mode, &url, proxies);
     if candidates.is_empty() {
         log::warn!("头像没有可用下载候选：provider={provider:?} owner={owner}");
         return Err("avatar.noSource".into());

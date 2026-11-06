@@ -101,14 +101,14 @@ ja = "G_U_A"
 [[github_proxy_sources]]
 url = "repositories-proxies.toml"
 
-# 桥接源脚本
-[[github_proxy_sources]]
-region = "chinese_mainland"
-format = "userscript"
-url = "https://tencent.api-data-abtest-config.dahi.edu.eu.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"
+# # 桥接源脚本
+# [[github_proxy_sources]]
+# region = "chinese_mainland"
+# format = "userscript"
+# url = "https://tencent.api-data-abtest-config.dahi.edu.eu.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"
 
-# 桥接源脚本
-[[github_proxy_sources]]
-region = "international"
-format = "userscript"
-url = "https://update.greasyfork.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"
+# # 桥接源脚本
+# [[github_proxy_sources]]
+# region = "international"
+# format = "userscript"
+# url = "https://update.greasyfork.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"

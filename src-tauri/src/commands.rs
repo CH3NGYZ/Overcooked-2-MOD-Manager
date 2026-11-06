@@ -4,7 +4,7 @@ use crate::config::ConfigService;
 use crate::display_path::display_path;
 use crate::download::{
     DownloadCandidate as AssetDownloadCandidate, DownloadContext,
-    try_download_candidates as try_asset_download_candidates,
+    ordered_asset_download_candidates, try_download_candidates as try_asset_download_candidates,
 };
 use crate::game;
 use crate::models::*;
@@ -77,7 +77,11 @@ fn installer_manifest_url(provider: &Provider) -> String {
     }
 }
 
-fn installer_sources_for_url(provider: &Provider, url: &str) -> Vec<InstallerChannel> {
+fn installer_sources_for_url(
+    proxies: &GitHubProxyConfig,
+    provider: &Provider,
+    url: &str,
+) -> Vec<InstallerChannel> {
     let mut sources = vec![InstallerChannel {
         id: if *provider == Provider::Gitee {
             "gitee-direct"
@@ -92,10 +96,9 @@ fn installer_sources_for_url(provider: &Provider, url: &str) -> Vec<InstallerCha
     if *provider == Provider::Gitee {
         return sources;
     }
-    // Startup updates use only compiled-in Release templates, independently
-    // of the user/remote proxy lists used by MOD downloads.
+    // One snapshot covers manifest discovery, signature checks and package downloads.
     let mut visited = HashSet::from([url.to_string()]);
-    for proxy in crate::github_proxies::bundled_defaults().release_proxies {
+    for proxy in proxies.release_proxies.iter().cloned() {
         let Some(endpoint) =
             crate::github_proxies::proxy_urls(std::slice::from_ref(&proxy), url, false, None)
                 .into_iter()
@@ -115,15 +118,20 @@ fn installer_sources_for_url(provider: &Provider, url: &str) -> Vec<InstallerCha
     sources
 }
 
-fn installer_manifest_sources(region: InstallerRegion) -> Vec<InstallerChannel> {
+fn installer_manifest_sources(
+    proxies: &GitHubProxyConfig,
+    region: InstallerRegion,
+) -> Vec<InstallerChannel> {
     let mut sources = Vec::new();
     if region == InstallerRegion::MainlandChina {
         sources.extend(installer_sources_for_url(
+            proxies,
             &Provider::Gitee,
             &installer_manifest_url(&Provider::Gitee),
         ));
     }
     sources.extend(installer_sources_for_url(
+        proxies,
         &Provider::Github,
         &installer_manifest_url(&Provider::Github),
     ));
@@ -141,9 +149,12 @@ fn installer_candidate(channel: &InstallerChannel) -> AssetDownloadCandidate {
     }
 }
 
-fn installer_download_candidates(info: &AppUpdateInfo) -> Vec<AssetDownloadCandidate> {
+fn installer_download_candidates(
+    proxies: &GitHubProxyConfig,
+    info: &AppUpdateInfo,
+) -> Vec<AssetDownloadCandidate> {
     match (&info.provider, &info.installer_url) {
-        (Some(provider), Some(url)) => installer_sources_for_url(provider, url)
+        (Some(provider), Some(url)) => installer_sources_for_url(proxies, provider, url)
             .iter()
             .map(installer_candidate)
             .collect(),
@@ -516,12 +527,11 @@ where
 }
 
 async fn discover_installer_update(
-    state: &AppState,
+    config: &AppConfig,
     app: &AppHandle,
 ) -> Result<AppUpdateCheckResult, String> {
     let region = detect_installer_region();
     emit_installer_phase(app, region, "manifest", None, None);
-    let config = state.config.load_or_default();
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
@@ -534,7 +544,7 @@ async fn discover_installer_update(
     let mut statuses: Vec<AppUpdateChannelStatus> = Vec::new();
     let result = run_installer_manifest_routes(
         &client,
-        &installer_manifest_sources(region),
+        &installer_manifest_sources(&config.github_proxies, region),
         target,
         &current_version,
         || false,
@@ -1693,343 +1703,10 @@ pub fn save_settings(
 }
 
 #[tauri::command]
-pub fn save_github_proxies(
-    state: State<'_, AppState>,
-    patch: GitHubProxyPatch,
-) -> Result<PublicConfig, String> {
-    log::info!("保存 GitHub/Gitee 代理配置");
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    let mut proxies = GitHubProxyConfig {
-        release_proxies: patch.release_proxies,
-        raw_proxies: patch.raw_proxies,
-        github_api_proxies: patch.github_api_proxies,
-        gitee_api_proxies: patch.gitee_api_proxies,
-        avatar_proxies: patch.avatar_proxies,
-    };
-    let mut config = state.config.load_or_default();
-    proxies = crate::github_proxies::validate_saved_config(proxies, &config.github_proxies)?;
-    config.github_proxies = proxies;
-    state
-        .config
-        .save(&config)
-        .map_err(|error| error.to_string())?;
-    log::info!(
-        "代理配置保存完成：Release={}，Raw={}，GitHub API={}，Gitee API={}",
-        config.github_proxies.release_proxies.len(),
-        config.github_proxies.raw_proxies.len(),
-        config.github_proxies.github_api_proxies.len(),
-        config.github_proxies.gitee_api_proxies.len()
-    );
-    Ok(state.config.public_config(&config))
-}
-
-#[derive(Debug)]
-struct ProxySourceReadError {
-    stage: &'static str,
-    reason: String,
-}
-
-impl ProxySourceReadError {
-    fn new(stage: &'static str, reason: impl Into<String>) -> Self {
-        Self {
-            stage,
-            reason: reason.into(),
-        }
-    }
-}
-
-async fn read_github_proxy_source(
-    client: &reqwest::Client,
-    source: &crate::github_proxies::ProxySource,
-) -> Result<GitHubProxyConfig, ProxySourceReadError> {
-    use crate::github_proxies::ProxySourceFormat;
-    let started_at = std::time::Instant::now();
-    let safe_url = repository_sources::safe_log_address(&source.url);
-    let (format, max_bytes) = match source.format {
-        ProxySourceFormat::Toml => ("toml", 1024 * 1024),
-        ProxySourceFormat::UserScript => ("userscript", 4 * 1024 * 1024),
-    };
-    log::info!(
-        "GitHub 代理来源读取开始：地址={}，内置文件={}，格式={}，大小限制={}字节",
-        safe_url,
-        source.bundled,
-        format,
-        max_bytes
-    );
-    let text = if source.bundled {
-        let location = SourceLocation::parse(&source.url).map_err(|error| {
-            ProxySourceReadError::new("locate", repository_sources::error_category(&error))
-        })?;
-        let text = location.bundled_text().map_err(|error| {
-            ProxySourceReadError::new("read", repository_sources::error_category(&error))
-        })?;
-        log::info!(
-            "GitHub 代理内置文件读取成功：地址={}，格式={}，字节数={}",
-            safe_url,
-            format,
-            text.len()
-        );
-        text.to_string()
-    } else {
-        if source.format == ProxySourceFormat::UserScript {
-            log::info!("正在请求 GitHub 代理 JS：地址={}，超时=5秒", safe_url);
-        }
-        log::info!(
-            "GitHub 代理来源下载开始：地址={}，格式={}，超时=5秒",
-            safe_url,
-            format
-        );
-        let mut response = client.get(&source.url).send().await.map_err(|error| {
-            ProxySourceReadError::new(
-                "request",
-                crate::locale_tag::with_params(
-                    "proxy.downloadFailureDetail",
-                    &[
-                        ("timeout", &error.is_timeout().to_string()),
-                        ("connect", &error.is_connect().to_string()),
-                        ("reason", &error.without_url().to_string()),
-                    ],
-                ),
-            )
-        })?;
-        let status = response.status();
-        log::info!(
-            "GitHub 代理来源 HTTP 响应：地址={}，最终地址={}，格式={}，状态码={}，声明字节数={:?}",
-            safe_url,
-            repository_sources::safe_log_address(response.url().as_str()),
-            format,
-            status.as_u16(),
-            response.content_length()
-        );
-        if !status.is_success() {
-            return Err(ProxySourceReadError::new("http", format!("HTTP {status}")));
-        }
-        let size_error = || {
-            ProxySourceReadError::new(
-                "size",
-                crate::locale_tag::with_params(
-                    "proxy.sourceTooLargeByMib",
-                    &[("mib", &(max_bytes / (1024 * 1024)).to_string())],
-                ),
-            )
-        };
-        if response
-            .content_length()
-            .is_some_and(|length| length > max_bytes as u64)
-        {
-            return Err(size_error());
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|error| {
-            ProxySourceReadError::new(
-                "body",
-                crate::locale_tag::with_params(
-                    "proxy.readFailureDetail",
-                    &[
-                        ("bytes", &bytes.len().to_string()),
-                        ("timeout", &error.is_timeout().to_string()),
-                        ("reason", &error.without_url().to_string()),
-                    ],
-                ),
-            )
-        })? {
-            if bytes.len().saturating_add(chunk.len()) > max_bytes {
-                return Err(size_error());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        log::info!(
-            "GitHub 代理来源下载成功：地址={}，格式={}，状态码={}，字节数={}，耗时={}ms",
-            safe_url,
-            format,
-            status.as_u16(),
-            bytes.len(),
-            started_at.elapsed().as_millis()
-        );
-        String::from_utf8(bytes)
-            .map_err(|_| ProxySourceReadError::new("utf8", "proxy.invalidUtf8"))?
-    };
-    if text.len() > max_bytes {
-        return Err(ProxySourceReadError::new(
-            "size",
-            crate::locale_tag::with_params(
-                "proxy.sourceTooLargeByMib",
-                &[("mib", &(max_bytes / (1024 * 1024)).to_string())],
-            ),
-        ));
-    }
-    log::debug!(
-        "GitHub 代理来源解析开始：地址={}，格式={}，字节数={}",
-        safe_url,
-        format,
-        text.len()
-    );
-    let config = match source.format {
-        ProxySourceFormat::Toml => crate::github_proxies::parse_manifest(&text),
-        ProxySourceFormat::UserScript => crate::github_proxies::parse_userscript(&text),
-    }
-    // Parser errors may quote a remote document or a proxy URL containing a
-    // secret. Log the source/stage rather than untrusted document contents.
-    .map_err(|error| {
-        let reason = match error.as_str() {
-            "proxy.noUsableEntries" => "proxy.noUsableEntriesJs",
-            "proxy.missingDownloadList" | "proxy.missingRawList" => "proxy.missingDownloadListJs",
-            _ => "proxy.validationFailed",
-        };
-        ProxySourceReadError::new("parse", reason)
-    })?;
-    log::info!(
-        "GitHub 代理来源解析成功：地址={}，格式={}，Release={}，Raw={}，GitHub API={}，Gitee API={}，耗时={}ms",
-        safe_url,
-        format,
-        config.release_proxies.len(),
-        config.raw_proxies.len(),
-        config.github_api_proxies.len(),
-        config.gitee_api_proxies.len(),
-        started_at.elapsed().as_millis()
-    );
-    Ok(config)
-}
-
-#[tauri::command]
 pub async fn refresh_github_proxies(state: State<'_, AppState>) -> Result<PublicConfig, String> {
-    let region = crate::config::current_user_region();
-    log::info!("开始刷新 GitHub 代理来源：地区={}", region);
-    let sources = repository_sources::github_proxy_sources(region).map_err(|error| {
-        log::error!(
-            "GitHub 代理来源配置读取失败：地区={}，阶段=index，错误类别={}",
-            region,
-            repository_sources::error_category(&error)
-        );
-        error.to_string()
-    })?;
-    let script_sources = sources
-        .iter()
-        .filter(|source| source.format == crate::github_proxies::ProxySourceFormat::UserScript)
-        .count();
-    log::info!(
-        "GitHub 代理来源配置已读取：地区={}，来源数={}，JS 来源数={}",
-        region,
-        sources.len(),
-        script_sources
-    );
-    if script_sources == 0 {
-        log::warn!(
-            "当前地区没有匹配的 GitHub 代理 JS 来源，不会发送 JS 请求：地区={}，索引=repositories.toml",
-            region
-        );
-    }
-    for (index, source) in sources.iter().enumerate() {
-        log::info!(
-            "GitHub 代理来源已排队：序号={}，地区={}，格式={:?}，内置文件={}，地址={}",
-            index + 1,
-            region,
-            source.format,
-            source.bundled,
-            repository_sources::safe_log_address(&source.url)
-        );
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .user_agent(releases::APP_USER_AGENT)
-        .build()
-        .map_err(|error| {
-            log::error!("GitHub 代理 HTTP 客户端创建失败：阶段=client");
-            error.without_url().to_string()
-        })?;
-    let mut failed = 0usize;
-    let mut downloaded = GitHubProxyConfig::default();
-    let mut succeeded = 0usize;
-    let mut scripts_succeeded = 0usize;
-    for source in sources {
-        match read_github_proxy_source(&client, &source).await {
-            Ok(config) => {
-                downloaded = crate::github_proxies::merge_source_configs(&downloaded, config);
-                succeeded += 1;
-                if source.format == crate::github_proxies::ProxySourceFormat::UserScript {
-                    scripts_succeeded += 1;
-                }
-            }
-            Err(error) => {
-                log::warn!(
-                    "GitHub 代理来源读取失败：地址={}，格式={:?}，阶段={}，原因={}，保留内置后备",
-                    repository_sources::safe_log_address(&source.url),
-                    source.format,
-                    error.stage,
-                    error.reason
-                );
-                failed += 1;
-            }
-        }
-    }
-    if succeeded == 0 || (script_sources > 0 && scripts_succeeded == 0) {
-        log::warn!(
-            "GitHub 远程代理来源不可用，保留已有配置与完整内置后备：JS 成功数={}，失败来源数={}",
-            scripts_succeeded,
-            failed
-        );
-    }
-    // Only the final read/merge/save transaction holds the cache/operation
-    // locks; network requests must not block edits or repository operations.
-    let _cache_guard = state.repository_cache.lock().await;
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    // merge_downloaded always supplies the complete bundled asset/API fallback
-    // set, including when a userscript failed or contained no usable proxies.
-    let mut config = state.config.load_or_default();
-    config.github_proxies =
-        crate::github_proxies::merge_downloaded(&config.github_proxies, downloaded);
-    crate::github_proxies::validate_unique_ids(&config.github_proxies).map_err(|error| {
-        log::error!("GitHub 代理同步提交失败：阶段=validate");
-        error
-    })?;
-    state.config.save(&config).map_err(|error| {
-        log::error!(
-            "GitHub 代理同步提交失败：阶段=save，错误类别={}",
-            repository_sources::error_category(&error)
-        );
-        error.to_string()
-    })?;
-    let remote_release = config
-        .github_proxies
-        .release_proxies
-        .iter()
-        .filter(|proxy| proxy.remote)
-        .count();
-    let remote_raw = config
-        .github_proxies
-        .raw_proxies
-        .iter()
-        .filter(|proxy| proxy.remote)
-        .count();
-    let builtin_release = config
-        .github_proxies
-        .release_proxies
-        .iter()
-        .filter(|proxy| proxy.builtin && !proxy.remote)
-        .count();
-    let builtin_raw = config
-        .github_proxies
-        .raw_proxies
-        .iter()
-        .filter(|proxy| proxy.builtin && !proxy.remote)
-        .count();
-    log::info!(
-        "GitHub 代理来源刷新完成：成功来源={}，失败来源={}，JS 成功数={}，远程 Release={}，远程 Raw={}，内置 Release={}，内置 Raw={}，内置后备已保留",
-        succeeded,
-        failed,
-        scripts_succeeded,
-        remote_release,
-        remote_raw,
-        builtin_release,
-        builtin_raw
-    );
-    Ok(state.config.public_config(&config))
+    let config = state.config.clone();
+    config.refresh_proxies().await?;
+    Ok(config.public_config(&config.load_or_default()))
 }
 
 #[tauri::command]
@@ -2946,16 +2623,12 @@ fn delete_bepinex_backup_blocking(
 pub(crate) fn selected_asset_proxy_mode(
     requested: Option<ProxyMode>,
     provider: &Provider,
-    region: &str,
+    _region: &str,
 ) -> ProxyMode {
     if *provider == Provider::Gitee {
         return ProxyMode::Direct;
     }
-    requested.unwrap_or(if region == crate::config::REGION_CHINESE_MAINLAND {
-        ProxyMode::AutoProxy
-    } else {
-        ProxyMode::AutoDirect
-    })
+    requested.unwrap_or(ProxyMode::AutoDirect)
 }
 
 pub(crate) fn asset_proxy_urls(
@@ -2970,7 +2643,7 @@ pub(crate) fn asset_proxy_urls(
     if mode == ProxyMode::Direct {
         return Vec::new();
     }
-    let mut entries = entries
+    let entries = entries
         .iter()
         .filter(|proxy| {
             mode != ProxyMode::Fixed
@@ -2978,16 +2651,12 @@ pub(crate) fn asset_proxy_urls(
         })
         .cloned()
         .collect::<Vec<_>>();
-    if mode != ProxyMode::Fixed {
-        // Keep the user's order inside each source. A failed userscript fetch
-        // leaves only the bundled entries, so those remain an automatic fallback.
-        entries.sort_by_key(|proxy| !proxy.remote);
-    }
     crate::github_proxies::proxy_urls(
         &entries,
         direct_url,
         is_raw_file,
-        is_raw_file.then_some(crate::github_proxies::RawProxyContext { branch, file_path }),
+        (is_raw_file && !branch.is_empty())
+            .then_some(crate::github_proxies::RawProxyContext { branch, file_path }),
     )
 }
 
@@ -3025,14 +2694,7 @@ pub(crate) fn plan_remote_download_candidates(
     let mode = selected_asset_proxy_mode(None, provider, crate::config::current_user_region());
     let is_raw_file = kind == crate::direct_mod::RemoteUrlKind::Raw;
     let entries = provider_proxy_entries(config, provider, is_raw_file);
-    // Raw 的代理模板要用 `{branch}` / `{path}`：仓库配置里已知的由调用方给出，
-    // 只有 URL 时由这条唯一实现推导。
-    let (branch, file_path) = if is_raw_file {
-        crate::github_proxies::raw_branch_and_path(url)
-    } else {
-        (String::new(), String::new())
-    };
-    let proxy_urls = asset_proxy_urls(entries, url, is_raw_file, &branch, &file_path, mode, None);
+    let proxy_urls = asset_proxy_urls(entries, url, is_raw_file, "", "", mode, None);
     plan_asset_download_candidates(mode, url, proxy_urls)
 }
 
@@ -3046,41 +2708,6 @@ fn plan_asset_download_candidates(
         return Err("proxy.noGlobalProxy".into());
     }
     Ok(candidates)
-}
-
-// Update and MOD downloads share candidate ordering, routing and deduplication.
-// Callers supply the proxy snapshot available at their point in startup.
-pub(crate) fn ordered_asset_download_candidates(
-    mode: ProxyMode,
-    direct_url: &str,
-    proxy_urls: Vec<String>,
-) -> Vec<AssetDownloadCandidate> {
-    let direct = || AssetDownloadCandidate {
-        route: AssetDownloadRoute::Direct,
-        url: direct_url.to_string(),
-    };
-    let proxies = proxy_urls
-        .into_iter()
-        .filter(|url| url != direct_url)
-        .map(|url| AssetDownloadCandidate {
-            route: AssetDownloadRoute::Proxy,
-            url,
-        })
-        .collect::<Vec<_>>();
-    let candidates = match mode {
-        ProxyMode::Direct => vec![direct()],
-        ProxyMode::Fixed => proxies.into_iter().take(1).collect(),
-        ProxyMode::AutoDirect => std::iter::once(direct()).chain(proxies).collect(),
-        ProxyMode::AutoProxy => proxies
-            .into_iter()
-            .chain(std::iter::once(direct()))
-            .collect(),
-    };
-    let mut seen = HashSet::new();
-    candidates
-        .into_iter()
-        .filter(|candidate| seen.insert(candidate.url.clone()))
-        .collect()
 }
 
 /// 仓库安装的结果。
@@ -3444,7 +3071,9 @@ pub async fn install_repository(
 #[tauri::command]
 pub fn cancel_download() -> Result<OperationResult, String> {
     log::info!("收到取消下载请求");
-    archive::cancel_download();
+    if !archive::cancel_download() {
+        return Err("update.inProgress".into());
+    }
     Ok(OperationResult {
         ok: true,
         message: "download.cancelling".into(),
@@ -7575,6 +7204,9 @@ pub fn open_update_repository() -> Result<OperationResult, String> {
 
 #[tauri::command]
 pub fn exit_app() -> Result<(), String> {
+    if archive::app_update_in_progress() {
+        return Err("update.inProgress".into());
+    }
     log::info!("收到退出应用请求");
     std::process::exit(0)
 }
@@ -7633,6 +7265,9 @@ fn probe_writable(dir: &Path) -> bool {
 /// 这样拖放可用、启动不弹 UAC、更新时能正常关闭自己。
 #[tauri::command]
 pub fn relaunch_as_admin() -> Result<OperationResult, String> {
+    if archive::app_update_in_progress() {
+        return Err("update.inProgress".into());
+    }
     log::info!("收到以管理员身份重启请求");
     if crate::is_elevated() {
         return Ok(OperationResult {
@@ -7689,9 +7324,12 @@ pub async fn check_app_update(
             return Ok(cached);
         }
     }
+    let config = state.config.load_or_default();
     let result = match tokio::time::timeout(
-        std::time::Duration::from_secs(5 * installer_manifest_sources(region).len() as u64 + 10),
-        discover_installer_update(&state, &app),
+        std::time::Duration::from_secs(
+            5 * installer_manifest_sources(&config.github_proxies, region).len() as u64 + 10,
+        ),
+        discover_installer_update(&config, &app),
     )
     .await
     {
@@ -7705,11 +7343,16 @@ pub async fn check_app_update(
         }
         Ok(Err(error)) => {
             log::error!("安装器更新检查初始化失败: {error}");
-            failed_app_update_check(&app, region, "update.checkInitFailed")
+            failed_app_update_check(
+                &app,
+                &config.github_proxies,
+                region,
+                "update.checkInitFailed",
+            )
         }
         Err(_) => {
             log::warn!("安装器更新检查超过总超时，已跳过自动更新");
-            failed_app_update_check(&app, region, "update.checkTimeout")
+            failed_app_update_check(&app, &config.github_proxies, region, "update.checkTimeout")
         }
     };
     if !result.all_failed {
@@ -7721,10 +7364,11 @@ pub async fn check_app_update(
 /// 整次检查失败时的结果：每个通道都标成失败，前端照旧逐条显示原因。
 fn failed_app_update_check(
     app: &AppHandle,
+    proxies: &GitHubProxyConfig,
     region: InstallerRegion,
     tag: &str,
 ) -> AppUpdateCheckResult {
-    let channels = installer_manifest_sources(region)
+    let channels = installer_manifest_sources(proxies, region)
         .iter()
         .map(|channel| {
             let status = installer_channel_status(channel, "failed", Some(tag.into()));
@@ -7836,9 +7480,10 @@ async fn download_installer_for_info(
     info: &AppUpdateInfo,
     app: &AppHandle,
     signature: &str,
+    proxies: &GitHubProxyConfig,
 ) -> Result<Vec<u8>, Vec<String>> {
-    let candidates = installer_download_candidates(info);
-    download_verified_installer(client, info, candidates, Some(app), |bytes| {
+    let candidates = installer_download_candidates(proxies, info);
+    download_verified_installer(client, info, proxies, candidates, Some(app), |bytes| {
         crate::app_update::verify_download(bytes, signature, &info.version)
     })
     .await
@@ -7848,6 +7493,7 @@ async fn download_installer_for_info(
 async fn download_verified_installer(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
+    proxies: &GitHubProxyConfig,
     candidates: Vec<AssetDownloadCandidate>,
     app: Option<&AppHandle>,
     verify: impl Fn(&[u8]) -> Result<(), String>,
@@ -7876,6 +7522,7 @@ async fn download_verified_installer(
                 };
                 let channel = info.provider.as_ref().and_then(|provider| {
                     installer_sources_for_url(
+                        proxies,
                         provider,
                         info.installer_url.as_deref().unwrap_or_default(),
                     )
@@ -7942,9 +7589,10 @@ async fn download_verified_installer(
 async fn resolve_app_update(
     app: &AppHandle,
     info: &AppUpdateInfo,
+    proxies: &GitHubProxyConfig,
 ) -> Result<tauri_plugin_updater::Update, String> {
     let provider = info.provider.as_ref().ok_or("update.manifestUrlInvalid")?;
-    let channels = installer_sources_for_url(provider, &installer_manifest_url(provider));
+    let channels = installer_sources_for_url(proxies, provider, &installer_manifest_url(provider));
     race_installer_channels(
         &channels,
         archive::is_download_cancelled,
@@ -8050,11 +7698,12 @@ async fn prepare_and_download_installer(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
     app: &AppHandle,
+    proxies: &GitHubProxyConfig,
 ) -> Result<VerifiedInstallerDownload, Vec<String>> {
-    let update = resolve_app_update(app, info)
+    let update = resolve_app_update(app, info, proxies)
         .await
         .map_err(|error| vec![error])?;
-    let bytes = download_installer_for_info(client, info, app, &update.signature).await?;
+    let bytes = download_installer_for_info(client, info, app, &update.signature, proxies).await?;
     Ok(VerifiedInstallerDownload { bytes, update })
 }
 
@@ -8089,7 +7738,7 @@ async fn discover_and_download_installer_update(
     })?;
     let result = run_installer_manifest_routes(
         &client,
-        &installer_manifest_sources(region),
+        &installer_manifest_sources(&config.github_proxies, region),
         target,
         &current_version,
         archive::is_download_cancelled,
@@ -8101,9 +7750,10 @@ async fn discover_and_download_installer_update(
         },
         |info| {
             let download_client = &download_client;
+            let proxies = &config.github_proxies;
             async move {
                 emit_installer_phase(app, region, "download", None, Some(info.clone()));
-                let download = prepare_and_download_installer(download_client, &info, app)
+                let download = prepare_and_download_installer(download_client, &info, app, proxies)
                     .await
                     .map_err(|errors| errors.join("；"))?;
                 Ok((info, download))
@@ -8118,7 +7768,7 @@ async fn discover_and_download_installer_update(
         InstallerRouteResult::Latest => return Ok(InstallerDownloadAttempt::Latest),
         InstallerRouteResult::Failed => {}
     }
-    let message = "update.manualUpdateSkipped".to_string();
+    let message = "update.manualRequired".to_string();
     emit_installer_phase(app, region, "skipped", Some(message.clone()), None);
     Ok(InstallerDownloadAttempt::Failed(message))
 }
@@ -8128,7 +7778,7 @@ pub async fn install_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<OperationResult, String> {
-    archive::start_download();
+    let _update_guard = archive::begin_app_update()?;
     log::info!("开始安装器自更新");
     let attempt = discover_and_download_installer_update(&state, &app).await?;
     let (info, download) = match attempt {
@@ -9722,186 +9372,6 @@ mod mod_file_location_tests {
 }
 
 #[cfg(test)]
-mod proxy_source_read_tests {
-    use super::*;
-    use crate::github_proxies::{ProxySource, ProxySourceFormat};
-    use std::net::TcpListener;
-
-    struct JsRequestLogger(Mutex<Vec<String>>);
-
-    static JS_REQUEST_LOGGER: JsRequestLogger = JsRequestLogger(Mutex::new(Vec::new()));
-
-    impl log::Log for JsRequestLogger {
-        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            metadata.level() <= log::Level::Info
-        }
-
-        fn log(&self, record: &log::Record<'_>) {
-            let message = record.args().to_string();
-            if message.starts_with("正在请求 GitHub 代理 JS：") {
-                self.0.lock().unwrap().push(message);
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    #[tokio::test]
-    async fn logs_js_request_before_http_response_without_query_secrets() {
-        log::set_logger(&JS_REQUEST_LOGGER).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let safe_address = format!("http://{address}/request-log-test.user.js");
-        let expected_address = safe_address.clone();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            let mut request = [0; 4096];
-            let _ = stream.read(&mut request);
-            // The JS-request entry must already exist while the server has
-            // not sent any response headers or body.
-            let messages = JS_REQUEST_LOGGER.0.lock().unwrap();
-            let message = messages
-                .iter()
-                .find(|message| message.contains(&expected_address))
-                .expect("JS request must be logged before awaiting HTTP response");
-            assert!(!message.contains("private-query"));
-            assert!(!message.contains("token="));
-            drop(messages);
-            stream
-                .write_all(
-                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                )
-                .unwrap();
-        });
-        let source = ProxySource {
-            url: format!("{safe_address}?token=private-query"),
-            format: ProxySourceFormat::UserScript,
-            bundled: false,
-        };
-        let error = read_github_proxy_source(&client(), &source)
-            .await
-            .unwrap_err();
-        server.join().unwrap();
-        assert_eq!(error.stage, "http");
-    }
-
-    fn http_source(status: &str, body: &[u8], declared_length: Option<usize>) -> ProxySource {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            declared_length.unwrap_or(body.len())
-        );
-        let body = body.to_vec();
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            let mut request = [0; 4096];
-            let _ = stream.read(&mut request);
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.write_all(&body);
-        });
-        ProxySource {
-            url: format!("http://{address}/proxies.user.js?token=private-query"),
-            format: ProxySourceFormat::UserScript,
-            bundled: false,
-        }
-    }
-
-    fn client() -> reqwest::Client {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .no_proxy()
-            .build()
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn reads_proxy_script_and_marks_imported_entries_remote() {
-        let script = br#"
-var download_url_us = [
-    ['https://release.example/https://github.com', 'US', '[US] Release'],
-], raw_url = [
-    ['https://raw.example/https://raw.githubusercontent.com', 'HK', '[HK] Raw'],
-];
-        "#;
-        let source = http_source("200 OK", script, None);
-        let config = read_github_proxy_source(&client(), &source).await.unwrap();
-        assert_eq!(config.release_proxies.len(), 1);
-        assert_eq!(config.raw_proxies.len(), 1);
-        assert!(config.release_proxies[0].remote);
-        assert!(config.raw_proxies[0].remote);
-    }
-
-    #[tokio::test]
-    async fn failures_identify_http_size_utf8_and_parse_stages_without_document_contents() {
-        for (status, body, declared_length, expected_stage) in [
-            (
-                "404 Not Found",
-                b"private-response".as_slice(),
-                None,
-                "http",
-            ),
-            ("200 OK", b"".as_slice(), Some(4 * 1024 * 1024 + 1), "size"),
-            ("200 OK", [0xff, 0xfe].as_slice(), None, "utf8"),
-            (
-                "200 OK",
-                b"[session-private] file not found private-response".as_slice(),
-                None,
-                "parse",
-            ),
-        ] {
-            let source = http_source(status, body, declared_length);
-            let error = read_github_proxy_source(&client(), &source)
-                .await
-                .unwrap_err();
-            assert_eq!(error.stage, expected_stage);
-            assert!(!error.reason.contains("private-response"));
-            assert!(!error.reason.contains("private-query"));
-            assert!(!error.reason.contains("session-private"));
-        }
-    }
-
-    #[tokio::test]
-    async fn empty_script_is_a_parse_failure_and_bundled_manifest_remains_available() {
-        let source = http_source("200 OK", b"var download_url_us = [], raw_url = [];", None);
-        let error = read_github_proxy_source(&client(), &source)
-            .await
-            .unwrap_err();
-        assert_eq!(error.stage, "parse");
-        assert_eq!(error.reason, "proxy.noUsableEntriesJs");
-        let bundled = read_github_proxy_source(
-            &client(),
-            &ProxySource {
-                url: "repositories-proxies.toml".into(),
-                format: ProxySourceFormat::Toml,
-                bundled: true,
-            },
-        )
-        .await
-        .unwrap();
-        assert!(
-            bundled
-                .release_proxies
-                .iter()
-                .any(|proxy| proxy.id == "oc2gh-release")
-        );
-        assert!(
-            bundled
-                .raw_proxies
-                .iter()
-                .any(|proxy| proxy.id == "oc2gh-raw")
-        );
-    }
-}
-
-#[cfg(test)]
 mod asset_download_strategy_tests {
     use super::*;
 
@@ -9935,7 +9405,7 @@ mod asset_download_strategy_tests {
                 .iter()
                 .map(|candidate| candidate.url.as_str())
                 .collect::<Vec<_>>(),
-            [&proxy_a, &proxy_b, DIRECT]
+            [DIRECT, &proxy_a, &proxy_b]
         );
         assert!(plan_asset_download_candidates(ProxyMode::Fixed, DIRECT, Vec::new()).is_err());
     }
@@ -10089,16 +9559,16 @@ mod asset_download_strategy_tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].phase, archive::DownloadPhase::Connecting);
         assert_eq!(events[1].phase, archive::DownloadPhase::Switching);
-        assert_eq!(events[2].route, Some(archive::DownloadRoute::Direct));
+        assert_eq!(events[0].route, Some(archive::DownloadRoute::Direct));
         assert_eq!(
             events
                 .iter()
                 .map(|event| event.source.as_deref())
                 .collect::<Vec<_>>(),
             [
+                Some("github.com"),
                 Some("first.example"),
-                Some("second.example"),
-                Some("github.com")
+                Some("second.example")
             ]
         );
     }
@@ -10117,162 +9587,14 @@ mod asset_download_strategy_tests {
     }
 
     #[test]
-    fn cached_remote_proxies_survive_restart_for_mods_but_not_self_updates() {
-        struct Workspace(PathBuf);
-        impl Drop for Workspace {
-            fn drop(&mut self) {
-                // Delete only this test's unique directory below the resolved
-                // temporary root, including when an assertion fails.
-                if let (Ok(root), Ok(temp)) =
-                    (self.0.canonicalize(), std::env::temp_dir().canonicalize())
-                {
-                    if root.parent() == Some(temp.as_path())
-                        && root.file_name().is_some_and(|name| {
-                            name.to_string_lossy().starts_with("oc2-updater-cached-")
-                        })
-                    {
-                        let _ = fs::remove_dir_all(root);
-                    }
-                }
-            }
-        }
-        let workspace =
-            Workspace(std::env::temp_dir().join(format!("oc2-updater-cached-{}", Uuid::new_v4())));
-        let service = ConfigService::for_test(workspace.0.clone());
-        let mut config = service.load().unwrap();
-        let mut bundled_alias = config.github_proxies.release_proxies[0].clone();
-        bundled_alias.id = "previous-remote-bundled-alias".into();
-        bundled_alias.builtin = false;
-        bundled_alias.remote = true;
-        let previous_success = GitHubProxyConfig {
-            release_proxies: vec![
-                proxy("previous-remote", "cached-proxy.example", true, true),
-                proxy(
-                    "previous-remote-duplicate",
-                    "cached-proxy.example",
-                    true,
-                    true,
-                ),
-                proxy("previous-remote-disabled", "cached-off.example", true, true),
-                bundled_alias,
-            ],
-            ..GitHubProxyConfig::default()
-        };
-        // Use the same merge and persistence boundary as successful refresh.
-        config.github_proxies =
-            crate::github_proxies::merge_downloaded(&config.github_proxies, previous_success);
-        for proxy in &mut config.github_proxies.release_proxies {
-            if proxy.id == "previous-remote-disabled" || proxy.id == "oc2gh-release" {
-                proxy.enabled = false;
-            }
-        }
-        service.save(&config).unwrap();
-        drop(service);
-        drop(config);
-
-        // A new service simulates startup before any remote refresh occurs.
-        let service = ConfigService::for_test(workspace.0.clone());
-        let mut restarted = service.load().unwrap();
-        assert!(
-            restarted
-                .github_proxies
-                .release_proxies
-                .iter()
-                .any(|proxy| proxy.id == "previous-remote" && proxy.remote && proxy.enabled)
-        );
-        let updater = installer_sources_for_url(&Provider::Github, DIRECT)
-            .iter()
-            .map(installer_candidate)
-            .collect::<Vec<_>>();
-        let mod_candidates = |proxies: &GitHubProxyConfig| {
-            let urls = asset_proxy_urls(
-                &proxies.release_proxies,
-                DIRECT,
-                false,
-                "",
-                "",
-                ProxyMode::AutoDirect,
-                None,
-            );
-            plan_asset_download_candidates(ProxyMode::AutoDirect, DIRECT, urls).unwrap()
-        };
-        let cached = mod_candidates(&restarted.github_proxies);
-        let cached_url = format!("https://cached-proxy.example/{DIRECT}");
-        assert_eq!(
-            cached
-                .iter()
-                .filter(|candidate| candidate.url == cached_url)
-                .count(),
-            1
-        );
-        assert!(
-            cached
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://gh.ddlc.top/"))
-        );
-        assert!(!cached.iter().any(|candidate| {
-            candidate.url.starts_with("https://cached-off.example/")
-                || candidate.url.starts_with("https://oc2gh.ch3ng.top/")
-        }));
-        assert_eq!(
-            cached.len(),
-            cached
-                .iter()
-                .map(|candidate| &candidate.url)
-                .collect::<HashSet<_>>()
-                .len()
-        );
-        assert!(
-            !updater
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://cached-proxy.example/"))
-        );
-
-        // A later save persists the newly available snapshot.
-        let next_success = GitHubProxyConfig {
-            release_proxies: vec![proxy("current-remote", "current-proxy.example", true, true)],
-            ..GitHubProxyConfig::default()
-        };
-        restarted.github_proxies =
-            crate::github_proxies::merge_downloaded(&restarted.github_proxies, next_success);
-        service.save(&restarted).unwrap();
-        let current = service.load().unwrap();
-        let current_mod = mod_candidates(&current.github_proxies);
-        assert!(
-            current_mod
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://current-proxy.example/"))
-        );
-        assert!(
-            !updater
-                .iter()
-                .any(|candidate| candidate.url.starts_with("https://current-proxy.example/"))
-        );
-        assert_eq!(
-            installer_sources_for_url(&Provider::Github, DIRECT)
-                .iter()
-                .map(installer_candidate)
-                .collect::<Vec<_>>(),
-            updater
-        );
-
-        // An unsuccessful new fetch must leave the saved successful list usable.
-        let after_failure = crate::github_proxies::merge_downloaded(
-            &current.github_proxies,
-            GitHubProxyConfig::default(),
-        );
-        assert_eq!(mod_candidates(&after_failure), current_mod);
-    }
-
-    #[test]
-    fn defaults_follow_region_and_gitee_forces_direct() {
+    fn defaults_are_direct_first_in_all_regions_and_gitee_forces_direct() {
         assert_eq!(
             selected_asset_proxy_mode(
                 None,
                 &Provider::Github,
                 crate::config::REGION_CHINESE_MAINLAND
             ),
-            ProxyMode::AutoProxy
+            ProxyMode::AutoDirect
         );
         assert_eq!(
             selected_asset_proxy_mode(None, &Provider::Github, crate::config::REGION_INTERNATIONAL),
@@ -10289,7 +9611,7 @@ mod asset_download_strategy_tests {
     }
 
     #[test]
-    fn automatic_modes_use_opposite_candidate_order() {
+    fn legacy_auto_proxy_and_auto_direct_use_the_same_order() {
         let proxies = vec![
             "https://proxy-a.example/asset".into(),
             "https://proxy-b.example/asset".into(),
@@ -10316,16 +9638,17 @@ mod asset_download_strategy_tests {
                 .map(|item| item.route)
                 .collect::<Vec<_>>(),
             [
+                AssetDownloadRoute::Direct,
                 AssetDownloadRoute::Proxy,
-                AssetDownloadRoute::Proxy,
-                AssetDownloadRoute::Direct
+                AssetDownloadRoute::Proxy
             ]
         );
-        assert_eq!(proxy_first[2].url, DIRECT);
+        assert_eq!(proxy_first[0].url, DIRECT);
+        assert_eq!(proxy_first, direct_first);
     }
 
     #[test]
-    fn automatic_proxy_uses_remote_first_and_bundled_fallback() {
+    fn automatic_proxy_preserves_manifest_order_without_origin_priority() {
         let entries = vec![
             proxy("bundled", "bundled.example", false, true),
             proxy("disabled", "disabled.example", true, false),
@@ -10341,8 +9664,8 @@ mod asset_download_strategy_tests {
             Some("bundled"),
         );
         assert_eq!(urls.len(), 2);
-        assert!(urls[0].starts_with("https://remote.example/"));
-        assert!(urls[1].starts_with("https://bundled.example/"));
+        assert!(urls[0].starts_with("https://bundled.example/"));
+        assert!(urls[1].starts_with("https://remote.example/"));
 
         let bundled_only = asset_proxy_urls(
             &entries[..1],
@@ -10433,7 +9756,7 @@ mod asset_download_strategy_tests {
         assert_eq!(result.unwrap(), PathBuf::from("downloaded"));
         assert_eq!(
             tried,
-            [AssetDownloadRoute::Proxy, AssetDownloadRoute::Direct]
+            [AssetDownloadRoute::Direct, AssetDownloadRoute::Proxy]
         );
 
         let candidates = plan_asset_download_candidates(

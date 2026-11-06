@@ -6,6 +6,7 @@ import { t } from '../i18n'
 import { useNotify } from '../useNotify'
 import { backendMessageOf } from '../locale/backend'
 import { markDialogBusy } from '../dialogBusy'
+import { appUpdateState } from '../appUpdateState'
 
 /** 页面返回、路由离开和关窗共用一个确认/清理门，不在卸载后做异步删除。 */
 export function usePublishLeaveGuard(
@@ -20,6 +21,7 @@ export function usePublishLeaveGuard(
   let request: Promise<boolean> | null = null
   let cancelDialog: (() => void) | null = null
   function requestLeave(): Promise<boolean> {
+    if (appUpdateState.stage === 'installing' || appUpdateState.stage === 'handoff') return Promise.resolve(false)
     if (request) return request
     if (busy.value) return Promise.resolve(false)
     if (!uploadedName.value && !dirty.value) return Promise.resolve(true)

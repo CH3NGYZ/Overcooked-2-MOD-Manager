@@ -615,7 +615,7 @@ pub struct GitHubProxy {
     pub enabled: bool,
     #[serde(default)]
     pub builtin: bool,
-    /// A managed proxy discovered in a userscript, rather than the TOML defaults.
+    /// Origin of this session snapshot: online manifest rather than bundled fallback.
     #[serde(default)]
     pub remote: bool,
 }
@@ -636,12 +636,13 @@ pub struct GitHubProxyConfig {
     /// （模板都按 `{owner}/{repo}/{branch}/{path}` 设计），能取到头像的是
     /// 「纯 {url} 包装」型。名单本身写在代理清单文件里（内置
     /// `repositories-proxies.toml` 或远程清单），代码不硬编码任何地址 ——
-    /// 与另外四组走同一套「读取 → 合并 → 去重」流程。
+    /// 与另外四组一起从清单整份替换，不持久化到用户配置。
     #[serde(default)]
     pub avatar_proxies: Vec<GitHubProxy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GitHubProxyManifest {
     #[serde(default = "default_proxy_manifest_version")]
     pub schema_version: u32,
@@ -1173,7 +1174,7 @@ pub struct AppConfig {
     /// 随即清空。真正到期与否仍由各仓库的 `releases_cached_at` 决定。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub staged_release_cache: BTreeMap<String, StagedReleaseCache>,
-    #[serde(default = "crate::github_proxies::bundled_defaults")]
+    #[serde(skip, default = "crate::github_proxies::bundled_defaults")]
     pub github_proxies: GitHubProxyConfig,
     #[serde(default)]
     pub mod_notes: Vec<ModNote>,
@@ -2176,18 +2177,6 @@ pub struct SettingsPatch {
     pub builtin_sources_only: Option<bool>,
     /// 只用内置地图源（不影响仓库源，反之亦然）。
     pub builtin_map_sources_only: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubProxyPatch {
-    pub release_proxies: Vec<GitHubProxy>,
-    pub raw_proxies: Vec<GitHubProxy>,
-    #[serde(default)]
-    pub github_api_proxies: Vec<GitHubProxy>,
-    #[serde(default)]
-    pub gitee_api_proxies: Vec<GitHubProxy>,
-    #[serde(default)]
-    pub avatar_proxies: Vec<GitHubProxy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

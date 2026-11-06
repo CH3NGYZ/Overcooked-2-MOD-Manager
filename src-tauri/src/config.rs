@@ -295,6 +295,7 @@ pub struct ConfigService {
     /// 保存时同步更新缓存，所以自己的写入不会读到旧值；
     /// 外部改动（用户手改 config.toml）会改变 mtime，缓存自动失效。
     cache: std::sync::Arc<std::sync::Mutex<Option<CachedConfig>>>,
+    proxies: std::sync::Arc<crate::github_proxy_runtime::ProxyRuntime>,
 }
 
 impl std::fmt::Debug for ConfigService {
@@ -317,6 +318,7 @@ impl ConfigService {
         Self {
             root,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         }
     }
 
@@ -332,6 +334,7 @@ impl ConfigService {
         Ok(Self {
             root,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         })
     }
 
@@ -359,11 +362,24 @@ impl ConfigService {
         let path = self.config_path();
         // 文件指纹没变 → 直接返回缓存副本，避免重复读盘与 TOML 解析
         if let Some(cached) = self.cached_if_fresh(&path) {
-            return Ok(cached);
+            return Ok(self.with_proxies(cached));
         }
         let config = self.load_from_disk()?;
         self.store_cache(&path, &config);
-        Ok(config)
+        Ok(self.with_proxies(config))
+    }
+
+    fn with_proxies(&self, mut config: AppConfig) -> AppConfig {
+        config.github_proxies = self.proxy_snapshot();
+        config
+    }
+
+    pub(crate) fn proxy_snapshot(&self) -> GitHubProxyConfig {
+        self.proxies.snapshot()
+    }
+
+    pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {
+        self.proxies.refresh(current_user_region()).await
     }
 
     fn cached_if_fresh(&self, path: &Path) -> Option<AppConfig> {
@@ -419,8 +435,6 @@ impl ConfigService {
                 // 先迁移开关，再同步根源地址：同步要按迁移后的开关选内置/远端。
                 changed |= migrate_bundled_source_switches(&mut config);
                 changed |= synchronize_builtin_repository_sources(&mut config);
-                changed |=
-                    crate::github_proxies::synchronize_bundled_defaults(&mut config.github_proxies);
                 changed |= Self::normalize_configured_regions(&mut config);
                 for repository in &mut config.repositories {
                     changed |= migrate_repository_i18n(repository);
@@ -514,7 +528,7 @@ impl ConfigService {
     pub fn load_or_default(&self) -> AppConfig {
         self.load().unwrap_or_else(|error| {
             log::error!("配置加载失败，使用默认配置：原因={}", error);
-            default_config()
+            self.with_proxies(default_config())
         })
     }
 
@@ -607,7 +621,7 @@ impl ConfigService {
             repository_sources: config.repository_sources.clone(),
             community_discovery,
             gitee_community_discovery,
-            github_proxies: config.github_proxies.clone(),
+            github_proxies: self.proxy_snapshot(),
             builtin_sources_only: config.builtin_sources_only,
             builtin_map_sources_only: config.builtin_map_sources_only,
         }
@@ -1211,16 +1225,17 @@ fn contains_legacy_repository_proxy_fields(text: &str) -> bool {
     let Ok(value) = toml::from_str::<toml::Value>(text) else {
         return false;
     };
-    value
-        .get("repositories")
-        .and_then(toml::Value::as_array)
-        .is_some_and(|repositories| {
-            repositories.iter().any(|repository| {
-                repository.as_table().is_some_and(|table| {
-                    LEGACY_FIELDS.iter().any(|field| table.contains_key(*field))
+    value.get("github_proxies").is_some()
+        || value
+            .get("repositories")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|repositories| {
+                repositories.iter().any(|repository| {
+                    repository.as_table().is_some_and(|table| {
+                        LEGACY_FIELDS.iter().any(|field| table.contains_key(*field))
+                    })
                 })
             })
-        })
 }
 
 /// 官方根源的地址：打开「仅用内置仓库源」时直接指向打包资源。
@@ -2219,6 +2234,7 @@ value = "RegionalMod.dll"
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let document =
@@ -2290,6 +2306,7 @@ value = "RegionalMod.dll"
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let document =
@@ -2454,6 +2471,7 @@ value = "RegionalMod.dll"
                 .join("target/test-config-load")
                 .join(Uuid::new_v4().to_string()),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         // V1：两个开关默认开启，官方根指向编译期快照
         let mut v1 = default_config();
@@ -2632,6 +2650,7 @@ url = "shared.toml"
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let legacy: RepositorySource = toml::from_str(
             r#"
@@ -2822,6 +2841,7 @@ value = "MOD.dll"
                     .join("target/test-config-load")
                     .join(Uuid::new_v4().to_string()),
                 cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                proxies: Default::default(),
             };
             let mut config = default_config();
             let mut expected_sources = config.repository_sources.clone();
@@ -2912,6 +2932,7 @@ value = "MOD.dll"
                 .join("target/test-config-load")
                 .join(Uuid::new_v4().to_string()),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
         let mut config = default_config();
@@ -2972,6 +2993,7 @@ value = "MOD.dll"
                 .join("target/test-config-load")
                 .join(Uuid::new_v4().to_string()),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
         let text = r#"
@@ -3058,6 +3080,7 @@ value = "Example.dll"
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let text = r#"
 format = "oc2-mod-repository-bundle"
@@ -3149,6 +3172,7 @@ builtin = true
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let config = default_config();
         let text = service.export_bundle(&config, None).unwrap();
@@ -3308,6 +3332,7 @@ builtin = true
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let template = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
@@ -3424,6 +3449,7 @@ builtin = true
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let mut release = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
@@ -3567,6 +3593,7 @@ builtin = true
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let bundle_for = |metadata: &str| {
             format!(
@@ -3672,6 +3699,7 @@ enabled = true
         let service = ConfigService {
             root: std::env::temp_dir(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            proxies: Default::default(),
         };
         let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
         let export = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
@@ -4222,3 +4250,7 @@ min_version = "1.0"
         assert_eq!(v.install_target, "BepInEx/plugins");
     }
 }
+
+#[cfg(test)]
+#[path = "config_proxy_tests.rs"]
+mod proxy_tests;

@@ -6,7 +6,7 @@ import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NS
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
-import UpdatePrompt from '../components/UpdatePrompt.vue'
+import { requireAppUpdate } from '../appUpdateState'
 import AppModal from '../components/AppModal.vue'
 import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
@@ -41,8 +41,6 @@ const githubToken = ref('')
 const giteeToken = ref('')
 const savingTokens = ref(false)
 const updateResult = ref<AppUpdateCheckResult | null>(null)
-const updateInfo = ref<NonNullable<AppUpdateCheckResult['update']> | null>(null)
-const showUpdate = ref(false)
 
 /* ===== 游戏版本（macOS：CrossOver / 原生） ===== */
 
@@ -243,9 +241,7 @@ async function checkUpdate() {
   try {
     updateResult.value = await api.checkAppUpdate('zh-CN', true)
     if (updateResult.value.update) {
-      // 检测到更新：与启动时相同的弹窗，更新/取消。
-      updateInfo.value = updateResult.value.update
-      showUpdate.value = true
+      requireAppUpdate(updateResult.value.update)
     } else if (updateResult.value.all_failed) {
       openReleaseFallback()
     } else {
@@ -721,7 +717,6 @@ async function clearTokens() {
     </n-drawer-content>
   </n-drawer>
 
-  <UpdatePrompt v-model:show="showUpdate" :update="updateInfo" />
 </template>
 
 <style scoped>

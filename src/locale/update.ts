@@ -170,12 +170,26 @@ export const update: DomainMessages = {
     ko: '업데이트 목록 주소가 올바르지 않습니다',
     ja: '更新マニフェストのアドレスが無効です',
   },
-  manualUpdateSkipped: {
-    'zh-CN': '请手动更新管理器, 本次跳过更新.',
-    'zh-TW': '請手動更新管理器, 本次略過更新.',
-    en: 'Please update the manager manually. This update was skipped.',
-    ko: '관리자를 직접 업데이트하세요. 이번 업데이트는 건너뛰었습니다.',
-    ja: 'マネージャーを手動で更新してください。今回の更新はスキップしました。',
+  required: {
+    'zh-CN': '必须更新到新版本才能继续使用。更新开始后无法取消，请等待完成。',
+    'zh-TW': '必須更新至新版本才能繼續使用。更新開始後無法取消，請等待完成。',
+    en: 'Update to the new version to continue. Once started, the update cannot be cancelled. Please wait for it to finish.',
+    ko: '계속 사용하려면 새 버전으로 업데이트해야 합니다. 시작한 업데이트는 취소할 수 없습니다. 완료될 때까지 기다려 주세요.',
+    ja: '引き続き使用するには新しいバージョンへの更新が必要です。開始後はキャンセルできません。完了までお待ちください。',
+  },
+  manualRequired: {
+    'zh-CN': '自动更新失败。请前往 Release 页面下载并安装最新版，完成更新后再使用管理器。',
+    'zh-TW': '自動更新失敗。請前往 Release 頁面下載並安裝最新版，完成更新後再使用管理器。',
+    en: 'Automatic update failed. Download and install the latest version from the Release page before using the manager again.',
+    ko: '자동 업데이트에 실패했습니다. Release 페이지에서 최신 버전을 다운로드하고 설치한 후 관리자를 다시 사용하세요.',
+    ja: '自動更新に失敗しました。Release ページから最新版をダウンロードしてインストールしてから、マネージャーをご使用ください。',
+  },
+  inProgress: {
+    'zh-CN': '程序正在更新，无法取消或退出，请等待完成',
+    'zh-TW': '程式正在更新，無法取消或結束，請等待完成',
+    en: 'The app is updating. Cancellation and exit are unavailable until it finishes.',
+    ko: '앱을 업데이트하는 중입니다. 완료될 때까지 취소하거나 종료할 수 없습니다.',
+    ja: 'アプリを更新中です。完了するまでキャンセルや終了はできません。',
   },
   noMatchingPackage: {
     'zh-CN': '更新中没有匹配的安装包',

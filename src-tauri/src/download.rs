@@ -1,4 +1,5 @@
 use crate::archive::{self, DownloadPhase, DownloadProgress, DownloadReporter, DownloadRoute};
+use crate::models::ProxyMode;
 use futures_util::StreamExt;
 use futures_util::future::{AbortHandle, Abortable};
 use futures_util::stream::FuturesUnordered;
@@ -12,6 +13,39 @@ use tauri::AppHandle;
 pub struct DownloadCandidate {
     pub route: DownloadRoute,
     pub url: String,
+}
+
+// Update and MOD downloads share candidate ordering, routing and deduplication.
+// Callers supply the proxy snapshot available at their point in startup.
+pub(crate) fn ordered_asset_download_candidates(
+    mode: ProxyMode,
+    direct_url: &str,
+    proxy_urls: Vec<String>,
+) -> Vec<DownloadCandidate> {
+    let direct = || DownloadCandidate {
+        route: DownloadRoute::Direct,
+        url: direct_url.to_string(),
+    };
+    let proxies = proxy_urls
+        .into_iter()
+        .filter(|url| url != direct_url)
+        .map(|url| DownloadCandidate {
+            route: DownloadRoute::Proxy,
+            url,
+        })
+        .collect::<Vec<_>>();
+    let candidates = match mode {
+        ProxyMode::Direct => vec![direct()],
+        ProxyMode::Fixed => proxies.into_iter().take(1).collect(),
+        ProxyMode::AutoDirect | ProxyMode::AutoProxy => {
+            std::iter::once(direct()).chain(proxies).collect()
+        }
+    };
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| seen.insert(candidate.url.clone()))
+        .collect()
 }
 
 pub fn candidate_progress(
@@ -358,14 +392,15 @@ where
                 let now = Instant::now();
                 let mut slow = sources.iter_mut().filter_map(|(id, source)| source.sample(now, policy).then_some(*id))
                     .collect::<Vec<_>>();
-                // When every candidate is slow and no replacements remain,
-                // retain the fastest active source so the file can still finish.
-                let fastest = sources.iter().max_by_key(|(id, source)|
-                    (source.speed, source.reporter.snapshot().downloaded, std::cmp::Reverse(**id)))
-                    .map(|(id, _)| *id);
-                slow.sort_unstable();
-                for id in slow {
-                    if pending.is_empty() && Some(id) == fastest { continue; }
+                // A slow connection is only worth dropping when an unstarted
+                // candidate can replace it. Reserve slots already being retired
+                // so repeated ticks cannot spend the same replacement twice.
+                slow.sort_unstable_by_key(|id| {
+                    let source = &sources[id];
+                    (source.speed, source.reporter.snapshot().downloaded, *id)
+                });
+                let replacements = pending.len().saturating_sub(retiring.len());
+                for id in slow.into_iter().take(replacements) {
                     if let Some(source) = sources.remove(&id) {
                         log::info!("下载源最近五秒速度过低，释放下载槽：候选序号={}，速度={}B/s", id + 1, source.speed);
                         retiring.insert(id);
@@ -377,6 +412,10 @@ where
     }
     Err(last_error.unwrap_or_else(|| "download.noCandidate".into()))
 }
+
+#[cfg(test)]
+#[path = "download_retention_tests.rs"]
+mod retention_tests;
 
 #[cfg(test)]
 mod tests {

@@ -52,9 +52,13 @@ fn direct(provider: Provider) -> InstallerChannel {
 }
 
 #[test]
-fn region_order_uses_all_and_only_compiled_release_templates() {
-    let mainland = installer_manifest_sources(InstallerRegion::MainlandChina);
-    let international = installer_manifest_sources(InstallerRegion::International);
+fn region_order_uses_all_and_only_the_supplied_snapshot() {
+    let defaults = crate::github_proxies::bundled_defaults();
+    let mainland = installer_manifest_sources(&defaults, InstallerRegion::MainlandChina);
+    let international = installer_manifest_sources(
+        &crate::github_proxies::bundled_defaults(),
+        InstallerRegion::International,
+    );
     assert_eq!(mainland[0].id, "gitee-direct");
     assert_eq!(mainland[1].id, "github-direct");
     assert_eq!(international[0].id, "github-direct");
@@ -64,7 +68,6 @@ fn region_order_uses_all_and_only_compiled_release_templates() {
             .iter()
             .all(|route| route.provider == Provider::Github)
     );
-    let defaults = crate::github_proxies::bundled_defaults();
     let urls = crate::github_proxies::proxy_urls(
         &defaults.release_proxies,
         &international[0].endpoint,
@@ -92,15 +95,22 @@ fn region_order_uses_all_and_only_compiled_release_templates() {
             .collect::<HashSet<_>>()
             .len()
     );
-    // Edits to a saved/default copy cannot affect updater route construction.
+    // The caller snapshot is authoritative, including an explicitly empty list.
     let mut saved = defaults;
     for proxy in &mut saved.release_proxies {
         proxy.template = "https://custom.example/{url}".into();
     }
-    assert_eq!(
-        installer_manifest_sources(InstallerRegion::International)[1].endpoint,
-        international[1].endpoint
+    assert!(
+        installer_manifest_sources(&saved, InstallerRegion::International)[1]
+            .endpoint
+            .starts_with("https://custom.example/")
     );
+    let empty = installer_manifest_sources(
+        &GitHubProxyConfig::default(),
+        InstallerRegion::International,
+    );
+    assert_eq!(empty.len(), 1);
+    assert_eq!(empty[0].id, "github-direct");
 }
 
 #[test]
@@ -131,13 +141,18 @@ fn each_released_format_is_selected_from_json_without_api_size_or_digest() {
             assert_eq!(info.body.as_deref(), Some("Release notes"));
             assert_eq!(info.date.as_deref(), Some("2026-10-13T19:33:14.785Z"));
             assert_eq!(info.download_size, None);
-            let candidates = installer_download_candidates(&info);
+            let candidates =
+                installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info);
             assert_eq!(
                 candidates.len(),
                 if route.provider == Provider::Gitee {
                     1
                 } else {
-                    installer_manifest_sources(InstallerRegion::International).len()
+                    installer_manifest_sources(
+                        &crate::github_proxies::bundled_defaults(),
+                        InstallerRegion::International,
+                    )
+                    .len()
                 }
             );
             assert_eq!(candidates[0].route, AssetDownloadRoute::Direct);
@@ -156,18 +171,24 @@ fn manifest_winner_does_not_restrict_the_independent_package_pool() {
     let info = inspect_installer_manifest(&direct(Provider::Github), &document, target(), &current)
         .unwrap()
         .unwrap();
-    let expected = installer_download_candidates(&info);
+    let expected = installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info);
     assert!(expected.len() > 1);
     assert_eq!(expected[0].route, AssetDownloadRoute::Direct);
-    for route in installer_manifest_sources(InstallerRegion::International)
-        .iter()
-        .skip(1)
+    for route in installer_manifest_sources(
+        &crate::github_proxies::bundled_defaults(),
+        InstallerRegion::International,
+    )
+    .iter()
+    .skip(1)
     {
         let info = inspect_installer_manifest(route, &document, target(), &current)
             .unwrap()
             .unwrap();
         assert_eq!(info.manifest_url, route.endpoint);
-        assert_eq!(expected, installer_download_candidates(&info));
+        assert_eq!(
+            expected,
+            installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info)
+        );
     }
     let gitee = inspect_installer_manifest(
         &direct(Provider::Gitee),
@@ -178,7 +199,7 @@ fn manifest_winner_does_not_restrict_the_independent_package_pool() {
     .unwrap()
     .unwrap();
     assert_eq!(
-        installer_download_candidates(&gitee),
+        installer_download_candidates(&crate::github_proxies::bundled_defaults(), &gitee),
         [AssetDownloadCandidate {
             route: AssetDownloadRoute::Direct,
             url: gitee.installer_url.unwrap()
@@ -485,7 +506,14 @@ async fn gitee_finishes_its_single_manifest_and_package_before_github_can_start(
                     if info.provider == Some(Provider::Gitee) {
                         tokio::time::sleep(Duration::from_millis(25)).await;
                         assert_eq!(server.requests.lock().unwrap().len(), 1);
-                        assert_eq!(installer_download_candidates(&info).len(), 1);
+                        assert_eq!(
+                            installer_download_candidates(
+                                &crate::github_proxies::bundled_defaults(),
+                                &info
+                            )
+                            .len(),
+                            1
+                        );
                         if fail_package {
                             return Err("signature failed".into());
                         }
@@ -722,12 +750,16 @@ async fn package_race_rejects_bad_signatures_and_can_choose_a_different_route() 
         url: format!("{}{path}", server.base),
     })
     .collect();
-    let bytes =
-        download_verified_installer(&reqwest::Client::new(), &info, candidates, None, |bytes| {
-            crate::app_update::verify_with_key(bytes, signature, key, &info.version)
-        })
-        .await
-        .unwrap();
+    let bytes = download_verified_installer(
+        &reqwest::Client::new(),
+        &info,
+        &GitHubProxyConfig::default(),
+        candidates,
+        None,
+        |bytes| crate::app_update::verify_with_key(bytes, signature, key, &info.version),
+    )
+    .await
+    .unwrap();
     assert_eq!(bytes, valid);
     assert_eq!(server.requests.lock().unwrap().len(), 3);
     assert!(crate::app_update::verify_with_key(&bytes, signature, key, "9.0.0").is_err());
@@ -753,17 +785,23 @@ async fn gitee_package_uses_one_get_without_range_requests() {
         route: AssetDownloadRoute::Direct,
         url: format!("{}/package", server.base),
     }];
-    let bytes =
-        download_verified_installer(&reqwest::Client::new(), &info, candidates, None, |bytes| {
+    let bytes = download_verified_installer(
+        &reqwest::Client::new(),
+        &info,
+        &GitHubProxyConfig::default(),
+        candidates,
+        None,
+        |bytes| {
             crate::app_update::verify_with_key(
                 bytes,
                 crate::app_update::TEST_SIGNATURE,
                 crate::app_update::TEST_KEY,
                 &info.version,
             )
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(bytes, valid);
     let requests = server.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);

@@ -7,7 +7,8 @@ import { api, watchDownloadProgress } from '../services/tauri'
 import type { DownloadProgress } from '../types'
 import { useDashboard } from '../composables/useDashboardStore'
 import { translateBackendMessage } from '../locale/backend'
-import { dismissDownloadFailure, downloadTaskState, retryDownloadTask } from '../downloadTask'
+import { downloadTaskState, dismissDownloadFailure, retryDownloadTask } from '../downloadTask'
+import { appUpdateState } from '../appUpdateState'
 
 const { refresh } = useDashboard()
 const progress = ref<DownloadProgress | null>(null)
@@ -16,6 +17,7 @@ let unlisten: (() => void) | null = null
 /** 当前是否有下载任务、以及最近一次失败（失败态由调用方报告，见 downloadTask.ts）。 */
 const running = computed(() => downloadTaskState.running)
 const failure = computed(() => downloadTaskState.failure)
+const canCancel = computed(() => appUpdateState.stage === 'idle')
 
 function percentValue(value: { downloaded: number; total?: number }): number {
   if (!value.total) return 0
@@ -39,7 +41,8 @@ const indeterminate = computed(() => {
  * 不能把卡片重新拉起来显示一个永远不动的 0%。
  */
 const visible = computed(() => {
-  if (failure.value) return true
+  if (appUpdateState.stage !== 'idle' && appUpdateState.stage !== 'installing') return false
+  if (failure.value) return canCancel.value
   if (!running.value) return false
   const value = progress.value
   if (!value || value.finished) return false
@@ -110,6 +113,7 @@ watch(() => running.value?.id ?? null, () => { progress.value = null })
 onUnmounted(() => { unlisten?.() })
 
 async function cancel() {
+  if (!canCancel.value) return
   // 立刻收起卡片：取消请求是异步的，后端也可能还没发出新的 finished 事件，
   // 等事件会让用户觉得按钮没反应。
   progress.value = null
@@ -123,7 +127,7 @@ async function cancel() {
   <!-- 下载进度 / 下载失败卡片：居中浮层，不占用页面布局 -->
   <Teleport to="body">
     <Transition name="dl-card">
-      <div v-if="visible" class="dl-mask">
+      <div v-if="visible" class="dl-mask" :class="{ 'dl-mask-update': !canCancel }">
         <!--
           失败态：后端失败路径不发事件，所以这张卡片由调用方通过
           `failDownloadTask` 点亮（见 downloadTask.ts）。卡片不消失，让用户在
@@ -179,7 +183,7 @@ async function cancel() {
             <span v-if="routeText" class="dl-route">{{ routeText }}</span>
           </div>
 
-          <div class="dl-actions">
+          <div v-if="canCancel" class="dl-actions">
             <n-button secondary size="small" @click="cancel">
               <CloseOutline width="13" height="13" />{{ t('common.cancelDownload') }}
             </n-button>
@@ -202,6 +206,7 @@ async function cancel() {
   background: rgba(0, 0, 0, .38);
   backdrop-filter: blur(1px);
 }
+.dl-mask-update { z-index: var(--oc2-layer-update-progress); }
 .dl-card {
   width: min(420px, calc(100vw - 80px));
   padding: 20px 22px 16px;

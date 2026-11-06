@@ -9,12 +9,66 @@ use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use zip::ZipArchive;
 
-static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
+// Cancellation and update ownership share one atomic state to avoid a check/store race.
+#[derive(Default)]
+struct DownloadControl(AtomicU8);
+
+const DOWNLOAD_IDLE: u8 = 0;
+const DOWNLOAD_CANCELLED: u8 = 1;
+const UPDATE_RUNNING: u8 = 2;
+
+impl DownloadControl {
+    fn start(&self) {
+        let _ = self.0.compare_exchange(
+            DOWNLOAD_CANCELLED,
+            DOWNLOAD_IDLE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    fn cancel(&self) -> bool {
+        self.set_unless_updating(DOWNLOAD_CANCELLED)
+    }
+
+    fn set_unless_updating(&self, next: u8) -> bool {
+        let mut state = self.0.load(Ordering::Acquire);
+        while state != UPDATE_RUNNING {
+            match self
+                .0
+                .compare_exchange_weak(state, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return true,
+                Err(actual) => state = actual,
+            }
+        }
+        false
+    }
+
+    fn updating(&self) -> bool {
+        self.0.load(Ordering::Acquire) == UPDATE_RUNNING
+    }
+
+    fn begin_update(&self) -> Option<AppUpdateGuard<'_>> {
+        self.set_unless_updating(UPDATE_RUNNING)
+            .then(|| AppUpdateGuard(self))
+    }
+}
+
+pub struct AppUpdateGuard<'a>(&'a DownloadControl);
+
+impl Drop for AppUpdateGuard<'_> {
+    fn drop(&mut self) {
+        self.0.0.store(DOWNLOAD_IDLE, Ordering::Release);
+    }
+}
+
+static DOWNLOAD_CONTROL: DownloadControl = DownloadControl(AtomicU8::new(DOWNLOAD_IDLE));
 const FIRST_BYTE_TIMEOUT_ERROR: &str = "download.firstByteTimeout";
 
 /// 「多久没有动静就判定这个下载源已死」的唯一判定线。
@@ -25,18 +79,27 @@ const FIRST_BYTE_TIMEOUT_ERROR: &str = "download.firstByteTimeout";
 /// 不进配置、不开放修改。
 pub const FIRST_BYTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-pub fn cancel_download() {
-    log::info!("收到下载取消请求");
-    DOWNLOAD_CANCELLED.store(true, Ordering::Release);
+pub fn cancel_download() -> bool {
+    DOWNLOAD_CONTROL.cancel()
 }
 
 pub fn is_download_cancelled() -> bool {
-    DOWNLOAD_CANCELLED.load(Ordering::Acquire)
+    DOWNLOAD_CONTROL.0.load(Ordering::Acquire) == DOWNLOAD_CANCELLED
 }
 
 pub fn start_download() {
     log::debug!("开始新的下载任务，清除取消状态");
-    DOWNLOAD_CANCELLED.store(false, Ordering::Release);
+    DOWNLOAD_CONTROL.start();
+}
+
+pub fn app_update_in_progress() -> bool {
+    DOWNLOAD_CONTROL.updating()
+}
+
+pub fn begin_app_update() -> Result<AppUpdateGuard<'static>, String> {
+    DOWNLOAD_CONTROL
+        .begin_update()
+        .ok_or_else(|| "update.inProgress".into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -436,7 +499,7 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
                         temporary.keep = true;
                         return Ok(target);
                     }
-                    Err(error) if DOWNLOAD_CANCELLED.load(Ordering::Acquire) => {
+                    Err(error) if is_download_cancelled() => {
                         let _ = fs::remove_file(&target);
                         return Err(error);
                     }
@@ -619,7 +682,7 @@ async fn download_ranges(
             let mut last_error = String::new();
             let mut last_error_kind = "unknown";
             for attempt in 1..=3 {
-                if DOWNLOAD_CANCELLED.load(Ordering::Acquire) {
+                if is_download_cancelled() {
                     return Err("download.cancelled".to_string());
                 }
                 let request = client
@@ -705,7 +768,7 @@ async fn download_ranges(
     }))
     .buffer_unordered(threads.clamp(1, 32) as usize);
     while let Some(result) = pending.next().await {
-        if DOWNLOAD_CANCELLED.load(Ordering::Acquire) {
+        if is_download_cancelled() {
             return Err("download.cancelled".into());
         }
         let (offset, bytes) = result?;
@@ -1897,6 +1960,48 @@ pub fn new_manifest(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn mandatory_update_rejects_cancel_and_duplicate_start_until_guard_drops() {
+        let control = DownloadControl::default();
+        assert!(control.cancel());
+        assert_eq!(control.0.load(Ordering::Acquire), DOWNLOAD_CANCELLED);
+        let guard = control
+            .begin_update()
+            .expect("update clears old cancellation");
+        assert!(control.updating());
+        assert!(control.begin_update().is_none());
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let control = &control;
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        assert!(!control.cancel());
+                        control.start();
+                        assert!(control.updating());
+                    }
+                });
+            }
+        });
+        drop(guard);
+        assert!(!control.updating());
+        assert!(control.cancel());
+        control.start();
+        assert_eq!(control.0.load(Ordering::Acquire), DOWNLOAD_IDLE);
+        assert!(control.begin_update().is_some());
+    }
+
+    #[test]
+    fn mandatory_update_error_releases_guard_without_leaving_cancellation() {
+        let control = DownloadControl::default();
+        let fail = || -> Result<(), &str> {
+            let _guard = control.begin_update().unwrap();
+            Err("download or signature failure")
+        };
+        assert!(fail().is_err());
+        assert_eq!(control.0.load(Ordering::Acquire), DOWNLOAD_IDLE);
+        assert!(control.cancel());
+    }
 
     #[test]
     fn copying_an_installed_dll_onto_itself_keeps_its_contents() {

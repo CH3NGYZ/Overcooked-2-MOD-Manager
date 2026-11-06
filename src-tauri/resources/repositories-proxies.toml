@@ -1,155 +1,155 @@
 schema_version = 1
 
 # Release 桥接
-[[release_proxies]]
-id = "gh-h233"
-name = "gh.h233.eu.org"
-template = "https://gh.h233.eu.org/{url}"
+# [[release_proxies]]
+# id = "gh-h233"
+# name = "gh.h233.eu.org"
+# template = "https://gh.h233.eu.org/{url}"
 
-[[release_proxies]]
-id = "gh-ddlc"
-name = "gh.ddlc.top"
-template = "https://gh.ddlc.top/{url}"
+# [[release_proxies]]
+# id = "gh-ddlc"
+# name = "gh.ddlc.top"
+# template = "https://gh.ddlc.top/{url}"
 
-[[release_proxies]]
-id = "gh-proxy-org"
-name = "gh-proxy.org"
-template = "https://gh-proxy.org/{url}"
+# [[release_proxies]]
+# id = "gh-proxy-org"
+# name = "gh-proxy.org"
+# template = "https://gh-proxy.org/{url}"
 
-[[release_proxies]]
-id = "cdn-gh-proxy-org"
-name = "cdn.gh-proxy.org"
-template = "https://cdn.gh-proxy.org/{url}"
+# [[release_proxies]]
+# id = "cdn-gh-proxy-org"
+# name = "cdn.gh-proxy.org"
+# template = "https://cdn.gh-proxy.org/{url}"
 
-[[release_proxies]]
-id = "edgeone-gh-proxy-org"
-name = "edgeone.gh-proxy.org"
-template = "https://edgeone.gh-proxy.org/{url}"
+# [[release_proxies]]
+# id = "edgeone-gh-proxy-org"
+# name = "edgeone.gh-proxy.org"
+# template = "https://edgeone.gh-proxy.org/{url}"
 
-[[release_proxies]]
-id = "cors-isteed"
-name = "cors.isteed.cc"
-template = "https://cors.isteed.cc/{url_no_scheme}"
+# [[release_proxies]]
+# id = "cors-isteed"
+# name = "cors.isteed.cc"
+# template = "https://cors.isteed.cc/{url_no_scheme}"
 
-[[release_proxies]]
-id = "ghproxy-it"
-name = "ghproxy.it"
-template = "https://ghproxy.it/{url}"
+# [[release_proxies]]
+# id = "ghproxy-it"
+# name = "ghproxy.it"
+# template = "https://ghproxy.it/{url}"
 
-[[release_proxies]]
-id = "github-boki"
-name = "github.boki.moe"
-template = "https://github.boki.moe/{url}"
+# [[release_proxies]]
+# id = "github-boki"
+# name = "github.boki.moe"
+# template = "https://github.boki.moe/{url}"
 
-[[release_proxies]]
-id = "gh-jasonzeng"
-name = "gh.jasonzeng.dev"
-template = "https://gh.jasonzeng.dev/{url}"
+# [[release_proxies]]
+# id = "gh-jasonzeng"
+# name = "gh.jasonzeng.dev"
+# template = "https://gh.jasonzeng.dev/{url}"
 
-[[release_proxies]]
-id = "gh-monlor"
-name = "gh.monlor.com"
-template = "https://gh.monlor.com/{url}"
+# [[release_proxies]]
+# id = "gh-monlor"
+# name = "gh.monlor.com"
+# template = "https://gh.monlor.com/{url}"
 
-[[release_proxies]]
-id = "github-geekery"
-name = "github.geekery.cn"
-template = "https://github.geekery.cn/{url}"
+# [[release_proxies]]
+# id = "github-geekery"
+# name = "github.geekery.cn"
+# template = "https://github.geekery.cn/{url}"
 
-[[release_proxies]]
-id = "github-ednovas"
-name = "github.ednovas.xyz"
-template = "https://github.ednovas.xyz/{url}"
+# [[release_proxies]]
+# id = "github-ednovas"
+# name = "github.ednovas.xyz"
+# template = "https://github.ednovas.xyz/{url}"
 
-[[release_proxies]]
-id = "ghfile-geekertao"
-name = "ghfile.geekertao.top"
-template = "https://ghfile.geekertao.top/{url}"
+# [[release_proxies]]
+# id = "ghfile-geekertao"
+# name = "ghfile.geekertao.top"
+# template = "https://ghfile.geekertao.top/{url}"
 
-[[release_proxies]]
-id = "ghp-keleyaa"
-name = "ghp.keleyaa.com"
-template = "https://ghp.keleyaa.com/{url}"
+# [[release_proxies]]
+# id = "ghp-keleyaa"
+# name = "ghp.keleyaa.com"
+# template = "https://ghp.keleyaa.com/{url}"
 
-[[release_proxies]]
-id = "gh-chjina"
-name = "gh.chjina.com"
-template = "https://gh.chjina.com/{url}"
+# [[release_proxies]]
+# id = "gh-chjina"
+# name = "gh.chjina.com"
+# template = "https://gh.chjina.com/{url}"
 
-[[release_proxies]]
-id = "ghpxy-hwinzniej"
-name = "ghpxy.hwinzniej.top"
-template = "https://ghpxy.hwinzniej.top/{url}"
+# [[release_proxies]]
+# id = "ghpxy-hwinzniej"
+# name = "ghpxy.hwinzniej.top"
+# template = "https://ghpxy.hwinzniej.top/{url}"
 
-[[release_proxies]]
-id = "cdn-crashmc"
-name = "cdn.crashmc.com"
-template = "https://cdn.crashmc.com/{url}"
+# [[release_proxies]]
+# id = "cdn-crashmc"
+# name = "cdn.crashmc.com"
+# template = "https://cdn.crashmc.com/{url}"
 
-[[release_proxies]]
-id = "git-yylx"
-name = "git.yylx.win"
-template = "https://git.yylx.win/{url}"
+# [[release_proxies]]
+# id = "git-yylx"
+# name = "git.yylx.win"
+# template = "https://git.yylx.win/{url}"
 
-[[release_proxies]]
-id = "gitproxy-mrhjx"
-name = "gitproxy.mrhjx.cn"
-template = "https://gitproxy.mrhjx.cn/{url}"
+# [[release_proxies]]
+# id = "gitproxy-mrhjx"
+# name = "gitproxy.mrhjx.cn"
+# template = "https://gitproxy.mrhjx.cn/{url}"
 
-[[release_proxies]]
-id = "ghproxy-cxkpro"
-name = "ghproxy.cxkpro.top"
-template = "https://ghproxy.cxkpro.top/{url}"
+# [[release_proxies]]
+# id = "ghproxy-cxkpro"
+# name = "ghproxy.cxkpro.top"
+# template = "https://ghproxy.cxkpro.top/{url}"
 
-[[release_proxies]]
-id = "gh-xxooo"
-name = "gh.xxooo.cf"
-template = "https://gh.xxooo.cf/{url}"
+# [[release_proxies]]
+# id = "gh-xxooo"
+# name = "gh.xxooo.cf"
+# template = "https://gh.xxooo.cf/{url}"
 
-[[release_proxies]]
-id = "gh-idayer"
-name = "gh.idayer.com"
-template = "https://gh.idayer.com/{url}"
+# [[release_proxies]]
+# id = "gh-idayer"
+# name = "gh.idayer.com"
+# template = "https://gh.idayer.com/{url}"
 
-[[release_proxies]]
-id = "down-npee"
-name = "down.npee.cn"
-template = "https://down.npee.cn/?{url}"
+# [[release_proxies]]
+# id = "down-npee"
+# name = "down.npee.cn"
+# template = "https://down.npee.cn/?{url}"
 
-[[release_proxies]]
-id = "raw-ihtw"
-name = "raw.ihtw.moe"
-template = "https://raw.ihtw.moe/{url_no_scheme}"
+# [[release_proxies]]
+# id = "raw-ihtw"
+# name = "raw.ihtw.moe"
+# template = "https://raw.ihtw.moe/{url_no_scheme}"
 
-[[release_proxies]]
-id = "xget"
-name = "Xget"
-template = "https://xget.xi-xu.me/gh/{github_path}"
+# [[release_proxies]]
+# id = "xget"
+# name = "Xget"
+# template = "https://xget.xi-xu.me/gh/{github_path}"
 
-[[release_proxies]]
-id = "gh-zwy"
-name = "gh.zwy.one"
-template = "https://gh.zwy.one/{url}"
+# [[release_proxies]]
+# id = "gh-zwy"
+# name = "gh.zwy.one"
+# template = "https://gh.zwy.one/{url}"
 
-[[release_proxies]]
-id = "ghproxy-monkeyray"
-name = "ghproxy.monkeyray.net"
-template = "https://ghproxy.monkeyray.net/{url}"
+# [[release_proxies]]
+# id = "ghproxy-monkeyray"
+# name = "ghproxy.monkeyray.net"
+# template = "https://ghproxy.monkeyray.net/{url}"
 
-[[release_proxies]]
-id = "ghproxy-net"
-name = "ghproxy.net"
-template = "https://ghproxy.net/{url}"
+# [[release_proxies]]
+# id = "ghproxy-net"
+# name = "ghproxy.net"
+# template = "https://ghproxy.net/{url}"
 
-[[release_proxies]]
-id = "ghfast"
-name = "ghfast.top"
-template = "https://ghfast.top/{url}"
+# [[release_proxies]]
+# id = "ghfast"
+# name = "ghfast.top"
+# template = "https://ghfast.top/{url}"
 
-[[release_proxies]]
-id = "wget-la"
-name = "wget.la"
-template = "https://wget.la/{url}"
+# [[release_proxies]]
+# id = "wget-la"
+# name = "wget.la"
+# template = "https://wget.la/{url}"
 
 [[release_proxies]]
 id = "oc2gh-release"
@@ -157,40 +157,40 @@ name = "oc2gh.ch3ng.top"
 template = "https://oc2gh.ch3ng.top/{url_path}"
 
 # Raw 桥接
-[[raw_proxies]]
-id = "wget-la-raw"
-name = "wget.la"
-template = "https://wget.la/{url}"
+# [[raw_proxies]]
+# id = "wget-la-raw"
+# name = "wget.la"
+# template = "https://wget.la/{url}"
 
-[[raw_proxies]]
-id = "hk-gh-proxy-raw"
-name = "hk.gh-proxy.org"
-template = "https://hk.gh-proxy.org/{url}"
+# [[raw_proxies]]
+# id = "hk-gh-proxy-raw"
+# name = "hk.gh-proxy.org"
+# template = "https://hk.gh-proxy.org/{url}"
 
-[[raw_proxies]]
-id = "ghfast-raw"
-name = "ghfast.top"
-template = "https://ghfast.top/{url}"
+# [[raw_proxies]]
+# id = "ghfast-raw"
+# name = "ghfast.top"
+# template = "https://ghfast.top/{url}"
 
-[[raw_proxies]]
-id = "gh-catmak-raw"
-name = "gh.catmak.name"
-template = "https://gh.catmak.name/{url}"
+# [[raw_proxies]]
+# id = "gh-catmak-raw"
+# name = "gh.catmak.name"
+# template = "https://gh.catmak.name/{url}"
 
-[[raw_proxies]]
-id = "fastly-jsdelivr"
-name = "jsdelivr.net"
-template = "https://fastly.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}"
+# [[raw_proxies]]
+# id = "fastly-jsdelivr"
+# name = "jsdelivr.net"
+# template = "https://fastly.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}"
 
-[[raw_proxies]]
-id = "cdn-gh-proxy-raw"
-name = "cdn.gh-proxy.org"
-template = "https://cdn.gh-proxy.org/{url}"
+# [[raw_proxies]]
+# id = "cdn-gh-proxy-raw"
+# name = "cdn.gh-proxy.org"
+# template = "https://cdn.gh-proxy.org/{url}"
 
-[[raw_proxies]]
-id = "g-blfrp-raw"
-name = "g.blfrp.cn"
-template = "https://g.blfrp.cn/{url}"
+# [[raw_proxies]]
+# id = "g-blfrp-raw"
+# name = "g.blfrp.cn"
+# template = "https://g.blfrp.cn/{url}"
 
 [[raw_proxies]]
 id = "oc2gh-raw"
@@ -227,7 +227,7 @@ id = "cdn-crashmc-avatar"
 name = "cdn.crashmc.com"
 template = "https://cdn.crashmc.com/{url}"
 
-[[avatar_proxies]]
-id = "oc2gh-avatar"
-name = "oc2gh.ch3ng.top"
-template = "https://oc2gh.ch3ng.top/{url_path}"
+# [[avatar_proxies]]
+# id = "oc2gh-avatar"
+# name = "oc2gh.ch3ng.top"
+# template = "https://oc2gh.ch3ng.top/{url_path}"

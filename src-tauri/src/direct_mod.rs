@@ -247,12 +247,7 @@ pub(crate) async fn download_remote_to_temp(
     };
     let racing = candidates.len() > 1;
     let threads = if racing { 1 } else { configured_threads };
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(config.network.timeout_seconds.max(1)))
-        .read_timeout(Duration::from_secs(120))
-        .user_agent(releases::APP_USER_AGENT)
-        .build()
+    let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|_| "direct.clientFailed")?;
     /*
      * 文件名：只有「单一候选且就是直连」时才先探测一次。

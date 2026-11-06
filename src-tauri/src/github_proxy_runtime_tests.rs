@@ -32,8 +32,13 @@ fn serve(status: &str, body: Vec<u8>, delay: Duration, declared_size: Option<usi
                 Err(error) => panic!("{error}"),
             }
         };
+        // macOS may inherit the listener's nonblocking mode; wait for complete headers.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         let mut bytes = Vec::new();
         let mut buf = [0; 1024];

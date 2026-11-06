@@ -1,4 +1,2 @@
-# Reuse Rust compiler outputs across clean builds and Cargo target directories.
-# Install with: cargo install sccache --locked
-[build]
-rustc-wrapper = "sccache"
+# Compiler caching is opt-in: clean build runners do not require sccache.
+# After installing it locally, set RUSTC_WRAPPER=sccache in your shell.

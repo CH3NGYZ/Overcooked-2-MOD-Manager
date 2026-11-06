@@ -1092,6 +1092,7 @@ pub struct RepositoryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub schema_version: u32,
+    #[serde(default = "crate::config::default_ui_zoom")]
     pub ui_zoom: f64,
     #[serde(default = "default_hide_unidentified_mods")]
     pub hide_unidentified_mods: bool,

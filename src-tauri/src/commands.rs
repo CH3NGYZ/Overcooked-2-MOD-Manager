@@ -5311,7 +5311,7 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
-    config.ui_zoom = 1.0;
+    config.ui_zoom = crate::config::default_ui_zoom();
     for repo in &mut config.repositories {
         repo.cached_releases.clear();
         // 时间戳与列表同生共死：只清列表会留下「空列表 + 新鲜时间」，

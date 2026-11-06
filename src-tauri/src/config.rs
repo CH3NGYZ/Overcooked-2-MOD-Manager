@@ -1073,10 +1073,18 @@ fn reorder_imported_repositories(config: &mut AppConfig, imported_ids: &[String]
 /// 默认开启；2 = 两者改为默认关闭，跟随远端索引。
 pub(crate) const CONFIG_SCHEMA_VERSION: u32 = 2;
 
+/// 与前端的启动兜底、恢复默认共用一份编译期资源，避免跨层默认值漂移。
+pub(crate) fn default_ui_zoom() -> f64 {
+    include_str!("../../src/uiZoomDefault.json")
+        .trim()
+        .parse()
+        .expect("bundled UI zoom default must be numeric")
+}
+
 pub(crate) fn default_config() -> AppConfig {
     AppConfig {
         schema_version: CONFIG_SCHEMA_VERSION,
-        ui_zoom: 1.5,
+        ui_zoom: default_ui_zoom(),
         hide_unidentified_mods: true,
         // 默认开启：删除的 MOD 先进回收站，用户能反悔。
         recycle_deleted_mods: true,
@@ -2356,6 +2364,21 @@ value = "RegionalMod.dll"
                 .collect::<Vec<_>>(),
             vec![Channel::Stable, Channel::Beta]
         );
+    }
+
+    #[test]
+    fn ui_zoom_defaults_to_125_and_preserves_stored_choices() {
+        assert_eq!(default_ui_zoom(), 1.25);
+        assert_eq!(default_config().ui_zoom, 1.25);
+        let mut value = serde_json::to_value(default_config()).unwrap();
+        value.as_object_mut().unwrap().remove("ui_zoom");
+        let missing: AppConfig = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(missing.ui_zoom, 1.25);
+        for zoom in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            value["ui_zoom"] = serde_json::json!(zoom);
+            let stored: AppConfig = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(stored.ui_zoom, zoom);
+        }
     }
 
     #[test]

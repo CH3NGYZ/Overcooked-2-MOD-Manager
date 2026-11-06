@@ -39,6 +39,8 @@ export interface ModPackageNode {
   key: string
   label: string
   mods: InstalledMod[]
+  /** 搜索命中的展示成员；包级开关、卸载、依赖和状态仍使用完整 mods。 */
+  visibleMods: InstalledMod[]
   grouped: boolean
   enabled: boolean
   partial: boolean

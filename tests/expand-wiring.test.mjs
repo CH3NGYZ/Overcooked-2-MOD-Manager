@@ -23,6 +23,7 @@ const levels = read('LevelsView.vue')
 const readBody = (name) =>
   readFileSync(new URL(`../src/components/${name}`, import.meta.url), 'utf8')
 const modGroupBody = readBody('ModGroupBody.vue')
+const modPackageBody = readBody('ModPackageBody.vue')
 const levelGroupBody = readBody('LevelSetGroupBody.vue')
 
 /** 抓出某个函数体（从 `function 名(` 到下一个顶格 `}`），用来判断顺序。 */
@@ -104,12 +105,12 @@ test('MOD 页：按键找卡片复用 expandScroll 的 cardByExpandKey（不自�
 
 test('MOD 页：包内子卡与随包依赖带包 key，落进内层状态而不是外层', () => {
   // 模板：包体里的每一张子卡（含 is_dependency 的依赖行）都把 pkg.key 传给点击处理。
-  assert.match(modGroupBody, /@click="ctx\.onCardClick\(\$event, mod, pkg\.key\)"/)
-  assert.match(modGroupBody, /:expanded="ctx\.expansion\.isInnerOpen\(pkg\.key, mod\.dll_file\)"/)
+  assert.match(modPackageBody, /@click="ctx\.onCardClick\(\$event, mod, pkg\.key\)"/)
+  assert.match(modPackageBody, /:expanded="ctx\.expansion\.isInnerOpen\(pkg\.key, mod\.dll_file\)"/)
   assert.match(modsLocal, /expansion\.openInner\(packageKey, mod\.dll_file\)/)
   assert.match(modsLocal, /expansion\.closeInner\(packageKey, mod\.dll_file\)/)
   // 依赖行与子 MOD 同一张卡片、同一条路径，只是关掉开关与标签文案。
-  assert.match(modGroupBody, /:switchable="!mod\.is_dependency"/)
+  assert.match(modPackageBody, /:switchable="!mod\.is_dependency"/)
 })
 
 test('MOD 页：收起外壳连带清内层，点空白只收独立卡与内层、不许收盘外壳', () => {

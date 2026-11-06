@@ -336,17 +336,17 @@ const sortedMods = computed(() =>
     .sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
 
-/** 搜索命中任一成员时，整个 MOD 包都保留，避免展开后包内卡片消失。 */
+/** 包的身份和操作范围不随搜索改变；搜索只裁剪实际渲染的成员卡片。 */
 function packageKeyOf(mod: InstalledMod) {
   return mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
 }
 
-const searchMatchedPackageKeys = computed(() => {
+const searchMatchedDllFiles = computed(() => {
   if (!query.value) return null
   const keys = new Set<string>()
   for (const mod of effectiveMods.value) {
     if (matchesLocalSearch(query.value, modSearchText(mod), ...searchExtra(mod))) {
-      keys.add(packageKeyOf(mod))
+      keys.add(mod.dll_file)
     }
   }
   return keys
@@ -617,6 +617,7 @@ const groups = computed<ModGroupNode[]>(() => {
       key,
       label,
       mods: ordered,
+      visibleMods: ordered.filter(mod => searchMatchedDllFiles.value === null || searchMatchedDllFiles.value.has(mod.dll_file)),
       grouped: ordered.length >= 2,
       enabled: enabledCount === ordered.length,
       partial: enabledCount > 0 && enabledCount < ordered.length,
@@ -637,8 +638,8 @@ const groups = computed<ModGroupNode[]>(() => {
       key,
       label,
       packages: [...packages.entries()]
-        .filter(([pkgKey]) => searchMatchedPackageKeys.value === null || searchMatchedPackageKeys.value.has(pkgKey))
-        .map(([pkgKey, list]) => toPackage(pkgKey, list)),
+        .map(([pkgKey, list]) => toPackage(pkgKey, list))
+        .filter(pkg => pkg.visibleMods.length > 0),
     }))
     .filter((group) => group.packages.length > 0)
 })

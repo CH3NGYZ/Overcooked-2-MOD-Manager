@@ -27,6 +27,7 @@ import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
+import SourceGroupSlot from '../components/SourceGroupSlot.vue'
 import {
   useSourceGroupTree,
   type SourceGroupEntry,
@@ -696,35 +697,88 @@ defineExpose({ refreshAll, visibleCount })
         @update:expanded-names="setOpenSources">
         <n-collapse-item v-for="node in normalTree" :key="node.id" :name="node.id">
           <template #header>
-            <div class="source-head">
-              <b>{{ node.label }}</b>
-              <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
-              <n-button size="tiny" quaternary
-                :loading="sourceRefreshing[node.id] || node.groups.some((g) => g.items.some((r) => refreshing[r.id]))"
-                :disabled="anyRefreshing" @click.stop="refreshSource(node)">
-                <template #icon><RefreshOutline width="13" height="13" /></template>
-              </n-button>
-            </div>
+            <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
+              <div class="source-head">
+                <b>{{ node.label }}</b>
+                <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
+                <n-button size="tiny" quaternary
+                  :loading="sourceRefreshing[node.id] || node.groups.some((g) => g.items.some((r) => refreshing[r.id]))"
+                  :disabled="anyRefreshing" @click.stop="refreshSource(node)">
+                  <template #icon><RefreshOutline width="13" height="13" /></template>
+                </n-button>
+              </div>
+            </SourceGroupSlot>
           </template>
+          <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
+            <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
+              @update:expanded-names="setOpenGroups">
+              <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
+                <template #header>
+                  <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" :group-key="group.key" v-slot="{ group }">
+                    <div class="group-head">
+                      <span>{{ group.label }}</span>
+                      <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
+                      <!-- 分组刷新：只刷新本组内的仓库，不影响其它组 -->
+                      <n-button size="tiny" quaternary class="group-refresh"
+                        :loading="groupRefreshing(group)"
+                        :disabled="anyRefreshing" @click.stop="refreshGroup(group)">
+                        <template #icon><RefreshOutline width="12" height="12" /></template>
+                      </n-button>
+                    </div>
+                  </SourceGroupSlot>
+                </template>
+                <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" :group-key="group.key" v-slot="{ group }">
+                  <div class="repo-grid">
+                    <OnlineCard v-for="repo in group.items" :key="repo.id" :data-focus-id="repo.id"
+                      :data-tutorial="repo.id === tutorialCardId ? 'mods-online-card' : undefined"
+                      :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
+                      :note="repoNote(repo) || repo.repository"
+                      :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"
+                      :status-clickable="hasLocalInstall(repo)"
+                      :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
+                      :dependency="cardDependency(repo)"
+                      :version="versionParts(repo)" :refreshing="!!refreshing[repo.id]"
+                      :downloads="downloadCount(repo)"
+                      :action="cardAction(repo)"
+                      :error="repo.last_error" :active="detailId === repo.id"
+                      :focus-flash="highlightId === repo.id"
+                      @open="detailId = repo.id"
+                      @status-click="openInLocalMods(repo)"
+                      @dependency-click="jumpToRelationRepository(repo)"
+                      @action="runCardAction(repo)" />
+                  </div>
+                </SourceGroupSlot>
+              </n-collapse-item>
+            </n-collapse>
+          </SourceGroupSlot>
+        </n-collapse-item>
+      </n-collapse>
 
-          <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
-            @update:expanded-names="setOpenGroups">
-            <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
-              <template #header>
-                <div class="group-head">
-                  <span>{{ group.label }}</span>
-                  <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
-                  <!-- 分组刷新：只刷新本组内的仓库，不影响其它组 -->
-                  <n-button size="tiny" quaternary class="group-refresh"
-                    :loading="groupRefreshing(group)"
-                    :disabled="anyRefreshing" @click.stop="refreshGroup(group)">
-                    <template #icon><RefreshOutline width="12" height="12" /></template>
-                  </n-button>
+      <!-- 社区仓库：与上方仓库源用分割线隔开，固定在最下方 -->
+      <template v-if="hasCommunity">
+        <div class="community-divider">
+          <span>{{ t('dialogs.communityRepositories') }}</span>
+        </div>
+        <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
+          @update:expanded-names="setOpenSources">
+          <n-collapse-item v-for="node in communityTree" :key="node.id" :name="node.id">
+            <template #header>
+              <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
+                <div class="source-head">
+                  <b>{{ node.label }}</b>
+                  <!-- 社区来源未经官方索引校验，用严重级红色与「重复」同级提示 -->
+                  <n-tag size="tiny" :bordered="false" class="state-tag"
+                    :color="tagColorFor('critical')">{{ t('dialogs.unknownOrigin') }}</n-tag>
+                  <n-tag size="tiny" :bordered="false" class="state-tag"
+                    :color="tagColorFor('muted')">{{ node.count }}</n-tag>
                 </div>
-              </template>
-
-              <div class="repo-grid">
-                <OnlineCard v-for="repo in group.items" :key="repo.id" :data-focus-id="repo.id"
+              </SourceGroupSlot>
+            </template>
+            <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
+              <!-- 社区仓库不分组：直接平铺卡片，没有分类标题 -->
+              <div class="repo-grid community-grid">
+                <OnlineCard v-for="repo in node.groups[0]?.items ?? []" :key="repo.id"
+                  :data-focus-id="repo.id"
                   :data-tutorial="repo.id === tutorialCardId ? 'mods-online-card' : undefined"
                   :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
                   :note="repoNote(repo) || repo.repository"
@@ -742,51 +796,8 @@ defineExpose({ refreshAll, visibleCount })
                   @dependency-click="jumpToRelationRepository(repo)"
                   @action="runCardAction(repo)" />
               </div>
-            </n-collapse-item>
-          </n-collapse>
-        </n-collapse-item>
-      </n-collapse>
-
-      <!-- 社区仓库：与上方仓库源用分割线隔开，固定在最下方 -->
-      <template v-if="hasCommunity">
-        <div class="community-divider">
-          <span>{{ t('dialogs.communityRepositories') }}</span>
-        </div>
-        <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
-          @update:expanded-names="setOpenSources">
-          <n-collapse-item v-for="node in communityTree" :key="node.id" :name="node.id">
-            <template #header>
-              <div class="source-head">
-                <b>{{ node.label }}</b>
-                <!-- 社区来源未经官方索引校验，用严重级红色与「重复」同级提示 -->
-                <n-tag size="tiny" :bordered="false" class="state-tag"
-                  :color="tagColorFor('critical')">{{ t('dialogs.unknownOrigin') }}</n-tag>
-                <n-tag size="tiny" :bordered="false" class="state-tag"
-                  :color="tagColorFor('muted')">{{ node.count }}</n-tag>
-              </div>
-            </template>
-            <!-- 社区仓库不分组：直接平铺卡片，没有分类标题 -->
-            <div class="repo-grid community-grid">
-              <OnlineCard v-for="repo in node.groups[0]?.items ?? []" :key="repo.id"
-                :data-focus-id="repo.id"
-                :data-tutorial="repo.id === tutorialCardId ? 'mods-online-card' : undefined"
-                :provider="repo.provider" :owner="repo.username" :title="repoName(repo)"
-                :note="repoNote(repo) || repo.repository"
-                :status-text="statusOf(repo).text" :status-tone="statusOf(repo).tone"
-                :status-clickable="hasLocalInstall(repo)"
-                :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
-                :dependency="cardDependency(repo)"
-                :version="versionParts(repo)" :refreshing="!!refreshing[repo.id]"
-                :downloads="downloadCount(repo)"
-                :action="cardAction(repo)"
-                :error="repo.last_error" :active="detailId === repo.id"
-                :focus-flash="highlightId === repo.id"
-                @open="detailId = repo.id"
-                @status-click="openInLocalMods(repo)"
-                @dependency-click="jumpToRelationRepository(repo)"
-                @action="runCardAction(repo)" />
-            </div>
-            <div v-if="!node.count" class="community-empty muted">{{ t('tools.noCommunityRepositoriesInThisChannel') }}</div>
+              <div v-if="!node.count" class="community-empty muted">{{ t('tools.noCommunityRepositoriesInThisChannel') }}</div>
+            </SourceGroupSlot>
           </n-collapse-item>
         </n-collapse>
       </template>

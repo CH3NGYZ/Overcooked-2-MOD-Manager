@@ -40,6 +40,7 @@ import {
   type MapCardState,
 } from '../levelSetStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
+import SourceGroupSlot from '../components/SourceGroupSlot.vue'
 import {
   useSourceGroupTree,
   type SourceGroupEntry,
@@ -844,56 +845,62 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
       @update:expanded-names="setOpenSources">
       <n-collapse-item v-for="node in tree" :key="node.id" :name="node.id">
         <template #header>
-          <div class="source-head">
-            <b>{{ node.label }}</b>
-            <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
-            <!-- 源刷新：重拉源树后刷新这个源下的全部 Release -->
-            <n-button size="tiny" quaternary class="group-refresh"
-              :loading="sourceRefreshing(node)" :disabled="anyRefreshing"
-              :title="t('modsOnline.refresh')" @click.stop="refreshSource(node)">
-              <template #icon><RefreshOutline width="13" height="13" /></template>
-            </n-button>
-          </div>
-        </template>
-
-        <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
-          @update:expanded-names="setOpenGroups">
-          <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
-            <template #header>
-              <div class="group-head">
-                <span>{{ group.label }}</span>
-                <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
-                <!-- 分类刷新：只刷新本分类内的地图，不影响其它分类 -->
-                <n-button size="tiny" quaternary class="group-refresh"
-                  :loading="groupRefreshing(group)" :disabled="anyRefreshing"
-                  :title="t('modsOnline.refresh')" @click.stop="refreshGroup(group)">
-                  <template #icon><RefreshOutline width="12" height="12" /></template>
-                </n-button>
-              </div>
-            </template>
-
-            <div class="repo-grid">
-              <!-- 卡片就是 MOD 安装页那张：只把数据换成地图的 -->
-              <OnlineCard v-for="map in group.items" :key="map.id" :data-focus-id="map.id"
-                :provider="map.provider" :owner="map.username" :title="mapName(map)"
-                :note="mapNote(map)"
-                :status-text="statusOf(map).text" :status-tone="statusOf(map).tone"
-                :status-clickable="hasLocalMap(map)"
-                :status-title="hasLocalMap(map) ? t('levelSet.viewInMapManager') : undefined"
-                :dependency="dependencyOf(map)"
-                :version="versionOf(map)" :refreshing="isRefreshing(map)"
-                :downloads="downloadCount(map)"
-                :action="actionOf(map)"
-                :error="map.last_error"
-                :active="detailId === map.id"
-                :focus-flash="highlightId === map.id"
-                @open="detailId = map.id"
-                @status-click="openInLevelSets(map)"
-                @dependency-click="jumpToDependency(map)"
-                @action="runAction(map)" />
+          <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
+            <div class="source-head">
+              <b>{{ node.label }}</b>
+              <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
+              <!-- 源刷新：重拉源树后刷新这个源下的全部 Release -->
+              <n-button size="tiny" quaternary class="group-refresh"
+                :loading="sourceRefreshing(node)" :disabled="anyRefreshing"
+                :title="t('modsOnline.refresh')" @click.stop="refreshSource(node)">
+                <template #icon><RefreshOutline width="13" height="13" /></template>
+              </n-button>
             </div>
-          </n-collapse-item>
-        </n-collapse>
+          </SourceGroupSlot>
+        </template>
+        <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
+          <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
+            @update:expanded-names="setOpenGroups">
+            <n-collapse-item v-for="group in node.groups" :key="group.key" :name="group.key">
+              <template #header>
+                <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" :group-key="group.key" v-slot="{ group }">
+                  <div class="group-head">
+                    <span>{{ group.label }}</span>
+                    <n-tag size="tiny" :bordered="false">{{ group.items.length }}</n-tag>
+                    <!-- 分类刷新：只刷新本分类内的地图，不影响其它分类 -->
+                    <n-button size="tiny" quaternary class="group-refresh"
+                      :loading="groupRefreshing(group)" :disabled="anyRefreshing"
+                      :title="t('modsOnline.refresh')" @click.stop="refreshGroup(group)">
+                      <template #icon><RefreshOutline width="12" height="12" /></template>
+                    </n-button>
+                  </div>
+                </SourceGroupSlot>
+              </template>
+              <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" :group-key="group.key" v-slot="{ group }">
+                <div class="repo-grid">
+                  <!-- 卡片就是 MOD 安装页那张：只把数据换成地图的 -->
+                  <OnlineCard v-for="map in group.items" :key="map.id" :data-focus-id="map.id"
+                    :provider="map.provider" :owner="map.username" :title="mapName(map)"
+                    :note="mapNote(map)"
+                    :status-text="statusOf(map).text" :status-tone="statusOf(map).tone"
+                    :status-clickable="hasLocalMap(map)"
+                    :status-title="hasLocalMap(map) ? t('levelSet.viewInMapManager') : undefined"
+                    :dependency="dependencyOf(map)"
+                    :version="versionOf(map)" :refreshing="isRefreshing(map)"
+                    :downloads="downloadCount(map)"
+                    :action="actionOf(map)"
+                    :error="map.last_error"
+                    :active="detailId === map.id"
+                    :focus-flash="highlightId === map.id"
+                    @open="detailId = map.id"
+                    @status-click="openInLevelSets(map)"
+                    @dependency-click="jumpToDependency(map)"
+                    @action="runAction(map)" />
+                </div>
+              </SourceGroupSlot>
+            </n-collapse-item>
+          </n-collapse>
+        </SourceGroupSlot>
       </n-collapse-item>
     </n-collapse>
   </PageLoading>

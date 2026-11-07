@@ -1,5 +1,8 @@
 # Logs
 logs
+# Rust log-command regression tests are source code, not runtime logs.
+!src-tauri/src/commands/logs/
+!src-tauri/src/commands/logs/**
 *.log
 npm-debug.log*
 yarn-debug.log*

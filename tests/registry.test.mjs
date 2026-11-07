@@ -10,8 +10,18 @@ const service = readFileSync(new URL('../src/services/tauri.ts', import.meta.url
 const lib = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
 
 const invoked = new Set([...service.matchAll(/invoke<[^>]*>\(\s*'([a-z_]+)'/g)].map((m) => m[1]))
-const handlerBlock = lib.slice(lib.indexOf('generate_handler!'))
-const registered = new Set([...handlerBlock.matchAll(/([a-z_]+)::([a-z_]+)/g)].map((m) => m[2]))
+function registeredPaths(source) {
+  const block = source.match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
+  assert.ok(block, '缺少 generate_handler 注册块')
+  return [...block.matchAll(/\b[a-z_][a-z_0-9]*(?:::[a-z_][a-z_0-9]*)+\b/g)].map(m => m[0])
+}
+const registered = new Set(registeredPaths(lib).map(path => path.split('::').at(-1)))
+
+test('注册解析只取完整路径末段，支持嵌套域且不扫描 handler 之外的代码', () => {
+  const paths = registeredPaths('generate_handler![community::refresh, commands::settings::get_config] other::not_registered')
+  assert.deepEqual(paths, ['community::refresh', 'commands::settings::get_config'])
+  assert.deepEqual(paths.map(path => path.split('::').at(-1)), ['refresh', 'get_config'])
+})
 
 test('every frontend invoke target is registered in generate_handler', () => {
   const missing = [...invoked].filter((name) => !registered.has(name))

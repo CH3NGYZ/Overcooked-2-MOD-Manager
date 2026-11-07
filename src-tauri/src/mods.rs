@@ -1,3 +1,4 @@
+pub(crate) mod file_state;
 pub(crate) mod install;
 pub(crate) mod status;
 #[cfg(test)]

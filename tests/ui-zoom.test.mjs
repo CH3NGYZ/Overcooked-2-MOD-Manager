@@ -80,5 +80,5 @@ test('后端创建、缺字段与界面重置共用前端默认资源', () => {
   assert.match(read('src-tauri/src/config.rs'), /include_str!\("\.\.\/\.\.\/src\/uiZoomDefault.json"\)/)
   assert.match(read('src-tauri/src/config.rs'), /ui_zoom: default_ui_zoom\(\)/)
   assert.match(read('src-tauri/src/models.rs'), /serde\(default = "crate::config::default_ui_zoom"\)/)
-  assert.match(read('src-tauri/src/commands.rs'), /config.ui_zoom = crate::config::default_ui_zoom\(\)/)
+  assert.match(read('src-tauri/src/commands/settings.rs'), /config.ui_zoom = crate::config::default_ui_zoom\(\)/)
 })

@@ -1,3 +1,8 @@
+pub(crate) mod cache;
+pub(crate) mod channels;
+pub(crate) mod download;
+pub(crate) mod manifest;
+
 use crate::models::AppUpdateInfo;
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use minisign_verify::{PublicKey, Signature};
@@ -459,3 +464,6 @@ mod tests {
         assert!(verify_with_key(bytes, "not a signature", TEST_KEY, "1.2.0").is_err());
     }
 }
+
+#[cfg(test)]
+mod installer_update_tests;

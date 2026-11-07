@@ -1,3 +1,5 @@
+pub(crate) mod install;
+
 use crate::models::{GameConfig, GameRuntime, Provider, WinhttpState};
 use regex::Regex;
 use std::fs;

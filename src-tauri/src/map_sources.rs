@@ -19,6 +19,8 @@
 //!
 //! 关系表复用 `RepositoryRelation`：「某 GUID 的版本必须在区间内」这个语义
 //! 两边没有差别。
+pub(crate) mod view;
+
 use crate::config::ConfigError;
 use crate::models::{
     AppConfig, AssetRule, AssetRuleType, CommunityMapRepository, MapRepositoryConfig, Provider,

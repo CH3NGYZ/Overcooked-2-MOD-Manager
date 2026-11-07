@@ -378,25 +378,21 @@ test('后端不再返回中文整句的框架错误（源码级确认）', () =>
    * 反向断言：这几个命令的错误路径必须已经是 tag，不能漏回中文。
    * 后端返回中文时前端怎么翻都翻不了 —— 这条守住「不要再写中文」。
    */
-  const rust = readFileSync(
-    new URL('../src-tauri/src/commands.rs', import.meta.url),
-    'utf8',
-  )
-  for (const tag of [
-    'framework.alreadyInstalled',
-    'framework.bepinexMissing',
-    'framework.bepinexOnlyResidue',
-    'framework.diyLevelMissing',
-    'backup.recycleFailed',
-  ]) {
-    assert.ok(rust.includes(tag), `commands.rs 应包含 tag：${tag}`)
-  }
+  const sources = new Map([
+    ['commands/bepinex.rs', ['framework.alreadyInstalled', 'framework.bepinexMissing', 'framework.bepinexOnlyResidue', 'backup.recycleFailed']],
+    ['commands/diy_level.rs', ['framework.diyLevelMissing']],
+    ['bepinex/install.rs', ['framework.alreadyInstalled']],
+  ].map(([file, tags]) => {
+    const rust = readFileSync(new URL(`../src-tauri/src/${file}`, import.meta.url), 'utf8')
+    for (const tag of tags) assert.ok(rust.includes(tag), `${file} 应包含 tag：${tag}`)
+    return [file, rust]
+  }))
   // 已迁移的这几条中文不该再残留
   for (const legacy of [
     'BepInEx 已安装，如需覆盖请使用重新安装',
     'BepInEx 框架未安装（仅存在 MOD 目录），无需卸载',
   ]) {
-    assert.ok(!rust.includes(legacy), `commands.rs 不应再含中文文案：${legacy}`)
+    for (const [file, rust] of sources) assert.ok(!rust.includes(legacy), `${file} 不应再含中文文案：${legacy}`)
   }
 })
 

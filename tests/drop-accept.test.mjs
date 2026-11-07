@@ -33,7 +33,7 @@ const importFlowSource = read('src/composables/useLevelSetImport.ts')
 const tauriService = read('src/services/tauri.ts')
 const rustLevelSets = read('src-tauri/src/level_sets.rs')
 const rustModels = read('src-tauri/src/models.rs')
-const rustCommands = read('src-tauri/src/commands.rs')
+const rustCommands = read('src-tauri/src/commands/drop_source.rs')
 const rustLib = read('src-tauri/src/lib.rs')
 
 test('扩展名判定：带点、不分大小写、不含点不认', () => {
@@ -149,7 +149,7 @@ test('跨页路由只有一份实现，且只在设备端分类一次', () => {
 })
 
 test('分类命令在后端注册，且按 info 判定地图包', () => {
-  assert.match(rustLib, /commands::classify_drop_source/, 'lib.rs 必须注册这个命令')
+  assert.match(rustLib, /commands::drop_source::classify_drop_source/, 'lib.rs 必须注册这个命令')
   assert.match(rustCommands, /pub async fn classify_drop_source/, '命令必须是 async（要读 ZIP）')
   assert.match(rustCommands, /let kind = if contents\.map_sets > 0/, '含 info 的 ZIP 判成 map')
   assert.match(rustCommands, /else if contents\.plugins > 0/, '没有 info 但有 DLL 的判成 mod')

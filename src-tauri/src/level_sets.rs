@@ -50,6 +50,9 @@
 //! - 同一关卡集在 ZIP 里出现两次
 //! - 目标目录已有**同身份**关卡集（安装前必须先卸载旧副本，见 `find_install_conflicts`）；
 //!   同名但身份不同会换名并存，等同「另一张图」。
+pub(crate) mod staging;
+pub(crate) mod view;
+
 use crate::asset_bundle::{self, LevelSetMetadata};
 use crate::metadata_read::{MetadataKind, MetadataOutcome, MetadataRequest};
 use crate::models::{
@@ -67,9 +70,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
-/// DIYLevel 框架目录（游戏相对路径）。与 `commands.rs` 的 `DIYLEVEL_DIR` 同源，
-/// 但这里是模块内的私有常量，避免两处互相依赖。
-const DIYLEVEL_DIR: &str = "BepInEx/plugins/OC2DIYLevel";
+use crate::framework::DIYLEVEL_DIR;
 
 /// 启用中的关卡集目录名。
 const LEVELS_DIR: &str = "levels";

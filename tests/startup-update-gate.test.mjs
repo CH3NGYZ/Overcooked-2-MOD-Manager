@@ -14,7 +14,7 @@ import test from 'node:test'
 const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 const settings = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
 const services = readFileSync(new URL('../src/services/tauri.ts', import.meta.url), 'utf8')
-const commands = readFileSync(new URL('../src-tauri/src/commands.rs', import.meta.url), 'utf8')
+const commands = readFileSync(new URL('../src-tauri/src/app_update/cache.rs', import.meta.url), 'utf8')
 
 test('启动更新检查恒开，不再有开关门控', () => {
   const mountBlock = app.slice(app.indexOf('onMounted('), app.indexOf('</script>'))

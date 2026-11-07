@@ -14,6 +14,8 @@
 //!
 //! 只缓存成功结果：失败写进去会让下一次重试直接拿到同一个错误。
 
+pub(crate) mod freshness;
+
 use crate::models::ReleaseInfo;
 use std::collections::HashMap;
 use std::future::Future;

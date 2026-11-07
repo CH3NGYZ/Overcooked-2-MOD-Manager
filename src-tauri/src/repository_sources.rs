@@ -1,3 +1,5 @@
+pub(crate) mod apply;
+
 use crate::config::{ConfigError, validate_repository, validate_repository_source_region};
 use crate::models::{AppConfig, RepositoryExport};
 use crate::releases;

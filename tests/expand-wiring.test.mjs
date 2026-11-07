@@ -17,8 +17,10 @@ import test from 'node:test'
  * 「先认领二级卡」删掉（点插件把整张集收掉）。这几条只能靠源码文本锁住。
  */
 const read = (name) => readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8')
-const modsLocal = read('ModsLocalView.vue')
-const levels = read('LevelsView.vue')
+const modsLocalView = read('ModsLocalView.vue')
+const levelsView = read('LevelsView.vue')
+const modsLocal = read('../composables/useModsLocalCardExpansion.ts')
+const levels = read('../composables/useLevelSetCardExpansion.ts')
 /** 组内容已下沉成独立组件（见 `group-body-wiring.test.mjs`），卡片标记去那里读。 */
 const readBody = (name) =>
   readFileSync(new URL(`../src/components/${name}`, import.meta.url), 'utf8')
@@ -26,12 +28,14 @@ const modGroupBody = readBody('ModGroupBody.vue')
 const modPackageBody = readBody('ModPackageBody.vue')
 const levelGroupBody = readBody('LevelSetGroupBody.vue')
 
-/** 抓出某个函数体（从 `function 名(` 到下一个顶格 `}`），用来判断顺序。 */
+/** 抓出某个函数体（从 `function 名(` 到与函数声明缩进相同的 `}`），用来判断顺序。 */
 function bodyOf(source, name) {
   const start = source.indexOf(`function ${name}(`)
   assert.ok(start >= 0, `找不到函数 ${name}`)
-  // 源码在工作区可能是 CRLF（Windows 检出、git 的 autocrlf），两种换行都要认。
-  const closing = /\r?\n\}\r?\n/.exec(source.slice(start))
+  const lineStart = source.lastIndexOf('\n', start) + 1
+  const indent = source.slice(lineStart, start).length
+  // Composable 内部函数会比旧页面顶层函数多一层缩进，按函数自身缩进定位闭合括号。
+  const closing = new RegExp(`\\r?\\n {${indent}}\\}\\r?\\n`).exec(source.slice(start))
   assert.ok(closing, `函数 ${name} 没有结束`)
   return source.slice(start, start + closing.index + closing[0].length)
 }
@@ -41,12 +45,20 @@ function expansionInstances(source) {
   return (source.match(/useCardExpansion\(/g) ?? []).length
 }
 
-test('两条线都复用同一份展开滚动实现，没有第二份 scrollIntoView', () => {
+test('两条线由各自页面 composable 拥有 DOM 协调，并复用同一份展开滚动实现', () => {
+  assert.match(modsLocalView, /useModsLocalCardExpansion/)
+  assert.match(levelsView, /useLevelSetCardExpansion/)
+  assert.doesNotMatch(modsLocalView, /from '\.\.\/expandScroll'/)
+  assert.doesNotMatch(levelsView, /from '\.\.\/expandScroll'/)
+  assert.doesNotMatch(modsLocalView, /function onDocumentClick|document\.addEventListener\('click'/)
+  assert.doesNotMatch(levelsView, /function onDocumentClick|document\.addEventListener\('click'/)
   for (const source of [modsLocal, levels]) {
     assert.match(source, /from '\.\.\/expandScroll'/)
-    assert.match(source, /from '\.\.\/composables\/useCardExpansion'/)
-    assert.doesNotMatch(source, /scrollIntoView/)
-    assert.doesNotMatch(source, /requestAnimationFrame/, '页里不许自己写缓动')
+    assert.match(source, /from '\.\/useCardExpansion'/)
+    assert.match(source, /onMounted\([\s\S]*addEventListener\('click', onDocumentClick\)/)
+    assert.match(source, /onBeforeUnmount\([\s\S]*removeEventListener\('click', onDocumentClick\)/)
+    assert.doesNotMatch(source, /\.scrollIntoView\(/)
+    assert.doesNotMatch(source, /requestAnimationFrame/, 'composable 不许另写缓动')
   }
 })
 
@@ -91,9 +103,9 @@ test('MOD 页：外层展开统一走 expandWithScroll，先量收缩量再改�
  * 自动展开会把其余命中挤出视口，也让用户失去「先看看有哪些」的机会。
  */
 test('MOD 页：跨页 focus 不自动展开卡片（只高亮）', () => {
-  assert.doesNotMatch(modsLocal, /expandWithScroll\(null,/,
+  assert.doesNotMatch(modsLocalView, /expandWithScroll\(null,/,
     '跨页 focus 只许高亮与滚动，不许调 expandWithScroll 自动摊开卡片')
-  assert.doesNotMatch(modsLocal, /watch\(\[highlightId,\s*groups\]/,
+  assert.doesNotMatch(modsLocalView, /watch\(\[highlightId,\s*groups\]/,
     '删掉的跨页展开 watch 不许回来')
 })
 
@@ -128,7 +140,7 @@ test('MOD 页：收起外壳连带清内层，点空白只收独立卡与内层�
 
 test('地图页：外层同样单开，且与 MOD 页一样只有一个展开状态实例', () => {
   assert.equal(expansionInstances(levels), 1)
-  assert.match(levels, /useCardExpansion\(\{ singleOuter: true \}\)/)
+  assert.match(levels, /const levelExpansion = useCardExpansion\(\{ singleOuter: true \}\)/)
 })
 
 test('地图页：点空白先认领二级卡，命中只收这一张、不动外层的集', () => {

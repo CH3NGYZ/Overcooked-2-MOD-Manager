@@ -188,19 +188,24 @@ test('单展开域：包外壳 → 独立卡的反向切换同样清掉包内子
   assert.deepEqual(cards.innerKeys.value, [])
 })
 
-test('两页各只建一个单开实例，MOD 页独立卡与包外壳落在同一键空间', async () => {
+test('两页各自的 DOM composable 拥有唯一单开实例，MOD 独立卡与包外壳共用键空间', async () => {
   const { readFileSync } = await import('node:fs')
   const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-  const mods = read('src/views/ModsLocalView.vue')
-  const levels = read('src/views/LevelsView.vue')
+  const modsView = read('src/views/ModsLocalView.vue')
+  const levelsView = read('src/views/LevelsView.vue')
+  const mods = read('src/composables/useModsLocalCardExpansion.ts')
+  const levels = read('src/composables/useLevelSetCardExpansion.ts')
+  const modGroupBody = read('src/components/ModGroupBody.vue')
+  const modPackageBody = read('src/components/ModPackageBody.vue')
 
-  // 一个页面一个实例：多建一个就会出现「独立卡与包同时摊开」的第二套状态。
+  assert.match(modsView, /useModsLocalCardExpansion/)
+  assert.match(levelsView, /useLevelSetCardExpansion/)
   assert.equal(mods.match(/useCardExpansion\(\{ singleOuter: true \}\)/g)?.length, 1)
   assert.equal(levels.match(/useCardExpansion\(\{ singleOuter: true \}\)/g)?.length, 1)
 
-  // 独立卡与包外壳的键前缀不同，但都进同一个外层键空间，靠 singleOuter 互斥。
   assert.match(mods, /const MOD_CARD_PREFIX = 'mod:'/)
-  assert.match(mods, /`pkg:\$\{mod\.package_id\}`/)
-  assert.doesNotMatch(mods, /expandedPackages|isPackageExpanded/)
-  assert.doesNotMatch(levels, /expandedDir|expandedPlugins|pluginKey/)
+  assert.match(modGroupBody, /:data-expand-key="pkg\.key"/)
+  assert.match(modPackageBody, /pkg\.key/)
+  assert.doesNotMatch(modsView, /expandedPackages|isPackageExpanded/)
+  assert.doesNotMatch(levelsView, /expandedDir|expandedPlugins|pluginKey/)
 })

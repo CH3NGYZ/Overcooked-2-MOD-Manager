@@ -124,7 +124,8 @@ pub async fn stop_game(
     let info = game::detect_game(&config);
     let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
     /*
-     * 温和关闭最多等 20 秒、强制结束再等 6 秒，整段都要放在阻塞线程池里：
+     * 温和阶段预算 20 秒、强制后等待预算 6 秒；按窗口的同步兜底和进程扫描
+     * 另计耗时，不是整个命令的硬截止。整段都要放在阻塞线程池里：
      * Tauri 的同步命令在 IPC 主线程内联执行，等待期间窗口会完全无响应。
      *
      * 停止失败时把「被判定成游戏」的进程名记下来：这类失败几乎都是同名的

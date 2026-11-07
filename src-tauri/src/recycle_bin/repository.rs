@@ -38,7 +38,7 @@ fn dll_matches_repository(
         Err(_) => return false,
     };
     let plugin = mods::parse_bepin_plugin_metadata(&bytes);
-    let metadata = crate::game::read_file_metadata(&path);
+    let metadata = crate::file_metadata::read_file_metadata(&path);
     let actual = [
         plugin
             .as_ref()

@@ -1223,7 +1223,7 @@ pub struct GameConfig {
     /// 用户手动选定的游戏目录。空 = 没有手动设置，启动时自动探测。
     ///
     /// 自动探测没有开关：写死路径优先，没有写死路径就去程序目录与各 Steam
-    /// 库里找（见 `game::find_game_path`）—— 一个「关掉就永远找不到游戏」的
+    /// 库里找（见 `game/discovery.rs::find_game_path`）—— 一个「关掉就永远找不到游戏」的
     /// 开关没有实际用途，曾经有过的 `auto_detect` 字段因此被删除。
     pub path: String,
     /// `#[serde(default)]` 取 `GameRuntime::default()`：旧配置缺这个字段时

@@ -283,7 +283,7 @@ fn installs_the_actual_platform_archives_with_digest_and_preservation_checks() {
             "5.4.23.5",
         )
         .unwrap();
-        let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
+        let info = crate::bepinex::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
         assert!(info.installed, "{name}");
         workspace.write("BepInEx/plugins/preserved.dll.disabled", b"user MOD");
         workspace.write("BepInEx/config/preserved.cfg", b"user settings");
@@ -361,7 +361,7 @@ fn installs_over_mod_only_residue_without_backup_and_keeps_plugins() {
         !workspace.backups().exists(),
         "没有已安装框架时不该产生备份"
     );
-    let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
+    let info = crate::bepinex::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
     assert!(info.installed && !info.has_residue);
 }
 
@@ -370,7 +370,7 @@ fn installs_over_mod_only_residue_without_backup_and_keeps_plugins() {
 fn mod_only_directory_is_residue_not_an_installed_framework() {
     let workspace = Workspace::new();
     workspace.write("BepInEx/plugins/existing.dll", b"user MOD");
-    let info = game::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
+    let info = crate::bepinex::detect_bepinex(&workspace.game(), Some(&workspace.backups()));
     assert!(!info.installed, "只有 plugins 时不应判定为已安装");
     assert!(info.has_residue, "应标记为残留目录");
 }

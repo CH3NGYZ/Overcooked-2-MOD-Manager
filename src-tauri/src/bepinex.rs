@@ -1,4 +1,9 @@
+mod detection;
 pub(crate) mod install;
+pub(crate) use detection::detect_bepinex;
+
+#[cfg(test)]
+mod loader_tests;
 
 use crate::models::{GameConfig, GameRuntime, Provider, WinhttpState};
 use regex::Regex;

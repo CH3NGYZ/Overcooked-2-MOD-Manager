@@ -13,6 +13,7 @@ mod direct_mod;
 // 展示用路径归一化：送给前端的路径只从这里出口，不参与 I/O
 mod display_path;
 mod download;
+mod file_metadata;
 mod framework;
 mod game;
 mod game_state;

@@ -1,4 +1,4 @@
-use crate::game::read_file_metadata;
+use crate::file_metadata::read_file_metadata;
 use crate::models::DllRole;
 use regex::Regex;
 use std::fs;

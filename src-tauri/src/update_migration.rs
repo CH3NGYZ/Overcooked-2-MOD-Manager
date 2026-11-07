@@ -295,8 +295,8 @@ fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
 
 fn finish_legacy_migration(migration: &Migration) -> Result<(), String> {
     let executable = migration.target.join("OC2ModManager.exe");
-    let actual =
-        game::read_file_version(&executable).ok_or("migrate.installedVersionUnreadable")?;
+    let actual = crate::file_metadata::read_file_version(&executable)
+        .ok_or("migrate.installedVersionUnreadable")?;
     if !version_matches(env!("CARGO_PKG_VERSION"), &actual) {
         return Err("migrate.versionMismatch".into());
     }

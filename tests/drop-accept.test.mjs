@@ -34,7 +34,7 @@ const tauriService = read('src/services/tauri.ts')
 const rustLevelPaths = read('src-tauri/src/level_sets/paths.rs')
 const rustLevelZip = read('src-tauri/src/level_sets/zip_inspect.rs')
 const rustLevelPlugins = read('src-tauri/src/level_sets/plugin_assignment.rs')
-const rustModels = read('src-tauri/src/models.rs')
+const rustLevelModels = read('src-tauri/src/models/levels.rs')
 const rustCommands = read('src-tauri/src/commands/drop_source.rs')
 const rustLib = read('src-tauri/src/lib.rs')
 
@@ -176,7 +176,7 @@ test('停用根在 plugins 之外，且旧位置会一次性迁移', () => {
  * DLL 要落进对应关卡集目录，这样「停用地图」搬走整个文件夹时插件一起走。
  */
 test('地图包里的修复插件跟着关卡集目录走', () => {
-  assert.match(rustModels, /pub plugins: Vec<ZipLevelSetPlugin>/, '导入结果要带出插件清单')
+  assert.match(rustLevelModels, /pub plugins: Vec<ZipLevelSetPlugin>/, '导入结果要带出插件清单')
   assert.match(rustLevelPlugins, /fn assign_plugins/, '插件归集只此一处')
   // 插件落在集目录根，不复制到多个集（重复 DLL 会被 BepInEx 加载两遍）
   // 确认界面里插件挂在所属地图集的 children 上：和 MOD 预览同一套九项元数据，

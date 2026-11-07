@@ -79,6 +79,6 @@ test('恢复默认落到 125%，原五档增减与持久化不变', async () => 
 test('后端创建、缺字段与界面重置共用前端默认资源', () => {
   assert.match(read('src-tauri/src/config/defaults.rs'), /include_str!\("\.\.\/\.\.\/\.\.\/src\/uiZoomDefault.json"\)/)
   assert.match(read('src-tauri/src/config/defaults.rs'), /ui_zoom: default_ui_zoom\(\)/)
-  assert.match(read('src-tauri/src/models.rs'), /serde\(default = "crate::config::default_ui_zoom"\)/)
+  assert.match(read('src-tauri/src/models/config.rs'), /serde\(default = "crate::config::default_ui_zoom"\)/)
   assert.match(read('src-tauri/src/commands/settings.rs'), /config.ui_zoom = crate::config::default_ui_zoom\(\)/)
 })

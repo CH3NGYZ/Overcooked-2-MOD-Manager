@@ -31,7 +31,9 @@ const detailDialog = read('src/components/InstallDetailDialog.vue')
 const installDetailSource = read('src/installDetail.ts')
 const importFlowSource = read('src/composables/useLevelSetImport.ts')
 const tauriService = read('src/services/tauri.ts')
-const rustLevelSets = read('src-tauri/src/level_sets.rs')
+const rustLevelPaths = read('src-tauri/src/level_sets/paths.rs')
+const rustLevelZip = read('src-tauri/src/level_sets/zip_inspect.rs')
+const rustLevelPlugins = read('src-tauri/src/level_sets/plugin_assignment.rs')
 const rustModels = read('src-tauri/src/models.rs')
 const rustCommands = read('src-tauri/src/commands/drop_source.rs')
 const rustLib = read('src-tauri/src/lib.rs')
@@ -154,7 +156,7 @@ test('分类命令在后端注册，且按 info 判定地图包', () => {
   assert.match(rustCommands, /let kind = if contents\.map_sets > 0/, '含 info 的 ZIP 判成 map')
   assert.match(rustCommands, /else if contents\.plugins > 0/, '没有 info 但有 DLL 的判成 mod')
   // 判据在后端只有一条：含 `info` 就是地图包（不靠扩展名、不靠目录名）
-  assert.match(rustLevelSets, /pub fn classify_zip/)
+  assert.match(rustLevelZip, /pub fn classify_zip/)
 })
 
 /**
@@ -163,10 +165,10 @@ test('分类命令在后端注册，且按 info 判定地图包', () => {
  * 就只停了地图。停用根必须在 plugins 之外。
  */
 test('停用根在 plugins 之外，且旧位置会一次性迁移', () => {
-  assert.match(rustLevelSets, /const DISABLED_ROOT: &str = "BepInEx\/cache\/modmanager_disabled_maps"/)
-  assert.doesNotMatch(rustLevelSets, /const DISABLED_ROOT: &str = "BepInEx\/plugins/, '停用根不能落在 plugins 里')
-  assert.match(rustLevelSets, /pub fn migrate_legacy_disabled_root/, '老用户的停用地图要搬过去')
-  assert.match(rustLevelSets, /BepInEx\/plugins\/OC2DIYLevel\/disabled/, '旧位置只用于迁移')
+  assert.match(rustLevelPaths, /const DISABLED_ROOT: &str = "BepInEx\/cache\/modmanager_disabled_maps"/)
+  assert.doesNotMatch(rustLevelPaths, /const DISABLED_ROOT: &str = "BepInEx\/plugins/, '停用根不能落在 plugins 里')
+  assert.match(rustLevelPaths, /pub fn migrate_legacy_disabled_root/, '老用户的停用地图要搬过去')
+  assert.match(rustLevelPaths, /BepInEx\/plugins\/OC2DIYLevel\/disabled/, '旧位置只用于迁移')
 })
 
 /**
@@ -175,7 +177,7 @@ test('停用根在 plugins 之外，且旧位置会一次性迁移', () => {
  */
 test('地图包里的修复插件跟着关卡集目录走', () => {
   assert.match(rustModels, /pub plugins: Vec<ZipLevelSetPlugin>/, '导入结果要带出插件清单')
-  assert.match(rustLevelSets, /fn assign_plugins/, '插件归集只此一处')
+  assert.match(rustLevelPlugins, /fn assign_plugins/, '插件归集只此一处')
   // 插件落在集目录根，不复制到多个集（重复 DLL 会被 BepInEx 加载两遍）
   // 确认界面里插件挂在所属地图集的 children 上：和 MOD 预览同一套九项元数据，
   // 打「随包插件」标签，展开那张地图才在下面缩进显示

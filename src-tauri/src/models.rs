@@ -1836,7 +1836,7 @@ pub struct MapRepositoryConfig {
     ///
     /// 空 = 老行为（列表里最新的那个）。非空时**不再按时间取最新**：直接把
     /// 该 tag 的资产按 `asset_rules` 里的版本正则拆成多个「版本」，一个资产
-    /// 一条 Release（见 `map_sources::synthesize_releases`）。
+    /// 一条 Release（见 `map_sources/assets.rs::synthesize_releases`）。
     ///
     /// 这是「一个仓库装多个地图集」的落地方式：作者每张图只往自己的固定 tag
     /// 里追加版本文件，条目靠 tag 区分，不必给每张图各开一个仓库。

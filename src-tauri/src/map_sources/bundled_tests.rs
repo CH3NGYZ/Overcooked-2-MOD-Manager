@@ -1,0 +1,63 @@
+use super::document::MapSourceDeclaration;
+use super::document::parse_document;
+use super::document::{MapSourceDocument, MapSourceMode};
+use super::tree::{BUILTIN_MAP_INDEX, bundled_map_tree};
+use crate::repository_sources::SourceLocation;
+
+fn index_location() -> SourceLocation {
+    SourceLocation::parse(BUILTIN_MAP_INDEX).expect("内置索引应该可解析")
+}
+
+fn index_document() -> MapSourceDocument {
+    let location = index_location();
+    parse_document(location.bundled_text().unwrap(), &location).expect("内置 maps.toml 应能解析")
+}
+
+fn declaration(id: &str) -> MapSourceDeclaration {
+    index_document()
+        .map_sources
+        .into_iter()
+        .find(|source| source.id == id)
+        .unwrap_or_else(|| panic!("索引里应有源 {id}"))
+}
+
+#[test]
+fn builtin_map_index_declares_only_sources() {
+    let doc = index_document();
+    assert!(doc.maps.is_empty(), "索引只声明源，条目在各自源里");
+    assert_eq!(
+        doc.map_sources.len(),
+        1,
+        "内置索引只保留第三方地图仓库（release-tags）"
+    );
+    assert_eq!(doc.map_sources[0].id, "community-maps");
+}
+
+/// 第三方源：一个 tag 一张图，元数据跟着各自 Release note 走。
+///
+/// 单测不联网，所以这里只锁「声明写得对」；真正解析 note 块的逻辑在
+/// `map_note` 的单测里（纯函数、离线可跑）。
+#[test]
+fn builtin_community_source_declares_release_tags_mode() {
+    let source = declaration("community-maps");
+    assert_eq!(source.mode, MapSourceMode::ReleaseTags);
+    assert_eq!(source.provider, Some(crate::models::Provider::Github));
+    assert_eq!(source.username, "QingyuQingxue");
+    assert_eq!(source.repository, "OC2-Map-Bundle");
+    assert_eq!(source.page_size, Some(100), "一次读 100 个 Release");
+    assert_eq!(source.max_pages, Some(10), "最多翻 10 页");
+    assert!(source.map.is_none(), "release-tags 不需要内联条目");
+}
+
+/// 内置树（离线）为空：唯一的源是 `release-tags`，条目要联网读 Release
+/// note 才生成。
+///
+/// 这条断言守住「内置树不偷偷联网、不伪造 tag 条目」；离线首启的空地图页
+/// 是这套配置的已知代价（要内置离线地图就再加一个 `repository` 源）。
+#[test]
+fn bundled_tree_is_empty_offline() {
+    assert!(
+        bundled_map_tree().is_empty(),
+        "内置索引只有 release-tags 源：离线解析不出条目"
+    );
+}

@@ -410,19 +410,11 @@ fn block_span(body: &str) -> Option<(usize, usize)> {
     Some((open, after_open + close + NOTE_BLOCK_CLOSE.len()))
 }
 
-/// 由 note 声明与实际资产推导「从资产名里抽版本号」的规则。
+/// 由 note 的 asset 模板生成整串锚定的版本规则；未写模板时使用
+/// `${tag}_v${version}.zip`，不从已有附件名猜测。
 ///
-/// 三条路径，按可靠性排序：
-///
-/// 1. 作者写了带 `${version}` 的模板 —— 模板就是唯一权威，其余部分按字面
-///    转义，整串锚定；
-/// 2. 作者没写模板 —— 从 Release 的第一个 `.zip` 资产名里找出版本号那一段，
-///    用它两侧的字面内容拼出同样的正则（于是「这张图的包叫 daxue_v0.3.2.zip」
-///    这种最常见的情况不需要作者额外声明）；
-/// 3. 两者都推不出版本号 —— 返回 `None`，调用方跳过这条 Release 并记 warn。
-///
-/// 之所以必须有版本号：地图的「版本」既是界面上的数字，也是安装时挑哪个
-/// 资产的标识（见 `map_sources::synthesize_releases`）。
+/// 显式模板缺少 `${version}` 时返回 None：版本是挑选安装资产的标识，
+/// 不能默默换成另一个模板（见 map_sources/assets.rs 的 synthesize_releases）。
 pub fn versioned_asset_rule(template: Option<&str>, tag: &str) -> Option<AssetRule> {
     let default_template = format!("{tag}_v{VERSION_PLACEHOLDER}.zip");
     let template = template

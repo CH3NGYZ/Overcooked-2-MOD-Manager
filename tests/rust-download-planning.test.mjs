@@ -26,7 +26,7 @@ test('download policy has one implementation in the download domain', () => {
 test('MOD, maps, README and avatars use shared planning without IPC helpers', () => {
   const consumers = [
     ['direct_mod.rs', ['plan_remote_download_candidates', 'classify_remote_url']],
-    ['map_sources.rs', ['plan_remote_download_candidates', 'RemoteUrlKind']],
+    ['map_sources/transport.rs', ['plan_remote_download_candidates', 'RemoteUrlKind']],
     ['repository_readme.rs', ['asset_proxy_urls', 'ordered_asset_download_candidates']],
     ['avatars.rs', ['selected_asset_proxy_mode', 'asset_proxy_urls', 'ordered_asset_download_candidates']],
     ['github_proxy_runtime.rs', ['ordered_asset_download_candidates']],

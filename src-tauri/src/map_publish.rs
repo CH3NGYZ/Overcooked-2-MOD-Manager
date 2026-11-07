@@ -435,9 +435,9 @@ fn validate_coordinates(owner: &str, repository: &str) -> Result<(String, String
 
 /// tag 是**一张地图**在仓库里的唯一 ID，不是版本号。
 ///
-/// 消费端（`map_sources::load_release_tag_maps`）只把这个字符串当身份写进
+/// 消费端（`map_sources/release_tags.rs::load_release_tag_maps`）只把这个字符串当身份写进
 /// `MapRepositoryConfig.tag`；版本号来自该 Release 的附件名 —— 管理器用
-/// `map_note::versioned_asset_rule(metadata.asset, assets)` 的正则从附件名里抽
+/// `map_note::versioned_asset_rule(metadata.asset, tag)` 的正则从附件名里抽
 /// `[0-9]+(?:\.[0-9]+)*`。所以 tag 可以是 `chan`、中文名，只要是一个合法的
 /// git ref；同名 tag 下换附件就是发新版本。
 ///

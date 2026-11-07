@@ -89,7 +89,7 @@ pub(crate) fn export_key(repo: &RepositoryExport) -> String {
 /// 从导出模型构造仓库配置。
 ///
 /// `pub(crate)` 是因为地图仓库要借它做 Release 抓取投影（见
-/// `map_sources::release_probe`）：两份模型都需要「一个能喂给
+/// `map_sources/releases.rs::release_probe`）：两份模型都需要「一个能喂给
 /// `fetch_releases` 的完整 RepositoryConfig」，而字段默认值只有这里知道。
 pub(crate) fn repository_from_export(
     repo: &RepositoryExport,

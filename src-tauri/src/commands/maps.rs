@@ -24,13 +24,10 @@ pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
     Ok(maps.iter().map(map_to_info).collect())
 }
 
-/// 刷新地图源树（索引 → 子源 → 地图），并保留同名条目的缓存与开关。
+/// 刷新地图源树，并保留同 ID 条目的 Release 缓存与失败状态，声明字段取新值。
 ///
-/// ## 回退条件与仓库源一致
-///
-/// 只有「官方入口 HTTP/网络失败」才试探内置快照；远程文档能读到但内容有问题
-/// （TOML 无效、缺必填字段）时直接报错，不能悄悄换成内置条目 —— 否则作者
-/// 刚发布的地图源写错了，用户看到的是旧的、看起来一切正常的内置列表。
+/// 非 builtin_only 的源树加载失败时尝试内置条目；内置为空则返回原错误。
+/// 这里不区分网络错误与格式错误，不能套用 MOD 仓库源的回退条件。
 #[tauri::command]
 pub async fn refresh_map_sources(
     state: State<'_, AppState>,
@@ -64,14 +61,13 @@ pub async fn refresh_map_sources(
         };
         crate::map_sources::load_map_tree(&region, builtin_only, &ctx).await
     };
-    // 内置开关开着时成功路径读的就是快照，标签要跟实际来源一致 —— 这行是
-    // 「地图列表到底来自哪里」的唯一日志证据。
+    // 来源标签描述根索引；即使根为内置，release-tags 与社区条目仍可能联网。
     let (maps, source) = match loaded {
         Ok(maps) => (maps, if builtin_only { "bundled" } else { "remote" }),
         Err(error) => {
             /*
-             * 官方入口连不上：退回内置快照，但**保留远程入口** —— 下次刷新
-             * 仍然先请求远程。这与仓库源「回退只进行一次」的规则同源。
+             * 加载失败时试探内置快照，但不修改入口配置，下次刷新仍走原入口。
+             * 快照为空时不能用空成功结果覆盖在用条目。
              */
             if builtin_only {
                 return Err(error.to_string());

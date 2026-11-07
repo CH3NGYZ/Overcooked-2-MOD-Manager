@@ -118,26 +118,31 @@ test('卸载与回收站的 tag 在五语下都有翻译', () => {
 })
 
 test('回收站命令不再返回中文文案（源码级确认）', () => {
-  const rust = readFileSync(
-    new URL('../src-tauri/src/recycle_bin.rs', import.meta.url),
-    'utf8',
-  )
-  for (const tag of [
-    'recycle.recordMissing',
-    'recycle.fileSharedByOtherPackage',
-    'recycle.insideModsDirectory',
-    'recycle.partialFailure',
-    'recycle.packageUpdated',
-    'recycle.wrongGameDirectory',
-  ]) {
-    assert.ok(rust.includes(tag), `recycle_bin.rs 应包含 tag：${tag}`)
+  const root = new URL('../src-tauri/src/recycle_bin/', import.meta.url)
+  const owners = {
+    'records.rs': ['recycle.recordMissing'],
+    'selection.rs': ['recycle.fileSharedByOtherPackage'],
+    'staging.rs': ['recycle.insideModsDirectory', 'recycle.partialFailure'],
+    'manifests.rs': ['recycle.packageUpdated'],
+    'restore.rs': ['recycle.recordMissing', 'recycle.partialFailure', 'recycle.wrongGameDirectory'],
   }
-  for (const legacy of [
-    '回收站记录不存在',
-    '该文件仍由其他 MOD 包使用，不能移入回收站',
-    '操作失败，部分文件保留在回收站，请查看日志',
-  ]) {
-    assert.ok(!rust.includes(legacy), `recycle_bin.rs 不应再含中文文案：${legacy}`)
+  for (const [file, tags] of Object.entries(owners)) {
+    const rust = readFileSync(new URL(file, root), 'utf8')
+    for (const tag of tags) {
+      assert.ok(rust.includes(tag), `${file} 应包含 tag：${tag}`)
+    }
+  }
+  const paths = [new URL('../recycle_bin.rs', root), ...readdirSync(root)
+    .filter(name => name.endsWith('.rs')).map(name => new URL(name, root))]
+  for (const path of paths) {
+    const rust = readFileSync(path, 'utf8')
+    for (const legacy of [
+      '回收站记录不存在',
+      '该文件仍由其他 MOD 包使用，不能移入回收站',
+      '操作失败，部分文件保留在回收站，请查看日志',
+    ]) {
+      assert.ok(!rust.includes(legacy), `${path} 不应再含中文文案：${legacy}`)
+    }
   }
 })
 

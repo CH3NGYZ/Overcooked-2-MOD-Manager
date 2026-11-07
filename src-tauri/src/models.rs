@@ -1169,9 +1169,8 @@ pub struct AppConfig {
     /// **永远命中不了** —— 每次刷新都把整棵仓库树的 API 重打一遍（实测
     /// 20+ 个仓库、几十个请求，还固定撞速率限制）。
     ///
-    /// 所以清理时把缓存挪到这里，`apply_document` 重建仓库时按 ID 取回。
-    /// 它只是短暂的搬运中转：重建完成的仓库会把缓存接回自己的字段，这里
-    /// 随即清空。真正到期与否仍由各仓库的 `releases_cached_at` 决定。
+    /// 清理时挪入，源应用时按原 ID 逐项取回；未认领项仍随配置保存，
+    /// 没有批次末统一清表。新鲜度仍由各仓库的 `releases_cached_at` 判定。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub staged_release_cache: BTreeMap<String, StagedReleaseCache>,
     #[serde(skip, default = "crate::github_proxies::bundled_defaults")]

@@ -158,8 +158,8 @@ function sourceNickname(
 /**
  * 是否应当改用内置快照兜底。
  *
- * 内置快照是落后几个版本的官方源，只在**确实拿不到在线内容**时使用，
- * 因此判断刻意保守 —— 三条同时满足才回退：
+ * 内置快照可能落后于在线官方源；目前按错误昵称和结果集合判断，
+ * 不区分网络错误与解析错误。三条同时满足才尝试回退：
  *
  *   1. 本次源文档阶段确实有失败（`sourceErrors` 非空）；
  *   2. 失败覆盖到了官方根源（错误文案形如 `<昵称>: …`）；
@@ -167,8 +167,7 @@ function sourceNickname(
  *
  * 第 3 条是关键：只要有一个官方子源成功带回仓库，就说明在线可用，
  * 这时用旧的内置内容覆盖会丢掉刚拿到的真实数据（包括作者刚发布的仓库）。
- * 「子源可访问但没有仓库」也不算可用，会回退 —— 那通常意味着索引被清空
- * 或入口指向了废弃分支。
+ * 空的官方树还必须伴随官方根错误；仅子源失败不会自动满足第 2 条。
  *
  * 抽成纯函数是为了能在 Node 里直接测；副作用（真正发起回退请求）留在调用方。
  */
@@ -183,12 +182,10 @@ export function shouldFallbackToBuiltin(
   const officialRoot = sources.find((source) => source.id === OFFICIAL_INDEX_ID)
   if (!officialRoot) return false
   /*
-   * 前缀必须取自**和报错时同一个昵称函数**。
+   * 前缀须遵循与报错显示相同的语言回退顺序。
    *
-   * 错误的产生方（`useRepositoryRefresh.sourceError`）用 `pickI18n` 按界面
-   * 语言取昵称；这里若改用镜像字段 `nickname`（恒为 zh-CN），繁体或英文
-   * 界面下前缀对不上，回退会被静默跳过 —— 表现正好是用户报的「报错了，
-   * 但没有回退」。两者共用 `sourceNickname`，不各写一份。
+   * useRepositoryRefresh.sourceError 用 pickI18n；此处的纯函数不加载 UI
+   * 依赖，因此以相同顺序取昵称，避免跨语言错误前缀失配。
    */
   const rootName = sourceNickname(officialRoot, locale)
   if (!sourceErrors.some((error) => error.startsWith(`${rootName}:`))) return false

@@ -339,10 +339,10 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
 }
 
 /**
- * 官方在线源全部失败时，改从内置快照加载官方源树。
+ * 完整刷新时，符合条件则尝试从内置快照加载官方源树。
  *
- * 只在「真正离线 / 官方入口不可达」时兜底，判断刻意保守：
- *   · 必须存在官方根源（`official-index`），且它在本次失败名单里；
+ * 判定不区分网络错误和解析错误，只检查错误与已得到的仓库：
+ *   · 必须存在官方根源（`OFFICIAL_INDEX_ID`），且它在本次失败名单里；
  *   · 当前官方源树下没有任何仓库 —— 只要有一个子源成功带回仓库，
  *     就说明在线可用，不能再用落后几版的内置内容覆盖它；
  *   · 只对官方根调用一次（`builtinFallback: true`），它内部会把整个
@@ -350,11 +350,8 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
  *
  * **必须继续递归子源**：内置索引 `repositories.toml` 自己**没有仓库**，
  * 它只声明子源（`repositories-azhe-hostutilities.toml` 等），仓库都在子源
- * 文件里。只加载索引会得到「回退成功、子源已写入、但一个仓库都没有」——
- * 这正是用户报的「报错之后没回退到内置仓库源，列表全空」。
- * 之前这里只调了一次 `importRepositorySource` 就返回，漏掉了与在线流程
- * 同一套的 `refreshSourceChain` 递归。现在回退后复用同一个函数展开子源，
- * 两条路径的子源处理不再分叉。
+ * 文件里。只应用索引不足以得到仓库，必须继续递归子源；子源仍可能分别失败。
+ * 回退复用 refreshSourceChain，让在线和内置流程的子源处理保持一致。
  *
  * 返回 `{ fallbackErrors, hasFallenBack }`：
  *   · `fallbackErrors` 用于向用户报告失败原因（成功时为空）；

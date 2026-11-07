@@ -109,8 +109,8 @@ pub(crate) async fn import_repository_source_into_config(
                 source_id,
                 repository_sources::error_category(&error)
             );
-            // HTTP/connectivity failures can trigger the caller's fallback
-            // decision. Invalid TOML, UTF-8 and unsafe content cannot.
+            // Read failures use access_error; invalid content stays Err. The
+            // frontend decides fallback independently of this result shape.
             if matches!(error, crate::config::ConfigError::Read(_)) {
                 return Ok(RepositorySourceImportResult {
                     preview: None,
@@ -300,18 +300,8 @@ pub(crate) async fn import_repository_source_into_config(
             repo.source_id = Some(source_id.clone());
         }
     }
-    /*
-     * 不要在这里清空暂存表。
-     *
-     * `apply_document` 是**逐源调用**的：一次整批刷新会对每个源各调一次。
-     * 早先在这里无条件 `clear()`，于是第一个源应用完就把**所有**源的暂存缓存
-     * 全丢了 —— 后面的源重建仓库时取不到自己的缓存，5 分钟缓存等于没做，
-     * 每次都把整棵树重打一遍（用户看到的就是「跳过缓存=false」却仍在请求）。
-     *
-     * 认领过的条目在上面 `remove` 时已经拿走了；剩下的属于「源文档里还没
-     * 应用到的源」，必须留到它们的 `apply_document` 跑完。整批刷新结束时
-     * 由 `prune_staged_release_cache` 统一清理。
-     */
+    // 每次只应用一个源：仅移除上面已认领的条目，保留其他源尚未接回的缓存。
+    // 当前没有批次末清表入口；未认领项也会随配置保存。
     state.config.save(&config).map_err(|error| {
         log::error!("仓库源刷新后保存配置失败：源={}，原因={}", source_id, error);
         error.to_string()

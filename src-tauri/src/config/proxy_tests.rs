@@ -1,4 +1,7 @@
-use super::*;
+use super::ConfigService;
+use crate::models::GitHubProxyConfig;
+use std::fs;
+use uuid::Uuid;
 
 #[test]
 fn proxy_snapshots_are_shared_but_never_saved_or_restored() {

@@ -54,7 +54,7 @@ test('覆盖仓库定义时保留 Release 缓存字段', () => {
    * 造出来的是全新对象。如果连缓存一起覆盖，源文档每刷新一次缓存就没了。
    */
   assert.match(
-    readFileSync(new URL('../src-tauri/src/config.rs', import.meta.url), 'utf8'),
+    readFileSync(new URL('../src-tauri/src/config/bundle.rs', import.meta.url), 'utf8'),
     /let cached_releases = std::mem::take\(&mut existing\.cached_releases\)/,
     'overwrite 分支必须先备份再恢复缓存字段',
   )

@@ -219,7 +219,7 @@ export function localVersion(mod: InstalledMod): string | undefined {
  * 取较高者后，DLL 版本只能**抑制**更新、绝不会凭空制造一条更新；
  * 线上真的发布了更高版本时，两种情况都照常报告。
  *
- * 后端 `mods.rs` 的 `binding_update_state` 用同一规则（`effective_local_version`），
+ * 后端 `mods/status.rs` 的 `binding_update_state` 用同一规则（`effective_local_version`），
  * 两处必须一起改，否则刷新完成后前端会推翻后端结论。
  */
 export function localCompareVersion(mod: InstalledMod): string | undefined {

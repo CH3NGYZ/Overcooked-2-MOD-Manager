@@ -1,4 +1,5 @@
 mod api_rate_gate;
+mod app_state;
 mod app_update;
 mod archive;
 // DIYLevel 关卡集的 info 是 Unity AssetBundle，关卡集名/作者/版本只能从里面解析
@@ -122,7 +123,7 @@ pub fn run() {
                     .rotation_strategy(RotationStrategy::KeepSome(5))
                     .build(),
             )?;
-            let state = commands::AppState::new().map_err(|error| {
+            let state = app_state::AppState::new().map_err(|error| {
                 log::error!("初始化应用状态失败：{error}");
                 std::io::Error::other(error.to_string())
             })?;

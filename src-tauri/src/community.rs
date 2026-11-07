@@ -1,5 +1,5 @@
+use crate::app_state::AppState;
 use crate::archive::InstallManifest;
-use crate::commands::AppState;
 use crate::models::{
     AppConfig, CommunityDiscovery, CommunityMapRepository, GitHubProxy, Provider, PublicConfig,
     RepositoryConfig, RepositorySource,

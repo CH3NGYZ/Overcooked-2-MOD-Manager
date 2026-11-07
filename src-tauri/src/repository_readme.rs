@@ -1,5 +1,6 @@
+use crate::app_state::AppState;
 use crate::archive::DownloadReporter;
-use crate::commands::{AppState, asset_proxy_urls};
+use crate::commands::asset_proxy_urls;
 use crate::download::{
     DownloadCandidate, ordered_asset_download_candidates, try_download_candidates_until_error,
 };

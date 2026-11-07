@@ -1,5 +1,6 @@
+use crate::app_state::AppState;
 use crate::archive::{self, DownloadRoute};
-use crate::commands::{AppState, install_manual_mod, plan_remote_download_candidates};
+use crate::commands::{install_manual_mod, plan_remote_download_candidates};
 use crate::download::{DownloadCandidate, DownloadContext, try_download_candidates};
 use crate::models::Provider;
 use crate::{game, releases};

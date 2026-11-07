@@ -1,4 +1,4 @@
-use crate::commands::AppState;
+use crate::app_state::AppState;
 use crate::config::ConfigService;
 use crate::game;
 use crate::models::{GameConfig, GameInfo};

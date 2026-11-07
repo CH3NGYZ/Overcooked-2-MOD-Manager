@@ -18,9 +18,8 @@
 //!
 //! ## 为什么待授权状态放在模块内的 static
 //!
-//! `AppState` 的构造点有 4 处（`commands.rs` 里两处测试与两处 setup 分支），
-//! 为一个只在授权时存在的临时状态给每一处都加一行不值得。它的寿命就是一次
-//! 授权（最长 [`AUTHORIZE_TIMEOUT`]），放模块级 `Mutex` 最省事，进程退出即丢。
+//! 待授权状态只服务一次授权（最长 [`AUTHORIZE_TIMEOUT`]），不属于持久配置。
+//! 模块级 `Mutex` 让同一进程的授权入口共用这一临时状态，进程退出即丢。
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
@@ -36,7 +35,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tauri::State;
 
-use crate::commands::AppState;
+use crate::app_state::AppState;
 use crate::display_path::display_path;
 use crate::locale_tag::with_params;
 use crate::map_note::{

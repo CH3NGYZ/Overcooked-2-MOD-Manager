@@ -15,7 +15,7 @@
 //! 不决定这个 ZIP 是不是包 —— DIYLevel 那种「一个真插件 + 一个纯依赖」
 //! 必须被认成包，而不是单 mod。
 
-use crate::commands::AppState;
+use crate::app_state::AppState;
 use crate::models::{DllRole, InstallConflict, InstalledMod, OperationResult};
 use crate::mods::{
     DllDetails, MAX_DLL_BYTES, compare_mod_versions, file_stem_name, placeholder_dll_details,

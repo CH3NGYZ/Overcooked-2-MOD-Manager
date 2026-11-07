@@ -1,3 +1,8 @@
+pub(crate) mod install;
+pub(crate) mod status;
+#[cfg(test)]
+pub(crate) mod test_support;
+
 use crate::archive::{self, InstallManifest};
 use crate::game::read_file_metadata;
 use crate::models::{

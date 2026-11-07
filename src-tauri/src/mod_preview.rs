@@ -640,7 +640,7 @@ fn confirm_mod_install_blocking(
                 origin.repository_id,
                 origin.release_tag
             );
-            crate::commands::install_staged_repository(
+            crate::mods::install::install_staged_repository(
                 &state,
                 &file,
                 &origin.repository_id,
@@ -648,7 +648,7 @@ fn confirm_mod_install_blocking(
                 origin.prerelease,
             )
         }
-        None => crate::commands::install_manual_mod(&state, &file, None),
+        None => crate::mods::install::install_manual_mod(&state, &file, None),
     };
     let _ = fs::remove_dir_all(&dir);
     result

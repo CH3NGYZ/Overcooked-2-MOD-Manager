@@ -1,10 +1,10 @@
 use crate::app_state::AppState;
 use crate::archive::{self, DownloadRoute};
-use crate::commands::install_manual_mod;
 use crate::download::planning::{
     RemoteUrlKind, classify_remote_url, plan_remote_download_candidates, provider_for_remote_url,
 };
 use crate::download::{DownloadCandidate, DownloadContext, try_download_candidates};
+use crate::mods::install::install_manual_mod;
 use crate::{game, releases};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};

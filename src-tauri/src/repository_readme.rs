@@ -1,9 +1,7 @@
 use crate::app_state::AppState;
 use crate::archive::DownloadReporter;
-use crate::commands::asset_proxy_urls;
-use crate::download::{
-    DownloadCandidate, ordered_asset_download_candidates, try_download_candidates_until_error,
-};
+use crate::download::planning::{asset_proxy_urls, ordered_asset_download_candidates};
+use crate::download::{DownloadCandidate, try_download_candidates_until_error};
 use crate::models::{GitHubProxy, Provider, ProxyMode};
 use crate::releases;
 use futures_util::StreamExt;

@@ -558,10 +558,10 @@ async fn verified_document(
      * 候选走与普通资产下载同一条路由（直连 + 代理竞速），因为这就是一次资产
      * 下载：只是产物是文本而不是 ZIP。
      */
-    let candidates = match crate::commands::plan_remote_download_candidates(
+    let candidates = match crate::download::planning::plan_remote_download_candidates(
         ctx.config,
         &reference.provider,
-        crate::direct_mod::RemoteUrlKind::ReleaseAsset,
+        crate::download::planning::RemoteUrlKind::ReleaseAsset,
         url.as_str(),
     ) {
         Ok(candidates) => candidates,

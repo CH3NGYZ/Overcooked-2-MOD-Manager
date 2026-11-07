@@ -233,7 +233,7 @@ async fn download_and_store(
     owner: &str,
 ) -> Result<Vec<u8>, String> {
     let url = direct_url(provider, owner);
-    let mode = crate::commands::selected_asset_proxy_mode(
+    let mode = crate::download::planning::selected_asset_proxy_mode(
         None,
         provider,
         crate::config::current_user_region(),
@@ -250,7 +250,7 @@ async fn download_and_store(
      * `raw.githubusercontent.com/{owner}/{repo}/main/{path}`，头像拆不出
      * repo，会拼出 `.../gua248.png//main/` 这种必然失败的地址。
      */
-    let proxies = crate::commands::asset_proxy_urls(
+    let proxies = crate::download::planning::asset_proxy_urls(
         &config.github_proxies.avatar_proxies,
         &url,
         false,
@@ -259,7 +259,8 @@ async fn download_and_store(
         mode,
         None,
     );
-    let candidates = crate::download::ordered_asset_download_candidates(mode, &url, proxies);
+    let candidates =
+        crate::download::planning::ordered_asset_download_candidates(mode, &url, proxies);
     if candidates.is_empty() {
         log::warn!("头像没有可用下载候选：provider={provider:?} owner={owner}");
         return Err("avatar.noSource".into());
@@ -531,7 +532,7 @@ mod tests {
         let url = direct_url(&Provider::Github, "gua248");
 
         // 错误的写法：raw 模式会把 .png 当成 owner 并拼出空 repo/分支
-        let raw_mode = crate::commands::asset_proxy_urls(
+        let raw_mode = crate::download::planning::asset_proxy_urls(
             &proxies,
             &url,
             true,
@@ -549,7 +550,7 @@ mod tests {
         );
 
         // 正确写法：非 raw 模式，不得出现被改写或空段拼接的地址
-        let avatar_mode = crate::commands::asset_proxy_urls(
+        let avatar_mode = crate::download::planning::asset_proxy_urls(
             &proxies,
             &url,
             false,

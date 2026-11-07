@@ -1,8 +1,10 @@
 use crate::app_state::AppState;
 use crate::archive::{self, DownloadRoute};
-use crate::commands::{install_manual_mod, plan_remote_download_candidates};
+use crate::commands::install_manual_mod;
+use crate::download::planning::{
+    RemoteUrlKind, classify_remote_url, plan_remote_download_candidates, provider_for_remote_url,
+};
 use crate::download::{DownloadCandidate, DownloadContext, try_download_candidates};
-use crate::models::Provider;
 use crate::{game, releases};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -18,19 +20,6 @@ use url::Url;
 /// 多分片会把带宽切碎，反而更慢。
 pub(crate) const DIRECT_DOWNLOAD_THREADS: u32 = 32;
 
-/// 远程 URL 的下载类别。
-///
-/// 三类走完全不同的路由：Release 资产只认 `release_proxies`，仓库 raw
-/// 文件认 `raw_proxies` 且代理模板要用分支与文件路径展开，其它直链没有
-/// 代理可用、直接单源多线程。判定结果只决定「用哪套代理与线程策略」，
-/// 不决定 URL 是否可信（那由下载入口校验）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RemoteUrlKind {
-    ReleaseAsset,
-    Raw,
-    Other,
-}
-
 /// 下载完成后的内容校验方式。
 ///
 /// 校验放在竞速回调里而不是整段下载之后：竞速时先到的文件可能是代理返回
@@ -41,50 +30,6 @@ pub(crate) enum RemoteValidation {
     ModFile,
     /// 关卡集 ZIP：完整读一遍条目（`archive::validate_zip`）。
     Zip,
-}
-
-/// 按 URL 判定下载类别；解析失败或不是 HTTP(S) 一律按 `Other`（真正的
-/// 拒绝在下载入口，这里只决定用哪套下载策略）。
-pub(crate) fn classify_remote_url(url: &str) -> RemoteUrlKind {
-    let Ok(parsed) = Url::parse(url.trim()) else {
-        return RemoteUrlKind::Other;
-    };
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return RemoteUrlKind::Other;
-    }
-    let host = parsed.host_str().unwrap_or_default();
-    let is_github = host.eq_ignore_ascii_case("github.com");
-    let is_gitee = host.eq_ignore_ascii_case("gitee.com");
-    let path = parsed.path();
-    if (is_github || is_gitee) && path.contains("/releases/download/") {
-        return RemoteUrlKind::ReleaseAsset;
-    }
-    if host.eq_ignore_ascii_case("raw.githubusercontent.com") {
-        return RemoteUrlKind::Raw;
-    }
-    if (is_github || is_gitee) && is_repository_raw_path(path) {
-        return RemoteUrlKind::Raw;
-    }
-    RemoteUrlKind::Other
-}
-
-/// `/{owner}/{repo}/raw/{...}`：GitHub / Gitee 仓库文件的 raw 入口。
-fn is_repository_raw_path(path: &str) -> bool {
-    let mut segments = path.trim_start_matches('/').split('/');
-    let _owner = segments.next();
-    let _repo = segments.next();
-    segments.next() == Some("raw") && segments.next().is_some()
-}
-
-/// 按 URL 判定下载源平台：决定用哪组代理、以及是否需要竞速。
-fn provider_for_remote_url(url: &str) -> Provider {
-    let host = Url::parse(url.trim())
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(str::to_ascii_lowercase));
-    match host.as_deref() {
-        Some("gitee.com") => Provider::Gitee,
-        _ => Provider::Github,
-    }
 }
 
 fn decode_filename(value: &str) -> String {
@@ -389,59 +334,6 @@ pub async fn install_online_mod(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn remote_url_kind_follows_host_and_path() {
-        // Release 资产：两个平台的 /releases/download/ 路径
-        for url in [
-            "https://github.com/CH3NGYZ/demo/releases/download/v1.0.0/demo.zip",
-            "https://gitee.com/ch3ngyz/demo/releases/download/v1.0.0/demo.zip",
-            "https://github.com/CH3NGYZ/demo/releases/download/v1.0.0/sub/demo.dll",
-        ] {
-            assert_eq!(
-                classify_remote_url(url),
-                RemoteUrlKind::ReleaseAsset,
-                "{url}"
-            );
-        }
-        // Raw：raw.githubusercontent 与两个平台的仓库 raw 入口
-        for url in [
-            "https://raw.githubusercontent.com/CH3NGYZ/demo/main/README.md",
-            "https://github.com/CH3NGYZ/demo/raw/main/maps/plus.zip",
-            "https://github.com/CH3NGYZ/demo/raw/refs/heads/main/maps/plus.zip",
-            "https://gitee.com/ch3ngyz/demo/raw/main/maps/plus.zip",
-        ] {
-            assert_eq!(classify_remote_url(url), RemoteUrlKind::Raw, "{url}");
-        }
-        // 其它直链：普通站点、仓库主页、以及只出现在查询串里的关键词都不改类别
-        for url in [
-            "https://example.com/files/map.zip",
-            "https://github.com/CH3NGYZ/demo",
-            "https://github.com/CH3NGYZ/demo/releases",
-            "https://example.com/?next=/releases/download/v1/x.zip",
-            "https://github.com/CH3NGYZ/demo/blob/main/README.md",
-            "ftp://github.com/CH3NGYZ/demo/releases/download/v1/x.zip",
-            "not a url",
-        ] {
-            assert_eq!(classify_remote_url(url), RemoteUrlKind::Other, "{url}");
-        }
-    }
-
-    #[test]
-    fn remote_provider_comes_from_the_url_host() {
-        assert_eq!(
-            provider_for_remote_url("https://gitee.com/ch3ngyz/demo/raw/main/a.zip"),
-            Provider::Gitee
-        );
-        assert_eq!(
-            provider_for_remote_url("https://raw.githubusercontent.com/o/r/main/a.zip"),
-            Provider::Github
-        );
-        assert_eq!(
-            provider_for_remote_url("https://example.com/a.zip"),
-            Provider::Github
-        );
-    }
 
     #[tokio::test]
     async fn direct_download_uses_ranges_and_preserves_bytes() {

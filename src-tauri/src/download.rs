@@ -1,5 +1,4 @@
 use crate::archive::{self, DownloadPhase, DownloadProgress, DownloadReporter, DownloadRoute};
-use crate::models::ProxyMode;
 use futures_util::StreamExt;
 use futures_util::future::{AbortHandle, Abortable};
 use futures_util::stream::FuturesUnordered;
@@ -9,43 +8,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
+pub(crate) mod planning;
+
+#[cfg(test)]
+mod race_tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadCandidate {
     pub route: DownloadRoute,
     pub url: String,
-}
-
-// Update and MOD downloads share candidate ordering, routing and deduplication.
-// Callers supply the proxy snapshot available at their point in startup.
-pub(crate) fn ordered_asset_download_candidates(
-    mode: ProxyMode,
-    direct_url: &str,
-    proxy_urls: Vec<String>,
-) -> Vec<DownloadCandidate> {
-    let direct = || DownloadCandidate {
-        route: DownloadRoute::Direct,
-        url: direct_url.to_string(),
-    };
-    let proxies = proxy_urls
-        .into_iter()
-        .filter(|url| url != direct_url)
-        .map(|url| DownloadCandidate {
-            route: DownloadRoute::Proxy,
-            url,
-        })
-        .collect::<Vec<_>>();
-    let candidates = match mode {
-        ProxyMode::Direct => vec![direct()],
-        ProxyMode::Fixed => proxies.into_iter().take(1).collect(),
-        ProxyMode::AutoDirect | ProxyMode::AutoProxy => {
-            std::iter::once(direct()).chain(proxies).collect()
-        }
-    };
-    let mut seen = HashSet::new();
-    candidates
-        .into_iter()
-        .filter(|candidate| seen.insert(candidate.url.clone()))
-        .collect()
 }
 
 pub fn candidate_progress(

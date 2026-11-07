@@ -1,6 +1,5 @@
-use crate::download::{
-    DownloadCandidate, DownloadOutput, ordered_asset_download_candidates, try_download_candidates,
-};
+use crate::download::planning::ordered_asset_download_candidates;
+use crate::download::{DownloadCandidate, DownloadOutput, try_download_candidates};
 use crate::github_proxies;
 use crate::models::{GitHubProxyConfig, ProxyMode};
 use crate::repository_sources::{self, SourceLocation};

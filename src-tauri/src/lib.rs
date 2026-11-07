@@ -31,7 +31,7 @@ mod map_sources;
 // Release note 里的地图元数据块（`<!-- oc2-map ... -->`）：一个仓库放多张地图时
 // 每张地图的信息跟着自己的 Release 走，不再需要一份集中式 TOML
 mod map_note;
-// 社区地图上传：GitHub device flow 登录 + 仓库 / Release / 附件写操作
+// 社区地图发布：GitHub App 网页授权、安装范围查询与 Release / 附件写入
 mod map_publish;
 // 元数据并行读取的中间层：MOD 的 DLL 与地图的 info 都走它编排
 mod metadata_read;
@@ -206,21 +206,21 @@ pub fn run() {
             commands::relations::sync_dependency_snapshots,
             community::refresh_community_repositories,
             community::cancel_community_search,
-            map_publish::start_github_authorization,
-            map_publish::poll_github_authorization,
-            map_publish::cancel_github_authorization,
-            map_publish::map_publish_state,
-            map_publish::check_publish_session,
-            map_publish::sign_out_map_publish,
-            map_publish::list_publish_repositories,
-            map_publish::list_publish_releases,
-            map_publish::save_publish_release,
-            map_publish::delete_publish_release,
-            map_publish::upload_publish_asset,
-            map_publish::delete_publish_asset,
-            map_publish::inspect_publish_zip,
-            map_publish::stage_publish_zip,
-            map_publish::publish_repository_topics,
+            map_publish::authorization::start_github_authorization,
+            map_publish::authorization::poll_github_authorization,
+            map_publish::authorization::cancel_github_authorization,
+            map_publish::session::map_publish_state,
+            map_publish::session::check_publish_session,
+            map_publish::session::sign_out_map_publish,
+            map_publish::repositories::list_publish_repositories,
+            map_publish::releases::list_publish_releases,
+            map_publish::releases::save_publish_release,
+            map_publish::releases::delete_publish_release,
+            map_publish::assets::upload_publish_asset,
+            map_publish::assets::delete_publish_asset,
+            map_publish::zip::inspect_publish_zip,
+            map_publish::zip::stage_publish_zip,
+            map_publish::repositories::publish_repository_topics,
             repository_readme::get_repository_readme,
             repository_readme::cancel_repository_readme,
             commands::repository_releases::get_repository_releases,

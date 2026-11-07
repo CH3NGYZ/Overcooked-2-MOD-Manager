@@ -43,7 +43,7 @@ impl Fingerprint {
     }
 }
 
-pub(super) fn inspect(path: &Path) -> Result<PublishZipInspection, String> {
+pub(in crate::map_publish) fn inspect(path: &Path) -> Result<PublishZipInspection, String> {
     inspect_with(&CACHE, path, super::inspect_publish_zip_blocking)
 }
 

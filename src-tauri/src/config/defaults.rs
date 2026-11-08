@@ -88,6 +88,7 @@ pub(crate) fn default_config() -> AppConfig {
          */
         map_repositories: crate::map_sources::bundled_map_tree(),
         builtin_map_sources_only: false,
+        builtin_proxies_only: false,
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
         builtin_sources_only: false,

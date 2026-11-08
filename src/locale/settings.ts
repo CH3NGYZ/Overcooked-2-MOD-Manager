@@ -7,6 +7,20 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const settings: DomainMessages = {
+  useBundledProxiesOnly: {
+    'zh-CN': '仅使用内置代理配置',
+    'zh-TW': '僅使用內建代理設定',
+    en: 'Use bundled proxy configuration only',
+    ko: '내장 프록시 설정만 사용',
+    ja: '内蔵プロキシ設定のみ使用',
+  },
+  useBundledProxiesOnlyHint: {
+    'zh-CN': '只读取管理器自带的代理配置，不刷新远端代理清单；与 MOD、地图源开关相互独立，下载仍可联网。',
+    'zh-TW': '只讀取管理器內建的代理設定，不更新遠端代理清單；與 MOD、地圖來源開關互相獨立，下載仍可連線。',
+    en: 'Use the shipped proxy configuration without fetching remote manifests. Independent of MOD and map source switches; downloads can still access the network.',
+    ko: '원격 목록을 갱신하지 않고 내장 프록시 설정을 사용합니다. MOD 및 지도 소스 스위치와 독립적이며 다운로드는 계속 네트워크를 사용합니다.',
+    ja: 'リモート一覧を更新せず、内蔵プロキシ設定を使用します。MOD・マップソースの切り替えとは独立しており、ダウンロードは引き続き通信できます。',
+  },
   // 路径管理
   paths: {
     'zh-CN': '路径管理',

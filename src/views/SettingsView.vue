@@ -396,6 +396,21 @@ async function toggleBuiltinMapSourcesOnly(value: boolean) {
   }
 }
 
+const builtinProxiesOnly = computed(() => config.value?.builtin_proxies_only === true)
+const switchingBuiltinProxies = ref(false)
+async function toggleBuiltinProxiesOnly(value: boolean) {
+  if (switchingBuiltinProxies.value) return
+  switchingBuiltinProxies.value = true
+  try {
+    config.value = await api.saveSettings({ builtin_proxies_only: value })
+    message.success(t('common.saved'))
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    switchingBuiltinProxies.value = false
+  }
+}
+
 /* ===== API 凭据 ===== */
 /** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
 async function saveTokens() {
@@ -551,6 +566,13 @@ async function clearTokens() {
       <template #right>
         <n-switch size="small" :value="builtinMapSourcesOnly" :loading="switchingBuiltinMapSources"
           @update:value="toggleBuiltinMapSourcesOnly" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :title="t('settings.useBundledProxiesOnly')"
+      :description="t('settings.useBundledProxiesOnlyHint')" data-testid="builtin-proxies-only">
+      <template #right>
+        <n-switch size="small" :value="builtinProxiesOnly" :loading="switchingBuiltinProxies"
+          @update:value="toggleBuiltinProxiesOnly" />
       </template>
     </SettingsRow>
   </SettingsGroup>

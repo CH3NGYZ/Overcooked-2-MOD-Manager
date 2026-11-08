@@ -37,9 +37,10 @@ impl ConfigService {
             community_discovery,
             gitee_community_discovery,
             gitcode_community_discovery,
-            github_proxies: self.proxy_snapshot(),
+            github_proxies: self.proxy_snapshot(config.builtin_proxies_only),
             builtin_sources_only: config.builtin_sources_only,
             builtin_map_sources_only: config.builtin_map_sources_only,
+            builtin_proxies_only: config.builtin_proxies_only,
         }
     }
 }

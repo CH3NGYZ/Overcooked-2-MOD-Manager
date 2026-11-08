@@ -47,5 +47,5 @@ test('config load keeps migration ordering and current proxy overlay on every re
   assert.match(storage, /return Ok\(self\.with_proxies\(cached\)\)/)
   assert.match(storage, /Ok\(self\.with_proxies\(config\)\)/)
   assert.match(storage, /self\.with_proxies\(default_config\(\)\)/)
-  assert.match(readText(resolve(root, 'public.rs')), /github_proxies: self\.proxy_snapshot\(\)/)
+  assert.match(readText(resolve(root, 'public.rs')), /github_proxies: self\.proxy_snapshot\(config\.builtin_proxies_only\)/)
 })

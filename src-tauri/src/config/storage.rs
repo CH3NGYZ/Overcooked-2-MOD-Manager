@@ -70,15 +70,24 @@ impl ConfigService {
     }
 
     fn with_proxies(&self, mut config: AppConfig) -> AppConfig {
-        config.github_proxies = self.proxy_snapshot();
+        config.github_proxies = self.proxy_snapshot(config.builtin_proxies_only);
         config
     }
 
-    pub(crate) fn proxy_snapshot(&self) -> GitHubProxyConfig {
-        self.proxies.snapshot()
+    pub(crate) fn proxy_snapshot(&self, builtin_only: bool) -> GitHubProxyConfig {
+        if builtin_only {
+            crate::github_proxies::bundled_defaults()
+        } else {
+            self.proxies.snapshot()
+        }
     }
 
     pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {
+        // Select before creating a client or resolving any remote manifest. Readers
+        // also select by this flag, so an older in-flight refresh cannot override it.
+        if self.load_or_default().builtin_proxies_only {
+            return Ok(());
+        }
         self.proxies.refresh(current_user_region()).await
     }
 

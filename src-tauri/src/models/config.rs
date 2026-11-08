@@ -66,6 +66,9 @@ pub struct AppConfig {
     /// `config/migrations.rs::migrate_bundled_source_switches`。
     #[serde(default)]
     pub builtin_map_sources_only: bool,
+    /// Only bundled proxy definitions are visible; remote refreshes cannot override them.
+    #[serde(default)]
+    pub builtin_proxies_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,6 +231,8 @@ pub struct PublicConfig {
     /// 一个连不上不代表另一个也连不上。
     #[serde(default)]
     pub builtin_map_sources_only: bool,
+    #[serde(default)]
+    pub builtin_proxies_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +257,7 @@ pub struct SettingsPatch {
     pub builtin_sources_only: Option<bool>,
     /// 只用内置地图源（不影响仓库源，反之亦然）。
     pub builtin_map_sources_only: Option<bool>,
+    pub builtin_proxies_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

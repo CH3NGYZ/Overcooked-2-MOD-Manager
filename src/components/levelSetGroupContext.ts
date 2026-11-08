@@ -1,8 +1,9 @@
 import type { ComputedRef, CSSProperties, InjectionKey, Ref, UnwrapNestedRefs } from 'vue'
 import type { LevelSetAuthorNames, LevelSetCardAction, LevelSetCardTag } from '../levelSetStatus'
+import type { LevelSetGroupNode } from '../levelSetGroups'
 import type { DependencyRow } from './DependencyTable.vue'
 import type { StatusActionSpec } from '../statusActions'
-import type { PackageStatus } from '../statusTags'
+import type { ModGroupNode, ModPackageNode } from '../localModGroups'
 import type { InstalledMod, LevelSetInfo, LevelSetPlugin, MapInfo } from '../types'
 
 /**
@@ -27,34 +28,11 @@ export const TOOL_BUTTON_WIDTH = 30
 /** 相邻工具栏按钮之间的空档（两端不加）。 */
 export const TOOL_GAP = 8
 
-/** 地图管理页的分组节点。 */
-export interface LevelSetGroupNode {
-  key: string
-  label: string
-  sets: LevelSetInfo[]
-}
+/** 地图分组投影由 levelSetGroups 拥有；此文件只保留页面上下文协议。 */
+export type { LevelSetGroupNode } from '../levelSetGroups'
 
-/** MOD 管理页的包节点（一个 DLL 一张卡，或 `package_id` 相同的多张合成一个外壳）。 */
-export interface ModPackageNode {
-  key: string
-  label: string
-  mods: InstalledMod[]
-  /** 搜索命中的展示成员；包级开关、卸载、依赖和状态仍使用完整 mods。 */
-  visibleMods: InstalledMod[]
-  grouped: boolean
-  enabled: boolean
-  partial: boolean
-  statuses: PackageStatus[]
-  action?: StatusActionSpec
-  repositoryId?: string
-}
-
-/** MOD 管理页的分组节点。 */
-export interface ModGroupNode {
-  key: string
-  label: string
-  packages: ModPackageNode[]
-}
+/** MOD 包与分组投影归 localModGroups；此文件只拥有页面注入协议。 */
+export type { ModGroupNode, ModPackageNode } from '../localModGroups'
 
 /**
  * 卡片展开状态里内容槽组件真正要用的两个判定。

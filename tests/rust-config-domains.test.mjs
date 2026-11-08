@@ -14,7 +14,7 @@ const owners = {
   public: ['public_config'],
   secrets: ['protect_secret', 'reveal_secret', 'set_publish_tokens', 'api_token'],
   sources: ['builtin_repository_sources_for_region', 'merge_builtin_repository_sources'],
-  storage: ['new', 'for_test', 'cached_if_fresh', 'load_from_disk', 'with_proxies', 'save'],
+  storage: ['new', 'cached_if_fresh', 'load_from_disk', 'with_proxies', 'save'],
   validation: ['validate_repository', 'check_version_spec', 'validate_relation'],
 }
 
@@ -32,6 +32,7 @@ test('config keeps one shared state owner and does not forward domain methods', 
       assert.deepEqual(found, [resolve(root, `${module}.rs`)], name)
     }
   }
+  assert.match(readText(resolve(root, 'storage/test_support.rs')), /fn for_test\(/)
   for (const [path, text] of files) {
     assert.ok(text.trimEnd().split('\n').length < 1000, `${path} is a replacement monolith`)
     assert.doesNotMatch(text, /\b(?:struct ConfigService|crate::commands::)/, path)

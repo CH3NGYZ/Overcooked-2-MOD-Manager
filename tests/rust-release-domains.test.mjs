@@ -12,7 +12,7 @@ const owners = {
   error: ['release_error_kind'],
   fetch: ['fetch_releases', 'fetch_all_releases', 'fetch_releases_page', 'fetch_releases_from_targets', 'fetch_repository_default_branch'],
   projection: ['parse_release_json', 'filter_channel'],
-  transport: ['api_target_kind', 'api_request_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json', 'fetch_release_api', 'is_official_gitee_api_url', 'gitee_api_url_with_token'],
+  transport: ['api_target_kind', 'api_request_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json', 'is_official_gitee_api_url', 'gitee_api_url_with_token'],
   version: ['parse_version', 'compare_release_versions', 'is_strict_semver', 'is_prerelease_version', 'suffix_identifiers', 'split_alpha_numeric', 'compare_prerelease_parts'],
 }
 
@@ -34,6 +34,7 @@ test('Release root exports real domain owners without forwarding or replacement 
   }
   assert.equal(files.reduce((count, [, text]) => count + [...text.matchAll(/\bstruct ApiTestServer\b/g)].length, 0), 1)
   assert.match(read('test_support.rs'), /stream\.set_nonblocking\(false\)\.unwrap\(\);/)
+  assert.match(read('transport/test_support.rs'), /pub async fn fetch_release_api\(/)
   assert.match(read('test_support.rs'), /set_read_timeout\(Some\(API_REQUEST_TIMEOUT\)\)/)
 })
 

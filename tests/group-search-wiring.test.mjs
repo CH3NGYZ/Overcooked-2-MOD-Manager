@@ -5,9 +5,10 @@ import { readFileSync } from 'node:fs'
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8')
 test('搜索展示只读命中成员，完整包仍用于操作；地图同样先逐卡筛选再分组', () => {
   const mods = read('src/views/ModsLocalView.vue')
-  assert.match(mods, /keys.add\(mod.dll_file\)/)
-  assert.match(mods, /mods: ordered,\s+visibleMods: ordered.filter/)
-  assert.match(mods, /filter\(pkg => pkg.visibleMods.length > 0\)/)
+  assert.match(mods, /searchMatchedDllFiles/)
+  const modProjection = read('src/localModGroups.ts')
+  assert.match(modProjection, /mods: ordered,\s+visibleMods: ordered.filter/)
+  assert.match(modProjection, /filter\(\(pkg\) => pkg.visibleMods.length > 0\)/)
   assert.doesNotMatch(mods, /searchMatchedPackageKeys/)
   const body = read('src/components/ModGroupBody.vue')
   assert.match(body, /v-for="mod in pkg.visibleMods"/)
@@ -21,7 +22,8 @@ test('搜索展示只读命中成员，完整包仍用于操作；地图同样�
   assert.match(body, /ctx.togglePackageEnabled\(pkg, value\)/)
   const maps = read('src/views/LevelsView.vue')
   assert.match(maps, /filter\(\(set\) => matchesLocalSearch/)
-  assert.match(maps, /for \(const set of visibleSets.value\)/)
+  assert.match(maps, /buildLevelSetGroups\(/)
+  assert.match(read('src/levelSetGroups.ts'), /for \(const set of sets\)/)
   assert.match(read('src/components/LevelSetGroupBody.vue'), /ctx.groups.find/)
 })
 

@@ -17,8 +17,14 @@ import { repositoryForMod } from '../modStatus'
 import type { RelationStatus } from '../modRelations'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import {
-  installedModTags, summarizeUnits, packageStatuses, type StatusSummary,
+  installedModTags, summarizeUnits, type StatusSummary,
 } from '../statusTags'
+import {
+  buildLocalModGroups,
+  filterLocalModGroups,
+  localModStatusUnits,
+  packageKeysMatchingStatus,
+} from '../localModGroups'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
@@ -327,11 +333,6 @@ const sortedMods = computed(() =>
     .sort((a, b) => modTitle(a).localeCompare(modTitle(b))),
 )
 
-/** 包的身份和操作范围不随搜索改变；搜索只裁剪实际渲染的成员卡片。 */
-function packageKeyOf(mod: InstalledMod) {
-  return mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
-}
-
 const searchMatchedDllFiles = computed(() => {
   if (!query.value) return null
   const keys = new Set<string>()
@@ -490,150 +491,20 @@ onBeforeUnmount(() => {
   pulseTimers.clear()
 })
 
-/**
- * MOD 的分类：优先用安装清单里的分组快照（后端 `group_i18n`）。
- *
- * 分组语义是「安装时绑定的仓库分类」，快照在安装那一刻固化，
- * 所以刚启动、仓库源还没刷新完（config.repositories 可能为空或仍旧）时也不会乱。
- * 快照里没有分组才回退到当前仓库配置；找不到仓库归入「未绑定」。
- */
-interface ModCategory { key: string; label: string }
-function modCategory(mod: InstalledMod): ModCategory {
-  const repo = repositoryForMod(repositories.value, mod)
-  /*
-   * 分类优先级：
-   *   1. 能匹配到在线仓库 → 归该仓库的分组（手动安装的 MOD 只要 GUID/产品名
-   *      对得上某个在线仓库，也走这条，和从 MOD 安装页装进来的表现一致）；
-   *   2. 匹配不到，但清单是手动安装创建的（`manual-<uuid>`）→「本地安装」；
-   *   3. 其余（直接丢进 plugins、没有清单）→「未绑定」。
-   * 安装清单里的 group 快照只在「有快照且能匹配仓库」时才使用，
-   * 否则会把本地安装错误地显示成空分组。
-   *
-   * 快照现在只有 i18n 形态（后端已删掉单语 `group` 字段）。
-   * 分组键必须与语言无关，所以取 `zh-CN`（或任一可用值）作为规范名，
-   * 展示名才用 `pickI18n` 按当前语言取 —— 否则切语言会重建折叠键。
-   */
-  const snapshot = mod.group_i18n
-  const hasSnapshot = !!snapshot && Object.keys(snapshot).length > 0
-  if (repo) {
-    if (hasSnapshot) {
-      const canonical = (snapshot['zh-CN'] || pickI18n(snapshot, '')).trim()
-      const label = pickI18n(snapshot, '') || t('dialogs.ungrouped')
-      return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
-    }
-    // key 用语言无关的原始分组名，切换语言时折叠状态不丢
-    const canonical = (repo.group || repo.group_i18n?.['zh-CN'] || pickI18n(repo.group_i18n, '')).trim()
-    const label = pickI18n(repo.group_i18n, repo.group || '') || t('dialogs.ungrouped')
-    return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
-  }
-  if (mod.manual_install) return { key: '__local_install__', label: t('tools.localInstall') }
-  if (hasSnapshot) {
-    const canonical = (snapshot!['zh-CN'] || pickI18n(snapshot, '')).trim()
-    const label = pickI18n(snapshot, '') || t('dialogs.ungrouped')
-    return { key: canonical ? `group:${canonical.toLowerCase()}` : '__ungrouped__', label }
-  }
-  return { key: '__unbound__', label: t('modsLocal.unbound') }
-}
-
-const groups = computed<ModGroupNode[]>(() => {
-  /*
-   * 先按 package_id 聚成包，再决定整包归属哪个分类。
-   *
-   * 之前的顺序反了（先按分类分桶、再在桶内聚包）：包内的纯依赖 DLL
-   * 没有 BepInPlugin GUID，匹配不到在线仓库，于是进「本地安装」分组；
-   * 同包的主 MOD 能匹配到仓库，进在线分组 —— 同一个包被拆到两个分类，
-   * 也就永远不会折叠成一个 MOD 包，还会互判「重复」。
-   *
-   * 一个包只属于一个分类，取包内**最能代表仓库**的成员：
-   * 优先能绑定在线仓库的，其次主 MOD，最后才用依赖自身。
-   */
-  const packagesByKey = new Map<string, InstalledMod[]>()
-  for (const mod of sortedMods.value) {
-    const packageKey = packageKeyOf(mod)
-    const list = packagesByKey.get(packageKey)
-    if (list) list.push(mod)
-    else packagesByKey.set(packageKey, [mod])
-  }
-
-  /** 包的分组代表：能匹配仓库的成员优先，主 MOD 其次，依赖最后。 */
-  const representative = (members: InstalledMod[]): InstalledMod => {
-    const bound = members.find((mod) => repositoryForMod(repositories.value, mod))
-    if (bound) return bound
-    const primary = members.find((mod) => !mod.is_dependency)
-    return primary ?? members[0]
-  }
-
-  const buckets = new Map<string, { label: string; packages: Map<string, InstalledMod[]> }>()
-  for (const [packageKey, members] of packagesByKey) {
-    const category = modCategory(representative(members))
-    let bucket = buckets.get(category.key)
-    if (!bucket) {
-      bucket = { label: category.label, packages: new Map() }
-      buckets.set(category.key, bucket)
-    }
-    bucket.packages.set(packageKey, members)
-  }
-
-  const toPackage = (key: string, list: InstalledMod[]): ModPackageNode => {
-    /*
-     * 主 MOD 在前、依赖 DLL 在后：包内顺序要能一眼看出「哪个是本体、
-     * 哪些是它带的库」。依赖表格紧跟在整批子卡片之后（见模板），
-     * 于是整段读下来是「本体 → 它带的依赖 → 这个包还要求什么」。
-     */
-    const ordered = [...list].sort(
-      (a, b) => Number(!!a.is_dependency) - Number(!!b.is_dependency),
-    )
-    const enabledCount = ordered.filter((mod) => mod.enabled).length
-    /*
-     * 包标题：能认出绑定仓库就用仓库名，让「装的是哪个包」一眼可读；
-     * 否则退回安装包名与插件名。整包成员共享一个仓库，所以同一包内
-     * 各 DLL 仍由行内插件名区分，不会因为标题统一而重名。
-     */
-    const label = ordered[0] ? displayTitle(ordered[0]) : ''
-    /*
-     * 包级状态：以整个包为主体，版本结论只留一条且不带数量
-     * （包里只有一个 Release tag，说「1 最新版」会暗示还有别的东西）。
-     * 实现见 statusTags.ts 的 packageStatuses。
-     */
-    const statuses = packageStatuses(ordered)
-    /*
-     * 包的仓库身份与快捷动作：整包成员共享同一个仓库，
-     * 所以直接用「包内能绑定仓库的那一个」——与包标题、分组用的是同一代表。
-     * 动作由包对外公开的状态集合解析（与单 MOD 共用 statusActions 的规则）。
-     */
-    const repo = repositoryForMod(repositories.value, representative(ordered))
-    const representativeMod = representative(ordered)
-    const action = actionContext(statuses.map((entry) => entry.key), representativeMod)?.action
-    return {
-      key,
-      label,
-      mods: ordered,
-      visibleMods: ordered.filter(mod => searchMatchedDllFiles.value === null || searchMatchedDllFiles.value.has(mod.dll_file)),
-      grouped: ordered.length >= 2,
-      enabled: enabledCount === ordered.length,
-      partial: enabledCount > 0 && enabledCount < ordered.length,
-      statuses,
-      action,
-      repositoryId: repo?.id,
-    }
-  }
-
-  return [...buckets.entries()]
-    .sort(([aKey, a], [bKey, b]) => {
-      // 「未绑定」「未分组」排最后
-      const tails = new Set(['__unbound__', '__ungrouped__'])
-      if (tails.has(aKey) !== tails.has(bKey)) return tails.has(aKey) ? 1 : -1
-      return a.label.localeCompare(b.label)
-    })
-    .map(([key, { label, packages }]) => ({
-      key,
-      label,
-      packages: [...packages.entries()]
-        .map(([pkgKey, list]) => toPackage(pkgKey, list))
-        .filter(pkg => pkg.visibleMods.length > 0),
-    }))
-    .filter((group) => group.packages.length > 0)
-})
+const groups = computed<ModGroupNode[]>(() => buildLocalModGroups({
+  mods: sortedMods.value,
+  repositories: repositories.value,
+  matchedDllFiles: searchMatchedDllFiles.value,
+  categoryTexts: {
+    ungrouped: t('dialogs.ungrouped'),
+    localInstall: t('tools.localInstall'),
+    unbound: t('modsLocal.unbound'),
+  },
+  pickI18n,
+  displayTitle,
+  actionFor: (statusKeys, representative) =>
+    actionContext(statusKeys, representative)?.action,
+}))
 
 const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))
 /** 默认全部展开：新出现的分类自动展开，用户的折叠选择单独记住。 */
@@ -956,79 +827,18 @@ function modAnchor(mod: InstalledMod) {
  * 包是页面上的一个整体（一个外壳、一条标题、一个版本结论），状态结论也属于
  * 整包；筛选时按整包一起显示或一起隐藏，不能把包内 DLL 拆开判断。
  */
-interface StatusUnitNode {
-  /** 命中时的状态集合，与 `packageStatuses` / 单 MOD 标签同源。 */
-  keys: string[]
-  /** 所属包键：筛选结果据此收窄 `groups`。 */
-  packageKey: string
-}
-
-/**
- * 一个单元的开关状态 key（`enabled` / `disabled`）。
- *
- * 页头把「N 已启用 / N 已禁用」单独成组，与结论类标签分开；这两个 key 也
- * 参与定位，所以直接并进单元的 keys —— `unitsWithStatus` 与聚合汇总共用
- * 同一份数据，不必另写一套命中判定。
- *
- * 半开半关的包两边都不算：说它「已启用」会掩盖还有 DLL 被停用的事实。
- */
-function enableKeysOf(mods: readonly InstalledMod[]): string[] {
-  if (mods.every((mod) => mod.enabled)) return ['enabled']
-  if (mods.every((mod) => !mod.enabled)) return ['disabled']
-  return []
-}
-
-const statusUnitNodes = computed<StatusUnitNode[]>(() => {
-  const nodes: StatusUnitNode[] = []
-  for (const group of groups.value) {
-    for (const pkg of group.packages) {
-      if (pkg.grouped) {
-        nodes.push({
-          keys: [...pkg.statuses.map((entry) => entry.key), ...enableKeysOf(pkg.mods)],
-          packageKey: pkg.key,
-        })
-        continue
-      }
-      // 单 DLL 包：这一张卡片自己就是单元，标签按成员自己的 labels 判断
-      for (const mod of pkg.mods) {
-        if (mod.is_dependency) continue
-        nodes.push({
-          /*
-           * 取「卡片实际渲染的标签键」，而不是裸 `mod.labels`。
-           * `installedModTags()` 会动态补上 `prerelease`（版本号带 -beta /
-           * 四段序号时），它不在后端 labels 里；用裸 labels 会让页头少一个
-           * 「预发布」，点了也筛不出对应卡片。
-           */
-          keys: [...installedModTags(mod).map((tag) => tag.key), ...enableKeysOf([mod])],
-          packageKey: pkg.key,
-        })
-      }
-    }
-  }
-  return nodes
-})
+const statusUnitNodes = computed(() => localModStatusUnits(groups.value))
 
 /**
  * 状态筛选按「包」收窄：包内多个 DLL 共享一个状态结论，整包一起显示或一起
  * 隐藏。页头计数仍读 `statusUnitNodes`（筛选前的全量），否则筛完之后其它
  * 标签会全部归零、没法再点回来。
  */
-const visiblePackageKeys = computed(
-  () =>
-    new Set(
-      statusUnitNodes.value
-        .filter((unit) => visibility.statusMatches(unit.keys))
-        .map((unit) => unit.packageKey),
-    ),
-)
-const visibleGroups = computed(() =>
-  groups.value
-    .map((node) => ({
-      ...node,
-      packages: node.packages.filter((pkg) => visiblePackageKeys.value.has(pkg.key)),
-    }))
-    .filter((node) => node.packages.length > 0),
-)
+const visiblePackageKeys = computed(() => packageKeysMatchingStatus(
+  statusUnitNodes.value,
+  (keys) => visibility.statusMatches(keys),
+))
+const visibleGroups = computed(() => filterLocalModGroups(groups.value, visiblePackageKeys.value))
 const visibleUnitCount = computed(() => visiblePackageKeys.value.size)
 
 /**

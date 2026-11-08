@@ -7,7 +7,7 @@ import {
 } from '../expandScroll'
 import { useCardExpansion } from './useCardExpansion'
 import type { InstalledMod } from '../types'
-import type { ModPackageNode } from '../components/levelSetGroupContext'
+import type { ModPackageNode } from '../localModGroups'
 
 export function useModsLocalCardExpansion() {
   const expansion = useCardExpansion({ singleOuter: true })

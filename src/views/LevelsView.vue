@@ -16,6 +16,7 @@ import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink } fro
 import { useListVisibility } from '../composables/useListVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
+import { buildLevelSetGroups } from '../levelSetGroups'
 import { formatVersionSpec } from '../versionSpec'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
@@ -227,44 +228,14 @@ const emptyDescription = computed(() =>
  */
 const versionRefs = computed(() => mapVersionRefs(maps.value))
 
-/** 分组节点：一个折叠项 = 一个作者（地图的分组语义就是作者）。 */
-interface LevelSetGroupNode {
-  key: string
-  label: string
-  sets: LevelSetInfo[]
-}
-
-/**
- * 本地关卡集按作者分组。
- *
- * 组顺序与组内卡片用同一把尺子：当前语言的作者展示名。组的先后若跟着数据
- * 排列（关卡集的返回顺序）走，换语言、重新扫描或改卡片排序规则时组的位置
- * 会漂移，用户记住的位置就没了；作者名排序与卡片名排序同源，整页才是
- * 「按名字排」的一致观感。
- *
- * 分组口径全部由 `levelSetStatus.ts` 的 `levelSetGroup` 决定（线上声明 →
- * 本地 author → 未分组），页面只负责取展示名与折叠。
- */
-const groups = computed<LevelSetGroupNode[]>(() => {
-  const buckets = new Map<string, { label: string; sets: LevelSetInfo[] }>()
-  for (const set of visibleSets.value) {
-    const group = levelSetGroup(set, maps.value)
-    let bucket = buckets.get(group.key)
-    if (!bucket) {
-      // 展示名按当前语言取；作者名没有多语言表时退回规范名本身，
-      // 两者都空才是「未分组」（`levelSetGroup` 已经把这种情况归到同一个键）
-      bucket = {
-        label: pickI18n(group.labelI18n, group.canonical) || t('dialogs.ungrouped'),
-        sets: [],
-      }
-      buckets.set(group.key, bucket)
-    }
-    bucket.sets.push(set)
-  }
-  return [...buckets.entries()]
-    .map(([key, bucket]) => ({ key, label: bucket.label, sets: bucket.sets }))
-    .sort((left, right) => left.label.localeCompare(right.label, locale.value))
-})
+/** 地图域复用唯一的身份分组规则；页面只负责给出响应式数据与文案。 */
+const groups = computed(() => buildLevelSetGroups(
+  visibleSets.value,
+  maps.value,
+  locale.value,
+  pickI18n,
+  t('dialogs.ungrouped'),
+))
 
 const allGroupKeys = computed(() => groups.value.map((group) => group.key))
 /** 默认全部展开：新出现的分组自动展开，用户的折叠选择单独记住。 */

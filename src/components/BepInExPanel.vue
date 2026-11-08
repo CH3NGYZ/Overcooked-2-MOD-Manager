@@ -29,6 +29,7 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import ModConfigEditor from './ModConfigEditor.vue'
 import BepInExSetupGuide from './BepInExSetupGuide.vue'
 import BusyOverlay from './BusyOverlay.vue'
@@ -37,6 +38,7 @@ import type { BepInExInstallResult, GameRuntime, OperationResult, Provider } fro
 const message = useNotify()
 const dialog = useDialog()
 const { load, loading, game, config } = useDashboard()
+const { blockModOperation } = useGameOperationGate()
 
 const working = ref(false)
 const installProvider = ref<Provider>('gitee')
@@ -105,6 +107,7 @@ const isWineRuntime = computed(() => runtime.value !== 'native')
 
 /** 真正执行安装（引导之外的部分）。 */
 async function runInstall(reinstall: boolean) {
+  if (blockModOperation()) return
   installing.value = true
   /*
    * 框架包也是从网上下载的，首字节超时同样要能原地重试：重试只重跑这次
@@ -152,6 +155,7 @@ async function runInstall(reinstall: boolean) {
  */
 async function install(reinstall: boolean) {
   if (!config.value) await load()
+  if (blockModOperation()) return
   if (needsGuide.value && isWineRuntime.value) {
     // CrossOver：先让用户准备容器，确认后再真正安装
     pendingInstall.value = { reinstall }
@@ -169,6 +173,7 @@ function onGuideConfirmed() {
 }
 
 function uninstall() {
+  if (blockModOperation()) return
   const instance = dialog.warning({
     title: t('recycle.uninstallBepinex'),
     /*
@@ -180,6 +185,7 @@ function uninstall() {
     positiveText: t('recycle.uninstall'),
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      if (blockModOperation()) return false
       markDialogBusy(instance)
       working.value = true
       // 卸载 = 先整目录备份，再按清单回收，两步都是磁盘操作，要遮罩
@@ -206,6 +212,7 @@ function uninstall() {
 const busyText = ref<string | null>(null)
 
 async function backup() {
+  if (blockModOperation()) return
   working.value = true
   busyText.value = t('overlays.backingUpTheBepinexFramework')
   try {
@@ -219,6 +226,7 @@ async function backup() {
 }
 
 async function restore(path: string) {
+  if (blockModOperation()) return
   working.value = true
   busyText.value = t('overlays.restoringTheBepinexFramework')
   try {
@@ -246,6 +254,7 @@ function removeBackup(path: string) {
 }
 
 async function toggleFramework(enabled: boolean) {
+  if (blockModOperation()) return
   const result = await api.switchWinhttp(enabled)
   result.ok
     ? message.success(translateBackendMessage(result.message) || (enabled ? t('overlays.frameworkEnabled') : t('overlays.frameworkDisabled')))
@@ -311,7 +320,7 @@ async function openBackup(backupPath: string) {
         <template #icon><FolderOpenOutline width="15" height="15" /></template>
         {{ t('settings.openFolder') }}
       </n-button>
-      <n-button size="small" secondary :disabled="working" @click="configEditorOpen = true">
+      <n-button size="small" secondary :disabled="working" @click="() => { if (!blockModOperation()) configEditorOpen = true }">
         <template #icon><SettingsOutline width="15" height="15" /></template>
         {{ t('framework.manageConfig') }}
       </n-button>

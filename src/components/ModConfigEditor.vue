@@ -28,6 +28,7 @@ import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import AppModal from './AppModal.vue'
 import { backendMessageOf } from '../locale/backend'
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 
 const props = defineProps<{
   show: boolean
@@ -45,6 +46,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
 const message = useNotify()
+const { blockModOperation } = useGameOperationGate()
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -99,6 +101,7 @@ async function load() {
 }
 
 async function save() {
+  if (blockModOperation()) return
   if (!canSave.value) return
   saving.value = true
   try {

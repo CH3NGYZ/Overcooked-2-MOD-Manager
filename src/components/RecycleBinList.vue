@@ -22,11 +22,13 @@ import { pickI18n, t, locale } from '../i18n'
 import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import type { ModRecycleEntry } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const { game } = useDashboard()
+const { blockModOperation } = useGameOperationGate()
 
 const entries = ref<ModRecycleEntry[]>([])
 const loading = ref(false)
@@ -76,7 +78,7 @@ function isActing(entry: ModRecycleEntry, kind: 'restore' | 'delete') {
 }
 
 async function restore(entry: ModRecycleEntry) {
-  if (busy.value || restoreBlocked.value) return
+  if (busy.value || blockModOperation()) return
   acting.value = { id: entry.id, kind: 'restore' }
   try {
     const result = await api.restoreRecycledMod(entry.id)
@@ -163,7 +165,7 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
           <template #header-extra>
             <div class="recycle-actions">
               <n-button size="tiny" secondary :loading="isActing(entry, 'restore')"
-                :disabled="busy || restoreBlocked" @click="restore(entry)">
+                :disabled="busy" @click="restore(entry)">
                 <template #icon><ArrowUndoOutline width="14" height="14" /></template>
                 {{ t('overlays.restore') }}
               </n-button>

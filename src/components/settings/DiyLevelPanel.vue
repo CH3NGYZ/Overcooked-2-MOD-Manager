@@ -29,6 +29,7 @@ import { formatBackupLabel } from '../../backupLabel'
 import { backendMessageOf, translateBackendMessage } from '../../locale/backend'
 import { markDialogBusy } from '../../dialogBusy'
 import { useDashboard } from '../../composables/useDashboardStore'
+import { useGameOperationGate } from '../../composables/useGameOperationGate'
 import { useRepositoryLink } from '../../crossLink'
 import BusyOverlay from '../BusyOverlay.vue'
 import type { DiyLevelInfo, Repository } from '../../types'
@@ -38,7 +39,8 @@ const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, loading, game, config } = useDashboard()
+const { load, loading, config } = useDashboard()
+const { blockModOperation } = useGameOperationGate()
 const { linkToRepository } = useRepositoryLink()
 
 const info = ref<DiyLevelInfo | null>(null)
@@ -56,8 +58,8 @@ const backups = computed(() => info.value?.backups ?? [])
  */
 const backupRows = computed(() =>
   backups.value.map((path) => ({ path, time: formatBackupLabel(path).time })))
-/** 游戏运行时禁止改名/删除/还原，与 BepInEx 面板同一约束。 */
-const busy = computed(() => working.value || !!game.value?.kitchen_running)
+/** Only an active operation disables controls; game state is checked on click. */
+const busy = computed(() => working.value)
 /** 备份/恢复/卸载期间的全屏遮罩文案。 */
 const busyText = ref<string | null>(null)
 
@@ -99,6 +101,7 @@ async function refresh() {
 
 /** 安装 / 重装：跳到 MOD 安装页并高亮对应仓库卡片，走同一条安装链路。 */
 function openInstall() {
+  if (blockModOperation()) return
   const repo = installableRepository.value
   if (!repo) {
     message.warning(t('framework.diylevelIsNotAvailableOnlineInstallItManuallyThenManageItHere'))
@@ -118,6 +121,7 @@ async function openDirectory() {
 
 /** 启用 / 禁用：走后端与 MOD 列表相同的 .dll 改名逻辑。 */
 async function toggle(value: boolean) {
+  if (blockModOperation()) return
   if (switching.value) return
   switching.value = true
   try {
@@ -143,12 +147,14 @@ async function toggle(value: boolean) {
  * —— 用户点的是框架级卸载，不是在 MOD 列表里删单个 DLL。
  */
 function uninstall() {
+  if (blockModOperation()) return
   const instance = dialog.warning({
     title: t('framework.uninstallDiylevelFramework'),
     content: t('framework.theWholeDiylevelFolderIsBackedUpBeforeUninstallingCustomMapsInsideAreMovedToTheRecycleBinTooContinue'),
     positiveText: t('overlays.uninstallFramework'),
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      if (blockModOperation()) return false
       markDialogBusy(instance)
       working.value = true
       busyText.value = t('framework.backingUpAndUninstallingDiylevel')
@@ -171,6 +177,7 @@ function uninstall() {
 
 /** 创建一个 DIYLevel 目录备份。 */
 async function backup() {
+  if (blockModOperation()) return
   working.value = true
   busyText.value = t('framework.backingUpTheDiylevelFolder')
   try {
@@ -189,12 +196,14 @@ async function backup() {
 
 /** 恢复备份：先删现有 DIYLevel 目录，再整体还原（后端负责）。 */
 function restore(backupPath: string) {
+  if (blockModOperation()) return
   dialog.warning({
     title: t('framework.restoreDiylevelBackup'),
     content: t('framework.theCurrentDiylevelFolderWillBeDeletedThenReplacedWithThisBackupContinue'),
     positiveText: t('overlays.restore'),
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      if (blockModOperation()) return false
       working.value = true
       busyText.value = t('framework.restoringDiylevelBackup')
       try {

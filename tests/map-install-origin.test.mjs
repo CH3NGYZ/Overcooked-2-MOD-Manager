@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { levelSetState, mapCardState, mapCardAction, mapVersionRefs } from '../src/levelSetStatus.ts'
+import { levelSetState, mapVersionRefs } from '../src/levelSetStatus.ts'
+import { mapCardState, mapCardAction } from '../src/mapCardStatus.ts'
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 

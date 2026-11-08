@@ -8,9 +8,8 @@ import test from 'node:test'
  * MOD 靠 GUID，关卡集靠 `levelSetName + author`。所以它必须独立测 ——
  * 直接复用 modStatus 的测试会漏掉「uid 不能当身份」这类专属陷阱。
  *
- * 后半部分测的是地图管理页真正需要的那几件事：绑定哪个地图源、
- * 框架依赖缺不缺、卡片上该出现哪些标签。这些判定以前分散在页面里
- * （依赖还要后端再扫一遍 `BepInEx/plugins`），搬成纯函数后必须锁住行为。
+ * 这里覆盖地图管理页的绑定、依赖和标签判定；在线地图下载卡片的状态、展示
+ * 与动作投影由 `src/mapCardStatus.ts` 单独持有，但复用本模块的身份和版本规则。
  */
 const {
   isSameLevelSet,
@@ -26,15 +25,17 @@ const {
   levelSetCardTags,
   levelSetGroup,
   levelSetAuthorNames,
-  mapCardState,
-  mapCardStatus,
-  mapCardAction,
   mapUpdateState,
   LEVEL_SET_STATE_TAGS,
   LEVEL_SET_UNGROUPED_KEY,
+} = await import('../src/levelSetStatus.ts')
+const {
+  mapCardState,
+  mapCardStatus,
+  mapCardAction,
   MAP_CARD_STATE_TAGS,
   MAP_CARD_STATE_TONES,
-} = await import('../src/levelSetStatus.ts')
+} = await import('../src/mapCardStatus.ts')
 const {
   levelSetStatusKeys,
   summarizeLevelSetTags,

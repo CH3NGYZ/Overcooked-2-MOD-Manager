@@ -31,13 +31,11 @@ import { dependencyTagFor } from '../modRelations'
 import {
   frameworkStates,
   levelSetForMap,
-  mapCardAction,
-  mapCardStatus,
   mapRelationRepository,
   mapRelationStatuses,
   type FrameworkState,
-  type MapCardState,
 } from '../levelSetStatus'
+import { mapCardAction, mapCardStatus, type MapCardState } from '../mapCardStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
 import {
@@ -370,7 +368,7 @@ function isInstalling(map: MapInfo): boolean {
 /**
  * 卡片状态：本地已装状态（与 MOD 安装页同款结论）。
  *
- * 判定细节在 `levelSetStatus.ts` 的纯函数里（Node 测试直接覆盖），这里只做
+ * 判定细节在 `mapCardStatus.ts` 的纯函数里（Node 测试直接覆盖），这里只做
  * 翻译与着色 —— 页面不再自己拼状态字符串，避免两处规则漂移。
  */
 function statusOf(map: MapInfo): { key: MapCardState; text: string; tone: TagTone } {

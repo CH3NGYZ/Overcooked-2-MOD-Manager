@@ -3,6 +3,42 @@ use super::relations::ReleaseRelationOverride;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// 发布渠道与玩家侧下载来源独立；Gitee 暂无发布授权入口。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PublishProvider {
+    #[default]
+    Github,
+    Gitcode,
+}
+
+impl PublishProvider {
+    pub fn api_provider(self) -> super::Provider {
+        match self {
+            Self::Github => super::Provider::Github,
+            Self::Gitcode => super::Provider::Gitcode,
+        }
+    }
+
+    pub fn api_endpoint(self) -> &'static str {
+        match self {
+            Self::Github => "https://api.github.com",
+            Self::Gitcode => "https://api.gitcode.com/api/v5",
+        }
+    }
+}
+
+/// 新渠道的凭据独立保存；GitHub 既有平面字段保留兼容。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PublishCredentialConfig {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: Option<i64>,
+    pub refresh_expires_at: Option<i64>,
+    pub login: String,
+}
+
 /// 这次授权打开的是哪个页面。
 ///
 /// `install` = 还没装过 App，直接去安装页：装 App 与勾仓库一步完成，回调会把
@@ -108,7 +144,7 @@ pub struct PublishRepositoryList {
 /// 一个 Release 附件。
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishAsset {
-    pub id: u64,
+    pub id: String,
     pub name: String,
     pub size: u64,
 }
@@ -146,7 +182,7 @@ pub struct PublishRepositoryTopics {
 /// 上传页看到的「一版地图」，就是仓库里的一个 Release。
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishRelease {
-    pub id: u64,
+    pub id: String,
     /// tag 是这张地图在仓库里的唯一标识（一个 tag = 一张地图集），不是版本号。
     pub tag: String,
     pub title: String,
@@ -202,11 +238,12 @@ pub struct MapPublishMetadata {
 /// 新建或修改一版地图的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublishSaveRequest {
+    pub provider: PublishProvider,
     pub owner: String,
     pub repository: String,
     /// 有值 = 改这一版；空 = 新建一版（Release 会自动建 tag）。
     #[serde(default)]
-    pub release_id: Option<u64>,
+    pub release_id: Option<String>,
     /// 地图集的地图 ID：一个 tag 一张图，版本号写在附件名里。
     pub tag: String,
     /// 块外面的说明文字。
@@ -220,9 +257,10 @@ pub struct PublishSaveRequest {
 /// 上传附件请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublishUploadRequest {
+    pub provider: PublishProvider,
     pub owner: String,
     pub repository: String,
-    pub release_id: u64,
+    pub release_id: String,
     /// 本地 ZIP 的绝对路径；附件名由后端从 ZIP 版本和 Release 规则生成。
     pub path: String,
 }
@@ -238,9 +276,10 @@ pub struct PublishUploadProgress {
 /// 删除一版地图的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublishDeleteReleaseRequest {
+    pub provider: PublishProvider,
     pub owner: String,
     pub repository: String,
-    pub release_id: u64,
+    pub release_id: String,
     /// 删 Release 之后要不要顺手删同名 tag（标签模式下留孤儿 tag 会让
     /// 作者以为自己还发布了这一版）。
     pub tag: String,

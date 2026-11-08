@@ -1,13 +1,15 @@
 use super::authorization::clear_pending_auth;
-use super::credentials::ACCESS_TOKEN_ENDPOINT;
 use super::credentials::ApiUser;
 use super::credentials::GITHUB_APP_CLIENT_ID;
 use super::credentials::GITHUB_APP_CLIENT_SECRET;
 use super::credentials::PUBLISH_INSTALL_URL;
 use super::credentials::TokenResponse;
 use super::credentials::client_secret;
+use super::credentials::token_request;
 use super::credentials::tokens_from_response;
-use super::http::API_ENDPOINT;
+use super::credentials::{
+    GITCODE_OAUTH_CLIENT_ID, GITCODE_OAUTH_CLIENT_SECRET, GITCODE_OAUTH_SCOPE,
+};
 use super::http::action_error;
 use super::http::api_client;
 use super::http::authorized;
@@ -17,17 +19,18 @@ use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
 use crate::locale_tag::with_params;
 use crate::models::PublishAuthState;
+use crate::models::PublishProvider;
 use crate::models::PublishSessionCheck;
 use crate::models::PublishSessionOutcome;
 use crate::models::PublishTokens;
 use tauri::State;
 
 /// 取出发布用的 Token；没有就让用户先登录。
-pub(super) fn publish_token(state: &AppState) -> Result<String, String> {
+pub(super) fn publish_token(state: &AppState, provider: PublishProvider) -> Result<String, String> {
     let config = state.config.load_or_default();
     state
         .config
-        .publish_token(&config)
+        .publish_token(&config, provider)
         .ok_or_else(|| "mapPublish.notAuthenticated".to_string())
 }
 
@@ -39,7 +42,7 @@ const ACCESS_EXPIRY_MARGIN_SECS: i64 = 120;
 ///
 /// refresh token 是一次性的：两次并发刷新时第二次拿的是已作废的旧 token，GitHub
 /// 会拒绝，而按「被拒绝 = 失效」处理就会把第一次刚换到的新令牌清掉。
-static SESSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(super) static SESSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// 按本地记下的过期时刻判断 access token 是否已经（或即将）失效。
 /// 不知道过期时刻（不过期的令牌、旧配置）就交给 `/user` 去判。
@@ -61,13 +64,23 @@ enum TokenProbe {
     Unavailable(String),
 }
 
-async fn probe_token(client: &reqwest::Client, token: &str) -> TokenProbe {
-    let response = match authorized(client.get(format!("{API_ENDPOINT}/user")), token)
-        .send_api(crate::models::Provider::Github)
-        .await
+async fn probe_token(
+    client: &reqwest::Client,
+    token: &str,
+    provider: PublishProvider,
+) -> TokenProbe {
+    let response = match authorized(
+        client.get(format!("{}/user", provider.api_endpoint())),
+        token,
+        provider,
+    )
+    .send_api(provider.api_provider())
+    .await
     {
         Ok(response) => response,
-        Err(error) => return TokenProbe::Unavailable(request_error(&error.to_string())),
+        Err(error) => {
+            return TokenProbe::Unavailable(request_error(&error.without_url().to_string()));
+        }
     };
     let status = response.status().as_u16();
     // 只有 401 说明令牌本身失效；403/5xx 是权限或服务问题，刷新也救不回来。
@@ -77,7 +90,7 @@ async fn probe_token(client: &reqwest::Client, token: &str) -> TokenProbe {
     match ensure_success(response, "user").await {
         Ok(response) => match response.json::<ApiUser>().await {
             Ok(user) => TokenProbe::Valid(user.login),
-            Err(error) => TokenProbe::Unavailable(request_error(&error.to_string())),
+            Err(error) => TokenProbe::Unavailable(request_error(&error.without_url().to_string())),
         },
         Err(reason) => TokenProbe::Unavailable(reason),
     }
@@ -107,26 +120,24 @@ fn refresh_rejection_reason(error: &str, description: Option<&str>) -> String {
     }
 }
 
-async fn refresh_tokens(client: &reqwest::Client, refresh_token: &str) -> RefreshResult {
-    let secret = match client_secret() {
+async fn refresh_tokens(
+    client: &reqwest::Client,
+    refresh_token: &str,
+    provider: PublishProvider,
+) -> RefreshResult {
+    let secret = match client_secret(provider) {
         Ok(secret) => secret,
         Err(reason) => return RefreshResult::Unavailable(reason),
     };
-    let form = [
-        ("client_id", GITHUB_APP_CLIENT_ID),
-        ("client_secret", secret),
-        ("grant_type", "refresh_token"),
-        ("refresh_token", refresh_token),
-    ];
-    let response = match client
-        .post(ACCESS_TOKEN_ENDPOINT)
-        .header("Accept", "application/json")
-        .form(&form)
-        .send_api(crate::models::Provider::Github)
-        .await
-    {
+    let request = match token_request(client, provider, secret, None, None, Some(refresh_token)) {
+        Ok(request) => request,
+        Err(reason) => return RefreshResult::Unavailable(reason),
+    };
+    let response = match request.send_api(provider.api_provider()).await {
         Ok(response) => response,
-        Err(error) => return RefreshResult::Unavailable(request_error(&error.to_string())),
+        Err(error) => {
+            return RefreshResult::Unavailable(request_error(&error.without_url().to_string()));
+        }
     };
     if !response.status().is_success() {
         // 这个端点的业务错误都是 200 + `error` 字段；非 2xx 是服务本身出了问题。
@@ -138,16 +149,15 @@ async fn refresh_tokens(client: &reqwest::Client, refresh_token: &str) -> Refres
     }
     let body: TokenResponse = match response.json().await {
         Ok(body) => body,
-        Err(error) => return RefreshResult::Unavailable(request_error(&error.to_string())),
+        Err(error) => {
+            return RefreshResult::Unavailable(request_error(&error.without_url().to_string()));
+        }
     };
     if let Some(error) = body.error.as_deref() {
-        log::warn!(
-            "GitHub 刷新发布 Token 被拒绝：{error}（{}）",
-            body.error_description.as_deref().unwrap_or_default()
-        );
+        log::warn!("发布 Token 刷新被拒绝");
         return RefreshResult::Rejected(refresh_rejection_reason(
             error,
-            body.error_description.as_deref(),
+            Some("OAuth refresh rejected"),
         ));
     }
     match tokens_from_response(&body, chrono::Utc::now().timestamp()) {
@@ -156,26 +166,44 @@ async fn refresh_tokens(client: &reqwest::Client, refresh_token: &str) -> Refres
     }
 }
 
-fn publish_auth_state(state: &AppState) -> PublishAuthState {
+fn publish_auth_state(state: &AppState, provider: PublishProvider) -> PublishAuthState {
     let config = state.config.load_or_default();
     PublishAuthState {
-        authenticated: state.config.publish_token(&config).is_some(),
-        login: config.auth.github_publish_login.clone(),
-        client_id: GITHUB_APP_CLIENT_ID.to_string(),
-        install_url: PUBLISH_INSTALL_URL.to_string(),
-        installed: state.config.publish_installation_id(&config) > 0,
-        secret_configured: !GITHUB_APP_CLIENT_SECRET.is_empty(),
+        authenticated: state.config.publish_token(&config, provider).is_some(),
+        login: publish_login(&config, provider).to_string(),
+        client_id: if provider == PublishProvider::Github {
+            GITHUB_APP_CLIENT_ID
+        } else {
+            GITCODE_OAUTH_CLIENT_ID
+        }
+        .to_string(),
+        install_url: if provider == PublishProvider::Github {
+            PUBLISH_INSTALL_URL
+        } else {
+            ""
+        }
+        .to_string(),
+        installed: provider == PublishProvider::Github
+            && state.config.publish_installation_id(&config) > 0,
+        secret_configured: match provider {
+            PublishProvider::Github => !GITHUB_APP_CLIENT_SECRET.is_empty(),
+            PublishProvider::Gitcode => {
+                !GITCODE_OAUTH_CLIENT_ID.is_empty()
+                    && !GITCODE_OAUTH_CLIENT_SECRET.is_empty()
+                    && !GITCODE_OAUTH_SCOPE.is_empty()
+            }
+        },
     }
 }
 
 /// 令牌失效且救不回来：清掉本地令牌（installation id 保留），让界面回到登录态。
-fn drop_publish_tokens(state: &AppState) -> Result<(), String> {
+fn drop_publish_tokens(state: &AppState, provider: PublishProvider) -> Result<(), String> {
     let _guard = state
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
-    state.config.clear_publish_token(&mut config);
+    state.config.clear_publish_token(&mut config, provider);
     state
         .config
         .save(&config)
@@ -185,6 +213,7 @@ fn drop_publish_tokens(state: &AppState) -> Result<(), String> {
 fn store_refreshed_tokens(
     state: &AppState,
     tokens: &PublishTokens,
+    provider: PublishProvider,
     login: &str,
 ) -> Result<(), String> {
     let _guard = state
@@ -194,7 +223,7 @@ fn store_refreshed_tokens(
     let mut config = state.config.load_or_default();
     state
         .config
-        .set_publish_tokens(&mut config, tokens, login)
+        .set_publish_tokens(&mut config, tokens, provider, login)
         .map_err(|error| action_error("save-token", &error.to_string()))?;
     state
         .config
@@ -209,27 +238,31 @@ fn store_refreshed_tokens(
 #[tauri::command]
 pub async fn check_publish_session(
     state: State<'_, AppState>,
+    provider: PublishProvider,
 ) -> Result<PublishSessionCheck, String> {
     let _session = SESSION_LOCK.lock().await;
-    let outcome = check_session_once(&state).await?;
+    let outcome = check_session_once(&state, provider).await?;
     Ok(PublishSessionCheck {
         outcome,
-        auth: publish_auth_state(&state),
+        auth: publish_auth_state(&state, provider),
     })
 }
 
-async fn check_session_once(state: &AppState) -> Result<PublishSessionOutcome, String> {
+async fn check_session_once(
+    state: &AppState,
+    provider: PublishProvider,
+) -> Result<PublishSessionOutcome, String> {
     let config = state.config.load_or_default();
-    let Some(access_token) = state.config.publish_token(&config) else {
+    let Some(access_token) = state.config.publish_token(&config, provider) else {
         return Ok(PublishSessionOutcome::SignedOut);
     };
-    let refresh_token = state.config.publish_refresh_token(&config);
-    let login = config.auth.github_publish_login.clone();
+    let refresh_token = state.config.publish_refresh_token(&config, provider);
+    let login = publish_login(&config, provider).to_string();
     let now = chrono::Utc::now().timestamp();
     let client = api_client()?;
 
-    if !access_token_expired(config.auth.github_publish_token_expires_at, now) {
-        match probe_token(&client, &access_token).await {
+    if !access_token_expired(publish_expiries(&config, provider).0, now) {
+        match probe_token(&client, &access_token, provider).await {
             TokenProbe::Valid(_) => return Ok(PublishSessionOutcome::Valid),
             TokenProbe::Unavailable(reason) => {
                 log::warn!("发布页会话检查失败（保留本地令牌）：{reason}");
@@ -243,30 +276,31 @@ async fn check_session_once(state: &AppState) -> Result<PublishSessionOutcome, S
 
     if !refresh_token_usable(
         refresh_token.as_deref(),
-        config.auth.github_publish_refresh_expires_at,
+        publish_expiries(&config, provider).1,
         now,
     ) {
-        drop_publish_tokens(state)?;
+        drop_publish_tokens(state, provider)?;
         log::info!("发布令牌无法刷新（没有或已过期 refresh token），已清除，需重新授权");
         return Ok(PublishSessionOutcome::Reauthorize {
             reason: "mapPublish.sessionExpired".to_string(),
         });
     }
     let refresh_token = refresh_token.unwrap_or_default();
-    match refresh_tokens(&client, &refresh_token).await {
+    match refresh_tokens(&client, &refresh_token, provider).await {
         RefreshResult::Refreshed(tokens) => {
             // 旧的一对已经作废：先落盘，再查登录名（查失败也不能丢新令牌）。
-            store_refreshed_tokens(state, &tokens, &login)?;
-            if let TokenProbe::Valid(fresh) = probe_token(&client, &tokens.access_token).await
+            store_refreshed_tokens(state, &tokens, provider, &login)?;
+            if let TokenProbe::Valid(fresh) =
+                probe_token(&client, &tokens.access_token, provider).await
                 && fresh != login
             {
-                store_refreshed_tokens(state, &tokens, &fresh)?;
+                store_refreshed_tokens(state, &tokens, provider, &fresh)?;
             }
             log::info!("发布令牌已刷新并保存");
             Ok(PublishSessionOutcome::Refreshed)
         }
         RefreshResult::Rejected(reason) => {
-            drop_publish_tokens(state)?;
+            drop_publish_tokens(state, provider)?;
             Ok(PublishSessionOutcome::Reauthorize { reason })
         }
         RefreshResult::Unavailable(reason) => {
@@ -278,31 +312,61 @@ async fn check_session_once(state: &AppState) -> Result<PublishSessionOutcome, S
 
 /// 读当前登录状态。前端进页面先调这个，不联网。
 #[tauri::command]
-pub fn map_publish_state(state: State<'_, AppState>) -> PublishAuthState {
-    publish_auth_state(&state)
+pub fn map_publish_state(
+    state: State<'_, AppState>,
+    provider: PublishProvider,
+) -> PublishAuthState {
+    publish_auth_state(&state, provider)
 }
 
 /// 退出发布登录：只清发布 Token，用户自己的 API Token 不动。
 #[tauri::command]
-pub fn sign_out_map_publish(state: State<'_, AppState>) -> Result<PublishAuthState, String> {
+pub async fn sign_out_map_publish(
+    state: State<'_, AppState>,
+    provider: PublishProvider,
+) -> Result<PublishAuthState, String> {
+    clear_pending_auth();
+    let _session = SESSION_LOCK.lock().await;
     {
         let _guard = state
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
         let mut config = state.config.load_or_default();
-        state.config.clear_publish_token(&mut config);
+        state.config.clear_publish_token(&mut config, provider);
         state
             .config
             .save(&config)
             .map_err(|error| action_error("sign-out", &error.to_string()))?;
     }
     clear_pending_auth();
-    log::info!("已退出 GitHub 发布登录");
+    log::info!("已退出发布登录");
     // 退出登录不动 installation id：用户在 GitHub 上改仓库范围时它不变，
     // 下次登录还能按它直查。
-    Ok(publish_auth_state(&state))
+    Ok(publish_auth_state(&state, provider))
 }
 
 #[cfg(test)]
 mod tests;
+
+fn publish_login(config: &crate::models::AppConfig, provider: PublishProvider) -> &str {
+    match provider {
+        PublishProvider::Github => &config.auth.github_publish_login,
+        PublishProvider::Gitcode => &config.auth.gitcode_publish.login,
+    }
+}
+fn publish_expiries(
+    config: &crate::models::AppConfig,
+    provider: PublishProvider,
+) -> (Option<i64>, Option<i64>) {
+    match provider {
+        PublishProvider::Github => (
+            config.auth.github_publish_token_expires_at,
+            config.auth.github_publish_refresh_expires_at,
+        ),
+        PublishProvider::Gitcode => (
+            config.auth.gitcode_publish.expires_at,
+            config.auth.gitcode_publish.refresh_expires_at,
+        ),
+    }
+}

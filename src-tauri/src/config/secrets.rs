@@ -44,6 +44,9 @@ fn protect_secret(value: &str) -> io::Result<String> {
     Ok(format!("plain:{}", B64.encode(value.as_bytes())))
 }
 
+#[cfg(test)]
+mod tests;
+
 fn reveal_secret(value: &str) -> Option<String> {
     if value.is_empty() {
         return None;
@@ -155,13 +158,27 @@ impl ConfigService {
     }
 
     /// 地图发布页的 access token：GitHub App 授权拿到的那一份，读路径不受影响。
-    pub(crate) fn publish_token(&self, config: &AppConfig) -> Option<String> {
-        reveal_secret(&config.auth.github_publish_token)
+    pub(crate) fn publish_token(
+        &self,
+        config: &AppConfig,
+        provider: PublishProvider,
+    ) -> Option<String> {
+        reveal_secret(match provider {
+            PublishProvider::Github => &config.auth.github_publish_token,
+            PublishProvider::Gitcode => &config.auth.gitcode_publish.access_token,
+        })
     }
 
     /// 与 access token 配对的 refresh token；App 关闭了令牌过期时没有。
-    pub(crate) fn publish_refresh_token(&self, config: &AppConfig) -> Option<String> {
-        reveal_secret(&config.auth.github_publish_refresh_token)
+    pub(crate) fn publish_refresh_token(
+        &self,
+        config: &AppConfig,
+        provider: PublishProvider,
+    ) -> Option<String> {
+        reveal_secret(match provider {
+            PublishProvider::Github => &config.auth.github_publish_refresh_token,
+            PublishProvider::Gitcode => &config.auth.gitcode_publish.refresh_token,
+        })
     }
 
     /// 写入一组发布令牌（首次授权或刷新后的轮换结果）。
@@ -172,6 +189,7 @@ impl ConfigService {
         &self,
         config: &mut AppConfig,
         tokens: &PublishTokens,
+        provider: PublishProvider,
         login: &str,
     ) -> io::Result<()> {
         let access = protect_secret(tokens.access_token.trim())?;
@@ -179,6 +197,16 @@ impl ConfigService {
             Some(value) if !value.is_empty() => protect_secret(value)?,
             _ => String::new(),
         };
+        if provider == PublishProvider::Gitcode {
+            config.auth.gitcode_publish = crate::models::PublishCredentialConfig {
+                access_token: access,
+                refresh_token: refresh,
+                expires_at: tokens.expires_at,
+                refresh_expires_at: tokens.refresh_expires_at,
+                login: login.trim().to_string(),
+            };
+            return Ok(());
+        }
         config.auth.github_publish_token = access;
         config.auth.github_publish_refresh_token = refresh;
         config.auth.github_publish_token_expires_at = tokens.expires_at;
@@ -187,7 +215,11 @@ impl ConfigService {
         Ok(())
     }
 
-    pub fn clear_publish_token(&self, config: &mut AppConfig) {
+    pub fn clear_publish_token(&self, config: &mut AppConfig, provider: PublishProvider) {
+        if provider == PublishProvider::Gitcode {
+            config.auth.gitcode_publish = Default::default();
+            return;
+        }
         config.auth.github_publish_token.clear();
         config.auth.github_publish_refresh_token.clear();
         config.auth.github_publish_token_expires_at = None;

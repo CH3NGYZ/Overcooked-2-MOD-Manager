@@ -1,4 +1,3 @@
-use super::http::API_ENDPOINT;
 use super::http::api_client;
 use super::http::authorized;
 use super::http::ensure_success;
@@ -19,6 +18,7 @@ use crate::models::MapPublishMetadata;
 use crate::models::OperationResult;
 use crate::models::PublishAsset;
 use crate::models::PublishDeleteReleaseRequest;
+use crate::models::PublishProvider;
 use crate::models::PublishRelease;
 use crate::models::PublishSaveRequest;
 use serde::Deserialize;
@@ -27,15 +27,19 @@ use tauri::State;
 
 #[derive(Deserialize)]
 pub(super) struct ApiAsset {
-    pub(super) id: u64,
+    #[serde(deserialize_with = "api_id")]
+    pub(super) id: String,
     pub(super) name: String,
     #[serde(default)]
     pub(super) size: u64,
+    #[serde(default, rename = "type")]
+    kind: String,
 }
 
 #[derive(Deserialize)]
 pub(super) struct ApiRelease {
-    id: u64,
+    #[serde(default, deserialize_with = "api_id")]
+    id: String,
     pub(super) tag_name: String,
     #[serde(default)]
     name: String,
@@ -50,7 +54,13 @@ pub(super) struct ApiRelease {
     #[serde(default)]
     pub(super) body: String,
     #[serde(default)]
-    assets: Vec<ApiAsset>,
+    pub(super) assets: Vec<ApiAsset>,
+}
+
+impl ApiAsset {
+    pub(super) fn is_attachment(&self) -> bool {
+        self.kind == "attach"
+    }
 }
 
 pub(super) fn asset_from_api(asset: ApiAsset) -> PublishAsset {
@@ -66,7 +76,7 @@ pub(super) fn asset_from_api(asset: ApiAsset) -> PublishAsset {
 /// 解析失败不当作整条列表失败：作者可能手写了半截块，界面至少要能把这一版
 /// 列出来并让他改回去。失败时正文用 `strip_note_block` 的近似结果（去掉块），
 /// 元数据留空。
-fn release_from_api(release: ApiRelease) -> PublishRelease {
+fn release_from_api(release: ApiRelease, provider: PublishProvider) -> PublishRelease {
     let (body, metadata) = match crate::map_note::parse_release_note(&release.body) {
         Ok(Some(block)) => (
             block.body,
@@ -82,7 +92,11 @@ fn release_from_api(release: ApiRelease) -> PublishRelease {
         }
     };
     PublishRelease {
-        id: release.id,
+        id: if provider == PublishProvider::Gitcode || release.id.is_empty() {
+            release.tag_name.clone()
+        } else {
+            release.id
+        },
         tag: release.tag_name,
         title: release.name,
         draft: release.draft,
@@ -90,7 +104,12 @@ fn release_from_api(release: ApiRelease) -> PublishRelease {
         created_at: release.created_at,
         published_at: release.published_at,
         body,
-        assets: release.assets.into_iter().map(asset_from_api).collect(),
+        assets: release
+            .assets
+            .into_iter()
+            .filter(|asset| provider == PublishProvider::Github || asset.is_attachment())
+            .map(asset_from_api)
+            .collect(),
         metadata,
     }
 }
@@ -98,21 +117,23 @@ fn release_from_api(release: ApiRelease) -> PublishRelease {
 #[tauri::command]
 pub async fn list_publish_releases(
     state: State<'_, AppState>,
+    provider: PublishProvider,
     owner: String,
     repository: String,
 ) -> Result<Vec<PublishRelease>, String> {
-    let token = publish_token(&state)?;
+    let token = publish_token(&state, provider)?;
+    let api_endpoint = provider.api_endpoint();
     let (owner, repository) = validate_coordinates(&owner, &repository)?;
     let client = api_client()?;
     let releases = crate::releases::pagination::collect_release_pages(|page| {
         let url = format!(
-            "{API_ENDPOINT}/repos/{owner}/{repository}/releases?per_page={}&page={page}",
+            "{api_endpoint}/repos/{owner}/{repository}/releases?per_page={}&page={page}",
             crate::releases::pagination::RELEASE_PAGE_SIZE
         );
-        let request = authorized(client.get(url), &token);
+        let request = authorized(client.get(url), &token, provider);
         async move {
             let response = request
-                .send_api(crate::models::Provider::Github)
+                .send_api(provider.api_provider())
                 .await
                 .map_err(|error| request_error(&error.to_string()))?;
             let releases: Vec<ApiRelease> = ensure_success(response, "list-releases")
@@ -127,7 +148,7 @@ pub async fn list_publish_releases(
     .await?;
     let mut result = releases
         .into_iter()
-        .map(release_from_api)
+        .map(|release| release_from_api(release, provider))
         .collect::<Vec<_>>();
     // tag 是地图身份、不是版本号，按它排没有语义，只提供一个稳定顺序；
     // 真正的版本号来自各 Release 的附件名。
@@ -191,7 +212,9 @@ pub async fn save_publish_release(
     state: State<'_, AppState>,
     request: PublishSaveRequest,
 ) -> Result<PublishRelease, String> {
-    let token = publish_token(&state)?;
+    let provider = request.provider;
+    let api_endpoint = provider.api_endpoint();
+    let token = publish_token(&state, provider)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
     let tag = if request.release_id.is_none() {
         validate_new_tag(&request.tag)?
@@ -212,11 +235,13 @@ pub async fn save_publish_release(
             }
             // 身份锁：已有 oc2-map 块时，英文名 / 中文名 / 作者不允许被改写，
             // 否则已安装的用户会因身份不符而检测错乱。
-            if let Some(release_id) = request.release_id {
+            if let Some(release_id) = request.release_id.as_deref() {
+                let release_id = encode_component(release_id);
                 let remote: ApiRelease = get_json(
                     &client,
                     &token,
-                    &format!("{API_ENDPOINT}/repos/{owner}/{repository}/releases/{release_id}"),
+                    provider,
+                    &format!("{api_endpoint}/repos/{owner}/{repository}/releases/{release_id}"),
                     "read-release",
                 )
                 .await?;
@@ -233,12 +258,14 @@ pub async fn save_publish_release(
             apply_table_tail(&mut metadata);
             render_release_body(&metadata, &request.body)
         }
-        None => match request.release_id {
+        None => match request.release_id.as_deref() {
             Some(release_id) => {
+                let release_id = encode_component(release_id);
                 let remote: ApiRelease = get_json(
                     &client,
                     &token,
-                    &format!("{API_ENDPOINT}/repos/{owner}/{repository}/releases/{release_id}"),
+                    provider,
+                    &format!("{api_endpoint}/repos/{owner}/{repository}/releases/{release_id}"),
                     "read-release",
                 )
                 .await?;
@@ -247,39 +274,31 @@ pub async fn save_publish_release(
             None => request.body.clone(),
         },
     };
-    let response = match request.release_id {
-        Some(release_id) => {
+    let payload = release_payload(provider, &tag, &body);
+    let response = match request.release_id.as_deref() {
+        Some(id) => {
             authorized(
                 client.patch(format!(
-                    "{API_ENDPOINT}/repos/{owner}/{repository}/releases/{release_id}"
+                    "{api_endpoint}/repos/{owner}/{repository}/releases/{}",
+                    encode_component(id)
                 )),
                 &token,
+                provider,
             )
-            .json(&json!({
-                "tag_name": tag,
-                "name": tag,
-                "body": body,
-                "draft": false,
-                "prerelease": false,
-            }))
-            .send_api(crate::models::Provider::Github)
+            .json(&payload)
+            .send_api(provider.api_provider())
             .await
         }
         None => {
             authorized(
                 client.post(format!(
-                    "{API_ENDPOINT}/repos/{owner}/{repository}/releases"
+                    "{api_endpoint}/repos/{owner}/{repository}/releases"
                 )),
                 &token,
+                provider,
             )
-            .json(&json!({
-                "tag_name": tag,
-                "name": tag,
-                "body": body,
-                "draft": false,
-                "prerelease": false,
-            }))
-            .send_api(crate::models::Provider::Github)
+            .json(&payload)
+            .send_api(provider.api_provider())
             .await
         }
     }
@@ -294,7 +313,7 @@ pub async fn save_publish_release(
         release.tag_name,
         request.release_id.is_none()
     );
-    Ok(release_from_api(release))
+    Ok(release_from_api(release, provider))
 }
 
 #[tauri::command]
@@ -302,17 +321,23 @@ pub async fn delete_publish_release(
     state: State<'_, AppState>,
     request: PublishDeleteReleaseRequest,
 ) -> Result<OperationResult, String> {
-    let token = publish_token(&state)?;
+    if request.provider == PublishProvider::Gitcode {
+        return Err("mapPublish.releaseDeleteUnavailable".into());
+    }
+    let provider = request.provider;
+    let api_endpoint = provider.api_endpoint();
+    let token = publish_token(&state, provider)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
     let client = api_client()?;
     let response = authorized(
         client.delete(format!(
-            "{API_ENDPOINT}/repos/{owner}/{repository}/releases/{}",
-            request.release_id
+            "{api_endpoint}/repos/{owner}/{repository}/releases/{}",
+            encode_component(&request.release_id)
         )),
         &token,
+        provider,
     )
-    .send_api(crate::models::Provider::Github)
+    .send_api(provider.api_provider())
     .await
     .map_err(|error| request_error(&error.to_string()))?;
     ensure_success(response, "delete-release").await?;
@@ -326,11 +351,12 @@ pub async fn delete_publish_release(
         let tag_path = encode_component(&tag);
         let response = authorized(
             client.delete(format!(
-                "{API_ENDPOINT}/repos/{owner}/{repository}/git/refs/tags/{tag_path}"
+                "{api_endpoint}/repos/{owner}/{repository}/git/refs/tags/{tag_path}"
             )),
             &token,
+            provider,
         )
-        .send_api(crate::models::Provider::Github)
+        .send_api(provider.api_provider())
         .await
         .map_err(|error| request_error(&error.to_string()))?;
         let status = response.status();
@@ -353,3 +379,21 @@ pub async fn delete_publish_release(
 
 #[cfg(test)]
 mod tests;
+
+fn api_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(value) => Ok(value),
+        serde_json::Value::Number(value) => Ok(value.to_string()),
+        _ => Err(serde::de::Error::custom("invalid identifier")),
+    }
+}
+fn release_payload(provider: PublishProvider, tag: &str, body: &str) -> serde_json::Value {
+    match provider {
+        PublishProvider::Github => {
+            json!({"tag_name": tag, "name": tag, "body": body, "draft": false, "prerelease": false})
+        }
+        PublishProvider::Gitcode => {
+            json!({"tag_name": tag, "name": tag, "body": body, "release_status": "latest"})
+        }
+    }
+}

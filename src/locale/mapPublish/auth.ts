@@ -2,6 +2,64 @@ import type { DomainMessages } from '../types.ts'
 
 /** GitHub 登录、会话、App 授权与请求权限反馈。同一 key 的五语保持集中。 */
 export const mapPublishAuth: DomainMessages = {
+  platformAccount: {
+    "zh-CN": "{provider} 账号",
+    "zh-TW": "{provider} 帳號",
+    "en": "{provider} account",
+    "ko": "{provider} 계정",
+    "ja": "{provider} アカウント",
+  },
+  gitcodePermissionHint: {
+    "zh-CN": "请确认 GitCode OAuth 已授予当前仓库所需权限，再重新授权。",
+    "zh-TW": "請確認 GitCode OAuth 已授予目前倉庫所需權限，再重新授權。",
+    "en": "Check the GitCode OAuth permissions for this repository, then authorize again.",
+    "ko": "현재 저장소에 필요한 GitCode OAuth 권한을 확인한 후 다시 승인하세요.",
+    "ja": "このリポジトリに必要な GitCode OAuth 権限を確認し、再承認してください。",
+  },
+
+  channel: {
+    "zh-CN": "发布渠道",
+    "zh-TW": "發布管道",
+    "en": "Publishing platform",
+    "ko": "게시 플랫폼",
+    "ja": "公開先",
+  },
+  oauthSignIn: {
+    "zh-CN": "使用 GitCode 登录",
+    "zh-TW": "使用 GitCode 登入",
+    "en": "Sign in with GitCode",
+    "ko": "GitCode로 로그인",
+    "ja": "GitCode でサインイン",
+  },
+  gitcodeHint: {
+    "zh-CN": "通过浏览器授权 GitCode 后，选择已有仓库管理地图 Release 和附件。此处不会创建仓库。",
+    "zh-TW": "透過瀏覽器授權 GitCode 後，選擇既有倉庫管理地圖 Release 與附件。此處不會建立倉庫。",
+    "en": "Authorize GitCode in your browser, then select an existing repository to manage map releases and attachments. No repositories are created.",
+    "ko": "브라우저에서 GitCode를 승인한 후 기존 저장소의 지도 릴리스와 첨부 파일을 관리합니다. 저장소는 생성하지 않습니다.",
+    "ja": "ブラウザーで GitCode を承認し、既存リポジトリのマップ Release と添付ファイルを管理します。リポジトリは作成しません。",
+  },
+  missingOAuthConfig: {
+    "zh-CN": "此构建尚未配置 GitCode OAuth，暂时无法登录，请联系维护者。",
+    "zh-TW": "此版本尚未設定 GitCode OAuth，暫時無法登入，請聯絡維護者。",
+    "en": "GitCode OAuth is not configured in this build. Contact the maintainer to enable sign-in.",
+    "ko": "이 빌드에는 GitCode OAuth가 구성되지 않았습니다. 관리자에게 문의하세요.",
+    "ja": "このビルドには GitCode OAuth が設定されていません。管理者にお問い合わせください。",
+  },
+  gitcodeRepositoryEmpty: {
+    "zh-CN": "没有可用仓库，请确认账号已有仓库且已授予相应权限。",
+    "zh-TW": "沒有可用倉庫，請確認帳號已有倉庫且已授予對應權限。",
+    "en": "No repositories are available. Check that your account has existing repositories and the required permissions.",
+    "ko": "사용 가능한 저장소가 없습니다. 기존 저장소와 승인 권한을 확인하세요.",
+    "ja": "利用可能なリポジトリがありません。既存のリポジトリと承認権限をご確認ください。",
+  },
+  releaseDeleteUnavailable: {
+    "zh-CN": "GitCode 当前公开 API 未提供删除整个 Release 的接口；如需删除，请前往仓库网页。附件仍可在此管理。",
+    "zh-TW": "GitCode 目前公開 API 未提供刪除整個 Release 的介面；如需刪除，請前往倉庫網頁。附件仍可在此管理。",
+    "en": "GitCode does not document an API for deleting a complete release. Delete it on the repository website; attachments can still be managed here.",
+    "ko": "GitCode는 전체 릴리스 삭제 API를 공개하지 않습니다. 저장소 웹사이트에서 삭제하세요. 첨부 파일은 여기서 관리할 수 있습니다.",
+    "ja": "GitCode には Release 全体の削除 API が公開されていません。削除はリポジトリのウェブサイトで行ってください。添付ファイルはこちらで管理できます。",
+  },
+
   signIn: {
     'zh-CN': '使用 GitHub 登录',
     'zh-TW': '使用 GitHub 登入',

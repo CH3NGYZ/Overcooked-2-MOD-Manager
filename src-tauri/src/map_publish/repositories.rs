@@ -9,6 +9,7 @@ use super::session::publish_token;
 use super::validation::validate_coordinates;
 use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
+use crate::models::PublishProvider;
 use crate::models::PublishRepository;
 use crate::models::PublishRepositoryList;
 use crate::models::PublishRepositoryTopics;
@@ -56,6 +57,7 @@ struct ApiInstallationRepositories {
 #[derive(Deserialize)]
 struct ApiPermissions {
     #[serde(default)]
+    #[serde(deserialize_with = "api_bool")]
     push: bool,
 }
 
@@ -64,12 +66,14 @@ struct ApiRepository {
     name: String,
     full_name: String,
     #[serde(default)]
+    #[serde(deserialize_with = "api_bool")]
     private: bool,
     #[serde(default)]
     default_branch: String,
     #[serde(default)]
     topics: Vec<String>,
     #[serde(default)]
+    #[serde(alias = "permission")]
     permissions: Option<ApiPermissions>,
 }
 
@@ -104,10 +108,14 @@ fn repository_from_api(repository: ApiRepository) -> PublishRepository {
 #[tauri::command]
 pub async fn list_publish_repositories(
     state: State<'_, AppState>,
+    provider: PublishProvider,
 ) -> Result<PublishRepositoryList, String> {
     let service = state.config.clone();
-    let token = publish_token(&state)?;
+    let token = publish_token(&state, provider)?;
     let client = api_client()?;
+    if provider == PublishProvider::Gitcode {
+        return gitcode_repositories(&client, &token).await;
+    }
     let known = {
         let config = service.load_or_default();
         service.publish_installation_id(&config)
@@ -134,6 +142,7 @@ pub async fn list_publish_repositories(
     let installations: ApiInstallationList = get_json(
         &client,
         &token,
+        PublishProvider::Github,
         &format!("{API_ENDPOINT}/user/installations?per_page=100"),
         "list-installations",
     )
@@ -185,8 +194,14 @@ async fn installation_repositories(
     let url = format!(
         "{API_ENDPOINT}/user/installations/{installation}/repositories?per_page={REPOSITORY_PAGE_SIZE}"
     );
-    let repositories: ApiInstallationRepositories =
-        get_json(client, token, &url, "list-installation-repositories").await?;
+    let repositories: ApiInstallationRepositories = get_json(
+        client,
+        token,
+        PublishProvider::Github,
+        &url,
+        "list-installation-repositories",
+    )
+    .await?;
     Ok(writable_repositories(repositories))
 }
 
@@ -200,6 +215,7 @@ async fn remembered_installation_repositories(
     let response = authorized(
         client.get(&format!("{API_ENDPOINT}/user/installations/{installation}")),
         token,
+        PublishProvider::Github,
     )
     .send_api(crate::models::Provider::Github)
     .await
@@ -269,16 +285,25 @@ async fn fetch_repository_topics(
     client: &reqwest::Client,
     token: &str,
     full_name: &str,
+    provider: PublishProvider,
 ) -> Result<Vec<String>, String> {
     let value: serde_json::Value = get_json(
         client,
         token,
-        &format!("{API_ENDPOINT}/repos/{full_name}/topics"),
+        provider,
+        &match provider {
+            PublishProvider::Github => format!("{API_ENDPOINT}/repos/{full_name}/topics"),
+            PublishProvider::Gitcode => format!("{}/repos/{full_name}", provider.api_endpoint()),
+        },
         "get-topics",
     )
     .await?;
     Ok(value
-        .get("names")
+        .get(if provider == PublishProvider::Github {
+            "names"
+        } else {
+            "topics"
+        })
         .and_then(|names| names.as_array())
         .map(|names| {
             names
@@ -302,16 +327,62 @@ fn topics_report(topics: Vec<String>) -> PublishRepositoryTopics {
 #[tauri::command]
 pub async fn publish_repository_topics(
     state: State<'_, AppState>,
+    provider: PublishProvider,
     owner: String,
     repository: String,
 ) -> Result<PublishRepositoryTopics, String> {
     let (owner, repository) = validate_coordinates(&owner, &repository)?;
-    let token = publish_token(&state)?;
+    let token = publish_token(&state, provider)?;
     let client = api_client()?;
     let full_name = format!("{owner}/{repository}");
-    let topics = fetch_repository_topics(&client, &token, &full_name).await?;
+    let topics = fetch_repository_topics(&client, &token, &full_name, provider).await?;
     Ok(topics_report(topics))
 }
 
 #[cfg(test)]
 mod tests;
+
+fn api_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Bool(value) => Ok(value),
+        serde_json::Value::Number(value) if value.as_u64() == Some(0) => Ok(false),
+        serde_json::Value::Number(value) if value.as_u64() == Some(1) => Ok(true),
+        _ => Err(serde::de::Error::custom("invalid permission")),
+    }
+}
+async fn gitcode_repositories(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<PublishRepositoryList, String> {
+    let mut result = Vec::new();
+    let mut page = 1;
+    loop {
+        let url = format!(
+            "{}/user/repos?per_page=100&page={page}",
+            PublishProvider::Gitcode.api_endpoint()
+        );
+        let repositories: Vec<ApiRepository> = get_json(
+            client,
+            token,
+            PublishProvider::Gitcode,
+            &url,
+            "list-repositories",
+        )
+        .await?;
+        let count = repositories.len();
+        result.extend(writable_repositories(ApiInstallationRepositories {
+            repositories,
+        }));
+        if count < 100 {
+            break;
+        }
+        page += 1;
+    }
+    result.sort_by(|left, right| left.full_name.cmp(&right.full_name));
+    result.dedup_by(|left, right| left.full_name == right.full_name);
+    Ok(PublishRepositoryList {
+        installations: 0,
+        all_repositories: false,
+        repositories: result,
+    })
+}

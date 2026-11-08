@@ -1,8 +1,27 @@
 fn main() {
     embed_repository_sources();
     embed_github_app_secret();
+    embed_gitcode_oauth();
     link_windows_test_manifest();
     tauri_build::build()
+}
+
+fn embed_gitcode_oauth() {
+    let mut generated = String::new();
+    for name in ["CLIENT_ID", "CLIENT_SECRET", "SCOPE"] {
+        let variable = format!("OC2_GITCODE_OAUTH_{name}");
+        println!("cargo:rerun-if-env-changed={variable}");
+        // Scope must be chosen when registering the application; do not silently
+        // request undocumented narrow permissions or all account permissions.
+        let value = std::env::var(variable).unwrap_or_default();
+        generated.push_str(&format!(
+            "pub const GITCODE_OAUTH_{name}: &str = {:?};\n",
+            value.trim()
+        ));
+    }
+    let output =
+        std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("gitcode_oauth.rs");
+    std::fs::write(output, generated).expect("无法写入 GitCode OAuth 配置");
 }
 
 /// GitHub App 的 Client Secret 不进仓库：优先读环境变量（CI 用 secret），

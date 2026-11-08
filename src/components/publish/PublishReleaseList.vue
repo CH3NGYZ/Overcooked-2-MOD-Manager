@@ -4,7 +4,7 @@ import { NButton, NSpin, NTable, NTag } from 'naive-ui'
 import { t } from '../../i18n'
 import { latestVersionOfRelease, unregisteredReleaseVersions, versionRowsOf } from '../../mapPublishRelease'
 import type { PublishRelease } from '../../types'
-const props = defineProps<{ repositoryName: string; releases: PublishRelease[]; releasesLoading: boolean; deletingRelease: boolean }>()
+const props = defineProps<{ provider: 'github' | 'gitcode'; repositoryName: string; releases: PublishRelease[]; releasesLoading: boolean; deletingRelease: boolean }>()
 const emit = defineEmits<{ create: []; open: [release: PublishRelease]; delete: [release: PublishRelease] }>()
 const rows = computed(() => props.releases.map(release => ({
   release, latest: latestVersionOfRelease(release),
@@ -19,6 +19,7 @@ const rows = computed(() => props.releases.map(release => ({
         {{ t('mapPublish.newMapSet') }}
       </n-button>
     </div>
+    <p v-if="provider === 'gitcode'" class="hint no-top">{{ t('mapPublish.releaseDeleteUnavailable') }}</p>
     <div v-if="releasesLoading" class="state-line"><n-spin size="small" /><span>{{ t('common.loading') }}</span></div>
     <p v-else-if="!rows.length" class="hint no-top">{{ t('mapPublish.mapSetEmpty') }}</p>
     <div v-else class="release-table-scroll">
@@ -50,7 +51,7 @@ const rows = computed(() => props.releases.map(release => ({
             </td>
             <td><div class="release-actions">
               <n-button size="small" :disabled="deletingRelease" @click="emit('open', row.release)">{{ t('mapPublish.mapManagement') }}</n-button>
-              <n-button size="small" type="error" secondary :disabled="deletingRelease" @click="emit('delete', row.release)">{{ t('common.action.delete') }}</n-button>
+              <n-button v-if="provider === 'github'" size="small" type="error" secondary :disabled="deletingRelease" @click="emit('delete', row.release)">{{ t('common.action.delete') }}</n-button>
             </div></td>
           </tr>
         </tbody>

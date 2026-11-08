@@ -26,7 +26,7 @@ import '../styles/publish.css'
 const message = useNotify()
 const dialog = useDialog()
 const publish = useMapPublish()
-const { auth, authReady, authLoading, authenticated, needsInstall, openInstallPage,
+const { provider, auth, authReady, authLoading, authenticated, needsInstall, openInstallPage,
   signingIn, authorization, authPhase, authFailure, repositories, repositoriesLoading,
   selectedRepository, releases, releasesLoading, deletingRelease, inspecting, uploadProgress,
   permissionFailure, missingTopics, loadState, startSignIn, startSignInAnyway,
@@ -138,7 +138,7 @@ function confirmDeleteAsset(name: string) {
     negativeText: t('common.action.cancel'),
     onPositiveClick: async () => {
       markDialogBusy(instance)
-      await deleteAsset(asset.id)
+      await deleteAsset(asset.id, workingRelease.value!.tag)
     },
   })
 }
@@ -165,7 +165,7 @@ function confirmDeleteAsset(name: string) {
     <!-- 未登录：主区只留入口；没装过 App 时按钮直接打开安装页，装与选仓库一步完成 -->
     <section v-if="!authenticated" class="group">
       <h2 class="group-title">
-        {{ auth?.installed ? t('mapPublish.signIn') : t('mapPublish.installAppNow') }}
+        {{ (provider === 'gitcode' || auth?.installed) ? t(provider === 'gitcode' ? 'mapPublish.oauthSignIn' : 'mapPublish.signIn') : t('mapPublish.installAppNow') }}
       </h2>
       <div class="panel">
         <div v-if="!authReady" class="state-line">
@@ -174,22 +174,22 @@ function confirmDeleteAsset(name: string) {
         </div>
         <template v-else>
           <p class="hint no-top">
-            {{ auth?.installed ? t('mapPublish.connectRequired') : t('mapPublish.installStepHint') }}
+            {{ (provider === 'gitcode' || auth?.installed) ? t(provider === 'gitcode' ? 'mapPublish.gitcodeHint' : 'mapPublish.connectRequired') : t('mapPublish.installStepHint') }}
           </p>
-          <p v-if="auth && !auth.secret_configured" class="warn no-top">{{ t('mapPublish.secretMissing') }}</p>
+          <p v-if="auth && !auth.secret_configured" class="warn no-top">{{ t(provider === 'gitcode' ? 'mapPublish.missingOAuthConfig' : 'mapPublish.secretMissing') }}</p>
           <p v-else-if="authPhase === 'expired'" class="warn no-top">{{ t('mapPublish.expired') }}</p>
           <p v-else-if="authPhase === 'denied'" class="warn no-top">{{ t('mapPublish.denied') }}</p>
           <p v-else-if="authPhase === 'failed'" class="warn no-top">{{ authFailure }}</p>
           <p v-if="authorization" class="hint">{{ t('mapPublish.waiting') }}</p>
-          <p class="hint no-top">
+          <p v-if="provider === 'github'" class="hint no-top">
             {{ t('mapPublish.installFallbackHint') }}
           </p>
           <div class="actions">
             <n-button size="small" type="primary" :loading="signingIn"
               :disabled="signingIn || (auth !== null && !auth.secret_configured)" @click="startSignIn">
-              {{ auth?.installed ? t('mapPublish.signIn') : t('mapPublish.installAppNow') }}
+              {{ (provider === 'gitcode' || auth?.installed) ? t(provider === 'gitcode' ? 'mapPublish.oauthSignIn' : 'mapPublish.signIn') : t('mapPublish.installAppNow') }}
             </n-button>
-            <n-button size="small" @click="startSignInAnyway">
+            <n-button v-if="provider === 'github'" size="small" @click="startSignInAnyway">
               {{ t('mapPublish.signInAnyway') }}
             </n-button>
             <n-button v-if="authorization" size="small" @click="reopenAuthorization">
@@ -213,10 +213,10 @@ function confirmDeleteAsset(name: string) {
         </div>
         <template v-else>
           <p v-if="needsInstall" class="hint no-top">{{ t('mapPublish.installStepHint') }}</p>
-          <p v-else-if="!repositories.length" class="hint no-top">{{ t('mapPublish.repositoryEmpty') }}</p>
+          <p v-else-if="!repositories.length" class="hint no-top">{{ t(provider === 'gitcode' ? 'mapPublish.gitcodeRepositoryEmpty' : 'mapPublish.repositoryEmpty') }}</p>
           <p v-else class="hint no-top">{{ t('mapPublish.chooseRepositoryHint') }}</p>
           <p v-if="authorization" class="hint no-top">{{ t('mapPublish.waiting') }}</p>
-          <p class="hint no-top">
+          <p v-if="provider === 'github'" class="hint no-top">
             {{ t('mapPublish.installFallbackHint') }}
           </p>
           <div class="actions">
@@ -224,7 +224,7 @@ function confirmDeleteAsset(name: string) {
               :disabled="signingIn" @click="startSignIn">
               {{ t('mapPublish.installAppNow') }}
             </n-button>
-            <n-button size="small" @click="startSignInAnyway">
+            <n-button v-if="provider === 'github'" size="small" @click="startSignInAnyway">
               {{ t('mapPublish.signInAnyway') }}
             </n-button>
             <n-button v-if="!needsInstall" size="small" type="primary" @click="openSettings">
@@ -254,7 +254,7 @@ function confirmDeleteAsset(name: string) {
         </div>
       </div>
 
-      <PublishReleaseList v-if="mode === 'list'" :repository-name="selectedRepository.full_name"
+      <PublishReleaseList :provider="provider" v-if="mode === 'list'" :repository-name="selectedRepository.full_name"
         :releases="releases" :releases-loading="releasesLoading" :deleting-release="deletingRelease"
         @create="openCreate" @open="openManagement" @delete="confirmDeleteRelease" />
       <template v-else>
@@ -267,9 +267,9 @@ function confirmDeleteAsset(name: string) {
             </p>
             <template v-else>
               <p class="hint no-top">
-                {{ t('mapPublish.permissionHint', { permission: permissionLabel }) }}
+                {{ t(provider === 'gitcode' ? 'mapPublish.gitcodePermissionHint' : 'mapPublish.permissionHint', { permission: permissionLabel }) }}
               </p>
-              <ol class="permission-steps">
+              <ol v-if="provider === 'github'" class="permission-steps">
                 <li>{{ t('mapPublish.permissionStep1') }}</li>
                 <li>{{ t('mapPublish.permissionStep2') }}</li>
                 <li>{{ t('mapPublish.permissionStep3') }}</li>
@@ -277,7 +277,7 @@ function confirmDeleteAsset(name: string) {
             </template>
           </div>
           <div class="banner-actions">
-            <n-button size="small" @click="openInstallPage">{{ t('mapPublish.manageAppInstall') }}</n-button>
+            <n-button v-if="provider === 'github'" size="small" @click="openInstallPage">{{ t('mapPublish.manageAppInstall') }}</n-button>
             <n-button size="small" type="primary" :loading="signingIn" :disabled="signingIn"
               @click="startSignInAnyway">
               {{ t('mapPublish.reauthorize') }}

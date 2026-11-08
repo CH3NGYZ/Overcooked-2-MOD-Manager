@@ -85,3 +85,33 @@ fn the_table_tail_overrides_the_stale_latest_versions() {
     apply_table_tail(&mut metadata);
     assert_eq!(metadata.latest_mapset_version, "0.69");
 }
+
+#[test]
+fn gitcode_releases_keep_tag_identity_and_only_attachment_assets() {
+    let remote: ApiRelease =
+        serde_json::from_value(json!({"tag_name":"map/测试", "name":"Map", "assets":[
+        {"id":"opaque-12", "name":"map.zip", "type":"attach"},
+        {"id":99, "name":"archive.zip", "type":"source"}]}))
+        .unwrap();
+    let projected = release_from_api(remote, PublishProvider::Gitcode);
+    assert_eq!(projected.id, "map/测试");
+    assert_eq!(projected.assets.len(), 1);
+    assert_eq!(projected.assets[0].id, "opaque-12");
+    let github: ApiRelease = serde_json::from_value(
+        json!({"id":123,"tag_name":"tag","assets":[{"id":42,"name":"asset.zip"}]}),
+    )
+    .unwrap();
+    let github = release_from_api(github, PublishProvider::Github);
+    assert_eq!(github.id, "123");
+    assert_eq!(github.assets[0].id, "42");
+    assert!(
+        release_payload(PublishProvider::Gitcode, "map", "body")
+            .get("draft")
+            .is_none()
+    );
+    assert!(
+        release_payload(PublishProvider::Github, "map", "body")
+            .get("release_status")
+            .is_none()
+    );
+}

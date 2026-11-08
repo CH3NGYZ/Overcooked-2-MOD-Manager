@@ -16,8 +16,8 @@ test('上传完成未登记时只禁重复上传，日志资料可改但留在�
 
 test('本次上传按服务器 ID 和固定仓库清理，保存失败不丢清理记录', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
-  assert.match(editor, /pendingUpload\.value = \{ id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name \}/)
-  assert.match(editor, /if \(!await publish.deleteAsset\(uploaded.id, uploaded\)\) return false\s+pendingUpload.value = null/)
+  assert.match(editor, /pendingUpload\.value = \{ provider: publish.provider.value, tag: release.tag, id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name \}/)
+  assert.match(editor, /if \(!await publish.deleteAsset\(uploaded.id, uploaded.tag, uploaded\)\) return false\s+pendingUpload.value = null/)
   assert.match(editor, /if \(!saved \|\| epoch !== editorEpoch\) return false\s+if \(step === 'versions'\) \{\s+pendingUpload.value = null/)
   assert.doesNotMatch(editor.slice(editor.indexOf('async function saveDocument(')), /resetToList\(\)/)
   assert.match(editor, /if \(await leave.requestLeave\(\)\) resetToList\(\)/)
@@ -27,7 +27,7 @@ test('本次上传按服务器 ID 和固定仓库清理，保存失败不丢清�
   }
   const session = read('src/composables/useMapPublish.ts')
   const deletion = session.slice(session.indexOf('async function deleteAsset('))
-  assert.match(deletion, /api.deletePublishAsset\(coordinates.owner, coordinates.repository, assetId\)/)
+  assert.match(deletion, /api.deletePublishAsset\(coordinates.owner, coordinates.repository, assetId, tag, coordinates.provider\)/)
   assert.match(deletion, /assets: release.assets.filter\(asset => asset.id !== assetId\)/)
   assert.doesNotMatch(deletion, /loadReleases\(/)
 })

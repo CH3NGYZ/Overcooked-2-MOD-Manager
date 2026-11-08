@@ -6,9 +6,9 @@ import { readText, sourceFiles } from './helpers/source-scan.mjs'
 const root = resolve('src-tauri/src/map_publish')
 const read = path => readText(resolve(root, path))
 const commands = [
-  ['authorization', 'start_github_authorization'],
-  ['authorization', 'poll_github_authorization'],
-  ['authorization', 'cancel_github_authorization'],
+  ['authorization', 'start_publish_authorization'],
+  ['authorization', 'poll_publish_authorization'],
+  ['authorization', 'cancel_publish_authorization'],
   ['session', 'map_publish_state'],
   ['session', 'check_publish_session'],
   ['session', 'sign_out_map_publish'],
@@ -23,7 +23,7 @@ const commands = [
   ['repositories', 'publish_repository_topics'],
 ]
 const owners = {
-  authorization: ['authorization_target', 'start_github_authorization', 'poll_github_authorization', 'cancel_github_authorization'],
+  authorization: ['authorization_target', 'start_publish_authorization', 'poll_publish_authorization', 'cancel_publish_authorization'],
   'authorization/callback': ['bind_callback_listener', 'spawn_callback_listener', 'handle_callback', 'parse_query'],
   credentials: ['tokens_from_response', 'client_secret', 'exchange_code', 'fetch_login'],
   session: ['publish_token', 'check_publish_session', 'check_session_once', 'refresh_tokens', 'store_refreshed_tokens'],
@@ -67,13 +67,13 @@ test('publish authorization, session rotation and ZIP upload retain their shared
   const auth = read('authorization.rs')
   for (const [before, after] of [
     ['let listener = bind_callback_listener()?', 'crate::shell_open::open_url('],
-    ['*guard = CallbackOutcome::Exchanging', 'match exchange_code('],
+    ['*guard = CallbackOutcome::Exchanging', 'let exchanged = exchange_code('],
   ]) {
     assert.ok(auth.indexOf(before) >= 0 && auth.indexOf(before) < auth.indexOf(after), before)
   }
   const session = read('session.rs')
   assert.match(session, /let _session = SESSION_LOCK\.lock\(\)\.await;\s*let outcome = check_session_once/)
-  assert.match(session, /store_refreshed_tokens\(state, &tokens, &login\)\?;\s*if let TokenProbe::Valid\(fresh\) = probe_token/)
+  assert.match(session, /store_refreshed_tokens\(state, &tokens, provider, &login\)\?;\s*if let TokenProbe::Valid\(fresh\) =\s*probe_token/)
   assert.match(session, /RefreshResult::Unavailable\(reason\) => \{\s*log::warn!\([^;]*\);\s*Ok\(PublishSessionOutcome::Unavailable \{ reason \}\)\s*\}/s)
   const zip = read('zip.rs')
   assert.match(zip, /#\[path = "\.\.\/map_publish_zip_cache\.rs"\]\s*pub\(super\) mod zip_cache;/)

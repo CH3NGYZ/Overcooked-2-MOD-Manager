@@ -139,6 +139,8 @@ pub struct LaunchConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
+    #[serde(default)]
+    pub gitcode_publish: super::publish::PublishCredentialConfig,
     pub github_token: String,
     pub gitee_token: String,
     #[serde(default)]

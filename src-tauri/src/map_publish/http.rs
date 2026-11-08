@@ -1,5 +1,6 @@
 use crate::api_scheduler::ApiRequestExt;
 use crate::locale_tag::with_params;
+use crate::models::PublishProvider;
 use crate::releases::APP_USER_AGENT;
 use std::time::Duration;
 
@@ -38,12 +39,21 @@ pub(super) fn api_client() -> Result<reqwest::Client, String> {
 pub(super) fn upload_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(UPLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent(APP_USER_AGENT)
         .build()
         .map_err(|error| request_error(&error.to_string()))
 }
 
-pub(super) fn authorized(request: reqwest::RequestBuilder, token: &str) -> reqwest::RequestBuilder {
+pub(super) fn authorized(
+    request: reqwest::RequestBuilder,
+    token: &str,
+    provider: PublishProvider,
+) -> reqwest::RequestBuilder {
+    let request = request.bearer_auth(token);
+    if provider == PublishProvider::Gitcode {
+        return request.header("Accept", "application/json");
+    }
     request
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", API_VERSION)
@@ -125,7 +135,7 @@ pub(super) async fn ensure_success(
         })
         .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
     log::warn!(
-        "GitHub 写操作失败：动作={action}，状态={}，详情={detail}",
+        "发布写操作失败：动作={action}，状态={}，详情={detail}",
         status.as_u16()
     );
     Err(classify_write_failure(
@@ -141,11 +151,12 @@ pub(super) async fn ensure_success(
 pub(super) async fn get_json<T: serde::de::DeserializeOwned>(
     client: &reqwest::Client,
     token: &str,
+    provider: PublishProvider,
     url: &str,
     action: &str,
 ) -> Result<T, String> {
-    let response = authorized(client.get(url), token)
-        .send_api(crate::models::Provider::Github)
+    let response = authorized(client.get(url), token, provider)
+        .send_api(provider.api_provider())
         .await
         .map_err(|error| request_error(&error.to_string()))?;
     ensure_success(response, action)

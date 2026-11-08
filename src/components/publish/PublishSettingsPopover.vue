@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NPopover, NSpin, NTag } from 'naive-ui'
+import { NButton, NInput, NPopover, NSelect, NSpin, NTag } from 'naive-ui'
 import { SettingsOutline } from '@vicons/ionicons5'
 import { t } from '../../i18n'
 import { api } from '../../services/tauri'
@@ -10,7 +10,7 @@ import type { useMapPublish } from '../../composables/useMapPublish'
 const props = defineProps<{ publish: ReturnType<typeof useMapPublish>; disabled: boolean }>()
 const settingsOpen = defineModel<boolean>('show', { default: false })
 watch(() => props.disabled, disabled => { if (disabled) settingsOpen.value = false })
-const { auth, authReady, authenticated, needsInstall, allRepositories, openInstallPage,
+const { provider, selectProvider, auth, authReady, authenticated, needsInstall, allRepositories, openInstallPage,
   signingIn, signingOut, authorization, authPhase, authFailure, repositories, repositoriesLoading,
   selectedFullName, startSignIn, startSignInAnyway, cancelSignIn,
   signOut, selectRepository } = props.publish
@@ -45,7 +45,11 @@ async function reopenAuthorization() {
       </template>
 
       <div class="map-publish publish-settings">
-        <h3 class="settings-title">{{ t('mapPublish.account') }}</h3>
+        <label class="settings-title" for="publish-provider">{{ t('mapPublish.channel') }}</label>
+        <n-select input-id="publish-provider" :value="provider" :disabled="disabled || signingIn || signingOut"
+          :options="[{ label: 'GitHub', value: 'github' }, { label: 'GitCode', value: 'gitcode' }]"
+          @update:value="selectProvider" />
+        <h3 class="settings-title">{{ t('mapPublish.platformAccount', { provider: provider === 'github' ? 'GitHub' : 'GitCode' }) }}</h3>
 
         <div v-if="!authReady" class="state-line">
           <n-spin size="small" />
@@ -59,8 +63,8 @@ async function reopenAuthorization() {
               {{ t('mapPublish.signOut') }}
             </n-button>
           </div>
-          <p class="hint no-top">{{ t('mapPublish.installAppHint') }}</p>
-          <div class="code-actions">
+          <p v-if="provider === 'github'" class="hint no-top">{{ t('mapPublish.installAppHint') }}</p>
+          <div v-if="provider === 'github'" class="code-actions">
             <n-button size="tiny" @click="openInstallPage">{{ t('mapPublish.installApp') }}</n-button>
           </div>
         </template>
@@ -81,15 +85,15 @@ async function reopenAuthorization() {
         </div>
 
         <div v-else class="auth-block">
-          <p class="hint no-top">{{ t('mapPublish.signInHint') }}</p>
-          <p v-if="auth && !auth.secret_configured" class="warn no-top">{{ t('mapPublish.secretMissing') }}</p>
+          <p class="hint no-top">{{ t(provider === 'gitcode' ? 'mapPublish.gitcodeHint' : 'mapPublish.signInHint') }}</p>
+          <p v-if="auth && !auth.secret_configured" class="warn no-top">{{ t(provider === 'gitcode' ? 'mapPublish.missingOAuthConfig' : 'mapPublish.secretMissing') }}</p>
           <p v-else-if="authPhase === 'expired'" class="warn no-top">{{ t('mapPublish.expired') }}</p>
           <p v-else-if="authPhase === 'denied'" class="warn no-top">{{ t('mapPublish.denied') }}</p>
           <p v-else-if="authPhase === 'failed'" class="warn no-top">{{ authFailure }}</p>
           <div class="code-actions">
             <n-button size="tiny" type="primary" :loading="signingIn"
               :disabled="disabled || signingIn || (auth !== null && !auth.secret_configured)" @click="startSignIn">
-              {{ t('mapPublish.signIn') }}
+              {{ t(provider === 'gitcode' ? 'mapPublish.oauthSignIn' : 'mapPublish.signIn') }}
             </n-button>
           </div>
         </div>
@@ -132,12 +136,12 @@ async function reopenAuthorization() {
               </li>
             </ul>
             <p v-else-if="repositories.length" class="hint no-top">{{ t('mapPublish.searchRepositoryEmpty') }}</p>
-            <p v-else class="hint no-top">{{ t('mapPublish.repositoryEmpty') }}</p>
+            <p v-else class="hint no-top">{{ t(provider === 'gitcode' ? 'mapPublish.gitcodeRepositoryEmpty' : 'mapPublish.repositoryEmpty') }}</p>
 
-            <p class="hint no-top">{{ t('mapPublish.repositoryHint') }}</p>
-            <p v-if="!allRepositories" class="hint no-top">{{ t('mapPublish.repositoryScopeHint') }}</p>
+            <p class="hint no-top">{{ t(provider === 'gitcode' ? 'mapPublish.gitcodeHint' : 'mapPublish.repositoryHint') }}</p>
+            <p v-if="provider === 'github' && !allRepositories" class="hint no-top">{{ t('mapPublish.repositoryScopeHint') }}</p>
 
-            <p class="hint no-top">{{ t('mapPublish.manualRepositoryHint') }}</p>
+            <p v-if="provider === 'github'" class="hint no-top">{{ t('mapPublish.manualRepositoryHint') }}</p>
           </template>
         </template>
       </div>

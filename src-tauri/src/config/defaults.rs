@@ -50,6 +50,7 @@ pub(crate) fn default_config() -> AppConfig {
             auto_restore_winhttp: true,
         },
         auth: AuthConfig {
+            gitcode_publish: Default::default(),
             github_token: String::new(),
             gitee_token: String::new(),
             gitcode_token: String::new(),

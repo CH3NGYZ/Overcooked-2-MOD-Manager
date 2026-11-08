@@ -39,10 +39,10 @@ pub use network::{GitHubProxy, GitHubProxyConfig, NetworkConfig, ProxyMode};
 pub use operations::{BepInExInstallResult, InstallConflict, OperationResult};
 pub use publish::{
     MapPublishMetadata, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,
-    PublishAuthorization, PublishDeleteReleaseRequest, PublishRelease, PublishRepository,
-    PublishRepositoryList, PublishRepositoryTopics, PublishSaveRequest, PublishSessionCheck,
-    PublishSessionOutcome, PublishTokens, PublishUploadProgress, PublishUploadRequest,
-    PublishZipInspection,
+    PublishAuthorization, PublishCredentialConfig, PublishDeleteReleaseRequest, PublishProvider,
+    PublishRelease, PublishRepository, PublishRepositoryList, PublishRepositoryTopics,
+    PublishSaveRequest, PublishSessionCheck, PublishSessionOutcome, PublishTokens,
+    PublishUploadProgress, PublishUploadRequest, PublishZipInspection,
 };
 pub use relations::{
     DependencySyncResult, RelationKind, ReleaseRelationOverride, RepositoryRelation,

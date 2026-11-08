@@ -1,3 +1,4 @@
+import type { PublishProvider } from '../types'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
@@ -29,7 +30,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   const assetRows = ref<AssetVersionRow[]>([])
   const metadataDirty = ref(false)
   const versionsDirty = ref(false)
-  const pendingUpload = ref<{ id: number; name: string; owner: string; repository: string } | null>(null)
+  const pendingUpload = ref<{ id: string; name: string; owner: string; repository: string; provider: PublishProvider; tag: string } | null>(null)
   const awaitingMetadata = computed(() => pendingUpload.value !== null)
   const pendingIdentity = ref<PublishZipInspection | MapPublishMetadata | null>(null)
   const pending = reactive({
@@ -60,7 +61,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   const leave = usePublishLeaveGuard(operationBusy, computed(() => pendingUpload.value?.name ?? ''), async () => {
     const uploaded = pendingUpload.value
     if (!uploaded) return true
-    if (!await publish.deleteAsset(uploaded.id, uploaded)) return false
+    if (!await publish.deleteAsset(uploaded.id, uploaded.tag, uploaded)) return false
     pendingUpload.value = null
     return true
   }, localDirty)
@@ -266,7 +267,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
       }
       const asset = await publish.uploadAsset(release, pending.path)
       if (!asset || epoch !== editorEpoch) return false
-      pendingUpload.value = { id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name }
+      pendingUpload.value = { provider: publish.provider.value, tag: release.tag, id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name }
       const row = assetRows.value.find(item => item.mapsetVersion === version)
       if (row) row.infoVersion = infoVersion
       else assetRows.value.push({ mapsetVersion: version, infoVersion, size: asset.size })

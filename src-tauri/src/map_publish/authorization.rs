@@ -1,3 +1,5 @@
+use super::credentials::{GITCODE_OAUTH_CLIENT_ID, GITCODE_OAUTH_SCOPE};
+use crate::models::PublishProvider;
 mod callback;
 
 use super::credentials::CALLBACK_URL;
@@ -34,6 +36,7 @@ const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(120);
 /// 一次授权里等回调的状态：回调线程把 `code` 塞进 `outcome`，换 Token 仍在异步
 /// 命令里做（线程里没有 tokio runtime，硬塞一个阻塞客户端只会多一条网络实现）。
 struct PendingAuthorization {
+    provider: PublishProvider,
     /// PKCE 只在纯 OAuth 授权时才有；安装页那条路没有 code_challenge。
     verifier: Option<String>,
     cancel: Arc<AtomicBool>,
@@ -71,7 +74,9 @@ fn code_challenge(verifier: &str) -> String {
 
 pub(super) fn clear_pending_auth() {
     if let Ok(mut pending) = PENDING_AUTH.lock() {
-        *pending = None;
+        if let Some(flow) = pending.take() {
+            flow.cancel.store(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -93,10 +98,24 @@ fn release_pending_auth() {
 /// `force_authorize` 是「装过 App 但没记下 id」的兜底：那条路进安装页不会回调，
 /// 只能改走 OAuth 把 Token 拿回来，再靠列安装把 id 补记上。
 fn authorization_target(
+    provider: PublishProvider,
     known: u64,
     nonce: &str,
     force_authorize: bool,
 ) -> (PublishAuthMode, String, Option<String>) {
+    if provider == PublishProvider::Gitcode {
+        return (
+            PublishAuthMode::Authorize,
+            format!(
+                "https://gitcode.com/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
+                encode_component(GITCODE_OAUTH_CLIENT_ID),
+                encode_component(CALLBACK_URL),
+                encode_component(GITCODE_OAUTH_SCOPE),
+                encode_component(nonce)
+            ),
+            None,
+        );
+    }
     if known == 0 && !force_authorize {
         return (
             PublishAuthMode::Install,
@@ -132,11 +151,12 @@ fn authorization_target(
 /// `force_authorize` 来自前端的「改用 GitHub 登录」：装过 App 却没记下 id 的用户
 /// 只有这条路能拿到 Token，拿到之后列一次安装就把 id 补记上了。
 #[tauri::command]
-pub async fn start_github_authorization(
+pub async fn start_publish_authorization(
     state: State<'_, AppState>,
+    provider: PublishProvider,
     force_authorize: Option<bool>,
 ) -> Result<PublishAuthorization, String> {
-    client_secret()?;
+    client_secret(provider)?;
     let known = {
         let config = state.config.load_or_default();
         state.config.publish_installation_id(&config)
@@ -144,7 +164,7 @@ pub async fn start_github_authorization(
     let listener = bind_callback_listener()?;
     let nonce = random_token();
     let (mode, authorize_url, verifier) =
-        authorization_target(known, &nonce, force_authorize.unwrap_or(false));
+        authorization_target(provider, known, &nonce, force_authorize.unwrap_or(false));
     let outcome = Arc::new(Mutex::new(CallbackOutcome::Pending));
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -152,6 +172,7 @@ pub async fn start_github_authorization(
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
         *pending = Some(PendingAuthorization {
+            provider,
             verifier,
             cancel: cancel.clone(),
             outcome: outcome.clone(),
@@ -165,7 +186,7 @@ pub async fn start_github_authorization(
             &[("reason", &error)],
         ));
     }
-    log::info!("GitHub 授权页已在系统浏览器打开（模式={mode:?}），等待本机回调");
+    log::info!("发布授权页已在系统浏览器打开（模式={mode:?}），等待本机回调");
     Ok(PublishAuthorization {
         authorize_url,
         expires_in: AUTHORIZE_TIMEOUT.as_secs(),
@@ -175,7 +196,7 @@ pub async fn start_github_authorization(
 
 /// 取消当前授权：离开上传页时调一次，别让端口一直被占着。
 #[tauri::command]
-pub fn cancel_github_authorization() {
+pub fn cancel_publish_authorization() {
     if let Ok(mut pending) = PENDING_AUTH.lock() {
         if let Some(flow) = pending.take() {
             flow.cancel.store(true, Ordering::Relaxed);
@@ -185,8 +206,9 @@ pub fn cancel_github_authorization() {
 
 /// 轮询一次授权进度：前端每 1 秒调一次，离开页面就停。
 #[tauri::command]
-pub async fn poll_github_authorization(
+pub async fn poll_publish_authorization(
     state: State<'_, AppState>,
+    provider: PublishProvider,
 ) -> Result<PublishAuthPoll, String> {
     let service = state.config.clone();
     let operation = state.operation.clone();
@@ -196,7 +218,10 @@ pub async fn poll_github_authorization(
             .map_err(|_| "lock.poisoned".to_string())?;
         match pending.as_ref() {
             None => return Ok(PublishAuthPoll::Expired),
-            Some(flow) => (flow.verifier.clone(), flow.outcome.clone()),
+            Some(flow) if flow.provider == provider => {
+                (flow.verifier.clone(), flow.outcome.clone())
+            }
+            Some(_) => return Ok(PublishAuthPoll::Expired),
         }
     };
     let snapshot = outcome
@@ -217,33 +242,49 @@ pub async fn poll_github_authorization(
                 }
                 *guard = CallbackOutcome::Exchanging;
             }
-            match exchange_code(&code, verifier.as_deref()).await {
+            let _session = super::session::SESSION_LOCK.lock().await;
+            let exchanged = exchange_code(provider, &code, verifier.as_deref()).await;
+            // A canceled or replaced flow may finish its network exchange late.
+            // Hold this short guard until persistence finishes so it cannot revive it.
+            let mut pending = PENDING_AUTH
+                .lock()
+                .map_err(|_| "lock.poisoned".to_string())?;
+            if !pending.as_ref().is_some_and(|flow| {
+                flow.provider == provider
+                    && Arc::ptr_eq(&flow.outcome, &outcome)
+                    && !flow.cancel.load(Ordering::Relaxed)
+            }) {
+                return Ok(PublishAuthPoll::Expired);
+            }
+            match exchanged {
                 Ok((tokens, login)) => {
                     {
                         let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
                         let mut config = service.load_or_default();
                         service
-                            .set_publish_tokens(&mut config, &tokens, &login)
+                            .set_publish_tokens(&mut config, &tokens, provider, &login)
                             .map_err(|error| action_error("save-token", &error.to_string()))?;
                         // 安装页回调带回的 id 就是「这次勾了哪些仓库」的答案：
                         // 记下来之后列仓库按 id 直查，不用等 /user/installations。
-                        if let Some(installation) = installation {
+                        if let Some(installation) =
+                            installation.filter(|_| provider == PublishProvider::Github)
+                        {
                             service.set_publish_installation_id(&mut config, installation);
                         }
                         service
                             .save(&config)
                             .map_err(|error| action_error("save-token", &error.to_string()))?;
                     }
-                    clear_pending_auth();
+                    pending.take();
                     log::info!(
-                        "GitHub 发布 Token 已保存：用户={login}，安装={installation:?}，可刷新={}",
+                        "发布 Token 已保存：用户={login}，安装={installation:?}，可刷新={}",
                         tokens.refresh_token.is_some()
                     );
                     Ok(PublishAuthPoll::Authorized { login })
                 }
                 Err(reason) => {
-                    clear_pending_auth();
-                    log::warn!("GitHub 授权换取 Token 失败：{reason}");
+                    pending.take();
+                    log::warn!("发布授权换取 Token 失败：{reason}");
                     Ok(auth_failure(reason))
                 }
             }

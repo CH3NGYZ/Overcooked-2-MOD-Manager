@@ -1,4 +1,3 @@
-use super::http::API_ENDPOINT;
 use super::http::api_client;
 use super::http::authorized;
 use super::http::ensure_success;
@@ -21,6 +20,7 @@ use crate::locale_tag::with_params;
 use crate::map_note::VERSION_PLACEHOLDER;
 use crate::models::OperationResult;
 use crate::models::PublishAsset;
+use crate::models::PublishProvider;
 use crate::models::PublishUploadRequest;
 use crate::models::PublishZipInspection;
 use tauri::State;
@@ -33,15 +33,18 @@ pub async fn upload_publish_asset(
     request: PublishUploadRequest,
     on_progress: tauri::ipc::Channel<crate::models::PublishUploadProgress>,
 ) -> Result<PublishAsset, String> {
-    let token = publish_token(&state)?;
+    let provider = request.provider;
+    let api_endpoint = provider.api_endpoint();
+    let token = publish_token(&state, provider)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
     let client = api_client()?;
     let remote: ApiRelease = get_json(
         &client,
         &token,
+        provider,
         &format!(
-            "{API_ENDPOINT}/repos/{owner}/{repository}/releases/{}",
-            request.release_id
+            "{api_endpoint}/repos/{owner}/{repository}/releases/{}",
+            encode_component(&request.release_id)
         ),
         "read-release",
     )
@@ -105,23 +108,60 @@ pub async fn upload_publish_asset(
         }
     });
     let client = upload_client()?;
-    let url = format!(
-        "{UPLOAD_ENDPOINT}/repos/{owner}/{repository}/releases/{}/assets?name={}",
-        request.release_id,
-        encode_component(&name)
-    );
-    let response = authorized(client.post(url.as_str()), &token)
-        .header("Content-Type", "application/zip")
-        .header("Content-Length", total)
-        .body(reqwest::Body::wrap_stream(stream))
-        .send_api(crate::models::Provider::Github)
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
-    let asset: ApiAsset = ensure_success(response, "upload-asset")
-        .await?
-        .json()
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
+    let body = reqwest::Body::wrap_stream(stream);
+    let asset = if provider == PublishProvider::Github {
+        let url = format!(
+            "{UPLOAD_ENDPOINT}/repos/{owner}/{repository}/releases/{}/assets?name={}",
+            encode_component(&request.release_id),
+            encode_component(&name)
+        );
+        let response = authorized(client.post(url), &token, provider)
+            .header("Content-Type", "application/zip")
+            .header("Content-Length", total)
+            .body(body)
+            .send_api(provider.api_provider())
+            .await
+            .map_err(|error| request_error(&error.without_url().to_string()))?;
+        ensure_success(response, "upload-asset")
+            .await?
+            .json::<ApiAsset>()
+            .await
+            .map_err(|error| request_error(&error.to_string()))?
+    } else {
+        let url = format!(
+            "{api_endpoint}/repos/{owner}/{repository}/releases/{}/upload_url?file_name={}",
+            encode_component(&remote.tag_name),
+            encode_component(&name)
+        );
+        let upload: SignedUpload =
+            get_json(&client, &token, provider, &url, "upload-address").await?;
+        let response = signed_upload_request(&client, &upload)?
+            .header("Content-Length", total)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| request_error(&error.without_url().to_string()))?;
+        // Object storage's response is not a Release attachment DTO.
+        if !response.status().is_success() {
+            return Err(super::http::action_error(
+                "upload-asset",
+                &format!("HTTP {}", response.status().as_u16()),
+            ));
+        }
+        let url = format!(
+            "{api_endpoint}/repos/{owner}/{repository}/releases/{}",
+            encode_component(&remote.tag_name)
+        );
+        let confirmed: ApiRelease =
+            get_json(&client, &token, provider, &url, "confirm-upload").await?;
+        confirmed
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == name && asset.is_attachment())
+            .ok_or_else(|| {
+                super::http::action_error("confirm-upload", "attachment not confirmed")
+            })?
+    };
     log::info!(
         "附件已上传：仓库={owner}/{repository}，Release={}，名称={}，大小={}",
         request.release_id,
@@ -175,22 +215,31 @@ fn upload_asset_name(tag: &str, template: Option<&str>, version: &str) -> Result
 #[tauri::command]
 pub async fn delete_publish_asset(
     state: State<'_, AppState>,
+    provider: PublishProvider,
+    tag: String,
     owner: String,
     repository: String,
-    asset_id: u64,
+    asset_id: String,
 ) -> Result<OperationResult, String> {
-    let token = publish_token(&state)?;
+    let token = publish_token(&state, provider)?;
+    let api_endpoint = provider.api_endpoint();
     let (owner, repository) = validate_coordinates(&owner, &repository)?;
     let client = api_client()?;
-    let response = authorized(
-        client.delete(format!(
-            "{API_ENDPOINT}/repos/{owner}/{repository}/releases/assets/{asset_id}"
-        )),
-        &token,
-    )
-    .send_api(crate::models::Provider::Github)
-    .await
-    .map_err(|error| request_error(&error.to_string()))?;
+    let url = match provider {
+        PublishProvider::Github => format!(
+            "{api_endpoint}/repos/{owner}/{repository}/releases/assets/{}",
+            encode_component(&asset_id)
+        ),
+        PublishProvider::Gitcode => format!(
+            "{api_endpoint}/repos/{owner}/{repository}/releases/{}/attach_files/{}",
+            encode_component(&super::validation::validate_tag(&tag)?),
+            encode_component(&asset_id)
+        ),
+    };
+    let response = authorized(client.delete(url), &token, provider)
+        .send_api(provider.api_provider())
+        .await
+        .map_err(|error| request_error(&error.to_string()))?;
     ensure_success(response, "delete-asset").await?;
     log::info!("附件已删除：仓库={owner}/{repository}，id={asset_id}");
     Ok(OperationResult {
@@ -198,3 +247,36 @@ pub async fn delete_publish_asset(
         message: "message.mapPublish.assetDeleted".to_string(),
     })
 }
+
+#[derive(serde::Deserialize)]
+struct SignedUpload {
+    url: String,
+    headers: std::collections::BTreeMap<String, String>,
+}
+/// The signed object-storage request is deliberately anonymous: OAuth is only
+/// sent to the official API. Redirects are disabled by upload_client.
+fn signed_upload_request(
+    client: &reqwest::Client,
+    upload: &SignedUpload,
+) -> Result<reqwest::RequestBuilder, String> {
+    let url = reqwest::Url::parse(&upload.url).map_err(|_| invalid_asset("invalid upload URL"))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(invalid_asset("invalid upload URL"));
+    }
+    let mut request = client.put(url);
+    for (name, value) in &upload.headers {
+        let lower = name.to_ascii_lowercase();
+        if !(lower.starts_with("x-obs-") || lower == "content-type" || lower == "content-md5") {
+            return Err(invalid_asset("unsupported upload header"));
+        }
+        request = request.header(name, value);
+    }
+    Ok(request)
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,3 +1,4 @@
+import type { PublishProvider } from '../types'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -426,21 +427,21 @@ export const api = {
   /* ===== 地图发布（GitHub Release）===== */
 
   /** 当前登录状态：不联网，进页面先调。 */
-  mapPublishState: () => invoke<PublishAuthState>('map_publish_state'),
+  mapPublishState: (provider: PublishProvider) => invoke<PublishAuthState>('map_publish_state', { provider }),
   /** 进入发布页时调一次：验证令牌，失效时用 refresh token 换新（只有这里会刷新）。 */
-  checkPublishSession: () => invoke<PublishSessionCheck>('check_publish_session'),
+  checkPublishSession: (provider: PublishProvider) => invoke<PublishSessionCheck>('check_publish_session', { provider }),
   /** 启动 GitHub App 用户授权：后端自己打开系统浏览器并监听本机回调端口。 */
-  startGithubAuthorization: (forceAuthorize = false) =>
-    invoke<PublishAuthorization>('start_github_authorization', { forceAuthorize }),
+  startPublishAuthorization: (provider: PublishProvider, forceAuthorize = false) =>
+    invoke<PublishAuthorization>('start_publish_authorization', { provider, forceAuthorize }),
   /** 前端每秒查一次；推荐直接轮询，不要在这里加延迟。 */
-  pollGithubAuthorization: () => invoke<PublishAuthPoll>('poll_github_authorization'),
+  pollPublishAuthorization: (provider: PublishProvider) => invoke<PublishAuthPoll>('poll_publish_authorization', { provider }),
   /** 取消待授权流程，释放本机回调端口（离开上传页时必须调）。 */
-  cancelGithubAuthorization: () => invoke<void>('cancel_github_authorization'),
-  signOutMapPublish: () => invoke<PublishAuthState>('sign_out_map_publish'),
+  cancelPublishAuthorization: () => invoke<void>('cancel_publish_authorization'),
+  signOutMapPublish: (provider: PublishProvider) => invoke<PublishAuthState>('sign_out_map_publish', { provider }),
   /** 当前账号安装范围内的仓库，带 map 标签的排在前面。 */
-  listPublishRepositories: () => invoke<PublishRepositoryList>('list_publish_repositories'),
-  listPublishReleases: (owner: string, repository: string) =>
-    invoke<PublishRelease[]>('list_publish_releases', { owner, repository }),
+  listPublishRepositories: (provider: PublishProvider) => invoke<PublishRepositoryList>('list_publish_repositories', { provider }),
+  listPublishReleases: (owner: string, repository: string, provider: PublishProvider) =>
+    invoke<PublishRelease[]>('list_publish_releases', { owner, repository, provider }),
   savePublishRelease: (request: PublishSaveRequest) =>
     invoke<PublishRelease>('save_publish_release', { request }),
   deletePublishRelease: (request: PublishDeleteReleaseRequest) =>
@@ -455,8 +456,8 @@ export const api = {
       active = false
     }
   },
-  deletePublishAsset: (owner: string, repository: string, assetId: number) =>
-    invoke<OperationResult>('delete_publish_asset', { owner, repository, assetId }),
+  deletePublishAsset: (owner: string, repository: string, assetId: string, tag: string, provider: PublishProvider) =>
+    invoke<OperationResult>('delete_publish_asset', { owner, repository, assetId, tag, provider }),
   /** 识别本地地图 ZIP（版本号、info、requires）；重活，后端在 spawn_blocking 里跑。 */
   inspectPublishZip: (path: string) =>
     invoke<PublishZipInspection>('inspect_publish_zip', { path }),
@@ -468,8 +469,8 @@ export const api = {
   stagePublishZip: (path: string, fileName: string) =>
     invoke<string>('stage_publish_zip', { path, fileName }),
   /** 只读检查仓库标签：缺 map 之类时界面顶部提示作者去仓库设置里加。 */
-  publishRepositoryTopics: (owner: string, repository: string) =>
-    invoke<PublishRepositoryTopics>('publish_repository_topics', { owner, repository }),
+  publishRepositoryTopics: (owner: string, repository: string, provider: PublishProvider) =>
+    invoke<PublishRepositoryTopics>('publish_repository_topics', { owner, repository, provider }),
 }
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

@@ -1,4 +1,3 @@
-use super::http::API_ENDPOINT;
 use super::http::action_error;
 use super::http::api_client;
 use super::http::authorized;
@@ -6,11 +5,13 @@ use super::http::ensure_success;
 use super::http::request_error;
 use crate::api_scheduler::ApiRequestExt;
 use crate::locale_tag::with_params;
+use crate::models::PublishProvider;
 use crate::models::PublishTokens;
 use serde::Deserialize;
 
 // 构建期注入凭据；只引用生成项，不在源码或日志中展开其值。
 include!(concat!(env!("OUT_DIR"), "/github_app.rs"));
+include!(concat!(env!("OUT_DIR"), "/gitcode_oauth.rs"));
 
 /// 管理器内置的 GitHub App Client ID（public client，不是秘密）。
 pub const GITHUB_APP_CLIENT_ID: &str = "Iv23liMDOtLBrrkv781U";
@@ -35,14 +36,13 @@ pub(super) struct TokenResponse {
     refresh_token: Option<String>,
     /// access token 剩余秒数（GitHub 固定 8 小时）。
     #[serde(default)]
+    #[serde(deserialize_with = "optional_seconds")]
     expires_in: Option<i64>,
     /// refresh token 剩余秒数（GitHub 固定 6 个月）。
     #[serde(default)]
     refresh_token_expires_in: Option<i64>,
     #[serde(default)]
     pub(super) error: Option<String>,
-    #[serde(default)]
-    pub(super) error_description: Option<String>,
 }
 
 /// 把成功响应换算成要落盘的一组令牌；access token 为空时返回 `None`。
@@ -79,7 +79,16 @@ pub(super) struct ApiUser {
 }
 
 /// Client Secret 由 `build.rs` 注入；空串说明这个构建没配，换不到 Token。
-pub(super) fn client_secret() -> Result<&'static str, String> {
+pub(super) fn client_secret(provider: PublishProvider) -> Result<&'static str, String> {
+    if provider == PublishProvider::Gitcode {
+        if GITCODE_OAUTH_CLIENT_ID.is_empty()
+            || GITCODE_OAUTH_CLIENT_SECRET.is_empty()
+            || GITCODE_OAUTH_SCOPE.is_empty()
+        {
+            return Err("mapPublish.missingOAuthConfig".to_string());
+        }
+        return Ok(GITCODE_OAUTH_CLIENT_SECRET);
+    }
     if GITHUB_APP_CLIENT_SECRET.is_empty() {
         return Err("mapPublish.missingClientSecret".to_string());
     }
@@ -87,37 +96,29 @@ pub(super) fn client_secret() -> Result<&'static str, String> {
 }
 
 pub(super) async fn exchange_code(
+    provider: PublishProvider,
     code: &str,
     verifier: Option<&str>,
 ) -> Result<(PublishTokens, String), String> {
-    let secret = client_secret()?;
+    let secret = client_secret(provider)?;
     let client = api_client()?;
-    let mut form = vec![
-        ("client_id", GITHUB_APP_CLIENT_ID),
-        ("client_secret", secret),
-        ("code", code),
-        ("redirect_uri", CALLBACK_URL),
-    ];
-    // 只有发起过 PKCE 挑战的流程才带 verifier；安装页那条路没有挑战，
-    // 硬带上会被 GitHub 当成不匹配。
-    if let Some(verifier) = verifier {
-        form.push(("code_verifier", verifier));
-    }
-    let response = client
-        .post(ACCESS_TOKEN_ENDPOINT)
-        .header("Accept", "application/json")
-        .form(&form)
-        .send_api(crate::models::Provider::Github)
+    let response = token_request(&client, provider, secret, Some(code), verifier, None)?
+        .send_api(provider.api_provider())
         .await
-        .map_err(|error| request_error(&error.to_string()))?;
-    let body: TokenResponse = ensure_success(response, "access-token")
-        .await?
+        .map_err(|error| request_error(&error.without_url().to_string()))?;
+    if !response.status().is_success() {
+        return Err(action_error(
+            "access-token",
+            &format!("HTTP {}", response.status().as_u16()),
+        ));
+    }
+    let body: TokenResponse = response
         .json()
         .await
         .map_err(|error| request_error(&error.to_string()))?;
     if let Some(error) = body.error.as_deref() {
-        let reason = body.error_description.as_deref().unwrap_or(error);
-        log::warn!("GitHub 授权换 Token 被拒绝：{error}（{reason}）");
+        let reason = "OAuth authorization rejected";
+        log::warn!("发布授权换 Token 被拒绝");
         return Err(match error {
             "bad_verification_code" | "expired_token" => {
                 "mapPublish.authorizationExpired".to_string()
@@ -129,15 +130,23 @@ pub(super) async fn exchange_code(
     let Some(tokens) = tokens_from_response(&body, chrono::Utc::now().timestamp()) else {
         return Err(action_error("access-token", "empty token"));
     };
-    let login = fetch_login(&client, &tokens.access_token).await?;
+    let login = fetch_login(&client, &tokens.access_token, provider).await?;
     Ok((tokens, login))
 }
 
-async fn fetch_login(client: &reqwest::Client, token: &str) -> Result<String, String> {
-    let response = authorized(client.get(format!("{API_ENDPOINT}/user")), token)
-        .send_api(crate::models::Provider::Github)
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
+async fn fetch_login(
+    client: &reqwest::Client,
+    token: &str,
+    provider: PublishProvider,
+) -> Result<String, String> {
+    let response = authorized(
+        client.get(format!("{}/user", provider.api_endpoint())),
+        token,
+        provider,
+    )
+    .send_api(provider.api_provider())
+    .await
+    .map_err(|error| request_error(&error.to_string()))?;
     let user: ApiUser = ensure_success(response, "user")
         .await?
         .json()
@@ -148,3 +157,65 @@ async fn fetch_login(client: &reqwest::Client, token: &str) -> Result<String, St
 
 #[cfg(test)]
 mod tests;
+
+fn optional_seconds<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("invalid expiry")),
+        Some(serde_json::Value::String(s)) => s.parse().map(Some).map_err(serde::de::Error::custom),
+        _ => Err(serde::de::Error::custom("invalid expiry")),
+    }
+}
+
+/// Keep the documented secret in multipart data, never in a URL. Token request
+/// errors must remove their URL because GitCode's refresh token is a query field.
+pub(super) fn token_request(
+    client: &reqwest::Client,
+    provider: PublishProvider,
+    secret: &str,
+    code: Option<&str>,
+    verifier: Option<&str>,
+    refresh: Option<&str>,
+) -> Result<reqwest::RequestBuilder, String> {
+    if provider == PublishProvider::Github {
+        let mut form = vec![
+            ("client_id", GITHUB_APP_CLIENT_ID),
+            ("client_secret", secret),
+        ];
+        if let Some(refresh) = refresh {
+            form.extend([("grant_type", "refresh_token"), ("refresh_token", refresh)]);
+        } else {
+            form.extend([
+                ("code", code.unwrap_or_default()),
+                ("redirect_uri", CALLBACK_URL),
+            ]);
+            if let Some(verifier) = verifier {
+                form.push(("code_verifier", verifier));
+            }
+        }
+        return Ok(client
+            .post(ACCESS_TOKEN_ENDPOINT)
+            .header("Accept", "application/json")
+            .form(&form));
+    }
+    let request = client
+        .post("https://gitcode.com/oauth/token")
+        .header("Accept", "application/json");
+    if let Some(refresh) = refresh {
+        return Ok(request.query(&[("grant_type", "refresh_token"), ("refresh_token", refresh)]));
+    }
+    let boundary = format!("oc2{}", uuid::Uuid::new_v4().simple());
+    // Generated configuration is a single field; reject multipart control bytes.
+    if secret.contains(['\r', '\n']) {
+        return Err("mapPublish.missingOAuthConfig".into());
+    }
+    Ok(request.query(&[("grant_type", "authorization_code"), ("code", code.unwrap_or_default()), ("client_id", GITCODE_OAUTH_CLIENT_ID)])
+        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+        .body(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"client_secret\"\r\n\r\n{secret}\r\n--{boundary}--\r\n")))
+}

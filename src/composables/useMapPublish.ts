@@ -1,3 +1,4 @@
+import type { PublishProvider } from '../types'
 import { computed, onUnmounted, ref } from 'vue'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
@@ -27,7 +28,7 @@ import type {
 export type AuthPhase = 'idle' | 'waiting' | 'expired' | 'denied' | 'failed'
 
 export interface SaveReleaseInput {
-  releaseId: number | null
+  releaseId: string | null
   tag: string
   body: string
   /**
@@ -48,6 +49,8 @@ export interface SaveReleaseInput {
 export function useMapPublish() {
   const message = useNotify()
 
+  const provider = ref<PublishProvider>('github')
+  let contextEpoch = 0
   const auth = ref<PublishAuthState | null>(null)
   const authReady = ref(false)
   const authLoading = ref(false)
@@ -114,7 +117,7 @@ export function useMapPublish() {
    * 本机带回一次 `installation_id`，不靠轮询 `/user/installations`。
    */
   const needsInstall = computed(
-    () => authenticated.value && authReady.value && installationCount.value === 0,
+    () => provider.value === 'github' && authenticated.value && authReady.value && installationCount.value === 0,
   )
 
   function fail(reason: unknown) {
@@ -139,7 +142,7 @@ export function useMapPublish() {
   // 离开页面必须让后端关掉本机回调端口；否则下一次登录会因端口被占用失败。
   onUnmounted(() => {
     clearPoll()
-    void api.cancelGithubAuthorization().catch(() => {})
+    void api.cancelPublishAuthorization().catch(() => {})
   })
 
   /** 后端要求前端每 1 秒查一次回调结果；间隔由协议固定，不需要后端下发。 */
@@ -158,7 +161,7 @@ export function useMapPublish() {
     if (epoch !== pollEpoch) return
     let status: PublishAuthPoll
     try {
-      status = await api.pollGithubAuthorization()
+      status = await api.pollPublishAuthorization(provider.value)
     } catch (reason) {
       if (epoch !== pollEpoch) return
       // 一次网络失败就结束本次登录：回调最长等 120 秒，反复重试只会让用户
@@ -209,8 +212,10 @@ export function useMapPublish() {
   }
 
   async function refreshAuth() {
+    const epoch = contextEpoch
     try {
-      auth.value = await api.mapPublishState()
+      const result = await api.mapPublishState(provider.value)
+      if (epoch === contextEpoch && !disposed) auth.value = result
     } catch (reason) {
       fail(reason)
     }
@@ -225,7 +230,7 @@ export function useMapPublish() {
     const epoch = ++releasesEpoch
     releasesLoading.value = true
     try {
-      const list = await api.listPublishReleases(repository.owner, repository.name)
+      const list = await api.listPublishReleases(repository.owner, repository.name, provider.value)
       if (epoch === releasesEpoch) releases.value = list
     } catch (reason) {
       if (epoch === releasesEpoch) {
@@ -246,8 +251,10 @@ export function useMapPublish() {
   async function loadState() {
     if (authLoading.value) return
     authLoading.value = true
+    const epoch = contextEpoch
     try {
-      const check = await api.checkPublishSession()
+      const check = await api.checkPublishSession(provider.value)
+      if (epoch !== contextEpoch || disposed) return
       auth.value = check.auth
       const outcome = check.outcome
       if (outcome.status === 'reauthorize') {
@@ -259,10 +266,13 @@ export function useMapPublish() {
       }
       if (auth.value.authenticated) await loadRepositories()
     } catch (reason) {
+      if (epoch !== contextEpoch || disposed) return
       fail(reason)
     } finally {
-      authReady.value = true
-      authLoading.value = false
+      if (epoch === contextEpoch && !disposed) {
+        authReady.value = true
+        authLoading.value = false
+      }
     }
   }
 
@@ -280,15 +290,18 @@ export function useMapPublish() {
   async function loadRepositories() {
     if (repositoriesLoading.value) return
     repositoriesLoading.value = true
+    const epoch = contextEpoch
     try {
-      const list = await api.listPublishRepositories()
+      const list = await api.listPublishRepositories(provider.value)
+      if (epoch !== contextEpoch || disposed) return
       installationCount.value = list.installations
       allRepositories.value = list.all_repositories
       await adoptRepositories(list.repositories)
     } catch (reason) {
+      if (epoch !== contextEpoch || disposed) return
       fail(reason)
     } finally {
-      repositoriesLoading.value = false
+      if (epoch === contextEpoch && !disposed) repositoriesLoading.value = false
     }
   }
 
@@ -326,17 +339,26 @@ export function useMapPublish() {
   async function beginAuthorization(forceAuthorize: boolean) {
     if (signingIn.value) return
     // 重新登录前先取消上一次：后端只保留一个待授权流程，旧监听会占着端口。
-    cancelSignIn()
+    clearPoll()
+    authorization.value = null
+    authPhase.value = 'idle'
+    authFailure.value = ''
     signingIn.value = true
+    const epoch = contextEpoch
     try {
-      authorization.value = await api.startGithubAuthorization(forceAuthorize)
+      await api.cancelPublishAuthorization()
+      if (epoch !== contextEpoch || disposed) return
+      const result = await api.startPublishAuthorization(provider.value, forceAuthorize)
+      if (epoch !== contextEpoch || disposed) return
+      authorization.value = result
       authPhase.value = 'waiting'
       schedulePoll()
     } catch (reason) {
+      if (epoch !== contextEpoch || disposed) return
       authPhase.value = 'idle'
       fail(reason)
     } finally {
-      signingIn.value = false
+      if (epoch === contextEpoch) signingIn.value = false
     }
   }
 
@@ -356,14 +378,22 @@ export function useMapPublish() {
     authorization.value = null
     authPhase.value = 'idle'
     authFailure.value = ''
-    void api.cancelGithubAuthorization().catch(() => {})
+    void api.cancelPublishAuthorization().catch(() => {})
   }
 
   async function signOut() {
     if (signingOut.value) return
     signingOut.value = true
+    contextEpoch += 1
+    releasesEpoch += 1
+    topicsEpoch += 1
+    authLoading.value = false
+    repositoriesLoading.value = false
+    releasesLoading.value = false
+    topicsLoading.value = false
+    cancelSignIn()
     try {
-      auth.value = await api.signOutMapPublish()
+      auth.value = await api.signOutMapPublish(provider.value)
       cancelSignIn()
       repositories.value = []
       selectedFullName.value = null
@@ -382,12 +412,12 @@ export function useMapPublish() {
   }
 
   /** `owner/name` 拆成后端要的两段；拼不出来就当没选仓库。 */
-  function selectedCoordinates(): { owner: string; repository: string } | null {
+  function selectedCoordinates(): { owner: string; repository: string; provider: PublishProvider } | null {
     const fullName = selectedFullName.value
     if (!fullName) return null
     const slash = fullName.indexOf('/')
     if (slash <= 0 || slash === fullName.length - 1) return null
-    return { owner: fullName.slice(0, slash), repository: fullName.slice(slash + 1) }
+    return { provider: provider.value, owner: fullName.slice(0, slash), repository: fullName.slice(slash + 1) }
   }
 
   /**
@@ -405,7 +435,7 @@ export function useMapPublish() {
     const epoch = ++topicsEpoch
     topicsLoading.value = true
     try {
-      const result = await api.publishRepositoryTopics(target.owner, target.repository)
+      const result = await api.publishRepositoryTopics(target.owner, target.repository, target.provider)
       if (epoch === topicsEpoch) repositoryTopics.value = result
     } catch {
       if (epoch === topicsEpoch) repositoryTopics.value = null
@@ -423,6 +453,7 @@ export function useMapPublish() {
     savingRelease.value = true
     try {
       const saved = await api.savePublishRelease({
+        provider: provider.value,
         owner: repository.owner,
         repository: repository.name,
         release_id: input.releaseId,
@@ -452,6 +483,7 @@ export function useMapPublish() {
     deletingRelease.value = true
     try {
       const result = await api.deletePublishRelease({
+        provider: provider.value,
         owner: repository.owner,
         repository: repository.name,
         release_id: release.id,
@@ -487,6 +519,7 @@ export function useMapPublish() {
     let acceptingProgress = true
     try {
       const uploaded = await api.uploadPublishAsset({
+        provider: provider.value,
         owner: repository.owner,
         repository: repository.name,
         release_id: release.id,
@@ -530,17 +563,17 @@ export function useMapPublish() {
     }
   }
 
-  async function deleteAsset(assetId: number, coordinates = selectedCoordinates()): Promise<boolean> {
+  async function deleteAsset(assetId: string, tag: string, coordinates = selectedCoordinates()): Promise<boolean> {
     if (!coordinates || deletingAsset.value) return false
     deletingAsset.value = true
     try {
-      const result = await api.deletePublishAsset(coordinates.owner, coordinates.repository, assetId)
+      const result = await api.deletePublishAsset(coordinates.owner, coordinates.repository, assetId, tag, coordinates.provider)
       if (!result.ok) {
         message.error(translateBackendMessage(result.message))
         return false
       }
       message.success(translateBackendMessage(result.message) || t('mapPublish.deleted'))
-      if (selectedFullName.value === `${coordinates.owner}/${coordinates.repository}`) {
+      if (provider.value === coordinates.provider && selectedFullName.value === `${coordinates.owner}/${coordinates.repository}`) {
         releasesEpoch += 1
         releasesLoading.value = false
         releases.value = releases.value.map(release => ({
@@ -556,7 +589,37 @@ export function useMapPublish() {
     }
   }
 
+  async function selectProvider(next: PublishProvider) {
+    if (next === provider.value || savingRelease.value || deletingRelease.value || uploading.value || deletingAsset.value || inspecting.value || signingOut.value) return;
+    clearPoll()
+    contextEpoch += 1
+    releasesEpoch += 1
+    topicsEpoch += 1
+    provider.value = next
+    authorization.value = null
+    authPhase.value = 'idle'
+    authFailure.value = ''
+    permissionFailure.value = null
+    auth.value = null
+    authReady.value = false
+    authLoading.value = false
+    repositoriesLoading.value = false
+    releasesLoading.value = false
+    topicsLoading.value = false
+    signingIn.value = false
+    repositories.value = []
+    selectedFullName.value = null
+    releases.value = []
+    repositoryTopics.value = null
+    installationCount.value = 0
+    allRepositories.value = false
+    await api.cancelPublishAuthorization().catch(() => {})
+    await loadState()
+  }
+
   return {
+    provider,
+    selectProvider,
     auth,
     authReady,
     authLoading,

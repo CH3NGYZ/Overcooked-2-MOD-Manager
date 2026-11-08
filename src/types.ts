@@ -901,8 +901,10 @@ export interface PublishRepositoryList {
   repositories: PublishRepository[]
 }
 
+export type PublishProvider = 'github' | 'gitcode'
+
 export interface PublishAsset {
-  id: number
+  id: string
   name: string
   size: number
 }
@@ -969,7 +971,7 @@ export interface MapPublishMetadata {
 }
 
 export interface PublishRelease {
-  id: number
+  id: string
   tag: string
   title: string
   draft: boolean
@@ -983,10 +985,11 @@ export interface PublishRelease {
 }
 
 export interface PublishSaveRequest {
+  provider: PublishProvider
   owner: string
   repository: string
   /** null = 新建（GitHub 按 tag 自动建），有值 = 修改这一版。 */
-  release_id: number | null
+  release_id: string | null
   tag: string
   body: string
   /** 发布页三步式里只有第三步（写回地图信息）会带它。 */
@@ -1000,17 +1003,19 @@ export interface PublishUploadProgress {
 }
 
 export interface PublishUploadRequest {
+  provider: PublishProvider
   owner: string
   repository: string
-  release_id: number
+  release_id: string
   /** 本地 ZIP 的绝对路径；附件名由后端从 ZIP 版本和 Release 规则生成。 */
   path: string
 }
 
 export interface PublishDeleteReleaseRequest {
+  provider: PublishProvider
   owner: string
   repository: string
-  release_id: number
+  release_id: string
   tag: string
   /** 是否顺手删掉同名 git tag；tag 已不存在时后端视为成功。 */
   delete_tag: boolean

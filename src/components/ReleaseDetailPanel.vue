@@ -64,7 +64,7 @@ export interface ReleaseDetailVersion {
  *
  * 任何可选数据缺失都只是「那块不渲染」，不会有空白占位或塌版。
  */
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, ref, watch } from 'vue'
 import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
@@ -73,11 +73,7 @@ import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatFileSize, formatLocalDateTime } from '../repositoryAssets'
 import DependencyTable, { type DependencyRow } from './DependencyTable.vue'
 import ProviderIcon from './ProviderIcon.vue'
-import {
-  fitsMinLogHeight,
-  releasePanelHeight,
-  RELEASE_LOG_MIN_HEIGHT,
-} from '../releasePanelFit'
+import { useReleasePanelFit } from '../composables/useReleasePanelFit'
 
 const props = withDefaults(
   defineProps<{
@@ -338,6 +334,7 @@ const readmeElement = ref<HTMLElement | null>(null)
 watch(
   [noteHtml, logHtml, readmeElement, () => props.readmeLoading],
   async () => {
+    if (!panelElement.value) return
     await nextTick()
     void renderMermaidBlocks(noteElement.value)
     void renderMermaidBlocks(logBoxElement.value)
@@ -353,158 +350,29 @@ watch(
  * 「被 Naive 抽屉裁出来的可视高度」，而 `100vh - 常数` 那类估算会随着头部、
  * 分段 tab、行高一起漂移（旧实现实测在 720 高的窗口里多算 47px）。
  */
-const panelElement = ref<HTMLElement | null>(null)
-const logBoxElement = ref<HTMLElement | null>(null)
-/** 面板锁定的像素高度；`null` = 不锁（矮窗口回退，见 `fitInstallPanel`）。 */
-const fittedPanelHeight = ref<number | null>(null)
-
-const panelStyle = computed(() =>
-  fittedPanelHeight.value ? { height: `${fittedPanelHeight.value}px` } : undefined,
-)
-/* 日志框的下限只保证「不会被挤没」，剩余空间由面板内部的 flex 链分配。 */
-const logBoxStyle = computed(() =>
-  activeTab.value === 'install' ? { minHeight: `${RELEASE_LOG_MIN_HEIGHT}px` } : undefined,
-)
-
-let fitObserver: ResizeObserver | null = null
-let fitFrame = 0
-let fitting = false
-let fitPending = false
-
-
-/*
- * 把面板锁成抽屉可视高度，剩下的空间交给面板内部的 flex 链分给日志框。
- *
- * 只量「抽屉被裁出来的可视高度」这一件 CSS 拿不到的事；面板定高之后日志框自己
- * 会长高 / 内滚，不再需要量「除日志框以外的固定高度」那种会与渲染时序赛跑的值
- * （先清内联高度再读，读到的是清掉之前的旧布局）。
- *
- * 唯一回退：窗口矮到日志框连最低高度都剩不下时不锁高度，让抽屉 body 自己滚 ——
- * 硬锁会把安装行裁掉（`.detail` 是 `overflow: clip`），比滚动更糟。
- */
-async function fitInstallPanel() {
-  const panel = panelElement.value
-  if (!panel) {
-    fittedPanelHeight.value = null
-    return
-  }
-  /*
-   * 说明页不重算：`.n-scrollbar-container` 的 clientHeight 在内容不足时会
-   * 缩到内容高度（实测 391），拿它量出来的面板高度只有 359 —— 从安装页切
-   * 过来就会「坍缩」。这里保留安装页量出的锁定高度，说明页在锁定高度内滚动。
-   */
-  if (activeTab.value !== 'install') return
-  const viewport = panel.closest('.n-scrollbar-container') as HTMLElement | null
-  const wrapper = panel.parentElement
-  const drawer = panel.closest('.n-drawer') as HTMLElement | null
-  if (!viewport || !wrapper) return
-  fitting = true
-  const wrapperStyle = getComputedStyle(wrapper)
-  const inset = parseFloat(wrapperStyle.paddingTop) + parseFloat(wrapperStyle.paddingBottom)
-  /*
-   * 用抽屉的**固定高度**算可用空间，而不是 `.n-scrollbar-container` 的
-   * clientHeight：后者在内容不足时会缩到内容高度（实测 391），面板被锁得
-   * 过矮，日志框的 min-height 溢出后就会盖住安装行。
-   */
-  const drawerRect = drawer?.getBoundingClientRect()
-  const panelRect = panel.getBoundingClientRect()
-  const available = drawerRect
-    ? drawerRect.height - (panelRect.top - drawerRect.top) - parseFloat(wrapperStyle.paddingBottom)
-    : viewport.clientHeight - inset
-  fittedPanelHeight.value = releasePanelHeight(available)
-  await nextTick()
-  /*
-   * 只有安装页有日志框可量；说明页保留锁定高度，切 tab 时面板不会突然坍缩。
-   *
-   * 日志框连最低高度都放不下、或者被 min-height 撑出面板底边时，回退成
-   * 「不锁高度」：面板按内容长高，安装行落在日志框下方、由抽屉 body 滚动，
-   * 而不是日志框溢出后盖在安装行上。
-   */
-  if (activeTab.value === 'install') {
-    const logBox = logBoxElement.value
-    const installRow = panel.querySelector<HTMLElement>('.install-row')
-    if (logBox) {
-      // 等一帧再量：高度写回 DOM 后布局才稳定，立刻量会读到切换前的中间态
-      await new Promise(requestAnimationFrame)
-      const logRect = logBox.getBoundingClientRect()
-      const panelRect = panel.getBoundingClientRect()
-      const installRect = installRow?.getBoundingClientRect()
-      /*
-       * 放不下就回退成「不锁高度」：日志框被 min-height 撑出面板、或者已经
-       * 压到安装行头上时，硬锁只会让安装行被盖住；不锁则面板按内容长高，
-       * 安装行正常落在日志框下方，由抽屉 body 滚动。
-       */
-      if (!fitsMinLogHeight(logBox.offsetHeight)
-        || logRect.bottom > panelRect.bottom + 0.5
-        || (installRect !== undefined && logRect.bottom > installRect.top + 0.5)) {
-        fittedPanelHeight.value = null
-      }
-    }
-  }
-  fitting = false
-  if (fitPending) {
-    fitPending = false
-    scheduleFitInstallPanel()
-  }
-}
-
-
-function scheduleFitInstallPanel() {
-  if (fitting) {
-    // 量测中不要并发进来：等这一轮写完高度后补跑一次。
-    fitPending = true
-    return
-  }
-  if (fitFrame) cancelAnimationFrame(fitFrame)
-  fitFrame = requestAnimationFrame(() => {
-    fitFrame = 0
-    void fitInstallPanel()
-  })
-}
-
-
-onMounted(() => {
-  const panel = panelElement.value
-  const viewport = panel?.closest('.n-scrollbar-container') as HTMLElement | null
-  if (!panel || !viewport) return
-  /*
-   * 只观察不会因我们的高度改动而变形的节点：抽屉容器（窗口缩放）与几条固定行
-   * （宽度变化会让它们换行变高）。观察面板自己会和「写回高度」互相触发。
-   */
-  fitObserver = new ResizeObserver(() => scheduleFitInstallPanel())
-  fitObserver.observe(viewport)
-  for (const selector of ['.detail-head', '.n-tabs-nav', '.summary-row', '.log-head', '.install-row']) {
-    const element = panel.querySelector(selector)
-    if (element) fitObserver.observe(element)
-  }
-  if (activeTab.value === 'install') scheduleFitInstallPanel()
-})
-
-onBeforeUnmount(() => {
-  fitObserver?.disconnect()
-  fitObserver = null
-  if (fitFrame) cancelAnimationFrame(fitFrame)
-  fitFrame = 0
-})
-
-watch(
-  [
-    activeTab,
-    hasLog,
-    logHtml,
+const {
+  panelElement,
+  logBoxElement,
+  panelStyle,
+  logBoxStyle,
+  isFitted,
+} = useReleasePanelFit({
+  activeTab,
+  hasLog,
+  logHtml,
+  dependencies: [
     () => props.version,
     () => props.assetValue,
     () => props.fileLabel,
     () => props.releaseTag,
     () => props.disabledLabel,
   ],
-  scheduleFitInstallPanel,
-)
+})
 </script>
 
 <template>
   <div ref="panelElement" class="detail" data-tutorial="detail-panel"
-    :class="{ 'detail--fill': fittedPanelHeight !== null }"
+    :class="{ 'detail--fill': isFitted }"
     :style="panelStyle">
     <header class="detail-head">
       <div class="head-main">
@@ -550,7 +418,7 @@ watch(
     <!--
       不用 `animated`：它会给 pane 内容做高度收缩/展开动画，切到说明页时
       日志框高度从最大化被压到 0，看起来就是「突然坍缩」。面板高度已经由
-      `fitInstallPanel` 锁定，这里只需要新内容淡入。
+      `useReleasePanelFit` 锁定，这里只需要新内容淡入。
     -->
     <n-tabs v-model:value="activeTab" type="segment" class="detail-tabs">
       <n-tab-pane name="info" class="info-pane" :tab="t('tools.details')">
@@ -699,7 +567,7 @@ watch(
  *
  * 说明页**不加**这个类（按内容自然长高，长 README 由抽屉 body 滚动）。
  *
- * 高度由 `fitInstallPanel()` 量出抽屉可视高度后写成内联像素（`panelStyle`），
+ * 高度由 `useReleasePanelFit` 量出抽屉可视高度后写成内联像素（`panelStyle`），
  * 面板内部每一层都是 flex 列，剩余高度一路传到日志框：日志长了在框内滚，
  * 短了长高补齐，安装行靠 `margin-top: auto` 贴底。
  *
@@ -711,7 +579,7 @@ watch(
  *
  * 1. 每一层都必须是 flex 列：中间任何一层是 `height: auto` 的块级盒，
  *    高度就传不到日志框（早先用 `100vh - 410px` 估算正是因此差出几十像素）。
- * 2. 视口连日志最低高度都放不下时（矮窗口），`fitInstallPanel` 回退成「不锁
+ * 2. 视口连日志最低高度都放不下时（矮窗口），`useReleasePanelFit` 回退成「不锁
  *    面板高度」：此时面板按内容长高、由抽屉 body 滚动，按钮需要滚一下才可见。
  *    硬锁高度会把安装行裁掉（`.detail` 是 `overflow: clip`），比滚动更糟。
  */

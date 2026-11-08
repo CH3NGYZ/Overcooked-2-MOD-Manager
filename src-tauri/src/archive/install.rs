@@ -24,31 +24,6 @@ pub(crate) fn extract_framework_zip_pending(
     result
 }
 
-#[cfg(test)]
-fn extract_mod_zip(
-    zip_path: &Path,
-    game_root: &Path,
-    target_dir: &str,
-    archive_name: &str,
-) -> Result<Vec<String>, String> {
-    log::info!(
-        "开始解压 MOD ZIP：文件={}，目标={}",
-        zip_path.display(),
-        target_dir
-    );
-    let plan = prepare_repository_mod_zip(zip_path, game_root, target_dir, archive_name)?;
-    extract_prepared_mod_zip(zip_path, game_root, &plan).map(PendingModInstall::commit)
-}
-
-#[cfg(test)]
-fn extract_local_mod_zip(
-    zip_path: &Path,
-    game_root: &Path,
-    archive_name: &str,
-) -> Result<Vec<String>, String> {
-    extract_local_mod_zip_pending(zip_path, game_root, archive_name).map(PendingModInstall::commit)
-}
-
 pub(crate) fn extract_local_mod_zip_pending(
     zip_path: &Path,
     game_root: &Path,
@@ -422,17 +397,6 @@ fn strip_zip_root(path: &Path, expected_root: &str) -> Option<PathBuf> {
     Some(path_components.into_iter().skip(strip_count).collect())
 }
 
-#[cfg(test)]
-fn copy_asset(
-    asset_path: &Path,
-    game_root: &Path,
-    install_target: &str,
-    file_name: &str,
-) -> Result<Vec<String>, String> {
-    copy_asset_pending(asset_path, game_root, install_target, file_name)
-        .map(PendingModInstall::commit)
-}
-
 pub(crate) fn copy_asset_pending(
     asset_path: &Path,
     game_root: &Path,
@@ -483,6 +447,11 @@ pub(crate) fn copy_asset_pending(
     pending.files.push(relative);
     Ok(pending)
 }
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+use test_support::{copy_asset, extract_local_mod_zip, extract_mod_zip};
 
 #[cfg(test)]
 mod rollback_tests;

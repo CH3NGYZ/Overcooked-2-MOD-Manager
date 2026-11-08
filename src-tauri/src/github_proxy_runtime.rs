@@ -93,11 +93,6 @@ impl ProxyRuntime {
         *self.current.write().unwrap_or_else(|e| e.into_inner()) = config;
         Ok(())
     }
-
-    #[cfg(test)]
-    pub(crate) fn replace_for_test(&self, config: GitHubProxyConfig) {
-        *self.current.write().unwrap() = config;
-    }
 }
 
 impl DownloadOutput for GitHubProxyConfig {
@@ -135,6 +130,8 @@ fn manifest_routes(
     Ok(routes)
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 #[path = "github_proxy_runtime_tests.rs"]
 mod tests;

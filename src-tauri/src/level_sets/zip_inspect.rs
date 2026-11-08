@@ -95,21 +95,10 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
     })
 }
 
-/// 读一个 ZIP 文件，按 `info` 识别出其中的关卡集。
-///
-/// 地图文件不在这里解压 —— 调用方拿到 [`ImportedLevelSet::files`] 后按需写入，
-/// 避免为了识别而先落盘一份临时副本。唯一的例外是随包插件的 DLL：PE 版本资源
-/// 只能从真实文件读，所以它们会被落到一份 scratch 目录再解析
-/// （见 [`prepare_zip_plugin`]）。
 #[cfg(test)]
-pub fn inspect_zip(zip_path: &Path) -> Result<Vec<ImportedLevelSet>, String> {
-    // 测试不关心并发度与进度：两个并发度都取全核，回调空转
-    let workers = crate::metadata_read::resolve_concurrency(
-        crate::metadata_read::AUTO_CONCURRENCY,
-        crate::metadata_read::cores(),
-    );
-    inspect_zip_with_progress(zip_path, workers, workers, &|_, _, _| {})
-}
+mod test_support;
+#[cfg(test)]
+pub use test_support::inspect_zip;
 
 /// 带进度的 ZIP 识别：`info` 按目录并行解析，其余流程与串行版一致。
 ///

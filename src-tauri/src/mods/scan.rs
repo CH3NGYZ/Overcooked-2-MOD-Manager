@@ -496,22 +496,7 @@ fn annotate_package_counts(mods: &mut [InstalledMod]) {
     }
 }
 
-/// 单个文件的 MOD 行（只在单元测试里用）：只读一份元数据，不起批次线程。
-///
-/// 生产的整目录扫描走 `read_metadata_batch`，这里只是为了把「读元数据」
-/// 这一步与断言用的装配分开，测试不必自己拼 `MetadataRequest`。
 #[cfg(test)]
-pub(super) fn inspect_dll_at(
-    path: &Path,
-    game: &Path,
-    config: &AppConfig,
-    manifests: &[InstallManifest],
-) -> InstalledMod {
-    let requests = [crate::metadata_read::MetadataRequest {
-        path: path.to_path_buf(),
-        display_name: canonical_dll_file(path, game),
-        kind: crate::metadata_read::MetadataKind::ModDll,
-    }];
-    let outcomes = crate::metadata_read::read_metadata_batch(&requests, 1, &|_, _| {});
-    inspect_dll(path, &outcomes[0], game, config, manifests)
-}
+mod test_support;
+#[cfg(test)]
+pub(super) use test_support::inspect_dll_at;

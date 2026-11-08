@@ -22,27 +22,12 @@ fn installed_level_sets(game_root: &Path, workers: usize) -> Vec<LevelSetOnDisk>
         .collect()
 }
 
-/// 找出本次要导入的关卡集与本地已装副本的身份冲突。
-///
-/// 只报告、不卸载：地图的卸载要走 [`delete_level_set`]（带回收站记录），由前端
-/// 用户确认后逐个调，安装事务里不掺卸载。同一张图不管版本相同、升级还是降级
-/// 都算同一个东西；已有重复副本（启用 + 停用各一份）全部列出。
-///
-/// `sets` 是同一批（同一个 ZIP / 同一个 Release）里识别出的关卡集。目录名撞车
-/// 但身份不同不算冲突 —— 那是允许并存的另一张图，`install_from_zip` 会为它换名。
-#[cfg(test)]
-pub fn find_install_conflicts(game_root: &Path, sets: &[ImportedLevelSet]) -> Vec<InstallConflict> {
-    find_install_conflicts_with_workers(
-        game_root,
-        sets,
-        crate::metadata_read::resolve_concurrency(
-            crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
-            crate::metadata_read::cores(),
-        ),
-    )
-}
-
 /// 同上，按调用方解析好的并行度读已装副本的 `info`。
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub use test_support::find_install_conflicts;
+
 pub fn find_install_conflicts_with_workers(
     game_root: &Path,
     sets: &[ImportedLevelSet],

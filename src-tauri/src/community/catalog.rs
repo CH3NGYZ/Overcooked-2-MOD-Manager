@@ -171,15 +171,6 @@ pub(super) fn classify_search_item(item: &Value) -> SearchHit {
     SearchHit::Skip
 }
 
-/// 只关心「这条命中能不能当 MOD 仓库」的调用方用这个包装。
-#[cfg(test)]
-pub(super) fn repository_from_search(item: &Value) -> Option<RepositoryConfig> {
-    match classify_search_item(item) {
-        SearchHit::Mod(repository) => Some(repository),
-        _ => None,
-    }
-}
-
 pub(crate) fn repository_from_coordinates(
     provider: &Provider,
     owner: &str,
@@ -222,5 +213,9 @@ pub(crate) struct SearchResults {
     pub(crate) discovery: CommunityDiscovery,
 }
 
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub(super) use test_support::repository_from_search;
 #[cfg(test)]
 mod tests;

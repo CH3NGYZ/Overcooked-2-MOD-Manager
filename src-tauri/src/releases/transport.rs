@@ -150,17 +150,6 @@ pub(super) async fn fetch_api_with_retries<T>(
     Err(error)
 }
 
-#[cfg(test)]
-pub async fn fetch_release_api(
-    client: &Client,
-    url: &str,
-    provider: &Provider,
-    token: Option<&str>,
-) -> Result<Vec<ReleaseInfo>, ReleaseError> {
-    let value = fetch_api_json(client, url, provider, token).await?;
-    parse_release_json(&value, provider)
-}
-
 async fn fetch_api_json(
     client: &Client,
     url: &str,
@@ -254,6 +243,11 @@ async fn fetch_api_json(
     })?;
     Ok(value)
 }
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub use test_support::fetch_release_api;
 
 #[cfg(test)]
 mod tests;

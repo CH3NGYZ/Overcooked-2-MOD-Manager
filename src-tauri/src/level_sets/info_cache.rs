@@ -18,10 +18,7 @@ pub(super) struct InfoCacheEntry {
     pub(super) mtime_nanos: u128,
     /// 解析结果（成功或失败 tag）。
     pub(super) result: Result<LevelSetMetadata, String>,
-    /// 这个 key 累计**真正读盘解析**的次数（缓存命中不增加）。
-    ///
-    /// 只有测试读它：命中与否从返回值上看不出来（命中与不命中结果相同），
-    /// 而「第二次没有再解析」是缓存唯一的可断言证据。
+    /// 这个 key 累计真正读盘解析的次数（缓存命中不增加）。
     pub(super) parses: u32,
 }
 
@@ -269,11 +266,7 @@ pub(crate) fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, S
     result
 }
 
-/// 缓存里某个 `info` 已经真正解析过几次（测试用）。
 #[cfg(test)]
-pub(super) fn info_cache_parses(info_path: &Path) -> Option<u32> {
-    let cache = info_cache().lock().ok()?;
-    cache
-        .get(&info_cache_key(info_path))
-        .map(|entry| entry.parses)
-}
+mod test_support;
+#[cfg(test)]
+pub(super) use test_support::info_cache_parses;

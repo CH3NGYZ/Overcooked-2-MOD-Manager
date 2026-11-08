@@ -18,16 +18,10 @@ use uuid::Uuid;
 
 const CONFIG_FILE: &str = "config.toml";
 
-impl ConfigService {
-    #[cfg(test)]
-    pub(crate) fn for_test(root: PathBuf) -> Self {
-        Self {
-            root,
-            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            proxies: Default::default(),
-        }
-    }
+#[cfg(test)]
+mod test_support;
 
+impl ConfigService {
     pub fn new() -> Result<Self, ConfigError> {
         let root = crate::user_paths::root().map_err(ConfigError::Directory)?;
         fs::create_dir_all(&root).map_err(|e| {

@@ -36,12 +36,6 @@ pub(crate) fn list_diy_level_backups(backup_root: &Path) -> Vec<String> {
 /// 备份目录名前缀：`DIYLevel.backup-<时间戳>-<uuid>`。
 const DIYLEVEL_BACKUP_PREFIX: &str = "DIYLevel.backup-";
 
-/// 校验一个路径确实是**本管理器**创建的 DIYLevel 备份目录。
-#[cfg(test)]
-fn validate_diy_level_backup_in(backup_path: &Path, backup_root: &Path) -> Result<PathBuf, String> {
-    validate_framework_backup_in(backup_path, backup_root, &DIYLEVEL_BACKUP)
-}
-
 /// 备份里保存安装清单用的文件名（放在备份目录根部）。
 ///
 /// 备份目录是框架目录的**完整可还原快照**，不只是文件副本：恢复后必须能
@@ -482,6 +476,11 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+use test_support::validate_diy_level_backup_in;
 
 #[cfg(test)]
 mod backup_safety_tests;

@@ -114,15 +114,6 @@ impl SearchRateLimits {
             Provider::Gitee => "community.giteeWebRateLimited",
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn for_gitee_test() -> Self {
-        Self {
-            provider: Provider::Gitee,
-            interval: Duration::ZERO,
-            ..Default::default()
-        }
-    }
 }
 
 fn rate_limit_delay(status: StatusCode, headers: &HeaderMap) -> Option<Duration> {
@@ -163,5 +154,7 @@ fn rate_limit_delay(status: StatusCode, headers: &HeaderMap) -> Option<Duration>
         })
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 pub(super) mod tests;

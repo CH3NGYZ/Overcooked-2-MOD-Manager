@@ -12,8 +12,6 @@ use super::paths::levels_root;
 use super::scan::locate_info_file;
 use super::zip_info::is_info_file;
 use super::zip_inspect::ImportedLevelSet;
-#[cfg(test)]
-use super::zip_inspect::inspect_zip;
 use crate::asset_bundle::LevelSetMetadata;
 use crate::models::LevelSetLayout;
 use std::fs;
@@ -41,27 +39,15 @@ pub(super) fn existing_level_set_metadata(
     None
 }
 
-/// 把选定的关卡集从 ZIP 写入 `levels/`。
-///
-/// 只写入 `selected` 里列出的条目。目标目录已有**同身份**关卡集时拒绝：安装
-/// 前必须先卸载旧副本（`find_install_conflicts` 报告、前端确认后逐个
-/// `delete_level_set`），这里不做隐式覆盖；同名但身份不同的目录会换名并存，
-/// 读不出身份的目录同样拒绝，不猜「用户想删哪个」。
-#[cfg(test)]
-pub fn install_from_zip(
-    zip_path: &Path,
-    game_root: &Path,
-    manifests_dir: &Path,
-    selected: &[String],
-) -> Result<Vec<String>, String> {
-    let sets = inspect_zip(zip_path)?;
-    install_parsed_sets(&sets, zip_path, game_root, manifests_dir, selected, None)
-}
-
 /// 把已经解析好的关卡集写进 `levels/`（`zip_path` 只用于回读文件内容）。
 ///
 /// 识别与写盘拆开是为了多选导入只解析一次：`import_level_sets` 以前对每个
 /// 选中的关卡集各重新整包识别一遍 —— N 张合集就是 N 倍识别时间。
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub use test_support::install_from_zip;
+
 pub fn install_parsed_sets(
     sets: &[ImportedLevelSet],
     zip_path: &Path,

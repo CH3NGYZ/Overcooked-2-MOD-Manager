@@ -36,7 +36,7 @@ import type { InstalledMod } from '../types'
 const props = defineProps<{ dllFile: string }>()
 
 const { mods, config } = useDashboard()
-const { refreshing, queued, sourceRefreshing, entryStateUnavailable } = useRepositoryRefresh()
+const { runtimeState } = useRepositoryRefresh()
 const { linkToRepository } = useRepositoryLink()
 
 /** 始终按当前 Dashboard 取这条 MOD：单仓刷新只替换仓库缓存，这里也要跟上。 */
@@ -47,12 +47,7 @@ const repositories = computed(() => config.value?.repositories ?? [])
 const status = computed(() => {
   const current = mod.value
   if (!current) return undefined
-  return runtimeModStatus(current, mods.value, repositories.value, {
-    refreshing: refreshing.value,
-    queued: queued.value,
-    sourceRefreshing: sourceRefreshing.value,
-    entryStateUnavailable: entryStateUnavailable.value,
-  })
+  return runtimeModStatus(current, mods.value, repositories.value, runtimeState.value)
 })
 
 const tags = computed(() =>

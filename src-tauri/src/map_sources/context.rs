@@ -4,8 +4,8 @@ use crate::models::Provider;
 
 /// 地图源加载期间的外部依赖：缓存、HTTP 客户端、配置、令牌、刷新批次。
 ///
-/// 源树遍历、Release 资产文档校验和条目刷新共用这些借用依赖；分页列表与
-/// 普通列表用不同缓存键，同键在一次批次中收敛。不另建客户端或全局缓存。
+/// 源树遍历、Release 资产文档校验和条目刷新共用这些借用依赖；统一完整分页，
+/// 同仓库共用缓存键并在一次批次中收敛。不另建客户端或全局缓存。
 pub struct MapSourceContext<'a> {
     pub cache: &'a crate::release_cache::RepoReleaseCache,
     pub client: &'a reqwest::Client,
@@ -15,7 +15,7 @@ pub struct MapSourceContext<'a> {
     pub gitee_token: Option<&'a str>,
     /// 一次用户动作的批次身份：同一批次里同一个仓库只请求一次 Release API。
     pub pass_id: Option<&'a str>,
-    /// Manual refresh bypasses TTL; same-pass readers still share one fresh snapshot.
+    /// Only full refresh bypasses TTL; same-pass readers still share one snapshot.
     pub force: bool,
     /// 上一次加载出来的条目。
     ///

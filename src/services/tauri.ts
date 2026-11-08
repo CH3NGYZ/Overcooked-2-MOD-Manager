@@ -9,7 +9,9 @@ import type {
   AppUpdateCheckResult,
   AppUpdatePhaseEvent,
   BepInExInstallResult,
-  Dashboard,
+  DashboardSummary,
+  InstalledMod,
+  UpdateStatus,
   DependencySyncResult,
   DropSourceKind,
   DiyLevelInfo,
@@ -56,10 +58,10 @@ import type {
 let gameStateRevision = 0
 let latestGameState: GameInfo | undefined
 
-async function readDashboard(): Promise<Dashboard> {
+async function readDashboard(): Promise<DashboardSummary> {
   const revision = gameStateRevision
-  const dashboard = await invoke<Dashboard>('get_dashboard')
-  // MOD 扫描可能慢于游戏状态事件：保留较新的事件快照，避免旧状态覆盖。
+  const dashboard = await invoke<DashboardSummary>('get_dashboard')
+  // 概览读取期间保留较新的游戏事件快照，避免迟到响应覆盖。
   if (revision !== gameStateRevision && latestGameState) dashboard.game = latestGameState
   return dashboard
 }
@@ -71,6 +73,8 @@ async function readDashboard(): Promise<Dashboard> {
  */
 export const api = {
   dashboard: readDashboard,
+  localMods: () => invoke<InstalledMod[]>('get_local_mods'),
+  modUpdates: (installed: InstalledMod[]) => invoke<UpdateStatus[]>('get_mod_updates', { installed }),
   refreshUserRegion: () => invoke<string>('refresh_user_region'),
   probeStartupSource: () => invoke<StartupProbe>('probe_startup_source'),
   cancelStartupProbe: () => invoke<void>('cancel_startup_probe'),
@@ -107,8 +111,8 @@ export const api = {
    * 刷新单个仓库的 Release 列表。
    *
    * 后端对 Release 列表有 5 分钟缓存：批量刷新、自动刷新、切页回来都直接
-   * 读缓存，不再逐仓打 API。只有**用户主动点刷新**时才传 `force: true`，
-   * 因为那个动作的语义就是「现在就要最新的」。
+   * 读缓存，不再逐仓打 API。只有右下角整批刷新才传 `force: true`；
+   * 卡片、分组、源级与检查更新入口均复用五分钟快照。
    */
   refreshRepository: (repositoryId: string, force = false) =>
     invoke<ReleaseInfo[]>('refresh_repository', { repositoryId, force }),
@@ -312,8 +316,8 @@ export const api = {
    * `passId` 是「同一次用户点击」的批次号，与随后的 `refreshMapReleases`
    * 共用：tag 模式下同一次加载要为同一个仓库的多个版本取资产，后端按它去重。
    */
-  refreshMapSources: (passId?: string) =>
-    invoke<MapInfo[]>('refresh_map_sources', { passId }),
+  refreshMapSources: (passId?: string, force = false) =>
+    invoke<MapInfo[]>('refresh_map_sources', { passId, force }),
   /**
    * 刷新一个地图的 Release 列表（5 分钟缓存）。
    *

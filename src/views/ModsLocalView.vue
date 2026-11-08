@@ -31,7 +31,7 @@ import type { DependencyRow } from '../dependencyRows'
 import { revealCard, useFocusHighlight, useRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
-import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
+import { runtimeModStatus } from '../modRuntimeStatus'
 import { isDependencyTag, tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
@@ -71,7 +71,7 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, ensureLoaded, loading, dashboard, game, config } = useDashboard()
+const { load, ensureLoaded, modsLoading: loading, mods: scannedMods, game, config } = useDashboard()
 
 const { blockModOperation } = useGameOperationGate()
 
@@ -81,7 +81,7 @@ const { blockModOperation } = useGameOperationGate()
  * 只改展示层、不改 store：教程一结束 `withDemoMods` 立刻返回原始数组，
  * 页面不需要任何清理。真实列表非空时也不会混进示例（见 `tutorial/demo.ts`）。
  */
-const mods = computed(() => withDemoMods(dashboard.value?.mods ?? []))
+const mods = computed(() => withDemoMods(scannedMods.value))
 
 /**
  * 删除是否经过回收站。
@@ -145,7 +145,7 @@ const { remove } = useModRemoval({
  * 的批次态。谁发起刷新都改同一份状态，所以切页往返不丢，两页的标签会同时显示「刷新中」。
  */
 const {
-  refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable,
+  refreshing, refreshingAll, runtimeState,
   checkingBound, outcome,
   refreshOne, refreshBoundRepositories,
 } = useRepositoryRefresh()
@@ -274,16 +274,6 @@ async function refreshLocal() {
 }
 
 /**
- * 刷新状态快照：判定函数吃普通对象，避免把响应式细节带进纯逻辑模块。
- */
-const refreshSnapshot = computed<RuntimeRefreshState>(() => ({
-  refreshing: refreshing.value,
-  queued: queued.value,
-  sourceRefreshing: sourceRefreshing.value,
-  entryStateUnavailable: entryStateUnavailable.value,
-}))
-
-/**
  * 每个 MOD 的运行期状态（合成后端扫描结果 + 当前仓库缓存 + 刷新状态）。
  *
  * 判定逻辑在 `modRuntimeStatus`：卡片标签组件（`ModStatusTags`）调的是**同一个**
@@ -291,7 +281,7 @@ const refreshSnapshot = computed<RuntimeRefreshState>(() => ({
  */
 const runtimeStatuses = computed(() =>
   mods.value.map((mod) => runtimeModStatus(
-    mod, mods.value, repositories.value, refreshSnapshot.value,
+    mod, mods.value, repositories.value, runtimeState.value,
   )))
 
 /** 列表与卡片实际用的 MOD（`labels` / `update_available` 已按运行期状态重算）。 */
@@ -767,7 +757,7 @@ function runPackageAction(pkg: ModPackageNode) {
 /** 单仓刷新：复用刷新引擎，只更新这一条仓库的缓存。 */
 async function refreshRepository(repo: Repository) {
   // 用户主动点刷新 → 强制请求，不吃 5 分钟 Release 缓存
-  const error = await refreshOne(repo, true)
+  const error = await refreshOne(repo)
   if (error) message.error(error)
 }
 

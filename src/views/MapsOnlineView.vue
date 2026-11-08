@@ -857,7 +857,7 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
       「刷新全部」按钮一直转，那会让人以为整源刷新还没结束。
   -->
   <n-float-button position="fixed" bottom="28" right="32" :disabled="anyRefreshing"
-    :tooltip="t('levelSet.refreshAllHint')" @click="refreshAll">
+    :tooltip="t('levelSet.refreshAllHint')" @click="refreshAll({ force: true })">
     <RefreshOutline width="17" height="17" :class="{ 'spin-icon': refreshingAll }" />
   </n-float-button>
 </template>

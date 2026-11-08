@@ -8,9 +8,8 @@ use tauri::State;
 
 /// 刷新单个仓库的 Release 列表。
 ///
-/// `force = true` 跳过 5 分钟缓存强制请求 —— 用户手动点「刷新」时传，
-/// 因为那个动作的语义就是「我要最新的」。批量刷新、自动刷新、切页回来
-/// 都传 `false`（或缺省）走缓存。
+/// 仅在线页右下角整批刷新传 `force = true` 跳过 5 分钟缓存；
+/// 卡片、分组、检查更新、启动和切页均传 `false`（或缺省）。
 #[tauri::command]
 pub async fn refresh_repository(
     state: State<'_, AppState>,
@@ -64,10 +63,7 @@ pub async fn refresh_repository(
      * `last_error` 不清：上次失败留下的错误要保留到下一次真正成功为止，
      * 否则界面会出现「有缓存列表但没有错误」的假象，用户以为已经恢复。
      */
-    if !force
-        && !repo.cached_releases.is_empty()
-        && cache_is_fresh(repo.releases_cached_at, now_millis(), RELEASE_CACHE_TTL_MS)
-    {
+    if !force && cache_is_fresh(repo.releases_cached_at, now_millis(), RELEASE_CACHE_TTL_MS) {
         log::info!(
             "仓库 Release 命中缓存：仓库={}，数量={}，缓存时间={:?}",
             repo.name,

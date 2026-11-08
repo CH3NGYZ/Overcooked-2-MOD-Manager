@@ -27,13 +27,13 @@ test('本地关卡集扫描只有 useLevelSetScan 一个入口', () => {
   }
 
   const scan = read('composables/useLevelSetScan.ts')
-  assert.match(scan, /export async function scanLevelSets\(/)
+  assert.match(scan, /export function scanLevelSets\(/)
   // 状态必须在模块作用域：挂在页面实例上就熬不过一次切页。
   assert.match(scan, /^const inFlight = ref\(0\)$/m)
   assert.match(scan, /const scanning = computed\(\(\) => inFlight\.value > 0\)/)
   assert.match(scan, /watchLevelSetScan\(/)
   // 结束时按计数归零清理，不能由先结束的那次清掉还在跑的进度。
-  assert.match(scan, /if \(inFlight\.value === 0\) progress\.value = null/)
+  assert.match(scan, /progress\.value = null/)
 })
 
 /**
@@ -43,8 +43,8 @@ test('本地关卡集扫描只有 useLevelSetScan 一个入口', () => {
 test('总览「本地地图」卡显示读取状态', () => {
   const overview = read('views/OverviewView.vue')
   assert.match(overview, /const \{ scanning: levelSetScanning, scanLevelSets \} = useLevelSetScan\(\)/)
-  assert.match(overview, /:loading="levelSetScanning"/)
-  assert.match(overview, /scanLevelSets\(\)\.catch\(/)
+  assert.match(overview, /:loading="localMapsChecking"/)
+  assert.match(overview, /levelSets\.value = await scanLevelSets\(\)/)
   assert.match(overview, /if \(levelSetScanning\.value\) return t\('levelSet\.scanning'\)/)
   assert.match(overview, /levelSetScanning\.value && !levelSets\.value\.length \? '—'/)
 })

@@ -1,9 +1,11 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '../services/tauri'
+import type { RuntimeRefreshState } from '../modRuntimeStatus'
+import { modUpdateAvailable } from '../statusTags'
 import { providerLabel } from '../providers'
 import { mapWithConcurrency } from '../concurrency'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
-import { refreshReleaseItem, runReleaseBatch, type ReleaseFetchSpec } from '../releaseRefresh'
+import { refreshReleaseItem, runReleaseBatch, runSourceReleaseRefresh, type ReleaseFetchSpec } from '../releaseRefresh'
 import { pickI18n, locale, t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
@@ -71,7 +73,7 @@ const entryStateUnavailable = state.entryStateUnavailable
  *
  * 与 `refreshingAll` 分开是因为两者的**副作用范围**不同：
  * `refreshingAll` 会先清空源缓存、让安装页整页进入加载态；
- * 检查更新不动源文档、不清列表，只是把几个仓库的 Release 重抓一遍。
+ * 检查更新会重读源文档但不清空列表，再刷新已绑定仓库的 Release。
  * 混用一个标志会让 MOD 管理页点一下「检查」就把 MOD 安装页刷成白屏。
  *
  * 放在模块作用域（而不是页面里的 `ref`）的原因与其它状态相同：
@@ -103,6 +105,22 @@ const anyRefreshing = state.anyRefreshing
  */
 const repositoriesLoading = computed(() => state.inFlight.value > 0)
 
+const runtimeState = computed<RuntimeRefreshState>(() => ({
+  refreshing: refreshing.value,
+  queued: queued.value,
+  sourceRefreshing: sourceRefreshing.value,
+  entryStateUnavailable: entryStateUnavailable.value || state.preparingSources.value,
+}))
+
+// Card comparisons are incremental (runtimeState). This is only the final
+// aggregate summary over the same local snapshot; it never fetches Releases.
+const dashboardStore = useDashboard()
+watch([anyRefreshing, dashboardStore.modsLoading, dashboardStore.mods, dashboardStore.config],
+  ([busy, scanning]) => {
+    dashboardStore.invalidateModUpdates()
+    if (!busy && !scanning && dashboardStore.dashboard.value) void dashboardStore.checkModUpdates()
+  }, { flush: 'post' })
+
 /** 最近一次整批刷新的失败信息（供页面决定是否提示）。 */
 const lastErrors = ref<string[]>([])
 
@@ -117,14 +135,14 @@ type StartupState = 'idle' | 'deferred' | 'running' | 'done'
 let startupState: StartupState = 'idle'
 
 function store() {
-  const { load, reloadConfig, applyConfigSnapshot, config, mods } = useDashboard()
+  const { loadBase, reloadConfig, applyConfigSnapshot, config, mods } = useDashboard()
   const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
   const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
   /** 当前地区决定哪些源/仓库真实存在；空值按「非中国大陆」处理，与后端一致。 */
   const region = computed(() => config.value?.region)
   /** 当前平台决定只看专属某平台的仓库（与 region 同语义层）。 */
   const platform = computed(() => config.value?.platform)
-  return { load, reloadConfig, applyConfigSnapshot, config, sources, repositories, mods, region, platform }
+  return { loadBase, reloadConfig, applyConfigSnapshot, config, sources, repositories, mods, region, platform }
 }
 
 /**
@@ -134,13 +152,8 @@ function store() {
  * 请求、成功写回、失败写回、错误文案只有一处，不会出现「单独点刷新会清
  * `last_error`、检查更新却不清」这种两套行为。
  *
- * 这里刻意不调用 load()：全量重读会重新扫描游戏目录和每个 DLL，
- * 在滚动时刷新表现为明显卡顿。单个仓库的结果局部替换即可，
- * 整批结束后再统一 load() 一次补齐其它派生状态（更新数、MOD 标签等）。
- *
- * `force` 只由**用户手动点刷新**传入：后端有 5 分钟 Release 缓存，批量
- * 刷新走缓存才不会把整棵仓库树重打一遍；但用户点那颗刷新按钮时的语义
- * 就是「现在就要最新的」，必须绕过缓存。
+ * Release 结果逐条写回，版本判定直接使用本地扫描快照，不重扫 DLL。
+ * 只有右下角整批刷新显式传 force；其它入口复用五分钟缓存。
  */
 function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<Repository> {
   const force = options.force ?? false
@@ -178,7 +191,7 @@ async function refreshOne(repo: Repository, force = false): Promise<string | nul
  * 失败的还挂着旧结论。
  */
 function patchRepository(repositoryId: string, patch: Partial<Repository>) {
-  const { dashboard } = useDashboard()
+  const { dashboard, applyConfigSnapshot } = useDashboard()
   const current = dashboard.value
   if (!current) return
   const config = current.config
@@ -186,10 +199,7 @@ function patchRepository(repositoryId: string, patch: Partial<Repository>) {
   if (index < 0) return
   const repositories = config.repositories.slice()
   repositories[index] = { ...repositories[index], ...patch }
-  dashboard.value = {
-    ...current,
-    config: { ...config, repositories },
-  }
+  applyConfigSnapshot({ ...config, repositories })
 }
 
 /**
@@ -204,11 +214,7 @@ function patchRepository(repositoryId: string, patch: Partial<Repository>) {
 /**
  * 一次批量刷新（本域唯一的实现，四个入口都走它）。
  *
- * 「刷一个显示一个」由局部更新实现：每个仓库完成时只替换它自己的
- * `cached_releases`（见 `refreshOne`），视图立刻显示该仓库的版本号，
- * 其余仓库继续转圈；整批结束后才 `load()` 一次，补齐更新数、MOD 标签等
- * 派生状态 —— 刷新过程中反复重读 Dashboard 会重新扫描游戏目录和每个 DLL，
- * 表现为页面滚动时明显卡一下。
+ * 单条结果立即写回；已安装绑定优先，收尾只重读配置，不重新扫描本地文件。
  */
 async function runRepositoryBatch(
   repos: Repository[],
@@ -226,12 +232,9 @@ async function runRepositoryBatch(
     ...repositoryReleaseSpec({ force: options.force }),
     trigger: options.trigger ?? 'partial',
     prioritize: (items) => prioritizeInstalledRepositories([...items], mods.value),
-    finalize: () => store().load(),
-    /*
-     * 「有更新」的数量只能在 `load()` 之后读：Dashboard 重读时后端会用刚拿到的
-     * Release 缓存重算每个 MOD 的 `update_available`，之前读到的还是上一轮结论。
-     */
-    countUpdated: () => store().mods.value.filter((mod) => mod.update_available).length,
+    finalize: () => store().reloadConfig(),
+    // Summarize the same local snapshot and Release results; no second API pass.
+    countUpdated: () => store().mods.value.filter((mod) => modUpdateAvailable(mod, store().repositories.value)).length,
   })
 }
 
@@ -239,7 +242,7 @@ async function runRepositoryBatch(
  * 限并发的批量刷新（旧签名：调用方只取失败文案）。
  *
  * `force` 的默认值必须是 false：启动刷新与切页触发的刷新要尽量吃 5 分钟
- * Release 缓存，只有用户手动点「刷新 / 检查更新」才值得绕过它。
+ * Release 缓存；仅右下角整批刷新显式绕过它。
  */
 async function refreshMany(repos: Repository[], options: { force?: boolean } = {}) {
   const result = await runRepositoryBatch(repos, { force: options.force, trigger: 'partial' })
@@ -256,25 +259,17 @@ export interface BoundRefreshSummary {
   errors: string[]
 }
 
-/**
- * 检查更新：只刷新「本地已安装条目绑定」的那几个仓库，**强制**绕过缓存。
- *
- * ## 为什么由引擎暴露，而不是页面自己调 `refreshMany`
- *
- * 三个页面（MOD 管理、MOD 安装、总览）读的是同一份模块级状态：
- * 谁发起刷新、从哪个页面发起，都不该改变别的页面看到的东西。
- * 页面自己拼调用顺序会出现「这个页在转、那个页不转」——
- * 本条入口保证「一批检查 = 一个共享的批次态（`checkingBound`）+ 每仓状态
- * + 一份可展示的结果（`outcome`）」。
- *
- * ## 为什么 force
- *
- * 用户点的是「检查更新」，语义就是「现在这版是不是最新的」。走 5 分钟缓存
- * 会让他刚发新版就点、点完还是旧结论，比多花一次请求糟糕得多。
- * 与地图管理页的「检查更新」保持同一取舍。
- */
+/** Prepare all source TOMLs first, then refresh only the bound repositories.
+ * API refresh supplies update evidence directly; ordinary checks honor cache TTL. */
 async function refreshBoundRepositories(repos: Repository[]): Promise<BoundRefreshSummary> {
-  const result = await runRepositoryBatch(repos, { force: true, trigger: 'bound' })
+  if (anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
+  const ids = new Set(repos.map((repo) => repo.id))
+  const result = await runSourceReleaseRefresh({
+    state,
+    trigger: 'bound',
+    prepare: () => prepareRepositorySources(false),
+    refresh: () => runRepositoryBatch(store().repositories.value.filter((repo) => ids.has(repo.id)), { trigger: 'single' }),
+  })
   return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
 }
 
@@ -477,145 +472,61 @@ async function discoverCommunityRepositories(
  * 完整刷新：源文档（父→子）→ 全部启用仓库的 Release（并发 4）。
  * 返回失败清单；调用方决定是否提示。
  */
-async function refreshEverything(): Promise<string[]> {
-  if (refreshingAll.value) return []
-  state.beginBatch('full')
-  /*
-   * 从清空源缓存到列表填回来，按仓库 id 的状态一个都匹配不上：这段空窗期
-   * 由 `entryStateUnavailable` 兜住卡片标签。Release 阶段开始前必须关掉。
-   */
-  state.setEntryStateUnavailable(true)
-  lastErrors.value = []
+async function prepareRepositorySources(clearEntries: boolean): Promise<string[]> {
   try {
-    const { load, reloadConfig, applyConfigSnapshot, repositories, sources, region, platform } = store()
+    const { loadBase, reloadConfig, applyConfigSnapshot, repositories, sources, region } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
-    if (!sources.value.length && !repositories.value.length) await load()
-    /*
-     * 先把旧缓存清掉，再拉取权威文档。
-     *
-     * 不这样做的话，页面会先用配置里上一轮的仓库列表渲染一遍，等 raw 文档
-     * 回来再整体替换 —— 用户看到的是「旧列表一闪、随后跳变」，而且旧条目在
-     * 新文档到达前是可点的（可能装到已经下线的仓库）。
-     *
-     * 清空只作用于本次要刷的源及其后代，社区源不受影响（它们由搜索管理）。
-     * 后端返回清理后的配置，这里直接写回 Dashboard，列表当场变空。
-     */
-    const refreshable = sources.value.filter(
-      (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
-    )
-    if (refreshable.length) {
-      try {
-        const cleared = await api.clearRepositorySourceCache(refreshable.map((source) => source.id))
-        applyConfigSnapshot(cleared)
-      } catch (reason) {
-        // 清空失败不阻塞刷新：后面每个源文档应用时也会各自清一次
-        // 这条会被 message.error 直接显示，原因可能是后端 tag
-        lastErrors.value.push(backendMessageOf(reason))
+    if (!sources.value.length && !repositories.value.length) await loadBase()
+    if (clearEntries) {
+      const refreshable = sources.value.filter(
+        (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
+      )
+      if (refreshable.length) {
+        try {
+          const cleared = await api.clearRepositorySourceCache(refreshable.map((source) => source.id))
+          applyConfigSnapshot(cleared)
+        } catch (reason) {
+          // 清空失败不阻塞刷新：后面每个源文档应用时也会各自清一次
+          // 这条会被 message.error 直接显示，原因可能是后端 tag
+          lastErrors.value.push(backendMessageOf(reason))
+        }
       }
     }
     const sourceErrors = await refreshSourceDocuments()
     // 源文档阶段用的是 reloadConfig（只更新配置）；
-    // 这里再读一次配置拿到最终仓库列表，Release 阶段结束时会做一次完整 load。
+    // 这里再读一次配置拿到最终仓库列表，Release 阶段结束时只重读配置，不扫描 DLL。
     await reloadConfig()
-    /*
-     * 官方在线源全军覆没时改用内置快照。
-     *
-     * 条件（三条同时满足才回退，任一不满足都不回退）：
-     *   1. 官方源本身启用且属于官方树（`DEFAULT_INDEX_ID` 及其子源）；
-     *   2. 本次源文档阶段确实失败过（sourceErrors 覆盖到官方树）；
-     *   3. 当前官方源树下**一个仓库都没有**——部分子源成功、或子源可访问但
-     *      没有仓库，都不算「全失败」，不能拿内置内容去覆盖真实结果。
-     *
-     * 内置快照是落后几个版本的官方源，只作为离线兜底；一旦回退成功，
-     * 后续每次刷新仍先请求在线入口，不会固定在内置版本。
-     */
     const { fallbackErrors, hasFallenBack } = await fallbackToBuiltinIfOffline(sourceErrors)
-    /*
-     * 回退成功时**也要**重读配置：内置仓库是在这次命令里写进配置的，
-     * 只有重新读一次才会出现在页面上。
-     *
-     * 这里踩过一次：原先写成 `if (fallbackErrors.length) reloadConfig()`，
-     * 而回退成功返回的是空数组（没有错误），于是重读被跳过 —— 结果是
-     * 「回退请求发了、配置也写了，但页面上一个仓库都不显示」。
-     * 用 hasFallenBack 表达「这次是否真的走了回退」，与「有没有报错」解耦。
-     */
     if (hasFallenBack) await reloadConfig()
-    /*
-     * 社区仓库发现：官方源树**刷新完毕之后**才触发，且不阻塞后面的 Release 刷新。
-     *
-     * 顺序要求来自用户：社区搜索依赖官方源树来判断「哪些同坐标已被官方收录」，
-     * 所以必须等官方源提交完成，否则会把官方已有的仓库当成社区新增；
-     * 而两个平台互相独立，并行发起即可 —— GitHub 走 Search API、Gitee 走
-     * 网页验证，互不排队。
-     *
-     * 结果由后端 `merge_results` 写进配置（含「被官方覆盖的社区副本置
-     * enabled=false」的闪避），这里把返回的完整配置直接写回 Dashboard。
-     * 任一平台失败只记录，不影响另一平台，也不影响整批刷新。
-     */
     const communityErrors = await discoverCommunityRepositories(applyConfigSnapshot)
     // 配置已经写回（或发现失败也不该让地图刷新无限等），地图源树可以读了
     markCommunityDiscovered()
 
-    /*
-     * 已安装优先：先把本地装过的 MOD 所绑定的仓库排到队首。
-     *
-     * 首次启动与「刷新全部仓库源」都走这里，所以两条路径行为一致：
-     * 用户关心的是自己装的仓库有没有更新，不该排在几十个未安装仓库
-     * 后面慢慢等。
-     *
-     * 不可用的仓库整条跳过，判定与安装页展示完全一致
-     * （见 `repositoryIsAvailable`）：
-     *   - `enabled=false`：被用户关闭，或被官方仓库源覆盖的社区副本；
-     *   - 地区不适用：例如 international 仓库在中国大陆。
-     * 这两类既不显示也不刷新，前端不会为它们发出任何请求。
-     */
-    const available = repositories.value.filter((repo) =>
-      repositoryIsAvailable(repo, sources.value, region.value, platform.value))
-    /*
-     * trigger 传 `single`：整批的结果由下面统一写一条 `full`，
-     * 否则这里会先把「上次检查」覆盖成半批数据（源文档与社区阶段的错误还没并进来）。
-     * 已安装优先已下沉到 `runRepositoryBatch`，不必在这里再排一次。
-     */
-    /*
-     * 仓库列表已由 `reloadConfig` 填回来，条目级状态从这里接管。
-     *
-     * 关掉批次兜底是「按仓库粒度返回」的前提：留着它，整批标志会把每张卡
-     * 都按在「刷新中」，直到最后一个仓库刷完才一起松开 —— 表现就是用户报的
-     * 「结果一批一起回来」。
-     */
-    state.setEntryStateUnavailable(false)
-    const release = await runRepositoryBatch(available, { trigger: 'single' })
-    /*
-     * 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
-     *
-     * 依赖声明只存在于仓库源文档里：源下线、文档改版或用户删了自定义源之后，
-     * 本地已装 MOD 的依赖信息就只剩安装那一刻的快照。这里按刚刷新到的配置
-     * 重写一遍，保证「在线与本地不一致时以在线为准」。
-     *
-     * 失败吞掉是刻意的：快照是展示用的兜底信息，它同步不上不该让用户看到
-     * 一条整批刷新失败的提示 —— 刷新本身已经成功了。
-     */
-    await api.syncDependencySnapshots().catch(() => undefined)
-    lastErrors.value = [...sourceErrors, ...fallbackErrors, ...communityErrors, ...release.errors]
-    /*
-     * 整批刷新跨了四个阶段（源文档、内置回退、社区发现、全部条目），
-     * 错误分散在四处，只有这里知道怎么合并 —— 所以结果由本函数自己写，
-     * 而不是让 `runRepositoryBatch` 把「只看到最后一段」的结果写出去。
-     */
-    state.publishOutcome({
-      trigger: 'full',
-      refreshed: release.refreshed,
-      updated: release.updated,
-      errors: lastErrors.value,
-      finishedAt: Date.now(),
-    })
-    return lastErrors.value
+    return [...sourceErrors, ...fallbackErrors, ...communityErrors]
   } finally {
-    // 发现阶段之前就抛错时也要兑现：地图启动刷新等在它后面，不能永远挂着
     markCommunityDiscovered()
-    state.setEntryStateUnavailable(false)
-    state.endBatch('full')
   }
+}
+
+async function refreshEverything(options: { force?: boolean } = {}): Promise<string[]> {
+  if (anyRefreshing.value) return []
+  lastErrors.value = []
+  state.setEntryStateUnavailable(true)
+  const result = await runSourceReleaseRefresh({
+    state,
+    trigger: 'full',
+    prepare: () => prepareRepositorySources(true),
+    refresh: async () => {
+      const { repositories, sources, region, platform } = store()
+      const available = repositories.value.filter((repo) =>
+        repositoryIsAvailable(repo, sources.value, region.value, platform.value))
+      const result = await runRepositoryBatch(available, { trigger: 'single', force: options.force })
+      await api.syncDependencySnapshots().catch(() => undefined)
+      return result
+    },
+  })
+  lastErrors.value = [...lastErrors.value, ...result.errors]
+  return lastErrors.value
 }
 
 /**
@@ -674,7 +585,7 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 
 export function useRepositoryRefresh() {
   return {
-    refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable,
+    refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable, runtimeState,
     checkingBound, anyRefreshing, repositoriesLoading,
     outcome, lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshBoundRepositories,

@@ -28,54 +28,34 @@ import {
 import StatCard from '../components/StatCard.vue'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import { useMapSources } from '../composables/useMapSources'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { api } from '../services/tauri'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
-import { modUpdateAvailable } from '../statusTags'
-import { repositoryForMod } from '../modStatus'
+import { runtimeModStatus } from '../modRuntimeStatus'
 import {
-  levelSetState, mapForLevelSet, mapVersionForLevelSet, mapVersionRefs,
+  levelSetState, levelSetIsRefreshing, mapForLevelSet, mapVersionForLevelSet, mapVersionRefs,
 } from '../levelSetStatus.ts'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
-import type { LevelSetInfo, MapInfo } from '../types'
+import type { LevelSetInfo } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const router = useRouter()
 const message = useNotify()
-const { ensureLoaded, load, loading, error, mods, game, config, frameworkOk } = useDashboard()
+const { ensureLoaded, load, modsLoading, error, mods, game, config, frameworkOk } = useDashboard()
 
-const { refreshing } = useRepositoryRefresh()
+const { runtimeState } = useRepositoryRefresh()
+const { maps, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
 /** 本地地图扫描状态（`useLevelSetScan` 的模块级单例，切页不丢）。 */
 const { scanning: levelSetScanning, scanLevelSets } = useLevelSetScan()
 
-/**
- * 「本地 MOD 相关仓库正在检查」。
- *
- * 这是本地 MOD 卡按钮的 loading 依据，语义是**只关心影响本地 MOD
- * 更新结论的那些仓库**，不是整批刷新：
- *
- *   · 与本地 MOD 绑定的仓库里，还有任意一个在刷新 → true
- *   · 全部刷完（成功或失败）→ false，按钮立刻可用
- *   · 与本项目无关的仓库（没装任何来自它的 MOD）还在刷 → 不影响这里
- *
- * 为什么不能用 `refreshingAll`：它是整条流水线（源文档 + 所有仓库），
- * 要几十秒才归零。用户装了 4 个 MOD、只关心这 4 个有没有新版，
- * 不该被迫等二十多个仓库全部刷完。
- */
-const localReposChecking = computed(() => {
-  const repos = config.value?.repositories ?? []
-  const bound = new Set<string>()
-  for (const mod of mods.value) {
-    if (mod.is_dependency) continue
-    const repo = repositoryForMod(repos, mod)
-    if (repo) bound.add(repo.id)
-  }
-  // 没有任何绑定关系时退回「整批是否在刷」，否则按钮永远不会转
-  if (!bound.size) return Object.values(refreshing.value).some(Boolean)
-  return [...bound].some((id) => refreshing.value[id])
-})
+/** Counts publish after scanning; each version conclusion follows its own online entry. */
+const modStatuses = computed(() => mods.value.map((mod) =>
+  runtimeModStatus(mod, mods.value, config.value?.repositories ?? [], runtimeState.value)))
+const localReposChecking = computed(() => modsLoading.value || runtimeState.value.entryStateUnavailable
+  || modStatuses.value.some((entry) => entry.refreshing))
 
 /**
  * 本地 MOD 卡的按钮文案与状态。
@@ -93,7 +73,8 @@ const buttonLabel = computed(() => {
 onMounted(() => {
   void ensureLoaded()
   void loadDiyLevel()
-  void loadMaps()
+  void loadOnlineMaps()
+  void loadLocalMaps()
 })
 
 /* ===== BepInEx 框架 ===== */
@@ -217,16 +198,11 @@ const installedMods = computed(() => mods.value)
 /**
  * 可更新的 MOD。
  *
- * **必须用 `modUpdateAvailable` 而不是 `mod.update_available`。**
- * 后者是后端扫盘时的快照；Release 缓存是之后异步刷新回来的。
- * MOD 管理页会用 `modUpdateVerdict` 按当前缓存实时重算，总览若只读快照
- * 就会出现「管理页显示可更新、总览说全部为最新版」这种自相矛盾。
+ * 与管理页和卡片共用 runtimeModStatus：源文档准备后，按各仓库的排队/
+ * 在飞状态逐个给出结论，不等待其它仓库，也不依赖扫描时的旧更新标志。
  */
-const updatable = computed(() => {
-  const repos = config.value?.repositories ?? []
-  return mods.value.filter((mod) =>
-    !mod.is_dependency && modUpdateAvailable(mod, repos))
-})
+const updatable = computed(() => modStatuses.value
+  .filter((entry) => !entry.mod.is_dependency && entry.mod.update_available).map((entry) => entry.mod))
 
 /**
  * 卡片副标题：有更新时报「N 个可更新」，没有时只报总数。
@@ -235,7 +211,9 @@ const updatable = computed(() => {
  */
 const installedSub = computed(() => {
   const total = installedMods.value.length
+  if (modsLoading.value) return t('tools.checking')
   if (!total) return t('modsLocal.noModsInstalled')
+  if (localReposChecking.value) return t('tools.checking')
   const updates = updatable.value.length
   return updates
     ? t('overview.installedCanUpdate', { count: total, updates })
@@ -312,8 +290,6 @@ function openOnlineRepositories() {
 
 /* ===== 在线地图 / 本地地图 ===== */
 
-/** 地图源声明的全部条目（`api.maps()`），与地图下载页读同一份。 */
-const maps = ref<MapInfo[]>([])
 /** 本地关卡集（`scanLevelSets()`），与地图管理页读同一份。 */
 const levelSets = ref<LevelSetInfo[]>([])
 
@@ -325,15 +301,12 @@ const levelSets = ref<LevelSetInfo[]>([])
  * 读取失败按 0 处理，不能让总览整页报错 —— 与本地 MOD / 框架卡片的做法
  * 相同，数据没到就用空状态文案，布局不塌。
  */
-async function loadMaps() {
-  const [sets, mapList] = await Promise.all([
-    // 走 `useLevelSetScan` 的唯一入口：扫描状态与进度是共享的，直接调 api 会让
-    // 卡片看不到这次读取（也看不到别的页面发起的那一次）。
-    scanLevelSets().catch(() => [] as LevelSetInfo[]),
-    api.maps().catch(() => [] as MapInfo[]),
-  ])
-  levelSets.value = sets
-  maps.value = mapList
+async function loadLocalMaps() {
+  try {
+    levelSets.value = await scanLevelSets()
+  } catch (reason) {
+    message.error(backendMessageOf(reason))
+  }
 }
 
 /**
@@ -347,6 +320,7 @@ const mapVersionList = computed(() => mapVersionRefs(maps.value))
 
 /** 单张本地地图的状态：口径与地图管理页的 `stateOf` 完全一致。 */
 function mapStateOf(set: LevelSetInfo) {
+  if (levelSetIsRefreshing(set, maps.value, refreshingHint.value)) return 'unknown'
   return levelSetState(set, mapVersionForLevelSet(set, mapVersionList.value))
 }
 
@@ -375,6 +349,9 @@ const onlineMapsSub = computed(() => {
  * 列表还没回来时 0 不是结论，只是「还不知道」—— 与「读取中」的按钮并排放着
  * 会让人以为一张地图都没装。未知一律显示破折号。
  */
+const localMapsChecking = computed(() => levelSetScanning.value
+  || !!refreshingHint.value.entryStateUnavailable
+  || levelSets.value.some((set) => levelSetIsRefreshing(set, maps.value, refreshingHint.value)))
 const localMapsValue = computed(() =>
   levelSetScanning.value && !levelSets.value.length ? '—' : String(levelSets.value.length))
 
@@ -384,6 +361,7 @@ const localMapsSub = computed(() => {
   if (!total) {
     return levelSetScanning.value ? t('levelSet.scanningPreparing') : t('overview.noMapsInstalled')
   }
+  if (localMapsChecking.value) return t('tools.checking')
   const updates = updatableMaps.value.length
   return updates
     ? t('overview.installedMapsCanUpdate', { count: total, updates })
@@ -399,6 +377,7 @@ const localMapsSub = computed(() => {
  */
 const localMapsButtonLabel = computed(() => {
   if (levelSetScanning.value) return t('levelSet.scanning')
+  if (localMapsChecking.value) return t('tools.checking')
   return updatableMaps.value.length ? t('overview.review') : t('overview.manage')
 })
 
@@ -436,7 +415,7 @@ function openLocalMaps() {
 <template>
   <div class="overview">
     <div v-if="error" class="muted">{{ error }}</div>
-    <div v-else class="overview-columns" :class="{ 'is-loading': loading }">
+    <div class="overview-columns">
       <!--
         左列 MOD 链路：BepInEx → 在线 MOD → 本地 MOD。
         顺序即操作顺序 —— 框架没装，下面两张卡的按钮都不可用。
@@ -493,7 +472,7 @@ function openLocalMaps() {
             按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
           -->
           <StatCard data-tutorial="overview-card-local-mods"
-            :label="t('overview.localMods')" :value="String(installedMods.length)"
+            :label="t('overview.localMods')" :value="modsLoading && !installedMods.length ? '—' : String(installedMods.length)"
             :extra="{ count: updatable.length, label: t('tools.update') }"
             :sub="installedSub"
             :tone="updatable.length ? 'warning' : 'success'"
@@ -588,7 +567,7 @@ function openLocalMaps() {
             <template #action>
               <n-button size="small" :secondary="!updatableMaps.length"
                 :type="updatableMaps.length ? 'warning' : 'default'"
-                :loading="levelSetScanning"
+                :loading="localMapsChecking"
                 :disabled="!levelSets.length" @click.stop="openLocalMaps">
                 <template v-if="!levelSetScanning" #icon>
                   <CloudDownloadOutline v-if="updatableMaps.length" width="14" height="14" />
@@ -611,7 +590,6 @@ function openLocalMaps() {
   /* 数据未到时不清空布局，避免卡片塌缩后再撑开 */
   min-height: 0;
 }
-.overview-columns.is-loading { opacity: .6; }
 
 /*
  * 两条纵向链路：等分两列、顶对齐，中间一条竖线。

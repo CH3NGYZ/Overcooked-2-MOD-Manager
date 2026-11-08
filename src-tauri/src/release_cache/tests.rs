@@ -1,6 +1,36 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[tokio::test]
+async fn bundle_cards_share_five_minutes_across_different_refresh_passes() {
+    let cache = RepoReleaseCache::default();
+    let calls = AtomicUsize::new(0);
+    let key = "gitcode:owner:bundle";
+    let first = run(&cache, key, Some("source-tree"), &calls).await;
+    cache
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(key)
+        .unwrap()
+        .fetched_at = Instant::now() - Duration::from_secs(299);
+    let second = run(&cache, key, Some("card-a"), &calls).await;
+    let third = run(&cache, key, Some("card-b"), &calls).await;
+    assert!(Arc::ptr_eq(&first, &second));
+    assert!(Arc::ptr_eq(&first, &third));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    cache
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(key)
+        .unwrap()
+        .fetched_at = Instant::now() - Duration::from_secs(300);
+    let expired = run(&cache, key, Some("card-c"), &calls).await;
+    assert!(!Arc::ptr_eq(&first, &expired));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
 async fn run(
     cache: &RepoReleaseCache,
     key: &str,

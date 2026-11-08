@@ -8,24 +8,21 @@
  * 回来只剩一个上次的 0，或者干脆重起一次扫描。与 `useMapSources` /
  * `useRepositoryRefresh` 一致：状态放模块作用域，页面只负责渲染。
  *
- * ## 只持有状态，不持有数据
- *
- * 列表本身仍由调用方保存（地图管理页要按作者分组排序、下载页要标记「已安装」、
- * 总览页只数个数），这里不存第二份，也就没有「谁的数据更新」的问题。`progress`
- * 只服务地图管理页整页加载态里的「已读取 x/y」。
+ * 最近一次本地结果也由此保存，供两页展示与已安装优先排序复用；在飞扫描
+ * 合并为一次，但不等待任何在线地图请求。在线与本地分别发布、分别处理失败。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { api, watchLevelSetScan } from '../services/tauri'
 import type { LevelSetInfo, LevelSetScanProgress } from '../types'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
 /**
- * 在飞扫描数。
- *
- * 用计数而不是布尔：进页面、导入后重读、另一页同时读都可能叠在一起，最后一个
- * 收尾才归零。写成布尔时先结束的那次会把还在跑的扫描判成「已结束」。
+ * 在飞扫描数；并发调用复用 pendingScan，同一轮只扫描一次。
  */
 const inFlight = ref(0)
+/** Latest local scan, independent of online maps; reused for installed-first scheduling. */
+const levelSets = shallowRef<LevelSetInfo[]>([])
+let pendingScan: Promise<LevelSetInfo[]> | undefined
 
 /** 是否有扫描在飞（总览卡片的按钮转圈读它）。 */
 const scanning = computed(() => inFlight.value > 0)
@@ -55,20 +52,25 @@ function ensureProgressListener(): void {
  * **所有入口都必须走这里**，不要直接调 `api.levelSets()`：绕过它就等于让总览
  * 卡片看不到那次读取，这个模块存在的意义也就没了。
  */
-export async function scanLevelSets(): Promise<LevelSetInfo[]> {
+export function scanLevelSets(): Promise<LevelSetInfo[]> {
+  if (pendingScan) return pendingScan
   ensureProgressListener()
-  // 新一轮从「没有进度」开始：上一轮的 x/y 会让人以为新扫描已经跑到那一步。
-  if (inFlight.value === 0) progress.value = null
+  progress.value = null
   inFlight.value += 1
-  try {
-    return await api.levelSets()
-  } finally {
-    inFlight.value -= 1
-    // 只有最后一个收尾才清进度：并发扫描里先结束的那次不该清掉还在跑的那次。
-    if (inFlight.value === 0) progress.value = null
-  }
+  pendingScan = (async () => {
+    try {
+      const result = await api.levelSets()
+      levelSets.value = result
+      return result
+    } finally {
+      inFlight.value -= 1
+      progress.value = null
+      pendingScan = undefined
+    }
+  })()
+  return pendingScan
 }
 
 export function useLevelSetScan() {
-  return { scanning, progress, scanLevelSets }
+  return { scanning, progress, scanLevelSets, levelSets }
 }

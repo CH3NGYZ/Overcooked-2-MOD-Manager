@@ -117,20 +117,14 @@ test('整批标志不参与卡片判定：进度只能按条目粒度显示', ()
    */
   assert.match(modRuntimeStatusSource, /state\.entryStateUnavailable/, '卡片要读条目集合兜底')
   assert.doesNotMatch(modRuntimeStatusSource, /refreshingAll/, '卡片判定不许读整批标志')
-  assert.match(modStatusTags, /entryStateUnavailable/, '标签组件要拿到条目集合兜底')
+  assert.match(modStatusTags, /runtimeState/, '标签组件要拿到共用运行期快照')
   assert.doesNotMatch(modStatusTags, /refreshingAll/, '标签组件不许拿整批标志')
 
-  // 两个域都必须在进入 Release 阶段之前关掉兜底，否则又是整批按住
-  assert.match(
-    repositoryEngine,
-    /setEntryStateUnavailable\(false\)[\s\S]{0,400}?runRepositoryBatch\(available/,
-    '仓库侧进入 Release 阶段前要先关掉条目集合兜底',
-  )
-  assert.match(
-    mapEngine,
-    /setEntryStateUnavailable\(false\)[\s\S]{0,400}?refreshReleases\(maps\.value/,
-    '地图侧进入 Release 阶段前要先关掉条目集合兜底',
-  )
+  // The source barrier belongs to the shared pipeline, not two copied flows.
+  assert.match(releaseRefresh, /state\.preparingSources\.value = false[\s\S]*?options\.refresh\(\)/)
+  assert.match(releaseRefresh, /state\.setEntryStateUnavailable\(false\)/)
+  for (const engine of [repositoryEngine, mapEngine]) assert.match(engine, /runSourceReleaseRefresh\(/)
+
 })
 
 test('排队中也算「刷新中」：整批一开始所有目标都变灰', () => {
@@ -144,8 +138,8 @@ test('排队中也算「刷新中」：整批一开始所有目标都变灰', ()
   assert.match(modRuntimeStatusSource, /queued\[repo\.id\]/, 'MOD 侧排队也算刷新中')
   assert.match(read('src/levelSetStatus.ts'), /refreshing\.queued\?\.has\(/, '地图侧排队也算刷新中')
   // 页面把队列状态喂进判定
-  assert.match(modsLocal, /queued: queued\.value/)
-  assert.match(levelsView, /queued: new Set\(Object\.keys\(queued\.value\)\)/)
+  assert.match(modsLocal, /runtimeState\.value/)
+  assert.match(mapEngine, /queued: new Set\(Object\.keys\(queued\.value\)\)/)
 })
 
 test('已安装优先下沉到批量实现，所有刷新入口自动生效', () => {
@@ -210,38 +204,24 @@ test('刷新结果有统一结构，两个域都能回传摘要', () => {
   for (const symbol of ['trigger', 'refreshed', 'updated', 'errors', 'finishedAt']) {
     assert.match(refreshState, new RegExp(`\\b${symbol}\\b`), `RefreshOutcome 缺 ${symbol}`)
   }
-  assert.match(repositoryEngine, /publishOutcome\(\{/, '整批刷新要写一份结果')
-  assert.match(mapEngine, /publishOutcome\(\{/,'地图整源刷新要写一份结果')
+  assert.match(releaseRefresh, /state\.publishOutcome\(outcome\)/, '两个域由共享流水线写结果')
   // 摘要文案与页头标签共用同一套格式化
   const outcomeText = read('src/refreshOutcomeText.ts')
   assert.match(outcomeText, /export function describeRefreshOutcome/)
   assert.match(read('src/components/RefreshResultTag.vue'), /describeRefreshOutcome\(/)
 })
 
-test('一次用户动作只生成一个刷新批次号，源树与 Release 共用它', () => {
-  /*
-   * tag 模式下后端按 `passId` 把同批内同一个仓库的 Release 请求合并成一次。
-   * 源树阶段与 Release 阶段各造一个编号就等于没传：同一次点击会按地图数
-   * 把同一个 API 打一遍。
-   */
-  assert.match(mapEngine, /function newPassId\(\)/, '批次号只能由这一个生成器产出')
-  assert.match(mapEngine, /api\.refreshMapReleases\(item\.id, true, passId\)/, 'Release 请求要带批次号')
-  for (const call of [
-    'refreshReleases(scoped, { passId })',
-    "refreshReleases(queue, { trigger: 'bound', passId",
-  ]) {
-    assert.ok(mapEngine.includes(call), `缺少同批透传：${call}`)
-  }
-  // 检查更新必须先重拉源树：Release 列表是照源文档的 tag 声明合成的
-  const bound = mapEngine.slice(
-    mapEngine.indexOf('async function refreshBoundMaps'),
-    mapEngine.indexOf('async function refreshSource'),
-  )
-  const reload = bound.indexOf('api.refreshMapSources(passId)')
-  const release = bound.indexOf("trigger: 'bound'")
-  assert.ok(reload >= 0 && reload < release, '检查更新要先重拉源树，再刷 Release')
-  // 服务层两个命令都要透传（Tauri v2 的参数键是 camelCase）
-  const tauriService = read('src/services/tauri.ts')
-  assert.match(tauriService, /invoke<MapInfo\[\]>\('refresh_map_sources', \{ passId \}\)/)
-  assert.match(tauriService, /invoke<ReleaseInfo\[\]>\('refresh_map_releases', \{ mapId, force, passId \}\)/)
+test('同一动作共享 pass，源准备和 Release 分阶段，只有浮动整批按钮 force', () => {
+  assert.match(mapEngine, /function newPassId\(\)/)
+  assert.match(mapEngine, /api\.refreshMapReleases\(item\.id, force, passId\)/)
+  assert.match(mapEngine, /api\.refreshMapSources\(passId, force\)/)
+  assert.match(mapEngine, /prepare: \(\) => prepareMapSources\(passId\)/)
+  assert.match(mapEngine, /prepareMapSources\(passId, options\.force\)/)
+  assert.match(repositoryEngine, /prepare: \(\) => prepareRepositorySources\(false\)/)
+  assert.match(mapsOnline, /@click="refreshAll\(\{ force: true \}\)"/)
+  assert.match(modsOnline, /engine\.refreshEverything\(\{ force: true \}\)/)
+  assert.doesNotMatch(modsOnline + modsLocal, /refreshOne\(repo, true\)/)
+  const service = read('src/services/tauri.ts')
+  assert.match(service, /invoke<MapInfo\[\]>\('refresh_map_sources', \{ passId, force \}\)/)
+  assert.match(service, /invoke<ReleaseInfo\[\]>\('refresh_map_releases', \{ mapId, force, passId \}\)/)
 })

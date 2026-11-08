@@ -1,7 +1,7 @@
 import { computed, ref, shallowRef } from 'vue'
 import { api, watchGameState } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
-import type { Dashboard, GameInfo, PublicConfig } from '../types'
+import type { Dashboard, GameInfo, PublicConfig, InstalledMod } from '../types'
 
 /**
  * 全局仪表盘状态：dashboard 快照 + 游戏状态事件合并。
@@ -13,6 +13,14 @@ const loading = ref(false)
 /** 后台重载计数：已有数据时刷新，不再遮罩、不禁用交互。 */
 const backgroundLoading = ref(0)
 const error = ref('')
+const localMods = shallowRef<InstalledMod[]>([])
+const modsLoading = ref(false)
+const modsError = ref('')
+let modsLoaded = false
+let basePending: Promise<void> | undefined
+let modsPending: Promise<void> | undefined
+let updateRevision = 0
+let configRevision = 0
 let gameStateRevision = 0
 let latestGame: GameInfo | undefined
 
@@ -101,19 +109,71 @@ export function useDashboard() {
    * 已有数据时的刷新（切页面、每仓刷新完成后的重载）走后台计数，
    * 既不遮罩也不禁用交互，避免刷新期间整页突然变灰、什么都点不了。
    */
-  async function load() {
+  function loadBase(): Promise<void> {
+    if (basePending) return basePending
+    const configBefore = dashboard.value?.config
     const initial = dashboard.value === null
     if (initial) loading.value = true
     else backgroundLoading.value += 1
     error.value = ''
-    try {
-      dashboard.value = await readDashboard()
-    } catch (reason) {
-      error.value = backendMessageOf(reason)
-    } finally {
-      if (initial) loading.value = false
-      else backgroundLoading.value = Math.max(0, backgroundLoading.value - 1)
+    basePending = (async () => {
+      try {
+        const value = await readDashboard()
+        // A slow summary response must not roll back newer source configuration.
+        const current = dashboard.value
+        dashboard.value = {
+          ...value,
+          config: current && current.config !== configBefore ? current.config : value.config,
+          mods: localMods.value,
+          updates: current?.updates ?? [],
+        }
+      } catch (reason) {
+        error.value = backendMessageOf(reason)
+      } finally {
+        if (initial) loading.value = false
+        else backgroundLoading.value = Math.max(0, backgroundLoading.value - 1)
+        basePending = undefined
+      }
+    })()
+    return basePending
+  }
+
+  function loadLocalMods(): Promise<void> {
+    if (modsPending) return modsPending
+    modsLoading.value = true
+    modsError.value = ''
+    modsPending = (async () => {
+      try {
+        localMods.value = await api.localMods()
+        modsLoaded = true
+        updateRevision += 1
+        const current = dashboard.value
+        if (current) dashboard.value = { ...current, mods: localMods.value }
+      } catch (reason) {
+        modsError.value = backendMessageOf(reason)
+      } finally {
+        modsLoading.value = false
+        modsPending = undefined
+      }
+    })()
+    return modsPending
+  }
+
+  async function checkModUpdates() {
+    const revision = ++updateRevision
+    const installed = localMods.value
+    const updates = await api.modUpdates(installed).catch(() => undefined)
+    const current = dashboard.value
+    if (updates && current && revision === updateRevision && installed === localMods.value) {
+      dashboard.value = { ...current, updates }
     }
+  }
+
+  function invalidateModUpdates() { updateRevision += 1 }
+
+  async function load() {
+    // Each lane publishes immediately; only callers needing a complete reload await both.
+    await Promise.all([loadBase(), loadLocalMods()])
   }
 
   async function refresh() {
@@ -128,12 +188,14 @@ export function useDashboard() {
    * （一次刷新要经过父源 + 多个子源，全量扫描会被重复十几次）。
    */
   async function reloadConfig() {
+    const revision = ++configRevision
     try {
       const config = await api.config()
+      if (revision !== configRevision) return
       const current = dashboard.value
       if (!current) {
         // 还没有任何快照：走完整读取
-        await load()
+        await loadBase()
         return
       }
       dashboard.value = { ...current, config }
@@ -150,6 +212,7 @@ export function useDashboard() {
    * 还不存在任何快照时退回完整读取。
    */
   function applyConfigSnapshot(config: PublicConfig) {
+    configRevision += 1
     const current = dashboard.value
     if (!current) return
     dashboard.value = { ...current, config }
@@ -160,13 +223,13 @@ export function useDashboard() {
    * 需要最新数据时由刷新引擎或用户手动刷新触发。
    */
   async function ensureLoaded() {
-    if (dashboard.value) return
-    await load()
+    if (!modsLoaded) void loadLocalMods()
+    if (!dashboard.value) await loadBase()
   }
 
   const config = computed<PublicConfig | null>(() => dashboard.value?.config ?? null)
   const game = computed<GameInfo | null>(() => dashboard.value?.game ?? null)
-  const mods = computed(() => dashboard.value?.mods ?? [])
+  const mods = computed(() => localMods.value)
   const enabledModCount = computed(() => mods.value.filter((mod) => mod.enabled).length)
   const updateCount = computed(() => mods.value.filter((mod) => mod.update_available).length)
   const frameworkOk = computed(() => {
@@ -175,8 +238,8 @@ export function useDashboard() {
   })
 
   return {
-    dashboard, loading, backgroundLoading, error,
+    dashboard, loading, backgroundLoading, error, modsLoading, modsError,
     config, game, mods, enabledModCount, updateCount, frameworkOk,
-    load, reloadConfig, applyConfigSnapshot, ensureLoaded, refresh, recheckGameState,
+    load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, ensureLoaded, refresh, recheckGameState,
   }
 }

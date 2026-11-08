@@ -70,6 +70,43 @@ fn tag_names(releases: &[ReleaseInfo]) -> Vec<&str> {
         .collect()
 }
 
+#[tokio::test]
+async fn bundle_refresh_projects_each_card_from_one_repository_snapshot() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let cache = crate::release_cache::RepoReleaseCache::default();
+    let calls = AtomicUsize::new(0);
+    let map = tag_entry("tag = \"maps\"");
+    for pass in ["source-tree", "first-card", "second-card"] {
+        let snapshot = cache
+            .list("github:u:r".into(), Some(pass), false, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![release("maps", &["rw_v1.0.zip", "rw_v2.0.zip"])])
+            })
+            .await
+            .unwrap();
+        let projected = super::releases::project_map_releases(&map, &snapshot).unwrap();
+        assert_eq!(tag_names(&projected), ["2.0", "1.0"]);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // The floating full refresh bypasses the snapshot once; all derived cards
+    // in that pass still share it even when they each request force=true.
+    for _ in 0..3 {
+        cache
+            .list(
+                "github:u:r".into(),
+                Some("floating-button"),
+                true,
+                || async {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![release("maps", &["rw_v3.0.zip"])])
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
 #[test]
 fn tag_mode_auto_select_keeps_a_free_text_version_asset() {
     // 版本表末项是 `0.78-fix`，规则只写数字段，自动匹配按理会落空

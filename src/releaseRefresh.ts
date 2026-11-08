@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import type { RefreshOutcome, RefreshState, RefreshTrigger } from './refreshState'
 import type { ReleaseInfo } from './types'
 
@@ -35,6 +36,34 @@ import type { ReleaseInfo } from './types'
 /** 能被刷新的条目：只要有稳定 id，长度/版本由调用方自己拿。 */
 export interface ReleaseItem {
   id: string
+}
+
+/** Source loading is the only phase barrier. Release refresh itself supplies
+ * update evidence; each result publishes immediately, including bound items
+ * prioritized by the domain. No second API pass or local scan is needed. */
+export async function runSourceReleaseRefresh(options: {
+  state: RefreshState
+  trigger: RefreshTrigger
+  prepare: () => Promise<string[]>
+  refresh: () => Promise<RefreshOutcome>
+}): Promise<RefreshOutcome> {
+  const { state, trigger } = options
+  state.beginBatch(trigger)
+  state.preparingSources.value = true
+  try {
+    const errors = await options.prepare()
+    state.preparingSources.value = false
+    state.setEntryStateUnavailable(false)
+    // Calling refresh synchronously queues every target before Vue renders.
+    const result = await options.refresh()
+    const outcome = { ...result, trigger, errors: [...errors, ...result.errors], finishedAt: Date.now() }
+    state.publishOutcome(outcome)
+    return outcome
+  } finally {
+    state.preparingSources.value = false
+    state.setEntryStateUnavailable(false)
+    state.endBatch(trigger)
+  }
 }
 
 /**
@@ -96,6 +125,13 @@ export async function refreshReleaseItem<T extends ReleaseItem>(
   if (!item.id || state.refreshing.value[item.id]) return null
   state.setItemFlag(item.id, true)
   try {
+    if (state.preparingSources.value) {
+      await new Promise<void>((resolve) => {
+        const stop = watch(state.preparingSources, (preparing) => {
+          if (!preparing) { stop(); resolve() }
+        }, { flush: 'sync' })
+      })
+    }
     const releases = await spec.fetch(item)
     /*
      * 写回必须早于关标志：反过来会先出现一帧「不在刷新中、但结论还是旧的」，

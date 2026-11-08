@@ -13,7 +13,7 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 106, '迁移的 IPC 集合不得因拆分丢失')
+  assert.equal(paths.length, 108, '迁移的 IPC 集合不得因拆分丢失')
   const declared = sourceFiles(resolve(root, 'commands'), ['.rs']).flatMap(path =>
     [...readText(path).matchAll(/^#\[tauri::command\]\s*pub (?:async )?fn ([a-z_]+)\(/gm)].map(m => m[1]))
   assert.equal(new Set(declared).size, declared.length, '命令不能在旧入口重复定义')

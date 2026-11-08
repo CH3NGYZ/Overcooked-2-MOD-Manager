@@ -550,6 +550,23 @@ export interface LevelSetRefreshingHint {
   sources: ReadonlySet<string>
 }
 
+/** Local comparisons wait for sources, then only their own queued/in-flight API. */
+export function levelSetIsRefreshing(
+  set: LevelSetInfo,
+  maps: readonly MapInfo[],
+  refreshing?: LevelSetRefreshingHint,
+): boolean {
+  const bound = mapForLevelSet(set, maps)
+  return !!refreshing && (
+    refreshing.entryStateUnavailable === true
+    || (!!bound && (
+      refreshing.maps.has(bound.id)
+      || !!refreshing.queued?.has(bound.id)
+      || (!!bound.source_id && refreshing.sources.has(bound.source_id))
+    ))
+  )
+}
+
 /**
  * 关卡集卡片状态区的完整标签列表。
  *
@@ -593,18 +610,11 @@ export function levelSetCardTags(
     }
   }
 
-  const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
-  const refreshingNow = !!refreshing && (
-    refreshing.entryStateUnavailable === true
-    || (!!bound && (
-      refreshing.maps.has(bound.id)
-      || !!refreshing.queued?.has(bound.id)
-      || (!!bound.source_id && refreshing.sources.has(bound.source_id))
-    ))
-  )
+  const refreshingNow = levelSetIsRefreshing(set, maps, refreshing)
+  const state = refreshingNow ? undefined : levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
   tags.push({
-    text: refreshingNow ? 'tools.refreshing' : LEVEL_SET_STATE_TAGS[state],
-    tone: refreshingNow ? 'muted' : LEVEL_SET_STATE_TONES[state],
+    text: refreshingNow ? 'tools.refreshing' : LEVEL_SET_STATE_TAGS[state!],
+    tone: refreshingNow ? 'muted' : LEVEL_SET_STATE_TONES[state!],
     kind: 'state',
     // 只要这个集绑定了地图，状态标签就允许跳回下载页并高亮那张卡 ——
     // 与 MOD 管理页一致：「最新版」和「有更新」都是「去下载页看看」的入口。
@@ -660,8 +670,9 @@ export function levelSetCardAction(
   mods: readonly InstalledMod[],
   gameProbed: boolean,
   repositories: readonly Repository[] = [],
+  refreshing?: LevelSetRefreshingHint,
 ): LevelSetCardAction | undefined {
-  if (!set.enabled || set.error) return undefined
+  if (!set.enabled || set.error || levelSetIsRefreshing(set, maps, refreshing)) return undefined
   const statuses = gameProbed
     ? levelSetRelationStatuses(set, maps, mods, repositories)
     : []

@@ -74,8 +74,8 @@ const startupPreflight = useStartupPreflight(() => {
   repositoryRefresh.requestStartupRefresh()
   /*
    * 地图源也要在启动时自动读一次：`release-tags` 源（一个仓库放多张地图）的
-   * 地图只能联网读 Release note 才知道，内置快照里没有。只读源树、不刷
-   * 每张图的 Release，与上面 MOD 仓库的启动刷新同一时机、同一层级。
+   * 地图只能联网读 Release note 才知道，内置快照里没有。源树准备好后按已安装优先刷新
+   * Release，刷新结果直接参与更新判定，与 MOD 使用同一阶段编排。
    *
    * 但要等社区发现把配置写完再读：带 `map` topic 的社区仓库是发现阶段
    * 写进配置的，地图源树直接读配置 —— 抢在发现之前加载，首启就看不到

@@ -56,6 +56,7 @@ import {
 import {
   levelSetAuthorNames,
   levelSetCardAction,
+  levelSetIsRefreshing,
   levelSetCardTags,
   levelSetDisplayName,
   levelSetGroup,
@@ -67,7 +68,6 @@ import {
   mapVersionRefs,
   type LevelSetCardAction,
   type LevelSetCardTag,
-  type LevelSetRefreshingHint,
 } from '../levelSetStatus.ts'
 import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, Repository } from '../types'
 
@@ -100,7 +100,7 @@ import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, Repository }
  *
  * 进入页面只读一次本地关卡集（`scanLevelSets()`），地图列表交给 `loadMaps()`。开关、删除、
  * 批量开关只影响本地关卡集，之后**只重读关卡集**；地图列表带 Release 缓存，
- * 与这些操作无关。「检测更新」走 `refreshBoundMaps`（并发 4、强制绕过缓存），
+ * 与这些操作无关。「检测更新」走 `refreshBoundMaps`（并发 4、复用五分钟缓存），
  * 是唯一重拉已装地图 Release 的入口；浮动刷新是唯一「两端都重读」的入口。
  */
 
@@ -137,7 +137,7 @@ const sets = ref<LevelSetInfo[]>([])
  * 刷新态同理：`checkingBound` 记的是共享引擎的批次，页面局部 ref 熬不过切页。
  */
 const {
-  maps, refreshing, queued, refreshingSources, entryStateUnavailable, checkingBound, outcome,
+  maps, checkingBound, outcome, refreshingHint,
   loadMaps, refreshBoundMaps, syncDependencySnapshots,
 } = useMapSources()
 const loading = ref(true)
@@ -288,26 +288,12 @@ const repositories = computed<Repository[]>(() =>
     )),
 )
 
-/**
- * 首次进入：关卡集与地图列表一起读。
- *
- * 两次读取互不依赖，所以不串行。地图列表交给 `loadMaps()`：它把结果写进
- * 单例、失败也自己提示，而且整源刷新进行中会**主动跳过** —— 切页回来时
- * 不会用旧缓存把正在重建的列表盖掉。地图列表失败不该让本地关卡集消失，
- * 那是最基础的信息，用户至少要看得到自己装了哪些图。
- */
+/** Local scanning owns only its loading/result. Online map loading starts
+ * independently on mount and must never delay publication of this list. */
 async function load() {
   loading.value = sets.value.length === 0
   try {
-    /*
-     * 两读并发，但**都要等**：地图列表没回来时 `boundMapOf` 找不到绑定，
-     * 卡片会先显示一帧「未绑定」再跳成「有更新 / 最新版」—— 用户看到的是状态闪变。
-     * `loadMaps` 内部自己吞掉失败（只提示、不 reject），所以这里不会连累关卡集。
-     *
-     * 关卡集走 `scanLevelSets()`（`useLevelSetScan` 的单例入口）：它自己清进度、
-     * 维护「正在读取」，总览页的本地地图卡读的也是这一份状态。
-     */
-    const levelSets = await Promise.all([scanLevelSets(), loadMaps()]).then(([list]) => list)
+    const levelSets = await scanLevelSets()
     sets.value = levelSets
   } catch (reason) {
     message.error(backendMessageOf(reason))
@@ -431,6 +417,7 @@ onMounted(() => {
    * 已有数据时 `ensureLoaded` 直接返回，不会重复扫描。
    */
   void ensureLoaded()
+  void loadMaps()
   void load()
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
@@ -463,6 +450,7 @@ function bindingOf(set: LevelSetInfo) {
 }
 
 function stateOf(set: LevelSetInfo) {
+  if (levelSetIsRefreshing(set, maps.value, refreshingHint.value)) return 'unknown'
   return levelSetState(set, mapVersionForLevelSet(set, versionRefs.value))
 }
 
@@ -493,12 +481,7 @@ function authorNamesOf(set: LevelSetInfo) {
  * 每次重算都新建两个 Set：一次刷新最多几十个 id，且只在 `refreshing` /
  * `refreshingSources` / `entryStateUnavailable` 变化（刷新的开始与结束）时重算，成本可忽略。
  */
-const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
-  entryStateUnavailable: entryStateUnavailable.value,
-  maps: new Set(Object.keys(refreshing.value)),
-  queued: new Set(Object.keys(queued.value)),
-  sources: new Set(Object.keys(refreshingSources.value)),
-}))
+
 
 /** 卡片状态标签：先依赖提醒，再版本结论（由 `levelSetStatus` 统一排序）。 */
 function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
@@ -519,7 +502,7 @@ const toggleSummary = computed(() => summarizeLevelSetToggleStatus(sortedSets.va
  * 可更新 > 缺依赖。本页只负责把动作执行出来。
  */
 function actionOf(set: LevelSetInfo): LevelSetCardAction | undefined {
-  return levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value)
+  return levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value, refreshingHint.value)
 }
 
 /** 这张卡的动作正在执行（按钮转圈）。 */
@@ -857,7 +840,7 @@ function onBulkSwitch(value: string | number) {
 /**
  * 检查更新：只刷新「本地已装地图绑定的地图」的 Release，与 MOD 管理页同一规则。
  *
- * 走共享引擎的 `refreshBoundMaps`（并发 4 组、强制绕过缓存），不在本页自己
+ * 走共享引擎的 `refreshBoundMaps`（并发 4 组、复用五分钟缓存），不在本页自己
  * 循环调后端命令：
  *   · 刷新状态记在 `useMapSources` 的单例里，地图下载页的按钮与卡片会同时
  *     进入刷新态，切页往返也不丢；
@@ -882,7 +865,7 @@ async function checkUpdates() {
      * 本地地图里几个有新版本」必须读关卡集，那是本页的数据。
      */
     const summary = await refreshBoundMaps([...targets.values()], {
-      countUpdated: () => sets.value.filter((set) => stateOf(set) === 'update_available').length,
+      countUpdated: () => sets.value.filter((set) => levelSetState(set, mapVersionForLevelSet(set, versionRefs.value)) === 'update_available').length,
     })
     // 逐条弹错：一次刷几十张图时合并成一句会把「哪张失败了」吞掉
     summary.errors.forEach((error) => message.error(error))

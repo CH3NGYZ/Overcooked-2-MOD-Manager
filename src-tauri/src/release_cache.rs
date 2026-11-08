@@ -9,7 +9,7 @@
 //!
 //! - **同一个 pass**：一次用户点击 = 一个 pass id。同一 pass 内同一个仓库只请求
 //!   一次 ——「点一次检查更新，只打一次 API」靠的是这个显式身份，不是靠时间猜；
-//! - **60 秒 TTL**：刚取回来的列表就是「现在的最新数据」，一分钟内再要一次没有
+//! - **5 分钟 TTL**：刚取回来的列表就是「现在的最新数据」，五分钟内再要一次没有
 //!   任何信息增量。没有它，启动时的「先读源树、再刷条目」会把同一个仓库打两遍。
 //!
 //! 只缓存成功结果：失败写进去会让下一次重试直接拿到同一个错误。
@@ -24,9 +24,10 @@ use std::time::{Duration, Instant};
 
 /// 没有 pass 时可用缓存的时长。
 ///
-/// 比 Release 缓存的 5 分钟短得多：这一层只负责「同一次动作里别重复请求」，
-/// 不是给界面读的缓存。用户手点刷新能接受的最旧数据是「一分钟内」。
-pub const REPO_RELEASE_CACHE_TTL: Duration = Duration::from_secs(60);
+/// 与条目缓存使用同一份五分钟时限；bundle 各地图共享原始列表。
+/// 右下角整批刷新通过 force 绕过 TTL，同 pass 内仍只请求一次。
+pub const REPO_RELEASE_CACHE_TTL: Duration =
+    Duration::from_millis(freshness::RELEASE_CACHE_TTL_MS as u64);
 
 /// 过期条目保留多久才真正清掉。
 ///

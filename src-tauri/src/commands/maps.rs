@@ -32,6 +32,7 @@ pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
 pub async fn refresh_map_sources(
     state: State<'_, AppState>,
     pass_id: Option<String>,
+    force: Option<bool>,
 ) -> Result<Vec<MapInfo>, String> {
     let config = state.config.load_or_default();
     let builtin_only = config.builtin_map_sources_only;
@@ -58,7 +59,7 @@ pub async fn refresh_map_sources(
             gitee_token: gitee_token.as_deref(),
             gitcode_token: gitcode_token.as_deref(),
             pass_id: pass_id.as_deref(),
-            force: pass_id.is_some(),
+            force: force.unwrap_or(false),
             // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
             previous: &config.map_repositories,
         };
@@ -135,10 +136,7 @@ pub async fn refresh_map_releases(
 
     // 缓存命中直接返回，一个请求都不发（与 MOD 仓库同一条规则）
     let now = now_millis();
-    if !force
-        && !map.cached_releases.is_empty()
-        && cache_is_fresh(map.releases_cached_at, now, RELEASE_CACHE_TTL_MS)
-    {
+    if !force && cache_is_fresh(map.releases_cached_at, now, RELEASE_CACHE_TTL_MS) {
         log::info!(
             "地图 Release 命中缓存：地图={}，数量={}",
             map.name,

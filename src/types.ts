@@ -582,6 +582,7 @@ export interface DropSourceKind {
 }
 export type ConfigEditorTarget = { kind: 'mod'; mod: InstalledMod } | { kind: 'bepinex' }
 export interface UpdateStatus { repository_id: string; local_version?: string; remote_version?: string; state: string }
+export interface DashboardSummary { config: PublicConfig; game: GameInfo }
 export interface Dashboard { config: PublicConfig; game: GameInfo; mods: InstalledMod[]; updates: UpdateStatus[] }
 export interface OperationResult { ok: boolean; message: string }
 /**

@@ -227,7 +227,7 @@ function cardAction(repo: Repository): CardAction {
 /** 单仓刷新：与批量刷新共用引擎，只更新这一条仓库的缓存。 */
 async function refreshRepository(repo: Repository) {
   // 用户主动点刷新 → 强制请求，不吃 5 分钟 Release 缓存
-  const error = await engine.refreshOne(repo, true)
+  const error = await engine.refreshOne(repo)
   if (error) message.error(error)
 }
 
@@ -608,7 +608,7 @@ const pageLoading = computed(() => loading.value || (engine.refreshingAll.value 
 
 /** 整源刷新入口（仅浮动按钮调用；页头按钮已移除）。 */
 async function refreshAll() {
-  const errors = await engine.refreshEverything()
+  const errors = await engine.refreshEverything({ force: true })
   errors.forEach((error) => message.error(error))
 }
 

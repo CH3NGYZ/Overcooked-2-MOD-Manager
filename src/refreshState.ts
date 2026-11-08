@@ -78,6 +78,8 @@ export interface RefreshBatch<T> {
 }
 
 export interface RefreshState {
+  /** All source documents must settle before scheduling release comparisons. */
+  preparingSources: Ref<boolean>
   /** 条目级：按 id。 */
   refreshing: Ref<Record<string, boolean>>
   /**
@@ -155,6 +157,7 @@ function batchFlagOf(trigger: RefreshTrigger): 'all' | 'bound' | null {
  *   再低则几十个仓库要排很久）。
  */
 export function createRefreshState(concurrency: number): RefreshState {
+  const preparingSources = ref(false)
   const refreshing = ref<Record<string, boolean>>({})
   const queued = ref<Record<string, boolean>>({})
   const refreshingSources = ref<Record<string, boolean>>({})
@@ -178,7 +181,8 @@ export function createRefreshState(concurrency: number): RefreshState {
 
   const inFlight = computed(() => Object.keys(refreshing.value).length)
   const anyRefreshing = computed(() =>
-    refreshingAll.value
+    preparingSources.value
+    || refreshingAll.value
     || checkingBound.value
     || inFlight.value > 0
     || Object.keys(queued.value).length > 0
@@ -279,6 +283,7 @@ export function createRefreshState(concurrency: number): RefreshState {
   }
 
   return {
+    preparingSources,
     refreshing,
     queued,
     refreshingSources,

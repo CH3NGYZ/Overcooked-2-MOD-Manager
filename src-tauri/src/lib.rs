@@ -176,6 +176,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::dashboard::get_dashboard,
+            commands::dashboard::get_local_mods,
+            commands::dashboard::get_mod_updates,
             commands::settings::get_config,
             commands::settings::get_install_language,
             commands::logs::read_rust_log,

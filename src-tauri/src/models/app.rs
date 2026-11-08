@@ -1,7 +1,5 @@
 use super::config::PublicConfig;
 use super::game::GameInfo;
-use super::mods::InstalledMod;
-use super::releases::UpdateStatus;
 use super::repositories::Provider;
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +67,4 @@ pub struct AppUpdateCheckResult {
 pub struct DashboardData {
     pub config: PublicConfig,
     pub game: GameInfo,
-    pub mods: Vec<InstalledMod>,
-    pub updates: Vec<UpdateStatus>,
 }

@@ -18,7 +18,7 @@ use std::path::Path;
 fn dll_matches_repository(
     game_root: &Path,
     relative: &str,
-    repo: &crate::models::RepositoryConfig,
+    repo: &crate::models::ModRepositoryConfig,
 ) -> bool {
     let configured = [
         repo.plugin_guid.trim(),
@@ -113,7 +113,7 @@ pub fn recycle_repository_packages_before_install(
     root: &Path,
     manifests_dir: &Path,
     game_root: &Path,
-    repo: &crate::models::RepositoryConfig,
+    repo: &crate::models::ModRepositoryConfig,
     replacement_files: &[String],
 ) -> Result<Vec<ModRecycleEntry>, String> {
     let manifests = all_active_manifests(manifests_dir)?;

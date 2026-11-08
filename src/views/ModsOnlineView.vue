@@ -6,7 +6,7 @@ import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { prefetchAvatars } from '../avatars'
 import { useNotify } from '../useNotify'
-import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
@@ -14,9 +14,9 @@ import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, resolveRel
 import { pickI18n, t } from '../i18n'
 import { tagColorFor, type TagTone } from '../theme'
 import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
-import { repositoryIsAvailable } from '../repositoryAvailability'
+import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
-import RepositoryDetail from '../components/RepositoryDetail.vue'
+import ModRepositoryDetail from '../components/ModRepositoryDetail.vue'
 import PageLoading from '../components/PageLoading.vue'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
@@ -27,7 +27,7 @@ import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
-import { useRepositoryPreview } from '../composables/useRepositoryPreview'
+import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
@@ -39,7 +39,7 @@ import {
   type SourceGroupLeaf,
   type SourceGroupOrder,
 } from '../composables/useSourceGroupTree'
-import type { Repository, RepositorySource } from '../types'
+import type { ModRepository, RepositorySource } from '../types'
 import { withDemoRepositories, withDemoSources } from '../tutorial/demo'
 
 const message = useNotify()
@@ -47,7 +47,7 @@ const { blockModOperation: gameBlocked } = useGameOperationGate()
 const { load, ensureLoaded, loading, config, mods } = useDashboard()
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦（教程门控脚手架仍在引擎里，当前无调用方）。 */
-const engine = useRepositoryRefresh()
+const engine = useModRepositoryRefresh()
 /**
  * `anyRefreshing`：禁用按钮用（源文档阶段也算忙，避免重复触发）。
  * `repositoriesLoading`：只决定图标转不转 —— 只有仓库真的在加载时才转。
@@ -117,7 +117,7 @@ const { dragActive } = useFileDrop({
 })
 
 /** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先检查关系，再下载预览。 */
-const { previewRepository } = useRepositoryPreview(openInstallPreview, {
+const { previewModRepository } = useModRepositoryPreview(openInstallPreview, {
   gameBlocked,
   onBusyChange: (repositoryId, busy) => {
     if (busy) installing.value[repositoryId] = true
@@ -175,7 +175,7 @@ onMounted(() => {
  * 用户还得再找一个刷新入口。把同一个按钮换成「刷新」，
  * 用户对着同一个位置点一次就能重试。
  */
-function installActionOf(repo: Repository): InstallAction | 'refresh' {
+function installActionOf(repo: ModRepository): InstallAction | 'refresh' {
   if (statusOf(repo).key === 'refresh_failed') return 'refresh'
   return repositoryInstallAction(statusOf(repo), repo)
 }
@@ -186,15 +186,15 @@ const INSTALL_LABELS: Record<InstallAction | 'refresh', string> = {
   update: 'dialogs.update',
   refresh: 'modsOnline.refresh',
 }
-function installLabel(repo: Repository) {
+function installLabel(repo: ModRepository) {
   return t(INSTALL_LABELS[installActionOf(repo)])
 }
 
 
 
 /** 主按钮：刷新失败时重试该仓库的 Release，其余走安装预览链路。 */
-function runCardAction(repo: Repository) {
-  if (installActionOf(repo) === 'refresh') void refreshRepository(repo)
+function runCardAction(repo: ModRepository) {
+  if (installActionOf(repo) === 'refresh') void refreshModRepository(repo)
   else void install(repo)
 }
 
@@ -204,7 +204,7 @@ function runCardAction(repo: Repository) {
  * 组件只管展示，判定仍在这里 —— 「缺依赖 / 冲突」的语义来自
  * `modRelations.dependencyTagFor`，四个页面共用同一份实现。
  */
-function cardDependency(repo: Repository): CardDependencyTag | null {
+function cardDependency(repo: ModRepository): CardDependencyTag | null {
   const tag = relationTag(repo)
   if (!tag) return null
   return {
@@ -216,7 +216,7 @@ function cardDependency(repo: Repository): CardDependencyTag | null {
 }
 
 /** 卡片的主按钮（给共享卡片组件用）。 */
-function cardAction(repo: Repository): CardAction {
+function cardAction(repo: ModRepository): CardAction {
   return {
     kind: installActionOf(repo),
     label: installLabel(repo),
@@ -226,19 +226,19 @@ function cardAction(repo: Repository): CardAction {
 }
 
 /** 单仓刷新：与批量刷新共用引擎，只更新这一条仓库的缓存。 */
-async function refreshRepository(repo: Repository) {
+async function refreshModRepository(repo: ModRepository) {
   // 用户主动点刷新 → 强制请求，不吃 5 分钟 Release 缓存
   const error = await engine.refreshOne(repo)
   if (error) message.error(error)
 }
 
 /** 该仓库是否有已安装的本地 MOD（决定状态标签能否跳到 MOD 管理）。 */
-function hasLocalInstall(repo: Repository) {
+function hasLocalInstall(repo: ModRepository) {
   return modsForRepository(mods.value, repo).length > 0
 }
 
 /** 点击状态标签：跳到 MOD 管理页并高亮绑定该仓库的 MOD 卡片。 */
-function openInLocalMods(repo: Repository) {
+function openInLocalMods(repo: ModRepository) {
   if (hasLocalInstall(repo)) linkToLocalMods(repo.id)
 }
 
@@ -249,7 +249,7 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
 /**
  * 安装页展示的仓库：只保留「在当前地区真实存在」的那些。
  *
- * 判定统一走 `repositoryIsAvailable`（enabled + 仓库地区 + 所属源地区），
+ * 判定统一走 `modRepositoryIsAvailable`（enabled + 仓库地区 + 所属源地区），
  * 与刷新排队、MOD 绑定、后端更新状态用同一套规则。
  * 地区不匹配的仓库不只是不显示：它也不会被刷新，
  * 所以不会出现「看不见的仓库刷新失败」这种无处处理的报错。
@@ -260,7 +260,7 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
  * 东西可指。合并只发生在展示层（见 `tutorial/demo.ts` 的边界说明），教程
  * 一结束这两个 computed 当场回到真实数据。
  *
- * 源必须先换：`repositoryIsAvailable` 会查「所属源是否存在」，只换仓库不换源，
+ * 源必须先换：`modRepositoryIsAvailable` 会查「所属源是否存在」，只换仓库不换源，
  * 示例卡片会被全部滤掉。
  */
 const sources = computed<RepositorySource[]>(() =>
@@ -268,10 +268,10 @@ const sources = computed<RepositorySource[]>(() =>
     (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
   ),
 )
-const repositories = computed<Repository[]>(() =>
+const repositories = computed<ModRepository[]>(() =>
   withDemoRepositories(
     (config.value?.repositories ?? []).filter((repo) =>
-      repositoryIsAvailable(repo, sources.value, currentRegion.value, config.value?.platform),
+      modRepositoryIsAvailable(repo, sources.value, currentRegion.value, config.value?.platform),
     ),
   ),
 )
@@ -294,7 +294,7 @@ watch(repositories, (list) => { void prefetchAvatars(list) }, { immediate: true 
 onMounted(() => { void prefetchAvatars(repositories.value) })
 
 /** 社区仓库（github-community / gitee-community）不展示分组标题，全部按未分组处理。 */
-function isCommunityRepo(repo: Repository) {
+function isCommunityRepo(repo: ModRepository) {
   return COMMUNITY_IDS.has(repo.source_id ?? '')
 }
 
@@ -310,26 +310,26 @@ const officialRepoKeys = computed(() => {
   }
   return keys
 })
-function repoKey(repo: Repository) {
+function repoKey(repo: ModRepository) {
   return `${repo.provider}:${repo.username.toLowerCase()}/${repo.repository.toLowerCase()}`
 }
-function isDuplicateOfOfficial(repo: Repository) {
+function isDuplicateOfOfficial(repo: ModRepository) {
   return isCommunityRepo(repo) && officialRepoKeys.value.has(repoKey(repo))
 }
 
 
 /* 多语言取值统一走 i18n 的 pickI18n（回收站、MOD 管理页也用它）。 */
-function repoName(repo: Repository) {
+function repoName(repo: ModRepository) {
   return pickI18n(repo.name_i18n, repo.name)
 }
-function repoGroup(repo: Repository) {
+function repoGroup(repo: ModRepository) {
   return pickI18n(repo.group_i18n, repo.group || '') || t('dialogs.ungrouped')
 }
 /**
  * 卡片简介：note_i18n 取当前语言，用统一的 Markdown 渲染取纯文本摘要
  * （卡片是摘要，完整 Markdown 在详情抽屉里渲染）。
  */
-function repoNote(repo: Repository) {
+function repoNote(repo: ModRepository) {
   return markdownSummary(pickI18n(repo.note_i18n, repo.note || ''))
 }
 
@@ -345,7 +345,7 @@ function repoNote(repo: Repository) {
  * 计算只依赖当前 Dashboard（已装 MOD + 仓库 Release 缓存），
  * 所以刷新完仓库后标签会自动出现/消失，不需要额外请求。
  */
-function unmetRelation(repo: Repository): RelationStatus | undefined {
+function unmetRelation(repo: ModRepository): RelationStatus | undefined {
   return primaryRelation(resolveRelations(repo, mods.value, repositories.value))
 }
 
@@ -355,7 +355,7 @@ function unmetRelation(repo: Repository): RelationStatus | undefined {
  * 判定与文案全部来自 `modRelations.dependencyTagFor` —— 与 MOD 管理页、
  * 地图下载页、地图管理页共用同一份实现，四个页面不会各写一套「缺依赖」。
  */
-function relationTag(repo: Repository): { text: string; tone: TagTone } | null {
+function relationTag(repo: ModRepository): { text: string; tone: TagTone } | null {
   const status = unmetRelation(repo)
   const tag = dependencyTagFor(status ? [status] : [], hasLocalInstall(repo))
   return tag ? { text: tag.text, tone: tag.tone } : null
@@ -374,7 +374,7 @@ function relationTargetName(status: RelationStatus) {
  * 与 MOD 管理页共用 `relationJumpRepositoryId` —— 两处点同一个状态，
  * 落点必须相同：都是**依赖的**仓库，而不是当前这张卡自己的仓库。
  */
-function relationJumpId(repo: Repository): string | undefined {
+function relationJumpId(repo: ModRepository): string | undefined {
   return relationJumpRepositoryId(unmetRelation(repo))
 }
 
@@ -383,7 +383,7 @@ function relationJumpId(repo: Repository): string | undefined {
  *
  * 没有可跳转目标时不假装可点，直接说明原因（没有可安装来源）。
  */
-function relationTagTitle(repo: Repository) {
+function relationTagTitle(repo: ModRepository) {
   const status = unmetRelation(repo)
   if (!status) return undefined
   const target = relationTargetName(status)
@@ -401,14 +401,14 @@ function relationTagTitle(repo: Repository) {
  * 不需要绕路由：目标卡片就在同一页，走 `focus` 直接高亮 3 秒，
  * 与从 MOD 管理页跳转过来用的是同一套高亮与滚动逻辑。
  */
-function jumpToRelationRepository(repo: Repository) {
+function jumpToRelationRepository(repo: ModRepository) {
   const id = relationJumpId(repo)
   if (id) focusRepository(id)
 }
 
 /* ===== 搜索 ===== */
 const query = computed(() => search.value.trim().toLowerCase())
-function matches(repo: Repository) {
+function matches(repo: ModRepository) {
   if (!query.value) return true
   const haystack = [
     repoName(repo),
@@ -438,7 +438,7 @@ const visibleCount = computed(() => repositories.value.filter(matches).length)
  * 本页只负责把自己特有的两件事投影进去：源名来自 `repository_sources`
  * （地图页的源名挂在条目上），社区源不分类。
  */
-const treeEntries = computed<SourceGroupEntry<Repository>[]>(() =>
+const treeEntries = computed<SourceGroupEntry<ModRepository>[]>(() =>
   repositories.value
     // 搜索过滤与「官方源已收录的不在社区源里重复展示」都在进树前完成
     .filter((repo) => matches(repo) && !isDuplicateOfOfficial(repo))
@@ -498,7 +498,7 @@ const tutorialCardId = computed(() => tree.value.flatMap(node => node.groups.fla
 
 /* ===== 动作 ===== */
 
-function latest(repo: Repository) {
+function latest(repo: ModRepository) {
   return repo.cached_releases[0]
 }
 
@@ -527,7 +527,7 @@ function releaseIsPrerelease(release: { prerelease: boolean; version?: string | 
  * 解析不出数字序号时（如 `1.9.9-beta`，或作者只勾了 prerelease 标记），
  * 用「测」这个文字标记提醒这是测试版 —— 数字表达不了就说清楚。
  */
-function versionParts(repo: Repository) {
+function versionParts(repo: ModRepository) {
   const release = latest(repo)
   if (!release) return { base: '—', marker: null as string | null, markerIsNumeric: false }
   return versionDisplay(
@@ -538,7 +538,7 @@ function versionParts(repo: Repository) {
 }
 
 /** 下载量：优先最新 Release 首个匹配资产的 download_count。 */
-function downloadCount(repo: Repository) {
+function downloadCount(repo: ModRepository) {
   const release = latest(repo)
   if (!release) return null
   const total = release.assets.reduce((sum, asset) => sum + (asset.download_count ?? 0), 0)
@@ -550,7 +550,7 @@ function downloadCount(repo: Repository) {
  * 已安装状态依据「已安装 MOD 的版本」与「仓库最新 Release 版本」比较。
  */
 interface RepoStatus { key: string; tone: StatusTone; text: string }
-function repoStatus(repo: Repository): RepoStatus {
+function repoStatus(repo: ModRepository): RepoStatus {
   const status = repositoryStatus(repo, mods.value)
   return { key: status.key, tone: status.tone, text: t(status.text) }
 }
@@ -561,7 +561,7 @@ const statusByRepo = computed(() => {
   for (const repo of repositories.value) map.set(repo.id, repoStatus(repo))
   return map
 })
-function statusOf(repo: Repository): RepoStatus {
+function statusOf(repo: ModRepository): RepoStatus {
   return statusByRepo.value.get(repo.id) ?? { key: 'not_refreshed', tone: 'idle', text: t('modsOnline.notRefreshed') }
 }
 
@@ -583,7 +583,7 @@ async function refreshSource(node: { id: string }) {
  * 任何内容可看，必须显示加载态；第一张卡回来立刻收起。
  *
  * 为什么用引擎的 `refreshingAll` 而不是页面自己的标志：它在
- * `useRepositoryRefresh` 里是模块级单例，刷新中切走再切回来时仍然是 true ——
+ * `useModRepositoryRefresh` 里是模块级单例，刷新中切走再切回来时仍然是 true ——
  * 页面级 ref 熬不过一次切页，那样用户切回来只会看到一个空列表加「没有仓库」，
  * 完全不知道后台那次刷新还在跑。
  *
@@ -603,16 +603,16 @@ async function refreshAll() {
  * 分组刷新：只刷新本组内的仓库 Release，不重拉源文档、不影响其它组。
  * 源文档（分组 / 仓库列表的来源）不在这里动，避免只点一个分组就把整棵源树清空重载。
  */
-async function refreshGroup(group: SourceGroupLeaf<Repository>) {
+async function refreshGroup(group: SourceGroupLeaf<ModRepository>) {
   // 组内不可用的仓库同样跳过刷新（分组由已筛选列表派生，这里再校验一次）
   const errors = await engine.refreshMany(group.items.filter(
-    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
+    (repo) => modRepositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
   ))
   errors.forEach((error) => message.error(error))
 }
 
 /** 该组是否有仓库正在刷新（决定分组按钮的转圈）。 */
-function groupRefreshing(group: SourceGroupLeaf<Repository>) {
+function groupRefreshing(group: SourceGroupLeaf<ModRepository>) {
   return group.items.some((repo) => refreshing.value[repo.id] || queued.value[repo.id])
 }
 
@@ -622,10 +622,10 @@ function groupRefreshing(group: SourceGroupLeaf<Repository>) {
  *
  * 流程与手动安装统一：先让后端**只下载并解析**（preview_only），
  * 把解析结果交给 ModInstallDialog 展示，用户点「立即安装」才真正写入。
- * 下载与预发布确认都在 useRepositoryPreview 里，两个页面共用。
+ * 下载与预发布确认都在 useModRepositoryPreview 里，两个页面共用。
  */
-function install(repo: Repository, tag?: string, asset?: string) {
-  return previewRepository(repo, tag, asset)
+function install(repo: ModRepository, tag?: string, asset?: string) {
+  return previewModRepository(repo, tag, asset)
 }
 
 /**
@@ -795,7 +795,7 @@ defineExpose({ refreshAll, visibleCount })
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
   <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
     <n-drawer-content v-if="detailRepo" :native-scrollbar="false" body-content-class="drawer-detail-body">
-      <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="false"
+      <ModRepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="false"
         :mods="mods" :repositories="repositories"
         @close="detailId = null" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />
     </n-drawer-content>

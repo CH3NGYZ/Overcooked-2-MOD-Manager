@@ -162,7 +162,7 @@ export const mapPublishRepository: DomainMessages = {
   topicsMissingTitle: {
     'zh-CN': '仓库缺少地图源标签',
     'zh-TW': '倉庫缺少地圖源標籤',
-    en: 'Repository is missing map topics',
+    en: 'ModRepository is missing map topics',
     ko: '저장소에 지도 태그가 없습니다',
     ja: 'リポジトリにマップタグがありません',
   },

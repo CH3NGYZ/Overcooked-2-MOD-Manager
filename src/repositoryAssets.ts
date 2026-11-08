@@ -5,7 +5,7 @@ import type { AssetRule, ReleaseAsset, ReleaseInfo } from './types'
  *
  * ## 为什么单独成模块
  *
- * 这段逻辑原本只写在 `RepositoryDetail.vue` 的 script 里。地图下载页新加的
+ * 这段逻辑原本只写在 `ModRepositoryDetail.vue` 的 script 里。地图下载页新加的
  * 详情抽屉同样要回答「这个版本里哪个文件会被下载」，而资产规则是**后端语义
  * 的镜像**（`exact` / `glob` / `regex`）—— 复制一份就等于允许两边慢慢分叉，
  * 出现「详情里显示了某个文件、实际下载的却是另一个」。

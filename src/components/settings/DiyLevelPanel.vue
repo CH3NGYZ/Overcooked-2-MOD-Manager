@@ -30,9 +30,9 @@ import { backendMessageOf, translateBackendMessage } from '../../locale/backend'
 import { markDialogBusy } from '../../dialogBusy'
 import { useDashboard } from '../../composables/useDashboardStore'
 import { useGameOperationGate } from '../../composables/useGameOperationGate'
-import { useRepositoryLink } from '../../crossLink'
+import { useModRepositoryLink } from '../../crossLink'
 import BusyOverlay from '../BusyOverlay.vue'
-import type { DiyLevelInfo, Repository } from '../../types'
+import type { DiyLevelInfo, ModRepository } from '../../types'
 
 /** DIYLevel 的稳定 GUID：与仓库源、安装清单、MOD 扫描用同一个标识。 */
 const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
@@ -41,7 +41,7 @@ const message = useNotify()
 const dialog = useDialog()
 const { load, loading, config } = useDashboard()
 const { blockModOperation } = useGameOperationGate()
-const { linkToRepository } = useRepositoryLink()
+const { linkToModRepository } = useModRepositoryLink()
 
 const info = ref<DiyLevelInfo | null>(null)
 const refreshing = ref(false)
@@ -63,7 +63,7 @@ const busy = computed(() => working.value)
 /** 备份/恢复/卸载期间的全屏遮罩文案。 */
 const busyText = ref<string | null>(null)
 
-const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
+const repositories = computed<ModRepository[]>(() => config.value?.repositories ?? [])
 
 /**
  * 能在线上提供 DIYLevel 的仓库（按 GUID 匹配）。
@@ -71,7 +71,7 @@ const repositories = computed<Repository[]>(() => config.value?.repositories ?? 
  * 与依赖解析的「可安装来源」同一判据：必须声明同一 GUID、是 Release 模式、
  * 且已有缓存的 Release —— 三者缺一，点了也只有下载失败。
  */
-const installableRepository = computed<Repository | undefined>(() =>
+const installableRepository = computed<ModRepository | undefined>(() =>
   repositories.value.find((repo) =>
     !!repo.plugin_guid
     && repo.plugin_guid.trim().toLowerCase() === DIYLEVEL_GUID
@@ -107,7 +107,7 @@ function openInstall() {
     message.warning(t('framework.diylevelIsNotAvailableOnlineInstallItManuallyThenManageItHere'))
     return
   }
-  linkToRepository(repo.id)
+  linkToModRepository(repo.id)
 }
 
 async function openDirectory() {

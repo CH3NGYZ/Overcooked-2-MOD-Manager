@@ -1,8 +1,8 @@
-use crate::config::validation::validate_repository;
+use crate::config::validation::validate_mod_repository;
 use crate::models::*;
 
-fn base_export(relations: Vec<RepositoryRelation>) -> RepositoryExport {
-    RepositoryExport {
+fn base_export(relations: Vec<RepositoryRelation>) -> ModRepositoryExport {
+    ModRepositoryExport {
         network_plan: Default::default(),
         kind: Default::default(),
         name: "dep-owner".into(),
@@ -12,7 +12,7 @@ fn base_export(relations: Vec<RepositoryRelation>) -> RepositoryExport {
         provider: Provider::Github,
         username: "a".into(),
         repository: "b".into(),
-        download_mode: RepositoryDownloadMode::Release,
+        download_mode: ModDownloadMode::Release,
         branch: String::new(),
         file_path: String::new(),
         region: None,
@@ -52,26 +52,26 @@ fn relation(kind: RelationKind, version: &str, optional: bool) -> RepositoryRela
 fn relation_without_guid_is_rejected() {
     let mut entry = relation(RelationKind::Requires, "", false);
     entry.guid = "   ".into();
-    assert!(validate_repository(&base_export(vec![entry])).is_err());
+    assert!(validate_mod_repository(&base_export(vec![entry])).is_err());
 }
 
 #[test]
 fn relation_with_unparsable_min_version_is_rejected() {
     let entry = relation(RelationKind::Requires, ">=not-a-version", false);
-    assert!(validate_repository(&base_export(vec![entry])).is_err());
+    assert!(validate_mod_repository(&base_export(vec![entry])).is_err());
 }
 
 #[test]
 fn relation_with_unparsable_max_version_is_rejected() {
     let entry = relation(RelationKind::Compatible, "<=not-a-version", false);
-    assert!(validate_repository(&base_export(vec![entry])).is_err());
+    assert!(validate_mod_repository(&base_export(vec![entry])).is_err());
 }
 
 /// 区间反了（min > max）永远匹配不到任何插件，属于配置错误。
 #[test]
 fn inverted_relation_range_is_rejected() {
     let entry = relation(RelationKind::Conflicts, ">=2.0,<=1.0", false);
-    assert!(validate_repository(&base_export(vec![entry])).is_err());
+    assert!(validate_mod_repository(&base_export(vec![entry])).is_err());
 }
 
 /// 合法关系（含四段 beta 序号写法）应当通过。
@@ -80,7 +80,7 @@ fn valid_relations_pass() {
     for version in ["", "*", ">=1.8.7", ">=1.8.7.2", ">=1.8.7-beta.2", "==1.8.7"] {
         let entry = relation(RelationKind::Requires, version, false);
         assert!(
-            validate_repository(&base_export(vec![entry])).is_ok(),
+            validate_mod_repository(&base_export(vec![entry])).is_ok(),
             "version={version}"
         );
     }
@@ -88,7 +88,7 @@ fn valid_relations_pass() {
     for version in ["1.8.7", "1.8.7,<=2.0"] {
         let entry = relation(RelationKind::Requires, version, false);
         assert!(
-            validate_repository(&base_export(vec![entry])).is_err(),
+            validate_mod_repository(&base_export(vec![entry])).is_err(),
             "version={version}"
         );
     }
@@ -96,7 +96,7 @@ fn valid_relations_pass() {
     for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
         let entry = relation(kind, ">=1.0,<=2.0", false);
         assert!(
-            validate_repository(&base_export(vec![entry])).is_ok(),
+            validate_mod_repository(&base_export(vec![entry])).is_ok(),
             "kind={}",
             kind.as_str()
         );
@@ -108,7 +108,7 @@ fn valid_relations_pass() {
 fn optional_is_rejected_for_non_requirement_relations() {
     for kind in [RelationKind::Conflicts, RelationKind::Compatible] {
         let entry = relation(kind, "", true);
-        let error = validate_repository(&base_export(vec![entry])).unwrap_err();
+        let error = validate_mod_repository(&base_export(vec![entry])).unwrap_err();
         assert!(
             error.to_string().contains("relationOptionalUnsupported"),
             "{error}"
@@ -124,7 +124,7 @@ fn release_relations_without_any_bound_is_rejected() {
         version: String::new(),
         relations: Vec::new(),
     });
-    let error = validate_repository(&export).unwrap_err();
+    let error = validate_mod_repository(&export).unwrap_err();
     assert!(error.to_string().contains("relationsEmpty"), "{error}");
 }
 
@@ -135,7 +135,7 @@ fn self_conflict_without_prerelease_flag_is_rejected() {
     let mut entry = relation(RelationKind::Conflicts, "", false);
     entry.guid = "com.example.owner".into();
     export.relations = vec![entry];
-    let error = validate_repository(&export).unwrap_err();
+    let error = validate_mod_repository(&export).unwrap_err();
     assert!(error.to_string().contains("relationSelfGuid"), "{error}");
 }
 
@@ -149,7 +149,10 @@ fn self_conflict_with_prerelease_flag_passes() {
         entry.guid = "com.example.owner".into();
         entry.prerelease = Some(flag);
         export.relations = vec![entry];
-        assert!(validate_repository(&export).is_ok(), "prerelease={flag}");
+        assert!(
+            validate_mod_repository(&export).is_ok(),
+            "prerelease={flag}"
+        );
     }
 }
 
@@ -158,7 +161,7 @@ fn self_conflict_with_prerelease_flag_passes() {
 fn prerelease_is_rejected_for_requires() {
     let mut entry = relation(RelationKind::Requires, "", false);
     entry.prerelease = Some(true);
-    let error = validate_repository(&base_export(vec![entry])).unwrap_err();
+    let error = validate_mod_repository(&base_export(vec![entry])).unwrap_err();
     assert!(
         error.to_string().contains("relationRequiresPrerelease"),
         "{error}"

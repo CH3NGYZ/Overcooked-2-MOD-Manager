@@ -7,17 +7,17 @@ use super::transport::repository_api_targets;
 use crate::models::GitHubProxy;
 use crate::models::Provider;
 use crate::models::ReleaseInfo;
-use crate::models::RepositoryConfig;
 use crate::providers::repository_file_url;
 use crate::providers::repository_release_api_url;
 use crate::providers::repository_release_api_url_page;
+use crate::releases::RepositoryRequest;
 use reqwest::Client;
 use serde_json::Value;
 use url::Url;
 
 pub async fn fetch_releases(
     client: &Client,
-    repo: &RepositoryConfig,
+    repo: &RepositoryRequest,
     token: Option<&str>,
     official_api_only: bool,
     api_proxies: &[GitHubProxy],
@@ -30,7 +30,7 @@ pub async fn fetch_releases(
 
 async fn fetch_releases_page(
     client: &Client,
-    repo: &RepositoryConfig,
+    repo: &RepositoryRequest,
     page: u32,
     token: Option<&str>,
     official_api_only: bool,
@@ -56,10 +56,9 @@ async fn fetch_releases_page(
     let request_targets =
         repository_api_targets(repo, &official, token, official_api_only, api_proxies)?;
     log::debug!(
-        "开始获取 Release: repository_id={} provider={:?} channel={:?} per_page={} page={} token_configured={} official_api_only={} api_target_count={}",
+        "开始获取 Release: repository_id={} provider={:?} per_page={} page={} token_configured={} official_api_only={} api_target_count={}",
         repo.id,
         repo.provider,
-        repo.channel,
         super::pagination::RELEASE_PAGE_SIZE,
         page,
         token.is_some(),
@@ -71,7 +70,7 @@ async fn fetch_releases_page(
 
 async fn fetch_releases_from_targets(
     client: &Client,
-    repo: &RepositoryConfig,
+    repo: &RepositoryRequest,
     official: &str,
     request_targets: Vec<(String, Option<&str>)>,
 ) -> Result<(Vec<ReleaseInfo>, usize), ReleaseError> {
@@ -117,7 +116,12 @@ async fn fetch_releases_from_targets(
                 gate.record_success(&repo.provider, gate_kind);
                 for release in &mut releases {
                     release.assets.retain(|asset| {
-                        !crate::community::is_source_archive(repo, &release.tag_name, &asset.name)
+                        !crate::community::is_source_archive(
+                            &repo.provider,
+                            repo.source_id.as_deref(),
+                            &release.tag_name,
+                            &asset.name,
+                        )
                     });
                 }
                 log::info!(
@@ -178,7 +182,7 @@ async fn fetch_releases_from_targets(
 
 pub async fn fetch_repository_default_branch(
     client: &Client,
-    repo: &RepositoryConfig,
+    repo: &RepositoryRequest,
     token: Option<&str>,
     api_proxies: &[GitHubProxy],
 ) -> Result<String, ReleaseError> {

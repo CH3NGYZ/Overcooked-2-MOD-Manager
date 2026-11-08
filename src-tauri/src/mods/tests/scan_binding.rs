@@ -42,7 +42,8 @@ fn real_manifest_scan_keeps_dll_metadata_but_selects_owner_repository_tag_first(
         vec![relative.into()],
         Vec::new(),
     );
-    manifest.repository_binding = crate::models::RepositoryBinding::from_release(&bound, "v98.0.0");
+    manifest.repository_binding =
+        crate::models::ModRepositoryBinding::from_release(&bound, "v98.0.0");
     crate::archive::write_manifest(&manifests, &manifest).unwrap();
     let scan = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
     assert_eq!(scan.len(), 1);
@@ -123,7 +124,7 @@ fn channel_bound_install_only_checks_its_own_release_track() {
         Vec::new(),
     );
     manifest.repository_binding =
-        crate::models::RepositoryBinding::from_release(&beta, "v98.0.0-beta.1");
+        crate::models::ModRepositoryBinding::from_release(&beta, "v98.0.0-beta.1");
     crate::archive::write_manifest(&manifests, &manifest).unwrap();
     let scan = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
     assert_eq!(scan.len(), 1);
@@ -132,7 +133,7 @@ fn channel_bound_install_only_checks_its_own_release_track() {
     assert!(scan[0].update_available);
 
     manifest.repository_binding =
-        crate::models::RepositoryBinding::from_release(&stable, "v98.0.0");
+        crate::models::ModRepositoryBinding::from_release(&stable, "v98.0.0");
     crate::archive::write_manifest(&manifests, &manifest).unwrap();
     let stable_scan = super::scan_mods_with_manifests(&root, &config, Some(&manifests));
     assert_eq!(
@@ -165,11 +166,11 @@ fn scanning_real_raw_manifest_prevents_same_guid_release_update() {
         std::fs::write(&path, bytes).unwrap();
         let mut raw = binding_repository();
         raw.id = "raw".into();
-        raw.download_mode = crate::models::RepositoryDownloadMode::RepositoryFile;
+        raw.download_mode = crate::models::ModDownloadMode::RepositoryFile;
         raw.cached_releases = vec![high_cached_release()];
         let mut release = raw.clone();
         release.id = "release".into();
-        release.download_mode = crate::models::RepositoryDownloadMode::Release;
+        release.download_mode = crate::models::ModDownloadMode::Release;
         let config: crate::models::AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},
@@ -244,7 +245,8 @@ fn late_sources_rebind_scanned_dll_facts_without_reading_files_and_preserve_mani
         vec!["BepInEx/plugins/Example/Example.dll".into()],
         vec![],
     );
-    manifest.repository_binding = crate::models::RepositoryBinding::from_release(&repo, "v1.0.0");
+    manifest.repository_binding =
+        crate::models::ModRepositoryBinding::from_release(&repo, "v1.0.0");
     crate::archive::write_manifest(&manifests, &manifest).unwrap();
     let mut config = crate::config::default_config();
     config.repositories.clear();

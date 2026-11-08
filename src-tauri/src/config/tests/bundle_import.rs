@@ -1,6 +1,6 @@
 use crate::config::ConfigService;
 use crate::config::defaults::default_config;
-use crate::config::identity::repository_from_export;
+use crate::config::identity::mod_repository_from_export;
 use crate::models::*;
 use std::fs;
 use std::path::Path;
@@ -98,7 +98,7 @@ fn community_catalogue_survives_config_reads_and_cannot_be_overwritten_by_import
     .unwrap()
     .repositories
     .remove(0);
-    let mut repository = repository_from_export(&template, "community-fixture".into(), false);
+    let mut repository = mod_repository_from_export(&template, "community-fixture".into(), false);
     repository.source_id = Some(crate::community::SOURCE_ID.into());
     let mut config = default_config();
     config.repositories.push(repository.clone());

@@ -5,6 +5,7 @@ mod config;
 mod game;
 mod levels;
 mod maps;
+mod mod_repositories;
 mod mods;
 mod network;
 mod network_plan;
@@ -13,6 +14,10 @@ mod publish;
 mod relations;
 mod releases;
 mod repositories;
+pub use mod_repositories::{
+    ModDownloadMode, ModRepositoryBinding, ModRepositoryBundle, ModRepositoryConfig,
+    ModRepositoryExport, ModRepositoryPatch,
+};
 
 pub use app::{
     AppUpdateChannelEvent, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo,
@@ -50,9 +55,7 @@ pub use relations::{
 pub use releases::{ReleaseAsset, ReleaseInfo, UpdateStatus};
 pub use repositories::{
     AssetRule, AssetRuleType, AvatarRequest, Channel, CommunityDiscovery, CommunityMapRepository,
-    ImportPreview, Provider, RepositoryBinding, RepositoryBundle, RepositoryConfig,
-    RepositoryDownloadMode, RepositoryExport, RepositoryPatch, RepositorySource,
-    RepositorySourceImportResult, StagedReleaseCache,
+    ImportPreview, Provider, RepositorySource, RepositorySourceImportResult, StagedReleaseCache,
 };
 
 pub(crate) use maps::default_snapshot_schema_version;

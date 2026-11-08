@@ -1,5 +1,5 @@
+use super::ModRepositoryBinding;
 use super::relations::RepositoryRelation;
-use super::repositories::RepositoryBinding;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -76,7 +76,7 @@ pub struct InstalledMod {
     #[serde(default)]
     pub is_dependency: bool,
     #[serde(default)]
-    pub repository_binding: Option<RepositoryBinding>,
+    pub repository_binding: Option<ModRepositoryBinding>,
     #[serde(default)]
     pub package_id: Option<String>,
     #[serde(default)]

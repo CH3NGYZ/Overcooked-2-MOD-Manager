@@ -7,7 +7,7 @@ import test from 'node:test'
  */
 const {
   OFFICIAL_INDEX_ID,
-  repositoryIsAvailable,
+  modRepositoryIsAvailable,
   repositoryRegionMatches,
   sourceMatchesRegion,
   shouldFallbackToBuiltin,
@@ -30,37 +30,37 @@ const repo = (extra = {}) => ({
 
 test('enabled=false 在两种地区都不可用', () => {
   for (const region of ['chinese_mainland', 'international']) {
-    assert.equal(repositoryIsAvailable(repo({ enabled: false }), sources, region), false, region)
+    assert.equal(modRepositoryIsAvailable(repo({ enabled: false }), sources, region), false, region)
   }
 })
 
 test('international 仓库在中国大陆不可用', () => {
   const intl = repo({ region: 'international' })
-  assert.equal(repositoryIsAvailable(intl, sources, 'chinese_mainland'), false)
-  assert.equal(repositoryIsAvailable(intl, sources, 'international'), true)
+  assert.equal(modRepositoryIsAvailable(intl, sources, 'chinese_mainland'), false)
+  assert.equal(modRepositoryIsAvailable(intl, sources, 'international'), true)
 })
 
 test('chinese_mainland 仓库在国际地区不可用', () => {
   const cn = repo({ region: 'chinese_mainland' })
-  assert.equal(repositoryIsAvailable(cn, sources, 'chinese_mainland'), true)
-  assert.equal(repositoryIsAvailable(cn, sources, 'international'), false)
+  assert.equal(modRepositoryIsAvailable(cn, sources, 'chinese_mainland'), true)
+  assert.equal(modRepositoryIsAvailable(cn, sources, 'international'), false)
 })
 
 test('地区为空的仓库在两种地区都可用', () => {
   const any = repo()
-  assert.equal(repositoryIsAvailable(any, sources, 'chinese_mainland'), true)
-  assert.equal(repositoryIsAvailable(any, sources, 'international'), true)
+  assert.equal(modRepositoryIsAvailable(any, sources, 'chinese_mainland'), true)
+  assert.equal(modRepositoryIsAvailable(any, sources, 'international'), true)
 })
 
 test('所属来源地区不适用时仓库也不可用', () => {
   // 仓库自身没写地区，但它挂在一个 international 子源下
   const child = repo({ source_id: 'intl-source' })
-  assert.equal(repositoryIsAvailable(child, sources, 'chinese_mainland'), false)
-  assert.equal(repositoryIsAvailable(child, sources, 'international'), true)
+  assert.equal(modRepositoryIsAvailable(child, sources, 'chinese_mainland'), false)
+  assert.equal(modRepositoryIsAvailable(child, sources, 'international'), true)
 })
 
 test('来源已从配置删除时仓库不可用（与后端一致）', () => {
-  assert.equal(repositoryIsAvailable(repo({ source_id: 'gone' }), sources, 'chinese_mainland'), false)
+  assert.equal(modRepositoryIsAvailable(repo({ source_id: 'gone' }), sources, 'chinese_mainland'), false)
 })
 
 test('社区发现暂停：所有地区隐藏旧社区仓库', () => {
@@ -76,16 +76,16 @@ test('社区发现暂停：所有地区隐藏旧社区仓库', () => {
     { id: 'github-community', region: undefined },
   ]
   for (const region of ['chinese_mainland', 'international', undefined]) {
-    assert.equal(repositoryIsAvailable(gitee, sources, region), false, `gitee ${region}`)
-    assert.equal(repositoryIsAvailable(github, sources, region), false, `github ${region}`)
+    assert.equal(modRepositoryIsAvailable(gitee, sources, region), false, `gitee ${region}`)
+    assert.equal(modRepositoryIsAvailable(github, sources, region), false, `github ${region}`)
   }
 })
 
 test('没有 source_id 的仓库只看 enabled 与自身地区', () => {
   const standalone = repo({ source_id: undefined })
-  assert.equal(repositoryIsAvailable(standalone, sources, 'chinese_mainland'), true)
-  assert.equal(repositoryIsAvailable(standalone, sources, 'international'), true)
-  assert.equal(repositoryIsAvailable({ ...standalone, enabled: false }, sources, 'international'), false)
+  assert.equal(modRepositoryIsAvailable(standalone, sources, 'chinese_mainland'), true)
+  assert.equal(modRepositoryIsAvailable(standalone, sources, 'international'), true)
+  assert.equal(modRepositoryIsAvailable({ ...standalone, enabled: false }, sources, 'international'), false)
 })
 
 test('旧地区别名按归一化后的值判断', () => {
@@ -97,8 +97,8 @@ test('旧地区别名按归一化后的值判断', () => {
 
 test('当前地区为空按「非中国大陆」处理，与后端 current_user_region 一致', () => {
   const intl = repo({ region: 'international' })
-  assert.equal(repositoryIsAvailable(intl, sources, undefined), true)
-  assert.equal(repositoryIsAvailable(repo({ region: 'chinese_mainland' }), sources, undefined), false)
+  assert.equal(modRepositoryIsAvailable(intl, sources, undefined), true)
+  assert.equal(modRepositoryIsAvailable(repo({ region: 'chinese_mainland' }), sources, undefined), false)
 })
 
 /* ===== 内置源回退判定 ===== */
@@ -244,11 +244,11 @@ test('平台别名归一化（win / mac / osx / darwin）', () => {
   assert.equal(normalizeRepositoryPlatform('freebsd'), '')
 })
 
-test('repositoryIsAvailable 把平台不适用当作「不存在」', () => {
+test('modRepositoryIsAvailable 把平台不适用当作「不存在」', () => {
   const macOnly = { enabled: true, region: undefined, source_id: undefined, platform: 'macos' }
   const windowsOnly = { enabled: true, region: undefined, source_id: undefined, platform: 'windows' }
-  assert.equal(repositoryIsAvailable(macOnly, undefined, undefined, 'macos'), true)
-  assert.equal(repositoryIsAvailable(macOnly, undefined, undefined, 'windows'), false)
+  assert.equal(modRepositoryIsAvailable(macOnly, undefined, undefined, 'macos'), true)
+  assert.equal(modRepositoryIsAvailable(macOnly, undefined, undefined, 'windows'), false)
   /*
    * 不传平台时按本机平台判断，而不是跳过过滤。
    * 「忘了传参数」若等于「平台限定失效」，那种失效没有任何报错，
@@ -259,8 +259,8 @@ test('repositoryIsAvailable 把平台不适用当作「不存在」', () => {
    * 因此在两个 macOS 目标上红过。这里改断言与平台无关的不变量：两个互斥平台的
    * 仓库恰好只有一个可用 —— 既证明回退真的按平台过滤，也不绑定具体平台。
    */
-  const macAvailable = repositoryIsAvailable(macOnly, undefined, undefined)
-  const windowsAvailable = repositoryIsAvailable(windowsOnly, undefined, undefined)
+  const macAvailable = modRepositoryIsAvailable(macOnly, undefined, undefined)
+  const windowsAvailable = modRepositoryIsAvailable(windowsOnly, undefined, undefined)
   assert.notEqual(macAvailable, windowsAvailable)
   assert.equal(macAvailable || windowsAvailable, true)
 })

@@ -16,9 +16,9 @@ import { pickI18n, t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { isPrereleaseVersion } from '../modStatus'
-import type { ModPreview, Repository } from '../types'
+import type { ModPreview, ModRepository } from '../types'
 
-export interface RepositoryPreviewOptions {
+export interface ModRepositoryPreviewOptions {
   /** 游戏是否在运行；返回 true 时中止并已给出提示。 */
   gameBlocked?: () => boolean
   /** 下载开始/结束的忙碌回调，用于驱动各自卡片的 loading。 */
@@ -35,13 +35,13 @@ export interface RepositoryPreviewOptions {
    * 流程，宿主还得自己排顺序。宿主只实现「弹出计划、执行、告诉我结果」，
    * 顺序与判定都留在 `modRelations.buildInstallPlan`。
    */
-  prepareInstall?: (repo: Repository, tag?: string) => Promise<boolean>
+  prepareInstall?: (repo: ModRepository, tag?: string) => Promise<boolean>
 }
 
 /**
  * @param openPreview 拿到预览后由宿主打开统一的安装详情弹窗
  */
-export function useRepositoryPreview(openPreview: (preview: ModPreview) => void, options: RepositoryPreviewOptions = {}) {
+export function useModRepositoryPreview(openPreview: (preview: ModPreview) => void, options: ModRepositoryPreviewOptions = {}) {
   const message = useNotify()
   const dialog = useDialog()
 
@@ -59,7 +59,7 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
    * 后端按仓库 `asset_rules` 自动选。传了就必须能匹配到，否则后端报
    * `noMatchingAsset` —— 界面显示哪个就下哪个，不静默换成别的。
    */
-  async function previewRepository(repo: Repository, tag?: string, assetName?: string): Promise<void> {
+  async function previewModRepository(repo: ModRepository, tag?: string, assetName?: string): Promise<void> {
     if (options.gameBlocked?.()) return
 
     const target = tag ?? repo.cached_releases[0]?.tag_name
@@ -127,7 +127,7 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
       })
       options.onBusyChange?.(repo.id, true)
       try {
-        const outcome = await api.installRepository(repo.id, tag, true, assetName)
+        const outcome = await api.installModRepository(repo.id, tag, true, assetName)
         // 走到这里说明 IPC 本身成功了：ok/message 是业务结论，不是下载故障
         endDownloadTask(token)
         if (!outcome.ok) {
@@ -151,5 +151,5 @@ export function useRepositoryPreview(openPreview: (preview: ModPreview) => void,
     await download()
   }
 
-  return { previewRepository }
+  return { previewModRepository }
 }

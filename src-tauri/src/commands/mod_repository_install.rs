@@ -1,9 +1,9 @@
 use crate::app_state::AppState;
 use crate::archive;
 use crate::game;
-use crate::models::{OperationResult, ProxyMode, RepositoryDownloadMode};
-use crate::mods::install::install_downloaded_repository;
-use crate::mods::install::repository_install_identity;
+use crate::models::{ModDownloadMode, OperationResult, ProxyMode};
+use crate::mods::install::install_downloaded_mod_repository;
+use crate::mods::install::mod_repository_install_identity;
 use crate::recycle_bin;
 use crate::releases;
 use std::fs;
@@ -16,7 +16,7 @@ use tauri::State;
 /// `preview_only` 为真时只下载并解析，不写入游戏目录，`preview` 字段
 /// 携带可供安装弹窗展示的解析结果；正常安装时 `preview` 为空。
 #[derive(serde::Serialize)]
-pub struct RepositoryInstallOutcome {
+pub struct ModRepositoryInstallOutcome {
     pub ok: bool,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -24,7 +24,7 @@ pub struct RepositoryInstallOutcome {
 }
 
 #[tauri::command]
-pub async fn install_repository(
+pub async fn install_mod_repository(
     app: AppHandle,
     state: State<'_, AppState>,
     repository_id: String,
@@ -36,7 +36,7 @@ pub async fn install_repository(
     // 界面语言（`zh-CN` / `en` / …）。用来在下载进度标签与安装预览标题里
     // 显示仓库的本地化名称；缺省时回退到仓库中文名。
     locale: Option<String>,
-) -> Result<RepositoryInstallOutcome, String> {
+) -> Result<ModRepositoryInstallOutcome, String> {
     let snapshot = state.config.load_or_default();
     let policy = snapshot
         .network_policy
@@ -68,7 +68,7 @@ pub async fn install_repository(
             .ok_or("source.repositoryMissing")?
             .clone();
         // 安装要求仓库在当前地区可用；隐藏/地区不匹配的仓库不能作为安装入口
-        if !crate::config::repository_is_available(
+        if !crate::config::mod_repository_is_available(
             &config,
             &repo,
             crate::config::current_user_region(),
@@ -81,7 +81,7 @@ pub async fn install_repository(
          * 必须在下载开始前算好：进度事件在下载过程中持续发出，label 是其中
          * 一个字段；等下载完再改就晚了。跟随界面语言，而不是固定用中文原名。
          */
-        let display_name = crate::config::localized_repository_name(&repo, locale.as_deref());
+        let display_name = crate::config::localized_mod_repository_name(&repo, locale.as_deref());
         let (
             download_url,
             download_name,
@@ -91,7 +91,7 @@ pub async fn install_repository(
             download_assets,
             is_raw_file,
         ) = match repo.download_mode {
-            RepositoryDownloadMode::RepositoryFile => {
+            ModDownloadMode::RepositoryFile => {
                 log::debug!(
                     "按仓库文件模式安装：仓库={}，分支={}，文件={}",
                     repo.name,
@@ -118,7 +118,7 @@ pub async fn install_repository(
                     true,
                 )
             }
-            RepositoryDownloadMode::Release => {
+            ModDownloadMode::Release => {
                 log::debug!(
                     "按 Release 模式安装：仓库={}，缓存 Release 数={}",
                     repo.name,
@@ -127,12 +127,12 @@ pub async fn install_repository(
                 let fetched_releases = if repo.cached_releases.is_empty() {
                     let client = releases::build_client(config.network.timeout_seconds)
                         .map_err(|e| e.to_string())?;
-                    let token = state.config.repository_api_token(&config, &repo);
+                    let token = state.config.mod_repository_api_token(&config, &repo);
                     let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
                     releases::filter_channel(
                         releases::fetch_releases(
                             &client,
-                            &repo,
+                            &crate::releases::RepositoryRequest::from(&repo),
                             token.as_deref(),
                             config.auth.official_api_only,
                             api_proxies,
@@ -161,8 +161,13 @@ pub async fn install_repository(
                     })
                     .or_else(|| fetched_releases.first())
                     .ok_or("source.noInstallableRelease")?;
-                let asset = releases::select_install_asset(&repo, release, asset_name.as_deref())
-                    .ok_or("source.noMatchingAsset")?;
+                let asset = releases::select_install_asset(
+                    &crate::releases::RepositoryRequest::from(&repo),
+                    &repo.asset_rules,
+                    release,
+                    asset_name.as_deref(),
+                )
+                .ok_or("source.noMatchingAsset")?;
                 log::info!(
                     "已选择 Release 资产：仓库={}，版本={}，资产={}",
                     repo.name,
@@ -250,7 +255,7 @@ pub async fn install_repository(
                 repo.name,
                 preview.total_dlls
             );
-            return Ok(RepositoryInstallOutcome {
+            return Ok(ModRepositoryInstallOutcome {
                 ok: true,
                 message: crate::locale_tag::with_params(
                     "mods.ready",
@@ -273,9 +278,12 @@ pub async fn install_repository(
                 return Err("mods.gameRestartedDuringDownload".into());
             }
             let current_config = state.config.load_or_default();
-            let install_repo =
-                repository_install_identity(&repo, &current_config, &state.config.manifests_dir())?;
-            install_downloaded_repository(
+            let install_repo = mod_repository_install_identity(
+                &repo,
+                &current_config,
+                &state.config.manifests_dir(),
+            )?;
+            install_downloaded_mod_repository(
                 &temp,
                 &download_name,
                 &game_root,
@@ -296,7 +304,7 @@ pub async fn install_repository(
                     release_tag,
                     file_count
                 );
-                Ok(RepositoryInstallOutcome {
+                Ok(ModRepositoryInstallOutcome {
                     ok: true,
                     message: if release_tag.is_empty() {
                         crate::locale_tag::with_params(
@@ -356,7 +364,7 @@ fn uninstall_repository_blocking(
         .iter()
         .find(|repo| repo.id == repository_id)
     {
-        repository_install_identity(repo, &config, &state.config.manifests_dir())?.id
+        mod_repository_install_identity(repo, &config, &state.config.manifests_dir())?.id
     } else {
         repository_id.to_string()
     };

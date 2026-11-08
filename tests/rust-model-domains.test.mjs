@@ -11,6 +11,7 @@ const owners = {
   game: ['BepInExInfo', 'DiyLevelInfo', 'GameConfig', 'GameInfo', 'GameRuntime', 'WinhttpState'],
   levels: ['LevelSetFlattenCandidate', 'LevelSetFlattenReport', 'LevelSetImportResult', 'LevelSetInfo', 'LevelSetLayout', 'LevelSetPlugin', 'LevelSetScanProgress', 'LevelSetZipProgress', 'MapInstallOrigin', 'StagedMapSource', 'ZipLevelSet', 'ZipLevelSetPlugin'],
   maps: ['AssetVersionEntry', 'MapInfo', 'MapRelationSnapshot', 'MapRelationSnapshots', 'MapRepositoryConfig', 'RequiredFramework'],
+  mod_repositories: ['ModDownloadMode', 'ModRepositoryBinding', 'ModRepositoryConfig', 'ModRepositoryExport', 'ModRepositoryBundle', 'ModRepositoryPatch'],
   mods: ['DllPluginInfo', 'DllRole', 'InstalledMod', 'InstalledModStatusLabel', 'ModNote', 'ModRecycleEntry', 'UninstallLocalModResult'],
   network: ['GitHubProxy', 'GitHubProxyConfig', 'GitHubProxyManifest', 'NetworkConfig', 'ProxyMode'],
   network_plan: ['NetworkPlanSelection', 'PlanOverride', 'PlanReference', 'PlanStep', 'RepositoryKind', 'RouteOverride'],
@@ -18,7 +19,7 @@ const owners = {
   publish: ['PublishProvider', 'PublishCredentialConfig', 'MapPublishMetadata', 'PublishAsset', 'PublishAuthMode', 'PublishAuthPoll', 'PublishAuthState', 'PublishAuthorization', 'PublishDeleteReleaseRequest', 'PublishRelease', 'PublishRepository', 'PublishRepositoryList', 'PublishRepositoryTopics', 'PublishSaveRequest', 'PublishSessionCheck', 'PublishSessionOutcome', 'PublishTokens', 'PublishUploadProgress', 'PublishUploadRequest', 'PublishZipInspection'],
   relations: ['DependencySyncResult', 'RelationKind', 'ReleaseRelationOverride', 'RepositoryRelation'],
   releases: ['ReleaseAsset', 'ReleaseInfo', 'UpdateStatus'],
-  repositories: ['AssetRule', 'AssetRuleType', 'AvatarRequest', 'Channel', 'CommunityDiscovery', 'CommunityMapRepository', 'ImportPreview', 'Provider', 'RepositoryBinding', 'RepositoryBundle', 'RepositoryConfig', 'RepositoryDownloadMode', 'RepositoryExport', 'RepositoryPatch', 'RepositorySource', 'RepositorySourceImportResult', 'StagedReleaseCache'],
+  repositories: ['AssetRule', 'AssetRuleType', 'AvatarRequest', 'Channel', 'CommunityDiscovery', 'CommunityMapRepository', 'ImportPreview', 'Provider', 'RepositorySource', 'RepositorySourceImportResult', 'StagedReleaseCache'],
 }
 
 const files = sourceFiles(root, ['.rs']).map(path => [path, readText(path)])
@@ -75,7 +76,7 @@ test('Model serde consumers share relation readers and defaults without changing
   assert.match(relations, /REPOSITORY_FIELD_NAMES\.contains\(&key\.as_str\(\)\)/)
   assert.match(relations, /crate::version_range::fold_bounds\(min_version, max_version\)/)
   assert.match(relations, /alias = "requires",\s*deserialize_with = "deserialize_relations"/)
-  for (const [owner, count] of [['repositories', 2], ['maps', 1]]) {
+  for (const [owner, count] of [['mod_repositories', 2], ['maps', 1]]) {
     const source = read(`${owner}.rs`)
     assert.match(source, /use super::relations::\{[^}]*\bdeserialize_relations\b[^}]*\};/)
     assert.equal([...source.matchAll(/deserialize_with = "deserialize_relations"/g)].length, count, owner)
@@ -88,7 +89,7 @@ test('Model serde consumers share relation readers and defaults without changing
   assert.match(config, /serde\(default = "crate::config::default_ui_zoom"\)/)
   assert.match(config, /crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY/)
   assert.match(config, /pub tutorial_watched_steps: Option<Vec<String>>/)
-  assert.match(read('repositories.rs'), /pub relations: Option<Vec<RepositoryRelation>>/)
+  assert.match(read('mod_repositories.rs'), /pub relations: Option<Vec<RepositoryRelation>>/)
   assert.match(read('mods.rs'), /#\[serde\(rename_all = "lowercase"\)\]\s*pub enum DllRole/)
   assert.match(read('levels.rs'), /#\[serde\(flatten\)\]\s*pub info: DllPluginInfo/)
   assert.match(read('publish.rs'), /#\[serde\(tag = "status", rename_all = "snake_case"\)\]/)

@@ -532,7 +532,7 @@ asset_rules = [{ type = "exact", value = "a.zip" }]
 }
 
 #[test]
-fn map_document_inherits_plans_and_release_probe_keeps_map_role() {
+fn map_document_inherits_plans_and_repository_request_keeps_map_role() {
     let text = r#"
 type = "map"
 network_plan.mainland = "github-public"
@@ -554,7 +554,7 @@ repository = "r"
 "#;
     let origin = SourceLocation::parse("maps.toml").unwrap();
     let document = parse_document(text, &origin, &Default::default()).unwrap();
-    let probe = super::releases::release_probe(&document.maps[0]);
+    let probe = crate::releases::RepositoryRequest::from(&document.maps[0]);
     assert_eq!(probe.kind, crate::models::RepositoryKind::Map);
     let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
     let plan = policy
@@ -566,7 +566,7 @@ repository = "r"
         )
         .unwrap();
     assert_eq!(plan.release.download_threads, 4);
-    let child = super::release_tags::declaration_probe(&document.map_sources[0]);
+    let child = super::release_tags::declaration_request(&document.map_sources[0]);
     assert_eq!(child.kind, crate::models::RepositoryKind::Map);
     let plan = policy
         .resolve(

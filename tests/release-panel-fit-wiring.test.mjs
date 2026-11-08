@@ -4,7 +4,7 @@ import test from 'node:test'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 const panel = read('src/components/ReleaseDetailPanel.vue')
-const repositoryDetail = read('src/components/RepositoryDetail.vue')
+const repositoryDetail = read('src/components/ModRepositoryDetail.vue')
 const modsOnline = read('src/views/ModsOnlineView.vue')
 const mapsOnline = read('src/views/MapsOnlineView.vue')
 const mapReleaseDetail = read('src/composables/useMapReleaseDetail.ts')
@@ -30,12 +30,12 @@ test('release panel delegates DOM sizing and lifecycle to one composable', () =>
 
 test('both online pages use the shared release panel through their domain adapters', () => {
   assert.match(repositoryDetail, /<ReleaseDetailPanel v-if="repo"/)
-  assert.match(modsOnline, /import RepositoryDetail from '\.\.\/components\/RepositoryDetail\.vue'/)
+  assert.match(modsOnline, /import ModRepositoryDetail from '\.\.\/components\/ModRepositoryDetail\.vue'/)
   assert.match(mapsOnline, /<ReleaseDetailPanel :key="detailMap\.id"/)
   assert.match(mapsOnline, /detailAssets/)
   assert.match(mapsOnline, /useMapReleaseDetail\(/)
   assert.match(mapsOnline, /detailDependencies/)
-  assert.doesNotMatch(mapsOnline, /useRepositoryReadme/)
+  assert.doesNotMatch(mapsOnline, /useModRepositoryReadme/)
 
   assert.match(mapReleaseDetail, /mapDependencyRows\(/)
   assert.match(mapReleaseDetail, /matchedReleaseAssets\(/)

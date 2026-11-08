@@ -33,7 +33,7 @@ test('shared Rust domains never import command implementations', () => {
 
 test('extracted business helpers have one owner outside IPC and do not become another large file', () => {
   const owners = [
-    ['mods/install.rs', ['install_manual_mod', 'install_staged_repository', 'install_downloaded_repository', 'repository_install_identity']],
+    ['mods/install.rs', ['install_manual_mod', 'install_staged_mod_repository', 'install_downloaded_mod_repository', 'mod_repository_install_identity']],
     ['mods/status.rs', ['collect_update_status']],
     ['mods/file_state.rs', ['set_local_mod_file_state']],
     ['framework.rs', ['backup_framework', 'restore_framework_backup', 'validate_framework_backup_in']],

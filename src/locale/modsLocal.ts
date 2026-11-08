@@ -99,7 +99,7 @@ export const modsLocal: DomainMessages = {
   repositoryMissing: {
     'zh-CN': '仓库缺失',
     'zh-TW': '倉庫缺失',
-    en: 'Repository missing',
+    en: 'ModRepository missing',
     ko: '저장소 없음',
     ja: 'リポジトリなし',
   },

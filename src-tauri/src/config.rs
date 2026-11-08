@@ -18,10 +18,10 @@ mod validation;
 pub use availability::REGION_CHINESE_MAINLAND;
 pub use availability::REGION_INTERNATIONAL;
 pub use availability::current_user_region;
+pub(crate) use availability::mod_repository_is_available;
 pub(crate) use availability::normalize_repository_platform;
 pub(crate) use availability::normalize_repository_region;
 pub(crate) use availability::normalize_repository_region_for_storage;
-pub(crate) use availability::repository_is_available;
 #[cfg(test)]
 pub(crate) use availability::repository_matches_channel;
 pub(crate) use availability::validate_repository_platform;
@@ -32,14 +32,13 @@ pub(crate) use defaults::default_config;
 pub(crate) use defaults::default_ui_zoom;
 pub(crate) use identity::export_key;
 pub(crate) use identity::repo_key;
-pub(crate) use identity::repository_from_export;
 pub(crate) use identity::source_repository_key;
 pub(crate) use metadata::localized_map_name;
-pub(crate) use metadata::localized_repository_name;
+pub(crate) use metadata::localized_mod_repository_name;
 pub(crate) use metadata::normalize_repository_i18n;
 pub(crate) use sources::builtin_repository_sources_for_region;
 pub(crate) use validation::check_version_spec;
-pub(crate) use validation::validate_repository;
+pub(crate) use validation::validate_mod_repository;
 
 /// 配置读写失败。
 ///

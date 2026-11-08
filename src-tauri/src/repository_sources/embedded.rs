@@ -4,7 +4,7 @@ use super::document::RepositorySourceDocument;
 use super::document::parse_document;
 use super::location::SourceLocation;
 use crate::config::ConfigError;
-use crate::models::RepositoryExport;
+use crate::models::ModRepositoryExport;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -33,7 +33,7 @@ include!(concat!(env!("OUT_DIR"), "/repository_sources.rs"));
 /// 用途：社区搜索结果必须回避全部内置/官方仓库，包括因当前地区
 /// 被过滤掉、因而不在 `config.repositories` 里的那些。
 /// 只读嵌入资源，不发起网络请求，也不修改任何配置。
-pub(crate) fn bundled_repository_configs() -> Vec<RepositoryExport> {
+pub(crate) fn bundled_repository_configs() -> Vec<ModRepositoryExport> {
     let mut repositories = Vec::new();
     let mut pending = match SourceLocation::parse(BUILTIN_INDEX) {
         Ok(location) => vec![location],

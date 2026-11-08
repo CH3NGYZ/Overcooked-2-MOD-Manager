@@ -1,5 +1,5 @@
 use super::transport::API_REQUEST_TIMEOUT;
-use crate::models::RepositoryConfig;
+use crate::releases::RepositoryRequest;
 use reqwest::Client;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -90,7 +90,7 @@ pub(super) fn api_test_client() -> Client {
     Client::builder().no_proxy().build().unwrap()
 }
 
-pub(super) fn api_test_repository() -> RepositoryConfig {
+pub(super) fn api_test_repository() -> RepositoryRequest {
     serde_json::from_value(serde_json::json!({
         "id": "retry-test", "name": "Retry test", "provider": "gitee",
         "username": "owner", "repository": "repo", "install_target": "BepInEx/plugins",

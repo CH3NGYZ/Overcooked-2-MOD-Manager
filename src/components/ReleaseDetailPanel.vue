@@ -2,7 +2,7 @@
 /**
  * 共享「发布详情面板」的对外类型。
  *
- * 面板**不认识** `Repository` / `MapInfo` 任何一方：MOD 安装页和地图下载页的
+ * 面板**不认识** `ModRepository` / `MapInfo` 任何一方：MOD 安装页和地图下载页的
  * 数据结构、状态机、安装命令都不一样，唯一相同的是「同一个 Release 长什么样」。
  * 所以这里的类型只描述面板真正会读到的字段，调用方传入自己的对象即可
  * （结构满足就能过类型检查）。
@@ -34,7 +34,7 @@ export interface ReleaseDetailVersion {
  *
  * ## 为什么要有这层
  *
- *「同一个 Release」在两个页面曾经各画一遍：MOD 侧是 `RepositoryDetail.vue` 的
+ *「同一个 Release」在两个页面曾经各画一遍：MOD 侧是 `ModRepositoryDetail.vue` 的
  * 分段 tabs（说明 / 下载安装）+ 版本下拉 + 提交日志 + 资产行 + 安装按钮；
  * 地图侧 `MapDetail.vue` 是扁平 section 拼贴，资产行只有名字和大小。
  * 同一个仓库点进去，两边长得完全不一样 —— 这个组件就是那条共享的骨架：

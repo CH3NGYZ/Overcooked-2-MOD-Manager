@@ -1,8 +1,8 @@
 use super::github::SEARCH_ENDPOINT;
 use crate::models::CommunityDiscovery;
 use crate::models::CommunityMapRepository;
+use crate::models::ModRepositoryConfig;
 use crate::models::Provider;
-use crate::models::RepositoryConfig;
 use crate::models::RepositorySource;
 use crate::releases;
 use serde_json::Value;
@@ -23,7 +23,7 @@ pub const GITEE_SOURCE_ID: &str = "gitee-community";
 /// 互相矛盾的「准入」结果。
 pub(crate) const REQUIRED_TOPICS: [&str; 2] = ["overcooked-2", "bepinex"];
 
-pub fn is_repository(repo: &RepositoryConfig) -> bool {
+pub fn is_repository(repo: &ModRepositoryConfig) -> bool {
     repo.source_id.as_deref().is_some_and(is_source)
 }
 
@@ -49,9 +49,14 @@ pub fn source_id(provider: &Provider) -> &'static str {
  * owner/repository，社区那份就整条隐藏，哪怕官方那份当前地区不可见或被禁用。
  */
 
-pub fn is_source_archive(repo: &RepositoryConfig, tag: &str, asset_name: &str) -> bool {
-    repo.provider == Provider::Gitee
-        && repo.source_id.as_deref() == Some(GITEE_SOURCE_ID)
+pub fn is_source_archive(
+    provider: &Provider,
+    source_id: Option<&str>,
+    tag: &str,
+    asset_name: &str,
+) -> bool {
+    *provider == Provider::Gitee
+        && source_id == Some(GITEE_SOURCE_ID)
         && !tag.trim().is_empty()
         && asset_name
             .trim()
@@ -119,7 +124,7 @@ pub fn source(provider: &Provider) -> RepositorySource {
 /// MOD 也不是地图源，静默丢弃；连坐标都读不出来才是真的格式异常，要计入
 /// `incomplete_results` 让用户知道这次发现不完整。
 pub(super) enum SearchHit {
-    Mod(RepositoryConfig),
+    Mod(ModRepositoryConfig),
     Map(CommunityMapRepository),
     Skip,
     Invalid,
@@ -187,7 +192,7 @@ pub(crate) fn repository_from_coordinates(
     name: &str,
     branch: &str,
     note: &str,
-) -> Option<RepositoryConfig> {
+) -> Option<ModRepositoryConfig> {
     let (owner, name) = releases::repository_coordinates(owner, name).ok()?;
     let identity = format!(
         "{}/{}",
@@ -219,7 +224,7 @@ pub(crate) fn repository_from_coordinates(
 }
 
 pub(crate) struct SearchResults {
-    pub(crate) repositories: Vec<RepositoryConfig>,
+    pub(crate) repositories: Vec<ModRepositoryConfig>,
     pub(crate) map_repositories: Vec<CommunityMapRepository>,
     pub(crate) discovery: CommunityDiscovery,
 }

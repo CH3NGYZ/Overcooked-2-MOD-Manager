@@ -29,7 +29,7 @@ fn regional_repository_variants_coexist_and_export_all_channels() {
         repository.download_threads = 16;
         repository
     });
-    let bundle = RepositoryBundle {
+    let bundle = ModRepositoryBundle {
         format: BUNDLE_FORMAT.into(),
         schema_version: 1,
         exported_at: String::new(),
@@ -112,7 +112,7 @@ fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
         );
         repository
     });
-    let bundle = RepositoryBundle {
+    let bundle = ModRepositoryBundle {
         format: BUNDLE_FORMAT.into(),
         schema_version: 1,
         exported_at: String::new(),
@@ -151,7 +151,7 @@ fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
         original_ids
     );
     let beta = &config.repositories[1];
-    let binding = crate::models::RepositoryBinding::from_release(beta, "v1.0.0-beta.1").unwrap();
+    let binding = crate::models::ModRepositoryBinding::from_release(beta, "v1.0.0-beta.1").unwrap();
     assert_eq!(binding.channel, Channel::Beta);
     assert!(binding.matches_repository(beta));
     assert!(!binding.matches_repository(&config.repositories[0]));
@@ -222,6 +222,6 @@ fn network_plan_changes_do_not_change_repository_identity() {
     )
     .unwrap();
     assert_eq!(before, crate::config::export_key(export));
-    let repo = crate::config::repository_from_export(export, "same-id".into(), false);
+    let repo = crate::config::identity::mod_repository_from_export(export, "same-id".into(), false);
     assert_eq!(before, repo_key(&repo));
 }

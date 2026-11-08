@@ -1,6 +1,6 @@
 use crate::models::MapRepositoryConfig;
+use crate::models::ModRepositoryConfig;
 use crate::models::ReleaseRelationOverride;
-use crate::models::RepositoryConfig;
 use crate::models::RepositoryRelation;
 
 /// 从覆盖表里挑出对指定版本生效的那一张；没有命中返回 `None`。
@@ -58,7 +58,7 @@ pub(crate) fn select_release_relations<'a>(
 ///
 /// 版本为空、没有覆盖表、或没有命中时都用仓库级 `relations`。
 pub fn effective_relations(
-    repo: &RepositoryConfig,
+    repo: &ModRepositoryConfig,
     release_version: Option<&str>,
 ) -> Vec<RepositoryRelation> {
     match select_release_relations(&repo.release_relations, release_version) {

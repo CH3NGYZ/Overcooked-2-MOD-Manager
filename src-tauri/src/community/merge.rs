@@ -5,8 +5,8 @@ use super::ownership::identity;
 use super::ownership::official_repository_keys;
 use crate::archive::InstallManifest;
 use crate::models::AppConfig;
+use crate::models::ModRepositoryConfig;
 use crate::models::Provider;
-use crate::models::RepositoryConfig;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -17,9 +17,10 @@ pub(super) fn merge_results(
     manifests: &[InstallManifest],
 ) {
     let source_id = source_id(provider);
-    let belongs_to_search = |repo: &RepositoryConfig| repo.source_id.as_deref() == Some(source_id);
+    let belongs_to_search =
+        |repo: &ModRepositoryConfig| repo.source_id.as_deref() == Some(source_id);
     let official = official_repository_keys(config);
-    let is_installed = |repo: &RepositoryConfig| {
+    let is_installed = |repo: &ModRepositoryConfig| {
         manifests.iter().any(|manifest| {
             manifest.repository_id == repo.id
                 || manifest

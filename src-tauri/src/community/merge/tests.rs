@@ -3,7 +3,7 @@ use super::super::catalog::{
 };
 use super::super::test_support::item;
 use super::*;
-use crate::models::{Channel, CommunityDiscovery, CommunityMapRepository, RepositoryBinding};
+use crate::models::{Channel, CommunityDiscovery, CommunityMapRepository, ModRepositoryBinding};
 
 #[test]
 fn merge_replaces_only_the_discovered_platform_map_repositories() {
@@ -76,7 +76,7 @@ fn community_merge_preserves_official_entries_and_installed_repositories_missing
         vec![],
         Vec::new(),
     );
-    manifest.repository_binding = RepositoryBinding::from_release(&retained, "nightly");
+    manifest.repository_binding = ModRepositoryBinding::from_release(&retained, "nightly");
     let found = repository_from_search(&item("Owner", "Official")).unwrap();
     merge_results(
         &mut config,
@@ -131,7 +131,7 @@ fn official_dedup_preserves_installed_channels_and_does_not_hide_custom_or_gitee
         vec![],
         Vec::new(),
     );
-    manifest.repository_binding = RepositoryBinding::from_release(&installed, "v1.0.0");
+    manifest.repository_binding = ModRepositoryBinding::from_release(&installed, "v1.0.0");
     let binding = manifest.repository_binding.clone();
 
     let mut custom = repository_from_search(&item("Owner", "Custom")).unwrap();
@@ -218,8 +218,8 @@ fn official_dedup_preserves_installed_channels_and_does_not_hide_custom_or_gitee
     );
 }
 
-fn manifest_binding_channel(repo: &RepositoryConfig) -> Channel {
-    RepositoryBinding::from_release(repo, "tag")
+fn manifest_binding_channel(repo: &ModRepositoryConfig) -> Channel {
+    ModRepositoryBinding::from_release(repo, "tag")
         .unwrap()
         .channel
 }
@@ -247,7 +247,7 @@ fn gitee_merge_preserves_github_catalogue_and_uses_provider_scoped_official_dedu
         vec![],
         Vec::new(),
     );
-    manifest.repository_binding = RepositoryBinding::from_release(&found, "v1.0.0");
+    manifest.repository_binding = ModRepositoryBinding::from_release(&found, "v1.0.0");
     let mut config: AppConfig = serde_json::from_value(serde_json::json!({
             "schema_version":1,"ui_zoom":1.5,
             "game":{"path":""},

@@ -117,11 +117,11 @@ pub(crate) fn install_manual_mod(
     })
 }
 
-pub(crate) fn repository_install_identity(
-    repo: &RepositoryConfig,
+pub(crate) fn mod_repository_install_identity(
+    repo: &ModRepositoryConfig,
     config: &AppConfig,
     manifests_dir: &Path,
-) -> Result<RepositoryConfig, String> {
+) -> Result<ModRepositoryConfig, String> {
     if manifests_dir
         .join(format!("{}.toml", repo.id))
         .try_exists()
@@ -160,7 +160,7 @@ pub(crate) fn repository_install_identity(
 /// 该仓库的全部旧包，再解压/复制新文件。必须走这条路径而不是
 /// `install_manual_mod` —— 后者每次生成新的 `manual-<uuid>` 清单，
 /// 同仓库的旧包不会被回收，装几次就有几份副本。
-pub(crate) fn install_staged_repository(
+pub(crate) fn install_staged_mod_repository(
     state: &AppState,
     staged_file: &Path,
     repository_id: &str,
@@ -189,9 +189,9 @@ pub(crate) fn install_staged_repository(
 
     let manifests_dir = state.config.manifests_dir();
     // 沿用仓库安装的身份解析：源可能已从配置消失，但旧清单仍要能被找到
-    let install_repo = repository_install_identity(&repo, &config, &manifests_dir)?;
+    let install_repo = mod_repository_install_identity(&repo, &config, &manifests_dir)?;
 
-    let file_count = install_downloaded_repository(
+    let file_count = install_downloaded_mod_repository(
         staged_file,
         download_name,
         &game_root,
@@ -228,13 +228,13 @@ pub(crate) fn install_staged_repository(
     })
 }
 
-pub(crate) fn install_downloaded_repository(
+pub(crate) fn install_downloaded_mod_repository(
     asset_path: &Path,
     download_name: &str,
     game_root: &Path,
     manifests_dir: &Path,
     recycle_root: &Path,
-    repo: &RepositoryConfig,
+    repo: &ModRepositoryConfig,
     release_tag: &str,
     prerelease: bool,
     // 安装成功后是否保留旧包的回收记录（= 用户开启了「优先放入回收站」）。
@@ -336,7 +336,7 @@ pub(crate) fn install_downloaded_repository(
             pending.files().to_vec(),
             crate::mods::effective_relations(repo, Some(release_tag)),
         );
-        manifest.repository_binding = RepositoryBinding::from_release(repo, release_tag);
+        manifest.repository_binding = ModRepositoryBinding::from_release(repo, release_tag);
         // 固化安装时的分组：之后即使源文档还没刷新出来（刚启动），
         // MOD 管理页也能按当时的分组稳定归类。
         manifest.group_i18n = repo.group_i18n.clone();

@@ -3,11 +3,11 @@ use crate::config::availability::PLATFORM_WINDOWS;
 use crate::config::availability::REGION_CHINESE_MAINLAND;
 use crate::config::availability::REGION_INTERNATIONAL;
 use crate::config::availability::current_platform;
+use crate::config::availability::mod_repository_is_available;
 use crate::config::availability::platform_matches;
-use crate::config::availability::repository_is_available;
 use crate::config::availability::repository_matches_channel;
 use crate::config::defaults::default_config;
-use crate::config::identity::repository_from_export;
+use crate::config::identity::mod_repository_from_export;
 use crate::models::*;
 
 use super::REGION_REPOSITORY;
@@ -33,7 +33,7 @@ fn repository_regions_are_optional_validated_and_preserved() {
             (!region.is_empty()).then_some(region)
         );
         let repository =
-            repository_from_export(&document.repositories[0], "regional".into(), false);
+            mod_repository_from_export(&document.repositories[0], "regional".into(), false);
         let mut config = default_config();
         config.repositories.push(repository);
         let serialized = toml::to_string(&config).unwrap();
@@ -122,7 +122,7 @@ fn repository_platform_is_optional_normalized_and_enforced() {
     assert!(error.to_string().contains("invalidPlatform"), "{error}");
 }
 
-/// 平台不适用时，repository_is_available 与地区不适用表现完全一致。
+/// 平台不适用时，mod_repository_is_available 与地区不适用表现完全一致。
 #[test]
 fn platform_mismatch_hides_repository_like_region_mismatch() {
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
@@ -130,14 +130,14 @@ fn platform_mismatch_hides_repository_like_region_mismatch() {
     let document =
         crate::repository_sources::parse_document(&text, &location, &Default::default()).unwrap();
     let mut repository =
-        repository_from_export(&document.repositories[0], "mac-only".into(), false);
+        mod_repository_from_export(&document.repositories[0], "mac-only".into(), false);
     repository.enabled = true;
     let mut config = default_config();
     config.repositories.push(repository);
     let stored = config.repositories[0].clone();
     // 在 macOS 上可用，在 Windows 上不可用 —— 与 region 的判定方式一致
     assert!(
-        repository_is_available(&config, &stored, REGION_CHINESE_MAINLAND)
+        mod_repository_is_available(&config, &stored, REGION_CHINESE_MAINLAND)
             == (current_platform() == PLATFORM_MACOS)
     );
 }
@@ -152,7 +152,7 @@ fn repository_channel_requires_both_source_and_repository_regions() {
     )
     .unwrap();
     let mut repository =
-        repository_from_export(&document.repositories[0], "regional".into(), false);
+        mod_repository_from_export(&document.repositories[0], "regional".into(), false);
     let mut config = default_config();
     for (configured, china, international) in [
         (None, true, true),
@@ -260,11 +260,11 @@ fn availability_requires_enabled_and_matching_region() {
     )
     .unwrap();
     let mut repository =
-        repository_from_export(&document.repositories[0], "regional".into(), false);
+        mod_repository_from_export(&document.repositories[0], "regional".into(), false);
     let config = default_config();
 
     /*
-     * `repository_is_available` 是「这个仓库此刻是否存在」的唯一判定：
+     * `mod_repository_is_available` 是「这个仓库此刻是否存在」的唯一判定：
      * enabled 与地区两个条件的交集。任一不满足都等于不存在，
      * 因此既不会显示，也不会被刷新、安装或参与更新统计。
      */
@@ -279,7 +279,7 @@ fn availability_requires_enabled_and_matching_region() {
         repository.region = region.map(str::to_owned);
         for current in [REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL] {
             assert_eq!(
-                repository_is_available(&config, &repository, current),
+                mod_repository_is_available(&config, &repository, current),
                 enabled && repository_matches_channel(&config, &repository, current),
                 "enabled={enabled}, region={region:?}, current={current}"
             );
@@ -289,12 +289,12 @@ fn availability_requires_enabled_and_matching_region() {
     // international 仓库在中国大陆彻底不存在（这是本次修复的原始症状）
     repository.enabled = true;
     repository.region = Some(REGION_INTERNATIONAL.into());
-    assert!(!repository_is_available(
+    assert!(!mod_repository_is_available(
         &config,
         &repository,
         REGION_CHINESE_MAINLAND
     ));
-    assert!(repository_is_available(
+    assert!(mod_repository_is_available(
         &config,
         &repository,
         REGION_INTERNATIONAL

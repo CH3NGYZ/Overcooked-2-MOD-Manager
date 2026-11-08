@@ -5,17 +5,17 @@ import { readText, sourceFiles } from './helpers/source-scan.mjs'
 
 const root = resolve('src-tauri/src/config')
 const owners = {
-  availability: ['repository_is_available', 'repository_matches_channel', 'current_user_region', 'normalize_repository_platform'],
+  availability: ['mod_repository_is_available', 'repository_matches_channel', 'current_user_region', 'normalize_repository_platform'],
   bundle: ['export_bundle', 'validate_bundle', 'preview_bundle', 'import_bundle', 'serialize_repository_bundle'],
   defaults: ['default_config', 'default_ui_zoom'],
-  identity: ['repo_key', 'export_key', 'source_repository_key', 'repository_from_export'],
+  identity: ['repo_key', 'export_key', 'source_repository_key', 'mod_repository_from_export'],
   metadata: ['localized_name', 'migrate_repository_i18n', 'normalize_repository_i18n'],
   migrations: ['contains_legacy_repository_proxy_fields', 'migrate_bundled_source_switches', 'normalize_configured_regions'],
   public: ['public_config'],
   secrets: ['protect_secret', 'reveal_secret', 'set_publish_tokens', 'api_token'],
   sources: ['builtin_repository_sources_for_region', 'merge_builtin_repository_sources'],
   storage: ['new', 'cached_if_fresh', 'load_from_disk', 'with_proxies', 'save'],
-  validation: ['validate_repository', 'check_version_spec', 'validate_relation'],
+  validation: ['validate_mod_repository', 'check_version_spec', 'validate_relation'],
 }
 
 test('config keeps one shared state owner and does not forward domain methods', () => {

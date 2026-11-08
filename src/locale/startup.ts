@@ -11,7 +11,7 @@ export const startup: DomainMessages = {
   'failed': {
     'zh-CN': "仓库源检测未完成",
     'zh-TW': "倉庫來源偵測未完成",
-    'en': "Repository source check failed",
+    'en': "ModRepository source check failed",
     'ko': "저장소 소스 확인 실패",
     'ja': "リポジトリソースの確認に失敗しました",
   },

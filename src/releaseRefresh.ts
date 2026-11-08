@@ -9,7 +9,7 @@ import type { ReleaseInfo } from './types'
  *
  * 它们本质上是同一种东西：GitHub / Gitee 上的一个仓库，要拉的是它的 Release
  * 列表，结论是「有没有比本地新的版本」。后端虽然给了两条命令
- * （`refresh_repository` / `refresh_map_releases`），但形状完全一致：
+ * （`refresh_mod_repository` / `refresh_map_releases`），但形状完全一致：
  * 请求 → 成功后写回这个条目的缓存 → 失败后把这个条目标成出错 → 无论哪种
  * 都关掉它自己的「刷新中」标志。
  *
@@ -153,7 +153,7 @@ export async function refreshReleaseItem<T extends ReleaseItem>(
  *
  * 地图侧没有「安装清单」这样的统一入口（本地关卡集与地图条目是两套身份），
  * 所以由页面把绑定上的地图 id 传进来；MOD 侧直接复用
- * `repositoryPriority.prioritizeInstalledRepositories`。
+ * `modRepositoryPriority.prioritizeInstalledModRepositories`。
  */
 export function prioritizeByIds<T extends ReleaseItem>(
   items: readonly T[],

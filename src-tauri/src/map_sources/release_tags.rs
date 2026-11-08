@@ -11,34 +11,19 @@ use crate::repository_sources::SourceLocation;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
-/// 「单仓多 Release」源要读哪个仓库。
-///
-/// 只为复用 `release_cache` 与 `fetch_releases` 的限流/代理/重试链路：
-/// 那条链路吃的是 `RepositoryConfig`，为地图再造一条抓取路径等于把规则
-/// 复制一遍，迟早两边行为不一致。
-pub(super) fn declaration_probe(
+/// A source declaration supplies repository request data, never a fake MOD.
+pub(super) fn declaration_request(
     declaration: &MapSourceDeclaration,
-) -> crate::models::RepositoryConfig {
-    let export: crate::models::RepositoryExport = serde_json::from_value(serde_json::json!({
-        "name": declaration.nickname,
-        "name_i18n": declaration.nickname_i18n,
-        "group": declaration.nickname,
-        "group_i18n": declaration.nickname_i18n,
-        "type": "map",
-        "network_plan": declaration.network_plan,
-        "provider": declaration.provider.clone().unwrap_or(Provider::Github),
-        "username": declaration.username.trim(),
-        "repository": declaration.repository.trim(),
-        "enabled": true,
-        "download_mode": "release",
-        "install_target": "",
-    }))
-    .expect("地图源投影的字段形状固定，构造失败说明模型改了默认值");
-    crate::config::repository_from_export(
-        &export,
-        declaration.id.trim().to_string(),
-        declaration.builtin.unwrap_or(false),
-    )
+) -> crate::releases::RepositoryRequest {
+    crate::releases::RepositoryRequest {
+        id: declaration.id.trim().to_string(),
+        provider: declaration.provider.clone().unwrap_or(Provider::Github),
+        username: declaration.username.trim().to_string(),
+        repository: declaration.repository.trim().to_string(),
+        kind: crate::models::RepositoryKind::Map,
+        network_plan: declaration.network_plan.clone(),
+        source_id: None,
+    }
 }
 
 /// 读一个「单仓多 Release」源，把每个 Release note 里的元数据块变成一张地图。
@@ -54,7 +39,7 @@ pub(super) async fn load_release_tag_maps(
     ctx: &MapSourceContext<'_>,
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
     let provider = declaration.provider.clone().unwrap_or(Provider::Github);
-    let probe = declaration_probe(declaration);
+    let probe = declaration_request(declaration);
     // All consumers now fetch complete pages and share the same repository snapshot.
     let key = crate::releases::repository_cache_key(
         provider.clone(),
@@ -187,7 +172,7 @@ pub(super) fn project_release_tag_maps(
 ///
 /// 走 JSON 而不是手写结构体：`MapRepositoryConfig` 字段很多、多数有默认值，
 /// 只写这次真正来自 note 的字段，其余交给 serde 默认值 —— 与
-/// `release_probe` 同一条理由。
+/// 地图配置的 serde 默认值保持兼容。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn note_block_map(
     declaration: &MapSourceDeclaration,

@@ -1,4 +1,4 @@
-import type { InstalledMod, Repository } from './types'
+import type { InstalledMod, ModRepository } from './types'
 
 /**
  * 仓库刷新排队：把「有本地已安装 MOD 的仓库」排到最前。
@@ -16,10 +16,10 @@ import type { InstalledMod, Repository } from './types'
  *     （多副本、多包），只应出现在队列里一次；
  *   - 其余仓库保持原顺序，不重排未安装的那一批。
  */
-export function prioritizeInstalledRepositories(
-  repos: Repository[],
+export function prioritizeInstalledModRepositories(
+  repos: ModRepository[],
   installed: InstalledMod[],
-): Repository[] {
+): ModRepository[] {
   const installedIds = new Set<string>()
   for (const mod of installed) {
     for (const id of mod.repository_ids ?? []) installedIds.add(id)
@@ -27,8 +27,8 @@ export function prioritizeInstalledRepositories(
   }
 
   const seen = new Set<string>()
-  const prioritized: Repository[] = []
-  const rest: Repository[] = []
+  const prioritized: ModRepository[] = []
+  const rest: ModRepository[] = []
   for (const repo of repos) {
     if (seen.has(repo.id)) continue
     seen.add(repo.id)

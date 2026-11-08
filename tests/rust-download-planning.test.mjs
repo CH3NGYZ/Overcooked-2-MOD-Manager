@@ -24,7 +24,7 @@ test('download policy has one implementation in the download domain', () => {
 })
 
 test('MOD and map downloads use resolved repository plans; generic URLs use the provider fallback', () => {
-  for (const file of ['commands/repository_install.rs', 'commands/map_install.rs']) {
+  for (const file of ['commands/mod_repository_install.rs', 'commands/map_install.rs']) {
     const source = read(file)
     assert.match(source, /crate::download::planning::plan_repository_download\(/, file)
     assert.doesNotMatch(source, /(?:repo|map)\.download_threads/, file)

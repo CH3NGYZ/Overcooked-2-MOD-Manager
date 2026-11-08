@@ -1,3 +1,4 @@
+import type { RelationSubject } from '../modRelations'
 /**
  * 安装前检查的宿主实现：生成计划、弹窗、等结果。
  *
@@ -16,14 +17,14 @@ import { pickI18n } from '../i18n'
 import {
   buildInstallPlan, planHasActions, type InstallPlan,
 } from '../modRelations'
-import type { InstalledMod, Repository } from '../types'
+import type { InstalledMod, ModRepository } from '../types'
 import { confirmModInstallNotes, firstInstallNotes } from '../modInstallNotes'
 
 export interface InstallPlanGateOptions {
   /** 已装 MOD（判定依赖与冲突的对象）。 */
   mods: () => readonly InstalledMod[]
   /** 当前可用的在线仓库（找可安装来源）。 */
-  repositories: () => readonly Repository[]
+  repositories: () => readonly ModRepository[]
   /** 游戏是否在运行；返回 true 时中止并已给出提示。 */
   gameBlocked: () => boolean
   /**
@@ -56,11 +57,12 @@ export function useInstallPlanGate(options: InstallPlanGateOptions) {
    * `releaseVersion` 是这次要装的版本：`release_relations` 按它筛关系表，
    * 用它而不是「已装版本」—— 用户要装的是新版本，规则也该按新版本算。
    */
-  async function run(repo: Repository, tag?: string): Promise<boolean> {
+  async function run(repo: RelationSubject, tag?: string): Promise<boolean> {
     // 地图仅借用关系检查，地图自身不进入 MOD 说明门。
-    if (options.repositories().some((entry) => entry.id === repo.id)) {
+    const modSource = options.repositories().find((entry) => entry === repo)
+    if (modSource) {
       if (options.gameBlocked()) return false
-      if (!await confirmModInstallNotes(firstInstallNotes([repo], options.mods()))) return false
+      if (!await confirmModInstallNotes(firstInstallNotes([modSource], options.mods()))) return false
     }
     const version = tag ?? repo.cached_releases[0]?.tag_name
     const built = buildInstallPlan(

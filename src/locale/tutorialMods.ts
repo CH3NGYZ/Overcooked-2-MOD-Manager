@@ -33,7 +33,7 @@ export const tutorialMods: DomainMessages = {
   'mods.onlineCard.title': {
     'zh-CN': '仓库卡片',
     'zh-TW': '倉庫卡片',
-    en: 'Repository card',
+    en: 'ModRepository card',
     ko: '저장소 카드',
     ja: 'リポジトリのカード',
   },

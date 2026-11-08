@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::models::{
-    ImportPreview, OperationResult, PublicConfig, RepositoryConfig, RepositoryDownloadMode,
-    RepositoryPatch,
+    ImportPreview, ModDownloadMode, ModRepositoryConfig, ModRepositoryPatch, OperationResult,
+    PublicConfig,
 };
 use crate::releases;
 use std::fs;
@@ -9,7 +9,7 @@ use tauri::State;
 use uuid::Uuid;
 
 #[tauri::command]
-pub fn export_repositories(
+pub fn export_mod_repositories(
     state: State<'_, AppState>,
     ids: Option<Vec<String>>,
 ) -> Result<String, String> {
@@ -25,13 +25,13 @@ pub fn export_repositories(
 }
 
 #[tauri::command]
-pub fn export_repositories_to_file(
+pub fn export_mod_repositories_to_file(
     state: State<'_, AppState>,
     path: String,
     ids: Option<Vec<String>>,
 ) -> Result<OperationResult, String> {
     log::info!("导出仓库配置到文件");
-    let text = export_repositories(state, ids)?;
+    let text = export_mod_repositories(state, ids)?;
     if !path.to_ascii_lowercase().ends_with(".oc2repo.toml")
         && !path.to_ascii_lowercase().ends_with(".toml")
     {
@@ -46,12 +46,12 @@ pub fn export_repositories_to_file(
 }
 
 #[tauri::command]
-pub fn copy_repositories(
+pub fn copy_mod_repositories(
     state: State<'_, AppState>,
     ids: Option<Vec<String>>,
 ) -> Result<OperationResult, String> {
     log::info!("复制仓库配置到剪贴板");
-    let text = export_repositories(state, ids)?;
+    let text = export_mod_repositories(state, ids)?;
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     clipboard.set_text(text).map_err(|e| e.to_string())?;
     Ok(OperationResult {
@@ -61,7 +61,7 @@ pub fn copy_repositories(
 }
 
 #[tauri::command]
-pub fn preview_repository_import(
+pub fn preview_mod_repository_import(
     state: State<'_, AppState>,
     text: String,
 ) -> Result<ImportPreview, String> {
@@ -80,7 +80,7 @@ pub fn preview_repository_import(
 }
 
 #[tauri::command]
-pub fn import_repositories(
+pub fn import_mod_repositories(
     state: State<'_, AppState>,
     text: String,
     conflict: String,
@@ -116,9 +116,9 @@ pub fn import_repositories(
 }
 
 #[tauri::command]
-pub fn save_repository(
+pub fn save_mod_repository(
     state: State<'_, AppState>,
-    patch: RepositoryPatch,
+    patch: ModRepositoryPatch,
 ) -> Result<PublicConfig, String> {
     log::info!(
         "保存仓库配置：操作={}，平台={:?}，下载模式={:?}",
@@ -146,7 +146,7 @@ pub fn save_repository(
     let (username, repository) =
         releases::repository_coordinates(&patch.username, &patch.repository)
             .map_err(|error| error.to_string())?;
-    if patch.download_mode == RepositoryDownloadMode::Release
+    if patch.download_mode == ModDownloadMode::Release
         && (patch.asset_rules.is_empty()
             || patch
                 .asset_rules
@@ -155,7 +155,7 @@ pub fn save_repository(
     {
         return Err("config.assetRuleRequired".into());
     }
-    if patch.download_mode == RepositoryDownloadMode::RepositoryFile {
+    if patch.download_mode == ModDownloadMode::RepositoryFile {
         releases::repository_file_url(
             &patch.provider,
             &username,
@@ -242,12 +242,12 @@ pub fn save_repository(
         .ok_or_else(|| "config.repositoryNameEmpty".to_string())?;
     let group = group_i18n["zh-CN"].clone();
     let note = note_i18n["zh-CN"].clone();
-    let asset_rules = if patch.download_mode == RepositoryDownloadMode::RepositoryFile {
+    let asset_rules = if patch.download_mode == ModDownloadMode::RepositoryFile {
         Vec::new()
     } else {
         patch.asset_rules
     };
-    let mut item = RepositoryConfig {
+    let mut item = ModRepositoryConfig {
         network_plan: patch.network_plan.clone().unwrap_or_else(|| {
             config
                 .repositories
@@ -320,12 +320,12 @@ pub fn save_repository(
         }
         state
             .config
-            .set_repository_tokens(existing, &patch.github_token, &patch.gitee_token);
+            .set_mod_repository_tokens(existing, &patch.github_token, &patch.gitee_token);
     } else {
         let mut item = item;
         state
             .config
-            .set_repository_tokens(&mut item, &patch.github_token, &patch.gitee_token);
+            .set_mod_repository_tokens(&mut item, &patch.github_token, &patch.gitee_token);
         config.repositories.push(item);
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
@@ -334,7 +334,7 @@ pub fn save_repository(
 }
 
 #[tauri::command]
-pub fn delete_repository(
+pub fn delete_mod_repository(
     state: State<'_, AppState>,
     repository_id: String,
 ) -> Result<OperationResult, String> {

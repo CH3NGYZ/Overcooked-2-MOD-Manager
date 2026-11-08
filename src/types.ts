@@ -30,7 +30,7 @@ export type AppPlatform = 'windows' | 'macos'
 export type GameRuntime = 'wine' | 'native'
 export type Channel = 'stable' | 'beta' | 'all'
 export type ProxyMode = 'direct' | 'auto_direct' | 'auto_proxy' | 'fixed'
-export type RepositoryDownloadMode = 'release' | 'repository_file'
+export type ModDownloadMode = 'release' | 'repository_file'
 export type AssetRuleType = 'exact' | 'glob' | 'regex'
 export interface GitHubProxy { id: string; name: string; template: string; regions: string[]; description: string; enabled: boolean; builtin: boolean; remote: boolean }
 export interface GitHubProxyConfig {
@@ -43,7 +43,7 @@ export interface GitHubProxyConfig {
   avatar_proxies: GitHubProxy[]
 }
 export interface AssetRule { type: AssetRuleType; value: string }
-export interface RepositoryBinding { provider: Provider; owner: string; repository: string; tag: string; channel: Channel }
+export interface ModRepositoryBinding { provider: Provider; owner: string; repository: string; tag: string; channel: Channel }
 export interface CommunityDiscovery { repository_ids: string[]; total_count: number; incomplete_results: boolean; truncated: boolean }
 export interface RepositoryReadme { content: string; exists: boolean; url: string }
 export interface ReleaseAsset { name: string; size: number; download_count?: number | null; download_url: string; digest?: string }
@@ -118,7 +118,7 @@ export interface ReleaseRelationOverride {
   relations: RepositoryRelation[]
 }
 
-export interface Repository {
+export interface ModRepository {
   id: string
   name: string
   name_i18n?: Record<string, string>
@@ -127,7 +127,7 @@ export interface Repository {
   provider: Provider
   username: string
   repository: string
-  download_mode: RepositoryDownloadMode
+  download_mode: ModDownloadMode
   branch: string
   file_path: string
   region?: string
@@ -188,7 +188,7 @@ export interface PublicConfig {
   github_token_set: boolean
   gitee_token_set: boolean
   gitcode_token_set: boolean
-  repositories: Repository[]
+  repositories: ModRepository[]
   repository_sources: RepositorySource[]
   community_discovery?: CommunityDiscovery | null
   gitee_community_discovery?: CommunityDiscovery
@@ -481,7 +481,7 @@ export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_relea
 export interface InstalledMod {
   repository_id?: string
   repository_ids?: string[]
-  repository_binding?: RepositoryBinding | null
+  repository_binding?: ModRepositoryBinding | null
   package_id?: string
   package_name?: string
   package_name_i18n?: Record<string, string>
@@ -615,7 +615,7 @@ export interface PermissionStatus {
   data_writable: boolean
 }
 /** 仓库安装结果；预览模式下携带解析结果，供安装弹窗展示。 */
-export interface RepositoryInstallOutcome extends OperationResult {
+export interface ModRepositoryInstallOutcome extends OperationResult {
   preview?: ModPreview
 }
 export interface DownloadProgress {
@@ -651,7 +651,7 @@ export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpd
 export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; builtin_proxies_only?: boolean
   builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
-export interface RepositoryPatch {
+export interface ModRepositoryPatch {
   id?: string
   name: string
   name_i18n?: Record<string, string>
@@ -660,7 +660,7 @@ export interface RepositoryPatch {
   provider: Provider
   username: string
   repository: string
-  download_mode: RepositoryDownloadMode
+  download_mode: ModDownloadMode
   branch: string
   file_path: string
   region?: string
@@ -701,7 +701,7 @@ export interface RequiredFramework {
 /**
  * 一个地图仓库（地图下载页的展示单元）。
  *
- * 与 `Repository` 平行但不同模型：绑定靠 `level_set_name + level_set_name_zh + author`，
+ * 与 `ModRepository` 平行但不同模型：绑定靠 `level_set_name + level_set_name_zh + author`，
  * 不是 `plugin_guid`。共用的是卡片外观与下载流水线。
  */
 export interface MapInfo {
@@ -782,7 +782,7 @@ export interface MapInfo {
   /**
    * 选哪个 Release 资产（地图只分发 ZIP）。
    *
-   * 与 `Repository.asset_rules` 同一语义、同一套 `exact`/`glob`/`regex` 规则，
+   * 与 `ModRepository.asset_rules` 同一语义、同一套 `exact`/`glob`/`regex` 规则，
    * 由 `repositoryAssets.ts` 在前端镜像匹配 —— 详情页的资产下拉才能列出
    * 「实际会被安装的那个文件」，而不是把 Release 里所有附件都摊出来。
    */

@@ -239,13 +239,18 @@ pub async fn get_repository_readme(
             repo.branch.clone()
         } else {
             let proxies = crate::providers::api_proxies(&config, &repo.provider);
-            let token = state.config.repository_api_token(&config, repo);
-            releases::fetch_repository_default_branch(&client, repo, token.as_deref(), proxies)
-                .await
-                .map_err(|error| {
-                    log::warn!("读取仓库默认分支失败：id={}，原因={}", repository_id, error);
-                    "readme.defaultBranchUnknown".to_string()
-                })?
+            let token = state.config.mod_repository_api_token(&config, repo);
+            releases::fetch_repository_default_branch(
+                &client,
+                &crate::releases::RepositoryRequest::from(repo),
+                token.as_deref(),
+                proxies,
+            )
+            .await
+            .map_err(|error| {
+                log::warn!("读取仓库默认分支失败：id={}，原因={}", repository_id, error);
+                "readme.defaultBranchUnknown".to_string()
+            })?
         };
         let url = releases::repository_file_url(
             &repo.provider,

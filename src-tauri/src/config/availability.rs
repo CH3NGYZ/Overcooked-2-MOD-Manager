@@ -162,7 +162,7 @@ pub(super) fn repository_source_matches_region(source: &RepositorySource, region
 
 pub(crate) fn repository_matches_channel(
     config: &AppConfig,
-    repository: &RepositoryConfig,
+    repository: &ModRepositoryConfig,
     region: &str,
 ) -> bool {
     region_matches(repository.region.as_deref(), region)
@@ -184,9 +184,9 @@ pub(crate) fn repository_matches_channel(
 /// 地区不适用与 `enabled=false` 取同一语义（整个不存在），而不是
 /// 「存在但不显示」——否则前端会替一个用户看不见的仓库发请求，
 /// 失败时还会弹出一条无从处理的错误。
-pub(crate) fn repository_is_available(
+pub(crate) fn mod_repository_is_available(
     config: &AppConfig,
-    repository: &RepositoryConfig,
+    repository: &ModRepositoryConfig,
     region: &str,
 ) -> bool {
     if repository

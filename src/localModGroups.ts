@@ -8,7 +8,7 @@ import {
   type StatusUnit,
 } from './statusTags.ts'
 import type { StatusActionSpec } from './statusActions'
-import type { InstalledMod, Repository } from './types'
+import type { InstalledMod, ModRepository } from './types'
 
 export interface ModPackageNode {
   key: string
@@ -42,7 +42,7 @@ export interface LocalModCategoryTexts {
 
 export interface LocalModGroupOptions {
   mods: readonly InstalledMod[]
-  repositories: Repository[]
+  repositories: ModRepository[]
   matchedDllFiles: ReadonlySet<string> | null
   categoryTexts: LocalModCategoryTexts
   pickI18n(map: Record<string, string> | undefined, fallback: string): string
@@ -73,7 +73,7 @@ export function packageKeyOf(mod: InstalledMod): string {
 /** Group a local MOD using its install-time category snapshot and current repository. */
 export function localModCategory(
   mod: InstalledMod,
-  repo: Repository | undefined,
+  repo: ModRepository | undefined,
   texts: LocalModCategoryTexts,
   pickI18n: LocalModGroupOptions['pickI18n'],
 ): LocalModCategory {

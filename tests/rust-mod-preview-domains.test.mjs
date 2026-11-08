@@ -63,7 +63,7 @@ test('MOD preview preserves analysis, conflict, staging and Tauri command contra
   assert.match(staging, /const ORIGIN_FILE: &str = "origin.json"/)
   assert.match(commands, /Uuid::parse_str\(value\.trim\(\)\)/)
   assert.match(commands, /spawn_blocking\(move \|\| confirm_mod_install_blocking/)
-  assert.match(commands, /install_staged_repository/)
+  assert.match(commands, /install_staged_mod_repository/)
   assert.match(commands, /install_manual_mod/)
   const registered = [...lib.matchAll(/mod_preview::commands::(analyze_mod_source|confirm_mod_install|cancel_mod_preview)/g)].map(match => match[1])
   assert.deepEqual(registered, ['analyze_mod_source', 'confirm_mod_install', 'cancel_mod_preview'])

@@ -120,7 +120,7 @@ export interface ModGroupContext {
   packageTagTargetId(pkg: ModPackageNode, key: string): string | undefined
   packageTagTitle(pkg: ModPackageNode, key: string): string | undefined
   openPackageTag(pkg: ModPackageNode, key: string): void
-  linkToRepository(repositoryId: string): void
+  linkToModRepository(repositoryId: string): void
 }
 
 /** `reactive()` 会把 ref/computed 字段解包，模板里才拿得到裸值。 */

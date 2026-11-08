@@ -28,7 +28,7 @@ import { uninstallMapConflict } from '../installConflicts'
 import { conflictCheckModel } from '../installCheck'
 import { backendMessageOf } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
-import { repositoryIsAvailable } from '../repositoryAvailability'
+import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { useDashboard } from './useDashboardStore'
 import { useInstallCheck } from './useInstallCheck'
 import { useMapSources } from './useMapSources'
@@ -66,7 +66,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     const current = config.value
     if (!current) return []
     return current.repositories.filter((repo) =>
-      repositoryIsAvailable(repo, current.repository_sources, current.region, current.platform))
+      modRepositoryIsAvailable(repo, current.repository_sources, current.region, current.platform))
   })
   /** 正在处理一份来源：暂存 / 识别 / 等确认 / 导入，期间入口按钮转圈并禁用。 */
   const importing = ref(false)

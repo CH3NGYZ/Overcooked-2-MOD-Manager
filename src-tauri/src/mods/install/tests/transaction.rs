@@ -66,12 +66,12 @@ fn online_install_with_no_recyclable_old_files_succeeds_or_preserves_manifest_on
                 let repo = repository(
                     "package",
                     if zip {
-                        RepositoryDownloadMode::Release
+                        ModDownloadMode::Release
                     } else {
-                        RepositoryDownloadMode::RepositoryFile
+                        ModDownloadMode::RepositoryFile
                     },
                 );
-                let result = install_downloaded_repository(
+                let result = install_downloaded_mod_repository(
                     &asset,
                     if zip { "update.zip" } else { "Main.dll" },
                     &workspace.game,
@@ -157,9 +157,9 @@ fn online_reinstall_rejects_invalid_old_manifests_and_nonfile_entries() {
         let original = fs::read(workspace.manifests.join("package.toml")).unwrap();
         let asset = workspace.root.join("Main.dll");
         fs::write(&asset, b"new plugin").unwrap();
-        let repo = repository("package", RepositoryDownloadMode::Release);
+        let repo = repository("package", ModDownloadMode::Release);
         assert!(
-            install_downloaded_repository(
+            install_downloaded_mod_repository(
                 &asset,
                 "Main.dll",
                 &workspace.game,
@@ -217,13 +217,13 @@ fn online_install_without_old_files_rolls_back_when_manifest_commit_fails() {
             fs::write(&asset, b"new plugin").unwrap();
             asset
         };
-        let result = install_downloaded_repository(
+        let result = install_downloaded_mod_repository(
             &asset,
             if zip { "update.zip" } else { "Main.dll" },
             &workspace.game,
             &workspace.manifests,
             &workspace.recycle,
-            &repository("package", RepositoryDownloadMode::Release),
+            &repository("package", ModDownloadMode::Release),
             "v2",
             false,
             true,
@@ -279,8 +279,8 @@ fn online_reinstall_with_duplicate_manifests_succeeds_or_rolls_back() {
                 }
                 asset
             };
-            let repo = repository("package", RepositoryDownloadMode::Release);
-            let result = install_downloaded_repository(
+            let repo = repository("package", ModDownloadMode::Release);
+            let result = install_downloaded_mod_repository(
                 &asset,
                 if zip { "update.zip" } else { "Main.dll" },
                 &workspace.game,
@@ -347,9 +347,9 @@ fn online_reinstall_recycles_complete_old_package_before_zip_or_dll_install() {
         let repo = repository(
             "package",
             if zip {
-                RepositoryDownloadMode::Release
+                ModDownloadMode::Release
             } else {
-                RepositoryDownloadMode::RepositoryFile
+                ModDownloadMode::RepositoryFile
             },
         );
         let asset = if zip {
@@ -359,7 +359,7 @@ fn online_reinstall_recycles_complete_old_package_before_zip_or_dll_install() {
             fs::write(&path, b"new main").unwrap();
             path
         };
-        let count = install_downloaded_repository(
+        let count = install_downloaded_mod_repository(
             &asset,
             if zip { "update.zip" } else { "Main.dll" },
             &workspace.game,
@@ -429,9 +429,9 @@ fn online_reinstall_mixed_zip_records_package_directory_and_recycles_previous_pa
         ("Data/settings.json", b"new settings"),
         ("README.txt", b"readme"),
     ]);
-    let repo = repository("package", RepositoryDownloadMode::Release);
+    let repo = repository("package", ModDownloadMode::Release);
     assert_eq!(
-        install_downloaded_repository(
+        install_downloaded_mod_repository(
             &asset,
             "MOD Bundle.zip",
             &workspace.game,
@@ -492,9 +492,9 @@ fn online_reinstall_failure_restores_disabled_files_manifest_and_shared_overwrit
         ("New.dll", b"new member"),
         ("Blocked.dll", b"cannot write"),
     ]);
-    let repo = repository("package", RepositoryDownloadMode::Release);
+    let repo = repository("package", ModDownloadMode::Release);
     assert!(
-        install_downloaded_repository(
+        install_downloaded_mod_repository(
             &asset,
             "update.zip",
             &workspace.game,
@@ -547,9 +547,9 @@ fn online_reinstall_rejects_unsafe_or_empty_archives_before_recycling() {
         let workspace = InstallWorkspace::new();
         let original = workspace.original();
         let asset = workspace.zip(entries);
-        let repo = repository("package", RepositoryDownloadMode::Release);
+        let repo = repository("package", ModDownloadMode::Release);
         assert!(
-            install_downloaded_repository(
+            install_downloaded_mod_repository(
                 &asset,
                 "update.zip",
                 &workspace.game,

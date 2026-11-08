@@ -27,7 +27,7 @@ import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
 import { parseVersionSpec, versionMatches } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
-  InstalledMod, MapInfo, RelationKind, ReleaseInfo, ReleaseRelationOverride, Repository,
+  InstalledMod, MapInfo, RelationKind, ReleaseInfo, ReleaseRelationOverride, ModRepository,
   RepositoryRelation,
 } from './types'
 
@@ -41,7 +41,7 @@ export interface RelationStatus {
   /** 命中的本地 MOD（冲突时就是需要卸载的那个）。 */
   installedMod?: InstalledMod
   /** 可安装来源：声明了同一 GUID 的仓库（仅 `installable` 有）。 */
-  repository?: Repository
+  repository?: ModRepository
   /**
    * 来源仓库里**满足区间**的那个 Release。
    *
@@ -160,8 +160,17 @@ export function pickReleaseRelations(
  * `releaseVersion` 是**这次要装（或当前展示）的版本**，不是本地已装版本：
  * 覆盖规则按它筛，因为不同大版本可能声明不同关系（1.0 依赖 B≥2，1.1 依赖 B≥3）。
  */
+export interface RelationSubject {
+  id: string
+  name: string
+  name_i18n?: Record<string, string>
+  cached_releases: ReleaseInfo[]
+  relations?: RepositoryRelation[]
+  release_relations?: ReleaseRelationOverride[]
+}
+
 export function relationsForRelease(
-  repo: Repository,
+  repo: RelationSubject,
   releaseVersion: string | null | undefined,
 ): RepositoryRelation[] {
   return pickReleaseRelations(repo.relations ?? [], repo.release_relations, releaseVersion)
@@ -228,7 +237,7 @@ function relationMatchesCopy(relation: RepositoryRelation, mod: InstalledMod): b
  * 只有当关系显式要求 `prerelease = true` 时才接受预发布 Release。
  */
 function matchingRelease(
-  repo: Repository,
+  repo: ModRepository,
   relation: RepositoryRelation,
 ): ReleaseInfo | undefined {
   const wantPrerelease = relation.prerelease
@@ -258,10 +267,10 @@ function matchingRelease(
  */
 function installSourceFor(
   guid: string,
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
   relation: RepositoryRelation,
   excludeRepositoryId?: string,
-): { repository: Repository; release: ReleaseInfo } | undefined {
+): { repository: ModRepository; release: ReleaseInfo } | undefined {
   for (const repo of repositories) {
     if (repo.id === excludeRepositoryId) continue
     if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, guid)) continue
@@ -291,8 +300,8 @@ function installSourceFor(
 export function resolveRelation(
   relation: RepositoryRelation,
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[],
-  owner?: Repository,
+  repositories: readonly ModRepository[],
+  owner?: Pick<RelationSubject, 'id'>,
 ): RelationStatus {
   const kind: RelationKind = relation.kind ?? 'requires'
   // 依赖看全部副本（存在即可）；冲突/兼容同样看全部，靠 prerelease 区分发布线
@@ -361,7 +370,7 @@ export function resolveRelation(
 }
 
 /** 这个本地 MOD 是否来自该仓库（按 id 或结构化绑定判断）。 */
-export function belongsToRepository(mod: InstalledMod, repo: Repository): boolean {
+export function belongsToRepository(mod: InstalledMod, repo: ModRepository): boolean {
   if (mod.repository_id === repo.id) return true
   if (mod.repository_ids?.includes(repo.id)) return true
   const binding = mod.repository_binding
@@ -380,9 +389,9 @@ export function belongsToRepository(mod: InstalledMod, repo: Repository): boolea
  */
 function compatibleSourceFor(
   relation: RepositoryRelation,
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
   excludeRepositoryId?: string,
-): { repository: Repository; release: ReleaseInfo } | undefined {
+): { repository: ModRepository; release: ReleaseInfo } | undefined {
   for (const repo of repositories) {
     if (repo.id === excludeRepositoryId) continue
     if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, relation.guid)) continue
@@ -409,9 +418,9 @@ function compatibleSourceFor(
  * 不传时只用仓库级默认声明。
  */
 export function resolveRelations(
-  repo: Repository,
+  repo: RelationSubject,
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
   releaseVersion?: string | null,
 ): RelationStatus[] {
   const declared = relationsForRelease(repo, releaseVersion)
@@ -443,7 +452,7 @@ export function unmetRelations(statuses: readonly RelationStatus[]): RelationSta
  * 与测试版（`channel = all`），只看最新一条 Release 会把整仓判成其中一条，
  * 另一条线的精确匹配就永远落空。
  */
-function publishesReleaseLine(repo: Repository, line: boolean): boolean | undefined {
+function publishesReleaseLine(repo: ModRepository, line: boolean): boolean | undefined {
   const releases = (repo.cached_releases ?? []).filter((entry) => !entry.draft)
   if (releases.length) {
     return releases.some((entry) =>
@@ -466,9 +475,9 @@ function publishesReleaseLine(repo: Repository, line: boolean): boolean | undefi
  */
 export function relationTargetRepository(
   relation: RepositoryRelation,
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
   excludeRepositoryId?: string,
-): Repository | undefined {
+): ModRepository | undefined {
   const candidates = repositories.filter((repo) =>
     repo.id !== excludeRepositoryId
     && !!repo.plugin_guid
@@ -554,9 +563,9 @@ export interface InstallPlan {
  *   - 缺依赖 → 线上有满足区间的版本时「装依赖」，否则 blocked
  */
 export function buildInstallPlan(
-  repo: Repository,
+  repo: RelationSubject,
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
   releaseVersion?: string | null,
 ): InstallPlan {
   const statuses = resolveRelations(repo, mods, repositories, releaseVersion)

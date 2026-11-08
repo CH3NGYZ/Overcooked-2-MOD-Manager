@@ -16,24 +16,48 @@ fn cached_tag_source_archives_cannot_be_installed_even_when_explicitly_selected(
         info.tag_name = tag;
         let selected = info.assets[0].name.clone();
         assert_eq!(
-            select_install_asset(&repo, &info, None).is_some(),
+            select_install_asset(
+                &crate::releases::RepositoryRequest::from(&repo),
+                &repo.asset_rules,
+                &info,
+                None
+            )
+            .is_some(),
             allowed,
             "{selected}"
         );
         assert_eq!(
-            select_install_asset(&repo, &info, Some(&selected)).is_some(),
+            select_install_asset(
+                &crate::releases::RepositoryRequest::from(&repo),
+                &repo.asset_rules,
+                &info,
+                Some(&selected)
+            )
+            .is_some(),
             allowed,
             "explicit {selected}"
         );
         let source_id = repo.source_id.take();
         assert!(
-            select_install_asset(&repo, &info, Some(&selected)).is_some(),
+            select_install_asset(
+                &crate::releases::RepositoryRequest::from(&repo),
+                &repo.asset_rules,
+                &info,
+                Some(&selected)
+            )
+            .is_some(),
             "custom Gitee {selected}"
         );
         repo.source_id = source_id;
         repo.provider = Provider::Github;
         assert!(
-            select_install_asset(&repo, &info, Some(&selected)).is_some(),
+            select_install_asset(
+                &crate::releases::RepositoryRequest::from(&repo),
+                &repo.asset_rules,
+                &info,
+                Some(&selected)
+            )
+            .is_some(),
             "GitHub {selected}"
         );
         repo.provider = Provider::Gitee;

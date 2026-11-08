@@ -489,7 +489,7 @@ body {
  * 表头与内容无法区分。
  *
  * 放在全局而不是各组件的 scoped 块里：渲染 Markdown 的地方不止一处
- * （RepositoryDetail 的 README/备注/日志、ModInstallDialog 的 Release 日志），
+ * （ModRepositoryDetail 的 README/备注/日志、ModInstallDialog 的 Release 日志），
  * 每处各写一份迟早不一致。这些选择器天然作用到 v-html 插入的节点上，
  * 不需要 :deep。
  *

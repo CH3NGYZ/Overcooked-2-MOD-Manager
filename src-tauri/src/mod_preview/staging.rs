@@ -99,7 +99,7 @@ pub(super) fn read_origin_record(
 /// 把「已经下载好的仓库资产」直接落进预览暂存并解析。
 ///
 /// 仓库安装流程的下载段包含代理选择与多源竞速，不适合在预览里重写一遍，
-/// 所以由 `install_repository` 在 `preview_only` 模式下先完成下载，
+/// 所以由 `install_mod_repository` 在 `preview_only` 模式下先完成下载，
 /// 再把临时文件交给这里解析。之后 `confirm_mod_install` 就能像处理
 /// 手动安装一样安装它。
 pub(crate) fn stage_downloaded_file(

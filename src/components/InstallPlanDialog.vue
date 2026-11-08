@@ -94,7 +94,7 @@ async function installAt(index: number, label: string) {
     const token = beginDownloadTask({ label, retry: install })
     try {
       // 先下载预览，再直接确认安装：暂存目录与用户确认已在上一层完成
-      const outcome = await api.installRepository(target.id, tag, true)
+      const outcome = await api.installModRepository(target.id, tag, true)
       endDownloadTask(token)
       if (!outcome.ok || !outcome.preview) {
         throw new Error(outcome.message

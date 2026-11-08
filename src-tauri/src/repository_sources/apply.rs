@@ -1,6 +1,8 @@
 use crate::app_state::AppState;
 use crate::archive;
-use crate::models::{AppConfig, RepositoryBinding, RepositorySource, RepositorySourceImportResult};
+use crate::models::{
+    AppConfig, ModRepositoryBinding, RepositorySource, RepositorySourceImportResult,
+};
 use crate::repository_sources;
 use crate::repository_sources::SourceLocation;
 use crate::repository_sources::source_address_key;
@@ -149,7 +151,7 @@ pub(crate) async fn import_repository_source_into_config(
         .collect::<std::collections::HashSet<_>>();
     let child_sources = document.repository_sources;
     let child_source_count = child_sources.len();
-    let bundle = crate::models::RepositoryBundle {
+    let bundle = crate::models::ModRepositoryBundle {
         format: "oc2-mod-repository-bundle".into(),
         schema_version: 1,
         exported_at: Utc::now().to_rfc3339(),
@@ -376,7 +378,7 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
         // 旧清单没有版本绑定：能用 release_tag 重建就补上
         let binding_missing = manifest.repository_binding.is_none()
             && !manifest.release_tag.trim().is_empty()
-            && repository.download_mode == crate::models::RepositoryDownloadMode::Release;
+            && repository.download_mode == crate::models::ModDownloadMode::Release;
         // 旧清单没记预发布标记：从缓存的 Release 里按 tag 找回（找得到才改）
         let prerelease_missing = !manifest.prerelease
             && repository
@@ -407,7 +409,7 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
         }
         if binding_missing {
             manifest.repository_binding =
-                RepositoryBinding::from_release(repository, &manifest.release_tag);
+                ModRepositoryBinding::from_release(repository, &manifest.release_tag);
             log::info!(
                 "补齐安装清单版本绑定：仓库={}，标签={}",
                 manifest.repository_id,

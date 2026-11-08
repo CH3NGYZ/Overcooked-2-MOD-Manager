@@ -164,7 +164,7 @@ pub fn purge_unmanaged(root: &Path, game_root: &Path, dll: &str) -> Result<(), S
 /*
  * 覆盖安装没有 `purge_repository_packages_before_install` 这样的包装：
  * 那条路径必须保留回滚能力，所以由调用方「先回收 → 安装成功后再 delete」，
- * 见 `install_downloaded_repository` 里 `keep_recycled` 的分支。
+ * 见 `install_downloaded_mod_repository` 里 `keep_recycled` 的分支。
  */
 /// 清掉回收站里的一条记录（回收流程刚生成的那条）。
 fn purge_entry(root: &Path, id: &str) -> Result<(), String> {

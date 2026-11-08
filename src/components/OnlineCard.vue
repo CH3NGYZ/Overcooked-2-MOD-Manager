@@ -11,7 +11,7 @@
  * - 地图卡片的状态要对照本地关卡集的 `author + levelSetName + levelSetNameZH`。
  *
  * 所以这里只做**展示**：所有状态、动作文案、按钮配色都由调用方算好后传入。
- * 组件不碰 `Repository` / `MapInfo` 任何一种模型 —— 一旦在这里 `instanceof`
+ * 组件不碰 `ModRepository` / `MapInfo` 任何一种模型 —— 一旦在这里 `instanceof`
  * 判断类型，两边就会开始互相牵连。
  *
  * ## 图标必须放 `#icon` 槽

@@ -123,7 +123,7 @@ export const source: DomainMessages = {
   mustBeHttp: {
     'zh-CN': '仓库源必须使用 HTTP 或 HTTPS 地址',
     'zh-TW': '倉庫源必須使用 HTTP 或 HTTPS 位址',
-    en: 'Repository sources must use an HTTP or HTTPS address',
+    en: 'ModRepository sources must use an HTTP or HTTPS address',
     ko: '저장소 소스는 HTTP 또는 HTTPS 주소여야 합니다',
     ja: 'リポジトリソースは HTTP または HTTPS のアドレスである必要があります',
   },
@@ -235,7 +235,7 @@ export const source: DomainMessages = {
   labeled: {
     'zh-CN': '仓库源 {label}',
     'zh-TW': '倉庫源 {label}',
-    en: 'Repository source {label}',
+    en: 'ModRepository source {label}',
     ko: '저장소 소스 {label}',
     ja: 'リポジトリソース {label}',
   },
@@ -279,7 +279,7 @@ export const source: DomainMessages = {
   fileModeRequiresExactPath: {
     'zh-CN': '仓库文件模式只支持具体文件路径，不支持通配和正则',
     'zh-TW': '倉庫檔案模式僅支援具體檔案路徑，不支援萬用字元和正規表達式',
-    en: 'Repository-file mode only supports an exact file path, not globs or regex',
+    en: 'ModRepository-file mode only supports an exact file path, not globs or regex',
     ko: '저장소 파일 모드는 구체적인 파일 경로만 지원하며 와일드카드와 정규식을 지원하지 않습니다',
     ja: 'リポジトリファイルモードは具体的なファイルパスのみ対応し、ワイルドカードと正規表現は使えません',
   },

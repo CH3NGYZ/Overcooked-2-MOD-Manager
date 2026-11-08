@@ -1,4 +1,4 @@
-import type { InstalledMod, InstalledModStatusLabel, Repository } from './types'
+import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
 import { repositoryForMod } from './modStatus.ts'
 import { primaryRelation, relationTagView, resolveRelations, type RelationStatus } from './modRelations.ts'
 import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
@@ -52,7 +52,7 @@ export interface RuntimeRefreshState {
  * 「已安装」改成「刷新中」。
  */
 export function repositoryRefreshing(
-  repo: Repository | undefined,
+  repo: ModRepository | undefined,
   state: RuntimeRefreshState,
 ): boolean {
   if (!repo || repo.download_mode === 'repository_file') return false
@@ -120,7 +120,7 @@ export function relationStatusLabel(
 export function runtimeModStatus(
   mod: InstalledMod,
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
   state: RuntimeRefreshState,
 ): RuntimeModStatus {
   const repo = repositoryForMod([...repositories], mod)

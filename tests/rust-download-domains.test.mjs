@@ -44,7 +44,7 @@ test('Download race invariants and shared callers remain on the existing seam', 
   assert.match(download, /value\.discard\(\)/)
   for (const file of [
     'direct_mod.rs', 'app_update/download.rs', 'app_update/manifest.rs',
-    'app_update/channels.rs', 'commands/repository_install.rs', 'commands/map_install.rs',
+    'app_update/channels.rs', 'commands/mod_repository_install.rs', 'commands/map_install.rs',
     'commands/bepinex.rs', 'repository_sources/verified.rs', 'avatars.rs', 'repository_readme.rs',
   ]) assert.match(read(file), /(?:crate::download|use crate::download)/, file)
   assert.match(read('download/planning.rs'), /use super::DownloadCandidate/)

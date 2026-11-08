@@ -2,13 +2,13 @@ import { ref, shallowRef } from 'vue'
 import { pickI18n } from './i18n'
 import { modsForRepository } from './modStatus'
 import { installedForGuid } from './modRelations'
-import type { InstalledMod, Repository } from './types'
+import type { InstalledMod, ModRepository } from './types'
 
 export interface ModInstallNote { id: string; name: string; text: string }
 
 /** 与卡片共用语言回退及仓库绑定规则；安装过的 MOD 无须重复阅读。 */
 export function firstInstallNotes(
-  repositories: readonly Repository[], mods: readonly InstalledMod[],
+  repositories: readonly ModRepository[], mods: readonly InstalledMod[],
 ): ModInstallNote[] {
   const seen = new Set<string>()
   return repositories.flatMap((repo) => {

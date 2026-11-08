@@ -4,13 +4,13 @@ use super::ConfigError;
 use super::ConfigService;
 use super::availability::normalize_repository_region;
 use super::identity::export_key;
+use super::identity::mod_repository_from_export;
 use super::identity::repo_key;
 use super::identity::repository_address_key;
-use super::identity::repository_from_export;
 use super::metadata::migrate_repository_export_i18n;
 use super::metadata::normalize_repository_i18n;
 use super::metadata::repository_name_from_i18n;
-use super::validation::validate_repository;
+use super::validation::validate_mod_repository;
 use crate::models::*;
 use chrono::Utc;
 use uuid::Uuid;
@@ -80,7 +80,7 @@ fn append_toml_translations(
     Ok(())
 }
 
-fn serialize_repository_bundle(bundle: &RepositoryBundle) -> Result<String, ConfigError> {
+fn serialize_repository_bundle(bundle: &ModRepositoryBundle) -> Result<String, ConfigError> {
     let mut text = String::new();
     append_toml_field(&mut text, "format", &bundle.format)?;
     append_toml_field(&mut text, "schema_version", &bundle.schema_version)?;
@@ -110,14 +110,14 @@ fn serialize_repository_bundle(bundle: &RepositoryBundle) -> Result<String, Conf
         text.push_str("\n# 下载方式\n");
         append_toml_field(&mut text, "download_mode", &repo.download_mode)?;
         match repo.download_mode {
-            RepositoryDownloadMode::Release => {
+            ModDownloadMode::Release => {
                 text.push_str("\n# Release 参数\n");
                 append_toml_field(&mut text, "channel", &repo.channel)?;
                 append_toml_field(&mut text, "max_release_count", &repo.max_release_count)?;
                 text.push_str("\n# 版本资产规则\n");
                 append_toml_field(&mut text, "asset_rules", &repo.asset_rules)?;
             }
-            RepositoryDownloadMode::RepositoryFile => {
+            ModDownloadMode::RepositoryFile => {
                 text.push_str("\n# 仓库文件参数\n");
                 append_toml_field(&mut text, "branch", &repo.branch)?;
                 text.push_str("\n# 仓库资产规则（仅支持具体文件）\n");
@@ -178,7 +178,7 @@ impl ConfigService {
                     .map(|list| list.contains(&repo.id))
                     .unwrap_or(true)
             })
-            .map(|repo| RepositoryExport {
+            .map(|repo| ModRepositoryExport {
                 network_plan: repo.network_plan.clone(),
                 kind: repo.kind,
                 name: repo.name.clone(),
@@ -223,7 +223,7 @@ impl ConfigService {
                 source.parent_id = None;
             }
         }
-        let bundle = RepositoryBundle {
+        let bundle = ModRepositoryBundle {
             format: BUNDLE_FORMAT.to_string(),
             schema_version: 1,
             exported_at: Utc::now().to_rfc3339(),
@@ -243,12 +243,12 @@ impl ConfigService {
         result
     }
 
-    pub fn validate_bundle(&self, text: &str) -> Result<RepositoryBundle, ConfigError> {
+    pub fn validate_bundle(&self, text: &str) -> Result<ModRepositoryBundle, ConfigError> {
         log::debug!("开始校验仓库配置包：字节数={}", text.len());
         if text.len() > 1024 * 1024 {
             return Err(ConfigError::Invalid("source.tooLarge".into()));
         }
-        let mut bundle: RepositoryBundle = toml::from_str(text).map_err(|e| {
+        let mut bundle: ModRepositoryBundle = toml::from_str(text).map_err(|e| {
             ConfigError::Invalid(crate::locale_tag::with_params(
                 "config.tomlParseFailed",
                 &[("reason", &e.to_string())],
@@ -265,7 +265,7 @@ impl ConfigService {
         }
         for repo in &mut bundle.repositories {
             normalize_repository_i18n(repo)?;
-            validate_repository(repo)?;
+            validate_mod_repository(repo)?;
         }
         log::info!(
             "仓库配置包校验完成：仓库={}，仓库源={}",
@@ -275,7 +275,11 @@ impl ConfigService {
         Ok(bundle)
     }
 
-    pub fn preview_bundle(&self, config: &AppConfig, bundle: &RepositoryBundle) -> ImportPreview {
+    pub fn preview_bundle(
+        &self,
+        config: &AppConfig,
+        bundle: &ModRepositoryBundle,
+    ) -> ImportPreview {
         let mut preview = ImportPreview {
             valid: true,
             errors: Vec::new(),
@@ -338,7 +342,7 @@ impl ConfigService {
     pub fn import_bundle(
         &self,
         config: &mut AppConfig,
-        bundle: &RepositoryBundle,
+        bundle: &ModRepositoryBundle,
         conflict: &str,
     ) -> ImportPreview {
         log::info!(
@@ -392,7 +396,7 @@ impl ConfigService {
                      * 覆盖的是**仓库定义**（名字、坐标、资产规则、安装目录），
                      * 不是 Release 缓存。
                      *
-                     * `repository_from_export` 造出来的是全新对象，缓存字段
+                     * `mod_repository_from_export` 造出来的是全新对象，缓存字段
                      * 一律为空。整批刷新时每个源文档都要走这里，如果连缓存一起
                      * 覆盖，5 分钟缓存就永远命中不了 —— 每次刷新（含每次启动）
                      * 都得把整棵仓库树的 API 重打一遍，实测 20+ 个仓库、几十个
@@ -404,7 +408,7 @@ impl ConfigService {
                     let cached_releases = std::mem::take(&mut existing.cached_releases);
                     let releases_cached_at = existing.releases_cached_at;
                     let last_error = existing.last_error.clone();
-                    *existing = repository_from_export(&item, id, builtin);
+                    *existing = mod_repository_from_export(&item, id, builtin);
                     existing.cached_releases = cached_releases;
                     existing.releases_cached_at = releases_cached_at;
                     existing.last_error = last_error;
@@ -412,11 +416,11 @@ impl ConfigService {
                 }
                 continue;
             }
-            let same_region = |repo: &RepositoryConfig| {
+            let same_region = |repo: &ModRepositoryConfig| {
                 normalize_repository_region(repo.region.as_deref())
                     == normalize_repository_region(item.region.as_deref())
             };
-            let same_name = |repo: &RepositoryConfig, name: &str| {
+            let same_name = |repo: &ModRepositoryConfig, name: &str| {
                 repo.channel == item.channel
                     && repo
                         .name_i18n
@@ -452,7 +456,7 @@ impl ConfigService {
             let id = Uuid::new_v4().to_string();
             config
                 .repositories
-                .push(repository_from_export(&export, id.clone(), false));
+                .push(mod_repository_from_export(&export, id.clone(), false));
             imported_ids.push(id);
         }
         reorder_imported_repositories(config, &imported_ids);

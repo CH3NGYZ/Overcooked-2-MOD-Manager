@@ -2,9 +2,9 @@ use super::diagnostics::safe_log_address;
 use super::location::SourceLocation;
 use super::transport::MAX_SOURCE_BYTES;
 use crate::config::ConfigError;
-use crate::config::validate_repository;
+use crate::config::validate_mod_repository;
 use crate::config::validate_repository_source_region;
-use crate::models::RepositoryExport;
+use crate::models::ModRepositoryExport;
 use serde::Deserialize;
 use serde::Deserializer;
 
@@ -98,7 +98,7 @@ pub struct RepositorySourceDocument {
     #[serde(default)]
     pub network_plan: crate::models::NetworkPlanSelection,
     #[serde(default)]
-    pub repositories: Vec<RepositoryExport>,
+    pub repositories: Vec<ModRepositoryExport>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySourceDeclaration>,
 }
@@ -170,7 +170,7 @@ pub(crate) fn parse_document(
         )?;
         repository.platform =
             crate::config::normalize_repository_platform(repository.platform.as_deref());
-        validate_repository(repository)?;
+        validate_mod_repository(repository)?;
     }
     let mut ids = std::collections::HashSet::new();
     let mut urls = std::collections::HashSet::new();

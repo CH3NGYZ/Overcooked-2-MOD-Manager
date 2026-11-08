@@ -19,7 +19,7 @@ relations.optional = false
 type = "exact"
 value = "a.zip"
 "#;
-    let error = toml::from_str::<RepositoryExport>(dotted).unwrap_err();
+    let error = toml::from_str::<ModRepositoryExport>(dotted).unwrap_err();
     assert!(error.to_string().contains("expected a sequence"), "{error}");
 }
 
@@ -49,7 +49,7 @@ guid = "com.example.other"
 min_version = "1.8.7"
 max_version = "2.0"
 "#;
-    let v = toml::from_str::<RepositoryExport>(explicit).expect("表数组写法应当成功");
+    let v = toml::from_str::<ModRepositoryExport>(explicit).expect("表数组写法应当成功");
     assert_eq!(v.relations.len(), 2);
     // 省略 kind 时按依赖处理：历史写法（[[requires]] 只写 guid）继续可读
     assert_eq!(v.relations[0].kind, RelationKind::Requires);
@@ -84,7 +84,7 @@ guid = "com.example.dep"
 min_version = "1.8.7"
 optional = true
 "#;
-    let v = toml::from_str::<RepositoryExport>(legacy).expect("旧字段名应当继续可读");
+    let v = toml::from_str::<ModRepositoryExport>(legacy).expect("旧字段名应当继续可读");
     assert_eq!(v.relations.len(), 1);
     assert_eq!(v.relations[0].kind, RelationKind::Requires);
     assert_eq!(v.relations[0].version, ">=1.8.7");
@@ -115,7 +115,7 @@ guid = "com.example.future"
 kind = "requires"
 guid = "com.example.dep"
 "#;
-    let v = toml::from_str::<RepositoryExport>(document).expect("未知 kind 不应让文档失败");
+    let v = toml::from_str::<ModRepositoryExport>(document).expect("未知 kind 不应让文档失败");
     assert_eq!(v.relations.len(), 1);
     assert_eq!(v.relations[0].guid, "com.example.dep");
 }
@@ -138,7 +138,7 @@ some_future_field = "whatever"
 type = "exact"
 value = "a.zip"
 "#;
-    let v = toml::from_str::<RepositoryExport>(document).expect("未知字段不应让文档失败");
+    let v = toml::from_str::<ModRepositoryExport>(document).expect("未知字段不应让文档失败");
     assert_eq!(v.name, "x");
 }
 
@@ -163,7 +163,7 @@ guid = "com.example.dep"
 # 写在了关系块之后 —— 实际属于关系条目
 install_target = "BepInEx/plugins"
 "#;
-    let error = toml::from_str::<RepositoryExport>(misplaced)
+    let error = toml::from_str::<ModRepositoryExport>(misplaced)
         .expect_err("仓库字段出现在关系块之后应当报错");
     let text = error.to_string();
     assert!(text.contains("install_target"), "{text}");
@@ -191,7 +191,7 @@ kind = "requires"
 guid = "com.example.dep"
 min_version = "1.0"
 "#;
-    let v = toml::from_str::<RepositoryExport>(correct).expect("正确顺序应当成功");
+    let v = toml::from_str::<ModRepositoryExport>(correct).expect("正确顺序应当成功");
     assert_eq!(v.relations.len(), 1);
     assert_eq!(v.install_target, "BepInEx/plugins");
 }

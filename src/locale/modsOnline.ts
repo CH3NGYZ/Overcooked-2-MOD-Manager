@@ -43,7 +43,7 @@ export const modsOnline: DomainMessages = {
   repositoryFile: {
     'zh-CN': '仓库文件',
     'zh-TW': '倉庫檔案',
-    en: 'Repository file',
+    en: 'ModRepository file',
     ko: '저장소 파일',
     ja: 'リポジトリファイル',
   },
@@ -59,7 +59,7 @@ export const modsOnline: DomainMessages = {
   repositoryRefreshFailed: {
     'zh-CN': '仓库刷新失败',
     'zh-TW': '倉庫重新整理失敗',
-    en: 'Repository refresh failed',
+    en: 'ModRepository refresh failed',
     ko: '저장소 새로 고침 실패',
     ja: 'リポジトリ更新失敗',
   },

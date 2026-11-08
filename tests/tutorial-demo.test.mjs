@@ -13,7 +13,7 @@ import { registerHooks } from 'node:module'
  *     方向（真实非空时仍混进假卡）会让用户看到自己不存在的 MOD；
  *   - 在线列表（来源 / 仓库 / 地图）：教程运行期间**整体替换**。这几步讲的是
  *     固定的「源分组 → 卡片 → 详情」路径，真实配置为空或首启连不上源时根本
- *     没有东西可指。替换必须同时换来源，否则 `repositoryIsAvailable` 会因为
+ *     没有东西可指。替换必须同时换来源，否则 `modRepositoryIsAvailable` 会因为
  *     「source_id 找不到所属源」把示例仓库全部滤掉。
  *
  * 共同要钉住的还有：
@@ -211,7 +211,7 @@ test('教程期间在线来源 / 仓库 / 地图整体替换真实数据', () =>
     assert.ok(!demoMaps.includes(maps[0]))
 
     // 卡片能不能显示，取决于「所属源在不在同一批来源里」
-    // （`repositoryIsAvailable` 查不到 source_id 就把仓库判成不可用）
+    // （`modRepositoryIsAvailable` 查不到 source_id 就把仓库判成不可用）
     const sourceIds = new Set(demoSources.map((source) => source.id))
     for (const repo of demoRepositories) {
       assert.ok(sourceIds.has(repo.source_id), `示例仓库的 source_id 没有对应来源：${repo.source_id}`)

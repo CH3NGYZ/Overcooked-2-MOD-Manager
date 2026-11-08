@@ -8,11 +8,11 @@ import { refreshReleaseItem, runReleaseBatch, runSourceReleaseRefresh, type Rele
 import { pickI18n } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
-import { prioritizeInstalledRepositories } from '../repositoryPriority'
+import { prioritizeInstalledModRepositories } from '../modRepositoryPriority'
 import {
-  repositoryIsAvailable, sourceMatchesRegion,
+  modRepositoryIsAvailable, sourceMatchesRegion,
 } from '../repositoryAvailability'
-import type { Repository, RepositorySource } from '../types'
+import type { ModRepository, RepositorySource } from '../types'
 
 /**
  * 仓库刷新引擎（模块级单例）。
@@ -137,7 +137,7 @@ let startupState: StartupState = 'idle'
 function store() {
   const { loadBase, reloadConfig, applyConfigSnapshot, config, mods } = useDashboard()
   const sources = computed<RepositorySource[]>(() => config.value?.repository_sources ?? [])
-  const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
+  const repositories = computed<ModRepository[]>(() => config.value?.repositories ?? [])
   /** 当前地区决定哪些源/仓库真实存在；空值按「非中国大陆」处理，与后端一致。 */
   const region = computed(() => config.value?.region)
   /** 当前平台决定只看专属某平台的仓库（与 region 同语义层）。 */
@@ -155,16 +155,16 @@ function store() {
  * Release 结果逐条写回，版本判定直接使用本地扫描快照，不重扫 DLL。
  * 只有右下角整批刷新显式传 force；其它入口复用五分钟缓存。
  */
-function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<Repository> {
+function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<ModRepository> {
   const force = options.force ?? false
   return {
-    fetch: (item) => api.refreshRepository(item.id, force),
+    fetch: (item) => api.refreshModRepository(item.id, force),
     apply: (item, releases) => patchRepository(item.id, {
       cached_releases: releases,
       last_error: undefined,
     }),
     /*
-     * 失败写回与后端**同一条规则**（`refresh_repository` 的 Err 分支）：
+     * 失败写回与后端**同一条规则**（`refresh_mod_repository` 的 Err 分支）：
      * 缓存清空 + 置 `last_error`。不这么写的话，前端会保留旧 Release 并显示
      * 「最新版」，直到整批结束的后端重扫才纠正。
      */
@@ -178,7 +178,7 @@ function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchS
 }
 
 /** 单仓刷新（「刷一个回来一个」的最小单位）。 */
-async function refreshOne(repo: Repository, force = false): Promise<string | null> {
+async function refreshOne(repo: ModRepository, force = false): Promise<string | null> {
   return refreshReleaseItem(state, repo, repositoryReleaseSpec({ force }))
 }
 
@@ -190,7 +190,7 @@ async function refreshOne(repo: Repository, force = false): Promise<string | nul
  * 失败路径早先是等整批 `load()`，于是同一批里成功的卡片一个个变、
  * 失败的还挂着旧结论。
  */
-function patchRepository(repositoryId: string, patch: Partial<Repository>) {
+function patchRepository(repositoryId: string, patch: Partial<ModRepository>) {
   const { dashboard, applyConfigSnapshot } = useDashboard()
   const current = dashboard.value
   if (!current) return
@@ -204,7 +204,7 @@ function patchRepository(repositoryId: string, patch: Partial<Repository>) {
 
 /**
  * 把「有本地已安装 MOD 的仓库」排到队列最前，其余保持原有顺序。
- * 实现见 `src/repositoryPriority.ts`（纯函数，便于直接测试）。
+ * 实现见 `src/modRepositoryPriority.ts`（纯函数，便于直接测试）。
  *
  * **排序下沉到这里**，而不是留给调用方：刷新入口有四个（刷新全部、整源、
  * 分组、检查更新），只有一处排序迟早漏掉三个 —— 用户在安装页点整源刷新时，
@@ -217,7 +217,7 @@ function patchRepository(repositoryId: string, patch: Partial<Repository>) {
  * 单条结果立即写回；已安装绑定优先，收尾只重读配置，不重新扫描本地文件。
  */
 async function runRepositoryBatch(
-  repos: Repository[],
+  repos: ModRepository[],
   options: { force?: boolean; trigger?: RefreshTrigger } = {},
 ): Promise<RefreshOutcome> {
   const { mods } = store()
@@ -226,12 +226,12 @@ async function runRepositoryBatch(
    * 已安装优先让用户自己装的仓库先出结论。
    */
   const refreshable = repos.filter((repo) => repo.download_mode !== 'repository_file')
-  return runReleaseBatch<Repository>({
+  return runReleaseBatch<ModRepository>({
     state,
     items: refreshable,
     ...repositoryReleaseSpec({ force: options.force }),
     trigger: options.trigger ?? 'partial',
-    prioritize: (items) => prioritizeInstalledRepositories([...items], mods.value),
+    prioritize: (items) => prioritizeInstalledModRepositories([...items], mods.value),
     finalize: () => store().reloadConfig(),
     // Summarize the same local snapshot and Release results; no second API pass.
     countUpdated: () => store().mods.value.filter((mod) => modUpdateAvailable(mod, store().repositories.value)).length,
@@ -244,7 +244,7 @@ async function runRepositoryBatch(
  * `force` 的默认值必须是 false：启动刷新与切页触发的刷新要尽量吃 5 分钟
  * Release 缓存；仅右下角整批刷新显式绕过它。
  */
-async function refreshMany(repos: Repository[], options: { force?: boolean } = {}) {
+async function refreshMany(repos: ModRepository[], options: { force?: boolean } = {}) {
   const result = await runRepositoryBatch(repos, { force: options.force, trigger: 'partial' })
   return result.errors
 }
@@ -261,7 +261,7 @@ export interface BoundRefreshSummary {
 
 /** Prepare all source TOMLs first, then refresh only the bound repositories.
  * API refresh supplies update evidence directly; ordinary checks honor cache TTL. */
-async function refreshBoundRepositories(repos: Repository[]): Promise<BoundRefreshSummary> {
+async function refreshBoundRepositories(repos: ModRepository[]): Promise<BoundRefreshSummary> {
   if (anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
   const ids = new Set(repos.map((repo) => repo.id))
   const result = await runSourceReleaseRefresh({
@@ -401,7 +401,7 @@ async function refreshSource(sourceId: string): Promise<string[]> {
       const { repositories, sources, region, platform } = store()
       const ids = sourceTree.descendants(sourceId)
       return runRepositoryBatch(repositories.value.filter(repo => !!repo.source_id && ids.has(repo.source_id)
-        && repositoryIsAvailable(repo, sources.value, region.value, platform.value)), { trigger: 'single' })
+        && modRepositoryIsAvailable(repo, sources.value, region.value, platform.value)), { trigger: 'single' })
     },
   })
   return result.errors
@@ -418,7 +418,7 @@ async function refreshEverything(options: { force?: boolean } = {}): Promise<str
     refresh: async () => {
       const { repositories, sources, region, platform } = store()
       const available = repositories.value.filter((repo) =>
-        repositoryIsAvailable(repo, sources.value, region.value, platform.value))
+        modRepositoryIsAvailable(repo, sources.value, region.value, platform.value))
       const result = await runRepositoryBatch(available, { trigger: 'single', force: options.force })
       await api.syncDependencySnapshots().catch(() => undefined)
       return result
@@ -455,7 +455,7 @@ function releaseStartupRefresh() {
 /** 是否还有待执行的启动刷新（页面可据此显示提示）。 */
 const startupRefreshPending = computed(() => startupState === 'deferred' || startupState === 'idle')
 
-export function useRepositoryRefresh() {
+export function useModRepositoryRefresh() {
   return {
     sourceNodes: sourceTree.nodes,
     preparingSources: state.preparingSources,

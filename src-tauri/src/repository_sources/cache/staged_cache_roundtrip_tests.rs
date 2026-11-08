@@ -1,7 +1,7 @@
 use super::*;
 
-fn sample_repo(id: &str, source_id: &str) -> crate::models::RepositoryConfig {
-    let mut repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+fn sample_repo(id: &str, source_id: &str) -> crate::models::ModRepositoryConfig {
+    let mut repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": id, "name": "Mod", "group": "G",
         "provider": "github", "username": "u", "repository": "r",
         "download_mode": "release", "channel": "all",

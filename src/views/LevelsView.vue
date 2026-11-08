@@ -13,7 +13,7 @@ import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useMapSources } from '../composables/useMapSources'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
-import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink } from '../crossLink'
+import { useFocusHighlight, useLocalModLink, useMapLink, useModRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -25,7 +25,7 @@ import {
   summarizeLevelSetToggleStatus,
 } from '../levelSetStatusSummary'
 import { formatVersionSpec } from '../versionSpec'
-import { repositoryIsAvailable } from '../repositoryAvailability'
+import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
 import PageLoading from '../components/PageLoading.vue'
@@ -63,13 +63,13 @@ import {
   levelSetRelationStatuses,
   levelSetState,
   mapForLevelSet,
-  mapRelationRepository,
+  mapRelationSubject,
   mapVersionForLevelSet,
   mapVersionRefs,
   type LevelSetCardAction,
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
-import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, Repository } from '../types'
+import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, ModRepository } from '../types'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
@@ -114,7 +114,7 @@ const { linkToMap } = useMapLink()
  * 能提供这个依赖的仓库卡片。地图的前置（DIYLevel、Web Runtime）本身就是
  * 仓库里的 MOD，所以这条跳转对地图同样成立。
  */
-const { linkToRepository } = useRepositoryLink()
+const { linkToModRepository } = useModRepositoryLink()
 /** 依赖版本冲突的落点：MOD 管理页里那张装错的依赖（没有仓库绑定时只跳页）。 */
 const { linkToLocalMods } = useLocalModLink()
 const router = useRouter()
@@ -275,12 +275,12 @@ watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
  * 它们本身也是在线 MOD 仓库，作者在源文档里给它们起了名字。缺了这份列表，
  * 名称会退化成 GUID、状态也会退化成「缺依赖」。
  *
- * 过滤口径与地图下载页、MOD 安装页完全一致 —— `repositoryIsAvailable` 是
+ * 过滤口径与地图下载页、MOD 安装页完全一致 —— `modRepositoryIsAvailable` 是
  * 地区 / 平台 / `enabled` 的唯一前端入口，页面不再另写一遍条件。
  */
-const repositories = computed<Repository[]>(() =>
+const repositories = computed<ModRepository[]>(() =>
   (config.value?.repositories ?? []).filter((repo) =>
-    repositoryIsAvailable(
+    modRepositoryIsAvailable(
       repo,
       config.value?.repository_sources,
       config.value?.region,
@@ -335,7 +335,7 @@ const {
 /**
  * 卡片「更新」按钮的安装前检查。
  *
- * 与地图下载页用的是同一份 `useInstallPlanGate` + `mapRelationRepository`
+ * 与地图下载页用的是同一份 `useInstallPlanGate` + `mapRelationSubject`
  * 投影：管理页的「更新」如果跳过检查，把一张新增了依赖的地图装上去，
  * 用户会得到「更新完反而跑不起来」。地图自身安装可在运行时进行；
  * 关系计划需要安装、更新或卸载 MOD 时必须停止游戏。
@@ -530,7 +530,7 @@ async function runCardAction(set: LevelSetInfo) {
   const action = actionOf(set)
   if (!action) return
   if (action.kind === 'install-dependency') {
-    if (action.repositoryId) linkToRepository(action.repositoryId)
+    if (action.repositoryId) linkToModRepository(action.repositoryId)
     return
   }
   if (action.kind === 'review-conflict') {
@@ -544,7 +544,7 @@ async function runCardAction(set: LevelSetInfo) {
   const map = mapForLevelSet(set, maps.value)
   if (!map) return
   const targetTag = map.latest_tag ?? undefined
-  if (!(await planGate.run(mapRelationRepository(map, targetTag), targetTag))) return
+  if (!(await planGate.run(mapRelationSubject(map, targetTag), targetTag))) return
   actionInFlight.value = set.dir_name
   try {
     await installRelease(map.id, targetTag, undefined, {
@@ -584,7 +584,7 @@ function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
 function onTagClick(tag: LevelSetCardTag) {
   // 缺依赖：跳到**依赖的**仓库（与 MOD 管理页同一个落点）；没有来源时
   // 标签不带 repositoryId，也就不会走到这里。
-  if (tag.repositoryId) linkToRepository(tag.repositoryId)
+  if (tag.repositoryId) linkToModRepository(tag.repositoryId)
   else if (tag.mapId) linkToMap(tag.mapId)
 }
 
@@ -625,7 +625,7 @@ function dependencyRows(set: LevelSetInfo): DependencyRow[] {
 
 /** 依赖表里可跳的行：跳到能提供它的仓库卡片（与 MOD 管理页同一个落点）。 */
 function openDependencyJump(row: DependencyRow) {
-  if (row.jump) linkToRepository(row.jump.id)
+  if (row.jump) linkToModRepository(row.jump.id)
 }
 
 /** 插件卡片标题：BepInPlugin 名优先，读不到就用文件名去掉 `.dll` / `.dll.disabled`。 */

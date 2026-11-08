@@ -1,11 +1,11 @@
-import type { InstalledMod, Repository } from './types'
+import type { InstalledMod, ModRepository } from './types'
 
 /**
  * 已安装 MOD 与仓库的双向匹配。
  * 安装清单优先记录 repository_id；旧清单或身份绑定兜底用 provider + owner/repository。
  * 两个页面（MOD 管理分组、MOD 安装状态）共用同一套判定，避免两边结论不一致。
  */
-export function repositoryForMod(repositories: Repository[], mod: InstalledMod): Repository | undefined {
+export function repositoryForMod(repositories: ModRepository[], mod: InstalledMod): ModRepository | undefined {
   if (mod.repository_id) {
     const byId = repositories.find((repo) => repo.id === mod.repository_id)
     if (byId) return byId
@@ -26,7 +26,7 @@ export function repositoryForMod(repositories: Repository[], mod: InstalledMod):
 }
 
 /** 同一仓库可能对应多个本地副本（旧版本共存），全部返回以便取最高版本比较。 */
-export function modsForRepository(mods: readonly InstalledMod[], repo: Repository): InstalledMod[] {
+export function modsForRepository(mods: readonly InstalledMod[], repo: ModRepository): InstalledMod[] {
   return mods.filter((mod) => {
     if (mod.repository_id === repo.id) return true
     if (mod.repository_ids?.includes(repo.id)) return true

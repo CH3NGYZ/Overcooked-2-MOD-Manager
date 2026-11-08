@@ -1,4 +1,4 @@
-import type { InstalledMod, InstalledModStatusLabel, Repository } from './types'
+import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
 import { compareVersions, isPrereleaseVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
 
 /**
@@ -443,7 +443,7 @@ export type InstallAction = 'install' | 'reinstall' | 'update'
  *   未刷新 / 刷新失败 / 未启用时按钮仍可点，按「安装」处理，
  *   交给后端在真正安装前再校验一次版本。
  */
-export function repositoryInstallAction(status: StatusTag, repo: Repository): InstallAction {
+export function repositoryInstallAction(status: StatusTag, repo: ModRepository): InstallAction {
   if (repo.download_mode === 'repository_file') {
     return status.key === 'installed' ? 'reinstall' : 'install'
   }
@@ -457,7 +457,7 @@ export function repositoryInstallAction(status: StatusTag, repo: Repository): In
   }
 }
 
-export function repositoryStatus(repo: Repository, installedMods: InstalledMod[]): StatusTag {
+export function repositoryStatus(repo: ModRepository, installedMods: InstalledMod[]): StatusTag {
   const tag = (key: keyof typeof STATUS_META): StatusTag => ({
     key,
     text: STATUS_META[key].text,
@@ -525,7 +525,7 @@ export type ModUpdateVerdict =
   /** 无法判定（未绑定 / 仓库报错 / RAW / 版本不可比较），调用方保留后端快照。 */
   | { known: false }
 
-export function modUpdateVerdict(mod: InstalledMod, repositories: Repository[]): ModUpdateVerdict {
+export function modUpdateVerdict(mod: InstalledMod, repositories: ModRepository[]): ModUpdateVerdict {
   // 纯依赖不是 MOD，不参与更新判定
   if (mod.is_dependency) return { known: false }
   const repo = repositoryForMod(repositories, mod)
@@ -547,7 +547,7 @@ export function modUpdateVerdict(mod: InstalledMod, repositories: Repository[]):
  * 需要区分「已判定 / 无法判定」的地方（MOD 管理页要显示「检查中」）
  * 直接调 `modUpdateVerdict`。
  */
-export function modUpdateAvailable(mod: InstalledMod, repositories: Repository[]): boolean {
+export function modUpdateAvailable(mod: InstalledMod, repositories: ModRepository[]): boolean {
   const verdict = modUpdateVerdict(mod, repositories)
   return verdict.known ? verdict.updateAvailable : mod.update_available
 }

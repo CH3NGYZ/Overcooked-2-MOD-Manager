@@ -1,5 +1,5 @@
 use crate::community::{SearchRateLimits, SearchResults, repository_from_coordinates};
-use crate::models::{CommunityDiscovery, CommunityMapRepository, Provider, RepositoryConfig};
+use crate::models::{CommunityDiscovery, CommunityMapRepository, ModRepositoryConfig, Provider};
 use scraper::{ElementRef, Html, Selector};
 use std::collections::HashSet;
 use std::future::Future;
@@ -108,7 +108,7 @@ fn classify_topics(topics: &HashSet<String>) -> Option<TopicKind> {
 }
 
 struct TopicPage {
-    repositories: Vec<RepositoryConfig>,
+    repositories: Vec<ModRepositoryConfig>,
     map_repositories: Vec<CommunityMapRepository>,
     has_next: bool,
     incomplete: bool,

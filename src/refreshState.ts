@@ -6,7 +6,7 @@ import { mapWithConcurrency } from './concurrency.ts'
  *
  * ## 为什么要抽出来
  *
- * 之前两套刷新各写一份状态：仓库侧在 `useRepositoryRefresh` 里维护
+ * 之前两套刷新各写一份状态：仓库侧在 `useModRepositoryRefresh` 里维护
  * `refreshing / sourceRefreshing / refreshingAll / checkingBound`，地图侧在
  * `useMapSources` 里又写了一遍同样的四个记录。两页之间还能共享（都在模块作用域），
  * 但**规则**已经开始漂移：批次语义、并发上限、谁能触发谁、失败怎么累计，

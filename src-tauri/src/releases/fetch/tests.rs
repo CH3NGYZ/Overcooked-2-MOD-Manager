@@ -164,7 +164,7 @@ fn gitee_community_source_tag_zip_is_removed_after_real_api_parsing() {
                 {"name":"Mod.zip","browser_download_url":"https://gitee.com/Owner/Mod/releases/download/v1.8.7.15/Mod.zip"},
                 {"name":"Mod.dll","browser_download_url":"https://gitee.com/Owner/Mod/releases/download/v1.8.7.15/Mod.dll"}
             ]}]"#)]);
-            let releases = fetch_releases_from_targets(&api_test_client(), &repo, &server.url,
+            let releases = fetch_releases_from_targets(&api_test_client(), &RepositoryRequest::from(&repo), &server.url,
                 vec![(server.url.clone(), None)]).await.unwrap().0;
             assert_eq!(releases[0].assets.iter().map(|asset| asset.name.as_str()).collect::<Vec<_>>(), ["Mod.zip", "Mod.dll"]);
             assert_eq!(server.requests().len(), 1);

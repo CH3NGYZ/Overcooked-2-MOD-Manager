@@ -135,7 +135,7 @@ pub(crate) fn synthesize_releases(
         let entry = versions.remove(index);
         versions.insert(0, entry);
     }
-    // tag 模式下这个字段是「最多暴露几个版本」，见 `release_probe` 的说明
+    // tag 模式下这个字段是「最多暴露几个版本」，API 分页不会受此展示上限影响
     versions.truncate(map.max_release_count.clamp(1, 100) as usize);
     versions
         .into_iter()

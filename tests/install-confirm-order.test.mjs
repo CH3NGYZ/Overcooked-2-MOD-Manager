@@ -10,7 +10,7 @@ import test from 'node:test'
  * 测试版、管理器先把冲突的 MOD 卸了，才问「这是预览版，确定要装吗」——
  * 用户一取消，环境已经被改动过。
  *
- * `useRepositoryPreview.ts` 依赖 Vue 与 Naive UI，无法在 Node 里直接执行，
+ * `useModRepositoryPreview.ts` 依赖 Vue 与 Naive UI，无法在 Node 里直接执行，
  * 所以这里对真实源码做结构性断言（与 tests/install-language.test.mjs 同风格）。
  * 运行时行为由 tools/verify-install-plan.mjs 的弹窗链路覆盖。
  *
@@ -18,14 +18,14 @@ import test from 'node:test'
  * 否则 indexOf 找到的位置区间可能被 `\r` 干扰。
  */
 const preview = readFileSync(
-  new URL('../src/composables/useRepositoryPreview.ts', import.meta.url),
+  new URL('../src/composables/useModRepositoryPreview.ts', import.meta.url),
   'utf8',
 ).replace(/\r\n/g, '\n')
 
-/** 取 `previewRepository` 的函数体（到函数结束的顶层 `}` 为止）。 */
+/** 取 `previewModRepository` 的函数体（到函数结束的顶层 `}` 为止）。 */
 function body() {
-  const start = preview.indexOf('async function previewRepository')
-  assert.ok(start >= 0, '找不到 previewRepository')
+  const start = preview.indexOf('async function previewModRepository')
+  assert.ok(start >= 0, '找不到 previewModRepository')
   const rest = preview.slice(start)
   const end = rest.indexOf('\n  }\n')
   assert.ok(end > 0, '函数体没有正常结束')
@@ -48,7 +48,7 @@ test('预发布确认排在关系检查之前', () => {
 test('关系检查排在下载之前', () => {
   const source = body()
   const prepareAt = source.indexOf('options.prepareInstall')
-  const downloadAt = source.indexOf('api.installRepository')
+  const downloadAt = source.indexOf('api.installModRepository')
 
   assert.ok(prepareAt >= 0 && downloadAt >= 0)
   assert.ok(
@@ -74,7 +74,7 @@ test('关系检查未通过时直接返回，不进入下载', () => {
   const source = body()
   const prepareBlock = source.slice(
     source.indexOf('if (options.prepareInstall)'),
-    source.indexOf('api.installRepository'),
+    source.indexOf('api.installModRepository'),
   )
   assert.ok(
     /if \(!ready\) return/.test(prepareBlock),

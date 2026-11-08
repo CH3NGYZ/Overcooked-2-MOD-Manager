@@ -27,7 +27,7 @@ import type {
   Provider,
   PublicConfig,
   ReleaseInfo,
-  RepositoryInstallOutcome,
+  ModRepositoryInstallOutcome,
   RepositoryReadme,
   RepositorySourceImportResult,
   RustLog,
@@ -117,8 +117,8 @@ export const api = {
    * 读缓存，不再逐仓打 API。只有右下角整批刷新才传 `force: true`；
    * 卡片、分组、源级与检查更新入口均复用五分钟快照。
    */
-  refreshRepository: (repositoryId: string, force = false) =>
-    invoke<ReleaseInfo[]>('refresh_repository', { repositoryId, force }),
+  refreshModRepository: (repositoryId: string, force = false) =>
+    invoke<ReleaseInfo[]>('refresh_mod_repository', { repositoryId, force }),
   /**
    * 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
    *
@@ -170,8 +170,8 @@ export const api = {
    * `assetName` 是安装页下拉里选中的资产；不传时后端按 `asset_rules` 自动选。
    * 必须与界面上显示的文件一致，否则会出现「选的 A、下载的 B」。
    */
-  installRepository: (repositoryId: string, tag?: string, previewOnly = false, assetName?: string) =>
-    invoke<RepositoryInstallOutcome>('install_repository', {
+  installModRepository: (repositoryId: string, tag?: string, previewOnly = false, assetName?: string) =>
+    invoke<ModRepositoryInstallOutcome>('install_mod_repository', {
       repositoryId, tag, previewOnly, assetName,
       // 后端按它选仓库的本地化名称（下载进度标签 + 安装预览标题）
       locale: locale.value,

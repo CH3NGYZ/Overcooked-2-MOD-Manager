@@ -1,6 +1,6 @@
 use crate::config::ConfigService;
 use crate::config::defaults::default_config;
-use crate::config::identity::repository_from_export;
+use crate::config::identity::mod_repository_from_export;
 use crate::models::*;
 use std::path::Path;
 
@@ -21,7 +21,8 @@ fn public_discovery_hides_late_official_descendants_without_erasing_saved_bindin
             "community",
         )
         .unwrap();
-        let binding = crate::models::RepositoryBinding::from_release(&community, "v1.0.0").unwrap();
+        let binding =
+            crate::models::ModRepositoryBinding::from_release(&community, "v1.0.0").unwrap();
         let mut config = default_config();
         let mut child = config.repository_sources[0].clone();
         child.id = "official-child".into();
@@ -96,7 +97,11 @@ fn structured_repository_fields_survive_storage_and_public_config_without_urls()
     .repositories
     .remove(0);
     let mut config = default_config();
-    config.repositories = vec![repository_from_export(&export, "structured".into(), false)];
+    config.repositories = vec![mod_repository_from_export(
+        &export,
+        "structured".into(),
+        false,
+    )];
     let stored = toml::to_string_pretty(&config).unwrap();
     let restored: AppConfig = toml::from_str(&stored).unwrap();
     let repo = &restored.repositories[0];

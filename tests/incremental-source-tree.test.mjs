@@ -37,7 +37,7 @@ registerHooks({
 
 const { useDashboard } = await import('../src/composables/useDashboardStore.ts')
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
-const { useRepositoryRefresh } = await import('../src/composables/useRepositoryRefresh.ts')
+const { useModRepositoryRefresh } = await import('../src/composables/useModRepositoryRefresh.ts')
 const { createSourceTreeState } = await import('../src/sourceTreeState.ts')
 const { buildSourceGroupTree } = await import('../src/composables/useSourceGroupTree.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -80,11 +80,11 @@ test('MOD engine publishes root and pending child titles, waits for every TOML, 
       if(id==='failed') { if(!retry) await failed.promise; else config.repositories.push(repo('recovered','failed')) }
       return {access_error:null}
     },
-    refreshRepository:async(id,force)=>{calls.push(['api',id,force]);return[]},
+    refreshModRepository:async(id,force)=>{calls.push(['api',id,force]);return[]},
     discoverCommunityRepositories:async()=>{throw Error('discovery must stay paused')},
     syncDependencySnapshots:async()=>{},
   }
-  const d=useDashboard(), e=useRepositoryRefresh()
+  const d=useDashboard(), e=useModRepositoryRefresh()
   await d.load(); const pending=e.refreshEverything()
   await tick(); assert.deepEqual(calls,['toml:root'])
   root.resolve(); await tick(); await tick()
@@ -143,7 +143,7 @@ test('MOD source config read failure is attached to its cleared group, never rep
     config:async()=>{if(fail)throw Error('snapshot read failed');return structuredClone(config)},
     importRepositorySource:async()=>{fail=true;return {access_error:null}},
   }
-  const d=useDashboard(),e=useRepositoryRefresh()
+  const d=useDashboard(),e=useModRepositoryRefresh()
   await d.load()
   const errors=await e.refreshSourceChain('snapshot-failure')
   assert.ok(errors.some(text=>text.includes('snapshot read failed')))

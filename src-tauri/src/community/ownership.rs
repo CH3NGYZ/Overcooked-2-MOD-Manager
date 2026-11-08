@@ -3,13 +3,13 @@ use super::catalog::is_source;
 use super::catalog::source_id;
 use crate::models::AppConfig;
 use crate::models::CommunityDiscovery;
-use crate::models::RepositoryConfig;
+use crate::models::ModRepositoryConfig;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 pub(super) type RepositoryIdentity = (&'static str, String, String);
 
-pub(super) fn identity(repo: &RepositoryConfig) -> RepositoryIdentity {
+pub(super) fn identity(repo: &ModRepositoryConfig) -> RepositoryIdentity {
     (
         source_id(&repo.provider),
         repo.username.to_ascii_lowercase(),

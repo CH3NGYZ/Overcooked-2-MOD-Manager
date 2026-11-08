@@ -12,7 +12,7 @@ import type { Provider } from './types'
 /**
  * 参与头像预取的最小结构。
  *
- * 取 `provider` + `username` 而不是某个具体模型：MOD 仓库（`Repository`）与
+ * 取 `provider` + `username` 而不是某个具体模型：MOD 仓库（`ModRepository`）与
  * 地图（`MapInfo`）都长这个样子，两个安装页因此能把各自的列表直接传进同一个
  * `prefetchAvatars`，不需要为地图再写一份预取。
  */

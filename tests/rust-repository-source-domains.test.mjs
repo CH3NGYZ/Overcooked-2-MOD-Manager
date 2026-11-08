@@ -57,7 +57,7 @@ test('MOD and map sources retain shared reading, verified failure and cache appl
   assert.match(location, /resolved\.origin\(\) != root\.origin\(\) \|\| !resolved\.path\(\)\.starts_with\(root\.path\(\)\)/)
   assert.match(location, /release_asset_reference\(base\)\.is_some\(\)/)
   const document = read('document.rs')
-  ordered(document, ['validate_repository_platform(', 'normalize_repository_platform(', 'validate_repository(repository)?'])
+  ordered(document, ['validate_repository_platform(', 'normalize_repository_platform(', 'validate_mod_repository(repository)?'])
   assert.match(document, /!ids\.insert\(source\.id\.clone\(\)\)/)
   assert.match(document, /\.retain\(\|source\| urls\.insert\(source_address_key\(&source\.url, source\.region\.as_deref\(\)\)\)\)/)
   const transport = read('transport.rs')

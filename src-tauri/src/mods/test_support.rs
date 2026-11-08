@@ -29,8 +29,8 @@ pub(super) fn duplicate_configuration_manager(
     })).unwrap()
 }
 
-pub(super) fn binding_repository() -> crate::models::RepositoryConfig {
-    crate::models::RepositoryConfig {
+pub(super) fn binding_repository() -> crate::models::ModRepositoryConfig {
+    crate::models::ModRepositoryConfig {
         network_plan: Default::default(),
         kind: Default::default(),
         id: "test".into(),
@@ -41,7 +41,7 @@ pub(super) fn binding_repository() -> crate::models::RepositoryConfig {
         provider: crate::models::Provider::Gitee,
         username: "example".into(),
         repository: "mod".into(),
-        download_mode: crate::models::RepositoryDownloadMode::Release,
+        download_mode: crate::models::ModDownloadMode::Release,
         branch: String::new(),
         file_path: String::new(),
         region: None,
@@ -150,7 +150,7 @@ relations = [{{ kind = "requires", guid = "base.guid", version = ">=0.10.0" }}]
     .unwrap()
 }
 
-pub(crate) fn repository(id: &str, mode: RepositoryDownloadMode) -> RepositoryConfig {
+pub(crate) fn repository(id: &str, mode: ModDownloadMode) -> ModRepositoryConfig {
     serde_json::from_value(serde_json::json!({
         "id": id, "name": id, "provider": "github",
         "username": "example", "repository": "mod", "download_mode": mode,
@@ -164,7 +164,7 @@ pub(crate) fn repository(id: &str, mode: RepositoryDownloadMode) -> RepositoryCo
     .unwrap()
 }
 
-pub(crate) fn config(repositories: Vec<RepositoryConfig>) -> AppConfig {
+pub(crate) fn config(repositories: Vec<ModRepositoryConfig>) -> AppConfig {
     serde_json::from_value(serde_json::json!({
         "schema_version": 1, "ui_zoom": 1.5,
         "game": {"path": ""},

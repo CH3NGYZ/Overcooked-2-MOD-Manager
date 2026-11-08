@@ -3,7 +3,7 @@
  *
  * ## 为什么抽出来
  *
- * MOD 安装页的仓库详情（`RepositoryDetail.vue`）要展示 README：请求 → 取消 →
+ * MOD 安装页的仓库详情（`ModRepositoryDetail.vue`）要展示 README：请求 → 取消 →
  * 切条目重置这条链最容易写漏。地图详情**不**用这条链 —— 地图的说明来自
  * 条目自己的 `note_i18n`，长文跟着版本（Release note 正文）走，仓库 README
  * 是仓库级的，一个仓库多张地图时会串味。
@@ -22,7 +22,7 @@ import { backendMessageOf } from '../locale/backend'
 import { demoReadme } from '../tutorial/demo'
 import type { RepositoryReadme } from '../types'
 
-export function useRepositoryReadme(sourceId: () => string | null | undefined) {
+export function useModRepositoryReadme(sourceId: () => string | null | undefined) {
   const readme = ref<RepositoryReadme | null>(null)
   const loading = ref(false)
   const error = ref('')

@@ -1,9 +1,10 @@
+import type { RelationSubject } from './modRelations'
 import { compareVersions } from './modStatus.ts'
 import {
   dependencyTagFor, relationsForMapRelease, resolveRelation, resolveRelations,
   type RelationStatus,
 } from './modRelations.ts'
-import type { InstalledMod, LevelSetInfo, MapInfo, Repository } from './types'
+import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository } from './types'
 
 /**
  * 关卡集（地图）的状态判定。
@@ -335,17 +336,6 @@ export function levelSetForMap(
 }
 
 /**
- * 把一张地图投影成 `Repository`，仅供关系判定使用。
- *
- * 为什么需要投影：地图的框架依赖与 MOD 的插件依赖是**同一套模型**
- * （`relations` + `required_frameworks`），判定逻辑已经写在 `modRelations.ts`
- * 里。地图不是 `Repository`，但只要有 `relations` 就能复用那条管线，
- * 不需要为地图再写一份依赖判定。
- *
- * 只填关系判定真正会读的字段，其余给安全默认值；新增字段时如果关系判定
- * 会读它，记得同步这里（`mapRelationRepository` 是唯一的投影入口）。
- */
-/**
  * 一张地图「将要安装 / 当前展示」的 Release 版本。
  *
  * 优先用后端缓存的最新 tag（用户点安装取的就是它）；源的 `latest_mapset_version`
@@ -363,50 +353,10 @@ export function mapReleaseVersion(
   return tag || null
 }
 
-/**
- * 把一张地图投影成 `Repository`，仅供关系判定使用。
- *
- * 为什么需要投影：地图的框架依赖与 MOD 的插件依赖是**同一套模型**
- * （`relations` + `required_frameworks`），判定逻辑已经写在 `modRelations.ts`
- * 里。地图不是 `Repository`，但只要有 `relations` 就能复用那条管线，
- * 不需要为地图再写一份依赖判定。
- *
- * `version` 是这次要判定/安装的 Release 版本：覆盖表（`release_relations`）
- * 按它选表，不传则用当前最新版本（`mapReleaseVersion`）。关系已经在这里
- * 定好，调用方不用再把版本传给 `resolveRelations` —— 传了也只会因为投影里
- * 没有覆盖表而原样返回。
- *
- * 只填关系判定真正会读的字段，其余给安全默认值；新增字段时如果关系判定
- * 会读它，记得同步这里（`mapRelationRepository` 是唯一的投影入口）。
- */
-export function mapRelationRepository(
-  map: MapInfo,
-  version?: string | null,
-): Repository {
+/** Maps supply only relation and release context to the shared evaluator. */
+export function mapRelationSubject(map: MapInfo, version?: string | null): RelationSubject {
   return {
-    id: map.id,
-    name: map.name,
-    name_i18n: map.name_i18n,
-    provider: map.provider,
-    username: map.username,
-    repository: map.repository,
-    // 下面这些字段关系判定不读，给安全默认值
-    download_mode: 'release',
-    branch: '',
-    file_path: '',
-    channel: 'all',
-    asset_rules: [],
-    install_target: '',
-    note: '',
-    plugin_guid: '',
-    local_product_name: '',
-    local_original_filename: '',
-    version_regex: '',
-    max_release_count: 10,
-    download_threads: 0,
-    enabled: map.enabled,
-    builtin: map.builtin,
-    // 契约里 `get_maps` 会填全部缓存 Release；老快照或手写测试对象可能没有
+    id: map.id, name: map.name, name_i18n: map.name_i18n,
     cached_releases: map.cached_releases ?? (map.latest_release ? [map.latest_release] : []),
     relations: relationsForMapRelease(map, version ?? mapReleaseVersion(map)),
   }
@@ -436,7 +386,7 @@ export function levelSetRelationStatuses(
   set: Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'>,
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[] = [],
+  repositories: readonly ModRepository[] = [],
 ): RelationStatus[] {
   const bound = mapForLevelSet(set, maps)
   // 已安装的图按**本地版本**取覆盖表：卡片说的是「这一版跑不跑得起来」，
@@ -457,11 +407,11 @@ export function levelSetRelationStatuses(
 export function mapRelationStatuses(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[] = [],
+  repositories: readonly ModRepository[] = [],
   version?: string | null,
 ): RelationStatus[] {
   if (!map) return []
-  return resolveRelations(mapRelationRepository(map, version), mods, repositories)
+  return resolveRelations(mapRelationSubject(map, version), mods, repositories)
 }
 
 /**
@@ -473,7 +423,7 @@ export function mapRelationStatuses(
 export function frameworkStates(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
-  repositories: readonly Repository[] = [],
+  repositories: readonly ModRepository[] = [],
 ): FrameworkState[] {
   return mapRelationStatuses(map, mods, repositories).map((status) => ({
     guid: status.relation.guid,
@@ -497,7 +447,7 @@ export function mapDependencyMissing(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
   gameProbed: boolean,
-  repositories: readonly Repository[] = [],
+  repositories: readonly ModRepository[] = [],
 ): boolean | null {
   if (!gameProbed) return null
   if (!map) return false
@@ -588,7 +538,7 @@ export function levelSetCardTags(
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
   gameProbed: boolean,
-  repositories: readonly Repository[] = [],
+  repositories: readonly ModRepository[] = [],
   refreshing?: LevelSetRefreshingHint,
 ): LevelSetCardTag[] {
   const bound = mapForLevelSet(set, maps)
@@ -669,7 +619,7 @@ export function levelSetCardAction(
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
   gameProbed: boolean,
-  repositories: readonly Repository[] = [],
+  repositories: readonly ModRepository[] = [],
   refreshing?: LevelSetRefreshingHint,
 ): LevelSetCardAction | undefined {
   if (!set.enabled || set.error || levelSetIsRefreshing(set, maps, refreshing)) return undefined

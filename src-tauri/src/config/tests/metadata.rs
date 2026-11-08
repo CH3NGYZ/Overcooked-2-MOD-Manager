@@ -1,7 +1,7 @@
 use crate::config::ConfigService;
 use crate::config::bundle::BUNDLE_FORMAT;
 use crate::config::defaults::default_config;
-use crate::config::identity::repository_from_export;
+use crate::config::identity::mod_repository_from_export;
 use crate::models::*;
 use std::fs;
 use std::path::Path;
@@ -75,7 +75,7 @@ fn legacy_repository_metadata_migrates_into_chinese_maps_and_persists_empty_fiel
     .unwrap()
     .repositories
     .remove(0);
-    config.repositories = vec![repository_from_export(
+    config.repositories = vec![mod_repository_from_export(
         &export,
         "legacy-repository".into(),
         false,
@@ -157,7 +157,7 @@ value = "Japan.dll"
     assert_eq!(export.name_i18n["ja"], "日本語名");
     assert_eq!(export.group_i18n["ja"], "ツール");
     assert_eq!(export.note_i18n["ja"], "日本語のメモ");
-    let bundle = RepositoryBundle {
+    let bundle = ModRepositoryBundle {
         format: BUNDLE_FORMAT.into(),
         schema_version: 1,
         exported_at: String::new(),

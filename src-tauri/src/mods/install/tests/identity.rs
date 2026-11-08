@@ -5,12 +5,12 @@ fn all_release_install_sources_persist_repository_tags_and_recycle_the_original_
     for source in [Some("official"), Some(crate::community::SOURCE_ID), None] {
         for provider in [Provider::Github, Provider::Gitee] {
             let workspace = InstallWorkspace::new();
-            let mut repo = repository("package", RepositoryDownloadMode::Release);
+            let mut repo = repository("package", ModDownloadMode::Release);
             repo.provider = provider;
             repo.source_id = source.map(str::to_string);
             repo.builtin = source == Some("official");
             let asset = workspace.zip(&[("Main.dll", b"first"), ("Child.dll", b"child")]);
-            install_downloaded_repository(
+            install_downloaded_mod_repository(
                 &asset,
                 "package.zip",
                 &workspace.game,
@@ -47,7 +47,7 @@ fn all_release_install_sources_persist_repository_tags_and_recycle_the_original_
             )
             .unwrap();
             let asset = workspace.zip(&[("Main.dll", b"second")]);
-            install_downloaded_repository(
+            install_downloaded_mod_repository(
                 &asset,
                 "package.zip",
                 &workspace.game,
@@ -73,9 +73,9 @@ fn all_release_install_sources_persist_repository_tags_and_recycle_the_original_
         }
     }
     let workspace = InstallWorkspace::new();
-    let raw = repository("package", RepositoryDownloadMode::RepositoryFile);
+    let raw = repository("package", ModDownloadMode::RepositoryFile);
     let asset = workspace.zip(&[("Main.dll", b"raw")]);
-    install_downloaded_repository(
+    install_downloaded_mod_repository(
         &asset,
         "package.zip",
         &workspace.game,
@@ -98,9 +98,9 @@ fn all_release_install_sources_persist_repository_tags_and_recycle_the_original_
 #[test]
 fn vanished_source_ids_reuse_the_bound_package_without_merging_live_packages() {
     let workspace = InstallWorkspace::new();
-    let mut old_repo = repository("old-source-id", RepositoryDownloadMode::Release);
+    let mut old_repo = repository("old-source-id", ModDownloadMode::Release);
     let asset = workspace.zip(&[("Main.dll", b"old")]);
-    install_downloaded_repository(
+    install_downloaded_mod_repository(
         &asset,
         "package.zip",
         &workspace.game,
@@ -114,7 +114,7 @@ fn vanished_source_ids_reuse_the_bound_package_without_merging_live_packages() {
     .unwrap();
     let mut new_repo = old_repo.clone();
     new_repo.id = "discovered-source-id".into();
-    let identity = repository_install_identity(
+    let identity = mod_repository_install_identity(
         &new_repo,
         &config(vec![new_repo.clone()]),
         &workspace.manifests,
@@ -122,7 +122,7 @@ fn vanished_source_ids_reuse_the_bound_package_without_merging_live_packages() {
     .unwrap();
     assert_eq!(identity.id, "old-source-id");
     assert_eq!(
-        repository_install_identity(
+        mod_repository_install_identity(
             &new_repo,
             &config(vec![old_repo.clone(), new_repo.clone()]),
             &workspace.manifests
@@ -132,7 +132,7 @@ fn vanished_source_ids_reuse_the_bound_package_without_merging_live_packages() {
         new_repo.id
     );
     let asset = workspace.zip(&[("Main.dll", b"new")]);
-    install_downloaded_repository(
+    install_downloaded_mod_repository(
         &asset,
         "package.zip",
         &workspace.game,
@@ -167,10 +167,10 @@ fn vanished_source_ids_reuse_the_bound_package_without_merging_live_packages() {
         vec![],
         Vec::new(),
     );
-    other.repository_binding = RepositoryBinding::from_release(&old_repo, "v1.0.0");
+    other.repository_binding = ModRepositoryBinding::from_release(&old_repo, "v1.0.0");
     archive::write_manifest(&workspace.manifests, &other).unwrap();
     assert!(
-        repository_install_identity(
+        mod_repository_install_identity(
             &new_repo,
             &config(vec![new_repo.clone()]),
             &workspace.manifests

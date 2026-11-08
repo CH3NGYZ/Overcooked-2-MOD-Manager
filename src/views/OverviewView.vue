@@ -27,11 +27,11 @@ import {
 } from '@vicons/ionicons5'
 import StatCard from '../components/StatCard.vue'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { useMapSources } from '../composables/useMapSources'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { api } from '../services/tauri'
-import { repositoryIsAvailable } from '../repositoryAvailability'
+import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
 import { runtimeModStatus } from '../modRuntimeStatus'
 import {
@@ -46,7 +46,7 @@ const router = useRouter()
 const message = useNotify()
 const { ensureLoaded, load, modsLoading, error, mods, game, config, frameworkOk } = useDashboard()
 
-const { runtimeState } = useRepositoryRefresh()
+const { runtimeState } = useModRepositoryRefresh()
 const { maps, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
 /** 本地地图扫描状态（`useLevelSetScan` 的模块级单例，切页不丢）。 */
 const { scanning: levelSetScanning, scanLevelSets } = useLevelSetScan()
@@ -240,11 +240,11 @@ function openLocalMods() {
 
 /**
  * 当前地区可见的仓库 —— 口径与 MOD 安装页的「共 N 个仓库」一致
- * （都用 `repositoryIsAvailable`），只是这里不带搜索过滤。
+ * （都用 `modRepositoryIsAvailable`），只是这里不带搜索过滤。
  */
 const onlineRepositories = computed(() =>
   (config.value?.repositories ?? []).filter(
-    (repo) => repositoryIsAvailable(repo, config.value?.repository_sources, config.value?.region, config.value?.platform),
+    (repo) => modRepositoryIsAvailable(repo, config.value?.repository_sources, config.value?.region, config.value?.platform),
   ))
 
 /** 其中刷新报错的那些。隐藏的仓库不算，它们本来就不参与刷新。 */

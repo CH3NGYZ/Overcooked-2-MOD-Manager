@@ -3,7 +3,7 @@ use crate::config::availability::REGION_CHINESE_MAINLAND;
 use crate::config::availability::REGION_INTERNATIONAL;
 use crate::config::availability::current_user_region;
 use crate::config::defaults::default_config;
-use crate::config::identity::repository_from_export;
+use crate::config::identity::mod_repository_from_export;
 use crate::models::*;
 
 use super::REGION_REPOSITORY;
@@ -56,13 +56,13 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
         builtin: true,
         parent_id: Some(builtin_source.clone()),
     });
-    let mut builtin = repository_from_export(&template, "builtin".into(), true);
+    let mut builtin = mod_repository_from_export(&template, "builtin".into(), true);
     builtin.name = "Built-in MOD".into();
     builtin
         .name_i18n
         .insert("zh-CN".into(), builtin.name.clone());
     builtin.source_id = Some(builtin_source);
-    let mut disabled = repository_from_export(&template, "disabled".into(), true);
+    let mut disabled = mod_repository_from_export(&template, "disabled".into(), true);
     disabled.name = "Disabled other-region MOD".into();
     disabled
         .name_i18n
@@ -70,7 +70,7 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
     disabled.region = Some(other_region.into());
     disabled.source_id = Some("other-region-child".into());
     disabled.enabled = false;
-    let mut detached = repository_from_export(&template, "detached".into(), false);
+    let mut detached = mod_repository_from_export(&template, "detached".into(), false);
     detached.name = "Detached MOD".into();
     detached
         .name_i18n
@@ -139,7 +139,7 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     let mut raw = release.clone();
     raw.name = "Raw MOD".into();
     raw.name_i18n.insert("zh-CN".into(), "Raw MOD".into());
-    raw.download_mode = RepositoryDownloadMode::RepositoryFile;
+    raw.download_mode = ModDownloadMode::RepositoryFile;
     raw.branch = "main".into();
     raw.file_path = "bin/Raw MOD.dll".into();
     raw.channel = Channel::All;
@@ -160,8 +160,8 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     let mut config = default_config();
     config.repository_sources.push(source);
     config.repositories = vec![
-        repository_from_export(&release, "release".into(), false),
-        repository_from_export(&raw, "raw".into(), false),
+        mod_repository_from_export(&release, "release".into(), false),
+        mod_repository_from_export(&raw, "raw".into(), false),
     ];
     // The editor keeps drafts for both modes; Release starts with main.
     config.repositories[0].branch = "main".into();

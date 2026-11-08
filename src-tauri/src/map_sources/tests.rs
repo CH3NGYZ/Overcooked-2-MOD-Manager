@@ -5,7 +5,7 @@ use super::community::{
 use super::document::{MapSourceMode, parse_document};
 use super::identity::map_identity;
 use super::identity::map_repository_id;
-use super::release_tags::declaration_probe;
+use super::release_tags::declaration_request;
 use super::state::map_is_available;
 use super::state::merge_maps_keeping_runtime_state;
 use super::state::replace_maps_keeping_runtime_state;
@@ -30,12 +30,8 @@ fn community_map_repositories_are_declared_as_release_tag_sources() {
     assert!(declaration.map.is_none());
     assert_eq!(declaration.page_size, None);
     assert_eq!(declaration.max_pages, None);
-    /*
-     * `declaration_probe` 的字段形状是 `expect` 出来的（它只用 serde 投影
-     * 一个 RepositoryConfig）：组合出错的声明会在第一次刷新时 panic。
-     * 这里把这条路径也走一遍，纯本地、不联网。
-     */
-    let probe = declaration_probe(&declaration);
+    // 源声明直接提供通用读取上下文，不依赖 MOD 配置默认值。
+    let probe = declaration_request(&declaration);
     assert_eq!(probe.provider, Provider::Gitee);
     assert_eq!(probe.username, "Owner");
     assert_eq!(probe.repository, "Maps");

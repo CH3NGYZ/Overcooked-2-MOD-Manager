@@ -1,13 +1,13 @@
-use crate::config::metadata::localized_repository_name;
+use crate::config::metadata::localized_mod_repository_name;
 use crate::models::*;
 use std::collections::BTreeMap;
 
-fn repo_with(names: &[(&str, &str)]) -> RepositoryConfig {
+fn repo_with(names: &[(&str, &str)]) -> ModRepositoryConfig {
     let mut name_i18n = BTreeMap::new();
     for (key, value) in names {
         name_i18n.insert((*key).to_string(), (*value).to_string());
     }
-    let mut repo: RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let mut repo: ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "r1", "name": "主机实用 MOD（街机 MOD）稳定版",
         "group": "", "provider": "github", "username": "u", "repository": "r",
         "download_mode": "release", "branch": "main", "file_path": "",
@@ -27,12 +27,15 @@ fn picks_the_name_matching_the_interface_locale() {
         ("ja", "ホストツール"),
     ]);
     assert_eq!(
-        localized_repository_name(&repo, Some("en")),
+        localized_mod_repository_name(&repo, Some("en")),
         "HostUtilities"
     );
-    assert_eq!(localized_repository_name(&repo, Some("ja")), "ホストツール");
     assert_eq!(
-        localized_repository_name(&repo, Some("zh-CN")),
+        localized_mod_repository_name(&repo, Some("ja")),
+        "ホストツール"
+    );
+    assert_eq!(
+        localized_mod_repository_name(&repo, Some("zh-CN")),
         "主机实用 MOD"
     );
 }
@@ -41,9 +44,9 @@ fn picks_the_name_matching_the_interface_locale() {
 #[test]
 fn falls_back_to_the_base_name_when_locale_is_missing_or_unknown() {
     let repo = repo_with(&[("en", "HostUtilities")]);
-    assert_eq!(localized_repository_name(&repo, Some("ko")), repo.name);
-    assert_eq!(localized_repository_name(&repo, None), repo.name);
-    assert_eq!(localized_repository_name(&repo, Some("")), repo.name);
+    assert_eq!(localized_mod_repository_name(&repo, Some("ko")), repo.name);
+    assert_eq!(localized_mod_repository_name(&repo, None), repo.name);
+    assert_eq!(localized_mod_repository_name(&repo, Some("")), repo.name);
 }
 
 /// 源文档可能只写主语言标记（`zh`），界面传来的是 `zh-TW`：应当能对上。
@@ -51,11 +54,11 @@ fn falls_back_to_the_base_name_when_locale_is_missing_or_unknown() {
 fn matches_on_the_primary_language_when_the_exact_tag_is_absent() {
     let repo = repo_with(&[("zh", "主机实用 MOD"), ("en-US", "HostUtilities")]);
     assert_eq!(
-        localized_repository_name(&repo, Some("zh-TW")),
+        localized_mod_repository_name(&repo, Some("zh-TW")),
         "主机实用 MOD"
     );
     assert_eq!(
-        localized_repository_name(&repo, Some("en-GB")),
+        localized_mod_repository_name(&repo, Some("en-GB")),
         "HostUtilities"
     );
 }
@@ -64,5 +67,5 @@ fn matches_on_the_primary_language_when_the_exact_tag_is_absent() {
 #[test]
 fn ignores_blank_translations() {
     let repo = repo_with(&[("en", "   ")]);
-    assert_eq!(localized_repository_name(&repo, Some("en")), repo.name);
+    assert_eq!(localized_mod_repository_name(&repo, Some("en")), repo.name);
 }

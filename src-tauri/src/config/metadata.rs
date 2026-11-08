@@ -11,7 +11,10 @@ use crate::models::*;
 /// 查找顺序：完整标记 → 主语言前缀 → `name`。
 /// 加前缀回退是因为源文档里可能只写了 `zh` 或 `en-US` 这类宽标记，
 /// 而界面传来的可能是 `zh-CN`，两者应当能对上。
-pub(crate) fn localized_repository_name(repo: &RepositoryConfig, locale: Option<&str>) -> String {
+pub(crate) fn localized_mod_repository_name(
+    repo: &ModRepositoryConfig,
+    locale: Option<&str>,
+) -> String {
     localized_name(&repo.name_i18n, &repo.name, locale)
 }
 
@@ -54,7 +57,7 @@ fn localized_name(
         .unwrap_or_else(|| mirror.to_string())
 }
 
-pub(super) fn migrate_repository_i18n(repository: &mut RepositoryConfig) -> bool {
+pub(super) fn migrate_repository_i18n(repository: &mut ModRepositoryConfig) -> bool {
     let mut changed = false;
     if repository
         .name_i18n
@@ -105,7 +108,7 @@ pub(super) fn migrate_repository_i18n(repository: &mut RepositoryConfig) -> bool
 
 /// Static source and bundle entries must declare Chinese values explicitly.
 /// Raw fields remain compatibility mirrors and never determine display values.
-pub(crate) fn normalize_repository_i18n(repo: &mut RepositoryExport) -> Result<(), ConfigError> {
+pub(crate) fn normalize_repository_i18n(repo: &mut ModRepositoryExport) -> Result<(), ConfigError> {
     let name = repo
         .name_i18n
         .get("zh-CN")
@@ -134,7 +137,7 @@ pub(super) fn repository_name_from_i18n(
         .unwrap_or_default()
 }
 
-pub(super) fn migrate_repository_export_i18n(repo: &mut RepositoryExport) {
+pub(super) fn migrate_repository_export_i18n(repo: &mut ModRepositoryExport) {
     repo.name_i18n
         .entry("zh-CN".into())
         .or_insert_with(|| repo.name.trim().to_string());

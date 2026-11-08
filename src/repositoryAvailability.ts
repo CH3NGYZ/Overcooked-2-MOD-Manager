@@ -1,4 +1,4 @@
-import type { Repository, RepositorySource } from './types'
+import type { ModRepository, RepositorySource } from './types'
 
 /**
  * 仓库「在当前地区是否存在」的纯函数。
@@ -27,7 +27,7 @@ export function repositoryRegionMatches(region: string | undefined, currentRegio
   return true
 }
 
-export function repositoryMatchesRegion(repo: Pick<Repository, 'region'>, currentRegion: string | undefined): boolean {
+export function repositoryMatchesRegion(repo: Pick<ModRepository, 'region'>, currentRegion: string | undefined): boolean {
   return repositoryRegionMatches(repo.region, currentRegion)
 }
 
@@ -65,7 +65,7 @@ export function repositoryPlatformMatches(
 
 /** 仓库所属来源；来源已从配置中删除时返回 undefined。 */
 export function repositorySource(
-  repo: Pick<Repository, 'source_id'>,
+  repo: Pick<ModRepository, 'source_id'>,
   sources: Pick<RepositorySource, 'id' | 'region'>[] | undefined,
 ): Pick<RepositorySource, 'id' | 'region'> | undefined {
   if (!repo.source_id) return undefined
@@ -83,8 +83,8 @@ export function repositorySource(
  *
  * 社区发现暂停期间，三平台的发现来源均不可用；保留旧配置以便之后恢复。
  */
-export function repositoryIsAvailable(
-  repo: Pick<Repository, 'enabled' | 'region' | 'source_id' | 'platform'>,
+export function modRepositoryIsAvailable(
+  repo: Pick<ModRepository, 'enabled' | 'region' | 'source_id' | 'platform'>,
   sources: Pick<RepositorySource, 'id' | 'region'>[] | undefined,
   currentRegion: string | undefined,
   currentPlatform?: string,
@@ -173,7 +173,7 @@ function sourceNickname(
  */
 export function shouldFallbackToBuiltin(
   sources: Pick<RepositorySource, 'id' | 'nickname' | 'nickname_i18n' | 'parent_id'>[],
-  repositories: Pick<Repository, 'source_id'>[],
+  repositories: Pick<ModRepository, 'source_id'>[],
   sourceErrors: readonly string[],
   /** 当前界面语言；不传时按 zh-CN 兜底值匹配。 */
   locale?: string,
@@ -184,7 +184,7 @@ export function shouldFallbackToBuiltin(
   /*
    * 前缀须遵循与报错显示相同的语言回退顺序。
    *
-   * useRepositoryRefresh.sourceError 用 pickI18n；此处的纯函数不加载 UI
+   * useModRepositoryRefresh.sourceError 用 pickI18n；此处的纯函数不加载 UI
    * 依赖，因此以相同顺序取昵称，避免跨语言错误前缀失配。
    */
   const rootName = sourceNickname(officialRoot, locale)

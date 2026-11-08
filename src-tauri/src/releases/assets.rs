@@ -2,7 +2,7 @@ use crate::models::AssetRule;
 use crate::models::AssetRuleType;
 use crate::models::ReleaseAsset;
 use crate::models::ReleaseInfo;
-use crate::models::RepositoryConfig;
+use crate::releases::RepositoryRequest;
 use globset::GlobBuilder;
 use regex::Regex;
 
@@ -23,15 +23,20 @@ pub fn asset_matches(asset: &ReleaseAsset, rules: &[AssetRule]) -> bool {
 }
 
 pub fn select_install_asset<'a>(
-    repo: &RepositoryConfig,
+    repo: &RepositoryRequest,
+    rules: &[AssetRule],
     release: &'a ReleaseInfo,
     asset_name: Option<&str>,
 ) -> Option<&'a ReleaseAsset> {
     release.assets.iter().find(|asset| {
-        !crate::community::is_source_archive(repo, &release.tag_name, &asset.name)
-            && asset_name
-                .map(|name| asset.name == name)
-                .unwrap_or_else(|| asset_matches(asset, &repo.asset_rules))
+        !crate::community::is_source_archive(
+            &repo.provider,
+            repo.source_id.as_deref(),
+            &release.tag_name,
+            &asset.name,
+        ) && asset_name
+            .map(|name| asset.name == name)
+            .unwrap_or_else(|| asset_matches(asset, rules))
     })
 }
 

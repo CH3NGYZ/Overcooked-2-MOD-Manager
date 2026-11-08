@@ -333,7 +333,7 @@ export const toolsUiRepository: DomainMessages = {
   repositoryFileModeDownloadsThisFileDirectly: {
     'zh-CN': '仓库文件模式直接下载该文件',
     'zh-TW': '倉庫檔案模式直接下載該檔案',
-    en: 'Repository-file mode downloads this file directly',
+    en: 'ModRepository-file mode downloads this file directly',
     ko: '저장소 파일 모드는 이 파일을 바로 받습니다',
     ja: 'リポジトリファイルモードはこのファイルを直接ダウンロードします',
   },

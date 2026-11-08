@@ -33,7 +33,7 @@ fn default_map_provider() -> Provider {
 
 /// 一个地图仓库：地图的分发单元。
 ///
-/// 与 `RepositoryConfig` 对称但刻意分开：MOD 靠插件识别字段绑定，地图靠
+/// 与 `ModRepositoryConfig` 对称但刻意分开：MOD 靠插件识别字段绑定，地图靠
 /// `author + level_set_name + level_set_name_zh`；两边共用关系类型和下载/刷新管线。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapRepositoryConfig {
@@ -180,7 +180,7 @@ pub struct MapRepositoryConfig {
     pub source_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_name_i18n: BTreeMap<String, String>,
-    /// Release 缓存，与 `RepositoryConfig` 同一套字段与 TTL 语义。
+    /// Release 缓存，与 `ModRepositoryConfig` 同一套字段与 TTL 语义。
     #[serde(default)]
     pub cached_releases: Vec<ReleaseInfo>,
     #[serde(default)]
@@ -272,7 +272,7 @@ pub struct MapInfo {
     pub level_set_name_zh: String,
     /// 绑定的本地作者（info 里的 `author`）。
     pub author: String,
-    /// 下载资产规则（与 `RepositoryConfig.asset_rules` 同语义）。
+    /// 下载资产规则（与 `ModRepositoryConfig.asset_rules` 同语义）。
     ///
     /// 地图只分发 ZIP，资产却是作者随意命名的，所以必须把规则交给前端，
     /// 让详情面板用同一套 exact/glob/regex 判定标出会被下载的那个资产。

@@ -22,7 +22,7 @@ pub struct InstallManifest {
     pub repository_id: String,
     pub release_tag: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repository_binding: Option<crate::models::RepositoryBinding>,
+    pub repository_binding: Option<crate::models::ModRepositoryBinding>,
     /*
      * 以下三个字段只有多语言形态，没有单语版本。
      *
@@ -81,7 +81,7 @@ struct ManifestWire {
     repository_id: String,
     release_tag: String,
     #[serde(default)]
-    repository_binding: Option<crate::models::RepositoryBinding>,
+    repository_binding: Option<crate::models::ModRepositoryBinding>,
     #[serde(default)]
     package_name: Option<String>,
     #[serde(default)]

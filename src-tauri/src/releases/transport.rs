@@ -58,7 +58,7 @@ pub(super) fn api_request_targets<'a>(
 /// Repository plans can narrow the global API list, but never authorize
 /// credentials at a proxy origin. Token grants remain a separate capability.
 pub(super) fn repository_api_targets<'a>(
-    repo: &crate::models::RepositoryConfig,
+    repo: &crate::releases::RepositoryRequest,
     official: &str,
     token: Option<&'a str>,
     official_only: bool,

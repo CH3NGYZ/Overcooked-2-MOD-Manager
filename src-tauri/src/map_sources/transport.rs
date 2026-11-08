@@ -2,7 +2,7 @@ use super::context::MapSourceContext;
 use super::document::MapSourceDocument;
 use super::document::parse_document;
 use crate::config::ConfigError;
-use crate::models::RepositoryConfig;
+use crate::releases::RepositoryRequest;
 use crate::repository_sources::SourceLocation;
 
 /// 读取并解析一个地图源文档（内置资源或远程地址）。
@@ -50,7 +50,16 @@ async fn verified_document(
         return None;
     };
     let reference = crate::releases::release_asset_reference(url)?;
-    let probe = coordinate_probe(&reference);
+    let probe = RepositoryRequest {
+        id: "release-asset-document".into(),
+        provider: reference.provider.clone(),
+        username: reference.username.clone(),
+        repository: reference.repository.clone(),
+        // Preserve the original default-plan selection for source documents.
+        kind: crate::models::RepositoryKind::Mod,
+        network_plan: Default::default(),
+        source_id: None,
+    };
     let key = crate::releases::repository_cache_key(
         reference.provider.clone(),
         &reference.username,
@@ -139,24 +148,4 @@ async fn verified_document(
         digest: asset.digest.clone(),
         candidates,
     })
-}
-
-/// 为「文档所在的仓库」造一个最小的 `RepositoryConfig`，只够取 Release 列表。
-fn coordinate_probe(reference: &crate::releases::ReleaseAssetReference) -> RepositoryConfig {
-    let export: crate::models::RepositoryExport = serde_json::from_value(serde_json::json!({
-        "name": format!("{}/{}", reference.username, reference.repository),
-        "name_i18n": {},
-        "group": "",
-        "group_i18n": {},
-        "provider": reference.provider,
-        "username": reference.username,
-        "repository": reference.repository,
-        "enabled": true,
-        "download_mode": "release",
-        "//": "文档可能落在很旧的 tag 里，列表要一次拿满",
-        "max_release_count": 100,
-        "install_target": "",
-    }))
-    .expect("文档校验投影的字段形状固定，构造失败说明模型改了默认值");
-    crate::config::repository_from_export(&export, "release-asset-document".to_string(), false)
 }

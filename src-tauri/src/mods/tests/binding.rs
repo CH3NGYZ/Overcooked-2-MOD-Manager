@@ -87,7 +87,7 @@ fn failed_release_source_does_not_rebind_to_another_cached_repository() {
 #[test]
 fn raw_binding_uses_identity_and_version_regex_without_release_comparison() {
     let mut raw = binding_repository();
-    raw.download_mode = crate::models::RepositoryDownloadMode::RepositoryFile;
+    raw.download_mode = crate::models::ModDownloadMode::RepositoryFile;
     raw.cached_releases = vec![high_cached_release()];
     for (guid, product, filename) in [
         (Some("COM.EXAMPLE.GUID"), None, None),
@@ -145,7 +145,7 @@ fn real_raw_source_wins_while_release_sources_keep_their_channel_rules() {
     release.channel = crate::models::Channel::Stable;
     let mut raw = binding_repository();
     raw.id = "raw".into();
-    raw.download_mode = crate::models::RepositoryDownloadMode::RepositoryFile;
+    raw.download_mode = crate::models::ModDownloadMode::RepositoryFile;
     // Raw selection ignores its unused channel field, including four-part versions.
     raw.channel = crate::models::Channel::Stable;
     assert_eq!(

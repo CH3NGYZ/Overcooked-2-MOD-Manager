@@ -1,4 +1,4 @@
-use crate::config::validation::validate_repository;
+use crate::config::validation::validate_mod_repository;
 use crate::models::*;
 
 #[test]
@@ -52,7 +52,7 @@ builtin = true
 
 #[test]
 fn unsafe_install_target_is_rejected() {
-    let result = validate_repository(&RepositoryExport {
+    let result = validate_mod_repository(&ModRepositoryExport {
         network_plan: Default::default(),
         kind: Default::default(),
         name: "bad".into(),
@@ -62,7 +62,7 @@ fn unsafe_install_target_is_rejected() {
         provider: Provider::Github,
         username: "a".into(),
         repository: "b".into(),
-        download_mode: RepositoryDownloadMode::Release,
+        download_mode: ModDownloadMode::Release,
         branch: String::new(),
         file_path: String::new(),
         region: None,
@@ -102,24 +102,27 @@ file_path = "bin/Release/OC2ManyRecipes.dll"
 install_target = "BepInEx/plugins"
 enabled = true
 "#;
-    let repository: RepositoryExport = toml::from_str(valid).unwrap();
-    assert!(validate_repository(&repository).is_ok());
+    let repository: ModRepositoryExport = toml::from_str(valid).unwrap();
+    assert!(validate_mod_repository(&repository).is_ok());
     assert_eq!(repository.channel, Channel::All);
 
     let missing_branch = valid.replace("branch = \"master\"\n", "");
-    let repository: RepositoryExport = toml::from_str(&missing_branch).unwrap();
-    assert!(validate_repository(&repository).is_err());
+    let repository: ModRepositoryExport = toml::from_str(&missing_branch).unwrap();
+    assert!(validate_mod_repository(&repository).is_err());
 
-    let repository: RepositoryExport = toml::from_str(valid).unwrap();
+    let repository: ModRepositoryExport = toml::from_str(valid).unwrap();
     for path in ["bin/*.dll", "bin/MOD?.dll", "../MOD.dll", "bin/./MOD.dll"] {
         let mut invalid = repository.clone();
         invalid.file_path = path.into();
-        assert!(validate_repository(&invalid).is_err(), "accepted {path}");
+        assert!(
+            validate_mod_repository(&invalid).is_err(),
+            "accepted {path}"
+        );
     }
     let mut invalid = repository;
     invalid.asset_rules.push(AssetRule {
         rule_type: AssetRuleType::Regex,
         value: ".*\\.dll".into(),
     });
-    assert!(validate_repository(&invalid).is_err());
+    assert!(validate_mod_repository(&invalid).is_err());
 }

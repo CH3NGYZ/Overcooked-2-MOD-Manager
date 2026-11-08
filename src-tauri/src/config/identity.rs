@@ -23,8 +23,8 @@ pub(crate) fn repository_address_key(
     )
 }
 
-pub(crate) fn repo_key(repo: &RepositoryConfig) -> String {
-    let export = RepositoryExport {
+pub(crate) fn repo_key(repo: &ModRepositoryConfig) -> String {
+    let export = ModRepositoryExport {
         network_plan: repo.network_plan.clone(),
         kind: repo.kind,
         name: String::new(),
@@ -62,14 +62,12 @@ pub(crate) fn source_repository_key(source_id: &str, identity: &str) -> String {
     format!("{}:{source_id}{identity}", source_id.len())
 }
 
-pub(crate) fn export_key(repo: &RepositoryExport) -> String {
+pub(crate) fn export_key(repo: &ModRepositoryExport) -> String {
     // Fields hidden by the current download mode are not repository identity.
     // Omitting them from an export must not change its ID on re-import.
     let (branch, file_path, asset_rules) = match repo.download_mode {
-        RepositoryDownloadMode::Release => ("", "", repo.asset_rules.as_slice()),
-        RepositoryDownloadMode::RepositoryFile => {
-            (repo.branch.as_str(), repo.file_path.as_str(), &[][..])
-        }
+        ModDownloadMode::Release => ("", "", repo.asset_rules.as_slice()),
+        ModDownloadMode::RepositoryFile => (repo.branch.as_str(), repo.file_path.as_str(), &[][..]),
     };
     format!(
         "{:?}|{}|{}|{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
@@ -89,17 +87,14 @@ pub(crate) fn export_key(repo: &RepositoryExport) -> String {
     )
 }
 
-/// 从导出模型构造仓库配置。
-///
-/// `pub(crate)` 是因为地图仓库要借它做 Release 抓取投影（见
-/// `map_sources/releases.rs::release_probe`）：两份模型都需要「一个能喂给
-/// `fetch_releases` 的完整 RepositoryConfig」，而字段默认值只有这里知道。
-pub(crate) fn repository_from_export(
-    repo: &RepositoryExport,
+/// 从 MOD 导出模型构造 MOD 配置，统一兼容字段和默认值。
+/// 地图与通用 Release 读取直接构造 RepositoryRequest，不经过 MOD 配置。
+pub(crate) fn mod_repository_from_export(
+    repo: &ModRepositoryExport,
     id: String,
     builtin: bool,
-) -> RepositoryConfig {
-    RepositoryConfig {
+) -> ModRepositoryConfig {
+    ModRepositoryConfig {
         network_plan: repo.network_plan.clone(),
         kind: repo.kind,
         id,

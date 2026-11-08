@@ -6,7 +6,7 @@ use super::availability::validate_repository_region;
 use crate::models::*;
 use std::path::Path;
 
-pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
+pub(crate) fn validate_mod_repository(repo: &ModRepositoryExport) -> Result<(), ConfigError> {
     crate::network_policy::NetworkPolicy::active()
         .and_then(|policy| policy.validate_selection(&repo.provider, repo.kind, &repo.network_plan))
         .map_err(ConfigError::Invalid)?;
@@ -30,7 +30,7 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
         )));
     }
     match repo.download_mode {
-        RepositoryDownloadMode::Release => {
+        ModDownloadMode::Release => {
             if repo.asset_rules.is_empty()
                 || repo
                     .asset_rules
@@ -40,7 +40,7 @@ pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigE
                 return Err(ConfigError::Invalid("config.assetRuleRequired".into()));
             }
         }
-        RepositoryDownloadMode::RepositoryFile => {
+        ModDownloadMode::RepositoryFile => {
             crate::releases::repository_file_url(
                 &repo.provider,
                 &repo.username,

@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
  *
  * ## 这次改动之前是什么样
  *
- * 同一件事在两个页面各有一份实现：MOD 安装页用模块级 `useRepositoryRefresh`，
+ * 同一件事在两个页面各有一份实现：MOD 安装页用模块级 `useModRepositoryRefresh`，
  * MOD 管理页另存一个页面级 `checkingUpdates`；地图管理页更彻底，直接 `for`
  * 循环调后端命令，和地图下载页的 `useMapSources` 完全没有交汇。表现就是
  * 「在这个页点刷新，那个页看不出在刷」，切走再回来按钮还会假装已经结束。
@@ -27,7 +27,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 const refreshState = read('src/refreshState.ts')
 const releaseRefresh = read('src/releaseRefresh.ts')
-const repositoryEngine = read('src/composables/useRepositoryRefresh.ts')
+const repositoryEngine = read('src/composables/useModRepositoryRefresh.ts')
 /** 分类里的卡片已下沉到 ModGroupBody（折叠槽索引见 `group-body-wiring.test.mjs`）。 */
 const modGroupBody = read('src/components/ModGroupBody.vue')
 const mapEngine = read('src/composables/useMapSources.ts')
@@ -46,7 +46,7 @@ test('刷新状态机只有一处实现，两个域都用它', () => {
   }
   assert.match(refreshState, /mapWithConcurrency\(/, '并发上限必须走共享限并发工具')
   for (const [name, source] of [
-    ['useRepositoryRefresh', repositoryEngine],
+    ['useModRepositoryRefresh', repositoryEngine],
     ['useMapSources', mapEngine],
   ]) {
     assert.match(source, /createRefreshState\(REFRESH_CONCURRENCY\)/, `${name} 必须用共享状态机`)
@@ -63,7 +63,7 @@ test('「刷一批带 Release 的条目」只有一处实现，两个域共用',
   assert.match(releaseRefresh, /export interface ReleaseFetchSpec/)
   assert.match(releaseRefresh, /export function prioritizeByIds/)
   // 两个域都得走它，而不是各自 mapWithConcurrency 一遍
-  assert.match(repositoryEngine, /runReleaseBatch<Repository>\(/)
+  assert.match(repositoryEngine, /runReleaseBatch<ModRepository>\(/)
   assert.match(mapEngine, /runReleaseBatch<MapInfo>\(/)
   /*
    * 「刷一个条目」的三件事 —— 请求 / 成功写回 / 失败写回 —— 每个域只定义一次
@@ -72,7 +72,7 @@ test('「刷一批带 Release 的条目」只有一处实现，两个域共用',
    * 域里不会各写一遍 try/catch 再各自决定什么时候写回。
    */
   for (const [name, source, spec] of [
-    ['useRepositoryRefresh', repositoryEngine, 'repositoryReleaseSpec'],
+    ['useModRepositoryRefresh', repositoryEngine, 'repositoryReleaseSpec'],
     ['useMapSources', mapEngine, 'mapReleaseSpec'],
   ]) {
     assert.match(source, new RegExp(`function ${spec}\\(`), `${name} 要有自己的 spec 定义`)
@@ -144,7 +144,7 @@ test('排队中也算「刷新中」：整批一开始所有目标都变灰', ()
 
 test('已安装优先下沉到批量实现，所有刷新入口自动生效', () => {
   // MOD 侧：整源 / 分组 / 刷新全部 / 检查更新 都经过 runRepositoryBatch
-  assert.match(repositoryEngine, /prioritizeInstalledRepositories\(\[\.\.\.items\], mods\.value\)/)
+  assert.match(repositoryEngine, /prioritizeInstalledModRepositories\(\[\.\.\.items\], mods\.value\)/)
   assert.match(repositoryEngine, /runRepositoryBatch\(/)
   // 地图侧：已装地图 id 由页面给（引擎不认识关卡集），但排序仍然走共享函数
   assert.match(mapEngine, /prioritizeByIds\(items, priorityIds\)/)
@@ -165,7 +165,7 @@ test('卡片标签由自订阅组件渲染，不依赖折叠插槽重渲染', ()
    * `shouldUpdateComponent` 会跳过它 —— 标签如果只吃页面塞进来的 props，
    * 刷新状态永远显示不出来（页头变了、卡片不动）。组件自己订阅刷新状态才行。
    */
-  assert.match(modStatusTags, /useRepositoryRefresh\(\)/, '标签组件要自己读刷新状态')
+  assert.match(modStatusTags, /useModRepositoryRefresh\(\)/, '标签组件要自己读刷新状态')
   assert.match(modStatusTags, /runtimeModStatus\(/, '标签内容与页头聚合共用同一份判定')
   assert.match(modGroupBody, /<ModStatusTags :dll-file="mod\.dll_file" \/>/, '卡片要改用该组件')
   assert.doesNotMatch(modGroupBody, /v-for="tag in modTags\(mod\)"/, '旧的页面内联标签必须删掉')

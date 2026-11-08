@@ -19,10 +19,10 @@ export function revealCard(find: () => HTMLElement | null) {
 }
 
 /** 跳到 MOD 安装页并高亮指定仓库。 */
-export function useRepositoryLink() {
+export function useModRepositoryLink() {
   const router = useRouter()
   return {
-    linkToRepository(repositoryId: string) {
+    linkToModRepository(repositoryId: string) {
       if (!repositoryId) return
       void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: repositoryId } })
     },

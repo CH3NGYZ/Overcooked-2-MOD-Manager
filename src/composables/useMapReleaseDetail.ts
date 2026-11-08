@@ -3,7 +3,7 @@ import { mapDependencyRows } from '../dependencyRows'
 import { pickI18n, t } from '../i18n'
 import { isPrereleaseVersion, formatVersion } from '../modStatus'
 import { matchedReleaseAssets } from '../repositoryAssets'
-import type { InstalledMod, MapInfo, ReleaseInfo, Repository, Provider } from '../types'
+import type { InstalledMod, MapInfo, ReleaseInfo, ModRepository, Provider } from '../types'
 
 import { repositoryHomepage } from '../providers'
 
@@ -11,7 +11,7 @@ interface UseMapReleaseDetailOptions {
   maps: MaybeRefOrGetter<readonly MapInfo[]>
   detailId: MaybeRefOrGetter<string | null>
   mods: MaybeRefOrGetter<readonly InstalledMod[]>
-  repositories: MaybeRefOrGetter<readonly Repository[]>
+  repositories: MaybeRefOrGetter<readonly ModRepository[]>
   mapName: (map: MapInfo) => string
 }
 

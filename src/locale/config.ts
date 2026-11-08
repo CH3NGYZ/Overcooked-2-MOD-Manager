@@ -60,7 +60,7 @@ export const config: DomainMessages = {
   fileModeExactAssetsOnly: {
     'zh-CN': '仓库文件模式的资产规则只支持具体文件',
     'zh-TW': '倉庫檔案模式的資產規則僅支援具體檔案',
-    en: 'Repository-file mode asset rules only support exact files',
+    en: 'ModRepository-file mode asset rules only support exact files',
     ko: '저장소 파일 모드의 자산 규칙은 구체적인 파일만 지원합니다',
     ja: 'リポジトリファイルモードのアセットルールは具体的なファイルのみ対応します',
   },
@@ -242,7 +242,7 @@ export const config: DomainMessages = {
   repositoryDeleted: {
     'zh-CN': '仓库已删除',
     'zh-TW': '倉庫已刪除',
-    en: 'Repository deleted',
+    en: 'ModRepository deleted',
     ko: '저장소를 삭제했습니다',
     ja: 'リポジトリを削除しました',
   },
@@ -256,21 +256,21 @@ export const config: DomainMessages = {
   tomlCopied: {
     'zh-CN': '仓库 TOML 已复制到剪贴板',
     'zh-TW': '倉庫 TOML 已複製到剪貼簿',
-    en: 'Repository TOML copied to the clipboard',
+    en: 'ModRepository TOML copied to the clipboard',
     ko: '저장소 TOML을 클립보드에 복사했습니다',
     ja: 'リポジトリの TOML をクリップボードにコピーしました',
   },
   labelSource: {
     'zh-CN': '仓库源',
     'zh-TW': '倉庫源',
-    en: 'Repository source',
+    en: 'ModRepository source',
     ko: '저장소 소스',
     ja: 'リポジトリソース',
   },
   repositoryLabeled: {
     'zh-CN': '仓库 {name}',
     'zh-TW': '倉庫 {name}',
-    en: 'Repository {name}',
+    en: 'ModRepository {name}',
     ko: '저장소 {name}',
     ja: 'リポジトリ {name}',
   },

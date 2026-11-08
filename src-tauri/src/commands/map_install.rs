@@ -237,7 +237,7 @@ pub async fn stage_map_release(
     crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
         // 取消标记只在命令入口重置，不能在等待元数据或补充候选之后重置
         archive::start_download();
-        // 与 `install_repository` 同口径：先把用户指定的版本与资产写进日志。
+        // 与 `install_mod_repository` 同口径：先把用户指定的版本与资产写进日志。
         // 资产选不出来（`source.noMatchingAsset`）时，这行是唯一能看出他点了哪个资产的地方。
         log::info!(
             "开始暂存地图来源：地图 ID={}，指定版本={}，指定资产={}",

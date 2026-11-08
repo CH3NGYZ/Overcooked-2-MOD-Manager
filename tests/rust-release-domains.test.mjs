@@ -64,7 +64,7 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(pagination, /received < RELEASE_PAGE_SIZE as usize/)
   assert.doesNotMatch(fetch, /filter_channel\(/)
   for (const file of ['fetch.rs', 'assets.rs']) {
-    assert.match(read(file), /!crate::community::is_source_archive\(repo, &release\.tag_name, &asset\.name\)/)
+    assert.match(read(file), /!crate::community::is_source_archive\(\s*&repo.provider,\s*repo.source_id.as_deref\(\),\s*&release\.tag_name,\s*&asset\.name,?\s*\)/)
   }
   const projection = read('projection.rs')
   assert.match(projection, /\|\| is_prerelease_version\(&tag\)/)
@@ -75,4 +75,21 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(read('../map_sources/releases.rs'), /crate::releases::fetch_releases\(/)
   assert.match(read('../map_sources/release_tags.rs'), /crate::releases::fetch_releases\(/)
   assert.match(read('../repository_readme.rs'), /releases::fetch_repository_default_branch\(/)
+})
+
+
+test('generic repository reads and map adapters do not construct MOD installation models', () => {
+  for (const file of ['fetch.rs', 'transport.rs', 'assets.rs']) {
+    assert.match(read(file), /RepositoryRequest/)
+    assert.doesNotMatch(read(file), /ModRepositoryConfig|install_target|plugin_guid/)
+  }
+  for (const file of ['../map_sources/releases.rs', '../map_sources/release_tags.rs', '../map_sources/transport.rs']) {
+    assert.match(read(file), /RepositoryRequest/)
+    assert.doesNotMatch(read(file), /ModRepositoryConfig|ModRepositoryExport|mod_repository_from_export/)
+  }
+  const models = read('../models/mod_repositories.rs')
+  assert.match(models, /pub struct ModRepositoryConfig/)
+  assert.match(models, /pub plugin_guid: String/)
+  assert.match(models, /pub install_target: String/)
+  assert.doesNotMatch(read('../models/repositories.rs'), /pub struct ModRepositoryConfig|pub plugin_guid:/)
 })

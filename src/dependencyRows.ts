@@ -36,7 +36,7 @@ import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
 import { formatVersionSpec } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
-  InstalledMod, LevelSetInfo, MapInfo, RelationKind, Repository, RepositoryRelation,
+  InstalledMod, LevelSetInfo, MapInfo, RelationKind, ModRepository, RepositoryRelation,
 } from './types'
 
 /**
@@ -111,9 +111,9 @@ export interface DependencyRowOptions {
   /** 本地已装 MOD（判断满足情况的对象）。 */
   mods?: readonly InstalledMod[]
   /** 在线 MOD 仓库（取名与找安装来源）。 */
-  repositories?: readonly Repository[]
+  repositories?: readonly ModRepository[]
   /** 声明方仓库：排除「装自己」，也是状态跳转的排除项。 */
-  ownerRepository?: Repository
+  ownerRepository?: ModRepository
   /** 文案翻译，缺省原样返回 key（测试/纯计算场景）。 */
   translate?: DependencyTranslate
   /** 名字本地化，缺省 zh-CN → 任意非空 → 回退值。 */
@@ -354,7 +354,7 @@ export function mapRelations(
  */
 export function installedModRelations(
   mod: InstalledMod,
-  repositories: readonly Repository[],
+  repositories: readonly ModRepository[],
 ): RepositoryRelation[] {
   const repo = repositoryForMod([...repositories], mod)
   if (!repo) return mod.relations ?? []
@@ -428,7 +428,7 @@ export function mergedModDependencyRows(
 ): DependencyRow[] {
   const repositories = options.repositories ?? []
   const merged: RepositoryRelation[] = []
-  let ownerRepository: Repository | undefined
+  let ownerRepository: ModRepository | undefined
   for (const mod of members) {
     if (mod.is_dependency) continue
     ownerRepository ??= repositoryForMod([...repositories], mod)

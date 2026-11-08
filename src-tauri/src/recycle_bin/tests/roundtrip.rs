@@ -24,7 +24,7 @@ fn repository_binding_survives_package_and_child_restore_and_rejects_changed_own
             workspace.write(&actual, b"bound plugin");
             workspace.write(B, b"sibling plugin");
             let mut original = workspace.manifest("package", &[A, B]);
-            original.repository_binding = Some(crate::models::RepositoryBinding {
+            original.repository_binding = Some(crate::models::ModRepositoryBinding {
                 provider: crate::models::Provider::Github,
                 owner: "Owner".into(),
                 repository: "Mod".into(),

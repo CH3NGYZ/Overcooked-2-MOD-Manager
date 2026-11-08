@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::models::{ReleaseInfo, RepositoryDownloadMode};
+use crate::models::{ModDownloadMode, ReleaseInfo};
 use crate::release_cache::freshness::RELEASE_CACHE_TTL_MS;
 use crate::release_cache::freshness::cache_is_fresh;
 use crate::release_cache::freshness::now_millis;
@@ -11,7 +11,7 @@ use tauri::State;
 /// 仅在线页右下角整批刷新传 `force = true` 跳过 5 分钟缓存；
 /// 卡片、分组、检查更新、启动和切页均传 `false`（或缺省）。
 #[tauri::command]
-pub async fn refresh_repository(
+pub async fn refresh_mod_repository(
     state: State<'_, AppState>,
     repository_id: String,
     force: Option<bool>,
@@ -41,14 +41,14 @@ pub async fn refresh_repository(
          * 都按「当前不存在」处理 —— 界面上根本没有这张卡片，
          * 刷新入口也就无从触发。
          */
-        if !crate::config::repository_is_available(
+        if !crate::config::mod_repository_is_available(
             &config,
             &config.repositories[index],
             crate::config::current_user_region(),
         ) {
             return Err("source.repositoryUnavailableInRegion".into());
         }
-        if config.repositories[index].download_mode == RepositoryDownloadMode::RepositoryFile {
+        if config.repositories[index].download_mode == ModDownloadMode::RepositoryFile {
             // 这条消息会直接展示在「刷新全部仓库源」的结果里，写成用户能看懂的话
             log::debug!(
                 "跳过仓库文件模式的 Release 刷新：仓库={}",
@@ -82,7 +82,7 @@ pub async fn refresh_repository(
 
         let client =
             releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
-        let token = state.config.repository_api_token(&config, &repo);
+        let token = state.config.mod_repository_api_token(&config, &repo);
         let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
         log::debug!(
             "请求仓库 Release API：仓库={}，平台={:?}，代理数={}，最大 Release 数={}",
@@ -98,7 +98,7 @@ pub async fn refresh_repository(
             .list(key, None, force, || async {
                 releases::fetch_releases(
                     &client,
-                    &repo,
+                    &crate::releases::RepositoryRequest::from(&repo),
                     token.as_deref(),
                     config.auth.official_api_only,
                     api_proxies,

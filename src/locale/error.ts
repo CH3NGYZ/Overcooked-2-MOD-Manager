@@ -444,7 +444,7 @@ export const error: DomainMessages = {
   'source.idOrNicknameEmpty': {
     'zh-CN': '仓库源 ID 和昵称不能为空',
     'zh-TW': '倉庫源 ID 和暱稱不能為空',
-    en: 'Repository source ID and nickname cannot be empty',
+    en: 'ModRepository source ID and nickname cannot be empty',
     ko: '저장소 소스 ID와 별명을 비워 둘 수 없습니다',
     ja: 'リポジトリソースの ID とニックネームは空にできません',
   },

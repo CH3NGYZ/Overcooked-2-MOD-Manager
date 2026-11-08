@@ -26,13 +26,13 @@ import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { versionDisplay } from '../modStatus'
 import { markdownSummary } from '../markdown'
 import { formatVersionSpec } from '../versionSpec'
-import { repositoryIsAvailable } from '../repositoryAvailability'
-import { useFocusHighlight, useLevelSetLink, useRepositoryLink } from '../crossLink'
+import { modRepositoryIsAvailable } from '../repositoryAvailability'
+import { useFocusHighlight, useLevelSetLink, useModRepositoryLink } from '../crossLink'
 import { dependencyTagFor } from '../modRelations'
 import {
   frameworkStates,
   levelSetForMap,
-  mapRelationRepository,
+  mapRelationSubject,
   mapRelationStatuses,
   type FrameworkState,
 } from '../levelSetStatus'
@@ -57,7 +57,7 @@ import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
-import type { InstallSource, LevelSetInfo, MapInfo, Repository } from '../types'
+import type { InstallSource, LevelSetInfo, MapInfo, ModRepository } from '../types'
 import { withDemoMaps } from '../tutorial/demo'
 import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
 
@@ -92,7 +92,7 @@ import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
  * 后端 `get_maps` 不填 `unmet_frameworks`（契约冻结）：依赖是否满足要用
  * 当前 Dashboard 的 MOD 列表判，而这份列表前端本来就有，交给后端等于每次
  * 打开页面再扫一遍 `BepInEx/plugins`。判定本身复用 MOD 侧同一条管线
- * （`mapRelationRepository` 把地图投影成 `Repository` 再走 `resolveRelations`）。
+ * （`mapRelationSubject` 仅提供关系上下文，再走共享 `resolveRelations`）。
  *
  * ## 安装入口在安装页
  *
@@ -118,7 +118,7 @@ const { mods, game, config, load, ensureLoaded } = useDashboard()
 const { highlightId } = useFocusHighlight()
 const { linkToLevelSets } = useLevelSetLink()
 /** 缺依赖的落点：MOD 安装页里那张能补上依赖的仓库卡片（与 MOD 管理页一致）。 */
-const { linkToRepository } = useRepositoryLink()
+const { linkToModRepository } = useModRepositoryLink()
 
 /*
  * 地图源数据与刷新状态都来自模块级单例（`useMapSources`）。
@@ -193,9 +193,9 @@ const gameProbed = computed(() => !!game.value?.path)
  * 所以缺框架时能像 MOD 的依赖一样被装上。传空数组会让「安装前检查」只显示
  * 一句「缺依赖」而没有可执行的步骤，用户还得自己去设置页找框架。
  */
-const repositories = computed<Repository[]>(() =>
+const repositories = computed<ModRepository[]>(() =>
   (config.value?.repositories ?? []).filter((repo) =>
-    repositoryIsAvailable(
+    modRepositoryIsAvailable(
       repo,
       config.value?.repository_sources,
       config.value?.region,
@@ -207,13 +207,8 @@ const repositories = computed<Repository[]>(() =>
  * 安装前检查。
  *
  * 地图的 `relations` 与 MOD 仓库的 `relations` 是同一套模型，所以判定逻辑也
- * 共用 `useInstallPlanGate`：它需要一个 `Repository` 作为关系来源。地图不是
- * `Repository`，这里走 `mapRelationRepository` 的**投影**把声明搬过去，
- * 与「地图管理」页算依赖缺失用的是同一份实现。
- *
- * 弹窗、执行顺序与「装依赖」步骤都来自 MOD 那一套（`InstallPlanDialog` +
- * `buildInstallPlan`）：地图安装与 MOD 安装在用户眼里是同一个动作 ——
- * 「把线上这个东西装到本地，缺的前置先补齐」。
+ * 共用 useInstallPlanGate 的最小 RelationSubject。地图只提供身份、显示名、
+ * Release 和关系上下文；依赖候选仍来自真实 MOD 仓库，不构造虚拟 MOD。
  */
 const planGate = useInstallPlanGate({
   mods: () => mods.value,
@@ -495,12 +490,12 @@ function jumpToDependency(map: MapInfo) {
     mapRelationStatuses(map, mods.value, repositories.value),
     hasLocalMap(map),
   )
-  if (tag?.repositoryId) linkToRepository(tag.repositoryId)
+  if (tag?.repositoryId) linkToModRepository(tag.repositoryId)
 }
 
 /** 依赖表里可跳的行：同样落到那张仓库卡片上。 */
 function openDependencyJump(row: DependencyRow) {
-  if (row.jump) linkToRepository(row.jump.id)
+  if (row.jump) linkToModRepository(row.jump.id)
 }
 
 /** 主按钮文案：与 MOD 安装页共用同一批 key。 */
@@ -554,7 +549,7 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
   if (isInstalling(map) || isRefreshing(map)) return
   const targetTag = tag ?? map.latest_tag ?? undefined
   // 前置检查：地图缺框架时装上也跑不起来，必须先让用户看到
-  const ready = await planGate.run(mapRelationRepository(map, targetTag), targetTag)
+  const ready = await planGate.run(mapRelationSubject(map, targetTag), targetTag)
   if (!ready) return
 
   setFlag(installing, map.id, true)

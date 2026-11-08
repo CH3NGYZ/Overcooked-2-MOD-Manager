@@ -118,7 +118,7 @@ fn confirm_mod_install_blocking(
      *
      * 走 install_manual_mod 会给包分配新的 `manual-<uuid>` 清单，
      * 于是同仓库的旧包永远不会被回收 —— 用户装三次就得到三份副本。
-     * 有来源记录时改走 install_staged_repository，它会先按仓库身份
+     * 有来源记录时改走 install_staged_mod_repository，它会先按仓库身份
      * 回收所有旧包再解压新文件。
      */
     let result = match read_origin_record(&state, &preview_id) {
@@ -129,7 +129,7 @@ fn confirm_mod_install_blocking(
                 origin.repository_id,
                 origin.release_tag
             );
-            crate::mods::install::install_staged_repository(
+            crate::mods::install::install_staged_mod_repository(
                 &state,
                 &file,
                 &origin.repository_id,

@@ -19,7 +19,7 @@ const {
   mapVersionRefs,
   mapForLevelSet,
   levelSetForMap,
-  mapRelationRepository,
+  mapRelationSubject,
   frameworkStates,
   mapDependencyMissing,
   levelSetCardTags,
@@ -409,8 +409,8 @@ test('作者名：线上与本地都为空时两行都空（视图显示 —）'
   assert.deepEqual(names, { zh: '', en: '' })
 })
 
-test('地图投影成 Repository 时把 required_frameworks 变成 requires 依赖', () => {
-  const repo = mapRelationRepository(map({
+test('地图投影成 ModRepository 时把 required_frameworks 变成 requires 依赖', () => {
+  const repo = mapRelationSubject(map({
     required_frameworks: [
       { guid: 'com.rw.diylevel', version: '>=1.0.0' },
       { guid: 'com.rw.diylevel.web', version: '' },
@@ -425,10 +425,10 @@ test('地图投影成 Repository 时把 required_frameworks 变成 requires 依�
 
 test('没有 cached_releases 时用 latest_release 兜底，保持仓库同形', () => {
   const latest = { tag_name: 'v0.73', name: 'v0.73', body: '', prerelease: false, draft: false, assets: [] }
-  const repo = mapRelationRepository(map({ cached_releases: undefined, latest_release: latest }))
+  const repo = mapRelationSubject(map({ cached_releases: undefined, latest_release: latest }))
   assert.deepEqual(repo.cached_releases, [latest])
-  assert.equal(repo.download_mode, 'release')
-  assert.equal(repo.install_target, '')
+  assert.equal('download_mode' in repo, false)
+  assert.equal('install_target' in repo, false)
 })
 
 test('框架依赖：装了且在区间内才算满足', () => {

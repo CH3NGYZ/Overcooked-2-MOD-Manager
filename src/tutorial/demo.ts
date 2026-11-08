@@ -5,7 +5,7 @@ import type {
   MapInfo,
   ReleaseAsset,
   ReleaseInfo,
-  Repository,
+  ModRepository,
   RepositoryReadme,
   RepositorySource,
 } from '../types'
@@ -64,7 +64,7 @@ const DEMO_DOWNLOAD_URL = 'https://example.invalid/tutorial-sample.zip'
 
 /** 当前这批示例数据。`startTutorialDemo()` 重建，`stopTutorialDemo()` 清空。 */
 let demoMods: InstalledMod[] = []
-let demoRepositories: Repository[] = []
+let demoRepositories: ModRepository[] = []
 let demoSources: RepositorySource[] = []
 let demoMaps: MapInfo[] = []
 
@@ -185,7 +185,7 @@ interface DemoRepositorySpec {
   versions: DemoVersion[]
 }
 
-function demoRepository(spec: DemoRepositorySpec): Repository {
+function demoRepository(spec: DemoRepositorySpec): ModRepository {
   return {
     id: spec.id,
     name: spec.title,
@@ -262,7 +262,7 @@ function buildDemoSources(): RepositorySource[] {
   ]
 }
 
-function buildDemoRepositories(): Repository[] {
+function buildDemoRepositories(): ModRepository[] {
   return [
     demoRepository({
       id: `${DEMO_ID_PREFIX}repo-a`,
@@ -347,7 +347,7 @@ export function withDemoMods(real: readonly InstalledMod[]): InstalledMod[] {
  * MOD 安装页的源列表：教程期间整体替换成示例源。
  *
  * 必须和 `withDemoRepositories` 一起用 —— 仓库可用性判定会查「所属源是否
- * 存在」，只换仓库不换源的话示例卡片会被 `repositoryIsAvailable` 全部滤掉，
+ * 存在」，只换仓库不换源的话示例卡片会被 `modRepositoryIsAvailable` 全部滤掉，
  * 页面看起来比教程之前还空。
  */
 export function withDemoSources(real: readonly RepositorySource[]): RepositorySource[] {
@@ -356,8 +356,8 @@ export function withDemoSources(real: readonly RepositorySource[]): RepositorySo
 }
 
 /** MOD 安装页的仓库列表：教程期间整体替换成示例仓库（理由见文件头）。 */
-export function withDemoRepositories(real: readonly Repository[]): Repository[] {
-  if (!demoActive.value) return real as Repository[]
+export function withDemoRepositories(real: readonly ModRepository[]): ModRepository[] {
+  if (!demoActive.value) return real as ModRepository[]
   return demoRepositories
 }
 

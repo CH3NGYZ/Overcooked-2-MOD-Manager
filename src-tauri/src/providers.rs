@@ -8,9 +8,8 @@ mod gitee;
 mod github;
 
 pub(crate) use coordinates::{
-    ReleaseAssetReference, release_asset_reference, repository_cache_key, repository_coordinates,
-    repository_file_name, repository_file_url, repository_release_api_url,
-    repository_release_api_url_page,
+    release_asset_reference, repository_cache_key, repository_coordinates, repository_file_name,
+    repository_file_url, repository_release_api_url, repository_release_api_url_page,
 };
 
 pub(crate) struct Infrastructure {

@@ -8,10 +8,10 @@
  * 就全丢了：回来只剩一个旧列表，用户完全不知道后台那次刷新还在跑，
  * 也看不到任何加载反馈。
  *
- * MOD 安装页没有这个问题，因为它的刷新状态在 `useRepositoryRefresh` 里同样
+ * MOD 安装页没有这个问题，因为它的刷新状态在 `useModRepositoryRefresh` 里同样
  * 是模块级单例。这里与之对齐：数据与状态都在模块作用域，页面只是渲染它们。
  *
- * ## 与 `useRepositoryRefresh` 的差别
+ * ## 与 `useModRepositoryRefresh` 的差别
  *
  * MOD 侧的数据源是 Dashboard（`game`/`mods`/`config`），刷新引擎只持有
  * 「谁在刷」。地图侧的数据是独立的一份（`maps`），没有对应的 store，
@@ -28,7 +28,7 @@ import { useLevelSetScan } from './useLevelSetScan'
 import { mapForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
 import type { MapInfo } from '../types'
 
-/** 并行上限（4 组），与仓库侧 `useRepositoryRefresh` 的取值保持一致。 */
+/** 并行上限（4 组），与仓库侧 `useModRepositoryRefresh` 的取值保持一致。 */
 const REFRESH_CONCURRENCY = 4
 
 /**
@@ -58,7 +58,7 @@ const loading = ref(true)
 const installing = ref<Record<string, boolean>>({})
 
 /**
- * 刷新状态（与仓库侧 `useRepositoryRefresh` 同一份实现 `createRefreshState`）。
+ * 刷新状态（与仓库侧 `useModRepositoryRefresh` 同一份实现 `createRefreshState`）。
  *
  * 条目级 `refreshing`、源级 `refreshingSources`、整批 `refreshingAll`、
  * 检查更新 `checkingBound` 与结果 `outcome` 全部来自它 —— 两套刷新的**规则**

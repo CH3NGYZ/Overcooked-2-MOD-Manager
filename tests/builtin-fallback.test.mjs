@@ -10,7 +10,7 @@ import test from 'node:test'
  * 测试会「失败得看起来像代码没修」，非常容易误判。
  */
 const refresh = readFileSync(
-  new URL('../src/composables/useRepositoryRefresh.ts', import.meta.url),
+  new URL('../src/composables/useModRepositoryRefresh.ts', import.meta.url),
   'utf8',
 ).replace(/\r\n/g, '\n')
 const resources = readFileSync(

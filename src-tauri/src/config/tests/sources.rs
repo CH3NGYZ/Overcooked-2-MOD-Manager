@@ -4,7 +4,7 @@ use crate::config::availability::REGION_INTERNATIONAL;
 use crate::config::availability::current_user_region;
 use crate::config::availability::repository_source_matches_region;
 use crate::config::defaults::default_config;
-use crate::config::identity::repository_from_export;
+use crate::config::identity::mod_repository_from_export;
 use crate::config::migrations::contains_legacy_repository_proxy_fields;
 use crate::config::sources::builtin_repository_sources_for_region;
 use crate::config::sources::merge_builtin_repository_sources;
@@ -180,7 +180,7 @@ fn builtin_source_migration_removes_obsolete_trees_and_preserves_custom_sources(
     custom.url = "https://example.com/custom.toml".into();
     custom.builtin = false;
     config.repository_sources = vec![old_root, child, grandchild, custom.clone()];
-    let export: RepositoryExport = toml::from_str(
+    let export: ModRepositoryExport = toml::from_str(
         r#"
 name = "Custom MOD"
 name_i18n.zh-CN = "Custom MOD"
@@ -199,11 +199,11 @@ value = "MOD.dll"
 "#,
     )
     .unwrap();
-    let mut old_fallback = repository_from_export(&export, "fallback".into(), true);
+    let mut old_fallback = mod_repository_from_export(&export, "fallback".into(), true);
     old_fallback.source_id = None;
-    let mut old_source_repo = repository_from_export(&export, "old-repo".into(), false);
+    let mut old_source_repo = mod_repository_from_export(&export, "old-repo".into(), false);
     old_source_repo.source_id = Some("old-grandchild".into());
-    let mut custom_repo = repository_from_export(&export, "custom-repo".into(), false);
+    let mut custom_repo = mod_repository_from_export(&export, "custom-repo".into(), false);
     custom_repo.source_id = Some(custom.id.clone());
     config.repositories = vec![old_fallback, old_source_repo, custom_repo];
     assert!(merge_builtin_repository_sources(
@@ -346,7 +346,7 @@ fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_field
         .into_iter()
         .map(|(id, source_id, builtin)| {
             let mut repository =
-                repository_from_export(&document.repositories[0], id.into(), builtin);
+                mod_repository_from_export(&document.repositories[0], id.into(), builtin);
             repository.source_id = source_id;
             repository
         })

@@ -11,7 +11,7 @@ pub(crate) fn collect_update_status(
         .iter()
         // 不可用的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
         .filter(|repo| {
-            crate::config::repository_is_available(
+            crate::config::mod_repository_is_available(
                 config,
                 repo,
                 crate::config::current_user_region(),
@@ -19,14 +19,14 @@ pub(crate) fn collect_update_status(
         })
         .map(|repo| {
             let local_mod = installed.iter().find(|item| {
-                (repo.download_mode == RepositoryDownloadMode::RepositoryFile
+                (repo.download_mode == ModDownloadMode::RepositoryFile
                     || (item.status != "not_release_asset"
                         && item.status != "duplicate_lower_version"))
                     && (item.repository_ids.iter().any(|id| id == &repo.id)
                         || item.repository_id.as_deref() == Some(repo.id.as_str()))
             });
             let local = local_mod.and_then(mods::local_update_version);
-            if repo.download_mode == RepositoryDownloadMode::RepositoryFile {
+            if repo.download_mode == ModDownloadMode::RepositoryFile {
                 return UpdateStatus {
                     repository_id: repo.id.clone(),
                     local_version: local,
@@ -56,8 +56,8 @@ pub(crate) fn collect_update_status(
         .collect()
 }
 
-pub(super) fn repository_remote_version(repo: &RepositoryConfig) -> Option<String> {
-    if repo.download_mode == RepositoryDownloadMode::RepositoryFile || repo.last_error.is_some() {
+pub(super) fn repository_remote_version(repo: &ModRepositoryConfig) -> Option<String> {
+    if repo.download_mode == ModDownloadMode::RepositoryFile || repo.last_error.is_some() {
         return None;
     }
     repo.cached_releases.first().and_then(|release| {
@@ -69,13 +69,13 @@ pub(super) fn repository_remote_version(repo: &RepositoryConfig) -> Option<Strin
 }
 
 pub(super) fn repository_update_state(
-    repo: Option<&RepositoryConfig>,
+    repo: Option<&ModRepositoryConfig>,
     installed_version: Option<&str>,
 ) -> (bool, &'static str) {
     let Some(repo) = repo else {
         return (false, "unbound");
     };
-    if repo.download_mode == RepositoryDownloadMode::RepositoryFile {
+    if repo.download_mode == ModDownloadMode::RepositoryFile {
         return (false, "not_release_asset");
     }
     if repo.last_error.is_some() {
@@ -93,8 +93,8 @@ pub(super) fn repository_update_state(
 }
 
 pub(super) fn bound_release<'a>(
-    repo: &'a RepositoryConfig,
-    binding: &RepositoryBinding,
+    repo: &'a ModRepositoryConfig,
+    binding: &ModRepositoryBinding,
 ) -> Option<&'a crate::models::ReleaseInfo> {
     if repo.last_error.is_some() || !binding.matches_repository(repo) {
         return None;
@@ -131,8 +131,8 @@ pub(super) fn effective_local_version(binding_tag: &str, dll_version: Option<&st
 }
 
 pub(super) fn binding_update_state(
-    repo: Option<&RepositoryConfig>,
-    binding: &RepositoryBinding,
+    repo: Option<&ModRepositoryConfig>,
+    binding: &ModRepositoryBinding,
     dll_version: Option<&str>,
 ) -> (bool, &'static str) {
     let Some(repo) = repo else {
@@ -175,7 +175,7 @@ pub(crate) fn local_update_version(installed: &InstalledMod) -> Option<String> {
 }
 
 pub(crate) fn remote_update_version(
-    repo: &RepositoryConfig,
+    repo: &ModRepositoryConfig,
     installed: Option<&InstalledMod>,
 ) -> Option<String> {
     match installed.and_then(|installed| installed.repository_binding.as_ref()) {
@@ -185,7 +185,7 @@ pub(crate) fn remote_update_version(
 }
 
 pub(crate) fn mod_update_state(
-    repo: &RepositoryConfig,
+    repo: &ModRepositoryConfig,
     installed: &InstalledMod,
 ) -> (bool, &'static str) {
     installed_update_state(
@@ -196,11 +196,11 @@ pub(crate) fn mod_update_state(
 }
 
 pub(super) fn installed_update_state(
-    repo: Option<&RepositoryConfig>,
-    binding: Option<&RepositoryBinding>,
+    repo: Option<&ModRepositoryConfig>,
+    binding: Option<&ModRepositoryBinding>,
     version: Option<&str>,
 ) -> (bool, &'static str) {
-    if repo.is_some_and(|repo| repo.download_mode == RepositoryDownloadMode::RepositoryFile) {
+    if repo.is_some_and(|repo| repo.download_mode == ModDownloadMode::RepositoryFile) {
         return (false, "not_release_asset");
     }
     match binding {

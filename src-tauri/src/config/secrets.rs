@@ -123,7 +123,12 @@ impl ConfigService {
         Ok(())
     }
 
-    pub fn set_repository_tokens(&self, repo: &mut RepositoryConfig, github: &str, gitee: &str) {
+    pub fn set_mod_repository_tokens(
+        &self,
+        repo: &mut ModRepositoryConfig,
+        github: &str,
+        gitee: &str,
+    ) {
         if !github.is_empty() {
             repo.github_token = protect_secret(github).unwrap_or_default();
         }
@@ -132,7 +137,7 @@ impl ConfigService {
         }
     }
 
-    pub fn repository_token(&self, repo: &RepositoryConfig) -> Option<String> {
+    pub fn mod_repository_token(&self, repo: &ModRepositoryConfig) -> Option<String> {
         match repo.provider {
             Provider::Github => reveal_secret(&repo.github_token),
             Provider::Gitee => reveal_secret(&repo.gitee_token),
@@ -140,12 +145,12 @@ impl ConfigService {
         }
     }
 
-    pub(crate) fn repository_api_token(
+    pub(crate) fn mod_repository_api_token(
         &self,
         config: &AppConfig,
-        repo: &RepositoryConfig,
+        repo: &ModRepositoryConfig,
     ) -> Option<String> {
-        self.repository_token(repo)
+        self.mod_repository_token(repo)
             .or_else(|| self.api_token(config, &repo.provider))
     }
 

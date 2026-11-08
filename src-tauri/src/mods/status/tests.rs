@@ -4,7 +4,7 @@ use crate::mods::test_support::{config, repository};
 #[test]
 fn update_summary_prefers_a_bound_tag_over_dll_metadata_and_supports_opaque_tags() {
     for tag in ["v1.0.0", "old-nightly"] {
-        let mut repo = repository("release", RepositoryDownloadMode::Release);
+        let mut repo = repository("release", ModDownloadMode::Release);
         repo.cached_releases[0].tag_name = if tag == "old-nightly" {
             "new-nightly".into()
         } else {
@@ -14,7 +14,7 @@ fn update_summary_prefers_a_bound_tag_over_dll_metadata_and_supports_opaque_tags
         // DLL 元数据版本故意与清单 tag 不同、但低于线上版本：
         // 更新结论按清单 tag 算，local_version 也显示清单 tag。
         local.version = Some("0.9.0".into());
-        local.repository_binding = RepositoryBinding::from_release(&repo, tag);
+        local.repository_binding = ModRepositoryBinding::from_release(&repo, tag);
         let status = collect_update_status(&config(vec![repo]), &[local]);
         assert_eq!(status[0].local_version.as_deref(), Some(tag));
         assert_eq!(status[0].state, "update_available");
@@ -33,7 +33,7 @@ fn installed(repository_id: &str, status: &str) -> InstalledMod {
 
 #[test]
 fn raw_update_status_ignores_cached_releases_and_api_errors() {
-    let mut raw = repository("raw", RepositoryDownloadMode::RepositoryFile);
+    let mut raw = repository("raw", ModDownloadMode::RepositoryFile);
     raw.last_error = Some("obsolete Release request failure".into());
     let statuses =
         collect_update_status(&config(vec![raw]), &[installed("raw", "not_release_asset")]);
@@ -45,8 +45,8 @@ fn raw_update_status_ignores_cached_releases_and_api_errors() {
 
 #[test]
 fn raw_installed_mod_cannot_supply_a_release_local_version() {
-    let raw = repository("raw", RepositoryDownloadMode::RepositoryFile);
-    let release = repository("release", RepositoryDownloadMode::Release);
+    let raw = repository("raw", ModDownloadMode::RepositoryFile);
+    let release = repository("release", ModDownloadMode::Release);
     let mut local = installed("raw", "not_release_asset");
     local.repository_ids.push("release".into());
     let statuses = collect_update_status(&config(vec![raw, release]), &[local]);
@@ -58,7 +58,7 @@ fn raw_installed_mod_cannot_supply_a_release_local_version() {
 
 #[test]
 fn release_installed_mod_still_reports_updates() {
-    let release = repository("release", RepositoryDownloadMode::Release);
+    let release = repository("release", ModDownloadMode::Release);
     let statuses = collect_update_status(&config(vec![release]), &[installed("release", "latest")]);
     assert_eq!(statuses[0].local_version.as_deref(), Some("1.2.3.4"));
     assert_eq!(statuses[0].remote_version.as_deref(), Some("99.0.0"));
@@ -68,7 +68,7 @@ fn release_installed_mod_still_reports_updates() {
 #[test]
 fn failed_release_refresh_overrides_cached_update_summary() {
     for cached_version in ["1.2.3.4", "99.0.0"] {
-        let mut release = repository("release", RepositoryDownloadMode::Release);
+        let mut release = repository("release", ModDownloadMode::Release);
         release.cached_releases[0].version = Some(cached_version.into());
         release.cached_releases[0].tag_name = format!("v{cached_version}");
         release.last_error = Some("Release request failed".into());
@@ -82,14 +82,14 @@ fn failed_release_refresh_overrides_cached_update_summary() {
 
 #[test]
 fn empty_release_or_invalid_versions_cannot_confirm_latest() {
-    let mut release = repository("release", RepositoryDownloadMode::Release);
+    let mut release = repository("release", ModDownloadMode::Release);
     release.cached_releases.clear();
     let local = installed("release", "latest");
     let statuses = collect_update_status(&config(vec![release]), std::slice::from_ref(&local));
     assert_eq!(statuses[0].state, "unknown");
     assert_eq!(statuses[0].remote_version, None);
 
-    let mut release = repository("release", RepositoryDownloadMode::Release);
+    let mut release = repository("release", ModDownloadMode::Release);
     release.cached_releases[0].version = Some("not-a-version".into());
     let statuses = collect_update_status(&config(vec![release]), std::slice::from_ref(&local));
     assert_eq!(statuses[0].state, "unknown");
@@ -97,7 +97,7 @@ fn empty_release_or_invalid_versions_cannot_confirm_latest() {
 
 #[test]
 fn successful_release_retry_restores_update_summary() {
-    let mut release = repository("release", RepositoryDownloadMode::Release);
+    let mut release = repository("release", ModDownloadMode::Release);
     release.last_error = Some("Release request failed".into());
     let local = installed("release", "repository_unavailable");
     let failed =
@@ -114,9 +114,9 @@ fn successful_release_retry_restores_update_summary() {
 
 #[test]
 fn failed_release_does_not_borrow_a_successful_bound_repositories_state() {
-    let mut failed = repository("failed", RepositoryDownloadMode::Release);
+    let mut failed = repository("failed", ModDownloadMode::Release);
     failed.last_error = Some("Release request failed".into());
-    let mut current = repository("current", RepositoryDownloadMode::Release);
+    let mut current = repository("current", ModDownloadMode::Release);
     current.cached_releases[0].version = Some("1.2.3.4".into());
     let mut local = installed("failed", "repository_unavailable");
     local.repository_ids.push("current".into());
@@ -129,7 +129,7 @@ fn failed_release_does_not_borrow_a_successful_bound_repositories_state() {
 #[test]
 fn release_update_summary_uses_the_loaded_copy_in_both_scan_orders() {
     for online_version in ["19.0", "20.0"] {
-        let mut release = repository("release", RepositoryDownloadMode::Release);
+        let mut release = repository("release", ModDownloadMode::Release);
         release.cached_releases[0].version = Some(online_version.into());
         release.cached_releases[0].tag_name = format!("v{online_version}");
         let config = config(vec![release]);
@@ -158,8 +158,8 @@ fn release_update_summary_uses_the_loaded_copy_in_both_scan_orders() {
 
 #[test]
 fn lower_raw_copy_keeps_its_installation_source_and_never_reports_a_release_update() {
-    let raw = repository("raw", RepositoryDownloadMode::RepositoryFile);
-    let release = repository("release", RepositoryDownloadMode::Release);
+    let raw = repository("raw", ModDownloadMode::RepositoryFile);
+    let release = repository("release", ModDownloadMode::Release);
     let mut lower_raw = installed("raw", "not_release_asset");
     lower_raw.version = Some("18.3".into());
     lower_raw.load_warning = Some("存在更高版本，建议卸载".into());

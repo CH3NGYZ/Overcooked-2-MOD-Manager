@@ -11,7 +11,7 @@ use super::*;
 fn manual_downgrade_keeps_latest_until_remote_moves_forward() {
     let mut repo = binding_repository();
     repo.cached_releases = vec![high_cached_release()];
-    let binding = crate::models::RepositoryBinding::from_release(&repo, "v99.0.0").unwrap();
+    let binding = crate::models::ModRepositoryBinding::from_release(&repo, "v99.0.0").unwrap();
     // 清单 tag 就是线上最新版，DLL 被替换成更旧的 1.2.0
     assert_eq!(
         super::binding_update_state(Some(&repo), &binding, Some("1.2.0")),
@@ -35,7 +35,7 @@ fn manual_upgrade_suppresses_update_without_hiding_real_one() {
     let mut repo = binding_repository();
     repo.cached_releases = vec![high_cached_release()];
     // 清单 tag 是旧版本 v1.0.0，DLL 已经是线上的 99.0.0
-    let binding = crate::models::RepositoryBinding::from_release(&repo, "v1.0.0").unwrap();
+    let binding = crate::models::ModRepositoryBinding::from_release(&repo, "v1.0.0").unwrap();
     assert_eq!(
         super::binding_update_state(Some(&repo), &binding, Some("99.0.0")),
         (false, "latest")
@@ -115,7 +115,7 @@ fn downgraded_dll_still_shows_latest_label() {
  */
 #[test]
 fn raw_repository_mods_never_report_unknown_version() {
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "raw-1", "name": "Raw", "provider": "github", "username": "u", "repository": "r",
         "download_mode": "repository_file", "branch": "main", "file_path": "mod.dll",
         "channel": "all", "asset_rules": [], "install_target": "BepInEx/plugins",
@@ -127,7 +127,7 @@ fn raw_repository_mods_never_report_unknown_version() {
     // RAW 仓库没有 cached_releases，但绑定存在
     let (update, status) = super::binding_update_state(
         Some(&repo),
-        &crate::models::RepositoryBinding {
+        &crate::models::ModRepositoryBinding {
             provider: crate::models::Provider::Github,
             owner: "u".into(),
             repository: "r".into(),
@@ -185,7 +185,7 @@ fn explicit_repository_tags_override_dll_versions_for_every_source_type() {
         repo.source_id = source.map(str::to_string);
         repo.builtin = source == Some("official");
         repo.cached_releases = vec![high_cached_release()];
-        let binding = crate::models::RepositoryBinding::from_release(&repo, "v98.0.0").unwrap();
+        let binding = crate::models::ModRepositoryBinding::from_release(&repo, "v98.0.0").unwrap();
         assert_eq!(
             super::binding_update_state(Some(&repo), &binding, None),
             (true, "update_available")
@@ -213,7 +213,7 @@ fn explicit_repository_tags_override_dll_versions_for_every_source_type() {
 fn opaque_tags_and_channel_provider_boundaries_are_preserved() {
     let mut repo = binding_repository();
     repo.channel = crate::models::Channel::Stable;
-    let binding = crate::models::RepositoryBinding::from_release(&repo, "old-nightly").unwrap();
+    let binding = crate::models::ModRepositoryBinding::from_release(&repo, "old-nightly").unwrap();
     let mut beta = high_cached_release();
     beta.tag_name = "beta-nightly".into();
     beta.prerelease = true;
@@ -240,8 +240,8 @@ fn opaque_tags_and_channel_provider_boundaries_are_preserved() {
     repo.provider = binding.provider.clone();
     repo.channel = crate::models::Channel::Beta;
     assert!(!binding.matches_repository(&repo));
-    repo.download_mode = crate::models::RepositoryDownloadMode::RepositoryFile;
-    assert!(crate::models::RepositoryBinding::from_release(&repo, "tag").is_none());
+    repo.download_mode = crate::models::ModDownloadMode::RepositoryFile;
+    assert!(crate::models::ModRepositoryBinding::from_release(&repo, "tag").is_none());
     assert_eq!(
         super::binding_update_state(None, &binding, None),
         (false, "bound_repository_missing")

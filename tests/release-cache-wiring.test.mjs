@@ -50,7 +50,7 @@ test('逐源应用结束时不无条件清空暂存表', () => {
 
 test('覆盖仓库定义时保留 Release 缓存字段', () => {
   /*
-   * `import_bundle` 在 overwrite 分支会 `*existing = repository_from_export(...)`，
+   * `import_bundle` 在 overwrite 分支会 `*existing = mod_repository_from_export(...)`，
    * 造出来的是全新对象。如果连缓存一起覆盖，源文档每刷新一次缓存就没了。
    */
   assert.match(

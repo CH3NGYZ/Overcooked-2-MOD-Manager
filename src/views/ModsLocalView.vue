@@ -16,7 +16,7 @@ import { matchesLocalSearch, modSearchText } from '../localItemSearch'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
 import type { RelationStatus } from '../modRelations'
-import { repositoryIsAvailable } from '../repositoryAvailability'
+import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { installedModTags } from '../statusTags'
 import {
   buildLocalModGroups,
@@ -28,7 +28,7 @@ import {
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
-import { revealCard, useFocusHighlight, useRepositoryLink } from '../crossLink'
+import { revealCard, useFocusHighlight, useModRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { runtimeModStatus } from '../modRuntimeStatus'
@@ -36,7 +36,7 @@ import { isDependencyTag, tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
+import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { withDemoMods } from '../tutorial/demo'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
@@ -61,12 +61,12 @@ import RefreshResultTag from '../components/RefreshResultTag.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
-import { useRepositoryPreview } from '../composables/useRepositoryPreview'
+import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useModRemoval } from '../composables/useModRemoval'
 import { useModsLocalCardExpansion } from '../composables/useModsLocalCardExpansion'
 import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
-import type { InstalledMod, Repository } from '../types'
+import type { InstalledMod, ModRepository } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
@@ -148,7 +148,7 @@ const {
   refreshing, refreshingAll, runtimeState,
   checkingBound, outcome,
   refreshOne, refreshBoundRepositories,
-} = useRepositoryRefresh()
+} = useModRepositoryRefresh()
 
 /**
  * 检查更新：**只刷新与已安装 MOD 绑定的仓库**。
@@ -171,7 +171,7 @@ async function checkUpdates() {
    * 收集「当前地区可见、且确实有本地 MOD 绑定」的仓库。
    *
    * 三点约束：
-   *   · 用 `repositoryIsAvailable` 而不是只看 enabled —— 地区不适用等于
+   *   · 用 `modRepositoryIsAvailable` 而不是只看 enabled —— 地区不适用等于
    *     该仓库不存在，不能给它发请求（否则会报「不属于当前下载渠道」）；
    *   · 跳过 RAW 模式：它没有 Release 可查（引擎入口内部也会跳过，
    *     这里先滤掉避免无意义的排队）；
@@ -180,12 +180,12 @@ async function checkUpdates() {
   const region = config.value?.region
   const platform = config.value?.platform
   const sources = config.value?.repository_sources
-  const targets = new Map<string, Repository>()
+  const targets = new Map<string, ModRepository>()
   for (const mod of effectiveMods.value) {
     if (mod.is_dependency) continue
     const repo = repositoryForMod(repositories.value, mod)
     if (!repo) continue
-    if (!repositoryIsAvailable(repo, sources, region, platform)) continue
+    if (!modRepositoryIsAvailable(repo, sources, region, platform)) continue
     if (repo.download_mode === 'repository_file') continue
     targets.set(repo.id, repo)
   }
@@ -217,7 +217,7 @@ async function checkUpdates() {
 }
 
 /** 状态标签跳转：点标签跳到 MOD 安装页，并高亮对应仓库卡片 3 秒。 */
-const { linkToRepository } = useRepositoryLink()
+const { linkToModRepository } = useModRepositoryLink()
 /**
  * 从 MOD 安装页跳回来时，高亮绑定到该仓库的 MOD 卡片 3 秒并滚动到它。
  *
@@ -412,7 +412,7 @@ function confirmDisableAll() {
  * MOD 通过 repository_id / repository_binding 找到对应仓库，取其 group_i18n；
  * 找不到绑定的 MOD 归入「未绑定」分组。
  */
-const repositories = computed<Repository[]>(() => config.value?.repositories ?? [])
+const repositories = computed<ModRepository[]>(() => config.value?.repositories ?? [])
 
 /**
  * 状态变化脉冲：某个 MOD 的标签从「刷新中」变成「最新版 / 可更新」时，
@@ -628,7 +628,7 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
  */
 function actionContext(labels: readonly string[] | undefined, mod: InstalledMod): {
   action: StatusActionSpec
-  repository?: Repository
+  repository?: ModRepository
   /** 冲突要卸载的目标：可能是别的 MOD，不一定是当前这张卡片。 */
   conflictMod?: InstalledMod
 } | undefined {
@@ -728,14 +728,14 @@ function runCardAction(mod: InstalledMod) {
   if (!context) return
   if (context.action.kind === 'update' && blockModOperation()) return
   if (context.action.kind === 'update' && context.repository) {
-    void previewRepository(context.repository)
+    void previewModRepository(context.repository)
   } else if (context.action.kind === 'install-dependency' && context.repository) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
-    linkToRepository(context.repository.id)
+    linkToModRepository(context.repository.id)
   } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
     locateConflict(context.conflictMod)
   } else if (context.repository) {
-    void refreshRepository(context.repository)
+    void refreshModRepository(context.repository)
   }
 }
 
@@ -749,13 +749,13 @@ function runPackageAction(pkg: ModPackageNode) {
     return
   }
   if (!context.repository) return
-  if (context.action.kind === 'update') void previewRepository(context.repository)
-  else if (context.action.kind === 'install-dependency') linkToRepository(context.repository.id)
-  else void refreshRepository(context.repository)
+  if (context.action.kind === 'update') void previewModRepository(context.repository)
+  else if (context.action.kind === 'install-dependency') linkToModRepository(context.repository.id)
+  else void refreshModRepository(context.repository)
 }
 
 /** 单仓刷新：复用刷新引擎，只更新这一条仓库的缓存。 */
-async function refreshRepository(repo: Repository) {
+async function refreshModRepository(repo: ModRepository) {
   // 用户主动点刷新 → 强制请求，不吃 5 分钟 Release 缓存
   const error = await refreshOne(repo)
   if (error) message.error(error)
@@ -813,7 +813,7 @@ function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undef
 
 function openPackageTag(pkg: ModPackageNode, tagKey: string) {
   const id = packageTagTargetId(pkg, tagKey)
-  if (id) linkToRepository(id)
+  if (id) linkToModRepository(id)
 }
 
 /** 包标签的悬停提示：与单 MOD 卡片同一套文案（依赖类单独说明）。 */
@@ -870,13 +870,13 @@ function packageDependencyRows(pkg: ModPackageNode): DependencyRow[] {
 /**
  * 依赖表状态标签的跳转：可安装 / 可更新的行落到 MOD 安装页那张仓库卡片。
  *
- * 与卡片上「缺依赖」标签走同一个入口（`linkToRepository` →
+ * 与卡片上「缺依赖」标签走同一个入口（`linkToModRepository` →
  * `#/mods-online?focus=<id>`）；缺依赖、冲突这类线上没有解法的行不带
  * `jump`，标签本来就不是可点样式，这里也就不可能被调用。
  */
 function openDependencyJump(row: DependencyRow) {
   const id = row.jump?.id
-  if (id) linkToRepository(id)
+  if (id) linkToModRepository(id)
 }
 
 /** 绑定仓库展示：provider + owner/repo（@tag）。 */
@@ -1010,7 +1010,7 @@ const { dragActive } = useFileDrop({
  * （preview_only 下载 → 安装详情弹窗 → 用户确认后才写入）。
  */
 const previewing = ref<Record<string, boolean>>({})
-const { previewRepository } = useRepositoryPreview(openInstallPreview, {
+const { previewModRepository } = useModRepositoryPreview(openInstallPreview, {
   gameBlocked: blockModOperation,
   onBusyChange: (repositoryId, busy) => {
     if (busy) previewing.value[repositoryId] = true
@@ -1155,7 +1155,7 @@ provide(
     packageTagTargetId,
     packageTagTitle,
     openPackageTag,
-    linkToRepository,
+    linkToModRepository,
   }),
 )
 </script>

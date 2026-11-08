@@ -17,7 +17,7 @@ import { acceptLabel } from './dropAccept'
 import { dragActive, dropAcceptTypes, dropHintSource } from './composables/useFileDrop'
 import { startGameWatch } from './composables/useDashboardStore'
 import { requestMapSourcesStartupRefresh } from './composables/useMapSources'
-import { useRepositoryRefresh } from './composables/useRepositoryRefresh'
+import { useModRepositoryRefresh } from './composables/useModRepositoryRefresh'
 import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition'
 import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api } from './services/tauri'
@@ -70,7 +70,7 @@ const dropHintText = computed(
  * 门控在下面的 `onMounted` 里：先注册 `onTutorialSettled`，再决定是否启动
  * 教程，刷新总在教程之后发生，不会在遮罩底下转圈。
  */
-const repositoryRefresh = useRepositoryRefresh()
+const repositoryRefresh = useModRepositoryRefresh()
 const startupPreflight = useStartupPreflight(() => {
   repositoryRefresh.requestStartupRefresh()
   requestMapSourcesStartupRefresh()

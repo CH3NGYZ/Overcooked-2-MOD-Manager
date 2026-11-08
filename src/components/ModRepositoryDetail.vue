@@ -8,7 +8,7 @@ import { repositoryHomepage, repositoryRawUrl } from '../providers'
  * 这里只留 MOD 侧真正独有的数据：缓存 Release、资产规则匹配、依赖关系判定、
  * 仓库链接地址。
  *
- * README 的拉取与取消在 `useRepositoryReadme`：只有 MOD 详情需要它。地图详情
+ * README 的拉取与取消在 `useModRepositoryReadme`：只有 MOD 详情需要它。地图详情
  * 用条目自己的 `note_i18n` 当说明，仓库 README 不参与（仓库级内容会串味）。
  */
 import { computed, ref, watch } from 'vue'
@@ -18,15 +18,15 @@ import { formatVersion, isPrereleaseVersion } from '../modStatus'
 import { matchedReleaseAssets } from '../repositoryAssets'
 import { relationsForRelease } from '../modRelations'
 import { dependencyRowsFor } from '../dependencyRows'
-import { useRepositoryLink } from '../crossLink'
-import { useRepositoryReadme } from '../composables/useRepositoryReadme'
+import { useModRepositoryLink } from '../crossLink'
+import { useModRepositoryReadme } from '../composables/useModRepositoryReadme'
 import ReleaseDetailPanel from './ReleaseDetailPanel.vue'
 import type { ReleaseDetailLink } from './ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../dependencyRows'
-import type { InstalledMod, Repository } from '../types'
+import type { InstalledMod, ModRepository } from '../types'
 
 const props = withDefaults(defineProps<{
-  repo: Repository | null
+  repo: ModRepository | null
   installing?: boolean
   gameBlocked?: boolean
   /**
@@ -38,7 +38,7 @@ const props = withDefaults(defineProps<{
    */
   mods?: readonly InstalledMod[]
   /** 可安装来源（缺依赖时它从哪个仓库补；与安装前检查同一个列表）。 */
-  repositories?: readonly Repository[]
+  repositories?: readonly ModRepository[]
 }>(), {
   installing: false,
   gameBlocked: false,
@@ -49,12 +49,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ close: []; install: [tag?: string, asset?: string]; back: [] }>()
 
 /** 依赖表里的跳转：与卡片上的「缺依赖」标签同一个入口（安装页 + `focus` 高亮）。 */
-const { linkToRepository } = useRepositoryLink()
+const { linkToModRepository } = useModRepositoryLink()
 
 const name = computed(() => (props.repo ? pickI18n(props.repo.name_i18n, props.repo.name) : ''))
 const note = computed(() => (props.repo ? pickI18n(props.repo.note_i18n, props.repo.note || '') : ''))
 
-const { readme, loading, error } = useRepositoryReadme(() => props.repo?.id ?? null)
+const { readme, loading, error } = useModRepositoryReadme(() => props.repo?.id ?? null)
 
 /* ===== 版本选择 + 资产规则命中 ===== */
 /** 当前选中的 Release（默认最新一个）。 */
@@ -142,7 +142,7 @@ function openDependencyJump(row: DependencyRow) {
   const id = row.jump?.id
   if (!id) return
   emit('close')
-  linkToRepository(id)
+  linkToModRepository(id)
 }
 
 /** 仓库文件模式：安装行左侧直接显示 `branch/file_path`。 */

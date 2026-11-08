@@ -9,7 +9,7 @@ fn installing_repository_recycles_every_package_bound_to_it() {
     // 同一仓库历史上装出过三个包：两个靠 binding 识别、一个靠 repository_id。
     // 安装前必须全部回收，否则装完仍会显示「重复」。
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "Repo", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
@@ -17,7 +17,7 @@ fn installing_repository_recycles_every_package_bound_to_it() {
     }))
     .unwrap();
 
-    let binding = || crate::models::RepositoryBinding {
+    let binding = || crate::models::ModRepositoryBinding {
         provider: crate::models::Provider::Github,
         owner: "Owner".into(),
         repository: "Mod".into(),
@@ -44,7 +44,7 @@ fn installing_repository_recycles_every_package_bound_to_it() {
     // 同 GUID 但属于别的仓库：不能动
     workspace.write("BepInEx/plugins/Other/keep.dll", b"keep");
     let mut keep = workspace.manifest("other-repo", &["BepInEx/plugins/Other/keep.dll"]);
-    keep.repository_binding = Some(crate::models::RepositoryBinding {
+    keep.repository_binding = Some(crate::models::ModRepositoryBinding {
         provider: crate::models::Provider::Github,
         owner: "SomeoneElse".into(),
         repository: "OtherMod".into(),
@@ -92,7 +92,7 @@ fn installing_repository_recycles_every_package_bound_to_it() {
 fn repository_recycle_skips_unrelated_bindings() {
     // 仓库没装过任何东西时返回空，调用方据此跳过回滚准备
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-fresh", "name": "Fresh", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
@@ -119,7 +119,7 @@ fn same_repository_packages_do_not_protect_each_others_files() {
      * 结果旧副本全部留在磁盘上 —— 这就是「更新后仍显示重复」的根因。
      */
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "Repo", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
@@ -130,7 +130,7 @@ fn same_repository_packages_do_not_protect_each_others_files() {
     // 两个旧包登记在同一批文件上（旧版本装出的两份副本）
     workspace.write(A, b"stale a");
     workspace.write(B, b"stale b");
-    let binding = crate::models::RepositoryBinding {
+    let binding = crate::models::ModRepositoryBinding {
         provider: crate::models::Provider::Github,
         owner: "Owner".into(),
         repository: "Mod".into(),
@@ -169,7 +169,7 @@ fn repository_recycle_matches_identity_even_when_channel_changed() {
     // 仓库渠道从 all 改成 beta（或反之）不应让旧安装失去归属：
     // 渠道只决定拉哪个 Release，不改变「同一个仓库」这个事实。
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "Repo", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
@@ -179,7 +179,7 @@ fn repository_recycle_matches_identity_even_when_channel_changed() {
 
     workspace.write(A, b"old");
     let mut old = workspace.manifest("legacy-package", &[A]);
-    old.repository_binding = Some(crate::models::RepositoryBinding {
+    old.repository_binding = Some(crate::models::ModRepositoryBinding {
         provider: crate::models::Provider::Github,
         owner: "Owner".into(),
         repository: "Mod".into(),
@@ -210,7 +210,7 @@ fn repository_install_recycles_legacy_manual_manifest_of_same_package() {
      * 分组下的孤儿条目，并与主 MOD 互判重复。
      */
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "DIYLevel", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "install_target": "BepInEx/plugins/DIYLevel", "enabled": true, "builtin": false,
@@ -252,7 +252,7 @@ fn legacy_manual_cleanup_never_touches_sibling_plugins() {
      * 不属于同一个包，绝不能因为「同目录」被误回收。
      */
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "Repo", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "install_target": "BepInEx/plugins", "enabled": true, "builtin": false,
@@ -291,7 +291,7 @@ fn manual_package_is_recycled_by_dll_identity_across_directories() {
      * 与文件散落在哪无关，否则这条 manual 包永远不会被回收。
      */
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "DIYLevel", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "plugin_guid": "com.ch3ngyz.plugin.DIYLevel",
@@ -330,7 +330,7 @@ fn manual_package_is_recycled_by_dll_identity_across_directories() {
 fn unrelated_manual_package_survives_repository_install() {
     // 身份不匹配的 manual 包不能因为「同时存在」就被清掉
     let workspace = Workspace::new();
-    let repo: crate::models::RepositoryConfig = serde_json::from_value(serde_json::json!({
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
         "id": "repo-1", "name": "DIYLevel", "provider": "github",
         "username": "Owner", "repository": "Mod", "download_mode": "release",
         "plugin_guid": "com.ch3ngyz.plugin.DIYLevel",

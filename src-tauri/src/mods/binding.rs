@@ -1,18 +1,18 @@
 use crate::models::Channel;
 use crate::models::InstalledMod;
-use crate::models::RepositoryConfig;
-use crate::models::RepositoryDownloadMode;
+use crate::models::ModDownloadMode;
+use crate::models::ModRepositoryConfig;
 use std::collections::HashMap;
 
 pub(super) fn select_repository<'a>(
-    candidates: &[&'a RepositoryConfig],
+    candidates: &[&'a ModRepositoryConfig],
     installed_version: Option<&str>,
-    source: Option<&RepositoryConfig>,
-) -> Option<&'a RepositoryConfig> {
+    source: Option<&ModRepositoryConfig>,
+) -> Option<&'a ModRepositoryConfig> {
     // A real Raw install cannot silently become a Release install because the
     // same plugin GUID also occurs in a repository with a newer cached tag.
     if let Some(source) =
-        source.filter(|repo| repo.download_mode == RepositoryDownloadMode::RepositoryFile)
+        source.filter(|repo| repo.download_mode == ModDownloadMode::RepositoryFile)
     {
         return candidates.iter().copied().find(|repo| repo.id == source.id);
     }
@@ -32,8 +32,8 @@ pub(super) fn select_repository<'a>(
             Channel::Stable
         }
     });
-    let compatible_release = |repo: &&RepositoryConfig| {
-        repo.download_mode == RepositoryDownloadMode::Release
+    let compatible_release = |repo: &&ModRepositoryConfig| {
+        repo.download_mode == ModDownloadMode::Release
             && preferred_channel
                 .as_ref()
                 .is_none_or(|channel| repo.channel == *channel || repo.channel == Channel::All)
@@ -52,7 +52,7 @@ pub(super) fn select_repository<'a>(
         .as_ref()
         .and_then(|channel| {
             candidates.iter().copied().find(|repo| {
-                repo.download_mode == RepositoryDownloadMode::Release && repo.channel == *channel
+                repo.download_mode == ModDownloadMode::Release && repo.channel == *channel
             })
         })
         .or_else(|| candidates.iter().copied().find(compatible_release));
@@ -61,7 +61,7 @@ pub(super) fn select_repository<'a>(
         candidates
             .iter()
             .copied()
-            .find(|repo| repo.download_mode == RepositoryDownloadMode::RepositoryFile)
+            .find(|repo| repo.download_mode == ModDownloadMode::RepositoryFile)
     })
 }
 
@@ -143,7 +143,7 @@ pub(super) fn inherit_repository_from_sibling(mods: &mut [InstalledMod]) {
 }
 
 pub(super) fn repository_matches_mod(
-    repo: &crate::models::RepositoryConfig,
+    repo: &crate::models::ModRepositoryConfig,
     guid: Option<&str>,
     product_name: Option<&str>,
     original_filename: Option<&str>,
@@ -185,16 +185,16 @@ pub(super) fn match_repository<'a>(
     product_name: Option<&str>,
     original_filename: Option<&str>,
     installed_version: Option<&str>,
-    binding: Option<&crate::models::RepositoryBinding>,
+    binding: Option<&crate::models::ModRepositoryBinding>,
     source_id: Option<&str>,
-) -> (Option<&'a RepositoryConfig>, Vec<String>) {
+) -> (Option<&'a ModRepositoryConfig>, Vec<String>) {
     let source_repository =
         source_id.and_then(|id| config.repositories.iter().find(|repo| repo.id == id));
     let candidates = config
         .repositories
         .iter()
         .filter(|repo| {
-            crate::config::repository_is_available(
+            crate::config::mod_repository_is_available(
                 config,
                 repo,
                 crate::config::current_user_region(),

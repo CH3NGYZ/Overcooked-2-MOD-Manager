@@ -5,46 +5,6 @@ use crate::models::MapRepositoryConfig;
 use crate::models::ReleaseAsset;
 use crate::models::ReleaseInfo;
 
-/// 把地图仓库投影成 `fetch_releases` 需要的最小 `RepositoryConfig`。
-///
-/// ## 为什么用投影而不是改 `fetch_releases` 的签名
-///
-/// `fetch_releases` 是 MOD 与地图共用的**唯一** Release 抓取入口：限流闸门、
-/// 直连/代理目标顺序、403 提前停止、渠道过滤、Gitee 特例都在里面。为了地图
-/// 再造一条抓取路径，等于把这些规则复制一遍 —— 迟早两边行为不一致。
-///
-/// 投影只填「取 Release 真正会读」的字段；其余用默认值。任何新增的
-/// Release 相关字段都要同时出现在这里，否则地图侧会拿到默认行为。
-pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::RepositoryConfig {
-    // max_release_count only limits the displayed asset versions; API pagination is shared.
-    // 借 `repository_from_export` 而不是手写字段：它掌握全部默认值，
-    // 手写一份会在新增字段时静默落空。
-    /*
-     * 用 serde 构造 `RepositoryExport`：它字段很多且多数有默认值，
-     * 手写结构体会在新增字段时编译失败（好事），但也要同步维护一份字段表。
-     * 走 JSON 只写这次真正关心的几项，其余取模型里的 serde 默认值。
-     */
-    let export: crate::models::RepositoryExport = serde_json::from_value(serde_json::json!({
-        "name": map.name,
-        "name_i18n": map.name_i18n,
-        "group": map.group,
-        "group_i18n": map.group_i18n,
-        "type": "map",
-        "network_plan": map.network_plan,
-        "provider": map.provider,
-        "username": map.username,
-        "repository": map.repository,
-        "enabled": map.enabled,
-        "download_mode": "release",
-        "channel": map.channel,
-        "max_release_count": map.max_release_count,
-        "asset_rules": map.asset_rules,
-        "install_target": "",
-    }))
-    .expect("地图投影的字段形状固定，构造失败说明模型改了默认值");
-    crate::config::repository_from_export(&export, map.id.clone(), map.builtin)
-}
-
 /// 刷新一个地图仓库的 Release 列表（tag 模式下返回合成的版本列表）。
 ///
 /// 与仓库侧同一条路径：`fetch_releases`。区别只有两处 —— 请求按仓库收敛
@@ -54,7 +14,7 @@ pub(crate) async fn fetch_map_release_data(
     ctx: &MapSourceContext<'_>,
     map: &MapRepositoryConfig,
 ) -> Result<MapRepositoryConfig, String> {
-    let probe = release_probe(map);
+    let probe = crate::releases::RepositoryRequest::from(map);
     let key =
         crate::releases::repository_cache_key(map.provider.clone(), &map.username, &map.repository);
     let token = ctx.token(&map.provider).map(str::to_string);
@@ -158,6 +118,6 @@ pub(crate) fn select_map_stage_asset<'a>(
     if asset_name.is_none() && map_tag(map).is_some() {
         return release.assets.first();
     }
-    let probe = release_probe(map);
-    crate::releases::select_install_asset(&probe, release, asset_name)
+    let probe = crate::releases::RepositoryRequest::from(map);
+    crate::releases::select_install_asset(&probe, &map.asset_rules, release, asset_name)
 }

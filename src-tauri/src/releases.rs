@@ -7,12 +7,14 @@ pub(crate) use error::ReleaseError;
 mod fetch;
 pub(crate) mod pagination;
 mod projection;
+mod request;
+pub(crate) use request::RepositoryRequest;
 mod transport;
 mod version;
 
 pub(crate) use crate::providers::{
-    ReleaseAssetReference, release_asset_reference, repository_cache_key, repository_coordinates,
-    repository_file_name, repository_file_url,
+    release_asset_reference, repository_cache_key, repository_coordinates, repository_file_name,
+    repository_file_url,
 };
 pub(crate) use assets::select_install_asset;
 pub(crate) use client::{APP_USER_AGENT, build_client, build_download_client};

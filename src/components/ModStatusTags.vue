@@ -4,8 +4,8 @@ import { NTag } from 'naive-ui'
 import { t } from '../i18n'
 import { tagColorForAny } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useRepositoryRefresh } from '../composables/useRepositoryRefresh'
-import { useRepositoryLink } from '../crossLink'
+import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
+import { useModRepositoryLink } from '../crossLink'
 import { installedModTags } from '../statusTags'
 import { runtimeModStatus } from '../modRuntimeStatus'
 import { relationJumpRepositoryId } from '../modRelations'
@@ -36,8 +36,8 @@ import type { InstalledMod } from '../types'
 const props = defineProps<{ dllFile: string }>()
 
 const { mods, config } = useDashboard()
-const { runtimeState } = useRepositoryRefresh()
-const { linkToRepository } = useRepositoryLink()
+const { runtimeState } = useModRepositoryRefresh()
+const { linkToModRepository } = useModRepositoryLink()
 
 /** 始终按当前 Dashboard 取这条 MOD：单仓刷新只替换仓库缓存，这里也要跟上。 */
 const mod = computed<InstalledMod | undefined>(() =>
@@ -71,7 +71,7 @@ function titleOf(tagKey: string) {
 
 function activate(tagKey: string) {
   const id = targetOf(tagKey)
-  if (id) linkToRepository(id)
+  if (id) linkToModRepository(id)
 }
 </script>
 

@@ -2,8 +2,8 @@ use super::game::{GameConfig, GameRuntime};
 use super::maps::MapRepositoryConfig;
 use super::mods::ModNote;
 use super::network::{GitHubProxyConfig, NetworkConfig};
-use super::repositories::{
-    CommunityDiscovery, CommunityMapRepository, RepositoryConfig, RepositorySource,
+use super::{
+    CommunityDiscovery, CommunityMapRepository, ModRepositoryConfig, RepositorySource,
     StagedReleaseCache,
 };
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ pub struct AppConfig {
     pub network: NetworkConfig,
     pub launch: LaunchConfig,
     pub auth: AuthConfig,
-    pub repositories: Vec<RepositoryConfig>,
+    pub repositories: Vec<ModRepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
     /// 地图仓库（DIYLevel 关卡集的远程来源）。
@@ -219,7 +219,7 @@ pub struct PublicConfig {
     pub github_publish_token_set: bool,
     #[serde(default)]
     pub github_publish_login: String,
-    pub repositories: Vec<RepositoryConfig>,
+    pub repositories: Vec<ModRepositoryConfig>,
     #[serde(default)]
     pub repository_sources: Vec<RepositorySource>,
     #[serde(default)]

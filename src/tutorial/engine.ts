@@ -18,7 +18,7 @@ import type { TutorialContext, TutorialStep } from './types'
  * ## 为什么是单例
  *
  * 教程跨越路由（侧栏 → 总览 → MOD 安装 → …），状态不能挂在某个页面组件上：
- * 页面一切换实例就没了。与 `useDashboardStore`、`useRepositoryRefresh` 同理，
+ * 页面一切换实例就没了。与 `useDashboardStore`、`useModRepositoryRefresh` 同理，
  * 状态放模块级，`App.vue` 只负责挂载覆盖层。单例的副作用是**同一次运行只能有
  * 一份教程**，这也正是我们要的（重播时必须先把上一次结束掉）。
  *

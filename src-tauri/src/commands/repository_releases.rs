@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::models::{Provider, ReleaseInfo, RepositoryDownloadMode};
+use crate::models::{ReleaseInfo, RepositoryDownloadMode};
 use crate::release_cache::freshness::RELEASE_CACHE_TTL_MS;
 use crate::release_cache::freshness::cache_is_fresh;
 use crate::release_cache::freshness::now_millis;
@@ -80,10 +80,7 @@ pub async fn refresh_repository(
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
     let token = state.config.repository_api_token(&config, &repo);
-    let api_proxies = match repo.provider {
-        Provider::Github => &config.github_proxies.github_api_proxies,
-        Provider::Gitee => &config.github_proxies.gitee_api_proxies,
-    };
+    let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
     log::debug!(
         "请求仓库 Release API：仓库={}，平台={:?}，代理数={}，最大 Release 数={}",
         repo.name,

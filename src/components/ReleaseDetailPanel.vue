@@ -73,6 +73,8 @@ import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatFileSize, formatLocalDateTime } from '../repositoryAssets'
 import DependencyTable, { type DependencyRow } from './DependencyTable.vue'
 import ProviderIcon from './ProviderIcon.vue'
+import type { Provider } from '../types'
+import { providerLabel, repositoryHomepage } from '../providers'
 import { useReleasePanelFit } from '../composables/useReleasePanelFit'
 
 const props = withDefaults(
@@ -80,7 +82,7 @@ const props = withDefaults(
     /* ===== 头部 ===== */
     /** 显示名（仓库名 / 地图名，调用方已按当前语言取好）。 */
     title: string
-    provider: 'github' | 'gitee'
+    provider: Provider
     /** 仓库 owner（地图是地图源 owner）。 */
     owner: string
     repository: string
@@ -205,9 +207,7 @@ const emit = defineEmits<{
 const activeTab = ref<'info' | 'install'>('info')
 
 const sourceUrl = computed(() =>
-  props.provider === 'gitee'
-    ? `https://gitee.com/${props.owner}/${props.repository}`
-    : `https://github.com/${props.owner}/${props.repository}`,
+  repositoryHomepage(props.provider, props.owner, props.repository),
 )
 
 /* ===== 说明 tab ===== */
@@ -381,7 +381,7 @@ const {
           <b>{{ title }}</b>
           <!-- 渠道 · 用户/仓库 · Release/Raw：后两段可点 -->
           <small class="head-meta">
-            <span class="meta-channel">{{ provider === 'gitee' ? 'Gitee' : 'GitHub' }}</span>
+            <span class="meta-channel">{{ providerLabel(provider) }}</span>
             <span class="meta-sep">·</span>
             <button type="button" class="meta-link" :title="sourceUrl" @click="emit('open-link', sourceUrl)">
               {{ owner }}/{{ repository }}

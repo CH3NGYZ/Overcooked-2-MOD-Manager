@@ -21,6 +21,7 @@ fn fixture(provider: Provider) -> serde_json::Value {
     let base = match provider {
         Provider::Github => "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager",
         Provider::Gitee => "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager",
+        Provider::Gitcode => "https://gitcode.com/CH3NGYZ/Overcooked-2-Manager",
     };
     let platforms = [
         ("windows-x86_64-nsis", "OC2ModManager_9.0.0_x64-setup.exe"),

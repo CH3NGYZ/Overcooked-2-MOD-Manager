@@ -64,6 +64,7 @@ fn cache_key(provider: &Provider, owner: &str) -> String {
     let provider = match provider {
         Provider::Github => "gh",
         Provider::Gitee => "gt",
+        Provider::Gitcode => "gc",
     };
     format!("{provider}-{:016x}", hasher.finish())
 }
@@ -78,6 +79,7 @@ pub fn response_key(provider: &Provider, owner: &str) -> String {
     let provider = match provider {
         Provider::Github => "github",
         Provider::Gitee => "gitee",
+        Provider::Gitcode => "gitcode",
     };
     format!("{provider}:{}", owner.trim().to_lowercase())
 }
@@ -128,6 +130,9 @@ fn direct_url(provider: &Provider, owner: &str) -> String {
     match provider {
         Provider::Github => format!("https://github.com/{encoded}.png?size=64"),
         Provider::Gitee => format!("https://gitee.com/{encoded}.png?size=64"),
+        // No verified owner-only avatar endpoint is available for GitCode yet.
+        // Let the card use its provider icon instead of requesting a guessed URL.
+        Provider::Gitcode => String::new(),
     }
 }
 
@@ -233,6 +238,9 @@ async fn download_and_store(
     owner: &str,
 ) -> Result<Vec<u8>, String> {
     let url = direct_url(provider, owner);
+    if url.is_empty() {
+        return Err("avatar.noSource".into());
+    }
     let mode = crate::download::planning::selected_asset_proxy_mode(
         None,
         provider,

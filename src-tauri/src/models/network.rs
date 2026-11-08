@@ -38,6 +38,8 @@ pub struct GitHubProxyConfig {
     pub github_api_proxies: Vec<GitHubProxy>,
     #[serde(default)]
     pub gitee_api_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub gitcode_api_proxies: Vec<GitHubProxy>,
     /// 头像专用代理。
     ///
     /// 单独一组而不是复用 raw：实测 raw 组全部取不到 `github.com/{owner}.png`
@@ -62,6 +64,8 @@ pub struct GitHubProxyManifest {
     pub github_api_proxies: Vec<GitHubProxy>,
     #[serde(default)]
     pub gitee_api_proxies: Vec<GitHubProxy>,
+    #[serde(default)]
+    pub gitcode_api_proxies: Vec<GitHubProxy>,
     /// 头像代理（`[[avatar_proxies]]`），与另外四组同一套清单格式。
     #[serde(default)]
     pub avatar_proxies: Vec<GitHubProxy>,

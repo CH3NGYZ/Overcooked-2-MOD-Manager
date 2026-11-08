@@ -9,6 +9,7 @@ use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_candidate;
 use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_manifest_sources;
+use crate::app_update::channels::{INSTALLER_GITCODE_OWNER, INSTALLER_GITCODE_REPO};
 use crate::archive;
 use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::models::{
@@ -48,6 +49,11 @@ pub(crate) fn inspect_installer_manifest(
     let (host, owner, repo) = match channel.provider {
         Provider::Github => ("github.com", INSTALLER_GITHUB_OWNER, INSTALLER_GITHUB_REPO),
         Provider::Gitee => ("gitee.com", INSTALLER_GITEE_OWNER, INSTALLER_GITEE_REPO),
+        Provider::Gitcode => (
+            "gitcode.com",
+            INSTALLER_GITCODE_OWNER,
+            INSTALLER_GITCODE_REPO,
+        ),
     };
     let path_prefix = format!("/{owner}/{repo}/releases/download/");
     if url.scheme() != "https"

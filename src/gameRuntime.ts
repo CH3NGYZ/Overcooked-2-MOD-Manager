@@ -17,7 +17,7 @@ export function gameExecutableName(platform?: AppPlatform, runtime?: GameRuntime
 }
 
 /** 各渠道的 BepInEx 安装包地址（后端 `bepinex::Package::url` 的前端镜像）。 */
-export function bepinexDownloadUrls(platform?: AppPlatform, runtime?: GameRuntime): Record<Provider, string> {
+export function bepinexDownloadUrls(platform?: AppPlatform, runtime?: GameRuntime): Record<Extract<Provider, 'github' | 'gitee'>, string> {
   const packageName = runtime === 'native' && platform === 'macos'
     ? 'BepInEx_macos_universal_5.4.23.5.zip'
     : 'BepInEx_win_x86_5.4.23.5.zip'

@@ -38,6 +38,7 @@ import {
 import { mapCardAction, mapCardStatus, type MapCardState } from '../mapCardStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
+import SourceTitle from '../components/SourceTitle.vue'
 import {
   useSourceGroupTree,
   type SourceGroupEntry,
@@ -712,7 +713,7 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
         <template #header>
           <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
             <div class="source-head">
-              <b>{{ node.label }}</b>
+              <SourceTitle :label="node.label" :items="maps.filter(item => item.source_id === node.id)" />
               <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
               <!-- 源刷新：重拉源树后刷新这个源下的全部 Release -->
               <n-button size="tiny" quaternary class="group-refresh"

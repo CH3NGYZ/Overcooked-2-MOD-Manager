@@ -6,6 +6,7 @@ fn explicit_empty_manifests_are_valid_but_missing_or_misspelled_fields_are_not()
         "schema_version = 1",
         "release_proxies = []",
         "avatar_proxies = []",
+        "gitcode_api_proxies = []",
     ] {
         assert_eq!(parse_manifest(text).unwrap(), GitHubProxyConfig::default());
     }
@@ -29,6 +30,31 @@ fn explicit_empty_manifests_are_valid_but_missing_or_misspelled_fields_are_not()
             format!("[[release_proxies]]\nid = 'test'\nname = 'Test'\ntemplate = '{template}'");
         assert!(parse_manifest(&text).is_err());
     }
+}
+
+#[test]
+fn gitcode_api_proxy_keeps_api_path_and_pagination_in_its_own_group() {
+    let bundled = bundled_defaults();
+    let proxies = &bundled.gitcode_api_proxies;
+    assert_eq!(proxies.len(), 1);
+    assert_eq!(proxies[0].id, "oc2gcapi");
+    let official =
+        "https://api.atomgit.com/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2";
+    assert_eq!(
+        proxy_urls(proxies, official, false, None),
+        [
+            "https://oc2gcapi.ch3ng.top/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2"
+        ]
+    );
+    let mut config = crate::config::default_config();
+    config.github_proxies = bundled;
+    assert_eq!(
+        crate::providers::api_proxies(&config, &crate::models::Provider::Gitcode)[0].id,
+        "oc2gcapi"
+    );
+    let invalid =
+        "[[gitcode_api_proxies]]\nid='bad'\nname='Bad'\ntemplate='http://proxy.example/{url}'";
+    assert!(parse_manifest(invalid).is_err());
 }
 
 #[test]

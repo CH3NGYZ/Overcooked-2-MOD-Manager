@@ -91,13 +91,33 @@ fn reveal_secret(value: &str) -> Option<String> {
 }
 
 impl ConfigService {
-    pub fn set_tokens(&self, config: &mut AppConfig, github: &str, gitee: &str) {
-        if !github.is_empty() {
-            config.auth.github_token = protect_secret(github).unwrap_or_default();
+    pub fn set_tokens(
+        &self,
+        config: &mut AppConfig,
+        github: &str,
+        gitee: &str,
+        gitcode: &str,
+    ) -> io::Result<()> {
+        // Protect every supplied value before mutating any field.
+        let github = (!github.trim().is_empty())
+            .then(|| protect_secret(github.trim()))
+            .transpose()?;
+        let gitee = (!gitee.trim().is_empty())
+            .then(|| protect_secret(gitee.trim()))
+            .transpose()?;
+        let gitcode = (!gitcode.trim().is_empty())
+            .then(|| protect_secret(gitcode.trim()))
+            .transpose()?;
+        if let Some(value) = github {
+            config.auth.github_token = value;
         }
-        if !gitee.is_empty() {
-            config.auth.gitee_token = protect_secret(gitee).unwrap_or_default();
+        if let Some(value) = gitee {
+            config.auth.gitee_token = value;
         }
+        if let Some(value) = gitcode {
+            config.auth.gitcode_token = value;
+        }
+        Ok(())
     }
 
     pub fn set_repository_tokens(&self, repo: &mut RepositoryConfig, github: &str, gitee: &str) {
@@ -113,6 +133,7 @@ impl ConfigService {
         match repo.provider {
             Provider::Github => reveal_secret(&repo.github_token),
             Provider::Gitee => reveal_secret(&repo.gitee_token),
+            Provider::Gitcode => None,
         }
     }
 
@@ -129,6 +150,7 @@ impl ConfigService {
         reveal_secret(match provider {
             Provider::Github => &config.auth.github_token,
             Provider::Gitee => &config.auth.gitee_token,
+            Provider::Gitcode => &config.auth.gitcode_token,
         })
     }
 

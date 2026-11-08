@@ -27,6 +27,7 @@ import { t } from '../i18n'
 import { translateBackendMessage } from '../locale/backend'
 import type { VersionDisplay } from '../modStatus'
 import ProviderIcon from './ProviderIcon.vue'
+import type { Provider } from '../types'
 
 /** 主按钮的动作类型，决定图标。 */
 export type CardActionKind = 'install' | 'reinstall' | 'update' | 'refresh'
@@ -48,7 +49,7 @@ export interface CardDependencyTag {
 }
 
 const props = defineProps<{
-  provider: 'github' | 'gitee'
+  provider: Provider
   owner?: string
   title: string
   /** 简介（调用方已做 markdown 摘要与长度处理）。 */

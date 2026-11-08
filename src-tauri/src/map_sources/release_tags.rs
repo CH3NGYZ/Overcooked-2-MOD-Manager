@@ -11,15 +11,6 @@ use crate::repository_sources::SourceLocation;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
-/// `release-tags` 模式每次向 API 要多少条 Release（默认值）。
-pub(super) const RELEASE_TAG_PAGE_SIZE: u32 = 50;
-
-/// `release-tags` 模式最多翻几页。
-///
-/// 50 × 20 = 1000 个 Release 已经是「一个人几年的产出」量级；设上限只是
-/// 为了防止一份异常仓库（几千个 tag）让一次刷新迟迟不结束。
-const RELEASE_TAG_MAX_PAGES: u32 = 20;
-
 /// 「单仓多 Release」源要读哪个仓库。
 ///
 /// 只为复用 `release_cache` 与 `fetch_releases` 的限流/代理/重试链路：
@@ -27,7 +18,6 @@ const RELEASE_TAG_MAX_PAGES: u32 = 20;
 /// 复制一遍，迟早两边行为不一致。
 pub(super) fn declaration_probe(
     declaration: &MapSourceDeclaration,
-    per_page: u32,
 ) -> crate::models::RepositoryConfig {
     let export: crate::models::RepositoryExport = serde_json::from_value(serde_json::json!({
         "name": declaration.nickname,
@@ -39,7 +29,6 @@ pub(super) fn declaration_probe(
         "repository": declaration.repository.trim(),
         "enabled": true,
         "download_mode": "release",
-        "max_release_count": per_page,
         "install_target": "",
     }))
     .expect("地图源投影的字段形状固定，构造失败说明模型改了默认值");
@@ -63,17 +52,10 @@ pub(super) async fn load_release_tag_maps(
     ctx: &MapSourceContext<'_>,
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
     let provider = declaration.provider.clone().unwrap_or(Provider::Github);
-    let page_size = declaration
-        .page_size
-        .unwrap_or(RELEASE_TAG_PAGE_SIZE)
-        .clamp(1, 100);
-    let max_pages = declaration
-        .max_pages
-        .unwrap_or(RELEASE_TAG_MAX_PAGES)
-        .clamp(1, 100);
-    let probe = declaration_probe(declaration, page_size);
+    let probe = declaration_probe(declaration);
     /*
-     * 缓存键加 `::all` 后缀：同一个仓库的「首页 10 条」与「全部分页」不是
+     * 保留历史 `::all` 缓存键，避免结构迁移改变现有缓存生命周期。
+     * 目前两个入口均读取全部分页；历史上「首页 10 条」与「全部分页」不是
      * 同一份数据，共用键要么让地图源读到不完整列表，要么让 MOD 侧拿到全量。
      */
     let key = format!(
@@ -90,11 +72,9 @@ pub(super) async fn load_release_tag_maps(
     let releases = match ctx
         .cache
         .list(key, ctx.pass_id, || async move {
-            crate::releases::fetch_all_releases(
+            crate::releases::fetch_releases(
                 ctx.client,
                 &probe,
-                page_size,
-                max_pages,
                 token.as_deref(),
                 official_api_only,
                 &api_proxies,

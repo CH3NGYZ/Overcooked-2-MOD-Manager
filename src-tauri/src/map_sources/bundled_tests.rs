@@ -30,7 +30,7 @@ fn builtin_map_index_declares_only_sources() {
         1,
         "内置索引只保留第三方地图仓库（release-tags）"
     );
-    assert_eq!(doc.map_sources[0].id, "community-maps");
+    assert_eq!(doc.map_sources[0].id, "oc2-map-bundle-index");
 }
 
 /// 第三方源：一个 tag 一张图，元数据跟着各自 Release note 走。
@@ -39,13 +39,18 @@ fn builtin_map_index_declares_only_sources() {
 /// `map_note` 的单测里（纯函数、离线可跑）。
 #[test]
 fn builtin_community_source_declares_release_tags_mode() {
-    let source = declaration("community-maps");
+    let parent = declaration("oc2-map-bundle-index");
+    let child = SourceLocation::resolve(&parent.url, Some(&index_location())).unwrap();
+    let document = parse_document(child.bundled_text().unwrap(), &child).unwrap();
+    assert_eq!(document.map_sources.len(), 1);
+    let source = &document.map_sources[0];
+    assert_eq!(source.id, "maps-oc2-map-bundle");
     assert_eq!(source.mode, MapSourceMode::ReleaseTags);
-    assert_eq!(source.provider, Some(crate::models::Provider::Github));
-    assert_eq!(source.username, "QingyuQingxue");
+    assert_eq!(source.provider, Some(crate::models::Provider::Gitcode));
+    assert_eq!(source.username, "CH3NGY2");
     assert_eq!(source.repository, "OC2-Map-Bundle");
-    assert_eq!(source.page_size, Some(100), "一次读 100 个 Release");
-    assert_eq!(source.max_pages, Some(10), "最多翻 10 页");
+    assert_eq!(source.page_size, None, "分页由共享 Release 入口统一控制");
+    assert_eq!(source.max_pages, None, "持续分页直到 API 返回不足 50 条");
     assert!(source.map.is_none(), "release-tags 不需要内联条目");
 }
 
@@ -59,5 +64,61 @@ fn bundled_tree_is_empty_offline() {
     assert!(
         bundled_map_tree().is_empty(),
         "内置索引只有 release-tags 源：离线解析不出条目"
+    );
+}
+
+/// Explicit opt-in: reads the real public API through the product source loader.
+#[tokio::test]
+#[ignore = "requires public GitCode network access"]
+async fn real_gitcode_bundle_loads_release_declarations() {
+    let config = crate::config::default_config();
+    let client = crate::releases::build_client(30).unwrap();
+    let parent = declaration("oc2-map-bundle-index");
+    let child = SourceLocation::resolve(&parent.url, Some(&index_location())).unwrap();
+    let document = parse_document(child.bundled_text().unwrap(), &child).unwrap();
+    let probe = super::release_tags::declaration_probe(&document.map_sources[0]);
+    let releases = crate::releases::fetch_releases(&client, &probe, None, true, &[])
+        .await
+        .unwrap_or_else(|error| panic!("real public Release API failed: {error}"));
+    println!("public API returned {} releases", releases.len());
+    let cache = crate::release_cache::RepoReleaseCache::default();
+    let context = super::context::MapSourceContext {
+        cache: &cache,
+        client: &client,
+        config: &config,
+        github_token: None,
+        gitee_token: None,
+        gitcode_token: None,
+        pass_id: Some("gitcode-public-acceptance"),
+        previous: &[],
+    };
+    let maps = super::tree::load_map_tree(crate::config::REGION_CHINESE_MAINLAND, true, &context)
+        .await
+        .unwrap();
+    assert!(
+        maps.len() >= 50,
+        "expected uploaded maps, got {}",
+        maps.len()
+    );
+    assert!(
+        maps.iter()
+            .all(|map| map.provider == crate::models::Provider::Gitcode
+                && map.username == "CH3NGY2"
+                && map.repository == "OC2-Map-Bundle")
+    );
+    assert!(
+        maps.iter()
+            .all(|map| map.source_id.as_deref() == Some("maps-oc2-map-bundle"))
+    );
+    if let Some(path) = std::env::var_os("OC2_MAP_ACCEPTANCE_JSON") {
+        let info = maps
+            .iter()
+            .map(super::view::map_to_info)
+            .collect::<Vec<_>>();
+        std::fs::write(path, serde_json::to_vec_pretty(&info).unwrap()).unwrap();
+    }
+    println!(
+        "public GitCode bundle: {} maps parsed by the real source loader",
+        maps.len()
     );
 }

@@ -1,5 +1,5 @@
 use super::http::API_ENDPOINT;
-use super::http::RELEASE_PAGE_SIZE;
+use super::http::REPOSITORY_PAGE_SIZE;
 use super::http::api_client;
 use super::http::authorized;
 use super::http::ensure_success;
@@ -182,7 +182,7 @@ async fn installation_repositories(
     installation: u64,
 ) -> Result<Vec<PublishRepository>, String> {
     let url = format!(
-        "{API_ENDPOINT}/user/installations/{installation}/repositories?per_page={RELEASE_PAGE_SIZE}"
+        "{API_ENDPOINT}/user/installations/{installation}/repositories?per_page={REPOSITORY_PAGE_SIZE}"
     );
     let repositories: ApiInstallationRepositories =
         get_json(client, token, &url, "list-installation-repositories").await?;

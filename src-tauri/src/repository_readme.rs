@@ -238,10 +238,7 @@ pub async fn get_repository_readme(
         let branch = if crate::community::is_repository(repo) && !repo.branch.trim().is_empty() {
             repo.branch.clone()
         } else {
-            let proxies = match repo.provider {
-                Provider::Github => &config.github_proxies.github_api_proxies,
-                Provider::Gitee => &config.github_proxies.gitee_api_proxies,
-            };
+            let proxies = crate::providers::api_proxies(&config, &repo.provider);
             let token = state.config.repository_api_token(&config, repo);
             releases::fetch_repository_default_branch(&client, repo, token.as_deref(), proxies)
                 .await

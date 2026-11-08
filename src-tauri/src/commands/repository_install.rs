@@ -131,10 +131,7 @@ pub async fn install_repository(
                 let client = releases::build_client(config.network.timeout_seconds)
                     .map_err(|e| e.to_string())?;
                 let token = state.config.repository_api_token(&config, &repo);
-                let api_proxies = match repo.provider {
-                    Provider::Github => &config.github_proxies.github_api_proxies,
-                    Provider::Gitee => &config.github_proxies.gitee_api_proxies,
-                };
+                let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
                 releases::filter_channel(
                     releases::fetch_releases(
                         &client,
@@ -212,7 +209,7 @@ pub async fn install_repository(
         .map_err(|e| e.to_string())?;
     let download_threads = match &repo.provider {
         Provider::Github => repo.download_threads.clamp(1, 32),
-        Provider::Gitee => 1,
+        Provider::Gitee | Provider::Gitcode => 1,
     };
     log::info!(
         "开始下载仓库文件：仓库={}，平台={:?}，线程数={}，代理策略={:?}",

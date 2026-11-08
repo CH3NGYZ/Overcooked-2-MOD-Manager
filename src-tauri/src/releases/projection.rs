@@ -93,6 +93,9 @@ pub fn parse_release_json(
             .unwrap_or_default()
             .into_iter()
             .filter_map(|asset| {
+                if *provider == Provider::Gitcode && crate::providers::is_generated_asset(&asset) {
+                    return None;
+                }
                 let name = asset.get("name").and_then(Value::as_str)?.to_string();
                 let download_url = [
                     "browser_download_url",

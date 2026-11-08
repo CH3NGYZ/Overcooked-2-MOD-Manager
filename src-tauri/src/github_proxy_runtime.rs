@@ -72,6 +72,7 @@ impl ProxyRuntime {
                     .chain(config.raw_proxies.iter_mut())
                     .chain(config.github_api_proxies.iter_mut())
                     .chain(config.gitee_api_proxies.iter_mut())
+                    .chain(config.gitcode_api_proxies.iter_mut())
                     .chain(config.avatar_proxies.iter_mut())
                 {
                     proxy.builtin = false;
@@ -83,11 +84,12 @@ impl ProxyRuntime {
         )
         .await?;
         log::info!(
-            "线上代理清单整份切换：Release={}，Raw={}，GitHub API={}，Gitee API={}，头像={}；不写磁盘",
+            "线上代理清单整份切换：Release={}，Raw={}，GitHub API={}，Gitee API={}，GitCode API={}，头像={}；不写磁盘",
             config.release_proxies.len(),
             config.raw_proxies.len(),
             config.github_api_proxies.len(),
             config.gitee_api_proxies.len(),
+            config.gitcode_api_proxies.len(),
             config.avatar_proxies.len()
         );
         *self.current.write().unwrap_or_else(|e| e.into_inner()) = config;

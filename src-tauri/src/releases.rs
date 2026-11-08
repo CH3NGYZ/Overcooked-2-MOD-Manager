@@ -5,6 +5,7 @@ mod client;
 mod error;
 pub(crate) use error::ReleaseError;
 mod fetch;
+pub(crate) mod pagination;
 mod projection;
 mod transport;
 mod version;
@@ -15,7 +16,7 @@ pub(crate) use crate::providers::{
 };
 pub(crate) use assets::select_install_asset;
 pub(crate) use client::{APP_USER_AGENT, build_client, build_download_client};
-pub(crate) use fetch::{fetch_all_releases, fetch_releases, fetch_repository_default_branch};
+pub(crate) use fetch::{fetch_releases, fetch_repository_default_branch};
 pub(crate) use projection::filter_channel;
 pub(crate) use version::{compare_release_versions, is_prerelease_version, parse_version};
 

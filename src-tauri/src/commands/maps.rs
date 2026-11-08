@@ -48,6 +48,7 @@ pub async fn refresh_map_sources(
         .map_err(|error| error.to_string())?;
     let github_token = state.config.api_token(&config, &Provider::Github);
     let gitee_token = state.config.api_token(&config, &Provider::Gitee);
+    let gitcode_token = state.config.api_token(&config, &Provider::Gitcode);
     let loaded = {
         let ctx = crate::map_sources::MapSourceContext {
             cache: &state.release_cache,
@@ -55,6 +56,7 @@ pub async fn refresh_map_sources(
             config: &config,
             github_token: github_token.as_deref(),
             gitee_token: gitee_token.as_deref(),
+            gitcode_token: gitcode_token.as_deref(),
             pass_id: pass_id.as_deref(),
             // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
             previous: &config.map_repositories,
@@ -148,6 +150,7 @@ pub async fn refresh_map_releases(
         .map_err(|error| error.to_string())?;
     let github_token = state.config.api_token(&config, &Provider::Github);
     let gitee_token = state.config.api_token(&config, &Provider::Gitee);
+    let gitcode_token = state.config.api_token(&config, &Provider::Gitcode);
     let fetched = {
         let ctx = crate::map_sources::MapSourceContext {
             cache: &state.release_cache,
@@ -155,6 +158,7 @@ pub async fn refresh_map_releases(
             config: &config,
             github_token: github_token.as_deref(),
             gitee_token: gitee_token.as_deref(),
+            gitcode_token: gitcode_token.as_deref(),
             pass_id: pass_id.as_deref(),
             // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
             previous: &config.map_repositories,

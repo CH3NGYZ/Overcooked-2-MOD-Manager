@@ -52,6 +52,7 @@ pub(crate) fn default_config() -> AppConfig {
         auth: AuthConfig {
             github_token: String::new(),
             gitee_token: String::new(),
+            gitcode_token: String::new(),
             official_api_only: true,
             github_publish_token: String::new(),
             github_publish_refresh_token: String::new(),
@@ -71,6 +72,7 @@ pub(crate) fn default_config() -> AppConfig {
         repository_sources: builtin_repository_sources_for_region(current_user_region(), false),
         community_discovery: None,
         gitee_community_discovery: None,
+        gitcode_community_discovery: None,
         community_map_repositories: Vec::new(),
         source_repository_ids: Default::default(),
         staged_release_cache: Default::default(),

@@ -182,11 +182,18 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
         // 显式清除：把两个 Token 都恢复成空
         config.auth.github_token.clear();
         config.auth.gitee_token.clear();
+        config.auth.gitcode_token.clear();
         log::info!("已清除全部 API Token");
     } else {
         state
             .config
-            .set_tokens(&mut config, &patch.github_token, &patch.gitee_token);
+            .set_tokens(
+                &mut config,
+                &patch.github_token,
+                &patch.gitee_token,
+                &patch.gitcode_token,
+            )
+            .map_err(|_| "config.tokenProtectionFailed")?;
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!("API Token 配置保存完成");

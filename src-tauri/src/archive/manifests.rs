@@ -217,6 +217,7 @@ pub fn package_display_name(repository_name: &str, provider: &crate::models::Pro
     let platform = match provider {
         crate::models::Provider::Github => "GitHub",
         crate::models::Provider::Gitee => "Gitee",
+        crate::models::Provider::Gitcode => "GitCode",
     };
     format!("{repository_name} - {platform}")
 }

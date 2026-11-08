@@ -52,10 +52,10 @@ impl Package {
             (Self::Windows, Provider::Gitee) => {
                 "https://gitee.com/ch3ngyz/Overcooked-2-Installer-ResourceFiles/releases/download/bepinex/BepInEx_win_x86_5.4.23.5.zip"
             }
-            (Self::Windows, Provider::Github) => {
+            (Self::Windows, Provider::Github | Provider::Gitcode) => {
                 "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x86_5.4.23.5.zip"
             }
-            (Self::MacOS, Provider::Github) => {
+            (Self::MacOS, Provider::Github | Provider::Gitcode) => {
                 "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_macos_universal_5.4.23.5.zip"
             }
             (Self::MacOS, Provider::Gitee) => {

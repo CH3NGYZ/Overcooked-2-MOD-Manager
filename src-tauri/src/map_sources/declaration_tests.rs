@@ -229,6 +229,7 @@ async fn real_release_tag_source_builds_maps() {
         config: &config,
         github_token: None,
         gitee_token: None,
+        gitcode_token: None,
         pass_id: Some("real-release-tags"),
         previous: &[],
     };

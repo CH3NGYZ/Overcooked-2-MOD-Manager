@@ -56,7 +56,7 @@ test('Community discovery keeps per-platform state, trusted pagination, token is
   assert.match(state, /pub\(super\) limits: tokio::sync::Mutex<SearchRateLimits>/)
   assert.match(state, /pub\(super\) cancelled: AtomicBool/)
   assert.match(state, /Duration::from_millis\(6100\)/)
-  assert.match(state, /Provider::Gitee => Duration::from_secs\(1\)/)
+  assert.match(state, /Provider::Gitee \| Provider::Gitcode => Duration::from_secs\(1\)/)
   const github = read('community/github.rs')
   ordered(github, ['limits.before_request(route).await?', '.timeout(Duration::from_secs(5))', 'limits.observe(route, status, response.headers())', 'bytes.len() + chunk.len() > MAX_RESPONSE_BYTES'])
   assert.match(github, /MAX_RESPONSE_BYTES: usize = 2 \* 1024 \* 1024/)

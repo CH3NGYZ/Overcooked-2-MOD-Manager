@@ -59,9 +59,13 @@ pub(super) async fn fetch_release_api_with_retries(
     url: &str,
     provider: &Provider,
     token: Option<&str>,
-) -> Result<Vec<ReleaseInfo>, ReleaseError> {
+) -> Result<(Vec<ReleaseInfo>, usize), ReleaseError> {
     fetch_api_with_retries(client, url, provider, token, |value| {
-        parse_release_json(value, provider)
+        let count = value
+            .as_array()
+            .ok_or_else(|| ReleaseError::Json("source.releaseResponseInvalid".into()))?
+            .len();
+        Ok((parse_release_json(value, provider)?, count))
     })
     .await
 }

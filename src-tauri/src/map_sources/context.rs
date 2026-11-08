@@ -11,6 +11,7 @@ pub struct MapSourceContext<'a> {
     pub client: &'a reqwest::Client,
     pub config: &'a AppConfig,
     pub github_token: Option<&'a str>,
+    pub gitcode_token: Option<&'a str>,
     pub gitee_token: Option<&'a str>,
     /// 一次用户动作的批次身份：同一批次里同一个仓库只请求一次 Release API。
     pub pass_id: Option<&'a str>,
@@ -27,14 +28,12 @@ impl MapSourceContext<'_> {
         match provider {
             Provider::Github => self.github_token,
             Provider::Gitee => self.gitee_token,
+            Provider::Gitcode => self.gitcode_token,
         }
     }
 
     pub(super) fn api_proxies(&self, provider: &Provider) -> &[crate::models::GitHubProxy] {
-        match provider {
-            Provider::Github => &self.config.github_proxies.github_api_proxies,
-            Provider::Gitee => &self.config.github_proxies.gitee_api_proxies,
-        }
+        crate::providers::api_proxies(self.config, provider)
     }
 
     /// 上一次成功生成、属于这个源的条目。

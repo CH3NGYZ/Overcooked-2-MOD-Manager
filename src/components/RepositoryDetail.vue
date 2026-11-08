@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { repositoryHomepage, repositoryRawUrl } from '../providers'
 /**
  * MOD 安装页的仓库详情（右侧抽屉的内容）。
  *
@@ -162,24 +163,14 @@ const disabledLabel = computed(() => {
 const sourceUrl = computed(() => {
   const repo = props.repo
   if (!repo) return ''
-  return repo.provider === 'gitee'
-    ? `https://gitee.com/${repo.username}/${repo.repository}`
-    : `https://github.com/${repo.username}/${repo.repository}`
+  return repositoryHomepage(repo.provider, repo.username, repo.repository)
 })
 const releaseUrl = computed(() => (sourceUrl.value ? `${sourceUrl.value}/releases/latest` : ''))
 /** Raw 地址：指向仓库的文件列表（release 模式）或具体文件（repository_file 模式）。 */
 const rawUrl = computed(() => {
   const repo = props.repo
   if (!repo) return ''
-  if (repo.download_mode === 'repository_file' && repo.branch && repo.file_path) {
-    return repo.provider === 'gitee'
-      ? `https://gitee.com/${repo.username}/${repo.repository}/raw/${repo.branch}/${repo.file_path}`
-      : `https://github.com/${repo.username}/${repo.repository}/raw/refs/heads/${repo.branch}/${repo.file_path}`
-  }
-  // 没有具体文件时指向仓库根目录的 Raw 浏览入口
-  return repo.provider === 'gitee'
-    ? `https://gitee.com/${repo.username}/${repo.repository}/raw/${repo.branch || 'master'}`
-    : `https://github.com/${repo.username}/${repo.repository}/raw/refs/heads/${repo.branch || 'main'}`
+  return repositoryRawUrl(repo.provider, repo.username, repo.repository, repo.branch || (repo.provider === 'gitee' ? 'master' : 'main'), repo.download_mode === 'repository_file' ? repo.file_path || '' : '')
 })
 /** 头部第三段链接：release 模式给 Release 页，仓库文件模式给 Raw 文件。 */
 const metaLinks = computed<ReleaseDetailLink[]>(() => {

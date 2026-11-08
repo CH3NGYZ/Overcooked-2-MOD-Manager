@@ -27,9 +27,7 @@ pub async fn refresh_community_repositories(
         let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
         state.config.load_or_default()
     };
-    let token = (provider == Provider::Github)
-        .then(|| state.config.api_token(&config, &Provider::Github))
-        .flatten();
+    let token = state.config.api_token(&config, &provider);
     let results = tokio::select! {
         results = async {
             match provider {
@@ -38,6 +36,10 @@ pub async fn refresh_community_repositories(
                     search_all(&client, SEARCH_ENDPOINT, token.as_deref(), &config.github_proxies.github_api_proxies, &mut limits).await
                 },
                 Provider::Gitee => crate::gitee_community::search_all(&app, state.config.cache_dir().join("gitee-webview"), &mut limits).await,
+                Provider::Gitcode => {
+                    let client = releases::build_client(config.network.timeout_seconds).map_err(|error| error.to_string())?;
+                    super::gitcode::discover(&client, token.as_deref(), &mut limits).await
+                },
             }
         } => results?,
         _ = async { while !search.cancelled.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => return Err("community.searchCancelled".into()),

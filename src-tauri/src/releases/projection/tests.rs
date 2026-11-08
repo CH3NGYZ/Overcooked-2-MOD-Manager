@@ -90,3 +90,20 @@ fn release_asset_download_counts_preserve_zero_and_missing_metadata() {
     .unwrap();
     assert_eq!(legacy.download_count, None);
 }
+
+#[test]
+fn gitcode_filters_only_generated_archives_and_keeps_optional_metadata() {
+    let input = serde_json::json!([{"tag_name":"map", "assets":[
+        {"name":"map.zip", "type":"source", "browser_download_url":"https://raw.atomgit.com/a/b/archive/refs/heads/map.zip"},
+        {"name":"fixture_map.tar.gz", "browser_download_url":"https://raw.atomgit.com/a/b/archive/refs/tags/map.tar.gz"},
+        {"name":"archive-map.zip", "type":"attach", "size":123, "digest":"sha256:abc", "browser_download_url":"https://atomgit.com/a/b/releases/download/map/archive-map.zip"},
+        {"name":"unknown.zip", "type":"attach", "browser_download_url":"https://atomgit.com/a/b/releases/download/map/unknown.zip"}
+    ]}]);
+    let result = parse_release_json(&input, &Provider::Gitcode).unwrap();
+    assert_eq!(result[0].assets.len(), 2);
+    assert_eq!(result[0].assets[0].name, "archive-map.zip");
+    assert_eq!(result[0].assets[0].size, 123);
+    assert_eq!(result[0].assets[0].digest.as_deref(), Some("sha256:abc"));
+    assert_eq!(result[0].assets[1].size, 0);
+    assert!(result[0].assets[1].digest.is_none());
+}

@@ -32,6 +32,7 @@ pub(super) fn community_map_label(provider: &Provider) -> SourceLabel {
     let (id, product) = match provider {
         Provider::Github => (GITHUB_COMMUNITY_MAP_SOURCE_ID, "GitHub"),
         Provider::Gitee => (GITEE_COMMUNITY_MAP_SOURCE_ID, "Gitee"),
+        Provider::Gitcode => ("gitcode-map-community", "GitCode"),
     };
     SourceLabel {
         id: id.to_string(),

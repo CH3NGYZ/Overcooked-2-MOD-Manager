@@ -22,96 +22,25 @@ pub async fn fetch_releases(
     official_api_only: bool,
     api_proxies: &[GitHubProxy],
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
-    let per_page = repo.max_release_count.clamp(1, 100);
-    fetch_releases_page(
-        client,
-        repo,
-        per_page,
-        None,
-        token,
-        official_api_only,
-        api_proxies,
-    )
+    super::pagination::collect_release_pages(|page| {
+        fetch_releases_page(client, repo, page, token, official_api_only, api_proxies)
+    })
     .await
-}
-
-/// 分页读取一个仓库的全部 Release。
-///
-/// 只有「一个仓库多张地图」的源需要它：那种源的地图数量与 Release 数量同阶，
-/// 只读第 1 页会漏掉排在后面的地图。MOD 与普通地图仍走 `fetch_releases`
-/// （只取第 1 页），不因为这条新路径变成每次都翻几十页。
-///
-/// 停止条件三条，缺一不可：
-/// 1. 解析后的 Release 数不足一页（跳过无 tag 条目也会缩短这一计数）；
-/// 2. 翻到 `max_pages` 上限 —— 防止一次刷新把几千个 Release 全拉下来；
-/// 3. 中途失败 —— 已经取到的部分照常返回：前几页的地图不会因为第 N 页
-///    限流而整块消失（首屏换一次 warn 日志）。
-pub async fn fetch_all_releases(
-    client: &Client,
-    repo: &RepositoryConfig,
-    per_page: u32,
-    max_pages: u32,
-    token: Option<&str>,
-    official_api_only: bool,
-    api_proxies: &[GitHubProxy],
-) -> Result<Vec<ReleaseInfo>, ReleaseError> {
-    let per_page = per_page.clamp(1, 100);
-    let max_pages = max_pages.clamp(1, 100);
-    let mut all = Vec::new();
-    for index in 0..max_pages {
-        let page = index + 1;
-        let requested = (page > 1).then_some(page);
-        let page_releases = match fetch_releases_page(
-            client,
-            repo,
-            per_page,
-            requested,
-            token,
-            official_api_only,
-            api_proxies,
-        )
-        .await
-        {
-            Ok(releases) => releases,
-            Err(error) => {
-                if all.is_empty() {
-                    return Err(error);
-                }
-                log::warn!(
-                    "分页读取 Release 中途失败，保留已取到的部分: repository_id={} page={} error_kind={} got={}",
-                    repo.id,
-                    page,
-                    release_error_kind(&error),
-                    all.len()
-                );
-                return Ok(all);
-            }
-        };
-        let received = page_releases.len();
-        all.extend(page_releases);
-        if received < per_page as usize {
-            break;
-        }
-    }
-    Ok(all)
 }
 
 async fn fetch_releases_page(
     client: &Client,
     repo: &RepositoryConfig,
-    per_page: u32,
-    page: Option<u32>,
+    page: u32,
     token: Option<&str>,
     official_api_only: bool,
     api_proxies: &[GitHubProxy],
-) -> Result<Vec<ReleaseInfo>, ReleaseError> {
-    let per_page = per_page.clamp(1, 100);
+) -> Result<(Vec<ReleaseInfo>, usize), ReleaseError> {
     let official = match repository_release_api_url_page(
         &repo.provider,
         &repo.username,
         &repo.repository,
-        per_page,
-        page,
+        Some(page),
     ) {
         Ok(url) => url,
         Err(error) => {
@@ -130,8 +59,8 @@ async fn fetch_releases_page(
         repo.id,
         repo.provider,
         repo.channel,
-        per_page,
-        page.unwrap_or(1),
+        super::pagination::RELEASE_PAGE_SIZE,
+        page,
         token.is_some(),
         official_api_only,
         request_targets.len()
@@ -144,7 +73,7 @@ async fn fetch_releases_from_targets(
     repo: &RepositoryConfig,
     official: &str,
     request_targets: Vec<(String, Option<&str>)>,
-) -> Result<Vec<ReleaseInfo>, ReleaseError> {
+) -> Result<(Vec<ReleaseInfo>, usize), ReleaseError> {
     let mut last_error = None;
     let mut skip_gitee_official = false;
     let gate = crate::api_rate_gate::global_gate();
@@ -183,7 +112,7 @@ async fn fetch_releases_from_targets(
             request_token.is_some()
         );
         match fetch_release_api_with_retries(client, &url, &repo.provider, request_token).await {
-            Ok(mut releases) => {
+            Ok((mut releases, received)) => {
                 gate.record_success(&repo.provider, gate_kind);
                 for release in &mut releases {
                     release.assets.retain(|asset| {
@@ -197,7 +126,7 @@ async fn fetch_releases_from_targets(
                     target_kind,
                     releases.len()
                 );
-                return Ok(releases);
+                return Ok((releases, received));
             }
             Err(error) => {
                 // 命中限流特征 → 给该类凭据上锁，后续同类官方请求改走代理
@@ -256,7 +185,6 @@ pub async fn fetch_repository_default_branch(
         &repo.provider,
         &repo.username,
         &repo.repository,
-        1,
     )?)
     .map_err(|error| ReleaseError::InvalidUrl(error.to_string()))?;
     url.path_segments_mut()

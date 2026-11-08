@@ -2,6 +2,7 @@
 
 mod catalog;
 pub(crate) mod commands;
+mod gitcode;
 mod github;
 mod merge;
 mod ownership;

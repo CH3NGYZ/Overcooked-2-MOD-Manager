@@ -66,13 +66,13 @@ export const toolsUiSettings: DomainMessages = {
     ko: 'Authorization: Bearer 헤더로 전송됩니다',
     ja: 'Authorization: Bearer ヘッダーで送信します',
   },
-  // 使用 access_token 请求头
+  // 使用 access_token 查询参数
   sentAsAnAccessTokenHeader: {
-    'zh-CN': '使用 access_token 请求头',
-    'zh-TW': '使用 access_token 請求頭',
-    en: 'Sent as an access_token header',
-    ko: 'access_token 헤더로 전송됩니다',
-    ja: 'access_token ヘッダーで送信します',
+    'zh-CN': '使用 access_token 查询参数',
+    'zh-TW': '使用 access_token 查詢參數',
+    en: 'Sent as an access_token query parameter',
+    ko: 'access_token 쿼리 매개변수로 전송됩니다',
+    ja: 'access_token クエリパラメーターで送信します',
   },
   // 已配置
   configured: {

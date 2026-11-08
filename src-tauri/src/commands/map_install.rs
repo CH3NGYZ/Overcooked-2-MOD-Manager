@@ -301,18 +301,8 @@ pub async fn stage_map_release(
 
     // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
     let expected_size = (asset.size > 0).then_some(asset.size);
-    /*
-     * 摘要校验只对 GitHub 生效：Gitee 不提供 SHA-256。
-     * 长度与 ZIP 结构校验两边都做。
-     */
-    let digest = if map.provider == Provider::Github {
-        asset
-            .digest
-            .as_deref()
-            .and_then(|value| value.strip_prefix("sha256:"))
-    } else {
-        None
-    };
+    // The shared verifier accepts the trusted asset digest for every provider.
+    let digest = asset.digest.as_deref();
     let download_name = asset.name.clone();
     /*
      * 进度标签与预览标题用界面语言下的地图名：进度事件在下载过程中持续发出，
@@ -329,7 +319,7 @@ pub async fn stage_map_release(
      */
     let configured_threads = match map.provider {
         Provider::Github => map.download_threads.clamp(0, 32),
-        Provider::Gitee => 1,
+        Provider::Gitee | Provider::Gitcode => 1,
     };
     let racing = candidates.len() > 1;
     log::debug!(

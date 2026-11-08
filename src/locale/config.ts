@@ -8,6 +8,13 @@ import type { DomainMessages } from './types'
  * 所以这里同时保留简体与繁体原文，不要合并成一条。
  */
 export const config: DomainMessages = {
+  tokenProtectionFailed: {
+    'zh-CN': '无法安全保存访问令牌，原配置已保留',
+    'zh-TW': '無法安全儲存存取權杖，原設定已保留',
+    en: 'Could not protect the access tokens. Existing settings were preserved.',
+    ko: '액세스 토큰을 안전하게 저장하지 못했습니다. 기존 설정을 유지했습니다.',
+    ja: 'アクセストークンを安全に保存できませんでした。既存の設定は保持されました。',
+  },
   assetRuleRequired: {
     'zh-CN': '请创建至少一个有效的资产规则',
     'zh-TW': '請建立至少一個有效的資產規則',

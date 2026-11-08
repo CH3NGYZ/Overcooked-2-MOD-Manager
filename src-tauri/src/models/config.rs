@@ -70,6 +70,8 @@ pub struct AppConfig {
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gitee_community_discovery: Option<CommunityDiscovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitcode_community_discovery: Option<CommunityDiscovery>,
     /// 社区地图发现：带 `map` topic 的仓库（两个平台各一份，发现时整体替换）。
     ///
     /// 只存坐标而不存条目：地图条目依赖各 Release note 里的 `oc2-map` 块，
@@ -132,6 +134,8 @@ pub struct LaunchConfig {
 pub struct AuthConfig {
     pub github_token: String,
     pub gitee_token: String,
+    #[serde(default)]
+    pub gitcode_token: String,
     pub official_api_only: bool,
     /// 地图发布页的 GitHub App access token；Windows 使用 DPAPI，非 Windows 仅 base64 编码。
     ///
@@ -201,6 +205,7 @@ pub struct PublicConfig {
     pub official_api_only: bool,
     pub github_token_set: bool,
     pub gitee_token_set: bool,
+    pub gitcode_token_set: bool,
     #[serde(default)]
     pub github_publish_token_set: bool,
     #[serde(default)]
@@ -212,6 +217,8 @@ pub struct PublicConfig {
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default)]
     pub gitee_community_discovery: Option<CommunityDiscovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitcode_community_discovery: Option<CommunityDiscovery>,
     #[serde(default)]
     pub github_proxies: GitHubProxyConfig,
     /// 只用内置仓库源（不访问远端 raw 入口）。
@@ -251,6 +258,8 @@ pub struct SettingsPatch {
 pub struct TokenPatch {
     pub github_token: String,
     pub gitee_token: String,
+    #[serde(default)]
+    pub gitcode_token: String,
     /// 显式清除已保存的 Token（留空字符串表示「不修改」）。
     #[serde(default)]
     pub clear: bool,

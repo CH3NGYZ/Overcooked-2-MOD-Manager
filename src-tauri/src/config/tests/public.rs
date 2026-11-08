@@ -12,7 +12,7 @@ fn public_discovery_hides_late_official_descendants_without_erasing_saved_bindin
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/verification/community-official-dedup-20261014/config-fixture"),
     );
-    for provider in [Provider::Github, Provider::Gitee] {
+    for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
         let community = crate::community::repository_from_coordinates(
             &provider,
             "Owner",
@@ -40,11 +40,13 @@ fn public_discovery_hides_late_official_descendants_without_erasing_saved_bindin
         match provider {
             Provider::Github => config.community_discovery = Some(discovery),
             Provider::Gitee => config.gitee_community_discovery = Some(discovery),
+            Provider::Gitcode => config.gitcode_community_discovery = Some(discovery),
         }
         let ids = |public: &PublicConfig| {
             match provider {
                 Provider::Github => public.community_discovery.as_ref(),
                 Provider::Gitee => public.gitee_community_discovery.as_ref(),
+                Provider::Gitcode => public.gitcode_community_discovery.as_ref(),
             }
             .unwrap()
             .repository_ids
@@ -110,4 +112,35 @@ fn structured_repository_fields_survive_storage_and_public_config_without_urls()
         "url = \"https://github.com/example/mod\"",
     );
     assert!(crate::repository_sources::parse_document(&old_format, &location).is_err());
+}
+
+#[test]
+fn gitcode_token_roundtrips_without_entering_public_config() {
+    let service = ConfigService::for_test(std::env::temp_dir().join("oc2-gitcode-token-fixture"));
+    let mut config = default_config();
+    service
+        .set_tokens(
+            &mut config,
+            "github-fixture",
+            "gitee-fixture",
+            "gitcode-fixture",
+        )
+        .unwrap();
+    assert_eq!(
+        service.api_token(&config, &Provider::Gitcode).as_deref(),
+        Some("gitcode-fixture")
+    );
+    assert_ne!(config.auth.gitcode_token, "gitcode-fixture");
+    let encrypted = config.auth.gitcode_token.clone();
+    service.set_tokens(&mut config, "", "", "").unwrap();
+    assert_eq!(config.auth.gitcode_token, encrypted);
+    let restored: AppConfig = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+    assert_eq!(
+        service.api_token(&restored, &Provider::Gitcode).as_deref(),
+        Some("gitcode-fixture")
+    );
+    let public = serde_json::to_string(&service.public_config(&restored)).unwrap();
+    assert!(public.contains("\"gitcode_token_set\":true"));
+    assert!(!public.contains("gitcode-fixture"));
+    assert!(!public.contains(&encrypted));
 }

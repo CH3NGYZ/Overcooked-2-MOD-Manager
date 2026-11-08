@@ -11,6 +11,7 @@ const SEARCH_INTERVAL: Duration = Duration::from_millis(6100);
 pub struct CommunitySearch {
     github: SearchState,
     gitee: SearchState,
+    gitcode: SearchState,
 }
 
 impl Default for CommunitySearch {
@@ -18,6 +19,7 @@ impl Default for CommunitySearch {
         Self {
             github: SearchState::new(Provider::Github),
             gitee: SearchState::new(Provider::Gitee),
+            gitcode: SearchState::new(Provider::Gitcode),
         }
     }
 }
@@ -27,6 +29,7 @@ impl CommunitySearch {
         match provider {
             Provider::Github => &self.github,
             Provider::Gitee => &self.gitee,
+            Provider::Gitcode => &self.gitcode,
         }
     }
 }
@@ -42,7 +45,7 @@ impl SearchState {
             limits: tokio::sync::Mutex::new(SearchRateLimits {
                 interval: match provider {
                     Provider::Github => SEARCH_INTERVAL,
-                    Provider::Gitee => Duration::from_secs(1),
+                    Provider::Gitee | Provider::Gitcode => Duration::from_secs(1),
                 },
                 provider,
                 ..Default::default()
@@ -112,6 +115,7 @@ impl SearchRateLimits {
         match self.provider {
             Provider::Github => "community.searchRateLimited",
             Provider::Gitee => "community.giteeWebRateLimited",
+            Provider::Gitcode => "community.searchRateLimited",
         }
     }
 }

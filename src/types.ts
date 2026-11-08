@@ -1,4 +1,4 @@
-export type Provider = 'github' | 'gitee'
+export type Provider = 'github' | 'gitee' | 'gitcode'
 /**
  * 仓库支持的桌面平台。
  *
@@ -20,6 +20,7 @@ export interface GitHubProxyConfig {
   raw_proxies: GitHubProxy[]
   github_api_proxies: GitHubProxy[]
   gitee_api_proxies: GitHubProxy[]
+  gitcode_api_proxies: GitHubProxy[]
   /** 头像专用代理：能服务任意 URL 的那类（纯 `{url}` 包装）。 */
   avatar_proxies: GitHubProxy[]
 }
@@ -165,10 +166,12 @@ export interface PublicConfig {
   official_api_only: boolean
   github_token_set: boolean
   gitee_token_set: boolean
+  gitcode_token_set: boolean
   repositories: Repository[]
   repository_sources: RepositorySource[]
   community_discovery?: CommunityDiscovery | null
-  gitee_community_discovery?: CommunityDiscovery | null
+  gitee_community_discovery?: CommunityDiscovery
+  gitcode_community_discovery?: CommunityDiscovery | null
   github_proxies: GitHubProxyConfig
   /** 只用内置仓库源：官方入口不走 Gitee / GitHub raw 直链。 */
   builtin_sources_only?: boolean
@@ -614,7 +617,7 @@ export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChann
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
 export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
-export interface TokenPatch { github_token: string; gitee_token: string; clear?: boolean }
+export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string
   name: string

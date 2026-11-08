@@ -15,6 +15,8 @@ pub(crate) const INSTALLER_GITEE_REPO: &str = "Overcooked-2-MOD-Manager";
 pub(crate) const INSTALLER_GITHUB_OWNER: &str = "CH3NGYZ";
 
 pub(crate) const INSTALLER_GITHUB_REPO: &str = "Overcooked-2-MOD-Manager";
+pub(crate) const INSTALLER_GITCODE_OWNER: &str = "CH3NGYZ";
+pub(crate) const INSTALLER_GITCODE_REPO: &str = "Overcooked-2-Manager";
 
 #[derive(Debug, Clone)]
 pub(crate) struct InstallerChannel {
@@ -49,6 +51,9 @@ pub(crate) fn detect_installer_region() -> InstallerRegion {
 
 pub(crate) fn installer_manifest_url(provider: &Provider) -> String {
     match provider {
+        Provider::Gitcode => format!(
+            "https://gitcode.com/{INSTALLER_GITCODE_OWNER}/{INSTALLER_GITCODE_REPO}/releases/download/latest/latest.json"
+        ),
         Provider::Gitee => format!(
             "https://gitee.com/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases/download/latest/latest.json"
         ),
@@ -74,7 +79,7 @@ pub(crate) fn installer_sources_for_url(
         endpoint: url.into(),
         proxy: None,
     }];
-    if *provider == Provider::Gitee {
+    if matches!(provider, Provider::Gitee | Provider::Gitcode) {
         return sources;
     }
     // One snapshot covers manifest discovery, signature checks and package downloads.

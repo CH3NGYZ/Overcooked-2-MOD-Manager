@@ -15,6 +15,7 @@ pub(crate) fn repository_address_key(
         match provider {
             Provider::Github => "github",
             Provider::Gitee => "gitee",
+            Provider::Gitcode => "gitcode",
         },
         username.trim().to_ascii_lowercase(),
         repository.trim().to_ascii_lowercase(),
@@ -104,7 +105,7 @@ pub(crate) fn repository_from_export(
                 repo.download_threads.clamp(1, 32)
             }
         }
-        Provider::Gitee => 1,
+        Provider::Gitee | Provider::Gitcode => 1,
     };
     RepositoryConfig {
         id,

@@ -240,7 +240,7 @@ pub fn save_repository(
                 patch.download_threads.clamp(1, 32)
             }
         }
-        Provider::Gitee => 1,
+        Provider::Gitee | Provider::Gitcode => 1,
     };
     let asset_rules = if patch.download_mode == RepositoryDownloadMode::RepositoryFile {
         Vec::new()

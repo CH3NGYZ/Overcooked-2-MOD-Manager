@@ -9,7 +9,7 @@ const owners = {
   assets: ['asset_matches', 'select_install_asset'],
   client: ['build_client', 'build_download_client'],
   error: ['release_error_kind'],
-  fetch: ['fetch_releases', 'fetch_all_releases', 'fetch_releases_page', 'fetch_releases_from_targets', 'fetch_repository_default_branch'],
+  fetch: ['fetch_releases', 'fetch_releases_page', 'fetch_releases_from_targets', 'fetch_repository_default_branch'],
   projection: ['parse_release_json', 'filter_channel'],
   transport: ['api_target_kind', 'api_request_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json'],
   version: ['parse_version', 'compare_release_versions', 'is_strict_semver', 'is_prerelease_version', 'suffix_identifiers', 'split_alpha_numeric', 'compare_prerelease_parts'],
@@ -57,9 +57,11 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(fetch, /crate::api_rate_gate::global_gate\(\)/)
   assert.match(fetch, /gate\.record_forbidden\(&repo\.provider, gate_kind, signal\)/)
   assert.match(fetch, /fetch_releases_from_targets\(client, repo, &official, request_targets\)\.await/)
-  assert.match(fetch, /if all\.is_empty\(\) \{\s*return Err\(error\);/)
-  assert.match(fetch, /return Ok\(all\);/)
-  assert.match(fetch, /let received = page_releases\.len\(\);/)
+  assert.match(fetch, /pagination::collect_release_pages/)
+  const pagination = read('pagination.rs')
+  assert.match(pagination, /RELEASE_PAGE_SIZE: u32 = 50/)
+  assert.match(pagination, /let \(items, received\) = fetch\(page\).await\?/)
+  assert.match(pagination, /received < RELEASE_PAGE_SIZE as usize/)
   assert.doesNotMatch(fetch, /filter_channel\(/)
   for (const file of ['fetch.rs', 'assets.rs']) {
     assert.match(read(file), /!crate::community::is_source_archive\(repo, &release\.tag_name, &asset\.name\)/)
@@ -71,6 +73,6 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(read('version.rs'), /Some\(SegmentVersion::parse\(remote\)\?\.cmp\(&SegmentVersion::parse\(local\)\?\)\)/)
   assert.match(read('../mods/status.rs'), /crate::releases::compare_release_versions\(&release\.tag_name, &local\)/)
   assert.match(read('../map_sources/releases.rs'), /crate::releases::fetch_releases\(/)
-  assert.match(read('../map_sources/release_tags.rs'), /crate::releases::fetch_all_releases\(/)
+  assert.match(read('../map_sources/release_tags.rs'), /crate::releases::fetch_releases\(/)
   assert.match(read('../repository_readme.rs'), /releases::fetch_repository_default_branch\(/)
 })

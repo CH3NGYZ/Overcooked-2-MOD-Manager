@@ -40,6 +40,8 @@ struct GateState {
     gitee_token: Option<Instant>,
     github_anonymous: Option<Instant>,
     github_token: Option<Instant>,
+    gitcode_anonymous: Option<Instant>,
+    gitcode_token: Option<Instant>,
     /// 连续二级限流次数，用于指数退避。
     github_secondary_hits: u32,
 }
@@ -96,6 +98,8 @@ impl ApiRateGate {
             (Provider::Gitee, GateKind::Token) => state.gitee_token,
             (Provider::Github, GateKind::Anonymous) => state.github_anonymous,
             (Provider::Github, GateKind::Token) => state.github_token,
+            (Provider::Gitcode, GateKind::Anonymous) => state.gitcode_anonymous,
+            (Provider::Gitcode, GateKind::Token) => state.gitcode_token,
             (_, GateKind::Proxy) => None,
         };
         match until {
@@ -119,6 +123,9 @@ impl ApiRateGate {
             Err(_) => return None,
         };
         let block = match provider {
+            Provider::Gitcode => {
+                Duration::from_secs(signal.retry_after.unwrap_or(60).clamp(1, 900))
+            }
             Provider::Gitee => {
                 // Gitee 只认正文里的限流文案；命中后固定 5 分钟
                 if !signal.body_limit_message {
@@ -150,6 +157,8 @@ impl ApiRateGate {
             (Provider::Gitee, GateKind::Token) => state.gitee_token = Some(deadline),
             (Provider::Github, GateKind::Anonymous) => state.github_anonymous = Some(deadline),
             (Provider::Github, GateKind::Token) => state.github_token = Some(deadline),
+            (Provider::Gitcode, GateKind::Anonymous) => state.gitcode_anonymous = Some(deadline),
+            (Provider::Gitcode, GateKind::Token) => state.gitcode_token = Some(deadline),
             _ => {}
         }
         Some(block)
@@ -167,6 +176,8 @@ impl ApiRateGate {
         match (provider, kind) {
             (Provider::Gitee, GateKind::Anonymous) => state.gitee_anonymous = None,
             (Provider::Gitee, GateKind::Token) => state.gitee_token = None,
+            (Provider::Gitcode, GateKind::Anonymous) => state.gitcode_anonymous = None,
+            (Provider::Gitcode, GateKind::Token) => state.gitcode_token = None,
             (Provider::Github, GateKind::Anonymous) => {
                 state.github_anonymous = None;
                 state.github_secondary_hits = 0;

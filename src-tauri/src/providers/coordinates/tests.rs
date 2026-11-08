@@ -26,56 +26,54 @@ fn repository_homepage_rejects_unsafe_path_segments() {
         "..",
     ] {
         assert!(repository_homepage(&Provider::Github, username, "repo").is_err());
-        assert!(repository_release_api_url(&Provider::Github, username, "repo", 10).is_err());
+        assert!(repository_release_api_url(&Provider::Github, username, "repo").is_err());
     }
 }
 
 #[test]
 fn release_api_urls_are_assembled_from_structured_repository_fields() {
     assert_eq!(
-        repository_release_api_url(&Provider::Github, "sinai-dev", "UnityExplorer", 10).unwrap(),
-        "https://api.github.com/repos/sinai-dev/UnityExplorer/releases?per_page=10&direction=desc&sort=created"
+        repository_release_api_url(&Provider::Github, "sinai-dev", "UnityExplorer").unwrap(),
+        "https://api.github.com/repos/sinai-dev/UnityExplorer/releases?per_page=50&page=1&direction=desc&sort=created"
     );
     assert_eq!(
         repository_release_api_url(
             &Provider::Gitee,
             "ch3ngyz",
-            "Overcooked-2-ChefRotation-Releases",
-            0
+            "Overcooked-2-ChefRotation-Releases"
         )
         .unwrap(),
-        "https://gitee.com/api/v5/repos/ch3ngyz/Overcooked-2-ChefRotation-Releases/releases?per_page=1&direction=desc&sort=created"
+        "https://gitee.com/api/v5/repos/ch3ngyz/Overcooked-2-ChefRotation-Releases/releases?per_page=50&page=1&direction=desc&sort=created"
     );
     assert!(
-        repository_release_api_url(&Provider::Github, "user", "repo", 500)
+        repository_release_api_url(&Provider::Github, "user", "repo")
             .unwrap()
-            .contains("per_page=100")
+            .contains("per_page=50")
     );
 }
 
-/// 翻页只在第 2 页起追加 `page`：第 1 页的地址被既有断言与代理模板逐字匹配。
+/// 所有列表从 page=1 开始，统一每页 50 条。
 #[test]
-fn paged_release_api_url_only_adds_page_after_the_first() {
-    let first =
-        repository_release_api_url_page(&Provider::Github, "owner", "repo", 50, None).unwrap();
+fn paged_release_api_url_always_includes_the_page() {
+    let first = repository_release_api_url_page(&Provider::Github, "owner", "repo", None).unwrap();
     assert_eq!(
         first,
-        "https://api.github.com/repos/owner/repo/releases?per_page=50&direction=desc&sort=created"
+        "https://api.github.com/repos/owner/repo/releases?per_page=50&page=1&direction=desc&sort=created"
     );
     // page = 1 与不传等价
     assert_eq!(
-        repository_release_api_url_page(&Provider::Github, "owner", "repo", 50, Some(1)).unwrap(),
+        repository_release_api_url_page(&Provider::Github, "owner", "repo", Some(1)).unwrap(),
         first
     );
     assert_eq!(
-        repository_release_api_url_page(&Provider::Github, "owner", "repo", 50, Some(2)).unwrap(),
+        repository_release_api_url_page(&Provider::Github, "owner", "repo", Some(2)).unwrap(),
         "https://api.github.com/repos/owner/repo/releases?per_page=50&page=2&direction=desc&sort=created"
     );
-    // 每页最多 100：地图源的 page_size 允许配置，越界要被夹住
+    // 页大小统一由共享常量控制
     assert!(
-        repository_release_api_url_page(&Provider::Github, "owner", "repo", 1000, Some(3))
+        repository_release_api_url_page(&Provider::Github, "owner", "repo", Some(3))
             .unwrap()
-            .contains("per_page=100")
+            .contains("per_page=50")
     );
 }
 

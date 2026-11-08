@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
+import { providerLabel } from '../providers'
 import { mapWithConcurrency } from '../concurrency'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
 import { refreshReleaseItem, runReleaseBatch, type ReleaseFetchSpec } from '../releaseRefresh'
@@ -30,7 +31,7 @@ import type { Provider, PublicConfig, Repository, RepositorySource } from '../ty
  */
 
 /** 社区仓库源由自动搜索管理，不参与文档刷新。 */
-const COMMUNITY_SOURCE_IDS = new Set(['github-community', 'gitee-community'])
+const COMMUNITY_SOURCE_IDS = new Set(['github-community', 'gitee-community', 'gitcode-community'])
 /**
  * 并行上限（4 组）。
  *
@@ -123,7 +124,7 @@ function store() {
   const region = computed(() => config.value?.region)
   /** 当前平台决定只看专属某平台的仓库（与 region 同语义层）。 */
   const platform = computed(() => config.value?.platform)
-  return { load, reloadConfig, applyConfigSnapshot, sources, repositories, mods, region, platform }
+  return { load, reloadConfig, applyConfigSnapshot, config, sources, repositories, mods, region, platform }
 }
 
 /**
@@ -450,6 +451,7 @@ async function discoverCommunityRepositories(
   applySnapshot: (config: PublicConfig) => void,
 ): Promise<string[]> {
   const providers: Provider[] = ['github', 'gitee']
+  if (store().config.value?.gitcode_token_set) providers.push('gitcode')
   const results = await Promise.all(providers.map(async (provider) => {
     try {
       const merged = await api.refreshCommunityRepositories(provider)
@@ -458,7 +460,7 @@ async function discoverCommunityRepositories(
       applySnapshot(merged)
       return null
     } catch (reason) {
-      const label = provider === 'github' ? 'GitHub' : 'Gitee'
+      const label = providerLabel(provider)
       /*
        * 原因来自后端，可能是 tag。它作为**参数值**传进文案，vue-i18n 只会
        * 原样插入，不会二次翻译 —— 所以必须先在这里翻译。

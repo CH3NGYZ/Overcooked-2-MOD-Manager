@@ -120,6 +120,10 @@ async fn valid_manifest_atomically_replaces_all_groups_without_merging() {
     assert!(after.raw_proxies.is_empty());
     assert!(after.avatar_proxies.is_empty());
     assert!(after.gitee_api_proxies.is_empty());
+    assert!(
+        after.gitcode_api_proxies.is_empty(),
+        "online snapshots must replace the bundled GitCode group too"
+    );
     let request = request.lock().unwrap().to_ascii_lowercase();
     assert!(!request.contains("authorization:"));
     assert!(!request.contains("cookie:"));

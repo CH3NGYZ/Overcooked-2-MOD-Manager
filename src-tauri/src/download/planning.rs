@@ -29,14 +29,18 @@ pub(crate) fn classify_remote_url(url: &str) -> RemoteUrlKind {
     let host = parsed.host_str().unwrap_or_default();
     let is_github = host.eq_ignore_ascii_case("github.com");
     let is_gitee = host.eq_ignore_ascii_case("gitee.com");
+    let is_gitcode = matches!(host, "gitcode.com" | "atomgit.com");
     let path = parsed.path();
-    if (is_github || is_gitee) && path.contains("/releases/download/") {
+    if (is_github || is_gitee || is_gitcode) && path.contains("/releases/download/") {
         return RemoteUrlKind::ReleaseAsset;
     }
-    if host.eq_ignore_ascii_case("raw.githubusercontent.com") {
+    if matches!(
+        host,
+        "raw.githubusercontent.com" | "raw.atomgit.com" | "raw.gitcode.com"
+    ) {
         return RemoteUrlKind::Raw;
     }
-    if (is_github || is_gitee) && is_repository_raw_path(path) {
+    if (is_github || is_gitee || is_gitcode) && is_repository_raw_path(path) {
         return RemoteUrlKind::Raw;
     }
     RemoteUrlKind::Other
@@ -97,7 +101,7 @@ pub(crate) fn selected_asset_proxy_mode(
     provider: &Provider,
     _region: &str,
 ) -> ProxyMode {
-    if *provider == Provider::Gitee {
+    if matches!(provider, Provider::Gitee | Provider::Gitcode) {
         return ProxyMode::Direct;
     }
     requested.unwrap_or(ProxyMode::AutoDirect)
@@ -142,7 +146,7 @@ pub(crate) fn provider_proxy_entries<'a>(
     provider: &Provider,
     is_raw_file: bool,
 ) -> &'a [GitHubProxy] {
-    if *provider == Provider::Gitee {
+    if matches!(provider, Provider::Gitee | Provider::Gitcode) {
         return &[];
     }
     if is_raw_file {

@@ -30,6 +30,7 @@ import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
+import SourceTitle from '../components/SourceTitle.vue'
 import {
   useSourceGroupTree,
   type SourceGroupEntry,
@@ -153,7 +154,7 @@ function openInstall() {
   openInstallSource()
 }
 
-const COMMUNITY_IDS = new Set(['github-community', 'gitee-community'])
+const COMMUNITY_IDS = new Set(['github-community', 'gitee-community', 'gitcode-community'])
 
 // 进入页面只复用现有数据，不触发刷新也不重新扫描；
 // 刷新由手动按钮或安装器启动后的刷新链路触发。
@@ -698,7 +699,7 @@ defineExpose({ refreshAll, visibleCount })
           <template #header>
             <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
               <div class="source-head">
-                <b>{{ node.label }}</b>
+                <SourceTitle :label="node.label" :items="repositories.filter(item => item.source_id === node.id)" :source-url="sources.find(source => source.id === node.id)?.url" />
                 <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
                 <n-button size="tiny" quaternary
                   :loading="sourceRefreshing[node.id] || node.groups.some((g) => g.items.some((r) => refreshing[r.id]))"
@@ -764,7 +765,7 @@ defineExpose({ refreshAll, visibleCount })
             <template #header>
               <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
                 <div class="source-head">
-                  <b>{{ node.label }}</b>
+                  <SourceTitle :label="node.label" :items="repositories.filter(item => item.source_id === node.id)" :source-url="sources.find(source => source.id === node.id)?.url" />
                   <!-- 社区来源未经官方索引校验，用严重级红色与「重复」同级提示 -->
                   <n-tag size="tiny" :bordered="false" class="state-tag"
                     :color="tagColorFor('critical')">{{ t('dialogs.unknownOrigin') }}</n-tag>

@@ -231,3 +231,10 @@ template = "https://cdn.crashmc.com/{url}"
 # id = "oc2gh-avatar"
 # name = "oc2gh.ch3ng.top"
 # template = "https://oc2gh.ch3ng.top/{url_path}"
+
+# GitCode API 桥接
+[[gitcode_api_proxies]]
+id = "oc2gcapi"
+name = "oc2gcapi.ch3ng.top"
+template = "https://oc2gcapi.ch3ng.top/{url_path}"
+description = "GitCode API 桥接"

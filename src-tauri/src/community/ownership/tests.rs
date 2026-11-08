@@ -46,6 +46,7 @@ fn community_merge_checks_official_source_tree_before_addition() {
         let discovery = match provider {
             Provider::Github => config.community_discovery.as_ref(),
             Provider::Gitee => config.gitee_community_discovery.as_ref(),
+            Provider::Gitcode => config.gitcode_community_discovery.as_ref(),
         };
         assert!(discovery.unwrap().repository_ids.is_empty());
 
@@ -78,7 +79,7 @@ fn community_merge_checks_official_source_tree_before_addition() {
             );
             configured.provider = match provider {
                 Provider::Github => Provider::Gitee,
-                Provider::Gitee => Provider::Github,
+                Provider::Gitee | Provider::Gitcode => Provider::Github,
             };
             assert!(!keys.contains(&identity(&configured)), "{source}");
         }

@@ -3,7 +3,9 @@ import { mapDependencyRows } from '../dependencyRows'
 import { pickI18n, t } from '../i18n'
 import { isPrereleaseVersion, formatVersion } from '../modStatus'
 import { matchedReleaseAssets } from '../repositoryAssets'
-import type { InstalledMod, MapInfo, ReleaseInfo, Repository } from '../types'
+import type { InstalledMod, MapInfo, ReleaseInfo, Repository, Provider } from '../types'
+
+import { repositoryHomepage } from '../providers'
 
 interface UseMapReleaseDetailOptions {
   maps: MaybeRefOrGetter<readonly MapInfo[]>
@@ -58,8 +60,7 @@ export function useMapReleaseDetail(options: UseMapReleaseDetailOptions) {
   const links = computed(() => {
     const current = map.value
     if (!current) return []
-    const host = current.provider === 'gitee' ? 'https://gitee.com' : 'https://github.com'
-    const source = `${host}/${current.username}/${current.repository}`
+    const source = repositoryHomepage(current.provider, current.username, current.repository)
     return [
       { label: t('levelSet.sourcePage'), url: source },
       { label: t('levelSet.releasePage'), url: `${source}/releases/latest` },
@@ -69,7 +70,7 @@ export function useMapReleaseDetail(options: UseMapReleaseDetailOptions) {
     map.value ? pickI18n(map.value.note_i18n, map.value.note ?? '') : '',
   )
   const name = computed(() => (map.value ? options.mapName(map.value) : ''))
-  const provider = computed<'github' | 'gitee'>(() => map.value?.provider ?? 'github')
+  const provider = computed<Provider>(() => map.value?.provider ?? 'github')
   const owner = computed(() => map.value?.username ?? '')
   const repository = computed(() => map.value?.repository ?? '')
   const bindingName = computed(() => map.value?.level_set_name ?? '')

@@ -35,11 +35,12 @@ fn parse_bundled_defaults() -> GitHubProxyConfig {
         }
     };
     log::info!(
-        "内置代理加载完成：Release={}，Raw={}，GitHub API={}，Gitee API={}",
+        "内置代理加载完成：Release={}，Raw={}，GitHub API={}，Gitee API={}，GitCode API={}",
         config.release_proxies.len(),
         config.raw_proxies.len(),
         config.github_api_proxies.len(),
-        config.gitee_api_proxies.len()
+        config.gitee_api_proxies.len(),
+        config.gitcode_api_proxies.len()
     );
     config
 }
@@ -56,6 +57,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         "raw_proxies",
         "github_api_proxies",
         "gitee_api_proxies",
+        "gitcode_api_proxies",
         "avatar_proxies",
     ]
     .iter()
@@ -82,6 +84,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         .chain(manifest.raw_proxies.iter_mut())
         .chain(manifest.github_api_proxies.iter_mut())
         .chain(manifest.gitee_api_proxies.iter_mut())
+        .chain(manifest.gitcode_api_proxies.iter_mut())
         .chain(manifest.avatar_proxies.iter_mut())
     {
         proxy.builtin = true;
@@ -92,6 +95,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         || manifest.raw_proxies.len() > MAX_PROXY_COUNT
         || manifest.github_api_proxies.len() > MAX_PROXY_COUNT
         || manifest.gitee_api_proxies.len() > MAX_PROXY_COUNT
+        || manifest.gitcode_api_proxies.len() > MAX_PROXY_COUNT
         || manifest.avatar_proxies.len() > MAX_PROXY_COUNT
     {
         return Err(crate::locale_tag::with_params(
@@ -104,15 +108,17 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
         raw_proxies: deduplicate(manifest.raw_proxies),
         github_api_proxies: deduplicate(manifest.github_api_proxies),
         gitee_api_proxies: deduplicate(manifest.gitee_api_proxies),
+        gitcode_api_proxies: deduplicate(manifest.gitcode_api_proxies),
         avatar_proxies: deduplicate(manifest.avatar_proxies),
     };
     validate_unique_ids(&config)?;
     log::info!(
-        "GitHub 代理 TOML 清单解析完成：Release={}，Raw={}，GitHub API={}，Gitee API={}",
+        "GitHub 代理 TOML 清单解析完成：Release={}，Raw={}，GitHub API={}，Gitee API={}，GitCode API={}",
         config.release_proxies.len(),
         config.raw_proxies.len(),
         config.github_api_proxies.len(),
-        config.gitee_api_proxies.len()
+        config.gitee_api_proxies.len(),
+        config.gitcode_api_proxies.len()
     );
     Ok(config)
 }
@@ -460,6 +466,7 @@ pub fn validate_unique_ids(config: &GitHubProxyConfig) -> Result<(), String> {
         &config.raw_proxies,
         &config.github_api_proxies,
         &config.gitee_api_proxies,
+        &config.gitcode_api_proxies,
         &config.avatar_proxies,
     ] {
         let mut ids = HashSet::new();

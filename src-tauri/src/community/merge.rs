@@ -97,6 +97,7 @@ pub(super) fn merge_results(
     match provider {
         Provider::Github => config.community_discovery = Some(discovery),
         Provider::Gitee => config.gitee_community_discovery = Some(discovery),
+        Provider::Gitcode => config.gitcode_community_discovery = Some(discovery),
     }
 }
 

@@ -16,17 +16,7 @@ use crate::models::ReleaseInfo;
 /// 投影只填「取 Release 真正会读」的字段；其余用默认值。任何新增的
 /// Release 相关字段都要同时出现在这里，否则地图侧会拿到默认行为。
 pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::RepositoryConfig {
-    /*
-     * tag 模式下 `max_release_count` 的语义变了：它现在是「最多显示几个版本」，
-     * 与「列表要拉多少条」无关 —— 要读的那个 tag 可能落在很旧的位置，所以
-     * per_page 固定拉满。两个语义不能共用一个数，共用的后果是条目把
-     * `max_release_count` 写成 3（只想显示 3 个版本）之后就再也找不到自己的 tag。
-     */
-    let per_page = if map_tag(map).is_some() {
-        100
-    } else {
-        map.max_release_count
-    };
+    // max_release_count only limits the displayed asset versions; API pagination is shared.
     // 借 `repository_from_export` 而不是手写字段：它掌握全部默认值，
     // 手写一份会在新增字段时静默落空。
     /*
@@ -45,7 +35,7 @@ pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::Reposit
         "enabled": map.enabled,
         "download_mode": "release",
         "channel": map.channel,
-        "max_release_count": per_page,
+        "max_release_count": map.max_release_count,
         "download_threads": map.download_threads,
         "asset_rules": map.asset_rules,
         "install_target": "",

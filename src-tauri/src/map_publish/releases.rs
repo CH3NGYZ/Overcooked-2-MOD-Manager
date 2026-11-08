@@ -1,5 +1,4 @@
 use super::http::API_ENDPOINT;
-use super::http::RELEASE_PAGE_SIZE;
 use super::http::api_client;
 use super::http::authorized;
 use super::http::ensure_success;
@@ -104,17 +103,27 @@ pub async fn list_publish_releases(
     let token = publish_token(&state)?;
     let (owner, repository) = validate_coordinates(&owner, &repository)?;
     let client = api_client()?;
-    let url =
-        format!("{API_ENDPOINT}/repos/{owner}/{repository}/releases?per_page={RELEASE_PAGE_SIZE}");
-    let response = authorized(client.get(url.as_str()), &token)
-        .send()
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
-    let releases: Vec<ApiRelease> = ensure_success(response, "list-releases")
-        .await?
-        .json()
-        .await
-        .map_err(|error| request_error(&error.to_string()))?;
+    let releases = crate::releases::pagination::collect_release_pages(|page| {
+        let url = format!(
+            "{API_ENDPOINT}/repos/{owner}/{repository}/releases?per_page={}&page={page}",
+            crate::releases::pagination::RELEASE_PAGE_SIZE
+        );
+        let request = authorized(client.get(url), &token);
+        async move {
+            let response = request
+                .send()
+                .await
+                .map_err(|error| request_error(&error.to_string()))?;
+            let releases: Vec<ApiRelease> = ensure_success(response, "list-releases")
+                .await?
+                .json()
+                .await
+                .map_err(|error| request_error(&error.to_string()))?;
+            let count = releases.len();
+            Ok::<_, String>((releases, count))
+        }
+    })
+    .await?;
     let mut result = releases
         .into_iter()
         .map(release_from_api)

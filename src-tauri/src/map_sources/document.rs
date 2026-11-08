@@ -101,10 +101,12 @@ pub struct MapSourceDeclaration {
     /// 单仓库地图的条目本体（`mode = "repository"`）。
     #[serde(default)]
     pub map: Option<MapRepositoryConfig>,
-    /// `release-tags` 模式每次向 API 要多少条 Release（默认 50）。
+    /// 兼容读取旧配置；分页已统一为 50，不再接受源级覆盖。
+    #[allow(dead_code)]
     #[serde(default)]
     pub page_size: Option<u32>,
-    /// `release-tags` 最多翻几页（默认 20，防止一份超大仓库拖死刷新）。
+    /// 兼容读取旧配置；完整读取到末页，不再用旧页数截断。
+    #[allow(dead_code)]
     #[serde(default)]
     pub max_pages: Option<u32>,
     /// 单语言镜像；源文档只写 `nickname_i18n` 时从 `zh-CN` 折进来。

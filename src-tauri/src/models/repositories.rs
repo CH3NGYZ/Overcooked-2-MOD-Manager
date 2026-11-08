@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 pub enum Provider {
     Github,
     Gitee,
+    Gitcode,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

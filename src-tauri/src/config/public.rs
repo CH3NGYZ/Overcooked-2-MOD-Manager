@@ -6,7 +6,7 @@ use crate::models::*;
 
 impl ConfigService {
     pub fn public_config(&self, config: &AppConfig) -> PublicConfig {
-        let (community_discovery, gitee_community_discovery) =
+        let (community_discovery, gitee_community_discovery, gitcode_community_discovery) =
             crate::community::visible_discoveries(config);
         let mut repositories = config.repositories.clone();
         for repo in &mut repositories {
@@ -28,6 +28,7 @@ impl ConfigService {
             launch: config.launch.clone(),
             official_api_only: config.auth.official_api_only,
             github_token_set: !config.auth.github_token.is_empty(),
+            gitcode_token_set: self.api_token(config, &Provider::Gitcode).is_some(),
             gitee_token_set: !config.auth.gitee_token.is_empty(),
             github_publish_token_set: !config.auth.github_publish_token.is_empty(),
             github_publish_login: config.auth.github_publish_login.clone(),
@@ -35,6 +36,7 @@ impl ConfigService {
             repository_sources: config.repository_sources.clone(),
             community_discovery,
             gitee_community_discovery,
+            gitcode_community_discovery,
             github_proxies: self.proxy_snapshot(),
             builtin_sources_only: config.builtin_sources_only,
             builtin_map_sources_only: config.builtin_map_sources_only,

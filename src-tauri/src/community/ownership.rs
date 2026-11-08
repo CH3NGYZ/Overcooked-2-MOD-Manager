@@ -78,7 +78,11 @@ fn bundled_official_repository_keys() -> HashSet<RepositoryIdentity> {
 
 pub(crate) fn visible_discoveries(
     config: &AppConfig,
-) -> (Option<CommunityDiscovery>, Option<CommunityDiscovery>) {
+) -> (
+    Option<CommunityDiscovery>,
+    Option<CommunityDiscovery>,
+    Option<CommunityDiscovery>,
+) {
     let official = official_repository_keys(config);
     let visible_ids = config
         .repositories
@@ -96,6 +100,7 @@ pub(crate) fn visible_discoveries(
     (
         visible(&config.community_discovery),
         visible(&config.gitee_community_discovery),
+        visible(&config.gitcode_community_discovery),
     )
 }
 

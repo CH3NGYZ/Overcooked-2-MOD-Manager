@@ -12,6 +12,8 @@ use std::collections::HashSet;
 
 pub const SOURCE_ID: &str = "github-community";
 
+pub const GITCODE_SOURCE_ID: &str = "gitcode-community";
+
 pub const GITEE_SOURCE_ID: &str = "gitee-community";
 
 /// 命中结果必须同时带这两个 topic 才算社区仓库。
@@ -26,13 +28,14 @@ pub fn is_repository(repo: &RepositoryConfig) -> bool {
 }
 
 pub fn is_source(id: &str) -> bool {
-    matches!(id, SOURCE_ID | GITEE_SOURCE_ID)
+    matches!(id, SOURCE_ID | GITEE_SOURCE_ID | GITCODE_SOURCE_ID)
 }
 
 pub fn source_id(provider: &Provider) -> &'static str {
     match provider {
         Provider::Github => SOURCE_ID,
         Provider::Gitee => GITEE_SOURCE_ID,
+        Provider::Gitcode => GITCODE_SOURCE_ID,
     }
 }
 
@@ -59,6 +62,7 @@ pub fn source(provider: &Provider) -> RepositorySource {
     let name = match provider {
         Provider::Github => "GitHub",
         Provider::Gitee => "Gitee",
+        Provider::Gitcode => "GitCode",
     };
     RepositorySource {
         id: source_id(provider).into(),
@@ -89,6 +93,7 @@ pub fn source(provider: &Provider) -> RepositorySource {
         url: match provider {
             Provider::Github => SEARCH_ENDPOINT,
             Provider::Gitee => crate::gitee_community::TOPIC_ENDPOINT,
+            Provider::Gitcode => super::gitcode::GITCODE_SEARCH_ENDPOINT,
         }
         .into(),
         /*
@@ -120,6 +125,10 @@ pub(super) enum SearchHit {
 }
 
 pub(super) fn classify_search_item(item: &Value) -> SearchHit {
+    classify_provider_item(item, &Provider::Github)
+}
+
+pub(super) fn classify_provider_item(item: &Value, provider: &Provider) -> SearchHit {
     let Some(topics) = item.get("topics").and_then(Value::as_array).map(|topics| {
         topics
             .iter()
@@ -158,12 +167,12 @@ pub(super) fn classify_search_item(item: &Value) -> SearchHit {
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        return repository_from_coordinates(&Provider::Github, &owner, &name, branch, note)
+        return repository_from_coordinates(provider, &owner, &name, branch, note)
             .map_or(SearchHit::Invalid, SearchHit::Mod);
     }
     if has_topic("map") {
         return SearchHit::Map(CommunityMapRepository {
-            provider: Provider::Github,
+            provider: provider.clone(),
             username: owner,
             repository: name,
         });
@@ -187,6 +196,7 @@ pub(crate) fn repository_from_coordinates(
     let prefix = match provider {
         Provider::Github => "community",
         Provider::Gitee => "gitee-community",
+        Provider::Gitcode => "gitcode-community",
     };
     let id = format!("{prefix}-{:x}", Sha256::digest(identity.as_bytes()));
     let display_name = format!("{owner}/{name}");

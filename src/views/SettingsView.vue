@@ -39,6 +39,7 @@ const diyLevelDrawer = ref(false)
 const tokenDrawer = ref(false)
 const githubToken = ref('')
 const giteeToken = ref('')
+const gitcodeToken = ref('')
 const savingTokens = ref(false)
 const updateResult = ref<AppUpdateCheckResult | null>(null)
 
@@ -400,9 +401,10 @@ async function toggleBuiltinMapSourcesOnly(value: boolean) {
 async function saveTokens() {
   savingTokens.value = true
   try {
-    config.value = await api.saveTokens({ github_token: githubToken.value, gitee_token: giteeToken.value })
+    config.value = await api.saveTokens({ github_token: githubToken.value, gitee_token: giteeToken.value, gitcode_token: gitcodeToken.value })
     githubToken.value = ''
     giteeToken.value = ''
+    gitcodeToken.value = ''
     message.success(t('common.saved'))
   } catch (reason) { fail(reason) } finally { savingTokens.value = false }
 }
@@ -411,9 +413,10 @@ async function saveTokens() {
 async function clearTokens() {
   savingTokens.value = true
   try {
-    config.value = await api.saveTokens({ github_token: '', gitee_token: '', clear: true })
+    config.value = await api.saveTokens({ github_token: '', gitee_token: '', gitcode_token: '', clear: true })
     githubToken.value = ''
     giteeToken.value = ''
+    gitcodeToken.value = ''
     message.success(t('tools.cleared'))
   } catch (reason) { fail(reason) } finally { savingTokens.value = false }
 }
@@ -606,6 +609,9 @@ async function clearTokens() {
         <n-tag size="small" :bordered="false" :type="config?.gitee_token_set ? 'success' : 'default'">
           Gitee{{ config?.gitee_token_set ? ' ✓' : '' }}
         </n-tag>
+        <n-tag size="small" :bordered="false" :type="config?.gitcode_token_set ? 'success' : 'default'">
+          GitCode{{ config?.gitcode_token_set ? ' ✓' : '' }}
+        </n-tag>
       </template>
     </SettingsRow>
   </SettingsGroup>
@@ -705,9 +711,16 @@ async function clearTokens() {
       <n-input v-model:value="giteeToken" type="password" show-password-on="click"
         :placeholder="config?.gitee_token_set ? t('tools.savedLeaveBlankToKeep') : t('tools.pasteYourGiteePrivateToken')" />
 
+      <div class="drawer-pref token-gap">
+        <div><b>GitCode Token</b><div class="muted">{{ t('tools.sentAsAnAccessTokenHeader') }}</div></div>
+        <n-tag v-if="config?.gitcode_token_set" size="tiny" :bordered="false" type="success">{{ t('tools.configured') }}</n-tag>
+      </div>
+      <n-input v-model:value="gitcodeToken" type="password" show-password-on="click"
+        :placeholder="config?.gitcode_token_set ? t('tools.savedLeaveBlankToKeep') : 'GitCode Token'" />
+
       <div class="token-actions">
         <n-button type="primary" :loading="savingTokens" @click="saveTokens">{{ t('modsOnline.save') }}</n-button>
-        <n-button v-if="config?.github_token_set || config?.gitee_token_set" quaternary type="error"
+        <n-button v-if="config?.github_token_set || config?.gitee_token_set || config?.gitcode_token_set" quaternary type="error"
           :loading="savingTokens" @click="clearTokens">{{ t('tools.clearAll') }}</n-button>
       </div>
 

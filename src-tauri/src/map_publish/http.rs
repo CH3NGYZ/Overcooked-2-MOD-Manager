@@ -6,7 +6,7 @@ pub(super) const API_ENDPOINT: &str = "https://api.github.com";
 
 const API_VERSION: &str = "2022-11-28";
 
-pub(super) const RELEASE_PAGE_SIZE: u32 = 100;
+pub(super) const REPOSITORY_PAGE_SIZE: u32 = 100;
 
 const API_TIMEOUT: Duration = Duration::from_secs(30);
 

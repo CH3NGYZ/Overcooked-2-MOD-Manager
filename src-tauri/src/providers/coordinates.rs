@@ -48,21 +48,15 @@ pub fn repository_release_api_url(
     provider: &Provider,
     username: &str,
     repository: &str,
-    max_release_count: u32,
 ) -> Result<String, ReleaseError> {
-    repository_release_api_url_page(provider, username, repository, max_release_count, None)
+    repository_release_api_url_page(provider, username, repository, None)
 }
 
-/// Release API 地址；`page` 为空或 1 时不写 `page` 参数。
-///
-/// 第 1 页的地址被既有测试与代理模板逐字匹配
-/// （`...?per_page=N&direction=desc&sort=created`），多一个 `page=1` 会同时
-/// 改掉两边，所以只有真正翻页时才追加参数。
+/// Release lists always start explicitly at page 1 with the shared page size.
 pub fn repository_release_api_url_page(
     provider: &Provider,
     username: &str,
     repository: &str,
-    max_release_count: u32,
     page: Option<u32>,
 ) -> Result<String, ReleaseError> {
     let (username, repository) = repository_coordinates(username, repository)?;
@@ -75,10 +69,11 @@ pub fn repository_release_api_url_page(
         .push(&repository)
         .push("releases");
     url.query_pairs_mut()
-        .append_pair("per_page", &max_release_count.clamp(1, 100).to_string());
-    if let Some(page) = page.filter(|page| *page > 1) {
-        url.query_pairs_mut().append_pair("page", &page.to_string());
-    }
+        .append_pair(
+            "per_page",
+            &crate::releases::pagination::RELEASE_PAGE_SIZE.to_string(),
+        )
+        .append_pair("page", &page.unwrap_or(1).max(1).to_string());
     url.query_pairs_mut()
         .append_pair("direction", "desc")
         .append_pair("sort", "created");
@@ -115,6 +110,10 @@ pub fn repository_file_url(
     }
     let mut url =
         Url::parse(&homepage).map_err(|error| ReleaseError::InvalidUrl(error.to_string()))?;
+    if *provider == Provider::Gitcode {
+        url.set_host(Some("raw.atomgit.com"))
+            .map_err(|_| ReleaseError::InvalidUrl("source.fileModeUrlFailed".into()))?;
+    }
     {
         let mut segments = url
             .path_segments_mut()
@@ -192,6 +191,11 @@ pub fn release_asset_reference(url: &Url) -> Option<ReleaseAssetReference> {
         Provider::Github
     } else if host == "gitee.com" || host == "www.gitee.com" {
         Provider::Gitee
+    } else if matches!(
+        host.as_str(),
+        "gitcode.com" | "www.gitcode.com" | "atomgit.com" | "www.atomgit.com"
+    ) {
+        Provider::Gitcode
     } else {
         return None;
     };

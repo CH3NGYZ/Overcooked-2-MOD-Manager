@@ -37,7 +37,7 @@ registerHooks({
       return { format: 'module', shortCircuit: true, source: FAKE_API }
     }
     if (url.includes('/src/composables/useDashboardStore.ts')) {
-      return { format: 'module', shortCircuit: true, source: `export const useDashboard = () => ({game: {get value() { return {kitchen_running: !!globalThis.__gameRunning} }},config:{value:null},mods:{value:[]}})` }
+      return { format: 'module', shortCircuit: true, source: `export const useDashboard = () => ({game: {get value() { return {kitchen_running: !!globalThis.__gameRunning} }},config:{get value(){return globalThis.__noteConfig ?? null}},mods:{value:[]}})` }
     }
     if (url.includes('/src/composables/useMapSources.ts')) {
       return { format: 'module', shortCircuit: true, source: `export const useMapSources = () => ({maps:{value:[]}})` }
@@ -100,6 +100,24 @@ export function useNotify() {
 `
 
 const { useModInstallFlow } = await import('../src/composables/useModInstallFlow.ts')
+const noteGate = await import('../src/modInstallNotes.ts')
+
+test('手动来源 GUID 匹配说明：取消立即放弃暂存，不进入安装详情', async (t) => {
+  globalThis.__installCalls = []
+  globalThis.__notices = []
+  globalThis.__gameRunning = false
+  globalThis.__noteConfig = { repositories: [{ id: 'manual-note', name: '手动说明',
+    plugin_guid: 'example.manual', note: '# 安装前阅读' }] }
+  t.after(() => { globalThis.__noteConfig = null; noteGate.finishModInstallNotes() })
+  const flow = useModInstallFlow()
+  flow.openPreview(modPreview({ entries: [{ guid: 'EXAMPLE.MANUAL', role: 'mod' }] }))
+  assert.equal(noteGate.modInstallNote.value.id, 'manual-note')
+  assert.equal(flow.previewOpen.value, false)
+  noteGate.finishModInstallNotes()
+  await flush()
+  assert.equal(flow.previewOpen.value, false)
+  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
+})
 
 const conflict = (handle, name, version = '2.1.0') => ({
   handle,

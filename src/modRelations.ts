@@ -52,7 +52,7 @@ export interface RelationStatus {
 }
 
 /** GUID 比较忽略大小写与首尾空白。 */
-function sameGuid(left: string, right: string): boolean {
+export function sameGuid(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase()
 }
 
@@ -189,7 +189,7 @@ export function relationsForMapRelease(
 }
 
 /** 本地所有装了某个 GUID 的 MOD（含被禁用的 —— 禁用不等于没装）。 */
-function installedForGuid(mods: readonly InstalledMod[], guid: string): InstalledMod[] {
+export function installedForGuid(mods: readonly InstalledMod[], guid: string): InstalledMod[] {
   return mods.filter((mod) => !!mod.guid && sameGuid(mod.guid, guid))
 }
 

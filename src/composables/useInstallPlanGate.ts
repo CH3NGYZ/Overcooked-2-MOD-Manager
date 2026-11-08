@@ -17,6 +17,7 @@ import {
   buildInstallPlan, planHasActions, type InstallPlan,
 } from '../modRelations'
 import type { InstalledMod, Repository } from '../types'
+import { confirmModInstallNotes, firstInstallNotes } from '../modInstallNotes'
 
 export interface InstallPlanGateOptions {
   /** 已装 MOD（判定依赖与冲突的对象）。 */
@@ -56,6 +57,11 @@ export function useInstallPlanGate(options: InstallPlanGateOptions) {
    * 用它而不是「已装版本」—— 用户要装的是新版本，规则也该按新版本算。
    */
   async function run(repo: Repository, tag?: string): Promise<boolean> {
+    // 地图仅借用关系检查，地图自身不进入 MOD 说明门。
+    if (options.repositories().some((entry) => entry.id === repo.id)) {
+      if (options.gameBlocked()) return false
+      if (!await confirmModInstallNotes(firstInstallNotes([repo], options.mods()))) return false
+    }
     const version = tag ?? repo.cached_releases[0]?.tag_name
     const built = buildInstallPlan(
       repo,

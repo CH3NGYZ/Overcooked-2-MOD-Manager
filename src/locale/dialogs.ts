@@ -7,6 +7,20 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const dialogs: DomainMessages = {
+  readModNoteFirst: {
+    'zh-CN': '请先仔细阅读说明',
+    'zh-TW': '請先仔細閱讀說明',
+    en: 'Please read the instructions carefully',
+    ko: '안내를 먼저 주의 깊게 읽어 주세요',
+    ja: '最初に説明をよくお読みください',
+  },
+  continueAfterReading: {
+    'zh-CN': '继续',
+    'zh-TW': '繼續',
+    en: 'Continue',
+    ko: '계속',
+    ja: '続行',
+  },
   // 发现新版本
   updateAvailable: {
     'zh-CN': '发现新版本',

@@ -10,6 +10,7 @@ import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
 import StartupPreflightDialog from './components/StartupPreflightDialog.vue'
 import GameOperationDialog from './components/GameOperationDialog.vue'
+import ModInstallNoteDialog from './components/ModInstallNoteDialog.vue'
 import { startupPreflightState, useStartupPreflight } from './composables/useStartupPreflight'
 import TutorialOverlay from './components/TutorialOverlay.vue'
 import { acceptLabel } from './dropAccept'
@@ -240,6 +241,7 @@ onMounted(() => {
         </div>
         <UpdatePrompt />
         <GameOperationDialog />
+        <ModInstallNoteDialog />
         <StartupPreflightDialog :state="startupPreflightState" :gate="startupPreflight" />
         <!-- 强制更新优先，卸载教程浮层也会解除它的键盘/滚轮监听。 -->
         <TutorialOverlay v-if="appUpdateState.stage === 'idle'" />

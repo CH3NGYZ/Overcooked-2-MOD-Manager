@@ -32,6 +32,9 @@ import { uninstallModConflict } from '../installConflicts'
 import { conflictCheckModel } from '../installCheck'
 import { modCheckTarget, needsInstallCheck, withConflictsResolved } from '../modInstallCheck'
 import { useInstallCheck } from './useInstallCheck'
+import { useDashboard } from './useDashboardStore'
+import { sameGuid } from '../modRelations'
+import { confirmModInstallNotes, firstInstallNotes } from '../modInstallNotes'
 import type { InstallCheckRow } from '../installCheck'
 import type { InstallConflict, InstallSource, ModPreview } from '../types'
 
@@ -58,6 +61,7 @@ async function executeConflictUninstall(
  */
 export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
   const message = useNotify()
+  const { config, mods } = useDashboard()
   const { blockModOperation } = useGameOperationGate()
   /** 「选择来源」面板是否打开。 */
   const sourceOpen = ref(false)
@@ -99,6 +103,25 @@ export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
       void discardPreview(next)
       return
     }
+    // 手动 DLL/ZIP/直链也可通过预览 GUID 找到源说明；无匹配源就按原流程。
+    // 在线仓库已在下载前确认过，不能在预览阶段重复弹。
+    if (next.origin === 'manual') {
+      const repositories = (config.value?.repositories ?? []).filter((repo) =>
+        repo.plugin_guid && next.entries.some((entry) =>
+          entry.guid && sameGuid(entry.guid, repo.plugin_guid)))
+      const notes = firstInstallNotes(repositories, mods.value)
+      if (notes.length) {
+        void confirmModInstallNotes(notes).then(async (ready) => {
+          if (ready && !blockModOperation()) proceedPreview(next)
+          else await discardPreview(next)
+        }).catch((reason: unknown) => { message.error(backendMessageOf(reason)) })
+        return
+      }
+    }
+    proceedPreview(next)
+  }
+
+  function proceedPreview(next: ModPreview) {
     if (!needsInstallCheck(next)) {
       preview.value = next
       previewOpen.value = true

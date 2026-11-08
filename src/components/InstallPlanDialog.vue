@@ -20,6 +20,7 @@ import { api } from '../services/tauri'
 import InstallCheckDialog from './InstallCheckDialog.vue'
 import type { InstallCheckRow } from '../installCheck'
 import type { InstallPlan } from '../modRelations'
+import { confirmModInstallNotes, firstInstallNotes } from '../modInstallNotes'
 
 const props = defineProps<{
   show: boolean
@@ -41,6 +42,15 @@ const emit = defineEmits<{
 
 const { blockModOperation } = useGameOperationGate()
 const model = computed(() => installCheckModelFromPlan(props.plan, props.targetLabel))
+
+async function confirmNotes(rows: readonly InstallCheckRow[]) {
+  const statuses = rows.filter((row) => row.kind !== 'uninstall')
+    .map((row) => props.plan.install[row.index])
+  // 关系解析已按 GUID 找到本地 MOD，升级/降级不能因为暂时缺仓库绑定而误弹。
+  const repositories = statuses.flatMap((status) =>
+    status?.repository && !status.installedMod ? [status.repository] : [])
+  return confirmModInstallNotes(firstInstallNotes(repositories, []))
+}
 
 /**
  * 执行一行。
@@ -107,6 +117,7 @@ async function installAt(index: number, label: string) {
 
 <template>
   <InstallCheckDialog :show="show" :model="model" :execute="execute"
+    :before-execute="confirmNotes"
     @update:show="(value: boolean) => emit('update:show', value)"
     @finished="(ready: boolean) => emit('finished', ready)" />
 </template>

@@ -26,7 +26,7 @@ export function repositoryForMod(repositories: Repository[], mod: InstalledMod):
 }
 
 /** 同一仓库可能对应多个本地副本（旧版本共存），全部返回以便取最高版本比较。 */
-export function modsForRepository(mods: InstalledMod[], repo: Repository): InstalledMod[] {
+export function modsForRepository(mods: readonly InstalledMod[], repo: Repository): InstalledMod[] {
   return mods.filter((mod) => {
     if (mod.repository_id === repo.id) return true
     if (mod.repository_ids?.includes(repo.id)) return true

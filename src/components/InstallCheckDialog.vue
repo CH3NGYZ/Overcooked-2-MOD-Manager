@@ -41,6 +41,8 @@ const props = defineProps<{
    * 错误提示，也不需要维护「哪一行失败过」—— 重试就是再点一次「全部处理」。
    */
   execute: (row: InstallCheckRow) => Promise<void>
+  /** 执行任何有副作用的步骤前统一确认；取消时整批停止。 */
+  beforeExecute?: (pending: readonly InstallCheckRow[]) => Promise<boolean>
 }>()
 
 const emit = defineEmits<{
@@ -105,6 +107,10 @@ async function runAll() {
   running.value = true
   failures.value = []
   try {
+    if (props.beforeExecute && !await props.beforeExecute(pending.value)) {
+      await close()
+      return
+    }
     for (const row of rows.value) {
       // 只跳过已成功的：失败的行要能重试，重复点一次就是重跑它们
       if (done.value[row.key] === 'ok') continue
@@ -178,7 +184,7 @@ const title = computed(() => props.model?.title ?? t('modsOnline.preInstallCheck
 </script>
 
 <template>
-  <AppModal :show="show" :mask-closable="false" :title="title"
+  <AppModal :show="show" :mask-closable="false" :closable="!running" :title="title"
     max-width="min(680px, 94%)"
     @update:show="(value: boolean) => { if (!value) void close() }">
     <p class="plan-lead">

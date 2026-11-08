@@ -8,21 +8,34 @@ use crate::config::{REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL};
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current() -> &'static str {
-    // Region is used on every configuration read. Query system preferences once
-    // per process rather than asking CoreFoundation again in these hot paths.
-    static REGION: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-    REGION.get_or_init(|| {
-        let detected = detect();
-        let (region, source) = detected.unwrap_or((REGION_INTERNATIONAL, "unavailable"));
-        log::info!(
-            "系统地区检测：平台={}，来源={source}，地区={region}",
-            std::env::consts::OS
-        );
-        if detected.is_none() {
-            log::warn!("无法读取明确的系统国家/地区，使用国际渠道");
-        }
-        region
-    })
+    // Config reads use a snapshot; the explicit post-tutorial recheck refreshes it.
+    *region_cache()
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+#[cfg(target_os = "macos")]
+fn region_cache() -> &'static std::sync::RwLock<&'static str> {
+    static REGION: std::sync::OnceLock<std::sync::RwLock<&'static str>> =
+        std::sync::OnceLock::new();
+    REGION.get_or_init(|| std::sync::RwLock::new(detect_region()))
+}
+
+#[cfg(target_os = "macos")]
+fn detect_region() -> &'static str {
+    detect()
+        .map(|(region, _)| region)
+        .unwrap_or(REGION_INTERNATIONAL)
+}
+
+/// Explicit startup recheck also updates the snapshot used by later config reads.
+#[cfg(target_os = "macos")]
+pub(crate) fn refresh() -> &'static str {
+    let region = detect_region();
+    *region_cache()
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = region;
+    region
 }
 
 /// 两位国家代码 → 地区。`CN` 是中国大陆，其余有效代码都是国际地区。

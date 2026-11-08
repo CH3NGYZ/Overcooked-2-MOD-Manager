@@ -8,6 +8,8 @@ import AppSidebar from './components/AppSidebar.vue'
 import AppTitleBar from './components/AppTitleBar.vue'
 import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
+import StartupPreflightDialog from './components/StartupPreflightDialog.vue'
+import { startupPreflightState, useStartupPreflight } from './composables/useStartupPreflight'
 import TutorialOverlay from './components/TutorialOverlay.vue'
 import { acceptLabel } from './dropAccept'
 import { dragActive, dropAcceptTypes, dropHintSource } from './composables/useFileDrop'
@@ -67,6 +69,21 @@ const dropHintText = computed(
  * 教程，刷新总在教程之后发生，不会在遮罩底下转圈。
  */
 const repositoryRefresh = useRepositoryRefresh()
+const startupPreflight = useStartupPreflight(() => {
+  repositoryRefresh.requestStartupRefresh()
+  /*
+   * 地图源也要在启动时自动读一次：`release-tags` 源（一个仓库放多张地图）的
+   * 地图只能联网读 Release note 才知道，内置快照里没有。只读源树、不刷
+   * 每张图的 Release，与上面 MOD 仓库的启动刷新同一时机、同一层级。
+   *
+   * 但要等社区发现把配置写完再读：带 `map` topic 的社区仓库是发现阶段
+   * 写进配置的，地图源树直接读配置 —— 抢在发现之前加载，首启就看不到
+   * 社区地图。等的是「发现结束」，不是整批刷新结束。
+   */
+  void repositoryRefresh
+    .whenCommunityDiscovered()
+    .then(() => requestMapSourcesStartupRefresh())
+})
 
 /* ===== 页面切换动画 ===== */
 /* 页面滚动容器：n-scrollbar 实例 ref（scrollTo(x, y)，用于切页复位） */
@@ -137,19 +154,7 @@ onMounted(() => {
    */
   const settleRefresh = () => {
     onTutorialSettled(() => {
-      repositoryRefresh.requestStartupRefresh()
-      /*
-       * 地图源也要在启动时自动读一次：`release-tags` 源（一个仓库放多张地图）的
-       * 地图只能联网读 Release note 才知道，内置快照里没有。只读源树、不刷
-       * 每张图的 Release，与上面 MOD 仓库的启动刷新同一时机、同一层级。
-       *
-       * 但要等社区发现把配置写完再读：带 `map` topic 的社区仓库是发现阶段
-       * 写进配置的，地图源树直接读配置 —— 抢在发现之前加载，首启就看不到
-       * 社区地图。等的是「发现结束」，不是整批刷新结束。
-       */
-      void repositoryRefresh
-        .whenCommunityDiscovered()
-        .then(() => requestMapSourcesStartupRefresh())
+      void startupPreflight.start()
     })
   }
   // 浏览器预览没有 Tauri IPC：跳过版本读取与启动更新检查，避免控制台噪音。
@@ -244,6 +249,7 @@ onMounted(() => {
           </Transition>
         </div>
         <UpdatePrompt />
+        <StartupPreflightDialog :state="startupPreflightState" :gate="startupPreflight" />
         <!-- 强制更新优先，卸载教程浮层也会解除它的键盘/滚轮监听。 -->
         <TutorialOverlay v-if="appUpdateState.stage === 'idle'" />
       </n-dialog-provider>

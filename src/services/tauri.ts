@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 // 只读当前界面语言（用于让后端选择仓库的本地化名称）；不引入任何 UI 依赖
 import { locale } from '../i18n'
 import type {
+  StartupProbe,
   AppUpdateChannelEvent,
   AppUpdateCheckResult,
   AppUpdatePhaseEvent,
@@ -70,6 +71,9 @@ async function readDashboard(): Promise<Dashboard> {
  */
 export const api = {
   dashboard: readDashboard,
+  refreshUserRegion: () => invoke<string>('refresh_user_region'),
+  probeStartupSource: () => invoke<StartupProbe>('probe_startup_source'),
+  cancelStartupProbe: () => invoke<void>('cancel_startup_probe'),
   config: () => invoke<PublicConfig>('get_config'),
   readRustLog: () => invoke<RustLog>('read_rust_log'),
   readFrontendLog: () => invoke<RustLog>('read_frontend_log'),

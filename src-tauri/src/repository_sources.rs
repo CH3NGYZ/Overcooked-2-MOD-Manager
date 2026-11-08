@@ -21,3 +21,6 @@ pub(crate) use embedded::{
 pub(crate) use location::SourceLocation;
 pub(crate) use transport::{SOURCE_DOCUMENT_TIMEOUT, load_document, load_text_document};
 pub(crate) use verified::{VerifiedDocument, fetch_document_bytes, load_verified_text_document};
+
+mod preflight;
+pub(crate) use preflight::{StartupProbe, cancel_startup_probe, probe_startup_source};

@@ -1,3 +1,4 @@
+import { startup } from './startup.ts'
 import { common } from './common.ts'
 import { config } from './config.ts'
 import { error } from './error.ts'
@@ -99,6 +100,7 @@ interface DomainTable {
 }
 
 export const TABLES: DomainTable[] = [
+  { domain: 'startup', messages: startup },
   { domain: 'common', messages: common },
   { domain: 'config', messages: config },
   { flat: true, messages: error },

@@ -974,3 +974,9 @@ export interface PublishDeleteReleaseRequest {
   /** 是否顺手删掉同名 git tag；tag 已不存在时后端视为成功。 */
   delete_tag: boolean
 }
+
+/** Startup diagnostics contain stable categories, never raw network errors. */
+export interface StartupProbe {
+  reachable: boolean
+  failure_kind: 'busy' | 'cancelled' | 'timeout' | 'http' | 'network' | 'too_large' | 'invalid_content' | null
+}

@@ -113,3 +113,26 @@ pub fn relaunch_as_admin() -> Result<OperationResult, String> {
         message: "update.elevationFailed".into(),
     })
 }
+
+/// Recheck after the tutorial rather than reuse the startup config snapshot.
+#[tauri::command]
+pub fn refresh_user_region() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        crate::user_region::refresh()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        crate::config::current_user_region()
+    }
+}
+
+#[tauri::command]
+pub async fn probe_startup_source() -> crate::repository_sources::StartupProbe {
+    crate::repository_sources::probe_startup_source().await
+}
+
+#[tauri::command]
+pub fn cancel_startup_probe() {
+    crate::repository_sources::cancel_startup_probe();
+}

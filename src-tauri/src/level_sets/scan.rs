@@ -25,9 +25,9 @@ use std::sync::atomic::Ordering;
 pub struct LevelSetOnDisk {
     /// 目录名（唯一键，也是开关时移动的目录名）。
     pub dir_name: String,
-    /// `true` = 在 `levels/`，`false` = 在 `disabled/`。
+    /// `true` = 在 `levels/`，`false` = 在 `BepInEx/cache/modmanager_disabled_maps/`。
     pub enabled: bool,
-    /// 目录的绝对路径（启用集 `levels/<目录名>`，停用集 `disabled/<目录名>`）。
+    /// 目录的绝对路径（启用集 `levels/<目录名>`，停用集 `BepInEx/cache/modmanager_disabled_maps/<目录名>`）。
     ///
     /// 由扫描时已经拼好的那个目录直接带出，不要在别处再拼一次 —— 基目录
     /// 换个位置时只改一处。
@@ -84,7 +84,7 @@ pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
 /// 谁先空闲谁接下一份。
 ///
 /// **顺序仍然确定**：并行只改变谁先算完，结果按原下标归位；排序口径维持
-/// 「先 `levels/` 再 `disabled/`，各自按目录名排序」，界面不会因为谁先跑完而重排。
+/// 「先 `levels/` 再 `BepInEx/cache/modmanager_disabled_maps/`，各自按目录名排序」，界面不会因为谁先跑完而重排。
 ///
 /// `manifests_dir` 用来读 BepInEx 表层包的随包插件登记表：那些 DLL 不在集
 /// 目录里，归属只能按登记的身份匹配（见 [`read_registered_plugins`]）。传

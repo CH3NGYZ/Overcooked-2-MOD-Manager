@@ -98,7 +98,7 @@ pub async fn get_level_sets(
     .map_err(|error| error.to_string())
 }
 
-/// 启用或停用一个关卡集（在 `levels/` 与 `disabled/` 之间移动目录）。
+/// 启用或停用一个关卡集（在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动目录）。
 ///
 /// 会改磁盘，所以要求游戏已停止 —— 与 MOD 开关同一条约束：游戏运行时改
 /// 插件目录里的内容，轻则本次不生效，重则读到半个文件。
@@ -182,8 +182,9 @@ pub fn set_all_level_sets_enabled(
 /// 在系统文件管理器中打开一个关卡集目录。
 ///
 /// 只读：不创建目录、不要求游戏已停止。前端只传目录名与「启用与否」，实际
-/// 路径由后端按 `OC2DIYLevel/{levels,disabled}` 拼出来 —— 参数不能指定任意
-/// 路径，`safe_game_path` 与 DIYLevel 归属检查都在 `level_sets` 里做。
+/// 路径由后端选择启用根 `BepInEx/plugins/OC2DIYLevel/levels` 或停用根
+/// `BepInEx/cache/modmanager_disabled_maps` 后拼出。参数不能指定任意路径，
+/// `safe_game_path` 与对应根目录的归属检查都在 `level_sets` 里做。
 #[tauri::command]
 pub fn open_level_set_directory(
     state: State<'_, AppState>,

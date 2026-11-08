@@ -29,7 +29,7 @@ import type { InstalledMod, LevelSetInfo, MapInfo, Repository } from './types'
 
 /** 关卡集的展示状态。 */
 export type LevelSetState =
-  /** 已停用（在 `disabled/` 里）。 */
+  /** 已停用（在 `BepInEx/cache/modmanager_disabled_maps/` 里）。 */
   | 'disabled'
   /** info 解析失败：名称与版本都读不到，但目录仍然可用（能开关）。 */
   | 'unreadable'

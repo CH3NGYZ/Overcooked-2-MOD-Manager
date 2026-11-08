@@ -26,13 +26,13 @@ use std::path::PathBuf;
 /// DIYLevel 也只会把它当成「下次启动才出现的地图」，不会读到半个文件。
 ///
 /// 开关是**移动**：DLL 正在 `levels/` 下按目录枚举并加载 `info`，此时把目录
-/// 挪到 `disabled/` 会让它正在读的路径消失。该历史策略仍用于开关/拍平；
+/// 挪到 `BepInEx/cache/modmanager_disabled_maps/` 会让它正在读的路径消失。该历史策略仍用于开关/拍平；
 /// 更新所需的删除已按最新产品要求放行纯地图，在删除实现内单独检查 DLL。
 ///
 /// ## 为什么做成常量而不是直接禁死
 ///
 /// 这条约束**尚未实机验证**。用户会手动测试「游戏运行时把目录移到
-/// `disabled/`」是否安全，确认没问题后把这个常量改成 `true` 即可放开。
+/// `BepInEx/cache/modmanager_disabled_maps/`」是否安全，确认没问题后把这个常量改成 `true` 即可放开。
 ///
 /// 判定集中在一处，就不会出现「安装放开了、开关忘了拦」这种半放开状态。
 pub(crate) const ALLOW_LEVEL_SET_TOGGLE_WHILE_RUNNING: bool = false;
@@ -71,7 +71,7 @@ pub fn ensure_operation_allowed(
     Ok(())
 }
 
-/// 启用或停用一个关卡集：在 `levels/` 与 `disabled/` 之间移动整个目录。
+/// 启用或停用一个关卡集：在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动整个目录。
 ///
 /// 返回值是移动后的新路径。目标位置已有同名目录时**拒绝**并返回错误 ——
 /// 覆盖会静默丢掉用户已有的那个关卡集，而这两个目录都是用户数据。

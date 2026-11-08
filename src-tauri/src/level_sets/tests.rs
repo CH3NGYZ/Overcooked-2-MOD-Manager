@@ -30,10 +30,13 @@ fn toggling_moves_the_whole_directory_between_levels_and_disabled() {
     std::fs::create_dir_all(&set).unwrap();
     std::fs::write(set.join("info_MySet"), b"placeholder").unwrap();
 
-    // 停用：整个目录移到 disabled/
+    // 停用：整个目录移到 BepInEx/cache/modmanager_disabled_maps/
     let moved = set_level_set_enabled(&root, "MySet", false).unwrap();
     assert!(!set.exists(), "原目录应已移走");
-    assert!(moved.is_dir(), "应出现在 disabled/");
+    assert!(
+        moved.is_dir(),
+        "应出现在 BepInEx/cache/modmanager_disabled_maps/"
+    );
     assert!(moved.join("info_MySet").is_file(), "目录内容要跟着走");
 
     // 启用：移回 levels/

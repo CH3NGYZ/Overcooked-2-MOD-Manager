@@ -147,7 +147,7 @@ fn parallel_scan_keeps_order_and_reports_progress() {
     assert_eq!(
         order,
         vec!["alpha", "mike", "zeta", "beta", "yankee"],
-        "并行不能打乱「先 levels 再 disabled、各自按名排序」"
+        "并行不能打乱「先启用根再 cache 停用根、各自按名排序」"
     );
     assert!(
         sets.iter()

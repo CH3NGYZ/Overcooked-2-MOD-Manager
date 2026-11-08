@@ -62,7 +62,7 @@ fn info_cache_parses_once_until_the_file_changes() {
 
 /// 扫描要带回关卡集目录的真实绝对路径。
 ///
-/// 详情面板把它与目录名合成「路径」一行；停用集必须指向 `disabled/`，
+/// 详情面板把它与目录名合成「路径」一行；停用集必须指向 `BepInEx/cache/modmanager_disabled_maps/`，
 /// 否则用户照抄出来的路径在磁盘上根本不存在。坏掉的关卡集（info 解析
 /// 失败）同样要带路径 —— 认不出元数据不等于找不到目录。
 #[test]
@@ -98,7 +98,7 @@ fn scan_reports_the_absolute_directory_path_for_both_sides() {
     assert!(!disabled.enabled);
     assert_eq!(
         disabled.path, disabled_dir,
-        "停用集应指向 disabled/<目录名>"
+        "停用集应指向 BepInEx/cache/modmanager_disabled_maps/<目录名>"
     );
     assert!(disabled.path.is_absolute(), "停用集路径也必须是绝对路径");
     assert!(
@@ -110,7 +110,7 @@ fn scan_reports_the_absolute_directory_path_for_both_sides() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-/// 定位必须跟随 `enabled` 决定去 `levels/` 还是 `disabled/` 找。
+/// 定位必须跟随 `enabled` 决定去 `levels/` 还是 `BepInEx/cache/modmanager_disabled_maps/` 找。
 ///
 /// 传错一侧就会「打开了别的目录」或「删掉了本该保留的副本」，所以这条
 /// 用同名目录只存在于一侧来验证，而不是只看是否成功。
@@ -160,7 +160,7 @@ fn deleting_without_recycling_removes_the_directory() {
     std::fs::create_dir_all(&set).unwrap();
     std::fs::write(set.join("info"), b"placeholder").unwrap();
 
-    // enabled=false：在 disabled/ 下找
+    // enabled=false：在 BepInEx/cache/modmanager_disabled_maps/ 下找
     remove_level_set(&recycle, &manifests, &game, "MySet", false, false).unwrap();
 
     assert!(!set.exists(), "关卡集目录应已删除");

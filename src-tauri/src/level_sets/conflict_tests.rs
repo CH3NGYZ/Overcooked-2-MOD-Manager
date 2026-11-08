@@ -162,7 +162,7 @@ fn display_name_falls_back_to_the_chinese_name() {
 #[test]
 fn existing_level_set_metadata_reads_the_disabled_root_too() {
     /*
-     * 曾经的缺陷：只看 `levels/`。同名目录只在 `disabled/` 时会得到
+     * 曾经的缺陷：只看 `levels/`。同名目录只在 `BepInEx/cache/modmanager_disabled_maps/` 时会得到
      * 「读不出身份」，于是另一张同名地图也被 `levelSet.targetExists`
      * 拒绝 —— 而本地根本没有那张图的副本可卸，用户无路可走。
      */
@@ -185,7 +185,7 @@ fn existing_level_set_metadata_reads_the_disabled_root_too() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-/// 只在 `disabled/` 里有同名目录、且身份不同时，必须换名并存而不是拒绝。
+/// 只在 `BepInEx/cache/modmanager_disabled_maps/` 里有同名目录、且身份不同时，必须换名并存而不是拒绝。
 ///
 /// 用真实 RW 包（ZIP 里的身份来自真 `info`），停用根那份的身份用
 /// `inject_info_cache` 伪造 —— 这是本修复最关键的一条端到端回归。

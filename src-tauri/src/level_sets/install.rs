@@ -18,9 +18,9 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-/// 找到与 `dir_name` 同名的已装关卡集并读出它的身份（先 `levels/` 再 `disabled/`）。
+/// 找到与 `dir_name` 同名的已装关卡集并读出它的身份（先 `levels/` 再 `BepInEx/cache/modmanager_disabled_maps/`）。
 ///
-/// 两个根都要看：同名目录只在 `disabled/` 时，只读 `levels/` 会得到「读不出
+/// 两个根都要看：同名目录只在 `BepInEx/cache/modmanager_disabled_maps/` 时，只读 `levels/` 会得到「读不出
 /// 身份」，于是「不同身份可以并存」的换名规则永远不会生效 —— 用户的另一张
 /// 同名地图会被一句 `levelSet.targetExists` 挡在门外（且没有任何旧副本可卸）。
 pub(super) fn existing_level_set_metadata(
@@ -110,7 +110,7 @@ pub fn install_parsed_sets(
      * - **身份不同** → 换一个目录名并存。两个不同地图共用同一个英文集名与
      *   作者是真实存在的（实测「胡闹糕中」与「胡闹达学」都是 GAODA/GAODA），
      *   整批拒绝只会让用户既装不上新的、也不知道该删谁。
-     * - `disabled/` 下有同名目录也算占用：那是用户停用的数据，直接覆盖会丢。
+     * - `BepInEx/cache/modmanager_disabled_maps/` 下有同名目录也算占用：那是用户停用的数据，直接覆盖会丢。
      *   所以命中 `taken` 时要**两个根都去读**，只看 `levels/` 会把「只在停用
      *   根里同名」误判成「读不出身份」，不同身份的地图也会被拒绝。
      */

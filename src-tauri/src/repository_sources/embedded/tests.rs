@@ -2,6 +2,33 @@ use super::super::transport::load_document;
 use super::*;
 
 #[test]
+fn mod_index_has_one_closed_resource_tree_and_no_legacy_runtime_entry() {
+    assert_eq!(BUILTIN_INDEX, "mods.toml");
+    assert!(DEFAULT_INDEX_GITHUB_URL.ends_with("/mods.toml"));
+    assert!(DEFAULT_INDEX_GITEE_URL.ends_with("/mods.toml"));
+    assert!(
+        !BUNDLED_SOURCES
+            .iter()
+            .any(|(path, _)| *path == "repositories.toml")
+    );
+    let location = SourceLocation::parse(BUILTIN_INDEX).unwrap();
+    let index = location.bundled_document().unwrap();
+    assert_eq!(index.repository_sources.len(), 8);
+    let mut repositories = 0;
+    for source in index.repository_sources {
+        // Source IDs remain stable while file locations change.
+        assert!(source.id.starts_with("repositories-"));
+        assert!(source.url.starts_with("mods/mods-"));
+        let child = SourceLocation::parse(&source.url)
+            .unwrap()
+            .bundled_document()
+            .unwrap();
+        repositories += child.repositories.len();
+    }
+    assert_eq!(repositories, 27);
+}
+
+#[test]
 fn embedded_index_templates_are_returned_as_independent_copies() {
     let location = SourceLocation::parse(BUILTIN_INDEX).unwrap();
     let original = location.bundled_document().unwrap();

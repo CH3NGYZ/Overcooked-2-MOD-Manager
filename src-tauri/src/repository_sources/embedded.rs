@@ -8,14 +8,15 @@ use crate::models::RepositoryExport;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-pub const BUILTIN_INDEX: &str = "repositories.toml";
+pub const BUILTIN_INDEX: &str = "mods.toml";
 
 pub const DEFAULT_INDEX_ID: &str = "official-repository-index";
 
 pub const DEFAULT_INDEX_GITEE_URL: &str =
-    "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/repositories.toml";
+    "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/mods.toml";
 
-pub const DEFAULT_INDEX_GITHUB_URL: &str = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/repositories.toml";
+pub const DEFAULT_INDEX_GITHUB_URL: &str =
+    "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods.toml";
 
 pub fn default_index_url(region: &str) -> &'static str {
     if region == crate::config::REGION_CHINESE_MAINLAND {

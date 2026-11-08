@@ -272,9 +272,10 @@ test('repositoryIsAvailable 把平台不适用当作「不存在」', () => {
  * 而真正要守的规则是「字段齐全 + 不出现 windows/未知限定」。 */
 test('内置仓库源每项都声明 platform，且只允许 macOS 限定', async () => {
   const { readFileSync, readdirSync } = await import('node:fs')
-  const dir = new URL('../src-tauri/resources/', import.meta.url)
+  const dir = new URL('../src-tauri/resources/mods/', import.meta.url)
   const files = readdirSync(dir).filter((name) =>
-    name.startsWith('repositories-') && name.endsWith('.toml') && name !== 'repositories-proxies.toml')
+    name.startsWith('mods-') && name.endsWith('.toml'))
+  assert.ok(files.length > 0, '必须扫描到 MOD 子文档，不能因路径迁移静默跳过检查')
 
   let totalRepos = 0
   let totalPlatformLines = 0

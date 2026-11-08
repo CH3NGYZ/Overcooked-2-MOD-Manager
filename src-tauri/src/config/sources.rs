@@ -5,7 +5,7 @@ use crate::models::*;
 
 /// 官方根源的地址：打开「仅用内置仓库源」时直接指向打包资源。
 ///
-/// `repositories.toml` 是内置索引的路径，`SourceLocation` 会把它解析成
+/// `mods.toml` 是内置索引的路径，`SourceLocation` 会把它解析成
 /// 嵌入资源 —— 也就是回退时用的那一份。所以这个开关不需要第二套加载
 /// 逻辑，只是把源头换成同一棵树。
 pub(crate) fn builtin_repository_sources_for_region(

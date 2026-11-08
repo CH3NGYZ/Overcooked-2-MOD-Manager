@@ -3,15 +3,15 @@ use super::*;
 
 #[test]
 fn official_channels_resolve_children_in_the_selected_remote_repository() {
-    let text = "[[repository_sources]]\nid = \"mods\"\nnickname = \"MODs\"\nurl = \"repositories-gua.toml\"\n";
+    let text = "[[repository_sources]]\nid = \"mods\"\nnickname = \"MODs\"\nurl = \"mods/mods-gua.toml\"\n";
     for (region, expected) in [
         (
             crate::config::REGION_CHINESE_MAINLAND,
-            "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/repositories-gua.toml",
+            "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/mods/mods-gua.toml",
         ),
         (
             crate::config::REGION_INTERNATIONAL,
-            "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/repositories-gua.toml",
+            "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods/mods-gua.toml",
         ),
     ] {
         let location = SourceLocation::parse(default_index_url(region)).unwrap();

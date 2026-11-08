@@ -223,7 +223,7 @@ fn routes_are_official_sibling_documents_with_direct_github_first() {
     assert_eq!(
         international[0][0].url,
         repository_sources::DEFAULT_INDEX_GITHUB_URL
-            .replace("repositories.toml", "repositories-proxies.toml")
+            .replace("mods.toml", "repositories-proxies.toml")
     );
     let mainland = manifest_routes(crate::config::REGION_CHINESE_MAINLAND, &snapshot).unwrap();
     assert_eq!(mainland.len(), 2);
@@ -231,7 +231,7 @@ fn routes_are_official_sibling_documents_with_direct_github_first() {
     assert_eq!(
         mainland[0][0].url,
         repository_sources::DEFAULT_INDEX_GITEE_URL
-            .replace("repositories.toml", "repositories-proxies.toml")
+            .replace("mods.toml", "repositories-proxies.toml")
     );
     assert_eq!(mainland[1], international[0]);
     let empty = manifest_routes(
@@ -257,8 +257,10 @@ async fn live_official_proxy_manifest() {
     let snapshot = runtime.snapshot();
     assert_eq!(snapshot.release_proxies.len(), 1);
     assert_eq!(snapshot.raw_proxies.len(), 1);
-    let github = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/repositories.toml";
-    let raw = "https://raw.githubusercontent.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/main/repositories.toml";
+    let github =
+        "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods.toml";
+    let raw =
+        "https://raw.githubusercontent.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/main/mods.toml";
     let github_urls = github_proxies::proxy_urls(&snapshot.raw_proxies, github, true, None);
     let raw_urls = github_proxies::proxy_urls(&snapshot.raw_proxies, raw, true, None);
     assert_eq!(raw_urls, github_urls);

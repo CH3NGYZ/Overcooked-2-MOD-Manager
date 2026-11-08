@@ -7,7 +7,7 @@ import test from 'node:test'
  *
  * 用户报的 bug：官方源读取失败、提示回退之后，界面上一片空白。
  *
- * 根因：内置索引 `src-tauri/resources/repositories.toml` **只声明子源**，
+ * 根因：内置索引 `src-tauri/resources/mods.toml` **只声明子源**，
  * 它自己的 `repositories` 是空的（仓库在 `repositories-*.toml` 里）。
  * 原来的 `fallbackToBuiltinIfOffline` 只调了一次
  * `importRepositorySource(officialRoot, ..., true)` 就返回 —— 那是「加载索引」，
@@ -27,7 +27,7 @@ const refresh = readFileSync(
   'utf8',
 ).replace(/\r\n/g, '\n')
 const resources = readFileSync(
-  new URL('../src-tauri/resources/repositories.toml', import.meta.url),
+  new URL('../src-tauri/resources/mods.toml', import.meta.url),
   'utf8',
 ).replace(/\r\n/g, '\n')
 

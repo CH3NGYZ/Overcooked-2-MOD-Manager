@@ -73,7 +73,7 @@ GitHub 文件地址按 `https://github.com/{username}/{repository}/raw/refs/head
 
 这些字段只属于软件“导出配置”生成的完整配置包。完整配置包用于在另一台管理器中导入，不能直接替代仓库源文件。
 
-仓库源可以使用 `.toml` 或 `.oc2repo.toml` 扩展名，例如 `repositories.toml` 或 `my-repositories.oc2repo.toml`。文件必须使用 UTF-8 编码；对外分享时，入口地址必须能够通过公开的 HTTP 或 HTTPS 地址返回 TOML 原文。
+仓库源可以使用 `.toml` 或 `.oc2repo.toml` 扩展名，例如 `mods.toml` 或 `my-repositories.oc2repo.toml`。文件必须使用 UTF-8 编码；对外分享时，入口地址必须能够通过公开的 HTTP 或 HTTPS 地址返回 TOML 原文。
 
 ### 在仓库源中声明其他仓库源
 
@@ -82,7 +82,7 @@ GitHub 文件地址按 `https://github.com/{username}/{repository}/raw/refs/head
 ```toml
 [[repository_sources]]
 id = "azhe-hostutilities"
-url = "repositories-azhe-hostutilities.toml"
+url = "mods/mods-azhe-hostutilities.toml"
 builtin = true
 
 [repository_sources.nickname_i18n]
@@ -376,7 +376,7 @@ type = "exact"
 value = "HostUtilities.zip"
 ```
 
-可以参考 [仓库源入口示例](src-tauri/resources/repositories.toml) 和 [街机 MOD 仓库示例](src-tauri/resources/repositories-azhe-hostutilities.toml)。`[[repositories]]` 不需要手动填写 `id` 或 `source_id`，管理器会维护仓库标识和来源绑定；也可以直接复制软件导出的仓库条目，已有的 `source_id` 会被当前源的 ID 替换。
+可以参考 [仓库源入口示例](src-tauri/resources/mods.toml) 和 [街机 MOD 仓库示例](src-tauri/resources/mods/mods-azhe-hostutilities.toml)。`[[repositories]]` 不需要手动填写 `id` 或 `source_id`，管理器会维护仓库标识和来源绑定；也可以直接复制软件导出的仓库条目，已有的 `source_id` 会被当前源的 ID 替换。
 
 ## 多语言名称、分组和简介
 
@@ -577,38 +577,13 @@ prerelease = false     # 排斥正式版
 
 ## 代理配置建议
 
-API、GitHub Release 和 GitHub Raw 文件的代理统一从管理器内的“GitHub 代理配置”管理，分别维护 GitHub API、Gitee API、Release 与 Raw 列表。仓库源不保存代理策略或代理 URL；GitHub 资产的安装菜单依次提供自动代理、自动直连、直链和手动选择。中国大陆默认自动代理，国际地区默认自动直连；Release 和仓库文件下载共用这套策略，Gitee 资产只直连。
+MOD 内置索引为 `mods.toml`，通过相对路径引用 `mods/` 子文档；它不提供全局代理定义。用户添加的普通仓库源也不能注册全局代理或要求执行脚本。
 
-自动直连先尝试直连，失败后按代理顺序继续。自动代理先尝试 JS 脚本来源，再尝试内置代理，全部代理失败后尝试直连。直链只请求原始地址，手动选择只请求所选启用代理。取消下载会停止后续尝试。
+当前代理配置由管理器随包清单启动兜底，官方远端 `repositories-proxies.toml` 完整验证成功后整份替换进程快照；合法空清单表示直连，读取或校验失败保留当前快照。设置中的“仅使用内置代理配置”可独立禁止远端配置刷新，下载本身仍可联网。清单不写入用户配置，不读取 JS/userscript，也不把远端清单与旧条目合并。
 
-每个渠道的 Release API 按“官方直连 → 官方直连并携带 Token → 该渠道 API 代理”的顺序请求；前一步失败后才进入下一步。GitHub API 代理只接在 GitHub 请求之后，Gitee API 代理只接在 Gitee 请求之后；Token 始终只发送到官方 API，不会发送给代理。
+当前清单版本为 `schema_version = 1`，支持 `release_proxies`、`raw_proxies`、`github_api_proxies`、`gitee_api_proxies`、`gitcode_api_proxies`、`avatar_proxies` 六组。每项包含唯一 `id`、`name`、HTTPS `template`，以及可选 `regions`、`description`、`enabled`。API 有对应平台 Token 时直接使用官方 Token 请求，否则官方匿名；失败后尝试对应 API 代理，当前代理保持匿名。Release/Raw 文件下载不携带 API Token。
 
-内置仓库索引 `repositories.toml` 可以按地区声明多个代理来源。代理来源表只从这个内置索引读取，普通远程仓库源里的同名表不会自动作为全局代理配置加载。`url` 可以是 HTTPS 直链，也可以是相对于当前 `repositories.toml` 的路径；同仓库文件直接填写相对路径即可。`format` 可选 `toml` 或 `userscript`，默认 `toml`。多个来源都会读取并合并，重复代理模板会去重：
-
-```toml
-[[github_proxy_sources]]
-region = "chinese_mainland"
-url = "https://gitee.com/example/mod-index/raw/main/repositories-proxies.toml"
-
-[[github_proxy_sources]]
-region = "international"
-url = "repositories-proxies.toml"
-
-[[github_proxy_sources]]
-region = "international"
-format = "userscript"
-url = "https://example.com/scripts/github-proxies.user.js"
-```
-
-`github_proxy_sources.region` 是可选的：填写 `chinese_mainland` 时只在中国大陆加载，填写 `international` 时只在国际渠道加载；省略 `region` 或填写空字符串时，两个渠道都会加载这个代理来源。来源文件内解析出的 Release、Raw 和 API 代理会按当前渠道合并，并继续按各代理条目的 `regions` 显示地区信息。
-
-JS 脚本中的 `download_url_us` 和 `raw_url` 仅解析为数据，不执行脚本；这些代理显示“远程”标签，TOML 清单条目显示“内置”。Release 和 Raw 列表把远程代理放在内置代理前面，保留各组内的排序并按模板去重。脚本请求或解析失败、列表为空时，管理器仍保留内置代理作为后备。来源标签由管理器维护，制作者不需要填写 `builtin` 或 `remote`。
-
-`repositories-proxies.toml` 的 `schema_version` 可省略，省略时默认为 1，目前支持版本 1。Release 和 Raw 下载代理分别使用 `[[release_proxies]]`、`[[raw_proxies]]`；API 代理按渠道分为 `[[github_api_proxies]]` 和 `[[gitee_api_proxies]]`。每项包含唯一 `id`、显示名称 `name`、安全模板 `template`、可选地区 `regions` 和说明 `description`。地区仅作界面说明，不会自动探测代理服务器的物理位置。
-
-模板不会执行 Python 或其他表达式，只替换以下白名单占位符：`{url}`（目标完整 URL）、`{url_no_scheme}`、`{github_path}`、`{url_path}`（目标 URL 的路径和查询参数）、`{owner}`、`{repo}`、`{tag}`、`{asset}`、`{branch}` 和 `{path}`。例如 `https://proxy.example/{url}`、`https://oc2gtapi.example{url_path}` 或 `https://cdn.example/gh/{owner}/{repo}@{branch}/{path}`。模板必须是 HTTPS；代理列表中的重复模板会自动合并并去重。不要把 Token 写进代理 URL。
-
-Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库源中的线程数只是下载设置，不能改变 Release API 的返回内容。
+模板仅替换固定占位符：`{url}`、`{url_no_scheme}`、`{github_path}`、`{url_path}`、`{owner}`、`{repo}`、`{tag}`、`{asset}`、`{branch}`、`{path}`，不执行表达式。代理注册表与源级 request plan 的新格式仍在迁移中，尚不能把计划示例当作已支持的配置。
 
 ## 在管理器中添加仓库源
 
@@ -635,7 +610,7 @@ Gitee 通常使用单线程下载，GitHub 可以使用多线程下载。仓库�
 
 只要有任何官方子源成功带回仓库，就说明在线可用，这时不会用旧快照覆盖真实数据。自定义源失败不触发回退。
 
-内置快照同样是「索引 + 子源文件」结构：`repositories.toml` 只声明 `[[repository_sources]]`，仓库内容在各子源文件里。回退后继续读取这些子源；子源仍可能各自失败，不能仅以索引读取成功认定列表完整。回退只做一次，并保留远程根地址 —— 下次刷新仍先请求在线入口。
+内置快照同样是「索引 + 子源文件」结构：`mods.toml` 只声明 `[[repository_sources]]`，仓库内容在各子源文件里。回退后继续读取这些子源；子源仍可能各自失败，不能仅以索引读取成功认定列表完整。回退只做一次，并保留远程根地址 —— 下次刷新仍先请求在线入口。
 
 ## 地图源（DIYLevel 关卡集）
 

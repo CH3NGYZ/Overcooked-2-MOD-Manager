@@ -349,8 +349,8 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
  *   · 只对官方根调用一次（`builtinFallback: true`），它内部会把整个
  *     内置索引树（含子源）一起展开。
  *
- * **必须继续递归子源**：内置索引 `repositories.toml` 自己**没有仓库**，
- * 它只声明子源（`repositories-azhe-hostutilities.toml` 等），仓库都在子源
+ * **必须继续递归子源**：内置索引 `mods.toml` 自己**没有仓库**，
+ * 它只声明子源（`mods/mods-azhe-hostutilities.toml` 等），仓库都在子源
  * 文件里。只应用索引不足以得到仓库，必须继续递归子源；子源仍可能分别失败。
  * 回退复用 refreshSourceChain，让在线和内置流程的子源处理保持一致。
  *

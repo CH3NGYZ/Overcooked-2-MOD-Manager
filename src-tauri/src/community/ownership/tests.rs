@@ -23,7 +23,7 @@ fn community_merge_checks_official_source_tree_before_addition() {
                 "repository_sources":[
                     {"id":"official-leaf","parent_id":"official-child","nickname":"Leaf","url":"leaf.toml","builtin":false},
                     {"id":"official-child","parent_id":"official-repository-index","nickname":"Child","url":"child.toml","builtin":false},
-                    {"id":"official-repository-index","nickname":"Official","url":"repositories.toml","builtin":true}
+                    {"id":"official-repository-index","nickname":"Official","url":"mods.toml","builtin":true}
                 ],
                 "repositories":[official.clone()]
             })).unwrap();

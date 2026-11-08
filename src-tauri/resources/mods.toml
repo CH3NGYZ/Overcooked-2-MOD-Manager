@@ -3,7 +3,7 @@
 # [[repository_sources]] 的顺序决定源在管理器中的展示顺序。
 [[repository_sources]]
 id = "repositories-azhe-hostutilities"
-url = "repositories-azhe-hostutilities.toml"
+url = "mods/mods-azhe-hostutilities.toml"
 builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -15,7 +15,7 @@ ja = "Azhe - アーケード MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "repositories-azhe-others"
-url = "repositories-azhe-others.toml"
+url = "mods/mods-azhe-others.toml"
 builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -27,7 +27,7 @@ ja = "Azhe - その他の MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "repositories-azhe-game-fixes"
-url = "repositories-azhe-game-fixes.toml"
+url = "mods/mods-azhe-game-fixes.toml"
 builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 游戏修复 - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -39,7 +39,7 @@ ja = "Azhe - ゲーム修正 - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "repositories-qingyuqingxue"
-url = "repositories-qingyuqingxue.toml"
+url = "mods/mods-qingyuqingxue.toml"
 builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @清雨青雪 - ID:94575050243"
@@ -51,7 +51,7 @@ ja = "RedNote @清雨青雪 - ID:94575050243"
 
 [[repository_sources]]
 id = "repositories-kfyangc"
-url = "repositories-kfyangc.toml"
+url = "mods/mods-kfyangc.toml"
 builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @漆雕帆船 - ID:5669571205"
@@ -63,7 +63,7 @@ ja = "RedNote @漆雕帆船 - ID:5669571205"
 
 [[repository_sources]]
 id = "repositories-foamp"
-url = "repositories-foamp.toml"
+url = "mods/mods-foamp.toml"
 builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @纸沫 - ID:5696399896"
@@ -75,7 +75,7 @@ ja = "RedNote @纸沫 - ID:5696399896"
 
 [[repository_sources]]
 id = "repositories-guojia99"
-url = "repositories-guojia99.toml"
+url = "mods/mods-guojia99.toml"
 builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "嘉吖 - DIYLevel Web前置"
@@ -87,7 +87,7 @@ ja = "嘉吖 - DIYLevel Web ランタイム"
 
 [[repository_sources]]
 id = "repositories-gua"
-url = "repositories-gua.toml"
+url = "mods/mods-gua.toml"
 builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "G_U_A"
@@ -95,20 +95,3 @@ zh-TW = "G_U_A"
 en = "G_U_A"
 ko = "G_U_A"
 ja = "G_U_A"
-
-
-# 桥接源索引
-[[github_proxy_sources]]
-url = "repositories-proxies.toml"
-
-# # 桥接源脚本
-# [[github_proxy_sources]]
-# region = "chinese_mainland"
-# format = "userscript"
-# url = "https://tencent.api-data-abtest-config.dahi.edu.eu.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"
-
-# # 桥接源脚本
-# [[github_proxy_sources]]
-# region = "international"
-# format = "userscript"
-# url = "https://update.greasyfork.org/scripts/412245/Github%20%E5%A2%9E%E5%BC%BA%20-%20%E9%AB%98%E9%80%9F%E4%B8%8B%E8%BD%BD.user.js"

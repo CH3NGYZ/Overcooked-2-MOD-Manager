@@ -1,0 +1,132 @@
+schema_version = 1
+
+[[request_plans]]
+id = "github-public-mod"
+provider = "github"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2ghapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+
+[[request_plans]]
+id = "github-public-map"
+provider = "github"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2ghapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+
+[[request_plans]]
+id = "github-mainland-mod"
+provider = "github"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2ghapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }, { kind = "proxy", id = "gh-h233" }, { kind = "proxy", id = "gh-ddlc" }, { kind = "proxy", id = "gh-proxy-org" }, { kind = "proxy", id = "cdn-gh-proxy-org" }, { kind = "proxy", id = "edgeone-gh-proxy-org" }, { kind = "proxy", id = "cors-isteed" }, { kind = "proxy", id = "ghproxy-it" }, { kind = "proxy", id = "github-boki" }, { kind = "proxy", id = "gh-jasonzeng" }, { kind = "proxy", id = "gh-monlor" }, { kind = "proxy", id = "github-geekery" }, { kind = "proxy", id = "github-ednovas" }, { kind = "proxy", id = "ghfile-geekertao" }, { kind = "proxy", id = "ghp-keleyaa" }, { kind = "proxy", id = "gh-chjina" }, { kind = "proxy", id = "ghpxy-hwinzniej" }, { kind = "proxy", id = "cdn-crashmc" }, { kind = "proxy", id = "git-yylx" }, { kind = "proxy", id = "gitproxy-mrhjx" }, { kind = "proxy", id = "ghproxy-cxkpro" }, { kind = "proxy", id = "gh-xxooo" }, { kind = "proxy", id = "gh-idayer" }, { kind = "proxy", id = "down-npee" }, { kind = "proxy", id = "raw-ihtw" }, { kind = "proxy", id = "xget" }, { kind = "proxy", id = "gh-zwy" }, { kind = "proxy", id = "ghproxy-monkeyray" }, { kind = "proxy", id = "ghproxy-net" }, { kind = "proxy", id = "ghfast" }, { kind = "proxy", id = "wget-la" }]
+race = true
+max_parallelism = 3
+[request_plans.raw]
+route = [{ kind = "direct" }, { kind = "proxy", id = "wget-la-raw" }, { kind = "proxy", id = "hk-gh-proxy-raw" }, { kind = "proxy", id = "ghfast-raw" }, { kind = "proxy", id = "gh-catmak-raw" }, { kind = "proxy", id = "fastly-jsdelivr" }, { kind = "proxy", id = "cdn-gh-proxy-raw" }, { kind = "proxy", id = "g-blfrp-raw" }, { kind = "proxy", id = "oc2gh-raw" }]
+race = true
+max_parallelism = 3
+
+[[request_plans]]
+id = "github-mainland-map"
+provider = "github"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2ghapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }, { kind = "proxy", id = "gh-h233" }, { kind = "proxy", id = "gh-ddlc" }, { kind = "proxy", id = "gh-proxy-org" }, { kind = "proxy", id = "cdn-gh-proxy-org" }, { kind = "proxy", id = "edgeone-gh-proxy-org" }, { kind = "proxy", id = "cors-isteed" }, { kind = "proxy", id = "ghproxy-it" }, { kind = "proxy", id = "github-boki" }, { kind = "proxy", id = "gh-jasonzeng" }, { kind = "proxy", id = "gh-monlor" }, { kind = "proxy", id = "github-geekery" }, { kind = "proxy", id = "github-ednovas" }, { kind = "proxy", id = "ghfile-geekertao" }, { kind = "proxy", id = "ghp-keleyaa" }, { kind = "proxy", id = "gh-chjina" }, { kind = "proxy", id = "ghpxy-hwinzniej" }, { kind = "proxy", id = "cdn-crashmc" }, { kind = "proxy", id = "git-yylx" }, { kind = "proxy", id = "gitproxy-mrhjx" }, { kind = "proxy", id = "ghproxy-cxkpro" }, { kind = "proxy", id = "gh-xxooo" }, { kind = "proxy", id = "gh-idayer" }, { kind = "proxy", id = "down-npee" }, { kind = "proxy", id = "raw-ihtw" }, { kind = "proxy", id = "xget" }, { kind = "proxy", id = "gh-zwy" }, { kind = "proxy", id = "ghproxy-monkeyray" }, { kind = "proxy", id = "ghproxy-net" }, { kind = "proxy", id = "ghfast" }, { kind = "proxy", id = "wget-la" }]
+race = true
+max_parallelism = 3
+[request_plans.raw]
+route = [{ kind = "direct" }, { kind = "proxy", id = "wget-la-raw" }, { kind = "proxy", id = "hk-gh-proxy-raw" }, { kind = "proxy", id = "ghfast-raw" }, { kind = "proxy", id = "gh-catmak-raw" }, { kind = "proxy", id = "fastly-jsdelivr" }, { kind = "proxy", id = "cdn-gh-proxy-raw" }, { kind = "proxy", id = "g-blfrp-raw" }, { kind = "proxy", id = "oc2gh-raw" }]
+race = true
+max_parallelism = 3
+
+[[request_plans]]
+id = "gitee-public-mod"
+provider = "gitee"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2gtapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+
+[[request_plans]]
+id = "gitee-public-map"
+provider = "gitee"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2gtapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+
+[[request_plans]]
+id = "gitcode-public-mod"
+provider = "gitcode"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2gcapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+
+[[request_plans]]
+id = "gitcode-public-map"
+provider = "gitcode"
+access = "public"
+[request_plans.api]
+route = [{ kind = "official" }, { kind = "proxy", id = "oc2gcapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "direct" }]
+max_parallelism = 1
+
+# Kept unreferenced by maps.toml until the source is re-enabled.
+[[request_plans]]
+id = "qingyuqingxue-map-proxy-only"
+provider = "github"
+access = "public"
+[request_plans.api]
+route = [{ kind = "proxy", id = "oc2ghapi" }]
+max_parallelism = 1
+[request_plans.release]
+route = [{ kind = "proxy", id = "oc2gh-release" }]
+max_parallelism = 1
+[request_plans.raw]
+route = [{ kind = "proxy", id = "oc2gh-raw" }]
+max_parallelism = 1

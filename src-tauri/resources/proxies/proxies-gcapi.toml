@@ -1,0 +1,11 @@
+schema_version = 1
+
+[[proxies]]
+id = "oc2gcapi"
+description = "GitCode API 桥接"
+name = "oc2gcapi.ch3ng.top"
+provider = "gitcode"
+intent = "api"
+access = "public"
+template = "https://oc2gcapi.ch3ng.top/{url_path}"
+token_transport = "matching_platform_token"

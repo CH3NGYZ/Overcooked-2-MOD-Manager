@@ -1,0 +1,73 @@
+schema_version = 1
+
+[[proxies]]
+id = "wget-la-raw"
+name = "wget.la"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://wget.la/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "hk-gh-proxy-raw"
+name = "hk.gh-proxy.org"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://hk.gh-proxy.org/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghfast-raw"
+name = "ghfast.top"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://ghfast.top/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-catmak-raw"
+name = "gh.catmak.name"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://gh.catmak.name/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "fastly-jsdelivr"
+name = "jsdelivr.net"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://fastly.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}"
+token_transport = "none"
+
+[[proxies]]
+id = "cdn-gh-proxy-raw"
+name = "cdn.gh-proxy.org"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://cdn.gh-proxy.org/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "g-blfrp-raw"
+name = "g.blfrp.cn"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://g.blfrp.cn/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "oc2gh-raw"
+name = "oc2gh.ch3ng.top"
+provider = "github"
+intent = "raw"
+access = "public"
+template = "https://oc2gh.ch3ng.top/{url_path}"
+token_transport = "none"

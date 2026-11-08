@@ -47,9 +47,11 @@ fn embedded_index_templates_are_returned_as_independent_copies() {
 }
 
 /*
- * 这两类嵌入文档**不是**仓库源，各有自己的解析器与自己的回归测试：
+ * 以下嵌入文档不是 MOD 仓库源，各有自己的解析器与回归测试：
  *
  * - `repositories-proxies.toml`：只有代理清单，没有 repositories；
+ * - `proxies.toml`、`proxies/`、`network-plans.toml`：新网络配置闭包，
+ *   由 `network_policy::tests` 使用真实解析器覆盖；
  * - `maps*.toml`：地图源（`[[maps]]` / `[[map_sources]]`），由
  *   `map_sources::bundled_tests` 覆盖。
  *
@@ -59,6 +61,15 @@ fn embedded_index_templates_are_returned_as_independent_copies() {
  */
 const NOT_REPOSITORY_DOCUMENTS: &[&str] = &[
     "repositories-proxies.toml",
+    "proxies.toml",
+    "network-plans.toml",
+    "proxies/proxies-avatar.toml",
+    "proxies/proxies-gcapi.toml",
+    "proxies/proxies-ghapi.toml",
+    "proxies/proxies-gtapi.toml",
+    "proxies/proxies-mapsource.toml",
+    "proxies/proxies-raw.toml",
+    "proxies/proxies-release.toml",
     "maps.toml",
     "maps/maps-oc2-map-bundle.toml",
     "maps/maps-qingyuqingxue.toml",

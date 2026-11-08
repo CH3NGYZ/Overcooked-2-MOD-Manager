@@ -1,0 +1,271 @@
+schema_version = 1
+
+[[proxies]]
+id = "gh-h233"
+name = "gh.h233.eu.org"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.h233.eu.org/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-ddlc"
+name = "gh.ddlc.top"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.ddlc.top/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-proxy-org"
+name = "gh-proxy.org"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh-proxy.org/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "cdn-gh-proxy-org"
+name = "cdn.gh-proxy.org"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://cdn.gh-proxy.org/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "edgeone-gh-proxy-org"
+name = "edgeone.gh-proxy.org"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://edgeone.gh-proxy.org/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "cors-isteed"
+name = "cors.isteed.cc"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://cors.isteed.cc/{url_no_scheme}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghproxy-it"
+name = "ghproxy.it"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghproxy.it/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "github-boki"
+name = "github.boki.moe"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://github.boki.moe/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-jasonzeng"
+name = "gh.jasonzeng.dev"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.jasonzeng.dev/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-monlor"
+name = "gh.monlor.com"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.monlor.com/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "github-geekery"
+name = "github.geekery.cn"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://github.geekery.cn/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "github-ednovas"
+name = "github.ednovas.xyz"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://github.ednovas.xyz/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghfile-geekertao"
+name = "ghfile.geekertao.top"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghfile.geekertao.top/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghp-keleyaa"
+name = "ghp.keleyaa.com"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghp.keleyaa.com/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-chjina"
+name = "gh.chjina.com"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.chjina.com/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghpxy-hwinzniej"
+name = "ghpxy.hwinzniej.top"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghpxy.hwinzniej.top/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "cdn-crashmc"
+name = "cdn.crashmc.com"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://cdn.crashmc.com/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "git-yylx"
+name = "git.yylx.win"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://git.yylx.win/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gitproxy-mrhjx"
+name = "gitproxy.mrhjx.cn"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gitproxy.mrhjx.cn/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghproxy-cxkpro"
+name = "ghproxy.cxkpro.top"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghproxy.cxkpro.top/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-xxooo"
+name = "gh.xxooo.cf"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.xxooo.cf/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-idayer"
+name = "gh.idayer.com"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.idayer.com/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "down-npee"
+name = "down.npee.cn"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://down.npee.cn/?{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "raw-ihtw"
+name = "raw.ihtw.moe"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://raw.ihtw.moe/{url_no_scheme}"
+token_transport = "none"
+
+[[proxies]]
+id = "xget"
+name = "Xget"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://xget.xi-xu.me/gh/{github_path}"
+token_transport = "none"
+
+[[proxies]]
+id = "gh-zwy"
+name = "gh.zwy.one"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://gh.zwy.one/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghproxy-monkeyray"
+name = "ghproxy.monkeyray.net"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghproxy.monkeyray.net/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghproxy-net"
+name = "ghproxy.net"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghproxy.net/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghfast"
+name = "ghfast.top"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://ghfast.top/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "wget-la"
+name = "wget.la"
+provider = "github"
+intent = "release"
+access = "public"
+template = "https://wget.la/{url}"
+token_transport = "none"

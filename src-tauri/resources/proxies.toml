@@ -1,0 +1,29 @@
+schema_version = 1
+
+[[proxy_sources]]
+id = "release"
+url = "proxies/proxies-release.toml"
+
+[[proxy_sources]]
+id = "raw"
+url = "proxies/proxies-raw.toml"
+
+[[proxy_sources]]
+id = "ghapi"
+url = "proxies/proxies-ghapi.toml"
+
+[[proxy_sources]]
+id = "gtapi"
+url = "proxies/proxies-gtapi.toml"
+
+[[proxy_sources]]
+id = "gcapi"
+url = "proxies/proxies-gcapi.toml"
+
+[[proxy_sources]]
+id = "avatar"
+url = "proxies/proxies-avatar.toml"
+
+[[proxy_sources]]
+id = "mapsource"
+url = "proxies/proxies-mapsource.toml"

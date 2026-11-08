@@ -1,0 +1,28 @@
+schema_version = 1
+
+[[proxies]]
+id = "cors-isteed-avatar"
+name = "cors.isteed.cc"
+provider = "github"
+intent = "avatar"
+access = "public"
+template = "https://cors.isteed.cc/{url_no_scheme}"
+token_transport = "none"
+
+[[proxies]]
+id = "ghp-keleyaa-avatar"
+name = "ghp.keleyaa.com"
+provider = "github"
+intent = "avatar"
+access = "public"
+template = "https://ghp.keleyaa.com/{url}"
+token_transport = "none"
+
+[[proxies]]
+id = "cdn-crashmc-avatar"
+name = "cdn.crashmc.com"
+provider = "github"
+intent = "avatar"
+access = "public"
+template = "https://cdn.crashmc.com/{url}"
+token_transport = "none"

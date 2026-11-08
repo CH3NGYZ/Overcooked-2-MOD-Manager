@@ -579,7 +579,7 @@ prerelease = false     # 排斥正式版
 
 MOD 内置索引为 `mods.toml`，通过相对路径引用 `mods/` 子文档；它不提供全局代理定义。用户添加的普通仓库源也不能注册全局代理或要求执行脚本。
 
-当前代理配置由管理器随包清单启动兜底，官方远端 `repositories-proxies.toml` 完整验证成功后整份替换进程快照；合法空清单表示直连，读取或校验失败保留当前快照。设置中的“仅使用内置代理配置”可独立禁止远端配置刷新，下载本身仍可联网。清单不写入用户配置，不读取 JS/userscript，也不把远端清单与旧条目合并。
+当前随包代理由 `proxies.toml` 的七组子清单及 `network-plans.toml` 完整校验后提供默认组，普通 Release 与地图专用 Release 分开。源级计划和 Token 授权执行仍在迁移，API 代理当前仍不带 Token。官方远端仍由 `repositories-proxies.toml` 完整验证成功后整份替换进程快照；合法空清单表示直连，读取或校验失败保留当前快照。设置中的“仅使用内置代理配置”可独立禁止远端配置刷新，下载本身仍可联网。清单不写入用户配置，不读取 JS/userscript，也不把远端清单与旧条目合并。
 
 当前清单版本为 `schema_version = 1`，支持 `release_proxies`、`raw_proxies`、`github_api_proxies`、`gitee_api_proxies`、`gitcode_api_proxies`、`avatar_proxies` 六组。每项包含唯一 `id`、`name`、HTTPS `template`，以及可选 `regions`、`description`、`enabled`。API 有对应平台 Token 时直接使用官方 Token 请求，否则官方匿名；失败后尝试对应 API 代理，当前代理保持匿名。Release/Raw 文件下载不携带 API Token。
 

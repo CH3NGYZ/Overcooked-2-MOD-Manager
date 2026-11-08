@@ -1,0 +1,11 @@
+schema_version = 1
+
+[[proxies]]
+id = "oc2gtapi"
+description = "Gitee API 桥接"
+name = "oc2gtapi.ch3ng.top"
+provider = "gitee"
+intent = "api"
+access = "public"
+template = "https://oc2gtapi.ch3ng.top/{url_path}"
+token_transport = "matching_platform_token"

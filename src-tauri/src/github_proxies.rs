@@ -3,10 +3,6 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 use url::Url;
 
-const BUNDLED_PROXY_MANIFEST: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/resources/repositories-proxies.toml"
-));
 const MAX_PROXY_COUNT: usize = 128;
 const PLACEHOLDERS: &[&str] = &[
     "url",
@@ -27,7 +23,9 @@ pub fn bundled_defaults() -> GitHubProxyConfig {
 }
 
 fn parse_bundled_defaults() -> GitHubProxyConfig {
-    let config = match parse_manifest(BUNDLED_PROXY_MANIFEST) {
+    let config = match crate::network_policy::NetworkPolicy::bundled()
+        .and_then(|snapshot| snapshot.bundled_proxy_groups())
+    {
         Ok(config) => config,
         Err(error) => {
             log::error!("内置 GitHub 代理清单解析失败：{}", error);
@@ -138,6 +136,10 @@ fn normalize_proxy(proxy: &mut GitHubProxy) -> Result<(), String> {
     proxy
         .regions
         .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    validate_template(proxy)
+}
+
+pub(crate) fn validate_template(proxy: &GitHubProxy) -> Result<(), String> {
     if proxy.id.is_empty() || proxy.name.is_empty() || proxy.template.is_empty() {
         return Err("proxy.fieldsRequired".into());
     }

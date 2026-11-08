@@ -272,26 +272,24 @@ fn raw_url_parts_are_derived_from_both_raw_entry_shapes() {
 
 #[test]
 fn bundled_url_path_proxies_render_one_slash_and_request_each_target_once() {
-    let bundled = bundled_defaults();
-    for (proxies, target, is_raw, expected) in [
+    let bundled = crate::network_policy::NetworkPolicy::bundled().unwrap();
+    for (id, target, is_raw, expected) in [
         (
-            &bundled.release_proxies,
+            "oc2gh-release",
             "https://github.com/acme/tool/releases/download/v1/tool.zip",
             false,
             "https://oc2gh.ch3ng.top/acme/tool/releases/download/v1/tool.zip",
         ),
         (
-            &bundled.raw_proxies,
+            "oc2gh-raw",
             "https://github.com/acme/tool/raw/refs/heads/main/bin/tool.dll",
             true,
             "https://oc2gh.ch3ng.top/acme/tool/raw/refs/heads/main/bin/tool.dll",
         ),
     ] {
-        let source = proxies
-            .iter()
-            .find(|proxy| proxy.name == "oc2gh.ch3ng.top")
-            .unwrap()
-            .clone();
+        // The Release bridge now belongs to the map-only registry group,
+        // while Raw remains a normal route. Both still use the same expander.
+        let source = bundled.proxies[id].legacy_entry();
         assert_eq!(source.template, "https://oc2gh.ch3ng.top/{url_path}");
         let duplicate = GitHubProxy {
             id: "other-id".into(),

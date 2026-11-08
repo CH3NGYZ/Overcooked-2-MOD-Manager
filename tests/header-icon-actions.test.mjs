@@ -35,6 +35,8 @@ test('两管理页共用受控图标批量开关，不改变聚合状态、过�
     assert.doesNotMatch(area, /<n-tabs|<n-tab-pane/)
     assert.match(source, /else if \(value === 'disable'\) confirmDisableAll\(\)/)
     assert.match(source, /const bulkSwitchValue = computed/)
+    assert.match(source, /bulkSwitchValue as bulkSwitchValueOf/)
+    assert.match(source, /bulkSwitchValueOf\(enabled/)
   }
   const bulk = read('src/components/HeaderBulkSwitch.vue')
   assert.match(bulk, /CheckmarkCircleOutline, CloseCircleOutline/)

@@ -4,6 +4,7 @@ import test from 'node:test'
 /** 两页共用的列表可见性规则：真实源码直接执行（Node 24 类型擦除）。 */
 const {
   nextStatusKey,
+  bulkSwitchValue,
   statusKeyMatches,
   visibilityCountLabel,
   visibilityEmptyText,
@@ -19,6 +20,14 @@ test('状态筛选是单选：换状态直接切过去，再点同一个取消',
   assert.equal(nextStatusKey(null, 'enabled'), 'enabled')
   assert.equal(nextStatusKey('enabled', 'disabled'), 'disabled')
   assert.equal(nextStatusKey('enabled', 'enabled'), null)
+})
+
+test('批量开关状态由完整列表投影，空列表和混合态均保持未选中', () => {
+  assert.equal(bulkSwitchValue(0, 0), '')
+  assert.equal(bulkSwitchValue(0, 3), 'disable')
+  assert.equal(bulkSwitchValue(3, 3), 'enable')
+  assert.equal(bulkSwitchValue(1, 3), '')
+  assert.equal(bulkSwitchValue(2, 3), '')
 })
 
 test('未选状态时所有单元可见，选中后只留含该状态的单元', () => {

@@ -29,6 +29,7 @@ import { installedModDependencyRows, mergedModDependencyRows } from '../dependen
 import type { DependencyRow } from '../dependencyRows'
 import { revealCard, useFocusHighlight, useRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
+import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { runtimeModStatus, type RuntimeRefreshState } from '../modRuntimeStatus'
 import { isDependencyTag, tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
@@ -361,29 +362,10 @@ const emptyDescription = computed(() =>
  */
 const bulkWorking = ref(false)
 const enabledModCount = computed(() => effectiveMods.value.filter((mod) => mod.enabled).length)
-const allModsEnabled = computed(() =>
-  effectiveMods.value.length > 0 && enabledModCount.value === effectiveMods.value.length)
 
-/**
- * 分段控件的选中值：全部启用 → `enable`，全部禁用 → `disable`，
- * 部分启用 → 空串（没有选中项）。
- *
- * 由聚合状态推导，而不是另存「用户最后点了哪个」：
- * 控件表达的是页面当前状态，存一份点击意图会在操作失败、确认框取消
- * 或外部刷新之后和真实状态脱节。
- *
- * 混合态用空串哨兵而不是 `null` / `undefined`：Naive 的 `value` 只收
- * `string | number`，传 `undefined` 会让它退回**非受控**模式 —— 点一下
- * 就自己记住选中项，取消确认框后控件仍停在「全部禁用」上，正好是要避免
- * 的那种假状态。空串则始终是受控的「没有匹配项」。
- */
-type BulkSwitchValue = 'enable' | 'disable' | ''
-const bulkSwitchValue = computed<BulkSwitchValue>(() => {
-  if (!effectiveMods.value.length) return ''
-  if (allModsEnabled.value) return 'enable'
-  if (!enabledModCount.value) return 'disable'
-  return ''
-})
+/** 页头分段开关的纯状态投影由两页共用；本页只提供完整 MOD 列表的计数。 */
+const bulkSwitchValue = computed(() =>
+  bulkSwitchValueOf(enabledModCount.value, effectiveMods.value.length))
 
 /**
  * 分段控件点击：只发起动作，不先改选中态。

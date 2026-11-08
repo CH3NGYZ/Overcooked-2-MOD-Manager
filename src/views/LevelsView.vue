@@ -14,6 +14,7 @@ import { useMapSources } from '../composables/useMapSources'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { useFocusHighlight, useLocalModLink, useMapLink, useRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
+import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { buildLevelSetGroups } from '../levelSetGroups'
@@ -797,25 +798,9 @@ async function organizeLevelSets() {
  * 这里只关心「已经在本地的地图」——启用/禁用、看有没有新版本、打开目录、删除。
  */
 const bulkWorking = ref(false)
-/**
- * 分段控件的选中值：全部启用 → `enable`，全部停用 → `disable`，
- * 部分启用 → 空串（没有选中项）。
- *
- * 由聚合状态推导，而不是另存「用户最后点了哪个」：控件表达的是列表当前
- * 状态，存一份点击意图会在操作失败、确认框取消或外部重读之后和真实状态脱节。
- *
- * 混合态用空串哨兵而不是 `null` / `undefined`：Naive 的 `value` 只收
- * `string | number`，传 `undefined` 会让它退回**非受控**模式 —— 点一下
- * 就自己记住选中项，取消确认框后控件仍停在「全部停用」上，正好是要避免的
- * 那种假状态。空串则始终是受控的「没有匹配项」。
- */
-type BulkSwitchValue = 'enable' | 'disable' | ''
-const bulkSwitchValue = computed<BulkSwitchValue>(() => {
-  if (!sets.value.length) return ''
-  if (enabledCount.value === sets.value.length) return 'enable'
-  if (!enabledCount.value) return 'disable'
-  return ''
-})
+/** 页头分段开关的纯状态投影由两页共用；本页只提供完整地图列表的计数。 */
+const bulkSwitchValue = computed(() =>
+  bulkSwitchValueOf(enabledCount.value, sets.value.length))
 
 /**
  * 批量切换全部关卡集。

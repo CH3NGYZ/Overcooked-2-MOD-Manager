@@ -10,7 +10,20 @@ export function nextStatusKey(current: string | null, key: string): string | nul
   return current === key ? null : key
 }
 
-/** 没有选中状态时所有单元都可见。 */
+export type BulkSwitchValue = 'enable' | 'disable' | ''
+
+/**
+ * 将完整列表的启用计数投影为页头受控分段开关的选中值。
+ * 空列表和部分启用都返回空串，保持控件受控且不伪造全开/全关状态。
+ */
+export function bulkSwitchValue(enabledCount: number, total: number): BulkSwitchValue {
+  if (total <= 0) return ''
+  if (enabledCount === total) return 'enable'
+  if (enabledCount === 0) return 'disable'
+  return ''
+}
+
+/** 没有选中状态时所有单元可见。 */
 export function statusKeyMatches(active: string | null, keys: readonly string[]): boolean {
   return active === null || keys.includes(active)
 }

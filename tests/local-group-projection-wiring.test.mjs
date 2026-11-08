@@ -12,6 +12,8 @@ const levelStatusSummary = read('src/levelSetStatusSummary.ts')
 test('both local management pages delegate group projection to pure domain modules', () => {
   assert.match(modsView, /buildLocalModGroups\(/)
   assert.match(modsView, /localModStatusUnits\(groups\.value\)/)
+  assert.match(modsView, /summarizeLocalModStatuses\(statusUnitNodes\.value\)/)
+  assert.match(modsProjection, /summarizeLocalModStatuses/)
   assert.match(modsView, /packageKeysMatchingStatus\(/)
   assert.match(modsView, /filterLocalModGroups\(groups\.value/)
   assert.doesNotMatch(modsView, /function modCategory\(|interface StatusUnitNode|const groups = computed<ModGroupNode\[\]>\(\(\) => \{/)

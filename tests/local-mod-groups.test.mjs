@@ -6,6 +6,7 @@ const {
   filterLocalModGroups,
   localModStatusUnits,
   packageKeysMatchingStatus,
+  summarizeLocalModStatuses,
 } = await import('../src/localModGroups.ts')
 const { buildLevelSetGroups } = await import('../src/levelSetGroups.ts')
 
@@ -92,6 +93,18 @@ test('status units count packages once and mixed package toggles do not claim a 
   const matching = packageKeysMatchingStatus(units, (keys) => keys.includes('update_available'))
   const visible = filterLocalModGroups(groups, matching)
   assert.deepEqual(visible.flatMap((group) => group.packages.map((pkg) => pkg.key)), ['dll:single.dll'])
+})
+
+test('MOD status summary keeps primary and toggle groups owned by the projection', () => {
+  const summary = summarizeLocalModStatuses([
+    { packageKey: 'pkg:a', keys: ['enabled', 'latest', 'latest'] },
+    { packageKey: 'pkg:b', keys: ['disabled', 'update_available'] },
+  ])
+
+  assert.deepEqual(summary.all.map((entry) => entry.key), ['update_available', 'disabled', 'latest', 'enabled'])
+  assert.deepEqual(summary.primary.map((entry) => entry.key), ['update_available', 'latest'])
+  assert.deepEqual(summary.toggle.map((entry) => entry.key), ['enabled', 'disabled'])
+  assert.deepEqual(summary.all.map((entry) => entry.count), [1, 1, 1, 1])
 })
 
 test('level-set grouping delegates identity/category to levelSetGroup and sorts localized labels', () => {

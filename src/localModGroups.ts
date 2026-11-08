@@ -1,5 +1,12 @@
 import { repositoryForMod } from './modStatus.ts'
-import { installedModTags, packageStatuses, type PackageStatus } from './statusTags.ts'
+import {
+  installedModTags,
+  packageStatuses,
+  summarizeUnits,
+  type PackageStatus,
+  type StatusSummary,
+  type StatusUnit,
+} from './statusTags.ts'
 import type { StatusActionSpec } from './statusActions'
 import type { InstalledMod, Repository } from './types'
 
@@ -48,6 +55,14 @@ export interface LocalModStatusUnit {
   packageKey: string
 }
 
+export interface LocalModStatusSummary {
+  all: StatusSummary[]
+  primary: StatusSummary[]
+  toggle: StatusSummary[]
+}
+
+const TOGGLE_STATUS_KEYS = ['enabled', 'disabled'] as const
+const TOGGLE_STATUS_KEY_SET: ReadonlySet<string> = new Set(TOGGLE_STATUS_KEYS)
 const TAIL_GROUPS = new Set(['__unbound__', '__ungrouped__'])
 
 /** Package identity is stable when search or status filtering changes. */
@@ -186,6 +201,19 @@ export function localModStatusUnits(groups: readonly ModGroupNode[]): LocalModSt
     }
   }
   return units
+}
+
+export function summarizeLocalModStatuses(
+  units: readonly LocalModStatusUnit[],
+): LocalModStatusSummary {
+  const all = summarizeUnits(units.map((unit): StatusUnit => ({ keys: unit.keys })))
+  return {
+    all,
+    primary: all.filter((entry) => !TOGGLE_STATUS_KEY_SET.has(entry.key)),
+    toggle: TOGGLE_STATUS_KEYS
+      .map((key) => all.find((entry) => entry.key === key))
+      .filter((entry): entry is StatusSummary => !!entry),
+  }
 }
 
 export function packageKeysMatchingStatus(

@@ -16,14 +16,13 @@ import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
 import type { RelationStatus } from '../modRelations'
 import { repositoryIsAvailable } from '../repositoryAvailability'
-import {
-  installedModTags, summarizeUnits, type StatusSummary,
-} from '../statusTags'
+import { installedModTags } from '../statusTags'
 import {
   buildLocalModGroups,
   filterLocalModGroups,
   localModStatusUnits,
   packageKeysMatchingStatus,
+  summarizeLocalModStatuses,
 } from '../localModGroups'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
@@ -532,32 +531,9 @@ function onGroupsExpanded(names: string[]) {
  * 这也让聚合数量与页内定位一致：点「N 最新版」高亮的是 N 张卡片
  * （单 MOD 卡片 + 包外壳），不会把包内某一行单独高亮出来。
  */
-const statusSummaryTags = computed<StatusSummary[]>(() =>
-  summarizeUnits(statusUnitNodes.value.map((unit) => ({ keys: unit.keys }))),
-)
-
-/**
- * 开关状态的 key：页头把它们单独成组，与结论类标签分开。
- *
- * 「已启用 / 已禁用」回答的是「现在开没开」，「有更新 / 缺依赖 / 最新版」
- * 回答的是「这个版本怎么样」。排在同一排里读起来像同一类结论。
- */
-const TOGGLE_STATUS_KEYS = ['enabled', 'disabled'] as const
-
-const isToggleStatus = (key: string) =>
-  (TOGGLE_STATUS_KEYS as readonly string[]).includes(key)
-
-/** 结论类标签（有更新 / 缺依赖 / 最新版…）。 */
-const statusTagsPrimary = computed(() =>
-  statusSummaryTags.value.filter((entry) => !isToggleStatus(entry.key)),
-)
-
-/** 开关状态标签：固定「已启用 → 已禁用」的顺序，数量为 0 的不显示。 */
-const statusTagsToggle = computed(() =>
-  TOGGLE_STATUS_KEYS.map((key) => statusSummaryTags.value.find((entry) => entry.key === key)).filter(
-    (entry): entry is StatusSummary => !!entry,
-  ),
-)
+const statusHeaderSummary = computed(() => summarizeLocalModStatuses(statusUnitNodes.value))
+const statusTagsPrimary = computed(() => statusHeaderSummary.value.primary)
+const statusTagsToggle = computed(() => statusHeaderSummary.value.toggle)
 
 /** 卡片标题：优先 MOD 包名（同一包内的子 MOD 显示同一个包标题），没有包则用插件名。 */
 /**

@@ -269,6 +269,27 @@ export const error: DomainMessages = {
   },
 
   // ===== 下载 =====
+  'download.invalidVolumeSet': {
+    'zh-CN': 'ZIP 分卷不完整或编号重复：需要同一 Release 中连续的 .z01、.z02…及最后的 .zip',
+    'zh-TW': 'ZIP 分卷不完整或編號重複：需要同一 Release 中連續的 .z01、.z02…及最後的 .zip',
+    en: 'Incomplete or duplicate ZIP volumes: consecutive .z01, .z02… and the final .zip must belong to the same Release',
+    ko: 'ZIP 분할 파일이 누락되었거나 중복됩니다. 같은 Release의 연속된 .z01, .z02… 및 마지막 .zip이 필요합니다',
+    ja: 'ZIP 分割ファイルが不足または重複しています。同じ Release の連続した .z01、.z02… と最後の .zip が必要です',
+  },
+  'download.invalidSplitZip': {
+    'zh-CN': 'ZIP 分卷结构损坏，无法重组；请检查所有分卷是否属于同一个压缩包',
+    'zh-TW': 'ZIP 分卷結構損壞，無法重組；請檢查所有分卷是否屬於同一個壓縮檔',
+    en: 'Invalid split ZIP structure. Check that all volumes belong to the same archive',
+    ko: '분할 ZIP 구조가 잘못되었습니다. 모든 분할 파일이 같은 압축 파일인지 확인하세요',
+    ja: '分割 ZIP の構造が不正です。すべての分割ファイルが同じアーカイブか確認してください',
+  },
+  'download.unsupportedSplitZip': {
+    'zh-CN': '暂不支持此分卷 ZIP 格式（包括 ZIP64）；请使用普通 ZIP 或经典分卷 ZIP',
+    'zh-TW': '暫不支援此分卷 ZIP 格式（包括 ZIP64）；請使用普通 ZIP 或經典分卷 ZIP',
+    en: 'Unsupported split ZIP format (including ZIP64). Use a regular ZIP or classic split ZIP',
+    ko: '지원하지 않는 분할 ZIP 형식입니다(ZIP64 포함). 일반 ZIP 또는 기존 분할 ZIP을 사용하세요',
+    ja: '未対応の分割 ZIP 形式です（ZIP64 を含む）。通常の ZIP または従来の分割 ZIP を使用してください',
+  },
   'download.cancelled': {
     'zh-CN': '下载已取消',
     'zh-TW': '下載已取消',

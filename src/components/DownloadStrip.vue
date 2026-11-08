@@ -9,6 +9,8 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { translateBackendMessage } from '../locale/backend'
 import { downloadTaskState, dismissDownloadFailure, retryDownloadTask } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
+import DownloadVolumes from './DownloadVolumes.vue'
+import { formatFileSize } from '../repositoryAssets'
 
 const { refresh } = useDashboard()
 const progress = ref<DownloadProgress | null>(null)
@@ -85,6 +87,7 @@ const stageText = computed(() => {
     case 'connecting': return t('tools.connectingToDownloadSource')
     case 'switching': return t('tools.switchingToAFasterSource')
     case 'downloading': return t('tools.downloading')
+    case 'merging': return t('tools.mergingVolumes')
     case 'finished': return t('tools.completed')
     default: return t('tools.preparing2')
   }
@@ -108,7 +111,11 @@ void watchDownloadProgress((value) => {
  * 换任务时清掉上一轮的进度：新下载要等自己的第一个事件，不能先显示上一次
  * 的百分比 —— 失败后点重试时最明显，否则卡片会先闪一下旧的进度再归零。
  */
-watch(() => running.value?.id ?? null, () => { progress.value = null })
+watch(() => running.value?.id ?? null, (id) => {
+  // Keep final volume states available on the failure card; only a new task
+  // clears them. Cancel/success already clear progress in their own handlers.
+  if (id !== null) progress.value = null
+})
 
 onUnmounted(() => { unlisten?.() })
 
@@ -143,6 +150,7 @@ async function cancel() {
           <p class="dl-error-label">{{ translateBackendMessage(failure.label) }}</p>
           <!-- 原因已经由 `backendMessageOf` 翻译过，后端 tag 不会漏到界面上 -->
           <p class="dl-error-reason">{{ failure.message }}</p>
+          <DownloadVolumes v-if="progress?.volumes" :volumes="progress.volumes" />
           <div class="dl-actions">
             <n-button type="primary" size="small" @click="retryDownloadTask">
               {{ t('common.action.retry') }}
@@ -182,6 +190,8 @@ async function cancel() {
             <span>{{ speedText }}</span>
             <span v-if="routeText" class="dl-route">{{ routeText }}</span>
           </div>
+          <div v-if="progress.volumes?.length" class="dl-speed">{{ formatFileSize(progress.downloaded) }} / {{ formatFileSize(progress.total) }}</div>
+          <DownloadVolumes v-if="progress.volumes" :volumes="progress.volumes" />
 
           <div v-if="canCancel" class="dl-actions">
             <n-button secondary size="small" @click="cancel">

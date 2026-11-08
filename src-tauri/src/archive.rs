@@ -7,6 +7,8 @@ mod manifests;
 mod map_snapshots;
 mod paths;
 mod progress;
+pub(crate) mod release_download;
+mod split_zip;
 mod transfer;
 mod zip_layout;
 

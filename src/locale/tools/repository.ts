@@ -2,6 +2,13 @@ import type { DomainMessages } from '../types.ts'
 
 /** 仓库详情、版本选择、刷新状态与下载进度。同一 key 的五语保持集中。 */
 export const toolsUiRepository: DomainMessages = {
+  mergingVolumes: { 'zh-CN': '正在重组并校验分卷', 'zh-TW': '正在重組並校驗分卷', en: 'Reassembling and verifying volumes', ko: '분할 파일 병합 및 검증 중', ja: '分割ファイルの再構築と検証中' },
+  volumeSummary: { 'zh-CN': '分卷：已完成 {done}/{total}', 'zh-TW': '分卷：已完成 {done}/{total}', en: 'Volumes: {done}/{total} completed', ko: '분할 파일: {done}/{total} 완료', ja: '分割ファイル：{done}/{total} 完了' },
+  volumeRetry: { 'zh-CN': '整卷重试 {count}/3', 'zh-TW': '整卷重試 {count}/3', en: 'Volume retries {count}/3', ko: '분할 파일 재시도 {count}/3', ja: '分割ファイル再試行 {count}/3' },
+  'volumeState.pending': { 'zh-CN': '排队中', 'zh-TW': '排隊中', en: 'Queued', ko: '대기 중', ja: '待機中' },
+  'volumeState.downloading': { 'zh-CN': '下载中', 'zh-TW': '下載中', en: 'Downloading', ko: '다운로드 중', ja: 'ダウンロード中' },
+  'volumeState.completed': { 'zh-CN': '已完成', 'zh-TW': '已完成', en: 'Completed', ko: '완료', ja: '完了' },
+  'volumeState.failed': { 'zh-CN': '失败', 'zh-TW': '失敗', en: 'Failed', ko: '실패', ja: '失敗' },
   // 说明
   details: {
     'zh-CN': '说明',

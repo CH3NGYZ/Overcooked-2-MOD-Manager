@@ -624,12 +624,18 @@ export interface DownloadProgress {
   total?: number
   speed_bytes: number
   finished: boolean
-  phase?: 'connecting' | 'switching' | 'downloading' | 'finished'
+  phase?: 'connecting' | 'switching' | 'downloading' | 'merging' | 'finished'
   route?: 'direct' | 'proxy'
   source?: string
   attempt?: number
   attempt_total?: number
   parallel_sources?: number
+  volumes?: {
+    name: string
+    state: 'pending' | 'downloading' | 'completed' | 'failed'
+    retry: number
+    progress: DownloadProgress
+  }[]
 }
 export interface ImportPreview { valid: boolean; errors: string[]; additions: string[]; duplicates: string[]; conflicts: string[] }
 export interface RepositorySourceImportResult {

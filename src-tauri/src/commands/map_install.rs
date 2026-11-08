@@ -1,8 +1,6 @@
 use crate::app_state::AppState;
 use crate::archive;
 use crate::display_path::display_path;
-use crate::download::DownloadContext;
-use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::game;
 use crate::level_sets::staging::cache_file_to_discard;
 use crate::level_sets::staging::validate_map_release_sets;
@@ -289,83 +287,30 @@ pub async fn stage_map_release(
             asset.name
         );
 
-        let planned = crate::download::planning::plan_repository_download(
-            &map.provider,
-            crate::models::RepositoryKind::Map,
-            &map.network_plan,
-            crate::config::current_user_region(),
-            &asset.download_url,
-            None,
-            None,
-            None,
-        )?;
-        let candidates = planned.candidates;
-
-        // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
-        let expected_size = (asset.size > 0).then_some(asset.size);
-        // The shared verifier accepts the trusted asset digest for every provider.
-        let digest = asset.digest.as_deref();
+        let assets = archive::release_download::asset_set(&asset, &release.assets)?;
         let download_name = asset.name.clone();
-        /*
-         * 进度标签与预览标题用界面语言下的地图名：进度事件在下载过程中持续发出，
-         * 名称必须在开始前算好。
-         */
         let display_name = crate::config::localized_map_name(&map, locale.as_deref());
-
         let client = releases::build_download_client(config.network.timeout_seconds)
             .map_err(|error| error.to_string())?;
-        let racing = planned.execution.race;
-        let configured_threads = planned.download_threads;
-        log::debug!(
-            "地图下载候选准备完成：地图={}，平台={:?}，候选数={}，线程数={}，竞速={}",
-            map.name,
-            map.provider,
-            candidates.len(),
-            configured_threads,
-            racing
-        );
-
         let cache_dir = state.config.cache_dir();
-        let temp = try_asset_download_candidates(
-            candidates,
-            archive::is_download_cancelled,
-            |candidate, reporter| {
-                let client = &client;
-                let cache_dir = &cache_dir;
-                let label = &display_name;
-                let is_zip = download_name.to_ascii_lowercase().ends_with(".zip");
-                async move {
-                    let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
-                        client,
-                        &candidate.url,
-                        cache_dir,
-                        label,
-                        &reporter,
-                        configured_threads,
-                        Some(archive::FIRST_BYTE_TIMEOUT),
-                    )
-                    .await?;
-                    let validation = archive::validate_download_file(&temp, expected_size, digest)
-                        .and_then(|_| {
-                            if is_zip {
-                                archive::validate_zip(&temp)
-                            } else {
-                                Ok(())
-                            }
-                        });
-                    if let Err(error) = validation {
-                        let _ = fs::remove_file(&temp);
-                        return Err(error);
-                    }
-                    Ok(temp)
-                }
+        let temp = archive::release_download::download(
+            &client,
+            assets,
+            &cache_dir,
+            &display_name,
+            Some(&app),
+            |url| {
+                crate::download::planning::plan_repository_download(
+                    &map.provider,
+                    crate::models::RepositoryKind::Map,
+                    &map.network_plan,
+                    crate::config::current_user_region(),
+                    url,
+                    None,
+                    None,
+                    None,
+                )
             },
-            Some(DownloadContext {
-                execution: Some(planned.execution),
-                app: Some(&app),
-                label: &display_name,
-                expected_size,
-            }),
         )
         .await
         .map_err(|error| {

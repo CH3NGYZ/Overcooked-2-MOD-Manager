@@ -47,6 +47,7 @@ pub fn candidate_progress(
         attempt: Some(attempt),
         attempt_total: Some(attempt_total),
         parallel_sources: None,
+        volumes: Vec::new(),
     }
 }
 
@@ -197,6 +198,27 @@ where
     C: FnMut() -> bool,
 {
     let app = context.as_ref().and_then(|context| context.app);
+    try_download_candidates_with_progress(candidates, is_cancelled, download, context, |progress| {
+        archive::emit_progress_event(app, progress)
+    })
+    .await
+}
+
+/// Uses the same race state machine with a caller-owned progress destination.
+/// Multipart downloads aggregate one winning candidate per volume here.
+pub(crate) async fn try_download_candidates_with_progress<T, F, Fut, C>(
+    candidates: Vec<DownloadCandidate>,
+    is_cancelled: C,
+    download: F,
+    context: Option<DownloadContext<'_>>,
+    report_progress: impl FnMut(DownloadProgress),
+) -> Result<T, String>
+where
+    T: DownloadOutput,
+    F: FnMut(DownloadCandidate, Arc<DownloadReporter>) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+    C: FnMut() -> bool,
+{
     let mut policy = RacePolicy::default();
     if let Some(execution) = context.as_ref().and_then(|value| value.execution) {
         if execution.max_parallelism == 0
@@ -216,7 +238,7 @@ where
         download,
         context,
         policy,
-        |progress| archive::emit_progress_event(app, progress),
+        report_progress,
     )
     .await
 }

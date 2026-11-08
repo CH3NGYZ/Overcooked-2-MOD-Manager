@@ -137,24 +137,29 @@ pub(crate) fn synthesize_releases(
     }
     // tag 模式下这个字段是「最多暴露几个版本」，见 `release_probe` 的说明
     versions.truncate(map.max_release_count.clamp(1, 100) as usize);
-    Ok(versions
+    versions
         .into_iter()
-        .map(|(version, asset)| ReleaseInfo {
-            // 多个版本共用一个真实 Release，ID 只能留空：留着会让它们撞键
-            release_id: None,
-            tag_name: version.clone(),
-            version: Some(version.clone()),
-            name: format!("v{version}"),
-            // 版本详情里显示的是作者写给人看的说明，元数据块是给管理器的，
-            // 不该跟着 body 一起流到界面上（它是 HTML 注释，但别指望渲染器）
-            body: crate::map_note::strip_note_block(&release.body),
-            published_at: release.published_at.clone(),
-            // 渠道过滤已按作者声明跳过，这两个标记不能再参与判定
-            prerelease: false,
-            draft: false,
-            assets: vec![asset],
+        .map(|(version, asset)| {
+            let mut assets = crate::archive::release_download::asset_set(&asset, &release.assets)?;
+            // The selected primary stays first for tag-mode installation.
+            assets.rotate_right(1);
+            Ok(ReleaseInfo {
+                // 多个版本共用一个真实 Release，ID 只能留空：留着会让它们撞键
+                release_id: None,
+                tag_name: version.clone(),
+                version: Some(version.clone()),
+                name: format!("v{version}"),
+                // 版本详情里显示的是作者写给人看的说明，元数据块是给管理器的，
+                // 不该跟着 body 一起流到界面上（它是 HTML 注释，但别指望渲染器）
+                body: crate::map_note::strip_note_block(&release.body),
+                published_at: release.published_at.clone(),
+                // 渠道过滤已按作者声明跳过，这两个标记不能再参与判定
+                prerelease: false,
+                draft: false,
+                assets,
+            })
         })
-        .collect())
+        .collect()
 }
 
 /// 把版本号渲染回资产名：`^gaoda_v(?P<version>[0-9.]+)\.zip$` + `3.4.1-fix`

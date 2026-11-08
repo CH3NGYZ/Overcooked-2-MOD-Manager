@@ -1,9 +1,7 @@
 use crate::app_state::AppState;
 use crate::archive;
-use crate::download::DownloadContext;
-use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::game;
-use crate::models::{OperationResult, Provider, ProxyMode, RepositoryDownloadMode};
+use crate::models::{OperationResult, ProxyMode, RepositoryDownloadMode};
 use crate::mods::install::install_downloaded_repository;
 use crate::mods::install::repository_install_identity;
 use crate::recycle_bin;
@@ -90,9 +88,8 @@ pub async fn install_repository(
             release_tag,
             release_body,
             release_prerelease,
-            digest,
+            download_assets,
             is_raw_file,
-            expected_size,
         ) = match repo.download_mode {
             RepositoryDownloadMode::RepositoryFile => {
                 log::debug!(
@@ -117,9 +114,8 @@ pub async fn install_repository(
                     String::new(),
                     String::new(),
                     false,
-                    None,
+                    Vec::new(),
                     true,
-                    None,
                 )
             }
             RepositoryDownloadMode::Release => {
@@ -179,90 +175,46 @@ pub async fn install_repository(
                     release.tag_name.clone(),
                     release.body.clone(),
                     release.prerelease,
-                    asset.digest.clone(),
+                    archive::release_download::asset_set(asset, &release.assets)?,
                     false,
-                    (asset.size > 0).then_some(asset.size),
                 )
             }
         };
-        let planned = crate::download::planning::plan_repository_download(
-            &repo.provider,
-            repo.kind,
-            &repo.network_plan,
-            crate::config::current_user_region(),
-            &download_url,
-            is_raw_file.then_some(crate::github_proxies::RawProxyContext {
-                branch: &repo.branch,
-                file_path: &repo.file_path,
-            }),
-            asset_proxy_mode,
-            asset_proxy_id.as_deref(),
-        )?;
-        let candidates = planned.candidates;
-        log::debug!(
-            "下载地址准备完成：仓库={}，模式={}，下载候选数={}，原始文件={}",
-            repo.name,
-            if is_raw_file { "raw" } else { "release" },
-            candidates.len(),
-            is_raw_file
-        );
         let client = releases::build_download_client(config.network.timeout_seconds)
             .map_err(|e| e.to_string())?;
-        let download_threads = planned.download_threads;
-        log::info!(
-            "开始下载仓库文件：仓库={}，平台={:?}，线程数={}，代理策略={:?}",
-            repo.name,
-            repo.provider,
-            download_threads,
-            asset_proxy_mode
-        );
         let cache_dir = state.config.cache_dir();
-        let temp = try_asset_download_candidates(
-            candidates,
-            archive::is_download_cancelled,
-            |candidate, reporter| {
-                let client = &client;
-                let cache_dir = &cache_dir;
-                let label = &repo.name;
-                let digest = if repo.provider == Provider::Github {
-                    digest.as_deref()
-                } else {
-                    None
-                };
-                let is_zip = download_name.to_ascii_lowercase().ends_with(".zip");
-                async move {
-                    let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
-                        client,
-                        &candidate.url,
-                        cache_dir,
-                        label,
-                        &reporter,
-                        download_threads,
-                        Some(archive::FIRST_BYTE_TIMEOUT),
-                    )
-                    .await?;
-                    let validation = archive::validate_download_file(&temp, expected_size, digest)
-                        .and_then(|_| {
-                            if is_zip {
-                                archive::validate_zip(&temp)
-                            } else {
-                                Ok(())
-                            }
-                        });
-                    if let Err(error) = validation {
-                        let _ = fs::remove_file(&temp);
-                        return Err(error);
-                    }
-                    Ok(temp)
-                }
+        let assets = if is_raw_file {
+            vec![crate::models::ReleaseAsset {
+                name: download_name.clone(),
+                size: 0,
+                download_count: None,
+                download_url,
+                digest: None,
+            }]
+        } else {
+            download_assets
+        };
+        let temp = archive::release_download::download(
+            &client,
+            assets,
+            &cache_dir,
+            &display_name,
+            Some(&app),
+            |url| {
+                crate::download::planning::plan_repository_download(
+                    &repo.provider,
+                    repo.kind,
+                    &repo.network_plan,
+                    crate::config::current_user_region(),
+                    url,
+                    is_raw_file.then_some(crate::github_proxies::RawProxyContext {
+                        branch: &repo.branch,
+                        file_path: &repo.file_path,
+                    }),
+                    asset_proxy_mode,
+                    asset_proxy_id.as_deref(),
+                )
             },
-            Some(DownloadContext {
-                execution: Some(planned.execution),
-                app: Some(&app),
-                // 下载进度里显示的名字同样跟随界面语言
-                label: &display_name,
-                expected_size,
-            }),
         )
         .await
         .map_err(|error| {

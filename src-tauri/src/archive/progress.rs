@@ -21,6 +21,16 @@ pub struct DownloadProgress {
     pub attempt_total: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parallel_sources: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<VolumeProgress>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeProgress {
+    pub name: String,
+    pub state: String,
+    pub retry: usize,
+    pub progress: Box<DownloadProgress>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -29,6 +39,7 @@ pub enum DownloadPhase {
     Connecting,
     Switching,
     Downloading,
+    Merging,
     Finished,
 }
 
@@ -53,6 +64,7 @@ impl DownloadProgress {
             attempt: None,
             attempt_total: None,
             parallel_sources: None,
+            volumes: Vec::new(),
         }
     }
 }
@@ -132,6 +144,7 @@ pub fn emit_progress(
         attempt: None,
         attempt_total: None,
         parallel_sources: None,
+        volumes: Vec::new(),
     });
 }
 

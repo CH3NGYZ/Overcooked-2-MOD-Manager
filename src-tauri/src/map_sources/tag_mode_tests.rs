@@ -70,6 +70,35 @@ fn tag_names(releases: &[ReleaseInfo]) -> Vec<&str> {
         .collect()
 }
 
+#[test]
+fn synthetic_versions_retain_only_their_own_split_companions_primary_first() {
+    let map = tag_entry("tag = \"maps\"");
+    let releases = synthesize_releases(
+        &map,
+        "maps",
+        &[release(
+            "maps",
+            &["rw_v1.0.z02", "rw_v2.0.zip", "rw_v1.0.zip", "rw_v1.0.z01"],
+        )],
+    )
+    .unwrap();
+    assert_eq!(releases[0].assets.len(), 1);
+    assert_eq!(
+        releases[1]
+            .assets
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>(),
+        ["rw_v1.0.zip", "rw_v1.0.z01", "rw_v1.0.z02"]
+    );
+    assert_eq!(
+        select_map_stage_asset(&map, &releases[1], None)
+            .unwrap()
+            .name,
+        "rw_v1.0.zip"
+    );
+}
+
 #[tokio::test]
 async fn bundle_refresh_projects_each_card_from_one_repository_snapshot() {
     use std::sync::atomic::{AtomicUsize, Ordering};

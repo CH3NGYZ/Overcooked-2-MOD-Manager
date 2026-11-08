@@ -28,8 +28,9 @@ test('MOD and map downloads use resolved repository plans; generic URLs use the 
     const source = read(file)
     assert.match(source, /crate::download::planning::plan_repository_download\(/, file)
     assert.doesNotMatch(source, /(?:repo|map)\.download_threads/, file)
-    assert.match(source, /execution: Some\(planned\.execution\)/, file)
+    assert.match(source, /archive::release_download::download\(/, file)
   }
+  assert.match(read('archive/release_download.rs'), /execution: Some\(planned\.execution\)/)
   assert.match(read('direct_mod.rs'), /crate::download::planning::file_download_threads\(/)
 })
 

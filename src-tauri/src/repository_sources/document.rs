@@ -14,6 +14,8 @@ use serde::Deserializer;
 /// 分别处理旧单语声明、只有其他语言的声明和完整多语言声明。
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepositorySourceDeclaration {
+    #[serde(default)]
+    pub network_plan: crate::models::NetworkPlanSelection,
     pub id: String,
     #[serde(default)]
     pub nickname_i18n: std::collections::BTreeMap<String, String>,
@@ -91,6 +93,10 @@ fn deserialize_builtin<'de, D: Deserializer<'de>>(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepositorySourceDocument {
+    #[serde(rename = "type", default)]
+    pub kind: Option<crate::models::RepositoryKind>,
+    #[serde(default)]
+    pub network_plan: crate::models::NetworkPlanSelection,
     #[serde(default)]
     pub repositories: Vec<RepositoryExport>,
     #[serde(default)]
@@ -107,6 +113,7 @@ pub(crate) fn source_address_key(url: &str, region: Option<&str>) -> (String, St
 pub(crate) fn parse_document(
     text: &str,
     location: &SourceLocation,
+    inherited: &crate::models::NetworkPlanSelection,
 ) -> Result<RepositorySourceDocument, ConfigError> {
     log::debug!(
         "开始解析仓库源文档：地址={}，字节数={}",
@@ -127,10 +134,21 @@ pub(crate) fn parse_document(
             &[("reason", &error.to_string())],
         ))
     })?;
+    document.network_plan = document.network_plan.inherit(inherited);
+    if document
+        .kind
+        .is_some_and(|kind| kind != crate::models::RepositoryKind::Mod)
+    {
+        return Err(ConfigError::Invalid("proxy.validationFailed".into()));
+    }
     if document.repositories.is_empty() && document.repository_sources.is_empty() {
         return Err(ConfigError::Invalid("source.emptyDocument".into()));
     }
     for repository in &mut document.repositories {
+        if repository.kind != crate::models::RepositoryKind::Mod {
+            return Err(ConfigError::Invalid("proxy.validationFailed".into()));
+        }
+        repository.network_plan = repository.network_plan.inherit(&document.network_plan);
         crate::config::normalize_repository_i18n(repository)?;
         repository.region = crate::config::normalize_repository_region_for_storage(
             repository.region.as_deref(),
@@ -157,6 +175,7 @@ pub(crate) fn parse_document(
     let mut ids = std::collections::HashSet::new();
     let mut urls = std::collections::HashSet::new();
     for source in &mut document.repository_sources {
+        source.network_plan = source.network_plan.inherit(&document.network_plan);
         source.id = source.id.trim().to_string();
         // 昵称只认多语言表（zh-CN 兜底），旧单语字段在此折叠
         let nickname = normalize_source_nickname(source)?;

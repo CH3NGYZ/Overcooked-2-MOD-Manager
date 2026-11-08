@@ -35,6 +35,7 @@ pub(super) fn community_map_label(provider: &Provider) -> SourceLabel {
         Provider::Gitcode => ("gitcode-map-community", "GitCode"),
     };
     SourceLabel {
+        network_plan: Default::default(),
         id: id.to_string(),
         name: format!("社区地图（{product}）"),
         name_i18n: BTreeMap::from([
@@ -58,6 +59,7 @@ pub(super) fn community_map_declaration(
     let username = repository.username.trim();
     let name = repository.repository.trim();
     MapSourceDeclaration {
+        network_plan: Default::default(),
         id: format!(
             "{}/{username}/{name}",
             crate::community::source_id(&repository.provider)

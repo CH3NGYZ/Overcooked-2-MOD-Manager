@@ -17,7 +17,12 @@ fn regional_repository_variants_coexist_and_export_all_channels() {
         proxies: Default::default(),
     };
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let document = crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+    let document = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
     let repositories = [REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL].map(|region| {
         let mut repository = document.repositories[0].clone();
         repository.region = Some(region.into());
@@ -88,7 +93,12 @@ fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
         proxies: Default::default(),
     };
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let document = crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+    let document = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
     let repositories = [Channel::Stable, Channel::Beta].map(|channel| {
         let mut repository = document.repositories[0].clone();
         repository.channel = channel;
@@ -194,4 +204,24 @@ fn repository_identity_uses_provider_username_repository_and_region() {
             Some("international")
         )
     );
+}
+
+#[test]
+fn network_plan_changes_do_not_change_repository_identity() {
+    let location = crate::repository_sources::SourceLocation::parse("mods.toml").unwrap();
+    let mut document = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
+    let export = &mut document.repositories[0];
+    let before = crate::config::export_key(export);
+    export.network_plan = toml::from_str(
+        "international = { id = 'github-public-mod', release = { download_threads = 8 } }",
+    )
+    .unwrap();
+    assert_eq!(before, crate::config::export_key(export));
+    let repo = crate::config::repository_from_export(export, "same-id".into(), false);
+    assert_eq!(before, repo_key(&repo));
 }

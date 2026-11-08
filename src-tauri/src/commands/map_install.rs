@@ -2,8 +2,6 @@ use crate::app_state::AppState;
 use crate::archive;
 use crate::display_path::display_path;
 use crate::download::DownloadContext;
-use crate::download::planning::RemoteUrlKind;
-use crate::download::planning::plan_remote_download_candidates;
 use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::game;
 use crate::level_sets::staging::cache_file_to_discard;
@@ -283,19 +281,17 @@ pub async fn stage_map_release(
         asset.name
     );
 
-    /*
-     * 下载候选：与 MOD 资产同一条路径。
-     *
-     * 地图只分发 ZIP，所以按 Release 资产处理（不会进 Raw 分支）；
-     * 代理模式按平台与地区取 `selected_asset_proxy_mode` 的默认值
-     * （Gitee 恒直连）。
-     */
-    let candidates = plan_remote_download_candidates(
-        &config,
+    let planned = crate::download::planning::plan_repository_download(
         &map.provider,
-        RemoteUrlKind::ReleaseAsset,
+        crate::models::RepositoryKind::Map,
+        &map.network_plan,
+        crate::config::current_user_region(),
         &asset.download_url,
+        None,
+        None,
+        None,
     )?;
+    let candidates = planned.candidates;
 
     // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
     let expected_size = (asset.size > 0).then_some(asset.size);
@@ -310,13 +306,8 @@ pub async fn stage_map_release(
 
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
-    let racing = candidates.len() > 1;
-    let configured_threads = crate::download::planning::file_download_threads(
-        Some(&map.provider),
-        crate::config::current_user_region(),
-        map.download_threads,
-        racing,
-    );
+    let racing = planned.execution.race;
+    let configured_threads = planned.download_threads;
     log::debug!(
         "地图下载候选准备完成：地图={}，平台={:?}，候选数={}，线程数={}，竞速={}",
         map.name,
@@ -362,6 +353,7 @@ pub async fn stage_map_release(
             }
         },
         Some(DownloadContext {
+            execution: Some(planned.execution),
             app: Some(&app),
             label: &display_name,
             expected_size,

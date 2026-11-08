@@ -170,6 +170,7 @@ async fn repeated_proxy_failures_preserve_api_or_learned_size_until_validated_co
                 }
             },
             Some(DownloadContext {
+                execution: None,
                 app: None,
                 label: "test",
                 expected_size,
@@ -340,6 +341,7 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
             }
         },
         Some(DownloadContext {
+            execution: None,
             app: None,
             label: "test",
             expected_size: Some(1000),
@@ -589,6 +591,7 @@ async fn chunked_proxy_without_content_length_publishes_real_percentages_from_me
             }
         },
         Some(DownloadContext {
+            execution: None,
             app: None,
             label: "test",
             expected_size: Some(size),
@@ -689,4 +692,76 @@ fn ready_loser_outputs_are_discarded() {
     std::fs::write(&path, b"ready loser").unwrap();
     drop(CompletedDownload(Some(path.clone())));
     assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn configured_sequence_attempts_only_one_candidate_and_stops_after_success() {
+    let started = Arc::new(Mutex::new(Vec::new()));
+    let observed = started.clone();
+    let bytes: Vec<u8> = try_download_candidates(
+        vec![candidate(0), candidate(1), candidate(2)],
+        || false,
+        move |candidate, _| {
+            observed.lock().unwrap().push(candidate.url.clone());
+            async move {
+                if candidate.url.contains("source0") {
+                    Err("first failed".into())
+                } else {
+                    Ok(vec![1, 2, 3])
+                }
+            }
+        },
+        Some(DownloadContext {
+            app: None,
+            label: "sequence",
+            expected_size: None,
+            execution: Some(DownloadExecution {
+                max_parallelism: 1,
+                race: false,
+            }),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bytes, [1, 2, 3]);
+    assert_eq!(
+        *started.lock().unwrap(),
+        [candidate(0).url, candidate(1).url]
+    );
+}
+
+#[tokio::test]
+async fn configured_race_honors_two_candidate_limit() {
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let measured = active.clone();
+    let maximum = peak.clone();
+    let result: Result<Vec<u8>, String> = try_download_candidates(
+        vec![candidate(0), candidate(1), candidate(2), candidate(3)],
+        || false,
+        move |_, _| {
+            let active = measured.clone();
+            let peak = maximum.clone();
+            async move {
+                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(count, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                Err("try next".into())
+            }
+        },
+        Some(DownloadContext {
+            app: None,
+            label: "race",
+            expected_size: None,
+            execution: Some(DownloadExecution {
+                max_parallelism: 2,
+                race: true,
+            }),
+        }),
+    )
+    .await;
+    assert!(result.is_err());
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
 }

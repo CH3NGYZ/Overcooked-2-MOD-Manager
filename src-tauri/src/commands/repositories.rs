@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::models::{
-    ImportPreview, OperationResult, Provider, PublicConfig, RepositoryConfig,
-    RepositoryDownloadMode, RepositoryPatch,
+    ImportPreview, OperationResult, PublicConfig, RepositoryConfig, RepositoryDownloadMode,
+    RepositoryPatch,
 };
 use crate::releases;
 use std::fs;
@@ -232,22 +232,21 @@ pub fn save_repository(
         .ok_or_else(|| "config.repositoryNameEmpty".to_string())?;
     let group = group_i18n["zh-CN"].clone();
     let note = note_i18n["zh-CN"].clone();
-    let download_threads = match &patch.provider {
-        Provider::Github => {
-            if patch.download_threads == 0 {
-                16
-            } else {
-                patch.download_threads.clamp(1, 32)
-            }
-        }
-        Provider::Gitee | Provider::Gitcode => 1,
-    };
     let asset_rules = if patch.download_mode == RepositoryDownloadMode::RepositoryFile {
         Vec::new()
     } else {
         patch.asset_rules
     };
     let mut item = RepositoryConfig {
+        network_plan: patch.network_plan.clone().unwrap_or_else(|| {
+            config
+                .repositories
+                .iter()
+                .find(|repo| repo.id == id)
+                .map(|repo| repo.network_plan.clone())
+                .unwrap_or_default()
+        }),
+        kind: crate::models::RepositoryKind::Mod,
         id: id.clone(),
         name,
         name_i18n,
@@ -279,7 +278,7 @@ pub fn save_repository(
             .unwrap_or(existing_release_relations),
         version_regex: patch.version_regex,
         max_release_count: patch.max_release_count.clamp(1, 100),
-        download_threads,
+        download_threads: patch.download_threads,
         github_token: String::new(),
         gitee_token: String::new(),
         official_api_only: patch.official_api_only,
@@ -292,6 +291,11 @@ pub fn save_repository(
         releases_cached_at: None,
         last_error: None,
     };
+    crate::network_policy::NetworkPolicy::shared()?.validate_selection(
+        &item.provider,
+        item.kind,
+        &item.network_plan,
+    )?;
     if let Some(existing) = config.repositories.iter_mut().find(|repo| repo.id == id) {
         let old_github = existing.github_token.clone();
         let old_gitee = existing.gitee_token.clone();

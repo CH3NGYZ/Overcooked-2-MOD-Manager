@@ -3,6 +3,8 @@ use crate::models::*;
 
 fn base_export(relations: Vec<RepositoryRelation>) -> RepositoryExport {
     RepositoryExport {
+        network_plan: Default::default(),
+        kind: Default::default(),
         name: "dep-owner".into(),
         name_i18n: std::collections::BTreeMap::new(),
         group: String::new(),

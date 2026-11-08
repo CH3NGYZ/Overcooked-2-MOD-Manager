@@ -90,10 +90,14 @@ fn community_catalogue_survives_config_reads_and_cannot_be_overwritten_by_import
     let service =
         ConfigService::for_test(verification.join(format!("catalogue-config-{}", Uuid::new_v4())));
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let template = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
-        .unwrap()
-        .repositories
-        .remove(0);
+    let template = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap()
+    .repositories
+    .remove(0);
     let mut repository = repository_from_export(&template, "community-fixture".into(), false);
     repository.source_id = Some(crate::community::SOURCE_ID.into());
     let mut config = default_config();

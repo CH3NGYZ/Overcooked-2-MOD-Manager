@@ -15,7 +15,7 @@ fn official_channels_resolve_children_in_the_selected_remote_repository() {
         ),
     ] {
         let location = SourceLocation::parse(default_index_url(region)).unwrap();
-        let document = parse_document(text, &location).unwrap();
+        let document = parse_document(text, &location, &Default::default()).unwrap();
         assert_eq!(document.repository_sources[0].url, expected);
     }
 }
@@ -35,7 +35,7 @@ url = "first.toml"
 builtin = true
 "#;
     let location = SourceLocation::parse("https://example.com/sources/index.toml").unwrap();
-    let document = parse_document(text, &location).unwrap();
+    let document = parse_document(text, &location, &Default::default()).unwrap();
     assert_eq!(document.repository_sources[0].id, "second");
     assert_eq!(
         document.repository_sources[0].url,
@@ -44,8 +44,22 @@ builtin = true
     assert_eq!(document.repository_sources[0].builtin, Some(false));
     assert_eq!(document.repository_sources[1].id, "first");
     assert_eq!(document.repository_sources[1].builtin, Some(true));
-    assert!(parse_document(&text.replace("\"false\"", "\"invalid\""), &location).is_err());
-    assert!(parse_document("[session-id] Repository or file not found", &location).is_err());
+    assert!(
+        parse_document(
+            &text.replace("\"false\"", "\"invalid\""),
+            &location,
+            &Default::default()
+        )
+        .is_err()
+    );
+    assert!(
+        parse_document(
+            "[session-id] Repository or file not found",
+            &location,
+            &Default::default()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -59,7 +73,7 @@ fn repositories_require_chinese_translations_and_ignore_raw_metadata() {
     let valid = document_for(
         "name = \"Raw name\"\nname_i18n.zh-CN = \"中文名称\"\ngroup = \"Raw group\"\ngroup_i18n.zh-CN = \"中文分组\"\nnote = \"Raw note\"\nnote_i18n.zh-CN = \"中文备注\"",
     );
-    let parsed = parse_document(&valid, &location).unwrap();
+    let parsed = parse_document(&valid, &location, &Default::default()).unwrap();
     let repo = &parsed.repositories[0];
     assert_eq!(repo.name, "中文名称");
     assert_eq!(repo.group, "中文分组");
@@ -83,7 +97,8 @@ fn repositories_require_chinese_translations_and_ignore_raw_metadata() {
             "config.missingNameI18n",
         ),
     ] {
-        let error = parse_document(&document_for(metadata), &location).unwrap_err();
+        let error =
+            parse_document(&document_for(metadata), &location, &Default::default()).unwrap_err();
         assert!(error.to_string().contains(expected_error), "{error}");
     }
 }
@@ -108,7 +123,7 @@ id = "mods"
 nickname = "Fallback name"
 url = "mods.toml"
 "#;
-    let document = parse_document(legacy, &location).unwrap();
+    let document = parse_document(legacy, &location, &Default::default()).unwrap();
     let source = &document.repository_sources[0];
     assert_eq!(source.nickname, "Fallback name");
     assert_eq!(source.nickname_i18n["zh-CN"], "Fallback name");
@@ -125,7 +140,7 @@ zh-TW = "繁體暱稱"
 en = "Translated name"
 ko = "번역 이름"
 "#;
-    let document = parse_document(translated, &location).unwrap();
+    let document = parse_document(translated, &location, &Default::default()).unwrap();
     let source = &document.repository_sources[0];
     assert_eq!(source.nickname, "中文昵称", "镜像值应取 zh-CN");
     assert_eq!(source.nickname_i18n["en"], "Translated name");
@@ -137,7 +152,7 @@ ko = "번역 이름"
 id = "mods"
 url = "mods.toml"
 "#;
-    let error = parse_document(missing, &location).unwrap_err();
+    let error = parse_document(missing, &location, &Default::default()).unwrap_err();
     assert!(
         error.to_string().contains("source.idOrNicknameEmpty"),
         "{error}"
@@ -147,7 +162,8 @@ url = "mods.toml"
     assert!(
         parse_document(
             &translated.replace("en = \"Translated name\"", "en = 1"),
-            &location
+            &location,
+            &Default::default()
         )
         .is_err()
     );
@@ -165,7 +181,7 @@ url = "mods.toml"
 zh-CN = "中文昵称"
 en = "   "
 "#;
-    let document = parse_document(text, &location).unwrap();
+    let document = parse_document(text, &location, &Default::default()).unwrap();
     assert_eq!(document.repository_sources[0].nickname_i18n.len(), 1);
     assert_eq!(document.repository_sources[0].nickname, "中文昵称");
 }
@@ -194,7 +210,7 @@ url = "mods.toml"
 region = "mainland-china"
 "#;
     let location = SourceLocation::parse("https://example.com/index.toml").unwrap();
-    let document = parse_document(text, &location).unwrap();
+    let document = parse_document(text, &location, &Default::default()).unwrap();
     assert_eq!(document.repository_sources.len(), 2);
     assert_eq!(document.repository_sources[0].id, "china");
     assert_eq!(document.repository_sources[1].id, "international");
@@ -202,4 +218,92 @@ region = "mainland-china"
         document.repository_sources[1].nickname_i18n["en"],
         "International Mods"
     );
+}
+
+#[test]
+fn document_kind_and_network_plan_defaults_survive_entry_and_child_projection() {
+    let location = SourceLocation::parse("mods.toml").unwrap();
+    let text = r#"
+type = "mod"
+network_plan.mainland = "github-public-mod"
+network_plan.international = "github-public-mod"
+[[repositories]]
+name_i18n.zh-CN = "plan test"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "u"
+repository = "r"
+install_target = "BepInEx/plugins"
+enabled = true
+asset_rules = [{type = "exact", value = "mod.dll"}]
+network_plan.mainland.release.download_threads = 4
+[[repository_sources]]
+id = "child"
+nickname = "child"
+url = "mods/child.toml"
+"#;
+    let doc = parse_document(text, &location, &Default::default()).unwrap();
+    let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
+    let entry = &doc.repositories[0];
+    let plan = policy
+        .resolve(
+            &entry.provider,
+            entry.kind,
+            "chinese_mainland",
+            &entry.network_plan,
+        )
+        .unwrap();
+    assert_eq!(plan.id, "github-public-mod");
+    assert_eq!(plan.release.download_threads, 4);
+    let child = policy
+        .resolve(
+            &entry.provider,
+            entry.kind,
+            "chinese_mainland",
+            &doc.repository_sources[0].network_plan,
+        )
+        .unwrap();
+    assert_eq!(child.id, "github-public-mod");
+    assert_eq!(child.release.download_threads, 1);
+    assert!(
+        parse_document(
+            &text.replace("type = \"mod\"", "type = \"map\""),
+            &location,
+            &Default::default()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn sparse_child_override_is_validated_after_inheriting_the_parent_plan() {
+    let parent = toml::from_str("mainland = 'github-public-mod'").unwrap();
+    let text = r#"type = "mod"
+network_plan.mainland.release.download_threads = 4
+[[repositories]]
+name_i18n.zh-CN = "child"
+group_i18n.zh-CN = ""
+note_i18n.zh-CN = ""
+provider = "github"
+username = "u"
+repository = "r"
+enabled = true
+install_target = "BepInEx/plugins"
+asset_rules = [{ type = "exact", value = "mod.dll" }]
+"#;
+    let location = SourceLocation::parse("mods.toml").unwrap();
+    let doc = parse_document(text, &location, &parent).unwrap();
+    let entry = &doc.repositories[0];
+    let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
+    let plan = policy
+        .resolve(
+            &entry.provider,
+            entry.kind,
+            "chinese_mainland",
+            &entry.network_plan,
+        )
+        .unwrap();
+    assert_eq!(plan.id, "github-public-mod");
+    assert_eq!(plan.release.download_threads, 4);
 }

@@ -24,12 +24,16 @@ author = "RW"
 asset_rules = [{rules}]
 "#
     );
-    parse_document(&text, &SourceLocation::parse("maps.toml").unwrap())
-        .unwrap()
-        .maps
-        .into_iter()
-        .next()
-        .unwrap()
+    parse_document(
+        &text,
+        &SourceLocation::parse("maps.toml").unwrap(),
+        &Default::default(),
+    )
+    .unwrap()
+    .maps
+    .into_iter()
+    .next()
+    .unwrap()
 }
 
 fn tag_entry(extra: &str) -> MapRepositoryConfig {
@@ -203,14 +207,14 @@ url = "child.toml"
     let asset =
         SourceLocation::parse("https://github.com/RW/RW/releases/download/maps/map-sources.toml")
             .unwrap();
-    let error = parse_document(text, &asset).unwrap_err();
+    let error = parse_document(text, &asset, &Default::default()).unwrap_err();
     assert!(
         format!("{error:?}").contains("mapSource.assetDocumentSubSources"),
         "{error:?}"
     );
     // 放在普通地址上的同一份文档仍然可以声明子源
     let plain = SourceLocation::parse("maps.toml").unwrap();
-    assert!(parse_document(text, &plain).is_ok());
+    assert!(parse_document(text, &plain, &Default::default()).is_ok());
 }
 
 #[test]
@@ -285,7 +289,12 @@ tag = "maps"
 asset_rules = [{{ type = "regex", value = 'rw_v(?P<version>[0-9.]+)\.zip' }}]
 "#
     );
-    let err = parse_document(&text, &SourceLocation::parse("maps.toml").unwrap()).unwrap_err();
+    let err = parse_document(
+        &text,
+        &SourceLocation::parse("maps.toml").unwrap(),
+        &Default::default(),
+    )
+    .unwrap_err();
     // 不锚定就会「同一个文件匹配出两个版本号」，必须在加载时就拒绝
     assert!(err.to_string().contains("mapSource.regexNotAnchored"));
 }
@@ -305,7 +314,12 @@ tag = "maps"
 asset_rules = [{{ type = "regex", value = '^rw_v[0-9.]+\.zip$' }}]
 "#
     );
-    let err = parse_document(&text, &SourceLocation::parse("maps.toml").unwrap()).unwrap_err();
+    let err = parse_document(
+        &text,
+        &SourceLocation::parse("maps.toml").unwrap(),
+        &Default::default(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("mapSource.assetRuleNeedsVersion"));
 }
 
@@ -339,7 +353,12 @@ level_set_name = "B_Set"
 author = "Other"
 asset_rules = [{ type = "exact", value = "b.zip" }]
 "#;
-    let doc = parse_document(text, &SourceLocation::parse("maps.toml").unwrap()).unwrap();
+    let doc = parse_document(
+        text,
+        &SourceLocation::parse("maps.toml").unwrap(),
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(doc.maps[0].provider, Provider::Gitee);
     assert_eq!(doc.maps[0].username, "QingyuQingxue");
     assert_eq!(doc.maps[0].repository, "OC2-Map-Bundle");
@@ -437,6 +456,83 @@ level_set_name = "A_Set"
 author = "Qingyu"
 asset_rules = [{ type = "exact", value = "a.zip" }]
 "#;
-    let err = parse_document(text, &SourceLocation::parse("maps.toml").unwrap()).unwrap_err();
+    let err = parse_document(
+        text,
+        &SourceLocation::parse("maps.toml").unwrap(),
+        &Default::default(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("mapSource.missingCoordinates"));
+}
+
+#[test]
+fn map_document_inherits_plans_and_release_probe_keeps_map_role() {
+    let text = r#"
+type = "map"
+network_plan.mainland = "github-public-map"
+network_plan.international = "github-public-map"
+[[maps]]
+provider = "github"
+username = "u"
+repository = "r"
+level_set_name = "PlanMap"
+asset_rules = [{type = "exact", value = "map.zip"}]
+network_plan.mainland.release.download_threads = 4
+[[map_sources]]
+id = "child"
+nickname = "Child"
+mode = "release-tags"
+provider = "github"
+username = "u"
+repository = "r"
+"#;
+    let origin = SourceLocation::parse("maps.toml").unwrap();
+    let document = parse_document(text, &origin, &Default::default()).unwrap();
+    let probe = super::releases::release_probe(&document.maps[0]);
+    assert_eq!(probe.kind, crate::models::RepositoryKind::Map);
+    let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
+    let plan = policy
+        .resolve(
+            &probe.provider,
+            probe.kind,
+            "chinese_mainland",
+            &probe.network_plan,
+        )
+        .unwrap();
+    assert_eq!(plan.release.download_threads, 4);
+    let child = super::release_tags::declaration_probe(&document.map_sources[0]);
+    assert_eq!(child.kind, crate::models::RepositoryKind::Map);
+    let plan = policy
+        .resolve(
+            &child.provider,
+            child.kind,
+            "chinese_mainland",
+            &child.network_plan,
+        )
+        .unwrap();
+    assert_eq!(plan.id, "github-public-map");
+    let parent = toml::from_str("mainland = 'github-public-map'").unwrap();
+    let sparse = text.replace("network_plan.mainland = \"github-public-map\"\n", "");
+    let inherited = parse_document(&sparse, &origin, &parent).unwrap();
+    assert_eq!(
+        inherited.maps[0].network_plan,
+        document.maps[0].network_plan
+    );
+
+    assert!(
+        parse_document(
+            &text.replace("type = \"map\"", "type = \"mod\""),
+            &origin,
+            &Default::default()
+        )
+        .is_err()
+    );
+    assert!(
+        parse_document(
+            &text.replace("[[maps]]", "[[maps]]\ntype = \"mod\""),
+            &origin,
+            &Default::default()
+        )
+        .is_err()
+    );
 }

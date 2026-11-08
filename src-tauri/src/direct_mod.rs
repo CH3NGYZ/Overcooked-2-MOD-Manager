@@ -252,6 +252,7 @@ pub(crate) async fn download_remote_to_temp(
             }
         },
         Some(DownloadContext {
+            execution: None,
             // 传入 app：直链、Release 资产与仓库资产共用同一套下载进度事件；
             // 路径是临时文件、没有 Release 元数据，所以 expected_size 留空，
             // 大小由下载源自己上报（有 Content-Length 时显示确定进度）。

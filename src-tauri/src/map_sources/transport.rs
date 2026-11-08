@@ -17,17 +17,23 @@ use crate::repository_sources::SourceLocation;
 pub(crate) async fn load_document(
     location: &SourceLocation,
     ctx: &MapSourceContext<'_>,
+    inherited: &crate::models::NetworkPlanSelection,
 ) -> Result<MapSourceDocument, ConfigError> {
     match verified_document(location, ctx).await {
         Some(verified) => {
             crate::repository_sources::load_verified_text_document(
                 location,
                 &verified,
-                parse_document,
+                |text, origin| parse_document(text, origin, inherited),
             )
             .await
         }
-        None => crate::repository_sources::load_text_document(location, parse_document).await,
+        None => {
+            crate::repository_sources::load_text_document(location, |text, origin| {
+                parse_document(text, origin, inherited)
+            })
+            .await
+        }
     }
 }
 

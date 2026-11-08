@@ -2,7 +2,34 @@
 
 本文面向《胡闹厨房 2》MOD 作者和仓库源维护者，说明如何制作、分享和维护管理器能够读取的 TOML 仓库源。
 
-一个 MOD 仓库条目通过 `provider`、`username`、`repository` 指定 GitHub 或 Gitee 项目，可选择下载 Release 资产或指定分支中的单个文件。仓库源文件可以包含多个 MOD 仓库，也可以引用其他仓库源，组织成父源和子源。具体 MOD 仓库不填写 `url`；仓库源和代理来源继续使用 `url` 指向文件。
+一个 MOD 仓库条目通过 `provider`、`username`、`repository` 指定 GitHub、Gitee 或 GitCode 项目，可选择下载 Release 资产或指定分支中的单个文件。仓库源文件可以包含多个 MOD 仓库，也可以引用其他仓库源，组织成父源和子源。具体 MOD 仓库不填写 `url`；仓库源和代理来源继续使用 `url` 指向文件。
+
+## 请求计划与地区默认值
+
+源文档顶部可以声明 `type = "mod"` 或 `type = "map"`。MOD 入口只接受 MOD 源，地图入口只接受地图源。旧文件省略时由入口补齐。具体计划定义集中在官方 `network-plans.toml` 的 `[[request_plans]]` 中，`[[default_plans]]` 登记 provider、type 和地区对应的计划 ID。
+
+```toml
+type = "mod"
+
+[network_plan]
+mainland = "github-mainland-mod"
+international = "github-public-mod"
+```
+
+地区键使用 `mainland`、`international`；`github-public-mod` 中的 public 是计划名的一部分。未写的地区自动取默认表：GitHub 中国大陆使用 `github-mainland-mod/map`，国际地区使用 `github-public-mod/map`；Gitee、GitCode 两地区分别使用各自的 `gitee-public-mod/map`、`gitcode-public-mod/map`。
+
+源、子源和具体仓库均可设置 `network_plan`；优先级为具体仓库、最近源/父源、默认表。地区值既可为字符串计划 ID，也可为对象。例如在一个 `[[repositories]]` 条目内：
+
+```toml
+network_plan.mainland = "github-mainland-mod"
+network_plan.international = { id = "github-public-mod", release = { download_threads = 4 } }
+```
+
+也可以只写 `network_plan.international.release.download_threads = 4`，继承已有计划并覆盖这一项。未写的地区、策略和字段继续继承；显式写 `id` 则从该计划重新开始，不继承父源的局部覆盖。`route` 数组整体替换。代理只能引用受信清单中的 ID，源不能定义全局代理。
+
+源条目不再声明顶层 `download_threads`。计划的 `release.download_threads`、`raw.download_threads` 控制单个候选的分片数（1–32）；`max_parallelism` 控制完整文件候选并发（1–3）。`race = true` 时每候选必须单线程；顺序模式要求 `max_parallelism = 1`，按 route 顺序尝试并在成功后停止。当前所有内置计划默认单线程。未知 ID、provider/type 不匹配、错误代理职责及非法并发组合会被拒绝。旧配置的顶层线程字段只兼容读取，不决定下载行为，也不再导出。
+
+API 路由同样按所选计划排列；未授权的代理请求保持匿名，源配置不能授予转发 Token 的权限。当前新计划闭包随应用内置；远端完整闭包热更新和代理凭据授权仍按待做计划后续推进，修改 Repos 本地文件不会直接改变已发布客户端。
 
 ## 仓库源和导出配置的区别
 
@@ -22,7 +49,6 @@ local_product_name = "My MOD"
 local_original_filename = "MyMod.dll"
 version_regex = ''
 max_release_count = 10
-download_threads = 16
 enabled = true
 
 name_i18n.zh-CN = "我的 MOD"
@@ -48,7 +74,6 @@ username = "gua248"
 repository = "Overcooked2-ManyRecipes"
 download_mode = "repository_file"
 branch = "master"
-download_threads = 4
 file_path = "bin/Release/OC2ManyRecipes.dll"
 plugin_guid = "dev.gua.overcooked.manyrecipes"
 local_product_name = "OC2ManyRecipes"
@@ -302,7 +327,6 @@ plugin_guid = "com.bepis.bepinex.configurationmanager"
 local_product_name = "BepInEx.ConfigurationManager"
 local_original_filename = "ConfigurationManager.dll"
 max_release_count = 10
-download_threads = 32
 enabled = true
 
 name_i18n.zh-CN = "BepInEx 配置管理器"
@@ -343,7 +367,6 @@ plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
 local_product_name = "主机实用MOD (街机MOD)"
 local_original_filename = "HostUtilities.dll"
 max_release_count = 10
-download_threads = 1
 enabled = true
 
 name_i18n.zh-CN = "主机实用 MOD（街机 MOD）稳定版"
@@ -501,7 +524,8 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 | `local_original_filename` | 否 | DLL 的 OriginalFilename，用于本地绑定。 |
 | `version_regex` | 否 | 本地 MOD 版本正则；填写后只有版本匹配时才会绑定，留空则忽略版本条件。 |
 | `max_release_count` | 否 | 当前仓库单次获取的最大 Release 数量，范围为 1 到 100，默认 10。 |
-| `download_threads` | 否 | GitHub 下载线程范围为 1 到 32，默认 16；Gitee 强制单线程。 |
+| `type` | 否 | 仓库职责：`mod` 或 `map`；旧文档省略时由对应源入口补齐。 |
+| `network_plan` | 否 | 按地区引用请求计划，也可局部覆盖其 `api`、`release`、`raw` 子项；省略时按 provider、type、地区选择默认计划。 |
 | `enabled` | 是 | `true` 显示并刷新，`false` 暂停该仓库。 |
 
 仓库源中的每个 `[[repositories]]` 都可以直接来自软件的导出配置。导出内容里的 `source_id` 只代表导出时的本地来源，发布仓库源时不需要手动修改；管理器下载仓库源后会忽略这些旧值，并统一写入当前仓库源配置的唯一 ID。

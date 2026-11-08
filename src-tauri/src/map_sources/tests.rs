@@ -81,7 +81,12 @@ fn bundled() -> SourceLocation {
 
 #[test]
 fn parses_a_minimal_map_document() {
-    let doc = parse_document(&minimal("RW", "RW", "RW_LevelSet"), &bundled()).unwrap();
+    let doc = parse_document(
+        &minimal("RW", "RW", "RW_LevelSet"),
+        &bundled(),
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(doc.maps.len(), 1);
     assert_eq!(doc.maps[0].level_set_name, "RW_LevelSet");
     assert_eq!(doc.maps[0].author, "RW");
@@ -89,7 +94,12 @@ fn parses_a_minimal_map_document() {
 
 #[test]
 fn identity_is_author_plus_level_set_name_case_insensitive() {
-    let doc = parse_document(&minimal("RW", "RW", "RW_LevelSet"), &bundled()).unwrap();
+    let doc = parse_document(
+        &minimal("RW", "RW", "RW_LevelSet"),
+        &bundled(),
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(map_identity(&doc.maps[0]), "rw\u{1}rw_levelset");
 }
 
@@ -101,7 +111,7 @@ fn rejects_duplicate_identity_within_one_document() {
         minimal("A", "RW", "Same"),
         minimal("B", "rw", "same")
     );
-    let err = parse_document(&text, &bundled()).unwrap_err();
+    let err = parse_document(&text, &bundled(), &Default::default()).unwrap_err();
     assert!(err.to_string().contains("mapSource.duplicateEntry"));
 }
 
@@ -112,13 +122,13 @@ fn same_set_name_under_different_authors_is_not_a_duplicate() {
         minimal("A", "Alice", "Shared"),
         minimal("B", "Bob", "Shared")
     );
-    assert!(parse_document(&text, &bundled()).is_ok());
+    assert!(parse_document(&text, &bundled(), &Default::default()).is_ok());
 }
 
 #[test]
 fn requires_level_set_name() {
     let text = minimal("M", "A", "").replace("level_set_name = \"\"", "");
-    let err = parse_document(&text, &bundled()).unwrap_err();
+    let err = parse_document(&text, &bundled(), &Default::default()).unwrap_err();
     assert!(err.to_string().contains("mapSource.missingLevelSetName"));
 }
 
@@ -128,14 +138,14 @@ fn requires_asset_rules() {
         "asset_rules = [{ type = \"exact\", value = \"map.zip\" }]",
         "",
     );
-    let err = parse_document(&text, &bundled()).unwrap_err();
+    let err = parse_document(&text, &bundled(), &Default::default()).unwrap_err();
     assert!(err.to_string().contains("mapSource.missingAssetRules"));
 }
 
 #[test]
 fn region_filtering_matches_the_repository_semantics() {
     // 走 parse_document 而不是裸 from_str：后者绕过 serde 的字段默认值
-    let mut map = parse_document(&minimal("M", "A", "S"), &bundled())
+    let mut map = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
         .unwrap()
         .maps
         .into_iter()
@@ -167,7 +177,7 @@ fn region_filtering_matches_the_repository_semantics() {
 #[test]
 fn refreshing_the_tree_keeps_release_cache_by_stable_id() {
     let mut config = crate::config::default_config();
-    let mut first = parse_document(&minimal("M", "A", "S"), &bundled())
+    let mut first = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
         .unwrap()
         .maps
         .into_iter()
@@ -189,7 +199,7 @@ fn refreshing_the_tree_keeps_release_cache_by_stable_id() {
     config.map_repositories = vec![first.clone()];
 
     // 源文档重建：同样的身份 → 同样的 ID
-    let mut fresh = parse_document(&minimal("M", "A", "S"), &bundled())
+    let mut fresh = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
         .unwrap()
         .maps
         .into_iter()
@@ -220,7 +230,7 @@ fn refreshing_the_tree_keeps_release_cache_by_stable_id() {
 #[test]
 fn refreshing_the_tree_follows_the_authors_enabled_flag() {
     let mut config = crate::config::default_config();
-    let mut stale = parse_document(&minimal("M", "A", "S"), &bundled())
+    let mut stale = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
         .unwrap()
         .maps
         .into_iter()
@@ -233,6 +243,7 @@ fn refreshing_the_tree_follows_the_authors_enabled_flag() {
     let mut fresh = parse_document(
         &minimal("M", "A", "S").replace("enabled = true", "enabled = false"),
         &bundled(),
+        &Default::default(),
     )
     .unwrap()
     .maps
@@ -251,7 +262,7 @@ fn refreshing_the_tree_follows_the_authors_enabled_flag() {
 #[test]
 fn map_id_is_stable_across_rebuilds_and_unique_per_identity() {
     let build = |source: &str, author: &str, set: &str| {
-        let map = parse_document(&minimal("M", author, set), &bundled())
+        let map = parse_document(&minimal("M", author, set), &bundled(), &Default::default())
             .unwrap()
             .maps
             .into_iter()
@@ -287,9 +298,13 @@ fn map_id_is_stable_across_rebuilds_and_unique_per_identity() {
 /// 新分组被判成「没变化」、配置不写盘，界面永远显示旧分组。
 #[test]
 fn a_display_only_map_change_still_counts_as_change() {
-    let fresh = parse_document(&minimal("RW", "RW", "RW_LevelSet"), &bundled())
-        .unwrap()
-        .maps;
+    let fresh = parse_document(
+        &minimal("RW", "RW", "RW_LevelSet"),
+        &bundled(),
+        &Default::default(),
+    )
+    .unwrap()
+    .maps;
     let mut stored = fresh.clone();
     stored[0].id = "maps-rw::rw::rw_levelset".to_string();
     stored[0].releases_cached_at = Some(1_700_000_000);
@@ -320,7 +335,7 @@ fn a_display_only_map_change_still_counts_as_change() {
 
 #[test]
 fn migrating_map_repository_does_not_restore_old_release_state() {
-    let mut old = parse_document(&minimal("M", "A", "S"), &bundled())
+    let mut old = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
         .unwrap()
         .maps
         .remove(0);
@@ -349,7 +364,7 @@ fn migrating_map_repository_does_not_restore_old_release_state() {
 
 #[test]
 fn fresh_empty_api_snapshot_replaces_previous_map_cache() {
-    let mut old = parse_document(&minimal("M", "A", "S"), &bundled())
+    let mut old = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
         .unwrap()
         .maps
         .remove(0);

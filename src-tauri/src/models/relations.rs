@@ -216,6 +216,8 @@ const REPOSITORY_FIELD_NAMES: &[&str] = &[
     "version_regex",
     "max_release_count",
     "download_threads",
+    "network_plan",
+    "type",
     "enabled",
 ];
 

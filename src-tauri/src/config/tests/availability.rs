@@ -15,12 +15,19 @@ use super::REGION_REPOSITORY;
 #[test]
 fn repository_regions_are_optional_validated_and_preserved() {
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let legacy = crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+    let legacy = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(legacy.repositories[0].region, None);
     for region in ["chinese_mainland", "international", ""] {
         let text =
             REGION_REPOSITORY.replace("channel =", &format!("region = \"{region}\"\nchannel ="));
-        let document = crate::repository_sources::parse_document(&text, &location).unwrap();
+        let document =
+            crate::repository_sources::parse_document(&text, &location, &Default::default())
+                .unwrap();
         assert_eq!(
             document.repositories[0].region.as_deref(),
             (!region.is_empty()).then_some(region)
@@ -37,10 +44,15 @@ fn repository_regions_are_optional_validated_and_preserved() {
         );
     }
     let unknown = REGION_REPOSITORY.replace("channel =", "region = \"unknown\"\nchannel =");
-    let document = crate::repository_sources::parse_document(&unknown, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(&unknown, &location, &Default::default())
+            .unwrap();
     assert_eq!(document.repositories[0].region, None);
     let invalid_type = REGION_REPOSITORY.replace("channel =", "region = true\nchannel =");
-    assert!(crate::repository_sources::parse_document(&invalid_type, &location).is_err());
+    assert!(
+        crate::repository_sources::parse_document(&invalid_type, &location, &Default::default())
+            .is_err()
+    );
 }
 
 #[test]
@@ -48,21 +60,29 @@ fn repository_platform_is_optional_normalized_and_enforced() {
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
 
     // 缺省：无平台字段 → 全平台可用
-    let document = crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+    let document = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(document.repositories[0].platform, None);
     assert!(platform_matches(None, PLATFORM_WINDOWS));
     assert!(platform_matches(None, PLATFORM_MACOS));
 
     // 显式空串：同样全平台
     let empty = REGION_REPOSITORY.replace("channel =", "platform = \"\"\nchannel =");
-    let document = crate::repository_sources::parse_document(&empty, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(&empty, &location, &Default::default()).unwrap();
     assert_eq!(document.repositories[0].platform, None);
 
     // windows / macos：各自只对对应平台可用
     for (value, ok_on_windows, ok_on_macos) in [("windows", true, false), ("macos", false, true)] {
         let text =
             REGION_REPOSITORY.replace("channel =", &format!("platform = \"{value}\"\nchannel ="));
-        let document = crate::repository_sources::parse_document(&text, &location).unwrap();
+        let document =
+            crate::repository_sources::parse_document(&text, &location, &Default::default())
+                .unwrap();
         assert_eq!(document.repositories[0].platform.as_deref(), Some(value));
         assert_eq!(
             platform_matches(Some(value), PLATFORM_WINDOWS),
@@ -85,7 +105,9 @@ fn repository_platform_is_optional_normalized_and_enforced() {
     ] {
         let text =
             REGION_REPOSITORY.replace("channel =", &format!("platform = \"{alias}\"\nchannel ="));
-        let document = crate::repository_sources::parse_document(&text, &location).unwrap();
+        let document =
+            crate::repository_sources::parse_document(&text, &location, &Default::default())
+                .unwrap();
         assert_eq!(
             document.repositories[0].platform.as_deref(),
             Some(expected),
@@ -95,7 +117,8 @@ fn repository_platform_is_optional_normalized_and_enforced() {
 
     // 无法识别的平台：验证阶段拒绝整条仓库（不是静默忽略）
     let invalid = REGION_REPOSITORY.replace("channel =", "platform = \"linux\"\nchannel =");
-    let error = crate::repository_sources::parse_document(&invalid, &location).unwrap_err();
+    let error = crate::repository_sources::parse_document(&invalid, &location, &Default::default())
+        .unwrap_err();
     assert!(error.to_string().contains("invalidPlatform"), "{error}");
 }
 
@@ -104,7 +127,8 @@ fn repository_platform_is_optional_normalized_and_enforced() {
 fn platform_mismatch_hides_repository_like_region_mismatch() {
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let text = REGION_REPOSITORY.replace("channel =", "platform = \"macos\"\nchannel =");
-    let document = crate::repository_sources::parse_document(&text, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(&text, &location, &Default::default()).unwrap();
     let mut repository =
         repository_from_export(&document.repositories[0], "mac-only".into(), false);
     repository.enabled = true;
@@ -121,7 +145,12 @@ fn platform_mismatch_hides_repository_like_region_mismatch() {
 #[test]
 fn repository_channel_requires_both_source_and_repository_regions() {
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let document = crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+    let document = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
     let mut repository =
         repository_from_export(&document.repositories[0], "regional".into(), false);
     let mut config = default_config();
@@ -151,6 +180,7 @@ fn repository_channel_requires_both_source_and_repository_regions() {
         REGION_CHINESE_MAINLAND
     ));
     config.repository_sources.push(RepositorySource {
+        network_plan: Default::default(),
         id: "restricted-source".into(),
         nickname: "Restricted source".into(),
         nickname_i18n: Default::default(),
@@ -223,7 +253,12 @@ fn gitee_community_applies_to_every_region_when_its_region_is_empty() {
 #[test]
 fn availability_requires_enabled_and_matching_region() {
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let document = crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+    let document = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
     let mut repository =
         repository_from_export(&document.repositories[0], "regional".into(), false);
     let config = default_config();

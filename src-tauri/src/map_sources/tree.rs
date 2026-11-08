@@ -50,6 +50,7 @@ pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
         return collected;
     };
     let root = SourceLabel {
+        network_plan: Default::default(),
         id: DEFAULT_MAP_INDEX_ID.to_string(),
         ..SourceLabel::default()
     };
@@ -66,7 +67,7 @@ fn collect_bundled_maps(
     let Ok(text) = location.bundled_text() else {
         return;
     };
-    let Ok(document) = parse_document(text, location) else {
+    let Ok(document) = parse_document(text, location, &label.network_plan) else {
         return;
     };
     for mut map in document.maps {
@@ -81,6 +82,7 @@ fn collect_bundled_maps(
     for child in document.map_sources {
         // clone 而不是移动：下面还要把整条声明交给 `build_declaration_map`
         let child_label = SourceLabel {
+            network_plan: child.network_plan.clone(),
             id: child.id.trim().to_string(),
             name: child.nickname.clone(),
             name_i18n: child.nickname_i18n.clone(),
@@ -207,6 +209,7 @@ pub async fn load_map_tree(
         None,
     ));
     let root = SourceLabel {
+        network_plan: Default::default(),
         id: DEFAULT_MAP_INDEX_ID.to_string(),
         ..SourceLabel::default()
     };
@@ -248,7 +251,7 @@ async fn load_map_document(
     collected: &mut Vec<MapRepositoryConfig>,
     ctx: &MapSourceContext<'_>,
 ) -> Result<(), ConfigError> {
-    let document = load_document(&location, ctx).await?;
+    let document = load_document(&location, ctx, &label.network_plan).await?;
     for mut map in document.maps {
         // 把源标签附到条目，持久化配置时不需要另存一棵源树。
         label.attach(&mut map);
@@ -269,6 +272,7 @@ async fn load_map_document(
         // 远程文档不能自行提权：省略时继承父源
         let child_builtin = builtin && child.builtin.unwrap_or(true);
         let child_label = SourceLabel {
+            network_plan: child.network_plan.clone(),
             id: child.id.trim().to_string(),
             name: child.nickname.clone(),
             name_i18n: child.nickname_i18n.clone(),

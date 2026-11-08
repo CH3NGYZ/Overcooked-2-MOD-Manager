@@ -1,3 +1,5 @@
+type = "map"
+
 # One release tag identifies one map; metadata comes from the oc2-map declaration.
 [[map_sources]]
 id = "maps-oc2-map-bundle"

@@ -10,7 +10,12 @@ fn index_location() -> SourceLocation {
 
 fn index_document() -> MapSourceDocument {
     let location = index_location();
-    parse_document(location.bundled_text().unwrap(), &location).expect("内置 maps.toml 应能解析")
+    parse_document(
+        location.bundled_text().unwrap(),
+        &location,
+        &Default::default(),
+    )
+    .expect("内置 maps.toml 应能解析")
 }
 
 fn declaration(id: &str) -> MapSourceDeclaration {
@@ -41,7 +46,8 @@ fn builtin_map_index_declares_only_sources() {
 fn builtin_community_source_declares_release_tags_mode() {
     let parent = declaration("oc2-map-bundle-index");
     let child = SourceLocation::resolve(&parent.url, Some(&index_location())).unwrap();
-    let document = parse_document(child.bundled_text().unwrap(), &child).unwrap();
+    let document =
+        parse_document(child.bundled_text().unwrap(), &child, &Default::default()).unwrap();
     assert_eq!(document.map_sources.len(), 1);
     let source = &document.map_sources[0];
     assert_eq!(source.id, "maps-oc2-map-bundle");
@@ -75,7 +81,8 @@ async fn real_gitcode_bundle_loads_release_declarations() {
     let client = crate::releases::build_client(30).unwrap();
     let parent = declaration("oc2-map-bundle-index");
     let child = SourceLocation::resolve(&parent.url, Some(&index_location())).unwrap();
-    let document = parse_document(child.bundled_text().unwrap(), &child).unwrap();
+    let document =
+        parse_document(child.bundled_text().unwrap(), &child, &Default::default()).unwrap();
     let probe = super::release_tags::declaration_probe(&document.map_sources[0]);
     let releases = crate::releases::fetch_releases(&client, &probe, None, true, &[])
         .await

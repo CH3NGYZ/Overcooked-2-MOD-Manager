@@ -271,7 +271,12 @@ async fn live_official_proxy_manifest() {
             .await
             .unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
-    repository_sources::parse_document(text, &SourceLocation::parse(github).unwrap()).unwrap();
+    repository_sources::parse_document(
+        text,
+        &SourceLocation::parse(github).unwrap(),
+        &Default::default(),
+    )
+    .unwrap();
     println!(
         "live Raw: bytes={} equivalent_hosts=true parsed=true",
         bytes.len()

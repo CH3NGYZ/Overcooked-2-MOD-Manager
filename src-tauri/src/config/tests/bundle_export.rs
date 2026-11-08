@@ -31,10 +31,14 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
         proxies: Default::default(),
     };
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let template = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
-        .unwrap()
-        .repositories
-        .remove(0);
+    let template = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap()
+    .repositories
+    .remove(0);
     let mut config = default_config();
     let builtin_source = config.repository_sources[0].id.clone();
     let other_region = if current_user_region() == REGION_CHINESE_MAINLAND {
@@ -43,6 +47,7 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
         REGION_CHINESE_MAINLAND
     };
     config.repository_sources.push(RepositorySource {
+        network_plan: Default::default(),
         id: "other-region-child".into(),
         nickname: "Child source".into(),
         nickname_i18n: Default::default(),
@@ -111,10 +116,14 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
         proxies: Default::default(),
     };
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let mut release = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
-        .unwrap()
-        .repositories
-        .remove(0);
+    let mut release = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap()
+    .repositories
+    .remove(0);
     release.name_i18n.insert("en".into(), "Release MOD".into());
     release.group_i18n.insert("zh-CN".into(), "测试分组".into());
     release.note = "多行备注\n[[repositories]]\n\"quoted\" \\ path".into();
@@ -125,6 +134,8 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     release.group = "测试分组".into();
     release.version_regex = r"^1\.\d+\.\d+$".into();
     release.download_threads = 16;
+    release.network_plan =
+        toml::from_str("international = { release = { download_threads = 4 } }").unwrap();
     let mut raw = release.clone();
     raw.name = "Raw MOD".into();
     raw.name_i18n.insert("zh-CN".into(), "Raw MOD".into());
@@ -135,6 +146,7 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     raw.version_regex = r"^1\.2\.\d+(\.\d+)?$".into();
     raw.asset_rules.clear();
     let source = RepositorySource {
+        network_plan: Default::default(),
         id: "export-source".into(),
         nickname: "自定义源".into(),
         nickname_i18n: std::collections::BTreeMap::from([("en".into(), "Source".into())]),
@@ -155,6 +167,7 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     config.repositories[0].branch = "main".into();
     config.repositories[0].file_path = "bin/UnusedDraft.dll".into();
     let text = service.export_bundle(&config, None).unwrap();
+    assert!(!text.contains("\ndownload_threads ="));
     let restored = service.validate_bundle(&text).unwrap();
     assert_eq!(
         serde_json::to_value(&restored.repositories).unwrap(),
@@ -176,6 +189,8 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
                 "name =",
                 "name_i18n.",
                 "provider =",
+                "type =",
+                "network_plan =",
                 "group =",
                 "group_i18n.",
                 "username =",
@@ -184,7 +199,6 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
                 "download_mode =",
                 "channel =",
                 "max_release_count =",
-                "download_threads =",
                 "asset_rules =",
                 "plugin_guid =",
                 "version_regex =",
@@ -198,7 +212,6 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
             vec![
                 "download_mode =",
                 "branch =",
-                "download_threads =",
                 "file_path =",
                 "plugin_guid =",
                 "local_product_name =",
@@ -233,7 +246,8 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
             .as_str(),
         Some("https://example.com/source.toml")
     );
-    let parsed = crate::repository_sources::parse_document(&text, &location).unwrap();
+    let parsed =
+        crate::repository_sources::parse_document(&text, &location, &Default::default()).unwrap();
     assert_eq!(parsed.repositories.len(), 2);
     assert_eq!(parsed.repositories[0].note, release.note);
     service.import_bundle(&mut config, &restored, "overwrite");

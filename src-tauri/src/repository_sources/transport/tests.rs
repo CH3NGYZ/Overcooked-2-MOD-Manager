@@ -69,14 +69,22 @@ async fn remote_source_reloads_changed_content_and_rejects_not_modified() {
     );
     let location = SourceLocation::parse(&url).unwrap();
     assert_eq!(
-        load_document(&location).await.unwrap().repositories[0].name,
+        load_document(&location, &Default::default())
+            .await
+            .unwrap()
+            .repositories[0]
+            .name,
         "Old"
     );
     assert_eq!(
-        load_document(&location).await.unwrap().repositories[0].name,
+        load_document(&location, &Default::default())
+            .await
+            .unwrap()
+            .repositories[0]
+            .name,
         "New"
     );
-    assert!(load_document(&location).await.is_err());
+    assert!(load_document(&location, &Default::default()).await.is_err());
     server.join().unwrap();
 }
 
@@ -97,7 +105,7 @@ async fn source_document_timeout_is_independent_of_user_network_config() {
     let body = "[[repositories]]\nname_i18n.zh-CN = \"Slow\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{ type = \"glob\", value = \"*.dll\" }]\n";
     let (url, server) = serve_delayed_response("/slow.toml", body, 1500);
     let location = SourceLocation::parse(&url).unwrap();
-    let document = load_document(&location)
+    let document = load_document(&location, &Default::default())
         .await
         .expect("1.5 秒延迟应在 30 秒超时内成功");
     assert_eq!(document.repositories[0].name, "Slow");
@@ -230,7 +238,7 @@ async fn remote_source_resolves_children_from_its_redirect_destination() {
         assert_eq!(count, 2);
     });
     let location = SourceLocation::parse(&format!("http://{address}/start.toml")).unwrap();
-    let result = load_document(&location).await;
+    let result = load_document(&location, &Default::default()).await;
     server.join().unwrap();
     assert_eq!(
         result.unwrap().repository_sources[0].url,

@@ -1,3 +1,21 @@
+export type RequestPlanStep = { kind: 'official' | 'direct' } | { kind: 'proxy'; id: string }
+export interface RequestRouteOverride {
+  route?: RequestPlanStep[]
+  race?: boolean
+  max_parallelism?: number
+  download_threads?: number
+}
+export type RequestPlanReference = string | {
+  id?: string
+  api?: RequestRouteOverride
+  release?: RequestRouteOverride
+  raw?: RequestRouteOverride
+}
+export interface NetworkPlanSelection {
+  mainland?: RequestPlanReference
+  international?: RequestPlanReference
+}
+
 export type Provider = 'github' | 'gitee' | 'gitcode'
 /**
  * 仓库支持的桌面平台。
@@ -130,7 +148,10 @@ export interface Repository {
   release_relations?: ReleaseRelationOverride[]
   version_regex: string
   max_release_count: number
-  download_threads: number
+  /** Legacy input only. Downloads use the resolved request plan. */
+  download_threads?: number
+  type?: 'mod' | 'map'
+  network_plan?: NetworkPlanSelection
   github_token_set?: boolean
   gitee_token_set?: boolean
   enabled: boolean
@@ -179,7 +200,9 @@ export interface PublicConfig {
   builtin_map_sources_only?: boolean
   builtin_proxies_only?: boolean
 }
-export interface RepositorySource { id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
+export interface RepositorySource {
+  network_plan?: NetworkPlanSelection
+  id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; has_residue: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 /**
  * DIYLevel 自定义关卡框架状态。
@@ -648,7 +671,10 @@ export interface RepositoryPatch {
   release_relations?: ReleaseRelationOverride[]
   version_regex: string
   max_release_count: number
-  download_threads: number
+  /** Legacy input only. Downloads use the resolved request plan. */
+  download_threads?: number
+  type?: 'mod' | 'map'
+  network_plan?: NetworkPlanSelection
   github_token?: string
   gitee_token?: string
   official_api_only?: boolean

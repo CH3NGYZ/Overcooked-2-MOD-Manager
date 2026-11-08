@@ -61,10 +61,11 @@ async fn probe_location(
     deadline: Duration,
     cancelled: &mut tokio::sync::watch::Receiver<bool>,
 ) -> StartupProbe {
+    let inherited = Default::default();
     tokio::select! {
         biased;
         _ = cancelled.changed() => StartupProbe::failed("cancelled"),
-        result = tokio::time::timeout(deadline, load_document(location)) => {
+        result = tokio::time::timeout(deadline, load_document(location, &inherited)) => {
             match result {
                 Err(_) => StartupProbe::failed("timeout"),
                 Ok(Ok(_)) => StartupProbe { reachable: true, failure_kind: None },

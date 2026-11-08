@@ -132,11 +132,12 @@ pub(crate) async fn load_text_document<T>(
 /// 「调快下载」顺带把源文档读取弄坏。
 pub async fn load_document(
     location: &SourceLocation,
+    inherited: &crate::models::NetworkPlanSelection,
 ) -> Result<RepositorySourceDocument, ConfigError> {
-    if matches!(location, SourceLocation::Bundled(_)) {
-        return location.bundled_document();
-    }
-    load_text_document(location, parse_document).await
+    load_text_document(location, |text, origin| {
+        parse_document(text, origin, inherited)
+    })
+    .await
 }
 
 #[cfg(test)]

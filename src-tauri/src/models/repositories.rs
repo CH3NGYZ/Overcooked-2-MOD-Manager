@@ -1,6 +1,7 @@
 use super::config::default_true;
 use super::relations::{ReleaseRelationOverride, RepositoryRelation, deserialize_relations};
 use super::releases::ReleaseInfo;
+use super::{NetworkPlanSelection, RepositoryKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -125,6 +126,10 @@ pub struct StagedReleaseCache {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryConfig {
+    #[serde(rename = "type", default)]
+    pub kind: RepositoryKind,
+    #[serde(default, skip_serializing_if = "NetworkPlanSelection::is_empty")]
+    pub network_plan: NetworkPlanSelection,
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -198,7 +203,7 @@ pub struct RepositoryConfig {
     pub version_regex: String,
     #[serde(default = "default_max_release_count")]
     pub max_release_count: u32,
-    #[serde(default = "default_download_threads")]
+    #[serde(default = "default_download_threads", skip_serializing)]
     pub download_threads: u32,
     #[serde(default)]
     pub github_token: String,
@@ -242,6 +247,8 @@ pub(super) fn default_max_release_count() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepositorySource {
+    #[serde(default, skip_serializing_if = "NetworkPlanSelection::is_empty")]
+    pub network_plan: NetworkPlanSelection,
     pub id: String,
     pub nickname: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -257,6 +264,10 @@ pub struct RepositorySource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryExport {
+    #[serde(rename = "type", default)]
+    pub kind: RepositoryKind,
+    #[serde(default, skip_serializing_if = "NetworkPlanSelection::is_empty")]
+    pub network_plan: NetworkPlanSelection,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -282,7 +293,7 @@ pub struct RepositoryExport {
     pub channel: Channel,
     #[serde(default = "default_max_release_count")]
     pub max_release_count: u32,
-    #[serde(default = "default_download_threads")]
+    #[serde(default = "default_download_threads", skip_serializing)]
     pub download_threads: u32,
     #[serde(default)]
     pub branch: String,
@@ -362,6 +373,8 @@ pub struct AvatarRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryPatch {
+    #[serde(default)]
+    pub network_plan: Option<NetworkPlanSelection>,
     pub id: Option<String>,
     pub name: String,
     #[serde(default)]
@@ -407,7 +420,7 @@ pub struct RepositoryPatch {
     pub version_regex: String,
     #[serde(default = "default_max_release_count")]
     pub max_release_count: u32,
-    #[serde(default = "default_download_threads")]
+    #[serde(default = "default_download_threads", skip_serializing)]
     pub download_threads: u32,
     #[serde(default)]
     pub github_token: String,

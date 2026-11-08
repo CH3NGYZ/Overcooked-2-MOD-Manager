@@ -25,6 +25,8 @@ pub(crate) fn repository_address_key(
 
 pub(crate) fn repo_key(repo: &RepositoryConfig) -> String {
     let export = RepositoryExport {
+        network_plan: repo.network_plan.clone(),
+        kind: repo.kind,
         name: String::new(),
         name_i18n: repo.name_i18n.clone(),
         group: repo.group.clone(),
@@ -97,17 +99,9 @@ pub(crate) fn repository_from_export(
     id: String,
     builtin: bool,
 ) -> RepositoryConfig {
-    let download_threads = match &repo.provider {
-        Provider::Github => {
-            if repo.download_threads == 0 {
-                16
-            } else {
-                repo.download_threads.clamp(1, 32)
-            }
-        }
-        Provider::Gitee | Provider::Gitcode => 1,
-    };
     RepositoryConfig {
+        network_plan: repo.network_plan.clone(),
+        kind: repo.kind,
         id,
         name: repo.name.clone(),
         name_i18n: repo.name_i18n.clone(),
@@ -145,7 +139,7 @@ pub(crate) fn repository_from_export(
         release_relations: repo.release_relations.clone(),
         version_regex: repo.version_regex.clone(),
         max_release_count: repo.max_release_count.clamp(1, 100),
-        download_threads,
+        download_threads: repo.download_threads,
         github_token: String::new(),
         gitee_token: String::new(),
         official_api_only: true,

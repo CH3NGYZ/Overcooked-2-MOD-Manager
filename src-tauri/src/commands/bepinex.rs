@@ -99,6 +99,7 @@ pub async fn install_bepinex(
             }
         },
         Some(DownloadContext {
+            execution: None,
             app: Some(&app),
             label: "BepInEx",
             expected_size: None,

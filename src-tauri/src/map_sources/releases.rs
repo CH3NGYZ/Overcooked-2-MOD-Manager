@@ -29,6 +29,8 @@ pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::Reposit
         "name_i18n": map.name_i18n,
         "group": map.group,
         "group_i18n": map.group_i18n,
+        "type": "map",
+        "network_plan": map.network_plan,
         "provider": map.provider,
         "username": map.username,
         "repository": map.repository,
@@ -36,7 +38,6 @@ pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::Reposit
         "download_mode": "release",
         "channel": map.channel,
         "max_release_count": map.max_release_count,
-        "download_threads": map.download_threads,
         "asset_rules": map.asset_rules,
         "install_target": "",
     }))

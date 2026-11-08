@@ -1,9 +1,9 @@
 use super::error::ReleaseError;
 use super::error::release_error_kind;
-use super::transport::api_request_targets;
 use super::transport::api_target_kind;
 use super::transport::fetch_api_with_retries;
 use super::transport::fetch_release_api_with_retries;
+use super::transport::repository_api_targets;
 use crate::models::GitHubProxy;
 use crate::models::Provider;
 use crate::models::ReleaseInfo;
@@ -53,7 +53,8 @@ async fn fetch_releases_page(
             return Err(error);
         }
     };
-    let request_targets = api_request_targets(&official, token, official_api_only, api_proxies);
+    let request_targets =
+        repository_api_targets(repo, &official, token, official_api_only, api_proxies)?;
     log::debug!(
         "开始获取 Release: repository_id={} provider={:?} channel={:?} per_page={} page={} token_configured={} official_api_only={} api_target_count={}",
         repo.id,
@@ -165,7 +166,7 @@ async fn fetch_releases_from_targets(
             }
         }
     }
-    let error = last_error.expect("release API request targets must not be empty");
+    let error = last_error.unwrap_or_else(|| ReleaseError::Http("proxy.validationFailed".into()));
     log::error!(
         "Release API 所有目标均失败: repository_id={} provider={:?} error_kind={}",
         repo.id,
@@ -194,7 +195,8 @@ pub async fn fetch_repository_default_branch(
     let official = url.to_string();
     let mut last_error = None;
     let mut skip_official = false;
-    for (url, request_token) in api_request_targets(&official, token, false, api_proxies) {
+    for (url, request_token) in repository_api_targets(repo, &official, token, false, api_proxies)?
+    {
         if skip_official && url == official {
             continue;
         }
@@ -233,7 +235,7 @@ pub async fn fetch_repository_default_branch(
             }
         }
     }
-    Err(last_error.expect("repository API always has an official target"))
+    Err(last_error.unwrap_or_else(|| ReleaseError::Http("proxy.validationFailed".into())))
 }
 
 #[cfg(test)]

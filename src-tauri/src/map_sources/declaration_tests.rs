@@ -15,7 +15,7 @@ fn origin() -> SourceLocation {
 }
 
 fn parse(text: &str) -> Result<MapSourceDocument, ConfigError> {
-    parse_document(text, &origin())
+    parse_document(text, &origin(), &Default::default())
 }
 
 fn error_tag(result: Result<MapSourceDocument, ConfigError>) -> String {
@@ -55,6 +55,7 @@ version = ">=0.10.0"
         "单语言镜像应从 zh-CN 折出来"
     );
     let label = SourceLabel {
+        network_plan: Default::default(),
         id: source.id.clone(),
         ..SourceLabel::default()
     };
@@ -116,6 +117,7 @@ requires = { "dev.gua.overcooked.diylevel" = ">=0.10.0" }
     let rule =
         crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), "daxue").unwrap();
     let label = SourceLabel {
+        network_plan: Default::default(),
         id: declaration.id.clone(),
         name: "社区地图仓库".to_string(),
         ..SourceLabel::default()
@@ -179,6 +181,7 @@ asset = "daxue_v${version}.zip"
         .unwrap();
     let declaration = &doc.map_sources[0];
     let label = SourceLabel {
+        network_plan: Default::default(),
         id: declaration.id.clone(),
         name: "社区地图仓库".to_string(),
         ..SourceLabel::default()

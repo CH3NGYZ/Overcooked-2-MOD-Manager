@@ -1,10 +1,6 @@
 use crate::app_state::AppState;
 use crate::archive;
 use crate::download::DownloadContext;
-use crate::download::planning::asset_proxy_urls;
-use crate::download::planning::plan_asset_download_candidates;
-use crate::download::planning::provider_proxy_entries;
-use crate::download::planning::selected_asset_proxy_mode;
 use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::game;
 use crate::models::{OperationResult, Provider, ProxyMode, RepositoryDownloadMode};
@@ -78,11 +74,6 @@ pub async fn install_repository(
      * 一个字段；等下载完再改就晚了。跟随界面语言，而不是固定用中文原名。
      */
     let display_name = crate::config::localized_repository_name(&repo, locale.as_deref());
-    let selected_proxy_mode = selected_asset_proxy_mode(
-        asset_proxy_mode,
-        &repo.provider,
-        crate::config::current_user_region(),
-    );
     let (
         download_url,
         download_name,
@@ -183,21 +174,20 @@ pub async fn install_repository(
             )
         }
     };
-    let proxy_entries = provider_proxy_entries(&config, &repo.provider, is_raw_file);
-    let proxy_urls = asset_proxy_urls(
-        proxy_entries,
+    let planned = crate::download::planning::plan_repository_download(
+        &repo.provider,
+        repo.kind,
+        &repo.network_plan,
+        crate::config::current_user_region(),
         &download_url,
-        is_raw_file,
-        &repo.branch,
-        &repo.file_path,
-        selected_proxy_mode,
+        is_raw_file.then_some(crate::github_proxies::RawProxyContext {
+            branch: &repo.branch,
+            file_path: &repo.file_path,
+        }),
+        asset_proxy_mode,
         asset_proxy_id.as_deref(),
-    );
-    let candidates = plan_asset_download_candidates(selected_proxy_mode, &download_url, proxy_urls);
-    let candidates = candidates.map_err(|error| {
-        log::warn!("指定代理模式但没有可用的 GitHub 代理：仓库={}", repo.name);
-        error
-    })?;
+    )?;
+    let candidates = planned.candidates;
     log::debug!(
         "下载地址准备完成：仓库={}，模式={}，下载候选数={}，原始文件={}",
         repo.name,
@@ -207,19 +197,13 @@ pub async fn install_repository(
     );
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
-    let racing = candidates.len() > 1;
-    let download_threads = crate::download::planning::file_download_threads(
-        Some(&repo.provider),
-        crate::config::current_user_region(),
-        repo.download_threads,
-        racing,
-    );
+    let download_threads = planned.download_threads;
     log::info!(
         "开始下载仓库文件：仓库={}，平台={:?}，线程数={}，代理策略={:?}",
         repo.name,
         repo.provider,
         download_threads,
-        selected_proxy_mode
+        asset_proxy_mode
     );
     let cache_dir = state.config.cache_dir();
     let temp = try_asset_download_candidates(
@@ -262,6 +246,7 @@ pub async fn install_repository(
             }
         },
         Some(DownloadContext {
+            execution: Some(planned.execution),
             app: Some(&app),
             // 下载进度里显示的名字同样跟随界面语言
             label: &display_name,

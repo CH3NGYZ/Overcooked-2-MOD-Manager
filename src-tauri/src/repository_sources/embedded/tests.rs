@@ -128,8 +128,13 @@ async fn builtin_index_loads_only_declared_sources_and_relative_repository_docum
      * `nickname_i18n`，镜像字段 `nickname` 是由 `normalize_source_nickname`
      * 从表里派生的 —— 直接反序列化拿到的是未归一化的空镜像。
      */
-    let declared_index = parse_document(location.bundled_text().unwrap(), &location).unwrap();
-    let index = load_document(&location).await.unwrap();
+    let declared_index = parse_document(
+        location.bundled_text().unwrap(),
+        &location,
+        &Default::default(),
+    )
+    .unwrap();
+    let index = load_document(&location, &Default::default()).await.unwrap();
     assert!(index.repositories.is_empty());
     assert!(!index.repository_sources.is_empty());
     assert_eq!(
@@ -159,7 +164,7 @@ async fn builtin_index_loads_only_declared_sources_and_relative_repository_docum
         for repository in &mut declared_child.repositories {
             crate::config::normalize_repository_i18n(repository).unwrap();
         }
-        let child = load_document(&child_location)
+        let child = load_document(&child_location, &Default::default())
             .await
             .unwrap_or_else(|error| panic!("{}: {error}", source.url));
         assert!(!child.repositories.is_empty(), "{}", source.url);

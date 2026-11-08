@@ -1,3 +1,4 @@
+use super::NetworkPlanSelection;
 use super::config::default_true;
 use super::relations::{ReleaseRelationOverride, RepositoryRelation, deserialize_relations};
 use super::releases::ReleaseInfo;
@@ -22,6 +23,10 @@ pub struct AssetVersionEntry {
     pub info_version: String,
 }
 
+fn default_map_kind() -> super::RepositoryKind {
+    super::RepositoryKind::Map
+}
+
 fn default_map_provider() -> Provider {
     Provider::Github
 }
@@ -32,6 +37,10 @@ fn default_map_provider() -> Provider {
 /// `author + level_set_name + level_set_name_zh`；两边共用关系类型和下载/刷新管线。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapRepositoryConfig {
+    #[serde(rename = "type", default = "default_map_kind")]
+    pub kind: super::RepositoryKind,
+    #[serde(default, skip_serializing_if = "NetworkPlanSelection::is_empty")]
+    pub network_plan: NetworkPlanSelection,
     /// 稳定 ID。
     ///
     /// 源文档可以不写：首次导入时按「源 ID + 身份」生成并持久化，
@@ -99,7 +108,9 @@ pub struct MapRepositoryConfig {
     /// 比较会让用户永远看到「可更新」，前端改用这一项确认「装的就是最新版」。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_info_version: Option<String>,
-    #[serde(default = "default_download_threads")]
+    /// Legacy input only; request plans are authoritative for downloads.
+    #[allow(dead_code)]
+    #[serde(default = "default_download_threads", skip_serializing)]
     pub download_threads: u32,
     /// 选哪个资产：地图只分发 ZIP。
     #[serde(default)]

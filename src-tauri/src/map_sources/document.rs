@@ -19,6 +19,10 @@ use std::collections::HashSet;
 /// 和「按主题拆成多份子源」两种组织方式都支持。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MapSourceDocument {
+    #[serde(rename = "type", default)]
+    pub kind: Option<crate::models::RepositoryKind>,
+    #[serde(default)]
+    pub network_plan: crate::models::NetworkPlanSelection,
     /// 条目的公共仓库坐标，省略时被逐条继承。
     ///
     /// 「一个 tag 装一个地图集的历史版本」意味着同一份文档里的条目几乎都是
@@ -81,6 +85,8 @@ pub enum MapSourceMode {
 /// 拆成三个 enum 变体只会让 TOML 的写法随模式变形、作者更难写对。
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapSourceDeclaration {
+    #[serde(default)]
+    pub network_plan: crate::models::NetworkPlanSelection,
     pub id: String,
     #[serde(default)]
     pub mode: MapSourceMode,
@@ -139,6 +145,7 @@ fn is_release_asset_document(origin: &SourceLocation) -> bool {
 pub fn parse_document(
     text: &str,
     origin: &SourceLocation,
+    inherited: &crate::models::NetworkPlanSelection,
 ) -> Result<MapSourceDocument, ConfigError> {
     let document: MapSourceDocument = toml::from_str(text).map_err(|error| {
         ConfigError::Invalid(crate::locale_tag::with_params(
@@ -148,6 +155,13 @@ pub fn parse_document(
     })?;
 
     let mut document = document;
+    document.network_plan = document.network_plan.inherit(inherited);
+    if document
+        .kind
+        .is_some_and(|kind| kind != crate::models::RepositoryKind::Map)
+    {
+        return Err(ConfigError::Invalid("proxy.validationFailed".into()));
+    }
     /*
      * `[bundle]` 先于校验生效：条目继承坐标之后，「缺 username/repository」
      * 才真的是作者漏写，而不是被 bundle 补过一轮的假阴性。
@@ -177,12 +191,14 @@ pub fn parse_document(
      * 要求作者同时写 `name` 和 `name_i18n` 只会制造两处不一致。
      */
     for entry in &mut document.maps {
+        entry.network_plan = entry.network_plan.inherit(&document.network_plan);
         fold_i18n_mirror(&mut entry.name, &entry.name_i18n);
         fold_i18n_mirror(&mut entry.group, &entry.group_i18n);
         fold_i18n_mirror(&mut entry.note, &entry.note_i18n);
     }
     // 子源同理：昵称只写多语言表就够，加载时折出单语言镜像随条目落盘
     for child in &mut document.map_sources {
+        child.network_plan = child.network_plan.inherit(&document.network_plan);
         fold_i18n_mirror(&mut child.nickname, &child.nickname_i18n);
         if let Some(map) = child.map.as_mut() {
             fold_i18n_mirror(&mut map.name, &map.name_i18n);
@@ -264,6 +280,15 @@ fn validate_declaration(
             validate_map_entry(&probe, origin)?;
         }
         MapSourceMode::ReleaseTags => {
+            crate::network_policy::NetworkPolicy::shared()
+                .and_then(|policy| {
+                    policy.validate_selection(
+                        &declaration.provider.clone().unwrap_or(Provider::Github),
+                        crate::models::RepositoryKind::Map,
+                        &declaration.network_plan,
+                    )
+                })
+                .map_err(ConfigError::Invalid)?;
             if declaration.username.trim().is_empty() || declaration.repository.trim().is_empty() {
                 return Err(ConfigError::Invalid(crate::locale_tag::with_params(
                     "mapSource.missingCoordinates",
@@ -283,6 +308,7 @@ fn apply_declaration_coordinates(
     map: &mut MapRepositoryConfig,
     declaration: &MapSourceDeclaration,
 ) {
+    map.network_plan = map.network_plan.inherit(&declaration.network_plan);
     if let Some(provider) = declaration.provider.clone() {
         map.provider = provider;
     }
@@ -310,6 +336,18 @@ pub(super) fn validate_map_entry(
     entry: &MapRepositoryConfig,
     origin: &SourceLocation,
 ) -> Result<(), ConfigError> {
+    crate::network_policy::NetworkPolicy::shared()
+        .and_then(|policy| {
+            policy.validate_selection(
+                &entry.provider,
+                crate::models::RepositoryKind::Map,
+                &entry.network_plan,
+            )
+        })
+        .map_err(ConfigError::Invalid)?;
+    if entry.kind != crate::models::RepositoryKind::Map {
+        return Err(ConfigError::Invalid("proxy.validationFailed".into()));
+    }
     let label = map_label(entry);
     if entry.level_set_name.trim().is_empty() {
         return Err(ConfigError::Invalid(crate::locale_tag::with_params(

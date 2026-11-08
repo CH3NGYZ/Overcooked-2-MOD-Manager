@@ -31,6 +31,8 @@ pub(super) fn duplicate_configuration_manager(
 
 pub(super) fn binding_repository() -> crate::models::RepositoryConfig {
     crate::models::RepositoryConfig {
+        network_plan: Default::default(),
+        kind: Default::default(),
         id: "test".into(),
         name: "Test".into(),
         name_i18n: std::collections::BTreeMap::new(),
@@ -139,6 +141,7 @@ relations = [{{ kind = "requires", guid = "base.guid", version = ">=0.10.0" }}]
     crate::map_sources::parse_document(
         &text,
         &crate::repository_sources::SourceLocation::parse("maps.toml").unwrap(),
+        &Default::default(),
     )
     .unwrap()
     .maps

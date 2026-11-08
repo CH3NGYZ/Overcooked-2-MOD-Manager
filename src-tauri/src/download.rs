@@ -50,7 +50,14 @@ pub fn candidate_progress(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DownloadExecution {
+    pub max_parallelism: u32,
+    pub race: bool,
+}
+
 pub struct DownloadContext<'a> {
+    pub execution: Option<DownloadExecution>,
     pub app: Option<&'a AppHandle>,
     pub label: &'a str,
     pub expected_size: Option<u64>,
@@ -190,12 +197,25 @@ where
     C: FnMut() -> bool,
 {
     let app = context.as_ref().and_then(|context| context.app);
+    let mut policy = RacePolicy::default();
+    if let Some(execution) = context.as_ref().and_then(|value| value.execution) {
+        if execution.max_parallelism == 0
+            || execution.max_parallelism > 3
+            || (!execution.race && execution.max_parallelism != 1)
+        {
+            return Err("proxy.validationFailed".into());
+        }
+        policy.parallelism = execution.max_parallelism as usize;
+        if !execution.race {
+            policy.minimum_speed = 0;
+        }
+    }
     race_candidates(
         candidates,
         is_cancelled,
         download,
         context,
-        RacePolicy::default(),
+        policy,
         |progress| archive::emit_progress_event(app, progress),
     )
     .await

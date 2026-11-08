@@ -351,3 +351,60 @@ fn fixed_mode_uses_only_selected_enabled_proxy() {
         );
     }
 }
+
+#[test]
+fn repository_plan_materializes_threads_routes_and_explicit_choice_without_escaping() {
+    use crate::models::{NetworkPlanSelection, RepositoryKind};
+    let selection: NetworkPlanSelection =
+        toml::from_str("mainland = 'qingyuqingxue-map-proxy-only'").unwrap();
+    let url = "https://github.com/QingyuQingxue/OC2-Map-Bundle/releases/download/test/map.zip";
+    let plan = plan_repository_download(
+        &Provider::Github,
+        RepositoryKind::Map,
+        &selection,
+        "chinese_mainland",
+        url,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.candidates.len(), 1);
+    assert_eq!(plan.candidates[0].route, DownloadRoute::Proxy);
+    assert!(!plan.candidates[0].url.starts_with("https://github.com/"));
+    assert_eq!(plan.download_threads, 1);
+    assert!(!plan.execution.race);
+    assert_eq!(plan.execution.max_parallelism, 1);
+    assert!(
+        plan_repository_download(
+            &Provider::Github,
+            RepositoryKind::Map,
+            &selection,
+            "chinese_mainland",
+            url,
+            None,
+            Some(ProxyMode::Direct),
+            None
+        )
+        .is_err()
+    );
+    let selection: NetworkPlanSelection =
+        toml::from_str("international = { raw = { download_threads = 8 } }").unwrap();
+    let plan = plan_repository_download(
+        &Provider::Github,
+        RepositoryKind::Mod,
+        &selection,
+        "international",
+        "https://github.com/user/repo/raw/refs/heads/main/a.dll",
+        Some(crate::github_proxies::RawProxyContext {
+            branch: "main",
+            file_path: "a.dll",
+        }),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.download_threads, 8);
+    assert_eq!(plan.candidates.len(), 1);
+    assert!(!plan.execution.race);
+}

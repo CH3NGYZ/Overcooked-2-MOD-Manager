@@ -7,6 +7,7 @@ mod levels;
 mod maps;
 mod mods;
 mod network;
+mod network_plan;
 mod operations;
 mod publish;
 mod relations;
@@ -53,3 +54,7 @@ pub use repositories::{
 };
 
 pub(crate) use maps::default_snapshot_schema_version;
+
+pub use network_plan::{
+    NetworkPlanSelection, PlanOverride, PlanReference, PlanStep, RepositoryKind, RouteOverride,
+};

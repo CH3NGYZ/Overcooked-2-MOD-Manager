@@ -54,6 +54,58 @@ pub(super) fn api_request_targets<'a>(
     targets
 }
 
+/// Repository plans can narrow the global API list, but never authorize
+/// credentials at a proxy origin. Token grants remain a separate capability.
+pub(super) fn repository_api_targets<'a>(
+    repo: &crate::models::RepositoryConfig,
+    official: &str,
+    token: Option<&'a str>,
+    official_only: bool,
+    proxies: &[GitHubProxy],
+) -> Result<Vec<(String, Option<&'a str>)>, ReleaseError> {
+    use crate::network_policy::{NetworkPolicy, Step};
+    let policy = NetworkPolicy::shared().map_err(ReleaseError::Http)?;
+    let plan = policy
+        .resolve(
+            &repo.provider,
+            repo.kind,
+            crate::config::current_user_region(),
+            &repo.network_plan,
+        )
+        .map_err(ReleaseError::Http)?;
+    let mut targets = Vec::new();
+    for step in &plan.api.route {
+        match step {
+            Step::Official => targets.push((official.to_string(), token)),
+            Step::Proxy { id } => {
+                let proxy = policy
+                    .proxies
+                    .get(id)
+                    .ok_or_else(|| ReleaseError::Http("proxy.validationFailed".into()))?;
+                // Keep legacy runtime proxy refresh for default plans; explicit
+                // source routes use exactly their trusted registry references.
+                let entries = if repo.network_plan.is_empty() {
+                    proxies.to_vec()
+                } else {
+                    vec![proxy.legacy_entry()]
+                };
+                targets.extend(
+                    api_request_targets(official, None, official_only, &entries)
+                        .into_iter()
+                        .filter(|(url, _)| url != official),
+                );
+            }
+            _ => return Err(ReleaseError::Http("proxy.validationFailed".into())),
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    targets.retain(|(url, _)| seen.insert(url.clone()));
+    if targets.is_empty() {
+        return Err(ReleaseError::Http("proxy.validationFailed".into()));
+    }
+    Ok(targets)
+}
+
 pub(super) async fn fetch_release_api_with_retries(
     client: &Client,
     url: &str,

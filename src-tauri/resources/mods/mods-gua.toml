@@ -1,3 +1,5 @@
+type = "mod"
+
 [[repositories]]
 enabled = true
 # 仓库基本信息
@@ -23,7 +25,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -406,7 +407,6 @@ download_mode = "repository_file"
 
 # 仓库文件参数
 branch = "master"
-download_threads = 1
 
 # 仓库资产规则（仅支持具体文件）
 file_path = "bin/Release/OC2ThrowAny.dll"
@@ -481,7 +481,6 @@ download_mode = "repository_file"
 
 # 仓库文件参数
 branch = "master"
-download_threads = 1
 
 # 仓库资产规则（仅支持具体文件）
 file_path = "bin/Release/OC2Jetpack.dll"
@@ -561,7 +560,6 @@ download_mode = "repository_file"
 
 # 仓库文件参数
 branch = "master"
-download_threads = 1
 
 # 仓库资产规则（仅支持具体文件）
 file_path = "bin/Release/OC2ManyRecipes.dll"
@@ -636,7 +634,6 @@ download_mode = "repository_file"
 
 # 仓库文件参数
 branch = "master"
-download_threads = 1
 
 # 仓库资产规则（仅支持具体文件）
 file_path = "bin/Release/OC2HostColor.dll"
@@ -696,7 +693,6 @@ download_mode = "repository_file"
 
 # 仓库文件参数
 branch = "master"
-download_threads = 1
 
 # 仓库资产规则（仅支持具体文件）
 file_path = "bin/Release/OC2Randomizer.dll"
@@ -766,7 +762,6 @@ download_mode = "repository_file"
 
 # 仓库文件参数
 branch = "master"
-download_threads = 1
 
 # 仓库资产规则（仅支持具体文件）
 file_path = "bin/Release/OC2HardHorde.dll"

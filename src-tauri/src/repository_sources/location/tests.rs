@@ -104,7 +104,7 @@ fn absolute_child_source_switches_the_repository_for_its_descendants() {
 id = "github"
 nickname = "GitHub"
 url = "https://github.com/kfyangc/Overcooked2-DIYLevelFastInit/raw/refs/heads/master/config/index.toml"
-"#, &gitee).unwrap();
+"#, &gitee, &Default::default()).unwrap();
     let github = SourceLocation::parse(&parent_document.repository_sources[0].url).unwrap();
     let child_document = parse_document(
         r#"
@@ -114,6 +114,7 @@ nickname = "Mods"
 url = "mods/child.toml"
 "#,
         &github,
+        &Default::default(),
     )
     .unwrap();
     assert_eq!(

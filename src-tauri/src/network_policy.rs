@@ -66,13 +66,10 @@ impl Proxy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Step {
-    Official,
-    Direct,
-    Proxy { id: String },
-}
+pub(crate) use crate::models::PlanStep as Step;
+use crate::models::{
+    NetworkPlanSelection, PlanOverride, PlanReference, RepositoryKind, RouteOverride,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,12 +79,16 @@ pub(crate) struct Route {
     /// Explicitly race this whole route group; otherwise try in listed order.
     #[serde(default)]
     pub race: bool,
+    #[serde(default = "single_thread")]
+    pub download_threads: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RequestPlan {
     pub id: String,
+    #[serde(rename = "type", default)]
+    pub kind: RepositoryKind,
     pub provider: Provider,
     pub access: Access,
     pub api: Route,
@@ -111,6 +112,7 @@ pub(crate) struct NetworkPolicy {
     pub proxies: BTreeMap<String, Proxy>,
     pub plans: BTreeMap<String, RequestPlan>,
     proxy_order: Vec<String>,
+    defaults: Vec<DefaultPlan>,
 }
 
 #[derive(Deserialize)]
@@ -139,9 +141,44 @@ struct ProxyDocument {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlanDocument {
+    #[serde(default)]
+    default_plans: Vec<DefaultPlan>,
     schema_version: u32,
     #[serde(default)]
     request_plans: Vec<RequestPlan>,
+}
+
+fn single_thread() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultPlan {
+    #[serde(rename = "type")]
+    kind: RepositoryKind,
+    provider: Provider,
+    mainland: String,
+    international: String,
+}
+
+impl Route {
+    fn apply(&mut self, patch: Option<&RouteOverride>) {
+        if let Some(patch) = patch {
+            if let Some(route) = &patch.route {
+                self.route = route.clone();
+            }
+            if let Some(value) = patch.race {
+                self.race = value;
+            }
+            if let Some(value) = patch.max_parallelism {
+                self.max_parallelism = value;
+            }
+            if let Some(value) = patch.download_threads {
+                self.download_threads = value;
+            }
+        }
+    }
 }
 
 fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> {
@@ -224,7 +261,85 @@ impl NetworkPolicy {
                 return Err("proxy.validationFailed".into());
             }
         }
+        for default in plans.default_plans {
+            if snapshot
+                .defaults
+                .iter()
+                .any(|item| item.provider == default.provider && item.kind == default.kind)
+            {
+                return Err("proxy.validationFailed".into());
+            }
+            for id in [&default.mainland, &default.international] {
+                if snapshot.plan(id, &default.provider)?.kind != default.kind {
+                    return Err("proxy.validationFailed".into());
+                }
+            }
+            snapshot.defaults.push(default);
+        }
         Ok(snapshot)
+    }
+
+    pub(crate) fn resolve(
+        &self,
+        provider: &Provider,
+        kind: RepositoryKind,
+        region: &str,
+        selection: &NetworkPlanSelection,
+    ) -> Result<RequestPlan, String> {
+        let international = region == crate::config::REGION_INTERNATIONAL;
+        let reference = if international {
+            &selection.international
+        } else {
+            &selection.mainland
+        };
+        let patch: PlanOverride = reference
+            .as_ref()
+            .map(PlanReference::override_value)
+            .unwrap_or_default();
+        let id = if let Some(id) = &patch.id {
+            id.as_str()
+        } else {
+            let default = self
+                .defaults
+                .iter()
+                .find(|item| &item.provider == provider && item.kind == kind)
+                .ok_or("proxy.validationFailed")?;
+            if international {
+                &default.international
+            } else {
+                &default.mainland
+            }
+        };
+        let mut plan = self.plan(id, provider)?.clone();
+        if plan.kind != kind {
+            return Err("proxy.validationFailed".into());
+        }
+        plan.api.apply(patch.api.as_ref());
+        plan.release.apply(patch.release.as_ref());
+        plan.raw.apply(patch.raw.as_ref());
+        validation::plan(self, &plan)?;
+        Ok(plan)
+    }
+
+    pub(crate) fn validate_selection(
+        &self,
+        provider: &Provider,
+        kind: RepositoryKind,
+        selection: &NetworkPlanSelection,
+    ) -> Result<(), String> {
+        for region in ["chinese_mainland", "international"] {
+            self.resolve(provider, kind, region, selection)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn shared() -> Result<&'static Self, String> {
+        static POLICY: std::sync::OnceLock<Result<NetworkPolicy, String>> =
+            std::sync::OnceLock::new();
+        POLICY
+            .get_or_init(Self::bundled)
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     pub(crate) fn plan(&self, id: &str, provider: &Provider) -> Result<&RequestPlan, String> {
@@ -263,29 +378,36 @@ impl NetworkPolicy {
     /// groups; API credential grants and source-specific routes are not implied
     /// by this view. The typed closure is validated before any group is exposed.
     pub(crate) fn bundled_proxy_groups(&self) -> Result<crate::models::GitHubProxyConfig, String> {
-        let entries =
-            |id: &str, provider: &Provider, intent: Intent| -> Result<Vec<GitHubProxy>, String> {
-                self.plan(id, provider)?
-                    .route(intent)?
-                    .route
-                    .iter()
-                    .filter_map(|step| match step {
-                        Step::Proxy { id } => Some(
-                            self.proxies
-                                .get(id)
-                                .map(Proxy::legacy_entry)
-                                .ok_or_else(|| "proxy.validationFailed".to_string()),
-                        ),
-                        _ => None,
-                    })
-                    .collect()
-            };
+        let entries = |provider: &Provider,
+                       region: &str,
+                       intent: Intent|
+         -> Result<Vec<GitHubProxy>, String> {
+            self.resolve(
+                provider,
+                RepositoryKind::Mod,
+                region,
+                &NetworkPlanSelection::default(),
+            )?
+            .route(intent)?
+            .route
+            .iter()
+            .filter_map(|step| match step {
+                Step::Proxy { id } => Some(
+                    self.proxies
+                        .get(id)
+                        .map(Proxy::legacy_entry)
+                        .ok_or_else(|| "proxy.validationFailed".to_string()),
+                ),
+                _ => None,
+            })
+            .collect()
+        };
         Ok(crate::models::GitHubProxyConfig {
-            release_proxies: entries("github-mainland-mod", &Provider::Github, Intent::Release)?,
-            raw_proxies: entries("github-mainland-mod", &Provider::Github, Intent::Raw)?,
-            github_api_proxies: entries("github-public-mod", &Provider::Github, Intent::Api)?,
-            gitee_api_proxies: entries("gitee-public-mod", &Provider::Gitee, Intent::Api)?,
-            gitcode_api_proxies: entries("gitcode-public-mod", &Provider::Gitcode, Intent::Api)?,
+            release_proxies: entries(&Provider::Github, "chinese_mainland", Intent::Release)?,
+            raw_proxies: entries(&Provider::Github, "chinese_mainland", Intent::Raw)?,
+            github_api_proxies: entries(&Provider::Github, "international", Intent::Api)?,
+            gitee_api_proxies: entries(&Provider::Gitee, "international", Intent::Api)?,
+            gitcode_api_proxies: entries(&Provider::Gitcode, "international", Intent::Api)?,
             avatar_proxies: self
                 .proxy_order
                 .iter()

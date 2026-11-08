@@ -211,6 +211,82 @@ pub(crate) fn plan_asset_download_candidates(
     Ok(candidates)
 }
 
+/// Materialized file route. The same resolved plan controls both whole-file
+/// concurrency and per-candidate chunks; source fields cannot override it later.
+pub(crate) struct RepositoryDownloadPlan {
+    pub candidates: Vec<DownloadCandidate>,
+    pub download_threads: u32,
+    pub execution: super::DownloadExecution,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_repository_download(
+    provider: &Provider,
+    kind: crate::models::RepositoryKind,
+    selection: &crate::models::NetworkPlanSelection,
+    region: &str,
+    url: &str,
+    raw: Option<crate::github_proxies::RawProxyContext<'_>>,
+    requested: Option<ProxyMode>,
+    selected_id: Option<&str>,
+) -> Result<RepositoryDownloadPlan, String> {
+    use crate::network_policy::{Intent, NetworkPolicy, Step};
+    let policy = NetworkPolicy::shared()?;
+    let plan = policy.resolve(provider, kind, region, selection)?;
+    let intent = if raw.is_some() {
+        Intent::Raw
+    } else {
+        Intent::Release
+    };
+    let route = plan.route(intent)?;
+    let mut candidates = Vec::new();
+    for step in &route.route {
+        match step {
+            Step::Direct if !matches!(requested, Some(ProxyMode::Fixed)) => {
+                candidates.push(DownloadCandidate {
+                    route: DownloadRoute::Direct,
+                    url: url.into(),
+                })
+            }
+            Step::Proxy { id }
+                if requested != Some(ProxyMode::Direct)
+                    && (requested != Some(ProxyMode::Fixed)
+                        || selected_id == Some(id.as_str())) =>
+            {
+                let proxy = policy.proxies.get(id).ok_or("proxy.validationFailed")?;
+                let expanded = crate::github_proxies::proxy_urls(
+                    &[proxy.legacy_entry()],
+                    url,
+                    raw.is_some(),
+                    raw.as_ref()
+                        .map(|context| crate::github_proxies::RawProxyContext {
+                            branch: context.branch,
+                            file_path: context.file_path,
+                        }),
+                );
+                candidates.extend(expanded.into_iter().map(|url| DownloadCandidate {
+                    route: DownloadRoute::Proxy,
+                    url,
+                }));
+            }
+            _ => {}
+        }
+    }
+    let mut seen = HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.url.clone()));
+    if candidates.is_empty() {
+        return Err("proxy.noGlobalProxy".into());
+    }
+    Ok(RepositoryDownloadPlan {
+        candidates,
+        download_threads: route.download_threads,
+        execution: super::DownloadExecution {
+            max_parallelism: route.max_parallelism,
+            race: route.race,
+        },
+    })
+}
+
 #[cfg(test)]
 #[path = "planning/tests.rs"]
 mod tests;

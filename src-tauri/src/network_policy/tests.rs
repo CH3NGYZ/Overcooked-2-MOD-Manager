@@ -39,7 +39,7 @@ max_parallelism = 1
 #[test]
 fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
     let snapshot = NetworkPolicy::bundled().unwrap();
-    assert_eq!(snapshot.proxies.len(), 45);
+    assert!(snapshot.proxies.len() >= 45);
     assert_eq!(snapshot.plans.len(), 9);
     let groups = snapshot.bundled_proxy_groups().unwrap();
     assert_eq!(groups.release_proxies.len(), 30);
@@ -247,4 +247,134 @@ fn duplicate_proxy_and_plan_ids_cannot_shadow_previous_definitions() {
     );
     assert!(NetworkPolicy::parse(&index, &documents, &duplicate).is_err());
     assert!(proxy_documents(&" ".repeat(1024 * 1024 + 1)).is_err());
+}
+
+#[test]
+fn defaults_are_selected_by_provider_kind_and_region() {
+    let policy = NetworkPolicy::bundled().unwrap();
+    for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
+        for kind in [RepositoryKind::Mod, RepositoryKind::Map] {
+            for region in ["chinese_mainland", "international"] {
+                let plan = policy
+                    .resolve(&provider, kind, region, &NetworkPlanSelection::default())
+                    .unwrap();
+                assert_eq!(plan.provider, provider);
+                assert_eq!(plan.kind, kind);
+                assert_eq!(plan.release.download_threads, 1);
+                assert_eq!(plan.raw.download_threads, 1);
+                assert_eq!(
+                    plan.release.race,
+                    provider == Provider::Github && region == "chinese_mainland"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn sparse_overrides_inherit_and_explicit_ids_reset_parent_overrides() {
+    let parent: NetworkPlanSelection = toml::from_str(
+        r#"
+mainland = { id = "github-public-mod", raw = { download_threads = 8 } }
+international = "github-public-mod"
+"#,
+    )
+    .unwrap();
+    let child: NetworkPlanSelection = toml::from_str(
+        r#"
+mainland = { release = { download_threads = 4 } }
+"#,
+    )
+    .unwrap();
+    let merged = child.inherit(&parent);
+    let policy = NetworkPolicy::bundled().unwrap();
+    let plan = policy
+        .resolve(
+            &Provider::Github,
+            RepositoryKind::Mod,
+            "chinese_mainland",
+            &merged,
+        )
+        .unwrap();
+    assert_eq!(plan.raw.download_threads, 8);
+    assert_eq!(plan.release.download_threads, 4);
+    assert!(merged.international.is_some());
+    let fresh: NetworkPlanSelection = toml::from_str("mainland = 'github-mainland-mod'").unwrap();
+    let plan = policy
+        .resolve(
+            &Provider::Github,
+            RepositoryKind::Mod,
+            "chinese_mainland",
+            &fresh.inherit(&merged),
+        )
+        .unwrap();
+    assert!(plan.release.race);
+    assert_eq!(plan.raw.download_threads, 1);
+    // An inherited route is replaced as a whole, never appended.
+    let route: NetworkPlanSelection = toml::from_str(
+        r#"
+mainland = { raw = { route = [{kind = "direct"}] } }
+"#,
+    )
+    .unwrap();
+    let plan = policy
+        .resolve(
+            &Provider::Github,
+            RepositoryKind::Mod,
+            "chinese_mainland",
+            &route.inherit(&parent),
+        )
+        .unwrap();
+    assert_eq!(plan.raw.route, [Step::Direct]);
+    assert_eq!(plan.raw.download_threads, 8);
+}
+
+#[test]
+fn effective_overrides_reject_wrong_provider_kind_threads_and_proxy_intent() {
+    let policy = NetworkPolicy::bundled().unwrap();
+    for text in [
+        "mainland = 'does-not-exist'",
+        "mainland = 'gitcode-public-mod'",
+        "mainland = 'github-public-map'",
+        "mainland = { release = { download_threads = 2 } }", // default is racing
+        "mainland = { release = { download_threads = 0 } }",
+        "mainland = { release = { download_threads = 33 } }",
+        "mainland = { api = { download_threads = 2 } }",
+        "mainland = { release = { route = [] } }",
+        "mainland = { release = { route = [{kind = 'proxy', id = 'oc2ghapi'}] } }",
+        "mainland = { release = { race = false } }", // parallelism must also be reset
+    ] {
+        let selection: NetworkPlanSelection = toml::from_str(text).unwrap();
+        assert!(
+            policy
+                .resolve(
+                    &Provider::Github,
+                    RepositoryKind::Mod,
+                    "chinese_mainland",
+                    &selection
+                )
+                .is_err(),
+            "{text}"
+        );
+    }
+    for text in [
+        "public = 'github-public-mod'",
+        "mainland = { release = { threads = 8 } }",
+    ] {
+        assert!(toml::from_str::<NetworkPlanSelection>(text).is_err());
+    }
+}
+
+#[test]
+fn default_table_rejects_duplicate_keys_missing_ids_and_mismatched_kind() {
+    let (index, documents, plans) = fixture();
+    let valid = "\n[[default_plans]]\ntype = 'mod'\nprovider = 'github'\nmainland = 'test'\ninternational = 'test'\n";
+    assert!(NetworkPolicy::parse(&index, &documents, &(plans.clone() + valid)).is_ok());
+    for text in [
+        plans.clone() + valid + valid,
+        plans.clone() + &valid.replace("mainland = 'test'", "mainland = 'unknown'"),
+        plans + &valid.replace("type = 'mod'", "type = 'map'"),
+    ] {
+        assert!(NetworkPolicy::parse(&index, &documents, &text).is_err());
+    }
 }

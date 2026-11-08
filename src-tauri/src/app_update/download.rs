@@ -192,6 +192,7 @@ pub(crate) async fn download_verified_installer(
             }
         },
         Some(DownloadContext {
+            execution: None,
             app,
             label: "update.downloadingInstaller",
             expected_size: info.download_size,

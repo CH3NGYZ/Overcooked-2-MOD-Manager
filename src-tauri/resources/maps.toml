@@ -1,3 +1,5 @@
+type = "map"
+
 # Preferred map source. QingyuQingxue is temporarily absent from this active index.
 # Keep maps/maps-qingyuqingxue.toml for restoration; installed maps are unaffected.
 [[map_sources]]

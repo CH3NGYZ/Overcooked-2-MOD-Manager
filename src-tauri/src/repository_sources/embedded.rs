@@ -72,7 +72,7 @@ impl SourceLocation {
     fn parse_bundled_document(&self) -> Result<RepositorySourceDocument, ConfigError> {
         log::debug!("读取内置仓库源文件：{}", safe_log_address(&self.address()));
         let text = self.bundled_text()?;
-        let document = parse_document(text, self);
+        let document = parse_document(text, self, &Default::default());
         match &document {
             Ok(document) => log::debug!(
                 "内置仓库源解析完成：地址={}，仓库={}，子源={}",

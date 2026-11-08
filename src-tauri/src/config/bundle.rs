@@ -93,6 +93,8 @@ fn serialize_repository_bundle(bundle: &RepositoryBundle) -> Result<String, Conf
         append_toml_field(&mut text, "name", &repo.name)?;
         append_toml_translations(&mut text, "name_i18n", &repo.name_i18n)?;
         append_toml_field(&mut text, "provider", &repo.provider)?;
+        append_toml_field(&mut text, "type", &repo.kind)?;
+        append_toml_field(&mut text, "network_plan", &repo.network_plan)?;
         append_toml_field(&mut text, "group", &repo.group)?;
         append_toml_translations(&mut text, "group_i18n", &repo.group_i18n)?;
         if let Some(region) = &repo.region {
@@ -112,14 +114,12 @@ fn serialize_repository_bundle(bundle: &RepositoryBundle) -> Result<String, Conf
                 text.push_str("\n# Release 参数\n");
                 append_toml_field(&mut text, "channel", &repo.channel)?;
                 append_toml_field(&mut text, "max_release_count", &repo.max_release_count)?;
-                append_toml_field(&mut text, "download_threads", &repo.download_threads)?;
                 text.push_str("\n# 版本资产规则\n");
                 append_toml_field(&mut text, "asset_rules", &repo.asset_rules)?;
             }
             RepositoryDownloadMode::RepositoryFile => {
                 text.push_str("\n# 仓库文件参数\n");
                 append_toml_field(&mut text, "branch", &repo.branch)?;
-                append_toml_field(&mut text, "download_threads", &repo.download_threads)?;
                 text.push_str("\n# 仓库资产规则（仅支持具体文件）\n");
                 append_toml_field(&mut text, "file_path", &repo.file_path)?;
             }
@@ -179,6 +179,8 @@ impl ConfigService {
                     .unwrap_or(true)
             })
             .map(|repo| RepositoryExport {
+                network_plan: repo.network_plan.clone(),
+                kind: repo.kind,
                 name: repo.name.clone(),
                 name_i18n: repo.name_i18n.clone(),
                 group: repo.group.clone(),

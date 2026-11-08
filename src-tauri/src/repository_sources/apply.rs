@@ -23,7 +23,7 @@ pub(crate) async fn import_repository_source_into_config(
     // download and apply their own files concurrently. Keep the source itself
     // so the UI can show its error state, but remove stale descendants and
     // repositories instead of restoring them after a failed request.
-    let (source_url, builtin_fallback_available) = {
+    let (source_url, builtin_fallback_available, parent_plan) = {
         let _cache_guard = state.repository_cache.lock().await;
         let _operation_guard = state
             .operation
@@ -80,7 +80,11 @@ pub(crate) async fn import_repository_source_into_config(
             removed_child_source_count,
             removed_repository_count
         );
-        (source_url, builtin_fallback_available && !builtin_fallback)
+        (
+            source_url,
+            builtin_fallback_available && !builtin_fallback,
+            source.network_plan.clone(),
+        )
     };
     let document_url = if builtin_fallback {
         log::warn!(
@@ -101,7 +105,7 @@ pub(crate) async fn import_repository_source_into_config(
         error.to_string()
     })?;
     // 超时由 load_document 内部固定为 SOURCE_DOCUMENT_TIMEOUT（30 秒）
-    let document = match repository_sources::load_document(&location).await {
+    let document = match repository_sources::load_document(&location, &parent_plan).await {
         Ok(document) => document,
         Err(error) => {
             log::error!(
@@ -232,6 +236,7 @@ pub(crate) async fn import_repository_source_into_config(
             existing.nickname_i18n = child.nickname_i18n;
             existing.url = child_url;
             existing.region = child.region.clone();
+            existing.network_plan = child.network_plan.clone();
             existing.builtin = child_builtin;
             continue;
         }
@@ -253,6 +258,7 @@ pub(crate) async fn import_repository_source_into_config(
             child.id.trim().to_string()
         };
         config.repository_sources.push(RepositorySource {
+            network_plan: child.network_plan.clone(),
             id: child_id,
             nickname: child.nickname.trim().to_string(),
             nickname_i18n: child.nickname_i18n,

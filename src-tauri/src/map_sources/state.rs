@@ -95,6 +95,7 @@ pub(crate) fn same_release_binding(
 /// 它们总是一起出现（`attach` 一次写全），拆开容易漏写其中一个。
 #[derive(Debug, Clone, Default)]
 pub(super) struct SourceLabel {
+    pub(super) network_plan: crate::models::NetworkPlanSelection,
     pub(super) id: String,
     pub(super) name: String,
     pub(super) name_i18n: BTreeMap<String, String>,
@@ -103,6 +104,7 @@ pub(super) struct SourceLabel {
 impl SourceLabel {
     /// 把源归属与源名写进条目。
     pub(super) fn attach(&self, map: &mut MapRepositoryConfig) {
+        map.network_plan = map.network_plan.inherit(&self.network_plan);
         map.source_id = Some(self.id.clone());
         map.source_name = self.name.clone();
         map.source_name_i18n = self.name_i18n.clone();

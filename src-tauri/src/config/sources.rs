@@ -16,6 +16,7 @@ pub(crate) fn builtin_repository_sources_for_region(
     // file-relative names inside that index, so they resolve to bundled
     // resources as well; the live index points them at remote raw URLs.
     vec![RepositorySource {
+        network_plan: Default::default(),
         id: crate::repository_sources::DEFAULT_INDEX_ID.into(),
         nickname: "官方仓库源".into(),
         nickname_i18n: [

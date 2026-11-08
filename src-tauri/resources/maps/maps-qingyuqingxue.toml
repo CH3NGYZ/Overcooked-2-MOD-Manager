@@ -1,5 +1,9 @@
+type = "map"
+
 # One release tag identifies one map; metadata comes from the oc2-map declaration.
 [[map_sources]]
+network_plan.mainland = "qingyuqingxue-map-proxy-only"
+network_plan.international = "qingyuqingxue-map-proxy-only"
 id = "community-maps"
 mode = "release-tags"
 provider = "github"

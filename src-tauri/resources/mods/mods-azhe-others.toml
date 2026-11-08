@@ -1,3 +1,5 @@
+type = "mod"
+
 [[repositories]]
 enabled = true
 # 仓库基本信息
@@ -23,7 +25,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -92,7 +93,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -155,7 +155,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -235,7 +234,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -329,7 +327,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -413,7 +410,6 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [
@@ -492,7 +488,6 @@ download_mode = "release"
 # 当前 Release：v1.0.0；后续版本由管理器自动读取。
 channel = "all"
 max_release_count = 10
-download_threads = 1
 
 # 版本资产规则
 asset_rules = [

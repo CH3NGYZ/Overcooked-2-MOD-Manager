@@ -67,10 +67,14 @@ fn legacy_repository_metadata_migrates_into_chinese_maps_and_persists_empty_fiel
     };
     let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
     let mut config = default_config();
-    let export = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
-        .unwrap()
-        .repositories
-        .remove(0);
+    let export = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap()
+    .repositories
+    .remove(0);
     config.repositories = vec![repository_from_export(
         &export,
         "legacy-repository".into(),
@@ -147,7 +151,8 @@ enabled = true
 type = "exact"
 value = "Japan.dll"
 "#;
-    let document = crate::repository_sources::parse_document(text, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(text, &location, &Default::default()).unwrap();
     let export = document.repositories[0].clone();
     assert_eq!(export.name_i18n["ja"], "日本語名");
     assert_eq!(export.group_i18n["ja"], "ツール");

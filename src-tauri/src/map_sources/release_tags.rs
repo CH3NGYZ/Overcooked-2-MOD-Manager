@@ -24,6 +24,8 @@ pub(super) fn declaration_probe(
         "name_i18n": declaration.nickname_i18n,
         "group": declaration.nickname,
         "group_i18n": declaration.nickname_i18n,
+        "type": "map",
+        "network_plan": declaration.network_plan,
         "provider": declaration.provider.clone().unwrap_or(Provider::Github),
         "username": declaration.username.trim(),
         "repository": declaration.repository.trim(),

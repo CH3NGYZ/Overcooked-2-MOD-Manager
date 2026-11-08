@@ -26,7 +26,8 @@ type = "exact"
 value = "Example.dll"
 "#;
     let location = crate::repository_sources::SourceLocation::parse("source.toml").unwrap();
-    let document = crate::repository_sources::parse_document(text, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(text, &location, &Default::default()).unwrap();
     assert_eq!(document.repositories.len(), 1);
     assert_eq!(document.repositories[0].name, "Example");
 }
@@ -41,7 +42,8 @@ url = "https://example.com/others.oc2repo.toml"
 builtin = true
 "#;
     let location = crate::repository_sources::SourceLocation::parse("source.toml").unwrap();
-    let document = crate::repository_sources::parse_document(text, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(text, &location, &Default::default()).unwrap();
     assert!(document.repositories.is_empty());
     assert_eq!(document.repository_sources.len(), 1);
     assert_eq!(document.repository_sources[0].id, "azhe-Others");
@@ -51,6 +53,8 @@ builtin = true
 #[test]
 fn unsafe_install_target_is_rejected() {
     let result = validate_repository(&RepositoryExport {
+        network_plan: Default::default(),
+        kind: Default::default(),
         name: "bad".into(),
         name_i18n: std::collections::BTreeMap::new(),
         group: String::new(),

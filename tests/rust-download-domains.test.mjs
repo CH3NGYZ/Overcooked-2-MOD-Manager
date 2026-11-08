@@ -20,7 +20,7 @@ test('Download root keeps the deep race coordinator and externalizes only its te
   assert.match(download, /^#\[cfg\(test\)\]\s*mod tests;$/m)
   assert.doesNotMatch(download, /^\s*#\[(?:tokio::)?test\]/m)
   assert.match(tests, /^use super::\*;/m)
-  assert.equal([...tests.matchAll(/#\[(?:tokio::)?test\]/g)].length, 12)
+  assert.equal([...tests.matchAll(/#\[(?:tokio::)?test\]/g)].length, 14)
   const files = [
     [resolve(root, 'download.rs'), read('download.rs')],
     ...sourceFiles(resolve(root, 'download'), ['.rs']).map(path => [path, readText(path)]),

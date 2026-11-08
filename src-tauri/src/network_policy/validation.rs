@@ -49,6 +49,10 @@ pub(super) fn plan(snapshot: &NetworkPolicy, plan: &RequestPlan) -> Result<(), S
         let route = plan.route(intent)?;
         if route.route.is_empty()
             || route.route.len() > 128
+            || route.download_threads == 0
+            || route.download_threads > 32
+            || (route.race && route.download_threads != 1)
+            || (intent == Intent::Api && route.download_threads != 1)
             || route.max_parallelism == 0
             || route.max_parallelism > 3
             || (!route.race && route.max_parallelism != 1)

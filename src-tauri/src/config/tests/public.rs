@@ -87,10 +87,14 @@ fn structured_repository_fields_survive_storage_and_public_config_without_urls()
         proxies: Default::default(),
     };
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
-    let export = crate::repository_sources::parse_document(REGION_REPOSITORY, &location)
-        .unwrap()
-        .repositories
-        .remove(0);
+    let export = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap()
+    .repositories
+    .remove(0);
     let mut config = default_config();
     config.repositories = vec![repository_from_export(&export, "structured".into(), false)];
     let stored = toml::to_string_pretty(&config).unwrap();
@@ -111,7 +115,10 @@ fn structured_repository_fields_survive_storage_and_public_config_without_urls()
         "username = \"example\"\nrepository = \"mod\"",
         "url = \"https://github.com/example/mod\"",
     );
-    assert!(crate::repository_sources::parse_document(&old_format, &location).is_err());
+    assert!(
+        crate::repository_sources::parse_document(&old_format, &location, &Default::default())
+            .is_err()
+    );
 }
 
 #[test]

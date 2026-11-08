@@ -46,9 +46,11 @@ url = "shared.toml"
     let mut config = default_config();
     let root = config.repository_sources[0].clone();
     let location = crate::repository_sources::SourceLocation::parse(&root.url).unwrap();
-    let document = crate::repository_sources::parse_document(text, &location).unwrap();
+    let document =
+        crate::repository_sources::parse_document(text, &location, &Default::default()).unwrap();
     for source in document.repository_sources {
         config.repository_sources.push(RepositorySource {
+            network_plan: Default::default(),
             id: source.id,
             nickname: source.nickname,
             nickname_i18n: source.nickname_i18n,
@@ -106,6 +108,7 @@ url = "shared.toml"
 #[test]
 fn official_index_follows_region_and_preserves_custom_sources() {
     let custom = RepositorySource {
+        network_plan: Default::default(),
         id: "regional-custom".into(),
         nickname: "Custom".into(),
         nickname_i18n: Default::default(),
@@ -153,6 +156,7 @@ fn official_index_follows_region_and_preserves_custom_sources() {
 fn builtin_source_migration_removes_obsolete_trees_and_preserves_custom_sources() {
     let mut config = default_config();
     let old_root = RepositorySource {
+        network_plan: Default::default(),
         id: "old-builtin-root".into(),
         nickname: "Old built-in source".into(),
         nickname_i18n: Default::default(),
@@ -260,6 +264,7 @@ fn config_load_applies_builtin_sources_only_to_the_official_root() {
     config.repository_sources = builtin_repository_sources_for_region(current_user_region(), false);
     config.builtin_sources_only = true;
     config.repository_sources.push(RepositorySource {
+        network_plan: Default::default(),
         id: "custom".into(),
         nickname: "自定义".into(),
         nickname_i18n: Default::default(),
@@ -295,6 +300,7 @@ fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_field
         let mut config = default_config();
         let mut expected_sources = config.repository_sources.clone();
         let old_root = RepositorySource {
+            network_plan: Default::default(),
             id: "obsolete-builtin".into(),
             nickname: "内置仓库源".into(),
             nickname_i18n: Default::default(),
@@ -308,6 +314,7 @@ fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_field
         old_child.parent_id = Some(old_root.id.clone());
         // 旧配置只有单语昵称：加载后应自动回填 zh-CN（见 normalize_configured_regions）
         let custom = RepositorySource {
+            network_plan: Default::default(),
             id: "custom-source".into(),
             nickname: "Custom source".into(),
             nickname_i18n: Default::default(),
@@ -323,8 +330,12 @@ fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_field
         expected_sources.push(expected_custom);
         config.repository_sources = vec![old_root.clone(), old_child.clone(), custom.clone()];
         let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
-        let document =
-            crate::repository_sources::parse_document(REGION_REPOSITORY, &location).unwrap();
+        let document = crate::repository_sources::parse_document(
+            REGION_REPOSITORY,
+            &location,
+            &Default::default(),
+        )
+        .unwrap();
         config.repositories = [
             ("obsolete-mod", Some(old_root.id), true),
             ("obsolete-child-mod", Some(old_child.id), true),

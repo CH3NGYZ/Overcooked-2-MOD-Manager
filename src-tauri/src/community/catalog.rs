@@ -65,6 +65,7 @@ pub fn source(provider: &Provider) -> RepositorySource {
         Provider::Gitcode => "GitCode",
     };
     RepositorySource {
+        network_plan: Default::default(),
         id: source_id(provider).into(),
         nickname: crate::locale_tag::with_params(
             "community.labelSimplified",

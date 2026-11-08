@@ -81,3 +81,22 @@ fn api_request_targets_order_direct_token_then_proxy() {
     assert_eq!(targets[0], (official.to_string(), None));
     assert_eq!(targets[1].1, None);
 }
+
+#[test]
+fn repository_api_plan_can_exclude_official_without_forwarding_credentials() {
+    let mut repo = crate::releases::test_support::api_test_repository();
+    repo.provider = Provider::Github;
+    repo.kind = crate::models::RepositoryKind::Map;
+    repo.network_plan = toml::from_str(
+        "mainland = 'qingyuqingxue-map-proxy-only'\ninternational = 'qingyuqingxue-map-proxy-only'",
+    )
+    .unwrap();
+    let official = "https://api.github.com/repos/user/repo/releases?per_page=50&page=2";
+    let targets =
+        repository_api_targets(&repo, official, Some("never-forward-this"), true, &[]).unwrap();
+    assert_eq!(targets.len(), 1);
+    assert!(targets[0].0.starts_with("https://oc2ghapi.ch3ng.top/"));
+    assert!(targets[0].0.contains("page=2"));
+    assert!(targets[0].1.is_none());
+    assert!(!targets[0].0.contains("never-forward-this"));
+}

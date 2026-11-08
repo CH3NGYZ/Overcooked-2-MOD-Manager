@@ -1,14 +1,13 @@
+# One release tag identifies one map; metadata comes from the oc2-map declaration.
 [[map_sources]]
 id = "community-maps"
 mode = "release-tags"
 provider = "github"
 username = "QingyuQingxue"
 repository = "OC2-Map-Bundle"
-page_size = 100
-max_pages = 10
 [map_sources.nickname_i18n]
-zh-CN = "社区地图仓库 (由清雨青雪维护)"
-zh-TW = "社群地圖倉庫"
-en = "Community map repository"
-ko = "커뮤니티 지도 저장소"
-ja = "コミュニティマップリポジトリ"
+zh-CN = "OC2 社区地图合集"
+zh-TW = "OC2 社群地圖合集"
+en = "OC2 community map bundle"
+ko = "OC2 커뮤니티 지도 모음"
+ja = "OC2 コミュニティマップ集"

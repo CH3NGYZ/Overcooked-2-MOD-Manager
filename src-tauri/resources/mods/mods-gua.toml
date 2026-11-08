@@ -23,7 +23,7 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 32
+download_threads = 1
 
 # 版本资产规则
 asset_rules = [

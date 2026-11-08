@@ -23,7 +23,7 @@ download_mode = "release"
 # Release 参数
 channel = "all"
 max_release_count = 10
-download_threads = 32
+download_threads = 1
 
 # 版本资产规则
 # 资产名形如 `v3.10.2_OC2DIYLevelRuntimeWLoader.zip`

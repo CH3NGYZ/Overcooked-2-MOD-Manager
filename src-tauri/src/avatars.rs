@@ -1,14 +1,14 @@
-//! 仓库 owner 头像：磁盘缓存 + 竞速下载 + 同一 owner 单飞。
+//! 仓库 owner 头像：磁盘缓存 + 计划内顺序下载 + 同一 owner 单飞。
 //!
 //! 头像不是关键数据，但有几个约束必须守住：
 //!
 //! 1. **缓存优先，但有有效期**。头像几乎不变，每次都联网既慢又浪费流量；
 //!    落盘后 12 小时内直接读文件、不发请求。超过 12 小时当作未命中重新
 //!    下载（用户偶尔会换头像，永久缓存会让界面一直显示旧图）。
-//! 2. **竞速下载**。GitHub 直连在部分网络下不可达，必须按现有 Raw 代理
-//!    候选竞速 —— 与 MOD 下载共用同一套候选顺序与代理配置，不另写一套。
+//! 2. **顺序下载**。按 request_plans.avatars 先直连再尝试头像代理，
+//!    成功立即停止；候选展开复用文件下载的共享规划器。
 //! 3. **同一 owner 单飞**。一次刷新会同时刷出几十个仓库，其中很多属于
-//!    同一个 owner（例如所有 BepInEx 插件）。若每个仓库各起一次竞速下载，
+//!    同一个 owner（例如所有 BepInEx 插件）。若每个仓库各起一次下载，
 //!    同一个人会被并发下载几十次。这里用进程内的 in-flight 表把同一
 //!    owner 的请求合并成一次，其余调用者等同一个结果。
 //! 4. **失败就回落到平台图标**（由前端处理），不要用占位图或旧图凑数。
@@ -112,30 +112,6 @@ pub fn cache_path(cache_dir: &std::path::Path, provider: &Provider, owner: &str)
         .join(format!("{}.img", cache_key(provider, owner)))
 }
 
-/// 头像的直链候选地址（不含代理）。
-///
-/// GitHub 与 Gitee 都支持 `/{owner}.png` 这个入口，会 302 到真正的头像
-/// 地址（GitHub → `avatars.githubusercontent.com`，Gitee → `foruda.gitee.com`）。
-/// 用这条规律可以省掉一次 API 请求 —— 仓库配置里本来只有 owner 名。
-fn direct_url(provider: &Provider, owner: &str) -> String {
-    let encoded: String = owner.trim().bytes().fold(String::new(), |mut out, byte| {
-        // 只保留 URI 里安全且用户名可能出现的字符，其余百分号编码
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-        out
-    });
-    match provider {
-        Provider::Github => format!("https://github.com/{encoded}.png?size=64"),
-        Provider::Gitee => format!("https://gitee.com/{encoded}.png?size=64"),
-        // No verified owner-only avatar endpoint is available for GitCode yet.
-        // Let the card use its provider icon instead of requesting a guessed URL.
-        Provider::Gitcode => String::new(),
-    }
-}
-
 /// 缓存文件是否仍在有效期内（按修改时间算）。
 ///
 /// 取不到修改时间（文件刚被外部工具改写、文件系统不提供）时按**过期**处理：
@@ -171,11 +147,11 @@ pub fn read_cached(
     Some(bytes)
 }
 
-/// 拿到一个 owner 的头像字节：缓存优先，未命中则竞速下载并落盘。
+/// 拿到一个 owner 的头像字节：缓存优先，未命中则按计划顺序下载并落盘。
 ///
 /// 同一 `(provider, owner)` 并发调用只会产生**一次**实际下载：先到的负责
 /// 下载，其余等待后重新读缓存。这样一次刷新里几十个同 owner 的仓库
-/// 不会各自发起竞速。
+/// 不会各自发起下载。
 pub async fn load(
     config: &AppConfig,
     cache_dir: &std::path::Path,
@@ -230,45 +206,18 @@ async fn wait_for_cache(
     Err("avatar.waitTimeout".into())
 }
 
-/// 按 Raw 代理候选竞速下载，成功后落盘。
+/// 按受信头像计划顺序下载，成功后落盘。
 async fn download_and_store(
     config: &AppConfig,
     cache_dir: &std::path::Path,
     provider: &Provider,
     owner: &str,
 ) -> Result<Vec<u8>, String> {
-    let url = direct_url(provider, owner);
-    if url.is_empty() {
-        return Err("avatar.noSource".into());
-    }
-    let mode = crate::download::planning::selected_asset_proxy_mode(
-        None,
+    let candidates = crate::download::planning::plan_avatar_download(
         provider,
         crate::config::current_user_region(),
-    );
-    /*
-     * 用**头像专用**代理组，不用 raw 组。
-     *
-     * 实测 8 个 raw 代理全部取不到 `github.com/{owner}.png`（403/404）——
-     * 它们的模板都按 `{owner}/{repo}/{branch}/{path}` 设计，头像 URL 没有
-     * 这些分段。真正能取到的是「纯 {url} 包装」型代理，所以头像有独立
-     * 名单 `avatar_proxies`，与其他分组一起由同一份清单替换。
-     *
-     * `is_raw_file = false` 同样必须：raw 模式会把目标重写成
-     * `raw.githubusercontent.com/{owner}/{repo}/main/{path}`，头像拆不出
-     * repo，会拼出 `.../gua248.png//main/` 这种必然失败的地址。
-     */
-    let proxies = crate::download::planning::asset_proxy_urls(
-        &config.github_proxies.avatar_proxies,
-        &url,
-        false,
-        "",
-        "",
-        mode,
-        None,
-    );
-    let candidates =
-        crate::download::planning::ordered_asset_download_candidates(mode, &url, proxies);
+        owner,
+    )?;
     if candidates.is_empty() {
         log::warn!("头像没有可用下载候选：provider={provider:?} owner={owner}");
         return Err("avatar.noSource".into());
@@ -280,13 +229,22 @@ async fn download_and_store(
 
     let client = crate::releases::build_download_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
-    let mut candidates_iter = candidates.into_iter();
+    fetch_and_store_candidates(&client, cache_dir, provider, owner, candidates).await
+}
+
+async fn fetch_and_store_candidates(
+    client: &reqwest::Client,
+    cache_dir: &std::path::Path,
+    provider: &Provider,
+    owner: &str,
+    candidates: Vec<crate::download::DownloadCandidate>,
+) -> Result<Vec<u8>, String> {
     // 逐个尝试而不是竞速：头像是几十 KB 的小文件，竞速的并发开销比省下的
     // 时间更贵，而且一次刷新里会有很多 owner 同时请求，再竞速会把连接数
     // 放大好几倍（用户明确要求「同一 owner 只做一次」，同样适用于彼此）。
     let mut last_error = String::new();
-    while let Some(candidate) = candidates_iter.next() {
-        match fetch_avatar(&client, &candidate.url).await {
+    for candidate in candidates {
+        match fetch_avatar(client, &candidate.url).await {
             Ok(bytes) => {
                 if let Err(error) = store(cache_dir, provider, owner, &bytes) {
                     // 落盘失败不影响本次显示，只是下次还要重新下载
@@ -317,12 +275,12 @@ async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, St
     .map_err(|_| "avatar.requestTimeout".to_string())?
     .map_err(|error| error.without_url().to_string())?
     .error_for_status()
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.without_url().to_string())?;
 
     let bytes = tokio::time::timeout(AVATAR_TIMEOUT, response.bytes())
         .await
         .map_err(|_| "avatar.readTimeout".to_string())?
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.without_url().to_string())?
         .to_vec();
     validate(&bytes).map(|_| bytes)
 }

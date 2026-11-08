@@ -26,3 +26,21 @@ intent = "avatar"
 access = "public"
 template = "https://cdn.crashmc.com/{url}"
 token_transport = "none"
+
+[[proxies]]
+id = "oc2gh-ch3ng-avatar"
+name = "oc2gh.ch3ng.top"
+provider = "github"
+intent = "avatar"
+access = "public"
+template = "https://oc2gh.ch3ng.top/{url_path}"
+token_transport = "none"
+
+[[proxies]]
+id = "cdn-akaere-avatar"
+name = "cdn.akaere.online"
+provider = "github"
+intent = "avatar"
+access = "public"
+template = "https://cdn.akaere.online/{url}"
+token_transport = "none"

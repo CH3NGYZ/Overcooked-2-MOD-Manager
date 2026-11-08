@@ -74,6 +74,9 @@ use crate::models::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Route {
+    /// Owner endpoint for avatars only; repository URLs come from their callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_template: Option<String>,
     pub route: Vec<Step>,
     pub max_parallelism: u32,
     /// Explicitly race this whole route group; otherwise try in listed order.
@@ -100,6 +103,8 @@ pub(crate) struct RequestPlan {
     pub api: Route,
     pub release: Route,
     pub raw: Route,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatars: Option<Route>,
 }
 
 impl RequestPlan {
@@ -108,7 +113,10 @@ impl RequestPlan {
             Intent::Api => Ok(&self.api),
             Intent::Release => Ok(&self.release),
             Intent::Raw => Ok(&self.raw),
-            Intent::Avatar => Err("proxy.validationFailed".into()),
+            Intent::Avatar => self
+                .avatars
+                .as_ref()
+                .ok_or_else(|| "avatar.noSource".into()),
         }
     }
 }

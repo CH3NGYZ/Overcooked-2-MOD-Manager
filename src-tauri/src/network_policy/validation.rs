@@ -61,8 +61,29 @@ pub(super) fn plan(snapshot: &NetworkPolicy, plan: &RequestPlan) -> Result<(), S
     {
         return Err("proxy.validationFailed".into());
     }
-    for intent in [Intent::Api, Intent::Release, Intent::Raw] {
+    for intent in [Intent::Api, Intent::Release, Intent::Raw, Intent::Avatar] {
+        // Older plan documents have no avatar capability.
+        if intent == Intent::Avatar && plan.avatars.is_none() {
+            continue;
+        }
         let route = plan.route(intent)?;
+        if intent == Intent::Avatar {
+            let endpoint = format!(
+                "{}{{owner}}.png",
+                crate::providers::infrastructure(&plan.provider).homepage
+            );
+            if route.url_template.as_deref() != Some(endpoint.as_str())
+                || route.race
+                || route.max_parallelism != 1
+                || route.download_threads != 1
+                || route.route.first() != Some(&Step::Direct)
+                || (plan.provider != Provider::Github && route.route != [Step::Direct])
+            {
+                return Err("proxy.validationFailed".into());
+            }
+        } else if route.url_template.is_some() {
+            return Err("proxy.validationFailed".into());
+        }
         if route.route.is_empty()
             || route.route.len() > 128
             || route.download_threads == 0

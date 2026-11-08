@@ -11,7 +11,7 @@ test('download policy has one implementation in the download domain', () => {
   const definitions = [
     'ordered_asset_download_candidates', 'selected_asset_proxy_mode', 'asset_proxy_urls',
     'provider_proxy_entries', 'plan_remote_download_candidates', 'plan_asset_download_candidates',
-    'classify_remote_url', 'provider_for_remote_url', 'file_download_threads', 'plan_repository_download',
+    'classify_remote_url', 'provider_for_remote_url', 'file_download_threads', 'plan_repository_download', 'plan_avatar_download', 'materialize_route',
   ]
   const files = sourceFiles(root, ['.rs'])
   for (const name of definitions) {
@@ -38,7 +38,7 @@ test('MOD, maps, README and avatars use shared planning without IPC helpers', ()
     ['direct_mod.rs', ['plan_remote_download_candidates', 'classify_remote_url']],
     ['map_sources/transport.rs', ['plan_remote_download_candidates', 'RemoteUrlKind']],
     ['repository_readme.rs', ['asset_proxy_urls', 'ordered_asset_download_candidates']],
-    ['avatars.rs', ['selected_asset_proxy_mode', 'asset_proxy_urls', 'ordered_asset_download_candidates']],
+    ['avatars.rs', ['plan_avatar_download']],
     ['github_proxy_runtime.rs', ['ordered_asset_download_candidates']],
   ]
   for (const [file, names] of consumers) {

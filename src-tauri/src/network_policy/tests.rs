@@ -1,5 +1,61 @@
 use super::*;
 
+#[test]
+fn avatars_validate_endpoint_intent_and_sequential_execution() {
+    let mut policy = NetworkPolicy::bundled().unwrap();
+    let plan = policy
+        .plan("github-public", &Provider::Github)
+        .unwrap()
+        .clone();
+    assert!(validation::plan(&policy, &plan).is_ok());
+    for invalid in [
+        "endpoint",
+        "race",
+        "parallel",
+        "threads",
+        "raw",
+        "official",
+        "proxy-first",
+    ] {
+        let mut bad = plan.clone();
+        let route = bad.avatars.as_mut().unwrap();
+        match invalid {
+            "endpoint" => route.url_template = Some("https://example.com/{owner}.png".into()),
+            "race" => route.race = true,
+            "parallel" => route.max_parallelism = 2,
+            "threads" => route.download_threads = 2,
+            "raw" => route.route.push(Step::Proxy {
+                id: "oc2gh-raw".into(),
+            }),
+            "official" => route.route.push(Step::Official),
+            "proxy-first" => {
+                route.route.remove(0);
+            }
+            _ => unreachable!(),
+        }
+        assert!(validation::plan(&policy, &bad).is_err(), "{invalid}");
+    }
+    let mut bad = plan.clone();
+    bad.release.url_template = plan.avatars.as_ref().unwrap().url_template.clone();
+    assert!(validation::plan(&policy, &bad).is_err());
+    policy
+        .proxies
+        .get_mut("cors-isteed-avatar")
+        .unwrap()
+        .provider = Provider::Gitee;
+    let mut bad = policy
+        .plan("gitee-public", &Provider::Gitee)
+        .unwrap()
+        .clone();
+    bad.avatars.as_mut().unwrap().route.push(Step::Proxy {
+        id: "cors-isteed-avatar".into(),
+    });
+    assert!(
+        validation::plan(&policy, &bad).is_err(),
+        "Gitee must remain direct-only"
+    );
+}
+
 fn fixture() -> (String, BTreeMap<String, String>, String) {
     let index =
         "schema_version = 1\n[[proxy_sources]]\nid = 'api'\nurl = 'proxies/api.toml'".into();

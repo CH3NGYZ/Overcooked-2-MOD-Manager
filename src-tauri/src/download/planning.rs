@@ -230,7 +230,7 @@ pub(crate) fn plan_repository_download(
     requested: Option<ProxyMode>,
     selected_id: Option<&str>,
 ) -> Result<RepositoryDownloadPlan, String> {
-    use crate::network_policy::{Intent, NetworkPolicy, Step};
+    use crate::network_policy::{Intent, NetworkPolicy};
     let policy = NetworkPolicy::shared()?;
     let plan = policy.resolve(provider, kind, region, selection)?;
     let intent = if raw.is_some() {
@@ -239,6 +239,64 @@ pub(crate) fn plan_repository_download(
         Intent::Release
     };
     let route = plan.route(intent)?;
+    let candidates = materialize_route(policy, route, url, raw, requested, selected_id)?;
+    Ok(RepositoryDownloadPlan {
+        candidates,
+        download_threads: route.download_threads,
+        execution: super::DownloadExecution {
+            max_parallelism: route.max_parallelism,
+            race: route.race,
+        },
+    })
+}
+
+/// Avatars belong to a platform owner, so they use the provider/region default
+/// (shared MOD/map plans), not whichever repository happens to request first.
+pub(crate) fn plan_avatar_download(
+    provider: &Provider,
+    region: &str,
+    owner: &str,
+) -> Result<Vec<DownloadCandidate>, String> {
+    use crate::models::{NetworkPlanSelection, RepositoryKind};
+    use crate::network_policy::{Intent, NetworkPolicy};
+    let policy = NetworkPolicy::shared()?;
+    let plan = policy.resolve(
+        provider,
+        RepositoryKind::Mod,
+        region,
+        &NetworkPlanSelection::default(),
+    )?;
+    let route = plan.route(Intent::Avatar)?;
+    let owner = owner.trim();
+    if owner.is_empty() {
+        return Err("avatar.ownerRequired".into());
+    }
+    let encoded = owner.bytes().fold(String::new(), |mut out, byte| {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+        out
+    });
+    let url = route
+        .url_template
+        .as_ref()
+        .ok_or("avatar.noSource")?
+        .replace("{owner}", &encoded);
+    // No raw context: owner PNGs must never be rewritten as repository files.
+    materialize_route(policy, route, &url, None, None, None)
+}
+
+fn materialize_route(
+    policy: &crate::network_policy::NetworkPolicy,
+    route: &crate::network_policy::Route,
+    url: &str,
+    raw: Option<crate::github_proxies::RawProxyContext<'_>>,
+    requested: Option<ProxyMode>,
+    selected_id: Option<&str>,
+) -> Result<Vec<DownloadCandidate>, String> {
+    use crate::network_policy::Step;
     let mut candidates = Vec::new();
     for step in &route.route {
         match step {
@@ -277,14 +335,7 @@ pub(crate) fn plan_repository_download(
     if candidates.is_empty() {
         return Err("proxy.noGlobalProxy".into());
     }
-    Ok(RepositoryDownloadPlan {
-        candidates,
-        download_threads: route.download_threads,
-        execution: super::DownloadExecution {
-            max_parallelism: route.max_parallelism,
-            race: route.race,
-        },
-    })
+    Ok(candidates)
 }
 
 #[cfg(test)]

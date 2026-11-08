@@ -1,5 +1,11 @@
 use super::*;
 
+fn direct_url(provider: &Provider, owner: &str) -> String {
+    crate::download::planning::plan_avatar_download(provider, "international", owner).unwrap()[0]
+        .url
+        .clone()
+}
+
 #[test]
 fn avatar_cache_key_separates_providers_and_ignores_case() {
     let gh = cache_key(&Provider::Github, "BepInEx");
@@ -86,12 +92,16 @@ fn avatar_cache_expires_after_twelve_hours() {
 #[test]
 fn direct_url_uses_the_platform_owner_endpoint() {
     assert_eq!(
+        direct_url(&Provider::Gitcode, "CH3NGY2"),
+        "https://gitcode.com/CH3NGY2.png"
+    );
+    assert_eq!(
         direct_url(&Provider::Github, "BepInEx"),
-        "https://github.com/BepInEx.png?size=64"
+        "https://github.com/BepInEx.png"
     );
     assert_eq!(
         direct_url(&Provider::Gitee, "ch3ngyz"),
-        "https://gitee.com/ch3ngyz.png?size=64"
+        "https://gitee.com/ch3ngyz.png"
     );
 }
 
@@ -102,6 +112,129 @@ fn unsafe_owner_characters_are_encoded() {
     assert!(!url.contains(' '), "{url}");
     assert!(!url.contains("/c"), "斜杠应被编码：{url}");
     assert!(url.contains("%20"), "{url}");
+}
+
+#[test]
+fn avatar_plans_use_only_matching_proxies_in_both_regions() {
+    use crate::archive::DownloadRoute;
+    use crate::download::planning::plan_avatar_download;
+    for region in ["international", "chinese_mainland"] {
+        for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
+            let candidates = plan_avatar_download(&provider, region, "ch3ngyz").unwrap();
+            assert!(matches!(candidates[0].route, DownloadRoute::Direct));
+            if provider == Provider::Github {
+                assert!(candidates.len() > 1);
+                for candidate in &candidates[1..] {
+                    assert!(matches!(candidate.route, DownloadRoute::Proxy));
+                    assert!(!candidate.url.contains("raw.githubusercontent.com"));
+                    assert!(!candidate.url.contains("//main"));
+                    assert!(candidate.url.ends_with("/ch3ngyz.png"));
+                }
+                assert!(candidates.iter().any(|candidate| candidate.url
+                    == "https://cdn.akaere.online/https://github.com/ch3ngyz.png"));
+                assert!(
+                    candidates
+                        .iter()
+                        .any(|candidate| candidate.url == "https://oc2gh.ch3ng.top/ch3ngyz.png")
+                );
+            } else {
+                assert_eq!(candidates.len(), 1, "{provider:?}");
+            }
+        }
+    }
+    assert!(plan_avatar_download(&Provider::Github, "international", " ").is_err());
+}
+
+/// Exercise the actual HTTP/validation/cache chain: 200 HTML must fall through,
+/// a valid second image wins, and neither the third URL nor a cache hit connects.
+#[tokio::test]
+async fn sequential_avatar_fetch_stops_after_valid_image_and_reuses_cache() {
+    use crate::archive::DownloadRoute;
+    use crate::download::DownloadCandidate;
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let recorded = paths.clone();
+    let (stop, stopped) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline && stopped.try_recv().is_err() {
+            let (mut socket, _) = match listener.accept() {
+                Ok(pair) => pair,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            socket.set_nonblocking(false).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") && request.len() < 8192 {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap().to_owned();
+            recorded.lock().unwrap().push(path.clone());
+            let body: &[u8] = if path == "/first" {
+                b"<html>proxy failed</html>"
+            } else {
+                b"\x89PNG\r\n\x1a\npayload"
+            };
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            socket.write_all(body).unwrap();
+        }
+    });
+    let cache = std::env::temp_dir().join(format!(
+        "oc2-avatar-http-{}-{}",
+        std::process::id(),
+        address.port()
+    ));
+    std::fs::create_dir(&cache).unwrap();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let candidates = ["first", "second", "third"]
+        .into_iter()
+        .map(|path| DownloadCandidate {
+            route: DownloadRoute::Direct,
+            url: format!("http://{address}/{path}"),
+        })
+        .collect();
+    let bytes =
+        fetch_and_store_candidates(&client, &cache, &Provider::Gitcode, "owner", candidates)
+            .await
+            .unwrap();
+    assert!(bytes.starts_with(b"\x89PNG"));
+    assert_eq!(
+        load(
+            &crate::config::default_config(),
+            &cache,
+            &Provider::Gitcode,
+            "owner"
+        )
+        .await
+        .unwrap(),
+        bytes
+    );
+    stop.send(()).unwrap();
+    server.join().unwrap();
+    assert_eq!(*paths.lock().unwrap(), ["/first", "/second"]);
+    std::fs::remove_dir_all(cache).unwrap();
 }
 
 #[test]
@@ -186,8 +319,7 @@ fn avatar_candidates_are_not_rewritten_into_raw_paths() {
     assert!(
         avatar_mode
             .iter()
-            .any(|candidate| candidate
-                == "https://wrap.example/https://github.com/gua248.png?size=64"),
+            .any(|candidate| candidate == "https://wrap.example/https://github.com/gua248.png"),
         "纯包装模板必须原样渲染：{avatar_mode:?}"
     );
 }

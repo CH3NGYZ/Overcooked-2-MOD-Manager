@@ -35,6 +35,10 @@ max_parallelism = 1
 download_threads = 1
 route = [{ kind = "direct" }]
 max_parallelism = 1
+[request_plans.avatars]
+url_template = "https://github.com/{owner}.png"
+route = [{ kind = "direct" }, { kind = "proxy", id = "cors-isteed-avatar" }, { kind = "proxy", id = "ghp-keleyaa-avatar" }, { kind = "proxy", id = "cdn-crashmc-avatar" }, { kind = "proxy", id = "oc2gh-ch3ng-avatar" }, { kind = "proxy", id = "cdn-akaere-avatar" }]
+max_parallelism = 1
 
 [[request_plans]]
 id = "github-mainland"
@@ -55,6 +59,10 @@ download_threads = 1
 route = [{ kind = "direct" }, { kind = "proxy", id = "wget-la-raw" }, { kind = "proxy", id = "hk-gh-proxy-raw" }, { kind = "proxy", id = "ghfast-raw" }, { kind = "proxy", id = "gh-catmak-raw" }, { kind = "proxy", id = "fastly-jsdelivr" }, { kind = "proxy", id = "cdn-gh-proxy-raw" }, { kind = "proxy", id = "g-blfrp-raw" }, { kind = "proxy", id = "oc2gh-raw" }]
 race = true
 max_parallelism = 3
+[request_plans.avatars]
+url_template = "https://github.com/{owner}.png"
+route = [{ kind = "direct" }, { kind = "proxy", id = "cors-isteed-avatar" }, { kind = "proxy", id = "ghp-keleyaa-avatar" }, { kind = "proxy", id = "cdn-crashmc-avatar" }, { kind = "proxy", id = "oc2gh-ch3ng-avatar" }, { kind = "proxy", id = "cdn-akaere-avatar" }]
+max_parallelism = 1
 
 [[request_plans]]
 id = "gitee-public"
@@ -71,6 +79,10 @@ route = [{ kind = "direct" }]
 max_parallelism = 1
 [request_plans.raw]
 download_threads = 1
+route = [{ kind = "direct" }]
+max_parallelism = 1
+[request_plans.avatars]
+url_template = "https://gitee.com/{owner}.png"
 route = [{ kind = "direct" }]
 max_parallelism = 1
 
@@ -91,6 +103,10 @@ max_parallelism = 1
 download_threads = 1
 route = [{ kind = "direct" }]
 max_parallelism = 1
+[request_plans.avatars]
+url_template = "https://gitcode.com/{owner}.png"
+route = [{ kind = "direct" }]
+max_parallelism = 1
 
 [[request_plans]]
 id = "qingyuqingxue-map-proxy-only"
@@ -107,4 +123,8 @@ max_parallelism = 1
 [request_plans.raw]
 download_threads = 1
 route = [{ kind = "proxy", id = "oc2gh-raw" }]
+max_parallelism = 1
+[request_plans.avatars]
+url_template = "https://github.com/{owner}.png"
+route = [{ kind = "direct" }, { kind = "proxy", id = "cors-isteed-avatar" }, { kind = "proxy", id = "ghp-keleyaa-avatar" }, { kind = "proxy", id = "cdn-crashmc-avatar" }, { kind = "proxy", id = "oc2gh-ch3ng-avatar" }, { kind = "proxy", id = "cdn-akaere-avatar" }]
 max_parallelism = 1

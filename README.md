@@ -45,6 +45,21 @@ network_plan.international = { id = "github-public", release = { download_thread
 
 API 路由同样按所选计划排列；未授权的代理请求保持匿名，源配置不能授予转发 Token 的权限。当前新计划闭包随应用内置；远端完整闭包热更新和代理凭据授权仍按待做计划后续推进，修改 Repos 本地文件不会直接改变已发布客户端。
 
+### 头像请求
+
+头像也是计划的子策略，写在同一个 `[[request_plans]]` 的 `[request_plans.avatars]` 下，与 `api`、`release`、`raw` 同级。以下片段应放在已有 GitHub 计划内：
+
+```toml
+[request_plans.avatars]
+url_template = "https://github.com/{owner}.png"
+route = [{ kind = "direct" }, { kind = "proxy", id = "cdn-akaere-avatar" }]
+max_parallelism = 1
+```
+
+`url_template` 固定为对应平台的 `https://github.com/{owner}.png`、`https://gitcode.com/{owner}.png` 或 `https://gitee.com/{owner}.png`，用户名按路径段编码。GitHub 先直连，再按 route 顺序尝试 `intent = "avatar"` 的代理，成功立即停止；Gitee、GitCode 只允许直连。头像不竞速、不分片，`race` 省略或为 false，`download_threads` 省略或为 1，`max_parallelism` 必须为 1。不能引用 Raw/Release/API 代理。
+
+头像按平台与用户名共享，使用该平台当前地区默认 MOD 计划的 avatars 子表；当前 MOD/map 共用计划，因此两类仓库显示相同头像。仓库的局部 `network_plan` 覆盖仍适用于 API/Release/Raw，不改变共享头像策略。缺少 avatars 的旧计划可读取，但没有头像下载能力。头像保留 12 小时磁盘缓存与同用户名请求合并，失败时显示平台图标。
+
 ## 仓库源和导出配置的区别
 
 仓库源是一个供程序在线读取的 TOML 文件，可以包含一个或多个 `[[repositories]]` 条目，也可以通过 `[[repository_sources]]` 条目继续声明其他仓库源。程序读取仓库源后，会保存并刷新其中的仓库源，再读取这些子仓库源中的仓库。

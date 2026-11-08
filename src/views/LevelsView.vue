@@ -41,6 +41,7 @@ import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetCardExpansion } from '../composables/useLevelSetCardExpansion'
+import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
 import { busyReader, useLevelSetsExternalChange } from '../composables/useLevelSetsExternalChange'
 import LevelSetGroupBody from '../components/LevelSetGroupBody.vue'
 import LevelSetGroupHeader from '../components/LevelSetGroupHeader.vue'
@@ -238,20 +239,12 @@ const groups = computed(() => buildLevelSetGroups(
 ))
 
 const allGroupKeys = computed(() => groups.value.map((group) => group.key))
-/** 默认全部展开：新出现的分组自动展开，用户的折叠选择单独记住。 */
-const collapsedGroups = ref<string[]>([])
-/** 筛选时（搜索或状态）强制全展开：命中卡不能藏在收起的作者分组后面。 */
-const groupsExpanded = computed(() =>
-  visibility.forceExpand.value
-    ? allGroupKeys.value
-    : allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
-)
-function onGroupsExpanded(names: string[]) {
-  // 筛选期间的折叠不落库，清空后用户原本的折叠状态才不会丢
-  if (visibility.ignoringCollapse()) return
-  const open = new Set(names)
-  collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
-}
+const {
+  expandedKeys: groupsExpanded,
+  onExpanded: onGroupsExpanded,
+  isCollapsed: isLocalGroupCollapsed,
+  expandGroup: expandLocalGroup,
+} = useLocalGroupExpansion(allGroupKeys, visibility.forceExpand, visibility.ignoringCollapse)
 
 /**
  * 跨页跳转的落点如果落在收起的组里，先把那个组展开。
@@ -267,8 +260,8 @@ function expandGroupForHighlight() {
   const hit = sets.value.find((set) => focusIdOf(set) === id)
   if (!hit) return
   const key = levelSetGroup(hit, maps.value).key
-  if (!collapsedGroups.value.includes(key)) return
-  collapsedGroups.value = collapsedGroups.value.filter((value) => value !== key)
+  if (!isLocalGroupCollapsed(key)) return
+  expandLocalGroup(key)
 }
 watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 

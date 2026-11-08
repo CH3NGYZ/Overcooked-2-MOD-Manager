@@ -10,6 +10,10 @@ const levelProjection = read('src/levelSetGroups.ts')
 const levelStatusSummary = read('src/levelSetStatusSummary.ts')
 
 test('both local management pages delegate group projection to pure domain modules', () => {
+  assert.match(modsView, /useLocalGroupExpansion\(/)
+  assert.match(modsView, /expandedKeys: groupsExpanded/)
+  assert.match(modsView, /onExpanded: onGroupsExpanded/)
+  assert.doesNotMatch(modsView, /const collapsedGroups = ref<string\[\]>\(\[\]\)/)
   assert.match(modsView, /buildLocalModGroups\(/)
   assert.match(modsView, /localModStatusUnits\(groups\.value\)/)
   assert.match(modsView, /summarizeLocalModStatuses\(statusUnitNodes\.value\)/)
@@ -18,6 +22,10 @@ test('both local management pages delegate group projection to pure domain modul
   assert.match(modsView, /filterLocalModGroups\(groups\.value/)
   assert.doesNotMatch(modsView, /function modCategory\(|interface StatusUnitNode|const groups = computed<ModGroupNode\[\]>\(\(\) => \{/)
 
+  assert.match(levelsView, /useLocalGroupExpansion\(/)
+  assert.match(levelsView, /isCollapsed: isLocalGroupCollapsed/)
+  assert.match(levelsView, /expandGroup: expandLocalGroup/)
+  assert.doesNotMatch(levelsView, /const collapsedGroups = ref<string\[\]>\(\[\]\)/)
   assert.match(levelsView, /buildLevelSetGroups\(/)
   assert.match(levelsView, /summarizeLevelSetTags\(sortedSets\.value, tagsOf\)/)
   assert.match(levelsView, /summarizeLevelSetToggleStatus\(sortedSets\.value\)/)

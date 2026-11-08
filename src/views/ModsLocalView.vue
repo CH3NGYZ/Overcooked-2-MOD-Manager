@@ -63,6 +63,7 @@ import { useRepositoryPreview } from '../composables/useRepositoryPreview'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useModRemoval } from '../composables/useModRemoval'
 import { useModsLocalCardExpansion } from '../composables/useModsLocalCardExpansion'
+import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
 import type { InstalledMod, Repository } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
@@ -506,20 +507,11 @@ const groups = computed<ModGroupNode[]>(() => buildLocalModGroups({
 }))
 
 const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))
-/** 默认全部展开：新出现的分类自动展开，用户的折叠选择单独记住。 */
-const collapsedGroups = ref<string[]>([])
-/** 筛选时（搜索或状态）强制全展开：命中卡不能藏在收起的分类后面。 */
-const groupsExpanded = computed(() =>
-  visibility.forceExpand.value
-    ? allGroupKeys.value
-    : allGroupKeys.value.filter((key) => !collapsedGroups.value.includes(key)),
-)
-function onGroupsExpanded(names: string[]) {
-  // 筛选期间的折叠不落库，清空后用户原本的折叠状态才不会丢
-  if (visibility.ignoringCollapse()) return
-  const open = new Set(names)
-  collapsedGroups.value = allGroupKeys.value.filter((key) => !open.has(key))
-}
+const {
+  expandedKeys: groupsExpanded,
+  onExpanded: onGroupsExpanded,
+  expandGroup: expandLocalGroup,
+} = useLocalGroupExpansion(allGroupKeys, visibility.forceExpand, visibility.ignoringCollapse)
 
 /**
  * 页头聚合标签：按状态汇总整页的**展示单元**数量。
@@ -611,9 +603,7 @@ function locateConflict(target: InstalledMod) {
   const groupKey = groups.value.find((group) =>
     group.packages.some((pkg) => pkg.mods.some((mod) => mod.dll_file === target.dll_file)),
   )?.key
-  if (groupKey && collapsedGroups.value.includes(groupKey)) {
-    collapsedGroups.value = collapsedGroups.value.filter((value) => value !== groupKey)
-  }
+  if (groupKey) expandLocalGroup(groupKey)
   window.setTimeout(() => {
     revealCard(() =>
       document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),

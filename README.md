@@ -12,17 +12,31 @@
 type = "mod"
 
 [network_plan]
-mainland = "github-mainland-mod"
-international = "github-public-mod"
+mainland = "github-mainland"
+international = "github-public"
 ```
 
-地区键使用 `mainland`、`international`；`github-public-mod` 中的 public 是计划名的一部分。未写的地区自动取默认表：GitHub 中国大陆使用 `github-mainland-mod/map`，国际地区使用 `github-public-mod/map`；Gitee、GitCode 两地区分别使用各自的 `gitee-public-mod/map`、`gitcode-public-mod/map`。
+地区键使用 `mainland`、`international`；`github-public` 中的 public 是计划名的一部分。未写的地区自动取默认表：GitHub 中国大陆使用 `github-mainland`，国际地区使用 `github-public`；Gitee、GitCode 两地区分别使用各自的 `gitee-public`、`gitcode-public`。
+
+`default_plans` 和 `request_plans` 的 `type` 支持列表：相同策略可写 `type = ["mod", "map"]`，同时适用于 MOD 和地图。旧的 `type = "mod"` / `"map"` 单字符串仍可读取。源文档和具体仓库自身的 `type` 继续表示单一职责。
+
+```toml
+[[default_plans]]
+type = ["mod", "map"]
+provider = "github"
+mainland = "github-mainland"
+international = "github-public"
+```
+
+当前三平台的公开 MOD/地图合用四份计划（GitHub 分大陆和国际）；清雨青雪地图的代理专用计划保持 `type = ["map"]` 并独立引用。以后某类仓库需要不同策略时，再建立对应类型的计划，并调整默认映射或源级引用。同 provider 的默认映射类型不能重叠，所引用计划必须支持映射中的全部类型；空列表、重复类型和未知类型会被拒绝。
+
+合并后的计划使用不带 mod/map 后缀的 ID。计划的 `aliases` 保存旧 `*-mod`、`*-map` ID，已有源引用仍能解析并继续局部覆盖，不保留重复计划；别名与计划 ID 使用同一命名空间，不能冲突。
 
 源、子源和具体仓库均可设置 `network_plan`；优先级为具体仓库、最近源/父源、默认表。地区值既可为字符串计划 ID，也可为对象。例如在一个 `[[repositories]]` 条目内：
 
 ```toml
-network_plan.mainland = "github-mainland-mod"
-network_plan.international = { id = "github-public-mod", release = { download_threads = 4 } }
+network_plan.mainland = "github-mainland"
+network_plan.international = { id = "github-public", release = { download_threads = 4 } }
 ```
 
 也可以只写 `network_plan.international.release.download_threads = 4`，继承已有计划并覆盖这一项。未写的地区、策略和字段继续继承；显式写 `id` 则从该计划重新开始，不继承父源的局部覆盖。`route` 数组整体替换。代理只能引用受信清单中的 ID，源不能定义全局代理。

@@ -218,7 +218,7 @@ fn network_plan_changes_do_not_change_repository_identity() {
     let export = &mut document.repositories[0];
     let before = crate::config::export_key(export);
     export.network_plan = toml::from_str(
-        "international = { id = 'github-public-mod', release = { download_threads = 8 } }",
+        "international = { id = 'github-public', release = { download_threads = 8 } }",
     )
     .unwrap();
     assert_eq!(before, crate::config::export_key(export));

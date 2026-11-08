@@ -225,8 +225,8 @@ fn document_kind_and_network_plan_defaults_survive_entry_and_child_projection() 
     let location = SourceLocation::parse("mods.toml").unwrap();
     let text = r#"
 type = "mod"
-network_plan.mainland = "github-public-mod"
-network_plan.international = "github-public-mod"
+network_plan.mainland = "github-public"
+network_plan.international = "github-public"
 [[repositories]]
 name_i18n.zh-CN = "plan test"
 group_i18n.zh-CN = ""
@@ -254,7 +254,7 @@ url = "mods/child.toml"
             &entry.network_plan,
         )
         .unwrap();
-    assert_eq!(plan.id, "github-public-mod");
+    assert_eq!(plan.id, "github-public");
     assert_eq!(plan.release.download_threads, 4);
     let child = policy
         .resolve(
@@ -264,7 +264,7 @@ url = "mods/child.toml"
             &doc.repository_sources[0].network_plan,
         )
         .unwrap();
-    assert_eq!(child.id, "github-public-mod");
+    assert_eq!(child.id, "github-public");
     assert_eq!(child.release.download_threads, 1);
     assert!(
         parse_document(
@@ -278,7 +278,7 @@ url = "mods/child.toml"
 
 #[test]
 fn sparse_child_override_is_validated_after_inheriting_the_parent_plan() {
-    let parent = toml::from_str("mainland = 'github-public-mod'").unwrap();
+    let parent = toml::from_str("mainland = 'github-public'").unwrap();
     let text = r#"type = "mod"
 network_plan.mainland.release.download_threads = 4
 [[repositories]]
@@ -304,6 +304,6 @@ asset_rules = [{ type = "exact", value = "mod.dll" }]
             &entry.network_plan,
         )
         .unwrap();
-    assert_eq!(plan.id, "github-public-mod");
+    assert_eq!(plan.id, "github-public");
     assert_eq!(plan.release.download_threads, 4);
 }

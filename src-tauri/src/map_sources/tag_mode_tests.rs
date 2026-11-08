@@ -469,8 +469,8 @@ asset_rules = [{ type = "exact", value = "a.zip" }]
 fn map_document_inherits_plans_and_release_probe_keeps_map_role() {
     let text = r#"
 type = "map"
-network_plan.mainland = "github-public-map"
-network_plan.international = "github-public-map"
+network_plan.mainland = "github-public"
+network_plan.international = "github-public"
 [[maps]]
 provider = "github"
 username = "u"
@@ -510,9 +510,9 @@ repository = "r"
             &child.network_plan,
         )
         .unwrap();
-    assert_eq!(plan.id, "github-public-map");
-    let parent = toml::from_str("mainland = 'github-public-map'").unwrap();
-    let sparse = text.replace("network_plan.mainland = \"github-public-map\"\n", "");
+    assert_eq!(plan.id, "github-public");
+    let parent = toml::from_str("mainland = 'github-public'").unwrap();
+    let sparse = text.replace("network_plan.mainland = \"github-public\"\n", "");
     let inherited = parse_document(&sparse, &origin, &parent).unwrap();
     assert_eq!(
         inherited.maps[0].network_plan,

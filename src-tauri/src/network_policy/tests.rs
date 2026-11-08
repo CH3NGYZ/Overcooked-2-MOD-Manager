@@ -40,7 +40,7 @@ max_parallelism = 1
 fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
     let snapshot = NetworkPolicy::bundled().unwrap();
     assert!(snapshot.proxies.len() >= 45);
-    assert_eq!(snapshot.plans.len(), 9);
+    assert_eq!(snapshot.plans.len(), 5);
     let groups = snapshot.bundled_proxy_groups().unwrap();
     assert_eq!(groups.release_proxies.len(), 30);
     assert_eq!(groups.raw_proxies.len(), 8);
@@ -64,14 +64,8 @@ fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
         assert_eq!(plan.release.max_parallelism, 1);
         assert!(!plan.release.race);
     }
-    assert!(
-        snapshot
-            .plan("github-public-mod", &Provider::Gitee)
-            .is_err()
-    );
-    let mainland = snapshot
-        .plan("github-mainland-mod", &Provider::Github)
-        .unwrap();
+    assert!(snapshot.plan("github-public", &Provider::Gitee).is_err());
+    let mainland = snapshot.plan("github-mainland", &Provider::Github).unwrap();
     assert!(mainland.release.race);
     assert_eq!(mainland.release.max_parallelism, 3);
     assert!(!mainland.release.route.contains(&Step::Proxy {
@@ -259,7 +253,7 @@ fn defaults_are_selected_by_provider_kind_and_region() {
                     .resolve(&provider, kind, region, &NetworkPlanSelection::default())
                     .unwrap();
                 assert_eq!(plan.provider, provider);
-                assert_eq!(plan.kind, kind);
+                assert!(plan.kinds.contains(&kind));
                 assert_eq!(plan.release.download_threads, 1);
                 assert_eq!(plan.raw.download_threads, 1);
                 assert_eq!(
@@ -275,8 +269,8 @@ fn defaults_are_selected_by_provider_kind_and_region() {
 fn sparse_overrides_inherit_and_explicit_ids_reset_parent_overrides() {
     let parent: NetworkPlanSelection = toml::from_str(
         r#"
-mainland = { id = "github-public-mod", raw = { download_threads = 8 } }
-international = "github-public-mod"
+mainland = { id = "github-public", raw = { download_threads = 8 } }
+international = "github-public"
 "#,
     )
     .unwrap();
@@ -299,7 +293,7 @@ mainland = { release = { download_threads = 4 } }
     assert_eq!(plan.raw.download_threads, 8);
     assert_eq!(plan.release.download_threads, 4);
     assert!(merged.international.is_some());
-    let fresh: NetworkPlanSelection = toml::from_str("mainland = 'github-mainland-mod'").unwrap();
+    let fresh: NetworkPlanSelection = toml::from_str("mainland = 'github-mainland'").unwrap();
     let plan = policy
         .resolve(
             &Provider::Github,
@@ -334,8 +328,8 @@ fn effective_overrides_reject_wrong_provider_kind_threads_and_proxy_intent() {
     let policy = NetworkPolicy::bundled().unwrap();
     for text in [
         "mainland = 'does-not-exist'",
-        "mainland = 'gitcode-public-mod'",
-        "mainland = 'github-public-map'",
+        "mainland = 'gitcode-public'",
+        "mainland = 'qingyuqingxue-map-proxy-only'",
         "mainland = { release = { download_threads = 2 } }", // default is racing
         "mainland = { release = { download_threads = 0 } }",
         "mainland = { release = { download_threads = 33 } }",
@@ -358,7 +352,7 @@ fn effective_overrides_reject_wrong_provider_kind_threads_and_proxy_intent() {
         );
     }
     for text in [
-        "public = 'github-public-mod'",
+        "public = 'github-public'",
         "mainland = { release = { threads = 8 } }",
     ] {
         assert!(toml::from_str::<NetworkPlanSelection>(text).is_err());
@@ -377,4 +371,139 @@ fn default_table_rejects_duplicate_keys_missing_ids_and_mismatched_kind() {
     ] {
         assert!(NetworkPolicy::parse(&index, &documents, &text).is_err());
     }
+}
+
+#[test]
+fn shared_type_lists_cover_both_roles_and_legacy_scalar_types_still_work() {
+    let (index, documents, plans) = fixture();
+    let shared = plans.replace(
+        "provider = \"github\"",
+        "type = [\"mod\", \"map\"]\nprovider = \"github\"",
+    ) + "\n[[default_plans]]\ntype = ['mod', 'map']\nprovider = 'github'\nmainland = 'test'\ninternational = 'test'\n";
+    let policy = NetworkPolicy::parse(&index, &documents, &shared).unwrap();
+    for kind in [RepositoryKind::Mod, RepositoryKind::Map] {
+        let resolved = policy
+            .resolve(
+                &Provider::Github,
+                kind,
+                "international",
+                &NetworkPlanSelection::default(),
+            )
+            .unwrap();
+        assert_eq!(resolved.id, "test");
+        assert_eq!(resolved.kinds, [RepositoryKind::Mod, RepositoryKind::Map]);
+    }
+    let scalar = shared
+        .replace("[\"mod\", \"map\"]", "\"mod\"")
+        .replace("['mod', 'map']", "'mod'");
+    let policy = NetworkPolicy::parse(&index, &documents, &scalar).unwrap();
+    assert_eq!(policy.plans["test"].kinds, [RepositoryKind::Mod]);
+    assert!(
+        policy
+            .resolve(
+                &Provider::Github,
+                RepositoryKind::Map,
+                "international",
+                &NetworkPlanSelection::default()
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn shared_type_lists_reject_empty_duplicate_unknown_and_overlapping_defaults() {
+    let (index, documents, plans) = fixture();
+    let typed = plans.replace(
+        "provider = \"github\"",
+        "type = [\"mod\", \"map\"]\nprovider = \"github\"",
+    );
+    let default = "\n[[default_plans]]\ntype = ['mod', 'map']\nprovider = 'github'\nmainland = 'test'\ninternational = 'test'\n";
+    for bad in ["[]", "['mod', 'mod']", "['mod', 'unknown']", "true"] {
+        let bad_plan = typed.replace("[\"mod\", \"map\"]", bad);
+        assert!(
+            NetworkPolicy::parse(&index, &documents, &bad_plan).is_err(),
+            "plan: {bad}"
+        );
+        let bad_default = default.replace("['mod', 'map']", bad);
+        assert!(
+            NetworkPolicy::parse(&index, &documents, &(typed.clone() + &bad_default)).is_err(),
+            "default: {bad}"
+        );
+    }
+    let overlapping = default.replace("['mod', 'map']", "'map'");
+    assert!(
+        NetworkPolicy::parse(
+            &index,
+            &documents,
+            &(typed.clone() + default + &overlapping)
+        )
+        .is_err()
+    );
+    // A shared default must be supported by both referenced request plans.
+    assert!(NetworkPolicy::parse(&index, &documents, &(plans + default)).is_err());
+    // Two deliberately separate defaults with disjoint roles remain valid.
+    let disjoint = default.replace("['mod', 'map']", "'mod'") + &overlapping;
+    assert!(NetworkPolicy::parse(&index, &documents, &(typed + &disjoint)).is_ok());
+}
+
+#[test]
+fn merged_builtin_plans_keep_legacy_references_without_duplicate_plans() {
+    let policy = NetworkPolicy::bundled().unwrap();
+    assert_eq!(policy.plans.len(), 5);
+    for (provider, name) in [
+        (Provider::Github, "github-public"),
+        (Provider::Github, "github-mainland"),
+        (Provider::Gitee, "gitee-public"),
+        (Provider::Gitcode, "gitcode-public"),
+    ] {
+        for kind in ["mod", "map"] {
+            let old = policy.plan(&format!("{name}-{kind}"), &provider).unwrap();
+            assert_eq!(old.id, name);
+            assert_eq!(old, policy.plan(name, &provider).unwrap());
+            assert_eq!(old.kinds, [RepositoryKind::Mod, RepositoryKind::Map]);
+        }
+    }
+    let special = policy
+        .plan("qingyuqingxue-map-proxy-only", &Provider::Github)
+        .unwrap();
+    assert_eq!(special.kinds, [RepositoryKind::Map]);
+    let old_reference: NetworkPlanSelection = toml::from_str(
+        "international = { id = 'github-public-map', release = { download_threads = 8 } }",
+    )
+    .unwrap();
+    let resolved = policy
+        .resolve(
+            &Provider::Github,
+            RepositoryKind::Map,
+            "international",
+            &old_reference,
+        )
+        .unwrap();
+    assert_eq!(resolved.id, "github-public");
+    assert_eq!(resolved.release.download_threads, 8);
+}
+
+#[test]
+fn aliases_cannot_collide_with_plan_ids_or_each_other() {
+    let (index, documents, plans) = fixture();
+    for aliases in ["['test']", "['legacy', 'legacy']", "['bad/id']"] {
+        let bad = plans.replace(
+            "id = \"test\"",
+            &format!("id = \"test\"\naliases = {aliases}"),
+        );
+        assert!(NetworkPolicy::parse(&index, &documents, &bad).is_err());
+    }
+    let second = plans
+        .split_once("[[request_plans]]")
+        .unwrap()
+        .1
+        .replace("id = \"test\"", "id = \"second\"\naliases = ['test']");
+    assert!(
+        NetworkPolicy::parse(
+            &index,
+            &documents,
+            &format!("{plans}\n[[request_plans]]{second}")
+        )
+        .is_err()
+    );
 }

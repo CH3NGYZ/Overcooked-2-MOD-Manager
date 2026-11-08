@@ -41,8 +41,24 @@ pub(super) fn proxy(proxy: &Proxy) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn kinds(kinds: &[RepositoryKind]) -> Result<(), String> {
+    if kinds.is_empty()
+        || kinds
+            .iter()
+            .enumerate()
+            .any(|(index, kind)| kinds[..index].contains(kind))
+    {
+        return Err("proxy.validationFailed".into());
+    }
+    Ok(())
+}
+
 pub(super) fn plan(snapshot: &NetworkPolicy, plan: &RequestPlan) -> Result<(), String> {
-    if !valid_id(&plan.id) {
+    kinds(&plan.kinds)?;
+    if !valid_id(&plan.id)
+        || plan.aliases.len() > 128
+        || plan.aliases.iter().any(|id| !valid_id(id))
+    {
         return Err("proxy.validationFailed".into());
     }
     for intent in [Intent::Api, Intent::Release, Intent::Raw] {

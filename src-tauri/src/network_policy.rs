@@ -87,8 +87,14 @@ pub(crate) struct Route {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RequestPlan {
     pub id: String,
-    #[serde(rename = "type", default)]
-    pub kind: RepositoryKind,
+    #[serde(
+        rename = "type",
+        default = "default_kinds",
+        deserialize_with = "deserialize_kinds"
+    )]
+    pub kinds: Vec<RepositoryKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     pub provider: Provider,
     pub access: Access,
     pub api: Route,
@@ -148,6 +154,28 @@ struct PlanDocument {
     request_plans: Vec<RequestPlan>,
 }
 
+fn default_kinds() -> Vec<RepositoryKind> {
+    vec![RepositoryKind::Mod]
+}
+
+/// Legacy scalar types and shared type lists normalize to one representation.
+fn deserialize_kinds<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<RepositoryKind>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Kinds {
+        One(RepositoryKind),
+        Many(Vec<RepositoryKind>),
+    }
+    let kinds = match Kinds::deserialize(deserializer)? {
+        Kinds::One(kind) => vec![kind],
+        Kinds::Many(kinds) => kinds,
+    };
+    validation::kinds(&kinds).map_err(serde::de::Error::custom)?;
+    Ok(kinds)
+}
+
 fn single_thread() -> u32 {
     1
 }
@@ -155,8 +183,8 @@ fn single_thread() -> u32 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DefaultPlan {
-    #[serde(rename = "type")]
-    kind: RepositoryKind,
+    #[serde(rename = "type", deserialize_with = "deserialize_kinds")]
+    kinds: Vec<RepositoryKind>,
     provider: Provider,
     mainland: String,
     international: String,
@@ -261,16 +289,28 @@ impl NetworkPolicy {
                 return Err("proxy.validationFailed".into());
             }
         }
+        // Aliases preserve saved references without retaining duplicate plans.
+        let mut names = std::collections::HashSet::new();
+        for plan in snapshot.plans.values() {
+            for id in std::iter::once(&plan.id).chain(&plan.aliases) {
+                if !names.insert(id) {
+                    return Err("proxy.validationFailed".into());
+                }
+            }
+        }
         for default in plans.default_plans {
-            if snapshot
-                .defaults
-                .iter()
-                .any(|item| item.provider == default.provider && item.kind == default.kind)
-            {
+            if snapshot.defaults.iter().any(|item| {
+                item.provider == default.provider
+                    && item.kinds.iter().any(|kind| default.kinds.contains(kind))
+            }) {
                 return Err("proxy.validationFailed".into());
             }
             for id in [&default.mainland, &default.international] {
-                if snapshot.plan(id, &default.provider)?.kind != default.kind {
+                if !default.kinds.iter().all(|kind| {
+                    snapshot
+                        .plan(id, &default.provider)
+                        .is_ok_and(|plan| plan.kinds.contains(kind))
+                }) {
                     return Err("proxy.validationFailed".into());
                 }
             }
@@ -302,7 +342,7 @@ impl NetworkPolicy {
             let default = self
                 .defaults
                 .iter()
-                .find(|item| &item.provider == provider && item.kind == kind)
+                .find(|item| &item.provider == provider && item.kinds.contains(&kind))
                 .ok_or("proxy.validationFailed")?;
             if international {
                 &default.international
@@ -311,7 +351,7 @@ impl NetworkPolicy {
             }
         };
         let mut plan = self.plan(id, provider)?.clone();
-        if plan.kind != kind {
+        if !plan.kinds.contains(&kind) {
             return Err("proxy.validationFailed".into());
         }
         plan.api.apply(patch.api.as_ref());
@@ -345,6 +385,11 @@ impl NetworkPolicy {
     pub(crate) fn plan(&self, id: &str, provider: &Provider) -> Result<&RequestPlan, String> {
         self.plans
             .get(id)
+            .or_else(|| {
+                self.plans
+                    .values()
+                    .find(|plan| plan.aliases.iter().any(|alias| alias == id))
+            })
             .filter(|plan| &plan.provider == provider)
             .ok_or_else(|| "proxy.validationFailed".into())
     }

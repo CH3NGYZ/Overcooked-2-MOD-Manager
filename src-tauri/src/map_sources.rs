@@ -16,7 +16,7 @@ pub(crate) mod view;
 pub(crate) use context::MapSourceContext;
 #[cfg(test)]
 pub(crate) use document::parse_document;
-pub(crate) use releases::{fetch_map_releases, select_map_stage_asset};
+pub(crate) use releases::{fetch_map_release_data, select_map_stage_asset};
 pub(crate) use state::{
     available_maps, map_is_available, replace_maps_keeping_runtime_state, same_release_binding,
 };
@@ -28,6 +28,8 @@ pub(crate) use tree::{
 mod bundled_tests;
 #[cfg(test)]
 mod declaration_tests;
+#[cfg(test)]
+mod refresh_tests;
 #[cfg(test)]
 mod tag_mode_tests;
 #[cfg(test)]

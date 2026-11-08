@@ -178,6 +178,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::dashboard::get_dashboard,
             commands::dashboard::get_local_mods,
+            commands::dashboard::rebind_local_mods,
             commands::dashboard::get_mod_updates,
             commands::settings::get_config,
             commands::settings::get_install_language,

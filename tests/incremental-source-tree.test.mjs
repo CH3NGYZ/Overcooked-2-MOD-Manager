@@ -16,7 +16,7 @@ registerHooks({
   load(url, context, next) {
     if (url.endsWith('/src/services/tauri.ts')) return {
       format: 'module', shortCircuit: true,
-      source: `export const api = new Proxy({}, {get: (_, key) => (...args) => globalThis.__loadingApi[key](...args)})
+      source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
         export const watchGameState = async () => () => {}
         export const watchLevelSetScan = async () => () => {}`,
     }

@@ -75,6 +75,7 @@ async function readDashboard(): Promise<DashboardSummary> {
 export const api = {
   dashboard: readDashboard,
   localMods: () => invoke<InstalledMod[]>('get_local_mods'),
+  rebindLocalMods: (installed: InstalledMod[]) => invoke<InstalledMod[]>('rebind_local_mods', { installed }),
   modUpdates: (installed: InstalledMod[]) => invoke<UpdateStatus[]>('get_mod_updates', { installed }),
   refreshUserRegion: () => invoke<string>('refresh_user_region'),
   probeStartupSource: () => invoke<StartupProbe>('probe_startup_source'),

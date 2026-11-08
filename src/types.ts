@@ -699,6 +699,8 @@ export interface RequiredFramework {
  * 不是 `plugin_guid`。共用的是卡片外观与下载流水线。
  */
 export interface MapInfo {
+  /** True only for maps generated from a release-tags source's API snapshot. */
+  release_derived?: boolean
   id: string
   name: string
   name_i18n?: Record<string, string>

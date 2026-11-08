@@ -23,6 +23,35 @@ let updateRevision = 0
 let configRevision = 0
 let gameStateRevision = 0
 let latestGame: GameInfo | undefined
+let bindingRevision = 0
+let bindingPending: Promise<void> | undefined
+
+/** Both independently arriving lanes reconcile against the backend's current
+ * repository configuration. Coalesce updates; reject responses overtaken by
+ * a newer TOML or local scan without blocking either lane's initial display. */
+function rebindLocalMods(): Promise<void> {
+  bindingRevision += 1
+  if (!modsLoaded || !localMods.value.length) return Promise.resolve()
+  if (bindingPending) return bindingPending
+  bindingPending = (async () => {
+    let revision: number
+    do {
+      revision = bindingRevision
+      const installed = localMods.value
+      try {
+        const rebound = await api.rebindLocalMods(installed)
+        if (revision !== bindingRevision || installed !== localMods.value) continue
+        localMods.value = rebound
+        updateRevision += 1
+        const current = dashboard.value
+        if (current) dashboard.value = { ...current, mods: rebound }
+      } catch (reason) {
+        modsError.value = backendMessageOf(reason)
+      }
+    } while (revision !== bindingRevision)
+  })().finally(() => { bindingPending = undefined })
+  return bindingPending
+}
 
 /**
  * 把后端推送的最新游戏状态合进快照。
@@ -127,6 +156,7 @@ export function useDashboard() {
           mods: localMods.value,
           updates: current?.updates ?? [],
         }
+        await rebindLocalMods()
       } catch (reason) {
         error.value = backendMessageOf(reason)
       } finally {
@@ -149,6 +179,7 @@ export function useDashboard() {
         updateRevision += 1
         const current = dashboard.value
         if (current) dashboard.value = { ...current, mods: localMods.value }
+        await rebindLocalMods()
       } catch (reason) {
         modsError.value = backendMessageOf(reason)
       } finally {
@@ -199,6 +230,7 @@ export function useDashboard() {
         return
       }
       dashboard.value = { ...current, config }
+      await rebindLocalMods()
     } catch (reason) {
       error.value = backendMessageOf(reason)
     }
@@ -216,6 +248,7 @@ export function useDashboard() {
     const current = dashboard.value
     if (!current) return
     dashboard.value = { ...current, config }
+    void rebindLocalMods()
   }
 
   /**

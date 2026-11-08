@@ -221,3 +221,68 @@ fn scanning_real_raw_manifest_prevents_same_guid_release_update() {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn late_sources_rebind_scanned_dll_facts_without_reading_files_and_preserve_manifest_identity() {
+    let root = std::env::temp_dir().join(format!("oc2-rebind-{}", uuid::Uuid::new_v4()));
+    let plugins = root.join("BepInEx/plugins/Example");
+    std::fs::create_dir_all(&plugins).unwrap();
+    std::fs::write(
+        plugins.join("Example.dll"),
+        plugin_blob("com.example.guid", "Example", "1.0.0"),
+    )
+    .unwrap();
+    let manifests = root.join("manifests");
+    let mut repo = binding_repository();
+    repo.channel = crate::models::Channel::Stable;
+    repo.cached_releases = vec![high_cached_release()];
+    let mut manifest = crate::archive::new_manifest(
+        "original-id",
+        "v1.0.0",
+        Default::default(),
+        Default::default(),
+        vec!["BepInEx/plugins/Example/Example.dll".into()],
+        vec![],
+    );
+    manifest.repository_binding = crate::models::RepositoryBinding::from_release(&repo, "v1.0.0");
+    crate::archive::write_manifest(&manifests, &manifest).unwrap();
+    let mut config = crate::config::default_config();
+    config.repositories.clear();
+    let mut installed = scan_mods_with_manifests(&root, &config, Some(&manifests));
+    assert_eq!(installed[0].status, "bound_repository_missing");
+    repo.id = "arrived-source".into();
+    let mut misleading = repo.clone();
+    misleading.id = "wrong-guid-repository".into();
+    misleading.repository = "wrong".into();
+    config.repositories = vec![misleading, repo.clone()];
+    let expected = scan_mods_with_manifests(&root, &config, Some(&manifests));
+    std::fs::remove_file(plugins.join("Example.dll")).unwrap();
+    super::super::binding::rebind_installed_mods(&config, &mut installed);
+    assert_eq!(
+        installed[0].repository_id.as_deref(),
+        Some("arrived-source")
+    );
+    assert_eq!(installed[0].repository_ids, expected[0].repository_ids);
+    assert_eq!(installed[0].status, expected[0].status);
+    assert_eq!(installed[0].labels, expected[0].labels);
+    assert_eq!(installed[0].repository_binding, manifest.repository_binding);
+    config.repositories.clear();
+    super::super::binding::rebind_installed_mods(&config, &mut installed);
+    assert_eq!(installed[0].repository_id, None);
+    assert_eq!(installed[0].status, "bound_repository_missing");
+    config.repositories.push(repo);
+    super::super::binding::rebind_installed_mods(&config, &mut installed);
+    assert_eq!(
+        installed[0].repository_id.as_deref(),
+        Some("arrived-source")
+    );
+    // A manually installed DLL uses the same GUID rule once its source arrives.
+    installed[0].repository_binding = None;
+    installed[0].package_id = None;
+    super::super::binding::rebind_installed_mods(&config, &mut installed);
+    assert_eq!(
+        installed[0].repository_id.as_deref(),
+        Some("arrived-source")
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}

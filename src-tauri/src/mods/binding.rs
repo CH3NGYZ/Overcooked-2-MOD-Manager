@@ -176,3 +176,101 @@ pub(super) fn repository_matches_mod(
         })
         .unwrap_or(false)
 }
+
+/// Match either a scan result or an existing local snapshot against the current
+/// source configuration. Manifest identity wins over GUID/PE fallback.
+pub(super) fn match_repository<'a>(
+    config: &'a crate::models::AppConfig,
+    guid: Option<&str>,
+    product_name: Option<&str>,
+    original_filename: Option<&str>,
+    installed_version: Option<&str>,
+    binding: Option<&crate::models::RepositoryBinding>,
+    source_id: Option<&str>,
+) -> (Option<&'a RepositoryConfig>, Vec<String>) {
+    let source_repository =
+        source_id.and_then(|id| config.repositories.iter().find(|repo| repo.id == id));
+    let candidates = config
+        .repositories
+        .iter()
+        .filter(|repo| {
+            crate::config::repository_is_available(
+                config,
+                repo,
+                crate::config::current_user_region(),
+            ) && if let Some(binding) = binding {
+                binding.matches_repository(repo)
+            } else {
+                repository_matches_mod(
+                    repo,
+                    guid,
+                    product_name,
+                    original_filename,
+                    installed_version,
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    let repository = if let Some(binding) = binding {
+        candidates
+            .iter()
+            .copied()
+            .find(|repo| source_repository.is_some_and(|source| source.id == repo.id))
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .copied()
+                    .find(|repo| repo.channel == binding.channel)
+            })
+            .or_else(|| candidates.first().copied())
+    } else {
+        select_repository(&candidates, installed_version, source_repository)
+    };
+    let ids = repository
+        .map(|bound| {
+            candidates
+                .iter()
+                .filter(|repo| repo.download_mode == bound.download_mode)
+                .map(|repo| repo.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    (repository, ids)
+}
+
+/// Rebind already parsed DLL facts; no filesystem scan, metadata read or network.
+/// Source arrival and local scan completion both call this same implementation.
+pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mut [InstalledMod]) {
+    for item in mods.iter_mut() {
+        let binding = item
+            .repository_binding
+            .as_ref()
+            .filter(|binding| binding.is_valid());
+        let (repository, ids) = match_repository(
+            config,
+            item.guid.as_deref(),
+            item.product_name.as_deref(),
+            item.original_filename.as_deref(),
+            item.version.as_deref(),
+            binding,
+            item.package_id.as_deref().or(item.repository_id.as_deref()),
+        );
+        let (update, status) =
+            super::status::installed_update_state(repository, binding, item.version.as_deref());
+        item.repository_id = repository.map(|repo| repo.id.clone());
+        item.repository_ids = ids;
+        item.update_available = update;
+        item.status = status.into();
+        if let Some(repo) = repository {
+            if item.group.is_empty() {
+                item.group = repo.group.clone();
+            }
+            if item.group_i18n.is_empty() {
+                item.group_i18n = repo.group_i18n.clone();
+            }
+        }
+    }
+    inherit_repository_from_sibling(mods);
+    super::identity::mark_duplicate_guids(mods);
+    super::status::refresh_status_labels(mods);
+}

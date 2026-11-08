@@ -15,7 +15,7 @@ const owners = {
   release_tags: ['load_release_tag_maps', 'note_block_map'],
   transport: ['load_document', 'verified_document'],
   context: ['token', 'api_proxies', 'previous_for'],
-  releases: ['release_probe', 'fetch_map_releases', 'select_map_stage_asset'],
+  releases: ['release_probe', 'fetch_map_release_data', 'select_map_stage_asset'],
   view: ['map_to_info'],
 }
 

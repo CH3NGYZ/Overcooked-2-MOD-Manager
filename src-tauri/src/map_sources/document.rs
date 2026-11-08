@@ -191,6 +191,7 @@ pub fn parse_document(
      * 要求作者同时写 `name` 和 `name_i18n` 只会制造两处不一致。
      */
     for entry in &mut document.maps {
+        entry.release_derived = false;
         entry.network_plan = entry.network_plan.inherit(&document.network_plan);
         fold_i18n_mirror(&mut entry.name, &entry.name_i18n);
         fold_i18n_mirror(&mut entry.group, &entry.group_i18n);
@@ -413,6 +414,7 @@ pub(super) fn build_declaration_map(
         ))
     })?;
     apply_declaration_coordinates(&mut map, declaration);
+    map.release_derived = false;
     label.attach(&mut map);
     map.builtin = builtin;
     map.id = map_repository_id(&label.id, &map);

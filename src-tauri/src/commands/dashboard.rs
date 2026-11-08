@@ -45,29 +45,46 @@ pub async fn get_local_mods(state: State<'_, AppState>) -> Result<Vec<InstalledM
                 )
             })
             .unwrap_or_default();
-        crate::api_scheduler::set_installed(
-            "mod",
-            config
-                .repositories
-                .iter()
-                .filter(|repo| {
-                    installed.iter().any(|item| {
-                        item.repository_id.as_deref() == Some(repo.id.as_str())
-                            || item.repository_ids.contains(&repo.id)
-                    })
-                })
-                .map(|repo| {
-                    crate::api_scheduler::repository_key(
-                        &repo.provider,
-                        &repo.username,
-                        &repo.repository,
-                    )
-                }),
-        );
-        Ok(installed)
+        Ok(reconcile_local_mods(&state, installed))
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Re-associate parsed DLL facts after a source arrives, without rescanning disk.
+#[tauri::command]
+pub fn rebind_local_mods(
+    state: State<'_, AppState>,
+    installed: Vec<InstalledMod>,
+) -> Vec<InstalledMod> {
+    reconcile_local_mods(&state, installed)
+}
+
+fn reconcile_local_mods(state: &AppState, mut installed: Vec<InstalledMod>) -> Vec<InstalledMod> {
+    // Scans may have started before a new TOML was applied. Always bind against
+    // the latest configuration, and update shared API scheduling priorities too.
+    let config = state.config.load_or_default();
+    mods::rebind_installed_mods(&config, &mut installed);
+    crate::api_scheduler::set_installed(
+        "mod",
+        config
+            .repositories
+            .iter()
+            .filter(|repo| {
+                installed.iter().any(|item| {
+                    item.repository_id.as_deref() == Some(repo.id.as_str())
+                        || item.repository_ids.contains(&repo.id)
+                })
+            })
+            .map(|repo| {
+                crate::api_scheduler::repository_key(
+                    &repo.provider,
+                    &repo.username,
+                    &repo.repository,
+                )
+            }),
+    );
+    installed
 }
 
 /// Compare the already scanned local snapshot after online refresh settles.

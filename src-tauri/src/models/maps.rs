@@ -37,6 +37,10 @@ fn default_map_provider() -> Provider {
 /// `author + level_set_name + level_set_name_zh`；两边共用关系类型和下载/刷新管线。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapRepositoryConfig {
+    /// Internal provenance: only release-tags expansion sets this, never TOML entries.
+    /// Its declaration and versions must be projected from the same repository snapshot.
+    #[serde(default)]
+    pub release_derived: bool,
     #[serde(rename = "type", default = "default_map_kind")]
     pub kind: super::RepositoryKind,
     #[serde(default, skip_serializing_if = "NetworkPlanSelection::is_empty")]
@@ -245,6 +249,8 @@ pub(crate) fn default_snapshot_schema_version() -> u32 {
 /// 由后端 `select_install_asset` 完成，前端只有拿到同一份规则才能镜像结论。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapInfo {
+    #[serde(default)]
+    pub release_derived: bool,
     pub id: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

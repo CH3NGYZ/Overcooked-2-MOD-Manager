@@ -237,6 +237,8 @@ async function refreshReleases(
      * 同一批），单点刷新这类独立动作不传，由这里新生成一个。
      */
     passId?: string
+    /** This action already expanded release-tags from its repository snapshot. */
+    sourcePrepared?: boolean
   } = {},
 ): Promise<RefreshOutcome> {
   const priorityIds = options.priorityIds ?? new Set(
@@ -246,10 +248,14 @@ async function refreshReleases(
     }),
   )
   const passId = options.passId ?? newPassId()
-  return runReleaseBatch<MapInfo>({
+  const available = list.filter((map) => !installing.value[map.id])
+  // Source expansion has already published these cards' declarations, versions
+  // and errors. Do not fan them out into a second IPC or reactive write queue.
+  const prepared = options.sourcePrepared ? available.filter(map => map.release_derived) : []
+  const result = await runReleaseBatch<MapInfo>({
     state,
     // 正在安装的不能同时刷：安装要替换目录，刷新会读它的元数据
-    items: list.filter((map) => !installing.value[map.id]),
+    items: available.filter(map => !options.sourcePrepared || !map.release_derived),
     ...mapReleaseSpec(passId, options.force),
     trigger: options.trigger ?? 'partial',
     prioritize: priorityIds && priorityIds.size
@@ -261,6 +267,11 @@ async function refreshReleases(
     },
     countUpdated: options.countUpdated,
   })
+  return {
+    ...result,
+    refreshed: result.refreshed + prepared.length,
+    errors: [...prepared.flatMap(map => map.last_error ? [backendMessageOf(map.last_error)] : []), ...result.errors],
+  }
 }
 
 /** 一次「检查更新」的结果：刷新了多少张图、其中多少有新版、哪些失败。 */
@@ -304,7 +315,7 @@ async function refreshBoundMaps(
     trigger: 'bound',
     prepare: () => prepareMapSources(passId),
     refresh: () => refreshReleases(maps.value.filter((map) => ids.has(map.id)), {
-      trigger: 'single', passId, ...options,
+      trigger: 'single', passId, sourcePrepared: true, ...options,
     }),
   })
   return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
@@ -321,7 +332,7 @@ async function refreshSource(node: { id: string }) {
     trigger: 'partial',
     prepare: () => state.runSource(node.id, () => prepareMapSources(passId, false, node.id)),
     refresh: () => refreshReleases(maps.value.filter((map) =>
-      sourceTree.descendants(node.id).has(map.source_id || '__none__')), { trigger: 'single', passId }),
+      sourceTree.descendants(node.id).has(map.source_id || '__none__')), { trigger: 'single', passId, sourcePrepared: true }),
   })
   if (result.errors.length) message?.error(result.errors[0])
 }
@@ -341,7 +352,7 @@ async function refreshAll(
       const errors = await prepareMapSources(passId, options.force)
       return errors
     },
-    refresh: () => refreshReleases(maps.value, { ...options, trigger: 'single', passId }),
+    refresh: () => refreshReleases(maps.value, { ...options, trigger: 'single', passId, sourcePrepared: true }),
   })
   result.errors.forEach((error) => message?.error(error))
 }

@@ -188,9 +188,24 @@ pub(crate) fn mod_update_state(
     repo: &RepositoryConfig,
     installed: &InstalledMod,
 ) -> (bool, &'static str) {
-    match installed.repository_binding.as_ref() {
-        Some(binding) => binding_update_state(Some(repo), binding, installed.version.as_deref()),
-        None => repository_update_state(Some(repo), installed.version.as_deref()),
+    installed_update_state(
+        Some(repo),
+        installed.repository_binding.as_ref(),
+        installed.version.as_deref(),
+    )
+}
+
+pub(super) fn installed_update_state(
+    repo: Option<&RepositoryConfig>,
+    binding: Option<&RepositoryBinding>,
+    version: Option<&str>,
+) -> (bool, &'static str) {
+    if repo.is_some_and(|repo| repo.download_mode == RepositoryDownloadMode::RepositoryFile) {
+        return (false, "not_release_asset");
+    }
+    match binding {
+        Some(binding) => binding_update_state(repo, binding, version),
+        None => repository_update_state(repo, version),
     }
 }
 

@@ -51,6 +51,15 @@ pub struct RepoReleaseCache {
 }
 
 impl RepoReleaseCache {
+    #[cfg(test)]
+    pub(crate) fn expire_for_test(&self, key: &str) {
+        self.entries
+            .lock()
+            .unwrap()
+            .get_mut(key)
+            .unwrap()
+            .fetched_at = Instant::now() - REPO_RELEASE_CACHE_TTL;
+    }
     /// 取完整仓库列表；成功原子替换旧快照。force 跳过 TTL，但同 pass 仍合并。
     ///
     /// `fetch` 是 `FnOnce`：命中时它根本不会被调用，闭包里准备的客户端与令牌

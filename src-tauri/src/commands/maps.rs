@@ -173,7 +173,10 @@ pub async fn refresh_map_releases(
 
         // 缓存命中直接返回，一个请求都不发（与 MOD 仓库同一条规则）
         let now = now_millis();
-        if !force && cache_is_fresh(map.releases_cached_at, now, RELEASE_CACHE_TTL_MS) {
+        if !map.release_derived
+            && !force
+            && cache_is_fresh(map.releases_cached_at, now, RELEASE_CACHE_TTL_MS)
+        {
             log::info!(
                 "地图 Release 命中缓存：地图={}，数量={}",
                 map.name,
@@ -201,7 +204,7 @@ pub async fn refresh_map_releases(
                 // 保留未刷分支，并给 Release 派生源提供已安装优先级。
                 previous: &config.map_repositories,
             };
-            crate::map_sources::fetch_map_releases(&ctx, &map).await
+            crate::map_sources::fetch_map_release_data(&ctx, &map).await
         };
 
         let _guard = state
@@ -220,10 +223,11 @@ pub async fn refresh_map_releases(
             return Err("source.repositoryConfigChanged".into());
         }
         match fetched {
-            Ok(releases) => {
-                target.cached_releases = releases.clone();
-                target.releases_cached_at = Some(now_millis());
-                target.last_error = None;
+            Ok(refreshed) => {
+                let releases = refreshed.cached_releases.clone();
+                // release-tags declarations (version table, dependencies, labels)
+                // belong to the same API snapshot as the asset projection.
+                *target = refreshed;
                 state
                     .config
                     .save(&latest)

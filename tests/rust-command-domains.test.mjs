@@ -13,7 +13,8 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 108, '迁移的 IPC 集合不得因拆分丢失')
+  assert.equal(paths.length, 109, '既有 IPC 加上内存快照重绑定命令，集合不得丢失')
+  assert.ok(paths.some(([, domain, name]) => domain === 'dashboard' && name === 'rebind_local_mods'))
   const declared = sourceFiles(resolve(root, 'commands'), ['.rs']).flatMap(path =>
     [...readText(path).matchAll(/^#\[tauri::command\]\s*pub (?:async )?fn ([a-z_]+)\(/gm)].map(m => m[1]))
   assert.equal(new Set(declared).size, declared.length, '命令不能在旧入口重复定义')

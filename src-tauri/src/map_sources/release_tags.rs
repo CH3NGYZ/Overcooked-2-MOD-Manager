@@ -90,6 +90,23 @@ pub(super) async fn load_release_tag_maps(
         }
     };
 
+    Ok(project_release_tag_maps(
+        declaration,
+        label,
+        builtin,
+        origin,
+        &releases,
+    ))
+}
+
+/// Source expansion and standalone card refresh consume exactly the same note parser.
+pub(super) fn project_release_tag_maps(
+    declaration: &MapSourceDeclaration,
+    label: &SourceLabel,
+    builtin: bool,
+    origin: &SourceLocation,
+    releases: &[crate::models::ReleaseInfo],
+) -> Vec<MapRepositoryConfig> {
     let mut maps = Vec::new();
     let mut seen = HashSet::new();
     for release in releases.iter() {
@@ -139,7 +156,7 @@ pub(super) async fn load_release_tag_maps(
                 }
                 // The complete API snapshot is already available. Replace old
                 // per-map projections now instead of reviving a previous cache.
-                match super::releases::project_map_releases(&map, releases.as_ref()) {
+                match super::releases::project_map_releases(&map, releases) {
                     Ok(projected) => {
                         map.cached_releases = projected;
                         map.releases_cached_at =
@@ -163,7 +180,7 @@ pub(super) async fn load_release_tag_maps(
         releases.len(),
         maps.len()
     );
-    Ok(maps)
+    maps
 }
 
 /// 把一个 Release 的 note 元数据拼成地图条目。
@@ -290,6 +307,7 @@ pub(super) fn note_block_map(
     });
     let mut map: MapRepositoryConfig =
         serde_json::from_value(value).expect("note 块的字段形状与 MapRepositoryConfig 一致");
+    map.release_derived = true;
     label.attach(&mut map);
     map.builtin = builtin;
     map.id = map_repository_id(&label.id, &map);

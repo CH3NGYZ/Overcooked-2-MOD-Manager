@@ -50,10 +50,10 @@ pub(crate) fn release_probe(map: &MapRepositoryConfig) -> crate::models::Reposit
 /// 与仓库侧同一条路径：`fetch_releases`。区别只有两处 —— 请求按仓库收敛
 /// （同一批里同一个仓库只打一次 API），以及 tag 模式下不「取最新那一条」，
 /// 而是把那个 tag 的资产逐个拆成版本。
-pub(crate) async fn fetch_map_releases(
+pub(crate) async fn fetch_map_release_data(
     ctx: &MapSourceContext<'_>,
     map: &MapRepositoryConfig,
-) -> Result<Vec<ReleaseInfo>, String> {
+) -> Result<MapRepositoryConfig, String> {
     let probe = release_probe(map);
     let key =
         crate::releases::repository_cache_key(map.provider.clone(), &map.username, &map.repository);
@@ -74,7 +74,50 @@ pub(crate) async fn fetch_map_releases(
             .map_err(|error| error.to_string())
         })
         .await?;
-    project_map_releases(map, releases.as_ref())
+    if map.release_derived {
+        let declaration = serde_json::from_value(serde_json::json!({
+            "id": map.source_id.as_deref().unwrap_or_default(),
+            "mode": "release-tags",
+            "provider": map.provider,
+            "username": map.username,
+            "repository": map.repository,
+            "network_plan": map.network_plan,
+        }))
+        .map_err(|error| error.to_string())?;
+        let label = super::state::SourceLabel {
+            id: map.source_id.clone().unwrap_or_default(),
+            name: map.source_name.clone(),
+            name_i18n: map.source_name_i18n.clone(),
+            network_plan: map.network_plan.clone(),
+        };
+        // This location is only a diagnostic/validation base; no TOML is read.
+        let origin =
+            crate::repository_sources::SourceLocation::parse(super::tree::BUILTIN_MAP_INDEX)
+                .map_err(|error| error.to_string())?;
+        let release = releases
+            .iter()
+            .find(|release| Some(release.tag_name.trim()) == map_tag(map))
+            .ok_or_else(|| "mapSource.mapMissing".to_string())?;
+        let refreshed = super::release_tags::project_release_tag_maps(
+            &declaration,
+            &label,
+            map.builtin,
+            &origin,
+            std::slice::from_ref(release),
+        )
+        .into_iter()
+        .find(|entry| entry.id == map.id)
+        .ok_or_else(|| "mapSource.mapMissing".to_string())?;
+        if let Some(error) = &refreshed.last_error {
+            return Err(error.clone());
+        }
+        return Ok(refreshed);
+    }
+    let mut refreshed = map.clone();
+    refreshed.cached_releases = project_map_releases(map, &releases)?;
+    refreshed.releases_cached_at = Some(crate::release_cache::freshness::now_millis());
+    refreshed.last_error = None;
+    Ok(refreshed)
 }
 
 /// One projection for fresh source declarations and individual map refreshes.

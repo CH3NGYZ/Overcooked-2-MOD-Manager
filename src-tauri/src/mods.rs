@@ -13,6 +13,7 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use binding::rebind_installed_mods;
 pub(crate) use file_state::{canonical_dll_name, disabled_dll_file, plugin_dll_files};
 pub(crate) use identity::{compare_mod_versions, is_safe_replacement_mod, note_key};
 pub(crate) use metadata::{

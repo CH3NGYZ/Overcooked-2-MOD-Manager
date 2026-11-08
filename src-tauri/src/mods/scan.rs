@@ -1,6 +1,4 @@
 use super::binding::inherit_repository_from_sibling;
-use super::binding::repository_matches_mod;
-use super::binding::select_repository;
 use super::file_state::PLUGINS_DIR;
 use super::file_state::canonical_dll_file;
 use super::file_state::canonical_dll_name;
@@ -10,16 +8,13 @@ use super::identity::mark_duplicate_guids;
 use super::identity::note_key_for_values;
 use super::metadata::choose_local_version;
 use super::metadata::placeholder_dll_details;
-use super::status::binding_update_state;
 use super::status::bound_release;
 use super::status::refresh_status_labels;
 use super::status::repository_remote_version;
-use super::status::repository_update_state;
 use crate::archive;
 use crate::archive::InstallManifest;
 use crate::models::AppConfig;
 use crate::models::InstalledMod;
-use crate::models::RepositoryDownloadMode;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -226,65 +221,24 @@ fn inspect_dll(
                 .any(|file| canonical_dll_name(file).eq_ignore_ascii_case(&dll_file))
         })
         .max_by(|left, right| left.installed_at.cmp(&right.installed_at));
-    let source_repository = manifest.and_then(|manifest| {
-        config
-            .repositories
-            .iter()
-            .find(|repo| repo.id == manifest.repository_id)
-    });
     let repository_binding = manifest
         .and_then(|manifest| manifest.repository_binding.as_ref())
         .filter(|binding| binding.is_valid());
-    /*
-     * 候选只来自当前地区可用的仓库：`enabled=false`（用户关闭，或被官方源
-     * 覆盖的社区副本）与地区不适用（例如中国大陆下的 international 仓库）
-     * 都不展示也不刷新，已安装的 MOD 自然不该再绑定到它们。
-     */
-    let candidates = config.repositories.iter().filter(|repo| {
-        crate::config::repository_is_available(config, repo, crate::config::current_user_region())
-            && if let Some(binding) = repository_binding {
-                binding.matches_repository(repo)
-            } else {
-                repository_matches_mod(
-                    repo,
-                    guid.as_deref(),
-                    details.product_name.as_deref(),
-                    details.original_filename.as_deref(),
-                    installed_version.as_deref(),
-                )
-            }
-    });
-    let candidates = candidates.collect::<Vec<_>>();
-    let repository = if let Some(binding) = repository_binding {
-        candidates
-            .iter()
-            .copied()
-            .find(|repo| source_repository.is_some_and(|source| source.id == repo.id))
-            .or_else(|| {
-                candidates
-                    .iter()
-                    .copied()
-                    .find(|repo| repo.channel == binding.channel)
-            })
-            .or_else(|| candidates.first().copied())
-    } else {
-        select_repository(&candidates, installed_version.as_deref(), source_repository)
-    };
-    let repository_ids = repository
-        .map(|bound| {
-            candidates
-                .iter()
-                .filter(|repo| repo.download_mode == bound.download_mode)
-                .map(|repo| repo.id.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+    let (repository, repository_ids) = super::binding::match_repository(
+        config,
+        guid.as_deref(),
+        details.product_name.as_deref(),
+        details.original_filename.as_deref(),
+        installed_version.as_deref(),
+        repository_binding,
+        manifest.map(|manifest| manifest.repository_id.as_str()),
+    );
     log::trace!(
         "分析 MOD：文件={}，GUID={}，版本={}，候选仓库={}，绑定={}",
         path.display(),
         guid.as_deref().unwrap_or("未知"),
         installed_version.as_deref().unwrap_or("未知"),
-        candidates.len(),
+        repository_ids.len(),
         repository.is_some()
     );
     /*
@@ -306,17 +260,11 @@ fn inspect_dll(
      * MOD 管理页于是永远显示「版本未知」——即使刷新早已完成。
      * 所以先按仓库模式分流：RAW 直接判「已安装」，不参与版本判断。
      */
-    let (update_available, status) = match repository {
-        Some(repo) if repo.download_mode == RepositoryDownloadMode::RepositoryFile => {
-            (false, "not_release_asset")
-        }
-        _ => match repository_binding {
-            Some(binding) => {
-                binding_update_state(repository, binding, installed_version.as_deref())
-            }
-            None => repository_update_state(repository, installed_version.as_deref()),
-        },
-    };
+    let (update_available, status) = super::status::installed_update_state(
+        repository,
+        repository_binding,
+        installed_version.as_deref(),
+    );
     if update_available {
         let remote = repository.and_then(|repo| {
             if let Some(binding) = repository_binding {

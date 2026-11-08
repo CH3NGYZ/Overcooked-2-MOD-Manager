@@ -16,7 +16,7 @@ registerHooks({
   load(url, context, next) {
     if (url.endsWith('/src/services/tauri.ts')) return {
       format: 'module', shortCircuit: true,
-      source: `export const api = new Proxy({}, {get: (_, key) => (...args) => globalThis.__loadingApi[key](...args)})
+      source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
         export const watchGameState = async () => () => {}
         export const watchLevelSetScan = async () => () => {}`,
     }
@@ -166,4 +166,64 @@ test('overview and local maps have no combined online/local publication barrier;
   const dashboard = read('src-tauri/src/commands/dashboard.rs')
   const summary = dashboard.slice(dashboard.indexOf('fn get_dashboard_blocking'), dashboard.indexOf('pub async fn get_local_mods'))
   assert.doesNotMatch(summary, /scan_mods_with_manifests|collect_update_status/)
+})
+
+test('release-tags source results are already update evidence and do not fan out into per-map IPC calls', async () => {
+  const engine = useMapSources()
+  const derived = { id: 'derived', source_id: 'bundle', release_derived: true, level_set_name: 'Derived', author: 'A', cached_at: Date.now(), cached_releases: [{tag_name:'2.0',assets:[]}], latest_tag:'2.0' }
+  const ordinary = { id: 'ordinary', source_id: 'toml', level_set_name: 'Ordinary', author: 'B' }
+  const requests = []
+  globalThis.__loadingApi = {
+    refreshMapSources: async (_pass, force) => {requests.push(['source',force]); return [derived,ordinary]},
+    refreshMapReleases: async (id,force) => {requests.push([id,force]);return [{tag_name:'3.0',assets:[]}]},
+    maps: async () => engine.maps.value,
+    syncDependencySnapshots: async () => {},
+  }
+  await engine.refreshAll({force:true})
+  assert.deepEqual(requests,[['source',true],['ordinary',true]])
+  assert.equal(engine.maps.value.find(m=>m.id==='derived').latest_tag,'2.0')
+  requests.length=0
+  await engine.refreshBoundMaps([derived])
+  assert.deepEqual(requests,[['source',false]])
+  requests.length=0
+  await engine.refreshReleases([derived],{trigger:'single'})
+  assert.deepEqual(requests,[['derived',false]],'a standalone card still reads the bundle snapshot via the backend')
+})
+
+test('local metadata and each arriving source reconcile bindings in both arrival orders without rescanning DLLs', async () => {
+  const d=useDashboard(), scan=deferred(); let scans=0, repos=[];const calls=[]
+  const missing={dll_file:'bound.dll',guid:'known.guid',version:'1.0',repository_id:null,repository_ids:[],status:'bound_repository_missing',labels:['bound_repository_missing']}
+  globalThis.__loadingApi={
+    dashboard:async()=>({config:{repositories:repos},game:{}}),
+    config:async()=>({repositories:repos}),
+    localMods:async()=>{scans++;return scan.promise},
+    rebindLocalMods:async(installed)=>{calls.push(installed.map(m=>m.dll_file));return installed.map(m=>({...m,repository_id:repos.length?'arrived':null,repository_ids:repos.length?['arrived']:[],status:repos.length?'unknown':'bound_repository_missing',labels:repos.length?['unknown']:['bound_repository_missing']}))},
+  }
+  const loading=d.loadLocalMods();scan.resolve([missing]);await loading
+  repos=[{id:'arrived',plugin_guid:'known.guid'}]
+  await d.reloadConfig()
+  assert.equal(d.mods.value[0].repository_id,'arrived','TOML arrival must reconcile the already-scanned local snapshot')
+  assert.equal(d.mods.value[0].labels.includes('bound_repository_missing'),false)
+  assert.equal(scans,1)
+  globalThis.__loadingApi.localMods=async()=>{scans++;return[missing]}
+  await d.loadLocalMods()
+  assert.equal(d.mods.value[0].repository_id,'arrived','scan completion must reconcile against repositories that arrived earlier')
+  assert.ok(calls.length>=2)
+})
+
+test('late binding responses cannot overwrite a newer TOML snapshot and pending rebinds coalesce', async () => {
+  const d=useDashboard(), stale=deferred();let calls=0
+  globalThis.__loadingApi.rebindLocalMods=async installed=>{
+    calls++
+    if(calls===1)return stale.promise
+    return installed.map(m=>({...m,repository_id:'newest'}))
+  }
+  globalThis.__loadingApi.config=async()=>({repositories:[{id:'first'}]})
+  const reload=d.reloadConfig();await tick()
+  d.applyConfigSnapshot({repositories:[{id:'second'}]})
+  d.applyConfigSnapshot({repositories:[{id:'newest'}]})
+  stale.resolve(d.mods.value.map(m=>({...m,repository_id:'stale'})))
+  await reload
+  assert.equal(d.mods.value[0].repository_id,'newest')
+  assert.equal(calls,2,'multiple source changes while in flight need only one latest reconciliation')
 })

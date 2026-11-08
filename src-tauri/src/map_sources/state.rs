@@ -65,7 +65,8 @@ pub(crate) fn same_release_binding(
     left: &MapRepositoryConfig,
     right: &MapRepositoryConfig,
 ) -> bool {
-    left.provider == right.provider
+    left.release_derived == right.release_derived
+        && left.provider == right.provider
         && left
             .username
             .trim()

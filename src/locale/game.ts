@@ -80,6 +80,20 @@ export const game: DomainMessages = {
     ko: '《Overcooked! 2》가 실행 중입니다. 종료 후 다시 시도하세요.',
     ja: '『Overcooked! 2』が実行中です。終了してから再試行してください。',
   },
+  operationBlocked: {
+    'zh-CN': '检测到游戏正在运行，请关闭后再尝试此操作！',
+    'zh-TW': '偵測到遊戲正在執行，請關閉後再嘗試此操作！',
+    en: 'The game is running. Close it and try this operation again.',
+    ko: '게임이 실행 중입니다. 게임을 종료한 후 다시 시도하세요.',
+    ja: 'ゲームが実行中です。終了してからもう一度お試しください。',
+  },
+  modOperationBlocked: {
+    'zh-CN': '检测到游戏正在运行，MOD 安装、更新或修改需要先关闭游戏。',
+    'zh-TW': '偵測到遊戲正在執行，MOD 安裝、更新或修改需要先關閉遊戲。',
+    en: 'The game is running. Close it before installing, updating, or changing MODs.',
+    ko: '게임이 실행 중입니다. MOD 설치, 업데이트 또는 변경 전에 게임을 종료하세요.',
+    ja: 'ゲームが実行中です。MOD のインストール、更新、変更の前にゲームを終了してください。',
+  },
   notRunning: {
     'zh-CN': '厨房当前未在运行',
     'zh-TW': '廚房目前未在執行',

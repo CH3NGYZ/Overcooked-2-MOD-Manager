@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { pickI18n, t } from '../i18n'
 import { tagColorForAny } from '../theme'
 import { PULSE_DURATION } from '../motion'
@@ -72,6 +73,8 @@ const message = useNotify()
 const dialog = useDialog()
 const { load, ensureLoaded, loading, dashboard, game, config } = useDashboard()
 
+const { blockModOperation } = useGameOperationGate()
+
 /**
  * 本页展示的 MOD 列表 = 真实 Dashboard ∪ 教程示例卡。
  *
@@ -124,6 +127,7 @@ const deletePackageConfirm = computed(() => recyclesOnDelete.value
  * 「后端要求二次确认」的分支很容易漏，漏了就会让包内 DLL 删不掉。
  */
 const { remove } = useModRemoval({
+  gameBlocked: blockModOperation,
   deleteCopy: () => deleteConfirm.value,
   titleOf: (mod) => modTitle(mod),
   onBusy: (mod, busyState) => {
@@ -374,6 +378,7 @@ const bulkSwitchValue = computed(() =>
  * 「全部禁用」，否则会让人以为已经生效。
  */
 function onBulkSwitch(value: string | number) {
+  if (blockModOperation()) return
   if (value === 'enable') void setAllEnabled(true)
   else if (value === 'disable') confirmDisableAll()
 }
@@ -385,6 +390,7 @@ function onBulkSwitch(value: string | number) {
  * 禁用方向会弹确认（游戏将不加载任何 MOD，但可随时恢复）。
  */
 async function setAllEnabled(enabled: boolean) {
+  if (blockModOperation()) return
   if (bulkWorking.value || !effectiveMods.value.length) return
   bulkWorking.value = true
   try {
@@ -558,6 +564,7 @@ function fail(reason: unknown) {
 }
 
 async function toggle(mod: InstalledMod, enabled: boolean) {
+  if (blockModOperation()) return
   busy.value[mod.dll_file] = true
   try {
     const result = await api.toggleLocalMod(mod.dll_file, enabled)
@@ -729,6 +736,7 @@ function packageAction(pkg: ModPackageNode) {
 function runCardAction(mod: InstalledMod) {
   const context = cardAction(mod)
   if (!context) return
+  if (context.action.kind === 'update' && blockModOperation()) return
   if (context.action.kind === 'update' && context.repository) {
     void previewRepository(context.repository)
   } else if (context.action.kind === 'install-dependency' && context.repository) {
@@ -744,6 +752,7 @@ function runCardAction(mod: InstalledMod) {
 function runPackageAction(pkg: ModPackageNode) {
   const context = packageAction(pkg)
   if (!context) return
+  if (context.action.kind === 'update' && blockModOperation()) return
   if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
     // 要卸的是「对方」；先带用户到那张卡上（见 `locateConflict`）
     locateConflict(context.conflictMod)
@@ -933,6 +942,7 @@ async function openLocation(mod: InstalledMod) {
 
 /** 打开配置编辑器（仅对存在配置文件的 MOD 可用）。 */
 function editConfig(mod: InstalledMod) {
+  if (blockModOperation()) return
   configTarget.value = mod
   configOpen.value = true
 }
@@ -1011,11 +1021,7 @@ const { dragActive } = useFileDrop({
  */
 const previewing = ref<Record<string, boolean>>({})
 const { previewRepository } = useRepositoryPreview(openInstallPreview, {
-  gameBlocked: () => {
-    if (!game.value?.kitchen_running) return false
-    message.warning(t('modsOnline.theGameIsRunningCloseItBeforeInstalling'))
-    return true
-  },
+  gameBlocked: blockModOperation,
   onBusyChange: (repositoryId, busy) => {
     if (busy) previewing.value[repositoryId] = true
     else delete previewing.value[repositoryId]
@@ -1042,11 +1048,7 @@ const {
 } = useInstallPlanGate({
   mods: () => mods.value,
   repositories: () => repositories.value,
-  gameBlocked: () => {
-    if (!game.value?.kitchen_running) return false
-    message.warning(t('modsOnline.theGameIsRunningCloseItBeforeInstalling'))
-    return true
-  },
+  gameBlocked: blockModOperation,
   onApplied: () => load(),
 })
 
@@ -1060,6 +1062,7 @@ const {
 
 /** 包级开关：走后端已有的 toggle_local_mod_package，一次切换整包。 */
 async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
+  if (blockModOperation()) return
   const packageId = node.mods[0]?.package_id
   if (!packageId) return
   for (const mod of node.mods) busy.value[mod.dll_file] = true
@@ -1088,6 +1091,7 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
 
 /** 包级删除：整包删除（文案随「是否经过回收站」切换）。 */
 function removePackage(node: ModPackageNode) {
+  if (blockModOperation()) return
   const first = node.mods[0]
   if (!first) return
   const confirm = deletePackageConfirm.value
@@ -1097,6 +1101,7 @@ function removePackage(node: ModPackageNode) {
     positiveText: confirm.action,
     negativeText: t('recycle.cancel'),
     async onPositiveClick() {
+      if (blockModOperation()) return false
       markDialogBusy(instance)
       for (const mod of node.mods) busy.value[mod.dll_file] = true
       try {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NCollapse, NCollapseItem, NEmpty, NFloatButton, NTag, useDialog } from 'naive-ui'
@@ -105,6 +106,7 @@ import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, Repository }
 
 const message = useNotify()
 const dialog = useDialog()
+const { blockModOperation } = useGameOperationGate()
 const { config, game, mods, ensureLoaded } = useDashboard()
 const { linkToMap } = useMapLink()
 /**
@@ -349,13 +351,13 @@ const {
  *
  * 与地图下载页用的是同一份 `useInstallPlanGate` + `mapRelationRepository`
  * 投影：管理页的「更新」如果跳过检查，把一张新增了依赖的地图装上去，
- * 用户会得到「更新完反而跑不起来」。`gameBlocked` 恒 false —— 地图导入允许
- * 在游戏运行时进行（与本地 ZIP / 在线安装同一条策略）。
+ * 用户会得到「更新完反而跑不起来」。地图自身安装可在运行时进行；
+ * 关系计划需要安装、更新或卸载 MOD 时必须停止游戏。
  */
 const planGate = useInstallPlanGate({
   mods: () => mods.value,
   repositories: () => repositories.value,
-  gameBlocked: () => false,
+  gameBlocked: blockModOperation,
   onApplied: () => reloadSets(),
 })
 /** 正在执行「更新」的卡片（目录名）；同一时刻只允许一个。 */
@@ -693,7 +695,8 @@ async function openDirectory(set: LevelSetInfo) {
  * 不能在地图页凭空换一套说法。
  */
 function remove(set: LevelSetInfo) {
-  if (deleting.value[set.dir_name] || kitchenRunning.value) return
+  if (deleting.value[set.dir_name]) return
+  if (set.plugins?.length && blockModOperation()) return
   const name = levelSetDisplayName(set, locale.value)
   const recycle = recyclesOnDelete.value
   const instance = dialog.warning({
@@ -704,6 +707,7 @@ function remove(set: LevelSetInfo) {
     positiveText: recycle ? t('modsLocal.moveToRecycleBin') : t('modsLocal.deletePermanently'),
     negativeText: t('recycle.cancel'),
     onPositiveClick: async () => {
+      if (set.plugins?.length && blockModOperation()) return false
       markDialogBusy(instance)
       deleting.value = { ...deleting.value, [set.dir_name]: true }
       try {

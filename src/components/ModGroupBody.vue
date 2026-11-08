@@ -82,7 +82,7 @@ const packages = computed(
             <n-button size="tiny" :style="buttonColorFor(ctx.actionByDll[mod.dll_file].tone, 'soft')"
               :title="t(ctx.actionByDll[mod.dll_file].label)"
               :loading="!!ctx.previewing[ctx.bindingRepositoryId(mod) ?? ''] || !!ctx.refreshing[ctx.bindingRepositoryId(mod) ?? '']"
-              :disabled="ctx.kitchenRunning" @click.stop="ctx.runCardAction(mod)">
+              @click.stop="ctx.runCardAction(mod)">
               <ArrowUpCircleOutline v-if="ctx.actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
               <DownloadOutline v-else-if="ctx.actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
               <TrashOutline v-else-if="ctx.actionByDll[mod.dll_file].kind === 'uninstall-conflict'" width="14" height="14" />
@@ -123,10 +123,10 @@ const packages = computed(
           </n-button>
           <span v-else class="tool-placeholder" />
           <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
-            :disabled="ctx.kitchenRunning" @click.stop="ctx.openLocation(mod)">
+            @click.stop="ctx.openLocation(mod)">
             <FolderOpenOutline width="14" height="14" />
           </n-button>
-          <n-button size="tiny" quaternary type="error" :disabled="ctx.kitchenRunning" :title="t('modsLocal.delete')"
+          <n-button size="tiny" quaternary type="error" :title="t('modsLocal.delete')"
             @click.stop="ctx.remove(mod)">
             <TrashOutline width="14" height="14" />
           </n-button>
@@ -194,7 +194,6 @@ const packages = computed(
               <n-button size="tiny" :style="buttonColorFor(pkg.action.tone, 'soft')"
                 :title="t(pkg.action.label)"
                 :loading="!!ctx.previewing[pkg.repositoryId ?? ''] || !!ctx.refreshing[pkg.repositoryId ?? '']"
-                :disabled="ctx.kitchenRunning"
                 @click.stop="ctx.runPackageAction(pkg)">
                 <ArrowUpCircleOutline v-if="pkg.action.kind === 'update'" width="14" height="14" />
                 <DownloadOutline v-else-if="pkg.action.kind === 'install-dependency'" width="14" height="14" />
@@ -233,7 +232,7 @@ const packages = computed(
             -->
             <span class="package-tool-group" :style="ctx.toolGroupStyle" @click.stop>
               <n-button size="tiny" quaternary type="error" :title="t('modsLocal.deletePackage')"
-                :disabled="ctx.kitchenRunning" @click="ctx.removePackage(pkg)">
+                @click="ctx.removePackage(pkg)">
                 <TrashOutline width="14" height="14" />
               </n-button>
             </span>

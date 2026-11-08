@@ -15,6 +15,8 @@
 import { useMessage } from 'naive-ui'
 import type { MessageApi, MessageOptions, MessageReactive } from 'naive-ui'
 import { messageDuration, messageNeedsCloseButton } from './notifyDuration'
+import { gameOperationNotice } from './composables/useGameOperationGate'
+import { translateBackendMessage } from './locale/backend'
 
 type Content = Parameters<MessageApi['success']>[0]
 
@@ -58,7 +60,16 @@ export function useNotify(): Notify {
     info: (content, options) => message.info(content, withReadableDuration(content, options)),
     success: (content, options) => message.success(content, withReadableDuration(content, options)),
     warning: (content, options) => message.warning(content, withReadableDuration(content, options)),
-    error: (content, options) => message.error(content, withReadableDuration(content, options)),
+    error: (content, options) => {
+      // A process may start after the click check. Backend refusal must still
+      // surface the same blocking notice, even when its caller adds context.
+      if (typeof content === 'string'
+        && (content.includes('game.running')
+          || content.includes(translateBackendMessage('game.running')))) {
+        gameOperationNotice.value = true
+      }
+      return message.error(content, withReadableDuration(content, options))
+    },
     loading: (content, options) => message.loading(content, { duration: 0, ...options }),
     destroyAll: () => message.destroyAll(),
   }

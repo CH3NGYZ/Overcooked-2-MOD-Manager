@@ -32,6 +32,8 @@ export interface RemovalCopy {
 }
 
 export interface ModRemovalOptions {
+  /** 游戏运行时阻止 MOD 删除，并由宿主显示统一 Modal。 */
+  gameBlocked?: () => boolean
   /**
    * 删除文案（随「删除后进回收站」设置变化）。
    *
@@ -58,6 +60,7 @@ export function useModRemoval(options: ModRemovalOptions) {
    * @param copy 覆盖默认文案；不传就是普通删除
    */
   function remove(mod: InstalledMod, copy?: RemovalCopy) {
+    if (options.gameBlocked?.()) return
     const fallback = options.deleteCopy()
     const instance = dialog.warning({
       title: copy?.title ?? t('modsLocal.deleteMod'),
@@ -65,6 +68,7 @@ export function useModRemoval(options: ModRemovalOptions) {
       positiveText: fallback.action,
       negativeText: t('recycle.cancel'),
       async onPositiveClick() {
+        if (options.gameBlocked?.()) return false
         markDialogBusy(instance)
         options.onBusy?.(mod, true)
         try {
@@ -79,6 +83,7 @@ export function useModRemoval(options: ModRemovalOptions) {
               positiveText: t('modsLocal.deletePackage'),
               negativeText: t('recycle.cancel'),
               async onPositiveClick() {
+                if (options.gameBlocked?.()) return false
                 markDialogBusy(packageInstance)
                 const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
                 packageResult.ok

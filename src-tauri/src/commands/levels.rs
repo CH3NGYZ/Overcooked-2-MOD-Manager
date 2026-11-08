@@ -234,10 +234,6 @@ fn delete_level_set_blocking(
         .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    crate::level_sets::ensure_operation_allowed(
-        &game_root,
-        crate::level_sets::LevelSetOperation::Toggle,
-    )?;
     crate::level_sets::remove_level_set(
         &state.config.mod_recycle_bin_dir(),
         &state.config.manifests_dir(),

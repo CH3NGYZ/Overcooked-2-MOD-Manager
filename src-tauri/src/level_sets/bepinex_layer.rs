@@ -316,6 +316,9 @@ pub(super) fn install_bepinex_layer_sets(
         }
     }
     let added_count = added.len();
+    if added_count > 0 {
+        crate::game::ensure_game_stopped(game_root)?;
+    }
     write_registered_plugins(
         manifests_dir,
         &merge_registered_plugins(previous.clone(), added),
@@ -435,6 +438,11 @@ fn extract_bepinex_layer_entries(
         }
         if lower.ends_with(".dll") && owned_plugins.get(&lower) == Some(&false) {
             continue;
+        }
+        // Layer archives can also contain framework/config files or DLLs
+        // without parsed plugin metadata. Guard the actual write scope.
+        if !lower.starts_with(BEPINEX_LEVELS_PREFIX) || lower.ends_with(".dll") {
+            crate::game::ensure_game_stopped(game_root)?;
         }
         let target = game_root.join(&name);
         if let Some(parent) = target.parent() {

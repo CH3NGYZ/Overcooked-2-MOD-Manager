@@ -63,6 +63,15 @@ pub fn install_parsed_sets(
     if targets.is_empty() {
         return Err("levelSet.nothingSelected".into());
     }
+    if targets.iter().any(|set| {
+        !set.plugins.is_empty()
+            || set
+                .files
+                .iter()
+                .any(|(_, path)| path.to_ascii_lowercase().ends_with(".dll"))
+    }) {
+        crate::game::ensure_game_stopped(game_root)?;
+    }
 
     /*
      * 表层包与历史形态是两条完全不同的落盘路径：前者按 ZIP 内路径原样解压

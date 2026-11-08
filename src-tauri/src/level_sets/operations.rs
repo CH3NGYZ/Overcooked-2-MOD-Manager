@@ -26,7 +26,8 @@ use std::path::PathBuf;
 /// DIYLevel 也只会把它当成「下次启动才出现的地图」，不会读到半个文件。
 ///
 /// 开关是**移动**：DLL 正在 `levels/` 下按目录枚举并加载 `info`，此时把目录
-/// 挪到 `disabled/` 会让它正在读的路径消失。卸载（删除）同理。
+/// 挪到 `disabled/` 会让它正在读的路径消失。该历史策略仍用于开关/拍平；
+/// 更新所需的删除已按最新产品要求放行纯地图，在删除实现内单独检查 DLL。
 ///
 /// ## 为什么做成常量而不是直接禁死
 ///
@@ -57,8 +58,8 @@ impl LevelSetOperation {
 
 /// 按操作类型决定是否需要「游戏已停止」。
 ///
-/// 所有关卡集写操作都必须走这里，不要在命令里各写一次 `ensure_game_stopped`
-/// —— 策略一改就得改多处，早晚漏掉一处。
+/// 开关/拍平等整体目录移动复用此历史策略；导入/删除按实际 MOD 写入范围
+/// 在领域实现中检查，避免把纯地图更新也当成 MOD 修改。
 pub fn ensure_operation_allowed(
     game_root: &Path,
     operation: LevelSetOperation,
@@ -256,6 +257,16 @@ pub fn remove_level_set(
         .map(|entry| entry.dll.clone())
         .collect();
     let plugins_root = game_root.join("BepInEx/plugins");
+    // Pure map replacement is allowed during play. Bundled DLLs are MOD
+    // changes, including unregistered DLLs inside the map directory.
+    let mut files = collect_files(game_root, &set_dir)?;
+    if !registered_files.is_empty()
+        || files
+            .iter()
+            .any(|file| file.to_ascii_lowercase().ends_with(".dll"))
+    {
+        crate::game::ensure_game_stopped(game_root)?;
+    }
 
     if !recycle {
         // 用户关掉了「删除 MOD 时优先放入回收站」：路径归属已校验，直接删
@@ -281,7 +292,6 @@ pub fn remove_level_set(
         log::info!("关卡集已删除（未进回收站）：目录={}", dir_name);
         return Ok(());
     }
-    let mut files = collect_files(game_root, &set_dir)?;
     files.extend(registered_files.iter().cloned());
     if files.is_empty() {
         fs::remove_dir_all(&set_dir).map_err(|error| {

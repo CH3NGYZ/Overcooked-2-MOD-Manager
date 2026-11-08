@@ -115,7 +115,7 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
           <FolderOpenOutline width="14" height="14" />
         </n-button>
         <n-button size="tiny" quaternary type="error" :title="t('modsLocal.delete')"
-          :disabled="ctx.kitchenRunning || !!ctx.deleting[set.dir_name]"
+          :disabled="!!ctx.deleting[set.dir_name]"
           :loading="!!ctx.deleting[set.dir_name]" @click.stop="ctx.removeSet(set)">
           <TrashOutline width="14" height="14" />
         </n-button>

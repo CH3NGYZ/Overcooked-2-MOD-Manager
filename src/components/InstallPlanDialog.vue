@@ -12,6 +12,7 @@
  * 的挂载代码不用改。
  */
 import { computed } from 'vue'
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { t } from '../i18n'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { installCheckModelFromPlan } from '../installCheck'
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   (event: 'finished', ready: boolean): void
 }>()
 
+const { blockModOperation } = useGameOperationGate()
 const model = computed(() => installCheckModelFromPlan(props.plan, props.targetLabel))
 
 /**
@@ -47,6 +49,7 @@ const model = computed(() => installCheckModelFromPlan(props.plan, props.targetL
  * 否则同一条失败会既有行下方红字、又有 toast。
  */
 async function execute(row: InstallCheckRow) {
+  if (blockModOperation()) throw new Error(t('game.running'))
   if (row.kind === 'uninstall') return uninstallAt(row.index)
   return installAt(row.index, row.label)
 }
@@ -77,6 +80,7 @@ async function installAt(index: number, label: string) {
    * `endDownloadTask` 之后任务号已经失效，确认安装再抛错不会点亮下载卡片。
    */
   const install = async (): Promise<void> => {
+    if (blockModOperation()) throw new Error(t('game.running'))
     const token = beginDownloadTask({ label, retry: install })
     try {
       // 先下载预览，再直接确认安装：暂存目录与用户确认已在上一层完成
@@ -85,6 +89,10 @@ async function installAt(index: number, label: string) {
       if (!outcome.ok || !outcome.preview) {
         throw new Error(outcome.message
           || t('modsOnline.downloadFinishedButNoInstallableContentWasParsed'))
+      }
+      if (blockModOperation()) {
+        await api.cancelModPreview(outcome.preview.preview_id)
+        throw new Error(t('game.running'))
       }
       const confirmed = await api.confirmModInstall(outcome.preview.preview_id)
       if (!confirmed.ok) throw new Error(confirmed.message)

@@ -56,7 +56,6 @@ export function useInstallPlanGate(options: InstallPlanGateOptions) {
    * 用它而不是「已装版本」—— 用户要装的是新版本，规则也该按新版本算。
    */
   async function run(repo: Repository, tag?: string): Promise<boolean> {
-    if (options.gameBlocked()) return false
     const version = tag ?? repo.cached_releases[0]?.tag_name
     const built = buildInstallPlan(
       repo,
@@ -65,6 +64,9 @@ export function useInstallPlanGate(options: InstallPlanGateOptions) {
       version,
     )
     if (!planHasActions(built)) return true
+    // A map itself may be installed while the game runs, but a plan that
+    // changes MOD files (such as an unmet framework dependency) is not.
+    if (options.gameBlocked()) return false
 
     plan.value = built
     target.value = pickI18n(repo.name_i18n, repo.name)

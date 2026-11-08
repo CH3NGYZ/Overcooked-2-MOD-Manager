@@ -36,6 +36,12 @@ registerHooks({
     if (url.includes('/src/services/tauri.ts')) {
       return { format: 'module', shortCircuit: true, source: FAKE_API }
     }
+    if (url.includes('/src/composables/useDashboardStore.ts')) {
+      return { format: 'module', shortCircuit: true, source: `export const useDashboard = () => ({game: {get value() { return {kitchen_running: !!globalThis.__gameRunning} }},config:{value:null},mods:{value:[]}})` }
+    }
+    if (url.includes('/src/composables/useMapSources.ts')) {
+      return { format: 'module', shortCircuit: true, source: `export const useMapSources = () => ({maps:{value:[]}})` }
+    }
     if (url.includes('/src/useNotify.ts')) {
       return { format: 'module', shortCircuit: true, source: FAKE_NOTIFY }
     }
@@ -46,7 +52,10 @@ registerHooks({
 /** IPC 替身：只记录调用并按需回一个成功结果。 */
 const FAKE_API = `
 const calls = () => globalThis.__installCalls
+export const watchLevelSetZipProgress = async () => () => {}
 export const api = {
+  stageMapSource: async () => ({path:'map.zip', staged:false, sets:globalThis.__mapSets}),
+  importLevelSets: async () => { calls().push(['importLevelSets']); return {installed:['map']} },
   chooseModFile: async () => null,
   analyzeModSource: async (kind, value) => {
     calls().push(['analyzeModSource', kind, value])
@@ -134,9 +143,75 @@ function settleCheck(flow, ready) {
 }
 
 test.beforeEach(() => {
+  globalThis.__gameRunning = false
   globalThis.__installCalls = []
   globalThis.__notices = []
   globalThis.__uninstallFails = false
+})
+
+test('运行中点击 MOD 来源：弹全局提示且不进入来源或 IPC', async () => {
+  const { gameOperationNotice } = await import('../src/composables/useGameOperationGate.ts')
+  const flow = useModInstallFlow()
+  globalThis.__gameRunning = true
+  gameOperationNotice.value = false
+  flow.openSource()
+  await flow.handleSourceSelect({ kind: 'url', value: 'https://example.com/mod.zip' })
+  assert.equal(gameOperationNotice.value, true)
+  assert.equal(flow.sourceOpen.value, false)
+  assert.deepEqual(globalThis.__installCalls, [])
+})
+
+test('预览返回前游戏启动：只丢弃暂存，不进入安装详情', async () => {
+  const flow = useModInstallFlow()
+  globalThis.__gameRunning = true
+  flow.openPreview(modPreview())
+  await flush()
+  assert.equal(flow.previewOpen.value, false)
+  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
+})
+
+test('冲突确认期间游戏启动：执行时复核，不调用卸载 IPC', async () => {
+  const flow = useModInstallFlow()
+  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
+  globalThis.__gameRunning = true
+  await assert.rejects(flow.executeCheck(flow.checkModel.value.rows[0]), /game.running/)
+  assert.deepEqual(globalThis.__installCalls, [])
+})
+
+test('运行中地图无待处理关系放行；缺少 MOD 依赖（包括没有来源）时拦截', async () => {
+  const { useInstallPlanGate } = await import('../src/composables/useInstallPlanGate.ts')
+  let checks = 0
+  const gate = useInstallPlanGate({
+    mods: () => [], repositories: () => [],
+    gameBlocked: () => { checks += 1; return true }, onApplied: () => {},
+  })
+  const repo = { id: 'map', name: 'Map', cached_releases: [], relations: [] }
+  assert.equal(await gate.run(repo), true)
+  assert.equal(checks, 0)
+  assert.equal(await gate.run({ ...repo, relations: [{ guid: 'missing.runtime', kind: 'requires' }] }), false)
+  assert.equal(checks, 1)
+  assert.equal(gate.open.value, false)
+})
+
+test('真实地图导入流程：运行中纯地图可确认导入，随包插件和无来源依赖在确认前拦截', async () => {
+  const { useLevelSetImport } = await import('../src/composables/useLevelSetImport.ts')
+  globalThis.__gameRunning = true
+  const base = {dir_name:'Map', name:'Map', author:'Author', version:'1', plugins:[], relations:[], conflicts:[]}
+  for (const extra of [{plugins:[{name:'Bundled plugin'}]}, {relations:[{guid:'missing.runtime',kind:'requires'}]}]) {
+    globalThis.__mapSets = [{...base,...extra}]
+    const flow = useLevelSetImport()
+    await flow.importSource({kind:'file',value:'map.zip'})
+    assert.equal(flow.previewOpen.value, false)
+    assert.deepEqual(globalThis.__installCalls, [])
+  }
+  globalThis.__mapSets = [base]
+  const flow = useLevelSetImport()
+  const importing = flow.importSource({kind:'file',value:'map.zip'})
+  await flush()
+  assert.equal(flow.previewOpen.value, true)
+  flow.confirmImport()
+  await importing
+  assert.deepEqual(globalThis.__installCalls, [['importLevelSets']])
 })
 
 test('没有同身份冲突：直接进安装详情，不弹检查窗', async () => {

@@ -23,6 +23,7 @@
  * 弹窗会打开但内容为空。
  */
 import { computed, ref } from 'vue'
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { celebrateInstall } from '../celebration'
@@ -47,6 +48,7 @@ const emit = defineEmits<{
 }>()
 
 const message = useNotify()
+const { blockModOperation } = useGameOperationGate()
 const installing = ref(false)
 
 /** 预览 → 详情模型（含「有没有可安装的内容」这一判定，空包只能取消）。 */
@@ -91,6 +93,7 @@ function handleAfterLeave() {
 
 /** 用户确认安装。同身份冲突已在打开本弹窗之前处理完，这里只装。 */
 async function confirm() {
+  if (blockModOperation()) return
   const current = props.preview
   if (!current) return
   installing.value = true

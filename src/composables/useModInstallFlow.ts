@@ -22,6 +22,7 @@
  *          <ModInstallDialog v-model:show="flow.previewOpen" ... />
  */
 import { ref } from 'vue'
+import { useGameOperationGate } from './useGameOperationGate'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
@@ -57,6 +58,7 @@ async function executeConflictUninstall(
  */
 export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
   const message = useNotify()
+  const { blockModOperation } = useGameOperationGate()
   /** 「选择来源」面板是否打开。 */
   const sourceOpen = ref(false)
   /** 来源卡片正在解析上一条来源（下载 / 预览），期间显示转圈。 */
@@ -77,6 +79,7 @@ export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
 
   /** 打开来源选择（本地文件 / 在线直链）。 */
   function openSource() {
+    if (blockModOperation()) return
     sourceOpen.value = true
   }
 
@@ -92,6 +95,10 @@ export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
    * 不能让整页在用户读弹窗时一直转圈。
    */
   function openPreview(next: ModPreview) {
+    if (blockModOperation()) {
+      void discardPreview(next)
+      return
+    }
     if (!needsInstallCheck(next)) {
       preview.value = next
       previewOpen.value = true
@@ -106,7 +113,10 @@ export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
   async function runConflictCheck(next: ModPreview) {
     const ready = await check.run(
       conflictCheckModel(next.conflicts, { targetLabel: modCheckTarget(next) }),
-      (row) => executeConflictUninstall(next.conflicts, row),
+      (row) => {
+        if (blockModOperation()) throw new Error('game.running')
+        return executeConflictUninstall(next.conflicts, row)
+      },
     )
     if (ready) {
       /*
@@ -131,6 +141,7 @@ export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
    * 直链 / 拖放」确认后要做的事完全一样（解析 → 预览 → 失败提示）。
    */
   async function handleSourceSelect(source: InstallSource) {
+    if (blockModOperation()) return
     if (sourceBusy.value) return
     sourceBusy.value = true
     /*

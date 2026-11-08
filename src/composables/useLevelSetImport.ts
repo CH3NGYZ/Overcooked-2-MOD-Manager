@@ -21,7 +21,9 @@ import { pickI18n, t } from '../i18n'
 import { api, watchLevelSetZipProgress } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { levelSetImportDetail } from '../installDetail'
-import { levelSetDependencyRows } from '../dependencyRows'
+import { levelSetDependencyRows, levelSetRelations } from '../dependencyRows'
+import { resolveRelation } from '../modRelations'
+import { useGameOperationGate } from './useGameOperationGate'
 import { uninstallMapConflict } from '../installConflicts'
 import { conflictCheckModel } from '../installCheck'
 import { backendMessageOf } from '../locale/backend'
@@ -51,6 +53,14 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
    * 这两个都是模块级单例，取用不会额外触发请求。
    */
   const { config, mods } = useDashboard()
+  const { blockModOperation } = useGameOperationGate()
+
+  function blockModChanges(sets: ZipLevelSet[]) {
+    const needsModChange = sets.some((set) => set.plugins.length > 0
+      || levelSetRelations(set, maps.value).some((relation) =>
+        !relation.optional && resolveRelation(relation, mods.value, repositories.value).state !== 'ok'))
+    return needsModChange && blockModOperation()
+  }
   const { maps } = useMapSources()
   const repositories = computed(() => {
     const current = config.value
@@ -163,6 +173,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
 
   /** 「立即安装」：只表态，真正的导入仍由 `importSource` 那条链负责。 */
   function confirmImport() {
+    if (pending.value && blockModChanges(pending.value.sets)) return
     resolveApproval(true)
   }
 
@@ -259,6 +270,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       message.warning(t('levelSet.zipWithoutInfo'))
       return false
     }
+    if (blockModChanges(staged.sets)) return false
     /*
      * 冲突先处理再问「要不要装」：同一个地图身份已经装过时，直接导入会让
      * 后端在回收旧目录与写入新目录之间打架，而卸载失败时详情弹窗只能留在
@@ -268,6 +280,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     const sets = await resolveConflicts(staged.sets, options.targetLabel)
     if (!sets) return false
     if (!(await askApproval(staged.path, sets))) return false
+    if (blockModChanges(sets)) return false
     /*
      * 用户表态后先收起弹窗再导入：写盘期间进度由页面按钮转圈，弹窗留着
      * 会一直挂着「取消」按钮，看着像还能反悔。

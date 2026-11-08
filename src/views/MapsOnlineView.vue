@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   NButton,
@@ -110,6 +111,7 @@ import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
  *   目标页与锚点：`#/levels` + 对应关卡集卡片的 `focus-flash`。
  */
 const message = useNotify()
+const { blockModOperation: gameBlocked } = useGameOperationGate()
 import { useMapSources } from '../composables/useMapSources'
 
 const { mods, game, config, load, ensureLoaded } = useDashboard()
@@ -220,10 +222,6 @@ const planGate = useInstallPlanGate({
   onApplied: () => load(),
 })
 
-function gameBlocked() {
-  // 地图安装允许在游戏运行时进行（与本地 ZIP 导入同一条策略），所以这里不拦
-  return false
-}
 
 /* ===== 搜索 =====
  *

@@ -56,10 +56,10 @@ const pkg = computed(() => ctx.groups.find(group => group.key === props.groupKey
         </n-button>
         <span v-else class="tool-placeholder" />
         <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
-          :disabled="ctx.kitchenRunning" @click.stop="ctx.openLocation(mod)">
+          @click.stop="ctx.openLocation(mod)">
           <FolderOpenOutline width="14" height="14" />
         </n-button>
-        <n-button size="tiny" quaternary type="error" :disabled="ctx.kitchenRunning"
+        <n-button size="tiny" quaternary type="error"
           :title="t('modsLocal.delete')" @click.stop="ctx.remove(mod)">
           <TrashOutline width="14" height="14" />
         </n-button>

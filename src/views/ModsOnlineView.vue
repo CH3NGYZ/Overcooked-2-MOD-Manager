@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NTag } from 'naive-ui'
 import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -41,7 +42,8 @@ import type { Repository, RepositorySource } from '../types'
 import { withDemoRepositories, withDemoSources } from '../tutorial/demo'
 
 const message = useNotify()
-const { load, ensureLoaded, loading, config, game, mods } = useDashboard()
+const { blockModOperation: gameBlocked } = useGameOperationGate()
+const { load, ensureLoaded, loading, config, mods } = useDashboard()
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦（教程门控脚手架仍在引擎里，当前无调用方）。 */
 const engine = useRepositoryRefresh()
@@ -218,7 +220,7 @@ function cardAction(repo: Repository): CardAction {
     kind: installActionOf(repo),
     label: installLabel(repo),
     loading: !!installing.value[repo.id],
-    disabled: !!game.value?.kitchen_running || !!refreshing.value[repo.id],
+    disabled: !!refreshing.value[repo.id],
   }
 }
 
@@ -627,13 +629,6 @@ function groupRefreshing(group: SourceGroupLeaf<Repository>) {
   return group.items.some((repo) => refreshing.value[repo.id])
 }
 
-function gameBlocked() {
-  if (game.value?.kitchen_running) {
-    message.warning(t('modsOnline.theGameIsRunningCloseItBeforeInstalling'))
-    return true
-  }
-  return false
-}
 
 /**
  * 仓库卡片的「安装 / 重装 / 更新」。
@@ -827,7 +822,7 @@ defineExpose({ refreshAll, visibleCount })
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
   <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
     <n-drawer-content v-if="detailRepo" :native-scrollbar="false" body-content-class="drawer-detail-body">
-      <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="!!game?.kitchen_running"
+      <RepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="false"
         :mods="mods" :repositories="repositories"
         @close="detailId = null" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />
     </n-drawer-content>

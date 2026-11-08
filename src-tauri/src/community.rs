@@ -1,5 +1,7 @@
 //! 社区目录、官方归属、搜索状态、分页读取和落地各有唯一职责。
 
+pub(crate) const DISCOVERY_ENABLED: bool = false;
+
 mod catalog;
 pub(crate) mod commands;
 mod gitcode;

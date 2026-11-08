@@ -1,3 +1,4 @@
+use crate::api_scheduler::ApiRequestExt;
 use crate::locale_tag::with_params;
 use crate::releases::APP_USER_AGENT;
 use std::time::Duration;
@@ -144,7 +145,7 @@ pub(super) async fn get_json<T: serde::de::DeserializeOwned>(
     action: &str,
 ) -> Result<T, String> {
     let response = authorized(client.get(url), token)
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
         .map_err(|error| request_error(&error.to_string()))?;
     ensure_success(response, action)

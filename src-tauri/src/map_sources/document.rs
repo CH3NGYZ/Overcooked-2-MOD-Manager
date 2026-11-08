@@ -280,7 +280,7 @@ fn validate_declaration(
             validate_map_entry(&probe, origin)?;
         }
         MapSourceMode::ReleaseTags => {
-            crate::network_policy::NetworkPolicy::shared()
+            crate::network_policy::NetworkPolicy::active()
                 .and_then(|policy| {
                     policy.validate_selection(
                         &declaration.provider.clone().unwrap_or(Provider::Github),
@@ -336,7 +336,7 @@ pub(super) fn validate_map_entry(
     entry: &MapRepositoryConfig,
     origin: &SourceLocation,
 ) -> Result<(), ConfigError> {
-    crate::network_policy::NetworkPolicy::shared()
+    crate::network_policy::NetworkPolicy::active()
         .and_then(|policy| {
             policy.validate_selection(
                 &entry.provider,

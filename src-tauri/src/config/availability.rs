@@ -189,5 +189,13 @@ pub(crate) fn repository_is_available(
     repository: &RepositoryConfig,
     region: &str,
 ) -> bool {
+    if repository
+        .source_id
+        .as_deref()
+        .is_some_and(crate::community::is_source)
+    {
+        return false;
+    }
+
     repository.enabled && repository_matches_channel(config, repository, region)
 }

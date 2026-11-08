@@ -81,19 +81,12 @@ pub(super) async fn load_release_tag_maps(
     {
         Ok(releases) => releases,
         Err(error) => {
-            /*
-             * 取不到就沿用上一次成功时生成的条目：第三方源不该因为一次限流
-             * 或断网从地图页整块消失（用户会以为作者下架了地图）。首次运行
-             * 没有旧条目时就是空，下一次刷新补上。
-             */
-            let previous = ctx.previous_for(&label.id);
             log::warn!(
-                "按 Release note 生成地图失败，沿用上次结果：源={}，原因={}，沿用={}",
+                "按 Release note 生成地图失败：源={}，原因={}",
                 label.id,
-                error,
-                previous.len()
+                error
             );
-            return Ok(previous);
+            return Err(ConfigError::Invalid(error));
         }
     };
 

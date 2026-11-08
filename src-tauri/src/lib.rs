@@ -1,4 +1,5 @@
 mod api_rate_gate;
+mod api_scheduler;
 mod app_state;
 mod app_update;
 mod archive;

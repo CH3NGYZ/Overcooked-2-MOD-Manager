@@ -39,7 +39,7 @@ import {
 import { mapCardAction, mapCardStatus, type MapCardState } from '../mapCardStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
-import SourceTitle from '../components/SourceTitle.vue'
+import SourceDirectory from '../components/SourceDirectory.vue'
 import {
   useSourceGroupTree,
   type SourceGroupEntry,
@@ -130,7 +130,7 @@ const { linkToRepository } = useRepositoryLink()
  * 忙碌状态也只能有一个真相。
  */
 const {
-  maps: realMaps, loading, refreshing, refreshingSources, installing, refreshingAll, anyRefreshing,
+  maps: realMaps, sourceNodes, loading, refreshing, queued, preparingSources, refreshingSources, installing, refreshingAll, anyRefreshing,
   loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
 } = useMapSources()
 /**
@@ -291,7 +291,10 @@ const treeEntries = computed<SourceGroupEntry<MapInfo>[]>(() =>
 const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } = useSourceGroupTree(
   () => treeEntries.value,
   () => ({
-    // 没有持久化源树：顺序 = 条目首次出现顺序 = 源文档的声明顺序
+    order: sourceNodes.value.map(node => ({ id: node.id, parentId: node.parent_id,
+      label: pickI18n(node.label_i18n, node.label), url: node.url, status: node.status, error: node.error })),
+    preserveEmpty: !query.value,
+    // Document declarations include pending and failed sources.
     ungrouped: { id: '__none__', label: t('levelSet.uncategorizedMapSource') },
   }),
   () => !!query.value,
@@ -357,7 +360,7 @@ function mapNote(map: MapInfo): string {
 }
 
 function isRefreshing(map: MapInfo): boolean {
-  return !!refreshing.value[map.id]
+  return preparingSources.value || !!refreshing.value[map.id] || !!queued.value[map.id]
 }
 
 function isInstalling(map: MapInfo): boolean {
@@ -676,7 +679,7 @@ async function refreshGroup(group: SourceGroupLeaf<MapInfo>) {
  * 反过来，源树回来、第一张卡片能渲染时 `visibleCount` 立刻大于 0，遮罩当场
  * 消失 —— 不需要在几个中间状态之间切换，也就不会有「遮罩闪两下」的抖动。
  */
-const pageLoading = computed(() => loading.value || (refreshingAll.value && visibleCount.value === 0))
+const pageLoading = computed(() => loading.value && tree.value.length === 0)
 
 </script>
 
@@ -698,30 +701,15 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
 
   <PageLoading :show="pageLoading">
     <template #status>{{ t('levelSet.readingMapSources') }}</template>
-    <n-empty v-if="!pageLoading && !visibleCount" class="empty" :description="emptyDescription" />
+    <n-empty v-if="!pageLoading && !tree.length" class="empty" :description="emptyDescription" />
 
     <!--
       三层折叠树，与 MOD 安装页同形：源（计数 + 刷新）→ 分类（计数 + 刷新）
       → 卡片网格。层级、缩进与刷新按钮的位置都与 MOD 安装页一致 —— 两页在
       用户眼里是同一件事（「把线上这个东西装到本地」），不该是两套长相。
     -->
-    <n-collapse v-else :expanded-names="sourcesExpanded" class="source-collapse"
-      @update:expanded-names="setOpenSources">
-      <n-collapse-item v-for="node in tree" :key="node.id" :name="node.id">
-        <template #header>
-          <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
-            <div class="source-head">
-              <SourceTitle :label="node.label" :items="maps.filter(item => item.source_id === node.id)" />
-              <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
-              <!-- 源刷新：重拉源树后刷新这个源下的全部 Release -->
-              <n-button size="tiny" quaternary class="group-refresh"
-                :loading="sourceRefreshing(node)" :disabled="anyRefreshing"
-                :title="t('modsOnline.refresh')" @click.stop="refreshSource(node)">
-                <template #icon><RefreshOutline width="13" height="13" /></template>
-              </n-button>
-            </div>
-          </SourceGroupSlot>
-        </template>
+    <SourceDirectory v-else :nodes="tree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
+      :busy="sourceRefreshing" @refresh="refreshSource" @update:expanded="setOpenSources" v-slot="{ node }">
         <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
           <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
             @update:expanded-names="setOpenGroups">
@@ -765,8 +753,7 @@ const pageLoading = computed(() => loading.value || (refreshingAll.value && visi
             </n-collapse-item>
           </n-collapse>
         </SourceGroupSlot>
-      </n-collapse-item>
-    </n-collapse>
+    </SourceDirectory>
   </PageLoading>
 
   <!--

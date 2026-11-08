@@ -29,6 +29,10 @@ test('Shared models have one domain owner and keep the existing root interface',
   const exports = Object.fromEntries([...entry.matchAll(/^pub use (\w+)::\{([^}]+)\};/gm)].map(([, owner, names]) => [
     owner, names.split(',').map(name => name.trim()).filter(Boolean).sort(),
   ]))
+  for (const [, owner, name] of entry.matchAll(/^pub use (\w+)::(\w+);/gm)) {
+    if (exports[owner] && !exports[owner].includes(name)) exports[owner].push(name)
+  }
+  for (const names of Object.values(exports)) names.sort()
   assert.deepEqual(Object.keys(exports).sort(), Object.keys(owners).sort())
   for (const [owner, names] of Object.entries(owners)) {
     assert.match(entry, new RegExp(`^mod ${owner};$`, 'm'))

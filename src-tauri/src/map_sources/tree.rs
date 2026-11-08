@@ -1,9 +1,9 @@
-use super::community::append_community_map_maps;
 use super::context::MapSourceContext;
 use super::document::MapSourceMode;
 use super::document::build_declaration_map;
 use super::document::parse_document;
 use super::identity::map_repository_id;
+use super::progress::{SourceNode, SourceTarget};
 use super::release_tags::load_release_tag_maps;
 use super::state::SourceLabel;
 use super::transport::load_document;
@@ -17,6 +17,22 @@ pub const BUILTIN_MAP_INDEX: &str = "maps.toml";
 
 /// 官方地图索引的源 ID（与仓库索引的 `official-repository-index` 对称）。
 pub const DEFAULT_MAP_INDEX_ID: &str = "official-map-index";
+
+fn root_source_label() -> SourceLabel {
+    SourceLabel {
+        id: DEFAULT_MAP_INDEX_ID.into(),
+        name: "地图源".into(),
+        name_i18n: [
+            ("zh-CN".into(), "地图源".into()),
+            ("zh-TW".into(), "地圖來源".into()),
+            ("en".into(), "Map sources".into()),
+            ("ko".into(), "지도 소스".into()),
+            ("ja".into(), "マップソース".into()),
+        ]
+        .into(),
+        ..SourceLabel::default()
+    }
+}
 
 /// 中国大陆的官方地图索引地址。
 ///
@@ -49,11 +65,7 @@ pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
     let Ok(index) = SourceLocation::parse(BUILTIN_MAP_INDEX) else {
         return collected;
     };
-    let root = SourceLabel {
-        network_plan: Default::default(),
-        id: DEFAULT_MAP_INDEX_ID.to_string(),
-        ..SourceLabel::default()
-    };
+    let root = root_source_label();
     collect_bundled_maps(&index, &root, 0, &mut collected);
     collected
 }
@@ -170,20 +182,10 @@ const MAX_MAP_SOURCE_DEPTH: usize = 3;
 
 /// 加载整棵地图源树，返回其中声明的全部地图。
 ///
-/// ## 与 `repository_sources` 的差别
-///
-/// 仓库侧要把源树**持久化**进 `repository_sources`，因为界面要展示父子源、
-/// 每个源有独立的错误状态与刷新按钮。地图侧仍然不维护这棵树：源在界面上
-/// 只是「源 → 分类 → 地图」三层折叠结构的第一层，因此每个条目自带
-/// 「源 ID + 源昵称」（`source_id` / `source_name` / `source_name_i18n`），
-/// 不额外造一棵需要同步、清理、迁移的源树。
-///
-/// 每份文档先收自身地图，再按声明顺序深度优先展开子源。
-/// 前端因此可以直接按条目首次出现的顺序排出源顺序，与 `[[map_sources]]` 的
-/// 声明顺序一致。
-///
-/// `ctx` 同时服务资产文档校验、release-tags 源和社区源。builtin_only 只选
-/// 内置索引，不代表离线；严格离线初始化使用 bundled_map_tree。
+/// 每份文档先发布自身地图及下级标题，再按声明顺序读取子源。
+/// 源状态通过观察器增量发布，进程内声明表供局部分支重试；地图声明仍跟随条目落盘。
+/// 所有 TOML 完成后再读取 Release 派生源，失败源保持空卡片并保留错误。
+/// builtin_only 仅选择内置索引，不代表离线；严格离线初始化使用 bundled_map_tree。
 pub async fn load_map_tree(
     region: &str,
     builtin_only: bool,
@@ -203,20 +205,39 @@ pub async fn load_map_tree(
     );
 
     let mut collected = Vec::new();
+    let mut deferred = Vec::new();
     let mut visited = HashSet::new();
     visited.insert(crate::repository_sources::source_address_key(
         &index.address(),
         None,
     ));
-    let root = SourceLabel {
-        network_plan: Default::default(),
-        id: DEFAULT_MAP_INDEX_ID.to_string(),
-        ..SourceLabel::default()
-    };
+    let root = root_source_label();
     /*
      * `index` 留一份给社区仓库使用：它们的条目也用索引位置做「来源文档」
      * 校验基底（`release-tags` 的条目校验只看条目自身字段）。
      */
+    if let Some(observer) = ctx.observer {
+        observer.begin(None);
+        let node = SourceNode {
+            id: root.id.clone(),
+            parent_id: None,
+            label: root.name.clone(),
+            label_i18n: root.name_i18n.clone(),
+            url: index.address(),
+            status: "pending".into(),
+            error: None,
+        };
+        observer.register(SourceTarget {
+            sequence: 0,
+            node: node.clone(),
+            origin: index.clone(),
+            label: root.clone(),
+            builtin: root_builtin,
+            depth: 0,
+            declaration: None,
+        });
+        observer.declare(node);
+    }
     load_map_document(
         index.clone(),
         &root,
@@ -226,14 +247,18 @@ pub async fn load_map_tree(
         0,
         &mut visited,
         &mut collected,
+        &mut deferred,
         ctx,
     )
     .await?;
+    load_deferred(deferred, &mut collected, ctx).await;
     /*
      * 社区发现的地图源排在官方源之后：官方索引是人工维护的权威条目，
      * 身份撞车时保留官方那份（见 `append_community_map_maps` 的去重）。
      */
-    append_community_map_maps(&mut collected, &index, ctx).await;
+    if crate::community::DISCOVERY_ENABLED {
+        super::community::append_community_map_maps(&mut collected, &index, ctx).await;
+    }
     log::info!("地图源树加载完成：地图={}", collected.len());
     Ok(collected)
 }
@@ -243,15 +268,59 @@ pub async fn load_map_tree(
 async fn load_map_document(
     location: SourceLocation,
     label: &SourceLabel,
-    parent_id: Option<&str>,
+    _parent_id: Option<&str>,
     builtin: bool,
     region: &str,
     depth: usize,
     visited: &mut HashSet<(String, String)>,
     collected: &mut Vec<MapRepositoryConfig>,
+    deferred: &mut Vec<SourceTarget>,
     ctx: &MapSourceContext<'_>,
 ) -> Result<(), ConfigError> {
-    let document = load_document(&location, ctx, &label.network_plan).await?;
+    if let Some(observer) = ctx.observer {
+        observer.publish(&label.id, "loading", None, collected);
+    }
+    let document = match load_document(&location, ctx, &label.network_plan).await {
+        Ok(document) => document,
+        Err(error) => {
+            if let Some(observer) = ctx.observer {
+                observer.publish(&label.id, "error", Some(error.to_string()), collected);
+            }
+            return Err(error);
+        }
+    };
+    // Publish all child titles before fetching any child document.
+    if let Some(observer) = ctx.observer {
+        for child in &document.map_sources {
+            if !child_matches_region(child.region.as_deref(), region) {
+                continue;
+            }
+            let node = SourceNode {
+                id: child.id.trim().into(),
+                parent_id: Some(label.id.clone()),
+                label: child.nickname.clone(),
+                label_i18n: child.nickname_i18n.clone(),
+                url: child.url.clone(),
+                status: "pending".into(),
+                error: None,
+            };
+            observer.register(SourceTarget {
+                sequence: 0,
+                node: node.clone(),
+                origin: location.clone(),
+                label: SourceLabel {
+                    network_plan: child.network_plan.clone(),
+                    id: child.id.trim().into(),
+                    name: child.nickname.clone(),
+                    name_i18n: child.nickname_i18n.clone(),
+                },
+                builtin: builtin && child.builtin.unwrap_or(true),
+                depth: depth + 1,
+                declaration: Some(child.clone()),
+            });
+            observer.declare(node);
+        }
+    }
     for mut map in document.maps {
         // 把源标签附到条目，持久化配置时不需要另存一棵源树。
         label.attach(&mut map);
@@ -260,6 +329,10 @@ async fn load_map_document(
         // 用「源 ID + 身份」派生，重建出来的地图能接回上一次的缓存。
         map.id = map_repository_id(&label.id, &map);
         collected.push(map);
+    }
+
+    if let Some(observer) = ctx.observer {
+        observer.publish(&label.id, "ready", None, collected);
     }
 
     for child in document.map_sources {
@@ -284,12 +357,22 @@ async fn load_map_document(
              */
             MapSourceMode::Repository => {
                 match build_declaration_map(&child, &child_label, child_builtin, &location) {
-                    Ok(map) => collected.push(map),
-                    Err(error) => log::warn!(
-                        "单仓库地图源声明无效，跳过：源={}，原因={}",
-                        child_label.id,
-                        error
-                    ),
+                    Ok(map) => {
+                        collected.push(map);
+                        if let Some(observer) = ctx.observer {
+                            observer.publish(&child_label.id, "ready", None, collected);
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(observer) = ctx.observer {
+                            observer.publish(
+                                &child_label.id,
+                                "error",
+                                Some(error.to_string()),
+                                collected,
+                            );
+                        }
+                    }
                 }
                 continue;
             }
@@ -300,16 +383,23 @@ async fn load_map_document(
              * 同一个源下面。
              */
             MapSourceMode::ReleaseTags => {
-                match load_release_tag_maps(&child, &child_label, child_builtin, &location, ctx)
-                    .await
-                {
-                    Ok(maps) => collected.extend(maps),
-                    Err(error) => log::warn!(
-                        "按 Release note 生成地图失败，跳过：源={}，原因={}",
-                        child_label.id,
-                        error
-                    ),
-                }
+                deferred.push(SourceTarget {
+                    sequence: 0,
+                    node: SourceNode {
+                        id: child_label.id.clone(),
+                        parent_id: Some(label.id.clone()),
+                        label: child.nickname.clone(),
+                        label_i18n: child.nickname_i18n.clone(),
+                        url: child.url.clone(),
+                        status: "pending".into(),
+                        error: None,
+                    },
+                    origin: location.clone(),
+                    label: child_label.clone(),
+                    builtin: child_builtin,
+                    depth: depth + 1,
+                    declaration: Some(child.clone()),
+                });
                 continue;
             }
             MapSourceMode::Document => {}
@@ -319,6 +409,14 @@ async fn load_map_document(
          * 其他作者的地图从页面上消失。失败只记日志，索引层不因此报错。
          */
         if depth + 1 > MAX_MAP_SOURCE_DEPTH {
+            if let Some(observer) = ctx.observer {
+                observer.publish(
+                    &child_label.id,
+                    "error",
+                    Some("source.tomlInvalid".into()),
+                    collected,
+                );
+            }
             log::warn!(
                 "地图源层级超过上限，丢弃更深层的子源：源={}，上限={}",
                 child_label.id,
@@ -329,6 +427,9 @@ async fn load_map_document(
         let child_location = match SourceLocation::resolve(&child.url, Some(&location)) {
             Ok(location) => location,
             Err(error) => {
+                if let Some(observer) = ctx.observer {
+                    observer.publish(&child_label.id, "error", Some(error.to_string()), collected);
+                }
                 // 单个子源地址写错不该让整棵树失败：其余作者的地图仍然可用
                 log::warn!(
                     "地图子源地址无效，跳过：源={}，地址={}，原因={}",
@@ -341,18 +442,27 @@ async fn load_map_document(
         };
         let key = crate::repository_sources::source_address_key(&child_location.address(), None);
         if !visited.insert(key) {
+            if let Some(observer) = ctx.observer {
+                observer.publish(
+                    &child_label.id,
+                    "error",
+                    Some("source.tomlInvalid".into()),
+                    collected,
+                );
+            }
             log::warn!("检测到地图源循环引用，跳过：源={}", child.id);
             continue;
         }
         let boxed = Box::pin(load_map_document(
             child_location,
             &child_label,
-            Some(parent_id.unwrap_or(&label.id)),
+            Some(&label.id),
             child_builtin,
             region,
             depth + 1,
             visited,
             collected,
+            deferred,
             ctx,
         ))
         .await;
@@ -374,3 +484,136 @@ fn child_matches_region(declared: Option<&str>, region: &str) -> bool {
         .filter(|value| !value.is_empty())
         .is_none_or(|declared| crate::config::normalize_repository_region(Some(declared)) == region)
 }
+
+/// Release-derived sources begin only after every TOML has settled.
+async fn load_deferred(
+    mut targets: Vec<SourceTarget>,
+    collected: &mut Vec<MapRepositoryConfig>,
+    ctx: &MapSourceContext<'_>,
+) {
+    targets.sort_by_key(|target| {
+        let bound = ctx.previous_for(&target.label.id);
+        !bound.iter().any(|map| {
+            crate::api_scheduler::is_installed(&map.provider, &map.username, &map.repository)
+        })
+    });
+    for target in targets {
+        let Some(declaration) = target.declaration else {
+            continue;
+        };
+        if let Some(observer) = ctx.observer {
+            observer.publish(&target.label.id, "loading", None, collected);
+        }
+        match load_release_tag_maps(
+            &declaration,
+            &target.label,
+            target.builtin,
+            &target.origin,
+            ctx,
+        )
+        .await
+        {
+            Ok(maps) => {
+                collected.extend(maps);
+                if let Some(observer) = ctx.observer {
+                    observer.publish(&target.label.id, "ready", None, collected);
+                }
+            }
+            Err(error) => {
+                if let Some(observer) = ctx.observer {
+                    observer.publish(
+                        &target.label.id,
+                        "error",
+                        Some(error.to_string()),
+                        collected,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Reuse the same document loader for a cached declaration, leaving unrelated sources intact.
+pub(crate) async fn load_map_branch(
+    id: &str,
+    ctx: &MapSourceContext<'_>,
+    region: &str,
+) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
+    let Some(observer) = ctx.observer else {
+        return load_map_tree(region, false, ctx).await;
+    };
+    let Some((target, ids)) = observer.begin(Some(id)) else {
+        return Err(ConfigError::Invalid("mapSource.mapMissing".into()));
+    };
+    let mut collected: Vec<_> = ctx
+        .previous
+        .iter()
+        .filter(|map| !map.source_id.as_ref().is_some_and(|id| ids.contains(id)))
+        .cloned()
+        .collect();
+    let mut deferred = Vec::new();
+    observer.publish(id, "loading", None, &collected);
+    match target
+        .declaration
+        .as_ref()
+        .map(|d| d.mode)
+        .unwrap_or_default()
+    {
+        MapSourceMode::Document => {
+            let location = if let Some(declaration) = &target.declaration {
+                match SourceLocation::resolve(&declaration.url, Some(&target.origin)) {
+                    Ok(location) => location,
+                    Err(error) => {
+                        observer.publish(id, "error", Some(error.to_string()), &collected);
+                        return Ok(collected);
+                    }
+                }
+            } else {
+                target.origin.clone()
+            };
+            let mut visited = HashSet::from([crate::repository_sources::source_address_key(
+                &location.address(),
+                None,
+            )]);
+            // The observer retains the failed node; its old cards stay removed.
+            let _ = load_map_document(
+                location,
+                &target.label,
+                target.node.parent_id.as_deref(),
+                target.builtin,
+                region,
+                target.depth,
+                &mut visited,
+                &mut collected,
+                &mut deferred,
+                ctx,
+            )
+            .await;
+        }
+        MapSourceMode::ReleaseTags => deferred.push(target.clone()),
+        MapSourceMode::Repository => {
+            if let Some(declaration) = &target.declaration {
+                match build_declaration_map(
+                    declaration,
+                    &target.label,
+                    target.builtin,
+                    &target.origin,
+                ) {
+                    Ok(map) => {
+                        collected.push(map);
+                        observer.publish(id, "ready", None, &collected);
+                    }
+                    Err(error) => {
+                        observer.publish(id, "error", Some(error.to_string()), &collected)
+                    }
+                }
+            }
+        }
+    }
+    load_deferred(deferred, &mut collected, ctx).await;
+    Ok(collected)
+}
+
+#[cfg(test)]
+#[path = "tree_tests.rs"]
+mod tests;

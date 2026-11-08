@@ -231,7 +231,7 @@ pub(crate) fn plan_repository_download(
     selected_id: Option<&str>,
 ) -> Result<RepositoryDownloadPlan, String> {
     use crate::network_policy::{Intent, NetworkPolicy};
-    let policy = NetworkPolicy::shared()?;
+    let policy = NetworkPolicy::active()?;
     let plan = policy.resolve(provider, kind, region, selection)?;
     let intent = if raw.is_some() {
         Intent::Raw
@@ -239,7 +239,7 @@ pub(crate) fn plan_repository_download(
         Intent::Release
     };
     let route = plan.route(intent)?;
-    let candidates = materialize_route(policy, route, url, raw, requested, selected_id)?;
+    let candidates = materialize_route(&policy, route, url, raw, requested, selected_id)?;
     Ok(RepositoryDownloadPlan {
         candidates,
         download_threads: route.download_threads,
@@ -259,7 +259,7 @@ pub(crate) fn plan_avatar_download(
 ) -> Result<Vec<DownloadCandidate>, String> {
     use crate::models::{NetworkPlanSelection, RepositoryKind};
     use crate::network_policy::{Intent, NetworkPolicy};
-    let policy = NetworkPolicy::shared()?;
+    let policy = NetworkPolicy::active()?;
     let plan = policy.resolve(
         provider,
         RepositoryKind::Mod,
@@ -285,7 +285,7 @@ pub(crate) fn plan_avatar_download(
         .ok_or("avatar.noSource")?
         .replace("{owner}", &encoded);
     // No raw context: owner PNGs must never be rewritten as repository files.
-    materialize_route(policy, route, &url, None, None, None)
+    materialize_route(&policy, route, &url, None, None, None)
 }
 
 fn materialize_route(

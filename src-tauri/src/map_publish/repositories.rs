@@ -7,6 +7,7 @@ use super::http::get_json;
 use super::http::request_error;
 use super::session::publish_token;
 use super::validation::validate_coordinates;
+use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
 use crate::models::PublishRepository;
 use crate::models::PublishRepositoryList;
@@ -200,7 +201,7 @@ async fn remembered_installation_repositories(
         client.get(&format!("{API_ENDPOINT}/user/installations/{installation}")),
         token,
     )
-    .send()
+    .send_api(crate::models::Provider::Github)
     .await
     .map_err(|error| request_error(&error.to_string()))?;
     // `ensure_success` 会把 404 变成 Err，所以这里必须先看状态码。

@@ -1,8 +1,11 @@
-use crate::models::{GitHubProxy, GitHubProxyConfig, GitHubProxyManifest};
+#[cfg(test)]
+use crate::models::GitHubProxyManifest;
+use crate::models::{GitHubProxy, GitHubProxyConfig};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 use url::Url;
 
+#[cfg(test)]
 const MAX_PROXY_COUNT: usize = 128;
 const PLACEHOLDERS: &[&str] = &[
     "url",
@@ -43,6 +46,7 @@ fn parse_bundled_defaults() -> GitHubProxyConfig {
     config
 }
 
+#[cfg(test)]
 pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
     log::debug!("开始解析 GitHub 代理 TOML 清单：字节数={}", text.len());
     if text.len() > 1024 * 1024 {
@@ -121,6 +125,7 @@ pub fn parse_manifest(text: &str) -> Result<GitHubProxyConfig, String> {
     Ok(config)
 }
 
+#[cfg(test)]
 fn normalize_proxy(proxy: &mut GitHubProxy) -> Result<(), String> {
     proxy.id = proxy.id.trim().to_string();
     proxy.name = proxy.name.trim().to_string();
@@ -179,6 +184,7 @@ pub(crate) fn validate_template(proxy: &GitHubProxy) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn template_key(proxy: &GitHubProxy) -> String {
     proxy
         .template
@@ -188,6 +194,7 @@ fn template_key(proxy: &GitHubProxy) -> String {
         .to_ascii_lowercase()
 }
 
+#[cfg(test)]
 fn deduplicate(proxies: Vec<GitHubProxy>) -> Vec<GitHubProxy> {
     let mut unique = Vec::<GitHubProxy>::new();
     let mut indexes = std::collections::HashMap::<String, usize>::new();
@@ -462,6 +469,7 @@ fn target_url_path(target: &str) -> String {
     path
 }
 
+#[cfg(test)]
 pub fn validate_unique_ids(config: &GitHubProxyConfig) -> Result<(), String> {
     for proxies in [
         &config.release_proxies,

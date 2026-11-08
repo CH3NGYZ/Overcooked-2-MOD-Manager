@@ -49,7 +49,8 @@ test('map loading shares transport and cache while retaining tag assets and runt
   assert.match(tags, /crate::releases::repository_cache_key/)
   assert.doesNotMatch(tags, /"\{\}::all"/)
   assert.match(tags, /crate::releases::fetch_releases\(/)
-  assert.match(tags, /ctx\.previous_for\(&label\.id\)/)
+  assert.match(tags, /return Err\(ConfigError::Invalid\(error\)\)/)
+  assert.doesNotMatch(tags, /return Ok\(previous\)/)
   assert.match(read('community.rs'), /load_release_tag_maps\(&declaration, &label, false, origin, ctx\)/)
   const state = read('state.rs')
   for (const field of ['cached_releases', 'releases_cached_at', 'last_error']) {

@@ -38,6 +38,7 @@ import type {
   LevelSetScanProgress,
   LevelSetZipProgress,
   MapInfo,
+  MapTreeProgress,
   MapInstallOrigin,
   PublishAsset,
   PublishAuthPoll,
@@ -316,8 +317,11 @@ export const api = {
    * `passId` 是「同一次用户点击」的批次号，与随后的 `refreshMapReleases`
    * 共用：tag 模式下同一次加载要为同一个仓库的多个版本取资产，后端按它去重。
    */
-  refreshMapSources: (passId?: string, force = false) =>
-    invoke<MapInfo[]>('refresh_map_sources', { passId, force }),
+  refreshMapSources: (passId?: string, force = false, onProgress?: (progress: MapTreeProgress) => void, sourceId?: string) => {
+    const onUpdate = new Channel<MapTreeProgress>()
+    onUpdate.onmessage = progress => onProgress?.(progress)
+    return invoke<MapInfo[]>('refresh_map_sources', { passId, force, onUpdate, sourceId })
+  },
   /**
    * 刷新一个地图的 Release 列表（5 分钟缓存）。
    *

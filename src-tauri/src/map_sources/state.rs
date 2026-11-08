@@ -116,7 +116,12 @@ impl SourceLabel {
 /// 与仓库侧 `repository_is_available` 同一条语义：`enabled=false` 与
 /// 「地区不适用」都表示「当前用户看不见这张地图」，前端不该为它发请求。
 pub fn map_is_available(map: &MapRepositoryConfig, current_region: &str) -> bool {
-    if !map.enabled {
+    if !map.enabled
+        || map
+            .source_id
+            .as_deref()
+            .is_some_and(crate::community::is_source)
+    {
         return false;
     }
     let normalized = map

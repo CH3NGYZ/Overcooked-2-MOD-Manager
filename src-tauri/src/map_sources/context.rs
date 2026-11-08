@@ -7,6 +7,7 @@ use crate::models::Provider;
 /// 源树遍历、Release 资产文档校验和条目刷新共用这些借用依赖；统一完整分页，
 /// 同仓库共用缓存键并在一次批次中收敛。不另建客户端或全局缓存。
 pub struct MapSourceContext<'a> {
+    pub observer: Option<&'a super::progress::SourceObserver>,
     pub cache: &'a crate::release_cache::RepoReleaseCache,
     pub client: &'a reqwest::Client,
     pub config: &'a AppConfig,
@@ -17,11 +18,8 @@ pub struct MapSourceContext<'a> {
     pub pass_id: Option<&'a str>,
     /// Only full refresh bypasses TTL; same-pass readers still share one snapshot.
     pub force: bool,
-    /// 上一次加载出来的条目。
-    ///
-    /// 只给「需要联网才能变成列表」的源兜底：那些源取不到 API 时不能整块
-    /// 消失（用户会以为作者下架了），沿用旧条目比清空诚实。文档子源不用它；
-    /// 子源失败跳过，根索引失败的回退由 IPC 编排决定。
+    /// 上次声明快照：局部刷新保留其他分支，Release 派生源据此识别已安装优先级。
+    /// 失败源不恢复旧卡片，错误保留在源节点供用户重试。
     pub previous: &'a [MapRepositoryConfig],
 }
 

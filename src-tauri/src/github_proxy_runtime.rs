@@ -1,20 +1,33 @@
+#[cfg(test)]
 use crate::download::planning::ordered_asset_download_candidates;
+#[cfg(test)]
 use crate::download::{DownloadCandidate, DownloadOutput, try_download_candidates};
 use crate::github_proxies;
-use crate::models::{GitHubProxyConfig, ProxyMode};
+use crate::models::GitHubProxyConfig;
+#[cfg(test)]
+use crate::models::ProxyMode;
+#[cfg(test)]
 use crate::repository_sources::{self, SourceLocation};
 use std::sync::RwLock;
 
 /// A process-local snapshot, shared by ConfigService clones but never serialized.
 pub(crate) struct ProxyRuntime {
-    current: RwLock<GitHubProxyConfig>,
+    current: RwLock<RuntimeSnapshot>,
     refresh: tokio::sync::Mutex<()>,
+}
+
+struct RuntimeSnapshot {
+    groups: GitHubProxyConfig,
+    policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
 }
 
 impl Default for ProxyRuntime {
     fn default() -> Self {
         Self {
-            current: RwLock::new(github_proxies::bundled_defaults()),
+            current: RwLock::new(RuntimeSnapshot {
+                groups: github_proxies::bundled_defaults(),
+                policy: None,
+            }),
             refresh: tokio::sync::Mutex::new(()),
         }
     }
@@ -25,9 +38,116 @@ impl ProxyRuntime {
         self.current
             .read()
             .unwrap_or_else(|e| e.into_inner())
+            .groups
             .clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn selected_policy(
+        &self,
+        proxies: bool,
+        plans: bool,
+    ) -> Result<std::sync::Arc<crate::network_policy::NetworkPolicy>, String> {
+        let policy = self
+            .current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .policy
+            .clone();
+        let current = policy
+            .map(Ok)
+            .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+        current.select(proxies, plans).map(std::sync::Arc::new)
+    }
+
+    pub(crate) fn configuration_snapshot(
+        &self,
+        proxies: bool,
+        plans: bool,
+    ) -> Result<
+        (
+            GitHubProxyConfig,
+            std::sync::Arc<crate::network_policy::NetworkPolicy>,
+        ),
+        String,
+    > {
+        let snapshot = self.current.read().unwrap_or_else(|e| e.into_inner());
+        let bundled = crate::network_policy::NetworkPolicy::shared()?;
+        let selected = snapshot
+            .policy
+            .as_deref()
+            .unwrap_or(bundled)
+            .select(proxies, plans)?;
+        let mut groups = if snapshot.policy.is_some() {
+            selected.bundled_proxy_groups()?
+        } else if proxies {
+            github_proxies::bundled_defaults()
+        } else {
+            snapshot.groups.clone()
+        };
+        if snapshot.policy.is_some() {
+            for entry in groups
+                .release_proxies
+                .iter_mut()
+                .chain(groups.raw_proxies.iter_mut())
+                .chain(groups.github_api_proxies.iter_mut())
+                .chain(groups.gitee_api_proxies.iter_mut())
+                .chain(groups.gitcode_api_proxies.iter_mut())
+                .chain(groups.avatar_proxies.iter_mut())
+            {
+                entry.builtin = proxies;
+                entry.remote = !proxies;
+            }
+        }
+        Ok((groups, std::sync::Arc::new(selected)))
+    }
+
+    pub(crate) async fn refresh_policy(
+        &self,
+        region: &str,
+        proxies: bool,
+        plans: bool,
+    ) -> Result<(), String> {
+        let _guard = self.refresh.lock().await;
+        let fresh =
+            crate::network_policy::NetworkPolicy::refresh_remote(region, proxies, plans).await?;
+        self.publish_policy(fresh, proxies)
+    }
+
+    fn publish_policy(
+        &self,
+        fresh: crate::network_policy::NetworkPolicy,
+        proxies: bool,
+    ) -> Result<(), String> {
+        // Parse the complete closure before publishing either view. No config or
+        // business lock is held while documents are being downloaded.
+        // Every switch combination must remain usable after publication.
+        for proxies in [false, true] {
+            for plans in [false, true] {
+                fresh.select(proxies, plans)?;
+            }
+        }
+        let mut groups = fresh.bundled_proxy_groups()?;
+        for proxy in groups
+            .release_proxies
+            .iter_mut()
+            .chain(groups.raw_proxies.iter_mut())
+            .chain(groups.github_api_proxies.iter_mut())
+            .chain(groups.gitee_api_proxies.iter_mut())
+            .chain(groups.gitcode_api_proxies.iter_mut())
+            .chain(groups.avatar_proxies.iter_mut())
+        {
+            proxy.builtin = proxies;
+            proxy.remote = !proxies;
+        }
+        *self.current.write().unwrap_or_else(|e| e.into_inner()) = RuntimeSnapshot {
+            groups,
+            policy: Some(std::sync::Arc::new(fresh)),
+        };
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) async fn refresh(&self, region: &str) -> Result<(), String> {
         // Only refreshes serialize here; readers and unrelated settings saves never wait on HTTP.
         let _guard = self.refresh.lock().await;
@@ -44,6 +164,7 @@ impl ProxyRuntime {
         Err(last_error)
     }
 
+    #[cfg(test)]
     async fn refresh_from(
         &self,
         client: &reqwest::Client,
@@ -92,15 +213,20 @@ impl ProxyRuntime {
             config.gitcode_api_proxies.len(),
             config.avatar_proxies.len()
         );
-        *self.current.write().unwrap_or_else(|e| e.into_inner()) = config;
+        self.current
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .groups = config;
         Ok(())
     }
 }
 
+#[cfg(test)]
 impl DownloadOutput for GitHubProxyConfig {
     fn discard(&self) {}
 }
 
+#[cfg(test)]
 fn manifest_routes(
     region: &str,
     snapshot: &GitHubProxyConfig,

@@ -70,7 +70,18 @@ impl ConfigService {
     }
 
     fn with_proxies(&self, mut config: AppConfig) -> AppConfig {
-        config.github_proxies = self.proxy_snapshot(config.builtin_proxies_only);
+        match self.proxies.configuration_snapshot(
+            config.builtin_proxies_only,
+            config.builtin_network_plans_only,
+        ) {
+            Ok((proxies, policy)) => {
+                config.github_proxies = proxies;
+                config.network_policy = Some(policy);
+            }
+            Err(error) => {
+                log::error!("选择网络快照失败：{error}");
+            }
+        }
         config
     }
 
@@ -85,10 +96,17 @@ impl ConfigService {
     pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {
         // Select before creating a client or resolving any remote manifest. Readers
         // also select by this flag, so an older in-flight refresh cannot override it.
-        if self.load_or_default().builtin_proxies_only {
+        let config = self.load_or_default();
+        if config.builtin_proxies_only && config.builtin_network_plans_only {
             return Ok(());
         }
-        self.proxies.refresh(current_user_region()).await
+        self.proxies
+            .refresh_policy(
+                current_user_region(),
+                config.builtin_proxies_only,
+                config.builtin_network_plans_only,
+            )
+            .await
     }
 
     fn cached_if_fresh(&self, path: &Path) -> Option<AppConfig> {

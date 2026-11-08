@@ -41,6 +41,7 @@ impl ConfigService {
             builtin_sources_only: config.builtin_sources_only,
             builtin_map_sources_only: config.builtin_map_sources_only,
             builtin_proxies_only: config.builtin_proxies_only,
+            builtin_network_plans_only: config.builtin_network_plans_only,
         }
     }
 }

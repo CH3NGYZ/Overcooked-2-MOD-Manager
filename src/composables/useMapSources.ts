@@ -19,6 +19,7 @@
  */
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
+import { createSourceTreeState } from '../sourceTreeState'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
 import { prioritizeByIds, runReleaseBatch, runSourceReleaseRefresh, type ReleaseFetchSpec } from '../releaseRefresh'
 import { backendMessageOf } from '../locale/backend'
@@ -64,6 +65,7 @@ const installing = ref<Record<string, boolean>>({})
  * 只有一处，不会一边按 4 并发、另一边按串行，也不会一边算成功、另一边算失败。
  */
 const state = createRefreshState(REFRESH_CONCURRENCY)
+const sourceTree = createSourceTreeState()
 /** 每张地图的 Release 刷新状态。 */
 const refreshing = state.refreshing
 /** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
@@ -273,16 +275,19 @@ export interface MapBoundRefreshSummary {
 
 /** Load all map declarations first. Bundle entries project their versions from
  * the shared repository snapshot; ordinary single-map sources use the same API
- * refresh queue. Failures retain the previous list and do not block other maps. */
-async function prepareMapSources(passId: string, force = false): Promise<string[]> {
+ * refresh queue. Failed nodes stay empty and never roll successful siblings back. */
+async function prepareMapSources(passId: string, force = false, sourceId?: string): Promise<string[]> {
   mapsRevision += 1
   try {
-    const result = await api.refreshMapSources(passId, force)
+    const result = await api.refreshMapSources(passId, force, progress => {
+      mapsRevision += 1
+      sourceTree.replace(progress.nodes)
+      maps.value = progress.maps
+    }, sourceId)
     mapsRevision += 1
     maps.value = result
-    return []
+    return sourceTree.nodes.value.flatMap(node => node.error ? [backendMessageOf(node.error)] : [])
   } catch (reason) {
-    // Callers retain/restore the previous list; network failure cannot erase it.
     return [backendMessageOf(reason)]
   }
 }
@@ -308,12 +313,15 @@ async function refreshBoundMaps(
 async function refreshSource(node: { id: string }) {
   if (anyRefreshing.value) return
   const passId = newPassId()
+  const removed = sourceTree.begin(node.id)
+  mapsRevision += 1
+  maps.value = maps.value.filter(map => !map.source_id || !removed.has(map.source_id))
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'partial',
-    prepare: () => state.runSource(node.id, () => prepareMapSources(passId)),
+    prepare: () => state.runSource(node.id, () => prepareMapSources(passId, false, node.id)),
     refresh: () => refreshReleases(maps.value.filter((map) =>
-      (map.source_id || '__none__') === node.id), { trigger: 'single', passId }),
+      sourceTree.descendants(node.id).has(map.source_id || '__none__')), { trigger: 'single', passId }),
   })
   if (result.errors.length) message?.error(result.errors[0])
 }
@@ -323,15 +331,14 @@ async function refreshAll(
 ) {
   if (anyRefreshing.value) return
   const passId = newPassId()
-  const previous = maps.value
   state.setEntryStateUnavailable(true)
   maps.value = []
+  sourceTree.replace([])
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'full',
     prepare: async () => {
       const errors = await prepareMapSources(passId, options.force)
-      if (errors.length) maps.value = previous
       return errors
     },
     refresh: () => refreshReleases(maps.value, { ...options, trigger: 'single', passId }),
@@ -344,8 +351,10 @@ export function useMapSources() {
   return {
     maps,
     loading,
+    sourceNodes: sourceTree.nodes,
     refreshing,
     queued,
+    preparingSources: state.preparingSources,
     refreshingSources,
     installing,
     refreshingAll,

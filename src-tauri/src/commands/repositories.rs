@@ -67,10 +67,15 @@ pub fn preview_repository_import(
 ) -> Result<ImportPreview, String> {
     log::info!("预览仓库配置导入：文本长度={}", text.len());
     let config = state.config.load_or_default();
-    let bundle = state
-        .config
-        .validate_bundle(&text)
-        .map_err(|e| e.to_string())?;
+    let policy = config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+    let bundle = crate::network_policy::NetworkPolicy::with_snapshot(policy, || {
+        state.config.validate_bundle(&text)
+    })
+    .map_err(|e| e.to_string())?;
     Ok(state.config.preview_bundle(&config, &bundle))
 }
 
@@ -90,10 +95,15 @@ pub fn import_repositories(
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
-    let bundle = state
-        .config
-        .validate_bundle(&text)
-        .map_err(|e| e.to_string())?;
+    let policy = config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+    let bundle = crate::network_policy::NetworkPolicy::with_snapshot(policy, || {
+        state.config.validate_bundle(&text)
+    })
+    .map_err(|e| e.to_string())?;
     let preview = state.config.import_bundle(&mut config, &bundle, &conflict);
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!(
@@ -291,11 +301,12 @@ pub fn save_repository(
         releases_cached_at: None,
         last_error: None,
     };
-    crate::network_policy::NetworkPolicy::shared()?.validate_selection(
-        &item.provider,
-        item.kind,
-        &item.network_plan,
-    )?;
+    config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?
+        .validate_selection(&item.provider, item.kind, &item.network_plan)?;
     if let Some(existing) = config.repositories.iter_mut().find(|repo| repo.id == id) {
         let old_github = existing.github_token.clone();
         let old_gitee = existing.gitee_token.clone();

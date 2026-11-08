@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(skip)]
+    pub(crate) network_policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
     pub schema_version: u32,
     #[serde(default = "crate::config::default_ui_zoom")]
     pub ui_zoom: f64,
@@ -69,6 +71,8 @@ pub struct AppConfig {
     /// Only bundled proxy definitions are visible; remote refreshes cannot override them.
     #[serde(default)]
     pub builtin_proxies_only: bool,
+    #[serde(default)]
+    pub builtin_network_plans_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -233,6 +237,8 @@ pub struct PublicConfig {
     pub builtin_map_sources_only: bool,
     #[serde(default)]
     pub builtin_proxies_only: bool,
+    #[serde(default)]
+    pub builtin_network_plans_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +264,7 @@ pub struct SettingsPatch {
     /// 只用内置地图源（不影响仓库源，反之亦然）。
     pub builtin_map_sources_only: Option<bool>,
     pub builtin_proxies_only: Option<bool>,
+    pub builtin_network_plans_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

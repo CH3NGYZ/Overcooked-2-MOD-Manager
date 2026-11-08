@@ -32,6 +32,7 @@ import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
 import SourceTitle from '../components/SourceTitle.vue'
+import SourceDirectory from '../components/SourceDirectory.vue'
 import {
   useSourceGroupTree,
   type SourceGroupEntry,
@@ -51,7 +52,7 @@ const engine = useRepositoryRefresh()
  * `anyRefreshing`：禁用按钮用（源文档阶段也算忙，避免重复触发）。
  * `repositoriesLoading`：只决定图标转不转 —— 只有仓库真的在加载时才转。
  */
-const { refreshing, sourceRefreshing, anyRefreshing, repositoriesLoading } = engine
+const { refreshing, queued, preparingSources, sourceRefreshing, anyRefreshing, repositoriesLoading } = engine
 /** 状态标签跳转：点标签跳到 MOD 管理页，并高亮绑定该仓库的 MOD 卡片 3 秒。 */
 const { linkToLocalMods } = useLocalModLink()
 /**
@@ -220,7 +221,7 @@ function cardAction(repo: Repository): CardAction {
     kind: installActionOf(repo),
     label: installLabel(repo),
     loading: !!installing.value[repo.id],
-    disabled: !!refreshing.value[repo.id],
+    disabled: preparingSources.value || !!refreshing.value[repo.id] || !!queued.value[repo.id],
   }
 }
 
@@ -453,9 +454,12 @@ const treeEntries = computed<SourceGroupEntry<Repository>[]>(() =>
 
 /** 源顺序 = `config.repository_sources` 的持久化顺序（读取顺序 = 展示顺序）。 */
 const sourceOrder = computed<SourceGroupOrder[]>(() =>
-  sources.value.map((source) => ({
+  sources.value.filter(source => !COMMUNITY_IDS.has(source.id)).map((source) => ({
     id: source.id,
     label: pickI18n(source.nickname_i18n, source.nickname),
+    parentId: source.parent_id, url: source.url,
+    status: engine.sourceNodes.value.find(node => node.id === source.id)?.status,
+    error: engine.sourceNodes.value.find(node => node.id === source.id)?.error,
   })),
 )
 
@@ -469,6 +473,7 @@ const {
   () => treeEntries.value,
   () => ({
     order: sourceOrder.value,
+    preserveEmpty: !query.value,
     ungrouped: { id: '__none__', label: t('dialogs.uncategorizedRepositories') },
     /* 社区仓库统一视为未分组：单组、无分类标题，直接平铺卡片。 */
     flat: (sourceId: string) => COMMUNITY_IDS.has(sourceId),
@@ -489,7 +494,7 @@ const hasCommunity = computed(() => communityTree.value.length > 0)
  * 加同名的 `data-tutorial`：重复 key 时 `querySelector` 落到哪一张取决于
  * DOM 顺序，教程就变成了随机指一张。只认整棵树里的第一个单条。
  */
-const tutorialCardId = computed(() => tree.value[0]?.groups[0]?.items[0]?.id ?? null)
+const tutorialCardId = computed(() => tree.value.flatMap(node => node.groups.flatMap(group => group.items))[0]?.id ?? null)
 
 /* ===== 动作 ===== */
 
@@ -565,26 +570,8 @@ function statusOf(repo: Repository): RepoStatus {
  * 再并行刷新刷新后属于这条源链的仓库。
  */
 async function refreshSource(node: { id: string }) {
-  // refreshSourceChain 内部已按租用完 reloadConfig，这里不再全量 load
-  const errors = await engine.refreshSourceChain(node.id)
+  const errors = await engine.refreshSource(node.id)
   errors.forEach((error) => message.error(error))
-  const ids = new Set<string>()
-  const collect = (sourceId: string) => {
-    ids.add(sourceId)
-    for (const child of sources.value.filter((entry) => entry.parent_id === sourceId)) collect(child.id)
-  }
-  collect(node.id)
-  /*
-   * 源文档刚拉回来的仓库也要按「真实存在」再过滤一次：
-   * 与展示同一套判定，避免把地区专属仓库（例如中国大陆下的
-   * international 仓库）送进 Release 刷新队列。
-   */
-  const scoped = repositories.value.filter(
-    (repo) => !!repo.source_id && ids.has(repo.source_id)
-      && repositoryIsAvailable(repo, config.value?.repository_sources, currentRegion.value, config.value?.platform),
-  )
-  const releaseErrors = await engine.refreshMany(scoped)
-  releaseErrors.forEach((error) => message.error(error))
 }
 
 /**
@@ -604,7 +591,7 @@ async function refreshSource(node: { id: string }) {
  * 刷新走的是 `backgroundLoading`（不显示整页遮罩）。实测点刷新后 852 帧采样
  * 里遮罩一次都没出现。
  */
-const pageLoading = computed(() => loading.value || (engine.refreshingAll.value && visibleCount.value === 0))
+const pageLoading = computed(() => loading.value && tree.value.length === 0)
 
 /** 整源刷新入口（仅浮动按钮调用；页头按钮已移除）。 */
 async function refreshAll() {
@@ -626,7 +613,7 @@ async function refreshGroup(group: SourceGroupLeaf<Repository>) {
 
 /** 该组是否有仓库正在刷新（决定分组按钮的转圈）。 */
 function groupRefreshing(group: SourceGroupLeaf<Repository>) {
-  return group.items.some((repo) => refreshing.value[repo.id])
+  return group.items.some((repo) => refreshing.value[repo.id] || queued.value[repo.id])
 }
 
 
@@ -685,25 +672,12 @@ defineExpose({ refreshAll, visibleCount })
 
   <PageLoading :show="pageLoading">
     <template #status>{{ t('modsOnline.readingRepositorySources') }}</template>
-    <n-empty v-if="!pageLoading && !visibleCount" :description="t('tools.noMatchingRepositories')" class="empty" />
+    <n-empty v-if="!pageLoading && !tree.length" :description="t('tools.noMatchingRepositories')" class="empty" />
 
     <template v-else>
-      <n-collapse :expanded-names="sourcesExpanded" class="source-collapse"
-        @update:expanded-names="setOpenSources">
-        <n-collapse-item v-for="node in normalTree" :key="node.id" :name="node.id">
-          <template #header>
-            <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
-              <div class="source-head">
-                <SourceTitle :label="node.label" :items="repositories.filter(item => item.source_id === node.id)" :source-url="sources.find(source => source.id === node.id)?.url" />
-                <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
-                <n-button size="tiny" quaternary
-                  :loading="sourceRefreshing[node.id] || node.groups.some((g) => g.items.some((r) => refreshing[r.id]))"
-                  :disabled="anyRefreshing" @click.stop="refreshSource(node)">
-                  <template #icon><RefreshOutline width="13" height="13" /></template>
-                </n-button>
-              </div>
-            </SourceGroupSlot>
-          </template>
+      <SourceDirectory :nodes="normalTree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
+        :busy="node => !!sourceRefreshing[node.id] || node.groups.some(group => group.items.some(repo => refreshing[repo.id]))"
+        @refresh="refreshSource" @update:expanded="setOpenSources" v-slot="{ node }">
           <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
             <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
               @update:expanded-names="setOpenGroups">
@@ -732,7 +706,7 @@ defineExpose({ refreshAll, visibleCount })
                       :status-clickable="hasLocalInstall(repo)"
                       :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
                       :dependency="cardDependency(repo)"
-                      :version="versionParts(repo)" :refreshing="!!refreshing[repo.id]"
+                      :version="versionParts(repo)" :refreshing="preparingSources || !!refreshing[repo.id] || !!queued[repo.id]"
                       :downloads="downloadCount(repo)"
                       :action="cardAction(repo)"
                       :error="repo.last_error" :active="detailId === repo.id"
@@ -746,8 +720,7 @@ defineExpose({ refreshAll, visibleCount })
               </n-collapse-item>
             </n-collapse>
           </SourceGroupSlot>
-        </n-collapse-item>
-      </n-collapse>
+      </SourceDirectory>
 
       <!-- 社区仓库：与上方仓库源用分割线隔开，固定在最下方 -->
       <template v-if="hasCommunity">
@@ -781,7 +754,7 @@ defineExpose({ refreshAll, visibleCount })
                   :status-clickable="hasLocalInstall(repo)"
                   :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
                   :dependency="cardDependency(repo)"
-                  :version="versionParts(repo)" :refreshing="!!refreshing[repo.id]"
+                  :version="versionParts(repo)" :refreshing="preparingSources || !!refreshing[repo.id] || !!queued[repo.id]"
                   :downloads="downloadCount(repo)"
                   :action="cardAction(repo)"
                   :error="repo.last_error" :active="detailId === repo.id"

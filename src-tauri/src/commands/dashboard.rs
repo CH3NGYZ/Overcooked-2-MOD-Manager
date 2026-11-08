@@ -34,7 +34,7 @@ pub async fn get_local_mods(state: State<'_, AppState>) -> Result<Vec<InstalledM
     tauri::async_runtime::spawn_blocking(move || {
         let config = state.config.load_or_default();
         let game_info = game::detect_game(&config);
-        Ok(game_info
+        let installed = game_info
             .path
             .as_ref()
             .map(|path| {
@@ -44,7 +44,27 @@ pub async fn get_local_mods(state: State<'_, AppState>) -> Result<Vec<InstalledM
                     Some(&state.config.manifests_dir()),
                 )
             })
-            .unwrap_or_default())
+            .unwrap_or_default();
+        crate::api_scheduler::set_installed(
+            "mod",
+            config
+                .repositories
+                .iter()
+                .filter(|repo| {
+                    installed.iter().any(|item| {
+                        item.repository_id.as_deref() == Some(repo.id.as_str())
+                            || item.repository_ids.contains(&repo.id)
+                    })
+                })
+                .map(|repo| {
+                    crate::api_scheduler::repository_key(
+                        &repo.provider,
+                        &repo.username,
+                        &repo.repository,
+                    )
+                }),
+        );
+        Ok(installed)
     })
     .await
     .map_err(|error| error.to_string())?

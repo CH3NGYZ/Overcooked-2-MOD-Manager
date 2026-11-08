@@ -13,6 +13,7 @@ use super::http::api_client;
 use super::http::authorized;
 use super::http::ensure_success;
 use super::http::request_error;
+use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
 use crate::locale_tag::with_params;
 use crate::models::PublishAuthState;
@@ -62,7 +63,7 @@ enum TokenProbe {
 
 async fn probe_token(client: &reqwest::Client, token: &str) -> TokenProbe {
     let response = match authorized(client.get(format!("{API_ENDPOINT}/user")), token)
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
     {
         Ok(response) => response,
@@ -121,7 +122,7 @@ async fn refresh_tokens(client: &reqwest::Client, refresh_token: &str) -> Refres
         .post(ACCESS_TOKEN_ENDPOINT)
         .header("Accept", "application/json")
         .form(&form)
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
     {
         Ok(response) => response,

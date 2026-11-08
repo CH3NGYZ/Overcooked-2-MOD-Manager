@@ -25,6 +25,7 @@ async fn bundled_proxy_switch_is_independent_persistent_and_blocks_remote_refres
             config.builtin_sources_only = mods;
             config.builtin_map_sources_only = maps;
             config.builtin_proxies_only = true;
+            config.builtin_network_plans_only = true;
             service.save(&config).unwrap();
             service
                 .proxies
@@ -135,5 +136,40 @@ fn config_error_fallback_uses_current_runtime_snapshot() {
         service.load_or_default().github_proxies,
         GitHubProxyConfig::default()
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn all_four_source_switches_persist_independently_and_plans_stay_process_local() {
+    let root = std::env::temp_dir().join(format!("oc2-four-switches-{}", Uuid::new_v4()));
+    let service = ConfigService::for_test(root.clone());
+    let mut config = service.load().unwrap();
+    let mut legacy = serde_json::to_value(&config).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("builtin_network_plans_only");
+    assert!(
+        !serde_json::from_value::<crate::models::AppConfig>(legacy)
+            .unwrap()
+            .builtin_network_plans_only
+    );
+    for bits in 0..16 {
+        config.builtin_sources_only = bits & 1 != 0;
+        config.builtin_map_sources_only = bits & 2 != 0;
+        config.builtin_proxies_only = bits & 4 != 0;
+        config.builtin_network_plans_only = bits & 8 != 0;
+        service.save(&config).unwrap();
+        let restarted = ConfigService::for_test(root.clone());
+        let loaded = restarted.load().unwrap();
+        let public = restarted.public_config(&loaded);
+        assert_eq!(public.builtin_sources_only, bits & 1 != 0);
+        assert_eq!(public.builtin_map_sources_only, bits & 2 != 0);
+        assert_eq!(public.builtin_proxies_only, bits & 4 != 0);
+        assert_eq!(public.builtin_network_plans_only, bits & 8 != 0);
+        assert!(loaded.network_policy.is_some());
+        let stored = fs::read_to_string(service.config_path()).unwrap();
+        assert!(!stored.contains("[network_policy]"));
+    }
     fs::remove_dir_all(root).unwrap();
 }

@@ -4,6 +4,7 @@ use super::http::api_client;
 use super::http::authorized;
 use super::http::ensure_success;
 use super::http::request_error;
+use crate::api_scheduler::ApiRequestExt;
 use crate::locale_tag::with_params;
 use crate::models::PublishTokens;
 use serde::Deserialize;
@@ -106,7 +107,7 @@ pub(super) async fn exchange_code(
         .post(ACCESS_TOKEN_ENDPOINT)
         .header("Accept", "application/json")
         .form(&form)
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
         .map_err(|error| request_error(&error.to_string()))?;
     let body: TokenResponse = ensure_success(response, "access-token")
@@ -134,7 +135,7 @@ pub(super) async fn exchange_code(
 
 async fn fetch_login(client: &reqwest::Client, token: &str) -> Result<String, String> {
     let response = authorized(client.get(format!("{API_ENDPOINT}/user")), token)
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
         .map_err(|error| request_error(&error.to_string()))?;
     let user: ApiUser = ensure_success(response, "user")

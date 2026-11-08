@@ -38,6 +38,10 @@ export interface SourceGroupEntry<T> {
 export interface SourceGroupOrder {
   id: string
   label: string
+  parentId?: string | null
+  url?: string
+  status?: string
+  error?: string | null
 }
 
 export interface SourceGroupLeaf<T> {
@@ -52,6 +56,10 @@ export interface SourceGroupSource<T> {
   id: string
   label: string
   count: number
+  parentId?: string | null
+  url?: string
+  status?: string
+  error?: string | null
   /** 「不分类」的源（如社区仓库）：只有一组且不显示分类标题。 */
   flat: boolean
   groups: SourceGroupLeaf<T>[]
@@ -63,6 +71,7 @@ export interface SourceGroupTreeOptions {
    * 地图页没有持久化源树，顺序本来就只能从条目顺序读出来。
    */
   order?: SourceGroupOrder[]
+  preserveEmpty?: boolean
   /** 没有源归属的条目的桶。 */
   ungrouped: { id: string; label: string }
   /** 该源只有一组且不显示分类标题（社区仓库）。 */
@@ -122,12 +131,23 @@ export function buildSourceGroupTree<T>(
     else buckets.set(id, [entry])
   }
 
+  // Search retains the ancestor titles of matching cards.
+  const required = new Set(buckets.keys())
+  let added = true
+  while (added) {
+    added = false
+    for (const node of options.order ?? []) {
+      if (required.has(node.id) && node.parentId && !required.has(node.parentId)) {
+        required.add(node.parentId); added = true
+      }
+    }
+  }
   const declaredLabels = new Map<string, string>()
   const ids: string[] = []
   const seen = new Set<string>()
   for (const declared of options.order ?? []) {
     if (declared.label) declaredLabels.set(declared.id, declared.label)
-    if (!buckets.has(declared.id) || seen.has(declared.id)) continue
+    if ((!options.preserveEmpty && !required.has(declared.id)) || seen.has(declared.id)) continue
     seen.add(declared.id)
     ids.push(declared.id)
   }
@@ -139,7 +159,7 @@ export function buildSourceGroupTree<T>(
   }
   if (buckets.has(ungroupedId)) ids.push(ungroupedId)
 
-  return ids.map((id) => {
+  const tree = ids.map((id) => {
     const items = buckets.get(id) ?? []
     /*
      * 源名的兜底顺序：声明昵称 → 条目上带的源名 → 源 ID。
@@ -155,8 +175,23 @@ export function buildSourceGroupTree<T>(
     const groups = flat
       ? [{ key: `${id}::flat`, label: '', items: items.map((entry) => entry.item) }]
       : buildLeaves(id, items)
-    return { id, label, count: items.length, flat, groups }
+    const declaration = options.order?.find(node => node.id === id)
+    return { ...declaration, id, label, count: items.length, flat, groups }
   })
+  const ownCounts = new Map(tree.map(node => [node.id, node.count]))
+  for (const root of tree) {
+    const visited = new Set([root.id])
+    const pending = [root.id]
+    while (pending.length) {
+      const parent = pending.pop()
+      for (const child of tree) {
+        if (child.parentId !== parent || visited.has(child.id)) continue
+        visited.add(child.id); pending.push(child.id)
+      }
+    }
+    root.count = [...visited].reduce((total, id) => total + (ownCounts.get(id) ?? 0), 0)
+  }
+  return tree
 }
 
 /** 所有源节点的折叠项名称。 */

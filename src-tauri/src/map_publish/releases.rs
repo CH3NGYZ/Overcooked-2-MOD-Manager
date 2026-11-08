@@ -9,6 +9,7 @@ use super::validation::encode_component;
 use super::validation::validate_coordinates;
 use super::validation::validate_new_tag;
 use super::validation::validate_tag;
+use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
 use crate::map_note::publish_metadata_from_note;
 use crate::map_note::render_release_body;
@@ -111,7 +112,7 @@ pub async fn list_publish_releases(
         let request = authorized(client.get(url), &token);
         async move {
             let response = request
-                .send()
+                .send_api(crate::models::Provider::Github)
                 .await
                 .map_err(|error| request_error(&error.to_string()))?;
             let releases: Vec<ApiRelease> = ensure_success(response, "list-releases")
@@ -261,7 +262,7 @@ pub async fn save_publish_release(
                 "draft": false,
                 "prerelease": false,
             }))
-            .send()
+            .send_api(crate::models::Provider::Github)
             .await
         }
         None => {
@@ -278,7 +279,7 @@ pub async fn save_publish_release(
                 "draft": false,
                 "prerelease": false,
             }))
-            .send()
+            .send_api(crate::models::Provider::Github)
             .await
         }
     }
@@ -311,7 +312,7 @@ pub async fn delete_publish_release(
         )),
         &token,
     )
-    .send()
+    .send_api(crate::models::Provider::Github)
     .await
     .map_err(|error| request_error(&error.to_string()))?;
     ensure_success(response, "delete-release").await?;
@@ -329,7 +330,7 @@ pub async fn delete_publish_release(
             )),
             &token,
         )
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
         .map_err(|error| request_error(&error.to_string()))?;
         let status = response.status();

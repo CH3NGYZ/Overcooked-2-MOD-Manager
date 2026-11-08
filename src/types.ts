@@ -199,6 +199,7 @@ export interface PublicConfig {
   /** 只用内置地图源（与仓库源开关相互独立）。 */
   builtin_map_sources_only?: boolean
   builtin_proxies_only?: boolean
+  builtin_network_plans_only?: boolean
 }
 export interface RepositorySource {
   network_plan?: NetworkPlanSelection
@@ -641,7 +642,8 @@ export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: 
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
-export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; builtin_proxies_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
+export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; builtin_proxies_only?: boolean
+  builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
 export interface RepositoryPatch {
   id?: string
@@ -1011,3 +1013,9 @@ export interface StartupProbe {
   reachable: boolean
   failure_kind: 'busy' | 'cancelled' | 'timeout' | 'http' | 'network' | 'too_large' | 'invalid_content' | null
 }
+
+export interface SourceNode {
+  id: string; parent_id?: string | null; label: string; label_i18n?: Record<string, string>;
+  url?: string; status: 'pending' | 'loading' | 'ready' | 'error'; error?: string | null
+}
+export interface MapTreeProgress { nodes: SourceNode[]; maps: MapInfo[] }

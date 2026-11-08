@@ -18,13 +18,13 @@ pub(crate) fn builtin_repository_sources_for_region(
     vec![RepositorySource {
         network_plan: Default::default(),
         id: crate::repository_sources::DEFAULT_INDEX_ID.into(),
-        nickname: "官方仓库源".into(),
+        nickname: "MOD源".into(),
         nickname_i18n: [
-            ("zh-CN".into(), "官方仓库源".into()),
-            ("zh-TW".into(), "官方倉庫來源".into()),
-            ("en".into(), "Official repositories".into()),
-            ("ko".into(), "공식 저장소 소스".into()),
-            ("ja".into(), "公式リポジトリソース".into()),
+            ("zh-CN".into(), "MOD源".into()),
+            ("zh-TW".into(), "MOD來源".into()),
+            ("en".into(), "MOD sources".into()),
+            ("ko".into(), "MOD 소스".into()),
+            ("ja".into(), "MODソース".into()),
         ]
         .into(),
         url: if builtin_only {

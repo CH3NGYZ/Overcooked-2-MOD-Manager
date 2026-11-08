@@ -15,6 +15,7 @@ use super::validation::validate_asset_name;
 use super::validation::validate_coordinates;
 use super::zip::MAX_ASSET_BYTES;
 use super::zip::zip_cache;
+use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
 use crate::locale_tag::with_params;
 use crate::map_note::VERSION_PLACEHOLDER;
@@ -113,7 +114,7 @@ pub async fn upload_publish_asset(
         .header("Content-Type", "application/zip")
         .header("Content-Length", total)
         .body(reqwest::Body::wrap_stream(stream))
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
         .map_err(|error| request_error(&error.to_string()))?;
     let asset: ApiAsset = ensure_success(response, "upload-asset")
@@ -187,7 +188,7 @@ pub async fn delete_publish_asset(
         )),
         &token,
     )
-    .send()
+    .send_api(crate::models::Provider::Github)
     .await
     .map_err(|error| request_error(&error.to_string()))?;
     ensure_success(response, "delete-asset").await?;

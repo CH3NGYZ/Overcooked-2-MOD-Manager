@@ -7,6 +7,15 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const settings: DomainMessages = {
+  dataSources: { 'zh-CN': '数据来源', 'zh-TW': '資料來源', en: 'Data sources', ko: '데이터 소스', ja: 'データソース' },
+  useBundledNetworkPlansOnly: { 'zh-CN': '仅使用内置下载计划', 'zh-TW': '僅使用內建下載計畫', en: 'Use bundled download plans only', ko: '내장 다운로드 계획만 사용', ja: '内蔵ダウンロードプランのみ使用' },
+  useBundledNetworkPlansOnlyHint: {
+    'zh-CN': '只使用管理器自带的 network-plans.toml，不读取远端下载计划；与代理配置和 MOD、地图源开关相互独立。',
+    'zh-TW': '僅使用管理器內建的 network-plans.toml，不讀取遠端下載計畫；與代理設定及 MOD、地圖來源開關互相獨立。',
+    en: 'Use the shipped network-plans.toml without fetching remote download plans. Independent of proxy, MOD and map source switches.',
+    ko: '원격 다운로드 계획을 가져오지 않고 내장 network-plans.toml을 사용합니다. 프록시, MOD 및 지도 소스와 독립적입니다.',
+    ja: 'リモートのダウンロードプランを取得せず、内蔵の network-plans.toml を使用します。プロキシ・MOD・マップソースとは独立しています。',
+  },
   useBundledProxiesOnly: {
     'zh-CN': '仅使用内置代理配置',
     'zh-TW': '僅使用內建代理設定',

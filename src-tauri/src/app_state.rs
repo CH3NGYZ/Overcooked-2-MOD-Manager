@@ -29,6 +29,7 @@ pub struct AppState {
     ///
     /// 一个合集仓的 Release 列表会被它下面的每张地图读到，还会被「文档放在
     /// Release 资产里」时的 sha256 校验读到 —— 一次刷新里只该请求一次 API。
+    pub(crate) map_source_registry: Arc<crate::map_sources::progress::SourceRegistry>,
     pub release_cache: Arc<crate::release_cache::RepoReleaseCache>,
     /// 程序更新检查的 5 分钟缓存（启动时恒检测，见 `check_app_update`）。
     pub app_update_check: Arc<Mutex<Option<CachedAppUpdateCheck>>>,
@@ -62,6 +63,7 @@ impl AppState {
             readme: Arc::new(crate::repository_readme::ReadmeDownloads::default()),
             game_state: Arc::new(Mutex::new(None)),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
+            map_source_registry: Arc::default(),
             release_cache: Arc::new(crate::release_cache::RepoReleaseCache::default()),
             app_update_check: Arc::new(Mutex::new(None)),
         }

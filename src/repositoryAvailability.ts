@@ -81,9 +81,7 @@ export function repositorySource(
  *   - 仓库自身地区不适用于当前地区（例如 international 仓库在中国大陆）；
  *   - 所属来源地区不适用于当前地区，或来源已被删除（与后端一致）。
  *
- * 社区源（GitHub / Gitee）默认地区为空，因此对全部地区可用；
- * 它们与官方源的关系由后端 `community::merge_results` 按身份闪避处理
- * （官方已收录的社区副本被置 `enabled=false`），不在地区维度表达。
+ * 社区发现暂停期间，三平台的发现来源均不可用；保留旧配置以便之后恢复。
  */
 export function repositoryIsAvailable(
   repo: Pick<Repository, 'enabled' | 'region' | 'source_id' | 'platform'>,
@@ -91,6 +89,8 @@ export function repositoryIsAvailable(
   currentRegion: string | undefined,
   currentPlatform?: string,
 ): boolean {
+  if (repo.source_id && ['github-community', 'gitee-community', 'gitcode-community'].includes(repo.source_id)) return false
+
   if (!repo.enabled) return false
   if (!repositoryRegionMatches(repo.region, currentRegion)) return false
   /*

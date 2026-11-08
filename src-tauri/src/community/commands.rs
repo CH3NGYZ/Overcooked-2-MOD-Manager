@@ -16,6 +16,9 @@ pub async fn refresh_community_repositories(
     state: State<'_, AppState>,
     provider: Option<Provider>,
 ) -> Result<PublicConfig, String> {
+    if !super::DISCOVERY_ENABLED {
+        return Ok(state.config.public_config(&state.config.load_or_default()));
+    }
     let provider = provider.unwrap_or(Provider::Github);
     let search = state.community.for_provider(&provider);
     let mut limits = search

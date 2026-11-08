@@ -227,6 +227,7 @@ async fn real_release_tag_source_builds_maps() {
     let client =
         crate::releases::build_client(config.network.timeout_seconds).expect("HTTP 客户端应可创建");
     let ctx = MapSourceContext {
+        observer: None,
         cache: &cache,
         client: &client,
         config: &config,

@@ -63,7 +63,7 @@ test('来源已从配置删除时仓库不可用（与后端一致）', () => {
   assert.equal(repositoryIsAvailable(repo({ source_id: 'gone' }), sources, 'chinese_mainland'), false)
 })
 
-test('社区源不限地区：Gitee 社区在国际地区同样可用', () => {
+test('社区发现暂停：所有地区隐藏旧社区仓库', () => {
   /*
    * 两个社区源默认 region 为空，因此对所有地区可用。
    * 它们与官方源的关系由后端按身份闪避（官方已收录的副本 enabled=false），
@@ -76,8 +76,8 @@ test('社区源不限地区：Gitee 社区在国际地区同样可用', () => {
     { id: 'github-community', region: undefined },
   ]
   for (const region of ['chinese_mainland', 'international', undefined]) {
-    assert.equal(repositoryIsAvailable(gitee, sources, region), true, `gitee ${region}`)
-    assert.equal(repositoryIsAvailable(github, sources, region), true, `github ${region}`)
+    assert.equal(repositoryIsAvailable(gitee, sources, region), false, `gitee ${region}`)
+    assert.equal(repositoryIsAvailable(github, sources, region), false, `github ${region}`)
   }
 })
 

@@ -2,6 +2,7 @@ use super::catalog::SearchHit;
 use super::catalog::SearchResults;
 use super::catalog::classify_search_item;
 use super::state::SearchRateLimits;
+use crate::api_scheduler::ApiRequestExt;
 use crate::github_proxies;
 use crate::models::CommunityDiscovery;
 use crate::models::GitHubProxy;
@@ -60,7 +61,7 @@ pub(super) async fn fetch_page(
         request = request.bearer_auth(token);
     }
     let response = request
-        .send()
+        .send_api(crate::models::Provider::Github)
         .await
         .map_err(|error| error.without_url().to_string())?;
     let status = response.status();

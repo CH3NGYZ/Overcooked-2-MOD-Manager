@@ -1,5 +1,6 @@
 //! Trusted network configuration. Parse the entire registry/plan closure before
 //! publishing it; source documents may reference plans but cannot define proxies.
+mod runtime;
 mod validation;
 
 use crate::models::{GitHubProxy, Provider};

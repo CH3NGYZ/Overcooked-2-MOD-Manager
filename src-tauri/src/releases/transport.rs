@@ -2,6 +2,7 @@ use super::client::APP_USER_AGENT;
 use super::error::ReleaseError;
 use super::error::release_error_kind;
 use super::projection::parse_release_json;
+use crate::api_scheduler::ApiRequestExt;
 use crate::models::GitHubProxy;
 use crate::models::Provider;
 use crate::models::ReleaseInfo;
@@ -64,7 +65,7 @@ pub(super) fn repository_api_targets<'a>(
     proxies: &[GitHubProxy],
 ) -> Result<Vec<(String, Option<&'a str>)>, ReleaseError> {
     use crate::network_policy::{NetworkPolicy, Step};
-    let policy = NetworkPolicy::shared().map_err(ReleaseError::Http)?;
+    let policy = NetworkPolicy::active().map_err(ReleaseError::Http)?;
     let plan = policy
         .resolve(
             &repo.provider,
@@ -207,7 +208,7 @@ async fn fetch_api_json(
             "no-cache, no-store, max-age=0",
         )
         .header(reqwest::header::PRAGMA, "no-cache");
-    let response = request.send().await.map_err(|e| {
+    let response = request.send_api(provider.clone()).await.map_err(|e| {
         let error = ReleaseError::Http(e.without_url().to_string());
         log::debug!(
             "Release API 网络请求异常: provider={:?} error_kind={}",

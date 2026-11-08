@@ -1,3 +1,4 @@
+use crate::api_scheduler::ApiRequestExt;
 pub const GITCODE_SEARCH_ENDPOINT: &str = "https://api.atomgit.com/api/v5/search/repositories";
 
 use super::catalog::{SearchHit, SearchResults, classify_provider_item};
@@ -35,7 +36,7 @@ pub(super) async fn discover(
             crate::providers::api_request(client, url.as_str(), &Provider::Gitcode, Some(token))
                 .map_err(|_| "community.searchUrlInvalid")?
                 .timeout(Duration::from_secs(5))
-                .send()
+                .send_api(crate::models::Provider::Gitcode)
                 .await
                 .map_err(|error| error.without_url().to_string())?;
         limits.observe("official", response.status(), response.headers());

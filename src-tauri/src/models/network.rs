@@ -45,12 +45,13 @@ pub struct GitHubProxyConfig {
     /// 单独一组而不是复用 raw：实测 raw 组全部取不到 `github.com/{owner}.png`
     /// （模板都按 `{owner}/{repo}/{branch}/{path}` 设计），能取到头像的是
     /// 「纯 {url} 包装」型。随包定义位于 `proxies/proxies-avatar.toml`，
-    /// 完整校验新网络配置闭包后投影到此组；远端刷新仍读取旧清单的
-    /// `avatar_proxies` 并随六组整份替换。条目不持久化到用户配置。
+    /// 完整校验代理索引与请求计划闭包后投影到此组，随快照整份替换。
+    /// 条目不持久化到用户配置。
     #[serde(default)]
     pub avatar_proxies: Vec<GitHubProxy>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHubProxyManifest {
@@ -71,6 +72,7 @@ pub struct GitHubProxyManifest {
     pub avatar_proxies: Vec<GitHubProxy>,
 }
 
+#[cfg(test)]
 fn default_proxy_manifest_version() -> u32 {
     1
 }

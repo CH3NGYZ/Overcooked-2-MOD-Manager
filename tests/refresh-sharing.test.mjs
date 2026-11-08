@@ -214,7 +214,7 @@ test('刷新结果有统一结构，两个域都能回传摘要', () => {
 test('同一动作共享 pass，源准备和 Release 分阶段，只有浮动整批按钮 force', () => {
   assert.match(mapEngine, /function newPassId\(\)/)
   assert.match(mapEngine, /api\.refreshMapReleases\(item\.id, force, passId\)/)
-  assert.match(mapEngine, /api\.refreshMapSources\(passId, force\)/)
+  assert.match(mapEngine, /api\.refreshMapSources\(passId, force, progress =>/)
   assert.match(mapEngine, /prepare: \(\) => prepareMapSources\(passId\)/)
   assert.match(mapEngine, /prepareMapSources\(passId, options\.force\)/)
   assert.match(repositoryEngine, /prepare: \(\) => prepareRepositorySources\(false\)/)
@@ -222,6 +222,6 @@ test('同一动作共享 pass，源准备和 Release 分阶段，只有浮动整
   assert.match(modsOnline, /engine\.refreshEverything\(\{ force: true \}\)/)
   assert.doesNotMatch(modsOnline + modsLocal, /refreshOne\(repo, true\)/)
   const service = read('src/services/tauri.ts')
-  assert.match(service, /invoke<MapInfo\[\]>\('refresh_map_sources', \{ passId, force \}\)/)
+  assert.match(service, /invoke<MapInfo\[\]>\('refresh_map_sources', \{ passId, force, onUpdate, sourceId \}\)/)
   assert.match(service, /invoke<ReleaseInfo\[\]>\('refresh_map_releases', \{ mapId, force, passId \}\)/)
 })

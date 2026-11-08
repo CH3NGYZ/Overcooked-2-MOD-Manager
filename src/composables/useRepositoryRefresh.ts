@@ -1,19 +1,18 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '../services/tauri'
+import { createSourceTreeState } from '../sourceTreeState'
 import type { RuntimeRefreshState } from '../modRuntimeStatus'
 import { modUpdateAvailable } from '../statusTags'
-import { providerLabel } from '../providers'
-import { mapWithConcurrency } from '../concurrency'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
 import { refreshReleaseItem, runReleaseBatch, runSourceReleaseRefresh, type ReleaseFetchSpec } from '../releaseRefresh'
-import { pickI18n, locale, t } from '../i18n'
+import { pickI18n } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledRepositories } from '../repositoryPriority'
 import {
-  OFFICIAL_INDEX_ID, repositoryIsAvailable, shouldFallbackToBuiltin, sourceMatchesRegion,
+  repositoryIsAvailable, sourceMatchesRegion,
 } from '../repositoryAvailability'
-import type { Provider, PublicConfig, Repository, RepositorySource } from '../types'
+import type { Repository, RepositorySource } from '../types'
 
 /**
  * 仓库刷新引擎（模块级单例）。
@@ -50,6 +49,7 @@ const REFRESH_CONCURRENCY = 4
  * 同一批刷新要在三个页面之间保持同一份状态，且刷新中切页往返不能丢。
  */
 const state = createRefreshState(REFRESH_CONCURRENCY)
+const sourceTree = createSourceTreeState()
 /** 仓库 Release 正在刷新（按仓库 id）。 */
 const refreshing = state.refreshing
 /** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
@@ -273,15 +273,7 @@ async function refreshBoundRepositories(repos: Repository[]): Promise<BoundRefre
   return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
 }
 
-/**
- * 源文档失败的报错文案：`<昵称>: <原因>`。
- *
- * **必须与回退判定用同一个昵称取值**。`shouldFallbackToBuiltin` 靠
- * 「错误文案是否以官方源昵称开头」判断失败是否覆盖到官方根源。两边都用
- * `pickI18n(nickname_i18n, nickname)`（并通过同一个 locale），前缀才能对上；
- * 如果一边用翻译值、另一边用恒为 zh-CN 的镜像字段，繁体/英文界面下回退
- * 会被静默跳过 —— 正是用户报的「报错了，但没有回退」。
- */
+/** 源节点和错误提示共用当前语言的源昵称。 */
 function sourceDisplayName(source: RepositorySource): string {
   return pickI18n(source.nickname_i18n, source.nickname)
 }
@@ -289,7 +281,7 @@ function sourceDisplayName(source: RepositorySource): string {
 /**
  * 把「来源名 + 失败原因」拼成一条可展示的错误。
  *
- * 收口点在这里是因为三处调用（单仓刷新、源链刷新、失败回退）都是同一个
+ * 收口点在这里是因为单仓刷新和源链刷新都是同一个
  * 形态，而**原因部分是后端 tag**（`source.tomlInvalid` 之类）。谁拼这条
  * 字符串谁就必须翻译，否则界面上会出现「某仓库: source.tomlInvalid」。
  */
@@ -312,6 +304,16 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   const source = sources.value.find((entry) => entry.id === sourceId)
   if (!source) return []
 
+  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id)).map(item => ({
+    id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n,
+    url: item.url, status: 'pending' as const,
+  })))
+  const removed = sourceTree.begin(sourceId)
+  const snapshot = store().config.value
+  if (snapshot) store().applyConfigSnapshot({ ...snapshot,
+    repositories: snapshot.repositories.filter(repo => !repo.source_id || !removed.has(repo.source_id)),
+    repository_sources: snapshot.repository_sources.filter(item => item.id === sourceId || !removed.has(item.id)),
+  })
   /* 源级标志也走共享状态机：地图侧用的是同一套写入规则 */
   const importErrors = await state.runSource(sourceId, async () => {
     try {
@@ -322,91 +324,24 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
     }
   })
   // 父源没读出来时它的子源无从谈起：直接返回，别拿旧 `sources` 递归
-  if (importErrors.length) return importErrors
+  if (importErrors.length) { sourceTree.settle(sourceId, importErrors[0]); return importErrors }
 
   await reloadConfig()
+  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id)).map(item => ({
+    id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n,
+    url: item.url, status: 'pending' as const,
+  })))
+  sourceTree.settle(sourceId)
   // 子源同样按地区过滤：父源是通用的，但它可以声明地区专属子源
   const children = sources.value.filter(
     (entry) => entry.parent_id === sourceId && sourceMatchesRegion(entry, region.value),
   )
   if (!children.length) return []
-  const childErrors = await Promise.all(children.map((child) => refreshSourceChain(child.id, visited)))
-  return childErrors.flat()
+  const childErrors: string[] = []
+  for (const child of children) childErrors.push(...await refreshSourceChain(child.id, visited))
+  return childErrors
 }
 
-/**
- * 完整刷新时，符合条件则尝试从内置快照加载官方源树。
- *
- * 判定不区分网络错误和解析错误，只检查错误与已得到的仓库：
- *   · 必须存在官方根源（`OFFICIAL_INDEX_ID`），且它在本次失败名单里；
- *   · 当前官方源树下没有任何仓库 —— 只要有一个子源成功带回仓库，
- *     就说明在线可用，不能再用落后几版的内置内容覆盖它；
- *   · 只对官方根调用一次（`builtinFallback: true`），它内部会把整个
- *     内置索引树（含子源）一起展开。
- *
- * **必须继续递归子源**：内置索引 `mods.toml` 自己**没有仓库**，
- * 它只声明子源（`mods/mods-azhe-hostutilities.toml` 等），仓库都在子源
- * 文件里。只应用索引不足以得到仓库，必须继续递归子源；子源仍可能分别失败。
- * 回退复用 refreshSourceChain，让在线和内置流程的子源处理保持一致。
- *
- * 返回 `{ fallbackErrors, hasFallenBack }`：
- *   · `fallbackErrors` 用于向用户报告失败原因（成功时为空）；
- *   · `hasFallenBack` 表示这次是否真的发送了内置回退请求。调用方必须用它
- *     （而不是「错误是否为空」）来决定要不要重读配置 —— 回退成功恰恰是
- *     「没有错误」的情况。
- */
-async function fallbackToBuiltinIfOffline(
-  sourceErrors: string[],
-): Promise<{ fallbackErrors: string[]; hasFallenBack: boolean }> {
-  const { sources, repositories, reloadConfig } = store()
-  /*
-   * 传当前界面语言：判定里的昵称前缀必须和 `sourceError` 生成时用的是
-   * 同一个值，否则繁体/英文界面下前缀不匹配、回退被静默跳过。
-   */
-  if (!shouldFallbackToBuiltin(sources.value, repositories.value, sourceErrors, locale.value)) {
-    return { fallbackErrors: [], hasFallenBack: false }
-  }
-
-  const officialRoot = sources.value.find((source) => source.id === OFFICIAL_INDEX_ID)
-  if (!officialRoot) return { fallbackErrors: [], hasFallenBack: false }
-
-  const errors: string[] = []
-  const rootErrors = await state.runSource(officialRoot.id, async () => {
-    try {
-      const result = await api.importRepositorySource(officialRoot.id, officialRoot.url, true)
-      return result.access_error ? [sourceError(officialRoot, result.access_error)] : []
-    } catch (reason) {
-      return [sourceError(officialRoot, reason instanceof Error ? reason.message : String(reason))]
-    }
-  })
-  // 索引本身都没读出来：后面的子源无从谈起
-  if (rootErrors.length) return { fallbackErrors: [...errors, ...rootErrors], hasFallenBack: true }
-
-  /*
-   * 索引已写入配置，子源现在才出现在 `sources` 里。
-   * 用和在线流程完全相同的 `refreshSourceChain` 展开它们 ——
-   * 内置子源地址是相对路径，后端 `SourceLocation` 会解析成打包资源，
-   * 不需要任何「内置专用」分支。
-   *
-   * 传空的 visited：根源刚刚已经被单独应用过，这里只需要它的后代。
-   */
-  await reloadConfig()
-  const childSources = sources.value.filter((entry) => entry.parent_id === officialRoot.id)
-  const childErrors = await mapWithConcurrency(
-    childSources,
-    REFRESH_CONCURRENCY,
-    (child) => refreshSourceChain(child.id, new Set([officialRoot.id])),
-  )
-  errors.push(...childErrors.flat())
-  return { fallbackErrors: errors, hasFallenBack: true }
-}
-
-/**
- * 刷新全部源文档（根源并行，子源递归）。
- *
- * 只刷新当前地区适用的源：international 源在中国大陆既不展示，
- * 也不该被拉取——否则会拖慢刷新，失败时还会弹出一条用户根本无法处理的错误。
- */
 async function refreshSourceDocuments(): Promise<string[]> {
   const { sources, region } = store()
   const refreshable = sources.value.filter(
@@ -417,55 +352,11 @@ async function refreshSourceDocuments(): Promise<string[]> {
   const roots = refreshable.filter((source) => !source.parent_id || !known.has(source.parent_id))
   if (!roots.length) return []
   const visited = new Set<string>()
-  /*
-   * 根源也必须限并发：内置索引树有 8 个子源，`Promise.all` 会同时发 8 个
-   * 文档请求，加上递归子源实际并发更高 —— 匿名 API 额度就是这么被磨掉的。
-   * 限成 4 组后整条链（含递归子源调用）同时最多 4 个文档在飞。
-   */
-  const results = await mapWithConcurrency(
-    roots,
-    REFRESH_CONCURRENCY,
-    (source) => refreshSourceChain(source.id, visited),
-  )
-  return results.flat()
-}
-
-/**
- * 社区仓库发现：并行搜索 GitHub 与 Gitee，把结果合并进配置。
- *
- * 只在官方源树刷新完毕之后调用（由 `refreshEverything` 保证顺序）：
- * 后端用官方源树判断同坐标去重，官方条目还没落地时会误判为「社区新增」。
- *
- * 两个平台并行：GitHub 走 Search API，Gitee 走独立 WebView 验证，互不排队。
- * 任一平台失败只收集错误 —— 另一平台的结果照常保留，整批刷新继续。
- * 搜索本身有频率限制与冷却（后端 rate gate），反复失败不会拖垮应用。
- *
- * @param applySnapshot 用返回的完整配置替换 Dashboard 快照（不再多发一次 get_config）
- */
-async function discoverCommunityRepositories(
-  applySnapshot: (config: PublicConfig) => void,
-): Promise<string[]> {
-  const providers: Provider[] = ['github', 'gitee']
-  if (store().config.value?.gitcode_token_set) providers.push('gitcode')
-  const results = await Promise.all(providers.map(async (provider) => {
-    try {
-      const merged = await api.refreshCommunityRepositories(provider)
-      // 两个平台各自返回完整配置：后返回的已经包含先返回的合并结果，
-      // 所以每次都整体替换即可，不需要自己拼。
-      applySnapshot(merged)
-      return null
-    } catch (reason) {
-      const label = providerLabel(provider)
-      /*
-       * 原因来自后端，可能是 tag。它作为**参数值**传进文案，vue-i18n 只会
-       * 原样插入，不会二次翻译 —— 所以必须先在这里翻译。
-       * `provider` 是产品名（GitHub / Gitee），各语言都保持原样，只翻外壳。
-       */
-      const message = backendMessageOf(reason)
-      return t('modsOnline.communityRepositoryError', { provider: label, reason: message })
-    }
-  }))
-  return results.filter((error): error is string => error !== null)
+  // Apply each declaration before descending. Concurrent config snapshots can
+  // discard a just-created child and leave its node pending forever.
+  const errors: string[] = []
+  for (const source of roots) errors.push(...await refreshSourceChain(source.id, visited))
+  return errors
 }
 
 /**
@@ -473,11 +364,11 @@ async function discoverCommunityRepositories(
  * 返回失败清单；调用方决定是否提示。
  */
 async function prepareRepositorySources(clearEntries: boolean): Promise<string[]> {
-  try {
     const { loadBase, reloadConfig, applyConfigSnapshot, repositories, sources, region } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await loadBase()
     if (clearEntries) {
+      sourceTree.replace([])
       const refreshable = sources.value.filter(
         (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
       )
@@ -496,16 +387,22 @@ async function prepareRepositorySources(clearEntries: boolean): Promise<string[]
     // 源文档阶段用的是 reloadConfig（只更新配置）；
     // 这里再读一次配置拿到最终仓库列表，Release 阶段结束时只重读配置，不扫描 DLL。
     await reloadConfig()
-    const { fallbackErrors, hasFallenBack } = await fallbackToBuiltinIfOffline(sourceErrors)
-    if (hasFallenBack) await reloadConfig()
-    const communityErrors = await discoverCommunityRepositories(applyConfigSnapshot)
-    // 配置已经写回（或发现失败也不该让地图刷新无限等），地图源树可以读了
-    markCommunityDiscovered()
+    return sourceErrors
+}
 
-    return [...sourceErrors, ...fallbackErrors, ...communityErrors]
-  } finally {
-    markCommunityDiscovered()
-  }
+async function refreshSource(sourceId: string): Promise<string[]> {
+  if (anyRefreshing.value) return []
+  const result = await runSourceReleaseRefresh({
+    state, trigger: 'partial',
+    prepare: () => refreshSourceChain(sourceId),
+    refresh: () => {
+      const { repositories, sources, region, platform } = store()
+      const ids = sourceTree.descendants(sourceId)
+      return runRepositoryBatch(repositories.value.filter(repo => !!repo.source_id && ids.has(repo.source_id)
+        && repositoryIsAvailable(repo, sources.value, region.value, platform.value)), { trigger: 'single' })
+    },
+  })
+  return result.errors
 }
 
 async function refreshEverything(options: { force?: boolean } = {}): Promise<string[]> {
@@ -530,32 +427,6 @@ async function refreshEverything(options: { force?: boolean } = {}): Promise<str
 }
 
 /**
- * 「社区发现阶段已经结束」信号。
- *
- * 地图源树也在启动时刷新一次，而社区发现的地图源仓库是**写进配置**、由
- * 地图源树读的。两件事在启动时并发发起的话，地图那边很可能先跑完、读到的
- * 还是不含社区仓库的旧配置 —— 首启就看不到社区地图，得等用户手动刷新地图页。
- *
- * 所以把「发现写完了」做成可等待的信号，让地图启动刷新挂在这里：只等社区
- * 搜索（几秒），不等后面的 Release 批次。
- */
-let communityDiscovered: Promise<void> = Promise.resolve()
-let settleCommunityDiscovered: () => void = () => {}
-
-function resetCommunityDiscoverySignal() {
-  communityDiscovered = new Promise<void>((resolve) => { settleCommunityDiscovered = resolve })
-}
-
-/** 等本轮启动刷新把社区发现写完（没在刷新时立刻兑现）。 */
-function whenCommunityDiscovered(): Promise<void> {
-  return communityDiscovered
-}
-
-function markCommunityDiscovered() {
-  settleCommunityDiscovered()
-}
-
-/**
  * 安排启动刷新（安装器启动时由 `App.vue` 调用一次）。
  *
  * V2 的前端教程系统已整体裁剪，所以启动后立即刷新，没有门控。
@@ -565,7 +436,6 @@ function markCommunityDiscovered() {
 function requestStartupRefresh() {
   if (startupState !== 'idle') return
   startupState = 'running'
-  resetCommunityDiscoverySignal()
   void refreshEverything().finally(() => { startupState = 'done' })
 }
 
@@ -585,12 +455,13 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 
 export function useRepositoryRefresh() {
   return {
+    sourceNodes: sourceTree.nodes,
+    preparingSources: state.preparingSources,
     refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable, runtimeState,
     checkingBound, anyRefreshing, repositoriesLoading,
     outcome, lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshBoundRepositories,
-    refreshSourceChain, refreshSourceDocuments, refreshEverything,
+    refreshSource, refreshSourceChain, refreshSourceDocuments, refreshEverything,
     requestStartupRefresh, deferStartupRefresh, releaseStartupRefresh,
-    whenCommunityDiscovered,
   }
 }

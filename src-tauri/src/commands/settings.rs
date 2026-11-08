@@ -157,6 +157,9 @@ pub fn save_settings(
     if let Some(value) = patch.builtin_proxies_only {
         config.builtin_proxies_only = value;
     }
+    if let Some(value) = patch.builtin_network_plans_only {
+        config.builtin_network_plans_only = value;
+    }
     state.config.save(&config).map_err(|e| e.to_string())?;
     log::info!("应用设置保存完成：界面缩放={}", config.ui_zoom);
     Ok(state.config.public_config(&config))

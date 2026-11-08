@@ -33,7 +33,9 @@ pub use mods::{
     DllPluginInfo, DllRole, InstalledMod, InstalledModStatusLabel, ModNote, ModRecycleEntry,
     UninstallLocalModResult,
 };
-pub use network::{GitHubProxy, GitHubProxyConfig, GitHubProxyManifest, NetworkConfig, ProxyMode};
+#[cfg(test)]
+pub use network::GitHubProxyManifest;
+pub use network::{GitHubProxy, GitHubProxyConfig, NetworkConfig, ProxyMode};
 pub use operations::{BepInExInstallResult, InstallConflict, OperationResult};
 pub use publish::{
     MapPublishMetadata, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,

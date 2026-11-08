@@ -411,6 +411,16 @@ async function toggleBuiltinProxiesOnly(value: boolean) {
   }
 }
 
+const builtinNetworkPlansOnly = computed(() => config.value?.builtin_network_plans_only === true)
+const switchingBuiltinNetworkPlans = ref(false)
+async function toggleBuiltinNetworkPlansOnly(value: boolean) {
+  if (switchingBuiltinNetworkPlans.value) return
+  switchingBuiltinNetworkPlans.value = true
+  try { config.value = await api.saveSettings({ builtin_network_plans_only: value }); message.success(t('common.saved')) }
+  catch (reason) { fail(reason) }
+  finally { switchingBuiltinNetworkPlans.value = false }
+}
+
 /* ===== API 凭据 ===== */
 /** 保存 Token：留空表示「不修改」，后端只在非空时覆盖。 */
 async function saveTokens() {
@@ -544,6 +554,8 @@ async function clearTokens() {
           @update:value="toggleRecycleDeletedMods" />
       </template>
     </SettingsRow>
+  </SettingsGroup>
+  <SettingsGroup :title="t('settings.dataSources')" data-testid="data-sources">
     <!--
       仅使用内置仓库源：官方入口不再按地区选 Gitee / GitHub 的 raw 直链，
       直接读管理器自带的快照。适合「官方入口在这台机器上连不上」或需要
@@ -573,6 +585,11 @@ async function clearTokens() {
       <template #right>
         <n-switch size="small" :value="builtinProxiesOnly" :loading="switchingBuiltinProxies"
           @update:value="toggleBuiltinProxiesOnly" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :title="t('settings.useBundledNetworkPlansOnly')" :description="t('settings.useBundledNetworkPlansOnlyHint')" data-testid="builtin-network-plans-only">
+      <template #right>
+        <n-switch size="small" :value="builtinNetworkPlansOnly" :loading="switchingBuiltinNetworkPlans" @update:value="toggleBuiltinNetworkPlansOnly" />
       </template>
     </SettingsRow>
   </SettingsGroup>

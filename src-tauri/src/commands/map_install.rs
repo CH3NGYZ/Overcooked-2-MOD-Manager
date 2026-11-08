@@ -230,195 +230,205 @@ pub async fn stage_map_release(
     asset_name: Option<String>,
     locale: Option<String>,
 ) -> Result<StagedMapSource, String> {
-    // 取消标记只在命令入口重置，不能在等待元数据或补充候选之后重置
-    archive::start_download();
-    // 与 `install_repository` 同口径：先把用户指定的版本与资产写进日志。
-    // 资产选不出来（`source.noMatchingAsset`）时，这行是唯一能看出他点了哪个资产的地方。
-    log::info!(
-        "开始暂存地图来源：地图 ID={}，指定版本={}，指定资产={}",
-        map_id,
-        tag.as_deref().unwrap_or("自动选择"),
-        asset_name.as_deref().unwrap_or("自动匹配")
-    );
-    let config = state.config.load_or_default();
-    let Some(map) = config
-        .map_repositories
-        .iter()
-        .find(|entry| entry.id == map_id)
-        .cloned()
-    else {
-        return Err("mapSource.mapMissing".into());
-    };
-    /*
-     * 暂存不写游戏目录，所以不探测游戏目录、也不拦「游戏正在运行」：
-     * 真正的写入在 `import_level_sets`，那里仍会校验 `game.notFound` 与运行状态。
-     */
-    let release = match tag.as_deref() {
-        Some(tag) => map
-            .cached_releases
+    let snapshot = state.config.load_or_default();
+    let policy = snapshot
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+    crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
+        // 取消标记只在命令入口重置，不能在等待元数据或补充候选之后重置
+        archive::start_download();
+        // 与 `install_repository` 同口径：先把用户指定的版本与资产写进日志。
+        // 资产选不出来（`source.noMatchingAsset`）时，这行是唯一能看出他点了哪个资产的地方。
+        log::info!(
+            "开始暂存地图来源：地图 ID={}，指定版本={}，指定资产={}",
+            map_id,
+            tag.as_deref().unwrap_or("自动选择"),
+            asset_name.as_deref().unwrap_or("自动匹配")
+        );
+        let config = state.config.load_or_default();
+        let Some(map) = config
+            .map_repositories
             .iter()
-            .find(|release| release.tag_name == tag)
+            .find(|entry| entry.id == map_id)
             .cloned()
-            .ok_or("mapSource.releaseMissing")?,
-        None => map
-            .cached_releases
-            .first()
-            .cloned()
-            .ok_or("source.noInstallableRelease")?,
-    };
-    /*
-     * 指定资产名时精确匹配；未指定时普通地图仍按 `asset_rules` 自动选，
-     * tag 模式直接用合成版本自带的唯一资产（见 `select_map_stage_asset`）。
-     */
-    let asset = crate::map_sources::select_map_stage_asset(&map, &release, asset_name.as_deref())
-        .ok_or("source.noMatchingAsset")?
-        .clone();
+        else {
+            return Err("mapSource.mapMissing".into());
+        };
+        /*
+         * 暂存不写游戏目录，所以不探测游戏目录、也不拦「游戏正在运行」：
+         * 真正的写入在 `import_level_sets`，那里仍会校验 `game.notFound` 与运行状态。
+         */
+        let release = match tag.as_deref() {
+            Some(tag) => map
+                .cached_releases
+                .iter()
+                .find(|release| release.tag_name == tag)
+                .cloned()
+                .ok_or("mapSource.releaseMissing")?,
+            None => map
+                .cached_releases
+                .first()
+                .cloned()
+                .ok_or("source.noInstallableRelease")?,
+        };
+        /*
+         * 指定资产名时精确匹配；未指定时普通地图仍按 `asset_rules` 自动选，
+         * tag 模式直接用合成版本自带的唯一资产（见 `select_map_stage_asset`）。
+         */
+        let asset =
+            crate::map_sources::select_map_stage_asset(&map, &release, asset_name.as_deref())
+                .ok_or("source.noMatchingAsset")?
+                .clone();
 
-    log::info!(
-        "地图安装资产已确定：地图={}，Release={}，资产={}",
-        map.name,
-        release.tag_name,
-        asset.name
-    );
+        log::info!(
+            "地图安装资产已确定：地图={}，Release={}，资产={}",
+            map.name,
+            release.tag_name,
+            asset.name
+        );
 
-    let planned = crate::download::planning::plan_repository_download(
-        &map.provider,
-        crate::models::RepositoryKind::Map,
-        &map.network_plan,
-        crate::config::current_user_region(),
-        &asset.download_url,
-        None,
-        None,
-        None,
-    )?;
-    let candidates = planned.candidates;
+        let planned = crate::download::planning::plan_repository_download(
+            &map.provider,
+            crate::models::RepositoryKind::Map,
+            &map.network_plan,
+            crate::config::current_user_region(),
+            &asset.download_url,
+            None,
+            None,
+            None,
+        )?;
+        let candidates = planned.candidates;
 
-    // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
-    let expected_size = (asset.size > 0).then_some(asset.size);
-    // The shared verifier accepts the trusted asset digest for every provider.
-    let digest = asset.digest.as_deref();
-    let download_name = asset.name.clone();
-    /*
-     * 进度标签与预览标题用界面语言下的地图名：进度事件在下载过程中持续发出，
-     * 名称必须在开始前算好。
-     */
-    let display_name = crate::config::localized_map_name(&map, locale.as_deref());
+        // size 是 u64（0 表示未知），只有正值才参与校验与进度总分母
+        let expected_size = (asset.size > 0).then_some(asset.size);
+        // The shared verifier accepts the trusted asset digest for every provider.
+        let digest = asset.digest.as_deref();
+        let download_name = asset.name.clone();
+        /*
+         * 进度标签与预览标题用界面语言下的地图名：进度事件在下载过程中持续发出，
+         * 名称必须在开始前算好。
+         */
+        let display_name = crate::config::localized_map_name(&map, locale.as_deref());
 
-    let client = releases::build_download_client(config.network.timeout_seconds)
-        .map_err(|error| error.to_string())?;
-    let racing = planned.execution.race;
-    let configured_threads = planned.download_threads;
-    log::debug!(
-        "地图下载候选准备完成：地图={}，平台={:?}，候选数={}，线程数={}，竞速={}",
-        map.name,
-        map.provider,
-        candidates.len(),
-        configured_threads,
-        racing
-    );
+        let client = releases::build_download_client(config.network.timeout_seconds)
+            .map_err(|error| error.to_string())?;
+        let racing = planned.execution.race;
+        let configured_threads = planned.download_threads;
+        log::debug!(
+            "地图下载候选准备完成：地图={}，平台={:?}，候选数={}，线程数={}，竞速={}",
+            map.name,
+            map.provider,
+            candidates.len(),
+            configured_threads,
+            racing
+        );
 
-    let cache_dir = state.config.cache_dir();
-    let temp = try_asset_download_candidates(
-        candidates,
-        archive::is_download_cancelled,
-        |candidate, reporter| {
-            let client = &client;
-            let cache_dir = &cache_dir;
-            let label = &display_name;
-            let is_zip = download_name.to_ascii_lowercase().ends_with(".zip");
-            async move {
-                let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
-                    client,
-                    &candidate.url,
-                    cache_dir,
-                    label,
-                    &reporter,
-                    configured_threads,
-                    Some(archive::FIRST_BYTE_TIMEOUT),
-                )
-                .await?;
-                let validation = archive::validate_download_file(&temp, expected_size, digest)
-                    .and_then(|_| {
-                        if is_zip {
-                            archive::validate_zip(&temp)
-                        } else {
-                            Ok(())
-                        }
-                    });
-                if let Err(error) = validation {
-                    let _ = fs::remove_file(&temp);
-                    return Err(error);
+        let cache_dir = state.config.cache_dir();
+        let temp = try_asset_download_candidates(
+            candidates,
+            archive::is_download_cancelled,
+            |candidate, reporter| {
+                let client = &client;
+                let cache_dir = &cache_dir;
+                let label = &display_name;
+                let is_zip = download_name.to_ascii_lowercase().ends_with(".zip");
+                async move {
+                    let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
+                        client,
+                        &candidate.url,
+                        cache_dir,
+                        label,
+                        &reporter,
+                        configured_threads,
+                        Some(archive::FIRST_BYTE_TIMEOUT),
+                    )
+                    .await?;
+                    let validation = archive::validate_download_file(&temp, expected_size, digest)
+                        .and_then(|_| {
+                            if is_zip {
+                                archive::validate_zip(&temp)
+                            } else {
+                                Ok(())
+                            }
+                        });
+                    if let Err(error) = validation {
+                        let _ = fs::remove_file(&temp);
+                        return Err(error);
+                    }
+                    Ok(temp)
                 }
-                Ok(temp)
-            }
-        },
-        Some(DownloadContext {
-            execution: Some(planned.execution),
-            app: Some(&app),
-            label: &display_name,
-            expected_size,
-        }),
-    )
-    .await
-    .map_err(|error| {
-        log::error!("地图资产下载失败：地图={}，原因={}", map.name, error);
-        error
-    })?;
+            },
+            Some(DownloadContext {
+                execution: Some(planned.execution),
+                app: Some(&app),
+                label: &display_name,
+                expected_size,
+            }),
+        )
+        .await
+        .map_err(|error| {
+            log::error!("地图资产下载失败：地图={}，原因={}", map.name, error);
+            error
+        })?;
 
-    /*
-     * 识别 + 身份校验在暂存阶段做完：
-     *
-     * - 仓库声明与实际 ZIP 不一致时，等用户确认完再报错太晚：界面已经展示了
-     *   一份要装的地图集，而安装必然失败；
-     * - 冲突列表要随 `ZipLevelSet` 一起返回，确认界面靠它提示「将卸载本地
-     *   哪些旧副本」。
-     *
-     * 解析 `info` 是可能几秒的 CPU 工作，走 `spawn_blocking`：不要占着异步
-     * 线程把窗口拖死（与 `stage_map_source` 同一条规则）。
-     */
-    let config_for_parse = config.clone();
-    let path_for_parse = temp.clone();
-    let app_for_parse = app.clone();
-    let parsed = match tauri::async_runtime::spawn_blocking(move || {
-        zip_level_sets(&app_for_parse, &config_for_parse, &path_for_parse)
+        /*
+         * 识别 + 身份校验在暂存阶段做完：
+         *
+         * - 仓库声明与实际 ZIP 不一致时，等用户确认完再报错太晚：界面已经展示了
+         *   一份要装的地图集，而安装必然失败；
+         * - 冲突列表要随 `ZipLevelSet` 一起返回，确认界面靠它提示「将卸载本地
+         *   哪些旧副本」。
+         *
+         * 解析 `info` 是可能几秒的 CPU 工作，走 `spawn_blocking`：不要占着异步
+         * 线程把窗口拖死（与 `stage_map_source` 同一条规则）。
+         */
+        let config_for_parse = config.clone();
+        let path_for_parse = temp.clone();
+        let app_for_parse = app.clone();
+        let parsed = match tauri::async_runtime::spawn_blocking(move || {
+            zip_level_sets(&app_for_parse, &config_for_parse, &path_for_parse)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => Err(error.to_string()),
+        };
+        let sets = match parsed {
+            Ok(sets) => sets,
+            Err(error) => {
+                let _ = fs::remove_file(&temp);
+                return Err(error);
+            }
+        };
+        let primary = match validate_map_release_sets(&sets, &map) {
+            Ok(primary) => primary,
+            Err(error) => {
+                let _ = fs::remove_file(&temp);
+                return Err(error);
+            }
+        };
+        log::info!(
+            "地图 Release 已暂存：地图={}，版本={}，资产={}，关卡集={}，冲突={}",
+            map.name,
+            release.tag_name,
+            download_name,
+            sets.len(),
+            sets.first().map(|set| set.conflicts.len()).unwrap_or(0)
+        );
+        let origin = MapInstallOrigin {
+            level_set_name: primary.name.clone(),
+            level_set_name_zh: primary.name_zh.clone().unwrap_or_default(),
+            author: primary.author.clone(),
+            mapset_version: release.tag_name.clone(),
+        };
+        Ok(StagedMapSource {
+            path: display_path(&temp),
+            staged: true,
+            sets,
+            origin: Some(origin),
+        })
     })
     .await
-    {
-        Ok(result) => result,
-        Err(error) => Err(error.to_string()),
-    };
-    let sets = match parsed {
-        Ok(sets) => sets,
-        Err(error) => {
-            let _ = fs::remove_file(&temp);
-            return Err(error);
-        }
-    };
-    let primary = match validate_map_release_sets(&sets, &map) {
-        Ok(primary) => primary,
-        Err(error) => {
-            let _ = fs::remove_file(&temp);
-            return Err(error);
-        }
-    };
-    log::info!(
-        "地图 Release 已暂存：地图={}，版本={}，资产={}，关卡集={}，冲突={}",
-        map.name,
-        release.tag_name,
-        download_name,
-        sets.len(),
-        sets.first().map(|set| set.conflicts.len()).unwrap_or(0)
-    );
-    let origin = MapInstallOrigin {
-        level_set_name: primary.name.clone(),
-        level_set_name_zh: primary.name_zh.clone().unwrap_or_default(),
-        author: primary.author.clone(),
-        mapset_version: release.tag_name.clone(),
-    };
-    Ok(StagedMapSource {
-        path: display_path(&temp),
-        staged: true,
-        sets,
-        origin: Some(origin),
-    })
 }

@@ -369,3 +369,168 @@ async fn live_official_proxy_manifest() {
         snapshot.avatar_proxies.len()
     );
 }
+
+/// Real HTTP bootstrap for the typed proxy/plan closure. Each connection is
+/// bounded and explicitly blocking on platforms inheriting listener flags.
+fn serve_policy(
+    bad_plans: bool,
+    expected: usize,
+) -> (SourceLocation, std::thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = SourceLocation::parse(&format!(
+        "http://{}/mods.toml",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let mut documents = std::collections::BTreeMap::new();
+    let index = SourceLocation::parse("proxies.toml")
+        .unwrap()
+        .bundled_text()
+        .unwrap()
+        .to_owned();
+    for path in crate::network_policy::proxy_documents(&index).unwrap() {
+        let body = SourceLocation::parse(&path)
+            .unwrap()
+            .bundled_text()
+            .unwrap()
+            .replace("name = \"", "name = \"REMOTE ");
+        documents.insert(format!("/{path}"), body);
+    }
+    documents.insert("/proxies.toml".to_owned(), index);
+    let plans = SourceLocation::parse("network-plans.toml")
+        .unwrap()
+        .bundled_text()
+        .unwrap()
+        .replacen("download_threads = 1", "download_threads = 2", 1);
+    documents.insert(
+        "/network-plans.toml".to_owned(),
+        if bad_plans {
+            "<html>bad</html>".into()
+        } else {
+            plans
+        },
+    );
+    let thread = std::thread::spawn(move || {
+        let mut paths = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while paths.len() < expected {
+            let (mut stream, _) = match listener.accept() {
+                Ok(pair) => pair,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(e) => panic!("{e}"),
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buf[..n]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(!request.to_lowercase().contains("authorization:"));
+            let path = request.split_whitespace().nth(1).unwrap().to_owned();
+            let body = documents.get(&path).expect("unexpected bootstrap path");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            paths.push(path);
+        }
+        paths
+    });
+    (base, thread)
+}
+
+#[tokio::test]
+async fn typed_policy_switches_select_documents_independently_and_failed_refresh_keeps_snapshot() {
+    use crate::models::{NetworkPlanSelection, Provider, RepositoryKind};
+    use crate::network_policy::NetworkPolicy;
+    for bundled_proxies in [false, true] {
+        for bundled_plans in [false, true] {
+            let expected = if bundled_proxies { 0 } else { 8 } + if bundled_plans { 0 } else { 1 };
+            let (base, server) = serve_policy(false, expected);
+            let runtime = ProxyRuntime::default();
+            let before = runtime.snapshot();
+            let fresh = NetworkPolicy::refresh_from(&base, bundled_proxies, bundled_plans)
+                .await
+                .unwrap();
+            assert_eq!(
+                runtime.snapshot(),
+                before,
+                "reads cannot publish partial closure"
+            );
+            runtime.publish_policy(fresh, bundled_proxies).unwrap();
+            let requests = server.join().unwrap();
+            assert_eq!(
+                requests.iter().any(|p| p == "/network-plans.toml"),
+                !bundled_plans
+            );
+            assert_eq!(
+                requests.iter().any(|p| p == "/proxies.toml"),
+                !bundled_proxies
+            );
+            let selected = runtime
+                .selected_policy(bundled_proxies, bundled_plans)
+                .unwrap();
+            let plan = selected
+                .resolve(
+                    &Provider::Github,
+                    RepositoryKind::Mod,
+                    "international",
+                    &NetworkPlanSelection::default(),
+                )
+                .unwrap();
+            assert_eq!(
+                plan.release.download_threads,
+                if bundled_plans { 1 } else { 2 }
+            );
+            assert!(
+                selected
+                    .proxies
+                    .values()
+                    .all(|proxy| proxy.name.starts_with("REMOTE ") != bundled_proxies)
+            );
+            let active_threads = NetworkPolicy::in_snapshot(selected, async {
+                crate::download::planning::plan_repository_download(
+                    &Provider::Github,
+                    RepositoryKind::Mod,
+                    &Default::default(),
+                    "international",
+                    "https://github.com/u/r/releases/download/v/a.zip",
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .download_threads
+            })
+            .await;
+            assert_eq!(active_threads, if bundled_plans { 1 } else { 2 });
+            let current = runtime.snapshot();
+            let (base, server) = serve_policy(true, 1);
+            let invalid = NetworkPolicy::refresh_from(&base, true, false).await;
+            assert!(invalid.is_err());
+            assert_eq!(server.join().unwrap(), vec!["/network-plans.toml"]);
+            assert_eq!(runtime.snapshot(), current);
+            assert_eq!(
+                ProxyRuntime::default().snapshot(),
+                before,
+                "restart uses bundled closure"
+            );
+        }
+    }
+}

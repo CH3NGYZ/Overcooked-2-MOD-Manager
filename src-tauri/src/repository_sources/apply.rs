@@ -14,6 +14,14 @@ pub(crate) async fn import_repository_source_into_config(
     source_url: String,
     builtin_fallback: bool,
 ) -> Result<RepositorySourceImportResult, String> {
+    let snapshot = state.config.load_or_default();
+    let policy = snapshot
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
+    crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
+
     if crate::community::is_source(&source_id) {
         return Err("source.communityManaged".into());
     }
@@ -331,6 +339,7 @@ pub(crate) async fn import_repository_source_into_config(
         access_error: None,
         builtin_fallback_available,
     })
+    }).await
 }
 
 /// 把安装清单里的分组快照同步成仓库当前的分组，只在真正变化时写文件。

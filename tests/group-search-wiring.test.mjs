@@ -28,10 +28,13 @@ test('搜索展示只读命中成员，完整包仍用于操作；地图同样�
 })
 
 test('在线两页的源、分组与社区插槽按稳定身份响应式取节点，不捕获旧过滤结果', () => {
+  const directory = read('src/components/SourceDirectory.vue')
+  assert.match(directory, /<SourceGroupSlot :get-tree="\(\) => nodes" :source-id="entry.id"/)
+  assert.match(directory, /<SourceDirectory :nodes="nodes"/)
   const slot = read('src/components/SourceGroupSlot.vue')
   assert.match(slot, /computed\(\(\) => props.getTree\(\).find/)
   assert.match(slot, /computed\(\(\) => node.value\?\.groups.find/)
-  for (const [path, count] of [['src/views/ModsOnlineView.vue', 6], ['src/views/MapsOnlineView.vue', 4]]) {
+  for (const [path, count] of [['src/views/ModsOnlineView.vue', 5], ['src/views/MapsOnlineView.vue', 3]]) {
     const view = read(path)
     assert.equal((view.match(/<SourceGroupSlot :get-tree="\(\) => tree"/g) ?? []).length, count)
     assert.equal((view.match(/:group-key="group.key"/g) ?? []).length, 2)

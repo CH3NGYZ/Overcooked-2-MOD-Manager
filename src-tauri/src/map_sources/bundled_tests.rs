@@ -19,11 +19,26 @@ fn index_document() -> MapSourceDocument {
 }
 
 fn declaration(id: &str) -> MapSourceDeclaration {
-    index_document()
-        .map_sources
-        .into_iter()
-        .find(|source| source.id == id)
-        .unwrap_or_else(|| panic!("索引里应有源 {id}"))
+    fn find(location: &SourceLocation, id: &str, depth: usize) -> Option<MapSourceDeclaration> {
+        if depth > 3 {
+            return None;
+        }
+        let doc =
+            parse_document(location.bundled_text().ok()?, location, &Default::default()).ok()?;
+        for source in doc.map_sources {
+            if source.id == id {
+                return Some(source);
+            }
+            if source.mode == MapSourceMode::Document {
+                let child = SourceLocation::resolve(&source.url, Some(location)).ok()?;
+                if let Some(found) = find(&child, id, depth + 1) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    find(&index_location(), id, 0).unwrap_or_else(|| panic!("内置树里应有源 {id}"))
 }
 
 #[test]
@@ -35,7 +50,10 @@ fn builtin_map_index_declares_only_sources() {
         1,
         "内置索引只保留第三方地图仓库（release-tags）"
     );
-    assert_eq!(doc.map_sources[0].id, "oc2-map-bundle-index");
+    assert_eq!(
+        declaration("maps-oc2-map-bundle").provider,
+        Some(crate::models::Provider::Gitcode)
+    );
 }
 
 /// 第三方源：一个 tag 一张图，元数据跟着各自 Release note 走。
@@ -44,12 +62,7 @@ fn builtin_map_index_declares_only_sources() {
 /// `map_note` 的单测里（纯函数、离线可跑）。
 #[test]
 fn builtin_community_source_declares_release_tags_mode() {
-    let parent = declaration("oc2-map-bundle-index");
-    let child = SourceLocation::resolve(&parent.url, Some(&index_location())).unwrap();
-    let document =
-        parse_document(child.bundled_text().unwrap(), &child, &Default::default()).unwrap();
-    assert_eq!(document.map_sources.len(), 1);
-    let source = &document.map_sources[0];
+    let source = declaration("maps-oc2-map-bundle");
     assert_eq!(source.id, "maps-oc2-map-bundle");
     assert_eq!(source.mode, MapSourceMode::ReleaseTags);
     assert_eq!(source.provider, Some(crate::models::Provider::Gitcode));
@@ -79,17 +92,15 @@ fn bundled_tree_is_empty_offline() {
 async fn real_gitcode_bundle_loads_release_declarations() {
     let config = crate::config::default_config();
     let client = crate::releases::build_client(30).unwrap();
-    let parent = declaration("oc2-map-bundle-index");
-    let child = SourceLocation::resolve(&parent.url, Some(&index_location())).unwrap();
-    let document =
-        parse_document(child.bundled_text().unwrap(), &child, &Default::default()).unwrap();
-    let probe = super::release_tags::declaration_probe(&document.map_sources[0]);
+    let source = declaration("maps-oc2-map-bundle");
+    let probe = super::release_tags::declaration_probe(&source);
     let releases = crate::releases::fetch_releases(&client, &probe, None, true, &[])
         .await
         .unwrap_or_else(|error| panic!("real public Release API failed: {error}"));
     println!("public API returned {} releases", releases.len());
     let cache = crate::release_cache::RepoReleaseCache::default();
     let context = super::context::MapSourceContext {
+        observer: None,
         cache: &cache,
         client: &client,
         config: &config,

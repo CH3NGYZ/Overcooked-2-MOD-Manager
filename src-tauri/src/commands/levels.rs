@@ -45,6 +45,7 @@ pub async fn get_level_sets(
          * `LevelWatcher::watch` 里就是「停掉现有监听」），下次检测到目录再建。
          */
         state.level_watch.watch(&app, Vec::new());
+        crate::api_scheduler::set_installed("map", Vec::new());
         return Ok(Vec::new());
     };
     let game_root = PathBuf::from(game_root);
@@ -86,13 +87,33 @@ pub async fn get_level_sets(
         // 快照只读一次：逐条关卡集都去读文件会变成几十次 IO
         let snapshots = archive::read_map_relation_snapshots(&manifests_dir);
         log::debug!("关卡集列表读取完成：数量={}", sets.len());
-        sets.into_iter()
+        let infos: Vec<LevelSetInfo> = sets
+            .into_iter()
             .map(|set| {
                 let mut info = level_set_to_info(set);
                 bind_map_relation_snapshot(&mut info, &config, &snapshots);
                 info
             })
-            .collect()
+            .collect();
+        crate::api_scheduler::set_installed(
+            "map",
+            config
+                .map_repositories
+                .iter()
+                .filter(|map| {
+                    infos
+                        .iter()
+                        .any(|info| info.map_id.as_deref() == Some(map.id.as_str()))
+                })
+                .map(|map| {
+                    crate::api_scheduler::repository_key(
+                        &map.provider,
+                        &map.username,
+                        &map.repository,
+                    )
+                }),
+        );
+        infos
     })
     .await
     .map_err(|error| error.to_string())

@@ -7,7 +7,7 @@ use crate::models::*;
 use std::path::Path;
 
 pub(crate) fn validate_repository(repo: &RepositoryExport) -> Result<(), ConfigError> {
-    crate::network_policy::NetworkPolicy::shared()
+    crate::network_policy::NetworkPolicy::active()
         .and_then(|policy| policy.validate_selection(&repo.provider, repo.kind, &repo.network_plan))
         .map_err(ConfigError::Invalid)?;
     validate_repository_region(repo.region.as_deref())?;

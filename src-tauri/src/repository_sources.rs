@@ -19,8 +19,12 @@ pub(crate) use embedded::{
     bundled_repository_configs, default_index_url,
 };
 pub(crate) use location::SourceLocation;
-pub(crate) use transport::{SOURCE_DOCUMENT_TIMEOUT, load_document, load_text_document};
-pub(crate) use verified::{VerifiedDocument, fetch_document_bytes, load_verified_text_document};
+#[cfg(test)]
+pub(crate) use transport::SOURCE_DOCUMENT_TIMEOUT;
+pub(crate) use transport::{load_document, load_text_document};
+#[cfg(test)]
+pub(crate) use verified::fetch_document_bytes;
+pub(crate) use verified::{VerifiedDocument, load_verified_text_document};
 
 mod preflight;
 pub(crate) use preflight::{StartupProbe, cancel_startup_probe, probe_startup_source};

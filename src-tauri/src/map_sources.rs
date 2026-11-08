@@ -16,7 +16,9 @@ pub(crate) use context::MapSourceContext;
 #[cfg(test)]
 pub(crate) use document::parse_document;
 pub(crate) use releases::{fetch_map_releases, select_map_stage_asset};
-pub(crate) use state::{available_maps, map_is_available, replace_maps_keeping_runtime_state};
+pub(crate) use state::{
+    available_maps, map_is_available, replace_maps_keeping_runtime_state, same_release_binding,
+};
 pub(crate) use tree::{
     BUILTIN_MAP_INDEX, bundled_map_tree, fill_missing_source_names, load_map_tree,
 };

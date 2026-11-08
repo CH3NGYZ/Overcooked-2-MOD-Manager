@@ -15,6 +15,8 @@ pub struct MapSourceContext<'a> {
     pub gitee_token: Option<&'a str>,
     /// 一次用户动作的批次身份：同一批次里同一个仓库只请求一次 Release API。
     pub pass_id: Option<&'a str>,
+    /// Manual refresh bypasses TTL; same-pass readers still share one fresh snapshot.
+    pub force: bool,
     /// 上一次加载出来的条目。
     ///
     /// 只给「需要联网才能变成列表」的源兜底：那些源取不到 API 时不能整块

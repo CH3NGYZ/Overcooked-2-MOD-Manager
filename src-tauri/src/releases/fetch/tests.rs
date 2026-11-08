@@ -2,6 +2,59 @@ use super::super::test_support::{ApiTestServer, api_test_client, api_test_reposi
 use super::*;
 
 #[tokio::test]
+#[ignore = "requires public GitCode API proxy network access"]
+async fn real_gitcode_proxy_reads_complete_release_pages() {
+    let client = crate::releases::build_client(30).unwrap();
+    let mut repo = api_test_repository();
+    repo.provider = Provider::Gitcode;
+    repo.username = "CH3NGY2".into();
+    repo.repository = "OC2-Map-Bundle".into();
+    let config = crate::config::default_config();
+    let proxies = crate::providers::api_proxies(&config, &repo.provider);
+    let started = std::time::Instant::now();
+    let releases = crate::releases::pagination::collect_release_pages(|page| {
+        let official = crate::providers::repository_release_api_url_page(
+            &repo.provider,
+            &repo.username,
+            &repo.repository,
+            Some(page),
+        )
+        .unwrap();
+        let targets = crate::github_proxies::proxy_urls(proxies, &official, false, None)
+            .into_iter()
+            .map(|url| (url, None))
+            .collect();
+        let client = &client;
+        let repo = &repo;
+        async move {
+            let result = fetch_releases_from_targets(client, repo, &official, targets).await?;
+            println!(
+                "GitCode proxy page={page} raw_count={} projected_count={}",
+                result.1,
+                result.0.len()
+            );
+            Ok::<_, ReleaseError>(result)
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        !releases.is_empty(),
+        "the public bundle must contain release declarations"
+    );
+    assert!(
+        releases
+            .iter()
+            .any(|release| release.body.contains("<!-- oc2-map"))
+    );
+    println!(
+        "GitCode proxy total={} elapsed_ms={}",
+        releases.len(),
+        started.elapsed().as_millis()
+    );
+}
+
+#[tokio::test]
 async fn release_api_success_stops_retries_and_remaining_targets() {
     let official = ApiTestServer::new(vec![("200 OK", "[]")]);
     let proxy = ApiTestServer::new(vec![("200 OK", "[]")]);

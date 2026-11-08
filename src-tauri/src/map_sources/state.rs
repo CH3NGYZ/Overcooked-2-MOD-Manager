@@ -35,7 +35,11 @@ pub(super) fn merge_maps_keeping_runtime_state(
 ) -> (Vec<MapRepositoryConfig>, bool) {
     let mut merged = Vec::with_capacity(fresh.len());
     for mut map in fresh {
-        if let Some(old) = previous.iter().find(|old| old.id == map.id) {
+        if map.releases_cached_at.is_none()
+            && map.last_error.is_none()
+            && let Some(old) = previous.iter().find(|old| old.id == map.id)
+            && same_release_binding(old, &map)
+        {
             map.cached_releases = old.cached_releases.clone();
             map.releases_cached_at = old.releases_cached_at;
             map.last_error = old.last_error.clone();
@@ -53,6 +57,35 @@ pub(super) fn merge_maps_keeping_runtime_state(
         _ => true,
     };
     (merged, changed)
+}
+
+/// Stable map IDs describe installation identity, not a hosting repository.
+/// A source migration or projection rule change must invalidate cached assets.
+pub(crate) fn same_release_binding(
+    left: &MapRepositoryConfig,
+    right: &MapRepositoryConfig,
+) -> bool {
+    left.provider == right.provider
+        && left
+            .username
+            .trim()
+            .eq_ignore_ascii_case(right.username.trim())
+        && left
+            .repository
+            .trim()
+            .eq_ignore_ascii_case(right.repository.trim())
+        && left.channel == right.channel
+        && super::identity::map_tag(left) == super::identity::map_tag(right)
+        && left.max_release_count == right.max_release_count
+        && left.asset_versions == right.asset_versions
+        && left.latest_mapset_version == right.latest_mapset_version
+        && left.latest_info_version == right.latest_info_version
+        && left.asset_rules.len() == right.asset_rules.len()
+        && left
+            .asset_rules
+            .iter()
+            .zip(&right.asset_rules)
+            .all(|(a, b)| a.rule_type == b.rule_type && a.value == b.value)
 }
 
 /// 一个源在界面上的身份：ID + 昵称（单语言镜像与多语言表）。

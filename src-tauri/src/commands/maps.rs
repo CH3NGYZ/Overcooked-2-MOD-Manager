@@ -58,6 +58,7 @@ pub async fn refresh_map_sources(
             gitee_token: gitee_token.as_deref(),
             gitcode_token: gitcode_token.as_deref(),
             pass_id: pass_id.as_deref(),
+            force: pass_id.is_some(),
             // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
             previous: &config.map_repositories,
         };
@@ -160,6 +161,7 @@ pub async fn refresh_map_releases(
             gitee_token: gitee_token.as_deref(),
             gitcode_token: gitcode_token.as_deref(),
             pass_id: pass_id.as_deref(),
+            force,
             // 取不到 API 时沿用上次的条目，见 `MapSourceContext::previous`
             previous: &config.map_repositories,
         };
@@ -178,6 +180,9 @@ pub async fn refresh_map_releases(
     else {
         return Err("mapSource.mapMissing".into());
     };
+    if !crate::map_sources::same_release_binding(target, &map) {
+        return Err("source.repositoryConfigChanged".into());
+    }
     match fetched {
         Ok(releases) => {
             target.cached_releases = releases.clone();

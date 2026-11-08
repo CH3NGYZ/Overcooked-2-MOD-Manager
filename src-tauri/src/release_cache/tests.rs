@@ -8,7 +8,7 @@ async fn run(
     calls: &AtomicUsize,
 ) -> Arc<Vec<ReleaseInfo>> {
     cache
-        .list(key.to_string(), pass_id, || async {
+        .list(key.to_string(), pass_id, false, || async {
             calls.fetch_add(1, Ordering::SeqCst);
             Ok(Vec::new())
         })
@@ -67,7 +67,7 @@ async fn failure_is_not_cached() {
     let cache = RepoReleaseCache::default();
     let calls = AtomicUsize::new(0);
     let failed = cache
-        .list("github:a:b".to_string(), None, || async {
+        .list("github:a:b".to_string(), None, false, || async {
             calls.fetch_add(1, Ordering::SeqCst);
             // 故意用一个非 tag 的失败串：缓存只关心「失败就不写」，与用户可见文案无关
             Err("boom".to_string())
@@ -100,4 +100,47 @@ fn repository_cache_key_separates_providers() {
         crate::releases::repository_cache_key(crate::models::Provider::Github, "a", "b"),
         crate::releases::repository_cache_key(crate::models::Provider::Gitee, "a", "b")
     );
+}
+
+#[tokio::test]
+async fn forced_refresh_replaces_old_snapshot_and_keeps_same_pass_single_flight() {
+    let cache = RepoReleaseCache::default();
+    let calls = AtomicUsize::new(0);
+    let key = "gitcode:a:b".to_string();
+    let old = run(&cache, &key, Some("old-pass"), &calls).await;
+    let read = || {
+        cache.list(key.clone(), Some("new-pass"), true, || async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        })
+    };
+    let (first, concurrent) = tokio::join!(read(), read());
+    let first = first.unwrap();
+    assert!(
+        !Arc::ptr_eq(&old, &first),
+        "force must discard the previous TTL snapshot"
+    );
+    assert!(Arc::ptr_eq(&first, &concurrent.unwrap()));
+    let later = run(&cache, &key, None, &calls).await;
+    assert!(
+        Arc::ptr_eq(&first, &later),
+        "ordinary reads must see the replacement"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn forced_refresh_without_pass_never_reuses_ttl() {
+    let cache = RepoReleaseCache::default();
+    let calls = AtomicUsize::new(0);
+    for _ in 0..2 {
+        cache
+            .list("github:a:b".into(), None, true, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }

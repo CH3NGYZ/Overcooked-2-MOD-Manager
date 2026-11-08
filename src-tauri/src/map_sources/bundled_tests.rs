@@ -90,6 +90,7 @@ async fn real_gitcode_bundle_loads_release_declarations() {
         gitee_token: None,
         gitcode_token: None,
         pass_id: Some("gitcode-public-acceptance"),
+        force: false,
         previous: &[],
     };
     let maps = super::tree::load_map_tree(crate::config::REGION_CHINESE_MAINLAND, true, &context)

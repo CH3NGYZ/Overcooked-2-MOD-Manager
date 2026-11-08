@@ -61,7 +61,7 @@ pub(crate) async fn fetch_map_releases(
     let api_proxies = ctx.api_proxies(&map.provider).to_vec();
     let releases = ctx
         .cache
-        .list(key, ctx.pass_id, || async move {
+        .list(key, ctx.pass_id, ctx.force, || async move {
             crate::releases::fetch_releases(
                 ctx.client,
                 &probe,
@@ -73,6 +73,14 @@ pub(crate) async fn fetch_map_releases(
             .map_err(|error| error.to_string())
         })
         .await?;
+    project_map_releases(map, releases.as_ref())
+}
+
+/// One projection for fresh source declarations and individual map refreshes.
+pub(super) fn project_map_releases(
+    map: &MapRepositoryConfig,
+    releases: &[ReleaseInfo],
+) -> Result<Vec<ReleaseInfo>, String> {
     match map_tag(map) {
         /*
          * tag 模式不走 `filter_channel`：渠道过滤的是 **Release**（稳定/预览），
@@ -80,9 +88,9 @@ pub(crate) async fn fetch_map_releases(
          * 作者在条目里声明，不再由 Release 的 prerelease 标记决定。
          * 硬过滤只会让写了 tag 的条目在 stable 渠道下整条消失。
          */
-        Some(tag) => synthesize_releases(map, tag, releases.as_ref()),
+        Some(tag) => synthesize_releases(map, tag, releases),
         None => Ok(crate::releases::filter_channel(
-            releases.as_ref().clone(),
+            releases.to_vec(),
             &map.channel,
         )),
     }

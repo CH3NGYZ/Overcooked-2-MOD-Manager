@@ -55,7 +55,7 @@ async fn verified_document(
     let api_proxies = ctx.api_proxies(&reference.provider).to_vec();
     let releases = match ctx
         .cache
-        .list(key, ctx.pass_id, || async move {
+        .list(key, ctx.pass_id, ctx.force, || async move {
             crate::releases::fetch_releases(
                 ctx.client,
                 &probe,

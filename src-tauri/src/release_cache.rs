@@ -50,7 +50,7 @@ pub struct RepoReleaseCache {
 }
 
 impl RepoReleaseCache {
-    /// 取一份 Release 列表：能复用就不调用 `fetch`，不能才请求。
+    /// 取完整仓库列表；成功原子替换旧快照。force 跳过 TTL，但同 pass 仍合并。
     ///
     /// `fetch` 是 `FnOnce`：命中时它根本不会被调用，闭包里准备的客户端与令牌
     /// 也就白准备了 —— 这正是我们要的。
@@ -60,6 +60,7 @@ impl RepoReleaseCache {
         &self,
         key: String,
         pass_id: Option<&str>,
+        force: bool,
         fetch: F,
     ) -> Result<Arc<Vec<ReleaseInfo>>, String>
     where
@@ -78,7 +79,7 @@ impl RepoReleaseCache {
         };
         // 等锁期间前一个请求可能已经把结果写进去了，所以命中判定必须在拿到锁之后。
         let _guard = gate.lock().await;
-        if let Some(hit) = self.hit(&key, pass_id) {
+        if let Some(hit) = self.hit(&key, pass_id, force) {
             log::debug!("Release 列表命中仓库缓存：仓库={}", key);
             return Ok(hit);
         }
@@ -88,7 +89,7 @@ impl RepoReleaseCache {
         Ok(shared)
     }
 
-    fn hit(&self, key: &str, pass_id: Option<&str>) -> Option<Arc<Vec<ReleaseInfo>>> {
+    fn hit(&self, key: &str, pass_id: Option<&str>, force: bool) -> Option<Arc<Vec<ReleaseInfo>>> {
         let entries = self.entries.lock().unwrap_or_else(|error| {
             log::warn!("Release 缓存锁中毒，继续使用：{error}");
             error.into_inner()
@@ -98,7 +99,8 @@ impl RepoReleaseCache {
         if pass_id.is_some() && entry.pass_id.as_deref() == pass_id {
             return Some(entry.releases.clone());
         }
-        (entry.fetched_at.elapsed() < REPO_RELEASE_CACHE_TTL).then(|| entry.releases.clone())
+        (!force && entry.fetched_at.elapsed() < REPO_RELEASE_CACHE_TTL)
+            .then(|| entry.releases.clone())
     }
 
     fn store(&self, key: &str, pass_id: Option<String>, releases: Arc<Vec<ReleaseInfo>>) {

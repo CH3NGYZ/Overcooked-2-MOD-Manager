@@ -231,6 +231,7 @@ async fn real_release_tag_source_builds_maps() {
         gitee_token: None,
         gitcode_token: None,
         pass_id: Some("real-release-tags"),
+        force: false,
         previous: &[],
     };
     let maps = load_map_tree(crate::config::current_user_region(), true, &ctx)

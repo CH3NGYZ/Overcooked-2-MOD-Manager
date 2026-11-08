@@ -53,25 +53,18 @@ pub(super) async fn load_release_tag_maps(
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
     let provider = declaration.provider.clone().unwrap_or(Provider::Github);
     let probe = declaration_probe(declaration);
-    /*
-     * 保留历史 `::all` 缓存键，避免结构迁移改变现有缓存生命周期。
-     * 目前两个入口均读取全部分页；历史上「首页 10 条」与「全部分页」不是
-     * 同一份数据，共用键要么让地图源读到不完整列表，要么让 MOD 侧拿到全量。
-     */
-    let key = format!(
-        "{}::all",
-        crate::releases::repository_cache_key(
-            provider.clone(),
-            &declaration.username,
-            &declaration.repository,
-        )
+    // All consumers now fetch complete pages and share the same repository snapshot.
+    let key = crate::releases::repository_cache_key(
+        provider.clone(),
+        &declaration.username,
+        &declaration.repository,
     );
     let token = ctx.token(&provider).map(str::to_string);
     let official_api_only = ctx.config.auth.official_api_only;
     let api_proxies = ctx.api_proxies(&provider).to_vec();
     let releases = match ctx
         .cache
-        .list(key, ctx.pass_id, || async move {
+        .list(key, ctx.pass_id, ctx.force, || async move {
             crate::releases::fetch_releases(
                 ctx.client,
                 &probe,
@@ -140,7 +133,7 @@ pub(super) async fn load_release_tag_maps(
             continue;
         };
         match note_block_map(declaration, label, &note, tag, rule, builtin, origin) {
-            Ok(map) => {
+            Ok(mut map) => {
                 if !seen.insert(map_identity(&map)) {
                     log::warn!(
                         "同一个源里有两张身份相同的地图，跳过后者：源={}，tag={}",
@@ -148,6 +141,16 @@ pub(super) async fn load_release_tag_maps(
                         tag
                     );
                     continue;
+                }
+                // The complete API snapshot is already available. Replace old
+                // per-map projections now instead of reviving a previous cache.
+                match super::releases::project_map_releases(&map, releases.as_ref()) {
+                    Ok(projected) => {
+                        map.cached_releases = projected;
+                        map.releases_cached_at =
+                            Some(crate::release_cache::freshness::now_millis());
+                    }
+                    Err(error) => map.last_error = Some(error),
                 }
                 maps.push(map);
             }

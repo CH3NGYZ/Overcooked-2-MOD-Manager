@@ -317,3 +317,59 @@ fn a_display_only_map_change_still_counts_as_change() {
     assert_eq!(merged[0].releases_cached_at, Some(1_700_000_000));
     assert_eq!(merged[0].last_error.as_deref(), Some("release.rateLimited"));
 }
+
+#[test]
+fn migrating_map_repository_does_not_restore_old_release_state() {
+    let mut old = parse_document(&minimal("M", "A", "S"), &bundled())
+        .unwrap()
+        .maps
+        .remove(0);
+    old.id = "stable-map-id".into();
+    old.releases_cached_at = Some(123);
+    old.last_error = Some("release.rateLimited".into());
+    for field in ["provider", "owner", "repository", "tag", "asset_rule"] {
+        let mut fresh = old.clone();
+        fresh.releases_cached_at = None;
+        fresh.last_error = None;
+        match field {
+            "provider" => fresh.provider = Provider::Gitcode,
+            "owner" => fresh.username = "CH3NGY2".into(),
+            "repository" => fresh.repository = "OC2-Map-Bundle".into(),
+            "tag" => fresh.tag = Some("new-tag".into()),
+            "asset_rule" => fresh.asset_rules[0].value = "new-map.zip".into(),
+            _ => unreachable!(),
+        }
+        let (merged, changed) = merge_maps_keeping_runtime_state(vec![old.clone()], vec![fresh]);
+        assert!(changed, "{field}");
+        assert_eq!(merged[0].releases_cached_at, None, "{field}");
+        assert_eq!(merged[0].last_error, None, "{field}");
+        assert!(merged[0].cached_releases.is_empty(), "{field}");
+    }
+}
+
+#[test]
+fn fresh_empty_api_snapshot_replaces_previous_map_cache() {
+    let mut old = parse_document(&minimal("M", "A", "S"), &bundled())
+        .unwrap()
+        .maps
+        .remove(0);
+    old.id = "stable-map-id".into();
+    old.releases_cached_at = Some(123);
+    old.last_error = Some("release.rateLimited".into());
+    old.cached_releases = vec![
+        serde_json::from_value(serde_json::json!({
+            "tag_name": "old", "name": "Old", "body": "", "prerelease": false,
+            "draft": false, "assets": []
+        }))
+        .unwrap(),
+    ];
+    let mut fresh = old.clone();
+    fresh.cached_releases.clear();
+    fresh.releases_cached_at = Some(456);
+    fresh.last_error = None;
+    let (merged, changed) = merge_maps_keeping_runtime_state(vec![old], vec![fresh]);
+    assert!(changed);
+    assert!(merged[0].cached_releases.is_empty());
+    assert_eq!(merged[0].releases_cached_at, Some(456));
+    assert_eq!(merged[0].last_error, None);
+}

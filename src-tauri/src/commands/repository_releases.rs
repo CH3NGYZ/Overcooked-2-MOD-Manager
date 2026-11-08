@@ -88,16 +88,23 @@ pub async fn refresh_repository(
         api_proxies.len(),
         repo.max_release_count
     );
-    let fetched = releases::fetch_releases(
-        &client,
-        &repo,
-        token.as_deref(),
-        config.auth.official_api_only,
-        api_proxies,
-    )
-    .await
-    .map(|releases| releases::filter_channel(releases, &repo.channel))
-    .map_err(|error| error.to_string());
+    let key =
+        releases::repository_cache_key(repo.provider.clone(), &repo.username, &repo.repository);
+    let fetched = state
+        .release_cache
+        .list(key, None, force, || async {
+            releases::fetch_releases(
+                &client,
+                &repo,
+                token.as_deref(),
+                config.auth.official_api_only,
+                api_proxies,
+            )
+            .await
+            .map_err(|error| error.to_string())
+        })
+        .await
+        .map(|snapshot| releases::filter_channel(snapshot.as_ref().clone(), &repo.channel));
 
     let _cache_guard = state.repository_cache.lock().await;
     let _operation_guard = state
@@ -127,6 +134,7 @@ pub async fn refresh_repository(
             // 只有真正拿到结果才刷新时间戳：失败后必须让下一次请求重新打 API
             latest_repo.releases_cached_at = Some(now_millis());
             latest_repo.last_error = None;
+            latest_config.staged_release_cache.remove(&repository_id);
             state
                 .config
                 .save(&latest_config)

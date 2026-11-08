@@ -46,7 +46,8 @@ test('map loading shares transport and cache while retaining tag assets and runt
     assert.match(read(file), /\.cache\s*\.list\(key, ctx\.pass_id,/)
   }
   const tags = read('release_tags.rs')
-  assert.match(tags, /"\{\}::all"/)
+  assert.match(tags, /crate::releases::repository_cache_key/)
+  assert.doesNotMatch(tags, /"\{\}::all"/)
   assert.match(tags, /crate::releases::fetch_releases\(/)
   assert.match(tags, /ctx\.previous_for\(&label\.id\)/)
   assert.match(read('community.rs'), /load_release_tag_maps\(&declaration, &label, false, origin, ctx\)/)

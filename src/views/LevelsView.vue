@@ -17,6 +17,11 @@ import { useListVisibility } from '../composables/useListVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { buildLevelSetGroups } from '../levelSetGroups'
+import {
+  levelSetStatusKeys,
+  summarizeLevelSetTags,
+  summarizeLevelSetToggleStatus,
+} from '../levelSetStatusSummary'
 import { formatVersionSpec } from '../versionSpec'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
@@ -60,7 +65,6 @@ import {
   type LevelSetCardAction,
   type LevelSetCardTag,
   type LevelSetRefreshingHint,
-  type LevelSetTone,
 } from '../levelSetStatus.ts'
 import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, Repository } from '../types'
 
@@ -189,13 +193,9 @@ const visibility = useListVisibility(query, {
   noStatusMatch: () => t('common.noStatusMatch'),
 })
 
-/** 一张卡属于哪些页头状态 key：结论标签 + 开关状态。 */
-function statusKeysOf(set: LevelSetInfo): string[] {
-  return [...tagsOf(set).map(tagKeyOf), set.enabled ? 'enabled' : 'disabled']
-}
 /** 状态筛选只收窄展示集合；页头计数仍读 `sortedSets`（筛选前）。 */
 const visibleSets = computed(() =>
-  sortedSets.value.filter((set) => visibility.statusMatches(statusKeysOf(set))),
+  sortedSets.value.filter((set) => visibility.statusMatches(levelSetStatusKeys(set, tagsOf(set)))),
 )
 
 /** 详情行里的绑定地图名与 tag 来自模块级单例，纯模块看不到，额外拼进来。 */
@@ -511,84 +511,8 @@ function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
   )
 }
 
-/** 页头聚合标签的一项。 */
-interface LevelStatusSummary {
-  key: string
-  text: string
-  tone: LevelSetTone
-  count: number
-}
-
-/**
- * 标签 key 带上看 `kind`。
- *
- * 同一段文案在「依赖提醒」与「版本结论」里说的是两件事，共用一个 key 会让
- * 页头定位把不相干的卡片也算命中。
- */
-function tagKeyOf(tag: LevelSetCardTag) {
-  return `tag:${tag.kind}:${tag.text}`
-}
-
-/** 开关状态的两个合成 key（页头单独成组，与结论类标签分开）。 */
-const TOGGLE_KEYS = ['enabled', 'disabled'] as const
-
-/** 一张卡是否命中某个聚合标签（含开关状态的两个合成 key）。 */
-function matchesStatus(set: LevelSetInfo, key: string) {
-  if (key === 'enabled') return set.enabled
-  if (key === 'disabled') return !set.enabled
-  return tagsOf(set).some((tag) => tagKeyOf(tag) === key)
-}
-
-/**
- * 页头「结论」组：卡片上真实存在的标签汇总（依赖提醒 + 版本结论）。
- *
- * 只汇总卡片上会出现的标签：页头每个标签都必须点得出落点，凑出来的分类
- * 点下去没有任何卡片会亮，比不放更糟。
- *
- * 停用状态的卡片自己会显示「已禁用」，但它回答的是「开没开」而不是「版本
- * 怎么样」，所以这里把它剔出去，交给下面的开关状态组 —— 否则同一件事会在
- * 页头出现两次（「1 已禁用」并排两条）。
- */
-const statusSummary = computed<LevelStatusSummary[]>(() => {
-  const buckets = new Map<string, LevelStatusSummary>()
-  const add = (key: string, text: string, tone: LevelSetTone) => {
-    const existing = buckets.get(key)
-    if (existing) existing.count += 1
-    else buckets.set(key, { key, text, tone, count: 1 })
-  }
-  for (const set of sortedSets.value) {
-    for (const tag of tagsOf(set)) {
-      if (tag.kind === 'state' && tag.text === 'modsLocal.disabled') continue
-      add(tagKeyOf(tag), tag.text, tag.tone)
-    }
-  }
-  /*
-   * 顺序：关系提醒 → 版本结论。同类里按数量降序，最常点的一类不用往右找。
-   * 判定顺序与卡片标签的排序同源（`levelSetCardTags` 也是先依赖后版本），
-   * 页头与卡片的阅读顺序因此一致。
-   */
-  const rank = (entry: LevelStatusSummary) =>
-    entry.key.startsWith('tag:dependency:') ? 0 : 1
-  return [...buckets.values()].sort(
-    (left, right) => rank(left) - rank(right) || right.count - left.count,
-  )
-})
-
-/** 页头「开关状态」组：固定「已启用 → 已禁用」，数量为 0 的不显示。 */
-const toggleSummary = computed<LevelStatusSummary[]>(() => {
-  const entries: LevelStatusSummary[] = []
-  for (const key of TOGGLE_KEYS) {
-    const count = sortedSets.value.filter((set) => matchesStatus(set, key)).length
-    if (!count) continue
-    entries.push({
-      key,
-      text: key === 'enabled' ? 'modsLocal.enabled2' : 'modsLocal.disabled',
-      tone: key === 'enabled' ? 'accent' : 'muted',
-      count,
-    })
-  }
-  return entries
-})
+const statusSummary = computed(() => summarizeLevelSetTags(sortedSets.value, tagsOf))
+const toggleSummary = computed(() => summarizeLevelSetToggleStatus(sortedSets.value))
 
 /* 页头标签改为列表筛选：命中判定与计数都在 `visibleSets` / `visibility`，不再需要页内定位与高亮。 */
 

@@ -35,6 +35,11 @@ const {
   MAP_CARD_STATE_TAGS,
   MAP_CARD_STATE_TONES,
 } = await import('../src/levelSetStatus.ts')
+const {
+  levelSetStatusKeys,
+  summarizeLevelSetTags,
+  summarizeLevelSetToggleStatus,
+} = await import('../src/levelSetStatusSummary.ts')
 
 function set(overrides = {}) {
   return {
@@ -106,6 +111,48 @@ function repo(overrides = {}) {
     ...overrides,
   }
 }
+
+test('页头状态 key 区分标签类型并附带开关状态', () => {
+  assert.deepEqual(levelSetStatusKeys(
+    set({ enabled: false }),
+    [{ kind: 'state', text: 'tools.update', tone: 'moderate' }],
+  ), ['tag:state:tools.update', 'disabled'])
+})
+
+test('页头结论摘要依赖优先、按数量排序且不重复统计禁用标签', () => {
+  const first = set()
+  const second = set({ dir_name: 'Second', enabled: false })
+  const summaries = summarizeLevelSetTags([first, second], (item) => item === first
+    ? [
+        { kind: 'dependency', text: 'modsOnline.missingDep', tone: 'critical' },
+        { kind: 'state', text: 'modsLocal.latest', tone: 'accent' },
+        { kind: 'state', text: 'modsLocal.disabled', tone: 'muted' },
+      ]
+    : [
+        { kind: 'dependency', text: 'modsOnline.missingDep', tone: 'critical' },
+        { kind: 'state', text: 'tools.update', tone: 'moderate' },
+      ])
+
+  assert.deepEqual(summaries, [
+    { key: 'tag:dependency:modsOnline.missingDep', text: 'modsOnline.missingDep', tone: 'critical', count: 2 },
+    { key: 'tag:state:modsLocal.latest', text: 'modsLocal.latest', tone: 'accent', count: 1 },
+    { key: 'tag:state:tools.update', text: 'tools.update', tone: 'moderate', count: 1 },
+  ])
+})
+
+test('页头开关摘要固定启用在前并省略数量为零的状态', () => {
+  assert.deepEqual(summarizeLevelSetToggleStatus([
+    set({ enabled: false }),
+    set({ dir_name: 'Second', enabled: true }),
+    set({ dir_name: 'Third', enabled: true }),
+  ]), [
+    { key: 'enabled', text: 'modsLocal.enabled2', tone: 'accent', count: 2 },
+    { key: 'disabled', text: 'modsLocal.disabled', tone: 'muted', count: 1 },
+  ])
+  assert.deepEqual(summarizeLevelSetToggleStatus([set({ enabled: true })]), [
+    { key: 'enabled', text: 'modsLocal.enabled2', tone: 'accent', count: 1 },
+  ])
+})
 
 test('身份比较用 author + levelSetName，忽略大小写与空白', () => {
   assert.ok(isSameLevelSet({ name: 'RW_LevelSet', author: 'RW' }, { name: 'rw_levelset ', author: ' rw' }))

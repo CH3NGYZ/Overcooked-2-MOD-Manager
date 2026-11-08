@@ -8,11 +8,10 @@ const read = path => readText(resolve(root, path))
 const owners = {
   assets: ['asset_matches', 'select_install_asset'],
   client: ['build_client', 'build_download_client'],
-  coordinates: ['repository_coordinates', 'repository_homepage', 'repository_release_api_url', 'repository_release_api_url_page', 'repository_file_url', 'repository_file_name', 'release_asset_reference', 'repository_cache_key'],
   error: ['release_error_kind'],
   fetch: ['fetch_releases', 'fetch_all_releases', 'fetch_releases_page', 'fetch_releases_from_targets', 'fetch_repository_default_branch'],
   projection: ['parse_release_json', 'filter_channel'],
-  transport: ['api_target_kind', 'api_request_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json', 'is_official_gitee_api_url', 'gitee_api_url_with_token'],
+  transport: ['api_target_kind', 'api_request_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json'],
   version: ['parse_version', 'compare_release_versions', 'is_strict_semver', 'is_prerelease_version', 'suffix_identifiers', 'split_alpha_numeric', 'compare_prerelease_parts'],
 }
 
@@ -20,6 +19,12 @@ test('Release root exports real domain owners without forwarding or replacement 
   const entry = read('../releases.rs')
   assert.doesNotMatch(entry, /\b(?:fn|struct|enum|impl)\s/)
   const files = sourceFiles(root, ['.rs']).map(path => [path, readText(path)])
+  const coordinates = read('../providers/coordinates.rs')
+  for (const name of ['repository_coordinates', 'repository_homepage', 'repository_release_api_url', 'repository_release_api_url_page', 'repository_file_url', 'repository_file_name', 'release_asset_reference', 'repository_cache_key']) {
+    assert.match(coordinates, new RegExp(`\\bfn ${name}\\(`))
+    for (const [, text] of files) assert.doesNotMatch(text, new RegExp(`\\bfn ${name}\\(`))
+  }
+  assert.match(entry, /pub\(crate\) use crate::providers::/)
   for (const [module, names] of Object.entries(owners)) {
     assert.match(entry, new RegExp(`mod ${module};`))
     for (const name of names) {
@@ -43,7 +48,8 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(transport, /Some\(token\) => targets\.push\(\(official_url\.to_string\(\), Some\(token\)\)\)/)
   assert.match(transport, /None => targets\.push\(\(official_url\.to_string\(\), None\)\)/)
   assert.match(transport, /proxy_urls\(api_proxies, official_url, false, None\)[\s\S]*?\.map\(\|url\| \(url, None\)\)/)
-  assert.match(transport, /Provider::Gitee, Some\(token\)\) if is_official_gitee_api_url\(url\)/)
+  assert.match(transport, /crate::providers::api_request\(client, url, provider, token\)/)
+  assert.match(read('../providers/authentication.rs'), /is_official_gitee_api_url\(url\)/)
   assert.equal([...transport.matchAll(/e\.without_url\(\)\.to_string\(\)/g)].length, 2)
   assert.match(transport, /for attempt in 0\.\.REPOSITORY_API_ATTEMPTS/)
   assert.match(transport, /Err\(error\) if error\.is_forbidden\(\) =>/)

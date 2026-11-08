@@ -40,6 +40,7 @@ mod mod_config;
 mod mod_preview;
 mod models;
 mod mods;
+mod providers;
 mod recycle_bin;
 mod release_cache;
 mod releases;

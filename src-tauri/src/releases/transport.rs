@@ -8,7 +8,6 @@ use crate::models::ReleaseInfo;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
-use url::Url;
 
 pub(super) const API_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -28,23 +27,6 @@ pub(super) fn api_target_kind(
     } else {
         "proxy"
     }
-}
-
-fn is_official_gitee_api_url(value: &str) -> bool {
-    let Ok(url) = Url::parse(value) else {
-        return false;
-    };
-    matches!(url.host_str(), Some("gitee.com" | "www.gitee.com"))
-        && url.path().starts_with("/api/v5/")
-}
-
-/// Gitee 的 access_token 通过 query 参数传递（与官方文档一致）。
-/// 只有官方 Gitee API 会附加；代理地址不携带凭据。
-fn gitee_api_url_with_token(url: &str, token: &str) -> Result<String, ReleaseError> {
-    let mut parsed =
-        Url::parse(url).map_err(|error| ReleaseError::InvalidUrl(error.to_string()))?;
-    parsed.query_pairs_mut().append_pair("access_token", token);
-    Ok(parsed.into())
 }
 
 /// Build the ordered API fallback sequence for one provider.
@@ -161,29 +143,14 @@ async fn fetch_api_json(
         provider,
         token.is_some()
     );
-    // Gitee 的 access_token 走 query 参数（官方约定）；GitHub 走 Authorization
-    let request_url = match (provider, token) {
-        (Provider::Gitee, Some(token)) if is_official_gitee_api_url(url) => {
-            gitee_api_url_with_token(url, token)?
-        }
-        _ => url.to_string(),
-    };
-    let mut request = client
-        .get(&request_url)
+    let request = crate::providers::api_request(client, url, provider, token)?
         .timeout(API_REQUEST_TIMEOUT)
         .header("User-Agent", APP_USER_AGENT)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",
         )
         .header(reqwest::header::PRAGMA, "no-cache");
-    if let Some(token) = token {
-        request = match provider {
-            Provider::Github => request.bearer_auth(token),
-            Provider::Gitee => request,
-        };
-    }
     let response = request.send().await.map_err(|e| {
         let error = ReleaseError::Http(e.without_url().to_string());
         log::debug!(

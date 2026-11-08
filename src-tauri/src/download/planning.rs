@@ -51,14 +51,12 @@ fn is_repository_raw_path(path: &str) -> bool {
 }
 
 /// 按 URL 判定下载源平台：决定用哪组代理、以及是否需要竞速。
-pub(crate) fn provider_for_remote_url(url: &str) -> Provider {
-    let host = Url::parse(url.trim())
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(str::to_ascii_lowercase));
-    match host.as_deref() {
-        Some("gitee.com") => Provider::Gitee,
-        _ => Provider::Github,
+pub(crate) fn provider_for_remote_url(url: &str) -> Option<Provider> {
+    let parsed = Url::parse(url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
     }
+    crate::providers::provider_for_host(parsed.host_str()?)
 }
 
 // Update and MOD downloads share candidate ordering, routing and deduplication.

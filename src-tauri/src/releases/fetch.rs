@@ -1,6 +1,3 @@
-use super::coordinates::repository_file_url;
-use super::coordinates::repository_release_api_url;
-use super::coordinates::repository_release_api_url_page;
 use super::error::ReleaseError;
 use super::error::release_error_kind;
 use super::transport::api_request_targets;
@@ -11,6 +8,9 @@ use crate::models::GitHubProxy;
 use crate::models::Provider;
 use crate::models::ReleaseInfo;
 use crate::models::RepositoryConfig;
+use crate::providers::repository_file_url;
+use crate::providers::repository_release_api_url;
+use crate::providers::repository_release_api_url_page;
 use reqwest::Client;
 use serde_json::Value;
 use url::Url;

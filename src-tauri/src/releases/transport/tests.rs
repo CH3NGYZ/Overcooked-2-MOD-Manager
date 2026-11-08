@@ -81,17 +81,3 @@ fn api_request_targets_order_direct_token_then_proxy() {
     assert_eq!(targets[0], (official.to_string(), None));
     assert_eq!(targets[1].1, None);
 }
-
-#[test]
-fn gitee_token_uses_access_token_query_on_official_api_only() {
-    // Gitee 的 access_token 走 query 参数（官方约定），且只附加在官方地址上
-    let official = "https://gitee.com/api/v5/repos/a/b/releases?per_page=10";
-    assert_eq!(
-        gitee_api_url_with_token(official, "secret token").unwrap(),
-        "https://gitee.com/api/v5/repos/a/b/releases?per_page=10&access_token=secret+token"
-    );
-    // 代理地址不识别为官方接口，因此不会附加凭据
-    assert!(!is_official_gitee_api_url(
-        "https://oc2gtapi.ch3ng.top/api/v5/repos/a/b/releases"
-    ));
-}

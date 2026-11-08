@@ -1,5 +1,5 @@
-use super::error::ReleaseError;
 use crate::models::Provider;
+use crate::releases::ReleaseError;
 use url::Url;
 
 pub fn repository_coordinates(
@@ -34,10 +34,7 @@ pub fn repository_homepage(
     repository: &str,
 ) -> Result<String, ReleaseError> {
     let (username, repository) = repository_coordinates(username, repository)?;
-    let base = match provider {
-        Provider::Github => "https://github.com/",
-        Provider::Gitee => "https://gitee.com/",
-    };
+    let base = super::infrastructure(provider).homepage;
     let mut url = Url::parse(base).expect("fixed repository host is a valid URL");
     url.path_segments_mut()
         .expect("fixed repository host accepts paths")
@@ -69,10 +66,7 @@ pub fn repository_release_api_url_page(
     page: Option<u32>,
 ) -> Result<String, ReleaseError> {
     let (username, repository) = repository_coordinates(username, repository)?;
-    let base = match provider {
-        Provider::Github => "https://api.github.com/repos/",
-        Provider::Gitee => "https://gitee.com/api/v5/repos/",
-    };
+    let base = super::infrastructure(provider).repository_api;
     let mut url = Url::parse(base).expect("fixed Release API host is a valid URL");
     url.path_segments_mut()
         .expect("fixed Release API host accepts paths")

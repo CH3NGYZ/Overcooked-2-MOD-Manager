@@ -186,7 +186,7 @@ pub(crate) async fn download_remote_to_temp(
         }],
         _ => plan_remote_download_candidates(
             &config,
-            &provider_for_remote_url(parsed.as_str()),
+            &provider_for_remote_url(parsed.as_str()).ok_or("direct.invalidUrl")?,
             kind,
             parsed.as_str(),
         )?,

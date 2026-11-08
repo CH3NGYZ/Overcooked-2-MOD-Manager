@@ -43,16 +43,20 @@ fn remote_url_kind_follows_host_and_path() {
 fn remote_provider_comes_from_the_url_host() {
     assert_eq!(
         provider_for_remote_url("https://gitee.com/ch3ngyz/demo/raw/main/a.zip"),
-        Provider::Gitee
+        Some(Provider::Gitee)
     );
     assert_eq!(
         provider_for_remote_url("https://raw.githubusercontent.com/o/r/main/a.zip"),
-        Provider::Github
+        Some(Provider::Github)
     );
-    assert_eq!(
-        provider_for_remote_url("https://example.com/a.zip"),
-        Provider::Github
-    );
+    for url in [
+        "https://example.com/a.zip",
+        "https://github.com.evil.example/a.zip",
+        "ftp://github.com/o/r",
+        "not a URL",
+    ] {
+        assert_eq!(provider_for_remote_url(url), None, "{url}");
+    }
 }
 
 #[test]

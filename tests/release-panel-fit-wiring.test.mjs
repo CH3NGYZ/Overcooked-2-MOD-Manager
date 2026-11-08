@@ -7,6 +7,7 @@ const panel = read('src/components/ReleaseDetailPanel.vue')
 const repositoryDetail = read('src/components/RepositoryDetail.vue')
 const modsOnline = read('src/views/ModsOnlineView.vue')
 const mapsOnline = read('src/views/MapsOnlineView.vue')
+const mapReleaseDetail = read('src/composables/useMapReleaseDetail.ts')
 const fit = read('src/composables/useReleasePanelFit.ts')
 const pureFit = read('src/releasePanelFit.ts')
 
@@ -32,8 +33,15 @@ test('both online pages use the shared release panel through their domain adapte
   assert.match(modsOnline, /import RepositoryDetail from '\.\.\/components\/RepositoryDetail\.vue'/)
   assert.match(mapsOnline, /<ReleaseDetailPanel :key="detailMap\.id"/)
   assert.match(mapsOnline, /detailAssets/)
+  assert.match(mapsOnline, /useMapReleaseDetail\(/)
   assert.match(mapsOnline, /detailDependencies/)
   assert.doesNotMatch(mapsOnline, /useRepositoryReadme/)
+
+  assert.match(mapReleaseDetail, /mapDependencyRows\(/)
+  assert.match(mapReleaseDetail, /matchedReleaseAssets\(/)
+  assert.match(mapReleaseDetail, /watch\(\s*\[activeMapId, latestTag\]/s)
+  assert.match(mapReleaseDetail, /selectedAssetName\.value = null/)
+  assert.doesNotMatch(mapsOnline, /mapDependencyRows\(|matchedReleaseAssets\(|isPrereleaseVersion\(/)
 })
 
 test('release panel pure geometry remains the single owner of height and scroll rules', () => {

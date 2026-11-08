@@ -22,11 +22,9 @@ import HeaderSearch from '../components/HeaderSearch.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
-import { formatVersion, isPrereleaseVersion, versionDisplay } from '../modStatus'
+import { versionDisplay } from '../modStatus'
 import { markdownSummary } from '../markdown'
-import { mapDependencyRows } from '../dependencyRows'
 import { formatVersionSpec } from '../versionSpec'
-import { matchedReleaseAssets } from '../repositoryAssets'
 import { repositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink, useRepositoryLink } from '../crossLink'
 import { dependencyTagFor } from '../modRelations'
@@ -49,7 +47,6 @@ import {
   type SourceGroupSource,
 } from '../composables/useSourceGroupTree'
 import ReleaseDetailPanel from '../components/ReleaseDetailPanel.vue'
-import type { ReleaseDetailLink } from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallCheckDialog from '../components/InstallCheckDialog.vue'
@@ -60,8 +57,9 @@ import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
-import type { InstallSource, LevelSetInfo, MapInfo, ReleaseInfo, Repository } from '../types'
+import type { InstallSource, LevelSetInfo, MapInfo, Repository } from '../types'
 import { withDemoMaps } from '../tutorial/demo'
+import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
 
 /**
  * 地图安装页。
@@ -404,165 +402,36 @@ function openInLevelSets(map: MapInfo) {
   linkToLevelSets(map.id)
 }
 
-const detailMap = computed(() => maps.value.find((map) => map.id === detailId.value) ?? null)
+const {
+  detailMap,
+  detailRelease,
+  detailVersions,
+  detailDependencies,
+  detailAssets,
+  detailAsset,
+  detailSelectedTag,
+  detailSelectedAsset,
+  detailReleaseTag,
+  detailPrerelease,
+  detailLinks,
+  detailNote,
+  detailName,
+  detailProvider,
+  detailOwner,
+  detailRepository,
+  detailBindingValue,
+  detailPrimaryAction,
+} = useMapReleaseDetail({
+  maps,
+  detailId,
+  mods,
+  repositories,
+  mapName,
+})
 const detailStatus = computed(() =>
   detailMap.value
     ? statusOf(detailMap.value)
     : { key: 'not_refreshed' as MapCardState, text: '', tone: 'muted' as TagTone },
-)
-
-/*
- * 地图详情不再有 README 区块：仓库 README 是**仓库级**的，一个仓库多张地图时
- * 把它塞进每张图的详情只会串味。说明 tab 显示这张图自己的 `note_i18n`
- * （来自 Release note 的 oc2-map 块），长文（块外的 Release note 正文）跟着
- * 版本走，显示在「下载安装」的提交日志里 —— 两处用的是同一次 API 拿到的数据。
- */
-
-/**
- * 依赖框架表（说明 tab 里、备注上方）。
- *
- * 行由 `dependencyRows.ts` 统一构造，和 MOD 安装页详情、地图管理页详情是同
- * 一份口径：名称按「在线 MOD 仓库卡片名 → 本地已装 MOD 的包标题 → GUID」
- * 解析（依赖是框架 MOD，它们本身也是在线仓库，所以有作者起的名字可显示），
- * 满足时只写「已满足」——版本写在「要求」列，状态列只回答「现在行不行」。
- *
- * 满足情况仍由 Dashboard 已扫好的本地 MOD 判定，与卡片上的「缺依赖」标签、
- * 安装前检查弹窗共用同一份结论。未满足时与 MOD 侧同一套结论：线上有满足
- * 区间的版本写「可安装 / 可更新」并带跳转（落到那张仓库卡片），没有来源才
- * 写「缺依赖」。
- */
-const detailDependencies = computed<DependencyRow[]>(() =>
-  mapDependencyRows(detailMap.value, {
-    mods: mods.value,
-    repositories: repositories.value,
-    translate: t,
-    pickName: pickI18n,
-    // 选中哪个 Release 就看哪一版的关系声明：覆盖表（release_relations）
-    // 回答的是「这一版缺什么」，显示最新版的要求会误导准备装旧版的用户。
-    version: detailRelease.value?.tag_name ?? null,
-  }),
-)
-
-/* ===== 详情抽屉：版本选择与面板展示值 ===== */
-
-/** 抽屉里选中的 tag；`null` 表示还没选（默认落到最新）。 */
-const detailSelectedTag = ref<string | null>(null)
-/** 缓存 Release：后端保证最新在前，未刷新时是空数组。 */
-const detailReleases = computed<ReleaseInfo[]>(() => detailMap.value?.cached_releases ?? [])
-const detailLatestTag = computed(() => detailReleases.value[0]?.tag_name ?? null)
-
-/**
- * 当前选中的 Release。
- *
- * 页面刷新完 Release 后旧选择可能已不在列表里，此时静默回落到最新——
- * 下拉值由 `detailSelectedTag` 同步（见下面的 watch），不会出现「选中的
- * 版本文件列表已经换了」这种错位。
- */
-const detailRelease = computed<ReleaseInfo | null>(() => {
-  const tag = detailSelectedTag.value
-  const found = detailReleases.value.find((release) => release.tag_name === tag)
-  return found ?? detailReleases.value[0] ?? null
-})
-
-/** 版本下拉选项：label 用原始 tag（含第 4 位），value 是 tag。 */
-const detailVersions = computed(() =>
-  detailReleases.value.map((release) => ({
-    label: formatVersion(release.tag_name || release.version || ''),
-    value: release.tag_name,
-  })),
-)
-
-/**
- * 资产下拉的候选：命中地图源 `asset_rules` 的文件（与 MOD 侧同一套规则镜像）。
- *
- * 规则没写或没命中时退化成「该 Release 里所有可下载文件」：这时后端也不会
- * 按规则选出东西，把列表清空只会得到一个不可用的安装按钮；列全反而让用户
- * 能自己指定要装哪个，且选中项会真的传给后端。
- */
-const detailAssets = computed(() => {
-  const release = detailRelease.value
-  if (!release) return []
-  const matched = matchedReleaseAssets(release, detailMap.value?.asset_rules ?? [])
-  return matched.length ? matched : release.assets.filter((asset) => !!asset.download_url)
-})
-
-/** 抽屉里选中的资产名；`null` 表示还没选（默认落到第一个候选）。 */
-const detailSelectedAsset = ref<string | null>(null)
-const detailAsset = computed(() =>
-  detailAssets.value.find((asset) => asset.name === detailSelectedAsset.value)
-  ?? detailAssets.value[0]
-  ?? null,
-)
-/** 换地图或换版本时清掉已选资产：旧选择在新 Release 里通常不存在。 */
-watch(
-  [() => detailMap.value?.id, () => detailRelease.value?.tag_name],
-  () => { detailSelectedAsset.value = null },
-)
-
-const detailReleaseTag = computed(
-  () => detailRelease.value?.tag_name || detailRelease.value?.name || '—',
-)
-const detailPrerelease = computed(() =>
-  detailRelease.value
-    ? isPrereleaseVersion(detailRelease.value.tag_name || detailRelease.value.version)
-    : false,
-)
-
-/** 头部链接：仓库主页 + 最新 Release 页（与 MOD 详情同一种「点开去看源」）。 */
-const detailLinks = computed<ReleaseDetailLink[]>(() => {
-  const map = detailMap.value
-  if (!map) return []
-  const host = map.provider === 'gitee' ? 'https://gitee.com' : 'https://github.com'
-  const sourceUrl = `${host}/${map.username}/${map.repository}`
-  return [
-    { label: t('levelSet.sourcePage'), url: sourceUrl },
-    { label: t('levelSet.releasePage'), url: `${sourceUrl}/releases/latest` },
-  ]
-})
-
-/** 简介（面板自己渲染 Markdown，这里给原文）。 */
-const detailNote = computed(() =>
-  detailMap.value ? pickI18n(detailMap.value.note_i18n, detailMap.value.note ?? '') : '',
-)
-
-/**
- * 面板的必填头部字段。
- *
- * 模板里的 `v-if` 收窄不会穿透到插槽内容（vue-tsc 把插槽编译成独立函数），
- * 所以这些值一律走 computed 兜底，面板只在抽屉打开时渲染。
- */
-const detailName = computed(() => (detailMap.value ? mapName(detailMap.value) : ''))
-const detailProvider = computed<'github' | 'gitee'>(() => detailMap.value?.provider ?? 'github')
-const detailOwner = computed(() => detailMap.value?.username ?? '')
-const detailRepository = computed(() => detailMap.value?.repository ?? '')
-const detailBindingName = computed(() => detailMap.value?.level_set_name ?? '')
-const detailAuthor = computed(() => detailMap.value?.author ?? '')
-
-/**
- * 面板「版本绑定」位显示的身份。
- *
- * MOD 那一列放的是仓库坐标（`owner/repository`），地图没有「绑定到哪个仓库」
- * 这回事，对应的身份就是关卡集的 `levelSetName · levelSetNameZH · author` —— 管理处卡片、
- * 展开详情和这里用同一份身份，位置也与 MOD 的版本绑定列对齐。
- */
-const detailBindingValue = computed(() => {
-  const name = detailBindingName.value
-  if (!name) return ''
-  return detailAuthor.value ? `${name} · ${detailAuthor.value}` : name
-})
-
-/** 没有缓存 Release 时直接安装会命中后端 `releaseMissing`，主按钮换成刷新。 */
-const detailPrimaryAction = computed<'install' | 'refresh'>(() =>
-  detailReleases.value.length ? 'install' : 'refresh',
-)
-
-/** 换地图或 Release 列表更新时回到最新版。 */
-watch(
-  [() => detailMap.value?.id, detailLatestTag],
-  () => {
-    detailSelectedTag.value = detailLatestTag.value
-  },
-  { immediate: true },
 )
 
 /** 版本号展示：与 MOD 卡片同一套两段式规则。 */

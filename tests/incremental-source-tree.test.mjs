@@ -133,3 +133,21 @@ test('map engine publishes channel snapshots immediately, keeps successful sibli
   requests.length=0;await e.refreshSource({id:'child'})
   assert.deepEqual(requests,[['retry',false,'child'],['api','nested-map',false]])
 })
+
+test('MOD source config read failure is attached to its cleared group, never reported ready and blank', async () => {
+  const config={repositories:[repo('before','snapshot-failure')],repository_sources:[{id:'snapshot-failure',nickname:'snapshot-failure',url:'child.toml'}],region:'international',platform:'windows'}
+  let fail=false
+  globalThis.__loadingApi={
+    dashboard:async()=>({config:structuredClone(config),game:{kitchen_running:false}}),
+    localMods:async()=>[],modUpdates:async()=>[],
+    config:async()=>{if(fail)throw Error('snapshot read failed');return structuredClone(config)},
+    importRepositorySource:async()=>{fail=true;return {access_error:null}},
+  }
+  const d=useDashboard(),e=useRepositoryRefresh()
+  await d.load()
+  const errors=await e.refreshSourceChain('snapshot-failure')
+  assert.ok(errors.some(text=>text.includes('snapshot read failed')))
+  const source=e.sourceNodes.value.find(n=>n.id==='snapshot-failure')
+  assert.equal(source.status,'error')
+  assert.match(source.error,/snapshot read failed/)
+})

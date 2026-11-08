@@ -318,7 +318,10 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   const importErrors = await state.runSource(sourceId, async () => {
     try {
       const result = await api.importRepositorySource(source.id, source.url)
-      return result.access_error ? [sourceError(source, result.access_error)] : []
+      if (result.access_error) return [sourceError(source, result.access_error)]
+      // 配置回读也是这份源的应用阶段：失败必须留在源分组，不能以空列表报成功。
+      await reloadConfig({ throwOnError: true })
+      return []
     } catch (reason) {
       return [sourceError(source, reason instanceof Error ? reason.message : String(reason))]
     }
@@ -326,7 +329,6 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   // 父源没读出来时它的子源无从谈起：直接返回，别拿旧 `sources` 递归
   if (importErrors.length) { sourceTree.settle(sourceId, importErrors[0]); return importErrors }
 
-  await reloadConfig()
   sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id)).map(item => ({
     id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n,
     url: item.url, status: 'pending' as const,

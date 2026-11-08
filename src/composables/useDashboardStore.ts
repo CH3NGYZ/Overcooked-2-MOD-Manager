@@ -218,7 +218,7 @@ export function useDashboard() {
    * 但游戏状态和已安装 MOD 并没有变化，重新全量扫描纯属浪费
    * （一次刷新要经过父源 + 多个子源，全量扫描会被重复十几次）。
    */
-  async function reloadConfig() {
+  async function reloadConfig(options: { throwOnError?: boolean } = {}) {
     const revision = ++configRevision
     try {
       const config = await api.config()
@@ -233,6 +233,7 @@ export function useDashboard() {
       await rebindLocalMods()
     } catch (reason) {
       error.value = backendMessageOf(reason)
+      if (options.throwOnError) throw reason
     }
   }
 

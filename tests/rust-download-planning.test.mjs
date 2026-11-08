@@ -11,7 +11,7 @@ test('download policy has one implementation in the download domain', () => {
   const definitions = [
     'ordered_asset_download_candidates', 'selected_asset_proxy_mode', 'asset_proxy_urls',
     'provider_proxy_entries', 'plan_remote_download_candidates', 'plan_asset_download_candidates',
-    'classify_remote_url', 'provider_for_remote_url',
+    'classify_remote_url', 'provider_for_remote_url', 'file_download_threads',
   ]
   const files = sourceFiles(root, ['.rs'])
   for (const name of definitions) {
@@ -21,6 +21,12 @@ test('download policy has one implementation in the download domain', () => {
   }
   const planning = read('download/planning.rs')
   assert.doesNotMatch(planning, /crate::(?:commands|direct_mod)::/)
+})
+
+test('MOD, map and URL downloads share the provider/region file thread policy', () => {
+  for (const file of ['commands/repository_install.rs', 'commands/map_install.rs', 'direct_mod.rs']) {
+    assert.match(read(file), /crate::download::planning::file_download_threads\(/, file)
+  }
 })
 
 test('MOD, maps, README and avatars use shared planning without IPC helpers', () => {

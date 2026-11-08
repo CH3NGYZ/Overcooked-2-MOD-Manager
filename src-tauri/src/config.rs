@@ -16,7 +16,6 @@ mod storage;
 mod validation;
 
 pub use availability::REGION_CHINESE_MAINLAND;
-#[cfg(any(target_os = "macos", test))]
 pub use availability::REGION_INTERNATIONAL;
 pub use availability::current_user_region;
 pub(crate) use availability::normalize_repository_platform;

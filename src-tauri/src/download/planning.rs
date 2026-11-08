@@ -99,12 +99,37 @@ pub(crate) fn ordered_asset_download_candidates(
 pub(crate) fn selected_asset_proxy_mode(
     requested: Option<ProxyMode>,
     provider: &Provider,
-    _region: &str,
+    region: &str,
 ) -> ProxyMode {
     if matches!(provider, Provider::Gitee | Provider::Gitcode) {
         return ProxyMode::Direct;
     }
-    requested.unwrap_or(ProxyMode::AutoDirect)
+    requested.unwrap_or_else(|| {
+        if region == crate::config::REGION_INTERNATIONAL {
+            ProxyMode::Direct
+        } else {
+            ProxyMode::AutoDirect
+        }
+    })
+}
+
+/// File concurrency is shared by MOD, map and pasted-URL downloads. A direct
+/// Gitee/GitCode URL must not accidentally inherit the generic 16/32 chunks.
+/// Concurrent complete-file candidates never also open per-source chunks.
+pub(crate) fn file_download_threads(
+    provider: Option<&Provider>,
+    region: &str,
+    configured: u32,
+    racing: bool,
+) -> u32 {
+    if racing
+        || matches!(provider, Some(Provider::Gitee | Provider::Gitcode))
+        || (provider == Some(&Provider::Github) && region == crate::config::REGION_INTERNATIONAL)
+    {
+        1
+    } else {
+        configured.clamp(1, 32)
+    }
 }
 
 pub(crate) fn asset_proxy_urls(

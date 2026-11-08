@@ -9,9 +9,7 @@ use crate::game;
 use crate::level_sets::staging::cache_file_to_discard;
 use crate::level_sets::staging::validate_map_release_sets;
 use crate::level_sets::staging::zip_level_sets;
-use crate::models::{
-    LevelSetImportResult, LevelSetZipProgress, MapInstallOrigin, Provider, StagedMapSource,
-};
+use crate::models::{LevelSetImportResult, LevelSetZipProgress, MapInstallOrigin, StagedMapSource};
 use crate::releases;
 use std::fs;
 use std::path::PathBuf;
@@ -312,16 +310,13 @@ pub async fn stage_map_release(
 
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
-    /*
-     * 线程数：GitHub 用仓库配置；Gitee 恒 1。
-     * 竞速时每个源只开 1 个分片连接（`racing` 时传 1），否则三源 × N 分片会
-     * 把带宽切得太碎，反而更慢 —— 与 MOD 侧完全相同的取舍。
-     */
-    let configured_threads = match map.provider {
-        Provider::Github => map.download_threads.clamp(0, 32),
-        Provider::Gitee | Provider::Gitcode => 1,
-    };
     let racing = candidates.len() > 1;
+    let configured_threads = crate::download::planning::file_download_threads(
+        Some(&map.provider),
+        crate::config::current_user_region(),
+        map.download_threads,
+        racing,
+    );
     log::debug!(
         "地图下载候选准备完成：地图={}，平台={:?}，候选数={}，线程数={}，竞速={}",
         map.name,
@@ -347,7 +342,7 @@ pub async fn stage_map_release(
                     cache_dir,
                     label,
                     &reporter,
-                    if racing { 1 } else { configured_threads },
+                    configured_threads,
                     Some(archive::FIRST_BYTE_TIMEOUT),
                 )
                 .await?;

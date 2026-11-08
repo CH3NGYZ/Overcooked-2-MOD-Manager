@@ -175,7 +175,7 @@ fn proxy(id: &str, host: &str, remote: bool, enabled: bool) -> GitHubProxy {
 }
 
 #[test]
-fn defaults_are_direct_first_in_all_regions_and_gitee_forces_direct() {
+fn defaults_follow_region_and_gitee_forces_direct() {
     assert_eq!(
         selected_asset_proxy_mode(
             None,
@@ -186,7 +186,7 @@ fn defaults_are_direct_first_in_all_regions_and_gitee_forces_direct() {
     );
     assert_eq!(
         selected_asset_proxy_mode(None, &Provider::Github, crate::config::REGION_INTERNATIONAL),
-        ProxyMode::AutoDirect
+        ProxyMode::Direct
     );
     assert_eq!(
         selected_asset_proxy_mode(
@@ -195,6 +195,41 @@ fn defaults_are_direct_first_in_all_regions_and_gitee_forces_direct() {
             crate::config::REGION_CHINESE_MAINLAND
         ),
         ProxyMode::Direct
+    );
+}
+
+#[test]
+fn file_threads_follow_provider_region_and_race_without_discarding_configured_count() {
+    let mainland = crate::config::REGION_CHINESE_MAINLAND;
+    let international = crate::config::REGION_INTERNATIONAL;
+    for provider in [Provider::Gitee, Provider::Gitcode] {
+        for region in [mainland, international] {
+            for racing in [false, true] {
+                assert_eq!(
+                    file_download_threads(Some(&provider), region, 16, racing),
+                    1
+                );
+            }
+        }
+    }
+    assert_eq!(
+        file_download_threads(Some(&Provider::Github), mainland, 16, false),
+        16
+    );
+    assert_eq!(
+        file_download_threads(Some(&Provider::Github), mainland, 16, true),
+        1
+    );
+    assert_eq!(
+        file_download_threads(Some(&Provider::Github), international, 16, false),
+        1
+    );
+    assert_eq!(file_download_threads(None, mainland, 16, false), 16);
+    assert_eq!(file_download_threads(None, mainland, 0, false), 1);
+    assert_eq!(file_download_threads(None, mainland, 64, false), 32);
+    assert_eq!(
+        selected_asset_proxy_mode(Some(ProxyMode::Fixed), &Provider::Github, international),
+        ProxyMode::Fixed
     );
 }
 

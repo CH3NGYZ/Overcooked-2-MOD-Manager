@@ -192,7 +192,12 @@ pub(crate) async fn download_remote_to_temp(
         )?,
     };
     let racing = candidates.len() > 1;
-    let threads = if racing { 1 } else { configured_threads };
+    let threads = crate::download::planning::file_download_threads(
+        provider_for_remote_url(parsed.as_str()).as_ref(),
+        crate::config::current_user_region(),
+        configured_threads,
+        racing,
+    );
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|_| "direct.clientFailed")?;
     /*

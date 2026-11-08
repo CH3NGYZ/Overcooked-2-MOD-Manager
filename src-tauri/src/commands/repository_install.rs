@@ -207,10 +207,13 @@ pub async fn install_repository(
     );
     let client = releases::build_download_client(config.network.timeout_seconds)
         .map_err(|e| e.to_string())?;
-    let download_threads = match &repo.provider {
-        Provider::Github => repo.download_threads.clamp(1, 32),
-        Provider::Gitee | Provider::Gitcode => 1,
-    };
+    let racing = candidates.len() > 1;
+    let download_threads = crate::download::planning::file_download_threads(
+        Some(&repo.provider),
+        crate::config::current_user_region(),
+        repo.download_threads,
+        racing,
+    );
     log::info!(
         "开始下载仓库文件：仓库={}，平台={:?}，线程数={}，代理策略={:?}",
         repo.name,
@@ -219,7 +222,6 @@ pub async fn install_repository(
         selected_proxy_mode
     );
     let cache_dir = state.config.cache_dir();
-    let racing = candidates.len() > 1;
     let temp = try_asset_download_candidates(
         candidates,
         archive::is_download_cancelled,
@@ -240,7 +242,7 @@ pub async fn install_repository(
                     cache_dir,
                     label,
                     &reporter,
-                    if racing { 1 } else { download_threads },
+                    download_threads,
                     Some(archive::FIRST_BYTE_TIMEOUT),
                 )
                 .await?;

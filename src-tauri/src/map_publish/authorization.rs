@@ -72,6 +72,25 @@ fn code_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
+/// Omit scope when the application uses the provider's registered defaults.
+/// State remains mandatory even when the platform's simulation omits it.
+fn gitcode_authorize_url(client_id: &str, callback: &str, scope: &str, nonce: &str) -> String {
+    let mut url =
+        url::Url::parse("https://gitcode.com/oauth/authorize").expect("fixed OAuth endpoint");
+    {
+        let mut query = url.query_pairs_mut();
+        query
+            .append_pair("client_id", client_id)
+            .append_pair("redirect_uri", callback)
+            .append_pair("response_type", "code")
+            .append_pair("state", nonce);
+        if !scope.trim().is_empty() {
+            query.append_pair("scope", scope.trim());
+        }
+    }
+    url.into()
+}
+
 pub(super) fn clear_pending_auth() {
     if let Ok(mut pending) = PENDING_AUTH.lock() {
         if let Some(flow) = pending.take() {
@@ -106,12 +125,11 @@ fn authorization_target(
     if provider == PublishProvider::Gitcode {
         return (
             PublishAuthMode::Authorize,
-            format!(
-                "https://gitcode.com/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
-                encode_component(GITCODE_OAUTH_CLIENT_ID),
-                encode_component(CALLBACK_URL),
-                encode_component(GITCODE_OAUTH_SCOPE),
-                encode_component(nonce)
+            gitcode_authorize_url(
+                GITCODE_OAUTH_CLIENT_ID,
+                CALLBACK_URL,
+                GITCODE_OAUTH_SCOPE,
+                nonce,
             ),
             None,
         );

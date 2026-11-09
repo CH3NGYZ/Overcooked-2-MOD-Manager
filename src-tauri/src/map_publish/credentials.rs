@@ -117,7 +117,6 @@ pub(super) fn client_secret(provider: PublishProvider) -> Result<&'static str, S
     if provider == PublishProvider::Gitcode {
         if GITCODE_OAUTH_CLIENT_ID.is_empty()
             || GITCODE_OAUTH_CLIENT_SECRET.is_empty()
-            || GITCODE_OAUTH_SCOPE.is_empty()
             || callback_endpoint(CALLBACK_URL).is_none()
         {
             return Err("mapPublish.missingOAuthConfig".to_string());

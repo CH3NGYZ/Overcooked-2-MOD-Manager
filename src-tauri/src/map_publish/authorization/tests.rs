@@ -53,3 +53,28 @@ fn gitcode_always_uses_oauth_with_state_and_without_installation_or_unverified_p
         assert!(verifier.is_none());
     }
 }
+
+#[test]
+fn gitcode_optional_scope_preserves_state_callback_and_explicit_permissions() {
+    for scope in ["", "  ", "all_user all_repository", "  requested&scope  "] {
+        let target = gitcode_authorize_url(
+            "fixture-id",
+            "http://127.0.0.1:52214/callback",
+            scope,
+            "a&b",
+        );
+        let url = url::Url::parse(&target).unwrap();
+        let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(query["client_id"], "fixture-id");
+        assert_eq!(query["redirect_uri"], "http://127.0.0.1:52214/callback");
+        assert_eq!(query["state"], "a&b");
+        assert_eq!(query["response_type"], "code");
+        if scope.trim().is_empty() {
+            assert!(!query.contains_key("scope"));
+            assert_eq!(query.len(), 4);
+        } else {
+            assert_eq!(query["scope"], scope.trim());
+            assert_eq!(query.len(), 5);
+        }
+    }
+}

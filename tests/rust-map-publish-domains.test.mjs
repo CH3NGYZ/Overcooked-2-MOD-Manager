@@ -13,6 +13,7 @@ test('GitHub App 配置由构建环境提供，测试包与正式包均注入发
   assert.doesNotMatch(read('credentials.rs'), /pub const GITHUB_APP_CLIENT_ID:/)
   assert.match(read('credentials.rs'), /GITHUB_APP_CLIENT_ID\.is_empty\(\)\s*\|\| GITHUB_APP_CLIENT_SECRET\.is_empty\(\)/)
   assert.match(read('session.rs'), /secret_configured: client_secret\(provider\)\.is_ok\(\)/)
+  assert.doesNotMatch(read('credentials.rs'), /GITCODE_OAUTH_SCOPE\.is_empty/)
   const workflow = readText(resolve('.github/workflows/build.yml'))
   for (const name of ['Build and verify CI-only signed packages', 'Build with Tauri']) {
     const step = workflow.split(`- name: ${name}\n`)[1]?.split('\n      - name:')[0]

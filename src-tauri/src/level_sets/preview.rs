@@ -25,7 +25,7 @@ fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
         content_sha256(info),
         root.display().to_string(),
         local.display().to_string(),
-        "preview-v3".into(),
+        "preview-v4".into(),
     ];
     for dir in [
         local.to_path_buf(),

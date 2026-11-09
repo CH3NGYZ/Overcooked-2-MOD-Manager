@@ -226,19 +226,28 @@ impl Context {
             large: false,
         });
         for v in composition.iter().take(64) {
-            if let Ok(child) = self.resolve(r, v) {
-                if let Some(child_index) = self.append_group(child, depth + 1, out) {
-                    // Raw ingredients share a row; processed ingredients keep their own group.
-                    if out[child_index].children.is_empty()
-                        && out[child_index].modifiers.is_empty()
-                        && child_index + 1 == out.len()
-                    {
-                        let mut raw = out.pop().unwrap();
-                        out[index].pictures.append(&mut raw.pictures);
-                    } else {
-                        out[index].children.push(child_index);
-                    }
+            let child = self.resolve(r, v).ok();
+            let child_index = child.and_then(|child| self.append_group(child, depth + 1, out));
+            if let Some(child_index) = child_index {
+                // Raw ingredients share a row; processed ingredients keep their own group.
+                if out[child_index].children.is_empty()
+                    && out[child_index].modifiers.is_empty()
+                    && child_index + 1 == out.len()
+                {
+                    let mut raw = out.pop().unwrap();
+                    out[index].pictures.append(&mut raw.pictures);
+                } else {
+                    out[index].children.push(child_index);
                 }
+            } else {
+                let name = child
+                    .and_then(|child| self.object(child).ok())
+                    .map(|m| string_of(&m, "m_Name"))
+                    .unwrap_or_default();
+                out[index].pictures.push(MenuIcon {
+                    name,
+                    data_url: None,
+                });
             }
         }
         let step = match custom_kind(&m) {
@@ -355,6 +364,48 @@ mod tests {
                 kind
             );
         }
+    }
+    #[test]
+    #[ignore = "requires installed Dmm and game bundle428"]
+    fn real_dmm_corn_ingredient() {
+        let game = Path::new("E:/SteamLibrary/steamapps/common/Overcooked! 2");
+        let local = game.join("BepInEx/plugins/OC2DIYLevel/levels/Dmm");
+        let mut c = Context::load(
+            &read_limited(&local.join("info_dmm")).unwrap(),
+            &local,
+            game,
+        )
+        .unwrap();
+        let recipes = c.recipes(4).unwrap();
+        assert_eq!(recipes.len(), 1);
+        let icons = recipes[0]
+            .tiles
+            .iter()
+            .flat_map(|t| &t.pictures)
+            .map(|i| (&i.name, i.data_url.is_some()))
+            .collect::<Vec<_>>();
+        eprintln!("DMM corn icons={icons:?}");
+        let document = c
+            .documents
+            .iter()
+            .find(|d| d.source == "bundle428")
+            .unwrap();
+        assert!(document.backing.is_some());
+        assert!(
+            document.file.data.len() < 16 * 1024 * 1024,
+            "retain only metadata, not 218MiB CAB"
+        );
+        eprintln!(
+            "bundle428 retained metadata bytes={}",
+            document.file.data.len()
+        );
+
+        assert!(
+            icons
+                .iter()
+                .any(|(n, ready)| n.to_ascii_lowercase().contains("corn") && *ready),
+            "corn ingredient must have an image"
+        );
     }
     #[test]
     #[ignore = "requires installed eon map fixture"]

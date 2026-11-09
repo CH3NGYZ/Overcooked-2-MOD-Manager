@@ -63,8 +63,14 @@ impl Context {
                     data = if let Some(bytes) = self.raw.get(name) {
                         bytes.get(offset..end).ok_or_else(failure)?.to_vec()
                     } else if let Some((path, node)) = self.streams.get(name) {
-                        crate::asset_bundle::read_bundle_file_range(path, node, offset, Some(size))
-                            .map_err(|_| failure())?
+                        crate::asset_bundle::read_bundle_file_range(
+                            path,
+                            node,
+                            offset,
+                            Some(size),
+                            Some(&mut self.blocks),
+                        )
+                        .map_err(|_| failure())?
                     } else {
                         return Err(failure());
                     };

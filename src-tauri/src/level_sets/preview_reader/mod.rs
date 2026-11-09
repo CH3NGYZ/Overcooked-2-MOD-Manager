@@ -3,6 +3,7 @@ use crate::asset_bundle::{int_of, read_bundle_entries, string_of, try_read_seria
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use unityfs::{Reader, SerializedFile, UnityValue as V};
+mod external;
 mod menu;
 mod recipes;
 pub(crate) mod sources;
@@ -58,6 +59,7 @@ struct Ref {
     id: i64,
 }
 struct Document {
+    backing: Option<(PathBuf, String)>,
     name: String,
     source: String,
     file: SerializedFile,
@@ -66,6 +68,7 @@ pub struct Context {
     documents: Vec<Document>,
     raw: HashMap<String, Vec<u8>>,
     streams: HashMap<String, (PathBuf, String)>,
+    blocks: crate::asset_bundle::BundleBlockCache,
     objects: HashMap<(usize, i64), Map>,
     images: HashMap<(usize, i64, u32), (String, u32, u32)>,
     textures: HashMap<(usize, i64), std::sync::Arc<image::RgbaImage>>,
@@ -121,6 +124,7 @@ impl Context {
             documents: vec![],
             raw: HashMap::new(),
             streams: HashMap::new(),
+            blocks: Default::default(),
             objects: HashMap::new(),
             images: HashMap::new(),
             textures: HashMap::new(),
@@ -229,6 +233,7 @@ impl Context {
                 let mut reader = Reader::new(bytes, unityfs::UnityVersion::default());
                 let file = try_read_serialized(&mut reader).ok_or_else(failure)?;
                 self.documents.push(Document {
+                    backing: None,
                     name: basename,
                     source: source.into(),
                     file,
@@ -252,14 +257,49 @@ impl Context {
         if object.byte_size > 128 * 1024 * 1024 {
             return Err(failure());
         }
-        let mut reader = Reader {
-            data: file.data.clone(),
-            pos: 0,
-            unity_version: file.unity_version.clone(),
-            endian: file.endian,
+        let local_object;
+        let mut reader = if let Some((path, node)) = &self.documents[r.file].backing {
+            let bytes = crate::asset_bundle::read_bundle_file_range(
+                path,
+                node,
+                object.byte_start,
+                Some(object.byte_size),
+                Some(&mut self.blocks),
+            )
+            .map_err(|_| failure())?;
+            // Preserve absolute alignment without allocating the skipped bytes.
+            let padding = object.byte_start % 16;
+            let mut data = vec![0; padding];
+            data.extend(bytes);
+            local_object = unityfs::objectreader::ObjectReader::new(
+                object.path_id,
+                object.class_id,
+                padding,
+                object.byte_size,
+                object.serialized_type.clone(),
+                object.version,
+            );
+            let mut reader = Reader::new(data, file.unity_version.clone());
+            reader.endian = file.endian;
+            reader
+        } else {
+            local_object = unityfs::objectreader::ObjectReader::new(
+                object.path_id,
+                object.class_id,
+                object.byte_start,
+                object.byte_size,
+                object.serialized_type.clone(),
+                object.version,
+            );
+            Reader {
+                data: file.data.clone(),
+                pos: 0,
+                unity_version: file.unity_version.clone(),
+                endian: file.endian,
+            }
         };
         let v = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            object.read_typetree(&mut reader, &[])
+            local_object.read_typetree(&mut reader, &file.ref_types)
         }))
         .map_err(|_| failure())?
         .map_err(|_| failure())?;
@@ -342,35 +382,7 @@ impl Context {
         if self.failed.contains(path) {
             return Err(failure());
         }
-        let result = (|| {
-            let names = crate::asset_bundle::bundle_file_names(path).map_err(|_| failure())?;
-            let mut entries = Vec::new();
-            let mut streams = Vec::new();
-            for name in names {
-                if name.to_ascii_lowercase().ends_with(".ress")
-                    || name.to_ascii_lowercase().ends_with(".resource")
-                {
-                    streams.push(name);
-                } else {
-                    entries.push((
-                        name.clone(),
-                        crate::asset_bundle::read_bundle_file_range(path, &name, 0, None)
-                            .map_err(|_| failure())?,
-                    ));
-                }
-            }
-            self.add_entries(
-                entries,
-                &path.file_name().unwrap_or_default().to_string_lossy(),
-            )?;
-            for name in streams {
-                self.streams.insert(
-                    name.rsplit('/').next().unwrap_or(&name).into(),
-                    (path.into(), name),
-                );
-            }
-            Ok(())
-        })();
+        let result = self.load_external(path);
         if result.is_ok() {
             self.loaded.insert(path.into());
         } else {
@@ -558,6 +570,7 @@ mod tests {
             documents: vec![],
             raw: HashMap::new(),
             streams: HashMap::new(),
+            blocks: Default::default(),
             objects: HashMap::new(),
             images: HashMap::new(),
             textures: HashMap::new(),
@@ -665,17 +678,43 @@ mod real_regressions {
         for (name, source) in [("lzma", &bytes), ("lz4", &lz4)] {
             let path = before.join(name);
             std::fs::write(&path, source).unwrap();
+            let mut cache = crate::asset_bundle::BundleBlockCache::default();
             for (node, data) in read_bundle_entries(source).unwrap() {
                 let n = data.len().min(127);
                 let offset = data.len().saturating_sub(n) / 2;
                 assert_eq!(
-                    crate::asset_bundle::read_bundle_file_range(&path, &node, offset, Some(n))
-                        .unwrap(),
+                    crate::asset_bundle::read_bundle_file_range(
+                        &path,
+                        &node,
+                        offset,
+                        Some(n),
+                        None
+                    )
+                    .unwrap(),
                     data[offset..offset + n]
                 );
+                for _ in 0..2 {
+                    assert_eq!(
+                        crate::asset_bundle::read_bundle_file_range(
+                            &path,
+                            &node,
+                            offset,
+                            Some(n),
+                            Some(&mut cache)
+                        )
+                        .unwrap(),
+                        data[offset..offset + n]
+                    );
+                }
                 assert!(
-                    crate::asset_bundle::read_bundle_file_range(&path, &node, data.len(), Some(1))
-                        .is_err()
+                    crate::asset_bundle::read_bundle_file_range(
+                        &path,
+                        &node,
+                        data.len(),
+                        Some(1),
+                        None
+                    )
+                    .is_err()
                 );
             }
         }

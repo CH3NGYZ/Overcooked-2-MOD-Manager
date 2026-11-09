@@ -11,7 +11,7 @@ const children=computed(()=>tile.value?.children.filter(i=>Number.isInteger(i) &
   <div v-if="tile" class="recipe-branch">
     <div class="menu-tile" :class="{'finished-tile':index===0}">
       <div class="menu-preparation">
-      <div class="menu-pictures" :aria-label="index===0 ? t('levelPreview.recipes') : t('levelPreview.ingredients')">
+      <div class="menu-pictures" :class="{'beside-preparation':index!==0 && children.length>0}" :aria-label="index===0 ? t('levelPreview.recipes') : t('levelPreview.ingredients')">
         <span v-for="(icon,i) in tile.pictures" :key="i" class="menu-icon" :title="icon.name || t('levelPreview.unresolved')">
           <img v-if="icon.data_url" :src="icon.data_url" :alt="icon.name" loading="lazy" /><span v-else class="missing-icon" :aria-label="t('levelPreview.unresolved')">?</span>
         </span>
@@ -36,10 +36,12 @@ const children=computed(()=>tile.value?.children.filter(i=>Number.isInteger(i) &
 .menu-tile{border:1px solid var(--oc2-row-line);border-radius:10px;background:var(--oc2-sunken);padding:4px;min-width:0;max-width:100%;}
 .menu-preparation,.ingredient-groups{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:clamp(2px,1cqw,20px);max-width:100%;}
 .menu-pictures,.menu-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:3px;}
-.menu-steps{flex-wrap:wrap;gap:clamp(2px,1cqw,20px);background:#f5f1e7;border-radius:6px;border-top:1px solid var(--oc2-row-line);margin-top:5px;padding-top:5px;max-width:100%;}
+.menu-steps{flex-wrap:wrap;gap:clamp(2px,1cqw,20px);background:var(--oc2-recipe-step-bg);border-radius:6px;border-top:1px solid var(--oc2-row-line);margin-top:5px;padding-top:5px;max-width:100%;}
+.menu-steps img{filter:var(--oc2-recipe-step-icon-filter);}
 .menu-icon{display:inline-flex;width:clamp(24px,16cqw,34px);height:clamp(24px,16cqw,34px);align-items:center;justify-content:center;flex:none;}
 .menu-icon img{width:100%;height:100%;object-fit:contain;}
 .finished-tile{background:transparent;border:0;}.finished-tile .menu-icon{width:72px;height:72px;}
 .menu-children{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(2px,1cqw,20px);max-width:100%;padding-top:8px;border-top:1px solid var(--oc2-row-line);}
+.menu-pictures.beside-preparation{padding-top:5px;}
 .missing-icon{color:var(--oc2-text-3);border:1px dashed var(--oc2-row-line);border-radius:50%;width:26px;height:26px;text-align:center;line-height:26px;}
 </style>

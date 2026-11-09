@@ -512,6 +512,8 @@ export function applyThemeCssVars() {
     '--oc2-tile': surface.tile,
     '--oc2-hover-line': surface.hoverLine,
     '--oc2-sunken': surface.sunken,
+    '--oc2-recipe-step-bg': resolvedMode.value === 'dark' ? surface.rowHover : '#f5f1e7',
+    '--oc2-recipe-step-icon-filter': resolvedMode.value === 'dark' ? 'brightness(0) invert(.78)' : 'brightness(0) invert(.25)',
     '--oc2-text-1': surface.text1,
     '--oc2-text-2': surface.text2,
     '--oc2-text-3': surface.text3,

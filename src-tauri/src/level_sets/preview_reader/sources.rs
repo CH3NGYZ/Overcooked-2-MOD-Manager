@@ -47,6 +47,38 @@ pub(crate) fn common_sources(game: &Path, local: &Path) -> Vec<PathBuf> {
     paths.into_iter().collect()
 }
 
+/// Cross-set custom sprites can point into another installed set's info CAB.
+/// Only index bundle directories; decoding remains reference driven.
+pub(crate) fn sibling_info_sources(game: &Path) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::new();
+    for root in [
+        crate::level_sets::paths::levels_root(game),
+        crate::level_sets::paths::disabled_root(game),
+    ] {
+        let Ok(base) = root.canonicalize() else {
+            continue;
+        };
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten().take(1024) {
+                let Ok(dir) = entry.path().canonicalize() else {
+                    continue;
+                };
+                if dir.starts_with(&base) && dir.is_dir() {
+                    if let Some(info) = crate::level_sets::scan::locate_info_file(&dir) {
+                        let Ok(info) = info.canonicalize() else {
+                            continue;
+                        };
+                        if info.starts_with(&base) {
+                            paths.insert(info);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    paths.into_iter().collect()
+}
+
 /// The IPC already uses the shared normalized game root (including .app selection).
 /// Enumerate bounded platform directories, so case-sensitive macOS layouts do not
 /// depend on guessing Windows or OSX folder names.
@@ -101,6 +133,30 @@ pub(crate) fn game_sources(game: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sibling_info_sources_follow_scan_rules_in_enabled_and_disabled_roots() {
+        let root = std::env::temp_dir().join(format!(
+            "oc2-sibling-info-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let enabled = crate::level_sets::paths::levels_root(&root);
+        let disabled = crate::level_sets::paths::disabled_root(&root);
+        for path in [
+            enabled.join("one/info_custom"),
+            disabled.join("two/info"),
+            enabled.join("ambiguous/info_a"),
+            enabled.join("ambiguous/info_b"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        let found = sibling_info_sources(&root);
+        assert_eq!(found.len(), 2);
+        assert!(found.contains(&enabled.join("one/info_custom").canonicalize().unwrap()));
+        assert!(found.contains(&disabled.join("two/info").canonicalize().unwrap()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn windows_and_macos_resources_and_optional_plugin_bundles() {
         let root = std::env::temp_dir().join(format!(

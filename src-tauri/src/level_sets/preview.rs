@@ -25,7 +25,7 @@ fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
         content_sha256(info),
         root.display().to_string(),
         local.display().to_string(),
-        "preview-v6".into(),
+        "preview-v8".into(),
     ];
     for dir in [
         local.to_path_buf(),
@@ -49,6 +49,7 @@ fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
     for path in super::preview_reader::sources::common_sources(root, local)
         .into_iter()
         .chain(super::preview_reader::sources::game_sources(root))
+        .chain(super::preview_reader::sources::sibling_info_sources(root))
     {
         if let Ok(meta) = path.metadata() {
             keys.push(format!(

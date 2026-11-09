@@ -5,7 +5,7 @@ import type { LevelPreviewPicture } from '../../types'
 withDefaults(defineProps<{picture?: LevelPreviewPicture | null; loading?: boolean; alt: string}>(), {picture:null, loading:false})
 </script>
 <template>
-  <div class="preview-picture" :aria-busy="loading">
+  <div class="preview-picture" :aria-busy="loading" :style="picture?.width && picture?.height ? {aspectRatio:`${picture.width} / ${picture.height}`} : undefined">
     <n-spin v-if="loading" size="small" />
     <img v-else-if="picture?.data_url" :src="picture.data_url" :alt="alt" />
     <span v-else>{{ t(picture?.state === 'error' ? 'levelPreview.error' : 'levelPreview.missing') }}</span>

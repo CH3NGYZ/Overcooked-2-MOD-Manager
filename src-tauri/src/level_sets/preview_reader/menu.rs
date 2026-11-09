@@ -45,12 +45,19 @@ impl Context {
         MenuIcon { name, data_url }
     }
     fn menu_icons(&mut self, r: Ref, m: &Map, key: &str) -> Vec<MenuIcon> {
+        let steps = key == "m_modifierPictures";
         array(m, key)
             .iter()
             .take(64)
             .map(|v| {
                 self.resolve(r, v)
-                    .map(|r| self.menu_icon(r))
+                    .map(|r| {
+                        let mut icon = self.menu_icon(r);
+                        if steps {
+                            normalize_step(&mut icon);
+                        }
+                        icon
+                    })
                     .unwrap_or(MenuIcon {
                         name: String::new(),
                         data_url: None,
@@ -173,10 +180,12 @@ impl Context {
                 _ => None,
             };
             if matches!(kind, 2 | 3) {
-                empty.modifiers.push(step.unwrap_or(MenuIcon {
+                let mut step = step.unwrap_or(MenuIcon {
                     name: String::new(),
                     data_url: None,
-                }));
+                });
+                normalize_step(&mut step);
+                empty.modifiers.push(step);
             }
         } else if let Some(icon) = self
             .named_icon(r, &m, "m_iconSprite", "iconSO")
@@ -255,7 +264,8 @@ impl Context {
             3 => self.named_icon(r, &m, "mixingIcon", "mixingIconSO"),
             _ => None,
         };
-        if let Some(step) = step {
+        if let Some(mut step) = step {
+            normalize_step(&mut step);
             out[index].modifiers.push(step);
         }
         // A single processing chain can share the same tile while keeping steps below.
@@ -300,6 +310,38 @@ impl Context {
         tiles
     }
 }
+// Only monochrome cooking symbols: retain black coverage, discard white artwork.
+fn normalize_step(icon: &mut MenuIcon) {
+    use base64::Engine;
+    let Some(url) = &icon.data_url else { return };
+    let Some(data) = url.strip_prefix("data:image/png;base64,") else {
+        return;
+    };
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
+        return;
+    };
+    let Ok(image) = image::load_from_memory(&bytes) else {
+        return;
+    };
+    let mut image = image.to_rgba8();
+    for pixel in image.pixels_mut() {
+        let darkness = 255 - pixel[0].max(pixel[1]).max(pixel[2]);
+        pixel[3] = ((u16::from(pixel[3]) * u16::from(darkness)) / 255) as u8;
+        pixel[0] = 0;
+        pixel[1] = 0;
+        pixel[2] = 0;
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    if image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .is_ok()
+    {
+        icon.data_url = Some(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(out.into_inner())
+        ));
+    }
+}
 fn custom_kind(m: &Map) -> i32 {
     let kind = int_of(m, "type");
     if kind != 0 {
@@ -314,6 +356,55 @@ fn custom_kind(m: &Map) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cooking_symbol_keeps_black_and_discards_white_with_alpha() {
+        use base64::Engine;
+        let image =
+            image::RgbaImage::from_raw(3, 1, vec![0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 80])
+                .unwrap();
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let mut icon = MenuIcon {
+            name: "OvenPot".into(),
+            data_url: Some(format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(png.into_inner())
+            )),
+        };
+        normalize_step(&mut icon);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(icon.data_url.unwrap().split(',').nth(1).unwrap())
+            .unwrap();
+        let image = image::load_from_memory(&bytes).unwrap().to_rgba8();
+        assert_eq!(image.get_pixel(0, 0)[3], 255);
+        assert_eq!(image.get_pixel(1, 0)[3], 0);
+        assert_eq!(image.get_pixel(2, 0)[3], 80);
+    }
+    #[test]
+    #[ignore = "requires installed pear fixture"]
+    fn real_pear_missing_icons() {
+        let game = Path::new("E:/SteamLibrary/steamapps/common/Overcooked! 2");
+        let local = game.join("BepInEx/plugins/OC2DIYLevel/levels/pear_v11.0(菊花梨）");
+        let info = crate::level_sets::scan::locate_info_file(&local).unwrap();
+        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let recipes = c.recipes(0).unwrap();
+        assert_eq!(recipes[14].name, "菠萝串");
+        assert!(
+            recipes[14].icon.is_some(),
+            "cross-set info sprite must resolve"
+        );
+        assert!(recipes[14].tiles[0].pictures[0].data_url.is_some());
+        let oven = recipes[38]
+            .tiles
+            .iter()
+            .flat_map(|t| &t.modifiers)
+            .find(|i| i.name == "OvenPot")
+            .unwrap();
+        assert!(oven.data_url.is_some());
+    }
+
     #[test]
     fn declared_menu_preserves_repeated_ingredients_steps_and_group_edges() {
         let mut c = super::super::tests::empty_context();

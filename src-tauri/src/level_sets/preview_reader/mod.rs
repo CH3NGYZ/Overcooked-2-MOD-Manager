@@ -356,6 +356,7 @@ impl Context {
             for path in sources::common_sources(&self.game_root, &self.local_root)
                 .into_iter()
                 .chain(sources::game_sources(&self.game_root))
+                .chain(sources::sibling_info_sources(&self.game_root))
             {
                 if let Ok(names) = crate::asset_bundle::bundle_file_names(&path) {
                     for name in names {

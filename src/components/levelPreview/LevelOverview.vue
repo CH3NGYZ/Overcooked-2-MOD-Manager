@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NButton, NPopover } from 'naive-ui'
 import { t } from '../../i18n'
 import type { LevelPreview, LevelPreviewPicture } from '../../types'
@@ -10,6 +10,23 @@ const enlarged = ref(false)
 const bundlesExpanded = ref(false)
 const bundlesOverflow = ref(false)
 const bundleList = ref<HTMLElement | null>(null)
+const parameterTable = ref<HTMLTableElement | null>(null)
+const initialHeight = ref<number | null>(null)
+const initialWidthLimit = ref(0)
+const thumbnailStyle = computed(() => {
+  if (initialHeight.value === null) return undefined
+  const ratio = props.picture?.width && props.picture?.height ? props.picture.width / props.picture.height : 524 / 308
+  return { height: `${initialHeight.value}px`, width: `${Math.min(initialWidthLimit.value, initialHeight.value * ratio)}px` }
+})
+function captureInitialHeight() {
+  const table = parameterTable.value
+  if (!table || initialHeight.value !== null) return
+  initialHeight.value = Math.max(24, table.getBoundingClientRect().height - 12)
+  initialWidthLimit.value = table.clientWidth * 0.28
+}
+watch(parameterTable, captureInitialHeight, { flush: 'post' })
+watch(() => props.level, () => { initialHeight.value = null; initialWidthLimit.value = 0 }, { flush: 'pre' })
+watch(() => props.level, captureInitialHeight, { flush: 'post' })
 let observer: ResizeObserver | undefined
 function measureBundles() {
   const node = bundleList.value
@@ -34,16 +51,15 @@ onBeforeUnmount(() => observer?.disconnect())
   <div class="level-information">
     <h2><LevelName :text="name" /></h2>
     <div class="information-layout">
-    <table class="level-information-table">
+    <table ref="parameterTable" class="level-information-table">
       <colgroup><col class="thumbnail-column" /><col /><col /><col /><col /></colgroup>
       <tbody>
         <tr>
           <td rowspan="4" class="thumbnail-cell">
             <n-popover v-model:show="enlarged" trigger="hover" placement="right" :disabled="!picture?.data_url" :show-arrow="false">
-              <template #trigger><button class="thumbnail-trigger" :aria-label="name" @focus="enlarged=true" @blur="enlarged=false" @keydown.esc="enlarged=false"><PreviewPicture :picture="picture" :loading="loading" :alt="name" /></button></template>
+              <template #trigger><button class="thumbnail-trigger" :style="thumbnailStyle" :aria-label="name" @focus="enlarged=true" @blur="enlarged=false" @keydown.esc="enlarged=false"><PreviewPicture :picture="picture" :loading="loading" :alt="name" /></button></template>
               <div class="enlarged-thumbnail"><PreviewPicture :picture="picture" :alt="name" /></div>
             </n-popover>
-            <small v-if="picture?.data_url">{{ picture.width }} × {{ picture.height }}</small>
           </td>
           <th scope="row">{{ t('levelPreview.nameEnglish') }}</th><td>{{ level.name || '—' }}</td>
           <th scope="row">{{ t('levelPreview.nameChinese') }}</th><td>{{ level.name_zh || '—' }}</td>
@@ -68,16 +84,17 @@ h2 {margin:0 0 8px;min-width:0;}
 .level-information-table {flex:3 1 520px;width:0;min-width:0;table-layout:auto;border-collapse:collapse;font-size:inherit;}
 th,td {border:1px solid var(--oc2-row-line);padding:5px 8px;text-align:left;overflow-wrap:anywhere;}
 th {width:1%;white-space:nowrap;font-weight:normal;color:var(--oc2-text-3);background:var(--oc2-sunken);}
-.thumbnail-column {width:22%;}
+.thumbnail-column {width:1%;}
 .bundle-column {flex:1 1 170px;min-width:0;border:1px solid var(--oc2-row-line);overflow-wrap:anywhere;}
 .bundle-label {padding:5px 8px;color:var(--oc2-text-3);background:var(--oc2-sunken);border-bottom:1px solid var(--oc2-row-line);}
 .bundle-content {padding:5px 8px;}
-@container (max-width:450px) {th {white-space:normal;}.thumbnail-column {width:20%;}}
+@container (max-width:450px) {th {white-space:normal;}}
 .bundle-list {margin:0;padding-left:16px;line-height:18px;}
 .bundle-list.is-collapsed {max-height:54px;overflow:hidden;}
-.thumbnail-cell small {display:block;color:var(--oc2-text-3);margin-top:4px;}
 .thumbnail-cell {vertical-align:middle;text-align:center;padding:6px;}
-.thumbnail-trigger {display:block;width:100%;max-width:160px;margin:auto;padding:0;border:0;border-radius:8px;background:transparent;cursor:zoom-in;}
+.thumbnail-trigger {display:block;width:0;height:0;margin:auto;padding:0;border:0;border-radius:8px;background:transparent;cursor:zoom-in;}
+.thumbnail-trigger :deep(.preview-picture) {width:100%;height:100%;aspect-ratio:auto !important;}
+.thumbnail-trigger :deep(img) {height:100%;object-fit:contain;}
 .thumbnail-trigger:focus-visible {outline:2px solid var(--oc2-text-2);outline-offset:3px;}
 .enlarged-thumbnail {width:min(524px,65vw,calc((100vh - 160px) * 524 / 308));aspect-ratio:524 / 308;}
 .enlarged-thumbnail :deep(.preview-picture) {width:100%;height:100%;aspect-ratio:auto;}

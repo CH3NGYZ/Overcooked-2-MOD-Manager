@@ -7,6 +7,7 @@ import { levelSetDisplayName } from '../../levelSetStatus'
 import { useLevelPreview } from '../../composables/useLevelPreview'
 import { CameraOutline } from '@vicons/ionicons5'
 import HeaderIconAction from '../HeaderIconAction.vue'
+import { prepareLevelScreenshot } from '../../levelScreenshot'
 import { useElementScreenshot } from '../../composables/useElementScreenshot'
 import AppModal from '../AppModal.vue'
 import LevelOverview from './LevelOverview.vue'
@@ -21,7 +22,7 @@ const message = useMessage()
 const { copying, copy } = useElementScreenshot()
 async function copyScreenshot() {
   if (!content.value) return
-  try { await copy(content.value); message.success(t('common.action.copied')) }
+  try { await copy(content.value, { width: 760, pixelRatio: 1.5, prepare: prepareLevelScreenshot }); message.success(t('common.action.copied')) }
   catch { message.error(t('levelPreview.screenshotFailed')) }
 }
 const {show,target,selected,query,loading,error,picture,recipes,pictureBusy,recipeBusy,pictureError,recipeError,current,visible} = p

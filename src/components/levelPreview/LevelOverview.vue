@@ -33,11 +33,12 @@ onBeforeUnmount(() => observer?.disconnect())
 <template>
   <div class="level-information">
     <h2><LevelName :text="name" /></h2>
+    <div class="information-layout">
     <table class="level-information-table">
-      <colgroup><col class="thumbnail-column" /><col class="label-column" /><col /><col class="label-column" /><col /></colgroup>
+      <colgroup><col class="thumbnail-column" /><col /><col /><col /><col /></colgroup>
       <tbody>
         <tr>
-          <td rowspan="5" class="thumbnail-cell">
+          <td rowspan="4" class="thumbnail-cell">
             <n-popover v-model:show="enlarged" trigger="hover" placement="right" :disabled="!picture?.data_url" :show-arrow="false">
               <template #trigger><button class="thumbnail-trigger" :aria-label="name" @focus="enlarged=true" @blur="enlarged=false" @keydown.esc="enlarged=false"><PreviewPicture :picture="picture" :loading="loading" :alt="name" /></button></template>
               <div class="enlarged-thumbnail"><PreviewPicture :picture="picture" :alt="name" /></div>
@@ -50,17 +51,28 @@ onBeforeUnmount(() => observer?.disconnect())
         <tr><th scope="row">{{ t('levelPreview.scene') }}</th><td>{{ level.scene_name || '—' }}</td><th scope="row">{{ t('levelPreview.file') }}</th><td :class="{'missing-file':!level.scene_exists}">{{ t(level.scene_exists ? 'levelPreview.exists' : 'levelPreview.absent') }}</td></tr>
         <tr><th scope="row">{{ t('levelPreview.minOrders') }}</th><td>{{ level.min_order_count }}</td><th scope="row">{{ t('levelPreview.maxOrders') }}</th><td>{{ level.max_order_count }}</td></tr>
         <tr><th scope="row">{{ t('levelPreview.totalRecipes') }}</th><td>{{ level.recipe_count }}</td><th scope="row">{{ t('levelPreview.activeRecipes') }}</th><td>{{ level.active_recipe_count }}</td></tr>
-        <tr><th scope="row">{{ t('levelPreview.dependencies') }} · {{ level.dependencies.length }}</th><td colspan="3"><template v-if="level.dependencies.length"><ul ref="bundleList" class="bundle-list" :class="{'is-collapsed':!bundlesExpanded}"><li v-for="bundle in level.dependencies" :key="bundle">{{ bundle }}</li></ul><n-button v-if="bundlesOverflow" class="bundle-toggle" size="tiny" quaternary :aria-expanded="bundlesExpanded" @click="bundlesExpanded=!bundlesExpanded">{{ t(bundlesExpanded ? 'levelPreview.collapseBundles' : 'levelPreview.expandBundles') }}</n-button></template><span v-else>{{ t('levelPreview.none') }}</span></td></tr>
+
       </tbody>
     </table>
+    <section class="bundle-column" :aria-label="t('levelPreview.dependencies')">
+      <div class="bundle-label">{{ t('levelPreview.dependencies') }} · {{ level.dependencies.length }}</div>
+      <div class="bundle-content"><template v-if="level.dependencies.length"><ul ref="bundleList" class="bundle-list" :class="{'is-collapsed':!bundlesExpanded}"><li v-for="bundle in level.dependencies" :key="bundle">{{ bundle }}</li></ul><n-button v-if="bundlesOverflow" class="bundle-toggle" size="tiny" quaternary :aria-expanded="bundlesExpanded" @click="bundlesExpanded=!bundlesExpanded">{{ t(bundlesExpanded ? 'levelPreview.collapseBundles' : 'levelPreview.expandBundles') }}</n-button></template><span v-else>{{ t('levelPreview.none') }}</span></div>
+    </section>
+    </div>
   </div>
 </template>
 <style scoped>
 h2 {margin:0 0 8px;min-width:0;}
-.level-information-table {width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;}
+.level-information {container-type:inline-size;}
+.information-layout {display:flex;flex-wrap:wrap;align-items:stretch;font-size:12px;}
+.level-information-table {flex:3 1 520px;width:0;min-width:0;table-layout:auto;border-collapse:collapse;font-size:inherit;}
 th,td {border:1px solid var(--oc2-row-line);padding:5px 8px;text-align:left;overflow-wrap:anywhere;}
-th {font-weight:normal;color:var(--oc2-text-3);background:var(--oc2-sunken);}
-.label-column {width:17%;}.thumbnail-column {width:22%;}
+th {width:1%;white-space:nowrap;font-weight:normal;color:var(--oc2-text-3);background:var(--oc2-sunken);}
+.thumbnail-column {width:22%;}
+.bundle-column {flex:1 1 170px;min-width:0;border:1px solid var(--oc2-row-line);overflow-wrap:anywhere;}
+.bundle-label {padding:5px 8px;color:var(--oc2-text-3);background:var(--oc2-sunken);border-bottom:1px solid var(--oc2-row-line);}
+.bundle-content {padding:5px 8px;}
+@container (max-width:450px) {th {white-space:normal;}.thumbnail-column {width:20%;}}
 .bundle-list {margin:0;padding-left:16px;line-height:18px;}
 .bundle-list.is-collapsed {max-height:54px;overflow:hidden;}
 .thumbnail-cell small {display:block;color:var(--oc2-text-3);margin-top:4px;}

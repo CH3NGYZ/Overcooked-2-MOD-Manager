@@ -26,8 +26,7 @@
 //! - `LevelSetInfoSO`：关卡集名（中英）、作者、版本、uid、关卡列表
 //! - `LevelInfoSO`：单关卡名（中英）、场景名、订单数区间
 //!
-//! 缩略图（Texture2D / Sprite）**预留但暂不实现**：需要解码 DXT/ETC 纹理，
-//! 属于第二阶段。`LevelMetadata::thumbnail_index` 现在恒为 `None`。
+//! 按需关卡预览、对象引用与纹理由 level_sets::preview_reader 拥有；扫描不解码图片。
 use unityfs::{Reader, SerializedFile, UnityValue};
 
 /// 解析出来的关卡集元数据。
@@ -132,27 +131,17 @@ pub fn parse_level_set(bytes: &[u8]) -> Result<LevelSetMetadata, ParseError> {
      * 容器格式本身简单（头部 + 块表 + 两段解压），自己解更可靠；
      * 真正复杂的是 SerializedFile 与类型树，那部分交给 crate。
      */
-    let data = read_bundle_data(bytes)?;
-
-    /*
-     * 数据区里可能有多个 SerializedFile（info 一个、resS 一个）。
-     * 逐个尝试：关卡集信息在其中一个里面。
-     */
-    let mut offset = 0usize;
-    while offset + 20 <= data.len() {
-        let mut reader = Reader::new(data[offset..].to_vec(), unityfs::UnityVersion::default());
-        let Some(file) = try_read_serialized(&mut reader) else {
-            break;
-        };
-        if let Some(metadata) = collect_level_set(&file) {
-            return Ok(metadata);
+    for (_, data) in read_bundle_entries(bytes)? {
+        if data.len() < 20 || !matches!(u32::from_be_bytes(data[8..12].try_into().unwrap()), 9..=30)
+        {
+            continue;
         }
-        // 跳到下一个 SerializedFile：按它自己声明的 file_size 前进
-        let file_size = u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap());
-        if file_size == 0 {
-            break;
+        let mut reader = Reader::new(data, unityfs::UnityVersion::default());
+        if let Some(file) = try_read_serialized(&mut reader) {
+            if let Some(metadata) = collect_level_set(&file) {
+                return Ok(metadata);
+            }
         }
-        offset += file_size as usize;
     }
     Err(ParseError::MissingLevelSetInfo)
 }
@@ -161,7 +150,7 @@ pub fn parse_level_set(bytes: &[u8]) -> Result<LevelSetMetadata, ParseError> {
 ///
 /// `unityfs` 遇到不认识的布局时可能 panic（内部有 `unwrap`），而扫描一个坏
 /// 文件不该让整个地图列表崩掉，所以这里捕获 panic。
-fn try_read_serialized(reader: &mut Reader) -> Option<SerializedFile> {
+pub(crate) fn try_read_serialized(reader: &mut Reader) -> Option<SerializedFile> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         SerializedFile::read(reader)
     }))
@@ -289,7 +278,7 @@ fn collect_level_set(file: &SerializedFile) -> Option<LevelSetMetadata> {
 }
 
 /// 从 UnityValue 映射里取字符串字段，缺失时返回空串。
-fn string_of(map: &std::collections::BTreeMap<String, UnityValue>, key: &str) -> String {
+pub(crate) fn string_of(map: &std::collections::BTreeMap<String, UnityValue>, key: &str) -> String {
     match map.get(key) {
         Some(UnityValue::String(value)) => value.clone(),
         _ => String::new(),
@@ -297,7 +286,7 @@ fn string_of(map: &std::collections::BTreeMap<String, UnityValue>, key: &str) ->
 }
 
 /// 从 UnityValue 映射里取整数字段，缺失时返回 0。
-fn int_of(map: &std::collections::BTreeMap<String, UnityValue>, key: &str) -> i32 {
+pub(crate) fn int_of(map: &std::collections::BTreeMap<String, UnityValue>, key: &str) -> i32 {
     match map.get(key) {
         Some(UnityValue::Int32(value)) => *value,
         Some(UnityValue::Int64(value)) => *value as i32,
@@ -350,6 +339,9 @@ fn decompress(
     uncompressed_size: usize,
     compression: Compression,
 ) -> Result<Vec<u8>, ParseError> {
+    if uncompressed_size > 512 * 1024 * 1024 {
+        return Err(ParseError::Corrupt("block too large".into()));
+    }
     match compression {
         Compression::None => {
             if data.len() < uncompressed_size {
@@ -421,7 +413,11 @@ struct BundleReader<'a> {
 
 impl<'a> BundleReader<'a> {
     fn take(&mut self, count: usize) -> Result<&'a [u8], ParseError> {
-        if self.pos + count > self.bytes.len() {
+        if self
+            .pos
+            .checked_add(count)
+            .is_none_or(|end| end > self.bytes.len())
+        {
             return Err(ParseError::Corrupt("bundle truncated".into()));
         }
         let slice = &self.bytes[self.pos..self.pos + count];
@@ -442,7 +438,10 @@ impl<'a> BundleReader<'a> {
     }
 
     fn cstr(&mut self) -> Result<String, ParseError> {
-        let end = self.bytes[self.pos..]
+        let end = self
+            .bytes
+            .get(self.pos..)
+            .ok_or_else(|| ParseError::Corrupt("cstring truncated".into()))?
             .iter()
             .position(|byte| *byte == 0)
             .map(|offset| self.pos + offset)
@@ -453,48 +452,257 @@ impl<'a> BundleReader<'a> {
     }
 }
 
-/// 读完整个 AssetBundle，返回按块顺序拼接的解压数据区。
-fn read_bundle_data(bytes: &[u8]) -> Result<Vec<u8>, ParseError> {
-    let mut reader = BundleReader { bytes, pos: 8 }; // 'UnityFS\0' 固定 8 字节
-    let _version = reader.u32()?;
-    let _unity_version = reader.cstr()?;
-    let _unity_revision = reader.cstr()?;
-    let _total_size = reader.i64()?;
-    let compressed_info_size = reader.u32()?;
-    let uncompressed_info_size = reader.u32()?;
+/// 保留内部文件边界，预览中的外部对象和流式纹理按目录定位。
+pub(crate) struct BundleLayout {
+    pub directory: Vec<(String, usize, usize)>,
+    data_start: usize,
+    total: usize,
+    blocks: Vec<(usize, usize, u16)>,
+}
+fn bundle_layout_with(
+    length: usize,
+    mut read: impl FnMut(usize, usize) -> Result<Vec<u8>, ParseError>,
+) -> Result<BundleLayout, ParseError> {
+    let prefix = read(0, length.min(4096))?;
+    if !prefix.starts_with(b"UnityFS\0") {
+        return Err(ParseError::NotABundle);
+    }
+    let mut reader = BundleReader {
+        bytes: &prefix,
+        pos: 8,
+    };
+    let version = reader.u32()?;
+    let _ = reader.cstr()?;
+    let _ = reader.cstr()?;
+    let total_size = reader.i64()?;
+    if total_size < 0 || total_size as usize != length {
+        return Err(ParseError::Corrupt("bundle size".into()));
+    }
+    let compressed_info_size = reader.u32()? as usize;
+    let uncompressed_info_size = reader.u32()? as usize;
+    if compressed_info_size > 16 * 1024 * 1024 || uncompressed_info_size > 64 * 1024 * 1024 {
+        return Err(ParseError::Corrupt("info too large".into()));
+    }
     let flags = reader.u32()?;
-
-    let info_compression = Compression::from_flags(flags)?;
-    let info_raw = reader.take(compressed_info_size as usize)?;
-    let info = decompress(info_raw, uncompressed_info_size as usize, info_compression)?;
-
-    let mut info_reader = BundleReader {
+    if version >= 7 {
+        reader.pos = (reader.pos + 15) & !15;
+    }
+    let header_end = reader.pos;
+    let info_start = if flags & 0x80 != 0 {
+        length
+            .checked_sub(compressed_info_size)
+            .ok_or_else(|| ParseError::Corrupt("info offset".into()))?
+    } else {
+        header_end
+    };
+    let info = decompress(
+        &read(info_start, compressed_info_size)?,
+        uncompressed_info_size,
+        Compression::from_flags(flags)?,
+    )?;
+    reader.pos = if flags & 0x80 != 0 {
+        header_end
+    } else {
+        info_start + compressed_info_size
+    };
+    if flags & 0x200 != 0 {
+        reader.pos = (reader.pos + 15) & !15;
+    }
+    let mut ir = BundleReader {
         bytes: &info,
         pos: 16,
-    }; // 前 16 字节是哈希
-    let block_count = info_reader.u32()?;
-    let mut blocks = Vec::with_capacity(block_count as usize);
-    for _ in 0..block_count {
-        let uncompressed_size = info_reader.u32()?;
-        let compressed_size = info_reader.u32()?;
-        let block_flags = info_reader.u16()? as u32;
-        blocks.push((uncompressed_size, compressed_size, block_flags));
+    };
+    let count = ir.u32()? as usize;
+    if count > info.len() / 10 {
+        return Err(ParseError::Corrupt("block count".into()));
     }
-    let _node_count = info_reader.u32()?; // 内部文件表：这里按块顺序拼接即可，不单独用
-
-    /*
-     * 数据区紧跟 blocksInfo 之后，每块是独立的压缩单元，必须分别解压再拼接。
-     *
-     * 注意块 flags 与头部 flags 的压缩方式**可以不同**（这份文件头是 LZ4、
-     * 数据块是 LZMA），只看头部解数据块会得到 `corrupt input`。
-     */
-    let mut data = Vec::new();
-    for (uncompressed_size, compressed_size, block_flags) in blocks {
-        let compression = Compression::from_flags(block_flags)?;
-        let raw = reader.take(compressed_size as usize)?;
-        data.extend(decompress(raw, uncompressed_size as usize, compression)?);
+    let mut blocks = Vec::with_capacity(count);
+    let mut total = 0usize;
+    for _ in 0..count {
+        let size = ir.u32()? as usize;
+        let compressed = ir.u32()? as usize;
+        let flags = ir.u16()?;
+        total = total
+            .checked_add(size)
+            .filter(|n| *n <= 512 * 1024 * 1024)
+            .ok_or_else(|| ParseError::Corrupt("bundle too large".into()))?;
+        blocks.push((size, compressed, flags));
     }
-    Ok(data)
+    let nodes = ir.u32()? as usize;
+    if nodes > info.len() / 21 {
+        return Err(ParseError::Corrupt("node count".into()));
+    }
+    let mut directory = Vec::new();
+    for _ in 0..nodes {
+        let offset = ir.i64()?;
+        let size = ir.i64()?;
+        let _flags = ir.u32()?;
+        let name = ir.cstr()?;
+        if offset < 0 || size < 0 {
+            return Err(ParseError::Corrupt("node range".into()));
+        }
+        directory.push((name, offset as usize, size as usize));
+    }
+    if directory
+        .iter()
+        .try_fold(0usize, |total, (_, _, size)| total.checked_add(*size))
+        .is_none_or(|n| n > 512 * 1024 * 1024)
+    {
+        return Err(ParseError::Corrupt("directory too large".into()));
+    }
+    Ok(BundleLayout {
+        directory,
+        data_start: reader.pos,
+        total,
+        blocks,
+    })
+}
+fn bundle_layout(bytes: &[u8]) -> Result<BundleLayout, ParseError> {
+    bundle_layout_with(bytes.len(), |start, size| {
+        let end = start
+            .checked_add(size)
+            .ok_or_else(|| ParseError::Corrupt("range overflow".into()))?;
+        bytes
+            .get(start..end)
+            .map(|b| b.to_vec())
+            .ok_or_else(|| ParseError::Corrupt("bundle truncated".into()))
+    })
+}
+/// Seek only to header and directory: indexing installed game bundles never reads
+/// their scene/texture payloads. The metadata-only CLI does not use this entry.
+#[allow(dead_code)]
+pub(crate) fn bundle_file_names(path: &std::path::Path) -> Result<Vec<String>, ParseError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let length = usize::try_from(file.metadata()?.len())
+        .map_err(|_| ParseError::Corrupt("file too large".into()))?;
+    let layout = bundle_layout_with(length, |start, size| {
+        if start.checked_add(size).is_none_or(|end| end > length) {
+            return Err(ParseError::Corrupt("file range".into()));
+        }
+        file.seek(SeekFrom::Start(start as u64))?;
+        let mut bytes = vec![0; size];
+        file.read_exact(&mut bytes)?;
+        Ok(bytes)
+    })?;
+    Ok(layout
+        .directory
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect())
+}
+/// Read only blocks intersecting a named node/range. External texture streams stay
+/// on disk instead of crowding useful metadata out of the preview cache.
+#[allow(dead_code)]
+pub(crate) fn read_bundle_file_range(
+    path: &std::path::Path,
+    name: &str,
+    offset: usize,
+    size: Option<usize>,
+) -> Result<Vec<u8>, ParseError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let length = usize::try_from(file.metadata()?.len())
+        .map_err(|_| ParseError::Corrupt("file too large".into()))?;
+    if length > 256 * 1024 * 1024 {
+        return Err(ParseError::Corrupt("file too large".into()));
+    }
+    let mut read = |start: usize, size: usize| -> Result<Vec<u8>, ParseError> {
+        if start.checked_add(size).is_none_or(|end| end > length) {
+            return Err(ParseError::Corrupt("file range".into()));
+        }
+        file.seek(SeekFrom::Start(start as u64))?;
+        let mut bytes = vec![0; size];
+        file.read_exact(&mut bytes)?;
+        Ok(bytes)
+    };
+    let layout = bundle_layout_with(length, &mut read)?;
+    let (_, node_start, node_size) = layout
+        .directory
+        .iter()
+        .find(|(n, _, _)| n == name)
+        .ok_or_else(|| ParseError::Corrupt("missing node".into()))?;
+    let size = size.unwrap_or(*node_size);
+    if size > 128 * 1024 * 1024 || offset.checked_add(size).is_none_or(|end| end > *node_size) {
+        return Err(ParseError::Corrupt("node range".into()));
+    }
+    let start = node_start
+        .checked_add(offset)
+        .ok_or_else(|| ParseError::Corrupt("node range".into()))?;
+    let end = start
+        .checked_add(size)
+        .filter(|end| *end <= layout.total)
+        .ok_or_else(|| ParseError::Corrupt("node range".into()))?;
+    let mut out = Vec::with_capacity(size);
+    let mut packed = layout.data_start;
+    let mut unpacked = 0usize;
+    for (block_size, compressed, flags) in layout.blocks {
+        let block_end = unpacked
+            .checked_add(block_size)
+            .ok_or_else(|| ParseError::Corrupt("block range".into()))?;
+        if unpacked < end && block_end > start {
+            let bytes = decompress(
+                &read(packed, compressed)?,
+                block_size,
+                Compression::from_flags(flags as u32)?,
+            )?;
+            if bytes.len() != block_size {
+                return Err(ParseError::Corrupt("block size".into()));
+            }
+            out.extend_from_slice(
+                &bytes[start.saturating_sub(unpacked)..(end - unpacked).min(block_size)],
+            );
+        }
+        packed = packed
+            .checked_add(compressed)
+            .filter(|end| *end <= length)
+            .ok_or_else(|| ParseError::Corrupt("block range".into()))?;
+        unpacked = block_end;
+        if unpacked >= end {
+            break;
+        }
+    }
+    if out.len() != size {
+        return Err(ParseError::Corrupt("node truncated".into()));
+    }
+    Ok(out)
+}
+/// Directory-only inspection shares header parsing without decoding any content blocks.
+pub(crate) fn read_bundle_entries(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ParseError> {
+    let BundleLayout {
+        directory,
+        data_start,
+        total,
+        blocks,
+    } = bundle_layout(bytes)?;
+    let mut reader = BundleReader {
+        bytes,
+        pos: data_start,
+    };
+    let mut data = Vec::with_capacity(total);
+    for (size, compressed, flags) in blocks {
+        let block = decompress(
+            reader.take(compressed)?,
+            size,
+            Compression::from_flags(flags as u32)?,
+        )?;
+        if block.len() != size {
+            return Err(ParseError::Corrupt("block size".into()));
+        }
+        data.extend(block);
+    }
+    directory
+        .into_iter()
+        .map(|(name, offset, size)| {
+            let end = offset
+                .checked_add(size)
+                .ok_or_else(|| ParseError::Corrupt("node overflow".into()))?;
+            let bytes = data
+                .get(offset..end)
+                .ok_or_else(|| ParseError::Corrupt("node bounds".into()))?;
+            Ok((name, bytes.to_vec()))
+        })
+        .collect()
 }
 
 #[cfg(test)]

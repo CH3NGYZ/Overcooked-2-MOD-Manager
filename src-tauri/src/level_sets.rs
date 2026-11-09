@@ -68,3 +68,6 @@ mod requires_tests;
 mod tests;
 #[cfg(test)]
 mod zip_tests;
+
+pub(crate) mod preview;
+pub(crate) mod preview_reader;

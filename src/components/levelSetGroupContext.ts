@@ -71,6 +71,7 @@ export interface LevelSetGroupContext {
   focusIdOf(set: LevelSetInfo): string | undefined
   removeSet(set: LevelSetInfo): void | Promise<void>
   openDir(set: LevelSetInfo): void | Promise<void>
+  preview(set: LevelSetInfo): void | Promise<void>
   pluginTitle(plugin: LevelSetPlugin): string
   togglePlugin(
     set: LevelSetInfo,

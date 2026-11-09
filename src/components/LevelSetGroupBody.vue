@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { NButton, NTag } from 'naive-ui'
-import { AlertCircleOutline, ArrowUpCircleOutline, DownloadOutline, FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
+import { ImagesOutline, AlertCircleOutline, ArrowUpCircleOutline, DownloadOutline, FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale } from '../i18n'
 import { formatVersion } from '../modStatus'
 import { translateBackendMessage } from '../locale/backend'
@@ -110,6 +110,7 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
 
       <!-- 工具栏：打开目录、删除（游戏运行时禁止删除） -->
       <template #tools>
+        <n-button size="tiny" quaternary :title="t('levelPreview.open')" :aria-label="t('levelPreview.open')" @click.stop="ctx.preview(set)"><ImagesOutline width="14" height="14" /></n-button>
         <n-button size="tiny" quaternary :title="t('modsLocal.revealInFolder')"
           @click.stop="ctx.openDir(set)">
           <FolderOpenOutline width="14" height="14" />

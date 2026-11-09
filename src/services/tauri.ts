@@ -1,3 +1,4 @@
+import type { LevelPreview, LevelPreviewDetail } from '../types'
 import type { PublishProvider } from '../types'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -214,6 +215,8 @@ export const api = {
    */
   /** 列出全部关卡集（启用与停用）。只读，游戏运行时也可调用。 */
   levelSets: () => invoke<LevelSetInfo[]>('get_level_sets'),
+  levelSetPreview: (dirName: string, enabled: boolean) => invoke<LevelPreview[]>('get_level_set_preview', { dirName, enabled }),
+  levelPreviewDetail: (dirName: string, enabled: boolean, index: number, part: 'picture' | 'recipes') => invoke<LevelPreviewDetail>('get_level_preview_detail', { dirName, enabled, index, part }),
   /**
    * 整理地图目录：把 `info` 埋在子文件夹里的目录搬成规范的 `levels/<集名>/`。
    *

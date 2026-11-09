@@ -319,3 +319,35 @@ fn flatten_level_sets_blocking(
     )?;
     crate::level_sets::flatten_level_sets(&game_root, &recycle_root, &manifests_dir, false)
 }
+
+/// 预览仅接收已安装关卡集坐标，不接收任意文件路径，也不要求停止游戏。
+#[tauri::command]
+pub async fn get_level_set_preview(
+    state: State<'_, AppState>,
+    dir_name: String,
+    enabled: bool,
+) -> Result<Vec<crate::level_sets::preview_reader::Level>, String> {
+    let config = state.config.load_or_default();
+    let root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::level_sets::preview::catalog(&root, &dir_name, enabled)
+    })
+    .await
+    .map_err(|_| "assetBundle.previewUnavailable".to_string())?
+}
+#[tauri::command]
+pub async fn get_level_preview_detail(
+    state: State<'_, AppState>,
+    dir_name: String,
+    enabled: bool,
+    index: usize,
+    part: String,
+) -> Result<crate::level_sets::preview::Detail, String> {
+    let config = state.config.load_or_default();
+    let root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::level_sets::preview::detail(&root, &dir_name, enabled, index, &part)
+    })
+    .await
+    .map_err(|_| "assetBundle.previewUnavailable".to_string())?
+}

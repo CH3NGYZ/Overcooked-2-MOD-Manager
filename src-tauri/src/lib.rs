@@ -268,6 +268,8 @@ pub fn run() {
             commands::avatars::clear_repository_avatars,
             commands::diy_level::get_diy_level_info,
             commands::levels::get_level_sets,
+            commands::levels::get_level_set_preview,
+            commands::levels::get_level_preview_detail,
             commands::levels::set_level_set_enabled,
             commands::levels::set_all_level_sets_enabled,
             commands::drop_source::classify_drop_source,

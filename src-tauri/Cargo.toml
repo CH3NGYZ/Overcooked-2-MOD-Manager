@@ -49,6 +49,7 @@ notify = "8"
 # 容器（UnityFS 头部 + 块表）仍自己解：unityfs 的数据块解压缺 LZMA 分支，
 # 而这份资源恰恰用 LZMA 压缩数据块，用它会把压缩数据当原始数据。
 unityfs = "0.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
 regex = "1"
 scraper = { version = "0.27", default-features = false }

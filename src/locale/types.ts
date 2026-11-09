@@ -44,6 +44,7 @@ export type DomainMessages = Record<string, Localized>
  * （`domain.key` 的组合是否真的存在）。
  */
 export const DOMAINS = [
+  'levelPreview',
   'startup',     // 启动地区与源可达性预检
   // —— 界面域：按页面/区域归属 ——
   'common',      // 通用：确定/取消/保存/删除 等跨页面复用的词

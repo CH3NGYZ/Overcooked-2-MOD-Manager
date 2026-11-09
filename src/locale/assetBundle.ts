@@ -10,6 +10,7 @@ import type { DomainMessages } from './types'
  * 固定文案在这里翻译。
  */
 export const assetBundle: DomainMessages = {
+  previewUnavailable: {'zh-CN':'无法解析关卡预览资源','zh-TW':'無法解析關卡預覽資源',en:'The level preview resource could not be read.',ko:'스테이지 미리보기 리소스를 읽을 수 없습니다.',ja:'ステージプレビューのリソースを読み取れません。'},
   notABundle: {
     'zh-CN': '这个文件不是 Unity 资源包（AssetBundle），读不出地图信息',
     'zh-TW': '這個檔案不是 Unity 資源包（AssetBundle），讀不出地圖資訊',

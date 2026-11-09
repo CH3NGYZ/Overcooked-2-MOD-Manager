@@ -1024,3 +1024,5 @@ export interface SourceNode {
   url?: string; status: 'pending' | 'loading' | 'ready' | 'error'; error?: string | null
 }
 export interface MapTreeProgress { nodes: SourceNode[]; maps: MapInfo[] }
+
+export type { LevelPreview, LevelPreviewPicture, LevelPreviewRecipe, LevelPreviewDetail, LevelPreviewMenuIcon, LevelPreviewMenuTile } from './levelPreviewTypes'

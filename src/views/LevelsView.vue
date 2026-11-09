@@ -45,6 +45,7 @@ import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetCardExpansion } from '../composables/useLevelSetCardExpansion'
 import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
 import { busyReader, useLevelSetsExternalChange } from '../composables/useLevelSetsExternalChange'
+import LevelPreviewDialog from '../components/levelPreview/LevelPreviewDialog.vue'
 import LevelSetGroupBody from '../components/LevelSetGroupBody.vue'
 import LevelSetGroupHeader from '../components/LevelSetGroupHeader.vue'
 import {
@@ -122,9 +123,9 @@ const router = useRouter()
 const { highlightId } = useFocusHighlight()
 /* 页头聚合标签现在切换列表可见性（见下方 `visibility`）；跨页定位只保留 `useFocusHighlight`。 */
 
-/** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
-/** 工具栏：两个按钮（打开、删除），列宽与间距与 MOD 管理页同源。 */
-const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 2 + TOOL_GAP)
+/** 工具栏：预览、打开、删除，共用按钮宽度与间距。 */
+const levelPreview = ref<InstanceType<typeof LevelPreviewDialog> | null>(null)
+const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 3 + TOOL_GAP * 2)
 
 /** 本页展示的关卡集 = 磁盘扫描结果；`useLevelSetScan` 是唯一读取入口。 */
 const sets = ref<LevelSetInfo[]>([])
@@ -913,6 +914,7 @@ provide(
     runCardAction,
     removeSet: remove,
     openDir: openDirectory,
+    preview: set => levelPreview.value?.open(set),
     pluginTitle,
     togglePlugin,
     dependencyRows,
@@ -1038,6 +1040,7 @@ provide(
   <InstallDetailDialog v-model:show="importPreviewOpen" :model="importDetail"
     @confirm="confirmImport" @discard="discardImport" />
 
+  <LevelPreviewDialog ref="levelPreview" />
   <PageLoading :show="loading">
     <!--
       转圈下方显示真实进度与当前读取的文件夹。

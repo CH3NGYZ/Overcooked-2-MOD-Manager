@@ -177,6 +177,7 @@ pub(super) fn clear_info_disk_cache(dir: &Path) -> Result<usize, String> {
 /// 解析逻辑出过错（旧版本把某个字段读错）时，修好的版本面对同一份文件
 /// 仍会拿到那份错误结果，只有清掉缓存才会重新解析。
 pub fn clear_info_cache() -> Result<usize, String> {
+    let preview_count = super::preview::clear()?;
     match info_cache().lock() {
         Ok(mut cache) => cache.clear(),
         /*
@@ -187,8 +188,8 @@ pub fn clear_info_cache() -> Result<usize, String> {
         Err(poison) => poison.into_inner().clear(),
     }
     match info_disk_cache_dir() {
-        Some(dir) => clear_info_disk_cache(&dir),
-        None => Ok(0),
+        Some(dir) => clear_info_disk_cache(&dir).map(|count| count + preview_count),
+        None => Ok(preview_count),
     }
 }
 

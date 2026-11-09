@@ -191,8 +191,9 @@ pub(crate) fn plan_remote_download_candidates(
     provider: &Provider,
     kind: RemoteUrlKind,
     url: &str,
+    region: &str,
 ) -> Result<Vec<DownloadCandidate>, String> {
-    let mode = selected_asset_proxy_mode(None, provider, crate::config::current_user_region());
+    let mode = selected_asset_proxy_mode(None, provider, region);
     let is_raw_file = kind == RemoteUrlKind::Raw;
     let entries = provider_proxy_entries(config, provider, is_raw_file);
     let proxy_urls = asset_proxy_urls(entries, url, is_raw_file, "", "", mode, None);

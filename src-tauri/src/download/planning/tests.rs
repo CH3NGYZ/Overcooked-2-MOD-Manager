@@ -122,6 +122,7 @@ fn remote_urls_pick_their_own_proxy_group_and_gitee_stays_direct() {
         &Provider::Github,
         RemoteUrlKind::ReleaseAsset,
         release_url,
+        crate::config::REGION_CHINESE_MAINLAND,
     )
     .unwrap();
     assert!(
@@ -137,9 +138,14 @@ fn remote_urls_pick_their_own_proxy_group_and_gitee_stays_direct() {
 
     // Raw 文件只用 raw_proxies，且模板里的分支/路径来自 URL 自身
     let raw_url = "https://github.com/acme/mod/raw/main/bin/mod.dll";
-    let raw =
-        plan_remote_download_candidates(&config, &Provider::Github, RemoteUrlKind::Raw, raw_url)
-            .unwrap();
+    let raw = plan_remote_download_candidates(
+        &config,
+        &Provider::Github,
+        RemoteUrlKind::Raw,
+        raw_url,
+        crate::config::REGION_CHINESE_MAINLAND,
+    )
+    .unwrap();
     assert!(
         raw.iter()
             .any(|candidate| candidate.url == "https://raw.example/acme/mod@main/bin/mod.dll")
@@ -149,12 +155,35 @@ fn remote_urls_pick_their_own_proxy_group_and_gitee_stays_direct() {
             .any(|candidate| candidate.url.contains("release.example"))
     );
 
+    // International defaults remain direct regardless of configured proxies.
+    for (kind, url) in [
+        (RemoteUrlKind::ReleaseAsset, release_url),
+        (RemoteUrlKind::Raw, raw_url),
+    ] {
+        let candidates = plan_remote_download_candidates(
+            &config,
+            &Provider::Github,
+            kind,
+            url,
+            crate::config::REGION_INTERNATIONAL,
+        )
+        .unwrap();
+        assert_eq!(
+            candidates,
+            vec![DownloadCandidate {
+                route: DownloadRoute::Direct,
+                url: url.into()
+            }]
+        );
+    }
+
     // Gitee 没有资产代理：只剩直连候选
     let gitee = plan_remote_download_candidates(
         &config,
         &Provider::Gitee,
         RemoteUrlKind::ReleaseAsset,
         "https://gitee.com/acme/mod/releases/download/v1/mod.zip",
+        crate::config::REGION_CHINESE_MAINLAND,
     )
     .unwrap();
     assert_eq!(gitee.len(), 1);

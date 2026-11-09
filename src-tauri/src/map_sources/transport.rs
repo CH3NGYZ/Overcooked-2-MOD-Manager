@@ -125,6 +125,7 @@ async fn verified_document(
         &reference.provider,
         crate::download::planning::RemoteUrlKind::ReleaseAsset,
         url.as_str(),
+        crate::config::current_user_region(),
     ) {
         Ok(candidates) => candidates,
         Err(error) => {

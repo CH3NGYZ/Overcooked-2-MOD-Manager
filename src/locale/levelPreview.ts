@@ -2,6 +2,7 @@ import type { DomainMessages } from './types'
 export const levelPreview: DomainMessages = {
   open: {'zh-CN':'关卡预览','zh-TW':'關卡預覽',en:'Level preview',ko:'스테이지 미리보기',ja:'ステージプレビュー'},
   search: {'zh-CN':'搜索关卡名称或场景','zh-TW':'搜尋關卡名稱或場景',en:'Search level or scene',ko:'스테이지 또는 장면 검색',ja:'ステージ名・シーンを検索'},
+  name: {'zh-CN':'关卡名称','zh-TW':'關卡名稱',en:'Level name',ko:'스테이지 이름',ja:'ステージ名'},
   scene: {'zh-CN':'场景名','zh-TW':'場景名稱',en:'Scene',ko:'장면',ja:'シーン'},
   orders: {'zh-CN':'同时订单数范围','zh-TW':'同時訂單數範圍',en:'Concurrent order range',ko:'동시 주문 수 범위',ja:'同時注文数の範囲'},
   missing: {'zh-CN':'暂无缩略图','zh-TW':'暫無縮圖',en:'No thumbnail',ko:'미리보기 이미지 없음',ja:'サムネイルなし'},

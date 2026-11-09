@@ -55,13 +55,13 @@ const childGroups=computed(()=>{
 <style scoped>
 .recipe-branch{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;max-width:100%;}
 .menu-tile{border:1px solid var(--oc2-row-line);border-radius:10px;background:var(--oc2-sunken);padding:4px;min-width:0;max-width:100%;}
-.menu-preparation,.ingredient-groups{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:clamp(5px,2cqw,20px);max-width:100%;}
+.menu-preparation,.ingredient-groups{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:clamp(2px,1cqw,20px);max-width:100%;}
 .menu-pictures,.menu-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:3px;}
-.menu-steps{flex-wrap:wrap;gap:clamp(5px,2cqw,20px);background:#f5f1e7;border-radius:6px;border-top:1px solid var(--oc2-row-line);margin-top:5px;padding-top:5px;max-width:100%;}
+.menu-steps{flex-wrap:wrap;gap:clamp(2px,1cqw,20px);background:#f5f1e7;border-radius:6px;border-top:1px solid var(--oc2-row-line);margin-top:5px;padding-top:5px;max-width:100%;}
 .menu-icon{display:inline-flex;width:clamp(24px,16cqw,34px);height:clamp(24px,16cqw,34px);align-items:center;justify-content:center;flex:none;}
 .menu-icon img{width:100%;height:100%;object-fit:contain;}
 .finished-tile{background:transparent;border:0;}.finished-tile .menu-icon{width:72px;height:72px;}
-.menu-children{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(5px,2cqw,20px);max-width:100%;padding-top:8px;border-top:1px solid var(--oc2-row-line);}
-.step-group{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(5px,2cqw,20px);max-width:100%;padding:5px;border:1px solid color-mix(in srgb,var(--oc2-text-3) 65%,transparent);border-radius:8px;background:color-mix(in srgb,var(--oc2-sunken) 55%,transparent);}
+.menu-children{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(2px,1cqw,20px);max-width:100%;padding-top:8px;border-top:1px solid var(--oc2-row-line);}
+.step-group{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(2px,1cqw,20px);max-width:100%;padding:5px;border:1px solid color-mix(in srgb,var(--oc2-text-3) 65%,transparent);border-radius:8px;background:color-mix(in srgb,var(--oc2-sunken) 55%,transparent);}
 .missing-icon{color:var(--oc2-text-3);border:1px dashed var(--oc2-row-line);border-radius:50%;width:26px;height:26px;text-align:center;line-height:26px;}
 </style>

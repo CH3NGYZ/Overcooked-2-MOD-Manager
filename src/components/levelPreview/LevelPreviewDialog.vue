@@ -6,7 +6,8 @@ import { translateBackendMessage } from '../../locale/backend'
 import { levelSetDisplayName } from '../../levelSetStatus'
 import { useLevelPreview } from '../../composables/useLevelPreview'
 import AppModal from '../AppModal.vue'
-import PreviewPicture from './PreviewPicture.vue'
+import LevelOverview from './LevelOverview.vue'
+import LevelName from './LevelName.vue'
 import RecipeCard from './RecipeCard.vue'
 import RecipeDetailDialog from './RecipeDetailDialog.vue'
 import type { LevelSetInfo, LevelPreview } from '../../types'
@@ -26,7 +27,7 @@ defineExpose({open:(set:LevelSetInfo) => p.open(set)})
         <n-input v-model:value="query" :placeholder="t('levelPreview.search')" :aria-label="t('levelPreview.search')" clearable />
         <nav class="level-list" :aria-label="t('levelPreview.open')">
           <button v-for="{level,index} in visible" :key="index" class="level-choice" :class="{'is-selected':selected===index}" :aria-current="selected===index ? 'true' : undefined" @click="selected=index">
-            <span class="level-number">{{ String(index+1).padStart(2,'0') }}</span><span class="level-choice-label"><strong>{{ name(level) }}</strong><small>{{ level.scene_name }}</small></span>
+            <span class="level-number">{{ String(index+1).padStart(2,'0') }}</span><span class="level-choice-label"><strong><LevelName :text="name(level)" :maximum="14" /></strong><small>{{ level.scene_name }}</small></span>
           </button>
           <p v-if="!loading && !visible.length">{{ t('levelPreview.noResults') }}</p>
         </nav>
@@ -34,16 +35,9 @@ defineExpose({open:(set:LevelSetInfo) => p.open(set)})
       <section class="preview-content" :aria-busy="loading">
         <n-spin v-if="loading && !current" size="small" />
         <template v-if="current">
-          <div class="level-overview">
-            <div><PreviewPicture :picture="picture" :loading="pictureBusy" :alt="name(current)" /><p v-if="pictureError" role="alert">{{ translateBackendMessage(pictureError) }}</p></div>
-            <div class="level-information">
-              <h2>{{ name(current) }}</h2><p>{{ current.name }}</p><p v-if="current.name_zh && current.name_zh!==name(current)">{{ current.name_zh }}</p>
-              <dl><dt>{{ t('levelPreview.scene') }}</dt><dd>{{ current.scene_name }}</dd><dt>{{ t('levelPreview.orders') }}</dt><dd>{{ current.min_order_count }}–{{ current.max_order_count }}</dd><dt>{{ t('levelPreview.file') }}</dt><dd :class="{'missing-file':!current.scene_exists}">{{ t(current.scene_exists ? 'levelPreview.exists' : 'levelPreview.absent') }}</dd></dl>
-            </div>
-          </div>
-          <div class="recipe-heading"><h3>{{ t('levelPreview.recipes') }}</h3><n-button size="tiny" quaternary @click="p.retry">{{ t('levelPreview.retry') }}</n-button></div>
-          <p class="muted">{{ t('levelPreview.static') }}</p>
-          <p class="muted">{{ t('levelPreview.counts',{resolved:recipes?.filter(r=>r.resolved).length ?? 0,total:current.recipe_count,active:current.active_recipe_count}) }}</p>
+          <LevelOverview :level="current" :name="name(current)" :picture="picture" :loading="pictureBusy" />
+          <p v-if="pictureError" role="alert">{{ translateBackendMessage(pictureError) }}</p>
+          <div class="recipe-toolbar"><span class="muted">{{ t('levelPreview.counts',{resolved:recipes?.filter(r=>r.resolved).length ?? 0,total:current.recipe_count,active:current.active_recipe_count}) }}</span><n-button size="tiny" quaternary @click="p.retry">{{ t('levelPreview.retry') }}</n-button></div>
           <n-spin v-if="recipeBusy" size="small" />
           <p v-else-if="recipeError" role="alert">{{ translateBackendMessage(recipeError) }}</p>
           <div v-else-if="recipes?.length" class="recipe-grid"><RecipeCard v-for="(recipe,index) in recipes" :key="index" :recipe="recipe" :index="index" @select="recipeDetail?.open(recipe,index)" /></div>
@@ -68,13 +62,10 @@ defineExpose({open:(set:LevelSetInfo) => p.open(set)})
 .level-choice-label {min-width:0;line-height:1.6;}
 .level-choice-label small {margin-top:3px;}
 .preview-content {overflow-y:auto;min-height:0;padding-right:8px;scrollbar-gutter:stable;}
-.level-overview {display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:20px;align-items:start;}
-.level-information {overflow-wrap:anywhere;}
-h2 {font-size:20px;margin:0 0 4px;} h3 {margin:0;font-size:16px;}
-p {margin:6px 0 12px;} dl {margin:16px 0 0;} dt {font-size:12px;color:var(--oc2-text-3);} dd {margin:2px 0 10px;}
-.recipe-heading {display:flex;align-items:center;justify-content:space-between;margin-top:24px;}
+p {margin:6px 0 12px;}
+.recipe-toolbar {display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;}
 .recipe-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;margin-top:12px;}
 .bundle-details {margin-top:20px;padding-top:12px;border-top:1px solid var(--oc2-row-line);overflow-wrap:anywhere;}
-summary {cursor:pointer;} .missing-file {color:var(--oc2-tone-critical-text);} .preview-status {padding:20px;}
-@media (max-width:850px) {.preview-layout{grid-template-columns:180px minmax(0,1fr);gap:12px;}.level-overview{grid-template-columns:minmax(0,1fr);}}
+summary {cursor:pointer;} .preview-status {padding:20px;}
+@media (max-width:850px) {.preview-layout{grid-template-columns:180px minmax(0,1fr);gap:12px;}}
 </style>

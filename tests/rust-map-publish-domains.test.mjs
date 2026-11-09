@@ -38,7 +38,6 @@ const commands = [
   ['assets', 'delete_publish_asset'],
   ['zip', 'inspect_publish_zip'],
   ['zip', 'stage_publish_zip'],
-  ['repositories', 'publish_repository_topics'],
 ]
 const owners = {
   authorization: ['authorization_target', 'start_publish_authorization', 'poll_publish_authorization', 'cancel_publish_authorization'],
@@ -47,7 +46,7 @@ const owners = {
   session: ['publish_token', 'check_publish_session', 'check_session_once', 'refresh_tokens', 'store_refreshed_tokens'],
   http: ['api_client', 'upload_client', 'authorized', 'classify_write_failure', 'ensure_success', 'get_json'],
   validation: ['validate_coordinates', 'validate_tag', 'validate_new_tag', 'validate_asset_name', 'encode_component'],
-  repositories: ['list_publish_repositories', 'remembered_installation_repositories', 'writable_repositories', 'publish_repository_topics'],
+  repositories: ['list_publish_repositories', 'remembered_installation_repositories', 'writable_repositories'],
   releases: ['release_from_api', 'save_publish_release', 'delete_publish_release', 'validate_publish_relations'],
   assets: ['upload_publish_asset', 'delete_publish_asset', 'validate_zip_identity', 'upload_asset_name'],
   zip: ['inspect_publish_zip', 'inspect_publish_zip_blocking', 'stage_publish_zip', 'stage_publish_zip_into'],

@@ -1,21 +1,17 @@
 use super::*;
 
 #[test]
-fn missing_topics_only_lists_the_ones_absent() {
-    assert_eq!(
-        missing_topics(&["overcooked-2".to_string(), "bepinex".to_string()]),
-        vec!["map".to_string()]
-    );
-    assert!(missing_topics(&publish_topics()).is_empty());
-    assert!(
-        missing_topics(&[
-            "Overcooked-2".to_string(),
-            "bepinex".to_string(),
-            "map".to_string(),
-            "extra".to_string(),
-        ])
-        .is_empty()
-    );
+fn gitcode_null_topics_are_ignored_when_listing_publish_repositories() {
+    let repositories: Vec<ApiRepository> = serde_json::from_value(serde_json::json!([
+        {"name": "maps", "full_name": "author/maps", "private": false,
+         "default_branch": "main", "topics": null,
+         "permission": {"push": true, "pull": true, "admin": true}}
+    ]))
+    .unwrap();
+    let result = writable_repositories(ApiInstallationRepositories { repositories });
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].owner, "author");
+    assert!(result[0].push);
 }
 
 #[test]

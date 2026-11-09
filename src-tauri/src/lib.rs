@@ -227,7 +227,6 @@ pub fn run() {
             map_publish::assets::delete_publish_asset,
             map_publish::zip::inspect_publish_zip,
             map_publish::zip::stage_publish_zip,
-            map_publish::repositories::publish_repository_topics,
             repository_readme::get_repository_readme,
             repository_readme::cancel_repository_readme,
             commands::mod_repository_releases::get_repository_releases,

@@ -29,7 +29,7 @@ const publish = useMapPublish()
 const { provider, auth, authReady, authLoading, authenticated, needsInstall, openInstallPage,
   signingIn, authorization, authPhase, authFailure, repositories, repositoriesLoading,
   selectedRepository, releases, releasesLoading, deletingRelease, inspecting, uploadProgress,
-  permissionFailure, missingTopics, loadState, startSignIn, startSignInAnyway,
+  permissionFailure, loadState, startSignIn, startSignInAnyway,
   cancelSignIn, refreshRepositories, deleteRelease, deleteAsset } = publish
 const editorRoot = ref<HTMLElement | null>(null)
 const editor = useMapPublishEditor(publish, editorRoot)
@@ -245,23 +245,14 @@ function confirmDeleteAsset(name: string) {
     <section v-else class="group">
       <h2 v-if="mode === 'list'" class="group-title">{{ t('mapPublish.mapSets') }}</h2>
 
-      <!-- 选了仓库就查一次标签：缺 map 之类，地图页就收不到这个仓库 -->
-      <div v-if="missingTopics.length" class="panel topics-banner">
-        <div class="topics-text">
-          <span class="topics-title">{{ t('mapPublish.topicsMissingTitle') }}</span>
-          <p class="hint no-top">{{ t('mapPublish.topicsMissingHint', { topics: missingTopics.join(', ') }) }}</p>
-          <p class="hint no-top">{{ t('mapPublish.topicsFixHint') }}</p>
-        </div>
-      </div>
-
       <PublishReleaseList :provider="provider" v-if="mode === 'list'" :repository-name="selectedRepository.full_name"
         :releases="releases" :releases-loading="releasesLoading" :deleting-release="deletingRelease"
         @create="openCreate" @open="openManagement" @delete="confirmDeleteRelease" />
       <template v-else>
         <!-- 缺权限 / 被限流的常驻引导：写失败后出现，写成功一次自动收起 -->
         <div v-if="permissionFailure" class="panel permission-banner">
-          <div class="topics-text">
-            <span class="topics-title">{{ t('mapPublish.permissionTitle') }}</span>
+          <div class="permission-text">
+            <span class="permission-title">{{ t('mapPublish.permissionTitle') }}</span>
             <p v-if="permissionFailure.rateLimited" class="hint no-top">
               {{ t('mapPublish.rateLimitedHint', { reset: permissionResetText }) }}
             </p>

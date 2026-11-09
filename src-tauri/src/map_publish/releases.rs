@@ -53,8 +53,22 @@ pub(super) struct ApiRelease {
     published_at: Option<String>,
     #[serde(default)]
     pub(super) body: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "release_assets")]
     pub(super) assets: Vec<ApiAsset>,
+}
+
+fn release_assets<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ApiAsset>, D::Error> {
+    let assets = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    assets
+        .into_iter()
+        // GitCode includes generated source archives without attachment IDs.
+        // Ignore them before enforcing the ID contract for uploaded assets;
+        // listing, saving and post-upload verification all use this decoder.
+        .filter(|asset| asset.get("type").and_then(|kind| kind.as_str()) != Some("source"))
+        .map(|asset| serde_json::from_value(asset).map_err(serde::de::Error::custom))
+        .collect()
 }
 
 impl ApiAsset {

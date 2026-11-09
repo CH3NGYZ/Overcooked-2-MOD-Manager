@@ -20,11 +20,11 @@ function load(api) {
   return {state:exports.useMapPublish(),notices,unmount}
 }
 const auth = {authenticated:true,login:'fixture',installed:false,secret_configured:true,client_id:'fixture',install_url:''}
-const repo = {owner:'u',name:'maps',full_name:'u/maps',topics:[],push:true}
+const repo = {owner:'u',name:'maps',full_name:'u/maps',push:true}
 const check = {outcome:{status:'valid'},auth}
 test('切换发布平台丢弃旧平台迟到的会话与仓库结果，GitCode不走App安装门',async()=>{
   const stale=deferred(), calls=[]
-  const {state}=load({checkPublishSession:async p=>{calls.push(p);return p==='github'?stale.promise:check},listPublishRepositories:async()=>({installations:0,all_repositories:false,repositories:[repo]}),listPublishReleases:async()=>[],publishRepositoryTopics:async()=>({missing:[]})})
+  const {state}=load({checkPublishSession:async p=>{calls.push(p);return p==='github'?stale.promise:check},listPublishRepositories:async()=>({installations:0,all_repositories:false,repositories:[repo]}),listPublishReleases:async()=>[]})
   const old=state.loadState()
   await state.selectProvider('gitcode')
   stale.resolve({outcome:{status:'signed_out'},auth:{...auth,authenticated:false,login:'stale'}})

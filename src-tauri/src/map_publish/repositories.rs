@@ -6,25 +6,13 @@ use super::http::ensure_success;
 use super::http::get_json;
 use super::http::request_error;
 use super::session::publish_token;
-use super::validation::validate_coordinates;
 use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
 use crate::models::PublishProvider;
 use crate::models::PublishRepository;
 use crate::models::PublishRepositoryList;
-use crate::models::PublishRepositoryTopics;
 use serde::Deserialize;
 use tauri::State;
-
-/// 发布检查与社区发现使用同一组地图仓库标签。
-const PUBLISH_TOPICS: [&str; 3] = ["overcooked-2", "bepinex", "map"];
-
-fn publish_topics() -> Vec<String> {
-    PUBLISH_TOPICS
-        .iter()
-        .map(|topic| (*topic).to_string())
-        .collect()
-}
 
 /// `/user/installations` 里的一条安装记录（只用到 id）。
 #[derive(Deserialize)]
@@ -71,8 +59,6 @@ struct ApiRepository {
     #[serde(default)]
     default_branch: String,
     #[serde(default)]
-    topics: Vec<String>,
-    #[serde(default)]
     #[serde(alias = "permission")]
     permissions: Option<ApiPermissions>,
 }
@@ -89,7 +75,6 @@ fn repository_from_api(repository: ApiRepository) -> PublishRepository {
         full_name: repository.full_name,
         private: repository.private,
         default_branch: repository.default_branch,
-        topics: repository.topics,
         push: repository
             .permissions
             .map(|permissions| permissions.push)
@@ -163,14 +148,7 @@ pub async fn list_publish_repositories(
         remember_installation_id(&service, &state, installation_ids[0]);
     }
     let installation_count = installation_ids.len();
-    // 已经是地图源的仓库排前面：作者多半是回来改自己已有的地图仓库。
-    result.sort_by(|left, right| {
-        let left_source = left.topics.iter().any(|topic| topic == "map");
-        let right_source = right.topics.iter().any(|topic| topic == "map");
-        right_source
-            .cmp(&left_source)
-            .then_with(|| left.full_name.cmp(&right.full_name))
-    });
+    result.sort_by(|left, right| left.full_name.cmp(&right.full_name));
     result.dedup_by(|left, right| left.full_name == right.full_name);
     log::info!(
         "发布页仓库列表加载完成：安装={}，可写仓库={}",
@@ -266,77 +244,6 @@ fn remember_installation_id(
     if let Err(error) = service.save(&config) {
         log::warn!("记录安装 id 失败：{error}");
     }
-}
-
-/// 仓库已有的标签里缺了哪些必需标签。GitHub 的标签一律小写，比较时不看大小写。
-fn missing_topics(topics: &[String]) -> Vec<String> {
-    PUBLISH_TOPICS
-        .iter()
-        .filter(|required| {
-            !topics
-                .iter()
-                .any(|topic| topic.eq_ignore_ascii_case(required))
-        })
-        .map(|required| (*required).to_string())
-        .collect()
-}
-
-async fn fetch_repository_topics(
-    client: &reqwest::Client,
-    token: &str,
-    full_name: &str,
-    provider: PublishProvider,
-) -> Result<Vec<String>, String> {
-    let value: serde_json::Value = get_json(
-        client,
-        token,
-        provider,
-        &match provider {
-            PublishProvider::Github => format!("{API_ENDPOINT}/repos/{full_name}/topics"),
-            PublishProvider::Gitcode => format!("{}/repos/{full_name}", provider.api_endpoint()),
-        },
-        "get-topics",
-    )
-    .await?;
-    Ok(value
-        .get(if provider == PublishProvider::Github {
-            "names"
-        } else {
-            "topics"
-        })
-        .and_then(|names| names.as_array())
-        .map(|names| {
-            names
-                .iter()
-                .filter_map(|name| name.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default())
-}
-
-fn topics_report(topics: Vec<String>) -> PublishRepositoryTopics {
-    let missing = missing_topics(&topics);
-    PublishRepositoryTopics {
-        topics,
-        required: publish_topics(),
-        missing,
-    }
-}
-
-/// 只读检查：选中仓库后立刻问一次标签齐不齐，缺了界面顶部提醒作者自己去仓库设置里补。
-#[tauri::command]
-pub async fn publish_repository_topics(
-    state: State<'_, AppState>,
-    provider: PublishProvider,
-    owner: String,
-    repository: String,
-) -> Result<PublishRepositoryTopics, String> {
-    let (owner, repository) = validate_coordinates(&owner, &repository)?;
-    let token = publish_token(&state, provider)?;
-    let client = api_client()?;
-    let full_name = format!("{owner}/{repository}");
-    let topics = fetch_repository_topics(&client, &token, &full_name, provider).await?;
-    Ok(topics_report(topics))
 }
 
 #[cfg(test)]

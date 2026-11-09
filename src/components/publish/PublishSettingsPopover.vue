@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NPopover, NSelect, NSpin, NTag } from 'naive-ui'
+import { NButton, NInput, NPopover, NSelect, NSpin } from 'naive-ui'
 import { SettingsOutline } from '@vicons/ionicons5'
 import { t } from '../../i18n'
 import { api } from '../../services/tauri'
@@ -129,9 +129,6 @@ async function reopenAuthorization() {
                   :class="{ active: repository.full_name === selectedFullName }"
                   :disabled="disabled" @click="chooseRepository(repository.full_name)">
                   <span class="repo-name mono">{{ repository.full_name }}</span>
-                  <n-tag v-if="repository.topics.includes('map')" size="tiny" type="success" :bordered="false">
-                    map
-                  </n-tag>
                 </button>
               </li>
             </ul>

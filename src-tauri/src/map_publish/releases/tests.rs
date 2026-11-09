@@ -3,6 +3,34 @@ use crate::map_note::NOTE_BLOCK_OPEN;
 use crate::models::AssetVersionEntry;
 
 #[test]
+fn gitcode_source_archives_without_ids_do_not_break_release_refresh() {
+    // Shape captured from GitCode's real public Release API: generated source
+    // archives have no id/size; only uploaded attachments have deletion IDs.
+    let remote: ApiRelease = serde_json::from_value(json!({
+        "tag_name": "blni", "name": "blni", "prerelease": false,
+        "created_at": "2026-11-08T14:37:28+08:00",
+        "assets": [
+            {"name": "blni.zip", "type": "source"},
+            {"id": 303782, "name": "blni_v2.1.zip", "type": "attach", "size": 2362693}
+        ]
+    }))
+    .unwrap();
+    let release = release_from_api(remote, PublishProvider::Gitcode);
+    assert_eq!(release.id, "blni");
+    assert_eq!(release.assets.len(), 1);
+    assert_eq!(release.assets[0].id, "303782");
+    assert_eq!(release.assets[0].size, 2362693);
+    // Missing IDs on real attachments must still fail; otherwise cleanup would
+    // act on a fabricated or empty server identifier.
+    assert!(
+        serde_json::from_value::<ApiRelease>(json!({
+            "tag_name": "blni", "assets": [{"name": "broken.zip", "type": "attach"}]
+        }))
+        .is_err()
+    );
+}
+
+#[test]
 fn publishing_rejects_invalid_relation_overrides_before_writing() {
     let mut metadata: MapPublishMetadata = serde_json::from_value(serde_json::json!({
         "release_relations": [{ "version": ">=0.9", "relations": [

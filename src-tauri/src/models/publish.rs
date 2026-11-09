@@ -123,7 +123,6 @@ pub struct PublishRepository {
     pub full_name: String,
     pub private: bool,
     pub default_branch: String,
-    pub topics: Vec<String>,
     /// 当前令牌对这个仓库有没有 push 权限（只读仓库不允许发布）。
     pub push: bool,
 }
@@ -169,14 +168,6 @@ pub struct PublishZipInspection {
     pub set_count: usize,
     /// `requires.txt` 声明的最低 runtime 版本（GUID → 版本区间）。
     pub requires: BTreeMap<String, String>,
-}
-
-/// 仓库标签检查结果：`required` 是发布页要求的三件套，`missing` 为空表示齐全。
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct PublishRepositoryTopics {
-    pub topics: Vec<String>,
-    pub required: Vec<String>,
-    pub missing: Vec<String>,
 }
 
 /// 上传页看到的「一版地图」，就是仓库里的一个 Release。

@@ -52,7 +52,6 @@ import type {
   PublishSaveRequest,
   PublishUploadRequest,
   PublishUploadProgress,
-  PublishRepositoryTopics,
   PublishZipInspection,
   StagedMapSource,
 } from '../types'
@@ -468,9 +467,7 @@ export const api = {
    */
   stagePublishZip: (path: string, fileName: string) =>
     invoke<string>('stage_publish_zip', { path, fileName }),
-  /** 只读检查仓库标签：缺 map 之类时界面顶部提示作者去仓库设置里加。 */
-  publishRepositoryTopics: (owner: string, repository: string, provider: PublishProvider) =>
-    invoke<PublishRepositoryTopics>('publish_repository_topics', { owner, repository, provider }),
+
 }
 
 export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

@@ -1,6 +1,6 @@
 import type { DomainMessages } from '../types.ts'
 
-/** 发布入口、仓库选择、地图集列表与 topics 指引。同一 key 的五语保持集中。 */
+/** 发布入口、仓库选择、地图集列表与仓库指引。同一 key 的五语保持集中。 */
 export const mapPublishRepository: DomainMessages = {
   mapSetColumn: {
     'zh-CN': '地图集',
@@ -80,11 +80,11 @@ export const mapPublishRepository: DomainMessages = {
     ja: 'リポジトリ',
   },
   repositoryHint: {
-    'zh-CN': '只列出你有推送权限的仓库；带 map 标签的排在前面。',
-    'zh-TW': '只列出你有推送權限的倉庫；帶 map 標籤的排在前面。',
-    en: 'Only repositories you can push to are listed; ones tagged map come first.',
-    ko: '푸시 권한이 있는 저장소만 표시되며 map 태그가 있는 저장소가 먼저 나옵니다.',
-    ja: 'プッシュ権限のあるリポジトリのみ表示されます。map タグ付きが先頭に並びます。',
+    'zh-CN': '列出可用仓库，按仓库名称排序；发布权限由平台校验。',
+    'zh-TW': '列出可用倉庫，按倉庫名稱排序；發布權限由平台驗證。',
+    en: 'Available repositories are sorted by name; the platform checks publishing permissions.',
+    ko: '사용 가능한 저장소를 이름순으로 표시합니다. 게시 권한은 플랫폼에서 확인합니다.',
+    ja: '利用可能なリポジトリを名前順に表示します。公開権限はプラットフォームが確認します。',
   },
   repositoryEmpty: {
     'zh-CN': "没有可用仓库，请先在 GitHub 创建并授权。",
@@ -94,11 +94,11 @@ export const mapPublishRepository: DomainMessages = {
     ja: "利用できるリポジトリがありません。GitHub で作成して許可してください。",
   },
   manualRepositoryHint: {
-    'zh-CN': "请自行在 GitHub 创建公开仓库并添加 README，再授权给 App；添加 overcooked-2、bepinex、map 三个 topic。管理器不创建仓库。",
-    'zh-TW': "請自行在 GitHub 建立公開倉庫並加入 README，再授權給 App；加入 overcooked-2、bepinex、map 三個 topic。管理器不建立倉庫。",
-    en: "Create a public repository with a README on GitHub, authorize it for the app, and add the overcooked-2, bepinex and map topics. The manager does not create repositories.",
-    ko: "GitHub에서 README가 있는 공개 저장소를 직접 만들고 앱에 권한을 부여한 뒤 overcooked-2, bepinex, map 토픽을 추가하세요. 관리자는 저장소를 생성하지 않습니다.",
-    ja: "GitHub で README 付きの公開リポジトリを作成し、App に許可して overcooked-2・bepinex・map のトピックを追加してください。マネージャーはリポジトリを作成しません。",
+    'zh-CN': "请自行在 GitHub 创建公开仓库并添加 README，再授权给 App。管理器不创建仓库。",
+    'zh-TW': "請自行在 GitHub 建立公開倉庫並加入 README，再授權給 App。管理器不建立倉庫。",
+    en: "Create a public repository with a README on GitHub, authorize it for the app. The manager does not create repositories.",
+    ko: "GitHub에서 README가 있는 공개 저장소를 직접 만들고 앱에 권한을 부여하세요. 관리자는 저장소를 생성하지 않습니다.",
+    ja: "GitHub で README 付きの公開リポジトリを作成し、App に許可してください。マネージャーはリポジトリを作成しません。",
   },
   selectRepository: {
     'zh-CN': '选择仓库',
@@ -159,32 +159,11 @@ export const mapPublishRepository: DomainMessages = {
     ko: '최신 버전',
     ja: '最新バージョン',
   },
-  topicsMissingTitle: {
-    'zh-CN': '仓库缺少地图源标签',
-    'zh-TW': '倉庫缺少地圖源標籤',
-    en: 'ModRepository is missing map topics',
-    ko: '저장소에 지도 태그가 없습니다',
-    ja: 'リポジトリにマップタグがありません',
-  },
-  topicsMissingHint: {
-    'zh-CN': '缺：{topics}。补齐之后地图页才会把这个仓库当地图源。',
-    'zh-TW': '缺：{topics}。補齊之後地圖頁才會把這個倉庫當作地圖源。',
-    en: 'Missing: {topics}. The map page only treats this repository as a map source once they are added.',
-    ko: '누락: {topics}. 추가하면 지도 페이지가 이 저장소를 지도 소스로 인식합니다.',
-    ja: '不足: {topics}。追加するとマップページがこのリポジトリをマップソースとして認識します。',
-  },
   invalidRepository: {
     'zh-CN': '仓库名不合法：{value}',
     'zh-TW': '倉庫名稱不合法：{value}',
     en: 'Invalid repository: {value}',
     ko: '잘못된 저장소입니다: {value}',
     ja: 'リポジトリ名が正しくありません：{value}',
-  },
-  topicsFixHint: {
-    'zh-CN': '在仓库的 Settings → Topics 里补上这些标签即可；管理器不会替你改。',
-    'zh-TW': '在倉庫的 Settings → Topics 裡補上這些標籤即可；管理器不會替你改。',
-    en: "Add these topics under the repository's Settings → Topics; the manager won't change them for you.",
-    ko: '저장소 Settings → Topics에서 직접 추가하세요. 관리자가 대신 바꾸지 않습니다.',
-    ja: 'リポジトリの Settings → Topics で追加してください。マネージャーは変更しません。',
   },
 }

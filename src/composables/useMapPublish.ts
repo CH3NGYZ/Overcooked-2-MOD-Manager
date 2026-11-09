@@ -14,7 +14,6 @@ import type {
   PublishAuthorization,
   PublishRelease,
   PublishRepository,
-  PublishRepositoryTopics,
   PublishZipInspection,
   PublishUploadProgress,
 } from '../types'
@@ -64,11 +63,6 @@ export function useMapPublish() {
   const repositoriesLoading = ref(false)
   const selectedFullName = ref<string | null>(null)
 
-  /** 选中仓库的标签检查结果；`missing` 非空时页面顶部只提醒作者去仓库设置里加。 */
-  const repositoryTopics = ref<PublishRepositoryTopics | null>(null)
-  const topicsLoading = ref(false)
-  const missingTopics = computed(() => repositoryTopics.value?.missing ?? [])
-
   /**
    * 写操作被 GitHub 拒绝的权限 / 限流原因。
    *
@@ -100,8 +94,6 @@ export function useMapPublish() {
   let pollEpoch = 0
   /** 切仓库时丢弃上一份 Release 请求的迟到结果。 */
   let releasesEpoch = 0
-  /** 同上，标签请求也要认这一份。 */
-  let topicsEpoch = 0
   const authenticated = computed(() => auth.value?.authenticated === true)
   const selectedRepository = computed(
     () => repositories.value.find((item) => item.full_name === selectedFullName.value) ?? null,
@@ -284,7 +276,6 @@ export function useMapPublish() {
       selectedFullName.value = list[0]?.full_name ?? null
     }
     await loadReleases()
-    await refreshTopics()
   }
 
   async function loadRepositories() {
@@ -333,7 +324,6 @@ export function useMapPublish() {
       : null
     releases.value = []
     await loadReleases()
-    await refreshTopics()
   }
 
   async function beginAuthorization(forceAuthorize: boolean) {
@@ -386,11 +376,9 @@ export function useMapPublish() {
     signingOut.value = true
     contextEpoch += 1
     releasesEpoch += 1
-    topicsEpoch += 1
     authLoading.value = false
     repositoriesLoading.value = false
     releasesLoading.value = false
-    topicsLoading.value = false
     cancelSignIn()
     try {
       auth.value = await api.signOutMapPublish(provider.value)
@@ -401,8 +389,6 @@ export function useMapPublish() {
       releasesEpoch += 1
       installationCount.value = 0
       allRepositories.value = false
-      repositoryTopics.value = null
-      topicsEpoch += 1
       message.success(t('mapPublish.signedOut'))
     } catch (reason) {
       fail(reason)
@@ -418,30 +404,6 @@ export function useMapPublish() {
     const slash = fullName.indexOf('/')
     if (slash <= 0 || slash === fullName.length - 1) return null
     return { provider: provider.value, owner: fullName.slice(0, slash), repository: fullName.slice(slash + 1) }
-  }
-
-  /**
-   * 选中仓库就只读查一次标签：缺了界面顶部只提醒作者去仓库设置里加。
-   *
-   * 标签只影响社区发现与地图源识别，读失败（网络抖动、Token 权限变窄）不该弹错
-   * 打断作者 —— 静默当成「未知」，下次切仓库或刷新页面再查。
-   */
-  async function refreshTopics() {
-    const target = selectedCoordinates()
-    if (!target) {
-      repositoryTopics.value = null
-      return
-    }
-    const epoch = ++topicsEpoch
-    topicsLoading.value = true
-    try {
-      const result = await api.publishRepositoryTopics(target.owner, target.repository, target.provider)
-      if (epoch === topicsEpoch) repositoryTopics.value = result
-    } catch {
-      if (epoch === topicsEpoch) repositoryTopics.value = null
-    } finally {
-      if (epoch === topicsEpoch) topicsLoading.value = false
-    }
   }
 
   async function saveRelease(
@@ -594,7 +556,6 @@ export function useMapPublish() {
     clearPoll()
     contextEpoch += 1
     releasesEpoch += 1
-    topicsEpoch += 1
     provider.value = next
     authorization.value = null
     authPhase.value = 'idle'
@@ -605,12 +566,10 @@ export function useMapPublish() {
     authLoading.value = false
     repositoriesLoading.value = false
     releasesLoading.value = false
-    topicsLoading.value = false
     signingIn.value = false
     repositories.value = []
     selectedFullName.value = null
     releases.value = []
-    repositoryTopics.value = null
     installationCount.value = 0
     allRepositories.value = false
     await api.cancelPublishAuthorization().catch(() => {})
@@ -637,9 +596,6 @@ export function useMapPublish() {
     repositoriesLoading,
     selectedFullName,
     selectedRepository,
-    repositoryTopics,
-    topicsLoading,
-    missingTopics,
     permissionFailure,
     releases,
     releasesLoading,
@@ -655,7 +611,6 @@ export function useMapPublish() {
     cancelSignIn,
     signOut,
     refreshRepositories,
-    refreshTopics,
     clearPermissionFailure,
     selectRepository,
     saveRelease,

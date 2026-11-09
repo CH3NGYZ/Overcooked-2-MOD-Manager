@@ -45,9 +45,9 @@ pub use operations::{BepInExInstallResult, InstallConflict, OperationResult};
 pub use publish::{
     MapPublishMetadata, PublishAsset, PublishAuthMode, PublishAuthPoll, PublishAuthState,
     PublishAuthorization, PublishCredentialConfig, PublishDeleteReleaseRequest, PublishProvider,
-    PublishRelease, PublishRepository, PublishRepositoryList, PublishRepositoryTopics,
-    PublishSaveRequest, PublishSessionCheck, PublishSessionOutcome, PublishTokens,
-    PublishUploadProgress, PublishUploadRequest, PublishZipInspection,
+    PublishRelease, PublishRepository, PublishRepositoryList, PublishSaveRequest,
+    PublishSessionCheck, PublishSessionOutcome, PublishTokens, PublishUploadProgress,
+    PublishUploadRequest, PublishZipInspection,
 };
 pub use relations::{
     DependencySyncResult, RelationKind, ReleaseRelationOverride, RepositoryRelation,

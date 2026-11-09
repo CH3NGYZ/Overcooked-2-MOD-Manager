@@ -12,16 +12,8 @@
   border-radius: 12px;
   background: var(--oc2-row);
 }
-.map-publish .topics-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-  border-color: var(--oc2-accent);
-}
-.map-publish .topics-text { min-width: 0; }
-.map-publish .topics-title { font-size: 13px; font-weight: 700; }
+.map-publish .permission-text { min-width: 0; }
+.map-publish .permission-title { font-size: 13px; font-weight: 700; }
 .map-publish .hint {
   margin: 8px 0 0;
   font-size: 12px;

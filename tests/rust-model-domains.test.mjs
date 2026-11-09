@@ -16,7 +16,7 @@ const owners = {
   network: ['GitHubProxy', 'GitHubProxyConfig', 'GitHubProxyManifest', 'NetworkConfig', 'ProxyMode'],
   network_plan: ['NetworkPlanSelection', 'PlanOverride', 'PlanReference', 'PlanStep', 'RepositoryKind', 'RouteOverride'],
   operations: ['BepInExInstallResult', 'InstallConflict', 'OperationResult'],
-  publish: ['PublishProvider', 'PublishCredentialConfig', 'MapPublishMetadata', 'PublishAsset', 'PublishAuthMode', 'PublishAuthPoll', 'PublishAuthState', 'PublishAuthorization', 'PublishDeleteReleaseRequest', 'PublishRelease', 'PublishRepository', 'PublishRepositoryList', 'PublishRepositoryTopics', 'PublishSaveRequest', 'PublishSessionCheck', 'PublishSessionOutcome', 'PublishTokens', 'PublishUploadProgress', 'PublishUploadRequest', 'PublishZipInspection'],
+  publish: ['PublishProvider', 'PublishCredentialConfig', 'MapPublishMetadata', 'PublishAsset', 'PublishAuthMode', 'PublishAuthPoll', 'PublishAuthState', 'PublishAuthorization', 'PublishDeleteReleaseRequest', 'PublishRelease', 'PublishRepository', 'PublishRepositoryList', 'PublishSaveRequest', 'PublishSessionCheck', 'PublishSessionOutcome', 'PublishTokens', 'PublishUploadProgress', 'PublishUploadRequest', 'PublishZipInspection'],
   relations: ['DependencySyncResult', 'RelationKind', 'ReleaseRelationOverride', 'RepositoryRelation'],
   releases: ['ReleaseAsset', 'ReleaseInfo', 'UpdateStatus'],
   repositories: ['AssetRule', 'AssetRuleType', 'AvatarRequest', 'Channel', 'CommunityDiscovery', 'CommunityMapRepository', 'ImportPreview', 'Provider', 'RepositorySource', 'RepositorySourceImportResult', 'StagedReleaseCache'],

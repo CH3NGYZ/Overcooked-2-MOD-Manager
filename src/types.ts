@@ -888,7 +888,6 @@ export interface PublishRepository {
   full_name: string
   private: boolean
   default_branch: string
-  topics: string[]
   push: boolean
 }
 
@@ -922,13 +921,6 @@ export interface PublishZipInspection {
   file_count: number
   set_count: number
   requires: Record<string, string>
-}
-
-/** 仓库标签检查结果：`missing` 为空表示三个标签齐全。 */
-export interface PublishRepositoryTopics {
-  topics: string[]
-  required: string[]
-  missing: string[]
 }
 
 /**

@@ -5,7 +5,6 @@ use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_download_candidates;
 use crate::app_update::channels::installer_manifest_sources;
-use crate::app_update::channels::installer_manifest_url;
 use crate::app_update::channels::installer_sources_for_url;
 use crate::app_update::manifest::InstallerRouteResult;
 use crate::app_update::manifest::race_installer_channels;
@@ -207,8 +206,21 @@ async fn resolve_app_update(
     info: &AppUpdateInfo,
     proxies: &GitHubProxyConfig,
 ) -> Result<tauri_plugin_updater::Update, String> {
-    let provider = info.provider.as_ref().ok_or("update.manifestUrlInvalid")?;
-    let channels = installer_sources_for_url(proxies, provider, &installer_manifest_url(provider));
+    // Package hosting can differ from the manifest mirror. Re-read the selected
+    // manifest's provider, then require identical version, URL and signature.
+    let mut channels = installer_manifest_sources(
+        proxies,
+        crate::app_update::channels::InstallerRegion::MainlandChina,
+    );
+    let provider = channels
+        .iter()
+        .find(|channel| {
+            channel.endpoint == info.manifest_url
+                && Some(channel.id.as_str()) == info.source_channel.as_deref()
+        })
+        .map(|channel| channel.provider.clone())
+        .ok_or("update.manifestUrlInvalid")?;
+    channels.retain(|channel| channel.provider == provider);
     race_installer_channels(
         &channels,
         archive::is_download_cancelled,
@@ -332,8 +344,8 @@ pub(crate) enum InstallerDownloadAttempt {
     Failed(String),
 }
 
-/// Finish the single Gitee route before starting GitHub's independent
-/// manifest and signature-validated package races.
+/// Try mainland direct mirrors in order before GitHub's independent manifest
+/// and signature-validated package races; international uses only GitHub.
 pub(crate) async fn discover_and_download_installer_update(
     state: &AppState,
     app: &AppHandle,

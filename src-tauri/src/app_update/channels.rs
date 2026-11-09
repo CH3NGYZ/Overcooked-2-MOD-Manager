@@ -69,10 +69,10 @@ pub(crate) fn installer_sources_for_url(
     url: &str,
 ) -> Vec<InstallerChannel> {
     let mut sources = vec![InstallerChannel {
-        id: if *provider == Provider::Gitee {
-            "gitee-direct"
-        } else {
-            "github-direct"
+        id: match provider {
+            Provider::Gitee => "gitee-direct",
+            Provider::Github => "github-direct",
+            Provider::Gitcode => "gitcode-direct",
         }
         .into(),
         provider: provider.clone(),
@@ -114,6 +114,11 @@ pub(crate) fn installer_manifest_sources(
             proxies,
             &Provider::Gitee,
             &installer_manifest_url(&Provider::Gitee),
+        ));
+        sources.extend(installer_sources_for_url(
+            proxies,
+            &Provider::Gitcode,
+            &installer_manifest_url(&Provider::Gitcode),
         ));
     }
     sources.extend(installer_sources_for_url(

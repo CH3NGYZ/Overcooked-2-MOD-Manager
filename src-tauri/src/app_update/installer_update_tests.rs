@@ -13,6 +13,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+mod manifest_mirror_tests;
+
 fn target() -> crate::app_update::UpdateTarget {
     crate::app_update::UpdateTarget::from_parts("windows", "x86_64", Some("exe")).unwrap()
 }
@@ -47,17 +49,12 @@ fn fixture(provider: Provider) -> serde_json::Value {
 }
 
 fn direct(provider: Provider) -> InstallerChannel {
-    InstallerChannel {
-        id: if provider == Provider::Gitee {
-            "gitee-direct"
-        } else {
-            "github-direct"
-        }
-        .into(),
-        endpoint: installer_manifest_url(&provider),
-        provider,
-        proxy: None,
-    }
+    installer_sources_for_url(
+        &GitHubProxyConfig::default(),
+        &provider,
+        &installer_manifest_url(&provider),
+    )
+    .remove(0)
 }
 
 #[test]
@@ -69,14 +66,16 @@ fn region_order_uses_all_and_only_the_supplied_snapshot() {
         InstallerRegion::International,
     );
     assert_eq!(mainland[0].id, "gitee-direct");
-    assert_eq!(mainland[1].id, "github-direct");
+    assert_eq!(mainland[1].id, "gitcode-direct");
+    assert_eq!(mainland[2].id, "github-direct");
     assert_eq!(international[0].id, "github-direct");
-    assert_eq!(mainland.len(), international.len() + 1);
+    assert_eq!(mainland.len(), international.len() + 2);
     assert!(
         international
             .iter()
             .all(|route| route.provider == Provider::Github)
     );
+    let github_routes = international.as_slice();
     let urls = crate::github_proxies::proxy_urls(
         &defaults.release_proxies,
         &international[0].endpoint,
@@ -84,13 +83,13 @@ fn region_order_uses_all_and_only_the_supplied_snapshot() {
         None,
     );
     assert_eq!(
-        international[1..]
+        github_routes[1..]
             .iter()
             .map(|route| &route.endpoint)
             .collect::<Vec<_>>(),
         urls.iter().collect::<Vec<_>>()
     );
-    for route in &international[1..] {
+    for route in &github_routes[1..] {
         let proxy = route.proxy.as_ref().unwrap();
         assert!(defaults.release_proxies.contains(proxy));
         assert!(route.id.starts_with("github-proxy:"));
@@ -124,7 +123,7 @@ fn region_order_uses_all_and_only_the_supplied_snapshot() {
 
 #[test]
 fn each_released_format_is_selected_from_json_without_api_size_or_digest() {
-    for provider in [Provider::Github, Provider::Gitee] {
+    for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
         let route = direct(provider.clone());
         let document = fixture(provider);
         for (os, arch, kind) in [
@@ -154,14 +153,16 @@ fn each_released_format_is_selected_from_json_without_api_size_or_digest() {
                 installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info);
             assert_eq!(
                 candidates.len(),
-                if route.provider == Provider::Gitee {
+                if route.provider != Provider::Github {
                     1
                 } else {
                     installer_manifest_sources(
                         &crate::github_proxies::bundled_defaults(),
                         InstallerRegion::International,
                     )
-                    .len()
+                    .iter()
+                    .filter(|channel| channel.provider == Provider::Github)
+                    .count()
                 }
             );
             assert_eq!(candidates[0].route, AssetDownloadRoute::Direct);
@@ -237,7 +238,11 @@ fn malformed_missing_platform_unsafe_urls_bad_names_and_empty_signatures_fail() 
     for url in [
         "http://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
         "https://github.com/wrong/repo/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
-        "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
+        "https://gitcode.com/CH3NGYZ/untrusted/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
+        "https://github.com.evil.example/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
+        "https://user@github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
+        "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe?token=x",
+        "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe#fragment",
         "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64_en-US.msi",
         "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_8.0.0_x64-setup.exe",
     ] {

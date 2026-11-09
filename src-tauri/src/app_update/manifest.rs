@@ -46,16 +46,23 @@ pub(crate) fn inspect_installer_manifest(
         .and_then(|mut parts| parts.next_back())
         .unwrap_or_default()
         .to_string();
-    let (host, owner, repo) = match channel.provider {
-        Provider::Github => ("github.com", INSTALLER_GITHUB_OWNER, INSTALLER_GITHUB_REPO),
-        Provider::Gitee => ("gitee.com", INSTALLER_GITEE_OWNER, INSTALLER_GITEE_REPO),
+    // Official mirrors may publish the same manifest with package URLs hosted
+    // by another official mirror. Plan the download using the asset's provider.
+    let reference =
+        crate::providers::release_asset_reference(url).ok_or("update.manifestPlatformMismatch")?;
+    let (host, owner, repositories): (_, _, &[&str]) = match reference.provider {
+        Provider::Github => (
+            "github.com",
+            INSTALLER_GITHUB_OWNER,
+            &[INSTALLER_GITHUB_REPO],
+        ),
+        Provider::Gitee => ("gitee.com", INSTALLER_GITEE_OWNER, &[INSTALLER_GITEE_REPO]),
         Provider::Gitcode => (
             "gitcode.com",
             INSTALLER_GITCODE_OWNER,
-            INSTALLER_GITCODE_REPO,
+            &[INSTALLER_GITCODE_REPO, "Overcooked-2-MOD-Manager"],
         ),
     };
-    let path_prefix = format!("/{owner}/{repo}/releases/download/");
     if url.scheme() != "https"
         || url.host_str() != Some(host)
         || !url.username().is_empty()
@@ -63,7 +70,14 @@ pub(crate) fn inspect_installer_manifest(
         || url.port().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || !url.path().starts_with(&path_prefix)
+        || reference.username != owner
+        || !repositories.contains(&reference.repository.as_str())
+        || reference.asset != name
+        || url.path()
+            != format!(
+                "/{owner}/{}/releases/download/{}/{name}",
+                reference.repository, reference.tag
+            )
         || !target.matches_name(&name, &manifest.version)
         || signature.trim().is_empty()
     {
@@ -84,7 +98,7 @@ pub(crate) fn inspect_installer_manifest(
         installer_signature: signature.clone(),
         installer_name: name,
         installer_type: target.kind.into(),
-        provider: Some(channel.provider.clone()),
+        provider: Some(reference.provider),
         source_channel: Some(channel.id.clone()),
     }))
 }
@@ -185,8 +199,8 @@ where
     if is_cancelled() {
         return Err("download.cancelled".into());
     }
-    // Gitee never enters a parallel pool or uses proxy/range requests.
-    if channels.len() == 1 && channels[0].provider == Provider::Gitee {
+    // Gitee and GitCode use a single direct request.
+    if channels.len() == 1 && matches!(channels[0].provider, Provider::Gitee | Provider::Gitcode) {
         return fetch(
             channels[0].clone(),
             std::sync::Arc::new(archive::DownloadReporter::new("")),
@@ -222,13 +236,14 @@ where
     Fut: std::future::Future<Output = Result<T, String>>,
 {
     let on_status = Mutex::new(on_status);
-    for provider in [Provider::Gitee, Provider::Github] {
+    let providers = [Provider::Gitee, Provider::Gitcode, Provider::Github];
+    for (index, provider) in providers.iter().enumerate() {
         if is_cancelled() {
             return Err("download.cancelled".into());
         }
         let group = channels
             .iter()
-            .filter(|channel| channel.provider == provider)
+            .filter(|channel| &channel.provider == provider)
             .cloned()
             .collect::<Vec<_>>();
         if group.is_empty() {
@@ -304,9 +319,10 @@ where
         }
         match result {
             Ok(result) => {
-                for skipped in channels.iter().filter(|channel| {
-                    provider == Provider::Gitee && channel.provider == Provider::Github
-                }) {
+                for skipped in channels
+                    .iter()
+                    .filter(|channel| providers[index + 1..].contains(&channel.provider))
+                {
                     on_status.lock().unwrap()(installer_channel_status(skipped, "skipped", None));
                 }
                 return Ok(result);

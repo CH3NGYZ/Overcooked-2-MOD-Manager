@@ -30,7 +30,7 @@ defineExpose({ open, close: () => { show.value = false } })
   </AppModal>
 </template>
 <style scoped>
-.recipe-detail {display:grid;gap:20px;overflow-wrap:anywhere;}
+.recipe-detail {container-type:inline-size;display:grid;gap:20px;overflow-wrap:anywhere;}
 .finished-icon {width:72px;height:72px;object-fit:contain;justify-self:center;}
 dl {display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 16px;margin:0;}
 dt {color:var(--oc2-text-3);}dd {margin:0;white-space:pre-wrap;}

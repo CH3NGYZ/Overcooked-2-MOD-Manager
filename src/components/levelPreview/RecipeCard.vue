@@ -14,7 +14,7 @@ defineEmits<{ select: [] }>()
   </button>
 </template>
 <style scoped>
-.recipe-card {position:relative;display:flex;align-items:flex-start;justify-content:center;padding:28px 8px 12px;border:1px solid color-mix(in srgb,var(--oc2-text-3) 65%,transparent);border-radius:10px;min-width:0;background:transparent;color:inherit;cursor:pointer;font:inherit;}
+.recipe-card {container-type:inline-size;position:relative;display:flex;align-items:flex-start;justify-content:center;padding:28px 8px 12px;border:1px solid color-mix(in srgb,var(--oc2-text-3) 65%,transparent);border-radius:10px;min-width:0;background:transparent;color:inherit;cursor:pointer;font:inherit;}
 .recipe-score {position:absolute;top:7px;left:10px;font-size:13px;font-weight:600;color:var(--oc2-text-2);font-variant-numeric:tabular-nums;}
 .recipe-card:hover {background:var(--oc2-sunken);border-color:var(--oc2-text-3);}
 .recipe-card:focus-visible {outline:2px solid var(--oc2-text-2);outline-offset:2px;}

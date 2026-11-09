@@ -19,7 +19,7 @@ watch(show, value => { if (!value) recipeDetail.value?.close() })
 defineExpose({open:(set:LevelSetInfo) => p.open(set)})
 </script>
 <template>
-  <AppModal v-model:show="show" :title="title" fill :scrollable="false" max-width="min(1100px, 94vw)" max-height="90%" card-class="level-preview-modal" @after-leave="p.afterLeave">
+  <AppModal v-model:show="show" :title="title" fill :scrollable="false" max-width="90%" max-height="90%" card-class="level-preview-modal" @after-leave="p.afterLeave">
     <div v-if="error" class="preview-status" role="alert">{{ translateBackendMessage(error) }} <n-button @click="target && p.open(target)">{{ t('levelPreview.retry') }}</n-button></div>
     <div v-else class="preview-layout">
       <aside class="preview-sidebar">

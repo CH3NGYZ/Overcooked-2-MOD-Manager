@@ -13,7 +13,7 @@ const owners = {
   plugin_registry: ['read_registered_plugins', 'write_registered_plugins', 'registered_plugin_paths'],
   plugin_assignment: ['assign_plugins'],
   requirements: ['runtime_relation'],
-  operations: ['ensure_operation_allowed', 'set_all_level_sets_enabled', 'remove_level_set'],
+  operations: [ 'set_all_level_sets_enabled', 'remove_level_set'],
   flatten: ['flatten_level_sets_with', 'rollback_flatten_group'],
   zip_inspect: ['classify_zip', 'inspect_zip_with_progress'],
   zip_info: ['parse_zip_info_directories'],
@@ -45,4 +45,17 @@ test('map scan, cache, identity, ZIP and transactions each retain one bounded ow
     assert.ok(text.trimEnd().split('\n').length < 1000, `${path} is a replacement monolith`)
     assert.doesNotMatch(text, /\bcrate::commands::/, `${path} must not depend on IPC`)
   }
+})
+
+
+test('map operations no longer probe game state while actual MOD writes retain their gates', () => {
+  for (const path of ['../commands/levels.rs', '../commands/map_install.rs', '../level_sets.rs']) {
+    assert.doesNotMatch(readText(resolve(root, path)), /ensure_operation_allowed|LevelSetOperation|ensure_game_stopped|is_game_running/)
+  }
+  const operations = readText(resolve(root, 'operations.rs'))
+  assert.doesNotMatch(operations, /ALLOW_LEVEL_SET|levelSet\.gameRunning|allowed_while_running/)
+  for (const path of ['operations.rs', 'install.rs', 'bepinex_layer.rs']) {
+    assert.match(readText(resolve(root, path)), /crate::game::ensure_game_stopped\(game_root\)/)
+  }
+  assert.match(readText(resolve(root, '../commands/mod_repository_install.rs')), /game::is_game_running/)
 })

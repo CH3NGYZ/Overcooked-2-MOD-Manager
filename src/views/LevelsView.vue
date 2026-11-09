@@ -634,13 +634,7 @@ function pluginTitle(plugin: LevelSetPlugin) {
   return plugin.name?.trim() || plugin.file_name.replace(/\.dll(\.disabled)?$/i, '')
 }
 
-/**
- * 切换开关。
- *
- * 后端在游戏运行时会返回 `levelSet.gameRunning` —— 移动 `levels/` 里的目录
- * 可能与 DIYLevel 正在做的枚举冲突。前端不自己判断游戏状态，直接按后端
- * 结果展示，避免两处口径不一致。
- */
+/** 切换地图开关允许游戏运行，由后端负责路径、冲突与回滚。 */
 async function toggle(set: LevelSetInfo, enabled: boolean) {
   if (busy.value[set.dir_name]) return
   busy.value = { ...busy.value, [set.dir_name]: true }

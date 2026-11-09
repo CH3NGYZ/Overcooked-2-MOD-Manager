@@ -28,8 +28,6 @@ pub use info_cache::clear_info_cache;
 pub(crate) use info_cache::read_info_metadata;
 pub use install::install_parsed_sets;
 pub use installed_versions::installed_mapset_version;
-pub use operations::LevelSetOperation;
-pub use operations::ensure_operation_allowed;
 pub use operations::locate_level_set_directory;
 pub use operations::remove_level_set;
 pub use operations::set_all_level_sets_enabled;

@@ -121,8 +121,7 @@ pub async fn get_level_sets(
 
 /// 启用或停用一个关卡集（在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动目录）。
 ///
-/// 会改磁盘，所以要求游戏已停止 —— 与 MOD 开关同一条约束：游戏运行时改
-/// 插件目录里的内容，轻则本次不生效，重则读到半个文件。
+/// 地图启停允许游戏运行；路径校验、操作锁与目录冲突保护仍由既有链路负责。
 #[tauri::command]
 pub fn set_level_set_enabled(
     state: State<'_, AppState>,
@@ -136,11 +135,6 @@ pub fn set_level_set_enabled(
         .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    // 移动目录在游戏运行时不安全（DLL 正在枚举 levels/），按策略拦下
-    crate::level_sets::ensure_operation_allowed(
-        &game_root,
-        crate::level_sets::LevelSetOperation::Toggle,
-    )?;
     crate::level_sets::set_level_set_enabled(&game_root, &dir_name, enabled)?;
     Ok(OperationResult {
         ok: true,
@@ -170,11 +164,6 @@ pub fn set_all_level_sets_enabled(
         .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    // 批量切换同样是移动目录，游戏运行时按同一策略拦下
-    crate::level_sets::ensure_operation_allowed(
-        &game_root,
-        crate::level_sets::LevelSetOperation::Toggle,
-    )?;
     let changed = crate::level_sets::set_all_level_sets_enabled(&game_root, enabled)?;
     if changed.is_empty() {
         return Ok(OperationResult {
@@ -225,9 +214,7 @@ pub fn open_level_set_directory(
 
 /// 删除一个关卡集（默认移入回收站，跟随 `recycle_deleted_mods`）。
 ///
-/// 删除是**移动/移除目录**：DIYLevel 正在 `levels/` 下枚举并加载 `info` 时
-/// 把目录搬走，会让它读到半个文件。所以这里按 `Toggle` 的策略拦下运行中的
-/// 游戏，而不是按「安装」放行。
+/// 纯地图删除允许游戏运行；实际涉及随包 DLL 时，领域实现保留 MOD 门禁。
 #[tauri::command]
 pub async fn delete_level_set(
     state: State<'_, AppState>,
@@ -277,7 +264,7 @@ fn delete_level_set_blocking(
 /// 一键拍平：把 `levels/` 下嵌套了几层的关卡集整理成扫描认得的规范目录。
 ///
 /// `dry_run=true` 只探测候选、不写盘（页头按钮据此显示「有几个目录可以整理」）。
-/// 真正的搬移要整目录 rename，按 `Toggle` 策略拦下运行中的游戏并占操作锁。
+/// 真正搬移占用操作锁，游戏运行时也允许执行。
 #[tauri::command]
 pub async fn flatten_level_sets(
     state: State<'_, AppState>,
@@ -313,10 +300,6 @@ fn flatten_level_sets_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
-    crate::level_sets::ensure_operation_allowed(
-        &game_root,
-        crate::level_sets::LevelSetOperation::Toggle,
-    )?;
     crate::level_sets::flatten_level_sets(&game_root, &recycle_root, &manifests_dir, false)
 }
 

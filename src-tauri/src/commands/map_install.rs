@@ -116,15 +116,6 @@ pub async fn import_level_sets(
     tauri::async_runtime::spawn_blocking(move || {
         log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
         let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
-        /*
-         * 安装是新增内容，游戏运行时也允许 —— 写的是本次启动还没扫描过的新目录。
-         * 用策略而不是直接 `ensure_game_stopped`：开关仍然需要停止游戏，
-         * 两者的差异集中在一处声明。
-         */
-        crate::level_sets::ensure_operation_allowed(
-            &game_root,
-            crate::level_sets::LevelSetOperation::Install,
-        )?;
         let zip = PathBuf::from(&zip_path);
         let info_app = app.clone();
         let sets = crate::level_sets::inspect_zip_with_progress(

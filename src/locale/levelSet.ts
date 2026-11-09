@@ -59,13 +59,6 @@ export const levelSet: DomainMessages = {
     ko: '선택한 레벨 세트가 없습니다',
     ja: 'レベルセットが選択されていません',
   },
-  gameRunning: {
-    'zh-CN': '游戏正在运行，暂时无法启用或停用地图，请先关闭游戏',
-    'zh-TW': '遊戲正在執行，暫時無法啟用或停用地圖，請先關閉遊戲',
-    en: 'The game is running, so maps cannot be enabled or disabled right now. Close the game first.',
-    ko: '게임이 실행 중이라 지도를 활성화/비활성화할 수 없습니다. 먼저 게임을 종료하세요.',
-    ja: 'ゲームが実行中のため、マップの有効化・無効化はできません。先にゲームを終了してください。',
-  },
   zipWithoutInfo: {
     'zh-CN': '这个 ZIP 里没有找到任何关卡集（缺少 info 文件）',
     'zh-TW': '這個 ZIP 裡沒有找到任何關卡集（缺少 info 檔案）',

@@ -1,4 +1,4 @@
-//! 关卡集启停、定位与回收；运行策略集中在此。
+//! 关卡集启停、定位与回收；地图操作不按游戏运行状态门控。
 
 use super::info_cache::read_info_metadata;
 use super::paths::collect_files;
@@ -17,59 +17,6 @@ use crate::framework::DIYLEVEL_DIR;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-
-/// 游戏运行时是否允许「移动目录」这类关卡集操作。
-///
-/// ## 为什么安装可以、开关不行
-///
-/// 安装是**新增**：写一个游戏本次启动还没扫描过的新目录，即使游戏正在运行，
-/// DIYLevel 也只会把它当成「下次启动才出现的地图」，不会读到半个文件。
-///
-/// 开关是**移动**：DLL 正在 `levels/` 下按目录枚举并加载 `info`，此时把目录
-/// 挪到 `BepInEx/cache/modmanager_disabled_maps/` 会让它正在读的路径消失。该历史策略仍用于开关/拍平；
-/// 更新所需的删除已按最新产品要求放行纯地图，在删除实现内单独检查 DLL。
-///
-/// ## 为什么做成常量而不是直接禁死
-///
-/// 这条约束**尚未实机验证**。用户会手动测试「游戏运行时把目录移到
-/// `BepInEx/cache/modmanager_disabled_maps/`」是否安全，确认没问题后把这个常量改成 `true` 即可放开。
-///
-/// 判定集中在一处，就不会出现「安装放开了、开关忘了拦」这种半放开状态。
-pub(crate) const ALLOW_LEVEL_SET_TOGGLE_WHILE_RUNNING: bool = false;
-
-/// 关卡集写操作的类型，决定游戏运行时是否放行。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LevelSetOperation {
-    /// 安装 / 更新：新增内容，运行时允许。
-    Install,
-    /// 启用 / 停用：移动目录，运行时不安全（待实机验证）。
-    Toggle,
-}
-
-impl LevelSetOperation {
-    /// 该操作在游戏运行时是否允许。
-    pub(crate) fn allowed_while_running(self) -> bool {
-        match self {
-            Self::Install => true,
-            Self::Toggle => ALLOW_LEVEL_SET_TOGGLE_WHILE_RUNNING,
-        }
-    }
-}
-
-/// 按操作类型决定是否需要「游戏已停止」。
-///
-/// 开关/拍平等整体目录移动复用此历史策略；导入/删除按实际 MOD 写入范围
-/// 在领域实现中检查，避免把纯地图更新也当成 MOD 修改。
-pub fn ensure_operation_allowed(
-    game_root: &Path,
-    operation: LevelSetOperation,
-) -> Result<(), String> {
-    if !operation.allowed_while_running() && crate::game::is_game_running(game_root) {
-        log::warn!("关卡集操作被拒绝：游戏仍在运行，操作={operation:?}");
-        return Err("levelSet.gameRunning".into());
-    }
-    Ok(())
-}
 
 /// 启用或停用一个关卡集：在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动整个目录。
 ///

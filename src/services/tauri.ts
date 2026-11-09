@@ -229,8 +229,7 @@ export const api = {
   /**
    * 启用或停用一个关卡集（移动目录）。
    *
-   * 游戏运行时会失败并返回 `levelSet.gameRunning` —— 移动 `levels/` 里的
-   * 目录可能与 DLL 正在做的枚举冲突，这条约束在实机验证前不放行。
+   * 地图启停允许游戏运行，后端继续校验路径和目录冲突。
    */
   setLevelSetEnabled: (dirName: string, enabled: boolean) =>
     invoke<OperationResult>('set_level_set_enabled', { dirName, enabled }),
@@ -238,7 +237,7 @@ export const api = {
    * 批量切换**全部**关卡集（地图管理页的「全部启用 / 全部禁用」）。
    *
    * 后端在一次操作锁里扫描磁盘真实状态、只切换需要变的目录；中途失败会
-   * 按逆序回滚，不会留下半开半关的列表。游戏运行时会整体拒绝。
+   * 按逆序回滚，不会留下半开半关的列表。游戏运行时也可执行。
    */
   setAllLevelSetsEnabled: (enabled: boolean) =>
     invoke<OperationResult>('set_all_level_sets_enabled', { enabled }),
@@ -291,7 +290,7 @@ export const api = {
    * 删除一个关卡集。
    *
    * 与 MOD 删除同一套策略：默认移入回收站（跟随 `recycle_deleted_mods`），
-   * 关闭回收时永久删除。移动目录在游戏运行时会被后端拒绝（`levelSet.gameRunning`）。
+   * 关闭回收时永久删除。纯地图删除允许游戏运行；涉及随包 DLL 时仍走 MOD 门禁。
    */
   deleteLevelSet: (dirName: string, enabled: boolean) =>
     invoke<OperationResult>('delete_level_set', { dirName, enabled }),

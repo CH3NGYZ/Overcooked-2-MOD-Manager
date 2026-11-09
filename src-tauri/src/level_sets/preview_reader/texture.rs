@@ -1,6 +1,28 @@
 use super::{Context, Map, Ref, V, failure, int_of};
 use base64::Engine;
 use image::{DynamicImage, ImageFormat, RgbaImage, imageops};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
+struct SharedTextures {
+    values: HashMap<String, Arc<RgbaImage>>,
+    bytes: usize,
+}
+fn shared_textures() -> &'static Mutex<SharedTextures> {
+    static CACHE: OnceLock<Mutex<SharedTextures>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Mutex::new(SharedTextures {
+            values: HashMap::new(),
+            bytes: 0,
+        })
+    })
+}
+pub(in crate::level_sets) fn clear_shared_textures() {
+    if let Ok(mut cache) = shared_textures().lock() {
+        cache.values.clear();
+        cache.bytes = 0;
+    }
+}
 fn number(m: &Map, k: &str) -> u32 {
     match m.get(k) {
         Some(V::Float(v)) if v.is_finite() && *v >= 0.0 => *v as u32,
@@ -9,6 +31,19 @@ fn number(m: &Map, k: &str) -> u32 {
     }
 }
 impl Context {
+    fn shared_texture_key(&self, r: Ref) -> Option<String> {
+        let document = self.documents.get(r.file)?;
+        let (path, node) = document.backing.as_ref()?;
+        let metadata = path.metadata().ok()?;
+        Some(format!(
+            "{}|{}|{}:{:?}|{}",
+            path.display(),
+            node,
+            metadata.len(),
+            metadata.modified().ok(),
+            r.id
+        ))
+    }
     pub(super) fn image(&mut self, r: Ref, max_side: u32) -> Result<(String, u32, u32), String> {
         if let Some(image) = self.images.get(&(r.file, r.id, max_side)) {
             return Ok(image.clone());
@@ -43,7 +78,14 @@ impl Context {
             .textures
             .get(&(texture_ref.file, texture_ref.id))
             .cloned();
-        let decoded = if let Some(image) = cached {
+        let shared_key = self.shared_texture_key(texture_ref);
+        let shared = shared_key.as_ref().and_then(|key| {
+            shared_textures()
+                .lock()
+                .ok()
+                .and_then(|cache| cache.values.get(key).cloned())
+        });
+        let decoded = if let Some(image) = cached.or(shared) {
             image
         } else {
             let inline = texture
@@ -99,6 +141,26 @@ impl Context {
             if used + decoded.as_raw().len() <= 64 * 1024 * 1024 {
                 self.textures
                     .insert((texture_ref.file, texture_ref.id), decoded.clone());
+            }
+            if let Some(key) = shared_key {
+                if let Ok(mut cache) = shared_textures().lock() {
+                    while cache.bytes + decoded.as_raw().len() > 64 * 1024 * 1024 {
+                        let Some((old_key, old)) = cache
+                            .values
+                            .iter()
+                            .next()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                        else {
+                            break;
+                        };
+                        cache.values.remove(&old_key);
+                        cache.bytes = cache.bytes.saturating_sub(old.as_raw().len());
+                    }
+                    if let Some(old) = cache.values.insert(key, decoded.clone()) {
+                        cache.bytes = cache.bytes.saturating_sub(old.as_raw().len());
+                    }
+                    cache.bytes += decoded.as_raw().len();
+                }
             }
             decoded
         };

@@ -25,7 +25,7 @@ fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
         content_sha256(info),
         root.display().to_string(),
         local.display().to_string(),
-        "preview-v4".into(),
+        "preview-v6".into(),
     ];
     for dir in [
         local.to_path_buf(),
@@ -100,7 +100,27 @@ pub(crate) fn catalog(root: &Path, dir: &str, enabled: bool) -> Result<Vec<Level
 fn disk_dir() -> Option<PathBuf> {
     crate::user_paths::root()
         .ok()
-        .map(|p| p.join("cache/level-preview-v3"))
+        .map(|p| p.join("cache/level-preview-v4"))
+}
+fn read_disk_json<T: serde::de::DeserializeOwned>(path: &Path, limit: u64) -> Option<T> {
+    let meta = path.metadata().ok()?;
+    if meta.len() > limit {
+        return None;
+    }
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+fn write_disk_json<T: serde::Serialize>(path: &Path, value: &T, limit: usize) {
+    let Ok(bytes) = serde_json::to_vec(value) else {
+        return;
+    };
+    if bytes.len() > limit || std::fs::create_dir_all(path.parent().unwrap()).is_err() {
+        return;
+    }
+    let temp = path.with_extension("tmp");
+    if std::fs::write(&temp, bytes).is_ok() {
+        let _ = std::fs::rename(&temp, path);
+    }
+    let _ = std::fs::remove_file(temp);
 }
 pub(crate) fn detail(
     root: &Path,
@@ -117,37 +137,37 @@ pub(crate) fn detail(
             return Err("assetBundle.previewUnavailable".into());
         }
         if part == "recipes" {
+            let path = disk_dir().map(|p| p.join(format!("{key}-{index}-recipes.json")));
+            if let Some(path) = &path {
+                if let Some(recipes) = read_disk_json(path, 32 * 1024 * 1024) {
+                    return Ok(Detail {
+                        picture: None,
+                        recipes: Some(recipes),
+                    });
+                }
+            }
+            let recipes = c.recipes(index)?;
+            if let Some(path) = path {
+                write_disk_json(&path, &recipes, 32 * 1024 * 1024);
+            }
             return Ok(Detail {
                 picture: None,
-                recipes: Some(c.recipes(index)?),
+                recipes: Some(recipes),
             });
         }
         let path = disk_dir().map(|p| p.join(format!("{key}-{index}.json")));
         if let Some(path) = &path {
-            if let Ok(meta) = path.metadata() {
-                if meta.len() <= 12 * 1024 * 1024 {
-                    if let Ok(bytes) = std::fs::read(path) {
-                        if let Ok(picture) = serde_json::from_slice::<Picture>(&bytes) {
-                            return Ok(Detail {
-                                picture: Some(picture),
-                                recipes: None,
-                            });
-                        }
-                    }
-                }
+            if let Some(picture) = read_disk_json(path, 12 * 1024 * 1024) {
+                return Ok(Detail {
+                    picture: Some(picture),
+                    recipes: None,
+                });
             }
         }
         let picture = c.picture(index)?;
         if picture.state != "error" {
             if let Some(path) = path {
-                if let Ok(bytes) = serde_json::to_vec(&picture) {
-                    let _ = std::fs::create_dir_all(path.parent().unwrap());
-                    let temp = path.with_extension("tmp");
-                    if std::fs::write(&temp, bytes).is_ok() {
-                        let _ = std::fs::rename(&temp, &path);
-                    }
-                    let _ = std::fs::remove_file(&temp);
-                }
+                write_disk_json(&path, &picture, 12 * 1024 * 1024);
             }
         }
         Ok(Detail {
@@ -158,6 +178,7 @@ pub(crate) fn detail(
 }
 pub(crate) fn clear() -> Result<usize, String> {
     *cache().lock().unwrap_or_else(|p| p.into_inner()) = None;
+    super::preview_reader::clear_shared_textures();
     let mut count = 0;
     if let Some(dir) = disk_dir() {
         if let Ok(entries) = std::fs::read_dir(dir) {

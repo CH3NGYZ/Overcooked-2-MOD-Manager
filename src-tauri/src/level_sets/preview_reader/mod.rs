@@ -8,6 +8,7 @@ mod menu;
 mod recipes;
 pub(crate) mod sources;
 mod texture;
+pub(super) use texture::clear_shared_textures;
 
 type Map = BTreeMap<String, V>;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

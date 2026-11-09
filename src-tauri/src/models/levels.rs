@@ -86,6 +86,9 @@ pub struct LevelSetInfo {
     /// 关卡数量（按 info 里 `levelInfos` 的声明统计，不是对象表）。
     #[serde(default)]
     pub level_count: usize,
+    /// info 中每关的名称与参数，扫描时复用已有解析与缓存。
+    #[serde(default)]
+    pub levels: Vec<crate::asset_bundle::LevelMetadata>,
     /// 解析失败的原因（tag）；成功时为 `None`。
     ///
     /// **解析失败不影响开关**：界面照常显示目录名，用户仍可把它移出去。

@@ -178,3 +178,30 @@ fn parallel_scan_keeps_order_and_reports_progress() {
 
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn scan_view_preserves_bilingual_level_names_and_defaults_old_payloads() {
+    let levels = vec![crate::asset_bundle::LevelMetadata {
+        name: "BigBurger".into(),
+        name_zh: Some("巨无霸汉堡".into()),
+        ..Default::default()
+    }];
+    let info = crate::level_sets::view::level_set_to_info(crate::level_sets::LevelSetOnDisk {
+        dir_name: "test".into(),
+        enabled: true,
+        path: PathBuf::from("test"),
+        metadata: Some(LevelSetMetadata {
+            levels: levels.clone(),
+            ..Default::default()
+        }),
+        error: None,
+        required_runtime: None,
+        plugins: vec![],
+    });
+    assert_eq!(info.levels, levels);
+    assert_eq!(info.level_count, 1);
+    let mut old = serde_json::to_value(&info).unwrap();
+    old.as_object_mut().unwrap().remove("levels");
+    let restored: crate::models::LevelSetInfo = serde_json::from_value(old).unwrap();
+    assert!(restored.levels.is_empty());
+}

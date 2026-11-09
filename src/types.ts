@@ -315,6 +315,8 @@ export interface LevelSetInfo {
   base_uid?: string | null
   /** 关卡数（按 info 里 levelInfos 的声明统计）。 */
   level_count: number
+  /** info 内逐关元数据；兼容旧扫描结果。 */
+  levels?: { name: string; name_zh?: string | null; scene_name: string; min_order_count: number; max_order_count: number }[]
   /** 解析失败的原因（tag）；成功时无此字段。 */
   error?: string | null
   /**

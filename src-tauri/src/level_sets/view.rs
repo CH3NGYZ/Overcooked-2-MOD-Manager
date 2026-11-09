@@ -40,6 +40,7 @@ pub(crate) fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> Level
             .unwrap_or_default(),
         base_uid: metadata.as_ref().and_then(|meta| meta.base_uid.clone()),
         level_count: metadata.as_ref().map(|meta| meta.levels.len()).unwrap_or(0),
+        levels: metadata.map(|meta| meta.levels).unwrap_or_default(),
         error: set.error,
         // 绑定、依赖快照与资产版本都由 `bind_map_relation_snapshot` 补：它需要
         // 配置与快照，这里只负责把磁盘扫描结果转成模型

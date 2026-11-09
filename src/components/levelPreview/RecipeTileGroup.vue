@@ -6,17 +6,6 @@ const props=defineProps<{tiles:LevelPreviewMenuTile[]; index:number; ancestors?:
 const tile=computed(()=>props.tiles[props.index])
 const path=computed(()=>[...(props.ancestors ?? []),props.index])
 const children=computed(()=>tile.value?.children.filter(i=>Number.isInteger(i) && i>=0 && i<props.tiles.length && !path.value.includes(i) && path.value.length<8) ?? [])
-const childGroups=computed(()=>{
-  const groups:{key:string;children:number[]}[]=[]
-  for(const child of children.value){
-    const modifiers=props.tiles[child]?.modifiers ?? []
-    const key=modifiers.length && modifiers.every(icon=>icon.name) ? JSON.stringify(modifiers.map(icon=>[icon.name,icon.data_url])) : ''
-    const previous=groups.at(-1)
-    if(key && previous?.key===key) previous.children.push(child)
-    else groups.push({key,children:[child]})
-  }
-  return groups
-})
 </script>
 <template>
   <div v-if="tile" class="recipe-branch">
@@ -28,12 +17,7 @@ const childGroups=computed(()=>{
         </span>
       </div>
       <div v-if="index!==0 && children.length" class="ingredient-groups">
-        <template v-for="(group,i) in childGroups" :key="i">
-          <div v-if="group.key && group.children.length>1" class="step-group">
-            <RecipeTileGroup v-for="child in group.children" :key="child" :tiles="tiles" :index="child" :ancestors="path" />
-          </div>
-          <RecipeTileGroup v-else :tiles="tiles" :index="group.children[0]!" :ancestors="path" />
-        </template>
+        <RecipeTileGroup v-for="child in children" :key="child" :tiles="tiles" :index="child" :ancestors="path" />
       </div>
       </div>
       <div v-if="tile.modifiers.length" class="menu-steps" :aria-label="t('levelPreview.steps')">
@@ -43,12 +27,7 @@ const childGroups=computed(()=>{
       </div>
     </div>
     <div v-if="index===0 && children.length" class="menu-children">
-      <template v-for="(group,i) in childGroups" :key="`${group.key}-${i}`">
-        <div v-if="group.key && group.children.length>1" class="step-group" :aria-label="t('levelPreview.steps')">
-          <RecipeTileGroup v-for="child in group.children" :key="child" :tiles="tiles" :index="child" :ancestors="path" />
-        </div>
-        <RecipeTileGroup v-else :tiles="tiles" :index="group.children[0]" :ancestors="path" />
-      </template>
+      <RecipeTileGroup v-for="child in children" :key="child" :tiles="tiles" :index="child" :ancestors="path" />
     </div>
   </div>
 </template>
@@ -62,6 +41,5 @@ const childGroups=computed(()=>{
 .menu-icon img{width:100%;height:100%;object-fit:contain;}
 .finished-tile{background:transparent;border:0;}.finished-tile .menu-icon{width:72px;height:72px;}
 .menu-children{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(2px,1cqw,20px);max-width:100%;padding-top:8px;border-top:1px solid var(--oc2-row-line);}
-.step-group{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:clamp(2px,1cqw,20px);max-width:100%;padding:5px;border:1px solid color-mix(in srgb,var(--oc2-text-3) 65%,transparent);border-radius:8px;background:color-mix(in srgb,var(--oc2-sunken) 55%,transparent);}
 .missing-icon{color:var(--oc2-text-3);border:1px dashed var(--oc2-row-line);border-radius:50%;width:26px;height:26px;text-align:center;line-height:26px;}
 </style>

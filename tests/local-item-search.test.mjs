@@ -143,3 +143,16 @@ test('页面传入的额外文字（卡片显示标题、绑定地图名）参�
   assert.ok(hits('线上显示名', item, '线上显示名'))
   assert.ok(mapHits('清雨青雪的地图', levelSet(), '清雨青雪的地图', 'v3.4.1-fix'))
 })
+
+
+test('地图：info 内逐关中英文名称可搜索，兼容旧扫描结果及空名称', () => {
+  const item = levelSet({ levels: [
+    { name: 'BigBurger', name_zh: '宇宙超级无敌巨无霸汉堡登场', scene_name: 'internal_scene' },
+    { name: 'Soup', name_zh: null },
+  ] })
+  assert.ok(mapHits('bigburger', item))
+  assert.ok(mapHits('巨无霸汉堡', item))
+  assert.ok(mapHits('SOUP', item))
+  assert.equal(mapHits('internal_scene', item), false)
+  assert.equal(mapHits('BigBurger', levelSet()), false)
+})

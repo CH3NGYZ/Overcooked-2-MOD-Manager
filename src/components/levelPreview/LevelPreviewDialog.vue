@@ -42,7 +42,6 @@ defineExpose({open:(set:LevelSetInfo) => p.open(set)})
           <p v-else-if="recipeError" role="alert">{{ translateBackendMessage(recipeError) }}</p>
           <div v-else-if="recipes?.length" class="recipe-grid"><RecipeCard v-for="(recipe,index) in recipes" :key="index" :recipe="recipe" :index="index" @select="recipeDetail?.open(recipe,index)" /></div>
           <p v-else>{{ t('levelPreview.empty') }}</p>
-          <details class="bundle-details"><summary>{{ t('levelPreview.dependencies') }} · {{ current.dependencies.length }}</summary><ul v-if="current.dependencies.length"><li v-for="bundle in current.dependencies" :key="bundle">{{ bundle }}</li></ul><p v-else>{{ t('levelPreview.none') }}</p></details>
         </template>
       </section>
     </div>
@@ -65,7 +64,6 @@ defineExpose({open:(set:LevelSetInfo) => p.open(set)})
 p {margin:6px 0 12px;}
 .recipe-toolbar {display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;}
 .recipe-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;margin-top:12px;}
-.bundle-details {margin-top:20px;padding-top:12px;border-top:1px solid var(--oc2-row-line);overflow-wrap:anywhere;}
 summary {cursor:pointer;} .preview-status {padding:20px;}
 @media (max-width:850px) {.preview-layout{grid-template-columns:180px minmax(0,1fr);gap:12px;}}
 </style>

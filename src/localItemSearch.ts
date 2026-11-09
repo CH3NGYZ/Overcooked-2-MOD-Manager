@@ -68,6 +68,7 @@ export function levelSetSearchText(set: LevelSetInfo): string {
   return join([
     set.name,
     set.name_zh,
+    ...(set.levels ?? []).flatMap(level => [level.name, level.name_zh]),
     set.author,
     set.map_group,
     set.map_group_i18n,

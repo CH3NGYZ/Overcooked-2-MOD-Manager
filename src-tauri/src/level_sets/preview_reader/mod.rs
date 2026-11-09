@@ -25,6 +25,8 @@ pub struct Level {
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuIcon {
+    #[serde(default)]
+    pub source: String,
     pub name: String,
     pub data_url: Option<String>,
 }
@@ -43,6 +45,8 @@ pub struct Recipe {
     pub resolved: bool,
     pub ingredients: Vec<String>,
     pub icon: Option<String>,
+    #[serde(default)]
+    pub icon_source: String,
     pub source: String,
     pub error: Option<String>,
     pub tiles: Vec<MenuTile>,
@@ -467,6 +471,7 @@ impl Context {
                         resolved: false,
                         ingredients: vec![],
                         icon: None,
+                        icon_source: String::new(),
                         source: String::new(),
                         error: Some(failure()),
                         tiles: vec![],

@@ -8,13 +8,24 @@ import RecipeTileGroup from './RecipeTileGroup.vue'
 const show = ref(false)
 const recipe = shallowRef<LevelPreviewRecipe | null>(null)
 const index = ref(0)
+const resourceSources = computed(() => {
+  const entries = new Map<string, Set<string>>()
+  for (const tile of recipe.value?.tiles ?? []) {
+    for (const icon of [...tile.pictures, ...tile.modifiers]) {
+      if (!icon.source || !icon.data_url) continue
+      if (!entries.has(icon.source)) entries.set(icon.source, new Set())
+      if (icon.name) entries.get(icon.source)!.add(icon.name)
+    }
+  }
+  return [...entries].map(([path, names]) => ({ path, names: [...names].join(' · ') }))
+})
 const title = computed(() => recipe.value?.name || `${t('levelPreview.unresolved')} #${index.value + 1}`)
 function open(value: LevelPreviewRecipe, position: number) { recipe.value = value; index.value = position; show.value = true }
 function afterLeave() { if (!show.value) recipe.value = null }
 defineExpose({ open, close: () => { show.value = false } })
 </script>
 <template>
-  <AppModal v-model:show="show" :title="title" max-width="min(560px, 90vw)" card-class="recipe-detail-modal" @after-leave="afterLeave">
+  <AppModal v-model:show="show" :title="title" :style="{ width: '50vw' }" max-width="50vw" max-height="90vh" card-class="recipe-detail-modal" @after-leave="afterLeave">
     <div v-if="recipe" class="recipe-detail">
       <RecipeTileGroup v-if="recipe.tiles?.length" :tiles="recipe.tiles" :index="0" />
       <img v-else-if="recipe.icon" class="finished-icon" :src="recipe.icon" :alt="recipe.name" />
@@ -23,6 +34,8 @@ defineExpose({ open, close: () => { show.value = false } })
         <dt>{{ t('levelPreview.status') }}</dt><dd>{{ t(recipe.active ? 'levelPreview.active' : 'levelPreview.inactive') }}</dd>
         <template v-if="recipe.ingredients.length"><dt>{{ t('levelPreview.ingredients') }}</dt><dd>{{ recipe.ingredients.join(' · ') }}</dd></template>
         <template v-if="recipe.source"><dt>{{ t('levelPreview.source') }}</dt><dd>{{ recipe.source }}</dd></template>
+        <template v-if="recipe.icon_source"><dt>{{ t('levelPreview.mainImageSource') }}</dt><dd>{{ recipe.icon_source }}</dd></template>
+        <template v-if="resourceSources.length"><dt>{{ t('levelPreview.imageSources') }}</dt><dd><ul class="resource-sources"><li v-for="source in resourceSources" :key="source.path"><span>{{ source.path }}</span><small v-if="source.names">{{ source.names }}</small></li></ul></dd></template>
       </dl>
       <p v-if="!recipe.resolved">{{ t('levelPreview.unresolved') }}</p>
       <p v-if="recipe.error" role="alert">{{ translateBackendMessage(recipe.error) }}</p>
@@ -34,4 +47,8 @@ defineExpose({ open, close: () => { show.value = false } })
 .finished-icon {width:72px;height:72px;object-fit:contain;justify-self:center;}
 dl {display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 16px;margin:0;}
 dt {color:var(--oc2-text-3);}dd {margin:0;white-space:pre-wrap;}
+
+.resource-sources {margin:0;padding-left:16px;}
+.resource-sources li + li {margin-top:8px;}
+.resource-sources small {display:block;color:var(--oc2-text-3);}
 </style>

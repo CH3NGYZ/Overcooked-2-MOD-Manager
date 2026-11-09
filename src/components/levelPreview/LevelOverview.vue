@@ -7,6 +7,10 @@ import LevelName from './LevelName.vue'
 import PreviewPicture from './PreviewPicture.vue'
 const props = defineProps<{ level: LevelPreview; name: string; picture: LevelPreviewPicture | null; loading: boolean }>()
 const enlarged = ref(false)
+const enlargedStyle = computed(() => {
+  const ratio = props.picture?.width && props.picture?.height ? props.picture.width / props.picture.height : 524 / 308
+  return { width: `min(524px, 65vw, calc((100vh - 160px) * ${ratio}))`, aspectRatio: String(ratio) }
+})
 const bundlesExpanded = ref(false)
 const bundlesOverflow = ref(false)
 const bundleList = ref<HTMLElement | null>(null)
@@ -58,7 +62,7 @@ onBeforeUnmount(() => observer?.disconnect())
           <td rowspan="4" class="thumbnail-cell">
             <n-popover v-model:show="enlarged" trigger="hover" placement="right" :disabled="!picture?.data_url" :show-arrow="false">
               <template #trigger><button class="thumbnail-trigger" :style="thumbnailStyle" :aria-label="name" @focus="enlarged=true" @blur="enlarged=false" @keydown.esc="enlarged=false"><PreviewPicture :picture="picture" :loading="loading" :alt="name" /></button></template>
-              <div class="enlarged-thumbnail"><PreviewPicture :picture="picture" :alt="name" /></div>
+              <div class="enlarged-thumbnail" :style="enlargedStyle"><PreviewPicture :picture="picture" :alt="name" /></div>
             </n-popover>
           </td>
           <th scope="row">{{ t('levelPreview.nameEnglish') }}</th><td>{{ level.name || '—' }}</td>
@@ -96,7 +100,7 @@ th {width:1%;white-space:nowrap;font-weight:normal;color:var(--oc2-text-3);backg
 .thumbnail-trigger :deep(.preview-picture) {width:100%;height:100%;aspect-ratio:auto !important;}
 .thumbnail-trigger :deep(img) {height:100%;object-fit:contain;}
 .thumbnail-trigger:focus-visible {outline:2px solid var(--oc2-text-2);outline-offset:3px;}
-.enlarged-thumbnail {width:min(524px,65vw,calc((100vh - 160px) * 524 / 308));aspect-ratio:524 / 308;}
+.enlarged-thumbnail {max-width:100%;}
 .enlarged-thumbnail :deep(.preview-picture) {width:100%;height:100%;aspect-ratio:auto;}
 .missing-file {color:var(--oc2-tone-critical-text);}
 </style>

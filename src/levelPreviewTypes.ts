@@ -15,7 +15,7 @@ export interface LevelPreviewPicture {
   height: number
   state: 'ready' | 'missing' | 'error'
 }
-export interface LevelPreviewMenuIcon { name:string; data_url:string|null }
+export interface LevelPreviewMenuIcon { name:string; data_url:string|null; source?:string }
 export interface LevelPreviewMenuTile {
   pictures:LevelPreviewMenuIcon[]
   modifiers:LevelPreviewMenuIcon[]
@@ -29,6 +29,7 @@ export interface LevelPreviewRecipe {
   resolved: boolean
   ingredients: string[]
   icon: string | null
+  icon_source?: string
   source: string
   error: string | null
   tiles: LevelPreviewMenuTile[]

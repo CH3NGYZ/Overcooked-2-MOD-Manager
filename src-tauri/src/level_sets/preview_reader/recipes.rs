@@ -41,6 +41,7 @@ impl Context {
                     resolved: false,
                     ingredients: vec![],
                     icon: None,
+                    icon_source: String::new(),
                     source: String::new(),
                     error: Some(failure()),
                     tiles: vec![],
@@ -68,6 +69,7 @@ impl Context {
             }
         }
         let mut icon = None;
+        let mut icon_source = String::new();
         // Ingredient traversal only needs names; do not decode all ingredient icons.
         if depth <= 1 {
             for key in ["icon", "sprite", "m_Icon", "m_iconSprite"] {
@@ -75,6 +77,7 @@ impl Context {
                     if let Ok(target) = self.resolve(r, v) {
                         icon = self.image(target, 128).ok().map(|x| x.0);
                         if icon.is_some() {
+                            icon_source = self.resource_source(target);
                             break;
                         }
                     }
@@ -86,7 +89,11 @@ impl Context {
                         if let Some(v) = array(tile, "m_mainPictures").first() {
                             icon = self
                                 .resolve(r, v)
-                                .and_then(|target| self.image(target, 128))
+                                .and_then(|target| {
+                                    let image = self.image(target, 128)?;
+                                    icon_source = self.resource_source(target);
+                                    Ok(image)
+                                })
                                 .ok()
                                 .map(|x| x.0);
                         }
@@ -102,6 +109,9 @@ impl Context {
                                 &string_of(&pseudo, "assetPath"),
                             ) {
                                 icon = self.image(asset, 128).ok().map(|x| x.0);
+                                if icon.is_some() {
+                                    icon_source = self.resource_source(asset);
+                                }
                             }
                         }
                     }
@@ -120,6 +130,7 @@ impl Context {
             active: true,
             ingredients,
             icon,
+            icon_source,
             source: self.documents[r.file].source.clone(),
             error: None,
             tiles,

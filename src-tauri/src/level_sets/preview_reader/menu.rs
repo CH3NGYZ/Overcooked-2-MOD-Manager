@@ -31,6 +31,18 @@ impl Context {
         }
         ingredient.ok_or_else(failure)
     }
+    pub(super) fn resource_source(&self, r: Ref) -> String {
+        let doc = &self.documents[r.file];
+        let Some((path, _)) = &doc.backing else {
+            return doc.source.clone();
+        };
+        let root = self
+            .game_root
+            .canonicalize()
+            .unwrap_or_else(|_| self.game_root.clone());
+        crate::display_path::display_path(path.strip_prefix(&root).unwrap_or(path))
+            .replace('\\', "/")
+    }
     fn menu_icon(&mut self, r: Ref) -> MenuIcon {
         let name = self
             .object(r)
@@ -42,7 +54,11 @@ impl Context {
         } else {
             None
         };
-        MenuIcon { name, data_url }
+        MenuIcon {
+            name,
+            data_url,
+            source: self.resource_source(r),
+        }
     }
     fn menu_icons(&mut self, r: Ref, m: &Map, key: &str) -> Vec<MenuIcon> {
         let steps = key == "m_modifierPictures";
@@ -59,6 +75,7 @@ impl Context {
                         icon
                     })
                     .unwrap_or(MenuIcon {
+                        source: String::new(),
                         name: String::new(),
                         data_url: None,
                     })
@@ -124,6 +141,7 @@ impl Context {
                 .map(|m| string_of(&m, "prefabName"))
                 .unwrap_or_default();
             tile.pictures.push(MenuIcon {
+                source: String::new(),
                 name,
                 data_url: None,
             });
@@ -181,6 +199,7 @@ impl Context {
             };
             if matches!(kind, 2 | 3) {
                 let mut step = step.unwrap_or(MenuIcon {
+                    source: String::new(),
                     name: String::new(),
                     data_url: None,
                 });
@@ -254,6 +273,7 @@ impl Context {
                     .map(|m| string_of(&m, "m_Name"))
                     .unwrap_or_default();
                 out[index].pictures.push(MenuIcon {
+                    source: String::new(),
                     name,
                     data_url: None,
                 });
@@ -297,6 +317,7 @@ impl Context {
         }
         let mut tiles = vec![MenuTile {
             pictures: vec![MenuIcon {
+                source: String::new(),
                 name: name.into(),
                 data_url: icon.map(str::to_owned),
             }],
@@ -367,6 +388,7 @@ mod tests {
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
         let mut icon = MenuIcon {
+            source: String::new(),
             name: "OvenPot".into(),
             data_url: Some(format!(
                 "data:image/png;base64,{}",
@@ -396,6 +418,11 @@ mod tests {
             "cross-set info sprite must resolve"
         );
         assert!(recipes[14].tiles[0].pictures[0].data_url.is_some());
+        assert!(
+            recipes[14].icon_source.ends_with("pear_music/info_my"),
+            "{}",
+            recipes[14].icon_source
+        );
         let oven = recipes[38]
             .tiles
             .iter()

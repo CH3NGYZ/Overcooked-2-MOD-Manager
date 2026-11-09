@@ -31,6 +31,8 @@ export const levelPreview: DomainMessages = {
   details: {'zh-CN':'查看菜谱详情','zh-TW':'查看食譜詳情',en:'View recipe details',ko:'레시피 상세 보기',ja:'レシピの詳細'},
   status: {'zh-CN':'采用状态','zh-TW':'採用狀態',en:'Usage',ko:'사용 상태',ja:'使用状態'},
   active: {'zh-CN':'采用','zh-TW':'採用',en:'Active',ko:'사용',ja:'使用'},
+  mainImageSource: {'zh-CN':'主图来源','zh-TW':'主圖來源',en:'Main image source',ko:'대표 이미지 출처',ja:'メイン画像の参照元'},
+  imageSources: {'zh-CN':'图片资源来源','zh-TW':'圖片資源來源',en:'Image resource sources',ko:'이미지 리소스 출처',ja:'画像リソースの参照元'},
   source: {'zh-CN':'资源来源','zh-TW':'資源來源',en:'Resource source',ko:'리소스 출처',ja:'リソースの参照元'},
   dependencies: {'zh-CN':'依赖资源 Bundle','zh-TW':'相依資源 Bundle',en:'Dependency bundles',ko:'의존 번들',ja:'依存バンドル'},
   none: {'zh-CN':'无声明','zh-TW':'無宣告',en:'None declared',ko:'선언 없음',ja:'宣言なし'},

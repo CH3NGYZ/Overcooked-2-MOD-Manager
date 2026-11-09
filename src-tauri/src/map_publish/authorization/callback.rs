@@ -14,11 +14,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
-/// 本机回调地址必须与 App 设置里登记的 Callback URL **完全一致**：GitHub 的通配
-/// 匹配只放宽子域与子路径，端口必须相同，所以这里写死 55748。
-const CALLBACK_ADDR: &str = "127.0.0.1:55748";
-
-const CALLBACK_PATH: &str = "/callback";
+use super::super::credentials::{CALLBACK_URL, callback_endpoint};
 
 /// 上一轮授权还没结束就再点一次时，端口还在旧监听手里。监听线程每 120 ms 看一次
 /// 取消标志，所以重试两秒足够；直接 bind 失败会让用户看到「端口被占用」而浏览器
@@ -27,15 +23,72 @@ const BIND_RETRIES: usize = 25;
 
 const BIND_RETRY_DELAY: Duration = Duration::from_millis(80);
 
+#[cfg(test)]
+#[test]
+fn configured_callback_path_is_used_by_the_real_http_handler() {
+    for (target, status, completed) in [
+        ("/oauth/return?state=fixture&code=example", "200 OK", true),
+        (
+            "/callback?state=fixture&code=example",
+            "404 Not Found",
+            false,
+        ),
+        (
+            "/oauth/return?state=other&code=example",
+            "400 Bad Request",
+            true,
+        ),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let outcome = Arc::new(Mutex::new(CallbackOutcome::Pending));
+        let result = Arc::clone(&outcome);
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream.set_nonblocking(false).unwrap();
+            handle_callback(stream, "fixture", &result, "/oauth/return")
+        });
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        client
+            .write_all(format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(
+            response.starts_with(&format!("HTTP/1.1 {status}")),
+            "{response}"
+        );
+        assert_eq!(server.join().unwrap(), completed);
+        let result = outcome.lock().unwrap();
+        if status == "200 OK" {
+            assert!(matches!(&*result, CallbackOutcome::Code { code, .. } if code == "example"));
+        } else if !completed {
+            assert!(matches!(&*result, CallbackOutcome::Pending));
+        } else {
+            assert!(
+                matches!(&*result, CallbackOutcome::Failed(tag) if tag == "mapPublish.stateMismatch")
+            );
+        }
+    }
+}
+
 /// 占住回调端口：上一轮授权没结束时先取消，再等它松手。
 pub(super) fn bind_callback_listener() -> Result<TcpListener, String> {
+    let (address, _) = callback_endpoint(CALLBACK_URL)
+        .ok_or_else(|| "mapPublish.callbackUnavailable".to_string())?;
     let mut last_error = None;
     for attempt in 0..BIND_RETRIES {
         if attempt > 0 {
             std::thread::sleep(BIND_RETRY_DELAY);
         }
         release_pending_auth();
-        match TcpListener::bind(CALLBACK_ADDR) {
+        match TcpListener::bind(address) {
             Ok(listener) => return Ok(listener),
             Err(error) => last_error = Some(error),
         }
@@ -78,7 +131,10 @@ pub(super) fn spawn_callback_listener(
             }
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if handle_callback(stream, &expected_state, &outcome) {
+                    let Some((_, path)) = callback_endpoint(CALLBACK_URL) else {
+                        return;
+                    };
+                    if handle_callback(stream, &expected_state, &outcome, &path) {
                         return;
                     }
                 }
@@ -108,6 +164,7 @@ fn handle_callback(
     mut stream: TcpStream,
     expected_state: &str,
     outcome: &Mutex<CallbackOutcome>,
+    callback_path: &str,
 ) -> bool {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut buffer = [0u8; 8192];
@@ -127,7 +184,7 @@ fn handle_callback(
         let _ = write_callback_page(&mut stream, "400 Bad Request", "这不是授权回调地址。");
         return false;
     };
-    if path != CALLBACK_PATH {
+    if path != callback_path {
         let _ = write_callback_page(&mut stream, "404 Not Found", "这不是授权回调地址。");
         return false;
     }

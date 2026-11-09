@@ -19,7 +19,15 @@ fn first_sign_in_opens_the_install_page_and_later_ones_do_not() {
         authorization_target(PublishProvider::Github, 18334019, "nonce-2", false);
     assert_eq!(mode, PublishAuthMode::Authorize);
     assert!(url.starts_with(AUTHORIZE_ENDPOINT));
-    assert!(url.contains("client_id=Iv23liMDOtLBrrkv781U"));
+    let parsed = url::Url::parse(&url).unwrap();
+    assert_eq!(
+        parsed
+            .query_pairs()
+            .find(|(key, _)| key == "client_id")
+            .unwrap()
+            .1,
+        GITHUB_APP_CLIENT_ID
+    );
     assert!(url.contains("state=nonce-2"));
     assert!(url.contains("code_challenge_method=S256"));
     assert!(verifier.is_some());

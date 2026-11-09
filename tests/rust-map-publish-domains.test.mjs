@@ -5,6 +5,23 @@ import { readText, sourceFiles } from './helpers/source-scan.mjs'
 
 const root = resolve('src-tauri/src/map_publish')
 const read = path => readText(resolve(root, path))
+
+test('GitHub App 配置由构建环境提供，测试包与正式包均注入发布凭据', () => {
+  const build = readText(resolve('src-tauri/build.rs'))
+  assert.match(build, /rerun-if-env-changed=OC2_GITHUB_APP_CLIENT_ID/)
+  assert.match(build, /std::env::var\("OC2_GITHUB_APP_CLIENT_ID"\)/)
+  assert.doesNotMatch(read('credentials.rs'), /pub const GITHUB_APP_CLIENT_ID:/)
+  assert.match(read('credentials.rs'), /GITHUB_APP_CLIENT_ID\.is_empty\(\)\s*\|\| GITHUB_APP_CLIENT_SECRET\.is_empty\(\)/)
+  assert.match(read('session.rs'), /secret_configured: client_secret\(provider\)\.is_ok\(\)/)
+  const workflow = readText(resolve('.github/workflows/build.yml'))
+  for (const name of ['Build and verify CI-only signed packages', 'Build with Tauri']) {
+    const step = workflow.split(`- name: ${name}\n`)[1]?.split('\n      - name:')[0]
+    assert.ok(step, name)
+    for (const variable of ['OC2_GITHUB_APP_CLIENT_ID', 'OC2_GITHUB_APP_INSTALL_URL', 'OC2_PUBLISH_CALLBACK_URL', 'OC2_GITHUB_APP_CLIENT_SECRET', 'OC2_GITCODE_OAUTH_CLIENT_ID', 'OC2_GITCODE_OAUTH_CLIENT_SECRET', 'OC2_GITCODE_OAUTH_SCOPE']) {
+      assert.ok(step.includes(`${variable}: \${{ secrets.${variable} }}`), `${name}: ${variable}`)
+    }
+  }
+})
 const commands = [
   ['authorization', 'start_publish_authorization'],
   ['authorization', 'poll_publish_authorization'],

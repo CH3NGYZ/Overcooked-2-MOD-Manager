@@ -1,6 +1,6 @@
 fn main() {
     embed_repository_sources();
-    embed_github_app_secret();
+    embed_publish_config();
     embed_gitcode_oauth();
     link_windows_test_manifest();
     tauri_build::build()
@@ -24,17 +24,21 @@ fn embed_gitcode_oauth() {
     std::fs::write(output, generated).expect("无法写入 GitCode OAuth 配置");
 }
 
-/// GitHub App 的 Client Secret 不进仓库：优先读环境变量（CI 用 secret），
-/// 其次读被忽略的 `.tmp/github-app-secret.txt`（本机构建）。两处都没有时注入
-/// 空串，上传页会在换 Token 时报 `mapPublish.missingClientSecret`，不会静默失败。
-fn embed_github_app_secret() {
+/// 发布应用配置从构建环境读取；仅 GitHub Secret 保留本机忽略文件后备。
+/// 缺失时注入空串，由发布授权入口统一检查，不回退到另一套应用身份。
+fn embed_publish_config() {
     let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let local = manifest
         .join("..")
         .join(".tmp")
         .join("github-app-secret.txt");
     println!("cargo:rerun-if-env-changed=OC2_GITHUB_APP_CLIENT_SECRET");
+    println!("cargo:rerun-if-env-changed=OC2_GITHUB_APP_CLIENT_ID");
     println!("cargo:rerun-if-changed={}", local.display());
+    let client_id = std::env::var("OC2_GITHUB_APP_CLIENT_ID")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let secret = std::env::var("OC2_GITHUB_APP_CLIENT_SECRET")
         .ok()
         .or_else(|| std::fs::read_to_string(&local).ok())
@@ -43,7 +47,20 @@ fn embed_github_app_secret() {
         .unwrap_or_default();
     let output =
         std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("github_app.rs");
-    let generated = format!("pub const GITHUB_APP_CLIENT_SECRET: &str = {secret:?};\n");
+    let mut generated = format!(
+        "pub const GITHUB_APP_CLIENT_ID: &str = {client_id:?};\npub const GITHUB_APP_CLIENT_SECRET: &str = {secret:?};\n"
+    );
+    for (variable, constant) in [
+        ("OC2_GITHUB_APP_INSTALL_URL", "PUBLISH_INSTALL_URL"),
+        ("OC2_PUBLISH_CALLBACK_URL", "CALLBACK_URL"),
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+        let value = std::env::var(variable).unwrap_or_default();
+        generated.push_str(&format!(
+            "pub const {constant}: &str = {:?};\n",
+            value.trim()
+        ));
+    }
     std::fs::write(output, generated).expect("无法写入 GitHub App 凭据");
 }
 

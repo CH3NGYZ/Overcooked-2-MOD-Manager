@@ -121,6 +121,13 @@ jobs:
         if: inputs.mode == 'test'
         shell: bash
         env:
+          OC2_GITHUB_APP_CLIENT_ID: ${{ secrets.OC2_GITHUB_APP_CLIENT_ID }}
+          OC2_GITHUB_APP_INSTALL_URL: ${{ secrets.OC2_GITHUB_APP_INSTALL_URL }}
+          OC2_PUBLISH_CALLBACK_URL: ${{ secrets.OC2_PUBLISH_CALLBACK_URL }}
+          OC2_GITHUB_APP_CLIENT_SECRET: ${{ secrets.OC2_GITHUB_APP_CLIENT_SECRET }}
+          OC2_GITCODE_OAUTH_CLIENT_ID: ${{ secrets.OC2_GITCODE_OAUTH_CLIENT_ID }}
+          OC2_GITCODE_OAUTH_CLIENT_SECRET: ${{ secrets.OC2_GITCODE_OAUTH_CLIENT_SECRET }}
+          OC2_GITCODE_OAUTH_SCOPE: ${{ secrets.OC2_GITCODE_OAUTH_SCOPE }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing == 'configured' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
@@ -164,6 +171,13 @@ jobs:
         if: inputs.mode != 'test'
         uses: tauri-apps/tauri-action@v0
         env:
+          OC2_GITHUB_APP_CLIENT_ID: ${{ secrets.OC2_GITHUB_APP_CLIENT_ID }}
+          OC2_GITHUB_APP_INSTALL_URL: ${{ secrets.OC2_GITHUB_APP_INSTALL_URL }}
+          OC2_PUBLISH_CALLBACK_URL: ${{ secrets.OC2_PUBLISH_CALLBACK_URL }}
+          OC2_GITHUB_APP_CLIENT_SECRET: ${{ secrets.OC2_GITHUB_APP_CLIENT_SECRET }}
+          OC2_GITCODE_OAUTH_CLIENT_ID: ${{ secrets.OC2_GITCODE_OAUTH_CLIENT_ID }}
+          OC2_GITCODE_OAUTH_CLIENT_SECRET: ${{ secrets.OC2_GITCODE_OAUTH_CLIENT_SECRET }}
+          OC2_GITCODE_OAUTH_SCOPE: ${{ secrets.OC2_GITCODE_OAUTH_SCOPE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

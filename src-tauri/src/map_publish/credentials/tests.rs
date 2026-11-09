@@ -1,5 +1,51 @@
 use super::*;
 
+#[test]
+fn callback_config_only_binds_literal_loopback_with_the_configured_path() {
+    let (address, path) = callback_endpoint("http://127.0.0.1:55881/oauth/return").unwrap();
+    assert_eq!(address.to_string(), "127.0.0.1:55881");
+    assert_eq!(path, "/oauth/return");
+    assert_eq!(
+        callback_endpoint("http://[::1]:55882/return")
+            .unwrap()
+            .0
+            .to_string(),
+        "[::1]:55882"
+    );
+    for invalid in [
+        "",
+        "https://127.0.0.1:55881/return",
+        "http://0.0.0.0:55881/return",
+        "http://192.168.1.2:55881/return",
+        "http://example.com/return",
+        "http://localhost:55881/return",
+        "http://127.0.0.1:0/return",
+        "http://127.0.0.1:55881/",
+        "http://u:p@127.0.0.1:55881/return",
+        "http://127.0.0.1:55881/return?state=fixed",
+        "http://127.0.0.1:55881/return#fragment",
+    ] {
+        assert!(callback_endpoint(invalid).is_none(), "{invalid}");
+    }
+}
+
+#[test]
+fn github_install_config_only_accepts_official_app_installation_entries() {
+    assert!(valid_install_url(
+        "https://github.com/apps/fixture-app/installations/new"
+    ));
+    for invalid in [
+        "",
+        "http://github.com/apps/fixture-app/installations/new",
+        "https://example.com/apps/fixture-app/installations/new",
+        "https://github.com/settings/apps/fixture-app",
+        "https://u:p@github.com/apps/fixture-app/installations/new",
+        "https://github.com/apps/fixture-app/installations/new?state=fixed",
+    ] {
+        assert!(!valid_install_url(invalid), "{invalid}");
+    }
+}
+
 fn token_body(json: &str) -> TokenResponse {
     serde_json::from_str(json).unwrap()
 }

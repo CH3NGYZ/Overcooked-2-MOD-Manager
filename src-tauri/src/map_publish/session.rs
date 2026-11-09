@@ -1,15 +1,12 @@
 use super::authorization::clear_pending_auth;
 use super::credentials::ApiUser;
+use super::credentials::GITCODE_OAUTH_CLIENT_ID;
 use super::credentials::GITHUB_APP_CLIENT_ID;
-use super::credentials::GITHUB_APP_CLIENT_SECRET;
 use super::credentials::PUBLISH_INSTALL_URL;
 use super::credentials::TokenResponse;
 use super::credentials::client_secret;
 use super::credentials::token_request;
 use super::credentials::tokens_from_response;
-use super::credentials::{
-    GITCODE_OAUTH_CLIENT_ID, GITCODE_OAUTH_CLIENT_SECRET, GITCODE_OAUTH_SCOPE,
-};
 use super::http::action_error;
 use super::http::api_client;
 use super::http::authorized;
@@ -185,14 +182,7 @@ fn publish_auth_state(state: &AppState, provider: PublishProvider) -> PublishAut
         .to_string(),
         installed: provider == PublishProvider::Github
             && state.config.publish_installation_id(&config) > 0,
-        secret_configured: match provider {
-            PublishProvider::Github => !GITHUB_APP_CLIENT_SECRET.is_empty(),
-            PublishProvider::Gitcode => {
-                !GITCODE_OAUTH_CLIENT_ID.is_empty()
-                    && !GITCODE_OAUTH_CLIENT_SECRET.is_empty()
-                    && !GITCODE_OAUTH_SCOPE.is_empty()
-            }
-        },
+        secret_configured: client_secret(provider).is_ok(),
     }
 }
 

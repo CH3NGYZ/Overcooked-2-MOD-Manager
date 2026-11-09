@@ -13,15 +13,49 @@ use serde::Deserialize;
 include!(concat!(env!("OUT_DIR"), "/github_app.rs"));
 include!(concat!(env!("OUT_DIR"), "/gitcode_oauth.rs"));
 
-/// 管理器内置的 GitHub App Client ID（public client，不是秘密）。
-pub const GITHUB_APP_CLIENT_ID: &str = "Iv23liMDOtLBrrkv781U";
-
-/// App 的安装入口：安装时选「Only select repositories」，只把地图仓库交出来。
-pub const PUBLISH_INSTALL_URL: &str = "https://github.com/apps/oc2-manager/installations/new";
-
 pub(super) const ACCESS_TOKEN_ENDPOINT: &str = "https://github.com/login/oauth/access_token";
 
-pub(super) const CALLBACK_URL: &str = "http://127.0.0.1:55748/callback";
+/// Only literal loopback IPs are accepted: no DNS resolution or external bind.
+pub(super) fn callback_endpoint(value: &str) -> Option<(std::net::SocketAddr, String)> {
+    let url = url::Url::parse(value).ok()?;
+    if url.scheme() != "http"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() == "/"
+    {
+        return None;
+    }
+    let ip = match url.host()? {
+        url::Host::Ipv4(ip) => std::net::IpAddr::V4(ip),
+        url::Host::Ipv6(ip) => std::net::IpAddr::V6(ip),
+        _ => return None,
+    };
+    let port = url.port_or_known_default()?;
+    if !ip.is_loopback() || port == 0 {
+        return None;
+    }
+    Some((std::net::SocketAddr::new(ip, port), url.path().to_string()))
+}
+
+fn valid_install_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let parts: Vec<_> = url.path().split('/').filter(|s| !s.is_empty()).collect();
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && parts.len() == 4
+        && parts[0] == "apps"
+        && parts[2] == "installations"
+        && parts[3] == "new"
+}
 
 /// `/login/oauth/access_token` 的响应：成功给 Token，失败给 `error`。
 ///
@@ -84,12 +118,17 @@ pub(super) fn client_secret(provider: PublishProvider) -> Result<&'static str, S
         if GITCODE_OAUTH_CLIENT_ID.is_empty()
             || GITCODE_OAUTH_CLIENT_SECRET.is_empty()
             || GITCODE_OAUTH_SCOPE.is_empty()
+            || callback_endpoint(CALLBACK_URL).is_none()
         {
             return Err("mapPublish.missingOAuthConfig".to_string());
         }
         return Ok(GITCODE_OAUTH_CLIENT_SECRET);
     }
-    if GITHUB_APP_CLIENT_SECRET.is_empty() {
+    if GITHUB_APP_CLIENT_ID.is_empty()
+        || GITHUB_APP_CLIENT_SECRET.is_empty()
+        || !valid_install_url(PUBLISH_INSTALL_URL)
+        || callback_endpoint(CALLBACK_URL).is_none()
+    {
         return Err("mapPublish.missingClientSecret".to_string());
     }
     Ok(GITHUB_APP_CLIENT_SECRET)

@@ -199,6 +199,7 @@ export const api = {
   /** 把生成好的多彩名字推送给正在运行的多彩名字 MOD（后端逐个端口尝试）。 */
   pushColorfulName: (name: string) => invoke<OperationResult>('push_colorful_name', { name }),
   /** 复制文本到系统剪贴板。 */
+  copyImage: (png: number[]) => invoke<OperationResult>('copy_image', { png }),
   copyText: (text: string) => invoke<OperationResult>('copy_text', { text }),
   openGameDirectory: () => invoke<OperationResult>('open_game_directory'),
   openModDirectory: () => invoke<OperationResult>('open_mod_directory'),

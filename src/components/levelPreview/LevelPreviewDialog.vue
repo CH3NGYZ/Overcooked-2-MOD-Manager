@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NSpin } from 'naive-ui'
+import { NButton, NInput, NSpin, useMessage } from 'naive-ui'
 import { t, locale } from '../../i18n'
 import { translateBackendMessage } from '../../locale/backend'
 import { levelSetDisplayName } from '../../levelSetStatus'
 import { useLevelPreview } from '../../composables/useLevelPreview'
+import { CameraOutline } from '@vicons/ionicons5'
+import HeaderIconAction from '../HeaderIconAction.vue'
+import { useElementScreenshot } from '../../composables/useElementScreenshot'
 import AppModal from '../AppModal.vue'
 import LevelOverview from './LevelOverview.vue'
 import LevelName from './LevelName.vue'
@@ -13,6 +16,14 @@ import RecipeDetailDialog from './RecipeDetailDialog.vue'
 import type { LevelSetInfo, LevelPreview } from '../../types'
 const recipeDetail = ref<InstanceType<typeof RecipeDetailDialog> | null>(null)
 const p = useLevelPreview()
+const content = ref<HTMLElement | null>(null)
+const message = useMessage()
+const { copying, copy } = useElementScreenshot()
+async function copyScreenshot() {
+  if (!content.value) return
+  try { await copy(content.value); message.success(t('common.action.copied')) }
+  catch { message.error(t('levelPreview.screenshotFailed')) }
+}
 const {show,target,selected,query,loading,error,picture,recipes,pictureBusy,recipeBusy,pictureError,recipeError,current,visible} = p
 const title = computed(() => target.value ? `${t('levelPreview.open')} · ${levelSetDisplayName(target.value,locale.value)}` : t('levelPreview.open'))
 function name(level: LevelPreview) {return locale.value.startsWith('zh') ? level.name_zh || level.name : level.name || level.name_zh}
@@ -32,10 +43,10 @@ defineExpose({open:(set:LevelSetInfo) => p.open(set)})
           <p v-if="!loading && !visible.length">{{ t('levelPreview.noResults') }}</p>
         </nav>
       </aside>
-      <section class="preview-content" :aria-busy="loading">
+      <section ref="content" class="preview-content" :aria-busy="loading">
         <n-spin v-if="loading && !current" size="small" />
         <template v-if="current">
-          <LevelOverview :level="current" :name="name(current)" :picture="picture" :loading="pictureBusy" />
+          <LevelOverview :level="current" :name="name(current)" :picture="picture" :loading="pictureBusy"><template #actions><HeaderIconAction data-screenshot-exclude :label="t('levelPreview.copyScreenshot')" :loading="copying" :disabled="copying || pictureBusy || recipeBusy" @click="copyScreenshot"><CameraOutline /></HeaderIconAction></template></LevelOverview>
           <p v-if="pictureError" role="alert">{{ translateBackendMessage(pictureError) }}</p>
           <div class="recipe-toolbar"><span class="muted">{{ t('levelPreview.counts',{resolved:recipes?.filter(r=>r.resolved).length ?? 0,total:current.recipe_count,active:current.active_recipe_count}) }}</span><n-button size="tiny" quaternary @click="p.retry">{{ t('levelPreview.retry') }}</n-button></div>
           <n-spin v-if="recipeBusy" size="small" />

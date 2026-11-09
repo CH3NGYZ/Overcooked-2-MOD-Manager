@@ -53,7 +53,7 @@ onBeforeUnmount(() => observer?.disconnect())
 </script>
 <template>
   <div class="level-information">
-    <h2><LevelName :text="name" /></h2>
+    <div class="level-heading"><h2><LevelName :text="name" /></h2><slot name="actions" /></div>
     <div class="information-layout">
     <table ref="parameterTable" class="level-information-table">
       <colgroup><col class="thumbnail-column" /><col /><col /><col /><col /></colgroup>
@@ -82,7 +82,8 @@ onBeforeUnmount(() => observer?.disconnect())
   </div>
 </template>
 <style scoped>
-h2 {margin:0 0 8px;min-width:0;}
+.level-heading {display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+h2 {margin:0;min-width:0;flex:1;}
 .level-information {container-type:inline-size;}
 .information-layout {display:flex;flex-wrap:wrap;align-items:stretch;font-size:12px;}
 .level-information-table {flex:3 1 520px;width:0;min-width:0;table-layout:auto;border-collapse:collapse;font-size:inherit;}

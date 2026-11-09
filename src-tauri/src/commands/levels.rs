@@ -21,7 +21,7 @@ pub fn clear_level_set_cache() -> Result<usize, String> {
 
 /// 列出全部关卡集（启用与停用）。
 ///
-/// 只读：不创建 `levels/`，不要求游戏已停止 —— 打开页面就能看到现状。
+/// 扫描完成后后台转换地图目录中的 LZMA，不阻塞列表返回。
 /// 未找到游戏目录时返回空列表而不是报错：地图页在没有厨房的情况下也该能打开。
 #[tauri::command]
 pub async fn get_level_sets(
@@ -63,6 +63,10 @@ pub async fn get_level_sets(
     let manifests_dir = state.config.manifests_dir();
     // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
     let info_workers = crate::metadata_read::workers_from(config.map_info_concurrency);
+    let operation = state.operation.clone();
+    let compression_cache = state.config.cache_dir().join("level-compression");
+    let compression_workers =
+        crate::metadata_read::workers_from(config.map_compression_concurrency);
     tauri::async_runtime::spawn_blocking(move || {
         /*
          * 进度事件逐份发：解析发生在多个线程里，`emit` 本身线程安全。
@@ -113,10 +117,19 @@ pub async fn get_level_sets(
                     )
                 }),
         );
-        infos
+        crate::level_sets::recompress::start(
+            game_root,
+            compression_cache,
+            compression_workers,
+            operation,
+            move |progress| {
+                let _ = app.emit("level-set-compression-progress", progress);
+            },
+        );
+        Ok(infos)
     })
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?
 }
 
 /// 启用或停用一个关卡集（在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动目录）。

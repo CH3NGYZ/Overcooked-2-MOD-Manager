@@ -12,6 +12,7 @@ mod operations;
 mod paths;
 mod plugin_assignment;
 mod plugin_registry;
+pub(crate) mod recompress;
 mod requirements;
 mod scan;
 mod zip_info;

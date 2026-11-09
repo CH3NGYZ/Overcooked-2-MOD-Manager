@@ -33,6 +33,7 @@ pub(crate) fn default_config() -> AppConfig {
         // 两类元数据默认都用全部 CPU 核心，线程数由 metadata_read 解析。
         mod_metadata_concurrency: crate::metadata_read::AUTO_CONCURRENCY,
         map_info_concurrency: crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
+        map_compression_concurrency: crate::metadata_read::AUTO_CONCURRENCY,
         // 全新配置没看过任何教程步骤，首次启动会完整播一遍。
         tutorial_watched_steps: Vec::new(),
         game: GameConfig {

@@ -18,6 +18,7 @@ registerHooks({
       format: 'module', shortCircuit: true,
       source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
         export const watchGameState = async () => () => {}
+        export const watchLevelSetCompression = async callback => { globalThis.__compressionEvent = callback; return () => {} }
         export const watchLevelSetScan = async () => () => {}`,
     }
     if (url.endsWith('/src/locale/backend.ts')) return {

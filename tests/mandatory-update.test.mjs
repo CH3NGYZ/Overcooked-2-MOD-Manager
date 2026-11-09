@@ -77,7 +77,7 @@ test('UI hides cancellation; native cancel, exit and close share the atomic upda
   assert.match(download, /if !archive::cancel_download\(\)[\s\S]*?update.inProgress/)
   assert.match(update, /install_app_update[\s\S]*?archive::begin_app_update\(\)\?/)
   for (const name of ['exit_app', 'relaunch_as_admin']) {
-    assert.match(system, new RegExp(`pub fn ${name}[^]*?archive::app_update_in_progress\\(\\)[^]*?update.inProgress`))
+    assert.match(system, new RegExp(`pub (?:async )?fn ${name}[^]*?archive::app_update_in_progress\\(\\)[^]*?update.inProgress`))
   }
   const lib = source('src-tauri/src/lib.rs')
   assert.match(lib, /app_update_in_progress\(\)[\s\S]*?CloseRequested[\s\S]*?api.prevent_close\(\)/)

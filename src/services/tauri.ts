@@ -38,6 +38,7 @@ import type {
   LevelSetFlattenReport,
   LevelSetInfo,
   LevelSetScanProgress,
+  LevelSetCompressionProgress,
   LevelSetZipProgress,
   MapInfo,
   MapTreeProgress,
@@ -524,4 +525,8 @@ export function watchAppUpdatePhase(callback: (progress: AppUpdatePhaseEvent) =>
 
 export function watchAppUpdateChannel(callback: (progress: AppUpdateChannelEvent) => void): Promise<UnlistenFn> {
   return listen<AppUpdateChannelEvent>('app-update-channel', (event) => callback(event.payload))
+}
+
+export function watchLevelSetCompression(callback: (progress: LevelSetCompressionProgress) => void): Promise<UnlistenFn> {
+  return listen<LevelSetCompressionProgress>('level-set-compression-progress', event => callback(event.payload))
 }

@@ -16,11 +16,18 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, St
 }
 
 #[tauri::command]
-pub fn exit_app() -> Result<(), String> {
+pub async fn exit_app() -> Result<(), String> {
     if archive::app_update_in_progress() {
         return Err("update.inProgress".into());
     }
     log::info!("收到退出应用请求");
+    tauri::async_runtime::spawn_blocking(crate::level_sets::recompress::shutdown)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|error| {
+            log::error!("地图资源恢复未完成，拒绝退出：{error}");
+            "assetBundle.recoveryPending".to_string()
+        })?;
     std::process::exit(0)
 }
 
@@ -102,6 +109,10 @@ pub fn relaunch_as_admin() -> Result<OperationResult, String> {
             message: "update.elevationUnsupported".into(),
         });
     }
+    crate::level_sets::recompress::shutdown().map_err(|error| {
+        log::error!("地图资源恢复未完成：{error}");
+        "assetBundle.recoveryPending".to_string()
+    })?;
     if crate::relaunch_elevated() {
         log::info!("已启动管理员实例，退出当前进程");
         // 给新进程一点时间接管

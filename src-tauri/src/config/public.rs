@@ -22,6 +22,7 @@ impl ConfigService {
             recycle_deleted_mods: config.recycle_deleted_mods,
             mod_metadata_concurrency: config.mod_metadata_concurrency,
             map_info_concurrency: config.map_info_concurrency,
+            map_compression_concurrency: config.map_compression_concurrency,
             tutorial_watched_steps: config.tutorial_watched_steps.clone(),
             game: config.game.clone(),
             network: config.network.clone(),

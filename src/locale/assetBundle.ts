@@ -10,6 +10,13 @@ import type { DomainMessages } from './types'
  * 固定文案在这里翻译。
  */
 export const assetBundle: DomainMessages = {
+  recoveryPending: {
+    'zh-CN': '地图资源恢复尚未完成，暂时无法退出。原件备份已保留，请确认地图目录可写后重试。',
+    'zh-TW': '地圖資源恢復尚未完成，暫時無法退出。原件備份已保留，請確認地圖目錄可寫後重試。',
+    en: 'Map recovery is incomplete. Original backups are retained. Make the map directory writable and try exiting again.',
+    ko: '지도 복구가 완료되지 않아 종료할 수 없습니다. 원본 백업은 보존됩니다. 지도 폴더의 쓰기 권한을 확인하고 다시 시도하세요.',
+    ja: 'マップの復元が未完了のため終了できません。元のバックアップは保持されています。マップフォルダーの書き込み権限を確認して再試行してください。',
+  },
   previewUnavailable: {'zh-CN':'无法解析关卡预览资源','zh-TW':'無法解析關卡預覽資源',en:'The level preview resource could not be read.',ko:'스테이지 미리보기 리소스를 읽을 수 없습니다.',ja:'ステージプレビューのリソースを読み取れません。'},
   notABundle: {
     'zh-CN': '这个文件不是 Unity 资源包（AssetBundle），读不出地图信息',

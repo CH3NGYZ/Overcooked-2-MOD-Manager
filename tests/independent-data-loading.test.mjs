@@ -18,6 +18,7 @@ registerHooks({
       format: 'module', shortCircuit: true,
       source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
         export const watchGameState = async () => () => {}
+        export const watchLevelSetCompression = async callback => { globalThis.__compressionEvent = callback; return () => {} }
         export const watchLevelSetScan = async () => () => {}`,
     }
     if (url.endsWith('/src/locale/backend.ts')) return {
@@ -227,3 +228,11 @@ test('late binding responses cannot overwrite a newer TOML snapshot and pending 
   assert.equal(d.mods.value[0].repository_id,'newest')
   assert.equal(calls,2,'multiple source changes while in flight need only one latest reconciliation')
 })
+
+ test('conversion progress remains visible after local scan IPC has finished', async () => {
+   const scan = useLevelSetScan()
+   const event = { done: 1, total: 3, converted: 1, skipped: 0, failed: 0, percent: 100, current: 'scene' }
+   globalThis.__compressionEvent(event)
+   assert.equal(scan.scanning.value, false)
+   assert.deepEqual(scan.compression.value, event)
+ })

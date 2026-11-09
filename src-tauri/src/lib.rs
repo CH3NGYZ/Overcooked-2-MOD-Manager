@@ -92,6 +92,18 @@ pub fn run() {
                     api.prevent_close();
                 }
             }
+            if window.label() == "main" && !archive::app_update_in_progress() {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        match crate::level_sets::recompress::shutdown() {
+                            Ok(()) => app.exit(0),
+                            Err(error) => log::error!("地图资源恢复未完成，拒绝退出：{error}"),
+                        }
+                    });
+                }
+            }
             gitee_webview::close_with_main(window, event);
         })
         .plugin(
@@ -313,7 +325,19 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, event| {
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                if crate::level_sets::recompress::has_pending_work() {
+                    api.prevent_exit();
+                    let app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        match crate::level_sets::recompress::shutdown() {
+                            Ok(()) => app.exit(0),
+                            Err(error) => log::error!("地图资源恢复未完成，拒绝退出：{error}"),
+                        }
+                    });
+                }
+            }
             if let tauri::RunEvent::ExitRequested {
                 code: None, api, ..
             } = event

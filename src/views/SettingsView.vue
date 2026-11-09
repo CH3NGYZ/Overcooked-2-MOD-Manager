@@ -307,6 +307,7 @@ function displayConcurrency(value: number) {
 
 /** MOD 与地图两侧默认都用全部核心（后端 `AppConfig` 的默认值同为 0）。 */
 const modMetadataConcurrency = computed(() => displayConcurrency(config.value?.mod_metadata_concurrency ?? 0))
+const mapCompressionConcurrency = computed(() => displayConcurrency(config.value?.map_compression_concurrency ?? 0))
 const mapInfoConcurrency = computed(() => displayConcurrency(config.value?.map_info_concurrency ?? 0))
 
 /* ===== 删除行为：是否经过回收站 ===== */
@@ -596,8 +597,7 @@ async function clearTokens() {
 
   <!--
     性能：元数据并行读取。
-    两项都只影响「同时读几个文件」，不改变任何结果，所以和开关类设置分开成组，
-    也没有「恢复默认」—— 下拉里的「全部核心」就是 MOD 侧的默认值。
+    读取与转换各自保存并行上限；全部核心是三项的默认值。
   -->
   <SettingsGroup :title="t('settings.performance')" data-tutorial="settings-performance">
     <SettingsRow :title="t('settings.modMetadataConcurrency')"
@@ -612,6 +612,12 @@ async function clearTokens() {
       <template #right>
         <n-select :value="mapInfoConcurrency" size="small" style="width: 160px" :options="concurrencyOptions"
           @update:value="(value: number) => savePreference({ map_info_concurrency: value }, t('settings.mapInfoConcurrency'))" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :title="t('settings.mapCompressionConcurrency')" :description="t('settings.mapCompressionConcurrencyHint')">
+      <template #right>
+        <n-select :value="mapCompressionConcurrency" size="small" style="width: 160px" :options="concurrencyOptions"
+          @update:value="(value: number) => savePreference({ map_compression_concurrency: value }, t('settings.mapCompressionConcurrency'))" />
       </template>
     </SettingsRow>
   </SettingsGroup>

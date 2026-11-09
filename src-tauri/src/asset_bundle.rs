@@ -28,6 +28,8 @@
 //!
 //! 按需关卡预览、对象引用与纹理由 level_sets::preview_reader 拥有；扫描不解码图片。
 use unityfs::{Reader, SerializedFile, UnityValue};
+#[path = "asset_bundle/recompress.rs"]
+pub(crate) mod recompress;
 
 /// 解析出来的关卡集元数据。
 ///
@@ -567,6 +569,21 @@ fn bundle_layout(bytes: &[u8]) -> Result<BundleLayout, ParseError> {
             .map(|b| b.to_vec())
             .ok_or_else(|| ParseError::Corrupt("bundle truncated".into()))
     })
+}
+/// Inspect compression without reading scene payloads; the queue skips LZ4 before allocating it.
+#[allow(dead_code)] // Shared with the read-only metadata CLI.
+pub(crate) fn bundle_needs_conversion(path: &std::path::Path) -> Result<bool, ParseError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let length = usize::try_from(file.metadata()?.len())
+        .map_err(|_| ParseError::Corrupt("file too large".into()))?;
+    let layout = bundle_layout_with(length, |start, size| {
+        file.seek(SeekFrom::Start(start as u64))?;
+        let mut bytes = vec![0; size];
+        file.read_exact(&mut bytes)?;
+        Ok(bytes)
+    })?;
+    Ok(layout.blocks.iter().any(|block| block.2 & 63 == 1))
 }
 /// Seek only to header and directory: indexing installed game bundles never reads
 /// their scene/texture payloads. The metadata-only CLI does not use this entry.

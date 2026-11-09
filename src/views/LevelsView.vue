@@ -148,7 +148,7 @@ const loading = ref(true)
  * 只用来填转圈条下面的那两行；`null` 表示「还不知道总数」（刚发出请求、
  * 后端还没列完目录），这时只显示不确定动画，不编一个假百分比。
  */
-const { progress: scanProgress, scanLevelSets } = useLevelSetScan()
+const { progress: scanProgress, compression, scanLevelSets } = useLevelSetScan()
 /** 每个集自己的开关请求状态（互不阻塞）。 */
 const busy = ref<Record<string, boolean>>({})
 /** 每个集自己的删除请求状态。 */
@@ -926,6 +926,9 @@ provide(
     右「开关状态」（N 已启用 / N 已禁用），中间一条竖线断开。
   -->
   <Teleport to="#page-header-title-extra" defer>
+    <n-tag v-if="compression" round size="small" :bordered="false" :title="compression.current" :color="tagColorFor(compression.failed ? 'moderate' : 'muted')">
+      {{ t('levelPreview.compressionProgress', { done: compression.done, total: compression.total, percent: compression.percent, converted: compression.converted, skipped: compression.skipped, failed: compression.failed }) }}
+    </n-tag>
     <span class="header-tag-group">
       <n-tag v-for="entry in statusSummary" :key="entry.key" size="small" :bordered="false"
         class="state-tag state-tag--link" :class="{ 'state-tag--active': visibility.isStatusActive(entry.key) }"

@@ -179,6 +179,8 @@ export interface PublicConfig {
   mod_metadata_concurrency: number
   /** 解析地图 `info` 的并发上限，语义同 `mod_metadata_concurrency`；默认 0（全部核心）。 */
   map_info_concurrency: number
+  /** 后台 LZMA 转 LZ4 并发上限；0 = 全部核心，独立于 info 读取。 */
+  map_compression_concurrency: number
   /** 已经看过的教程步骤 id；启动时只播不在里面的步骤。 */
   tutorial_watched_steps?: string[]
   game: { path: string; runtime: GameRuntime }
@@ -232,6 +234,15 @@ export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
  * 加载；关卡集是 `levels/` 下的一个目录、由 DIYLevel 读取。界面复用同一套
  * 卡片样式，模型刻意不合并 —— 合并后每个使用点都要判「这是哪种」。
  */
+export interface LevelSetCompressionProgress {
+  done: number
+  total: number
+  converted: number
+  skipped: number
+  failed: number
+  percent: number
+  current: string
+}
 export interface LevelSetScanProgress {
   /** 已经解析完的份数。 */
   done: number
@@ -651,7 +662,7 @@ export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChann
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
 export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; builtin_proxies_only?: boolean
-  builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; tutorial_watched_steps?: string[] }
+  builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
 export interface ModRepositoryPatch {
   id?: string

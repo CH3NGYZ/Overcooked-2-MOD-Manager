@@ -126,6 +126,17 @@ export const settings: DomainMessages = {
     ko: '지도 info를 동시에 몇 개까지 파싱할지; 기본값은 모든 CPU 코어',
     ja: 'マップ info を同時にいくつ解析するか。既定は全 CPU コア',
   },
+  mapCompressionConcurrency: {
+    'zh-CN': '地图资源转换并行数', 'zh-TW': '地圖資源轉換並行數',
+    en: 'Parallel map bundle conversions', ko: '지도 리소스 병렬 변환', ja: 'マップリソースの並列変換数',
+  },
+  mapCompressionConcurrencyHint: {
+    'zh-CN': '后台同时将几个 LZMA 资源转换为 LZ4；默认全部核心，下次转换生效',
+    'zh-TW': '背景同時將幾個 LZMA 資源轉換為 LZ4；預設全部核心，下次轉換生效',
+    en: 'LZMA bundles converted to LZ4 at once; defaults to all cores, applies to the next batch',
+    ko: '동시에 LZ4로 변환할 LZMA 리소스 수; 기본값은 모든 코어이며 다음 작업부터 적용',
+    ja: '同時に LZ4 に変換する LZMA リソース数。既定は全コア、次の処理から適用',
+  },
   // 全部核心
   allCores: {
     'zh-CN': '全部核心',

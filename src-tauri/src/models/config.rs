@@ -36,6 +36,9 @@ pub struct AppConfig {
     /// `0` = 全部 CPU 核心（默认，[`crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY`]）。
     #[serde(default = "default_map_info_concurrency")]
     pub map_info_concurrency: u32,
+    /// LZMA 转 LZ4 并行上限；0 表示全部 CPU 核心。
+    #[serde(default)]
+    pub map_compression_concurrency: u32,
     /// 已经看过的教程步骤 id（前端步骤表的 `id`）。
     ///
     /// 教程步骤是只增不改的清单：更新后新加的步骤 id 不在这个集合里，
@@ -205,6 +208,9 @@ pub struct PublicConfig {
     /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。
     #[serde(default = "default_map_info_concurrency")]
     pub map_info_concurrency: u32,
+    /// LZMA 转 LZ4 并行上限；0 表示全部 CPU 核心。
+    #[serde(default)]
+    pub map_compression_concurrency: u32,
     /// 已经看过的教程步骤 id；启动教程时只播不在里面的步骤。
     #[serde(default)]
     pub tutorial_watched_steps: Vec<String>,
@@ -258,6 +264,7 @@ pub struct SettingsPatch {
     pub mod_metadata_concurrency: Option<u32>,
     /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。
     pub map_info_concurrency: Option<u32>,
+    pub map_compression_concurrency: Option<u32>,
     /// 这次「已经看过」的教程步骤 id；后端把它并进配置里的集合。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tutorial_watched_steps: Option<Vec<String>>,

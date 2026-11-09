@@ -95,6 +95,9 @@ pub fn save_settings(
     if let Some(value) = patch.mod_metadata_concurrency {
         config.mod_metadata_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
     }
+    if let Some(value) = patch.map_compression_concurrency {
+        config.map_compression_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+    }
     if let Some(value) = patch.map_info_concurrency {
         config.map_info_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
     }

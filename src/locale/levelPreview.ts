@@ -2,6 +2,7 @@ import type { DomainMessages } from './types'
 export const levelPreview: DomainMessages = {
   copyScreenshot: {'zh-CN':'截图并复制','zh-TW':'截圖並複製',en:'Capture and copy',ko:'캡처 후 복사',ja:'スクリーンショットをコピー'},
   screenshotFailed: {'zh-CN':'截图复制失败，请重试','zh-TW':'截圖複製失敗，請重試',en:'Could not copy the screenshot. Please try again.',ko:'스크린샷을 복사하지 못했습니다. 다시 시도해 주세요.',ja:'スクリーンショットをコピーできませんでした。再試行してください。'},
+  compressionProgress: {'zh-CN':'LZ4 {done}/{total} · {percent}% · 转换{converted} 跳过{skipped} 失败{failed}','zh-TW':'LZ4 {done}/{total} · {percent}% · 轉換{converted} 跳過{skipped} 失敗{failed}',en:'LZ4 {done}/{total} · {percent}% · Converted {converted}, skipped {skipped}, failed {failed}',ko:'LZ4 {done}/{total} · {percent}% · 변환 {converted}, 건너뜀 {skipped}, 실패 {failed}',ja:'LZ4 {done}/{total} · {percent}% · 変換{converted} スキップ{skipped} 失敗{failed}'},
   open: {'zh-CN':'关卡预览','zh-TW':'關卡預覽',en:'Level preview',ko:'스테이지 미리보기',ja:'ステージプレビュー'},
   search: {'zh-CN':'搜索关卡名称或场景','zh-TW':'搜尋關卡名稱或場景',en:'Search level or scene',ko:'스테이지 또는 장면 검색',ja:'ステージ名・シーンを検索'},
   name: {'zh-CN':'关卡名称','zh-TW':'關卡名稱',en:'Level name',ko:'스테이지 이름',ja:'ステージ名'},

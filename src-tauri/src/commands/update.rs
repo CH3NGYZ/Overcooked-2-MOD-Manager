@@ -156,13 +156,16 @@ pub async fn install_app_update(
         info.installer_type,
         download.bytes.len()
     );
-    tauri::async_runtime::spawn_blocking(move || download.update.install(&download.bytes))
-        .await
-        .map_err(|_| "update.installFailed")?
-        .map_err(|error| {
-            log::error!("Tauri Updater 安装失败：{error}");
-            "update.installFailedManual".to_string()
-        })?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::level_sets::recompress::shutdown().map_err(std::io::Error::other)?;
+        download.update.install(&download.bytes)
+    })
+    .await
+    .map_err(|_| "update.installFailed")?
+    .map_err(|error| {
+        log::error!("Tauri Updater 安装失败：{error}");
+        "update.installFailedManual".to_string()
+    })?;
     #[cfg(not(windows))]
     {
         log::info!("Tauri Updater 安装完成，正在重启：版本={version}");

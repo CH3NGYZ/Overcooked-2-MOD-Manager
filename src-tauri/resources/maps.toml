@@ -3,11 +3,29 @@ type = "map"
 # Preferred map source. QingyuQingxue is temporarily absent from this active index.
 # Keep maps/maps-qingyuqingxue.toml for restoration; installed maps are unaffected.
 [[map_sources]]
-id = "oc2-map-bundle-index"
-url = "maps/maps-oc2-map-bundle.toml"
+id = "maps-oc2-map-bundle"
+mode = "release-tags"
+provider = "gitcode"
+username = "CH3NGY2"
+repository = "OC2-Map-Bundle"
 [map_sources.nickname_i18n]
-zh-CN = "OC2 社区地图"
-zh-TW = "OC2 社群地圖"
-en = "OC2 community maps"
-ko = "OC2 커뮤니티 지도"
-ja = "OC2 コミュニティマップ"
+zh-CN = "社区地图源 (由清雨青雪维护) - 请勿滥用"
+zh-TW = "社群地圖源 (由清雨青雪維護) - 請勿濫用"
+en = "Community Map Source (Maintained by QingyuQingxue) - Please Do Not Abuse"
+ko = "커뮤니티 지도 소스 (QingyuQingxue 관리) - 악용하지 마세요"
+ja = "コミュニティマップソース (QingyuQingxue 管理) - 悪用しないでください"
+
+# [[map_sources]]
+# network_plan.mainland = "qingyuqingxue-map-proxy-only"
+# network_plan.international = "qingyuqingxue-map-proxy-only"
+# id = "community-maps"
+# mode = "release-tags"
+# provider = "github"
+# username = "QingyuQingxue"
+# repository = "OC2-Map-Bundle"
+# [map_sources.nickname_i18n]
+# zh-CN = "OC2 社区地图合集"
+# zh-TW = "OC2 社群地圖合集"
+# en = "OC2 community map bundle"
+# ko = "OC2 커뮤니티 지도 모음"
+# ja = "OC2 コミュニティマップ集"

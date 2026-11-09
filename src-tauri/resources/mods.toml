@@ -6,7 +6,6 @@ type = "mod"
 [[repository_sources]]
 id = "repositories-azhe-hostutilities"
 url = "mods/mods-azhe-hostutilities.toml"
-builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
 zh-TW = "阿哲 - 街機MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -18,7 +17,6 @@ ja = "Azhe - アーケード MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 [[repository_sources]]
 id = "repositories-azhe-others"
 url = "mods/mods-azhe-others.toml"
-builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
 zh-TW = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -30,7 +28,6 @@ ja = "Azhe - その他の MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 [[repository_sources]]
 id = "repositories-azhe-game-fixes"
 url = "mods/mods-azhe-game-fixes.toml"
-builtin=true
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 游戏修复 - 小红书 @Azhe是阿哲 - ID:5566308341"
 zh-TW = "阿哲 - 遊戲修復 - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -42,7 +39,6 @@ ja = "Azhe - ゲーム修正 - RedNote @Azhe是阿哲 - ID:5566308341"
 [[repository_sources]]
 id = "repositories-qingyuqingxue"
 url = "mods/mods-qingyuqingxue.toml"
-builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @清雨青雪 - ID:94575050243"
 zh-TW = "小红书 @清雨青雪 - ID:94575050243"
@@ -54,7 +50,6 @@ ja = "RedNote @清雨青雪 - ID:94575050243"
 [[repository_sources]]
 id = "repositories-kfyangc"
 url = "mods/mods-kfyangc.toml"
-builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @漆雕帆船 - ID:5669571205"
 zh-TW = "小红书 @漆雕帆船 - ID:5669571205"
@@ -66,7 +61,6 @@ ja = "RedNote @漆雕帆船 - ID:5669571205"
 [[repository_sources]]
 id = "repositories-foamp"
 url = "mods/mods-foamp.toml"
-builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @纸沫 - ID:5696399896"
 zh-TW = "小红书 @纸沫 - ID:5696399896"
@@ -78,7 +72,6 @@ ja = "RedNote @纸沫 - ID:5696399896"
 [[repository_sources]]
 id = "repositories-guojia99"
 url = "mods/mods-guojia99.toml"
-builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "嘉吖 - DIYLevel Web前置"
 zh-TW = "嘉吖 - DIYLevel Web前置"
@@ -90,7 +83,6 @@ ja = "嘉吖 - DIYLevel Web ランタイム"
 [[repository_sources]]
 id = "repositories-gua"
 url = "mods/mods-gua.toml"
-builtin=false
 [repository_sources.nickname_i18n]
 zh-CN = "G_U_A"
 zh-TW = "G_U_A"

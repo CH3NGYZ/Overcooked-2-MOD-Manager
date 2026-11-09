@@ -21,8 +21,9 @@ const content = ref<HTMLElement | null>(null)
 const message = useMessage()
 const { copying, copy } = useElementScreenshot()
 async function copyScreenshot() {
-  if (!content.value) return
-  try { await copy(content.value, { width: 760, pixelRatio: 1.5, prepare: prepareLevelScreenshot }); message.success(t('common.action.copied')) }
+  if (!content.value || !target.value || !current.value) return
+  const screenshotTitle = `${levelSetDisplayName(target.value, locale.value)} · ${name(current.value)}`
+  try { await copy(content.value, { width: 760, pixelRatio: 1.5, prepare: snapshot => prepareLevelScreenshot(snapshot, screenshotTitle) }); message.success(t('common.action.copied')) }
   catch { message.error(t('levelPreview.screenshotFailed')) }
 }
 const {show,target,selected,query,loading,error,picture,recipes,pictureBusy,recipeBusy,pictureError,recipeError,current,visible} = p

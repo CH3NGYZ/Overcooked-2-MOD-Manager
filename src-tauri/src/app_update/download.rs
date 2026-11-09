@@ -18,7 +18,6 @@ use crate::models::{AppUpdateChannelStatus, AppUpdateInfo, GitHubProxyConfig};
 use crate::releases;
 use crate::repository_sources;
 use futures_util::StreamExt;
-use std::fs;
 use tauri::AppHandle;
 use url::Url;
 
@@ -244,7 +243,7 @@ async fn resolve_app_update_at(
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let target_executable = crate::update_migration::update_executable(&executable)?;
         let logs = crate::user_paths::logs_dir()?;
-        fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
         // Keep the original path so installer-side relocation can snapshot it.
         crate::app_update::windows_installer_args(
             target.kind,

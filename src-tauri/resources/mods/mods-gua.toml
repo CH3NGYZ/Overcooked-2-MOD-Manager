@@ -23,7 +23,7 @@ platform = ""
 download_mode = "release"
 
 # Release 参数
-channel = "all"
+channel = "stable"
 max_release_count = 10
 
 # 版本资产规则

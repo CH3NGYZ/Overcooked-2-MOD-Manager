@@ -32,7 +32,7 @@ export function prepareLevelScreenshot(snapshot: HTMLElement, title: string) {
   const image = snapshot.querySelector<HTMLImageElement>('.thumbnail-trigger img')
   const ratio = image?.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : 524 / 308
   set('.thumbnail-trigger', { width: `${Math.min(688, 300 * ratio)}px`, height: `${Math.min(300, 688 / ratio)}px`, maxWidth: '100%' })
-  set('th,td', { padding: '9px 12px' })
+  set('th,td', { padding: '16px 18px', lineHeight: '1.5', verticalAlign: 'middle' })
   set('th', { width: '40%', whiteSpace: 'normal', overflowWrap: 'normal' })
   snapshot.querySelector('.bundle-column')?.remove()
   set('.recipe-toolbar', { fontSize: '14px', marginTop: '16px' })

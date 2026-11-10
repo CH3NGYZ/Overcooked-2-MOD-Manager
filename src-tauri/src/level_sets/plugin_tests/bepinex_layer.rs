@@ -105,7 +105,7 @@ fn bepinex_layer_install_registers_plugins_and_uninstall_recycles_them() {
     let sets = scan_level_sets_with_progress(
         &game,
         Some(&manifests),
-        crate::metadata_read::cores(),
+        crate::concurrency::cores(),
         &|_, _, _| {},
     );
     assert_eq!(sets.len(), 1);

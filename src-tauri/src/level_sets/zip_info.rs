@@ -42,97 +42,99 @@ pub(super) fn parse_zip_info_directories(
     let finished = std::sync::atomic::AtomicUsize::new(0);
     let outcomes: Vec<std::sync::Mutex<Option<InfoOutcome>>> =
         (0..total).map(|_| std::sync::Mutex::new(None)).collect();
-    std::thread::scope(|scope| {
-        for _ in 0..workers {
-            scope.spawn(|| {
+    crate::concurrency::run_queue(
+        workers,
+        || {
+            /*
+             * 每个线程各自打开一份 ZIP：`ZipArchive` 的读句柄不是 `Sync`，
+             * 共用一份就得加锁，等于把并行又串回去。中央目录只读一遍，
+             * 代价远小于解析一个 `info`。
+             */
+            let archive = match fs::File::open(zip_path)
+                .map_err(|error| error.to_string())
+                .and_then(|file| {
+                    zip::ZipArchive::new(file).map_err(|error| {
+                        crate::locale_tag::with_params(
+                            "archive.zipReadFailed",
+                            &[("reason", &error.to_string())],
+                        )
+                    })
+                }) {
+                Ok(archive) => Some(archive),
+                Err(reason) => {
+                    log::warn!(
+                        "ZIP 读取句柄打开失败，识别将整体失败：文件={}，原因={}",
+                        zip_path.display(),
+                        reason
+                    );
+                    None
+                }
+            };
+            archive
+        },
+        || {
+            let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            (index < total).then_some(index)
+        },
+        |archive, &index| {
+            let directory = &directories[index];
+            let mut outcome = InfoOutcome {
+                metadata: None,
+                last_error: String::new(),
+            };
+            for (entry_index, entry_name) in &directory.candidates {
                 /*
-                 * 每个线程各自打开一份 ZIP：`ZipArchive` 的读句柄不是 `Sync`，
-                 * 共用一份就得加锁，等于把并行又串回去。中央目录只读一遍，
-                 * 代价远小于解析一个 `info`。
+                 * 进度在**开始读这一份**时上报：同一目录有多个候选时
+                 * `done` 不变、`current` 换成下一个 `info` 文件名，
+                 * 用户能看出在重试而不是卡住。
                  */
-                let mut archive = match fs::File::open(zip_path)
-                    .map_err(|error| error.to_string())
-                    .and_then(|file| {
-                        zip::ZipArchive::new(file).map_err(|error| {
-                            crate::locale_tag::with_params(
-                                "archive.zipReadFailed",
-                                &[("reason", &error.to_string())],
-                            )
-                        })
-                    }) {
-                    Ok(archive) => Some(archive),
+                progress(
+                    finished.load(std::sync::atomic::Ordering::Relaxed),
+                    total,
+                    entry_name,
+                );
+                let Some(archive) = archive.as_mut() else {
+                    outcome.last_error = "archive.zipReadFailed".to_string();
+                    break;
+                };
+                match read_zip_entry(archive, *entry_index) {
+                    Ok(bytes) => match asset_bundle::parse_level_set(&bytes) {
+                        Ok(parsed) => {
+                            outcome.metadata = Some(parsed);
+                            break;
+                        }
+                        Err(error) => {
+                            log::debug!(
+                                "候选 info 不是关卡集，继续试下一个：目录={}，条目={}，原因={}",
+                                directory.directory,
+                                entry_name,
+                                error
+                            );
+                            outcome.last_error = error.to_string();
+                        }
+                    },
                     Err(reason) => {
                         log::warn!(
-                            "ZIP 读取句柄打开失败，识别将整体失败：文件={}，原因={}",
-                            zip_path.display(),
+                            "候选 info 读取失败，继续试下一个：目录={}，条目={}，原因={}",
+                            directory.directory,
+                            entry_name,
                             reason
                         );
-                        None
-                    }
-                };
-                loop {
-                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(directory) = directories.get(index) else {
-                        break;
-                    };
-                    let mut outcome = InfoOutcome {
-                        metadata: None,
-                        last_error: String::new(),
-                    };
-                    for (entry_index, entry_name) in &directory.candidates {
-                        /*
-                         * 进度在**开始读这一份**时上报：同一目录有多个候选时
-                         * `done` 不变、`current` 换成下一个 `info` 文件名，
-                         * 用户能看出在重试而不是卡住。
-                         */
-                        progress(
-                            finished.load(std::sync::atomic::Ordering::Relaxed),
-                            total,
-                            entry_name,
-                        );
-                        let Some(archive) = archive.as_mut() else {
-                            outcome.last_error = "archive.zipReadFailed".to_string();
-                            break;
-                        };
-                        match read_zip_entry(archive, *entry_index) {
-                            Ok(bytes) => match asset_bundle::parse_level_set(&bytes) {
-                                Ok(parsed) => {
-                                    outcome.metadata = Some(parsed);
-                                    break;
-                                }
-                                Err(error) => {
-                                    log::debug!(
-                                        "候选 info 不是关卡集，继续试下一个：目录={}，条目={}，原因={}",
-                                        directory.directory,
-                                        entry_name,
-                                        error
-                                    );
-                                    outcome.last_error = error.to_string();
-                                }
-                            },
-                            Err(reason) => {
-                                log::warn!(
-                                    "候选 info 读取失败，继续试下一个：目录={}，条目={}，原因={}",
-                                    directory.directory,
-                                    entry_name,
-                                    reason
-                                );
-                                outcome.last_error = reason;
-                            }
-                        }
-                    }
-                    /*
-                     * 先记完成数再写槽位：下一份 `current` 的 `done` 才是真进度。
-                     * 槽位按任务下标回位，因此结果顺序与串行版完全一致。
-                     */
-                    finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if let Ok(mut slot) = outcomes[index].lock() {
-                        *slot = Some(outcome);
+                        outcome.last_error = reason;
                     }
                 }
-            });
-        }
-    });
+            }
+            outcome
+        },
+        |index, outcome| {
+            finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            *outcomes[index].lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(outcome.unwrap_or_else(|| InfoOutcome {
+                    metadata: None,
+                    last_error: "metadataRead.taskFailed".into(),
+                }));
+        },
+    );
     let mut parsed = Vec::with_capacity(total);
     for (index, directory) in directories.iter().enumerate() {
         let outcome = outcomes[index]

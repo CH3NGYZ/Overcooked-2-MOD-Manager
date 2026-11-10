@@ -12,8 +12,8 @@
  * 合并为一次，但不等待任何在线地图请求。在线与本地分别发布、分别处理失败。
  */
 import { computed, ref, shallowRef } from 'vue'
-import { api, watchLevelSetScan, watchLevelSetCompression } from '../services/tauri'
-import type { LevelSetInfo, LevelSetScanProgress, LevelSetCompressionProgress } from '../types'
+import { api, watchLevelSetScan } from '../services/tauri'
+import type { LevelSetInfo, LevelSetScanProgress } from '../types'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
 /**
@@ -30,9 +30,6 @@ const scanning = computed(() => inFlight.value > 0)
 /** 最近一次扫描进度；扫描结束即清空，避免下次开始前挂着上一轮的 x/y。 */
 const progress = ref<LevelSetScanProgress | null>(null)
 
-const compression = ref<LevelSetCompressionProgress | null>(null)
-let compressionClearTimer: ReturnType<typeof setTimeout> | undefined
-let compressionListening: Promise<UnlistenFn | null> | null = null
 let listening: Promise<UnlistenFn | null> | null = null
 
 /**
@@ -58,18 +55,11 @@ function ensureProgressListener(): void {
 export function scanLevelSets(): Promise<LevelSetInfo[]> {
   if (pendingScan) return pendingScan
   ensureProgressListener()
-  compressionListening ??= watchLevelSetCompression(next => {
-    if (compressionClearTimer) clearTimeout(compressionClearTimer)
-    compression.value = next
-    if (next.done === next.total && next.failed === 0) {
-      compressionClearTimer = setTimeout(() => { compression.value = null }, 8000)
-    }
-  }).catch(() => null)
   progress.value = null
   inFlight.value += 1
   pendingScan = (async () => {
     try {
-      await Promise.all([listening, compressionListening])
+      await listening
       const result = await api.levelSets()
       levelSets.value = result
       return result
@@ -83,5 +73,5 @@ export function scanLevelSets(): Promise<LevelSetInfo[]> {
 }
 
 export function useLevelSetScan() {
-  return { scanning, progress, compression, scanLevelSets, levelSets }
+  return { scanning, progress, scanLevelSets, levelSets }
 }

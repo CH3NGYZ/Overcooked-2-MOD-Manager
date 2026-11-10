@@ -229,10 +229,13 @@ test('late binding responses cannot overwrite a newer TOML snapshot and pending 
   assert.equal(calls,2,'multiple source changes while in flight need only one latest reconciliation')
 })
 
- test('conversion progress remains visible after local scan IPC has finished', async () => {
-   const scan = useLevelSetScan()
-   const event = { done: 1, total: 3, converted: 1, skipped: 0, failed: 0, percent: 100, current: 'scene' }
-   globalThis.__compressionEvent(event)
-   assert.equal(scan.scanning.value, false)
-   assert.deepEqual(scan.compression.value, event)
- })
+test('conversion status is independent of local scanning and receives queue events', async () => {
+  globalThis.__loadingApi.levelCompressionProgress = async () => ({ running: false, done: 0, total: 0 })
+  const { useLevelCompression } = await import('../src/composables/useLevelCompression.ts')
+  const status = useLevelCompression()
+  await tick()
+  const event = { running: true, done: 1, total: 3, sets_done: 0, sets_total: 1, files_done: 1, files_total: 3 }
+  globalThis.__compressionEvent(event)
+  assert.equal(useLevelSetScan().scanning.value, false)
+  assert.deepEqual(status.compression.value, event)
+})

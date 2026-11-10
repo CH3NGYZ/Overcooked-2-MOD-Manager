@@ -105,11 +105,11 @@ fn no_roots_means_no_watch() {
 /// 启动循环，发送与防抖不并发。
 #[test]
 fn an_idle_channel_never_notifies() {
-    let (sender, receiver) = mpsc::channel::<()>();
+    let (sender, receiver) = mpsc::channel::<Vec<PathBuf>>();
     let hits = Arc::new(AtomicUsize::new(0));
     let counter = hits.clone();
     let thread = std::thread::spawn(move || {
-        debounce_loop(receiver, Duration::from_millis(80), || {
+        debounce_loop(receiver, Duration::from_millis(80), |_| {
             counter.fetch_add(1, Ordering::SeqCst);
         })
     });
@@ -121,16 +121,16 @@ fn an_idle_channel_never_notifies() {
 
 #[test]
 fn burst_of_events_emits_once_after_the_quiet_window() {
-    let (sender, receiver) = mpsc::channel::<()>();
+    let (sender, receiver) = mpsc::channel::<Vec<PathBuf>>();
     // 先把整串事件塞满通道再启动循环：发送与防抖不并发，窗口内的调度抖动
     // 不会凭空造出一个「安静的窗口」（原因见上一个用例）。
     for _ in 0..500 {
-        sender.send(()).expect("发送事件");
+        sender.send(Vec::new()).expect("发送事件");
     }
     let hits = Arc::new(AtomicUsize::new(0));
     let counter = hits.clone();
     let thread = std::thread::spawn(move || {
-        debounce_loop(receiver, Duration::from_millis(80), || {
+        debounce_loop(receiver, Duration::from_millis(80), |_| {
             counter.fetch_add(1, Ordering::SeqCst);
         })
     });
@@ -152,7 +152,7 @@ fn real_watcher_reports_directory_creation() {
     let plan = watch_plan(std::slice::from_ref(&root));
     let hits = Arc::new(AtomicUsize::new(0));
     let counter = hits.clone();
-    let state = build_watch_state(plan, move || {
+    let state = build_watch_state(plan, move |_| {
         counter.fetch_add(1, Ordering::SeqCst);
     })
     .expect("watcher 建起来了");
@@ -168,4 +168,20 @@ fn real_watcher_reports_directory_creation() {
     // stop 会关通道并 join 线程：能返回就说明线程退出了
     state.stop();
     fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn changed_paths_select_only_the_affected_set() {
+    let root = PathBuf::from("game/levels");
+    assert_eq!(
+        changed_sets(
+            std::slice::from_ref(&root),
+            &[root.join("pear/info"), root.join("pear/scene")]
+        ),
+        Some(vec!["pear".into()])
+    );
+    assert_eq!(
+        changed_sets(std::slice::from_ref(&root), &[root.clone()]),
+        None
+    );
 }

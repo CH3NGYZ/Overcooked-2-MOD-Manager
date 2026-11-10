@@ -5,7 +5,7 @@
 //! 目录变更通知（Windows `ReadDirectoryChangesW`、macOS FSEvents）代替轮询：
 //! 轮询要么太慢（1 秒级）要么太贵（每次都要重扫全部 `info`）。
 //!
-//! 事件只用来提醒前端「重读一次」，不携带路径：扫描口径（两个根的第一层）、
+//! 事件合并路径后将变化地图集加入后台转换队列，并提醒前端重读；扫描口径（两个根的第一层）、
 //! 排序与身份判定都在 `level_sets` 里，前端重读一次就能拿到完整一致的结果。
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 关卡集列表可能已经变化。
 const LEVEL_SETS_CHANGED_EVENT: &str = "level-sets-changed";
@@ -65,12 +65,48 @@ impl LevelWatcher {
             return;
         }
         let emit_app = app.clone();
-        *guard = build_watch_state(plan, move || {
+        *guard = build_watch_state(plan, move |paths| {
+            let app = emit_app.clone();
+            let roots = roots.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Some(state) = app.try_state::<crate::app_state::AppState>() {
+                    let names = changed_sets(&roots, &paths);
+                    crate::level_sets::recompress::enqueue_installed(
+                        &state,
+                        &app,
+                        names.as_deref(),
+                    );
+                    // A missing watched root may have appeared; rebuild off the watcher thread.
+                    state.level_watch.watch(&app, roots);
+                }
+            });
             if let Err(error) = emit_app.emit(LEVEL_SETS_CHANGED_EVENT, ()) {
                 log::debug!("发送关卡集变化事件失败：{error}");
             }
         });
     }
+}
+
+/// Only changed top-level sets are queued; ancestor notifications recheck all candidates.
+fn changed_sets(roots: &[PathBuf], paths: &[PathBuf]) -> Option<Vec<String>> {
+    let mut names = std::collections::BTreeSet::new();
+    for path in paths {
+        let mut matched = false;
+        for root in roots {
+            if let Ok(relative) = path.strip_prefix(root) {
+                if let Some(std::path::Component::Normal(name)) = relative.components().next() {
+                    names.insert(name.to_string_lossy().into_owned());
+                    matched = true;
+                } else {
+                    return None;
+                }
+            }
+        }
+        if !matched {
+            return None;
+        }
+    }
+    Some(names.into_iter().collect())
 }
 
 /// 实际注册的一组监听目标。
@@ -152,16 +188,16 @@ fn watch_target_for(root: &Path) -> Option<(PathBuf, bool)> {
 /// 自动刷新，不能影响扫描本身；下次 `watch` 调用会重试。
 fn build_watch_state(
     plan: Vec<WatchTarget>,
-    emit: impl FnMut() + Send + 'static,
+    emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
 ) -> Option<WatchState> {
-    let (sender, receiver) = mpsc::channel::<()>();
+    let (sender, receiver) = mpsc::channel::<Vec<PathBuf>>();
     let mut watcher =
         match notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result
         {
             Ok(event) => {
                 if affects_level_list(&event.kind) {
                     // 线程已经退出（watcher 被 drop）时发送失败，忽略即可
-                    let _ = sender.send(());
+                    let _ = sender.send(event.paths);
                 }
             }
             Err(error) => log::debug!("关卡集目录监听错误：{error}"),
@@ -233,15 +269,23 @@ fn affects_level_list(kind: &EventKind) -> bool {
 ///
 /// 发送端全部释放（watcher 已 drop）时 `recv_timeout` 返回断开，循环退出，
 /// 线程不残留。
-fn debounce_loop(receiver: Receiver<()>, window: Duration, mut notify: impl FnMut()) {
+fn debounce_loop(
+    receiver: Receiver<Vec<PathBuf>>,
+    window: Duration,
+    mut notify: impl FnMut(Vec<PathBuf>),
+) {
     let mut pending = false;
+    let mut paths = std::collections::BTreeSet::new();
     loop {
         match receiver.recv_timeout(window) {
-            Ok(()) => pending = true,
+            Ok(changed) => {
+                pending = true;
+                paths.extend(changed);
+            }
             Err(RecvTimeoutError::Timeout) => {
                 if pending {
                     pending = false;
-                    notify();
+                    notify(std::mem::take(&mut paths).into_iter().collect());
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,

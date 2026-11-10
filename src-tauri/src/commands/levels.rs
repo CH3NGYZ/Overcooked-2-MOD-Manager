@@ -21,7 +21,7 @@ pub fn clear_level_set_cache() -> Result<usize, String> {
 
 /// 列出全部关卡集（启用与停用）。
 ///
-/// 扫描完成后后台转换地图目录中的 LZMA，不阻塞列表返回。
+/// 只读取地图列表；转换由启动与安装完成分别入队。
 /// 未找到游戏目录时返回空列表而不是报错：地图页在没有厨房的情况下也该能打开。
 #[tauri::command]
 pub async fn get_level_sets(
@@ -62,11 +62,7 @@ pub async fn get_level_sets(
     );
     let manifests_dir = state.config.manifests_dir();
     // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
-    let info_workers = crate::metadata_read::workers_from(config.map_info_concurrency);
-    let operation = state.operation.clone();
-    let compression_cache = state.config.cache_dir().join("level-compression");
-    let compression_workers =
-        crate::metadata_read::workers_from(config.map_compression_concurrency);
+    let info_workers = crate::concurrency::workers_from(config.map_info_concurrency);
     tauri::async_runtime::spawn_blocking(move || {
         /*
          * 进度事件逐份发：解析发生在多个线程里，`emit` 本身线程安全。
@@ -116,15 +112,6 @@ pub async fn get_level_sets(
                         &map.repository,
                     )
                 }),
-        );
-        crate::level_sets::recompress::start(
-            game_root,
-            compression_cache,
-            compression_workers,
-            operation,
-            move |progress| {
-                let _ = app.emit("level-set-compression-progress", progress);
-            },
         );
         Ok(infos)
     })
@@ -346,4 +333,9 @@ pub async fn get_level_preview_detail(
     })
     .await
     .map_err(|_| "assetBundle.previewUnavailable".to_string())?
+}
+
+#[tauri::command]
+pub fn get_level_compression_progress() -> crate::level_sets::recompress::Progress {
+    crate::level_sets::recompress::snapshot()
 }

@@ -217,6 +217,7 @@ export const api = {
    */
   /** 列出全部关卡集（启用与停用）。只读，游戏运行时也可调用。 */
   levelSets: () => invoke<LevelSetInfo[]>('get_level_sets'),
+  levelCompressionProgress: () => invoke<LevelSetCompressionProgress>('get_level_compression_progress'),
   levelSetPreview: (dirName: string, enabled: boolean) => invoke<LevelPreview[]>('get_level_set_preview', { dirName, enabled }),
   levelPreviewDetail: (dirName: string, enabled: boolean, index: number, part: 'picture' | 'recipes') => invoke<LevelPreviewDetail>('get_level_preview_detail', { dirName, enabled, index, part }),
   /**

@@ -9,6 +9,7 @@ mod avatars;
 mod bepinex;
 mod commands;
 mod community;
+mod concurrency;
 mod config;
 mod direct_mod;
 // 展示用路径归一化：送给前端的路径只从这里出口，不参与 I/O
@@ -145,7 +146,20 @@ pub fn run() {
                 std::io::Error::other(error.to_string())
             })?;
             let proxy_config = state.config.clone();
-            app.manage(state);
+            app.manage(state.clone());
+            let compression_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Some(game) = crate::game::detect_game(&state.config.load_or_default()).path {
+                    state.level_watch.watch(
+                        &compression_app,
+                        vec![
+                            crate::level_sets::levels_root(std::path::Path::new(&game)),
+                            crate::level_sets::disabled_root(std::path::Path::new(&game)),
+                        ],
+                    );
+                }
+                crate::level_sets::recompress::enqueue_installed(&state, &compression_app, None);
+            });
             tauri::async_runtime::spawn(async move {
                 if proxy_config.refresh_proxies().await.is_err() {
                     log::warn!("启动线上代理清单不可用，继续使用随包清单");
@@ -281,6 +295,7 @@ pub fn run() {
             commands::avatars::clear_repository_avatars,
             commands::diy_level::get_diy_level_info,
             commands::levels::get_level_sets,
+            commands::levels::get_level_compression_progress,
             commands::levels::get_level_set_preview,
             commands::levels::get_level_preview_detail,
             commands::levels::set_level_set_enabled,

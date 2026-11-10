@@ -118,7 +118,7 @@ pub(crate) fn stage_downloaded_file(
         return Err("modPreview.unsupportedType".into());
     }
     let workers =
-        crate::metadata_read::workers_from(state.config.load_or_default().mod_metadata_concurrency);
+        crate::concurrency::workers_from(state.config.load_or_default().mod_metadata_concurrency);
     let mut preview = if extension == "dll" {
         build_preview(vec![analyze_dll(source, file_name)], file_name)
     } else {

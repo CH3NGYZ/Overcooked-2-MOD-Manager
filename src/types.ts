@@ -235,6 +235,12 @@ export type WinhttpState = 'modenabled' | 'moddisabled' | 'missing' | 'conflict'
  * 卡片样式，模型刻意不合并 —— 合并后每个使用点都要判「这是哪种」。
  */
 export interface LevelSetCompressionProgress {
+  running: boolean
+  sets_done: number
+  sets_total: number
+  set_name: string
+  files_done: number
+  files_total: number
   done: number
   total: number
   converted: number

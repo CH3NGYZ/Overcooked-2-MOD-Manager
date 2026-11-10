@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -19,12 +19,15 @@ pub(crate) struct Progress {
     pub failed: usize,
     pub percent: usize,
     pub current: String,
+    pub running: bool,
+    pub sets_done: usize,
+    pub sets_total: usize,
+    pub set_name: String,
+    pub files_done: usize,
+    pub files_total: usize,
 }
-#[derive(Default)]
-struct Lifecycle {
-    running: bool,
-    stopping: bool,
-}
+mod scheduler;
+use scheduler::Lifecycle;
 static LIFECYCLE: OnceLock<(Mutex<Lifecycle>, std::sync::Condvar)> = OnceLock::new();
 static CANCEL: AtomicBool = AtomicBool::new(false);
 fn lifecycle() -> &'static (Mutex<Lifecycle>, std::sync::Condvar) {
@@ -49,6 +52,9 @@ pub(crate) fn shutdown() -> Result<(), String> {
     let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
     state.stopping = true;
     CANCEL.store(true, Ordering::SeqCst);
+    // Idle workers may be waiting for an active set's follow-up. Cancellation
+    // can leave unclaimed files in that set, so completion alone cannot wake them.
+    wake.notify_all();
     while state.running {
         state = wake.wait(state).unwrap_or_else(|e| e.into_inner());
     }
@@ -63,33 +69,160 @@ pub(crate) fn shutdown() -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn start(
+struct Job {
     game: PathBuf,
     cache: PathBuf,
-    workers: usize,
+    set: PathBuf,
+    files: Vec<PathBuf>,
+    signature: Vec<(PathBuf, u64, Option<std::time::SystemTime>)>,
     operation: Arc<Mutex<()>>,
-    emit: impl Fn(Progress) + Send + Sync + 'static,
-) {
-    let (lock, _) = lifecycle();
-    {
-        let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
-        if state.running || state.stopping {
-            return;
-        }
-        state.running = true;
+}
+
+fn fingerprint(
+    game: &Path,
+    set: &Path,
+) -> Result<Vec<(PathBuf, u64, Option<std::time::SystemTime>)>, String> {
+    let mut result = Vec::new();
+    for relative in super::paths::collect_files(game, set)? {
+        let path = game.join(relative);
+        let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+        result.push((path, meta.len(), meta.modified().ok()));
     }
+    result.sort();
+    Ok(result)
+}
+
+pub(crate) fn snapshot() -> Progress {
+    lifecycle()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .progress
+        .clone()
+}
+
+/// Startup passes None; installation passes only the successfully installed directories.
+pub(crate) fn enqueue_installed(
+    state: &crate::app_state::AppState,
+    app: &tauri::AppHandle,
+    selected: Option<&[String]>,
+) {
+    let config = state.config.load_or_default();
+    let Some(game) = crate::game::detect_game(&config).path else {
+        return;
+    };
+    let game = PathBuf::from(game);
+    let mut sets = Vec::new();
+    for root in [super::levels_root(&game), super::disabled_root(&game)] {
+        let Ok(root) = root.canonicalize() else {
+            continue;
+        };
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(set) = entry.path().canonicalize() else {
+                continue;
+            };
+            if !set.starts_with(&root)
+                || !set.is_dir()
+                || super::scan::locate_info_file(&set).is_none()
+            {
+                continue;
+            }
+            if selected.is_some_and(|names| {
+                !names.iter().any(|name| {
+                    set.file_name()
+                        .is_some_and(|part| part == std::ffi::OsStr::new(name))
+                })
+            }) {
+                continue;
+            }
+            sets.push(set);
+        }
+    }
+    sets.sort();
+    sets.dedup();
+    // Enumerate outside the queue lock; no directory IO while workers publish progress.
+    let jobs = sets
+        .into_iter()
+        .filter_map(|set| {
+            let signature = fingerprint(&game, &set).ok()?;
+            let files = signature
+                .iter()
+                .map(|(path, _, _)| path.clone())
+                .filter(|path| {
+                    let mut magic = [0u8; 8];
+                    fs::File::open(path)
+                        .and_then(|mut file| file.read_exact(&mut magic))
+                        .is_ok()
+                        && &magic == b"UnityFS\0"
+                })
+                .collect();
+            Some((
+                Job {
+                    game: game.clone(),
+                    cache: state.config.cache_dir().join("level-compression"),
+                    set,
+                    files,
+                    signature: signature.clone(),
+                    operation: state.operation.clone(),
+                },
+                signature,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let (lock, _) = lifecycle();
+    let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
+    if queue.stopping {
+        return;
+    }
+    let workers = crate::concurrency::workers_from(config.map_compression_concurrency);
+    let was_running = queue.running;
+    for (job, signature) in jobs {
+        queue.enqueue(job, signature);
+    }
+    lifecycle().1.notify_all();
+    if was_running || queue.pending.is_empty() {
+        return;
+    }
+    queue.running = true;
+    drop(queue);
+    let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Always release the lifecycle latch, including an unexpected worker panic.
-        struct Finish;
+        use tauri::Emitter;
+        struct Finish(bool);
         impl Drop for Finish {
             fn drop(&mut self) {
+                if !self.0 {
+                    return;
+                }
                 let (lock, wake) = lifecycle();
-                lock.lock().unwrap_or_else(|e| e.into_inner()).running = false;
+                let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
+                queue.running = false;
+                queue.progress.running = false;
                 wake.notify_all();
             }
         }
-        let _finish = Finish;
-        run(&game, &cache, workers, &operation, &emit);
+        let mut finish = Finish(true);
+        loop {
+            run_workers(workers, &|progress| {
+                let _ = app.emit("level-set-compression-progress", progress);
+            });
+            let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+            // Admission and going idle share a lock: an enqueue at the boundary cannot be lost.
+            if !queue.stopping && !queue.pending.is_empty() {
+                continue;
+            }
+            finish.0 = false;
+            queue.running = false;
+            queue.progress.running = false;
+            lifecycle().1.notify_all();
+            let progress = queue.progress.clone();
+            drop(queue);
+            let _ = app.emit("level-set-compression-progress", progress);
+            break;
+        }
     });
 }
 
@@ -240,6 +373,14 @@ fn convert(
     }
     {
         let _guard = operation.lock().map_err(|_| "lock.poisoned")?;
+        // Installation may have held this lock while shutdown was requested.
+        if CANCEL.load(Ordering::SeqCst) {
+            let _ = fs::remove_file(&output_path);
+            let _ = fs::remove_file(&backup);
+            let _ = fs::remove_file(work.join("source.txt"));
+            let _ = fs::remove_dir(&work);
+            return Ok(false);
+        }
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
         let inside = [super::levels_root(game), super::disabled_root(game)]
             .iter()
@@ -260,99 +401,87 @@ fn convert(
     Ok(true)
 }
 
-fn run(
-    game: &Path,
-    cache: &Path,
-    workers: usize,
-    operation: &Mutex<()>,
-    emit: &(dyn Fn(Progress) + Sync),
-) {
-    let mut files = Vec::new();
-    for root in [super::levels_root(game), super::disabled_root(game)] {
-        let Ok(root) = root.canonicalize() else {
-            continue;
-        };
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(set) = entry.path().canonicalize() else {
-                continue;
-            };
-            if !set.starts_with(&root)
-                || !set.is_dir()
-                || super::scan::locate_info_file(&set).is_none()
-            {
-                continue;
-            }
-            if let Ok(paths) = super::paths::collect_files(game, &set) {
-                for path in paths {
-                    let Ok(path) = game.join(path).canonicalize() else {
-                        continue;
-                    };
-                    if path.starts_with(&set)
-                        && !path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .starts_with('.')
-                    {
-                        files.push(path);
-                    }
+fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
+    crate::concurrency::run_queue(
+        workers,
+        || (),
+        || {
+            let (lock, wake) = lifecycle();
+            let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
+            loop {
+                if let Some(work) = queue.claim() {
+                    return Some(work);
                 }
+                if queue.stopping || !queue.has_active() {
+                    return None;
+                }
+                queue = wake.wait(queue).unwrap_or_else(|e| e.into_inner());
             }
-        }
-    }
-    files.sort();
-    files.dedup();
-    let state = Mutex::new(Progress {
-        total: files.len(),
-        ..Default::default()
-    });
-    emit(state.lock().unwrap().clone());
-    let next = AtomicUsize::new(0);
-    std::thread::scope(|scope| {
-        for _ in 0..workers.max(1).min(files.len()) {
-            let files = &files;
-            let state = &state;
-            let next = &next;
-            scope.spawn(move || {
-                loop {
-                    if CANCEL.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(path) = files.get(i) else {
-                        break;
-                    };
-                    let current =
-                        crate::display_path::display_path(path.strip_prefix(game).unwrap_or(path));
-                    let result = convert(path, game, cache, operation, &|done, total| {
-                        let mut snapshot = state.lock().unwrap();
-                        snapshot.percent = done.saturating_mul(100) / total.max(1);
-                        snapshot.current = current.clone();
-                        emit(snapshot.clone());
-                    });
-                    let mut snapshot = state.lock().unwrap();
+        },
+        |_, work| {
+            let job = &work.job;
+            work.index.map(|index| {
+                let path = &job.files[index];
+                convert(
+                    path,
+                    &job.game,
+                    &job.cache,
+                    &job.operation,
+                    &|done, total| {
+                        let progress = {
+                            let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                            queue.progress.percent = done.saturating_mul(100) / total.max(1);
+                            queue.progress.current = crate::display_path::display_path(path);
+                            queue.progress.clone()
+                        };
+                        emit(progress);
+                    },
+                )
+            })
+        },
+        |work, result| {
+            let job = &work.job;
+            let mut finished = work.index.is_none();
+            if let Some(index) = work.index {
+                let path = &job.files[index];
+                let result = result.flatten().unwrap_or_else(|| {
+                    Err("conversion worker panicked; recovery materials retained".into())
+                });
+                let stamp = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|_| fs::metadata(path).ok())
+                    .map(|meta| (meta.len(), meta.modified().ok()));
+                let progress = {
+                    let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
                     match result {
-                        Ok(true) => snapshot.converted += 1,
-                        Ok(false) => snapshot.skipped += 1,
+                        Ok(true) => queue.progress.converted += 1,
+                        Ok(false) => queue.progress.skipped += 1,
                         Err(error) => {
-                            snapshot.failed += 1;
-                            log::warn!(
-                                "地图资源转换失败，恢复材料保留：{}: {error}",
-                                path.display()
-                            );
+                            queue.progress.failed += 1;
+                            log::warn!("地图转换失败，保留恢复材料：{}: {error}", path.display());
                         }
                     }
-                    snapshot.done += 1;
-                    snapshot.current = current;
-                    snapshot.percent = 100;
-                    emit(snapshot.clone());
-                }
-            });
-        }
-    });
+                    queue.progress.done += 1;
+                    queue.progress.current = crate::display_path::display_path(path);
+                    queue.progress.percent = 100;
+                    finished = queue.file_finished(job, path.clone(), stamp);
+                    queue.progress.clone()
+                };
+                emit(progress);
+            }
+            if finished {
+                let fingerprint = fingerprint(&job.game, &job.set).ok();
+                let progress = {
+                    let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                    queue.set_finished(job, fingerprint);
+                    lifecycle().1.notify_all();
+                    queue.progress.clone()
+                };
+                emit(progress);
+            }
+        },
+    );
 }
 #[cfg(test)]
 mod tests {
@@ -361,6 +490,37 @@ mod tests {
         let path = std::env::temp_dir().join(format!("oc2-compress-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&path).unwrap();
         path
+    }
+    #[test]
+    fn busy_queue_keeps_new_sets_and_replaces_only_pending_duplicates() {
+        fn job(set: &str, count: usize) -> Job {
+            Job {
+                game: PathBuf::from("game"),
+                cache: PathBuf::from("cache"),
+                set: PathBuf::from(set),
+                files: (0..count).map(|i| PathBuf::from(i.to_string())).collect(),
+                signature: vec![],
+                operation: Arc::new(Mutex::new(())),
+            }
+        }
+        let mut queue = Lifecycle::default();
+        queue.enqueue(job("first", 2), vec![]);
+        queue.running = true;
+        let active = queue.pending.pop_front().unwrap();
+        queue.enqueue(job("second", 3), vec![]);
+        queue.enqueue(job("second", 5), vec![]);
+        queue.enqueue(job("first", 4), vec![]);
+        assert_eq!(queue.pending.len(), 2);
+        assert_eq!(queue.progress.total, 11); // active 2 + pending 5 + follow-up 4
+        assert_eq!(queue.progress.sets_total, 3);
+        assert_eq!(active.files.len(), 2);
+        assert_eq!(queue.pending[0].set, PathBuf::from("second"));
+        queue.completed.insert(PathBuf::from("unchanged"), vec![]);
+        queue.enqueue(job("unchanged", 9), vec![]);
+        assert_eq!(queue.progress.total, 11);
+        queue.stopping = true;
+        queue.enqueue(job("after-exit", 10), vec![]);
+        assert_eq!(queue.pending.len(), 2);
     }
     #[test]
     fn replacement_verifies_hash_and_rolls_back_corrupt_output() {

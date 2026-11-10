@@ -1,8 +1,16 @@
 import type { DomainMessages } from './types'
 export const levelPreview: DomainMessages = {
+  conversionStatus: {'zh-CN':'状态','zh-TW':'狀態',en:'Status',ko:'상태',ja:'状態'},
+  conversionTitle: {"zh-CN": "地图资源优化", "zh-TW": "地圖資源最佳化", "en": "Map resource optimization", "ko": "지도 리소스 최적화", "ja": "マップリソース最適化"},
+  conversionActive: {"zh-CN": "正在转换为 LZ4", "zh-TW": "正在轉換為 LZ4", "en": "Converting to LZ4", "ko": "LZ4로 변환 중", "ja": "LZ4 に変換中"},
+  conversionIdle: {"zh-CN": "空闲", "zh-TW": "閒置", "en": "Idle", "ko": "대기 중", "ja": "待機中"},
+  conversionSets: {"zh-CN": "地图集", "zh-TW": "關卡集", "en": "Level sets", "ko": "스테이지 세트", "ja": "ステージセット"},
+  conversionFiles: {"zh-CN": "地图集内文件", "zh-TW": "關卡集內檔案", "en": "Files in current set", "ko": "현재 세트 파일", "ja": "現在のセット内ファイル"},
+  conversionTotal: {"zh-CN": "总资源文件", "zh-TW": "總資源檔案", "en": "Total resource files", "ko": "전체 리소스 파일", "ja": "全リソースファイル"},
+  conversionFailed: {"zh-CN": "{count} 个文件未完成，原件与恢复材料已保留", "zh-TW": "{count} 個檔案未完成，原件與恢復資料已保留", "en": "{count} files incomplete; originals and recovery files retained", "ko": "파일 {count}개 미완료; 원본 및 복구 파일 보존", "ja": "{count} ファイル未完了。元のファイルと復元用ファイルを保持"},
+
   copyScreenshot: {'zh-CN':'截图并复制','zh-TW':'截圖並複製',en:'Capture and copy',ko:'캡처 후 복사',ja:'スクリーンショットをコピー'},
   screenshotFailed: {'zh-CN':'截图复制失败，请重试','zh-TW':'截圖複製失敗，請重試',en:'Could not copy the screenshot. Please try again.',ko:'스크린샷을 복사하지 못했습니다. 다시 시도해 주세요.',ja:'スクリーンショットをコピーできませんでした。再試行してください。'},
-  compressionProgress: {'zh-CN':'LZ4 {done}/{total} · {percent}% · 转换{converted} 跳过{skipped} 失败{failed}','zh-TW':'LZ4 {done}/{total} · {percent}% · 轉換{converted} 跳過{skipped} 失敗{failed}',en:'LZ4 {done}/{total} · {percent}% · Converted {converted}, skipped {skipped}, failed {failed}',ko:'LZ4 {done}/{total} · {percent}% · 변환 {converted}, 건너뜀 {skipped}, 실패 {failed}',ja:'LZ4 {done}/{total} · {percent}% · 変換{converted} スキップ{skipped} 失敗{failed}'},
   open: {'zh-CN':'关卡预览','zh-TW':'關卡預覽',en:'Level preview',ko:'스테이지 미리보기',ja:'ステージプレビュー'},
   search: {'zh-CN':'搜索关卡名称或场景','zh-TW':'搜尋關卡名稱或場景',en:'Search level or scene',ko:'스테이지 또는 장면 검색',ja:'ステージ名・シーンを検索'},
   name: {'zh-CN':'关卡名称','zh-TW':'關卡名稱',en:'Level name',ko:'스테이지 이름',ja:'ステージ名'},

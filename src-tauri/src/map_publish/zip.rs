@@ -83,8 +83,8 @@ fn inspect_publish_zip_blocking(path: &std::path::Path) -> Result<PublishZipInsp
     // 明确告诉作者「这个包里有多张图」，而不是悄悄挑第一张。
     let sets = crate::level_sets::inspect_zip_with_progress(
         path,
-        crate::metadata_read::workers_from(crate::metadata_read::AUTO_CONCURRENCY),
-        crate::metadata_read::workers_from(crate::metadata_read::AUTO_CONCURRENCY),
+        crate::concurrency::workers_from(crate::concurrency::AUTO_CONCURRENCY),
+        crate::concurrency::workers_from(crate::concurrency::AUTO_CONCURRENCY),
         &|_, _, _| {},
     )?;
     let first = sets

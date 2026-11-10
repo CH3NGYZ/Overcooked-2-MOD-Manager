@@ -27,8 +27,8 @@ pub(crate) fn zip_level_sets(
     let progress_app = app.clone();
     let sets = crate::level_sets::inspect_zip_with_progress(
         path,
-        crate::metadata_read::workers_from(config.map_info_concurrency),
-        crate::metadata_read::workers_from(config.mod_metadata_concurrency),
+        crate::concurrency::workers_from(config.map_info_concurrency),
+        crate::concurrency::workers_from(config.mod_metadata_concurrency),
         &move |done, total, current| {
             let _ = progress_app.emit(
                 "level-set-zip-progress",
@@ -48,7 +48,7 @@ pub(crate) fn zip_level_sets(
             crate::level_sets::find_install_conflicts_with_workers(
                 Path::new(root),
                 &sets,
-                crate::metadata_read::workers_from(config.map_info_concurrency),
+                crate::concurrency::workers_from(config.map_info_concurrency),
             )
         })
         .unwrap_or_default();

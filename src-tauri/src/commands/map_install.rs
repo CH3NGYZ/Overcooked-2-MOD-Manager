@@ -113,6 +113,7 @@ pub async fn import_level_sets(
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     let manifests_dir = state.config.manifests_dir();
     let operation = state.operation.clone();
+    let compression_state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
         let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
@@ -120,8 +121,8 @@ pub async fn import_level_sets(
         let info_app = app.clone();
         let sets = crate::level_sets::inspect_zip_with_progress(
             &zip,
-            crate::metadata_read::workers_from(config.map_info_concurrency),
-            crate::metadata_read::workers_from(config.mod_metadata_concurrency),
+            crate::concurrency::workers_from(config.map_info_concurrency),
+            crate::concurrency::workers_from(config.mod_metadata_concurrency),
             &move |done, total, current| {
                 let _ = info_app.emit(
                     "level-set-zip-progress",
@@ -161,6 +162,11 @@ pub async fn import_level_sets(
                 origin.as_ref(),
             )?;
             log::info!("关卡集导入完成（BepInEx 表层包）：数量={}", installed.len());
+            crate::level_sets::recompress::enqueue_installed(
+                &compression_state,
+                &app,
+                Some(&installed),
+            );
             return Ok(LevelSetImportResult { installed });
         }
         /*
@@ -188,6 +194,11 @@ pub async fn import_level_sets(
                 std::slice::from_ref(name),
                 origin.as_ref(),
             )?;
+            crate::level_sets::recompress::enqueue_installed(
+                &compression_state,
+                &app,
+                Some(&single),
+            );
             installed.extend(single);
         }
         log::info!("关卡集导入完成：数量={}", installed.len());

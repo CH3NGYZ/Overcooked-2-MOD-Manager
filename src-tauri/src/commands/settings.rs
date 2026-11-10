@@ -93,13 +93,13 @@ pub fn save_settings(
      * 其余夹到本机核心数以内 —— 存一个超过本机的值只会让下次扫描白等。
      */
     if let Some(value) = patch.mod_metadata_concurrency {
-        config.mod_metadata_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+        config.mod_metadata_concurrency = crate::concurrency::clamp_stored_concurrency(value);
     }
     if let Some(value) = patch.map_compression_concurrency {
-        config.map_compression_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+        config.map_compression_concurrency = crate::concurrency::clamp_stored_concurrency(value);
     }
     if let Some(value) = patch.map_info_concurrency {
-        config.map_info_concurrency = crate::metadata_read::clamp_stored_concurrency(value);
+        config.map_info_concurrency = crate::concurrency::clamp_stored_concurrency(value);
     }
     /*
      * 教程进度：前端每走一步就把「已看过」的 id 整批发来，这里做并集。

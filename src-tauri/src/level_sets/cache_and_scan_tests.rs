@@ -135,7 +135,7 @@ fn parallel_scan_keeps_order_and_reports_progress() {
     let sets = scan_level_sets_with_progress(
         &root,
         None,
-        crate::metadata_read::cores(),
+        crate::concurrency::cores(),
         &|done, total, current| {
             seen.lock()
                 .unwrap()

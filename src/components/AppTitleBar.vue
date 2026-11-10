@@ -16,6 +16,7 @@ import { isTauri, safeTauri, safeTauriSync } from '../runtime'
 import { appUpdateState } from '../appUpdateState'
 import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
+import LevelCompressionStatus from './LevelCompressionStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { recordTap, SECRET_ENTRY_WINDOW_MS, tapSequenceReady } from '../secretEntry'
 
@@ -250,6 +251,7 @@ defineExpose({ onUnmountedCleanup })
       整组包一层，macOS 上靠 `order` 提到左侧、跟在窗控后面（右侧留给身份与主操作）。
     -->
     <div class="toolbar-group">
+      <LevelCompressionStatus />
       <!-- 界面缩放：下拉选择（与语言下拉一致） -->
       <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="onZoomSelect">

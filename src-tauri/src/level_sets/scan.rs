@@ -64,9 +64,9 @@ pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
     scan_level_sets_inner(
         game_root,
         None,
-        crate::metadata_read::resolve_concurrency(
+        crate::concurrency::resolve_concurrency(
             crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
-            crate::metadata_read::cores(),
+            crate::concurrency::cores(),
         ),
         true,
         &|_, _, _| {},

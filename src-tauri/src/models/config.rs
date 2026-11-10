@@ -27,7 +27,7 @@ pub struct AppConfig {
     /// 读取 MOD 元数据（DLL）时最多同时处理几个文件。
     ///
     /// `0` = 全部 CPU 核心（默认）。用户可存任意正整数，真正执行前按当前机器
-    /// 的核心数夹紧（[`crate::metadata_read::resolve_concurrency`]），所以配置
+    /// 的核心数夹紧（[`crate::concurrency::resolve_concurrency`]），所以配置
     /// 换机器仍然安全。
     #[serde(default)]
     pub mod_metadata_concurrency: u32,

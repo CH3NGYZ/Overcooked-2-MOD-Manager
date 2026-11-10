@@ -13,35 +13,28 @@
 //! 谁也不能单独调、也没法配置。
 //!
 //! 这里把**编排**收拢成一层：调用方只给出「文件路径 + 要哪种元数据」，由本模块
-//! 去重、查缓存、按上限并发、按原顺序返回。解析本身仍只各有一份实现，本模块
+//! 去重、查缓存、委托 concurrency 按上限并发、按原顺序返回。解析本身仍只各有一份实现，本模块
 //! 不解析任何字节。
 //!
 //! ## 并发上限
 //!
 //! 解析 `info` 是 CPU 密集（几百 MB 的 UnityFS 要 LZMA 解压 + 走对象表），
-//! 读 DLL 是 IO 密集但文件很小（本机实测 20 个插件共 0.9 MB）。两者默认值
-//! 不同，且都能在设置里调（`mod_metadata_concurrency` / `map_info_concurrency`），
-//! 见 [`resolve_concurrency`]。
+//! 读 DLL 是 IO 密集但文件很小。两者默认都是 0（全部核心），可分别在设置里
+//! 调整（`mod_metadata_concurrency` / `map_info_concurrency`），
+//! 见 [`crate::concurrency::resolve_concurrency`]。
 //!
 //! ## 线程模型
 //!
-//! 每个批次临时起 `workers` 个线程做完就退出，不做常驻线程池：一个批次的
-//! 线程创建开销是几十微秒，而常驻池会带来生命周期、退出与测试隔离问题，
-//! 对这个使用强度不值。动态取号（`AtomicUsize`）而不是静态切片，因为同一个
-//! 批次里文件大小能差几百倍（最大 101 MB、最小 0.3 MB），静态切分会让拿到
-//! 大文件的线程成为长尾。
+//! 本模块不再创建线程；所有批次复用 concurrency::run_bounded，由共享
+//! run_queue 动态领取任务、隔离 panic 并按请求顺序收集结果。
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use crate::asset_bundle::LevelSetMetadata;
 use crate::mods::{DllDetails, read_dll_details};
-
-/// 配置值取它时表示「用全部 CPU 核心」。
-pub(crate) const AUTO_CONCURRENCY: u32 = 0;
 
 /// 解析地图 `info` 的默认并发上限。
 ///
@@ -49,53 +42,11 @@ pub(crate) const AUTO_CONCURRENCY: u32 = 0;
 /// （本机实测最大 101 MB），也有几十份小文件，固定 4 路会让小文件排在长尾
 /// 后面；满核时大文件仍只占一个线程，其余核心继续消化小文件。用户可以在
 /// 设置页改回固定值，真正执行前按本机核心数夹紧。
-pub(crate) const DEFAULT_MAP_INFO_CONCURRENCY: u32 = AUTO_CONCURRENCY;
+pub(crate) const DEFAULT_MAP_INFO_CONCURRENCY: u32 = crate::concurrency::AUTO_CONCURRENCY;
 
 /// DLL 元数据缓存条数上限。超过就整体清空（与 `level_sets` 的 `info` 缓存
 /// 同一套策略：这种缓存只服务于「反复扫同一批文件」，不需要精细淘汰）。
 const DLL_DETAILS_CACHE_LIMIT: usize = 512;
-
-/// 当前机器的可用核心数，至少 1。
-pub(crate) fn cores() -> usize {
-    std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1)
-        .max(1)
-}
-
-/// 把配置里的并发值解析成实际线程数。
-///
-/// `0` = 全部核心；其余夹到 `1..=cores`。上限永远按**当前机器**算，配置里
-/// 存的是用户意图（例如 8），换到 4 核机器上按 4 跑，不会起 8 个线程。
-pub(crate) fn resolve_concurrency(stored: u32, cores: usize) -> usize {
-    let cores = cores.max(1);
-    if stored == AUTO_CONCURRENCY {
-        cores
-    } else {
-        (stored as usize).clamp(1, cores)
-    }
-}
-
-/// 配置值 → 本机实际线程数（`0` = 全部核心）。
-///
-/// 调用方只关心「这次批次开几个线程」，不该各自重复 `resolve_concurrency(x,
-/// cores())`：写两遍就有一处会忘了夹紧。
-pub(crate) fn workers_from(stored: u32) -> usize {
-    resolve_concurrency(stored, cores())
-}
-
-/// 保存设置时把并发值夹到本机允许的范围（`0` = 全部核心，原样保留）。
-///
-/// 与 [`resolve_concurrency`] 的区别：那个返回「这次开几个线程」，这个返回
-/// 「写回配置文件的值」——`0` 不能在这里被展开成核心数，否则换到核心更多的
-/// 机器上就永远是旧机器的上限了。
-pub(crate) fn clamp_stored_concurrency(stored: u32) -> u32 {
-    if stored == AUTO_CONCURRENCY {
-        AUTO_CONCURRENCY
-    } else {
-        stored.clamp(1, cores() as u32)
-    }
-}
 
 /// 要读哪种元数据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -211,7 +162,7 @@ pub(crate) fn read_metadata_batch(
     }
 
     let workers = workers.clamp(1, jobs.len().max(1));
-    let results = run_bounded(&jobs, workers, |index, job| {
+    let results = crate::concurrency::run_bounded(&jobs, workers, |index, job| {
         let outcome = read_one(job);
         progress(index, &outcome);
         outcome
@@ -256,58 +207,6 @@ fn read_one(job: &MetadataRequest) -> MetadataOutcome {
             Err(error) => MetadataOutcome::failed(error),
         },
     }
-}
-
-/// 通用有界并发执行器。
-///
-/// 结果按原下标升序返回；某一条 panic 只让那一条变成 `None`（同批其它项照常
-/// 返回），调用方决定怎么降级。
-pub(crate) fn run_bounded<T, R>(
-    items: &[T],
-    workers: usize,
-    run: impl Fn(usize, &T) -> R + Sync,
-) -> Vec<(usize, Option<R>)>
-where
-    T: Sync,
-    R: Send,
-{
-    if items.is_empty() {
-        return Vec::new();
-    }
-    let workers = workers.clamp(1, items.len());
-    let next = AtomicUsize::new(0);
-    let mut collected: Vec<(usize, Option<R>)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                let next = &next;
-                let run = &run;
-                scope.spawn(move || {
-                    let mut local: Vec<(usize, Option<R>)> = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        if index >= items.len() {
-                            break;
-                        }
-                        let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            run(index, &items[index])
-                        }))
-                        .ok();
-                        if value.is_none() {
-                            log::warn!("元数据读取任务 panic，已隔离：下标={index}");
-                        }
-                        local.push((index, value));
-                    }
-                    local
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().unwrap_or_default())
-            .collect()
-    });
-    collected.sort_by_key(|(index, _)| *index);
-    collected
 }
 
 /// 缓存键：能 `canonicalize` 就用规范路径（大小写、短名、verbatim 前缀都对

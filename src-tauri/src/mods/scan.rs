@@ -149,7 +149,7 @@ pub fn scan_mods_with_manifests(
             kind: crate::metadata_read::MetadataKind::ModDll,
         })
         .collect::<Vec<_>>();
-    let workers = crate::metadata_read::workers_from(config.mod_metadata_concurrency);
+    let workers = crate::concurrency::workers_from(config.mod_metadata_concurrency);
     let details = crate::metadata_read::read_metadata_batch(&requests, workers, &|_, _| {});
     let mut installed = paths
         .into_iter()

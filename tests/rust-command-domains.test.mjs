@@ -13,7 +13,7 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 112, '既有 IPC、两个只读关卡预览命令及图片剪贴板命令，集合不得丢失')
+  assert.equal(paths.length, 113, '既有 IPC、两个只读关卡预览命令及图片剪贴板命令，集合不得丢失')
   assert.ok(paths.some(([, domain, name]) => domain === 'clipboard' && name === 'copy_image'))
   assert.ok(paths.some(([, domain, name]) => domain === 'dashboard' && name === 'rebind_local_mods'))
   for (const name of ['get_level_set_preview', 'get_level_preview_detail']) assert.ok(paths.some(([, domain, actual]) => domain === 'levels' && actual === name))

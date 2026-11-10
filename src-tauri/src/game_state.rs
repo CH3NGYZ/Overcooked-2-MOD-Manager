@@ -56,6 +56,16 @@ pub(crate) fn start_observer(app: AppHandle) {
                     {
                         let _ = app.emit("level-set-compression-progress", progress);
                     }
+                    if crate::level_sets::recompress::take_rescan_request() {
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            crate::level_sets::recompress::enqueue_installed(
+                                &handle.state::<AppState>(),
+                                &handle,
+                                None,
+                            );
+                        });
+                    }
                     if let Some(info) = change {
                         log::info!(
                             "游戏状态变化：已找到游戏={}，BepInEx已安装={}，游戏运行={}，WinHTTP={:?}",

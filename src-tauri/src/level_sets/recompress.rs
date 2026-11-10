@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -29,6 +29,7 @@ pub(crate) struct Progress {
 mod scheduler;
 use scheduler::Lifecycle;
 static LIFECYCLE: OnceLock<(Mutex<Lifecycle>, std::sync::Condvar)> = OnceLock::new();
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 static CANCEL: AtomicBool = AtomicBool::new(false);
 // Unknown startup state is conservative until the initial game probe completes.
 static GAME_RUNNING: AtomicBool = AtomicBool::new(true);
@@ -39,14 +40,29 @@ fn lifecycle() -> &'static (Mutex<Lifecycle>, std::sync::Condvar) {
 pub(crate) fn set_game_running(running: bool) -> Option<Progress> {
     let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
     let changed = GAME_RUNNING.swap(running, Ordering::SeqCst) != running;
+    if running && (changed || !queue.paused) {
+        queue.game_started();
+        GENERATION.store(queue.generation, Ordering::SeqCst);
+    }
     queue.paused = running;
-    queue.progress.running = queue.running && !running;
+    queue.progress.running = queue.running && !running && !queue.rescan_requested;
     lifecycle().1.notify_all();
     changed.then(|| queue.progress.clone())
 }
 
-fn may_convert() -> bool {
-    !CANCEL.load(Ordering::SeqCst) && !GAME_RUNNING.load(Ordering::SeqCst)
+fn may_convert(generation: u64) -> bool {
+    !CANCEL.load(Ordering::SeqCst)
+        && !GAME_RUNNING.load(Ordering::SeqCst)
+        && GENERATION.load(Ordering::SeqCst) == generation
+}
+
+/// Called by the existing game observer, never performs filesystem IO.
+pub(crate) fn take_rescan_request() -> bool {
+    lifecycle()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take_rescan()
 }
 
 pub(crate) fn has_pending_work() -> bool {
@@ -128,6 +144,10 @@ pub(crate) fn enqueue_installed(
         use tauri::Emitter;
         let _ = app.emit("level-set-compression-progress", progress);
     }
+    let generation = GENERATION.load(Ordering::SeqCst);
+    if !may_convert(generation) {
+        return;
+    }
     let Some(game) = info.path else {
         return;
     };
@@ -167,6 +187,9 @@ pub(crate) fn enqueue_installed(
     let jobs = sets
         .into_iter()
         .filter_map(|set| {
+            if !may_convert(generation) {
+                return None;
+            }
             let signature = fingerprint(&game, &set).ok()?;
             let files = signature
                 .iter()
@@ -194,7 +217,7 @@ pub(crate) fn enqueue_installed(
         .collect::<Vec<_>>();
     let (lock, _) = lifecycle();
     let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
-    if queue.stopping {
+    if !queue.accepts(generation) || queue.rescan_requested {
         return;
     }
     let workers = crate::concurrency::workers_from(config.map_compression_concurrency);
@@ -233,7 +256,7 @@ pub(crate) fn enqueue_installed(
             });
             let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
             // Admission and going idle share a lock: an enqueue at the boundary cannot be lost.
-            if !queue.stopping && !queue.pending.is_empty() {
+            if !queue.stopping && !queue.paused && !queue.pending.is_empty() {
                 continue;
             }
             finish.0 = false;
@@ -354,7 +377,9 @@ fn convert(
     cache: &Path,
     operation: &Mutex<()>,
     progress: &dyn Fn(usize, usize),
+    generation: u64,
 ) -> Result<Option<bool>, String> {
+    let may_convert = || may_convert(generation);
     if !may_convert() {
         return Ok(None);
     }
@@ -463,7 +488,7 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 if let Some(work) = queue.claim() {
                     return Some(work);
                 }
-                if queue.stopping || (!queue.paused && !queue.has_active()) {
+                if queue.stopping || queue.paused || !queue.has_active() {
                     return None;
                 }
                 queue = wake.wait(queue).unwrap_or_else(|e| e.into_inner());
@@ -481,12 +506,16 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                     &|done, total| {
                         let progress = {
                             let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                            if !queue.accepts(work.generation) {
+                                return;
+                            }
                             queue.progress.percent = done.saturating_mul(100) / total.max(1);
                             queue.progress.current = crate::display_path::display_path(path);
                             queue.progress.clone()
                         };
                         emit(progress);
                     },
+                    work.generation,
                 )
             })
         },
@@ -499,8 +528,8 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                     Err("conversion worker panicked; recovery materials retained".into())
                 });
                 if matches!(result, Ok(None)) {
-                    let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
-                    queue.defer(work);
+                    let queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                    // Interrupted work belongs to the discarded batch; never requeue it.
                     lifecycle().1.notify_all();
                     let progress = queue.progress.clone();
                     drop(queue);
@@ -514,10 +543,13 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                     .map(|meta| (meta.len(), meta.modified().ok()));
                 let progress = {
                     let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                    if !queue.accepts(work.generation) {
+                        return;
+                    }
                     match result {
                         Ok(Some(true)) => queue.progress.converted += 1,
                         Ok(Some(false)) => queue.progress.skipped += 1,
-                        Ok(None) => unreachable!("deferred above"),
+                        Ok(None) => unreachable!("interrupted above"),
                         Err(error) => {
                             queue.progress.failed += 1;
                             log::warn!("地图转换失败，保留恢复材料：{}: {error}", path.display());
@@ -535,6 +567,9 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 let fingerprint = fingerprint(&job.game, &job.set).ok();
                 let progress = {
                     let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                    if !queue.accepts(work.generation) {
+                        return;
+                    }
                     queue.set_finished(job, fingerprint);
                     lifecycle().1.notify_all();
                     queue.progress.clone()
@@ -648,9 +683,18 @@ mod tests {
         fs::write(&path, &bytes).unwrap();
         let cache = dir.join("cache");
         assert_eq!(
-            convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {
-                set_game_running(true);
-            })
+            convert(
+                &path,
+                &dir,
+                &cache,
+                &Mutex::new(()),
+                &|_, _| {
+                    set_game_running(true);
+                    // Even a rapid exit must not revive this old conversion.
+                    set_game_running(false);
+                },
+                GENERATION.load(Ordering::SeqCst)
+            )
             .unwrap(),
             None
         );
@@ -658,7 +702,15 @@ mod tests {
         assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
         set_game_running(false);
         assert_eq!(
-            convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap(),
+            convert(
+                &path,
+                &dir,
+                &cache,
+                &Mutex::new(()),
+                &|_, _| {},
+                GENERATION.load(Ordering::SeqCst)
+            )
+            .unwrap(),
             Some(true)
         );
         let result = fs::read(&path).unwrap();
@@ -667,7 +719,15 @@ mod tests {
             crate::asset_bundle::read_bundle_entries(&result).unwrap()
         );
         assert_eq!(
-            convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap(),
+            convert(
+                &path,
+                &dir,
+                &cache,
+                &Mutex::new(()),
+                &|_, _| {},
+                GENERATION.load(Ordering::SeqCst)
+            )
+            .unwrap(),
             Some(false)
         );
         assert_eq!(fs::read(&source).unwrap(), bytes);

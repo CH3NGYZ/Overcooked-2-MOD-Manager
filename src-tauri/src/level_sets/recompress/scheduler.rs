@@ -18,6 +18,7 @@ struct Active {
 
 pub(super) struct Work {
     pub job: Arc<Job>,
+    pub generation: u64,
     /// Empty sets still need their completion fingerprint recorded.
     pub index: Option<usize>,
 }
@@ -27,16 +28,17 @@ pub(super) struct Lifecycle {
     pub running: bool,
     pub stopping: bool,
     pub paused: bool,
+    pub generation: u64,
+    pub rescan_requested: bool,
     pub pending: VecDeque<Job>,
     pub progress: Progress,
     pub completed: BTreeMap<PathBuf, Signature>,
     active: BTreeMap<PathBuf, Active>,
-    deferred: VecDeque<Work>,
 }
 
 impl Lifecycle {
     pub fn enqueue(&mut self, job: Job, signature: Signature) {
-        if self.stopping || self.completed.get(&job.set) == Some(&signature) {
+        if self.stopping || self.paused || self.completed.get(&job.set) == Some(&signature) {
             return;
         }
         if let Some(index) = self.pending.iter().position(|item| item.set == job.set) {
@@ -68,14 +70,12 @@ impl Lifecycle {
         if self.paused {
             return None;
         }
-        if let Some(work) = self.deferred.pop_front() {
-            return Some(work);
-        }
         for active in self.active.values_mut() {
             if active.next < active.job.files.len() {
                 let index = active.next;
                 active.next += 1;
                 return Some(Work {
+                    generation: self.generation,
                     job: active.job.clone(),
                     index: Some(index),
                 });
@@ -105,7 +105,11 @@ impl Lifecycle {
                     processed: BTreeMap::new(),
                 },
             );
-            return Some(Work { job, index });
+            return Some(Work {
+                job,
+                index,
+                generation: self.generation,
+            });
         }
         None
     }
@@ -114,8 +118,27 @@ impl Lifecycle {
         !self.active.is_empty()
     }
 
-    pub fn defer(&mut self, work: Work) {
-        self.deferred.push_back(work);
+    /// Discard the entire old batch; in-flight transactions still finish safely.
+    pub fn game_started(&mut self) {
+        self.paused = true;
+        self.generation += 1;
+        self.rescan_requested = true;
+        self.pending.clear();
+        self.active.clear();
+        self.completed.clear();
+        self.progress = Progress::default();
+    }
+
+    pub fn accepts(&self, generation: u64) -> bool {
+        !self.stopping && !self.paused && self.generation == generation
+    }
+
+    /// Only the observer consumes this after old workers have joined.
+    pub fn take_rescan(&mut self) -> bool {
+        if self.stopping || self.paused || self.running {
+            return false;
+        }
+        std::mem::take(&mut self.rescan_requested)
     }
 
     pub fn file_finished(
@@ -183,32 +206,34 @@ mod tests {
     }
 
     #[test]
-    fn game_pause_preserves_pending_and_interrupted_files_until_resume() {
+    fn game_start_discards_batch_and_exit_requests_one_fresh_scan() {
         let mut state = Lifecycle::default();
-        state.paused = true;
         state.enqueue(job("first", 2), vec![]);
+        state.running = true;
+        let old = state.claim().unwrap();
+        state.enqueue(job("pending", 1), vec![]);
+        state.completed.insert("previous".into(), vec![]);
+        state.game_started();
+        assert!(!state.accepts(old.generation));
+        assert!(state.pending.is_empty());
+        assert!(!state.has_active());
+        assert!(state.completed.is_empty());
+        state.enqueue(job("during-game", 1), vec![]);
+        assert!(state.pending.is_empty());
         assert!(state.claim().is_none());
-        assert_eq!(state.pending.len(), 1);
+        assert!(!state.take_rescan());
         state.paused = false;
-        let work = state.claim().unwrap();
-        state.paused = true;
-        state.defer(work);
-        state.enqueue(job("added-while-playing", 1), vec![]);
-        assert!(state.claim().is_none());
+        assert!(!state.take_rescan()); // Replacement from the old batch is still joining.
+        state.running = false;
+        assert!(state.take_rescan());
+        assert!(!state.take_rescan());
+        state.enqueue(job("first", 2), vec![]);
+        let fresh = state.claim().unwrap();
+        assert_eq!(fresh.index, Some(0));
+        assert!(state.accepts(fresh.generation));
+        assert!(!state.accepts(old.generation)); // Also rejects old scan admission/completions.
         assert_eq!(state.progress.done, 0);
-        assert_eq!(state.progress.skipped, 0);
-        assert_eq!(state.progress.failed, 0);
-        state.paused = false;
-        let retry = state.claim().unwrap();
-        assert_eq!(retry.index, Some(0));
-        assert_eq!(retry.job.set, PathBuf::from("first"));
-        assert!(!state.file_finished(&retry.job, retry.job.files[0].clone(), None));
-        let last = state.claim().unwrap();
-        assert_eq!(last.index, Some(1));
-        assert!(state.file_finished(&last.job, last.job.files[1].clone(), None));
-        state.set_finished(&last.job, None);
-        let added = state.claim().unwrap();
-        assert_eq!(added.job.set, PathBuf::from("added-while-playing"));
+        assert_eq!(state.progress.sets_total, 1);
     }
     #[test]
     fn four_single_file_sets_run_together_and_accept_new_work_while_busy() {

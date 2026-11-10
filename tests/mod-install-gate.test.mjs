@@ -37,7 +37,7 @@ registerHooks({
       return { format: 'module', shortCircuit: true, source: FAKE_API }
     }
     if (url.includes('/src/composables/useDashboardStore.ts')) {
-      return { format: 'module', shortCircuit: true, source: `export const useDashboard = () => ({game: {get value() { return {kitchen_running: !!globalThis.__gameRunning} }},config:{get value(){return globalThis.__noteConfig ?? null}},mods:{value:[]}})` }
+      return { format: 'module', shortCircuit: true, source: `export const useDashboard = () => ({game: {get value() { return {kitchen_running: !!globalThis.__gameRunning} }},config:{get value(){return globalThis.__noteConfig ?? null}},mods:{get value(){return globalThis.__noteMods ?? []}}})` }
     }
     if (url.includes('/src/composables/useMapSources.ts')) {
       return { format: 'module', shortCircuit: true, source: `export const useMapSources = () => ({maps:{value:[]}})` }
@@ -108,7 +108,8 @@ test('手动来源 GUID 匹配说明：取消立即放弃暂存，不进入安�
   globalThis.__gameRunning = false
   globalThis.__noteConfig = { repositories: [{ id: 'manual-note', name: '手动说明',
     plugin_guid: 'example.manual', note: '# 安装前阅读' }] }
-  t.after(() => { globalThis.__noteConfig = null; noteGate.finishModInstallNotes() })
+  t.after(() => { globalThis.__noteConfig = null; globalThis.__noteMods = null; noteGate.finishModInstallNotes() })
+  globalThis.__noteMods = [{ repository_id: 'manual-note', guid: 'example.manual' }]
   const flow = useModInstallFlow()
   flow.openPreview(modPreview({ entries: [{ guid: 'EXAMPLE.MANUAL', role: 'mod' }] }))
   assert.equal(noteGate.modInstallNote.value.id, 'manual-note')

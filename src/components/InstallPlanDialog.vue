@@ -46,10 +46,10 @@ const model = computed(() => installCheckModelFromPlan(props.plan, props.targetL
 async function confirmNotes(rows: readonly InstallCheckRow[]) {
   const statuses = rows.filter((row) => row.kind !== 'uninstall')
     .map((row) => props.plan.install[row.index])
-  // 关系解析已按 GUID 找到本地 MOD，升级/降级不能因为暂时缺仓库绑定而误弹。
-  const repositories = statuses.flatMap((status) =>
-    status?.repository && !status.installedMod ? [status.repository] : [])
-  return confirmModInstallNotes(firstInstallNotes(repositories, []))
+  // 依赖升级也需区分安装清单与手动放入的 DLL，沿用主 MOD 的唯一说明规则。
+  const repositories = statuses.flatMap((status) => status?.repository ? [status.repository] : [])
+  const mods = statuses.flatMap((status) => status?.installedMod ? [status.installedMod] : [])
+  return confirmModInstallNotes(firstInstallNotes(repositories, mods))
 }
 
 /**

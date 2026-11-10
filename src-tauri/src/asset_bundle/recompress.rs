@@ -1,8 +1,7 @@
 //! Lossless UnityFS compression rewrite; serialized objects and CAB names stay unchanged.
 use super::*;
 
-#[allow(dead_code)] // The metadata-only oc2-info tool shares this module.
-pub(crate) fn to_lz4(
+pub(crate) fn to_lz4hc3(
     bytes: &[u8],
     progress: &dyn Fn(usize, usize),
 ) -> Result<Option<Vec<u8>>, ParseError> {
@@ -91,9 +90,16 @@ pub(crate) fn to_lz4(
     let mut records = Vec::new();
     let mut done = 0;
     for block in data.chunks(128 * 1024) {
-        let compressed = lz4_flex::block::compress(block);
+        // Raw LZ4HC level 3 blocks, without a length prefix or frame header:
+        // UnityFS already stores the decoded length in its block table.
+        let compressed = lz4::block::compress(
+            block,
+            Some(lz4::block::CompressionMode::HIGHCOMPRESSION(3)),
+            false,
+        )
+        .map_err(|err| ParseError::Corrupt(format!("LZ4HC3 compression: {err}")))?;
         let (payload, kind) = if compressed.len() < block.len() {
-            (compressed.as_slice(), 2u16)
+            (compressed.as_slice(), 3u16)
         } else {
             (block, 0u16)
         };
@@ -193,30 +199,88 @@ mod tests {
         let data = (0..400_000).map(|i| (i % 251) as u8).collect::<Vec<_>>();
         for at_end in [false, true] {
             let source = fixture(&data, at_end);
-            let output = to_lz4(&source, &|_, _| {}).unwrap().unwrap();
+            let output = to_lz4hc3(&source, &|_, _| {}).unwrap().unwrap();
             assert_eq!(
                 read_bundle_entries(&source).unwrap(),
                 read_bundle_entries(&output).unwrap()
             );
             assert_eq!(bundle_layout(&output).unwrap().blocks.len(), 4);
-            assert!(to_lz4(&output, &|_, _| {}).unwrap().is_none());
+            assert!(
+                bundle_layout(&output)
+                    .unwrap()
+                    .blocks
+                    .iter()
+                    .all(|b| b.2 == 3)
+            );
+            let layout = bundle_layout(&output).unwrap();
+            let mut position = layout.data_start;
+            for (block, (_, packed, _)) in data.chunks(128 * 1024).zip(&layout.blocks) {
+                let expected = lz4::block::compress(
+                    block,
+                    Some(lz4::block::CompressionMode::HIGHCOMPRESSION(3)),
+                    false,
+                )
+                .unwrap();
+                assert_eq!(&output[position..position + packed], expected);
+                position += packed;
+            }
+            assert!(to_lz4hc3(&output, &|_, _| {}).unwrap().is_none());
+            // Existing ordinary LZ4 blocks use the same decoder and remain untouched.
+            let mut ordinary = output.clone();
+            let mut header = BundleReader {
+                bytes: &ordinary,
+                pos: 8,
+            };
+            header.u32().unwrap();
+            header.cstr().unwrap();
+            header.cstr().unwrap();
+            header.i64().unwrap();
+            header.u32().unwrap();
+            header.u32().unwrap();
+            header.u32().unwrap();
+            let info_start = header.pos;
+            for i in 0..layout.blocks.len() {
+                let flag = info_start + 20 + i * 10 + 8;
+                ordinary[flag..flag + 2].copy_from_slice(&2u16.to_be_bytes());
+            }
+            assert!(to_lz4hc3(&ordinary, &|_, _| {}).unwrap().is_none());
         }
     }
     #[test]
     fn truncated_bundle_cannot_convert() {
         let mut source = fixture(&vec![7; 1024], false);
         source.pop();
-        assert!(to_lz4(&source, &|_, _| {}).is_err());
+        assert!(to_lz4hc3(&source, &|_, _| {}).is_err());
+    }
+    #[test]
+    fn incompressible_block_stays_raw() {
+        let mut state = 0x12345678u32;
+        let data = (0..128 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect::<Vec<_>>();
+        let source = fixture(&data, false);
+        let output = to_lz4hc3(&source, &|_, _| {}).unwrap().unwrap();
+        assert_eq!(bundle_layout(&output).unwrap().blocks[0].2, 0);
+        assert_eq!(
+            read_bundle_entries(&source).unwrap(),
+            read_bundle_entries(&output).unwrap()
+        );
+        assert!(to_lz4hc3(&output, &|_, _| {}).unwrap().is_none());
     }
     #[test]
     #[ignore = "requires the installed pear info fixture"]
     fn real_lzma_info_recompresses_without_changing_entries() {
-        let path = std::path::Path::new(
-            "E:/SteamLibrary/steamapps/common/Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/pear_v11.0(菊花梨）/info_pear",
+        let path = std::env::var_os("OC2_LZMA_INFO_FIXTURE").map(std::path::PathBuf::from).unwrap_or_else(||
+            "E:/SteamLibrary/steamapps/common/Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/pear_v11.0(菊花梨）/info_pear".into()
         );
-        let bytes = std::fs::read(path).expect("pear info fixture");
-        let source = fixture(&read_bundle_entries(&bytes).unwrap()[0].1, false);
-        let output = to_lz4(&source, &|_, _| {})
+        let bytes = std::fs::read(path).expect("real info fixture");
+        let source = bytes.clone();
+        let output = to_lz4hc3(&source, &|_, _| {})
             .expect("recompress")
             .expect("LZMA fixture");
         assert_ne!(bytes, output);

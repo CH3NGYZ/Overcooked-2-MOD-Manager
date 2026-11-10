@@ -355,7 +355,7 @@ fn convert(
     if hash(&backup)? != source_hash {
         return Err("backup hash mismatch".into());
     }
-    let output = crate::asset_bundle::recompress::to_lz4(&bytes, progress)
+    let output = crate::asset_bundle::recompress::to_lz4hc3(&bytes, progress)
         .map_err(|e| e.to_string())?
         .ok_or("compression changed")?;
     write_new(&output_path, &output)?;
@@ -572,10 +572,10 @@ mod tests {
     #[test]
     #[ignore = "requires installed map fixtures; writes only a temporary copy"]
     fn real_map_resource_conversion_transaction() {
-        let source = Path::new(
-            "E:/SteamLibrary/steamapps/common/Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/blni_v2.1(小NO)/s_blni_1",
+        let source = std::env::var_os("OC2_LZMA_SCENE_FIXTURE").map(PathBuf::from).unwrap_or_else(||
+            "E:/SteamLibrary/steamapps/common/Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/blni_v2.1(小NO)/s_blni_1".into()
         );
-        let bytes = fs::read(source).expect("real LZMA resource");
+        let bytes = fs::read(&source).expect("real LZMA resource");
         let dir = workspace();
         let set = super::super::levels_root(&dir).join("fixture");
         fs::create_dir_all(&set).unwrap();
@@ -589,7 +589,7 @@ mod tests {
             crate::asset_bundle::read_bundle_entries(&result).unwrap()
         );
         assert!(!convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap());
-        assert_eq!(fs::read(source).unwrap(), bytes);
+        assert_eq!(fs::read(&source).unwrap(), bytes);
         assert_eq!(fs::read_dir(cache).unwrap().count(), 0);
     }
 }

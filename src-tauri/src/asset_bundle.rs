@@ -29,6 +29,7 @@
 //! 按需关卡预览、对象引用与纹理由 level_sets::preview_reader 拥有；扫描不解码图片。
 use unityfs::{Reader, SerializedFile, UnityValue};
 #[path = "asset_bundle/recompress.rs"]
+#[cfg(feature = "bundle-recompression")]
 pub(crate) mod recompress;
 
 /// 解析出来的关卡集元数据。

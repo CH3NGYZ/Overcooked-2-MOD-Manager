@@ -17,6 +17,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
 
+[features]
+default = ["bundle-recompression"]
+bundle-recompression = ["dep:lz4"]
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -51,6 +55,7 @@ notify = "8"
 unityfs = "0.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
+lz4 = { version = "1.28", optional = true }
 regex = "1"
 scraper = { version = "0.27", default-features = false }
 globset = "0.4"

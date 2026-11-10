@@ -59,4 +59,5 @@ pub(crate) fn with_params(base: &str, pairs: &[(&str, &str)]) -> String {
 }
 
 #[cfg(test)]
+#[path = "locale_tag/tests.rs"]
 mod tests;

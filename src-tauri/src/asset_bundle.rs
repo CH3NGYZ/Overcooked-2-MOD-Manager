@@ -309,6 +309,7 @@ fn non_empty(value: String) -> Option<String> {
 }
 
 #[cfg(test)]
+#[path = "asset_bundle/tests.rs"]
 mod tests;
 // ===== UnityFS 容器解析 =====
 //

@@ -302,4 +302,5 @@ pub fn fold_bounds(min: &str, max: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "version_range/tests.rs"]
 mod tests;

@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { t } from '../i18n'
 import {
-  exitTutorial,
   measureTutorialTarget,
   nextStep,
   prevStep,
@@ -38,7 +37,7 @@ import { placeCard, VIEWPORT_MARGIN, type Size } from '../tutorial/geometry'
  *
  * - 点击任意位置 / 「下一步」：下一步
  * - 滚轮（累计到阈值才切，避免触控板一滑跳好几步）
- * - ← ↑ = 上一步，→ ↓ = 下一步，Esc = 退出
+ * - ← ↑ = 上一步，→ ↓ = 下一步
  * - 切步期间（`tutorial.busy`）全部忽略，避免连点开两次抽屉
  *
  * 滚轮与方向键都在 **window capture** 阶段监听并 `preventDefault`：教程期间
@@ -170,7 +169,6 @@ function onKeydown(event: KeyboardEvent) {
     case 'Escape':
       event.preventDefault()
       event.stopPropagation()
-      exitTutorial()
       break
     default:
       break
@@ -247,9 +245,7 @@ watch(
         <div class="tutorial-card-head">
           <span class="tutorial-card-count"
             :aria-label="t('tutorial.stepProgress', { n: tutorial.index.value + 1, total: tutorial.total.value })">{{ tutorial.index.value + 1 }} / {{ tutorial.total.value }}</span>
-          <n-button class="tutorial-card-skip" size="tiny" quaternary @click.stop="exitTutorial">
-            {{ t('tutorial.skip') }}
-          </n-button>
+
         </div>
         <div class="tutorial-card-progress" aria-hidden="true">
           <span :style="{ width: `${progress}%` }" />

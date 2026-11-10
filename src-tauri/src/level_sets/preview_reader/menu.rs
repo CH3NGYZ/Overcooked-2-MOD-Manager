@@ -176,11 +176,7 @@ impl Context {
         }
         let tiles = self.declared_tiles(r, &m);
         if !tiles.is_empty() {
-            for tile in tiles.iter().skip(usize::from(tiles.len() > 1)) {
-                empty.pictures.extend(tile.pictures.clone());
-                empty.modifiers.extend(tile.modifiers.clone());
-            }
-            return empty;
+            return declared_ingredient_tile(tiles);
         }
         let composition = array(&m, "compositionSOs");
         if !composition.is_empty() {
@@ -229,15 +225,11 @@ impl Context {
         }
         let declared = self.declared_tiles(r, &m);
         if !declared.is_empty() {
-            let offset = out.len();
-            if offset + declared.len() > 96 {
-                return None;
-            }
-            for mut tile in declared {
-                tile.children = tile.children.into_iter().map(|i| i + offset).collect();
-                out.push(tile);
-            }
-            return Some(offset);
+            // A native recipe used as an ingredient contributes its preparation,
+            // not another finished-dish tile (RecipeHelper.GetSpriteListPseudoRecipe).
+            let index = out.len();
+            out.push(declared_ingredient_tile(declared));
+            return Some(index);
         }
         let composition = array(&m, "compositionSOs");
         if composition.is_empty() {
@@ -331,6 +323,20 @@ impl Context {
         tiles
     }
 }
+fn declared_ingredient_tile(tiles: Vec<MenuTile>) -> MenuTile {
+    let skip = usize::from(tiles.len() > 1);
+    let mut ingredient = MenuTile {
+        pictures: vec![],
+        modifiers: vec![],
+        children: vec![],
+        large: false,
+    };
+    for mut tile in tiles.into_iter().skip(skip) {
+        ingredient.pictures.append(&mut tile.pictures);
+        ingredient.modifiers.append(&mut tile.modifiers);
+    }
+    ingredient
+}
 // Only monochrome cooking symbols: retain black coverage, discard white artwork.
 fn normalize_step(icon: &mut MenuIcon) {
     use base64::Engine;
@@ -377,6 +383,102 @@ fn custom_kind(m: &Map) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires installed RW and game resources"]
+    fn real_rw_breeze_recipes() {
+        let game = Path::new("E:/SteamLibrary/steamapps/common/Overcooked! 2");
+        let local = game.join("BepInEx/plugins/OC2DIYLevel/levels/rw_v0.73(Rick-Wang)");
+        let info = crate::level_sets::scan::locate_info_file(&local).unwrap();
+        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let index = c.levels.iter().position(|l| l.name_zh == "微风").unwrap();
+        let recipes = c.recipes(index).unwrap();
+        for recipe in &recipes[42..45] {
+            assert!(
+                recipe
+                    .tiles
+                    .iter()
+                    .skip(1)
+                    .flat_map(|t| &t.pictures)
+                    .all(|p| p.name != "ui_Pancake_01"),
+                "sub-recipe finished icon leaked into ingredients: {}",
+                recipe.name
+            );
+            let pictures = recipe
+                .tiles
+                .iter()
+                .skip(1)
+                .flat_map(|t| &t.pictures)
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>();
+            assert!(pictures.contains(&"Flour_Icon") && pictures.contains(&"egg_Icon"));
+            let steps = recipe
+                .tiles
+                .iter()
+                .flat_map(|t| &t.modifiers)
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(steps, ["Mixer", "FryingPan"]);
+        }
+        assert_eq!(
+            recipes[16].ingredients,
+            ["DLC05_Banana", "Milk", "DLC05_Banana", "Milk"]
+        );
+        assert_eq!(recipes.len(), 50);
+        let out = if Path::new(".tmp").exists() {
+            PathBuf::from(".tmp/rw-breeze-recipes.json")
+        } else {
+            PathBuf::from("../.tmp/rw-breeze-recipes.json")
+        };
+        std::fs::write(out, serde_json::to_vec(&recipes).unwrap()).unwrap();
+    }
+    #[test]
+    fn nested_native_recipe_uses_ingredients_and_steps_without_finished_picture() {
+        fn icon(name: &str) -> MenuIcon {
+            MenuIcon {
+                name: name.into(),
+                source: String::new(),
+                data_url: None,
+            }
+        }
+        let result = declared_ingredient_tile(vec![
+            MenuTile {
+                pictures: vec![icon("finished")],
+                modifiers: vec![],
+                children: vec![1],
+                large: true,
+            },
+            MenuTile {
+                pictures: vec![icon("flour"), icon("egg")],
+                modifiers: vec![icon("Mixer"), icon("FryingPan")],
+                children: vec![],
+                large: false,
+            },
+        ]);
+        assert_eq!(
+            result
+                .pictures
+                .iter()
+                .map(|i| i.name.as_str())
+                .collect::<Vec<_>>(),
+            ["flour", "egg"]
+        );
+        assert_eq!(
+            result
+                .modifiers
+                .iter()
+                .map(|i| i.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Mixer", "FryingPan"]
+        );
+        assert!(result.children.is_empty());
+        let single = declared_ingredient_tile(vec![MenuTile {
+            pictures: vec![icon("raw")],
+            modifiers: vec![],
+            children: vec![],
+            large: false,
+        }]);
+        assert_eq!(single.pictures[0].name, "raw");
+    }
     #[test]
     fn cooking_symbol_keeps_black_and_discards_white_with_alpha() {
         use base64::Engine;

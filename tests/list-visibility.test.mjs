@@ -66,3 +66,16 @@ test('空态区分：没数据 / 搜索没命中 / 状态筛选没命中', () =>
   // 有可见项时不该给空态（调用方用 n-empty v-if 挡住，这里仍返回兜底文案）
   assert.equal(visibilityEmptyText(state({ visible: 3 }), texts), '没有数据')
 })
+
+test('selected status clears when its last item changes state', async () => {
+  const { ref, computed, nextTick } = await import('vue')
+  const { useListVisibility } = await import('../src/composables/useListVisibility.ts')
+  const keys = ref(['update', 'latest'])
+  const view = useListVisibility(ref(''), texts)
+  view.reconcileStatuses(computed(() => keys.value))
+  view.toggleStatus('update')
+  keys.value = ['latest']
+  await nextTick()
+  assert.equal(view.activeStatus.value, null)
+  assert.equal(view.statusMatches(['latest']), true)
+})

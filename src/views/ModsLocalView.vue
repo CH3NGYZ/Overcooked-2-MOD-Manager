@@ -1158,6 +1158,8 @@ provide(
     linkToModRepository,
   }),
 )
+// Register eager watchers only after all computed dependencies are initialized.
+visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...statusTagsToggle.value].map(entry => entry.key)))
 </script>
 
 <template>

@@ -5,7 +5,7 @@
  * 响应式状态。页面负责回答「我这个展示单元属于哪些状态」，选中态、切换、
  * 计数、空态、折叠与批量开关的反应两页完全一致。
  */
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   nextStatusKey,
   statusKeyMatches,
@@ -21,6 +21,12 @@ export function useListVisibility(
   const activeStatus = ref<string | null>(null)
   const searching = computed(() => query.value.trim().length > 0)
   const filtering = computed(() => searching.value || activeStatus.value !== null)
+
+  function reconcileStatuses(keys: ComputedRef<readonly string[]>) {
+    watch(keys, available => {
+      if (activeStatus.value && !available.includes(activeStatus.value)) activeStatus.value = null
+    })
+  }
 
   function toggleStatus(key: string) {
     activeStatus.value = nextStatusKey(activeStatus.value, key)
@@ -56,6 +62,7 @@ export function useListVisibility(
     return filtering.value
   }
   return {
+    reconcileStatuses,
     activeStatus,
     searching,
     filtering,

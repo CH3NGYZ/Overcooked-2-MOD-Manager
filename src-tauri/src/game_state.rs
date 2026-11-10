@@ -36,10 +36,26 @@ pub(crate) fn start_observer(app: AppHandle) {
                 (observer, change)
             })
             .await;
+            if !matches!(&result, Ok((_, Ok(_)))) {
+                if let Some(progress) = crate::level_sets::recompress::set_game_running(true) {
+                    let _ = app.emit("level-set-compression-progress", progress);
+                }
+            }
             match result {
                 Ok((next, Ok(change))) => {
                     observer = next;
                     failures = 0;
+                    let running = app
+                        .state::<AppState>()
+                        .game_state
+                        .lock()
+                        .map_or(true, |info| {
+                            info.as_ref().is_none_or(|info| info.kitchen_running)
+                        });
+                    if let Some(progress) = crate::level_sets::recompress::set_game_running(running)
+                    {
+                        let _ = app.emit("level-set-compression-progress", progress);
+                    }
                     if let Some(info) = change {
                         log::info!(
                             "游戏状态变化：已找到游戏={}，BepInEx已安装={}，游戏运行={}，WinHTTP={:?}",

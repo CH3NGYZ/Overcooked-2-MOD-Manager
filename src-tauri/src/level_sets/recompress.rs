@@ -30,8 +30,23 @@ mod scheduler;
 use scheduler::Lifecycle;
 static LIFECYCLE: OnceLock<(Mutex<Lifecycle>, std::sync::Condvar)> = OnceLock::new();
 static CANCEL: AtomicBool = AtomicBool::new(false);
+// Unknown startup state is conservative until the initial game probe completes.
+static GAME_RUNNING: AtomicBool = AtomicBool::new(true);
 fn lifecycle() -> &'static (Mutex<Lifecycle>, std::sync::Condvar) {
     LIFECYCLE.get_or_init(Default::default)
+}
+
+pub(crate) fn set_game_running(running: bool) -> Option<Progress> {
+    let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+    let changed = GAME_RUNNING.swap(running, Ordering::SeqCst) != running;
+    queue.paused = running;
+    queue.progress.running = queue.running && !running;
+    lifecycle().1.notify_all();
+    changed.then(|| queue.progress.clone())
+}
+
+fn may_convert() -> bool {
+    !CANCEL.load(Ordering::SeqCst) && !GAME_RUNNING.load(Ordering::SeqCst)
 }
 
 pub(crate) fn has_pending_work() -> bool {
@@ -108,7 +123,12 @@ pub(crate) fn enqueue_installed(
     selected: Option<&[String]>,
 ) {
     let config = state.config.load_or_default();
-    let Some(game) = crate::game::detect_game(&config).path else {
+    let info = crate::game::detect_game(&config);
+    if let Some(progress) = set_game_running(info.kitchen_running) {
+        use tauri::Emitter;
+        let _ = app.emit("level-set-compression-progress", progress);
+    }
+    let Some(game) = info.path else {
         return;
     };
     let game = PathBuf::from(game);
@@ -182,11 +202,13 @@ pub(crate) fn enqueue_installed(
     for (job, signature) in jobs {
         queue.enqueue(job, signature);
     }
+    queue.progress.running = queue.running && !queue.paused;
     lifecycle().1.notify_all();
     if was_running || queue.pending.is_empty() {
         return;
     }
     queue.running = true;
+    queue.progress.running = !queue.paused;
     drop(queue);
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -279,9 +301,16 @@ fn replace(
     backup: &Path,
     source_hash: &[u8],
     output_hash: &[u8],
-) -> Result<(), String> {
+    should_continue: &dyn Fn() -> bool,
+) -> Result<bool, String> {
+    if !should_continue() {
+        return Ok(false);
+    }
     if hash(path)? != source_hash {
         return Err("source changed before replacement".into());
+    }
+    if !should_continue() {
+        return Ok(false);
     }
     let result: Result<(), String> = (|| {
         let mut input = fs::File::open(output).map_err(|e| e.to_string())?;
@@ -316,7 +345,7 @@ fn replace(
             backup.display()
         ));
     }
-    Ok(())
+    Ok(true)
 }
 
 fn convert(
@@ -325,21 +354,24 @@ fn convert(
     cache: &Path,
     operation: &Mutex<()>,
     progress: &dyn Fn(usize, usize),
-) -> Result<bool, String> {
+) -> Result<Option<bool>, String> {
+    if !may_convert() {
+        return Ok(None);
+    }
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut magic = [0u8; 8];
     if file.read_exact(&mut magic).is_err() || &magic != b"UnityFS\0" {
-        return Ok(false);
+        return Ok(Some(false));
     }
     drop(file);
     if fs::metadata(path).map_err(|e| e.to_string())?.len() > 512 * 1024 * 1024 {
         return Err("bundle size limit".into());
     }
     if !crate::asset_bundle::bundle_needs_conversion(path).map_err(|e| e.to_string())? {
-        return Ok(false);
+        return Ok(Some(false));
     }
-    if CANCEL.load(Ordering::SeqCst) {
-        return Ok(false);
+    if !may_convert() {
+        return Ok(None);
     }
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     fs::create_dir_all(cache).map_err(|e| e.to_string())?;
@@ -355,31 +387,34 @@ fn convert(
     if hash(&backup)? != source_hash {
         return Err("backup hash mismatch".into());
     }
-    let output = crate::asset_bundle::recompress::to_lz4hc3(&bytes, progress)
-        .map_err(|e| e.to_string())?
-        .ok_or("compression changed")?;
+    let output = crate::asset_bundle::recompress::to_lz4hc3(&bytes, progress, &may_convert)
+        .map_err(|e| e.to_string())?;
+    let Some(output) = output else {
+        fs::remove_dir_all(&work).map_err(|e| e.to_string())?;
+        return Ok(None);
+    };
     write_new(&output_path, &output)?;
     let output_hash = Sha256::digest(&output).to_vec();
     if hash(&output_path)? != output_hash {
         return Err("staging hash mismatch".into());
     }
     // Shutdown can discard work before replacement; once copying begins rollback must finish.
-    if CANCEL.load(Ordering::SeqCst) {
+    if !may_convert() {
         fs::remove_file(&output_path).map_err(|e| e.to_string())?;
         fs::remove_file(&backup).map_err(|e| e.to_string())?;
         let _ = fs::remove_file(work.join("source.txt"));
         let _ = fs::remove_dir(&work);
-        return Ok(false);
+        return Ok(None);
     }
     {
         let _guard = operation.lock().map_err(|_| "lock.poisoned")?;
         // Installation may have held this lock while shutdown was requested.
-        if CANCEL.load(Ordering::SeqCst) {
+        if !may_convert() {
             let _ = fs::remove_file(&output_path);
             let _ = fs::remove_file(&backup);
             let _ = fs::remove_file(work.join("source.txt"));
             let _ = fs::remove_dir(&work);
-            return Ok(false);
+            return Ok(None);
         }
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
         let inside = [super::levels_root(game), super::disabled_root(game)]
@@ -392,13 +427,29 @@ fn convert(
         if !inside {
             return Err("source moved outside map roots".into());
         }
-        replace(path, &output_path, &backup, &source_hash, &output_hash)?;
+        // Refresh the real process state at the write boundary, covering observer latency.
+        if crate::game::is_game_running(game) {
+            set_game_running(true);
+            fs::remove_dir_all(&work).map_err(|e| e.to_string())?;
+            return Ok(None);
+        }
+        if !replace(
+            path,
+            &output_path,
+            &backup,
+            &source_hash,
+            &output_hash,
+            &may_convert,
+        )? {
+            fs::remove_dir_all(&work).map_err(|e| e.to_string())?;
+            return Ok(None);
+        }
     }
     for item in [&output_path, &backup, &work.join("source.txt")] {
         fs::remove_file(item).map_err(|e| e.to_string())?;
     }
     fs::remove_dir(&work).map_err(|e| e.to_string())?;
-    Ok(true)
+    Ok(Some(true))
 }
 
 fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
@@ -412,7 +463,7 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 if let Some(work) = queue.claim() {
                     return Some(work);
                 }
-                if queue.stopping || !queue.has_active() {
+                if queue.stopping || (!queue.paused && !queue.has_active()) {
                     return None;
                 }
                 queue = wake.wait(queue).unwrap_or_else(|e| e.into_inner());
@@ -447,6 +498,15 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 let result = result.flatten().unwrap_or_else(|| {
                     Err("conversion worker panicked; recovery materials retained".into())
                 });
+                if matches!(result, Ok(None)) {
+                    let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
+                    queue.defer(work);
+                    lifecycle().1.notify_all();
+                    let progress = queue.progress.clone();
+                    drop(queue);
+                    emit(progress);
+                    return;
+                }
                 let stamp = result
                     .as_ref()
                     .ok()
@@ -455,8 +515,9 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 let progress = {
                     let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
                     match result {
-                        Ok(true) => queue.progress.converted += 1,
-                        Ok(false) => queue.progress.skipped += 1,
+                        Ok(Some(true)) => queue.progress.converted += 1,
+                        Ok(Some(false)) => queue.progress.skipped += 1,
+                        Ok(None) => unreachable!("deferred above"),
                         Err(error) => {
                             queue.progress.failed += 1;
                             log::warn!("地图转换失败，保留恢复材料：{}: {error}", path.display());
@@ -533,11 +594,13 @@ mod tests {
         fs::write(&output, b"corrupt").unwrap();
         let old = hash(&path).unwrap();
         let expected = Sha256::digest(b"expected").to_vec();
-        assert!(replace(&path, &output, &backup, &old, &expected).is_err());
+        assert!(replace(&path, &output, &backup, &old, &expected, &|| true).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"original");
         assert!(backup.exists());
         fs::write(&output, b"expected").unwrap();
-        replace(&path, &output, &backup, &old, &expected).unwrap();
+        assert!(!replace(&path, &output, &backup, &old, &expected, &|| false).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        replace(&path, &output, &backup, &old, &expected, &|| true).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"expected");
         fs::remove_file(path).unwrap();
         fs::remove_file(backup).unwrap();
@@ -559,7 +622,8 @@ mod tests {
                 &output,
                 &backup,
                 &Sha256::digest(b"old"),
-                &hash(&output).unwrap()
+                &hash(&output).unwrap(),
+                &|| true
             )
             .is_err()
         );
@@ -572,6 +636,7 @@ mod tests {
     #[test]
     #[ignore = "requires installed map fixtures; writes only a temporary copy"]
     fn real_map_resource_conversion_transaction() {
+        set_game_running(false);
         let source = std::env::var_os("OC2_LZMA_SCENE_FIXTURE").map(PathBuf::from).unwrap_or_else(||
             "E:/SteamLibrary/steamapps/common/Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/blni_v2.1(小NO)/s_blni_1".into()
         );
@@ -582,13 +647,29 @@ mod tests {
         let path = set.join("scene");
         fs::write(&path, &bytes).unwrap();
         let cache = dir.join("cache");
-        assert!(convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap());
+        assert_eq!(
+            convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {
+                set_game_running(true);
+            })
+            .unwrap(),
+            None
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
+        set_game_running(false);
+        assert_eq!(
+            convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap(),
+            Some(true)
+        );
         let result = fs::read(&path).unwrap();
         assert_eq!(
             crate::asset_bundle::read_bundle_entries(&bytes).unwrap(),
             crate::asset_bundle::read_bundle_entries(&result).unwrap()
         );
-        assert!(!convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap());
+        assert_eq!(
+            convert(&path, &dir, &cache, &Mutex::new(()), &|_, _| {}).unwrap(),
+            Some(false)
+        );
         assert_eq!(fs::read(&source).unwrap(), bytes);
         assert_eq!(fs::read_dir(cache).unwrap().count(), 0);
     }

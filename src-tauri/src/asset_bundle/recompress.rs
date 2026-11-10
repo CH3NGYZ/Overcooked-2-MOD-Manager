@@ -4,7 +4,11 @@ use super::*;
 pub(crate) fn to_lz4hc3(
     bytes: &[u8],
     progress: &dyn Fn(usize, usize),
+    should_continue: &dyn Fn() -> bool,
 ) -> Result<Option<Vec<u8>>, ParseError> {
+    if !should_continue() {
+        return Ok(None);
+    }
     let layout = bundle_layout(bytes)?;
     if !layout.blocks.iter().any(|b| b.2 & 63 == 1) {
         return Ok(None);
@@ -74,11 +78,15 @@ pub(crate) fn to_lz4hc3(
             .checked_add(*compressed)
             .filter(|end| *end <= bytes.len())
             .ok_or_else(|| ParseError::Corrupt("block range".into()))?;
-        let block = decompress(
-            &bytes[offset..end],
-            *size,
-            Compression::from_flags(*kind as u32)?,
-        )?;
+        let compression = Compression::from_flags(*kind as u32)?;
+        let block = if compression == Compression::Lzma {
+            let Some(block) = decode_lzma(&bytes[offset..end], *size, should_continue)? else {
+                return Ok(None);
+            };
+            block
+        } else {
+            decompress(&bytes[offset..end], *size, compression)?
+        };
         if block.len() != *size {
             return Err(ParseError::Corrupt("block size".into()));
         }
@@ -90,6 +98,9 @@ pub(crate) fn to_lz4hc3(
     let mut records = Vec::new();
     let mut done = 0;
     for block in data.chunks(128 * 1024) {
+        if !should_continue() {
+            return Ok(None);
+        }
         // Raw LZ4HC level 3 blocks, without a length prefix or frame header:
         // UnityFS already stores the decoded length in its block table.
         let compressed = lz4::block::compress(
@@ -134,6 +145,9 @@ pub(crate) fn to_lz4hc3(
     let mut verified_length = 0usize;
     let mut position = rewritten.data_start;
     for (plain, packed, kind) in &rewritten.blocks {
+        if !should_continue() {
+            return Ok(None);
+        }
         let block = decompress(
             &output[position..position + packed],
             *plain,
@@ -150,6 +164,51 @@ pub(crate) fn to_lz4hc3(
         return Err(ParseError::Corrupt("recompression content mismatch".into()));
     }
     Ok(Some(output))
+}
+
+/// Bound each native decoder call so a newly running game can stop background CPU work.
+fn decode_lzma(
+    bytes: &[u8],
+    size: usize,
+    should_continue: &dyn Fn() -> bool,
+) -> Result<Option<Vec<u8>>, ParseError> {
+    if bytes.len() < 5 || size > 512 * 1024 * 1024 {
+        return Err(ParseError::Corrupt("LZMA extent".into()));
+    }
+    let mut input = bytes[..5].to_vec();
+    input.extend_from_slice(&u64::MAX.to_le_bytes());
+    input.extend_from_slice(&bytes[5..]);
+    let mut stream = xz2::stream::Stream::new_lzma_decoder(u64::MAX)
+        .map_err(|e| ParseError::Corrupt(e.to_string()))?;
+    let mut output = Vec::with_capacity(size);
+    loop {
+        if !should_continue() {
+            return Ok(None);
+        }
+        let before = stream.total_in();
+        let mut chunk = Vec::with_capacity((size.saturating_sub(output.len()) + 1).min(128 * 1024));
+        let status = stream
+            .process_vec(
+                &input[before as usize..],
+                &mut chunk,
+                xz2::stream::Action::Finish,
+            )
+            .map_err(|e| ParseError::Corrupt(e.to_string()))?;
+        let produced = chunk.len();
+        output.extend(chunk);
+        if output.len() > size {
+            return Err(ParseError::Corrupt("LZMA size overflow".into()));
+        }
+        if status == xz2::stream::Status::StreamEnd {
+            if output.len() != size {
+                return Err(ParseError::Corrupt("LZMA size mismatch".into()));
+            }
+            return Ok(Some(output));
+        }
+        if stream.total_in() == before && produced == 0 {
+            return Err(ParseError::Corrupt("LZMA stalled".into()));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -199,7 +258,7 @@ mod tests {
         let data = (0..400_000).map(|i| (i % 251) as u8).collect::<Vec<_>>();
         for at_end in [false, true] {
             let source = fixture(&data, at_end);
-            let output = to_lz4hc3(&source, &|_, _| {}).unwrap().unwrap();
+            let output = to_lz4hc3(&source, &|_, _| {}, &|| true).unwrap().unwrap();
             assert_eq!(
                 read_bundle_entries(&source).unwrap(),
                 read_bundle_entries(&output).unwrap()
@@ -224,7 +283,7 @@ mod tests {
                 assert_eq!(&output[position..position + packed], expected);
                 position += packed;
             }
-            assert!(to_lz4hc3(&output, &|_, _| {}).unwrap().is_none());
+            assert!(to_lz4hc3(&output, &|_, _| {}, &|| true).unwrap().is_none());
             // Existing ordinary LZ4 blocks use the same decoder and remain untouched.
             let mut ordinary = output.clone();
             let mut header = BundleReader {
@@ -243,14 +302,33 @@ mod tests {
                 let flag = info_start + 20 + i * 10 + 8;
                 ordinary[flag..flag + 2].copy_from_slice(&2u16.to_be_bytes());
             }
-            assert!(to_lz4hc3(&ordinary, &|_, _| {}).unwrap().is_none());
+            assert!(
+                to_lz4hc3(&ordinary, &|_, _| {}, &|| true)
+                    .unwrap()
+                    .is_none()
+            );
         }
+    }
+    #[test]
+    fn pause_interrupts_lzma_between_chunks_without_producing_a_replacement() {
+        use std::cell::Cell;
+        let data = vec![7; 1024 * 1024];
+        let source = fixture(&data, false);
+        let calls = Cell::new(0);
+        let result = to_lz4hc3(&source, &|_, _| {}, &|| {
+            calls.set(calls.get() + 1);
+            calls.get() <= 3
+        })
+        .unwrap();
+        assert!(result.is_none());
+        assert_eq!(calls.get(), 4);
+        assert!(to_lz4hc3(&source, &|_, _| {}, &|| true).unwrap().is_some());
     }
     #[test]
     fn truncated_bundle_cannot_convert() {
         let mut source = fixture(&vec![7; 1024], false);
         source.pop();
-        assert!(to_lz4hc3(&source, &|_, _| {}).is_err());
+        assert!(to_lz4hc3(&source, &|_, _| {}, &|| true).is_err());
     }
     #[test]
     fn incompressible_block_stays_raw() {
@@ -264,13 +342,13 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let source = fixture(&data, false);
-        let output = to_lz4hc3(&source, &|_, _| {}).unwrap().unwrap();
+        let output = to_lz4hc3(&source, &|_, _| {}, &|| true).unwrap().unwrap();
         assert_eq!(bundle_layout(&output).unwrap().blocks[0].2, 0);
         assert_eq!(
             read_bundle_entries(&source).unwrap(),
             read_bundle_entries(&output).unwrap()
         );
-        assert!(to_lz4hc3(&output, &|_, _| {}).unwrap().is_none());
+        assert!(to_lz4hc3(&output, &|_, _| {}, &|| true).unwrap().is_none());
     }
     #[test]
     #[ignore = "requires the installed pear info fixture"]
@@ -280,7 +358,7 @@ mod tests {
         );
         let bytes = std::fs::read(path).expect("real info fixture");
         let source = bytes.clone();
-        let output = to_lz4hc3(&source, &|_, _| {})
+        let output = to_lz4hc3(&source, &|_, _| {}, &|| true)
             .expect("recompress")
             .expect("LZMA fixture");
         assert_ne!(bytes, output);

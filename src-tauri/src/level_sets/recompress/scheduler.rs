@@ -26,10 +26,12 @@ pub(super) struct Work {
 pub(super) struct Lifecycle {
     pub running: bool,
     pub stopping: bool,
+    pub paused: bool,
     pub pending: VecDeque<Job>,
     pub progress: Progress,
     pub completed: BTreeMap<PathBuf, Signature>,
     active: BTreeMap<PathBuf, Active>,
+    deferred: VecDeque<Work>,
 }
 
 impl Lifecycle {
@@ -62,6 +64,12 @@ impl Lifecycle {
         if self.stopping {
             self.pending.clear();
             return None;
+        }
+        if self.paused {
+            return None;
+        }
+        if let Some(work) = self.deferred.pop_front() {
+            return Some(work);
         }
         for active in self.active.values_mut() {
             if active.next < active.job.files.len() {
@@ -104,6 +112,10 @@ impl Lifecycle {
 
     pub fn has_active(&self) -> bool {
         !self.active.is_empty()
+    }
+
+    pub fn defer(&mut self, work: Work) {
+        self.deferred.push_back(work);
     }
 
     pub fn file_finished(
@@ -170,6 +182,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn game_pause_preserves_pending_and_interrupted_files_until_resume() {
+        let mut state = Lifecycle::default();
+        state.paused = true;
+        state.enqueue(job("first", 2), vec![]);
+        assert!(state.claim().is_none());
+        assert_eq!(state.pending.len(), 1);
+        state.paused = false;
+        let work = state.claim().unwrap();
+        state.paused = true;
+        state.defer(work);
+        state.enqueue(job("added-while-playing", 1), vec![]);
+        assert!(state.claim().is_none());
+        assert_eq!(state.progress.done, 0);
+        assert_eq!(state.progress.skipped, 0);
+        assert_eq!(state.progress.failed, 0);
+        state.paused = false;
+        let retry = state.claim().unwrap();
+        assert_eq!(retry.index, Some(0));
+        assert_eq!(retry.job.set, PathBuf::from("first"));
+        assert!(!state.file_finished(&retry.job, retry.job.files[0].clone(), None));
+        let last = state.claim().unwrap();
+        assert_eq!(last.index, Some(1));
+        assert!(state.file_finished(&last.job, last.job.files[1].clone(), None));
+        state.set_finished(&last.job, None);
+        let added = state.claim().unwrap();
+        assert_eq!(added.job.set, PathBuf::from("added-while-playing"));
+    }
     #[test]
     fn four_single_file_sets_run_together_and_accept_new_work_while_busy() {
         let queue = (Mutex::new(Lifecycle::default()), Condvar::new());

@@ -2,7 +2,7 @@ import type { DomainMessages } from './types'
 export const levelPreview: DomainMessages = {
   conversionStatus: {'zh-CN':'状态','zh-TW':'狀態',en:'Status',ko:'상태',ja:'状態'},
   conversionTitle: {"zh-CN": "地图资源优化", "zh-TW": "地圖資源最佳化", "en": "Map resource optimization", "ko": "지도 리소스 최적화", "ja": "マップリソース最適化"},
-  conversionActive: {"zh-CN": "正在转换为 LZ4", "zh-TW": "正在轉換為 LZ4", "en": "Converting to LZ4", "ko": "LZ4로 변환 중", "ja": "LZ4 に変換中"},
+  conversionActive: {"zh-CN": "正在转换为 LZ4HC3", "zh-TW": "正在轉換為 LZ4HC3", "en": "Converting to LZ4HC3", "ko": "LZ4HC3로 변환 중", "ja": "LZ4HC3 に変換中"},
   conversionIdle: {"zh-CN": "空闲", "zh-TW": "閒置", "en": "Idle", "ko": "대기 중", "ja": "待機中"},
   conversionSets: {"zh-CN": "地图集", "zh-TW": "關卡集", "en": "Level sets", "ko": "스테이지 세트", "ja": "ステージセット"},
   conversionFiles: {"zh-CN": "地图集内文件", "zh-TW": "關卡集內檔案", "en": "Files in current set", "ko": "현재 세트 파일", "ja": "現在のセット内ファイル"},

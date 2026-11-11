@@ -106,6 +106,8 @@ test('local maps setup evaluates immediate grouping watchers with tutorial depen
 
     const state = app._instance.setupState
     assert.equal(state.loading, false)
+    assert.equal(state.diyLevelAvailable, true, 'tutorial maps do not depend on the real DLL scan or selected target')
+    assert.equal(state.diyLevelMissing, false)
     assert.equal(state.sets.length, 2)
     assert.equal(state.visibleSets.length, 2)
     assert.deepEqual(state.groups.flatMap(group => group.sets).map(set => set.dir_name).sort(),

@@ -119,11 +119,20 @@ test('all missing-mod translations use the same name placeholder and requested C
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.match(entry[locale], /\{name\}/)
 })
 
-test('chef and list pages share missing-state routing and centered layout', () => {
-  const chef = read('src/views/DiyChefView.vue'), shared = read('src/components/ModNotInstalled.vue')
+test('chef, local maps and drawer share missing-state routing and centered layout with tutorial isolation', () => {
+  const chef = read('src/views/DiyChefView.vue'), levels = read('src/views/LevelsView.vue')
+  const panel = read('src/components/settings/DiyLevelPanel.vue'), shared = read('src/components/ModNotInstalled.vue')
   assert.match(chef, /<ModNotInstalled[^>]*opened\?\.status === 'not_installed'[^>]*guid="dev\.gua\.overcooked\.diychef"/)
   assert.doesNotMatch(chef, /chef-empty|chef-loading|router\.push/)
   assert.match(chef, /\.diychef-page \{[^}]*display: flex;[^}]*flex: 1 1 auto;/)
+  assert.match(levels, /demoActive\.value \|\| \(modsStatus\.value === 'ready' && !!diyLevelTarget\.value\)/)
+  assert.match(levels, /!demoActive\.value && modsStatus\.value === 'ready' && !diyLevelTarget\.value/)
+  assert.match(levels, /!diyLevelTarget\.value && !localReadError\.value/)
+  assert.match(levels, /modsStatus === 'error' \|\| localReadError/)
+  assert.match(levels, /<ModNotInstalled[^>]*diyLevelMissing[^>]*guid="dev\.gua\.overcooked\.diylevel"/)
+  assert.match(levels, /realSetsTarget\.value === diyLevelTarget\.value \? realSets\.value : \[\]/)
+  assert.match(panel, /<ModNotInstalled[^>]*layout="inline"/)
+  assert.doesNotMatch(panel, /cached_releases|installableRepository/)
   assert.match(shared, /useModRepositoryLink\(\)/)
   assert.match(shared, /v-if="repository" #extra/)
   assert.doesNotMatch(shared, /router\.push|api\.|https?:\/\//)

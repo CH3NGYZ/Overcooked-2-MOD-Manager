@@ -4,6 +4,7 @@ import { computed, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NCollapse, NCollapseItem, NFloatButton, NTag, useDialog } from 'naive-ui'
 import ContentState from '../components/ContentState.vue'
+import ModNotInstalled from '../components/ModNotInstalled.vue'
 import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { matchesLocalSearch, levelSetSearchText } from '../localItemSearch'
 import { t, locale, pickI18n } from '../i18n'
@@ -110,10 +111,15 @@ import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMa
 const message = useNotify()
 const dialog = useDialog()
 const { blockModOperation } = useGameOperationGate()
-const { config: realConfig, game: realGame, mods: realMods, ensureLoaded } = useDashboard()
+const { config: realConfig, game: realGame, mods: realMods, modsStatus, modsError, diyLevelTarget, ensureLoaded } = useDashboard()
 const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
 const mods = computed(() => withDemoMods(realMods.value))
+const localReadError = ref('')
+// The completed backend scan owns GUID/version selection. Tutorial data has
+// its own presentation and never adopts or changes this real target token.
+const diyLevelAvailable = computed(() => demoActive.value || (modsStatus.value === 'ready' && !!diyLevelTarget.value))
+const diyLevelMissing = computed(() => !demoActive.value && modsStatus.value === 'ready' && !diyLevelTarget.value && !localReadError.value)
 const { linkToMap } = useMapLink()
 /**
  * 「缺依赖」的安装入口与 MOD 管理页同一个落点：跳到 MOD 安装页并高亮那张
@@ -134,7 +140,10 @@ const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 3 + TOOL_GAP * 2)
 
 /** 扫描缓存只存真实数据，教程展示通过同一批示例投影。 */
 const realSets = ref<LevelSetInfo[]>([])
-const sets = computed(() => withDemoLevelSets(realSets.value))
+const realSetsTarget = ref<string | null>(null)
+const sets = computed(() => withDemoLevelSets(
+  diyLevelAvailable.value && realSetsTarget.value === diyLevelTarget.value ? realSets.value : [],
+))
 /**
  * 地图源声明的地图与刷新状态，全部来自模块级单例（`useMapSources`）。
  *
@@ -159,7 +168,7 @@ const repositories = computed<ModRepository[]>(() =>
     )),
 )
 const realLoading = ref(true)
-const loading = computed(() => !demoActive.value && realLoading.value)
+const loading = computed(() => !demoActive.value && (realLoading.value || modsStatus.value === 'idle' || modsStatus.value === 'loading'))
 /**
  * 扫描进度（后端 `level-set-scan-progress` 逐份上报，订阅在 `useLevelSetScan` 里）。
  *
@@ -292,11 +301,14 @@ watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 async function load() {
   if (demoActive.value) return
   realLoading.value = realSets.value.length === 0
+  localReadError.value = ''
   try {
     const levelSets = await scanLevelSets()
     realSets.value = levelSets
+    realSetsTarget.value = diyLevelTarget.value
   } catch (reason) {
-    message.error(backendMessageOf(reason))
+    localReadError.value = backendMessageOf(reason)
+    message.error(localReadError.value)
   } finally {
     realLoading.value = false
   }
@@ -310,10 +322,13 @@ async function load() {
  */
 async function reloadSets() {
   if (demoActive.value) return
+  localReadError.value = ''
   try {
     realSets.value = await scanLevelSets()
+    realSetsTarget.value = diyLevelTarget.value
   } catch (reason) {
-    message.error(backendMessageOf(reason))
+    localReadError.value = backendMessageOf(reason)
+    message.error(localReadError.value)
   }
 }
 
@@ -431,6 +446,9 @@ watch(demoActive, active => {
   void ensureLoaded()
   void loadMaps()
   void load()
+})
+watch(diyLevelTarget, () => {
+  if (!demoActive.value && modsStatus.value === 'ready') void load()
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */
@@ -995,11 +1013,11 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
       :description="t('levelSet.checkUpdatesHint')" @click="checkUpdates">
       <RefreshOutline width="16" height="16" aria-hidden="true" />
     </HeaderIconAction>
-    <HeaderIconAction secondary :label="t('levelSet.organize')" :loading="organizing" :disabled="organizing || loading"
+    <HeaderIconAction secondary :label="t('levelSet.organize')" :loading="organizing" :disabled="organizing || loading || !diyLevelAvailable"
       :description="t('levelSet.organizeHint')" @click="organizeLevelSets">
       <AlbumsOutline width="16" height="16" aria-hidden="true" />
     </HeaderIconAction>
-    <HeaderIconAction secondary :label="t('modsLocal.openFolder')" @click="openLevelsDirectory">
+    <HeaderIconAction secondary :label="t('modsLocal.openFolder')" :disabled="!diyLevelAvailable" @click="openLevelsDirectory">
       <FolderOpenOutline width="16" height="16" aria-hidden="true" />
     </HeaderIconAction>
   </Teleport>
@@ -1055,11 +1073,13 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
       <span v-else>{{ t('levelSet.scanningPreparing') }}</span>
       <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
     </template>
-    <ContentState v-if="!loading && !visibleSets.length" data-tutorial="levels-page"
+    <ModNotInstalled v-if="!loading && diyLevelMissing" guid="dev.gua.overcooked.diylevel" name="DIYLevel" data-tutorial="levels-page" />
+    <ContentState v-else-if="!loading && !demoActive && (modsStatus === 'error' || localReadError)" :description="modsError || localReadError" />
+    <ContentState v-else-if="!loading && diyLevelAvailable && !visibleSets.length" data-tutorial="levels-page"
       :description="emptyDescription" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
-    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse" data-tutorial="levels-page"
+    <n-collapse v-else-if="diyLevelAvailable" :expanded-names="groupsExpanded" class="group-collapse" data-tutorial="levels-page"
       @update:expanded-names="onGroupsExpanded">
       <!--
         折叠项里只挂组件、不写卡片：`n-collapse` 的动态 prop 只有

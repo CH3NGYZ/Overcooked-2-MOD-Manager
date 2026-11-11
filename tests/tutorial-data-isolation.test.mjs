@@ -305,7 +305,10 @@ test('page wiring projects every data lane, skips mount/drop reads and restores 
   for (const file of ['MapsOnlineView', 'LevelsView', 'OverviewView']) {
     const source = read(file)
     assert.match(source, /withDemoMaps\(realMaps\.value\)/, file)
-    assert.match(source, /withDemoLevelSets\(real(?:Level)?Sets\.value\)/, file)
+    if (file === 'LevelsView') {
+      assert.match(source, /withDemoLevelSets\(\s*diyLevelAvailable\.value && realSetsTarget\.value === diyLevelTarget\.value \? realSets\.value : \[\]/, file)
+      assert.match(source, /const diyLevelAvailable = computed\(\(\) => demoActive\.value \|\|/)
+    } else assert.match(source, /withDemoLevelSets\(real(?:Level)?Sets\.value\)/, file)
   }
   assert.match(read('MapsOnlineView'), /withDemoMapSourceNodes\(realSourceNodes\.value\)/)
   assert.match(read('LevelsView'), /busyReader\(\(\) => demoActive\.value \|\|/)

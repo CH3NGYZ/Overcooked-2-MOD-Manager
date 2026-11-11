@@ -1,6 +1,7 @@
 //! BepInEx 表层布局识别、选择性安装与回滚。
 
 use super::installed_versions::record_installed_mapset_versions;
+use super::paths::LevelSetRoots;
 use super::paths::disabled_root;
 use super::paths::is_safe_dir_name;
 use super::paths::is_safe_relative;
@@ -243,11 +244,11 @@ pub(super) fn inspect_bepinex_layer(
 /// 免得为了回滚把几百 MB 读进内存。
 const MAX_OVERWRITE_ROLLBACK_BYTES: u64 = 16 * 1024 * 1024;
 
-/// 把 BepInEx 表层包按 ZIP 内路径原样解压到游戏目录，并登记随包插件归属。
+/// 地图写入选中 DIYLevel 的 levels，随包插件保留 ZIP 内位置并登记归属。
 ///
 /// 与历史形态的差异：
-/// - 不拍平、不改目录名：`BepInEx/plugins/OC2DIYLevel/levels/<集>/` 就是作者
-///   规划好的位置，扫描按「`levels` 下第一层」照样能认出来。
+/// - 不拍平、不改集目录名：ZIP 的历史 `OC2DIYLevel/levels/` 子树重定向到
+///   当前最高版本 DLL 的兄弟 levels，避免装进已经不再使用的旧目录。
 /// - 插件不搬进集目录：它们留在 `BepInEx/plugins/**`，绑定关系写进登记表，
 ///   MOD 扫描据此避让（见 `mods::scan_mods_with_manifests`）。
 ///
@@ -258,12 +259,13 @@ pub(super) fn install_bepinex_layer_sets(
     all_sets: &[ImportedLevelSet],
     targets: &[&ImportedLevelSet],
     zip_path: &Path,
-    game_root: &Path,
+    roots: &LevelSetRoots,
     manifests_dir: &Path,
     origin: Option<&crate::models::MapInstallOrigin>,
 ) -> Result<Vec<String>, String> {
-    let levels_dir = levels_root(game_root);
-    let disabled_dir = disabled_root(game_root);
+    let game_root = roots.game_root();
+    let levels_dir = levels_root(roots)?;
+    let disabled_dir = roots.safe_path(&disabled_root(game_root))?;
     for set in targets {
         if !is_safe_dir_name(&set.dir_name) {
             return Err("levelSet.invalidName".into());
@@ -324,8 +326,7 @@ pub(super) fn install_bepinex_layer_sets(
         &merge_registered_plugins(previous.clone(), added),
     )?;
 
-    if let Err(reason) = extract_bepinex_layer(zip_path, game_root, &selected_dirs, &owned_plugins)
-    {
+    if let Err(reason) = extract_bepinex_layer(zip_path, roots, &selected_dirs, &owned_plugins) {
         if let Err(error) = write_registered_plugins(manifests_dir, &previous) {
             log::warn!(
                 "随包插件登记表回滚失败，可能留下指向不存在文件的记录：原因={}",
@@ -350,7 +351,7 @@ pub(super) fn install_bepinex_layer_sets(
 /// 什么都没发生，留下半个 BepInEx 目录比报错更糟。
 fn extract_bepinex_layer(
     zip_path: &Path,
-    game_root: &Path,
+    roots: &LevelSetRoots,
     selected_dirs: &HashSet<String>,
     owned_plugins: &HashMap<String, bool>,
 ) -> Result<(), String> {
@@ -363,7 +364,7 @@ fn extract_bepinex_layer(
     let mut overwritten: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     let result = extract_bepinex_layer_entries(
         &mut archive,
-        game_root,
+        roots,
         selected_dirs,
         owned_plugins,
         &mut created,
@@ -403,13 +404,16 @@ fn extract_bepinex_layer(
 #[allow(clippy::too_many_arguments)]
 fn extract_bepinex_layer_entries(
     archive: &mut zip::ZipArchive<fs::File>,
-    game_root: &Path,
+    roots: &LevelSetRoots,
     selected_dirs: &HashSet<String>,
     owned_plugins: &HashMap<String, bool>,
     created: &mut Vec<PathBuf>,
     created_dirs: &mut Vec<PathBuf>,
     overwritten: &mut Vec<(PathBuf, Vec<u8>)>,
 ) -> Result<(), String> {
+    let game_root = roots.game_root();
+    let levels_dir = levels_root(roots)?;
+    let mut targets = HashSet::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| {
             crate::locale_tag::with_params(
@@ -444,7 +448,16 @@ fn extract_bepinex_layer_entries(
         if !lower.starts_with(BEPINEX_LEVELS_PREFIX) || lower.ends_with(".dll") {
             crate::game::ensure_game_stopped(game_root)?;
         }
-        let target = game_root.join(&name);
+        let target = if lower.starts_with(BEPINEX_LEVELS_PREFIX) {
+            roots.safe_path(&levels_dir.join(&name[BEPINEX_LEVELS_PREFIX.len()..]))?
+        } else {
+            roots.safe_path(&game_root.join(&name))?
+        };
+        // 重定向后也不能让不同 ZIP 条目写到同一个目标。
+        let target_key = target.to_string_lossy().to_lowercase();
+        if !targets.insert(target_key) {
+            return Err("archive.pathEscape".into());
+        }
         if let Some(parent) = target.parent() {
             /*
              * 记下本次新建的目录链：失败回滚时只删这些，原有目录（哪怕是空的
@@ -453,7 +466,7 @@ fn extract_bepinex_layer_entries(
             let mut missing: Vec<PathBuf> = Vec::new();
             let mut cursor = Some(parent);
             while let Some(directory) = cursor {
-                if directory.exists() || !directory.starts_with(game_root) {
+                if directory.exists() {
                     break;
                 }
                 missing.push(directory.to_path_buf());

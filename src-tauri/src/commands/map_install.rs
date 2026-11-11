@@ -54,7 +54,17 @@ pub async fn stage_map_source(
         }
     };
     // 解析失败时下载来的暂存文件没有后续用途，当场清掉，不留垃圾
-    let sets = match zip_level_sets(&app, &config, &path) {
+    let parse_state = state.inner().clone();
+    let parse_app = app.clone();
+    let parse_path = path.clone();
+    let sets = match tauri::async_runtime::spawn_blocking(move || {
+        let roots = crate::mods::snapshot::optional_level_roots(&parse_state)?;
+        zip_level_sets(&parse_app, &config, &parse_path, roots.as_ref())
+    })
+    .await
+    .map_err(|error| error.to_string())
+    .and_then(|result| result)
+    {
         Ok(sets) => sets,
         Err(error) => {
             if staged {
@@ -117,6 +127,7 @@ pub async fn import_level_sets(
     tauri::async_runtime::spawn_blocking(move || {
         log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
         let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
+        let (_, roots) = crate::mods::snapshot::level_roots(&compression_state, &game_root)?;
         let zip = PathBuf::from(&zip_path);
         let info_app = app.clone();
         let sets = crate::level_sets::inspect_zip_with_progress(
@@ -156,7 +167,7 @@ pub async fn import_level_sets(
             let installed = crate::level_sets::install_parsed_sets(
                 &sets,
                 &zip,
-                &game_root,
+                &roots,
                 &manifests_dir,
                 &selected,
                 origin.as_ref(),
@@ -189,7 +200,7 @@ pub async fn import_level_sets(
             let single = crate::level_sets::install_parsed_sets(
                 &sets,
                 &zip,
-                &game_root,
+                &roots,
                 &manifests_dir,
                 std::slice::from_ref(name),
                 origin.as_ref(),
@@ -334,8 +345,15 @@ pub async fn stage_map_release(
         let config_for_parse = config.clone();
         let path_for_parse = temp.clone();
         let app_for_parse = app.clone();
+        let state_for_parse = state.inner().clone();
         let parsed = match tauri::async_runtime::spawn_blocking(move || {
-            zip_level_sets(&app_for_parse, &config_for_parse, &path_for_parse)
+            let roots = crate::mods::snapshot::optional_level_roots(&state_for_parse)?;
+            zip_level_sets(
+                &app_for_parse,
+                &config_for_parse,
+                &path_for_parse,
+                roots.as_ref(),
+            )
         })
         .await
         {

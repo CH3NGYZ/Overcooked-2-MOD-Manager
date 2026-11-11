@@ -101,7 +101,8 @@ pub(crate) fn shutdown() -> Result<(), String> {
 }
 
 struct Job {
-    game: PathBuf,
+    roots: super::LevelSetRoots,
+    valid_scan: Arc<AtomicBool>,
     cache: PathBuf,
     set: PathBuf,
     files: Vec<PathBuf>,
@@ -132,7 +133,29 @@ pub(crate) fn snapshot() -> Progress {
         .clone()
 }
 
-/// Startup passes None; installation passes only the successfully installed directories.
+/// Watch only directories selected by a completed local MOD scan.
+pub(crate) fn watch_selected(state: &crate::app_state::AppState, app: &tauri::AppHandle) {
+    // Root changes and scan invalidation hold the same lock. A late callback must
+    // select and install one current watch plan without a mutation between them.
+    let Ok(_operation) = state.operation.lock() else {
+        log::warn!("操作锁已中毒，暂不重建关卡集监听");
+        return;
+    };
+    let roots = crate::game::detect_game(&state.config.load_or_default())
+        .path
+        .and_then(|game| crate::mods::snapshot::level_roots(state, Path::new(&game)).ok())
+        .map(|(_, roots)| {
+            let mut paths = vec![super::disabled_root(roots.game_root())];
+            if let Ok(enabled) = super::levels_root(&roots) {
+                paths.insert(0, enabled);
+            }
+            paths
+        })
+        .unwrap_or_default();
+    state.level_watch.watch(app, roots);
+}
+
+/// Completed local scans pass None; installation passes only successful directories.
 pub(crate) fn enqueue_installed(
     state: &crate::app_state::AppState,
     app: &tauri::AppHandle,
@@ -152,8 +175,28 @@ pub(crate) fn enqueue_installed(
         return;
     };
     let game = PathBuf::from(game);
+    let Ok((snapshot, roots)) = crate::mods::snapshot::level_roots(state, &game) else {
+        return;
+    };
+    let Ok(valid_scan) = state
+        .local_mod_snapshot
+        .lock()
+        .map_err(|_| ())
+        .and_then(|scans| {
+            scans
+                .lease(snapshot.generation, roots.game_root())
+                .map_err(|_| ())
+        })
+    else {
+        return;
+    };
+    let game = roots.game_root();
     let mut sets = Vec::new();
-    for root in [super::levels_root(&game), super::disabled_root(&game)] {
+    let mut map_roots = vec![super::disabled_root(game)];
+    if let Ok(enabled) = super::levels_root(&roots) {
+        map_roots.insert(0, enabled);
+    }
+    for root in map_roots {
         let Ok(root) = root.canonicalize() else {
             continue;
         };
@@ -187,7 +230,7 @@ pub(crate) fn enqueue_installed(
     let jobs = sets
         .into_iter()
         .filter_map(|set| {
-            if !may_convert(generation) {
+            if !may_convert(generation) || !valid_scan.load(Ordering::SeqCst) {
                 return None;
             }
             let signature = fingerprint(&game, &set).ok()?;
@@ -204,7 +247,8 @@ pub(crate) fn enqueue_installed(
                 .collect();
             Some((
                 Job {
-                    game: game.clone(),
+                    roots: roots.clone(),
+                    valid_scan: valid_scan.clone(),
                     cache: state.config.cache_dir().join("level-compression"),
                     set,
                     files,
@@ -217,7 +261,7 @@ pub(crate) fn enqueue_installed(
         .collect::<Vec<_>>();
     let (lock, _) = lifecycle();
     let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
-    if !queue.accepts(generation) || queue.rescan_requested {
+    if !queue.accepts(generation) || queue.rescan_requested || !valid_scan.load(Ordering::SeqCst) {
         return;
     }
     let workers = crate::concurrency::workers_from(config.map_compression_concurrency);
@@ -373,13 +417,15 @@ fn replace(
 
 fn convert(
     path: &Path,
-    game: &Path,
+    roots: &super::LevelSetRoots,
+    valid_scan: &AtomicBool,
     cache: &Path,
     operation: &Mutex<()>,
     progress: &dyn Fn(usize, usize),
     generation: u64,
 ) -> Result<Option<bool>, String> {
-    let may_convert = || may_convert(generation);
+    let game = roots.game_root();
+    let may_convert = || may_convert(generation) && valid_scan.load(Ordering::SeqCst);
     if !may_convert() {
         return Ok(None);
     }
@@ -442,7 +488,11 @@ fn convert(
             return Ok(None);
         }
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
-        let inside = [super::levels_root(game), super::disabled_root(game)]
+        let mut map_roots = vec![super::disabled_root(game)];
+        if let Ok(enabled) = super::levels_root(roots) {
+            map_roots.insert(0, enabled);
+        }
+        let inside = map_roots
             .iter()
             .filter_map(|root| root.canonicalize().ok())
             .any(|root| {
@@ -500,7 +550,8 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 let path = &job.files[index];
                 convert(
                     path,
-                    &job.game,
+                    &job.roots,
+                    &job.valid_scan,
                     &job.cache,
                     &job.operation,
                     &|done, total| {
@@ -529,16 +580,18 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 });
                 if matches!(result, Ok(None)) {
                     let queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
-                    // Interrupted work belongs to the discarded batch; never requeue it.
-                    lifecycle().1.notify_all();
-                    let progress = queue.progress.clone();
-                    drop(queue);
-                    emit(progress);
-                    return;
+                    if !queue.accepts(work.generation) {
+                        lifecycle().1.notify_all();
+                        let progress = queue.progress.clone();
+                        drop(queue);
+                        emit(progress);
+                        return;
+                    }
                 }
                 let stamp = result
                     .as_ref()
                     .ok()
+                    .filter(|result| result.is_some())
                     .and_then(|_| fs::metadata(path).ok())
                     .map(|meta| (meta.len(), meta.modified().ok()));
                 let progress = {
@@ -549,7 +602,7 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                     match result {
                         Ok(Some(true)) => queue.progress.converted += 1,
                         Ok(Some(false)) => queue.progress.skipped += 1,
-                        Ok(None) => unreachable!("interrupted above"),
+                        Ok(None) => queue.progress.skipped += 1,
                         Err(error) => {
                             queue.progress.failed += 1;
                             log::warn!("地图转换失败，保留恢复材料：{}: {error}", path.display());
@@ -564,7 +617,11 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 emit(progress);
             }
             if finished {
-                let fingerprint = fingerprint(&job.game, &job.set).ok();
+                let fingerprint = job
+                    .valid_scan
+                    .load(Ordering::SeqCst)
+                    .then(|| fingerprint(job.roots.game_root(), &job.set).ok())
+                    .flatten();
                 let progress = {
                     let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
                     if !queue.accepts(work.generation) {
@@ -591,7 +648,8 @@ mod tests {
     fn busy_queue_keeps_new_sets_and_replaces_only_pending_duplicates() {
         fn job(set: &str, count: usize) -> Job {
             Job {
-                game: PathBuf::from("game"),
+                roots: super::super::LevelSetRoots::new("game".into(), None),
+                valid_scan: Arc::new(AtomicBool::new(true)),
                 cache: PathBuf::from("cache"),
                 set: PathBuf::from(set),
                 files: (0..count).map(|i| PathBuf::from(i.to_string())).collect(),
@@ -677,7 +735,8 @@ mod tests {
         );
         let bytes = fs::read(&source).expect("real LZMA resource");
         let dir = workspace();
-        let set = super::super::levels_root(&dir).join("fixture");
+        let roots = super::super::paths::test_roots(&dir);
+        let set = super::super::levels_root(&roots).unwrap().join("fixture");
         fs::create_dir_all(&set).unwrap();
         let path = set.join("scene");
         fs::write(&path, &bytes).unwrap();
@@ -685,7 +744,8 @@ mod tests {
         assert_eq!(
             convert(
                 &path,
-                &dir,
+                &roots,
+                &AtomicBool::new(true),
                 &cache,
                 &Mutex::new(()),
                 &|_, _| {
@@ -704,7 +764,8 @@ mod tests {
         assert_eq!(
             convert(
                 &path,
-                &dir,
+                &roots,
+                &AtomicBool::new(true),
                 &cache,
                 &Mutex::new(()),
                 &|_, _| {},
@@ -721,7 +782,8 @@ mod tests {
         assert_eq!(
             convert(
                 &path,
-                &dir,
+                &roots,
+                &AtomicBool::new(true),
                 &cache,
                 &Mutex::new(()),
                 &|_, _| {},

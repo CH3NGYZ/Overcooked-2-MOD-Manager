@@ -45,10 +45,11 @@ import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withD
 
 const router = useRouter()
 const message = useNotify()
-const { ensureLoaded, load, modsLoading: realModsLoading, error: realError, mods: realMods, game: realGame, config: realConfig } = useDashboard()
+const { ensureLoaded, ensureLocalModsLoaded, load, modsLoading: realModsLoading, error: realError, mods: realMods, diyLevelTarget: realDiyLevelTarget, game: realGame, config: realConfig } = useDashboard()
 const mods = computed(() => withDemoMods(realMods.value))
 const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
+const diyLevelTarget = computed(() => withDemoDiyLevelTarget(realDiyLevelTarget.value))
 const modsLoading = computed(() => !demoActive.value && realModsLoading.value)
 const error = computed(() => demoActive.value ? '' : realError.value)
 const frameworkOk = computed(() => game.value?.bepinex.installed === true)
@@ -132,13 +133,9 @@ function openFrameworkSettings() {
 
 /* ===== DIYLevel 框架 ===== */
 
-/** DIYLevel 的稳定 GUID：与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
-const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
-
-const diyLevelMod = computed(() => demoActive.value
-  ? mods.value.find((mod) => mod.dll_file === withDemoDiyLevelTarget(null))
-  : mods.value.find((mod) =>
-    !!mod.guid && mod.guid.trim().toLowerCase() === DIYLEVEL_GUID))
+/** 与后端后续地图操作共用同一份最高版本选择，不在页面重判版本。 */
+const diyLevelMod = computed(() =>
+  mods.value.find((mod) => mod.dll_file === diyLevelTarget.value))
 
 const diyLevelOk = computed(() => !!diyLevelMod.value)
 const diyLevelEnabled = computed(() => diyLevelMod.value?.enabled === true)
@@ -161,6 +158,8 @@ async function loadDiyLevel() {
   if (demoActive.value) return
   diyLevelLoading.value = true
   try {
+    await ensureLocalModsLoaded()
+    if (demoActive.value) return
     const info = await api.diyLevelInfo()
     diyLevelPacks.value = info.level_packs ?? 0
   } catch {
@@ -185,15 +184,14 @@ async function toggleDiyLevel(enabled: boolean) {
     const result = await api.setDiyLevelEnabled(enabled)
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
-      await load()
-      // 开关不改地图文件，但重读一次能顺带刷新版本/地图集摘要
-      await loadDiyLevel()
     } else {
       message.error(translateBackendMessage(result.message))
     }
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
+    await load().catch(() => undefined)
+    await loadDiyLevel()
     working.value = false
   }
 }

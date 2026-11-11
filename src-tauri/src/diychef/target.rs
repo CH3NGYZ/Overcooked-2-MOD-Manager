@@ -3,19 +3,11 @@ use crate::{
     models::{ChefTarget, InstalledMod},
     mods,
 };
-use std::{
-    cmp::Ordering,
-    path::{Path, PathBuf},
-};
-pub(crate) const GUID: &str = "dev.gua.overcooked.diychef";
+use std::path::{Path, PathBuf};
+pub(crate) const GUID: &str = mods::plugin_target::DIYCHEF_GUID;
 pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarget> {
-    let mut values: Vec<_> = mods
-        .iter()
-        .filter(|m| {
-            m.guid
-                .as_deref()
-                .is_some_and(|g| g.eq_ignore_ascii_case(GUID))
-        })
+    mods::plugin_target::candidates(mods, GUID)
+        .into_iter()
         .map(|m| ChefTarget {
             id: if m.enabled {
                 m.dll_file.clone()
@@ -35,39 +27,20 @@ pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarg
                 }
                 .into(),
         })
-        .collect();
-    values.sort_by(|a, b| {
-        mods::compare_mod_versions(
-            b.version.as_deref().unwrap_or(""),
-            a.version.as_deref().unwrap_or(""),
-        )
-        .unwrap_or(Ordering::Equal)
-        .then(a.id.cmp(&b.id))
-    });
-    values
+        .collect()
 }
 /// The picker and explicit selection share this eligibility rule. A known older
 /// version is never offered while the highest version is installed more than once.
 pub(crate) fn eligible(values: &[ChefTarget]) -> Vec<ChefTarget> {
-    let Some(top) = values.first() else {
-        return vec![];
-    };
-    let unknown = values.iter().any(|x| {
-        x.version
-            .as_deref()
-            .is_none_or(|v| mods::compare_mod_versions(v, v).is_none())
-    });
-    values
-        .iter()
-        .filter(|x| {
-            unknown
-                || mods::compare_mod_versions(
-                    x.version.as_deref().unwrap_or(""),
-                    top.version.as_deref().unwrap_or(""),
-                ) == Some(Ordering::Equal)
-        })
-        .cloned()
-        .collect()
+    mods::plugin_target::highest_indices(
+        &values
+            .iter()
+            .map(|item| item.version.as_deref())
+            .collect::<Vec<_>>(),
+    )
+    .into_iter()
+    .map(|index| values[index].clone())
+    .collect()
 }
 pub(crate) fn select(
     values: &[ChefTarget],
@@ -91,19 +64,8 @@ pub(crate) fn select(
     })
 }
 pub(crate) fn mod_root(game_root: &Path, target: &ChefTarget) -> Result<PathBuf, String> {
-    let enabled = game::safe_game_path(game_root, &target.id)?;
-    let actual = if enabled.is_file() {
-        enabled
-    } else {
-        game::safe_game_path(game_root, &format!("{}.disabled", target.id))?
-    };
-    if !actual.is_file() {
-        return Err("diychef.targetChanged".into());
-    }
-    actual
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "diychef.targetChanged".into())
+    mods::plugin_target::directory(game_root, &target.display_path, target.enabled)
+        .map_err(|_| "diychef.targetChanged".into())
 }
 pub(crate) fn child(game_root: &Path, parent: &Path, name: &str) -> Result<PathBuf, String> {
     let root = game::resolve_existing_ancestor(game_root)?;

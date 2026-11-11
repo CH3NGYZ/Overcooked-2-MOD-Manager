@@ -21,7 +21,7 @@ pub fn clear_level_set_cache() -> Result<usize, String> {
 
 /// 列出全部关卡集（启用与停用）。
 ///
-/// 只读取地图列表；转换由启动与安装完成分别入队。
+/// 只读取地图列表；转换由本地 MOD 扫描与安装完成分别入队。
 /// 未找到游戏目录时返回空列表而不是报错：地图页在没有厨房的情况下也该能打开。
 #[tauri::command]
 pub async fn get_level_sets(
@@ -38,39 +38,33 @@ pub async fn get_level_sets(
      *
      * `State` 不能跨 await，所以在同步段把需要的东西都取出来再 move 进闭包。
      */
-    let config = state.config.load_or_default();
-    let Some(game_root) = game::detect_game(&config).path else {
-        /*
-         * 游戏目录没了：旧监听还指着已经消失的路径，先停掉（空 roots 在
-         * `LevelWatcher::watch` 里就是「停掉现有监听」），下次检测到目录再建。
-         */
-        state.level_watch.watch(&app, Vec::new());
-        crate::api_scheduler::set_installed("map", Vec::new());
-        return Ok(Vec::new());
-    };
-    let game_root = PathBuf::from(game_root);
-    /*
-     * 目录监听跟着游戏目录走：`watch` 幂等，目标没变直接返回，游戏路径被
-     * 用户改掉时重建。这里仍在同步段，`State` 不能跨 await，先把它用掉。
-     */
-    state.level_watch.watch(
-        &app,
-        vec![
-            crate::level_sets::levels_root(&game_root),
-            crate::level_sets::disabled_root(&game_root),
-        ],
-    );
-    let manifests_dir = state.config.manifests_dir();
-    // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
-    let info_workers = crate::concurrency::workers_from(config.map_info_concurrency);
+    let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let prepared = prepare_level_set_scan(&state)?;
+        let Some((config, snapshot, roots)) = prepared else {
+            /*
+             * 游戏目录没了：旧监听还指着已经消失的路径，先停掉（空 roots 在
+             * `LevelWatcher::watch` 里就是「停掉现有监听」），下次检测到目录再建。
+             */
+            state.level_watch.watch(&app, Vec::new());
+            crate::api_scheduler::set_installed("map", Vec::new());
+            return Ok(Vec::new());
+        };
+        /*
+         * 目录监听跟着游戏目录走：`watch` 幂等，目标没变直接返回，游戏路径被
+         * 用户改掉时重建。这里仍在同步段，`State` 不能跨 await，先把它用掉。
+         */
+        crate::level_sets::recompress::watch_selected(&state, &app);
+        let manifests_dir = state.config.manifests_dir();
+        // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
+        let info_workers = crate::concurrency::workers_from(config.map_info_concurrency);
         /*
          * 进度事件逐份发：解析发生在多个线程里，`emit` 本身线程安全。
          * 发送失败（窗口已关、前端还没挂监听）不影响扫描结果，忽略即可。
          */
         let progress_app = app.clone();
         let sets = crate::level_sets::scan_level_sets_with_progress(
-            &game_root,
+            &roots,
             Some(&manifests_dir),
             info_workers,
             &move |done, total, current| {
@@ -95,6 +89,17 @@ pub async fn get_level_sets(
                 info
             })
             .collect();
+        // Parsing happens outside the operation lock. A scan superseded by a
+        // game/root change must neither publish its result nor reset priorities.
+        let _operation = state
+            .operation
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?;
+        state
+            .local_mod_snapshot
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?
+            .get(snapshot.generation, roots.game_root())?;
         crate::api_scheduler::set_installed(
             "map",
             config
@@ -119,6 +124,38 @@ pub async fn get_level_sets(
     .map_err(|error| error.to_string())?
 }
 
+/// Migration is the only write associated with scanning. Select and migrate
+/// while the operation lock prevents a new scan or game setting from intervening.
+fn prepare_level_set_scan(
+    state: &AppState,
+) -> Result<
+    Option<(
+        crate::models::AppConfig,
+        crate::models::LocalModSnapshot,
+        crate::level_sets::LevelSetRoots,
+    )>,
+    String,
+> {
+    let _operation = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let Some(game_root) = game::detect_game(&config).path else {
+        return Ok(None);
+    };
+    let (snapshot, roots) =
+        crate::mods::snapshot::level_roots(state, std::path::Path::new(&game_root))?;
+    if roots.package_root().is_some() {
+        crate::level_sets::migrate_legacy_disabled_root(&roots);
+    }
+    Ok(Some((config, snapshot, roots)))
+}
+
+#[cfg(test)]
+#[path = "levels/scan_tests.rs"]
+mod scan_tests;
+
 /// 启用或停用一个关卡集（在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动目录）。
 ///
 /// 地图启停允许游戏运行；路径校验、操作锁与目录冲突保护仍由既有链路负责。
@@ -135,7 +172,8 @@ pub fn set_level_set_enabled(
         .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    crate::level_sets::set_level_set_enabled(&game_root, &dir_name, enabled)?;
+    let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
+    crate::level_sets::set_level_set_enabled(&roots, &dir_name, enabled)?;
     Ok(OperationResult {
         ok: true,
         message: if enabled {
@@ -164,7 +202,8 @@ pub fn set_all_level_sets_enabled(
         .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    let changed = crate::level_sets::set_all_level_sets_enabled(&game_root, enabled)?;
+    let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
+    let changed = crate::level_sets::set_all_level_sets_enabled(&roots, enabled)?;
     if changed.is_empty() {
         return Ok(OperationResult {
             ok: true,
@@ -192,7 +231,7 @@ pub fn set_all_level_sets_enabled(
 /// 在系统文件管理器中打开一个关卡集目录。
 ///
 /// 只读：不创建目录、不要求游戏已停止。前端只传目录名与「启用与否」，实际
-/// 路径由后端选择启用根 `BepInEx/plugins/OC2DIYLevel/levels` 或停用根
+/// 路径由后端选择当前最高版本包的 `levels` 或停用根
 /// `BepInEx/cache/modmanager_disabled_maps` 后拼出。参数不能指定任意路径，
 /// `safe_game_path` 与对应根目录的归属检查都在 `level_sets` 里做。
 #[tauri::command]
@@ -204,7 +243,8 @@ pub fn open_level_set_directory(
     log::debug!("打开关卡集目录：目录={}，启用={}", dir_name, enabled);
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    let path = crate::level_sets::locate_level_set_directory(&game_root, &dir_name, enabled)?;
+    let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
+    let path = crate::level_sets::locate_level_set_directory(&roots, &dir_name, enabled)?;
     shell_open::open_path(&path)?;
     Ok(OperationResult {
         ok: true,
@@ -243,10 +283,11 @@ fn delete_level_set_blocking(
         .map_err(|_| "lock.poisoned".to_string())?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
     crate::level_sets::remove_level_set(
         &state.config.mod_recycle_bin_dir(),
         &state.config.manifests_dir(),
-        &game_root,
+        &roots,
         &dir_name,
         enabled,
         config.recycle_deleted_mods,
@@ -287,20 +328,17 @@ fn flatten_level_sets_blocking(
     let recycle_root = state.config.mod_recycle_bin_dir();
     let manifests_dir = state.config.manifests_dir();
     if dry_run {
+        let (_, roots) = crate::mods::snapshot::level_roots(state, &game_root)?;
         // 探测只读：不锁操作、不要求游戏停止
-        return crate::level_sets::flatten_level_sets(
-            &game_root,
-            &recycle_root,
-            &manifests_dir,
-            true,
-        );
+        return crate::level_sets::flatten_level_sets(&roots, &recycle_root, &manifests_dir, true);
     }
     log::info!("开始整理地图目录：游戏目录={}", game_root.display());
     let _guard = state
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
-    crate::level_sets::flatten_level_sets(&game_root, &recycle_root, &manifests_dir, false)
+    let (_, roots) = crate::mods::snapshot::level_roots(state, &game_root)?;
+    crate::level_sets::flatten_level_sets(&roots, &recycle_root, &manifests_dir, false)
 }
 
 /// 预览仅接收已安装关卡集坐标，不接收任意文件路径，也不要求停止游戏。
@@ -312,8 +350,9 @@ pub async fn get_level_set_preview(
 ) -> Result<Vec<crate::level_sets::preview_reader::Level>, String> {
     let config = state.config.load_or_default();
     let root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    let (_, roots) = crate::mods::snapshot::level_roots(&state, &root)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::level_sets::preview::catalog(&root, &dir_name, enabled)
+        crate::level_sets::preview::catalog(&roots, &dir_name, enabled)
     })
     .await
     .map_err(|_| "assetBundle.previewUnavailable".to_string())?
@@ -328,8 +367,9 @@ pub async fn get_level_preview_detail(
 ) -> Result<crate::level_sets::preview::Detail, String> {
     let config = state.config.load_or_default();
     let root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+    let (_, roots) = crate::mods::snapshot::level_roots(&state, &root)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::level_sets::preview::detail(&root, &dir_name, enabled, index, &part)
+        crate::level_sets::preview::detail(&roots, &dir_name, enabled, index, &part)
     })
     .await
     .map_err(|_| "assetBundle.previewUnavailable".to_string())?

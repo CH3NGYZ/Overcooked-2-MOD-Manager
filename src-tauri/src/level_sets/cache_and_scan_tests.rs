@@ -122,7 +122,10 @@ fn parallel_scan_keeps_order_and_reports_progress() {
     let _ = std::fs::remove_dir_all(&root);
     // 刻意乱序创建：目录项的读取顺序不代表扫描输出的顺序
     let plan: [(PathBuf, &[&str]); 2] = [
-        (levels_root(&root), &["zeta", "alpha", "mike"]),
+        (
+            levels_root(&crate::level_sets::paths::test_roots(&root)).unwrap(),
+            &["zeta", "alpha", "mike"],
+        ),
         (disabled_root(&root), &["beta", "yankee"]),
     ];
     for (side, names) in plan {
@@ -133,7 +136,7 @@ fn parallel_scan_keeps_order_and_reports_progress() {
 
     let seen: Mutex<Vec<(usize, usize, String)>> = Mutex::new(Vec::new());
     let sets = scan_level_sets_with_progress(
-        &root,
+        &crate::level_sets::paths::test_roots(&root),
         None,
         crate::concurrency::cores(),
         &|done, total, current| {

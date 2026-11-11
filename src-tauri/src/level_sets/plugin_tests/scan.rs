@@ -65,9 +65,14 @@ fn scan_progress_counts_each_level_set_exactly_once() {
     std::fs::write(levels.join("WithInfo/info"), b"not an asset bundle").unwrap();
 
     let reports = std::sync::Mutex::new(Vec::<(usize, usize)>::new());
-    scan_level_sets_with_progress(&root, None, 2, &|done, total, _| {
-        reports.lock().unwrap().push((done, total));
-    });
+    scan_level_sets_with_progress(
+        &crate::level_sets::paths::test_roots(&root),
+        None,
+        2,
+        &|done, total, _| {
+            reports.lock().unwrap().push((done, total));
+        },
+    );
 
     let reports = reports.into_inner().unwrap();
     assert_eq!(reports.first(), Some(&(0, 3)), "首帧必须从 0/3 开始");

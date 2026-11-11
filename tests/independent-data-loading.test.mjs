@@ -56,9 +56,11 @@ test('online MOD/map results publish while local scans remain pending; local sca
   assert.equal(dashboard.modsLoading.value, true)
   assert.equal(local.scanning.value, true)
   assert.equal(modScans, 1)
-  assert.equal(setScans, 1)
+  assert.equal(setScans, 0, 'maps wait for the DLL scan that selects the DIYLevel root')
   assert.strictEqual(scan, duplicate)
   mods.resolve({ generation: 1, mods: [{ dll_file: 'local.dll', version: '1.0' }] })
+  await tick()
+  assert.equal(setScans, 1)
   sets.resolve([{ dir_name: 'local-map', name: 'Fast', author: 'A', enabled: true, version: '1.0' }])
   await scan
   await tick()
@@ -332,4 +334,119 @@ test('a refresh discovering a new root resumes a fresh scan after invalidating i
   assert.equal(d.modsGeneration.value, 42)
   assert.equal(d.mods.value[0].dll_file, 'E.dll')
   assert.equal(d.modsStatus.value, 'ready')
+})
+
+test('a failed DLL scan prevents local map reads without blocking online maps; an empty successful scan permits them', async () => {
+  const d = useDashboard(), local = useLevelSetScan(), mods = deferred()
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'map-scan-failure', runtime: 'native' } })
+  let setScans = 0, modScans = 0
+  globalThis.__loadingApi = {
+    localMods: () => { modScans++; return mods.promise },
+    levelSets: async () => { setScans++; return [] },
+    maps: async () => [{ id: 'still-online' }],
+  }
+  const scan = local.scanLevelSets()
+  const failure = assert.rejects(scan, /DLL read failed/)
+  await useMapSources().loadMaps()
+  assert.equal(useMapSources().maps.value[0].id, 'still-online')
+  assert.equal(setScans, 0)
+  mods.reject(new Error('DLL read failed'))
+  await failure
+  assert.equal(modScans, 1, 'one failed scan must not retry itself indefinitely')
+  assert.equal(local.scanning.value, false)
+  assert.equal(setScans, 0)
+  globalThis.__loadingApi.localMods = async () => ({ generation: 50, mods: [], diy_level_target: null })
+  assert.deepEqual(await local.scanLevelSets(), [])
+  assert.equal(setScans, 1, 'successfully scanning zero plugins is still a completed scan')
+})
+
+test('MOD update comparisons wait for the successful current DLL scan and never use a failed snapshot', async () => {
+  const d = useDashboard(), mods = deferred(), comparisons = []
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'updates-after-scan', runtime: 'native' } })
+  globalThis.__loadingApi = {
+    localMods: () => mods.promise,
+    modUpdates: async installed => { comparisons.push(installed); return [{ dll_file: 'newest.dll' }] },
+  }
+  const check = d.checkModUpdates()
+  await tick()
+  assert.equal(comparisons.length, 0)
+  const installed = [{ dll_file: 'newest.dll', version: '2.0' }]
+  mods.resolve({ generation: 51, mods: installed })
+  await check
+  assert.deepEqual(comparisons, [installed])
+  assert.equal(d.dashboard.value.updates[0].dll_file, 'newest.dll')
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'updates-failure', runtime: 'native' } })
+  globalThis.__loadingApi.localMods = async () => { throw new Error('DLL unavailable') }
+  await d.checkModUpdates()
+  assert.equal(comparisons.length, 1)
+  assert.equal(d.modsStatus.value, 'error')
+})
+
+test('DLL scan waiters follow a root change instead of accepting or failing on the old request', async () => {
+  const d = useDashboard(), old = deferred(), fresh = deferred()
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'waiting-old-root', runtime: 'native' } })
+  globalThis.__loadingApi = { localMods: () => old.promise }
+  let completed = false
+  const waiting = d.ensureLocalModsLoaded().then(generation => { completed = true; return generation })
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'waiting-fresh-root', runtime: 'native' } })
+  globalThis.__loadingApi.localMods = () => fresh.promise
+  const freshScan = d.loadLocalMods()
+  old.reject(new Error('old root failed'))
+  await tick()
+  assert.equal(completed, false)
+  assert.equal(d.modsStatus.value, 'loading')
+  fresh.resolve({ generation: 52, mods: [{ dll_file: 'fresh.dll' }] })
+  assert.equal(await waiting, 52)
+  await freshScan
+})
+
+test('local map results and errors from an overtaken root cannot publish as the current root', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  for (const failOld of [false, true]) {
+    const oldMap = deferred(), freshMods = deferred()
+    const key = failOld ? 'error' : 'result'
+    const generation = failOld ? 56 : 54
+    d.applyConfigSnapshot({ repositories: [], game: { path: `map-old-${key}`, runtime: 'native' } })
+    let setScans = 0
+    globalThis.__loadingApi = {
+      localMods: async () => ({ generation, mods: [] }),
+      levelSets: () => ++setScans === 1 ? oldMap.promise : Promise.resolve([{ dir_name: `fresh-${key}` }]),
+    }
+    const scan = local.scanLevelSets()
+    await tick()
+    assert.equal(setScans, 1)
+    d.applyConfigSnapshot({ repositories: [], game: { path: `map-fresh-${key}`, runtime: 'native' } })
+    globalThis.__loadingApi.localMods = () => freshMods.promise
+    const freshScan = d.loadLocalMods()
+    if (failOld) oldMap.reject(new Error('stale root error'))
+    else oldMap.resolve([{ dir_name: 'stale-map' }])
+    await tick()
+    assert.notEqual(local.levelSets.value[0]?.dir_name, 'stale-map')
+    assert.equal(setScans, 1, 'the replacement map scan also waits for its DLL root')
+    freshMods.resolve({ generation: generation + 1, mods: [] })
+    await freshScan
+    assert.deepEqual(await scan, [{ dir_name: `fresh-${key}` }])
+    assert.equal(setScans, 2)
+    assert.equal(local.levelSets.value[0].dir_name, `fresh-${key}`)
+  }
+})
+
+test('DIYLevel summaries retain only the backend-selected DLL token, including disabled highest versions', async () => {
+  const d = useDashboard()
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'backend-target', runtime: 'native' } })
+  const mods = [
+    { dll_file: 'old.dll', guid: 'dev.gua.overcooked.diylevel', version: '1.0', enabled: true },
+    { dll_file: 'highest.dll', guid: 'dev.gua.overcooked.diylevel', version: '2.0', enabled: false },
+  ]
+  globalThis.__loadingApi = { localMods: async () => ({ generation: 58, mods, diy_level_target: 'highest.dll' }) }
+  await d.loadLocalMods()
+  assert.equal(d.diyLevelTarget.value, 'highest.dll')
+  assert.equal(d.mods.value.find(mod => mod.dll_file === d.diyLevelTarget.value).enabled, false)
+  globalThis.__loadingApi.localMods = async () => ({ generation: 59, mods, diy_level_target: null })
+  await d.loadLocalMods()
+  assert.equal(d.diyLevelTarget.value, null, 'an ambiguous backend target must not fall back to the first GUID match')
+  globalThis.__loadingApi.localMods = async () => ({ generation: 60, mods, diy_level_target: 'highest.dll' })
+  await d.loadLocalMods()
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'invalidated-target', runtime: 'native' } })
+  assert.equal(d.diyLevelTarget.value, null)
 })

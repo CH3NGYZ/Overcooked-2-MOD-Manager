@@ -27,7 +27,7 @@ fn migrates_the_legacy_disabled_root() {
     std::fs::create_dir_all(legacy.join("Old")).unwrap();
     std::fs::write(legacy.join("Old/info"), b"x").unwrap();
 
-    migrate_legacy_disabled_root(&root);
+    migrate_legacy_disabled_root(&crate::level_sets::paths::test_roots(&root));
     assert!(
         disabled_root(&root).join("Old/info").is_file(),
         "旧停用根应整体搬到新位置"
@@ -40,7 +40,7 @@ fn migrates_the_legacy_disabled_root() {
     std::fs::write(legacy_c.join("Clash/info"), b"old").unwrap();
     std::fs::create_dir_all(disabled_root(&root).join("Clash")).unwrap();
     std::fs::write(disabled_root(&root).join("Clash/info"), b"new").unwrap();
-    migrate_legacy_disabled_root(&root);
+    migrate_legacy_disabled_root(&crate::level_sets::paths::test_roots(&root));
     assert_eq!(
         std::fs::read(disabled_root(&root).join("Clash/info")).unwrap(),
         b"new",

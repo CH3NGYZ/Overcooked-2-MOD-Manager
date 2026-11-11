@@ -90,7 +90,7 @@ pub(super) fn sanitize_dir_name(name: &str) -> Option<String> {
 
 /// 单个目录名的字符数上限。
 ///
-/// 关卡集目录位于 `<游戏>/BepInEx/plugins/OC2DIYLevel/levels/` 下，Windows
+/// 关卡集目录位于选中 DIYLevel DLL 的兄弟 `levels/` 下，Windows
 /// 默认 260 字符的路径上限还要留给里面的文件名（Unity 的 `.resS` 常与主文件同名同长）。
 /// 正常集名远低于这个值，这里只拦病态长名。
 pub(super) const MAX_DIR_NAME_CHARS: usize = 48;

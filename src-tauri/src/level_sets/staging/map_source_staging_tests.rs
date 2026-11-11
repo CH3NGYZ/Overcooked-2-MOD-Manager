@@ -149,7 +149,7 @@ fn real_pear_bundle_install_and_scan_keep_versions_separate() {
     let installed = crate::level_sets::install_parsed_sets(
         &sets,
         &path,
-        &game,
+        &crate::level_sets::paths::test_roots(&game),
         &manifests,
         &selected,
         Some(&origin),
@@ -161,10 +161,11 @@ fn real_pear_bundle_install_and_scan_keep_versions_separate() {
     map.id = "pear-source".into();
     config.map_repositories = vec![map];
     let snapshots = archive::read_map_relation_snapshots(&manifests);
-    let mut infos: Vec<_> = crate::level_sets::scan_level_sets(&game)
-        .into_iter()
-        .map(level_set_to_info)
-        .collect();
+    let mut infos: Vec<_> =
+        crate::level_sets::scan_level_sets(&crate::level_sets::paths::test_roots(&game))
+            .into_iter()
+            .map(level_set_to_info)
+            .collect();
     assert_eq!(infos.len(), 2);
     for info in &mut infos {
         bind_map_relation_snapshot(info, &config, &snapshots);

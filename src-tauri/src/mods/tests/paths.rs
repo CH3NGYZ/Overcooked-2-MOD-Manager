@@ -89,6 +89,7 @@ fn bundled_level_set_plugins_are_not_scanned_as_mods() {
     // 地图集目录：随包 DLL 与地图资源同处一个父目录
     let set_dir = plugins.join("OC2DIYLevel/levels/MySet");
     std::fs::create_dir_all(&set_dir).unwrap();
+    std::fs::write(set_dir.join("info"), b"map-directory-fixture").unwrap();
     let bundled = set_dir.join("BundledFix.dll");
     std::fs::write(
         &bundled,
@@ -144,14 +145,28 @@ fn plugin_dll_files_returns_game_relative_paths_for_a_lexical_root() {
     std::fs::create_dir_all(plugins.join("Nested")).unwrap();
     // 地图随包插件：与 `scan_mods_with_manifests` 一样不许当成普通 MOD
     std::fs::create_dir_all(plugins.join("OC2DIYLevel/levels/SomeSet")).unwrap();
-    std::fs::create_dir_all(plugins.join("OC2DIYLevel/disabled")).unwrap();
+    std::fs::create_dir_all(plugins.join("OC2DIYLevel/disabled/OtherSet")).unwrap();
+    std::fs::write(
+        plugins.join("OC2DIYLevel/levels/SomeSet/info"),
+        b"map-fixture",
+    )
+    .unwrap();
+    std::fs::write(
+        plugins.join("OC2DIYLevel/disabled/OtherSet/info"),
+        b"map-fixture",
+    )
+    .unwrap();
     std::fs::write(plugins.join("OC2DIYLevel/levels/SomeSet/Plugin.dll"), b"x").unwrap();
     std::fs::write(
         plugins.join("OC2DIYLevel/levels/SomeSet/Plugin.dll.disabled"),
         b"x",
     )
     .unwrap();
-    std::fs::write(plugins.join("OC2DIYLevel/disabled/Other.dll"), b"x").unwrap();
+    std::fs::write(
+        plugins.join("OC2DIYLevel/disabled/OtherSet/Other.dll"),
+        b"x",
+    )
+    .unwrap();
     std::fs::write(plugins.join("Alpha.dll"), b"x").unwrap();
     std::fs::write(plugins.join("Beta.dll.disabled"), b"x").unwrap();
     std::fs::write(plugins.join("Nested/Gamma.dll"), b"x").unwrap();
@@ -219,4 +234,223 @@ fn registered_level_set_plugins_are_not_scanned_as_mods() {
     );
 
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// 目录名不再写死 OC2DIYLevel；地图里的同 GUID 高版本 DLL 不能抢走实际根。
+#[test]
+fn dynamic_map_directories_do_not_pollute_guid_selection_or_bulk_toggles() {
+    let root = std::env::temp_dir().join(format!("oc2-dynamic-map-dlls-{}", uuid::Uuid::new_v4()));
+    let plugins = root.join("BepInEx/plugins");
+    for (path, version) in [
+        ("CustomLevel-v2/Plugin.dll", "2.0.0"),
+        ("CustomLevel-v2/levels/One/Fake.dll", "99.0.0"),
+        ("CustomLevel-v2/LEVELS/Two/Disabled.dll.disabled", "98.0.0"),
+        ("CustomLevel-v2/disabled/Three/Legacy.dll", "97.0.0"),
+        ("CustomLevel-v2.before-restore-123/Plugin.dll", "96.0.0"),
+    ] {
+        let target = plugins.join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(
+            &target,
+            plugin_blob("dev.gua.overcooked.diylevel", path, version),
+        )
+        .unwrap();
+        assert!(is_mod_file(&target));
+    }
+    let scanned = scan_mods_with_manifests(&root, &crate::config::default_config(), None);
+    assert_eq!(scanned.len(), 1);
+    let selected =
+        crate::mods::plugin_target::unique(&scanned, crate::mods::plugin_target::DIYLEVEL_GUID)
+            .unwrap();
+    assert_eq!(
+        selected.dll_file,
+        "BepInEx/plugins/CustomLevel-v2/Plugin.dll"
+    );
+    let files = plugin_dll_files(&root, None).unwrap();
+    assert_eq!(files, ["BepInEx/plugins/CustomLevel-v2/Plugin.dll"]);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn registered_disabled_map_plugin_is_excluded_from_scan_and_bulk_toggles() {
+    let root = std::env::temp_dir().join(format!(
+        "oc2-disabled-map-registry-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let dll = root.join("BepInEx/plugins/Fix/Fix.dll.disabled");
+    std::fs::create_dir_all(dll.parent().unwrap()).unwrap();
+    std::fs::write(
+        &dll,
+        plugin_blob("dev.gua.overcooked.diylevel", "Fix", "99.0.0"),
+    )
+    .unwrap();
+    let manifests = root.join("manifests");
+    std::fs::create_dir_all(&manifests).unwrap();
+    std::fs::write(
+        manifests.join(crate::level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+        r#"{"version":1,"entries":[{"dll":"BepInEx/plugins/Fix/Fix.dll","owner":{"name":"Set"}}]}"#,
+    )
+    .unwrap();
+    assert!(
+        scan_mods_with_manifests(&root, &crate::config::default_config(), Some(&manifests))
+            .is_empty()
+    );
+    assert!(
+        plugin_dll_files(&root, Some(&manifests))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        scan_mods_with_manifests(&root, &crate::config::default_config(), None).len(),
+        1
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ordinary_plugins_in_levels_or_disabled_named_directories_remain_visible_and_toggleable() {
+    let root =
+        std::env::temp_dir().join(format!("oc2-ordinary-named-dirs-{}", uuid::Uuid::new_v4()));
+    let expected = [
+        "BepInEx/plugins/disabled/Tool.dll",
+        "BepInEx/plugins/levels/Tool.dll",
+        "BepInEx/plugins/Other/disabled/Tool.dll",
+        "BepInEx/plugins/Other/levels/Tool.dll.disabled",
+    ];
+    for (index, relative) in expected.iter().enumerate() {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            plugin_blob(&format!("com.example.ordinary.{index}"), "Tool", "1.0.0"),
+        )
+        .unwrap();
+    }
+    let mut scanned = scan_mods_with_manifests(&root, &crate::config::default_config(), None)
+        .into_iter()
+        .map(|item| {
+            if item.enabled {
+                item.dll_file
+            } else {
+                disabled_dll_file(&item.dll_file)
+            }
+        })
+        .collect::<Vec<_>>();
+    scanned.sort_by_key(|path| path.to_ascii_lowercase());
+    let toggleable = plugin_dll_files(&root, None).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+
+    assert_eq!(scanned, expected);
+    assert_eq!(toggleable, expected);
+}
+
+#[test]
+fn diylevel_package_named_levels_owns_its_map_subtrees_without_hiding_sibling_mods() {
+    let root = std::env::temp_dir().join(format!("oc2-named-diy-package-{}", uuid::Uuid::new_v4()));
+    for (relative, guid, version) in [
+        (
+            "Regular/Framework.dll",
+            "dev.gua.overcooked.diylevel",
+            "1.0.0",
+        ),
+        (
+            "levels/Framework.dll.disabled",
+            "dev.gua.overcooked.diylevel",
+            "2.0.0",
+        ),
+        ("levels/Tool.dll", "com.example.ordinary", "1.0.0"),
+        (
+            "levels/levels/Map/Fake.dll",
+            "dev.gua.overcooked.diylevel",
+            "99.0.0",
+        ),
+        (
+            "levels/disabled/Map/Fake.dll.disabled",
+            "dev.gua.overcooked.diylevel",
+            "98.0.0",
+        ),
+    ] {
+        let path = root.join("BepInEx/plugins").join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, plugin_blob(guid, relative, version)).unwrap();
+    }
+    let scanned = scan_mods_with_manifests(&root, &crate::config::default_config(), None);
+    let toggleable = plugin_dll_files(&root, None).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+
+    assert_eq!(scanned.len(), 3);
+    let selected =
+        crate::mods::plugin_target::unique(&scanned, crate::mods::plugin_target::DIYLEVEL_GUID)
+            .unwrap();
+    assert_eq!(selected.dll_file, "BepInEx/plugins/levels/Framework.dll");
+    assert!(!selected.enabled);
+    assert_eq!(
+        toggleable,
+        [
+            "BepInEx/plugins/levels/Framework.dll.disabled",
+            "BepInEx/plugins/levels/Tool.dll",
+            "BepInEx/plugins/Regular/Framework.dll",
+        ]
+    );
+}
+
+#[test]
+fn removed_diylevel_packages_require_fixed_or_unique_info_before_claiming_map_plugins() {
+    let root =
+        std::env::temp_dir().join(format!("oc2-orphan-map-ownership-{}", uuid::Uuid::new_v4()));
+    let plugins = root.join("BepInEx/plugins");
+    for directory in [
+        "Gone/levels/Unique",
+        "Gone/disabled/Fixed/Nested",
+        "Other/levels/Ambiguous",
+    ] {
+        let path = plugins.join(directory).join("Tool.dll");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, plugin_blob("com.example.tool", directory, "1.0.0")).unwrap();
+    }
+    for relative in [
+        "Gone/levels/Unique/info_custom",
+        "Gone/disabled/Fixed/info",
+        "Gone/disabled/Fixed/info_one",
+        "Gone/disabled/Fixed/info_two",
+        "Other/levels/Ambiguous/info_one",
+        "Other/levels/Ambiguous/info_two",
+    ] {
+        std::fs::write(plugins.join(relative), b"map-directory-fixture").unwrap();
+    }
+
+    let scanned = scan_mods_with_manifests(&root, &crate::config::default_config(), None);
+    let toggleable = plugin_dll_files(&root, None).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+
+    assert_eq!(scanned.len(), 1);
+    assert_eq!(
+        scanned[0].dll_file,
+        "BepInEx/plugins/Other/levels/Ambiguous/Tool.dll"
+    );
+    assert_eq!(
+        toggleable,
+        ["BepInEx/plugins/Other/levels/Ambiguous/Tool.dll"]
+    );
+}
+
+#[test]
+fn map_ownership_never_uses_directory_names_above_the_plugins_root() {
+    let workspace = std::env::temp_dir().join(format!(
+        "oc2-plugin-ownership-boundary-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let root = workspace.join("levels/Game");
+    let path = root.join("BepInEx/plugins/Tool.dll");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(root.join("info"), b"outside-plugins-fixture").unwrap();
+    std::fs::write(path, plugin_blob("com.example.tool", "Tool", "1.0.0")).unwrap();
+
+    let scanned = scan_mods_with_manifests(&root, &crate::config::default_config(), None);
+    let toggleable = plugin_dll_files(&root, None).unwrap();
+    std::fs::remove_dir_all(workspace).unwrap();
+
+    assert_eq!(scanned.len(), 1);
+    assert_eq!(scanned[0].dll_file, "BepInEx/plugins/Tool.dll");
+    assert_eq!(toggleable, ["BepInEx/plugins/Tool.dll"]);
 }

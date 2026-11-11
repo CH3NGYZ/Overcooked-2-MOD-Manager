@@ -1,14 +1,13 @@
 //! 本地目录枚举、元数据批读与关卡集组装。
 
+use super::paths::LevelSetRoots;
 use super::paths::disabled_root;
 use super::paths::levels_root;
-use super::paths::migrate_legacy_disabled_root;
 use super::plugin_registry::RegisteredLevelSetPlugin;
 use super::plugin_registry::read_registered_plugins;
 use super::requirements::read_required_runtime;
 use super::zip_plugins::fallback_plugin_info;
 use crate::asset_bundle::LevelSetMetadata;
-use crate::framework::DIYLEVEL_DIR;
 use crate::metadata_read::MetadataKind;
 use crate::metadata_read::MetadataOutcome;
 use crate::metadata_read::MetadataRequest;
@@ -60,15 +59,14 @@ pub type ScanProgress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);
 /// 扫描一个游戏目录下的全部关卡集（启用与停用）。
 ///
 /// 单测与旧调用方的默认入口：并行度取 `map_info_concurrency` 的默认值（全部核心）。
-pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
+pub fn scan_level_sets(roots: &LevelSetRoots) -> Vec<LevelSetOnDisk> {
     scan_level_sets_inner(
-        game_root,
+        roots,
         None,
         crate::concurrency::resolve_concurrency(
             crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
             crate::concurrency::cores(),
         ),
-        true,
         &|_, _, _| {},
     )
 }
@@ -90,32 +88,29 @@ pub fn scan_level_sets(game_root: &Path) -> Vec<LevelSetOnDisk> {
 /// 目录里，归属只能按登记的身份匹配（见 [`read_registered_plugins`]）。传
 /// `None` 时只看集目录（安装前身份扫描、单测都不需要登记表）。
 pub fn scan_level_sets_with_progress(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     manifests_dir: Option<&Path>,
     workers: usize,
     progress: ScanProgress<'_>,
 ) -> Vec<LevelSetOnDisk> {
-    scan_level_sets_inner(game_root, manifests_dir, workers, true, progress)
+    scan_level_sets_inner(roots, manifests_dir, workers, progress)
 }
 
-/// 扫描本体：`migrate_legacy` 区分「地图页扫描」与「安装前身份扫描」。
+/// 扫描本体只读。旧目录迁移由命令层在 operation 锁和当前 MOD 快照下完成，
+/// 避免解析尚未结束时切换根目录，旧扫描仍在搬动文件。
 ///
 /// 三段的理由：枚举只读目录与 `requires.txt`（很快，先拿到总数才能给出
 /// 「3/13」这种真实进度）；解析全部交给中间层按一批跑（info 与 DLL 混排）；
 /// 组装只做纯内存拼装，按原下标归位。
 pub(super) fn scan_level_sets_inner(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     manifests_dir: Option<&Path>,
     workers: usize,
-    migrate_legacy: bool,
     progress: ScanProgress<'_>,
 ) -> Vec<LevelSetOnDisk> {
-    let base = game_root.join(DIYLEVEL_DIR);
-    // 旧版本的停用根在 `plugins/` 里，先搬走再枚举（见 `migrate_legacy_disabled_root`）
-    if migrate_legacy {
-        migrate_legacy_disabled_root(game_root);
-    }
-    let targets = collect_level_set_targets(game_root);
+    let game_root = roots.game_root();
+    let base = roots.package_root().unwrap_or(game_root);
+    let targets = collect_level_set_targets(roots);
     let total = targets.len();
     progress(0, total, "");
     if total == 0 {
@@ -295,12 +290,14 @@ pub(super) fn scan_level_sets_inner(
 }
 
 /// 枚举一个游戏目录下全部关卡集目录（启用根 + 停用根，各自按目录名排序）。
-fn collect_level_set_targets(game_root: &Path) -> Vec<LevelSetTarget> {
+fn collect_level_set_targets(roots: &LevelSetRoots) -> Vec<LevelSetTarget> {
     let mut targets = Vec::new();
-    for (root, enabled) in [
-        (levels_root(game_root), true),
-        (disabled_root(game_root), false),
-    ] {
+    let enabled = levels_root(roots).ok().map(|root| (root, true));
+    let disabled = roots
+        .safe_path(&disabled_root(roots.game_root()))
+        .ok()
+        .map(|root| (root, false));
+    for (root, enabled) in enabled.into_iter().chain(disabled) {
         let Ok(entries) = fs::read_dir(&root) else {
             continue;
         };

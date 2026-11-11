@@ -59,7 +59,7 @@ fn scanning_reads_requires_txt_even_when_info_is_broken() {
     std::fs::write(set.join("info_broken"), b"not a bundle").unwrap();
     std::fs::write(set.join(REQUIRES_FILE), "3.10.2").unwrap();
 
-    let sets = scan_level_sets(&game);
+    let sets = scan_level_sets(&crate::level_sets::paths::test_roots(&game));
     assert_eq!(sets.len(), 1);
     assert!(sets[0].metadata.is_none(), "info 本身读不出来");
     assert_eq!(sets[0].required_runtime.as_deref(), Some("3.10.2"));

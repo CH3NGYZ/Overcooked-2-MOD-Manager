@@ -10,7 +10,7 @@
  * 「框架」角色 —— 自制地图靠它加载。与另外两个概念严格区分：
  *   · BepInEx 是**加载器**（`bepinex::installed` 判核心程序集）
  *   · DIYLevel 是**内容框架 MOD**
- *   · 地图文件是用户数据，放在 `BepInEx/plugins/OC2DIYLevel/levels`
+ *   · 地图文件是用户数据，放在扫描选中的最高版本 DLL 所在目录的 `levels/`
  *
  * 安装动作不自己实现下载：有在线仓库时直接跳到仓库卡片
  * （`/mods-online?focus=<仓库id>` 定位并高亮），没有仓库时如实说明只能手动装。
@@ -31,15 +31,17 @@ import { markDialogBusy } from '../../dialogBusy'
 import { useDashboard } from '../../composables/useDashboardStore'
 import { useGameOperationGate } from '../../composables/useGameOperationGate'
 import { useModRepositoryLink } from '../../crossLink'
+import { modRepositoryForGuid } from '../../repositoryAvailability'
 import BusyOverlay from '../BusyOverlay.vue'
-import type { DiyLevelInfo, ModRepository } from '../../types'
+import ModNotInstalled from '../ModNotInstalled.vue'
+import type { DiyLevelInfo } from '../../types'
 
 /** DIYLevel 的稳定 GUID：与仓库源、安装清单、MOD 扫描用同一个标识。 */
 const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, loading, config } = useDashboard()
+const { load, loading, config, ensureLocalModsLoaded } = useDashboard()
 const { blockModOperation } = useGameOperationGate()
 const { linkToModRepository } = useModRepositoryLink()
 
@@ -63,37 +65,24 @@ const busy = computed(() => working.value)
 /** 备份/恢复/卸载期间的全屏遮罩文案。 */
 const busyText = ref<string | null>(null)
 
-const repositories = computed<ModRepository[]>(() => config.value?.repositories ?? [])
-
-/**
- * 能在线上提供 DIYLevel 的仓库（按 GUID 匹配）。
- *
- * 与依赖解析的「可安装来源」同一判据：必须声明同一 GUID、是 Release 模式、
- * 且已有缓存的 Release —— 三者缺一，点了也只有下载失败。
- */
-const installableRepository = computed<ModRepository | undefined>(() =>
-  repositories.value.find((repo) =>
-    !!repo.plugin_guid
-    && repo.plugin_guid.trim().toLowerCase() === DIYLEVEL_GUID
-    && repo.download_mode === 'release'
-    && (repo.cached_releases?.length ?? 0) > 0),
-)
+const onlineRepository = computed(() => modRepositoryForGuid(DIYLEVEL_GUID, config.value))
 
 const repositoryName = computed(() =>
-  installableRepository.value
-    ? pickI18n(installableRepository.value.name_i18n, installableRepository.value.name)
+  onlineRepository.value
+    ? pickI18n(onlineRepository.value.name_i18n, onlineRepository.value.name)
     : '')
 
 function fail(reason: unknown) {
   message.error(backendMessageOf(reason))
 }
 
-async function refresh() {
+async function refresh(reportError = true) {
   refreshing.value = true
   try {
+    await ensureLocalModsLoaded()
     info.value = await api.diyLevelInfo()
   } catch (reason) {
-    fail(reason)
+    if (reportError) fail(reason)
   } finally {
     refreshing.value = false
   }
@@ -102,7 +91,7 @@ async function refresh() {
 /** 安装 / 重装：跳到 MOD 安装页并高亮对应仓库卡片，走同一条安装链路。 */
 function openInstall() {
   if (blockModOperation()) return
-  const repo = installableRepository.value
+  const repo = onlineRepository.value
   if (!repo) {
     message.warning(t('framework.diylevelIsNotAvailableOnlineInstallItManuallyThenManageItHere'))
     return
@@ -124,17 +113,21 @@ async function toggle(value: boolean) {
   if (blockModOperation()) return
   if (switching.value) return
   switching.value = true
+  let failed = false
   try {
     const result = await api.setDiyLevelEnabled(value)
     result.ok
       ? message.success(translateBackendMessage(result.message))
       : message.error(translateBackendMessage(result.message))
-    await refresh()
-    // MOD 列表里也显示这个插件，状态变了要同步刷新
-    await load()
+    failed = !result.ok
   } catch (reason) {
+    failed = true
     fail(reason)
   } finally {
+    // A failed write may already invalidate the backend scan. Reconcile before
+    // releasing the controls, without hiding the original operation failure.
+    await load().catch(() => undefined)
+    await refresh(!failed)
     switching.value = false
   }
 }
@@ -158,16 +151,19 @@ function uninstall() {
       markDialogBusy(instance)
       working.value = true
       busyText.value = t('framework.backingUpAndUninstallingDiylevel')
+      let failed = false
       try {
         const result = await api.uninstallDiyLevel()
         result.ok
       ? message.success(translateBackendMessage(result.message))
       : message.error(translateBackendMessage(result.message))
-        await refresh()
-        await load()
+        failed = !result.ok
       } catch (reason) {
+        failed = true
         fail(reason)
       } finally {
+        await load().catch(() => undefined)
+        await refresh(!failed)
         busyText.value = null
         working.value = false
       }
@@ -206,16 +202,19 @@ function restore(backupPath: string) {
       if (blockModOperation()) return false
       working.value = true
       busyText.value = t('framework.restoringDiylevelBackup')
+      let failed = false
       try {
         const result = await api.restoreDiyLevel(backupPath)
         result.ok
       ? message.success(translateBackendMessage(result.message))
       : message.error(translateBackendMessage(result.message))
-        await refresh()
-        await load()
+        failed = !result.ok
       } catch (reason) {
+        failed = true
         fail(reason)
       } finally {
+        await load().catch(() => undefined)
+        await refresh(!failed)
         busyText.value = null
         working.value = false
       }
@@ -287,36 +286,30 @@ onMounted(() => { void refresh() })
       </n-button>
     </div>
 
-    <!-- 安装：未安装时只有这一个入口；已安装则是「重新安装 / 创建备份 / 卸载框架」 -->
-    <div class="panel-install">
+    <ModNotInstalled v-if="info && !installed" :guid="DIYLEVEL_GUID" name="DIYLevel" layout="inline" :disabled="busy" />
+
+    <!-- 已安装时保留重装、备份和卸载；未安装状态由共享组件提供在线入口。 -->
+    <div v-if="installed" class="panel-install">
       <div class="panel-field">
         <span class="muted">{{ t('framework.installSource') }}</span>
-        <span v-if="installableRepository" class="muted">{{ repositoryName }}</span>
+        <span v-if="onlineRepository" class="muted">{{ repositoryName }}</span>
         <span v-else class="muted">{{ t('framework.noRepositoryCanInstallItOnline') }}</span>
       </div>
       <div class="panel-buttons">
-        <n-button size="small" type="primary" :disabled="busy || !installableRepository"
+        <n-button v-if="onlineRepository" size="small" type="primary" :disabled="busy"
           @click="openInstall">
           <template #icon><AddCircleOutline width="15" height="15" /></template>
-          {{ installed ? t('overlays.reinstall') : t('overlays.installFramework') }}
+          {{ t('overlays.reinstall') }}
         </n-button>
-        <template v-if="installed">
-          <n-button size="small" secondary :disabled="busy" @click="backup">
-            <template #icon><SaveOutline width="15" height="15" /></template>
-            {{ t('overlays.createBackup') }}
-          </n-button>
-          <n-button size="small" secondary type="warning" :disabled="busy" @click="uninstall">
-            <template #icon><WarningOutline width="15" height="15" /></template>
-            {{ t('overlays.uninstallFramework') }}
-          </n-button>
-        </template>
+        <n-button size="small" secondary :disabled="busy" @click="backup">
+          <template #icon><SaveOutline width="15" height="15" /></template>
+          {{ t('overlays.createBackup') }}
+        </n-button>
+        <n-button size="small" secondary type="warning" :disabled="busy" @click="uninstall">
+          <template #icon><WarningOutline width="15" height="15" /></template>
+          {{ t('overlays.uninstallFramework') }}
+        </n-button>
       </div>
-      <!-- 未安装时的说明：讲清装完之后能做什么，避免用户找不到维护入口 -->
-      <p v-if="!installed" class="muted panel-hint">
-        {{ installableRepository
-          ? t('overlays.afterInstallingTheEnableSwitchConfigManagerAndBackupsAppearHere')
-          : t('framework.notAvailableOnlineNoRepositoryDeclaresThisGuidInstallItManuallyThenManageItHere') }}
-      </p>
     </div>
 
     <!-- 备份列表：与 BepInEx 面板同一套结构；没有备份且未安装时整块不出现 -->
@@ -385,7 +378,6 @@ onMounted(() => { void refresh() })
 .panel-install { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
 .panel-field { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .panel-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.panel-hint { font-size: 12px; margin: 0; line-height: 1.5; }
 
 .panel-backups {
   margin-top: 18px;

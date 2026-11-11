@@ -1,4 +1,5 @@
 //! 只读预览的目录校验、缓存与重活入口。
+use super::LevelSetRoots;
 use super::{info_cache::content_sha256, locate_level_set_directory, scan::locate_info_file};
 use crate::level_sets::preview_reader::{Context, Level, Picture, Recipe};
 use std::{
@@ -20,19 +21,25 @@ pub(crate) struct Detail {
 }
 /// External common/game resources may change without changing info. Fingerprint their
 /// directory entries as well, so reopening never revives a stale external image.
-fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
+fn fingerprint(roots: &LevelSetRoots, local: &Path, info: &[u8]) -> String {
+    let root = roots.game_root();
     let mut keys = vec![
         content_sha256(info),
         root.display().to_string(),
+        roots
+            .package_root()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
         local.display().to_string(),
         "preview-v11".into(),
     ];
-    for dir in [
+    let mut directories = vec![
         local.to_path_buf(),
-        root.join("BepInEx/plugins/OC2DIYLevel"),
         root.join("Overcooked2_Data/StreamingAssets/Windows"),
         root.join("Overcooked2.app/Contents/Resources/Data/StreamingAssets/OSX"),
-    ] {
+    ];
+    directories.extend(roots.package_root().map(Path::to_path_buf));
+    for dir in directories {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 if let Ok(m) = entry.metadata() {
@@ -49,7 +56,7 @@ fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
     for path in super::preview_reader::sources::common_sources(root, local)
         .into_iter()
         .chain(super::preview_reader::sources::game_sources(root))
-        .chain(super::preview_reader::sources::sibling_info_sources(root))
+        .chain(super::preview_reader::sources::sibling_info_sources(roots))
     {
         if let Ok(meta) = path.metadata() {
             keys.push(format!(
@@ -64,12 +71,12 @@ fn fingerprint(root: &Path, local: &Path, info: &[u8]) -> String {
     content_sha256(keys.join("\n").as_bytes())
 }
 fn with_context<T>(
-    root: &Path,
+    roots: &LevelSetRoots,
     dir: &str,
     enabled: bool,
     f: impl FnOnce(&mut Context, &str) -> Result<T, String>,
 ) -> Result<T, String> {
-    let local = locate_level_set_directory(root, dir, enabled)?;
+    let local = locate_level_set_directory(roots, dir, enabled)?;
     let info = locate_info_file(&local).ok_or("assetBundle.missingLevelSetInfo")?;
     let canonical = info
         .canonicalize()
@@ -82,18 +89,22 @@ fn with_context<T>(
         return Err("archive.pathEscape".into());
     }
     let bytes = crate::level_sets::preview_reader::read_limited(&info)?;
-    let key = fingerprint(root, &local, &bytes);
+    let key = fingerprint(roots, &local, &bytes);
     let mut cache = cache().lock().map_err(|_| "lock.poisoned")?;
     if cache.as_ref().is_none_or(|e| e.key != key) {
         *cache = Some(Entry {
             key: key.clone(),
-            context: Context::load(&bytes, &local, root)?,
+            context: Context::load(&bytes, &local, roots)?,
         });
     }
     f(&mut cache.as_mut().unwrap().context, &key)
 }
-pub(crate) fn catalog(root: &Path, dir: &str, enabled: bool) -> Result<Vec<Level>, String> {
-    with_context(root, dir, enabled, |c, _| {
+pub(crate) fn catalog(
+    roots: &LevelSetRoots,
+    dir: &str,
+    enabled: bool,
+) -> Result<Vec<Level>, String> {
+    with_context(roots, dir, enabled, |c, _| {
         c.refresh_files();
         Ok(c.levels.clone())
     })
@@ -124,7 +135,7 @@ fn write_disk_json<T: serde::Serialize>(path: &Path, value: &T, limit: usize) {
     let _ = std::fs::remove_file(temp);
 }
 pub(crate) fn detail(
-    root: &Path,
+    roots: &LevelSetRoots,
     dir: &str,
     enabled: bool,
     index: usize,
@@ -133,7 +144,7 @@ pub(crate) fn detail(
     if !matches!(part, "picture" | "recipes") {
         return Err("assetBundle.previewUnavailable".into());
     }
-    with_context(root, dir, enabled, |c, key| {
+    with_context(roots, dir, enabled, |c, key| {
         if index >= c.levels.len() {
             return Err("assetBundle.previewUnavailable".into());
         }

@@ -33,9 +33,10 @@ pub use operations::locate_level_set_directory;
 pub use operations::remove_level_set;
 pub use operations::set_all_level_sets_enabled;
 pub use operations::set_level_set_enabled;
+pub use paths::LevelSetRoots;
 pub use paths::disabled_root;
-pub(crate) use paths::legacy_disabled_root;
 pub(crate) use paths::levels_root;
+pub(crate) use paths::migrate_legacy_disabled_root;
 #[cfg(test)]
 pub use plugin_registry::LEVEL_SET_PLUGIN_REGISTRY;
 pub use plugin_registry::registered_plugin_paths;
@@ -63,6 +64,8 @@ mod mapset_version_tests;
 mod plugin_tests;
 #[cfg(test)]
 mod requires_tests;
+#[cfg(test)]
+mod root_context_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

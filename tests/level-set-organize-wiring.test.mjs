@@ -59,7 +59,7 @@ test('整理地图目录：先探测、再确认、最后才真搬并重读', ()
 test('整理地图目录：页头按钮接的是同一个实现，且有防重入', () => {
   assert.ok(PAGE.includes('@click="organizeLevelSets"'), '页头按钮直接调整理动作')
   assert.ok(PAGE.includes(':loading="organizing"'), '按钮自己显示进度')
-  assert.ok(PAGE.includes(':disabled="organizing || loading"'), '列表加载中不允许整理')
+  assert.ok(PAGE.includes(':disabled="organizing || loading || !diyLevelAvailable"'), '列表加载中或缺少已选中的 DIYLevel 根时不允许整理')
   assert.ok(organizeBlock().includes('if (organizing.value) return'), '连点不能触发第二次')
 })
 

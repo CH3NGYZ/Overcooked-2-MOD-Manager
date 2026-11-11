@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct LocalModSnapshot {
     pub generation: u64,
     pub mods: Vec<InstalledMod>,
+    #[serde(default)]
+    pub diy_level_target: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChefTarget {

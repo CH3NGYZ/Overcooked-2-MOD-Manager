@@ -168,7 +168,7 @@ fn existing_level_set_metadata_reads_the_disabled_root_too() {
      */
     let root =
         std::env::temp_dir().join(format!("oc2-lv-disabled-lookup-{}", uuid::Uuid::new_v4()));
-    let levels = levels_root(&root);
+    let levels = levels_root(&crate::level_sets::paths::test_roots(&root)).unwrap();
     let disabled = disabled_root(&root);
     std::fs::create_dir_all(&levels).unwrap();
     let stale = disabled.join("GAODA");
@@ -199,7 +199,8 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
     }
     let root = std::env::temp_dir().join(format!("oc2-lv-disabled-{}", uuid::Uuid::new_v4()));
     let game = root.join("game");
-    std::fs::create_dir_all(levels_root(&game)).unwrap();
+    std::fs::create_dir_all(levels_root(&crate::level_sets::paths::test_roots(&game)).unwrap())
+        .unwrap();
     let stale = disabled_root(&game).join("RW_LevelSet");
     std::fs::create_dir_all(&stale).unwrap();
     let info = stale.join("info");
@@ -228,7 +229,12 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
         installed[0], "RW_LevelSet",
         "同名不同身份应换名并存，而不是 levelSet.targetExists"
     );
-    assert!(levels_root(&game).join(&installed[0]).is_dir());
+    assert!(
+        levels_root(&crate::level_sets::paths::test_roots(&game))
+            .unwrap()
+            .join(&installed[0])
+            .is_dir()
+    );
     assert!(stale.is_dir(), "停用根里的用户数据不能被改动");
 
     std::fs::remove_dir_all(&root).unwrap();

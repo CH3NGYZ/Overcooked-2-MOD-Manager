@@ -2,21 +2,21 @@
 
 use super::identity::level_set_display_name;
 use super::identity::same_level_set;
+use super::paths::LevelSetRoots;
 use super::scan::LevelSetOnDisk;
 use super::scan::scan_level_sets_inner;
 use super::zip_inspect::ImportedLevelSet;
 use crate::models::InstallConflict;
 use std::collections::HashSet;
-use std::path::Path;
 
 /// 已安装的关卡集（启用根 + 停用根各扫一遍），供安装前的身份冲突判定用。
 ///
-/// 与 [`scan_level_sets`] 的差别只有三点：不迁移旧停用根、不要进度、解析不出
+/// 与地图页扫描的差别是不要进度、解析不出
 /// `info` 的目录直接跳过（读不出身份就无法判定冲突，交给 `install_from_zip`
 /// 按目录名规则处理）。目录名排序，冲突行顺序才稳定。
-fn installed_level_sets(game_root: &Path, workers: usize) -> Vec<LevelSetOnDisk> {
+fn installed_level_sets(roots: &LevelSetRoots, workers: usize) -> Vec<LevelSetOnDisk> {
     // 冲突判定只看身份（info），不需要随包插件，所以不传登记表
-    scan_level_sets_inner(game_root, None, workers, false, &|_, _, _| {})
+    scan_level_sets_inner(roots, None, workers, &|_, _, _| {})
         .into_iter()
         .filter(|set| set.metadata.is_some())
         .collect()
@@ -29,11 +29,11 @@ mod test_support;
 pub use test_support::find_install_conflicts;
 
 pub fn find_install_conflicts_with_workers(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     sets: &[ImportedLevelSet],
     workers: usize,
 ) -> Vec<InstallConflict> {
-    conflicts_with_installed(&installed_level_sets(game_root, workers), sets)
+    conflicts_with_installed(&installed_level_sets(roots, workers), sets)
 }
 
 /// 纯函数部分：已装列表 × 待装列表 → 冲突行。

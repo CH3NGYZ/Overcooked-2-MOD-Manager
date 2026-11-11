@@ -3,7 +3,9 @@ use super::file_state::PLUGINS_DIR;
 use super::file_state::canonical_dll_file;
 use super::file_state::canonical_dll_name;
 use super::file_state::is_disabled_mod_file;
+use super::file_state::is_map_plugin;
 use super::file_state::is_mod_file;
+use super::file_state::is_ordinary_plugin;
 use super::identity::mark_duplicate_guids;
 use super::identity::note_key_for_values;
 use super::metadata::choose_local_version;
@@ -18,24 +20,8 @@ use crate::models::InstalledMod;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-
-/**
- * 是否是「恢复框架前的暂存目录」。
- *
- * 恢复 BepInEx 或 DIYLevel 时会先把现有目录改名成 `<目录>.before-restore-<时间戳>`，
- * 用完即删。但旧版本不删，且 DIYLevel 的目录在 `BepInEx/plugins/` 里面
- * （`BepInEx/plugins/OC2DIYLevel`），所以它的暂存目录直接躺在扫描根下 ——
- * 里面的 DLL 会被当成插件，用户看到「刚恢复完就冒出一批重复 MOD」。
- *
- * 这里在扫描时兜底跳过：新版本已经会删，但升级前留下的残留仍可能一直在，
- * 不跳过就会持续误报，用户只能自己翻目录手删才能恢复。
- */
-pub(super) fn is_restore_staging_component(name: &std::ffi::OsStr) -> bool {
-    name.to_str()
-        .is_some_and(|text| text.contains(".before-restore-"))
-}
 
 pub fn scan_mods_with_manifests(
     game: &Path,
@@ -47,8 +33,6 @@ pub fn scan_mods_with_manifests(
     // 不是普通 MOD：它们跟着整个集目录在 levels 与停用根之间移动，
     // 再出现在 MOD 列表里会让用户单独改成 `.dll.disabled`，
     // 两套开关状态互相打架。
-    let level_sets_root = crate::level_sets::levels_root(game);
-    let legacy_disabled_root = crate::level_sets::legacy_disabled_root(game);
     /*
      * BepInEx 表层包的随包插件登记在 `manifests/level-set-plugins.json`：它们
      * 物理上躺在 `BepInEx/plugins/` 下（作者规划好的位置，不能搬走），归属却是
@@ -73,36 +57,10 @@ pub fn scan_mods_with_manifests(
     for entry in WalkDir::new(&plugins) {
         match entry {
             Ok(entry) if entry.file_type().is_file() && is_mod_file(entry.path()) => {
-                // 恢复暂存目录里的文件不算 MOD：那是一次恢复操作的回滚素材，
-                // 删不掉时会残留，不能让它污染插件列表
-                let inside_staging =
-                    entry
-                        .path()
-                        .strip_prefix(&plugins)
-                        .ok()
-                        .is_some_and(|relative| {
-                            relative.components().any(|component| {
-                                is_restore_staging_component(component.as_os_str())
-                            })
-                        });
-                if inside_staging {
+                let Ok(relative) = entry.path().strip_prefix(&plugins) else {
                     continue;
-                }
-                let path = entry.path();
-                if path.starts_with(&level_sets_root) || path.starts_with(&legacy_disabled_root) {
-                    continue;
-                }
-                /*
-                 * 登记表里的路径是「相对游戏目录、正斜杠、小写比较」。这里用
-                 * 字面 `game` 剥前缀，不能拿 canonicalize 后的路径混着比
-                 * （与 `plugin_dll_files` 里注释的同一类坑）。
-                 */
-                let registered_hit = path
-                    .strip_prefix(game)
-                    .ok()
-                    .map(|relative| relative.to_string_lossy().replace('\\', "/").to_lowercase())
-                    .is_some_and(|relative| registered.contains(&relative));
-                if registered_hit {
+                };
+                if !is_ordinary_plugin(relative, &registered) {
                     continue;
                 }
                 paths.push(entry.into_path());
@@ -141,19 +99,9 @@ pub fn scan_mods_with_manifests(
      * 结果按 `paths` 原顺序返回，卡片顺序与串行扫描时一致；某个文件读失败
      * 只影响它自己那一行（占位成纯依赖）。
      */
-    let requests = paths
-        .iter()
-        .map(|path| crate::metadata_read::MetadataRequest {
-            path: path.clone(),
-            display_name: canonical_dll_file(path, game),
-            kind: crate::metadata_read::MetadataKind::ModDll,
-        })
-        .collect::<Vec<_>>();
     let workers = crate::concurrency::workers_from(config.mod_metadata_concurrency);
-    let details = crate::metadata_read::read_metadata_batch(&requests, workers, &|_, _| {});
-    let mut installed = paths
+    let mut installed = read_plugin_metadata(&plugins, paths, workers)
         .into_iter()
-        .zip(details)
         .map(|(path, outcome)| inspect_dll(&path, &outcome, game, config, &manifests))
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
@@ -182,6 +130,44 @@ pub fn scan_mods_with_manifests(
         workers
     );
     installed
+}
+
+/// 扫描与批量开关共用一批 DLL 解析结果，先确认 DIYLevel 包再过滤地图子树。
+/// 收集所有同 GUID 包目录用于归属判断；版本高低仍只由 plugin_target 处理。
+pub(super) fn read_plugin_metadata(
+    plugins: &Path,
+    paths: Vec<PathBuf>,
+    workers: usize,
+) -> Vec<(PathBuf, crate::metadata_read::MetadataOutcome)> {
+    let requests = paths
+        .iter()
+        .map(|path| crate::metadata_read::MetadataRequest {
+            path: path.clone(),
+            display_name: format!("{PLUGINS_DIR}/{}", canonical_dll_file(path, plugins)),
+            kind: crate::metadata_read::MetadataKind::ModDll,
+        })
+        .collect::<Vec<_>>();
+    let details = crate::metadata_read::read_metadata_batch(&requests, workers, &|_, _| {});
+    let diy_level_packages = paths
+        .iter()
+        .zip(&details)
+        .filter(|(_, outcome)| {
+            outcome
+                .mod_dll()
+                .and_then(|details| details.guid.as_deref())
+                .is_some_and(|guid| {
+                    guid.trim()
+                        .eq_ignore_ascii_case(super::plugin_target::DIYLEVEL_GUID)
+                })
+        })
+        .filter_map(|(path, _)| path.parent().map(Path::to_path_buf))
+        .collect::<HashSet<_>>();
+    let mut map_info = HashMap::new();
+    paths
+        .into_iter()
+        .zip(details)
+        .filter(|(path, _)| !is_map_plugin(path, plugins, &diy_level_packages, &mut map_info))
+        .collect()
 }
 
 /// 把一条 DLL 的元数据解析结果组装成一个 MOD 行。

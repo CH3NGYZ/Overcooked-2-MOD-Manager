@@ -140,19 +140,6 @@ pub fn run() {
             })?;
             let proxy_config = state.config.clone();
             app.manage(state.clone());
-            let compression_app = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Some(game) = crate::game::detect_game(&state.config.load_or_default()).path {
-                    state.level_watch.watch(
-                        &compression_app,
-                        vec![
-                            crate::level_sets::levels_root(std::path::Path::new(&game)),
-                            crate::level_sets::disabled_root(std::path::Path::new(&game)),
-                        ],
-                    );
-                }
-                crate::level_sets::recompress::enqueue_installed(&state, &compression_app, None);
-            });
             tauri::async_runtime::spawn(async move {
                 if proxy_config.refresh_proxies().await.is_err() {
                     log::warn!("启动线上代理清单不可用，继续使用随包清单");

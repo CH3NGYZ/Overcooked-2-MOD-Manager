@@ -389,7 +389,12 @@ mod tests {
         let game = Path::new("E:/SteamLibrary/steamapps/common/Overcooked! 2");
         let local = game.join("BepInEx/plugins/OC2DIYLevel/levels/rw_v0.73(Rick-Wang)");
         let info = crate::level_sets::scan::locate_info_file(&local).unwrap();
-        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let mut c = Context::load(
+            &read_limited(&info).unwrap(),
+            &local,
+            &crate::level_sets::paths::test_roots(game),
+        )
+        .unwrap();
         let index = c.levels.iter().position(|l| l.name_zh == "微风").unwrap();
         let recipes = c.recipes(index).unwrap();
         for recipe in &recipes[42..45] {
@@ -512,7 +517,12 @@ mod tests {
         let game = Path::new("E:/SteamLibrary/steamapps/common/Overcooked! 2");
         let local = game.join("BepInEx/plugins/OC2DIYLevel/levels/pear_v11.0(菊花梨）");
         let info = crate::level_sets::scan::locate_info_file(&local).unwrap();
-        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let mut c = Context::load(
+            &read_limited(&info).unwrap(),
+            &local,
+            &crate::level_sets::paths::test_roots(game),
+        )
+        .unwrap();
         let recipes = c.recipes(0).unwrap();
         assert_eq!(recipes[14].name, "菠萝串");
         assert!(
@@ -593,7 +603,7 @@ mod tests {
         let mut c = Context::load(
             &read_limited(&local.join("info_dmm")).unwrap(),
             &local,
-            game,
+            &crate::level_sets::paths::test_roots(game),
         )
         .unwrap();
         let recipes = c.recipes(4).unwrap();
@@ -638,7 +648,12 @@ mod tests {
             .map(|e| e.path())
             .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("info"))
             .unwrap();
-        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let mut c = Context::load(
+            &read_limited(&info).unwrap(),
+            &local,
+            &crate::level_sets::paths::test_roots(game),
+        )
+        .unwrap();
         let recipes = c.recipes(1).unwrap();
         let mut nested = 0;
         for recipe in &recipes {
@@ -673,7 +688,12 @@ mod tests {
             .map(|e| e.path())
             .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("info"))
             .unwrap();
-        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let mut c = Context::load(
+            &read_limited(&info).unwrap(),
+            &local,
+            &crate::level_sets::paths::test_roots(game),
+        )
+        .unwrap();
         let recipes = c.recipes(0).unwrap();
         let soup = recipes.iter().find(|r| r.name == "Soup_Onion").unwrap();
         eprintln!(
@@ -709,7 +729,12 @@ mod tests {
             .map(|e| e.path())
             .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("info"))
             .unwrap();
-        let mut c = Context::load(&read_limited(&info).unwrap(), &local, game).unwrap();
+        let mut c = Context::load(
+            &read_limited(&info).unwrap(),
+            &local,
+            &crate::level_sets::paths::test_roots(game),
+        )
+        .unwrap();
         // Resolve an actual reference to the optional W3 CAB; its presence in externals
         // alone does not mean the selected menus use it.
         let (file, external) = c

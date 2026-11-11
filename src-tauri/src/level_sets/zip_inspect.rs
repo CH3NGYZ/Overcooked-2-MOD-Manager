@@ -31,8 +31,8 @@ pub struct ImportedLevelSet {
     pub dir_name: String,
     /// 落盘形态：拍平（历史）还是 BepInEx 表层包原样解压。
     ///
-    /// 安装流程按它分叉：表层包不改名、不搬插件，只把 ZIP 内路径原样落到
-    /// 游戏目录并登记插件归属（见 [`install_bepinex_layer_sets`]）。
+    /// 安装流程按它分叉：表层包不改集目录名、不搬插件，地图子树定向到
+    /// 当前 DIYLevel 根并登记插件归属（见 [`install_bepinex_layer_sets`]）。
     pub layout: LevelSetLayout,
     /// 该关卡集的 `info` 文件内容解析结果。
     pub metadata: LevelSetMetadata,

@@ -29,6 +29,7 @@ const dashboard = useDashboard()
 const { load, ensureLoaded } = dashboard
 const game = computed(() => withDemoGame(dashboard.game.value))
 const mods = computed(() => withDemoMods(dashboard.mods.value))
+const diyLevelTarget = computed(() => withDemoDiyLevelTarget(dashboard.diyLevelTarget.value))
 
 const version = ref('')
 const checking = ref(false)
@@ -112,19 +113,14 @@ const bepinexSummary = computed(() => {
 
 /* ===== DIYLevel 框架卡片摘要（与 BepInEx 对齐） ===== */
 
-/** DIYLevel 的稳定 GUID，与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
-const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
-
 /**
- * 从 MOD 扫描结果里取 DIYLevel 那一项。
+ * 按后端最高版本选择，从 MOD 扫描结果里取 DIYLevel 那一项。
  *
  * 用 `mods` 而不是再调一次 `diy_level_info`：设置页已经拿到 Dashboard，
  * 多一次 IPC 只会让摘要比抽屉慢半拍。抽屉里才用专用命令（它还带地图数量）。
  */
-const diyLevelMod = computed(() => demoActive.value
-  ? mods.value.find((mod) => mod.dll_file === withDemoDiyLevelTarget(null))
-  : (mods.value ?? []).find((mod) =>
-    !!mod.guid && mod.guid.trim().toLowerCase() === DIYLEVEL_GUID))
+const diyLevelMod = computed(() =>
+  mods.value.find((mod) => mod.dll_file === diyLevelTarget.value))
 
 const diyLevelInstalled = computed(() => !!diyLevelMod.value)
 const diyLevelEnabled = computed(() => diyLevelMod.value?.enabled === true)

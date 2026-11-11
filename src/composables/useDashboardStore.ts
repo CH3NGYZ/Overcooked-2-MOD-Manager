@@ -19,6 +19,8 @@ const modsLoading = ref(false)
 const modsError = ref('')
 const modsGeneration = shallowRef(0)
 const modsStatus = shallowRef<'idle' | 'loading' | 'ready' | 'error'>('idle')
+/** Selected by the backend's GUID/version resolver, including disabled copies. */
+const diyLevelTarget = shallowRef<string | null>(null)
 let modsLoaded = false
 // Request identity is frontend-only; trusted generations come exclusively from IPC.
 let modsRequestRevision = 0
@@ -40,6 +42,7 @@ function invalidateLocalMods() {
   modsLoading.value = false
   modsStatus.value = 'idle'
   modsGeneration.value = 0
+  diyLevelTarget.value = null
   modsError.value = ''
   localMods.value = []
   bindingRevision += 1
@@ -234,6 +237,7 @@ export function useDashboard() {
         if (revision !== modsRequestRevision) return
         localMods.value = snapshot.mods
         modsGeneration.value = snapshot.generation
+        diyLevelTarget.value = snapshot.diy_level_target ?? null
         modsStatus.value = 'ready'
         modsLoaded = true
         updateRevision += 1
@@ -255,6 +259,13 @@ export function useDashboard() {
   }
 
   async function checkModUpdates() {
+    if (demoActive.value) return
+    try {
+      await ensureLocalModsLoaded()
+    } catch {
+      // A failed DLL scan cannot establish which installed versions to compare.
+      return
+    }
     if (demoActive.value) return
     const revision = ++updateRevision
     const installed = localMods.value
@@ -338,10 +349,16 @@ export function useDashboard() {
 
   /** Editors need a successfully completed DLL scan, including an empty result. */
   async function ensureLocalModsLoaded() {
-    if (demoActive.value) return modsGeneration.value
-    if (modsStatus.value !== 'ready') await loadLocalMods()
-    if (modsStatus.value !== 'ready') throw new Error(modsError.value)
-    return modsGeneration.value
+    for (;;) {
+      if (demoActive.value) return modsGeneration.value
+      const pending = modsPending ?? (modsStatus.value === 'ready' ? undefined : loadLocalMods())
+      const revision = modsRequestRevision
+      if (pending) await pending
+      // A root/runtime change may replace the scan while this caller waits.
+      if (revision !== modsRequestRevision) continue
+      if (modsStatus.value !== 'ready') throw new Error(modsError.value)
+      return modsGeneration.value
+    }
   }
 
   const config = computed<PublicConfig | null>(() => dashboard.value?.config ?? null)
@@ -356,7 +373,7 @@ export function useDashboard() {
 
   return {
     dashboard, loading, backgroundLoading, error, modsLoading, modsError, modsGeneration, modsStatus,
-    config, game, mods, enabledModCount, updateCount, frameworkOk,
+    config, game, mods, diyLevelTarget, enabledModCount, updateCount, frameworkOk,
     load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, ensureLoaded, ensureLocalModsLoaded, refresh, recheckGameState,
   }
 }

@@ -6,8 +6,9 @@ use crate::framework::list_diy_level_backups;
 use crate::framework::read_backup_manifest;
 use crate::framework::restore_framework_backup;
 use crate::framework::validate_framework_backup_in;
+use crate::framework::{diy_level_backup_spec, diy_level_restore_spec};
 use crate::game;
-use crate::models::{DiyLevelInfo, OperationResult};
+use crate::models::{DiyLevelInfo, InstalledMod, LocalModSnapshot, OperationResult};
 use crate::mods;
 use crate::mods::file_state::set_local_mod_file_state;
 use crate::recycle_bin;
@@ -17,18 +18,19 @@ use std::path::Path;
 use std::path::PathBuf;
 use tauri::State;
 
-/// DIYLevel 自定义关卡框架的稳定 GUID。
-///
-/// 与仓库源里的 `plugin_guid`、安装清单、MOD 扫描用的是同一个标识 ——
-/// 作者会改文件名和产品名，只有 GUID 稳定，所以状态判定只认它。
-const DIYLEVEL_GUID: &str = "dev.gua.overcooked.diylevel";
-
 /// 读取 DIYLevel 框架状态。
 ///
 /// 复用 MOD 扫描结果，不单独扫盘：扫描已经处理了 `.dll.disabled` 命名、
 /// 元数据解析和清单绑定，再写一套判定只会和 MOD 列表给出的结论不一致。
 #[tauri::command]
-pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, String> {
+pub async fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_diy_level_info_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn get_diy_level_info_blocking(state: &AppState) -> Result<DiyLevelInfo, String> {
     let config = state.config.load_or_default();
     let backups = list_diy_level_backups(&state.config.backups_dir());
     let Some(game_root) = game::detect_game(&config).path else {
@@ -43,31 +45,29 @@ pub fn get_diy_level_info(state: State<'_, AppState>) -> Result<DiyLevelInfo, St
         });
     };
     let root = PathBuf::from(&game_root);
-    // 与 MOD 列表同源：同一份扫描、同一份清单，结论不会互相矛盾
-    let installed =
-        mods::scan_mods_with_manifests(&root, &config, Some(&state.config.manifests_dir()));
-    let target = installed.iter().find(|item| {
-        item.guid
-            .as_deref()
-            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
-    });
-    /*
-     * 地图目录：`BepInEx/plugins/OC2DIYLevel/levels`。
-     *
-     * 目录名来自包里固定的相对结构（`OC2DIYLevel/levels/...`），不是用户
-     * 可配的；这里只做「存在与否」的只读判断，不创建 —— 没装框架时凭空
-     * 建一个空目录，会让人以为已经准备好放地图了。
-     */
-    let levels_dir = root.join("BepInEx/plugins/OC2DIYLevel/levels");
+    let (snapshot, roots) = mods::snapshot::level_roots(state, &root)?;
+    let target = selected_target(&snapshot);
+    let levels_dir = roots
+        .package_root()
+        .map(|directory| directory.join("levels"));
     Ok(DiyLevelInfo {
         installed: target.is_some(),
         enabled: target.is_some_and(|item| item.enabled),
         version: target.and_then(|item| item.version.clone()),
         dll_file: target.map(|item| item.dll_file.clone()),
-        has_levels_dir: levels_dir.is_dir(),
-        level_packs: count_level_packs(&levels_dir),
+        has_levels_dir: levels_dir
+            .as_ref()
+            .is_some_and(|directory| directory.is_dir()),
+        level_packs: levels_dir
+            .as_ref()
+            .map_or(0, |directory| count_level_packs(directory)),
         backups,
     })
+}
+
+fn selected_target(snapshot: &LocalModSnapshot) -> Option<&InstalledMod> {
+    let dll = snapshot.diy_level_target.as_deref()?;
+    snapshot.mods.iter().find(|item| item.dll_file == dll)
 }
 
 /// 地图集数量 = `levels/` 下的文件夹个数。
@@ -90,8 +90,18 @@ fn count_level_packs(levels_dir: &Path) -> u32 {
 /// 走与 MOD 列表相同的 `.dll` / `.dll.disabled` 改名逻辑（`set_local_mod_file_state`），
 /// 不新增一套开关实现 —— 否则两处对「禁用」的定义迟早分叉。
 #[tauri::command]
-pub fn set_diy_level_enabled(
+pub async fn set_diy_level_enabled(
     state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<OperationResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || set_diy_level_enabled_blocking(&state, enabled))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn set_diy_level_enabled_blocking(
+    state: &AppState,
     enabled: bool,
 ) -> Result<OperationResult, String> {
     log::info!("切换 DIYLevel 框架状态：启用={enabled}");
@@ -102,15 +112,8 @@ pub fn set_diy_level_enabled(
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
-    let installed =
-        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
-    let Some(target) = installed.iter().find(|item| {
-        item.guid
-            .as_deref()
-            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
-    }) else {
-        return Err("framework.diyLevelMissing".into());
-    };
+    let (snapshot, _) = mods::snapshot::level_roots(state, &game_root)?;
+    let target = selected_target(&snapshot).ok_or("framework.diyLevelMissing")?;
     if target.enabled == enabled {
         return Ok(OperationResult {
             ok: true,
@@ -122,6 +125,7 @@ pub fn set_diy_level_enabled(
             .into(),
         });
     }
+    state.invalidate_local_mod_snapshot()?;
     set_local_mod_file_state(&game_root, &target.dll_file, enabled)?;
     Ok(OperationResult {
         ok: true,
@@ -139,7 +143,14 @@ pub fn set_diy_level_enabled(
 /// 回收站只带得走清单里登记的文件，用户自己放进 `OC2DIYLevel` 的地图集、
 /// 改过的配置不在清单里 —— 只有目录备份能保证还能找回。
 #[tauri::command]
-pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || uninstall_diy_level_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn uninstall_diy_level_blocking(state: &AppState) -> Result<OperationResult, String> {
     log::info!("开始卸载 DIYLevel");
     let _guard = state
         .operation
@@ -149,23 +160,31 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
-    let installed =
-        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
-    let Some(target) = installed.iter().find(|item| {
-        item.guid
-            .as_deref()
-            .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
-    }) else {
-        return Err("framework.diyLevelMissing".into());
-    };
+    let (snapshot, roots) = mods::snapshot::level_roots(state, &game_root)?;
+    let target = selected_target(&snapshot).ok_or("framework.diyLevelMissing")?;
     let dll_file = target.dll_file.clone();
-    let package_id = target.package_id.clone().unwrap_or_else(|| "manual".into());
+    let package_id = target
+        .package_id
+        .clone()
+        .unwrap_or_else(|| format!("manual-{}", uuid::Uuid::new_v4()));
 
-    // 先备份整个 OC2DIYLevel 目录（含清单快照），再动文件
+    let spec = diy_level_backup_spec(
+        roots.game_root(),
+        roots.package_root().ok_or("framework.diyLevelMissing")?,
+    )?;
+    if let Some(manifest) = archive::read_manifest(&state.config.manifests_dir(), &package_id) {
+        let selected_directory = roots.package_root().ok_or("framework.diyLevelMissing")?;
+        for file in manifest.files {
+            if !game::safe_game_path(roots.game_root(), &file)?.starts_with(selected_directory) {
+                return Err("backup.diyLevelTargetMismatch".into());
+            }
+        }
+    }
+    // 先备份所选 DLL 所在目录（含清单快照），再动文件。
     let backup = backup_framework(
         &game_root,
         &state.config.backups_dir(),
-        &DIYLEVEL_BACKUP,
+        &spec,
         &state.config.manifests_dir(),
         &package_id,
     )?;
@@ -179,6 +198,7 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
     let has_manifest = manifest_id
         .as_deref()
         .is_some_and(|id| archive::read_manifest(&manifests_dir, id).is_some());
+    state.invalidate_local_mod_snapshot()?;
     let result = if let Some(id) = manifest_id.as_deref().filter(|_| has_manifest) {
         recycle_bin::recycle_package(&recycle_root, &manifests_dir, &game_root, id, None).map(
             |entry| {
@@ -192,30 +212,14 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
             },
         )
     } else if config.recycle_deleted_mods {
-        recycle_bin::recycle_mod_dll(
-            &recycle_root,
-            &manifests_dir,
-            &game_root,
-            manifest_id.as_deref().unwrap_or("manual"),
-            &dll_file,
-            &installed,
-        )
-        .map(|_| {
+        recycle_bin::recycle_unmanaged(&recycle_root, &game_root, &dll_file).map(|_| {
             crate::locale_tag::with_params(
                 "message.framework.diyLevelMovedToRecycleBinNoCount",
                 &[("path", &backup.display().to_string())],
             )
         })
     } else {
-        recycle_bin::purge_mod_dll(
-            &recycle_root,
-            &manifests_dir,
-            &game_root,
-            manifest_id.as_deref().unwrap_or("manual"),
-            &dll_file,
-            &installed,
-        )
-        .map(|_| {
+        recycle_bin::purge_unmanaged(&recycle_root, &game_root, &dll_file).map(|_| {
             crate::locale_tag::with_params(
                 "message.framework.diyLevelDeleted",
                 &[("path", &backup.display().to_string())],
@@ -247,19 +251,38 @@ pub fn uninstall_diy_level(state: State<'_, AppState>) -> Result<OperationResult
 /// 且**不自动创建**——目录不存在说明框架没装或版本结构不同，创建空目录
 /// 只会误导用户。
 #[tauri::command]
-pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn open_diy_level_directory(
+    state: State<'_, AppState>,
+) -> Result<OperationResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || open_diy_level_directory_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn open_diy_level_directory_blocking(state: &AppState) -> Result<OperationResult, String> {
     let config = state.config.load_or_default();
     let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let root = Path::new(&game_root);
-    // 优先地图目录；框架装在别处时退回插件目录，至少能给用户一个能看的落点
-    let levels = game::safe_game_path(root, "BepInEx/plugins/OC2DIYLevel/levels")?;
-    let package = game::safe_game_path(root, "BepInEx/plugins/OC2DIYLevel")?;
+    let (_, roots) = mods::snapshot::level_roots(state, root)?;
+    let package = roots
+        .package_root()
+        .ok_or("framework.diyLevelMissing")?
+        .to_path_buf();
+    let relative = package.join("levels");
+    let relative = relative
+        .strip_prefix(roots.game_root())
+        .map_err(|_| "archive.pathEscape")?;
+    let levels = game::safe_game_path(root, &relative.to_string_lossy())?;
     let target = if levels.is_dir() {
         levels
     } else if package.is_dir() {
         package
     } else {
-        return Err("error.framework.diyLevelDirMissing?path=BepInEx/plugins/OC2DIYLevel".into());
+        return Err(crate::locale_tag::with_params(
+            "error.framework.diyLevelDirMissing",
+            &[("path", &package.display().to_string())],
+        ));
     };
     shell_open::open_path(&target)?;
     Ok(OperationResult {
@@ -268,9 +291,16 @@ pub fn open_diy_level_directory(state: State<'_, AppState>) -> Result<OperationR
     })
 }
 
-/// 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）+ 它的安装清单快照。
+/// 备份扫描选中的 DIYLevel 目录及安装清单快照。
 #[tauri::command]
-pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub async fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup_diy_level_blocking(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn backup_diy_level_blocking(state: &AppState) -> Result<OperationResult, String> {
     log::info!("开始备份 DIYLevel");
     let _guard = state
         .operation
@@ -279,22 +309,20 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
-    // 清单 ID 是动态的（仓库 id 或 manual-<uuid>），从当前扫描结果取
-    let installed =
-        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
-    let manifest_id = installed
-        .iter()
-        .find(|item| {
-            item.guid
-                .as_deref()
-                .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
-        })
-        .and_then(|item| item.package_id.clone())
-        .ok_or("framework.diyLevelMissing")?;
+    let (snapshot, roots) = mods::snapshot::level_roots(state, &game_root)?;
+    let target = selected_target(&snapshot).ok_or("framework.diyLevelMissing")?;
+    let manifest_id = target
+        .package_id
+        .clone()
+        .unwrap_or_else(|| format!("manual-{}", uuid::Uuid::new_v4()));
+    let spec = diy_level_backup_spec(
+        roots.game_root(),
+        roots.package_root().ok_or("framework.diyLevelMissing")?,
+    )?;
     let backup = backup_framework(
         &game_root,
         &state.config.backups_dir(),
-        &DIYLEVEL_BACKUP,
+        &spec,
         &state.config.manifests_dir(),
         &manifest_id,
     )?;
@@ -314,12 +342,21 @@ pub fn backup_diy_level(state: State<'_, AppState>) -> Result<OperationResult, S
 /// 恢复不同 —— 备份之后新增的地图集不会被留下来，得到的就是备份那一刻的
 /// 完整快照，不会出现「新旧文件混在一起」的半新半旧状态。
 ///
-/// 与 BepInEx 恢复一致，删除前先把当前目录另存一份 `DIYLevel.before-restore-*`，
-/// 用户误操作时还有一次后悔的机会。
+/// 与 BepInEx 恢复一致，删除前把当前目录暂存到 `.before-restore-*`，成功后清理。
 #[tauri::command]
-pub fn restore_diy_level(
+pub async fn restore_diy_level(
     state: State<'_, AppState>,
     backup_path: String,
+) -> Result<OperationResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || restore_diy_level_blocking(&state, &backup_path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn restore_diy_level_blocking(
+    state: &AppState,
+    backup_path: &str,
 ) -> Result<OperationResult, String> {
     log::info!("开始恢复 DIYLevel 备份：路径={backup_path}");
     let _guard = state
@@ -330,37 +367,26 @@ pub fn restore_diy_level(
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
 
+    let (snapshot, roots) = mods::snapshot::level_roots(state, &game_root)?;
     let backup = validate_framework_backup_in(
         Path::new(&backup_path),
         &state.config.backups_dir(),
         &DIYLEVEL_BACKUP,
     )?;
+    let spec = diy_level_restore_spec(roots.game_root(), &backup, roots.package_root())?;
     /*
      * 清单 ID：优先用备份里快照自带的（那是安装时的真实 ID），
-     * 没有快照的旧备份退回扫描当前安装结果，最后兜底 "manual"。
+     * 没有快照的旧备份使用当前扫描目标的清单 ID，最后创建独立的手动安装 ID。
      */
     let manifest_id = read_backup_manifest(&backup)
         .map(|manifest| manifest.repository_id)
-        .or_else(|| {
-            let installed = mods::scan_mods_with_manifests(
-                &game_root,
-                &config,
-                Some(&state.config.manifests_dir()),
-            );
-            installed
-                .iter()
-                .find(|item| {
-                    item.guid
-                        .as_deref()
-                        .is_some_and(|guid| guid.trim().eq_ignore_ascii_case(DIYLEVEL_GUID))
-                })
-                .and_then(|item| item.package_id.clone())
-        })
-        .unwrap_or_else(|| "manual".into());
+        .or_else(|| selected_target(&snapshot).and_then(|item| item.package_id.clone()))
+        .unwrap_or_else(|| format!("manual-{}", uuid::Uuid::new_v4()));
+    state.invalidate_local_mod_snapshot()?;
     restore_framework_backup(
         &game_root,
         &backup,
-        &DIYLEVEL_BACKUP,
+        &spec,
         &state.config.manifests_dir(),
         &manifest_id,
     )?;
@@ -373,9 +399,21 @@ pub fn restore_diy_level(
 
 /// 删除一个 DIYLevel 备份。
 #[tauri::command]
-pub fn delete_diy_level_backup(
+pub async fn delete_diy_level_backup(
     state: State<'_, AppState>,
     backup_path: String,
+) -> Result<OperationResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_diy_level_backup_blocking(&state, &backup_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn delete_diy_level_backup_blocking(
+    state: &AppState,
+    backup_path: &str,
 ) -> Result<OperationResult, String> {
     log::info!("开始删除 DIYLevel 备份：路径={backup_path}");
     let _guard = state

@@ -33,8 +33,9 @@ fn info_cache_parses_once_until_the_file_changes() {
     std::fs::create_dir_all(&set_dir).unwrap();
     let info = set_dir.join("info");
     std::fs::write(&info, b"not a bundle").unwrap();
+    let info = info.canonicalize().unwrap();
 
-    let first = scan_level_sets(&game);
+    let first = scan_level_sets(&crate::level_sets::paths::test_roots(&game));
     assert_eq!(first.len(), 1);
     let first_error = first[0].error.clone().expect("非 AssetBundle 应报错");
     assert_eq!(
@@ -43,13 +44,13 @@ fn info_cache_parses_once_until_the_file_changes() {
         "首次扫描必须真正解析一次"
     );
 
-    let second = scan_level_sets(&game);
+    let second = scan_level_sets(&crate::level_sets::paths::test_roots(&game));
     assert_eq!(second[0].error.as_deref(), Some(first_error.as_str()));
     assert_eq!(info_cache_parses(&info), Some(1), "文件没变时不该重复解析");
 
     // 换掉内容且长度不同：len/mtime 指纹失效，必须重新解析并拿到新结果。
     std::fs::write(&info, b"UnityFS\0\0\0\0\0\0\0\0\0\0\0\0").unwrap();
-    let third = scan_level_sets(&game);
+    let third = scan_level_sets(&crate::level_sets::paths::test_roots(&game));
     assert_ne!(
         third[0].error.as_deref(),
         Some(first_error.as_str()),
@@ -75,7 +76,7 @@ fn scan_reports_the_absolute_directory_path_for_both_sides() {
     std::fs::write(enabled_dir.join("info"), b"not a bundle").unwrap();
     std::fs::write(disabled_dir.join("info"), b"not a bundle").unwrap();
 
-    let sets = scan_level_sets(&game);
+    let sets = scan_level_sets(&crate::level_sets::paths::test_roots(&game));
     assert_eq!(sets.len(), 2);
     let enabled = sets
         .iter()
@@ -87,7 +88,11 @@ fn scan_reports_the_absolute_directory_path_for_both_sides() {
         .expect("应扫到停用集");
 
     assert!(enabled.enabled);
-    assert_eq!(enabled.path, enabled_dir, "启用集应指向 levels/<目录名>");
+    assert_eq!(
+        enabled.path,
+        enabled_dir.canonicalize().unwrap(),
+        "启用集应指向 levels/<目录名>"
+    );
     assert!(enabled.path.is_absolute(), "路径必须是绝对路径");
     assert!(
         enabled
@@ -97,7 +102,8 @@ fn scan_reports_the_absolute_directory_path_for_both_sides() {
 
     assert!(!disabled.enabled);
     assert_eq!(
-        disabled.path, disabled_dir,
+        disabled.path,
+        disabled_dir.canonicalize().unwrap(),
         "停用集应指向 BepInEx/cache/modmanager_disabled_maps/<目录名>"
     );
     assert!(disabled.path.is_absolute(), "停用集路径也必须是绝对路径");
@@ -120,10 +126,13 @@ fn locating_respects_the_enabled_side() {
     let enabled_dir = game.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("Same");
     std::fs::create_dir_all(&enabled_dir).unwrap();
 
-    let located = locate_level_set_directory(&game, "Same", true).unwrap();
+    let located =
+        locate_level_set_directory(&crate::level_sets::paths::test_roots(&game), "Same", true)
+            .unwrap();
     assert_eq!(located, enabled_dir.canonicalize().unwrap());
     assert_eq!(
-        locate_level_set_directory(&game, "Same", false).unwrap_err(),
+        locate_level_set_directory(&crate::level_sets::paths::test_roots(&game), "Same", false)
+            .unwrap_err(),
         "levelSet.notFound",
         "停用侧没有同名目录时必须报 notFound"
     );
@@ -141,7 +150,15 @@ fn deleting_moves_the_set_into_the_recycle_bin() {
     std::fs::write(set.join("info"), b"placeholder").unwrap();
     std::fs::write(set.join("s_myset_1"), b"level").unwrap();
 
-    remove_level_set(&recycle, &manifests, &game, "MySet", true, true).unwrap();
+    remove_level_set(
+        &recycle,
+        &manifests,
+        &crate::level_sets::paths::test_roots(&game),
+        "MySet",
+        true,
+        true,
+    )
+    .unwrap();
 
     assert!(!set.exists(), "关卡集目录应已移走");
     let records = crate::recycle_bin::list(&recycle).unwrap();
@@ -161,7 +178,15 @@ fn deleting_without_recycling_removes_the_directory() {
     std::fs::write(set.join("info"), b"placeholder").unwrap();
 
     // enabled=false：在 BepInEx/cache/modmanager_disabled_maps/ 下找
-    remove_level_set(&recycle, &manifests, &game, "MySet", false, false).unwrap();
+    remove_level_set(
+        &recycle,
+        &manifests,
+        &crate::level_sets::paths::test_roots(&game),
+        "MySet",
+        false,
+        false,
+    )
+    .unwrap();
 
     assert!(!set.exists(), "关卡集目录应已删除");
     assert!(
@@ -179,11 +204,26 @@ fn deleting_rejects_unsafe_names_and_missing_sets() {
     let manifests = root.join("manifests");
 
     for name in ["", "..", "../escape", "a/b", "C:evil"] {
-        let result = remove_level_set(&recycle, &manifests, &game, name, true, true);
+        let result = remove_level_set(
+            &recycle,
+            &manifests,
+            &crate::level_sets::paths::test_roots(&game),
+            name,
+            true,
+            true,
+        );
         assert!(result.is_err(), "应拒绝不安全的目录名 {name:?}");
     }
     assert_eq!(
-        remove_level_set(&recycle, &manifests, &game, "Missing", true, true).unwrap_err(),
+        remove_level_set(
+            &recycle,
+            &manifests,
+            &crate::level_sets::paths::test_roots(&game),
+            "Missing",
+            true,
+            true
+        )
+        .unwrap_err(),
         "levelSet.notFound"
     );
 

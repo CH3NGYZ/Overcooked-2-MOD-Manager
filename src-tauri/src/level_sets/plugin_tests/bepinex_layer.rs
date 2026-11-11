@@ -103,7 +103,7 @@ fn bepinex_layer_install_registers_plugins_and_uninstall_recycles_them() {
 
     // 扫描按身份并入「随包插件」
     let sets = scan_level_sets_with_progress(
-        &game,
+        &crate::level_sets::paths::test_roots(&game),
         Some(&manifests),
         crate::concurrency::cores(),
         &|_, _, _| {},
@@ -134,7 +134,15 @@ fn bepinex_layer_install_registers_plugins_and_uninstall_recycles_them() {
     );
 
     // 卸载：集目录与登记 DLL 一起进回收站，登记表清空
-    remove_level_set(&recycle, &manifests, &game, "RW_LevelSet", true, true).unwrap();
+    remove_level_set(
+        &recycle,
+        &manifests,
+        &crate::level_sets::paths::test_roots(&game),
+        "RW_LevelSet",
+        true,
+        true,
+    )
+    .unwrap();
     assert!(
         !game
             .join("BepInEx/plugins/OC2DIYLevel/levels/RW_LevelSet")

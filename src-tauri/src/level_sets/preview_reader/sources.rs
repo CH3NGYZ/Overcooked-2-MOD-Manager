@@ -49,12 +49,13 @@ pub(crate) fn common_sources(game: &Path, local: &Path) -> Vec<PathBuf> {
 
 /// Cross-set custom sprites can point into another installed set's info CAB.
 /// Only index bundle directories; decoding remains reference driven.
-pub(crate) fn sibling_info_sources(game: &Path) -> Vec<PathBuf> {
+pub(crate) fn sibling_info_sources(roots: &crate::level_sets::LevelSetRoots) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
-    for root in [
-        crate::level_sets::paths::levels_root(game),
-        crate::level_sets::paths::disabled_root(game),
-    ] {
+    let enabled = crate::level_sets::paths::levels_root(roots).ok();
+    let disabled = roots
+        .safe_path(&crate::level_sets::paths::disabled_root(roots.game_root()))
+        .ok();
+    for root in enabled.into_iter().chain(disabled) {
         let Ok(base) = root.canonicalize() else {
             continue;
         };
@@ -91,7 +92,11 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let enabled = crate::level_sets::paths::levels_root(&root);
+        let roots = crate::level_sets::LevelSetRoots::new(
+            root.clone(),
+            Some(root.join("BepInEx/plugins/renamed-diy-level-v3")),
+        );
+        let enabled = crate::level_sets::paths::levels_root(&roots).unwrap();
         let disabled = crate::level_sets::paths::disabled_root(&root);
         for path in [
             enabled.join("one/info_custom"),
@@ -102,7 +107,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, b"fixture").unwrap();
         }
-        let found = sibling_info_sources(&root);
+        let found = sibling_info_sources(&roots);
         assert_eq!(found.len(), 2);
         assert!(found.contains(&enabled.join("one/info_custom").canonicalize().unwrap()));
         assert!(found.contains(&disabled.join("two/info").canonicalize().unwrap()));

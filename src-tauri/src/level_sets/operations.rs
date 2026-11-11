@@ -1,19 +1,18 @@
 //! 关卡集启停、定位与回收；地图操作不按游戏运行状态门控。
 
 use super::info_cache::read_info_metadata;
+use super::paths::LevelSetRoots;
 use super::paths::collect_files;
 use super::paths::disabled_root;
 use super::paths::is_safe_dir_name;
 use super::paths::levels_root;
 use super::paths::remove_empty_directories;
 use super::paths::remove_empty_parents;
-use super::paths::{DISABLED_ROOT, LEVELS_DIR};
 use super::plugin_registry::RegisteredLevelSetPlugin;
 use super::plugin_registry::forget_registered_plugins;
 use super::plugin_registry::read_registered_plugins;
 use super::scan::locate_info_file;
 use super::scan::scan_level_sets;
-use crate::framework::DIYLEVEL_DIR;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -23,7 +22,7 @@ use std::path::PathBuf;
 /// 返回值是移动后的新路径。目标位置已有同名目录时**拒绝**并返回错误 ——
 /// 覆盖会静默丢掉用户已有的那个关卡集，而这两个目录都是用户数据。
 pub fn set_level_set_enabled(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     dir_name: &str,
     enabled: bool,
 ) -> Result<PathBuf, String> {
@@ -32,13 +31,19 @@ pub fn set_level_set_enabled(
         log::warn!("拒绝不安全的关卡集目录名：{}", dir_name);
         return Err("levelSet.invalidName".into());
     }
+    let game_root = roots.game_root();
+    let levels_dir = levels_root(roots)?;
+    let disabled_dir = roots.safe_path(&disabled_root(game_root))?;
     let (from_root, to_root) = if enabled {
-        (disabled_root(game_root), levels_root(game_root))
+        (disabled_dir, levels_dir)
     } else {
-        (levels_root(game_root), disabled_root(game_root))
+        (levels_dir, disabled_dir)
     };
-    let source = from_root.join(dir_name);
-    let destination = to_root.join(dir_name);
+    let source = roots.safe_path(&from_root.join(dir_name))?;
+    let destination = roots.safe_path(&to_root.join(dir_name))?;
+    if !source.starts_with(&from_root) || !destination.starts_with(&to_root) {
+        return Err("archive.pathEscape".into());
+    }
     if !source.is_dir() {
         log::warn!(
             "关卡集不在预期位置：目录={}，期望={}",
@@ -87,15 +92,18 @@ pub fn set_level_set_enabled(
 /// 移动的目录，保证列表不会停在半开半关的状态（与 MOD 的批量开关同语义）。
 ///
 /// 空列表表示「本来就已经是目标状态」，调用方据此给出「无需切换」提示。
-pub fn set_all_level_sets_enabled(game_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
-    let targets: Vec<String> = scan_level_sets(game_root)
+pub fn set_all_level_sets_enabled(
+    roots: &LevelSetRoots,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    let targets: Vec<String> = scan_level_sets(roots)
         .into_iter()
         .filter(|set| set.enabled != enabled)
         .map(|set| set.dir_name)
         .collect();
     let mut changed: Vec<String> = Vec::new();
     for dir_name in &targets {
-        match set_level_set_enabled(game_root, dir_name, enabled) {
+        match set_level_set_enabled(roots, dir_name, enabled) {
             Ok(_) => changed.push(dir_name.clone()),
             Err(error) => {
                 log::error!(
@@ -104,7 +112,7 @@ pub fn set_all_level_sets_enabled(game_root: &Path, enabled: bool) -> Result<Vec
                     error
                 );
                 for previous in changed.iter().rev() {
-                    if let Err(rollback) = set_level_set_enabled(game_root, previous, !enabled) {
+                    if let Err(rollback) = set_level_set_enabled(roots, previous, !enabled) {
                         log::error!("批量切换回滚失败：目录={}，原因={}", previous, rollback);
                     }
                 }
@@ -115,7 +123,7 @@ pub fn set_all_level_sets_enabled(game_root: &Path, enabled: bool) -> Result<Vec
     Ok(changed)
 }
 
-/// 定位一个关卡集目录，并确认它确实是 `OC2DIYLevel` 下的真实目录。
+/// 定位一个关卡集目录，并确认它属于选中的 DIYLevel 根或停用根。
 ///
 /// `enabled` 决定去 `levels/` 还是停用根找：同名目录可能只存在于其中一边，
 /// 猜错就会操作到另一个关卡集（打开错目录、删错文件）。
@@ -123,7 +131,7 @@ pub fn set_all_level_sets_enabled(game_root: &Path, enabled: bool) -> Result<Vec
 /// 「打开目录」与「删除」都先走这里，路径校验只写一遍 —— 两个入口不会出现
 /// 一个严一个松，也不会因为某个入口将来漏改而让前端参数变成任意路径。
 pub fn locate_level_set_directory(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     dir_name: &str,
     enabled: bool,
 ) -> Result<PathBuf, String> {
@@ -137,18 +145,12 @@ pub fn locate_level_set_directory(
      * 两侧各有自己的根（启用侧在 plugins 里、停用侧在 cache 里），归属检查
      * 必须对着各自的根做 —— 拿 DIYLevel 的根去校验停用侧会永远不通过。
      */
-    let (base, relative) = if enabled {
-        (
-            crate::game::safe_game_path(game_root, DIYLEVEL_DIR)?,
-            format!("{DIYLEVEL_DIR}/{LEVELS_DIR}/{dir_name}"),
-        )
+    let base = if enabled {
+        levels_root(roots)?
     } else {
-        (
-            crate::game::safe_game_path(game_root, DISABLED_ROOT)?,
-            format!("{DISABLED_ROOT}/{dir_name}"),
-        )
+        roots.safe_path(&disabled_root(roots.game_root()))?
     };
-    let path = crate::game::safe_game_path(game_root, &relative)?;
+    let path = roots.safe_path(&base.join(dir_name))?;
     if !path.starts_with(&base) || !path.is_dir() {
         log::warn!(
             "关卡集目录不存在或不在 DIYLevel 下：目录={}，期望={}",
@@ -176,12 +178,13 @@ pub fn locate_level_set_directory(
 pub fn remove_level_set(
     recycle_root: &Path,
     manifests_dir: &Path,
-    game_root: &Path,
+    roots: &LevelSetRoots,
     dir_name: &str,
     enabled: bool,
     recycle: bool,
 ) -> Result<(), String> {
-    let set_dir = locate_level_set_directory(game_root, dir_name, enabled)?;
+    let game_root = roots.game_root();
+    let set_dir = locate_level_set_directory(roots, dir_name, enabled)?;
     /*
      * BepInEx 表层包的随包插件不在集目录里：按身份从登记表里取出属于它的
      * DLL，卸载时一起回收并清掉登记 —— 否则插件留在 `BepInEx/plugins` 里

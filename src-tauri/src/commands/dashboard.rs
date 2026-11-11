@@ -30,6 +30,7 @@ fn get_dashboard_blocking(state: &AppState) -> Result<DashboardData, String> {
 /// Local DLL scanning is independent of online configuration and game summary.
 #[tauri::command]
 pub async fn get_local_mods(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::models::LocalModSnapshot, String> {
     let state = state.inner().clone();
@@ -78,11 +79,15 @@ pub async fn get_local_mods(
             return Err("diychef.staleScan".into());
         }
         let installed = reconcile_local_mods(&state, installed);
-        state
+        let snapshot = state
             .local_mod_snapshot
             .lock()
             .map_err(|e| e.to_string())?
-            .publish(generation, scan_root.as_deref(), installed)
+            .publish(generation, scan_root.as_deref(), installed)?;
+        drop(_operation);
+        crate::level_sets::recompress::watch_selected(&state, &app);
+        crate::level_sets::recompress::enqueue_installed(&state, &app, None);
+        Ok(snapshot)
     })
     .await
     .map_err(|error| error.to_string())?

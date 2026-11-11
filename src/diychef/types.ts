@@ -1,6 +1,6 @@
 /** Mirrors models/diychef.rs. Opaque IDs never contain caller supplied paths. */
 import type { InstalledMod } from '../types'
-export interface LocalModSnapshot { generation: number; mods: InstalledMod[] }
+export interface LocalModSnapshot { generation: number; mods: InstalledMod[]; diy_level_target?: string | null }
 export interface ChefTarget { id: string; guid: string; version: string | null; display_path: string; enabled: boolean; generation: number; compatibility: string }
 export interface ChefSource { state: string; filename: string; revision: string; encoding: string; newline: string }
 export interface ChefItem { id: string; source_kind: string; display_name: string; config_name: string; head_name: string; custom_id: number | null; resource_state: string; preview_state: string }

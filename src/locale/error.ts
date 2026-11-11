@@ -114,6 +114,20 @@ export const error: DomainMessages = {
     ko: 'DIYLevel 프레임워크가 설치되어 있지 않습니다',
     ja: 'DIYLevel フレームワークがインストールされていません',
   },
+  'framework.diyLevelAmbiguous': {
+    'zh-CN': '发现多个最高版本的 DIYLevel，无法确定地图目录，请先在 MOD 管理中处理重复副本',
+    'zh-TW': '發現多個最高版本的 DIYLevel，無法確定地圖目錄，請先在 MOD 管理中處理重複副本',
+    en: 'Multiple highest-version DIYLevel copies were found. Resolve the duplicates in MOD Management to select the map folder.',
+    ko: '최고 버전의 DIYLevel 복사본이 여러 개 있어 지도 폴더를 결정할 수 없습니다. MOD 관리에서 중복 복사본을 정리하세요.',
+    ja: '最新版の DIYLevel が複数見つかったため、マップフォルダーを特定できません。MOD 管理で重複を解消してください。',
+  },
+  'backup.diyLevelTargetMismatch': {
+    'zh-CN': '此备份的原目录与当前 DIYLevel 目录不同，已停止恢复，请先处理当前安装的副本',
+    'zh-TW': '此備份的原目錄與目前 DIYLevel 目錄不同，已停止還原，請先處理目前安裝的副本',
+    en: 'This backup belongs to a different DIYLevel folder. Resolve the currently installed copy before restoring it.',
+    ko: '이 백업의 원래 폴더가 현재 DIYLevel 폴더와 다릅니다. 현재 설치된 복사본을 정리한 뒤 복원하세요.',
+    ja: 'このバックアップの元のフォルダーは現在の DIYLevel と異なります。現在のコピーを整理してから復元してください。',
+  },
   'framework.diyLevelDirMissing': {
     'zh-CN': '未找到 DIYLevel 目录：{path}',
     'zh-TW': '找不到 DIYLevel 目錄：{path}',

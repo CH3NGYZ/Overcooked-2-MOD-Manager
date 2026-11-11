@@ -77,7 +77,7 @@ impl LevelWatcher {
                         names.as_deref(),
                     );
                     // A missing watched root may have appeared; rebuild off the watcher thread.
-                    state.level_watch.watch(&app, roots);
+                    crate::level_sets::recompress::watch_selected(&state, &app);
                 }
             });
             if let Err(error) = emit_app.emit(LEVEL_SETS_CHANGED_EVENT, ()) {

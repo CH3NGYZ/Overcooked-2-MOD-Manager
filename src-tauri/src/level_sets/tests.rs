@@ -16,7 +16,8 @@ fn rejects_unsafe_directory_names() {
 
     // 目录名必须是单一路径片段：这些都应该被拒绝
     for name in ["..", "../evil", "a/b", "a\\b", ""] {
-        let result = set_level_set_enabled(&root, name, false);
+        let result =
+            set_level_set_enabled(&crate::level_sets::paths::test_roots(&root), name, false);
         assert!(result.is_err(), "应拒绝目录名 {name:?}");
     }
     std::fs::remove_dir_all(&root).unwrap();
@@ -31,7 +32,8 @@ fn toggling_moves_the_whole_directory_between_levels_and_disabled() {
     std::fs::write(set.join("info_MySet"), b"placeholder").unwrap();
 
     // 停用：整个目录移到 BepInEx/cache/modmanager_disabled_maps/
-    let moved = set_level_set_enabled(&root, "MySet", false).unwrap();
+    let moved = set_level_set_enabled(&crate::level_sets::paths::test_roots(&root), "MySet", false)
+        .unwrap();
     assert!(!set.exists(), "原目录应已移走");
     assert!(
         moved.is_dir(),
@@ -40,8 +42,9 @@ fn toggling_moves_the_whole_directory_between_levels_and_disabled() {
     assert!(moved.join("info_MySet").is_file(), "目录内容要跟着走");
 
     // 启用：移回 levels/
-    let back = set_level_set_enabled(&root, "MySet", true).unwrap();
-    assert_eq!(back, set);
+    let back =
+        set_level_set_enabled(&crate::level_sets::paths::test_roots(&root), "MySet", true).unwrap();
+    assert_eq!(back, set.canonicalize().unwrap());
     assert!(back.join("info_MySet").is_file());
 
     std::fs::remove_dir_all(&root).unwrap();
@@ -57,7 +60,8 @@ fn bulk_toggle_moves_every_set_and_skips_noop_ones() {
     std::fs::create_dir_all(disabled_root(&root).join("C")).unwrap();
 
     // 停用：只移动当前启用的 A、B，已经在 disabled 的 C 不参与
-    let changed = set_all_level_sets_enabled(&root, false).unwrap();
+    let changed =
+        set_all_level_sets_enabled(&crate::level_sets::paths::test_roots(&root), false).unwrap();
     assert_eq!(changed, vec!["A".to_string(), "B".to_string()]);
     for name in ["A", "B", "C"] {
         assert!(
@@ -67,10 +71,15 @@ fn bulk_toggle_moves_every_set_and_skips_noop_ones() {
     }
 
     // 全部已是禁用态：再关一次不产生移动
-    assert!(set_all_level_sets_enabled(&root, false).unwrap().is_empty());
+    assert!(
+        set_all_level_sets_enabled(&crate::level_sets::paths::test_roots(&root), false)
+            .unwrap()
+            .is_empty()
+    );
 
     // 启用：三个都回到 levels
-    let back = set_all_level_sets_enabled(&root, true).unwrap();
+    let back =
+        set_all_level_sets_enabled(&crate::level_sets::paths::test_roots(&root), true).unwrap();
     assert_eq!(back.len(), 3);
     for name in ["A", "B", "C"] {
         assert!(
@@ -90,7 +99,7 @@ fn refuses_to_overwrite_an_existing_set_at_the_target() {
     std::fs::create_dir_all(disabled_root(&root).join("Dup")).unwrap();
 
     // 两边同名：覆盖会静默丢掉用户已有的那个，必须拒绝
-    let result = set_level_set_enabled(&root, "Dup", false);
+    let result = set_level_set_enabled(&crate::level_sets::paths::test_roots(&root), "Dup", false);
     assert!(result.is_err(), "目标已存在时应拒绝");
     std::fs::remove_dir_all(&root).unwrap();
 }

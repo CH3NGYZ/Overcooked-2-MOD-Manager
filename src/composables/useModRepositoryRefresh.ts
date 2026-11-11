@@ -116,11 +116,11 @@ const runtimeState = computed<RuntimeRefreshState>(() => ({
 // Card comparisons are incremental (runtimeState). This is only the final
 // aggregate summary over the same local snapshot; it never fetches Releases.
 const dashboardStore = useDashboard()
-watch([anyRefreshing, dashboardStore.modsLoading, dashboardStore.mods, dashboardStore.config],
-  ([busy, scanning]) => {
+watch([anyRefreshing, dashboardStore.modsStatus, dashboardStore.mods, dashboardStore.config],
+  ([busy, status]) => {
     dashboardStore.invalidateModUpdates()
     if (demoActive.value) return
-    if (!busy && !scanning && dashboardStore.dashboard.value) void dashboardStore.checkModUpdates()
+    if (!busy && status === 'ready' && dashboardStore.dashboard.value) void dashboardStore.checkModUpdates()
   }, { flush: 'post' })
 
 /** 最近一次整批刷新的失败信息（供页面决定是否提示）。 */

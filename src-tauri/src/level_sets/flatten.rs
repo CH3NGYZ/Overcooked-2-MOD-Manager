@@ -3,6 +3,7 @@
 use super::identity::allocate_dir_name;
 use super::identity::sanitize_dir_name;
 use super::info_cache::read_info_metadata;
+use super::paths::LevelSetRoots;
 use super::paths::collect_dir_names;
 use super::paths::collect_files;
 use super::paths::disabled_root;
@@ -113,19 +114,19 @@ struct PlannedFlattenSet {
 /// 空出来的嵌套壳与「没归到任何集」的剩余文件进回收站，不直接删除：它们可能
 /// 是作者随包的资源或说明，静默删掉就找不回来了。
 pub fn flatten_level_sets(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     recycle_root: &Path,
     manifests_dir: &Path,
     dry_run: bool,
 ) -> Result<LevelSetFlattenReport, String> {
-    flatten_level_sets_with(game_root, recycle_root, manifests_dir, dry_run, &|path| {
+    flatten_level_sets_with(roots, recycle_root, manifests_dir, dry_run, &|path| {
         read_info_metadata(path)
     })
 }
 
 /// 拍平本体：`parse_info` 可注入，单测用它喂假元数据（不依赖真实 `info` 字节）。
 pub(super) fn flatten_level_sets_with<F>(
-    game_root: &Path,
+    roots: &LevelSetRoots,
     recycle_root: &Path,
     manifests_dir: &Path,
     dry_run: bool,
@@ -134,7 +135,11 @@ pub(super) fn flatten_level_sets_with<F>(
 where
     F: Fn(&Path) -> Result<LevelSetMetadata, String>,
 {
-    let levels_dir = levels_root(game_root);
+    let game_root = roots.game_root();
+    if roots.package_root().is_none() && dry_run {
+        return Ok(LevelSetFlattenReport::default());
+    }
+    let levels_dir = levels_root(roots)?;
     if !levels_dir.is_dir() {
         return Ok(LevelSetFlattenReport::default());
     }

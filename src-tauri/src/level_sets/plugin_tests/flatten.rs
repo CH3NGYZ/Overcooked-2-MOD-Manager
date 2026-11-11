@@ -6,7 +6,7 @@ use super::*;
 fn flattening_moves_nested_level_sets_into_canonical_directories() {
     let (root, game, recycle) = workspace("flatten");
     let manifests = root.join("manifests");
-    let levels = levels_root(&game);
+    let levels = levels_root(&crate::level_sets::paths::test_roots(&game)).unwrap();
 
     let pear = levels.join("pear9.5关卡/levels包/PearSet");
     std::fs::create_dir_all(&pear).unwrap();
@@ -29,14 +29,28 @@ fn flattening_moves_nested_level_sets_into_canonical_directories() {
         Ok(metadata(&name, None))
     };
 
-    let report = flatten_level_sets_with(&game, &recycle, &manifests, true, &parse).unwrap();
+    let report = flatten_level_sets_with(
+        &crate::level_sets::paths::test_roots(&game),
+        &recycle,
+        &manifests,
+        true,
+        &parse,
+    )
+    .unwrap();
     assert_eq!(report.candidates.len(), 1);
     assert_eq!(report.candidates[0].dir_name, "pear9.5关卡");
     assert_eq!(report.candidates[0].nested_infos, 2);
     assert_eq!(report.flattened, 0);
     assert!(pear.join("info").is_file(), "dry_run 不许动磁盘");
 
-    let report = flatten_level_sets_with(&game, &recycle, &manifests, false, &parse).unwrap();
+    let report = flatten_level_sets_with(
+        &crate::level_sets::paths::test_roots(&game),
+        &recycle,
+        &manifests,
+        false,
+        &parse,
+    )
+    .unwrap();
     assert_eq!(report.flattened, 2);
     assert!(report.failed.is_empty(), "{:?}", report.failed);
     assert!(levels.join("PearSet/info").is_file(), "info 落成固定名");
@@ -64,7 +78,7 @@ fn flattening_moves_nested_level_sets_into_canonical_directories() {
 fn flatten_probe_is_bounded_to_three_levels() {
     let (root, game, recycle) = workspace("flatten-depth");
     let manifests = root.join("manifests");
-    let levels = levels_root(&game);
+    let levels = levels_root(&crate::level_sets::paths::test_roots(&game)).unwrap();
     let within = levels.join("within/l1/l2/l3");
     std::fs::create_dir_all(&within).unwrap();
     std::fs::write(within.join("info"), b"x").unwrap();
@@ -72,12 +86,13 @@ fn flatten_probe_is_bounded_to_three_levels() {
     std::fs::create_dir_all(&beyond).unwrap();
     std::fs::write(beyond.join("info"), b"x").unwrap();
 
-    let report = flatten_level_sets_with(&game, &recycle, &manifests, true, &|_: &Path| -> Result<
-        LevelSetMetadata,
-        String,
-    > {
-        Err("skip".into())
-    })
+    let report = flatten_level_sets_with(
+        &crate::level_sets::paths::test_roots(&game),
+        &recycle,
+        &manifests,
+        true,
+        &|_: &Path| -> Result<LevelSetMetadata, String> { Err("skip".into()) },
+    )
     .unwrap();
     let names: Vec<&str> = report
         .candidates
@@ -94,7 +109,7 @@ fn flatten_probe_is_bounded_to_three_levels() {
 fn flatten_rolls_back_the_whole_group_on_failure() {
     let (root, game, recycle) = workspace("flatten-rollback");
     let manifests = root.join("manifests");
-    let levels = levels_root(&game);
+    let levels = levels_root(&crate::level_sets::paths::test_roots(&game)).unwrap();
     let alpha = levels.join("broken/levels包/AlphaSet");
     std::fs::create_dir_all(&alpha).unwrap();
     std::fs::write(alpha.join("info"), b"AlphaSet").unwrap();
@@ -109,7 +124,14 @@ fn flatten_rolls_back_the_whole_group_on_failure() {
         let name = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         Ok(metadata(&name, None))
     };
-    let report = flatten_level_sets_with(&game, &recycle, &manifests, false, &parse).unwrap();
+    let report = flatten_level_sets_with(
+        &crate::level_sets::paths::test_roots(&game),
+        &recycle,
+        &manifests,
+        false,
+        &parse,
+    )
+    .unwrap();
 
     assert_eq!(report.flattened, 0);
     assert_eq!(report.failed.len(), 1, "失败要逐条记录");

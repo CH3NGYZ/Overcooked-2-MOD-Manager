@@ -13,6 +13,7 @@
  */
 import { computed, ref, shallowRef } from 'vue'
 import { api, watchLevelSetScan } from '../services/tauri'
+import { useDashboard } from './useDashboardStore'
 import { demoActive } from '../tutorial/demo'
 import type { LevelSetInfo, LevelSetScanProgress } from '../types'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -63,10 +64,23 @@ export function scanLevelSets(): Promise<LevelSetInfo[]> {
   pendingScan = (async () => {
     try {
       await listening
-      if (demoActive.value) return levelSets.value
-      const result = await api.levelSets()
-      levelSets.value = result
-      return result
+      const dashboard = useDashboard()
+      for (;;) {
+        if (demoActive.value) return levelSets.value
+        // DIYLevel's root comes from the completed DLL scan; online map reads
+        // remain independent of this local dependency.
+        const generation = await dashboard.ensureLocalModsLoaded()
+        if (demoActive.value) return levelSets.value
+        try {
+          const result = await api.levelSets()
+          if (dashboard.modsStatus.value !== 'ready' || generation !== dashboard.modsGeneration.value) continue
+          levelSets.value = result
+          return result
+        } catch (reason) {
+          if (dashboard.modsStatus.value !== 'ready' || generation !== dashboard.modsGeneration.value) continue
+          throw reason
+        }
+      }
     } finally {
       inFlight.value -= 1
       progress.value = null

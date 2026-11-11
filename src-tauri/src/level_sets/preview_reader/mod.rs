@@ -89,6 +89,7 @@ pub struct Context {
     level_refs: Vec<Ref>,
     local_root: PathBuf,
     game_root: PathBuf,
+    roots: crate::level_sets::LevelSetRoots,
 }
 fn failure() -> String {
     "assetBundle.previewUnavailable".into()
@@ -124,7 +125,11 @@ fn reference(value: &V, file: usize, docs: &[Document]) -> Option<Ref> {
     })
 }
 impl Context {
-    pub fn load(bytes: &[u8], local_root: &Path, game_root: &Path) -> Result<Self, String> {
+    pub fn load(
+        bytes: &[u8],
+        local_root: &Path,
+        roots: &crate::level_sets::LevelSetRoots,
+    ) -> Result<Self, String> {
         let mut c = Self {
             documents: vec![],
             raw: HashMap::new(),
@@ -144,7 +149,8 @@ impl Context {
             levels: vec![],
             level_refs: vec![],
             local_root: local_root.into(),
-            game_root: game_root.into(),
+            game_root: roots.game_root().into(),
+            roots: roots.clone(),
         };
         c.add_bundle(bytes, "info")?;
         let mut set = None;
@@ -316,7 +322,7 @@ impl Context {
             for path in sources::common_sources(&self.game_root, &self.local_root)
                 .into_iter()
                 .chain(sources::game_sources(&self.game_root))
-                .chain(sources::sibling_info_sources(&self.game_root))
+                .chain(sources::sibling_info_sources(&self.roots))
             {
                 if let Ok(names) = crate::asset_bundle::bundle_file_names(&path) {
                     for name in names {
@@ -489,7 +495,12 @@ mod tests {
             }
             let bytes = read_limited(&path).expect("real info required");
             let start = std::time::Instant::now();
-            let mut c = Context::load(&bytes, path.parent().unwrap(), game).unwrap();
+            let mut c = Context::load(
+                &bytes,
+                path.parent().unwrap(),
+                &crate::level_sets::paths::test_roots(game),
+            )
+            .unwrap();
             assert_eq!(c.levels.len(), sample["levels"].as_array().unwrap().len());
             for i in 0..c.levels.len() {
                 let picture = c.picture(i).unwrap();
@@ -549,6 +560,7 @@ mod tests {
             level_refs: vec![],
             local_root: PathBuf::new(),
             game_root: PathBuf::new(),
+            roots: crate::level_sets::LevelSetRoots::new(PathBuf::new(), None),
         }
     }
     #[test]
@@ -564,7 +576,14 @@ mod tests {
         ] {
             assert!(c.safe_file(Path::new("."), p).is_none());
         }
-        assert!(Context::load(b"invalid", Path::new("."), Path::new(".")).is_err());
+        assert!(
+            Context::load(
+                b"invalid",
+                Path::new("."),
+                &crate::level_sets::paths::test_roots(Path::new("."))
+            )
+            .is_err()
+        );
     }
 }
 
@@ -631,7 +650,8 @@ mod real_regressions {
         std::fs::create_dir_all(&before).unwrap();
         std::fs::write(before.join("info"), &bytes).unwrap();
         std::fs::write(before.join("s_rw_1"), b"scene-presence-fixture").unwrap();
-        let mut c = Context::load(&bytes, &before, game).unwrap();
+        let mut c =
+            Context::load(&bytes, &before, &crate::level_sets::paths::test_roots(game)).unwrap();
         assert!(c.levels[0].scene_exists);
         let first = c.picture(0).unwrap();
         assert_eq!(first.state, "ready");
@@ -681,14 +701,16 @@ mod real_regressions {
                 );
             }
         }
-        let mut converted = Context::load(&lz4, &before, game).unwrap();
+        let mut converted =
+            Context::load(&lz4, &before, &crate::level_sets::paths::test_roots(game)).unwrap();
         assert_eq!(converted.picture(0).unwrap().data_url, first.data_url);
         assert_eq!(
             crate::asset_bundle::parse_level_set(&lz4).unwrap(),
             crate::asset_bundle::parse_level_set(&bytes).unwrap()
         );
         std::fs::rename(&before, &after).unwrap();
-        let mut renamed = Context::load(&bytes, &after, game).unwrap();
+        let mut renamed =
+            Context::load(&bytes, &after, &crate::level_sets::paths::test_roots(game)).unwrap();
         assert!(renamed.levels[0].scene_exists);
         assert_eq!(renamed.picture(0).unwrap().data_url, first.data_url);
         let r = renamed.level_refs[0];

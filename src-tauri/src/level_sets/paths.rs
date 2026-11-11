@@ -1,6 +1,5 @@
 //! 地图目录约定、路径校验与文件枚举。
 
-use crate::framework::DIYLEVEL_DIR;
 use std::fs;
 use std::path::Component;
 use std::path::Path;
@@ -20,9 +19,52 @@ pub(super) const DISABLED_ROOT: &str = "BepInEx/cache/modmanager_disabled_maps";
 /// 旧的停用根（`plugins/OC2DIYLevel/disabled`），只用于一次性迁移。
 pub(super) const LEGACY_DISABLED_ROOT: &str = "BepInEx/plugins/OC2DIYLevel/disabled";
 
-/// 启用中的关卡集根：`BepInEx/plugins/OC2DIYLevel/levels`。
-pub(crate) fn levels_root(game_root: &Path) -> PathBuf {
-    game_root.join(DIYLEVEL_DIR).join(LEVELS_DIR)
+/// 一次本地 MOD 扫描选中的 DIYLevel 目录；没有插件时只保留停用地图的入口。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LevelSetRoots {
+    game_root: PathBuf,
+    package_root: Option<PathBuf>,
+}
+
+impl LevelSetRoots {
+    pub fn new(game_root: PathBuf, package_root: Option<PathBuf>) -> Self {
+        Self {
+            game_root,
+            package_root,
+        }
+    }
+
+    pub fn game_root(&self) -> &Path {
+        &self.game_root
+    }
+
+    pub fn package_root(&self) -> Option<&Path> {
+        self.package_root.as_deref()
+    }
+
+    /// 可写目录必须属于真实游戏根；联接和尚不存在的目标也走同一安全校验。
+    pub(super) fn safe_path(&self, path: &Path) -> Result<PathBuf, String> {
+        let canonical_root = crate::game::resolve_existing_ancestor(&self.game_root)?;
+        let relative = path
+            .strip_prefix(&self.game_root)
+            .or_else(|_| path.strip_prefix(&canonical_root))
+            .map_err(|_| "archive.pathEscape".to_string())?;
+        crate::game::safe_game_path(&self.game_root, &relative.to_string_lossy())
+    }
+}
+
+/// 启用关卡集只归本地扫描选中的最高版本 DLL 所在目录，不猜默认安装位置。
+pub(crate) fn levels_root(roots: &LevelSetRoots) -> Result<PathBuf, String> {
+    let package = roots.package_root().ok_or("framework.diyLevelMissing")?;
+    roots.safe_path(&package.join(LEVELS_DIR))
+}
+
+#[cfg(test)]
+pub(super) fn test_roots(game_root: &Path) -> LevelSetRoots {
+    LevelSetRoots::new(
+        game_root.to_path_buf(),
+        Some(game_root.join(crate::framework::DIYLEVEL_DIR)),
+    )
 }
 
 /// 停用中的关卡集根：`BepInEx/cache/modmanager_disabled_maps`。
@@ -30,8 +72,8 @@ pub fn disabled_root(game_root: &Path) -> PathBuf {
     game_root.join(DISABLED_ROOT)
 }
 
-/// 旧停用根（在 `plugins/` 里）：只用于迁移，以及 MOD 扫描时把它排除掉。
-pub(crate) fn legacy_disabled_root(game_root: &Path) -> PathBuf {
+/// 旧停用根（在 `plugins/` 里）：只用于迁移。
+fn legacy_disabled_root(game_root: &Path) -> PathBuf {
     game_root.join(LEGACY_DISABLED_ROOT)
 }
 
@@ -40,12 +82,30 @@ pub(crate) fn legacy_disabled_root(game_root: &Path) -> PathBuf {
 /// 只在旧目录存在时动作：整体 rename 失败（目标已存在、跨卷等）就退化成逐项
 /// 搬迁，同名目录留在原地并记日志 —— 宁可少搬一个，也不覆盖用户的数据。
 /// 搬空后删掉旧目录壳，避免下次启动又扫到一遍。
-pub fn migrate_legacy_disabled_root(game_root: &Path) {
-    let legacy = legacy_disabled_root(game_root);
+pub fn migrate_legacy_disabled_root(roots: &LevelSetRoots) {
+    let Ok(target) = roots.safe_path(&disabled_root(roots.game_root())) else {
+        return;
+    };
+    // 同时保留旧管理器的固定迁移入口；它不能作为启用地图根的回退。
+    let mut sources = vec![legacy_disabled_root(roots.game_root())];
+    if let Some(package) = roots.package_root() {
+        let selected = package.join("disabled");
+        if !sources.contains(&selected) {
+            sources.insert(0, selected);
+        }
+    }
+    for legacy in sources {
+        let Ok(legacy) = roots.safe_path(&legacy) else {
+            continue;
+        };
+        migrate_disabled_directory(&target, &legacy);
+    }
+}
+
+fn migrate_disabled_directory(target: &Path, legacy: &Path) {
     if !legacy.is_dir() {
         return;
     }
-    let target = disabled_root(game_root);
     if fs::create_dir_all(&target).is_err() {
         log::warn!("创建停用根失败，暂不迁移旧目录：{}", target.display());
         return;
@@ -55,7 +115,7 @@ pub fn migrate_legacy_disabled_root(game_root: &Path) {
         .map(|mut it| it.next().is_some())
         .unwrap_or(false)
     {
-        match fs::rename(&legacy, &target) {
+        match fs::rename(legacy, target) {
             Ok(()) => {
                 log::info!(
                     "旧停用根已整体迁移：从={}，到={}",
@@ -71,7 +131,7 @@ pub fn migrate_legacy_disabled_root(game_root: &Path) {
             ),
         }
     }
-    let Ok(entries) = fs::read_dir(&legacy) else {
+    let Ok(entries) = fs::read_dir(legacy) else {
         return;
     };
     for entry in entries.flatten() {
@@ -100,7 +160,7 @@ pub fn migrate_legacy_disabled_root(game_root: &Path) {
         }
     }
     // 只在真的空掉时删壳；还有搬不动的条目就留着现场
-    let _ = fs::remove_dir(&legacy);
+    let _ = fs::remove_dir(legacy);
 }
 
 /// 目录名是否是**单一路径片段**（不含分隔符、`..`、盘符、根）。

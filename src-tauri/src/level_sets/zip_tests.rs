@@ -76,7 +76,7 @@ fn installs_the_zip_into_levels_with_fixed_info_name() {
     assert!(destination.join("s_rw_10").is_file());
 
     // 装完之后再扫一遍，元数据应能读回来
-    let sets = scan_level_sets(&root);
+    let sets = scan_level_sets(&crate::level_sets::paths::test_roots(&root));
     assert_eq!(sets.len(), 1);
     assert!(sets[0].enabled);
     assert_eq!(sets[0].metadata.as_ref().unwrap().name, "RW_LevelSet");

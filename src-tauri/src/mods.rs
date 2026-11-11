@@ -5,6 +5,7 @@ pub(crate) mod file_state;
 mod identity;
 pub(crate) mod install;
 mod metadata;
+pub(crate) mod plugin_target;
 mod relations;
 mod scan;
 pub(crate) mod snapshot;

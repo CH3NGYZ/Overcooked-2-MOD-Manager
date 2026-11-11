@@ -2,15 +2,13 @@ use crate::archive;
 use crate::display_path::display_path;
 use crate::game;
 use chrono::Utc;
+use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-/// DIYLevel 框架本体所在目录（游戏相对路径）。
-///
-/// 备份、恢复、卸载都以它为单位：`OC2DIYLevel` 下既有框架 DLL，也有
-/// `levels/` 自制地图。`BepInEx/core` 属于加载器，归 BepInEx 的备份管。
+/// 旧备份的固定相对目录；当前操作由扫描选中的 DLL 目录构造动态 spec。
 pub(crate) const DIYLEVEL_DIR: &str = "BepInEx/plugins/OC2DIYLevel";
 
 /// 列出已有的 DIYLevel 备份（按名称升序，与 BepInEx 备份同样的排列方式）。
@@ -52,11 +50,11 @@ const FRAMEWORK_BACKUP_MANIFEST: &str = "framework-manifest.toml";
 /// 清单放哪」完全同构，所以统一成这个结构，避免两套实现各自漂移：
 ///   · `directories` —— 需要整棵树拷贝的目录（游戏相对路径）
 ///   · `files`       —— 散落在游戏根目录的框架文件（游戏相对路径）
-pub(crate) struct FrameworkBackupSpec {
+pub(crate) struct FrameworkBackupSpec<'a> {
     /// 备份目录名前缀，也是恢复/删除时校验用的标识。
     prefix: &'static str,
     /// 需要整目录拷贝的游戏相对路径。
-    directories: &'static [&'static str],
+    directories: Cow<'a, [Cow<'a, str>]>,
     /// 需要单文件拷贝的游戏相对路径（与 `directories` 互不重叠）。
     files: &'static [&'static str],
 }
@@ -67,9 +65,9 @@ pub(crate) struct FrameworkBackupSpec {
 /// 与 `run_bepinex.sh` 是 doorstop 的配置。早期备份只拷 `BepInEx/`，恢复后
 /// 框架不完整 —— 判定「已安装」看的是 `BepInEx/core`，但 `winhttp.dll` 缺失
 /// 会让框架显示为未启用，用户以为恢复失败。
-pub(crate) const BEPINEX_BACKUP: FrameworkBackupSpec = FrameworkBackupSpec {
+pub(crate) const BEPINEX_BACKUP: FrameworkBackupSpec<'static> = FrameworkBackupSpec {
     prefix: "BepInEx.backup-",
-    directories: &["BepInEx"],
+    directories: Cow::Borrowed(&[Cow::Borrowed("BepInEx")]),
     files: &[
         "winhttp.dll",
         "winhttp.dll.disabled",
@@ -82,13 +80,10 @@ pub(crate) const BEPINEX_BACKUP: FrameworkBackupSpec = FrameworkBackupSpec {
     ],
 };
 
-/// DIYLevel 框架：只有 `BepInEx/plugins/OC2DIYLevel` 这一个目录。
-///
-/// 它的清单 ID 是动态的（仓库 id 或 `manual-<uuid>`），所以不在 spec 里写死，
-/// 由调用方按实际扫描到的 `package_id` 传入。
-pub(crate) const DIYLEVEL_BACKUP: FrameworkBackupSpec = FrameworkBackupSpec {
+/// DIYLevel 旧备份的种类标识及兼容布局；当前备份使用动态目录 spec。
+pub(crate) const DIYLEVEL_BACKUP: FrameworkBackupSpec<'static> = FrameworkBackupSpec {
     prefix: DIYLEVEL_BACKUP_PREFIX,
-    directories: &[DIYLEVEL_DIR],
+    directories: Cow::Borrowed(&[Cow::Borrowed(DIYLEVEL_DIR)]),
     files: &[],
 };
 
@@ -99,12 +94,13 @@ pub(crate) const DIYLEVEL_BACKUP: FrameworkBackupSpec = FrameworkBackupSpec {
 pub(crate) fn backup_framework(
     game_root: &Path,
     backup_root: &Path,
-    spec: &FrameworkBackupSpec,
+    spec: &FrameworkBackupSpec<'_>,
     manifests_dir: &Path,
     manifest_id: &str,
 ) -> Result<PathBuf, String> {
-    for directory in spec.directories {
-        ensure_copy_paths_disjoint(&game_root.join(directory), backup_root)?;
+    for directory in spec.directories.iter() {
+        let source = game::safe_game_path(game_root, directory)?;
+        ensure_copy_paths_disjoint(&source, backup_root)?;
     }
     fs::create_dir_all(backup_root).map_err(|e| e.to_string())?;
     let target = backup_root.join(format!(
@@ -116,8 +112,11 @@ pub(crate) fn backup_framework(
     fs::create_dir_all(&target).map_err(|e| e.to_string())?;
 
     // 目录树：按原相对路径放回备份里，恢复时原样拷回游戏目录
-    for directory in spec.directories {
-        copy_dir(&game_root.join(directory), &target.join(directory))?;
+    for directory in spec.directories.iter() {
+        copy_dir(
+            &game::safe_game_path(game_root, directory)?,
+            &target.join(directory.as_ref()),
+        )?;
     }
     // 根目录的散文件：存在才拷，缺失不算错误（比如 macOS 没有 winhttp.dll）
     for relative in spec.files {
@@ -139,7 +138,7 @@ pub(crate) fn backup_framework(
      * 完全一致）。没有清单（手工装的框架）就按当前实际文件现造一份 ——
      * 这样恢复后依然能正常卸载，不会落回「拒绝删除未知文件」。
      */
-    let manifest = archive::read_manifest(manifests_dir, manifest_id).unwrap_or_else(|| {
+    let mut manifest = archive::read_manifest(manifests_dir, manifest_id).unwrap_or_else(|| {
         let files = framework_files_on_disk(game_root, spec);
         archive::new_manifest(
             manifest_id,
@@ -150,7 +149,9 @@ pub(crate) fn backup_framework(
             Vec::new(),
         )
     });
+    diy_level::scope_manifest(spec, &mut manifest)?;
     write_backup_manifest(&target, &manifest)?;
+    diy_level::write_layout(&target, spec)?;
     log::info!(
         "框架备份完成：前缀={}，路径={}，清单ID={}，清单文件数={}",
         spec.prefix,
@@ -175,10 +176,10 @@ fn write_backup_manifest(backup: &Path, manifest: &archive::InstallManifest) -> 
 ///
 /// 只在「没有现成安装清单」时用来现造清单：手工安装的框架没有清单，
 /// 备份/恢复后必须能再次卸载，否则会落回「拒绝删除未知文件」。
-fn framework_files_on_disk(game_root: &Path, spec: &FrameworkBackupSpec) -> Vec<String> {
+fn framework_files_on_disk(game_root: &Path, spec: &FrameworkBackupSpec<'_>) -> Vec<String> {
     let mut files = Vec::new();
-    for directory in spec.directories {
-        for entry in walkdir::WalkDir::new(game_root.join(directory))
+    for directory in spec.directories.iter() {
+        for entry in walkdir::WalkDir::new(game_root.join(directory.as_ref()))
             .into_iter()
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())
@@ -218,27 +219,46 @@ pub(crate) fn read_backup_manifest(backup: &Path) -> Option<archive::InstallMani
 pub(crate) fn restore_framework_backup(
     game_root: &Path,
     backup: &Path,
-    spec: &FrameworkBackupSpec,
+    spec: &FrameworkBackupSpec<'_>,
     manifests_dir: &Path,
     manifest_id: &str,
 ) -> Result<(), String> {
     if !backup.is_dir() {
         return Err("backup.notFound".into());
     }
+    diy_level::verify_restore_ownership(spec, manifests_dir, manifest_id)?;
     // 恢复前的另存目录：放在备份根的同级，避开被还原的目录树
     let stamp = Utc::now().timestamp();
     let mut staged = Vec::new();
-    for directory in spec.directories {
-        let destination = game_root.join(directory);
-        ensure_copy_paths_disjoint(&backup.join(directory), &destination)?;
+    // Validate every destination and backup source before removing anything.
+    let directories = spec
+        .directories
+        .iter()
+        .map(|directory| {
+            let destination = game::safe_game_path(game_root, directory)?;
+            let source = game::safe_game_path(backup, directory)?;
+            if !source.is_dir() {
+                return Err("backup.notFound".to_string());
+            }
+            ensure_copy_paths_disjoint(&source, &destination)?;
+            Ok((directory.as_ref(), source, destination))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    for (directory, _, destination) in &directories {
         if !destination.exists() {
             continue;
         }
-        let previous = game_root.join(format!("{directory}.before-restore-{stamp}"));
-        archive::clear_readonly(&destination)?;
-        copy_dir(&destination, &previous)?;
+        let previous = game::safe_game_path(
+            game_root,
+            &format!(
+                "{directory}.before-restore-{stamp}-{}",
+                Uuid::new_v4().simple()
+            ),
+        )?;
+        archive::clear_readonly(destination)?;
+        copy_dir(destination, &previous)?;
         staged.push(previous.clone());
-        fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(destination).map_err(|e| e.to_string())?;
         log::info!("恢复前已另存：路径={}", previous.display());
     }
     for relative in spec.files {
@@ -249,11 +269,8 @@ pub(crate) fn restore_framework_backup(
     }
 
     // 整体还原
-    for directory in spec.directories {
-        let source = backup.join(directory);
-        if source.is_dir() {
-            copy_dir(&source, &game_root.join(directory))?;
-        }
+    for (_, source, destination) in &directories {
+        copy_dir(source, destination)?;
     }
     for relative in spec.files {
         let source = backup.join(relative);
@@ -302,7 +319,7 @@ pub(crate) fn restore_framework_backup(
      * 框架。旧备份没有清单快照时，退回按当前实际文件现造一份 —— 至少保证
      * 不会再报「没有安装清单，拒绝删除未知文件」。
      */
-    let manifest = read_backup_manifest(backup).unwrap_or_else(|| {
+    let mut manifest = read_backup_manifest(backup).unwrap_or_else(|| {
         let files = framework_files_on_disk(game_root, spec);
         archive::new_manifest(
             manifest_id,
@@ -313,6 +330,7 @@ pub(crate) fn restore_framework_backup(
             Vec::new(),
         )
     });
+    diy_level::scope_manifest(spec, &mut manifest)?;
     archive::write_manifest(manifests_dir, &manifest)?;
     log::info!(
         "框架备份恢复完成：前缀={}，路径={}，清单文件数={}",
@@ -327,7 +345,7 @@ pub(crate) fn restore_framework_backup(
 pub(crate) fn validate_framework_backup_in(
     backup_path: &Path,
     backup_root: &Path,
-    spec: &FrameworkBackupSpec,
+    spec: &FrameworkBackupSpec<'_>,
 ) -> Result<PathBuf, String> {
     let target = fs::canonicalize(backup_path).map_err(|_| "backup.notFound".to_string())?;
     let root = fs::canonicalize(backup_root).map_err(|_| "backup.unavailable".to_string())?;
@@ -456,10 +474,11 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     }
     ensure_copy_paths_disjoint(source, destination)?;
     fs::create_dir_all(destination).map_err(|e| e.to_string())?;
-    for entry in walkdir::WalkDir::new(source)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in walkdir::WalkDir::new(source).follow_links(false) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_type().is_symlink() {
+            return Err("archive.pathEscape".into());
+        }
         let relative = entry
             .path()
             .strip_prefix(source)
@@ -476,6 +495,9 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+mod diy_level;
+pub(crate) use diy_level::{diy_level_backup_spec, diy_level_restore_spec};
 
 #[cfg(test)]
 mod test_support;

@@ -38,7 +38,13 @@ pub(super) struct Lifecycle {
 
 impl Lifecycle {
     pub fn enqueue(&mut self, job: Job, signature: Signature) {
-        if self.stopping || self.paused || self.completed.get(&job.set) == Some(&signature) {
+        // Recheck under the queue lock: enumeration can outlive its MOD scan and
+        // must never replace pending work admitted by the newer scan.
+        if self.stopping
+            || self.paused
+            || !job.valid_scan.load(std::sync::atomic::Ordering::SeqCst)
+            || self.completed.get(&job.set) == Some(&signature)
+        {
             return;
         }
         if let Some(index) = self.pending.iter().position(|item| item.set == job.set) {
@@ -194,7 +200,8 @@ mod tests {
 
     fn job(name: &str, files: usize) -> Job {
         Job {
-            game: "game".into(),
+            roots: crate::level_sets::LevelSetRoots::new("game".into(), None),
+            valid_scan: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             cache: "cache".into(),
             set: name.into(),
             files: (0..files)
@@ -203,6 +210,48 @@ mod tests {
             signature: vec![],
             operation: Arc::new(Mutex::new(())),
         }
+    }
+
+    #[test]
+    fn late_invalidated_scan_cannot_replace_fresh_pending_work() {
+        let root = std::path::Path::new("game");
+        let mut scans = crate::mods::snapshot::LocalModSnapshots::default();
+        let generation = scans.begin(Some(root));
+        scans.publish(generation, Some(root), vec![]).unwrap();
+        let mut late = job("same-set", 3);
+        late.valid_scan = scans.lease(generation, root).unwrap();
+
+        let generation = scans.begin(Some(root));
+        scans.publish(generation, Some(root), vec![]).unwrap();
+        let mut fresh = job("same-set", 1);
+        fresh.valid_scan = scans.lease(generation, root).unwrap();
+        let current = fresh.valid_scan.clone();
+        let queue = Mutex::new(Lifecycle::default());
+        let mut state = queue.lock().unwrap();
+        state.enqueue(fresh, vec![]);
+        // The old enumerator reaches this lock after a new scan already queued work.
+        state.enqueue(late, vec![]);
+
+        assert_eq!(state.pending.len(), 1);
+        assert!(Arc::ptr_eq(&state.pending[0].valid_scan, &current));
+        assert_eq!(state.progress.total, 1);
+        assert_eq!(state.progress.sets_total, 1);
+        let next = state.claim().unwrap();
+        assert_eq!(next.job.files.len(), 1);
+        assert!(next.job.valid_scan.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn invalidated_scan_cannot_start_a_new_batch() {
+        let mut state = Lifecycle::default();
+        let late = job("old-root", 2);
+        late.valid_scan.store(false, Ordering::SeqCst);
+        state.enqueue(late, vec![]);
+        assert!(state.pending.is_empty());
+        assert_eq!(state.progress.total, 0);
+        assert_eq!(state.progress.sets_total, 0);
+        assert!(!state.progress.running);
+        assert!(state.claim().is_none());
     }
 
     #[test]

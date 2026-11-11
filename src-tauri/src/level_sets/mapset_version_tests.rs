@@ -207,7 +207,7 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
         install_parsed_sets(
             &sets,
             &zip_path,
-            &game,
+            &crate::level_sets::paths::test_roots(&game),
             &manifests,
             &["Music".into()],
             Some(&source),
@@ -221,7 +221,7 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
         install_parsed_sets(
             &sets,
             &zip_path,
-            &game,
+            &crate::level_sets::paths::test_roots(&game),
             &manifests,
             &["pear".into()],
             Some(&source),
@@ -239,7 +239,13 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
             "11.0-fix"
         );
         for name in ["Music", "pear"] {
-            assert!(levels_root(&game).join(name).join("info").is_file());
+            assert!(
+                levels_root(&crate::level_sets::paths::test_roots(&game))
+                    .unwrap()
+                    .join(name)
+                    .join("info")
+                    .is_file()
+            );
         }
         std::fs::remove_dir_all(root).unwrap();
     }

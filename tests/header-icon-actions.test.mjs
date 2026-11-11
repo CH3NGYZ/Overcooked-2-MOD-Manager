@@ -87,7 +87,7 @@ test('页头图标有可访问名称，上方气泡复用原文字且保留按�
   assert.match(local, /:loading="checkingBound" :disabled="checkingBound \|\| refreshingAll"/)
   for (const target of ['mods-local-bulk', 'mods-local-actions', 'mods-local-open-dir']) assert.ok(local.includes(`data-tutorial="${target}"`))
   const levels = header(read('src/views/LevelsView.vue'))
-  assert.match(levels, /:loading="organizing" :disabled="organizing \|\| loading"/)
+  assert.match(levels, /:loading="organizing" :disabled="organizing \|\| loading \|\| !diyLevelAvailable"/)
   assert.match(levels, /:loading="checkingBound" :disabled="checkingBound \|\| loading"/)
   const css = read('src/styles/global.css')
   assert.match(css, /\.page-header-actions \.bulk-switch \{[^}]*width: 68px;/)

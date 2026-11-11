@@ -5,6 +5,7 @@ use super::identity::allocate_dir_name;
 use super::identity::level_set_identity_matches;
 use super::info_cache::read_info_metadata;
 use super::installed_versions::record_installed_mapset_versions;
+use super::paths::LevelSetRoots;
 use super::paths::collect_dir_names;
 use super::paths::disabled_root;
 use super::paths::is_safe_relative;
@@ -51,11 +52,12 @@ pub use test_support::install_from_zip;
 pub fn install_parsed_sets(
     sets: &[ImportedLevelSet],
     zip_path: &Path,
-    game_root: &Path,
+    roots: &LevelSetRoots,
     manifests_dir: &Path,
     selected: &[String],
     origin: Option<&crate::models::MapInstallOrigin>,
 ) -> Result<Vec<String>, String> {
+    let game_root = roots.game_root();
     let targets: Vec<&ImportedLevelSet> = sets
         .iter()
         .filter(|set| selected.iter().any(|name| name == &set.dir_name))
@@ -63,6 +65,8 @@ pub fn install_parsed_sets(
     if targets.is_empty() {
         return Err("levelSet.nothingSelected".into());
     }
+    let levels_dir = levels_root(roots)?;
+    let disabled_dir = roots.safe_path(&disabled_root(game_root))?;
     if targets.iter().any(|set| {
         !set.plugins.is_empty()
             || set
@@ -88,18 +92,8 @@ pub fn install_parsed_sets(
         {
             return Err("levelSet.nothingSelected".into());
         }
-        return install_bepinex_layer_sets(
-            sets,
-            &targets,
-            zip_path,
-            game_root,
-            manifests_dir,
-            origin,
-        );
+        return install_bepinex_layer_sets(sets, &targets, zip_path, roots, manifests_dir, origin);
     }
-
-    let levels_dir = levels_root(game_root);
-    let disabled_dir = disabled_root(game_root);
 
     /*
      * 目标目录名下已经有东西时：
@@ -160,7 +154,7 @@ pub fn install_parsed_sets(
 
     let mut installed = Vec::new();
     for (dir_name, set) in &resolved {
-        write_level_set(zip_path, game_root, dir_name, set)?;
+        write_level_set(zip_path, roots, dir_name, set)?;
         installed.push(dir_name.clone());
     }
     let installed_sets: Vec<&ImportedLevelSet> = resolved.iter().map(|(_, set)| *set).collect();
@@ -171,11 +165,11 @@ pub fn install_parsed_sets(
 /// 把单个关卡集从 ZIP 写入 `levels/`。
 fn write_level_set(
     zip_path: &Path,
-    game_root: &Path,
+    roots: &LevelSetRoots,
     dir_name: &str,
     set: &ImportedLevelSet,
 ) -> Result<(), String> {
-    let destination = levels_root(game_root).join(dir_name);
+    let destination = roots.safe_path(&levels_root(roots)?.join(dir_name))?;
     fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
 
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
@@ -213,7 +207,7 @@ fn write_level_set(
         } else {
             relative.clone()
         };
-        let target = destination.join(&disk_name);
+        let target = roots.safe_path(&destination.join(&disk_name))?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }

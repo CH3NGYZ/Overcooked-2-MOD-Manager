@@ -1,4 +1,3 @@
-use crate::game;
 use crate::models::{AppConfig, LevelSetZipProgress, MapRepositoryConfig, ZipLevelSet};
 use std::fs;
 use std::path::Path;
@@ -22,6 +21,7 @@ pub(crate) fn zip_level_sets(
     app: &AppHandle,
     config: &AppConfig,
     path: &Path,
+    roots: Option<&super::LevelSetRoots>,
 ) -> Result<Vec<ZipLevelSet>, String> {
     // `info` 是地图线、随包插件是 DLL（MOD 线），两条线各有自己的并行度设置。
     let progress_app = app.clone();
@@ -41,12 +41,10 @@ pub(crate) fn zip_level_sets(
             );
         },
     )?;
-    let game_root = game::detect_game(config).path;
-    let conflicts = game_root
-        .as_deref()
-        .map(|root| {
+    let conflicts = roots
+        .map(|roots| {
             crate::level_sets::find_install_conflicts_with_workers(
-                Path::new(root),
+                roots,
                 &sets,
                 crate::concurrency::workers_from(config.map_info_concurrency),
             )

@@ -7,5 +7,12 @@ pub fn install_from_zip(
     selected: &[String],
 ) -> Result<Vec<String>, String> {
     let sets = super::super::zip_inspect::inspect_zip(zip_path)?;
-    install_parsed_sets(&sets, zip_path, game_root, manifests_dir, selected, None)
+    install_parsed_sets(
+        &sets,
+        zip_path,
+        &super::super::paths::test_roots(game_root),
+        manifests_dir,
+        selected,
+        None,
+    )
 }

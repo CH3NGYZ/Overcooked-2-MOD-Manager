@@ -12,20 +12,6 @@ pub const BUILTIN_INDEX: &str = "mods.toml";
 
 pub const DEFAULT_INDEX_ID: &str = "official-repository-index";
 
-pub const DEFAULT_INDEX_GITEE_URL: &str =
-    "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/mods.toml";
-
-pub const DEFAULT_INDEX_GITHUB_URL: &str =
-    "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods.toml";
-
-pub fn default_index_url(region: &str) -> &'static str {
-    if region == crate::config::REGION_CHINESE_MAINLAND {
-        DEFAULT_INDEX_GITEE_URL
-    } else {
-        DEFAULT_INDEX_GITHUB_URL
-    }
-}
-
 include!(concat!(env!("OUT_DIR"), "/repository_sources.rs"));
 
 /// 遍历内置仓库快照，返回其中所有的仓库配置（**不做地区过滤**）。

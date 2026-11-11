@@ -200,12 +200,8 @@ export interface PublicConfig {
   gitee_community_discovery?: CommunityDiscovery
   gitcode_community_discovery?: CommunityDiscovery | null
   github_proxies: GitHubProxyConfig
-  /** 只用内置仓库源：官方入口不走 Gitee / GitHub raw 直链。 */
-  builtin_sources_only?: boolean
-  /** 只用内置地图源（与仓库源开关相互独立）。 */
-  builtin_map_sources_only?: boolean
-  builtin_proxies_only?: boolean
-  builtin_network_plans_only?: boolean
+  /** 本次启动的数据来源；下次启动重新按电脑地区初始化。 */
+  data_provider: DataProvider
 }
 export interface RepositorySource {
   network_plan?: NetworkPlanSelection
@@ -671,8 +667,8 @@ export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: 
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
-export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; builtin_proxies_only?: boolean
-  builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; diychef_preview_concurrency?: number; tutorial_watched_steps?: string[] }
+export type DataProvider = 'github' | 'gitee' | 'builtin'
+export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; data_provider?: DataProvider; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; diychef_preview_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
 export interface ModRepositoryPatch {
   id?: string

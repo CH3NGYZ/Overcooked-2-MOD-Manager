@@ -27,7 +27,7 @@ pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
 /// 刷新地图源树，并保留同 ID 条目的 Release 缓存与失败状态，声明字段取新值。
 ///
 /// 每份 TOML 解析后经 Channel 发布目录快照；失败节点保留标题、错误与重试入口。
-/// 只由内置开关决定入口，读取失败不再恢复旧卡片或切换内置数据。
+/// 官方入口由本次运行的 DataProvider 决定，读取失败不恢复旧卡片。
 #[tauri::command]
 pub async fn refresh_map_sources(
     state: State<'_, AppState>,
@@ -44,9 +44,9 @@ pub async fn refresh_map_sources(
         .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
     crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
         let config = state.config.load_or_default();
-        let builtin_only = config.builtin_map_sources_only;
+        let provider = config.data_provider;
         let region = crate::config::current_user_region().to_string();
-        log::info!("开始刷新地图源：内置={}，地区={}", builtin_only, region);
+        log::info!("开始刷新地图源：来源={:?}，地区={}", provider, region);
         /*
          * 源文档可以放在 Release 资产里，那时要先向同一个仓库的 API 取 size/sha256
          * 才能校验。客户端与令牌在这里建一次、整棵源树共用；`pass_id` 是这次用户
@@ -64,7 +64,7 @@ pub async fn refresh_map_sources(
                 let _ = on_update.send(progress);
             },
             state.map_source_registry.clone(),
-            format!("{region}/{builtin_only}"),
+            format!("{region}/{provider:?}"),
         );
         let loaded = {
             let ctx = crate::map_sources::MapSourceContext {
@@ -86,7 +86,7 @@ pub async fn refresh_map_sources(
             {
                 crate::map_sources::load_map_branch(id, &ctx, &region).await
             } else {
-                crate::map_sources::load_map_tree(&region, builtin_only, &ctx).await
+                crate::map_sources::load_map_tree(&region, provider, &ctx).await
             }
         };
         // Failed root documents publish an empty error node and clear their old cards.
@@ -111,13 +111,16 @@ pub async fn refresh_map_sources(
                 })
                 .cloned(),
         );
-        let source = if builtin_only { "bundled" } else { "remote" };
+        let source = format!("{provider:?}");
 
         let _guard = state
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
         let mut config = state.config.load_or_default();
+        if config.data_provider != provider {
+            return Err("source.addressMismatch".into());
+        }
         let changed = crate::map_sources::replace_maps_keeping_runtime_state(&mut config, maps);
         if changed {
             state

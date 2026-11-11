@@ -54,10 +54,10 @@ pub(crate) async fn import_repository_source_into_config(
         }
         let builtin_fallback_available = source.id == repository_sources::DEFAULT_INDEX_ID
             && [
-                repository_sources::DEFAULT_INDEX_GITEE_URL,
-                repository_sources::DEFAULT_INDEX_GITHUB_URL,
+                crate::models::DataProvider::Gitee.document("mods.toml"),
+                crate::models::DataProvider::Github.document("mods.toml"),
             ]
-            .contains(&source.url.as_str())
+            .contains(&source.url)
             && source.builtin
             && source.parent_id.is_none();
         if builtin_fallback && !builtin_fallback_available {

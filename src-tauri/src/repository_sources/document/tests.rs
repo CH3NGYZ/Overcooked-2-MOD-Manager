@@ -1,4 +1,3 @@
-use super::super::embedded::default_index_url;
 use super::*;
 
 #[test]
@@ -14,7 +13,10 @@ fn official_channels_resolve_children_in_the_selected_remote_repository() {
             "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods/mods-gua.toml",
         ),
     ] {
-        let location = SourceLocation::parse(default_index_url(region)).unwrap();
+        let location = SourceLocation::parse(
+            &crate::models::DataProvider::for_region(region).document("mods.toml"),
+        )
+        .unwrap();
         let document = parse_document(text, &location, &Default::default()).unwrap();
         assert_eq!(document.repository_sources[0].url, expected);
     }

@@ -9,7 +9,7 @@ const owners = {
   cache: ['clear_source_cache'],
   diagnostics: ['safe_log_address', 'error_category'],
   document: ['nickname_fallback', 'normalize_source_nickname', 'deserialize_builtin', 'source_address_key', 'parse_document'],
-  embedded: ['default_index_url', 'bundled_repository_configs', 'bundled_document', 'parse_bundled_document', 'bundled_text'],
+  embedded: ['bundled_repository_configs', 'bundled_document', 'parse_bundled_document', 'bundled_text'],
   location: ['parse', 'resolve', 'resolve_remote_path', 'remote', 'bundled_path', 'address', 'is_file_relative_path', 'raw_repository_root', 'remote_document_location'],
   transport: ['load_text_document', 'load_document'],
   verified: ['load_verified_text_document', 'fetch_document_bytes'],

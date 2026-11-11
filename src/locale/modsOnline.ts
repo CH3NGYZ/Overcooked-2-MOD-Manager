@@ -190,38 +190,6 @@ export const modsOnline: DomainMessages = {
     ko: '"{name}"은(는) "{owner}"와(과) 호환되지 않아 제거가 필요합니다. 계속할까요?',
     ja: '「{name}」は「{owner}」と互換性がないため、アンインストールが必要です。続行しますか？',
   },
-  // 仅使用内置仓库源
-  useBundledSourcesOnly: {
-    'zh-CN': '仅使用内置仓库源',
-    'zh-TW': '僅使用內建倉庫來源',
-    en: 'Use bundled sources only',
-    ko: '내장 저장소 소스만 사용',
-    ja: '組み込みソースのみ使用',
-  },
-  // 不访问 Gitee / GitHub 的仓库源直链，直接使用管理器自带的快照；自定义仓库源不受影响
-  skipsTheGiteeGithubRawSourceLinksAndUsesTheSnapshotShippedWithTheManagerCustomSourcesAreNotAffected: {
-    'zh-CN': '不访问 Gitee / GitHub 的仓库源直链，直接使用管理器自带的快照；自定义仓库源不受影响',
-    'zh-TW': '不存取 Gitee / GitHub 的倉庫來源直鏈，直接使用管理器自帶的快照；自訂倉庫來源不受影響',
-    en: 'Skips the Gitee / GitHub raw source links and uses the snapshot shipped with the manager. Custom sources are not affected.',
-    ko: 'Gitee / GitHub raw 링크를 사용하지 않고 관리자에 포함된 스냅샷을 사용합니다. 사용자 지정 소스는 영향받지 않습니다.',
-    ja: 'Gitee / GitHub の raw リンクを使わず、マネージャー同梱のスナップショットを使用します。カスタムソースには影響しません。',
-  },
-  // 已切换到内置仓库源，刷新后生效
-  switchedToBundledSourcesRefreshToApply: {
-    'zh-CN': '已切换到内置仓库源，刷新后生效',
-    'zh-TW': '已切換到內建倉庫來源，重新整理後生效',
-    en: 'Switched to bundled sources. Refresh to apply.',
-    ko: '내장 저장소 소스로 전환했습니다. 새로 고침 후 적용됩니다.',
-    ja: '組み込みソースに切り替えました。更新後に反映されます。',
-  },
-  // 已恢复在线仓库源，刷新后生效
-  restoredOnlineSourcesRefreshToApply: {
-    'zh-CN': '已恢复在线仓库源，刷新后生效',
-    'zh-TW': '已恢復線上倉庫來源，重新整理後生效',
-    en: 'Restored online sources. Refresh to apply.',
-    ko: '온라인 저장소 소스로 복원했습니다. 새로 고침 후 적용됩니다.',
-    ja: 'オンラインソースに戻しました。更新後に反映されます。',
-  },
   // 安装前检查
   preInstallCheck: {
     'zh-CN': '安装前检查',

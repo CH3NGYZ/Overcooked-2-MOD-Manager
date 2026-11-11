@@ -4,8 +4,16 @@ use super::*;
 #[test]
 fn mod_index_has_one_closed_resource_tree_and_no_legacy_runtime_entry() {
     assert_eq!(BUILTIN_INDEX, "mods.toml");
-    assert!(DEFAULT_INDEX_GITHUB_URL.ends_with("/mods.toml"));
-    assert!(DEFAULT_INDEX_GITEE_URL.ends_with("/mods.toml"));
+    assert!(
+        crate::models::DataProvider::Github
+            .document("mods.toml")
+            .ends_with("/mods.toml")
+    );
+    assert!(
+        crate::models::DataProvider::Gitee
+            .document("mods.toml")
+            .ends_with("/mods.toml")
+    );
     assert!(
         !BUNDLED_SOURCES
             .iter()

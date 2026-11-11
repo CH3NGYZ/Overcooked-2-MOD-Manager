@@ -111,9 +111,13 @@ async fn real_gitcode_bundle_loads_release_declarations() {
         force: false,
         previous: &[],
     };
-    let maps = super::tree::load_map_tree(crate::config::REGION_CHINESE_MAINLAND, true, &context)
-        .await
-        .unwrap();
+    let maps = super::tree::load_map_tree(
+        crate::config::REGION_CHINESE_MAINLAND,
+        crate::models::DataProvider::Builtin,
+        &context,
+    )
+    .await
+    .unwrap();
     assert!(
         maps.len() >= 50,
         "expected uploaded maps, got {}",

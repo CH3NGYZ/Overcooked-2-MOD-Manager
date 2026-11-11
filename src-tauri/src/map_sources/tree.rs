@@ -34,26 +34,6 @@ fn root_source_label() -> SourceLabel {
     }
 }
 
-/// 中国大陆的官方地图索引地址。
-///
-/// 与仓库索引放在**同一个仓库**里，只是文件名不同 —— 维护者改一处就能同时
-/// 更新两类源，不需要记两个地址。
-pub const DEFAULT_MAP_INDEX_GITEE_URL: &str =
-    "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/maps.toml";
-
-/// 国际地区的官方地图索引地址。
-pub const DEFAULT_MAP_INDEX_GITHUB_URL: &str =
-    "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/maps.toml";
-
-/// 按地区选官方地图索引地址。
-pub fn default_map_index_url(region: &str) -> &'static str {
-    if region == crate::config::REGION_CHINESE_MAINLAND {
-        DEFAULT_MAP_INDEX_GITEE_URL
-    } else {
-        DEFAULT_MAP_INDEX_GITHUB_URL
-    }
-}
-
 /// 同步加载内置地图源树（索引 → 子源 → 地图）。
 ///
 /// 只走编译期嵌入的资源，读取/解析失败跳过，不向调用方返回错误。内置索引只声明
@@ -185,18 +165,13 @@ const MAX_MAP_SOURCE_DEPTH: usize = 3;
 /// 每份文档先发布自身地图及下级标题，再按声明顺序读取子源。
 /// 源状态通过观察器增量发布，进程内声明表供局部分支重试；地图声明仍跟随条目落盘。
 /// 所有 TOML 完成后再读取 Release 派生源，失败源保持空卡片并保留错误。
-/// builtin_only 仅选择内置索引，不代表离线；严格离线初始化使用 bundled_map_tree。
+/// DataProvider 仅选择官方索引，不代表离线；严格离线初始化使用 bundled_map_tree。
 pub async fn load_map_tree(
     region: &str,
-    builtin_only: bool,
+    provider: crate::models::DataProvider,
     ctx: &MapSourceContext<'_>,
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
-    let index_reference = if builtin_only {
-        BUILTIN_MAP_INDEX
-    } else {
-        default_map_index_url(region)
-    };
-    let index = SourceLocation::parse(index_reference)?;
+    let index = SourceLocation::parse(&provider.document(BUILTIN_MAP_INDEX))?;
     let root_builtin = matches!(index, SourceLocation::Bundled(_));
     log::info!(
         "开始加载地图源树：索引={}，内置={}",
@@ -540,7 +515,7 @@ pub(crate) async fn load_map_branch(
     region: &str,
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
     let Some(observer) = ctx.observer else {
-        return load_map_tree(region, false, ctx).await;
+        return load_map_tree(region, ctx.config.data_provider, ctx).await;
     };
     let Some((target, ids)) = observer.begin(Some(id)) else {
         return Err(ConfigError::Invalid("mapSource.mapMissing".into()));

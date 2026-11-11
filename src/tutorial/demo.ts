@@ -367,7 +367,7 @@ function buildDemoConfig(): PublicConfig {
     official_api_only: false, github_token_set: false, gitee_token_set: false, gitcode_token_set: false,
     repositories: demoRepositories, repository_sources: demoSources,
     github_proxies: { release_proxies: [], raw_proxies: [], github_api_proxies: [], gitee_api_proxies: [], gitcode_api_proxies: [], avatar_proxies: [] },
-    builtin_sources_only: false, builtin_map_sources_only: false, builtin_proxies_only: false, builtin_network_plans_only: false,
+    data_provider: 'builtin',
   }
 }
 

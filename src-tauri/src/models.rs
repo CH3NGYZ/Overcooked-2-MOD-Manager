@@ -3,6 +3,7 @@
 mod app;
 mod chef_preview;
 mod config;
+mod data_provider;
 mod diychef;
 mod game;
 mod levels;
@@ -27,6 +28,7 @@ pub use app::{
 };
 pub use chef_preview::{ChefPreviewBounds, ChefPreviewMesh, ChefPreviewScene};
 pub use config::{AppConfig, AuthConfig, LaunchConfig, PublicConfig, SettingsPatch, TokenPatch};
+pub use data_provider::DataProvider;
 pub use diychef::{
     ChefChange, ChefDiagnostic, ChefDocumentRow, ChefDraft, ChefEditorOpen, ChefEditorSnapshot,
     ChefEntry, ChefHat, ChefItem, ChefReference, ChefSelection, ChefSource, ChefTarget,

@@ -1,5 +1,5 @@
 //! Startup diagnostics use the same bounded source reader, without loading children.
-use super::{DEFAULT_INDEX_GITHUB_URL, SourceLocation, load_document};
+use super::{SourceLocation, load_document};
 use crate::config::ConfigError;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -37,7 +37,8 @@ pub(crate) async fn probe_startup_source() -> StartupProbe {
         *active = Some(sender);
     }
     let location =
-        SourceLocation::parse(DEFAULT_INDEX_GITHUB_URL).expect("official source URL must be valid");
+        SourceLocation::parse(&crate::models::DataProvider::Github.document("mods.toml"))
+            .expect("official source URL must be valid");
     let _guard = ActiveGuard;
     let result = probe_location(&location, Duration::from_secs(10), &mut cancelled).await;
     // Never log raw errors: they can carry URL queries or response content.

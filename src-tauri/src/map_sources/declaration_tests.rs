@@ -238,9 +238,13 @@ async fn real_release_tag_source_builds_maps() {
         force: false,
         previous: &[],
     };
-    let maps = load_map_tree(crate::config::current_user_region(), true, &ctx)
-        .await
-        .expect("内置索引应能加载");
+    let maps = load_map_tree(
+        crate::config::current_user_region(),
+        crate::models::DataProvider::Builtin,
+        &ctx,
+    )
+    .await
+    .expect("内置索引应能加载");
 
     // 单仓库地图（RW）离线就有；三张 tag 模式地图来自真实 Release note
     assert!(

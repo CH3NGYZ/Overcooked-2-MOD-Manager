@@ -1,7 +1,6 @@
 //! 默认配置与跨层共享的界面缩放默认值。
 
-use super::availability::current_user_region;
-use super::sources::builtin_repository_sources_for_region;
+use super::sources::builtin_repository_sources;
 use crate::models::*;
 
 /// 默认配置。
@@ -12,8 +11,8 @@ use crate::models::*;
 ///
 /// 只在「需要区分旧写法」时递增：加载时按版本号跑一次性迁移，然后把新版本
 /// 写回，迁移不会重复执行。历史：1 = V2 初期两个 `builtin_*_sources_only`
-/// 默认开启；2 = 两者改为默认关闭，跟随远端索引。
-pub(crate) const CONFIG_SCHEMA_VERSION: u32 = 2;
+/// 默认开启；2 = 默认远端；3 = 统一进程内数据来源，移除四个持久开关。
+pub(crate) const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 /// 与前端的启动兜底、恢复默认共用一份编译期资源，避免跨层默认值漂移。
 pub(crate) fn default_ui_zoom() -> f64 {
@@ -65,14 +64,9 @@ pub(crate) fn default_config() -> AppConfig {
             github_publish_installation_id: 0,
         },
         repositories: Vec::new(),
-        /*
-         * 新配置的官方根源按地区指向远端索引，与下面对应的开关保持同一个状态。
-         *
-         * 两个「仅使用内置源」开关默认关闭：内置快照退居为远程索引读不到时的
-         * 回退数据（见 `refresh_sources` / `refresh_map_sources`），正常情况下
-         * 用远端的最新条目。
-         */
-        repository_sources: builtin_repository_sources_for_region(current_user_region(), false),
+        // A deterministic template; ConfigService applies this session's provider
+        // before first save. Ordinary config reads never re-detect the OS region.
+        repository_sources: builtin_repository_sources(DataProvider::default()),
         community_discovery: None,
         gitee_community_discovery: None,
         gitcode_community_discovery: None,
@@ -86,16 +80,12 @@ pub(crate) fn default_config() -> AppConfig {
          * 在里面写盘会绕开短操作锁，与「整份配置读取、修改与保存须持锁」
          * 的边界冲突。内置快照是编译期资源，同步构造没有副作用。
          *
-         * 快照不再是默认数据来源：`builtin_map_sources_only` 默认关闭，刷新
-         * 先读远端索引，失败时才用这份快照兜底。
+         * 后续刷新统一按本次运行选择的 DataProvider 读取官方入口。
          */
         map_repositories: crate::map_sources::bundled_map_tree(),
-        builtin_map_sources_only: false,
-        builtin_proxies_only: false,
-        builtin_network_plans_only: false,
+        data_provider: DataProvider::default(),
         network_policy: None,
         github_proxies: crate::github_proxies::bundled_defaults(),
         mod_notes: Vec::new(),
-        builtin_sources_only: false,
     }
 }

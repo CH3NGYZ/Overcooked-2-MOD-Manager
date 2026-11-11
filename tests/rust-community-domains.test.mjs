@@ -46,7 +46,7 @@ test('Community definitions have one real owner and IPC registers implementation
   assert.match(read('app_state.rs'), /community: Arc::new\(crate::community::CommunitySearch::default\(\)\)/)
   assert.match(read('gitee_community.rs'), /use crate::community::\{SearchRateLimits, SearchResults, repository_from_coordinates\};/)
   assert.match(read('gitee_community.rs'), /crate::community::REQUIRED_TOPICS/)
-  assert.match(read('config/public.rs'), /crate::community::visible_discoveries\(config\)/)
+  assert.match(read('config/public.rs'), /crate::community::visible_discoveries\(&config\)/)
 })
 
 test('Community discovery keeps per-platform state, trusted pagination, token isolation and ordered commit locks', () => {

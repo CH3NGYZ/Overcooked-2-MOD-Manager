@@ -222,7 +222,8 @@ fn routes_are_official_sibling_documents_with_direct_github_first() {
     assert_eq!(international[0][0].route, DownloadRoute::Direct);
     assert_eq!(
         international[0][0].url,
-        repository_sources::DEFAULT_INDEX_GITHUB_URL
+        crate::models::DataProvider::Github
+            .document("mods.toml")
             .replace("mods.toml", "repositories-proxies.toml")
     );
     let mainland = manifest_routes(crate::config::REGION_CHINESE_MAINLAND, &snapshot).unwrap();
@@ -230,7 +231,8 @@ fn routes_are_official_sibling_documents_with_direct_github_first() {
     assert_eq!(mainland[0].len(), 1);
     assert_eq!(
         mainland[0][0].url,
-        repository_sources::DEFAULT_INDEX_GITEE_URL
+        crate::models::DataProvider::Gitee
+            .document("mods.toml")
             .replace("mods.toml", "repositories-proxies.toml")
     );
     assert_eq!(mainland[1], international[0]);
@@ -456,81 +458,140 @@ fn serve_policy(
 }
 
 #[tokio::test]
-async fn typed_policy_switches_select_documents_independently_and_failed_refresh_keeps_snapshot() {
-    use crate::models::{NetworkPlanSelection, Provider, RepositoryKind};
+async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snapshot() {
+    use crate::models::{DataProvider, NetworkPlanSelection, Provider, RepositoryKind};
     use crate::network_policy::NetworkPolicy;
-    for bundled_proxies in [false, true] {
-        for bundled_plans in [false, true] {
-            let expected = if bundled_proxies { 0 } else { 8 } + if bundled_plans { 0 } else { 1 };
-            let (base, server) = serve_policy(false, expected);
-            let runtime = ProxyRuntime::default();
-            let before = runtime.snapshot();
-            let fresh = NetworkPolicy::refresh_from(&base, bundled_proxies, bundled_plans)
-                .await
-                .unwrap();
-            assert_eq!(
-                runtime.snapshot(),
-                before,
-                "reads cannot publish partial closure"
-            );
-            runtime.publish_policy(fresh, bundled_proxies).unwrap();
-            let requests = server.join().unwrap();
-            assert_eq!(
-                requests.iter().any(|p| p == "/network-plans.toml"),
-                !bundled_plans
-            );
-            assert_eq!(
-                requests.iter().any(|p| p == "/proxies.toml"),
-                !bundled_proxies
-            );
-            let selected = runtime
-                .selected_policy(bundled_proxies, bundled_plans)
-                .unwrap();
-            let plan = selected
-                .resolve(
-                    &Provider::Github,
-                    RepositoryKind::Mod,
-                    "international",
-                    &NetworkPlanSelection::default(),
-                )
-                .unwrap();
-            assert_eq!(
-                plan.release.download_threads,
-                if bundled_plans { 1 } else { 2 }
-            );
-            assert!(
-                selected
-                    .proxies
-                    .values()
-                    .all(|proxy| proxy.name.starts_with("REMOTE ") != bundled_proxies)
-            );
-            let active_threads = NetworkPolicy::in_snapshot(selected, async {
-                crate::download::planning::plan_repository_download(
-                    &Provider::Github,
-                    RepositoryKind::Mod,
-                    &Default::default(),
-                    "international",
-                    "https://github.com/u/r/releases/download/v/a.zip",
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap()
-                .download_threads
-            })
-            .await;
-            assert_eq!(active_threads, if bundled_plans { 1 } else { 2 });
-            let current = runtime.snapshot();
-            let (base, server) = serve_policy(true, 1);
-            let invalid = NetworkPolicy::refresh_from(&base, true, false).await;
-            assert!(invalid.is_err());
-            assert_eq!(server.join().unwrap(), vec!["/network-plans.toml"]);
-            assert_eq!(runtime.snapshot(), current);
-            assert_eq!(
-                ProxyRuntime::default().snapshot(),
-                before,
-                "restart uses bundled closure"
-            );
-        }
+    for provider in [DataProvider::Github, DataProvider::Gitee] {
+        let (base, server) = serve_policy(false, 9);
+        let runtime = ProxyRuntime::new(provider);
+        let before = runtime.snapshot();
+        let fresh = NetworkPolicy::refresh_from(&base).await.unwrap();
+        assert_eq!(
+            runtime.snapshot(),
+            before,
+            "reads cannot publish a partial closure"
+        );
+        runtime.publish_policy(fresh, provider, 0).unwrap();
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 9);
+        assert!(requests.iter().any(|p| p == "/network-plans.toml"));
+        assert!(requests.iter().any(|p| p == "/proxies.toml"));
+        let (selected_provider, groups, selected) = runtime.configuration_snapshot().unwrap();
+        assert_eq!(selected_provider, provider);
+        assert!(
+            groups
+                .release_proxies
+                .iter()
+                .all(|proxy| proxy.remote && !proxy.builtin)
+        );
+        let plan = selected
+            .resolve(
+                &Provider::Github,
+                RepositoryKind::Mod,
+                "international",
+                &NetworkPlanSelection::default(),
+            )
+            .unwrap();
+        assert_eq!(plan.release.download_threads, 2);
+        assert!(
+            selected
+                .proxies
+                .values()
+                .all(|proxy| proxy.name.starts_with("REMOTE "))
+        );
+        let active_threads = NetworkPolicy::in_snapshot(selected, async {
+            crate::download::planning::plan_repository_download(
+                &Provider::Github,
+                RepositoryKind::Mod,
+                &Default::default(),
+                "international",
+                "https://github.com/u/r/releases/download/v/a.zip",
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+            .download_threads
+        })
+        .await;
+        assert_eq!(active_threads, 2);
+        let current = runtime.snapshot();
+        let (base, server) = serve_policy(true, 9);
+        assert!(NetworkPolicy::refresh_from(&base).await.is_err());
+        assert_eq!(server.join().unwrap().len(), 9);
+        assert_eq!(runtime.snapshot(), current);
+        assert_eq!(
+            ProxyRuntime::new(provider).snapshot(),
+            before,
+            "restart uses shipped closure"
+        );
     }
+}
+
+#[test]
+fn switching_provider_resets_the_snapshot_and_rejects_late_results_including_a_b_a() {
+    use crate::models::DataProvider;
+    use crate::network_policy::NetworkPolicy;
+    let runtime = ProxyRuntime::new(DataProvider::Github);
+    let bundled = runtime.configuration_snapshot().unwrap();
+    let mut fresh = NetworkPolicy::bundled().unwrap();
+    for proxy in fresh.proxies.values_mut() {
+        proxy.name = format!("REMOTE {}", proxy.name);
+    }
+    runtime
+        .publish_policy(fresh.clone(), DataProvider::Github, 0)
+        .unwrap();
+    assert_ne!(runtime.snapshot(), bundled.1);
+    runtime.select_provider(DataProvider::Gitee);
+    assert_eq!(runtime.provider(), DataProvider::Gitee);
+    assert_eq!(runtime.snapshot(), bundled.1);
+    assert_eq!(*runtime.configuration_snapshot().unwrap().2, *bundled.2);
+    runtime
+        .publish_policy(fresh.clone(), DataProvider::Github, 0)
+        .unwrap();
+    assert_eq!(
+        runtime.snapshot(),
+        bundled.1,
+        "late results from another provider are hidden"
+    );
+    runtime.select_provider(DataProvider::Github);
+    runtime
+        .publish_policy(fresh.clone(), DataProvider::Github, 0)
+        .unwrap();
+    assert_eq!(
+        runtime.snapshot(),
+        bundled.1,
+        "returning to A must not accept A's old response"
+    );
+    runtime.select_provider(DataProvider::Builtin);
+    runtime
+        .publish_policy(fresh, DataProvider::Gitee, 1)
+        .unwrap();
+    assert_eq!(runtime.snapshot(), bundled.1);
+}
+
+#[tokio::test]
+async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_for_network() {
+    use crate::models::DataProvider;
+    let runtime = std::sync::Arc::new(ProxyRuntime::new(DataProvider::Github));
+    let guard = runtime.refresh.lock().await;
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let pending = runtime.clone();
+    let task = tokio::spawn(async move {
+        started.send(()).unwrap();
+        pending.refresh_policy().await
+    });
+    ready.await.unwrap();
+    runtime.select_provider(DataProvider::Gitee);
+    tokio::time::timeout(Duration::from_millis(200), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    runtime.select_provider(DataProvider::Builtin);
+    tokio::time::timeout(Duration::from_millis(200), runtime.refresh_policy())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(guard);
 }

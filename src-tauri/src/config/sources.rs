@@ -1,17 +1,10 @@
 //! 官方根源同步与旧源树清理。
 
-use super::availability::current_user_region;
 use crate::models::*;
 
-/// 官方根源的地址：打开「仅用内置仓库源」时直接指向打包资源。
-///
-/// `mods.toml` 是内置索引的路径，`SourceLocation` 会把它解析成
-/// 嵌入资源 —— 也就是回退时用的那一份。所以这个开关不需要第二套加载
-/// 逻辑，只是把源头换成同一棵树。
-pub(crate) fn builtin_repository_sources_for_region(
-    region: &str,
-    builtin_only: bool,
-) -> Vec<RepositorySource> {
+/// Provider selection only changes the official entry point; custom sources
+/// retain their declared addresses and normal region/platform availability.
+pub(crate) fn builtin_repository_sources(provider: DataProvider) -> Vec<RepositorySource> {
     // Only the entry point is shipped with the application. Its children are
     // file-relative names inside that index, so they resolve to bundled
     // resources as well; the live index points them at remote raw URLs.
@@ -27,22 +20,15 @@ pub(crate) fn builtin_repository_sources_for_region(
             ("ja".into(), "MODソース".into()),
         ]
         .into(),
-        url: if builtin_only {
-            crate::repository_sources::BUILTIN_INDEX.into()
-        } else {
-            crate::repository_sources::default_index_url(region).into()
-        },
+        url: provider.document(crate::repository_sources::BUILTIN_INDEX),
         region: None,
         builtin: true,
         parent_id: None,
     }]
 }
 
-pub(super) fn synchronize_builtin_repository_sources(config: &mut AppConfig) -> bool {
-    merge_builtin_repository_sources(
-        config,
-        builtin_repository_sources_for_region(current_user_region(), config.builtin_sources_only),
-    )
+pub(crate) fn synchronize_builtin_repository_sources(config: &mut AppConfig) -> bool {
+    merge_builtin_repository_sources(config, builtin_repository_sources(config.data_provider))
 }
 
 pub(super) fn merge_builtin_repository_sources(

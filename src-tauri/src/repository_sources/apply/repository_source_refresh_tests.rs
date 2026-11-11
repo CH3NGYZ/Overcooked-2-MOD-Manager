@@ -37,11 +37,7 @@ async fn bundled_fallback_keeps_remote_entry_and_rejects_custom_sources() {
      * `load` 不会再跑一遍按开关重建官方根的逻辑。
      */
     let mut online = state.config.load().unwrap();
-    online.builtin_sources_only = false;
-    online.repository_sources = crate::config::builtin_repository_sources_for_region(
-        crate::config::current_user_region(),
-        false,
-    );
+    crate::config::synchronize_builtin_repository_sources(&mut online);
     state.config.save(&online).unwrap();
     let mut config = state.config.load().unwrap();
     let root = config.repository_sources[0].clone();
@@ -314,18 +310,11 @@ async fn official_remote_index_loads_each_declared_child() {
     // 线上索引用例：默认配置只读内置快照，这里显式切回在线入口。
     // `save` 会把配置放进读取缓存，所以根地址一并换掉。
     let mut online = state.config.load().unwrap();
-    online.builtin_sources_only = false;
-    online.repository_sources = crate::config::builtin_repository_sources_for_region(
-        crate::config::current_user_region(),
-        false,
-    );
+    crate::config::synchronize_builtin_repository_sources(&mut online);
     state.config.save(&online).unwrap();
     let config = state.config.load().unwrap();
     let root = config.repository_sources[0].clone();
-    assert_eq!(
-        root.url,
-        repository_sources::default_index_url(crate::config::current_user_region())
-    );
+    assert_eq!(root.url, config.data_provider.document("mods.toml"));
     // Simulate a previous offline run, then ensure an ordinary refresh
     // returns to the live URL and replaces the bundled children.
     import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), true)

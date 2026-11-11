@@ -36,7 +36,7 @@ pub(crate) use identity::source_repository_key;
 pub(crate) use metadata::localized_map_name;
 pub(crate) use metadata::localized_mod_repository_name;
 pub(crate) use metadata::normalize_repository_i18n;
-pub(crate) use sources::builtin_repository_sources_for_region;
+pub(crate) use sources::synchronize_builtin_repository_sources;
 pub(crate) use validation::check_version_spec;
 pub(crate) use validation::validate_mod_repository;
 

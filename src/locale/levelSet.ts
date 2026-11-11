@@ -433,20 +433,6 @@ export const levelSet: DomainMessages = {
     ko: '지도 소스 새로 고침',
     ja: 'マップソースを更新',
   },
-  useBundledMapSourcesOnly: {
-    'zh-CN': '仅使用内置地图源',
-    'zh-TW': '僅使用內建地圖源',
-    en: 'Use bundled map sources only',
-    ko: '내장 지도 소스만 사용',
-    ja: '内蔵マップソースのみ使用',
-  },
-  useBundledMapSourcesOnlyHint: {
-    'zh-CN': '地图索引改读管理器自带的快照，不访问 Gitee / GitHub 的 raw 入口。适合官方入口连不上或需要完全离线的场景。',
-    'zh-TW': '地圖索引改讀管理器內建的快照，不存取 Gitee / GitHub 的 raw 入口。適合官方入口連不上或需要完全離線的情況。',
-    en: 'Read the map index from the snapshot shipped with the manager instead of the Gitee/GitHub raw entry. Useful when that entry is unreachable or you need to stay fully offline.',
-    ko: '지도 인덱스를 Gitee / GitHub raw 대신 관리자에 내장된 스냅숏에서 읽습니다. 공식 진입점에 연결할 수 없거나 완전히 오프라인일 때 유용합니다.',
-    ja: '地図インデックスを Gitee / GitHub の raw ではなく、マネージャー内蔵のスナップショットから読みます。公式エントリに接続できない場合や完全オフラインで使う場合に便利です。',
-  },
   // 地图管理页：绑定与版本对照
   unboundHint: {
     'zh-CN': '没有地图源声明这一组关卡集，所以无法检查更新（本地导入或源已下线）',

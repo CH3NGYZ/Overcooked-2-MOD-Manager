@@ -122,61 +122,16 @@ pub fn save_settings(
     if let Some(steps) = &patch.tutorial_watched_steps {
         config.record_tutorial_steps(steps);
     }
-    if let Some(value) = patch.builtin_sources_only {
-        config.builtin_sources_only = value;
-        /*
-         * 官方根源的地址必须同步改写，否则保存下去的配置仍指向远端。
-         *
-         * 读取配置时 `synchronize_builtin_repository_sources` 会按开关重建
-         * 内置根，但那是**下次读取**才生效；这里先重建一次，保证本次返回的
-         * 配置就已经指向正确入口（否则界面上的源地址要等重启才变）。
-         * 只替换「内置根」，子源与自定义源原样保留。
-         */
-        let mut rebuilt = crate::config::builtin_repository_sources_for_region(
-            crate::config::current_user_region(),
-            value,
-        );
-        rebuilt.extend(
-            config
-                .repository_sources
-                .into_iter()
-                .filter(|source| !(source.builtin && source.parent_id.is_none())),
-        );
-        config.repository_sources = rebuilt;
-        log::info!(
-            "「仅使用内置仓库源」已{}：官方根入口={}",
-            if value { "开启" } else { "关闭" },
-            if value {
-                crate::repository_sources::BUILTIN_INDEX
-            } else {
-                "地区默认远端地址"
-            }
-        );
-    }
-    if let Some(value) = patch.builtin_map_sources_only {
-        config.builtin_map_sources_only = value;
-        /*
-         * 地图源不持久化源树，开关只影响「下次刷新从哪里读索引」，
-         * 所以这里不需要重建任何条目 —— 立刻用新入口加载一次，让开关的
-         * 效果当次可见，也让界面拿到与新入口一致的地图列表。
-         */
-        log::info!(
-            "「仅使用内置地图源」已{}：索引={}",
-            if value { "开启" } else { "关闭" },
-            if value {
-                crate::map_sources::BUILTIN_MAP_INDEX
-            } else {
-                "地区默认远端地址"
-            }
-        );
-    }
-    if let Some(value) = patch.builtin_proxies_only {
-        config.builtin_proxies_only = value;
-    }
-    if let Some(value) = patch.builtin_network_plans_only {
-        config.builtin_network_plans_only = value;
+    if let Some(provider) = patch.data_provider {
+        config.data_provider = provider;
+        crate::config::synchronize_builtin_repository_sources(&mut config);
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
+    if let Some(provider) = patch.data_provider {
+        // The selection belongs to this session, so stale saves or external edits
+        // cannot undo it. Commit it only after the settings write succeeds.
+        state.config.select_data_provider(provider);
+    }
     crate::diychef::preview::configure_concurrency(config.diychef_preview_concurrency);
     log::info!("应用设置保存完成：界面缩放={}", config.ui_zoom);
     Ok(state.config.public_config(&config))

@@ -10,11 +10,11 @@ const owners = {
   defaults: ['default_config', 'default_ui_zoom'],
   identity: ['repo_key', 'export_key', 'source_repository_key', 'mod_repository_from_export'],
   metadata: ['localized_name', 'migrate_repository_i18n', 'normalize_repository_i18n'],
-  migrations: ['contains_legacy_repository_proxy_fields', 'migrate_bundled_source_switches', 'normalize_configured_regions'],
+  migrations: ['contains_legacy_repository_proxy_fields', 'migrate_schema', 'normalize_configured_regions'],
   public: ['public_config'],
   secrets: ['protect_secret', 'reveal_secret', 'set_publish_tokens', 'api_token'],
-  sources: ['builtin_repository_sources_for_region', 'merge_builtin_repository_sources'],
-  storage: ['new', 'cached_if_fresh', 'load_from_disk', 'with_proxies', 'save'],
+  sources: ['builtin_repository_sources', 'merge_builtin_repository_sources'],
+  storage: ['new', 'cached_if_fresh', 'load_from_disk', 'with_runtime', 'save'],
   validation: ['validate_mod_repository', 'check_version_spec', 'validate_relation'],
 }
 
@@ -41,11 +41,11 @@ test('config keeps one shared state owner and does not forward domain methods', 
 
 test('config load keeps migration ordering and current proxy overlay on every return path', () => {
   const storage = readText(resolve(root, 'storage.rs'))
-  const migrate = storage.indexOf('changed |= migrate_bundled_source_switches(&mut config);')
+  const migrate = storage.indexOf('changed |= migrate_schema(&mut config);')
   const sync = storage.indexOf('changed |= synchronize_builtin_repository_sources(&mut config);')
   assert.ok(migrate >= 0 && sync > migrate)
-  assert.match(storage, /return Ok\(self\.with_proxies\(cached\)\)/)
-  assert.match(storage, /Ok\(self\.with_proxies\(config\)\)/)
-  assert.match(storage, /self\.with_proxies\(default_config\(\)\)/)
-  assert.match(readText(resolve(root, 'public.rs')), /github_proxies: self\.proxy_snapshot\(config\.builtin_proxies_only\)/)
+  assert.match(storage, /return Ok\(self\.with_runtime\(cached\)\)/)
+  assert.match(storage, /Ok\(self\.with_runtime\(config\)\)/)
+  assert.match(storage, /self\.with_runtime\(default_config\(\)\)/)
+  assert.match(readText(resolve(root, 'public.rs')), /let config = self\.with_runtime\(config\.clone\(\)\)/)
 })

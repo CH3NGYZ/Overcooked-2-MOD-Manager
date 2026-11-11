@@ -121,6 +121,7 @@ export const api = {
   detectGame: () => invoke<GameInfo>('detect_game'),
   setGamePath: (path: string) => invoke<GameInfo>('set_game_path', { path }),
   resetGamePath: () => invoke<GameInfo>('reset_game_path'),
+  refreshNetworkConfig: () => invoke<PublicConfig>('refresh_github_proxies'),
   saveSettings: (patch: SettingsPatch) => invoke<PublicConfig>('save_settings', { patch }),
   /** 保存 / 清除 API 个人 Token（非空字符串覆盖，空字符串保持不变）。 */
   saveTokens: (patch: TokenPatch) => invoke<PublicConfig>('save_tokens', { patch }),

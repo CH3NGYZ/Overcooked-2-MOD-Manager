@@ -30,19 +30,13 @@ pub(super) fn contains_legacy_repository_proxy_fields(text: &str) -> bool {
             })
 }
 
-/// 把「仅使用内置源」两个开关从旧的默认值 `true` 迁到 `false`。
-///
-/// V2 早期把仓库与地图条目只写进内置快照，两个开关默认开启、并被原样写进
-/// 配置文件。改 serde 默认值与 `default_config()` 只能影响全新配置 —— 老用户
-/// 的文件里仍写着 `true`，看起来像「默认没改」。这里按 `schema_version` 做
-/// 一次性迁移，之后用户自己再打开不会被覆盖。
-pub(super) fn migrate_bundled_source_switches(config: &mut AppConfig) -> bool {
+/// Schema 3 removes the four independent source switches. Unknown legacy fields
+/// are ignored on read and dropped when the migrated configuration is saved.
+pub(super) fn migrate_schema(config: &mut AppConfig) -> bool {
     if config.schema_version >= CONFIG_SCHEMA_VERSION {
         return false;
     }
     config.schema_version = CONFIG_SCHEMA_VERSION;
-    config.builtin_sources_only = false;
-    config.builtin_map_sources_only = false;
     true
 }
 

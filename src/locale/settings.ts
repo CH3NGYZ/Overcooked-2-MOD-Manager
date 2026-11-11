@@ -8,27 +8,29 @@ import type { DomainMessages } from './types'
  */
 export const settings: DomainMessages = {
   dataSources: { 'zh-CN': '数据来源', 'zh-TW': '資料來源', en: 'Data sources', ko: '데이터 소스', ja: 'データソース' },
-  useBundledNetworkPlansOnly: { 'zh-CN': '仅使用内置下载计划', 'zh-TW': '僅使用內建下載計畫', en: 'Use bundled download plans only', ko: '내장 다운로드 계획만 사용', ja: '内蔵ダウンロードプランのみ使用' },
-  useBundledNetworkPlansOnlyHint: {
-    'zh-CN': '只使用管理器自带的 network-plans.toml，不读取远端下载计划；与代理配置和 MOD、地图源开关相互独立。',
-    'zh-TW': '僅使用管理器內建的 network-plans.toml，不讀取遠端下載計畫；與代理設定及 MOD、地圖來源開關互相獨立。',
-    en: 'Use the shipped network-plans.toml without fetching remote download plans. Independent of proxy, MOD and map source switches.',
-    ko: '원격 다운로드 계획을 가져오지 않고 내장 network-plans.toml을 사용합니다. 프록시, MOD 및 지도 소스와 독립적입니다.',
-    ja: 'リモートのダウンロードプランを取得せず、内蔵の network-plans.toml を使用します。プロキシ・MOD・マップソースとは独立しています。',
+  dataProviderGithub: { 'zh-CN': 'GitHub（国际）', 'zh-TW': 'GitHub（國際）', en: 'GitHub (International)', ko: 'GitHub (국제)', ja: 'GitHub（国際）' },
+  dataProviderGitee: { 'zh-CN': 'Gitee（中国大陆）', 'zh-TW': 'Gitee（中國大陸）', en: 'Gitee (Mainland China)', ko: 'Gitee (중국 본토)', ja: 'Gitee（中国本土）' },
+  dataProviderBuiltin: { 'zh-CN': '内置', 'zh-TW': '內建', en: 'Bundled', ko: '내장', ja: '内蔵' },
+  dataProviderHint: {
+    'zh-CN': '统一选择 MOD 源、地图源、代理和网络计划。每次启动按电脑地区初始化，本次运行可手动更改。',
+    'zh-TW': '統一選擇 MOD 來源、地圖來源、代理與網路計畫。每次啟動依電腦地區初始化，本次執行可手動變更。',
+    en: 'Choose the source for MODs, maps, proxies and network plans. Initialized from your computer region at each launch; you can change it for this session.',
+    ko: 'MOD, 지도, 프록시 및 네트워크 계획의 소스를 함께 선택합니다. 시작할 때 컴퓨터 지역에 따라 초기화되며 이번 실행 중에는 직접 바꿀 수 있습니다.',
+    ja: 'MOD・マップ・プロキシ・ネットワークプランの取得元をまとめて選択します。起動ごとにコンピューターの地域で初期化され、実行中は手動で変更できます。',
   },
-  useBundledProxiesOnly: {
-    'zh-CN': '仅使用内置代理配置',
-    'zh-TW': '僅使用內建代理設定',
-    en: 'Use bundled proxy configuration only',
-    ko: '내장 프록시 설정만 사용',
-    ja: '内蔵プロキシ設定のみ使用',
+  dataProviderChanged: {
+    'zh-CN': '已切换数据来源，刷新 MOD / 地图仓库后应用',
+    'zh-TW': '已切換資料來源，重新整理 MOD / 地圖倉庫後套用',
+    en: 'Data source changed. Refresh the MOD / map repositories to apply.',
+    ko: '데이터 소스를 변경했습니다. MOD / 지도 저장소를 새로 고치면 적용됩니다.',
+    ja: 'データソースを変更しました。MOD / マップリポジトリを更新すると反映されます。',
   },
-  useBundledProxiesOnlyHint: {
-    'zh-CN': '只读取管理器自带的代理配置，不刷新远端代理清单；与 MOD、地图源开关相互独立，下载仍可联网。',
-    'zh-TW': '只讀取管理器內建的代理設定，不更新遠端代理清單；與 MOD、地圖來源開關互相獨立，下載仍可連線。',
-    en: 'Use the shipped proxy configuration without fetching remote manifests. Independent of MOD and map source switches; downloads can still access the network.',
-    ko: '원격 목록을 갱신하지 않고 내장 프록시 설정을 사용합니다. MOD 및 지도 소스 스위치와 독립적이며 다운로드는 계속 네트워크를 사용합니다.',
-    ja: 'リモート一覧を更新せず、内蔵プロキシ設定を使用します。MOD・マップソースの切り替えとは独立しており、ダウンロードは引き続き通信できます。',
+  dataProviderNetworkFallback: {
+    'zh-CN': '已切换数据来源；网络配置暂时使用内置数据，刷新 MOD / 地图仓库后应用源变更',
+    'zh-TW': '已切換資料來源；網路設定暫時使用內建資料，重新整理 MOD / 地圖倉庫後套用來源變更',
+    en: 'Data source changed; using bundled network settings for now. Refresh the MOD / map repositories to apply the source change.',
+    ko: '데이터 소스를 변경했습니다. 네트워크 설정은 일시적으로 내장 데이터를 사용합니다. MOD / 지도 저장소를 새로 고쳐 소스 변경을 적용하세요.',
+    ja: 'データソースを変更しました。ネットワーク設定は一時的に内蔵データを使用します。MOD / マップリポジトリを更新すると取得元の変更が反映されます。',
   },
   // 路径管理
   paths: {

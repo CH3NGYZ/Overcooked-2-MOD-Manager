@@ -21,7 +21,7 @@ pub(crate) use state::{
     available_maps, map_is_available, replace_maps_keeping_runtime_state, same_release_binding,
 };
 pub(crate) use tree::{
-    BUILTIN_MAP_INDEX, bundled_map_tree, fill_missing_source_names, load_map_branch, load_map_tree,
+    bundled_map_tree, fill_missing_source_names, load_map_branch, load_map_tree,
 };
 
 #[cfg(test)]

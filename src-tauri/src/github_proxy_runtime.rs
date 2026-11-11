@@ -3,9 +3,9 @@ use crate::download::planning::ordered_asset_download_candidates;
 #[cfg(test)]
 use crate::download::{DownloadCandidate, DownloadOutput, try_download_candidates};
 use crate::github_proxies;
-use crate::models::GitHubProxyConfig;
 #[cfg(test)]
 use crate::models::ProxyMode;
+use crate::models::{DataProvider, GitHubProxyConfig};
 #[cfg(test)]
 use crate::repository_sources::{self, SourceLocation};
 use std::sync::RwLock;
@@ -14,26 +14,59 @@ use std::sync::RwLock;
 pub(crate) struct ProxyRuntime {
     current: RwLock<RuntimeSnapshot>,
     refresh: tokio::sync::Mutex<()>,
+    selection_changed: tokio::sync::watch::Sender<u64>,
 }
 
 struct RuntimeSnapshot {
+    provider: DataProvider,
+    revision: u64,
     groups: GitHubProxyConfig,
     policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
 }
 
 impl Default for ProxyRuntime {
     fn default() -> Self {
-        Self {
-            current: RwLock::new(RuntimeSnapshot {
-                groups: github_proxies::bundled_defaults(),
-                policy: None,
-            }),
-            refresh: tokio::sync::Mutex::new(()),
-        }
+        Self::new(DataProvider::default())
     }
 }
 
 impl ProxyRuntime {
+    pub(crate) fn new(provider: DataProvider) -> Self {
+        Self {
+            current: RwLock::new(RuntimeSnapshot {
+                provider,
+                revision: 0,
+                groups: github_proxies::bundled_defaults(),
+                policy: None,
+            }),
+            refresh: tokio::sync::Mutex::new(()),
+            selection_changed: tokio::sync::watch::channel(0).0,
+        }
+    }
+
+    pub(crate) fn provider(&self) -> DataProvider {
+        self.current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .provider
+    }
+
+    pub(crate) fn select_provider(&self, provider: DataProvider) {
+        let mut snapshot = self.current.write().unwrap_or_else(|e| e.into_inner());
+        if snapshot.provider != provider {
+            // A different provider starts from the shipped closure. Never expose
+            // the previous provider's plans while the new one is being fetched.
+            *snapshot = RuntimeSnapshot {
+                provider,
+                revision: snapshot.revision + 1,
+                groups: github_proxies::bundled_defaults(),
+                policy: None,
+            };
+            self.selection_changed.send_replace(snapshot.revision);
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> GitHubProxyConfig {
         self.current
             .read()
@@ -42,91 +75,58 @@ impl ProxyRuntime {
             .clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn selected_policy(
-        &self,
-        proxies: bool,
-        plans: bool,
-    ) -> Result<std::sync::Arc<crate::network_policy::NetworkPolicy>, String> {
-        let policy = self
-            .current
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .policy
-            .clone();
-        let current = policy
-            .map(Ok)
-            .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
-        current.select(proxies, plans).map(std::sync::Arc::new)
-    }
-
     pub(crate) fn configuration_snapshot(
         &self,
-        proxies: bool,
-        plans: bool,
     ) -> Result<
         (
+            DataProvider,
             GitHubProxyConfig,
             std::sync::Arc<crate::network_policy::NetworkPolicy>,
         ),
         String,
     > {
         let snapshot = self.current.read().unwrap_or_else(|e| e.into_inner());
-        let bundled = crate::network_policy::NetworkPolicy::shared()?;
-        let selected = snapshot
-            .policy
-            .as_deref()
-            .unwrap_or(bundled)
-            .select(proxies, plans)?;
-        let mut groups = if snapshot.policy.is_some() {
-            selected.bundled_proxy_groups()?
-        } else if proxies {
-            github_proxies::bundled_defaults()
-        } else {
-            snapshot.groups.clone()
-        };
-        if snapshot.policy.is_some() {
-            for entry in groups
-                .release_proxies
-                .iter_mut()
-                .chain(groups.raw_proxies.iter_mut())
-                .chain(groups.github_api_proxies.iter_mut())
-                .chain(groups.gitee_api_proxies.iter_mut())
-                .chain(groups.gitcode_api_proxies.iter_mut())
-                .chain(groups.avatar_proxies.iter_mut())
-            {
-                entry.builtin = proxies;
-                entry.remote = !proxies;
-            }
-        }
-        Ok((groups, std::sync::Arc::new(selected)))
+        let policy = snapshot.policy.clone().map(Ok).unwrap_or_else(|| {
+            crate::network_policy::NetworkPolicy::shared()
+                .map(|policy| std::sync::Arc::new(policy.clone()))
+        })?;
+        Ok((snapshot.provider, snapshot.groups.clone(), policy))
     }
 
-    pub(crate) async fn refresh_policy(
-        &self,
-        region: &str,
-        proxies: bool,
-        plans: bool,
-    ) -> Result<(), String> {
-        let _guard = self.refresh.lock().await;
-        let fresh =
-            crate::network_policy::NetworkPolicy::refresh_remote(region, proxies, plans).await?;
-        self.publish_policy(fresh, proxies)
+    pub(crate) async fn refresh_policy(&self) -> Result<(), String> {
+        // Bundled mode must remain immediate even if an old remote is stalled.
+        if self.provider() == DataProvider::Builtin {
+            return Ok(());
+        }
+        let mut changed = self.selection_changed.subscribe();
+        let _guard = tokio::select! {
+            biased;
+            _ = changed.changed() => return Ok(()),
+            guard = self.refresh.lock() => guard,
+        };
+        let (provider, revision) = {
+            let snapshot = self.current.read().unwrap_or_else(|e| e.into_inner());
+            (snapshot.provider, snapshot.revision)
+        };
+        if provider == DataProvider::Builtin {
+            return Ok(());
+        }
+        let fresh = tokio::select! {
+            biased;
+            _ = changed.changed() => return Ok(()),
+            result = crate::network_policy::NetworkPolicy::refresh_remote(provider) => result?,
+        };
+        self.publish_policy(fresh, provider, revision)
     }
 
     fn publish_policy(
         &self,
         fresh: crate::network_policy::NetworkPolicy,
-        proxies: bool,
+        provider: DataProvider,
+        revision: u64,
     ) -> Result<(), String> {
-        // Parse the complete closure before publishing either view. No config or
-        // business lock is held while documents are being downloaded.
-        // Every switch combination must remain usable after publication.
-        for proxies in [false, true] {
-            for plans in [false, true] {
-                fresh.select(proxies, plans)?;
-            }
-        }
+        // Parse the complete closure before publishing either view. A late
+        // response cannot overwrite a newer selection, including A -> B -> A.
         let mut groups = fresh.bundled_proxy_groups()?;
         for proxy in groups
             .release_proxies
@@ -137,13 +137,14 @@ impl ProxyRuntime {
             .chain(groups.gitcode_api_proxies.iter_mut())
             .chain(groups.avatar_proxies.iter_mut())
         {
-            proxy.builtin = proxies;
-            proxy.remote = !proxies;
+            proxy.builtin = false;
+            proxy.remote = true;
         }
-        *self.current.write().unwrap_or_else(|e| e.into_inner()) = RuntimeSnapshot {
-            groups,
-            policy: Some(std::sync::Arc::new(fresh)),
-        };
+        let mut snapshot = self.current.write().unwrap_or_else(|e| e.into_inner());
+        if snapshot.provider == provider && snapshot.revision == revision {
+            snapshot.groups = groups;
+            snapshot.policy = Some(std::sync::Arc::new(fresh));
+        }
         Ok(())
     }
 
@@ -231,7 +232,7 @@ fn manifest_routes(
     region: &str,
     snapshot: &GitHubProxyConfig,
 ) -> Result<Vec<Vec<DownloadCandidate>>, String> {
-    let github = SourceLocation::parse(repository_sources::DEFAULT_INDEX_GITHUB_URL)
+    let github = SourceLocation::parse(&DataProvider::Github.document("mods.toml"))
         .map_err(|_| "proxy.validationFailed")?;
     let github = SourceLocation::resolve("repositories-proxies.toml", Some(&github))
         .map_err(|_| "proxy.validationFailed")?
@@ -239,7 +240,7 @@ fn manifest_routes(
     let proxies = github_proxies::proxy_urls(&snapshot.raw_proxies, &github, true, None);
     let mut routes = Vec::new();
     if region == crate::config::REGION_CHINESE_MAINLAND {
-        let gitee = SourceLocation::parse(repository_sources::default_index_url(region))
+        let gitee = SourceLocation::parse(&DataProvider::for_region(region).document("mods.toml"))
             .map_err(|_| "proxy.validationFailed")?;
         let gitee = SourceLocation::resolve("repositories-proxies.toml", Some(&gitee))
             .map_err(|_| "proxy.validationFailed")?

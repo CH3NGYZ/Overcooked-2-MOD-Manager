@@ -3,11 +3,10 @@
 use super::CachedConfig;
 use super::ConfigError;
 use super::ConfigService;
-use super::availability::current_user_region;
 use super::defaults::default_config;
 use super::metadata::migrate_repository_i18n;
 use super::migrations::contains_legacy_repository_proxy_fields;
-use super::migrations::migrate_bundled_source_switches;
+use super::migrations::migrate_schema;
 use super::sources::synchronize_builtin_repository_sources;
 use crate::models::*;
 use chrono::Utc;
@@ -34,7 +33,9 @@ impl ConfigService {
         Ok(Self {
             root,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            proxies: Default::default(),
+            proxies: std::sync::Arc::new(crate::github_proxy_runtime::ProxyRuntime::new(
+                DataProvider::for_region(super::availability::current_user_region()),
+            )),
         })
     }
 
@@ -62,51 +63,34 @@ impl ConfigService {
         let path = self.config_path();
         // 文件指纹没变 → 直接返回缓存副本，避免重复读盘与 TOML 解析
         if let Some(cached) = self.cached_if_fresh(&path) {
-            return Ok(self.with_proxies(cached));
+            return Ok(self.with_runtime(cached));
         }
         let config = self.load_from_disk()?;
         self.store_cache(&path, &config);
-        Ok(self.with_proxies(config))
+        Ok(self.with_runtime(config))
     }
 
-    fn with_proxies(&self, mut config: AppConfig) -> AppConfig {
-        match self.proxies.configuration_snapshot(
-            config.builtin_proxies_only,
-            config.builtin_network_plans_only,
-        ) {
-            Ok((proxies, policy)) => {
+    pub(super) fn with_runtime(&self, mut config: AppConfig) -> AppConfig {
+        match self.proxies.configuration_snapshot() {
+            Ok((provider, proxies, policy)) => {
+                if config.data_provider != provider {
+                    config.data_provider = provider;
+                    synchronize_builtin_repository_sources(&mut config);
+                }
                 config.github_proxies = proxies;
                 config.network_policy = Some(policy);
             }
-            Err(error) => {
-                log::error!("选择网络快照失败：{error}");
-            }
+            Err(error) => log::error!("选择网络快照失败：{error}"),
         }
         config
     }
 
-    pub(crate) fn proxy_snapshot(&self, builtin_only: bool) -> GitHubProxyConfig {
-        if builtin_only {
-            crate::github_proxies::bundled_defaults()
-        } else {
-            self.proxies.snapshot()
-        }
+    pub(crate) fn select_data_provider(&self, provider: DataProvider) {
+        self.proxies.select_provider(provider);
     }
 
     pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {
-        // Select before creating a client or resolving any remote manifest. Readers
-        // also select by this flag, so an older in-flight refresh cannot override it.
-        let config = self.load_or_default();
-        if config.builtin_proxies_only && config.builtin_network_plans_only {
-            return Ok(());
-        }
-        self.proxies
-            .refresh_policy(
-                current_user_region(),
-                config.builtin_proxies_only,
-                config.builtin_network_plans_only,
-            )
-            .await
+        self.proxies.refresh_policy().await
     }
 
     fn cached_if_fresh(&self, path: &Path) -> Option<AppConfig> {
@@ -147,7 +131,7 @@ impl ConfigService {
             previous
         } else {
             log::info!("未找到配置文件，创建默认配置");
-            let config = default_config();
+            let config = self.with_runtime(default_config());
             self.save(&config)?;
             return Ok(config);
         };
@@ -159,8 +143,8 @@ impl ConfigService {
         match toml::from_str::<AppConfig>(&text) {
             Ok(mut config) => {
                 let mut changed = legacy_repository_proxy_fields;
-                // 先迁移开关，再同步根源地址：同步要按迁移后的开关选内置/远端。
-                changed |= migrate_bundled_source_switches(&mut config);
+                config.data_provider = self.proxies.provider();
+                changed |= migrate_schema(&mut config);
                 changed |= synchronize_builtin_repository_sources(&mut config);
                 changed |= Self::normalize_configured_regions(&mut config);
                 for repository in &mut config.repositories {
@@ -197,7 +181,7 @@ impl ConfigService {
                     Utc::now().format("%Y%m%d%H%M%S")
                 ));
                 let _ = fs::rename(&source, backup);
-                let config = default_config();
+                let config = self.with_runtime(default_config());
                 self.save(&config)?;
                 Err(ConfigError::Parse(error.to_string()))
             }
@@ -207,7 +191,7 @@ impl ConfigService {
     pub fn load_or_default(&self) -> AppConfig {
         self.load().unwrap_or_else(|error| {
             log::error!("配置加载失败，使用默认配置：原因={}", error);
-            self.with_proxies(default_config())
+            self.with_runtime(default_config())
         })
     }
 

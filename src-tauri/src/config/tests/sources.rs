@@ -1,12 +1,11 @@
 use crate::config::ConfigService;
 use crate::config::availability::REGION_CHINESE_MAINLAND;
 use crate::config::availability::REGION_INTERNATIONAL;
-use crate::config::availability::current_user_region;
 use crate::config::availability::repository_source_matches_region;
 use crate::config::defaults::default_config;
 use crate::config::identity::mod_repository_from_export;
 use crate::config::migrations::contains_legacy_repository_proxy_fields;
-use crate::config::sources::builtin_repository_sources_for_region;
+use crate::config::sources::builtin_repository_sources;
 use crate::config::sources::merge_builtin_repository_sources;
 use crate::config::sources::synchronize_builtin_repository_sources;
 use crate::models::*;
@@ -122,20 +121,20 @@ fn official_index_follows_region_and_preserves_custom_sources() {
     for (region, expected) in [
         (
             REGION_CHINESE_MAINLAND,
-            crate::repository_sources::DEFAULT_INDEX_GITEE_URL,
+            crate::models::DataProvider::Gitee.document("mods.toml"),
         ),
         (
             REGION_INTERNATIONAL,
-            crate::repository_sources::DEFAULT_INDEX_GITHUB_URL,
+            crate::models::DataProvider::Github.document("mods.toml"),
         ),
         (
             REGION_CHINESE_MAINLAND,
-            crate::repository_sources::DEFAULT_INDEX_GITEE_URL,
+            crate::models::DataProvider::Gitee.document("mods.toml"),
         ),
     ] {
         merge_builtin_repository_sources(
             &mut config,
-            builtin_repository_sources_for_region(region, false),
+            builtin_repository_sources(DataProvider::for_region(region)),
         );
         assert_eq!(config.repository_sources.len(), 2);
         assert_eq!(
@@ -147,7 +146,7 @@ fn official_index_follows_region_and_preserves_custom_sources() {
         assert_eq!(config.repository_sources[1], custom);
         assert!(!merge_builtin_repository_sources(
             &mut config,
-            builtin_repository_sources_for_region(region, false)
+            builtin_repository_sources(DataProvider::for_region(region))
         ));
     }
 }
@@ -221,70 +220,32 @@ value = "MOD.dll"
 }
 
 #[test]
-fn builtin_sources_only_switch_selects_the_bundled_entry() {
-    for region in [REGION_CHINESE_MAINLAND, REGION_INTERNATIONAL] {
-        let remote = builtin_repository_sources_for_region(region, false);
-        assert_eq!(remote.len(), 1);
-        assert_eq!(remote[0].id, crate::repository_sources::DEFAULT_INDEX_ID);
-        assert_eq!(
-            remote[0].url,
-            crate::repository_sources::default_index_url(region),
-            "关闭开关时应使用地区默认远端地址"
-        );
-        assert_ne!(
-            remote[0].url,
-            crate::repository_sources::BUILTIN_INDEX,
-            "远端地址不能等于内置路径"
-        );
-
-        let bundled = builtin_repository_sources_for_region(region, true);
-        assert_eq!(bundled.len(), 1);
-        assert_eq!(
-            bundled[0].url,
-            crate::repository_sources::BUILTIN_INDEX,
-            "打开开关时官方根应指向内置快照"
-        );
-        // 两个地区得到同一个内置入口 —— 这正是「不再按地区选择」的含义
-        assert_eq!(
-            bundled[0].url,
-            builtin_repository_sources_for_region(REGION_CHINESE_MAINLAND, true)[0].url
-        );
-        // 其余身份字段不受开关影响
-        assert_eq!(bundled[0].id, remote[0].id);
-        assert!(bundled[0].builtin);
-        assert!(bundled[0].parent_id.is_none());
+fn all_providers_select_the_official_root_and_preserve_custom_sources() {
+    for provider in [
+        DataProvider::Github,
+        DataProvider::Gitee,
+        DataProvider::Builtin,
+    ] {
+        let mut config = default_config();
+        config.repository_sources.push(RepositorySource {
+            network_plan: Default::default(),
+            id: "custom".into(),
+            nickname: "Custom".into(),
+            nickname_i18n: Default::default(),
+            url: "https://example.com/custom.toml".into(),
+            region: None,
+            builtin: false,
+            parent_id: None,
+        });
+        config.data_provider = provider;
+        synchronize_builtin_repository_sources(&mut config);
+        let root = &config.repository_sources[0];
+        assert_eq!(root.id, crate::repository_sources::DEFAULT_INDEX_ID);
+        assert_eq!(root.url, provider.document("mods.toml"));
+        assert!(root.builtin && root.parent_id.is_none());
+        assert_eq!(config.repository_sources[1].id, "custom");
+        assert!(!synchronize_builtin_repository_sources(&mut config));
     }
-}
-
-/// 读取配置时按开关重建官方根，且保留自定义源与既有子源。
-#[test]
-fn config_load_applies_builtin_sources_only_to_the_official_root() {
-    // 从「开关关着时写下的配置」开始：官方根还指向远端，同步才有事可做。
-    let mut config = default_config();
-    config.repository_sources = builtin_repository_sources_for_region(current_user_region(), false);
-    config.builtin_sources_only = true;
-    config.repository_sources.push(RepositorySource {
-        network_plan: Default::default(),
-        id: "custom".into(),
-        nickname: "自定义".into(),
-        nickname_i18n: Default::default(),
-        url: "https://example.com/custom.toml".into(),
-        region: None,
-        builtin: false,
-        parent_id: None,
-    });
-
-    assert!(synchronize_builtin_repository_sources(&mut config));
-    let root = config
-        .repository_sources
-        .iter()
-        .find(|source| source.id == crate::repository_sources::DEFAULT_INDEX_ID)
-        .expect("官方根应存在");
-    assert_eq!(root.url, crate::repository_sources::BUILTIN_INDEX);
-    assert!(
-        config.repository_sources.iter().any(|s| s.id == "custom"),
-        "自定义源不应被开关影响"
-    );
 }
 
 #[test]

@@ -18,7 +18,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { displayPath } from '../gameRuntime'
-import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
+import type { AppUpdateCheckResult, DataProvider, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withDemoMods } from '../tutorial/demo'
 
@@ -364,82 +364,35 @@ async function confirmDisableRecycle() {
   )
 }
 
-/* ===== 仅使用内置仓库源 ===== */
+/* ===== 官方数据来源（本次启动有效） ===== */
+const dataProvider = computed(() => config.value?.data_provider ?? 'github')
+const switchingDataProvider = ref(false)
+const dataProviderOptions = computed(() => [
+  { value: 'github', label: t('settings.dataProviderGithub') },
+  { value: 'gitee', label: t('settings.dataProviderGitee') },
+  { value: 'builtin', label: t('settings.dataProviderBuiltin') },
+])
 
-const builtinSourcesOnly = computed(() => config.value?.builtin_sources_only === true)
-const switchingBuiltinSources = ref(false)
-
-/**
- * 切换「仅使用内置仓库源」。
- *
- * 保存后后端会同步改写官方根源的地址，所以**必须**把返回的配置写回
- * `config.value` —— 否则开关状态要等下一次 Dashboard 读取才更新。
- */
-async function toggleBuiltinSourcesOnly(value: boolean) {
-  if (switchingBuiltinSources.value) return
-  switchingBuiltinSources.value = true
+async function switchDataProvider(value: DataProvider) {
+  if (value === dataProvider.value || switchingDataProvider.value || demoActive.value) return
+  switchingDataProvider.value = true
   try {
-    config.value = await api.saveSettings({ builtin_sources_only: value })
-    message.success(value
-      ? t('modsOnline.switchedToBundledSourcesRefreshToApply')
-      : t('modsOnline.restoredOnlineSourcesRefreshToApply'))
+    config.value = await api.saveSettings({ data_provider: value })
+    dashboard.applyConfigSnapshot(config.value)
+    try {
+      config.value = await api.refreshNetworkConfig()
+      dashboard.applyConfigSnapshot(config.value)
+      message.success(t('settings.dataProviderChanged'))
+    } catch {
+      // The selected provider remains active; a failed network refresh keeps
+      // the shipped proxy/plan closure selected by the backend.
+      message.warning(t('settings.dataProviderNetworkFallback'))
+    }
   } catch (reason) {
     fail(reason)
   } finally {
-    switchingBuiltinSources.value = false
+    switchingDataProvider.value = false
   }
-}
-
-/* ===== 仅使用内置地图源 ===== */
-
-const builtinMapSourcesOnly = computed(() => config.value?.builtin_map_sources_only === true)
-const switchingBuiltinMapSources = ref(false)
-
-/**
- * 切换「仅使用内置地图源」。
- *
- * 与仓库源开关**相互独立**：地图索引和仓库索引是两个文件，一个连不上
- * 不代表另一个也连不上，所以不合并成一个开关。地图源树不持久化，这个
- * 开关只决定下次刷新从哪里读索引。
- */
-async function toggleBuiltinMapSourcesOnly(value: boolean) {
-  if (switchingBuiltinMapSources.value) return
-  switchingBuiltinMapSources.value = true
-  try {
-    config.value = await api.saveSettings({ builtin_map_sources_only: value })
-    message.success(value
-      ? t('modsOnline.switchedToBundledSourcesRefreshToApply')
-      : t('modsOnline.restoredOnlineSourcesRefreshToApply'))
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    switchingBuiltinMapSources.value = false
-  }
-}
-
-const builtinProxiesOnly = computed(() => config.value?.builtin_proxies_only === true)
-const switchingBuiltinProxies = ref(false)
-async function toggleBuiltinProxiesOnly(value: boolean) {
-  if (switchingBuiltinProxies.value) return
-  switchingBuiltinProxies.value = true
-  try {
-    config.value = await api.saveSettings({ builtin_proxies_only: value })
-    message.success(t('common.saved'))
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    switchingBuiltinProxies.value = false
-  }
-}
-
-const builtinNetworkPlansOnly = computed(() => config.value?.builtin_network_plans_only === true)
-const switchingBuiltinNetworkPlans = ref(false)
-async function toggleBuiltinNetworkPlansOnly(value: boolean) {
-  if (switchingBuiltinNetworkPlans.value) return
-  switchingBuiltinNetworkPlans.value = true
-  try { config.value = await api.saveSettings({ builtin_network_plans_only: value }); message.success(t('common.saved')) }
-  catch (reason) { fail(reason) }
-  finally { switchingBuiltinNetworkPlans.value = false }
 }
 
 /* ===== API 凭据 ===== */
@@ -577,40 +530,12 @@ async function clearTokens() {
     </SettingsRow>
   </SettingsGroup>
   <SettingsGroup :title="t('settings.dataSources')" data-testid="data-sources">
-    <!--
-      仅使用内置仓库源：官方入口不再按地区选 Gitee / GitHub 的 raw 直链，
-      直接读管理器自带的快照。适合「官方入口在这台机器上连不上」或需要
-      完全离线的场景；自定义仓库源不受影响。
-    -->
-    <SettingsRow :title="t('modsOnline.useBundledSourcesOnly')"
-      :description="t('modsOnline.skipsTheGiteeGithubRawSourceLinksAndUsesTheSnapshotShippedWithTheManagerCustomSourcesAreNotAffected')">
+    <SettingsRow :title="t('settings.dataSources')" :description="t('settings.dataProviderHint')">
       <template #right>
-        <n-switch size="small" :value="builtinSourcesOnly" :loading="switchingBuiltinSources"
-          @update:value="toggleBuiltinSourcesOnly" />
-      </template>
-    </SettingsRow>
-    <!--
-      仅使用内置地图源：与上面的仓库源开关并列但独立。
-      地图索引和仓库索引是两个文件，一个连不上不代表另一个也连不上；
-      合并成一个开关会让用户为了修复地图而关掉仓库的在线源。
-    -->
-    <SettingsRow :title="t('levelSet.useBundledMapSourcesOnly')"
-      :description="t('levelSet.useBundledMapSourcesOnlyHint')">
-      <template #right>
-        <n-switch size="small" :value="builtinMapSourcesOnly" :loading="switchingBuiltinMapSources"
-          @update:value="toggleBuiltinMapSourcesOnly" />
-      </template>
-    </SettingsRow>
-    <SettingsRow :title="t('settings.useBundledProxiesOnly')"
-      :description="t('settings.useBundledProxiesOnlyHint')" data-testid="builtin-proxies-only">
-      <template #right>
-        <n-switch size="small" :value="builtinProxiesOnly" :loading="switchingBuiltinProxies"
-          @update:value="toggleBuiltinProxiesOnly" />
-      </template>
-    </SettingsRow>
-    <SettingsRow :title="t('settings.useBundledNetworkPlansOnly')" :description="t('settings.useBundledNetworkPlansOnlyHint')" data-testid="builtin-network-plans-only">
-      <template #right>
-        <n-switch size="small" :value="builtinNetworkPlansOnly" :loading="switchingBuiltinNetworkPlans" @update:value="toggleBuiltinNetworkPlansOnly" />
+        <n-select :value="dataProvider" :options="dataProviderOptions" style="width: 224px"
+          :loading="switchingDataProvider" :disabled="switchingDataProvider || !config || demoActive"
+          :aria-label="t('settings.dataSources')" data-testid="data-provider"
+          @update:value="switchDataProvider" />
       </template>
     </SettingsRow>
   </SettingsGroup>

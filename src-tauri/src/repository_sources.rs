@@ -14,10 +14,7 @@ pub(crate) use diagnostics::{error_category, safe_log_address};
 #[cfg(test)]
 pub(crate) use document::parse_document;
 pub(crate) use document::{nickname_fallback, source_address_key};
-pub(crate) use embedded::{
-    BUILTIN_INDEX, DEFAULT_INDEX_GITEE_URL, DEFAULT_INDEX_GITHUB_URL, DEFAULT_INDEX_ID,
-    bundled_repository_configs, default_index_url,
-};
+pub(crate) use embedded::{BUILTIN_INDEX, DEFAULT_INDEX_ID, bundled_repository_configs};
 pub(crate) use location::SourceLocation;
 #[cfg(test)]
 pub(crate) use transport::SOURCE_DOCUMENT_TIMEOUT;

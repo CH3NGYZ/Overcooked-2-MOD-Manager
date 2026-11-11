@@ -64,21 +64,6 @@ pub struct AppConfig {
     /// 的地址解析与相对路径规则。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub map_repositories: Vec<MapRepositoryConfig>,
-    /// 是否只用内置地图快照（与 `builtin_sources_only` 呼应）。
-    ///
-    /// 打开后官方地图索引的 `url` 指向编译期嵌入的 `maps.toml`，
-    /// 与仓库侧「仅使用内置仓库源」完全同一套语义。
-    ///
-    /// 默认 `false`：先读远端索引，加载失败时由 `refresh_map_sources` 按策略尝试内置条目。
-    /// 这只选择根入口，release-tags/社区条目仍可能联网；缺字段补 `false`，旧开关迁移见
-    /// `config/migrations.rs::migrate_bundled_source_switches`。
-    #[serde(default)]
-    pub builtin_map_sources_only: bool,
-    /// Only bundled proxy definitions are visible; remote refreshes cannot override them.
-    #[serde(default)]
-    pub builtin_proxies_only: bool,
-    #[serde(default)]
-    pub builtin_network_plans_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_discovery: Option<CommunityDiscovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,15 +95,9 @@ pub struct AppConfig {
     pub github_proxies: GitHubProxyConfig,
     #[serde(default)]
     pub mod_notes: Vec<ModNote>,
-    /// 只用管理器自带的仓库源快照，不访问 Gitee / GitHub 的 raw 入口。
-    ///
-    /// 打开后官方根源的地址直接落到打包资源，不再按地区选择远端直链；
-    /// 这也让完全离线环境能列出仓库。自定义源不受影响 —— 那是用户明确添加的。
-    ///
-    /// 默认 `false`，理由与 `builtin_map_sources_only` 相同：远端索引是数据
-    /// 来源，内置快照只是读不到时的回退。
-    #[serde(default)]
-    pub builtin_sources_only: bool,
+    /// Session selection; every new process initializes it from the computer region.
+    #[serde(skip)]
+    pub data_provider: super::DataProvider,
 }
 
 impl AppConfig {
@@ -241,17 +220,7 @@ pub struct PublicConfig {
     pub gitcode_community_discovery: Option<CommunityDiscovery>,
     #[serde(default)]
     pub github_proxies: GitHubProxyConfig,
-    /// 只用内置仓库源（不访问远端 raw 入口）。
-    #[serde(default)]
-    pub builtin_sources_only: bool,
-    /// 只用内置地图源。与仓库源开关相互独立：地图索引和仓库索引是两个文件，
-    /// 一个连不上不代表另一个也连不上。
-    #[serde(default)]
-    pub builtin_map_sources_only: bool,
-    #[serde(default)]
-    pub builtin_proxies_only: bool,
-    #[serde(default)]
-    pub builtin_network_plans_only: bool,
+    pub data_provider: super::DataProvider,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,12 +243,7 @@ pub struct SettingsPatch {
     /// 这次「已经看过」的教程步骤 id；后端把它并进配置里的集合。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tutorial_watched_steps: Option<Vec<String>>,
-    /// 只用内置仓库源（不访问远端 raw 入口）。
-    pub builtin_sources_only: Option<bool>,
-    /// 只用内置地图源（不影响仓库源，反之亦然）。
-    pub builtin_map_sources_only: Option<bool>,
-    pub builtin_proxies_only: Option<bool>,
-    pub builtin_network_plans_only: Option<bool>,
+    pub data_provider: Option<super::DataProvider>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

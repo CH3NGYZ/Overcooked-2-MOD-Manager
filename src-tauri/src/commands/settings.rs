@@ -105,6 +105,9 @@ pub fn save_settings(
     if let Some(value) = patch.mod_metadata_concurrency {
         config.mod_metadata_concurrency = crate::concurrency::clamp_stored_concurrency(value);
     }
+    if let Some(value) = patch.diychef_preview_concurrency {
+        config.diychef_preview_concurrency = crate::concurrency::clamp_stored_concurrency(value);
+    }
     if let Some(value) = patch.map_compression_concurrency {
         config.map_compression_concurrency = crate::concurrency::clamp_stored_concurrency(value);
     }
@@ -174,6 +177,7 @@ pub fn save_settings(
         config.builtin_network_plans_only = value;
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
+    crate::diychef::preview::configure_concurrency(config.diychef_preview_concurrency);
     log::info!("应用设置保存完成：界面缩放={}", config.ui_zoom);
     Ok(state.config.public_config(&config))
 }

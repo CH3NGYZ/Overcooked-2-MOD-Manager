@@ -7,14 +7,14 @@ import { registerHooks } from 'node:module'
  *
  * ## 为什么需要它
  *
- * 教程的步骤散在 7 个 `steps.*.ts` 里，由不同人同时写。最典型的坏法不是
+ * 教程的步骤按功能散在 `steps.*.ts` 里。最典型的坏法不是
  * 类型错误，而是**运行时静默失真**：
  *
  *   - 两个人用了同一个 `id`（引擎按数组下标跑，不会报错，但「从某步开始」
  *     与排查日志会指向错的那一步）；
  *   - `titleKey` / `bodyKey` 拼错或忘了写进语言表（`t()` 未知 key 原样返回，
  *     界面上直接显示 `tutorial.mods.foo.title`）；
- *   - 七种语言的某一种漏了（`Localized` 类型只在编译期管字段存在，
+ *   - 五种语言的某一种漏了（`Localized` 类型只在编译期管字段存在，
  *     空字符串能过）。
  *
  * 所以这里从**真实步骤表**出发，逐条把这三个问题钉死。
@@ -42,10 +42,52 @@ registerHooks({
   },
 })
 
-const { tutorialSteps } = await import('../src/tutorial/steps.ts')
+const { tutorialSteps, tutorialSections } = await import('../src/tutorial/steps.ts')
+
+test('章节目录是播放器与管理器共用的唯一顺序，步骤恰好属于一章', () => {
+  assert.equal(new Set(tutorialSections.map(section => section.id)).size, tutorialSections.length)
+  assert.deepEqual(tutorialSections.flatMap(section => section.steps), tutorialSteps)
+  for (const section of tutorialSections) {
+    assert.ok(section.titleKey && section.steps.length > 0, section.id)
+  }
+  assert.deepEqual(tutorialSections.map(section => section.id), [
+    'chrome', 'overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'diychef', 'tools', 'settings',
+  ])
+})
+
+test('暖暖离开菜单时按受控展开状态关闭，不因退场中的选项重新打开', async t => {
+  const previous = globalThis.document
+  t.after(() => { globalThis.document = previous })
+  const step = tutorialSteps.find(item => item.id === 'diychef-more')
+  for (const expanded of [true, false]) {
+    const clicks = [], waits = []
+    globalThis.document = { querySelector: selector => selector.includes('aria-expanded="true"') ? (expanded ? {} : null) : {} }
+    await step.cleanup({
+      click: selector => { clicks.push(selector); return true },
+      waitForGone: async selector => { waits.push(selector); return true },
+    })
+    assert.equal(clicks.length, Number(expanded), 'the outgoing menu may stay in the DOM after demo exit closes it')
+    assert.equal(waits.length, 1)
+  }
+})
+
+test('暖暖返回默认位置或拖动步骤时先关闭帽窗', async t => {
+  const previous = globalThis.document
+  t.after(() => { globalThis.document = previous })
+  globalThis.document = { querySelector: () => ({}) }
+  for (const id of ['diychef-default', 'diychef-drag']) {
+    const actions = []
+    await tutorialSteps.find(item => item.id === id).prepare({
+      click: selector => { actions.push(['close', selector]); return true },
+      waitForGone: async selector => { actions.push(['gone', selector]); return true },
+    })
+    assert.deepEqual(actions.map(([name]) => name), ['close', 'gone'])
+    assert.match(actions[0][1], /diychef-hat-cancel/)
+  }
+})
 
 /** 允许出现在 `route` 里的页面（`NAV_ORDER` + 侧栏底部两项）。 */
-const ROUTES = new Set(['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'tools', 'settings'])
+const ROUTES = new Set(['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'diychef', 'tools', 'settings'])
 
 /** 契约第 5 节的完整 id 列表与顺序；教程内容改了要先改这份契约。 */
 const EXPECTED_IDS = [
@@ -56,6 +98,7 @@ const EXPECTED_IDS = [
   'titlebar-language',
   'titlebar-theme-mode',
   'titlebar-accent',
+  'sidebar-overview',
   'overview-column-mods',
   'overview-card-bepinex',
   'overview-card-online-mods',
@@ -78,12 +121,23 @@ const EXPECTED_IDS = [
   'mods-local-open-dir',
   'mods-local-card',
   'sidebar-maps-online',
+  'maps-online-page',
   'sidebar-levels',
+  'levels-page',
+  'sidebar-rename',
+  'rename-editor',
+  'sidebar-diychef',
+  'diychef-default',
+  'diychef-drag',
+  'diychef-hats',
+  'diychef-more',
+  'sidebar-tools',
   'tools-sponsor',
   'tools-logs',
   'tools-recycle',
   'tools-cache',
   'tools-advanced',
+  'sidebar-settings',
   'settings-game-runtime',
   'settings-game-path',
   'settings-bepinex',
@@ -101,6 +155,10 @@ async function loadTutorialTables() {
     '../src/locale/tutorialMods.ts',
     '../src/locale/tutorialTools.ts',
     '../src/locale/tutorialSettings.ts',
+    '../src/locale/tutorialDiyChef.ts',
+    '../src/locale/tutorialNavigation.ts',
+    '../src/locale/tutorialMaps.ts',
+    '../src/locale/tutorialRename.ts',
   ]
   const tables = {}
   const missing = []
@@ -120,6 +178,39 @@ test('步骤 id 唯一、顺序与契约一致', () => {
   const ids = tutorialSteps.map((step) => step.id)
   assert.equal(new Set(ids).size, ids.length, `id 重复：${ids.filter((id, i) => ids.indexOf(id) !== i).join(', ')}`)
   assert.deepEqual(ids, EXPECTED_IDS, '步骤增删或调序后要同步契约第 5 节与本测试')
+})
+
+test('九个侧栏入口先说明用途，下一步才进入对应页面', () => {
+  const sections = [
+    ['overview', 'overview-column-mods'],
+    ['mods-online', 'mods-online-search'],
+    ['mods-local', 'mods-local-tags'],
+    ['maps-online', 'maps-online-page'],
+    ['levels', 'levels-page'],
+    ['rename', 'rename-editor'],
+    ['diychef', 'diychef-default'],
+    ['tools', 'tools-sponsor'],
+    ['settings', 'settings-game-runtime'],
+  ]
+  for (const [route, contentId] of sections) {
+    const navIndex = tutorialSteps.findIndex(step => step.id === `sidebar-${route}`)
+    const nav = tutorialSteps[navIndex], content = tutorialSteps[navIndex + 1]
+    assert.ok(nav, `${route} has a sidebar explanation`)
+    assert.equal(nav.route, undefined, 'sidebar explanation must not change the underlying page')
+    assert.equal(nav.prepare, undefined, 'sidebar explanation must not click through to the page')
+    assert.equal(nav.target, `[data-tutorial="nav-${route}"]`)
+    assert.equal(content.id, contentId)
+    assert.equal(content.route, route)
+  }
+})
+
+test('地图概述和多彩名教程只指出真实区域，不触发安装、改名或推送', () => {
+  for (const id of ['maps-online-page', 'levels-page', 'rename-editor']) {
+    const step = tutorialSteps.find(step => step.id === id)
+    assert.equal(step.prepare, undefined)
+    assert.equal(step.cleanup, undefined)
+    assert.equal(step.target, `[data-tutorial="${id}"]`)
+  }
 })
 
 test('每一步都有 id / 标题 key / 正文 key，且是教程域下的静态 key', () => {

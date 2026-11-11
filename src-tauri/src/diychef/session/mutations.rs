@@ -1,5 +1,5 @@
 use super::{Session, check_draft, game_root, get, validate, view};
-use crate::diychef::{catalog, storage, target, validation};
+use crate::diychef::{catalog, prefer, storage, target, validation};
 use crate::{app_state::AppState, game, models::*, mods};
 fn recheck_target(state: &AppState, s: &Session) -> Result<(), String> {
     let config = state.config.load_or_default();
@@ -101,7 +101,7 @@ pub(crate) fn initialize(
         &s.mod_root,
         &s.target.id,
         expected,
-        b"Chef_Black_cat\r\n",
+        prefer::DEFAULT_CONTENT,
         true,
     )?;
     let v = view(&s)?;

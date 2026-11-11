@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn fixed_cache_children_reject_files_and_atomic_failure_leaves_no_record() {
+    let root = std::env::temp_dir().join(format!("chef-fixed-cache-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    assert_eq!(
+        directory_under(&root, CacheDirectory::Native).unwrap(),
+        root.join("cache/diychef-native")
+    );
+    fs::write(root.join("cache"), b"preserve").unwrap();
+    assert_eq!(
+        directory_under(&root, CacheDirectory::Native),
+        Err("diychef.previewUnsafeResource".into())
+    );
+    fs::remove_file(root.join("cache")).unwrap();
+    let directory = root.join("cache/diychef-native");
+    let file = directory.join(format!("{}.bin", "a".repeat(64)));
+    assert!(
+        write_atomic(&directory, &file, |output| {
+            output.write_all(b"partial")?;
+            Err(std::io::Error::other("fixture interruption"))
+        })
+        .is_err()
+    );
+    assert!(!file.exists());
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+    assert!(write_atomic(&directory, &root.join("prefer.txt"), |_| Ok(())).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn persistent_hit_miss_revision_and_input_boundary() {
     let directory = std::env::temp_dir().join(format!("chef-png-{}", uuid::Uuid::new_v4()));
     let mut png = Cursor::new(vec![]);
@@ -58,13 +87,67 @@ fn persistent_hit_miss_revision_and_input_boundary() {
 fn eviction_preserves_current_png_and_unrelated_files() {
     let directory = std::env::temp_dir().join(format!("chef-lru-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&directory).unwrap();
-    let current = directory.join("current.bin");
-    fs::write(directory.join("old.bin"), [0; 32]).unwrap();
+    let current = directory.join(format!("{}.bin", "a".repeat(64)));
+    let old = directory.join(format!("{}.bin", "b".repeat(64)));
+    fs::write(&old, [0; 32]).unwrap();
     fs::write(&current, [0; 32]).unwrap();
     fs::write(directory.join("other.txt"), "retain").unwrap();
+    fs::write(directory.join("unrelated-file.bin"), "retain").unwrap();
     prune(&directory, &current, 32).unwrap();
     assert!(current.is_file());
-    assert!(!directory.join("old.bin").exists());
+    assert!(!old.exists());
     assert!(directory.join("other.txt").exists());
+    assert_eq!(
+        fs::read(directory.join("unrelated-file.bin")).unwrap(),
+        b"retain"
+    );
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn clear_removes_generated_records_and_interrupted_writes_without_following_subdirectories() {
+    let root = std::env::temp_dir().join(format!("chef-cache-clear-{}", uuid::Uuid::new_v4()));
+    let directory = root.join("thumbnails");
+    fs::create_dir_all(&directory).unwrap();
+    let mut png = Cursor::new(vec![]);
+    image::DynamicImage::new_rgba8(512, 640)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    for key in ["chef-body-v1:first", "chef-body-v1:second"] {
+        access_in(&directory, key, Some(png.get_ref()), false).unwrap();
+    }
+    let temporary = directory.join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    fs::write(&temporary, b"interrupted").unwrap();
+    fs::write(directory.join("unrelated-cache.bin"), b"preserve").unwrap();
+    fs::write(root.join("outside-cache.bin"), b"preserve").unwrap();
+    let nested = directory.join(format!("{}.bin", "f".repeat(64)));
+    fs::create_dir(&nested).unwrap();
+    fs::write(nested.join("inside-cache.bin"), b"preserve").unwrap();
+    assert_eq!(clear_in(&directory).unwrap(), 2);
+    assert!(!temporary.exists());
+    assert_eq!(
+        fs::read(directory.join("unrelated-cache.bin")).unwrap(),
+        b"preserve"
+    );
+    assert_eq!(
+        fs::read(nested.join("inside-cache.bin")).unwrap(),
+        b"preserve"
+    );
+    assert_eq!(
+        fs::read(root.join("outside-cache.bin")).unwrap(),
+        b"preserve"
+    );
+    assert_eq!(clear_in(&directory).unwrap(), 0);
+    assert_eq!(clear_in(&root.join("missing")).unwrap(), 0);
+    assert!(
+        access_at(
+            &directory,
+            "chef-body-v1:odd-epoch",
+            Some(png.get_ref()),
+            false,
+            1
+        )
+        .is_err()
+    );
+    fs::remove_dir_all(root).unwrap();
 }

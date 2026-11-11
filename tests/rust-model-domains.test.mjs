@@ -8,6 +8,8 @@ const read = file => readText(resolve(root, file))
 const owners = {
   app: ['AppUpdateChannelEvent', 'AppUpdateChannelStatus', 'AppUpdateCheckResult', 'AppUpdateInfo', 'AppUpdatePhaseEvent', 'DashboardData', 'RustLog'],
   config: ['AppConfig', 'AuthConfig', 'LaunchConfig', 'PublicConfig', 'SettingsPatch', 'TokenPatch'],
+  chef_preview: ['ChefPreviewBounds', 'ChefPreviewMesh', 'ChefPreviewScene'],
+  diychef: ['LocalModSnapshot', 'ChefTarget', 'ChefSource', 'ChefItem', 'ChefHat', 'ChefReference', 'HatReference', 'ChefEntry', 'ChefSelection', 'ChefDocumentRow', 'ChefDiagnostic', 'ChefChange', 'ChefValidation', 'ChefDraft', 'ChefEditorSnapshot', 'ChefEditorOpen'],
   game: ['BepInExInfo', 'DiyLevelInfo', 'GameConfig', 'GameInfo', 'GameRuntime', 'WinhttpState'],
   levels: ['LevelSetFlattenCandidate', 'LevelSetFlattenReport', 'LevelSetImportResult', 'LevelSetInfo', 'LevelSetLayout', 'LevelSetPlugin', 'LevelSetScanProgress', 'LevelSetZipProgress', 'MapInstallOrigin', 'StagedMapSource', 'ZipLevelSet', 'ZipLevelSetPlugin'],
   maps: ['AssetVersionEntry', 'MapInfo', 'MapRelationSnapshot', 'MapRelationSnapshots', 'MapRepositoryConfig', 'RequiredFramework'],
@@ -36,7 +38,7 @@ test('Shared models have one domain owner and keep the existing root interface',
   for (const names of Object.values(exports)) names.sort()
   assert.deepEqual(Object.keys(exports).sort(), Object.keys(owners).sort())
   for (const [owner, names] of Object.entries(owners)) {
-    assert.match(entry, new RegExp(`^mod ${owner};$`, 'm'))
+    assert.match(entry, new RegExp(`^(?:pub\\(crate\\) )?mod ${owner};$`, 'm'))
     assert.deepEqual(exports[owner], [...names].sort(), owner)
     const definitions = [...read(`${owner}.rs`).matchAll(/^pub (?:struct|enum) (\w+)/gm)].map(match => match[1]).sort()
     assert.deepEqual(definitions, [...names].sort(), owner)

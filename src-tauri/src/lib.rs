@@ -203,6 +203,7 @@ pub fn run() {
             commands::diychef_editor::save_diychef_config,
             commands::diychef_preview::get_diychef_preview,
             commands::diychef_preview::read_diychef_preview_asset,
+            commands::diychef_preview::clear_diychef_cache,
             commands::diychef_thumbnail::diychef_thumbnail_cache,
             commands::diychef_thumbnail::get_diychef_preview_fingerprint,
             commands::dashboard::rebind_local_mods,

@@ -7,10 +7,10 @@ import {
   NCollapseItem,
   NDrawer,
   NDrawerContent,
-  NEmpty,
   NFloatButton,
   NTag,
 } from 'naive-ui'
+import ContentState from '../components/ContentState.vue'
 import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
 import { t, pickI18n } from '../i18n'
 import { api } from '../services/tauri'
@@ -58,7 +58,7 @@ import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
 import type { InstallSource, LevelSetInfo, MapInfo, ModRepository } from '../types'
-import { withDemoMaps } from '../tutorial/demo'
+import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMapSourceNodes, withDemoMods } from '../tutorial/demo'
 import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
 
 /**
@@ -114,7 +114,10 @@ const message = useNotify()
 const { blockModOperation: gameBlocked } = useGameOperationGate()
 import { useMapSources } from '../composables/useMapSources'
 
-const { mods, game, config, load, ensureLoaded } = useDashboard()
+const { mods: realMods, game: realGame, config: realConfig, load, ensureLoaded } = useDashboard()
+const mods = computed(() => withDemoMods(realMods.value))
+const game = computed(() => withDemoGame(realGame.value))
+const config = computed(() => withDemoConfig(realConfig.value))
 const { highlightId } = useFocusHighlight()
 const { linkToLevelSets } = useLevelSetLink()
 /** 缺依赖的落点：MOD 安装页里那张能补上依赖的仓库卡片（与 MOD 管理页一致）。 */
@@ -130,7 +133,7 @@ const { linkToModRepository } = useModRepositoryLink()
  * 忙碌状态也只能有一个真相。
  */
 const {
-  maps: realMaps, sourceNodes, loading, refreshing, queued, preparingSources, refreshingSources, installing, refreshingAll, anyRefreshing,
+  maps: realMaps, sourceNodes: realSourceNodes, loading, refreshing, queued, preparingSources, refreshingSources, installing, refreshingAll, anyRefreshing,
   loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
 } = useMapSources()
 /**
@@ -142,7 +145,9 @@ const {
  * 全都读 `maps.value`，这里换掉数据源即可，展示逻辑一行不用动。
  */
 const maps = computed<MapInfo[]>(() => withDemoMaps(realMaps.value))
-const sets = ref<LevelSetInfo[]>([])
+const sourceNodes = computed(() => withDemoMapSourceNodes(realSourceNodes.value))
+const realSets = ref<LevelSetInfo[]>([])
+const sets = computed(() => withDemoLevelSets(realSets.value))
 /**
  * 本地关卡集扫描的唯一入口。
  *
@@ -302,8 +307,9 @@ const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } =
  * 拿到。失败不影响列表展示：最坏是状态停在「无法检测更新」那一档。
  */
 async function loadLevelSets() {
+  if (demoActive.value) return
   try {
-    sets.value = await scanLevelSets()
+    realSets.value = await scanLevelSets()
   } catch (reason) {
     message.warning(backendMessageOf(reason))
   }
@@ -323,6 +329,7 @@ async function loadLevelSets() {
 watch(maps, (list) => { void prefetchAvatars(list) }, { immediate: true })
 
 onMounted(() => {
+  if (demoActive.value) return
   /*
    * 依赖提示与安装前检查都读 Dashboard 的 MOD 列表，而 Dashboard 由页面
    * 自己按需加载。缺少这一步时直接进本页会判不出「依赖缺失」，安装前置检查
@@ -335,6 +342,13 @@ onMounted(() => {
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
   if (pending) void startDropInstall(pending)
+})
+
+watch(demoActive, active => {
+  if (active) return
+  void ensureLoaded()
+  void loadMaps()
+  void loadLevelSets()
 })
 
 /** 展示名：多语言表 → 单语言镜像 → 仓库坐标。 */
@@ -613,7 +627,7 @@ const { acceptDrop } = useDropRouting()
  */
 const { dragActive } = useFileDrop({
   accept: ['zip', 'dll'],
-  busy: () => importing.value,
+  busy: () => demoActive.value || importing.value,
   onDrop: (path) => {
     void (async () => {
       if (await acceptDrop(path, 'map')) await startDropInstall(path)
@@ -696,14 +710,14 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
 
   <PageLoading :show="pageLoading">
     <template #status>{{ t('levelSet.readingMapSources') }}</template>
-    <n-empty v-if="!pageLoading && !tree.length" class="empty" :description="emptyDescription" />
+    <ContentState v-if="!pageLoading && !tree.length" :description="emptyDescription" data-tutorial="maps-online-page" />
 
     <!--
       三层折叠树，与 MOD 安装页同形：源（计数 + 刷新）→ 分类（计数 + 刷新）
       → 卡片网格。层级、缩进与刷新按钮的位置都与 MOD 安装页一致 —— 两页在
       用户眼里是同一件事（「把线上这个东西装到本地」），不该是两套长相。
     -->
-    <SourceDirectory v-else :nodes="tree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
+    <SourceDirectory v-else data-tutorial="maps-online-page" :nodes="tree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
       :busy="sourceRefreshing" @refresh="refreshSource" @update:expanded="setOpenSources" v-slot="{ node }">
         <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
           <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
@@ -920,7 +934,4 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
   margin: 2px 28px 6px 28px;
 }
 
-.empty {
-  padding: 48px 0;
-}
 </style>

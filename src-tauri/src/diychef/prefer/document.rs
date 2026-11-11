@@ -96,7 +96,7 @@ impl Document {
 
     fn line(text: &str, ending: &str, seen: &mut HashSet<String>, lines: &mut Vec<Line>) {
         let tokens: Vec<_> = text.split([' ', '\t']).filter(|s| !s.is_empty()).collect();
-        let kind = if text.contains("LOBBYSWITCHCHEF=TRUE") {
+        let kind = if text.contains(super::SWITCH_LINE) {
             LineKind::Switch
         } else if tokens.is_empty() {
             LineKind::Blank

@@ -3,6 +3,7 @@ use crate::diychef::preview::{
     assembly::{Tree, array, multiply, number},
     geometry::{Geometry, transform},
 };
+use std::borrow::Cow;
 use unityfs::{
     UnityValue as V,
     classes::{TryFromUnityValue, mesh::Mesh},
@@ -197,8 +198,8 @@ pub(super) fn texture(
     )?;
     let map = store.object(t)?;
     let mut bytes = match map.get("image data").or_else(|| map.get("image_data")) {
-        Some(V::Bytes(b)) => b.clone(),
-        _ => vec![],
+        Some(V::Bytes(b)) => Cow::Borrowed(b.as_slice()),
+        _ => Cow::Borrowed(&[] as &[u8]),
     };
     if let Some(V::Map(s)) = map.get("m_StreamData") {
         let size = s.get("size").and_then(V::as_i64).unwrap_or_default();
@@ -211,10 +212,13 @@ pub(super) fn texture(
             if offset < 0 || size > 128 * 1024 * 1024 {
                 return Err("diychef.previewLimit".into());
             }
-            bytes = store.stream(t.file, name, offset as usize, size as usize)?;
+            bytes = Cow::Owned(store.stream(t.file, name, offset as usize, size as usize)?);
         }
     }
     let rgba = crate::unity_assets::decode_texture(&map, &bytes)?;
+    // Decoded pixels no longer need either compressed source buffer.
+    drop(bytes);
+    drop(map);
     let image = image::DynamicImage::ImageRgba8(rgba).thumbnail(1024, 1024);
     let mut out = std::io::Cursor::new(vec![]);
     image

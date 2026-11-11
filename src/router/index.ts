@@ -7,6 +7,7 @@ export const routes = [
   { path: '/maps-online', name: 'maps-online', meta: { title: 'levelSet.download' }, component: () => import('../views/MapsOnlineView.vue') },
   { path: '/levels', name: 'levels', meta: { title: 'levelSet.title' }, component: () => import('../views/LevelsView.vue') },
   { path: '/rename', name: 'rename', meta: { title: 'rename.colorfulName' }, component: () => import('../views/RenameView.vue') },
+  { path: '/diychef', name: 'diychef', meta: { title: 'diychef.title' }, component: () => import('../views/DiyChefView.vue') },
   { path: '/tools', name: 'tools', meta: { title: 'nav.tools' }, component: () => import('../views/ToolsView.vue') },
   { path: '/settings', name: 'settings', meta: { title: 'nav.settings' }, component: () => import('../views/SettingsView.vue') },
   // 地图发布页：作者专用，不进侧栏；工具页入口收起后由标题栏连点版本号解锁

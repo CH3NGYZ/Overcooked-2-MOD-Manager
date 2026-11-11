@@ -17,7 +17,7 @@ registerHooks({
     if (url.endsWith('/src/services/tauri.ts')) return {
       format: 'module', shortCircuit: true,
       source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
-        export const watchGameState = async () => () => {}
+        export const watchGameState = async callback => { globalThis.__gameStateEvent = callback; return () => {} }
         export const watchLevelSetCompression = async callback => { globalThis.__compressionEvent = callback; return () => {} }
         export const watchLevelSetScan = async () => () => {}`,
     }
@@ -31,12 +31,12 @@ registerHooks({
   },
 })
 
-const { useDashboard } = await import('../src/composables/useDashboardStore.ts')
+const { useDashboard, startGameWatch } = await import('../src/composables/useDashboardStore.ts')
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
 const { useLevelSetScan } = await import('../src/composables/useLevelSetScan.ts')
 const { levelSetIsRefreshing } = await import('../src/levelSetStatus.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-function deferred() { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
+function deferred() { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 
 test('online MOD/map results publish while local scans remain pending; local scans single-flight', async () => {
   const mods = deferred(), sets = deferred()
@@ -58,7 +58,7 @@ test('online MOD/map results publish while local scans remain pending; local sca
   assert.equal(modScans, 1)
   assert.equal(setScans, 1)
   assert.strictEqual(scan, duplicate)
-  mods.resolve([{ dll_file: 'local.dll', version: '1.0' }])
+  mods.resolve({ generation: 1, mods: [{ dll_file: 'local.dll', version: '1.0' }] })
   sets.resolve([{ dir_name: 'local-map', name: 'Fast', author: 'A', enabled: true, version: '1.0' }])
   await scan
   await tick()
@@ -69,7 +69,7 @@ test('online MOD/map results publish while local scans remain pending; local sca
 test('local MOD results publish without waiting for a slow summary; a failed online map read preserves local results', async () => {
   const base = deferred()
   globalThis.__loadingApi.dashboard = () => base.promise
-  globalThis.__loadingApi.localMods = async () => [{ dll_file: 'new.dll', version: '3.0' }]
+  globalThis.__loadingApi.localMods = async () => ({ generation: 2, mods: [{ dll_file: 'new.dll', version: '3.0' }] })
   globalThis.__loadingApi.maps = async () => { throw new Error('offline') }
   const dashboard = useDashboard(), maps = useMapSources(), local = useLevelSetScan()
   const reload = dashboard.load()
@@ -200,13 +200,13 @@ test('local metadata and each arriving source reconcile bindings in both arrival
     localMods:async()=>{scans++;return scan.promise},
     rebindLocalMods:async(installed)=>{calls.push(installed.map(m=>m.dll_file));return installed.map(m=>({...m,repository_id:repos.length?'arrived':null,repository_ids:repos.length?['arrived']:[],status:repos.length?'unknown':'bound_repository_missing',labels:repos.length?['unknown']:['bound_repository_missing']}))},
   }
-  const loading=d.loadLocalMods();scan.resolve([missing]);await loading
+  const loading=d.loadLocalMods();scan.resolve({generation:3,mods:[missing]});await loading
   repos=[{id:'arrived',plugin_guid:'known.guid'}]
   await d.reloadConfig()
   assert.equal(d.mods.value[0].repository_id,'arrived','TOML arrival must reconcile the already-scanned local snapshot')
   assert.equal(d.mods.value[0].labels.includes('bound_repository_missing'),false)
   assert.equal(scans,1)
-  globalThis.__loadingApi.localMods=async()=>{scans++;return[missing]}
+  globalThis.__loadingApi.localMods=async()=>{scans++;return{generation:4,mods:[missing]}}
   await d.loadLocalMods()
   assert.equal(d.mods.value[0].repository_id,'arrived','scan completion must reconcile against repositories that arrived earlier')
   assert.ok(calls.length>=2)
@@ -238,4 +238,98 @@ test('conversion status is independent of local scanning and receives queue even
   globalThis.__compressionEvent(event)
   assert.equal(useLevelSetScan().scanning.value, false)
   assert.deepEqual(status.compression.value, event)
+})
+
+
+test('game root/runtime changes reject stale scans, binding responses and their finalizers', async () => {
+  const d = useDashboard()
+  const config = (path, runtime = 'native') => ({repositories: [], game: {path, runtime}})
+  d.applyConfigSnapshot(config('A'))
+  globalThis.__loadingApi = {localMods: async () => ({generation: 20, mods: [{dll_file: 'A.dll'}]})}
+  await d.loadLocalMods()
+  assert.equal(d.modsGeneration.value, 20)
+  const old = deferred(), fresh = deferred()
+  globalThis.__loadingApi.localMods = () => old.promise
+  const oldLoad = d.loadLocalMods()
+  d.applyConfigSnapshot(config('B'))
+  assert.equal(d.modsGeneration.value, 0)
+  assert.equal(d.modsStatus.value, 'idle')
+  assert.deepEqual(d.mods.value, [])
+  globalThis.__loadingApi.localMods = () => fresh.promise
+  const newLoad = d.loadLocalMods()
+  old.resolve({generation: 21, mods: [{dll_file: 'stale.dll'}]})
+  await oldLoad
+  assert.equal(d.modsStatus.value, 'loading')
+  assert.equal(d.modsLoading.value, true)
+  fresh.resolve({generation: 22, mods: [{dll_file: 'B.dll'}]})
+  await newLoad
+  assert.equal(d.mods.value[0].dll_file, 'B.dll')
+  assert.equal(d.modsGeneration.value, 22)
+  d.applyConfigSnapshot({...config('B'), repositories: [{id: 'source-only'}]})
+  await tick()
+  assert.equal(d.modsGeneration.value, 22, 'source changes retain trusted DLL generation')
+  const staleBinding = deferred()
+  globalThis.__loadingApi.rebindLocalMods = () => staleBinding.promise
+  d.applyConfigSnapshot({...config('B'), repositories: [{id: 'new-source'}]})
+  d.applyConfigSnapshot(config('B', 'wine'))
+  assert.equal(d.modsGeneration.value, 0, 'runtime changes invalidate even with unchanged path')
+  staleBinding.resolve([{dll_file: 'old-binding.dll'}])
+  await tick()
+  assert.deepEqual(d.mods.value, [])
+  assert.equal(d.modsStatus.value, 'idle')
+})
+
+test('a game path event rejects an old scan failure and a late base summary cannot roll back a new root', async () => {
+  const d = useDashboard(), stale = deferred(), base = deferred()
+  startGameWatch()
+  globalThis.__gameStateEvent({path: 'B', kitchen_running: false})
+  globalThis.__loadingApi = {localMods: () => stale.promise, dashboard: () => base.promise}
+  const oldLoad = d.loadLocalMods(), oldBase = d.loadBase()
+  d.applyConfigSnapshot({repositories: [], game: {path: 'C', runtime: 'native'}})
+  globalThis.__gameStateEvent({path: 'C', kitchen_running: false})
+  globalThis.__loadingApi.localMods = async () => ({generation: 30, mods: [{dll_file: 'C.dll'}]})
+  await d.loadLocalMods()
+  stale.reject(new Error('stale failure'))
+  await oldLoad
+  base.resolve({config: {repositories: [], game: {path: 'B', runtime: 'wine'}}, game: {path: 'B'}})
+  await oldBase
+  assert.equal(d.config.value.game.path, 'C')
+  assert.equal(d.game.value.path, 'C')
+  assert.equal(d.mods.value[0].dll_file, 'C.dll')
+  assert.equal(d.modsGeneration.value, 30)
+  assert.equal(d.modsError.value, '')
+})
+
+
+test('the first summary after an explicit root change does not invalidate its concurrent fresh scan twice', async () => {
+  const d = useDashboard(), scan = deferred(), base = deferred()
+  d.applyConfigSnapshot({repositories: [], game: {path: 'D', runtime: 'native'}})
+  globalThis.__loadingApi = {localMods: () => scan.promise, dashboard: () => base.promise}
+  const reload = d.load()
+  base.resolve({config: {repositories: [], game: {path: 'D', runtime: 'native'}}, game: {path: 'D'}})
+  await tick()
+  assert.equal(d.modsStatus.value, 'loading')
+  scan.resolve({generation: 40, mods: [{dll_file: 'D.dll'}]})
+  await reload
+  assert.equal(d.modsGeneration.value, 40)
+  assert.equal(d.mods.value[0].dll_file, 'D.dll')
+  assert.equal(d.modsStatus.value, 'ready')
+})
+
+
+test('a refresh discovering a new root resumes a fresh scan after invalidating its parallel request', async () => {
+  const d = useDashboard(), old = deferred()
+  let scans = 0
+  globalThis.__loadingApi = {
+    dashboard: async () => ({config: {repositories: [], game: {path: 'E', runtime: 'native'}}, game: {path: 'E'}}),
+    localMods: () => ++scans === 1 ? old.promise : Promise.resolve({generation: 42, mods: [{dll_file: 'E.dll'}]}),
+  }
+  const reload = d.refresh()
+  await tick()
+  old.resolve({generation: 41, mods: [{dll_file: 'overtaken.dll'}]})
+  await reload
+  assert.equal(scans, 2)
+  assert.equal(d.modsGeneration.value, 42)
+  assert.equal(d.mods.value[0].dll_file, 'E.dll')
+  assert.equal(d.modsStatus.value, 'ready')
 })

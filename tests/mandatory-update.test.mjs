@@ -80,7 +80,8 @@ test('UI hides cancellation; native cancel, exit and close share the atomic upda
     assert.match(system, new RegExp(`pub (?:async )?fn ${name}[^]*?archive::app_update_in_progress\\(\\)[^]*?update.inProgress`))
   }
   const lib = source('src-tauri/src/lib.rs')
-  assert.match(lib, /app_update_in_progress\(\)[\s\S]*?CloseRequested[\s\S]*?api.prevent_close\(\)/)
+  assert.match(lib, /if window.label\(\) == "main" \{\s*if let tauri::WindowEvent::CloseRequested[\s\S]*?api.prevent_close\(\)/)
   assert.match(lib, /ExitRequested[\s\S]*?code: None[\s\S]*?app_update_in_progress\(\)[\s\S]*?api.prevent_exit\(\)/)
-  assert.match(source('src/composables/usePublishLeaveGuard.ts'), /appUpdateState.stage === 'installing' \|\| appUpdateState.stage === 'handoff'/)
+  assert.match(source('src/composables/useAppCloseGuard.ts'), /appUpdateState.stage === 'installing' \|\| appUpdateState.stage === 'handoff'/)
+  assert.match(source('src/composables/usePageLeaveGuard.ts'), /appCloseBlocked/)
 })

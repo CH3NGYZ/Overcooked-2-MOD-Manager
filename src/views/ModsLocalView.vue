@@ -7,8 +7,9 @@ import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } f
 import { useDialog } from 'naive-ui'
 import { useNotify } from '../useNotify'
 import {
-  NCollapse, NCollapseItem, NEmpty, NFloatButton, NTag,
+  NCollapse, NCollapseItem, NFloatButton, NTag,
 } from 'naive-ui'
+import ContentState from '../components/ContentState.vue'
 import {
   FolderOpenOutline, RefreshOutline,
 } from '@vicons/ionicons5'
@@ -37,7 +38,7 @@ import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
-import { withDemoMods } from '../tutorial/demo'
+import { demoActive, withDemoConfig, withDemoGame, withDemoMods } from '../tutorial/demo'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
 import HeaderBulkSwitch from '../components/HeaderBulkSwitch.vue'
@@ -71,15 +72,18 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, ensureLoaded, modsLoading: loading, mods: scannedMods, game, config } = useDashboard()
+const { load, ensureLoaded, modsLoading: realLoading, mods: scannedMods, game: realGame, config: realConfig } = useDashboard()
+const loading = computed(() => !demoActive.value && realLoading.value)
+const game = computed(() => withDemoGame(realGame.value))
+const config = computed(() => withDemoConfig(realConfig.value))
 
 const { blockModOperation } = useGameOperationGate()
 
 /**
- * 本页展示的 MOD 列表 = 真实 Dashboard ∪ 教程示例卡。
+ * 教程期间整批展示示例 MOD，真实扫描结果只保留在 store。
  *
  * 只改展示层、不改 store：教程一结束 `withDemoMods` 立刻返回原始数组，
- * 页面不需要任何清理。真实列表非空时也不会混进示例（见 `tutorial/demo.ts`）。
+ * 页面不需要任何清理；真实列表非空与在飞结果均不影响示例。
  */
 const mods = computed(() => withDemoMods(scannedMods.value))
 
@@ -247,11 +251,13 @@ const busy = ref<Record<string, boolean>>({})
 const { expansion, modCardKey, onCardClick, togglePackage } = useModsLocalCardExpansion()
 // 切页面复用已有 Dashboard；开关/删除后仍用 load() 取最新扫描结果
 onMounted(() => {
+  if (demoActive.value) return
   void ensureLoaded()
   // 从地图页「去安装」跳过来：路径已暂存在模块里，直接接着走预览
   const pending = takePendingDrop('mod')
   if (pending) void startDropInstall(pending)
 })
+watch(demoActive, active => { if (!active) void ensureLoaded() })
 
 /**
  * 本地刷新：重新读取 Dashboard，重扫 BepInEx/plugins 并重算标签。
@@ -997,7 +1003,7 @@ const { acceptDrop } = useDropRouting()
  */
 const { dragActive } = useFileDrop({
   accept: ['dll', 'zip'],
-  busy: () => installSourceBusy.value,
+  busy: () => demoActive.value || installSourceBusy.value,
   onDrop: (path) => {
     void (async () => {
       if (await acceptDrop(path, 'mod')) await startDropInstall(path)
@@ -1266,7 +1272,7 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
   -->
   <PageLoading :show="loading">
     <template #status>{{ t('common.loading') }}</template>
-    <n-empty v-if="!loading && !visibleGroups.length" :description="emptyDescription" class="empty" />
+    <ContentState v-if="!loading && !visibleGroups.length" :description="emptyDescription" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"

@@ -3,14 +3,16 @@ import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NLog, NSelect, NTag, useDialog } from 'naive-ui'
-import { BuildOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BookOutline, BuildOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, PersonOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
 import { clearAvatarCache } from '../avatars'
+import { clearChefThumbnailCache } from '../composables/useDiyChefThumbnails'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
+import TutorialManager from '../components/tutorial/TutorialManager.vue'
 import { api } from '../services/tauri'
 import type { RustLog } from '../types'
 import { replayTutorial } from '../tutorial/engine'
@@ -23,6 +25,7 @@ const dialog = useDialog()
 const router = useRouter()
 const working = ref<Record<string, boolean>>({})
 const logOpen = ref(false)
+const tutorialManagerOpen = ref(false)
 /** 当前弹窗在看哪一份日志；清空按这个走，不再猜路径。 */
 const logKind = ref<LogKind | null>(null)
 const logTitle = ref('')
@@ -216,6 +219,20 @@ async function clearLevels() {
     clearingLevels.value = false
   }
 }
+
+const clearingChefs = ref(false)
+async function clearChefs() {
+  if (clearingChefs.value) return
+  clearingChefs.value = true
+  try {
+    const removed = await clearChefThumbnailCache()
+    message.success(t('tools.clearedChefCache', { count: removed }))
+  } catch (reason) {
+    message.error(backendMessageOf(reason))
+  } finally {
+    clearingChefs.value = false
+  }
+}
 </script>
 
 <template>
@@ -269,6 +286,10 @@ async function clearLevels() {
     <SettingsRow :icon="MapOutline" :title="t('tools.clearLevelCache')"
       :description="t('tools.deletesParsedMapInfoItWillBeReparsedTheNextTimeYouOpenTheMapPage')"
       clickable @click="clearLevels" />
+    <SettingsRow :icon="PersonOutline" :title="t('tools.clearChefCache')"
+      :description="t('tools.clearChefCacheDescription')" data-clear-chef-cache
+      role="button" tabindex="0" :aria-busy="clearingChefs" clickable @click="clearChefs"
+      @keydown.enter.prevent="clearChefs" @keydown.space.prevent="clearChefs" />
   </SettingsGroup>
 
   <SettingsGroup :title="t('tools.advanced')" data-tutorial="tools-advanced">
@@ -284,10 +305,14 @@ async function clearLevels() {
     -->
     <SettingsRow :icon="RefreshOutline" :title="t('tutorial.replay')"
       :description="t('tutorial.replayDescription')" clickable @click="replayTutorial" />
+    <SettingsRow :icon="BookOutline" :title="t('tutorial.manager.title')"
+      :description="t('tutorial.manager.description')" data-tutorial-manager-entry role="button" tabindex="0" aria-haspopup="dialog"
+      clickable @click="tutorialManagerOpen = true" @keydown.enter.prevent="tutorialManagerOpen = true" @keydown.space.prevent="tutorialManagerOpen = true" />
   </SettingsGroup>
 
   <!-- 回收站浏览弹窗：唯一入口就在上面的「打开回收站」 -->
   <RecycleBinDialog v-model:show="recycleOpen" />
+  <TutorialManager v-model:show="tutorialManagerOpen" />
 
   <!--
     日志查看：fill 让弹窗一打开就是允许的最大尺寸。

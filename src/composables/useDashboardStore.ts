@@ -1,6 +1,7 @@
 import { computed, ref, shallowRef } from 'vue'
 import { api, watchGameState } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
+import { demoActive } from '../tutorial/demo'
 import type { Dashboard, GameInfo, PublicConfig, InstalledMod } from '../types'
 
 /**
@@ -16,20 +17,51 @@ const error = ref('')
 const localMods = shallowRef<InstalledMod[]>([])
 const modsLoading = ref(false)
 const modsError = ref('')
+const modsGeneration = shallowRef(0)
+const modsStatus = shallowRef<'idle' | 'loading' | 'ready' | 'error'>('idle')
 let modsLoaded = false
+// Request identity is frontend-only; trusted generations come exclusively from IPC.
+let modsRequestRevision = 0
 let basePending: Promise<void> | undefined
 let modsPending: Promise<void> | undefined
 let updateRevision = 0
 let configRevision = 0
 let gameStateRevision = 0
 let latestGame: GameInfo | undefined
+let gameIdentity: GameInfo | undefined
 let bindingRevision = 0
 let bindingPending: Promise<void> | undefined
+
+/** A different game root/runtime invalidates both metadata and its trusted scan token. */
+function invalidateLocalMods() {
+  modsRequestRevision += 1
+  modsPending = undefined
+  modsLoaded = false
+  modsLoading.value = false
+  modsStatus.value = 'idle'
+  modsGeneration.value = 0
+  modsError.value = ''
+  localMods.value = []
+  bindingRevision += 1
+  updateRevision += 1
+  const current = dashboard.value
+  if (current) dashboard.value = { ...current, mods: [], updates: [] }
+}
+
+function configGameChanged(before: PublicConfig | undefined, after: PublicConfig) {
+  return !!before?.game && !!after.game &&
+    (before.game.path !== after.game.path || before.game.runtime !== after.game.runtime)
+}
+
+function gamePathChanged(before: GameInfo | undefined, after: GameInfo) {
+  return !!before && before.path !== after.path
+}
 
 /** Both independently arriving lanes reconcile against the backend's current
  * repository configuration. Coalesce updates; reject responses overtaken by
  * a newer TOML or local scan without blocking either lane's initial display. */
 function rebindLocalMods(): Promise<void> {
+  if (demoActive.value) return Promise.resolve()
   bindingRevision += 1
   if (!modsLoaded || !localMods.value.length) return Promise.resolve()
   if (bindingPending) return bindingPending
@@ -37,6 +69,7 @@ function rebindLocalMods(): Promise<void> {
     let revision: number
     do {
       revision = bindingRevision
+      if (demoActive.value || !modsLoaded || !localMods.value.length) break
       const installed = localMods.value
       try {
         const rebound = await api.rebindLocalMods(installed)
@@ -46,7 +79,9 @@ function rebindLocalMods(): Promise<void> {
         const current = dashboard.value
         if (current) dashboard.value = { ...current, mods: rebound }
       } catch (reason) {
-        modsError.value = backendMessageOf(reason)
+        if (revision === bindingRevision && installed === localMods.value) {
+          modsError.value = backendMessageOf(reason)
+        }
       }
     } while (revision !== bindingRevision)
   })().finally(() => { bindingPending = undefined })
@@ -67,6 +102,8 @@ function rebindLocalMods(): Promise<void> {
  * 深响应会拖慢每次扫描结果的赋值。正确的做法就是浅引用 + 整对象替换。
  */
 function applyGame(value: GameInfo) {
+  if (gamePathChanged(gameIdentity, value)) invalidateLocalMods()
+  gameIdentity = value
   latestGame = value
   gameStateRevision += 1
   const current = dashboard.value
@@ -92,6 +129,7 @@ export function startGameWatch() {
  * 浏览器预览没有 IPC、旧安装包也没有这条命令 —— 都静默跳过，事件通道兜底。
  */
 async function recheckGameState() {
+  if (demoActive.value) return
   try {
     applyGame(await api.refreshGameState())
   } catch {
@@ -139,6 +177,7 @@ export function useDashboard() {
    * 既不遮罩也不禁用交互，避免刷新期间整页突然变灰、什么都点不了。
    */
   function loadBase(): Promise<void> {
+    if (demoActive.value) return Promise.resolve()
     if (basePending) return basePending
     const configBefore = dashboard.value?.config
     const initial = dashboard.value === null
@@ -150,13 +189,27 @@ export function useDashboard() {
         const value = await readDashboard()
         // A slow summary response must not roll back newer source configuration.
         const current = dashboard.value
+        const newerConfig = current && current.config !== configBefore
+        const config = newerConfig ? current.config : value.config
+        const game = newerConfig && configGameChanged(value.config, current.config) ? current.game : value.game
+        const identityChanged = configGameChanged(current?.config, config) || gamePathChanged(gameIdentity, game)
+        if (configGameChanged(current?.config, config)) {
+          invalidateLocalMods()
+          gameIdentity = undefined
+        } else if (gamePathChanged(gameIdentity, game)) invalidateLocalMods()
+        gameIdentity = game
+        latestGame = game
         dashboard.value = {
           ...value,
-          config: current && current.config !== configBefore ? current.config : value.config,
+          config,
+          game,
           mods: localMods.value,
-          updates: current?.updates ?? [],
+          updates: dashboard.value?.updates ?? [],
         }
         await rebindLocalMods()
+        // A root discovered by this summary may have overtaken the parallel
+        // scan. Resume once against the newly established identity.
+        if (identityChanged) await loadLocalMods()
       } catch (reason) {
         error.value = backendMessageOf(reason)
       } finally {
@@ -169,28 +222,40 @@ export function useDashboard() {
   }
 
   function loadLocalMods(): Promise<void> {
+    if (demoActive.value) return Promise.resolve()
     if (modsPending) return modsPending
     modsLoading.value = true
+    modsStatus.value = 'loading'
     modsError.value = ''
+    const revision = ++modsRequestRevision
     modsPending = (async () => {
       try {
-        localMods.value = await api.localMods()
+        const snapshot = await api.localMods()
+        if (revision !== modsRequestRevision) return
+        localMods.value = snapshot.mods
+        modsGeneration.value = snapshot.generation
+        modsStatus.value = 'ready'
         modsLoaded = true
         updateRevision += 1
         const current = dashboard.value
         if (current) dashboard.value = { ...current, mods: localMods.value }
         await rebindLocalMods()
       } catch (reason) {
+        if (revision !== modsRequestRevision) return
+        modsStatus.value = 'error'
         modsError.value = backendMessageOf(reason)
       } finally {
-        modsLoading.value = false
-        modsPending = undefined
+        if (revision === modsRequestRevision) {
+          modsLoading.value = false
+          modsPending = undefined
+        }
       }
     })()
     return modsPending
   }
 
   async function checkModUpdates() {
+    if (demoActive.value) return
     const revision = ++updateRevision
     const installed = localMods.value
     const updates = await api.modUpdates(installed).catch(() => undefined)
@@ -219,6 +284,7 @@ export function useDashboard() {
    * （一次刷新要经过父源 + 多个子源，全量扫描会被重复十几次）。
    */
   async function reloadConfig(options: { throwOnError?: boolean } = {}) {
+    if (demoActive.value) return
     const revision = ++configRevision
     try {
       const config = await api.config()
@@ -229,7 +295,11 @@ export function useDashboard() {
         await loadBase()
         return
       }
-      dashboard.value = { ...current, config }
+      if (configGameChanged(current.config, config)) {
+        invalidateLocalMods()
+        gameIdentity = undefined
+      }
+      dashboard.value = { ...dashboard.value!, config }
       await rebindLocalMods()
     } catch (reason) {
       error.value = backendMessageOf(reason)
@@ -248,7 +318,11 @@ export function useDashboard() {
     configRevision += 1
     const current = dashboard.value
     if (!current) return
-    dashboard.value = { ...current, config }
+    if (configGameChanged(current.config, config)) {
+      invalidateLocalMods()
+      gameIdentity = undefined
+    }
+    dashboard.value = { ...dashboard.value!, config }
     void rebindLocalMods()
   }
 
@@ -257,8 +331,17 @@ export function useDashboard() {
    * 需要最新数据时由刷新引擎或用户手动刷新触发。
    */
   async function ensureLoaded() {
+    if (demoActive.value) return
     if (!modsLoaded) void loadLocalMods()
     if (!dashboard.value) await loadBase()
+  }
+
+  /** Editors need a successfully completed DLL scan, including an empty result. */
+  async function ensureLocalModsLoaded() {
+    if (demoActive.value) return modsGeneration.value
+    if (modsStatus.value !== 'ready') await loadLocalMods()
+    if (modsStatus.value !== 'ready') throw new Error(modsError.value)
+    return modsGeneration.value
   }
 
   const config = computed<PublicConfig | null>(() => dashboard.value?.config ?? null)
@@ -272,8 +355,8 @@ export function useDashboard() {
   })
 
   return {
-    dashboard, loading, backgroundLoading, error, modsLoading, modsError,
+    dashboard, loading, backgroundLoading, error, modsLoading, modsError, modsGeneration, modsStatus,
     config, game, mods, enabledModCount, updateCount, frameworkOk,
-    load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, ensureLoaded, refresh, recheckGameState,
+    load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, ensureLoaded, ensureLocalModsLoaded, refresh, recheckGameState,
   }
 }

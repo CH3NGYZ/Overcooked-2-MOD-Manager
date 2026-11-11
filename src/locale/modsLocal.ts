@@ -7,6 +7,13 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const modsLocal: DomainMessages = {
+  installBeforeManaging: {
+    'zh-CN': '未安装 {name}，请安装后再来管理',
+    'zh-TW': '未安裝 {name}，請安裝後再來管理',
+    en: '{name} is not installed. Install it before managing it here.',
+    ko: '{name}이(가) 설치되지 않았습니다. 설치한 후 여기에서 관리하세요.',
+    ja: '{name}がインストールされていません。インストールしてから管理してください。',
+  },
   // 名称
   name: {
     'zh-CN': '名称',

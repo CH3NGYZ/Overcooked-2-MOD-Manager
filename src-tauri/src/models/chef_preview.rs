@@ -23,6 +23,9 @@ pub struct ChefPreviewMesh {
 pub struct ChefPreviewScene {
     pub fingerprint: String,
     pub scene_version: u32,
+    /// Admission estimate for decoded frontend buffers and their GPU copies.
+    #[serde(default)]
+    pub estimated_bytes: usize,
     pub status: String,
     pub meshes: Vec<ChefPreviewMesh>,
     pub head_bounds: ChefPreviewBounds,

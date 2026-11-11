@@ -408,7 +408,7 @@ onBeforeUnmount(clearNativeSelection)
     </n-button>
   </Teleport>
 
-  <div class="rename-stage">
+  <div class="rename-stage" data-tutorial="rename-editor">
     <n-tabs v-model:value="stageName" class="stage-tabs" :tabs-padding="0" animated>
       <!-- 阶段一：输入名字 -->
       <n-tab-pane name="input">

@@ -46,6 +46,13 @@ export interface TutorialStep {
   when?: () => boolean
 }
 
+/** 播放顺序与管理目录共用同一份章节登记；步骤 id 保持全局唯一。 */
+export interface TutorialSection {
+  id: string
+  titleKey: string
+  steps: readonly TutorialStep[]
+}
+
 /**
  * `prepare` / `cleanup` 拿到的工具集。
  *

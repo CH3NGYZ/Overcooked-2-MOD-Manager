@@ -1,10 +1,10 @@
 //! Sessions hold backend-owned paths, baselines and bounded editor state.
 mod mutations;
-use mutations::check_live;
 pub(crate) use mutations::{initialize, save};
 
 use super::{
     catalog::{self, Catalog},
+    prefer,
     storage::{self, Stored},
     target, validation,
 };
@@ -18,6 +18,7 @@ pub(crate) struct ChefSessions {
 pub(crate) struct Session {
     pub id: String,
     pub game_root: PathBuf,
+    pub game_settings: GameConfig,
     pub mod_root: PathBuf,
     pub target: ChefTarget,
     pub catalog: Catalog,
@@ -61,6 +62,7 @@ pub(crate) fn open(
     let session = Session {
         id: uuid::Uuid::new_v4().to_string(),
         game_root: root,
+        game_settings: state.config.load_or_default().game,
         mod_root,
         target,
         catalog,
@@ -118,17 +120,13 @@ pub(crate) fn view(s: &Session) -> Result<ChefEditorSnapshot, String> {
         lobby_switch: draft.lobby_switch,
     };
     if s.stored.source.state == "missing" {
-        selection.entries = vec![ChefEntry {
-            entry_id: "default:black_cat".into(),
-            row_id: None,
-            chef_ref: ChefReference::Known {
-                chef_id: "native:Chef_Black_cat".into(),
-            },
-            hat_ref: HatReference::Known {
-                hat_id: "hat:".into(),
-            },
-        }];
+        selection = prefer::Document::parse(prefer::DEFAULT_CONTENT)?.selection(&s.catalog);
+        for entry in &mut selection.entries {
+            entry.entry_id = "default:black_cat".into();
+            entry.row_id = None;
+        }
         draft.entries = selection.entries.clone();
+        draft.lobby_switch = selection.lobby_switch;
     }
     let diagnostics = validation::validate(&s.stored.document, &s.catalog, &draft)?.diagnostics;
     Ok(ChefEditorSnapshot {
@@ -185,27 +183,33 @@ pub(crate) fn resolve_preview_context(
     chef_id: &str,
     hat_id: &str,
 ) -> Result<PreviewContext, String> {
-    let s = get(state, session_id)?;
-    check_live(state, &s)?;
-    let chef = s
-        .catalog
-        .chefs
-        .iter()
-        .find(|x| x.id == chef_id)
-        .ok_or("diychef.invalidResource")?;
-    let hat = s
-        .catalog
-        .hats
-        .iter()
-        .find(|x| x.id == hat_id)
-        .ok_or("diychef.invalidResource")?;
+    let (game_root, mod_root, chef, hat) = with_preview_session(state, session_id, |s| {
+        let chef = s
+            .catalog
+            .chefs
+            .iter()
+            .find(|x| x.id == chef_id)
+            .ok_or("diychef.invalidResource")?;
+        let hat = s
+            .catalog
+            .hats
+            .iter()
+            .find(|x| x.id == hat_id)
+            .ok_or("diychef.invalidResource")?;
+        Ok((
+            s.game_root.clone(),
+            s.mod_root.clone(),
+            chef.clone(),
+            hat.clone(),
+        ))
+    })?;
     if chef.resource_state == "invalid" || hat.resource_state == "invalid" {
         return Err("diychef.invalidResource".into());
     }
     let chef_directory = if chef.source_kind == "custom" {
         Some(target::child(
-            &s.game_root,
-            &s.mod_root,
+            &game_root,
+            &mod_root,
             &format!("Resources/{}", chef.config_name),
         )?)
     } else {
@@ -213,8 +217,8 @@ pub(crate) fn resolve_preview_context(
     };
     let hat_directory = if hat.kind == "custom" {
         Some(target::child(
-            &s.game_root,
-            &s.mod_root,
+            &game_root,
+            &mod_root,
             &format!("Resources/HATS/{}", hat.config_value),
         )?)
     } else {
@@ -222,7 +226,7 @@ pub(crate) fn resolve_preview_context(
     };
     Ok(PreviewContext {
         session_id: session_id.into(),
-        game_root: s.game_root,
+        game_root,
         chef_name: if chef.source_kind == "custom" {
             chef.config_name.clone()
         } else {
@@ -235,7 +239,51 @@ pub(crate) fn resolve_preview_context(
 }
 
 pub(crate) fn require_session(state: &AppState, id: &str) -> Result<(), String> {
-    get(state, id).map(|_| ())
+    with_preview_session(state, id, |_| Ok(()))
+}
+
+/// Preview is read-only: authorize the exact scan/target/root on every call,
+/// without probing processes, BepInEx backups or cloning the complete catalog.
+/// Save/initialize retain their independent live game-stopped checks.
+fn with_preview_session<T>(
+    state: &AppState,
+    id: &str,
+    select: impl FnOnce(&Session) -> Result<T, String>,
+) -> Result<T, String> {
+    let current_game = state.config.load_or_default().game;
+    let (root, mod_root, target, settings, value) = {
+        let sessions = state.diychef_sessions.lock().map_err(|e| e.to_string())?;
+        let s = sessions.values.get(id).ok_or("diychef.sessionExpired")?;
+        (
+            s.game_root.clone(),
+            s.mod_root.clone(),
+            s.target.clone(),
+            s.game_settings.clone(),
+            select(s)?,
+        )
+    };
+    if current_game != settings {
+        return Err("diychef.targetChanged".into());
+    }
+    // Empty settings use the root already authorized by a successful scan. A
+    // changed runtime/path invalidates that generation and must reopen a session.
+    let selected_path = if settings.path.trim().is_empty() {
+        root.as_path()
+    } else {
+        std::path::Path::new(&settings.path)
+    };
+    if game::selected_game_root(selected_path, &settings).map_err(|_| "diychef.targetChanged")?
+        != root
+        || target::mod_root(&root, &target)? != mod_root
+    {
+        return Err("diychef.targetChanged".into());
+    }
+    state
+        .local_mod_snapshot
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(target.generation, &root)?;
+    Ok(value)
 }
 
 #[cfg(test)]

@@ -23,8 +23,18 @@ test('四页只在页头操作区接入图标按钮，原动作与提示名称�
     }
   }
   for (const page of readdirSync(new URL('../src/views/', import.meta.url))) {
-    if (!pages.includes(page)) assert.doesNotMatch(read('src/views/' + page), /HeaderIconAction|HeaderBulkSwitch/, page)
+    if (!pages.includes(page) && page !== 'DiyChefView.vue') assert.doesNotMatch(read('src/views/' + page), /HeaderIconAction|HeaderBulkSwitch/, page)
   }
+  const chef = read('src/views/DiyChefView.vue')
+  const chefHeader = header(chef)
+  assert.equal((chefHeader.match(/<HeaderIconAction\b/g) ?? []).length, 3)
+  for (const [label, action] of [['diychef.reload', 'reload'], ['modsLocal.openFolder', 'openFolder']]) {
+    assert.ok(chefHeader.includes(`:label="t('${label}')"`), label)
+    assert.ok(chefHeader.includes(`@click="${action}"`), action)
+  }
+  assert.match(chefHeader, /<n-dropdown\b[^>]*placement="bottom-end"[^>]*@select="more">\s*<span\b[^>]*>\s*<HeaderIconAction\b[^>]*:label="t\('diychef\.more'\)"/)
+  assert.match(chef, /api\.openModFileLocation\(snapshot\.value\.target\.display_path\)/)
+  assert.match(chefHeader, /<HeaderSearch v-model:value="query"/)
 })
 
 test('两管理页共用受控图标批量开关，不改变聚合状态、过滤门控和禁用确认', () => {
@@ -48,19 +58,17 @@ test('两管理页共用受控图标批量开关，不改变聚合状态、过�
   assert.match(bulk, /event.key === 'Enter' \|\| event.key === ' '/)
 })
 
-test('四页搜索使用同一内容自适应输入，移除固定宽度与空清除占位', () => {
+test('四页搜索共用加宽且输入期间不伸缩的输入框，保留搜索与清除入口', () => {
   for (const page of pages) {
     const source = read('src/views/' + page)
     assert.match(header(source), /<HeaderSearch v-model:value="search"/)
     assert.doesNotMatch(source, /\.header-search\s*\{|<n-input v-model:value="search"|SearchOutline/)
   }
   const search = read('src/components/HeaderSearch.vue')
-  assert.match(search, /v-model:value="value" autosize :clearable="value.length > 0"/)
-  assert.match(search, /'header-search--empty': !value/)
-  assert.match(search, /max-width: 240px/)
+  assert.match(search, /v-model:value="value" :clearable="value.length > 0"/)
+  assert.doesNotMatch(search, /\bautosize\b|header-search--empty|n-input__input-mirror/)
+  assert.match(search, /width: min\(280px, 32vw\)/)
   assert.match(search, /'aria-label': t\('dialogs.search'\)/)
-  assert.match(search, /\.n-input__placeholder\) \{ position: static;/)
-  assert.match(search, /\.n-input__input-mirror\) \{ display: none;/)
 })
 
 test('页头图标有可访问名称，上方气泡复用原文字且保留按钮属性与忙碌态', () => {

@@ -2,12 +2,19 @@ import { ref } from 'vue'
 import { i18n } from '../locale/index.ts'
 import type {
   InstalledMod,
+  GameInfo,
+  LevelSetInfo,
+  LevelSetCompressionProgress,
+  LevelPreview,
+  LevelPreviewDetail,
   MapInfo,
   ReleaseAsset,
   ReleaseInfo,
   ModRepository,
+  PublicConfig,
   RepositoryReadme,
   RepositorySource,
+  SourceNode,
 } from '../types'
 
 /**
@@ -18,22 +25,18 @@ import type {
  * 教程里有几组步骤是「指着一张卡片讲」：MOD 管理页的本地卡片、MOD 安装页的
  * 仓库卡片、地图下载页的地图卡片。新用户磁盘上什么都没有、首次启动又可能
  * 连不上任何仓库源，那些列表就是空的 —— 高亮框没东西可框，用户也看不到
- * 卡片长什么样。所以在教程运行期间，前端把这三处列表换成示例数据。
+ * 卡片长什么样。所以在教程运行期间，前端把相关列表与摘要换成示例数据。
  *
- * ## 两个域，两条不同的合并规则
- *
- *   - **本地 MOD（`withDemoMods`）只在真实列表为空时补**：那是用户自己磁盘上
- *     的状态，有真卡就不该看见假卡。
- *   - **在线列表（`withDemoRepositories` / `withDemoSources` / `withDemoMaps`）
- *     在教程期间整体替换**：那里的内容取决于网络与用户配置，教程要讲的是固定的
+ * 本地 MOD、地图、在线条目、源树与概览在教程期间全部使用同一批示例。
+ * 真实列表即使非空也整体替换：教程要讲的是固定的
  *     「源分组 → 卡片 → 详情 → 版本」路径，保留真实条目会让步骤指到随机一张卡
  *     （甚至一张都没有）。教程结束后 `App.vue` 的 `onTutorialSettled` 会发起
- *     真实刷新，页面当场回到真实数据。
+ *     真实刷新，页面当场回到真实数据；真实请求迟到也只改变真实缓存。
  *
  * ## 边界（改动时不要越线）
  *
  *   · 只在**页面展示层**合并（`ModsLocalView` 的 `mods`、两个安装页的
- *     `repositories` / `sources` / `maps`），不写进 Dashboard 快照、配置或任何
+ *     `repositories` / `sources` / `maps` / `sets`），不写进 Dashboard 快照、配置或任何
  *     后端命令 —— 教程结束后页面 computed 当场回到真实数据，没有残留状态。
  *   · 示例仓库与示例地图的 owner 是一个不存在的账号，头像预取必须跳过
  *     （`isDemoOwner`）；示例条目的 README 由 `demoReadme` 直接给内置内容，
@@ -67,6 +70,22 @@ let demoMods: InstalledMod[] = []
 let demoRepositories: ModRepository[] = []
 let demoSources: RepositorySource[] = []
 let demoMaps: MapInfo[] = []
+let demoLevelSets: LevelSetInfo[] = []
+let demoMapSourceNodes: SourceNode[] = []
+let demoConfig: PublicConfig | null = null
+const DEMO_DIYLEVEL_DLL = 'oc2.tutorial.demo.DIYLevel.dll'
+const demoGame: GameInfo = {
+  path: 'C:\\OC2-Tutorial',
+  game_exists: true,
+  bepinex: { installed: true, has_residue: false, has_config: true, version: '5.4.23.2', backups: [] },
+  kitchen_running: false,
+  winhttp_state: 'modenabled',
+}
+const demoCompression: LevelSetCompressionProgress = {
+  running: false, sets_done: 0, sets_total: 0, set_name: '',
+  files_done: 0, files_total: 0, done: 0, total: 0,
+  converted: 0, skipped: 0, failed: 0, percent: 0, current: '',
+}
 
 function t(key: string): string {
   return i18n.global.t(key)
@@ -88,7 +107,7 @@ export function isDemoOwner(owner: string | null | undefined): boolean {
 }
 
 /**
- * 两张示例 MOD。
+ * 三张示例 MOD，与在线仓库和 DIYLevel 概览共用同一组身份。
  *
  * 故意不设 `plugin_name`：卡片标题的取值顺序是
  * `plugin_name → title → product_name → name`（`ModsLocalView` 的 `modTitle`），
@@ -102,6 +121,7 @@ function buildDemoMods(): InstalledMod[] {
       product_name: 'BepInEx.ConfigurationManager',
       original_filename: 'BepInEx.ConfigurationManager.dll',
       guid: 'oc2.tutorial.demo.mod-a',
+      repository_id: `${DEMO_ID_PREFIX}repo-a`,
       company: 'BepInEx',
       copyright: t('tutorial.demo.author'),
       dll_file: 'BepInEx.ConfigurationManager.dll',
@@ -122,6 +142,7 @@ function buildDemoMods(): InstalledMod[] {
       product_name: 'ArcadeMod',
       original_filename: 'ArcadeMod.dll',
       guid: 'oc2.tutorial.demo.mod-b',
+      repository_id: `${DEMO_ID_PREFIX}repo-b`,
       // 厂商照社区里街机 MOD 的作者写，卡片详情的「公司」一栏才像真的；
       // 「这是演示数据」由 GUID 前缀与仓库说明承担，不靠厂商字段。
       company: 'CH3NGYZ',
@@ -136,6 +157,23 @@ function buildDemoMods(): InstalledMod[] {
       is_dependency: false,
       has_config: false,
       has_logs: false,
+      status: 'latest',
+    },
+    {
+      name: t('framework.diyLevel.title'),
+      title: t('framework.diyLevel.title'),
+      guid: `${DEMO_ID_PREFIX}diylevel`,
+      repository_id: `${DEMO_ID_PREFIX}repo-diylevel`,
+      product_name: 'OC2DIYLevel',
+      original_filename: 'OC2DIYLevel.dll',
+      dll_file: DEMO_DIYLEVEL_DLL,
+      company: t('tutorial.demo.author'),
+      enabled: true,
+      version: '2.1.0',
+      version_source: 'metadata',
+      update_available: false,
+      duplicate_guid: false,
+      has_config: false,
       status: 'latest',
     },
   ]
@@ -232,8 +270,9 @@ function demoMap(spec: DemoMapSpec): MapInfo {
     provider: 'github',
     username: DEMO_OWNER,
     repository: DEMO_REPOSITORY,
-    // 身份字段写示例值：本地永远匹配不到，卡片状态因此稳定停在「未安装」。
+    // 本地地图复用同一身份，两个地图页面与概览得到同一个版本结论。
     level_set_name: spec.levelSetName,
+    level_set_name_zh: spec.title,
     author: t('tutorial.demo.author'),
     note: t('tutorial.demo.repoNote'),
     enabled: true,
@@ -267,7 +306,7 @@ function buildDemoRepositories(): ModRepository[] {
     demoRepository({
       id: `${DEMO_ID_PREFIX}repo-a`,
       title: t('tutorial.demo.modA'),
-      guid: 'oc2.tutorial.demo.repo-a',
+      guid: 'oc2.tutorial.demo.mod-a',
       productName: 'BepInEx.ConfigurationManager',
       dllName: 'BepInEx.ConfigurationManager.dll',
       assetBase: 'BepInEx.ConfigurationManager',
@@ -279,13 +318,57 @@ function buildDemoRepositories(): ModRepository[] {
     demoRepository({
       id: `${DEMO_ID_PREFIX}repo-b`,
       title: t('tutorial.demo.modB'),
-      guid: 'oc2.tutorial.demo.repo-b',
+      guid: 'oc2.tutorial.demo.mod-b',
       productName: 'ArcadeMod',
       dllName: 'ArcadeMod.dll',
       assetBase: 'ArcadeMod',
       versions: [{ tag: '1.0.4', published: '2026-04-11T09:00:00Z', downloads: 1560 }],
     }),
+    demoRepository({
+      id: `${DEMO_ID_PREFIX}repo-diylevel`,
+      title: t('framework.diyLevel.title'),
+      guid: `${DEMO_ID_PREFIX}diylevel`,
+      productName: 'OC2DIYLevel',
+      dllName: 'OC2DIYLevel.dll',
+      assetBase: 'OC2DIYLevel',
+      versions: [{ tag: '2.1.0', published: '2026-06-02T09:00:00Z', downloads: 2400 }],
+    }),
   ]
+}
+
+function buildDemoLevelSets(): LevelSetInfo[] {
+  return demoMaps.map((map, index) => ({
+    dir_name: `${DEMO_ID_PREFIX}level-set-${index + 1}`,
+    path: `C:\\OC2-Tutorial\\BepInEx\\plugins\\OC2DIYLevel\\levels\\${map.level_set_name}`,
+    enabled: true,
+    name: map.level_set_name,
+    name_zh: map.level_set_name_zh,
+    author: map.author,
+    version: map.latest_info_version ?? '',
+    installed_mapset_version: map.latest_mapset_version ?? '',
+    uid: `${DEMO_ID_PREFIX}uid-${index + 1}`,
+    base_uid: `${DEMO_ID_PREFIX}base-${index + 1}`,
+    level_count: 1,
+    map_id: map.id,
+    map_group: map.group,
+    levels: [{ name: map.name, name_zh: map.name, scene_name: `${DEMO_ID_PREFIX}scene-${index + 1}`, min_order_count: 2, max_order_count: 5 }],
+  }))
+}
+
+function buildDemoConfig(): PublicConfig {
+  const macos = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent)
+  return {
+    schema_version: 1, platform: macos ? 'macos' : 'windows', region: 'global', ui_zoom: 1.25,
+    hide_unidentified_mods: false, recycle_deleted_mods: true,
+    mod_metadata_concurrency: 0, map_info_concurrency: 0, map_compression_concurrency: 0, diychef_preview_concurrency: 0,
+    game: { path: demoGame.path!, runtime: 'native' },
+    network: { timeout_seconds: 30, download_threads: 4, max_retry_count: 3 },
+    launch: { ask_user_to_start_from_steam: true, auto_restore_winhttp: true },
+    official_api_only: false, github_token_set: false, gitee_token_set: false, gitcode_token_set: false,
+    repositories: demoRepositories, repository_sources: demoSources,
+    github_proxies: { release_proxies: [], raw_proxies: [], github_api_proxies: [], gitee_api_proxies: [], gitcode_api_proxies: [], avatar_proxies: [] },
+    builtin_sources_only: false, builtin_map_sources_only: false, builtin_proxies_only: false, builtin_network_plans_only: false,
+  }
 }
 
 function buildDemoMaps(): MapInfo[] {
@@ -320,6 +403,9 @@ export function startTutorialDemo(): void {
   demoSources = buildDemoSources()
   demoRepositories = buildDemoRepositories()
   demoMaps = buildDemoMaps()
+  demoLevelSets = buildDemoLevelSets()
+  demoMapSourceNodes = [{ id: DEMO_MAP_SOURCE_ID, label: t('tutorial.demo.sourceName'), status: 'ready' }]
+  demoConfig = buildDemoConfig()
   demoActive.value = true
 }
 
@@ -330,16 +416,17 @@ export function stopTutorialDemo(): void {
   demoSources = []
   demoRepositories = []
   demoMaps = []
+  demoLevelSets = []
+  demoMapSourceNodes = []
+  demoConfig = null
 }
 
 /**
- * 本地 MOD 列表的展示合并：非空就用真实数据，空的才补示例。
- *
- * 未在演示态、或真实列表非空时返回**原引用**（不复制、不新建数组）：
+ * 本地 MOD 列表与在线列表一样整体替换。未在演示态时返回**原引用**：
  * 调用方多半是 computed，同一个引用能让下游的 `watch`/`computed` 原地不动。
  */
 export function withDemoMods(real: readonly InstalledMod[]): InstalledMod[] {
-  if (!demoActive.value || real.length > 0) return real as InstalledMod[]
+  if (!demoActive.value) return real as InstalledMod[]
   return demoMods
 }
 
@@ -365,6 +452,46 @@ export function withDemoRepositories(real: readonly ModRepository[]): ModReposit
 export function withDemoMaps(real: readonly MapInfo[]): MapInfo[] {
   if (!demoActive.value) return real as MapInfo[]
   return demoMaps
+}
+
+/** 本地地图、源树及游戏摘要都只投影展示，不写入对应共享 store。 */
+export function withDemoLevelSets(real: readonly LevelSetInfo[]): LevelSetInfo[] {
+  return demoActive.value ? demoLevelSets : real as LevelSetInfo[]
+}
+
+export function withDemoMapSourceNodes(real: readonly SourceNode[]): SourceNode[] {
+  return demoActive.value ? demoMapSourceNodes : real as SourceNode[]
+}
+
+export function withDemoGame(real: GameInfo | null): GameInfo | null {
+  return demoActive.value ? demoGame : real
+}
+
+export function withDemoLevelCompression(real: LevelSetCompressionProgress | null): LevelSetCompressionProgress | null {
+  return demoActive.value ? demoCompression : real
+}
+
+export function withDemoDiyLevelTarget(real: string | null): string | null {
+  return demoActive.value ? DEMO_DIYLEVEL_DLL : real
+}
+
+export function withDemoConfig(real: PublicConfig | null): PublicConfig | null {
+  return demoActive.value ? demoConfig : real
+}
+
+/** 示例目录永久识别；退出时尚在离场动画中的预览也不能去读真实路径。 */
+export function demoLevelPreview(set: LevelSetInfo): LevelPreview[] | null {
+  if (!isDemoId(set.dir_name)) return null
+  return (set.levels ?? []).map(level => ({
+    ...level, name_zh: level.name_zh ?? '', dependencies: [], scene_exists: true,
+    recipe_count: 0, active_recipe_count: 0,
+  }))
+}
+
+export function demoLevelPreviewDetail(set: LevelSetInfo): LevelPreviewDetail | null {
+  return isDemoId(set.dir_name)
+    ? { picture: { data_url: null, width: 0, height: 0, state: 'missing' }, recipes: [] }
+    : null
 }
 
 /**

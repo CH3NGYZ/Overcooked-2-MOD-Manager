@@ -106,7 +106,7 @@ test('本地准备先于远端创建，完整登记与独立维护使用不同�
   assert.ok(editor.includes('if (!workingRelease.value && !tagEdited)'))
   assert.match(read('src/components/publish/PublishReleaseStep.vue'), /@update:value="setTag"/)
   const guard = read('src/composables/usePublishLeaveGuard.ts')
-  assert.match(guard, /!uploadedName.value && !dirty.value/)
+  assert.match(guard, /dirty: computed\(\(\) => Boolean\(uploadedName.value\) \|\| dirty.value\)/)
   assert.match(guard, /mapPublish.discardDraftConfirm/)
   assert.match(read('src/components/publish/PublishAssetStep.vue'), /pending.inspection.file_size/)
 })

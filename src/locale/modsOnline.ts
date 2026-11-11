@@ -7,6 +7,13 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const modsOnline: DomainMessages = {
+  goToInstall: {
+    'zh-CN': '前往 MOD 安装',
+    'zh-TW': '前往 MOD 安裝',
+    en: 'Go to MOD installation',
+    ko: 'MOD 설치로 이동',
+    ja: 'MODのインストールへ',
+  },
   // 共 {count} 个仓库
   repositories: {
     'zh-CN': '共 {count} 个仓库',

@@ -43,6 +43,8 @@ const NON_TAG = new Set([
   'common.other',
   // DIYLevel 框架的稳定 GUID（与仓库源、安装清单共用同一标识）
   'dev.gua.overcooked.diylevel',
+  // DIYChef uses the same GUID across original and FastInit implementations.
+  'dev.gua.overcooked.diychef',
   // 地图发布关系往返测试里的 FastInit 插件 GUID，不是用户错误 tag
   'oc2.diylevel.fastinit',
   // 同上 GUID 的短写，只在地图发布模块的单测固件里出现
@@ -59,6 +61,8 @@ const NON_TAG = new Set([
   'invalid.example', 'raw.example', 'release.example', 'remote.example',
   'second.example', 'selected.example', 'slow.example', 'halfwritten.json.tmp',
   'dll.disabled',
+  // Unity's streamed texture file and the rendered-cache eviction fixtures.
+  'resources.assets.resS', 'current.bin', 'old.bin',
   // 拍平测试里的随包资源文件名（作者真的这么命名，不是 tag）
   'shared.assets',
   // 地图源测试里的示例值

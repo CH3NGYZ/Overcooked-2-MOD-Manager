@@ -270,7 +270,7 @@ body {
   padding: var(--page-pad-top) 28px var(--page-pad-bottom);
   /*
    * flex 列容器：内容不足一屏时让子级（空状态、列表）吃掉剩余高度，
-   * 短页面也能占满可视区（`.page-body > .n-empty` 靠这条居中）。
+   * 短页面也能占满可视区（ContentState 靠这条高度链居中）。
    * 整页加载态本身已经下沉到 `components/PageLoading.vue`（fixed 定位），
    * 不再依赖这条高度链。
    */
@@ -363,28 +363,6 @@ body {
   width: 1px;
   height: 14px;
   background: var(--oc2-row-line);
-}
-
-/*
- * 整页加载态已下沉为共享组件 `components/PageLoading.vue`。
- *
- * 以前四个整页页面各写 `<n-spin :show="loading">` 包住列表，转圈位置靠这里
- * 一串「让 .n-spin-container 吃掉剩余高度」的规则去凑。问题是那个容器的中心
- * 会随两件事漂移：页头高度（每页不同），以及内容总高度（数据还没来时塌得
- * 很矮、已有数据时又变成好几屏）—— 于是同一份加载态在各页落在不同高度，
- * 一页在中央、另一页偏上。组件改成 fixed 相对窗口定位、只让出标题栏与侧栏，
- * 各页必然落在同一处，那串 n-spin 规则因此整体删除。
- *
- * 这里只留下空状态（n-empty）居中：它现在直接挂在 .page-body 下。
- */
-.page-body > .n-empty {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
 }
 
 /* 标题栏主题色矩阵：3×3 色块（5 色 + 空位），只显示颜色不显示文字 */

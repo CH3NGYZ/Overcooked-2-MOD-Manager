@@ -1,4 +1,5 @@
 //! Reference-driven native assets. Bundle names are hints; object identities are discovered.
+mod documents;
 use crate::{
     asset_bundle::BundleBlockCache,
     unity_assets::{self, Source},
@@ -29,7 +30,9 @@ pub(in crate::diychef::preview) struct Avatar {
     pub colourisation_mode: i32,
 }
 pub(in crate::diychef::preview) struct Store {
-    pub docs: Vec<Document>,
+    pub disk_stamp: String,
+    pub cache_epoch: u64,
+    pub docs: Vec<Arc<Document>>,
     pub blocks: BundleBlockCache,
     pub avatars: HashMap<String, Avatar>,
     pub default_template: String,
@@ -37,42 +40,26 @@ pub(in crate::diychef::preview) struct Store {
     pub objects: HashMap<Ref, Arc<Map>>,
     pub sources: Vec<PathBuf>,
     pub trees: HashMap<Ref, Arc<crate::diychef::preview::assembly::Tree>>,
-    pub parts: HashMap<(Ref, Ref, Option<Ref>), crate::diychef::preview::cache::Part>,
-    pub part_bytes: usize,
     pub custom_models: HashMap<String, crate::diychef::preview::cache::Prepared>,
     pub custom_bytes: usize,
-    index: Option<HashMap<String, (PathBuf, String)>>,
+    index: Option<Arc<HashMap<String, (PathBuf, String)>>>,
+    documents: documents::Documents,
 }
 
+#[cfg(test)]
 pub(in crate::diychef::preview) fn sources(game: &Path) -> Vec<PathBuf> {
-    let mut result = crate::unity_assets::game_sources(game);
-    for relative in [
-        "Overcooked2_Data/resources.assets",
-        "Overcooked2.app/Contents/Resources/Data/resources.assets",
-        "Contents/Resources/Data/resources.assets",
-    ] {
-        let Ok(path) = crate::game::safe_game_path(game, relative) else {
-            continue;
-        };
-        let Ok(path) = path.canonicalize() else {
-            continue;
-        };
-        if path.is_file() {
-            result.push(path.clone());
-            let stream = path.with_file_name("resources.assets.resS");
-            if stream.is_file() {
-                result.push(stream);
-            }
-        }
-    }
-    result.sort();
-    result.dedup();
-    result
+    super::super::metadata::source_metadata(game)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
 }
 
 impl Store {
-    pub fn new(sources: Vec<PathBuf>) -> Result<Self, String> {
-        let mut store = Self {
+    fn empty(sources: Vec<PathBuf>) -> Self {
+        Self {
+            disk_stamp: String::new(),
+            cache_epoch: 0,
             docs: vec![],
             blocks: Default::default(),
             avatars: HashMap::new(),
@@ -82,11 +69,64 @@ impl Store {
             sources,
             index: None,
             trees: HashMap::new(),
-            parts: HashMap::new(),
-            part_bytes: 0,
             custom_models: HashMap::new(),
             custom_bytes: 0,
-        };
+            documents: Default::default(),
+        }
+    }
+    /// Worker state is private; metadata and the decoded-block budget are shared.
+    /// Prepared models are deliberately not cloned into every worker.
+    pub(super) fn fork(&self) -> Self {
+        Self {
+            disk_stamp: self.disk_stamp.clone(),
+            cache_epoch: self.cache_epoch,
+            docs: self.docs.clone(),
+            blocks: self.blocks.clone(),
+            avatars: self.avatars.clone(),
+            default_template: self.default_template.clone(),
+            player_colour: self.player_colour.clone(),
+            objects: self.objects.clone(),
+            sources: self.sources.clone(),
+            trees: self.trees.clone(),
+            custom_models: HashMap::new(),
+            custom_bytes: 0,
+            index: self.index.clone(),
+            documents: self.documents.clone(),
+        }
+    }
+    /// Scenes own their transported payload. Keep only seed-shared object
+    /// caches while idle, so worker-local decoded models do not stay duplicated.
+    pub(super) fn trim_for_idle(&mut self, seed: &Self) {
+        self.custom_models = HashMap::new();
+        self.custom_bytes = 0;
+        self.objects = seed.objects.clone();
+        self.trees = seed.trees.clone();
+    }
+    #[cfg(test)]
+    pub(super) fn memory_profile(&self) -> serde_json::Value {
+        let (block_bytes, block_entries, layouts) = self.blocks.stats();
+        let (metadata_bytes, metadata_entries) = self.documents.stats();
+        serde_json::json!({
+            "block_bytes": block_bytes,
+            "block_entries": block_entries,
+            "bundle_layouts": layouts,
+            "shared_metadata_raw_bytes": metadata_bytes,
+            "shared_metadata_documents": metadata_entries,
+            "store_document_refs": self.docs.len(),
+            "store_serialized_objects": self.docs.iter().map(|d| d.file.objects.len()).sum::<usize>(),
+            "store_type_tree_nodes": self.docs.iter().flat_map(|d| &d.file.types).map(|t| t.nodes.len()).sum::<usize>(),
+            "store_object_entries": self.objects.len(),
+            "store_tree_entries": self.trees.len(),
+            "store_custom_bytes": self.custom_bytes,
+            "store_custom_entries": self.custom_models.len(),
+        })
+    }
+    #[cfg(test)]
+    pub(in crate::diychef::preview) fn test_seed() -> Self {
+        Self::empty(vec![])
+    }
+    pub fn new(sources: Vec<PathBuf>) -> Result<Self, String> {
+        let mut store = Self::empty(sources);
         // These ship on both PC layouts. Every hint is parsed and validated; no pathID is built in.
         const AVATARS: &[&str] = &[
             "bundle18",
@@ -149,6 +189,9 @@ impl Store {
         let (source, value) = first_colour.ok_or("diychef.previewUnavailable")?;
         let source = store.resolve(source, &value)?;
         store.player_colour = Some(super::palette::read(&mut store, source)?);
+        // Scanning all source bundle headers belongs to this resource stamp,
+        // never to an individual worker's first external reference.
+        store.ensure_index();
         Ok(store)
     }
     pub fn object(&mut self, r: Ref) -> Result<Arc<Map>, String> {
@@ -192,13 +235,17 @@ impl Store {
         {
             return Ok(i);
         }
-        let file = unity_assets::metadata(&source, &mut self.blocks)?;
-        if self.docs.iter().map(|d| d.file.data.len()).sum::<usize>() + file.data.len()
+        let key = name.clone();
+        let document = self.documents.load(&key, || {
+            let file = unity_assets::metadata(&source, &mut self.blocks)?;
+            Ok(Document { source, name, file })
+        })?;
+        if self.docs.iter().map(|d| d.file.data.len()).sum::<usize>() + document.file.data.len()
             > 128 * 1024 * 1024
         {
             return Err("diychef.previewLimit".into());
         }
-        self.docs.push(Document { source, name, file });
+        self.docs.push(document);
         Ok(self.docs.len() - 1)
     }
     fn load_bundle(&mut self, path: &Path) -> Result<(), String> {
@@ -283,7 +330,7 @@ impl Store {
                 }
             }
         }
-        self.index = Some(index);
+        self.index = Some(Arc::new(index));
     }
     pub fn stream(
         &mut self,

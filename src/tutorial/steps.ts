@@ -1,39 +1,33 @@
-import type { TutorialStep } from './types'
-import { chromeSteps, sidebarNavSteps } from './steps.chrome'
+import type { TutorialSection } from './types'
+import { chromeSteps } from './steps.chrome'
+import { sidebarNavSteps } from './steps.navigation'
 import { overviewSteps } from './steps.overview'
 import { modsLocalSteps, modsOnlineSteps } from './steps.mods'
 import { settingsSteps } from './steps.settings'
 import { sponsorSteps, toolsSteps } from './steps.tools'
+import { diyChefSteps } from './steps.diychef'
+import { mapsOnlineSteps, levelsSteps } from './steps.maps'
+import { renameSteps } from './steps.rename'
 
 /**
  * 内置教程的全部步骤，顺序即播放顺序。
  *
- * 排列按用户实际会走的路：先认清骨架（标题栏 / 侧栏），再一页一页往下讲
- * （总览 → MOD 安装 → MOD 管理 → 地图 → 工具 → 设置）。三段主流程换页前，
- * 先插一步把高亮挪到侧栏对应的格子（`sidebarNavSteps` 的前两个）—— 用户
- * 看到的是「点这一格会去哪」，而不是页面忽然变了。
- *
- * 地图两页只留「高亮侧栏标签 + 切过去」两步：它与 MOD 两页是同构的
- * （同一套卡片、同一套展开与开关），重复讲一遍只会让教程变长。工具页先讲
- * 收款码再讲四组维护动作（用户要求先看到「能不能支持作者」）。设置页把两个
- * 框架行拆成两步紧跟游戏目录，macOS 的「游戏类型」排在最前（只在 mac 上播）。
- *
- * 各段内容在 `steps.<域>.ts` 里，每一段都只写自己那几屏的步骤与文案 key；
- * 这里只负责顺序。新增一段时同时改这个数组与它自己的文件。
+ * 每页先高亮侧栏、说明用途，下一步才切到该页内容。按侧栏顺序经过总览、
+ * MOD、地图、改多彩名、暖暖，最后是工具与设置。地图卡片复用 MOD 的操作
+ * 模式，每页只概述一次；工具仍先介绍支持作者，再讲维护动作。
+ * 页面步骤和导航步骤分别维护，这里只编排顺序。旧 id 保持稳定以合并已看进度。
  */
-// 这四个「导航过渡」步骤要插在主流程中间，按名字取出来，别用下标。
-const [sidebarModsOnline, sidebarModsLocal, sidebarMapsOnline, sidebarLevels] = sidebarNavSteps
-
-export const tutorialSteps: TutorialStep[] = [
-  ...chromeSteps,
-  ...overviewSteps,
-  sidebarModsOnline,
-  ...modsOnlineSteps,
-  sidebarModsLocal,
-  ...modsLocalSteps,
-  sidebarMapsOnline,
-  sidebarLevels,
-  ...sponsorSteps,
-  ...toolsSteps,
-  ...settingsSteps,
+export const tutorialSections: TutorialSection[] = [
+  { id: 'chrome', titleKey: 'tutorial.manager.basics', steps: chromeSteps },
+  { id: 'overview', titleKey: 'nav.overview', steps: [sidebarNavSteps.overview, ...overviewSteps] },
+  { id: 'mods-online', titleKey: 'nav.modInstall', steps: [sidebarNavSteps.modsOnline, ...modsOnlineSteps] },
+  { id: 'mods-local', titleKey: 'nav.modManager', steps: [sidebarNavSteps.modsLocal, ...modsLocalSteps] },
+  { id: 'maps-online', titleKey: 'levelSet.download', steps: [sidebarNavSteps.mapsOnline, ...mapsOnlineSteps] },
+  { id: 'levels', titleKey: 'levelSet.title', steps: [sidebarNavSteps.levels, ...levelsSteps] },
+  { id: 'rename', titleKey: 'rename.colorfulName', steps: [sidebarNavSteps.rename, ...renameSteps] },
+  { id: 'diychef', titleKey: 'diychef.title', steps: [sidebarNavSteps.diychef, ...diyChefSteps] },
+  { id: 'tools', titleKey: 'nav.tools', steps: [sidebarNavSteps.tools, ...sponsorSteps, ...toolsSteps] },
+  { id: 'settings', titleKey: 'nav.settings', steps: [sidebarNavSteps.settings, ...settingsSteps] },
 ]
+
+export const tutorialSteps = tutorialSections.flatMap(section => section.steps)

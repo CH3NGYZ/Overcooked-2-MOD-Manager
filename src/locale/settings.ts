@@ -137,6 +137,17 @@ export const settings: DomainMessages = {
     ko: '동시에 LZ4HC3로 변환할 LZMA 리소스 수; 기본값은 모든 코어이며 다음 작업부터 적용',
     ja: '同時に LZ4HC3 に変換する LZMA リソース数。既定は全コア、次の処理から適用',
   },
+  diyChefPreviewConcurrency: {
+    'zh-CN': '暖暖缩略图渲染并行数', 'zh-TW': '暖暖縮圖渲染並行數',
+    en: 'Parallel chef thumbnail rendering', ko: '셰프 미리보기 병렬 렌더링', ja: 'シェフサムネイルの並列生成数',
+  },
+  diyChefPreviewConcurrencyHint: {
+    'zh-CN': '同时准备几个厨师的模型和贴图；默认全部核心，已缓存的缩略图直接复用',
+    'zh-TW': '同時準備幾個廚師的模型和貼圖；預設全部核心，已快取的縮圖直接重用',
+    en: 'How many chef models and textures are prepared at once; defaults to all cores and reuses cached thumbnails',
+    ko: '동시에 준비할 셰프 모델과 텍스처 수입니다. 기본값은 모든 코어이며 캐시된 미리보기를 재사용합니다',
+    ja: '同時にモデルとテクスチャを準備するシェフ数。既定は全コアで、保存済みサムネイルを再利用します',
+  },
   // 全部核心
   allCores: {
     'zh-CN': '全部核心',

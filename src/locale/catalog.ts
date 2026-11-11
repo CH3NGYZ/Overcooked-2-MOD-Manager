@@ -1,4 +1,5 @@
 import { levelPreview } from './levelPreview.ts'
+import { diychef } from './diychef/index.ts'
 import { startup } from './startup.ts'
 import { common } from './common.ts'
 import { config } from './config.ts'
@@ -43,6 +44,11 @@ import { renameUi } from './renameUi.ts'
 import { uiCommon } from './uiCommon.ts'
 import { refresh } from './refresh.ts'
 import { tutorialChrome } from './tutorialChrome.ts'
+import { tutorialDiyChef } from './tutorialDiyChef.ts'
+import { tutorialNavigation } from './tutorialNavigation.ts'
+import { tutorialMaps } from './tutorialMaps.ts'
+import { tutorialRename } from './tutorialRename.ts'
+import { tutorialManager } from './tutorialManager.ts'
 import { tutorialMods } from './tutorialMods.ts'
 import { tutorialOverview } from './tutorialOverview.ts'
 import { tutorialSettings } from './tutorialSettings.ts'
@@ -101,6 +107,7 @@ interface DomainTable {
 }
 
 export const TABLES: DomainTable[] = [
+  { domain: 'diychef', messages: diychef },
   { domain: 'levelPreview', messages: levelPreview },
   { domain: 'startup', messages: startup },
   { domain: 'common', messages: common },
@@ -119,6 +126,11 @@ export const TABLES: DomainTable[] = [
   { domain: 'readme', messages: readme },
   { domain: 'wine', messages: wine },
   { domain: 'tutorial', messages: tutorialChrome },
+  { domain: 'tutorial', messages: tutorialDiyChef },
+  { domain: 'tutorial', messages: tutorialNavigation },
+  { domain: 'tutorial', messages: tutorialMaps },
+  { domain: 'tutorial', messages: tutorialRename },
+  { domain: 'tutorial', messages: tutorialManager },
   // 内置教程按屏幕拆表：域内 key 用子域段（'overview.…' / 'tools.…'），拼成 tutorial.<子域>.<键>
   { domain: 'tutorial', messages: tutorialOverview },
   { domain: 'tutorial', messages: tutorialMods },

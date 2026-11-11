@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 #[test]
 fn scene_fingerprint_is_stable_across_sessions_and_tracks_selected_hat_files() {
+    let _guard = TEST_CACHE_ACCESS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let root = std::env::temp_dir().join(format!("chef-scene-key-{}", uuid::Uuid::new_v4()));
     let chef = root.join("Resources/Fox");
     let hat = root.join("Resources/HATS/Test");
@@ -112,7 +115,7 @@ fn real_chef_previews() {
                 .then(|| root.join("Resources/HATS").join(hat)),
         };
         let first = context_fingerprint(&context).unwrap();
-        let scene = cache::get(&context).unwrap();
+        let scene = cache::get(&context, cache_epoch()).unwrap();
         assert_eq!(first, scene.fingerprint);
         eprintln!(
             "{name} {hat}: status={} meshes={} bounds={:?} diagnostics={:?} elapsed={:?}",
@@ -200,7 +203,7 @@ fn real_chef_previews() {
             }
         }
         let repeat = std::time::Instant::now();
-        let second = cache::get(&context).unwrap();
+        let second = cache::get(&context, cache_epoch()).unwrap();
         assert_eq!(scene.fingerprint, second.fingerprint);
         eprintln!("cache-hit {:?}", repeat.elapsed());
     }
@@ -214,7 +217,7 @@ fn real_all_native_previews() {
     let mut report = vec![];
     for name in crate::diychef::catalog::NATIVE_NAMES.lines() {
         let start = std::time::Instant::now();
-        let result = native::native_scene(&game, name, "None");
+        let result = native::native_scene(&game, name, "None", cache_epoch());
         match result {
             Ok(scene)=>report.push(serde_json::json!({"name":name,"meshes":scene.parts.len(),"triangles":scene.parts.iter().map(|p|p.geometry.indices.len()/3).sum::<usize>(),"diagnostics":scene.diagnostics,"elapsed_ms":start.elapsed().as_millis()})),
             Err(error)=>report.push(serde_json::json!({"name":name,"error":error,"elapsed_ms":start.elapsed().as_millis()})),

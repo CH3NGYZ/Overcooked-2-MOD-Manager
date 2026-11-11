@@ -1,4 +1,5 @@
-import type { ModRepository, RepositorySource } from './types'
+import type { ModRepository, PublicConfig, RepositorySource } from './types'
+import { sameGuid } from './modRelations.ts'
 
 /**
  * 仓库「在当前地区是否存在」的纯函数。
@@ -105,6 +106,17 @@ export function modRepositoryIsAvailable(
   if (!repo.source_id) return true
   const source = repositorySource(repo, sources)
   return !!source && sourceMatchesRegion(source, currentRegion)
+}
+
+/** Locate the same loaded card the online MOD page can show, without a refresh
+ * or a cached-release requirement. Navigation does not perform installation. */
+export function modRepositoryForGuid(
+  guid: string,
+  config: Pick<PublicConfig, 'repositories' | 'repository_sources' | 'region' | 'platform'> | null | undefined,
+): ModRepository | undefined {
+  if (!guid.trim()) return undefined
+  return config?.repositories.find(repo => !!repo.plugin_guid && sameGuid(repo.plugin_guid, guid)
+    && modRepositoryIsAvailable(repo, config.repository_sources, config.region, config.platform))
 }
 
 /**

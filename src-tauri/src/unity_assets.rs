@@ -1,7 +1,7 @@
 //! Shared bounded Unity object/texture reading for map and chef previews.
 mod sources;
 mod texture;
-pub(crate) use sources::{game_resource_roots, game_sources};
+pub(crate) use sources::{game_resource_roots, game_source_metadata, game_sources};
 pub(crate) use texture::{decode_texture, texture_dimensions};
 
 use crate::asset_bundle::{BundleBlockCache, try_read_serialized};

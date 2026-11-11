@@ -5,16 +5,183 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 const MAX_PNG: u64 = 4 * 1024 * 1024;
 const MAX_CACHE: u64 = 128 * 1024 * 1024;
 static ACCESS: Mutex<()> = Mutex::new(());
 
-pub(crate) fn access(key: &str, png: Option<&[u8]>, partial: bool) -> Result<Vec<u8>, String> {
-    let directory = crate::user_paths::root()?.join("cache/diychef-thumbnails");
-    let _guard = ACCESS.lock().map_err(|_| "diychef.previewUnavailable")?;
-    access_in(&directory, key, png, partial)
+pub(super) enum CacheDirectory {
+    Thumbnails,
+    Native,
+    Assets,
+}
+
+pub(super) fn directory() -> Result<PathBuf, String> {
+    fixed_directory(CacheDirectory::Thumbnails)
+}
+
+pub(super) fn fixed_directory(kind: CacheDirectory) -> Result<PathBuf, String> {
+    let root = crate::user_paths::root()?;
+    directory_under(&root, kind)
+}
+
+fn directory_under(root: &Path, kind: CacheDirectory) -> Result<PathBuf, String> {
+    let leaf = match kind {
+        CacheDirectory::Thumbnails => "diychef-thumbnails",
+        CacheDirectory::Native => "diychef-native",
+        CacheDirectory::Assets => "diychef-assets",
+    };
+    let directory = root.join("cache").join(leaf);
+    // The system's data root may itself be redirected. Disposable child
+    // directories may not be links/junctions, including broken links.
+    for child in [root.join("cache"), directory.clone()] {
+        match fs::symlink_metadata(&child) {
+            Ok(info)
+                if !info.is_dir() || info.file_type().is_symlink() || is_reparse_point(&info) =>
+            {
+                return Err("diychef.previewUnsafeResource".into());
+            }
+            Ok(_) => {
+                if !child
+                    .canonicalize()
+                    .map_err(|_| "diychef.previewUnavailable")?
+                    .starts_with(
+                        root.canonicalize()
+                            .map_err(|_| "diychef.previewUnavailable")?,
+                    )
+                {
+                    return Err("diychef.previewUnsafeResource".into());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("diychef.previewUnavailable".into()),
+        }
+    }
+    Ok(directory)
+}
+
+pub(super) fn lock_access() -> Result<MutexGuard<'static, ()>, String> {
+    ACCESS
+        .lock()
+        .map_err(|_| "diychef.previewUnavailable".into())
+}
+
+pub(super) fn regular_file(path: &Path) -> Result<Option<fs::Metadata>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(info) if info.file_type().is_symlink() || is_reparse_point(&info) => {
+            Err("diychef.previewUnsafeResource".into())
+        }
+        Ok(info) if info.is_file() => Ok(Some(info)),
+        Ok(_) => Err("diychef.previewUnsafeResource".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("diychef.previewUnavailable".into()),
+    }
+}
+
+pub(super) fn write_atomic(
+    directory: &Path,
+    file: &Path,
+    write: impl FnOnce(&mut fs::File) -> std::io::Result<()>,
+) -> Result<(), String> {
+    if file.parent() != Some(directory) {
+        return Err("diychef.previewUnsafeResource".into());
+    }
+    fs::create_dir_all(directory).map_err(|_| "diychef.previewUnavailable")?;
+    let temporary = directory.join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        write(&mut output)?;
+        output.sync_all()?;
+        fs::rename(&temporary, file)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err("diychef.previewUnavailable".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn access(
+    key: &str,
+    png: Option<&[u8]>,
+    partial: bool,
+    epoch: u64,
+) -> Result<Vec<u8>, String> {
+    access_at(&directory()?, key, png, partial, epoch)
+}
+
+pub(super) fn access_at(
+    directory: &Path,
+    key: &str,
+    png: Option<&[u8]>,
+    partial: bool,
+    epoch: u64,
+) -> Result<Vec<u8>, String> {
+    let _guard = lock_access()?;
+    super::preview::require_epoch(epoch)?;
+    access_in(directory, key, png, partial)
+}
+
+pub(super) fn clear_in(directory: &Path) -> Result<usize, String> {
+    let _guard = lock_access()?;
+    let info = match fs::symlink_metadata(directory) {
+        Ok(info) => info,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(_) => return Err("diychef.previewUnavailable".into()),
+    };
+    if !info.is_dir() || info.file_type().is_symlink() || is_reparse_point(&info) {
+        return Err("diychef.previewUnsafeResource".into());
+    }
+    let mut removed = 0;
+    for entry in fs::read_dir(directory).map_err(|_| "diychef.previewUnavailable")? {
+        let entry = entry.map_err(|_| "diychef.previewUnavailable")?;
+        let path = entry.path();
+        let stem = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let extension = path
+            .extension()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let record = is_record(&path);
+        let temporary = extension == "tmp" && uuid::Uuid::parse_str(stem).is_ok();
+        let file_type = entry
+            .file_type()
+            .map_err(|_| "diychef.previewUnavailable")?;
+        if (record || temporary) && file_type.is_file() {
+            fs::remove_file(path).map_err(|_| "diychef.previewUnavailable")?;
+            removed += usize::from(record);
+        }
+    }
+    Ok(removed)
+}
+
+fn is_record(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("bin")
+        && path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| {
+                stem.len() == 64 && stem.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+}
+
+fn is_reparse_point(info: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return info.file_attributes() & 0x400 != 0;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = info;
+        false
+    }
 }
 
 fn access_in(
@@ -34,27 +201,17 @@ fn access_in(
         return Err("diychef.previewUnsafeResource".into());
     }
     let file = directory.join(format!("{:x}.bin", Sha256::digest(key.as_bytes())));
+    let existing = regular_file(&file)?;
     if let Some(bytes) = png {
         validate_png(bytes)?;
         fs::create_dir_all(directory).map_err(|_| "diychef.previewUnavailable")?;
-        if file.is_file() {
+        if existing.is_some() {
             return Ok(vec![]);
         }
-        let temporary = directory.join(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let result = (|| {
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)?;
+        write_atomic(directory, &file, |output| {
             output.write_all(&[u8::from(partial)])?;
-            output.write_all(bytes)?;
-            output.sync_all()?;
-            fs::rename(&temporary, &file)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err("diychef.previewUnavailable".into());
-        }
+            output.write_all(bytes)
+        })?;
         prune(directory, &file, MAX_CACHE)?;
         return Ok(vec![]);
     }
@@ -97,16 +254,15 @@ fn validate_png(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn prune(directory: &Path, keep: &Path, budget: u64) -> Result<(), String> {
+pub(super) fn prune(directory: &Path, keep: &Path, budget: u64) -> Result<(), String> {
     let mut entries: Vec<(PathBuf, u64, std::time::SystemTime)> = vec![];
     for entry in fs::read_dir(directory).map_err(|_| "diychef.previewUnavailable")? {
         let entry = entry.map_err(|_| "diychef.previewUnavailable")?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("bin") {
+        if !is_record(&path) {
             continue;
         }
-        let info = entry.metadata().map_err(|_| "diychef.previewUnavailable")?;
-        if info.is_file() {
+        if let Ok(Some(info)) = regular_file(&path) {
             entries.push((
                 path,
                 info.len(),

@@ -3,7 +3,7 @@ import { router } from '../router'
 import { clampRectToViewport, inflateRect, unionRects, type Rect, type Size } from './geometry'
 import { startTutorialDemo, stopTutorialDemo } from './demo'
 import { mergeWatchedSteps, normalizeStepIds, unwatchedSteps } from './progress'
-import { tutorialSteps } from './steps'
+import { tutorialSections, tutorialSteps } from './steps'
 import { clearTutorialProgress, isTutorialCompleted, markTutorialCompleted } from './storage'
 import type { TutorialContext, TutorialStep } from './types'
 
@@ -32,7 +32,8 @@ import type { TutorialContext, TutorialStep } from './types'
  *
  * ## 切步期间锁输入
  *
- * `runStep` 全程 `busy = true`：按钮、滚轮、方向键在收尾前一律忽略。
+ * 从旧步骤 `cleanup` 到新步骤 `runStep` 全程 `busy = true`：按钮、滚轮、
+ * 方向键在收尾前一律忽略。
  * 否则连点两下会同时跑两条 prepare，抽屉被开两次、路由跳两次。
  */
 
@@ -281,8 +282,10 @@ function rememberStep(step: TutorialStep): void {
 }
 
 /** 当前平台上真正会播的步骤（`when` 只在这里求值）。 */
-function visibleSteps(): TutorialStep[] {
-  return tutorialSteps.filter((step) => !step.when || step.when())
+function visibleSteps(sectionId?: string): TutorialStep[] {
+  const steps = sectionId === undefined ? tutorialSteps
+    : tutorialSections.find(section => section.id === sectionId)?.steps ?? []
+  return steps.filter((step) => !step.when || step.when())
 }
 
 /* ===== 步骤执行 ===== */
@@ -371,9 +374,13 @@ async function runStep(targetIndex: number): Promise<void> {
 }
 
 async function moveTo(targetIndex: number): Promise<void> {
-  if (!active.value) return
+  if (!active.value || busy.value) return
   const target = activeSteps[targetIndex]
   if (!target) return
+  // cleanup 也可能等待弹窗退场，必须在第一次 await 前锁住整段切步。
+  const token = ++runToken
+  busy.value = true
+  stopFollow()
   const previous = activeSteps[index.value]
   if (previous && previous !== target && previous.cleanup) {
     try {
@@ -382,7 +389,8 @@ async function moveTo(targetIndex: number): Promise<void> {
       // 收尾失败不影响下一步
     }
   }
-  if (!active.value) return
+  // 退出后立即重播会再次 active；旧收尾不能推进或解锁新一轮教程。
+  if (!active.value || token !== runToken) return
   index.value = targetIndex
   await runStep(targetIndex)
 }
@@ -400,6 +408,8 @@ export const tutorial = {
 }
 
 export interface StartTutorialOptions {
+  /** 只播放这个章节；有 fromStepId 时从章内指定步骤开始。 */
+  sectionId?: string
   /** 从某一步开始（用于调试与「跳到这一节」）。 */
   fromStepId?: string
   /** 重新播放：清掉本地「已看过」标记，从头播全部步骤。 */
@@ -417,12 +427,17 @@ export interface StartTutorialOptions {
  */
 export function startTutorial(options: StartTutorialOptions = {}): void {
   if (active.value) return
-  if (options.restart) clearTutorialProgress()
-  const steps = visibleSteps()
+  const steps = visibleSteps(options.sectionId)
   if (!steps.length) return
-  const playAll = Boolean(options.restart || options.fromStepId)
-  const playable = playAll ? steps : unwatchedSteps(steps, options.watchedStepIds ?? watchedStepIds)
+  // 无效定位不能悄悄回到章首，也不能清除完整教程的完成标记。
+  if (options.fromStepId && !steps.some(step => step.id === options.fromStepId)) return
+  if (options.restart && options.sectionId === undefined) clearTutorialProgress()
+  const playAll = Boolean(options.restart || options.fromStepId || options.sectionId !== undefined)
+  let playable = playAll ? steps : unwatchedSteps(steps, options.watchedStepIds ?? watchedStepIds)
   if (!playable.length) return
+  if (options.sectionId !== undefined && options.fromStepId) {
+    playable = playable.slice(playable.findIndex(step => step.id === options.fromStepId))
+  }
   // 本次运行的基准集合。从配置读进来时以它为准，避免上一次运行留下的 id
   // 让「这一步看没看过」判断串味；重播也保留集合（进入老步骤不该再写盘）。
   watchedStepIds = normalizeStepIds(options.watchedStepIds ?? watchedStepIds)

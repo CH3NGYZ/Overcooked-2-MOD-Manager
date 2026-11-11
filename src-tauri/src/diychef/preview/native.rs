@@ -1,6 +1,7 @@
 mod avatar;
 mod mesh;
 mod palette;
+mod pool;
 pub(super) mod reader;
 mod visibility;
 use super::{
@@ -9,37 +10,31 @@ use super::{
 };
 use crate::models::ChefPreviewBounds;
 use reader::{Ref, Store};
-use std::{
-    path::Path,
-    sync::{Arc, Mutex, OnceLock},
-};
+use std::{path::Path, sync::Arc};
 
-struct CachedStore {
-    stamp: String,
-    store: Store,
+pub(super) fn configure_concurrency(stored: u32) {
+    pool::shared().set_workers(crate::concurrency::workers_from(stored));
+}
+pub(super) fn clear(epoch: u64) {
+    pool::shared().clear(epoch);
 }
 pub(super) fn with_store<T>(
     game: &Path,
+    epoch: u64,
     operation: impl FnOnce(&mut Store) -> Result<T, String>,
 ) -> Result<T, String> {
-    static CACHE: OnceLock<Mutex<Option<CachedStore>>> = OnceLock::new();
-    let paths = reader::sources(game);
-    let stamp = super::fingerprint::files(&paths)?;
-    let mut cache = CACHE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .map_err(|_| "diychef.previewUnavailable")?;
-    if cache.as_ref().is_none_or(|c| c.stamp != stamp) {
-        *cache = Some(CachedStore {
-            stamp,
-            store: Store::new(paths)?,
-        });
-    }
-    let result = operation(&mut cache.as_mut().unwrap().store);
-    if result.is_err() {
-        *cache = None;
-    }
-    result
+    super::require_epoch(epoch)?;
+    let sources = super::metadata::game(game)?;
+    pool::shared().run(
+        epoch,
+        sources.stamp.clone(),
+        || Store::new(sources.paths.clone()),
+        |store| {
+            store.disk_stamp = sources.stamp.clone();
+            store.cache_epoch = epoch;
+            operation(store)
+        },
+    )
 }
 pub(super) fn tree(store: &mut Store, name: &str) -> Result<Arc<Tree>, String> {
     // UI prefabs provide both relaxed/open hands and retain chef-specific features.
@@ -98,11 +93,19 @@ pub(super) fn part(
                 .ok_or("diychef.previewUnavailable")
         })
         .transpose()?;
-    let key = (renderer, material, pose);
-    if let Some(part) = store.parts.get(&key) {
-        let mut p = part.clone();
-        p.name = name.into();
-        return Ok(p);
+    let disk_key = super::native_disk_cache::part_key(
+        store,
+        renderer,
+        material,
+        pose,
+        &node.world,
+        player_body,
+    );
+    if let Some(part) = disk_key
+        .as_ref()
+        .and_then(|key| super::native_disk_cache::load_part(key, name, store.cache_epoch))
+    {
+        return Ok(part);
     }
     let geometry = mesh::read(store, tree, renderer, skeleton).inspect_err(|_| {
         #[cfg(test)]
@@ -124,12 +127,10 @@ pub(super) fn part(
         offset,
         material_floats,
     };
-    let used = part.geometry.vertices.len() * 32
-        + part.geometry.indices.len() * 4
-        + part.texture.as_ref().map_or(0, Vec::len);
-    if store.part_bytes + used <= 64 * 1024 * 1024 {
-        store.part_bytes += used;
-        store.parts.insert(key, part.clone());
+    // The returned scene owns the only model buffers. Reuse lives on disk,
+    // rather than cloning each geometry/PNG into every active worker.
+    if let Some(key) = disk_key {
+        super::native_disk_cache::save_part(&key, &part, store.cache_epoch);
     }
     Ok(part)
 }
@@ -232,15 +233,22 @@ pub(super) fn hat(store: &mut Store, tree: &Tree, value: &str) -> Result<Vec<Par
     }
     Ok(parts)
 }
-pub(super) fn native_scene(game: &Path, name: &str, value: &str) -> Result<Prepared, String> {
-    with_store(game, |store| {
-        let tree = tree(store, name)?;
-        let mut scene = model_parts(store, &tree, name)?;
-        match hat(store, &tree, value) {
-            Ok(h) => scene.parts.extend(h),
-            Err(e) => scene.diagnostics.push(e),
-        }
-        Ok(scene)
+pub(super) fn native_scene(
+    game: &Path,
+    name: &str,
+    value: &str,
+    epoch: u64,
+) -> Result<Prepared, String> {
+    super::native_disk_cache::scene(game, name, value, epoch, || {
+        with_store(game, epoch, |store| {
+            let tree = tree(store, name)?;
+            let mut scene = model_parts(store, &tree, name)?;
+            match hat(store, &tree, value) {
+                Ok(h) => scene.parts.extend(h),
+                Err(e) => scene.diagnostics.push(e),
+            }
+            Ok(scene)
+        })
     })
 }
 pub(super) fn bone(tree: &Tree, name: &str) -> Result<Matrix, String> {

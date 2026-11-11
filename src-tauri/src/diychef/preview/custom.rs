@@ -10,12 +10,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn scene(context: &PreviewContext) -> Result<Prepared, String> {
+pub(super) fn scene(context: &PreviewContext, epoch: u64) -> Result<Prepared, String> {
     let dir = context
         .chef_directory
         .as_deref()
         .ok_or("diychef.previewUnavailable")?;
-    native::with_store(&context.game_root, |store| {
+    native::with_store(&context.game_root, epoch, |store| {
         let stamp = super::fingerprint::directory(dir)?;
         let (template, body_warning) = body(dir, store)?;
         let tree = native::tree(store, &template)?;
@@ -120,8 +120,11 @@ pub(super) fn scene(context: &PreviewContext) -> Result<Prepared, String> {
         Ok(prepared)
     })
 }
-pub(super) fn native_with_custom_hat(context: &PreviewContext) -> Result<Prepared, String> {
-    native::with_store(&context.game_root, |store| {
+pub(super) fn native_with_custom_hat(
+    context: &PreviewContext,
+    epoch: u64,
+) -> Result<Prepared, String> {
+    native::with_store(&context.game_root, epoch, |store| {
         let tree = native::tree(store, &context.chef_name)?;
         let mut prepared = native::model_parts(store, &tree, &context.chef_name)?;
         add_hat(context, store, &tree, &mut prepared);

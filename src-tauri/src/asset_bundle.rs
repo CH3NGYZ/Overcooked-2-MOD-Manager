@@ -28,6 +28,9 @@
 //!
 //! 按需关卡预览、对象引用与纹理由 level_sets::preview_reader 拥有；扫描不解码图片。
 use unityfs::{Reader, SerializedFile, UnityValue};
+#[path = "asset_bundle/block_cache.rs"]
+mod block_cache;
+pub(crate) use block_cache::BundleBlockCache;
 #[path = "asset_bundle/recompress.rs"]
 #[cfg(feature = "bundle-recompression")]
 pub(crate) mod recompress;
@@ -610,20 +613,6 @@ pub(crate) fn bundle_file_names(path: &std::path::Path) -> Result<Vec<String>, P
         .map(|(name, _, _)| name)
         .collect())
 }
-/// Context-scoped decoded blocks, bounded to 192MiB. Sequential references share
-/// decompression work without eagerly loading every external CAB/texture stream.
-/// This accommodates commonW3's single 119MiB LZMA block plus small LZ4 blocks;
-/// a smaller cap would re-decompress that same block for every referenced object.
-#[derive(Default)]
-#[allow(dead_code)]
-pub(crate) struct BundleBlockCache {
-    layouts: std::collections::HashMap<std::path::PathBuf, std::sync::Arc<BundleLayout>>,
-    entries: std::collections::VecDeque<(
-        (std::path::PathBuf, usize, usize, usize, u16),
-        std::sync::Arc<[u8]>,
-    )>,
-    bytes: usize,
-}
 /// Read only blocks intersecting a named node/range. External texture streams stay
 /// on disk instead of crowding useful metadata out of the preview cache.
 #[allow(dead_code)]
@@ -632,7 +621,7 @@ pub(crate) fn read_bundle_file_range(
     name: &str,
     offset: usize,
     size: Option<usize>,
-    mut cache: Option<&mut BundleBlockCache>,
+    cache: Option<&mut BundleBlockCache>,
 ) -> Result<Vec<u8>, ParseError> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path)?;
@@ -652,14 +641,10 @@ pub(crate) fn read_bundle_file_range(
     };
     // A CAB may reference hundreds of objects. Its block directory is immutable
     // within the owning preview context, so parse it once rather than per object.
-    let layout = if let Some(layout) = cache.as_ref().and_then(|c| c.layouts.get(path)) {
-        layout.clone()
+    let layout = if let Some(cache) = cache.as_ref() {
+        cache.layout(path, || bundle_layout_with(length, &mut read))?
     } else {
-        let layout = std::sync::Arc::new(bundle_layout_with(length, &mut read)?);
-        if let Some(cache) = cache.as_mut() {
-            cache.layouts.insert(path.to_path_buf(), layout.clone());
-        }
-        layout
+        std::sync::Arc::new(bundle_layout_with(length, &mut read)?)
     };
     let (_, node_start, node_size) = layout
         .directory
@@ -686,15 +671,7 @@ pub(crate) fn read_bundle_file_range(
             .ok_or_else(|| ParseError::Corrupt("block range".into()))?;
         if unpacked < end && block_end > start {
             let key = (path.to_path_buf(), packed, compressed, block_size, flags);
-            let cached = cache.as_ref().and_then(|c| {
-                c.entries
-                    .iter()
-                    .find(|(k, _)| k == &key)
-                    .map(|(_, v)| v.clone())
-            });
-            let bytes = if let Some(bytes) = cached {
-                bytes
-            } else {
+            let load = || {
                 let bytes = decompress(
                     &read(packed, compressed)?,
                     block_size,
@@ -703,19 +680,13 @@ pub(crate) fn read_bundle_file_range(
                 if bytes.len() != block_size {
                     return Err(ParseError::Corrupt("block size".into()));
                 }
-                let bytes: std::sync::Arc<[u8]> = bytes.into();
-                if let Some(cache) = cache.as_mut().filter(|_| bytes.len() <= 192 * 1024 * 1024) {
-                    while cache.bytes + bytes.len() > 192 * 1024 * 1024 {
-                        if let Some((_, old)) = cache.entries.pop_front() {
-                            cache.bytes -= old.len();
-                        } else {
-                            break;
-                        }
-                    }
-                    cache.bytes += bytes.len();
-                    cache.entries.push_back((key, bytes.clone()));
-                }
-                bytes
+                Ok(bytes)
+            };
+            let bytes = if let Some(cache) = cache.as_ref() {
+                cache.block(key, load)?
+            } else {
+                let mut load = load;
+                std::sync::Arc::new(load()?)
             };
             out.extend_from_slice(
                 &bytes[start.saturating_sub(unpacked)..(end - unpacked).min(block_size)],

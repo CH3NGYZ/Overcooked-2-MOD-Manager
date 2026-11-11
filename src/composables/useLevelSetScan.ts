@@ -13,6 +13,7 @@
  */
 import { computed, ref, shallowRef } from 'vue'
 import { api, watchLevelSetScan } from '../services/tauri'
+import { demoActive } from '../tutorial/demo'
 import type { LevelSetInfo, LevelSetScanProgress } from '../types'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
@@ -25,7 +26,7 @@ const levelSets = shallowRef<LevelSetInfo[]>([])
 let pendingScan: Promise<LevelSetInfo[]> | undefined
 
 /** 是否有扫描在飞（总览卡片的按钮转圈读它）。 */
-const scanning = computed(() => inFlight.value > 0)
+const scanning = computed(() => !demoActive.value && inFlight.value > 0)
 
 /** 最近一次扫描进度；扫描结束即清空，避免下次开始前挂着上一轮的 x/y。 */
 const progress = ref<LevelSetScanProgress | null>(null)
@@ -53,6 +54,8 @@ function ensureProgressListener(): void {
  * 卡片看不到那次读取，这个模块存在的意义也就没了。
  */
 export function scanLevelSets(): Promise<LevelSetInfo[]> {
+  // Keep this cache real. Pages project the tutorial list without publishing it here.
+  if (demoActive.value) return Promise.resolve(levelSets.value)
   if (pendingScan) return pendingScan
   ensureProgressListener()
   progress.value = null
@@ -60,6 +63,7 @@ export function scanLevelSets(): Promise<LevelSetInfo[]> {
   pendingScan = (async () => {
     try {
       await listening
+      if (demoActive.value) return levelSets.value
       const result = await api.levelSets()
       levelSets.value = result
       return result

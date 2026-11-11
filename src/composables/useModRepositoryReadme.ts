@@ -16,10 +16,10 @@
  * `sourceId` 变化即重新拉取（含首次）：抽屉打开时条目 id 才有值，关闭后变回
  * `null`，此时取消在途请求并清空结果，下次打开不会先闪一下上一个条目的内容。
  */
-import { onUnmounted, ref, watch } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { api } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
-import { demoReadme } from '../tutorial/demo'
+import { demoActive, demoReadme, isDemoId } from '../tutorial/demo'
 import type { RepositoryReadme } from '../types'
 
 export function useModRepositoryReadme(sourceId: () => string | null | undefined) {
@@ -51,6 +51,8 @@ export function useModRepositoryReadme(sourceId: () => string | null | undefined
       readme.value = sample
       return
     }
+    // 真实详情随教程暂停；示例详情即使还在退出动画中也不能请求真实后端。
+    if (demoActive.value || isDemoId(id)) return
     const request = crypto.randomUUID()
     requestId = request
     loading.value = true
@@ -73,8 +75,8 @@ export function useModRepositoryReadme(sourceId: () => string | null | undefined
     loading.value = false
   }
 
-  watch(sourceId, () => { void load() }, { immediate: true })
-  onUnmounted(cancel)
+  watch([sourceId, demoActive], () => { void load() }, { immediate: true, flush: 'sync' })
+  onScopeDispose(cancel)
 
   return { readme, loading, error, reload: load }
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NSelect, NSwitch, NTag } from 'naive-ui'
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
@@ -20,15 +20,20 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { displayPath } from '../gameRuntime'
 import type { AppUpdateCheckResult, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withDemoMods } from '../tutorial/demo'
 
 const message = useNotify()
 const route = useRoute()
 const router = useRouter()
-const { load, ensureLoaded, game, mods } = useDashboard()
+const dashboard = useDashboard()
+const { load, ensureLoaded } = dashboard
+const game = computed(() => withDemoGame(dashboard.game.value))
+const mods = computed(() => withDemoMods(dashboard.mods.value))
 
 const version = ref('')
 const checking = ref(false)
-const config = ref<PublicConfig | null>(null)
+const realConfig = ref<PublicConfig | null>(null)
+const config = computed({ get: () => withDemoConfig(realConfig.value), set: value => { realConfig.value = value } })
 const savingPath = ref(false)
 
 const pathDrawer = ref(false)
@@ -116,8 +121,9 @@ const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
  * 用 `mods` 而不是再调一次 `diy_level_info`：设置页已经拿到 Dashboard，
  * 多一次 IPC 只会让摘要比抽屉慢半拍。抽屉里才用专用命令（它还带地图数量）。
  */
-const diyLevelMod = computed(() =>
-  (mods.value ?? []).find((mod) =>
+const diyLevelMod = computed(() => demoActive.value
+  ? mods.value.find((mod) => mod.dll_file === withDemoDiyLevelTarget(null))
+  : (mods.value ?? []).find((mod) =>
     !!mod.guid && mod.guid.trim().toLowerCase() === DIYLEVEL_GUID))
 
 const diyLevelInstalled = computed(() => !!diyLevelMod.value)
@@ -156,13 +162,27 @@ async function relaunchAdmin() {
   }
 }
 
-onMounted(async () => {
+let disposed = false
+let loadGeneration = 0
+async function loadSettings() {
+  const ticket = ++loadGeneration
+  if (demoActive.value) return
   version.value = await getVersion().catch(() => '')
-  config.value = await api.config().catch(() => null)
+  if (disposed || ticket !== loadGeneration || demoActive.value) return
+  const value = await api.config().catch(() => null)
+  if (disposed || ticket !== loadGeneration || demoActive.value) return
+  config.value = value
   await ensureLoaded()
+  if (disposed || ticket !== loadGeneration || demoActive.value) return
   await refreshPermission()
-  openRequestedPanel()
-})
+  if (!disposed && ticket === loadGeneration && !demoActive.value) openRequestedPanel()
+}
+watch(demoActive, active => {
+  loadGeneration += 1
+  if (!active) void loadSettings()
+}, { flush: 'sync' })
+onMounted(() => { void loadSettings() })
+onBeforeUnmount(() => { disposed = true; loadGeneration += 1 })
 
 /**
  * 处理 `?focus=` 深链，例如总览页「安装框架」按钮跳过来要直接开抽屉。
@@ -260,8 +280,11 @@ function openReleaseFallback() {
 
 /* ===== 通用偏好 ===== */
 async function savePreference(patch: Parameters<typeof api.saveSettings>[0], label: string) {
+  if (demoActive.value) return
   try {
-    config.value = await api.saveSettings(patch)
+    const saved = await api.saveSettings(patch)
+    config.value = saved
+    dashboard.applyConfigSnapshot(saved)
     message.success(label)
   } catch (reason) { fail(reason) }
 }
@@ -309,6 +332,7 @@ function displayConcurrency(value: number) {
 const modMetadataConcurrency = computed(() => displayConcurrency(config.value?.mod_metadata_concurrency ?? 0))
 const mapCompressionConcurrency = computed(() => displayConcurrency(config.value?.map_compression_concurrency ?? 0))
 const mapInfoConcurrency = computed(() => displayConcurrency(config.value?.map_info_concurrency ?? 0))
+const diyChefPreviewConcurrency = computed(() => displayConcurrency(config.value?.diychef_preview_concurrency ?? 0))
 
 /* ===== 删除行为：是否经过回收站 ===== */
 
@@ -597,7 +621,7 @@ async function clearTokens() {
 
   <!--
     性能：元数据并行读取。
-    读取与转换各自保存并行上限；全部核心是三项的默认值。
+    读取、转换与暖暖预览各自保存并行上限，默认使用全部核心。
   -->
   <SettingsGroup :title="t('settings.performance')" data-tutorial="settings-performance">
     <SettingsRow :title="t('settings.modMetadataConcurrency')"
@@ -618,6 +642,13 @@ async function clearTokens() {
       <template #right>
         <n-select :value="mapCompressionConcurrency" size="small" style="width: 160px" :options="concurrencyOptions"
           @update:value="(value: number) => savePreference({ map_compression_concurrency: value }, t('settings.mapCompressionConcurrency'))" />
+      </template>
+    </SettingsRow>
+    <SettingsRow :title="t('settings.diyChefPreviewConcurrency')" :description="t('settings.diyChefPreviewConcurrencyHint')"
+      data-testid="diychef-preview-concurrency">
+      <template #right>
+        <n-select :value="diyChefPreviewConcurrency" size="small" style="width: 160px" :options="concurrencyOptions"
+          @update:value="(value: number) => savePreference({ diychef_preview_concurrency: value }, t('settings.diyChefPreviewConcurrency'))" />
       </template>
     </SettingsRow>
   </SettingsGroup>

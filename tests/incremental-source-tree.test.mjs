@@ -71,7 +71,7 @@ test('MOD engine publishes root and pending child titles, waits for every TOML, 
   let retry=false
   globalThis.__loadingApi = {
     dashboard:async()=>({config:structuredClone(config),game:{kitchen_running:false}}),
-    localMods:async()=>[{dll_file:'bound.dll',repository_id:'bound',labels:[],enabled:true}],
+    localMods:async()=>({generation:1,mods:[{dll_file:'bound.dll',repository_id:'bound',labels:[],enabled:true}]}),
     modUpdates:async()=>[],config:async()=>structuredClone(config),
     clearRepositorySourceCache:async()=>structuredClone(config),
     importRepositorySource:async(id)=>{
@@ -140,7 +140,7 @@ test('MOD source config read failure is attached to its cleared group, never rep
   let fail=false
   globalThis.__loadingApi={
     dashboard:async()=>({config:structuredClone(config),game:{kitchen_running:false}}),
-    localMods:async()=>[],modUpdates:async()=>[],
+    localMods:async()=>({generation:2,mods:[]}),modUpdates:async()=>[],
     config:async()=>{if(fail)throw Error('snapshot read failed');return structuredClone(config)},
     importRepositorySource:async()=>{fail=true;return {access_error:null}},
   }

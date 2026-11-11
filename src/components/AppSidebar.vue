@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NScrollbar } from 'naive-ui'
 import {
   CloudDownloadOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline,
-  ColorWandOutline, MapOutline, AlbumsOutline,
+  ColorWandOutline, MapOutline, AlbumsOutline, ShirtOutline,
 } from '@vicons/ionicons5'
 import { t } from '../i18n'
 
@@ -60,6 +60,7 @@ const sections = [
  */
 const extraItems = [
   { name: 'rename', title: 'rename.colorfulName', icon: ColorWandOutline },
+  { name: 'diychef', title: 'diychef.title', icon: ShirtOutline },
 ]
 /** 沉底导航：工具与设置固定在侧栏底部。 */
 const bottomItems = [
@@ -68,10 +69,26 @@ const bottomItems = [
 ]
 
 const activeName = computed(() => (route.name as string) ?? 'overview')
+const sidebar = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+async function revealActive() {
+  await nextTick()
+  sidebar.value?.querySelector('.nav-scroll .nav-item.active')?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+}
+onMounted(() => {
+  void revealActive()
+  const scroll = sidebar.value?.querySelector('.nav-scroll')
+  if (scroll) {
+    resizeObserver = new ResizeObserver(() => { void revealActive() })
+    resizeObserver.observe(scroll)
+  }
+})
+onBeforeUnmount(() => resizeObserver?.disconnect())
+watch(activeName, revealActive)
 </script>
 
 <template>
-  <aside class="sidebar" data-tutorial="app-sidebar">
+  <aside ref="sidebar" class="sidebar" data-tutorial="app-sidebar">
     <!-- 可滚动导航：用 Naive 的 n-scrollbar（自带悬浮细滚动条，不占布局宽度） -->
     <n-scrollbar class="nav-scroll">
       <nav class="nav">

@@ -19,7 +19,7 @@
  * 更新要看预览、依赖和被覆盖的文件，刷新失败要看仓库的错误详情，
  * 在总览里一键执行等于绕过这些信息。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NSwitch } from 'naive-ui'
 import {
@@ -41,13 +41,21 @@ import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
 import type { LevelSetInfo } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMods } from '../tutorial/demo'
 
 const router = useRouter()
 const message = useNotify()
-const { ensureLoaded, load, modsLoading, error, mods, game, config, frameworkOk } = useDashboard()
+const { ensureLoaded, load, modsLoading: realModsLoading, error: realError, mods: realMods, game: realGame, config: realConfig } = useDashboard()
+const mods = computed(() => withDemoMods(realMods.value))
+const config = computed(() => withDemoConfig(realConfig.value))
+const game = computed(() => withDemoGame(realGame.value))
+const modsLoading = computed(() => !demoActive.value && realModsLoading.value)
+const error = computed(() => demoActive.value ? '' : realError.value)
+const frameworkOk = computed(() => game.value?.bepinex.installed === true)
 
 const { runtimeState } = useModRepositoryRefresh()
-const { maps, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
+const { maps: realMaps, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
+const maps = computed(() => withDemoMaps(realMaps.value))
 /** 本地地图扫描状态（`useLevelSetScan` 的模块级单例，切页不丢）。 */
 const { scanning: levelSetScanning, scanLevelSets } = useLevelSetScan()
 
@@ -71,6 +79,7 @@ const buttonLabel = computed(() => {
 })
 
 onMounted(() => {
+  if (demoActive.value) return
   void ensureLoaded()
   void loadDiyLevel()
   void loadOnlineMaps()
@@ -126,8 +135,9 @@ function openFrameworkSettings() {
 /** DIYLevel 的稳定 GUID：与后端 `DIYLEVEL_GUID`、MOD 扫描一致。 */
 const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
 
-const diyLevelMod = computed(() =>
-  mods.value.find((mod) =>
+const diyLevelMod = computed(() => demoActive.value
+  ? mods.value.find((mod) => mod.dll_file === withDemoDiyLevelTarget(null))
+  : mods.value.find((mod) =>
     !!mod.guid && mod.guid.trim().toLowerCase() === DIYLEVEL_GUID))
 
 const diyLevelOk = computed(() => !!diyLevelMod.value)
@@ -148,6 +158,7 @@ const diyLevelPacks = ref(0)
 const diyLevelLoading = ref(false)
 
 async function loadDiyLevel() {
+  if (demoActive.value) return
   diyLevelLoading.value = true
   try {
     const info = await api.diyLevelInfo()
@@ -162,7 +173,8 @@ async function loadDiyLevel() {
 const diyLevelSub = computed(() => {
   if (!diyLevelOk.value) return t('framework.customMapsLoadOnlyAfterInstallingThis')
   const version = diyLevelMod.value?.version ?? t('tools.versionUnknown')
-  return `${t('modsOnline.versions')} ${version} · ${t('framework.mapPacks')} ${diyLevelPacks.value}`
+  const packs = demoActive.value ? withDemoLevelSets([]).length : diyLevelPacks.value
+  return `${t('modsOnline.versions')} ${version} · ${t('framework.mapPacks')} ${packs}`
 })
 
 /** 切换 DIYLevel 启用状态：走后端与 MOD 列表相同的 .dll 改名逻辑。 */
@@ -291,7 +303,8 @@ function openOnlineRepositories() {
 /* ===== 在线地图 / 本地地图 ===== */
 
 /** 本地关卡集（`scanLevelSets()`），与地图管理页读同一份。 */
-const levelSets = ref<LevelSetInfo[]>([])
+const realLevelSets = ref<LevelSetInfo[]>([])
+const levelSets = computed(() => withDemoLevelSets(realLevelSets.value))
 
 /**
  * 地图区两份数据：地图源的条目列表（在线）与本地扫描结果（本地）。
@@ -302,8 +315,9 @@ const levelSets = ref<LevelSetInfo[]>([])
  * 相同，数据没到就用空状态文案，布局不塌。
  */
 async function loadLocalMaps() {
+  if (demoActive.value) return
   try {
-    levelSets.value = await scanLevelSets()
+    realLevelSets.value = await scanLevelSets()
   } catch (reason) {
     message.error(backendMessageOf(reason))
   }
@@ -410,6 +424,14 @@ function openLocalMaps() {
   }
   void router.push({ name: 'levels', query: { [FOCUS_QUERY]: mapId } })
 }
+
+watch(demoActive, active => {
+  if (active) return
+  void ensureLoaded()
+  void loadDiyLevel()
+  void loadOnlineMaps()
+  void loadLocalMaps()
+})
 </script>
 
 <template>

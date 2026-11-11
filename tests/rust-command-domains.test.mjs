@@ -13,7 +13,10 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 113, '既有 IPC、两个只读关卡预览命令及图片剪贴板命令，集合不得丢失')
+  assert.equal(paths.length, 122, '既有 IPC 与暖暖编辑、真实预览及元数据缩略图缓存命令，集合不得丢失')
+  for (const name of ['open_diychef_editor', 'initialize_diychef_config', 'validate_diychef_draft', 'save_diychef_config']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_editor' && actual === name))
+  for (const name of ['get_diychef_preview', 'read_diychef_preview_asset', 'clear_diychef_cache']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_preview' && actual === name))
+  for (const name of ['get_diychef_preview_fingerprint', 'diychef_thumbnail_cache']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_thumbnail' && actual === name))
   assert.ok(paths.some(([, domain, name]) => domain === 'clipboard' && name === 'copy_image'))
   assert.ok(paths.some(([, domain, name]) => domain === 'dashboard' && name === 'rebind_local_mods'))
   for (const name of ['get_level_set_preview', 'get_level_preview_detail']) assert.ok(paths.some(([, domain, actual]) => domain === 'levels' && actual === name))

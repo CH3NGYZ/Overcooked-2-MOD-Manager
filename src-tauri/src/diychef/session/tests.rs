@@ -54,6 +54,7 @@ fn editor_requires_completed_backend_generation_and_invalidates_existing_session
     let opened = open(&state, generation, None).unwrap().snapshot.unwrap();
     assert_eq!(opened.source.state, "missing");
     assert_eq!(opened.selection.entries.len(), 1);
+    assert!(opened.selection.lobby_switch);
     assert!(
         !workspace
             .0
@@ -73,7 +74,43 @@ fn editor_requires_completed_backend_generation_and_invalidates_existing_session
         validate(&state, &opened.session_id, &draft).err().unwrap(),
         "diychef.conflict"
     );
+    let chef = opened
+        .chefs
+        .iter()
+        .find(|chef| chef.source_kind == "native")
+        .unwrap();
+    let hat = opened
+        .hats
+        .iter()
+        .find(|hat| hat.config_value == "None")
+        .unwrap();
+    let preview = || resolve_preview_context(&state, &opened.session_id, &chef.id, &hat.id);
+    assert_eq!(preview().unwrap().game_root, root);
+    require_session(&state, &opened.session_id).unwrap();
+    let mut changed = state.config.load().unwrap();
+    changed.game.path = workspace
+        .0
+        .join("different-game")
+        .to_string_lossy()
+        .into_owned();
+    state.config.save(&changed).unwrap();
+    assert_eq!(preview().unwrap_err(), "diychef.targetChanged");
+    state.config.save(&config).unwrap();
+    let dll = workspace.0.join("game/BepInEx/plugins/DIYChef/DIYChef.dll");
+    let moved = dll.with_extension("dll.disabled");
+    fs::rename(&dll, &moved).unwrap();
+    assert!(
+        preview().is_err(),
+        "an unchanged scan cannot authorize a missing/disabled target DLL"
+    );
+    fs::rename(&moved, &dll).unwrap();
+    assert!(preview().is_ok());
     state.invalidate_local_mod_snapshot().unwrap();
+    assert_eq!(preview().unwrap_err(), "diychef.staleScan");
+    assert_eq!(
+        require_session(&state, &opened.session_id).unwrap_err(),
+        "diychef.staleScan"
+    );
     assert_eq!(
         get(&state, &opened.session_id).err().unwrap(),
         "diychef.staleScan"
@@ -82,6 +119,83 @@ fn editor_requires_completed_backend_generation_and_invalidates_existing_session
         open(&state, generation, None).err().unwrap(),
         "diychef.staleScan"
     );
+}
+
+#[test]
+fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present_files() {
+    let workspace = Workspace::new();
+    let root = workspace.0.join("game").canonicalize().unwrap();
+    let mod_root = root.join("BepInEx/plugins/DIYChef");
+    let mut session = Session {
+        id: "default-session".into(),
+        game_root: root.clone(),
+        game_settings: GameConfig {
+            path: root.to_string_lossy().into_owned(),
+            runtime: GameRuntime::Native,
+        },
+        mod_root: mod_root.clone(),
+        target: ChefTarget {
+            id: "default-target".into(),
+            guid: target::GUID.into(),
+            version: Some("2.2.0".into()),
+            display_path: "fixture".into(),
+            enabled: true,
+            generation: 1,
+            compatibility: "fastinit_2_2".into(),
+        },
+        catalog: catalog::read(&root, &mod_root).unwrap(),
+        stored: storage::read(&root, &mod_root, "default-target").unwrap(),
+    };
+    let missing = view(&session).unwrap();
+    assert_eq!(missing.source.state, "missing");
+    assert!(missing.selection.lobby_switch);
+    assert_eq!(missing.selection.entries.len(), 1);
+    assert_eq!(missing.selection.entries[0].row_id, None);
+    assert!(matches!(
+        &missing.selection.entries[0].chef_ref,
+        ChefReference::Known { chef_id } if chef_id == "native:Chef_Black_cat"
+    ));
+    let path = mod_root.join("prefer.txt");
+    assert!(!path.exists(), "view never writes the missing default");
+    session.stored = storage::write(
+        &root,
+        &mod_root,
+        &session.target.id,
+        &missing.source.revision,
+        prefer::DEFAULT_CONTENT,
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        b"Chef_Black_cat\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n"
+    );
+    assert_eq!(prefer::DEFAULT_CONTENT.len(), 40);
+    let initialized = view(&session).unwrap();
+    assert_eq!(initialized.source.state, "present");
+    assert_eq!(initialized.source.encoding, "utf8");
+    assert!(initialized.selection.lobby_switch);
+    for (original, lobby_switch) in [
+        (b"".as_slice(), false),
+        (b"Chef_Black_cat\r\n", false),
+        (b"Chef_Black_cat\nLOBBYSWITCHCHEF=FALSE\n", false),
+        (b"LOBBYSWITCHCHEF=TRUE\r\nChef_Black_cat\r\n", true),
+        (
+            b"LOBBYSWITCHCHEF=TRUE\nChef_Black_cat\nLOBBYSWITCHCHEF=TRUE",
+            true,
+        ),
+    ] {
+        fs::write(&path, original).unwrap();
+        session.stored = storage::read(&root, &mod_root, &session.target.id).unwrap();
+        let present = view(&session).unwrap();
+        assert_eq!(present.source.state, "present");
+        assert_eq!(present.selection.lobby_switch, lobby_switch);
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            original,
+            "view preserves present bytes"
+        );
+    }
 }
 
 #[test]
@@ -197,13 +311,15 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     let opened = open(&state, generation, None).unwrap().snapshot.unwrap();
     assert_eq!(opened.target.compatibility, "fastinit_2_2");
     assert_eq!(opened.source.state, "missing");
+    assert!(opened.selection.lobby_switch);
     assert!(!destination.join("prefer.txt").exists());
     let initialized = initialize(&state, &opened.session_id, &opened.source.revision).unwrap();
     assert_eq!(
         fs::read(destination.join("prefer.txt")).unwrap(),
-        b"Chef_Black_cat\r\n"
+        b"Chef_Black_cat\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n"
     );
     assert_eq!(initialized.source.state, "present");
+    assert!(initialized.selection.lobby_switch);
     let session = get(&state, &opened.session_id).unwrap();
     let mut draft = baseline_draft(&session);
     draft.entries[0].hat_ref = HatReference::Known {
@@ -245,7 +361,7 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     );
     assert_eq!(
         fs::read(destination.join("prefer.txt")).unwrap(),
-        b"Chef_Black_cat\r\n",
+        b"Chef_Black_cat\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n",
         "rejected drafts never reach disk"
     );
     draft.entries.swap(0, 1);
@@ -257,7 +373,7 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         .map(|change| change.id)
         .collect();
     let saved = save(&state, &opened.session_id, &draft).unwrap();
-    let expected = b"Chef_Black_cat HAT=None\r\n00-Fox HAT=Hardhat\r\nLOBBYSWITCHCHEF=TRUE\r\n";
+    let expected = b"Chef_Black_cat HAT=None\r\n00-Fox HAT=Hardhat\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n";
     assert_eq!(fs::read(destination.join("prefer.txt")).unwrap(), expected);
     assert_eq!(saved.selection.entries.len(), 2);
     assert!(saved.selection.lobby_switch);
@@ -276,6 +392,7 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     let historical = b"00-Fox HAT=Hardhat\r\nChef_Black_cat HAT=None\r\n";
     fs::write(destination.join("prefer.txt"), historical).unwrap();
     let old = open(&state, generation, None).unwrap().snapshot.unwrap();
+    assert!(!old.selection.lobby_switch);
     assert!(
         matches!(&old.selection.entries[0].chef_ref, ChefReference::Known {chef_id} if chef_id == "custom:00-Fox")
     );

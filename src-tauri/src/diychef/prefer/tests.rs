@@ -175,8 +175,8 @@ fn append_without_final_newline_separates_new_entry_and_switch() {
     assert_eq!(
         String::from_utf8(bytes).unwrap(),
         format!(
-            "Chef_Black_cat{}Chef_Beard{}LOBBYSWITCHCHEF=TRUE",
-            doc.newline, doc.newline
+            "Chef_Black_cat{}Chef_Beard{}{}LOBBYSWITCHCHEF=TRUE",
+            doc.newline, doc.newline, doc.newline
         )
     );
 }
@@ -217,4 +217,192 @@ fn unknown_deletion_cannot_resurrect_shadowed_unknown() {
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(String::from_utf8(bytes).unwrap(), "Chef_Black_cat");
+}
+
+#[test]
+fn normal_saves_move_every_old_switch_position_to_one_final_separated_record() {
+    let c = catalog();
+    for newline in ["\n", "\r\n", "\r"] {
+        for final_newline in [false, true] {
+            let ending = if final_newline { newline } else { "" };
+            for old_lines in [
+                vec![SWITCH_LINE, "Chef_Black_cat", "Chef_Beard"],
+                vec!["Chef_Black_cat", SWITCH_LINE, "Chef_Beard"],
+                vec!["Chef_Black_cat", "Chef_Beard", SWITCH_LINE],
+                vec!["Chef_Black_cat", "", "\t", SWITCH_LINE, "Chef_Beard"],
+                vec![
+                    SWITCH_LINE,
+                    "Chef_Black_cat",
+                    SWITCH_LINE,
+                    "Chef_Beard",
+                    SWITCH_LINE,
+                ],
+            ] {
+                let original = old_lines.join(newline) + ending;
+                let doc = Document::parse(original.as_bytes()).unwrap();
+                let (bytes, changes) = plan(&doc, &draft(&doc, &c), &c).unwrap();
+                let expected = format!(
+                    "Chef_Black_cat{newline}Chef_Beard{newline}{newline}{SWITCH_LINE}{ending}"
+                );
+                assert_eq!(decode(&bytes).unwrap().0, expected, "{original:?}");
+                assert!(changes.is_empty(), "ordinary switch relocation is lossless");
+                assert_eq!(doc.text(), original, "planning never mutates the source");
+                let readback = Document::parse(&bytes).unwrap();
+                assert!(matches!(
+                    readback.lines.last().unwrap().kind,
+                    LineKind::Switch
+                ));
+                assert_eq!(
+                    readback
+                        .lines
+                        .iter()
+                        .filter(|line| matches!(line.kind, LineKind::Switch))
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    plan(&readback, &draft(&readback, &c), &c).unwrap().0,
+                    bytes,
+                    "the normalized layout is stable"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn switch_footer_keeps_unknown_duplicates_and_mixed_internal_endings_exact() {
+    let c = catalog();
+    let original = concat!(
+        "LOBBYSWITCHCHEF=TRUE\r\n",
+        "  Chef_Black_cat HAT=Alien extra \n",
+        "UNKNOWN HAT=Alien\r",
+        "Chef_Black_cat HAT=None\r\n",
+        " \t\r\n\n"
+    );
+    let doc = Document::parse(original.as_bytes()).unwrap();
+    let (bytes, changes) = plan(&doc, &draft(&doc, &c), &c).unwrap();
+    assert!(changes.is_empty());
+    assert_eq!(
+        decode(&bytes).unwrap().0,
+        concat!(
+            "  Chef_Black_cat HAT=Alien extra \n",
+            "UNKNOWN HAT=Alien\r",
+            "Chef_Black_cat HAT=None\r\n",
+            "\r\nLOBBYSWITCHCHEF=TRUE\r\n"
+        )
+    );
+    let mixed = Document::parse(b"Chef_Black_cat\nChef_Beard\r").unwrap();
+    let mut d = draft(&mixed, &c);
+    d.lobby_switch = true;
+    assert_eq!(
+        decode(&plan(&mixed, &d, &c).unwrap().0).unwrap().0,
+        "Chef_Black_cat\nChef_Beard\r\rLOBBYSWITCHCHEF=TRUE\n",
+        "CR followed by LF must not collapse the intended empty separator line"
+    );
+}
+
+#[test]
+fn switch_footer_preserves_encoding_bom_newline_and_unterminated_final_record() {
+    let c = catalog();
+    for encoding in ["utf8", "utf8bom", "utf16le", "utf16be"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            let mut encoder = Document::parse(b"").unwrap();
+            encoder.encoding = encoding.into();
+            for final_newline in [false, true] {
+                let ending = if final_newline { newline } else { "" };
+                let original = encoder.encode(&format!(
+                    "{SWITCH_LINE}{newline}Chef_Black_cat{newline}UNKNOWN HAT=Alien{ending}"
+                ));
+                let doc = Document::parse(&original).unwrap();
+                let (bytes, _) = plan(&doc, &draft(&doc, &c), &c).unwrap();
+                assert_eq!(
+                    bytes,
+                    encoder.encode(&format!(
+                        "Chef_Black_cat{newline}UNKNOWN HAT=Alien{newline}{newline}{SWITCH_LINE}{ending}"
+                    ))
+                );
+                assert_eq!(Document::parse(&bytes).unwrap().encoding, encoding);
+                assert_eq!(doc.encode(&doc.text()), original);
+            }
+        }
+    }
+}
+
+#[test]
+fn abnormal_switch_records_need_explicit_confirmation_when_canonicalized_or_removed() {
+    let c = catalog();
+    let doc =
+        Document::parse(b"# LOBBYSWITCHCHEF=TRUE extra\nChef_Black_cat\nLOBBYSWITCHCHEF=TRUE\n")
+            .unwrap();
+    let d = draft(&doc, &c);
+    let (bytes, changes) = plan(&doc, &d, &c).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].before, "# LOBBYSWITCHCHEF=TRUE extra");
+    assert_eq!(changes[0].after, SWITCH_LINE);
+    assert_eq!(
+        decode(&bytes).unwrap().0,
+        "Chef_Black_cat\n\nLOBBYSWITCHCHEF=TRUE\n"
+    );
+}
+
+#[test]
+fn default_and_both_reset_modes_share_the_single_switch_footer() {
+    assert_eq!(DEFAULT_CONTENT.len(), 40);
+    assert_eq!(
+        DEFAULT_CONTENT,
+        b"Chef_Black_cat\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n"
+    );
+    let c = catalog();
+    for original in [
+        "LOBBYSWITCHCHEF=TRUE\r\nUNKNOWN\r\nChef_Black_cat\r\nChef_Black_cat HAT=None",
+        "Chef_Black_cat\r\n\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n",
+    ] {
+        let doc = Document::parse(original.as_bytes()).unwrap();
+        for intent in ["keep_black_cat", "restore_default"] {
+            let mut d = draft(&doc, &c);
+            d.entries.retain(|entry| {
+                matches!(&entry.chef_ref, ChefReference::Known { chef_id } if chef_id == "native:Chef_Black_cat")
+            });
+            d.lobby_switch = true;
+            d.reset_intent = Some(intent.into());
+            let (bytes, changes) = plan(&doc, &d, &c).unwrap();
+            assert_eq!(bytes, DEFAULT_CONTENT);
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].id, "reset");
+        }
+    }
+    let doc = Document::parse(DEFAULT_CONTENT).unwrap();
+    let (bytes, changes) = plan(&doc, &draft(&doc, &c), &c).unwrap();
+    assert_eq!(bytes, DEFAULT_CONTENT);
+    assert!(changes.is_empty());
+}
+
+#[test]
+fn appending_after_the_previous_switch_moves_its_separator_with_the_footer() {
+    let c = catalog();
+    let doc = Document::parse(DEFAULT_CONTENT).unwrap();
+    let mut d = draft(&doc, &c);
+    d.entries.push(ChefEntry {
+        entry_id: "appended-after-switch".into(),
+        row_id: None,
+        chef_ref: ChefReference::Known {
+            chef_id: "native:Chef_Beard".into(),
+        },
+        hat_ref: HatReference::Known {
+            hat_id: "hat:".into(),
+        },
+    });
+    let (bytes, changes) = plan(&doc, &d, &c).unwrap();
+    assert!(changes.is_empty());
+    assert_eq!(
+        bytes,
+        b"Chef_Black_cat\r\nChef_Beard\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n"
+    );
+    d.lobby_switch = false;
+    assert_eq!(
+        plan(&doc, &d, &c).unwrap().0,
+        b"Chef_Black_cat\r\nChef_Beard\r\n",
+        "disabling removes the old switch separator as well"
+    );
 }

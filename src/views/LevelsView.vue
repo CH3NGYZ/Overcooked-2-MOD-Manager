@@ -2,7 +2,8 @@
 import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NCollapse, NCollapseItem, NEmpty, NFloatButton, NTag, useDialog } from 'naive-ui'
+import { NCollapse, NCollapseItem, NFloatButton, NTag, useDialog } from 'naive-ui'
+import ContentState from '../components/ContentState.vue'
 import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { matchesLocalSearch, levelSetSearchText } from '../localItemSearch'
 import { t, locale, pickI18n } from '../i18n'
@@ -71,6 +72,7 @@ import {
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
 import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, ModRepository } from '../types'
+import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMods } from '../tutorial/demo'
 
 /**
  * 地图管理页 —— 只做「管理已经在本地的地图」。
@@ -108,7 +110,10 @@ import type { InstallSource, LevelSetInfo, LevelSetPlugin, MapInfo, ModRepositor
 const message = useNotify()
 const dialog = useDialog()
 const { blockModOperation } = useGameOperationGate()
-const { config, game, mods, ensureLoaded } = useDashboard()
+const { config: realConfig, game: realGame, mods: realMods, ensureLoaded } = useDashboard()
+const config = computed(() => withDemoConfig(realConfig.value))
+const game = computed(() => withDemoGame(realGame.value))
+const mods = computed(() => withDemoMods(realMods.value))
 const { linkToMap } = useMapLink()
 /**
  * 「缺依赖」的安装入口与 MOD 管理页同一个落点：跳到 MOD 安装页并高亮那张
@@ -127,8 +132,9 @@ const { highlightId } = useFocusHighlight()
 const levelPreview = ref<InstanceType<typeof LevelPreviewDialog> | null>(null)
 const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 3 + TOOL_GAP * 2)
 
-/** 本页展示的关卡集 = 磁盘扫描结果；`useLevelSetScan` 是唯一读取入口。 */
-const sets = ref<LevelSetInfo[]>([])
+/** 扫描缓存只存真实数据，教程展示通过同一批示例投影。 */
+const realSets = ref<LevelSetInfo[]>([])
+const sets = computed(() => withDemoLevelSets(realSets.value))
 /**
  * 地图源声明的地图与刷新状态，全部来自模块级单例（`useMapSources`）。
  *
@@ -138,10 +144,22 @@ const sets = ref<LevelSetInfo[]>([])
  * 刷新态同理：`checkingBound` 记的是共享引擎的批次，页面局部 ref 熬不过切页。
  */
 const {
-  maps, checkingBound, outcome, refreshingHint,
+  maps: realMaps, checkingBound, outcome, refreshingHint,
   loadMaps, refreshBoundMaps, syncDependencySnapshots,
 } = useMapSources()
-const loading = ref(true)
+const maps = computed(() => withDemoMaps(realMaps.value))
+/** Dependency tags can be evaluated immediately when tutorial maps are present. */
+const repositories = computed<ModRepository[]>(() =>
+  (config.value?.repositories ?? []).filter((repo) =>
+    modRepositoryIsAvailable(
+      repo,
+      config.value?.repository_sources,
+      config.value?.region,
+      config.value?.platform,
+    )),
+)
+const realLoading = ref(true)
+const loading = computed(() => !demoActive.value && realLoading.value)
 /**
  * 扫描进度（后端 `level-set-scan-progress` 逐份上报，订阅在 `useLevelSetScan` 里）。
  *
@@ -269,37 +287,18 @@ function expandGroupForHighlight() {
 }
 watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 
-/**
- * 在线 MOD 仓库，只留「在当前地区真实存在」的那些。
- *
- * 依赖表的名称与判定都要用它：地图的依赖是框架 MOD（DIYLevel / Web Runtime），
- * 它们本身也是在线 MOD 仓库，作者在源文档里给它们起了名字。缺了这份列表，
- * 名称会退化成 GUID、状态也会退化成「缺依赖」。
- *
- * 过滤口径与地图下载页、MOD 安装页完全一致 —— `modRepositoryIsAvailable` 是
- * 地区 / 平台 / `enabled` 的唯一前端入口，页面不再另写一遍条件。
- */
-const repositories = computed<ModRepository[]>(() =>
-  (config.value?.repositories ?? []).filter((repo) =>
-    modRepositoryIsAvailable(
-      repo,
-      config.value?.repository_sources,
-      config.value?.region,
-      config.value?.platform,
-    )),
-)
-
 /** Local scanning owns only its loading/result. Online map loading starts
  * independently on mount and must never delay publication of this list. */
 async function load() {
-  loading.value = sets.value.length === 0
+  if (demoActive.value) return
+  realLoading.value = realSets.value.length === 0
   try {
     const levelSets = await scanLevelSets()
-    sets.value = levelSets
+    realSets.value = levelSets
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
-    loading.value = false
+    realLoading.value = false
   }
 }
 
@@ -310,8 +309,9 @@ async function load() {
  * 地图源列表（`useMapSources` 的 `maps`）不会因此变化，重拉纯属浪费。
  */
 async function reloadSets() {
+  if (demoActive.value) return
   try {
-    sets.value = await scanLevelSets()
+    realSets.value = await scanLevelSets()
   } catch (reason) {
     message.error(backendMessageOf(reason))
   }
@@ -358,7 +358,7 @@ const actionInFlight = ref<string | null>(null)
  */
 useLevelSetsExternalChange(
   reloadSets,
-  busyReader(() => importing.value
+  busyReader(() => demoActive.value || importing.value
     || loading.value
     || Object.values(busy.value).some(Boolean)
     || Object.values(deleting.value).some(Boolean)),
@@ -402,7 +402,7 @@ const { acceptDrop } = useDropRouting()
  */
 const { dragActive } = useFileDrop({
   accept: ['zip', 'dll'],
-  busy: () => importing.value,
+  busy: () => demoActive.value || importing.value,
   onDrop: (path) => {
     void (async () => {
       if (await acceptDrop(path, 'map')) await startDropInstall(path)
@@ -411,6 +411,7 @@ const { dragActive } = useFileDrop({
 })
 
 onMounted(() => {
+  if (demoActive.value) return
   /*
    * 依赖缺失判定与「删除是否进回收站」都要读 Dashboard（mods / config），
    * 而 Dashboard 由页面自己按需加载。直接进本页时它可能还是空的：那时
@@ -423,6 +424,13 @@ onMounted(() => {
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
   if (pending) void startDropInstall(pending)
+})
+
+watch(demoActive, active => {
+  if (active) return
+  void ensureLoaded()
+  void loadMaps()
+  void load()
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */
@@ -1047,11 +1055,11 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
       <span v-else>{{ t('levelSet.scanningPreparing') }}</span>
       <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
     </template>
-    <n-empty v-if="!loading && !visibleSets.length" class="empty"
+    <ContentState v-if="!loading && !visibleSets.length" data-tutorial="levels-page"
       :description="emptyDescription" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
-    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
+    <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse" data-tutorial="levels-page"
       @update:expanded-names="onGroupsExpanded">
       <!--
         折叠项里只挂组件、不写卡片：`n-collapse` 的动态 prop 只有
@@ -1103,13 +1111,9 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
   .spin-icon { animation: none; }
 }
 
-.empty {
-  padding: 48px 0;
-}
-
 /*
  * 加载遮罩里「正在读取的文件夹」那一行。
- * 两行的排布与间距由 PageLoading 的 .page-loading-text 统一给，这里只补
+ * 两行的排布与间距由 ContentState 的 .content-state-text 统一给，这里只补
  * 内容差异：文件夹名可能很长，单行省略 + title 给全文 —— 进度数字才是
  * 这一块的主信息。
  */

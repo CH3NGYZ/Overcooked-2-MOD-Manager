@@ -1,3 +1,5 @@
+export type * from './diychef/types'
+export type * from './diychef/preview/types'
 export type RequestPlanStep = { kind: 'official' | 'direct' } | { kind: 'proxy'; id: string }
 export interface RequestRouteOverride {
   route?: RequestPlanStep[]
@@ -181,6 +183,8 @@ export interface PublicConfig {
   map_info_concurrency: number
   /** 后台 LZMA 转 LZ4 并发上限；0 = 全部核心，独立于 info 读取。 */
   map_compression_concurrency: number
+  /** 暖暖缩略图并行准备上限；0 = 全部 CPU 核心。 */
+  diychef_preview_concurrency: number
   /** 已经看过的教程步骤 id；启动时只播不在里面的步骤。 */
   tutorial_watched_steps?: string[]
   game: { path: string; runtime: GameRuntime }
@@ -668,7 +672,7 @@ export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChann
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export interface AppUpdateCheckResult { update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
 export interface SettingsPatch { ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; builtin_sources_only?: boolean; builtin_map_sources_only?: boolean; builtin_proxies_only?: boolean
-  builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; tutorial_watched_steps?: string[] }
+  builtin_network_plans_only?: boolean; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; diychef_preview_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
 export interface ModRepositoryPatch {
   id?: string

@@ -7,11 +7,7 @@ import { registerHooks } from 'node:module'
  *
  * ## 为什么需要它
  *
- * 示例数据有两个域，规则不一样，两边都容易在后续改动中悄悄失效：
- *
- *   - 本地 MOD：只在「教程运行中、且真实列表为空」时补两张卡 —— 合并函数写错
- *     方向（真实非空时仍混进假卡）会让用户看到自己不存在的 MOD；
- *   - 在线列表（来源 / 仓库 / 地图）：教程运行期间**整体替换**。这几步讲的是
+ * 所有示例投影都在教程期间整体替换真实列表，退出恢复原引用。这几步讲的是
  *     固定的「源分组 → 卡片 → 详情」路径，真实配置为空或首启连不上源时根本
  *     没有东西可指。替换必须同时换来源，否则 `modRepositoryIsAvailable` 会因为
  *     「source_id 找不到所属源」把示例仓库全部滤掉。
@@ -58,10 +54,18 @@ const {
   withDemoRepositories,
   withDemoSources,
   withDemoMaps,
+  withDemoLevelSets,
+  withDemoMapSourceNodes,
+  withDemoConfig,
+  withDemoGame,
+  withDemoDiyLevelTarget,
   demoReadme,
   isDemoId,
   isDemoOwner,
 } = await import('../src/tutorial/demo.ts')
+const { diyChefDemoSnapshot, diyChefDemoImage, isDiyChefDemoSession } = await import('../src/tutorial/demoDiyChef.ts')
+const { levelSetForMap } = await import('../src/levelSetStatus.ts')
+const { repositoryForMod } = await import('../src/modStatus.ts')
 
 /** 一条真实 MOD 的最小形状；合并函数在任何状态下都不该改动它。 */
 function realMod() {
@@ -76,18 +80,60 @@ function realMod() {
   }
 }
 
+test('暖暖示例每次教程独立重建、默认位是原生且结束即撤销', () => {
+  assert.equal(diyChefDemoSnapshot.value, null)
+  startTutorialDemo()
+  const first = diyChefDemoSnapshot.value
+  assert.ok(first)
+  assert.equal(first.chefs.length, 3)
+  assert.equal(first.selection.entries.length, 2)
+  assert.equal(first.selection.lobby_switch, true)
+  const firstChef = first.chefs.find(chef => chef.id === first.selection.entries[0].chef_ref.chef_id)
+  assert.equal(firstChef.source_kind, 'native')
+  assert.equal(new Set(first.chefs.map(chef => chef.id)).size, 3)
+  for (const chef of first.chefs) assert.ok(!chef.display_name.startsWith('tutorial.'))
+  assert.equal(isDiyChefDemoSession(first.session_id), true)
+  stopTutorialDemo()
+  assert.equal(diyChefDemoSnapshot.value, null)
+  assert.equal(isDiyChefDemoSession(first.session_id), true, 'outgoing demo components stay isolated after the flag clears')
+  startTutorialDemo()
+  const second = diyChefDemoSnapshot.value
+  assert.notEqual(second, first)
+  second.selection.entries.pop()
+  assert.equal(first.selection.entries.length, 2, 'demo runs share no mutable draft data')
+  stopTutorialDemo()
+})
+
+test('暖暖示例只使用随包真实模型PNG且未知组合不走真实生成', async () => {
+  const { readFile } = await import('node:fs/promises')
+  startTutorialDemo()
+  try {
+    const snapshot = diyChefDemoSnapshot.value
+    for (const chef of snapshot.chefs) {
+      const path = diyChefDemoImage(snapshot.session_id, chef.id, 'hat:')
+      assert.ok(path.startsWith('/tutorial/diychef/'))
+      const bytes = await readFile(new URL(`../public${path}`, import.meta.url))
+      assert.equal(bytes.subarray(1, 4).toString(), 'PNG')
+      assert.ok(bytes.length < 300_000)
+    }
+    assert.ok(diyChefDemoImage(snapshot.session_id, 'custom:00-Fox', 'hat:Wizardhat'))
+    assert.equal(diyChefDemoImage('real-session', snapshot.chefs[0].id, 'hat:'), null)
+    assert.equal(diyChefDemoImage(snapshot.session_id, snapshot.chefs[0].id, 'hat:unknown'), null)
+  } finally { stopTutorialDemo() }
+})
+
 test('未进入教程时合并函数原样返回真实数据', () => {
   const mods = [realMod()]
   assert.equal(withDemoMods(mods), mods)
   assert.equal(withDemoMods([]).length, 0)
 })
 
-test('教程运行中且列表为空时补上示例卡片', () => {
+test('教程运行中列表为空时展示三张完整示例卡片', () => {
   startTutorialDemo()
   try {
     assert.equal(demoActive.value, true)
     const mods = withDemoMods([])
-    assert.equal(mods.length, 2)
+    assert.equal(mods.length, 3)
     // 标题取语言表里的社区 MOD 名（BepInEx 配置管理器 / 街机 MOD），
     // 但必须来自 `t()`、不是 key 原文，且两张卡不能同名
     for (const mod of mods) {
@@ -95,18 +141,22 @@ test('教程运行中且列表为空时补上示例卡片', () => {
       assert.ok(!mod.title.startsWith('tutorial.'), `标题不应是 key 原文：${mod.title}`)
       assert.equal(mod.enabled, true)
     }
-    assert.equal(new Set(mods.map((mod) => mod.title)).size, mods.length, '两张示例 MOD 不能同名')
+    assert.equal(new Set(mods.map((mod) => mod.title)).size, mods.length, '示例 MOD 不能同名')
   } finally {
     stopTutorialDemo()
   }
 })
 
-test('教程运行中但真实列表非空时不注入示例', () => {
+test('教程运行中真实列表非空时也整体替换，退出恢复同一原引用', () => {
   startTutorialDemo()
   try {
     const mods = [realMod()]
+    assert.notEqual(withDemoMods(mods), mods)
+    assert.equal(withDemoMods(mods).length, 3)
+    assert.ok(withDemoMods(mods).every(mod => isDemoId(mod.guid)))
+    assert.equal(mods.length, 1)
+    stopTutorialDemo()
     assert.equal(withDemoMods(mods), mods)
-    assert.equal(withDemoMods(mods).length, 1)
   } finally {
     stopTutorialDemo()
   }
@@ -114,7 +164,7 @@ test('教程运行中但真实列表非空时不注入示例', () => {
 
 test('教程结束立刻回到真实数据，示例被清空', () => {
   startTutorialDemo()
-  assert.equal(withDemoMods([]).length, 2)
+  assert.equal(withDemoMods([]).length, 3)
   stopTutorialDemo()
   assert.equal(demoActive.value, false)
   assert.equal(withDemoMods([]).length, 0)
@@ -124,7 +174,7 @@ test('重复开始不会叠加示例卡片', () => {
   startTutorialDemo()
   startTutorialDemo()
   try {
-    assert.equal(withDemoMods([]).length, 2)
+    assert.equal(withDemoMods([]).length, 3)
   } finally {
     stopTutorialDemo()
   }
@@ -303,4 +353,69 @@ test('示例 owner 被头像预取跳过，真实 owner 不受影响', () => {
   } finally {
     stopTutorialDemo()
   }
+})
+
+test('本地地图与源树整体替换非空真实数据，跨页身份和版本一致', () => {
+  const realSets = [{ dir_name: 'real-set', name: 'Real map' }]
+  const realNodes = [{ id: 'real-source', label: 'Real source', status: 'error' }]
+  assert.equal(withDemoLevelSets(realSets), realSets)
+  assert.equal(withDemoMapSourceNodes(realNodes), realNodes)
+  startTutorialDemo()
+  try {
+    const sets = withDemoLevelSets(realSets)
+    const nodes = withDemoMapSourceNodes(realNodes)
+    const maps = withDemoMaps([])
+    assert.equal(sets.length, 2)
+    assert.equal(nodes.length, 1)
+    assert.equal(nodes[0].status, 'ready')
+    for (const map of maps) {
+      const set = levelSetForMap(map, sets)
+      assert.ok(set)
+      assert.equal(set.map_id, map.id)
+      assert.equal(set.installed_mapset_version, map.latest_mapset_version)
+      assert.ok(isDemoId(set.dir_name))
+      assert.ok(nodes.some(node => node.id === map.source_id))
+    }
+    const mods = withDemoMods([])
+    const repositories = withDemoRepositories([])
+    for (const mod of mods) {
+      const repo = repositoryForMod(repositories, mod)
+      assert.ok(repo)
+      assert.equal(repo.plugin_guid, mod.guid)
+      assert.equal(repo.cached_releases[0].version, mod.version)
+    }
+  } finally { stopTutorialDemo() }
+  assert.equal(withDemoLevelSets(realSets), realSets)
+  assert.equal(withDemoMapSourceNodes(realNodes), realNodes)
+})
+
+test('概览和设置使用独立示例配置与框架摘要，结束恢复真实对象且重播重建', () => {
+  const real = { game: { path: 'real-path' }, repositories: [realRepository()], repository_sources: [realSource()], mod_metadata_concurrency: 7 }
+  const realGame = { path: 'real-path', kitchen_running: true }
+  assert.equal(withDemoConfig(real), real)
+  assert.equal(withDemoGame(realGame), realGame)
+  assert.equal(withDemoDiyLevelTarget('real.dll'), 'real.dll')
+  startTutorialDemo()
+  const config = withDemoConfig(real)
+  const game = withDemoGame(realGame)
+  const target = withDemoDiyLevelTarget('real.dll')
+  assert.notEqual(config, real)
+  assert.notEqual(game, realGame)
+  assert.equal(config.repositories, withDemoRepositories([]))
+  assert.equal(config.repository_sources, withDemoSources([]))
+  assert.equal(config.game.path, game.path)
+  assert.equal(game.kitchen_running, false)
+  assert.equal(game.bepinex.installed, true)
+  for (const key of ['mod_metadata_concurrency', 'map_info_concurrency', 'map_compression_concurrency', 'diychef_preview_concurrency']) assert.equal(config[key], 0)
+  assert.ok(withDemoMods([]).some(mod => mod.dll_file === target))
+  config.mod_metadata_concurrency = 2
+  assert.equal(real.mod_metadata_concurrency, 7)
+  stopTutorialDemo()
+  assert.equal(withDemoConfig(real), real)
+  assert.equal(withDemoGame(realGame), realGame)
+  assert.equal(withDemoDiyLevelTarget('real.dll'), 'real.dll')
+  startTutorialDemo()
+  assert.notEqual(withDemoConfig(real), config)
+  assert.equal(withDemoConfig(real).mod_metadata_concurrency, 0)
+  stopTutorialDemo()
 })

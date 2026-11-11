@@ -9,6 +9,7 @@ import { pickI18n } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledModRepositories } from '../modRepositoryPriority'
+import { demoActive, isDemoId } from '../tutorial/demo'
 import {
   modRepositoryIsAvailable, sourceMatchesRegion,
 } from '../repositoryAvailability'
@@ -109,7 +110,7 @@ const runtimeState = computed<RuntimeRefreshState>(() => ({
   refreshing: refreshing.value,
   queued: queued.value,
   sourceRefreshing: sourceRefreshing.value,
-  entryStateUnavailable: entryStateUnavailable.value || state.preparingSources.value,
+  entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingSources.value),
 }))
 
 // Card comparisons are incremental (runtimeState). This is only the final
@@ -118,6 +119,7 @@ const dashboardStore = useDashboard()
 watch([anyRefreshing, dashboardStore.modsLoading, dashboardStore.mods, dashboardStore.config],
   ([busy, scanning]) => {
     dashboardStore.invalidateModUpdates()
+    if (demoActive.value) return
     if (!busy && !scanning && dashboardStore.dashboard.value) void dashboardStore.checkModUpdates()
   }, { flush: 'post' })
 
@@ -157,12 +159,22 @@ function store() {
  */
 function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<ModRepository> {
   const force = options.force ?? false
+  const skipped = new Set<string>()
   return {
-    fetch: (item) => api.refreshModRepository(item.id, force),
-    apply: (item, releases) => patchRepository(item.id, {
-      cached_releases: releases,
-      last_error: undefined,
-    }),
+    fetch: (item) => {
+      if (demoActive.value || isDemoId(item.id)) {
+        skipped.add(item.id)
+        return Promise.resolve(item.cached_releases ?? [])
+      }
+      return api.refreshModRepository(item.id, force)
+    },
+    apply: (item, releases) => {
+      if (skipped.has(item.id)) return
+      patchRepository(item.id, {
+        cached_releases: releases,
+        last_error: undefined,
+      })
+    },
     /*
      * 失败写回与后端**同一条规则**（`refresh_mod_repository` 的 Err 分支）：
      * 缓存清空 + 置 `last_error`。不这么写的话，前端会保留旧 Release 并显示
@@ -179,6 +191,7 @@ function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchS
 
 /** 单仓刷新（「刷一个回来一个」的最小单位）。 */
 async function refreshOne(repo: ModRepository, force = false): Promise<string | null> {
+  if (demoActive.value || isDemoId(repo.id)) return null
   return refreshReleaseItem(state, repo, repositoryReleaseSpec({ force }))
 }
 
@@ -220,12 +233,13 @@ async function runRepositoryBatch(
   repos: ModRepository[],
   options: { force?: boolean; trigger?: RefreshTrigger } = {},
 ): Promise<RefreshOutcome> {
+  if (demoActive.value) return { trigger: options.trigger ?? 'partial', refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
   const { mods } = store()
   /*
    * 仓库文件（RAW）模式没有 Release 可刷，直接跳过，不当成失败上报。
    * 已安装优先让用户自己装的仓库先出结论。
    */
-  const refreshable = repos.filter((repo) => repo.download_mode !== 'repository_file')
+  const refreshable = repos.filter((repo) => !isDemoId(repo.id) && repo.download_mode !== 'repository_file')
   return runReleaseBatch<ModRepository>({
     state,
     items: refreshable,
@@ -262,7 +276,7 @@ export interface BoundRefreshSummary {
 /** Prepare all source TOMLs first, then refresh only the bound repositories.
  * API refresh supplies update evidence directly; ordinary checks honor cache TTL. */
 async function refreshBoundRepositories(repos: ModRepository[]): Promise<BoundRefreshSummary> {
-  if (anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
+  if (demoActive.value || anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
   const ids = new Set(repos.map((repo) => repo.id))
   const result = await runSourceReleaseRefresh({
     state,
@@ -298,6 +312,7 @@ function sourceError(source: RepositorySource, reason: string): string {
  * 用 load() 会把全量扫描重复十几次，这是刷新期间卡顿的主要来源。
  */
 async function refreshSourceChain(sourceId: string, visited = new Set<string>()): Promise<string[]> {
+  if (demoActive.value || isDemoId(sourceId)) return []
   if (visited.has(sourceId)) return []
   visited.add(sourceId)
   const { reloadConfig, sources, region } = store()
@@ -345,6 +360,7 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
 }
 
 async function refreshSourceDocuments(): Promise<string[]> {
+  if (demoActive.value) return []
   const { sources, region } = store()
   const refreshable = sources.value.filter(
     (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
@@ -366,9 +382,11 @@ async function refreshSourceDocuments(): Promise<string[]> {
  * 返回失败清单；调用方决定是否提示。
  */
 async function prepareRepositorySources(clearEntries: boolean): Promise<string[]> {
+    if (demoActive.value) return []
     const { loadBase, reloadConfig, applyConfigSnapshot, repositories, sources, region } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await loadBase()
+    if (demoActive.value) return []
     if (clearEntries) {
       sourceTree.replace([])
       const refreshable = sources.value.filter(
@@ -393,7 +411,7 @@ async function prepareRepositorySources(clearEntries: boolean): Promise<string[]
 }
 
 async function refreshSource(sourceId: string): Promise<string[]> {
-  if (anyRefreshing.value) return []
+  if (demoActive.value || isDemoId(sourceId) || anyRefreshing.value) return []
   const result = await runSourceReleaseRefresh({
     state, trigger: 'partial',
     prepare: () => refreshSourceChain(sourceId),
@@ -408,7 +426,7 @@ async function refreshSource(sourceId: string): Promise<string[]> {
 }
 
 async function refreshEverything(options: { force?: boolean } = {}): Promise<string[]> {
-  if (anyRefreshing.value) return []
+  if (demoActive.value || anyRefreshing.value) return []
   lastErrors.value = []
   state.setEntryStateUnavailable(true)
   const result = await runSourceReleaseRefresh({
@@ -420,7 +438,7 @@ async function refreshEverything(options: { force?: boolean } = {}): Promise<str
       const available = repositories.value.filter((repo) =>
         modRepositoryIsAvailable(repo, sources.value, region.value, platform.value))
       const result = await runRepositoryBatch(available, { trigger: 'single', force: options.force })
-      await api.syncDependencySnapshots().catch(() => undefined)
+      if (!demoActive.value) await api.syncDependencySnapshots().catch(() => undefined)
       return result
     },
   })
@@ -436,6 +454,7 @@ async function refreshEverything(options: { force?: boolean } = {}): Promise<str
  * 目前没有任何调用方；如果确定不再恢复教程，可以连同 `deferred` 状态一起删。
  */
 function requestStartupRefresh() {
+  if (demoActive.value) return
   if (startupState !== 'idle') return
   startupState = 'running'
   void refreshEverything().finally(() => { startupState = 'done' })
@@ -458,10 +477,13 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 export function useModRepositoryRefresh() {
   return {
     sourceNodes: sourceTree.nodes,
-    preparingSources: state.preparingSources,
-    refreshing, queued, sourceRefreshing, refreshingAll, entryStateUnavailable, runtimeState,
-    checkingBound, anyRefreshing, repositoriesLoading,
-    outcome, lastErrors, startupRefreshPending,
+    preparingSources: computed(() => !demoActive.value && state.preparingSources.value),
+    refreshing, queued, sourceRefreshing,
+    refreshingAll: computed(() => !demoActive.value && refreshingAll.value), entryStateUnavailable, runtimeState,
+    checkingBound: computed(() => !demoActive.value && checkingBound.value),
+    anyRefreshing: computed(() => !demoActive.value && anyRefreshing.value),
+    repositoriesLoading: computed(() => !demoActive.value && repositoriesLoading.value),
+    outcome: computed(() => demoActive.value ? null : outcome.value), lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshBoundRepositories,
     refreshSource, refreshSourceChain, refreshSourceDocuments, refreshEverything,
     requestStartupRefresh, deferStartupRefresh, releaseStartupRefresh,

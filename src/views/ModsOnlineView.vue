@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NEmpty, NFloatButton, NTag } from 'naive-ui'
+import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NFloatButton, NTag } from 'naive-ui'
+import ContentState from '../components/ContentState.vue'
 import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
 import { useDashboard } from '../composables/useDashboardStore'
 import { prefetchAvatars } from '../avatars'
@@ -40,11 +41,13 @@ import {
   type SourceGroupOrder,
 } from '../composables/useSourceGroupTree'
 import type { ModRepository, RepositorySource } from '../types'
-import { withDemoRepositories, withDemoSources } from '../tutorial/demo'
+import { demoActive, withDemoConfig, withDemoMods, withDemoRepositories, withDemoSources } from '../tutorial/demo'
 
 const message = useNotify()
 const { blockModOperation: gameBlocked } = useGameOperationGate()
-const { load, ensureLoaded, loading, config, mods } = useDashboard()
+const { load, ensureLoaded, loading, config: realConfig, mods: realMods } = useDashboard()
+const config = computed(() => withDemoConfig(realConfig.value))
+const mods = computed(() => withDemoMods(realMods.value))
 
 /** 刷新引擎是模块级单例：启动刷新与页面挂载解耦（教程门控脚手架仍在引擎里，当前无调用方）。 */
 const engine = useModRepositoryRefresh()
@@ -108,7 +111,7 @@ const { acceptDrop } = useDropRouting()
  */
 const { dragActive } = useFileDrop({
   accept: ['dll', 'zip'],
-  busy: () => installSourceBusy.value,
+  busy: () => demoActive.value || installSourceBusy.value,
   onDrop: (path) => {
     void (async () => {
       if (await acceptDrop(path, 'mod')) await startDropInstall(path)
@@ -162,11 +165,13 @@ const COMMUNITY_IDS = new Set(['github-community', 'gitee-community', 'gitcode-c
 // 进入页面只复用现有数据，不触发刷新也不重新扫描；
 // 刷新由手动按钮或安装器启动后的刷新链路触发。
 onMounted(() => {
+  if (demoActive.value) return
   void ensureLoaded()
   // 从地图页「去安装」跳过来：路径已暂存在模块里，直接接着走预览
   const pending = takePendingDrop('mod')
   if (pending) void startDropInstall(pending)
 })
+watch(demoActive, active => { if (!active) void ensureLoaded() })
 
 /**
  * 主按钮动作：刷新失败 → 刷新，否则安装 / 重装 / 更新。
@@ -672,7 +677,7 @@ defineExpose({ refreshAll, visibleCount })
 
   <PageLoading :show="pageLoading">
     <template #status>{{ t('modsOnline.readingRepositorySources') }}</template>
-    <n-empty v-if="!pageLoading && !tree.length" :description="t('tools.noMatchingRepositories')" class="empty" />
+    <ContentState v-if="!pageLoading && !tree.length" :description="t('tools.noMatchingRepositories')" />
 
     <template v-else>
       <SourceDirectory :nodes="normalTree" :expanded="sourcesExpanded" :disabled="anyRefreshing"

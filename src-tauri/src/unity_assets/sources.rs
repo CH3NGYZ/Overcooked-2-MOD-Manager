@@ -1,6 +1,7 @@
 //! Platform resource discovery shared by map and chef preview providers.
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
+    fs::Metadata,
     path::{Path, PathBuf},
 };
 /// The IPC already uses the shared normalized game root (including .app selection).
@@ -27,10 +28,18 @@ pub(crate) fn game_resource_roots(game: &Path) -> Vec<PathBuf> {
             }
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten().take(1024) {
-                    if let Ok(path) = entry.path().canonicalize() {
-                        if path.starts_with(&root) && path.is_dir() && paths.insert(path.clone()) {
-                            queue.push((path, depth + 1));
-                        }
+                    let Ok(info) = entry.metadata() else { continue };
+                    // Windows directory enumeration already supplies metadata.
+                    // Files cannot add resource roots; do not open every bundle
+                    // just to canonicalize a path that will be discarded.
+                    if !info.is_dir() && !is_link(&info) {
+                        continue;
+                    }
+                    let Some((path, info)) = resolved_entry(entry.path(), info, &root) else {
+                        continue;
+                    };
+                    if info.is_dir() && paths.insert(path.clone()) {
+                        queue.push((path, depth + 1));
                     }
                 }
             }
@@ -39,17 +48,71 @@ pub(crate) fn game_resource_roots(game: &Path) -> Vec<PathBuf> {
     paths.into_iter().collect()
 }
 pub(crate) fn game_sources(game: &Path) -> Vec<PathBuf> {
-    let mut paths = BTreeSet::new();
+    game_source_metadata(game, usize::MAX, usize::MAX)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// The source list and its metadata come from the same enumeration. Callers
+/// that need invalidation must not rediscover and stat every file afterwards.
+pub(crate) fn game_source_metadata(
+    game: &Path,
+    max_files: usize,
+    max_path_bytes: usize,
+) -> Result<Vec<(PathBuf, Metadata)>, ()> {
+    let mut paths = BTreeMap::new();
+    let mut path_bytes = 0usize;
     for base in game_resource_roots(game) {
         if let Ok(entries) = std::fs::read_dir(&base) {
             for entry in entries.flatten().take(4096) {
-                if let Ok(path) = entry.path().canonicalize() {
-                    if path.starts_with(&base) && path.is_file() {
-                        paths.insert(path);
+                let Ok(info) = entry.metadata() else { continue };
+                let Some((path, info)) = resolved_entry(entry.path(), info, &base) else {
+                    continue;
+                };
+                if info.is_file() {
+                    if !paths.contains_key(&path) {
+                        path_bytes =
+                            path_bytes.saturating_add(path.as_os_str().as_encoded_bytes().len());
+                        if paths.len() >= max_files || path_bytes > max_path_bytes {
+                            return Err(());
+                        }
                     }
+                    paths.insert(path, info);
                 }
             }
         }
     }
-    paths.into_iter().collect()
+    Ok(paths.into_iter().collect())
 }
+
+fn resolved_entry(path: PathBuf, info: Metadata, boundary: &Path) -> Option<(PathBuf, Metadata)> {
+    if !is_link(&info) {
+        // The parent is already canonical and names originate in read_dir.
+        return Some((path, info));
+    }
+    let path = path.canonicalize().ok()?;
+    if !path.starts_with(boundary) {
+        return None;
+    }
+    let info = path.metadata().ok()?;
+    Some((path, info))
+}
+
+fn is_link(info: &Metadata) -> bool {
+    if info.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if info.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests;

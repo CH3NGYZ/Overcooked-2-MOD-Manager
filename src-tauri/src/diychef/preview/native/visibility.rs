@@ -73,7 +73,7 @@ mod tests {
     fn real_native_merged_meshes_keep_only_open_eye_triangles() {
         use crate::diychef::preview::native;
         let game = std::path::Path::new("E:/SteamLibrary/steamapps/common/Overcooked! 2");
-        native::with_store(game, |store| {
+        native::with_store(game, crate::diychef::preview::cache_epoch(), |store| {
             // Independently inspected native m_Skin: closed-eye vertices have
             // weight 1 on Eyes2_Blinks and form disjoint triangle islands.
             for (name, visible_triangles) in [

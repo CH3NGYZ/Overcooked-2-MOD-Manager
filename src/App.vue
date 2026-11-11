@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CloudUploadOutline } from '@vicons/ionicons5'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTitleBar from './components/AppTitleBar.vue'
+import AppCloseGuard from './components/AppCloseGuard.vue'
 import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
 import StartupPreflightDialog from './components/StartupPreflightDialog.vue'
@@ -87,7 +88,7 @@ const pageScrollRef = ref<{ scrollTo: (x: number, y: number) => void } | null>(n
  * 并且**列全**每个路由名：漏掉的页面会让 `indexOf` 返回 -1，切过去时既不设
  * 转场也不复位滚动（地图两页曾长期因此不走转场动画）。
  */
-const NAV_ORDER = ['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'tools', 'settings', 'map-publish']
+const NAV_ORDER = ['overview', 'mods-online', 'mods-local', 'maps-online', 'levels', 'rename', 'diychef', 'tools', 'settings', 'map-publish']
 
 /**
  * 越靠下点击 → 新页面从下方滑入（page-down）；越靠上点击 → 从上方滑入（page-up）。
@@ -197,6 +198,7 @@ onMounted(() => {
     -->
     <n-message-provider placement="bottom-left">
       <n-dialog-provider>
+        <AppCloseGuard />
         <div class="app-shell">
           <AppTitleBar :version="version" @secret-entry="openSecretEntry" />
           <div class="app-body" :inert="appUpdateState.stage !== 'idle'">

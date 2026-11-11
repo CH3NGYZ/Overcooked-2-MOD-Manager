@@ -1,12 +1,10 @@
-import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { computed, type Ref } from 'vue'
 import { useDialog } from 'naive-ui'
 import { t } from '../i18n'
 import { useNotify } from '../useNotify'
 import { backendMessageOf } from '../locale/backend'
 import { markDialogBusy } from '../dialogBusy'
-import { appUpdateState } from '../appUpdateState'
+import { usePageLeaveGuard } from './usePageLeaveGuard'
 
 /** 页面返回、路由离开和关窗共用一个确认/清理门，不在卸载后做异步删除。 */
 export function usePublishLeaveGuard(
@@ -17,22 +15,13 @@ export function usePublishLeaveGuard(
 ) {
   const dialog = useDialog()
   const message = useNotify()
-  const confirming = ref(false)
-  let request: Promise<boolean> | null = null
   let cancelDialog: (() => void) | null = null
-  function requestLeave(): Promise<boolean> {
-    if (appUpdateState.stage === 'installing' || appUpdateState.stage === 'handoff') return Promise.resolve(false)
-    if (request) return request
-    if (busy.value) return Promise.resolve(false)
-    if (!uploadedName.value && !dirty.value) return Promise.resolve(true)
-    confirming.value = true
-    request = new Promise<boolean>(resolve => {
+  function confirm(): Promise<boolean> {
+    return new Promise<boolean>(resolve => {
       let settled = false
       const finish = (ok: boolean) => {
         if (settled) return
         settled = true
-        confirming.value = false
-        request = null
         cancelDialog = null
         resolve(ok)
       }
@@ -63,47 +52,11 @@ export function usePublishLeaveGuard(
       })
       cancelDialog = () => { finish(false); instance.destroy() }
     })
-    return request
   }
-  onBeforeRouteLeave(() => requestLeave())
-
-  let disposed = false
-  let unlisten: (() => void) | null = null
-  let closing = false
-  async function listenForClose() {
-    try {
-      const appWindow = getCurrentWindow()
-      const stop = await appWindow.onCloseRequested(async event => {
-        event.preventDefault()
-        if (closing) return
-        closing = true
-        try {
-          if (!await requestLeave() || disposed) return
-          // 移除拦截后再 close，沿用现有关闭权限，不扩大到强制 destroy。
-          await unlisten?.()
-          unlisten = null
-          try { await appWindow.close() }
-          catch (reason) { message.error(backendMessageOf(reason)); await listenForClose() }
-        } finally { closing = false }
-      })
-      if (disposed) stop()
-      else unlisten = stop
-    } catch (reason) { if (!disposed) message.error(backendMessageOf(reason)) }
-  }
-  function preventReload(event: BeforeUnloadEvent) {
-    if (!busy.value && !uploadedName.value && !dirty.value) return
-    event.preventDefault()
-    event.returnValue = ''
-  }
-  onMounted(() => {
-    void listenForClose()
-    window.addEventListener('beforeunload', preventReload)
+  return usePageLeaveGuard({
+    busy,
+    dirty: computed(() => Boolean(uploadedName.value) || dirty.value),
+    confirm,
+    cancelConfirm: () => cancelDialog?.(),
   })
-  onBeforeUnmount(() => {
-    disposed = true
-    unlisten?.()
-    cancelDialog?.()
-    window.removeEventListener('beforeunload', preventReload)
-  })
-  return { confirming, requestLeave }
 }

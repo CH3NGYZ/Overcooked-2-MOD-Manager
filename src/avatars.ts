@@ -20,7 +20,7 @@
 import { ref } from 'vue'
 import { api } from './services/tauri'
 import { avatarKey, pendingAvatarTargets, type AvatarSource } from './avatarTargets'
-import { isDemoOwner } from './tutorial/demo'
+import { demoActive, isDemoOwner } from './tutorial/demo'
 import type { Provider } from './types'
 
 /** `provider:owner` → data URL。 */
@@ -57,6 +57,7 @@ export function clearAvatarCache() {
  * 会产生两倍请求。
  */
 export function prefetchAvatars(sources: readonly AvatarSource[]): Promise<void> {
+  if (demoActive.value) return Promise.resolve()
   const pending = pendingAvatarTargets(
     /*
      * 教程示例条目的 owner 并不存在（`tutorial/demo.ts` 的 `isDemoOwner`），

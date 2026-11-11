@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
+import { demoActive, demoLevelPreview, demoLevelPreviewDetail, isDemoId } from '../tutorial/demo'
 import type { LevelPreview, LevelPreviewPicture, LevelPreviewRecipe, LevelSetInfo } from '../types'
 
 /** Each dialog session owns its results; late IPC responses cannot change a newer selection. */
@@ -27,6 +28,7 @@ export function useLevelPreview() {
   async function loadDetail() {
     const set = target.value
     if (!set || !current.value || !show.value) return
+    if (demoActive.value && !isDemoId(set.dir_name)) return
     const ticket = ++request
     const generation = session
     const index = selected.value
@@ -39,7 +41,7 @@ export function useLevelPreview() {
       busy.value = !cached?.[part]
       if (!busy.value) return
       try {
-        const result = await api.levelPreviewDetail(set!.dir_name, set!.enabled, index, part)
+        const result = demoLevelPreviewDetail(set!) ?? await api.levelPreviewDetail(set!.dir_name, set!.enabled, index, part)
         if (generation !== session) return
         const entry = details.get(index) ?? {}
         if (result.picture) entry.picture = result.picture
@@ -57,6 +59,7 @@ export function useLevelPreview() {
     await Promise.all([load('picture'), load('recipes')])
   }
   async function open(set: LevelSetInfo) {
+    if (demoActive.value && !isDemoId(set.dir_name)) return
     const generation = ++session
     ++request
     target.value = {...set}
@@ -69,8 +72,9 @@ export function useLevelPreview() {
     query.value = ''
     picture.value = null
     recipes.value = null
+    pictureBusy.value = recipeBusy.value = false
     try {
-      const result = await api.levelSetPreview(set.dir_name, set.enabled)
+      const result = demoLevelPreview(set) ?? await api.levelSetPreview(set.dir_name, set.enabled)
       if (session !== generation) return
       levels.value = result
       loading.value = false
@@ -83,6 +87,8 @@ export function useLevelPreview() {
   }
   watch(selected, loadDetail)
   watch(show, value => { if (!value) { ++session; ++request } })
+  // A preview already open before replay must not keep a real target in the tutorial.
+  watch(demoActive, () => { ++session; ++request; show.value = false }, { flush: 'sync' })
   function afterLeave() {
     if (show.value) return
     target.value = null

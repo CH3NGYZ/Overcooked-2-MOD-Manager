@@ -170,6 +170,27 @@ export const toolsUiDiagnostics: DomainMessages = {
     ko: '지도 캐시 {count}개를 지웠습니다',
     ja: 'マップキャッシュを {count} 件消去しました',
   },
+  clearChefCache: {
+    'zh-CN': '清除厨师缓存',
+    'zh-TW': '清除廚師快取',
+    en: 'Clear chef cache',
+    ko: '요리사 캐시 지우기',
+    ja: 'シェフキャッシュを消去',
+  },
+  clearChefCacheDescription: {
+    'zh-CN': '删除厨房暖暖已生成的厨师和帽子预览缓存；下次查看时会重新生成',
+    'zh-TW': '刪除廚房暖暖已產生的廚師和帽子預覽快取；下次查看時會重新產生',
+    en: 'Deletes generated chef and hat preview caches for DIYChef. They will be generated again when viewed.',
+    ko: 'DIYChef에서 생성한 요리사와 모자 미리보기 캐시를 삭제합니다. 다음에 볼 때 다시 생성합니다.',
+    ja: 'DIYChef で生成したシェフと帽子のプレビューキャッシュを削除します。次に表示するときに再生成します。',
+  },
+  clearedChefCache: {
+    'zh-CN': '已清除厨师缓存（{count} 项）',
+    'zh-TW': '已清除廚師快取（{count} 項）',
+    en: 'Chef cache cleared ({count} entries)',
+    ko: '요리사 캐시를 지웠습니다({count}개 항목)',
+    ja: 'シェフキャッシュを消去しました（{count} 件）',
+  },
   // 已打开开发者工具
   developerToolsOpened: {
     'zh-CN': '已打开开发者工具',

@@ -1,4 +1,6 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
+import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation } from '../diychef/types'
+import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -76,7 +78,18 @@ async function readDashboard(): Promise<DashboardSummary> {
  */
 export const api = {
   dashboard: readDashboard,
-  localMods: () => invoke<InstalledMod[]>('get_local_mods'),
+  localMods: () => invoke<LocalModSnapshot>('get_local_mods'),
+  diyChefOpen: (generation: number, targetId?: string) => invoke<ChefEditorOpen>('open_diychef_editor', { generation, targetId }),
+  diyChefInitialize: (sessionId: string, expectedRevision: string) => invoke<ChefEditorSnapshot>('initialize_diychef_config', { sessionId, expectedRevision }),
+  diyChefValidate: (sessionId: string, draft: ChefDraft) => invoke<ChefValidation>('validate_diychef_draft', { sessionId, draft }),
+  diyChefSave: (sessionId: string, draft: ChefDraft) => invoke<ChefEditorSnapshot>('save_diychef_config', { sessionId, draft }),
+  diyChefPreview: (sessionId: string, chefId: string, hatId: string) => invoke<ChefPreviewScene>('get_diychef_preview', { sessionId, chefId, hatId }),
+  diyChefPreviewAsset: (sessionId: string, assetId: string) => invoke<ArrayBuffer>('read_diychef_preview_asset', { sessionId, assetId }),
+  diyChefFingerprint: (sessionId: string, chefId: string, hatId: string) => invoke<string>('get_diychef_preview_fingerprint', { sessionId, chefId, hatId }),
+  /** Cached bytes contain one state byte (0 ready / 1 partial), then the PNG. */
+  diyChefThumbnail: (key: string, png?: number[], partial?: boolean) => invoke<ArrayBuffer>('diychef_thumbnail_cache', { key, png, partial }),
+  /** Clear generated chef scenes, native resources and disk PNGs; no path input. */
+  clearDiyChefCache: () => invoke<number>('clear_diychef_cache'),
   rebindLocalMods: (installed: InstalledMod[]) => invoke<InstalledMod[]>('rebind_local_mods', { installed }),
   modUpdates: (installed: InstalledMod[]) => invoke<UpdateStatus[]>('get_mod_updates', { installed }),
   refreshUserRegion: () => invoke<string>('refresh_user_region'),

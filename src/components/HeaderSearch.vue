@@ -7,16 +7,14 @@ const value = defineModel<string>('value', { required: true })
 </script>
 
 <template>
-  <n-input v-model:value="value" autosize :clearable="value.length > 0" size="small"
-    class="header-search" :class="{ 'header-search--empty': !value }"
+  <n-input v-model:value="value" :clearable="value.length > 0" size="small"
+    class="header-search"
     :placeholder="t('dialogs.search')" :input-props="{ 'aria-label': t('dialogs.search') }">
     <template #prefix><SearchOutline width="14" height="14" aria-hidden="true" /></template>
   </n-input>
 </template>
 
 <style scoped>
-.header-search { width: auto; flex: 0 1 auto; min-width: 0; max-width: 240px; }
-/* 空值时用译文参与布局，输入后交回 Naive 的文字镜像；不预留清除按钮空位。 */
-.header-search--empty :deep(.n-input__placeholder) { position: static; height: var(--n-height); }
-.header-search--empty :deep(.n-input__input-mirror) { display: none; }
+/* 输入法组合期间保持输入区域宽度稳定，避免文字镜像挤压原生光标。 */
+.header-search { width: min(280px, 32vw); flex: 0 1 auto; min-width: 120px; }
 </style>

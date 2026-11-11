@@ -34,6 +34,7 @@ pub(crate) fn default_config() -> AppConfig {
         mod_metadata_concurrency: crate::concurrency::AUTO_CONCURRENCY,
         map_info_concurrency: crate::metadata_read::DEFAULT_MAP_INFO_CONCURRENCY,
         map_compression_concurrency: crate::concurrency::AUTO_CONCURRENCY,
+        diychef_preview_concurrency: crate::concurrency::AUTO_CONCURRENCY,
         // 全新配置没看过任何教程步骤，首次启动会完整播一遍。
         tutorial_watched_steps: Vec::new(),
         game: GameConfig {

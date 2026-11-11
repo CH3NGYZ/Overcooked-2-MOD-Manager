@@ -19,6 +19,7 @@ import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { recordTap, SECRET_ENTRY_WINDOW_MS, tapSequenceReady } from '../secretEntry'
+import { demoActive, withDemoGame } from '../tutorial/demo'
 
 const props = defineProps<{ version: string }>()
 /** 连点版本号达成后交给 `App.vue` 决定去哪儿；标题栏自身不碰路由。 */
@@ -145,9 +146,11 @@ function runChrome(action: ChromeAction) {
 /* ===== 厨房启动 / 停止（悬浮在应用图标上） ===== */
 
 const message = useNotify()
-const { game, recheckGameState } = useDashboard()
+const { game: realGame, recheckGameState } = useDashboard()
+const game = computed(() => withDemoGame(realGame.value))
 /** 启动/停止进行中，按钮显示 loading 并禁止重复点击。 */
-const launching = ref(false)
+const launchPending = ref(false)
+const launching = computed(() => !demoActive.value && launchPending.value)
 /** 悬浮提示是否展开。 */
 const gameHover = ref(false)
 
@@ -170,23 +173,25 @@ const canLaunch = computed(() => !!game.value?.path && appUpdateState.stage === 
  * 一起重做，几次下去比状态本身贵得多。
  */
 async function toggleGame() {
-  if (launching.value || appUpdateState.stage !== 'idle') return
-  launching.value = true
+  if (demoActive.value || launchPending.value || appUpdateState.stage !== 'idle') return
+  launchPending.value = true
   const wasRunning = kitchenRunning.value
   try {
     const result = wasRunning ? await api.stopGame() : await api.launchNormal()
+    if (demoActive.value) return
     result.ok ? message.success(translateBackendMessage(result.message)) : message.error(translateBackendMessage(result.message))
     if (result.ok) {
       for (let attempt = 0; attempt < 6; attempt += 1) {
+        if (demoActive.value) break
         await recheckGameState()
-        if (kitchenRunning.value !== wasRunning) break
+        if (demoActive.value || kitchenRunning.value !== wasRunning) break
         await new Promise((resolve) => window.setTimeout(resolve, 700))
       }
     }
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
-    launching.value = false
+    launchPending.value = false
   }
 }
 

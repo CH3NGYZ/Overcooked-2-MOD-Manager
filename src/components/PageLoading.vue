@@ -29,13 +29,12 @@
  * ```html
  * <PageLoading :show="loading">
  *   <template #status>{{ t('common.loading') }}</template>
- *   <n-empty v-if="..." />
+ *   <ContentState v-if="..." :description="..." />
  *   <n-collapse v-else>…</n-collapse>
  * </PageLoading>
  * ```
  */
-import { NSpin } from 'naive-ui'
-import { t } from '../i18n'
+import ContentState from './ContentState.vue'
 
 defineProps<{
   /** 是否显示加载遮罩。内容包裹与它无关，始终渲染。 */
@@ -50,13 +49,9 @@ defineProps<{
       v-if 而不是 v-show：遮罩消失后不该留下任何参与命中测试的元素，
       否则下面的列表会短暂点不动（与 BusyOverlay 同一条理由）。
     -->
-    <div v-if="show" class="page-loading" role="status" aria-live="polite" aria-busy="true">
-      <n-spin size="large" />
-      <!-- 文案槽：不传时用通用的「加载中…」，地图页会传逐份扫描进度 -->
-      <div class="page-loading-text">
-        <slot name="status">{{ t('common.loading') }}</slot>
-      </div>
-    </div>
+    <ContentState v-if="show" loading class="page-loading">
+      <template v-if="$slots.status" #status><slot name="status" /></template>
+    </ContentState>
   </Teleport>
 </template>
 
@@ -70,29 +65,9 @@ defineProps<{
   bottom: 0;
   /* 页面内浮层：低于下载遮罩与 BusyOverlay，不挡其它全局浮层 */
   z-index: var(--oc2-layer-page, 2500);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   /* 半透明而非全遮：用户能看出下面是什么页面，只是暂时还没读出来 */
   background: color-mix(in srgb, var(--oc2-body) 74%, transparent);
   backdrop-filter: blur(2px);
   cursor: progress;
-}
-
-/*
- * 转圈与文字的间距对齐 Naive 自己的 `.n-spin-description`（margin-top: 8px）：
- * 同一个数值只在这里写一次，改成自绘排版后仍然和平台观感一致。
- */
-.page-loading-text {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  margin-top: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--oc2-text-2);
-  pointer-events: none;
 }
 </style>

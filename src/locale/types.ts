@@ -44,6 +44,7 @@ export type DomainMessages = Record<string, Localized>
  * （`domain.key` 的组合是否真的存在）。
  */
 export const DOMAINS = [
+  'diychef',
   'levelPreview',
   'startup',     // 启动地区与源可达性预检
   // —— 界面域：按页面/区域归属 ——

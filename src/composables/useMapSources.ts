@@ -26,6 +26,7 @@ import { backendMessageOf } from '../locale/backend'
 import { useNotify, type Notify } from '../useNotify'
 import { useLevelSetScan } from './useLevelSetScan'
 import { mapForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
+import { demoActive, isDemoId } from '../tutorial/demo'
 import type { MapInfo } from '../types'
 
 /** 并行上限（4 组），与仓库侧 `useModRepositoryRefresh` 的取值保持一致。 */
@@ -97,7 +98,7 @@ const outcome = state.outcome
 /** 任一刷新活动：两个页面的按钮 loading / 禁用统一看它。 */
 const anyRefreshing = state.anyRefreshing
 const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
-  entryStateUnavailable: entryStateUnavailable.value || state.preparingSources.value,
+  entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingSources.value),
   maps: new Set(Object.keys(refreshing.value)),
   queued: new Set(Object.keys(queued.value)),
   sources: new Set(Object.keys(refreshingSources.value)),
@@ -130,6 +131,7 @@ function setFlag(flags: typeof refreshing, id: string, value: boolean) {
  *   · 刷新流程自己收尾时读 —— 必须强制，那时列表正等着换成新数据。
  */
 async function loadMaps(options: { force?: boolean } = {}) {
+  if (demoActive.value) return
   if ((refreshingAll.value || state.preparingSources.value) && !options.force) return
   const revision = ++mapsRevision
   loading.value = maps.value.length === 0
@@ -147,6 +149,7 @@ async function loadMaps(options: { force?: boolean } = {}) {
  * with normal TTL caching. It runs once independently of page lifetimes. */
 let startupState: 'idle' | 'running' | 'done' = 'idle'
 export function requestMapSourcesStartupRefresh() {
+  if (demoActive.value) return
   if (startupState !== 'idle') return
   startupState = 'running'
   void refreshAll()
@@ -157,6 +160,7 @@ export function requestMapSourcesStartupRefresh() {
 }
 
 async function syncDependencySnapshots() {
+  if (demoActive.value) return
   await api.syncDependencySnapshots().catch(() => undefined)
 }
 
@@ -180,21 +184,32 @@ async function syncDependencySnapshots() {
  * `releaseRefresh` / `refreshState` 里。
  */
 function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo> {
+  const skipped = new Set<string>()
   return {
     // Only the floating full-refresh button bypasses TTL; same-pass reads still coalesce.
-    fetch: (item) => api.refreshMapReleases(item.id, force, passId),
+    // Queued real jobs may reach the worker after the tutorial has started.
+    fetch: (item) => {
+      if (demoActive.value || isDemoId(item.id)) {
+        skipped.add(item.id)
+        return Promise.resolve(item.cached_releases ?? [])
+      }
+      return api.refreshMapReleases(item.id, force, passId)
+    },
     /*
      * 成功写回只替换这一张图，不等整批结束重载列表：`latest_tag` 取自缓存的
      * 第一条，与后端 `map_to_info` 完全同一条规则（所以不必在前端另立判定）。
      */
-    apply: (item, releases) => patchMap(item.id, {
-      cached_releases: releases,
-      latest_release: releases[0] ?? null,
-      latest_tag: releases[0]?.tag_name ?? null,
-      cached_release_count: releases.length,
-      cached_at: Date.now(),
-      last_error: null,
-    }),
+    apply: (item, releases) => {
+      if (skipped.has(item.id)) return
+      patchMap(item.id, {
+        cached_releases: releases,
+        latest_release: releases[0] ?? null,
+        latest_tag: releases[0]?.tag_name ?? null,
+        cached_release_count: releases.length,
+        cached_at: Date.now(),
+        last_error: null,
+      })
+    },
     /* 与后端 Err 分支同一规则：清缓存 + 置错，卡片当场显示「刷新失败」 */
     fail: (item, message) => patchMap(item.id, {
       cached_releases: [],
@@ -241,6 +256,7 @@ async function refreshReleases(
     sourcePrepared?: boolean
   } = {},
 ): Promise<RefreshOutcome> {
+  if (demoActive.value) return { trigger: options.trigger ?? 'partial', refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
   const priorityIds = options.priorityIds ?? new Set(
     useLevelSetScan().levelSets.value.flatMap((set) => {
       const map = mapForLevelSet(set, maps.value)
@@ -248,7 +264,7 @@ async function refreshReleases(
     }),
   )
   const passId = options.passId ?? newPassId()
-  const available = list.filter((map) => !installing.value[map.id])
+  const available = list.filter((map) => !isDemoId(map.id) && !installing.value[map.id])
   // Source expansion has already published these cards' declarations, versions
   // and errors. Do not fan them out into a second IPC or reactive write queue.
   const prepared = options.sourcePrepared ? available.filter(map => map.release_derived) : []
@@ -288,6 +304,7 @@ export interface MapBoundRefreshSummary {
  * the shared repository snapshot; ordinary single-map sources use the same API
  * refresh queue. Failed nodes stay empty and never roll successful siblings back. */
 async function prepareMapSources(passId: string, force = false, sourceId?: string): Promise<string[]> {
+  if (demoActive.value) return []
   mapsRevision += 1
   try {
     const result = await api.refreshMapSources(passId, force, progress => {
@@ -307,7 +324,7 @@ async function refreshBoundMaps(
   targets: MapInfo[],
   options: { countUpdated?: () => number } = {},
 ): Promise<MapBoundRefreshSummary> {
-  if (anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
+  if (demoActive.value || anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
   const passId = newPassId()
   const ids = new Set(targets.map((map) => map.id))
   const result = await runSourceReleaseRefresh({
@@ -322,7 +339,7 @@ async function refreshBoundMaps(
 }
 
 async function refreshSource(node: { id: string }) {
-  if (anyRefreshing.value) return
+  if (demoActive.value || isDemoId(node.id) || anyRefreshing.value) return
   const passId = newPassId()
   const removed = sourceTree.begin(node.id)
   mapsRevision += 1
@@ -340,7 +357,7 @@ async function refreshSource(node: { id: string }) {
 async function refreshAll(
   options: { countUpdated?: () => number; priorityIds?: ReadonlySet<string>; force?: boolean } = {},
 ) {
-  if (anyRefreshing.value) return
+  if (demoActive.value || anyRefreshing.value) return
   const passId = newPassId()
   state.setEntryStateUnavailable(true)
   maps.value = []
@@ -361,18 +378,18 @@ export function useMapSources() {
   if (!message) message = useNotify()
   return {
     maps,
-    loading,
+    loading: computed(() => !demoActive.value && loading.value),
     sourceNodes: sourceTree.nodes,
     refreshing,
     queued,
-    preparingSources: state.preparingSources,
+    preparingSources: computed(() => !demoActive.value && state.preparingSources.value),
     refreshingSources,
     installing,
-    refreshingAll,
+    refreshingAll: computed(() => !demoActive.value && refreshingAll.value),
     entryStateUnavailable,
-    checkingBound,
-    anyRefreshing, refreshingHint,
-    outcome,
+    checkingBound: computed(() => !demoActive.value && checkingBound.value),
+    anyRefreshing: computed(() => !demoActive.value && anyRefreshing.value), refreshingHint,
+    outcome: computed(() => demoActive.value ? null : outcome.value),
     loadMaps,
     refreshAll,
     refreshSource,

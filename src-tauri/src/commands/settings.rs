@@ -60,6 +60,16 @@ pub fn save_settings(
     {
         return Err("game.settingsChanged".into());
     }
+    if patch
+        .game_runtime
+        .is_some_and(|runtime| runtime != config.game.runtime)
+        || patch
+            .game_path
+            .as_ref()
+            .is_some_and(|path| *path != config.game.path)
+    {
+        state.invalidate_local_mod_snapshot()?;
+    }
     if let Some(runtime) = patch.game_runtime {
         config.game.switch_runtime(runtime);
     }

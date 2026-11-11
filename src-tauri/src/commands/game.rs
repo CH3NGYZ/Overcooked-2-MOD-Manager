@@ -43,6 +43,7 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
         if config.game != previous.game {
             return Err("game.settingsChanged".into());
         }
+        state.invalidate_local_mod_snapshot()?;
         config.game.path = root.to_string_lossy().to_string();
         state.config.save(&config).map_err(|e| e.to_string())?;
         config
@@ -62,6 +63,7 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
         let mut config = state.config.load_or_default();
+        state.invalidate_local_mod_snapshot()?;
         config.game.path.clear();
         state.config.save(&config).map_err(|e| e.to_string())?;
         config

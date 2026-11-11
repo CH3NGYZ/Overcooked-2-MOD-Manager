@@ -259,55 +259,11 @@ impl Context {
             .iter()
             .find(|o| o.path_id == r.id)
             .ok_or_else(failure)?;
-        if object.byte_size > 128 * 1024 * 1024 {
-            return Err(failure());
-        }
-        let local_object;
-        let mut reader = if let Some((path, node)) = &self.documents[r.file].backing {
-            let bytes = crate::asset_bundle::read_bundle_file_range(
-                path,
-                node,
-                object.byte_start,
-                Some(object.byte_size),
-                Some(&mut self.blocks),
-            )
-            .map_err(|_| failure())?;
-            // Preserve absolute alignment without allocating the skipped bytes.
-            let padding = object.byte_start % 16;
-            let mut data = vec![0; padding];
-            data.extend(bytes);
-            local_object = unityfs::objectreader::ObjectReader::new(
-                object.path_id,
-                object.class_id,
-                padding,
-                object.byte_size,
-                object.serialized_type.clone(),
-                object.version,
-            );
-            let mut reader = Reader::new(data, file.unity_version.clone());
-            reader.endian = file.endian;
-            reader
-        } else {
-            local_object = unityfs::objectreader::ObjectReader::new(
-                object.path_id,
-                object.class_id,
-                object.byte_start,
-                object.byte_size,
-                object.serialized_type.clone(),
-                object.version,
-            );
-            Reader {
-                data: file.data.clone(),
-                pos: 0,
-                unity_version: file.unity_version.clone(),
-                endian: file.endian,
-            }
-        };
-        let v = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            local_object.read_typetree(&mut reader, &file.ref_types)
-        }))
-        .map_err(|_| failure())?
-        .map_err(|_| failure())?;
+        let backing = self.documents[r.file]
+            .backing
+            .as_ref()
+            .map(|(path, node)| crate::unity_assets::Source::Bundle(path.clone(), node.clone()));
+        let v = crate::unity_assets::object(file, object, backing.as_ref(), &mut self.blocks)?;
         let V::Map(m) = v else {
             return Err(failure());
         };

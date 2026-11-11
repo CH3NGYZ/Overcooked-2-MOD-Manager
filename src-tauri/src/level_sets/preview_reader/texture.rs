@@ -64,16 +64,7 @@ impl Context {
         } else {
             (r, m, None, 0)
         };
-        let width = number(&texture, "m_Width");
-        let height = number(&texture, "m_Height");
-        if width == 0
-            || height == 0
-            || width > 8192
-            || height > 8192
-            || u64::from(width) * u64::from(height) > 16_777_216
-        {
-            return Err(failure());
-        }
+        let (width, height) = crate::unity_assets::texture_dimensions(&texture)?;
         let cached = self
             .textures
             .get(&(texture_ref.file, texture_ref.id))
@@ -118,21 +109,8 @@ impl Context {
                     };
                 }
             }
-            if data.is_empty() || data.len() > 128 * 1024 * 1024 {
-                return Err(failure());
-            }
-            let rgba = std::panic::catch_unwind(|| {
-                unityfs::decompress_texture(
-                    width as usize,
-                    height as usize,
-                    int_of(&texture, "m_TextureFormat"),
-                    &data,
-                )
-            })
-            .map_err(|_| failure())?
-            .ok_or_else(failure)?;
             let decoded =
-                std::sync::Arc::new(RgbaImage::from_raw(width, height, rgba).ok_or_else(failure)?);
+                std::sync::Arc::new(crate::unity_assets::decode_texture(&texture, &data)?);
             let used: usize = self
                 .textures
                 .values()

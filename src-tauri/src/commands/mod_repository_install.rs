@@ -283,6 +283,7 @@ pub async fn install_mod_repository(
                 &current_config,
                 &state.config.manifests_dir(),
             )?;
+            state.invalidate_local_mod_snapshot()?;
             install_downloaded_mod_repository(
                 &temp,
                 &download_name,
@@ -356,6 +357,7 @@ fn uninstall_repository_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;

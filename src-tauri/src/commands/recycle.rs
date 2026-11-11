@@ -49,6 +49,7 @@ fn restore_recycled_mod_blocking(state: &AppState, id: &str) -> Result<Operation
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     let original = recycle_bin::original_game_path(&state.config.mod_recycle_bin_dir(), &id)?;

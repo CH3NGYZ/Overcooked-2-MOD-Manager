@@ -1,7 +1,9 @@
 //! 共享配置与 IPC 模型；根只声明和导出，各领域保留唯一 serde 定义。
 
 mod app;
+mod chef_preview;
 mod config;
+mod diychef;
 mod game;
 mod levels;
 mod maps;
@@ -23,7 +25,13 @@ pub use app::{
     AppUpdateChannelEvent, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo,
     AppUpdatePhaseEvent, DashboardData, RustLog,
 };
+pub use chef_preview::{ChefPreviewBounds, ChefPreviewMesh, ChefPreviewScene};
 pub use config::{AppConfig, AuthConfig, LaunchConfig, PublicConfig, SettingsPatch, TokenPatch};
+pub use diychef::{
+    ChefChange, ChefDiagnostic, ChefDocumentRow, ChefDraft, ChefEditorOpen, ChefEditorSnapshot,
+    ChefEntry, ChefHat, ChefItem, ChefReference, ChefSelection, ChefSource, ChefTarget,
+    ChefValidation, HatReference, LocalModSnapshot,
+};
 pub use game::{BepInExInfo, DiyLevelInfo, GameConfig, GameInfo, GameRuntime, WinhttpState};
 pub use levels::{
     LevelSetFlattenCandidate, LevelSetFlattenReport, LevelSetImportResult, LevelSetInfo,

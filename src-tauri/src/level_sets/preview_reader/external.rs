@@ -17,37 +17,8 @@ impl Context {
             if self.documents.iter().any(|d| d.name == name) {
                 continue;
             }
-            let header = crate::asset_bundle::read_bundle_file_range(
-                path,
-                &node,
-                0,
-                Some(48),
-                Some(&mut self.blocks),
-            )
-            .map_err(|_| failure())?;
-            let version = u32::from_be_bytes(header[8..12].try_into().unwrap());
-            if !(9..=30).contains(&version) {
-                return Err(failure());
-            }
-            let offset = if version >= 22 {
-                usize::try_from(u64::from_be_bytes(header[32..40].try_into().unwrap()))
-                    .map_err(|_| failure())?
-            } else {
-                u32::from_be_bytes(header[12..16].try_into().unwrap()) as usize
-            };
-            if !(48..=16 * 1024 * 1024).contains(&offset) {
-                return Err(failure());
-            }
-            let bytes = crate::asset_bundle::read_bundle_file_range(
-                path,
-                &node,
-                0,
-                Some(offset),
-                Some(&mut self.blocks),
-            )
-            .map_err(|_| failure())?;
-            let mut reader = Reader::new(bytes, unityfs::UnityVersion::default());
-            let file = try_read_serialized(&mut reader).ok_or_else(failure)?;
+            let source = crate::unity_assets::Source::Bundle(path.into(), node.clone());
+            let file = crate::unity_assets::metadata(&source, &mut self.blocks)?;
             documents.push(Document {
                 backing: Some((path.into(), node)),
                 name,

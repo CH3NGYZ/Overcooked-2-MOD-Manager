@@ -7,6 +7,7 @@ pub(crate) mod install;
 mod metadata;
 mod relations;
 mod scan;
+pub(crate) mod snapshot;
 pub(crate) mod status;
 #[cfg(test)]
 pub(crate) mod test_support;

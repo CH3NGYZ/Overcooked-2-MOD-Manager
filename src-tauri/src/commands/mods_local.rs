@@ -113,6 +113,7 @@ fn uninstall_local_mod_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -338,6 +339,7 @@ fn uninstall_mod_dll_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -444,6 +446,7 @@ pub fn toggle_local_mod(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -471,6 +474,7 @@ pub fn toggle_local_mod_package(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -547,6 +551,7 @@ pub fn set_all_local_mods_enabled(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;

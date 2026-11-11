@@ -11,6 +11,14 @@ fn clone_keeps_every_lock_observer_and_cache_shared() {
     let state = state();
     let cloned = state.clone();
     assert_eq!(state.config.config_path(), cloned.config.config_path());
+    assert!(Arc::ptr_eq(
+        &state.local_mod_snapshot,
+        &cloned.local_mod_snapshot
+    ));
+    assert!(Arc::ptr_eq(
+        &state.diychef_sessions,
+        &cloned.diychef_sessions
+    ));
     assert!(Arc::ptr_eq(&state.operation, &cloned.operation));
     assert!(Arc::ptr_eq(
         &state.repository_cache,

@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct AppState {
     pub config: ConfigService,
+    pub(crate) local_mod_snapshot: Arc<Mutex<crate::mods::snapshot::LocalModSnapshots>>,
+    pub(crate) diychef_sessions: Arc<Mutex<crate::diychef::session::ChefSessions>>,
     /*
      * 串行化「写游戏目录」的操作（安装、卸载、开关、回收站）。
      *
@@ -47,6 +49,14 @@ pub struct CachedAppUpdateCheck {
 }
 
 impl AppState {
+    /// Call immediately before a plugin/game-root mutation while operation is held.
+    pub(crate) fn invalidate_local_mod_snapshot(&self) -> Result<(), String> {
+        self.local_mod_snapshot
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?
+            .invalidate();
+        Ok(())
+    }
     pub fn new() -> Result<Self, String> {
         log::debug!("创建应用状态");
         Ok(Self::with_config(
@@ -57,6 +67,8 @@ impl AppState {
     pub(crate) fn with_config(config: ConfigService) -> Self {
         Self {
             config,
+            local_mod_snapshot: Arc::default(),
+            diychef_sessions: Arc::default(),
             operation: Arc::new(Mutex::new(())),
             repository_cache: Arc::new(tokio::sync::Mutex::new(())),
             community: Arc::new(crate::community::CommunitySearch::default()),

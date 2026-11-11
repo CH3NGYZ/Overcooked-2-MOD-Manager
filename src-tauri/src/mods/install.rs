@@ -16,6 +16,7 @@ pub(crate) fn install_manual_mod(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -171,6 +172,7 @@ pub(crate) fn install_staged_mod_repository(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;

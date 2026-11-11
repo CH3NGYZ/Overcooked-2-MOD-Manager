@@ -29,11 +29,33 @@ fn get_dashboard_blocking(state: &AppState) -> Result<DashboardData, String> {
 
 /// Local DLL scanning is independent of online configuration and game summary.
 #[tauri::command]
-pub async fn get_local_mods(state: State<'_, AppState>) -> Result<Vec<InstalledMod>, String> {
+pub async fn get_local_mods(
+    state: State<'_, AppState>,
+) -> Result<crate::models::LocalModSnapshot, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let config = state.config.load_or_default();
         let game_info = game::detect_game(&config);
+        let scan_root = game_info
+            .path
+            .as_deref()
+            .map(Path::new)
+            .map(game::resolve_existing_ancestor)
+            .transpose()?;
+        let generation = {
+            let _operation = state
+                .operation
+                .lock()
+                .map_err(|_| "lock.poisoned".to_string())?;
+            if state.config.load_or_default().game != config.game {
+                return Err("diychef.staleScan".into());
+            }
+            state
+                .local_mod_snapshot
+                .lock()
+                .map_err(|e| e.to_string())?
+                .begin(scan_root.as_deref())
+        };
         let installed = game_info
             .path
             .as_ref()
@@ -45,7 +67,22 @@ pub async fn get_local_mods(state: State<'_, AppState>) -> Result<Vec<InstalledM
                 )
             })
             .unwrap_or_default();
-        Ok(reconcile_local_mods(&state, installed))
+        let _operation = state
+            .operation
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?;
+        let latest_config = state.config.load_or_default();
+        let latest = game::detect_game(&latest_config);
+        if latest_config.game != config.game || latest.path.as_deref() != game_info.path.as_deref()
+        {
+            return Err("diychef.staleScan".into());
+        }
+        let installed = reconcile_local_mods(&state, installed);
+        state
+            .local_mod_snapshot
+            .lock()
+            .map_err(|e| e.to_string())?
+            .publish(generation, scan_root.as_deref(), installed)
     })
     .await
     .map_err(|error| error.to_string())?

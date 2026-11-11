@@ -12,6 +12,7 @@ mod community;
 mod concurrency;
 mod config;
 mod direct_mod;
+mod diychef;
 // 展示用路径归一化：送给前端的路径只从这里出口，不参与 I/O
 mod display_path;
 mod download;
@@ -51,6 +52,7 @@ mod repository_readme;
 mod repository_sources;
 // 系统 Shell 交互：打开目录/URL 与在文件管理器中定位（不硬编码 explorer.exe）
 mod shell_open;
+mod unity_assets;
 mod update_migration;
 mod user_paths;
 // 版本区间语法（`version = ">=1.8,<2"`）：std-only，工具 `tools/oc2-info` 也复用
@@ -88,23 +90,14 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
-            if window.label() == "main" && archive::app_update_in_progress() {
+            if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                 }
             }
-            if window.label() == "main" && !archive::app_update_in_progress() {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        match crate::level_sets::recompress::shutdown() {
-                            Ok(()) => app.exit(0),
-                            Err(error) => log::error!("地图资源恢复未完成，拒绝退出：{error}"),
-                        }
-                    });
-                }
-            }
+            // Keep the main window alive even before the frontend close owner
+            // has registered. App confirms drafts, then calls exit_app; that
+            // command restores pending map files before allowing process exit.
             gitee_webview::close_with_main(window, event);
         })
         .plugin(
@@ -204,6 +197,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::dashboard::get_dashboard,
             commands::dashboard::get_local_mods,
+            commands::diychef_editor::open_diychef_editor,
+            commands::diychef_editor::initialize_diychef_config,
+            commands::diychef_editor::validate_diychef_draft,
+            commands::diychef_editor::save_diychef_config,
+            commands::diychef_preview::get_diychef_preview,
+            commands::diychef_preview::read_diychef_preview_asset,
+            commands::diychef_thumbnail::diychef_thumbnail_cache,
+            commands::diychef_thumbnail::get_diychef_preview_fingerprint,
             commands::dashboard::rebind_local_mods,
             commands::dashboard::get_mod_updates,
             commands::settings::get_config,

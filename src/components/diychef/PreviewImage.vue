@@ -57,6 +57,9 @@ watch(() => [props.sessionId, props.chefId, props.hatId], (next, before) => {
   void load()
 })
 onMounted(() => {
+  // A viewport root is still clipped by the nested scrollbar, so its margin
+  // cannot preload rows outside that scrollport. Expand the scrollport itself.
+  const root = host.value?.closest<HTMLElement>('.n-scrollbar-container') ?? null
   observer = new IntersectionObserver(([entry]) => {
     const next = entry?.isIntersecting ?? false
     if (visible === next) return
@@ -68,9 +71,9 @@ onMounted(() => {
       if (!result.value && lastKey) result.value = acquireThumbnail(lastKey)
       settling = setTimeout(() => { settling = undefined; void load() }, 90)
     } else release()
-  // Keep one complete card row above and below the viewport. Cards beyond
+  // Keep two complete card rows above and below the scrollport. Cards beyond
   // this buffer release their leases; the bounded PNG LRU can still reuse them.
-  }, { rootMargin: '240px 80px' })
+  }, { root, rootMargin: '480px 80px' })
   if (host.value) observer.observe(host.value)
 })
 onBeforeUnmount(() => { stop(); observer?.disconnect(); release() })

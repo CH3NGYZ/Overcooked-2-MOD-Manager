@@ -55,13 +55,15 @@ test('the real portrait lifecycle ignores passing cards, reuses a warm image imm
   boundary.calls = []
   putThumbnail('visibility-fixture', new Blob(['png']), 'ready', [])
   boundary.lease = () => acquireThumbnail('visibility-fixture')
-  const element = {}, errors = []
+  const scrollRoot = {}
+  const element = { closest(selector) { assert.equal(selector, '.n-scrollbar-container'); return scrollRoot } }, errors = []
   const app = renderer.createApp({ ...PreviewImage, render() { getCurrentInstance().setupState.host = element; return null } },
     { sessionId: 'visibility-session', chefId: 'fox', hatId: 'hat', name: 'Fox' })
   app.config.errorHandler = error => errors.push(error)
   try {
     app.mount({})
-    assert.equal(boundary.observer.options.rootMargin, '240px 80px', 'retain the adjacent row while bounding offscreen image references')
+    assert.equal(boundary.observer.options.root, scrollRoot, 'the scrollport must own the margin so its clipping does not prevent preloading')
+    assert.equal(boundary.observer.options.rootMargin, '480px 80px', 'prepare the next two rows before cards enter the scrollport')
     const state = app._instance.setupState
     const intersect = value => boundary.observer.callback([{ isIntersecting: value }])
     for (let i = 0; i < 25; i++) { intersect(true); intersect(false) }

@@ -128,7 +128,13 @@ pub(crate) fn view(s: &Session) -> Result<ChefEditorSnapshot, String> {
         draft.entries = selection.entries.clone();
         draft.lobby_switch = selection.lobby_switch;
     }
-    let diagnostics = validation::validate(&s.stored.document, &s.catalog, &draft)?.diagnostics;
+    let diagnostics = validation::validate(
+        &s.stored.document,
+        &s.catalog,
+        &draft,
+        s.target.supports_custom_default,
+    )?
+    .diagnostics;
     Ok(ChefEditorSnapshot {
         session_id: s.id.clone(),
         target: s.target.clone(),
@@ -157,7 +163,12 @@ pub(crate) fn validate(
 ) -> Result<ChefValidation, String> {
     let s = get(state, id)?;
     check_draft(&s, d)?;
-    let mut result = validation::validate(&s.stored.document, &s.catalog, d)?;
+    let mut result = validation::validate(
+        &s.stored.document,
+        &s.catalog,
+        d,
+        s.target.supports_custom_default,
+    )?;
     if s.target.compatibility != "fastinit_2_2" {
         result.diagnostics.push(validation::diagnostic(
             "diychef.unsupportedImplementation",

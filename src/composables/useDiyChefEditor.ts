@@ -192,8 +192,8 @@ export function useDiyChefEditor(options: EditorOptions) {
   function place(chefId: string, targetChefId: string | null, after: boolean) {
     if (editable.value && state.value && snapshot.value) applyResult(placeChef(state.value, snapshot.value, chefId, targetChefId, after))
   }
-  function changeHat(chefId: string, hat: HatReference) {
-    if (state.value) edit(changeChefHat(state.value, chefId, hat))
+  function changeHat(chefIds: string | readonly string[], hat: HatReference) {
+    if (state.value) edit(changeChefHat(state.value, chefIds, hat))
   }
   function setLobby(value: boolean) {
     if (!state.value) return

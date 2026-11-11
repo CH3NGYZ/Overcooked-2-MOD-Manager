@@ -5,6 +5,7 @@ import { chefDropTarget, type ChefCardBounds } from '../diychef/reorder'
 interface ReorderOptions {
   root: Readonly<Ref<HTMLElement | null>>
   enabled: Readonly<Ref<boolean>>
+  canBeDefault: (source: string) => boolean
   place: (chefId: string, targetChefId: string | null, after: boolean) => void
   disable: (chefId: string) => void
 }
@@ -57,7 +58,7 @@ export function useChefReorder(options: ReorderOptions) {
     overEnabled.value = !!bounds && pointerX >= bounds.left && pointerX <= bounds.right
       && pointerY >= bounds.top - shift - 12 && pointerY <= bounds.bottom - shift + 24
     const target = overEnabled.value && sourceBounds ? chefDropTarget({
-      sourceId, custom: tile?.dataset.chefSource === 'custom', source: sourceBounds, positions,
+      sourceId, preserveDefault: !options.canBeDefault(tile?.dataset.chefSource ?? ''), source: sourceBounds, positions,
       deltaX: pointerX - startX, deltaY: pointerY - startY, scrollShift: shift, pointerX, pointerY,
     }) : null
     targetId.value = target?.id ?? null

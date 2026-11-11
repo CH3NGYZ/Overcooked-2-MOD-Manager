@@ -1,5 +1,5 @@
 import type { ChefDiagnostic, ChefDocumentRow, ChefEditorSnapshot, ChefEntry, ChefItem, HatReference } from './types.ts'
-import { hatForChef, hasNativeDefault, toggleChefError, usableEntries, type ChefEditState } from './draft.ts'
+import { hatForChef, hasValidDefault, toggleChefError, usableEntries, type ChefEditState } from './draft.ts'
 
 export interface ChefFilters {
   query: string
@@ -31,7 +31,7 @@ export function projectChefs(snapshot: ChefEditorSnapshot, state: ChefEditState,
   const selected = new Set(knownEntries.map((entry) => entry.chef_ref.kind === 'known' ? entry.chef_ref.chef_id : ''))
   const usable = usableEntries(state.draft, snapshot)
   const first = usable[0]?.chef_ref
-  const defaultId = first?.kind === 'known' && hasNativeDefault(state.draft, snapshot) ? first.chef_id : null
+  const defaultId = first?.kind === 'known' && hasValidDefault(state.draft, snapshot) ? first.chef_id : null
   const filtered = hasChefFilters(filters)
   const query = filters.query.trim().toLocaleLowerCase()
   const matches = (chef: ChefItem, enabled: boolean) => {

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import { NButton, NCheckbox, NDropdown, type DropdownOption } from 'naive-ui'
-import { EllipsisHorizontal, FolderOpenOutline, RefreshOutline, SaveOutline } from '@vicons/ionicons5'
+import { EllipsisHorizontal, FolderOpenOutline, RefreshOutline, SaveOutline, ShirtOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
-import { hatForChef } from '../diychef/draft'
+import { canBeDefault, hatForChef } from '../diychef/draft'
+import type { HatReference } from '../diychef/types'
 import { projectChefs, projectProblems, type ChefFilters as ChefFilterState } from '../diychef/projection'
 import { useDiyChefEditor } from '../composables/useDiyChefEditor'
 import { useDiyChefConfirmations } from '../composables/useDiyChefConfirmations'
@@ -43,6 +44,7 @@ const filters = computed<ChefFilterState>(() => ({ query: query.value, sources: 
 const projection = computed(() => snapshot.value && state.value ? projectChefs(snapshot.value, state.value, filters.value) : null)
 const problems = computed(() => snapshot.value && state.value ? projectProblems(snapshot.value, state.value, diagnostics.value) : [])
 const hatChefId = shallowRef<string | null>(null)
+const hatScope = shallowRef<'chef' | 'all'>('chef')
 const hatOpen = shallowRef(false)
 const moreOpen = shallowRef(false)
 const hatChef = computed(() => snapshot.value?.chefs.find((chef) => chef.id === hatChefId.value) ?? null)
@@ -51,7 +53,10 @@ const hatChefEnabled = computed(() => state.value?.draft.entries.some((entry) =>
 const announcement = shallowRef('')
 const root = shallowRef<HTMLElement | null>(null)
 const reorderable = computed(() => editable.value && !projection.value?.filtered && !hatOpen.value && !leaveOpen.value && !changesOpen.value)
-const { draggingId, targetId, dropAfter, overEnabled, start: startDrag } = useChefReorder({ root, enabled: reorderable, place, disable: toggle })
+const { draggingId, targetId, dropAfter, overEnabled, start: startDrag } = useChefReorder({
+  root, enabled: reorderable, place, disable: toggle,
+  canBeDefault: source => !!snapshot.value && canBeDefault(source, snapshot.value),
+})
 const moreOptions = computed<DropdownOption[]>(() => [
   { key: 'undo', label: t('diychef.undo'), disabled: !canUndo.value },
   { type: 'divider', key: 'divider' },
@@ -89,7 +94,14 @@ function place(chefId: string, targetChefId: string | null, after: boolean) {
   void focusChef(chefId, true)
 }
 function toggle(chefId: string) { editor.toggle(chefId); void focusChef(chefId) }
-function openHat(chefId: string) { hatChefId.value = chefId; hatOpen.value = true }
+function openHat(chefId: string, scope: 'chef' | 'all' = 'chef') {
+  hatScope.value = scope
+  hatChefId.value = chefId
+  hatOpen.value = true
+}
+function applyHat(chefId: string, hat: HatReference) {
+  editor.changeHat(hatScope.value === 'all' ? snapshot.value?.chefs.map(chef => chef.id) ?? [] : chefId, hat)
+}
 function more(key: string) {
   if (key === 'undo') editor.undo()
   else if (key === 'default') editor.reset('restore_default')
@@ -127,6 +139,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
   </Teleport>
   <Teleport to="#page-header-actions" defer>
     <HeaderSearch v-model:value="query" />
+    <HeaderIconAction :label="t('diychef.bulkChangeHat')" :disabled="!editable || !projection?.defaultId" data-tutorial="diychef-bulk-hat"
+      @click="projection?.defaultId && openHat(projection.defaultId, 'all')"><ShirtOutline /></HeaderIconAction>
     <HeaderIconAction :label="t('diychef.reload')" :disabled="busy || demonstrating" @click="reload"><RefreshOutline /></HeaderIconAction>
     <HeaderIconAction :label="t('modsLocal.openFolder')" :disabled="!snapshot || busy || demonstrating" @click="openFolder"><FolderOpenOutline /></HeaderIconAction>
     <n-dropdown v-model:show="moreOpen" :options="moreOptions" :node-props="moreNodeProps" trigger="click" placement="bottom-end" @select="more">
@@ -152,7 +166,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
       <ContentState v-if="!projection.enabled.length && !projection.disabled.length" :description="t('diychef.noResults')">
         <template #extra><n-button size="small" @click="clearFilters">{{ t('diychef.clearFilters') }}</n-button></template>
       </ContentState>
-      <HatDialog v-model:show="hatOpen" :snapshot="snapshot" :chef="hatChef" :hat="currentHat" :enabled="hatChefEnabled" :frozen="!editable" @apply="editor.changeHat" />
+      <HatDialog v-model:show="hatOpen" :snapshot="snapshot" :chef="hatChef" :hat="currentHat" :enabled="hatChefEnabled" :scope="hatScope" :frozen="!editable" @apply="applyHat" />
     </template>
     <SaveChangesDialog :show="changesOpen" :changes="changes" @resolve="confirmation.resolveChanges" />
     <LeaveDialog :show="leaveOpen" :can-save="canSave" @stay="confirmation.cancelLeave" @discard="confirmation.resolveLeave(true)" @save="confirmation.saveAndLeave" />

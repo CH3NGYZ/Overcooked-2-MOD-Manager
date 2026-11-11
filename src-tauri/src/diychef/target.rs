@@ -5,6 +5,12 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 pub(crate) const GUID: &str = mods::plugin_target::DIYCHEF_GUID;
+fn supports_custom_default(version: Option<&str>) -> bool {
+    // This is a DLL version, so use the same numeric ordering as target selection.
+    version
+        .and_then(|value| mods::compare_mod_versions(value, "2.2"))
+        .is_some_and(|order| order != std::cmp::Ordering::Less)
+}
 pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarget> {
     mods::plugin_target::candidates(mods, GUID)
         .into_iter()
@@ -19,13 +25,15 @@ pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarg
             display_path: m.dll_file.clone(),
             enabled: m.enabled,
             generation,
-            compatibility:
-                if m.version.as_deref() == Some("2.2.0") && m.name.contains("FastInit") {
-                    "fastinit_2_2"
-                } else {
-                    "read_only"
-                }
-                .into(),
+            compatibility: if supports_custom_default(m.version.as_deref())
+                && m.name.contains("FastInit")
+            {
+                "fastinit_2_2"
+            } else {
+                "read_only"
+            }
+            .into(),
+            supports_custom_default: supports_custom_default(m.version.as_deref()),
         })
         .collect()
 }
@@ -97,6 +105,30 @@ mod tests {
             enabled,
             generation: 1,
             compatibility: "read_only".into(),
+            supports_custom_default: supports_custom_default(v),
+        }
+    }
+    #[test]
+    fn custom_defaults_require_at_least_diychef_2_2() {
+        for version in [
+            Some("2.2"),
+            Some("2.2.0"),
+            Some("v2.2.0"),
+            Some("2.2.0.1"),
+            Some("2.3.0"),
+            Some("3.0"),
+            Some("2.2.0-beta.1"),
+        ] {
+            assert!(supports_custom_default(version), "{version:?}");
+        }
+        for version in [
+            None,
+            Some(""),
+            Some("unknown"),
+            Some("2.1.9"),
+            Some("2.1.9-beta.1"),
+        ] {
+            assert!(!supports_custom_default(version), "{version:?}");
         }
     }
     #[test]

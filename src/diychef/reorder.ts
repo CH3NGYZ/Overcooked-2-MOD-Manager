@@ -9,7 +9,7 @@ export interface ChefCardBounds {
 
 interface DropInput {
   sourceId: string
-  custom: boolean
+  preserveDefault: boolean
   source: ChefCardBounds
   positions: readonly ChefCardBounds[]
   deltaX: number
@@ -53,5 +53,5 @@ export function chefDropTarget(input: DropInput): { id: string; after: boolean }
   const after = overlapping && sourceIndex >= 0
     ? sourceIndex < targetIndex
     : centerX > target.left + target.width / 2
-  return { id: target.id, after: after || (target.isDefault && input.custom) }
+  return { id: target.id, after: after || (target.isDefault && input.preserveDefault) }
 }

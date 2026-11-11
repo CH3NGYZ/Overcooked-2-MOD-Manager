@@ -17,6 +17,8 @@ pub struct ChefTarget {
     pub enabled: bool,
     pub generation: u64,
     pub compatibility: String,
+    #[serde(default)]
+    pub supports_custom_default: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChefSource {

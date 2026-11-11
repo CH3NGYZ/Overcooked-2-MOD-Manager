@@ -6,7 +6,7 @@ const card = (id, left, top = 0, width = 128, isDefault = false) => ({ id, left,
 const positions = [card('default', 0, 0, 268, true), card('a', 280), card('b', 420), card('c', 560)]
 function target(id, deltaX, deltaY = 0, overrides = {}) {
   const source = positions.find(position => position.id === id)
-  return chefDropTarget({ sourceId: id, source, custom: false, positions, deltaX, deltaY, scrollShift: 0,
+  return chefDropTarget({ sourceId: id, source, preserveDefault: false, positions, deltaX, deltaY, scrollShift: 0,
     pointerX: source.left + source.width / 2 + deltaX, pointerY: source.top + source.height / 2 + deltaY, ...overrides })
 }
 
@@ -46,10 +46,10 @@ test('when multiple cards overlap the largest intersection wins', () => {
   assert.deepEqual(target('c', -215), { id: 'a', after: false })
 })
 
-test('disabled chefs insert by the floating center and custom chefs always follow the native default', () => {
+test('disabled chefs insert by the floating center and preserve a restricted default only when requested', () => {
   const source = card('disabled', 280, 400)
   assert.deepEqual(target('a', 120, -400, { source, sourceId: source.id, pointerX: 464, pointerY: 110 }), { id: 'b', after: false })
-  assert.deepEqual(target('a', -270, -400, { source, sourceId: source.id, custom: true, pointerX: 74, pointerY: 110 }), { id: 'default', after: true })
+  assert.deepEqual(target('a', -270, -400, { source, sourceId: source.id, preserveDefault: true, pointerX: 74, pointerY: 110 }), { id: 'default', after: true })
   assert.deepEqual(target('a', -270, -400, { source, sourceId: source.id, pointerX: 74, pointerY: 110 }), { id: 'default', after: false })
 })
 

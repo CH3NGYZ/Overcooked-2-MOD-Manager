@@ -81,7 +81,7 @@ fn historical_invalid_chef_does_not_reserve_id_or_head_for_new_usable_chef() {
                 hat_id: "hat:".into(),
             },
         });
-        let result = validate(&doc, &c, &d).unwrap();
+        let result = validate(&doc, &c, &d, false).unwrap();
         assert!(
             !result.save_blocking,
             "plugin skips broken registration first: {:?}",
@@ -100,7 +100,7 @@ fn historical_invalid_chef_does_not_reserve_id_or_head_for_new_usable_chef() {
         // block a newly introduced competing registration.
         let mut usable = c.clone();
         usable.chefs[1].resource_state = "valid".into();
-        let actual_conflict = validate(&doc, &usable, &d).unwrap();
+        let actual_conflict = validate(&doc, &usable, &d, false).unwrap();
         assert!(actual_conflict.save_blocking);
         assert!(
             actual_conflict
@@ -151,9 +151,36 @@ fn native_default_fixture(text: &[u8]) -> (Document, Catalog, ChefDraft) {
 }
 
 #[test]
+fn custom_defaults_are_allowed_only_for_capable_targets_and_empty_still_blocks() {
+    for input in [b"Fox\n".as_slice(), b"Fox\nChef_Black_cat\n"] {
+        let (doc, c, d) = native_default_fixture(input);
+        assert!(!validate(&doc, &c, &d, true).unwrap().save_blocking);
+        assert!(validate(&doc, &c, &d, false).unwrap().save_blocking);
+        assert_eq!(prefer::plan(&doc, &d, &c).unwrap().0, input);
+    }
+    for input in [b"".as_slice(), b"Broken\n", b"UNKNOWN\n"] {
+        let (doc, c, d) = native_default_fixture(input);
+        let result = validate(&doc, &c, &d, true).unwrap();
+        assert!(result.save_blocking);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|item| item.code == "diychef.emptySelection")
+        );
+        assert!(
+            !result
+                .diagnostics
+                .iter()
+                .any(|item| item.code == NATIVE_DEFAULT_REQUIRED)
+        );
+    }
+}
+
+#[test]
 fn custom_opening_chef_blocks_even_when_an_enabled_native_follows() {
     let (doc, c, d) = native_default_fixture(b"Fox\nChef_Black_cat\n");
-    let result = validate(&doc, &c, &d).unwrap();
+    let result = validate(&doc, &c, &d, false).unwrap();
     assert!(result.save_blocking);
     let problem = result
         .diagnostics
@@ -168,14 +195,14 @@ fn custom_opening_chef_blocks_even_when_an_enabled_native_follows() {
     );
     let mut corrected = d.clone();
     corrected.entries.swap(0, 1);
-    assert!(!validate(&doc, &c, &corrected).unwrap().save_blocking);
+    assert!(!validate(&doc, &c, &corrected, false).unwrap().save_blocking);
 }
 
 #[test]
 fn no_usable_native_or_empty_selection_requires_a_native_default() {
     for input in [b"Fox\n".as_slice(), b"Broken\n", b"UNKNOWN\n", b""] {
         let (doc, c, d) = native_default_fixture(input);
-        let result = validate(&doc, &c, &d).unwrap();
+        let result = validate(&doc, &c, &d, false).unwrap();
         assert!(result.save_blocking, "{input:?}");
         assert!(
             result
@@ -187,7 +214,7 @@ fn no_usable_native_or_empty_selection_requires_a_native_default() {
     let (doc, mut c, d) = native_default_fixture(b"Chef_Black_cat\nFox\n");
     c.chefs[0].resource_state = "invalid".into();
     assert!(
-        validate(&doc, &c, &d)
+        validate(&doc, &c, &d, false)
             .unwrap()
             .diagnostics
             .iter()
@@ -198,7 +225,7 @@ fn no_usable_native_or_empty_selection_requires_a_native_default() {
 #[test]
 fn historical_unknown_and_broken_rows_do_not_displace_the_first_usable_native() {
     let (doc, c, d) = native_default_fixture(b"UNKNOWN\nBroken\nChef_Black_cat\nFox\n");
-    let result = validate(&doc, &c, &d).unwrap();
+    let result = validate(&doc, &c, &d, false).unwrap();
     assert!(!result.save_blocking, "{:?}", result.diagnostics);
     assert!(
         !result
@@ -213,7 +240,7 @@ fn validation_of_a_historical_custom_default_preserves_its_order_and_original_by
     let original = b"  Fox  EXTRA\r\nUNKNOWN\r\nChef_Black_cat\r\n";
     let (doc, c, d) = native_default_fixture(original);
     let before = d.clone();
-    let result = validate(&doc, &c, &d).unwrap();
+    let result = validate(&doc, &c, &d, false).unwrap();
     assert!(result.save_blocking);
     assert!(
         matches!(&d.entries[0].chef_ref, ChefReference::Known { chef_id } if chef_id == "custom:Fox")

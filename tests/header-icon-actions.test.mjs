@@ -27,7 +27,9 @@ test('四页只在页头操作区接入图标按钮，原动作与提示名称�
   }
   const chef = read('src/views/DiyChefView.vue')
   const chefHeader = header(chef)
-  assert.equal((chefHeader.match(/<HeaderIconAction\b/g) ?? []).length, 3)
+  assert.equal((chefHeader.match(/<HeaderIconAction\b/g) ?? []).length, 4)
+  assert.match(chefHeader, /:label="t\('diychef\.bulkChangeHat'\)"/)
+  assert.match(chefHeader, /openHat\(projection\.defaultId, 'all'\)/)
   for (const [label, action] of [['diychef.reload', 'reload'], ['modsLocal.openFolder', 'openFolder']]) {
     assert.ok(chefHeader.includes(`:label="t('${label}')"`), label)
     assert.ok(chefHeader.includes(`@click="${action}"`), action)

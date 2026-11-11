@@ -31,7 +31,7 @@ function buildSnapshot(): ChefEditorSnapshot {
   })
   return {
     session_id: SESSION_ID,
-    target: { id: `${DEMO_ID_PREFIX}diychef.target`, guid: 'dev.gua.overcooked.diychef', version: '2.2.0', display_path: '', enabled: true, generation: 0, compatibility: 'fastinit_2_2' },
+    target: { id: `${DEMO_ID_PREFIX}diychef.target`, guid: 'dev.gua.overcooked.diychef', version: '2.2.0', display_path: '', enabled: true, generation: 0, compatibility: 'fastinit_2_2', supports_custom_default: true },
     source: { state: 'present', filename: 'prefer.txt', revision: SESSION_ID, encoding: 'utf8', newline: 'crlf' },
     catalog_revision: SESSION_ID,
     chefs: [

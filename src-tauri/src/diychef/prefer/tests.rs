@@ -58,7 +58,7 @@ fn unrelated_switch_preserves_unknown_and_duplicate_bytes() {
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
     assert!(changes.is_empty());
     assert!(String::from_utf8(bytes).unwrap().starts_with(original));
-    let v = validation::validate(&doc, &c, &d).unwrap();
+    let v = validation::validate(&doc, &c, &d, false).unwrap();
     assert!(!v.save_blocking);
     assert_eq!(v.diagnostics.len(), 2);
 }
@@ -139,7 +139,11 @@ fn empty_and_forged_unknown_refs_block() {
     let doc = Document::parse(b"Chef_Black_cat").unwrap();
     let mut d = draft(&doc, &c);
     d.entries.clear();
-    assert!(validation::validate(&doc, &c, &d).unwrap().save_blocking);
+    assert!(
+        validation::validate(&doc, &c, &d, false)
+            .unwrap()
+            .save_blocking
+    );
     d.entries.push(ChefEntry {
         entry_id: "fake".into(),
         row_id: None,
@@ -151,7 +155,7 @@ fn empty_and_forged_unknown_refs_block() {
             hat_id: "hat:".into(),
         },
     });
-    assert!(validation::validate(&doc, &c, &d).is_err());
+    assert!(validation::validate(&doc, &c, &d, false).is_err());
 }
 
 #[test]

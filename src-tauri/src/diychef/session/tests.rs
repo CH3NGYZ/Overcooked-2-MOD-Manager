@@ -142,6 +142,7 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
             enabled: true,
             generation: 1,
             compatibility: "fastinit_2_2".into(),
+            supports_custom_default: true,
         },
         catalog: catalog::read(&root, &mod_root).unwrap(),
         stored: storage::read(&root, &mod_root, "default-target").unwrap(),
@@ -339,30 +340,23 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         },
     );
     draft.lobby_switch = true;
-    let rejected = validate(&state, &opened.session_id, &draft).unwrap();
-    assert!(rejected.save_blocking);
+    assert!(opened.target.supports_custom_default);
     assert!(
-        rejected
-            .diagnostics
-            .iter()
-            .any(|problem| problem.code == validation::NATIVE_DEFAULT_REQUIRED)
-    );
-    assert_eq!(
-        save(&state, &opened.session_id, &draft).err().unwrap(),
-        validation::NATIVE_DEFAULT_REQUIRED
+        !validate(&state, &opened.session_id, &draft)
+            .unwrap()
+            .save_blocking
     );
     let mut custom_only = draft.clone();
     custom_only.entries.truncate(1);
-    assert_eq!(
-        save(&state, &opened.session_id, &custom_only)
-            .err()
-            .unwrap(),
-        validation::NATIVE_DEFAULT_REQUIRED
+    assert!(
+        !validate(&state, &opened.session_id, &custom_only)
+            .unwrap()
+            .save_blocking
     );
     assert_eq!(
         fs::read(destination.join("prefer.txt")).unwrap(),
         b"Chef_Black_cat\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n",
-        "rejected drafts never reach disk"
+        "validation alone never writes to disk"
     );
     draft.entries.swap(0, 1);
     let validated = validate(&state, &opened.session_id, &draft).unwrap();
@@ -396,7 +390,7 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     assert!(
         matches!(&old.selection.entries[0].chef_ref, ChefReference::Known {chef_id} if chef_id == "custom:00-Fox")
     );
-    assert!(old.diagnostics.iter().any(|problem| problem.code
+    assert!(!old.diagnostics.iter().any(|problem| problem.code
         == validation::NATIVE_DEFAULT_REQUIRED
         && problem.save_blocking));
     assert_eq!(
@@ -404,16 +398,14 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         historical
     );
     let historical_draft = baseline_draft(&get(&state, &old.session_id).unwrap());
-    assert_eq!(
-        save(&state, &old.session_id, &historical_draft)
-            .err()
-            .unwrap(),
-        validation::NATIVE_DEFAULT_REQUIRED
+    let historical_saved = save(&state, &old.session_id, &historical_draft).unwrap();
+    assert!(
+        matches!(&historical_saved.selection.entries[0].chef_ref, ChefReference::Known { chef_id } if chef_id == "custom:00-Fox")
     );
     assert_eq!(
         fs::read(destination.join("prefer.txt")).unwrap(),
         historical,
-        "reading or rejecting an existing custom default preserves it byte-for-byte"
+        "reading or saving an unchanged custom default preserves it byte-for-byte"
     );
     let mut edited = baseline_draft(&get(&state, &opened.session_id).unwrap());
     edited.lobby_switch = false;

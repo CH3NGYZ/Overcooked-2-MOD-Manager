@@ -60,20 +60,24 @@ export function usableEntries(draft: ChefDraft, snapshot: ChefEditorSnapshot): C
   return draft.entries.filter((entry) => entry.chef_ref.kind === 'known' && usable.has(entry.chef_ref.chef_id))
 }
 
-export function nativeEntries(draft: ChefDraft, snapshot: ChefEditorSnapshot): ChefEntry[] {
-  const native = new Set(snapshot.chefs.filter(chef => chef.source_kind === 'native').map(chef => chef.id))
-  return usableEntries(draft, snapshot).filter(entry => entry.chef_ref.kind === 'known' && native.has(entry.chef_ref.chef_id))
+export function canBeDefault(source: string, snapshot: ChefEditorSnapshot): boolean {
+  return source === 'native' || (source === 'custom' && snapshot.target.supports_custom_default === true)
 }
 
-export function hasNativeDefault(draft: ChefDraft, snapshot: ChefEditorSnapshot): boolean {
+function defaultEntries(draft: ChefDraft, snapshot: ChefEditorSnapshot): ChefEntry[] {
+  const eligible = new Set(snapshot.chefs.filter(chef => canBeDefault(chef.source_kind, snapshot)).map(chef => chef.id))
+  return usableEntries(draft, snapshot).filter(entry => entry.chef_ref.kind === 'known' && eligible.has(entry.chef_ref.chef_id))
+}
+
+export function hasValidDefault(draft: ChefDraft, snapshot: ChefEditorSnapshot): boolean {
   const first = usableEntries(draft, snapshot)[0]
-  return !!first && nativeEntries(draft, snapshot)[0] === first
+  return !!first && defaultEntries(draft, snapshot)[0] === first
 }
 
 /** Only explicit edits reorder a legacy custom-first file; reading stays lossless. */
-function promoteNativeDefault(state: ChefEditState, snapshot: ChefEditorSnapshot) {
-  if (hasNativeDefault(state.draft, snapshot)) return
-  const first = nativeEntries(state.draft, snapshot)[0]
+function promoteDefault(state: ChefEditState, snapshot: ChefEditorSnapshot) {
+  if (hasValidDefault(state.draft, snapshot)) return
+  const first = defaultEntries(state.draft, snapshot)[0]
   if (first) state.draft.entries = [first, ...state.draft.entries.filter(entry => entry !== first)]
 }
 
@@ -115,7 +119,7 @@ export function toggleChef(state: ChefEditState, snapshot: ChefEditorSnapshot, c
     next.draft.entries.push(newEntry(state, snapshot, chefId))
     delete next.disabledHats[chefId]
   }
-  promoteNativeDefault(next, snapshot)
+  promoteDefault(next, snapshot)
   return { state: next }
 }
 
@@ -123,7 +127,7 @@ export function toggleChefError(draft: ChefDraft, snapshot: ChefEditorSnapshot, 
   const selected = entryForChef(draft, chefId)
   const chef = snapshot.chefs.find((item) => item.id === chefId)
   if (!chef) return 'unavailable'
-  if (selected && chef.source_kind === 'native' && isUsableResource(chef.resource_state) && nativeEntries(draft, snapshot).length <= 1) {
+  if (!snapshot.target.supports_custom_default && selected && chef.source_kind === 'native' && isUsableResource(chef.resource_state) && defaultEntries(draft, snapshot).length <= 1) {
     return 'nativeDefaultRequired'
   }
   if (selected && isUsableResource(chef.resource_state) && usableEntries(draft, snapshot).length <= 1) {
@@ -135,7 +139,7 @@ export function toggleChefError(draft: ChefDraft, snapshot: ChefEditorSnapshot, 
 export function setDefaultChef(state: ChefEditState, snapshot: ChefEditorSnapshot, chefId: string): ChefEditResult {
   const chef = snapshot.chefs.find((item) => item.id === chefId)
   if (!chef || !isUsableResource(chef.resource_state)) return { error: 'unavailable' }
-  if (chef.source_kind !== 'native') return { error: 'nativeDefaultRequired' }
+  if (!canBeDefault(chef.source_kind, snapshot)) return { error: 'nativeDefaultRequired' }
   const next = copyEditState(state)
   const entry = entryForChef(next.draft, chefId) ?? newEntry(state, snapshot, chefId)
   next.draft.entries = [entry, ...next.draft.entries.filter((item) => item.entry_id !== entry.entry_id)]
@@ -146,7 +150,7 @@ export function setDefaultChef(state: ChefEditState, snapshot: ChefEditorSnapsho
 
 /** Both pointer and keyboard moves use full entries, preserving unresolved rows' relative order. */
 export function moveChef(state: ChefEditState, snapshot: ChefEditorSnapshot, chefId: string, targetChefId: string, after?: boolean): ChefEditState {
-  if (!nativeEntries(state.draft, snapshot).length) return state
+  if (!defaultEntries(state.draft, snapshot).length) return state
   const from = state.draft.entries.findIndex((entry) => entry.chef_ref.kind === 'known' && entry.chef_ref.chef_id === chefId)
   const to = state.draft.entries.findIndex((entry) => entry.chef_ref.kind === 'known' && entry.chef_ref.chef_id === targetChefId)
   if (from < 0 || to < 0 || from === to) return state
@@ -154,7 +158,7 @@ export function moveChef(state: ChefEditState, snapshot: ChefEditorSnapshot, che
   const [entry] = next.draft.entries.splice(from, 1)
   const target = to - (from < to ? 1 : 0)
   next.draft.entries.splice(target + Number(after ?? from < to), 0, entry!)
-  promoteNativeDefault(next, snapshot)
+  promoteDefault(next, snapshot)
   if (draftSignature(next.draft) === draftSignature(state.draft)) return state
   next.draft.acknowledged_change_ids = []
   return next
@@ -164,7 +168,9 @@ export function moveChef(state: ChefEditState, snapshot: ChefEditorSnapshot, che
 export function placeChef(state: ChefEditState, snapshot: ChefEditorSnapshot, chefId: string, targetChefId: string | null, after: boolean): ChefEditResult {
   if (targetChefId === null) {
     if (usableEntries(state.draft, snapshot).length) return { state }
-    if (snapshot.chefs.find(chef => chef.id === chefId)?.source_kind !== 'native') return { error: 'nativeDefaultRequired' }
+    const chef = snapshot.chefs.find(chef => chef.id === chefId)
+    if (!chef || !isUsableResource(chef.resource_state)) return { error: 'unavailable' }
+    if (!canBeDefault(chef.source_kind, snapshot)) return { error: 'nativeDefaultRequired' }
     return toggleChef(state, snapshot, chefId)
   }
   if (!entryForChef(state.draft, targetChefId)) return { state }
@@ -173,11 +179,16 @@ export function placeChef(state: ChefEditState, snapshot: ChefEditorSnapshot, ch
   return { state: moveChef(selected.state!, snapshot, chefId, targetChefId, after) }
 }
 
-export function changeChefHat(state: ChefEditState, chefId: string, hat: HatReference): ChefEditState {
+export function changeChefHat(state: ChefEditState, chefIds: string | readonly string[], hat: HatReference): ChefEditState {
   const next = copyEditState(state)
-  const entry = entryForChef(next.draft, chefId)
-  if (entry) entry.hat_ref = { ...hat }
-  else next.disabledHats[chefId] = { ...hat }
+  const remaining = new Set(typeof chefIds === 'string' ? [chefIds] : chefIds)
+  for (const entry of next.draft.entries) {
+    if (entry.chef_ref.kind === 'known' && remaining.has(entry.chef_ref.chef_id)) {
+      entry.hat_ref = { ...hat }
+      remaining.delete(entry.chef_ref.chef_id)
+    }
+  }
+  for (const chefId of remaining) next.disabledHats[chefId] = { ...hat }
   next.draft.acknowledged_change_ids = []
   return next
 }
@@ -185,9 +196,9 @@ export function changeChefHat(state: ChefEditState, chefId: string, hat: HatRefe
 export function removeProblemRow(state: ChefEditState, snapshot: ChefEditorSnapshot, rowId: string): ChefEditResult {
   const next = copyEditState(state)
   next.draft.entries = next.draft.entries.filter((entry) => entry.row_id !== rowId)
-  if (nativeEntries(state.draft, snapshot).length && !nativeEntries(next.draft, snapshot).length) return { error: 'nativeDefaultRequired' }
+  if (defaultEntries(state.draft, snapshot).length && !defaultEntries(next.draft, snapshot).length) return { error: snapshot.target.supports_custom_default ? 'lastChef' : 'nativeDefaultRequired' }
   if (!usableEntries(next.draft, snapshot).length) return { error: 'lastChef' }
-  promoteNativeDefault(next, snapshot)
+  promoteDefault(next, snapshot)
   next.draft.removed_problem_row_ids = [...new Set([...next.draft.removed_problem_row_ids, rowId])]
   next.draft.acknowledged_change_ids = []
   return { state: next }

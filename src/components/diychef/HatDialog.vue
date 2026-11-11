@@ -9,10 +9,10 @@ import AppModal from '../AppModal.vue'
 import HatPicker from './HatPicker.vue'
 
 const PreviewCanvas = defineAsyncComponent(() => import('./PreviewCanvas.vue'))
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   show: boolean; snapshot: ChefEditorSnapshot; chef: ChefItem | null; hat: HatReference | null
-  enabled: boolean; frozen: boolean
-}>()
+  enabled: boolean; frozen: boolean; scope?: 'chef' | 'all'
+}>(), { scope: 'chef' })
 const emit = defineEmits<{ 'update:show': [value: boolean]; apply: [chefId: string, hat: HatReference] }>()
 const selectedId = shallowRef<string | null>(null)
 const previewState = shallowRef<'loading' | 'ready' | 'partial' | 'error'>('loading')
@@ -43,7 +43,7 @@ function apply() {
 </script>
 
 <template>
-  <AppModal :show="show" :title="t('diychef.hatTitle', { name: chef?.display_name ?? '' })" max-width="min(820px, 94vw)" fill :scrollable="false"
+  <AppModal :show="show" :title="t(scope === 'all' ? 'diychef.bulkHatTitle' : 'diychef.hatTitle', { name: chef?.display_name ?? '' })" max-width="min(820px, 94vw)" fill :scrollable="false"
     @update:show="emit('update:show', $event)">
     <div v-if="chef" class="chef-hat-dialog" data-tutorial="diychef-hat-dialog">
       <div class="chef-hat-preview">
@@ -60,10 +60,10 @@ function apply() {
         </div>
       </div>
     </div>
-    <p v-if="!enabled" class="chef-hat-session-note">{{ t('diychef.hatDisabledHint') }}</p>
+    <p v-if="scope === 'all' || !enabled" class="chef-hat-session-note">{{ t(scope === 'all' ? 'diychef.bulkHatHint' : 'diychef.hatDisabledHint') }}</p>
     <template #footer>
       <n-button size="small" data-tutorial="diychef-hat-cancel" @click="emit('update:show', false)">{{ t('diychef.cancel') }}</n-button>
-      <n-button size="small" type="primary" :disabled="!canApply" @click="apply">{{ t(previewState === 'error' || previewState === 'partial' ? 'diychef.hatApplyWithoutPreview' : 'diychef.hatApply') }}</n-button>
+      <n-button size="small" type="primary" :disabled="!canApply" @click="apply">{{ t(scope === 'all' ? 'diychef.hatApplyAll' : previewState === 'error' || previewState === 'partial' ? 'diychef.hatApplyWithoutPreview' : 'diychef.hatApply') }}</n-button>
     </template>
   </AppModal>
 </template>

@@ -172,6 +172,28 @@ test('placing a disabled custom chef first clamps behind the native and remains 
   assert.deepEqual(editor.state.value, before, 'placing Fox did not leave a second undo step for enabling it')
 })
 
+test('bulk hat choice is one undo step and saving retains disabled choices for later enabling', async t => {
+  const { editor } = await setup(t)
+  await editor.open()
+  editor.toggle('fox')
+  const before = structuredClone(editor.state.value)
+  const chefs = editor.snapshot.value.chefs.map(chef => chef.id)
+  const hat = { kind: 'known', hat_id: 'hat:None' }
+  editor.changeHat(chefs, hat)
+  assert.equal(editor.dirty.value, true)
+  assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.hat_ref), [hat, hat])
+  assert.deepEqual(editor.state.value.disabledHats, { owl: hat })
+  editor.undo()
+  assert.deepEqual(editor.state.value, before)
+  editor.changeHat(chefs, hat)
+  assert.equal(await editor.save(), true)
+  assert.equal(editor.dirty.value, false)
+  assert.deepEqual(editor.snapshot.value.selection.entries.map(entry => entry.hat_ref), [hat, hat])
+  assert.deepEqual(editor.state.value.disabledHats, { owl: hat })
+  editor.toggle('owl')
+  assert.deepEqual(editor.state.value.draft.entries.at(-1).hat_ref, hat)
+})
+
 test('save freezes all mutations through validation, confirmation and write/read-back', async t => {
   const check = deferred(), confirm = deferred(), write = deferred()
   let writes = 0, confirmationCalls = 0, opens = 0

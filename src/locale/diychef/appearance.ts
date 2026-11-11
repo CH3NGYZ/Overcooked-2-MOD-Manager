@@ -2,6 +2,10 @@ import type { DomainMessages } from '../types.ts'
 
 export const diychefAppearance: DomainMessages = {
   changeHat: { 'zh-CN': '换帽子', 'zh-TW': '換帽子', en: 'Change hat', ko: '모자 변경', ja: '帽子を変更' },
+  bulkChangeHat: { 'zh-CN': '一键更换帽子', 'zh-TW': '一鍵更換帽子', en: 'Change all hats', ko: '모든 모자 변경', ja: '帽子を一括変更' },
+  bulkHatTitle: { 'zh-CN': '一键更换帽子 · {name}', 'zh-TW': '一鍵更換帽子 · {name}', en: 'Change all hats · {name}', ko: '모든 모자 변경 · {name}', ja: '帽子を一括変更 · {name}' },
+  hatApplyAll: { 'zh-CN': '应用到所有厨师', 'zh-TW': '套用至所有廚師', en: 'Apply to all chefs', ko: '모든 셰프에 적용', ja: 'すべてのシェフに適用' },
+  bulkHatHint: { 'zh-CN': '以默认开屏厨师预览，应用后请保存页面配置。未启用厨师不会被启用，其帽子选择仅在本次编辑中保留。', 'zh-TW': '以預設開場廚師預覽，套用後請儲存頁面設定。未啟用廚師不會被啟用，其帽子選擇僅在本次編輯中保留。', en: 'Preview on the opening chef, then save the page after applying. Disabled chefs stay disabled; their hat choices last for this editing session.', ko: '시작 셰프로 미리본 후 적용하고 페이지 설정을 저장하세요. 비활성 셰프는 그대로 유지되며 모자 선택은 이번 편집 동안만 유지됩니다.', ja: '開始時のシェフで試着し、適用後にページの設定を保存してください。無効なシェフは有効にならず、帽子の選択は今回の編集中のみ保持されます。' },
   hatTitle: { 'zh-CN': '给 {name} 换帽子', 'zh-TW': '給 {name} 換帽子', en: 'Choose a hat for {name}', ko: '{name}의 모자 선택', ja: '{name}の帽子を選択' },
   hatSearch: { 'zh-CN': '搜索帽子', 'zh-TW': '搜尋帽子', en: 'Search hats', ko: '모자 검색', ja: '帽子を検索' },
   hatAuto: { 'zh-CN': '跟随游戏', 'zh-TW': '跟隨遊戲', en: 'Follow the game', ko: '게임 설정 따르기', ja: 'ゲームに合わせる' },

@@ -19,7 +19,7 @@ const chef = (id, source = 'custom', resource = 'valid') => ({
 function fixture(entries = [selected('cat'), selected('fox')]) {
   const snapshot = {
     session_id: 'session',
-    target: { id: 'target', guid: 'dev.gua.overcooked.diychef', version: '2.2.0', display_path: 'fixture', enabled: true, generation: 7, compatibility: 'fastinit_2_2' },
+    target: { id: 'target', guid: 'dev.gua.overcooked.diychef', version: '2.1.0', display_path: 'fixture', enabled: true, generation: 7, compatibility: 'read_only', supports_custom_default: false },
     source: { state: 'present', filename: 'prefer.txt', revision: 'revision', encoding: 'utf8', newline: 'crlf' },
     catalog_revision: 'catalog',
     chefs: [chef('cat', 'native', 'known_name'), chef('beard', 'native', 'known_name'), chef('fox'), chef('owl'), chef('broken', 'custom', 'invalid')],
@@ -40,6 +40,41 @@ function fixture(entries = [selected('cat'), selected('fox')]) {
   return { snapshot, state: { draft: createChefDraft(snapshot), disabledHats: {} } }
 }
 const unfiltered = { query: '', sources: [], statuses: [] }
+
+test('DIYChef 2.2 supports custom opening chefs through setting, dragging and projection', () => {
+  const { snapshot, state } = fixture()
+  snapshot.target.supports_custom_default = true
+  snapshot.target.version = '2.2.0'
+  const direct = setDefaultChef(state, snapshot, 'fox')
+  assert.equal(direct.error, undefined)
+  assert.equal(projectChefs(snapshot, direct.state, unfiltered).defaultId, 'fox')
+  const dragged = placeChef(state, snapshot, 'owl', 'cat', false)
+  assert.equal(dragged.error, undefined)
+  assert.equal(projectChefs(snapshot, dragged.state, unfiltered).defaultId, 'owl')
+  assert.deepEqual(projectChefs(snapshot, state, unfiltered).enabled.map(item => item.chef.id), ['cat', 'fox'])
+})
+
+test('DIYChef 2.2 can disable its final native chef while retaining the final usable chef safeguard', () => {
+  const { snapshot, state } = fixture()
+  snapshot.target.supports_custom_default = true
+  snapshot.target.version = '2.2.0'
+  const next = toggleChef(state, snapshot, 'cat')
+  assert.equal(next.error, undefined)
+  assert.equal(projectChefs(snapshot, next.state, unfiltered).defaultId, 'fox')
+  assert.equal(toggleChef(next.state, snapshot, 'fox').error, 'lastChef')
+})
+
+test('DIYChef 2.2 accepts custom-first files without reordering and can populate an empty selection', () => {
+  const { snapshot, state } = fixture([selected('fox'), selected('cat')])
+  snapshot.target.supports_custom_default = true
+  snapshot.target.version = '2.2.0'
+  assert.equal(projectChefs(snapshot, state, unfiltered).defaultId, 'fox')
+  const empty = { ...state, draft: { ...state.draft, entries: [] } }
+  const next = placeChef(empty, snapshot, 'owl', null, false)
+  assert.equal(next.error, undefined)
+  assert.equal(projectChefs(snapshot, next.state, unfiltered).defaultId, 'owl')
+  assert.equal(setDefaultChef(state, snapshot, 'broken').error, 'unavailable')
+})
 
 test('the final usable native chef cannot be disabled even when custom chefs remain enabled', () => {
   const { snapshot, state } = fixture([missing, selected('cat'), selected('broken')])
@@ -85,6 +120,25 @@ test('disabled hat preferences never enable a chef, and follow-game differs from
   assert.deepEqual(enabled.draft.entries.at(-1).hat_ref, hat('hat:None'))
   assert.equal(enabled.disabledHats.owl, undefined)
   assert.notDeepEqual(hatForChef(enabled, snapshot, 'owl'), hat())
+})
+
+test('changing all hats updates the full catalogue without enabling chefs or rewriting unresolved rows', () => {
+  const { snapshot, state } = fixture([selected('cat'), missing, selected('fox', 'fox', hat('hat:None'))])
+  state.disabledHats.owl = hat('hat:None')
+  state.draft.acknowledged_change_ids = ['confirmed']
+  const before = structuredClone(state)
+  const choice = hat('hat:Wizard')
+  const next = changeChefHat(state, snapshot.chefs.map(chef => chef.id), choice)
+  assert.deepEqual(next.draft.entries.map(entry => entry.chef_ref), state.draft.entries.map(entry => entry.chef_ref))
+  assert.deepEqual(next.draft.entries[1], missing)
+  for (const chef of snapshot.chefs) assert.deepEqual(hatForChef(next, snapshot, chef.id), choice)
+  assert.deepEqual(next.draft.acknowledged_change_ids, [])
+  assert.deepEqual(state, before)
+  assert.notEqual(next.draft.entries[0].hat_ref, next.draft.entries[2].hat_ref)
+  choice.hat_id = 'hat:None'
+  assert.deepEqual(next.disabledHats.owl, hat('hat:Wizard'))
+  const enabled = toggleChef(next, snapshot, 'owl').state
+  assert.deepEqual(enabled.draft.entries.at(-1).hat_ref, hat('hat:Wizard'))
 })
 
 test('toggle round-trip restores original row and hat metadata without a phantom dirty state', () => {
@@ -334,7 +388,7 @@ test('dropping into an empty usable selection accepts a native chef and rejects 
     assert.deepEqual(next.disabledHats, {})
     assert.deepEqual(state, before)
     assert.equal(placeChef(state, snapshot, 'owl', null, false).error, 'nativeDefaultRequired')
-    assert.equal(placeChef(state, snapshot, 'absent', null, false).error, 'nativeDefaultRequired')
+    assert.equal(placeChef(state, snapshot, 'absent', null, false).error, 'unavailable')
   }
 })
 

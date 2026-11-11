@@ -20,6 +20,7 @@ pub(crate) fn validate(
     doc: &Document,
     c: &Catalog,
     draft: &ChefDraft,
+    supports_custom_default: bool,
 ) -> Result<ChefValidation, String> {
     let baseline = doc.selection(c);
     let old: HashMap<_, _> = baseline
@@ -107,10 +108,9 @@ pub(crate) fn validate(
     if first_usable.is_none() {
         diagnostics.push(diagnostic("diychef.emptySelection", None, true));
     }
-    // Keep historical records untouched on read, but only a native chef can be
-    // the opening chef in a newly saved configuration. Skip unresolved/broken
-    // resources exactly as registration does when choosing that first chef.
-    if first_usable.is_none_or(|item| item.source_kind != "native") {
+    // The selected DLL determines default eligibility; unresolved/broken rows
+    // never occupy the opening slot. DIYChef 2.2 added custom opening chefs.
+    if !supports_custom_default && first_usable.is_none_or(|item| item.source_kind != "native") {
         let mut problem = diagnostic(NATIVE_DEFAULT_REQUIRED, None, true);
         problem.chef_id = first_usable.map(|item| item.id.clone());
         diagnostics.push(problem);

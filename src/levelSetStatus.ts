@@ -210,11 +210,11 @@ export function levelSetState(
   set: Pick<LevelSetInfo, 'enabled' | 'version' | 'error'> & { installed_mapset_version?: string },
   remote?: MapVersionRef | null,
 ): LevelSetState {
-  // 停用优先：用户关掉的东西不该显示「可更新」，那会催他去更新一个不用的地图
-  if (!set.enabled) return 'disabled'
+  // 停用只影响游戏加载，仍须提醒已经安装的地图有更新。
+  const order = remote && !set.error ? mapUpdateState(set.version, remote, set.installed_mapset_version) : 'unknown'
+  if (!set.enabled) return order === 'update_available' ? order : 'disabled'
   if (set.error) return 'unreadable'
   if (!remote) return 'unbound'
-  const order = mapUpdateState(set.version, remote, set.installed_mapset_version)
   // 除 `unknown` 外，版本结论与 `LevelSetState` 的版本分支同名，直接透传
   if (order === 'unknown') return 'unknown'
   return order
@@ -609,7 +609,8 @@ export interface LevelSetCardAction {
  * 仓库装/升级那个插件，所以按钮文案统一按中档处理。
  *
  * 不给出动作的情况：
- *   · 停用 / info 解析失败：状态本身就不完整，先让用户处理卡片的开关；
+ *   · info 解析失败或刷新中：尚不能确定更新来源；
+ *   · 停用地图仅保留更新动作，依赖操作等重新启用后再处理；
  *   · 可更新但没有绑定到在线地图：没有可下载的来源；
  *   · 线上没有满足区间的仓库（真·缺依赖）：按钮点了没反应，比没有按钮更糟
  *     （`dependencyTagFor` 只给有候选仓库的项 `repositoryId`）。
@@ -622,8 +623,8 @@ export function levelSetCardAction(
   repositories: readonly ModRepository[] = [],
   refreshing?: LevelSetRefreshingHint,
 ): LevelSetCardAction | undefined {
-  if (!set.enabled || set.error || levelSetIsRefreshing(set, maps, refreshing)) return undefined
-  const statuses = gameProbed
+  if (set.error || levelSetIsRefreshing(set, maps, refreshing)) return undefined
+  const statuses = gameProbed && set.enabled
     ? levelSetRelationStatuses(set, maps, mods, repositories)
     : []
   const conflict = statuses.find((status) => status.state === 'conflict' && status.installedMod)
@@ -648,6 +649,7 @@ export function levelSetCardAction(
     }
   }
 
+  if (!set.enabled) return undefined
   const dependency = dependencyTagFor(statuses, true)
   if (dependency?.repositoryId) {
     return {

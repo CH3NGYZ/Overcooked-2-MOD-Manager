@@ -168,10 +168,10 @@ test('uid 随版本变化，不能当身份', () => {
   assert.ok(isSameLevelSet(v1, v2), 'uid 不同也必须认成同一地图')
 })
 
-test('停用优先于一切 —— 关掉的地图不该催用户更新', () => {
+test('停用地图仍提醒更新，开关只影响游戏加载', () => {
   assert.equal(levelSetState(set({ enabled: false, version: '0.1' }), {
     tag: 'v9.9.9', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'disabled')
+  }), 'update_available')
 })
 
 test('解析失败优先于版本比较', () => {

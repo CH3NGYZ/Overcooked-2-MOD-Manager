@@ -29,7 +29,7 @@ import {
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
 import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
 import type { DependencyRow } from '../dependencyRows'
-import { revealCard, useFocusHighlight, useModRepositoryLink } from '../crossLink'
+import { useFocusHighlight, useModRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { runtimeModStatus } from '../modRuntimeStatus'
@@ -494,7 +494,6 @@ const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))
 const {
   expandedKeys: groupsExpanded,
   onExpanded: onGroupsExpanded,
-  expandGroup: expandLocalGroup,
 } = useLocalGroupExpansion(allGroupKeys, visibility.forceExpand, visibility.ignoringCollapse)
 
 /**
@@ -569,31 +568,6 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
       : message.error(translateBackendMessage(result.message))
     await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
-}
-
-/**
- * 「去卸载」：把关系里点名的那张已安装卡片滚到视口中间并高亮。
- *
- * 冲突的收尾确实是卸载「对方」，但这里不直接弹确认框：用户点的是 A 卡上的
- * 「去卸载」，要卸的却可能是 B —— 直接弹框等于让人对着一张还没见过的卡签字，
- * 卸错了还得重装一遍。先把 B 带到他眼前，删不删由他在那张卡上决定；从 B 的
- * 卡片删也走同一条 `remove` 流程（含后端要求整包确认的分支）。
- *
- * 分类收起时卡片不渲染（折叠体是 `n-collapse` 的内容插槽），`querySelector`
- * 会一直找不到，所以先展开目标所在的分类，等展开动画结束再滚。状态标签已改为
- * 列表筛选，这里只滚动定位，不再播状态脉冲。
- */
-function locateConflict(target: InstalledMod) {
-  const anchor = modAnchor(target)
-  const groupKey = groups.value.find((group) =>
-    group.packages.some((pkg) => pkg.mods.some((mod) => mod.dll_file === target.dll_file)),
-  )?.key
-  if (groupKey) expandLocalGroup(groupKey)
-  window.setTimeout(() => {
-    revealCard(() =>
-      document.querySelector<HTMLElement>(`[data-mod-anchor="${CSS.escape(anchor)}"]`),
-    )
-  }, 320)
 }
 
 /**
@@ -727,7 +701,7 @@ function packageAction(pkg: ModPackageNode) {
  *   - update：预下载 → 安装详情弹窗 → 用户确认（与仓库卡片安装同一套）
  *   - refresh：只重拉这一条仓库的 Release，不下载任何文件
  *   - install-dependency：跳到 MOD 安装页并定位到该仓库卡片
- *   - uninstall-conflict：跳到关系里指名的那个 MOD 卡片上（由用户自己决定删不删）
+ *   - uninstall-conflict：把关系里指名的那个 MOD 交给统一卸载确认链
  */
 function runCardAction(mod: InstalledMod) {
   const context = cardAction(mod)
@@ -739,7 +713,8 @@ function runCardAction(mod: InstalledMod) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
     linkToModRepository(context.repository.id)
   } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
-    locateConflict(context.conflictMod)
+    // 冲突目标是对方 MOD；复用右侧垃圾桶的完整确认、整包确认、忙碌与刷新流程。
+    remove(context.conflictMod)
   } else if (context.repository) {
     void refreshModRepository(context.repository)
   }
@@ -750,8 +725,8 @@ function runPackageAction(pkg: ModPackageNode) {
   if (!context) return
   if (context.action.kind === 'update' && blockModOperation()) return
   if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
-    // 要卸的是「对方」；先带用户到那张卡上（见 `locateConflict`）
-    locateConflict(context.conflictMod)
+    // 包级冲突同样直接卸载关系目标，不能误删当前包或只做页面定位。
+    remove(context.conflictMod)
     return
   }
   if (!context.repository) return

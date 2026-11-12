@@ -382,6 +382,11 @@ flowchart TD
 **Overcooked! 2 レベル制作所（QQ 4グループ）：714907749**
 カスタムマップの制作、インストール、プレイに関する情報交換を歓迎します。
 """
+# 依赖长消息分片修复
+[[repositories.relations]]
+kind = "requires"
+guid = "com.ch3ngyz.plugin.overcooked2.diylevel.multipartmessagefix"
+
 
 [[repositories]]
 enabled = true

@@ -56,9 +56,16 @@ kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
 # 分版本依赖
 [[repositories.release_relations]]
-version = "==1.7.0"
+version = ">=1.7.0,<1.9.0"
 relations = [
   { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = "==0.10.0" },
+]
+# 分版本依赖
+[[repositories.release_relations]]
+version = ">=1.9.0"
+relations = [
+  { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = ">=0.10.0" },
+  { kind = "conflicts", guid = "com.ch3ngyz.plugin.overcooked2.diylevel.resourcereadfailureblocker" },
 ]
 
 [[repositories]]

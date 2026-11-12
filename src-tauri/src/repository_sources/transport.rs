@@ -5,6 +5,7 @@ use super::document::parse_document;
 use super::location::SourceLocation;
 use super::location::remote_document_location;
 use crate::config::ConfigError;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::releases;
 
 /// 读取仓库源文档（raw 索引与各级子源）的访问超时。
@@ -66,7 +67,7 @@ pub(crate) async fn load_text_document<T>(
             "no-cache, no-store, max-age=0",
         )
         .header(reqwest::header::PRAGMA, "no-cache")
-        .send()
+        .send_logged()
         .await
         .map_err(|error| {
             log::error!(

@@ -5,6 +5,7 @@ use super::transport::MAX_SOURCE_BYTES;
 use super::transport::SOURCE_DOCUMENT_TIMEOUT;
 use super::transport::load_text_document;
 use crate::config::ConfigError;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::releases;
 
 /// 一份需要「先问 API、再下载比对」的远程文档。
@@ -136,7 +137,7 @@ pub(crate) async fn fetch_document_bytes(
             "no-cache, no-store, max-age=0",
         )
         .header(reqwest::header::PRAGMA, "no-cache")
-        .send()
+        .send_logged()
         .await
         .map_err(|error| error.without_url().to_string())?;
     let status = response.status();

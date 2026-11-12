@@ -2,6 +2,7 @@ use crate::app_state::AppState;
 use crate::archive::DownloadReporter;
 use crate::download::planning::{asset_proxy_urls, ordered_asset_download_candidates};
 use crate::download::{DownloadCandidate, try_download_candidates_until_error};
+use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{GitHubProxy, Provider, ProxyMode};
 use crate::releases;
 use futures_util::StreamExt;
@@ -120,7 +121,7 @@ async fn fetch_readme(
             "no-cache, no-store, max-age=0",
         )
         .header(reqwest::header::PRAGMA, "no-cache")
-        .send()
+        .send_logged()
         .await
         .map_err(|error| error.without_url().to_string())?;
     let status = response.status();

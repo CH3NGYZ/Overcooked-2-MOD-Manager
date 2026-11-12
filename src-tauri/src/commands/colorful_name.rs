@@ -1,5 +1,6 @@
 use crate::app_state::AppState;
 use crate::game;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::models::OperationResult;
 use std::path::Path;
 use tauri::State;
@@ -101,7 +102,7 @@ async fn send_colorful_name(
     };
     request
         .body(serde_json::json!({ "name": name }).to_string())
-        .send()
+        .send_logged()
         .await
 }
 
@@ -117,8 +118,9 @@ async fn classify_colorful_name(
         Ok(response) if response.status().is_success() => ColorfulNameOutcome::Delivered(port),
         Ok(response) => {
             let status = response.status();
-            // 街机MOD 的 403 正文就是「Token 不匹配」，写进日志才能直接定位鉴权问题。
-            let body = response.text().await.unwrap_or_default();
+            // 共享诊断已读取并脱敏正文；复用它，避免 MOD 回显握手令牌时
+            // 原有的短错误日志再次输出凭据，也不额外等待慢正文。
+            let body = crate::http_diagnostics::body_preview(&response).unwrap_or_default();
             let body = body.chars().take(80).collect::<String>();
             let detail = format!("{status} {}", body.trim()).trim().to_string();
             ColorfulNameOutcome::Rejected(port, detail)

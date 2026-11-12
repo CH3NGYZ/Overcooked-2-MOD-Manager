@@ -165,7 +165,7 @@ impl ApiRequestExt for reqwest::RequestBuilder {
         scheduler(&provider)
             .acquire(request_key(&provider, request.url()))
             .await;
-        client.execute(request).await
+        crate::http_diagnostics::execute(client, request).await
     }
 }
 

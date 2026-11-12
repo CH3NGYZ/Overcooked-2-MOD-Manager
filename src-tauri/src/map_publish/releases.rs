@@ -386,9 +386,8 @@ pub async fn delete_publish_release(
             log::info!("同名 tag 已删除：{tag}");
         } else {
             // Release 已删除；现有策略仅记录 tag 删除的非成功响应，不回滚或上抛。
-            let body = response.text().await.unwrap_or_default();
             log::warn!(
-                "同名 tag 删除失败（忽略，视为已删除）：{tag}，状态={}，详情={body}",
+                "同名 tag 删除失败（忽略，视为已删除）：{tag}，状态={}",
                 status.as_u16()
             );
         }

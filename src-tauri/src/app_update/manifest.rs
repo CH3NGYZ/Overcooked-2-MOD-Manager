@@ -12,6 +12,7 @@ use crate::app_update::channels::installer_manifest_sources;
 use crate::app_update::channels::{INSTALLER_GITCODE_OWNER, INSTALLER_GITCODE_REPO};
 use crate::archive;
 use crate::download::try_download_candidates as try_asset_download_candidates;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{
     AppConfig, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo, Provider,
 };
@@ -124,7 +125,7 @@ pub(super) async fn fetch_installer_manifest(
             .header("Cache-Control", "no-cache, no-store")
             .header("Pragma", "no-cache")
             .timeout(std::time::Duration::from_secs(5))
-            .send()
+            .send_logged()
             .await
             .map_err(|_| "update.manifestRequestFailed")?;
         if !response.status().is_success() {

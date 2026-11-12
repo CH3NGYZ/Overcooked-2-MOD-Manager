@@ -4,6 +4,7 @@ use crate::download::planning::{
     RemoteUrlKind, classify_remote_url, plan_remote_download_candidates, provider_for_remote_url,
 };
 use crate::download::{DownloadCandidate, DownloadContext, try_download_candidates};
+use crate::http_diagnostics::HttpRequestExt;
 use crate::mods::install::install_manual_mod;
 use crate::{game, releases};
 use std::fs::{self, File};
@@ -125,7 +126,7 @@ async fn probe_remote_filename(client: &reqwest::Client, parsed: &Url) -> Result
     let response = tokio::select! {
         result = client.get(parsed.clone()).timeout(archive::FIRST_BYTE_TIMEOUT).header(reqwest::header::RANGE, "bytes=0-0")
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
-            .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send() => {
+            .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send_logged() => {
             result.map_err(|_| "direct.infoFailed")?.error_for_status().map_err(|_| "direct.infoFailed")?
         }
         _ = async {

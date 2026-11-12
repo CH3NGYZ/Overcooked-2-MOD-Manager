@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{AppConfig, Provider};
 
 /// 单个头像的大小上限。
@@ -269,7 +270,7 @@ async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, St
         client
             .get(url)
             .header("User-Agent", crate::releases::APP_USER_AGENT)
-            .send(),
+            .send_logged(),
     )
     .await
     .map_err(|_| "avatar.requestTimeout".to_string())?

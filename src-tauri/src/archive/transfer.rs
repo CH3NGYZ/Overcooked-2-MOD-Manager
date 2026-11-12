@@ -1,6 +1,7 @@
 use super::control::is_download_cancelled;
 use super::integrity::validate_download_size;
 use super::progress::{DownloadProgress, DownloadReporter, emit_progress};
+use crate::http_diagnostics::HttpRequestExt;
 use futures_util::{StreamExt, stream};
 use reqwest::Client;
 use std::fs::{self, File};
@@ -72,7 +73,7 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
             .header("User-Agent", crate::releases::APP_USER_AGENT)
             .header(reqwest::header::ACCEPT_ENCODING, "identity");
         let head_response = if let Some(timeout) = first_byte_timeout {
-            match tokio::time::timeout(timeout, head.send()).await {
+            match tokio::time::timeout(timeout, head.send_logged()).await {
                 Ok(Ok(response)) => Some(response),
                 Ok(Err(error)) => {
                     log::warn!(
@@ -89,7 +90,7 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
                 }
             }
         } else {
-            match head.send().await {
+            match head.send_logged().await {
                 Ok(response) => Some(response),
                 Err(error) => {
                     log::warn!(
@@ -131,7 +132,7 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
                 .header(reqwest::header::ACCEPT_ENCODING, "identity")
                 .header(reqwest::header::RANGE, "bytes=0-0");
             let range_response = if let Some(timeout) = first_byte_timeout {
-                match tokio::time::timeout(timeout, range_request.send()).await {
+                match tokio::time::timeout(timeout, range_request.send_logged()).await {
                     Ok(Ok(response)) => Some(response),
                     Ok(Err(error)) => {
                         log::warn!(
@@ -148,7 +149,7 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
                     }
                 }
             } else {
-                match range_request.send().await {
+                match range_request.send_logged().await {
                     Ok(response) => Some(response),
                     Err(error) => {
                         log::warn!(
@@ -235,11 +236,11 @@ async fn download_stream(
         .header("User-Agent", crate::releases::APP_USER_AGENT)
         .header(reqwest::header::ACCEPT_ENCODING, "identity");
     let response = if let Some(timeout) = first_byte_timeout {
-        tokio::time::timeout(timeout, request.send())
+        tokio::time::timeout(timeout, request.send_logged())
             .await
             .map_err(|_| FIRST_BYTE_TIMEOUT_ERROR.to_string())?
     } else {
-        request.send().await
+        request.send_logged().await
     }
     .map_err(|error| error.without_url().to_string())?;
     if !response.status().is_success() {
@@ -384,7 +385,7 @@ async fn download_ranges(
                     .header(reqwest::header::ACCEPT_ENCODING, "identity")
                     .header(reqwest::header::RANGE, format!("bytes={start}-{end}"));
                 let response = if let Some(timeout) = first_byte_timeout {
-                    match tokio::time::timeout(timeout, request.send()).await {
+                    match tokio::time::timeout(timeout, request.send_logged()).await {
                         Ok(result) => result,
                         Err(_) => {
                             log::warn!("分片首字节超时：范围={}-{}，尝试={}", start, end, attempt);
@@ -392,7 +393,7 @@ async fn download_ranges(
                         }
                     }
                 } else {
-                    request.send().await
+                    request.send_logged().await
                 };
                 match response {
                     Ok(response) if response.status() == reqwest::StatusCode::PARTIAL_CONTENT => {

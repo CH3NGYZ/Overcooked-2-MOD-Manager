@@ -16,6 +16,7 @@ use super::zip::MAX_ASSET_BYTES;
 use super::zip::zip_cache;
 use crate::api_scheduler::ApiRequestExt;
 use crate::app_state::AppState;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::locale_tag::with_params;
 use crate::map_note::VERSION_PLACEHOLDER;
 use crate::models::OperationResult;
@@ -138,7 +139,7 @@ pub async fn upload_publish_asset(
         let response = signed_upload_request(&client, &upload)?
             .header("Content-Length", total)
             .body(body)
-            .send()
+            .send_logged()
             .await
             .map_err(|error| request_error(&error.without_url().to_string()))?;
         // Object storage's response is not a Release attachment DTO.

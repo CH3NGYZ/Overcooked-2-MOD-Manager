@@ -110,18 +110,6 @@ fn classify_write_failure(
 
 /// 仅保留平台的错误说明字段，不向界面或日志传递原始响应。
 fn error_detail(body: &[u8]) -> Option<String> {
-    use regex::Regex;
-    use std::sync::LazyLock;
-    static SECRETS: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(concat!(
-            r#"(?is)\b(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|authorization|cookie|set-cookie|private-token|api[_-]?key|token)\b\s*["']?\s*[:=].*"#,
-            r#"|\b(?:bearer|basic)\s+[^\s,;]+"#,
-            r#"|https?://[^\s<>"']+"#,
-            r#"|\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+"#,
-            r#"|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#,
-        ))
-        .expect("valid credential redaction pattern")
-    });
     let value: serde_json::Value = serde_json::from_slice(body).ok()?;
     [
         "message",
@@ -139,7 +127,7 @@ fn error_detail(body: &[u8]) -> Option<String> {
         }
         // 先脱敏再截断，避免截在凭据中间后绕过识别。URL 整段移除，
         // 不保留可能携带令牌、Cookie 或签名的查询串和路径。
-        let redacted = SECRETS.replace_all(detail, "[REDACTED_SECRET]");
+        let redacted = crate::http_diagnostics::redact_text(detail);
         let plain = redacted
             .chars()
             .map(|ch| if ch.is_control() { ' ' } else { ch })
@@ -175,20 +163,27 @@ pub(super) async fn ensure_success(
                 .ok()
                 .is_some_and(|endpoint| endpoint.host_str() == response.url().host_str())
         });
-    let mut body = Vec::new();
-    loop {
-        match response.chunk().await {
-            Ok(Some(chunk)) if body.len() + chunk.len() <= 16 * 1024 => {
-                body.extend_from_slice(&chunk);
-            }
-            Ok(None) => break,
-            _ => {
-                body.clear();
-                break;
+    let detail = if let Some(body) = crate::http_diagnostics::body_preview(&response) {
+        // Share request-aware redaction with the detailed diagnostic, including
+        // credentials echoed by the service under an unrelated field.
+        error_detail(body.as_bytes())
+    } else {
+        let mut body = Vec::new();
+        loop {
+            match response.chunk().await {
+                Ok(Some(chunk)) if body.len() + chunk.len() <= 16 * 1024 => {
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(None) => break,
+                _ => {
+                    body.clear();
+                    break;
+                }
             }
         }
+        error_detail(&body)
     }
-    let detail = error_detail(&body).unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+    .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
     log::warn!(
         "发布写操作失败：平台={provider:?}，动作={action}，状态={}",
         status.as_u16()

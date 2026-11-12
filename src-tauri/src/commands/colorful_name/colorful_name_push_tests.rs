@@ -3,19 +3,45 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 /// 起一个只服务一次请求的本地服务，返回它的地址和收到的原始请求头。
-fn one_shot_server(response: &'static str) -> (String, std::thread::JoinHandle<String>) {
+fn one_shot_server(status: &str, body: &str) -> (String, std::thread::JoinHandle<String>) {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(false).unwrap();
     let address = listener.local_addr().unwrap();
     let handle = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
-        let mut buffer = [0_u8; 8192];
-        let read = stream.read(&mut buffer).unwrap_or(0);
-        let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
-        let _ = stream.write_all(response.as_bytes());
-        request
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        loop {
+            let mut buffer = [0_u8; 1024];
+            let read = stream.read(&mut buffer).unwrap();
+            assert_ne!(read, 0, "request ended before its body");
+            request.extend_from_slice(&buffer[..read]);
+            assert!(request.len() <= 8192, "fixture request is bounded");
+            if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                let headers = std::str::from_utf8(&request[..end]).unwrap();
+                let length = headers
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+                    .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                    .unwrap_or(0);
+                if request.len() >= end + 4 + length {
+                    break;
+                }
+            }
+        }
+        stream.write_all(response.as_bytes()).unwrap();
+        String::from_utf8(request).unwrap()
     });
     (format!("http://{address}/set-name"), handle)
 }
@@ -29,9 +55,7 @@ fn client() -> reqwest::Client {
 
 #[tokio::test]
 async fn sends_the_official_origin_header_the_mod_accepts() {
-    let (url, server) = one_shot_server(
-        "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
-    );
+    let (url, server) = one_shot_server("200 OK", r#"{"ok":true}"#);
     let response = send_colorful_name(&client(), &url, "test-name", None)
         .await
         .unwrap();
@@ -70,9 +94,7 @@ fn fixture_token() -> String {
 
 #[tokio::test]
 async fn a_handshake_token_replaces_the_origin_header() {
-    let (url, server) = one_shot_server(
-        "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
-    );
+    let (url, server) = one_shot_server("200 OK", r#"{"ok":true}"#);
     let token = fixture_token();
     let response = send_colorful_name(&client(), &url, "test-name", Some(&token))
         .await
@@ -94,9 +116,7 @@ async fn a_handshake_token_replaces_the_origin_header() {
 #[tokio::test]
 async fn a_rejected_port_is_not_reported_as_unreachable() {
     // MOD 在缺 token / Origin 不匹配时的真实响应。
-    let (url, server) = one_shot_server(
-        "HTTP/1.1 403 Forbidden\r\nContent-Length: 13\r\nConnection: close\r\n\r\nToken 不匹配",
-    );
+    let (url, server) = one_shot_server("403 Forbidden", "Token 不匹配");
     let response = send_colorful_name(&client(), &url, "test-name", None).await;
     match classify_colorful_name(28780, response).await {
         ColorfulNameOutcome::Rejected(port, detail) => {
@@ -104,7 +124,7 @@ async fn a_rejected_port_is_not_reported_as_unreachable() {
             // 状态码和 MOD 的正文都要留下，才能区分「鉴权失败」和「版本不对」。
             assert!(detail.contains("403"), "拒绝详情应含状态码：{detail}");
             assert!(
-                detail.contains("Token"),
+                detail.contains("Token 不匹配"),
                 "拒绝详情应保留 MOD 正文：{detail}"
             );
         }
@@ -125,6 +145,24 @@ async fn a_rejected_port_is_not_reported_as_unreachable() {
         classify_colorful_name(closed_port, response).await,
         ColorfulNameOutcome::Unreachable(port) if port == closed_port
     ));
+}
+
+#[tokio::test]
+async fn a_rejected_response_redacts_an_echoed_handshake_token() {
+    let token = fixture_token();
+    let body = format!("凭据被拒绝，服务端回显 {token}");
+    let (url, server) = one_shot_server("403 Forbidden", &body);
+    let response = send_colorful_name(&client(), &url, "test-name", Some(&token)).await;
+    let ColorfulNameOutcome::Rejected(port, detail) = classify_colorful_name(28780, response).await
+    else {
+        panic!("403 must remain a rejected response");
+    };
+    assert_eq!(port, 28780);
+    assert!(detail.contains("403"));
+    assert!(detail.contains("凭据被拒绝"));
+    assert!(detail.contains("[REDACTED_SECRET]"));
+    assert!(!detail.contains(&token));
+    server.join().unwrap();
 }
 
 /// 握手文件的接受条件：版本、端口段、token 形状三项都必须成立。

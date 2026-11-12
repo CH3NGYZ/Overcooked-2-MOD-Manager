@@ -24,6 +24,7 @@ mod gitee_community;
 mod gitee_webview;
 mod github_proxies;
 mod github_proxy_runtime;
+mod http_diagnostics;
 mod install_guard;
 // 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod level_sets;

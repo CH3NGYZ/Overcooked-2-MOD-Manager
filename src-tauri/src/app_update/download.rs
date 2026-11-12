@@ -14,6 +14,7 @@ use crate::archive::DownloadRoute as AssetDownloadRoute;
 use crate::download::DownloadCandidate as AssetDownloadCandidate;
 use crate::download::DownloadContext;
 use crate::download::try_download_candidates as try_asset_download_candidates;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{AppUpdateChannelStatus, AppUpdateInfo, GitHubProxyConfig};
 use crate::releases;
 use crate::repository_sources;
@@ -35,7 +36,7 @@ async fn download_installer(
     let response = client
         .get(url)
         .header("User-Agent", releases::APP_USER_AGENT)
-        .send()
+        .send_logged()
         .await
         .map_err(|error| error.to_string())?
         .error_for_status()

@@ -21,6 +21,8 @@ interface DropInput {
   pointerX: number
   pointerY: number
   currentTarget?: ChefDropCandidate | null
+  /** A disabled source has just entered the enabled lane. */
+  allowRegionEntry?: boolean
 }
 
 /** Positions follow the current preview slot order, with its placeholder as source. */
@@ -46,12 +48,12 @@ export function chefDropTarget(input: DropInput): ChefDropCandidate | null {
       overlap = area; distance = nextDistance; target = position
     }
   }
-  // Positive overlap below the threshold cannot fall through to pointer-nearest:
-  // an edge grab otherwise bypasses the same area requirement.
-  if (target && overlap < CHEF_SWAP_OVERLAP) {
+  // Entering another lane reserves a slot immediately. Once inside, positive
+  // overlap below the threshold cannot fall through to pointer-nearest.
+  if (target && overlap < CHEF_SWAP_OVERLAP && !input.allowRegionEntry) {
     return retained()
   }
-  if (!target && positions.some(position => position.id !== input.sourceId
+  if (!input.allowRegionEntry && !target && positions.some(position => position.id !== input.sourceId
     && input.pointerX >= position.left && input.pointerX <= position.left + position.width
     && input.pointerY >= position.top - scrollShift && input.pointerY <= position.top - scrollShift + position.height)) {
     return retained()

@@ -70,6 +70,24 @@ test('disabled chefs insert by floating center and restricted defaults remain pr
   assert.deepEqual(target('a', -150, -400, { source, sourceId: source.id }), { id: 'default', after: false })
 })
 
+test('entering the enabled lane inserts below 50 percent, then lane swaps keep the threshold', () => {
+  const source = card('disabled', 140, 400)
+  const input = { source, sourceId: source.id, pointerX: 204, pointerY: 215 }
+  assert.equal(target('a', 0, -190, input), null)
+  const entering = target('a', 0, -190, { ...input, allowRegionEntry: true })
+  assert.deepEqual(entering, { id: 'a', after: false })
+  assert.deepEqual(target('a', 0, -190, { ...input, currentTarget: entering }), entering)
+  assert.equal(target('a', 140, -190, { ...input, pointerX: 344 }), null)
+  assert.deepEqual(target('a', 140, -190, { ...input, pointerX: 344, currentTarget: entering }), entering)
+})
+
+test('a region entry with a leading pointer reserves its nearest slot while protecting a legacy default', () => {
+  const source = card('disabled', 140, 400)
+  const input = { source, sourceId: source.id, pointerX: 5, pointerY: 215, preserveDefault: true }
+  assert.equal(target('a', 140, -100, input), null)
+  assert.deepEqual(target('a', 140, -100, { ...input, allowRegionEntry: true }), { id: 'default', after: true })
+})
+
 test('a genuinely empty area permits nearest-slot insertion; an empty lane has no target', () => {
   assert.deepEqual(target('a', 0, 300), { id: 'a', after: false })
   assert.equal(target('a', 0, 0, { positions: [] }), null)

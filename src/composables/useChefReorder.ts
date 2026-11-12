@@ -68,11 +68,15 @@ export function useChefReorder(options: ReorderOptions) {
     }
     positions = options.motion.snapshot(enabledGroup)
     const bounds = enabledGroup?.getBoundingClientRect()
+    const previouslyOverEnabled = overEnabled.value
     overEnabled.value = !!bounds && pointerX >= bounds.left && pointerX <= bounds.right
       && pointerY >= bounds.top - 12 && pointerY <= bounds.bottom + 24
+    const sourceIsEnabled = tile?.classList.contains('is-enabled') ?? false
+    const enteringEnabled = overEnabled.value && !previouslyOverEnabled && !sourceIsEnabled
     const target = overEnabled.value && sourceBounds ? chefDropTarget({
       sourceId, preserveDefault: !options.canBeDefault(tile?.dataset.chefSource ?? ''), source: sourceBounds, positions,
       deltaX: pointerX - startX, deltaY: pointerY - startY, scrollShift: 0, pointerX, pointerY, currentTarget: targetId.value ? { id: targetId.value, after: dropAfter.value } : null,
+      allowRegionEntry: enteringEnabled,
     }) : null
     targetId.value = target?.id ?? null
     dropAfter.value = target?.after ?? false

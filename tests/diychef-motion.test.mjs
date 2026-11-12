@@ -306,6 +306,66 @@ test('a disabled insertion into a full grid follows shifted neighbours across ro
   assert.deepEqual(target, { id: 'b', after: true }); assert.deepEqual(order(), ['a', 'b', 'x', 'c', 'd'])
 })
 
+for (const reduced of [false, true]) test(`entering another lane reserves a slot immediately, then swaps at 50 percent (reduced=${reduced})`, async t => {
+  const { root, enabled, disabled, dispatch, flushFrame, setReduced } = dragFixture(t, ['a', 'b', 'c', 'd'], 2)
+  setReduced(reduced)
+  const card = chef('x', 30, 800, false); disabled.append(card)
+  const calls = [], { value } = mounted(t, () => {
+    const motion = useChefMotion(shallowRef(root))
+    return useChefReorder({ root: shallowRef(root), enabled: shallowRef(true), canBeDefault: () => true,
+      place: (...args) => calls.push(args), disable: () => assert.fail('a disabled source cannot disable'), motion })
+  })
+  const order = () => [...enabled.children].filter(element => element.style.position !== 'absolute')
+    .sort((a, b) => Number(a.style.order ?? 0) - Number(b.style.order ?? 0))
+    .map(element => element.dataset.chefId ?? element.dataset.chefPlaceholder)
+  const move = (clientX, clientY) => { dispatch('pointermove', { pointerId: 1, clientX, clientY }); flushFrame() }
+  const original = enabled.getBoundingClientRect()
+  value.start({ button: 0, isPrimary: true, pointerId: 1, clientX: 94, clientY: 900, target: card, currentTarget: card }, 'x')
+  move(94, original.bottom + 23)
+  assert.equal(value.overEnabled.value, true)
+  assert.deepEqual(order(), ['a', 'b', 'x', 'c', 'd'], '38.5 percent overlap already reserves the cross-lane slot')
+  assert.equal(enabled.getBoundingClientRect().height, original.height + 212)
+  assert.equal(root.querySelectorAll('[data-chef-placeholder]').length, 1)
+  assert.deepEqual(calls, [], 'preview does not mutate the draft')
+  move(94, 392)
+  assert.deepEqual(order(), ['a', 'b', 'x', 'c', 'd'], 'resting on the new placeholder keeps its insertion')
+  move(170 - .128, 392)
+  assert.deepEqual(order(), ['a', 'b', 'x', 'c', 'd'], '49.9 percent cannot swap inside the lane')
+  move(170, 392)
+  assert.deepEqual(order(), ['a', 'b', 'c', 'x', 'd'], '50 percent swaps with the shifted neighbour')
+  move(158 + .128, 392)
+  assert.deepEqual(order(), ['a', 'b', 'c', 'x', 'd'], 'reverse 49.9 percent retains the slot')
+  move(158, 392)
+  assert.deepEqual(order(), ['a', 'b', 'x', 'c', 'd'], 'reverse 50 percent immediately restores it')
+  move(94, enabled.getBoundingClientRect().bottom + 25)
+  assert.equal(value.overEnabled.value, false); assert.equal(enabled.querySelector('[data-chef-placeholder]'), null)
+  assert.equal(enabled.getBoundingClientRect().height, original.height)
+  move(94, original.bottom + 23)
+  assert.deepEqual(order(), ['a', 'b', 'x', 'c', 'd'], 'reentry reserves a new slot without waiting for 50 percent')
+  move(94, 392)
+  dispatch('pointerup', { pointerId: 1, clientX: 94, clientY: 392 }); await tick()
+  assert.deepEqual(calls, [['x', 'c', false]])
+  assert.equal(root.querySelector('[data-chef-placeholder]'), null)
+  if (reduced) assert.ok(root.querySelectorAll('[data-chef-id]').every(element => element.animations.length === 0))
+})
+
+test('an enabled chef returning to its lane still needs 50 percent to change its slot', t => {
+  const { root, enabled, cards, dispatch, flushFrame } = dragFixture(t)
+  const card = cards[0], { value } = mounted(t, () => {
+    const motion = useChefMotion(shallowRef(root))
+    return useChefReorder({ root: shallowRef(root), enabled: shallowRef(true), canBeDefault: () => true,
+      place: () => assert.fail('preview cannot place'), disable: () => assert.fail('preview cannot disable'), motion })
+  })
+  value.start({ button: 0, isPrimary: true, pointerId: 1, clientX: 94, clientY: 180, target: card, currentTarget: card }, 'a')
+  dispatch('pointermove', { pointerId: 1, clientX: 94, clientY: 600 }); flushFrame()
+  assert.equal(value.overEnabled.value, false)
+  dispatch('pointermove', { pointerId: 1, clientX: 234, clientY: 70 }); flushFrame()
+  assert.equal(value.overEnabled.value, true); assert.equal(value.targetId.value, null)
+  assert.equal(enabled.querySelector('[data-chef-placeholder]').style.order, '0')
+  dispatch('pointermove', { pointerId: 1, clientX: 234, clientY: 180 }); flushFrame()
+  assert.equal(value.targetId.value, 'b'); assert.equal(value.dropAfter.value, true)
+})
+
 test('fractional CSS widths do not stretch the placeholder height or the motion lane', t => {
   const { root, lane, enabled, cards, raise } = dragFixture(t, ['a', 'b'], 2)
   root.layout.width = 799.671875; root.offsetWidth = 800

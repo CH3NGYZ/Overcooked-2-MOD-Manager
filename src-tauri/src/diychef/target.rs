@@ -25,14 +25,7 @@ pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarg
             display_path: m.dll_file.clone(),
             enabled: m.enabled,
             generation,
-            compatibility: if supports_custom_default(m.version.as_deref())
-                && m.name.contains("FastInit")
-            {
-                "fastinit_2_2"
-            } else {
-                "read_only"
-            }
-            .into(),
+            compatibility: "editable".into(),
             supports_custom_default: supports_custom_default(m.version.as_deref()),
         })
         .collect()
@@ -129,6 +122,22 @@ mod tests {
             Some("2.1.9-beta.1"),
         ] {
             assert!(!supports_custom_default(version), "{version:?}");
+        }
+    }
+    #[test]
+    fn older_unknown_and_non_fastinit_targets_are_editable() {
+        for version in [None, Some("1.0"), Some("2.1"), Some("2.1.9"), Some("2.2")] {
+            let installed: InstalledMod = serde_json::from_value(serde_json::json!({
+                "name": "DIYChef", "guid": GUID, "version": version,
+                "dll_file": "BepInEx/plugins/DIYChef/DIYChef.dll", "enabled": true,
+                "version_source": "plugin", "update_available": false,
+                "duplicate_guid": false, "status": "unknown"
+            }))
+            .unwrap();
+            let values = candidates(&[installed], 7);
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].compatibility, "editable");
+            assert_eq!(values[0].supports_custom_default, version == Some("2.2"));
         }
     }
     #[test]

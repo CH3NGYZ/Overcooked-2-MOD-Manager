@@ -66,6 +66,7 @@ fn historical_invalid_chef_does_not_reserve_id_or_head_for_new_usable_chef() {
             catalog_revision: c.revision.clone(),
             target_generation: 1,
             entries: selection.entries,
+            hat_bindings: selection.hat_bindings,
             lobby_switch: false,
             removed_problem_row_ids: vec![],
             acknowledged_change_ids: vec![],
@@ -87,20 +88,35 @@ fn historical_invalid_chef_does_not_reserve_id_or_head_for_new_usable_chef() {
             "plugin skips broken registration first: {:?}",
             result.diagnostics
         );
-        assert_eq!(result.diagnostics.len(), 1);
-        assert_eq!(result.diagnostics[0].code, "diychef.invalidResource");
-        assert!(!result.diagnostics[0].save_blocking);
+        assert!(
+            result.diagnostics.is_empty(),
+            "unsupported historical rows are discarded"
+        );
         let (bytes, _) = prefer::plan(&doc, &d, &c).unwrap();
         assert_eq!(
             String::from_utf8(bytes).unwrap(),
-            "Broken\nChef_Black_cat\nFox\n",
-            "unaffected historical record stays intact"
+            "Chef_Black_cat\nFox\n",
+            "unsupported historical record is discarded"
         );
         // A usable earlier chef really does reserve the ID/head and must still
         // block a newly introduced competing registration.
         let mut usable = c.clone();
         usable.chefs[1].resource_state = "valid".into();
-        let actual_conflict = validate(&doc, &usable, &d, false).unwrap();
+        let mut conflicting = d.clone();
+        conflicting.entries.insert(
+            0,
+            ChefEntry {
+                entry_id: "broken-now-usable".into(),
+                row_id: None,
+                chef_ref: ChefReference::Known {
+                    chef_id: "custom:Broken".into(),
+                },
+                hat_ref: HatReference::Known {
+                    hat_id: "hat:".into(),
+                },
+            },
+        );
+        let actual_conflict = validate(&doc, &usable, &conflicting, false).unwrap();
         assert!(actual_conflict.save_blocking);
         assert!(
             actual_conflict
@@ -142,6 +158,7 @@ fn native_default_fixture(text: &[u8]) -> (Document, Catalog, ChefDraft) {
         catalog_revision: c.revision.clone(),
         target_generation: 1,
         entries: selection.entries,
+        hat_bindings: selection.hat_bindings,
         lobby_switch: selection.lobby_switch,
         removed_problem_row_ids: vec![],
         acknowledged_change_ids: vec![],
@@ -214,11 +231,8 @@ fn no_usable_native_or_empty_selection_requires_a_native_default() {
     let (doc, mut c, d) = native_default_fixture(b"Chef_Black_cat\nFox\n");
     c.chefs[0].resource_state = "invalid".into();
     assert!(
-        validate(&doc, &c, &d, false)
-            .unwrap()
-            .diagnostics
-            .iter()
-            .any(|p| p.code == NATIVE_DEFAULT_REQUIRED)
+        validate(&doc, &c, &d, false).is_err(),
+        "a newly invalid catalog requires a fresh snapshot"
     );
 }
 
@@ -250,9 +264,41 @@ fn validation_of_a_historical_custom_default_preserves_its_order_and_original_by
         serde_json::to_value(&before).unwrap()
     );
     let (bytes, changes) = prefer::plan(&doc, &d, &c).unwrap();
-    assert_eq!(bytes, original);
+    assert_eq!(bytes, b"  Fox  EXTRA\r\nChef_Black_cat\r\n");
+    assert_eq!(
+        doc.encode(&doc.text()),
+        original,
+        "the original source remains untouched"
+    );
     assert!(
         changes.is_empty(),
         "opening an old custom-first file does not silently repair it"
     );
+}
+
+#[test]
+fn disabled_invalid_catalog_chefs_accept_bulk_bindings_without_generating_rows() {
+    let (doc, mut c, mut d) = native_default_fixture(b"Chef_Black_cat\n");
+    let mut none = c.hats[0].clone();
+    none.id = "hat:None".into();
+    none.config_value = "None".into();
+    c.hats.push(none);
+    assert!(
+        c.chefs
+            .iter()
+            .any(|item| item.id == "custom:Broken" && item.resource_state == "invalid")
+    );
+    for chef in &c.chefs {
+        d.hat_bindings.insert(
+            chef.id.clone(),
+            HatReference::Known {
+                hat_id: "hat:None".into(),
+            },
+        );
+    }
+    let result = validate(&doc, &c, &d, false).unwrap();
+    assert!(!result.save_blocking);
+    let (bytes, _) = prefer::plan(&doc, &d, &c).unwrap();
+    assert_eq!(bytes, b"Chef_Black_cat HAT=None\n");
+    assert_eq!(d.hat_bindings.len(), c.chefs.len());
 }

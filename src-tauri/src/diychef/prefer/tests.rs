@@ -42,6 +42,7 @@ fn draft(d: &Document, c: &Catalog) -> ChefDraft {
         catalog_revision: c.revision.clone(),
         target_generation: 1,
         entries: s.entries,
+        hat_bindings: s.hat_bindings,
         lobby_switch: s.lobby_switch,
         removed_problem_row_ids: vec![],
         acknowledged_change_ids: vec![],
@@ -49,18 +50,27 @@ fn draft(d: &Document, c: &Catalog) -> ChefDraft {
     }
 }
 #[test]
-fn unrelated_switch_preserves_unknown_and_duplicate_bytes() {
+fn unsupported_and_duplicate_rows_are_discarded_on_explicit_save() {
     let c = catalog();
-    let original = "Chef_Black_cat HAT=Alien extra\r\nUNKNOWN\r\nChef_Black_cat HAT=None\r\n";
-    let doc = Document::parse(original.as_bytes()).unwrap();
+    let original =
+        b"Chef_Black_cat HAT=Alien extra\r\nUNKNOWN\r\nChef_Black_cat HAT=None\r\nChef_Beard\r\n";
+    let doc = Document::parse(original).unwrap();
     let mut d = draft(&doc, &c);
+    assert_eq!(d.entries.len(), 1);
     d.lobby_switch = true;
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
     assert!(changes.is_empty());
-    assert!(String::from_utf8(bytes).unwrap().starts_with(original));
-    let v = validation::validate(&doc, &c, &d, false).unwrap();
-    assert!(!v.save_blocking);
-    assert_eq!(v.diagnostics.len(), 2);
+    assert_eq!(bytes, b"Chef_Beard\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n");
+    assert!(
+        !validation::validate(&doc, &c, &d, false)
+            .unwrap()
+            .save_blocking
+    );
+    assert_eq!(
+        doc.encode(&doc.text()),
+        original,
+        "reading and planning never rewrite the source"
+    );
 }
 #[test]
 fn disabling_does_not_reactivate_duplicate() {
@@ -69,7 +79,7 @@ fn disabling_does_not_reactivate_duplicate() {
     let mut d = draft(&doc, &c);
     d.entries.remove(0);
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
-    assert_eq!(changes.len(), 1);
+    assert!(changes.is_empty());
     assert_eq!(String::from_utf8(bytes).unwrap(), "Chef_Beard\n");
 }
 #[test]
@@ -96,9 +106,12 @@ fn reset_cleans_problem_records_but_uses_final_edited_selection() {
         .retain(|e| matches!(&e.chef_ref, ChefReference::Known { .. }));
     d.reset_intent = Some("restore_default".into());
     d.lobby_switch = false;
-    d.entries[0].hat_ref = HatReference::Known {
-        hat_id: "hat:None".into(),
-    };
+    d.hat_bindings.insert(
+        "native:Chef_Black_cat".into(),
+        HatReference::Known {
+            hat_id: "hat:None".into(),
+        },
+    );
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
     assert_eq!(
         String::from_utf8(bytes).unwrap(),
@@ -111,9 +124,12 @@ fn second_unknown_token_is_preserved_when_hat_inserted() {
     let c = catalog();
     let doc = Document::parse(b"  Chef_Black_cat  EXTRA tail\n").unwrap();
     let mut d = draft(&doc, &c);
-    d.entries[0].hat_ref = HatReference::Known {
-        hat_id: "hat:None".into(),
-    };
+    d.hat_bindings.insert(
+        "native:Chef_Black_cat".into(),
+        HatReference::Known {
+            hat_id: "hat:None".into(),
+        },
+    );
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(
@@ -185,7 +201,7 @@ fn append_without_final_newline_separates_new_entry_and_switch() {
     );
 }
 #[test]
-fn unrelated_reordering_preserves_shadowed_duplicate() {
+fn reordering_discards_shadowed_duplicate() {
     let c = catalog();
     let doc = Document::parse(b"Chef_Black_cat\nChef_Black_cat HAT=None\nChef_Beard\nChef_Box\n")
         .unwrap();
@@ -195,7 +211,7 @@ fn unrelated_reordering_preserves_shadowed_duplicate() {
     assert!(changes.is_empty());
     assert_eq!(
         String::from_utf8(bytes).unwrap(),
-        "Chef_Black_cat\nChef_Black_cat HAT=None\nChef_Box\nChef_Beard\n"
+        "Chef_Black_cat\nChef_Box\nChef_Beard\n"
     );
 }
 #[test]
@@ -205,8 +221,7 @@ fn moving_first_record_past_duplicate_requires_its_removal() {
     let mut d = draft(&doc, &c);
     d.entries.reverse();
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
-    assert_eq!(changes.len(), 1);
-    assert!(changes[0].id.starts_with("duplicate:"));
+    assert!(changes.is_empty());
     assert_eq!(
         String::from_utf8(bytes).unwrap(),
         "Chef_Beard\nChef_Black_cat\n"
@@ -216,10 +231,10 @@ fn moving_first_record_past_duplicate_requires_its_removal() {
 fn unknown_deletion_cannot_resurrect_shadowed_unknown() {
     let c = catalog();
     let doc = Document::parse(b"UNKNOWN HAT=Alien\nUNKNOWN HAT=None\nChef_Black_cat").unwrap();
-    let mut d = draft(&doc, &c);
-    d.entries.remove(0);
+    let d = draft(&doc, &c);
+    assert_eq!(d.entries.len(), 1, "unknown rows were already discarded");
     let (bytes, changes) = plan(&doc, &d, &c).unwrap();
-    assert_eq!(changes.len(), 1);
+    assert!(changes.is_empty());
     assert_eq!(String::from_utf8(bytes).unwrap(), "Chef_Black_cat");
 }
 
@@ -275,13 +290,14 @@ fn normal_saves_move_every_old_switch_position_to_one_final_separated_record() {
 }
 
 #[test]
-fn switch_footer_keeps_unknown_duplicates_and_mixed_internal_endings_exact() {
+fn switch_footer_discards_unsupported_rows_and_keeps_mixed_supported_endings() {
     let c = catalog();
     let original = concat!(
         "LOBBYSWITCHCHEF=TRUE\r\n",
         "  Chef_Black_cat HAT=Alien extra \n",
         "UNKNOWN HAT=Alien\r",
         "Chef_Black_cat HAT=None\r\n",
+        "Chef_Beard HAT=None\r",
         " \t\r\n\n"
     );
     let doc = Document::parse(original.as_bytes()).unwrap();
@@ -289,12 +305,7 @@ fn switch_footer_keeps_unknown_duplicates_and_mixed_internal_endings_exact() {
     assert!(changes.is_empty());
     assert_eq!(
         decode(&bytes).unwrap().0,
-        concat!(
-            "  Chef_Black_cat HAT=Alien extra \n",
-            "UNKNOWN HAT=Alien\r",
-            "Chef_Black_cat HAT=None\r\n",
-            "\r\nLOBBYSWITCHCHEF=TRUE\r\n"
-        )
+        concat!("Chef_Beard HAT=None\r", "\rLOBBYSWITCHCHEF=TRUE\r\n")
     );
     let mixed = Document::parse(b"Chef_Black_cat\nChef_Beard\r").unwrap();
     let mut d = draft(&mixed, &c);
@@ -323,7 +334,7 @@ fn switch_footer_preserves_encoding_bom_newline_and_unterminated_final_record() 
                 assert_eq!(
                     bytes,
                     encoder.encode(&format!(
-                        "Chef_Black_cat{newline}UNKNOWN HAT=Alien{newline}{newline}{SWITCH_LINE}{ending}"
+                        "Chef_Black_cat{newline}{newline}{SWITCH_LINE}{ending}"
                     ))
                 );
                 assert_eq!(Document::parse(&bytes).unwrap().encoding, encoding);
@@ -409,4 +420,38 @@ fn appending_after_the_previous_switch_moves_its_separator_with_the_footer() {
         b"Chef_Black_cat\r\nChef_Beard\r\n",
         "disabling removes the old switch separator as well"
     );
+}
+
+#[test]
+fn binding_map_overrides_stale_rows_and_clearing_means_automatic() {
+    let c = catalog();
+    let doc = Document::parse(b"Chef_Black_cat HAT=Santa\n").unwrap();
+    let mut d = draft(&doc, &c);
+    d.hat_bindings.insert(
+        "native:Chef_Black_cat".into(),
+        HatReference::Known {
+            hat_id: "hat:None".into(),
+        },
+    );
+    assert_eq!(plan(&doc, &d, &c).unwrap().0, b"Chef_Black_cat HAT=None\n");
+    d.hat_bindings.clear();
+    assert_eq!(plan(&doc, &d, &c).unwrap().0, b"Chef_Black_cat HAT=\n");
+}
+#[test]
+fn native_is_the_physical_first_line_after_leading_blanks_and_switches() {
+    let c = catalog();
+    for prefix in ["\r\n \t\r\n", "\r\nLOBBYSWITCHCHEF=TRUE\r\n\r\n"] {
+        for lobby in [false, true] {
+            let doc = Document::parse(format!("{prefix}Chef_Black_cat\r\n").as_bytes()).unwrap();
+            let mut d = draft(&doc, &c);
+            d.lobby_switch = lobby;
+            assert!(
+                !validation::validate(&doc, &c, &d, false)
+                    .unwrap()
+                    .save_blocking
+            );
+            let output = decode(&plan(&doc, &d, &c).unwrap().0).unwrap().0;
+            assert_eq!(output.lines().next(), Some("Chef_Black_cat"));
+        }
+    }
 }

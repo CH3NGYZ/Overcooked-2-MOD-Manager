@@ -22,6 +22,17 @@ pub(crate) fn validate(
     draft: &ChefDraft,
     supports_custom_default: bool,
 ) -> Result<ChefValidation, String> {
+    let projected = prefer::project(draft);
+    let draft = &projected;
+    for (chef_id, hat) in &draft.hat_bindings {
+        if !c.chefs.iter().any(|chef| chef.id == *chef_id) {
+            return Err("diychef.invalidDraft".into());
+        }
+        if !matches!(hat, HatReference::Known { hat_id } if c.hats.iter().any(|item| item.id == *hat_id && item.resource_state != "invalid"))
+        {
+            return Err("diychef.invalidDraft".into());
+        }
+    }
     let baseline = doc.selection(c);
     let old: HashMap<_, _> = baseline
         .entries

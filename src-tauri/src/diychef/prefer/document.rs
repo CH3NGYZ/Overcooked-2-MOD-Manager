@@ -1,6 +1,6 @@
 use crate::diychef::catalog::Catalog;
 use crate::models::*;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 #[derive(Clone, Debug)]
 pub(crate) enum LineKind {
     Blank,
@@ -129,6 +129,7 @@ impl Document {
     }
     pub(crate) fn selection(&self, catalog: &Catalog) -> ChefSelection {
         let mut entries = vec![];
+        let mut hat_bindings = BTreeMap::new();
         let mut lobby_switch = false;
         for l in &self.lines {
             match &l.kind {
@@ -160,6 +161,21 @@ impl Document {
                             raw_value: hat.clone(),
                             row_id: l.id.clone(),
                         });
+                    // The manager emits only rows the selected resource catalog can express.
+                    // Unsupported chef/hat rows are ignored until the next explicit save.
+                    let (ChefReference::Known { chef_id }, HatReference::Known { .. }) =
+                        (&chef_ref, &hat_ref)
+                    else {
+                        continue;
+                    };
+                    if catalog
+                        .chefs
+                        .iter()
+                        .any(|chef| chef.id == *chef_id && chef.resource_state == "invalid")
+                    {
+                        continue;
+                    }
+                    hat_bindings.insert(chef_id.clone(), hat_ref.clone());
                     entries.push(ChefEntry {
                         entry_id: l.id.clone(),
                         row_id: Some(l.id.clone()),
@@ -172,6 +188,7 @@ impl Document {
         }
         ChefSelection {
             entries,
+            hat_bindings,
             lobby_switch,
         }
     }

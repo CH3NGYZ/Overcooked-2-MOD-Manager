@@ -1,6 +1,6 @@
 use super::{Document, LineKind, SWITCH_LINE};
 use crate::{diychef::catalog::Catalog, models::*};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 pub(crate) fn names(entry: &ChefEntry, c: &Catalog) -> Result<(String, String), String> {
     let key = match &entry.chef_ref {
         ChefReference::Known { chef_id } => c
@@ -61,6 +61,8 @@ fn blank(text: &str) -> bool {
 /// Normal saves and resets share one footer rule. Preserve record bytes/endings;
 /// only the trailing separator before the single switch is normalized.
 fn render(mut lines: Vec<(&str, &str)>, newline: &str, lobby_switch: bool) -> String {
+    let leading = lines.iter().take_while(|(text, _)| blank(text)).count();
+    lines.drain(..leading);
     if lobby_switch {
         let last = lines.iter().rposition(|(text, _)| !blank(text));
         lines.truncate(last.map_or(0, |index| index + 1));
@@ -96,6 +98,8 @@ pub(crate) fn plan(
     draft: &ChefDraft,
     c: &Catalog,
 ) -> Result<(Vec<u8>, Vec<ChefChange>), String> {
+    let projected = super::project(draft);
+    let draft = &projected;
     if let Some(reset) = draft.reset_intent.as_deref() {
         if !["keep_black_cat", "restore_default"].contains(&reset) {
             return Err("diychef.invalidDraft".into());
@@ -128,7 +132,6 @@ pub(crate) fn plan(
         };
         return Ok((doc.encode(&text), changes));
     }
-    let removed: HashSet<_> = draft.removed_problem_row_ids.iter().collect();
     let mut rendered = vec![];
     let mut changes = vec![];
     let by_id: HashMap<_, _> = doc.lines.iter().map(|l| (l.id.as_str(), l)).collect();
@@ -171,7 +174,6 @@ pub(crate) fn plan(
     let mut index = 0;
     let mut lines = vec![];
     let mut had_switch = false;
-    let mut preceding_slots = 0;
     for l in &doc.lines {
         match &l.kind {
             LineKind::Blank => {
@@ -197,28 +199,11 @@ pub(crate) fn plan(
                 had_switch = true;
             }
             LineKind::Chef {
-                key,
-                duplicate: true,
-                ..
+                duplicate: true, ..
             } => {
-                // Preserve a duplicate only if its intended first record is still
-                // emitted before it. Otherwise it could silently reactivate a chef.
-                let desired = draft
-                    .entries
-                    .iter()
-                    .position(|e| names(e, c).is_ok_and(|(k, _)| k == *key));
-                if desired.is_some_and(|i| i < preceding_slots) && !removed.contains(&l.id) {
-                    lines.push((l.text.as_str(), l.ending.as_str()));
-                } else {
-                    changes.push(ChefChange {
-                        id: format!("duplicate:{}", l.id),
-                        before: l.text.clone(),
-                        after: String::new(),
-                    });
-                }
+                // Duplicate and unsupported rows never survive a generated TXT.
             }
             LineKind::Chef { .. } => {
-                preceding_slots += 1;
                 if index < rendered.len() {
                     let (text, ending) = &rendered[index];
                     lines.push((text.as_str(), ending.as_str()));

@@ -58,8 +58,10 @@ pub(crate) fn save(
         &s.game_root,
         &s.mod_root,
         &s.target.id,
+        &s.bindings_dir,
         &d.base_revision,
         &bytes,
+        &d.hat_bindings,
         false,
     )?;
     let view = view(&s)?;
@@ -89,19 +91,19 @@ pub(crate) fn initialize(
     expected: &str,
 ) -> Result<ChefEditorSnapshot, String> {
     let mut s = get(state, id)?;
-    if s.target.compatibility != "fastinit_2_2" {
-        return Err("diychef.unsupportedImplementation".into());
-    }
     recheck_target(state, &s)?;
     let _operation = state.operation.lock().map_err(|e| e.to_string())?;
     game::ensure_game_stopped(&s.game_root)?;
     check_live(state, &s)?;
+    let (bytes, hat_bindings) = initialization_plan(&s)?;
     s.stored = storage::write(
         &s.game_root,
         &s.mod_root,
         &s.target.id,
+        &s.bindings_dir,
         expected,
-        prefer::DEFAULT_CONTENT,
+        &bytes,
+        &hat_bindings,
         true,
     )?;
     let v = view(&s)?;
@@ -112,4 +114,21 @@ pub(crate) fn initialize(
         .values
         .insert(id.into(), s);
     Ok(v)
+}
+
+/// Build the missing-file baseline using the same complete selection shown by
+/// the editor; valid saved bindings take precedence over default automatic hats.
+pub(super) fn initialization_plan(
+    s: &Session,
+) -> Result<(Vec<u8>, std::collections::BTreeMap<String, HatReference>), String> {
+    // The missing-file snapshot already merges valid manager bindings with the
+    // default chef. Generate from it, so initialization cannot reset a saved hat.
+    let selection = view(s)?.selection;
+    let mut draft = super::baseline_draft(s);
+    draft.entries = selection.entries;
+    draft.hat_bindings = selection.hat_bindings;
+    draft.lobby_switch = selection.lobby_switch;
+    let default = prefer::Document::parse(prefer::DEFAULT_CONTENT)?;
+    let (bytes, _) = prefer::plan(&default, &draft, &s.catalog)?;
+    Ok((bytes, draft.hat_bindings))
 }

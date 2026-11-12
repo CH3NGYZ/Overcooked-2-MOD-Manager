@@ -23,6 +23,7 @@ pub(crate) struct Session {
     pub target: ChefTarget,
     pub catalog: Catalog,
     pub stored: Stored,
+    pub bindings_dir: PathBuf,
 }
 pub(super) fn game_root(state: &AppState) -> Result<PathBuf, String> {
     let game = game::detect_game(&state.config.load_or_default());
@@ -58,7 +59,8 @@ pub(crate) fn open(
     };
     let mod_root = target::mod_root(&root, &target)?;
     let catalog = catalog::read(&root, &mod_root)?;
-    let stored = storage::read(&root, &mod_root, &target.id)?;
+    let bindings_dir = state.config.config_path().with_file_name("diychef");
+    let stored = storage::read(&root, &mod_root, &target.id, &bindings_dir)?;
     let session = Session {
         id: uuid::Uuid::new_v4().to_string(),
         game_root: root,
@@ -67,6 +69,7 @@ pub(crate) fn open(
         target,
         catalog,
         stored,
+        bindings_dir,
     };
     let view = view(&session)?;
     let mut sessions = state.diychef_sessions.lock().map_err(|e| e.to_string())?;
@@ -101,12 +104,20 @@ pub(crate) fn get(state: &AppState, id: &str) -> Result<Session, String> {
     Ok(s)
 }
 fn baseline_draft(s: &Session) -> ChefDraft {
-    let selection = s.stored.document.selection(&s.catalog);
+    let mut selection = s.stored.document.selection(&s.catalog);
+    let mut bindings = s.stored.hat_bindings.clone();
+    bindings.retain(|id, hat| s.catalog.chefs.iter().any(|chef| chef.id == *id)
+        && matches!(hat, HatReference::Known { hat_id } if s.catalog.hats.iter().any(|item| item.id == *hat_id && item.resource_state != "invalid")));
+    // TXT is an external input only at the read boundary. A submitted draft is
+    // never re-imported, so stale entry projections cannot overwrite its map.
+    bindings.extend(selection.hat_bindings);
+    selection.hat_bindings = bindings;
     ChefDraft {
         base_revision: s.stored.source.revision.clone(),
         catalog_revision: s.catalog.revision.clone(),
         target_generation: s.target.generation,
         entries: selection.entries,
+        hat_bindings: selection.hat_bindings,
         lobby_switch: selection.lobby_switch,
         removed_problem_row_ids: vec![],
         acknowledged_change_ids: vec![],
@@ -117,6 +128,7 @@ pub(crate) fn view(s: &Session) -> Result<ChefEditorSnapshot, String> {
     let mut draft = baseline_draft(s);
     let mut selection = ChefSelection {
         entries: draft.entries.clone(),
+        hat_bindings: draft.hat_bindings.clone(),
         lobby_switch: draft.lobby_switch,
     };
     if s.stored.source.state == "missing" {
@@ -125,6 +137,8 @@ pub(crate) fn view(s: &Session) -> Result<ChefEditorSnapshot, String> {
             entry.entry_id = "default:black_cat".into();
             entry.row_id = None;
         }
+        selection.hat_bindings.extend(draft.hat_bindings.clone());
+        draft.hat_bindings = selection.hat_bindings.clone();
         draft.entries = selection.entries.clone();
         draft.lobby_switch = selection.lobby_switch;
     }
@@ -163,21 +177,12 @@ pub(crate) fn validate(
 ) -> Result<ChefValidation, String> {
     let s = get(state, id)?;
     check_draft(&s, d)?;
-    let mut result = validation::validate(
+    validation::validate(
         &s.stored.document,
         &s.catalog,
         d,
         s.target.supports_custom_default,
-    )?;
-    if s.target.compatibility != "fastinit_2_2" {
-        result.diagnostics.push(validation::diagnostic(
-            "diychef.unsupportedImplementation",
-            None,
-            true,
-        ));
-        result.save_blocking = true;
-    }
-    Ok(result)
+    )
 }
 #[derive(Clone, Debug)]
 pub(crate) struct PreviewContext {

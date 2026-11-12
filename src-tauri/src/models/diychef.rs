@@ -1,6 +1,7 @@
 //! DIYChef editor wire contracts; paths stay in backend sessions.
 use crate::models::InstalledMod;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LocalModSnapshot {
     pub generation: u64,
@@ -70,6 +71,8 @@ pub struct ChefEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChefSelection {
     pub entries: Vec<ChefEntry>,
+    #[serde(default)]
+    pub hat_bindings: BTreeMap<String, HatReference>,
     pub lobby_switch: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,6 +110,8 @@ pub struct ChefDraft {
     pub catalog_revision: String,
     pub target_generation: u64,
     pub entries: Vec<ChefEntry>,
+    #[serde(default)]
+    pub hat_bindings: BTreeMap<String, HatReference>,
     pub lobby_switch: bool,
     #[serde(default)]
     pub removed_problem_row_ids: Vec<String>,

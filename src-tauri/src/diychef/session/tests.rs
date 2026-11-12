@@ -145,7 +145,14 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
             supports_custom_default: true,
         },
         catalog: catalog::read(&root, &mod_root).unwrap(),
-        stored: storage::read(&root, &mod_root, "default-target").unwrap(),
+        stored: storage::read(
+            &root,
+            &mod_root,
+            "default-target",
+            &workspace.0.join("manager/diychef"),
+        )
+        .unwrap(),
+        bindings_dir: workspace.0.join("manager/diychef"),
     };
     let missing = view(&session).unwrap();
     assert_eq!(missing.source.state, "missing");
@@ -162,8 +169,10 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
         &root,
         &mod_root,
         &session.target.id,
+        &session.bindings_dir,
         &missing.source.revision,
-        prefer::DEFAULT_CONTENT,
+        &mutations::initialization_plan(&session).unwrap().0,
+        &missing.selection.hat_bindings,
         true,
     )
     .unwrap();
@@ -176,6 +185,53 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
     assert_eq!(initialized.source.state, "present");
     assert_eq!(initialized.source.encoding, "utf8");
     assert!(initialized.selection.lobby_switch);
+    let saved_hats = std::collections::BTreeMap::from([
+        (
+            "native:Chef_Black_cat".into(),
+            HatReference::Known {
+                hat_id: "hat:None".into(),
+            },
+        ),
+        (
+            "native:Chef_Beard".into(),
+            HatReference::Known {
+                hat_id: "hat:None".into(),
+            },
+        ),
+    ]);
+    session.stored = storage::write(
+        &root,
+        &mod_root,
+        &session.target.id,
+        &session.bindings_dir,
+        &session.stored.source.revision,
+        prefer::DEFAULT_CONTENT,
+        &saved_hats,
+        false,
+    )
+    .unwrap();
+    fs::remove_file(&path).unwrap();
+    session.stored =
+        storage::read(&root, &mod_root, &session.target.id, &session.bindings_dir).unwrap();
+    let missing_with_hats = view(&session).unwrap();
+    assert_eq!(missing_with_hats.selection.hat_bindings, saved_hats);
+    let (bytes, bindings) = mutations::initialization_plan(&session).unwrap();
+    assert_eq!(
+        bytes,
+        b"Chef_Black_cat HAT=None\r\n\r\nLOBBYSWITCHCHEF=TRUE\r\n"
+    );
+    session.stored = storage::write(
+        &root,
+        &mod_root,
+        &session.target.id,
+        &session.bindings_dir,
+        &session.stored.source.revision,
+        &bytes,
+        &bindings,
+        true,
+    )
+    .unwrap();
+    assert_eq!(view(&session).unwrap().selection.hat_bindings, saved_hats);
     for (original, lobby_switch) in [
         (b"".as_slice(), false),
         (b"Chef_Black_cat\r\n", false),
@@ -187,7 +243,8 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
         ),
     ] {
         fs::write(&path, original).unwrap();
-        session.stored = storage::read(&root, &mod_root, &session.target.id).unwrap();
+        session.stored =
+            storage::read(&root, &mod_root, &session.target.id, &session.bindings_dir).unwrap();
         let present = view(&session).unwrap();
         assert_eq!(present.source.state, "present");
         assert_eq!(present.selection.lobby_switch, lobby_switch);
@@ -310,7 +367,7 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         .publish(generation, Some(&root), installed)
         .unwrap();
     let opened = open(&state, generation, None).unwrap().snapshot.unwrap();
-    assert_eq!(opened.target.compatibility, "fastinit_2_2");
+    assert_eq!(opened.target.compatibility, "editable");
     assert_eq!(opened.source.state, "missing");
     assert!(opened.selection.lobby_switch);
     assert!(!destination.join("prefer.txt").exists());
@@ -323,9 +380,18 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     assert!(initialized.selection.lobby_switch);
     let session = get(&state, &opened.session_id).unwrap();
     let mut draft = baseline_draft(&session);
-    draft.entries[0].hat_ref = HatReference::Known {
-        hat_id: "hat:None".into(),
-    };
+    draft.hat_bindings.insert(
+        "native:Chef_Black_cat".into(),
+        HatReference::Known {
+            hat_id: "hat:None".into(),
+        },
+    );
+    draft.hat_bindings.insert(
+        "custom:00-Fox".into(),
+        HatReference::Known {
+            hat_id: "hat:Hardhat".into(),
+        },
+    );
     draft.entries.insert(
         0,
         ChefEntry {
@@ -383,6 +449,88 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     assert!(
         matches!(&reopened.selection.entries[0].chef_ref, ChefReference::Known {chef_id} if chef_id == "native:Chef_Black_cat")
     );
+    // Only the disabled chef's map changes; a new manager instance must recover
+    // it independently of the unchanged TXT entries and stale entry hat_ref.
+    let mut disabled = baseline_draft(&get(&state, &reopened.session_id).unwrap());
+    disabled.entries.retain(|e| matches!(&e.chef_ref, ChefReference::Known { chef_id } if chef_id == "native:Chef_Black_cat"));
+    let disabled_saved = save(&state, &reopened.session_id, &disabled).unwrap();
+    let mut map_only = baseline_draft(&get(&state, &disabled_saved.session_id).unwrap());
+    map_only.hat_bindings.insert(
+        "custom:00-Fox".into(),
+        HatReference::Known {
+            hat_id: "hat:None".into(),
+        },
+    );
+    save(&state, &disabled_saved.session_id, &map_only).unwrap();
+    let disabled_bytes = fs::read(destination.join("prefer.txt")).unwrap();
+    assert!(!String::from_utf8_lossy(&disabled_bytes).contains("00-Fox"));
+    let state = AppState::with_config(ConfigService::for_test(workspace.0.join("manager")));
+    let installed = crate::mods::scan_mods_with_manifests(
+        &root,
+        &state.config.load().unwrap(),
+        Some(&state.config.manifests_dir()),
+    );
+    let generation = state.local_mod_snapshot.lock().unwrap().begin(Some(&root));
+    state
+        .local_mod_snapshot
+        .lock()
+        .unwrap()
+        .publish(generation, Some(&root), installed)
+        .unwrap();
+    let restored = open(&state, generation, None).unwrap().snapshot.unwrap();
+    assert!(
+        matches!(restored.selection.hat_bindings.get("custom:00-Fox"), Some(HatReference::Known { hat_id }) if hat_id == "hat:None")
+    );
+    assert_eq!(restored.selection.entries.len(), 1);
+    let mut enabled = baseline_draft(&get(&state, &restored.session_id).unwrap());
+    enabled.entries.push(ChefEntry {
+        entry_id: "restored:fox".into(),
+        row_id: None,
+        chef_ref: ChefReference::Known {
+            chef_id: "custom:00-Fox".into(),
+        },
+        hat_ref: HatReference::Known {
+            hat_id: "hat:Hardhat".into(),
+        },
+    });
+    let enabled_saved = save(&state, &restored.session_id, &enabled).unwrap();
+    assert!(
+        String::from_utf8_lossy(&fs::read(destination.join("prefer.txt")).unwrap())
+            .contains("00-Fox HAT=None")
+    );
+    assert!(
+        get(&state, &enabled_saved.session_id)
+            .unwrap()
+            .stored
+            .bindings_path
+            .starts_with(
+                state
+                    .config
+                    .config_path()
+                    .parent()
+                    .unwrap()
+                    .canonicalize()
+                    .unwrap()
+            )
+    );
+    // Deleting TXT must not let automatic initialization erase saved None hats.
+    fs::remove_file(destination.join("prefer.txt")).unwrap();
+    let missing_again = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let reinitialized = initialize(
+        &state,
+        &missing_again.session_id,
+        &missing_again.source.revision,
+    )
+    .unwrap();
+    assert!(
+        String::from_utf8_lossy(&fs::read(destination.join("prefer.txt")).unwrap())
+            .starts_with("Chef_Black_cat HAT=None\r\n")
+    );
+    for id in ["native:Chef_Black_cat", "custom:00-Fox"] {
+        assert!(
+            matches!(reinitialized.selection.hat_bindings.get(id), Some(HatReference::Known { hat_id }) if hat_id == "hat:None")
+        );
+    }
     let historical = b"00-Fox HAT=Hardhat\r\nChef_Black_cat HAT=None\r\n";
     fs::write(destination.join("prefer.txt"), historical).unwrap();
     let old = open(&state, generation, None).unwrap().snapshot.unwrap();
@@ -407,17 +555,17 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         historical,
         "reading or saving an unchanged custom default preserves it byte-for-byte"
     );
-    let mut edited = baseline_draft(&get(&state, &opened.session_id).unwrap());
+    let mut edited = baseline_draft(&get(&state, &old.session_id).unwrap());
     edited.lobby_switch = false;
     let external = b"Chef_Beard HAT=Fancy\n";
     fs::write(destination.join("prefer.txt"), external).unwrap();
     assert_eq!(
-        save(&state, &opened.session_id, &edited).err().unwrap(),
+        save(&state, &old.session_id, &edited).err().unwrap(),
         "diychef.conflict"
     );
     assert_eq!(fs::read(destination.join("prefer.txt")).unwrap(), external);
     println!(
-        "E1 real DLL scanned; init + ordered Fox/Hardhat/None/lobby save + reopen + external conflict passed ({} bytes saved)",
+        "E1 real DLL scanned; init + ordered hats + disabled/map-only save + manager restart + enable + deleted TXT reinit + external conflict passed ({} bytes saved)",
         expected.len()
     );
 }

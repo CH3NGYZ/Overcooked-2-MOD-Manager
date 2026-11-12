@@ -6,7 +6,7 @@ import ChefTile from './ChefTile.vue'
 
 const props = defineProps<{
   items: ChefTileItem[]; sessionId: string; enabled: boolean; filtered: boolean; frozen: boolean
-  reorderable: boolean; draggingId: string | null; targetId: string | null; dropAfter: boolean; overEnabled: boolean
+  reorderable: boolean; draggingId: string | null; overEnabled: boolean
 }>()
 const emit = defineEmits<{
   toggle: [chefId: string]; hat: [chefId: string]; drag: [event: PointerEvent, chefId: string]
@@ -27,7 +27,7 @@ const groups = computed(() => props.enabled
       <h3 v-if="group.label">{{ group.label }} <span>{{ group.items.length }}</span></h3>
       <div class="chef-grid">
       <ChefTile v-for="item in group.items" :key="item.chef.id" :item="item" :session-id="sessionId"
-        :frozen="frozen" :reorderable="reorderable" :dragging="draggingId === item.chef.id" :drop-target="!!draggingId && targetId === item.chef.id" :drop-after="dropAfter"
+        :frozen="frozen" :reorderable="reorderable" :dragging="draggingId === item.chef.id"
         @toggle="emit('toggle', $event)" @hat="emit('hat', $event)" @drag="(event, id) => emit('drag', event, id)" />
       </div>
     </div>

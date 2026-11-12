@@ -1,6 +1,9 @@
 import { onBeforeUnmount, shallowRef, watch, type Ref } from 'vue'
 import { resolveScrollContainer, scrollInsetTop } from '../expandScroll'
 import { chefDropTarget, type ChefCardBounds } from '../diychef/reorder'
+import type { createChefCardMotion } from '../diychef/cardMotion'
+import { CHEF_LIFT_MS } from '../diychef/cardMotion'
+import { EASE_STANDARD, prefersReducedMotion } from '../motion'
 
 interface ReorderOptions {
   root: Readonly<Ref<HTMLElement | null>>
@@ -8,6 +11,15 @@ interface ReorderOptions {
   canBeDefault: (source: string) => boolean
   place: (chefId: string, targetChefId: string | null, after: boolean) => void
   disable: (chefId: string) => void
+  motion: {
+    pickup: ReturnType<typeof createChefCardMotion>['pickup']
+    snapshot: ReturnType<typeof createChefCardMotion>['snapshot']
+    adopt: (chefId: string, ghost: HTMLElement) => void
+    settle: (chefId: string) => void
+    cancel: (chefId: string, ghost: HTMLElement) => void
+    preview: (sourceId: string, targetId: string | null, after: boolean, positions: readonly ChefCardBounds[], overEnabled?: boolean) => void
+    clearPreview: () => void
+  }
 }
 
 /** One page-owned drag lane reorders, enables and disables entire chef cards. */
@@ -19,10 +31,11 @@ export function useChefReorder(options: ReorderOptions) {
   let sourceId = '', pointerId = -1
   let startX = 0, startY = 0, pointerX = 0, pointerY = 0
   let tile: HTMLElement | null = null, ghost: HTMLElement | null = null
+  let lift: Animation | null = null
   let scroll: HTMLElement | null = null
-  let scrollStart = 0, frame = 0
+  let frame = 0
   let scrollBounds: { top: number; bottom: number } | null = null
-  let enabledBounds: DOMRect | null = null
+  let enabledGroup: HTMLElement | null = null
   let positions: ChefCardBounds[] = []
   let sourceBounds: ChefCardBounds | null = null
   let clickTimer: ReturnType<typeof setTimeout> | null = null
@@ -53,36 +66,41 @@ export function useChefReorder(options: ReorderOptions) {
         : pointerY > scrollBounds.bottom - edge ? Math.min(16, (pointerY - scrollBounds.bottom + edge) / 3) : 0
       if (delta) { const before = scroll.scrollTop; scroll.scrollTop += delta; scrolling = before !== scroll.scrollTop }
     }
-    const shift = (scroll?.scrollTop ?? 0) - scrollStart
-    const bounds = enabledBounds
+    positions = options.motion.snapshot(enabledGroup)
+    const bounds = enabledGroup?.getBoundingClientRect()
     overEnabled.value = !!bounds && pointerX >= bounds.left && pointerX <= bounds.right
-      && pointerY >= bounds.top - shift - 12 && pointerY <= bounds.bottom - shift + 24
+      && pointerY >= bounds.top - 12 && pointerY <= bounds.bottom + 24
     const target = overEnabled.value && sourceBounds ? chefDropTarget({
       sourceId, preserveDefault: !options.canBeDefault(tile?.dataset.chefSource ?? ''), source: sourceBounds, positions,
-      deltaX: pointerX - startX, deltaY: pointerY - startY, scrollShift: shift, pointerX, pointerY,
+      deltaX: pointerX - startX, deltaY: pointerY - startY, scrollShift: 0, pointerX, pointerY, currentTarget: targetId.value ? { id: targetId.value, after: dropAfter.value } : null,
     }) : null
     targetId.value = target?.id ?? null
     dropAfter.value = target?.after ?? false
+    options.motion.preview(sourceId, overEnabled.value ? targetId.value : null, dropAfter.value, positions, overEnabled.value)
     if (ghost) {
-      ghost.style.transform = `translate(${pointerX - startX}px, ${pointerY - startY}px)`
+      ghost.style.transform = `translate3d(${pointerX - startX}px, ${pointerY - startY}px, 0)`
       ghost.classList.toggle('is-enabled', overEnabled.value)
     }
     if (scrolling) frame = requestAnimationFrame(tick)
   }
-  function cancel() {
+  function cancel(animate = true) {
+    const released = ghost, from = draggingId.value
+    if (released && from && animate) options.motion.cancel(from, released)
     if (frame) cancelAnimationFrame(frame)
     frame = 0
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onEnd)
-    window.removeEventListener('pointercancel', cancel)
+    window.removeEventListener('pointercancel', onCancel)
     window.removeEventListener('keydown', onKey, true)
-    window.removeEventListener('blur', cancel)
-    window.removeEventListener('resize', cancel)
+    window.removeEventListener('blur', onCancel)
+    window.removeEventListener('resize', onCancel)
     try { if (tile?.hasPointerCapture(pointerId)) tile.releasePointerCapture(pointerId) } catch { /* detached source */ }
+    lift?.cancel(); lift = null
     ghost?.remove(); ghost = null
+    options.motion.clearPreview()
     draggingId.value = targetId.value = null
     overEnabled.value = false
-    positions = []; sourceBounds = null; enabledBounds = null; tile = null; pointerId = -1
+    positions = []; sourceBounds = null; enabledGroup = null; tile = null; pointerId = -1
   }
   function onKey(event: KeyboardEvent) {
     if (event.key !== 'Escape') return
@@ -93,24 +111,29 @@ export function useChefReorder(options: ReorderOptions) {
   function begin() {
     if (!tile?.isConnected) { cancel(); return }
     draggingId.value = sourceId
-    const rect = tile.getBoundingClientRect()
+    const pickup = options.motion.pickup(sourceId)
+    if (!pickup) { cancel(); return }
+    const rect = pickup.bounds
     sourceBounds = { id: sourceId, left: rect.left, top: rect.top, width: rect.width, height: rect.height, isDefault: tile.classList.contains('is-default') }
-    ghost = tile.cloneNode(true) as HTMLElement
-    ghost.removeAttribute('data-chef-id')
+    ghost = pickup.ghost
     ghost.classList.add('chef-drag-preview')
+    ghost.dataset.chefMotionState = 'drag'
+    ghost.dataset.chefMotionId = sourceId
     ghost.setAttribute('aria-hidden', 'true'); ghost.inert = true
     Object.assign(ghost.style, { position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`,
-      height: `${rect.height}px`, zIndex: '3000', pointerEvents: 'none', opacity: '.92', margin: '0' })
+      height: `${rect.height}px`, zIndex: '3000', pointerEvents: 'none', opacity: '1', margin: '0',
+      boxShadow: '0 12px 32px color-mix(in srgb, var(--oc2-text-1) 18%, transparent)' })
     document.body.append(ghost)
+    if (!prefersReducedMotion() && ghost.animate) lift = ghost.animate([
+      { boxShadow: '0 1px 3px color-mix(in srgb, var(--oc2-text-1) 8%, transparent)' },
+      { boxShadow: ghost.style.boxShadow },
+    ], { duration: CHEF_LIFT_MS, easing: EASE_STANDARD })
     const enabled = options.root.value?.querySelector<HTMLElement>('[data-chef-group="enabled"]')
-    enabledBounds = enabled?.getBoundingClientRect() ?? null
-    positions = Array.from(enabled?.querySelectorAll<HTMLElement>('[data-chef-id]') ?? []).map(element => {
-      const rect = element.getBoundingClientRect()
-      return { id: element.dataset.chefId!, left: rect.left, top: rect.top, width: rect.width, height: rect.height, isDefault: element.classList.contains('is-default') }
-    })
-    scrollStart = scroll?.scrollTop ?? 0
+    enabledGroup = enabled ?? null
     const bounds = scroll?.getBoundingClientRect()
     scrollBounds = bounds && scroll ? { top: bounds.top + scrollInsetTop(scroll), bottom: bounds.bottom } : null
+    pickup.resume()
+    positions = options.motion.snapshot(enabledGroup)
     try { tile.setPointerCapture(pointerId) } catch { cancel() }
   }
   function onMove(event: PointerEvent) {
@@ -128,10 +151,15 @@ export function useChefReorder(options: ReorderOptions) {
     const from = draggingId.value, to = targetId.value, after = dropAfter.value, accepted = overEnabled.value
     const wasEnabled = tile?.classList.contains('is-enabled') ?? false
     if (from) blockTrailingClick()
-    cancel()
-    if (!from || !options.enabled.value) return
-    if (accepted && from !== to) options.place(from, to, after)
+    if (ghost && from) options.motion.adopt(from, ghost)
+    // The page captures the live ghost before releasing it; committing still
+    // goes through the existing draft/default/last-chef rules exactly once.
+    if (!from || !options.enabled.value) { cancel(); return }
+    if (accepted && !positions.some(position => position.id !== from)) options.place(from, null, false)
+    else if (accepted && to && from !== to) options.place(from, to, after)
     else if (!accepted && wasEnabled) options.disable(from)
+    options.motion.settle(from)
+    cancel(false)
   }
   function start(event: PointerEvent, chefId: string) {
     if (!options.enabled.value || event.button !== 0 || !event.isPrimary) return
@@ -143,12 +171,13 @@ export function useChefReorder(options: ReorderOptions) {
     scroll = options.root.value ? resolveScrollContainer(options.root.value) : null
     window.addEventListener('pointermove', onMove, { passive: false })
     window.addEventListener('pointerup', onEnd)
-    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('pointercancel', onCancel)
     window.addEventListener('keydown', onKey, true)
-    window.addEventListener('blur', cancel)
-    window.addEventListener('resize', cancel)
+    window.addEventListener('blur', onCancel)
+    window.addEventListener('resize', onCancel)
   }
+  function onCancel() { cancel() }
   watch(options.enabled, value => { if (!value) cancel() })
-  onBeforeUnmount(() => { cancel(); if (clickTimer) clearTimeout(clickTimer); window.removeEventListener('click', stopClick, true); window.removeEventListener('pointerup', cancelledRelease, true) })
+  onBeforeUnmount(() => { cancel(false); if (clickTimer) clearTimeout(clickTimer); window.removeEventListener('click', stopClick, true); window.removeEventListener('pointerup', cancelledRelease, true) })
   return { draggingId, targetId, dropAfter, overEnabled, start }
 }

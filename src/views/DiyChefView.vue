@@ -13,6 +13,7 @@ import { useDiyChefEditor } from '../composables/useDiyChefEditor'
 import { useDiyChefConfirmations } from '../composables/useDiyChefConfirmations'
 import { usePageLeaveGuard } from '../composables/usePageLeaveGuard'
 import { useChefReorder } from '../composables/useChefReorder'
+import { useChefMotion } from '../composables/useChefMotion'
 import { useDashboard } from '../composables/useDashboardStore'
 import { configurePreviewConcurrency } from '../diychef/preview/queue'
 import { diyChefDemoSnapshot } from '../tutorial/demoDiyChef'
@@ -52,9 +53,10 @@ const currentHat = computed(() => snapshot.value && state.value && hatChefId.val
 const hatChefEnabled = computed(() => state.value?.draft.entries.some((entry) => entry.chef_ref.kind === 'known' && entry.chef_ref.chef_id === hatChefId.value) ?? false)
 const announcement = shallowRef('')
 const root = shallowRef<HTMLElement | null>(null)
+const chefMotion = useChefMotion(root)
 const reorderable = computed(() => editable.value && !projection.value?.filtered && !hatOpen.value && !leaveOpen.value && !changesOpen.value)
-const { draggingId, targetId, dropAfter, overEnabled, start: startDrag } = useChefReorder({
-  root, enabled: reorderable, place, disable: toggle,
+const { draggingId, overEnabled, start: startDrag } = useChefReorder({
+  root, enabled: reorderable, place, disable: toggle, motion: chefMotion,
   canBeDefault: source => !!snapshot.value && canBeDefault(source, snapshot.value),
 })
 const moreOptions = computed<DropdownOption[]>(() => [
@@ -89,11 +91,12 @@ function announcePosition(chefId: string) {
 }
 function place(chefId: string, targetChefId: string | null, after: boolean) {
   if (!reorderable.value) return
-  editor.place(chefId, targetChefId, after)
-  announcePosition(chefId)
-  void focusChef(chefId, true)
+  void chefMotion.change(chefId, () => {
+    editor.place(chefId, targetChefId, after)
+    announcePosition(chefId)
+  }, () => focusChef(chefId, true))
 }
-function toggle(chefId: string) { editor.toggle(chefId); void focusChef(chefId) }
+function toggle(chefId: string) { void chefMotion.change(chefId, () => editor.toggle(chefId), () => focusChef(chefId)) }
 function openHat(chefId: string, scope: 'chef' | 'all' = 'chef') {
   hatScope.value = scope
   hatChefId.value = chefId
@@ -150,7 +153,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
       <template #icon><SaveOutline /></template>{{ t('diychef.save') }}
     </n-button>
   </Teleport>
-  <div ref="root" class="diychef-page" data-tutorial="diychef-page">
+  <div ref="root" class="diychef-page" data-chef-motion="idle" data-tutorial="diychef-page">
     <EditorNotice :snapshot="snapshot" :error="error" :game-running="gameRunning" :read-only="readOnly" :stale="stale" :busy="busy" :diagnostics="diagnostics" @reload="reload" />
     <ContentState v-if="loading && !snapshot" loading :description="t('diychef.loading')" />
     <TargetPicker v-else-if="opened?.status === 'select_target'" :candidates="opened.candidates" :busy="busy" @select="editor.open" />
@@ -158,10 +161,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
     <template v-if="snapshot && state && projection">
       <ConfigProblems :problems="problems" :frozen="!editable" @remove="editor.removeProblem" @hat="openHat" />
       <ChefGrid data-tutorial="diychef-grid" :items="projection.enabled" :session-id="snapshot.session_id" enabled :filtered="projection.filtered" :frozen="!editable"
-        :reorderable="reorderable" :dragging-id="draggingId" :target-id="targetId" :drop-after="dropAfter" :over-enabled="overEnabled"
+        :reorderable="reorderable" :dragging-id="draggingId" :over-enabled="overEnabled"
         @toggle="toggle" @hat="openHat" @drag="startDrag" />
       <ChefGrid :items="projection.disabled" :session-id="snapshot.session_id" :enabled="false" :filtered="projection.filtered" :frozen="!editable"
-        :reorderable="reorderable" :dragging-id="draggingId" :target-id="targetId" :drop-after="dropAfter" :over-enabled="overEnabled"
+        :reorderable="reorderable" :dragging-id="draggingId" :over-enabled="overEnabled"
         @toggle="toggle" @hat="openHat" @drag="startDrag" />
       <ContentState v-if="!projection.enabled.length && !projection.disabled.length" :description="t('diychef.noResults')">
         <template #extra><n-button size="small" @click="clearFilters">{{ t('diychef.clearFilters') }}</n-button></template>
@@ -175,7 +178,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
 </template>
 
 <style scoped>
-.diychef-page { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.diychef-page { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
 .chef-more-trigger { display: inline-flex; }
 .chef-live { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>

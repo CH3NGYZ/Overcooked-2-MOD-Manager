@@ -289,6 +289,14 @@ pub async fn save_publish_release(
         },
     };
     let payload = release_payload(provider, &tag, &body);
+    log::info!(
+        "发布页 Release 写入：平台={provider:?}，操作={}",
+        if request.release_id.is_none() {
+            "create"
+        } else {
+            "update"
+        }
+    );
     let response = match request.release_id.as_deref() {
         Some(id) => {
             authorized(

@@ -57,7 +57,6 @@ pub(super) fn authorized(
     request
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", API_VERSION)
-        .header("Authorization", format!("Bearer {token}"))
 }
 
 /// 取一个响应头的文本值；缺失或不是 UTF-8 都当成没有。
@@ -109,12 +108,57 @@ fn classify_write_failure(
     }
 }
 
-/// 把非 2xx 的响应翻成 tag。GitHub 的错误正文里 `message` 是给人看的原因，
-/// 直接当参数带给前端 —— 比只显示状态码有用得多。
+/// 仅保留平台的错误说明字段，不向界面或日志传递原始响应。
+fn error_detail(body: &[u8]) -> Option<String> {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static SECRETS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
+            r#"(?is)\b(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|authorization|cookie|set-cookie|private-token|api[_-]?key|token)\b\s*["']?\s*[:=].*"#,
+            r#"|\b(?:bearer|basic)\s+[^\s,;]+"#,
+            r#"|https?://[^\s<>"']+"#,
+            r#"|\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+"#,
+            r#"|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#,
+        ))
+        .expect("valid credential redaction pattern")
+    });
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    [
+        "message",
+        "error_message",
+        "msg",
+        "error_description",
+        "error",
+    ]
+    .into_iter()
+    .filter_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+    .find_map(|detail| {
+        let detail = detail.trim();
+        if detail.is_empty() || detail.contains(['<', '>', '\0']) {
+            return None;
+        }
+        // 先脱敏再截断，避免截在凭据中间后绕过识别。URL 整段移除，
+        // 不保留可能携带令牌、Cookie 或签名的查询串和路径。
+        let redacted = SECRETS.replace_all(detail, "[REDACTED_SECRET]");
+        let plain = redacted
+            .chars()
+            .map(|ch| if ch.is_control() { ' ' } else { ch })
+            .collect::<String>();
+        let plain = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut limited = plain.chars().take(511).collect::<String>();
+        if plain.chars().count() > 511 {
+            limited.push('…');
+        }
+        (!limited.is_empty()).then_some(limited)
+    })
+}
+
+/// 把非 2xx 的响应翻成 tag。兼容 GitHub message 和 GitCode error_message，
+/// 只在界面返回经过筛选、脱敏和限长的纯文本。
 ///
-/// 403 的分类要看响应头，所以必须在 `text()` 消费响应之前取出来。
+/// 403 的分类要看响应头，所以必须在消费响应之前取出来。
 pub(super) async fn ensure_success(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     action: &str,
 ) -> Result<reqwest::Response, String> {
     let status = response.status();
@@ -124,18 +168,29 @@ pub(super) async fn ensure_success(
     let accepted = header_text(&response, "x-accepted-github-permissions");
     let rate_remaining = header_text(&response, "x-ratelimit-remaining");
     let rate_reset = header_text(&response, "x-ratelimit-reset");
-    let body = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("message")
-                .and_then(|message| message.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+    let provider = [PublishProvider::Github, PublishProvider::Gitcode]
+        .into_iter()
+        .find(|provider| {
+            reqwest::Url::parse(provider.api_endpoint())
+                .ok()
+                .is_some_and(|endpoint| endpoint.host_str() == response.url().host_str())
+        });
+    let mut body = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if body.len() + chunk.len() <= 16 * 1024 => {
+                body.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            _ => {
+                body.clear();
+                break;
+            }
+        }
+    }
+    let detail = error_detail(&body).unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
     log::warn!(
-        "发布写操作失败：动作={action}，状态={}，详情={detail}",
+        "发布写操作失败：平台={provider:?}，动作={action}，状态={}",
         status.as_u16()
     );
     Err(classify_write_failure(

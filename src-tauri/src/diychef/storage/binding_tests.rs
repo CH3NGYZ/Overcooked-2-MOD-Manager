@@ -65,7 +65,7 @@ fn bindings_only_changes_survive_reopen_and_target_id_changes() {
     let saved = w.save(&initial, bytes, &map("hat:"), false).unwrap();
     assert_ne!(saved.source.revision, initial.source.revision);
     assert_eq!(fs::read(w.root().join("prefer.txt")).unwrap(), bytes);
-    let reopened = read(&w.game(), &w.root(), "id.disabled", &w.directory()).unwrap();
+    let reopened = read(&w.game(), &w.root(), "dll.disabled", &w.directory()).unwrap();
     assert_eq!(reopened.hat_bindings, map("hat:"));
     assert_eq!(reopened.bindings_path, saved.bindings_path);
     assert!(

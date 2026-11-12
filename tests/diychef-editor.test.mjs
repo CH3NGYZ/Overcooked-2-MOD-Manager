@@ -37,7 +37,7 @@ function fixture(entries = [selected('cat'), selected('fox')]) {
     ],
     selection: { entries, lobby_switch: true }, diagnostics: [],
   }
-  return { snapshot, state: { draft: createChefDraft(snapshot), disabledHats: {} } }
+  return { snapshot, state: { draft: createChefDraft(snapshot) } }
 }
 const unfiltered = { query: '', sources: [], statuses: [] }
 
@@ -114,17 +114,17 @@ test('disabling the native default promotes the next enabled native ahead of cus
 test('disabled hat preferences never enable a chef, and follow-game differs from no-hat', () => {
   const { snapshot, state } = fixture()
   const next = changeChefHat(state, 'owl', hat('hat:None'))
-  assert.equal(draftSignature(next.draft), draftSignature(state.draft))
+  assert.notEqual(draftSignature(next.draft), draftSignature(state.draft))
   assert.deepEqual(hatForChef(next, snapshot, 'owl'), hat('hat:None'))
   const enabled = toggleChef(next, snapshot, 'owl').state
   assert.deepEqual(enabled.draft.entries.at(-1).hat_ref, hat('hat:None'))
-  assert.equal(enabled.disabledHats.owl, undefined)
+  assert.deepEqual(enabled.draft.hat_bindings.owl, hat('hat:None'))
   assert.notDeepEqual(hatForChef(enabled, snapshot, 'owl'), hat())
 })
 
 test('changing all hats updates the full catalogue without enabling chefs or rewriting unresolved rows', () => {
   const { snapshot, state } = fixture([selected('cat'), missing, selected('fox', 'fox', hat('hat:None'))])
-  state.disabledHats.owl = hat('hat:None')
+  state.draft.hat_bindings.owl = hat('hat:None')
   state.draft.acknowledged_change_ids = ['confirmed']
   const before = structuredClone(state)
   const choice = hat('hat:Wizard')
@@ -136,7 +136,7 @@ test('changing all hats updates the full catalogue without enabling chefs or rew
   assert.deepEqual(state, before)
   assert.notEqual(next.draft.entries[0].hat_ref, next.draft.entries[2].hat_ref)
   choice.hat_id = 'hat:None'
-  assert.deepEqual(next.disabledHats.owl, hat('hat:Wizard'))
+  assert.deepEqual(next.draft.hat_bindings.owl, hat('hat:Wizard'))
   const enabled = toggleChef(next, snapshot, 'owl').state
   assert.deepEqual(enabled.draft.entries.at(-1).hat_ref, hat('hat:Wizard'))
 })
@@ -152,7 +152,7 @@ test('toggle round-trip restores original row and hat metadata without a phantom
 
 test('bulk reset clears problem/duplicate rows and old black-cat hat while preserving full undo data', () => {
   const { snapshot, state } = fixture([selected('cat', 'cat', hat('hat:Wizard')), missing, selected('fox')])
-  state.disabledHats.owl = hat('hat:None')
+  state.draft.hat_bindings.owl = hat('hat:None')
   state.draft.acknowledged_change_ids = ['old-ack']
   const undo = copyEditState(state)
   const kept = resetChefDraft(state, snapshot, 'keep_black_cat')
@@ -162,7 +162,7 @@ test('bulk reset clears problem/duplicate rows and old black-cat hat while prese
   assert.ok(kept.draft.removed_problem_row_ids.includes('missing'))
   assert.ok(kept.draft.removed_problem_row_ids.includes('duplicate'))
   assert.ok(!kept.draft.removed_problem_row_ids.includes('blank'))
-  assert.deepEqual(kept.disabledHats, {})
+  assert.deepEqual(kept.draft.hat_bindings, { cat: hat() })
   assert.deepEqual(kept.draft.acknowledged_change_ids, [])
   assert.deepEqual(state, undo)
   const reset = resetChefDraft(state, snapshot, 'restore_default')
@@ -175,7 +175,7 @@ test('bulk reset clears problem/duplicate rows and old black-cat hat while prese
   assert.equal(lobbyOff.draft.lobby_switch, false, 'resets preserve the original state for undo')
 })
 
-test('missing-file initialization updates credentials while retaining edited order and session hats', () => {
+test('missing-file initialization updates credentials while retaining edited order and saved hat bindings', () => {
   const { snapshot, state } = fixture()
   const edited = setDefaultChef(changeChefHat(state, 'owl', hat('hat:None')), snapshot, 'beard').state
   const initialized = { ...snapshot, source: { ...snapshot.source, revision: 'created' }, catalog_revision: 'current', target: { ...snapshot.target, generation: 8 } }
@@ -184,7 +184,7 @@ test('missing-file initialization updates credentials while retaining edited ord
   assert.equal(rebased.draft.catalog_revision, 'current')
   assert.equal(rebased.draft.target_generation, 8)
   assert.deepEqual(rebased.draft.entries, edited.draft.entries)
-  assert.deepEqual(rebased.disabledHats, edited.disabledHats)
+  assert.deepEqual(rebased.draft.hat_bindings, edited.draft.hat_bindings)
   assert.notEqual(draftSignature(rebased.draft), draftSignature(createChefDraft(snapshot)))
 })
 
@@ -242,9 +242,9 @@ test('tags within each group are alternatives while any selected tags mark the p
   }
 })
 
-test('clearing tags and search restores the complete projection and ordering without losing draft entries or session hats', () => {
+test('clearing tags and search restores the complete projection and ordering without losing draft entries or saved hat bindings', () => {
   const { snapshot, state } = fixture([selected('cat'), missing, selected('fox', 'fox', hat('hat:Wizard')), selected('beard')])
-  state.disabledHats.owl = hat('hat:None')
+  state.draft.hat_bindings.owl = hat('hat:None')
   state.draft.acknowledged_change_ids = ['confirmed']
   const before = copyEditState(state)
   const originalSnapshot = structuredClone(snapshot)
@@ -283,8 +283,8 @@ test('dropping a disabled custom chef inserts in one edit and clamps a front dro
     ['fox', true, ['cat', 'fox', 'owl']],
   ]) {
     const { snapshot, state } = fixture()
-    state.disabledHats.owl = hat('hat:Wizard')
-    state.disabledHats.broken = hat('hat:None')
+    state.draft.hat_bindings.owl = hat('hat:Wizard')
+    state.draft.hat_bindings.broken = hat('hat:None')
     state.draft.acknowledged_change_ids = ['previous-confirmation']
     const before = structuredClone(state)
     const next = placeChef(state, snapshot, 'owl', target, after).state
@@ -296,7 +296,7 @@ test('dropping a disabled custom chef inserts in one edit and clamps a front dro
     assert.equal(inserted.entry_id, 'draft:owl')
     assert.equal(inserted.row_id, null)
     assert.deepEqual(inserted.hat_ref, hat('hat:Wizard'))
-    assert.deepEqual(next.disabledHats, { broken: hat('hat:None') })
+    assert.deepEqual(next.draft.hat_bindings, state.draft.hat_bindings)
     assert.deepEqual(next.draft.acknowledged_change_ids, [])
     assert.deepEqual(state, before, context)
   }
@@ -313,7 +313,7 @@ test('dropping a previously disabled row restores its metadata and most recent h
   assert.equal(restored.entry_id, 'entry:owl')
   assert.equal(restored.row_id, 'original-owl-row')
   assert.deepEqual(restored.hat_ref, hat('hat:None'))
-  assert.equal(next.disabledHats.owl, undefined)
+  assert.deepEqual(next.draft.hat_bindings.owl, hat('hat:None'))
   restored.hat_ref.hat_id = 'hat:Wizard'
   next.draft.entries[0].chef_ref.chef_id = 'edited-result-only'
   next.draft.removed_problem_row_ids.push('result-only')
@@ -357,7 +357,7 @@ test('native source metadata determines who may take the first slot, independent
 
 test('invalid or disappeared drop targets cannot enable a chef or alter existing draft state', () => {
   const { snapshot, state } = fixture([selected('cat'), missing, selected('fox')])
-  state.disabledHats.owl = hat('hat:Wizard')
+  state.draft.hat_bindings.owl = hat('hat:Wizard')
   state.draft.acknowledged_change_ids = ['unchanged-confirmation']
   const before = structuredClone(state)
   for (const target of ['', 'absent', 'owl', 'broken', 'missing']) {
@@ -376,7 +376,7 @@ test('invalid or disappeared drop targets cannot enable a chef or alter existing
 test('dropping into an empty usable selection accepts a native chef and rejects a custom default', () => {
   for (const entries of [[], [missing], [missing, selected('broken')]]) {
     const { snapshot, state } = fixture(entries)
-    state.disabledHats.beard = hat('hat:None')
+    state.draft.hat_bindings.beard = hat('hat:None')
     const before = structuredClone(state)
     const next = placeChef(state, snapshot, 'beard', null, false).state
     assert.ok(next)
@@ -385,7 +385,7 @@ test('dropping into an empty usable selection accepts a native chef and rejects 
       entry_id: 'draft:beard', row_id: null, chef_ref: { kind: 'known', chef_id: 'beard' }, hat_ref: hat('hat:None'),
     })
     assert.equal(projectChefs(snapshot, next, unfiltered).defaultId, 'beard')
-    assert.deepEqual(next.disabledHats, {})
+    assert.deepEqual(next.draft.hat_bindings, state.draft.hat_bindings)
     assert.deepEqual(state, before)
     assert.equal(placeChef(state, snapshot, 'owl', null, false).error, 'nativeDefaultRequired')
     assert.equal(placeChef(state, snapshot, 'absent', null, false).error, 'unavailable')
@@ -394,7 +394,7 @@ test('dropping into an empty usable selection accepts a native chef and rejects 
 
 test('a null drop target is a no-op whenever an existing usable chef still occupies the enabled section', () => {
   const { snapshot, state } = fixture([missing, selected('cat')])
-  state.disabledHats.owl = hat('hat:Wizard')
+  state.draft.hat_bindings.owl = hat('hat:Wizard')
   const before = structuredClone(state)
   for (const source of ['owl', 'cat', 'absent']) {
     assert.equal(placeChef(state, snapshot, source, null, true).state, state)
@@ -419,4 +419,31 @@ test('dirty signature ignores baseline/confirmation credentials but notices an i
   acknowledged.draft.base_revision = 'new-revision'
   assert.equal(draftSignature(acknowledged.draft), baseline)
   assert.notEqual(draftSignature(resetChefDraft(state, snapshot, 'keep_black_cat').draft), baseline)
+})
+
+test('saved bindings own known chef hats and missing bindings never revive old row choices', () => {
+  const { snapshot } = fixture([selected('cat'), selected('fox', 'fox', hat('hat:Wizard'))])
+  snapshot.selection.hat_bindings = { owl: hat('hat:None') }
+  const state = { draft: createChefDraft(snapshot) }
+  assert.deepEqual(hatForChef(state, snapshot, 'fox'), hat())
+  assert.deepEqual(hatForChef(state, snapshot, 'owl'), hat('hat:None'))
+  const reenabled = toggleChef(toggleChef(state, snapshot, 'fox').state, snapshot, 'fox').state
+  assert.deepEqual(reenabled.draft.entries.at(-1).hat_ref, hat())
+  const cleared = changeChefHat(state, 'owl', hat())
+  assert.deepEqual(hatForChef(cleared, snapshot, 'owl'), hat())
+  assert.notEqual(draftSignature(cleared.draft), draftSignature(state.draft))
+  assert.deepEqual(snapshot.selection.hat_bindings, { owl: hat('hat:None') })
+})
+
+test('binding copies preserve independent choices and signatures ignore map insertion order and auto defaults', () => {
+  const { snapshot, state } = fixture()
+  state.draft.hat_bindings = { fox: hat('hat:Wizard'), owl: hat('hat:None') }
+  const copied = copyEditState(state)
+  copied.draft.hat_bindings = { owl: hat('hat:None'), cat: hat(), fox: hat('hat:Wizard') }
+  assert.equal(draftSignature(copied.draft), draftSignature(state.draft))
+  copied.draft.hat_bindings.fox.hat_id = 'hat:None'
+  assert.deepEqual(state.draft.hat_bindings.fox, hat('hat:Wizard'))
+  const disabled = toggleChef(state, snapshot, 'fox').state
+  assert.deepEqual(disabled.draft.hat_bindings, state.draft.hat_bindings)
+  assert.notEqual(disabled.draft.hat_bindings.fox, state.draft.hat_bindings.fox)
 })

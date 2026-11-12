@@ -57,14 +57,15 @@ function snapshot(missing = false) {
 const valid = () => ({ diagnostics: [], changes: [], save_blocking: false })
 async function setup(t, { missing = false, running = false, api = {}, confirmChanges = async () => true, demoSnapshot } = {}) {
   const initial = snapshot(missing)
+  let current = initial
   globalThis.__chefNotices = []
   globalThis.__chefApi = {
     dashboard: async () => ({ config: { repositories: [], game: { path: 'fixture', runtime: 'native' } }, game: { path: 'fixture', kitchen_running: running } }),
     localMods: async () => ({ generation: 7, mods: [] }),
-    diyChefOpen: async () => ({ status: 'ready', candidates: [initial.target], snapshot: initial }),
+    diyChefOpen: async () => ({ status: 'ready', candidates: [initial.target], snapshot: current }),
     diyChefInitialize: async () => ({ ...snapshot(), source: { ...snapshot().source, revision: 'initialized' } }),
     diyChefValidate: async () => valid(),
-    diyChefSave: async (_session, draft) => ({ ...snapshot(), source: { ...snapshot().source, revision: 'saved' }, selection: { entries: draft.entries, lobby_switch: draft.lobby_switch } }),
+    diyChefSave: async (_session, draft) => { current = { ...current, source: { ...current.source, revision: 'saved' }, selection: { entries: structuredClone(draft.entries), hat_bindings: structuredClone(draft.hat_bindings), lobby_switch: draft.lobby_switch } }; return current },
     ...api,
   }
   const dashboard = useDashboard()
@@ -98,7 +99,7 @@ test('missing config remains editable while running; stopping initializes only t
   assert.equal(editor.snapshot.value.source.revision, 'initialized')
   assert.equal(editor.state.value.draft.base_revision, 'initialized')
   assert.equal(draftSignature(editor.state.value.draft), draftSignature(edited.draft))
-  assert.deepEqual(editor.state.value.disabledHats, edited.disabledHats)
+  assert.deepEqual(editor.state.value.draft.hat_bindings, edited.draft.hat_bindings)
   assert.equal(editor.dirty.value, true)
   assert.equal(editor.canSave.value, true)
   editor.undo()
@@ -157,16 +158,16 @@ test('placing a disabled custom chef first clamps behind the native and remains 
   editor.changeHat('fox', { kind: 'known', hat_id: 'hat:None' })
   editor.changeHat('owl', { kind: 'known', hat_id: 'hat:None' })
   const before = structuredClone(editor.state.value)
-  assert.equal(editor.dirty.value, false, 'disabled hat preferences have not changed prefer.txt')
+  assert.equal(editor.dirty.value, true, 'disabled hat bindings require saving independently of prefer.txt')
   editor.place('fox', 'cat', false)
   assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.chef_ref.chef_id), ['cat', 'fox'])
   assert.deepEqual(editor.state.value.draft.entries[1].hat_ref, { kind: 'known', hat_id: 'hat:None' })
-  assert.deepEqual(editor.state.value.disabledHats, { owl: { kind: 'known', hat_id: 'hat:None' } })
+  assert.deepEqual(editor.state.value.draft.hat_bindings.owl, { kind: 'known', hat_id: 'hat:None' })
   assert.equal(editor.dirty.value, true)
   assert.equal(editor.canUndo.value, true)
   editor.undo()
   assert.deepEqual(editor.state.value, before, 'one undo restores the full state before enabling and moving Fox')
-  assert.equal(editor.dirty.value, false)
+  assert.equal(editor.dirty.value, true, 'undo keeps the earlier unsaved disabled bindings')
   assert.equal(editor.canUndo.value, false)
   editor.undo()
   assert.deepEqual(editor.state.value, before, 'placing Fox did not leave a second undo step for enabling it')
@@ -182,14 +183,14 @@ test('bulk hat choice is one undo step and saving retains disabled choices for l
   editor.changeHat(chefs, hat)
   assert.equal(editor.dirty.value, true)
   assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.hat_ref), [hat, hat])
-  assert.deepEqual(editor.state.value.disabledHats, { owl: hat })
+  assert.deepEqual(editor.state.value.draft.hat_bindings, { cat: hat, fox: hat, owl: hat })
   editor.undo()
   assert.deepEqual(editor.state.value, before)
   editor.changeHat(chefs, hat)
   assert.equal(await editor.save(), true)
   assert.equal(editor.dirty.value, false)
   assert.deepEqual(editor.snapshot.value.selection.entries.map(entry => entry.hat_ref), [hat, hat])
-  assert.deepEqual(editor.state.value.disabledHats, { owl: hat })
+  assert.deepEqual(editor.state.value.draft.hat_bindings, { cat: hat, fox: hat, owl: hat })
   editor.toggle('owl')
   assert.deepEqual(editor.state.value.draft.entries.at(-1).hat_ref, hat)
 })
@@ -228,7 +229,7 @@ test('save freezes all mutations through validation, confirmation and write/read
   await tick()
   assert.equal(writes, 1)
   attemptEdits()
-  write.resolve({ ...snapshot(), source: { ...snapshot().source, revision: 'saved' }, selection: { entries: frozen.draft.entries, lobby_switch: false } })
+  write.resolve({ ...snapshot(), source: { ...snapshot().source, revision: 'saved' }, selection: { entries: frozen.draft.entries, hat_bindings: frozen.draft.hat_bindings, lobby_switch: false } })
   assert.equal(await save, true)
   assert.equal(editor.saving.value, false)
   assert.equal(editor.dirty.value, false)
@@ -263,14 +264,18 @@ test('cancelling normalization performs no write and changes no confirmation cre
   assert.equal(editor.editable.value, true)
 })
 
-test('successful save keeps hats tried on disabled chefs for the current editor session', async t => {
+test('successful save persists disabled hat choices and reload uses the saved snapshot', async t => {
   const { editor } = await setup(t)
   await editor.open()
   editor.changeHat('owl', { kind: 'known', hat_id: 'hat:None' })
   editor.toggle('fox')
   assert.equal(await editor.save(), true)
-  assert.deepEqual(editor.state.value.disabledHats.owl, { kind: 'known', hat_id: 'hat:None' })
+  assert.deepEqual(editor.state.value.draft.hat_bindings.owl, { kind: 'known', hat_id: 'hat:None' })
   assert.equal(editor.dirty.value, false)
+  await editor.open()
+  assert.deepEqual(editor.state.value.draft.hat_bindings.owl, { kind: 'known', hat_id: 'hat:None' })
+  editor.toggle('owl')
+  assert.deepEqual(editor.state.value.draft.entries.at(-1).hat_ref, { kind: 'known', hat_id: 'hat:None' })
 })
 
 test('revision conflicts and write/read-back failures require reloading, while the draft stays editable', async t => {
@@ -413,4 +418,40 @@ test('a write already in flight before the tutorial cannot overwrite the demo an
   assert.equal(editor.error.value, 'diychef.conflict')
   assert.equal(editor.canSave.value, false)
   assert.equal(editor.dirty.value, true)
+})
+
+test('changing only a disabled chef makes the outfit saveable and survives save, reload and enabling', async t => {
+  let saved
+  const { editor } = await setup(t)
+  await editor.open()
+  const enabledBefore = structuredClone(editor.state.value.draft.entries)
+  const save = globalThis.__chefApi.diyChefSave
+  globalThis.__chefApi.diyChefSave = async (session, draft) => { saved = structuredClone(draft); return save(session, draft) }
+  editor.changeHat('owl', { kind: 'known', hat_id: 'hat:None' })
+  assert.deepEqual(editor.state.value.draft.entries, enabledBefore)
+  assert.equal(editor.dirty.value, true)
+  assert.equal(editor.canSave.value, true)
+  assert.equal(await editor.save(), true)
+  assert.deepEqual(saved.entries, enabledBefore)
+  assert.deepEqual(saved.hat_bindings.owl, { kind: 'known', hat_id: 'hat:None' })
+  await editor.open()
+  assert.equal(editor.dirty.value, false)
+  assert.deepEqual(editor.state.value.draft.hat_bindings.owl, saved.hat_bindings.owl)
+  editor.toggle('owl')
+  assert.deepEqual(editor.state.value.draft.entries.at(-1).hat_ref, saved.hat_bindings.owl)
+})
+
+test('legacy DIYChef targets use the editable flow while default eligibility comes from backend capability', async t => {
+  const legacy = snapshot()
+  legacy.target = { ...legacy.target, compatibility: 'editable', version: '2.1.0', supports_custom_default: false }
+  const { editor } = await setup(t, { api: { diyChefOpen: async () => ({ status: 'ready', candidates: [], snapshot: legacy }) } })
+  await editor.open()
+  assert.equal(editor.readOnly.value, false)
+  assert.equal(editor.editable.value, true)
+  editor.changeHat('owl', { kind: 'known', hat_id: 'hat:None' })
+  assert.equal(editor.canSave.value, true)
+  editor.setDefault('owl')
+  assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.chef_ref.chef_id), ['cat'])
+  assert.ok(globalThis.__chefNotices.includes('diychef.nativeDefaultRequired'))
+  assert.equal(await editor.save(), true)
 })

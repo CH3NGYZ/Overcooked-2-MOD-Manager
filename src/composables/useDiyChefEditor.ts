@@ -35,7 +35,7 @@ export function useDiyChefEditor(options: EditorOptions) {
   const undoState = shallowRef<ChefEditState | null>(null)
   const demonstrating = computed(() => !!options.demoSnapshot?.())
   const gameRunning = computed(() => !demonstrating.value && (dashboard.game.value?.kitchen_running ?? false))
-  const readOnly = computed(() => snapshot.value?.target.compatibility !== 'fastinit_2_2')
+  const readOnly = computed(() => snapshot.value?.target.compatibility === 'read_only')
   const stale = computed(() => !demonstrating.value && !!snapshot.value && dashboard.modsGeneration.value !== snapshot.value.target.generation)
   const busy = computed(() => loading.value || saving.value || initializing.value)
   const editable = computed(() => !!state.value && !busy.value && !readOnly.value)
@@ -69,13 +69,13 @@ export function useDiyChefEditor(options: EditorOptions) {
     initializing.value = false
   }
 
-  function acceptSnapshot(value: ChefEditorSnapshot, preserveDraft = false, preserveSessionHats = false) {
+  function acceptSnapshot(value: ChefEditorSnapshot, preserveDraft = false) {
     const previous = state.value
     const wasDirty = dirty.value
     snapshot.value = value
     state.value = preserveDraft && wasDirty && previous
       ? rebaseInitializedDraft(previous, value)
-      : { draft: createChefDraft(value), disabledHats: preserveDraft || preserveSessionHats ? previous?.disabledHats ?? {} : {} }
+      : { draft: createChefDraft(value) }
     if (preserveDraft && undoState.value) undoState.value = rebaseInitializedDraft(undoState.value, value)
     else undoState.value = null
     validation.value = null
@@ -240,7 +240,7 @@ export function useDiyChefEditor(options: EditorOptions) {
       pendingDiskOperations.add(operation)
       const result = await api.diyChefSave(current.session_id, pending.draft)
       if (disposed || ticket !== generation) return false
-      acceptSnapshot(result, false, true)
+      acceptSnapshot(result)
       notify.success(t('diychef.saved'))
       return true
     } catch (reason) {

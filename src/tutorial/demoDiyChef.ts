@@ -50,6 +50,7 @@ function buildSnapshot(): ChefEditorSnapshot {
         entry_id: `${DEMO_ID_PREFIX}diychef.row.${index}`, row_id: null,
         chef_ref: { kind: 'known', chef_id: id }, hat_ref: { kind: 'known', hat_id: 'hat:' },
       })),
+      hat_bindings: Object.fromEntries([diyChefDemoIds.blackCat, diyChefDemoIds.fox].map(id => [id, { kind: 'known' as const, hat_id: 'hat:' }])),
       lobby_switch: true,
     },
     diagnostics: [],

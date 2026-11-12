@@ -8,11 +8,11 @@ export interface ChefHat { id: string; kind: string; config_value: string; displ
 export type ChefReference = { kind: 'known'; chef_id: string } | { kind: 'unresolved'; raw_key: string; row_id: string }
 export type HatReference = { kind: 'known'; hat_id: string } | { kind: 'unresolved'; raw_value: string; row_id: string }
 export interface ChefEntry { entry_id: string; row_id: string | null; chef_ref: ChefReference; hat_ref: HatReference }
-export interface ChefSelection { entries: ChefEntry[]; lobby_switch: boolean }
+export interface ChefSelection { entries: ChefEntry[]; hat_bindings: Record<string, HatReference>; lobby_switch: boolean }
 export interface ChefDocumentRow { row_id: string; category: string; raw_display: string; duplicate_group_id: string | null }
 export interface ChefDiagnostic { id: string; severity: string; code: string; chef_id: string | null; hat_id: string | null; row_id: string | null; save_blocking: boolean }
 export interface ChefChange { id: string; before: string; after: string }
 export interface ChefValidation { diagnostics: ChefDiagnostic[]; changes: ChefChange[]; save_blocking: boolean }
-export interface ChefDraft { base_revision: string; catalog_revision: string; target_generation: number; entries: ChefEntry[]; lobby_switch: boolean; removed_problem_row_ids: string[]; acknowledged_change_ids: string[]; reset_intent: string | null }
+export interface ChefDraft { base_revision: string; catalog_revision: string; target_generation: number; entries: ChefEntry[]; hat_bindings: Record<string, HatReference>; lobby_switch: boolean; removed_problem_row_ids: string[]; acknowledged_change_ids: string[]; reset_intent: string | null }
 export interface ChefEditorSnapshot { session_id: string; target: ChefTarget; source: ChefSource; catalog_revision: string; chefs: ChefItem[]; hats: ChefHat[]; document_rows: ChefDocumentRow[]; selection: ChefSelection; diagnostics: ChefDiagnostic[] }
 export interface ChefEditorOpen { status: 'ready' | 'not_installed' | 'select_target'; candidates: ChefTarget[]; snapshot: ChefEditorSnapshot | null }

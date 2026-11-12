@@ -2,8 +2,6 @@ import type { ChefDraft, ChefEditorSnapshot, ChefEntry, ChefReference, HatRefere
 
 export interface ChefEditState {
   draft: ChefDraft
-  /** Hats for disabled chefs belong to this editor session, never to prefer.txt. */
-  disabledHats: Record<string, HatReference>
 }
 export type ChefEditResult = { state: ChefEditState; error?: never } | { state?: never; error: 'lastChef' | 'unavailable' | 'nativeDefaultRequired' }
 
@@ -17,6 +15,8 @@ export function createChefDraft(snapshot: ChefEditorSnapshot): ChefDraft {
     catalog_revision: snapshot.catalog_revision,
     target_generation: snapshot.target.generation,
     entries: snapshot.selection.entries.map(copyEntry),
+    hat_bindings: copyBindings(snapshot.selection.hat_bindings ?? Object.fromEntries(snapshot.selection.entries.flatMap((entry) =>
+      entry.chef_ref.kind === 'known' ? [[entry.chef_ref.chef_id, entry.hat_ref]] : []))),
     lobby_switch: snapshot.selection.lobby_switch,
     removed_problem_row_ids: [],
     acknowledged_change_ids: [],
@@ -28,15 +28,19 @@ export function copyEntry(entry: ChefEntry): ChefEntry {
   return { ...entry, chef_ref: { ...entry.chef_ref }, hat_ref: { ...entry.hat_ref } }
 }
 
+function copyBindings(bindings: Record<string, HatReference>): Record<string, HatReference> {
+  return Object.fromEntries(Object.entries(bindings).map(([id, hat]) => [id, { ...hat }]))
+}
+
 export function copyEditState(state: ChefEditState): ChefEditState {
   return {
     draft: {
       ...state.draft,
       entries: state.draft.entries.map(copyEntry),
+      hat_bindings: copyBindings(state.draft.hat_bindings),
       removed_problem_row_ids: [...state.draft.removed_problem_row_ids],
       acknowledged_change_ids: [...state.draft.acknowledged_change_ids],
     },
-    disabledHats: Object.fromEntries(Object.entries(state.disabledHats).map(([id, hat]) => [id, { ...hat }])),
   }
 }
 
@@ -48,7 +52,9 @@ function referenceValue(reference: ChefReference | HatReference) {
 /** Identity/confirmation tokens are not user edits; semantic order and unresolved text are. */
 export function draftSignature(draft: ChefDraft): string {
   return JSON.stringify({
-    entries: draft.entries.map((entry) => [referenceValue(entry.chef_ref), referenceValue(entry.hat_ref)]),
+    entries: draft.entries.map((entry) => [referenceValue(entry.chef_ref), entry.chef_ref.kind === 'unresolved' ? referenceValue(entry.hat_ref) : null]),
+    bindings: Object.entries(draft.hat_bindings).filter(([, hat]) => hat.kind !== 'known' || hat.hat_id !== 'hat:')
+      .sort(([left], [right]) => left.localeCompare(right)).map(([id, hat]) => [id, referenceValue(hat)]),
     lobby: draft.lobby_switch,
     removed: [...draft.removed_problem_row_ids].sort(),
     reset: draft.reset_intent,
@@ -92,7 +98,7 @@ export function autoHat(snapshot: ChefEditorSnapshot): HatReference {
 }
 
 export function hatForChef(state: ChefEditState, snapshot: ChefEditorSnapshot, chefId: string): HatReference {
-  return entryForChef(state.draft, chefId)?.hat_ref ?? state.disabledHats[chefId] ?? autoHat(snapshot)
+  return state.draft.hat_bindings[chefId] ?? autoHat(snapshot)
 }
 
 function newEntry(state: ChefEditState, snapshot: ChefEditorSnapshot, chefId: string): ChefEntry {
@@ -102,7 +108,7 @@ function newEntry(state: ChefEditState, snapshot: ChefEditorSnapshot, chefId: st
     entry_id: original?.entry_id ?? `draft:${chefId}`,
     row_id: original?.row_id ?? null,
     chef_ref: { kind: 'known', chef_id: chefId },
-    hat_ref: { ...(state.disabledHats[chefId] ?? original?.hat_ref ?? autoHat(snapshot)) },
+    hat_ref: { ...hatForChef(state, snapshot, chefId) },
   }
 }
 
@@ -113,11 +119,9 @@ export function toggleChef(state: ChefEditState, snapshot: ChefEditorSnapshot, c
   const next = copyEditState(state)
   next.draft.acknowledged_change_ids = []
   if (selected) {
-    next.disabledHats[chefId] = { ...selected.hat_ref }
     next.draft.entries = next.draft.entries.filter((entry) => entry.entry_id !== selected.entry_id)
   } else {
     next.draft.entries.push(newEntry(state, snapshot, chefId))
-    delete next.disabledHats[chefId]
   }
   promoteDefault(next, snapshot)
   return { state: next }
@@ -144,7 +148,6 @@ export function setDefaultChef(state: ChefEditState, snapshot: ChefEditorSnapsho
   const entry = entryForChef(next.draft, chefId) ?? newEntry(state, snapshot, chefId)
   next.draft.entries = [entry, ...next.draft.entries.filter((item) => item.entry_id !== entry.entry_id)]
   next.draft.acknowledged_change_ids = []
-  delete next.disabledHats[chefId]
   return { state: next }
 }
 
@@ -181,14 +184,12 @@ export function placeChef(state: ChefEditState, snapshot: ChefEditorSnapshot, ch
 
 export function changeChefHat(state: ChefEditState, chefIds: string | readonly string[], hat: HatReference): ChefEditState {
   const next = copyEditState(state)
-  const remaining = new Set(typeof chefIds === 'string' ? [chefIds] : chefIds)
+  const ids = new Set(typeof chefIds === 'string' ? [chefIds] : chefIds)
+  for (const chefId of ids) next.draft.hat_bindings[chefId] = { ...hat }
+  // Entries carry row metadata and an output mirror; bindings own each known chef's choice.
   for (const entry of next.draft.entries) {
-    if (entry.chef_ref.kind === 'known' && remaining.has(entry.chef_ref.chef_id)) {
-      entry.hat_ref = { ...hat }
-      remaining.delete(entry.chef_ref.chef_id)
-    }
+    if (entry.chef_ref.kind === 'known' && ids.has(entry.chef_ref.chef_id)) entry.hat_ref = { ...next.draft.hat_bindings[entry.chef_ref.chef_id]! }
   }
-  for (const chefId of remaining) next.disabledHats[chefId] = { ...hat }
   next.draft.acknowledged_change_ids = []
   return next
 }
@@ -213,7 +214,7 @@ export function resetChefDraft(state: ChefEditState, snapshot: ChefEditorSnapsho
   next.draft.removed_problem_row_ids = snapshot.document_rows.filter((row) => row.category !== 'blank').map((row) => row.row_id)
   next.draft.acknowledged_change_ids = []
   next.draft.reset_intent = mode
-  next.disabledHats = {}
+  next.draft.hat_bindings = { [blackCat.id]: autoHat(snapshot) }
   return next
 }
 

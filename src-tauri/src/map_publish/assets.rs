@@ -185,9 +185,10 @@ fn validate_zip_identity(
         return Err(invalid_asset("ZIP must contain exactly one level set"));
     }
     if let Some(metadata) = metadata {
-        if metadata.level_set_name != inspection.level_set_name
-            || metadata.level_set_name_zh != inspection.level_set_name_zh
-            || metadata.author != inspection.author
+        // Release rendering trims identity fields; cached ZIP inspections may retain whitespace.
+        if metadata.level_set_name.trim() != inspection.level_set_name.trim()
+            || metadata.level_set_name_zh.trim() != inspection.level_set_name_zh.trim()
+            || metadata.author.trim() != inspection.author.trim()
         {
             return Err("mapPublish.zipIdentityMismatch".to_string());
         }

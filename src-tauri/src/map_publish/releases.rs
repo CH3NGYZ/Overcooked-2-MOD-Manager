@@ -261,9 +261,10 @@ pub async fn save_publish_release(
                 .await?;
                 if let Ok(Some(note)) = crate::map_note::parse_release_note(&remote.body) {
                     let locked = &note.metadata;
-                    if locked.level_set_name != metadata.level_set_name
-                        || locked.level_set_name_zh != metadata.level_set_name_zh
-                        || locked.author != metadata.author
+                    // 旧的手写声明可能保留首尾空白，与本次写入的规范化身份等价。
+                    if locked.level_set_name.trim() != metadata.level_set_name.trim()
+                        || locked.level_set_name_zh.trim() != metadata.level_set_name_zh.trim()
+                        || locked.author.trim() != metadata.author.trim()
                     {
                         return Err("mapPublish.zipIdentityMismatch".to_string());
                     }

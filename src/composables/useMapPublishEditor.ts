@@ -1,4 +1,3 @@
-import type { PublishProvider } from '../types'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
@@ -30,8 +29,6 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   const assetRows = ref<AssetVersionRow[]>([])
   const metadataDirty = ref(false)
   const versionsDirty = ref(false)
-  const pendingUpload = ref<{ id: string; name: string; owner: string; repository: string; provider: PublishProvider; tag: string } | null>(null)
-  const awaitingMetadata = computed(() => pendingUpload.value !== null)
   const pendingIdentity = ref<PublishZipInspection | MapPublishMetadata | null>(null)
   const pending = reactive({
     path: '', fileName: '', version: '', inspection: null as PublishZipInspection | null,
@@ -51,22 +48,15 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   const existingRule = computed(() => workingRelease.value?.metadata?.asset.trim() ?? '')
   const effectiveRule = computed(() => workingRelease.value ? releaseAssetRule(workingRelease.value) : composeAssetRule(form.tag.trim()))
   const canonicalName = computed(() => renderAssetName(effectiveRule.value, '', pending.version))
-  const latestRow = computed(() => assetRows.value.at(-1) ?? null)
   const unregistered = computed(() => workingRelease.value ? unregisteredReleaseVersions(workingRelease.value) : [])
   const operationBusy = computed(() => stepBusy.value !== null || publish.savingRelease.value ||
     publish.uploading.value || publish.inspecting.value || pending.checking || publish.deletingAsset.value || publish.deletingRelease.value || publish.repositoriesLoading.value || publish.releasesLoading.value)
-  const preparing = computed(() => mode.value !== 'list' && (Boolean(pending.path) || awaitingMetadata.value || !workingRelease.value?.metadata))
+  const preparing = computed(() => mode.value !== 'list' && (Boolean(pending.path) || !workingRelease.value?.metadata))
   const localDirty = computed(() => mode.value !== 'list' && (Boolean(pending.path) || metadataDirty.value || versionsDirty.value ||
     form.body !== (workingRelease.value?.body ?? '') || (!workingRelease.value && Boolean(form.tag))))
-  const leave = usePublishLeaveGuard(operationBusy, computed(() => pendingUpload.value?.name ?? ''), async () => {
-    const uploaded = pendingUpload.value
-    if (!uploaded) return true
-    if (!await publish.deleteAsset(uploaded.id, uploaded.tag, uploaded)) return false
-    pendingUpload.value = null
-    return true
-  }, localDirty)
+  const leave = usePublishLeaveGuard(operationBusy, localDirty)
   const busyAny = computed(() => operationBusy.value || leave.confirming.value)
-  const canSelectStep = (step: PublishStepId) => stepAvailable(step, Boolean(workingRelease.value), awaitingMetadata.value, pending.accepted)
+  const canSelectStep = (step: PublishStepId) => stepAvailable(step, Boolean(workingRelease.value), pending.accepted)
   watch(() => [document.draft.levelSetName, document.draft.levelSetNameZh, document.draft.author,
     document.draft.nameI18n, document.draft.groupI18n, document.draft.noteI18n,
     document.draft.requires, document.draft.compatible, document.draft.conflicts], () => {
@@ -103,14 +93,14 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
     } finally { applying = false }
   }
   function openManagement(release: PublishRelease) {
-    if (busyAny.value || awaitingMetadata.value) return
+    if (busyAny.value) return
     activeTag.value = release.tag
     resetForm(release)
     mode.value = 'manage'
     activeStep.value = 'versions'
   }
   function openCreate() {
-    if (busyAny.value || awaitingMetadata.value || !publish.selectedRepository.value) return
+    if (busyAny.value || !publish.selectedRepository.value) return
     activeTag.value = ''
     resetForm(null)
     mode.value = 'create'
@@ -126,7 +116,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   async function backToList() {
     if (await leave.requestLeave()) resetToList()
   }
-  watch(publish.selectedFullName, () => { if (!awaitingMetadata.value) resetToList() }, { flush: 'sync' })
+  watch(publish.selectedFullName, resetToList, { flush: 'sync' })
   onBeforeUnmount(() => { editorEpoch += 1 })
   function selectStep(step: PublishStepId) {
     if (!busyAny.value && canSelectStep(step)) {
@@ -180,7 +170,8 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
       await validation.pulse(document.invalidRelation.value)
       return false
     }
-    if (step === 'versions' && document.invalidVersionRelation.value) {
+    if ((step === 'versions' || step === 'asset') && document.invalidVersionRelation.value) {
+      activeStep.value = 'versions'
       message.warning(t('mapPublish.invalidRelations'))
       await validation.pulse(document.invalidVersionRelation.value)
       return false
@@ -189,7 +180,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   }
 
   async function loadPendingZip(path: string) {
-    if (busyAny.value || awaitingMetadata.value || !publish.selectedRepository.value) return
+    if (busyAny.value || !publish.selectedRepository.value) return
     if (mode.value === 'list') openCreate()
     selectingZip.value = true
     activeStep.value = 'asset'
@@ -218,7 +209,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
     activeStep.value = 'release'
   }
   async function pickPendingZip() {
-    if (busyAny.value || awaitingMetadata.value) return
+    if (busyAny.value) return
     const epoch = editorEpoch
     try {
       const path = await api.chooseLevelSetZip()
@@ -244,45 +235,48 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   }
 
   async function uploadPending(): Promise<boolean> {
-    if (awaitingMetadata.value || busyAny.value || !await validate('release') || !await validate('metadata') || !await validate('asset') || busyAny.value) return false
-    let release = workingRelease.value
+    if (busyAny.value || !await validate('release') || !await validate('metadata') || !await validate('asset') || busyAny.value) return false
+    const current = workingRelease.value
     const repository = publish.selectedRepository.value
     if (!repository || !pending.inspection) return false
     const name = canonicalName.value
-    if (release && release.assets.some(asset => asset.name === name)) {
+    if (current && current.assets.some(asset => asset.name === name)) {
       message.warning(t('mapPublish.assetExists', { name }))
       return false
     }
     const epoch = editorEpoch
     const version = pending.version
     const infoVersion = pending.inspection.info_version.trim()
+    // 只在本次声明快照里加入待上传版，尚无附件的行不能参与实际版本表协调。
+    const rows = [...assetRows.value.filter(row => row.mapsetVersion !== version),
+      { mapsetVersion: version, infoVersion, size: pending.inspection.file_size }]
     stepBusy.value = 'asset'
     try {
-      if (!release) {
-        // 创建成功即固定 tag；上传失败重试复用此 Release，正文草稿留到最终登记。
-        release = await publish.saveRelease({ releaseId: null, tag: form.tag.trim(), body: '' }, { quiet: true })
-        if (!release || epoch !== editorEpoch) return false
-        activeTag.value = release.tag
-        form.tag = release.tag
-      }
+      // 新图与新版本同一顺序：后端合并声明块和日志，保存 Release 后再上传。
+      const release = await publish.saveRelease({ releaseId: current?.id ?? null, tag: current?.tag ?? form.tag.trim(),
+        body: form.body, metadata: buildMetadata(rows) }, { quiet: true })
+      if (!release || epoch !== editorEpoch) return false
+      activeTag.value = release.tag
+      form.tag = release.tag
+      form.body = release.body
+      metadataDirty.value = versionsDirty.value = false
       const asset = await publish.uploadAsset(release, pending.path)
       if (!asset || epoch !== editorEpoch) return false
-      pendingUpload.value = { provider: publish.provider.value, tag: release.tag, id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name }
-      const row = assetRows.value.find(item => item.mapsetVersion === version)
-      if (row) row.infoVersion = infoVersion
-      else assetRows.value.push({ mapsetVersion: version, infoVersion, size: asset.size })
+      assetRows.value = rows.map(row => row.mapsetVersion === version ? { ...row, size: asset.size } : row)
+      versionsDirty.value = false
       rejectPending()
       activeStep.value = 'versions'
       return true
     } finally { stepBusy.value = null }
   }
 
-  function buildMetadata(): MapPublishMetadata {
+  function buildMetadata(rows: readonly AssetVersionRow[] = assetRows.value): MapPublishMetadata {
+    const latest = rows.at(-1)
     return {
       ...document.buildFields(), asset: existingRule.value,
-      latest_mapset_version: latestRow.value?.mapsetVersion.trim() ?? '',
-      latest_info_version: latestRow.value?.infoVersion.trim() ?? '',
-      asset_versions: assetRows.value.filter(row => row.mapsetVersion.trim()).map(row => ({
+      latest_mapset_version: latest?.mapsetVersion.trim() ?? '',
+      latest_info_version: latest?.infoVersion.trim() ?? '',
+      asset_versions: rows.filter(row => row.mapsetVersion.trim()).map(row => ({
         mapset_version: row.mapsetVersion.trim(), info_version: row.infoVersion.trim(),
       })),
     }
@@ -290,13 +284,13 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   async function saveDocument(step: 'metadata' | 'versions' = 'metadata'): Promise<boolean> {
     if (busyAny.value || !await validate(step) || busyAny.value) return false
     if (step === 'metadata' && preparing.value) {
-      activeStep.value = awaitingMetadata.value ? 'versions' : 'asset'
+      activeStep.value = 'asset'
       return true
     }
     const release = workingRelease.value
     if (!release) return false
-    const complete = step === 'versions' && (awaitingMetadata.value || !release.metadata)
-    // 上传流程统一登记全部草稿；日常直接维护仍隔离三个保存域。
+    const complete = step === 'versions' && !release.metadata
+    // 无声明的历史 Release 首次补齐资料；日常维护仍隔离三个保存域。
     if (complete && (!await validate('release') || !await validate('metadata'))) return false
     const epoch = editorEpoch
     stepBusy.value = step
@@ -305,7 +299,6 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
         metadata: complete ? buildMetadata() : metadataForStep(step, release.metadata, buildMetadata()) })
       if (!saved || epoch !== editorEpoch) return false
       if (step === 'versions') {
-        pendingUpload.value = null
         versionsDirty.value = false
         if (complete) {
           metadataDirty.value = false
@@ -319,7 +312,7 @@ export function useMapPublishEditor(publish: ReturnType<typeof useMapPublish>, r
   }
   const assetNameOf = (row: AssetVersionRow) => workingRelease.value ? assetNameForRow(workingRelease.value, row) : ''
   return {
-    mode, activeTag, activeStep, stepBusy, form, document, assetRows, metadataDirty, versionsDirty, awaitingMetadata, pending,
+    mode, activeTag, activeStep, stepBusy, form, document, assetRows, metadataDirty, versionsDirty, pending,
     selectingZip, preparing, repositoryName, setTag,
     workingRelease, canonicalName, inspectionError, unregistered, busyAny, validation, canSelectStep,
     openManagement, openCreate, backToList, selectStep, loadPendingZip, pickPendingZip,

@@ -326,11 +326,11 @@ export const mapPublishPreparation: DomainMessages = {
     ja: 'マップ情報',
   },
   stepMetadataHint: {
-    'zh-CN': '这些字段会写进 Release 说明里的 oc2-map 块，管理器靠它识别这张图。上传完 ZIP 后记得点保存。',
-    'zh-TW': '這些欄位會寫進 Release 說明裡的 oc2-map 區塊，管理器靠它識別這張圖。上傳完 ZIP 後記得點儲存。',
-    en: 'These fields go into the oc2-map block in the release note; the manager identifies the map from it. Save after uploading a ZIP.',
-    ko: '이 항목들은 릴리스 노트의 oc2-map 블록에 기록되며 관리자가 이 정보로 지도를 인식합니다. ZIP을 올린 뒤 반드시 저장하세요.',
-    ja: 'これらの項目はリリースノートの oc2-map ブロックに書き込まれ、マネージャーはこれでマップを識別します。ZIP を上げたら必ず保存してください。',
+    'zh-CN': '这些字段会写进 Release 说明里的 oc2-map 块，管理器靠它识别这张图。确认上传时会一起保存，日常修改也可单独保存地图信息。',
+    'zh-TW': '這些欄位會寫進 Release 說明裡的 oc2-map 區塊，管理器靠它識別這張圖。確認上傳時會一併儲存，日常修改也可單獨儲存地圖資訊。',
+    en: 'These fields go into the oc2-map block in the release notes so the manager can identify the map. They are saved when you confirm an upload; later map-info changes can also be saved separately.',
+    ko: '이 항목들은 릴리스 노트의 oc2-map 블록에 기록되어 관리자가 지도를 인식합니다. 업로드를 확인할 때 함께 저장되며 이후 지도 정보 변경은 따로 저장할 수 있습니다.',
+    ja: 'これらの項目はリリースノートの oc2-map ブロックに書き込まれ、マネージャーがマップを識別するために使います。アップロードの確認時にまとめて保存され、後からマップ情報だけを保存することもできます。',
   },
   stepDone: {
     'zh-CN': '已完成',

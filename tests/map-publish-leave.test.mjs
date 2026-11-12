@@ -4,27 +4,27 @@ import { readFileSync } from 'node:fs'
 import { stepAvailable } from '../src/mapPublishFlow.ts'
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
-test('上传完成未登记时只禁重复上传，日志资料可改但留在草稿', () => {
+test('确认上传先写完整声明，成功后直接进入版本管理', () => {
   for (const exists of [false, true]) {
-    assert.equal(stepAvailable('release', exists, true), exists)
-    assert.equal(stepAvailable('asset', exists, true), false)
-    assert.equal(stepAvailable('metadata', exists, true), exists)
+    assert.equal(stepAvailable('release', exists, true), true)
+    assert.equal(stepAvailable('asset', exists, true), true)
+    assert.equal(stepAvailable('metadata', exists, true), true)
     assert.equal(stepAvailable('versions', exists, true), exists)
   }
   for (const step of ['release', 'asset', 'metadata', 'versions']) assert.equal(stepAvailable(step, true, false), true)
 })
 
-test('本次上传按服务器 ID 和固定仓库清理，保存失败不丢清理记录', () => {
+test('确认上传按统一顺序保存正文与声明，再按服务器 Release ID 上传附件', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
-  assert.match(editor, /pendingUpload\.value = \{ provider: publish.provider.value, tag: release.tag, id: asset.id, name: asset.name, owner: repository.owner, repository: repository.name \}/)
-  assert.match(editor, /if \(!await publish.deleteAsset\(uploaded.id, uploaded.tag, uploaded\)\) return false\s+pendingUpload.value = null/)
-  assert.match(editor, /if \(!saved \|\| epoch !== editorEpoch\) return false\s+if \(step === 'versions'\) \{\s+pendingUpload.value = null/)
+  assert.doesNotMatch(editor, /pendingUpload|awaitingMetadata/)
+  assert.match(editor, /const current = workingRelease.value/)
+  assert.match(editor, /const rows = \[\.\.\.assetRows.value[\s\S]*pending.inspection.file_size/)
+  assert.match(editor, /releaseId: current\?\.id \?\? null/)
+  assert.match(editor, /body: form.body, metadata: buildMetadata\(rows\)/)
+  assert.ok(editor.indexOf('publish.saveRelease(') < editor.indexOf('publish.uploadAsset('))
+  assert.match(editor, /assetRows.value = rows\.map\(row => row\.mapsetVersion === version \?/)
   assert.doesNotMatch(editor.slice(editor.indexOf('async function saveDocument(')), /resetToList\(\)/)
   assert.match(editor, /if \(await leave.requestLeave\(\)\) resetToList\(\)/)
-  for (const action of ['loadPendingZip', 'pickPendingZip', 'uploadPending']) {
-    const body = editor.slice(editor.indexOf(`async function ${action}(`))
-    assert.match(body.slice(0, body.indexOf('\n  }')), /awaitingMetadata.value/)
-  }
   const session = read('src/composables/useMapPublish.ts')
   const deletion = session.slice(session.indexOf('async function deleteAsset('))
   assert.match(deletion, /api.deletePublishAsset\(coordinates.owner, coordinates.repository, assetId, tag, coordinates.provider\)/)
@@ -37,6 +37,8 @@ test('退出弹窗取消不删除、失败可重试，路由与关窗共用离�
   const shared = read('src/composables/usePageLeaveGuard.ts')
   const close = read('src/composables/useAppCloseGuard.ts')
   assert.match(guard, /return usePageLeaveGuard\(/)
+  assert.match(guard, /usePublishLeaveGuard\(\s*busy: Readonly<Ref<boolean>>,[\s\S]*dirty: Readonly<Ref<boolean>>/)
+  assert.doesNotMatch(guard, /uploadedName|discardUpload|deleteAndLeave|discard: \(\)/)
   assert.match(shared, /onBeforeRouteLeave\(\(\) => requestLeave\(\)\)/)
   assert.match(shared, /registerPageLeaveGuard\(\{ requestLeave, blocked \}\)/)
   assert.doesNotMatch(shared, /onCloseRequested|getCurrentWindow/)
@@ -46,9 +48,10 @@ test('退出弹窗取消不删除、失败可重试，路由与关窗共用离�
   assert.match(read('src/components/AppCloseGuard.vue'), /useAppCloseGuard\(\)/)
   assert.match(shared, /if \(request\) return request/)
   assert.match(shared, /if \(options.busy.value\) return Promise.resolve\(false\)/)
-  assert.match(guard, /if \(await discard\(\)\) \{ finish\(true\); return true \}/)
-  assert.match(guard, /instance.loading = false[\s\S]*return false/)
-  assert.match(guard, /onNegativeClick: \(\) => \{ if \(instance.loading\) return false; finish\(false\) \}/)
+  assert.match(guard, /title: t\('mapPublish.discardDraftTitle'\)/)
+  assert.match(guard, /content: t\('mapPublish.discardDraftConfirm'\)/)
+  assert.match(guard, /onPositiveClick: \(\) => \{ finish\(true\) \}/)
+  assert.match(guard, /onNegativeClick: \(\) => \{ finish\(false\) \}/)
   assert.match(shared, /window.removeEventListener\('beforeunload', preventReload\)/)
   assert.doesNotMatch(shared.slice(shared.indexOf('onBeforeUnmount(() =>')), /discard\(/)
 })
@@ -67,9 +70,10 @@ test('地图集为带表头的表格，上传后的设置/刷新/删除不得绕
   assert.match(list, /scope="row"/)
   assert.doesNotMatch(list, /<ul|repositoryScopeHint/)
   const view = read('src/views/MapPublishView.vue')
-  assert.match(view, /:disabled="!authenticated \|\| busyAny \|\| awaitingMetadata"/)
-  assert.match(view, /:disabled="busyAny \|\| awaitingMetadata"/)
-  assert.match(view, /busy: \(\) => busyAny.value \|\| awaitingMetadata.value/)
-  assert.match(read('src/components/publish/PublishVersionsStep.vue'), /:remove-disabled="awaitingMetadata"/)
+  assert.match(view, /:disabled="!authenticated \|\| busyAny"/)
+  assert.match(view, /:disabled="busyAny"/)
+  assert.match(view, /busy: \(\) => busyAny.value/)
+  assert.doesNotMatch(view, /awaitingMetadata/)
+  assert.doesNotMatch(read('src/components/publish/PublishVersionsStep.vue'), /remove-disabled|awaitingMetadata/)
   assert.doesNotMatch(view, /mapPublish.subtitle|mapPublish.flowHint/)
 })

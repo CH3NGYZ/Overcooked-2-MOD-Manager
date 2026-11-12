@@ -1,6 +1,6 @@
 import type { DomainMessages } from '../types.ts'
 
-/** 版本排序、关系编辑、登记保存及退出清理。同一 key 的五语保持集中。 */
+/** 版本排序、关系编辑、独立保存与草稿退出。同一 key 的五语保持集中。 */
 export const mapPublishVersions: DomainMessages = {
   relationsSection: {
     'zh-CN': '依赖关系',
@@ -43,34 +43,6 @@ export const mapPublishVersions: DomainMessages = {
     en: 'Size',
     ko: '크기',
     ja: 'サイズ',
-  },
-  uploadNeedsSave: {
-    'zh-CN': 'ZIP 已上传，请在版本管理中保存完成登记；退出将删除本次上传。',
-    'zh-TW': 'ZIP 已上傳，請在版本管理中儲存完成登記；離開將刪除本次上傳。',
-    en: 'ZIP uploaded. Save in version management to register it; leaving deletes this upload.',
-    ko: 'ZIP 업로드 완료. 버전 관리에서 저장해 등록하세요. 나가면 이번 업로드가 삭제됩니다.',
-    ja: 'ZIP をアップロードしました。バージョン管理で保存して登録してください。中断すると今回の ZIP を削除します。',
-  },
-  discardUploadTitle: {
-    'zh-CN': '放弃本次上传？',
-    'zh-TW': '放棄本次上傳？',
-    en: 'Discard this upload?',
-    ko: '이번 업로드를 취소할까요?',
-    ja: '今回のアップロードを破棄しますか？',
-  },
-  discardUploadConfirm: {
-    'zh-CN': '本次上传尚未登记。退出前将删除 GitHub 上的 {name}，不会影响已有版本和本地 ZIP。',
-    'zh-TW': '本次上傳尚未登記。離開前將刪除 GitHub 上的 {name}，不影響已有版本與本機 ZIP。',
-    en: 'This upload is not registered. Leaving deletes {name} from GitHub. Existing versions and your local ZIP are kept.',
-    ko: '이번 업로드가 등록되지 않았습니다. 나가기 전에 GitHub의 {name}을 삭제합니다. 기존 버전과 로컬 ZIP은 유지됩니다.',
-    ja: '今回の ZIP は未登録です。中断すると GitHub の {name} を削除します。既存バージョンとローカル ZIP は残ります。',
-  },
-  deleteAndLeave: {
-    'zh-CN': '删除并退出',
-    'zh-TW': '刪除並離開',
-    en: 'Delete and leave',
-    ko: '삭제 후 나가기',
-    ja: '削除して中断',
   },
   continueEditing: {
     'zh-CN': '继续编辑',
@@ -248,14 +220,6 @@ export const mapPublishVersions: DomainMessages = {
     ja: 'この行をドラッグして順序を変更',
   },
 
-  confirmPublish: {
-    'zh-CN': "确认发布",
-    'zh-TW': "確認發布",
-    en: "Confirm publication",
-    ko: "게시 확인",
-    ja: "公開を確定",
-  },
-
   uploadNewVersion: {
     'zh-CN': "上传新版",
     'zh-TW': "上傳新版",
@@ -273,11 +237,11 @@ export const mapPublishVersions: DomainMessages = {
   },
 
   discardDraftConfirm: {
-    'zh-CN': "本地草稿尚未保存，离开会丢弃这些修改；不会删除本地 ZIP 或已有 Release。",
-    'zh-TW': "本機草稿尚未儲存，離開會放棄這些修改；不會刪除本機 ZIP 或既有 Release。",
-    en: "Leaving discards unsaved local changes. The local ZIP and existing releases are not deleted.",
-    ko: "나가면 저장하지 않은 로컬 변경이 삭제됩니다. 로컬 ZIP과 기존 릴리스는 삭제하지 않습니다.",
-    ja: "移動すると未保存の下書きを破棄します。ローカル ZIP や既存の Release は削除しません。",
+    'zh-CN': "本地草稿尚未保存，离开会丢弃这些修改；本地 ZIP、已有 Release 和已上传的附件都会保留。",
+    'zh-TW': "本機草稿尚未儲存，離開會放棄這些修改；本機 ZIP、既有 Release 與已上傳的附件都會保留。",
+    en: "Leaving discards unsaved local changes. The local ZIP, existing releases and uploaded assets are kept.",
+    ko: "나가면 저장하지 않은 로컬 변경을 버립니다. 로컬 ZIP, 기존 릴리스와 업로드한 첨부 파일은 유지됩니다.",
+    ja: "移動すると未保存の下書きを破棄します。ローカル ZIP、既存の Release、アップロード済みの添付ファイルは残ります。",
   },
 
   discardAndLeave: {

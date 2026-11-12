@@ -1003,7 +1003,7 @@ export interface PublishSaveRequest {
   release_id: string | null
   tag: string
   body: string
-  /** 发布页三步式里只有第三步（写回地图信息）会带它。 */
+  /** 上传确认先提交完整地图声明；日常资料与版本保存也复用此字段。 */
   metadata?: MapPublishMetadata
 }
 

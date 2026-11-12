@@ -36,8 +36,8 @@ test('四步导航顺序固定：发布信息、地图信息、上传确认、�
 
 test('未选 ZIP 留在选择入口，本地识别通过即可准备前三步', () => {
   assert.equal(stepAvailable('release', false), false)
-  for (const step of ['release', 'metadata', 'asset']) assert.equal(stepAvailable(step, false, false, true), true)
-  assert.equal(stepAvailable('versions', false, false, true), false)
+  for (const step of ['release', 'metadata', 'asset']) assert.equal(stepAvailable(step, false, true), true)
+  assert.equal(stepAvailable('versions', false, true), false)
   assert.equal(stepAvailable('asset', false), false)
   assert.equal(stepAvailable('metadata', false), false)
   assert.equal(stepAvailable('asset', true), true)
@@ -122,12 +122,19 @@ test('发布 tag 只允许 ASCII 字母数字', () => {
   }
 })
 
-test('ZIP 身份比较三个字段并严格比较空值', () => {
+test('ZIP 身份三字段去首尾空白，空值与大小写仍严格比较', () => {
   const metadata = { level_set_name: 'Map', level_set_name_zh: '地图', author: 'Alice' }
   assert.equal(zipIdentityMismatch(metadata, { ...metadata }), false)
+  const padded = { level_set_name: '\t Map \n', level_set_name_zh: ' 地图 ', author: '\n Alice \t' }
+  assert.equal(zipIdentityMismatch(metadata, padded), false)
+  assert.equal(zipIdentityMismatch(padded, metadata), false)
   assert.equal(zipIdentityMismatch(metadata, { ...metadata, author: 'Bob' }), true)
+  assert.equal(zipIdentityMismatch(metadata, { ...metadata, author: 'alice' }), true)
+  assert.equal(zipIdentityMismatch(metadata, { ...metadata, level_set_name: 'map' }), true)
   assert.equal(zipIdentityMismatch(metadata, { ...metadata, level_set_name_zh: '' }), true)
+  assert.equal(zipIdentityMismatch(metadata, { ...metadata, level_set_name_zh: '  ' }), true)
   assert.equal(zipIdentityMismatch({ ...metadata, author: '' }, { ...metadata, author: 'Alice' }), true)
+  assert.equal(zipIdentityMismatch({ ...metadata, level_set_name_zh: ' ' }, { ...metadata, level_set_name_zh: '' }), false)
 })
 
 test('权限失败的 tag 解出权限名与限流时间', () => {

@@ -33,7 +33,7 @@ const { provider, auth, authReady, authLoading, authenticated, needsInstall, ope
   cancelSignIn, refreshRepositories, deleteRelease, deleteAsset } = publish
 const editorRoot = ref<HTMLElement | null>(null)
 const editor = useMapPublishEditor(publish, editorRoot)
-const { mode, activeTag, activeStep, selectingZip, pending, workingRelease, unregistered, busyAny, awaitingMetadata, canSelectStep,
+const { mode, activeTag, activeStep, selectingZip, pending, workingRelease, unregistered, busyAny, canSelectStep,
   openCreate, openManagement, backToList, selectStep, loadPendingZip } = editor
 const settingsOpen = ref(false)
 const openSettings = () => { settingsOpen.value = true }
@@ -77,7 +77,7 @@ const permissionResetText = computed(() => {
 })
 
 const { dragActive } = useFileDrop({
-  accept: ['zip'], hint: () => t('mapPublish.dropToInspect'), busy: () => busyAny.value || awaitingMetadata.value,
+  accept: ['zip'], hint: () => t('mapPublish.dropToInspect'), busy: () => busyAny.value,
   onDrop: path => { void loadPendingZip(path) },
 })
 async function openExternal(url: string) {
@@ -128,7 +128,7 @@ function confirmDeleteRelease(release: PublishRelease) {
 
 /** 删掉一个版本：排序表里这一行也会跟着消失（附件是唯一事实）。 */
 function confirmDeleteAsset(name: string) {
-  if (busyAny.value || awaitingMetadata.value) return
+  if (busyAny.value) return
   const asset = workingRelease.value?.assets.find((item) => item.name === name)
   if (!asset) return
   const instance = dialog.warning({
@@ -147,12 +147,12 @@ function confirmDeleteAsset(name: string) {
 <template>
   <Teleport to="#page-header-actions" defer>
     <template v-if="mode === 'list'">
-      <n-button size="small" :loading="repositoriesLoading || releasesLoading" :disabled="!authenticated || busyAny || awaitingMetadata"
+      <n-button size="small" :loading="repositoriesLoading || releasesLoading" :disabled="!authenticated || busyAny"
         @click="refreshRepositories">
         <template #icon><RefreshOutline width="14" height="14" /></template>
         {{ t('common.action.refresh') }}
       </n-button>
-      <PublishSettingsPopover v-model:show="settingsOpen" :publish="publish" :disabled="busyAny || awaitingMetadata" />
+      <PublishSettingsPopover v-model:show="settingsOpen" :publish="publish" :disabled="busyAny" />
     </template>
     <n-button v-else size="small" :disabled="busyAny" @click="backToList">
       {{ t('mapPublish.backToMapSets') }}
@@ -277,8 +277,7 @@ function confirmDeleteAsset(name: string) {
         </div>
 
         <p v-if="pending.accepted && activeStep !== 'asset'" class="hint">{{ pending.fileName }} · {{ t('mapPublish.zipReadyHint') }}</p>
-        <p v-if="awaitingMetadata" class="warn">{{ t('mapPublish.uploadNeedsSave') }}</p>
-        <p v-else-if="unregistered.length" class="warn">
+        <p v-if="unregistered.length" class="warn">
           {{ t('mapPublish.unregisteredVersions', { count: unregistered.length }) }}
         </p>
         <n-tabs v-if="!selectingZip" :value="activeStep" type="segment" size="large" class="publish-step-nav"

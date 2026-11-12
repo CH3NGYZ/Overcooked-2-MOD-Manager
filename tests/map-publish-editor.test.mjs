@@ -83,30 +83,36 @@ test('四步保存、info 版本与前置同名附件检查不退回一键发布
   assert.match(editor, /function openCreate[\s\S]*?activeStep\.value = 'release'/)
   assert.match(editor, /const version = result\.info_version\.trim\(\)/)
   assert.match(editor, /asset: existingRule\.value/)
-  assert.match(editor, /release\.assets\.some\(asset => asset\.name === name\)/)
+  assert.match(editor, /current\.assets\.some\(asset => asset\.name === name\)/)
   assert.match(editor, /metadata: complete \? buildMetadata\(\) : metadataForStep\(step, release.metadata, buildMetadata\(\)\)/)
   assert.match(editor, /body: complete \? form.body : release.body/)
-  assert.match(editor, /step === 'versions'[\s\S]*pendingUpload.value = null/)
+  assert.match(editor, /const complete = step === 'versions' && !release.metadata/)
+  assert.match(editor, /if \(complete\) \{[\s\S]*metadataDirty.value = false[\s\S]*form.body = saved.body/)
+  assert.doesNotMatch(editor, /pendingUpload|awaitingMetadata/)
   assert.doesNotMatch(editor, /publishVersion|missingPublishInputs|versionFromFileName|resetPublishSteps/)
   const session = read('src/composables/useMapPublish.ts')
   assert.doesNotMatch(session.slice(session.indexOf('async function saveRelease('), session.indexOf('async function deleteRelease(')), /loadReleases\(/)
   assert.doesNotMatch(session.slice(session.indexOf('async function uploadAsset('), session.indexOf('async function inspectZip(')), /loadReleases\(/)
 })
 
-test('本地准备先于远端创建，完整登记与独立维护使用不同保存边界', () => {
+test('本地准备先于远端创建，确认上传与独立维护使用不同保存边界', () => {
   const editor = read('src/composables/useMapPublishEditor.ts')
   const release = editor.slice(editor.indexOf('async function saveReleaseStep('), editor.indexOf('async function uploadPending('))
   assert.ok(release.indexOf('if (preparing.value)') < release.indexOf('publish.saveRelease('))
   assert.doesNotMatch(release, /releaseId: null/)
   const upload = editor.slice(editor.indexOf('async function uploadPending('), editor.indexOf('function buildMetadata('))
   assert.match(upload, /validate\('release'\)[\s\S]*validate\('metadata'\)[\s\S]*validate\('asset'\)/)
-  assert.match(upload, /if \(!release\) \{[\s\S]*releaseId: null[\s\S]*activeTag.value = release.tag/)
+  assert.match(upload, /const current = workingRelease.value/)
+  assert.match(upload, /const rows = \[\.\.\.assetRows.value[\s\S]*pending.inspection.file_size/)
+  assert.match(upload, /releaseId: current\?\.id \?\? null/)
+  assert.match(upload, /body: form.body, metadata: buildMetadata\(rows\)/)
   assert.ok(upload.indexOf('publish.saveRelease(') < upload.indexOf('publish.uploadAsset('))
-  assert.ok(editor.includes('awaitingMetadata.value || !release.metadata'))
+  assert.match(upload, /assetRows.value = rows\.map\(row => row\.mapsetVersion === version \?/)
   assert.ok(editor.includes('if (!workingRelease.value && !tagEdited)'))
   assert.match(read('src/components/publish/PublishReleaseStep.vue'), /@update:value="setTag"/)
   const guard = read('src/composables/usePublishLeaveGuard.ts')
-  assert.match(guard, /dirty: computed\(\(\) => Boolean\(uploadedName.value\) \|\| dirty.value\)/)
+  assert.match(editor, /usePublishLeaveGuard\(operationBusy, localDirty\)/)
+  assert.match(guard, /return usePageLeaveGuard\(\{\s+busy,\s+dirty,/)
   assert.match(guard, /mapPublish.discardDraftConfirm/)
   assert.match(read('src/components/publish/PublishAssetStep.vue'), /pending.inspection.file_size/)
 })
@@ -210,8 +216,8 @@ test('识别表先挂载再校验，不符保留表格且不得污染草稿或�
   assert.doesNotMatch(asset, /inspection-grid/)
 })
 
-test('发布新增文案五语全部登记', () => {
-  for (const key of ['editTitle', 'stepVersionsTitle', 'saveVersions', 'assetRelations', 'continueToVersions', 'selectZipTitle', 'continueToMetadata', 'continueToUpload', 'confirmUpload', 'confirmPublish', 'saveChangelog', 'discardDraftTitle', 'discardDraftConfirm', 'discardAndLeave', 'zipReadyHint', 'changelogHint', 'uploadConfirmationHint', 'assetExists', 'unregisteredVersions', 'inspectionSetCount', 'uploadNeedsSave', 'discardUploadTitle', 'discardUploadConfirm', 'deleteAndLeave', 'continueEditing', 'mapSetColumn', 'versionCount', 'statusColumn', 'actionsColumn', 'languageColumn', 'relationsSection', 'versionsReadOnly', 'assetRelationsHint', 'inheritRelations', 'invalidRelations', 'versionRangeColumn', 'orderColumn', 'assetColumn', 'sizeColumn']) {
-    for (const language of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(mapPublish[key][language]?.trim(), `${key}/${language}`)
+test('地图发布实际源表的所有文案五语全部登记', () => {
+  for (const [key, translations] of Object.entries(mapPublish)) {
+    for (const language of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(translations[language]?.trim(), `${key}/${language}`)
   }
 })

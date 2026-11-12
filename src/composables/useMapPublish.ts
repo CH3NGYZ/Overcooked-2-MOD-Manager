@@ -32,8 +32,8 @@ export interface SaveReleaseInput {
   body: string
   /**
    * 有值 = 同时重写 Release note 的 `oc2-map` 块；省略时后端读远端正文并保留原块。
-   * 只有「地图资料」步骤带 metadata：块是消费端识别地图的唯一依据，版本表
-   * 里登记过的附件才对玩家可见。
+   * 上传确认携带包含待上传版本的完整 metadata，先保存正文后上传附件；日常资料
+   * 和版本保存按各自的字段域提交。消费端只显示表内有实际附件的版本。
    */
   metadata?: MapPublishMetadata
 }

@@ -141,10 +141,10 @@ export const mapPublishUpload: DomainMessages = {
   },
 
   uploadConfirmationHint: {
-    'zh-CN': "核对上述信息后再上传：此时才创建或复用 Release。上传成功后仍需在版本管理中确认发布，才完成登记。",
-    'zh-TW': "核對上述資訊後再上傳：此時才建立或重用 Release。上傳成功後仍須在版本管理中確認發布，才完成登記。",
-    en: "Review before uploading. The release is created or reused only now. After upload, confirm publication in version management to register it.",
-    ko: "정보를 확인한 후 업로드하세요. 이때 릴리스를 생성하거나 재사용합니다. 업로드 후 버전 관리에서 게시를 확인해야 등록됩니다.",
-    ja: "内容を確認してアップロードしてください。この時点で Release を作成または再利用します。アップロード後、バージョン管理で公開を確定すると登録完了です。",
+    'zh-CN': "确认后会先将发布说明和地图声明一起保存到 Release，再上传 ZIP。上传成功即完成发布，之后可在版本管理中调整。",
+    'zh-TW': "確認後會先將發布說明和地圖宣告一起儲存至 Release，再上傳 ZIP。上傳成功即完成發布，之後可在版本管理中調整。",
+    en: "Confirm to save the release notes and map declaration to the release, then upload the ZIP. A successful upload completes publication; you can adjust versions afterward.",
+    ko: "확인하면 먼저 릴리스 노트와 지도 선언을 릴리스에 저장한 다음 ZIP을 업로드합니다. 업로드가 성공하면 게시가 완료되며 이후 버전 관리에서 조정할 수 있습니다.",
+    ja: "確認すると、まずリリースノートとマップ宣言を Release に保存してから ZIP をアップロードします。アップロード成功で公開完了となり、後からバージョン管理で調整できます。",
   },
 }

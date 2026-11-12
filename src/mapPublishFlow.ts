@@ -1,4 +1,4 @@
-/** 本地准备与远端上传分离；版本登记是发布完成边界。 */
+/** 本地准备与远端上传分离；确认上传先保存完整声明，再上传附件。 */
 
 // 带 `.ts` 扩展名：Node 的 `--test` 直接跑源码（类型剥离不做补全），Vite 与
 // `allowImportingTsExtensions` 都接受这种写法。
@@ -10,8 +10,7 @@ export type PublishStepId = 'release' | 'asset' | 'metadata' | 'versions'
 /** 先准备本地资料，确认上传才创建 Release。 */
 export const PUBLISH_STEP_ORDER: readonly PublishStepId[] = ['release', 'metadata', 'asset', 'versions']
 
-export function stepAvailable(step: PublishStepId, releaseExists: boolean, uploadPending = false, zipReady = false): boolean {
-  if (uploadPending) return releaseExists && step !== 'asset'
+export function stepAvailable(step: PublishStepId, releaseExists: boolean, zipReady = false): boolean {
   if (step === 'versions') return releaseExists
   return releaseExists || zipReady
 }
@@ -84,14 +83,14 @@ export function isMapPublishTag(value: string): boolean {
   return /^[A-Za-z0-9]+$/.test(value)
 }
 
-/** 比较 ZIP 身份的三个字段，空值也参与比较。 */
+/** 与声明写入保持一致，三字段去首尾空白后比较；空值和大小写仍参与比较。 */
 export function zipIdentityMismatch(
   metadata: { level_set_name: string; level_set_name_zh: string; author: string },
   inspection: { level_set_name: string; level_set_name_zh: string; author: string },
 ): boolean {
-  return metadata.level_set_name !== inspection.level_set_name ||
-    metadata.level_set_name_zh !== inspection.level_set_name_zh ||
-    metadata.author !== inspection.author
+  return metadata.level_set_name.trim() !== inspection.level_set_name.trim() ||
+    metadata.level_set_name_zh.trim() !== inspection.level_set_name_zh.trim() ||
+    metadata.author.trim() !== inspection.author.trim()
 }
 
 export type PublishZipIssue = 'multiple' | 'version' | 'identity'

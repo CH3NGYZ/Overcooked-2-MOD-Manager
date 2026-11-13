@@ -385,9 +385,9 @@ kind = "requires"
 guid = "dev.gua.overcooked.diylevel"
 # 分版本依赖
 [[repositories.release_relations]]
-version = ">=0.4.0"
+version = "==0.4.0"
 relations = [
-  { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = ">=0.10.0" },
+  { kind = "requires", guid = "dev.gua.overcooked.diylevel", version = "==0.10.0" },
   { kind = "conflicts", guid = "oc2.diylevel.fastinit", version = ">=1.9.0" },
 ]
 

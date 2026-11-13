@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { sourceFiles } from './helpers/source-scan.mjs'
 import { readLocaleTables } from './helpers/locale-tables.mjs'
+import { i18n } from '../src/locale/index.ts'
+import { LOCALE_CODES } from '../src/locale/types.ts'
 import test from 'node:test'
 
 /**
@@ -12,8 +14,8 @@ import test from 'node:test'
  * 语言表里是「…下载并**安装**」。key 拼错不会报错、不会崩，界面上就是中文原文，
  * 切到英/日/韩也不变 —— 只能靠扫描发现。修复时一次扫出 11 条同类遗漏。
  *
- * 只覆盖字面量调用。动态 key（变量、模板拼接）无法静态判定，那部分仍需
- * 人工检查；本测试的存在是为了让「新增文案忘了登记」变成构建期红灯。
+ * 通用扫描覆盖字面量调用；共享安装卡片另查动态动作与状态表中的字面量 key，
+ * 防止把不存在的 key 当成合法测试预期。模板拼接的 key 仍需领域测试覆盖。
  *
  * ## 表在哪里
  *
@@ -63,4 +65,34 @@ test('t() 的字面量 key 全部已登记', () => {
     }
   }
   assert.deepEqual(missing, [], `以下文案未登记到语言表：\n  ${missing.join('\n  ')}`)
+})
+
+test('地图与 MOD 安装卡片的动态动作、状态文案在五语下都存在', () => {
+  const files = [
+    'src/mapCardStatus.ts', 'src/levelSetStatus.ts', 'src/statusActions.ts', 'src/statusTags.ts',
+    'src/views/ModsOnlineView.vue', 'src/components/ReleaseDetailPanel.vue',
+  ]
+  const keys = new Set()
+  for (const file of files) {
+    const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+    for (const match of text.matchAll(/['"]((?:common|overview|modsOnline|modsLocal|tools|dialogs|levelSet|mapVersion)\.[\w.]+)['"]/g)) {
+      keys.add(match[1])
+    }
+  }
+  assert.ok(keys.size > 30, '应覆盖两域动作与状态映射，而非仅直接 t() 调用')
+  for (const key of keys) {
+    assert.ok(declared.has(key), `动作或状态文案未登记：${key}`)
+    for (const locale of LOCALE_CODES) {
+      assert.ok(i18n.global.te(key, locale), `${locale} 缺少 ${key}`)
+      assert.notEqual(i18n.global.t(key, {}, { locale }), key, `${locale} 不应显示裸 ${key}`)
+    }
+  }
+})
+
+test('旧安装动作 key 与 common.action 复用同一份五语文案', () => {
+  const { registered } = readLocaleTables()
+  for (const [legacy, shared] of [
+    ['modsOnline.install', 'common.action.install'], ['overview.reinstall', 'common.action.reinstall'],
+    ['dialogs.update', 'common.action.update'], ['modsOnline.refresh', 'common.action.refresh'],
+  ]) assert.equal(registered.get(legacy), registered.get(shared), `${legacy} 应复用 ${shared}`)
 })

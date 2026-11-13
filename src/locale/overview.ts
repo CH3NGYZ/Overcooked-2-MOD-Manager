@@ -1,4 +1,5 @@
 import type { DomainMessages } from './types'
+import { common } from './common.ts'
 
 /**
  * overview 域的界面文案。
@@ -377,13 +378,7 @@ export const overview: DomainMessages = {
     ja: '一般設定',
   },
   // 重装
-  reinstall: {
-    'zh-CN': '重装',
-    'zh-TW': '重新安裝',
-    en: 'Reinstall',
-    ko: '재설치',
-    ja: '再インストール',
-  },
+  reinstall: common['action.reinstall'],
   // 启动游戏
   launchGame: {
     'zh-CN': '启动游戏',

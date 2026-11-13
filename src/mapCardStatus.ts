@@ -44,5 +44,5 @@ export function mapCardActionLabel(map: MapInfo, sets: readonly LevelSetInfo[], 
   if (state === 'ahead') return 'mapVersion.installThisVersion'
   if (state === 'unknown') return 'mapVersion.chooseThisVersion'
   const action = mapCardAction(map, sets, maps)
-  return { install: 'modsOnline.install', reinstall: 'modsOnline.reinstall', update: 'dialogs.update', refresh: 'modsOnline.refresh' }[action]
+  return { install: 'common.action.install', reinstall: 'common.action.reinstall', update: 'common.action.update', refresh: 'common.action.refresh' }[action]
 }

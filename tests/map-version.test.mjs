@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs'
 import { aggregateLevelSetVersion, assetVersionIndex, mapsForLevelSet, mapUpdateState, mapVersionRef } from '../src/mapVersion.ts'
 import { levelSetCardAction, levelSetCardTags, mapForLevelSet } from '../src/levelSetStatus.ts'
 import { mapCardAction, mapCardActionLabel, mapCardState } from '../src/mapCardStatus.ts'
+import { i18n } from '../src/locale/index.ts'
+import { LOCALE_CODES } from '../src/locale/types.ts'
 
 const rows = (...entries) => entries.map(([mapset_version, info_version]) => ({ mapset_version, info_version }))
 const installed = (overrides = {}) => ({ dir_name: 'local', name: 'Map', name_zh: '地图', author: 'Author', version: '1', enabled: true, ...overrides })
@@ -169,7 +171,7 @@ test('an acyclic table partial order keeps its maximal update across source orde
     assert.equal(result.primaryTarget.mapId, 'c')
     assert.equal(result.evidence, 'table')
     assert.deepEqual(levelSetCardAction(local, maps, [], false, [], refreshing), {
-      kind: 'update', label: 'dialogs.update', tone: 'moderate', mapId: 'c', tag: 'C',
+      kind: 'update', label: 'common.action.update', tone: 'moderate', mapId: 'c', tag: 'C',
     })
   }
 })
@@ -196,10 +198,33 @@ test('disabled local updates retain exact target map id/tag and dependency sourc
 
 test('each source card describes ahead, same, or incomparable and offers explicit installation', () => {
   const local = installed({ version: '2' }), older = online('old', '1'), same = online('same', '2'), unknown = online('unknown', '')
-  for (const [map, state, action, label] of [[older, 'ahead', 'install', 'mapVersion.installThisVersion'], [same, 'latest', 'reinstall', 'modsOnline.reinstall'], [unknown, 'unknown', 'install', 'mapVersion.chooseThisVersion']]) {
+  for (const [map, state, action, label] of [[older, 'ahead', 'install', 'mapVersion.installThisVersion'], [same, 'latest', 'reinstall', 'common.action.reinstall'], [unknown, 'unknown', 'install', 'mapVersion.chooseThisVersion']]) {
     assert.equal(mapCardState(map, [local], [older, same, unknown]), state)
     assert.equal(mapCardAction(map, [local]), action)
     assert.equal(mapCardActionLabel(map, [local]), label)
+  }
+})
+
+test('地图安装的所有动态动作在五语下实际翻译，不显示裸 key 或 MOD 文案', () => {
+  const local = installed()
+  const cases = [
+    [online('new'), [], '安装'],
+    [online('same', '1'), [local], '重装'],
+    [online('newer', '2'), [local], '更新'],
+    [online('unread', '2', { latest_tag: '' }), [], '刷新'],
+    [online('failed', '2', { last_error: 'mapSource.noRelease' }), [local], '刷新'],
+    [online('older', '0.9'), [local], '安装此版本'],
+    [online('unknown', ''), [local], '主动安装此版本'],
+  ]
+  for (const [map, sets, chinese] of cases) {
+    const key = mapCardActionLabel(map, sets)
+    for (const locale of LOCALE_CODES) {
+      assert.ok(i18n.global.te(key, locale), `${locale} 缺少 ${key}`)
+      const text = i18n.global.t(key, {}, { locale })
+      assert.notEqual(text, key)
+      assert.doesNotMatch(text, /MOD|ModRepository|模组|模組/)
+      if (locale === 'zh-CN') assert.equal(text, chinese)
+    }
   }
 })
 

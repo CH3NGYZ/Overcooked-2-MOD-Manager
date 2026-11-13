@@ -1,4 +1,5 @@
 import type { DomainMessages } from './types'
+import { common } from './common.ts'
 
 /**
  * modsOnline 域的界面文案。
@@ -50,7 +51,7 @@ export const modsOnline: DomainMessages = {
   repositoryFile: {
     'zh-CN': '仓库文件',
     'zh-TW': '倉庫檔案',
-    en: 'ModRepository file',
+    en: 'Repository file',
     ko: '저장소 파일',
     ja: 'リポジトリファイル',
   },
@@ -66,26 +67,14 @@ export const modsOnline: DomainMessages = {
   repositoryRefreshFailed: {
     'zh-CN': '仓库刷新失败',
     'zh-TW': '倉庫重新整理失敗',
-    en: 'ModRepository refresh failed',
+    en: 'Repository refresh failed',
     ko: '저장소 새로 고침 실패',
     ja: 'リポジトリ更新失敗',
   },
   // 刷新
-  refresh: {
-    'zh-CN': '刷新',
-    'zh-TW': '重新整理',
-    en: 'Refresh',
-    ko: '새로 고침',
-    ja: '更新',
-  },
+  refresh: common['action.refresh'],
   // 安装
-  install: {
-    'zh-CN': '安装',
-    'zh-TW': '安裝',
-    en: 'Install',
-    ko: '설치',
-    ja: 'インストール',
-  },
+  install: common['action.install'],
   // 版本
   versions: {
     'zh-CN': '版本',

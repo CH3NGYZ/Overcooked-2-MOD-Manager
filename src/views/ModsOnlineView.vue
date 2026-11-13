@@ -186,10 +186,10 @@ function installActionOf(repo: ModRepository): InstallAction | 'refresh' {
 }
 
 const INSTALL_LABELS: Record<InstallAction | 'refresh', string> = {
-  install: 'modsOnline.install',
-  reinstall: 'overview.reinstall',
-  update: 'dialogs.update',
-  refresh: 'modsOnline.refresh',
+  install: 'common.action.install',
+  reinstall: 'common.action.reinstall',
+  update: 'common.action.update',
+  refresh: 'common.action.refresh',
 }
 function installLabel(repo: ModRepository) {
   return t(INSTALL_LABELS[installActionOf(repo)])

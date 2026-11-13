@@ -56,6 +56,27 @@ export const common: DomainMessages = {
     ko: '새로 고침',
     ja: '更新',
   },
+  'action.install': {
+    'zh-CN': '安装',
+    'zh-TW': '安裝',
+    en: 'Install',
+    ko: '설치',
+    ja: 'インストール',
+  },
+  'action.reinstall': {
+    'zh-CN': '重装',
+    'zh-TW': '重新安裝',
+    en: 'Reinstall',
+    ko: '재설치',
+    ja: '再インストール',
+  },
+  'action.update': {
+    'zh-CN': '更新',
+    'zh-TW': '更新',
+    en: 'Update',
+    ko: '업데이트',
+    ja: '更新',
+  },
   'action.copy': {
     'zh-CN': '复制',
     'zh-TW': '複製',

@@ -726,7 +726,7 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
                     <!-- 分类刷新：只刷新本分类内的地图，不影响其它分类 -->
                     <n-button size="tiny" quaternary class="group-refresh"
                       :loading="groupRefreshing(group)" :disabled="anyRefreshing"
-                      :title="t('modsOnline.refresh')" @click.stop="refreshGroup(group)">
+                      :title="t('common.action.refresh')" @click.stop="refreshGroup(group)">
                       <template #icon><RefreshOutline width="12" height="12" /></template>
                     </n-button>
                   </div>

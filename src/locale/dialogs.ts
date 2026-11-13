@@ -1,4 +1,5 @@
 import type { DomainMessages } from './types'
+import { common } from './common.ts'
 
 /**
  * dialogs 域的界面文案。
@@ -70,13 +71,7 @@ export const dialogs: DomainMessages = {
     ja: '更新のインストールを開始しました。アプリは自動で終了します。',
   },
   // 更新
-  update: {
-    'zh-CN': '更新',
-    'zh-TW': '更新',
-    en: 'Update',
-    ko: '업데이트',
-    ja: '更新',
-  },
+  update: common['action.update'],
   // 稍后
   later: {
     'zh-CN': '稍后',

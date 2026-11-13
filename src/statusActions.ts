@@ -47,10 +47,10 @@ export interface StatusActionSpec {
  *   - `disabled` / `prerelease` / `latest`：无需动作。
  */
 const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
-  update_available: { kind: 'update', label: 'dialogs.update', tone: 'moderate' },
-  repository_unavailable: { kind: 'refresh', label: 'modsOnline.refresh', tone: 'moderate' },
-  refresh_failed: { kind: 'refresh', label: 'modsOnline.refresh', tone: 'moderate' },
-  bound_repository_missing: { kind: 'refresh', label: 'modsOnline.refresh', tone: 'critical' },
+  update_available: { kind: 'update', label: 'common.action.update', tone: 'moderate' },
+  repository_unavailable: { kind: 'refresh', label: 'common.action.refresh', tone: 'moderate' },
+  refresh_failed: { kind: 'refresh', label: 'common.action.refresh', tone: 'moderate' },
+  bound_repository_missing: { kind: 'refresh', label: 'common.action.refresh', tone: 'critical' },
   /*
    * 缺依赖 → 「去安装」。色调用 critical，与「缺依赖」标签同档 ——
    * 用户看到的标签与按钮是同一种颜色，不需要额外解释它们是一回事。

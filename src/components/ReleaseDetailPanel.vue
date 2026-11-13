@@ -510,8 +510,8 @@ const {
             <!-- 最右：安装 / 刷新 -->
             <n-button type="primary" :loading="actionLoading" :disabled="actionDisabled" @click="runPrimaryAction">
               <DownloadOutline v-if="!actionIsRefresh" width="15" height="15" />{{ actionIsRefresh
-                ? t('modsOnline.refresh')
-                : t('modsOnline.install') }}
+                ? t('common.action.refresh')
+                : t('common.action.install') }}
             </n-button>
           </div>
 

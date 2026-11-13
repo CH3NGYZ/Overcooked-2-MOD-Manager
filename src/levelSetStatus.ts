@@ -504,7 +504,7 @@ export function levelSetCardAction(
   if (target) {
     return {
       kind: 'update',
-      label: 'dialogs.update',
+      label: 'common.action.update',
       tone: 'moderate',
       mapId: target.mapId,
       tag: target.tag,

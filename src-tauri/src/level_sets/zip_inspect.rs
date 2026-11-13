@@ -77,7 +77,10 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .replace('\\', "/");
         if is_junk_entry(&name) {
             continue;
         }
@@ -156,7 +159,10 @@ pub fn inspect_zip_with_progress(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .replace('\\', "/");
         if is_junk_entry(&name) {
             continue;
         }

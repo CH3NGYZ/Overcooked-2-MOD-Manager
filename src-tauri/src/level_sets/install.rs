@@ -183,7 +183,9 @@ fn write_level_set(
     let mut index_of = std::collections::HashMap::new();
     for index in 0..archive.len() {
         if let Ok(entry) = archive.by_index_raw(index) {
-            index_of.insert(entry.name().replace('\\', "/"), index);
+            if let Ok(name) = entry.name() {
+                index_of.insert(name.replace('\\', "/"), index);
+            }
         }
     }
 

@@ -65,7 +65,7 @@ fn real_info_bytes() -> Option<Vec<u8>> {
     let mut archive = zip::ZipArchive::new(file).ok()?;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).ok()?;
-        if is_info_file(entry.name()) {
+        if entry.name().ok().is_some_and(|name| is_info_file(&name)) {
             let mut bytes = Vec::new();
             entry.read_to_end(&mut bytes).ok()?;
             return Some(bytes);

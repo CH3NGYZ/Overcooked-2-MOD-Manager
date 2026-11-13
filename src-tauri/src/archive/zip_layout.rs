@@ -124,8 +124,17 @@ fn inspect_mod_zip(zip_path: &Path) -> Result<ModZipLayout, String> {
                 &[("reason", &e.to_string())],
             )
         })?;
+        let entry_name = entry
+            .name()
+            .map_err(|e| {
+                crate::locale_tag::with_params(
+                    "archive.zipEntryReadFailed",
+                    &[("reason", &e.to_string())],
+                )
+            })?
+            .into_owned();
         let path = entry.enclosed_name().ok_or_else(|| {
-            crate::locale_tag::with_params("archive.unsafePath", &[("entry", entry.name())])
+            crate::locale_tag::with_params("archive.unsafePath", &[("entry", &entry_name)])
         })?;
         let components = path.components().collect::<Vec<_>>();
         let Some(root) = components.first() else {
@@ -175,8 +184,17 @@ fn online_zip_strip_root(zip_path: &Path, install_target: &str) -> Result<Option
                 &[("reason", &e.to_string())],
             )
         })?;
+        let entry_name = entry
+            .name()
+            .map_err(|e| {
+                crate::locale_tag::with_params(
+                    "archive.zipEntryReadFailed",
+                    &[("reason", &e.to_string())],
+                )
+            })?
+            .into_owned();
         let path = entry.enclosed_name().ok_or_else(|| {
-            crate::locale_tag::with_params("archive.unsafePath", &[("entry", entry.name())])
+            crate::locale_tag::with_params("archive.unsafePath", &[("entry", &entry_name)])
         })?;
         if !entry.is_dir() {
             file_paths.push(path.to_path_buf());

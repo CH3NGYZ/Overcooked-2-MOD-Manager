@@ -80,9 +80,13 @@ pub(super) fn analyze_zip(
                 continue;
             }
             let Some(enclosed) = entry.enclosed_name() else {
+                let entry_name = entry
+                    .name()
+                    .map(|name| name.into_owned())
+                    .unwrap_or_else(|error| format!("<invalid name: {error}>"));
                 return Err(crate::locale_tag::with_params(
                     "archive.unsafePath2",
-                    &[("entry", &entry.name().to_string())],
+                    &[("entry", &entry_name)],
                 ));
             };
             if !enclosed

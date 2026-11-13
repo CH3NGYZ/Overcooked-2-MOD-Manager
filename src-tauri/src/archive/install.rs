@@ -297,8 +297,17 @@ fn zip_entry_destinations(
                 &[("reason", &e.to_string())],
             )
         })?;
+        let entry_name = entry
+            .name()
+            .map_err(|e| {
+                crate::locale_tag::with_params(
+                    "archive.zipEntryReadFailed",
+                    &[("reason", &e.to_string())],
+                )
+            })?
+            .into_owned();
         let enclosed = entry.enclosed_name().ok_or_else(|| {
-            crate::locale_tag::with_params("archive.unsafePath", &[("entry", entry.name())])
+            crate::locale_tag::with_params("archive.unsafePath", &[("entry", &entry_name)])
         })?;
         if entry.is_dir() {
             continue;
@@ -307,7 +316,7 @@ fn zip_entry_destinations(
             strip_zip_root(&enclosed, root).ok_or_else(|| {
                 crate::locale_tag::with_params(
                     "archive.unexpectedRootDirectory",
-                    &[("root", root), ("entry", entry.name())],
+                    &[("root", root), ("entry", &entry_name)],
                 )
             })?
         } else {

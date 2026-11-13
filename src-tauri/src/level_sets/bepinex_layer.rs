@@ -424,7 +424,10 @@ fn extract_bepinex_layer_entries(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| error.to_string())?
+            .replace('\\', "/");
         if is_junk_entry(&name) {
             continue;
         }

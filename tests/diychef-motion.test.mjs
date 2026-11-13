@@ -266,6 +266,53 @@ function dragFixture(t, ids = ['a', 'b', 'c'], columns = 3) {
   return { ...browser, enabled, disabled, cards, source, raise, choose, order }
 }
 
+for (const reduced of [false, true]) test(`cross-section group drag reserves one slot per member and commits frozen order once (reduced=${reduced})`, async t => {
+  const { root, enabled, disabled, dispatch, flushFrame, setReduced } = dragFixture(t)
+  setReduced(reduced)
+  const card = chef('x', 30, 800, false); disabled.append(card)
+  const calls = [], { value } = mounted(t, () => {
+    const motion = useChefMotion(shallowRef(root))
+    return useChefReorder({ root: shallowRef(root), enabled: shallowRef(true), members: () => ['a', 'x'], canBeDefault: () => true,
+      place: (...args) => calls.push(args), disable: () => assert.fail('unexpected disable'), motion })
+  })
+  value.start({ button: 0, isPrimary: true, pointerId: 1, clientX: 94, clientY: 900, target: card, currentTarget: card }, 'x')
+  dispatch('pointermove', { pointerId: 1, clientX: 94, clientY: 180 }); flushFrame()
+  assert.equal(root.querySelectorAll('[data-chef-placeholder]').length, 2)
+  assert.equal(enabled.querySelectorAll('[data-chef-placeholder]').length, 2)
+  assert.equal(document.body.querySelectorAll('.chef-drag-preview').length, 2)
+  assert.equal(document.body.querySelector('.chef-drag-count').textContent, '2')
+  assert.deepEqual([...value.draggingIds.value], ['a', 'x'])
+  const order = [...enabled.children].filter(element => element.style.position !== 'absolute')
+    .sort((a, b) => Number(a.style.order ?? 0) - Number(b.style.order ?? 0))
+    .map(element => element.dataset.chefId ?? element.dataset.chefPlaceholder)
+  assert.deepEqual(order, ['a', 'x', 'b', 'c'])
+  assert.deepEqual(calls, [])
+  dispatch('pointerup', { pointerId: 1, clientX: 94, clientY: 180 }); await tick()
+  assert.deepEqual(calls, [[['a', 'x'], 'b', false]])
+  assert.equal(root.querySelectorAll('[data-chef-placeholder]').length, 0)
+  assert.equal(document.body.querySelectorAll('.chef-drag-preview').length, 0)
+})
+
+test('dropping a group outside both sections cancels all members and clears every temporary slot', async t => {
+  const { root, enabled, cards, dispatch, flushFrame } = dragFixture(t)
+  let mutations = 0
+  const { value } = mounted(t, () => {
+    const motion = useChefMotion(shallowRef(root))
+    return useChefReorder({ root: shallowRef(root), enabled: shallowRef(true), members: () => ['a', 'b'], canBeDefault: () => true,
+      place: () => { mutations++ }, disable: () => { mutations++ }, motion })
+  })
+  const card = cards[0]
+  value.start({ button: 0, isPrimary: true, pointerId: 1, clientX: 94, clientY: 180, target: card, currentTarget: card }, 'a')
+  dispatch('pointermove', { pointerId: 1, clientX: 900, clientY: 600 }); flushFrame()
+  assert.equal(root.querySelectorAll('[data-chef-placeholder]').length, 2)
+  dispatch('pointerup', { pointerId: 1, clientX: 900, clientY: 600 }); await tick()
+  assert.equal(mutations, 0)
+  assert.equal(root.querySelectorAll('[data-chef-placeholder]').length, 0)
+  assert.equal(document.body.querySelectorAll('.chef-drag-preview').length, 0)
+  assert.equal(enabled.querySelectorAll('[data-chef-drag-source]').length, 0)
+  assert.equal(value.draggingIds.value.size, 0)
+})
+
 test('live slot order reverses the same neighbour at 50 percent even before its preview animation finishes', t => {
   const { lane, enabled, source, raise, choose, order } = dragFixture(t)
   const origin = raise('a'), b = source('b')

@@ -1,6 +1,7 @@
 import type { DomainMessages } from '../types.ts'
 
 export const diychefBackend: DomainMessages = {
+  nativeFallbackRequired: { 'zh-CN': '至少保留一位游戏自带厨师作为稳定回退。请启用游戏自带厨师后保存；自定义厨师仍可作为默认开屏厨师。', 'zh-TW': '至少保留一位遊戲內建廚師作為穩定備援。請啟用遊戲內建廚師後儲存；自訂廚師仍可作為預設開屏廚師。', en: 'Keep at least one enabled game chef as a stable fallback before saving. A custom chef can still be the opening chef.', ko: '안정적인 대체를 위해 게임 기본 셰프를 한 명 이상 활성화한 후 저장하세요. 사용자 지정 셰프를 시작 셰프로 유지할 수 있습니다.', ja: '安定した代替用にゲーム内蔵シェフを1人以上有効にしてから保存してください。カスタムシェフは起動時のシェフに設定できます。' },
   nativeDefaultRequired: { 'zh-CN': '默认开屏厨师必须为游戏自带厨师。请保留至少一位游戏自带厨师，并将其设为默认后保存。', 'zh-TW': '預設開屏廚師必須為遊戲內建廚師。請保留至少一位遊戲內建廚師，並將其設為預設後儲存。', en: 'The opening chef must be a game chef. Keep at least one game chef and set one as the opening chef before saving.', ko: '시작 화면 셰프는 게임 기본 셰프여야 합니다. 기본 셰프를 한 명 이상 유지하고 시작 셰프로 지정한 후 저장하세요.', ja: '起動時のシェフにはゲーム内蔵シェフが必要です。内蔵シェフを1人以上残し、起動時のシェフに設定してから保存してください。' },
   previewUnsafeResource: { 'zh-CN': '预览资源超出所选厨师目录或路径不安全。', 'zh-TW': '預覽資源超出所選廚師目錄或路徑不安全。', en: 'The preview resource is outside the chef folder or uses an unsafe path.', ko: '미리보기 리소스가 셰프 폴더 밖에 있거나 경로가 안전하지 않습니다.', ja: 'プレビュー用リソースがシェフのフォルダー外にあるか、パスが安全ではありません。' },
   previewLimit: { 'zh-CN': '预览资源超过大小或复杂度限制。', 'zh-TW': '預覽資源超過大小或複雜度限制。', en: 'The preview resource exceeds the size or complexity limit.', ko: '미리보기 리소스가 크기 또는 복잡도 제한을 초과했습니다.', ja: 'プレビュー用リソースがサイズまたは複雑さの上限を超えています。' },

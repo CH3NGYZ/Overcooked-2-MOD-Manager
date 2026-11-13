@@ -186,6 +186,7 @@ pub fn run() {
             commands::dashboard::get_dashboard,
             commands::dashboard::get_local_mods,
             commands::diychef_editor::open_diychef_editor,
+            commands::diychef_editor::migrate_diychef_resources,
             commands::diychef_editor::initialize_diychef_config,
             commands::diychef_editor::validate_diychef_draft,
             commands::diychef_editor::save_diychef_config,

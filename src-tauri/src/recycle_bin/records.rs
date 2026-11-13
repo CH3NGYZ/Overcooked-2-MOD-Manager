@@ -170,14 +170,22 @@ pub(super) fn load_record(directory: &Path, id: &str) -> Result<RecycleRecord, S
         packages.insert(id.to_lowercase());
     }
     for related in &record.related_manifests {
-        if record.package_id.is_none()
-            || !valid_package_id(&related.package_id)
+        if !valid_package_id(&related.package_id)
             || !packages.insert(related.package_id.to_lowercase())
             || related.removed_files.iter().any(|file| {
-                !record
-                    .removed_manifest_files
-                    .iter()
-                    .any(|removed| file_key(file) == file_key(removed))
+                if record.package_id.is_some() {
+                    !record
+                        .removed_manifest_files
+                        .iter()
+                        .any(|removed| file_key(file) == file_key(removed))
+                } else {
+                    // Directory records own no primary package. Their related
+                    // snapshots may only change files actually in this journal.
+                    !record
+                        .files
+                        .iter()
+                        .any(|removed| file_key(file) == file_key(&removed.relative))
+                }
             })
         {
             return Err(INVALID_RECORD.into());

@@ -15,4 +15,4 @@ export interface ChefChange { id: string; before: string; after: string }
 export interface ChefValidation { diagnostics: ChefDiagnostic[]; changes: ChefChange[]; save_blocking: boolean }
 export interface ChefDraft { base_revision: string; catalog_revision: string; target_generation: number; entries: ChefEntry[]; hat_bindings: Record<string, HatReference>; lobby_switch: boolean; removed_problem_row_ids: string[]; acknowledged_change_ids: string[]; reset_intent: string | null }
 export interface ChefEditorSnapshot { session_id: string; target: ChefTarget; source: ChefSource; catalog_revision: string; chefs: ChefItem[]; hats: ChefHat[]; document_rows: ChefDocumentRow[]; selection: ChefSelection; diagnostics: ChefDiagnostic[] }
-export interface ChefEditorOpen { status: 'ready' | 'not_installed' | 'select_target'; candidates: ChefTarget[]; snapshot: ChefEditorSnapshot | null }
+export interface ChefEditorOpen { status: 'ready' | 'not_installed' | 'select_target'; candidates: ChefTarget[]; snapshot: ChefEditorSnapshot | null; legacy_targets?: ChefTarget[]; migration_available?: boolean }

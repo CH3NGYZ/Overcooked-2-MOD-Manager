@@ -14,6 +14,46 @@ use std::fs;
 
 use super::{A, B, Workspace};
 
+#[test]
+fn directory_records_restore_related_manifests_but_cannot_claim_unmoved_files() {
+    let workspace = Workspace::new();
+    workspace.write(A, b"legacy plugin");
+    workspace.write(B, b"resource");
+    workspace.manifest("directory-package", &[A, B]);
+    let record = crate::recycle_bin::recycle_directories(
+        &workspace.recycle,
+        &workspace.manifests,
+        &workspace.game,
+        &["BepInEx/plugins/Bundle".into()],
+        "directory".into(),
+    )
+    .unwrap();
+    let directory = workspace.recycle.join(&record.id);
+    let mut journal = load_record(&directory, &record.id).unwrap();
+    assert!(journal.package_id.is_none());
+    assert_eq!(journal.related_manifests.len(), 1);
+    let mut manifest: crate::archive::InstallManifest =
+        toml::from_str(&journal.related_manifests[0].original).unwrap();
+    let unrelated = "BepInEx/plugins/Unrelated/Other.dll";
+    manifest.files.push(unrelated.into());
+    journal.related_manifests[0].original = toml::to_string(&manifest).unwrap();
+    journal.related_manifests[0]
+        .removed_files
+        .push(unrelated.into());
+    save_record(&directory, &journal).unwrap();
+    assert_eq!(
+        restore(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &record.id
+        )
+        .unwrap_err(),
+        INVALID_RECORD
+    );
+    assert!(!workspace.game.join(A).exists());
+}
+
 /// 没有 `package_id` 却带着清单快照的记录是坏记录（台账不一致），
 /// 不能静默跳过清单合并把文件搬回去。
 #[test]

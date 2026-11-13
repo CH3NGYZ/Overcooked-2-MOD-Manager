@@ -415,9 +415,13 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     let mut custom_only = draft.clone();
     custom_only.entries.truncate(1);
     assert!(
-        !validate(&state, &opened.session_id, &custom_only)
+        validate(&state, &opened.session_id, &custom_only)
             .unwrap()
             .save_blocking
+    );
+    assert_eq!(
+        save(&state, &opened.session_id, &custom_only).unwrap_err(),
+        validation::NATIVE_FALLBACK_REQUIRED
     );
     assert_eq!(
         fs::read(destination.join("prefer.txt")).unwrap(),

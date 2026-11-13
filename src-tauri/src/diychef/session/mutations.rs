@@ -37,6 +37,11 @@ pub(crate) fn save(
     let validation = validate(state, id, d)?;
     if validation.save_blocking {
         if validation.diagnostics.iter().any(|problem| {
+            problem.code == validation::NATIVE_FALLBACK_REQUIRED && problem.save_blocking
+        }) {
+            return Err(validation::NATIVE_FALLBACK_REQUIRED.into());
+        }
+        if validation.diagnostics.iter().any(|problem| {
             problem.code == validation::NATIVE_DEFAULT_REQUIRED && problem.save_blocking
         }) {
             return Err(validation::NATIVE_DEFAULT_REQUIRED.into());

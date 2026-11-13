@@ -100,6 +100,9 @@ pub(crate) fn plan(
 ) -> Result<(Vec<u8>, Vec<ChefChange>), String> {
     let projected = super::project(draft);
     let draft = &projected;
+    if !crate::diychef::catalog::has_native_fallback(&draft.entries, c) {
+        return Err(crate::diychef::validation::NATIVE_FALLBACK_REQUIRED.into());
+    }
     if let Some(reset) = draft.reset_intent.as_deref() {
         if !["keep_black_cat", "restore_default"].contains(&reset) {
             return Err("diychef.invalidDraft".into());

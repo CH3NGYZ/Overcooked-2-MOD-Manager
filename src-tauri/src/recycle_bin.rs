@@ -1,6 +1,7 @@
 //! Recoverable removal: staged files, journals and active manifests form one transaction.
 
 mod delete;
+mod directories;
 mod errors;
 mod file_io;
 mod manifests;
@@ -17,6 +18,7 @@ mod tests;
 pub(crate) use delete::{
     delete, delete_all, purge_mod_dll, purge_package, purge_selected_mod, purge_unmanaged,
 };
+pub(crate) use directories::{directory_files, recycle_directories};
 pub(crate) use records::{list, original_game_path};
 pub(crate) use repository::recycle_repository_packages_before_install;
 pub(crate) use restore::restore;

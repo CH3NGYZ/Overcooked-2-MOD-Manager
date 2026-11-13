@@ -1,5 +1,6 @@
 //! DIYChef configuration: one parser, trusted targets and transactional writes.
 pub(crate) mod catalog;
+pub(crate) mod migration;
 pub(crate) mod prefer;
 pub(crate) mod preview;
 pub(crate) mod session;

@@ -6,7 +6,7 @@ import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
-import { canBeDefault, hatForChef } from '../diychef/draft'
+import { canBeDefault, hatForChef, isUsableResource } from '../diychef/draft'
 import type { HatReference } from '../diychef/types'
 import { projectChefs, projectProblems, type ChefFilters as ChefFilterState } from '../diychef/projection'
 import { useDiyChefEditor } from '../composables/useDiyChefEditor'
@@ -14,6 +14,7 @@ import { useDiyChefConfirmations } from '../composables/useDiyChefConfirmations'
 import { usePageLeaveGuard } from '../composables/usePageLeaveGuard'
 import { useChefReorder } from '../composables/useChefReorder'
 import { useChefMotion } from '../composables/useChefMotion'
+import { useChefSelection } from '../composables/useChefSelection'
 import { useDashboard } from '../composables/useDashboardStore'
 import { configurePreviewConcurrency } from '../diychef/preview/queue'
 import { diyChefDemoSnapshot } from '../tutorial/demoDiyChef'
@@ -29,12 +30,13 @@ import HatDialog from '../components/diychef/HatDialog.vue'
 import TargetPicker from '../components/diychef/TargetPicker.vue'
 import SaveChangesDialog from '../components/diychef/SaveChangesDialog.vue'
 import LeaveDialog from '../components/diychef/LeaveDialog.vue'
+import LegacyMigrationNotice from '../components/diychef/LegacyMigrationNotice.vue'
 
 const message = useNotify()
 const dashboard = useDashboard()
 watch(() => dashboard.config.value?.diychef_preview_concurrency ?? 0, configurePreviewConcurrency, { immediate: true })
 const confirmation = useDiyChefConfirmations(() => editor.save())
-const editor = useDiyChefEditor({ confirmChanges: confirmation.confirmChanges, cancelChanges: confirmation.cancelChanges, demoSnapshot: () => diyChefDemoSnapshot.value })
+const editor = useDiyChefEditor({ confirmChanges: confirmation.confirmChanges, cancelChanges: confirmation.cancelChanges, demoSnapshot: () => diyChefDemoSnapshot.value, confirmMigration: () => requestLeave() })
 const { snapshot, state, opened, loading, saving, error, diagnostics, gameRunning, readOnly, stale, busy, editable, dirty, canSave, canUndo, demonstrating } = editor
 const { changes, changesOpen, leaveOpen } = confirmation
 const { requestLeave } = usePageLeaveGuard({ busy, dirty, confirm: confirmation.confirmLeave, cancelConfirm: confirmation.cancelLeave })
@@ -43,6 +45,12 @@ const sources = shallowRef<ChefFilterState['sources']>([])
 const statuses = shallowRef<ChefFilterState['statuses']>([])
 const filters = computed<ChefFilterState>(() => ({ query: query.value, sources: sources.value, statuses: statuses.value }))
 const projection = computed(() => snapshot.value && state.value ? projectChefs(snapshot.value, state.value, filters.value) : null)
+const filterKey = computed(() => JSON.stringify(filters.value))
+const readingOrder = computed(() => projection.value ? [...projection.value.enabled, ...projection.value.disabled].map(item => item.chef.id) : [])
+const selectableIds = computed(() => new Set(snapshot.value?.chefs.filter(chef => isUsableResource(chef.resource_state)).map(chef => chef.id) ?? []))
+const sessionKey = computed(() => snapshot.value?.session_id)
+const allProjection = computed(() => snapshot.value && state.value ? projectChefs(snapshot.value, state.value, { query: '', sources: [], statuses: [] }) : null)
+const canEnableAll = computed(() => !!allProjection.value?.disabled.some(item => isUsableResource(item.chef.resource_state)))
 const problems = computed(() => snapshot.value && state.value ? projectProblems(snapshot.value, state.value, diagnostics.value) : [])
 const hatChefId = shallowRef<string | null>(null)
 const hatScope = shallowRef<'chef' | 'all'>('chef')
@@ -55,8 +63,10 @@ const announcement = shallowRef('')
 const root = shallowRef<HTMLElement | null>(null)
 const chefMotion = useChefMotion(root)
 const reorderable = computed(() => editable.value && !projection.value?.filtered && !hatOpen.value && !leaveOpen.value && !changesOpen.value)
-const { draggingId, overEnabled, start: startDrag } = useChefReorder({
-  root, enabled: reorderable, place, disable: toggle, motion: chefMotion,
+const selectionEnabled = computed(() => editable.value && !hatOpen.value && !leaveOpen.value && !changesOpen.value)
+const selection = useChefSelection({ root, enabled: selectionEnabled, filterKey, sessionId: sessionKey, readingOrder, selectableIds })
+const { draggingId, draggingIds, overEnabled, start: startDrag } = useChefReorder({
+  root, enabled: reorderable, members: selection.members, place, disable, motion: chefMotion,
   canBeDefault: source => !!snapshot.value && canBeDefault(source, snapshot.value),
 })
 const moreOptions = computed<DropdownOption[]>(() => [
@@ -79,7 +89,7 @@ async function focusChef(chefId: string, scroll = false) {
   const button = document.querySelector<HTMLButtonElement>(`[data-chef-focus="${CSS.escape(chefId)}"]`)
   const tile = button?.closest<HTMLElement>('[data-chef-id]')
   if (button && !button.disabled) button.focus({ preventScroll: true })
-  else tile?.querySelector<HTMLButtonElement>('.chef-toggle:not(:disabled)')?.focus({ preventScroll: true })
+  else tile?.querySelector<HTMLInputElement>('.chef-select input:not(:disabled)')?.focus({ preventScroll: true })
   if (!tile) document.querySelector<HTMLButtonElement>('.diychef-page .chef-tile-main:not(:disabled)')?.focus({ preventScroll: true })
   if (scroll) tile?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
 }
@@ -89,14 +99,22 @@ function announcePosition(chefId: string) {
   const chef = snapshot.value?.chefs.find((entry) => entry.id === chefId)
   if (index >= 0 && chef) announcement.value = t('diychef.moved', { name: chef.display_name, position: index + 1 })
 }
-function place(chefId: string, targetChefId: string | null, after: boolean) {
+function place(chefIds: string | readonly string[], targetChefId: string | null, after: boolean) {
   if (!reorderable.value) return
-  void chefMotion.change(chefId, () => {
-    editor.place(chefId, targetChefId, after)
-    announcePosition(chefId)
-  }, () => focusChef(chefId, true))
+  const anchor = draggingId.value ?? (typeof chefIds === 'string' ? chefIds : chefIds[0]!)
+  void chefMotion.change(chefIds, () => {
+    editor.place(chefIds, targetChefId, after)
+    announcePosition(anchor)
+  }, () => focusChef(anchor, true))
 }
-function toggle(chefId: string) { void chefMotion.change(chefId, () => editor.toggle(chefId), () => focusChef(chefId)) }
+function disable(chefIds: string | readonly string[]) {
+  const ids = typeof chefIds === 'string' ? [chefIds] : chefIds
+  const anchor = draggingId.value ?? ids[0]!
+  void chefMotion.change(ids, () => editor.disable(ids), () => focusChef(anchor))
+}
+function selectChef(chefId: string) { selection.toggle(chefId) }
+function bulkEnable() { selection.clear(); void chefMotion.change(allProjection.value?.disabled.map(item => item.chef.id) ?? [], editor.enableAll) }
+function bulkDisable() { selection.clear(); void chefMotion.change(allProjection.value?.enabled.map(item => item.chef.id) ?? [], editor.disableAll) }
 function openHat(chefId: string, scope: 'chef' | 'all' = 'chef') {
   hatScope.value = scope
   hatChefId.value = chefId
@@ -153,7 +171,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
       <template #icon><SaveOutline /></template>{{ t('diychef.save') }}
     </n-button>
   </Teleport>
-  <div ref="root" class="diychef-page" data-chef-motion="idle" data-tutorial="diychef-page">
+  <div ref="root" class="diychef-page" data-chef-motion="idle" data-tutorial="diychef-page" @pointerdown.capture="selection.start">
+    <LegacyMigrationNotice v-if="editor.migrationVisible.value" :targets="editor.legacyTargets.value" :busy="busy" :importing="editor.migrating.value" :can-import="editor.canMigrate.value" :target-available="opened?.migration_available === true" @import="editor.migrate" @ignore="editor.ignoreMigration" />
     <EditorNotice :snapshot="snapshot" :error="error" :game-running="gameRunning" :read-only="readOnly" :stale="stale" :busy="busy" :diagnostics="diagnostics" @reload="reload" />
     <ContentState v-if="loading && !snapshot" loading :description="t('diychef.loading')" />
     <TargetPicker v-else-if="opened?.status === 'select_target'" :candidates="opened.candidates" :busy="busy" @select="editor.open" />
@@ -161,11 +180,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
     <template v-if="snapshot && state && projection">
       <ConfigProblems :problems="problems" :frozen="!editable" @remove="editor.removeProblem" @hat="openHat" />
       <ChefGrid data-tutorial="diychef-grid" :items="projection.enabled" :session-id="snapshot.session_id" enabled :filtered="projection.filtered" :frozen="!editable"
-        :reorderable="reorderable" :dragging-id="draggingId" :over-enabled="overEnabled"
-        @toggle="toggle" @hat="openHat" @drag="startDrag" />
+        :bulk-disabled="!projection.defaultId"
+        :reorderable="reorderable" :dragging-id="draggingId" :dragging-ids="draggingIds" :selected-ids="selection.selectedIds.value" :over-enabled="overEnabled"
+        @select="selectChef" @hat="openHat" @drag="startDrag" @bulk-disable="bulkDisable" @bulk-enable="bulkEnable" />
       <ChefGrid :items="projection.disabled" :session-id="snapshot.session_id" :enabled="false" :filtered="projection.filtered" :frozen="!editable"
-        :reorderable="reorderable" :dragging-id="draggingId" :over-enabled="overEnabled"
-        @toggle="toggle" @hat="openHat" @drag="startDrag" />
+        :bulk-disabled="!canEnableAll"
+        :reorderable="reorderable" :dragging-id="draggingId" :dragging-ids="draggingIds" :selected-ids="selection.selectedIds.value" :over-enabled="overEnabled"
+        @select="selectChef" @hat="openHat" @drag="startDrag" @bulk-disable="bulkDisable" @bulk-enable="bulkEnable" />
+      <div v-if="selection.rectangle.value" class="chef-selection-rect" :style="selection.rectangleStyle.value" aria-hidden="true" />
       <ContentState v-if="!projection.enabled.length && !projection.disabled.length" :description="t('diychef.noResults')">
         <template #extra><n-button size="small" @click="clearFilters">{{ t('diychef.clearFilters') }}</n-button></template>
       </ContentState>
@@ -181,4 +203,5 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
 .diychef-page { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
 .chef-more-trigger { display: inline-flex; }
 .chef-live { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.chef-selection-rect { position: fixed; z-index: 25; pointer-events: none; border: 1px solid var(--oc2-accent); background: color-mix(in srgb, var(--oc2-accent) 12%, transparent); }
 </style>

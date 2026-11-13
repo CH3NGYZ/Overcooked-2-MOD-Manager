@@ -1,6 +1,19 @@
 use crate::{app_state::AppState, diychef::session, models::*};
 use tauri::State;
 #[tauri::command]
+pub async fn migrate_diychef_resources(
+    state: State<'_, AppState>,
+    generation: u64,
+    target_id: String,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::diychef::migration::migrate(&state, generation, &target_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 pub async fn open_diychef_editor(
     state: State<'_, AppState>,
     generation: u64,

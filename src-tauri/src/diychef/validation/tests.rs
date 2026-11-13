@@ -169,12 +169,26 @@ fn native_default_fixture(text: &[u8]) -> (Document, Catalog, ChefDraft) {
 
 #[test]
 fn custom_defaults_are_allowed_only_for_capable_targets_and_empty_still_blocks() {
-    for input in [b"Fox\n".as_slice(), b"Fox\nChef_Black_cat\n"] {
+    for input in [b"Fox\nChef_Black_cat\n".as_slice()] {
         let (doc, c, d) = native_default_fixture(input);
         assert!(!validate(&doc, &c, &d, true).unwrap().save_blocking);
         assert!(validate(&doc, &c, &d, false).unwrap().save_blocking);
         assert_eq!(prefer::plan(&doc, &d, &c).unwrap().0, input);
     }
+    let (doc, c, d) = native_default_fixture(b"Fox\n");
+    let result = validate(&doc, &c, &d, true).unwrap();
+    assert!(result.save_blocking);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|problem| problem.code == NATIVE_FALLBACK_REQUIRED)
+    );
+    assert_eq!(
+        prefer::plan(&doc, &d, &c).unwrap_err(),
+        NATIVE_FALLBACK_REQUIRED
+    );
+    assert_eq!(doc.encode(&doc.text()), b"Fox\n");
     for input in [b"".as_slice(), b"Broken\n", b"UNKNOWN\n"] {
         let (doc, c, d) = native_default_fixture(input);
         let result = validate(&doc, &c, &d, true).unwrap();
@@ -230,9 +244,17 @@ fn no_usable_native_or_empty_selection_requires_a_native_default() {
     }
     let (doc, mut c, d) = native_default_fixture(b"Chef_Black_cat\nFox\n");
     c.chefs[0].resource_state = "invalid".into();
+    let invalidated = validate(&doc, &c, &d, false).unwrap();
+    assert!(invalidated.save_blocking);
     assert!(
-        validate(&doc, &c, &d, false).is_err(),
-        "a newly invalid catalog requires a fresh snapshot"
+        invalidated
+            .diagnostics
+            .iter()
+            .any(|problem| problem.code == NATIVE_FALLBACK_REQUIRED)
+    );
+    assert_eq!(
+        prefer::plan(&doc, &d, &c).unwrap_err(),
+        NATIVE_FALLBACK_REQUIRED
     );
 }
 

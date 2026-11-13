@@ -1,5 +1,7 @@
 //! Sessions hold backend-owned paths, baselines and bounded editor state.
 mod mutations;
+#[cfg(test)]
+mod native_fallback_tests;
 pub(crate) use mutations::{initialize, save};
 
 use super::{
@@ -45,6 +47,7 @@ pub(crate) fn open(
         .map_err(|e| e.to_string())?
         .get(generation, &root)?;
     let candidates = target::eligible(&target::candidates(&snapshot.mods, generation));
+    let legacy_targets = super::migration::legacy_targets(&snapshot.mods, generation);
     let Some(target) = target::select(&candidates, target_id)? else {
         return Ok(ChefEditorOpen {
             status: if candidates.is_empty() {
@@ -55,8 +58,11 @@ pub(crate) fn open(
             .into(),
             candidates,
             snapshot: None,
+            legacy_targets,
+            migration_available: false,
         });
     };
+    let migration_available = !legacy_targets.is_empty() && super::migration::modern(&target);
     let mod_root = target::mod_root(&root, &target)?;
     let catalog = catalog::read(&root, &mod_root)?;
     let bindings_dir = state.config.config_path().with_file_name("diychef");
@@ -81,6 +87,8 @@ pub(crate) fn open(
         status: "ready".into(),
         candidates,
         snapshot: Some(view),
+        legacy_targets,
+        migration_available,
     })
 }
 pub(crate) fn get(state: &AppState, id: &str) -> Result<Session, String> {

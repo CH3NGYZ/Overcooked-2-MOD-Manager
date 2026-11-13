@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   changeChefHat, copyEditState, createChefDraft, draftSignature, hatForChef, moveChef, placeChef,
-  rebaseInitializedDraft, removeProblemRow, resetChefDraft, setDefaultChef, toggleChef,
+  rebaseInitializedDraft, removeProblemRow, resetChefDraft, setDefaultChef, toggleChef, disableChefs, enableAllChefs, disableAllChefs,
 } from '../src/diychef/draft.ts'
 import { projectChefs, projectProblems } from '../src/diychef/projection.ts'
 
@@ -54,14 +54,15 @@ test('DIYChef 2.2 supports custom opening chefs through setting, dragging and pr
   assert.deepEqual(projectChefs(snapshot, state, unfiltered).enabled.map(item => item.chef.id), ['cat', 'fox'])
 })
 
-test('DIYChef 2.2 can disable its final native chef while retaining the final usable chef safeguard', () => {
+test('DIYChef 2.2 cannot disable its final native chef even with a custom opening chef', () => {
   const { snapshot, state } = fixture()
   snapshot.target.supports_custom_default = true
   snapshot.target.version = '2.2.0'
   const next = toggleChef(state, snapshot, 'cat')
-  assert.equal(next.error, undefined)
-  assert.equal(projectChefs(snapshot, next.state, unfiltered).defaultId, 'fox')
-  assert.equal(toggleChef(next.state, snapshot, 'fox').error, 'lastChef')
+  assert.equal(next.error, 'nativeFallbackRequired')
+  const customFirst = setDefaultChef(state, snapshot, 'fox').state
+  assert.equal(toggleChef(customFirst, snapshot, 'cat').error, 'nativeFallbackRequired')
+  assert.deepEqual(customFirst.draft.entries.map(entry => entry.chef_ref.chef_id), ['fox', 'cat'])
 })
 
 test('DIYChef 2.2 accepts custom-first files without reordering and can populate an empty selection', () => {
@@ -71,9 +72,40 @@ test('DIYChef 2.2 accepts custom-first files without reordering and can populate
   assert.equal(projectChefs(snapshot, state, unfiltered).defaultId, 'fox')
   const empty = { ...state, draft: { ...state.draft, entries: [] } }
   const next = placeChef(empty, snapshot, 'owl', null, false)
-  assert.equal(next.error, undefined)
-  assert.equal(projectChefs(snapshot, next.state, unfiltered).defaultId, 'owl')
+  assert.equal(next.error, 'nativeFallbackRequired')
+  const repaired = placeChef(empty, snapshot, ['owl', 'cat'], null, false)
+  assert.equal(repaired.error, undefined)
+  assert.equal(projectChefs(snapshot, repaired.state, unfiltered).defaultId, 'owl')
   assert.equal(setDefaultChef(state, snapshot, 'broken').error, 'unavailable')
+})
+
+test('group disabling retains one native without displacing the custom opening chef or changing hats and lobby', () => {
+  const { snapshot, state } = fixture([selected('fox'), missing, selected('cat'), selected('owl'), selected('beard')])
+  snapshot.target.supports_custom_default = true
+  state.draft.hat_bindings = { fox: hat('hat:Wizard'), cat: hat('hat:None'), beard: hat('hat:Wizard'), owl: hat('hat:None') }
+  state.draft.lobby_switch = false
+  const next = disableChefs(state, snapshot, ['cat', 'owl', 'beard'])
+  assert.equal(next.error, undefined)
+  assert.equal(next.notice, 'nativeFallbackRetained')
+  assert.deepEqual(next.state.draft.entries.map(entry => entry.chef_ref.chef_id ?? 'missing'), ['fox', 'missing', 'cat'])
+  assert.deepEqual(next.state.draft.hat_bindings, state.draft.hat_bindings)
+  assert.equal(next.state.draft.lobby_switch, false)
+  assert.deepEqual(state.draft.entries.map(entry => entry.chef_ref.chef_id ?? 'missing'), ['fox', 'missing', 'cat', 'owl', 'beard'])
+})
+
+test('disable all retains a custom default plus one native, and native defaults retain only themselves', () => {
+  const { snapshot, state } = fixture([selected('fox'), selected('cat'), selected('owl'), selected('beard')])
+  snapshot.target.supports_custom_default = true
+  state.draft.hat_bindings.owl = hat('hat:Wizard')
+  const next = disableAllChefs(state, snapshot)
+  assert.deepEqual(next.state.draft.entries.map(entry => entry.chef_ref.chef_id), ['fox', 'cat'])
+  assert.deepEqual(next.state.draft.hat_bindings, state.draft.hat_bindings)
+  const nativeFirst = setDefaultChef(state, snapshot, 'beard').state
+  assert.deepEqual(disableAllChefs(nativeFirst, snapshot).state.draft.entries.map(entry => entry.chef_ref.chef_id), ['beard'])
+  const pureCustom = fixture([selected('fox')])
+  pureCustom.snapshot.target.supports_custom_default = true
+  assert.equal(disableAllChefs(pureCustom.state, pureCustom.snapshot).error, 'nativeFallbackRequired')
+  assert.equal(toggleChef(pureCustom.state, pureCustom.snapshot, 'cat').error, undefined)
 })
 
 test('the final usable native chef cannot be disabled even when custom chefs remain enabled', () => {
@@ -229,9 +261,9 @@ test('tags within each group are alternatives while any selected tags mark the p
   for (const [sources, statuses, enabled, disabled] of [
     [['native', 'custom'], ['enabled'], ['cat', 'fox'], []],
     [['custom'], ['enabled', 'disabled'], ['fox'], ['owl', 'broken']],
-    [['native', 'custom'], ['enabled', 'disabled'], ['cat', 'fox'], ['beard', 'owl', 'broken']],
-    [['native', 'custom'], [], ['cat', 'fox'], ['beard', 'owl', 'broken']],
-    [[], ['enabled', 'disabled'], ['cat', 'fox'], ['beard', 'owl', 'broken']],
+    [['native', 'custom'], ['enabled', 'disabled'], ['cat', 'fox'], ['owl', 'broken', 'beard']],
+    [['native', 'custom'], [], ['cat', 'fox'], ['owl', 'broken', 'beard']],
+    [[], ['enabled', 'disabled'], ['cat', 'fox'], ['owl', 'broken', 'beard']],
   ]) {
     const filters = { query: '', sources, statuses }
     const projected = projectChefs(snapshot, state, filters)

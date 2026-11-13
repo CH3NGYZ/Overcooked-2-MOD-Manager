@@ -1,5 +1,5 @@
 import type { ChefDiagnostic, ChefDocumentRow, ChefEditorSnapshot, ChefEntry, ChefItem, HatReference } from './types.ts'
-import { hatForChef, hasValidDefault, toggleChefError, usableEntries, type ChefEditState } from './draft.ts'
+import { hatForChef, hasValidDefault, usableEntries, type ChefEditState } from './draft.ts'
 
 export interface ChefFilters {
   query: string
@@ -8,12 +8,11 @@ export interface ChefFilters {
 }
 export interface ChefTileItem {
   chef: ChefItem
+  catalogOrder: number
   enabled: boolean
   isDefault: boolean
   entry: ChefEntry | null
   hat: HatReference
-  canToggle: boolean
-  toggleError: 'lastChef' | 'nativeDefaultRequired' | 'unavailable' | null
 }
 export interface ChefProblem {
   row: ChefDocumentRow
@@ -40,18 +39,16 @@ export function projectChefs(snapshot: ChefEditorSnapshot, state: ChefEditState,
     return !query || [chef.display_name, chef.config_name, chef.head_name].some((text) => text.toLocaleLowerCase().includes(query))
   }
   const tile = (chef: ChefItem, entry: ChefEntry | null): ChefTileItem => {
-    const toggleError = toggleChefError(state.draft, snapshot, chef.id) ?? null
     return {
-    chef, entry, enabled: !!entry, isDefault: chef.id === defaultId,
+    chef, catalogOrder: snapshot.chefs.indexOf(chef), entry, enabled: !!entry, isDefault: chef.id === defaultId,
     hat: hatForChef(state, snapshot, chef.id),
-    canToggle: !toggleError, toggleError,
     }
   }
   const enabled = knownEntries.flatMap((entry) => {
     const chef = entry.chef_ref.kind === 'known' ? chefById.get(entry.chef_ref.chef_id) : undefined
     return chef && matches(chef, true) ? [tile(chef, entry)] : []
   })
-  const disabled = snapshot.chefs.filter((chef) => !selected.has(chef.id) && matches(chef, false)).map((chef) => tile(chef, null))
+  const disabled = ['custom', 'native'].flatMap(source => snapshot.chefs.filter((chef) => chef.source_kind === source && !selected.has(chef.id) && matches(chef, false))).map((chef) => tile(chef, null))
   const filterCounts = snapshot.chefs.reduce((counts, chef) => {
     if (chef.source_kind === 'native' || chef.source_kind === 'custom') counts[chef.source_kind] += 1
     counts[selected.has(chef.id) ? 'enabled' : 'disabled'] += 1

@@ -136,4 +136,8 @@ pub struct ChefEditorOpen {
     pub status: String,
     pub candidates: Vec<ChefTarget>,
     pub snapshot: Option<ChefEditorSnapshot>,
+    #[serde(default)]
+    pub legacy_targets: Vec<ChefTarget>,
+    #[serde(default)]
+    pub migration_available: bool,
 }

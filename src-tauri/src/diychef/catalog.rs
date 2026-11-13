@@ -1,5 +1,5 @@
 use super::target::child;
-use crate::models::{ChefHat, ChefItem};
+use crate::models::{ChefEntry, ChefHat, ChefItem, ChefReference};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Read, path::Path};
 #[derive(Clone)]
@@ -7,6 +7,17 @@ pub(crate) struct Catalog {
     pub chefs: Vec<ChefItem>,
     pub hats: Vec<ChefHat>,
     pub revision: String,
+}
+/// A custom opening chef still needs an enabled built-in chef for stable fallback.
+pub(crate) fn has_native_fallback(entries: &[ChefEntry], catalog: &Catalog) -> bool {
+    entries.iter().any(|entry| match &entry.chef_ref {
+        ChefReference::Known { chef_id } => catalog.chefs.iter().any(|chef| {
+            chef.id == *chef_id
+                && chef.source_kind == "native"
+                && matches!(chef.resource_state.as_str(), "valid" | "known_name")
+        }),
+        ChefReference::Unresolved { .. } => false,
+    })
 }
 pub(crate) const NATIVE_NAMES: &str = r#"Chef_Beard
 Chef_Black_cat

@@ -4,10 +4,11 @@ import { useDashboard } from './useDashboardStore'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
+import { ignoredLegacyTargets, legacyTargetSignature } from '../diychef/migration'
 import type { ChefChange, ChefEditorOpen, ChefEditorSnapshot, ChefValidation, HatReference } from '../diychef/types'
 import {
   changeChefHat, copyEditState, createChefDraft, draftSignature, moveChef,
-  rebaseInitializedDraft, removeProblemRow, resetChefDraft, setDefaultChef, toggleChef, placeChef,
+  rebaseInitializedDraft, removeProblemRow, resetChefDraft, setDefaultChef, toggleChef, placeChef, disableChefs, enableAllChefs, disableAllChefs,
   type ChefEditResult, type ChefEditState,
 } from '../diychef/draft'
 
@@ -15,6 +16,7 @@ interface EditorOptions {
   confirmChanges: (changes: ChefChange[]) => Promise<boolean>
   cancelChanges: () => void
   demoSnapshot?: () => ChefEditorSnapshot | null
+  confirmMigration?: () => Promise<boolean>
 }
 
 /** Disk snapshots and editable state are independent until a successful write and read-back. */
@@ -27,6 +29,8 @@ export function useDiyChefEditor(options: EditorOptions) {
   const loading = shallowRef(false)
   const saving = shallowRef(false)
   const initializing = shallowRef(false)
+  const migrating = shallowRef(false)
+  const ignoredMigration = shallowRef('')
   const operationError = shallowRef('')
   const validationError = shallowRef('')
   const error = computed(() => operationError.value || validationError.value)
@@ -37,12 +41,18 @@ export function useDiyChefEditor(options: EditorOptions) {
   const gameRunning = computed(() => !demonstrating.value && (dashboard.game.value?.kitchen_running ?? false))
   const readOnly = computed(() => snapshot.value?.target.compatibility === 'read_only')
   const stale = computed(() => !demonstrating.value && !!snapshot.value && dashboard.modsGeneration.value !== snapshot.value.target.generation)
-  const busy = computed(() => loading.value || saving.value || initializing.value)
+  const busy = computed(() => loading.value || saving.value || initializing.value || migrating.value)
   const editable = computed(() => !!state.value && !busy.value && !readOnly.value)
   const baselineSignature = computed(() => snapshot.value ? draftSignature(createChefDraft(snapshot.value)) : '')
   const dirty = computed(() => !demonstrating.value && !!state.value && draftSignature(state.value.draft) !== baselineSignature.value)
   const canSave = computed(() => dirty.value && !busy.value && !readOnly.value && !gameRunning.value && !stale.value && !needsReload.value && snapshot.value?.source.state === 'present')
   const diagnostics = computed(() => validation.value?.diagnostics ?? snapshot.value?.diagnostics ?? [])
+  const legacyTargets = computed(() => opened.value?.legacy_targets ?? [])
+  const migrationSignature = computed(() => legacyTargetSignature(legacyTargets.value, dashboard.config.value?.game.path ?? ''))
+  const migrationVisible = computed(() => !demonstrating.value && legacyTargets.value.length > 0
+    && ignoredMigration.value !== migrationSignature.value && !ignoredLegacyTargets.has(migrationSignature.value))
+  const canMigrate = computed(() => migrationVisible.value && opened.value?.migration_available === true
+    && !!snapshot.value && !busy.value && !gameRunning.value && !stale.value && !needsReload.value)
   let generation = 0
   let validationGeneration = 0
   let validationTimer: ReturnType<typeof setTimeout> | null = null
@@ -67,6 +77,7 @@ export function useDiyChefEditor(options: EditorOptions) {
     loading.value = false
     saving.value = false
     initializing.value = false
+    migrating.value = false
   }
 
   function acceptSnapshot(value: ChefEditorSnapshot, preserveDraft = false) {
@@ -159,6 +170,37 @@ export function useDiyChefEditor(options: EditorOptions) {
     }
   }
 
+  function ignoreMigration() {
+    if (busy.value) return
+    ignoredMigration.value = migrationSignature.value
+    ignoredLegacyTargets.add(migrationSignature.value)
+  }
+
+  async function migrate() {
+    if (disposed || !canMigrate.value || !snapshot.value) return
+    const ticket = generation
+    if (options.confirmMigration && !await options.confirmMigration()) return
+    if (disposed || ticket !== generation || !canMigrate.value || !snapshot.value) return
+    const current = snapshot.value
+    const operation = Symbol()
+    pendingDiskOperations.add(operation)
+    migrating.value = true
+    let failure: unknown = null
+    try { await api.diyChefMigrate(current.target.generation, current.target.id) }
+    catch (reason) { failure = reason }
+    finally {
+      pendingDiskOperations.delete(operation)
+      if (!disposed && ticket === generation) {
+        migrating.value = false
+        // The command can invalidate the generation on either outcome. A fresh
+        // scan also updates the page if another installation changed meanwhile.
+        await open(current.target.id, true)
+        if (failure !== null) reportOperationFailure(failure)
+        else notify.success(t('diychef.migrationDone'))
+      }
+    }
+  }
+
   function scheduleValidation() {
     if (disposed || demonstrating.value) return
     validationGeneration += 1
@@ -177,7 +219,10 @@ export function useDiyChefEditor(options: EditorOptions) {
 
   function applyResult(result: ChefEditResult) {
     if (result.error) notify.info(t(`diychef.${result.error}`))
-    else if (result.state) edit(result.state)
+    else if (result.state) {
+      edit(result.state)
+      if (result.notice) notify.info(t(`diychef.${result.notice}`))
+    }
   }
 
   function toggle(chefId: string) {
@@ -189,8 +234,17 @@ export function useDiyChefEditor(options: EditorOptions) {
   function move(chefId: string, targetChefId: string) {
     if (state.value && snapshot.value) edit(moveChef(state.value, snapshot.value, chefId, targetChefId))
   }
-  function place(chefId: string, targetChefId: string | null, after: boolean) {
-    if (editable.value && state.value && snapshot.value) applyResult(placeChef(state.value, snapshot.value, chefId, targetChefId, after))
+  function place(chefIds: string | readonly string[], targetChefId: string | null, after: boolean) {
+    if (editable.value && state.value && snapshot.value) applyResult(placeChef(state.value, snapshot.value, chefIds, targetChefId, after))
+  }
+  function disable(chefIds: readonly string[]) {
+    if (editable.value && state.value && snapshot.value) applyResult(disableChefs(state.value, snapshot.value, chefIds))
+  }
+  function enableAll() {
+    if (editable.value && state.value && snapshot.value) applyResult(enableAllChefs(state.value, snapshot.value))
+  }
+  function disableAll() {
+    if (editable.value && state.value && snapshot.value) applyResult(disableAllChefs(state.value, snapshot.value))
   }
   function changeHat(chefIds: string | readonly string[], hat: HatReference) {
     if (state.value) edit(changeChefHat(state.value, chefIds, hat))
@@ -287,9 +341,10 @@ export function useDiyChefEditor(options: EditorOptions) {
     options.cancelChanges()
   })
   return {
-    snapshot, state, opened, loading, saving, initializing, error, validation, diagnostics,
+    snapshot, state, opened, loading, saving, initializing, migrating, error, validation, diagnostics,
     gameRunning, readOnly, stale, busy, editable, dirty, canSave, demonstrating,
+    legacyTargets, migrationVisible, canMigrate, ignoreMigration, migrate,
     canUndo: computed(() => !!undoState.value && editable.value),
-    open, save, toggle, setDefault, move, place, changeHat, setLobby, removeProblem, reset, undo,
+    open, save, toggle, setDefault, move, place, disable, enableAll, disableAll, changeHat, setLobby, removeProblem, reset, undo,
   }
 }

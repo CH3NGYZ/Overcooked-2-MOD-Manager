@@ -6,6 +6,7 @@ export const CHEF_MOVE_MS = 300
 export const CHEF_PREVIEW_MS = 180
 export const CHEF_LIFT_MS = 120
 type Bounds = Pick<ChefCardBounds, 'left' | 'top' | 'width' | 'height'>
+export type ChefMotionIds = string | readonly string[]
 interface CardFrame { element: HTMLElement; bounds: Bounds; clone?: HTMLElement; viewportBounds?: Bounds }
 type Frames = Map<string, CardFrame>
 interface Flight { element: HTMLElement; target: HTMLElement; animation: Animation; opacity: string }
@@ -43,8 +44,9 @@ export function cloneChefCard(source: HTMLElement): HTMLElement {
     images[index]?.replaceWith(canvas)
   })
   clone.classList.remove('is-dragging', 'chef-drag-preview', 'chef-motion-bridge')
+  clone.querySelector('.chef-drag-count')?.remove()
   clone.setAttribute('aria-hidden', 'true'); clone.inert = true
-  Object.assign(clone.style, { opacity: '1', transform: '', scale: '', visibility: '', margin: '0', pointerEvents: 'none' })
+  Object.assign(clone.style, { opacity: '1', transform: '', scale: '', rotate: '', visibility: '', margin: '0', pointerEvents: 'none' })
   return clone
 }
 
@@ -54,7 +56,7 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
   const moves = new Map<HTMLElement, Move>()
   const flights = new Map<string, Flight>()
   const slots = createChefDragLayout(root)
-  let adopted: { id: string; element: HTMLElement } | null = null
+  const adopted = new Map<string, HTMLElement>()
   let previewKey = ''
 
   function clearPreview() { slots.clear(); previewKey = '' }
@@ -69,22 +71,23 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
       delete flight.target.dataset.chefMotionState
     }
     flights.clear()
-    adopted = null
+    adopted.clear()
     if (root()) root()!.dataset.chefMotion = 'idle'
   }
-  function capture(chefId: string): Frames {
+  function capture(chefIds: ChefMotionIds): Frames {
     const host = root(), result: Frames = new Map()
+    const ids = new Set(typeof chefIds === 'string' ? [chefIds] : chefIds)
     if (!host) { stop(); return result }
     const box = host.getBoundingClientRect()
     // Read current visual positions before cancelling interrupted animations.
     for (const element of host.querySelectorAll<HTMLElement>('[data-chef-id]')) {
       const id = element.dataset.chefId!, flight = flights.get(id)
-      const fixed = adopted?.id === id, visual = fixed ? adopted!.element : flight?.element ?? element
+      const fixed = adopted.has(id), visual = adopted.get(id) ?? flight?.element ?? element
       const visualBox = visual.getBoundingClientRect()
       result.set(id, { element, bounds: localBounds(visualBox, box), viewportBounds: fixed ? visualBox : undefined,
-        clone: id === chefId || flight ? cloneChefCard(visual) : undefined })
+        clone: ids.has(id) || flight ? cloneChefCard(visual) : undefined })
     }
-    adopted = null
+    adopted.clear()
     stop()
     return result
   }
@@ -115,12 +118,7 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
         moving.getBoundingClientRect()
         moving.classList.toggle('is-enabled', element.classList.contains('is-enabled'))
         moving.classList.toggle('is-default', element.classList.contains('is-default'))
-        const label = moving.querySelector('.chef-default-label')
-        if (!element.classList.contains('is-default')) label?.remove()
-        else if (!label) {
-          const nextLabel = element.querySelector('.chef-default-label')
-          if (nextLabel) moving.querySelector('.chef-tile-main')?.append(nextLabel.cloneNode(true))
-        }
+        moving.classList.toggle('is-selected', element.classList.contains('is-selected'))
       }
       if (typeof moving.animate !== 'function') { if (bridge) moving.remove(); continue }
       const opacity = element.style.opacity
@@ -148,29 +146,35 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
     host.dataset.chefMotion = moves.size || flights.size ? phase : 'idle'
   }
   function adopt(chefId: string, ghost: HTMLElement) {
-    adopted = { id: chefId, element: ghost }
+    adopted.set(chefId, ghost)
     ghost.dataset.chefMotionId = chefId
   }
-  function pickup(chefId: string) {
-    const before = capture(chefId), source = before.get(chefId), host = root()
+  function pickup(chefId: string, memberIds: readonly string[] = [chefId]) {
+    const before = capture(memberIds), source = before.get(chefId), host = root()
     if (!source?.clone || !host) return null
     const origin = host.getBoundingClientRect()
-    before.delete(chefId)
+    const members = memberIds.flatMap(id => {
+      const frame = before.get(id)
+      return frame?.clone ? [{ id, ghost: frame.clone, bounds: { width: frame.bounds.width, height: frame.bounds.height,
+        left: frame.bounds.left + origin.left, top: frame.bounds.top + origin.top } }] : []
+    })
+    for (const id of memberIds) before.delete(id)
     return { ghost: source.clone, bounds: { width: source.bounds.width, height: source.bounds.height, left: source.bounds.left + origin.left, top: source.bounds.top + origin.top },
+      members,
       // The caller samples stable hit-test geometry before resuming neighbours.
-      resume: () => { slots.place(chefId, chefId); play(before, CHEF_PREVIEW_MS, 'preview') } }
+      resume: () => { slots.place(chefId, null, false, null, memberIds); play(before, CHEF_PREVIEW_MS, 'preview') } }
   }
-  function preview(sourceId: string, targetId: string | null, after: boolean, positions: readonly ChefCardBounds[], overEnabled = false) {
-    const key = `${sourceId}/${targetId}/${after}/${overEnabled}`
+  function preview(sourceId: string, targetId: string | null, after: boolean, positions: readonly ChefCardBounds[], overEnabled = false, memberIds: readonly string[] = [sourceId], overDisabled = false) {
+    const key = `${memberIds.join(',')}/${targetId}/${after}/${overEnabled}/${overDisabled}`
     if (key === previewKey) return
     // Sample current positions before restoring the previous real slot. Both
     // same-grid and cross-grid insertions then use the browser's actual grid.
     const before = capture('')
-    before.delete(sourceId)
+    for (const id of memberIds) before.delete(id)
     const enabled = root()?.querySelector<HTMLElement>('[data-chef-group="enabled"]')
-    const empty = overEnabled && positions.every(position => position.id === sourceId)
+    const empty = overEnabled && positions.every(position => memberIds.includes(position.id))
     const enabledGrid = enabled?.classList.contains('chef-grid') ? enabled : enabled?.querySelector<HTMLElement>('.chef-grid')
-    slots.place(sourceId, empty && targetId === sourceId ? null : targetId, after, empty ? enabledGrid : null)
+    slots.place(sourceId, empty && memberIds.includes(targetId ?? '') ? null : targetId, after, empty ? enabledGrid : null, memberIds, overDisabled)
     previewKey = key
     play(before, CHEF_PREVIEW_MS, 'preview')
   }
@@ -183,5 +187,5 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
       return end && origin ? { ...end, left: end.left + origin.left, top: end.top + origin.top } : element.getBoundingClientRect()
     })
   }
-  return { capture, play, stop, adopt, pickup, preview, clearPreview, snapshot, hasAdopted: () => !!adopted }
+  return { capture, play, stop, adopt, pickup, preview, clearPreview, snapshot, hasAdopted: () => adopted.size > 0 }
 }

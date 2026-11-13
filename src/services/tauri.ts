@@ -80,6 +80,7 @@ export const api = {
   dashboard: readDashboard,
   localMods: () => invoke<LocalModSnapshot>('get_local_mods'),
   diyChefOpen: (generation: number, targetId?: string) => invoke<ChefEditorOpen>('open_diychef_editor', { generation, targetId }),
+  diyChefMigrate: (generation: number, targetId: string) => invoke<void>('migrate_diychef_resources', { generation, targetId }),
   diyChefInitialize: (sessionId: string, expectedRevision: string) => invoke<ChefEditorSnapshot>('initialize_diychef_config', { sessionId, expectedRevision }),
   diyChefValidate: (sessionId: string, draft: ChefDraft) => invoke<ChefValidation>('validate_diychef_draft', { sessionId, draft }),
   diyChefSave: (sessionId: string, draft: ChefDraft) => invoke<ChefEditorSnapshot>('save_diychef_config', { sessionId, draft }),

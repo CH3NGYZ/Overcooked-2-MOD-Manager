@@ -5,6 +5,7 @@ use super::{
 use crate::models::*;
 use std::collections::{HashMap, HashSet};
 pub(crate) const NATIVE_DEFAULT_REQUIRED: &str = "diychef.nativeDefaultRequired";
+pub(crate) const NATIVE_FALLBACK_REQUIRED: &str = "diychef.nativeFallbackRequired";
 pub(crate) fn diagnostic(code: &str, row: Option<String>, blocking: bool) -> ChefDiagnostic {
     ChefDiagnostic {
         id: format!("{code}:{}", row.as_deref().unwrap_or("")),
@@ -126,7 +127,17 @@ pub(crate) fn validate(
         problem.chef_id = first_usable.map(|item| item.id.clone());
         diagnostics.push(problem);
     }
-    let (_, changes) = prefer::plan(doc, draft, c)?;
+    let has_native = super::catalog::has_native_fallback(&draft.entries, c);
+    if !has_native {
+        diagnostics.push(diagnostic(NATIVE_FALLBACK_REQUIRED, None, true));
+    }
+    // Historical drafts remain readable with an actionable diagnostic. The TXT
+    // planner independently rejects the same invalid final state before output.
+    let changes = if has_native {
+        prefer::plan(doc, draft, c)?.1
+    } else {
+        vec![]
+    };
     let save_blocking = diagnostics.iter().any(|d| d.save_blocking);
     Ok(ChefValidation {
         diagnostics,

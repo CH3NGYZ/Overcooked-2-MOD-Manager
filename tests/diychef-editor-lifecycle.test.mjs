@@ -55,7 +55,7 @@ function snapshot(missing = false) {
   }
 }
 const valid = () => ({ diagnostics: [], changes: [], save_blocking: false })
-async function setup(t, { missing = false, running = false, api = {}, confirmChanges = async () => true, demoSnapshot } = {}) {
+async function setup(t, { missing = false, running = false, api = {}, confirmChanges = async () => true, demoSnapshot, confirmMigration } = {}) {
   const initial = snapshot(missing)
   let current = initial
   globalThis.__chefNotices = []
@@ -72,7 +72,7 @@ async function setup(t, { missing = false, running = false, api = {}, confirmCha
   await dashboard.loadBase()
   await dashboard.loadLocalMods()
   startGameWatch()
-  const instance = mounted(() => useDiyChefEditor({ confirmChanges, cancelChanges() {}, demoSnapshot }))
+  const instance = mounted(() => useDiyChefEditor({ confirmChanges, cancelChanges() {}, demoSnapshot, confirmMigration }))
   t.after(instance.dispose)
   return { editor: instance.value, dispose: instance.dispose, initial }
 }
@@ -193,6 +193,26 @@ test('bulk hat choice is one undo step and saving retains disabled choices for l
   assert.deepEqual(editor.state.value.draft.hat_bindings, { cat: hat, fox: hat, owl: hat })
   editor.toggle('owl')
   assert.deepEqual(editor.state.value.draft.entries.at(-1).hat_ref, hat)
+})
+
+test('group enable and disable preserve fallback and hats in one undoable editor edit', async t => {
+  const { editor } = await setup(t)
+  await editor.open()
+  editor.snapshot.value.target.supports_custom_default = true
+  editor.changeHat('owl', { kind: 'known', hat_id: 'hat:None' })
+  const before = structuredClone(editor.state.value)
+  editor.place(['fox', 'owl'], 'cat', false)
+  assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.chef_ref.chef_id), ['fox', 'owl', 'cat'])
+  editor.undo()
+  assert.deepEqual(editor.state.value, before)
+  editor.place(['fox', 'owl'], 'cat', false)
+  const enabled = structuredClone(editor.state.value)
+  editor.disable(['cat', 'owl'])
+  assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.chef_ref.chef_id), ['fox', 'cat'])
+  assert.deepEqual(editor.state.value.draft.hat_bindings, enabled.draft.hat_bindings)
+  assert.ok(globalThis.__chefNotices.includes('diychef.nativeFallbackRetained'))
+  editor.undo()
+  assert.deepEqual(editor.state.value, enabled)
 })
 
 test('save freezes all mutations through validation, confirmation and write/read-back', async t => {
@@ -454,4 +474,68 @@ test('legacy DIYChef targets use the editable flow while default eligibility com
   assert.deepEqual(editor.state.value.draft.entries.map(entry => entry.chef_ref.chef_id), ['cat'])
   assert.ok(globalThis.__chefNotices.includes('diychef.nativeDefaultRequired'))
   assert.equal(await editor.save(), true)
+})
+
+test('legacy migration ignores the same target set across reloads and instances, while a changed set reappears', async t => {
+  let targets = [{ ...snapshot().target, id: 'legacy-ignore-a', version: '1.9' }, { ...snapshot().target, id: 'legacy-ignore-b', version: '1.8' }]
+  const api = { diyChefOpen: async () => ({ status: 'ready', candidates: [], snapshot: snapshot(), legacy_targets: targets, migration_available: true }) }
+  const first = await setup(t, { api }); await first.editor.open()
+  assert.equal(first.editor.migrationVisible.value, true)
+  const before = draftSignature(first.editor.state.value.draft)
+  first.editor.ignoreMigration()
+  assert.equal(first.editor.migrationVisible.value, false)
+  assert.equal(draftSignature(first.editor.state.value.draft), before)
+  assert.equal(first.editor.dirty.value, false)
+  targets = [...targets].reverse()
+  await first.editor.open()
+  assert.equal(first.editor.migrationVisible.value, false)
+  first.dispose()
+  const second = await setup(t, { api }); await second.editor.open()
+  assert.equal(second.editor.migrationVisible.value, false)
+  targets = [...targets, { ...targets[0], id: 'legacy-ignore-c' }]
+  await second.editor.open()
+  assert.equal(second.editor.migrationVisible.value, true)
+})
+
+test('legacy migration gates game-running and target selection, and cancellation makes no IPC call', async t => {
+  let available = false, calls = 0, confirmed = 0
+  const { editor } = await setup(t, { running: true, confirmMigration: async () => { confirmed++; return false }, api: {
+    diyChefOpen: async () => ({ status: 'ready', candidates: [], snapshot: snapshot(), legacy_targets: [{ ...snapshot().target, id: 'legacy-gate', version: '1.9' }], migration_available: available }),
+    diyChefMigrate: async () => { calls++ },
+  } })
+  await editor.open()
+  assert.equal(editor.canMigrate.value, false)
+  await editor.migrate(); assert.equal(calls, 0)
+  globalThis.__chefGameEvent({ path: 'fixture', kitchen_running: false })
+  await tick(); assert.equal(editor.canMigrate.value, false)
+  available = true; await editor.open()
+  assert.equal(editor.canMigrate.value, true)
+  await editor.migrate()
+  assert.equal(confirmed, 1); assert.equal(calls, 0)
+})
+
+test('legacy import calls the typed IPC once and reloads the scan and editor after success or failure', async t => {
+  let targets = [{ ...snapshot().target, id: 'legacy-import', version: '1.9' }], scans = 0, opens = 0, writes = 0
+  const imported = deferred()
+  const { editor } = await setup(t, { api: {
+    localMods: async () => { scans++; return { generation: 7, mods: [] } },
+    diyChefOpen: async () => { opens++; return { status: 'ready', candidates: [], snapshot: snapshot(), legacy_targets: targets, migration_available: true } },
+    diyChefMigrate: (generation, target) => { writes++; assert.equal(generation, 7); assert.equal(target, 'target'); return imported.promise },
+  } })
+  await editor.open()
+  const beforeScans = scans, beforeOpens = opens
+  const migration = editor.migrate()
+  assert.equal(editor.migrating.value, true); assert.equal(editor.busy.value, true)
+  await editor.migrate(); assert.equal(writes, 1)
+  targets = []; imported.resolve(); await migration
+  assert.equal(scans, beforeScans + 1); assert.equal(opens, beforeOpens + 1)
+  assert.equal(editor.migrationVisible.value, false)
+  assert.ok(globalThis.__chefNotices.includes('diychef.migrationDone'))
+  targets = [{ ...snapshot().target, id: 'legacy-import-retry', version: '1.9' }]
+  await editor.open()
+  globalThis.__chefApi.diyChefMigrate = async () => { throw new Error('diychef.migrationFailed') }
+  await editor.migrate()
+  assert.equal(editor.error.value, 'diychef.migrationFailed')
+  assert.equal(editor.migrationVisible.value, true)
+  assert.equal(editor.busy.value, false)
 })

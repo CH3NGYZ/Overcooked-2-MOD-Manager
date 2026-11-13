@@ -183,7 +183,15 @@ body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
+  /* 页面及 teleport 到 body 的弹层统一禁选，避免拖动操作带出原生文字高亮。 */
+  -webkit-user-select: none;
+  user-select: none;
   transition: background-color .18s ease, color .18s ease;
+}
+/* Naive 输入组件也落到原生输入元素；可编辑内容继续保留选字、复制与编辑。 */
+:where(input, textarea, [contenteditable]:not([contenteditable="false"])) {
+  -webkit-user-select: text;
+  user-select: text;
 }
 /* Naive UI provider 层兜底高度（ConfigProvider 已 abstract，防其他层复发）。 */
 #app > .n-config-provider,

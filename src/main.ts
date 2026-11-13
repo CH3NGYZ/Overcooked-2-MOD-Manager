@@ -1,15 +1,11 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import { router } from './router'
-import { installSingleClickSelection } from './textSelection'
 import { applyInstallLanguage, locale } from './i18n'
 import { i18n } from './locale'
 import { api } from './services/tauri'
 import 'highlight.js/styles/github-dark.css'
 import './styles/global.css'
-
-// 只保留按住拖动选择：屏蔽双击选词 / 三击选段（输入框除外）
-installSingleClickSelection()
 
 /**
  * 首启语言：安装程序写下的语言优先。

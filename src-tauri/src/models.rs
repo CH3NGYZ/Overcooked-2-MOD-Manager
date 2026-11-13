@@ -62,7 +62,7 @@ pub use publish::{
 pub use relations::{
     DependencySyncResult, RelationKind, ReleaseRelationOverride, RepositoryRelation,
 };
-pub use releases::{ReleaseAsset, ReleaseInfo, UpdateStatus};
+pub use releases::{ModRepositoryReleaseSnapshot, ReleaseAsset, ReleaseInfo, UpdateStatus};
 pub use repositories::{
     AssetRule, AssetRuleType, AvatarRequest, Channel, CommunityDiscovery, CommunityMapRepository,
     ImportPreview, Provider, RepositorySource, RepositorySourceImportResult, StagedReleaseCache,

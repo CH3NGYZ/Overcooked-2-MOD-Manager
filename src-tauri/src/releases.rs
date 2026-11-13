@@ -22,6 +22,8 @@ pub(crate) use client::{
 };
 pub(crate) use fetch::{fetch_releases, fetch_repository_default_branch};
 pub(crate) use projection::filter_channel;
+pub(crate) use projection::project_mod_releases;
+pub(crate) use version::resolve_prerelease;
 pub(crate) use version::{compare_release_versions, is_prerelease_version, parse_version};
 
 #[cfg(test)]

@@ -9,9 +9,23 @@ pub struct ReleaseInfo {
     pub name: String,
     pub body: String,
     pub published_at: Option<String>,
+    /// Raw platform verdict; missing in legacy caches. Explicit false is authoritative.
+    #[serde(
+        default,
+        rename = "apiPrerelease",
+        alias = "api_prerelease",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub api_prerelease: Option<bool>,
     pub prerelease: bool,
     pub draft: bool,
     pub assets: Vec<ReleaseAsset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModRepositoryReleaseSnapshot {
+    pub cached_releases: Vec<ReleaseInfo>,
+    pub release_prerelease_metadata: std::collections::BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -43,8 +43,12 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
         }
         let key = crate::config::source_repository_key(source_id, &crate::config::repo_key(repo));
         config.source_repository_ids.insert(key, repo.id.clone());
-        // 只搬「有内容」的缓存：空列表搬过去也没有意义，反而让判断变复杂
-        if !repo.cached_releases.is_empty() {
+        // A successful empty channel may still contain authoritative verdicts
+        // for installed tags, or be a valid fresh empty API response.
+        if !repo.cached_releases.is_empty()
+            || !repo.release_prerelease_metadata.is_empty()
+            || repo.releases_cached_at.is_some()
+        {
             config.staged_release_cache.insert(
                 repo.id.clone(),
                 crate::models::StagedReleaseCache {
@@ -65,6 +69,12 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
         .repository_sources
         .retain(|source| roots.contains(&source.id) || !descendants.contains(&source.id));
     (
+                    repository_key: Some(crate::releases::repository_cache_key(
+                        repo.provider.clone(),
+                        &repo.username,
+                        &repo.repository,
+                    )),
+                    release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
         repository_count - config.repositories.len(),
         source_count - config.repository_sources.len(),
     )

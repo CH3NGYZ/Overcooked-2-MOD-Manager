@@ -103,6 +103,13 @@ fn serialize_repository_bundle(bundle: &ModRepositoryBundle) -> Result<String, C
         append_toml_field(&mut text, "username", &repo.username)?;
         append_toml_field(&mut text, "repository", &repo.repository)?;
         append_toml_field(&mut text, "enabled", &repo.enabled)?;
+        if !repo.release_prerelease_metadata.is_empty() {
+            append_toml_field(
+                &mut text,
+                "release_prerelease_metadata",
+                &repo.release_prerelease_metadata,
+            )?;
+        }
         if let Some(source_id) = &repo.source_id {
             append_toml_field(&mut text, "source_id", source_id)?;
         }
@@ -179,6 +186,7 @@ impl ConfigService {
                     .unwrap_or(true)
             })
             .map(|repo| ModRepositoryExport {
+                release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
                 network_plan: repo.network_plan.clone(),
                 kind: repo.kind,
                 name: repo.name.clone(),
@@ -416,10 +424,14 @@ impl ConfigService {
                      * 与「源文档重新声明了这个仓库」无关。
                      */
                     let cached_releases = std::mem::take(&mut existing.cached_releases);
+                    let metadata = std::mem::take(&mut existing.release_prerelease_metadata);
                     let releases_cached_at = existing.releases_cached_at;
                     let last_error = existing.last_error.clone();
                     *existing = mod_repository_from_export(&item, id, builtin);
                     existing.cached_releases = cached_releases;
+                    // A source re-declaration cannot overwrite locally fetched
+                    // platform metadata with an older imported snapshot.
+                    existing.release_prerelease_metadata.extend(metadata);
                     existing.releases_cached_at = releases_cached_at;
                     existing.last_error = last_error;
                     imported_ids.push(existing.id.clone());

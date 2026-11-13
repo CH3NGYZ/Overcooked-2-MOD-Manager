@@ -148,7 +148,11 @@ pub async fn install_mod_repository(
                     asset.name.clone(),
                     release.tag_name.clone(),
                     release.body.clone(),
-                    release.prerelease,
+                    releases::resolve_prerelease(
+                        release.api_prerelease,
+                        release.prerelease,
+                        Some(&release.tag_name),
+                    ),
                     archive::release_download::asset_set(asset, &release.assets)?,
                     false,
                 )

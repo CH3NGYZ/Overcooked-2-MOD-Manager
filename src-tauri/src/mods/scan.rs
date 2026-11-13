@@ -369,17 +369,14 @@ fn inspect_dll(
                     .unwrap_or_default()
             }
         },
-        /*
-         * 预发布判定取清单快照标记或统一版本解析器的判定（含四段 beta）。
-         *
-         * 只读快照不够：作者可能没在 Release 上勾 prerelease，但版本号本身
-         * 叫 `0.4.0-beta`、`0.4.0.5-beta` —— 这类同样要按预发布提示。
-         * 与前端 isPrereleaseVersion 保持同一规则。
-         */
-        prerelease: manifest.is_some_and(|item| item.prerelease)
-            || installed_version
-                .as_deref()
-                .is_some_and(crate::releases::is_prerelease_version),
+        prerelease: super::binding::installed_prerelease(
+            config,
+            repository_binding,
+            manifest.is_some_and(|item| item.prerelease),
+            repository_binding
+                .map(|binding| binding.tag.as_str())
+                .or(installed_version.as_deref()),
+        ),
         /*
          * 依赖快照：仓库还在配置里时前端用线上声明，仓库不在了（源下线/
          * 自定义源被删）才退回这份快照 —— 否则依赖表会凭空消失。

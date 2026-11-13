@@ -63,7 +63,7 @@ test('「刷一批带 Release 的条目」只有一处实现，两个域共用',
   assert.match(releaseRefresh, /export interface ReleaseFetchSpec/)
   assert.match(releaseRefresh, /export function prioritizeByIds/)
   // 两个域都得走它，而不是各自 mapWithConcurrency 一遍
-  assert.match(repositoryEngine, /runReleaseBatch<ModRepository>\(/)
+  assert.match(repositoryEngine, /runReleaseBatch<ModRepository, ModRepositoryReleaseSnapshot>\(/)
   assert.match(mapEngine, /runReleaseBatch<MapInfo>\(/)
   /*
    * 「刷一个条目」的三件事 —— 请求 / 成功写回 / 失败写回 —— 每个域只定义一次

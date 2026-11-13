@@ -1,15 +1,42 @@
 use super::error::ReleaseError;
-use super::version::is_prerelease_version;
 use super::version::is_strict_semver;
 use super::version::parse_version;
+use super::version::resolve_prerelease;
 use crate::models::Channel;
 use crate::models::Provider;
 use crate::models::ReleaseAsset;
 use crate::models::ReleaseInfo;
 use serde_json::Value;
 
+/// Capture raw platform verdicts only from a fully fetched list, before a Beta
+/// entry promoted to stable disappears from that channel's installable cache.
+pub(crate) fn project_mod_releases(
+    releases: Vec<ReleaseInfo>,
+    channel: &Channel,
+) -> crate::models::ModRepositoryReleaseSnapshot {
+    let release_prerelease_metadata = releases
+        .iter()
+        .filter_map(|release| {
+            release
+                .api_prerelease
+                .map(|value| (release.tag_name.clone(), value))
+        })
+        .collect();
+    crate::models::ModRepositoryReleaseSnapshot {
+        cached_releases: filter_channel(releases, channel),
+        release_prerelease_metadata,
+    }
+}
+
 pub fn filter_channel(mut releases: Vec<ReleaseInfo>, channel: &Channel) -> Vec<ReleaseInfo> {
     let before = releases.len();
+    for release in &mut releases {
+        release.prerelease = resolve_prerelease(
+            release.api_prerelease,
+            release.prerelease,
+            Some(&release.tag_name),
+        );
+    }
     releases.retain(|release| {
         !release.draft
             && match channel {
@@ -132,23 +159,9 @@ pub fn parse_release_json(
                 })
             })
             .collect();
-        /*
-         * 预发布 = API 标记 或 版本号本身是预发布（四段 beta 序号 / `-` 后缀）。
-         *
-         * 必须在这里算好、随 ReleaseInfo 一起下发：前端只能拿到
-         * `version`（已被 parse_version 截成三段，第 4 段丢失）和
-         * `tag_name` 两串文本，让各处自己反推必然出现不一致 ——
-         * 实际发生过：卡片读 tag_name 判成预发布，安装确认弹窗读
-         * version 判成正式版，同一个版本两种结论。
-         *
-         * 不再用「tag 含 beta/alpha 字样」兜底：判定统一走
-         * is_prerelease_version，与比较、渠道筛选共用同一套 semver 规则。
-         */
-        let prerelease = item
-            .get("prerelease")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-            || is_prerelease_version(&tag);
+        // Keep unknown distinct from false so old caches retain suffix fallback.
+        let api_prerelease = item.get("prerelease").and_then(Value::as_bool);
+        let prerelease = resolve_prerelease(api_prerelease, false, Some(&tag));
         let date = item
             .get("published_at")
             .or_else(|| item.get("created_at"))
@@ -172,6 +185,7 @@ pub fn parse_release_json(
                 .unwrap_or_default()
                 .to_string(),
             published_at: date,
+            api_prerelease,
             prerelease,
             draft: item.get("draft").and_then(Value::as_bool).unwrap_or(false),
             assets,

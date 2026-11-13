@@ -90,19 +90,21 @@ test('formatVersion 只去尾部全 0 段，有数字的段一律保留', () => 
   assert.equal(formatVersion(''), '')
 })
 
-test('预发布判定：元数据标记与版本号后缀是或关系', () => {
+test('预发布判定：明确布尔值权威，未知时兼容旧标记和后缀', () => {
   // 作者勾了 prerelease → 是
   assert.equal(isPrereleaseVersion('0.4.0', true), true)
-  // 作者没勾，但版本号带 - 后缀 → 也是
-  assert.equal(isPrereleaseVersion('0.4.0-beta', false), true)
-  assert.equal(isPrereleaseVersion('0.4.0.5-beta', false), true)
+  // 平台明确取消标记，即使历史标记和后缀仍指向 beta 也应清除
+  assert.equal(isPrereleaseVersion('0.4.0-beta', false, true), false)
+  assert.equal(isPrereleaseVersion('0.4.0.5-beta', false), false)
+  assert.equal(isPrereleaseVersion('0.4.0', undefined, true), true)
+  assert.equal(isPrereleaseVersion('0.4.0-beta', null, false), true)
   assert.equal(isPrereleaseVersion('0.4.0-rc.1', undefined), true)
   // 正式版（含尾部补 0 段）
   assert.equal(isPrereleaseVersion('0.4.0', false), false)
   assert.equal(isPrereleaseVersion('0.4.0.0', false), false)
   // 第 4 段非 0 即 beta 序号，算预发布
-  assert.equal(isPrereleaseVersion('0.4.0.5', false), true)
-  assert.equal(isPrereleaseVersion('1.8.7.23', false), true)
+  assert.equal(isPrereleaseVersion('0.4.0.5', undefined), true)
+  assert.equal(isPrereleaseVersion('1.8.7.23', undefined), true)
   assert.equal(isPrereleaseVersion('0.4', undefined), false)
   // 无法解析且没有标记 → 不臆断
   assert.equal(isPrereleaseVersion('unknown', false), false)
@@ -130,7 +132,7 @@ test('四段版本号读 tag_name 与读归一后的 version 结论应一致', (
   assert.equal(isPrereleaseVersion(tagName, backendFlag), true)
   assert.equal(isPrereleaseVersion(normalized, backendFlag), true)
   // 若丢掉后端标记，两者就会分叉——这正是修复前的问题
-  assert.equal(isPrereleaseVersion(tagName, false), true)
+  assert.equal(isPrereleaseVersion(tagName, undefined), true)
   assert.equal(isPrereleaseVersion(normalized, false), false)
 })
 
@@ -142,7 +144,7 @@ test('四段版本号读 tag_name 与读归一后的 version 结论应一致', (
  */
 test('四种 beta 写法统一识别为预发布', () => {
   for (const version of ['1.8.5-pre.01', '1.9.7-beta.4', '1.8.7-beta1', '1.8.7.beta4']) {
-    assert.equal(isPrereleaseVersion(version, false), true, version)
+    assert.equal(isPrereleaseVersion(version, undefined), true, version)
   }
 })
 
@@ -267,7 +269,7 @@ test('同号 beta 低于正式版，下一个次版本的 beta 才是更新', ()
 test('versionDisplay 把 -beta.N 拆成 主干 + 数字序号', () => {
 
   for (const tag of ['v1.9.9-beta.2', '1.9.9-beta.2', '1.9.9.2']) {
-    const d = versionDisplay(tag, false, '测')
+    const d = versionDisplay(tag, true, '测')
     assert.equal(d.base, '1.9.9', tag)
     assert.equal(d.marker, '2', tag)
     assert.equal(d.markerIsNumeric, true, tag)
@@ -286,7 +288,7 @@ test('versionDisplay 对正式版不给标记', () => {
 test('versionDisplay 无数字序号时用文字标记提示测试版', () => {
 
   // 只有文字标识
-  const beta = versionDisplay('1.9.9-beta', false, '测')
+  const beta = versionDisplay('1.9.9-beta', true, '测')
   assert.equal(beta.base, '1.9.9')
   assert.equal(beta.markerIsNumeric, false)
   assert.ok(beta.marker)
@@ -300,5 +302,11 @@ test('versionDisplay 无数字序号时用文字标记提示测试版', () => {
 test('versionDisplay 主干去掉 v 前缀与第 4 段', () => {
 
   assert.equal(versionDisplay('v1.9.9.23', false, '测').base, '1.9.9')
-  assert.equal(versionDisplay('v1.9.9.23', false, '测').marker, '23')
+  assert.equal(versionDisplay('v1.9.9.23', true, '测').marker, '23')
+})
+
+test('转正式后所有后缀写法清除展示marker', () => {
+  for (const tag of ['v1.9.9-beta.2', '1.9.9.23', '1.9.9-fix']) {
+    assert.equal(versionDisplay(tag, false, '测').marker, null, tag)
+  }
 })

@@ -20,7 +20,7 @@ const owners = {
   operations: ['BepInExInstallResult', 'InstallConflict', 'OperationResult'],
   publish: ['PublishProvider', 'PublishCredentialConfig', 'MapPublishMetadata', 'PublishAsset', 'PublishAuthMode', 'PublishAuthPoll', 'PublishAuthState', 'PublishAuthorization', 'PublishDeleteReleaseRequest', 'PublishRelease', 'PublishRepository', 'PublishRepositoryList', 'PublishSaveRequest', 'PublishSessionCheck', 'PublishSessionOutcome', 'PublishTokens', 'PublishUploadProgress', 'PublishUploadRequest', 'PublishZipInspection'],
   relations: ['DependencySyncResult', 'RelationKind', 'ReleaseRelationOverride', 'RepositoryRelation'],
-  releases: ['ReleaseAsset', 'ReleaseInfo', 'UpdateStatus'],
+  releases: ['ModRepositoryReleaseSnapshot', 'ReleaseAsset', 'ReleaseInfo', 'UpdateStatus'],
   repositories: ['AssetRule', 'AssetRuleType', 'AvatarRequest', 'Channel', 'CommunityDiscovery', 'CommunityMapRepository', 'ImportPreview', 'Provider', 'RepositorySource', 'RepositorySourceImportResult', 'StagedReleaseCache'],
 }
 

@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn explicit_api_false_wins_over_beta_tag_and_legacy_cache() {
+    for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
+        let releases = parse_release_json(
+            &serde_json::json!([
+                {"tag_name": "v1.9.9-beta.2", "prerelease": false},
+                {"tag_name": "v1.9.9-beta.3"},
+                {"tag_name": "v1.9.9", "prerelease": true}
+            ]),
+            &provider,
+        )
+        .unwrap();
+        assert_eq!(releases[0].api_prerelease, Some(false));
+        assert!(!releases[0].prerelease);
+        assert_eq!(releases[1].api_prerelease, None);
+        assert!(releases[1].prerelease);
+        assert!(releases[2].prerelease);
+        let snapshot = project_mod_releases(releases, &Channel::Beta);
+        assert_eq!(
+            snapshot.release_prerelease_metadata.get("v1.9.9-beta.2"),
+            Some(&false)
+        );
+        assert!(
+            !snapshot
+                .cached_releases
+                .iter()
+                .any(|release| release.tag_name == "v1.9.9-beta.2")
+        );
+    }
+    let legacy: ReleaseInfo = serde_json::from_value(serde_json::json!({
+        "tag_name": "v1.9.9-beta", "version": null, "name": "", "body": "",
+        "published_at": null, "prerelease": false, "draft": false, "assets": []
+    }))
+    .unwrap();
+    assert_eq!(legacy.api_prerelease, None);
+    assert_eq!(filter_channel(vec![legacy], &Channel::Beta).len(), 1);
+}
+
+#[test]
 fn versions_and_channels_are_supported() {
     assert_eq!(
         parse_version("v1.2.3-beta").unwrap().to_string(),
@@ -15,6 +53,7 @@ fn versions_and_channels_are_supported() {
             name: String::new(),
             body: String::new(),
             published_at: None,
+            api_prerelease: None,
             prerelease: false,
             draft: false,
             assets: Vec::new(),
@@ -26,6 +65,7 @@ fn versions_and_channels_are_supported() {
             name: String::new(),
             body: String::new(),
             published_at: None,
+            api_prerelease: None,
             prerelease: true,
             draft: false,
             assets: Vec::new(),

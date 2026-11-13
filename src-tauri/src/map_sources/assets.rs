@@ -153,6 +153,7 @@ pub(crate) fn synthesize_releases(
                 // 不该跟着 body 一起流到界面上（它是 HTML 注释，但别指望渲染器）
                 body: crate::map_note::strip_note_block(&release.body),
                 published_at: release.published_at.clone(),
+                api_prerelease: Some(false),
                 // 渠道过滤已按作者声明跳过，这两个标记不能再参与判定
                 prerelease: false,
                 draft: false,

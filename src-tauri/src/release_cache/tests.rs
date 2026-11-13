@@ -108,6 +108,55 @@ async fn failure_is_not_cached() {
     assert_eq!(calls.load(Ordering::SeqCst), 2, "失败不能挡住下一次重试");
 }
 
+#[tokio::test]
+async fn failed_force_revokes_old_ttl_and_pass_hits_without_mutating_the_trusted_arc() {
+    for retry_pass in [None, Some("old-pass"), Some("failed-pass")] {
+        let cache = RepoReleaseCache::default();
+        let calls = AtomicUsize::new(0);
+        let key = "github:a:b";
+        let release = |api| {
+            serde_json::from_value(serde_json::json!({
+                "tag_name": "v1.0.0-beta", "name": "", "body": "",
+                "api_prerelease": api, "prerelease": api, "draft": false, "assets": []
+            }))
+            .unwrap()
+        };
+        let old = cache
+            .list(key.into(), Some("old-pass"), false, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![release(true)])
+            })
+            .await
+            .unwrap();
+        let failed = cache
+            .list(key.into(), Some("failed-pass"), true, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err("offline".into())
+            })
+            .await;
+        assert!(failed.is_err());
+        let retry = cache
+            .list(key.into(), retry_pass, false, || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![release(false)])
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "retry pass: {retry_pass:?}"
+        );
+        assert!(!Arc::ptr_eq(&old, &retry));
+        assert_eq!(retry[0].api_prerelease, Some(false));
+        assert_eq!(
+            old[0].api_prerelease,
+            Some(true),
+            "existing consumers retain their snapshot"
+        );
+    }
+}
+
 #[test]
 fn repository_cache_key_normalizes_case() {
     assert_eq!(

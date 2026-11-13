@@ -245,7 +245,7 @@ function matchingRelease(
     if (release.draft) return false
     const version = release.tag_name || release.version
     // 发布线判定：默认只要正式版；显式要求预发布时才放宽
-    const prerelease = isPrereleaseVersion(version, release.prerelease)
+    const prerelease = isPrereleaseVersion(version, release.apiPrerelease, release.prerelease)
     if (wantPrerelease === true) {
       if (!prerelease) return false
     } else if (prerelease) {
@@ -397,7 +397,7 @@ function compatibleSourceFor(
     if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, relation.guid)) continue
     if (repo.download_mode !== 'release') continue
     const release = (repo.cached_releases ?? []).find((entry) => {
-      if (entry.draft || entry.prerelease) return false
+      if (entry.draft || isPrereleaseVersion(entry.tag_name || entry.version, entry.apiPrerelease, entry.prerelease)) return false
       const version = entry.tag_name || entry.version
       // 只要不满足版本要求就可用
       return !matchesVersionSpec(relation.version, version)
@@ -456,7 +456,7 @@ function publishesReleaseLine(repo: ModRepository, line: boolean): boolean | und
   const releases = (repo.cached_releases ?? []).filter((entry) => !entry.draft)
   if (releases.length) {
     return releases.some((entry) =>
-      isPrereleaseVersion(entry.tag_name || entry.version, entry.prerelease) === line)
+      isPrereleaseVersion(entry.tag_name || entry.version, entry.apiPrerelease, entry.prerelease) === line)
   }
   if (repo.channel === 'beta') return line
   if (repo.channel === 'stable') return !line

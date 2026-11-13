@@ -96,7 +96,7 @@ pub struct InstalledMod {
     /// 安装时的单语分组名（快照缺失时兜底）。
     #[serde(default)]
     pub group: String,
-    /// 安装的 Release 是否为预发布版本（来自安装清单快照）。
+    /// 已解析的预发布结论：精确平台 tag 元数据优先，其次安装清单与版本后缀。
     #[serde(default)]
     pub prerelease: bool,
     /// 依赖快照（安装时写入安装清单，刷新仓库后由 `sync_dependency_snapshots` 同步为线上声明）。

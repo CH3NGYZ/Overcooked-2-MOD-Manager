@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::models::{ModDownloadMode, ReleaseInfo};
+use crate::models::{ModDownloadMode, ModRepositoryReleaseSnapshot, ReleaseInfo};
 use crate::release_cache::freshness::RELEASE_CACHE_TTL_MS;
 use crate::release_cache::freshness::cache_is_fresh;
 use crate::release_cache::freshness::now_millis;
@@ -15,7 +15,7 @@ pub async fn refresh_mod_repository(
     state: State<'_, AppState>,
     repository_id: String,
     force: Option<bool>,
-) -> Result<Vec<ReleaseInfo>, String> {
+) -> Result<ModRepositoryReleaseSnapshot, String> {
     let snapshot = state.config.load_or_default();
     let policy = snapshot
         .network_policy
@@ -70,14 +70,20 @@ pub async fn refresh_mod_repository(
          * `last_error` 不清：上次失败留下的错误要保留到下一次真正成功为止，
          * 否则界面会出现「有缓存列表但没有错误」的假象，用户以为已经恢复。
          */
-        if !force && cache_is_fresh(repo.releases_cached_at, now_millis(), RELEASE_CACHE_TTL_MS) {
+        if !force
+            && repo.last_error.is_none()
+            && cache_is_fresh(repo.releases_cached_at, now_millis(), RELEASE_CACHE_TTL_MS)
+        {
             log::info!(
                 "仓库 Release 命中缓存：仓库={}，数量={}，缓存时间={:?}",
                 repo.name,
                 repo.cached_releases.len(),
                 repo.releases_cached_at
             );
-            return Ok(repo.cached_releases.clone());
+            return Ok(ModRepositoryReleaseSnapshot {
+                cached_releases: repo.cached_releases.clone(),
+                release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
+            });
         }
 
         let client =
@@ -107,7 +113,9 @@ pub async fn refresh_mod_repository(
                 .map_err(|error| error.to_string())
             })
             .await
-            .map(|snapshot| releases::filter_channel(snapshot.as_ref().clone(), &repo.channel));
+            .map(|snapshot| {
+                releases::project_mod_releases(snapshot.as_ref().clone(), &repo.channel)
+            });
 
         let _cache_guard = state.repository_cache.lock().await;
         let _operation_guard = state
@@ -132,8 +140,10 @@ pub async fn refresh_mod_repository(
 
         latest_repo.etag = None;
         match fetched {
-            Ok(filtered) => {
-                latest_repo.cached_releases = filtered.clone();
+            Ok(snapshot) => {
+                latest_repo.cached_releases = snapshot.cached_releases.clone();
+                latest_repo.release_prerelease_metadata =
+                    snapshot.release_prerelease_metadata.clone();
                 // 只有真正拿到结果才刷新时间戳：失败后必须让下一次请求重新打 API
                 latest_repo.releases_cached_at = Some(now_millis());
                 latest_repo.last_error = None;
@@ -145,15 +155,14 @@ pub async fn refresh_mod_repository(
                 log::info!(
                     "仓库 Release 刷新完成：仓库={}，数量={}",
                     repo.name,
-                    filtered.len()
+                    snapshot.cached_releases.len()
                 );
-                Ok(filtered)
+                Ok(snapshot)
             }
             Err(error) => {
                 log::error!("仓库 Release 刷新失败：仓库={}，原因={}", repo.name, error);
-                latest_repo.cached_releases.clear();
-                // 清掉时间戳，避免「空列表 + 新鲜时间」被误判成命中缓存
-                latest_repo.releases_cached_at = None;
+                // Keep the last complete successful snapshot and timestamp.
+                // last_error prevents a failed refresh from becoming a cache hit.
                 latest_repo.last_error = Some(error.clone());
                 state
                     .config

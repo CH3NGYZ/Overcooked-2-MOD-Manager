@@ -57,9 +57,15 @@ export interface ReleaseInfo {
   name_i18n?: Record<string, string>
   body: string
   published_at?: string
+  /** Explicit platform verdict; absent/null only for legacy metadata. */
+  apiPrerelease?: boolean | null
   prerelease: boolean
   draft: boolean
   assets: ReleaseAsset[]
+}
+export interface ModRepositoryReleaseSnapshot {
+  cached_releases: ReleaseInfo[]
+  release_prerelease_metadata: Record<string, boolean>
 }
 /**
  * MOD 与另一个插件之间的关系种类。
@@ -161,6 +167,7 @@ export interface ModRepository {
   pinned_version?: string | null
   ignored_version?: string
   cached_releases: ReleaseInfo[]
+  release_prerelease_metadata?: Record<string, boolean>
   last_error?: string
 }
 export interface PublicConfig {

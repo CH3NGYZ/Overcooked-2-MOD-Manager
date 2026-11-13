@@ -170,3 +170,34 @@ fn lower_raw_copy_keeps_its_installation_source_and_never_reports_a_release_upda
     assert_eq!(statuses[1].local_version, None);
     assert_eq!(statuses[1].state, "unknown");
 }
+
+#[test]
+fn bound_channel_uses_platform_tristate_before_legacy_flag_and_suffix() {
+    for (api, legacy, tag, expected_beta) in [
+        (Some(false), true, "v99.0.0-beta", false),
+        (Some(true), false, "v99.0.0", true),
+        (None, true, "v99.0.0", true),
+        (None, false, "v99.0.0-beta", true),
+        (None, false, "v99.0.0", false),
+    ] {
+        let mut repo = repository("release", ModDownloadMode::Release);
+        repo.cached_releases[0].api_prerelease = api;
+        repo.cached_releases[0].prerelease = legacy;
+        repo.cached_releases[0].tag_name = tag.into();
+        for channel in [Channel::All, Channel::Stable, Channel::Beta] {
+            let mut binding = ModRepositoryBinding::from_release(&repo, "v1.0.0").unwrap();
+            binding.channel = channel;
+            let expected = match binding.channel {
+                Channel::All => true,
+                Channel::Stable => !expected_beta,
+                Channel::Beta => expected_beta,
+            };
+            assert_eq!(
+                bound_release(&repo, &binding).is_some(),
+                expected,
+                "api={api:?}, legacy={legacy}, tag={tag}, channel={:?}",
+                binding.channel
+            );
+        }
+    }
+}

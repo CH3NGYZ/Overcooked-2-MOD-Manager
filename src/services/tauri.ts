@@ -30,6 +30,7 @@ import type {
   Provider,
   PublicConfig,
   ReleaseInfo,
+  ModRepositoryReleaseSnapshot,
   ModRepositoryInstallOutcome,
   RepositoryReadme,
   RepositorySourceImportResult,
@@ -134,7 +135,7 @@ export const api = {
    * 卡片、分组、源级与检查更新入口均复用五分钟快照。
    */
   refreshModRepository: (repositoryId: string, force = false) =>
-    invoke<ReleaseInfo[]>('refresh_mod_repository', { repositoryId, force }),
+    invoke<ModRepositoryReleaseSnapshot>('refresh_mod_repository', { repositoryId, force }),
   /**
    * 把线上依赖声明同步进本地清单（MOD 安装清单 + 地图依赖清单）。
    *

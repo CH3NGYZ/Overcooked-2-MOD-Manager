@@ -169,6 +169,9 @@ pub struct ModRepositoryConfig {
     pub etag: Option<String>,
     #[serde(default)]
     pub cached_releases: Vec<ReleaseInfo>,
+    /// Complete successful API tag verdicts, captured before channel filtering.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub release_prerelease_metadata: BTreeMap<String, bool>,
     /// `cached_releases` 的获取时间（Unix 毫秒）。
     ///
     /// 用来判断缓存是否还在有效期内，避免每次打开页面或批量刷新都把整棵
@@ -182,6 +185,8 @@ pub struct ModRepositoryConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModRepositoryExport {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub release_prerelease_metadata: BTreeMap<String, bool>,
     #[serde(rename = "type", default)]
     pub kind: RepositoryKind,
     #[serde(default, skip_serializing_if = "NetworkPlanSelection::is_empty")]

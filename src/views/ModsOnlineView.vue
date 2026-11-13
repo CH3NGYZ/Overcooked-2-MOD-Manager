@@ -514,8 +514,8 @@ function latest(repo: ModRepository) {
  * 版本号一律优先取 `tag_name`：后端的 `version` 字段是 semver 归一结果
  * （`1.8.7.23` → `1.8.7`），用它判断会丢掉第 4 位；`tag_name` 才是原始写法。
  */
-function releaseIsPrerelease(release: { prerelease: boolean; version?: string | null; tag_name?: string }) {
-  return isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
+function releaseIsPrerelease(release: { prerelease: boolean; apiPrerelease?: boolean | null; version?: string | null; tag_name?: string }) {
+  return isPrereleaseVersion(release.tag_name || release.version, release.apiPrerelease, release.prerelease)
 }
 
 /**

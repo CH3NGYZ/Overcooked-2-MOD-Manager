@@ -135,6 +135,12 @@ test('后端已带 prerelease 标签时不重复插入', () => {
   assert.equal(tags[0].key, 'prerelease')
 })
 
+test('明确转正式清除单卡与包头的历史预发布标签和后缀推断', () => {
+  const installed = mod({ version: '1.0.0-beta.1', prerelease: false, labels: ['prerelease', 'latest'] })
+  assert.equal(installedModTags(installed).some(tag => tag.key === 'prerelease'), false)
+  assert.equal(packageStatuses([installed, { ...installed, dll_file: 'b.dll' }]).some(tag => tag.key === 'prerelease'), false)
+})
+
 test('版本结论类标签互斥：替换后不残留旧结论', () => {
   // 之前只过滤 latest/update_available，会留下 repository_unavailable，
   // 于是出现「最新版 + 仓库不可用」这种矛盾组合。

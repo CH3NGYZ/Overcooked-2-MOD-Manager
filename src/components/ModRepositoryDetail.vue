@@ -191,7 +191,7 @@ const selectedReleaseIsPrerelease = computed(() => {
   const release = selectedRelease.value
   if (!release) return false
   // 传 tag_name：version 是后端归一后的三段，第 4 段 beta 序号已经丢了
-  return isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
+  return isPrereleaseVersion(release.tag_name || release.version, release.apiPrerelease, release.prerelease)
 })
 
 async function openUrl(url: string) {

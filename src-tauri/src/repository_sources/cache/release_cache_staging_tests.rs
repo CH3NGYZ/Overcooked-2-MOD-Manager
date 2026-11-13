@@ -70,3 +70,26 @@ fn empty_caches_are_not_staged() {
         "空缓存不该搬进暂存表，否则判断变复杂而且没有意义"
     );
 }
+
+#[test]
+fn empty_beta_channel_keeps_platform_verdicts_across_staging_and_toml() {
+    let mut config = crate::config::default_config();
+    let mut entry = repo("promoted", "src");
+    entry.channel = crate::models::Channel::Beta;
+    entry
+        .release_prerelease_metadata
+        .insert("v1.0.0-beta".into(), false);
+    entry.releases_cached_at = Some(123);
+    config.repositories = vec![entry];
+    clear_source_cache(&mut config, &["src".to_string()]);
+    let persisted = toml::to_string(&config).unwrap();
+    let restored: crate::models::AppConfig = toml::from_str(&persisted).unwrap();
+    let staged = &restored.staged_release_cache["promoted"];
+    assert!(staged.releases.is_empty());
+    assert_eq!(
+        staged.release_prerelease_metadata.get("v1.0.0-beta"),
+        Some(&false)
+    );
+    assert_eq!(staged.cached_at, Some(123));
+    assert_eq!(staged.repository_key.as_deref(), Some("Github:u:r"));
+}

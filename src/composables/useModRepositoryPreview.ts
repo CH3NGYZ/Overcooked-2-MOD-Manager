@@ -79,7 +79,7 @@ export function useModRepositoryPreview(openPreview: (preview: ModPreview) => vo
      * 而卡片那边看到的是预发布，两处结论不一致。
      */
     const prerelease = release
-      ? isPrereleaseVersion(release.tag_name || release.version, release.prerelease)
+      ? isPrereleaseVersion(release.tag_name || release.version, release.apiPrerelease, release.prerelease)
       : false
     /*
      * 预发布确认必须排在关系检查**之前**。

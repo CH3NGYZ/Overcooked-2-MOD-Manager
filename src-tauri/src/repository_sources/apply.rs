@@ -312,6 +312,7 @@ pub(crate) async fn import_repository_source_into_config(
                  */
                 if let Some(staged) = config.staged_release_cache.remove(previous_id) {
                     repo.cached_releases = staged.releases;
+                    repo.release_prerelease_metadata = staged.release_prerelease_metadata;
                     repo.releases_cached_at = staged.cached_at;
                     repo.last_error = staged.last_error;
                 }
@@ -384,14 +385,35 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
         let binding_missing = manifest.repository_binding.is_none()
             && !manifest.release_tag.trim().is_empty()
             && repository.download_mode == crate::models::ModDownloadMode::Release;
-        // 旧清单没记预发布标记：从缓存的 Release 里按 tag 找回（找得到才改）
-        let prerelease_missing = !manifest.prerelease
-            && repository
-                .cached_releases
-                .iter()
-                .find(|release| release.tag_name == manifest.release_tag)
+        let binding = manifest
+            .repository_binding
+            .clone()
+            .or_else(|| ModRepositoryBinding::from_release(repository, &manifest.release_tag));
+        let legacy_prerelease = manifest.prerelease
+            || binding
+                .as_ref()
+                .filter(|binding| {
+                    binding.matches_identity(repository) && binding.tag == manifest.release_tag
+                })
+                .and_then(|_| {
+                    repository
+                        .cached_releases
+                        .iter()
+                        .find(|release| release.tag_name == manifest.release_tag)
+                })
                 .is_some_and(|release| release.prerelease);
-        if !group_changed && !name_changed && !binding_missing && !prerelease_missing {
+        // The same exact-identity resolver used by scan/rebind can both fill a
+        // legacy marker and clear it after an explicit platform false verdict.
+        let prerelease = binding.as_ref().map_or(manifest.prerelease, |binding| {
+            crate::mods::installed_prerelease(
+                config,
+                Some(binding),
+                legacy_prerelease,
+                Some(&binding.tag),
+            )
+        });
+        let prerelease_changed = prerelease != manifest.prerelease;
+        if !group_changed && !name_changed && !binding_missing && !prerelease_changed {
             continue;
         }
 
@@ -421,12 +443,13 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
                 manifest.release_tag
             );
         }
-        if prerelease_missing {
-            manifest.prerelease = true;
+        if prerelease_changed {
+            manifest.prerelease = prerelease;
             log::info!(
-                "补齐安装清单预发布标记：仓库={}，标签={}",
+                "更新安装清单预发布标记：仓库={}，标签={}，预发布={}",
                 manifest.repository_id,
-                manifest.release_tag
+                manifest.release_tag,
+                prerelease
             );
         }
         if let Err(error) = archive::write_manifest(&manifest_dir, &manifest) {
@@ -446,3 +469,6 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
 
 #[cfg(test)]
 mod repository_source_refresh_tests;
+
+#[cfg(test)]
+mod manifest_prerelease_tests;

@@ -71,16 +71,16 @@ export async function runSourceReleaseRefresh(options: {
  *
  * 两个域只提供这三个回调，其余（标志、并发、结果收集）都在这里。
  */
-export interface ReleaseFetchSpec<T extends ReleaseItem> {
+export interface ReleaseFetchSpec<T extends ReleaseItem, R = ReleaseInfo[]> {
   /** 请求这一条的最新 Release；抛错即按失败处理（两个 IPC 命令本身就是抛错的）。 */
-  fetch: (item: T) => Promise<ReleaseInfo[]>
+  fetch: (item: T) => Promise<R>
   /**
    * 成功写回：把结果落到这个条目自己的缓存上。
    *
    * 必须只改这一个条目（其余条目沿用原对象）：整批刷新期间每个条目都会
    * 走一遍这里，整体替换快照会让所有卡片跟着抖一次。
    */
-  apply?: (item: T, releases: ReleaseInfo[]) => void
+  apply?: (item: T, releases: R) => void
   /**
    * 失败写回：把这个条目标成出错，让卡片立刻显示「刷新失败」。
    *
@@ -97,7 +97,7 @@ export interface ReleaseFetchSpec<T extends ReleaseItem> {
   errorText: (item: T, reason: unknown) => string
 }
 
-export interface ReleaseBatchOptions<T extends ReleaseItem> extends ReleaseFetchSpec<T> {
+export interface ReleaseBatchOptions<T extends ReleaseItem, R = ReleaseInfo[]> extends ReleaseFetchSpec<T, R> {
   /** 共享状态机（两个域各一个实例，同一种实现）。 */
   state: RefreshState
   items: readonly T[]
@@ -117,10 +117,10 @@ export interface ReleaseBatchOptions<T extends ReleaseItem> extends ReleaseFetch
  * 已经在刷的直接返回 `null`（当作成功但不重复发请求）——
  * 两个页面同时点同一个仓库时，第二下不该产生第二个请求。
  */
-export async function refreshReleaseItem<T extends ReleaseItem>(
+export async function refreshReleaseItem<T extends ReleaseItem, R = ReleaseInfo[]>(
   state: RefreshState,
   item: T,
-  spec: ReleaseFetchSpec<T>,
+  spec: ReleaseFetchSpec<T, R>,
 ): Promise<string | null> {
   if (!item.id || state.refreshing.value[item.id]) return null
   state.setItemFlag(item.id, true)
@@ -177,8 +177,8 @@ export function prioritizeByIds<T extends ReleaseItem>(
  * 去重、跳过正在刷的、并发上限、结果统计全部由状态机负责；
  * 这里只把「域的顺序偏好」和「一个条目怎么刷」交进去。
  */
-export function runReleaseBatch<T extends ReleaseItem>(
-  options: ReleaseBatchOptions<T>,
+export function runReleaseBatch<T extends ReleaseItem, R = ReleaseInfo[]>(
+  options: ReleaseBatchOptions<T, R>,
 ): Promise<RefreshOutcome> {
   const items = options.prioritize ? options.prioritize(options.items) : options.items
   return options.state.runBatch({

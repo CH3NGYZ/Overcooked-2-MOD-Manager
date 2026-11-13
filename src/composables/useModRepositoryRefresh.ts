@@ -13,7 +13,7 @@ import { demoActive, isDemoId } from '../tutorial/demo'
 import {
   modRepositoryIsAvailable, sourceMatchesRegion,
 } from '../repositoryAvailability'
-import type { ModRepository, RepositorySource } from '../types'
+import type { ModRepository, ModRepositoryReleaseSnapshot, RepositorySource } from '../types'
 
 /**
  * 仓库刷新引擎（模块级单例）。
@@ -157,31 +157,27 @@ function store() {
  * Release 结果逐条写回，版本判定直接使用本地扫描快照，不重扫 DLL。
  * 只有右下角整批刷新显式传 force；其它入口复用五分钟缓存。
  */
-function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<ModRepository> {
+function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchSpec<ModRepository, ModRepositoryReleaseSnapshot> {
   const force = options.force ?? false
   const skipped = new Set<string>()
   return {
     fetch: (item) => {
       if (demoActive.value || isDemoId(item.id)) {
         skipped.add(item.id)
-        return Promise.resolve(item.cached_releases ?? [])
+        return Promise.resolve({ cached_releases: item.cached_releases ?? [], release_prerelease_metadata: item.release_prerelease_metadata ?? {} })
       }
       return api.refreshModRepository(item.id, force)
     },
-    apply: (item, releases) => {
+    apply: (item, snapshot) => {
       if (skipped.has(item.id)) return
       patchRepository(item.id, {
-        cached_releases: releases,
+        ...snapshot,
         last_error: undefined,
       })
     },
-    /*
-     * 失败写回与后端**同一条规则**（`refresh_mod_repository` 的 Err 分支）：
-     * 缓存清空 + 置 `last_error`。不这么写的话，前端会保留旧 Release 并显示
-     * 「最新版」，直到整批结束的后端重扫才纠正。
-     */
+    // Failure preserves the previous successful platform verdicts. last_error
+    // still controls the unavailable conclusion and prevents fresh cache hits.
     fail: (item, message) => patchRepository(item.id, {
-      cached_releases: [],
       last_error: message,
     }),
     // 原因来自后端，可能是 tag —— 拼进展示串之前必须翻译
@@ -240,7 +236,7 @@ async function runRepositoryBatch(
    * 已安装优先让用户自己装的仓库先出结论。
    */
   const refreshable = repos.filter((repo) => !isDemoId(repo.id) && repo.download_mode !== 'repository_file')
-  return runReleaseBatch<ModRepository>({
+  return runReleaseBatch<ModRepository, ModRepositoryReleaseSnapshot>({
     state,
     items: refreshable,
     ...repositoryReleaseSpec({ force: options.force }),

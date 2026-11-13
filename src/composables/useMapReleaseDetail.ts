@@ -54,7 +54,7 @@ export function useMapReleaseDetail(options: UseMapReleaseDetailOptions) {
   const releaseTag = computed(() => release.value?.tag_name || release.value?.name || '—')
   const prerelease = computed(() =>
     release.value
-      ? isPrereleaseVersion(release.value.tag_name || release.value.version)
+      ? isPrereleaseVersion(release.value.tag_name || release.value.version, release.value.apiPrerelease, release.value.prerelease)
       : false,
   )
   const links = computed(() => {

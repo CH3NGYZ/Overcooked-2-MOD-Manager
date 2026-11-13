@@ -48,6 +48,7 @@ fn release(tag: &str, assets: &[&str]) -> ReleaseInfo {
         name: "地图合集".to_string(),
         body: "更新说明".to_string(),
         published_at: Some("2026-01-01T00:00:00Z".to_string()),
+        api_prerelease: None,
         prerelease: true,
         draft: false,
         assets: assets

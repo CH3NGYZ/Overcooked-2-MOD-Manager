@@ -188,6 +188,7 @@ fn refreshing_the_tree_keeps_release_cache_by_stable_id() {
         name: String::new(),
         body: String::new(),
         published_at: None,
+        api_prerelease: None,
         prerelease: false,
         draft: false,
         assets: Vec::new(),

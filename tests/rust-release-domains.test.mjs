@@ -67,7 +67,9 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
     assert.match(read(file), /!crate::community::is_source_archive\(\s*&repo.provider,\s*repo.source_id.as_deref\(\),\s*&release\.tag_name,\s*&asset\.name,?\s*\)/)
   }
   const projection = read('projection.rs')
-  assert.match(projection, /\|\| is_prerelease_version\(&tag\)/)
+  assert.match(projection, /let api_prerelease = item\.get\("prerelease"\)\.and_then\(Value::as_bool\)/)
+  assert.match(projection, /resolve_prerelease\(api_prerelease, false, Some\(&tag\)\)/)
+  assert.match(read('version.rs'), /api\.unwrap_or_else\(\|\| legacy \|\| version\.is_some_and\(is_prerelease_version\)\)/)
   assert.match(projection, /version: parse_version\(&tag\)\.map/)
   assert.match(projection, /a\.version\.as_deref\(\)\.and_then\(parse_version\)/)
   assert.match(read('version.rs'), /Some\(SegmentVersion::parse\(remote\)\?\.cmp\(&SegmentVersion::parse\(local\)\?\)\)/)

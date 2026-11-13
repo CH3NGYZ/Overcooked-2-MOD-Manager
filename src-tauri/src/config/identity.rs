@@ -25,6 +25,7 @@ pub(crate) fn repository_address_key(
 
 pub(crate) fn repo_key(repo: &ModRepositoryConfig) -> String {
     let export = ModRepositoryExport {
+        release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
         network_plan: repo.network_plan.clone(),
         kind: repo.kind,
         name: String::new(),
@@ -144,6 +145,7 @@ pub(crate) fn mod_repository_from_export(
         ignored_version: None,
         etag: None,
         cached_releases: Vec::new(),
+        release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
         releases_cached_at: None,
         last_error: None,
     }

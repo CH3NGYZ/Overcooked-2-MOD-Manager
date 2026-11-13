@@ -93,7 +93,19 @@ impl RepoReleaseCache {
             log::debug!("Release 列表命中仓库缓存：仓库={}", key);
             return Ok(hit);
         }
-        let releases = fetch().await?;
+        let releases = match fetch().await {
+            Ok(releases) => releases,
+            Err(error) => {
+                // A failed forced refresh must also revoke the previous TTL/pass
+                // hit. Persisted consumers keep their last trusted snapshot, but
+                // the next request must actually retry the API.
+                self.entries
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&key);
+                return Err(error);
+            }
+        };
         let shared = Arc::new(releases);
         self.store(&key, pass_id.map(str::to_string), shared.clone());
         Ok(shared)

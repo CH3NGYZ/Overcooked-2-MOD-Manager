@@ -24,6 +24,55 @@ fn bundle_round_trip_is_toml() {
 }
 
 #[test]
+fn platform_prerelease_verdicts_roundtrip_without_changing_repository_identity() {
+    let service = ConfigService {
+        root: std::env::temp_dir(),
+        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        proxies: Default::default(),
+    };
+    let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
+    let template = crate::repository_sources::parse_document(
+        REGION_REPOSITORY,
+        &location,
+        &Default::default(),
+    )
+    .unwrap()
+    .repositories
+    .remove(0);
+    let mut repository = mod_repository_from_export(&template, "promoted".into(), false);
+    let identity = crate::config::repo_key(&repository);
+    repository
+        .release_prerelease_metadata
+        .insert("v1.0.0-beta".into(), false);
+    assert_eq!(crate::config::repo_key(&repository), identity);
+    let mut config = default_config();
+    config.repositories = vec![repository];
+    let bundle = service
+        .validate_bundle(&service.export_bundle(&config, None).unwrap())
+        .unwrap();
+    let mut imported = default_config();
+    service.import_bundle(&mut imported, &bundle, "overwrite");
+    assert_eq!(
+        imported.repositories[0]
+            .release_prerelease_metadata
+            .get("v1.0.0-beta"),
+        Some(&false)
+    );
+    config.repositories[0]
+        .release_prerelease_metadata
+        .insert("v1.0.0-beta".into(), true);
+    service.import_bundle(&mut config, &bundle, "overwrite");
+    assert_eq!(config.repositories[0].id, "promoted");
+    assert_eq!(
+        config.repositories[0]
+            .release_prerelease_metadata
+            .get("v1.0.0-beta"),
+        Some(&true),
+        "re-declared sources cannot overwrite locally fetched metadata"
+    );
+}
+
+#[test]
 fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sources() {
     let service = ConfigService {
         root: std::env::temp_dir(),

@@ -180,15 +180,11 @@ export function replaceVersionConclusion(
 
 export function installedModTags(mod: InstalledMod): StatusTag[] {
   const labels: string[] = mod.labels?.length ? mod.labels : [mod.status]
-  const tags = labels.map((label: InstalledModStatusLabel | string) => {
+  const prerelease = isPrereleaseVersion(localVersion(mod), mod.prerelease)
+  const tags = labels.filter(label => label !== 'prerelease' || prerelease).map((label: InstalledModStatusLabel | string) => {
     const meta = STATUS_META[label]
     return { key: label, text: meta?.text ?? label, tone: meta?.tone ?? 'muted' }
   })
-  /*
-   * 预发布判定取「元数据标记」或「版本号带 - 后缀」：
-   * 作者没勾 prerelease 但版本叫 0.4.0-beta 时，同样要提示。
-   */
-  const prerelease = isPrereleaseVersion(localVersion(mod), mod.prerelease)
   if (prerelease && !tags.some((tag) => tag.key === 'prerelease')) {
     const meta = STATUS_META.prerelease
     tags.unshift({ key: 'prerelease', text: meta.text, tone: meta.tone })

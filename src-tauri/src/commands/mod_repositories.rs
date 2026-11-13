@@ -298,6 +298,7 @@ pub fn save_mod_repository(
         ignored_version: None,
         etag: None,
         cached_releases: Vec::new(),
+        release_prerelease_metadata: Default::default(),
         releases_cached_at: None,
         last_error: None,
     };
@@ -308,6 +309,13 @@ pub fn save_mod_repository(
         .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?
         .validate_selection(&item.provider, item.kind, &item.network_plan)?;
     if let Some(existing) = config.repositories.iter_mut().find(|repo| repo.id == id) {
+        if item.provider == existing.provider
+            && item.username.eq_ignore_ascii_case(&existing.username)
+            && item.repository.eq_ignore_ascii_case(&existing.repository)
+            && item.download_mode == existing.download_mode
+        {
+            item.release_prerelease_metadata = existing.release_prerelease_metadata.clone();
+        }
         let old_github = existing.github_token.clone();
         let old_gitee = existing.gitee_token.clone();
         item.builtin = existing.builtin;

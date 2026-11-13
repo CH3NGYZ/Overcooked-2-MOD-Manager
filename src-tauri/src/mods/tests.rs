@@ -37,6 +37,7 @@ mod binding;
 mod duplicates;
 mod metadata;
 mod paths;
+mod prerelease;
 mod relations;
 mod scan_binding;
 mod scan_metadata;

@@ -100,11 +100,16 @@ pub(super) fn bound_release<'a>(
         return None;
     }
     repo.cached_releases.iter().find(|release| {
+        let prerelease = crate::releases::resolve_prerelease(
+            release.api_prerelease,
+            release.prerelease,
+            Some(&release.tag_name),
+        );
         !release.draft
             && match binding.channel {
                 Channel::All => true,
-                Channel::Stable => !release.prerelease,
-                Channel::Beta => release.prerelease,
+                Channel::Stable => !prerelease,
+                Channel::Beta => prerelease,
             }
     })
 }

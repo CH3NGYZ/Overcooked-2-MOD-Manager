@@ -296,7 +296,7 @@ fn is_valid_identifier_sequence(value: &str) -> bool {
 
 /// 版本号本身是否带预发布标识（`-beta`、`-rc.1` 等）。
 ///
-/// 与 Release 元数据里的 `prerelease` 标记是**或**的关系：作者没勾标记，
+/// Legacy fallback when platform metadata is unavailable: 作者没勾标记，
 /// 但版本叫 `0.4.0-beta`、`0.4.0.5-beta` 时同样按预发布对待。
 ///
 /// 四段版本按 semver 的 beta 序号处理：`1.8.7.23` ≡ `1.8.7-beta.23`，
@@ -304,6 +304,12 @@ fn is_valid_identifier_sequence(value: &str) -> bool {
 /// 渠道筛选和界面提示里会得到三种答案。
 pub fn is_prerelease_version(version: &str) -> bool {
     SegmentVersion::parse(version).is_some_and(|parsed| !parsed.prerelease.is_empty())
+}
+
+/// Explicit platform metadata wins, including false; legacy snapshots and full
+/// version suffixes are consulted only when that verdict is unknown.
+pub fn resolve_prerelease(api: Option<bool>, legacy: bool, version: Option<&str>) -> bool {
+    api.unwrap_or_else(|| legacy || version.is_some_and(is_prerelease_version))
 }
 
 #[cfg(test)]

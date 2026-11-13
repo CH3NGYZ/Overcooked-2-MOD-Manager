@@ -99,11 +99,9 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
 /**
  * 是否预发布版本。
  *
- * 两个来源取**或**：
- *   1. 后端算好的 `prerelease` 标记 —— 这是权威值，为真就一定按预发布处理，
- *      与前端如何显示版本号无关；
- *   2. 版本号本身是预发布（四段 beta 序号或 `-` 后缀）—— 仅作兜底，
- *      用于旧缓存里没有后端算过标记的 Release。
+ * 明确的平台标记或后端已解析结论优先（包括 false）；仅未知时，
+ * 才读取旧快照标记和完整版本后缀。Release 调用传 apiPrerelease 和旧 prerelease，
+ * InstalledMod 调用传后端已经按精确绑定解析好的 prerelease。
  *
  * 规则本身只在后端 `releases::is_prerelease_version` 实现一次（四段 =
  * beta 序号、`-` 后缀 = 预发布），前端这里只是同一套规则的镜像，
@@ -116,8 +114,10 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
 export function isPrereleaseVersion(
   version: string | null | undefined,
   flag?: boolean | null,
+  legacyFlag?: boolean | null,
 ): boolean {
-  if (flag) return true
+  if (typeof flag === 'boolean') return flag
+  if (legacyFlag) return true
   const parsed = parseVersion(version)
   return !!parsed && parsed.prerelease.length > 0
 }
@@ -219,6 +219,7 @@ export function versionDisplay(
 ): VersionDisplay {
   // 主干一律用 stripPrerelease 归一：去 v 前缀、去后缀、丢第 4 段序号
   const base = value ? stripPrerelease(value) : ''
+  if (!isPrereleaseVersion(value, prerelease)) return { base: base || '—', marker: null, markerIsNumeric: false }
   if (!value) return { base: base || '—', marker: prerelease ? fallbackMarker : null, markerIsNumeric: false }
 
   const parsed = parseVersion(value)

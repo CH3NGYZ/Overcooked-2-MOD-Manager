@@ -170,7 +170,7 @@ test('a queued real Release batch stops issuing IPC after tutorial starts', asyn
   demo.startTutorialDemo()
   resetCalls()
   try {
-    first.resolve([])
+    first.resolve({ cached_releases: [], release_prerelease_metadata: {} })
     second.resolve([])
     await Promise.all([repoBatch, mapBatch])
     await tick()

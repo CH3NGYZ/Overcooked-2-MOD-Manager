@@ -4,6 +4,59 @@ use crate::models::ModDownloadMode;
 use crate::models::ModRepositoryConfig;
 use std::collections::HashMap;
 
+/// Only an exact installed Release identity can correct an installation-time
+/// snapshot. Never infer this from the latest tag, DLL GUID or another source.
+pub(crate) fn installed_prerelease(
+    config: &crate::models::AppConfig,
+    binding: Option<&crate::models::ModRepositoryBinding>,
+    legacy: bool,
+    version: Option<&str>,
+) -> bool {
+    let api = binding
+        .filter(|binding| binding.is_valid())
+        .and_then(|binding| {
+            let key = crate::releases::repository_cache_key(
+                binding.provider.clone(),
+                &binding.owner,
+                &binding.repository,
+            );
+            let current = config
+                .repositories
+                .iter()
+                .filter(|repo| {
+                    repo.download_mode == ModDownloadMode::Release && binding.matches_identity(repo)
+                })
+                .filter_map(|repo| {
+                    repo.release_prerelease_metadata
+                        .get(&binding.tag)
+                        .copied()
+                        .or_else(|| {
+                            repo.cached_releases
+                                .iter()
+                                .find(|release| release.tag_name == binding.tag)
+                                .and_then(|release| release.api_prerelease)
+                        })
+                        .map(|value| (repo.releases_cached_at, value))
+                });
+            let staged = config
+                .staged_release_cache
+                .values()
+                .filter(|snapshot| snapshot.repository_key.as_deref() == Some(key.as_str()))
+                .filter_map(|snapshot| {
+                    snapshot
+                        .release_prerelease_metadata
+                        .get(&binding.tag)
+                        .copied()
+                        .map(|value| (snapshot.cached_at, value))
+                });
+            current
+                .chain(staged)
+                .max_by_key(|(time, _)| *time)
+                .map(|(_, value)| value)
+        });
+    crate::releases::resolve_prerelease(api, legacy, version)
+}
+
 pub(super) fn select_repository<'a>(
     candidates: &[&'a ModRepositoryConfig],
     installed_version: Option<&str>,
@@ -257,6 +310,14 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
         );
         let (update, status) =
             super::status::installed_update_state(repository, binding, item.version.as_deref());
+        item.prerelease = installed_prerelease(
+            config,
+            binding,
+            item.prerelease,
+            binding
+                .map(|binding| binding.tag.as_str())
+                .or(item.version.as_deref()),
+        );
         item.repository_id = repository.map(|repo| repo.id.clone());
         item.repository_ids = ids;
         item.update_available = update;

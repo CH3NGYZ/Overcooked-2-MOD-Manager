@@ -6,6 +6,7 @@ import { parsePublishPermissionFailure, type PublishPermissionFailure } from '..
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useNotify } from '../useNotify'
 import { upsertPublishRelease } from '../mapPublishRelease'
+import { readPublishProvider, savePublishProvider } from '../mapPublishPreferences'
 import type {
   PublishAsset,
   MapPublishMetadata,
@@ -48,7 +49,7 @@ export interface SaveReleaseInput {
 export function useMapPublish() {
   const message = useNotify()
 
-  const provider = ref<PublishProvider>('github')
+  const provider = ref<PublishProvider>(readPublishProvider())
   let contextEpoch = 0
   const auth = ref<PublishAuthState | null>(null)
   const authReady = ref(false)
@@ -557,6 +558,7 @@ export function useMapPublish() {
     contextEpoch += 1
     releasesEpoch += 1
     provider.value = next
+    savePublishProvider(next)
     authorization.value = null
     authPhase.value = 'idle'
     authFailure.value = ''

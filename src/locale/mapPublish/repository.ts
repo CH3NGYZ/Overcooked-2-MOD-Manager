@@ -38,11 +38,11 @@ export const mapPublishRepository: DomainMessages = {
     ja: 'マップ公開',
   },
   subtitle: {
-    'zh-CN': '把地图 ZIP 作为 GitHub Release 发布；管理器会读取 Release 说明里的 oc2-map 信息来识别地图。',
-    'zh-TW': '把地圖 ZIP 作為 GitHub Release 發布；管理器會讀取 Release 說明裡的 oc2-map 資訊來識別地圖。',
-    en: 'Publish map ZIPs as GitHub releases. The manager reads the oc2-map block in each release note to identify the map.',
-    ko: '지도 ZIP을 GitHub 릴리스로 배포합니다. 관리자는 릴리스 노트의 oc2-map 정보를 읽어 지도를 인식합니다.',
-    ja: 'マップ ZIP を GitHub リリースとして公開します。マネージャーはリリースノートの oc2-map 情報を読み取ってマップを識別します。',
+    'zh-CN': '把地图 ZIP 作为 GitHub 或 GitCode Release 发布；管理器会读取 Release 说明里的 oc2-map 信息来识别地图。',
+    'zh-TW': '把地圖 ZIP 作為 GitHub 或 GitCode Release 發布；管理器會讀取 Release 說明裡的 oc2-map 資訊來識別地圖。',
+    en: 'Publish map ZIPs as GitHub or GitCode releases. The manager reads the oc2-map block in each release note to identify the map.',
+    ko: '지도 ZIP을 GitHub 또는 GitCode 릴리스로 배포합니다. 관리자는 릴리스 노트의 oc2-map 정보를 읽어 지도를 인식합니다.',
+    ja: 'マップ ZIP を GitHub または GitCode リリースとして公開します。マネージャーはリリースノートの oc2-map 情報を読み取ってマップを識別します。',
   },
   publishEntry: {
     'zh-CN': '发布地图',

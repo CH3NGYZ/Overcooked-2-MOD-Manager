@@ -2,7 +2,7 @@
 import { NConfigProvider, NDialogProvider, NMessageProvider, NScrollbar } from 'naive-ui'
 import { getVersion } from '@tauri-apps/api/app'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { CloudUploadOutline } from '@vicons/ionicons5'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTitleBar from './components/AppTitleBar.vue'
@@ -33,19 +33,7 @@ const version = ref('')
 
 /** 页头标题：阶段覆盖值优先，否则用路由 meta；两者都过翻译表。 */
 const route = useRoute()
-const router = useRouter()
 const resolvedTitle = computed(() => t(pageTitleOverride.value ?? (route.meta.title as string) ?? ''))
-
-/**
- * 标题栏连点版本号解锁的隐蔽入口：地图发布页（作者专用）。
- *
- * 工具页的常规入口收起后路由仍保留（`router/index.ts` 里的 `/map-publish`），
- * 这里只负责跳过去，解锁判定在 `secretEntry.ts`、点击收集在 `AppTitleBar`。
- * 侧栏没有这一项，作者看完发布页点侧栏任意一项即可离开。
- */
-function openSecretEntry() {
-  void router.push({ name: 'map-publish' }).catch(() => undefined)
-}
 
 /**
  * 整窗拖放提示条。
@@ -200,7 +188,7 @@ onMounted(() => {
       <n-dialog-provider>
         <AppCloseGuard />
         <div class="app-shell">
-          <AppTitleBar :version="version" @secret-entry="openSecretEntry" />
+          <AppTitleBar :version="version" />
           <div class="app-body" :inert="appUpdateState.stage !== 'idle'">
             <AppSidebar />
             <main class="app-main">              <header class="page-header">

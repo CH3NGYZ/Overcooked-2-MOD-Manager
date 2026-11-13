@@ -33,16 +33,6 @@ const logPath = ref('')
 const logContent = ref('')
 
 /**
- * 地图发布入口开关。发布流程只对作者开放，工具页这一项长期收起；
- * 放开时把这个值改为 true 并删掉本常量。
- *
- * 路由 `/map-publish` 始终保留，作者的进入方式改成标题栏隐蔽入口：
- * 3 秒内连点版本号 5 次（见 `secretEntry.ts` / `App.vue::openSecretEntry`）。
- * 所以这里即使为 false，页面也仍然可达。
- */
-const MAP_PUBLISH_ENTRY_ENABLED = false
-
-/**
  * 日志等级筛选。
  *
  * 日志行格式形如 `[时间][模块][INFO] 内容`，等级出现在第三个方括号里；
@@ -248,12 +238,7 @@ async function clearChefs() {
     </div>
   </SettingsGroup>
 
-  <!--
-    地图发布页只服务地图作者，用户量小，所以不进侧栏：入口放在工具页，
-    与「发布」有关的动作集中在这里，不占用所有用户都要看的导航。
-    发布流程对外开放前，这个分组不渲染；开关在 script 里。
-  -->
-  <SettingsGroup v-if="MAP_PUBLISH_ENTRY_ENABLED" :title="t('mapPublish.title')">
+  <SettingsGroup :title="t('mapPublish.title')" data-testid="map-publish-group">
     <SettingsRow :icon="CloudUploadOutline" :title="t('mapPublish.publishEntry')"
       :description="t('mapPublish.subtitle')" :description-title="t('mapPublish.subtitle')" clickable
       @click="router.push('/map-publish')" />

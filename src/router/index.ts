@@ -10,7 +10,7 @@ export const routes = [
   { path: '/diychef', name: 'diychef', meta: { title: 'diychef.title' }, component: () => import('../views/DiyChefView.vue') },
   { path: '/tools', name: 'tools', meta: { title: 'nav.tools' }, component: () => import('../views/ToolsView.vue') },
   { path: '/settings', name: 'settings', meta: { title: 'nav.settings' }, component: () => import('../views/SettingsView.vue') },
-  // 地图发布页：作者专用，不进侧栏；工具页入口收起后由标题栏连点版本号解锁
+  // 地图发布页：作者专用，不进侧栏，由工具页的独立分组进入。
   { path: '/map-publish', name: 'map-publish', meta: { title: 'mapPublish.title' }, component: () => import('../views/MapPublishView.vue') },
 ]
 

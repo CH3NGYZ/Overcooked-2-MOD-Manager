@@ -4,9 +4,10 @@ import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import * as vue from 'vue'
+import { readPublishProvider, savePublishProvider } from '../src/mapPublishPreferences.ts'
 const code = ts.transpileModule(readFileSync('src/composables/useMapPublish.ts', 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const deferred = () => { let resolve; const promise = new Promise(r => {resolve=r}); return {resolve,promise} }
-function load(api) {
+function load(api, storage = null) {
   const exports = {}, notices = [], unmount = []
   const deps = {
     vue: {...vue,onUnmounted: fn=>unmount.push(fn)},
@@ -15,6 +16,10 @@ function load(api) {
     '../locale/backend':{backendMessageOf:String,translateBackendMessage:String},
     '../useNotify':{useNotify:()=>({error:x=>notices.push(x),warning:x=>notices.push(x),success:()=>{}})},
     '../mapPublishRelease':{upsertPublishRelease:(list,value)=>[...list.filter(x=>x.id!==value.id),value]},
+    '../mapPublishPreferences':{
+      readPublishProvider:()=>readPublishProvider(storage),
+      savePublishProvider:provider=>savePublishProvider(provider,storage),
+    },
   }
   vm.runInNewContext(code,{exports,require:name=>{assert.ok(name in deps,name);return deps[name]},setTimeout,clearTimeout})
   return {state:exports.useMapPublish(),notices,unmount}
@@ -53,4 +58,35 @@ test('退出登录后迟到的仓库响应不能恢复旧列表',async()=>{
   const loading=state.loadState();await new Promise(r=>setImmediate(r))
   await state.signOut();stale.resolve({installations:1,all_repositories:true,repositories:[repo]});await loading
   assert.equal(state.authenticated.value,false);assert.equal(state.repositories.value.length,0);assert.equal(state.repositoriesLoading.value,false)
+})
+
+test('重新进入页面从持久偏好恢复已接受的渠道，首次会话请求使用恢复值',async()=>{
+  const saved = new Map(), calls = []
+  const storage = {getItem:key=>saved.get(key) ?? null,setItem:(key,value)=>saved.set(key,value)}
+  const api = {checkPublishSession:async provider=>{
+    calls.push(provider)
+    return {outcome:{status:'signed_out'},auth:{...auth,authenticated:false}}
+  }}
+  const first = load(api,storage).state
+  assert.equal(first.provider.value,'github')
+  await first.selectProvider('gitcode')
+  assert.deepEqual([...saved.values()],['gitcode'])
+  const reopened = load(api,storage).state
+  assert.equal(reopened.provider.value,'gitcode')
+  await reopened.loadState()
+  assert.deepEqual(calls,['gitcode','gitcode'])
+  await reopened.selectProvider('github')
+  assert.equal(load(api,storage).state.provider.value,'github')
+})
+
+test('写操作期间拒绝的渠道切换不覆盖已保存偏好',async()=>{
+  const saved = new Map()
+  const storage = {getItem:key=>saved.get(key) ?? null,setItem:(key,value)=>saved.set(key,value)}
+  savePublishProvider('gitcode',storage)
+  const {state} = load({},storage)
+  state.uploading.value = true
+  await state.selectProvider('github')
+  assert.equal(state.provider.value,'gitcode')
+  assert.equal(readPublishProvider(storage),'gitcode')
+  assert.deepEqual([...saved.values()],['gitcode'])
 })

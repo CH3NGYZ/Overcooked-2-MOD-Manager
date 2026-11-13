@@ -18,28 +18,9 @@ import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { recordTap, SECRET_ENTRY_WINDOW_MS, tapSequenceReady } from '../secretEntry'
 import { demoActive, withDemoGame } from '../tutorial/demo'
 
 const props = defineProps<{ version: string }>()
-/** 连点版本号达成后交给 `App.vue` 决定去哪儿；标题栏自身不碰路由。 */
-const emit = defineEmits<{ secretEntry: [] }>()
-
-/**
- * 隐蔽入口：3 秒内连点版本号 5 次。
- *
- * 版本号只在真实 Tauri 环境渲染（浏览器预览读不到版本、span 不存在），
- * 所以这条入口天然只对桌面端开放。窗口与次数规则在 `secretEntry.ts`，
- * 这里只收集时间戳；达成后立刻清空，第 6 次点击不会又跳一次。
- */
-let versionTaps: number[] = []
-function onVersionTap() {
-  if (appUpdateState.stage !== 'idle') return
-  versionTaps = recordTap(versionTaps, Date.now(), SECRET_ENTRY_WINDOW_MS)
-  if (!tapSequenceReady(versionTaps)) return
-  versionTaps = []
-  emit('secretEntry')
-}
 
 /**
  * 标题栏三个弹层（缩放 / 语言 / 主题色）的层级。
@@ -238,12 +219,7 @@ defineExpose({ onUnmountedCleanup })
       <div class="brand-text" data-tauri-drag-region>
         <div class="brand-title-row">
           <strong>{{ t('nav.oc2ModManager') }}</strong>
-          <!--
-            隐蔽入口：连点版本号 5 次解锁地图发布页。不加 title / hover / 光标变化，
-            界面上完全看不出来。`.stop` 是必需的：这一小块位于标题栏的
-            `data-tauri-drag-region` 内，mousedown 冒泡上去会被当成拖窗口吞掉点击。
-          -->
-          <span v-if="props.version" class="brand-version" @mousedown.stop @click.stop="onVersionTap">v{{ props.version }}</span>
+          <span v-if="props.version" class="brand-version">v{{ props.version }}</span>
         </div>
         <small>{{ t('nav.quicklyManageModsForOvercooked2') }}</small>
       </div>

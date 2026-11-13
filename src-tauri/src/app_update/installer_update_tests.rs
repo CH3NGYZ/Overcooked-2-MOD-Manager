@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+mod manifest_changelog_tests;
 mod manifest_mirror_tests;
 
 fn target() -> crate::app_update::UpdateTarget {

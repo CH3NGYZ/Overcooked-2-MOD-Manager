@@ -17,6 +17,8 @@ export const BUILD_KEYS = {
   'x86_64-apple-darwin': ['darwin-x86_64-app'],
 }
 export const PLATFORM_KEYS = Object.values(BUILD_KEYS).flat()
+export const MAX_UPDATE_MANIFEST_BYTES = 1024 * 1024
+export const CHANGELOG_LIMITS = Object.freeze({ entries: 256, entryBytes: 128 * 1024, totalBytes: 768 * 1024 })
 
 function checkedVersion(value) {
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
@@ -195,11 +197,76 @@ export function publicUpdateAssetUrl(release, asset, version) {
   return url
 }
 
-export function updateManifest(version, platforms, { notes = '', pubDate = new Date().toISOString() } = {}) {
+function compareReleaseVersions(left, right) {
+  const a = left.split('.').map(BigInt)
+  const b = right.split('.').map(BigInt)
+  for (let index = 0; index < 3; index++) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1
+  }
+  return 0
+}
+
+export function collectReleaseChangelog(releases, targetVersion) {
+  checkedVersion(targetVersion)
+  if (!Array.isArray(releases)) throw new Error('Invalid GitHub release list')
+  const entries = []
+  for (const release of releases) {
+    if (!release || typeof release !== 'object') throw new Error('Invalid GitHub release record')
+    if (release.draft !== false || release.prerelease !== false || typeof release.tag_name !== 'string') continue
+    const version = release.tag_name.replace(/^v/, '')
+    try { checkedVersion(version) } catch { continue }
+    if (compareReleaseVersions(version, targetVersion) >= 0) continue
+    entries.push({ version, notes: release.body ?? '' })
+  }
+  return entries
+}
+
+function checkedChangelog(changelog, version, notes) {
+  if (!Array.isArray(changelog) || changelog.length > CHANGELOG_LIMITS.entries) throw new Error('Invalid updater changelog')
+  const entries = new Map()
+  for (const entry of changelog) {
+    checkedVersion(entry?.version)
+    if (typeof entry.notes !== 'string' || compareReleaseVersions(entry.version, version) > 0
+      || Buffer.byteLength(entry.notes, 'utf8') > CHANGELOG_LIMITS.entryBytes) {
+      throw new Error('Invalid updater changelog entry')
+    }
+    if (!entries.has(entry.version)) entries.set(entry.version, { version: entry.version, notes: entry.notes })
+  }
+  // Target notes remain authoritative even when a historical record uses the same version.
+  entries.set(version, { version, notes })
+  if (entries.size > CHANGELOG_LIMITS.entries) throw new Error('Too many updater changelog entries')
+  let totalBytes = 0
+  for (const entry of entries.values()) {
+    if (typeof entry.notes !== 'string') throw new Error('Invalid updater changelog notes')
+    const bytes = Buffer.byteLength(entry.notes, 'utf8')
+    if (bytes > CHANGELOG_LIMITS.entryBytes) throw new Error('Updater changelog entry is too large')
+    totalBytes += bytes
+  }
+  if (totalBytes > CHANGELOG_LIMITS.totalBytes) throw new Error('Updater changelog is too large')
+  return [...entries.values()].sort((left, right) => compareReleaseVersions(left.version, right.version))
+}
+
+export function serializeUpdateManifest(manifest) {
+  const bytes = Buffer.from(JSON.stringify(manifest, null, 2) + '\n', 'utf8')
+  if (bytes.length > MAX_UPDATE_MANIFEST_BYTES) throw new Error('Updater manifest exceeds the 1 MiB client limit')
+  return bytes
+}
+
+export function updateManifest(version, platforms, { notes = '', pubDate = new Date().toISOString(), changelog } = {}) {
   checkedVersion(version)
   if (Object.keys(platforms).length !== PLATFORM_KEYS.length
     || PLATFORM_KEYS.some(key => !platforms[key]?.signature || !platforms[key]?.url)) {
     throw new Error(`The updater manifest must include all ${PLATFORM_KEYS.length} signed targets`)
   }
-  return { version, notes, pub_date: pubDate, platforms }
+  const manifest = { version, notes, pub_date: pubDate, platforms }
+  if (changelog === undefined) return manifest
+  try {
+    const extended = { ...manifest, changelog: checkedChangelog(changelog, version, notes) }
+    // Match the uploaded bytes, including JSON escaping, indentation and the final newline.
+    serializeUpdateManifest(extended)
+    return extended
+  } catch {
+    console.warn('Optional updater changelog omitted: invalid fields or size limits; keeping target notes')
+    return manifest
+  }
 }

@@ -5,9 +5,9 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GitHubRelease } from './github-release.mjs'
 import {
-  RELEASE_OWNER, RELEASE_REPO, assertDraftRelease, collectUpdateAssets,
+  RELEASE_OWNER, RELEASE_REPO, assertDraftRelease, collectReleaseChangelog, collectUpdateAssets,
   publicUpdateAssetUrl, readProject, releaseNotesFromMessage, releaseTag, updateManifest,
-  verifyUpdateSignature,
+  serializeUpdateManifest, verifyUpdateSignature,
 } from './release-lib.mjs'
 
 export function readReleaseNotes(commitish, root = process.cwd()) {
@@ -83,7 +83,13 @@ export async function aggregateManifest(github, release, assets, version, public
     const url = publicUpdateAssetUrl(release, asset, version)
     platforms[key] = { signature, url }
   }
-  return updateManifest(version, platforms, { notes: release.body || '' })
+  let changelog
+  try {
+    changelog = collectReleaseChangelog(await github.releases(), version)
+  } catch {
+    console.warn('Optional updater release history unavailable; keeping target notes')
+  }
+  return updateManifest(version, platforms, { notes: release.body || '', changelog })
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -106,11 +112,12 @@ export async function main(args = process.argv.slice(2)) {
   if (args[0] === 'check') return
   const assets = await github.assets(release.id)
   const manifest = await aggregateManifest(github, release, assets, version, publicKey)
+  const manifestBytes = serializeUpdateManifest(manifest)
   assertDraftRelease(await github.release(release.id), version)
   for (const asset of assets) {
     if (asset.name === 'latest.json') await github.deleteAsset(asset.id)
   }
-  await github.uploadManifest(release.id, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'))
+  await github.uploadManifest(release.id, manifestBytes)
   console.log(`Uploaded a verified ${Object.keys(manifest.platforms).length}-target latest.json to draft ${tag}; nothing was published`)
 }
 

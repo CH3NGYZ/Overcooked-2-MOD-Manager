@@ -65,6 +65,22 @@ test('prompt has no dismiss/retry path; all final failure forms lead to Release 
   assert.match(prompt, /v-else[\s\S]*?:disabled="busy"/)
 })
 
+test('update heading puts the muted version change after the title with a wrapping baseline layout', () => {
+  const prompt = source('src/components/UpdatePrompt.vue')
+  assert.match(prompt, /<div class="update-heading">\s*<h2 class="title">[^]*?dialogs\.versionAvailable[^]*?<\/h2>\s*<span v-if="update" class="version-line muted">v\{\{ update\.current_version \}\} → v\{\{ update\.version \}\}<\/span>\s*<\/div>/)
+  assert.match(prompt, /\.update-heading\s*\{[^}]*display: flex;[^}]*align-items: baseline;[^}]*flex-wrap: wrap;/)
+  assert.match(prompt, /\.version-line\s*\{[^}]*font-size: 13px;/)
+})
+
+test('only manual fallback keeps its guidance; release notes render without the repeated body label', () => {
+  const prompt = source('src/components/UpdatePrompt.vue')
+  assert.match(prompt, /<p v-if="manual" class="update-requirement">\{\{ t\('update\.manualRequired'\) \}\}<\/p>/)
+  assert.doesNotMatch(prompt, /['"]update\.required['"]|body-label|dialogs\.whatSNew/)
+  assert.match(prompt, /v-if="manual && failureDetail" class="update-error" role="alert"/)
+  assert.match(prompt, /class="body markdown-body" v-html="bodyHtml"/)
+  assert.match(prompt, /<div v-else class="body">\{\{ bodyText \}\}<\/div>/)
+})
+
 test('UI hides cancellation; native cancel, exit and close share the atomic update guard', () => {
   const strip = source('src/components/DownloadStrip.vue')
   assert.match(strip, /if \(!canCancel.value\) return/)

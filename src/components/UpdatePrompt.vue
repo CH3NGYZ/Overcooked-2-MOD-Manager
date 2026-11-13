@@ -94,14 +94,15 @@ async function openRelease() {
     :z-index="6100" card-class="mandatory-update" max-width="min(520px, 92%)"
     max-height="85%" min-height="160px">
     <div class="update-body">
-      <h2 class="title">{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
-      <div v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</div>
-      <p class="update-requirement">{{ t(manual ? 'update.manualRequired' : 'update.required') }}</p>
+      <div class="update-heading">
+        <h2 class="title">{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
+        <span v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</span>
+      </div>
+      <p v-if="manual" class="update-requirement">{{ t('update.manualRequired') }}</p>
       <div v-if="manual && failureDetail" class="update-error" role="alert">
         {{ failureDetail }}
       </div>
       <div v-if="releaseError" class="update-error" role="alert">{{ releaseError }}</div>
-      <div class="body-label muted">{{ t('dialogs.whatSNew') }}</div>
       <div v-if="bodyHtml" ref="bodyElement" class="body markdown-body" v-html="bodyHtml"></div>
       <div v-else class="body">{{ bodyText }}</div>
       <div v-if="phaseText" class="phase" role="status">{{ translateBackendMessage(phaseText) }}</div>
@@ -126,13 +127,19 @@ async function openRelease() {
 }
 .update-requirement { margin: 0 0 8px; color: var(--oc2-text-2); }
 .update-error { color: var(--oc2-accent); overflow-wrap: anywhere; }
+.update-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
 .title {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 21px;
   font-weight: 700;
 }
-.version-line { margin-bottom: 12px; }
-.body-label { margin-bottom: 6px; }
+.version-line { font-size: 13px; white-space: nowrap; }
 /*
  * 正文不再自己限高滚动：外层 AppModal 已经统一滚动，
  * 这里再套一层会出现两级滚动，手势体验很差。

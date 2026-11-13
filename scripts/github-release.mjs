@@ -27,14 +27,20 @@ export class GitHubRelease {
     return response.status === 204 ? undefined : response.json()
   }
 
-  async findRelease(tag) {
+  async releases() {
     const found = []
     for (let page = 1; ; page++) {
       const releases = await this.request(`/releases?per_page=100&page=${page}`)
-      found.push(...releases.filter(release => release.tag_name === tag))
+      if (!Array.isArray(releases)) throw new Error('Invalid GitHub release list')
+      found.push(...releases)
       if (releases.length < 100) break
       if (page >= 100) throw new Error('Too many releases to locate the draft safely')
     }
+    return found
+  }
+
+  async findRelease(tag) {
+    const found = (await this.releases()).filter(release => release.tag_name === tag)
     if (found.length > 1) throw new Error('Multiple releases use the requested version tag')
     return found[0]
   }

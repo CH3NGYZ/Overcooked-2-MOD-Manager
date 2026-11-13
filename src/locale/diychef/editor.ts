@@ -9,8 +9,6 @@ export const diychefEditor: DomainMessages = {
   defaultHint: { 'zh-CN': '游戏会使用第一位可加载且已解锁的厨师', 'zh-TW': '遊戲會使用第一位可載入且已解鎖的廚師', en: 'The game uses the first chef that can be loaded and is unlocked', ko: '게임은 불러올 수 있고 잠금 해제된 첫 셰프를 사용합니다', ja: 'ゲームは読み込み可能でアンロック済みの最初のシェフを使用します' },
   native: { 'zh-CN': '游戏自带', 'zh-TW': '遊戲內建', en: 'Game chefs', ko: '게임 기본', ja: 'ゲーム内蔵' },
   custom: { 'zh-CN': '自定义', 'zh-TW': '自訂', en: 'Custom', ko: '사용자 지정', ja: 'カスタム' },
-  customChefs: { 'zh-CN': '自定义厨师', 'zh-TW': '自訂廚師', en: 'Custom chefs', ko: '사용자 지정 셰프', ja: 'カスタムシェフ' },
-  nativeChefs: { 'zh-CN': '游戏自带厨师', 'zh-TW': '遊戲內建廚師', en: 'Game chefs', ko: '게임 기본 셰프', ja: 'ゲーム内蔵シェフ' },
   sourceFilter: { 'zh-CN': '厨师来源', 'zh-TW': '廚師來源', en: 'Chef source', ko: '셰프 출처', ja: 'シェフの種類' },
   statusFilter: { 'zh-CN': '启用状态', 'zh-TW': '啟用狀態', en: 'Enabled state', ko: '사용 상태', ja: '有効状態' },
   select: { 'zh-CN': '选择 {name}', 'zh-TW': '選取 {name}', en: 'Select {name}', ko: '{name} 선택', ja: '{name}を選択' },

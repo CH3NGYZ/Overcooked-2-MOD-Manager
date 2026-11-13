@@ -46,12 +46,10 @@ const description = computed(() => [props.item.chef.display_name, props.item.isD
 .chef-tile.is-selected { outline: 2px dashed color-mix(in srgb, var(--oc2-accent) 80%, var(--oc2-text-1)); outline-offset: 3px; background: color-mix(in srgb, var(--oc2-accent) 9%, var(--oc2-row)); }
 .chef-tile-main { width: 100%; min-width: 0; min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 6px; background: transparent; border: 0; border-radius: inherit; font: inherit; color: var(--oc2-text-1); cursor: pointer; }
 .chef-tile :deep(.chef-portrait) { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
-.chef-tile :deep(.chef-portrait img), .chef-tile :deep(.chef-motion-image) { filter: grayscale(0); transition: filter 220ms ease; }
 .chef-tile :deep(.chef-motion-image) { width: 100%; height: 100%; object-fit: contain; }
-.chef-tile:not(.is-enabled) :deep(.chef-portrait img), .chef-tile:not(.is-enabled) :deep(.chef-motion-image) { filter: grayscale(1); }
-.chef-tile::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--oc2-text-3) 12%, transparent); opacity: 0; transition: opacity 220ms ease; pointer-events: none; }
-.chef-tile:not(.is-enabled)::after { opacity: 1; }
-.chef-select { position: absolute; top: 7px; right: 7px; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--oc2-row); }
+.chef-select { position: absolute; top: 7px; right: 7px; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: transparent; opacity: .24; transition: opacity 160ms ease; }
+.chef-select :deep(.n-checkbox) { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.chef-tile:hover .chef-select, .chef-tile:focus-within .chef-select, .chef-tile.is-selected .chef-select { opacity: 1; }
 .chef-tile.is-draggable { user-select: none; touch-action: none; cursor: grab; }
 .is-draggable .chef-tile-main { cursor: grab; }
 .chef-tile.is-dragging, .is-dragging .chef-tile-main { cursor: grabbing; }
@@ -62,7 +60,6 @@ button:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px
 .chef-placeholder { border-style: dashed; border-color: color-mix(in srgb, var(--oc2-accent) 55%, var(--oc2-row-line)); background: color-mix(in srgb, var(--oc2-accent) 6%, var(--oc2-row)); }
 [data-chef-motion-state='move'], [data-chef-motion-state='preview'], .chef-drag-preview { will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
-  .chef-tile, .chef-tile::after, .chef-drag-preview { transition: none; }
-  .chef-tile :deep(.chef-portrait img), .chef-tile :deep(.chef-motion-image) { transition: none; }
+  .chef-tile, .chef-select, .chef-drag-preview { transition: none; }
 }
 </style>

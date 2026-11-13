@@ -25,6 +25,20 @@ pub fn note_key(mod_info: &InstalledMod) -> String {
 }
 
 pub(super) fn mark_duplicate_guids(mods: &mut [InstalledMod]) {
+    // Rebinding reuses existing rows, so every pass must revoke its old verdicts
+    // before checking enabled peers again (including after disable/removal).
+    for item in mods.iter_mut() {
+        item.duplicate_guid = false;
+        item.duplicate_version = false;
+        if item.load_warning.as_deref() == Some("mods.higherVersionPresent") {
+            item.load_warning = None;
+        }
+        if item.status == "duplicate_lower_version" {
+            // Runtime callers recompute source/update status before this pass.
+            // A standalone repeat cannot recover that old source conclusion.
+            item.status = "unknown".into();
+        }
+    }
     for index in 0..mods.len() {
         if !mods[index].enabled {
             continue;
@@ -55,11 +69,14 @@ pub(super) fn mark_duplicate_guids(mods: &mut [InstalledMod]) {
             continue;
         };
         let has_higher = peers.iter().any(|peer| {
-            mods[*peer]
-                .version
-                .as_deref()
-                .and_then(|higher| compare_mod_versions(higher, current))
-                == Some(Ordering::Greater)
+            // A shared repository can contain different, simultaneously loaded
+            // GUIDs. Preserve the existing GUID/name shadowing rule only.
+            mods_share_plugin_identity(&mods[index], &mods[*peer])
+                && mods[*peer]
+                    .version
+                    .as_deref()
+                    .and_then(|higher| compare_mod_versions(higher, current))
+                    == Some(Ordering::Greater)
         });
         if has_higher {
             log::warn!(
@@ -98,6 +115,53 @@ fn mods_share_guid_and_version(left: &InstalledMod, right: &InstalledMod) -> boo
 }
 
 fn mods_share_identity(left: &InstalledMod, right: &InstalledMod) -> bool {
+    if mods_share_plugin_identity(left, right) {
+        return true;
+    }
+    // Only independent MOD installations can duplicate a repository. Members
+    // of one package and pure dependencies intentionally share its binding.
+    if left.is_dependency || right.is_dependency {
+        return false;
+    }
+    if left
+        .package_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .zip(
+            right
+                .package_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty()),
+        )
+        .is_some_and(|(left, right)| left == right)
+    {
+        return false;
+    }
+    left.repository_binding
+        .as_ref()
+        .filter(|binding| binding.is_valid())
+        .zip(
+            right
+                .repository_binding
+                .as_ref()
+                .filter(|binding| binding.is_valid()),
+        )
+        .is_some_and(|(left, right)| {
+            crate::releases::repository_cache_key(
+                left.provider.clone(),
+                &left.owner,
+                &left.repository,
+            ) == crate::releases::repository_cache_key(
+                right.provider.clone(),
+                &right.owner,
+                &right.repository,
+            )
+        })
+}
+
+fn mods_share_plugin_identity(left: &InstalledMod, right: &InstalledMod) -> bool {
     let same_guid = left
         .guid
         .as_deref()

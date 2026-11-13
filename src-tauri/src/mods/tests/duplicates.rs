@@ -224,3 +224,174 @@ fn lower_duplicate_guid_is_marked_as_not_loaded() {
     super::mark_duplicate_guids(&mut mods);
     assert!(mods[0].duplicate_version && mods[1].duplicate_version);
 }
+
+fn repository_bound_copy(index: usize, version: &str) -> crate::models::InstalledMod {
+    plain_mod(
+        &format!("BepInEx/plugins/copy-{index}.dll"),
+        serde_json::json!({
+            "name": format!("Distinct plugin {index}"), "guid": format!("com.example.distinct.{index}"),
+            "version": version, "package_id": format!("package-{index}"),
+            "repository_id": format!("source-entry-{index}"), "repository_ids": ["shared-candidate"],
+            "repository_binding": {"provider": "github", "owner": "Example", "repository": "Mod", "tag": format!("v{version}")},
+            "update_available": true,
+        }),
+    )
+}
+
+#[test]
+fn exact_repository_binding_marks_different_plugins_without_claiming_one_is_shadowed() {
+    let mut mods = vec![
+        repository_bound_copy(1, "1.0"),
+        repository_bound_copy(2, "2.0"),
+    ];
+    let binding = mods[1].repository_binding.as_mut().unwrap();
+    binding.owner = " example ".into();
+    binding.repository = " MOD ".into();
+    binding.channel = crate::models::Channel::Beta;
+    mark_duplicate_guids(&mut mods);
+    refresh_status_labels(&mut mods);
+    assert!(mods.iter().all(|item| item.duplicate_guid));
+    assert!(mods.iter().all(|item| {
+        item.labels
+            .contains(&crate::models::InstalledModStatusLabel::Duplicate)
+    }));
+    assert!(
+        mods.iter()
+            .all(|item| !item.duplicate_version && item.update_available)
+    );
+    assert!(
+        mods.iter()
+            .all(|item| item.load_warning.is_none() && item.status == "latest")
+    );
+}
+
+#[test]
+fn candidate_ids_and_different_repository_coordinates_are_never_duplicate_identity() {
+    for mismatch in [
+        "github-vs-gitee",
+        "github-vs-gitcode",
+        "owner",
+        "repository",
+        "missing",
+        "invalid",
+    ] {
+        let mut mods = vec![
+            repository_bound_copy(1, "1.0"),
+            repository_bound_copy(2, "2.0"),
+        ];
+        let binding = mods[1].repository_binding.as_mut().unwrap();
+        match mismatch {
+            "github-vs-gitee" => binding.provider = crate::models::Provider::Gitee,
+            "github-vs-gitcode" => binding.provider = crate::models::Provider::Gitcode,
+            "owner" => binding.owner = "another-owner".into(),
+            "repository" => binding.repository = "another-repository".into(),
+            "invalid" => {
+                binding.owner = "../invalid".into();
+                mods[0].repository_binding.as_mut().unwrap().owner = "../invalid".into();
+            }
+            "missing" => mods[1].repository_binding = None,
+            _ => unreachable!(),
+        }
+        assert_eq!(mods[0].repository_ids, mods[1].repository_ids);
+        mark_duplicate_guids(&mut mods);
+        assert!(
+            mods.iter()
+                .all(|item| !item.duplicate_guid && !item.duplicate_version),
+            "{mismatch}"
+        );
+    }
+}
+
+#[test]
+fn repository_identity_excludes_package_siblings_and_pure_dependencies() {
+    for exclusion in ["package", "dependency"] {
+        let mut mods = vec![
+            repository_bound_copy(1, "1.0"),
+            repository_bound_copy(2, "2.0"),
+        ];
+        if exclusion == "package" {
+            mods[1].package_id = mods[0].package_id.clone();
+        } else {
+            mods[1].is_dependency = true;
+        }
+        mark_duplicate_guids(&mut mods);
+        assert!(mods.iter().all(|item| !item.duplicate_guid), "{exclusion}");
+        // An actual GUID copy remains a duplicate even inside the same package.
+        mods[1].guid = mods[0].guid.clone();
+        mark_duplicate_guids(&mut mods);
+        assert!(mods.iter().all(|item| item.duplicate_guid), "{exclusion}");
+        assert_eq!(
+            mods[0].load_warning.as_deref(),
+            Some("mods.higherVersionPresent")
+        );
+    }
+}
+
+#[test]
+fn repository_duplicate_labels_clear_after_disable_and_removal() {
+    let config = crate::mods::test_support::config(Vec::new());
+    let mut mods = vec![
+        repository_bound_copy(1, "1.0"),
+        repository_bound_copy(2, "2.0"),
+    ];
+    mark_duplicate_guids(&mut mods);
+    assert!(mods.iter().all(|item| item.duplicate_guid));
+    mods[1].enabled = false;
+    crate::mods::rebind_installed_mods(&config, &mut mods);
+    assert!(mods.iter().all(|item| {
+        !item.duplicate_guid
+            && !item
+                .labels
+                .contains(&crate::models::InstalledModStatusLabel::Duplicate)
+    }));
+    mods[1].enabled = true;
+    mark_duplicate_guids(&mut mods);
+    assert!(mods.iter().all(|item| item.duplicate_guid));
+    mods.remove(1);
+    crate::mods::rebind_installed_mods(&config, &mut mods);
+    assert!(!mods[0].duplicate_guid);
+    assert!(
+        !mods[0]
+            .labels
+            .contains(&crate::models::InstalledModStatusLabel::Duplicate)
+    );
+}
+
+#[test]
+fn old_guid_shadow_warning_is_revoked_when_the_higher_copy_is_disabled() {
+    let mut mods = vec![
+        duplicate_configuration_manager("1.0", "3.0"),
+        duplicate_configuration_manager("2.0", "3.0"),
+    ];
+    mark_duplicate_guids(&mut mods);
+    assert_eq!(mods[0].status, "duplicate_lower_version");
+    mods[1].enabled = false;
+    mark_duplicate_guids(&mut mods);
+    refresh_status_labels(&mut mods);
+    assert!(
+        mods.iter()
+            .all(|item| !item.duplicate_guid && !item.duplicate_version)
+    );
+    assert!(mods[0].load_warning.is_none());
+    assert!(
+        !mods[0]
+            .labels
+            .contains(&crate::models::InstalledModStatusLabel::DuplicateLowerVersion)
+    );
+}
+
+#[test]
+fn existing_name_identity_keeps_its_previous_version_warning_semantics() {
+    let mut mods = vec![
+        repository_bound_copy(1, "1.0"),
+        repository_bound_copy(2, "2.0"),
+    ];
+    mods[1].name = mods[0].name.clone();
+    mods[1].repository_binding = None;
+    mark_duplicate_guids(&mut mods);
+    assert!(mods.iter().all(|item| item.duplicate_guid));
+    assert_eq!(
+        mods[0].load_warning.as_deref(),
+        Some("mods.higherVersionPresent")
+    );
+}

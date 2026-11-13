@@ -100,15 +100,41 @@ pub(super) struct SourceLabel {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) name_i18n: BTreeMap<String, String>,
+    pub(super) note_i18n: BTreeMap<String, String>,
+    pub(super) regions: Vec<String>,
 }
 
 impl SourceLabel {
+    pub(super) fn child(&self, declaration: &super::document::MapSourceDeclaration) -> Self {
+        let mut regions = self.regions.clone();
+        let region = crate::config::normalize_repository_region(declaration.region.as_deref());
+        if !region.is_empty() && !regions.contains(&region) {
+            regions.push(region);
+        }
+        Self {
+            network_plan: declaration.network_plan.clone(),
+            id: declaration.id.trim().into(),
+            name: declaration.nickname.clone(),
+            name_i18n: declaration.nickname_i18n.clone(),
+            note_i18n: declaration.note_i18n.clone(),
+            regions,
+        }
+    }
+
+    pub(super) fn matches_region(&self, region: &str) -> bool {
+        self.regions
+            .iter()
+            .all(|value| crate::config::region_matches(Some(value), region))
+    }
+
     /// 把源归属与源名写进条目。
     pub(super) fn attach(&self, map: &mut MapRepositoryConfig) {
         map.network_plan = map.network_plan.inherit(&self.network_plan);
         map.source_id = Some(self.id.clone());
         map.source_name = self.name.clone();
         map.source_name_i18n = self.name_i18n.clone();
+        map.source_note_i18n = self.note_i18n.clone();
+        map.source_regions = Some(self.regions.clone());
     }
 }
 
@@ -125,18 +151,13 @@ pub fn map_is_available(map: &MapRepositoryConfig, current_region: &str) -> bool
     {
         return false;
     }
-    let normalized = map
-        .region
-        .as_deref()
-        .map(|value| crate::config::normalize_repository_region(Some(value)))
-        .filter(|value| !value.is_empty());
-    match normalized {
-        None => true,
-        Some(value) if value == crate::config::REGION_CHINESE_MAINLAND => {
-            current_region == crate::config::REGION_CHINESE_MAINLAND
-        }
-        Some(_) => current_region != crate::config::REGION_CHINESE_MAINLAND,
-    }
+    crate::config::region_matches(map.region.as_deref(), current_region)
+        && map
+            .source_regions
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .all(|region| crate::config::region_matches(Some(region), current_region))
 }
 
 /// 从配置里取出当前地区可用的全部地图。

@@ -22,8 +22,10 @@ pub(crate) use availability::mod_repository_is_available;
 pub(crate) use availability::normalize_repository_platform;
 pub(crate) use availability::normalize_repository_region;
 pub(crate) use availability::normalize_repository_region_for_storage;
+pub(crate) use availability::region_matches;
 #[cfg(test)]
 pub(crate) use availability::repository_matches_channel;
+pub(crate) use availability::repository_source_is_available;
 pub(crate) use availability::validate_repository_platform;
 pub use availability::validate_repository_region;
 pub use availability::validate_repository_source_region;

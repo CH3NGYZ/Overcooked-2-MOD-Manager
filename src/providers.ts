@@ -18,34 +18,6 @@ export function ownerHomepage(provider: Provider, owner: string): string {
   return `${PLATFORMS[provider].homepage}/${encodeURIComponent(owner)}`
 }
 
-export interface RepositoryCoordinates { provider: Provider; username: string; repository: string }
-
-/** Source document coordinates take precedence over the repositories it lists. */
-export function sourceRepository(items: readonly RepositoryCoordinates[], sourceUrl?: string): RepositoryCoordinates | null {
-  if (sourceUrl) {
-    try {
-      const url = new URL(sourceUrl)
-      if (url.protocol !== 'https:' || url.username || url.password) return null
-      const hosts: Record<string, Provider> = {
-        'github.com': 'github', 'raw.githubusercontent.com': 'github', 'api.github.com': 'github',
-        'gitee.com': 'gitee', 'gitcode.com': 'gitcode', 'atomgit.com': 'gitcode',
-        'raw.atomgit.com': 'gitcode', 'api.atomgit.com': 'gitcode',
-      }
-      const provider = hosts[url.hostname]
-      if (!provider) return null
-      const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
-      const offset = parts[0] === 'api' && parts[1] === 'v5' && parts[2] === 'repos' ? 3 : parts[0] === 'repos' ? 1 : 0
-      const username = parts[offset], repository = parts[offset + 1]
-      if (!username || !repository || [username, repository].some(value => /[\s/\\:?#]/u.test(value) || value === '.' || value === '..')) return null
-      if (['search', 'users', 'user', 'api'].includes(username)) return null
-      return { provider, username, repository }
-    } catch { return null }
-  }
-  const first = items[0]
-  if (!first?.username || !first.repository) return null
-  return items.every(item => item.provider === first.provider && item.username.toLowerCase() === first.username.toLowerCase() && item.repository.toLowerCase() === first.repository.toLowerCase()) ? first : null
-}
-
 export function repositoryRawUrl(provider: Provider, owner: string, repository: string, branch: string, path = ''): string {
   const base = provider === 'gitcode'
     ? `https://raw.atomgit.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`

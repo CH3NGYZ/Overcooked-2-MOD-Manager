@@ -205,7 +205,7 @@ export interface PublicConfig {
 }
 export interface RepositorySource {
   network_plan?: NetworkPlanSelection
-  id: string; nickname: string; nickname_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
+  id: string; nickname: string; nickname_i18n?: Record<string, string>; note_i18n?: Record<string, string>; url: string; region?: string; builtin: boolean; parent_id?: string }
 export interface BepInExInfo { installed: boolean; has_residue: boolean; has_config: boolean; version?: string; version_source?: string; backups: string[] }
 /**
  * DIYLevel 自定义关卡框架状态。
@@ -761,6 +761,8 @@ export interface MapInfo {
   /** 所属地图源的展示名（多语言表优先，单语言镜像兜底）。 */
   source_name?: string
   source_name_i18n?: Record<string, string>
+  /** 所属源的说明，不与地图自身的 note_i18n 混用。 */
+  source_note_i18n?: Record<string, string>
   /** 缓存里最新 Release tag；没刷新过时为空。 */
   latest_tag?: string | null
   /**
@@ -1039,7 +1041,7 @@ export interface StartupProbe {
 }
 
 export interface SourceNode {
-  id: string; parent_id?: string | null; label: string; label_i18n?: Record<string, string>;
+  id: string; parent_id?: string | null; label: string; label_i18n?: Record<string, string>; note_i18n?: Record<string, string>;
   url?: string; status: 'pending' | 'loading' | 'ready' | 'error'; error?: string | null
 }
 export interface MapTreeProgress { nodes: SourceNode[]; maps: MapInfo[] }

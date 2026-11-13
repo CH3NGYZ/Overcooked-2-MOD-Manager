@@ -47,6 +47,7 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
         REGION_CHINESE_MAINLAND
     };
     config.repository_sources.push(RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "other-region-child".into(),
         nickname: "Child source".into(),
@@ -146,6 +147,7 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     raw.version_regex = r"^1\.2\.\d+(\.\d+)?$".into();
     raw.asset_rules.clear();
     let source = RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "export-source".into(),
         nickname: "自定义源".into(),
@@ -258,5 +260,63 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
             .map(|repo| repo.id.as_str())
             .collect::<Vec<_>>(),
         ["release", "raw"]
+    );
+}
+
+#[test]
+fn source_notes_survive_parsing_bundle_storage_import_and_public_projection() {
+    let service =
+        ConfigService::for_test(std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()));
+    let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
+    let document=crate::repository_sources::parse_document("[[repository_sources]]\nid='custom-note'\nnickname='Custom'\nurl='https://example.com/source.toml'\nregion='chinese_mainland'\n[repository_sources.note_i18n]\nen='English source note'\nzh-CN='源说明'\n",&location,&Default::default()).unwrap();
+    let declaration = &document.repository_sources[0];
+    let mut config = default_config();
+    let source = RepositorySource {
+        network_plan: Default::default(),
+        id: declaration.id.clone(),
+        nickname: declaration.nickname.clone(),
+        nickname_i18n: declaration.nickname_i18n.clone(),
+        note_i18n: declaration.note_i18n.clone(),
+        url: declaration.url.clone(),
+        region: declaration.region.clone(),
+        builtin: false,
+        parent_id: None,
+    };
+    config.repository_sources.push(source.clone());
+    let restored: AppConfig = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+    assert_eq!(
+        restored.repository_sources.last().unwrap().note_i18n,
+        source.note_i18n
+    );
+    assert_eq!(
+        service
+            .public_config(&restored)
+            .repository_sources
+            .last()
+            .unwrap()
+            .note_i18n,
+        source.note_i18n
+    );
+    let bundle = service
+        .validate_bundle(
+            &service
+                .export_bundle(&config, None)
+                .unwrap()
+                .replace("region = \"cn\"", "region = \"chinese_mainland\""),
+        )
+        .unwrap();
+    assert_eq!(
+        bundle.repository_sources.last().unwrap().note_i18n,
+        source.note_i18n
+    );
+    assert_eq!(
+        bundle.repository_sources.last().unwrap().region.as_deref(),
+        Some("cn")
+    );
+    let mut imported = default_config();
+    service.import_bundle(&mut imported, &bundle, "overwrite");
+    assert_eq!(
+        imported.repository_sources.last().unwrap().note_i18n,
+        source.note_i18n
     );
 }

@@ -45,10 +45,11 @@ fn declaration(id: &str) -> MapSourceDeclaration {
 fn builtin_map_index_declares_only_sources() {
     let doc = index_document();
     assert!(doc.maps.is_empty(), "索引只声明源，条目在各自源里");
-    assert_eq!(
-        doc.map_sources.len(),
-        1,
-        "内置索引只保留第三方地图仓库（release-tags）"
+    assert!(!doc.map_sources.is_empty());
+    assert!(
+        doc.map_sources
+            .iter()
+            .all(|source| source.mode == MapSourceMode::ReleaseTags)
     );
     assert_eq!(
         declaration("maps-oc2-map-bundle").provider,

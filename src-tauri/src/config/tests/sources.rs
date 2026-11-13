@@ -22,14 +22,14 @@ fn config_reads_preserve_remote_children_and_load_later_disk_changes() {
 id = "china"
 nickname = "China"
 url = "mods.toml"
-region = "chinese_mainland"
+region = "cn"
 [repository_sources.nickname_i18n]
 en = "China Mods"
 [[repository_sources]]
-id = "international"
+id = "global"
 nickname = "International"
 url = "mods.toml"
-region = "international"
+region = "global"
 [repository_sources.nickname_i18n]
 en = "International Mods"
 [[repository_sources]]
@@ -49,6 +49,7 @@ url = "shared.toml"
         crate::repository_sources::parse_document(text, &location, &Default::default()).unwrap();
     for source in document.repository_sources {
         config.repository_sources.push(RepositorySource {
+            note_i18n: Default::default(),
             network_plan: Default::default(),
             id: source.id,
             nickname: source.nickname,
@@ -64,7 +65,7 @@ url = "shared.toml"
     assert_eq!(loaded.repository_sources, config.repository_sources);
     for (region, expected_ids) in [
         (REGION_CHINESE_MAINLAND, vec!["china", "shared"]),
-        (REGION_INTERNATIONAL, vec!["international", "shared"]),
+        (REGION_INTERNATIONAL, vec!["global", "shared"]),
     ] {
         let sources = loaded
             .repository_sources
@@ -107,6 +108,7 @@ url = "shared.toml"
 #[test]
 fn official_index_follows_region_and_preserves_custom_sources() {
     let custom = RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "regional-custom".into(),
         nickname: "Custom".into(),
@@ -155,6 +157,7 @@ fn official_index_follows_region_and_preserves_custom_sources() {
 fn builtin_source_migration_removes_obsolete_trees_and_preserves_custom_sources() {
     let mut config = default_config();
     let old_root = RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "old-builtin-root".into(),
         nickname: "Old built-in source".into(),
@@ -228,6 +231,7 @@ fn all_providers_select_the_official_root_and_preserve_custom_sources() {
     ] {
         let mut config = default_config();
         config.repository_sources.push(RepositorySource {
+            note_i18n: Default::default(),
             network_plan: Default::default(),
             id: "custom".into(),
             nickname: "Custom".into(),
@@ -261,6 +265,7 @@ fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_field
         let mut config = default_config();
         let mut expected_sources = config.repository_sources.clone();
         let old_root = RepositorySource {
+            note_i18n: Default::default(),
             network_plan: Default::default(),
             id: "obsolete-builtin".into(),
             nickname: "内置仓库源".into(),
@@ -275,6 +280,7 @@ fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_field
         old_child.parent_id = Some(old_root.id.clone());
         // 旧配置只有单语昵称：加载后应自动回填 zh-CN（见 normalize_configured_regions）
         let custom = RepositorySource {
+            note_i18n: Default::default(),
             network_plan: Default::default(),
             id: "custom-source".into(),
             nickname: "Custom source".into(),

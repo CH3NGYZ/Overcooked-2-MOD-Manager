@@ -28,6 +28,8 @@ pub struct SourceNode {
     pub parent_id: Option<String>,
     pub label: String,
     pub label_i18n: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_i18n: BTreeMap<String, String>,
     pub url: String,
     pub status: String,
     pub error: Option<String>,
@@ -130,6 +132,22 @@ impl SourceObserver {
         drop(all);
         *self.nodes.lock().unwrap_or_else(|e| e.into_inner()) = nodes;
         Some((target, ids))
+    }
+
+    pub(super) fn remove(&self, ids: &std::collections::HashSet<String>) {
+        self.nodes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|node| !ids.contains(&node.id));
+        if let Some(entries) = self
+            .registry
+            .entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&self.namespace)
+        {
+            entries.retain(|id, _| !ids.contains(id));
+        }
     }
 
     pub(super) fn declare(&self, node: SourceNode) {

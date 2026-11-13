@@ -48,6 +48,9 @@ pub(crate) async fn import_repository_source_into_config(
             log::warn!("刷新仓库源失败：源不存在，源={}", source_id);
             return Err("source.sourceMissing".into());
         };
+        if !crate::config::repository_source_is_available(&original_config, source, crate::config::current_user_region()) {
+            return Err("source.sourceMissing".into());
+        }
         if !source.url.trim().eq_ignore_ascii_case(source_url.trim()) {
             log::warn!("刷新仓库源失败：请求地址与当前配置不一致，源={}", source_id);
             return Err("source.addressMismatch".into());
@@ -244,6 +247,7 @@ pub(crate) async fn import_repository_source_into_config(
             // 声明里的 nickname 已是 zh-CN 兜底值，运行时镜像与多语言表一起写
             existing.nickname = child.nickname.trim().to_string();
             existing.nickname_i18n = child.nickname_i18n;
+            existing.note_i18n = child.note_i18n;
             existing.url = child_url;
             existing.region = child.region.clone();
             existing.network_plan = child.network_plan.clone();
@@ -268,6 +272,7 @@ pub(crate) async fn import_repository_source_into_config(
             child.id.trim().to_string()
         };
         config.repository_sources.push(RepositorySource {
+            note_i18n: child.note_i18n,
             network_plan: child.network_plan.clone(),
             id: child_id,
             nickname: child.nickname.trim().to_string(),

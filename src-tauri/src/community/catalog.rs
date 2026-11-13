@@ -70,6 +70,7 @@ pub fn source(provider: &Provider) -> RepositorySource {
         Provider::Gitcode => "GitCode",
     };
     RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: source_id(provider).into(),
         nickname: crate::locale_tag::with_params(

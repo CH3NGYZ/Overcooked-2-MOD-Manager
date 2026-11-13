@@ -558,23 +558,13 @@ repository = "r"
     assert_eq!(probe.kind, crate::models::RepositoryKind::Map);
     let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
     let plan = policy
-        .resolve(
-            &probe.provider,
-            probe.kind,
-            "chinese_mainland",
-            &probe.network_plan,
-        )
+        .resolve(&probe.provider, probe.kind, "cn", &probe.network_plan)
         .unwrap();
     assert_eq!(plan.release.download_threads, 4);
     let child = super::release_tags::declaration_request(&document.map_sources[0]);
     assert_eq!(child.kind, crate::models::RepositoryKind::Map);
     let plan = policy
-        .resolve(
-            &child.provider,
-            child.kind,
-            "chinese_mainland",
-            &child.network_plan,
-        )
+        .resolve(&child.provider, child.kind, "cn", &child.network_plan)
         .unwrap();
     assert_eq!(plan.id, "github-public");
     let parent = toml::from_str("mainland = 'github-public'").unwrap();

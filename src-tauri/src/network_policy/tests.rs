@@ -304,7 +304,7 @@ fn defaults_are_selected_by_provider_kind_and_region() {
     let policy = NetworkPolicy::bundled().unwrap();
     for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
         for kind in [RepositoryKind::Mod, RepositoryKind::Map] {
-            for region in ["chinese_mainland", "international"] {
+            for region in ["cn", "global"] {
                 let plan = policy
                     .resolve(&provider, kind, region, &NetworkPlanSelection::default())
                     .unwrap();
@@ -314,7 +314,7 @@ fn defaults_are_selected_by_provider_kind_and_region() {
                 assert_eq!(plan.raw.download_threads, 1);
                 assert_eq!(
                     plan.release.race,
-                    provider == Provider::Github && region == "chinese_mainland"
+                    provider == Provider::Github && region == "cn"
                 );
             }
         }
@@ -339,12 +339,7 @@ mainland = { release = { download_threads = 4 } }
     let merged = child.inherit(&parent);
     let policy = NetworkPolicy::bundled().unwrap();
     let plan = policy
-        .resolve(
-            &Provider::Github,
-            RepositoryKind::Mod,
-            "chinese_mainland",
-            &merged,
-        )
+        .resolve(&Provider::Github, RepositoryKind::Mod, "cn", &merged)
         .unwrap();
     assert_eq!(plan.raw.download_threads, 8);
     assert_eq!(plan.release.download_threads, 4);
@@ -354,7 +349,7 @@ mainland = { release = { download_threads = 4 } }
         .resolve(
             &Provider::Github,
             RepositoryKind::Mod,
-            "chinese_mainland",
+            "cn",
             &fresh.inherit(&merged),
         )
         .unwrap();
@@ -371,7 +366,7 @@ mainland = { raw = { route = [{kind = "direct"}] } }
         .resolve(
             &Provider::Github,
             RepositoryKind::Mod,
-            "chinese_mainland",
+            "cn",
             &route.inherit(&parent),
         )
         .unwrap();
@@ -397,12 +392,7 @@ fn effective_overrides_reject_wrong_provider_kind_threads_and_proxy_intent() {
         let selection: NetworkPlanSelection = toml::from_str(text).unwrap();
         assert!(
             policy
-                .resolve(
-                    &Provider::Github,
-                    RepositoryKind::Mod,
-                    "chinese_mainland",
-                    &selection
-                )
+                .resolve(&Provider::Github, RepositoryKind::Mod, "cn", &selection)
                 .is_err(),
             "{text}"
         );
@@ -442,7 +432,7 @@ fn shared_type_lists_cover_both_roles_and_legacy_scalar_types_still_work() {
             .resolve(
                 &Provider::Github,
                 kind,
-                "international",
+                "global",
                 &NetworkPlanSelection::default(),
             )
             .unwrap();
@@ -459,7 +449,7 @@ fn shared_type_lists_cover_both_roles_and_legacy_scalar_types_still_work() {
             .resolve(
                 &Provider::Github,
                 RepositoryKind::Map,
-                "international",
+                "global",
                 &NetworkPlanSelection::default()
             )
             .is_err()
@@ -531,7 +521,7 @@ fn merged_builtin_plans_keep_legacy_references_without_duplicate_plans() {
         .resolve(
             &Provider::Github,
             RepositoryKind::Map,
-            "international",
+            "global",
             &old_reference,
         )
         .unwrap();

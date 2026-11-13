@@ -277,8 +277,15 @@ impl NetworkPolicy {
             if document.schema_version != 1 || document.proxies.len() > 128 {
                 return Err("proxy.validationFailed".into());
             }
-            for proxy in document.proxies {
+            for mut proxy in document.proxies {
                 validation::proxy(&proxy)?;
+                proxy.regions = proxy
+                    .regions
+                    .iter()
+                    .map(|region| crate::config::normalize_repository_region(Some(region)))
+                    .collect();
+                proxy.regions.sort();
+                proxy.regions.dedup();
                 snapshot.proxy_order.push(proxy.id.clone());
                 if snapshot.proxies.insert(proxy.id.clone(), proxy).is_some() {
                     return Err("proxy.validationFailed".into());
@@ -335,7 +342,8 @@ impl NetworkPolicy {
         region: &str,
         selection: &NetworkPlanSelection,
     ) -> Result<RequestPlan, String> {
-        let international = region == crate::config::REGION_INTERNATIONAL;
+        let international =
+            crate::config::region_matches(Some(crate::config::REGION_INTERNATIONAL), region);
         let reference = if international {
             &selection.international
         } else {
@@ -376,7 +384,10 @@ impl NetworkPolicy {
         kind: RepositoryKind,
         selection: &NetworkPlanSelection,
     ) -> Result<(), String> {
-        for region in ["chinese_mainland", "international"] {
+        for region in [
+            crate::config::REGION_CHINESE_MAINLAND,
+            crate::config::REGION_INTERNATIONAL,
+        ] {
             self.resolve(provider, kind, region, selection)?;
         }
         Ok(())
@@ -457,11 +468,11 @@ impl NetworkPolicy {
             .collect()
         };
         Ok(crate::models::GitHubProxyConfig {
-            release_proxies: entries(&Provider::Github, "chinese_mainland", Intent::Release)?,
-            raw_proxies: entries(&Provider::Github, "chinese_mainland", Intent::Raw)?,
-            github_api_proxies: entries(&Provider::Github, "international", Intent::Api)?,
-            gitee_api_proxies: entries(&Provider::Gitee, "international", Intent::Api)?,
-            gitcode_api_proxies: entries(&Provider::Gitcode, "international", Intent::Api)?,
+            release_proxies: entries(&Provider::Github, "cn", Intent::Release)?,
+            raw_proxies: entries(&Provider::Github, "cn", Intent::Raw)?,
+            github_api_proxies: entries(&Provider::Github, "global", Intent::Api)?,
+            gitee_api_proxies: entries(&Provider::Gitee, "global", Intent::Api)?,
+            gitcode_api_proxies: entries(&Provider::Gitcode, "global", Intent::Api)?,
             avatar_proxies: self
                 .proxy_order
                 .iter()

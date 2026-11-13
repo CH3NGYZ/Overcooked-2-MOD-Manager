@@ -1,4 +1,5 @@
 import type { StartupProbe } from './types.ts'
+import { normalizeRepositoryRegion } from './repositoryAvailability.ts'
 
 export type PreflightStage = 'idle' | 'region' | 'checking' | 'failed' | 'closing' | 'completed'
 
@@ -49,7 +50,7 @@ export function createStartupPreflight(deps: Dependencies) {
         try {
           const region = await deps.region()
           if (closing) return
-          if (region === 'chinese_mainland') { finish(); return }
+          if (normalizeRepositoryRegion(region) === 'cn') { finish(); return }
         } catch {
           if (closing) return
           change('failed', 'region')

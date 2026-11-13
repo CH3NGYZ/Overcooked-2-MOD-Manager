@@ -1,6 +1,5 @@
-<script setup lang="ts" generic="T extends { provider: Provider; username: string; repository: string }">
+<script setup lang="ts" generic="T">
 import { computed } from 'vue'
-import type { Provider } from '../types'
 import { NCollapse, NCollapseItem, NButton, NTag, NAlert } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
 import SourceTitle from './SourceTitle.vue'
@@ -39,7 +38,7 @@ const children = computed(() => {
       <template #header>
         <SourceGroupSlot :get-tree="getTree" :source-id="entry.id" v-slot="{ node }">
           <div class="source-head" :data-source-id="node.id">
-            <SourceTitle :label="node.label" :source-url="node.url" :items="node.groups.flatMap(group => group.items)" />
+            <SourceTitle :label="node.label" :note-i18n="node.note_i18n" />
             <n-tag size="tiny" :bordered="false">{{ node.count }}</n-tag>
             <n-button size="tiny" quaternary :loading="node.status === 'pending' || node.status === 'loading' || busy(node)"
               :disabled="disabled" @click.stop="emit('refresh', node)">

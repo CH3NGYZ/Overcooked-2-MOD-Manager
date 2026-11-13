@@ -317,10 +317,10 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   visited.add(sourceId)
   const { reloadConfig, sources, region } = store()
   const source = sources.value.find((entry) => entry.id === sourceId)
-  if (!source) return []
+  if (!source || !sourceMatchesRegion(source, region.value, sources.value)) return []
 
-  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id)).map(item => ({
-    id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n,
+  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id) && sourceMatchesRegion(item, region.value, sources.value)).map(item => ({
+    id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n, note_i18n: item.note_i18n,
     url: item.url, status: 'pending' as const,
   })))
   const removed = sourceTree.begin(sourceId)
@@ -344,14 +344,14 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   // 父源没读出来时它的子源无从谈起：直接返回，别拿旧 `sources` 递归
   if (importErrors.length) { sourceTree.settle(sourceId, importErrors[0]); return importErrors }
 
-  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id)).map(item => ({
-    id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n,
+  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id) && sourceMatchesRegion(item, region.value, sources.value)).map(item => ({
+    id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n, note_i18n: item.note_i18n,
     url: item.url, status: 'pending' as const,
   })))
   sourceTree.settle(sourceId)
   // 子源同样按地区过滤：父源是通用的，但它可以声明地区专属子源
   const children = sources.value.filter(
-    (entry) => entry.parent_id === sourceId && sourceMatchesRegion(entry, region.value),
+    (entry) => entry.parent_id === sourceId && sourceMatchesRegion(entry, region.value, sources.value),
   )
   if (!children.length) return []
   const childErrors: string[] = []
@@ -363,10 +363,10 @@ async function refreshSourceDocuments(): Promise<string[]> {
   if (demoActive.value) return []
   const { sources, region } = store()
   const refreshable = sources.value.filter(
-    (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
+    (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value, sources.value),
   )
   const known = new Set(refreshable.map((source) => source.id))
-  // 父源已被移除的孤儿当作根源，避免整条链都不刷新
+  // Available sources retain their full ancestry; refresh each root once.
   const roots = refreshable.filter((source) => !source.parent_id || !known.has(source.parent_id))
   if (!roots.length) return []
   const visited = new Set<string>()
@@ -390,7 +390,7 @@ async function prepareRepositorySources(clearEntries: boolean): Promise<string[]
     if (clearEntries) {
       sourceTree.replace([])
       const refreshable = sources.value.filter(
-        (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value),
+        (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value, sources.value),
       )
       if (refreshable.length) {
         try {

@@ -266,6 +266,16 @@ impl ConfigService {
         for repo in &mut bundle.repositories {
             normalize_repository_i18n(repo)?;
             validate_mod_repository(repo)?;
+            repo.region = super::availability::normalize_repository_region_for_storage(
+                repo.region.as_deref(),
+                &repo.name,
+            );
+        }
+        for source in &mut bundle.repository_sources {
+            source.region = super::availability::normalize_repository_region_for_storage(
+                source.region.as_deref(),
+                &source.nickname,
+            );
         }
         log::info!(
             "仓库配置包校验完成：仓库={}，仓库源={}",

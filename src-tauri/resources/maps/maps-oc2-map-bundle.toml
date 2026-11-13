@@ -1,15 +1,21 @@
 type = "map"
 
-# One release tag identifies one map; metadata comes from the oc2-map declaration.
 [[map_sources]]
 id = "maps-oc2-map-bundle"
 mode = "release-tags"
 provider = "gitcode"
 username = "CH3NGY2"
 repository = "OC2-Map-Bundle"
+region = "cn"
 [map_sources.nickname_i18n]
-zh-CN = "OC2 社区地图合集"
-zh-TW = "OC2 社群地圖合集"
-en = "OC2 community map bundle"
-ko = "OC2 커뮤니티 지도 모음"
-ja = "OC2 コミュニティマップ集"
+zh-CN = "社区地图源 (由清雨青雪维护)"
+zh-TW = "社群地圖源 (由清雨青雪維護)"
+en = "Community Map Source (Maintained by QingyuQingxue)"
+ko = "커뮤니티 지도 소스 (QingyuQingxue 관리)"
+ja = "コミュニティマップソース (QingyuQingxue 管理)"
+[map_sources.note_i18n]
+zh-CN = "快速下载渠道来之不易，请勿频繁下载，仅在需要玩的时候更新或安装即可。"
+zh-TW = "快速下載渠道來之不易，請勿頻繁下載，僅在需要玩的時候更新或安裝即可。"
+en = "The fast download channel is not easy to come by. Please do not download frequently. Only update or install when needed."
+ko = "빠른 다운로드 채널은 얻기 어렵습니다. 자주 다운로드하지 마세요. 필요할 때만 업데이트하거나 설치하세요."
+ja = "高速ダウンロードチャネルは手に入れるのが難しいです。頻繁にダウンロードしないでください。必要な場合にのみ更新またはインストールしてください。"

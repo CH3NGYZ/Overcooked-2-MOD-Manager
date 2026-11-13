@@ -12,7 +12,7 @@ function setup(overrides = {}) {
   const events = []
   const gate = createStartupPreflight({
     desktop: true,
-    region: async () => { events.push('region'); return 'international' },
+    region: async () => { events.push('region'); return 'global' },
     probe: async () => { events.push('probe'); return { reachable: true, failure_kind: null } },
     cancel: async () => { events.push('cancel') },
     beforeProbe: async () => { events.push('render') },
@@ -34,7 +34,10 @@ test('international startup renders before probing and releases startup only onc
 
 test('mainland recheck skips probing; browser preview skips IPC', async () => {
   for (const overrides of [
+    { region: async () => 'cn' },
+    { region: async () => ' CN ' },
     { region: async () => 'chinese_mainland' },
+    { region: async () => 'mainland-china' },
     { desktop: false, region: async () => { throw Error('must not invoke') } },
   ]) {
     const { gate, events } = setup(overrides)

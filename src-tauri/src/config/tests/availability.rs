@@ -22,7 +22,7 @@ fn repository_regions_are_optional_validated_and_preserved() {
     )
     .unwrap();
     assert_eq!(legacy.repositories[0].region, None);
-    for region in ["chinese_mainland", "international", ""] {
+    for region in ["cn", "global", ""] {
         let text =
             REGION_REPOSITORY.replace("channel =", &format!("region = \"{region}\"\nchannel ="));
         let document =
@@ -157,8 +157,8 @@ fn repository_channel_requires_both_source_and_repository_regions() {
     for (configured, china, international) in [
         (None, true, true),
         (Some(""), true, true),
-        (Some("chinese_mainland"), true, false),
-        (Some("international"), false, true),
+        (Some("cn"), true, false),
+        (Some("global"), false, true),
         (Some(" MAINLAND-CHINA "), true, false),
         (Some("Other"), false, true),
     ] {
@@ -180,6 +180,7 @@ fn repository_channel_requires_both_source_and_repository_regions() {
         REGION_CHINESE_MAINLAND
     ));
     config.repository_sources.push(RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "restricted-source".into(),
         nickname: "Restricted source".into(),
@@ -270,10 +271,10 @@ fn availability_requires_enabled_and_matching_region() {
      */
     for (enabled, region) in [
         (true, None),
-        (true, Some("international")),
-        (true, Some("chinese_mainland")),
+        (true, Some("global")),
+        (true, Some("cn")),
         (false, None),
-        (false, Some("international")),
+        (false, Some("global")),
     ] {
         repository.enabled = enabled;
         repository.region = region.map(str::to_owned);
@@ -299,4 +300,57 @@ fn availability_requires_enabled_and_matching_region() {
         &repository,
         REGION_INTERNATIONAL
     ));
+}
+
+#[test]
+fn canonical_regions_and_legacy_aliases_share_one_matrix_and_storage_values() {
+    use crate::config::availability::{normalize_repository_region_for_storage, region_matches};
+    for (input, expected) in [
+        ("cn", "cn"),
+        ("chinese_mainland", "cn"),
+        ("MAINLAND-CHINA", "cn"),
+        ("global", "global"),
+        ("international", "global"),
+        ("other", "global"),
+    ] {
+        assert_eq!(
+            normalize_repository_region_for_storage(Some(input), "test").as_deref(),
+            Some(expected)
+        );
+        for current in ["cn", "global"] {
+            assert_eq!(region_matches(Some(input), current), expected == current);
+        }
+    }
+    for input in [None, Some(""), Some("unknown")] {
+        assert_eq!(normalize_repository_region_for_storage(input, "test"), None);
+        for current in ["cn", "global"] {
+            assert!(region_matches(input, current));
+        }
+    }
+}
+
+#[test]
+fn mod_source_ancestors_are_intersected_and_broken_or_cyclic_chains_are_unavailable() {
+    use crate::config::availability::repository_source_is_available;
+    let mut config = default_config();
+    let mut parent = config.repository_sources[0].clone();
+    parent.id = "parent".into();
+    parent.region = Some("cn".into());
+    parent.parent_id = None;
+    let mut child = parent.clone();
+    child.id = "child".into();
+    child.parent_id = Some(parent.id.clone());
+    child.region = None;
+    config.repository_sources = vec![parent, child.clone()];
+    assert!(repository_source_is_available(&config, &child, "cn"));
+    assert!(!repository_source_is_available(&config, &child, "global"));
+    child.region = Some("global".into());
+    assert!(!repository_source_is_available(&config, &child, "cn"));
+    assert!(!repository_source_is_available(&config, &child, "global"));
+    child.region = None;
+    child.parent_id = Some("missing".into());
+    assert!(!repository_source_is_available(&config, &child, "cn"));
+    child.parent_id = Some(child.id.clone());
+    config.repository_sources[1] = child.clone();
+    assert!(!repository_source_is_available(&config, &child, "cn"));
 }

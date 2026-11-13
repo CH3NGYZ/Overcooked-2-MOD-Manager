@@ -32,7 +32,7 @@ pub(super) fn proxy(proxy: &Proxy) -> Result<(), String> {
         || proxy
             .regions
             .iter()
-            .any(|r| !matches!(r.as_str(), "chinese_mainland" | "international"))
+            .any(|r| crate::config::normalize_repository_region(Some(r)).is_empty())
     {
         return Err("proxy.validationFailed".into());
     }

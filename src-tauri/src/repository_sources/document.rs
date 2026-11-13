@@ -19,6 +19,8 @@ pub struct RepositorySourceDeclaration {
     pub id: String,
     #[serde(default)]
     pub nickname_i18n: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub note_i18n: std::collections::BTreeMap<String, String>,
     /// 兼容字段：旧文档的单语昵称。
     ///
     /// 反序列化后由 `normalize_source_nickname` 折叠进 `nickname_i18n`，

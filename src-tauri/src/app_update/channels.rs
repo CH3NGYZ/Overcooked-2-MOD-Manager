@@ -35,8 +35,8 @@ pub(crate) enum InstallerRegion {
 impl InstallerRegion {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::MainlandChina => "mainland-china",
-            Self::International => "international",
+            Self::MainlandChina => crate::config::REGION_CHINESE_MAINLAND,
+            Self::International => crate::config::REGION_INTERNATIONAL,
         }
     }
 }

@@ -12,7 +12,7 @@ export { sourceMatchesRegion } from './repositoryAvailability'
 
 /** 渠道展示文案（页头用）。 */
 export function repositoryRegionLabel(region: string | undefined): string {
-  return normalizeRepositoryRegion(region) === 'chinese_mainland'
+  return normalizeRepositoryRegion(region) === 'cn'
     ? t('tools.mainlandChina')
     : t('tools.international')
 }

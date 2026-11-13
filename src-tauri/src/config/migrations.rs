@@ -56,6 +56,27 @@ impl ConfigService {
                 changed = true;
             }
         }
+        for map in &mut config.map_repositories {
+            let normalized =
+                normalize_repository_region_for_storage(map.region.as_deref(), &map.id);
+            if map.region != normalized {
+                map.region = normalized;
+                changed = true;
+            }
+            if let Some(previous) = &map.source_regions {
+                let mut regions: Vec<_> = previous
+                    .iter()
+                    .map(|value| super::normalize_repository_region(Some(value)))
+                    .filter(|value| !value.is_empty())
+                    .collect();
+                regions.sort();
+                regions.dedup();
+                if &regions != previous {
+                    map.source_regions = Some(regions);
+                    changed = true;
+                }
+            }
+        }
         for source in &mut config.repository_sources {
             let normalized = normalize_repository_region_for_storage(
                 source.region.as_deref(),

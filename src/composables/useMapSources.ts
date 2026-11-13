@@ -27,7 +27,7 @@ import { useNotify, type Notify } from '../useNotify'
 import { useLevelSetScan } from './useLevelSetScan'
 import { mapForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
 import { demoActive, isDemoId } from '../tutorial/demo'
-import type { MapInfo } from '../types'
+import type { MapInfo, SourceNode } from '../types'
 
 /** 并行上限（4 组），与仓库侧 `useModRepositoryRefresh` 的取值保持一致。 */
 const REFRESH_CONCURRENCY = 4
@@ -67,6 +67,17 @@ const installing = ref<Record<string, boolean>>({})
  */
 const state = createRefreshState(REFRESH_CONCURRENCY)
 const sourceTree = createSourceTreeState()
+/** Persisted map snapshots can display their source notes before a tree refresh. */
+const sourceNodes = computed<SourceNode[]>(() => {
+  if (sourceTree.nodes.value.length) return sourceTree.nodes.value
+  const known = new Map<string, SourceNode>()
+  for (const map of maps.value) {
+    if (!map.source_id || known.has(map.source_id)) continue
+    known.set(map.source_id, { id: map.source_id, label: map.source_name || map.source_id,
+      label_i18n: map.source_name_i18n, note_i18n: map.source_note_i18n, status: 'ready' })
+  }
+  return [...known.values()]
+})
 /** 每张地图的 Release 刷新状态。 */
 const refreshing = state.refreshing
 /** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
@@ -379,7 +390,7 @@ export function useMapSources() {
   return {
     maps,
     loading: computed(() => !demoActive.value && loading.value),
-    sourceNodes: sourceTree.nodes,
+    sourceNodes,
     refreshing,
     queued,
     preparingSources: computed(() => !demoActive.value && state.preparingSources.value),

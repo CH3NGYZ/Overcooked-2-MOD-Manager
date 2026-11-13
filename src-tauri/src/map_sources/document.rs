@@ -121,6 +121,8 @@ pub struct MapSourceDeclaration {
     #[serde(default)]
     pub nickname_i18n: BTreeMap<String, String>,
     #[serde(default)]
+    pub note_i18n: BTreeMap<String, String>,
+    #[serde(default)]
     pub region: Option<String>,
     /// 是否属于内置树。省略时继承父源 —— 远程文档不能自行提权。
     #[serde(default)]
@@ -191,6 +193,10 @@ pub fn parse_document(
      * 要求作者同时写 `name` 和 `name_i18n` 只会制造两处不一致。
      */
     for entry in &mut document.maps {
+        entry.region = crate::config::normalize_repository_region_for_storage(
+            entry.region.as_deref(),
+            &entry.id,
+        );
         entry.release_derived = false;
         entry.network_plan = entry.network_plan.inherit(&document.network_plan);
         fold_i18n_mirror(&mut entry.name, &entry.name_i18n);
@@ -199,9 +205,17 @@ pub fn parse_document(
     }
     // 子源同理：昵称只写多语言表就够，加载时折出单语言镜像随条目落盘
     for child in &mut document.map_sources {
+        child.region = crate::config::normalize_repository_region_for_storage(
+            child.region.as_deref(),
+            &child.id,
+        );
         child.network_plan = child.network_plan.inherit(&document.network_plan);
         fold_i18n_mirror(&mut child.nickname, &child.nickname_i18n);
         if let Some(map) = child.map.as_mut() {
+            map.region = crate::config::normalize_repository_region_for_storage(
+                map.region.as_deref(),
+                &child.id,
+            );
             fold_i18n_mirror(&mut map.name, &map.name_i18n);
             fold_i18n_mirror(&mut map.group, &map.group_i18n);
             fold_i18n_mirror(&mut map.note, &map.note_i18n);

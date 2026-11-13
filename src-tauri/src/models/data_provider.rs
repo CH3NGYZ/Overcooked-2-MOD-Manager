@@ -13,7 +13,7 @@ pub enum DataProvider {
 
 impl DataProvider {
     pub(crate) fn for_region(region: &str) -> Self {
-        if region == crate::config::REGION_CHINESE_MAINLAND {
+        if crate::config::region_matches(Some(crate::config::REGION_CHINESE_MAINLAND), region) {
             Self::Gitee
         } else {
             Self::Github
@@ -62,11 +62,8 @@ mod tests {
 
     #[test]
     fn startup_selection_uses_computer_region_and_wire_values_are_closed() {
-        assert_eq!(
-            DataProvider::for_region("chinese_mainland"),
-            DataProvider::Gitee
-        );
-        for region in ["international", "", "unknown"] {
+        assert_eq!(DataProvider::for_region("cn"), DataProvider::Gitee);
+        for region in ["global", "", "unknown"] {
             assert_eq!(DataProvider::for_region(region), DataProvider::Github);
         }
         for (value, provider) in [

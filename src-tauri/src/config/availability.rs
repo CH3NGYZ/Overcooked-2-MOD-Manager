@@ -3,9 +3,9 @@
 use super::ConfigError;
 use crate::models::*;
 
-pub const REGION_CHINESE_MAINLAND: &str = "chinese_mainland";
+pub const REGION_CHINESE_MAINLAND: &str = "cn";
 
-pub const REGION_INTERNATIONAL: &str = "international";
+pub const REGION_INTERNATIONAL: &str = "global";
 
 pub(crate) fn normalize_repository_region(region: Option<&str>) -> String {
     match region
@@ -14,8 +14,8 @@ pub(crate) fn normalize_repository_region(region: Option<&str>) -> String {
         .to_ascii_lowercase()
         .as_str()
     {
-        "chinese_mainland" | "mainland-china" => REGION_CHINESE_MAINLAND.into(),
-        "international" | "other" => REGION_INTERNATIONAL.into(),
+        "cn" | "chinese_mainland" | "mainland-china" => REGION_CHINESE_MAINLAND.into(),
+        "global" | "international" | "other" => REGION_INTERNATIONAL.into(),
         _ => String::new(),
     }
 }
@@ -34,17 +34,16 @@ pub(crate) fn normalize_repository_region_for_storage(
         log::debug!("仓库地区为空，按全部地区处理：对象={}", context.trim());
         return None;
     }
-    match value.to_ascii_lowercase().as_str() {
-        "chinese_mainland" | "mainland-china" => Some(REGION_CHINESE_MAINLAND.into()),
-        "international" | "other" => Some(REGION_INTERNATIONAL.into()),
-        unknown => {
-            log::warn!(
-                "仓库地区无法识别，按全部地区处理：对象={}，值={}",
-                context.trim(),
-                unknown
-            );
-            None
-        }
+    let normalized = normalize_repository_region(Some(value));
+    if normalized.is_empty() {
+        log::warn!(
+            "仓库地区无法识别，按全部地区处理：对象={}，值={}",
+            context.trim(),
+            value
+        );
+        None
+    } else {
+        Some(normalized)
     }
 }
 
@@ -79,11 +78,15 @@ pub fn validate_repository_region(region: Option<&str>) -> Result<(), ConfigErro
         .map_err(|_| ConfigError::Invalid("config.invalidRegion".into()))
 }
 
-fn region_matches(configured_region: Option<&str>, region: &str) -> bool {
+pub(crate) fn region_matches(configured_region: Option<&str>, region: &str) -> bool {
     match normalize_repository_region(configured_region).as_str() {
         "" => true,
-        REGION_CHINESE_MAINLAND => region == REGION_CHINESE_MAINLAND,
-        REGION_INTERNATIONAL => region != REGION_CHINESE_MAINLAND,
+        REGION_CHINESE_MAINLAND => {
+            normalize_repository_region(Some(region)) == REGION_CHINESE_MAINLAND
+        }
+        REGION_INTERNATIONAL => {
+            normalize_repository_region(Some(region)) != REGION_CHINESE_MAINLAND
+        }
         _ => true,
     }
 }
@@ -160,6 +163,32 @@ pub(super) fn repository_source_matches_region(source: &RepositorySource, region
     region_matches(source.region.as_deref(), region)
 }
 
+/// A source and all its ancestors must apply; broken/cyclic ownership is unavailable.
+pub(crate) fn repository_source_is_available(
+    config: &AppConfig,
+    source: &RepositorySource,
+    region: &str,
+) -> bool {
+    let mut current = source;
+    for _ in 0..=config.repository_sources.len() {
+        if !repository_source_matches_region(current, region) {
+            return false;
+        }
+        let Some(parent) = current.parent_id.as_deref() else {
+            return true;
+        };
+        let Some(found) = config
+            .repository_sources
+            .iter()
+            .find(|candidate| candidate.id == parent)
+        else {
+            return false;
+        };
+        current = found;
+    }
+    false
+}
+
 pub(crate) fn repository_matches_channel(
     config: &AppConfig,
     repository: &ModRepositoryConfig,
@@ -170,7 +199,7 @@ pub(crate) fn repository_matches_channel(
         && platform_matches(repository.platform.as_deref(), current_platform())
         && repository.source_id.as_deref().is_none_or(|source_id| {
             config.repository_sources.iter().any(|source| {
-                source.id == source_id && repository_source_matches_region(source, region)
+                source.id == source_id && repository_source_is_available(config, source, region)
             })
         })
 }

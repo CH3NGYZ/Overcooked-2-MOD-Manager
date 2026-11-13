@@ -9,6 +9,7 @@ pub(crate) fn builtin_repository_sources(provider: DataProvider) -> Vec<Reposito
     // file-relative names inside that index, so they resolve to bundled
     // resources as well; the live index points them at remote raw URLs.
     vec![RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: crate::repository_sources::DEFAULT_INDEX_ID.into(),
         nickname: "MOD源".into(),

@@ -82,6 +82,8 @@ pub struct RepositorySource {
     pub nickname: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub nickname_i18n: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_i18n: BTreeMap<String, String>,
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,

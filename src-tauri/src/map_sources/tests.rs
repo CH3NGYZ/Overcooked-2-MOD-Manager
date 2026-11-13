@@ -147,20 +147,20 @@ fn region_filtering_matches_the_repository_semantics() {
         .into_iter()
         .next()
         .unwrap();
-    assert!(map_is_available(&map, "chinese_mainland"));
-    assert!(map_is_available(&map, "international"));
+    assert!(map_is_available(&map, "cn"));
+    assert!(map_is_available(&map, "global"));
 
-    map.region = Some("chinese_mainland".into());
-    assert!(map_is_available(&map, "chinese_mainland"));
-    assert!(!map_is_available(&map, "international"));
+    map.region = Some("cn".into());
+    assert!(map_is_available(&map, "cn"));
+    assert!(!map_is_available(&map, "global"));
 
-    map.region = Some("international".into());
-    assert!(!map_is_available(&map, "chinese_mainland"));
-    assert!(map_is_available(&map, "international"));
+    map.region = Some("global".into());
+    assert!(!map_is_available(&map, "cn"));
+    assert!(map_is_available(&map, "global"));
 
     // 禁用一律不可见，与地区无关
     map.enabled = false;
-    assert!(!map_is_available(&map, "international"));
+    assert!(!map_is_available(&map, "global"));
 }
 
 /*

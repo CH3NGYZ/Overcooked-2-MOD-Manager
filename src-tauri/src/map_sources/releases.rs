@@ -45,6 +45,8 @@ pub(crate) async fn fetch_map_release_data(
         }))
         .map_err(|error| error.to_string())?;
         let label = super::state::SourceLabel {
+            note_i18n: map.source_note_i18n.clone(),
+            regions: map.source_regions.clone().unwrap_or_default(),
             id: map.source_id.clone().unwrap_or_default(),
             name: map.source_name.clone(),
             name_i18n: map.source_name_i18n.clone(),

@@ -113,7 +113,7 @@ group_i18n.ja = "アーケード MOD - 中国本土おすすめ"
 provider = "gitee"
 username = "ch3ngyz"
 repository = "Overcooked-2-HostUtilities-Stable-Releases"
-region = "chinese_mainland"
+region = "cn"
 platform = ""
 
 # 下载方式
@@ -187,7 +187,7 @@ group_i18n.ja = "アーケード MOD - 中国本土おすすめ"
 provider = "gitee"
 username = "ch3ngyz"
 repository = "Overcooked-2-HostUtilities-Beta-Releases"
-region = "chinese_mainland"
+region = "cn"
 platform = ""
 
 # 下载方式
@@ -261,7 +261,7 @@ group_i18n.ja = "アーケード MOD - 海外おすすめ"
 provider = "github"
 username = "CH3NGYZ"
 repository = "Overcooked-2-HostUtilities-Stable-Releases"
-region = "international"
+region = "global"
 platform = ""
 
 # 下载方式
@@ -335,7 +335,7 @@ group_i18n.ja = "アーケード MOD - 海外おすすめ"
 provider = "github"
 username = "CH3NGYZ"
 repository = "Overcooked-2-HostUtilities-Beta-Releases"
-region = "international"
+region = "global"
 platform = ""
 
 # 下载方式

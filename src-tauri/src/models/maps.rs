@@ -180,6 +180,11 @@ pub struct MapRepositoryConfig {
     pub source_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_name_i18n: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_note_i18n: BTreeMap<String, String>,
+    /// Source/ancestor restrictions survive config reloads without a persisted tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_regions: Option<Vec<String>>,
     /// Release 缓存，与 `ModRepositoryConfig` 同一套字段与 TTL 语义。
     #[serde(default)]
     pub cached_releases: Vec<ReleaseInfo>,
@@ -295,6 +300,8 @@ pub struct MapInfo {
     pub source_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_name_i18n: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_note_i18n: BTreeMap<String, String>,
     /// 作者指定的「这就是最新版」的**地图包版本**；没写时为 `None`。
     ///
     /// 前端判定改的是**语义**而不是比较方式：写了它就不再比大小，只比等值

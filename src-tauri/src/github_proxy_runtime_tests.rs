@@ -488,7 +488,7 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
             .resolve(
                 &Provider::Github,
                 RepositoryKind::Mod,
-                "international",
+                "global",
                 &NetworkPlanSelection::default(),
             )
             .unwrap();
@@ -504,7 +504,7 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
                 &Provider::Github,
                 RepositoryKind::Mod,
                 &Default::default(),
-                "international",
+                "global",
                 "https://github.com/u/r/releases/download/v/a.zip",
                 None,
                 None,

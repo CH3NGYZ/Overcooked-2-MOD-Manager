@@ -217,7 +217,7 @@ async fn builtin_index_loads_only_declared_sources_and_relative_repository_docum
         for repository in child.repositories {
             assert!(matches!(
                 repository.region.as_deref(),
-                None | Some("chinese_mainland" | "international")
+                None | Some("cn" | "global")
             ));
         }
     }

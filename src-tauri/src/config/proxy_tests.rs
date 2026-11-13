@@ -118,8 +118,8 @@ fn provider_is_initialized_once_per_session_and_never_restored_by_disk_reads() {
     use crate::models::DataProvider;
     let root = std::env::temp_dir().join(format!("oc2-session-provider-{}", Uuid::new_v4()));
     for (region, expected) in [
-        ("chinese_mainland", DataProvider::Gitee),
-        ("international", DataProvider::Github),
+        ("cn", DataProvider::Gitee),
+        ("global", DataProvider::Github),
     ] {
         let service = ConfigService::for_test(root.clone());
         service.select_data_provider(DataProvider::for_region(region));

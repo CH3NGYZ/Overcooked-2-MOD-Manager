@@ -172,37 +172,26 @@ fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
 
 #[test]
 fn repository_identity_uses_provider_username_repository_and_region() {
-    let github =
-        repository_address_key(&Provider::Github, " Example ", "MOD", Some("international"));
+    let github = repository_address_key(&Provider::Github, " Example ", "MOD", Some("global"));
     assert_eq!(
         github,
-        repository_address_key(&Provider::Github, "example", "mod", Some("international"))
+        repository_address_key(&Provider::Github, "example", "mod", Some("global"))
     );
     assert_ne!(
         github,
-        repository_address_key(&Provider::Gitee, "example", "mod", Some("international"))
+        repository_address_key(&Provider::Gitee, "example", "mod", Some("global"))
     );
     assert_ne!(
         github,
-        repository_address_key(
-            &Provider::Github,
-            "example",
-            "mod",
-            Some("chinese_mainland")
-        )
+        repository_address_key(&Provider::Github, "example", "mod", Some("cn"))
     );
     assert_ne!(
         github,
-        repository_address_key(&Provider::Github, "other", "mod", Some("international"))
+        repository_address_key(&Provider::Github, "other", "mod", Some("global"))
     );
     assert_ne!(
         github,
-        repository_address_key(
-            &Provider::Github,
-            "example",
-            "another",
-            Some("international")
-        )
+        repository_address_key(&Provider::Github, "example", "another", Some("global"))
     );
 }
 

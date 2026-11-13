@@ -55,6 +55,7 @@ pub(crate) fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         source_id: map.source_id.clone(),
         source_name: map.source_name.clone(),
         source_name_i18n: map.source_name_i18n.clone(),
+        source_note_i18n: map.source_note_i18n.clone(),
         /*
          * 作者钉死的版本号：有值时前端只比等值（本地更高也提示更新），
          * 因为版本号是作者手写的自由文本，`0.7 > 0.69` 这种大小关系

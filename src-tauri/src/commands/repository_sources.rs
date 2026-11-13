@@ -141,6 +141,7 @@ pub fn save_repository_source(
         source.url = url.into();
     } else {
         config.repository_sources.push(RepositorySource {
+            note_i18n: Default::default(),
             network_plan: Default::default(),
             id: Uuid::new_v4().to_string(),
             nickname: effective_nickname,
@@ -278,6 +279,7 @@ pub fn save_repository_sources(
             return Err("source.idDuplicate".into());
         }
         ordered.push(RepositorySource {
+            note_i18n: source.note_i18n,
             network_plan: Default::default(),
             id,
             nickname,

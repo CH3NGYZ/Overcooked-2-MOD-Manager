@@ -8,6 +8,7 @@ import test from 'node:test'
 const {
   OFFICIAL_INDEX_ID,
   modRepositoryIsAvailable,
+  normalizeRepositoryRegion,
   repositoryRegionMatches,
   sourceMatchesRegion,
   shouldFallbackToBuiltin,
@@ -26,6 +27,40 @@ const repo = (extra = {}) => ({
   region: undefined,
   source_id: 'any-source',
   ...extra,
+})
+
+test('canonical cn/global values normalize legacy aliases on both sides of the region comparison', () => {
+  const mainland = ['cn', ' CN ', 'chinese_mainland', 'mainland-china']
+  const global = ['global', ' GLOBAL ', 'international', 'other']
+  for (const value of mainland) assert.equal(normalizeRepositoryRegion(value), 'cn')
+  for (const value of global) assert.equal(normalizeRepositoryRegion(value), 'global')
+  for (const current of [...mainland, ...global, undefined]) {
+    for (const required of mainland) assert.equal(repositoryRegionMatches(required, current), mainland.includes(current))
+    for (const required of global) assert.equal(repositoryRegionMatches(required, current), !mainland.includes(current))
+    for (const required of [undefined, '', '  ']) assert.equal(repositoryRegionMatches(required, current), true)
+  }
+})
+
+test('source, every ancestor and repository regions intersect; missing and cyclic ancestors remain unavailable', () => {
+  const chain = [
+    { id: 'root', region: 'cn' },
+    { id: 'child', parent_id: 'root' },
+    { id: 'leaf', parent_id: 'child', region: '' },
+  ]
+  const childRepo = repo({ source_id: 'leaf' })
+  assert.equal(sourceMatchesRegion(chain[2], 'cn', chain), true)
+  assert.equal(sourceMatchesRegion(chain[2], 'global', chain), false)
+  assert.equal(modRepositoryIsAvailable(childRepo, chain, 'cn'), true)
+  assert.equal(modRepositoryIsAvailable(childRepo, chain, 'global'), false)
+  assert.equal(modRepositoryIsAvailable({ ...childRepo, region: 'global' }, chain, 'cn'), false)
+  const conflicting = chain.map(source => source.id === 'child' ? { ...source, region: 'global' } : source)
+  for (const region of ['cn', 'global']) {
+    assert.equal(modRepositoryIsAvailable(childRepo, conflicting, region), false)
+    for (const broken of [chain.slice(1), [{ id: 'leaf', parent_id: 'leaf' }], [{ id: 'leaf', parent_id: 'a' }, { id: 'a', parent_id: 'leaf' }]]) {
+      assert.equal(sourceMatchesRegion(broken.find(source => source.id === 'leaf'), region, broken), false)
+      assert.equal(modRepositoryIsAvailable(childRepo, broken, region), false)
+    }
+  }
 })
 
 test('enabled=false 在两种地区都不可用', () => {

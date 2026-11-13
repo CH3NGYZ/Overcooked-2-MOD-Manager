@@ -105,6 +105,7 @@ nickname = "Failed"
         ..Default::default()
     };
     observer.declare(SourceNode {
+        note_i18n: Default::default(),
         id: "root".into(),
         parent_id: None,
         label: "Root".into(),
@@ -136,7 +137,7 @@ nickname = "Failed"
         &label,
         None,
         false,
-        "international",
+        "global",
         0,
         &mut visited,
         &mut collected,
@@ -183,9 +184,7 @@ nickname = "Failed"
         previous: &collected,
         ..ctx
     };
-    let recovered = load_map_branch("failed", &ctx, "international")
-        .await
-        .unwrap();
+    let recovered = load_map_branch("failed", &ctx, "global").await.unwrap();
     assert_eq!(recovered.len(), 3, "successful siblings survive retry");
     assert!(
         progress

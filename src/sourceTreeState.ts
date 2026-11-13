@@ -6,7 +6,10 @@ export function createSourceTreeState() {
   const nodes = ref<SourceNode[]>([])
   function declare(declarations: SourceNode[]) {
     const previous = new Map(nodes.value.map(node => [node.id, node]))
-    nodes.value = declarations.map(node => previous.get(node.id) ?? node)
+    nodes.value = declarations.map(node => {
+      const existing = previous.get(node.id)
+      return existing ? { ...node, status: existing.status, error: existing.error } : node
+    })
   }
   function descendants(id: string): Set<string> {
     const ids = new Set([id])

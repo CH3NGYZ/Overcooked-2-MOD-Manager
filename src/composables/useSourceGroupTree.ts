@@ -38,6 +38,7 @@ export interface SourceGroupEntry<T> {
 export interface SourceGroupOrder {
   id: string
   label: string
+  note_i18n?: Record<string, string>
   parentId?: string | null
   url?: string
   status?: string
@@ -55,6 +56,7 @@ export interface SourceGroupSource<T> {
   /** 源 ID（折叠项名称，也是「刷新这个源」的入参）。 */
   id: string
   label: string
+  note_i18n?: Record<string, string>
   count: number
   parentId?: string | null
   url?: string

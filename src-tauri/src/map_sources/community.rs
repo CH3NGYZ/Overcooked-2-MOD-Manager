@@ -35,6 +35,8 @@ pub(super) fn community_map_label(provider: &Provider) -> SourceLabel {
         Provider::Gitcode => ("gitcode-map-community", "GitCode"),
     };
     SourceLabel {
+        note_i18n: Default::default(),
+        regions: Default::default(),
         network_plan: Default::default(),
         id: id.to_string(),
         name: format!("社区地图（{product}）"),
@@ -59,6 +61,7 @@ pub(super) fn community_map_declaration(
     let username = repository.username.trim();
     let name = repository.repository.trim();
     MapSourceDeclaration {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: format!(
             "{}/{username}/{name}",

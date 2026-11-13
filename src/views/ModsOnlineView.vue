@@ -270,7 +270,7 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
  */
 const sources = computed<RepositorySource[]>(() =>
   withDemoSources(
-    (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value)),
+    (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value, config.value?.repository_sources)),
   ),
 )
 const repositories = computed<ModRepository[]>(() =>
@@ -462,6 +462,7 @@ const sourceOrder = computed<SourceGroupOrder[]>(() =>
   sources.value.filter(source => !COMMUNITY_IDS.has(source.id)).map((source) => ({
     id: source.id,
     label: pickI18n(source.nickname_i18n, source.nickname),
+    note_i18n: source.note_i18n,
     parentId: source.parent_id, url: source.url,
     status: engine.sourceNodes.value.find(node => node.id === source.id)?.status,
     error: engine.sourceNodes.value.find(node => node.id === source.id)?.error,
@@ -738,7 +739,7 @@ defineExpose({ refreshAll, visibleCount })
             <template #header>
               <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
                 <div class="source-head">
-                  <SourceTitle :label="node.label" :items="repositories.filter(item => item.source_id === node.id)" :source-url="sources.find(source => source.id === node.id)?.url" />
+                  <SourceTitle :label="node.label" :note-i18n="node.note_i18n" />
                   <!-- 社区来源未经官方索引校验，用严重级红色与「重复」同级提示 -->
                   <n-tag size="tiny" :bordered="false" class="state-tag"
                     :color="tagColorFor('critical')">{{ t('dialogs.unknownOrigin') }}</n-tag>

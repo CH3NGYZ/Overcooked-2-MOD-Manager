@@ -5,6 +5,7 @@ type = "mod"
 # [[repository_sources]] 的顺序决定源在管理器中的展示顺序。
 [[repository_sources]]
 id = "repositories-azhe-hostutilities"
+region = ""
 url = "mods/mods-azhe-hostutilities.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 街机MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -16,6 +17,7 @@ ja = "Azhe - アーケード MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "repositories-azhe-others"
+region = ""
 url = "mods/mods-azhe-others.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 其他MOD - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -27,6 +29,7 @@ ja = "Azhe - その他の MOD - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "repositories-azhe-game-fixes"
+region = ""
 url = "mods/mods-azhe-game-fixes.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "阿哲 - 游戏修复 - 小红书 @Azhe是阿哲 - ID:5566308341"
@@ -38,6 +41,7 @@ ja = "Azhe - ゲーム修正 - RedNote @Azhe是阿哲 - ID:5566308341"
 
 [[repository_sources]]
 id = "repositories-qingyuqingxue"
+region = ""
 url = "mods/mods-qingyuqingxue.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @清雨青雪 - ID:94575050243"
@@ -49,6 +53,7 @@ ja = "RedNote @清雨青雪 - ID:94575050243"
 
 [[repository_sources]]
 id = "repositories-kfyangc"
+region = ""
 url = "mods/mods-kfyangc.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @漆雕帆船 - ID:5669571205"
@@ -60,6 +65,7 @@ ja = "RedNote @漆雕帆船 - ID:5669571205"
 
 [[repository_sources]]
 id = "repositories-foamp"
+region = ""
 url = "mods/mods-foamp.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "小红书 @纸沫 - ID:5696399896"
@@ -71,6 +77,7 @@ ja = "RedNote @纸沫 - ID:5696399896"
 
 [[repository_sources]]
 id = "repositories-guojia99"
+region = ""
 url = "mods/mods-guojia99.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "嘉吖 - DIYLevel Web前置"
@@ -82,6 +89,7 @@ ja = "嘉吖 - DIYLevel Web ランタイム"
 
 [[repository_sources]]
 id = "repositories-gua"
+region = ""
 url = "mods/mods-gua.toml"
 [repository_sources.nickname_i18n]
 zh-CN = "G_U_A"

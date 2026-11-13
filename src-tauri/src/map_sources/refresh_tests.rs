@@ -80,11 +80,9 @@ repository='b'
         )
         .unwrap();
         let declaration = &document.map_sources[0];
-        let label = SourceLabel {
-            id: declaration.id.clone(),
-            network_plan: declaration.network_plan.clone(),
-            ..Default::default()
-        };
+        let mut label = SourceLabel::default().child(declaration);
+        label.note_i18n.insert("en".into(), "Source only".into());
+        label.regions.push("cn".into());
         let cache = crate::release_cache::RepoReleaseCache::default();
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let config = crate::config::default_config();
@@ -114,6 +112,8 @@ repository='b'
             };
             let fresh = fetch_map_release_data(&ctx, map).await.unwrap();
             assert_eq!(fresh.cached_releases[0].tag_name, "1.0");
+            assert_eq!(fresh.source_note_i18n, map.source_note_i18n);
+            assert_eq!(fresh.source_regions, map.source_regions);
         }
         assert_eq!(
             requests.lock().unwrap().len(),

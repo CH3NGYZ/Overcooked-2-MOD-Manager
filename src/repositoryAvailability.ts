@@ -15,16 +15,17 @@ import { sameGuid } from './modRelations.ts'
 /** 地区值归一化：兼容旧别名，空值表示不限地区。 */
 export function normalizeRepositoryRegion(region: string | undefined): string {
   const value = region?.trim().toLowerCase()
-  if (value === 'mainland-china') return 'chinese_mainland'
-  if (value === 'other') return 'international'
+  if (value === 'chinese_mainland' || value === 'mainland-china') return 'cn'
+  if (value === 'international' || value === 'other') return 'global'
   return value || ''
 }
 
 /** 仓库/源是否适用于当前下载渠道。空地区适用全部。 */
 export function repositoryRegionMatches(region: string | undefined, currentRegion: string | undefined): boolean {
   const value = normalizeRepositoryRegion(region)
-  if (value === 'chinese_mainland') return currentRegion === 'chinese_mainland'
-  if (value === 'international') return currentRegion !== 'chinese_mainland'
+  const current = normalizeRepositoryRegion(currentRegion)
+  if (value === 'cn') return current === 'cn'
+  if (value === 'global') return current !== 'cn'
   return true
 }
 
@@ -32,8 +33,27 @@ export function repositoryMatchesRegion(repo: Pick<ModRepository, 'region'>, cur
   return repositoryRegionMatches(repo.region, currentRegion)
 }
 
-export function sourceMatchesRegion(source: Pick<RepositorySource, 'region'>, currentRegion: string | undefined): boolean {
-  return repositoryRegionMatches(source.region, currentRegion)
+type RegionalSource = Pick<RepositorySource, 'id' | 'region' | 'parent_id'>
+
+/** A child cannot bypass a restricted, missing or cyclic ancestor. */
+export function sourceMatchesRegion(
+  source: Pick<RepositorySource, 'region'> & Partial<Pick<RepositorySource, 'id' | 'parent_id'>>,
+  currentRegion: string | undefined,
+  sources?: readonly RegionalSource[],
+): boolean {
+  const visited = new Set<string>()
+  let current = source
+  while (true) {
+    if (!repositoryRegionMatches(current.region, currentRegion)) return false
+    if (!sources || !current.parent_id) return true
+    if (current.id) {
+      if (visited.has(current.id)) return false
+      visited.add(current.id)
+    }
+    const parent = sources.find(entry => entry.id === current.parent_id)
+    if (!parent) return false
+    current = parent
+  }
 }
 
 /**
@@ -67,8 +87,8 @@ export function repositoryPlatformMatches(
 /** 仓库所属来源；来源已从配置中删除时返回 undefined。 */
 export function repositorySource(
   repo: Pick<ModRepository, 'source_id'>,
-  sources: Pick<RepositorySource, 'id' | 'region'>[] | undefined,
-): Pick<RepositorySource, 'id' | 'region'> | undefined {
+  sources: RegionalSource[] | undefined,
+): RegionalSource | undefined {
   if (!repo.source_id) return undefined
   return (sources ?? []).find((entry) => entry.id === repo.source_id)
 }
@@ -86,7 +106,7 @@ export function repositorySource(
  */
 export function modRepositoryIsAvailable(
   repo: Pick<ModRepository, 'enabled' | 'region' | 'source_id' | 'platform'>,
-  sources: Pick<RepositorySource, 'id' | 'region'>[] | undefined,
+  sources: RegionalSource[] | undefined,
   currentRegion: string | undefined,
   currentPlatform?: string,
 ): boolean {
@@ -105,7 +125,7 @@ export function modRepositoryIsAvailable(
   if (!repositoryPlatformMatches(repo.platform, platform)) return false
   if (!repo.source_id) return true
   const source = repositorySource(repo, sources)
-  return !!source && sourceMatchesRegion(source, currentRegion)
+  return !!source && sourceMatchesRegion(source, currentRegion, sources)
 }
 
 /** Locate the same loaded card the online MOD page can show, without a refresh

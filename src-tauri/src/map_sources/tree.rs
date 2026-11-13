@@ -41,13 +41,22 @@ fn root_source_label() -> SourceLabel {
 /// 它仍用于两件事 —— 内置索引里若出现 `repository` / `document` 形式的条目，
 /// 先给地图页一个无需网络的初始列表；根索引读取失败时由调用方决定是否回退。
 pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
+    bundled_map_snapshot().0
+}
+
+fn bundled_map_snapshot() -> (
+    Vec<MapRepositoryConfig>,
+    std::collections::HashMap<String, SourceLabel>,
+) {
     let mut collected = Vec::new();
+    let mut labels = std::collections::HashMap::new();
     let Ok(index) = SourceLocation::parse(BUILTIN_MAP_INDEX) else {
-        return collected;
+        return (collected, labels);
     };
     let root = root_source_label();
-    collect_bundled_maps(&index, &root, 0, &mut collected);
-    collected
+    labels.insert(root.id.clone(), root.clone());
+    collect_bundled_maps(&index, &root, 0, &mut collected, &mut labels);
+    (collected, labels)
 }
 
 fn collect_bundled_maps(
@@ -55,6 +64,7 @@ fn collect_bundled_maps(
     label: &SourceLabel,
     depth: usize,
     collected: &mut Vec<MapRepositoryConfig>,
+    labels: &mut std::collections::HashMap<String, SourceLabel>,
 ) {
     let Ok(text) = location.bundled_text() else {
         return;
@@ -72,13 +82,9 @@ fn collect_bundled_maps(
         return;
     }
     for child in document.map_sources {
-        // clone 而不是移动：下面还要把整条声明交给 `build_declaration_map`
-        let child_label = SourceLabel {
-            network_plan: child.network_plan.clone(),
-            id: child.id.trim().to_string(),
-            name: child.nickname.clone(),
-            name_i18n: child.nickname_i18n.clone(),
-        };
+        // Retain labels for release-tags sources too, without fetching their APIs.
+        let child_label = label.child(&child);
+        labels.insert(child_label.id.clone(), child_label.clone());
         match child.mode {
             /*
              * 单仓库地图的条目就写在这份索引里，不需要网络：内置树照样能
@@ -109,7 +115,7 @@ fn collect_bundled_maps(
         let Ok(child_location) = SourceLocation::resolve(&child.url, Some(location)) else {
             continue;
         };
-        collect_bundled_maps(&child_location, &child_label, depth + 1, collected);
+        collect_bundled_maps(&child_location, &child_label, depth + 1, collected, labels);
     }
 }
 
@@ -120,33 +126,34 @@ fn collect_bundled_maps(
 /// 网络，读取失败跳过；只有缺名字时才查内置条目。调用方负责保存，后续
 /// 配置缓存命中不再执行同步。远程索引独有的子源在刷新时覆盖。
 pub(crate) fn fill_missing_source_names(maps: &mut [MapRepositoryConfig]) -> bool {
-    fn missing(map: &MapRepositoryConfig) -> bool {
+    let needs_metadata = |map: &MapRepositoryConfig| {
         map.source_id
             .as_deref()
             .is_some_and(|id| !id.trim().is_empty())
-            && map.source_name.trim().is_empty()
-    }
-    if !maps.iter().any(missing) {
+            && (map.source_name.trim().is_empty() || map.source_regions.is_none())
+    };
+    if !maps.iter().any(needs_metadata) {
         return false;
     }
-    let mut names = std::collections::HashMap::new();
-    for map in bundled_map_tree() {
-        let Some(id) = map.source_id else {
-            continue;
-        };
-        names
-            .entry(id)
-            .or_insert((map.source_name, map.source_name_i18n));
-    }
+    let (_, labels) = bundled_map_snapshot();
     let mut changed = false;
     for map in maps.iter_mut() {
-        if !missing(map) {
+        if !needs_metadata(map) {
             continue;
         }
-        let found = map.source_id.as_ref().and_then(|id| names.get(id).cloned());
-        if let Some((name, name_i18n)) = found {
-            map.source_name = name;
-            map.source_name_i18n = name_i18n;
+        let Some(label) = map.source_id.as_ref().and_then(|id| labels.get(id)) else {
+            continue;
+        };
+        if map.source_name.trim().is_empty() {
+            map.source_name = label.name.clone();
+            map.source_name_i18n = label.name_i18n.clone();
+            changed = true;
+        }
+        // None identifies old unknown metadata. Some([]) preserves an explicitly
+        // unrestricted source and its intentionally absent note across restarts.
+        if map.source_regions.is_none() {
+            map.source_note_i18n = label.note_i18n.clone();
+            map.source_regions = Some(label.regions.clone());
             changed = true;
         }
     }
@@ -194,6 +201,7 @@ pub async fn load_map_tree(
     if let Some(observer) = ctx.observer {
         observer.begin(None);
         let node = SourceNode {
+            note_i18n: root.note_i18n.clone(),
             id: root.id.clone(),
             parent_id: None,
             label: root.name.clone(),
@@ -226,7 +234,7 @@ pub async fn load_map_tree(
         ctx,
     )
     .await?;
-    load_deferred(deferred, &mut collected, ctx).await;
+    load_deferred(deferred, &mut collected, ctx, region).await;
     /*
      * 社区发现的地图源排在官方源之后：官方索引是人工维护的权威条目，
      * 身份撞车时保留官方那份（见 `append_community_map_maps` 的去重）。
@@ -252,6 +260,9 @@ async fn load_map_document(
     deferred: &mut Vec<SourceTarget>,
     ctx: &MapSourceContext<'_>,
 ) -> Result<(), ConfigError> {
+    if !label.matches_region(region) {
+        return Ok(());
+    }
     if let Some(observer) = ctx.observer {
         observer.publish(&label.id, "loading", None, collected);
     }
@@ -267,10 +278,11 @@ async fn load_map_document(
     // Publish all child titles before fetching any child document.
     if let Some(observer) = ctx.observer {
         for child in &document.map_sources {
-            if !child_matches_region(child.region.as_deref(), region) {
+            if !crate::config::region_matches(child.region.as_deref(), region) {
                 continue;
             }
             let node = SourceNode {
+                note_i18n: child.note_i18n.clone(),
                 id: child.id.trim().into(),
                 parent_id: Some(label.id.clone()),
                 label: child.nickname.clone(),
@@ -283,12 +295,7 @@ async fn load_map_document(
                 sequence: 0,
                 node: node.clone(),
                 origin: location.clone(),
-                label: SourceLabel {
-                    network_plan: child.network_plan.clone(),
-                    id: child.id.trim().into(),
-                    name: child.nickname.clone(),
-                    name_i18n: child.nickname_i18n.clone(),
-                },
+                label: label.child(&child),
                 builtin: builtin && child.builtin.unwrap_or(true),
                 depth: depth + 1,
                 declaration: Some(child.clone()),
@@ -303,7 +310,9 @@ async fn load_map_document(
         // ID 必须跨刷新稳定，否则重建条目会丢失缓存与关系快照的关联。
         // 用「源 ID + 身份」派生，重建出来的地图能接回上一次的缓存。
         map.id = map_repository_id(&label.id, &map);
-        collected.push(map);
+        if super::state::map_is_available(&map, region) {
+            collected.push(map);
+        }
     }
 
     if let Some(observer) = ctx.observer {
@@ -313,18 +322,13 @@ async fn load_map_document(
     for child in document.map_sources {
         // 地区不匹配的子源整个跳过：它的地址对当前用户没有意义，
         // 请求它只会换来一次 404 和一条无从处理的错误
-        if !child_matches_region(child.region.as_deref(), region) {
+        if !crate::config::region_matches(child.region.as_deref(), region) {
             log::debug!("跳过地区不匹配的地图子源：源={}", child.id);
             continue;
         }
         // 远程文档不能自行提权：省略时继承父源
         let child_builtin = builtin && child.builtin.unwrap_or(true);
-        let child_label = SourceLabel {
-            network_plan: child.network_plan.clone(),
-            id: child.id.trim().to_string(),
-            name: child.nickname.clone(),
-            name_i18n: child.nickname_i18n.clone(),
-        };
+        let child_label = label.child(&child);
         match child.mode {
             /*
              * 单仓库地图：整仓 = 一张图，条目本体写在声明里，这里只是补齐
@@ -333,7 +337,9 @@ async fn load_map_document(
             MapSourceMode::Repository => {
                 match build_declaration_map(&child, &child_label, child_builtin, &location) {
                     Ok(map) => {
-                        collected.push(map);
+                        if super::state::map_is_available(&map, region) {
+                            collected.push(map);
+                        }
                         if let Some(observer) = ctx.observer {
                             observer.publish(&child_label.id, "ready", None, collected);
                         }
@@ -361,6 +367,7 @@ async fn load_map_document(
                 deferred.push(SourceTarget {
                     sequence: 0,
                     node: SourceNode {
+                        note_i18n: child.note_i18n.clone(),
                         id: child_label.id.clone(),
                         parent_id: Some(label.id.clone()),
                         label: child.nickname.clone(),
@@ -452,19 +459,12 @@ async fn load_map_document(
     Ok(())
 }
 
-/// 子源声明的地区是否适用于当前地区（空 = 所有地区）。
-fn child_matches_region(declared: Option<&str>, region: &str) -> bool {
-    declared
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none_or(|declared| crate::config::normalize_repository_region(Some(declared)) == region)
-}
-
 /// Release-derived sources begin only after every TOML has settled.
 async fn load_deferred(
     mut targets: Vec<SourceTarget>,
     collected: &mut Vec<MapRepositoryConfig>,
     ctx: &MapSourceContext<'_>,
+    region: &str,
 ) {
     targets.sort_by_key(|target| {
         let bound = ctx.previous_for(&target.label.id);
@@ -473,6 +473,9 @@ async fn load_deferred(
         })
     });
     for target in targets {
+        if !target.label.matches_region(region) {
+            continue;
+        }
         let Some(declaration) = target.declaration else {
             continue;
         };
@@ -527,6 +530,11 @@ pub(crate) async fn load_map_branch(
         .cloned()
         .collect();
     let mut deferred = Vec::new();
+    if !target.label.matches_region(region) {
+        observer.remove(&ids);
+        observer.publish(id, "ready", None, &collected);
+        return Ok(collected);
+    }
     observer.publish(id, "loading", None, &collected);
     match target
         .declaration
@@ -575,7 +583,9 @@ pub(crate) async fn load_map_branch(
                     &target.origin,
                 ) {
                     Ok(map) => {
-                        collected.push(map);
+                        if super::state::map_is_available(&map, region) {
+                            collected.push(map);
+                        }
                         observer.publish(id, "ready", None, &collected);
                     }
                     Err(error) => {
@@ -585,10 +595,13 @@ pub(crate) async fn load_map_branch(
             }
         }
     }
-    load_deferred(deferred, &mut collected, ctx).await;
+    load_deferred(deferred, &mut collected, ctx, region).await;
     Ok(collected)
 }
 
+#[cfg(test)]
+#[path = "region_tests.rs"]
+mod region_tests;
 #[cfg(test)]
 #[path = "tree_tests.rs"]
 mod tests;

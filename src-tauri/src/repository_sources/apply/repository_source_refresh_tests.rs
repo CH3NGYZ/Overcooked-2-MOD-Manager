@@ -42,6 +42,7 @@ async fn bundled_fallback_keeps_remote_entry_and_rejects_custom_sources() {
     let mut config = state.config.load().unwrap();
     let root = config.repository_sources[0].clone();
     let custom = RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "custom-source".into(),
         nickname: "Custom".into(),
@@ -207,6 +208,7 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
     let state = test_state();
     let mut config = state.config.load().unwrap();
     let root = RepositorySource {
+        note_i18n: Default::default(),
         network_plan: Default::default(),
         id: "live-index-test".into(),
         nickname: "Live index".into(),

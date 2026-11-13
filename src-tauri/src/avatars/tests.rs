@@ -1,7 +1,7 @@
 use super::*;
 
 fn direct_url(provider: &Provider, owner: &str) -> String {
-    crate::download::planning::plan_avatar_download(provider, "international", owner).unwrap()[0]
+    crate::download::planning::plan_avatar_download(provider, "global", owner).unwrap()[0]
         .url
         .clone()
 }
@@ -118,7 +118,7 @@ fn unsafe_owner_characters_are_encoded() {
 fn avatar_plans_use_only_matching_proxies_in_both_regions() {
     use crate::archive::DownloadRoute;
     use crate::download::planning::plan_avatar_download;
-    for region in ["international", "chinese_mainland"] {
+    for region in ["global", "cn"] {
         for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
             let candidates = plan_avatar_download(&provider, region, "ch3ngyz").unwrap();
             assert!(matches!(candidates[0].route, DownloadRoute::Direct));
@@ -142,7 +142,7 @@ fn avatar_plans_use_only_matching_proxies_in_both_regions() {
             }
         }
     }
-    assert!(plan_avatar_download(&Provider::Github, "international", " ").is_err());
+    assert!(plan_avatar_download(&Provider::Github, "global", " ").is_err());
 }
 
 /// Exercise the actual HTTP/validation/cache chain: 200 HTML must fall through,

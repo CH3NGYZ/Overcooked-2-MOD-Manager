@@ -96,6 +96,23 @@ test('order 里声明了但没有条目的源不出现（不产生空标题）',
   assert.deepEqual(tree.map((node) => node.id), ['src-a'])
 })
 
+test('source notes belong to each declaration, including empty parents, and never fall back to card notes', () => {
+  const notes = { 'zh-CN': '源说明', en: 'Source note', ja: 'ソース説明' }
+  const tree = buildSourceGroupTree([
+    entry({ sourceId: 'child', item: { note_i18n: { en: 'Card note' } } }),
+    entry({ sourceId: 'plain', item: { note_i18n: { en: 'Another card note' } } }),
+  ], {
+    order: [{ id: 'root', label: 'Root', note_i18n: notes },
+      { id: 'child', parentId: 'root', label: 'Child', note_i18n: { en: 'Child source' } },
+      { id: 'plain', label: 'Plain' }],
+    ungrouped: { id: '__none__', label: 'Uncategorized' },
+  })
+  assert.deepEqual(tree[0].note_i18n, notes)
+  assert.equal(tree[0].count, 1)
+  assert.deepEqual(tree[1].note_i18n, { en: 'Child source' })
+  assert.equal(tree[2].note_i18n, undefined)
+})
+
 test('没有源归属的条目进未归类桶，并固定垫底', () => {
   const entries = [
     entry({ sourceId: '', group: '', sourceLabel: '', item: 'orphan' }),

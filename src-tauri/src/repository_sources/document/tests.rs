@@ -195,14 +195,14 @@ fn same_source_url_can_have_distinct_regional_names() {
 id = "china"
 nickname = "China"
 url = "mods.toml"
-region = "chinese_mainland"
+region = "cn"
 [repository_sources.nickname_i18n]
 en = "China Mods"
 [[repository_sources]]
-id = "international"
+id = "global"
 nickname = "International"
 url = "mods.toml"
-region = "international"
+region = "global"
 [repository_sources.nickname_i18n]
 en = "International Mods"
 [[repository_sources]]
@@ -215,7 +215,7 @@ region = "mainland-china"
     let document = parse_document(text, &location, &Default::default()).unwrap();
     assert_eq!(document.repository_sources.len(), 2);
     assert_eq!(document.repository_sources[0].id, "china");
-    assert_eq!(document.repository_sources[1].id, "international");
+    assert_eq!(document.repository_sources[1].id, "global");
     assert_eq!(
         document.repository_sources[1].nickname_i18n["en"],
         "International Mods"
@@ -249,12 +249,7 @@ url = "mods/child.toml"
     let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
     let entry = &doc.repositories[0];
     let plan = policy
-        .resolve(
-            &entry.provider,
-            entry.kind,
-            "chinese_mainland",
-            &entry.network_plan,
-        )
+        .resolve(&entry.provider, entry.kind, "cn", &entry.network_plan)
         .unwrap();
     assert_eq!(plan.id, "github-public");
     assert_eq!(plan.release.download_threads, 4);
@@ -262,7 +257,7 @@ url = "mods/child.toml"
         .resolve(
             &entry.provider,
             entry.kind,
-            "chinese_mainland",
+            "cn",
             &doc.repository_sources[0].network_plan,
         )
         .unwrap();
@@ -299,12 +294,7 @@ asset_rules = [{ type = "exact", value = "mod.dll" }]
     let entry = &doc.repositories[0];
     let policy = crate::network_policy::NetworkPolicy::shared().unwrap();
     let plan = policy
-        .resolve(
-            &entry.provider,
-            entry.kind,
-            "chinese_mainland",
-            &entry.network_plan,
-        )
+        .resolve(&entry.provider, entry.kind, "cn", &entry.network_plan)
         .unwrap();
     assert_eq!(plan.id, "github-public");
     assert_eq!(plan.release.download_threads, 4);

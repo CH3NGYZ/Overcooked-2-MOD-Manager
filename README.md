@@ -74,7 +74,7 @@ provider = "github"
 username = "example"
 repository = "my-mod"
 download_mode = "release"
-region = "international"
+region = "global"
 channel = "all"
 install_target = "BepInEx/plugins"
 plugin_guid = "com.example.my-mod"
@@ -166,11 +166,14 @@ zh-CN = "G_U_A"
 | --- | --- | --- |
 | `id` | 是 | 源的唯一标识，同一源文件中不能重复。建议使用字母、数字、点、短横线和下划线，首字符使用字母或数字。 |
 | `nickname_i18n` | 新文档必填 | 多语言昵称表，建议明确包含非空 `zh-CN`；旧声明的兼容规则见下文。支持 `zh-CN`、`zh-TW`、`en`、`ko`、`ja`。 |
+| `note_i18n` | 否 | 安装页源标题旁的多语言说明；与昵称采用同一语言回退顺序，省略或内容为空时不显示，不从仓库地址生成说明。 |
 | `url` | 是 | 完整 HTTP(S) 直链，或相对于当前源所在仓库的文件路径。 |
-| `region` | 否 | `chinese_mainland` 仅中国大陆，`international` 仅非中国大陆；省略时对所有地区显示。 |
+| `region` | 否 | `cn` 仅中国大陆，`global` 仅国际地区；省略时对所有地区显示。 |
 | `builtin` | 否 | 子源是否继承父源的内置保护，普通自定义源通常省略。使用布尔值 `true` / `false`。 |
 
 展示昵称时依次选择当前界面语言、英文、简体中文、表里第一个非空值，最后使用单语镜像。为兼容旧文件，解析时优先使用 `zh-CN`，缺失时使用表里第一个非空翻译，再使用旧单语 `nickname`；解析后会补齐 `nickname_i18n.zh-CN` 和镜像值，没有任何非空昵称才报错。新文件建议明确填写非空 `zh-CN`，不要再写旧单语字段。
+
+`region` 的新文档统一使用 `cn` / `global`；省略或 `region = ""` 适用于两地区。历史 `chinese_mainland` / `international`（以及旧别名）仍兼容读取，保存时归一为新值。父源与条目的地区限制必须同时满足；不匹配的源既不展示，也不读取其下级文档或刷新其中条目。`network_plan.mainland` / `network_plan.international` 是请求计划选择字段，字段名保持不变。
 
 `region` 根据电脑地区设置筛选源，与界面语言无关：只想翻译同一个源的标题时，添加多语言表即可，不需要为了翻译重复声明源。同一 URL 可以按不同地区声明多个源，但每个源必须使用不同的 `id`。
 
@@ -319,11 +322,11 @@ local_original_filename = "MyMod.dll"
 
 | 配置 | 展示渠道 |
 | --- | --- |
-| `region = "chinese_mainland"` | 仅中国大陆。 |
-| `region = "international"` | 仅非中国大陆。 |
+| `region = "cn"` | 仅中国大陆。 |
+| `region = "global"` | 仅非中国大陆。 |
 | 省略 `region` 或填写 `region = ""` | 所有地区。 |
 
-管理器按照电脑地区设置选择当前 MOD 下载渠道，切换界面语言不会改变渠道。仓库必须同时满足自身和所属源的地区限制才会显示；例如，中国大陆源下的 `region = "international"` 仓库不会显示。想在同一源中提供国内和国际两组仓库时，源本身不要限定地区，再为各个仓库分别填写 `region`。
+管理器按照电脑地区设置选择当前 MOD 下载渠道，切换界面语言不会改变渠道。仓库必须同时满足自身和所属源的地区限制才会显示；例如，中国大陆源下的 `region = "global"` 仓库不会显示。想在同一源中提供国内和国际两组仓库时，源本身不要限定地区，再为各个仓库分别填写 `region`。
 
 此字段控制仓库卡片展示、刷新、仓库统计、在线更新绑定和配置导出；不符合当前渠道的仓库不会参与这些操作，也不会删除已经安装的本地 MOD。修改仓库时，可以在二级菜单的“适用地区”中选择“中国大陆地区”“国际地区”或“全部地区”，新建仓库默认选择“全部地区”。
 
@@ -393,7 +396,7 @@ provider = "gitee"
 username = "ch3ngyz"
 repository = "Overcooked-2-HostUtilities-Stable-Releases"
 download_mode = "release"
-region = "chinese_mainland"
+region = "cn"
 channel = "all"
 install_target = "BepInEx/plugins"
 plugin_guid = "com.ch3ngyz.plugin.HostUtilities"
@@ -545,7 +548,7 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 | `download_mode` | 否 | `release` 下载 Release 资产；`repository_file` 下载指定分支内的单个文件。省略时为 `release`。 |
 | `branch` | 文件模式必填 | 仓库文件模式使用的分支名，例如 `main` 或 `master`。 |
 | `file_path` | 文件模式必填 | 相对分支根目录的文件路径，例如 `bin/Release/Example.dll`。 |
-| `region` | 否 | `chinese_mainland` 仅中国大陆，`international` 仅非中国大陆；省略或为空时对所有地区展示，还需满足所属源的地区限制。 |
+| `region` | 否 | `cn` 仅中国大陆，`global` 仅国际地区；省略或为空时对所有地区展示，还需满足所属源的地区限制。 |
 | `channel` | 否 | 仅 Release 模式使用。`all`、`stable` 或 `beta`；省略时默认 `all`。正式版排除 prerelease，测试版只取 prerelease，全部版本包含两者；草稿 Release 不会使用。 |
 | `asset_rules` | Release 模式必填 | 一个或多个 Release 资产规则，至少一条。多个规则满足任意一条即可。 |
 | `install_target` | 是 | 游戏目录下的相对安装目录；空字符串表示按压缩包内部结构安装。 |
@@ -688,7 +691,48 @@ MOD 内置索引为 `mods.toml`，通过相对路径引用 `mods/` 子文档；�
 
 完整的制作说明、ZIP 目录结构、必填字段、依赖声明与常见失败原因见 **[docs/map-sources.md](docs/map-sources.md)**。
 
-设置页的「仅使用内置地图源」与「仅使用内置仓库源」是两个**相互独立**的开关：地图索引和仓库索引是两个文件，一个连不上不代表另一个也连不上。
+### 地图源的地区与多语言说明
+
+每个 `[[map_sources]]` 都可声明 `region` 与 `note_i18n`，三种 `mode` 使用同一规则。`region = "cn"` 只在中国大陆显示，`region = "global"` 只在国际地区显示，省略或留空则两地区显示。嵌套源与其地图条目还需满足全部父源限制；地区筛选独立于界面语言。
+
+```toml
+[[map_sources]]
+id = "maps-oc2-map-bundle"
+mode = "release-tags"
+provider = "gitcode"
+username = "CH3NGY2"
+repository = "OC2-Map-Bundle"
+region = "cn"
+[map_sources.nickname_i18n]
+zh-CN = "社区地图源 (由清雨青雪维护)"
+zh-TW = "社群地圖源 (由清雨青雪維護)"
+en = "Community Map Source (Maintained by QingyuQingxue)"
+ko = "커뮤니티 지도 소스 (QingyuQingxue 관리)"
+ja = "コミュニティマップソース (QingyuQingxue 管理)"
+[map_sources.note_i18n]
+zh-CN = "快速下载渠道来之不易，请勿频繁下载，仅在需要玩的时候更新或安装即可。"
+zh-TW = "快速下載渠道來之不易，請勿頻繁下載，僅在需要玩的時候更新或安裝即可。"
+en = "The fast download channel is not easy to come by. Please do not download frequently. Only update or install when needed."
+ko = "빠른 다운로드 채널은 얻기 어렵습니다. 자주 다운로드하지 마세요. 필요할 때만 업데이트하거나 설치하세요."
+ja = "高速ダウンロードチャネルは手に入れるのが難しいです。頻繁にダウンロードしないでください。必要な場合にのみ更新またはインストールしてください。"
+```
+
+MOD 的 `[[repository_sources]]` 同样支持这两个字段，例如：
+
+```toml
+[[repository_sources]]
+id = "my-source"
+url = "mods/child.toml"
+region = "global"
+[repository_sources.nickname_i18n]
+zh-CN = "示例 MOD 源"
+[repository_sources.note_i18n]
+zh-CN = "仅在需要时下载或更新。"
+```
+
+两个安装页只展示当前源的 `note_i18n`；它与地图/MOD 卡片自己的简介互相独立。没有该字段就不显示附属说明，切换界面语言会同步选择翻译。
+
+设置页使用统一的「数据来源」选择 GitHub、Gitee 或内置，MOD、地图、代理和请求计划共用该选择。地区仍取电脑地区，不由所选托管平台决定。
 
 ## 发布前检查清单
 
@@ -708,7 +752,7 @@ MOD 内置索引为 `mods.toml`，通过相对路径引用 `mods/` 子文档；�
 - [ ] 声明了 `relations` 时使用 `[[repositories.relations]]` 表数组写法，没有写成 `relations.guid = "..."` 的点号形式。
 - [ ] 指向自己 GUID 的 `conflicts` / `compatible` 关系都写了 `prerelease`。
 - [ ] 每条 `release_relations` 都写了非空的 `version` 区间；区间里带比较符（裸版本号会被拒绝），下限不高于上限，没有使用 `~=`。
-- [ ] 需要按地区显示时，为仓库源或仓库填写 `region = "chinese_mainland"` 或 `region = "international"`；省略表示所有地区，仓库和所属源的限制必须同时满足。
+- [ ] 需要按地区显示时，为仓库源或仓库填写 `region = "cn"` 或 `region = "global"`；省略表示所有地区，仓库和所属源的限制必须同时满足。
 - [ ] 相对路径对应当前仓库和分支中的实际文件，完整直链返回 TOML 原文。
 - [ ] Release 模式的 `channel` 符合预期，省略时为 `all`；填写了 `version_regex` 时，正则能匹配预期的本地版本。
 - [ ] 仓库文件模式已填写准确的本地识别字段，并知晓该模式不支持 Release 更新检测。

@@ -199,7 +199,6 @@ pub async fn load_map_tree(
      * 校验基底（`release-tags` 的条目校验只看条目自身字段）。
      */
     if let Some(observer) = ctx.observer {
-        observer.begin(None);
         let node = SourceNode {
             note_i18n: root.note_i18n.clone(),
             id: root.id.clone(),
@@ -251,7 +250,7 @@ pub async fn load_map_tree(
 async fn load_map_document(
     location: SourceLocation,
     label: &SourceLabel,
-    _parent_id: Option<&str>,
+    parent_id: Option<&str>,
     builtin: bool,
     region: &str,
     depth: usize,
@@ -277,6 +276,9 @@ async fn load_map_document(
     };
     // Publish all child titles before fetching any child document.
     if let Some(observer) = ctx.observer {
+        if parent_id.is_none() && depth == 0 {
+            observer.commit_root(&label.id);
+        }
         for child in &document.map_sources {
             if !crate::config::region_matches(child.region.as_deref(), region) {
                 continue;
@@ -520,7 +522,7 @@ pub(crate) async fn load_map_branch(
     let Some(observer) = ctx.observer else {
         return load_map_tree(region, ctx.config.data_provider, ctx).await;
     };
-    let Some((target, ids)) = observer.begin(Some(id)) else {
+    let Some((target, ids)) = observer.begin(id) else {
         return Err(ConfigError::Invalid("mapSource.mapMissing".into()));
     };
     let mut collected: Vec<_> = ctx

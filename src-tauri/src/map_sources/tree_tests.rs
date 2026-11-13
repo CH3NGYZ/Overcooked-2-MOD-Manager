@@ -17,6 +17,228 @@ asset_rules = [{{ type = "glob", value = "*.zip" }}]
     )
 }
 
+async fn root_document(
+    origin: &SourceLocation,
+    label: &SourceLabel,
+    ctx: &MapSourceContext<'_>,
+) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
+    let mut maps = Vec::new();
+    load_map_document(
+        origin.clone(),
+        label,
+        None,
+        false,
+        "global",
+        0,
+        &mut HashSet::new(),
+        &mut maps,
+        &mut Vec::new(),
+        ctx,
+    )
+    .await?;
+    Ok(maps)
+}
+
+#[tokio::test]
+async fn root_failures_keep_branch_retry_targets_until_a_successful_root_replaces_them() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = SourceLocation::parse(&format!(
+        "http://{}/root.toml",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let server = std::thread::spawn(move || {
+        let mut paths = Vec::new();
+        let mut roots = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while paths.len() < 8 {
+            let (mut socket, _) = match listener.accept() {
+                Ok(pair) => pair,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "missing document request: {paths:?}"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            socket.set_nonblocking(false).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+                let mut buf = [0; 1024];
+                let count = socket.read(&mut buf).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buf[..count]);
+            }
+            let request = String::from_utf8(bytes).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap().to_owned();
+            let (status, body) = match path.as_str() {
+                "/root.toml" => {
+                    roots += 1;
+                    match roots {
+                        1 => (
+                            "200 OK",
+                            format!(
+                                "{}\n[[map_sources]]\nid='old'\nurl='old.toml'\nnickname='Old'\n",
+                                map("Old root")
+                            ),
+                        ),
+                        2 => ("500 Failed", String::new()),
+                        3 => ("200 OK", "maps = [ broken TOML".into()),
+                        4 => (
+                            "200 OK",
+                            format!(
+                                "{}\n[[map_sources]]\nid='new'\nurl='new.toml'\nnickname='New'\n",
+                                map("New root")
+                            ),
+                        ),
+                        _ => panic!("unexpected root request"),
+                    }
+                }
+                "/old.toml" => ("200 OK", map("Old child")),
+                "/new.toml" => ("200 OK", map("New child")),
+                _ => panic!("unexpected request: {path}"),
+            };
+            paths.push(path);
+            write!(
+                socket,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+        paths
+    });
+    let events = Arc::new(Mutex::new(Vec::<MapTreeProgress>::new()));
+    let capture = events.clone();
+    let observer = SourceObserver::new(move |event| capture.lock().unwrap().push(event));
+    let label = SourceLabel {
+        id: "root".into(),
+        ..Default::default()
+    };
+    let root_node = SourceNode {
+        id: label.id.clone(),
+        parent_id: None,
+        label: "Root".into(),
+        label_i18n: Default::default(),
+        note_i18n: Default::default(),
+        url: origin.address(),
+        status: "pending".into(),
+        error: None,
+    };
+    observer.register(SourceTarget {
+        node: root_node.clone(),
+        sequence: 0,
+        origin: origin.clone(),
+        label: label.clone(),
+        builtin: false,
+        depth: 0,
+        declaration: None,
+    });
+    observer.declare(root_node);
+    let cache = crate::release_cache::RepoReleaseCache::default();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let config = crate::config::default_config();
+    let ctx = MapSourceContext {
+        observer: Some(&observer),
+        cache: &cache,
+        client: &client,
+        config: &config,
+        github_token: None,
+        gitcode_token: None,
+        gitee_token: None,
+        pass_id: None,
+        force: false,
+        previous: &[],
+    };
+    let old = root_document(&origin, &label, &ctx).await.unwrap();
+    assert_eq!(old.len(), 2);
+    let ctx = MapSourceContext {
+        previous: &old,
+        ..ctx
+    };
+    for failure in ["HTTP failure", "invalid TOML"] {
+        assert!(
+            root_document(&origin, &label, &ctx).await.is_err(),
+            "{failure}"
+        );
+        {
+            let events = events.lock().unwrap();
+            let root = events
+                .last()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|node| node.id == "root")
+                .unwrap();
+            assert_eq!(root.status, "error");
+            assert!(root.error.is_some());
+        }
+        let retried = load_map_branch("old", &ctx, "global").await.unwrap();
+        assert_eq!(
+            retried.len(),
+            2,
+            "{failure} must retain old sibling maps and the child retry target"
+        );
+        assert!(
+            retried
+                .iter()
+                .any(|map| map.source_id.as_deref() == Some("old"))
+        );
+    }
+    let replacement = root_document(&origin, &label, &ctx).await.unwrap();
+    assert_eq!(replacement.len(), 2);
+    assert!(
+        replacement
+            .iter()
+            .all(|map| map.source_id.as_deref() != Some("old"))
+    );
+    {
+        let events = events.lock().unwrap();
+        let first_new = events
+            .iter()
+            .find(|event| event.nodes.iter().any(|node| node.id == "new"))
+            .unwrap();
+        assert_eq!(
+            first_new
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            ["root", "new"],
+            "successful root removes stale local nodes before publishing new child titles"
+        );
+        assert_eq!(first_new.nodes[1].status, "pending");
+        assert_eq!(first_new.nodes[0].status, "ready");
+    }
+    assert!(
+        load_map_branch("old", &ctx, "global").await.is_err(),
+        "successful root removes stale persistent retry targets"
+    );
+    assert_eq!(
+        server.join().unwrap(),
+        [
+            "/root.toml",
+            "/old.toml",
+            "/root.toml",
+            "/old.toml",
+            "/root.toml",
+            "/old.toml",
+            "/root.toml",
+            "/new.toml",
+        ]
+    );
+}
+
 #[tokio::test]
 async fn documents_publish_incrementally_before_release_apis_and_failed_branch_retries_alone() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

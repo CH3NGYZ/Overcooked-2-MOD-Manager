@@ -93,9 +93,24 @@ impl SourceObserver {
         entries.insert(target.node.id.clone(), target);
     }
 
+    /// A parsed root owns the next tree; failed reads must keep old retry targets.
+    pub(super) fn commit_root(&self, id: &str) {
+        let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
+        nodes.retain(|node| node.id == id);
+        if let Some(entries) = self
+            .registry
+            .entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&self.namespace)
+        {
+            entries.retain(|key, _| key == id);
+        }
+    }
+
     pub(super) fn begin(
         &self,
-        id: Option<&str>,
+        id: &str,
     ) -> Option<(SourceTarget, std::collections::HashSet<String>)> {
         let mut all = self
             .registry
@@ -103,10 +118,6 @@ impl SourceObserver {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let entries = all.entry(self.namespace.clone()).or_default();
-        let Some(id) = id else {
-            entries.clear();
-            return None;
-        };
         let target = entries.get(id)?.clone();
         let mut ids = std::collections::HashSet::from([id.to_owned()]);
         loop {

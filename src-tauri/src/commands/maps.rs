@@ -27,7 +27,7 @@ pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
 /// 刷新地图源树，并保留同 ID 条目的 Release 缓存与失败状态，声明字段取新值。
 ///
 /// 每份 TOML 解析后经 Channel 发布目录快照；失败节点保留标题、错误与重试入口。
-/// 官方入口由本次运行的 DataProvider 决定，读取失败不恢复旧卡片。
+/// 官方入口由本次运行的 DataProvider 决定；主文档失败保留旧快照，成功后逐源重建。
 #[tauri::command]
 pub async fn refresh_map_sources(
     state: State<'_, AppState>,
@@ -95,16 +95,8 @@ pub async fn refresh_map_sources(
                         crate::map_sources::load_map_tree(&region, provider, &ctx).await
                     }
                 };
-                // Failed root documents publish an empty error node and clear their old cards.
-                let failure = loaded.as_ref().err().map(ToString::to_string);
-                if source_id
-                    .as_deref()
-                    .is_some_and(|id| id != "official-map-index")
-                    && failure.is_some()
-                {
-                    return Err(failure.unwrap());
-                }
-                let mut maps = loaded.unwrap_or_default();
+                // A failed root is not a valid empty tree: preserve its stored maps.
+                let mut maps = loaded.map_err(|error| error.to_string())?;
                 // Paused discovery data remains stored, but cannot participate in the tree or APIs.
                 maps.extend(
                     config
@@ -141,9 +133,6 @@ pub async fn refresh_map_sources(
                     config.map_repositories.len(),
                     changed
                 );
-                if let Some(error) = failure {
-                    return Err(error);
-                }
                 Ok(crate::map_sources::available_maps(&config, &region)
                     .iter()
                     .map(map_to_info)
